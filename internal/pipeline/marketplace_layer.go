@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
+	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
@@ -18,29 +20,17 @@ import (
 )
 
 type MarketplaceLayerMutation struct {
-	editor    *config.LayerEditor
-	legacy    bool
-	endpoint  config.MarketplaceEntry
-	endpointS bool
-	pins      []config.MarketplaceResourcePin
-	pinsS     bool
-	removal   *marketplaceRemoval
-}
-
-type marketplaceRemoval struct {
-	entry      config.MarketplaceEntry
-	pin        config.MarketplaceResourcePin
-	collection bool
+	editor      *config.LayerEditor
+	endpoint    config.MarketplaceEntry
+	endpointS   bool
+	pins        []config.MarketplaceResourcePin
+	pinsS       bool
+	removesPins bool
 }
 
 func (m *MarketplaceLayerMutation) EnsureEndpoint(entry config.MarketplaceEntry) error {
 	if m == nil {
 		return errors.New("marketplace layer mutation is nil")
-	}
-	if m.legacy {
-		m.endpoint = entry
-		m.endpointS = true
-		return nil
 	}
 	if m.editor == nil {
 		return errors.New("marketplace layer mutation has no open editor")
@@ -60,13 +50,6 @@ func (m *MarketplaceLayerMutation) IncludePins(entry config.MarketplaceEntry, pi
 	if len(pins) == 0 {
 		return errors.New("marketplace install requires at least one pin")
 	}
-	if m.legacy {
-		m.endpoint = entry
-		m.endpointS = true
-		m.pins = append(m.pins, pins...)
-		m.pinsS = true
-		return nil
-	}
 	if m.editor == nil {
 		return errors.New("marketplace layer mutation has no open editor")
 	}
@@ -85,23 +68,22 @@ func (m *MarketplaceLayerMutation) IncludePins(entry config.MarketplaceEntry, pi
 }
 
 func (m *MarketplaceLayerMutation) RemoveDirectPin(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) error {
-	return m.removeMarketplacePin(entry, pin, false)
+	return m.removeMarketplacePin(entry, pin)
 }
 
+// RemoveCollection drops the collection's exact pin and records no
+// collection/<name> exclusion, unlike Git-source collection removal
+// (remove.go, SetLayerExclude). Marketplace sources support only explicit
+// include requests at runtime (marketplaceEntryForLock refuses all, tags, and
+// registries with v4.marketplace-runtime-unsupported), so no dynamic selection
+// can re-select the removed collection.
 func (m *MarketplaceLayerMutation) RemoveCollection(entry config.MarketplaceEntry, collection config.MarketplaceResourcePin) error {
-	return m.removeMarketplacePin(entry, collection, true)
+	return m.removeMarketplacePin(entry, collection)
 }
 
-func (m *MarketplaceLayerMutation) removeMarketplacePin(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, collection bool) error {
+func (m *MarketplaceLayerMutation) removeMarketplacePin(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) error {
 	if m == nil {
 		return errors.New("marketplace layer mutation is nil")
-	}
-	if m.legacy {
-		if m.removal != nil {
-			return errors.New("marketplace layer mutation supports one legacy removal")
-		}
-		m.removal = &marketplaceRemoval{entry: entry, pin: pin, collection: collection}
-		return nil
 	}
 	if m.editor == nil {
 		return errors.New("marketplace layer mutation has no open editor")
@@ -118,6 +100,7 @@ func (m *MarketplaceLayerMutation) removeMarketplacePin(entry config.Marketplace
 	}
 	m.endpoint = entry
 	m.endpointS = true
+	m.removesPins = true
 	return nil
 }
 
@@ -125,101 +108,22 @@ func MutateMarketplaceLayer(ctx context.Context, repoRoot, localConfigDir, confi
 	if mutate == nil {
 		return nil, errors.New("marketplace layer mutation callback is required")
 	}
-	if _, err := os.Lstat(configPath); err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return nil, err
-		}
-		return mutateV4MarketplaceLayer(ctx, repoRoot, localConfigDir, configPath, source, mutate, sync)
-	}
-	v4, err := config.LoadV4ConfigIfPresent(configPath, source)
-	if err != nil {
+	if err := RecoverDependencyTransactions(ctx); err != nil {
 		return nil, err
 	}
-	if v4 == nil {
-		return mutateLegacyMarketplaceLayer(configPath, source, mutate, sync)
+	if err := ValidateConsumerIntent(ctx, repoRoot, localConfigDir); err != nil {
+		return nil, err
+	}
+	if _, err := config.LoadV4ConfigIfPresent(configPath, source); err != nil {
+		return nil, err
 	}
 	return mutateV4MarketplaceLayer(ctx, repoRoot, localConfigDir, configPath, source, mutate, sync)
 }
 
-func commitMarketplaceConfigRemoval(configPath string, mutate func() (*config.FileSnapshot, config.ConfigFileCommit, error), sync func() ([]error, error)) (warnings []error, retErr error) {
-	snapshot, commit, err := mutate()
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if retErr == nil {
-			return
-		}
-		if rollbackErr := snapshot.RestoreIfCurrent(commit); rollbackErr != nil {
-			retErr = errors.Join(retErr, fmt.Errorf("rollback Marketplace config: %w", rollbackErr))
-		}
-	}()
-	if sync != nil {
-		warnings, err = sync()
-		if err != nil {
-			return nil, err
-		}
-	}
-	current, err := os.ReadFile(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("read Marketplace config after remove: %w", err)
-	}
-	if !bytes.Equal(current, commit.Bytes) {
-		return nil, fmt.Errorf("marketplace config changed concurrently during remove")
-	}
-	return warnings, nil
-}
-
-func mutateLegacyMarketplaceLayer(configPath string, source config.Source, mutate func(*MarketplaceLayerMutation) error, sync func() ([]error, error)) ([]error, error) {
-	m := &MarketplaceLayerMutation{legacy: true}
-	if err := mutate(m); err != nil {
-		return nil, err
-	}
-	before, err := os.ReadFile(configPath)
-	if err != nil {
-		return nil, err
-	}
-	warnings, err := runLegacyMarketplaceMutation(configPath, m, sync)
-	if err != nil {
-		return nil, err
-	}
-	after, err := os.ReadFile(configPath)
-	if err != nil {
-		return nil, err
-	}
-	if !bytes.Equal(before, after) {
-		warnLegacyLayerMutation(source, configPath)
-	}
-	return warnings, nil
-}
-
-func runLegacyMarketplaceMutation(configPath string, m *MarketplaceLayerMutation, sync func() ([]error, error)) ([]error, error) {
-	if r := m.removal; r != nil {
-		return commitMarketplaceConfigRemoval(configPath, func() (*config.FileSnapshot, config.ConfigFileCommit, error) {
-			if r.collection {
-				return config.RemoveMarketplaceCollectionWithSnapshotAndCommit(configPath, r.entry.URL, r.entry.InstanceID, r.pin)
-			}
-			return config.RemoveMarketplaceDirectPinWithSnapshotAndCommit(configPath, r.entry.URL, r.entry.InstanceID, r.pin)
-		}, sync)
-	}
-	if m.pinsS {
-		if sync == nil {
-			sync = func() ([]error, error) { return nil, nil }
-		}
-		return ensureMarketplacePinsAndSync(configPath, m.endpoint, m.pins, sync)
-	}
-	if m.endpointS {
-		if err := config.EnsureMarketplaceEntryInConfig(configPath, m.endpoint); err != nil {
-			return nil, err
-		}
-	}
-	if sync == nil {
-		return nil, nil
-	}
-	return sync()
-}
-
 func mutateV4MarketplaceLayer(ctx context.Context, repoRoot, localConfigDir, configPath string, source config.Source, mutate func(*MarketplaceLayerMutation) error, sync func() ([]error, error)) (warnings []error, retErr error) {
+	// Rollback validation must reuse this invocation's organization evidence,
+	// never start fresh acquisition after the install has already failed.
+	ctx = WithTransientOrganizationMarketplaceLockCache(ctx)
 	staging, err := newConfigStagingManager()
 	if err != nil {
 		return nil, err
@@ -275,24 +179,19 @@ func mutateV4MarketplaceLayer(ctx context.Context, repoRoot, localConfigDir, con
 		return nil, err
 	}
 	scope := lockfile.Scope(source.LockScope())
-	_, lockGeneration, lockMode, lockDoc, err := readMarketplaceLayerLock(lockPath, scope)
+	lockBefore, lockGeneration, lockMode, lockDoc, err := readMarketplaceLayerLock(lockPath, scope)
 	if err != nil {
 		return nil, err
 	}
 	if lockDoc.Scope == "" {
 		lockDoc.Scope = scope
 	}
-	_, configExpectedMode, err := dependencytxn.ReadGenerationAndMode(configEdit.Path)
+	configBefore, configGeneration, configExpectedMode, err := dependencytxn.ReadSnapshot(configEdit.Path)
 	if err != nil {
 		return nil, err
 	}
-	configSnapshot, err := config.SnapshotConfigFile(configPath)
-	if err != nil {
-		return nil, err
-	}
-	lockSnapshot, err := config.SnapshotConfigFile(lockPath)
-	if err != nil {
-		return nil, err
+	if configGeneration != configEdit.Expected {
+		return nil, fmt.Errorf("%w: Marketplace config changed while staging %s", dependencytxn.ErrGenerationConflict, configEdit.Path)
 	}
 
 	mergeEntry := m.endpoint
@@ -309,9 +208,18 @@ func mutateV4MarketplaceLayer(ctx context.Context, repoRoot, localConfigDir, con
 	if absolute, err := filepath.Abs(configPath); err == nil {
 		overlays[filepath.Clean(absolute)] = configEdit.Bytes
 	}
-	finalEC := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: localConfigDir, FileOverlays: overlays}, nil)
+	ws, err := workspaceForRoots(repoRoot, localConfigDir)
+	if err != nil {
+		return nil, err
+	}
+	finalEC := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(), FileOverlays: overlays}, nil)
 	if len(finalEC.Errors) > 0 {
 		return nil, errors.Join(finalEC.Errors...)
+	}
+	if m.removesPins {
+		if err := preflightHookRemoval(ctx, ws, edits, overlays); err != nil {
+			return nil, err
+		}
 	}
 	reads, err := marketplaceLayerReadAssertions(finalEC, configEdit, lockPath, lockData, lockGeneration)
 	if err != nil {
@@ -338,47 +246,155 @@ func mutateV4MarketplaceLayer(ctx context.Context, repoRoot, localConfigDir, con
 	if sync == nil {
 		return nil, nil
 	}
-	configCommit := config.NewConfigFileCommit(configEdit.Bytes)
-	lockCommit := config.NewConfigFileCommit(lockData)
 	defer func() {
 		if retErr == nil {
 			return
 		}
-		if rollbackErr := configSnapshot.RestoreIfCurrent(configCommit); rollbackErr != nil {
-			retErr = errors.Join(retErr, fmt.Errorf("rollback Marketplace config: %w", rollbackErr))
-		}
-		if rollbackErr := lockSnapshot.RestoreIfCurrent(lockCommit); rollbackErr != nil {
-			retErr = errors.Join(retErr, fmt.Errorf("rollback Marketplace lock: %w", rollbackErr))
+		// A cancelled install still needs cleanup, but a competing writer must
+		// not keep this deferred transaction waiting indefinitely.
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		if rollbackErr := rollbackMarketplaceLayer(rollbackCtx, stateDir, ws, source, desired, configBefore, lockBefore, reads, retErr); rollbackErr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("rollback Marketplace config and lock: %w", rollbackErr))
 		}
 	}()
 	warnings, err = sync()
 	if err != nil {
 		return nil, err
 	}
-	current, err := os.ReadFile(configPath)
+	current, mode, err := dependencytxn.ReadGenerationAndMode(configEdit.Path)
 	if err != nil {
 		return nil, fmt.Errorf("read Marketplace config after sync: %w", err)
 	}
-	if !bytes.Equal(current, configEdit.Bytes) {
-		return nil, fmt.Errorf("marketplace config changed concurrently during install")
+	if current != (dependencytxn.Generation{Exists: true, Digest: dependencytxn.Digest(configEdit.Bytes)}) || mode != configEdit.Mode {
+		return nil, fmt.Errorf("%w: Marketplace config changed during install", dependencytxn.ErrGenerationConflict)
 	}
 	return warnings, nil
 }
 
-func marketplaceLayerLockPath(configPath string) (string, error) {
-	paths, err := config.ResolveConfigLockPaths(configPath)
+// Roll back the config and its Marketplace evidence together. Git reconciliation
+// is durable independently of the install: retain its exact records, but never
+// infer ownership of an arbitrary replacement lock from its cache availability.
+func rollbackMarketplaceLayer(ctx context.Context, stateDir string, ws Workspace, source config.Source, published []dependencytxn.DesiredFile, configBefore, lockBefore []byte, reads []dependencytxn.ReadAssertion, cause error) error {
+	configFile, lockFile := published[0], published[1]
+	current, generation, mode, err := dependencytxn.ReadSnapshot(lockFile.Path)
 	if err != nil {
-		if _, statErr := os.Lstat(configPath); errors.Is(statErr, os.ErrNotExist) {
-			dir, dirErr := filepath.EvalSymlinks(filepath.Dir(configPath))
-			if dirErr != nil {
-				return "", err
-			}
-			lock, lockErr := lockfile.PathForConfig(filepath.Join(dir, filepath.Base(configPath)))
-			if lockErr != nil {
-				return "", lockErr
-			}
-			return dependencytxn.ValidateDestination(filepath.Clean(lock))
+		return fmt.Errorf("%w: inspect Marketplace lock during rollback: %w", dependencytxn.ErrGenerationConflict, err)
+	}
+	if !generation.Exists || mode != lockFile.Mode {
+		return fmt.Errorf("%w: Marketplace lock disappeared or changed mode at %s", dependencytxn.ErrGenerationConflict, lockFile.Path)
+	}
+	configPublished := dependencytxn.Generation{Exists: true, Digest: dependencytxn.Digest(configFile.Bytes)}
+	// Keep every read/alias assertion; only our published destinations have
+	// advanced. Check before validation as well as inside the rollback CAS.
+	rollbackReads := append([]dependencytxn.ReadAssertion(nil), reads...)
+	for i := range rollbackReads {
+		switch rollbackReads[i].Path {
+		case configFile.Path:
+			rollbackReads[i].Expected = configPublished
+		case lockFile.Path:
+			rollbackReads[i].Expected = generation
 		}
+	}
+	if err := dependencytxn.ValidateReadAssertions(rollbackReads); err != nil {
+		return err
+	}
+	lockRestore := lockBefore
+	if !bytes.Equal(current, lockFile.Bytes) {
+		var committed *DependencyCommittedSyncError
+		if !errors.As(cause, &committed) {
+			return fmt.Errorf("%w: Marketplace lock changed outside dependency reconciliation at %s", dependencytxn.ErrGenerationConflict, lockFile.Path)
+		}
+		lockRestore, err = marketplaceRollbackReconciledLock(current, lockFile.Bytes, lockBefore)
+		if err != nil {
+			return err
+		}
+		// Validate the mixed candidate (original authored selection, retained
+		// exact Git, original Marketplace evidence) before publishing any of it.
+		ec := LoadEffective(ctx, ConfigLoadCached, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(), FileOverlays: map[string][]byte{configFile.Path: configBefore, lockFile.Path: lockRestore}}, nil)
+		if len(ec.Errors) > 0 {
+			return fmt.Errorf("%w: cannot validate Marketplace rollback candidate: %w", dependencytxn.ErrGenerationConflict, errors.Join(ec.Errors...))
+		}
+		var entries []config.RegistryEntry
+		for _, layer := range ec.PresentLayers() {
+			if layer.Source == source {
+				entries = readOnlyRemoteEntries(layer)
+			}
+		}
+		doc, err := lockfile.Decode(lockRestore)
+		if err != nil {
+			return err
+		}
+		if !readOnlyGitDocumentMatches(doc, entries) {
+			return fmt.Errorf("%w: reconciled Git lock no longer matches Marketplace layer", dependencytxn.ErrGenerationConflict)
+		}
+	}
+	restore := []dependencytxn.DesiredFile{
+		{Path: configFile.Path, Expected: configPublished, ExpectedMode: configFile.Mode, Bytes: configBefore, Mode: configFile.ExpectedMode, Delete: !configFile.Expected.Exists},
+		{Path: lockFile.Path, Expected: generation, ExpectedMode: mode, Bytes: lockRestore, Mode: lockFile.ExpectedMode, Delete: !lockFile.Expected.Exists && len(lockRestore) == 0},
+	}
+	if len(lockRestore) > 0 && !lockFile.Expected.Exists {
+		restore[1].Mode = mode
+	}
+	_, err = dependencytxn.Commit(ctx, stateDir, restore, dependencytxn.WithReadAssertions(rollbackReads))
+	return err
+}
+
+// A reconciler may add missing Git records, not change the Marketplace write
+// set or retained exact records. Require the precise canonical bytes it writes;
+// a comment, reformat, replacement pin, or changed retained record is foreign.
+func marketplaceRollbackReconciledLock(current, published, before []byte) ([]byte, error) {
+	conflict := func() ([]byte, error) {
+		return nil, fmt.Errorf("%w: Marketplace lock changed after publication", dependencytxn.ErrGenerationConflict)
+	}
+	doc, err := lockfile.Decode(current)
+	if err != nil {
+		return conflict()
+	}
+	prepared, err := lockfile.Decode(published)
+	if err != nil {
+		return nil, err
+	}
+	canonical, err := lockfile.Encode(doc)
+	if err != nil || !bytes.Equal(canonical, current) {
+		return conflict()
+	}
+	probe := doc
+	probe.Registries = prepared.Registries
+	canonical, err = lockfile.Encode(probe)
+	if err != nil || !bytes.Equal(canonical, published) || len(doc.Registries) <= len(prepared.Registries) {
+		return conflict()
+	}
+	for _, retained := range prepared.Registries {
+		found := false
+		for _, registry := range doc.Registries {
+			if reflect.DeepEqual(retained, registry) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return conflict()
+		}
+	}
+	doc.Marketplaces = nil
+	if len(before) > 0 {
+		previous, err := lockfile.Decode(before)
+		if err != nil {
+			return nil, err
+		}
+		doc.Marketplaces = previous.Marketplaces
+	}
+	return lockfile.Encode(doc)
+}
+
+func marketplaceLayerLockPath(configPath string) (string, error) {
+	resolve := config.ResolveConfigLockPaths
+	if _, err := os.Lstat(configPath); errors.Is(err, os.ErrNotExist) {
+		resolve = config.ResolveConfigLockPathsTolerateMissing
+	}
+	paths, err := resolve(configPath)
+	if err != nil {
 		return "", err
 	}
 	return dependencytxn.ValidateDestination(filepath.Clean(paths.CanonicalLock))
@@ -408,14 +424,6 @@ func marketplaceLayerReadAssertions(ec config.EffectiveConfig, configEdit Staged
 	lockDigest := dependencytxn.Digest(lockData)
 	for _, layer := range ec.PresentLayers() {
 		for _, read := range layer.Reads {
-			if read.RuntimeLock {
-				assertion := dependencytxn.ReadAssertion{Path: read.Path, RequestedPath: read.RequestedPath}
-				if previous, exists := byAlias[read.RequestedPath]; exists && previous != assertion {
-					return nil, fmt.Errorf("%w: config alias changed at %s", dependencytxn.ErrGenerationConflict, read.RequestedPath)
-				}
-				byAlias[read.RequestedPath] = assertion
-				continue
-			}
 			if digest, exists := byPath[read.Path]; exists && digest != read.Digest {
 				return nil, fmt.Errorf("%w: inconsistent config read at %s", dependencytxn.ErrGenerationConflict, read.Path)
 			}
@@ -453,7 +461,11 @@ func marketplaceLayerReadAssertions(ec config.EffectiveConfig, configEdit Staged
 }
 
 func ToggleMarketplacePin(ctx context.Context, repoRoot, localConfigDir, configPath string, source config.Source, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, enable bool) error {
-	_, err := MutateMarketplaceLayer(ctx, repoRoot, localConfigDir, configPath, source, func(m *MarketplaceLayerMutation) error {
+	ws, err := NewWorkspace(repoRoot, localConfigDir)
+	if err != nil {
+		return err
+	}
+	_, err = MutateMarketplaceLayer(ctx, repoRoot, localConfigDir, configPath, source, func(m *MarketplaceLayerMutation) error {
 		if enable {
 			pin := pin
 			pin.Direct = true
@@ -462,8 +474,7 @@ func ToggleMarketplacePin(ctx context.Context, repoRoot, localConfigDir, configP
 		}
 		return m.RemoveDirectPin(entry, pin)
 	}, func() ([]error, error) {
-		syncOpts := append(silentSyncOptsForPaths(repoRoot, localConfigDir, localConfigDir), withMarketplaceMode(resolver.MarketplaceResolveModeCachedNoFetch))
-		return nil, silentSync(ctx, repoRoot, syncOpts...)
+		return nil, silentSync(ctx, ws, withMarketplaceMode(resolver.MarketplaceResolveModeCachedNoFetch))
 	})
 	return err
 }

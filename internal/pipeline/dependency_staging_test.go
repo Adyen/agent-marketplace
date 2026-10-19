@@ -14,11 +14,11 @@ func TestSilentSyncCollectPreservesDependencyWarnings(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\n"), 0o644); err != nil {
+	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	warning := errors.New("dependency warning")
-	warnings, err := silentSyncCollect(context.Background(), dir,
+	warnings, err := silentSyncCollect(context.Background(), mustWorkspace(t, dir),
 		withDependencyReconciler(func(context.Context, string, string, bool, []StagedConfigEdit) (DependencyLockView, error) {
 			return DependencyLockView{Warnings: []error{warning}}, nil
 		}),
@@ -41,7 +41,7 @@ func TestMutateConfigWithDependenciesKeepsEditPrivateUntilReconcile(t *testing.T
 	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	original := []byte("apiVersion: agent-marketplace/v2\n")
+	original := []byte("apiVersion: agent-marketplace/v4\n")
 	if err := os.WriteFile(destination, original, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -51,13 +51,13 @@ func TestMutateConfigWithDependenciesKeepsEditPrivateUntilReconcile(t *testing.T
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(shadow, []byte("apiVersion: agent-marketplace/v2\nskills: [review]\n"), 0o644)
+		return os.WriteFile(shadow, []byte("apiVersion: agent-marketplace/v4\nsources: {local: {directory: registry}}\nresources: {local: [skill/review]}\n"), 0o644)
 	}, func(_ context.Context, _, _ string, _ bool, edits []StagedConfigEdit) (DependencyLockView, error) {
 		real, err := os.ReadFile(destination)
 		if err != nil || string(real) != string(original) {
 			t.Fatalf("real config at reconciler start = %q, %v", real, err)
 		}
-		if len(edits) != 1 || string(edits[0].Bytes) != "apiVersion: agent-marketplace/v2\nskills: [review]\n" {
+		if len(edits) != 1 || string(edits[0].Bytes) != "apiVersion: agent-marketplace/v4\nsources: {local: {directory: registry}}\nresources: {local: [skill/review]}\n" {
 			t.Fatalf("staged edits = %#v", edits)
 		}
 		return DependencyLockView{}, stop
@@ -77,7 +77,7 @@ func TestDependencyReconcilerReceivesCoalescedStagedConfig(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	original := []byte("apiVersion: agent-marketplace/v2\n")
+	original := []byte("apiVersion: agent-marketplace/v4\n")
 	if err := os.WriteFile(destination, original, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -94,21 +94,21 @@ func TestDependencyReconcilerReceivesCoalescedStagedConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(shadow, []byte("apiVersion: agent-marketplace/v2\nskills: [one]\n"), 0o644); err != nil {
+	if err := os.WriteFile(shadow, []byte("apiVersion: agent-marketplace/v4\nsources: {local: {directory: registry}}\nresources: {local: [skill/one]}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(shadow, []byte("apiVersion: agent-marketplace/v2\nskills: [final]\n"), 0o644); err != nil {
+	if err := os.WriteFile(shadow, []byte("apiVersion: agent-marketplace/v4\nsources: {local: {directory: registry}}\nresources: {local: [skill/final]}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	stop := errors.New("stop after reconcile")
-	_, err = silentSyncCollect(context.Background(), dir,
+	_, err = silentSyncCollect(context.Background(), mustWorkspace(t, dir),
 		withConfigStaging(staging),
 		withDependencyReconciler(func(_ context.Context, _, _ string, _ bool, edits []StagedConfigEdit) (DependencyLockView, error) {
 			real, readErr := os.ReadFile(destination)
 			if readErr != nil || string(real) != string(original) {
 				t.Fatalf("real config at reconciler start = %q, %v", real, readErr)
 			}
-			if len(edits) != 1 || string(edits[0].Bytes) != "apiVersion: agent-marketplace/v2\nskills: [final]\n" {
+			if len(edits) != 1 || string(edits[0].Bytes) != "apiVersion: agent-marketplace/v4\nsources: {local: {directory: registry}}\nresources: {local: [skill/final]}\n" {
 				t.Fatalf("staged edits = %#v", edits)
 			}
 			return DependencyLockView{}, stop

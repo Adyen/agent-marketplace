@@ -1,5 +1,7 @@
 package mapping
 
+import "regexp"
+
 // mcpEntry describes how a source interpolation pattern is transformed for a
 // given target harness.
 type mcpEntry struct {
@@ -32,8 +34,9 @@ var mcpTable = []mcpEntry{
 		// Devin provenance: bundled 3000.3 docs (docs/devin-cli-harness-spec-3000.3.md,
 		// "MCP servers → Schema") show ${env:VAR} interpolation; the 3000.3.27
 		// interpolation probe is still pending.
-		TargetDevin: "${env:VAR}",
-		TargetCodex: "inline",
+		TargetDevin:    "${env:VAR}",
+		TargetCodex:    "inline",
+		TargetOpenCode: "inline",
 	}},
 
 	// Last verified: 2026-04-23 against Windsurf v1.0
@@ -46,8 +49,9 @@ var mcpTable = []mcpEntry{
 		TargetGemini:   "${extensionPath}",
 		// Devin provenance: bundled 3000.3 docs document
 		// "oauthClientSecret": "${env:OAUTH_CLIENT_SECRET}"; 3000.3.27 probe pending.
-		TargetDevin: "${env:VAR}",
-		TargetCodex: "${env:VAR}",
+		TargetDevin:    "${env:VAR}",
+		TargetCodex:    "${env:VAR}",
+		TargetOpenCode: "{env:VAR}",
 	}},
 
 	// Last verified: 2026-04-23 against Windsurf v1.0
@@ -61,8 +65,9 @@ var mcpTable = []mcpEntry{
 		// Devin provenance: none. ${file:PATH} is a Windsurf-only interpolation
 		// style with zero Devin evidence in the 3000.3 snapshot, so it is
 		// explicitly unmappable rather than guessed.
-		TargetDevin: mcpUnmappable,
-		TargetCodex: mcpUnmappable,
+		TargetDevin:    mcpUnmappable,
+		TargetCodex:    mcpUnmappable,
+		TargetOpenCode: "{file:PATH}",
 	}},
 }
 
@@ -102,15 +107,22 @@ func McpInterpolation(source string, target Target) string {
 	return pattern
 }
 
-func WindsurfShellEnvName(value string) (string, bool) {
-	if len(value) < 2 || value[0] != '$' {
-		return "", false
-	}
-	for i := 1; i < len(value); i++ {
-		c := value[i]
-		if c != '_' && (c < 'A' || c > 'Z') && (c < '0' || c > '9') {
-			return "", false
-		}
-	}
-	return value[1:], true
+// bareEnvReference mirrors the bare form of Gemini CLI's settings resolver,
+// /\$(?:(\w+)|{([^}]+)})/: a dollar sign followed by ASCII word characters,
+// including digits ($1) and the second dollar of $$NAME. Gemini documents no
+// escape, so a backslash before the dollar does not prevent expansion.
+var bareEnvReference = regexp.MustCompile(`\$[A-Za-z0-9_]+`)
+
+// ContainsBareEnvReference reports whether value contains a bare $NAME, which
+// Gemini expands as an environment reference and canonical values treat as
+// literal text.
+func ContainsBareEnvReference(value string) bool {
+	return bareEnvReference.MatchString(value)
+}
+
+// BraceBareEnvReferences rewrites every bare $NAME in value to ${NAME}.
+func BraceBareEnvReferences(value string) string {
+	return bareEnvReference.ReplaceAllStringFunc(value, func(match string) string {
+		return "${" + match[1:] + "}"
+	})
 }

@@ -1,0 +1,300 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-1/changed-false         	  280988	      9902 ns/op	    6937 B/op	     135 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-1/changed-false         	  241154	     11732 ns/op	    6937 B/op	     135 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-1/changed-false         	  232998	      9343 ns/op	    6937 B/op	     135 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-1/changed-false         	  288326	      9049 ns/op	    6937 B/op	     135 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-1/changed-false         	  292056	      8065 ns/op	    6937 B/op	     135 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-1/changed-true         	  284568	      8644 ns/op	    7265 B/op	     151 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-1/changed-true         	  291686	      8589 ns/op	    7265 B/op	     151 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-1/changed-true         	  286027	      8772 ns/op	    7265 B/op	     151 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-1/changed-true         	  296293	      8200 ns/op	    7265 B/op	     151 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-1/changed-true         	  297549	      8244 ns/op	    7265 B/op	     151 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-32/changed-false         	   16317	    146513 ns/op	  132442 B/op	    2278 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-32/changed-false         	   16705	    143546 ns/op	  132442 B/op	    2278 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-32/changed-false         	   16382	    146019 ns/op	  132441 B/op	    2278 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-32/changed-false         	   16568	    145252 ns/op	  132442 B/op	    2278 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-32/changed-false         	   16783	    143676 ns/op	  132442 B/op	    2278 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-32/changed-true         	   15298	    155681 ns/op	  137675 B/op	    2538 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-32/changed-true         	   15472	    155018 ns/op	  137674 B/op	    2538 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-32/changed-true         	   15229	    157117 ns/op	  137674 B/op	    2538 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-32/changed-true         	   16082	    149439 ns/op	  137675 B/op	    2538 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-32/changed-true         	   16249	    149502 ns/op	  137675 B/op	    2538 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-256/changed-false         	    2089	   1139143 ns/op	 1041660 B/op	   17327 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-256/changed-false         	    2068	   1141832 ns/op	 1041660 B/op	   17327 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-256/changed-false         	    2104	   1111095 ns/op	 1041660 B/op	   17327 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-256/changed-false         	    2028	   1170026 ns/op	 1041660 B/op	   17327 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-256/changed-false         	    2113	   1161793 ns/op	 1041660 B/op	   17327 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-256/changed-true         	    1940	   1235509 ns/op	 1083252 B/op	   19381 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-256/changed-true         	    1946	   1242360 ns/op	 1083249 B/op	   19381 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-256/changed-true         	    1897	   1249465 ns/op	 1083253 B/op	   19381 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-256/changed-true         	    2083	   1164801 ns/op	 1083253 B/op	   19381 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-256/changed-true         	    2042	   1184779 ns/op	 1083251 B/op	   19381 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-1024/changed-false         	     428	   5549275 ns/op	 4200006 B/op	   68831 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-1024/changed-false         	     416	   5803393 ns/op	 4199991 B/op	   68831 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-1024/changed-false         	     417	   5710788 ns/op	 4200005 B/op	   68831 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-1024/changed-false         	     429	   5614455 ns/op	 4199994 B/op	   68831 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-1024/changed-false         	     434	   5550040 ns/op	 4199997 B/op	   68831 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-1024/changed-true         	     405	   5898066 ns/op	 4345801 B/op	   77032 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-1024/changed-true         	     393	   6027890 ns/op	 4345794 B/op	   77032 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-1024/changed-true         	     403	   5919446 ns/op	 4345786 B/op	   77032 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-1024/changed-true         	     414	   5898060 ns/op	 4345794 B/op	   77032 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-1024/changed-true         	     408	   5976882 ns/op	 4345801 B/op	   77032 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-4096/changed-false         	      63	  34183682 ns/op	16795860 B/op	  274875 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-4096/changed-false         	      63	  34473699 ns/op	16795833 B/op	  274875 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-4096/changed-false         	      60	  34559078 ns/op	16795851 B/op	  274875 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-4096/changed-false         	      67	  35071480 ns/op	16795833 B/op	  274875 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-4096/changed-false         	      66	  34203143 ns/op	16795854 B/op	  274875 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-4096/changed-true         	      67	  35989307 ns/op	17429096 B/op	  307675 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-4096/changed-true         	      61	  36370201 ns/op	17429091 B/op	  307674 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-4096/changed-true         	      61	  37028484 ns/op	17429092 B/op	  307674 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-4096/changed-true         	      66	  36105765 ns/op	17429063 B/op	  307674 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-4096/changed-true         	      72	  35621862 ns/op	17429064 B/op	  307674 allocs/op
+PASS

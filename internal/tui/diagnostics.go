@@ -1,9 +1,10 @@
 package tui
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
+
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
 
 type diagnosticSeverity uint8
@@ -30,19 +31,17 @@ const (
 	diagnosticMutation        diagnosticCategory = "mutation"
 	diagnosticSync            diagnosticCategory = "sync"
 	diagnosticUpdate          diagnosticCategory = "update"
-	diagnosticMigration       diagnosticCategory = "migration"
 	diagnosticEditor          diagnosticCategory = "editor"
 )
 
 type operationKind string
 
 const (
-	operationMutation  operationKind = "mutation"
-	operationTargets   operationKind = "targets"
-	operationSync      operationKind = "sync"
-	operationUpdate    operationKind = "update"
-	operationMigration operationKind = "migration"
-	operationEditor    operationKind = "editor"
+	operationMutation operationKind = "mutation"
+	operationTargets  operationKind = "targets"
+	operationSync     operationKind = "sync"
+	operationUpdate   operationKind = "update"
+	operationEditor   operationKind = "editor"
 )
 
 type tuiDiagnostic struct {
@@ -81,17 +80,20 @@ func snapshotDiagnostic(severity diagnosticSeverity, category diagnosticCategory
 }
 
 func stableDiagnosticKey(err error) string {
-	if err == nil {
-		return "<nil>"
+	return pipeline.IssueDedupKey(err)
+}
+
+func diagnosticCategoryFor(category pipeline.IssueCategory) diagnosticCategory {
+	switch category {
+	case pipeline.IssueConfig:
+		return diagnosticConfig
+	case pipeline.IssueCatalog:
+		return diagnosticCatalog
+	case pipeline.IssueMaterialization:
+		return diagnosticMaterialization
+	default:
+		return diagnosticResolution
 	}
-	type keyer interface{ DedupKey() string }
-	var keyed keyer
-	if errors.As(err, &keyed) {
-		if key := keyed.DedupKey(); key != "" {
-			return key
-		}
-	}
-	return fmt.Sprintf("%T\x00%s", err, err.Error())
 }
 
 func diagnosticIdentity(d tuiDiagnostic) string {
@@ -163,6 +165,29 @@ func (s *diagnosticStore) recordOperationFailure(operation operationKind, catego
 	clear(s.operations[len(kept):originalLength])
 	s.operations = append(kept, diagnostics...)
 	slog.Error("tui operation failed", "operation", operation, "category", category, "attempt", attempt, "error_count", len(diagnostics))
+}
+
+func (s *diagnosticStore) recordOperationWarnings(operation operationKind, category diagnosticCategory, errs ...error) {
+	s.nextAttempt++
+	attempt := s.nextAttempt
+	recorded := 0
+	for _, err := range errs {
+		if err == nil {
+			continue
+		}
+		s.operations = append(s.operations, tuiDiagnostic{
+			severity:   diagnosticWarning,
+			provenance: diagnosticOperation,
+			category:   category,
+			operation:  operation,
+			attempt:    attempt,
+			stableKey:  stableDiagnosticKey(err),
+			err:        err,
+		})
+		recorded++
+	}
+	s.operations = deduplicateDiagnostics(s.operations)
+	slog.Warn("tui operation completed with warnings", "operation", operation, "category", category, "attempt", attempt, "warning_count", recorded)
 }
 
 func (s *diagnosticStore) recordOperationSuccess(operation operationKind) {
@@ -237,5 +262,11 @@ func (m *Model) recordOperationFailure(operation operationKind, category diagnos
 func (m *Model) recordOperationSuccess(operation operationKind) {
 	m.seedLegacyDiagnostics()
 	m.diagnostics.recordOperationSuccess(operation)
+	m.syncDiagnosticViews()
+}
+
+func (m *Model) recordOperationWarnings(operation operationKind, category diagnosticCategory, errs ...error) {
+	m.seedLegacyDiagnostics()
+	m.diagnostics.recordOperationWarnings(operation, category, errs...)
 	m.syncDiagnosticViews()
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/toolpolicy"
 )
 
 // maxNestingKey is Devin's documented flat-subagent nesting limit key
@@ -67,6 +68,9 @@ func translateSubagent(s *ir.Subagent, opts compile.Options) ([]artifact.Artifac
 	errs = append(errs, nestedNameDiagnostics(name, source)...)
 	errs = append(errs, builtinNameDiagnostics(name, source)...)
 	errs = append(errs, securityRestrictionDiagnostics(s, source)...)
+	if compile.SubagentReadOnly(s) {
+		errs = append(errs, compile.ReadOnlyUnsupported(mapping.TargetDevin, s))
+	}
 
 	// An unrepresentable allowed-tools restriction is NOT one of the fail-closed
 	// checks any more (bead agent-marketplace-pu6b): it omits the key, warns,
@@ -74,7 +78,7 @@ func translateSubagent(s *ir.Subagent, opts compile.Options) ([]artifact.Artifac
 	// suppression gate so a subagent that is unrepresentable for several reasons
 	// still reports the tool loss alongside the blocking ones — the user should
 	// see every finding in one compile even when one of them costs the artifact.
-	tools, toolsPresent, toolsFromExtra, toolDiags := resolveAllowedTools(name, source, s.Tools, s.Tools != nil, s.Extra, opts, diag.CodeSubagentDevinToolUnknown)
+	tools, toolsPresent, toolsFromExtra, toolDiags := resolveAllowedTools(name, source, s.Tools, s.Tools != nil, s.Extra, opts, s.ToolSource, toolpolicy.SurfaceSubagentTools, diag.CodeSubagentDevinToolUnknown)
 
 	if len(errs) > 0 {
 		// Plan, subagent-only rules for Isolation, DisallowedTools, and
@@ -86,9 +90,12 @@ func translateSubagent(s *ir.Subagent, opts compile.Options) ([]artifact.Artifac
 
 	var diags []diag.Diagnostic
 	diags = append(diags, toolDiags...)
-	model, modelDiags := mapSubagentModel(name, source, s.Model, opts)
+	selection, modelDiags, err := compile.SubagentModel(s, mapping.TargetDevin, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	model := selection.Model
 	diags = append(diags, modelDiags...)
-	diags = append(diags, effortDiagnostics(s, source)...)
 
 	fm := &compile.Frontmatter{}
 	fm.Set("name", name)
@@ -146,7 +153,7 @@ func translateSubagent(s *ir.Subagent, opts compile.Options) ([]artifact.Artifac
 		"isolation":       true,
 		"effort":          true,
 	})
-	extraKeys, extraDiags := compile.ExtraKeys(s.Extra, canonical, mapping.TargetDevin, name, source)
+	extraKeys, extraDiags := compile.ModelExtraKeys(s.Extra, canonical, mapping.TargetDevin, name, source)
 	diags = append(diags, extraDiags...)
 	appendExtras(fm, s.Extra, extraKeys, toolsFromExtra)
 
@@ -294,60 +301,4 @@ func securityRestrictionDiagnostics(s *ir.Subagent, source diag.SourceRef) []dia
 		})
 	}
 	return diags
-}
-
-// effortDiagnostics reports the dropped reasoning-effort preference.
-//
-// Plan, subagent-only fields: "Effort: warning and drop". Effort selects how
-// much reasoning a subagent spends; it grants no capability, so dropping it
-// cannot widen the privilege or activation surface and does not fail the
-// resource. The value is included because it is a documented effort level, not
-// a command string or permission value.
-func effortDiagnostics(s *ir.Subagent, source diag.SourceRef) []diag.Diagnostic {
-	if s.Effort == "" {
-		return nil
-	}
-	slog.Warn("devin subagent effort dropped", "target", mapping.TargetDevin, "resource", s.Name(), "effort", s.Effort)
-	return []diag.Diagnostic{{
-		Code:     diag.CodeSubagentDevinEffortDropped,
-		Severity: diag.SeverityWarning,
-		Target:   string(mapping.TargetDevin),
-		Resource: s.Name(),
-		Message:  fmt.Sprintf("Devin has no subagent effort field; the %q effort level was dropped", s.Effort),
-		Hint:     "Remove effort or use a target that supports it",
-		Source:   source,
-	}}
-}
-
-// mapSubagentModel resolves the subagent model and reports the two distinct
-// model losses the plan requires.
-//
-// Plan, models: "An unmappable explicit model is omitted and emits a warning.
-// An empty subagent model stays empty and emits a warning because Devin
-// interprets absence as its default subagent model, not parent-model
-// inheritance."
-//
-// These are deliberately separate codes. subagent.devin.model-unmappable says
-// "you asked for a model this target cannot name"; subagent.devin.model-default
-// says "you asked for nothing, and on Devin that is a concrete choice rather
-// than inheritance". Collapsing them would hide the second case, which is the
-// one a user migrating from an inheriting harness gets wrong.
-//
-// An unmappable model degrades to the same default, so the unmappable case does
-// not additionally emit the default warning: the model-unmappable diagnostic
-// already tells the user no model was written.
-func mapSubagentModel(resource string, source diag.SourceRef, model string, opts compile.Options) (string, []diag.Diagnostic) {
-	if model == "" {
-		slog.Warn("devin subagent model absent", "target", mapping.TargetDevin, "resource", resource)
-		return "", []diag.Diagnostic{{
-			Code:     diag.CodeSubagentDevinModelDefault,
-			Severity: diag.SeverityWarning,
-			Target:   string(mapping.TargetDevin),
-			Resource: resource,
-			Message:  "no subagent model was set, so Devin uses its default subagent model rather than inheriting the parent model",
-			Hint:     "Set an explicit stable Devin model alias (sonnet, opus, or haiku) when a fixed model is required",
-			Source:   source,
-		}}
-	}
-	return mapModel(resource, source, model, opts, diag.CodeSubagentDevinModelUnmappable)
 }

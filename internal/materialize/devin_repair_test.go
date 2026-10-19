@@ -35,7 +35,7 @@ func dropOwnershipState(t *testing.T, outDir string) {
 func devinMcpSelection(names ...string) []resolver.ResolvedArtifact {
 	resolved := make([]resolver.ResolvedArtifact, 0, len(names))
 	for _, name := range names {
-		resolved = append(resolved, devinResolved(name, ir.NewMcpServer(name, name+"-binary", nil, nil, nil, ir.SourceRef{}), false))
+		resolved = append(resolved, devinResolvedResource(name, ir.NewMcpServer(name, name+"-binary", nil, nil, nil, ir.SourceRef{}), false))
 	}
 	return resolved
 }
@@ -53,15 +53,15 @@ func repairFileFor(t *testing.T, preview *RepairPreview, rel string) *RepairFile
 
 func TestRepairPreviewsEnumeratesEveryValidatedAdapter(t *testing.T) {
 	repoRoot := t.TempDir()
-	previews, err := RepairPreviews(context.Background(), repoRoot, nil)
+	previews, err := RepairPreviews(context.Background(), repoRoot, nil, nil)
 	if err != nil {
 		t.Fatalf("repair previews: %v", err)
 	}
-	if len(previews) != 2 {
+	if len(previews) != 3 {
 		t.Fatalf("repair previews = %d, want one preview per migrated adapter", len(previews))
 	}
-	if previews[0].Target != hcc.TargetCodex || previews[1].Target != hcc.TargetDevin {
-		t.Fatalf("repair targets = %#v, want [codex devin]", []hcc.Target{previews[0].Target, previews[1].Target})
+	if previews[0].Target != hcc.TargetCodex || previews[1].Target != hcc.TargetDevin || previews[2].Target != hcc.TargetOpenCode {
+		t.Fatalf("repair targets = %#v, want [codex devin opencode]", []hcc.Target{previews[0].Target, previews[1].Target, previews[2].Target})
 	}
 }
 
@@ -123,6 +123,7 @@ func TestDevinRepairPreviewIsReadOnlyAndNominatesExactMatchesOnly(t *testing.T) 
 // TestDevinRepairAdoptionRecordsOwnershipWithoutChangingBytes pins "`doctor
 // --repair --yes` adopts exact current desired matches": adoption is a statement
 // about the RECORD, so the user's file must come out byte-for-byte identical.
+// spec: owned-entry-reconciliation/identical-values-are-offered-for-adoption
 func TestDevinRepairAdoptionRecordsOwnershipWithoutChangingBytes(t *testing.T) {
 	repoRoot, _ := devinEnv(t)
 	root := devinProjectRoot(repoRoot)

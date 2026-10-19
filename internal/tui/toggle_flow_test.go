@@ -15,12 +15,12 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
-const v2Header = `apiVersion: agent-marketplace/v2
+const v4Header = `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
 `
 
-const repoV2Header = `apiVersion: agent-marketplace/v2
+const repoV4Header = `apiVersion: agent-marketplace/v4
 `
 
 // Test that after a simulated snapshotLoadedMsg, both the row data
@@ -134,11 +134,10 @@ func TestReadSnapshotReflectsLocalToggle(t *testing.T) {
 		t.Fatalf("mkdir agents: %v", err)
 	}
 
-	projectConfig := repoV2Header + `registries:
-  - url: ./local-skills
-    path: skills
-skills:
-  - audit
+	projectConfig := repoV4Header + `sources:
+  local: {directory: ./local-skills/skills}
+resources:
+  local: [skill/audit]
 `
 	if err := os.WriteFile(filepath.Join(agentsDir, "config.yaml"), []byte(projectConfig), 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
@@ -167,7 +166,7 @@ skills:
 	if err := os.MkdirAll(homeAgentsDir, 0o755); err != nil {
 		t.Fatalf("mkdir home agents: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(homeAgentsDir, "config.yaml"), []byte(v2Header), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(homeAgentsDir, "config.yaml"), []byte(v4Header), 0o644); err != nil {
 		t.Fatalf("write global config: %v", err)
 	}
 
@@ -232,7 +231,7 @@ skills:
 	}
 
 	// Toggle: add "deploy" to the local config.
-	mustWriteFile(t, config.LocalConfigPath(repoRoot), []byte("skills:\n  include:\n    - deploy\n"))
+	mustWriteFile(t, config.LocalConfigPath(repoRoot), []byte("apiVersion: agent-marketplace/v4\nsources:\n  local: {directory: ./local-skills/skills}\nresources:\n  local: [skill/deploy]\n"))
 
 	// Load snapshot AFTER toggle.
 	snap2 := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
@@ -271,6 +270,7 @@ skills:
 // TestReadSnapshotReflectsProjectToggle exercises the project-scope toggle:
 // add a skill to the project config's registry entry skills list and verify
 // the rows reflect the project enablement.
+// spec: tui-startup/provisional-rows-retain-single-view-position-and-guarded-actions
 func TestReadSnapshotReflectsProjectToggle(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
@@ -282,11 +282,10 @@ func TestReadSnapshotReflectsProjectToggle(t *testing.T) {
 	}
 
 	// Project config: local registry with audit selected via entry-level skills.
-	projectConfig := repoV2Header + `registries:
-  - url: ./local-skills
-    path: skills
-    skills:
-      - audit
+	projectConfig := repoV4Header + `sources:
+  local: {directory: ./local-skills/skills}
+resources:
+  local: [skill/audit]
 `
 	if err := os.WriteFile(filepath.Join(agentsDir, "config.yaml"), []byte(projectConfig), 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
@@ -312,7 +311,7 @@ func TestReadSnapshotReflectsProjectToggle(t *testing.T) {
 	if err := os.MkdirAll(homeAgentsDir, 0o755); err != nil {
 		t.Fatalf("mkdir home agents: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(homeAgentsDir, "config.yaml"), []byte(v2Header), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(homeAgentsDir, "config.yaml"), []byte(v4Header), 0o644); err != nil {
 		t.Fatalf("write global config: %v", err)
 	}
 
@@ -369,7 +368,7 @@ func TestReadSnapshotReflectsProjectToggle(t *testing.T) {
 	}
 
 	// Toggle: add "deploy" to the project config's registry entry skills.
-	editRegistrySelection(t, config.RepoCommitted, config.ProjectConfigPath(repoRoot), config.RegistryEntry{URL: "./local-skills"}, config.SelectionInclude, "deploy")
+	editRegistrySelection(t, config.RepoCommitted, config.ProjectConfigPath(repoRoot), config.RegistryEntry{URL: filepath.Join(canonicalWorkspacePath(t, repoRoot), "local-skills", "skills"), V4Kind: config.V4SourceDirectory}, config.SelectionInclude, "deploy")
 
 	// After toggle: deploy should be project-enabled.
 	snap2 := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
@@ -397,7 +396,7 @@ func TestReadSnapshotReflectsProjectToggle(t *testing.T) {
 
 func newMockGlobalConfig() (*config.Config, error) {
 	return &config.Config{
-		APIVersion: config.APIVersionV2,
+		APIVersion: config.APIVersionV4,
 		Harnesses:  []string{"factory"},
 	}, nil
 }
@@ -420,7 +419,7 @@ func swapLoadRepoConfig(fn func() (*config.Config, error)) func() {
 
 func swapLoadLocalConfig(fn func() (*config.LocalConfig, error)) func() {
 	prev := loadLocalConfig
-	loadLocalConfig = fn
+	loadLocalConfig = func(string) (*config.LocalConfig, error) { return fn() }
 	return func() {
 		loadLocalConfig = prev
 	}
@@ -449,13 +448,10 @@ func TestReadSnapshotProjectToggleWithPerEntrySkills(t *testing.T) {
 
 	// Project config: registry entry HAS its own skills list.
 	// The toggle should now write to the per-entry skills list.
-	projectConfig := repoV2Header + `registries:
-  - url: ./local-skills
-    path: skills
-    skills:
-      - audit
-skills:
-  - audit
+	projectConfig := repoV4Header + `sources:
+  local: {directory: ./local-skills/skills}
+resources:
+  local: [skill/audit]
 `
 	if err := os.WriteFile(filepath.Join(agentsDir, "config.yaml"), []byte(projectConfig), 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
@@ -511,8 +507,12 @@ skills:
 	defer restoreLocal()
 
 	// Toggle: add "deploy" to the per-registry skills list (not top-level).
-	registryURL := "./local-skills"
-	editRegistrySelection(t, config.RepoCommitted, config.ProjectConfigPath(repoRoot), config.RegistryEntry{URL: registryURL}, config.SelectionInclude, "deploy")
+	registryURL := filepath.Join(canonicalWorkspacePath(t, repoRoot), "local-skills", "skills")
+	editRegistrySelection(t, config.RepoCommitted, config.ProjectConfigPath(repoRoot), config.RegistryEntry{URL: registryURL, V4Kind: config.V4SourceDirectory}, config.SelectionInclude, "deploy")
+	loaded, err := config.LoadRootConfigFromPath(config.ProjectConfigPath(repoRoot))
+	if err != nil || len(loaded.Registries) != 1 || canonicalWorkspacePath(t, loaded.Registries[0].URL) != registryURL || !equalStrings(loaded.Registries[0].Skills.Include, []string{"audit", "deploy"}) {
+		t.Fatalf("toggle did not update the existing source while retaining audit: %#v, %v", loaded, err)
+	}
 
 	// After toggle: deploy should now be project-enabled because the
 	// skill was added to the specific registry entry's skills list.
@@ -683,7 +683,8 @@ func TestDisableInStatusTabKeepsListScrollPosition(t *testing.T) {
 	m.width, m.height = 120, 20
 	m.rows = enabled
 	m.authoritativeRows = enabled
-	m.switchTab(tabStatus)
+	m.filteredRows = enabled
+	m.rebuildFlatItems()
 	if m.listVisibleHeight() >= len(m.flatItems) {
 		t.Fatalf("fixture must overflow the list: visible=%d items=%d", m.listVisibleHeight(), len(m.flatItems))
 	}
@@ -800,12 +801,10 @@ func TestReadSnapshotExpandsCollections(t *testing.T) {
 	// The registry has skills, but none are selected via the entry's
 	// skills/tags/required/default fields. Skills are only selected via
 	// the collection reference.
-	projectConfig := repoV2Header + `registries:
-  - url: ./local-skills
-    path: skills
-collections:
-  include:
-    - my-tools
+	projectConfig := repoV4Header + `sources:
+  local: {directory: ./local-skills/skills}
+resources:
+  local: [collection/my-tools]
 `
 	if err := os.WriteFile(filepath.Join(agentsDir, "config.yaml"), []byte(projectConfig), 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
@@ -840,7 +839,7 @@ skills:
 	if err := os.MkdirAll(homeAgentsDir, 0o755); err != nil {
 		t.Fatalf("mkdir home agents: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(homeAgentsDir, "config.yaml"), []byte(v2Header), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(homeAgentsDir, "config.yaml"), []byte(v4Header), 0o644); err != nil {
 		t.Fatalf("write global config: %v", err)
 	}
 
@@ -915,7 +914,7 @@ skills:
 // TestReadSnapshotProjectToggleWithGlobalRegistry verifies that enabling
 // a skill at project scope works even when the skill's source registry
 // only exists in the global config (not in the project config). This
-// exercises the EnsureRegistryWithPathsInConfig fallback added in the fix.
+// exercises source creation through the shared v4 layer mutation.
 func TestReadSnapshotProjectToggleWithGlobalRegistry(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
@@ -927,9 +926,8 @@ func TestReadSnapshotProjectToggleWithGlobalRegistry(t *testing.T) {
 	}
 
 	// Project config has NO git registries — only a local one.
-	projectConfig := repoV2Header + `registries:
-  - url: ./local-skills
-    path: skills
+	projectConfig := repoV4Header + `sources:
+  local: {directory: ./local-skills/skills}
 `
 	if err := os.WriteFile(filepath.Join(agentsDir, "config.yaml"), []byte(projectConfig), 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
@@ -955,11 +953,10 @@ func TestReadSnapshotProjectToggleWithGlobalRegistry(t *testing.T) {
 	if err := os.MkdirAll(homeAgentsDir, 0o755); err != nil {
 		t.Fatalf("mkdir home agents: %v", err)
 	}
-	globalConfig := v2Header + `registries:
-  - url: ` + globalRegistry + `
-    path: skills
-    skills:
-      - global-tool
+	globalConfig := v4Header + `sources:
+  global: {directory: ` + filepath.Join(globalRegistry, "skills") + `}
+resources:
+  global: [skill/global-tool]
 `
 	if err := os.WriteFile(filepath.Join(homeAgentsDir, "config.yaml"), []byte(globalConfig), 0o644); err != nil {
 		t.Fatalf("write global config: %v", err)
@@ -1025,13 +1022,9 @@ func TestReadSnapshotProjectToggleWithGlobalRegistry(t *testing.T) {
 		t.Fatalf("global-tool should NOT be project-enabled initially, got EnabledProject=%v", globalTool.EnabledProject)
 	}
 
-	// Now enable global-tool at project scope. The registry URL
-	// (git@example.com:global-skills.git) does NOT exist in the
-	// project config, so EnsureRegistryWithPathsInConfig must add it first.
+	// Enable global-tool at project scope. The layer mutation must add
+	// the absent source before applying its selection.
 	projectPath := config.ProjectConfigPath(repoRoot)
-	if err := config.EnsureRegistryWithPathsInConfig(projectPath, globalTool.RegistryURL, globalTool.RegistryRef, globalTool.RegistryPath); err != nil {
-		t.Fatalf("EnsureRegistryWithPathsInConfig: %v", err)
-	}
 	editRegistrySelection(t, config.RepoCommitted, projectPath, config.RegistryEntry{URL: globalTool.RegistryURL, Ref: globalTool.RegistryRef, Path: globalTool.RegistryPath}, config.SelectionInclude, "global-tool")
 
 	// Reload snapshot and verify project enablement.
@@ -1074,7 +1067,7 @@ func TestToggleFlowEnableAfterExcludeRoundTripGlobal(t *testing.T) {
 	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
 		t.Fatalf("mkdir agents: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(agentsDir, "config.yaml"), []byte(repoV2Header), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(agentsDir, "config.yaml"), []byte(repoV4Header), 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
 	}
 
@@ -1090,11 +1083,11 @@ func TestToggleFlowEnableAfterExcludeRoundTripGlobal(t *testing.T) {
 	if err := os.MkdirAll(homeAgentsDir, 0o755); err != nil {
 		t.Fatalf("mkdir home agents: %v", err)
 	}
-	globalConfig := v2Header + fmt.Sprintf(`registries:
-  - url: %s
-    path: skills
-    default: true
-`, globalSkillsDir)
+	globalConfig := v4Header + fmt.Sprintf(`sources:
+  global: {directory: %s}
+resources:
+  global: {all: true}
+`, filepath.Join(globalSkillsDir, "skills"))
 	if err := os.WriteFile(filepath.Join(homeAgentsDir, "config.yaml"), []byte(globalConfig), 0o644); err != nil {
 		t.Fatalf("write global config: %v", err)
 	}
@@ -1131,7 +1124,7 @@ func TestToggleFlowEnableAfterExcludeRoundTripGlobal(t *testing.T) {
 
 	// Step 1: Disable smith at global scope — adds to exclude.
 	globalPath := filepath.Join(homeDir, ".agents", "config.yaml")
-	editRegistrySelection(t, config.UserPersonal, globalPath, config.RegistryEntry{URL: globalSkillsDir, Path: "skills"}, config.SelectionExclude, "smith")
+	editRegistrySelection(t, config.UserPersonal, globalPath, config.RegistryEntry{URL: filepath.Join(globalSkillsDir, "skills"), V4Kind: config.V4SourceDirectory}, config.SelectionExclude, "smith")
 
 	snap2 := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
 	if len(snap2.errs) > 0 {
@@ -1152,7 +1145,7 @@ func TestToggleFlowEnableAfterExcludeRoundTripGlobal(t *testing.T) {
 	}
 
 	// Step 2: Re-enable smith at global scope — adds to include, must clean up exclude.
-	editRegistrySelection(t, config.UserPersonal, globalPath, config.RegistryEntry{URL: globalSkillsDir, Path: "skills"}, config.SelectionInclude, "smith")
+	editRegistrySelection(t, config.UserPersonal, globalPath, config.RegistryEntry{URL: filepath.Join(globalSkillsDir, "skills"), V4Kind: config.V4SourceDirectory}, config.SelectionInclude, "smith")
 
 	snap3 := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
 	if len(snap3.errs) > 0 {
@@ -1178,7 +1171,7 @@ func TestToggleFlowEnableAfterExcludeRoundTripGlobal(t *testing.T) {
 		t.Fatalf("load config: %v", err)
 	}
 	for _, e := range cfg.Registries {
-		if e.URL == globalSkillsDir {
+		if e.URL == filepath.Join(globalSkillsDir, "skills") {
 			for _, ex := range e.Skills.Exclude {
 				if ex == "smith" {
 					t.Fatalf("smith should NOT be in exclude after re-enable, got Exclude=%v", e.Skills.Exclude)
@@ -1196,14 +1189,11 @@ func TestToggleFlowSinglePressDisableWithDefault(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	mustWriteFile(t, configPath, []byte(`apiVersion: agent-marketplace/v2
-registries:
-  - url: git@example.com:infra.git
-    ref: main
-    default: true
-    skills:
-      include:
-        - smith
+	mustWriteFile(t, configPath, []byte(`apiVersion: agent-marketplace/v4
+sources:
+  infra: {git: "git@example.com:infra.git", ref: main}
+resources:
+  infra: {all: true, include: [skill/smith]}
 `))
 
 	editRegistrySelection(t, config.RepoCommitted, configPath, config.RegistryEntry{URL: "git@example.com:infra.git", Ref: "main"}, config.SelectionExclude, "smith")

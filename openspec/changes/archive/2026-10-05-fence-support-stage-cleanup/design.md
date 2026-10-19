@@ -1,0 +1,11 @@
+## Context
+
+prepareSkillLinkCache creates and fills a producer staging directory, then copies its support into the compiled cache before native link publication. Its deferred path-based RemoveAll can delete a replacement producer directory. Returning an unnamed error also hides cleanup refusals.
+
+## Decision
+
+Capture the producer parent and original directory leaf after current creation. Reuse NativeRoot Lstat/SameFile/RemoveAll so cleanup cannot reopen a retargeted parent or remove a different leaf inode. Return a named error and join cleanup/close errors at the existing prepare/native diagnostic boundary. Capture locals do not shadow the returned error. Directory contents alter timestamps, so cleanup authority uses object identity, not creation-time full directory state. Creation/write admission remains a separate follow-on; this slice establishes post-admission cleanup authority only.
+
+## Verification
+
+Public Factory Run reaches real support publication. At the existing staged-publication boundary, move its actual producer directory and create a regular replacement directory containing independently authored inert foreign bytes. Parent deletes the replacement/red. Refusal preserves foreign bytes/inode/mode/mtime and retained original support, reports materialize.write.error and leaves native link absent. Healthy retry really installs exact support/mode and removes only its new producer stage, preserving the previous foreign replacement. Linux/macOS full materialization, repeated race controls, validation/spec, whole RunSupportFiles disk cost and complete all-file review required. No new callback/schema/dependency/budget/source comments, whole-tree transaction or atomic writer exclusion. Linux/macOS full materialization suites, count20 races/source controls, validate/lint/build/spec/shellcheck passed. Full disk RunSupportFiles serial medians9.902484→9.585072ms (-3.20%,p=.151,not significant),465337→472108B/op (+1.46%),5200→5268alloc/op (+1.31%),2sx5/no95CI. Initial baseline8.888296ms versus after44.604081ms under concurrent verification was not comparable and is retained/disclosed, not an isolated guard cost/speedup claim. Timed source/staging/cache/prune/copy/native disk lifecycle; no network/logs discarded/fixture outside timing.

@@ -1,0 +1,10 @@
+:root {
+  --am-brand-logo-width: 160px;
+  --am-brand-logo-offset-y: 1px;
+  --am-brand-slash-color: #00D16A;
+}
+
+.am-brand-slash {
+  color: var(--am-brand-slash-color);
+  font-weight: 800;
+}

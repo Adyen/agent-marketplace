@@ -35,7 +35,7 @@ func devinUnsupportedTransportSyncResult(t *testing.T) SyncResult {
 `)
 
 	repoCfg := &config.Config{
-		APIVersion: "agent-marketplace/v2",
+		APIVersion: "agent-marketplace/v4",
 		Registries: []config.RegistryEntry{{
 			URL:           registry,
 			SourceHarness: "claude",
@@ -44,8 +44,8 @@ func devinUnsupportedTransportSyncResult(t *testing.T) SyncResult {
 	}
 
 	return Sync(context.Background(), ResolveOptions{
-		RepoRoot: t.TempDir(),
-		NoBackup: true,
+		Workspace: mustWorkspace(t, t.TempDir()),
+		NoBackup:  true,
 		Loaders: Loaders{
 			Org:    func() (*config.Config, error) { return &config.Config{}, nil },
 			Global: func() (*config.Config, error) { return &config.Config{Harnesses: []string{"devin"}}, nil },
@@ -86,7 +86,7 @@ func TestSyncCountsCatalogLoadFailureAsUntrusted(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
 
 	repoCfg := &config.Config{
-		APIVersion: "agent-marketplace/v2",
+		APIVersion: "agent-marketplace/v4",
 		Registries: []config.RegistryEntry{{
 			URL:    filepath.Join(t.TempDir(), "missing.git"),
 			Ref:    "main",
@@ -95,8 +95,8 @@ func TestSyncCountsCatalogLoadFailureAsUntrusted(t *testing.T) {
 	}
 
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: t.TempDir(),
-		NoBackup: true,
+		Workspace: mustWorkspace(t, t.TempDir()),
+		NoBackup:  true,
 		Loaders: Loaders{
 			Org:    func() (*config.Config, error) { return &config.Config{}, nil },
 			Global: func() (*config.Config, error) { return &config.Config{Harnesses: []string{"factory"}}, nil },

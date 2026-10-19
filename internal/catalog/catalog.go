@@ -11,8 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -22,8 +22,10 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/claude"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/windsurf"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 
 	"github.com/Adyen/agent-marketplace/internal/collection"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 )
 
@@ -41,13 +43,14 @@ const (
 
 // Entry represents a single cataloged resource discovered from a registry.
 type Entry struct {
-	Kind          ir.ResourceKind
-	Name          string
-	Description   string
-	Tags          []string
-	Resource      ir.Resource // underlying IR resource for downstream compile/materialize
-	Path          string      // source file path (from ir.SourceRef)
-	SourceHarness string      `json:"-"`
+	Kind              ir.ResourceKind
+	Name              string
+	Description       string
+	Tags              []string
+	Resource          ir.Resource // underlying IR resource for downstream compile/materialize
+	Path              string      // source file path (from ir.SourceRef)
+	SourceHarness     string      `json:"-"`
+	PrimarySourcePath string      `json:"-"`
 }
 
 // Requirement identifies another resource that must be selected for a
@@ -62,6 +65,7 @@ type Requirement struct {
 
 // Catalog holds the result of loading a registry via HCC.
 type Catalog struct {
+	sourceRefusal error
 	Entries       []Entry
 	Diagnostics   []diag.Diagnostic
 	SourceHarness string // harness name used for ingestion (autodetected or explicit)
@@ -283,9 +287,12 @@ func markdownBody(content string) string {
 }
 
 type IngestOptions struct {
-	LegacyWindsurfHooks bool
-	LegacyBareMCP       bool
+	LegacyWindsurfHooks       bool
+	LegacyBareMCP             bool
+	LegacyNativeHookInventory bool
 }
+
+func (c *Catalog) SourceRefusal() error { return c.sourceRefusal }
 
 // Load discovers resources from a directory on disk using HCC IngestBundle,
 // filtered to KindSkill. The sourceHarness parameter controls the ingest
@@ -297,17 +304,42 @@ func Load(dir string, sourceHarness string) (*Catalog, error) {
 	return LoadWithOptions(dir, sourceHarness, IngestOptions{})
 }
 
-func LoadWithOptions(dir string, sourceHarness string, opts IngestOptions) (*Catalog, error) {
+func LoadWithOptions(dir string, sourceHarness string, opts IngestOptions) (cat *Catalog, err error) {
 	root, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve load root %q: %w", dir, err)
 	}
-	srcFS := os.DirFS(root)
+	srcFS, err := fsboundary.OpenSourceFS(root)
+	if err != nil {
+		return nil, fmt.Errorf("capture load root %q: %w", dir, err)
+	}
+	defer func() {
+		if closeErr := srcFS.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	return LoadSourceWithOptions(srcFS, root, sourceHarness, opts)
+}
+
+func LoadSourceWithOptions(srcFS *fsboundary.SourceFS, dir, sourceHarness string, opts IngestOptions) (*Catalog, error) {
+	root, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve load root %q: %w", dir, err)
+	}
 	cat, err := LoadFSWithOptions(srcFS, sourceHarness, opts)
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(err, srcFS.Refusal())
 	}
+	cat.sourceRefusal = srcFS.Refusal()
+	definition, _ := target.Lookup(cat.SourceHarness)
 	for i := range cat.Entries {
+		primary := filepath.ToSlash(cat.Entries[i].Path)
+		if !srcFS.WasRead(primary) && definition.RepoRoot != "" {
+			primary = path.Join(definition.RepoRoot, primary)
+		}
+		if srcFS.WasRead(primary) {
+			cat.Entries[i].PrimarySourcePath = filepath.Join(root, filepath.FromSlash(primary))
+		}
 		if cat.Entries[i].Path != "" && !filepath.IsAbs(cat.Entries[i].Path) {
 			cat.Entries[i].Path = filepath.Join(root, cat.Entries[i].Path)
 		}
@@ -321,11 +353,16 @@ func LoadFS(srcFS fs.FS, sourceHarness string) (*Catalog, error) {
 }
 
 func LoadFSWithOptions(srcFS fs.FS, sourceHarness string, opts IngestOptions) (*Catalog, error) {
+	if opts.LegacyNativeHookInventory {
+		srcFS = legacyNativeInventoryFS{fsys: srcFS}
+	}
 	from := ingest.Harness(sourceHarness)
 	var autodetectDiag diag.Diagnostic
+	var layoutDiags []diag.Diagnostic
 
 	if from == "" {
-		detected, ok := ingest.Autodetect(srcFS)
+		detected, ok, diagnostics := ingest.AutodetectWithDiagnostics(srcFS)
+		layoutDiags = diagnostics
 		if ok {
 			from = detected
 		} else {
@@ -343,9 +380,13 @@ func LoadFSWithOptions(srcFS fs.FS, sourceHarness string, opts IngestOptions) (*
 	var bundle *ingest.Bundle
 	var err error
 	if opts.LegacyBareMCP && from == ingest.HarnessClaude {
-		bundle, err = claude.LoadBundleWithOptions(srcFS, claude.LoadOptions{LegacyBareMCP: true})
+		bundle, err = hcc.IngestBundleWithLoader(srcFS, func(observed fs.FS) (*ingest.Bundle, error) {
+			return claude.LoadBundleWithOptions(observed, claude.LoadOptions{LegacyBareMCP: true})
+		})
 	} else if opts.LegacyWindsurfHooks && from == ingest.HarnessWindsurf {
-		bundle, err = (windsurf.Ingester{}).LoadBundleWithOptions(srcFS, windsurf.LoadOptions{LegacyHookInventory: true})
+		bundle, err = hcc.IngestBundleWithLoader(srcFS, func(observed fs.FS) (*ingest.Bundle, error) {
+			return (windsurf.Ingester{}).LoadBundleWithOptions(observed, windsurf.LoadOptions{LegacyHookInventory: true})
+		})
 	} else {
 		bundle, err = hcc.IngestBundle(srcFS, hcc.Harness(from))
 	}
@@ -354,6 +395,7 @@ func LoadFSWithOptions(srcFS fs.FS, sourceHarness string, opts IngestOptions) (*
 	}
 
 	entries := make([]Entry, 0, len(bundle.Resources))
+	var requiresDiags []diag.Diagnostic
 	for _, r := range bundle.Resources {
 		entry := Entry{
 			Kind:          r.Kind(),
@@ -366,15 +408,19 @@ func LoadFSWithOptions(srcFS fs.FS, sourceHarness string, opts IngestOptions) (*
 		entry.Tags = tagsFromResource(r)
 
 		// Path from SourceRef
-		if src, ok := sourceRefFromResource(r); ok {
+		src, _ := sourceRefFromResource(r)
+		if src != "" {
 			entry.Path = src
 		}
+		requiresDiags = append(requiresDiags, requiresDiagnosticsFromExtra(extraFromResource(r), r.Name(), src)...)
 
 		entries = append(entries, entry)
 	}
 
-	allDiags := make([]diag.Diagnostic, 0, len(bundle.Diagnostics)+1)
+	allDiags := make([]diag.Diagnostic, 0, len(bundle.Diagnostics)+len(requiresDiags)+1)
 	allDiags = append(allDiags, bundle.Diagnostics...)
+	allDiags = append(allDiags, requiresDiags...)
+	allDiags = append(allDiags, layoutDiags...)
 	if autodetectDiag.Code != "" {
 		allDiags = append(allDiags, autodetectDiag)
 	}
@@ -416,25 +462,62 @@ func tagsFromExtra(extra map[string]any) []string {
 	}
 }
 
+const CodeRequiresInvalid = "catalog.requires.invalid"
+
+type requirementIssue struct {
+	Index  int
+	Reason string
+}
+
 func requirementsFromExtra(extra map[string]any) []Requirement {
-	if extra == nil {
+	requirements, _ := parseRequirementsExtra(extra)
+	return requirements
+}
+
+func requiresDiagnosticsFromExtra(extra map[string]any, resourceName, sourceFile string) []diag.Diagnostic {
+	_, issues := parseRequirementsExtra(extra)
+	if len(issues) == 0 {
 		return nil
+	}
+	diagnostics := make([]diag.Diagnostic, 0, len(issues))
+	for _, issue := range issues {
+		message := "requires: " + issue.Reason
+		if issue.Index >= 0 {
+			message = fmt.Sprintf("requires item %d: %s", issue.Index, issue.Reason)
+		}
+		diagnostics = append(diagnostics, diag.Diagnostic{
+			Code:     CodeRequiresInvalid,
+			Severity: diag.SeverityWarning,
+			Resource: resourceName,
+			Message:  message,
+			Source:   diag.SourceRef{File: sourceFile},
+		})
+	}
+	return diagnostics
+}
+
+func parseRequirementsExtra(extra map[string]any) ([]Requirement, []requirementIssue) {
+	if extra == nil {
+		return nil, nil
 	}
 	meta, ok := extra["metadata"].(map[string]any)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	raw, ok := meta["requires"]
 	if !ok {
-		return nil
+		return nil, nil
 	}
 
 	items, ok := raw.([]any)
 	if !ok {
-		slog.Warn("ignoring malformed metadata.requires", "reason", "requires must be a list")
-		return nil
+		return nil, []requirementIssue{{Index: -1, Reason: "requires must be a list"}}
 	}
 	requirements := make([]Requirement, 0, len(items))
+	var issues []requirementIssue
+	skip := func(index int, reason string) {
+		issues = append(issues, requirementIssue{Index: index, Reason: reason})
+	}
 	for i, item := range items {
 		switch value := item.(type) {
 		case string:
@@ -442,29 +525,29 @@ func requirementsFromExtra(extra map[string]any) []Requirement {
 			if ok {
 				requirements = append(requirements, Requirement{Kind: kind, Name: name})
 			} else {
-				slog.Warn("ignoring malformed resource requirement", "index", i, "reason", "invalid shorthand")
+				skip(i, "invalid shorthand")
 			}
 		case map[string]any:
 			name, valid := requirementMapString(value, "name", true)
 			name = strings.TrimSpace(name)
 			if !valid || name == "" {
-				slog.Warn("ignoring malformed resource requirement", "index", i, "reason", "name must be a non-empty string")
+				skip(i, "name must be a non-empty string")
 				continue
 			}
 			kindText, valid := requirementMapString(value, "kind", false)
 			if !valid {
-				slog.Warn("ignoring malformed resource requirement", "index", i, "reason", "kind must be a string")
+				skip(i, "kind must be a string")
 				continue
 			}
 			kind, ok := parseRequirementKind(kindText)
 			if !ok {
-				slog.Warn("ignoring malformed resource requirement", "index", i, "reason", "unknown or unsupported kind")
+				skip(i, "unknown or unsupported kind")
 				continue
 			}
 			registry, registryValid := requirementMapString(value, "registry", false)
 			path, pathValid := requirementMapString(value, "path", false)
 			if !registryValid || !pathValid {
-				slog.Warn("ignoring malformed resource requirement", "index", i, "reason", "registry and path must be strings")
+				skip(i, "registry and path must be strings")
 				continue
 			}
 			requirements = append(requirements, Requirement{
@@ -474,10 +557,10 @@ func requirementsFromExtra(extra map[string]any) []Requirement {
 				Path:     strings.TrimSpace(path),
 			})
 		default:
-			slog.Warn("ignoring malformed resource requirement", "index", i, "reason", "requirement must be a string or map")
+			skip(i, "requirement must be a string or map")
 		}
 	}
-	return requirements
+	return requirements, issues
 }
 
 func parseRequirementShorthand(value string) (ir.ResourceKind, string, bool) {
@@ -492,8 +575,12 @@ func parseRequirementShorthand(value string) (ir.ResourceKind, string, bool) {
 }
 
 func parseRequirementKind(value string) (ir.ResourceKind, bool) {
-	if strings.TrimSpace(value) == "" {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
 		return ir.KindSkill, true
+	}
+	if strings.EqualFold(trimmed, "all") {
+		return ir.KindSkill, false
 	}
 	kind, ok := skill.ParseKind(value)
 	if !ok || kind == ir.KindCollection {
@@ -588,8 +675,11 @@ func preserveResourceSourcePath(r ir.Resource, sourcePath string) {
 // display compatibility, while the IR SourceRef remains pinned to the immutable
 // snapshot that was actually ingested.
 func SourcePath(entry Entry) string {
+	if entry.PrimarySourcePath != "" {
+		return entry.PrimarySourcePath
+	}
 	if entry.Resource != nil {
-		if source, ok := sourceRefFromResource(entry.Resource); ok {
+		if source, ok := sourceRefFromResource(entry.Resource); ok && filepath.IsAbs(source) {
 			return source
 		}
 	}

@@ -15,12 +15,12 @@ func TestBlockedRegistryCredentialRedaction(t *testing.T) {
 	t.Setenv("HOME", dir)
 	raw := "https://YOUR_USER_HERE:YOUR_TOKEN_HERE@example.invalid/repo.git?token=YOUR_QUERY_HERE#YOUR_FRAGMENT_HERE"
 	user := filepath.Join(dir, "user.yaml")
-	writeFile(t, user, "apiVersion: agent-marketplace/v3\nharnesses: [factory]\nallowed_registries: []\nregistries:\n  - url: "+raw+"\n    ref: main\n")
+	writeFile(t, user, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nallowed_registries: []\nsources:\n  shared: {git: '"+raw+"', ref: main}\nresources: {shared: [skill/review]}\n")
 	var logs bytes.Buffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
 	t.Cleanup(func() { slog.SetDefault(previous) })
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: filepath.Join(dir, "absent-org.yaml"), GlobalPath: user,
 		RepoPath: filepath.Join(dir, "absent-repo.yaml"), LocalPath: filepath.Join(dir, "absent-local.yaml"),
 	})

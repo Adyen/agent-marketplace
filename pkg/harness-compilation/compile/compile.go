@@ -13,6 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/hookpolicy"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	extpkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
 )
@@ -29,6 +30,7 @@ const (
 	TargetGemini   = mapping.TargetGemini
 	TargetDevin    = mapping.TargetDevin
 	TargetCodex    = mapping.TargetCodex
+	TargetOpenCode = mapping.TargetOpenCode
 )
 
 // Compiler is the interface that each target compiler must implement.
@@ -67,6 +69,7 @@ type Options struct {
 	pluginRoot              string
 	managedByField          string
 	managedByValue          string
+	nativeHookOutput        bool
 	scope                   Scope
 	mcpCredentialKeyTokens  []string
 	mcpInterpolationPattern *regexp.Regexp
@@ -83,6 +86,8 @@ func (o Options) ToolOverride() map[string]string { return o.toolOverride }
 func (o Options) PluginRoot() string { return o.pluginRoot }
 
 func (o Options) ManagedBy() (string, string) { return o.managedByField, o.managedByValue }
+
+func (o Options) NativeHookOutput() bool { return o.nativeHookOutput }
 
 // Scope returns the configured installation scope. The zero value is
 // ScopeProject: a caller that never thought about scope keeps compiling
@@ -168,9 +173,19 @@ func GuardNativeCodexTranslation(resource ir.Resource, target Target, translate 
 	if _, _, err := ir.ValidateResource(resource); err != nil {
 		return nil, nil, err
 	}
-	nativeDiagnostics := codexNativeLossDiagnostics(resource, target)
+	// BASE-era Codex-native hooks carry Ext.Codex.NativeHook without the
+	// HookSource provenance newer ingesters record. Normalize a clone to the
+	// codex source so the catalog resolver understands native-only events on
+	// every public path (Compile, Lookup, direct target compilers); the
+	// caller's IR is never mutated.
+	if hook, ok := resource.(*ir.Hook); ok && hook.HookSource == "" && hook.Ext.Codex != nil && hook.Ext.Codex.NativeHook {
+		clone := *hook
+		clone.HookSource = string(TargetCodex)
+		resource = &clone
+	}
+	nativeDiagnostics := append(openCodeNativeLossDiagnostics(resource, target), codexNativeLossDiagnostics(resource, target)...)
 	if diag.HasErrors(nativeDiagnostics) {
-		slog.Warn("compile suppressed native Codex resource", "target", target, "resource", resource.Name(), "diagnostic", nativeDiagnostics[0].Code)
+		slog.Warn("compile suppressed native resource", "target", target, "resource", resource.Name(), "diagnostic", nativeDiagnostics[0].Code)
 		return nil, nativeDiagnostics, nil
 	}
 	artifacts, diagnostics, err := translate(resource)
@@ -181,7 +196,7 @@ func GuardNativeCodexTranslation(resource ir.Resource, target Target, translate 
 		}
 	}
 	if len(missing) > 0 {
-		slog.Warn("compile omitted native Codex field", "target", target, "resource", resource.Name(), "diagnostic", missing[0].Code)
+		slog.Warn("compile omitted native field", "target", target, "resource", resource.Name(), "diagnostic", missing[0].Code)
 		diagnostics = append(missing, diagnostics...)
 	}
 	return artifacts, diagnostics, err
@@ -229,6 +244,10 @@ func WithManagedBy(field, value string) Option {
 		o.managedByField = field
 		o.managedByValue = value
 	}
+}
+
+func WithNativeHookOutput() Option {
+	return func(o *Options) { o.nativeHookOutput = true }
 }
 
 // WithScope selects the installation scope the caller is compiling for. An
@@ -311,11 +330,19 @@ func Compile(r ir.Resource, t Target, opts ...Option) (*Result, error) {
 			opt(cfg)
 		}
 	}
+	if kind == ir.KindHook && cfg.NativeHookOutput() {
+		hook, ok := r.(*ir.Hook)
+		if !ok {
+			return nil, fmt.Errorf("compile: native hook output requires a hook resource")
+		}
+		return NativeHookProjection(hook, t, cfg.Scope(), cfg.pluginRoot)
+	}
 	var (
 		arts  []artifact.Artifact
 		diags []diag.Diagnostic
 		err   error
 	)
+	r = normalizeFactoryToolsCategory(r)
 	arts, diags, err = GuardNativeCodexTranslation(r, t, func(resource ir.Resource) ([]artifact.Artifact, []diag.Diagnostic, error) {
 		return translateSafely(c, resource, *cfg)
 	})
@@ -335,38 +362,46 @@ func Compile(r ir.Resource, t Target, opts ...Option) (*Result, error) {
 	}, nil
 }
 
-// codexNativeLossDiagnostics prevents target-specific Codex sidecars from
-// disappearing or being reinterpreted when a native resource leaves Codex.
-func codexNativeLossDiagnostics(resource ir.Resource, target Target) []diag.Diagnostic {
-	if target == TargetCodex {
-		return nil
+// compilesReadOnlySubagents reports whether target's built-in compiler applies
+// SubagentReadOnly, mapping or refusing a read-only subagent itself.
+func compilesReadOnlySubagents(target Target) bool {
+	switch target {
+	case TargetClaude, TargetCursor, TargetFactory, TargetGemini, TargetDevin, TargetWindsurf, TargetOpenCode:
+		return true
+	default:
+		return false
 	}
+}
+
+// codexNativeLossDiagnostics prevents target-specific Codex sidecars from
+// disappearing or being reinterpreted when a native resource leaves Codex, and
+// from contradicting the canonical MCP server when compiling to Codex.
+func codexNativeLossDiagnostics(resource ir.Resource, target Target) []diag.Diagnostic {
 	diagnostic := func(code string, severity diag.Severity, message string, source ir.SourceRef) []diag.Diagnostic {
 		return []diag.Diagnostic{{Code: code, Severity: severity, Target: string(target), Resource: resource.Name(), Message: message, Source: diag.SourceRef(source)}}
+	}
+	if target == TargetCodex {
+		if server, ok := resource.(*ir.McpServer); ok && server.Ext.Codex != nil && !codexMCPMatchesCanonical(server, server.Ext.Codex.MCP) {
+			return diagnostic(diag.CodeMcpCodexSecurityUnsupported, diag.SeverityError, "A native Codex MCP sidecar does not match the canonical server; server suppressed", server.Source)
+		}
+		return nil
 	}
 	switch typed := resource.(type) {
 	case *ir.Subagent:
 		if typed.Ext.Codex == nil {
 			return nil
 		}
-		if typed.Ext.Codex.SandboxMode != "" {
+		if mode := typed.Ext.Codex.SandboxMode; mode != "" && (mode != "read-only" || !compilesReadOnlySubagents(target)) {
 			return diagnostic(diag.CodeSubagentSecurityRestrictionUnsupported, diag.SeverityError, "Target cannot preserve the native Codex sandbox restriction; subagent suppressed", typed.Source)
 		}
-		var diagnostics []diag.Diagnostic
-		if typed.Ext.Codex.Model != "" {
-			diagnostics = append(diagnostics, diagnostic(diag.CodeSubagentCodexModelDropped, diag.SeverityWarning, "Target omitted a Codex-only model while preserving the subagent", typed.Source)...)
-		}
-		if typed.Ext.Codex.ReasoningEffort != "" {
-			diagnostics = append(diagnostics, diagnostic(diag.CodeSubagentCodexEffortDropped, diag.SeverityWarning, "Target omitted a Codex-only reasoning effort while preserving the subagent", typed.Source)...)
-		}
-		return diagnostics
+		return nil
 	case *ir.Hook:
 		if typed.Ext.Codex != nil && (typed.Ext.Codex.CommandWindows != nil || typed.Ext.Codex.AdditionalContextLimit != nil || typed.Ext.Codex.HookAsync != nil && *typed.Ext.Codex.HookAsync) {
 			return diagnostic(diag.CodeHookCodexNativeFieldsUnsupported, diag.SeverityError, "Target cannot preserve native Codex hook execution or context fields; hook suppressed", typed.Source)
 		}
 		nativeCodex := typed.Ext.Codex != nil && typed.Ext.Codex.NativeHook
 		if nativeCodex {
-			if _, ok := mapping.NativeCodexHookEvent(typed.Event, typed.Matcher, target); !ok {
+			if !hookpolicy.HasEquivalentEvent(typed, target) {
 				return diagnostic(diag.CodeHookEventUnmappable, diag.SeverityError, "Target cannot preserve this hook event; hook suppressed", typed.Source)
 			}
 			if strings.Contains(typed.Command, "${") {
@@ -385,7 +420,7 @@ func codexNativeLossDiagnostics(resource ir.Resource, target Target) []diag.Diag
 		if ext.MCP != nil {
 			placement = ext.MCP.ExperimentalEnvironment
 		}
-		if ext.BearerTokenEnvVar != "" || len(ext.EnvHTTPHeaders) > 0 || ext.MCP != nil && len(ext.MCP.RemoteEnvVars) > 0 || placement != "" && placement != "local" || codexMCPLiteralsContainInterpolation(ext.MCP, target) || !codexMCPMatchesCanonical(typed, ext.MCP) {
+		if ext.BearerTokenEnvVar != "" || len(ext.EnvHTTPHeaders) > 0 || ext.MCP != nil && len(ext.MCP.RemoteEnvVars) > 0 || placement != "" && placement != "local" || codexMCPLiteralsContainInterpolation(ext.MCP) || !codexMCPMatchesCanonical(typed, ext.MCP) {
 			return diagnostic(diag.CodeMcpSecurityRestrictionUnsupported, diag.SeverityError, "Target cannot preserve native Codex MCP authority or literal semantics; server suppressed", typed.Source)
 		}
 		if placement == "local" {
@@ -395,19 +430,12 @@ func codexNativeLossDiagnostics(resource ir.Resource, target Target) []diag.Diag
 	return nil
 }
 
-func codexMCPLiteralsContainInterpolation(native *extpkg.CodexMCP, target Target) bool {
+func codexMCPLiteralsContainInterpolation(native *extpkg.CodexMCP) bool {
 	if native == nil {
 		return false
 	}
 	reinterpreted := func(value string) bool {
-		if strings.Contains(value, "${") {
-			return true
-		}
-		if target != TargetWindsurf {
-			return false
-		}
-		_, shellReference := mapping.WindsurfShellEnvName(value)
-		return shellReference
+		return strings.Contains(value, "${")
 	}
 	if reinterpreted(native.Command) || reinterpreted(native.CWD) || reinterpreted(native.URL) {
 		return true

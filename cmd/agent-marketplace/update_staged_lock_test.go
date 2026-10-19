@@ -22,11 +22,11 @@ func TestStagedLockDestinationValidation(t *testing.T) {
 	repo := t.TempDir()
 	configPath := filepath.Join(repo, ".agents", "config.yaml")
 	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
-	writeConfig(t, configPath, "apiVersion: agent-marketplace/v2\nregistries: []\n")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nsources: {}\n")
 	withWorkingDir(t, repo)
 
 	_, _, _, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{
-		stagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: configPath, Path: configPath, Bytes: []byte("apiVersion: agent-marketplace/v2\nregistries: []\n")}},
+		stagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: configPath, Path: configPath, Bytes: []byte("apiVersion: agent-marketplace/v4\nsources: {}\n")}},
 		stagedLockEdits:   []pipeline.StagedLockEdit{{Path: configPath, Bytes: []byte("apiVersion: 2\n")}},
 	})
 	if !errors.Is(err, dependencytxn.ErrGenerationConflict) {

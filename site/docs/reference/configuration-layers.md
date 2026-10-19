@@ -1,10 +1,10 @@
 # Configuration layers reference
 
-Agent Marketplace reads up to four configuration files on every run and combines them. Each file is a layer. This page lists the layers, where each file lives, which fields each layer may set, and how the CLI decides between layers when they disagree. For the fields themselves, see the [repository configuration reference](./configuration.md).
+The CLI reads up to four configuration files on every run and combines them. Each file is a layer. This page lists the layers, where each file lives, which fields each may set, and how layers that disagree are resolved. For the fields themselves, see the [repository configuration reference](./configuration.md).
 
 ## Layer order
 
-Layers merge from lowest to highest precedence. A higher layer overrides a lower layer where the rules below allow it. All four files use the same v4 schema.
+Layers merge from lowest to highest precedence. A higher layer overrides a lower layer where the rules below allow it. Every existing root in all four layers, including organization and personal-local, must declare exactly `apiVersion: agent-marketplace/v4`. Included fragments may omit the field or declare exact v4; a root cannot inherit its version. Unsupported input refuses the operation rather than being skipped. See [schema versions](./configuration.md#schema-versions) for diagnostics and [pre-upgrade conversion](../how-to/migrate-configuration.md) for older installations.
 
 | Order | Layer | Configuration file | Generated lock | Purpose |
 |---|---|---|---|---|
@@ -27,6 +27,7 @@ Every layer may declare `sources`, `resources`, and `include`. The other top-lev
 | `allowed_registries`, `allowed_marketplaces` | yes | yes | yes | no |
 | `backup` | yes | yes | no | no |
 | `logging` | accepted, not used | yes | no | no |
+| `update_check` | yes | yes | no | no |
 | `telemetry` | yes | yes | no | no |
 | `materialization` | no | yes | yes | yes |
 | Exclusion-only Marketplace source | no | yes | no | no |
@@ -39,13 +40,23 @@ The organization file accepts a `logging` block, but the CLI configures logging 
 
 ### Target harnesses
 
-The CLI picks one top-level target list, project first:
+The CLI picks a top-level target list for each selecting layer.
+
+Resources selected by the repository or personal-local file use:
 
 1. A non-empty `harnesses` list in the repository file.
 2. Otherwise, a non-empty `harnesses` list in the user file.
 3. Otherwise, the organization `harnesses` list.
 
-Lists are not combined across layers. A resource group's `harnesses` list intersects with this target list, so it can narrow the targets for that group but cannot add a target that is not already selected.
+Resources selected by the user or organization file use:
+
+1. A non-empty `harnesses` list in the user file.
+2. Otherwise, the organization `harnesses` list.
+3. Otherwise, the repository list, when neither of those files declares one.
+
+A repository's list therefore never narrows what your user or organization configuration installs: running `sync` or `deinit` inside a repository that targets only `claude` keeps your user and organization resources for every harness your user or organization list names. A collection's members use the list of the layer that selected the collection. When the two lists differ, `status` shows both under `TARGET HARNESS SET`.
+
+Lists are not combined across layers. A resource group's `harnesses` list intersects with its scope's target list, so it can narrow the targets for that group but cannot add a target that is not already selected.
 
 ### Allowlists
 
@@ -64,6 +75,7 @@ These fields control machine-wide behavior, so repository files cannot change th
 
 - `backup` merges field by field from the organization file and then the user file. A value set in the user file wins over the organization value for the same field.
 - `logging` comes from the user file only.
+- `update_check` is read from the organization and user files. A value set in the user file wins over the organization value.
 - `telemetry` is read from the organization and user files. See the [telemetry reference](./telemetry.md) for how the two combine.
 
 ### Materialization
@@ -94,11 +106,11 @@ The organization file applies to every user on the machine, so the CLI checks fi
 - `/etc/agent-marketplace/config.yaml` must be a regular file, not a symlink, owned by root, and not writable by group or others.
 - The `/etc/agent-marketplace` directory must be owned by root, not a symlink, and not writable by group or others.
 - Every included file must meet the same file rules. Every directory above an included file, up to the filesystem root, must meet the same directory rules. The CLI checks each path as written, before it resolves symlinks or `..` segments.
-- When the organization file declares Git or Marketplace sources, a deployed `/etc/agent-marketplace/lock.yaml` must meet the same file rules and declare `scope: organization`.
+- The organization lock is optional: an absent `/etc/agent-marketplace/lock.yaml` leaves the layer unlocked (see [Organization lock](#organization-lock)). When a lock is deployed, it must meet the same file rules and declare `scope: organization`; a malformed, wrong-scope, or stale deployed lock is rejected before its remote resources are used.
 
 A file or directory that breaks a rule fails the organization layer with an `organization.trust.*` diagnostic, such as `organization.trust.include.writable` or `organization.trust.ancestor.symlink`.
 
-System symlink aliases do not get an exception. On macOS, `/etc`, `/var`, and `/tmp` are symlinks, so write organization include paths with the physical location, such as `/private/etc/agent-marketplace/profiles/company.yaml`.
+System symlink aliases do not get an exception. On macOS, `/etc`, `/var`, and `/tmp` are symlinks, so organization include paths must use the physical location, such as `/private/etc/agent-marketplace/profiles/company.yaml`.
 
 User, repository, and personal-local files and their includes have no ownership or permission requirements.
 
@@ -107,7 +119,7 @@ User, repository, and personal-local files and their includes have no ownership 
 Some managed setups never deploy an organization lock. The CLI supports that permanently:
 
 - When `/etc/agent-marketplace/lock.yaml` is absent, the organization layer stays unlocked. Online runs, including `sync --check`, resolve the organization's Marketplace requests into a verified lock held in memory for that run and never write `/etc`.
-- When the lock is present, it is exact. The CLI installs only what it records, and it stops with an error, without touching the lock, when the lock no longer matches the organization file.
+- When the lock is present, it is exact. The CLI installs only what it records, and it stops with an error, without touching the lock, when the lock no longer matches the organization file. The exception is `lock --scope organization` itself. It reconciles a mismatched lock, re-resolving only the entries whose source or ref changed and keeping the others at their locked commits (or moving every entry under `--upgrade`), so the administrator never has to delete the lock to relock it.
 - `lock` and `lock --check` without `--scope` cover the user, repository, and personal-local locks, and `lock --check` also checks the organization lock. Only `lock --scope organization`, run by an administrator who can write `/etc/agent-marketplace`, creates or updates the organization lock.
 
 ## Related documentation

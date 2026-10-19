@@ -31,6 +31,16 @@ const commandLabel = computed(() => {
   if (!command.value) return `Install command unavailable for ${props.item.name}: this Marketplace returned an invalid route value`
   return `Copy install command for ${props.item.name}`
 })
+
+const installationCountDescription = 'Installations that reported this resource enabled in their latest configuration within the last 30 days'
+const installationCountText = computed(() => {
+  const count = props.item.installation_count
+  if (count === undefined) return undefined
+  return `${count} reported ${count === 1 ? 'installation' : 'installations'}`
+})
+const installationCountLabel = computed(() =>
+  installationCountText.value === undefined ? undefined : `${installationCountText.value}. ${installationCountDescription}`
+)
 </script>
 
 <template>
@@ -46,15 +56,16 @@ const commandLabel = computed(() => {
           <span class="shrink-0 font-mono text-xs font-medium text-muted">{{ kindLabel(item.kind) }}</span>
           <span class="text-xs text-dimmed" aria-hidden="true">·</span>
           <h2 class="relative z-10 min-w-0 truncate font-mono text-sm font-medium leading-5 tracking-tight">
-            <NuxtLink v-if="browserUrl" :to="browserUrl" class="cursor-pointer rounded decoration-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
-              <span class="text-muted">{{ registryLabel(item) }}/</span><span class="font-semibold text-highlighted">{{ item.name }}</span>
+            <NuxtLink v-if="browserUrl" :to="browserUrl" :aria-label="`${registryLabel(item)}/${item.name}`" class="resource-coordinate-link relative cursor-pointer rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+              <span class="text-muted">{{ registryLabel(item) }}</span><span class="resource-coordinate__separator am-brand-slash"> / </span><span class="font-semibold text-highlighted">{{ item.name }}</span>
             </NuxtLink>
-            <span v-else><span class="text-muted">{{ registryLabel(item) }}/</span><span class="font-semibold text-highlighted">{{ item.name }}</span></span>
+            <span v-else :aria-label="`${registryLabel(item)}/${item.name}`"><span class="text-muted">{{ registryLabel(item) }}</span><span class="resource-coordinate__separator am-brand-slash"> / </span><span class="font-semibold text-highlighted">{{ item.name }}</span></span>
           </h2>
         </div>
 
         <p v-if="item.description" class="mt-1 truncate text-sm font-medium leading-5 text-toned">{{ item.description }}</p>
         <p v-else class="mt-1 truncate text-sm italic leading-5 text-dimmed">No description provided.</p>
+        <p v-if="installationCountText !== undefined" :aria-label="installationCountLabel" :title="installationCountDescription" class="mt-1 truncate text-xs leading-4 text-dimmed">{{ installationCountText }}</p>
       </div>
 
       <div class="relative z-10 col-start-2 mt-2 flex min-h-16 min-w-20 flex-col items-start justify-center sm:col-start-3 sm:row-start-1 sm:mt-0 sm:min-w-28 sm:items-end">
@@ -98,3 +109,19 @@ const commandLabel = computed(() => {
     </div>
   </article>
 </template>
+
+<style scoped>
+.resource-coordinate-link {
+  transition: box-shadow 150ms;
+}
+
+.resource-coordinate-link:hover {
+  box-shadow: inset 0 -1px 0 var(--am-color-action-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .resource-coordinate-link {
+    transition: none;
+  }
+}
+</style>

@@ -6,14 +6,15 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
-	tea "github.com/charmbracelet/bubbletea"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
 
 // noopSyncCmd replaces runSyncCmd in tests so that anyCmdProducesQuitMsg
 // does not execute real sync I/O when it calls commands to inspect their
 // output.
-var noopSyncCmd = func(ctx context.Context, repoRoot string) tea.Cmd {
+var noopSyncCmd = func(ctx context.Context, workspace pipeline.Workspace) tea.Cmd {
 	return func() tea.Msg {
 		return syncDoneMsg{err: nil}
 	}
@@ -124,8 +125,8 @@ func TestSyncDoneMsgWithoutQuitAfterSyncDoesNotQuit(t *testing.T) {
 	updated, cmd := m.Update(syncDoneMsg{err: nil})
 	got := updated.(Model)
 
-	if got.syncing {
-		t.Fatalf("syncDoneMsg should clear syncing")
+	if !got.syncing {
+		t.Fatalf("syncDoneMsg should keep syncing active until the authoritative reload")
 	}
 	if got.quitAfterSync {
 		t.Fatalf("syncDoneMsg should not set quitAfterSync")
@@ -187,6 +188,7 @@ func TestConfirmCancelClearsQuitAfterSync(t *testing.T) {
 	}
 }
 
+// spec: tui-interactions/guarded-submission
 func TestConfirmYesWhileSyncingDoesNotStartSecondSync(t *testing.T) {
 	m := newTestModel()
 	m.pane = paneConfirm

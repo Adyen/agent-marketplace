@@ -59,7 +59,7 @@ func BenchmarkAllDiscoveredResourceNamesSingleKind(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = allDiscoveredResourceNames(regs, catalogs, "", ir.KindSkill)
+		_, _ = allDiscoveredResourceNames(regs, catalogs, "", config.RepoCommitted, ir.KindSkill)
 	}
 }
 
@@ -73,7 +73,7 @@ func BenchmarkAllDiscoveredResourceNamesAllKinds(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, k := range config.AllKinds {
-			_, _ = allDiscoveredResourceNames(regs, catalogs, "", k)
+			_, _ = allDiscoveredResourceNames(regs, catalogs, "", config.RepoCommitted, k)
 		}
 	}
 }
@@ -87,7 +87,7 @@ func BenchmarkAllDiscoveredResourceNamesMultiRegistry(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, k := range config.AllKinds {
-			_, _ = allDiscoveredResourceNames(regs, catalogs, "", k)
+			_, _ = allDiscoveredResourceNames(regs, catalogs, "", config.RepoCommitted, k)
 		}
 	}
 }
@@ -101,7 +101,32 @@ func BenchmarkAllDiscoveredResourceNamesLarge(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, k := range config.AllKinds {
-			_, _ = allDiscoveredResourceNames(regs, catalogs, "", k)
+			_, _ = allDiscoveredResourceNames(regs, catalogs, "", config.RepoCommitted, k)
 		}
 	}
+}
+
+func BenchmarkPlanNamedInstalls(b *testing.B) {
+	regs := benchRegistries(1)
+	catalogs := benchCatalogs(regs, 100, 100, 100)
+	cfg := &config.Config{Registries: regs}
+
+	b.Run("single", func(b *testing.B) {
+		args := []string{"skill-000"}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if _, _, err := planNamedInstalls(args, catalogs, nil, nil, cfg, 0, false, ScopeRepo, nil); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("multiple", func(b *testing.B) {
+		args := []string{"skill-000", "cmd-001", "agent-002", "skill-003", "skill-000"}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if _, _, err := planNamedInstalls(args, catalogs, nil, nil, cfg, 0, false, ScopeRepo, nil); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
 }

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
@@ -18,36 +19,88 @@ import (
 )
 
 func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir string, selected map[lockfile.Scope]bool, policy resolver.MarketplaceRevocationPolicy) (int, error) {
-	layers, overlays, err := missingMarketplaceLockLayers(repoRoot, localDir, selected)
-	if err != nil || len(layers) == 0 {
+	ws, err := pipeline.WorkspaceForRoots(repoRoot, localDir)
+	if err != nil {
 		return 0, err
 	}
-	ec := pipeline.LoadEffective(ctx, pipeline.ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: localDir, FileOverlays: overlays}, policy)
-	if len(ec.Errors) > 0 {
-		return 0, errors.Join(ec.Errors...)
+	intent := config.ReadIntent(ctx, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir()})
+	if err := pipeline.MarketplaceAllowlistError(intent); err != nil {
+		return 0, err
 	}
 	resolver := marketplace.NewResolver()
-	resolver.AllowedRegistries = ec.Allowed
-	desired := make([]dependencytxn.DesiredFile, 0, len(layers))
-	for _, layer := range layers {
-		doc, err := marketplacelock.Resolve(ctx, resolver, layer.Layer, ec.TargetHarnesses, policy)
-		if err != nil {
-			return 0, fmt.Errorf("create Marketplace lock %q: %w", layer.LockPath, err)
+	resolver.AllowedRegistries = intent.AllowedRegistries()
+	targets, _ := intent.TargetHarnesses()
+	var desired []dependencytxn.DesiredFile
+	for _, source := range []config.Source{config.UserPersonal, config.RepoCommitted, config.RepoPersonal} {
+		layer := intent.Layers[source]
+		scope := lockfile.Scope(source.LockScope())
+		if selected != nil && !selected[scope] {
+			continue
 		}
-		data, err := encodeWithGitRegistries(doc, layer.registries)
+		if !layer.Present() {
+			continue
+		}
+		if err := layer.Err(); err != nil {
+			return 0, err
+		}
+		if !layer.NeedsMarketplaceLock() {
+			continue
+		}
+		paths, err := config.ResolveConfigLockPaths(layer.Path)
 		if err != nil {
 			return 0, err
 		}
-		if err := os.MkdirAll(filepath.Dir(layer.LockPath), 0o755); err != nil {
+		lockPath, err := rejectGeneratedLockSymlink(paths.CanonicalLock)
+		if err != nil {
+			return 0, err
+		}
+		current, expected, exists, err := pipeline.ReadLayerLock(lockPath, scope)
+		if err != nil {
+			return 0, err
+		}
+		// An existing v2 lock with Marketplace records keeps every record it
+		// has; it only gains identities for registrations it does not record.
+		var unrecorded []string
+		existingMarketplaceLock := exists && current.APIVersion != lockfile.APIVersionV1 && len(current.Marketplaces) > 0
+		if existingMarketplaceLock {
+			if unrecorded = unrecordedRegistrations(layer, current); len(unrecorded) == 0 {
+				continue
+			}
+		}
+		var registries []lockfile.GitRegistry
+		var expectedMode os.FileMode
+		if exists {
+			registries = current.Registries
+			if _, expectedMode, err = dependencytxn.ReadGenerationAndMode(lockPath); err != nil {
+				return 0, err
+			}
+		}
+		var doc lockfile.Document
+		if existingMarketplaceLock {
+			if doc, err = appendRegistrationIdentities(ctx, *current, unrecorded); err != nil {
+				return 0, fmt.Errorf("record Marketplace registrations in lock %q: %w", lockPath, err)
+			}
+			slog.Info("marketplace registration identities recorded", "scope", scope, "count", len(unrecorded))
+		} else if doc, err = marketplacelock.Resolve(ctx, resolver, layer, targets, policy); err != nil {
+			return 0, fmt.Errorf("create Marketplace lock %q: %w", lockPath, err)
+		}
+		data, err := encodeWithGitRegistries(doc, registries)
+		if err != nil {
+			return 0, err
+		}
+		if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
 			return 0, fmt.Errorf("create Marketplace lock directory: %w", err)
 		}
-		mode := layer.expectedMode
-		if !layer.expected.Exists {
+		mode := expectedMode
+		if !expected.Exists {
 			mode = 0o644
 		}
-		desired = append(desired, dependencytxn.DesiredFile{Path: layer.LockPath, Expected: layer.expected, ExpectedMode: layer.expectedMode, Bytes: data, Mode: mode})
+		desired = append(desired, dependencytxn.DesiredFile{Path: lockPath, Expected: expected, ExpectedMode: expectedMode, Bytes: data, Mode: mode})
 	}
-	reads, err := effectiveReadAssertions(ec, nil, nil)
+	if len(desired) == 0 {
+		return 0, nil
+	}
+	reads, err := pipeline.IntentReadAssertions(intent)
 	if err != nil {
 		return 0, err
 	}
@@ -62,14 +115,41 @@ func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir st
 	return len(desired), nil
 }
 
-// marketplaceLockBootstrap is a writable layer whose lock is absent or has no
-// Marketplace records. An existing lock keeps its Git registries and is
-// replaced only if its generation is unchanged at commit.
-type marketplaceLockBootstrap struct {
-	marketplacelock.Layer
-	registries   []lockfile.GitRegistry
-	expected     dependencytxn.Generation
-	expectedMode os.FileMode
+// unrecordedRegistrations returns the canonical endpoints of the layer's
+// resource-free registrations that an existing lock does not identify yet.
+// A lock that does not bind to the layer gains nothing here, so the reload
+// that follows reports its binding error unchanged.
+func unrecordedRegistrations(layer config.LayerIntent, current *lockfile.Document) []string {
+	if err := layer.ValidateDeployedMarketplaceLock(current); err != nil {
+		slog.Debug("existing Marketplace lock does not bind; registration identities not recorded", "scope", current.Scope, "error", err)
+		return nil
+	}
+	recorded := make(map[string]bool, len(current.Marketplaces))
+	for _, locked := range current.Marketplaces {
+		recorded[locked.URL] = true
+	}
+	var endpoints []string
+	for _, source := range layer.MarketplaceSources() {
+		if len(source.Requests) == 0 && !recorded[source.URL] {
+			endpoints = append(endpoints, source.URL)
+		}
+	}
+	return endpoints
+}
+
+// appendRegistrationIdentities adds one identity-only record per endpoint,
+// leaving every existing record of current untouched.
+func appendRegistrationIdentities(ctx context.Context, current lockfile.Document, endpoints []string) (lockfile.Document, error) {
+	doc := current
+	doc.Marketplaces = slices.Clone(current.Marketplaces)
+	for _, endpoint := range endpoints {
+		instanceID, err := marketplacelock.EndpointInstanceID(ctx, endpoint)
+		if err != nil {
+			return lockfile.Document{}, fmt.Errorf("identify Marketplace endpoint %s: %w", endpoint, err)
+		}
+		doc.Marketplaces = append(doc.Marketplaces, lockfile.MarketplaceLock{URL: endpoint, InstanceID: instanceID})
+	}
+	return doc, nil
 }
 
 func encodeWithGitRegistries(doc lockfile.Document, registries []lockfile.GitRegistry) ([]byte, error) {
@@ -81,74 +161,165 @@ func encodeWithGitRegistries(doc lockfile.Document, registries []lockfile.GitReg
 	return lockfile.Encode(normalized)
 }
 
-func missingMarketplaceLockLayers(repoRoot, localDir string, selected map[lockfile.Scope]bool) ([]marketplaceLockBootstrap, map[string][]byte, error) {
-	userPath, err := config.GlobalConfigPath()
-	if err != nil {
-		return nil, nil, err
+type archiveRefreshKey struct{ endpoint, instance, registryID, kind, name string }
+
+func archiveRefreshWarningKey(w *resolver.ArchiveEvidenceRefreshedWarning) archiveRefreshKey {
+	return archiveRefreshKey{w.MarketplaceURL, w.InstanceID, w.RegistryID, w.Kind, w.Name}
+}
+
+func archiveRefreshPinKey(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) archiveRefreshKey {
+	return archiveRefreshKey{entry.URL, entry.InstanceID, pin.RegistryID, pin.Kind, pin.Name}
+}
+
+func stripUnpersistedRefreshWarnings(warnings []error, persisted map[archiveRefreshKey]bool) []error {
+	kept := make([]error, 0, len(warnings))
+	for _, w := range warnings {
+		var refresh *resolver.ArchiveEvidenceRefreshedWarning
+		if errors.As(w, &refresh) && !persisted[archiveRefreshWarningKey(refresh)] {
+			continue
+		}
+		kept = append(kept, w)
 	}
-	paths := []struct {
-		source config.Source
-		path   string
-	}{
-		{config.UserPersonal, userPath},
-		{config.RepoCommitted, config.ProjectConfigPath(repoRoot)},
-		{config.RepoPersonal, config.LocalConfigPath(localDir)},
+	return kept
+}
+
+func refreshDriftedMarketplaceLocks(ctx context.Context, repoRoot, localDir string, mergedCfg *config.Config, warnings []error) (map[archiveRefreshKey]bool, error) {
+	if mergedCfg == nil {
+		return nil, nil
 	}
-	var layers []marketplaceLockBootstrap
-	overlays := map[string][]byte{}
-	for _, candidate := range paths {
-		if (candidate.source == config.RepoCommitted && config.IsHomeDir(repoRoot)) || (candidate.source == config.RepoPersonal && config.IsHomeDir(localDir)) {
-			continue
+	refreshed := make(map[archiveRefreshKey]bool)
+	for _, w := range warnings {
+		var refresh *resolver.ArchiveEvidenceRefreshedWarning
+		if errors.As(w, &refresh) {
+			refreshed[archiveRefreshWarningKey(refresh)] = true
 		}
-		scope := lockfile.Scope(candidate.source.LockScope())
-		if selected != nil && !selected[scope] {
-			continue
-		}
-		v4, err := config.LoadV4ConfigIfPresent(candidate.path, candidate.source)
-		if err != nil {
-			return nil, nil, err
-		}
-		if v4 == nil || !marketplacelock.HasMarketplaceSource(v4) {
-			continue
-		}
-		paths, err := config.ResolveConfigLockPaths(candidate.path)
-		if err != nil {
-			return nil, nil, err
-		}
-		lockPath, err := rejectGeneratedLockSymlink(paths.CanonicalLock)
-		if err != nil {
-			return nil, nil, err
-		}
-		current, expected, exists, err := loadLayerLock(lockPath, scope)
-		if err != nil {
-			return nil, nil, err
-		}
-		if exists && len(current.Marketplaces) > 0 {
-			continue
-		}
-		var registries []lockfile.GitRegistry
-		var expectedMode os.FileMode
-		if exists {
-			registries = current.Registries
-			if _, expectedMode, err = dependencytxn.ReadGenerationAndMode(lockPath); err != nil {
-				return nil, nil, err
+	}
+	if len(refreshed) == 0 {
+		return nil, nil
+	}
+	intent := config.ReadIntent(ctx, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: localDir})
+	cache := marketplace.DefaultCache()
+	type pendingMerge struct {
+		entry config.MarketplaceEntry
+		pins  []config.MarketplaceResourcePin
+	}
+	type layerWork struct {
+		path         string
+		v4           *config.V4Config
+		current      *lockfile.Document
+		expected     dependencytxn.Generation
+		expectedMode os.FileMode
+		merges       []pendingMerge
+	}
+	var order []config.Source
+	layers := make(map[config.Source]*layerWork)
+	for _, entry := range mergedCfg.Marketplaces {
+		var pins []config.MarketplaceResourcePin
+		for _, pin := range entry.Resources {
+			if refreshed[archiveRefreshPinKey(entry, pin)] {
+				pins = append(pins, pin)
 			}
 		}
-		doc, err := marketplacelock.Provisional(v4, scope)
-		if err != nil {
-			return nil, nil, err
+		if len(pins) == 0 || !entry.Source.IsWritable() {
+			continue
 		}
-		data, err := encodeWithGitRegistries(doc, registries)
-		if err != nil {
-			return nil, nil, err
+		work, ok := layers[entry.Source]
+		if !ok {
+			layer := intent.Layers[entry.Source]
+			if !layer.Present() {
+				continue
+			}
+			if err := layer.Err(); err != nil {
+				return nil, err
+			}
+			v4Cfg, err := config.LoadV4ConfigIfPresent(layer.Path, entry.Source)
+			if err != nil {
+				return nil, err
+			}
+			if v4Cfg == nil {
+				continue
+			}
+			paths, err := config.ResolveConfigLockPaths(layer.Path)
+			if err != nil {
+				return nil, err
+			}
+			lockPath, err := rejectGeneratedLockSymlink(paths.CanonicalLock)
+			if err != nil {
+				return nil, err
+			}
+			current, expected, exists, err := pipeline.ReadLayerLock(lockPath, lockfile.Scope(entry.Source.LockScope()))
+			if err != nil {
+				return nil, err
+			}
+			if !exists || current == nil || len(current.Marketplaces) == 0 {
+				continue
+			}
+			_, expectedMode, err := dependencytxn.ReadGenerationAndMode(lockPath)
+			if err != nil {
+				return nil, err
+			}
+			work = &layerWork{path: lockPath, v4: v4Cfg, current: current, expected: expected, expectedMode: expectedMode}
+			layers[entry.Source] = work
+			order = append(order, entry.Source)
 		}
-		overlays[lockPath] = data
-		layers = append(layers, marketplaceLockBootstrap{
-			Layer:        marketplacelock.Layer{Source: candidate.source, LockPath: lockPath, V4: v4},
-			registries:   registries,
-			expected:     expected,
-			expectedMode: expectedMode,
-		})
+		work.merges = append(work.merges, pendingMerge{entry: entry, pins: pins})
 	}
-	return layers, overlays, nil
+	var desired []dependencytxn.DesiredFile
+	stagedKeysByPath := make(map[string][]archiveRefreshKey)
+	for _, source := range order {
+		work := layers[source]
+		doc := *work.current
+		for _, merge := range work.merges {
+			merged, err := marketplacelock.MergePinsToV4(work.v4, doc, merge.entry, merge.pins, cache)
+			if err != nil {
+				return nil, fmt.Errorf("refresh Marketplace lock %q evidence: %w", work.path, err)
+			}
+			doc = merged
+		}
+		data, err := lockfile.Encode(doc)
+		if err != nil {
+			return nil, err
+		}
+		normalizedCurrent, err := lockfile.Normalize(*work.current)
+		if err != nil {
+			return nil, err
+		}
+		currentData, err := lockfile.Encode(normalizedCurrent)
+		if err != nil {
+			return nil, err
+		}
+		if string(data) == string(currentData) {
+			continue
+		}
+		desired = append(desired, dependencytxn.DesiredFile{Path: work.path, Expected: work.expected, ExpectedMode: work.expectedMode, Bytes: data, Mode: work.expectedMode})
+		for _, merge := range work.merges {
+			for _, pin := range merge.pins {
+				key := archiveRefreshPinKey(merge.entry, pin)
+				stagedKeysByPath[work.path] = append(stagedKeysByPath[work.path], key)
+			}
+		}
+	}
+	if len(desired) == 0 {
+		return nil, nil
+	}
+	reads, err := pipeline.IntentReadAssertions(intent)
+	if err != nil {
+		return nil, err
+	}
+	stateDir, err := dependencyStateDir()
+	if err != nil {
+		return nil, err
+	}
+	committed, err := commitDependencyTransaction(ctx, stateDir, desired, dependencytxn.WithReadAssertions(reads))
+	if err != nil {
+		return nil, fmt.Errorf("commit refreshed Marketplace lock evidence: %w", err)
+	}
+	slog.Info("marketplace lock evidence refreshed", "count", len(committed.Changed))
+	persisted := make(map[archiveRefreshKey]bool)
+	for _, path := range committed.Changed {
+		for _, key := range stagedKeysByPath[path] {
+			persisted[key] = true
+		}
+	}
+	return persisted, nil
 }

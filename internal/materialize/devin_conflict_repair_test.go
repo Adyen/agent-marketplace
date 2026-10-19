@@ -40,7 +40,7 @@ func writeHandwrittenConflict(t *testing.T, repoRoot, key string) (mcpPath strin
 		t.Fatal(err)
 	}
 	return mcpPath, []resolver.ResolvedArtifact{
-		devinResolved(key, ir.NewMcpServer(key, "generated-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, key, ir.NewMcpServer(key, "generated-binary", nil, nil, nil, ir.SourceRef{}), false),
 	}
 }
 
@@ -50,6 +50,7 @@ func writeHandwrittenConflict(t *testing.T, repoRoot, key string) (mcpPath strin
 // Before this class existed, this exact fixture produced adoptions=0,
 // orphans=0, Actionable()==false: sync refused to write because it could not
 // prove ownership, and `doctor --repair` said "nothing to repair".
+// spec: owned-entry-reconciliation/differing-values-are-offered-for-replacement
 func TestDevinUnmanagedValueConflictIsOfferedAsAThirdRepairClass(t *testing.T) {
 	repoRoot, _ := devinEnv(t)
 	mcpPath, selection := writeHandwrittenConflict(t, repoRoot, "genai-atlassian")

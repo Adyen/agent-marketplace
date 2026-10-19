@@ -10,14 +10,46 @@ import (
 	"testing"
 )
 
+func loadEffectiveForTest(ctx context.Context, opts LoadEffectiveOptions) EffectiveConfig {
+	if opts.RepoRoot == "" {
+		for _, path := range []string{opts.RepoPath, opts.LocalPath, opts.GlobalPath, opts.OrganizationPath} {
+			if path != "" {
+				opts.RepoRoot = filepath.Dir(path)
+				break
+			}
+		}
+	}
+	if opts.LocalConfigDir == "" {
+		opts.LocalConfigDir = opts.RepoRoot
+	}
+	intent := ReadIntent(ctx, opts)
+	ev := Evidence{}
+	for _, source := range intentLayerOrder {
+		doc, reads, errs := deployedLayerEvidence(intent.Layers[source], source, opts)
+		ev.Locks[source] = doc
+		ev.errors[source] = errs
+		ev.reads[source] = reads
+		ev.Reads = append(ev.Reads, reads...)
+	}
+	ec := bindLayers(intent, ev)
+	if ec.Organization.Config != nil && len(ec.Organization.Errors) == 0 && organizationHasRemoteRequirements(ec.Organization.Config) {
+		if trustErr := ValidateOrganizationTrustUnit(ec.Organization.Path, true, true); trustErr != nil {
+			ev.errors[Organization] = append(ev.errors[Organization], trustErr)
+			ec.Organization.Config = nil
+			ec.Organization.Errors = append(ec.Organization.Errors, trustErr)
+		}
+	}
+	return finishBind(intent, ev, ec)
+}
+
 func TestLoadEffectiveRejectsOversizedConfigBeforeYAMLParsing(t *testing.T) {
 	dir := t.TempDir()
 	userPath := filepath.Join(dir, "user.yaml")
-	data := append([]byte("apiVersion: agent-marketplace/v3\n"), make([]byte, MaxEffectiveConfigSize)...)
+	data := append([]byte("apiVersion: agent-marketplace/v4\n"), make([]byte, MaxEffectiveConfigSize)...)
 	if err := os.WriteFile(userPath, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
 		GlobalPath:       userPath,
 		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
@@ -34,17 +66,17 @@ func TestLoadEffectiveRejectsOversizedConfigBeforeYAMLParsing(t *testing.T) {
 func TestLoadEffectiveReturnsOrganizationProvenance(t *testing.T) {
 	dir := t.TempDir()
 	orgPath := filepath.Join(dir, "org.yaml")
-	writeFile(t, orgPath, `apiVersion: agent-marketplace/v3
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: git@gitlab.example.com:example-org/org.git
-    ref: main
-    required: true
+sources:
+  org: {git: git@gitlab.example.com:example-org/org.git, ref: main}
+resources:
+  org: {all: true, required: true}
 `)
 	writeTrustedOrganizationLock(t, orgPath)
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: orgPath,
 		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
 		GlobalPath:       filepath.Join(dir, "missing-global.yaml"),
@@ -58,7 +90,7 @@ registries:
 		t.Fatalf("expected organization source %v, got %v", Organization, ec.Organization.Source)
 	}
 	if !ec.Managed {
-		t.Fatalf("expected Managed to be true for a valid v3 organization layer")
+		t.Fatalf("expected Managed to be true for a valid v4 organization layer")
 	}
 	if len(ec.Organization.Config.Registries) != 1 {
 		t.Fatalf("expected 1 org registry, got %d", len(ec.Organization.Config.Registries))
@@ -71,16 +103,17 @@ registries:
 func TestLoadEffectiveReturnsErrorsBeforeCatalog(t *testing.T) {
 	dir := t.TempDir()
 	userPath := filepath.Join(dir, "user.yaml")
-	writeFile(t, userPath, `apiVersion: agent-marketplace/v3
+	writeFile(t, userPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
 allowed_registries: []
-registries:
-  - url: https://example.com/blocked.git
-    ref: main
+sources:
+  blocked: {git: https://example.com/blocked.git, ref: main}
+resources:
+  blocked: [skill/review]
 `)
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
 		GlobalPath:       userPath,
 		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
@@ -90,8 +123,9 @@ registries:
 	if len(ec.Errors) == 0 {
 		t.Fatalf("expected config errors for blocked registry URL")
 	}
-	if !strings.Contains(ec.Errors[0].Error(), "blocked by allowed_registries") {
-		t.Fatalf("expected URL blocked error, got: %v", ec.Errors[0])
+	var blocked *RegistryURLBlockedError
+	if !errors.As(errors.Join(ec.Errors...), &blocked) || !equalStrings(blocked.BlockedURLs, []string{"https://example.com/blocked.git"}) {
+		t.Fatalf("expected typed URL blocked error, got: %v", ec.Errors)
 	}
 }
 
@@ -101,34 +135,37 @@ func TestLoadEffectiveResolvesAllowedRegistriesFirstAuthority(t *testing.T) {
 		orgPath := filepath.Join(dir, "org.yaml")
 		userPath := filepath.Join(dir, "user.yaml")
 		repoPath := filepath.Join(dir, "repo.yaml")
-		writeFile(t, orgPath, `apiVersion: agent-marketplace/v3
+		writeFile(t, orgPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
 allowed_registries:
   - ".*"
-registries:
-  - url: git@example.com:org.git
-    ref: main
+sources:
+  org: {git: git@example.com:org.git, ref: main}
+resources:
+  org: [skill/review]
 `)
 		writeTrustedOrganizationLock(t, orgPath)
-		writeFile(t, userPath, `apiVersion: agent-marketplace/v3
+		writeFile(t, userPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
 allowed_registries:
   - ^example\.com/
-registries:
-  - url: git@example.com:user.git
-    ref: main
+sources:
+  user: {git: git@example.com:user.git, ref: main}
+resources:
+  user: [skill/review]
 `)
-		writeFile(t, repoPath, `apiVersion: agent-marketplace/v3
+		writeFile(t, repoPath, `apiVersion: agent-marketplace/v4
 allowed_registries:
   - ^github\.com/
-registries:
-  - url: git@example.com:repo.git
-    ref: main
+sources:
+  repo: {git: git@example.com:repo.git, ref: main}
+resources:
+  repo: [skill/review]
 `)
 
-		ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+		ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 			OrganizationPath: orgPath,
 			GlobalPath:       userPath,
 			RepoPath:         repoPath,
@@ -147,24 +184,26 @@ registries:
 		dir := t.TempDir()
 		userPath := filepath.Join(dir, "user.yaml")
 		repoPath := filepath.Join(dir, "repo.yaml")
-		writeFile(t, userPath, `apiVersion: agent-marketplace/v3
+		writeFile(t, userPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
 allowed_registries:
   - ^example\.com/
-registries:
-  - url: git@example.com:user.git
-    ref: main
+sources:
+  user: {git: git@example.com:user.git, ref: main}
+resources:
+  user: [skill/review]
 `)
-		writeFile(t, repoPath, `apiVersion: agent-marketplace/v3
+		writeFile(t, repoPath, `apiVersion: agent-marketplace/v4
 allowed_registries:
   - ^github\.com/
-registries:
-  - url: git@example.com:repo.git
-    ref: main
+sources:
+  repo: {git: git@example.com:repo.git, ref: main}
+resources:
+  repo: [skill/review]
 `)
 
-		ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+		ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 			OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
 			GlobalPath:       userPath,
 			RepoPath:         repoPath,
@@ -180,54 +219,46 @@ registries:
 	})
 }
 
-func TestV2ConfigStillLoadsThroughLoadEffective(t *testing.T) {
-	dir := t.TempDir()
-	userPath := filepath.Join(dir, "user.yaml")
-	repoPath := filepath.Join(dir, "repo.yaml")
-	writeFile(t, userPath, `apiVersion: agent-marketplace/v2
-harnesses:
-  - factory
-registries:
-  - url: git@gitlab.example.com:example-org/user.git
-    ref: main
-`)
-	writeFile(t, repoPath, `apiVersion: agent-marketplace/v2
-registries:
-  - url: git@gitlab.example.com:example-org/repo.git
-    ref: main
-`)
-
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
-		OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
-		GlobalPath:       userPath,
-		RepoPath:         repoPath,
-		LocalPath:        filepath.Join(dir, "missing-local.yaml"),
-	})
-
-	if len(ec.Errors) > 0 {
-		t.Fatalf("unexpected errors: %v", ec.Errors)
-	}
-	if ec.User.Config == nil || ec.User.Config.APIVersion != APIVersionV2 {
-		t.Fatalf("expected v2 user config to load")
-	}
-	if ec.Repo.Config == nil || ec.Repo.Config.APIVersion != APIVersionV2 {
-		t.Fatalf("expected v2 repo config to load")
-	}
-	if ec.Merged == nil || len(ec.Merged.Registries) != 2 {
-		t.Fatalf("expected merged v2 config with 2 registries, got %v", ec.Merged)
+// spec: consumer-config-format/explicit-non-v4-root-versions-are-refused
+func TestLoadEffectiveRefusesLegacyUserAndRepoRoots(t *testing.T) {
+	for _, version := range []string{"agent-marketplace/v2", "agent-marketplace/v3"} {
+		t.Run(version, func(t *testing.T) {
+			dir := t.TempDir()
+			userPath := filepath.Join(dir, "user.yaml")
+			repoPath := filepath.Join(dir, "repo.yaml")
+			before := "apiVersion: " + version + "\nregistries:\n  - url: https://example.test/shared.git\n    ref: main\n"
+			writeFile(t, userPath, before)
+			writeFile(t, repoPath, before)
+			ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
+				OrganizationPath: filepath.Join(dir, "missing-org.yaml"), GlobalPath: userPath,
+				RepoPath: repoPath, LocalPath: filepath.Join(dir, "missing-local.yaml"),
+			})
+			if len(ec.Errors) != 2 || ec.User.Config != nil || ec.Repo.Config != nil || len(ec.Merged.Registries) != 0 {
+				t.Fatalf("unsupported roots were interpreted: errors=%v merged=%#v", ec.Errors, ec.Merged)
+			}
+			for i, path := range []string{userPath, repoPath} {
+				var validation *V4ValidationError
+				if !errors.As(ec.Errors[i], &validation) || validation.Code != "v4.api-version" || validation.Path != path || validation.Line != 1 {
+					t.Fatalf("error %d = %v, want path-specific format refusal", i, ec.Errors[i])
+				}
+				if got, err := os.ReadFile(path); err != nil || string(got) != before {
+					t.Fatalf("refusal changed %s: %q %v", path, got, err)
+				}
+			}
+		})
 	}
 }
 
 func TestLoadEffectiveAllowsRepoHarnesses(t *testing.T) {
 	dir := t.TempDir()
 	repoPath := filepath.Join(dir, "repo.yaml")
-	writeFile(t, repoPath, `apiVersion: agent-marketplace/v3
+	writeFile(t, repoPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries: []
+sources: {}
 `)
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
 		GlobalPath:       filepath.Join(dir, "missing-global.yaml"),
 		RepoPath:         repoPath,
@@ -254,16 +285,16 @@ func TestLoadEffectiveNoLegacyOrgFallbackSkipsMissingOrg(t *testing.T) {
 		LocalPath:        filepath.Join(dir, "missing-local.yaml"),
 	}
 
-	ec := LoadEffective(context.Background(), opts)
+	ec := loadEffectiveForTest(context.Background(), opts)
 
 	if ec.Organization.Config != nil {
 		t.Fatalf("expected no organization config, got %v", ec.Organization.Config)
 	}
 	if len(ec.Errors) != 0 {
-		t.Fatalf("expected no errors for missing v3 org config, got %v", ec.Errors)
+		t.Fatalf("expected no errors for missing v4 org config, got %v", ec.Errors)
 	}
 	if ec.Managed {
-		t.Fatalf("expected unmanaged when v3 org config is missing")
+		t.Fatalf("expected unmanaged when v4 org config is missing")
 	}
 	if ec.Organization.Source != SourceUnset {
 		t.Fatalf("expected unset source, got %v", ec.Organization.Source)
@@ -273,17 +304,17 @@ func TestLoadEffectiveNoLegacyOrgFallbackSkipsMissingOrg(t *testing.T) {
 func TestLoadEffectiveNoLegacyOrgFallbackIgnoresEnvVar(t *testing.T) {
 	dir := t.TempDir()
 	legacyPath := filepath.Join(dir, "legacy-org.yaml")
-	writeFile(t, legacyPath, `apiVersion: agent-marketplace/v2
+	writeFile(t, legacyPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries: []
+sources: {}
 `)
 
 	t.Setenv("HOME", filepath.Join(dir, "home"))
 	t.Setenv("AGENT_MARKETPLACE_ORG_CONFIG", legacyPath)
 	SetTestOrganizationConfigPath(t, filepath.Join(dir, "missing-org.yaml"))
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		GlobalPath: filepath.Join(dir, "missing-global.yaml"),
 		RepoPath:   filepath.Join(dir, "missing-repo.yaml"),
 		LocalPath:  filepath.Join(dir, "missing-local.yaml"),
@@ -300,53 +331,38 @@ registries: []
 	}
 }
 
-func TestLoadEffectiveOrganizationAcceptsV2Org(t *testing.T) {
-	dir := t.TempDir()
-	orgPath := filepath.Join(dir, "org.yaml")
-	writeFile(t, orgPath, `apiVersion: agent-marketplace/v2
-harnesses:
-  - factory
-registries: []
-`)
-
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
-		OrganizationPath: orgPath,
-		GlobalPath:       filepath.Join(dir, "missing-global.yaml"),
-		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
-		LocalPath:        filepath.Join(dir, "missing-local.yaml"),
-	})
-
-	if ec.Organization.Config == nil {
-		t.Fatalf("expected v2 organization config to load")
-	}
-	if len(ec.Errors) != 0 {
-		t.Fatalf("expected no errors for valid v2 organization config, got: %v", ec.Errors)
-	}
-	if !ec.Managed {
-		t.Fatalf("expected valid v2 organization config to be managed")
-	}
-	if ec.Organization.Source != Organization {
-		t.Fatalf("expected organization source %v, got %v", Organization, ec.Organization.Source)
-	}
-	if !equalStrings(ec.Organization.Config.Harnesses, []string{"factory"}) {
-		t.Fatalf("expected org harnesses [factory], got %v", ec.Organization.Config.Harnesses)
+func TestLoadEffectiveOrganizationRefusesLegacyRoot(t *testing.T) {
+	for _, version := range []string{"agent-marketplace/v2", "agent-marketplace/v3"} {
+		t.Run(version, func(t *testing.T) {
+			dir := t.TempDir()
+			orgPath := filepath.Join(dir, "org.yaml")
+			writeFile(t, orgPath, "apiVersion: "+version+"\nharnesses: [factory]\nsources: {}\n")
+			ec := loadEffectiveForTest(context.Background(), isolatedEffectiveOptions(orgPath))
+			var validation *V4ValidationError
+			if !errors.As(errors.Join(ec.Errors...), &validation) || validation.Code != "v4.api-version" || validation.Path != orgPath || validation.Line != 1 {
+				t.Fatalf("organization refusal = %v", ec.Errors)
+			}
+			if ec.Organization.Config != nil || ec.Managed || ec.Organization.Source != Organization || ec.Diagnostics.Validation != "invalid" {
+				t.Fatalf("legacy root treated as managed or absent: %#v", ec.Organization)
+			}
+		})
 	}
 }
 
-func TestLoadEffectiveNoLegacyOrgFallbackLoadsV3Org(t *testing.T) {
+func TestLoadEffectiveNoLegacyOrgFallbackLoadsV4Org(t *testing.T) {
 	dir := t.TempDir()
 	orgPath := filepath.Join(dir, "org.yaml")
-	writeFile(t, orgPath, `apiVersion: agent-marketplace/v3
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: git@gitlab.example.com:example-org/org.git
-    ref: main
-    required: true
+sources:
+  org: {git: git@gitlab.example.com:example-org/org.git, ref: main}
+resources:
+  org: {all: true, required: true}
 `)
 	writeTrustedOrganizationLock(t, orgPath)
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: orgPath,
 		GlobalPath:       filepath.Join(dir, "missing-global.yaml"),
 		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
@@ -354,13 +370,13 @@ registries:
 	})
 
 	if ec.Organization.Config == nil {
-		t.Fatalf("expected v3 organization config to be loaded")
+		t.Fatalf("expected v4 organization config to be loaded")
 	}
 	if len(ec.Errors) != 0 {
 		t.Fatalf("unexpected errors: %v", ec.Errors)
 	}
 	if !ec.Managed {
-		t.Fatalf("expected managed for valid v3 organization layer")
+		t.Fatalf("expected managed for valid v4 organization layer")
 	}
 	if ec.Organization.Source != Organization {
 		t.Fatalf("expected organization source %v, got %v", Organization, ec.Organization.Source)
@@ -379,10 +395,10 @@ func TestLoadEffectiveNoLegacyOrgFallbackRejectsUnreadable(t *testing.T) {
 	}
 	dir := t.TempDir()
 	orgPath := filepath.Join(dir, "org.yaml")
-	writeFile(t, orgPath, `apiVersion: agent-marketplace/v3
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries: []
+sources: {}
 `)
 	if err := os.Chmod(orgPath, 0o000); err != nil {
 		t.Fatalf("chmod: %v", err)
@@ -391,7 +407,7 @@ registries: []
 		_ = os.Chmod(orgPath, 0o644)
 	}()
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: orgPath,
 		GlobalPath:       filepath.Join(dir, "missing-global.yaml"),
 		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
@@ -413,18 +429,18 @@ func TestLoadEffectiveTargetHarnessesUserWinsOverOrg(t *testing.T) {
 	dir := t.TempDir()
 	orgPath := filepath.Join(dir, "org.yaml")
 	userPath := filepath.Join(dir, "user.yaml")
-	writeFile(t, orgPath, `apiVersion: agent-marketplace/v3
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries: []
+sources: {}
 `)
-	writeFile(t, userPath, `apiVersion: agent-marketplace/v2
+	writeFile(t, userPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - cursor
-registries: []
+sources: {}
 `)
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: orgPath,
 		GlobalPath:       userPath,
 		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
@@ -446,17 +462,17 @@ func TestLoadEffectiveTargetHarnessesFallsBackToOrg(t *testing.T) {
 	dir := t.TempDir()
 	orgPath := filepath.Join(dir, "org.yaml")
 	userPath := filepath.Join(dir, "user.yaml")
-	writeFile(t, orgPath, `apiVersion: agent-marketplace/v3
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
   - windsurf
-registries: []
+sources: {}
 `)
-	writeFile(t, userPath, `apiVersion: agent-marketplace/v2
-registries: []
+	writeFile(t, userPath, `apiVersion: agent-marketplace/v4
+sources: {}
 `)
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: orgPath,
 		GlobalPath:       userPath,
 		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
@@ -477,13 +493,15 @@ registries: []
 func TestLoadEffectiveAllowsMissingUserHarnesses(t *testing.T) {
 	dir := t.TempDir()
 	userPath := filepath.Join(dir, "user.yaml")
-	writeFile(t, userPath, `apiVersion: agent-marketplace/v2
-registries:
-  - url: /local/skills
+	writeFile(t, userPath, `apiVersion: agent-marketplace/v4
+sources:
+  local: {directory: /local/skills}
+resources:
+  local: [skill/review]
 `)
 
 	// Avoid falling back to embedded org defaults which carry harnesses.
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
 		GlobalPath:       userPath,
 		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
@@ -501,17 +519,19 @@ registries:
 	}
 }
 
-func TestLoadEffectiveAllowsV2RepoHarnesses(t *testing.T) {
+func TestLoadEffectiveAllowsV4RepoHarnesses(t *testing.T) {
 	dir := t.TempDir()
 	repoPath := filepath.Join(dir, "repo.yaml")
-	writeFile(t, repoPath, `apiVersion: agent-marketplace/v2
+	writeFile(t, repoPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: /local/skills
+sources:
+  local: {directory: /local/skills}
+resources:
+  local: [skill/review]
 `)
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
 		GlobalPath:       filepath.Join(dir, "missing-global.yaml"),
 		RepoPath:         repoPath,
@@ -537,10 +557,10 @@ func TestLoadEffectiveOrganizationDiagnostics(t *testing.T) {
 		t.Skip("file ownership/permission diagnostics are Unix-specific")
 	}
 
-	validV3 := `apiVersion: agent-marketplace/v3
+	validV4 := `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries: []
+sources: {}
 `
 	cases := []struct {
 		name        string
@@ -552,7 +572,7 @@ registries: []
 		{
 			name: "valid",
 			setup: func(t *testing.T, p string) {
-				writeFile(t, p, validV3)
+				writeFile(t, p, validV4)
 				if err := os.Chmod(p, 0o444); err != nil {
 					t.Fatalf("chmod: %v", err)
 				}
@@ -567,7 +587,7 @@ registries: []
 		{
 			name: "invalid",
 			setup: func(t *testing.T, p string) {
-				writeFile(t, p, "apiVersion: agent-marketplace/v3\nunknown_field: x\nregistries: []\n")
+				writeFile(t, p, "apiVersion: agent-marketplace/v4\nunknown_field: x\nsources: {}\n")
 			},
 			wantErr:     "unknown top-level field",
 			wantManaged: false,
@@ -575,7 +595,7 @@ registries: []
 		{
 			name: "writable",
 			setup: func(t *testing.T, p string) {
-				writeFile(t, p, validV3)
+				writeFile(t, p, validV4)
 				if err := os.Chmod(p, 0o666); err != nil {
 					t.Fatalf("chmod: %v", err)
 				}
@@ -586,7 +606,7 @@ registries: []
 		{
 			name: "wrong-owner",
 			setup: func(t *testing.T, p string) {
-				writeFile(t, p, validV3)
+				writeFile(t, p, validV4)
 				if err := os.Chmod(p, 0o444); err != nil {
 					t.Fatalf("chmod: %v", err)
 				}
@@ -617,7 +637,7 @@ registries: []
 		{
 			name: "unreadable",
 			setup: func(t *testing.T, p string) {
-				writeFile(t, p, validV3)
+				writeFile(t, p, validV4)
 				if err := os.Chmod(p, 0o000); err != nil {
 					t.Fatalf("chmod: %v", err)
 				}
@@ -645,7 +665,7 @@ registries: []
 			p := filepath.Join(t.TempDir(), "org.yaml")
 			tc.setup(t, p)
 
-			ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+			ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 				OrganizationPath: p,
 				GlobalPath:       filepath.Join(t.TempDir(), "missing-global.yaml"),
 				RepoPath:         filepath.Join(t.TempDir(), "missing-repo.yaml"),
@@ -689,5 +709,46 @@ func writeFile(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
+	}
+}
+
+// spec: configuration-intent/reading-authored-selections-without-acquisition
+func TestReadIntentPerformsNoLockIO(t *testing.T) {
+	dir := t.TempDir()
+	userDir := filepath.Join(dir, "user")
+	userPath := filepath.Join(userDir, "config.yaml")
+	writeFile(t, userPath, `apiVersion: agent-marketplace/v4
+sources: {m: {marketplace: https://market.example}}
+resources:
+  m:
+    include: [main/collection/onboarding]
+`)
+	if err := os.MkdirAll(filepath.Join(userDir, "lock.yaml"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	opts := LoadEffectiveOptions{
+		RepoRoot:         dir,
+		LocalConfigDir:   dir,
+		OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
+		GlobalPath:       userPath,
+		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
+		LocalPath:        filepath.Join(dir, "missing-local.yaml"),
+	}
+	intent := ReadIntent(context.Background(), opts)
+	if len(intent.Errors) != 0 {
+		t.Fatalf("intent errors = %v", intent.Errors)
+	}
+	if !intent.Layers[UserPersonal].NeedsMarketplaceLock() {
+		t.Fatal("expected user layer to need a Marketplace lock")
+	}
+	for _, read := range intent.Layers[UserPersonal].Reads {
+		if read.AcquisitionLock {
+			t.Fatalf("ReadIntent recorded acquisition lock read %#v", read)
+		}
+	}
+	effective := Bind(intent, Evidence{})
+	var validation *V4ValidationError
+	if !errors.As(errors.Join(effective.Errors...), &validation) || validation.Code != "v4.marketplace-lock-required" {
+		t.Fatalf("errors = %v, want v4.marketplace-lock-required", effective.Errors)
 	}
 }

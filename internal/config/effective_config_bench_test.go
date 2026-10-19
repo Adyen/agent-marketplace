@@ -9,32 +9,33 @@ import (
 )
 
 func BenchmarkLoadEffectiveSmall(b *testing.B) {
-	dir := b.TempDir()
-	writeBenchConfig(b, dir, 2)
-	opts := LoadEffectiveOptions{
-		OrganizationPath: filepath.Join(dir, "org.yaml"),
-		GlobalPath:       filepath.Join(dir, "user.yaml"),
-		RepoPath:         filepath.Join(dir, "repo.yaml"),
-		LocalPath:        filepath.Join(dir, "local.yaml"),
-	}
-
-	for b.Loop() {
-		_ = LoadEffective(context.Background(), opts)
-	}
+	benchmarkLoadEffective(b, 2)
 }
 
 func BenchmarkLoadEffectiveLargeConfig(b *testing.B) {
+	benchmarkLoadEffective(b, 50)
+}
+
+func benchmarkLoadEffective(b *testing.B, n int) {
+	b.Helper()
 	dir := b.TempDir()
-	writeBenchConfig(b, dir, 50)
+	writeBenchConfig(b, dir, n)
 	opts := LoadEffectiveOptions{
 		OrganizationPath: filepath.Join(dir, "org.yaml"),
 		GlobalPath:       filepath.Join(dir, "user.yaml"),
 		RepoPath:         filepath.Join(dir, "repo.yaml"),
 		LocalPath:        filepath.Join(dir, "local.yaml"),
 	}
-
+	b.ReportAllocs()
+	b.ResetTimer()
 	for b.Loop() {
-		_ = LoadEffective(context.Background(), opts)
+		ec := loadEffectiveForTest(context.Background(), opts)
+		if len(ec.Errors) != 0 || ec.Merged == nil {
+			b.Fatalf("effective config: errors=%v merged=%#v", ec.Errors, ec.Merged)
+		}
+		if len(ec.Merged.Registries) != 4*n {
+			b.Fatalf("effective registry count=%d, want %d", len(ec.Merged.Registries), 4*n)
+		}
 	}
 }
 
@@ -42,13 +43,22 @@ func BenchmarkOrganizationIncludeTreeDiskReads(b *testing.B) {
 	dir := b.TempDir()
 	root := filepath.Join(dir, "authority", "config.yaml")
 	middle := filepath.Join(dir, "external", "middle.yaml")
-	writeBenchFile(b, filepath.Join(dir, "external", "nested", "leaf.yaml"), "registries:\n  - path: /live-registry\n    skills: {include: [review]}\n")
+	writeBenchFile(b, filepath.Join(dir, "external", "nested", "leaf.yaml"), "sources: {live: {directory: /live-registry}}\nresources: {live: [skill/review]}\n")
 	writeBenchFile(b, middle, "include: nested/leaf.yaml\n")
-	writeBenchFile(b, root, "apiVersion: agent-marketplace/v2\ninclude: "+middle+"\n")
+	writeBenchFile(b, root, "apiVersion: agent-marketplace/v4\ninclude: "+middle+"\n")
 	b.ReportAllocs()
+	b.ResetTimer()
 	for b.Loop() {
-		cfg, err := loadConfigTree(root, organizationLayer)
-		if err != nil || len(cfg.Registries) != 1 {
+		data, err := readConfigFile(root)
+		if err != nil {
+			b.Fatal(err)
+		}
+		li, err := readLayerIntent(root, "", data, organizationLayer, nil)
+		if err != nil {
+			b.Fatal(err)
+		}
+		cfg, err := li.bind(nil)
+		if err != nil || len(cfg.Registries) != 1 || cfg.Registries[0].Skills.Include[0] != "review" {
 			b.Fatalf("load organization include tree: %v", err)
 		}
 	}
@@ -56,24 +66,26 @@ func BenchmarkOrganizationIncludeTreeDiskReads(b *testing.B) {
 
 func writeBenchConfig(b testing.TB, dir string, n int) {
 	b.Helper()
-	org := "apiVersion: agent-marketplace/v3\nharnesses:\n  - factory\nallowed_registries:\n  - ^gitlab\\.example\\.com/\nregistries:\n"
-	user := "apiVersion: agent-marketplace/v3\nharnesses:\n  - factory\nregistries:\n"
-	repo := "apiVersion: agent-marketplace/v3\nregistries:\n"
-	local := "apiVersion: agent-marketplace/v3\nregistries:\n"
-
-	for i := 0; i < n; i++ {
-		url := fmt.Sprintf("git@gitlab.example.com:example-org/repo-%d.git", i)
-		entry := fmt.Sprintf("  - url: %s\n    ref: main\n    skills:\n      include:\n        - skill-%d\n", url, i)
-		org += entry
-		user += entry
-		repo += entry
-		local += entry
+	// Authored Git selections exercise configuration I/O without acquisition.
+	// Equal origins in different layers still preserve four provenance entries.
+	for _, layer := range []string{"org", "user", "repo", "local"} {
+		data := "apiVersion: agent-marketplace/v4\n"
+		if layer != "local" {
+			data += "harnesses: [factory]\n"
+		}
+		if layer == "org" {
+			data += "allowed_registries: ['^gitlab\\.example\\.com/']\n"
+		}
+		data += "sources:\n"
+		for i := 0; i < n; i++ {
+			data += fmt.Sprintf("  registry-%d: {git: git@gitlab.example.com:example-org/repo-%d.git, ref: main}\n", i, i)
+		}
+		data += "resources:\n"
+		for i := 0; i < n; i++ {
+			data += fmt.Sprintf("  registry-%d: [skill/skill-%d]\n", i, i)
+		}
+		writeBenchFile(b, filepath.Join(dir, layer+".yaml"), data)
 	}
-
-	writeBenchFile(b, filepath.Join(dir, "org.yaml"), org)
-	writeBenchFile(b, filepath.Join(dir, "user.yaml"), user)
-	writeBenchFile(b, filepath.Join(dir, "repo.yaml"), repo)
-	writeBenchFile(b, filepath.Join(dir, "local.yaml"), local)
 }
 
 func writeBenchFile(b testing.TB, path, content string) {

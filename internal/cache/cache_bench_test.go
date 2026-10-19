@@ -1,12 +1,11 @@
 package cache
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
 // BenchmarkBaseCachePath measures the suffix-stripping hot path used by
@@ -49,22 +48,17 @@ func BenchmarkActiveRegistryHashes_ManyRegistries(b *testing.B) {
 
 	for _, c := range cases {
 		b.Run(c.name, func(b *testing.B) {
-			cfgs := make([]*config.Config, c.numLayers)
+			var sources []string
 			for l := 0; l < c.numLayers; l++ {
-				cfg := &config.Config{}
 				for r := 0; r < c.perLayer; r++ {
-					cfg.Registries = append(cfg.Registries, config.RegistryEntry{
-						URL: fmt.Sprintf("git@example.com:layer%d-reg%03d.git", l, r),
-						Ref: "main",
-					})
+					sources = append(sources, fmt.Sprintf("git@example.com:layer%d-reg%03d.git", l, r))
 				}
-				cfgs[l] = cfg
 			}
 
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_ = activeRegistryHashes(cfgs...)
+				_ = activeRegistryHashes(sources)
 			}
 		})
 	}
@@ -94,13 +88,10 @@ func BenchmarkGarbageCollectDryRun(b *testing.B) {
 				b.Fatal(err)
 			}
 
-			cfg := &config.Config{}
+			var sources []string
 			for a := 0; a < c.numActive; a++ {
 				url := fmt.Sprintf("git@example.com:repo-%d.git", a)
-				cfg.Registries = append(cfg.Registries, config.RegistryEntry{
-					URL: url,
-					Ref: "main",
-				})
+				sources = append(sources, url)
 				if err := os.MkdirAll(filepath.Join(cacheDir, HashURL(url)), 0o755); err != nil {
 					b.Fatal(err)
 				}
@@ -111,11 +102,12 @@ func BenchmarkGarbageCollectDryRun(b *testing.B) {
 					b.Fatal(err)
 				}
 			}
+			reader := staticReachability(nil, sources...)
 
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				if _, err := GarbageCollect(true, cfg); err != nil {
+				if _, err := GarbageCollect(context.Background(), true, reader); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -129,6 +121,11 @@ func BenchmarkCloneOrPullWarmLocalRepo(b *testing.B) {
 	remoteDir := b.TempDir()
 	if err := runGit("", "init", "--bare", remoteDir); err != nil {
 		b.Fatal(err)
+	}
+	for _, setting := range []string{"receive.autogc", "maintenance.auto"} {
+		if err := runGit(remoteDir, "config", setting, "false"); err != nil {
+			b.Fatal(err)
+		}
 	}
 	workDir := b.TempDir()
 	if err := runGit("", "clone", remoteDir, workDir); err != nil {

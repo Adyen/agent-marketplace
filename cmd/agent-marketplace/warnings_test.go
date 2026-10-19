@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -250,6 +251,7 @@ func TestWriteSyncIssuesGroupsDistinctProblemsByDiagnosticCode(t *testing.T) {
 	}
 }
 
+// spec: resource-prerequisites/remediation-with-hints
 func TestWriteGroupedWarningsIncludesRequirementRemediation(t *testing.T) {
 	warning := &resolver.UnmetRequirementWarning{
 		ResourceKind: ir.KindSkill,
@@ -267,8 +269,49 @@ func TestWriteGroupedWarningsIncludesRequirementRemediation(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := out.String()
-	if !strings.Contains(got, `agent-marketplace install "genai-atlassian" --kind mcp --from "git@example.com:agents/registry.git" --path "integrations"`) {
+	if !strings.Contains(got, `agent-marketplace install genai-atlassian --kind mcp --from git@example.com:agents/registry.git --path integrations`) {
 		t.Fatalf("requirement remediation missing:\n%s", got)
+	}
+	warning.Requirement.Name = "audit$(inert-value)"
+	out.Reset()
+	if err := writeGroupedWarnings(&out, []error{warning}, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `agent-marketplace install 'audit$(inert-value)' --kind mcp`) {
+		t.Fatalf("human-readable prerequisite sink lost literal quoting: %s", out.String())
+	}
+}
+
+// spec: resource-prerequisites/rows-are-sorted
+func TestSplitRequirementWarningsSortsRows(t *testing.T) {
+	newWarning := func(resourceKind ir.ResourceKind, resourceName string, reqKind ir.ResourceKind, reqName string) error {
+		return &resolver.UnmetRequirementWarning{
+			ResourceKind: resourceKind,
+			ResourceName: resourceName,
+			Requirement:  catalog.Requirement{Kind: reqKind, Name: reqName},
+		}
+	}
+	errs := []error{
+		newWarning(ir.KindSkill, "zulu", ir.KindMcpServer, "second-mcp"),
+		newWarning(ir.KindSkill, "alpha", ir.KindMcpServer, "docs"),
+		newWarning(ir.KindSkill, "zulu", ir.KindSkill, "first-skill"),
+	}
+
+	rows, other := splitRequirementWarnings(errs)
+	if len(other) != 0 {
+		t.Fatalf("splitRequirementWarnings() non-requirement errors = %v, want none", other)
+	}
+	got := make([][2]string, 0, len(rows))
+	for _, row := range rows {
+		got = append(got, [2]string{row.Resource, row.Requirement})
+	}
+	want := [][2]string{
+		{"skill:alpha", "mcp:docs"},
+		{"skill:zulu", "mcp:second-mcp"},
+		{"skill:zulu", "skill:first-skill"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("splitRequirementWarnings() rows = %v, want %v", got, want)
 	}
 }
 

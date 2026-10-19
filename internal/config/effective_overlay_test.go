@@ -5,8 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
 func TestLoadEffectiveFileOverlaysRetainRealPaths(t *testing.T) {
@@ -14,16 +12,16 @@ func TestLoadEffectiveFileOverlaysRetainRealPaths(t *testing.T) {
 	user := filepath.Join(dir, "user.yaml")
 	repo := filepath.Join(dir, "repo.yaml")
 	local := filepath.Join(dir, "local.yaml")
-	if err := os.WriteFile(user, []byte("apiVersion: agent-marketplace/v2\nskills: [old]\n"), 0o600); err != nil {
+	if err := os.WriteFile(user, []byte("apiVersion: agent-marketplace/v4\nsources: {shared: {git: https://example.test/shared.git, ref: main}}\nresources: {shared: [skill/old]}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
 		GlobalPath:       user, RepoPath: repo, LocalPath: local,
 		FileOverlays: map[string][]byte{
-			user:  []byte("apiVersion: agent-marketplace/v2\nskills: [user-new]\n"),
-			repo:  []byte("apiVersion: agent-marketplace/v2\nskills: [repo-new]\n"),
-			local: []byte("skills: [local-new]\n"),
+			user:  []byte("apiVersion: agent-marketplace/v4\nsources: {shared: {git: https://example.test/shared.git, ref: main}}\nresources: {shared: [skill/user-new]}\n"),
+			repo:  []byte("apiVersion: agent-marketplace/v4\nsources: {shared: {git: https://example.test/shared.git, ref: main}}\nresources: {shared: [skill/repo-new]}\n"),
+			local: []byte("apiVersion: agent-marketplace/v4\nsources: {shared: {git: https://example.test/shared.git, ref: main}}\nresources: {shared: [skill/local-new]}\n"),
 		},
 	})
 	if len(ec.Errors) != 0 {
@@ -35,8 +33,18 @@ func TestLoadEffectiveFileOverlaysRetainRealPaths(t *testing.T) {
 	if ec.User.Config == nil || ec.Repo.Config == nil || ec.Local == nil {
 		t.Fatalf("overlaid layers missing: %#v", ec)
 	}
+	for _, layer := range []struct {
+		entries []RegistryEntry
+		skill   string
+	}{
+		{ec.User.Config.Registries, "user-new"}, {ec.Repo.Config.Registries, "repo-new"}, {ec.Local.Registries, "local-new"},
+	} {
+		if len(layer.entries) != 1 || len(layer.entries[0].Skills.Include) != 1 || layer.entries[0].Skills.Include[0] != layer.skill {
+			t.Fatalf("overlaid selections missing: entries=%#v want=%s", layer.entries, layer.skill)
+		}
+	}
 	raw, err := os.ReadFile(user)
-	if err != nil || string(raw) != "apiVersion: agent-marketplace/v2\nskills: [old]\n" {
+	if err != nil || string(raw) != "apiVersion: agent-marketplace/v4\nsources: {shared: {git: https://example.test/shared.git, ref: main}}\nresources: {shared: [skill/old]}\n" {
 		t.Fatalf("real user config changed: %q, %v", raw, err)
 	}
 	if _, err := os.Stat(repo); !os.IsNotExist(err) {
@@ -63,7 +71,7 @@ func TestLoadEffectiveV4MissingLocalOverlayThroughAlias(t *testing.T) {
 	if _, err := os.Stat(local); !os.IsNotExist(err) {
 		t.Fatalf("local config already exists: %v", err)
 	}
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		RepoRoot: alias, LocalConfigDir: alias,
 		OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
 		GlobalPath:       filepath.Join(dir, "missing-user.yaml"),
@@ -93,7 +101,7 @@ resources: {new: [skill/new]}
 	if err := os.WriteFile(user, onDisk, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
 		GlobalPath:       user,
 		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
@@ -114,79 +122,14 @@ resources: {new: [skill/new]}
 func TestLoadEffectiveNeverOverlaysOrganization(t *testing.T) {
 	dir := t.TempDir()
 	org := filepath.Join(dir, "org.yaml")
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		OrganizationPath: org,
 		GlobalPath:       filepath.Join(dir, "missing-user.yaml"),
 		RepoPath:         filepath.Join(dir, "missing-repo.yaml"),
 		LocalPath:        filepath.Join(dir, "missing-local.yaml"),
-		FileOverlays:     map[string][]byte{org: []byte("apiVersion: agent-marketplace/v2\nregistries:\n  - url: https://example.com/x.git\n    ref: main\n")},
+		FileOverlays:     map[string][]byte{org: []byte("apiVersion: agent-marketplace/v4\nsources: {shared: {git: https://example.com/x.git, ref: main}}\nresources: {shared: [skill/review]}\n")},
 	})
 	if ec.Organization.Config != nil || ec.Managed {
 		t.Fatalf("organization overlay bypassed trust: %#v", ec.Organization)
-	}
-}
-
-func TestLoadEffectiveUsesOnlyOrganizationRuntimeLockOverlay(t *testing.T) {
-	dir := t.TempDir()
-	org := filepath.Join(dir, "config.yaml")
-	onDisk := []byte(`apiVersion: agent-marketplace/v4
-sources:
-  hosted: {marketplace: https://marketplace.example}
-resources:
-  hosted: {include: [tools/skill/review]}
-`)
-	if err := os.WriteFile(org, onDisk, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	lockPath := filepath.Join(dir, "lock.yaml")
-	lockData, err := lockfile.Encode(lockfile.Document{
-		APIVersion: lockfile.APIVersionV2,
-		Scope:      lockfile.ScopeOrganization,
-		Marketplaces: []lockfile.MarketplaceLock{{
-			URL:              "https://marketplace.example",
-			InstanceID:       "marketplace",
-			RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: "tools", RegistryID: "registry"}},
-			Resources: []lockfile.MarketplaceResourceLock{{
-				RegistryName:  "tools",
-				RegistryID:    "registry",
-				Kind:          "skill",
-				Name:          "review",
-				Revision:      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-				ContentDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-				ArchiveDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-				Acquisition:   lockfile.MarketplaceAcquisitionMirror,
-			}},
-		}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
-		OrganizationPath:        org,
-		GlobalPath:              filepath.Join(dir, "missing-user.yaml"),
-		RepoPath:                filepath.Join(dir, "missing-repo.yaml"),
-		LocalPath:               filepath.Join(dir, "missing-local.yaml"),
-		OrganizationRuntimeLock: lockData,
-	})
-	if len(ec.Errors) != 0 {
-		t.Fatalf("errors = %v", ec.Errors)
-	}
-	if ec.Organization.Config == nil || len(ec.Organization.Config.Marketplaces) != 1 || ec.Organization.Config.Marketplaces[0].InstanceID != "marketplace" {
-		t.Fatalf("runtime lock was not applied: %#v", ec.Organization.Config)
-	}
-	runtimeRead := false
-	for _, read := range ec.Organization.Reads {
-		if (read.Path == lockPath || read.RequestedPath == lockPath) && read.Overlay && read.RuntimeLock {
-			runtimeRead = true
-		}
-	}
-	if !runtimeRead {
-		t.Fatalf("runtime lock read was not distinguished from a staged config overlay: %#v", ec.Organization.Reads)
-	}
-	if got, err := os.ReadFile(org); err != nil || string(got) != string(onDisk) {
-		t.Fatalf("runtime lock changed organization config: %q, %v", got, err)
-	}
-	if _, err := os.Lstat(lockPath); !os.IsNotExist(err) {
-		t.Fatalf("runtime lock was published: %v", err)
 	}
 }

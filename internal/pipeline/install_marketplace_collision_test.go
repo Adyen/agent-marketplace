@@ -20,8 +20,15 @@ func TestMarketplaceResolvedCollision(t *testing.T) {
 		Resolved: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "review"}},
 	}
 	collection := &marketplace.PreparedInstall{CollectionMembers: []*marketplace.PreparedInstall{plan}}
-	for _, source := range []config.Source{config.RepoCommitted, config.UserPersonal, config.Organization} {
-		resolved := []resolver.ResolvedArtifact{{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "alias"}, Source: source}}
+	for _, tcScope := range []struct {
+		source config.Source
+		scope  config.Source
+	}{
+		{config.RepoCommitted, config.RepoCommitted},
+		{config.UserPersonal, config.UserPersonal},
+		{config.Organization, config.UserPersonal},
+	} {
+		resolved := []resolver.ResolvedArtifact{{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "alias"}, Source: tcScope.source}}
 		for _, tc := range []struct {
 			name string
 			plan *marketplace.PreparedInstall
@@ -30,8 +37,8 @@ func TestMarketplaceResolvedCollision(t *testing.T) {
 			{"collection", collection},
 			{"nested", &marketplace.PreparedInstall{CollectionMembers: []*marketplace.PreparedInstall{collection}}},
 		} {
-			t.Run(source.String()+"/"+tc.name, func(t *testing.T) {
-				if err := checkResolvedMarketplaceInstallCollision(resolved, tc.plan); !errors.Is(err, ErrMarketplaceInstallCollision) {
+			t.Run(tcScope.source.String()+"/"+tc.name, func(t *testing.T) {
+				if err := checkResolvedMarketplaceInstallCollision(resolved, tc.plan, tcScope.scope); !errors.Is(err, ErrMarketplaceInstallCollision) {
 					t.Fatalf("collision error = %v", err)
 				}
 			})
@@ -51,12 +58,44 @@ func TestMarketplaceResolvedCollision(t *testing.T) {
 		{"different installed name", resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "alias"}, InstalledName: "different"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := checkResolvedMarketplaceInstallCollision([]resolver.ResolvedArtifact{tc.existing}, collection)
+			err := checkResolvedMarketplaceInstallCollision([]resolver.ResolvedArtifact{tc.existing}, collection, config.RepoCommitted)
 			if tc.collision != errors.Is(err, ErrMarketplaceInstallCollision) || (!tc.collision && err != nil) {
 				t.Fatalf("collision error=%v want collision=%v", err, tc.collision)
 			}
 			if tc.collision && !strings.Contains(err.Error(), "--as <name>") {
 				t.Fatalf("collision lacks alias guidance: %v", err)
+			}
+		})
+	}
+}
+
+func TestMarketplaceResolvedCollisionChecksInstallScope(t *testing.T) {
+	leaf := &marketplace.PreparedInstall{
+		Entry:    config.MarketplaceEntry{URL: "https://market.example", InstanceID: "new"},
+		Pin:      config.MarketplaceResourcePin{RegistryID: "new", Kind: "skill", Name: "review"},
+		Resolved: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "review"}},
+	}
+	for _, tc := range []struct {
+		name      string
+		source    config.Source
+		required  bool
+		install   config.Source
+		collision bool
+	}{
+		{"user and repository are complementary", config.UserPersonal, false, config.RepoCommitted, false},
+		{"repository and user are complementary", config.RepoCommitted, false, config.UserPersonal, false},
+		{"same repository scope collides", config.RepoCommitted, false, config.RepoPersonal, true},
+		{"required organization suppresses repository", config.Organization, true, config.RepoCommitted, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resolved := []resolver.ResolvedArtifact{{
+				Entry: catalog.Entry{Kind: ir.KindSkill, Name: "review"}, Source: tc.source, Required: tc.required,
+			}}
+			for _, plan := range []*marketplace.PreparedInstall{leaf, {CollectionMembers: []*marketplace.PreparedInstall{leaf}}} {
+				err := checkResolvedMarketplaceInstallCollision(resolved, plan, tc.install)
+				if errors.Is(err, ErrMarketplaceInstallCollision) != tc.collision || (!tc.collision && err != nil) {
+					t.Fatalf("collision = %v, want collision %v", err, tc.collision)
+				}
 			}
 		})
 	}
@@ -77,14 +116,14 @@ func TestMarketplaceInstallCollisionHonorsCollectionExclusions(t *testing.T) {
 		direct          bool
 		collision       bool
 	}{
-		{name: "active member", source: config.Organization, collision: true},
+		{name: "active member", source: config.Organization},
 		{name: "excluded organization member", source: config.Organization, exclusionSource: config.UserPersonal, exclude: true},
 		{name: "excluded user member", source: config.UserPersonal, exclusionSource: config.UserPersonal, exclude: true},
 		{name: "excluded repo member", source: config.RepoCommitted, exclusionSource: config.RepoCommitted, exclude: true},
 		{name: "excluded local member", source: config.RepoPersonal, exclusionSource: config.RepoPersonal, exclude: true},
 		{name: "required member", source: config.Organization, exclusionSource: config.UserPersonal, exclude: true, required: true, collision: true},
-		{name: "direct user pin", source: config.UserPersonal, exclusionSource: config.UserPersonal, exclude: true, direct: true, collision: true},
-		{name: "wrong exclusion scope", source: config.Organization, exclusionSource: config.RepoCommitted, exclude: true, collision: true},
+		{name: "direct repository pin", source: config.RepoCommitted, exclusionSource: config.RepoCommitted, exclude: true, direct: true, collision: true},
+		{name: "wrong exclusion scope", source: config.RepoCommitted, exclusionSource: config.UserPersonal, exclude: true, collision: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{
@@ -100,6 +139,37 @@ func TestMarketplaceInstallCollisionHonorsCollectionExclusions(t *testing.T) {
 			}
 			if tc.collision && !strings.Contains(err.Error(), "--as <name>") {
 				t.Fatalf("collision lacks alias guidance: %v", err)
+			}
+		})
+	}
+}
+
+func TestMarketplaceInstallPreflightKeepsOtherScopePins(t *testing.T) {
+	plan := &marketplace.PreparedInstall{
+		Entry:    config.MarketplaceEntry{URL: "https://market.example", InstanceID: "new"},
+		Pin:      config.MarketplaceResourcePin{RegistryID: "new", Kind: "skill", Name: "review"},
+		Resolved: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "review"}},
+	}
+	for _, tc := range []struct {
+		name      string
+		scope     Scope
+		source    config.Source
+		required  bool
+		collision bool
+	}{
+		{"user pin and repo install", ScopeRepo, config.UserPersonal, false, false},
+		{"repo pin and user install", ScopeUser, config.RepoCommitted, false, false},
+		{"repo pin and repo install", ScopeRepo, config.RepoCommitted, false, true},
+		{"required organization pin and repo install", ScopeRepo, config.Organization, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{
+				URL: "https://old.example", InstanceID: "old", Source: tc.source, Required: tc.required,
+				Resources: []config.MarketplaceResourcePin{{RegistryID: "old", Kind: "skill", Name: "review"}},
+			}}}
+			err := checkMarketplaceInstallCollision(context.Background(), InstallOptions{RepoRoot: t.TempDir(), Scope: tc.scope}, &config.EffectiveConfig{Merged: cfg}, plan)
+			if errors.Is(err, ErrMarketplaceInstallCollision) != tc.collision || (!tc.collision && err != nil) {
+				t.Fatalf("collision = %v, want collision %v", err, tc.collision)
 			}
 		})
 	}

@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,7 +14,7 @@ import (
 func TestFindRepoRootWalksUpToAgentsConfig(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	mustMkdirAll(t, filepath.Join(repoRoot, ".agents"))
-	mustWriteFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n"))
+	mustWriteFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {}\n"))
 
 	nestedDir := filepath.Join(repoRoot, "internal", "config")
 	mustMkdirAll(t, nestedDir)
@@ -49,7 +51,7 @@ func TestFindRepoRootDoesNotCrossGitBoundary(t *testing.T) {
 	parentRepo := filepath.Join(tmp, "parent")
 	mustMkdirAll(t, filepath.Join(parentRepo, ".agents"))
 	mustWriteFile(t, filepath.Join(parentRepo, ".agents", "config.yaml"),
-		[]byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n"))
+		[]byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {}\n"))
 	runGit(t, parentRepo, "init")
 
 	// Child git repo nested inside the parent (no .agents/config.yaml of its own).
@@ -78,14 +80,14 @@ func TestFindRepoRootMonorepoSubdirectoryConfig(t *testing.T) {
 	monoRepo := filepath.Join(tmp, "monorepo")
 	mustMkdirAll(t, filepath.Join(monoRepo, ".agents"))
 	mustWriteFile(t, filepath.Join(monoRepo, ".agents", "config.yaml"),
-		[]byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n"))
+		[]byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {}\n"))
 	runGit(t, monoRepo, "init")
 
 	// service-a has its own config within the same git repo.
 	serviceA := filepath.Join(monoRepo, "services", "service-a")
 	mustMkdirAll(t, filepath.Join(serviceA, ".agents"))
 	mustWriteFile(t, filepath.Join(serviceA, ".agents", "config.yaml"),
-		[]byte("apiVersion: agent-marketplace/v2\nregistries: []\n"))
+		[]byte("apiVersion: agent-marketplace/v4\nsources: {}\n"))
 
 	// cwd is a nested directory inside service-a.
 	cwd := filepath.Join(serviceA, "src", "handler")
@@ -120,22 +122,17 @@ func TestLoadGlobalConfigLoadsAndValidatesYAML(t *testing.T) {
 	configPath := filepath.Join(homeDir, ".agents", "config.yaml")
 	mustMkdirAll(t, filepath.Dir(configPath))
 	mustWriteFile(t, configPath, []byte(`
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: git@example.com:security.git
-    ref: main
+sources:
+  security: {git: git@example.com:security.git, ref: main}
+resources:
+  security:
     required: true
-    skills:
-      include:
-        - no-curl-bash
-      exclude:
-        - legacy-security
-    tags:
-      - security
-tags:
-  - security
+    include: [skill/no-curl-bash]
+    exclude: [skill/legacy-security]
+    tags: [security]
 `))
 
 	cfg, err := LoadGlobalConfig()
@@ -143,21 +140,12 @@ tags:
 		t.Fatalf("expected global config to load: %v", err)
 	}
 
-	want := &Config{
-		APIVersion: APIVersionV2,
-		Harnesses:  []string{"factory"},
-		Registries: []RegistryEntry{{
-			URL:      "git@example.com:security.git",
-			Ref:      "main",
-			Skills:   KindSelector{Include: []string{"no-curl-bash"}, Exclude: []string{"legacy-security"}},
-			Tags:     []string{"security"},
-			Required: true,
-		}},
-		Tags: []string{"security"},
+	if cfg.APIVersion != APIVersionV4 || !reflect.DeepEqual(cfg.Harnesses, []string{"factory"}) || len(cfg.Registries) != 1 {
+		t.Fatalf("unexpected global config: %#v", cfg)
 	}
-
-	if !reflect.DeepEqual(cfg, want) {
-		t.Fatalf("expected global config %#v, got %#v", want, cfg)
+	entry := cfg.Registries[0]
+	if entry.URL != "git@example.com:security.git" || entry.Ref != "main" || entry.V4Kind != V4SourceGit || !entry.Required || !reflect.DeepEqual(entry.Skills, KindSelector{Include: []string{"no-curl-bash"}, Exclude: []string{"legacy-security"}}) || !reflect.DeepEqual(entry.Tags, []string{"security"}) {
+		t.Fatalf("global source policy lost: %#v", entry)
 	}
 }
 
@@ -177,17 +165,14 @@ func TestLoadRepoConfigLoadsFromRepoRoot(t *testing.T) {
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	mustMkdirAll(t, filepath.Dir(configPath))
 	mustWriteFile(t, configPath, []byte(`
-apiVersion: agent-marketplace/v2
-registries:
-  - url: git@example.com:infra.git
-    ref: v1.0.0
-    skills:
-      include:
-        - vm-lifecycle
-      exclude:
-        - firewall-rule-lifecycle
-tags:
-  - k8s
+apiVersion: agent-marketplace/v4
+sources:
+  infra: {git: git@example.com:infra.git, ref: v1.0.0}
+resources:
+  infra:
+    include: [skill/vm-lifecycle]
+    exclude: [skill/firewall-rule-lifecycle]
+    tags: [k8s]
 `))
 
 	nestedDir := filepath.Join(repoRoot, "cmd", "agent-marketplace")
@@ -199,18 +184,12 @@ tags:
 		t.Fatalf("expected repo config to load: %v", err)
 	}
 
-	want := &Config{
-		APIVersion: APIVersionV2,
-		Registries: []RegistryEntry{{
-			URL:    "git@example.com:infra.git",
-			Ref:    "v1.0.0",
-			Skills: KindSelector{Include: []string{"vm-lifecycle"}, Exclude: []string{"firewall-rule-lifecycle"}},
-		}},
-		Tags: []string{"k8s"},
+	if cfg.APIVersion != APIVersionV4 || len(cfg.Registries) != 1 {
+		t.Fatalf("unexpected repo config: %#v", cfg)
 	}
-
-	if !reflect.DeepEqual(cfg, want) {
-		t.Fatalf("expected repo config %#v, got %#v", want, cfg)
+	entry := cfg.Registries[0]
+	if entry.URL != "git@example.com:infra.git" || entry.Ref != "v1.0.0" || entry.V4Kind != V4SourceGit || !reflect.DeepEqual(entry.Skills, KindSelector{Include: []string{"vm-lifecycle"}, Exclude: []string{"firewall-rule-lifecycle"}}) || !reflect.DeepEqual(entry.Tags, []string{"k8s"}) {
+		t.Fatalf("repo source policy lost: %#v", entry)
 	}
 }
 
@@ -222,12 +201,13 @@ func TestLoadRepoConfigAllowsTopLevelHarnesses(t *testing.T) {
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	mustMkdirAll(t, filepath.Dir(configPath))
 	mustWriteFile(t, configPath, []byte(`
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: git@example.com:infra.git
-    ref: v1.0.0
+sources:
+  infra: {git: git@example.com:infra.git, ref: v1.0.0}
+resources:
+  infra: [skill/review]
 `))
 
 	nestedDir := filepath.Join(repoRoot, "cmd", "agent-marketplace")
@@ -250,10 +230,11 @@ func TestLoadGlobalConfigSucceedsWithoutHarnesses(t *testing.T) {
 	configPath := filepath.Join(homeDir, ".agents", "config.yaml")
 	mustMkdirAll(t, filepath.Dir(configPath))
 	mustWriteFile(t, configPath, []byte(`
-apiVersion: agent-marketplace/v2
-registries:
-  - url: git@example.com:infra.git
-    ref: main
+apiVersion: agent-marketplace/v4
+sources:
+  infra: {git: git@example.com:infra.git, ref: main}
+resources:
+  infra: [skill/review]
 `))
 
 	cfg, err := LoadGlobalConfig()
@@ -275,7 +256,7 @@ func TestLoadRepoConfigReturnsNilWhenCwdIsHomeDir(t *testing.T) {
 	// Create ~/.agents/config.yaml — this is the user-personal config, NOT a project config.
 	configPath := filepath.Join(homeDir, ".agents", "config.yaml")
 	mustMkdirAll(t, filepath.Dir(configPath))
-	mustWriteFile(t, configPath, []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n"))
+	mustWriteFile(t, configPath, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {}\n"))
 
 	withWorkingDir(t, homeDir)
 
@@ -294,12 +275,12 @@ func TestFindRepoRootSkipsHomeDirAgentsConfigButFindsNestedProject(t *testing.T)
 
 	// Create ~/.agents/config.yaml (user-personal config).
 	mustMkdirAll(t, filepath.Join(homeDir, ".agents"))
-	mustWriteFile(t, filepath.Join(homeDir, ".agents", "config.yaml"), []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n"))
+	mustWriteFile(t, filepath.Join(homeDir, ".agents", "config.yaml"), []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {}\n"))
 
 	// Create a real project nested below home.
 	projectRoot := filepath.Join(homeDir, "projects", "myrepo")
 	mustMkdirAll(t, filepath.Join(projectRoot, ".agents"))
-	mustWriteFile(t, filepath.Join(projectRoot, ".agents", "config.yaml"), []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n"))
+	mustWriteFile(t, filepath.Join(projectRoot, ".agents", "config.yaml"), []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {}\n"))
 
 	nested := filepath.Join(projectRoot, "internal", "pkg")
 	mustMkdirAll(t, nested)
@@ -356,24 +337,22 @@ func TestLoadLocalConfigReturnsNilWhenMissing(t *testing.T) {
 	}
 }
 
-func TestLoadLocalConfigLoadsSkillsExcludeAndIgnoresOtherFields(t *testing.T) {
+func TestLoadLocalConfigLoadsSourceBoundSkillsAndExclusions(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	mustMkdirAll(t, filepath.Join(repoRoot, ".agents"))
-	mustWriteFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(`apiVersion: agent-marketplace/v2
+	mustWriteFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(`apiVersion: agent-marketplace/v4
 harnesses: [factory]
-registries: []
+sources: {}
 `))
 	configPath := filepath.Join(repoRoot, ".agents", "config.local.yaml")
 	mustWriteFile(t, configPath, []byte(`
-skills:
-  include:
-    - locally-enabled-skill
-  exclude:
-    - local-only-skill
-    - another-local-skill
-registries:
-  - url: git@example.com:ignored.git
-    ref: ignored
+apiVersion: agent-marketplace/v4
+sources:
+  local: {git: git@example.com:local.git, ref: main}
+resources:
+  local:
+    include: [skill/locally-enabled-skill]
+    exclude: [skill/local-only-skill, skill/another-local-skill]
 `))
 
 	nestedDir := filepath.Join(repoRoot, "cmd", "agent-marketplace")
@@ -385,12 +364,8 @@ registries:
 		t.Fatalf("expected local config to load: %v", err)
 	}
 
-	want := &LocalConfig{
-		Registries: []RegistryEntry{{URL: "git@example.com:ignored.git", Ref: "ignored"}},
-		Skills:     KindSelector{Include: []string{"locally-enabled-skill"}, Exclude: []string{"local-only-skill", "another-local-skill"}},
-	}
-	if !reflect.DeepEqual(cfg, want) {
-		t.Fatalf("expected local config %#v, got %#v", want, cfg)
+	if cfg.APIVersion != APIVersionV4 || len(cfg.Registries) != 1 || cfg.Registries[0].URL != "git@example.com:local.git" || cfg.Registries[0].Ref != "main" || !reflect.DeepEqual(cfg.Registries[0].Skills, KindSelector{Include: []string{"locally-enabled-skill"}, Exclude: []string{"local-only-skill", "another-local-skill"}}) {
+		t.Fatalf("local source policy lost: %#v", cfg)
 	}
 }
 
@@ -411,15 +386,13 @@ func TestLoadConfigFromPathLoadsValidFile(t *testing.T) {
 	path := filepath.Join(homeDir, ".agents", "config.yaml")
 	mustMkdirAll(t, filepath.Dir(path))
 	mustWriteFile(t, path, []byte(`
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: git@example.com:infra.git
-    ref: v1.0.0
-    required: true
-    skills:
-      - vm-lifecycle
+sources:
+  infra: {git: git@example.com:infra.git, ref: v1.0.0}
+resources:
+  infra: {required: true, include: [skill/vm-lifecycle]}
 `))
 
 	cfg, err := LoadConfigFromPath(path)
@@ -427,36 +400,20 @@ registries:
 		t.Fatalf("expected config to load: %v", err)
 	}
 
-	want := &Config{
-		APIVersion: APIVersionV2,
-		Harnesses:  []string{"factory"},
-		Registries: []RegistryEntry{{
-			URL:      "git@example.com:infra.git",
-			Ref:      "v1.0.0",
-			Required: true,
-			Skills:   KindSelector{Include: []string{"vm-lifecycle"}},
-		}},
+	if cfg.APIVersion != APIVersionV4 || !reflect.DeepEqual(cfg.Harnesses, []string{"factory"}) || len(cfg.Registries) != 1 {
+		t.Fatalf("unexpected config: %#v", cfg)
 	}
-	if !reflect.DeepEqual(cfg, want) {
-		t.Fatalf("expected %#v, got %#v", want, cfg)
+	entry := cfg.Registries[0]
+	if entry.URL != "git@example.com:infra.git" || entry.Ref != "v1.0.0" || !entry.Required || !reflect.DeepEqual(entry.Skills.Include, []string{"vm-lifecycle"}) {
+		t.Fatalf("source policy lost: %#v", entry)
 	}
 }
 
 func TestLoadConfigFromPathReturnsValidationError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	mustWriteFile(t, path, []byte(`
-registries:
-  - url: ""
-    ref: main
-`))
-
+	mustWriteFile(t, path, []byte("apiVersion: agent-marketplace/v4\nsources: {shared: {git: '', ref: main}}\n"))
 	_, err := LoadConfigFromPath(path)
-	if err == nil {
-		t.Fatalf("expected validation error")
-	}
-	if !strings.Contains(err.Error(), "registries[0].url is required") {
-		t.Fatalf("expected url validation error, got %v", err)
-	}
+	assertLoaderV4Error(t, err, "sources.shared", "v4.source-value", 2)
 }
 
 func TestLoadConfigFromPathReturnsParseError(t *testing.T) {
@@ -467,9 +424,7 @@ func TestLoadConfigFromPathReturnsParseError(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected parse error")
 	}
-	if !strings.Contains(err.Error(), "parse config") {
-		t.Fatalf("expected parse error, got %v", err)
-	}
+	assertLoaderV4Error(t, err, canonicalPath(t, path), "v4.parse", 0)
 }
 
 func TestLoadConfigFromPathAllowsRepoHarnesses(t *testing.T) {
@@ -477,12 +432,13 @@ func TestLoadConfigFromPathAllowsRepoHarnesses(t *testing.T) {
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	mustMkdirAll(t, filepath.Dir(configPath))
 	mustWriteFile(t, configPath, []byte(`
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: git@example.com:infra.git
-    ref: main
+sources:
+  infra: {git: git@example.com:infra.git, ref: main}
+resources:
+  infra: [skill/review]
 `))
 
 	cfg, err := LoadConfigFromPath(configPath)
@@ -499,10 +455,10 @@ registries:
 	globalPath := filepath.Join(homeDir, ".agents", "config.yaml")
 	mustMkdirAll(t, filepath.Dir(globalPath))
 	mustWriteFile(t, globalPath, []byte(`
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries: []
+sources: {}
 `))
 
 	globalCfg, err := LoadConfigFromPath(globalPath)
@@ -515,9 +471,11 @@ registries: []
 
 	localPath := filepath.Join(t.TempDir(), "config.local.yaml")
 	mustWriteFile(t, localPath, []byte(`
-registries:
-  - url: /local/skills
-    ref: main
+apiVersion: agent-marketplace/v4
+sources:
+  local: {directory: /local/skills}
+resources:
+  local: [skill/review]
 `))
 
 	_, err = LoadConfigFromPath(localPath)
@@ -539,14 +497,11 @@ func TestLoadLocalConfigFromPathReturnsNilWhenMissing(t *testing.T) {
 func TestLoadLocalConfigFromPathLoadsSkillsAndExclude(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.local.yaml")
 	mustWriteFile(t, path, []byte(`
-skills:
-  include:
-    - local-skill
-  exclude:
-    - opt-out-skill
-registries:
-  - url: /local/skills
-    ref: main
+apiVersion: agent-marketplace/v4
+sources:
+  local: {directory: /local/skills}
+resources:
+  local: {include: [skill/local-skill], exclude: [skill/opt-out-skill]}
 `))
 
 	cfg, err := LoadLocalConfigFromPath(path)
@@ -554,12 +509,8 @@ registries:
 		t.Fatalf("expected local config to load: %v", err)
 	}
 
-	want := &LocalConfig{
-		Registries: []RegistryEntry{{URL: "/local/skills", Ref: "main"}},
-		Skills:     KindSelector{Include: []string{"local-skill"}, Exclude: []string{"opt-out-skill"}},
-	}
-	if !reflect.DeepEqual(cfg, want) {
-		t.Fatalf("expected %#v, got %#v", want, cfg)
+	if cfg.APIVersion != APIVersionV4 || len(cfg.Registries) != 1 || cfg.Registries[0].URL != "/local/skills" || !cfg.Registries[0].IsLocal() || !reflect.DeepEqual(cfg.Registries[0].Skills, KindSelector{Include: []string{"local-skill"}, Exclude: []string{"opt-out-skill"}}) {
+		t.Fatalf("local selection lost: %#v", cfg)
 	}
 }
 
@@ -571,153 +522,78 @@ func TestLoadLocalConfigFromPathReturnsParseError(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected parse error")
 	}
-	if !strings.Contains(err.Error(), "parse config") {
-		t.Fatalf("expected parse error, got %v", err)
-	}
+	assertLoaderV4Error(t, err, canonicalPath(t, path), "v4.parse", 0)
 }
 
 func TestLoadLocalConfigFromPathRejectsUnknownKeys(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.local.yaml")
-	mustWriteFile(t, path, []byte(`
-skills:
-  exclude: [opt-out]
-harnesses: [factory]
-`))
-
+	mustWriteFile(t, path, []byte("apiVersion: agent-marketplace/v4\nsources: {local: {directory: /local/skills}}\nresources: {local: {exclude: [skill/opt-out]}}\nharnesses: [factory]\n"))
 	_, err := LoadLocalConfigFromPath(path)
-	if err == nil {
-		t.Fatalf("expected strict parse error for unknown key 'harnesses'")
+	assertLoaderV4Error(t, err, "harnesses", "v4.layer-field", 0)
+}
+
+// spec: consumer-config-format/explicit-non-v4-root-versions-are-refused
+// spec: consumer-config-format/versionless-roots-are-refused-in-every-consumer-layer
+func TestConfigAPIVersionPolicy(t *testing.T) {
+	cases := []struct {
+		name, version, code string
+		line                int
+	}{
+		{"v4", "apiVersion: agent-marketplace/v4\n", "", 0},
+		{"versionless", "", "v4.api-version-required", 1},
+		{"v1", "apiVersion: agent-marketplace/v1\n", "v4.api-version", 1},
+		{"v2", "apiVersion: agent-marketplace/v2\n", "v4.api-version", 1},
+		{"v3", "apiVersion: agent-marketplace/v3\n", "v4.api-version", 1},
+		{"unknown", "apiVersion: agent-marketplace/v99\n", "v4.api-version", 1},
+		{"empty", "apiVersion: ''\n", "v4.api-version", 1},
+		{"null", "apiVersion: null\n", "v4.api-version", 1},
+		{"number", "apiVersion: 4\n", "v4.api-version", 1},
+		{"list", "apiVersion: [agent-marketplace/v4]\n", "v4.api-version", 1},
+		{"case", "apiVersion: Agent-Marketplace/v4\n", "v4.api-version", 1},
+		{"padded", "apiVersion: ' agent-marketplace/v4 '\n", "v4.api-version", 1},
 	}
-	if !strings.Contains(err.Error(), "harnesses") {
-		t.Fatalf("expected error to mention unknown key 'harnesses', got %v", err)
+	for _, loader := range []struct {
+		name, filename string
+		load           func(string) (*Config, error)
+	}{
+		{"config", "config.yaml", LoadConfigFromPath},
+		{"local-via-config", "config.local.yaml", LoadConfigFromPath},
+		{"local", "config.local.yaml", func(path string) (*Config, error) {
+			cfg, err := LoadLocalConfigFromPath(path)
+			if cfg == nil {
+				return nil, err
+			}
+			return &Config{APIVersion: cfg.APIVersion, Registries: cfg.Registries}, err
+		}},
+		{"root-only", "config.yaml", LoadRootConfigFromPath},
+	} {
+		for _, tc := range cases {
+			t.Run(loader.name+"/"+tc.name, func(t *testing.T) {
+				path := filepath.Join(t.TempDir(), loader.filename)
+				before := tc.version + "sources: {local: {directory: /local/skills}}\nresources: {local: [skill/hello]}\n"
+				mustWriteFile(t, path, []byte(before))
+				cfg, err := loader.load(path)
+				if tc.code != "" {
+					assertLoaderV4Error(t, err, path, tc.code, tc.line)
+					if cfg != nil {
+						t.Fatalf("refused root exposed config: %#v", cfg)
+					}
+				} else if err != nil || cfg == nil || cfg.APIVersion != APIVersionV4 || len(cfg.Registries) != 1 || cfg.Registries[0].URL != "/local/skills" || !reflect.DeepEqual(cfg.Registries[0].Skills.Include, []string{"hello"}) {
+					t.Fatalf("valid control lost selections: cfg=%#v err=%v", cfg, err)
+				}
+				if got, err := os.ReadFile(path); err != nil || string(got) != before {
+					t.Fatalf("loader mutated root: %q %v", got, err)
+				}
+			})
+		}
 	}
 }
 
-// TestConfigAPIVersionPolicy is a table-driven matrix covering how the loaders
-// gate apiVersion across local vs. non-local config paths:
-//   - local config (LoadLocalConfigFromPath) tolerates an optional apiVersion,
-//     but a mismatched one is still rejected;
-//   - a local path loaded through the full Config loader (LoadConfigFromPath,
-//     the editor / remove --from path) does NOT require apiVersion, while a
-//     non-local path still does.
-func TestConfigAPIVersionPolicy(t *testing.T) {
-	cases := []struct {
-		name        string
-		fileName    string
-		content     string
-		useLocal    bool   // true → LoadLocalConfigFromPath; false → LoadConfigFromPath
-		wantErr     bool   // expect a load error
-		errSubstr   string // when wantErr, error must contain this substring
-		verifyLocal func(t *testing.T, cfg *LocalConfig)
-		verifyCfg   func(t *testing.T, cfg *Config)
-	}{
-		{
-			// A local config may carry an optional apiVersion line (added by
-			// hand or copied from a sibling) without tripping the strict
-			// KnownFields decoder ("field apiVersion not found in ...").
-			name:     "local tolerates apiVersion",
-			fileName: "config.local.yaml",
-			content: `
-apiVersion: agent-marketplace/v2
-skills:
-  include: [local-skill]
-registries:
-  - url: /local/skills
-    ref: main
-`,
-			useLocal: true,
-			verifyLocal: func(t *testing.T, cfg *LocalConfig) {
-				if cfg.APIVersion != APIVersionV2 {
-					t.Fatalf("expected apiVersion %q, got %q", APIVersionV2, cfg.APIVersion)
-				}
-				if !reflect.DeepEqual(cfg.Skills, KindSelector{Include: []string{"local-skill"}}) {
-					t.Fatalf("unexpected skills selector: %#v", cfg.Skills)
-				}
-			},
-		},
-		{
-			// A mismatched apiVersion is still rejected so typos / stale
-			// versions surface.
-			name:     "local rejects wrong apiVersion",
-			fileName: "config.local.yaml",
-			content: `
-apiVersion: agent-marketplace/v1
-skills:
-  include: [local-skill]
-`,
-			useLocal:  true,
-			wantErr:   true,
-			errSubstr: "unsupported apiVersion",
-		},
-		{
-			// Loading a local config path through the full Config loader (the
-			// editor and remove --from flows) must not demand apiVersion; local
-			// configs are generated without it, so requiring it broke
-			// `remove --scope local`.
-			name:     "local path via Config loader skips apiVersion requirement",
-			fileName: "config.local.yaml",
-			content: `
-registries:
-  - url: /local/skills
-    ref: main
-    skills:
-      include: [hello]
-`,
-			verifyCfg: func(t *testing.T, cfg *Config) {
-				if cfg == nil || len(cfg.Registries) != 1 {
-					t.Fatalf("expected one registry entry, got %#v", cfg)
-				}
-			},
-		},
-		{
-			// The leniency must not leak into project/global configs, which
-			// must still declare apiVersion.
-			name:     "non-local path still requires apiVersion",
-			fileName: "config.yaml",
-			content: `
-registries:
-  - url: /repo/skills
-    ref: main
-`,
-			wantErr: true,
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), tc.fileName)
-			mustWriteFile(t, path, []byte(tc.content))
-
-			var (
-				localCfg *LocalConfig
-				cfg      *Config
-				err      error
-			)
-			if tc.useLocal {
-				localCfg, err = LoadLocalConfigFromPath(path)
-			} else {
-				cfg, err = LoadConfigFromPath(path)
-			}
-
-			if tc.wantErr {
-				if err == nil {
-					t.Fatalf("expected load error, got nil")
-				}
-				if tc.errSubstr != "" && !strings.Contains(err.Error(), tc.errSubstr) {
-					t.Fatalf("expected error to contain %q, got %v", tc.errSubstr, err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("expected config to load, got error: %v", err)
-			}
-			if tc.verifyLocal != nil {
-				tc.verifyLocal(t, localCfg)
-			}
-			if tc.verifyCfg != nil {
-				tc.verifyCfg(t, cfg)
-			}
-		})
+func assertLoaderV4Error(t *testing.T, err error, path, code string, line int) {
+	t.Helper()
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != code || validation.Path != path || validation.Line != line {
+		t.Fatalf("error = %v, want %s at %s line %d", err, code, path, line)
 	}
 }
 
@@ -779,88 +655,118 @@ func canonicalPath(t *testing.T, path string) string {
 	return filepath.Clean(resolved)
 }
 
-func TestLoadGlobalConfigLoadsV3Minimal(t *testing.T) {
-	homeDir := t.TempDir()
-	t.Setenv("HOME", homeDir)
-
-	configPath := filepath.Join(homeDir, ".agents", "config.yaml")
-	mustMkdirAll(t, filepath.Dir(configPath))
-	mustWriteFile(t, configPath, []byte(`apiVersion: agent-marketplace/v3
-harnesses:
-  - factory
-  - claude
-`))
-
-	cfg, err := LoadGlobalConfig()
-	if err != nil {
-		t.Fatalf("expected v3 global config to load: %v", err)
-	}
-	if cfg == nil {
-		t.Fatal("expected non-nil config")
-	}
-	if cfg.APIVersion != APIVersionV3 {
-		t.Fatalf("expected apiVersion %q, got %q", APIVersionV3, cfg.APIVersion)
-	}
-	if !reflect.DeepEqual(cfg.Harnesses, []string{"factory", "claude"}) {
-		t.Fatalf("expected harnesses [factory claude], got %v", cfg.Harnesses)
-	}
-}
-
-func TestLoadConfigFromPathLoadsV3Global(t *testing.T) {
-	homeDir := t.TempDir()
-	t.Setenv("HOME", homeDir)
-
-	configPath := filepath.Join(homeDir, ".agents", "config.yaml")
-	mustMkdirAll(t, filepath.Dir(configPath))
-	mustWriteFile(t, configPath, []byte(`apiVersion: agent-marketplace/v3
-harnesses:
-  - factory
-`))
-
-	cfg, err := LoadConfigFromPath(configPath)
-	if err != nil {
-		t.Fatalf("expected v3 config to load: %v", err)
-	}
-	if cfg == nil {
-		t.Fatal("expected non-nil config")
-	}
-	if cfg.APIVersion != APIVersionV3 {
-		t.Fatalf("expected apiVersion %q, got %q", APIVersionV3, cfg.APIVersion)
+func TestPublicLoadersRefuseV3WithV4Controls(t *testing.T) {
+	for _, name := range []string{"global", "explicit-global", "repo", "explicit-repo"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			home := filepath.Join(dir, "home")
+			repo := filepath.Join(dir, "repo")
+			t.Setenv("HOME", home)
+			path := filepath.Join(repo, ".agents", "config.yaml")
+			if name == "global" || name == "explicit-global" {
+				path = filepath.Join(home, ".agents", "config.yaml")
+			}
+			mustMkdirAll(t, filepath.Dir(path))
+			withWorkingDir(t, filepath.Dir(filepath.Dir(path)))
+			load := func() (*Config, error) {
+				switch name {
+				case "global":
+					return LoadGlobalConfig()
+				case "repo":
+					return LoadRepoConfig()
+				default:
+					return LoadConfigFromPath(path)
+				}
+			}
+			for _, version := range []string{"agent-marketplace/v3", "agent-marketplace/v4"} {
+				mustWriteFile(t, path, []byte("apiVersion: "+version+"\nharnesses: [factory, claude]\n"))
+				cfg, err := load()
+				if version == "agent-marketplace/v3" {
+					wantPath := path
+					if name == "repo" {
+						wantPath = canonicalPath(t, path)
+					}
+					assertLoaderV4Error(t, err, wantPath, "v4.api-version", 1)
+					if cfg != nil {
+						t.Fatalf("legacy config exposed: %#v", cfg)
+					}
+				} else if err != nil || cfg == nil || cfg.APIVersion != APIVersionV4 || !reflect.DeepEqual(cfg.Harnesses, []string{"factory", "claude"}) {
+					t.Fatalf("v4 loader control: cfg=%#v err=%v", cfg, err)
+				}
+			}
+		})
 	}
 }
 
-func TestLoadConfigAcceptsV3(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.yaml")
-	mustWriteFile(t, path, []byte(`apiVersion: agent-marketplace/v3
-harnesses:
-  - factory
-registries:
-  - url: git@example.com:repo.git
-    ref: main
-`))
-
-	cfg, err := loadConfig(path, true)
-	if err != nil {
-		t.Fatalf("expected v3 config to load through loadConfig: %v", err)
+// A config root that does not exist yet must get one canonical name however
+// many of its directories are missing, so staged edits, the loader, and lock
+// reconciliation agree on it. The home here is reached through a symlink, as
+// it is under macOS /tmp and /var.
+// spec: config-mutation/user-scope-install-creates-a-missing-user-root
+func TestCanonicalConfigPathTolerateMissingResolvesTheDeepestExistingAncestor(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if cfg.APIVersion != APIVersionV3 {
-		t.Fatalf("expected apiVersion %q, got %q", APIVersionV3, cfg.APIVersion)
+	resolvedReal, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ path, want string }{
+		{filepath.Join(link, "config.yaml"), filepath.Join(resolvedReal, "config.yaml")},
+		{filepath.Join(link, ".agents", "config.yaml"), filepath.Join(resolvedReal, ".agents", "config.yaml")},
+		{filepath.Join(link, "a", "b", "config.yaml"), filepath.Join(resolvedReal, "a", "b", "config.yaml")},
+	} {
+		got, err := canonicalConfigPathTolerateMissing(tc.path)
+		if err != nil || got != tc.want {
+			t.Fatalf("canonicalConfigPathTolerateMissing(%q) = %q, %v; want %q", tc.path, got, err, tc.want)
+		}
+		if err := os.MkdirAll(filepath.Dir(tc.path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(tc.path, []byte("apiVersion: agent-marketplace/v4\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		existing, err := canonicalConfigPath(tc.path)
+		if err != nil || existing != got {
+			t.Fatalf("name after creating %q = %q, %v; want the pre-creation name %q", tc.path, existing, err, got)
+		}
 	}
 }
 
-func TestLoadConfigFromPathAllowsV3RepoHarnesses(t *testing.T) {
-	// A config.yaml that is not the global path is treated as a repo config.
-	configPath := filepath.Join(t.TempDir(), "config.yaml")
-	mustWriteFile(t, configPath, []byte(`apiVersion: agent-marketplace/v3
-harnesses:
-  - factory
-`))
-
-	cfg, err := LoadConfigFromPath(configPath)
-	if err != nil {
-		t.Fatalf("expected v3 repo config with harnesses to load: %v", err)
+// A dangling symlink on the path, as the file or as one of its directories,
+// has no name that stays the same once its target exists. It is refused, and
+// the error still reports a missing file so readers treat the layer as absent.
+// spec: config-mutation/user-scope-install-through-a-dangling-symlink-is-refused
+func TestCanonicalConfigPathTolerateMissingRefusesADanglingSymlink(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(cfg.Harnesses, []string{"factory"}) {
-		t.Fatalf("expected v3 repo harnesses [factory], got %#v", cfg.Harnesses)
+	if err := os.Symlink(filepath.Join(root, "dotfiles", "agents"), filepath.Join(home, ".agents")); err != nil {
+		t.Fatal(err)
+	}
+	leafDir := filepath.Join(root, "leaf")
+	if err := os.MkdirAll(leafDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "dotfiles", "config.yaml"), filepath.Join(leafDir, "config.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{
+		filepath.Join(home, ".agents", "config.yaml"),
+		filepath.Join(home, ".agents", "nested", "config.yaml"),
+		filepath.Join(leafDir, "config.yaml"),
+	} {
+		got, err := canonicalConfigPathTolerateMissing(path)
+		if err == nil || !errors.Is(err, fs.ErrNotExist) || !strings.Contains(err.Error(), "symlink to a missing target") {
+			t.Fatalf("canonicalConfigPathTolerateMissing(%q) = %q, %v; want a dangling-symlink error that wraps fs.ErrNotExist", path, got, err)
+		}
 	}
 }

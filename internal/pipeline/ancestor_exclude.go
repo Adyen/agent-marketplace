@@ -101,21 +101,6 @@ func detectAncestorMaterializedExcludes(
 	return warns
 }
 
-// AncestorMaterializedExcludeWarnings reports excludes in the local layer of a
-// subdirectory that cannot take effect because the excluded skill is still
-// materialized in an ancestor root. Exposed for callers (e.g. sync --check)
-// that drive resolution directly instead of via Sync.
-func AncestorMaterializedExcludeWarnings(matRoot, repoRoot string, res ResolveResult) []error {
-	targets := res.TargetHarnesses
-	return detectAncestorMaterializedExcludes(
-		matRoot,
-		repoRoot,
-		targets,
-		skillExcludesFromLocal(res.LocalCfg),
-		res.Resolved,
-	)
-}
-
 // ancestorRoots returns the directories from the parent of matRoot up to and
 // including repoRoot, ordered deepest-first. Returns nil if repoRoot is not an
 // ancestor of matRoot.

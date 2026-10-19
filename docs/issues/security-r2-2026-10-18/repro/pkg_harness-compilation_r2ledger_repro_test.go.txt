@@ -1,0 +1,45 @@
+package harnesscompile
+
+// R2 frozen-ledger reproduction; see docs/issues/2026-10-18-security-r2-frozen-ledger.md.
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// F167 (SDK sink): a marker-merge destination leaf links to external JSON.
+func TestR2LedgerF167SDKMergeLeafAlias(t *testing.T) {
+	outDir, external := t.TempDir(), t.TempDir()
+	payload := filepath.Join(external, "private.json")
+	const body = `{"mcpServers":{"foreign":{"command":"inert"}},"token":"inert-secret"}`
+	if err := os.WriteFile(payload, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	leaf := filepath.Join(outDir, ".mcp.json")
+	if err := os.Symlink(payload, leaf); err != nil {
+		t.Fatal(err)
+	}
+	result := &Result{Artifacts: []Artifact{{
+		Path:              ".mcp.json",
+		Bytes:             []byte(`{"mcpServers":{"managed":{"command":"inert-managed"}}}`),
+		MergeWithExisting: true,
+		ManagedByField:    "_managed_by",
+		ManagedByValue:    "agent-marketplace",
+	}}}
+	report, err := Materialize(result, outDir, WithWriteMode(WriteModeOverwrite))
+	var written []string
+	if report != nil {
+		written = report.Written
+	}
+	t.Logf("err=%v written=%v", err, written)
+	if err == nil {
+		t.Errorf("REPRODUCED: SDK merge accepted the external leaf link")
+	}
+	if got, lerr := os.Readlink(leaf); lerr != nil || got != payload {
+		t.Errorf("leaf link changed: readlink=%q err=%v", got, lerr)
+	}
+	if raw, rerr := os.ReadFile(payload); rerr != nil || string(raw) != body {
+		t.Errorf("REPRODUCED: external JSON modified (err=%v)", rerr)
+	}
+}

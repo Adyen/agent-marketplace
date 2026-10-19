@@ -1,3 +1,4 @@
+@import "../../../../design/brand.css";
 @import "../../../../design/semantic-colors.css";
 
 /**
@@ -23,6 +24,12 @@
   --am-danger: var(--am-color-status-danger);
 
   --am-maxw: 1200px;
+  --am-text-supporting: 13px;
+  --am-text-body-sm: 14px;
+  --am-text-body: 17px;
+  --am-font-medium: 500;
+  --am-font-semibold: 600;
+  --am-font-bold: 700;
   --am-section-padding: 96px;
   --am-section-heading-width: 760px;
   --am-section-heading-size: 36px;
@@ -56,7 +63,7 @@
   --am-terminal-selection: var(--am-color-terminal-selection);
   --am-terminal-shadow-strong: var(--am-color-terminal-shadow-strong);
   --am-technical-padding: 16px;
-  --am-technical-font-size: 12.5px;
+  --am-technical-font-size: var(--am-text-supporting);
   --am-technical-line-height: 1.8;
   --am-hero-bg: var(--am-color-hero-bg);
   --am-hero-text: var(--am-color-hero-text);
@@ -68,6 +75,12 @@
   --am-footer-bg: var(--am-color-footer-bg);
 
   --vp-code-font-size: 13px;
+}
+
+.VPNavBarTitle .logo {
+  width: var(--am-brand-logo-width);
+  height: auto;
+  transform: translateY(var(--am-brand-logo-offset-y));
 }
 
 .dark {
@@ -82,7 +95,6 @@
   --vp-c-text-3: var(--am-color-text-muted);
   --vp-c-divider: var(--am-color-border-default);
   --vp-c-gutter: var(--am-color-border-default);
-  --am-technical-font-size: 13.5px;
 }
 
 @media (max-width: 680px) {

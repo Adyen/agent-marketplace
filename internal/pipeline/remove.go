@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
@@ -57,6 +59,7 @@ type RemoveOptions struct {
 	DependencyReconcile DependencyReconciler
 	CleanupDependencies CleanupDependencyCommitter
 	configStaging       *configStagingManager
+	workspace           *Workspace
 	warningSink         *[]error
 }
 
@@ -76,11 +79,29 @@ type RemoveResult struct {
 // Remove removes a resource from the appropriate config layer and re-syncs.
 // It handles collection detection, scope inference, scope boundary validation,
 // per-scope config editing, and --from ad-hoc registry removal.
+func removeWorkspace(opts RemoveOptions) (Workspace, error) {
+	if opts.workspace != nil {
+		return *opts.workspace, nil
+	}
+	return workspaceForRoots(opts.RepoRoot, "")
+}
+
 func syncAfterRemove(ctx context.Context, opts RemoveOptions, extra ...silentSyncOpt) error {
-	if opts.DependencyReconcile != nil {
+	ws, err := removeWorkspace(opts)
+	if err != nil {
+		return err
+	}
+	if opts.configStaging != nil {
+		edits, err := opts.configStaging.Edits()
+		if err != nil {
+			return err
+		}
+		if err := preflightHookRemoval(ctx, ws, edits, nil); err != nil {
+			return err
+		}
 		extra = append(extra, withDependencyReconciler(opts.DependencyReconcile), withConfigStaging(opts.configStaging))
 	}
-	warnings, err := silentSyncCollect(ctx, opts.RepoRoot, extra...)
+	warnings, err := silentSyncCollect(ctx, ws, extra...)
 	if opts.warningSink != nil {
 		*opts.warningSink = append(*opts.warningSink, warnings...)
 	}
@@ -90,13 +111,26 @@ func syncAfterRemove(ctx context.Context, opts RemoveOptions, extra ...silentSyn
 func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retErr error) {
 	var warnings []error
 	opts.warningSink = &warnings
+	ws, err := workspaceForRoots(opts.RepoRoot, "")
+	if err != nil {
+		return nil, err
+	}
+	if err := RecoverDependencyTransactions(ctx); err != nil {
+		return nil, err
+	}
+	if err := ValidateConsumerIntent(ctx, ws.RepoRoot(), ws.LocalConfigDir()); err != nil {
+		return nil, err
+	}
+	opts.workspace = &ws
 	defer func() {
 		if result != nil {
 			result.Warnings = warnings
 		}
 	}()
+	if opts.DependencyReconcile == nil && materialize.HasActiveNativeHooks(ws.MaterializeRoot()) {
+		opts.DependencyReconcile = commitRemovalConfig
+	}
 	if opts.DependencyReconcile != nil {
-		var err error
 		opts.configStaging, err = newConfigStagingManager()
 		if err != nil {
 			return nil, err
@@ -126,77 +160,40 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		return nil, fmt.Errorf("resource name is required")
 	}
 
-	mergedCfg, repoCfg, orgCfg, err := loadRemoveConfig(ctx, opts.RepoRoot)
+	mergedCfg, repoCfg, orgCfg, err := loadRemoveConfig(ctx, ws)
 	if err != nil {
 		return nil, err
 	}
 
-	if collection, entry, ok := marketplaceCollectionByName(mergedCfg, name, opts.Kind, opts.HasKind); ok {
-		if entry.Source == config.Organization {
-			if entry.Required {
-				return nil, fmt.Errorf("collection %q is required and managed externally", name)
-			}
-			return nil, fmt.Errorf("collection %q is managed externally", name)
-		}
-		effective := opts.Scope
-		if !opts.ScopeSpecified {
-			effective = inferMarketplaceRemoveScope(entry.Source)
-		}
-		configPath, err := scopedConfigPath(opts.RepoRoot, effective)
-		if err != nil {
-			return nil, fmt.Errorf("resolve config path: %w", err)
-		}
-		if _, err := MutateMarketplaceLayer(ctx, opts.RepoRoot, opts.RepoRoot, configPath, scopeToConfigSource(effective), func(m *MarketplaceLayerMutation) error {
-			return m.RemoveCollection(entry, collection)
-		}, func() ([]error, error) {
-			return nil, silentSync(ctx, opts.RepoRoot)
-		}); err != nil {
-			return nil, err
-		}
-		return &RemoveResult{RemovedName: name, IsCollection: true}, nil
+	earlyTarget, err := resolvedResourceByNameInScope(earlyRemovalCandidates(mergedCfg, name), name, opts.Kind, opts.HasKind, mergedCfg, opts.Scope, opts.ScopeSpecified)
+	if err != nil {
+		return nil, err
 	}
-
-	if pin, entry, matches := marketplaceDirectPinMatches(mergedCfg, name, opts.Kind, opts.HasKind); matches > 1 {
-		return nil, fmt.Errorf("%q matches %d Marketplace pins by local or canonical name; remove by an unambiguous installed name", name, matches)
-	} else if matches == 1 {
-		if entry.Source == config.Organization {
-			if entry.Required {
-				return nil, fmt.Errorf("%s %q is required and managed externally", skill.KindLabel(opts.Kind), name)
+	marketplaceCfg := mergedCfg
+	if earlyTarget != nil {
+		scoped := *mergedCfg
+		scoped.Marketplaces = nil
+		if earlyTarget.IsMarketplace {
+			for _, entry := range mergedCfg.Marketplaces {
+				if entry.Source == earlyTarget.Source && entry.URL == earlyTarget.RegistryURL {
+					scoped.Marketplaces = append(scoped.Marketplaces, entry)
+				}
 			}
-			return nil, fmt.Errorf("%s %q is managed externally", skill.KindLabel(opts.Kind), name)
 		}
-		effective := opts.Scope
-		if !opts.ScopeSpecified {
-			effective = inferMarketplaceRemoveScope(entry.Source)
-		}
-		if err := config.ValidateScopeBoundary(entry.Source, scopeToConfigSource(effective)); err != nil {
-			return nil, err
-		}
-		configPath, err := scopedConfigPath(opts.RepoRoot, effective)
-		if err != nil {
-			return nil, fmt.Errorf("resolve config path: %w", err)
-		}
-		if _, err := MutateMarketplaceLayer(ctx, opts.RepoRoot, opts.RepoRoot, configPath, scopeToConfigSource(effective), func(m *MarketplaceLayerMutation) error {
-			return m.RemoveDirectPin(entry, pin)
-		}, func() ([]error, error) {
-			return nil, silentSync(ctx, opts.RepoRoot)
-		}); err != nil {
-			return nil, err
-		}
-		return &RemoveResult{RemovedName: name}, nil
+		marketplaceCfg = &scoped
 	}
-
-	if pin, ok := marketplaceCollectionOnlyPinByName(mergedCfg, name, opts.Kind, opts.HasKind); ok {
-		collectionName := "an explicitly selected collection"
-		if selections := pin.SelectedBy.List(); len(selections) > 0 {
-			collectionName = selections[0].Name
+	// Organization resources must also be disambiguated against catalog-selected
+	// resources, which are absent from the early authored-selection candidates.
+	organizationResource := earlyTarget != nil && earlyTarget.IsMarketplace && earlyTarget.Source == config.Organization && earlyTarget.Kind != ir.KindCollection
+	if !organizationResource {
+		if result, handled, err := removeMarketplaceSelection(ctx, opts, marketplaceCfg, name); handled {
+			return result, err
 		}
-		return nil, fmt.Errorf("marketplace %s %q is selected only through collection %s; remove that collection instead", pin.Kind, name, collectionName)
 	}
 
 	// Collections disappear during expansion, so locate their owning selection
 	// before resolving ordinary resources.
-	if !opts.HasKind || opts.Kind == ir.KindCollection {
+	if (!opts.HasKind || opts.Kind == ir.KindCollection) && (earlyTarget == nil || !earlyTarget.IsMarketplace && earlyTarget.Kind == ir.KindCollection) {
 		selection, effective, err := findCollectionRemovalSelection(opts.RepoRoot, mergedCfg, orgCfg, name, opts.Scope, opts.ScopeSpecified)
 
 		if err != nil {
@@ -213,10 +210,6 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 				}
 				return nil, err
 			}
-			destination, err := scopedConfigPath(opts.RepoRoot, effective)
-			if err != nil {
-				return nil, fmt.Errorf("resolve config path: %w", err)
-			}
 			if selection.RegistryScoped {
 				registryURL, registryPath := collectionRegistryLocation(selection)
 				entry := config.RegistryEntry{
@@ -226,29 +219,15 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 					V4Kind:        selection.V4Kind,
 					SourceHarness: strings.TrimSpace(selection.SourceHarness),
 				}
+				// Removing an explicitly selected collection drops its include
+				// and records a source-scoped exclusion, matching --from removal.
 				if err := editRemovalSelection(opts.RepoRoot, effective, opts.configStaging, entry, ir.KindCollection, name, config.SelectionExclude); err != nil {
 					return nil, err
 				}
 			} else {
-				rootCfg, err := config.LoadRootConfigFromPath(destination)
-				if err != nil {
-					return nil, fmt.Errorf("load root config %q: %w", destination, err)
-				}
-				rootSelected := hasTopLevelCollectionSelection(rootCfg, name)
 				providers := collectionProviderEntries(mergedCfg, name)
 				if err := editRemovalLayer(opts.RepoRoot, effective, opts.configStaging, func(m *LayerMutation) error {
-					locator := config.ResourceLocator{Kind: ir.KindCollection, Name: name}
-					inherited, err := m.UnboundIncludeInherited(locator)
-					if err != nil {
-						return err
-					}
-					if err := m.RemoveUnboundInclude(locator); err != nil {
-						return err
-					}
-					if !rootSelected || inherited {
-						return m.SetLayerExclude(locator, providers)
-					}
-					return nil
+					return m.SetLayerExclude(config.ResourceLocator{Kind: ir.KindCollection, Name: name}, providers)
 				}); err != nil {
 					return nil, err
 				}
@@ -260,11 +239,15 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		}
 	}
 
-	resolvedResult := Resolve(ctx, ResolveOptions{RepoRoot: opts.RepoRoot, SkipInventory: true, ReadOnlyExactLocks: true})
+	ws, err = removeWorkspace(opts)
+	if err != nil {
+		return nil, err
+	}
+	resolvedResult := Resolve(ctx, ResolveOptions{Workspace: ws, SkipInventory: true, ReadOnlyExactLocks: true})
 	if len(resolvedResult.Errors) > 0 {
 		return nil, errors.Join(resolvedResult.Errors...)
 	}
-	resolved := resolvedResult.Resolved
+	resolved := removalResourceCandidates(resolvedResult, name)
 
 	target, err := resolvedResourceByNameInScope(resolved, name, opts.Kind, opts.HasKind, mergedCfg, opts.Scope, opts.ScopeSpecified)
 	if err != nil {
@@ -277,6 +260,20 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 	// required:true skills are immune to remove from any scope.
 	if target.Required {
 		return nil, fmt.Errorf("%s %q is required and cannot be removed", skill.KindLabel(target.Kind), name)
+	}
+
+	if target.IsMarketplace && target.Source == config.Organization {
+		for _, entry := range resolvedResult.MergedCfg.Marketplaces {
+			if entry.Source != target.Source {
+				continue
+			}
+			for _, pin := range entry.Resources {
+				if config.MarketplaceCatalogKey(entry, pin) == target.CatalogKey {
+					return excludeOrganizationMarketplacePin(ctx, opts, entry, pin, name)
+				}
+			}
+		}
+		return nil, fmt.Errorf("%w: organization Marketplace resource %q no longer matches its resolved pin", ErrMarketplaceRemoveNotSelected, name)
 	}
 
 	// Determine the effective scope: caller-specified takes precedence;
@@ -316,11 +313,6 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 		return nil, err
 	}
 	return &RemoveResult{RemovedName: name, InferredUserScope: inferredUserScope}, nil
-}
-
-func isEditUnsupported(err error) bool {
-	var validation *config.V4ValidationError
-	return errors.As(err, &validation) && validation.Code == "config.edit.unsupported-operation"
 }
 
 func hasTopLevelCollectionSelection(cfg *config.Config, name string) bool {
@@ -606,8 +598,8 @@ func requiredCollectionAutoSelects(entry config.RegistryEntry) bool {
 	return true
 }
 
-func loadRemoveConfig(ctx context.Context, repoRoot string) (mergedCfg, repoCfg, orgCfg *config.Config, err error) {
-	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: repoRoot}, nil)
+func loadRemoveConfig(ctx context.Context, ws Workspace) (mergedCfg, repoCfg, orgCfg *config.Config, err error) {
+	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir()}, nil)
 	if len(ec.Errors) > 0 && !config.OnlyRegistryURLBlockedErrors(ec.Errors) {
 		return nil, nil, nil, errors.Join(ec.Errors...)
 	}
@@ -655,29 +647,8 @@ func editRemovalSelection(repoRoot string, scope Scope, staging *configStagingMa
 	})
 }
 
-func excludeWithUnboundCompatibility(repoRoot string, scope Scope, staging *configStagingManager, entry config.RegistryEntry, kind ir.ResourceKind, name string, clearStale bool) error {
-	locator := config.ResourceLocator{Kind: kind, Name: name}
-	return editRemovalLayer(repoRoot, scope, staging, func(m *LayerMutation) error {
-		if clearStale {
-			if err := m.ClearUnboundExclude(locator); err != nil {
-				return err
-			}
-			if err := m.RemoveUnboundInclude(locator); err != nil {
-				return err
-			}
-		}
-		binding, err := bindRemovalRegistry(m, entry)
-		if err != nil {
-			return err
-		}
-		if err := m.Apply(binding, config.SelectionChange{Operation: config.SelectionExclude, Locators: []config.ResourceLocator{locator}}); err != nil {
-			return err
-		}
-		if err := m.SetUnboundExclude(locator); err != nil && !isEditUnsupported(err) {
-			return err
-		}
-		return nil
-	})
+func excludeBoundResource(repoRoot string, scope Scope, staging *configStagingManager, entry config.RegistryEntry, kind ir.ResourceKind, name string) error {
+	return editRemovalSelection(repoRoot, scope, staging, entry, kind, name, config.SelectionExclude)
 }
 
 // removalDropsInclude reports whether removing name from entry can delete the
@@ -703,7 +674,7 @@ func removalSelectionOperation(destination string, entry config.RegistryEntry, k
 	var rootEntry *config.RegistryEntry
 	for i := range rootCfg.Registries {
 		candidate := &rootCfg.Registries[i]
-		if adHocRegistryEntryMatches(*candidate, entry.URL, entry.Path, "", "") {
+		if adHocRegistryEntryMatches(*candidate, entry.URL, entry.Path, entry.Ref, "") {
 			rootEntry = candidate
 			break
 		}
@@ -715,10 +686,52 @@ func removalSelectionOperation(destination string, entry config.RegistryEntry, k
 	if err != nil {
 		return config.SelectionExclude, err
 	}
-	if expanded != nil && countAdHocRegistryEntries(expanded.Registries, entry.URL, entry.Path, "", "") > countAdHocRegistryEntries(rootCfg.Registries, entry.URL, entry.Path, "", "") {
-		return config.SelectionExclude, nil
+	if expanded != nil {
+		if countAdHocRegistryEntries(expanded.Registries, entry.URL, entry.Path, entry.Ref, "") > countAdHocRegistryEntries(rootCfg.Registries, entry.URL, entry.Path, entry.Ref, "") {
+			return config.SelectionExclude, nil
+		}
+		canonical, err := canonicalConfigDestination(destination)
+		if err != nil {
+			return config.SelectionExclude, err
+		}
+		// Publication preserves logical layer ownership; loader provenance
+		// resolves contained intermediate aliases as well as the final link.
+		canonical, err = filepath.EvalSymlinks(canonical)
+		if err != nil {
+			return config.SelectionExclude, err
+		}
+		for _, candidate := range expanded.Registries {
+			if !adHocRegistryEntryMatches(candidate, entry.URL, entry.Path, entry.Ref, "") {
+				continue
+			}
+			if v4EntryHasIncludedDecision(candidate, canonical, name, kind) {
+				return config.SelectionExclude, nil
+			}
+		}
 	}
 	return config.SelectionRemoveInclude, nil
+}
+
+// v4 merges repeated source bindings, so entry counts alone cannot identify a
+// selection that removing the root declaration would reveal from an include.
+func v4EntryHasIncludedDecision(entry config.RegistryEntry, canonical, name string, kind ir.ResourceKind) bool {
+	for _, decision := range entry.V4Decisions {
+		request := decision.Request
+		if name != "" && (request == nil || request.Name != name || request.MarketplaceKind() != marketplaceProtocolKind(kind)) {
+			continue
+		}
+		if decision.Provenance.File != "" && decision.Provenance.File != canonical {
+			return true
+		}
+		if request != nil {
+			for _, provenance := range request.Provenance {
+				if provenance.File != "" && provenance.File != canonical {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func excludeCollectionMember(repoRoot string, scope Scope, staging *configStagingManager, target *resolver.ResolvedArtifact, name string) error {
@@ -740,35 +753,14 @@ func removeResource(repoRoot string, scope Scope, staging *configStagingManager,
 		return editRemovalSelection(repoRoot, scope, staging, entry, target.Kind, name, operation)
 
 	case ScopeLocal:
-		if target.Source == config.RepoPersonal {
-			destination, err := ScopedConfigPath(repoRoot, scope)
-			if err != nil {
-				return err
-			}
-			rootCfg, err := config.LoadRootConfigFromPath(destination)
-			if err != nil {
-				return fmt.Errorf("load local root config: %w", err)
-			}
-			if rootCfg != nil && registryEntryInList(rootCfg.Registries, target.RegistryURL, target.RegistryPath) {
-				return editRemovalSelection(repoRoot, scope, staging, entry, target.Kind, name, config.SelectionExclude)
-			}
-			localCfg, err := config.LoadLocalConfigFromPath(destination)
-			if err != nil {
-				return fmt.Errorf("load local config: %w", err)
-			}
-			if localCfg != nil && localRegistryEntryExists(localCfg, target.RegistryURL, target.RegistryPath) {
-				return excludeWithUnboundCompatibility(repoRoot, scope, staging, entry, target.Kind, name, false)
-			}
-			return excludeWithUnboundCompatibility(repoRoot, scope, staging, entry, target.Kind, name, true)
-		}
-		return excludeWithUnboundCompatibility(repoRoot, scope, staging, entry, target.Kind, name, false)
+		return excludeBoundResource(repoRoot, scope, staging, entry, target.Kind, name)
 
 	default:
 		if repoCfg == nil {
 			return fmt.Errorf("no repo config found; cannot remove %q", name)
 		}
 		if (!scopeSpecified || target.Source.IsMachineScope()) && !projectExplicitlySelects(repoCfg, *target) && !projectSelectsByTag(repoCfg, *target) {
-			return excludeWithUnboundCompatibility(repoRoot, ScopeLocal, staging, entry, target.Kind, name, false)
+			return excludeBoundResource(repoRoot, ScopeLocal, staging, entry, target.Kind, name)
 		}
 		destination, err := ScopedConfigPath(repoRoot, scope)
 		if err != nil {
@@ -830,18 +822,6 @@ func stageConfigPath(staging *configStagingManager, path string) (string, error)
 		return path, nil
 	}
 	return staging.Path(path)
-}
-
-// registryEntryInList reports whether the list contains an entry that exactly
-// matches url and path (the same exact-match rule the editor uses when writing
-// to a specific scope's config).
-func registryEntryInList(entries []config.RegistryEntry, url, registryPath string) bool {
-	for _, entry := range entries {
-		if config.NormalizeGitURL(entry.URL) == config.NormalizeGitURL(url) && config.NormalizeRegistryPath(entry.Path) == config.NormalizeRegistryPath(registryPath) {
-			return true
-		}
-	}
-	return false
 }
 
 // selectAdHocRegistryEntry resolves one configured entry for --from. An
@@ -939,6 +919,115 @@ func resolvedResourceByName(resolved []resolver.ResolvedArtifact, name string, k
 	return resolveResourceMatches(resourceMatches(resolved, name, kind, hasKind), name, cfg)
 }
 
+// Early removal must disambiguate authored selections without requiring a
+// discoverable catalog: removing a broken collection must remain possible.
+func earlyRemovalCandidates(cfg *config.Config, name string) []resolver.ResolvedArtifact {
+	if cfg == nil {
+		return nil
+	}
+	var candidates []resolver.ResolvedArtifact
+	var hasResource, hasEarly, hasOrganizationResource bool
+	for _, entry := range cfg.Registries {
+		for _, kind := range config.AllKinds {
+			direct, _ := resolver.EffectiveDirectSelectionSources(entry, cfg.Registries, nil, kind, name)
+			if !direct {
+				continue
+			}
+			candidates = append(candidates, removalCandidateForEntry(entry, kind, name))
+			if kind == ir.KindCollection {
+				hasEarly = true
+			} else {
+				hasResource = true
+			}
+		}
+	}
+	for _, entry := range cfg.Marketplaces {
+		for _, pin := range entry.Resources {
+			member := !pin.Direct && len(pin.SelectedBy.List()) > 0
+			if !marketplacePinNamed(pin, name) || (member && entry.Source != config.Organization) || cfg.MarketplacePinExcluded(entry, pin) {
+				continue
+			}
+			kind, ok := skill.ParseKind(pin.Kind)
+			if !ok {
+				continue
+			}
+			candidates = append(candidates, resolver.ResolvedArtifact{
+				Entry: catalog.Entry{Kind: kind, Name: name}, Source: entry.Source,
+				RegistryURL: entry.URL, RegistryPath: pin.RegistryID, IsMarketplace: true,
+			})
+			hasEarly = true
+			hasOrganizationResource = hasOrganizationResource || entry.Source == config.Organization && kind != ir.KindCollection
+		}
+	}
+	// Identify organization resources so their opt-out can be deferred until
+	// catalog-selected resources also participate in ambiguity resolution.
+	if (!hasResource || !hasEarly) && !hasOrganizationResource {
+		return nil
+	}
+	return candidates
+}
+
+func removalCandidateForEntry(entry config.RegistryEntry, kind ir.ResourceKind, name string) resolver.ResolvedArtifact {
+	return resolver.ResolvedArtifact{
+		Entry:          catalog.Entry{Kind: kind, Name: name, SourceHarness: entry.SourceHarness},
+		RegistryURL:    entry.URL,
+		RegistryPath:   entry.Path,
+		Ref:            entry.Ref,
+		V4Kind:         entry.V4Kind,
+		Source:         entry.Source,
+		FilePrecedence: entry.FilePrecedence,
+		Required:       entry.Required,
+	}
+}
+
+// Missing and malformed direct selections are removal targets, not resources
+// that can be materialized. Keep them out of the ordinary resolver result.
+func removalResourceCandidates(result ResolveResult, name string) []resolver.ResolvedArtifact {
+	candidates := slices.Clone(result.Resolved)
+	if result.MergedCfg == nil {
+		return candidates
+	}
+	for _, issue := range result.ResolveErrors {
+		var missing *resolver.SelectedNotFoundError
+		var malformed *resolver.SelectedMalformedError
+		var kind ir.ResourceKind
+		var selected, url, path, ref, via string
+		switch {
+		case errors.As(issue, &missing):
+			kind, selected, url, path, ref, via = missing.Kind, missing.Name, missing.URL, missing.Path, missing.Ref, missing.Via
+		case errors.As(issue, &malformed):
+			kind, selected, url, path, ref, via = malformed.Kind, malformed.Name, malformed.URL, malformed.Path, malformed.Ref, malformed.Via
+		default:
+			continue
+		}
+		if selected != name || via != "" {
+			continue
+		}
+		// Discovery expands parent roots into sub-bundles. Edit the configured
+		// root once, rather than treating each discovered path as a selection.
+		for _, entry := range result.MergedCfg.Registries {
+			if config.NormalizeGitURL(entry.URL) != config.NormalizeGitURL(url) ||
+				!registryPathOwns(entry.Path, path) || entry.Ref != ref {
+				continue
+			}
+			direct, _ := resolver.EffectiveDirectSelectionSources(entry, result.MergedCfg.Registries, result.LocalCfg, kind, name)
+			if !direct {
+				continue
+			}
+			candidate := removalCandidateForEntry(entry, kind, name)
+			if slices.ContainsFunc(candidates, func(existing resolver.ResolvedArtifact) bool {
+				return existing.Kind == kind && existing.Name == name && existing.Source == candidate.Source &&
+					existing.RegistryURL == candidate.RegistryURL && registryPathOwns(candidate.RegistryPath, existing.RegistryPath) && existing.Ref == candidate.Ref
+			}) {
+				continue
+			}
+			slog.Debug("removal includes undiscoverable explicit selection", "kind", skill.KindLabel(kind), "name", name, "source", entry.Source)
+			candidates = append(candidates, candidate)
+		}
+	}
+	return candidates
+}
+
 // resolvedResourceByNameInScope narrows a same-kind name lookup to the
 // requested installation scope before checking ambiguity. An explicit scope
 // with no occurrence is not allowed to fall through to a different scope. The
@@ -982,7 +1071,7 @@ func resolvedResourceByNameInScope(resolved []resolver.ResolvedArtifact, name st
 func resourceMatches(resolved []resolver.ResolvedArtifact, name string, kind ir.ResourceKind, hasKind bool) []resolver.ResolvedArtifact {
 	var matches []resolver.ResolvedArtifact
 	for _, candidate := range resolved {
-		if candidate.Name != name {
+		if candidate.Name != name && (!candidate.IsMarketplace || candidate.MarketplaceResourceName != name) {
 			continue
 		}
 		if hasKind && candidate.Kind != kind {
@@ -1055,6 +1144,11 @@ func ambiguousRegistryError(name string, matches []resolver.ResolvedArtifact, cf
 	seen := make(map[string]struct{}, len(matches))
 	for _, match := range matches {
 		url, path, ref := owningRegistryEntry(cfg, match)
+		if match.IsMarketplace {
+			// A Marketplace endpoint is selected by URL alone; --ref and
+			// --path describe Git and directory sources.
+			url, path, ref = match.RegistryURL, "", ""
+		}
 		var line strings.Builder
 		fmt.Fprintf(&line, "\n  --scope %s --from %q", inferRemoveScope(match), url)
 		if r := strings.TrimSpace(ref); r != "" {
@@ -1180,7 +1274,7 @@ func resolvedResourceInRegistryWithRef(resolved []resolver.ResolvedArtifact, nam
 // the entry when its path equals entryPath or lives beneath it — the resolver
 // records the discovered sub-bundle path on an artifact, which can be deeper
 // than the configured entry path (e.g. entry "teams/pm/plugins" discovers
-// "teams/pm/plugins/pm-data-analytics"). Mirrors localRegistryEntryExists.
+// "teams/pm/plugins/pm-data-analytics").
 func registryPathOwns(entryPath, artifactPath string) bool {
 	ep := config.NormalizeRegistryPath(entryPath)
 	if ep == "" {
@@ -1245,37 +1339,15 @@ func stringListContains(values []string, wanted string) bool {
 	return false
 }
 
-// localRegistryEntryExists reports whether a registry entry matching the
-// given URL and path exists in the local config. Used to determine whether
-// a RepoPersonal-sourced resource was installed into a registry entry's
-// include list or the top-level kind selector.
-func localRegistryEntryExists(localCfg *config.LocalConfig, registryURL, registryPath string) bool {
-	for _, entry := range localCfg.Registries {
-		if config.NormalizeGitURL(entry.URL) != config.NormalizeGitURL(registryURL) {
-			continue
-		}
-		if registryPath != "" {
-			ep := config.NormalizeRegistryPath(entry.Path)
-			rp := config.NormalizeRegistryPath(registryPath)
-			// The resolved artifact's RegistryPath may include a sub-bundle
-			// directory below the entry's configured Path (e.g. entry.Path="plugins"
-			// but RegistryPath="plugins/personal"). Use prefix match so that
-			// a registry entry with path=plugins correctly owns resources at
-			// plugins/personal, plugins/memory, etc.
-			if ep != rp && !strings.HasPrefix(rp, ep+"/") {
-				continue
-			}
-		}
-		return true
-	}
-	return false
-}
-
 // removeFromAdHoc handles the --from code path for remove.
 // With a name: remove the resource from the --from registry entry.
 // Without a name: remove the entire registry entry from the config.
 func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*RemoveResult, error) {
 	repoRoot := opts.RepoRoot
+	ws, err := removeWorkspace(opts)
+	if err != nil {
+		return nil, err
+	}
 
 	// Resolve web URLs into git URL + ref + path. Explicit flags win.
 	resolvedURL, resolvedRef, resolvedPath, _ := ResolveFromURL(fromURL, opts.FromRef, opts.FromPath)
@@ -1288,9 +1360,27 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	// ignored on remove: a registry that was previously allowed and is now
 	// blocked by a tightened allowed_registries policy must still be removable.
 	syntheticEntry := config.RegistryEntry{URL: fromURL, Ref: fromRef, Path: fromPath}
-	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: repoRoot}, nil)
+	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir()}, nil)
 	if len(ec.Errors) > 0 && !config.OnlyRegistryURLBlockedErrors(ec.Errors) {
 		return nil, errors.Join(ec.Errors...)
+	}
+	if name := strings.TrimSpace(opts.ResourceName); name != "" {
+		if marketplaceCfg, ok, err := marketplaceRemovalSource(ec.Merged, opts); ok {
+			if err != nil {
+				return nil, err
+			}
+			// Like other --from removals, an omitted scope means repo scope.
+			opts.ScopeSpecified = true
+			candidates := earlyRemovalCandidates(marketplaceCfg, name)
+			candidates = slices.DeleteFunc(candidates, func(candidate resolver.ResolvedArtifact) bool { return !candidate.IsMarketplace })
+			if _, err := resolvedResourceByNameInScope(candidates, name, opts.Kind, opts.HasKind, marketplaceCfg, opts.Scope, true); err != nil {
+				return nil, err
+			}
+			if result, handled, err := removeMarketplaceSelection(ctx, opts, marketplaceCfg, name); handled {
+				return result, err
+			}
+			return nil, fmt.Errorf("%w: marketplace endpoint %q has no direct selection named %q", ErrMarketplaceRemoveNotSelected, strings.TrimSpace(opts.FromURL), name)
+		}
 	}
 	if err := config.ValidateRegistryURLs([]config.RegistryEntry{syntheticEntry}, ec.Allowed); err != nil && !config.IsRegistryURLBlockedError(err) {
 		return nil, err
@@ -1311,7 +1401,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	// The merged config finds entries defined by includes or lower layers. A
 	// missing --path/--ref may identify one entry, but never silently selects
 	// among distinct paths or refs.
-	mergedCfg, _, _, err := loadRemoveConfig(ctx, repoRoot)
+	mergedCfg, _, _, err := loadRemoveConfig(ctx, ws)
 	if err != nil {
 		return nil, err
 	}
@@ -1338,6 +1428,22 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 		selectedPath = strings.TrimSpace(targetEntry.Path)
 	}
 	requiresShadow := entryInMerged && countAdHocRegistryEntries(mergedCfg.Registries, fromURL, fromPath, fromRef, localDir) > countAdHocRegistryEntries(rootEntries, fromURL, fromPath, fromRef, localDir)
+	if entryInMerged && !requiresShadow {
+		canonical, err := canonicalConfigDestination(configPath)
+		if err != nil {
+			return nil, err
+		}
+		canonical, err = filepath.EvalSymlinks(canonical)
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range mergedCfg.Registries {
+			if adHocRegistryEntryMatches(entry, fromURL, fromPath, fromRef, localDir) && v4EntryHasIncludedDecision(entry, canonical, "", ir.KindSkill) {
+				requiresShadow = true
+				break
+			}
+		}
+	}
 	// Prefer the defining layer's ref when writing a shadow entry, so git
 	// shadow entries pass ref-required validation even if the user omitted --ref.
 	shadowRef := fromRef
@@ -1412,7 +1518,16 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	// The entry lookup above has already failed closed on ambiguous paths/refs.
 	collectionEntryInTarget := entryInTarget
 	collectionMergedEntry, collectionEntryInMerged := mergedEntry, entryInMerged
-	if collectionEntryInMerged && collectionSelectedInEntry(collectionMergedEntry, name) {
+	if !opts.HasKind {
+		lookupURL := mergedEntry.URL
+		if entryInTarget {
+			lookupURL = targetEntry.URL
+		}
+		if _, err := resolvedResourceInRegistryAtRef(earlyRemovalCandidates(mergedCfg, name), name, opts.Kind, false, lookupURL, selectedPath, shadowRef); err != nil {
+			return nil, err
+		}
+	}
+	if (!opts.HasKind || opts.Kind == ir.KindCollection) && collectionEntryInMerged && collectionSelectedInEntry(collectionMergedEntry, name) {
 		if collectionRequiredInRegistry(mergedCfg, name, collectionMergedEntry) {
 			return nil, fmt.Errorf("collection %q is required and cannot be removed", name)
 		}
@@ -1451,15 +1566,20 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	// resource like a skill enabled at both user and repo scope would be
 	// reported as spuriously "ambiguous" even though --from already names the
 	// entry to operate on).
-	resolvedResult := Resolve(ctx, ResolveOptions{RepoRoot: repoRoot, IgnoreBlockedRegistries: true, SkipInventory: true, ReadOnlyExactLocks: true})
+	resolvedResult := Resolve(ctx, ResolveOptions{Workspace: ws, IgnoreBlockedRegistries: true, SkipInventory: true, ReadOnlyExactLocks: true})
 	if len(resolvedResult.Errors) > 0 {
 		return nil, errors.Join(resolvedResult.Errors...)
 	}
 	var target *resolver.ResolvedArtifact
+	candidates := removalResourceCandidates(resolvedResult, name)
+	lookupURL := mergedEntry.URL
+	if entryInTarget {
+		lookupURL = targetEntry.URL
+	}
 	if strings.TrimSpace(fromRef) != "" {
-		target, err = resolvedResourceInRegistryAtRef(resolvedResult.Resolved, name, opts.Kind, opts.HasKind, fromURL, selectedPath, fromRef)
+		target, err = resolvedResourceInRegistryAtRef(candidates, name, opts.Kind, opts.HasKind, lookupURL, selectedPath, fromRef)
 	} else {
-		target, err = resolvedResourceInRegistry(resolvedResult.Resolved, name, opts.Kind, opts.HasKind, fromURL, selectedPath)
+		target, err = resolvedResourceInRegistry(candidates, name, opts.Kind, opts.HasKind, lookupURL, selectedPath)
 	}
 	if err != nil {
 		return nil, err
@@ -1546,6 +1666,158 @@ func removalEditEntry(entry config.RegistryEntry, url, path, ref string) config.
 	return out
 }
 
+// Stable diagnostic codes for Marketplace removal refusals.
+var (
+	ErrMarketplaceRemoveUnsupportedQualifier   = errors.New("marketplace.remove-unsupported-qualifier")
+	ErrMarketplaceRemoveNotSelected            = errors.New("marketplace.remove-not-selected")
+	ErrMarketplaceRemoveAmbiguousSource        = errors.New("marketplace.remove-ambiguous-source")
+	ErrMarketplaceRemoveOrganizationCollection = errors.New("marketplace.remove-organization-collection")
+)
+
+// marketplaceRemovalSource narrows named --from removal to a configured
+// Marketplace endpoint, preferring entries in the requested scope. It reports
+// false for Git and directory sources, whose --from handling is unchanged.
+func marketplaceRemovalSource(cfg *config.Config, opts RemoveOptions) (*config.Config, bool, error) {
+	fromURL := strings.TrimSpace(opts.FromURL)
+	want, err := config.NormalizeMarketplaceURL(fromURL)
+	if cfg == nil || err != nil {
+		return nil, false, nil
+	}
+	var matched, scoped []config.MarketplaceEntry
+	for _, entry := range cfg.Marketplaces {
+		if got, err := config.NormalizeMarketplaceURL(entry.URL); err != nil || got != want {
+			continue
+		}
+		matched = append(matched, entry)
+		if sourceMatchesRemoveScope(entry.Source, opts.Scope) {
+			scoped = append(scoped, entry)
+		}
+	}
+	if len(matched) == 0 {
+		return nil, false, nil
+	}
+	if strings.TrimSpace(opts.FromRef) != "" || strings.TrimSpace(opts.FromPath) != "" {
+		return nil, true, fmt.Errorf("%w: --ref and --path do not apply to Marketplace endpoint %q", ErrMarketplaceRemoveUnsupportedQualifier, fromURL)
+	}
+	for _, entry := range cfg.Registries {
+		if config.NormalizeGitURL(entry.URL) == config.NormalizeGitURL(fromURL) {
+			return nil, true, fmt.Errorf("%w: --from %q matches both a Marketplace endpoint and a registry source", ErrMarketplaceRemoveAmbiguousSource, fromURL)
+		}
+	}
+	if len(scoped) > 0 {
+		matched = scoped
+	}
+	slog.Debug("named removal targets Marketplace endpoint", "endpoint", want, "entries", len(matched), "scope", opts.Scope)
+	endpoint := *cfg
+	endpoint.Marketplaces = matched
+	return &endpoint, true, nil
+}
+
+// removeMarketplaceSelection removes a direct Marketplace pin or collection
+// from cfg. handled is false when cfg has no Marketplace selection named name.
+func removeMarketplaceSelection(ctx context.Context, opts RemoveOptions, cfg *config.Config, name string) (*RemoveResult, bool, error) {
+	if collection, entry, ok := marketplaceCollectionByName(cfg, name, opts.Kind, opts.HasKind); ok {
+		if entry.Source == config.Organization {
+			if entry.Required {
+				return nil, true, fmt.Errorf("collection %q is required and managed externally", name)
+			}
+			return nil, true, fmt.Errorf("%w: collection %q is managed externally; exclude individual optional members with 'agent-marketplace remove <member> --scope user' instead", ErrMarketplaceRemoveOrganizationCollection, name)
+		}
+		effective := opts.Scope
+		if !opts.ScopeSpecified {
+			effective = inferMarketplaceRemoveScope(entry.Source)
+		}
+		configPath, err := scopedConfigPath(opts.RepoRoot, effective)
+		if err != nil {
+			return nil, true, fmt.Errorf("resolve config path: %w", err)
+		}
+		if _, err := MutateMarketplaceLayer(ctx, opts.RepoRoot, opts.RepoRoot, configPath, scopeToConfigSource(effective), func(m *MarketplaceLayerMutation) error {
+			return m.RemoveCollection(entry, collection)
+		}, func() ([]error, error) {
+			return nil, syncAfterRemove(ctx, opts)
+		}); err != nil {
+			return nil, true, err
+		}
+		return &RemoveResult{RemovedName: name, IsCollection: true}, true, nil
+	}
+
+	if pin, entry, matches := marketplaceDirectPinMatches(cfg, name, opts.Kind, opts.HasKind); matches > 1 {
+		return nil, true, fmt.Errorf("%q matches %d Marketplace pins by local or canonical name; remove by an unambiguous installed name", name, matches)
+	} else if matches == 1 {
+		if entry.Source == config.Organization {
+			result, err := excludeOrganizationMarketplacePin(ctx, opts, entry, pin, name)
+			return result, true, err
+		}
+		effective := opts.Scope
+		if !opts.ScopeSpecified {
+			effective = inferMarketplaceRemoveScope(entry.Source)
+		}
+		if err := config.ValidateScopeBoundary(entry.Source, scopeToConfigSource(effective)); err != nil {
+			return nil, true, err
+		}
+		configPath, err := scopedConfigPath(opts.RepoRoot, effective)
+		if err != nil {
+			return nil, true, fmt.Errorf("resolve config path: %w", err)
+		}
+		if _, err := MutateMarketplaceLayer(ctx, opts.RepoRoot, opts.RepoRoot, configPath, scopeToConfigSource(effective), func(m *MarketplaceLayerMutation) error {
+			return m.RemoveDirectPin(entry, pin)
+		}, func() ([]error, error) {
+			return nil, syncAfterRemove(ctx, opts)
+		}); err != nil {
+			return nil, true, err
+		}
+		return &RemoveResult{RemovedName: name}, true, nil
+	}
+
+	if pin, entry, ok := marketplaceCollectionOnlyPinByName(cfg, name, opts.Kind, opts.HasKind); ok {
+		if entry.Source == config.Organization {
+			result, err := excludeOrganizationMarketplacePin(ctx, opts, entry, pin, name)
+			return result, true, err
+		}
+		collectionName := "an explicitly selected collection"
+		if selections := pin.SelectedBy.List(); len(selections) > 0 {
+			collectionName = selections[0].Name
+		}
+		return nil, true, fmt.Errorf("marketplace %s %q is selected only through collection %s; remove that collection instead", pin.Kind, name, collectionName)
+	}
+	return nil, false, nil
+}
+
+func excludeOrganizationMarketplacePin(ctx context.Context, opts RemoveOptions, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, name string) (*RemoveResult, error) {
+	if entry.Required {
+		return nil, fmt.Errorf("marketplace %s %q is required and managed externally", pin.Kind, name)
+	}
+	effective := opts.Scope
+	if !opts.ScopeSpecified {
+		effective = ScopeUser
+	}
+	if err := config.ValidateScopeBoundary(entry.Source, scopeToConfigSource(effective)); err != nil {
+		var boundary *config.ScopeBoundaryError
+		if errors.As(err, &boundary) {
+			return nil, fmt.Errorf("%w. %s", err, boundary.Suggestion)
+		}
+		return nil, err
+	}
+	slog.Debug("excluding optional organization Marketplace resource", "endpoint", entry.URL, "registry", pin.RegistrySlug, "kind", pin.Kind, "name", pin.Name, "scope", effective)
+	if err := editRemovalLayer(opts.RepoRoot, effective, opts.configStaging, func(m *LayerMutation) error {
+		binding, err := m.EnsureMarketplaceSource(entry.URL)
+		if err != nil {
+			return err
+		}
+		return m.ExcludeMarketplacePin(binding, pin)
+	}); err != nil {
+		return nil, err
+	}
+	if err := syncAfterRemove(ctx, opts); err != nil {
+		return nil, err
+	}
+	result := &RemoveResult{RemovedName: name, InferredUserScope: !opts.ScopeSpecified}
+	if selections := pin.SelectedBy.List(); !pin.Direct && len(selections) > 0 {
+		result.CollectionVia = "collection:" + selections[0].Name
+	}
+	return result, nil
+}
+
 func marketplaceCollectionByName(cfg *config.Config, name string, kind ir.ResourceKind, hasKind bool) (config.MarketplaceResourcePin, config.MarketplaceEntry, bool) {
 	if cfg == nil || (hasKind && marketplaceProtocolKind(kind) != "collection") {
 		return config.MarketplaceResourcePin{}, config.MarketplaceEntry{}, false
@@ -1577,7 +1849,7 @@ func marketplaceDirectPinMatches(cfg *config.Config, name string, kind ir.Resour
 	count := 0
 	for _, entry := range cfg.Marketplaces {
 		for _, pin := range entry.Resources {
-			if pin.Kind == "collection" || !marketplacePinNamed(pin, name) {
+			if pin.Kind == "collection" || !marketplacePinNamed(pin, name) || cfg.MarketplacePinExcluded(entry, pin) {
 				continue
 			}
 			if hasKind && marketplaceProtocolKind(kind) != pin.Kind {
@@ -1597,24 +1869,24 @@ func marketplacePinNamed(pin config.MarketplaceResourcePin, name string) bool {
 	return pin.Name == name || marketplaceInstalledName(pin) == name
 }
 
-func marketplaceCollectionOnlyPinByName(cfg *config.Config, name string, kind ir.ResourceKind, hasKind bool) (config.MarketplaceResourcePin, bool) {
+func marketplaceCollectionOnlyPinByName(cfg *config.Config, name string, kind ir.ResourceKind, hasKind bool) (config.MarketplaceResourcePin, config.MarketplaceEntry, bool) {
 	if cfg == nil {
-		return config.MarketplaceResourcePin{}, false
+		return config.MarketplaceResourcePin{}, config.MarketplaceEntry{}, false
 	}
 	for _, entry := range cfg.Marketplaces {
 		for _, pin := range entry.Resources {
-			if pin.Kind == "collection" || !marketplacePinNamed(pin, name) {
+			if pin.Kind == "collection" || !marketplacePinNamed(pin, name) || cfg.MarketplacePinExcluded(entry, pin) {
 				continue
 			}
 			if hasKind && marketplaceProtocolKind(kind) != pin.Kind {
 				continue
 			}
 			if !pin.Direct && len(pin.SelectedBy.List()) > 0 {
-				return pin, true
+				return pin, entry, true
 			}
 		}
 	}
-	return config.MarketplaceResourcePin{}, false
+	return config.MarketplaceResourcePin{}, config.MarketplaceEntry{}, false
 }
 
 func inferMarketplaceRemoveScope(source config.Source) Scope {

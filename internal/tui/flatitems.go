@@ -1,40 +1,101 @@
 package tui
 
-import "github.com/Adyen/agent-marketplace/internal/materialize"
+import (
+	"strings"
+
+	"github.com/Adyen/agent-marketplace/internal/materialize"
+)
 
 // flat-items helpers on Model: the cursor indexes into m.flatItems, which is
-// computed from filteredRows + activeTab + per-tab foldState. These helpers
+// computed from filteredRows + the status-grouped foldState. These helpers
 // keep the transformation and fold-state mutation in one place.
 
-// currentFoldState returns the fold-state map for the active tab, creating it
-// lazily if the tabStates bucket is missing.
+// currentFoldState returns the model's fold-state map, creating it lazily.
 func (m *Model) currentFoldState() map[string]bool {
-	if m.tabStates == nil {
-		m.tabStates = newTabStates()
+	key := m.viewSettings.normalized()
+	if m.filter != "" {
+		if m.queryFoldSections == nil || m.queryFoldQuery != m.filter {
+			m.queryFoldSections = make(map[viewSettings]map[string]bool)
+			m.queryFoldQuery = m.filter
+		}
+		if m.queryFoldSections[key] == nil {
+			m.queryFoldSections[key] = make(map[string]bool)
+		}
+		return m.queryFoldSections[key]
 	}
-	st, ok := m.tabStates[m.activeTab]
-	if !ok || st == nil {
-		st = &tabViewState{foldedSections: make(map[string]bool)}
-		m.tabStates[m.activeTab] = st
+	m.queryFoldSections = nil
+	m.queryFoldQuery = ""
+	if m.foldedSections == nil {
+		m.foldedSections = make(map[viewSettings]map[string]bool)
 	}
-	if st.foldedSections == nil {
-		st.foldedSections = make(map[string]bool)
+	if m.foldedSections[key] == nil {
+		m.foldedSections[key] = make(map[string]bool)
 	}
-	return st.foldedSections
+	return m.foldedSections[key]
 }
 
-// rebuildFlatItems recomputes m.flatItems from m.filteredRows, the active
-// tab, and the active tab's fold state. When a filter is active, fold state
-// is overridden so that sections containing matches render expanded. The
-// user's persisted fold state in tabStates is untouched and restored as
-// soon as the filter clears.
+// rebuildFlatItems recomputes m.flatItems from m.filteredRows and the fold
+// state. Search folds live in a per-query map, so the user's persisted fold
+// state is untouched and restored as soon as the filter clears.
 func (m *Model) rebuildFlatItems() {
-	fold := m.currentFoldState()
-	if m.filter != "" {
-		fold = map[string]bool{}
-	}
-	m.flatItems = buildTree(m.filteredRows, m.activeTab, fold)
+	m.flatItems = buildGroupedTree(m.filteredRows, m.viewSettings, m.currentFoldState())
 	m.listHeightPrefix = m.listHeightPrefix[:0]
+}
+
+func (m *Model) applyViewSettings(s viewSettings) {
+	s = s.normalized()
+	if s == m.viewSettings.normalized() {
+		m.viewSettings = s
+		return
+	}
+	anchor := m.selectionKey()
+	m.viewSettings = s
+	m.filteredRows = m.applyFilter()
+	m.rebuildFlatItems()
+	if anchor != "" && m.restoreSelectionKey(anchor) {
+		return
+	}
+	if rowAnchor := strings.TrimPrefix(anchor, "row\x00"); rowAnchor != anchor {
+		if sectionPath := m.containingSectionPath(rowAnchor); sectionPath != "" {
+			if m.restoreSelectionKey("section\x00" + sectionPath) {
+				return
+			}
+		}
+	}
+	m.cursor = 0
+	m.listOffset = 0
+}
+
+func (m *Model) containingSectionPath(key string) string {
+	unfolded := buildGroupedTree(m.filteredRows, m.viewSettings, nil)
+	stack := []string{}
+	ancestors := []string{}
+	for _, it := range unfolded {
+		if it.Kind == flatSection {
+			for len(stack) > it.SectionDepth {
+				stack = stack[:len(stack)-1]
+			}
+			if len(stack) == it.SectionDepth {
+				stack = append(stack, it.SectionPath)
+			} else {
+				stack[it.SectionDepth] = it.SectionPath
+			}
+			continue
+		}
+		if rowKey(it.Row) == key {
+			ancestors = append([]string(nil), stack...)
+			break
+		}
+	}
+	for i := len(ancestors) - 1; i >= 0; i-- {
+		want := "section\x00" + ancestors[i]
+		for _, it := range m.flatItems {
+			if flatItemKey(it) == want {
+				return ancestors[i]
+			}
+		}
+	}
+	return ""
 }
 
 // selectedRow returns the skill row the cursor currently points to, if any.
@@ -108,7 +169,7 @@ func (m *Model) setFoldAtCursor(collapsed bool) {
 }
 
 // collapseAllSections collapses every section currently present in
-// m.flatItems for the active tab.
+// m.flatItems.
 func (m *Model) collapseAllSections() {
 	fs := m.currentFoldState()
 	for _, it := range m.flatItems {
@@ -118,17 +179,9 @@ func (m *Model) collapseAllSections() {
 	}
 }
 
-// expandAllSections clears the fold-state map for the active tab, expanding
-// every section.
+// expandAllSections clears the fold-state map, expanding every section.
 func (m *Model) expandAllSections() {
-	if m.tabStates == nil {
-		return
-	}
-	st, ok := m.tabStates[m.activeTab]
-	if !ok || st == nil {
-		return
-	}
-	st.foldedSections = make(map[string]bool)
+	clear(m.currentFoldState())
 }
 
 // rowKey is the stable identity of a resource row across snapshot rebuilds.
@@ -201,17 +254,36 @@ func (m Model) selectionKeyForRebuild() string {
 	if m.pane == paneDetail && m.detailKey != "" {
 		return "row\x00" + m.detailKey
 	}
+	if m.cursor == 0 && m.filter == "" {
+		return ""
+	}
 	return m.selectionKey()
 }
 
-func (m *Model) restoreSelectionAfterRebuild(key string) {
-	m.restoreSelectionKey(key)
+// rebuildAnchor is the item under the cursor and its line within the
+// viewport, so rows inserted above it by a rebuild do not shift it on screen.
+type rebuildAnchor struct {
+	key  string
+	line int
 }
 
-// recomputeView is called after any input change (rows/filter/fold/tab). It
+func (m Model) captureRebuildAnchor() rebuildAnchor {
+	return rebuildAnchor{key: m.selectionKeyForRebuild(), line: m.cursor - m.listOffset}
+}
+
+func (m *Model) restoreSelectionAfterRebuild(anchor rebuildAnchor) {
+	if !m.restoreSelectionKey(anchor.key) {
+		return
+	}
+	m.listOffset = m.cursor - anchor.line
+	m.clampListOffset()
+}
+
+// recomputeView is called after any input change (rows/filter/fold). It
 // reapplies the filter, rebuilds the flat item list, and adjusts the cursor.
-// When a filter is active, the cursor snaps to the first matching skill so
-// arrow-keys don't start from a section header or a stale row.
+// When a filter is active, the cursor snaps to the best-ranked match (the
+// first one on ties) so arrow-keys don't start from a section header or a
+// stale row.
 func (m *Model) recomputeView() {
 	m.filteredRows = m.applyFilter()
 	m.rebuildFlatItems()
@@ -223,15 +295,18 @@ func (m *Model) recomputeView() {
 	}
 
 	if m.filter != "" {
-		// Snap cursor to the first skill row (preferred) or section header.
+		// Scroll from the top so the best match keeps its section headers
+		// in view whenever it fits.
+		m.cursor, m.listOffset = 0, 0
+		best := -1
 		for i, it := range m.flatItems {
-			if it.Kind == flatArtifact {
-				m.cursor = i
-				m.clampListOffset()
-				return
+			if it.Kind == flatArtifact && (best < 0 || searchRankLess(it.Row, m.flatItems[best].Row)) {
+				best = i
 			}
 		}
-		m.cursor = 0
+		if best >= 0 {
+			m.cursor = best
+		}
 		m.clampListOffset()
 		return
 	}

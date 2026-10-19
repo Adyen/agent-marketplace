@@ -11,6 +11,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Adyen/agent-marketplace/internal/logging/logvalue"
+	"github.com/Adyen/agent-marketplace/internal/redact"
 )
 
 const (
@@ -24,7 +27,7 @@ const (
 
 	SchemaVersion = "1"
 	SchemaMajor   = 1
-	SchemaMinor   = 1
+	SchemaMinor   = 2
 )
 
 // ResourceAttribute names a telemetry resource attribute that is allowed in the
@@ -75,6 +78,8 @@ const (
 	MetricAttrResourceKind      MetricAttribute = "resource.kind"
 	MetricAttrResourceName      MetricAttribute = "resource.name"
 	MetricAttrResourceRequired  MetricAttribute = "resource.required"
+	MetricAttrSourceKind        MetricAttribute = "source.kind"
+	MetricAttrMarketplaceID     MetricAttribute = "marketplace.id"
 	MetricAttrOmissionReason    MetricAttribute = "reason"
 )
 
@@ -95,6 +100,8 @@ var InventoryRegistryAttributes = []MetricAttribute{
 	MetricAttrConfigScope,
 	MetricAttrRegistryRequired,
 	MetricAttrRegistryDefault,
+	MetricAttrSourceKind,
+	MetricAttrMarketplaceID,
 }
 
 var InventoryOmissionAttributes = []MetricAttribute{
@@ -111,6 +118,8 @@ var InventoryResourceAttributes = []MetricAttribute{
 	MetricAttrResourceName,
 	MetricAttrConfigScope,
 	MetricAttrResourceRequired,
+	MetricAttrSourceKind,
+	MetricAttrMarketplaceID,
 }
 
 // MetricSchemaAttributes is the v1 metric attribute allowlist. These are the
@@ -184,14 +193,6 @@ func LevelOrder(level string) int {
 	}
 }
 
-// MaxLevel returns the higher of two levels.
-func MaxLevel(a, b string) string {
-	if LevelOrder(a) >= LevelOrder(b) {
-		return a
-	}
-	return b
-}
-
 // LookupIP resolves a hostname to IP addresses. It defaults to net.LookupIP and
 // may be overridden in tests to avoid real DNS lookups.
 var LookupIP = net.LookupIP
@@ -260,13 +261,13 @@ func ValidateEndpointSyntax(endpoint string) error {
 	}
 	u, err := url.Parse(endpoint)
 	if err != nil {
-		return fmt.Errorf("endpoint %q is not a valid URL: %w", endpoint, err)
+		return fmt.Errorf("endpoint %q is not a valid URL: %w", redact.URLValue(endpoint), redact.Error(err))
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("endpoint %q must use http or https, got %q", endpoint, u.Scheme)
+		return fmt.Errorf("endpoint %q must use http or https, got %q", redact.URLValue(endpoint), u.Scheme)
 	}
 	if u.Hostname() == "" {
-		return fmt.Errorf("endpoint %q must have a host", endpoint)
+		return fmt.Errorf("endpoint %q must have a host", redact.URLValue(endpoint))
 	}
 	return nil
 }
@@ -293,50 +294,50 @@ func validateEndpoint(endpoint string, allowInsecure, dnsFailureIsError bool) er
 	}
 	u, err := url.Parse(endpoint)
 	if err != nil {
-		return fmt.Errorf("endpoint %q is not a valid URL: %w", endpoint, err)
+		return fmt.Errorf("endpoint %q is not a valid URL: %w", redact.URLValue(endpoint), redact.Error(err))
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("endpoint %q must use http or https, got %q", endpoint, u.Scheme)
+		return fmt.Errorf("endpoint %q must use http or https, got %q", redact.URLValue(endpoint), u.Scheme)
 	}
 	host := u.Hostname()
 	if host == "" {
-		return fmt.Errorf("endpoint %q must have a host", endpoint)
+		return fmt.Errorf("endpoint %q must have a host", redact.URLValue(endpoint))
 	}
 	if u.Scheme == "https" {
 		return nil
 	}
 
 	if isLoopbackHost(host) {
-		slog.Debug("allowing insecure HTTP endpoint", "host", host, "reason", "loopback")
+		slog.Debug("allowing insecure HTTP endpoint", "host", logvalue.Safe(host), "reason", "loopback")
 		return nil
 	}
 
 	// Literal IP address.
 	if ip := net.ParseIP(host); ip != nil {
 		if isLoopbackIP(ip) {
-			slog.Debug("allowing insecure HTTP endpoint", "host", host, "reason", "loopback_ip")
+			slog.Debug("allowing insecure HTTP endpoint", "host", logvalue.Safe(host), "reason", "loopback_ip")
 			return nil
 		}
 		if isPrivateOrLinkLocalIP(ip) {
 			if allowInsecure {
-				slog.Debug("allowing insecure HTTP endpoint", "host", host, "reason", "private_ip")
+				slog.Debug("allowing insecure HTTP endpoint", "host", logvalue.Safe(host), "reason", "private_ip")
 				return nil
 			}
-			slog.Warn("rejecting insecure HTTP endpoint", "host", host, "reason", "allow_insecure_required")
+			slog.Warn("rejecting insecure HTTP endpoint", "host", logvalue.Safe(host), "reason", "allow_insecure_required")
 			return fmt.Errorf("insecure HTTP for private endpoint %q requires allow_insecure: true from organization policy", host)
 		}
-		slog.Warn("rejecting insecure HTTP endpoint", "host", host, "reason", "public_ip")
-		return fmt.Errorf("endpoint %q must use HTTPS for non-loopback, non-private hosts", endpoint)
+		slog.Warn("rejecting insecure HTTP endpoint", "host", logvalue.Safe(host), "reason", "public_ip")
+		return fmt.Errorf("endpoint %q must use HTTPS for non-loopback, non-private hosts", redact.URLValue(endpoint))
 	}
 
 	// Hostnames are only allowed for insecure HTTP under organization policy.
 	if !allowInsecure {
-		slog.Warn("rejecting insecure HTTP endpoint", "host", host, "reason", "hostname_requires_allow_insecure")
+		slog.Warn("rejecting insecure HTTP endpoint", "host", logvalue.Safe(host), "reason", "hostname_requires_allow_insecure")
 		return fmt.Errorf("insecure HTTP for non-loopback, non-private hostname %q requires allow_insecure: true from organization policy", host)
 	}
 	ips, err := LookupIP(host)
 	if err != nil || len(ips) == 0 {
-		slog.Warn("could not resolve insecure HTTP hostname", "host", host, "reason", "hostname_does_not_resolve", "error", err, "delivery_check", dnsFailureIsError)
+		slog.Warn("could not resolve insecure HTTP hostname", "host", logvalue.Safe(host), "reason", "hostname_does_not_resolve", "error", logvalue.Safe(err), "delivery_check", dnsFailureIsError)
 		if !dnsFailureIsError {
 			return nil
 		}
@@ -344,11 +345,11 @@ func validateEndpoint(endpoint string, allowInsecure, dnsFailureIsError bool) er
 	}
 	for _, ip := range ips {
 		if !isPrivateOrLinkLocalIP(ip) {
-			slog.Warn("rejecting insecure HTTP endpoint", "host", host, "resolved_ip", ip, "reason", "public_ip")
+			slog.Warn("rejecting insecure HTTP endpoint", "host", logvalue.Safe(host), "resolved_ip", ip, "reason", "public_ip")
 			return fmt.Errorf("insecure HTTP hostname %q resolves to public IP %v", host, ip)
 		}
 	}
-	slog.Info("allowing insecure HTTP endpoint for private hostname", "host", host, "ips", ips)
+	slog.Info("allowing insecure HTTP endpoint for private hostname", "host", logvalue.Safe(host), "ips", ips)
 	return nil
 }
 
@@ -386,13 +387,13 @@ func validateRetentionPolicy(urlStr string) error {
 	}
 	u, err := url.Parse(urlStr)
 	if err != nil {
-		return fmt.Errorf("retention_policy %q is not a valid URL: %w", urlStr, err)
+		return fmt.Errorf("retention_policy %q is not a valid URL: %w", redact.URLValue(urlStr), redact.Error(err))
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("retention_policy %q must use http or https, got %q", urlStr, u.Scheme)
+		return fmt.Errorf("retention_policy %q must use http or https, got %q", redact.URLValue(urlStr), u.Scheme)
 	}
 	if u.Host == "" {
-		return fmt.Errorf("retention_policy %q must have a host", urlStr)
+		return fmt.Errorf("retention_policy %q must have a host", redact.URLValue(urlStr))
 	}
 	return nil
 }

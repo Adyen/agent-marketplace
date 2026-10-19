@@ -30,6 +30,8 @@ For changes to ingestion, compilation, config loading, or filesystem publication
 - **Bounds at every read boundary.** Root configs, recursive includes, alternate loaders, and overlays must use the same applicable size policy. Require that opened files are regular files where that is the input contract, reject oversized input before parsing, and retain a bounded reader even after checking size to handle growth. Depth or cycle checks do not substitute for byte or total-work bounds; any new aggregate budget needs an explicit policy decision rather than an arbitrary threshold.
 - **Evidence that exercises the boundary.** Require a failing regression test and a valid control through the actual consumer. Cover both alias orders, empty typed values, nested fields, legitimate native groups, external/dangling symlinks, hard links, special files, size boundaries, permissions, and byte/mtime no-ops as applicable. Assert the intended error identity and unchanged external bytes, not just any failure. Isolate umask changes and potentially blocking probes in bounded child processes. A preservation test must prove that the intended content update occurred; an include test must not duplicate its selection in the containing config. Use each target's real loader and native installation path, not differently labeled calls to one helper or plugin output as a substitute for native sync.
 
+Consumer-config boundary review must verify exact-v4 roots in all four layers (including organization and personal-local), accepted versionless/exact-v4 included fragments, and file/field-specific `v4.api-version-required` or `v4.api-version` refusals across readers, direct editors, staged reloads, init, ad-hoc acquisition, and CLI/TUI entry points. Validate all required input before new acquisition or config/lock/harness mutation. Preserve established pending-journal handling and ordinary logging rather than imposing a blanket no-write claim. Do not restore a legacy decoder/editor, migration command, or automatic conversion prompt. Keep the internal v4 runtime adapter and independent lock/hash/operator/API/artifact/native schemas.
+
 Apply the existing benchmark requirements to added validation on hot paths. Report its cost explicitly; do not remove safety checks to obtain a faster result.
 
 ## Tests
@@ -42,6 +44,15 @@ Apply the existing benchmark requirements to added validation on hot paths. Repo
 - Use table-driven subtests for behavior matrices and byte-exact golden tests for generated layouts. Share fixtures and assertion helpers rather than repeating setup.
 - Isolate tests from the developer's machine. Use temporary directories and scoped environment variables; default unit tests must not read or mutate the real home directory or depend on optional third-party executables or external network services.
 - Follow the E2E test selection rules below: prefer declarative cases for standard setup/run/assert workflows and standalone tests only when the framework cannot express the setup.
+
+### Property-based tests
+
+- Use [`pgregory.net/rapid`](https://pkg.go.dev/pgregory.net/rapid) for structured invariants on internally consistent values (configs, documents, IR, ownership state). Use native Go fuzzing for raw-byte parser boundaries instead.
+- Property oracles must be independently authored, like expected values in example tests: derive them from the contract, never by re-running the production algorithm under test.
+- Constrain generated inputs per case so each subtest covers the interesting region by construction; do not generate broadly and then filter most inputs away.
+- Assert with `errors.Is`/`errors.As` and stable diagnostic codes, as elsewhere; do not match error prose.
+- Rapid is test-only. The `go list -deps` graph guard in `cmd/agent-marketplace` enforces that Rapid never links into the shipped binary; production code must not import it.
+- Never commit Rapid failfiles (`testdata/rapid/` is ignored). When a run shrinks a counterexample, convert it into a plain example regression test in the same change as its fix.
 
 ### E2E test suite
 
@@ -82,7 +93,11 @@ Use the structured fixture builders in `e2e/harness_test.go` (`Skill`, `Command`
 
 #### Command coverage guard
 
-Every public command and flag must succeed in at least one E2E invocation against a legacy (v2/v3) configuration and at least one against a v4 configuration; commands that never read the layered client configuration (`completion`, `help`, `convert`, `serve`) need one successful invocation. The `e2e`-tagged binary records each invocation's command, flags, starting `apiVersion` per layer, and outcome, and a complete passing `make e2e` run fails when a requirement is uncovered. A new command or flag therefore needs E2E tests for both schemas. `e2e/testdata/command-coverage-gaps.txt` is empty now that the pre-existing gaps are closed (#363); the guard also fails when a listed entry is covered, and new surface must never be added there.
+Every public command and flag that interprets consumer configuration must have an actual successful behavioral E2E invocation in a v4 workflow. Every present consumer root in that invocation, including organization and personal-local, must declare exact `agent-marketplace/v4`; first-run workflows may create absent roots as v4. Commands that never read layered consumer configuration (`completion`, `help`, Marketplace `serve`) retain successful configuration-independent witnesses. The `e2e`-tagged binary records each invocation's command, flags, starting `apiVersion` for each layer, and outcome. Help-only runs, refusals, relabeled legacy records, or success with an unsupported root cannot satisfy consumer operational coverage. After a complete, passing `make e2e` run, the suite fails if any requirement lacks its successful invocation. `e2e/testdata/command-coverage-gaps.txt` remains empty; do not add exceptions for legacy-support removal.
+
+The normal Marketplace E2E launch gate must execute required refusal witnesses for unsupported/versionless roots in every layer and explicit non-v4 included fragments. Seed valid selections, existing locks and owned output, and acquisition counters so no-write/no-acquisition claims are non-vacuous. Pending-journal tests must distinguish safe replay of already-admitted writes from refusal of new work; crash-recovery success tests exercise supported v4 mutations, not consumer migration.
+
+The pre-v4 success `upgrade-gate` and CI job are retired. Preserve their independent lock-byte/source-revision, scope, collision, and ownership assertions using v4 fixtures. Keep `released-client-gate` pinned to checksum-verified stable v4.1.4 with a shared v4 fixture and isolated actors. `E2E Gates` passes only after successful planning and both Marketplace/released-client jobs succeeding when selected, or both intentionally skipping when unselected; failures, cancellation, missing witnesses, and unexpected skips fail acceptance.
 
 ### TUI test ownership
 
@@ -102,7 +117,7 @@ The CLI configures a process-wide `slog` logger before any subcommand runs (see 
 
 - **Defaults live in code.** The `Default*` constants in `internal/config/config.go` are the single source of truth for the logging runtime (`internal/logging`). Keep them there.
 - **Do not seed a `logging:` block into the generated config skeleton.** The skeleton carries only required global fields (`apiVersion`, `harnesses`); logging is opt-in override only. Users override via `~/.agents/config.yaml` (`logging:`) or `AGENT_MARKETPLACE_*` env vars. Precedence is **env var > config file > code default**.
-- Full strategy and overridable keys: [`docs/logging.md`](./docs/logging.md).
+- Current strategy and overridable keys: [logging reference](./site/docs/reference/logging.md). Historical `docs/` leads are not current consumer-format guidance.
 
 ## Performance and benchmarking
 

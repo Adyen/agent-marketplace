@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 )
@@ -31,7 +33,7 @@ func newInitCmd() *cobra.Command {
 			"harnesses list. It does not install resources, add registries, or configure a marketplace.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runInit(cmd.OutOrStdout(), os.Stdin, harnesses)
+			return runInit(cmd.Context(), cmd.OutOrStdout(), os.Stdin, harnesses)
 		},
 	}
 
@@ -41,11 +43,11 @@ func newInitCmd() *cobra.Command {
 	return cmd
 }
 
-func runInit(out io.Writer, in *os.File, harnesses []string) error {
+func runInit(ctx context.Context, out io.Writer, in *os.File, harnesses []string) error {
 	slog.Info("init start")
 
 	if len(harnesses) > 0 {
-		return initWithHarnesses(out, harnesses)
+		return initWithHarnesses(ctx, out, harnesses)
 	}
 
 	if !isTerminal(in.Fd()) {
@@ -74,7 +76,7 @@ func runInit(out io.Writer, in *os.File, harnesses []string) error {
 		return err
 	}
 
-	path, created, err := initializeAndReport(out, harnesses)
+	path, created, err := initializeAndReport(ctx, out, harnesses)
 	if err != nil {
 		return err
 	}
@@ -87,16 +89,22 @@ func runInit(out io.Writer, in *os.File, harnesses []string) error {
 	return nil
 }
 
-func initWithHarnesses(out io.Writer, harnesses []string) error {
+func initWithHarnesses(ctx context.Context, out io.Writer, harnesses []string) error {
 	if err := config.ValidateHarnessIDs(harnesses); err != nil {
 		slog.Error("init failed to validate harnesses", "err", err)
 		return err
 	}
-	_, _, err := initializeAndReport(out, harnesses)
+	_, _, err := initializeAndReport(ctx, out, harnesses)
 	return err
 }
 
-func initializeAndReport(out io.Writer, harnesses []string) (string, bool, error) {
+func initializeAndReport(ctx context.Context, out io.Writer, harnesses []string) (string, bool, error) {
+	if err := prepareDependencyTransactions(ctx, false); err != nil {
+		return "", false, err
+	}
+	if err := pipeline.ValidateConsumerIntent(ctx, config.FindRepoRoot(), config.FindLocalConfigDir()); err != nil {
+		return "", false, err
+	}
 	path, err := config.InitializeUserPersonal(harnesses)
 	if errors.Is(err, config.ErrAlreadyInitialized) {
 		if _, err := fmt.Fprintln(out, "User personal config already initialized."); err != nil {
@@ -117,7 +125,7 @@ func initializeAndReport(out io.Writer, harnesses []string) (string, bool, error
 }
 
 func promptTelemetryConsent(out io.Writer, reader *bufio.Reader, configPath string) error {
-	org, err := config.LoadOrganizationPolicyConfig()
+	org, err := config.LoadOrganizationSettings()
 	if err != nil {
 		return fmt.Errorf("load organization config: %w", err)
 	}
@@ -125,14 +133,14 @@ func promptTelemetryConsent(out io.Writer, reader *bufio.Reader, configPath stri
 	// telemetry level (on or off). A telemetry block that only declares an
 	// endpoint or other policy fields is not an activation decision; the user
 	// may still choose a level.
-	if org != nil && org.Telemetry != nil && org.Telemetry.Level != "" {
+	if org.Telemetry != nil && org.Telemetry.Level != "" {
 		_, _ = fmt.Fprintln(out, "Telemetry is managed by your organization; no user preference is needed.")
 		return nil
 	}
 
-	var user *config.Config
+	var user config.Settings
 	if _, statErr := os.Stat(configPath); !os.IsNotExist(statErr) {
-		loaded, loadErr := config.LoadConfigFromPath(configPath)
+		loaded, loadErr := config.LoadUserSettings()
 		if loadErr != nil {
 			slog.Warn("failed to load user config for telemetry consent prompt", "path", configPath, "error", loadErr)
 		} else {

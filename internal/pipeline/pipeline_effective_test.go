@@ -12,34 +12,32 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
-func TestResolveStopsOnV3ConfigErrors(t *testing.T) {
+func TestResolveStopsOnV4ConfigErrors(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", t.TempDir())
 
-	// User config declares a v3 schema with a valid registry.
+	// User config declares a v4 schema with a valid registry.
 	userConfigPath := filepath.Join(dir, "user.yaml")
-	writeFile(t, userConfigPath, `apiVersion: agent-marketplace/v3
+	writeFile(t, userConfigPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
 allowed_registries:
   - ^.*
-registries:
-  - url: https://example.com/repo.git
-    ref: main
+sources:
+  registry: {git: https://example.com/repo.git, ref: main}
 `)
 
-	// Repo config is v3 but contains a forbidden field for repo layer.
+	// Repo config is v4 but contains a forbidden field for repo layer.
 	repoConfigPath := filepath.Join(dir, "repo.yaml")
-	writeFile(t, repoConfigPath, `apiVersion: agent-marketplace/v3
+	writeFile(t, repoConfigPath, `apiVersion: agent-marketplace/v4
 backup:
   enabled: true
-registries:
-  - url: https://example.com/repo.git
-    ref: main
+sources:
+  registry: {git: https://example.com/repo.git, ref: main}
 `)
 
 	result := Resolve(context.Background(), ResolveOptions{
-		RepoRoot:    dir,
+		Workspace:   mustWorkspace(t, dir),
 		CatalogMode: catalog.LoadModeInspect,
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: filepath.Join(dir, "missing-org.yaml"),
@@ -50,7 +48,7 @@ registries:
 	})
 
 	if len(result.Errors) == 0 {
-		t.Fatalf("expected Resolve to stop with v3 config errors")
+		t.Fatalf("expected Resolve to stop with v4 config errors")
 	}
 
 	// The repo backup error must be present, and no catalog loading should have
@@ -69,18 +67,19 @@ func TestResolve_LoadEffectivePathUsesOrganizationSource(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	orgPath := filepath.Join(dir, "org.yaml")
-	writeFile(t, orgPath, `apiVersion: agent-marketplace/v3
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: git@gitlab.example.com:example-org/org.git
-    ref: main
+sources:
+  registry: {git: 'git@gitlab.example.com:example-org/org.git', ref: main}
+resources:
+  registry:
+    all: true
     required: true
 `)
-	writeFile(t, filepath.Join(dir, "lock.yaml"), "apiVersion: agent-marketplace-lock/v1\nscope: organization\n")
 
 	result := Resolve(context.Background(), ResolveOptions{
-		RepoRoot:    dir,
+		Workspace:   mustWorkspace(t, dir),
 		CatalogMode: catalog.LoadModeInspect,
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: orgPath,
@@ -96,8 +95,8 @@ registries:
 		}
 	}
 
-	if result.OrgCfg == nil || result.OrgCfg.APIVersion != config.APIVersionV3 {
-		t.Fatalf("expected v3 org config to be loaded")
+	if result.OrgCfg == nil || result.OrgCfg.APIVersion != config.APIVersionV4 {
+		t.Fatalf("expected v4 org config to be loaded")
 	}
 
 	// The org registry must carry the Organization source after merge. Because
@@ -123,8 +122,8 @@ registries: []
 `)
 
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: dir,
-		NoBackup: true,
+		Workspace: mustWorkspace(t, dir),
+		NoBackup:  true,
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: orgPath,
 			GlobalPath:       filepath.Join(dir, "missing-global.yaml"),
@@ -136,9 +135,7 @@ registries: []
 	if len(result.Errors) == 0 {
 		t.Fatalf("expected sync to fail on invalid organization config")
 	}
-	if !strings.Contains(joinErrors(result.Errors), "unsupported apiVersion") {
-		t.Fatalf("expected unsupported apiVersion error, got: %v", result.Errors)
-	}
+	assertConsumerFormatError(t, errors.Join(result.Errors...), "v4.api-version", orgPath)
 	if len(result.CatalogLoad.Catalogs) != 0 {
 		t.Fatalf("expected no catalog load when config validation fails, got %d", len(result.CatalogLoad.Catalogs))
 	}
@@ -148,16 +145,15 @@ func TestSyncRevalidatesExactLocksBeforeMaterialization(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", t.TempDir())
 	orgPath := filepath.Join(dir, "org.yaml")
-	writeFile(t, orgPath, `apiVersion: agent-marketplace/v2
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries: []
 `)
 	concurrent := errors.New("exact lock changed concurrently")
 	called := false
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: dir,
-		NoBackup: true,
+		Workspace: mustWorkspace(t, dir),
+		NoBackup:  true,
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: orgPath,
 			GlobalPath:       filepath.Join(dir, "missing-global.yaml"),
@@ -177,6 +173,35 @@ registries: []
 	}
 }
 
+// A conflicting EffectiveOpts root override must fail before Sync touches
+// either exact-lock path: the same pre-mutation ordering the zero-Workspace
+// check enforces, because the lease path can write reconciled lockfiles.
+func TestSyncRejectsConflictingEffectiveOptsRootsBeforeLease(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	leaseCalled := false
+	result := Sync(context.Background(), ResolveOptions{
+		Workspace: mustWorkspace(t, dir),
+		NoBackup:  true,
+		EffectiveOpts: config.LoadEffectiveOptions{
+			RepoRoot: t.TempDir(),
+		},
+		ExactLockLease: func(context.Context) (func(), error) {
+			leaseCalled = true
+			return func() {}, nil
+		},
+	})
+	if leaseCalled {
+		t.Fatal("exact lock lease ran before the EffectiveOpts root-conflict rejection")
+	}
+	if !errors.Is(errors.Join(result.Errors...), ErrInvalidWorkspace) {
+		t.Fatalf("sync errors = %v, want ErrInvalidWorkspace", result.Errors)
+	}
+	if !errors.Is(errors.Join(result.CatalogTrustErrors...), ErrInvalidWorkspace) {
+		t.Fatalf("sync catalog trust errors = %v, want ErrInvalidWorkspace", result.CatalogTrustErrors)
+	}
+}
+
 func TestSync_NoLegacyOrgFallbackUnmanaged(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
@@ -186,24 +211,23 @@ func TestSync_NoLegacyOrgFallbackUnmanaged(t *testing.T) {
 	writeSkill(t, registryRoot, "local-skill", "A local skill", []string{"test"})
 
 	globalPath := filepath.Join(t.TempDir(), "global.yaml")
-	writeFile(t, globalPath, `apiVersion: agent-marketplace/v2
+	writeFile(t, globalPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries: []
 `)
 
-	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
-registries:
-  - url: `+registryRoot+`
-    ref: main
+	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources:
+  registry:
+    directory: `+registryRoot+`
     source_harness: claude
-    skills:
-      - local-skill
+resources:
+  registry: [skill/local-skill]
 `)
 
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: repoRoot,
-		NoBackup: true,
+		Workspace: mustWorkspace(t, repoRoot),
+		NoBackup:  true,
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: filepath.Join(t.TempDir(), "missing-org.yaml"),
 			GlobalPath:       globalPath,
@@ -231,33 +255,34 @@ func TestSync_OrganizationRequiredIgnoresRepoExclude(t *testing.T) {
 	writeSkill(t, registryRoot, "required-skill", "A required skill", []string{"test"})
 
 	orgPath := filepath.Join(t.TempDir(), "org.yaml")
-	writeFile(t, orgPath, `apiVersion: agent-marketplace/v3
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: `+registryRoot+`
-    ref: main
+sources:
+  registry:
+    directory: `+registryRoot+`
     source_harness: claude
+resources:
+  registry:
+    all: true
     required: true
-    skills:
-      - required-skill
 `)
 
 	repoPath := filepath.Join(t.TempDir(), "repo.yaml")
-	writeFile(t, repoPath, `apiVersion: agent-marketplace/v3
-registries:
-  - url: `+registryRoot+`
-    ref: main
+	writeFile(t, repoPath, `apiVersion: agent-marketplace/v4
+sources:
+  registry:
+    directory: `+registryRoot+`
     source_harness: claude
-    default: true
-    skills:
-      exclude:
-        - required-skill
+resources:
+  registry:
+    all: true
+    exclude: [skill/required-skill]
 `)
 
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: repoRoot,
-		NoBackup: true,
+		Workspace: mustWorkspace(t, repoRoot),
+		NoBackup:  true,
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: orgPath,
 			GlobalPath:       filepath.Join(t.TempDir(), "missing-global.yaml"),
@@ -285,34 +310,36 @@ func TestSync_OrganizationDefaultSuppressibleByUserNotRepo(t *testing.T) {
 	writeSkill(t, registryRoot, "default-skill", "A default skill", []string{"test"})
 
 	orgPath := filepath.Join(t.TempDir(), "org.yaml")
-	writeFile(t, orgPath, `apiVersion: agent-marketplace/v3
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: `+registryRoot+`
-    ref: main
+sources:
+  registry:
+    directory: `+registryRoot+`
     source_harness: claude
-    default: true
+resources:
+  registry:
+    all: true
 `)
 
 	t.Run("user excludes", func(t *testing.T) {
 		userPath := filepath.Join(t.TempDir(), "user.yaml")
-		writeFile(t, userPath, `apiVersion: agent-marketplace/v3
+		writeFile(t, userPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: `+registryRoot+`
-    ref: main
+sources:
+  registry:
+    directory: `+registryRoot+`
     source_harness: claude
-    skills:
-      exclude:
-        - default-skill
+resources:
+  registry:
+    exclude: [skill/default-skill]
 `)
 
 		repoRoot := t.TempDir()
 		result := Sync(context.Background(), ResolveOptions{
-			RepoRoot: repoRoot,
-			NoBackup: true,
+			Workspace: mustWorkspace(t, repoRoot),
+			NoBackup:  true,
 			EffectiveOpts: config.LoadEffectiveOptions{
 				OrganizationPath: orgPath,
 				GlobalPath:       userPath,
@@ -332,19 +359,19 @@ registries:
 	t.Run("repo excludes", func(t *testing.T) {
 		repoRoot := t.TempDir()
 		repoPath := filepath.Join(t.TempDir(), "repo.yaml")
-		writeFile(t, repoPath, `apiVersion: agent-marketplace/v3
-registries:
-  - url: `+registryRoot+`
-    ref: main
+		writeFile(t, repoPath, `apiVersion: agent-marketplace/v4
+sources:
+  registry:
+    directory: `+registryRoot+`
     source_harness: claude
-    skills:
-      exclude:
-        - default-skill
+resources:
+  registry:
+    exclude: [skill/default-skill]
 `)
 
 		result := Sync(context.Background(), ResolveOptions{
-			RepoRoot: repoRoot,
-			NoBackup: true,
+			Workspace: mustWorkspace(t, repoRoot),
+			NoBackup:  true,
 			EffectiveOpts: config.LoadEffectiveOptions{
 				OrganizationPath: orgPath,
 				GlobalPath:       filepath.Join(t.TempDir(), "missing-global.yaml"),

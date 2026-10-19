@@ -189,7 +189,7 @@ func BenchmarkRunSyncCheckLocalRegistry(b *testing.B) {
 			})
 
 			var buf bytes.Buffer
-			err = runSyncCheck(context.Background(), &buf)
+			err = runSyncCheck(context.Background(), &buf, false)
 			if err == nil || !strings.Contains(err.Error(), "out of sync") {
 				b.Fatalf("runSyncCheck error = %v, want out of sync", err)
 			}
@@ -198,7 +198,7 @@ func BenchmarkRunSyncCheckLocalRegistry(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				buf.Reset()
-				if err := runSyncCheck(context.Background(), &buf); err == nil {
+				if err := runSyncCheck(context.Background(), &buf, false); err == nil {
 					b.Fatal("runSyncCheck error = nil, want out of sync")
 				}
 			}
@@ -299,6 +299,55 @@ func BenchmarkRunDoctor(b *testing.B) {
 	}
 }
 
+func BenchmarkRunGCDryRunEmptyCache(b *testing.B) {
+	benchmarkRunGCEmptyCache(b, true)
+}
+
+func BenchmarkRunGCEmptyCache(b *testing.B) {
+	benchmarkRunGCEmptyCache(b, false)
+}
+
+func benchmarkRunGCEmptyCache(b *testing.B, dryRun bool) {
+	home := b.TempDir()
+	b.Setenv("HOME", home)
+	b.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	b.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	config.SetTestOrganizationConfigPath(b, filepath.Join(home, "missing-organization.yaml"))
+	userPath := filepath.Join(home, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o700); err != nil {
+		b.Fatal(err)
+	}
+	if err := os.WriteFile(userPath, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"), 0o600); err != nil {
+		b.Fatal(err)
+	}
+	repo := b.TempDir()
+	original, err := os.Getwd()
+	if err != nil {
+		b.Fatal(err)
+	}
+	if err := os.Chdir(repo); err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() {
+		if err := os.Chdir(original); err != nil {
+			b.Fatalf("restore benchmark directory: %v", err)
+		}
+	})
+	b.Cleanup(config.ResetRepoRootCache)
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	b.Cleanup(func() { slog.SetDefault(previous) })
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		config.ResetRepoRootCache()
+		if err := runGC(context.Background(), io.Discard, dryRun); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 // BenchmarkBuildHarnessTargetRows measures the status HARNESS TARGETS section,
 // which runs on every `status` invocation.
 func BenchmarkBuildHarnessTargetRows(b *testing.B) {
@@ -330,40 +379,6 @@ func BenchmarkBuildCodexHarnessTargetRows(b *testing.B) {
 		}
 		if len(rows) != 1 {
 			b.Fatalf("unexpected row count %d", len(rows))
-		}
-	}
-}
-
-func BenchmarkRunConvertToCodex(b *testing.B) {
-	b.Setenv("CODEX_HOME", "")
-	b.Setenv("XDG_STATE_HOME", b.TempDir())
-	srcDir := b.TempDir()
-	files := map[string]string{
-		".claude-plugin/plugin.json": `{"name":"benchmark","version":"1.0.0"}`,
-		"skills/demo/SKILL.md":       "---\nname: demo\ndescription: Benchmark skill\n---\n\n# Demo\n",
-		"hooks/hooks.json":           `{"hooks":{"PreToolUse":[{"type":"command","command":"lint"}]}}`,
-		".mcp.json":                  `{"mcpServers":{"docs":{"command":"docs-server","args":["--stdio"]}}}`,
-	}
-	for name, content := range files {
-		path := filepath.Join(srcDir, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			b.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-			b.Fatal(err)
-		}
-	}
-	outRoot := b.TempDir()
-	previousLogger := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	b.Cleanup(func() { slog.SetDefault(previousLogger) })
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		outDir := filepath.Join(outRoot, fmt.Sprintf("run-%d", i))
-		if err := runConvert(io.Discard, srcDir, "claude", "codex", outDir, false, true, false); err != nil {
-			b.Fatal(err)
 		}
 	}
 }

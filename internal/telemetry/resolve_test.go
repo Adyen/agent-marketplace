@@ -24,9 +24,10 @@ func expectedInstallID(dir string) string {
 	return filepath.Join(dir, "agent-marketplace", "telemetry", "installation-id")
 }
 
+// spec: telemetry/unconfigured-telemetry-stays-off
 func TestResolveDefaultOff(t *testing.T) {
 	dir := setStateRoot(t)
-	state, err := ResolveTelemetryConfig(nil, nil, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, amconfig.Settings{}, "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -52,7 +53,7 @@ func TestResolveDefaultOff(t *testing.T) {
 
 func TestResolveProjectEndpoint(t *testing.T) {
 	dir := setStateRoot(t)
-	state, err := ResolveTelemetryConfig(nil, nil, "https://project.example.com", "https://project.example.com/retention")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, amconfig.Settings{}, "https://project.example.com", "https://project.example.com/retention")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -70,16 +71,17 @@ func TestResolveProjectEndpoint(t *testing.T) {
 	}
 }
 
+// spec: telemetry/user-endpoint-and-community-report-coexist
 func TestResolveUserEndpointAndCommunity(t *testing.T) {
 	setStateRoot(t)
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:              tmcfg.LevelBasic,
 			Endpoint:           "https://user.example.com",
 			CommunityReporting: boolPtr(true),
 		},
 	}
-	state, err := ResolveTelemetryConfig(nil, user, "https://project.example.com", "https://project.example.com/retention")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "https://project.example.com", "https://project.example.com/retention")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -111,14 +113,14 @@ func TestResolveUserEndpointAndCommunity(t *testing.T) {
 
 func TestResolveOrganizationEndpointLocksUser(t *testing.T) {
 	setStateRoot(t)
-	org := &amconfig.Config{
+	org := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:           tmcfg.LevelDetailed,
 			Endpoint:        "https://org.example.com",
 			RetentionPolicy: "https://org.example.com/retention",
 		},
 	}
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelBasic,
 			Endpoint: "https://user.example.com",
@@ -141,10 +143,10 @@ func TestResolveOrganizationEndpointLocksUser(t *testing.T) {
 
 func TestResolveOrganizationMinimum(t *testing.T) {
 	setStateRoot(t)
-	org := &amconfig.Config{
+	org := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelBasic},
 	}
-	state, err := ResolveTelemetryConfig(org, nil, "https://project.example.com", "https://project.example.com/retention")
+	state, err := ResolveTelemetryConfig(org, amconfig.Settings{}, "https://project.example.com", "https://project.example.com/retention")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -156,6 +158,7 @@ func TestResolveOrganizationMinimum(t *testing.T) {
 	}
 }
 
+// spec: telemetry/organization-level-is-authoritative
 func TestResolveOrganizationLevelPolicy(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -176,8 +179,8 @@ func TestResolveOrganizationLevelPolicy(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			setStateRoot(t)
-			org := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Level: tc.orgLevel}}
-			user := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Level: tc.userLevel}}
+			org := amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{Level: tc.orgLevel}}
+			user := amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{Level: tc.userLevel}}
 			state, err := ResolveTelemetryConfig(org, user, "", "")
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -191,13 +194,13 @@ func TestResolveOrganizationLevelPolicy(t *testing.T) {
 
 func TestResolveOrganizationLocksCommunity(t *testing.T) {
 	setStateRoot(t)
-	org := &amconfig.Config{
+	org := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:              tmcfg.LevelBasic,
 			CommunityReporting: boolPtr(false),
 		},
 	}
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:              tmcfg.LevelBasic,
 			CommunityReporting: boolPtr(true),
@@ -217,14 +220,14 @@ func TestResolveOrganizationLocksCommunity(t *testing.T) {
 
 func TestResolveDeduplication(t *testing.T) {
 	setStateRoot(t)
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:              tmcfg.LevelBasic,
 			Endpoint:           "https://project.example.com",
 			CommunityReporting: boolPtr(true),
 		},
 	}
-	state, err := ResolveTelemetryConfig(nil, user, "https://project.example.com", "https://project.example.com/retention")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "https://project.example.com", "https://project.example.com/retention")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -239,11 +242,12 @@ func TestResolveDeduplication(t *testing.T) {
 	}
 }
 
+// spec: telemetry/organization-policy-gates-environment-overrides
 func TestResolveEnvOverrides(t *testing.T) {
 	tests := []struct {
 		name          string
-		org           *amconfig.Config
-		user          *amconfig.Config
+		org           amconfig.Settings
+		user          amconfig.Settings
 		envEndpoint   string
 		envLevel      string
 		envCommunity  string
@@ -271,7 +275,7 @@ func TestResolveEnvOverrides(t *testing.T) {
 		},
 		{
 			name:         "env endpoint ignored when org endpoint locked",
-			org:          &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Endpoint: "https://org.example.com", RetentionPolicy: "https://org.example.com/r"}},
+			org:          amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{Endpoint: "https://org.example.com", RetentionPolicy: "https://org.example.com/r"}},
 			wantEndpoint: "https://org.example.com",
 			wantSource:   sourceOrganization,
 			wantLevel:    tmcfg.LevelOff,
@@ -279,7 +283,7 @@ func TestResolveEnvOverrides(t *testing.T) {
 		},
 		{
 			name:         "env level ignored when organization policy has no level",
-			org:          &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Endpoint: "https://org.example.com", RetentionPolicy: "https://org.example.com/r"}},
+			org:          amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{Endpoint: "https://org.example.com", RetentionPolicy: "https://org.example.com/r"}},
 			wantEndpoint: "https://org.example.com",
 			wantSource:   sourceOrganization,
 			wantLevel:    tmcfg.LevelOff,
@@ -287,7 +291,7 @@ func TestResolveEnvOverrides(t *testing.T) {
 		},
 		{
 			name:         "env level ignored when org level locked",
-			org:          &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelBasic}},
+			org:          amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelBasic}},
 			wantEndpoint: "https://project.example.com",
 			wantSource:   sourceProject,
 			wantLevel:    tmcfg.LevelBasic,
@@ -295,7 +299,7 @@ func TestResolveEnvOverrides(t *testing.T) {
 		},
 		{
 			name:          "env community ignored when org community locked",
-			org:           &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelBasic, CommunityReporting: boolPtr(false)}},
+			org:           amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelBasic, CommunityReporting: boolPtr(false)}},
 			wantEndpoint:  "https://project.example.com",
 			wantSource:    sourceProject,
 			wantLevel:     tmcfg.LevelBasic,
@@ -329,7 +333,7 @@ func TestResolveEnvOverrides(t *testing.T) {
 func TestResolveEnvOverrideInvalidEndpoint(t *testing.T) {
 	setStateRoot(t)
 	t.Setenv(EnvEndpoint, "http://public.example.com")
-	_, err := ResolveTelemetryConfig(nil, nil, "", "")
+	_, err := ResolveTelemetryConfig(amconfig.Settings{}, amconfig.Settings{}, "", "")
 	if err == nil {
 		t.Fatal("expected error for insecure public env endpoint")
 	}
@@ -337,13 +341,13 @@ func TestResolveEnvOverrideInvalidEndpoint(t *testing.T) {
 
 func TestResolveCommunityDisabledWhenLevelOff(t *testing.T) {
 	setStateRoot(t)
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:              tmcfg.LevelOff,
 			CommunityReporting: boolPtr(true),
 		},
 	}
-	state, err := ResolveTelemetryConfig(nil, user, "https://project.example.com", "https://project.example.com/retention")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "https://project.example.com", "https://project.example.com/retention")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -352,6 +356,7 @@ func TestResolveCommunityDisabledWhenLevelOff(t *testing.T) {
 	}
 }
 
+// spec: telemetry/endpoint-authentication-follows-endpoint-authority
 func TestResolveAuthAndCA(t *testing.T) {
 	setStateRoot(t)
 	dir := t.TempDir()
@@ -367,7 +372,7 @@ func TestResolveAuthAndCA(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:         tmcfg.LevelBasic,
 			Endpoint:      "https://user.example.com",
@@ -379,7 +384,7 @@ func TestResolveAuthAndCA(t *testing.T) {
 			},
 		},
 	}
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -412,10 +417,10 @@ func TestResolveRejectsDisabledUserTransportSettingsWhenOrganizationEnablesTelem
 		t.Fatal(err)
 	}
 
-	org := &amconfig.Config{
+	org := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelBasic},
 	}
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelOff,
 			Endpoint: "https://user.example.com",
@@ -429,13 +434,13 @@ func TestResolveRejectsDisabledUserTransportSettingsWhenOrganizationEnablesTelem
 
 func TestResolveOrganizationUsesDefaultRetention(t *testing.T) {
 	setStateRoot(t)
-	org := &amconfig.Config{
+	org := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelBasic,
 			Endpoint: "https://org.example.com",
 		},
 	}
-	state, err := ResolveTelemetryConfig(org, nil, "https://project.example.com", "https://project.example.com/retention")
+	state, err := ResolveTelemetryConfig(org, amconfig.Settings{}, "https://project.example.com", "https://project.example.com/retention")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -446,13 +451,13 @@ func TestResolveOrganizationUsesDefaultRetention(t *testing.T) {
 
 func TestResolveInsecurePublicEndpointErrors(t *testing.T) {
 	setStateRoot(t)
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelBasic,
 			Endpoint: "http://public.example.com",
 		},
 	}
-	_, err := ResolveTelemetryConfig(nil, user, "", "")
+	_, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err == nil {
 		t.Fatal("expected error for insecure public endpoint")
 	}
@@ -461,12 +466,12 @@ func TestResolveInsecurePublicEndpointErrors(t *testing.T) {
 func TestResolveEnvLevelGatedByOrganization(t *testing.T) {
 	setStateRoot(t)
 	t.Setenv(EnvLevel, "detailed")
-	org := &amconfig.Config{
+	org := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level: tmcfg.LevelBasic,
 		},
 	}
-	state, err := ResolveTelemetryConfig(org, nil, "", "")
+	state, err := ResolveTelemetryConfig(org, amconfig.Settings{}, "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -477,14 +482,14 @@ func TestResolveEnvLevelGatedByOrganization(t *testing.T) {
 
 func TestResolveCommunityFoldingWithDefaultMetricsPath(t *testing.T) {
 	setStateRoot(t)
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:              tmcfg.LevelBasic,
 			Endpoint:           "https://project.example.com/v1/metrics",
 			CommunityReporting: boolPtr(true),
 		},
 	}
-	state, err := ResolveTelemetryConfig(nil, user, "https://project.example.com", "https://project.example.com/retention")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "https://project.example.com", "https://project.example.com/retention")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -501,14 +506,14 @@ func TestResolveCommunityFoldingWithDefaultMetricsPath(t *testing.T) {
 
 func TestResolveCommunityNotFoldedWithCustomPath(t *testing.T) {
 	setStateRoot(t)
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:              tmcfg.LevelBasic,
 			Endpoint:           "https://project.example.com/custom",
 			CommunityReporting: boolPtr(true),
 		},
 	}
-	state, err := ResolveTelemetryConfig(nil, user, "https://project.example.com", "https://project.example.com/retention")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "https://project.example.com", "https://project.example.com/retention")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -532,7 +537,7 @@ func TestResolveOrganizationPrivateHostnameEndpoint(t *testing.T) {
 	}
 	defer func() { tmcfg.LookupIP = old }()
 
-	org := &amconfig.Config{
+	org := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:           tmcfg.LevelBasic,
 			Endpoint:        "http://private.example.com",
@@ -540,7 +545,7 @@ func TestResolveOrganizationPrivateHostnameEndpoint(t *testing.T) {
 			AllowInsecure:   true,
 		},
 	}
-	state, err := ResolveTelemetryConfig(org, nil, "", "")
+	state, err := ResolveTelemetryConfig(org, amconfig.Settings{}, "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -558,7 +563,7 @@ func TestResolveOrganizationPrivateHostnameOffline(t *testing.T) {
 	}
 	defer func() { tmcfg.LookupIP = old }()
 
-	org := &amconfig.Config{
+	org := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:           tmcfg.LevelBasic,
 			Endpoint:        "http://private.example.com",
@@ -566,7 +571,7 @@ func TestResolveOrganizationPrivateHostnameOffline(t *testing.T) {
 			AllowInsecure:   true,
 		},
 	}
-	state, err := ResolveTelemetryConfig(org, nil, "", "")
+	state, err := ResolveTelemetryConfig(org, amconfig.Settings{}, "", "")
 	if err != nil {
 		t.Fatalf("offline DNS failure should not reject valid configuration: %v", err)
 	}
@@ -587,7 +592,7 @@ func TestResolveOrganizationPrivateHostnamePublicIP(t *testing.T) {
 	}
 	defer func() { tmcfg.LookupIP = old }()
 
-	org := &amconfig.Config{
+	org := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:           tmcfg.LevelBasic,
 			Endpoint:        "http://private.example.com",
@@ -595,7 +600,7 @@ func TestResolveOrganizationPrivateHostnamePublicIP(t *testing.T) {
 			AllowInsecure:   true,
 		},
 	}
-	_, err := ResolveTelemetryConfig(org, nil, "", "")
+	_, err := ResolveTelemetryConfig(org, amconfig.Settings{}, "", "")
 	if err == nil {
 		t.Fatal("expected error when private hostname resolves to a public IP")
 	}

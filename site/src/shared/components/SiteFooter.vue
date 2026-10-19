@@ -1,128 +1,101 @@
 <script setup lang="ts">
-import { withBase } from 'vitepress'
-import {
-  DOCS_PATH,
-  GITHUB_REPOSITORY_URL,
-  MARKETPLACE_PATH,
-} from '../site'
+import { useData, withBase } from 'vitepress'
+import { GITHUB_REPOSITORY_URL } from '../site'
+
+const { theme } = useData()
+const documentationPath = theme.value.siteProfile === 'docs' ? withBase('/') : withBase('/docs/')
 
 const links = [
-  { label: 'Documentation', href: withBase(DOCS_PATH), external: false },
-  { label: 'Marketplace', href: MARKETPLACE_PATH, external: false, hardNavigation: true },
-  { label: 'GitHub', href: GITHUB_REPOSITORY_URL, external: true },
+  { label: 'Apache 2.0 license', href: `${GITHUB_REPOSITORY_URL}/blob/main/LICENSE`, external: true },
+  { label: 'Documentation', href: documentationPath },
+  { label: 'GitHub ↗', href: GITHUB_REPOSITORY_URL, external: true },
 ]
 </script>
 
 <template>
-  <footer class="utility-footer">
+  <footer class="site-footer">
     <div class="footer-row">
-      <a class="brand" :href="withBase('/')">agent-marketplace</a>
+      <p>
+        Built at <span class="adyen">Adyen</span>
+      </p>
 
       <nav aria-label="Footer navigation">
-        <a
-          v-for="link in links"
-          :key="link.label"
-          :href="link.href"
-          :target="link.external ? '_blank' : link.hardNavigation ? '_self' : undefined"
-          :rel="link.external ? 'noreferrer' : undefined"
-        >
-          {{ link.label }}
-        </a>
+        <template v-for="(link, index) in links" :key="link.label">
+          <span v-if="index" aria-hidden="true">·</span>
+          <a
+            :href="link.href"
+            :target="link.external ? '_blank' : undefined"
+            :rel="link.external ? 'noreferrer' : undefined"
+          >
+            {{ link.label }}
+          </a>
+        </template>
       </nav>
-
-      <p class="footer-meta">
-        built at Adyen
-        <span aria-hidden="true">·</span>
-        Apache-2.0
-        <span aria-hidden="true">·</span>
-        No telemetry by default
-      </p>
     </div>
   </footer>
 </template>
 
 <style scoped>
-.utility-footer {
-  padding: 22px 0;
+.site-footer {
+  padding: 24px 0;
   border-top: 1px solid var(--am-border);
-  background: var(--am-footer-bg);
+  background: var(--vp-c-bg);
+  font-family: var(--vp-font-family-base), sans-serif;
 }
 
 .footer-row {
+  display: flex;
   max-width: var(--am-maxw);
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px 32px;
   margin: 0 auto;
   padding: 0 24px;
-  display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr);
-  align-items: center;
-  gap: 24px;
 }
 
-.brand {
+p,
+nav {
+  margin: 0;
+  color: var(--vp-c-text-2);
+  font-size: var(--am-text-body-sm);
+  font-weight: var(--am-font-medium);
+}
+
+.adyen {
   color: var(--vp-c-brand-1);
-  font-family: var(--vp-font-family-mono);
-  font-size: 17px;
-  font-weight: 650;
-  text-decoration: none;
-  white-space: nowrap;
+  font-weight: var(--am-font-semibold);
 }
 
 nav {
   display: flex;
-  gap: 18px;
+  align-items: center;
+  gap: 10px;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
   white-space: nowrap;
 }
 
-nav a {
-  color: var(--vp-c-text-2);
-  font-size: 15px;
-  font-weight: 550;
-  text-decoration: none;
-}
-
-nav a:hover,
-.brand:hover {
+a:hover {
   color: var(--vp-c-brand-2);
 }
 
-nav a:focus-visible,
-.brand:focus-visible {
-  outline: 2px solid var(--vp-c-brand-1);
-  outline-offset: 4px;
+a:focus-visible {
   border-radius: 2px;
+  outline: 2px solid var(--vp-c-brand-1);
+  outline-offset: 3px;
 }
 
-.footer-meta {
-  justify-self: end;
-  margin: 0;
-  color: var(--vp-c-text-3);
-  font-family: var(--vp-font-family-mono);
-  font-size: 12.5px;
-  white-space: nowrap;
-}
-
-.footer-meta span {
-  margin: 0 5px;
-}
-
-@media (max-width: 900px) {
+@media (max-width: 680px) {
   .footer-row {
-    grid-template-columns: 1fr;
-    gap: 14px;
-  }
-
-  .footer-row > * {
-    min-width: 0;
-  }
-
-  .footer-meta {
-    justify-self: start;
-    white-space: normal;
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   nav {
-    max-width: 100%;
-    overflow-x: auto;
+    flex-wrap: wrap;
   }
 }
 </style>

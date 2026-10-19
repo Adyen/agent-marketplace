@@ -11,6 +11,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
+// spec: hook-resources/legacy-windsurf-hook-lock-is-retained-until-upgrade
 func TestWindsurfLegacyHookLockRetainedUntilUpgrade(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -23,7 +24,7 @@ func TestWindsurfLegacyHookLockRetainedUntilUpgrade(t *testing.T) {
 	writeFile(t, filepath.Join(working, ".windsurf", "hooks.json"), `{"hooks":{"pre_run_command":[{"command":"echo first"},{"command":"echo second"}]}}`)
 	commitAndPushAll(t, working, "add source hooks")
 	repo := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "harnesses: [windsurf]\nregistries:\n  - url: "+origin+"\n    ref: main\n    source_harness: windsurf\n    default: true\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [windsurf]\nsources:\n  origin: {git: file://"+origin+", ref: main, source_harness: windsurf}\nresources:\n  origin: {all: true}\n")
 	withWorkingDir(t, repo)
 	if out, err := executeCommand("lock"); err != nil {
 		t.Fatalf("initial lock: %v\n%s", err, out)
@@ -65,12 +66,12 @@ func TestWindsurfLegacyHookLockRetainedUntilUpgrade(t *testing.T) {
 	if out, err := executeCommand("sync", "--locked"); err != nil {
 		t.Fatalf("upgraded sync: %v\n%s", err, out)
 	}
-	assertWindsurfLockCommands(t, repo, []string{"echo second", "echo first"})
+	assertWindsurfLockCommands(t, repo, []string{"echo first", "echo second"})
 }
 
 func assertWindsurfLockCommands(t *testing.T, repo string, want []string) {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(repo, ".windsurf", "hooks.json"))
+	data, err := os.ReadFile(filepath.Join(repo, ".devin", "hooks.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -196,8 +196,7 @@ func runDeinit(ctx context.Context, out io.Writer, scope deinitScope, purgeConfi
 	// Preserve cache entries for organization-owned artifacts so their
 	// materialized symlinks remain valid after user teardown.
 	if scope == deinitScopeUser {
-		preserveCfg := preservedCacheConfig(resolvedArtifacts)
-		gcResult, gcErr := cache.GarbageCollect(dryRun, preserveCfg)
+		gcResult, gcErr := cache.GarbageCollectLegacyCaches(ctx, dryRun, preservedCacheSources(resolvedArtifacts))
 		if gcErr != nil {
 			return fmt.Errorf("cleaning cache: %w", gcErr)
 		}
@@ -234,13 +233,14 @@ func runDeinit(ctx context.Context, out io.Writer, scope deinitScope, purgeConfi
 				// Report the effective post-purge configuration from cache only. This
 				// lookup is telemetry best effort: resolution errors neither add output
 				// nor change the successful teardown's exit status.
-				finalResult := pipeline.Resolve(ctx, pipeline.ResolveOptions{
-					RepoRoot:       repoRoot,
-					LocalConfigDir: config.FindLocalConfigDir(),
-					CatalogMode:    catalog.LoadModeCachedNoFetch,
-					SkipInventory:  true,
-				})
-				pipeline.RecordResolvedInventory(ctx, finalResult)
+				if ws, err := pipeline.NewWorkspace(repoRoot, config.FindLocalConfigDir()); err == nil {
+					finalResult := pipeline.Resolve(ctx, pipeline.ResolveOptions{
+						Workspace:     ws,
+						CatalogMode:   catalog.LoadModeCachedNoFetch,
+						SkipInventory: true,
+					})
+					pipeline.RecordResolvedInventory(ctx, finalResult)
+				}
 			}
 		}
 	}
@@ -337,8 +337,8 @@ func removeEmptyDir(dir string) {
 // mandatory policy output).
 //
 // It uses the read-only exact lock view. A present organization lock is exact
-// and fail-closed; an intentionally absent organization lock follows unlocked
-// mutable acquisition/cache rules so organization output can still be preserved.
+// and fail-closed; an intentionally absent organization Marketplace lock may
+// reuse verified exact local evidence, never acquire or bootstrap it online.
 // When no machine-wide target harness set is configured, there is no organization-
 // owned output to preserve, so the function returns an empty slice rather than
 // defaulting artifacts to a target the user never requested.
@@ -350,13 +350,17 @@ func resolveOrgOwnedArtifacts(ctx context.Context, repoRoot string) ([]resolver.
 
 func resolveOrgOwnedArtifactsMode(ctx context.Context, repoRoot string, mode catalog.LoadMode) ([]resolver.ResolvedArtifact, func(), error) {
 	marketplaceMode := resolver.MarketplaceResolveModeCachedNoFetch
+	ws, err := pipeline.NewWorkspace(repoRoot, config.FindLocalConfigDir())
+	if err != nil {
+		return nil, nil, err
+	}
 	resolveOpts := pipeline.ResolveOptions{
-		RepoRoot:           repoRoot,
-		LocalConfigDir:     config.FindLocalConfigDir(),
+		Workspace:          ws,
 		CatalogMode:        mode,
 		RequireTargetSet:   true,
 		SkipInventory:      true,
 		ReadOnlyExactLocks: true,
+		ConfigLoadMode:     pipeline.ConfigLoadCached,
 		MarketplaceMode:    &marketplaceMode,
 		MarketplaceSourceFilter: func(source config.Source) bool {
 			return source == config.Organization
@@ -376,7 +380,7 @@ func resolveOrgOwnedArtifactsMode(ctx context.Context, repoRoot string, mode cat
 		releaseExactLease()
 		return nil, nil, errors.Join(unresolved...)
 	}
-	if len(res.TargetHarnesses) == 0 {
+	if len(res.MachineTargetHarnesses) == 0 {
 		releaseExactLease()
 		slog.Info("deinit: target harness set is empty; no organization-owned artifacts to preserve")
 		return nil, func() {}, nil
@@ -424,29 +428,14 @@ func isOrganizationRegistry(cfg *config.Config, url, path, ref string) bool {
 	return false
 }
 
-// preservedCacheConfig builds a minimal config containing the registries that
-// back the preserved organization-owned artifacts. cache.GarbageCollect uses the
-// registry URLs to keep the corresponding raw clone directories while removing
-// caches that are no longer referenced by preserved output.
-func preservedCacheConfig(artifacts []resolver.ResolvedArtifact) *config.Config {
-	cfg := &config.Config{
-		APIVersion: config.APIVersionV3,
-		Registries: []config.RegistryEntry{},
-	}
-	seen := make(map[string]struct{})
+// preservedCacheSources returns the Git source URLs that keep the raw clone
+// directories backing the preserved organization-owned artifacts reachable.
+func preservedCacheSources(artifacts []resolver.ResolvedArtifact) []string {
+	var sources []string
 	for _, a := range artifacts {
-		if a.RegistryURL == "" {
-			continue
+		if a.RegistryURL != "" {
+			sources = append(sources, a.RegistryURL)
 		}
-		key := a.RegistryURL + "@" + a.Ref
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		cfg.Registries = append(cfg.Registries, config.RegistryEntry{
-			URL: a.RegistryURL,
-			Ref: a.Ref,
-		})
 	}
-	return cfg
+	return sources
 }

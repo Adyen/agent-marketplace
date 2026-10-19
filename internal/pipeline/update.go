@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"os/exec"
 	pathpkg "path"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -19,8 +21,10 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
+	"gopkg.in/yaml.v3"
 )
 
 var dottedVersionRefPattern = regexp.MustCompile(`^(.*?)(\d+)$`)
@@ -35,7 +39,6 @@ type RefBump struct {
 // UpdateOptions holds the arguments for an update operation.
 type UpdateOptions struct {
 	RepoRoot            string
-	MaterializeRoot     string
 	LocalConfigDir      string
 	Bump                bool
 	BumpScopes          map[lockfile.Scope]bool
@@ -64,6 +67,45 @@ type marketplaceUpdatePlan struct {
 	ConfigPath       string
 	ReplacementPins  []config.MarketplaceResourcePin
 	CollectionUpdate bool
+}
+
+// MissingMarketplaceResourcesError names every Marketplace pin whose
+// latest-revision lookup returned 404. Update returns it together with a
+// non-nil result after applying every other planned update, so callers can
+// print the report before surfacing the error.
+type MissingMarketplaceResourcesError struct {
+	Pins []MarketplacePinUpdate
+}
+
+func (e *MissingMarketplaceResourcesError) Error() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d Marketplace resource(s) no longer exist:", len(e.Pins))
+	for _, pin := range e.Pins {
+		name := pin.OldPin.InstalledName
+		if name == "" {
+			name = pin.OldPin.Name
+		}
+		fmt.Fprintf(&b, "\nmarketplace %s pin %s/%s/%s: resource not found; remove the old pin with `agent-marketplace remove %s` and install the new name",
+			pin.Entry.URL, pin.OldPin.RegistryID, pin.OldPin.Kind, pin.OldPin.Name, name)
+	}
+	return b.String()
+}
+
+func missingMarketplacePins(plans []marketplaceUpdatePlan) error {
+	var missing *MissingMarketplaceResourcesError
+	for i := range plans {
+		if plans[i].Reason != marketplaceResourceMissingReason {
+			continue
+		}
+		if missing == nil {
+			missing = &MissingMarketplaceResourcesError{}
+		}
+		missing.Pins = append(missing.Pins, plans[i].MarketplacePinUpdate)
+	}
+	if missing == nil {
+		return nil
+	}
+	return missing
 }
 
 type UpdateTarget struct {
@@ -101,8 +143,15 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 	}()
 
 	repoRoot := opts.RepoRoot
+	ws, err := workspaceForRoots(repoRoot, opts.LocalConfigDir)
+	if err != nil {
+		return nil, err
+	}
+	if err := RecoverDependencyTransactions(ctx); err != nil {
+		return nil, err
+	}
 	slog.Info("update start", "repo_root", repoRoot, "bump", opts.Bump)
-	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: opts.LocalConfigDir}, nil)
+	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir()}, nil)
 	if len(ec.Errors) > 0 {
 		return nil, errors.Join(ec.Errors...)
 	}
@@ -122,8 +171,9 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 	for _, plan := range plans {
 		actionable = actionable || !plan.Skipped
 	}
+	missing := missingMarketplacePins(plans)
 	if !actionable {
-		return updateResult(updatedRegistries, nil, plans), nil
+		return updateResult(updatedRegistries, nil, plans), missing
 	}
 	if opts.DependencyReconcile == nil {
 		return nil, errors.New("update requires dependency lock reconciliation")
@@ -135,7 +185,6 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 	defer closeConfigStaging(staging, "update", &retErr)
 	lockEdits := make(map[string]StagedLockEdit)
 	var lockEditOrder []string
-	warnedLegacyPaths := make(map[string]bool)
 	for i := range plans {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -148,32 +197,13 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 		if err != nil {
 			return nil, err
 		}
-		if v4 != nil {
-			if err := stageV4MarketplaceLockUpdate(plan, v4, lockEdits, &lockEditOrder); err != nil {
-				updateErr := fmt.Errorf("update Marketplace pin %s/%s/%s: %w", plan.OldPin.RegistryID, plan.OldPin.Kind, plan.OldPin.Name, err)
-				slog.Error("update aborted on Marketplace lock conflict", "config_path", plan.ConfigPath, "registry_id", plan.OldPin.RegistryID, "kind", plan.OldPin.Kind, "name", plan.OldPin.Name, "error", updateErr)
-				return nil, updateErr
-			}
-			plan.Updated = true
-			continue
+		if v4 == nil {
+			return nil, fmt.Errorf("v4 Marketplace configuration disappeared: %s", plan.ConfigPath)
 		}
-		configPath, err := staging.Path(plan.ConfigPath)
-		if err != nil {
-			return nil, err
-		}
-		if plan.CollectionUpdate {
-			_, _, err = config.EnsureMarketplaceCollectionWithSnapshotAndCommit(configPath, plan.Entry.URL, plan.Entry.InstanceID, plan.OldPin, plan.ReplacementPins)
-		} else {
-			err = config.UpdateMarketplacePinInConfig(configPath, plan.Entry.URL, plan.Entry.InstanceID, plan.OldPin, plan.NewPin)
-		}
-		if err != nil {
+		if err := stageV4MarketplaceLockUpdate(plan, v4, lockEdits, &lockEditOrder); err != nil {
 			updateErr := fmt.Errorf("update Marketplace pin %s/%s/%s: %w", plan.OldPin.RegistryID, plan.OldPin.Kind, plan.OldPin.Name, err)
-			slog.Error("update aborted on Marketplace config conflict", "config_path", plan.ConfigPath, "registry_id", plan.OldPin.RegistryID, "kind", plan.OldPin.Kind, "name", plan.OldPin.Name, "error", updateErr)
+			slog.Error("update aborted on Marketplace lock conflict", "config_path", plan.ConfigPath, "registry_id", plan.OldPin.RegistryID, "kind", plan.OldPin.Kind, "name", plan.OldPin.Name, "error", updateErr)
 			return nil, updateErr
-		}
-		if !warnedLegacyPaths[plan.ConfigPath] {
-			warnedLegacyPaths[plan.ConfigPath] = true
-			warnLegacyLayerMutation(plan.Source, plan.ConfigPath)
 		}
 		plan.Updated = true
 	}
@@ -187,18 +217,28 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 			if !bumpScopeSelected(opts.BumpScopes, scope) {
 				continue
 			}
-			registries := layerRegistriesForUpdate(layer)
+			registries := GitRegistryEntries(layer.Sources)
 			if len(registries) == 0 {
 				continue
 			}
 			if err := config.ValidateRegistryURLs(registries, ec.Allowed); err != nil {
 				return nil, err
 			}
+			// Includes and source ownership belong to the declaring root, not
+			// the private shadow used for dependency publication.
+			v4, err := config.LoadV4ConfigIfPresent(layer.Path, layer.Source)
+			if err != nil {
+				return nil, err
+			}
+			if v4 == nil {
+				return nil, fmt.Errorf("configuration disappeared: %s", layer.Path)
+			}
 			configPath, err := staging.Path(layer.Path)
 			if err != nil {
 				return nil, err
 			}
-			layerBumps, layerSkipped, err := bumpRepoRegistryRefs(ctx, configPath, &config.Config{Registries: registries}, opts.BumpTarget)
+			layerTarget := config.LayerTarget{Source: layer.Source, StagedPath: configPath, DeclaringPath: layer.Path}
+			layerBumps, layerSkipped, err := bumpRepoRegistryRefs(ctx, layerTarget, v4, &config.Config{Registries: registries}, opts.BumpTarget)
 			if err != nil {
 				return nil, err
 			}
@@ -207,15 +247,14 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 		}
 	}
 
-	syncOpts := silentSyncOptsForPaths(repoRoot, opts.MaterializeRoot, opts.LocalConfigDir)
-	syncOpts = append(syncOpts, withConfigStaging(staging), withDependencyReconciler(func(ctx context.Context, repoRoot, localDir string, _ bool, edits []StagedConfigEdit) (DependencyLockView, error) {
+	syncOpts := []silentSyncOpt{withConfigStaging(staging), withDependencyReconciler(func(ctx context.Context, repoRoot, localDir string, _ bool, edits []StagedConfigEdit) (DependencyLockView, error) {
 		ordered := make([]StagedLockEdit, 0, len(lockEditOrder))
 		for _, path := range lockEditOrder {
 			ordered = append(ordered, lockEdits[path])
 		}
 		return opts.DependencyReconcile(ctx, repoRoot, localDir, bumps, edits, ordered)
-	}))
-	if _, err := silentSyncCollect(ctx, repoRoot, syncOpts...); err != nil {
+	})}
+	if _, err := silentSyncCollect(ctx, ws, syncOpts...); err != nil {
 		if hasUnsupportedMarketplacePlan(plans) && isUnsupportedMarketplaceSyncError(err) {
 			err = fmt.Errorf("sync was required, but unsupported Marketplace pins prevented synchronization; index-only and collection updates are not implemented — remove or disable those pins before retrying: %w", err)
 		}
@@ -224,7 +263,7 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 	result = updateResult(updatedRegistries, bumps, plans)
 	result.SkippedBumps = skippedBumps
 	slog.Info("update end", "updated_registries", updatedRegistries, "bumps", len(bumps), "marketplace_updated", result.UpdatedMarketplacePins, "marketplace_skipped", result.SkippedMarketplacePins)
-	return result, nil
+	return result, missing
 }
 
 func updateResult(updatedRegistries int, bumps []RefBump, plans []marketplaceUpdatePlan) *UpdateResult {
@@ -251,7 +290,7 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 	}
 	targets := hccTargetsFromStrings(ec.TargetHarnesses)
 	plans := make([]marketplaceUpdatePlan, 0, len(ec.Merged.Marketplaces))
-	collectionLeaves := make(map[string]struct{})
+	collectionLeaves := make(map[string]bool)
 	for _, entry := range ec.Merged.Marketplaces {
 		configPath := ""
 		if entry.Source.IsWritable() {
@@ -269,58 +308,24 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 			if pin.Kind != "collection" {
 				continue
 			}
-			item := MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Required: entry.Required, Skipped: true}
-			expanded := false
+			var leaves []string
 			for _, leaf := range entry.Resources {
 				for _, selector := range leaf.SelectedBy.List() {
 					if selector.RegistryID == pin.RegistryID && selector.Name == pin.Name && selector.Revision == pin.Revision {
-						expanded = true
-						collectionLeaves[marketplaceUpdateKey(entry, leaf)] = struct{}{}
+						leaves = append(leaves, marketplaceUpdateKey(entry, leaf))
 					}
 				}
 			}
-			if constrained[marketplaceV4PinKey(entry.Alias, pin)] {
-				item.Reason = "request pins an explicit revision"
-				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
-				continue
-			}
-			if entry.Source == config.Organization {
-				item.Reason = "organization pin is managed externally"
-				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
-				continue
-			}
-			if !expanded {
-				item.Reason = "collection pin updates are not supported"
-				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
-				continue
-			}
-			source, latest, err := resolverMP.LatestRevision(ctx, entry, pin)
+			plan, err := planMarketplaceCollectionUpdate(ctx, resolverMP, entry, pin, configPath, constrained[marketplaceV4PinKey(entry.Alias, pin)], len(leaves) > 0, targets)
 			if err != nil {
-				return nil, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, err)
+				return nil, err
 			}
-			if string(latest.ContentDigest) == pin.Digest {
-				item.Reason = "content digest unchanged"
-				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
-				continue
+			plans = append(plans, plan)
+			unchanged := plan.Skipped && plan.Reason == contentDigestUnchangedReason
+			for _, key := range leaves {
+				refreshable, seen := collectionLeaves[key]
+				collectionLeaves[key] = unchanged && (refreshable || !seen)
 			}
-			if len(targets) == 0 {
-				return nil, &TargetHarnessSetMissingError{}
-			}
-			locator := marketplace.MarketplaceLocator{Registry: string(source.ID), Kind: pin.Kind, Name: pin.Name, Revision: string(latest.ContentDigest), Digest: string(latest.ContentDigest)}
-			prepared, err := resolverMP.PrepareLocator(ctx, entry, locator, targets)
-			if err != nil {
-				return nil, fmt.Errorf("prepare Marketplace collection %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, err)
-			}
-			for _, leaf := range prepared.CollectionMembers {
-				if err := validatePreparedMarketplaceUpdate(leaf); err != nil {
-					return nil, fmt.Errorf("validate Marketplace collection leaf: %w", err)
-				}
-			}
-			newPins := marketplaceInstallPins(prepared)
-			item.Skipped = false
-			item.NewPin = prepared.Pin
-			item.ArchiveDigest = prepared.ArchiveDigest
-			plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath, ReplacementPins: newPins, CollectionUpdate: true})
 		}
 		for _, pin := range entry.Resources {
 			if pin.Kind == "collection" {
@@ -340,12 +345,19 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
 				continue
 			}
-			if _, selected := collectionLeaves[marketplaceUpdateKey(entry, pin)]; selected {
-				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Skipped: true, Reason: "leaf is pinned by a collection revision"}, ConfigPath: configPath})
+			refreshable, selected := collectionLeaves[marketplaceUpdateKey(entry, pin)]
+			if selected && !refreshable {
+				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Skipped: true, Reason: collectionLeafPinnedReason}, ConfigPath: configPath})
 				continue
 			}
 			source, latest, err := resolverMP.LatestRevision(ctx, entry, pin)
 			if err != nil {
+				var missingErr *marketplace.MissingResourceError
+				if errors.As(err, &missingErr) {
+					item := MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Required: entry.Required, Skipped: true, Reason: marketplaceResourceMissingReason}
+					plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
+					continue
+				}
 				return nil, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, err)
 			}
 			item := MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Skipped: true}
@@ -354,8 +366,26 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
 				continue
 			}
-			if string(latest.ContentDigest) == pin.Digest && !marketplace.IndexOnlyOccurrenceChanged(pin, latest) {
-				item.Reason = "content digest unchanged"
+			unchanged := string(latest.ContentDigest) == pin.Digest && !marketplace.IndexOnlyOccurrenceChanged(pin, latest)
+			if unchanged {
+				verified, refreshed, err := refreshDriftedArchiveEvidence(ctx, resolverMP, entry, pin, latest)
+				if err != nil {
+					return nil, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, err)
+				}
+				if refreshed {
+					item.Skipped = false
+					item.NewPin = pin
+					item.ArchiveDigest = verified
+					item.Reason = fmt.Sprintf("archive evidence refreshed %s -> %s", pin.LockArchiveDigest, verified)
+					plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
+					continue
+				}
+			}
+			if selected || unchanged {
+				item.Reason = contentDigestUnchangedReason
+				if selected {
+					item.Reason = collectionLeafPinnedReason
+				}
 				plans = append(plans, marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath})
 				continue
 			}
@@ -380,6 +410,71 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 		}
 	}
 	return plans, nil
+}
+
+const (
+	contentDigestUnchangedReason     = "content digest unchanged"
+	collectionLeafPinnedReason       = "leaf is pinned by a collection revision"
+	marketplaceResourceMissingReason = "resource no longer exists on the Marketplace"
+)
+
+func planMarketplaceCollectionUpdate(ctx context.Context, resolverMP *marketplace.Resolver, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, configPath string, constrained, expanded bool, targets []hcc.Target) (marketplaceUpdatePlan, error) {
+	item := MarketplacePinUpdate{Entry: entry, OldPin: pin, Source: entry.Source, Required: entry.Required, Skipped: true}
+	skip := func(reason string) (marketplaceUpdatePlan, error) {
+		item.Reason = reason
+		return marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath}, nil
+	}
+	switch {
+	case constrained:
+		return skip("request pins an explicit revision")
+	case entry.Source == config.Organization:
+		return skip("organization pin is managed externally")
+	case !expanded:
+		return skip("collection pin updates are not supported")
+	}
+	source, latest, err := resolverMP.LatestRevision(ctx, entry, pin)
+	if err != nil {
+		var missingErr *marketplace.MissingResourceError
+		if errors.As(err, &missingErr) {
+			item.Reason = marketplaceResourceMissingReason
+			return marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath}, nil
+		}
+		return marketplaceUpdatePlan{}, fmt.Errorf("marketplace %s pin %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, pin.Name, err)
+	}
+	if string(latest.ContentDigest) == pin.Digest {
+		return skip(contentDigestUnchangedReason)
+	}
+	if len(targets) == 0 {
+		return marketplaceUpdatePlan{}, &TargetHarnessSetMissingError{}
+	}
+	locator := marketplace.MarketplaceLocator{Registry: string(source.ID), Kind: pin.Kind, Name: pin.Name, Revision: string(latest.ContentDigest), Digest: string(latest.ContentDigest)}
+	prepared, err := resolverMP.PrepareLocator(ctx, entry, locator, targets)
+	if err != nil {
+		return marketplaceUpdatePlan{}, fmt.Errorf("prepare Marketplace collection %s/%s/%s: %w", entry.URL, pin.RegistryID, pin.Kind, err)
+	}
+	for _, leaf := range prepared.CollectionMembers {
+		if err := validatePreparedMarketplaceUpdate(leaf); err != nil {
+			return marketplaceUpdatePlan{}, fmt.Errorf("validate Marketplace collection leaf: %w", err)
+		}
+	}
+	item.Skipped = false
+	item.NewPin = prepared.Pin
+	item.ArchiveDigest = prepared.ArchiveDigest
+	return marketplaceUpdatePlan{MarketplacePinUpdate: item, ConfigPath: configPath, ReplacementPins: marketplaceInstallPins(prepared), CollectionUpdate: true}, nil
+}
+
+func refreshDriftedArchiveEvidence(ctx context.Context, resolverMP *marketplace.Resolver, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, latest store.AssessedResourceRevision) (string, bool, error) {
+	if pin.LockArchiveDigest == "" || latest.ArchiveDigest == "" || string(latest.ArchiveDigest) == pin.LockArchiveDigest {
+		return "", false, nil
+	}
+	verified, err := resolverMP.RefreshArchiveEvidence(ctx, entry, pin)
+	if err != nil {
+		return "", false, err
+	}
+	if verified == "" || verified == pin.LockArchiveDigest {
+		return "", false, nil
+	}
+	return verified, true, nil
 }
 
 func marketplaceUpdateKey(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) string {
@@ -540,16 +635,6 @@ func isUnsupportedMarketplaceSyncError(err error) bool {
 	return false
 }
 
-func layerRegistriesForUpdate(layer config.LayerResult) []config.RegistryEntry {
-	if layer.Config != nil {
-		return layer.Config.Registries
-	}
-	if layer.Local != nil {
-		return layer.Local.Registries
-	}
-	return nil
-}
-
 func bumpScopeSelected(scopes map[lockfile.Scope]bool, scope lockfile.Scope) bool {
 	if scopes == nil {
 		return scope == lockfile.ScopeRepo
@@ -557,7 +642,7 @@ func bumpScopeSelected(scopes map[lockfile.Scope]bool, scope lockfile.Scope) boo
 	return scopes[scope]
 }
 
-func bumpRepoRegistryRefs(ctx context.Context, configPath string, repoCfg *config.Config, target *UpdateTarget) (bumps, skipped []RefBump, retErr error) {
+func bumpRepoRegistryRefs(ctx context.Context, layerTarget config.LayerTarget, v4 *config.V4Config, repoCfg *config.Config, target *UpdateTarget) (bumps, skipped []RefBump, retErr error) {
 	if repoCfg == nil || len(repoCfg.Registries) == 0 {
 		return nil, nil, nil
 	}
@@ -620,20 +705,92 @@ func bumpRepoRegistryRefs(ctx context.Context, configPath string, repoCfg *confi
 	}
 
 	applied := bumps[:0]
+	rootRefs := make(map[string]RefBump)
 	for _, bump := range bumps {
-		updated, err := config.UpdateRegistryRefInConfig(configPath, bump.URL, bump.OldRef, bump.NewRef)
-		if err != nil {
-			return nil, nil, err
+		owned := false
+		for name, source := range v4.Sources {
+			// A source declared identically in an included fragment is not
+			// root-owned: advancing only the root copy would leave the tree
+			// with conflicting declarations.
+			if source.Kind == config.V4SourceGit && source.File == v4.Files[len(v4.Files)-1] && len(source.AlsoDeclaredIn) == 0 &&
+				config.NormalizeGitURL(source.URL) == config.NormalizeGitURL(bump.URL) && source.Ref == bump.OldRef {
+				rootRefs[name] = bump
+				owned = true
+			}
 		}
-		if updated == 0 {
-			slog.Warn("update bump skipped: ref is declared outside the root config file", "url", bump.URL, "old_ref", bump.OldRef, "new_ref", bump.NewRef)
+		if !owned {
+			slog.Warn("update bump skipped: ref is not owned by the root config file alone", "url", bump.URL, "old_ref", bump.OldRef, "new_ref", bump.NewRef)
 			skipped = append(skipped, bump)
 			continue
 		}
 		applied = append(applied, bump)
 	}
+	if len(rootRefs) > 0 {
+		if err := stageRootRegistryRefs(layerTarget, rootRefs); err != nil {
+			return nil, nil, err
+		}
+	}
 
 	return applied, skipped, nil
+}
+
+// stageRootRegistryRefs changes only root-owned scalar refs. LayerEditor keeps
+// full-tree validation anchored to the authored path before and after the edit;
+// only the private shadow changes here, and dependency reconciliation publishes it.
+func stageRootRegistryRefs(target config.LayerTarget, refs map[string]RefBump) error {
+	editor, err := config.OpenLayerEditor(target)
+	if err != nil {
+		return err
+	}
+	candidate, err := editor.Render()
+	if err != nil {
+		return err
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(candidate.Bytes, &doc); err != nil {
+		return fmt.Errorf("parse staged config %s: %w", target.DeclaringPath, err)
+	}
+	sources := updateMappingValue(doc.Content[0], "sources")
+	names := make([]string, 0, len(refs))
+	for name := range refs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		bump := refs[name]
+		source := updateMappingValue(sources, name)
+		gitNode, refNode := updateMappingValue(source, "git"), updateMappingValue(source, "ref")
+		if gitNode == nil || refNode == nil || config.NormalizeGitURL(gitNode.Value) != config.NormalizeGitURL(bump.URL) || strings.TrimSpace(refNode.Value) != bump.OldRef {
+			return fmt.Errorf("%w: source %s changed while staging %s", dependencytxn.ErrGenerationConflict, name, target.DeclaringPath)
+		}
+		refNode.Value = bump.NewRef
+	}
+	var data bytes.Buffer
+	encoder := yaml.NewEncoder(&data)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(&doc); err != nil {
+		return fmt.Errorf("encode staged config %s: %w", target.DeclaringPath, err)
+	}
+	if err := encoder.Close(); err != nil {
+		return fmt.Errorf("close staged config encoder %s: %w", target.DeclaringPath, err)
+	}
+	if err := os.WriteFile(target.StagedPath, data.Bytes(), candidate.Mode); err != nil {
+		return fmt.Errorf("write staged config %s: %w", target.DeclaringPath, err)
+	}
+	_, err = config.OpenLayerEditor(target)
+	return err
+}
+
+func updateMappingValue(node *yaml.Node, key string) *yaml.Node {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return node.Content[i+1]
+		}
+	}
+	return nil
 }
 
 func canonicalUpdateRegistryURL(raw string) (string, error) {

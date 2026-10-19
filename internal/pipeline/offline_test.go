@@ -58,13 +58,13 @@ func TestOfflineSyncUsesWarmMarketplaceMirror(t *testing.T) {
 	}
 
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: repoRoot,
-		NoBackup: true,
-		Offline:  true,
+		Workspace: mustWorkspace(t, repoRoot),
+		NoBackup:  true,
+		Offline:   true,
 		Loaders: Loaders{
 			Org: func() (*config.Config, error) { return &config.Config{}, nil },
 			Global: func() (*config.Config, error) {
-				return &config.Config{APIVersion: config.APIVersionV2, Harnesses: []string{"factory"}}, nil
+				return &config.Config{APIVersion: config.APIVersionV4, Harnesses: []string{"factory"}}, nil
 			},
 			Repo: func() (*config.Config, error) {
 				return &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, nil
@@ -161,13 +161,13 @@ func TestOfflineSyncUsesCollectionPreparationMetadataCache(t *testing.T) {
 	server.Close()
 
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: repoRoot,
-		NoBackup: true,
-		Offline:  true,
+		Workspace: mustWorkspace(t, repoRoot),
+		NoBackup:  true,
+		Offline:   true,
 		Loaders: Loaders{
 			Org: func() (*config.Config, error) { return &config.Config{}, nil },
 			Global: func() (*config.Config, error) {
-				return &config.Config{APIVersion: config.APIVersionV2, Harnesses: []string{"factory"}}, nil
+				return &config.Config{APIVersion: config.APIVersionV4, Harnesses: []string{"factory"}}, nil
 			},
 			Repo: func() (*config.Config, error) {
 				return &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, nil
@@ -199,13 +199,13 @@ func TestOfflineSyncFailsBeforeMaterializationWhenGitCacheMissing(t *testing.T) 
 		t.Fatal(err)
 	}
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: repoRoot,
-		NoBackup: true,
-		Offline:  true,
+		Workspace: mustWorkspace(t, repoRoot),
+		NoBackup:  true,
+		Offline:   true,
 		Loaders: Loaders{
 			Org: func() (*config.Config, error) { return &config.Config{}, nil },
 			Global: func() (*config.Config, error) {
-				return &config.Config{APIVersion: config.APIVersionV2, Harnesses: []string{"factory"}}, nil
+				return &config.Config{APIVersion: config.APIVersionV4, Harnesses: []string{"factory"}}, nil
 			},
 			Repo: func() (*config.Config, error) {
 				return &config.Config{Registries: []config.RegistryEntry{{
@@ -250,13 +250,13 @@ func TestOfflineSyncRejectsSymlinkedLocalRegistry(t *testing.T) {
 	}
 
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: repoRoot,
-		NoBackup: true,
-		Offline:  true,
+		Workspace: mustWorkspace(t, repoRoot),
+		NoBackup:  true,
+		Offline:   true,
 		Loaders: Loaders{
 			Org: func() (*config.Config, error) { return &config.Config{}, nil },
 			Global: func() (*config.Config, error) {
-				return &config.Config{APIVersion: config.APIVersionV2, Harnesses: []string{"factory"}}, nil
+				return &config.Config{APIVersion: config.APIVersionV4, Harnesses: []string{"factory"}}, nil
 			},
 			Repo: func() (*config.Config, error) {
 				return &config.Config{Registries: []config.RegistryEntry{{
@@ -297,13 +297,13 @@ func TestOfflineSyncFailsBeforeMaterializationForIncompleteSnapshot(t *testing.T
 	}
 
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: repoRoot,
-		NoBackup: true,
-		Offline:  true,
+		Workspace: mustWorkspace(t, repoRoot),
+		NoBackup:  true,
+		Offline:   true,
 		Loaders: Loaders{
 			Org: func() (*config.Config, error) { return &config.Config{}, nil },
 			Global: func() (*config.Config, error) {
-				return &config.Config{APIVersion: config.APIVersionV2, Harnesses: []string{"factory"}}, nil
+				return &config.Config{APIVersion: config.APIVersionV4, Harnesses: []string{"factory"}}, nil
 			},
 			Repo: func() (*config.Config, error) {
 				return &config.Config{Registries: []config.RegistryEntry{{
@@ -360,13 +360,13 @@ func TestOfflineSyncMarketplaceCacheFailurePreservesOutput(t *testing.T) {
 		RegistryID: "src", Kind: "skill", Name: "review", Revision: digest, Digest: digest,
 	}}}
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: repoRoot,
-		NoBackup: true,
-		Offline:  true,
+		Workspace: mustWorkspace(t, repoRoot),
+		NoBackup:  true,
+		Offline:   true,
 		Loaders: Loaders{
 			Org: func() (*config.Config, error) { return &config.Config{}, nil },
 			Global: func() (*config.Config, error) {
-				return &config.Config{APIVersion: config.APIVersionV2, Harnesses: []string{"factory"}}, nil
+				return &config.Config{APIVersion: config.APIVersionV4, Harnesses: []string{"factory"}}, nil
 			},
 			Repo: func() (*config.Config, error) {
 				return &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, nil
@@ -401,13 +401,13 @@ func TestOfflineSyncPreservesExactMarketplaceSelectorsOnFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: repoRoot,
-		NoBackup: true,
-		Offline:  true,
+		Workspace: mustWorkspace(t, repoRoot),
+		NoBackup:  true,
+		Offline:   true,
 		Loaders: Loaders{
 			Org: func() (*config.Config, error) { return &config.Config{}, nil },
 			Global: func() (*config.Config, error) {
-				return &config.Config{APIVersion: config.APIVersionV2, Harnesses: []string{"factory"}}, nil
+				return &config.Config{APIVersion: config.APIVersionV4, Harnesses: []string{"factory"}}, nil
 			},
 			Repo:  func() (*config.Config, error) { return config.LoadConfigFromPath(configPath) },
 			Local: func() (*config.LocalConfig, error) { return &config.LocalConfig{}, nil },
@@ -510,7 +510,7 @@ func TestOfflineSyncUserExclusionRemovesOwnCollectionMember(t *testing.T) {
 		Org: func() (*config.Config, error) { return &config.Config{}, nil },
 		Global: func() (*config.Config, error) {
 			return &config.Config{
-				APIVersion: config.APIVersionV2, Harnesses: []string{"factory"},
+				APIVersion: config.APIVersionV4, Harnesses: []string{"factory"},
 				Marketplaces:          []config.MarketplaceEntry{entry},
 				MarketplaceExclusions: []config.MarketplaceExclusion{{URL: entry.URL, Locator: "src/skill/review"}},
 			}, nil
@@ -518,7 +518,7 @@ func TestOfflineSyncUserExclusionRemovesOwnCollectionMember(t *testing.T) {
 		Repo:  func() (*config.Config, error) { return &config.Config{}, nil },
 		Local: func() (*config.LocalConfig, error) { return &config.LocalConfig{}, nil },
 	}
-	result := Sync(context.Background(), ResolveOptions{RepoRoot: t.TempDir(), NoBackup: true, Offline: true, Loaders: loaders})
+	result := Sync(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, t.TempDir()), NoBackup: true, Offline: true, Loaders: loaders})
 	if len(result.Errors) != 0 {
 		t.Fatalf("sync errors = %v", result.Errors)
 	}
@@ -546,7 +546,7 @@ func TestOfflineSyncUserMarketplaceExclusionSuppressesOptionalOrganizationMember
 			},
 			Global: func() (*config.Config, error) {
 				return &config.Config{
-					APIVersion: config.APIVersionV2, Harnesses: []string{"factory"},
+					APIVersion: config.APIVersionV4, Harnesses: []string{"factory"},
 					MarketplaceExclusions: []config.MarketplaceExclusion{{URL: entry.URL, Locator: "src/skill/review"}},
 				}, nil
 			},
@@ -555,7 +555,7 @@ func TestOfflineSyncUserMarketplaceExclusionSuppressesOptionalOrganizationMember
 		}
 	}
 
-	result := Sync(context.Background(), ResolveOptions{RepoRoot: repoRoot, NoBackup: true, Offline: true, Loaders: loaders(orgEntry)})
+	result := Sync(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, repoRoot), NoBackup: true, Offline: true, Loaders: loaders(orgEntry)})
 	if len(result.Errors) != 0 {
 		t.Fatalf("optional organization sync errors = %v", result.Errors)
 	}
@@ -567,7 +567,7 @@ func TestOfflineSyncUserMarketplaceExclusionSuppressesOptionalOrganizationMember
 	}
 
 	orgEntry.Required = true
-	result = Sync(context.Background(), ResolveOptions{RepoRoot: repoRoot, NoBackup: true, Offline: true, Loaders: loaders(orgEntry)})
+	result = Sync(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, repoRoot), NoBackup: true, Offline: true, Loaders: loaders(orgEntry)})
 	if len(result.Errors) != 0 {
 		t.Fatalf("required organization sync errors = %v", result.Errors)
 	}
@@ -586,13 +586,13 @@ func TestOfflineOverridesExplicitMarketplaceRefresh(t *testing.T) {
 
 	explicitMode := resolver.MarketplaceResolveModeRefresh
 	result := Resolve(context.Background(), ResolveOptions{
-		RepoRoot:        t.TempDir(),
+		Workspace:       mustWorkspace(t, t.TempDir()),
 		Offline:         true,
 		MarketplaceMode: &explicitMode,
 		Loaders: Loaders{
 			Org: func() (*config.Config, error) { return &config.Config{}, nil },
 			Global: func() (*config.Config, error) {
-				return &config.Config{APIVersion: config.APIVersionV2, Harnesses: []string{"factory"}}, nil
+				return &config.Config{APIVersion: config.APIVersionV4, Harnesses: []string{"factory"}}, nil
 			},
 			Repo: func() (*config.Config, error) {
 				return &config.Config{Marketplaces: []config.MarketplaceEntry{{

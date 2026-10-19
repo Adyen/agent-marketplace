@@ -1,0 +1,26 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4ExactExclusionAdaptation/exclusions=1-16         	 3098025	       778.3 ns/op	    2160 B/op	      12 allocs/op
+BenchmarkV4ExactExclusionAdaptation/exclusions=1-16         	 3068570	       777.1 ns/op	    2160 B/op	      12 allocs/op
+BenchmarkV4ExactExclusionAdaptation/exclusions=1-16         	 3086450	       773.6 ns/op	    2160 B/op	      12 allocs/op
+BenchmarkV4ExactExclusionAdaptation/exclusions=1-16         	 3061834	       797.9 ns/op	    2160 B/op	      12 allocs/op
+BenchmarkV4ExactExclusionAdaptation/exclusions=1-16         	 3119817	       778.8 ns/op	    2160 B/op	      12 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=1-16            	 2590587	       937.6 ns/op	    2800 B/op	      16 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=1-16            	 2617390	       920.6 ns/op	    2800 B/op	      16 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=1-16            	 2621617	       922.2 ns/op	    2800 B/op	      16 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=1-16            	 2580205	       940.3 ns/op	    2800 B/op	      16 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=1-16            	 2497580	       948.8 ns/op	    2800 B/op	      16 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=64-16           	   70666	     34345 ns/op	  111944 B/op	     314 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=64-16           	   72368	     33654 ns/op	  111944 B/op	     314 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=64-16           	   68338	     33624 ns/op	  111944 B/op	     314 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=64-16           	   66212	     34360 ns/op	  111944 B/op	     314 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=64-16           	   72366	     33393 ns/op	  111944 B/op	     314 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=1024-16         	    4350	    558503 ns/op	 1783604 B/op	    4205 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=1024-16         	    4287	    556642 ns/op	 1783603 B/op	    4205 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=1024-16         	    4023	    569543 ns/op	 1783603 B/op	    4205 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=1024-16         	    4300	    564888 ns/op	 1783603 B/op	    4205 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=1024-16         	    4365	    554175 ns/op	 1783603 B/op	    4205 allocs/op
+PASS
+ok  	github.com/Adyen/agent-marketplace/internal/config	48.184s

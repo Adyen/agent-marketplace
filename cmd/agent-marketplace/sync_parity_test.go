@@ -29,8 +29,8 @@ func TestSyncCLIAndTUIParity(t *testing.T) {
 			origin, working := createBareRepoWithWorkingClone(t, "parity.git")
 			writeSkill(t, working, "review", "Review", nil)
 			commitAndPushAll(t, working, "seed")
-			harnesses := "apiVersion: agent-marketplace/v2\nharnesses: [factory, devin, codex, claude, cursor, gemini, windsurf]\n"
-			registry := "registries:\n  - url: " + origin + "\n    ref: main\n    skills: [review]\n"
+			harnesses := "apiVersion: agent-marketplace/v4\nharnesses: [factory, devin, codex, claude, cursor, gemini, windsurf]\n"
+			registry := "sources:\n  tools:\n    git: file://" + origin + "\n    ref: main\nresources:\n  tools:\n    include: [skill/review]\n"
 			repo := filepath.Join(t.TempDir(), "repo")
 			repoConfig := harnesses
 			if sharedRegistry {
@@ -55,7 +55,7 @@ func TestSyncCLIAndTUIParity(t *testing.T) {
 				t.Fatal(err)
 			}
 			for range 2 {
-				result, release := pipeline.ResolveWithExactLockLease(context.Background(), pipeline.ResolveOptions{RepoRoot: repo, ReadOnlyExactLocks: true})
+				result, release := pipeline.ResolveWithExactLockLease(context.Background(), pipeline.ResolveOptions{Workspace: mustWorkspace(t, repo), ReadOnlyExactLocks: true})
 				report, err := materialize.Run(context.Background(), repo, result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(result.MaterializationModes))
 				release()
 				if err != nil || len(result.Errors) != 0 {
@@ -64,7 +64,7 @@ func TestSyncCLIAndTUIParity(t *testing.T) {
 				if !report.InSync() {
 					t.Errorf("TUI reports drift after CLI sync: writes=%d, removals=%d", report.TotalWritten(), report.TotalRemoved())
 				}
-				if err := runTUIDependencyLifecycle(context.Background(), repo, false); err != nil {
+				if _, err := runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repo), false); err != nil {
 					t.Fatal(err)
 				}
 				assertLink := func() {

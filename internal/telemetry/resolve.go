@@ -103,35 +103,28 @@ func queueRootFromInstallationIDPath(path string) string {
 func LoadAndResolve(ctx context.Context) (TelemetryState, error) {
 	slog.InfoContext(ctx, "loading and resolving telemetry config")
 
-	org, err := amconfig.LoadOrganizationPolicyConfig()
+	organization, err := amconfig.LoadOrganizationSettings()
 	if err != nil {
 		return TelemetryState{}, fmt.Errorf("load organization config: %w", err)
 	}
-
-	userPath, err := amconfig.GlobalConfigPath()
-	if err != nil {
-		return TelemetryState{}, fmt.Errorf("resolve user config path: %w", err)
-	}
-
-	user, err := amconfig.LoadConfigFromPath(userPath)
+	user, err := amconfig.LoadUserSettings()
 	if err != nil {
 		return TelemetryState{}, fmt.Errorf("load user config: %w", err)
 	}
-
-	return ResolveTelemetryConfig(org, user, DefaultProjectEndpoint, DefaultProjectRetentionURL)
+	return ResolveTelemetryConfig(organization, user, DefaultProjectEndpoint, DefaultProjectRetentionURL)
 }
 
 // ResolveTelemetryConfig computes the effective telemetry state from the
 // organization and user configuration layers. projectEndpoint and
 // projectRetentionURL are release-configured defaults.
-func ResolveTelemetryConfig(organization, user *amconfig.Config, projectEndpoint, projectRetentionURL string) (TelemetryState, error) {
+func ResolveTelemetryConfig(organization, user amconfig.Settings, projectEndpoint, projectRetentionURL string) (TelemetryState, error) {
 	state := TelemetryState{SchemaVersion: tmcfg.SchemaVersion}
 	slog.Info("resolving telemetry config")
 	warnIgnoredOtelVars()
 
-	orgTC := telemetryFromConfig(organization)
-	userTC := telemetryFromConfig(user)
-	orgActive := organization != nil && organization.Telemetry != nil
+	orgTC := telemetryFromSettings(organization)
+	userTC := telemetryFromSettings(user)
+	orgActive := organization.Telemetry != nil
 
 	var err error
 	userTC, err = applyEnvOverrides(userTC, orgTC, orgActive)
@@ -198,11 +191,11 @@ func ResolveTelemetryConfig(organization, user *amconfig.Config, projectEndpoint
 	return state, nil
 }
 
-func telemetryFromConfig(cfg *amconfig.Config) *tmcfg.TelemetryConfig {
-	if cfg == nil || cfg.Telemetry == nil {
+func telemetryFromSettings(settings amconfig.Settings) *tmcfg.TelemetryConfig {
+	if settings.Telemetry == nil {
 		return &tmcfg.TelemetryConfig{}
 	}
-	return cfg.Telemetry
+	return settings.Telemetry
 }
 
 func safeLevel(tc *tmcfg.TelemetryConfig) string {
@@ -309,7 +302,7 @@ func applyEnvOverrides(userTC, orgTC *tmcfg.TelemetryConfig, orgActive bool) (*t
 		if orgActive && orgTC.Endpoint != "" {
 			slog.Debug("skipping telemetry endpoint env override because organization policy is active", "var", EnvEndpoint)
 		} else {
-			slog.Info("applying telemetry endpoint override from environment", "var", EnvEndpoint, "endpoint", ep)
+			slog.Info("applying telemetry endpoint override from environment", "var", EnvEndpoint, "endpoint", logURL(ep))
 			if ep != userTC.Endpoint {
 				userTC.Headers = nil
 			}
@@ -432,15 +425,15 @@ func installationIDPath() (string, error) {
 	return filepath.Join(root, DefaultInstallationIDSubpath), nil
 }
 
-func resolveHarnesses(organization, user *amconfig.Config) []string {
-	cfg := user
-	if cfg == nil || len(cfg.Harnesses) == 0 {
-		cfg = organization
+func resolveHarnesses(organization, user amconfig.Settings) []string {
+	harnesses := user.Harnesses
+	if len(harnesses) == 0 {
+		harnesses = organization.Harnesses
 	}
-	if cfg == nil || len(cfg.Harnesses) == 0 {
+	if len(harnesses) == 0 {
 		return nil
 	}
-	return uniqueSortedStrings(cfg.Harnesses)
+	return uniqueSortedStrings(harnesses)
 }
 
 func uniqueSortedStrings(values []string) []string {

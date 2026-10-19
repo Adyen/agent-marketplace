@@ -21,7 +21,7 @@ func TestSync_DemotesResolverNameCollisionToWarning(t *testing.T) {
 	writeSkill(t, registryB, "only-b", "Only in B", []string{"test"})
 
 	repoCfg := &config.Config{
-		APIVersion: "agent-marketplace/v2",
+		APIVersion: "agent-marketplace/v4",
 		Registries: []config.RegistryEntry{
 			{
 				URL:           registryA,
@@ -37,8 +37,8 @@ func TestSync_DemotesResolverNameCollisionToWarning(t *testing.T) {
 	}
 
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: repoRoot,
-		NoBackup: true,
+		Workspace: mustWorkspace(t, repoRoot),
+		NoBackup:  true,
 		Loaders: Loaders{
 			Org:    func() (*config.Config, error) { return &config.Config{}, nil },
 			Global: func() (*config.Config, error) { return &config.Config{Harnesses: []string{"factory"}}, nil },

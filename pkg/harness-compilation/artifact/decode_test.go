@@ -11,6 +11,57 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+// spec: marketplace-api/canonical-null-extra-is-not-a-native-extension
+func TestCanonicalHookMetadataProjectionCompatibility(t *testing.T) {
+	hook := ir.NewHook("guard", "PreToolUse", "echo safe", "command", nil, ir.SourceRef{})
+	resource, err := DecodeResource("hook", earlierNullExtraPayload(t, hook))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value, retained := resource.(*ir.Hook).Extra["Extra"]; !retained || value != nil {
+		t.Fatalf("canonical hook metadata changed: %#v", resource.(*ir.Hook).Extra)
+	}
+}
+
+// earlierNullExtraPayload returns r's payload as encoders before #724 wrote it,
+// with the serializer's null Extra member.
+func earlierNullExtraPayload(t *testing.T, r ir.Resource) []byte {
+	t.Helper()
+	canonical, err := FromIR(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(canonical.Payload, &fields); err != nil {
+		t.Fatal(err)
+	}
+	fields["Extra"] = nil
+	payload, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
+}
+
+// spec: marketplace-api/non-hook-canonical-metadata-compatibility
+func TestCanonicalNonHookNullExtraCompatibility(t *testing.T) {
+	for _, kind := range []string{"skill", "command", "subagent", "mcpserver"} {
+		t.Run(kind, func(t *testing.T) {
+			resource, err := DecodeResource(kind, []byte(`{"name":"resource","Extra":null}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			extra, err := extractExtra(resource)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if value, retained := extra["Extra"]; !retained || value != nil {
+				t.Fatalf("non-hook canonical metadata changed: %#v", extra)
+			}
+		})
+	}
+}
+
 func TestDecodeResourceRoundTrip(t *testing.T) {
 	skillExtra := map[string]any{"category": "review", "tags": []any{"security", "performance"}}
 	commandExtra := map[string]any{"shell": "bash", "nested": map[string]any{"key": "value"}}
@@ -225,6 +276,9 @@ func TestDecodeResourceRejectsCaseCollidingKnownAliases(t *testing.T) {
 		{name: "nested source", kind: "hook", data: `{"name":"probe","Source":{"File":"safe","file":"source-secret"}}`, secret: "source-secret"},
 		{name: "nested permissions", kind: "skill", data: `{"name":"probe","Permissions":{"allow":["safe"],"Allow":["permissions-secret"]}}`, secret: "permissions-secret"},
 		{name: "name alias", kind: "hook", data: `{"name":"probe","Name":"name-secret"}`, secret: "name-secret"},
+		{name: "hook source alias", kind: "hook", data: `{"name":"probe","HookSource":"safe","hooksource":"source-secret"}`, secret: "source-secret"},
+		{name: "tool source alias", kind: "subagent", data: `{"name":"probe","ToolSource":"safe","toolsource":"source-secret"}`, secret: "source-secret"},
+		{name: "skill tool source alias", kind: "skill", data: `{"name":"probe","ToolSource":"safe","toolsource":"source-secret"}`, secret: "source-secret"},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {

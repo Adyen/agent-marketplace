@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
@@ -72,6 +73,8 @@ func newListCmd() *cobra.Command {
 	return cmd
 }
 
+var runListMaterialize = materialize.Run
+
 func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter string) error {
 	kind, hasKind, err := parseOptionalKind(kindFilter)
 	if err != nil {
@@ -82,8 +85,12 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 	}
 
 	repoRoot := config.FindRepoRoot()
+	ws, err := pipeline.NewWorkspace(repoRoot, config.FindLocalConfigDir())
+	if err != nil {
+		return err
+	}
 	result, releaseExactLease := pipeline.ResolveWithExactLockLease(ctx, pipeline.ResolveOptions{
-		RepoRoot:           repoRoot,
+		Workspace:          ws,
 		CatalogMode:        catalog.LoadModeInspect,
 		ReadOnlyExactLocks: true,
 	})
@@ -144,7 +151,7 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 	if err != nil {
 		return err
 	}
-	dryRunReport, dryRunErr := materialize.Run(ctx, repoRoot, result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
+	dryRunReport, dryRunErr := runListMaterialize(ctx, ws.MaterializeRoot(), result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
 	if dryRunErr != nil {
 		// A failed drift probe must not hide the listing itself, but file mode
 		// returns manifest and containment problems as hard errors that would
@@ -181,22 +188,41 @@ func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, 
 	// Resolve web URLs into git URL + ref + path. Explicit flags win.
 	fromURL, fromRef, fromPath, _ = pipeline.ResolveFromURL(fromURL, fromRef, fromPath)
 
-	// Validate the ad-hoc URL against the effective allowlist before any
-	// network access. LoadEffective also validates the existing configured
-	// layers and returns their resolved allowlist.
-	ec := pipeline.LoadEffective(ctx, pipeline.ConfigLoadOnline, config.LoadEffectiveOptions{}, nil)
-	config.LogManagedDiagnostics(ec.Diagnostics)
-	for _, w := range ec.Warnings {
+	// Validate the ad-hoc URL against the allowlist resolved by ReadIntent
+	// before any network access.
+	ws, err := pipeline.DiscoverWorkspace()
+	if err != nil {
+		return err
+	}
+	intent := config.ReadIntent(ctx, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir()})
+	for _, w := range intent.Warnings {
 		fmt.Fprintf(errOut, "warning: %s\n", terminalSafeText(fmt.Sprint(w))) //nolint:errcheck // best-effort warning on stderr
 	}
+	if len(intent.Errors) > 0 {
+		return errors.Join(intent.Errors...)
+	}
 	syntheticEntry := config.RegistryEntry{URL: fromURL, Ref: fromRef, Path: fromPath}
-	if err := config.ValidateRegistryURLs([]config.RegistryEntry{syntheticEntry}, ec.Allowed); err != nil {
+	if err := config.ValidateRegistryURLs([]config.RegistryEntry{syntheticEntry}, intent.AllowedRegistries()); err != nil {
 		return err
+	}
+
+	// A Git registry without an explicit ref uses the branch its remote HEAD
+	// advertises, matching install --from. Local directory registries ignore
+	// the ref entirely. Resolving after the allowlist check keeps a blocked URL
+	// offline.
+	if !syntheticEntry.IsLocal() && fromRef == "" {
+		defaultBranch, err := cache.DefaultBranch(fromURL)
+		if err != nil {
+			return err
+		}
+		fromRef = defaultBranch
+		syntheticEntry.Ref = fromRef
+		slog.Info("list --from using registry default branch", "ref", fromRef)
 	}
 
 	// Build a synthetic config with just the --from entry to load catalogs.
 	syntheticCfg := &config.Config{
-		APIVersion: config.APIVersionV2,
+		APIVersion: config.APIVersionV4,
 		Registries: []config.RegistryEntry{syntheticEntry},
 	}
 
@@ -213,6 +239,10 @@ func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, 
 	}
 	if len(hardCatalogErrs) > 0 {
 		return errors.Join(hardCatalogErrs...)
+	}
+
+	for _, warning := range requiresInvalidWarnings(result.Catalogs) {
+		fmt.Fprintf(errOut, "warning: %s\n", terminalSafeText(warning.Error())) //nolint:errcheck
 	}
 
 	displayName := registryDisplayName(fromURL)
@@ -255,6 +285,20 @@ func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, 
 	}
 
 	return writeListTable(out, rows)
+}
+
+func requiresInvalidWarnings(catalogs map[string]loadedCatalog) []error {
+	var warnings []error
+	for _, loaded := range catalogs {
+		for _, d := range loaded.Diagnostics {
+			if d.Code == catalog.CodeRequiresInvalid {
+				warnings = append(warnings, pipeline.PromoteDiagnostic(d))
+			}
+		}
+	}
+	warnings = pipeline.DedupIssues(warnings)
+	slices.SortFunc(warnings, func(a, b error) int { return strings.Compare(a.Error(), b.Error()) })
+	return warnings
 }
 
 func buildListRows(cfg *config.Config, catalogs map[string]loadedCatalog, resolved []resolver.ResolvedArtifact) []listRow {

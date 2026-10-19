@@ -18,6 +18,7 @@ import (
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 )
 
+// spec: telemetry/endpoint-override-does-not-forward-authentication
 func TestTelemetryEndpointOverrideCredentials(t *testing.T) {
 	for _, mode := range []string{"changed", "same", "organization-locked"} {
 		t.Run(mode, func(t *testing.T) {
@@ -40,17 +41,17 @@ func TestTelemetryEndpointOverrideCredentials(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			}))
 			defer server.Close()
-			user := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{
+			user := amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{
 				Level: tmcfg.LevelBasic, Endpoint: server.URL,
 				Headers: map[string]tmcfg.HeaderSource{"X-API-Key": {Env: "TELEMETRY_FIXTURE_SECRET"}, "X-Tenant": {File: secretFile}},
 			}}
-			var org *amconfig.Config
+			var org amconfig.Settings
 			t.Setenv(EnvEndpoint, server.URL)
 			if mode == "changed" {
 				user.Telemetry.Endpoint = "https://configured.example.invalid"
 			}
 			if mode == "organization-locked" {
-				org = &amconfig.Config{Telemetry: cloneTelemetryConfig(user.Telemetry)}
+				org = amconfig.Settings{Telemetry: cloneTelemetryConfig(user.Telemetry)}
 				t.Setenv(EnvEndpoint, "https://ignored.example.invalid")
 			}
 			state, err := ResolveTelemetryConfig(org, user, "", "")

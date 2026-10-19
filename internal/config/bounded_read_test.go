@@ -26,7 +26,7 @@ func writeBoundedConfigTestFile(t *testing.T, path, data string) {
 
 func TestReadConfigFileBoundsAndRegularFiles(t *testing.T) {
 	dir := t.TempDir()
-	prefix := "registries: []\n#"
+	prefix := "sources: {}\n#"
 	exact := prefix + strings.Repeat("x", int(MaxEffectiveConfigSize)-len(prefix))
 	exactPath := filepath.Join(dir, "exact.yaml")
 	if err := os.WriteFile(exactPath, []byte(exact), 0o600); err != nil {
@@ -54,15 +54,15 @@ func TestReadConfigFileBoundsAndRegularFiles(t *testing.T) {
 
 func TestConfigLoadersRejectOversizedRootsAndIncludes(t *testing.T) {
 	dir := t.TempDir()
-	large := "registries: []\n#" + strings.Repeat("x", int(MaxEffectiveConfigSize)) + "\n"
+	large := "sources: {}\n#" + strings.Repeat("x", int(MaxEffectiveConfigSize)) + "\n"
 	root := filepath.Join(dir, "config.yaml")
-	writeBoundedConfigTestFile(t, root, "apiVersion: agent-marketplace/v2\ninclude: large.yaml\nregistries: []\n")
+	writeBoundedConfigTestFile(t, root, "apiVersion: agent-marketplace/v4\ninclude: large.yaml\nsources: {}\n")
 	writeBoundedConfigTestFile(t, filepath.Join(dir, "large.yaml"), large)
 	if _, err := LoadConfigFromPath(root); !errors.Is(err, ErrConfigTooLarge) {
 		t.Fatalf("included config error = %v, want ErrConfigTooLarge", err)
 	}
 	rootOnly := filepath.Join(dir, "root-only.yaml")
-	writeBoundedConfigTestFile(t, rootOnly, "apiVersion: agent-marketplace/v2\n"+strings.Repeat("#", int(MaxEffectiveConfigSize))+"x\n")
+	writeBoundedConfigTestFile(t, rootOnly, "apiVersion: agent-marketplace/v4\n"+strings.Repeat("#", int(MaxEffectiveConfigSize))+"x\n")
 	if _, err := LoadRootConfigFromPath(rootOnly); !errors.Is(err, ErrConfigTooLarge) {
 		t.Fatalf("root config error = %v, want ErrConfigTooLarge", err)
 	}
@@ -70,7 +70,7 @@ func TestConfigLoadersRejectOversizedRootsAndIncludes(t *testing.T) {
 		t.Fatalf("LoadConfigFromPath root error = %v, want ErrConfigTooLarge", err)
 	}
 	localRoot := filepath.Join(dir, "config.local.yaml")
-	writeBoundedConfigTestFile(t, localRoot, "include: large-local.yaml\n")
+	writeBoundedConfigTestFile(t, localRoot, "apiVersion: agent-marketplace/v4\ninclude: large-local.yaml\n")
 	writeBoundedConfigTestFile(t, filepath.Join(dir, "large-local.yaml"), large)
 	if _, err := LoadLocalConfigFromPath(localRoot); !errors.Is(err, ErrConfigTooLarge) {
 		t.Fatalf("local include error = %v, want ErrConfigTooLarge", err)
@@ -125,10 +125,8 @@ func TestV4ConfigConsumersEnforceBoundedRegularFiles(t *testing.T) {
 		})
 	}
 
-	legacy := filepath.Join(dir, "legacy.yaml")
-	writeBoundedConfigTestFile(t, legacy, "apiVersion: agent-marketplace/v2\n"+strings.Repeat("#", int(MaxEffectiveConfigSize)))
-	if _, err := FindV4MigrationCandidates(MigratePaths{User: legacy}); !errors.Is(err, ErrConfigTooLarge) {
-		t.Fatalf("migration candidate error = %v, want ErrConfigTooLarge", err)
+	if _, err := LoadRootConfigFromPath(oversizedRoot); !errors.Is(err, ErrConfigTooLarge) {
+		t.Fatalf("root-only loader error = %v, want ErrConfigTooLarge", err)
 	}
 }
 
@@ -157,12 +155,12 @@ func TestConfigFileOverlaysRejectOversizedInclude(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "config.yaml")
 	include := filepath.Join(dir, "fragment.yaml")
-	writeBoundedConfigTestFile(t, root, "apiVersion: agent-marketplace/v2\ninclude: fragment.yaml\nregistries: []\n")
-	baseline := []byte("registries: []\n")
+	writeBoundedConfigTestFile(t, root, "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nsources: {}\n")
+	baseline := []byte("sources: {}\n")
 	writeBoundedConfigTestFile(t, include, string(baseline))
-	rootData := []byte("apiVersion: agent-marketplace/v2\ninclude: fragment.yaml\nregistries: []\n")
-	overlays := map[string][]byte{include: []byte("registries: []\n#" + strings.Repeat("x", int(MaxEffectiveConfigSize)) + "\n")}
-	if _, _, err := loadConfigTreeWithReads(root, root, rootData, repoLayer, overlays); !errors.Is(err, ErrConfigTooLarge) {
+	rootData := []byte("apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nsources: {}\n")
+	overlays := map[string][]byte{include: []byte("sources: {}\n#" + strings.Repeat("x", int(MaxEffectiveConfigSize)) + "\n")}
+	if _, err := readLayerIntent(root, root, rootData, repoLayer, overlays); !errors.Is(err, ErrConfigTooLarge) {
 		t.Fatalf("overlay error = %v, want ErrConfigTooLarge", err)
 	}
 	got, err := os.ReadFile(include)
@@ -174,12 +172,12 @@ func TestConfigFileOverlaysRejectOversizedInclude(t *testing.T) {
 func TestReadConfigFileRegularSymlinkAndSpecialFiles(t *testing.T) {
 	dir := t.TempDir()
 	regular := filepath.Join(dir, "regular.yaml")
-	writeBoundedConfigTestFile(t, regular, "registries: []\n")
+	writeBoundedConfigTestFile(t, regular, "sources: {}\n")
 	link := filepath.Join(dir, "link.yaml")
 	if err := os.Symlink(regular, link); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := readConfigFile(link); err != nil || string(got) != "registries: []\n" {
+	if got, err := readConfigFile(link); err != nil || string(got) != "sources: {}\n" {
 		t.Fatalf("regular symlink read: %q err=%v", got, err)
 	}
 	directory := filepath.Join(dir, "directory.yaml")
@@ -219,8 +217,8 @@ func BenchmarkLoadBoundedIncludes(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
-	write(root, "apiVersion: agent-marketplace/v2\ninclude: fragment.yaml\nregistries: []\n")
-	write(filepath.Join(dir, "fragment.yaml"), "registries: []\n")
+	write(root, "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nsources: {}\n")
+	write(filepath.Join(dir, "fragment.yaml"), "sources: {}\n")
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
@@ -233,7 +231,7 @@ func BenchmarkLoadBoundedIncludes(b *testing.B) {
 func TestReadOpenedConfigFileRestoresBlockingRegularDescriptor(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	data := []byte("registries: []\n")
+	data := []byte("sources: {}\n")
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}

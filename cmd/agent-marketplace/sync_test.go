@@ -1,14 +1,51 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
+
+// spec: authored-configuration-reads/selection-labels-with-missing-acquisition-evidence
+func TestConfiguredSelectionLabelsReadsIntentWithoutLocks(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	var requests atomic.Int32
+	server := newV4MarketplaceLockServerWithHook(t, func() { requests.Add(1) })
+	defer server.Close()
+
+	repo := t.TempDir()
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  local: {directory: resources}
+  hosted: {marketplace: `+server.URL+`}
+resources:
+  local: {include: [skill/keep]}
+  hosted: {include: [tools/skill/review]}
+`)
+
+	labels := configuredSelectionLabels(context.Background(), repo, repo)
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("selection label read made %d Marketplace requests", got)
+	}
+	if !slices.Contains(labels, `skill "keep"`) {
+		t.Fatalf("labels = %v, want the directory-source selection kept without an acquisition lock", labels)
+	}
+}
 
 func TestSyncSummaryUsesTextLabelsInsteadOfEmoji(t *testing.T) {
 	if isolateCommandTest(t) {
@@ -35,12 +72,15 @@ func TestSyncCommandMaterializesSkillsAndPrintsSummary(t *testing.T) {
 	commitAndPushAll(t, working, "Add infra skills")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - vm-lifecycle
+resources:
+  skills:
+    include:
+      - skill/vm-lifecycle
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -73,14 +113,16 @@ func TestSyncCommandDoesNotWarnWhenDevinSupportFilesAreMaterialized(t *testing.T
 	commitAndPushAll(t, working, "Add skill with support file")
 
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - devin
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - review
+resources:
+  skills:
+    include: [skill/review]
 `)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
@@ -112,14 +154,14 @@ func TestSyncCommandGroupsWindsurfSubagentDropWarnings(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - windsurf
-registries:
-  - url: `+registry+`
-    subagents:
-      - reviewer
-      - worker-generic
+sources:
+  agents: {directory: `+registry+`}
+resources:
+  agents:
+    include: [subagent/reviewer, subagent/worker-generic]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -167,12 +209,14 @@ func TestSyncCommandReturnsNonZeroWhenRegistryCannotBeLoaded(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+filepath.Join(t.TempDir(), "missing.git")+`
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+filepath.Join(t.TempDir(), "missing.git")+`
     ref: main
-    skills:
-      - vm-lifecycle
+resources:
+  skills:
+    include: [skill/vm-lifecycle]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -199,9 +243,10 @@ func TestSyncCommandPrintsHintWhenRegistriesConfiguredButNoSkills(t *testing.T) 
 	commitAndPushAll(t, working, "Add infra skills")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 
@@ -225,8 +270,8 @@ func TestSyncCommandNoHintWhenNoRegistriesConfigured(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-# No registries configured
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+# No sources configured
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -253,14 +298,17 @@ func TestSyncCommandAddsLocalConfigAndLockToGitignore(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources: {}
 `)
-	writeFile(t, filepath.Join(repoRoot, ".agents", "config.local.yaml"), `
-skills:
-  exclude:
-    - local-only-skill
+	writeFile(t, filepath.Join(repoRoot, ".agents", "config.local.yaml"), `apiVersion: agent-marketplace/v4
+sources:
+  local: {directory: resources}
+resources:
+  local:
+    exclude: [skill/local-only-skill]
 `)
+	writeSkill(t, filepath.Join(repoRoot, "resources"), "local-only-skill", "Excluded local skill", nil)
 
 	withWorkingDir(t, repoRoot)
 
@@ -308,12 +356,14 @@ metadata:
 	commitAndPushAll(t, working, "Add valid and malformed skills")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - valid-skill
+resources:
+  skills:
+    include: [skill/valid-skill]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -360,12 +410,15 @@ func TestSyncCommandNoHintWhenSkillsAlreadySynced(t *testing.T) {
 	commitAndPushAll(t, working, "Add infra skills")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - vm-lifecycle
+resources:
+  skills:
+    include:
+      - skill/vm-lifecycle
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -402,16 +455,15 @@ func TestSyncCommandMonorepoSubdirectoryTopLevelSkillsIncludeSelectsLocalRegistr
 	paymentsDir := filepath.Join(monorepoRoot, "payments")
 
 	writeConfig(t, filepath.Join(paymentsDir, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
   - windsurf
-registries:
-  - url: .
-    path: registry
-skills:
-  include:
-    - test-skill
+sources:
+  local: {directory: registry}
+resources:
+  local:
+    include: [skill/test-skill]
 `)
 	writeSkill(t, filepath.Join(paymentsDir, "registry"), "test-skill", "Test skill", []string{"test"})
 
@@ -422,7 +474,7 @@ skills:
 		t.Fatalf("expected sync command to succeed: %v\n%s", err, output)
 	}
 	if strings.Contains(output, "No skills selected") {
-		t.Fatalf("expected top-level skills include to resolve from local registry, got %q", output)
+		t.Fatalf("expected source-bound skill include to resolve from local registry, got %q", output)
 	}
 
 	assertFileExists(t, filepath.Join(paymentsDir, ".factory", "skills", "test-skill", "SKILL.md"))
@@ -441,12 +493,15 @@ func TestSyncCheckExitsZeroWhenInSync(t *testing.T) {
 	commitAndPushAll(t, working, "Add infra skills")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - vm-lifecycle
+resources:
+  skills:
+    include:
+      - skill/vm-lifecycle
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -479,12 +534,15 @@ func TestSyncCheckExitsNonZeroWhenDrifted(t *testing.T) {
 	commitAndPushAll(t, working, "Add infra skills")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - vm-lifecycle
+resources:
+  skills:
+    include:
+      - skill/vm-lifecycle
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -577,23 +635,25 @@ func TestE2E038_MonorepoSubdirectorySkillsIncludeFilter(t *testing.T) {
 
 	// User config references the same registry but with the payments subdirectory.
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: `+origin+`
+sources:
+  payments:
+    git: file://`+origin+`
     ref: main
     path: payments
-    skills:
-      - payment-api
+resources:
+  payments:
+    include: [skill/payment-api]
 `)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries: []
+sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -666,22 +726,24 @@ description: Deploy command
 	// Point path at .factory (bundle root), NOT .factory/skills.
 	// Set default: true so all discovered resources are auto-selected.
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: `+origin+`
+sources:
+  bundle:
+    git: file://`+origin+`
     ref: main
     path: .factory
-    default: true
+resources:
+  bundle: {all: true}
 `)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries: []
+sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -709,21 +771,22 @@ func TestSyncPathTraversalRejected(t *testing.T) {
 
 	// Absolute path should be rejected.
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: git@example.com:repo.git
+sources:
+  skills:
+    git: git@example.com:repo.git
     ref: main
     path: /tmp/evil
 `)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries: []
+sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -731,8 +794,9 @@ registries: []
 	if err == nil {
 		t.Fatalf("expected sync to fail with absolute path, got: %s", output)
 	}
-	if !strings.Contains(output, "path must be relative") && !strings.Contains(err.Error(), "path must be relative") {
-		t.Fatalf("expected 'path must be relative' error, got: %v\n%s", err, output)
+	var validation *config.V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != "v4.git-path" || validation.Path != "sources.skills.path" || validation.Line == 0 {
+		t.Fatalf("expected typed v4.git-path error naming the source path with line context, got: %v\n%s", err, output)
 	}
 }
 
@@ -745,21 +809,22 @@ func TestSyncPathTraversalDotDotRejected(t *testing.T) {
 
 	// ../ traversal path should be rejected.
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: git@example.com:repo.git
+sources:
+  skills:
+    git: git@example.com:repo.git
     ref: main
     path: ../evil
 `)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries: []
+sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -767,8 +832,9 @@ registries: []
 	if err == nil {
 		t.Fatalf("expected sync to fail with ../ traversal path, got: %s", output)
 	}
-	if !strings.Contains(output, "must not escape the registry root") && !strings.Contains(err.Error(), "must not escape the registry root") {
-		t.Fatalf("expected 'must not escape the registry root' error, got: %v\n%s", err, output)
+	var validation *config.V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != "v4.git-path" || validation.Path != "sources.skills.path" || validation.Line == 0 {
+		t.Fatalf("expected typed v4.git-path error naming the source path with line context, got: %v\n%s", err, output)
 	}
 }
 
@@ -789,13 +855,16 @@ func TestSyncPruneStaleRemovesStaleSkillSelection(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+	writeConfig(t, configPath, `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - vm-lifecycle
-      - deleted-skill
+resources:
+  skills:
+    include:
+      - skill/vm-lifecycle
+      - skill/deleted-skill
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -825,7 +894,7 @@ registries:
 		lines := strings.Split(string(configData), "\n")
 		for _, line := range lines {
 			trimmed := strings.TrimSpace(line)
-			if trimmed == "- deleted-skill" {
+			if trimmed == "- skill/deleted-skill" {
 				// This line appears in the include list context if it's
 				// after "skills:" and before "exclude:" — but the simplest
 				// check is that after prune, the warning should not appear.
@@ -862,13 +931,15 @@ func TestSyncPruneStaleDoesNotPruneRequiredResources(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	// required:true registry selecting a skill that doesn't exist.
-	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+	writeConfig(t, configPath, `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
+resources:
+  skills:
     required: true
-    skills:
-      - mandatory-skill
+    include: [skill/mandatory-skill]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -894,12 +965,15 @@ func TestSyncPruneStaleNoopWithoutStaleSelections(t *testing.T) {
 	commitAndPushAll(t, working, "Add infra skills")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - vm-lifecycle
+resources:
+  skills:
+    include:
+      - skill/vm-lifecycle
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -925,12 +999,15 @@ func TestSyncCommandShowsOutputDirsWhenFilesAreWritten(t *testing.T) {
 	commitAndPushAll(t, working, "Add skill")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - vm-lifecycle
+resources:
+  skills:
+    include:
+      - skill/vm-lifecycle
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -969,12 +1046,15 @@ func TestSyncCommandOutputDirsShowCountsAndVerboseDetail(t *testing.T) {
 	commitAndPushAll(t, working, "Add skill")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - vm-lifecycle
+resources:
+  skills:
+    include:
+      - skill/vm-lifecycle
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -989,12 +1069,15 @@ registries:
 
 	// Verbose output lists individual files under each directory.
 	repoRoot2 := filepath.Join(t.TempDir(), "repo2")
-	writeConfig(t, filepath.Join(repoRoot2, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+	writeConfig(t, filepath.Join(repoRoot2, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - vm-lifecycle
+resources:
+  skills:
+    include:
+      - skill/vm-lifecycle
 `)
 	withWorkingDir(t, repoRoot2)
 
@@ -1023,19 +1106,22 @@ func TestSyncCommandDeduplicatesCollisionWarnings(t *testing.T) {
 
 	// Configure two harnesses so the same skill is materialized to two targets.
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
   - claude
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - vm-lifecycle
+resources:
+  skills:
+    include:
+      - skill/vm-lifecycle
 `)
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -1074,12 +1160,12 @@ func TestSyncCheckReturnsClearErrorWhenTargetHarnessSetMissing(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
-registries:
-  - url: `+filepath.Join(t.TempDir(), "registry")+`
-    ref: main
-    skills:
-      - some-skill
+	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources:
+  skills: {directory: `+filepath.Join(t.TempDir(), "registry")+`}
+resources:
+  skills:
+    include: [skill/some-skill]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -1111,28 +1197,32 @@ func TestSyncPrunesOrgOwnedArtifactsWhenOrgConfigDisappears(t *testing.T) {
 	commitAndPushAll(t, working, "Add skills")
 
 	orgCfgPath := filepath.Join(t.TempDir(), "org-config.yaml")
-	writeFile(t, orgCfgPath, `apiVersion: agent-marketplace/v3
+	writeFile(t, orgCfgPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - org-skill
+resources:
+  skills:
+    include: [skill/org-skill]
 `)
 	config.SetTestOrganizationConfigPath(t, orgCfgPath)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
+	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - user-skill
+resources:
+  skills:
+    include: [skill/user-skill]
 `)
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `registries: []`)
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `sources: {}`)
 
 	withWorkingDir(t, repoRoot)
 	requireOrganizationLock(t, orgCfgPath)

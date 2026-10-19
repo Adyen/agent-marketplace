@@ -189,13 +189,3 @@ export function outputRows(
     ]
   })
 }
-
-export function statusesUsed(kindIds: string[]): Status[] {
-  const seen = new Set<Status>()
-  for (const kindId of kindIds) {
-    for (const target of targets) {
-      seen.add(cellFor(kindId, target.id).status)
-    }
-  }
-  return [...seen]
-}

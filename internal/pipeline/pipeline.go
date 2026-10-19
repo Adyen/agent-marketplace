@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -20,7 +21,6 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
-	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
@@ -41,9 +41,10 @@ type Loaders struct {
 }
 
 type ResolveOptions struct {
-	RepoRoot         string
-	MaterializeRoot  string // where to materialize harness files; defaults to RepoRoot if empty
-	LocalConfigDir   string // base dir for resolving local-config entries' relative paths; defaults to RepoRoot
+	// Workspace is the single root-bearing field: it carries the validated
+	// repository, local-config, and derived materialization roots shared by
+	// Resolve and Sync.
+	Workspace        Workspace
 	CatalogMode      catalog.LoadMode
 	Offline          bool
 	Loaders          Loaders
@@ -51,7 +52,7 @@ type ResolveOptions struct {
 	Gitignore        bool
 	NoBackup         bool
 	RequireTargetSet bool
-	// EffectiveOpts overrides the paths used by config.LoadEffective.
+	// EffectiveOpts overrides the paths used by LoadEffective.
 	EffectiveOpts config.LoadEffectiveOptions
 	// IgnoreBlockedRegistries treats RegistryURLBlockedError from the allowlist
 	// validation as non-fatal. Used by the remove path so a previously-allowed
@@ -69,8 +70,11 @@ type ResolveOptions struct {
 	MarketplaceRevocationPolicy resolver.MarketplaceRevocationPolicy
 	// MarketplaceMode overrides the mode derived from CatalogMode when set,
 	// except that Offline always forces CachedNoFetch.
-	MarketplaceMode    *resolver.MarketplaceResolveMode
-	marketplaceInstall *marketplace.PreparedInstall
+	MarketplaceMode                       *resolver.MarketplaceResolveMode
+	marketplaceInstall                    *marketplace.PreparedInstall
+	marketplaceInstallSource              config.Source
+	MarketplaceLockEvidenceStrict         bool
+	MarketplaceReportArchiveEvidenceDrift bool
 	// ConfigLoadMode selects organization-lock loading semantics; the default
 	// is online. Offline and cached-only catalog operations always force strict
 	// loading, preserving their existing requirement for on-disk evidence.
@@ -79,6 +83,16 @@ type ResolveOptions struct {
 	// the selected sources. It is applied only to the resolver's view and does
 	// not change the effective configuration returned to callers.
 	MarketplaceSourceFilter func(config.Source) bool
+	BrowsingConfigReady     func(*config.Config)
+	ProvisionalConfigReady  func(*config.Config, *config.LocalConfig)
+	ConfigReady             func(*config.Config)
+	// MarketplaceArtifactsFromCache resolves Marketplace selections into
+	// materializable artifacts from verified local cache evidence during
+	// inspect-mode resolution — exactly the semantics offline sync uses. No
+	// artifacts are downloaded and no config or lock file is written; the
+	// inspect-mode pin table is computed unchanged. Only status and doctor set
+	// it; every other caller keeps metadata-only inspect behavior.
+	MarketplaceArtifactsFromCache bool
 }
 
 type ResolveResult struct {
@@ -94,15 +108,25 @@ type ResolveResult struct {
 	LockMetadata          []LockMetadata
 	MarketplaceStatuses   []marketplace.PinStatus
 	MarketplaceInspection *marketplace.Inspection
-	ConfigErrors          []error
-	CatalogErrors         []error
-	ResolveErrors         []error
-	Errors                []error
-	Warnings              []error
-	TargetHarnesses       []hcc.Target
-	TargetHarnessSource   config.Source
-	Managed               bool
-	Diagnostics           config.ManagedInstallationDiagnostics
+	// MarketplaceArtifactResolver resolves Marketplace selections to artifacts
+	// from the verified local cache. It is set only when
+	// MarketplaceArtifactsFromCache was honored, and lets a caller that
+	// re-resolves outside the pipeline — status's local-exclude diff — select
+	// the same Marketplace artifacts the pipeline did.
+	MarketplaceArtifactResolver resolver.MarketplaceResolver
+	ConfigErrors                []error
+	CatalogErrors               []error
+	ResolveErrors               []error
+	Errors                      []error
+	Warnings                    []error
+	TargetHarnesses             []hcc.Target
+	TargetHarnessSource         config.Source
+	// MachineTargetHarnesses is the target set for output selected by the user
+	// and organization layers. Repository configuration never narrows it.
+	MachineTargetHarnesses     []hcc.Target
+	MachineTargetHarnessSource config.Source
+	Managed                    bool
+	Diagnostics                config.ManagedInstallationDiagnostics
 }
 
 // TargetHarnessSetMissingError is returned by Resolve/Sync when no effective
@@ -174,6 +198,17 @@ func targetHarnessSetFromEC(ec config.EffectiveConfig) ([]hcc.Target, config.Sou
 	return nil, config.SourceUnset
 }
 
+// machineTargetHarnessSetFromEC returns the target set for output selected by
+// the user and organization layers: the user list, then the organization list.
+// Only when neither declares targets does it fall back to the repository set,
+// so a repository cannot narrow output that machine layers selected.
+func machineTargetHarnessSetFromEC(ec config.EffectiveConfig, repository []hcc.Target, repositorySource config.Source) ([]hcc.Target, config.Source) {
+	if harnesses, source := config.MachineHarnesses(ec.User.Config, ec.Organization.Config); len(harnesses) > 0 {
+		return hccTargetsFromStrings(harnesses), source
+	}
+	return slices.Clone(repository), repositorySource
+}
+
 // CatalogTrusted reports whether this run's view of the registries is reliable
 // enough to conclude that a selected-but-absent resource is genuinely gone
 // upstream rather than merely unreachable. It is the gate `sync --prune-stale`
@@ -232,10 +267,6 @@ func SoftWarnings(resolved ResolveResult) []error {
 	return warnings
 }
 
-func DefaultLoaders() Loaders {
-	return Loaders{Org: config.LoadOrganizationConfig, Global: config.LoadGlobalConfig, Repo: config.LoadRepoConfig, Local: config.LoadLocalConfig}
-}
-
 // filterBlockedRegistryErrors removes RegistryURLBlockedError values from errs,
 // logging each ignored error as a warning. It returns the remaining errors.
 func filterBlockedRegistryErrors(errs []error) ([]error, bool) {
@@ -271,7 +302,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	if opts.Offline {
 		opts.CatalogMode = catalog.LoadModeInspect
 	}
-	slog.Debug("pipeline resolve start", "repo_root", opts.RepoRoot, "catalog_mode", opts.CatalogMode, "offline", opts.Offline)
+	slog.Debug("pipeline resolve start", "repo_root", opts.Workspace.RepoRoot(), "catalog_mode", opts.CatalogMode, "offline", opts.Offline)
 	var result ResolveResult
 	// Every early return below must still hand back a valid policy: an unset
 	// mode matches neither "symlink" nor "file" and would silently pick a
@@ -311,6 +342,18 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		result.Errors = []error{ctx.Err()}
 		return result, releaseExactLease
 	}
+	// The Workspace is the only root-bearing value: reject a zero Workspace
+	// and any EffectiveOpts root override that conflicts with it before a
+	// config loader, catalog read, backup, or materialization can act on
+	// disagreeing roots.
+	if err := opts.Workspace.validate(); err != nil {
+		result.Errors = []error{err}
+		return result, releaseExactLease
+	}
+	if err := checkEffectiveOptsRoots(opts.EffectiveOpts, opts.Workspace); err != nil {
+		result.Errors = []error{err}
+		return result, releaseExactLease
+	}
 	if opts.ExactLockLease != nil {
 		release, err := opts.ExactLockLease(ctx)
 		if err != nil {
@@ -325,6 +368,8 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	var ec config.EffectiveConfig
 	var transientOrganizationMarketplaceLock transientOrganizationMarketplaceLockUse
 
+	ObservePhase(ctx, PhaseConfigure)
+
 	var configLoadSpan telemetry.Span
 	if tel != nil {
 		_, configLoadSpan = tel.StartSpan(ctx, "agent_marketplace.pipeline.config_load", nil)
@@ -338,14 +383,22 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 
 	effectiveOpts := opts.EffectiveOpts
 	if effectiveOpts.RepoRoot == "" {
-		effectiveOpts.RepoRoot = opts.RepoRoot
+		effectiveOpts.RepoRoot = opts.Workspace.RepoRoot()
 	}
 	if effectiveOpts.LocalConfigDir == "" {
-		effectiveOpts.LocalConfigDir = opts.LocalConfigDir
+		effectiveOpts.LocalConfigDir = opts.Workspace.LocalConfigDir()
 	}
 	loadMode := opts.ConfigLoadMode
 	if opts.Offline || opts.CatalogMode == catalog.LoadModeCachedNoFetch {
 		loadMode = ConfigLoadStrict
+	}
+	provisionalEmitted := false
+	provisionalReady := opts.ProvisionalConfigReady
+	if provisionalReady != nil {
+		provisionalReady = func(merged *config.Config, local *config.LocalConfig) {
+			provisionalEmitted = true
+			opts.ProvisionalConfigReady(merged, local)
+		}
 	}
 	useLoaders := opts.Loaders.Org != nil || opts.Loaders.Global != nil || opts.Loaders.Repo != nil || opts.Loaders.Local != nil
 	if useLoaders {
@@ -387,11 +440,11 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 			Local:        localCfg,
 			Errors:       errs,
 		}
-		if loadMode != ConfigLoadStrict && marketplacelock.HasRequiredError(ec.Errors) {
-			ec, transientOrganizationMarketplaceLock = loadEffective(ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy)
+		if loadMode != ConfigLoadStrict && NeedsLockBootstrap(ec.Errors) {
+			ec, transientOrganizationMarketplaceLock = loadEffective(ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy, opts.BrowsingConfigReady, provisionalReady)
 		}
 	} else {
-		ec, transientOrganizationMarketplaceLock = loadEffective(ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy)
+		ec, transientOrganizationMarketplaceLock = loadEffective(ctx, loadMode, effectiveOpts, opts.MarketplaceRevocationPolicy, opts.BrowsingConfigReady, provisionalReady)
 	}
 
 	result.Diagnostics = ec.Diagnostics
@@ -413,20 +466,17 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		slog.Error("effective config error", "error", err)
 	}
 
-	if opts.Gitignore {
-		gitignoreDir := opts.LocalConfigDir
-		if gitignoreDir == "" {
-			gitignoreDir = opts.RepoRoot
-		}
-		EnsureLocalConfigGitignored(gitignoreDir)
-	}
 	if len(ec.Errors) > 0 {
 		result.ConfigErrors = ec.Errors
 		result.Errors = ec.Errors
 		return result, releaseExactLease
 	}
+	if opts.Gitignore {
+		EnsureLocalConfigGitignored(opts.Workspace.LocalConfigDir())
+	}
 
 	result.TargetHarnesses, result.TargetHarnessSource = targetHarnessSetFromEC(ec)
+	result.MachineTargetHarnesses, result.MachineTargetHarnessSource = machineTargetHarnessSetFromEC(ec, result.TargetHarnesses, result.TargetHarnessSource)
 
 	if opts.RequireTargetSet && len(result.TargetHarnesses) == 0 {
 		result.Errors = []error{&TargetHarnessSetMissingError{}}
@@ -435,11 +485,11 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 
 	var mergedCfg *config.Config
 	if ec.Merged != nil {
-		// config.LoadEffective already merged the layers and validated the
+		// LoadEffective already merged the layers and validated the
 		// registry URLs against the resolved allowlist.
 		mergedCfg = ec.Merged
 	} else {
-		// Custom loaders bypass config.LoadEffective, so we still need to
+		// Custom loaders bypass LoadEffective, so we still need to
 		// merge the layers and enforce the allowlist here.
 		layers := make([]config.Layer, 0, 4)
 		if result.OrgCfg != nil {
@@ -495,6 +545,12 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		return result, releaseExactLease
 	}
 	result.MaterializationModes = materializationModes
+	if provisionalReady != nil && mergedCfg != nil && !provisionalEmitted {
+		provisionalReady(mergedCfg, ec.Local)
+	}
+	if opts.ConfigReady != nil && mergedCfg != nil {
+		opts.ConfigReady(mergedCfg)
+	}
 	registryCount := 0
 	if mergedCfg != nil {
 		registryCount = len(mergedCfg.Registries)
@@ -525,10 +581,11 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		result.LockMetadata = readOnlyView.gitMetadata
 		result.Warnings = append(result.Warnings, readOnlyView.warnings...)
 	}
-	if opts.LocalConfigDir != "" && opts.LocalConfigDir != opts.RepoRoot {
-		catalogOpts = append(catalogOpts, catalog.WithLocalConfigDir(opts.LocalConfigDir))
+	if opts.Workspace.LocalConfigDir() != opts.Workspace.RepoRoot() {
+		catalogOpts = append(catalogOpts, catalog.WithLocalConfigDir(opts.Workspace.LocalConfigDir()))
 	}
-	loadResult := catalog.LoadRegistriesWithContext(ctx, mergedCfg, opts.RepoRoot, opts.CatalogMode, catalogOpts...)
+	ObservePhase(ctx, PhaseResolve)
+	loadResult := catalog.LoadRegistriesWithContext(ctx, mergedCfg, opts.Workspace.RepoRoot(), opts.CatalogMode, catalogOpts...)
 	result.CatalogLoad = loadResult
 	result.CatalogErrors = loadResult.Errors
 	slog.Debug("catalogs loaded", "catalogs", len(loadResult.Catalogs), "errors", len(loadResult.Errors))
@@ -556,6 +613,8 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		mpMode = resolver.MarketplaceResolveModeCachedNoFetch
 	}
 	marketplaceResolver := marketplace.NewResolver()
+	marketplaceResolver.LockEvidenceStrict = opts.MarketplaceLockEvidenceStrict
+	marketplaceResolver.ReportArchiveEvidenceDrift = opts.MarketplaceReportArchiveEvidenceDrift
 	// Keep the effective registry origin policy on the Marketplace resolver as
 	// well as on the loaded config. PrepareLocator uses the resolver directly,
 	// while normal sync passes the loaded config through the generic resolver.
@@ -567,10 +626,23 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		mpResolver = transientOrganizationMarketplaceResolver{delegate: marketplaceResolver}
 	}
 	if opts.CatalogMode == catalog.LoadModeInspect && mpMode == resolver.MarketplaceResolveModeInspect && loadedCfg != nil {
-		inspection := marketplaceResolver.Inspect(ctx, loadedCfg, result.TargetHarnesses, mpMode)
+		inspection := marketplaceResolver.Inspect(ctx, loadedCfg, resolver.UnionTargetHarnesses(result.TargetHarnesses, result.MachineTargetHarnesses), mpMode)
 		result.MarketplaceStatuses = inspection.Pins
 		result.MarketplaceInspection = &inspection
 		mpResolver = inspection
+		if opts.MarketplaceArtifactsFromCache {
+			// The read-only commands need the same desired set sync computes,
+			// from the verified local cache only. The transient organization
+			// wrapper is applied whenever the transient organization lock is
+			// in use — it forces organization entries to CachedNoFetch — so
+			// organization selections expand exactly as in sync.
+			var artifactDelegate resolver.MarketplaceResolver = marketplaceResolver
+			if transientOrganizationMarketplaceLock != transientOrganizationMarketplaceLockUnused {
+				artifactDelegate = transientOrganizationMarketplaceResolver{delegate: marketplaceResolver}
+			}
+			result.MarketplaceArtifactResolver = marketplaceCacheArtifactResolver{delegate: artifactDelegate, pins: inspection.Pins}
+			mpResolver = result.MarketplaceArtifactResolver
+		}
 	}
 	marketplaceCfg := loadedCfg
 	if loadedCfg != nil && opts.MarketplaceSourceFilter != nil {
@@ -591,6 +663,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		resolver.WithMalformed(catalog.MalformedByKey(loadResult.Catalogs)),
 		resolver.WithContext(ctx),
 		resolver.WithTargetHarnesses(result.TargetHarnesses),
+		resolver.WithMachineTargetHarnesses(result.MachineTargetHarnesses),
 		resolver.WithMarketplaceResolver(mpResolver),
 		resolver.WithMarketplaceResolveMode(mpMode),
 		resolver.WithMarketplaceRevocationPolicy(opts.MarketplaceRevocationPolicy),
@@ -604,7 +677,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 			errs = append(errs, resolveErr)
 			continue
 		}
-		if resolver.IsWarning(resolveErr) {
+		if resolver.IsWarning(resolveErr) || IsMarketplaceCacheMetadataMissingWarning(resolveErr) {
 			continue
 		}
 		if resolver.IsSoftSelectedNotFound(resolveErr) || resolver.IsSoftSelectedMalformed(resolveErr) {
@@ -644,7 +717,7 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 		}
 		opts.Gitignore = true
 	}
-	slog.Debug("pipeline sync start", "repo_root", opts.RepoRoot, "catalog_mode", opts.CatalogMode, "offline", opts.Offline)
+	slog.Debug("pipeline sync start", "repo_root", opts.Workspace.RepoRoot(), "catalog_mode", opts.CatalogMode, "offline", opts.Offline)
 	opts.RequireTargetSet = true
 
 	tel := telemetry.TelemetryFromContext(ctx)
@@ -677,6 +750,23 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 			syncSpan.End()
 		}
 	}()
+
+	// A zero Workspace or a conflicting EffectiveOpts root override is
+	// rejected before locks, config loaders, catalog access, backup, or
+	// materialization; both are pre-materialization trust failures, so they
+	// land in Errors and CatalogTrustErrors together. Checking the override
+	// here — not only inside resolve — keeps the rejection ahead of either
+	// exact-lock path, whose acquisition can write reconciled lockfiles.
+	if err := opts.Workspace.validate(); err != nil {
+		result.Errors = []error{err}
+		result.CatalogTrustErrors = []error{err}
+		return result
+	}
+	if err := checkEffectiveOptsRoots(opts.EffectiveOpts, opts.Workspace); err != nil {
+		result.Errors = []error{err}
+		result.CatalogTrustErrors = []error{err}
+		return result
+	}
 
 	var releaseExactLocks func()
 	if opts.ExactLockLease != nil {
@@ -714,18 +804,15 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 		result.Warnings = append(result.Warnings, warning)
 	}
 
-	// Compute the materialization root once and reuse it for both the
-	// ancestor-exclude detection (below) and the actual materialize.Run
-	// call further down. The warning root and the write root must always
-	// agree, so deriving them from a single value avoids future drift.
-	matRoot := opts.MaterializeRoot
-	if matRoot == "" {
-		matRoot = opts.RepoRoot
-	}
+	// The Workspace derives the materialization root once; both the
+	// ancestor-exclude detection (below) and the actual materialize.Run call
+	// further down consume it, so the warning root and the write root cannot
+	// drift apart.
+	matRoot := opts.Workspace.MaterializeRoot()
 	targets := resolved.TargetHarnesses
 	result.Warnings = append(result.Warnings, detectAncestorMaterializedExcludes(
 		matRoot,
-		opts.RepoRoot,
+		opts.Workspace.RepoRoot(),
 		targets,
 		skillExcludesFromLocal(resolved.LocalCfg),
 		resolved.Resolved,
@@ -759,7 +846,7 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 		return result
 	}
 	if opts.marketplaceInstall != nil {
-		if err := checkResolvedMarketplaceInstallCollision(resolved.Resolved, opts.marketplaceInstall); err != nil {
+		if err := checkResolvedMarketplaceInstallCollision(resolved.Resolved, opts.marketplaceInstall, opts.marketplaceInstallSource); err != nil {
 			slog.Warn("Marketplace install refused after dependency resolution", "error", err)
 			result.addMaterializeError(err)
 			return result
@@ -826,6 +913,8 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 			}
 		}
 	}
+
+	ObservePhase(ctx, PhaseMaterialize)
 
 	if hook, ok := ctx.Value(syncPhaseHookContextKey{}).(func(string)); ok {
 		hook("before-materialization")
@@ -928,7 +1017,7 @@ func CollectManagedPaths(resolved []resolver.ResolvedArtifact) map[hcc.Target]ba
 			slog.Error("resolve native aggregate backup files", "target", t, "error", mappingErr)
 			continue
 		}
-		if len(harness.NativeAggregateInstalls(t)) > 0 {
+		if len(harness.NativeAggregateInstalls(t)) > 0 || t == hcc.TargetOpenCode {
 			destinations, err := harness.ResolveDestinations(t, true, ".")
 			if err != nil {
 				slog.Error("resolve native aggregate backup destinations", "target", t, "error", err)
@@ -974,6 +1063,9 @@ func CollectCodexBackupPartitions(resolved []resolver.ResolvedArtifact) ([]backu
 	}
 	partitions, err := CodexBackupPartitions()
 	if err != nil {
+		if !selected && errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	if selected {

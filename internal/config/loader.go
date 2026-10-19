@@ -2,7 +2,6 @@ package config
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -14,8 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
-	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 // fileExists reports whether the given path exists (file or directory).
@@ -253,27 +252,9 @@ func isWithinRoot(path, root string) bool {
 }
 
 // DefaultHarnesses returns the default target harness list used when
-// creating skeleton configs or migrating v1 configs.
+// creating skeleton configs.
 func DefaultHarnesses() []string {
 	return []string{"factory", "windsurf"}
-}
-
-type configIncludeLoader struct {
-	kind               layerKind
-	loaded             map[string]struct{}
-	visiting           map[string]struct{}
-	files              []*Config
-	rootPath           string
-	organizationPath   string
-	rootData           []byte
-	nextFilePrecedence int
-	reads              []ConfigRead
-	readByPath         map[string]ConfigRead
-	overlays           map[string][]byte
-}
-
-func newConfigIncludeLoader(kind layerKind) *configIncludeLoader {
-	return &configIncludeLoader{kind: kind, loaded: map[string]struct{}{}, visiting: map[string]struct{}{}}
 }
 
 func canonicalConfigPath(path string) (string, error) {
@@ -288,28 +269,37 @@ func canonicalConfigPath(path string) (string, error) {
 	return filepath.Clean(canonical), nil
 }
 
-// canonicalConfigPathTolerateMissing canonicalizes path even when the file
-// does not exist yet. A layer being created has no symlink of its own, so its
-// parent directory is resolved instead: that yields the same name the loader
-// produces once the file exists, which keeps provenance and lock-path
-// comparisons stable across the creating edit.
+// canonicalConfigPathTolerateMissing canonicalizes path even when the file,
+// or some of its directories, do not exist yet. It resolves the deepest
+// existing ancestor and appends the missing components, which yields the same
+// name canonicalConfigPath produces once the file exists. That keeps staged
+// edits, provenance, and lock-path comparisons stable across the creating edit.
+// A dangling symlink on the path has no such stable name, so it is refused
+// with an error that still reports the file as not existing.
 func canonicalConfigPathTolerateMissing(path string) (string, error) {
-	canonical, err := canonicalConfigPath(path)
-	if err == nil {
-		return canonical, nil
+	current, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve config path %q: %w", path, err)
 	}
-	if !errors.Is(err, fs.ErrNotExist) {
-		return "", err
+	var missing []string
+	for {
+		canonical, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				canonical = filepath.Join(canonical, missing[i])
+			}
+			return filepath.Clean(canonical), nil
+		}
+		parent := filepath.Dir(current)
+		if !errors.Is(err, fs.ErrNotExist) || parent == current {
+			return "", fmt.Errorf("resolve config path %q: %w", path, err)
+		}
+		if _, lstatErr := os.Lstat(current); lstatErr == nil {
+			return "", fmt.Errorf("resolve config path %q: %s is a symlink to a missing target: %w", path, current, err)
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
 	}
-	absolute, absErr := filepath.Abs(path)
-	if absErr != nil {
-		return "", absErr
-	}
-	dir, dirErr := filepath.EvalSymlinks(filepath.Dir(absolute))
-	if dirErr != nil {
-		return filepath.Clean(absolute), nil
-	}
-	return filepath.Join(dir, filepath.Base(absolute)), nil
 }
 
 // ConfigLockPaths identifies one config and its layer-owned lock through both
@@ -321,9 +311,33 @@ type ConfigLockPaths struct {
 	CanonicalLock   string
 }
 
+// ResolveConfigLockPathsTolerateMissing is ResolveConfigLockPaths for a config
+// that may not exist yet, such as a layer root an edit is about to create.
+func ResolveConfigLockPathsTolerateMissing(path string) (ConfigLockPaths, error) {
+	if absolute, err := filepath.Abs(path); err == nil && dependencytxn.ClassifyDestination(absolute) != dependencytxn.AuthorityLegacy {
+		return ResolveConfigLockPaths(absolute)
+	}
+	canonical, err := canonicalConfigPathTolerateMissing(path)
+	if err != nil {
+		return ConfigLockPaths{}, err
+	}
+	return configLockPaths(path, canonical)
+}
+
 // ResolveConfigLockPaths resolves path before deriving its layer-owned lock.
 func ResolveConfigLockPaths(path string) (ConfigLockPaths, error) {
-	canonical, err := canonicalConfigPath(path)
+	requested, err := filepath.Abs(path)
+	if err != nil {
+		return ConfigLockPaths{}, fmt.Errorf("resolve config path %q: %w", path, err)
+	}
+	var canonical string
+	if dependencytxn.ClassifyDestination(requested) != dependencytxn.AuthorityLegacy {
+		// The lock belongs to the logical layer, not an approved config
+		// link's target (which can be outside the .agents directory).
+		canonical, err = dependencytxn.CanonicalConfigDestination(filepath.Clean(requested))
+	} else {
+		canonical, err = canonicalConfigPath(path)
+	}
 	if err != nil {
 		return ConfigLockPaths{}, err
 	}
@@ -353,6 +367,35 @@ func configLockPaths(path, canonical string) (ConfigLockPaths, error) {
 	}, nil
 }
 
+func readDeployedLock(path string, scope lockfile.Scope, overlays map[string][]byte) (*lockfile.Document, *ConfigRead, error) {
+	paths, err := ResolveConfigLockPathsTolerateMissing(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	ev, decode, err := dependencytxn.ReadLayerLock(paths.CanonicalLock, paths.RequestedLock, scope, overlays)
+	if err != nil {
+		var coded *lockfile.Error
+		if decode && errors.As(err, &coded) && coded.Code == lockfile.CodeScopeMismatch {
+			return nil, nil, v4err(v4MarketplaceLockMismatchCode, "", 0, "%s", coded.Err)
+		}
+		op := "read"
+		if decode {
+			op = "decode"
+		}
+		return nil, nil, fmt.Errorf("%s lock %q for config %q: %w", op, paths.CanonicalLock, path, err)
+	}
+	if ev.Digest == "" {
+		return nil, nil, nil
+	}
+	return &ev.Document, &ConfigRead{
+		Path:            paths.CanonicalLock,
+		RequestedPath:   paths.RequestedLock,
+		Digest:          ev.Digest,
+		Overlay:         ev.Overlay,
+		AcquisitionLock: true,
+	}, nil
+}
+
 func sourceForLayer(kind layerKind) Source {
 	switch kind {
 	case organizationLayer:
@@ -368,358 +411,20 @@ func sourceForLayer(kind layerKind) Source {
 	}
 }
 
-func (l *configIncludeLoader) collect(path string, root bool) (*Config, error) {
-	if l.kind == organizationLayer {
-		if !filepath.IsAbs(path) {
-			wd, err := os.Getwd()
-			if err != nil {
-				return nil, fmt.Errorf("resolve organization config path %q: %w", path, err)
-			}
-			path = wd + string(filepath.Separator) + path
-		}
-		if root {
-			l.organizationPath = path
-		} else if err := validateOrganizationInclude(path, l.organizationPath); err != nil {
-			return nil, err
-		}
-	}
-	canonical := l.rootPath
-	var err error
-	if !root || canonical == "" {
-		canonical, err = canonicalConfigPath(path)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if _, ok := l.visiting[canonical]; ok {
-		return nil, fmt.Errorf("config include cycle at %q", canonical)
-	}
-	if _, ok := l.loaded[canonical]; ok {
-		if l.readByPath != nil {
-			read := l.readByPath[canonical]
-			read.RequestedPath, err = filepath.Abs(path)
-			if err != nil {
-				return nil, err
-			}
-			l.reads = append(l.reads, read)
-		}
-		slog.Debug("config include skipped", "path", canonical, "reason", "duplicate")
-		return nil, nil
-	}
-
-	l.visiting[canonical] = struct{}{}
-	defer delete(l.visiting, canonical)
-	data := l.rootData
-	overlay, staged := l.overlays[canonical]
-	if !staged {
-		overlay, staged = l.overlays[path]
-	}
-	if staged {
-		data, err = boundedConfigData(overlay)
-	} else if !root || data == nil {
-		data, err = readConfigFile(canonical)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read config %q: %w", canonical, err)
-	}
-	if l.readByPath != nil {
-		requested, err := filepath.Abs(path)
-		if err != nil {
-			return nil, err
-		}
-		read := ConfigRead{Path: canonical, RequestedPath: requested, Digest: fmt.Sprintf("%x", sha256.Sum256(data)), Overlay: staged}
-		l.reads = append(l.reads, read)
-		l.readByPath[canonical] = read
-	}
-	cfg, errs := loadV3ConfigWithAPIVersion(data, l.kind, false, root && l.kind != localLayer)
-	if len(errs) > 0 {
-		return nil, fmt.Errorf("validate config %q: %w", canonical, errors.Join(errs...))
-	}
-	if logErrs := validateLogging(cfg.Logging); len(logErrs) > 0 {
-		return nil, fmt.Errorf("validate logging config %q: %w", canonical, errors.Join(logErrs...))
-	}
-	for _, include := range cfg.Include {
-		if strings.TrimSpace(include) == "" {
-			return nil, fmt.Errorf("validate config %q: include path must not be empty", canonical)
-		}
-		includePath := include
-		if !filepath.IsAbs(includePath) {
-			if l.kind == organizationLayer {
-				includePath = lexicalConfigParent(path) + string(filepath.Separator) + includePath
-			} else {
-				includePath = filepath.Join(filepath.Dir(canonical), includePath)
-			}
-		}
-		slog.Debug("loading config include", "owner", canonical, "path", includePath)
-		if _, err := l.collect(includePath, false); err != nil {
-			slog.Error("config include failed", "owner", canonical, "path", includePath, "error", err)
-			return nil, fmt.Errorf("load include %q referenced by %q: %w", includePath, canonical, err)
-		}
-	}
-	if !root || len(cfg.Include) > 0 {
-		l.nextFilePrecedence++
-		for i := range cfg.Registries {
-			cfg.Registries[i].FilePrecedence = l.nextFilePrecedence
-		}
-	}
-	l.files = append(l.files, cfg)
-	l.loaded[canonical] = struct{}{}
-	return cfg, nil
-}
-
-func mergeIncludeSelector(dst *KindSelector, src KindSelector) {
-	dst.Exclude = removeSelectorNames(dst.Exclude, src.Include)
-	dst.Include = removeSelectorNames(dst.Include, src.Include)
-	dst.Include = appendSelectorNames(dst.Include, src.Include)
-	dst.Include = removeSelectorNames(dst.Include, src.Exclude)
-	dst.Exclude = removeSelectorNames(dst.Exclude, src.Exclude)
-	dst.Exclude = appendSelectorNames(dst.Exclude, src.Exclude)
-	dst.ExcludeAll = dst.ExcludeAll || src.ExcludeAll
-}
-
-func removeSelectorNames(values, removed []string) []string {
-	if len(values) == 0 || len(removed) == 0 {
-		return values
-	}
-	set := make(map[string]struct{}, len(removed))
-	for _, value := range removed {
-		set[strings.TrimSpace(value)] = struct{}{}
-	}
-	filtered := values[:0]
-	for _, value := range values {
-		if _, drop := set[strings.TrimSpace(value)]; !drop {
-			filtered = append(filtered, value)
-		}
-	}
-	return filtered
-}
-
-func appendSelectorNames(dst, src []string) []string {
-	if len(src) == 0 {
-		return dst
-	}
-	seen := make(map[string]struct{}, len(dst)+len(src))
-	for _, value := range dst {
-		seen[strings.TrimSpace(value)] = struct{}{}
-	}
-	for _, value := range src {
-		key := strings.TrimSpace(value)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		dst = append(dst, value)
-	}
-	return dst
-}
-
-func mergeLocalIncludeLayers(layers []Layer) *Config {
-	merged := &Config{}
-	for _, layer := range layers {
-		cfg := layer.Config
-		if cfg == nil {
-			continue
-		}
-		merged.Registries = append(merged.Registries, cfg.Registries...)
-		for _, kind := range AllKinds {
-			mergeIncludeSelector(merged.SelectorForKindPtr(kind), cfg.SelectorForKind(kind))
-		}
-		if cfg.APIVersion != "" {
-			merged.APIVersion = cfg.APIVersion
-		}
-		if cfg.Materialization != nil {
-			merged.Materialization = mergeMaterializationConfig(merged.Materialization, cfg.Materialization)
-		}
-	}
-	return merged
-}
-
-// loadV4RuntimeConfig adapts a parsed v4 tree to the legacy runtime model.
-// Marketplace acquisition sources require the owning layer lock; Git/directory
-// and user exclusion-only trees never touch one. The returned ConfigRead covers
-// the lock so callers can add it to their read assertions.
-func loadV4RuntimeConfig(v4 *V4Config, configPath string, kind layerKind, overlays map[string][]byte) (*Config, *ConfigRead, error) {
-	hasMarketplace := false
-	for name := range v4.Sources {
-		if v4.AcquiresMarketplace(name) {
-			hasMarketplace = true
-			break
-		}
-	}
-	if !hasMarketplace {
-		cfg, err := v4.ToLegacyConfig(kind)
-		return cfg, nil, err
-	}
-	canonical, err := canonicalConfigPathTolerateMissing(configPath)
-	if err != nil {
-		return nil, nil, err
-	}
-	paths, err := configLockPaths(configPath, canonical)
-	if err != nil {
-		return nil, nil, err
-	}
-	data, overlaid := overlays[paths.CanonicalLock]
-	if !overlaid {
-		data, overlaid = overlays[paths.RequestedLock]
-	}
-	if !overlaid {
-		data, err = lockfile.ReadBytes(paths.CanonicalLock)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return nil, nil, v4err("v4.marketplace-lock-required", paths.CanonicalLock, 0, "Marketplace resources require acquisition lock %q: %v", paths.CanonicalLock, err)
-			}
-			return nil, nil, fmt.Errorf("read lock %q for config %q: %w", paths.CanonicalLock, configPath, err)
-		}
-	}
-	doc, err := lockfile.Decode(data)
-	if err != nil {
-		return nil, nil, fmt.Errorf("decode lock %q for config %q: %w", paths.CanonicalLock, configPath, err)
-	}
-	// Decode already returns a normalized document; skip the defensive second
-	// normalization that ToLegacyConfigWithLock performs for untrusted callers.
-	cfg, err := v4.toLegacyConfig(kind, &doc)
-	if err != nil {
-		return nil, nil, err
-	}
-	read := &ConfigRead{
-		Path:            paths.CanonicalLock,
-		RequestedPath:   paths.RequestedLock,
-		Digest:          fmt.Sprintf("%x", sha256.Sum256(data)),
-		Overlay:         overlaid,
-		AcquisitionLock: true,
-	}
-	return cfg, read, nil
-}
-
-func loadConfigTree(path string, kind layerKind) (*Config, error) {
+func loadIntentConfig(path string, kind layerKind, overlays map[string][]byte) (*Config, error) {
 	data, err := readConfigFile(path)
 	if err != nil {
 		return nil, err
 	}
-	if PeekAPIVersion(data) == APIVersionV4 {
-		organizationPath := ""
-		if kind == organizationLayer {
-			organizationPath = path
-		}
-		v4, err := loadV4TreeWithOverlays(path, true, map[string]bool{}, nil, data, organizationPath, kind)
-		if err != nil {
-			return nil, err
-		}
-		cfg, _, err := loadV4RuntimeConfig(v4, path, kind, nil)
-		return cfg, err
-	}
-	return loadCollectedConfigTree(path, newConfigIncludeLoader(kind))
-}
-
-func loadConfigTreeFromRootData(canonicalPath string, data []byte, kind layerKind) (*Config, error) {
-	cfg, _, err := loadConfigTreeFromRootDataWithFiles(canonicalPath, data, kind)
-	return cfg, err
-}
-
-func loadConfigTreeFromRootDataWithFiles(canonicalPath string, data []byte, kind layerKind) (*Config, []*Config, error) {
-	loader := newConfigIncludeLoader(kind)
-	loader.rootPath = canonicalPath
-	loader.rootData = data
-	cfg, err := loadCollectedConfigTree(canonicalPath, loader)
-	if err != nil {
-		return nil, nil, err
-	}
-	return cfg, append([]*Config(nil), loader.files...), nil
-}
-
-func loadConfigTreeWithReads(path, canonicalPath string, data []byte, kind layerKind, overlays map[string][]byte) (*Config, []ConfigRead, error) {
-	if PeekAPIVersion(data) == APIVersionV4 {
-		organizationPath := ""
-		if kind == organizationLayer {
-			organizationPath = path
-		}
-		v4, err := loadV4TreeWithOverlays(path, true, map[string]bool{}, overlays, data, organizationPath, kind)
-		if err != nil {
-			return nil, nil, err
-		}
-		cfg, lockRead, err := loadV4RuntimeConfig(v4, path, kind, overlays)
-		if err != nil {
-			return nil, nil, err
-		}
-		reads := make([]ConfigRead, 0, len(v4.Files)+1)
-		for _, file := range v4.Files {
-			contents, overlaid, readErr := v4ConfigData(file, file, false, nil, overlays)
-			if readErr != nil {
-				return nil, nil, fmt.Errorf("read v4 config %q: %w", file, readErr)
-			}
-			reads = append(reads, ConfigRead{Path: file, RequestedPath: file, Digest: fmt.Sprintf("%x", sha256.Sum256(contents)), Overlay: overlaid})
-		}
-		if lockRead != nil {
-			reads = append(reads, *lockRead)
-		}
-		return cfg, reads, nil
-	}
-	loader := newConfigIncludeLoader(kind)
-	loader.rootPath = canonicalPath
-	loader.rootData = data
-	loader.overlays = overlays
-	loader.readByPath = make(map[string]ConfigRead)
-	cfg, err := loadCollectedConfigTree(path, loader)
-	return cfg, loader.reads, err
-}
-
-func configWithCascadingDefaults(files []*Config, index int) *Config {
-	copyCfg := *files[index]
-	for i := index + 1; i < len(files); i++ {
-		later := files[i]
-		if later.Tags != nil {
-			copyCfg.Tags = later.Tags
-		}
-		for _, kind := range AllKinds {
-			if kind == ir.KindCollection {
-				continue
-			}
-			dst := copyCfg.SelectorForKindPtr(kind)
-			src := later.SelectorForKind(kind)
-			if src.Include != nil {
-				dst.Include = src.Include
-			}
-			if src.Exclude != nil {
-				dst.Exclude = src.Exclude
-			}
-			dst.ExcludeAll = dst.ExcludeAll || src.ExcludeAll
-		}
-	}
-	return &copyCfg
-}
-
-func loadCollectedConfigTree(path string, loader *configIncludeLoader) (*Config, error) {
-	kind := loader.kind
-	root, err := loader.collect(path, true)
+	li, err := readLayerIntent(path, "", data, kind, overlays)
 	if err != nil {
 		return nil, err
 	}
-	if len(loader.files) == 1 && len(root.Include) == 0 {
-		return root, nil
+	doc, err := li.deployedLock(overlays)
+	if err != nil {
+		return nil, err
 	}
-	layers := make([]Layer, 0, len(loader.files))
-	for i, cfg := range loader.files {
-		if kind != localLayer {
-			cfg = configWithCascadingDefaults(loader.files, i)
-		}
-		layers = append(layers, Layer{Source: sourceForLayer(kind), Config: cfg})
-	}
-	var merged *Config
-	if kind == localLayer {
-		merged = mergeLocalIncludeLayers(layers)
-	} else {
-		merged = MergeLayers(layers)
-		merged.Collections = KindSelector{}
-		for _, cfg := range loader.files {
-			mergeIncludeSelector(&merged.Collections, cfg.Collections)
-			if cfg.Telemetry != nil {
-				telemetry := *cfg.Telemetry
-				merged.Telemetry = &telemetry
-			}
-		}
-	}
-	merged.Include = append(IncludePaths(nil), root.Include...)
-	return merged, nil
+	return li.bind(doc)
 }
 
 func rootConfigNotExist(path string, err error) bool {
@@ -749,20 +454,6 @@ func configAsLocal(cfg *Config) *LocalConfig {
 	}
 }
 
-// loadV3OrV2Config reads a Config from path using the strict layer-aware
-// loader. v2 is the canonical schema and v3 is accepted as a compatibility
-// alias; neither version is rewritten while loading.
-func loadV3OrV2Config(path string, kind layerKind, requireHarnesses bool) (*Config, error) {
-	cfg, err := loadConfigTree(path, kind)
-	if err != nil {
-		return nil, err
-	}
-	if requireHarnesses && len(cfg.Harnesses) == 0 {
-		return nil, fmt.Errorf("validate config %q: harnesses is required", path)
-	}
-	return cfg, nil
-}
-
 func LoadGlobalConfig() (*Config, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -770,7 +461,7 @@ func LoadGlobalConfig() (*Config, error) {
 	}
 
 	configPath := filepath.Join(homeDir, ".agents", "config.yaml")
-	cfg, err := loadV3OrV2Config(configPath, userLayer, false)
+	cfg, err := loadIntentConfig(configPath, userLayer, nil)
 	if err != nil {
 		if rootConfigNotExist(configPath, err) {
 			slog.Debug("config skipped", "layer", "user", "path", configPath, "reason", "not_found")
@@ -795,55 +486,63 @@ func LoadUserLoggingConfig() (*LoggingConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := loadConfigTree(configPath, userLayer)
+	settings, err := loadSettings(configPath, userLayer)
 	if err != nil {
-		if rootConfigNotExist(configPath, err) {
-			return nil, nil
-		}
 		return nil, fmt.Errorf("load user logging config %q: %w", configPath, err)
 	}
-	return cfg.Logging, nil
+	return settings.Logging, nil
+}
+
+// UpdateCheckEnabled reports whether organization and user configuration allow the release check; a user setting overrides the organization's.
+func UpdateCheckEnabled() (bool, error) {
+	org, err := LoadOrganizationSettings()
+	if err != nil {
+		return false, fmt.Errorf("load organization update check config: %w", err)
+	}
+	user, err := LoadUserSettings()
+	if err != nil {
+		return false, fmt.Errorf("load user update check config: %w", err)
+	}
+	enabled := true
+	if org.UpdateCheck != nil && org.UpdateCheck.Enabled != nil {
+		enabled = *org.UpdateCheck.Enabled
+	}
+	if user.UpdateCheck != nil && user.UpdateCheck.Enabled != nil {
+		enabled = *user.UpdateCheck.Enabled
+	}
+	return enabled, nil
 }
 
 func LoadRootConfigFromPath(path string) (*Config, error) {
 	kind := repoLayer
-	requireAPIVersion := true
 	if isLocalConfigPath(path) {
 		kind = localLayer
-		requireAPIVersion = false
 	} else if isGlobalConfigPath(path) {
 		kind = userLayer
 	}
-	data, err := readConfigFile(path)
+	canonical, data, err := readEffectiveLayer(path, nil)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("read config %q: %w", path, err)
 	}
-	if PeekAPIVersion(data) == APIVersionV4 {
-		v4, err := ParseV4Config(data, path, true)
-		if err != nil {
-			return nil, err
-		}
-		cfg, _, err := loadV4RuntimeConfig(v4, path, kind, nil)
-		return cfg, err
+	li, err := readRootLayerIntent(path, data, kind, canonical)
+	if err != nil {
+		return nil, err
 	}
-	cfg, errs := loadV3ConfigWithAPIVersion(data, kind, false, requireAPIVersion)
-	if len(errs) > 0 {
-		return nil, fmt.Errorf("validate config %q: %w", path, errors.Join(errs...))
+	doc, err := li.deployedLock(nil)
+	if err != nil {
+		return nil, err
 	}
-	if logErrs := validateLogging(cfg.Logging); len(logErrs) > 0 {
-		return nil, fmt.Errorf("validate logging config %q: %w", path, errors.Join(logErrs...))
-	}
-	return cfg, nil
+	return li.bind(doc)
 }
 
 // LoadConfigFromPath loads an explicit config and its includes.
-// Harnesses is optional. Local configs may also omit apiVersion.
+// Harnesses is optional; every present root must declare exact v4.
 func LoadConfigFromPath(path string) (*Config, error) {
 	if isLocalConfigPath(path) {
-		cfg, err := loadConfigTree(path, localLayer)
+		cfg, err := loadIntentConfig(path, localLayer, nil)
 		if err != nil {
 			if rootConfigNotExist(path, err) {
 				slog.Debug("config skipped", "path", path, "reason", "not_found")
@@ -863,7 +562,7 @@ func LoadConfigFromPath(path string) (*Config, error) {
 		kind = repoLayer
 	}
 
-	cfg, err := loadV3OrV2Config(path, kind, false)
+	cfg, err := loadIntentConfig(path, kind, nil)
 	if err != nil {
 		if rootConfigNotExist(path, err) {
 			slog.Debug("config skipped", "path", path, "reason", "not_found")
@@ -879,7 +578,7 @@ func LoadConfigFromPath(path string) (*Config, error) {
 // LoadLocalConfigFromPath loads a LocalConfig from an explicit file path.
 // Unlike LoadLocalConfig, it does not use FindRepoRoot.
 func LoadLocalConfigFromPath(path string) (*LocalConfig, error) {
-	loaded, err := loadConfigTree(path, localLayer)
+	loaded, err := loadIntentConfig(path, localLayer, nil)
 	cfg := configAsLocal(loaded)
 	if err != nil {
 		if rootConfigNotExist(path, err) {
@@ -905,7 +604,7 @@ func LoadRepoConfig() (*Config, error) {
 	}
 
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-	cfg, err := loadV3OrV2Config(configPath, repoLayer, false)
+	cfg, err := loadIntentConfig(configPath, repoLayer, nil)
 	if err != nil {
 		if rootConfigNotExist(configPath, err) {
 			slog.Debug("config skipped", "layer", "repo", "path", configPath, "reason", "not_found")
@@ -927,7 +626,7 @@ func LoadLocalConfig() (*LocalConfig, error) {
 	}
 
 	configPath := filepath.Join(localDir, ".agents", "config.local.yaml")
-	loaded, err := loadConfigTree(configPath, localLayer)
+	loaded, err := loadIntentConfig(configPath, localLayer, nil)
 	cfg := configAsLocal(loaded)
 	if err != nil {
 		if rootConfigNotExist(configPath, err) {

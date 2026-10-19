@@ -15,12 +15,12 @@ func TestEffectiveConfigLayerResultsExposeExplicitPathsInPrecedenceOrder(t *test
 		filepath.Join(dir, "repo.yaml"),
 		filepath.Join(dir, "local.yaml"),
 	}
-	writeFile(t, paths[0], "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n")
-	writeFile(t, paths[1], "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n")
-	writeFile(t, paths[2], "apiVersion: agent-marketplace/v2\n")
-	writeFile(t, paths[3], "skills: [local-skill]\n")
+	writeFile(t, paths[0], "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	writeFile(t, paths[1], "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	writeFile(t, paths[2], "apiVersion: agent-marketplace/v4\n")
+	writeFile(t, paths[3], "apiVersion: agent-marketplace/v4\nsources: {local: {git: https://example.test/local.git, ref: main}}\nresources: {local: [skill/local-skill]}\n")
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		RepoRoot:         dir,
 		LocalConfigDir:   dir,
 		OrganizationPath: paths[0],
@@ -35,7 +35,7 @@ func TestEffectiveConfigLayerResultsExposeExplicitPathsInPrecedenceOrder(t *test
 	wantSources := []Source{Organization, UserPersonal, RepoCommitted, RepoPersonal}
 	assertLayerResults(t, ec.LayerResults(), wantSources, paths)
 	assertLayerResults(t, ec.PresentLayers(), wantSources, paths)
-	if ec.LocalLayer.Local == nil || ec.LocalLayer.Local.Skills.Include[0] != "local-skill" {
+	if ec.LocalLayer.Local == nil || ec.LocalLayer.Local.Registries[0].Skills.Include[0] != "local-skill" {
 		t.Fatalf("LocalLayer did not expose parsed local config: %#v", ec.LocalLayer)
 	}
 	if ec.Local != ec.LocalLayer.Local {
@@ -52,13 +52,13 @@ func TestEffectiveConfigLayerResultsExposeDefaultPaths(t *testing.T) {
 	repoPath := filepath.Join(repo, ".agents", "config.yaml")
 	localPath := filepath.Join(repo, ".agents", "config.local.yaml")
 	for _, path := range []string{orgPath, userPath, repoPath} {
-		writeFile(t, path, "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n")
+		writeFile(t, path, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 	}
-	writeFile(t, localPath, "skills: [local-skill]\n")
+	writeFile(t, localPath, "apiVersion: agent-marketplace/v4\nsources: {local: {git: https://example.test/local.git, ref: main}}\nresources: {local: [skill/local-skill]}\n")
 	t.Setenv("HOME", home)
 	SetTestOrganizationConfigPath(t, orgPath)
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		RepoRoot:       repo,
 		LocalConfigDir: repo,
 	})
@@ -75,9 +75,9 @@ func TestEffectiveConfigUsesNearestMonorepoLocalLayerPath(t *testing.T) {
 	home := filepath.Join(dir, "home")
 	repo := filepath.Join(dir, "repo")
 	service := filepath.Join(repo, "services", "payments")
-	writeFile(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n")
+	writeFile(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 	nearestLocalPath := filepath.Join(service, ".agents", "config.local.yaml")
-	writeFile(t, nearestLocalPath, "skills: [payments-skill]\n")
+	writeFile(t, nearestLocalPath, "apiVersion: agent-marketplace/v4\nsources: {local: {git: https://example.test/local.git, ref: main}}\nresources: {local: [skill/payments-skill]}\n")
 	if err := os.MkdirAll(filepath.Join(service, "src"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -94,19 +94,22 @@ func TestEffectiveConfigUsesNearestMonorepoLocalLayerPath(t *testing.T) {
 	ResetRepoRootCache()
 	t.Cleanup(ResetRepoRootCache)
 
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{})
-	if len(ec.Errors) != 0 {
-		t.Fatalf("LoadEffective errors: %v", ec.Errors)
-	}
 	canonicalService, err := filepath.EvalSymlinks(service)
 	if err != nil {
 		t.Fatal(err)
+	}
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
+		RepoRoot:       repo,
+		LocalConfigDir: canonicalService,
+	})
+	if len(ec.Errors) != 0 {
+		t.Fatalf("LoadEffective errors: %v", ec.Errors)
 	}
 	wantLocalPath := filepath.Join(canonicalService, ".agents", "config.local.yaml")
 	if ec.LocalLayer.Path != wantLocalPath {
 		t.Fatalf("LocalLayer.Path = %q, want nearest local path %q", ec.LocalLayer.Path, wantLocalPath)
 	}
-	if ec.LocalLayer.Local == nil || ec.LocalLayer.Local.Skills.Include[0] != "payments-skill" {
+	if ec.LocalLayer.Local == nil || ec.LocalLayer.Local.Registries[0].Skills.Include[0] != "payments-skill" {
 		t.Fatalf("nearest local config was not loaded: %#v", ec.LocalLayer)
 	}
 }
@@ -119,7 +122,7 @@ func TestEffectiveConfigAbsentLayersRetainResolvedPaths(t *testing.T) {
 		filepath.Join(dir, "missing-repo.yaml"),
 		filepath.Join(dir, "missing-local.yaml"),
 	}
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{
 		RepoRoot:         dir,
 		LocalConfigDir:   dir,
 		OrganizationPath: paths[0],

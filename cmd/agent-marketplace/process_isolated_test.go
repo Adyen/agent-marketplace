@@ -151,6 +151,14 @@ func runCommandProcess(parent context.Context, t *testing.T, selector, pattern s
 	result := commandProcessResult{root: root, output: output.String(), err: err}
 	if ctx.Err() != nil {
 		result.err = errors.Join(result.err, ctx.Err())
+		// The child's own deadline is load-sensitive: the same scenario passes
+		// when run alone. Point the reader at the sanctioned remediation before
+		// they treat the timeout as an assertion regression. A parent deadline
+		// or cancellation is not load-sensitivity, so only the child's own
+		// expiry carries the hint.
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) && parent.Err() == nil {
+			result.err = errors.Join(result.err, errors.New("child hit the fixed 120s command-test deadline under concurrent load; rerun this scenario alone with -count=1 before treating it as a regression (see AGENTS.md, Build, test, and verification)"))
+		}
 	}
 	data, readErr := os.ReadFile(completionPath)
 	var completion commandCompletion
@@ -187,6 +195,7 @@ func commandProcessEnvironment(root, completionPath, selector string) []string {
 		"GIT_CONFIG_KEY_0=maintenance.auto",
 		"GIT_CONFIG_VALUE_0=0",
 		"AGENT_MARKETPLACE_NO_TUI=1",
+		"AGENT_MARKETPLACE_NO_UPDATE_CHECK=1",
 		"AGENT_MARKETPLACE_LOG_ENABLED=false",
 		processIsolatedRootEnv + "=" + root,
 		processIsolatedSelectorEnv + "=" + selector,

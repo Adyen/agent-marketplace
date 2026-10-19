@@ -1,9 +1,0 @@
-{
-  "hooks": {
-    "pre_read_code": [
-      {
-        "command": "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"
-      }
-    ]
-  }
-}

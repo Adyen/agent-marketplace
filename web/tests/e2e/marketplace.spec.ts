@@ -9,6 +9,7 @@ const appURL = `http://127.0.0.1:${process.env.E2E_APP_PORT || '4321'}`
 const relativeAppURL = `http://127.0.0.1:${process.env.E2E_RELATIVE_APP_PORT || '4322'}`
 const relativeAppBaseURL = `${relativeAppURL}/marketplace/`
 const sharedOriginURL = `http://127.0.0.1:${process.env.E2E_SHARED_ORIGIN_PORT || '4323'}`
+const publicSiteURL = `http://127.0.0.1:${process.env.E2E_PUBLIC_SITE_PORT || '4326'}`
 const sharedAppearanceKey = 'vitepress-theme-appearance'
 
 function colorChannels(color: string): number[] {
@@ -70,6 +71,7 @@ function streamingItems(count: number) {
 async function routeStreamingSearch(page: Page, failNextPageOnce = false) {
   const items = streamingItems(30)
   const offsets: number[] = []
+  const sorts: (string | null)[] = []
   let shouldFail = failNextPageOnce
   await page.route('**/api/v1/search**', async (route) => {
     const url = new URL(route.request().url())
@@ -77,6 +79,7 @@ async function routeStreamingSearch(page: Page, failNextPageOnce = false) {
     const offset = Number(url.searchParams.get('offset') || 0)
     const limit = Number(url.searchParams.get('limit') || 25)
     offsets.push(offset)
+    sorts.push(url.searchParams.get('sort'))
     if (offset > 0 && shouldFail) {
       shouldFail = false
       return route.fulfill({ status: 400, contentType: 'application/json', body: '{}' })
@@ -87,22 +90,26 @@ async function routeStreamingSearch(page: Page, failNextPageOnce = false) {
       body: JSON.stringify({ items: items.slice(offset, offset + limit), total: items.length, offset, limit }),
     })
   })
-  return offsets
+  return { offsets, sorts }
 }
 
 test.describe('Marketplace browser discovery', () => {
+  // spec: marketplace-web-ui/footer-identifies-the-running-marketplace
   test('shows the running Marketplace version in the footer', async ({ page }) => {
     const instanceRequests: string[] = []
     page.on('request', (request) => {
       if (new URL(request.url()).pathname === '/api/v1/instance') instanceRequests.push(request.url())
     })
     await page.goto('/')
-    await expect(page.locator('footer')).toContainText('Version v4.0.0-e2e')
+    const footer = page.locator('footer')
+    await expect(footer).toContainText('Version v4.0.0-e2e')
+    await expect(footer.getByRole('link', { name: 'Docs', exact: true })).toBeVisible()
+    await expect(footer).toContainText('built at Adyen')
     expect(instanceRequests).toEqual([])
   })
 
   test('streams additional search results while scrolling', async ({ page }) => {
-    const offsets = await routeStreamingSearch(page)
+    const { offsets } = await routeStreamingSearch(page)
     await page.goto('/')
     await page.getByLabel('Search', { exact: true }).fill('stream')
     await expect(page.locator('article')).toHaveCount(25)
@@ -121,7 +128,7 @@ test.describe('Marketplace browser discovery', () => {
         disconnect() {}
       } as unknown as typeof IntersectionObserver
     })
-    const offsets = await routeStreamingSearch(page, true)
+    const { offsets } = await routeStreamingSearch(page, true)
     await page.goto('/')
     await page.getByLabel('Search', { exact: true }).fill('stream')
     await expect(page.locator('article')).toHaveCount(25)
@@ -148,7 +155,107 @@ test.describe('Marketplace browser discovery', () => {
     expect(detailStyle).toEqual(homepageStyle)
   })
 
-  test('shares navigation and appearance across both frontends', async ({ page }) => {
+  // spec: marketplace-web-ui/marketplace-header-offers-non-redundant-external-documentation-navigation
+  // spec: site-deployment-profiles/navigation-respects-deployment-context
+  test('roots Marketplace navigation at the configured web base', async ({ browser, page }) => {
+    await page.goto(appURL)
+    const rootNavigation = page.getByRole('navigation', { name: 'Product navigation' })
+    await expect(rootNavigation.getByRole('link', { name: 'agent-marketplace', exact: true })).toHaveAttribute('href', '/')
+    await expect(rootNavigation.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', 'https://agent-marketplace.io/docs')
+    await expect(rootNavigation.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('target', '_blank')
+    await expect(rootNavigation.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('rel', 'noopener noreferrer')
+    await expect(rootNavigation.getByTestId('docs-external-icon')).toBeVisible()
+    await expect(rootNavigation.getByRole('link', { name: 'Marketplace', exact: true })).toHaveCount(0)
+    await expect(page.locator('footer').getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', 'https://agent-marketplace.io/docs')
+    await page.goto(`${appURL}/r/team-tools/skill/secure-review`)
+    await expect(page.getByRole('link', { name: /Set up CLI/ })).toHaveAttribute('href', 'https://agent-marketplace.io/docs')
+
+    const relativePage = await browser.newPage()
+    try {
+      await relativePage.goto(relativeAppBaseURL)
+      const relativeNavigation = relativePage.getByRole('navigation', { name: 'Product navigation' })
+      await expect(relativeNavigation.getByRole('link', { name: 'agent-marketplace', exact: true })).toHaveAttribute('href', '/marketplace/')
+      await expect(relativeNavigation.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/docs/')
+      await expect(relativeNavigation.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('target', '_blank')
+      await expect(relativeNavigation.getByTestId('docs-external-icon')).toBeVisible()
+      await expect(relativeNavigation.getByRole('link', { name: 'Marketplace', exact: true })).toHaveCount(0)
+    }
+    finally {
+      await relativePage.close()
+    }
+  })
+
+  // spec: marketplace-web-ui/marketplace-links-to-locally-hosted-documentation-when-enabled
+  test('opens bundled documentation without contacting the public website', async ({ context, page }) => {
+    const externalRequests: string[] = []
+    await context.route('**/*', async (route) => {
+      const url = new URL(route.request().url())
+      if (url.hostname !== '127.0.0.1' && url.hostname !== 'localhost') {
+        externalRequests.push(url.href)
+        await route.abort()
+        return
+      }
+      await route.continue()
+    })
+    await page.goto(sharedOriginURL)
+    const docs = page.getByRole('navigation', { name: 'Product navigation' }).getByRole('link', { name: 'Docs', exact: true })
+    await expect(docs).toHaveAttribute('href', '/docs/')
+    await expect(docs).toHaveAttribute('target', '_blank')
+    await expect(docs).toHaveAttribute('rel', 'noopener noreferrer')
+    await expect(page.locator('footer').getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/docs/')
+    const popupPromise = page.waitForEvent('popup')
+    await docs.click()
+    const popup = await popupPromise
+    try {
+      await expect(popup).toHaveURL(`${sharedOriginURL}/docs/`)
+      await expect(popup.getByRole('heading', { level: 1, name: /^Documentation\b/ })).toBeVisible()
+      expect(await popup.evaluate(() => window.opener === null)).toBe(true)
+      await popup.getByRole('link', { name: 'Install', exact: true }).first().click()
+      await expect(popup).toHaveURL(`${sharedOriginURL}/docs/install`)
+    }
+    finally {
+      await popup.close()
+    }
+    await page.goto(`${sharedOriginURL}/r/team-tools/skill/secure-review`)
+    await expect(page.getByRole('link', { name: /Set up CLI/ })).toHaveAttribute('href', '/docs/')
+    expect(externalRequests).toEqual([])
+  })
+
+  test('keeps the public landing profile and its palette independent', async ({ page }) => {
+    await page.goto(publicSiteURL)
+    await expect(page.getByRole('heading', { name: /Manage AI agent tooling once/ })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Docs', exact: true }).first()).toHaveAttribute('href', '/docs/')
+    await expect(page.getByRole('link', { name: 'Marketplace', exact: true })).toHaveCount(0)
+
+    const lightHero = await page.locator('.hero').evaluate(element => getComputedStyle(element).getPropertyValue('--am-hero-bg').trim())
+    await page.evaluate(() => document.documentElement.classList.add('dark'))
+    const darkHero = await page.locator('.hero').evaluate(element => getComputedStyle(element).getPropertyValue('--am-hero-bg').trim())
+    expect(lightHero).not.toBe('')
+    expect(darkHero).not.toBe(lightHero)
+  })
+
+  // spec: site-deployment-profiles/marketplace-deployment-uses-root-ui-with-same-origin-services
+  test('routes the self-hosted Marketplace UI, documentation, API, and discovery on one origin', async ({ page, request }) => {
+    await page.goto(sharedOriginURL)
+    await expect(page.getByRole('heading', { name: 'e2e-marketplace', exact: true })).toBeVisible()
+    await expect(page.getByText('Manage AI agent tooling once', { exact: true })).toHaveCount(0)
+
+    const [docs, instance, discovery] = await Promise.all([
+      request.get(`${sharedOriginURL}/docs/`),
+      request.get(`${sharedOriginURL}/api/v1/instance`),
+      request.get(`${sharedOriginURL}/.well-known/agent-marketplace.json`),
+    ])
+    expect(docs.ok()).toBe(true)
+    expect(await docs.text()).toMatch(/<h1[^>]*>Documentation\b/)
+    expect(instance.ok()).toBe(true)
+    expect((await instance.json()).name).toBe('E2E Marketplace')
+    expect(discovery.ok()).toBe(true)
+    expect((await discovery.json()).instance_id).toBe('e2e-marketplace')
+  })
+
+  // spec: marketplace-web-ui/browser-surfaces-present-accessible-adaptive-branding
+  // spec: marketplace-web-ui/browser-surfaces-carry-the-approved-slash-motif
+  test('shares navigation, appearance, and branding across browser surfaces', async ({ page }) => {
     const fontStatus = () => page.evaluate(() => {
       const bodyStyle = getComputedStyle(document.body)
       return {
@@ -161,17 +268,63 @@ test.describe('Marketplace browser discovery', () => {
       }
     })
 
+    await page.goto(publicSiteURL)
+    await expect(page.locator('.h1-sub .am-brand-slash')).toHaveCount(0)
+    const eyebrowSlash = page.locator('.eyebrow .am-brand-slash').first()
+    await expect(eyebrowSlash).toHaveCSS('color', 'rgb(0, 209, 106)')
+    await expect(eyebrowSlash).toHaveCSS('font-weight', '800')
+    const eyebrowText = await page.locator('.eyebrow').first().evaluate(element => element.textContent ?? '')
+    expect(eyebrowText).toMatch(/^\/\s\S/)
+    const eyebrowColors = await page.locator('.eyebrow').first().evaluate((element) => ({
+      label: getComputedStyle(element).color,
+      slash: getComputedStyle(element.querySelector('.am-brand-slash')!).color,
+    }))
+    expect(eyebrowColors.label).not.toBe(eyebrowColors.slash)
+    await expect(page.getByRole('heading', { name: /Manage AI agent tooling once Sync it everywhere you work/ })).toBeVisible()
+    const landingBrand = page.locator('.VPNavBarTitle').getByRole('link', { name: 'agent-marketplace', exact: true })
+    await expect(landingBrand).toHaveAttribute('href', '/')
+    await expect(landingBrand.locator('img.light')).toHaveAttribute('src', '/brand/logo-horizontal-black.svg')
+    await expect(landingBrand.locator('img.light')).toBeVisible()
+    await expect(landingBrand.locator('img.dark')).toHaveAttribute('src', '/brand/logo-horizontal-white.svg')
+    await expect(landingBrand.locator('img.dark')).toBeHidden()
+    const sharedLogoWidth = await landingBrand.locator('img.light').evaluate(element => element.getBoundingClientRect().width)
+    const sharedLogoTransform = await landingBrand.locator('img.light').evaluate(element => getComputedStyle(element).transform)
+    expect(sharedLogoWidth).toBe(160)
+    expect(sharedLogoTransform).not.toBe('none')
+    await expect(page.locator('link[rel="icon"][type="image/svg+xml"]')).toHaveAttribute('href', '/brand/favicon.svg')
+
     await page.goto(sharedOriginURL)
     await page.evaluate(key => localStorage.setItem(key, 'light'), sharedAppearanceKey)
     await page.reload()
 
-    await expect(page.locator('.VPNav')).toHaveCount(1)
-    const landingNav = page.getByRole('navigation', { name: 'Main Navigation' })
-    await expect(page.locator('.VPNavBarTitle').getByRole('link', { name: 'agent-marketplace', exact: true })).toHaveAttribute('href', '/')
-    await expect(landingNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('target', '_self')
-    await expect(landingNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('href', '/marketplace/')
-    await expect(landingNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/docs/')
-    await expect(page.locator('link[rel="prefetch"][href="/marketplace/"]')).toHaveCount(1)
+    const marketplaceNav = page.getByRole('navigation', { name: 'Product navigation' })
+    const introSlash = page.locator('.marketplace-intro h1 .am-brand-slash')
+    await expect(introSlash).toHaveText('/')
+    await expect(introSlash).toHaveCSS('color', 'rgb(0, 209, 106)')
+    await expect(introSlash).toHaveCSS('font-weight', '800')
+    await expect(page.locator('.marketplace-intro h1')).toHaveText('/ e2e-marketplace')
+    await expect(page.locator('#filters-heading .am-brand-slash')).toHaveCount(0)
+    await expect(page.locator('#results-heading .am-brand-slash')).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: 'Filters', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Resources', exact: true })).toBeVisible()
+    const coordinateSlash = page.locator('.resource-coordinate__separator').first()
+    await expect(coordinateSlash).toHaveText('/')
+    await expect(coordinateSlash).toHaveCSS('color', 'rgb(0, 209, 106)')
+    await expect(coordinateSlash).toHaveCSS('font-weight', '800')
+    const marketplaceBrand = marketplaceNav.getByRole('link', { name: 'agent-marketplace', exact: true })
+    await expect(marketplaceBrand).toHaveAttribute('href', '/')
+    await expect(marketplaceBrand.locator('.am-site-nav__brand-logo--light')).toHaveAttribute('src', '/brand/logo-horizontal-black.svg')
+    await expect(marketplaceBrand.locator('.am-site-nav__brand-logo--light')).toBeVisible()
+    await expect(marketplaceBrand.locator('.am-site-nav__brand-logo--light')).toHaveCSS('width', `${sharedLogoWidth}px`)
+    await expect(marketplaceBrand.locator('.am-site-nav__brand-logo--light')).toHaveCSS('transform', sharedLogoTransform)
+    await expect(marketplaceBrand.locator('.am-site-nav__brand-logo--dark')).toHaveAttribute('src', '/brand/logo-horizontal-white.svg')
+    await expect(marketplaceBrand.locator('.am-site-nav__brand-logo--dark')).toBeHidden()
+    await expect(page.locator('link[rel="icon"][type="image/svg+xml"]')).toHaveAttribute('href', '/brand/favicon.svg')
+    await expect(marketplaceNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveCount(0)
+    await expect(marketplaceNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/docs/')
+    await expect(marketplaceNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('target', '_blank')
+    await expect(marketplaceNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('rel', 'noopener noreferrer')
+    await expect(marketplaceNav.getByTestId('docs-external-icon')).toBeVisible()
     await expect(page.locator('html')).not.toHaveClass(/\bdark\b/)
     await expect.poll(fontStatus).toEqual({
       bodyFamily: 'system-ui, sans-serif',
@@ -180,51 +333,56 @@ test.describe('Marketplace browser discovery', () => {
       downloadedFonts: 0,
     })
 
-    await page.goto(`${sharedOriginURL}/README`)
-    await expect(page.locator('.VPNav')).toHaveCount(1)
-    expect(await page.locator('.VPNavBarTitle').getByRole('link', { name: 'agent-marketplace', exact: true }).getAttribute('aria-current')).toBeNull()
-    await page.goto(sharedOriginURL)
-
-    const landingSwitch = page.locator('.VPNavBarAppearance .VPSwitchAppearance')
-    await expect(landingSwitch).toHaveAttribute('title', 'Switch to dark theme')
-    await expect(landingSwitch).toHaveAttribute('aria-checked', 'false')
-    await landingSwitch.click()
+    const marketplaceSwitch = marketplaceNav.getByRole('switch', { name: 'Switch to dark theme' })
+    await marketplaceSwitch.click()
     await expect(page.locator('html')).toHaveClass(/\bdark\b/)
+    await expect(marketplaceBrand.locator('.am-site-nav__brand-logo--light')).toBeHidden()
+    await expect(marketplaceBrand.locator('.am-site-nav__brand-logo--dark')).toBeVisible()
     await expect.poll(() => page.evaluate(key => localStorage.getItem(key), sharedAppearanceKey)).toBe('dark')
 
-    // The Marketplace link must hard-navigate to the origin root from nested
-    // documentation pages too, not only from the landing page.
-    await page.goto(`${sharedOriginURL}/docs/reference/cli`)
-    await expect(landingNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('href', '/marketplace/')
-    await landingNav.getByRole('link', { name: 'Marketplace', exact: true }).click()
-    await expect(page).toHaveURL(`${sharedOriginURL}/marketplace/`)
-
-    const marketplaceNav = page.getByRole('navigation', { name: 'Product navigation' })
-    await expect(marketplaceNav.getByRole('link', { name: 'agent-marketplace', exact: true })).toHaveAttribute('href', '/')
-    await expect(marketplaceNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('href', '/marketplace/')
-    await expect(marketplaceNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('aria-current', 'page')
-    await expect(marketplaceNav.getByRole('link', { name: 'Get started', exact: true })).toHaveCount(0)
-    await expect(marketplaceNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/docs/')
+    await page.goto(`${sharedOriginURL}/docs/`)
+    await expect(page.getByRole('heading', { name: /Documentation/ })).toBeVisible()
+    const docsNav = page.getByRole('navigation', { name: 'Main Navigation' })
+    const docsBrand = page.locator('.VPNavBarTitle').getByRole('link', { name: 'agent-marketplace', exact: true })
+    await expect(docsBrand).toHaveAttribute('href', '/docs/')
+    await expect(docsBrand.locator('img.light')).toHaveAttribute('src', '/docs/brand/logo-horizontal-black.svg')
+    await expect(docsBrand.locator('img.light')).toBeHidden()
+    await expect(docsBrand.locator('img.dark')).toHaveAttribute('src', '/docs/brand/logo-horizontal-white.svg')
+    await expect(docsBrand.locator('img.dark')).toBeVisible()
+    await expect(docsBrand.locator('img.dark')).toHaveCSS('width', `${sharedLogoWidth}px`)
+    await expect(docsBrand.locator('img.dark')).toHaveCSS('transform', sharedLogoTransform)
+    await expect(page.locator('link[rel="icon"][type="image/svg+xml"]')).toHaveAttribute('href', '/docs/brand/favicon.svg')
+    await expect(docsNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('href', '/')
+    await expect(docsNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/docs/')
     await expect(page.locator('html')).toHaveClass(/\bdark\b/)
-    await expect(page.locator('link[href*="nuxt-fonts-global"]')).toHaveCount(0)
-    await expect.poll(fontStatus).toEqual({
+    await expect.poll(() => page.evaluate(() => {
+      const bodyStyle = getComputedStyle(document.body)
+      return {
+        bodyFamily: bodyStyle.fontFamily,
+        fontSmoothing: bodyStyle.getPropertyValue('-webkit-font-smoothing'),
+        textRendering: bodyStyle.textRendering,
+        downloadedFonts: performance.getEntriesByType('resource')
+          .filter(entry => /\.(?:woff2?|ttf|otf)(?:\?|$)/.test(entry.name))
+          .length,
+      }
+    })).toEqual({
       bodyFamily: 'system-ui, sans-serif',
       fontSmoothing: 'antialiased',
       textRendering: 'optimizelegibility',
       downloadedFonts: 0,
     })
 
-    const marketplaceSwitch = marketplaceNav.getByRole('switch', { name: 'Switch to light theme' })
-    await expect(marketplaceSwitch).toHaveAttribute('aria-checked', 'true')
-    await expect(marketplaceSwitch).toHaveCSS('cursor', 'pointer')
-    await marketplaceSwitch.click()
+    const docsSwitch = page.locator('.VPNavBarAppearance .VPSwitchAppearance')
+    await docsSwitch.click()
     await expect(page.locator('html')).not.toHaveClass(/\bdark\b/)
-    await expect.poll(() => page.evaluate(key => localStorage.getItem(key), sharedAppearanceKey)).toBe('light')
+    await expect(docsBrand.locator('img.light')).toBeVisible()
+    await expect(docsBrand.locator('img.dark')).toBeHidden()
+    await expect.poll(() => page.evaluate(key => localStorage.getItem(key), sharedAppearanceKey)).toBe('auto')
 
-    await marketplaceNav.getByRole('link', { name: 'agent-marketplace', exact: true }).click()
+    await docsNav.getByRole('link', { name: 'Marketplace', exact: true }).click()
     await expect(page).toHaveURL(`${sharedOriginURL}/`)
+    await expect(page.getByRole('heading', { name: 'e2e-marketplace', exact: true })).toBeVisible()
     await expect(page.locator('html')).not.toHaveClass(/\bdark\b/)
-    await expect(page.evaluate(key => localStorage.getItem(key), sharedAppearanceKey)).resolves.toBe('light')
   })
 
   test('keeps Nuxt color scales fixed and ordered in both themes', async ({ page }) => {
@@ -271,7 +429,7 @@ test.describe('Marketplace browser discovery', () => {
     }
   })
 
-  test('applies the Marketplace palette without changing the Landing palette', async ({ page }) => {
+  test('applies the Marketplace palette in both themes', async ({ page }) => {
     const themes = {
       light: {
         marketplace: {
@@ -291,7 +449,6 @@ test.describe('Marketplace browser discovery', () => {
           action: 'rgb(8, 122, 61)',
           actionSoft: 'rgb(229, 243, 234)',
         },
-        landing: { canvas: [255, 255, 255], surface: [255, 255, 255], actionHover: [10, 152, 80] },
       },
       dark: {
         marketplace: {
@@ -311,7 +468,6 @@ test.describe('Marketplace browser discovery', () => {
           action: 'rgb(85, 219, 137)',
           actionSoft: 'rgb(32, 61, 44)',
         },
-        landing: { canvas: [9, 17, 13], surface: [11, 18, 14], actionHover: [120, 235, 162] },
       },
     } as const
 
@@ -370,7 +526,12 @@ test.describe('Marketplace browser discovery', () => {
       await expect(resourceName).toHaveCSS('color', theme.marketplace.primaryText)
       await expect(description).toHaveCSS('color', theme.marketplace.secondaryText)
 
-      await row.getByRole('link', { name: 'team-tools/secure-review', exact: true }).hover()
+      const coordinateLink = row.getByRole('link', { name: 'team-tools/secure-review', exact: true })
+      await expect(coordinateLink).toHaveText('team-tools / secure-review')
+      await expect(coordinateLink).toHaveCSS('box-shadow', 'none')
+      await coordinateLink.hover()
+      await expect.poll(() => coordinateLink.evaluate(element => getComputedStyle(element).boxShadow)).toContain('inset')
+      await expect.poll(() => coordinateLink.evaluate(element => getComputedStyle(element).boxShadow)).toContain(theme.marketplace.action)
       await expect(row).toHaveCSS('background-color', theme.marketplace.hover)
       expect(contrastRatio(
         await namespace.evaluate(element => getComputedStyle(element).color),
@@ -408,37 +569,11 @@ test.describe('Marketplace browser discovery', () => {
       await expect(markdown.locator('pre')).toHaveCSS('border-color', theme.marketplace.border)
 
       const command = page.getByTestId('command-text')
-      await expect(command.locator('../..')).toHaveCSS('background-color', theme.marketplace.code)
+      await expect(page.getByTestId('command-container')).toHaveCSS('background-color', theme.marketplace.code)
       await expect(command).toHaveCSS('color', theme.marketplace.primaryText)
       await expect(page.getByRole('button', { name: /Copy pinned CLI install command/ })).toHaveCSS('background-color', theme.marketplace.action)
 
       await expect(page.getByTestId('revision-summary')).toHaveCount(0)
-
-      await page.goto(sharedOriginURL)
-      await page.evaluate(
-        ({ key, value }) => localStorage.setItem(key, value),
-        { key: sharedAppearanceKey, value: preference },
-      )
-      await page.reload()
-      const landingRoles = await page.evaluate(() => {
-        const probe = document.createElement('span')
-        document.body.appendChild(probe)
-        const color = (role: string) => {
-          probe.style.color = `var(${role})`
-          const value = getComputedStyle(probe).color
-          return (value.match(/[0-9]*\.?[0-9]+/g) ?? []).slice(0, 3).map(Number).map(Math.round)
-        }
-        const root = getComputedStyle(document.documentElement)
-        const result = {
-          canvas: color('--am-color-bg-canvas'),
-          surface: color('--am-color-bg-surface'),
-          actionHover: color('--am-color-action-hover'),
-          control: root.getPropertyValue('--am-color-bg-control').trim(),
-        }
-        probe.remove()
-        return result
-      })
-      expect(landingRoles).toEqual({ ...theme.landing, control: '' })
     }
   })
 
@@ -479,14 +614,14 @@ test.describe('Marketplace browser discovery', () => {
   test('exposes the shared navigation from a keyboard-operable mobile menu', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 })
 
-    for (const path of ['/', '/marketplace/']) {
+    for (const path of ['/', '/docs/']) {
       await page.goto(`${sharedOriginURL}${path}`)
-      const isLanding = path === '/'
-      const nav = page.getByRole('navigation', { name: isLanding ? 'Main Navigation' : 'Product navigation' })
-      const menuButton = page.getByRole('button', { name: isLanding ? 'mobile navigation' : 'Toggle navigation' })
-      const marketplaceLink = isLanding
+      const isDocs = path === '/docs/'
+      const nav = page.getByRole('navigation', { name: isDocs ? 'Main Navigation' : 'Product navigation' })
+      const menuButton = page.getByRole('button', { name: isDocs ? 'mobile navigation' : 'Toggle navigation' })
+      const menuLink = isDocs
         ? page.locator('#VPNavScreen').getByRole('link', { name: 'Marketplace', exact: true })
-        : nav.getByRole('link', { name: 'Marketplace', exact: true })
+        : nav.getByRole('link', { name: 'Docs', exact: true })
 
       const viewport = await page.evaluate(() => ({
         width: document.documentElement.clientWidth,
@@ -496,13 +631,13 @@ test.describe('Marketplace browser discovery', () => {
 
       await expect(menuButton).toBeVisible()
       await expect(menuButton).toHaveAttribute('aria-expanded', 'false')
-      await expect(marketplaceLink).not.toBeVisible()
+      await expect(menuLink).not.toBeVisible()
 
       await menuButton.focus()
       await menuButton.press('Enter')
       await expect(menuButton).toHaveAttribute('aria-expanded', 'true')
-      await expect(marketplaceLink).toBeVisible()
-      if (isLanding) {
+      await expect(menuLink).toBeVisible()
+      if (isDocs) {
         await menuButton.press('Enter')
       }
       else {
@@ -510,7 +645,7 @@ test.describe('Marketplace browser discovery', () => {
         await expect(menuButton).toBeFocused()
       }
       await expect(menuButton).toHaveAttribute('aria-expanded', 'false')
-      await expect(marketplaceLink).not.toBeVisible()
+      await expect(menuLink).not.toBeVisible()
     }
   })
 
@@ -541,6 +676,56 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.locator('[data-slot="content"]')).toContainText('Installation is disabled because this revision is revoked.')
     await expect(lastResource.getByText('review', { exact: true })).toHaveCount(0)
     await expect(page.getByText(/on this page cannot be installed/)).toHaveCount(0)
+  })
+
+  // spec: marketplace-browser/browser-displays-counts-while-preserving-filtered-pagination
+  test('requests installation ordering and displays reported counts', async ({ page }) => {
+    const searchRequests: URL[] = []
+    page.on('request', request => {
+      if (new URL(request.url()).pathname === '/api/v1/search') searchRequests.push(new URL(request.url()))
+    })
+
+    await page.goto('/')
+    const rows = page.locator('article')
+    await expect(rows).toHaveCount(2)
+    await expect(rows.nth(0).getByRole('link', { name: 'team-tools/secure-review', exact: true })).toBeVisible()
+    const countText = rows.nth(0).getByText('7 reported installations', { exact: true })
+    await expect(countText).toBeVisible()
+    await expect(countText).toHaveAttribute('title', /latest configuration within the last 30 days/)
+    await expect(rows.nth(1)).not.toContainText('reported installation')
+
+    await page.getByLabel('Search', { exact: true }).fill('secure')
+    await expectResourceCount(page, 1)
+    await expect(rows).toHaveCount(1)
+    await expect(rows.nth(0)).toContainText('7 reported installations')
+
+    await page.getByLabel('Search', { exact: true }).fill('')
+    await page.getByRole('radio', { name: 'Command', exact: true }).check()
+    await expectResourceCount(page, 1)
+    await expect(rows.nth(0).getByRole('link', { name: 'team-tools/deploy-preview', exact: true })).toBeVisible()
+    await expect(rows.nth(0)).not.toContainText('reported installation')
+
+    await page.getByRole('button', { name: 'Clear', exact: true }).click()
+    await page.getByRole('checkbox', { name: 'team-tools', exact: true }).check()
+    await expectResourceCount(page, 2)
+    await expect(rows.nth(0)).toContainText('7 reported installations')
+
+    expect(searchRequests.length).toBeGreaterThan(0)
+    for (const request of searchRequests) {
+      expect(request.searchParams.get('sort')).toBe('installations')
+    }
+  })
+
+  // spec: marketplace-browser/browser-displays-counts-while-preserving-filtered-pagination
+  test('keeps installation ordering while loading more results', async ({ page }) => {
+    const { offsets, sorts } = await routeStreamingSearch(page)
+    await page.goto('/')
+    await page.getByLabel('Search', { exact: true }).fill('stream')
+    await expect(page.locator('article')).toHaveCount(25)
+    await page.getByTestId('load-more-trigger').scrollIntoViewIfNeeded()
+    await expect(page.locator('article')).toHaveCount(30)
+    expect(offsets).toEqual([0, 25])
+    expect(sorts).toEqual(['installations', 'installations'])
   })
 
   test('searches from the homepage and persists URL-backed filters', async ({ page }) => {
@@ -610,21 +795,40 @@ test.describe('Marketplace browser discovery', () => {
 
     await expect(page).toHaveURL(`${appURL}/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}`)
     await expect(page.getByRole('heading', { name: 'secure-review', exact: true })).toBeVisible()
+    await expect(page.getByTestId('resource-title-slash')).toHaveText('/')
+    await expect(page.getByTestId('resource-title-slash')).toHaveCSS('color', 'rgb(0, 209, 106)')
+    await expect(page.getByTestId('resource-title-slash')).toHaveCSS('font-weight', '800')
     await expect(page.getByTestId('revision-summary')).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: 'Install', exact: true })).toBeVisible()
+    const setupCLI = page.getByRole('link', { name: 'Set up CLI (opens in a new tab)', exact: true })
+    await expect(setupCLI).toHaveAttribute('target', '_blank')
+    await expect(setupCLI.getByTestId('setup-external-icon')).toHaveCount(1)
     const pinnedCommand = `agent-marketplace install "${appURL}/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}"`
     await expect(page.getByTestId('command-text')).toHaveText(pinnedCommand)
     const copyCommand = page.getByRole('button', { name: /Copy pinned CLI install command/ })
     await expect(copyCommand).toBeEnabled()
     await copyCommand.click()
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(pinnedCommand)
-    const copyRevision = page.getByRole('button', { name: /Copy revision/ }).first()
+    const revisionRow = page.getByTestId('revision-row')
+    const copyRevision = revisionRow.getByRole('button')
+    await expect(revisionRow.getByTestId('revision-label')).toHaveText('Revision (latest)')
+    await expect(revisionRow.getByTestId('revision-id')).toHaveText('a'.repeat(12))
+    await expect(revisionRow.getByTestId('scanned-group')).toHaveCount(0)
+    await expect(revisionRow.getByTestId('source-link')).toHaveText('Adyen/agent-skills')
+    await expect(revisionRow.getByTestId('source-link')).toHaveAttribute('href', `https://github.com/Adyen/agent-skills/blob/${'8'.repeat(40)}/skills/secure-review/SKILL.md`)
+    await expect(revisionRow.getByTestId('source-path')).toHaveText('skills/secure-review/SKILL.md')
+    await expect(copyRevision).toHaveAttribute('aria-label', /Copy revision/)
     await expect(copyRevision).toBeEnabled()
     await copyRevision.click()
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(digest)
+    await expect(copyRevision).toHaveText('')
+    await expect(copyRevision).toHaveAttribute('aria-label', 'Revision copied')
+    await expect(revisionRow.getByTestId('revision-copy-status')).toHaveText('Copied')
     await expect(page.getByRole('button', { name: /Copy detail URL/ })).toHaveCount(0)
 
     await page.getByRole('tab', { name: 'Security', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'Automated scan', exact: true })).toBeVisible()
+    await expect(page.getByText('Scanned Jan 2, 2026', { exact: true })).toBeVisible()
     await page.getByText('Analyzer and assessment parameters', { exact: true }).click()
     await expect(page.getByText('e2e-analyzer-2', { exact: true })).toBeVisible()
     await expect(page.getByText(`${'6'.repeat(12)}…`, { exact: true })).toBeVisible()
@@ -643,7 +847,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page).toHaveURL(`${appURL}/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(previousDigest)}?tab=revisions`)
     await expect(page.getByRole('tab', { name: 'Revisions', exact: true })).toHaveAttribute('aria-selected', 'true')
     await expect(page.getByRole('link', { name: 'Newer revision available', exact: true })).toHaveAttribute('href', `/r/team-tools/skill/secure-review/revisions/${encodeURIComponent(digest)}`)
-    await expect(page.getByRole('alert', { name: 'This revision is revoked' })).toContainText('superseded policy')
+    await expect(page.getByTestId('unavailable-notice')).toContainText('This revision has been revoked and can no longer be installed.')
   })
 
   test('follows an exact digest-pinned browser route to safely render hostile primary Markdown', async ({ page }) => {
@@ -702,16 +906,24 @@ test.describe('Marketplace browser discovery', () => {
     expect(contentRequests.some(url => url.includes(`${encodeURIComponent('sha256:2222222222222222222222222222222222222222222222222222222222222222')}`))).toBe(false)
   })
 
-  test('keeps revoked revision metadata visible but disables install command actions', async ({ page }) => {
+  test('keeps revoked revision metadata visible with one compact unavailable notice', async ({ page }) => {
     const revokedDigest = `sha256:${'b'.repeat(64)}`
     await page.goto(`/r/team-tools/command/deploy-preview/revisions/${encodeURIComponent(revokedDigest)}`)
 
     await expect(page.getByRole('heading', { name: 'deploy-preview', exact: true })).toBeVisible()
-    await expect(page.getByRole('alert')).toContainText('This revision is revoked')
+    const notice = page.getByTestId('unavailable-notice')
+    await expect(notice).toContainText('Not available')
+    await expect(notice).toContainText('This revision has been revoked and can no longer be installed.')
+    await expect(notice.getByTestId('unavailable-status-icon')).toHaveCount(1)
+    await expect(notice).toHaveCSS('border-top-width', '1px')
+    expect(await notice.evaluate(element => getComputedStyle(element).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)')
+    await expect(page.getByRole('alert')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /Copy pinned CLI install command/ })).toHaveCount(0)
+    await expect(page.getByRole('link', { name: /Set up CLI/ })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'View security details', exact: true })).toHaveCount(0)
     await expect(page.getByTestId('revision-summary')).toHaveCount(0)
     await page.getByRole('tab', { name: 'Technical details', exact: true }).click()
     await expect(page.getByText(revokedDigest, { exact: true }).first()).toBeVisible()
-    await expect(page.getByRole('button', { name: /Copy pinned CLI install command/ })).toBeDisabled()
     await expect(page.getByRole('button', { name: /Copy detail URL/ })).toHaveCount(0)
   })
 

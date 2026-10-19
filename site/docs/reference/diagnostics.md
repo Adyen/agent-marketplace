@@ -37,20 +37,28 @@ The first part of a code names the area that reported it.
 | `materialize.*` | Writing generated files into harness folders. |
 | `ownership.*` | Ownership records and locking for Devin and Codex shared configuration files. |
 | `doctor.*` | Findings from `agent-marketplace doctor` and `doctor --repair`. |
-| `config.*` | Loading and editing configuration files, such as `config.legacy-deprecated`. |
-| `v4.*` | Validation of v4 configuration files, such as `v4.writer-opt-in`. |
+| `config.*` | Loading and editing configuration files, such as `config.edit.include-owned`. |
+| `v4.*` | Consumer configuration validation, such as `v4.api-version-required` or `v4.api-version`. |
 | `lock.*` | Lockfile state, such as `lock.stale` or `lock.snapshot-unavailable`. |
 | `dependency.*` | Recovery of an interrupted config and lock update, such as `dependency.recovery-required`. |
 | `git.*` | Git acquisition and authentication, such as `git.auth-config-untrusted`. |
 | `catalog.*`, `resolver.*` | Discovering resources in registries and choosing between them, such as `resolver.name-collision`. |
-| `marketplace.*` | Hosted Marketplace security findings, policy, and ingestion. |
+| `marketplace.*` | Hosted Marketplace security findings, policy, and ingestion, plus consumer install and remove refusals such as `marketplace.remove-not-selected`. |
+
+## Consumer format refusals
+
+- `v4.api-version-required`: an existing consumer root omits `apiVersion`, including a personal-local or organization root.
+- `v4.api-version`: a root or explicitly versioned included fragment has an unsupported or invalid version. Only the exact string `agent-marketplace/v4` is accepted; fragments under a validated v4 root may omit the field.
+- `v4.legacy-key`: a v4-validated root or included fragment still contains legacy installation keys. Changing only the version string is not conversion.
+
+Format diagnostics identify the offending file and `apiVersion` field (or legacy key), with line context when available. [Convert before upgrading](../how-to/migrate-configuration.md) with an older released migrator; the shipped CLI and TUI never offer conversion. A refused new operation does not acquire resources or change config, locks, or harness output. Existing pending-journal recovery and ordinary logs are separate: read-only modes report `dependency.recovery-required` without replay, while recovery-capable commands can finish previously admitted writes before validating fresh input.
 
 ## Viewing diagnostics
 
-- `agent-marketplace sync` prints errors and warnings. Add `-v` to also see affected files and malformed-resource details.
+- `agent-marketplace sync` prints errors and warnings. `-v` adds affected files and malformed-resource details.
 - `agent-marketplace status` prints warnings and errors in its `WARNINGS` and `ERRORS` sections.
 - `agent-marketplace doctor` prints ownership and compatibility diagnostics.
-- In the TUI, press `e` to open the diagnostics view.
+- In the TUI, `e` opens the diagnostics view.
 
 ## Complete catalog
 

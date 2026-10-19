@@ -16,6 +16,10 @@ func TestCodexIdentityIsPubliclyDiscoverable(t *testing.T) {
 	if !ok {
 		t.Fatal("Codex must be publicly discoverable after target promotion")
 	}
+	if definition.HookProjection == nil {
+		t.Fatal("Codex hook projection is not derived")
+	}
+	definition.HookProjection = nil
 	want := Definition{Target: TargetCodex, Label: "Codex", PartitionedRoots: true, Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 6}
 	if !reflect.DeepEqual(definition, want) {
 		t.Fatalf("Lookup(codex) = %#v, want %#v", definition, want)
@@ -42,13 +46,15 @@ func TestCodexNativeLayoutIsAvailable(t *testing.T) {
 			Prefix:               ".codex",
 			MachineRootEnv:       "CODEX_HOME",
 			InstallationEvidence: true,
-			Components:           []string{"agents"},
+			Components:           []string{"agents", "hook-support"},
 			ResourcePaths:        map[ir.ResourceKind]string{ir.KindSubagent: "agents/%s.toml"},
 			Aggregates: []NativeAggregate{
 				{
-					Kind:    ir.KindHook,
-					Project: NativeAggregateFile{Path: "hooks.json", Member: "hooks"},
-					User:    NativeAggregateFile{Path: "hooks.json", Member: "hooks"},
+					Kind:       ir.KindHook,
+					Shape:      HookShapeMatcherGroups,
+					SupportDir: "hook-support",
+					Project:    NativeAggregateFile{Path: "hooks.json", Member: "hooks"},
+					User:       NativeAggregateFile{Path: "hooks.json", Member: "hooks"},
 				},
 				{
 					Kind:    ir.KindMcpServer,
@@ -97,15 +103,65 @@ func TestCodexNativeLayoutIsAvailable(t *testing.T) {
 
 func TestDefinitionsAppendCodexWithoutChangingExistingTargets(t *testing.T) {
 	want := []Definition{
-		{Target: TargetClaude, Label: "Claude Code", RepoRoot: ".claude", UserRoot: ".claude", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 1},
-		{Target: TargetFactory, Label: "Factory Droid", RepoRoot: ".factory", UserRoot: ".factory", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 0},
-		{Target: TargetCursor, Label: "Cursor", RepoRoot: ".cursor", UserRoot: ".cursor", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 2},
-		{Target: TargetWindsurf, Label: "Windsurf", RepoRoot: ".", UserRoot: ".codeium/windsurf", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 3},
-		{Target: TargetGemini, Label: "Gemini CLI", RepoRoot: ".gemini", UserRoot: ".gemini", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 4},
-		{Target: TargetDevin, Label: "Devin CLI", RepoRoot: ".devin", UserRoot: ".config/devin", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 5},
-		{Target: TargetCodex, Label: "Codex", PartitionedRoots: true, Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 6},
+		{Target: TargetClaude, Label: "Claude Code", RepoRoot: ".claude", UserRoot: ".claude", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 1,
+			HookProjection: &NativeHookProjection{
+				Shape:      HookShapeMatcherGroups,
+				SupportDir: "hook-support",
+				Project:    NativeHookProjectionFile{Path: "settings.json", Member: "hooks"},
+				User:       NativeHookProjectionFile{Path: "settings.json", Member: "hooks"},
+			}},
+		{Target: TargetFactory, Label: "Factory Droid", RepoRoot: ".factory", UserRoot: ".factory", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 0,
+			HookProjection: &NativeHookProjection{
+				Shape:      HookShapeMatcherGroups,
+				SupportDir: "hook-support",
+				Project:    NativeHookProjectionFile{Path: "hooks.json"},
+				User:       NativeHookProjectionFile{Path: "hooks.json"},
+			}},
+		{Target: TargetCursor, Label: "Cursor", RepoRoot: ".cursor", UserRoot: ".cursor", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 2,
+			HookProjection: &NativeHookProjection{
+				Shape:      HookShapeEventHandlers,
+				SupportDir: "hook-support",
+				Project:    NativeHookProjectionFile{Path: "hooks.json", Member: "hooks", Envelope: map[string]any{"version": 1}},
+				User:       NativeHookProjectionFile{Path: "hooks.json", Member: "hooks", Envelope: map[string]any{"version": 1}},
+			}},
+		{Target: TargetWindsurf, Label: "Windsurf", RepoRoot: ".", UserRoot: ".codeium/windsurf", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 3,
+			HookProjection: &NativeHookProjection{
+				Shape:      HookShapeEventHandlers,
+				SupportDir: "hook-support",
+				Project:    NativeHookProjectionFile{Path: ".devin/hooks.json", Member: "hooks"},
+				User:       NativeHookProjectionFile{Path: "hooks.json", Member: "hooks"},
+			}},
+		{Target: TargetGemini, Label: "Gemini CLI", RepoRoot: ".gemini", UserRoot: ".gemini", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 4,
+			HookProjection: &NativeHookProjection{
+				Shape:      HookShapeMatcherGroups,
+				SupportDir: "hook-support",
+				Project:    NativeHookProjectionFile{Path: "settings.json", Member: "hooks"},
+				User:       NativeHookProjectionFile{Path: "settings.json", Member: "hooks"},
+			}},
+		{Target: TargetDevin, Label: "Devin CLI", RepoRoot: ".devin", UserRoot: ".config/devin", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 5,
+			HookProjection: &NativeHookProjection{
+				Shape:      HookShapeMatcherGroups,
+				SupportDir: "hook-support",
+				Project:    NativeHookProjectionFile{Path: "hooks.v1.json"},
+				User:       NativeHookProjectionFile{Path: "config.json", Member: "hooks"},
+			}},
+		{Target: TargetCodex, Label: "Codex", PartitionedRoots: true, Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 6,
+			HookProjection: &NativeHookProjection{
+				Shape:      HookShapeMatcherGroups,
+				SupportDir: ".codex/hook-support",
+				Project:    NativeHookProjectionFile{Path: ".codex/hooks.json", Member: "hooks"},
+				User:       NativeHookProjectionFile{Path: ".codex/hooks.json", Member: "hooks"},
+			}},
+		{Target: TargetOpenCode, Label: "OpenCode", RepoRoot: ".opencode", UserRoot: ".config/opencode", Compiler: true, Ingester: true, Conversion: true, UI: true, UIOrder: 7},
 	}
-	if got := Definitions(); !reflect.DeepEqual(got, want) {
+	got := Definitions()
+	for i := range got {
+		_, _, aggregate := nativeAggregate(got[i].Target, ir.KindHook)
+		if aggregate != (got[i].HookProjection != nil) {
+			t.Fatalf("Definitions()[%d] hook projection = %v, want one exactly when a hook aggregate is declared", i, got[i].HookProjection)
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Definitions() = %#v, want %#v", got, want)
 	}
 }

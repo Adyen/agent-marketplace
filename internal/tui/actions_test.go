@@ -15,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // ks is a shorthand for constructing KindSelector with includes only.
@@ -23,6 +24,10 @@ func ks(v ...string) config.KindSelector {
 		return config.KindSelector{}
 	}
 	return config.KindSelector{Include: v}
+}
+
+func readSnapshot(ctx context.Context, repoRoot, homeDir string, mode catalogLoadMode) snapshotLoadedMsg {
+	return readSnapshotForWorkspace(ctx, defaultTUIWorkspace(repoRoot), homeDir, mode)
 }
 
 func TestLoadCatalogsForTUIUsesExistingCacheWithoutRefresh(t *testing.T) {
@@ -579,7 +584,7 @@ func TestBuildRowsIncludesAllResourceKinds(t *testing.T) {
 func TestRenderListShowsLoadingStateBeforeSnapshotHydrates(t *testing.T) {
 	m := Model{loading: true}
 
-	if got := renderList(m, 24); got != "Loading resources..." {
+	if got := ansi.Strip(renderList(m, 24)); got != "Loading resources..." {
 		t.Fatalf("expected loading state, got %q", got)
 	}
 }
@@ -619,7 +624,7 @@ func TestReadSnapshotResourcesMaterializeThroughTUISync(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".agents"), 0o755); err != nil {
 		t.Fatalf("mkdir repo agents: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoV2Header), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoV4Header), 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
 	}
 
@@ -631,10 +636,10 @@ func TestReadSnapshotResourcesMaterializeThroughTUISync(t *testing.T) {
 		t.Fatalf("write skill: %v", err)
 	}
 
-	globalConfig := v2Header + `registries:
-  - url: ` + registryRoot + `
-    skills:
-      - audit
+	globalConfig := v4Header + `sources:
+  local: {directory: ` + registryRoot + `}
+resources:
+  local: [skill/audit]
 `
 	if err := os.MkdirAll(filepath.Join(homeDir, ".agents"), 0o755); err != nil {
 		t.Fatalf("mkdir home agents: %v", err)
@@ -672,7 +677,7 @@ func TestReadSnapshotResourcesMaterializeThroughTUISync(t *testing.T) {
 		t.Fatalf("resolved skill Resource is nil; TUI sync would prune without writing")
 	}
 
-	msg := runSyncCmd(context.Background(), repoRoot)()
+	msg := runSyncCmd(context.Background(), defaultTUIWorkspace(repoRoot))()
 	done, ok := msg.(syncDoneMsg)
 	if !ok {
 		t.Fatalf("runSyncCmd returned %T, want syncDoneMsg", msg)
@@ -694,7 +699,7 @@ func TestReadSnapshotRowsIncludeAllFactoryResourceKinds(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".agents"), 0o755); err != nil {
 		t.Fatalf("mkdir repo agents: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoV2Header), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoV4Header), 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
 	}
 
@@ -714,20 +719,12 @@ func TestReadSnapshotRowsIncludeAllFactoryResourceKinds(t *testing.T) {
 		}
 	}
 
-	globalConfig := v2Header + `registries:
-  - url: ` + registryRoot + `
-    path: .agents
+	globalConfig := v4Header + `sources:
+  local:
+    directory: ` + filepath.Join(registryRoot, ".agents") + `
     source_harness: factory
-    skills:
-      - audit
-    commands:
-      - continue
-    subagents:
-      - worker
-    hooks:
-      - PreToolUse-command
-    mcp:
-      - memory
+resources:
+  local: [skill/audit, command/continue, subagent/worker, hook/PreToolUse-command, mcp/memory]
 `
 	if err := os.MkdirAll(filepath.Join(homeDir, ".agents"), 0o755); err != nil {
 		t.Fatalf("mkdir home agents: %v", err)
@@ -789,7 +786,7 @@ func TestRunUpdateCmdRefreshesAndMaterializes(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".agents"), 0o755); err != nil {
 		t.Fatalf("mkdir repo agents: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoV2Header), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoV4Header), 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
 	}
 
@@ -801,10 +798,10 @@ func TestRunUpdateCmdRefreshesAndMaterializes(t *testing.T) {
 		t.Fatalf("write skill: %v", err)
 	}
 
-	globalConfig := v2Header + `registries:
-  - url: ` + registryRoot + `
-    skills:
-      - refresh-me
+	globalConfig := v4Header + `sources:
+  local: {directory: ` + registryRoot + `}
+resources:
+  local: [skill/refresh-me]
 `
 	if err := os.MkdirAll(filepath.Join(homeDir, ".agents"), 0o755); err != nil {
 		t.Fatalf("mkdir home agents: %v", err)
@@ -831,7 +828,7 @@ func TestRunUpdateCmdRefreshesAndMaterializes(t *testing.T) {
 	})
 	defer restoreLocal()
 
-	msg := runUpdateCmd(context.Background(), repoRoot, homeDir, 1)()
+	msg := runUpdateCmdForWorkspace(context.Background(), defaultTUIWorkspace(repoRoot), homeDir, 1)()
 	done, ok := msg.(updateDoneMsg)
 	if !ok {
 		t.Fatalf("runUpdateCmd returned %T, want updateDoneMsg", msg)

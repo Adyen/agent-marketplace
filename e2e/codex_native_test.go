@@ -39,14 +39,10 @@ func writeCodexRepoMCPConfig(env *Env, registryURL, name string, harnesses ...st
 		selected.WriteString(harness)
 		selected.WriteByte('\n')
 	}
-	env.WriteGlobalConfig("apiVersion: agent-marketplace/v3\nharnesses:\n" + selected.String() + "registries: []")
-	env.WriteRepoConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v3
-registries:
-  - url: %s
-    ref: main
-    source_harness: claude
-    mcp:
-      - %s
+	env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses:\n" + selected.String())
+	env.WriteRepoConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+sources: {team: {git: %q, ref: main, source_harness: claude}}
+resources: {team: {include: [mcp/%s]}}
 `, registryURL, name))
 }
 
@@ -103,18 +99,10 @@ func TestE2ECodexCustomHomeAndNativeDetectionDoNotRequireExecutable(t *testing.T
 		".codex/agents/native-reviewer.toml":   "name = 'native-reviewer'\ndescription = 'Review changes'\ndeveloper_instructions = 'Review carefully.'\n",
 		".codex/config.toml":                   "[mcp_servers.native]\ncommand = 'native-server'\n",
 	})
-	env.WriteGlobalConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v3
-harnesses:
-  - codex
-registries:
-  - url: %s
-    ref: main
-    skills:
-      - native-skill
-    subagents:
-      - native-reviewer
-    mcp:
-      - native
+	env.WriteGlobalConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+harnesses: [codex]
+sources: {team: {git: %q, ref: main}}
+resources: {team: {include: [skill/native-skill, subagent/native-reviewer, mcp/native]}}
 `, registryURL))
 
 	withoutCodex := pathWithoutExecutable(t, env.path, "codex")
@@ -147,17 +135,12 @@ func TestE2ECodexConcurrentAggregateSync(t *testing.T) {
 	env := newCodexEnv(t)
 	alphaURL := mcpRegistry(env, "codex-concurrent-alpha", "alpha", "alpha-bin")
 	betaURL := mcpRegistry(env, "codex-concurrent-beta", "beta", "beta-bin")
-	env.WriteGlobalConfig("apiVersion: agent-marketplace/v3\nharnesses:\n  - codex\nregistries: []")
+	env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [codex]\n")
 
-	baseOrg := `apiVersion: agent-marketplace/v3
-harnesses:
-  - codex
-registries:
-  - url: %s
-    ref: main
-    source_harness: claude
-    mcp:
-      - %s
+	baseOrg := `apiVersion: agent-marketplace/v4
+harnesses: [codex]
+sources: {team: {git: %q, ref: main, source_harness: claude}}
+resources: {team: {include: [mcp/%s]}}
 `
 	env.WriteFile("/etc/agent-marketplace/codex-alpha/config.yaml", fmt.Sprintf(baseOrg, alphaURL, "alpha"))
 	env.WriteFile("/etc/agent-marketplace/codex-beta/config.yaml", fmt.Sprintf(baseOrg, betaURL, "beta"))
@@ -174,20 +157,16 @@ registries:
 	if err := os.WriteFile(configPath, []byte(seed), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	proofPath, proofBytes := prepareOwnershipProofFIFO(t, env, alphaOrg)
+	pausePath, signal := prepareOwnershipPause(t, env, betaOrg)
 
 	var alpha, beta ExecResult
 	alphaDone := make(chan struct{})
 	go func() {
 		defer close(alphaDone)
-		alpha = env.RunAMWithEnv(map[string]string{"AGENT_MARKETPLACE_V3_ORG_CONFIG": alphaOrg}, "sync", "--no-backup")
+		alpha = env.RunAMWithEnv(map[string]string{"AGENT_MARKETPLACE_V3_ORG_CONFIG": alphaOrg, "AGENT_MARKETPLACE_E2E_OWNERSHIP_PAUSE": pausePath}, "sync", "--no-backup")
 	}()
 
-	fifoWriter := openFIFOWriter(t, proofPath, alphaDone, &alpha)
-	if err := os.Rename(proofPath+".seed", proofPath); err != nil {
-		_ = fifoWriter.Close()
-		t.Fatal(err)
-	}
+	fifoWriter := openFIFOWriter(t, pausePath, alphaDone, &alpha)
 
 	betaLog := filepath.Join(t.TempDir(), "beta.log")
 	betaDone := make(chan struct{})
@@ -203,7 +182,7 @@ registries:
 	// Hold the first writer long enough for the default-wait path to report
 	// contention after the second writer reaches the same root.
 	time.Sleep(1100 * time.Millisecond)
-	if _, err := fifoWriter.Write(proofBytes); err != nil {
+	if _, err := fifoWriter.Write(signal); err != nil {
 		_ = fifoWriter.Close()
 		t.Fatal(err)
 	}
@@ -268,15 +247,10 @@ func TestE2ECodexMissingAndCorruptOwnershipFailClosed(t *testing.T) {
 				{Name: "managed", Command: "first-bin"},
 				{Name: "stale", Command: "stale-bin"},
 			}))
-			env.WriteGlobalConfig("apiVersion: agent-marketplace/v3\nharnesses:\n  - codex\nregistries: []")
-			env.WriteRepoConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v3
-registries:
-  - url: %s
-    ref: main
-    source_harness: claude
-    mcp:
-      - managed
-      - stale
+			env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [codex]\n")
+			env.WriteRepoConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+sources: {team: {git: %q, ref: main, source_harness: claude}}
+resources: {team: {include: [mcp/managed, mcp/stale]}}
 `, firstURL))
 			if result := env.RunAM("sync"); result.ExitCode != 0 {
 				t.Fatalf("seed sync exited %d:\n%s", result.ExitCode, result.Combined)
@@ -339,18 +313,10 @@ func TestE2ECodexMalformedAggregatesAreIsolated(t *testing.T) {
 			files := RegistryFilesEx([]Skill{{Name: "survivor"}}, nil, nil, []MCPServer{{Name: "generated", Command: "generated-server"}})
 			files["hooks/hooks.json"] = `{"hooks":{"PreToolUse":[{"type":"command","command":"generated-hook","matcher":"Bash"}]}}`
 			registryURL := env.CreateBareRepo("malformed-isolation", files)
-			env.WriteGlobalConfig("apiVersion: agent-marketplace/v3\nharnesses:\n  - codex\nregistries: []")
-			env.WriteRepoConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v3
-registries:
-  - url: %s
-    ref: main
-    source_harness: claude
-    skills:
-      - survivor
-    hooks:
-      - PreToolUse-command
-    mcp:
-      - generated
+			env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [codex]\n")
+			env.WriteRepoConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+sources: {team: {git: %q, ref: main, source_harness: claude}}
+resources: {team: {include: [skill/survivor, hook/PreToolUse-command, mcp/generated]}}
 `, registryURL))
 			malformedPath := filepath.Join(env.workspace, filepath.FromSlash(tc.malformedPath))
 			if err := os.MkdirAll(filepath.Dir(malformedPath), 0o755); err != nil {
@@ -461,6 +427,7 @@ func TestE2ECodexDestructiveRepairRequiresConfirmationAndRedactsSecrets(t *testi
 	if err := os.WriteFile(configPath, []byte(original), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	env.MustRunAM("lock", "--scope", "repo")
 
 	preview := env.RunAM("doctor", "--repair", "--yes")
 	assertRepairResult(t, preview, 0, "replace mcp-server", "left unchanged")
@@ -514,6 +481,7 @@ func TestE2ECodexRepairCorruptionAfterIndependentAdoptionIsPartialFailure(t *tes
 	if err := os.WriteFile(codexPath, []byte(codexOriginal), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	env.MustRunAM("lock", "--scope", "repo")
 
 	result := env.RunAM("doctor", "--repair", "--yes")
 	if result.ExitCode == 0 {
@@ -637,6 +605,13 @@ func runDoctorRepairInTTY(t *testing.T, env *Env, answer string) ExecResult {
 
 func runAMInTTY(t *testing.T, env *Env, command, option, prompt, answer string) ExecResult {
 	t.Helper()
+	return runAMInTTYAtPrompt(t, env, command, option, prompt, answer, nil)
+}
+
+// runAMInTTYAtPrompt is runAMInTTY with atPrompt called while the command is
+// blocked at its prompt, before the answer is written.
+func runAMInTTYAtPrompt(t *testing.T, env *Env, command, option, prompt, answer string, atPrompt func()) ExecResult {
+	t.Helper()
 	scriptPath, err := exec.LookPath("script")
 	if err != nil {
 		t.Fatalf("interactive E2E requires the system 'script' utility: %v", err)
@@ -715,6 +690,9 @@ exec "$AM_E2E_BINARY" "$AM_E2E_COMMAND" >"$AM_E2E_STDOUT" 2>"$AM_E2E_STDERR"
 	}
 
 prompted:
+	if atPrompt != nil {
+		atPrompt()
+	}
 	if _, err := stdin.Write([]byte(answer)); err != nil {
 		t.Fatalf("answer %s prompt: %v", command, err)
 	}

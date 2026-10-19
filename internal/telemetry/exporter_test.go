@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -45,7 +46,7 @@ func TestAuthHeaderResolution(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelBasic,
 			Endpoint: srv.URL,
@@ -56,7 +57,7 @@ func TestAuthHeaderResolution(t *testing.T) {
 		},
 	}
 
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -76,6 +77,32 @@ func TestAuthHeaderResolution(t *testing.T) {
 	}
 	if gotHeaders.Get("X-Tenant") != "tenant-42" {
 		t.Fatalf("x-tenant header = %q, want tenant-42", gotHeaders.Get("X-Tenant"))
+	}
+}
+
+// spec: configuration-settings/untrusted-log-values-cannot-create-records
+func TestRouteClientLogsEncodeConfiguredValues(t *testing.T) {
+	previous := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	var values []string
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{
+		ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
+			if attr.Key == "endpoint" || attr.Key == "ca_file" {
+				values = append(values, attr.Key+"="+attr.Value.String())
+			}
+			return attr
+		},
+	})))
+	q := NewQueue(filepath.Join(t.TempDir(), "queue"))
+	if _, _, err := buildRouteClients("http://127.0.0.1/\r\nforged", nil, "", false, "primary", queueSubdirMetrics, nil, q); err == nil {
+		t.Fatal("endpoint with line breaks accepted")
+	}
+	if _, _, err := buildRouteClients("http://127.0.0.1:1", nil, filepath.Join(t.TempDir(), "missing\r\nforged.pem"), false, "primary", queueSubdirMetrics, nil, q); err == nil {
+		t.Fatal("missing CA file accepted")
+	}
+	want := []string{"endpoint=[redacted URL]", "endpoint=[redacted URL]", "endpoint=http://127.0.0.1:1"}
+	if len(values) != 4 || !slices.Equal(values[:3], want) || !strings.HasSuffix(values[3], `missing\r\nforged.pem`) || strings.ContainsAny(values[3], "\r\n") {
+		t.Fatalf("logged configured values = %q", values)
 	}
 }
 
@@ -108,6 +135,7 @@ func TestRouteClientsDeferDNSUntilDelivery(t *testing.T) {
 	}
 }
 
+// spec: telemetry/equivalent-routes-are-delivered-once
 func TestExporterDeduplication(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", dir)
@@ -171,7 +199,7 @@ func TestRouteFolding(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:              tmcfg.LevelBasic,
 			Endpoint:           srv.URL,
@@ -179,7 +207,7 @@ func TestRouteFolding(t *testing.T) {
 		},
 	}
 
-	state, err := ResolveTelemetryConfig(nil, user, srv.URL, "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, srv.URL, "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -226,7 +254,7 @@ func TestCommunityNotFolded(t *testing.T) {
 	}))
 	defer communitySrv.Close()
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:              tmcfg.LevelBasic,
 			Endpoint:           primarySrv.URL,
@@ -234,7 +262,7 @@ func TestCommunityNotFolded(t *testing.T) {
 		},
 	}
 
-	state, err := ResolveTelemetryConfig(nil, user, communitySrv.URL, "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, communitySrv.URL, "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -285,12 +313,12 @@ func TestShutdownGivesStalledPrimaryAndCommunityFairOpportunity(t *testing.T) {
 	}))
 	defer communitySrv.Close()
 
-	user := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{
+	user := amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{
 		Level:              tmcfg.LevelBasic,
 		Endpoint:           primarySrv.URL,
 		CommunityReporting: boolPtr(true),
 	}}
-	state, err := ResolveTelemetryConfig(nil, user, communitySrv.URL, "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, communitySrv.URL, "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -336,7 +364,7 @@ func TestTLSWithCAFile(t *testing.T) {
 
 	caFile := writeServerCert(t, dir, srv)
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelBasic,
 			Endpoint: srv.URL,
@@ -344,7 +372,7 @@ func TestTLSWithCAFile(t *testing.T) {
 		},
 	}
 
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -375,14 +403,14 @@ func TestInsecureHTTPForLoopback(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelBasic,
 			Endpoint: srv.URL,
 		},
 	}
 
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -402,6 +430,7 @@ func TestInsecureHTTPForLoopback(t *testing.T) {
 	}
 }
 
+// spec: telemetry/standard-opentelemetry-endpoint-variables-are-ignored
 func TestOtelEndpointEnvDoesNotOverride(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", dir)
@@ -414,14 +443,14 @@ func TestOtelEndpointEnvDoesNotOverride(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelBasic,
 			Endpoint: srv.URL,
 		},
 	}
 
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -452,14 +481,14 @@ func TestQueueOnExportFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelBasic,
 			Endpoint: srv.URL,
 		},
 	}
 
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}

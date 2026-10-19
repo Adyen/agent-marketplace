@@ -4,11 +4,11 @@
       {
         "hooks": [
           {
-            "command": "${extensionPath}/scripts/check.sh",
+            "command": "\"$GEMINI_PROJECT_DIR\"/plugins/demo/scripts/check.sh",
             "type": "command"
           }
         ],
-        "matcher": "Read"
+        "matcher": "^run_shell_command$"
       }
     ]
   }

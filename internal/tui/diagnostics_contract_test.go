@@ -9,12 +9,14 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -38,6 +40,7 @@ func TestHardSnapshotFailureNeverRendersInSync(t *testing.T) {
 	}
 }
 
+// spec: inspection-outcomes/materialization-dry-run-failure
 func TestReadSnapshotPropagatesMaterializationDryRunError(t *testing.T) {
 	induced := errors.New("induced dry-run failure")
 	previousMaterialize := runMaterialize
@@ -49,7 +52,7 @@ func TestReadSnapshotPropagatesMaterializationDryRunError(t *testing.T) {
 	restoreOrg := swapLoadOrgConfig(func() (*config.Config, error) { return nil, nil })
 	t.Cleanup(restoreOrg)
 	restoreGlobal := swapLoadGlobalConfig(func() (*config.Config, error) {
-		return &config.Config{APIVersion: config.APIVersionV2, Harnesses: []string{"factory"}}, nil
+		return &config.Config{APIVersion: config.APIVersionV4, Harnesses: []string{"factory"}}, nil
 	})
 	t.Cleanup(restoreGlobal)
 	restoreRepo := swapLoadRepoConfig(func() (*config.Config, error) { return nil, nil })
@@ -63,6 +66,87 @@ func TestReadSnapshotPropagatesMaterializationDryRunError(t *testing.T) {
 	}
 	if errs := diagnosticErrors(snapshot.diagnostics); len(errs) != 1 || !errors.Is(errs[0], induced) {
 		t.Fatalf("dry-run failure not propagated: %v", errs)
+	}
+}
+
+// spec: inspection-outcomes/malformed-resource-warning
+func TestReadSnapshotClassifiesMalformedResourceAsWarning(t *testing.T) {
+	repoRoot := t.TempDir()
+	homeDir := t.TempDir()
+	registryRoot := t.TempDir()
+	globalCfg := &config.Config{
+		APIVersion: config.APIVersionV4,
+		Harnesses:  []string{"factory"},
+		Registries: []config.RegistryEntry{
+			{URL: registryRoot, Skills: config.KindSelector{Include: []string{"healthy"}}},
+		},
+	}
+	restoreOrg := swapLoadOrgConfig(func() (*config.Config, error) { return nil, nil })
+	t.Cleanup(restoreOrg)
+	restoreGlobal := swapLoadGlobalConfig(func() (*config.Config, error) { return globalCfg, nil })
+	t.Cleanup(restoreGlobal)
+	restoreRepo := swapLoadRepoConfig(func() (*config.Config, error) { return nil, nil })
+	t.Cleanup(restoreRepo)
+	restoreLocal := swapLoadLocalConfig(func() (*config.LocalConfig, error) { return nil, nil })
+	t.Cleanup(restoreLocal)
+	previousDiscover := discoverCatalog
+	discoverCatalog = func(dir, sourceHarness string) (catalogInfo, error) {
+		if dir != registryRoot {
+			return catalogInfo{}, errors.New("unexpected discovery for " + dir)
+		}
+		return catalogInfo{
+			Entries: []catalog.Entry{{Name: "healthy", Path: filepath.Join(dir, "healthy")}},
+			Malformed: []skill.MalformedSkill{{
+				DirName: "broken-skill",
+				Path:    filepath.Join("skills", "broken-skill", "SKILL.md"),
+				Kind:    ir.KindSkill.String(),
+				Error:   errors.New("yaml: parse failure"),
+			}},
+		}, nil
+	}
+	t.Cleanup(func() { discoverCatalog = previousDiscover })
+
+	snapshot := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
+	if errs := diagnosticErrors(snapshot.diagnostics); len(errs) != 0 {
+		t.Fatalf("malformed unselected resource produced error diagnostics: %v", errs)
+	}
+	var malformedWarning error
+	for _, d := range snapshot.diagnostics {
+		if d.severity == diagnosticWarning && strings.Contains(d.err.Error(), "broken-skill") {
+			malformedWarning = d.err
+		}
+	}
+	if malformedWarning == nil {
+		t.Fatalf("malformed resource missing from warning diagnostics: %+v", snapshot.diagnostics)
+	}
+	if strings.Contains(malformedWarning.Error(), filepath.Join("SKILL.md", "SKILL.md")) {
+		t.Fatalf("warning appended a second SKILL.md to a file path: %v", malformedWarning)
+	}
+	if snapshot.driftAssessment != driftReady {
+		t.Fatalf("warning-only malformed resource marked drift failed: %v", snapshot.driftAssessment)
+	}
+}
+
+func TestReadSnapshotReturnsBeforeMaterializeOnResolveFailure(t *testing.T) {
+	materializeRan := false
+	previousMaterialize := runMaterialize
+	runMaterialize = func(context.Context, string, []resolver.ResolvedArtifact, ...materialize.RunOption) (*materialize.Report, error) {
+		materializeRan = true
+		return nil, nil
+	}
+	t.Cleanup(func() { runMaterialize = previousMaterialize })
+
+	// An empty repository root yields the zero Workspace, so Resolve fails
+	// with a generic ErrInvalidWorkspace before any loader runs.
+	snapshot := readSnapshot(context.Background(), "", t.TempDir(), catalogLoadCached)
+	if materializeRan {
+		t.Fatal("runMaterialize ran after Resolve returned a generic error")
+	}
+	if errs := diagnosticErrors(snapshot.diagnostics); !errors.Is(errors.Join(errs...), pipeline.ErrInvalidWorkspace) {
+		t.Fatalf("resolve failure not exposed as diagnostics: %v", errs)
+	}
+	if len(snapshot.errs) == 0 {
+		t.Fatal("resolve failure did not populate snapshot errs")
 	}
 }
 
@@ -82,10 +166,8 @@ func TestOperationFailureSurvivesSnapshotUntilSameOperationRecovers(t *testing.T
 
 	updated, _ = m.Update(syncDoneMsg{err: syncFailure})
 	m = updated.(Model)
-	if len(m.errs) != 1 || !errors.Is(m.errs[0], syncFailure) {
-		t.Fatalf("sync failure not retained: %v", m.errs)
-	}
-
+	// The failed sync ends when the authoritative reload it scheduled is
+	// accepted; only then is its own error recorded as the verdict.
 	generation := m.requests.active(requestSnapshot)
 	updated, _ = m.Update(snapshotLoadedMsg{
 		generation:      generation,
@@ -94,13 +176,20 @@ func TestOperationFailureSurvivesSnapshotUntilSameOperationRecovers(t *testing.T
 	})
 	m = updated.(Model)
 	if len(m.errs) != 1 || !errors.Is(m.errs[0], syncFailure) {
-		t.Fatalf("snapshot erased operation failure: %v", m.errs)
+		t.Fatalf("sync failure not retained: %v", m.errs)
 	}
 	if len(m.warnings) != 0 {
 		t.Fatalf("replacement snapshot retained stale warning: %v", m.warnings)
 	}
 
 	updated, _ = m.Update(syncDoneMsg{})
+	m = updated.(Model)
+	generation = m.requests.active(requestSnapshot)
+	updated, _ = m.Update(snapshotLoadedMsg{
+		generation:      generation,
+		driftAssessment: driftReady,
+		mergedCfg:       &config.Config{},
+	})
 	m = updated.(Model)
 	if len(m.errs) != 0 {
 		t.Fatalf("successful sync did not recover its failure: %v", m.errs)
@@ -140,7 +229,7 @@ func TestBrokenSnapshotRowsCanOpenMutationModal(t *testing.T) {
 	m := modelWithSelectedRow(t, r)
 	m.pane = paneList
 
-	updated, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeySpace})
+	updated, cmd := m.handleKey(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = updated.(Model)
 	if m.pane != paneToggleModal {
 		t.Fatalf("rows under hard snapshot errors did not open the toggle modal: pane %v", m.pane)
@@ -170,7 +259,7 @@ func TestReadSnapshotRetainsPartialRowsAfterCatalogFailure(t *testing.T) {
 	restoreOrg := swapLoadOrgConfig(func() (*config.Config, error) { return nil, nil })
 	t.Cleanup(restoreOrg)
 	globalCfg := &config.Config{
-		APIVersion: config.APIVersionV2,
+		APIVersion: config.APIVersionV4,
 		Harnesses:  []string{"factory"},
 		Registries: []config.RegistryEntry{
 			{URL: healthyRoot, Skills: config.KindSelector{Include: []string{"healthy"}}},
@@ -258,7 +347,7 @@ func TestReadSnapshotRetainsPartialRowsAfterCatalogFailure(t *testing.T) {
 	if missing.DetailSource != nil {
 		t.Fatal("missing row captured a detail source")
 	}
-	detail := renderDetailFullContent(*missing, 80)
+	detail := renderDetailFullContent(newTheme(true), *missing, 80)
 	if !strings.Contains(detail, "No verified content is available") {
 		t.Fatalf("missing row detail = %q", detail)
 	}
@@ -382,7 +471,7 @@ func TestAppendUnavailableSelectionRows(t *testing.T) {
 	}
 }
 
-func TestReadSnapshotUnavailableSelectionNeverReportsInSync(t *testing.T) {
+func TestReadSnapshotOptionalUnavailableSelectionKeepsAssessment(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
 	registryRoot := t.TempDir()
@@ -390,7 +479,7 @@ func TestReadSnapshotUnavailableSelectionNeverReportsInSync(t *testing.T) {
 	restoreOrg := swapLoadOrgConfig(func() (*config.Config, error) { return nil, nil })
 	t.Cleanup(restoreOrg)
 	globalCfg := &config.Config{
-		APIVersion: config.APIVersionV2,
+		APIVersion: config.APIVersionV4,
 		Harnesses:  []string{"factory"},
 		Registries: []config.RegistryEntry{
 			{URL: registryRoot, Skills: config.KindSelector{Include: []string{"missing"}}},
@@ -417,8 +506,8 @@ func TestReadSnapshotUnavailableSelectionNeverReportsInSync(t *testing.T) {
 	t.Cleanup(func() { discoverCatalog = previousDiscover })
 
 	snapshot := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
-	if snapshot.driftAssessment != driftFailed {
-		t.Fatalf("unavailable selection drift assessment = %v, want failed", snapshot.driftAssessment)
+	if snapshot.driftAssessment != driftReady {
+		t.Fatalf("optional unavailable selection drift assessment = %v, want ready", snapshot.driftAssessment)
 	}
 	var missing *row
 	unavailable := 0
@@ -442,11 +531,8 @@ func TestReadSnapshotUnavailableSelectionNeverReportsInSync(t *testing.T) {
 	updated, _ := m.Update(snapshot)
 	m = updated.(Model)
 	footer := ansi.Strip(renderFooter(m))
-	if strings.Contains(footer, "in sync") {
-		t.Fatalf("unavailable selection rendered in sync: %q", footer)
-	}
-	if !m.failuresOrDrift() {
-		t.Fatal("unavailable selection did not count as drift/failure")
+	if strings.Contains(footer, "drift unavailable") {
+		t.Fatalf("optional unavailable selection blocked the drift footer: %q", footer)
 	}
 	for i := range m.flatItems {
 		if m.flatItems[i].Kind == flatArtifact && m.flatItems[i].Row.UnavailableReason != "" {
@@ -454,13 +540,15 @@ func TestReadSnapshotUnavailableSelectionNeverReportsInSync(t *testing.T) {
 			break
 		}
 	}
-	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeySpace})
+	updated, _ = m.handleKey(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = updated.(Model)
 	if m.pane != paneToggleModal {
 		t.Fatalf("unavailable row did not open the scope modal: pane %v", m.pane)
 	}
 
-	synthetic := modelWithSelectedRow(t, *missing)
+	hard := *missing
+	hard.UnavailableSoft = false
+	synthetic := modelWithSelectedRow(t, hard)
 	synthetic.driftAssessment = driftReady
 	syntheticFooter := ansi.Strip(renderFooter(synthetic))
 	if strings.Contains(syntheticFooter, "in sync") {
@@ -562,21 +650,19 @@ func TestInvalidConfigSnapshotKeepsEditorOnlyRecovery(t *testing.T) {
 		t.Fatal("no section header available under invalid config")
 	}
 	wasFolded := m.currentFoldState()[sectionPath]
-	updated, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeySpace})
+	updated, cmd := m.handleKey(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = updated.(Model)
 	if m.pane != paneList {
 		t.Fatalf("Space on a section header moved the pane under invalid config: pane %v", m.pane)
 	}
-	if cmd != nil {
-		t.Fatal("Space on a section header returned a command under invalid config")
+	if cmd == nil {
+		t.Fatal("Space on a section header returned no editor guidance under invalid config")
 	}
-	if m.currentFoldState()[sectionPath] == wasFolded {
-		t.Fatal("Space on a section header did not toggle the fold under invalid config")
+	if msg, ok := cmd().(toastMsg); !ok || !strings.Contains(msg.text, "edit config") {
+		t.Fatalf("Space on a section header guidance = %#v, want an edit-config toast", cmd())
 	}
-	updated, cmd = m.handleKey(tea.KeyMsg{Type: tea.KeySpace})
-	m = updated.(Model)
-	if cmd != nil {
-		t.Fatal("unfolding the section header returned a command under invalid config")
+	if m.currentFoldState()[sectionPath] != wasFolded {
+		t.Fatal("Space on a section header changed the fold under invalid config")
 	}
 	for i := range m.flatItems {
 		if m.flatItems[i].Kind == flatArtifact {
@@ -588,7 +674,7 @@ func TestInvalidConfigSnapshotKeepsEditorOnlyRecovery(t *testing.T) {
 		t.Fatal("artifact selection was not restored under invalid config")
 	}
 
-	updated, cmd = m.handleKey(tea.KeyMsg{Type: tea.KeySpace})
+	updated, cmd = m.handleKey(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = updated.(Model)
 	if m.pane != paneList {
 		t.Fatalf("Space opened a structured mutation modal under invalid config: pane %v", m.pane)
@@ -600,7 +686,7 @@ func TestInvalidConfigSnapshotKeepsEditorOnlyRecovery(t *testing.T) {
 		t.Fatalf("Space guidance = %#v, want an edit-config toast", cmd())
 	}
 
-	updated, cmd = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'H'}})
+	updated, cmd = m.handleKey(tea.KeyPressMsg{Code: 'H', Text: string('H')})
 	m = updated.(Model)
 	if m.pane != paneList {
 		t.Fatalf("Harness opened a structured mutation modal under invalid config: pane %v", m.pane)
@@ -612,7 +698,7 @@ func TestInvalidConfigSnapshotKeepsEditorOnlyRecovery(t *testing.T) {
 		t.Fatalf("Harness guidance = %#v, want an edit-config toast", cmd())
 	}
 
-	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'E'}})
+	updated, _ = m.handleKey(tea.KeyPressMsg{Code: 'E', Text: string('E')})
 	m = updated.(Model)
 	if m.pane != paneEditConfigModal {
 		t.Fatalf("invalid config did not keep the editor reachable: pane %v", m.pane)
@@ -638,7 +724,7 @@ func TestInvalidConfigSnapshotKeepsEditorOnlyRecovery(t *testing.T) {
 			break
 		}
 	}
-	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeySpace})
+	updated, _ = m.handleKey(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = updated.(Model)
 	if m.pane != paneToggleModal {
 		t.Fatalf("catalog-error snapshot blocked the scope modal: pane %v", m.pane)

@@ -5,14 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -277,17 +281,17 @@ func TestRemoveExistingRelativeUserRegistry(t *testing.T) {
 	repoRoot, home := t.TempDir(), t.TempDir()
 	t.Chdir(repoRoot)
 	t.Setenv("HOME", home)
-	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
-	registryRoot := filepath.Join(repoRoot, "project-registry")
+	config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	registryRoot := filepath.Join(home, ".agents", "project-registry")
 	writeSkill(t, registryRoot, "review", "review skill", nil)
 	userPath, err := config.GlobalConfigPath()
 	if err != nil {
 		t.Fatal(err)
 	}
-	initial := "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: ./project-registry\n    skills: {include: [review]}\n"
+	initial := "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  project: {directory: ./project-registry, source_harness: factory}\nresources:\n  project: [skill/review]\n"
 	writeFile(t, userPath, initial)
 	result, err := Remove(context.Background(), RemoveOptions{
-		RepoRoot: repoRoot, Scope: ScopeUser, ScopeSpecified: true, FromURL: "./project-registry",
+		RepoRoot: repoRoot, Scope: ScopeUser, ScopeSpecified: true, FromURL: registryRoot,
 	})
 	if err != nil {
 		t.Fatalf("remove existing relative user registry: %v", err)
@@ -307,16 +311,16 @@ func TestRemoveNamedExistingRelativeUserRegistry(t *testing.T) {
 		from                      bool
 		collection                bool
 	}{
-		{name: "named from", selection: "skills: {include: [review]}", resource: "review", from: true},
-		{name: "named unscoped", selection: "skills: {include: [review]}", resource: "review"},
-		{name: "collection from", selection: "collections: [bundle]", resource: "bundle", from: true, collection: true},
+		{name: "named from", selection: "[skill/review]", resource: "review", from: true},
+		{name: "named unscoped", selection: "[skill/review]", resource: "review"},
+		{name: "collection from", selection: "[collection/bundle]", resource: "bundle", from: true, collection: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repoRoot, home := t.TempDir(), t.TempDir()
 			t.Chdir(repoRoot)
 			t.Setenv("HOME", home)
-			config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
-			registryRoot := filepath.Join(repoRoot, "project-registry")
+			config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+			registryRoot := filepath.Join(home, ".agents", "project-registry")
 			writeSkill(t, registryRoot, "review", "review skill", nil)
 			if tc.collection {
 				writeFile(t, filepath.Join(registryRoot, "collections", "bundle", "COLLECTION.yaml"), "name: bundle\nskills:\n  - name: review\n")
@@ -325,11 +329,11 @@ func TestRemoveNamedExistingRelativeUserRegistry(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			initial := "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: ./project-registry\n    " + tc.selection + "\n"
+			initial := "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  project: {directory: ./project-registry, source_harness: factory}\nresources:\n  project: " + tc.selection + "\n"
 			writeFile(t, userPath, initial)
 			opts := RemoveOptions{RepoRoot: repoRoot, ResourceName: tc.resource, Scope: ScopeUser, ScopeSpecified: true}
 			if tc.from {
-				opts.FromURL = "./project-registry"
+				opts.FromURL = registryRoot
 			}
 			result, err := Remove(context.Background(), opts)
 			if err != nil {
@@ -338,18 +342,23 @@ func TestRemoveNamedExistingRelativeUserRegistry(t *testing.T) {
 			if result == nil || result.RemovedName != tc.resource || result.IsCollection != tc.collection {
 				t.Fatalf("remove result = %#v", result)
 			}
+			canonicalRoot, err := filepath.EvalSymlinks(registryRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
 			cfg, err := config.LoadRootConfigFromPath(userPath)
-			if err != nil || len(cfg.Registries) != 1 || cfg.Registries[0].URL != "./project-registry" {
+			if err != nil || len(cfg.Registries) != 1 || cfg.Registries[0].URL != canonicalRoot || cfg.Registries[0].AuthoredDirectory != "./project-registry" {
 				t.Fatalf("existing entry was lost: %#v err=%v", cfg, err)
 			}
 			entry := cfg.Registries[0]
 			if tc.collection {
-				if !slices.Contains(entry.Collections.Exclude, tc.resource) || slices.Contains(entry.Collections.Include, tc.resource) {
-					t.Fatalf("collection cleanup missing: %#v", entry.Collections)
+				if slices.Contains(entry.Collections.Include, tc.resource) || !slices.Contains(entry.Collections.Exclude, tc.resource) {
+					t.Fatalf("ad-hoc collection cleanup missing: %#v", entry.Collections)
 				}
-			} else if slices.Contains(entry.Skills.Include, tc.resource) && !slices.Contains(entry.Skills.Exclude, tc.resource) {
-				t.Fatalf("skill cleanup missing: %#v", entry.Skills)
+			} else if slices.Contains(entry.Skills.Include, tc.resource) || slices.Contains(entry.Skills.Exclude, tc.resource) {
+				t.Fatalf("direct skill include was masked rather than removed: %#v", entry.Skills)
 			}
+			assertResourceNotResolved(t, repoRoot, "review")
 		})
 	}
 }
@@ -358,20 +367,20 @@ func TestRemoveFromRelativeRepoRegistryRejectsNewUserShadow(t *testing.T) {
 	repoRoot, home := t.TempDir(), t.TempDir()
 	t.Chdir(repoRoot)
 	t.Setenv("HOME", home)
-	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
 	registryRoot := filepath.Join(repoRoot, "project-registry")
 	writeSkill(t, registryRoot, "review", "review skill", nil)
 	repoPath := config.ProjectConfigPath(repoRoot)
-	repoInitial := "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: ./project-registry\n    skills: {include: [review]}\n"
+	repoInitial := "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  project: {directory: ./project-registry, source_harness: factory}\nresources:\n  project: [skill/review]\n"
 	writeFile(t, repoPath, repoInitial)
 	userPath, err := config.GlobalConfigPath()
 	if err != nil {
 		t.Fatal(err)
 	}
-	userInitial := "apiVersion: agent-marketplace/v2\nregistries: []\n"
+	userInitial := "apiVersion: agent-marketplace/v4\n"
 	writeFile(t, userPath, userInitial)
 	_, err = Remove(context.Background(), RemoveOptions{
-		RepoRoot: repoRoot, ResourceName: "review", FromURL: "./project-registry", Scope: ScopeUser, ScopeSpecified: true,
+		RepoRoot: repoRoot, ResourceName: "review", FromURL: registryRoot, Scope: ScopeUser, ScopeSpecified: true,
 	})
 	var boundary *config.GlobalRelativeRegistryError
 	if !errors.As(err, &boundary) {
@@ -390,15 +399,15 @@ func TestRemoveFromRelativeRepoRegistryRejectsNewUserShadow(t *testing.T) {
 func TestRemoveFromAdHocShadowsIncludedRegistry(t *testing.T) {
 	repoRoot := t.TempDir()
 	t.Chdir(repoRoot)
-	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
 	registryRoot := t.TempDir()
 	writeSkill(t, registryRoot, "included-skill", "included skill", nil)
 
 	includedPath := filepath.Join(repoRoot, ".agents", "team.yaml")
-	includedData := fmt.Sprintf("registries:\n  - path: %q\n    source_harness: factory\n    skills: [included-skill]\n", registryRoot)
+	includedData := fmt.Sprintf("sources:\n  team: {directory: %q, source_harness: factory}\nresources:\n  team: [skill/included-skill]\n", registryRoot)
 	writeFile(t, includedPath, includedData)
 	rootPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-	writeFile(t, rootPath, "apiVersion: agent-marketplace/v2\nharnesses: [factory]\ninclude: team.yaml\n")
+	writeFile(t, rootPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\ninclude: team.yaml\n")
 
 	result, err := Remove(context.Background(), RemoveOptions{
 		RepoRoot:       repoRoot,
@@ -440,14 +449,14 @@ func TestRemoveFromAdHocShadowsIncludedRegistry(t *testing.T) {
 func TestRemoveNamedResourceFromIncludedAdHocRegistry(t *testing.T) {
 	repoRoot := t.TempDir()
 	t.Chdir(repoRoot)
-	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
 	registryRoot := t.TempDir()
 	writeSkill(t, registryRoot, "included-named-skill", "included named skill", nil)
 	includedPath := filepath.Join(repoRoot, ".agents", "team.yaml")
-	includedData := fmt.Sprintf("registries:\n  - path: %q\n    source_harness: factory\n    skills: [included-named-skill]\n", registryRoot)
+	includedData := fmt.Sprintf("sources:\n  team: {directory: %q, source_harness: factory}\nresources:\n  team: [skill/included-named-skill]\n", registryRoot)
 	writeFile(t, includedPath, includedData)
 	rootPath := config.ProjectConfigPath(repoRoot)
-	writeFile(t, rootPath, "apiVersion: agent-marketplace/v2\nharnesses: [factory]\ninclude: team.yaml\n")
+	writeFile(t, rootPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\ninclude: team.yaml\n")
 
 	result, err := Remove(context.Background(), RemoveOptions{
 		RepoRoot:       repoRoot,
@@ -483,14 +492,14 @@ func TestRemoveDuplicateRootAndIncludedSkillRetainsExclusion(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			repoRoot := t.TempDir()
 			t.Chdir(repoRoot)
-			config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+			config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
 			registryRoot := t.TempDir()
 			writeSkill(t, registryRoot, "duplicate-explicit-skill", "duplicate explicit skill", nil)
 			includedPath := filepath.Join(repoRoot, ".agents", "team.yaml")
-			includedData := fmt.Sprintf("registries:\n  - path: %q\n    source_harness: factory\n    skills: [duplicate-explicit-skill]\n", registryRoot)
+			includedData := fmt.Sprintf("sources:\n  team: {directory: %q, source_harness: factory}\nresources:\n  team: [skill/duplicate-explicit-skill]\n", registryRoot)
 			writeFile(t, includedPath, includedData)
 			rootPath := config.ProjectConfigPath(repoRoot)
-			writeFile(t, rootPath, fmt.Sprintf("apiVersion: agent-marketplace/v2\nharnesses: [factory]\ninclude: team.yaml\nregistries:\n  - path: %q\n    source_harness: factory\n    skills: [duplicate-explicit-skill]\n", registryRoot))
+			writeFile(t, rootPath, fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [factory]\ninclude: team.yaml\nsources:\n  team: {directory: %q, source_harness: factory}\nresources:\n  team: [skill/duplicate-explicit-skill]\n", registryRoot))
 
 			opts := RemoveOptions{RepoRoot: repoRoot, ResourceName: "duplicate-explicit-skill", Scope: ScopeRepo, ScopeSpecified: true}
 			if tc.adHoc {
@@ -529,14 +538,14 @@ func TestRemoveDuplicateRootAndIncludedSkillRetainsExclusion(t *testing.T) {
 func TestRemoveFromAdHocReplacesRootDuplicateWithShadow(t *testing.T) {
 	repoRoot := t.TempDir()
 	t.Chdir(repoRoot)
-	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
 	registryRoot := t.TempDir()
 	writeSkill(t, registryRoot, "duplicate-skill", "duplicate skill", nil)
 	includedPath := filepath.Join(repoRoot, ".agents", "team.yaml")
-	includedData := fmt.Sprintf("registries:\n  - path: %q\n    source_harness: factory\n    skills: [duplicate-skill]\n", registryRoot)
+	includedData := fmt.Sprintf("sources:\n  team: {directory: %q, source_harness: factory}\nresources:\n  team: [skill/duplicate-skill]\n", registryRoot)
 	writeFile(t, includedPath, includedData)
 	rootPath := config.ProjectConfigPath(repoRoot)
-	writeFile(t, rootPath, fmt.Sprintf("apiVersion: agent-marketplace/v2\nharnesses: [factory]\ninclude: team.yaml\nregistries:\n  - path: %q\n    source_harness: factory\n    skills: [duplicate-skill]\n", registryRoot))
+	writeFile(t, rootPath, fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [factory]\ninclude: team.yaml\nsources:\n  team: {directory: %q, source_harness: factory}\nresources:\n  team: [skill/duplicate-skill]\n", registryRoot))
 
 	result, err := Remove(context.Background(), RemoveOptions{RepoRoot: repoRoot, Scope: ScopeRepo, ScopeSpecified: true, FromURL: registryRoot})
 	if err != nil {
@@ -565,16 +574,16 @@ func TestRemoveFromAdHocReplacesRootDuplicateWithShadow(t *testing.T) {
 func TestRemoveLocalResourceShadowsIncludedRegistry(t *testing.T) {
 	repoRoot := t.TempDir()
 	t.Chdir(repoRoot)
-	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
 	registryRoot := t.TempDir()
 	writeSkill(t, registryRoot, "included-local-skill", "included local skill", nil)
-	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n")
+	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 
 	includedPath := filepath.Join(repoRoot, ".agents", "local-team.yaml")
-	includedData := fmt.Sprintf("registries:\n  - path: %q\n    source_harness: factory\n    skills: [included-local-skill]\n", registryRoot)
+	includedData := fmt.Sprintf("sources:\n  team: {directory: %q, source_harness: factory}\nresources:\n  team: [skill/included-local-skill]\n", registryRoot)
 	writeFile(t, includedPath, includedData)
 	rootPath := config.LocalConfigPath(repoRoot)
-	writeFile(t, rootPath, "include: local-team.yaml\n")
+	writeFile(t, rootPath, "apiVersion: agent-marketplace/v4\ninclude: local-team.yaml\n")
 
 	result, err := Remove(context.Background(), RemoveOptions{
 		RepoRoot:       repoRoot,
@@ -602,7 +611,7 @@ func TestRemoveLocalResourceShadowsIncludedRegistry(t *testing.T) {
 	if len(rootCfg.Registries) != 1 || !slices.Contains(rootCfg.Registries[0].Skills.Exclude, "included-local-skill") {
 		t.Fatalf("local root registries = %#v, want resource exclusion", rootCfg.Registries)
 	}
-	resolved := Resolve(context.Background(), ResolveOptions{RepoRoot: repoRoot, SkipInventory: true})
+	resolved := Resolve(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, repoRoot), SkipInventory: true})
 	if len(resolved.Errors) != 0 {
 		t.Fatalf("resolve errors = %v", resolved.Errors)
 	}
@@ -623,16 +632,16 @@ func TestRemoveLocalResourceShadowsIncludedRegistry(t *testing.T) {
 func TestRemoveCollectionMemberShadowsIncludedRegistry(t *testing.T) {
 	repoRoot := t.TempDir()
 	t.Chdir(repoRoot)
-	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
 	registryRoot := t.TempDir()
 	writeSkill(t, registryRoot, "included-member", "included member", nil)
 	writeFile(t, filepath.Join(registryRoot, "collections", "included-bundle", "COLLECTION.yaml"), "name: included-bundle\nskills:\n  - name: included-member\n")
 
 	includedPath := filepath.Join(repoRoot, ".agents", "registries.yaml")
-	includedData := fmt.Sprintf("registries:\n  - url: %q\n    source_harness: factory\n    collections: [included-bundle]\n", registryRoot)
+	includedData := fmt.Sprintf("sources:\n  team: {directory: %q, source_harness: factory}\nresources:\n  team: [collection/included-bundle]\n", registryRoot)
 	writeFile(t, includedPath, includedData)
 	rootPath := config.ProjectConfigPath(repoRoot)
-	writeFile(t, rootPath, "apiVersion: agent-marketplace/v2\nharnesses: [factory]\ninclude: registries.yaml\n")
+	writeFile(t, rootPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\ninclude: registries.yaml\n")
 
 	result, err := Remove(context.Background(), RemoveOptions{
 		RepoRoot: repoRoot, ResourceName: "included-member", Scope: ScopeRepo, ScopeSpecified: true,
@@ -663,12 +672,16 @@ func TestRemoveCollectionMemberShadowsIncludedRegistry(t *testing.T) {
 func TestRemoveCollectionDuplicateInRootAndIncludeRetainsExclusion(t *testing.T) {
 	repoRoot := t.TempDir()
 	t.Chdir(repoRoot)
-	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	registryRoot := t.TempDir()
+	writeSkill(t, registryRoot, "duplicate-member", "duplicate member", nil)
+	writeFile(t, filepath.Join(registryRoot, "collections", "duplicate-bundle", "COLLECTION.yaml"), "name: duplicate-bundle\nskills:\n  - name: duplicate-member\n")
 	includedPath := filepath.Join(repoRoot, ".agents", "collections.yaml")
-	includedData := "collections:\n  include: [duplicate-bundle]\n"
+	includedData := fmt.Sprintf("sources:\n  team: {directory: %q, source_harness: factory}\nresources:\n  team: [collection/duplicate-bundle]\n", registryRoot)
 	writeFile(t, includedPath, includedData)
 	rootPath := config.ProjectConfigPath(repoRoot)
-	writeFile(t, rootPath, "apiVersion: agent-marketplace/v2\nharnesses: [factory]\ninclude: collections.yaml\ncollections:\n  include: [duplicate-bundle]\n")
+	writeFile(t, rootPath, fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [factory]\ninclude: collections.yaml\nsources:\n  team: {directory: %q, source_harness: factory}\nresources:\n  team: [collection/duplicate-bundle]\n", registryRoot))
+	assertRemovalResourceResolved(t, repoRoot, "duplicate-member", config.RepoCommitted)
 	result, err := Remove(context.Background(), RemoveOptions{RepoRoot: repoRoot, ResourceName: "duplicate-bundle", Scope: ScopeRepo, ScopeSpecified: true})
 	if err != nil {
 		t.Fatal(err)
@@ -684,8 +697,8 @@ func TestRemoveCollectionDuplicateInRootAndIncludeRetainsExclusion(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if slices.Contains(rootCfg.Collections.Include, "duplicate-bundle") || !slices.Contains(rootCfg.Collections.Exclude, "duplicate-bundle") {
-		t.Fatalf("root collections = %#v, want exclusion without selection", rootCfg.Collections)
+	if len(rootCfg.Registries) != 1 || slices.Contains(rootCfg.Registries[0].Collections.Include, "duplicate-bundle") || !slices.Contains(rootCfg.Registries[0].Collections.Exclude, "duplicate-bundle") {
+		t.Fatalf("root sources = %#v, want exclusion without selection", rootCfg.Registries)
 	}
 	rootData, err := os.ReadFile(rootPath)
 	if err != nil {
@@ -694,26 +707,39 @@ func TestRemoveCollectionDuplicateInRootAndIncludeRetainsExclusion(t *testing.T)
 	if !strings.Contains(string(rootData), "include: collections.yaml") {
 		t.Fatalf("root include directive lost:\n%s", rootData)
 	}
-	ec := config.LoadEffective(context.Background(), config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: repoRoot})
+	ec := LoadEffective(context.Background(), ConfigLoadStrict, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: repoRoot}, nil)
 	if len(ec.Errors) != 0 {
 		t.Fatalf("effective config errors = %v", ec.Errors)
 	}
-	if hasTopLevelCollectionSelection(ec.Merged, "duplicate-bundle") {
-		t.Fatalf("collection remained installed: %#v", ec.Merged.Collections)
+	for _, entry := range ec.Merged.Registries {
+		if collectionSelectedInEntry(entry, "duplicate-bundle") {
+			t.Fatalf("collection remained selected: %#v", entry.Collections)
+		}
 	}
+	assertResourceNotResolved(t, repoRoot, "duplicate-member")
 }
 
 func TestRemoveCollectionUsesRequestedScopeAndPreservesOtherRoot(t *testing.T) {
 	repoRoot := t.TempDir()
 	t.Chdir(repoRoot)
 	t.Setenv("HOME", t.TempDir())
-	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
-	writeFile(t, config.ProjectConfigPath(repoRoot), "apiVersion: agent-marketplace/v2\nharnesses: [factory]\ncollections:\n  include: [repo-bundle]\n")
+	config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	registryRoot := t.TempDir()
+	for _, name := range []string{"repo", "user"} {
+		providerRoot := filepath.Join(registryRoot, name)
+		writeSkill(t, providerRoot, name+"-member", name+" member", nil)
+		writeFile(t, filepath.Join(providerRoot, "collections", name+"-bundle", "COLLECTION.yaml"), "name: "+name+"-bundle\nskills:\n  - name: "+name+"-member\n")
+	}
+	repoPath := config.ProjectConfigPath(repoRoot)
+	repoData := fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  team: {directory: %q, source_harness: factory}\nresources:\n  team: [collection/repo-bundle]\n", filepath.Join(registryRoot, "repo"))
+	writeFile(t, repoPath, repoData)
 	userPath, err := config.GlobalConfigPath()
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, userPath, "apiVersion: agent-marketplace/v2\ncollections:\n  include: [user-bundle]\n")
+	writeFile(t, userPath, fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  team: {directory: %q, source_harness: factory}\nresources:\n  team: [collection/user-bundle]\n", filepath.Join(registryRoot, "user")))
+	assertRemovalResourceResolved(t, repoRoot, "user-member", config.UserPersonal)
+	assertRemovalResourceResolved(t, repoRoot, "repo-member", config.RepoCommitted)
 
 	if _, err := Remove(context.Background(), RemoveOptions{
 		RepoRoot: repoRoot, ResourceName: "user-bundle", Scope: ScopeUser, ScopeSpecified: true,
@@ -724,25 +750,34 @@ func TestRemoveCollectionUsesRequestedScopeAndPreservesOtherRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if slices.Contains(userCfg.Collections.Include, "user-bundle") {
-		t.Fatalf("user selection remained: %#v", userCfg.Collections)
+	if len(userCfg.Registries) != 1 || slices.Contains(userCfg.Registries[0].Collections.Include, "user-bundle") || !slices.Equal(userCfg.Registries[0].Collections.Exclude, []string{"user-bundle"}) {
+		t.Fatalf("user direct selection was not replaced by a source-scoped exclusion: %#v", userCfg.Registries)
 	}
 	repoCfg, err := config.LoadRootConfigFromPath(config.ProjectConfigPath(repoRoot))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(repoCfg.Collections.Include, "repo-bundle") {
-		t.Fatalf("repo selection was changed by user-scope removal: %#v", repoCfg.Collections)
+	if len(repoCfg.Registries) != 1 || !slices.Contains(repoCfg.Registries[0].Collections.Include, "repo-bundle") {
+		t.Fatalf("repo selection was changed by user-scope removal: %#v", repoCfg.Registries)
 	}
+	if after, err := os.ReadFile(repoPath); err != nil || string(after) != repoData {
+		t.Fatalf("user removal changed repo root: %v\n%s", err, after)
+	}
+	assertResourceNotResolved(t, repoRoot, "user-member")
+	assertRemovalResourceResolved(t, repoRoot, "repo-member", config.RepoCommitted)
 }
 
 func TestRemoveCollectionClearsShorthandSelection(t *testing.T) {
 	repoRoot := t.TempDir()
 	t.Chdir(repoRoot)
 	t.Setenv("HOME", t.TempDir())
-	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
 	rootPath := config.ProjectConfigPath(repoRoot)
-	writeFile(t, rootPath, "apiVersion: agent-marketplace/v2\nharnesses: [factory]\ncollections: [shorthand-bundle]\n")
+	registryRoot := t.TempDir()
+	writeSkill(t, registryRoot, "shorthand-member", "shorthand member", nil)
+	writeFile(t, filepath.Join(registryRoot, "collections", "shorthand-bundle", "COLLECTION.yaml"), "name: shorthand-bundle\nskills:\n  - name: shorthand-member\n")
+	writeFile(t, rootPath, fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  team: {directory: %q, source_harness: factory}\nresources:\n  team: [collection/shorthand-bundle]\n", registryRoot))
+	assertRemovalResourceResolved(t, repoRoot, "shorthand-member", config.RepoCommitted)
 
 	if _, err := Remove(context.Background(), RemoveOptions{
 		RepoRoot: repoRoot, ResourceName: "shorthand-bundle", Scope: ScopeRepo, ScopeSpecified: true,
@@ -753,15 +788,27 @@ func TestRemoveCollectionClearsShorthandSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rootCfg.Collections.Include) != 0 || len(rootCfg.Collections.Exclude) != 0 {
-		t.Fatalf("root collections = %#v, want shorthand removed without exclusion", rootCfg.Collections)
+	if len(rootCfg.Registries) != 1 || len(rootCfg.Registries[0].Collections.Include) != 0 || !slices.Equal(rootCfg.Registries[0].Collections.Exclude, []string{"shorthand-bundle"}) {
+		t.Fatalf("root sources = %#v, want shorthand include replaced by a source-scoped exclusion", rootCfg.Registries)
 	}
+	assertResourceNotResolved(t, repoRoot, "shorthand-member")
 	rootData, err := os.ReadFile(rootPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(rootData), "shorthand-bundle") || strings.Contains(string(rootData), "collections") {
-		t.Fatalf("shorthand selection masked rather than removed:\n%s", rootData)
+	if strings.Contains(string(rootData), "collections") || strings.Contains(string(rootData), "registries:") {
+		t.Fatalf("v4 root gained legacy selector keys:\n%s", rootData)
+	}
+	v4Root, err := config.LoadV4ConfigFromPath(rootPath)
+	if err != nil {
+		t.Fatalf("load v4 root: %v", err)
+	}
+	group, ok := v4Root.Groups["team"]
+	if !ok || len(v4Root.Groups) != 1 {
+		t.Fatalf("v4 groups = %#v, want only the team group", v4Root.Groups)
+	}
+	if len(group.Include) != 0 || !slices.Equal(group.Exclude, []string{"collection/shorthand-bundle"}) {
+		t.Fatalf("team group include=%#v exclude=%#v, want no include and exclude [collection/shorthand-bundle]\n%s", group.Include, group.Exclude, rootData)
 	}
 }
 
@@ -770,9 +817,13 @@ func TestRemoveTopLevelMachineCollectionRejectsRepoScope(t *testing.T) {
 	t.Chdir(repoRoot)
 	t.Setenv("HOME", t.TempDir())
 	orgPath := filepath.Join(t.TempDir(), "org.yaml")
-	config.SetTestV3OrganizationConfigPath(t, orgPath)
-	writeFile(t, orgPath, "apiVersion: agent-marketplace/v2\ncollections:\n  include: [machine-bundle]\n")
-	writeFile(t, config.ProjectConfigPath(repoRoot), "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n")
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	registryRoot := t.TempDir()
+	writeSkill(t, registryRoot, "machine-member", "machine member", nil)
+	writeFile(t, filepath.Join(registryRoot, "collections", "machine-bundle", "COLLECTION.yaml"), "name: machine-bundle\nskills:\n  - name: machine-member\n")
+	orgData := fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  machine: {directory: %q, source_harness: factory}\nresources:\n  machine: [collection/machine-bundle]\n", registryRoot)
+	writeFile(t, orgPath, orgData)
+	writeFile(t, config.ProjectConfigPath(repoRoot), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 
 	_, err := Remove(context.Background(), RemoveOptions{
 		RepoRoot: repoRoot, ResourceName: "machine-bundle", Scope: ScopeRepo, ScopeSpecified: true,
@@ -787,9 +838,13 @@ func TestRemoveTopLevelMachineCollectionRejectsLocalScope(t *testing.T) {
 	t.Chdir(repoRoot)
 	t.Setenv("HOME", t.TempDir())
 	orgPath := filepath.Join(t.TempDir(), "org.yaml")
-	config.SetTestV3OrganizationConfigPath(t, orgPath)
-	writeFile(t, orgPath, "apiVersion: agent-marketplace/v2\ncollections:\n  include: [machine-bundle]\n")
-	writeFile(t, config.ProjectConfigPath(repoRoot), "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n")
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	registryRoot := t.TempDir()
+	writeSkill(t, registryRoot, "machine-member", "machine member", nil)
+	writeFile(t, filepath.Join(registryRoot, "collections", "machine-bundle", "COLLECTION.yaml"), "name: machine-bundle\nskills:\n  - name: machine-member\n")
+	orgData := fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  machine: {directory: %q, source_harness: factory}\nresources:\n  machine: [collection/machine-bundle]\n", registryRoot)
+	writeFile(t, orgPath, orgData)
+	writeFile(t, config.ProjectConfigPath(repoRoot), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 
 	_, err := Remove(context.Background(), RemoveOptions{
 		RepoRoot: repoRoot, ResourceName: "machine-bundle", Scope: ScopeLocal, ScopeSpecified: true,
@@ -804,12 +859,13 @@ func TestRemoveTopLevelOrganizationCollectionInfersUserScope(t *testing.T) {
 	t.Chdir(repoRoot)
 	t.Setenv("HOME", t.TempDir())
 	orgPath := filepath.Join(t.TempDir(), "org.yaml")
-	config.SetTestV3OrganizationConfigPath(t, orgPath)
+	config.SetTestOrganizationConfigPath(t, orgPath)
 	registryRoot := t.TempDir()
 	writeSkill(t, registryRoot, "machine-skill", "machine skill", nil)
-	orgData := "apiVersion: agent-marketplace/v2\nregistries:\n  - path: \"" + registryRoot + "\"\n    source_harness: factory\n    collections: [machine-bundle]\ncollections:\n  include: [machine-bundle]\n"
+	writeFile(t, filepath.Join(registryRoot, "collections", "machine-bundle", "COLLECTION.yaml"), "name: machine-bundle\nskills:\n  - name: machine-skill\n")
+	orgData := fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  machine: {directory: %q, source_harness: factory}\nresources:\n  machine: [collection/machine-bundle]\n", registryRoot)
 	writeFile(t, orgPath, orgData)
-	writeFile(t, config.ProjectConfigPath(repoRoot), "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n")
+	writeFile(t, config.ProjectConfigPath(repoRoot), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 
 	result, err := Remove(context.Background(), RemoveOptions{RepoRoot: repoRoot, ResourceName: "machine-bundle"})
 	if err != nil {
@@ -926,13 +982,18 @@ func TestRemoveRequiredMachineCollectionRejectsRepoScope(t *testing.T) {
 	repoRoot := t.TempDir()
 	t.Chdir(repoRoot)
 	t.Setenv("HOME", t.TempDir())
-	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
-	writeFile(t, config.ProjectConfigPath(repoRoot), "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n")
+	config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	writeFile(t, config.ProjectConfigPath(repoRoot), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 	userPath, err := config.GlobalConfigPath()
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, userPath, "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: /machine\n    required: true\n    collections: [required-bundle]\n")
+	registryRoot := t.TempDir()
+	writeSkill(t, registryRoot, "required-member", "required member", nil)
+	writeFile(t, filepath.Join(registryRoot, "collections", "required-bundle", "COLLECTION.yaml"), "name: required-bundle\nskills:\n  - name: required-member\n")
+	writeFile(t, userPath, fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  machine: {directory: %q, source_harness: factory}\nresources:\n  machine:\n    required: true\n    include: [collection/required-bundle]\n", registryRoot))
+	assertRemovalResourceResolved(t, repoRoot, "required-member", config.UserPersonal)
+	before, info := layerFreezeFile(t, userPath)
 
 	_, err = Remove(context.Background(), RemoveOptions{
 		RepoRoot: repoRoot, ResourceName: "required-bundle", Scope: ScopeRepo, ScopeSpecified: true,
@@ -940,11 +1001,26 @@ func TestRemoveRequiredMachineCollectionRejectsRepoScope(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "required and cannot be removed") {
 		t.Fatalf("error = %v, want required machine collection rejection", err)
 	}
+	layerAssertFileUnchanged(t, userPath, before, info)
+}
+
+func assertRemovalResourceResolved(t *testing.T, repoRoot, name string, source config.Source) {
+	t.Helper()
+	resolved := Resolve(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, repoRoot), SkipInventory: true})
+	if len(resolved.Errors) != 0 {
+		t.Fatalf("resolve errors = %v", resolved.Errors)
+	}
+	for _, item := range resolved.Resolved {
+		if item.Name == name && item.Source == source {
+			return
+		}
+	}
+	t.Fatalf("resource %q was not resolved from %s before removal: %#v", name, source, resolved.Resolved)
 }
 
 func assertResourceNotResolved(t *testing.T, repoRoot, name string) {
 	t.Helper()
-	resolved := Resolve(context.Background(), ResolveOptions{RepoRoot: repoRoot, SkipInventory: true})
+	resolved := Resolve(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, repoRoot), SkipInventory: true})
 	if len(resolved.Errors) != 0 {
 		t.Fatalf("resolve errors = %v", resolved.Errors)
 	}
@@ -958,11 +1034,11 @@ func assertResourceNotResolved(t *testing.T, repoRoot, name string) {
 func TestRemovePathOnlyLocalResourceUsesOnlyRequestedRegistry(t *testing.T) {
 	repoRoot := t.TempDir()
 	t.Chdir(repoRoot)
-	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
 	localA, localB := t.TempDir(), t.TempDir()
 	writeSkill(t, localA, "selected", "selected local skill", nil)
 	writeSkill(t, localB, "selected", "other local skill", nil)
-	writeFile(t, config.ProjectConfigPath(repoRoot), fmt.Sprintf("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - path: %q\n    skills: [selected]\n  - path: %q\n    skills: [selected]\n", localA, localB))
+	writeFile(t, config.ProjectConfigPath(repoRoot), fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  local-a: {directory: %q, source_harness: factory}\n  local-b: {directory: %q, source_harness: factory}\nresources:\n  local-a: [skill/selected]\n  local-b: [skill/selected]\n", localA, localB))
 
 	result, err := Remove(context.Background(), RemoveOptions{
 		RepoRoot: repoRoot, ResourceName: "selected", FromURL: localA,
@@ -987,7 +1063,7 @@ func TestRemovePathOnlyLocalResourceUsesOnlyRequestedRegistry(t *testing.T) {
 	if !slices.Contains(cfg.Registries[1].Skills.Include, "selected") || slices.Contains(cfg.Registries[1].Skills.Exclude, "selected") {
 		t.Fatalf("other alias = %#v, want untouched", cfg.Registries[1])
 	}
-	resolved := Resolve(context.Background(), ResolveOptions{RepoRoot: repoRoot, SkipInventory: true})
+	resolved := Resolve(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, repoRoot), SkipInventory: true})
 	if len(resolved.Errors) != 0 || len(resolved.Resolved) != 1 || resolved.Resolved[0].RegistryURL != localB {
 		t.Fatalf("resolved = %#v, errors = %v; want only the other local registry", resolved.Resolved, resolved.Errors)
 	}
@@ -996,13 +1072,50 @@ func TestRemovePathOnlyLocalResourceUsesOnlyRequestedRegistry(t *testing.T) {
 func TestRemoveAdHocRefTargetsOnlyNamedRef(t *testing.T) {
 	repoRoot := t.TempDir()
 	t.Chdir(repoRoot)
-	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	isolateConsumerPipeline(t)
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	registryRoot := t.TempDir()
-	writeSkill(t, registryRoot, "shared", "shared skill", nil)
+	writeSkill(t, filepath.Join(registryRoot, "skills"), "shared", "shared skill", nil)
+	for _, args := range [][]string{{"init"}, {"config", "user.email", "test@example.com"}, {"config", "user.name", "Test"}, {"add", "."}, {"commit", "-m", "seed"}, {"branch", "-M", "main"}, {"branch", "release"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = registryRoot
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	registryURL := "file://" + filepath.ToSlash(registryRoot)
+	oid, err := cache.ResolveExactGitRefWithContext(context.Background(), registryURL, registryRoot, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := cache.AcquireExactGit(registryURL, registryRoot, oid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	built, err := sourcerevision.Build(sourcerevision.Input{SnapshotRoot: snapshot, RootPath: "skills", SourceHarness: "factory"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(built.Manifest.Resources) != 1 || built.Manifest.Resources[0].Name != "shared" {
+		t.Fatalf("exact Git fixture did not contain shared: %#v", built.Manifest.Resources)
+	}
+	resource := built.Manifest.Resources[0]
+	commit, err := lockfile.ParseGitOID(oid.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockedRoot := lockfile.GitRoot{Path: "skills", SourceHarness: "factory", RevisionSchema: built.Manifest.SchemaVersion, RevisionDigest: lockfile.Digest(built.Manifest.RevisionDigest), Resources: []lockfile.GitResource{{Kind: "skill", Name: "shared", ContentDigest: lockfile.Digest(resource.ContentDigest), ArchiveDigest: lockfile.Digest(resource.ArchiveDigest)}}}
+	lockData, err := lockfile.Encode(lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeRepo, Registries: []lockfile.GitRegistry{{URL: registryURL, Ref: "main", Commit: commit, Roots: []lockfile.GitRoot{lockedRoot}}, {URL: registryURL, Ref: "release", Commit: commit, Roots: []lockfile.GitRoot{lockedRoot}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repoRoot, ".agents", "lock.yaml"), string(lockData))
 	rootPath := config.ProjectConfigPath(repoRoot)
-	writeFile(t, rootPath, fmt.Sprintf("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: %q\n    ref: main\n    path: skills\n    skills: [shared]\n  - url: %q\n    ref: release\n    path: skills\n    skills: [shared]\n", registryRoot, registryRoot))
+	writeFile(t, rootPath, fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  main-source: {git: %q, ref: main, path: skills, source_harness: factory}\n  release-source: {git: %q, ref: release, path: skills, source_harness: factory}\nresources:\n  main-source: [skill/shared]\n  release-source: [skill/shared]\n", registryURL, registryURL))
 
-	if _, err := Remove(context.Background(), RemoveOptions{RepoRoot: repoRoot, ResourceName: "shared", FromURL: registryRoot, FromRef: "release", FromPath: "skills", Scope: ScopeRepo, ScopeSpecified: true}); err != nil {
+	if _, err := Remove(context.Background(), RemoveOptions{RepoRoot: repoRoot, ResourceName: "shared", FromURL: registryURL, FromRef: "release", FromPath: "skills", Scope: ScopeRepo, ScopeSpecified: true}); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
 	cfg, err := config.LoadRootConfigFromPath(rootPath)
@@ -1012,12 +1125,12 @@ func TestRemoveAdHocRefTargetsOnlyNamedRef(t *testing.T) {
 	if len(cfg.Registries) != 2 || !slices.Contains(cfg.Registries[0].Skills.Include, "shared") || slices.Contains(cfg.Registries[0].Skills.Exclude, "shared") || slices.Contains(cfg.Registries[1].Skills.Include, "shared") || slices.Contains(cfg.Registries[1].Skills.Exclude, "shared") {
 		t.Fatalf("registries = %#v, want only the release selection dropped, without an exclusion", cfg.Registries)
 	}
-	resolved := Resolve(context.Background(), ResolveOptions{RepoRoot: repoRoot, SkipInventory: true})
+	resolved := Resolve(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, repoRoot), SkipInventory: true})
 	if len(resolved.Errors) != 0 || len(resolved.Resolved) != 1 || resolved.Resolved[0].Ref != "main" {
 		t.Fatalf("resolved after release exclusion = %#v, errors = %v; want main only", resolved.Resolved, resolved.Errors)
 	}
 
-	if _, err := Remove(context.Background(), RemoveOptions{RepoRoot: repoRoot, FromURL: registryRoot, FromRef: "release", FromPath: "skills", Scope: ScopeRepo, ScopeSpecified: true}); err != nil {
+	if _, err := Remove(context.Background(), RemoveOptions{RepoRoot: repoRoot, FromURL: registryURL, FromRef: "release", FromPath: "skills", Scope: ScopeRepo, ScopeSpecified: true}); err != nil {
 		t.Fatalf("whole registry Remove: %v", err)
 	}
 	cfg, err = config.LoadRootConfigFromPath(rootPath)
@@ -1032,17 +1145,23 @@ func TestRemoveAdHocRefTargetsOnlyNamedRef(t *testing.T) {
 func TestRemoveNamedFromCollectionRejectsMachineToRepoBoundary(t *testing.T) {
 	repoRoot := t.TempDir()
 	t.Chdir(repoRoot)
-	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
 	registryRoot := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	writeFile(t, config.ProjectConfigPath(repoRoot), "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n")
-	writeFile(t, filepath.Join(home, ".agents", "config.yaml"), fmt.Sprintf("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - path: %q\n    collections: [machine-bundle]\n", registryRoot))
+	writeFile(t, config.ProjectConfigPath(repoRoot), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	writeSkill(t, registryRoot, "machine-member", "machine member", nil)
+	writeFile(t, filepath.Join(registryRoot, "collections", "machine-bundle", "COLLECTION.yaml"), "name: machine-bundle\nskills:\n  - name: machine-member\n")
+	userPath := filepath.Join(home, ".agents", "config.yaml")
+	writeFile(t, userPath, fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  machine: {directory: %q, source_harness: factory}\nresources:\n  machine: [collection/machine-bundle]\n", registryRoot))
+	assertRemovalResourceResolved(t, repoRoot, "machine-member", config.UserPersonal)
+	before, info := layerFreezeFile(t, userPath)
 
 	_, err := Remove(context.Background(), RemoveOptions{RepoRoot: repoRoot, ResourceName: "machine-bundle", FromURL: registryRoot, Scope: ScopeRepo, ScopeSpecified: true})
 	if err == nil || !strings.Contains(err.Error(), "cannot exclude registry") {
 		t.Fatalf("error = %v, want machine-to-repo boundary rejection", err)
 	}
+	layerAssertFileUnchanged(t, userPath, before, info)
 }
 
 func TestRegistryPathOwns(t *testing.T) {

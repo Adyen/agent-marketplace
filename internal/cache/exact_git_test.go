@@ -11,12 +11,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/iotest"
 	"time"
 
-	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/testutil"
 	"golang.org/x/sys/unix"
@@ -149,23 +149,97 @@ func TestResolveExactGitRefReturnsConciseSSHTransportFailure(t *testing.T) {
 	}
 }
 
+// exactGitHangBound only detects a subprocess that cancellation failed to
+// stop; it is not a speed requirement.
+const exactGitHangBound = 30 * time.Second
+
 func TestExactGitSubprocessHonorsCancellation(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	binDir := t.TempDir()
+	pids := filepath.Join(binDir, "pids")
+	if err := os.Mkdir(pids, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	gitPath := filepath.Join(binDir, "git")
-	if err := os.WriteFile(gitPath, []byte("#!/bin/sh\nexec sleep 60\n"), 0o700); err != nil {
+	// Every fake git invocation records its PID as the name of an empty file
+	// (created atomically, so the test never reads a partial PID) and then
+	// blocks far longer than the hang bound; exec keeps that PID for the sleep.
+	// The script locates the record directory from its own path, so no test
+	// path is interpolated into shell source.
+	script := "#!/bin/sh\n: > \"$(dirname -- \"$0\")/pids/$$\"\nexec sleep 600\n"
+	if err := os.WriteFile(gitPath, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	started := time.Now()
-	_, err := exactGitBytesWithContext(ctx, "", "fetch")
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("exact git error = %v, want context deadline", err)
+	recorded := func() []int {
+		entries, err := os.ReadDir(pids)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := make([]int, 0, len(entries))
+		for _, entry := range entries {
+			pid, err := strconv.Atoi(entry.Name())
+			if err != nil || pid <= 0 {
+				t.Fatalf("fake git pid record %q: %v", entry.Name(), err)
+			}
+			out = append(out, pid)
+		}
+		return out
 	}
-	if elapsed := time.Since(started); elapsed > time.Second {
-		t.Fatalf("cancelled exact git took %s", elapsed)
+	// Until the call returns, its child is unreaped, so a recorded PID still
+	// names that fake git process and is safe to signal. After the call
+	// returns the PID may be reused, so cleanup never signals it then.
+	returned := false
+	t.Cleanup(func() {
+		if returned {
+			return
+		}
+		for _, pid := range recorded() {
+			_ = unix.Kill(pid, unix.SIGKILL)
+		}
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		_, err := exactGitBytesWithContext(ctx, "", "fetch")
+		result <- err
+	}()
+
+	// Cancel only once the subprocess is running, so the test proves that a
+	// live git process is stopped rather than racing process start.
+	bound := time.NewTimer(exactGitHangBound)
+	defer bound.Stop()
+	poll := time.NewTicker(5 * time.Millisecond)
+	defer poll.Stop()
+	for len(recorded()) == 0 {
+		select {
+		case err := <-result:
+			returned = true
+			t.Fatalf("exact git returned before its subprocess started: %v", err)
+		case <-poll.C:
+		case <-bound.C:
+			t.Fatal("fake git subprocess never started")
+		}
+	}
+	cancel()
+	var err error
+	select {
+	case err = <-result:
+		returned = true
+	case <-bound.C:
+		t.Fatal("cancelled exact git did not stop its subprocess")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("exact git error = %v, want context cancellation", err)
+	}
+	// The call reaps its child before returning, so every recorded fake git
+	// process must already be gone; no elapsed-time threshold is involved.
+	for _, pid := range recorded() {
+		if killErr := unix.Kill(pid, 0); !errors.Is(killErr, unix.ESRCH) {
+			t.Fatalf("cancelled exact git left subprocess %d running: %v", pid, killErr)
+		}
 	}
 	if _, err := os.Lstat(CacheDir()); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("cancelled exact git left cache residue: %v", err)
@@ -213,8 +287,8 @@ func TestExactGitLifecycleCoexistenceAndOffline(t *testing.T) {
 	if opened != firstPath {
 		t.Fatalf("OpenExactGit path = %q, want %q", opened, firstPath)
 	}
-	if _, err := GarbageCollect(false, &config.Config{}); err != nil {
-		t.Fatalf("GarbageCollect: %v", err)
+	if _, err := GarbageCollectLegacyCaches(context.Background(), false, nil); err != nil {
+		t.Fatalf("GarbageCollectLegacyCaches: %v", err)
 	}
 	if _, err := OpenExactGit(canonical, first); err != nil {
 		t.Fatalf("OpenExactGit after registry garbage collection: %v", err)
@@ -337,6 +411,7 @@ func TestExactGitCancelledReadOnlyDoesNotCreateLockFile(t *testing.T) {
 	}
 }
 
+// spec: registry-symlink-containment/snapshot-tracked-tree-is-altered
 func TestExactGitRejectsMismatchAndTampering(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	repo := newExactGitRepository(t, "sha1")
@@ -450,20 +525,30 @@ func TestExactGitRejectsObjectFormatMismatch(t *testing.T) {
 	}
 }
 
-func TestExactGitRejectsEscapingSymlink(t *testing.T) {
+// Symlink safety is enforced per configured root by sourcerevision; an unsafe
+// link elsewhere in the repository must not make the whole snapshot unusable.
+// spec: registry-symlink-containment/snapshot-contains-unselected-unsafe-symlinks
+func TestExactGitAcquiresSnapshotWithEscapingOrDanglingSymlink(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	repo := newExactGitRepository(t, "sha1")
 	work := filepath.Join(filepath.Dir(repo), "work")
 	if err := os.Symlink("../outside", filepath.Join(work, "escape")); err != nil {
 		t.Fatal(err)
 	}
-	gitTest(t, work, "add", "escape")
+	if err := os.Symlink("/nonexistent/.factory/settings.json", filepath.Join(work, "dangling")); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, work, "add", "escape", "dangling")
 	gitTest(t, work, "commit", "-m", "symlink")
 	gitTest(t, work, "push", "origin", "HEAD:main")
 
-	oid := resolveExactGitRefForTest(t, "https://example.invalid/symlink", repo, "main")
-	if _, err := AcquireExactGit("https://example.invalid/symlink", repo, oid); !errors.Is(err, ErrExactGitSnapshotUntrusted) {
-		t.Fatalf("AcquireExactGit(symlink) error = %v, want ErrExactGitSnapshotUntrusted", err)
+	canonical := "https://example.invalid/symlink"
+	oid := resolveExactGitRefForTest(t, canonical, repo, "main")
+	if _, err := AcquireExactGit(canonical, repo, oid); err != nil {
+		t.Fatalf("AcquireExactGit(unsafe symlink outside any root): %v", err)
+	}
+	if _, err := AcquireExactGit(canonical, repo, oid); err != nil {
+		t.Fatalf("AcquireExactGit(reuse snapshot): %v", err)
 	}
 }
 
@@ -485,7 +570,7 @@ func TestExactGitAllowsContainedSymlink(t *testing.T) {
 }
 
 func TestExactGitDoesNotPersistFetchCredentialsAndUsesPrivateModes(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	isolatedGitAuth(t)
 	repo := newExactGitRepository(t, "sha1")
 	gitTest(t, repo, "update-server-info")
 	server := httptest.NewServer(http.FileServer(http.Dir(filepath.Dir(repo))))
@@ -689,7 +774,7 @@ func testExactGitConsumptionBlocksGarbageCollection(t *testing.T, acquire bool) 
 
 	gcDone := make(chan error, 1)
 	go func() {
-		_, err := garbageCollectExactGit(false, nil)
+		_, err := garbageCollectExactGitWithContext(context.Background(), false, nil)
 		gcDone <- err
 	}()
 	select {
@@ -719,7 +804,7 @@ func TestExactGitNamespaceLeaseBlocksGarbageCollection(t *testing.T) {
 	started := make(chan struct{})
 	go func() {
 		close(started)
-		_, err := garbageCollectExactGit(false, nil)
+		_, err := garbageCollectExactGitWithContext(context.Background(), false, nil)
 		done <- err
 	}()
 	<-started
@@ -773,6 +858,8 @@ func newExactGitRepository(t testing.TB, algorithm string) string {
 	bare := filepath.Join(root, "remote.git")
 	work := filepath.Join(root, "work")
 	gitTest(t, "", "init", "--bare", "--object-format="+algorithm, bare)
+	gitTest(t, "", "-C", bare, "config", "receive.autogc", "false")
+	gitTest(t, "", "-C", bare, "config", "maintenance.auto", "false")
 	gitTest(t, "", "init", "--object-format="+algorithm, work)
 	gitTest(t, work, "config", "user.email", "test@example.invalid")
 	gitTest(t, work, "config", "user.name", "Test")

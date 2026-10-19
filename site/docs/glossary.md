@@ -1,10 +1,10 @@
 # Glossary
 
-Plain-language definitions of the words these docs use. Each entry links to the page with the full details.
+Definitions of the terms these docs use. Each entry links to the full details.
 
 ## Cache
 
-The copies of registries that `agent-marketplace` downloads to your computer, stored under `~/.cache/agent-marketplace/`. Installed skills are [symlinks](#symlink) into the cache, so deleting it breaks them until the next [sync](#sync) downloads everything again, which requires a network connection. To free space safely, run `agent-marketplace gc`. See [Clean the cache safely](./how-to/clean-the-cache-safely.md).
+The copies of registries that `agent-marketplace` downloads to your computer, stored under `~/.cache/agent-marketplace/`. Installed skills are [symlinks](#symlink) into the cache, so deleting it breaks them until the next [sync](#sync) downloads everything again over the network. To free space safely, run `agent-marketplace gc`. See [Clean the cache safely](./how-to/clean-the-cache-safely.md).
 
 ## Collection
 
@@ -60,7 +60,7 @@ A shell command that your [harness](#harness) runs automatically when something 
 
 ## Lockfile
 
-A generated file, `lock.yaml`, that records the exact [commit](#commit) and a fingerprint of the content for each Git or Marketplace [source](#source). It makes sure that everyone who runs [sync](#sync) gets identical files, even after a branch moves on. Commit `.agents/lock.yaml` together with `.agents/config.yaml`, and do not edit it by hand. `agent-marketplace update` moves it forward on purpose. See [Reproducibility and lockfiles](./explanation/reproducibility-and-lockfiles.md).
+A generated file, `lock.yaml`, that records the exact [commit](#commit) and a fingerprint of the content for each Git or Marketplace [source](#source). Everyone who runs [sync](#sync) gets identical files, even after a branch moves on. Commit `.agents/lock.yaml` together with `.agents/config.yaml`, and do not edit it by hand. `agent-marketplace update` moves it forward on purpose. See [Reproducibility and lockfiles](./explanation/reproducibility-and-lockfiles.md).
 
 ## Locator
 
@@ -81,6 +81,10 @@ A program that gives your AI agent extra tools or data through the Model Context
 ## Ownership state
 
 Records that `agent-marketplace` keeps about which entries it wrote into settings files it shares with you, such as Devin's `mcp_config.json` or Codex's `config.toml`. They let it update or remove only its own entries. The records live in `~/.local/state/agent-marketplace/` (or `$XDG_STATE_HOME/agent-marketplace/` when that variable is set). Do not delete them. See [Shared configuration ownership](./explanation/shared-configuration-ownership.md).
+
+## Prerequisite
+
+Another resource that a resource needs to work, declared in its front matter under `metadata.requires`. An unmet prerequisite produces an advisory warning with the install command that fixes it; it never blocks the install. Only `sync --strict` (including `sync --strict --check`) fails on an unmet prerequisite. See [Declare resource prerequisites](./how-to/author/declare-resource-prerequisites.md) and the [resource prerequisites reference](./reference/resource-prerequisites.md).
 
 ## Ref
 
@@ -136,7 +140,7 @@ The `agent-marketplace sync` command. It downloads what your configuration asks 
 
 ## Tag
 
-A label that a registry author puts on a resource, such as `k8s` or `security`. You can install everything with a tag at once, with `tags: [k8s]` in a [resource group](#resource-group) or with `agent-marketplace install --tag k8s`. See [Declare tags and prerequisites](./how-to/author/declare-tags-and-prerequisites.md).
+A label that a registry author puts on a resource, such as `k8s` or `security`. You can install everything with a tag at once, with `tags: [k8s]` in a [resource group](#resource-group) or with `agent-marketplace install --tag k8s`. See [Declare tags and a license](./how-to/author/declare-tags-and-licenses.md).
 
 ## Terminal
 

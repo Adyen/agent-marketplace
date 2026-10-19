@@ -27,15 +27,19 @@ func TestBackupCreatedOnInstall(t *testing.T) {
 
 	// User config with registry.
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 	withWorkingDir(t, repoRoot)
@@ -77,15 +81,19 @@ func TestBackupRestoreRoundTrip(t *testing.T) {
 	commitAndPushAll(t, working, "Add roundtrip skill")
 
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 	withWorkingDir(t, repoRoot)
@@ -156,15 +164,19 @@ func TestBackupListCommand(t *testing.T) {
 	commitAndPushAll(t, working, "Add list test skill")
 
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 	withWorkingDir(t, repoRoot)
@@ -220,19 +232,23 @@ func TestSyncNoBackupFlag(t *testing.T) {
 	commitAndPushAll(t, working, "Add no-backup skill")
 
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      include:
-        - no-backup-skill
+resources:
+  skills:
+    include: [skill/no-backup-skill]
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -289,15 +305,19 @@ func TestBackupOnlyIncludesManagedPaths(t *testing.T) {
 	commitAndPushAll(t, working, "Add managed skill")
 
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 	withWorkingDir(t, repoRoot)
@@ -366,17 +386,21 @@ func TestBackupDisabledViaConfig(t *testing.T) {
 
 	// User config with backup disabled.
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
 backup:
   enabled: false
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 	withWorkingDir(t, repoRoot)
@@ -443,15 +467,19 @@ func TestBackupPreservesSymlinks(t *testing.T) {
 	commitAndPushAll(t, working, "Add symlink skill")
 
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 	withWorkingDir(t, repoRoot)
@@ -461,7 +489,7 @@ registries:
 		t.Fatalf("first install failed: %v\n%s", err, output)
 	}
 
-	mutable := pipeline.Resolve(context.Background(), pipeline.ResolveOptions{RepoRoot: repoRoot})
+	mutable := pipeline.Resolve(context.Background(), pipeline.ResolveOptions{Workspace: mustWorkspace(t, repoRoot)})
 	if err := errors.Join(mutable.Errors...); err != nil {
 		t.Fatalf("resolve mutable catalog: %v", err)
 	}
@@ -469,7 +497,7 @@ registries:
 	if err != nil {
 		t.Fatalf("prepare exact lock: %v", err)
 	}
-	exact := pipeline.Resolve(context.Background(), pipeline.ResolveOptions{RepoRoot: repoRoot, CatalogOption: []catalog.LoadOption{exactOption}})
+	exact := pipeline.Resolve(context.Background(), pipeline.ResolveOptions{Workspace: mustWorkspace(t, repoRoot), CatalogOption: []catalog.LoadOption{exactOption}})
 	if err := errors.Join(exact.Errors...); err != nil {
 		t.Fatalf("resolve exact catalog: %v", err)
 	}
@@ -578,15 +606,19 @@ func TestBackupCreateOnDemand(t *testing.T) {
 	commitAndPushAll(t, working, "Add on-demand skill")
 
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 	withWorkingDir(t, repoRoot)
@@ -692,17 +724,21 @@ func TestBackupCreateWhenDisabled(t *testing.T) {
 	commitAndPushAll(t, working, "Add disabled-create skill")
 
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
 backup:
   enabled: false
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 	withWorkingDir(t, repoRoot)

@@ -1,0 +1,49 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+                                                         | merge-before.txt | merge-after.txt |
+                                                         |                 sec/op                 |    sec/op      vs base                |
+MergeJSONCObjectLookupsCPU/members-1/changed-false-16                                6.631u +/- inf [1]    9.161u +/- inf [1]   +38.15% (p=0.008 n=5)
+MergeJSONCObjectLookupsCPU/members-1/changed-true-16                                 7.229u +/- inf [1]    8.864u +/- inf [1]   +22.62% (p=0.008 n=5)
+MergeJSONCObjectLookupsCPU/members-32/changed-false-16                               123.4u +/- inf [1]    152.4u +/- inf [1]   +23.50% (p=0.008 n=5)
+MergeJSONCObjectLookupsCPU/members-32/changed-true-16                                133.1u +/- inf [1]    171.4u +/- inf [1]   +28.79% (p=0.008 n=5)
+MergeJSONCObjectLookupsCPU/members-256/changed-false-16                              987.5u +/- inf [1]   1999.6u +/- inf [1]  +102.48% (p=0.008 n=5)
+MergeJSONCObjectLookupsCPU/members-256/changed-true-16                               1.074m +/- inf [1]    2.142m +/- inf [1]   +99.51% (p=0.008 n=5)
+MergeJSONCObjectLookupsCPU/members-1024/changed-false-16                             4.713m +/- inf [1]    9.079m +/- inf [1]   +92.62% (p=0.008 n=5)
+MergeJSONCObjectLookupsCPU/members-1024/changed-true-16                              4.950m +/- inf [1]    9.390m +/- inf [1]   +89.69% (p=0.008 n=5)
+MergeJSONCObjectLookupsCPU/members-4096/changed-false-16                             30.51m +/- inf [1]    32.63m +/- inf [1]         ~ (p=0.151 n=5)
+MergeJSONCObjectLookupsCPU/members-4096/changed-true-16                              31.87m +/- inf [1]    33.65m +/- inf [1]         ~ (p=0.151 n=5)
+geomean                                                                              672.5u          983.9u         +46.29%
+[1] need >= 6 samples for confidence interval at level 0.95
+
+                                                         | merge-before.txt | merge-after.txt |
+                                                         |                  B/op                  |      B/op        vs base              |
+MergeJSONCObjectLookupsCPU/members-1/changed-false-16                               6.812Ki +/- inf [1]     6.810Ki +/- inf [1]  -0.03% (p=0.016 n=5)
+MergeJSONCObjectLookupsCPU/members-1/changed-true-16                                7.133Ki +/- inf [1]     7.133Ki +/- inf [1]       ~ (p=0.722 n=5)
+MergeJSONCObjectLookupsCPU/members-32/changed-false-16                              130.0Ki +/- inf [1]     130.0Ki +/- inf [1]       ~ (p=0.095 n=5)
+MergeJSONCObjectLookupsCPU/members-32/changed-true-16                               135.2Ki +/- inf [1]     135.2Ki +/- inf [1]       ~ (p=0.413 n=5)
+MergeJSONCObjectLookupsCPU/members-256/changed-false-16                            1022.7Ki +/- inf [1]    1022.3Ki +/- inf [1]  -0.04% (p=0.008 n=5)
+MergeJSONCObjectLookupsCPU/members-256/changed-true-16                              1.039Mi +/- inf [1]     1.039Mi +/- inf [1]       ~ (p=0.135 n=5)
+MergeJSONCObjectLookupsCPU/members-1024/changed-false-16                            4.018Mi +/- inf [1]     4.017Mi +/- inf [1]  -0.03% (p=0.008 n=5)
+MergeJSONCObjectLookupsCPU/members-1024/changed-true-16                             4.158Mi +/- inf [1]     4.157Mi +/- inf [1]       ~ (p=0.056 n=5)
+MergeJSONCObjectLookupsCPU/members-4096/changed-false-16                            16.04Mi +/- inf [1]     16.04Mi +/- inf [1]       ~ (p=0.222 n=5)
+MergeJSONCObjectLookupsCPU/members-4096/changed-true-16                             16.64Mi +/- inf [1]     16.64Mi +/- inf [1]       ~ (p=0.310 n=5)
+geomean                                                                             583.3Ki           583.2Ki        -0.01%
+[1] need >= 6 samples for confidence interval at level 0.95
+
+                                                         | merge-before.txt | merge-after.txt |
+                                                         |               allocs/op                |   allocs/op    vs base                |
+MergeJSONCObjectLookupsCPU/members-1/changed-false-16                                 135.0 +/- inf [1]     135.0 +/- inf [1]       ~ (p=1.000 n=5) [2]
+MergeJSONCObjectLookupsCPU/members-1/changed-true-16                                  151.0 +/- inf [1]     151.0 +/- inf [1]       ~ (p=1.000 n=5) [2]
+MergeJSONCObjectLookupsCPU/members-32/changed-false-16                               2.279k +/- inf [1]    2.279k +/- inf [1]       ~ (p=1.000 n=5) [2]
+MergeJSONCObjectLookupsCPU/members-32/changed-true-16                                2.539k +/- inf [1]    2.539k +/- inf [1]       ~ (p=1.000 n=5) [2]
+MergeJSONCObjectLookupsCPU/members-256/changed-false-16                              17.34k +/- inf [1]    17.33k +/- inf [1]  -0.01% (p=0.008 n=5)
+MergeJSONCObjectLookupsCPU/members-256/changed-true-16                               19.39k +/- inf [1]    19.39k +/- inf [1]       ~ (p=0.206 n=5)
+MergeJSONCObjectLookupsCPU/members-1024/changed-false-16                             68.85k +/- inf [1]    68.85k +/- inf [1]  -0.00% (p=0.032 n=5)
+MergeJSONCObjectLookupsCPU/members-1024/changed-true-16                              77.05k +/- inf [1]    77.05k +/- inf [1]       ~ (p=0.238 n=5)
+MergeJSONCObjectLookupsCPU/members-4096/changed-false-16                             274.9k +/- inf [1]    274.9k +/- inf [1]  -0.00% (p=0.032 n=5)
+MergeJSONCObjectLookupsCPU/members-4096/changed-true-16                              307.7k +/- inf [1]    307.7k +/- inf [1]       ~ (p=0.714 n=5)
+geomean                                                                              10.59k          10.59k        -0.00%
+[1] need >= 6 samples for confidence interval at level 0.95
+[2] all samples are equal

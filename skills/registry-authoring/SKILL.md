@@ -1,10 +1,11 @@
 ---
 name: registry-authoring
 description: >
-  How to create and maintain a skill registry that agent-marketplace can
+  How to create and maintain a registry that agent-marketplace can
   discover, ingest, and sync into harness-native layouts. Use when creating
-  a new registry repo (like infra-skills), adding skills to an existing
-  registry, writing CI validation, or troubleshooting discovery failures.
+  a registry repo, adding skills, commands, subagents, hooks, MCP servers, or
+  collections to one, writing registry CI validation, releasing a registry,
+  or troubleshooting resources that are missing or malformed.
 metadata:
   tags:
     - registry
@@ -15,454 +16,354 @@ metadata:
 
 # Registry Authoring
 
-A registry is a plain Git repository whose resources (skills, commands,
-subagents, hooks, MCP servers) are auto-discovered by agent-marketplace
-from their directory layout and `SKILL.md` frontmatter. No manifest file
-is required — the tool walks the tree looking for well-known files.
+A registry is a plain Git repository (or local directory) whose resources are
+discovered from the native layout of one **source harness**. There is no
+manifest: the CLI reads the layout's well-known paths. The authoritative
+references are
+[registry layout](https://github.com/Adyen/agent-marketplace/blob/main/site/docs/reference/registry-layout.md),
+[resource metadata](https://github.com/Adyen/agent-marketplace/blob/main/site/docs/reference/resource-metadata.md),
+and [collections](https://github.com/Adyen/agent-marketplace/blob/main/site/docs/reference/collections.md).
 
-This skill covers the conventions, pitfalls, and operational patterns
-that make a registry reliable and pleasant to consume.
-
-## Minimal Registry
+## Minimal registry (Claude layout)
 
 ```
-my-skills/
+my-registry/
 ├── skills/
 │   ├── deploy-conventions/
-│   │   └── SKILL.md
+│   │   ├── SKILL.md
+│   │   └── references/checklist.md   ← ships with the skill
 │   └── incident-response/
 │       └── SKILL.md
+├── commands/
+│   └── release.md
+├── collections/
+│   └── platform-onboarding/
+│       └── COLLECTION.yaml
 ├── CODEOWNERS
 └── README.md
 ```
 
-Before syncing, configure the target harness set in the project config or,
-when shared across projects, in `~/.agents/config.yaml` or
-`/etc/agent-marketplace/config.yaml`:
-
-```yaml
-apiVersion: agent-marketplace/v2
-harnesses: [factory]
-registries: []
-```
-
-The committed repository config may declare its own top-level `harnesses`;
-when omitted, it inherits the user or organization target set.
-
-Consuming repos point at it:
+A consumer selects from it with a v4 config:
 
 ```yaml
 # .agents/config.yaml
-apiVersion: agent-marketplace/v2
-registries:
-  - url: git@gitlab.example.com:example-org/my-skills.git
-    ref: main
-    path: skills
-    skills:
-      include: [deploy-conventions]
+apiVersion: agent-marketplace/v4
+sources:
+  platform:
+    git: git@github.com:example-org/my-registry.git
+    ref: v1.4.0
+    source_harness: claude     # state the layout instead of relying on detection
+resources:
+  platform:
+    include:
+      - skill/deploy-conventions
+      - command/release
+      - collection/platform-onboarding
 ```
 
-## Directory Structure
+Consumers can also select by `tags: [...]` or take everything with `all: true`.
+Set the source `path:` when resources live under a subdirectory: `path: resources`
+discovers `resources/skills/...`, `resources/commands/...`, and so on.
 
-### Path prefix
+## Layout by source harness
 
-Use a top-level directory (e.g. `skills/`, `commands/`, `hooks/`) to
-group resources by kind. Set `path: skills` in the consumer config so
-agent-marketplace scans only the relevant subtree.
+Bundle and root-form paths are relative to the registry root, or to the
+source's `path`.
 
+| Harness | Skill | Command | Subagent | Hook | MCP server |
+|---|---|---|---|---|---|
+| `claude` | `skills/<name>/SKILL.md` | `commands/<name>.md` | `agents/<name>.md` | `hooks/hooks.json` | `.mcp.json` at the bundle root |
+| `factory` | `skills/<name>/SKILL.md` | `commands/<name>.md` | `droids/<name>.md` | `hooks/hooks.json` | `mcp.json` |
+| `cursor` | `skills/<name>/SKILL.md` | `commands/<name>.md` | `agents/<name>.md` | `hooks/hooks.json` | `mcp.json` |
+| `windsurf` | `skills/<name>/SKILL.md` | `workflows/<name>.md` | not supported | `hooks.json` | `mcp_config.json` |
+| `gemini` | `.gemini/skills/<name>/SKILL.md` or `.agents/skills/…` | `commands/<name>.toml` | `.gemini/agents/<name>.md` | `.gemini/settings.json#hooks` | `.gemini/settings.json#mcpServers` |
+| `devin` | `skills/<name>/SKILL.md` | skill dir + `x-agent-marketplace-kind: command` | `agents/<name>.md` | `hooks.v1.json` | `mcp_config.json` |
+| `codex` | `.agents/skills/<name>/SKILL.md` | skill dir + `x-agent-marketplace-kind: command` | `.codex/agents/<name>.toml` | `.codex/hooks.json#hooks` | `.codex/config.toml#mcp_servers` |
+| `opencode` | `.opencode/skills/<name>/SKILL.md` | `.opencode/commands/<name>.md` | `.opencode/agents/<name>.md` | `.opencode/hooks/agent-marketplace/<name>.json` | `opencode.json[c]#mcp` |
+
+There are no generic `subagents/` or `mcp/` roots: a Claude subagent ships as
+`agents/<name>.md`, and Claude MCP servers ship in a root `.mcp.json`. Files in
+directories the layout does not read are silently undiscovered. Explicit
+workspace roots keep their resources inside the matching harness prefix; their
+hook files are listed below.
+
+### Hooks
+
+A registry may instead be an explicit native workspace root. Its hook file is:
+
+| Harness | Native workspace hook path |
+|---|---|
+| `claude` | `.claude/settings.json#hooks` |
+| `factory` | `.factory/hooks.json` |
+| `cursor` | `.cursor/hooks.json#hooks` |
+| `windsurf` | `.devin/hooks.json#hooks` |
+| `gemini` | `.gemini/settings.json#hooks` |
+| `devin` | `.devin/hooks.v1.json` |
+| `codex` | `.codex/hooks.json#hooks` |
+| `opencode` | `.opencode/hooks/agent-marketplace/<name>.json` beside the fixed adapter |
+
+Use the source harness's documented workspace directories for its other
+resources. A Claude workspace source uses `.claude/skills/`, `.claude/commands/`, `.claude/agents/`, and
+`.claude/settings.json` together; it does not mix root-level bundle directories
+or a `.claude-plugin` manifest with that workspace hook file.
+
+For example, a Claude `PreToolUse` hook that runs only for `Bash` can ship in
+`.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/check.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}
 ```
-team-skills/
-├── skills/           ← path: skills
-│   └── vm-lifecycle/
-│       └── SKILL.md
-├── commands/         ← path: commands
-│   └── deploy.md
-├── hooks/
-│   └── pre-push.json
-└── mcp/
-    └── service-catalog.json
-```
 
-You can also list multiple registries pointing at the same repo with
-different `path` values, or a single registry with `path: .` to scan
-everything.
+Keep `scripts/check.sh` below `.claude/` beside the hook definition. Sync copies
+regular support files byte-for-byte into `hook-support/<source>/<hook>/` for
+each selected target and rewrites the plugin-root token to that installed
+location. Repository-scope commands use the target's documented
+project-directory variable or working-directory base; user-scope commands use
+the absolute installed path. The definition JSON itself is not copied into
+support output.
 
-### Resource directory layout
+Hook matchers must cover the same source tool concepts exactly, including
+anchoring and MCP naming. A partial or unknown mapping suppresses that hook
+with an error, while valid sibling hooks still install. The shipped
+[hook and tool catalog](https://github.com/Adyen/agent-marketplace/blob/main/site/docs/reference/hook-and-tool-names.md)
+lists the exact target events, types, names, and timeout rules. Do not expect
+every resource with an explicit tool list to convert to every target; an
+allow-list can only select tools the target actually has, and it cannot use a
+combined target tool to cover only part of that tool's scope.
 
-Each resource is a directory whose identity file lives at a known
-location. Skill directories **must** contain `SKILL.md`:
+A hook command or prompt is trusted executable content. Review it as registry
+code, and note that sync prints changed command and prompt values to stdout for
+review. That stdout listing is intentionally exact; the application's logs and
+telemetry do not contain those values.
 
-```
-vm-lifecycle/
-├── SKILL.md           ← required; identity + instructions
-├── references/
-│   └── repo-map.md    ← auxiliary content (not a separate skill)
-└── scripts/
-    └── validate.sh    ← supporting asset
-```
+### Autodetection
 
-Non-skill resources use their own harness-native layouts:
-- **Commands** — standalone `.md` files or `commands/<name>/<name>.md`
-- **Hooks** — `hooks.json` files
-- **MCP servers** — `mcp.json` files
-- **Subagents** — droid YAML/JSON files
+Without `source_harness`, the CLI detects the layout from markers: `.devin/`,
+then plugin manifests (`.claude-plugin/plugin.json`, `.factory-plugin/`,
+`.cursor-plugin/`, `gemini-extension.json`), then `.codex/`, then Claude-shaped
+roots, and so on. Root-level Cursor, Windsurf, Factory, and Gemini layouts share
+folder names with Claude, and a root-level Devin layout (no `.devin/`) is never
+detected. `.devin/hooks.json` is Windsurf's workspace hook file, while
+`.devin/hooks.v1.json` is Devin CLI's; set `source_harness` explicitly when that
+context could be ambiguous. An `.opencode/` folder with OpenCode resources or
+`opencode.json` selects OpenCode only when the otherwise-detected layout has no
+workspace folder of its own (`.codex/`, `.claude/`, `.factory/`, `.cursor/`,
+`.gemini/`, `.windsurf/`); `.opencode/package.json` alone is not a marker. When
+both layouts are present the catalog warns `ingest.autodetect.ambiguous`, and
+the unselected layout is not read; a container of bundles with a top-level
+`.opencode/` stays a container. Tell consumers to set `source_harness` for
+these and the other ambiguous registries. An undetected registry falls back to
+Claude with `catalog.autodetect.fallback`.
 
-### What discovery considers a skill
+### Root shapes
 
-`agent-marketplace` walks the configured `path` and:
+A registry root (or the `path` target) may be one bundle in a layout above, a
+single `SKILL.md` (which must declare `name`), a folder of skill folders, or a
+pure container of bundles. A container's subfolders are searched for bundles,
+skipping `.git`, `.github`, `node_modules`, `.cache`, `test`, `tests`,
+`__tests__`, harness folders, and resource folders. A root that has its own
+resources and also sub-bundles is read as the root only, with
+`catalog.discover.sub-bundles-ignored`; move root resources into a subfolder
+such as `common/`.
 
-1. Any directory containing `SKILL.md` is a skill. The directory name
-   is the default skill name (overridden by frontmatter `name:`).
-2. Standalone `.md` files with valid frontmatter containing a `name:`
-   field are also skills (useful for commands).
-3. Nested `SKILL.md` files inside an already-discovered skill directory
-   are **not** separate skills — they are supplementary assets.
-4. Directories named `node_modules`, `.git`, `.cache`, `test`,
-   `tests`, `__tests__` are skipped.
-5. Hidden directories (dot-prefix) are skipped. Registry paths containing
-   parent traversal (`..`) are rejected rather than used to escape the
-   configured registry root.
+Everything inside a skill folder ships with the skill; a nested `SKILL.md` is a
+support file, not a separate skill. Keep skills one level under `skills/`.
 
-**Do not** nest skill directories inside other skill directories and
-expect them to be independently discovered. Use a flat or shallow
-two-level structure instead.
+## `SKILL.md` frontmatter
 
-## SKILL.md Format
-
-Follow the [agentskills.io specification](https://agentskills.io/specification).
-Every skill directory must contain a `SKILL.md` with YAML frontmatter:
+Follow the [Agent Skills specification](https://agentskills.io/specification):
 
 ```markdown
 ---
 name: vm-lifecycle
 description: >
-  How to create, update, and decommission VMs across infrastructure.
-  Use when working with OpenStack VMs, Puppet node definitions, or DNS
-  records.
+  Create, update, and decommission VMs. Use when working with OpenStack VMs,
+  Puppet node definitions, or DNS records for a host.
+license: Apache-2.0
 metadata:
-  version: "1.2"
-  tags:
-    - openstack
-    - puppet
-    - network
----
-
-# VM Lifecycle
-
-## When to use
-Use this skill when creating, modifying, or decommissioning virtual machines.
-
-## Step-by-step: Creating a new VM
-...
-```
-
-### Frontmatter rules
-
-| Field | Required | Notes |
-|-------|----------|-------|
-| `name` | yes | Must be unique across the same registry. Kebab-case. |
-| `description` | yes | Multi-line OK with `>`. Shown in `list` and TUI. |
-| `metadata.version` | optional | String (quote it). Not semver-enforced. |
-| `metadata.tags` | optional | List of strings. Used by `install --tag` and `tags:` in config. |
-| `metadata.requires` | optional | List of prerequisites. Use `"mcp:name"` shorthand or a map with `name`, `kind`, and optional `registry`/`path`. Advisory only. |
-
-The frontmatter must be delimited by `---` on its own line. The parser
-extracts content between the first and second `---` markers as YAML.
-Malformed frontmatter causes the skill to surface as "malformed" in
-`list` and `status` output, and blocks `install`.
-
-### Naming conventions
-
-- Use **kebab-case**: `vm-lifecycle`, `enc-debugging`, `k8s-app-onboarding`.
-- Name should describe the workflow or domain, not the tool: prefer
-  `incident-response` over `pagerduty-workflow`.
-- The directory name and frontmatter `name:` should match. When they
-  differ, frontmatter wins for deduplication but directory name is used
-  for `install` and `sync` unless frontmatter is parsed successfully.
-- Avoid names that collide across registries; the consumer warns and picks
-  one deterministic winner.
-
-### Description best practices
-
-The description is the primary signal for agents deciding whether to
-activate a skill. Write it as a **when-to-use** trigger:
-
-```yaml
-description: >
-  Debug the Puppet External Node Classifier when a node's classification
-  is missing or wrong. Use when ENC errors appear in Puppet runs, or when
-  a VM is assigned to the wrong environment/pool.
-```
-
-**Good**: Mentions specific symptoms, tool names, and error conditions.
-**Bad**: "A skill about the ENC" — too vague for an agent to match
-against a user request.
-
-### Tag strategy
-
-Tags enable `install --tag <tag>` and `tags: [...]` in consumer config.
-Treat tags as **broad categories** that group related skills for
-bulk selection:
-
-```yaml
-metadata:
-  tags:
-    - infra          # domain: infrastructure operations
-    - openstack      # technology: OpenStack
-    - lifecycle      # pattern: create/update/delete workflows
-    - puppet         # technology: Puppet
-```
-
-Guidelines:
-
-- Prefer lowercase, singular nouns: `network` not `Networks`.
-- Include one **domain** tag (infra, security, platform) and one or
-  more **technology** tags (k8s, openstack, puppet).
-- Don't duplicate the skill name as a tag — it's redundant.
-- Keep the set small (3–6 tags). Every tag is a potential `install
-  --tag` filter, so each one should pull in a meaningful cohort.
-
-### Declaring prerequisites
-
-Declare resources that a skill needs under `metadata.requires`:
-
-```yaml
-metadata:
+  tags: [infra, openstack, puppet]
   requires:
     - mcp:service-catalog
     - name: incident-response
       kind: skill
-      registry: git@gitlab.example.com:team/operations-skills.git
+      registry: git@github.com:example-org/operations-skills.git
       path: skills
+---
 ```
 
-Use `"<kind>:<name>"` shorthand, or a map with required `name` and
-optional `kind`, `registry`, and `path`. A bare `"name"` or omitted
-`kind` defaults to `skill`. Supported kinds are `skill`, `command`,
-`subagent`, `hook`, and `mcp`; `collection` is not supported.
-Malformed entries are ignored and produce a structured log warning.
+| Field | Notes |
+|---|---|
+| `name` | Lowercase letters, digits, hyphens; starts with a letter. Wins over the folder name; the folder name is the fallback, except for a root-level `SKILL.md`. Keep them equal. |
+| `description` | Required by the spec. Write it as a when-to-use trigger naming symptoms, tools, and error conditions. |
+| `license` | Optional SPDX identifier. Hosted Marketplaces use it for license policy. |
+| `x-agent-marketplace-kind` | `command` marks a skill-shaped command in Devin and Codex layouts only. |
+| `metadata.tags` | Strings used by consumer `tags:` and `install --tag`. Matching is exact and case-sensitive. |
+| `metadata.requires` | Advisory prerequisites. |
 
-Requirements are advisory. They produce CLI diagnostics when the
-matching kind and name are not selected, but they never install a
-resource or override an exclude. Use `registry` and `path` only to
-improve the suggested install command; do not rely on
-`metadata.requires` for enforcement.
+Invalid YAML or an invalid name makes the skill malformed (for example
+`ingest.claude.load-skill-failed`): `list` shows `malformed: <reason>`, sync
+counts it under `Malformed`, and it is not installed. Harness-specific fields
+such as `allowed-tools` and `model` are translated per target; other unknown
+fields pass through.
 
-## Skill Body Content
+Commands and subagents written as Markdown with frontmatter read `metadata.tags`
+and `metadata.requires` from the same place. A Claude command's name comes from
+its file name.
 
-The body after frontmatter is the actual instruction set that agents
-read. Structure it for **machine consumption first, human reference
-second**:
+### Tags
 
-1. **When to use** — triggers that help the agent decide to activate.
-2. **Decision trees** — conditional logic based on context.
-3. **Step-by-step procedures** — ordered actions spanning repos/tools.
-4. **Reference tables** — mappings, constants, repo relationships.
-5. **Gotchas** — common mistakes, ordering constraints, failure modes.
+Tags group resources for bulk selection. Use a small set (3–6) of lowercase
+nouns: one domain (`infra`, `security`, `platform`) plus technologies (`k8s`,
+`puppet`). A tag that repeats the resource name selects nothing new.
 
-Keep instructions **precise and actionable**. Avoid prose that requires
-interpretation:
+### Prerequisites
+
+`requires` items are `"<kind>:<name>"` strings (a bare name means `skill`) or
+maps with `name` and optional `kind`, `registry`, `path`. Kinds are `skill`,
+`command`, `subagent`, `hook`, `mcp`; `collection` is not accepted. A
+prerequisite is met by any selected resource of that kind and name, from any
+source; `registry` and `path` only improve the suggested install command.
+Unmet prerequisites warn and never install anything. Items with an unknown kind
+or no `name` are skipped with a log warning.
+
+## Collections
+
+A collection bundles resources for one-line selection
+(`collection/<name>` in a consumer's `include`). It lives at
+`collections/<name>/COLLECTION.yaml`; flat `collections/<name>.yaml` files are
+ignored, and consumers match on the `name` field, not the folder.
+
+```yaml
+name: platform-onboarding
+description: Common starter resources for platform teams
+resources:
+  - kind: skill
+    name: deploy-conventions
+  - kind: command
+    name: release
+  - kind: mcp
+    name: service-catalog
+    registry: https://github.com/example-org/shared-mcp.git   # must already be a consumer source
+includes:
+  - name: security-baseline
+```
+
+- Member `kind` defaults to `skill`; `collection` is not a member kind (use
+  `includes` to nest). The legacy `skills:` list still works; write `resources:`.
+- A member without `registry` comes from the collection's own source, ref, and
+  path. A collection cannot add a registry to the consumer's config; a member
+  from another registry fails unless the consumer already declares it.
+- `includes` may name a collection from any configured registry. Shared nested
+  collections are fine; including an ancestor is a cycle.
+- A missing member warns during `sync` and fails `sync --strict`; `list` does
+  not check members.
+- The collection itself writes no files; removing one member records an
+  exclude and keeps the collection selected.
+
+## Writing the body
+
+The body is what the agent reads after the description fires. Put the ordered
+steps first, then decision rules, reference tables, and gotchas. Name exact
+files, fields, and commands:
 
 ```markdown
 ## Step 1: Network configuration (network-configurations repo)
 Add the VM's IP allocation in `networks/<dc>/hosts.yaml` under the
-correct datacenter section. The entry must include hostname, ip, and
-netmask fields.
+datacenter section, with `hostname`, `ip`, and `netmask`.
 ```
 
-Not:
+Reference support files from the body (`See references/repo-map.md`) so the
+agent knows to open them.
 
-```markdown
-## Step 1
-First you need to configure the network. Go to the network repo and
-add an entry for the new VM. Make sure it's in the right place.
+## Check locally
+
+```bash
+agent-marketplace list --from .            # every resource should be `available`
 ```
 
-### Supporting assets
+A clean conversion reports `Diagnostics 0`. Look up `ingest.*` codes in the
+[diagnostics reference](https://github.com/Adyen/agent-marketplace/blob/main/site/docs/reference/diagnostics.md).
 
-Place reference documents, scripts, and templates alongside `SKILL.md`
-inside the skill directory. They are **not** independently discovered
-(only `SKILL.md` defines a skill), but agents may read them when the
-skill is active:
+## CI validation
 
-```
-network-change-workflow/
-├── SKILL.md
-├── references/
-│   ├── firewall-repo-map.md
-│   └── change-template.yaml
-└── scripts/
-    └── validate-change.sh
-```
+Sync a throwaway consumer against the checkout with a pinned CLI
+(`v4.0.9` or newer) and every harness your consumers target:
 
-Reference these assets from the skill body so the agent knows they
-exist:
+> **Warning:** Hook review stdout includes exact command and prompt values.
+> This script deliberately captures that stdout in `sync.log`. Treat the log as
+> sensitive and do not publish it as a CI artifact.
 
-```markdown
-## Reference
-See `references/firewall-repo-map.md` for the repository layout and
-`scripts/validate-change.sh` for pre-merge validation.
-```
-
-## Multi-Resource Registries
-
-A registry can contain more than skills. The canonical agent-marketplace v2
-schema supports commands, subagents, hooks, and MCP servers from the same
-repository, organized by kind:
-
-```
-team-resources/
-├── skills/
-│   ├── vm-lifecycle/
-│   │   └── SKILL.md
-│   └── enc-debugging/
-│       └── SKILL.md
-├── commands/
-│   ├── deploy-service/
-│   │   └── deploy-service.md
-│   └── rollback.md
-├── hooks/
-│   └── pre-tool-audit/
-│       └── hooks.json
-├── mcp/
-│   └── service-catalog/
-│       └── mcp.json
-└── subagents/
-    └── incident-responder.yaml
+```bash
+set -euo pipefail                       # run under bash
+REGISTRY_PATH=$PWD
+CONSUMER=$(mktemp -d)
+mkdir -p "$CONSUMER/.agents"
+cat > "$CONSUMER/.agents/config.yaml" << EOF
+apiVersion: agent-marketplace/v4
+harnesses: [claude, factory, cursor, windsurf, gemini, devin, codex]
+sources:
+  checkout:
+    directory: ${REGISTRY_PATH}
+resources:
+  checkout:
+    all: true
+    required: true
+EOF
+cd "$CONSUMER"
+agent-marketplace sync --strict -v | tee sync.log
+grep -q 'Malformed 0  Errors' sync.log   # --strict alone does not fail on malformed resources under all: true
+agent-marketplace sync --check
+for kind in skill command subagent hook mcp collection; do agent-marketplace list --kind "$kind"; done
 ```
 
-Consumers select resources by kind in a v2 config:
+Compare the `list` output with a checked-in expectation so a resource in an
+unread directory fails CI. The
+[CI how-to](https://github.com/Adyen/agent-marketplace/blob/main/site/docs/how-to/author/validate-a-registry-in-ci.md)
+explains each step and the download command for a pinned release.
 
-```yaml
-apiVersion: agent-marketplace/v2
-registries:
-  - url: git@gitlab.example.com:team/team-resources.git
-    ref: main
-    path: skills          # or path: . to scan everything
-    skills:
-      include:
-        - vm-lifecycle
-    commands:
-      include:
-        - deploy-service
-    hooks:
-      include:
-        - pre-tool-audit
-    mcp:
-      include:
-        - service-catalog
-    subagents:
-      include:
-        - incident-responder
-```
+## Access control
 
-## CODEOWNERS and Access Control
+`CODEOWNERS` plus branch protection is the trust boundary: whoever can merge
+into the registry ships resources to every consumer. Require review for
+`skills/` and stricter owners for sensitive paths.
 
-Registry repos should use `CODEOWNERS` to control who can add or modify
-skills. This is the primary security boundary — GitLab merge
-protections enforce it.
+## Versioning and releases
 
-```
-# CODEOWNERS
-# All skills require infra-team review
-/skills/           @infra-team
+- Tag releases with semantic versions and keep a `CHANGELOG.md`. Renaming or
+  removing a resource is a major release.
+- Consumers pinned to a tag stay on it until they edit `ref:` and run `sync`.
+  Consumers on a branch stay on their locked commit until `update`.
+- `update --bump` rewrites eligible refs in v4 `sources:` to tags that differ
+  only in the final number. Refs declared by included fragments are reported
+  and left unchanged; consumers edit those fragments deliberately.
+- Document the consumer v4 snippet and contribution rules in the registry
+  README.
 
-# Security skills require security-team review
-/skills/security-* @security-team
-```
-
-There is no separate trust model. If a user can merge into the registry
-repo (per CODEOWNERS + branch protection), their skill is trusted.
-
-## CI Validation
-
-Add a CI job that validates every `SKILL.md` on merge requests:
-
-```yaml
-# .gitlab-ci.yml
-validate-skills:
-  script:
-    - |
-      for f in $(find skills -name SKILL.md); do
-        if ! head -1 "$f" | grep -q '^---'; then
-          echo "ERROR: $f missing frontmatter opening ---"
-          exit 1
-        fi
-        if ! grep -q '^name:' "$f"; then
-          echo "ERROR: $f missing name field"
-          exit 1
-        fi
-        if ! grep -q '^description:' "$f"; then
-          echo "ERROR: $f missing description field"
-          exit 1
-        fi
-      done
-```
-
-This catches:
-- Missing or malformed frontmatter delimiters
-- Missing required `name` or `description` fields (does not validate general YAML syntax — use yq or python-yaml for that)
-
-For stricter validation, check against the agentskills.io JSON schema
-if one is published.
-
-## README for the Registry
-
-Every registry repo should have a `README.md` that:
-
-1. Lists available skills with one-line descriptions (auto-generated or
-   manual).
-2. Shows the `.agents/config.yaml` snippet for consuming the registry.
-3. Documents contributing instructions (directory structure, frontmatter
-   requirements, review process).
-
-Example from infra-skills:
-
-```markdown
-## Integrating with agent-marketplace
-
-```yaml
-apiVersion: agent-marketplace/v2
-registries:
-  - url: git@gitlab.example.com:example-team/infra-skills.git
-    ref: main
-    path: skills
-skills:
-  include:
-    - vm-lifecycle
-    - ip-and-dns-management
-```
-
-Run the sync and commit the config:
-
-\`\`\`bash
-agent-marketplace sync
-git add .agents/config.yaml .gitignore
-\`\`\`
-```
-
-## Versioning and Refs
-
-- Pin consumers to a **branch** (`main`) for latest, or a **tag**
-  (`v1.2.0`) for stability.
-- Use `metadata.version` in frontmatter to track skill-level changes
-  independently of the repo tag.
-- `agent-marketplace update --bump` checks for newer refs when
-  consumers pin to a tag.
-- Breaking changes to a skill's frontmatter name or tag set should be
-  called out in the registry's changelog or release notes.
-
-## Common Mistakes
+## Common mistakes
 
 | Mistake | Symptom | Fix |
-|---------|---------|-----|
-| Nesting skills inside skills | Inner skill not discovered | Keep skills at the same depth under `path` |
-| Missing `---` delimiters | Skill shows as "malformed" | Add opening and closing `---` lines |
-| `name:` with spaces or capitals | Install by name fails, inconsistent display | Use kebab-case: `my-skill` |
-| Same `name:` in two registries | Sync warns and picks one deterministic winner | Rename one or narrow per-registry selections |
-| Description too vague | Agents don't activate the skill when they should | Include when-to-use triggers and specific error conditions |
-| Tag duplication with name | `install --tag vm-lifecycle` is redundant | Tags should group; names already identify |
-| No CODEOWNERS | Anyone can merge skill changes | Add CODEOWNERS to enforce review |
-| Forgetting `path:` in config | Registry root scanned, may find irrelevant dirs | Set `path: skills` (or appropriate subdirectory) |
-| `metadata.version` as unquoted number | YAML treats `1.2` as float 1.2, not string | Quote it: `"1.2"` |
-| Auxiliary `.md` files mistaken for skills | `references/notes.md` appears in `list` | Put non-skill `.md` files inside a skill directory (they become assets of the parent) |
+|---|---|---|
+| Resource in a directory the layout does not read (`subagents/`, `mcp/`) | Missing from `list` | Use the source harness's native path |
+| Root-level Cursor/Windsurf/Factory/Devin layout without `source_harness` | Read as Claude; resources missing | Consumers set `source_harness` |
+| Skill nested inside another skill | Inner skill not discovered | Keep skills one level under `skills/` |
+| `name` with capitals, spaces, or underscores | Skill reported malformed | Use kebab-case matching the folder |
+| Root resources plus sub-bundles | `catalog.discover.sub-bundles-ignored` | Move root resources into a subfolder |
+| Collection as `collections/<name>.yaml` | Collection not found | Use `collections/<name>/COLLECTION.yaml` |
+| Collection member from an unconfigured registry | Expansion error | Tell consumers to add that source first |
+| Same kind and name in two registries | Consumer warns and picks one winner | Rename, or consumers narrow selections |
+| Vague description | Agents never activate the skill | Name triggers, tools, and error text |
+| No CODEOWNERS | Unreviewed changes reach consumers | Add CODEOWNERS and branch protection |

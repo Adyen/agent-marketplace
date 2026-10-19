@@ -86,6 +86,7 @@ func TestStrictDecodeRejectsUnsafeOrAmbiguousYAML(t *testing.T) {
 	}
 }
 
+// spec: acquisition-lock-codec/registry-input-order-does-not-change-emitted-bytes
 func TestNormalizeEncodeDeterministic(t *testing.T) {
 	doc := Document{APIVersion: APIVersionV1, Scope: ScopeRepo, Registries: []GitRegistry{{URL: "https://B.example/r.git", Ref: "z", Commit: mustOID(t, sha1a)}, {URL: "https://a.example/r.git", Ref: "a", Commit: mustOID(t, sha1a)}}}
 	first, err := Encode(doc)
@@ -99,6 +100,7 @@ func TestNormalizeEncodeDeterministic(t *testing.T) {
 	}
 }
 
+// spec: acquisition-lock-codec/emitted-bytes-decode-to-the-normalized-document
 func TestEncodeSizeBoundary(t *testing.T) {
 	const prefix = "apiVersion: agent-marketplace-lock/v1\nscope: repo\nregistries:\n  - url: https://example.com/repo\n    ref: "
 	const suffix = "\n    commit: " + sha1a + "\n"
@@ -142,41 +144,6 @@ func TestPathMapping(t *testing.T) {
 	}
 	if _, err := PathForConfig("relative/config.yaml"); err == nil {
 		t.Fatal("relative path accepted")
-	}
-}
-
-func TestPlanMinimalRetainsAndRemoves(t *testing.T) {
-	old := Document{APIVersion: APIVersionV2, Scope: ScopeRepo, Registries: []GitRegistry{{URL: "https://example/a", Ref: "main", Commit: mustOID(t, sha1a), Roots: []GitRoot{{Path: "skills", SourceHarness: "claude", RevisionSchema: "v1", RevisionDigest: Digest(sha256a)}}}, {URL: "https://example/orphan", Ref: "main", Commit: mustOID(t, sha1a)}}}
-	reqs := Requirements{Scope: ScopeRepo, Git: []GitRequirement{{URL: "https://example/a.git", Ref: "main", Roots: []GitRootRequirement{{Path: "skills", SourceHarness: "claude"}}}, {URL: "https://example/new", Ref: "main"}}}
-	plan, err := Plan(reqs, &old, OperationSync)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(plan.Retained) != 1 || len(plan.Added) != 1 || len(plan.Removed) != 1 || len(plan.Acquisitions) != 1 || !plan.Changed() {
-		t.Fatalf("plan = %#v", plan)
-	}
-}
-
-func TestPlanUnchangedAndUpgradeSelection(t *testing.T) {
-	locked := Document{APIVersion: APIVersionV2, Scope: ScopeRepo, Registries: []GitRegistry{{URL: "https://example/a", Ref: "main", Commit: mustOID(t, sha1a), Roots: []GitRoot{{Path: "skills", SourceHarness: "claude", RevisionSchema: "v1", RevisionDigest: Digest(sha256a)}}}}}
-	requirements := Requirements{Scope: ScopeRepo, Git: []GitRequirement{{URL: "https://example/a.git", Ref: "main", Roots: []GitRootRequirement{{Path: "skills", SourceHarness: "claude"}}}}}
-	plan, err := Plan(requirements, &locked, OperationSync)
-	if err != nil || plan.Changed() || len(plan.Retained) != 1 || !reflect.DeepEqual(plan.Desired, locked) {
-		t.Fatalf("unchanged plan = %#v, %v", plan, err)
-	}
-	requirements.Upgrade = UpgradeSelection{Git: []GitUpgradeSelector{{URL: "https://example/a", Path: "skills"}}}
-	plan, err = Plan(requirements, &locked, OperationUpgrade)
-	if err != nil || len(plan.Upgraded) != 1 || len(plan.Acquisitions) != 1 {
-		t.Fatalf("targeted upgrade plan = %#v, %v", plan, err)
-	}
-}
-
-func TestPlanAutodetectedGitHarnessMatchesExistingRoot(t *testing.T) {
-	current := Document{APIVersion: APIVersionV2, Scope: ScopeRepo, Registries: []GitRegistry{{URL: "https://example.com/repo", Ref: "main", Commit: mustOID(t, sha1a), Roots: []GitRoot{{Path: "skills", SourceHarness: "factory", RevisionSchema: "v1", RevisionDigest: Digest(sha256a)}}}}}
-	requirements := Requirements{Scope: ScopeRepo, Git: []GitRequirement{{URL: "https://example.com/repo.git", Ref: "main", Roots: []GitRootRequirement{{Path: "skills"}}}}}
-	plan, err := Plan(requirements, &current, OperationSync)
-	if err != nil || plan.Changed() || len(plan.Retained) != 1 || plan.Desired.Registries[0].Roots[0].SourceHarness != "factory" {
-		t.Fatalf("autodetected plan = %#v, %v", plan, err)
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/collection"
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -32,6 +33,8 @@ type Input struct {
 	RootPath       string
 	SourceHarness  string
 	RevisionSchema string
+	beforeIngest   func(string)
+	beforeHash     func(string)
 }
 
 type Result struct {
@@ -80,7 +83,33 @@ func (r Result) Projection() Projection {
 	return Projection{SourceHarness: r.SourceHarness, RevisionSchema: r.Manifest.SchemaVersion, RevisionDigest: r.Manifest.RevisionDigest, Resources: resources}
 }
 
-func Build(input Input) (Result, error) {
+func nativeOnlyHistoricalCatalog(source *fsboundary.SourceFS, root, harness string, options catalog.IngestOptions, hasNativeInventory bool) (*catalog.Catalog, error) {
+	if !hasNativeInventory {
+		return nil, nil
+	}
+	currentOptions := options
+	currentOptions.LegacyNativeHookInventory = false
+	current, currentErr := catalog.LoadSourceWithOptions(source, root, harness, currentOptions)
+	if currentErr != nil || current == nil {
+		return nil, currentErr
+	}
+	if current.SourceRefusal() != nil || len(current.Entries) == 0 {
+		return nil, nil
+	}
+	for _, diagnostic := range current.Diagnostics {
+		if diagnostic.IsError() {
+			return nil, nil
+		}
+	}
+	for _, entry := range current.Entries {
+		if entry.Kind != ir.KindHook {
+			return nil, nil
+		}
+	}
+	return &catalog.Catalog{SourceHarness: current.SourceHarness}, nil
+}
+
+func Build(input Input) (result Result, err error) {
 	if input.RevisionSchema == "" {
 		input.RevisionSchema = lockfile.CurrentRevisionSchema
 	}
@@ -93,21 +122,58 @@ func Build(input Input) (Result, error) {
 		return Result{}, err
 	}
 
-	options := catalog.IngestOptions{LegacyWindsurfHooks: !contract.AdditiveWindsurfHooks, LegacyBareMCP: !contract.BareBundleMCP}
-	cat, err := catalog.LoadWithOptions(root, input.SourceHarness, options)
-	loaded := cat
-	if err != nil || len(cat.Entries) == 0 {
-		discovered, discoverErr := catalog.DiscoverWithOptions(root, input.SourceHarness, options)
-		if discoverErr != nil {
-			return Result{}, fmt.Errorf("%w: load root %q: %w", ErrCatalog, input.RootPath, errors.Join(err, discoverErr))
+	source, err := fsboundary.OpenSourceFS(root)
+	if err != nil {
+		return Result{}, fmt.Errorf("capture revision source: %w", err)
+	}
+	defer func() {
+		if refusal := source.Refusal(); refusal != nil {
+			result = Result{}
+			err = fmt.Errorf("%w: source refused: %w", ErrCatalog, errors.Join(err, refusal))
 		}
-		if err != nil || len(discovered.Entries) > 0 {
-			sourceHarness := input.SourceHarness
-			if sourceHarness == "" {
-				sourceHarness = "auto"
+		if closeErr := source.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if input.beforeIngest != nil {
+		input.beforeIngest(root)
+	}
+	options := catalog.IngestOptions{LegacyWindsurfHooks: !contract.AdditiveWindsurfHooks, LegacyBareMCP: !contract.BareBundleMCP, LegacyNativeHookInventory: true}
+	cat, err := catalog.LoadSourceWithOptions(source, root, input.SourceHarness, options)
+	loaded := cat
+	hasNativeInventory := catalog.LegacyNativeHookInventoryPresent(source)
+	if hasNativeInventory {
+		loaded = nil
+	}
+	if fsboundary.IsSourceRefusal(err) {
+		return Result{}, fmt.Errorf("%w: source refused: %w", ErrCatalog, err)
+	}
+	if cat != nil && cat.SourceRefusal() != nil {
+		return Result{}, fmt.Errorf("%w: source refused: %w", ErrCatalog, cat.SourceRefusal())
+	}
+	if err != nil || len(cat.Entries) == 0 {
+		discovered, discoverErr := catalog.DiscoverSourceWithOptions(source, root, input.SourceHarness, options)
+		if discoverErr != nil {
+			historical, currentErr := nativeOnlyHistoricalCatalog(source, root, input.SourceHarness, options, hasNativeInventory)
+			if historical == nil {
+				return Result{}, fmt.Errorf("%w: load root %q: %w", ErrCatalog, input.RootPath, errors.Join(err, discoverErr, currentErr))
 			}
-			cat = &catalog.Catalog{Entries: discovered.Entries, Diagnostics: discovered.Diagnostics, SourceHarness: sourceHarness}
-			loaded = nil
+			cat = historical
+			err = nil
+		} else {
+			for _, discoveryErr := range discovered.Errors {
+				if fsboundary.IsSourceRefusal(discoveryErr) {
+					return Result{}, fmt.Errorf("%w: source refused: %w", ErrCatalog, discoveryErr)
+				}
+			}
+			if err != nil || len(discovered.Entries) > 0 {
+				sourceHarness := input.SourceHarness
+				if sourceHarness == "" {
+					sourceHarness = "auto"
+				}
+				cat = &catalog.Catalog{Entries: discovered.Entries, Diagnostics: discovered.Diagnostics, SourceHarness: sourceHarness}
+				loaded = nil
+			}
 		}
 	}
 	diagnosticErrors := 0
@@ -117,7 +183,7 @@ func Build(input Input) (Result, error) {
 		}
 	}
 
-	collections, err := collection.DiscoverCollections(root, "", "", "", normalizedRootPath(input.RootPath))
+	collections, err := collection.DiscoverCollectionsFS(source, root, "", "", "", normalizedRootPath(input.RootPath))
 	if err != nil {
 		return Result{}, fmt.Errorf("%w: discover collections: %w", ErrCatalog, err)
 	}
@@ -139,6 +205,12 @@ func Build(input Input) (Result, error) {
 		}
 		seen[key] = struct{}{}
 	}
+	if input.beforeHash != nil {
+		input.beforeHash(root)
+	}
+	if err := source.VerifyRoot(); err != nil {
+		return Result{}, fmt.Errorf("%w: validate revision root: %w", ErrCatalog, err)
+	}
 	for _, entry := range entries {
 		kind := entry.Kind.String()
 		key := kind + "/" + entry.Name
@@ -148,9 +220,9 @@ func Build(input Input) (Result, error) {
 			continue
 		}
 
-		resource, err := buildResource(root, entry, contract)
+		resource, err := buildResource(root, source, entry, contract)
 		if err != nil {
-			if errors.Is(err, ErrPathEscape) {
+			if errors.Is(err, ErrPathEscape) || fsboundary.IsSourceRefusal(err) {
 				return Result{}, fmt.Errorf("%w: build %s: %w", ErrCatalog, key, err)
 			}
 			warnings = append(warnings, ResourceWarning{Kind: kind, Name: entry.Name, Reason: "resource could not be built: " + err.Error()})
@@ -283,11 +355,11 @@ func cloneDigests(in map[string]string) map[string]string {
 	return out
 }
 
-func buildResource(root string, entry catalog.Entry, contract lockfile.SourceRevisionContract) (revisionResource, error) {
+func buildResource(root string, source *fsboundary.SourceFS, entry catalog.Entry, contract lockfile.SourceRevisionContract) (revisionResource, error) {
 	if entry.Resource == nil {
 		return revisionResource{}, errors.New("resource is nil")
 	}
-	payload, err := resourceSourceBytes(root, entry)
+	payload, err := resourceSourceBytes(root, source, entry, contract)
 	if err != nil {
 		return revisionResource{}, err
 	}
@@ -295,7 +367,7 @@ func buildResource(root string, entry catalog.Entry, contract lockfile.SourceRev
 	if entry.Kind == ir.KindCollection {
 		return revisionResource{Kind: "collection", Name: entry.Name, ContentDigest: digest}, nil
 	}
-	support, err := intrinsicSupportFileDigests(root, entry, contract)
+	support, err := intrinsicSupportFileDigests(root, source, entry, contract)
 	if err != nil {
 		return revisionResource{}, err
 	}
@@ -314,7 +386,24 @@ func buildResource(root string, entry catalog.Entry, contract lockfile.SourceRev
 	return revisionResource{Kind: entry.Kind.String(), Name: entry.Name, ContentDigest: digest, ArchiveDigest: contentDigest(archiveInput), SupportFiles: support}, nil
 }
 
-func resourceSourceBytes(root string, entry catalog.Entry) ([]byte, error) {
+func resourceSourceBytes(root string, source *fsboundary.SourceFS, entry catalog.Entry, contract lockfile.SourceRevisionContract) (data []byte, err error) {
+	defer func() {
+		if entry.PrimarySourcePath != "" && entry.PrimarySourcePath == entry.Path && errors.Is(err, fs.ErrNotExist) && !fsboundary.IsSourceRefusal(err) {
+			err = fmt.Errorf("%w: admitted primary %q disappeared: %w", fsboundary.ErrGenerationConflict, entry.Path, err)
+		}
+	}()
+	if entry.Kind != ir.KindCollection && entry.PrimarySourcePath != "" && entry.PrimarySourcePath != entry.Path {
+		rel, err := lexicallyContained(root, entry.PrimarySourcePath)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := source.ReadFile(filepath.ToSlash(rel)); err != nil {
+			if errors.Is(err, fs.ErrNotExist) && !fsboundary.IsSourceRefusal(err) {
+				err = fmt.Errorf("%w: admitted primary %q disappeared: %w", fsboundary.ErrGenerationConflict, entry.PrimarySourcePath, err)
+			}
+			return nil, err
+		}
+	}
 	// Collections digest over their canonical IR serialization, never the raw
 	// collection definition file: entry.Path is populated for collections so
 	// consumers can locate the definition file, but hashing that file would
@@ -327,12 +416,23 @@ func resourceSourceBytes(root string, entry catalog.Entry) ([]byte, error) {
 		if err := rejectSymlinkComponents(root, name); err != nil {
 			return nil, err
 		}
-		data, err := os.ReadFile(name)
+		rel, err := lexicallyContained(root, name)
+		if err != nil {
+			return nil, err
+		}
+		data, err := source.ReadFile(filepath.ToSlash(rel))
 		if err == nil {
 			return data, nil
 		}
+		if entry.PrimarySourcePath == entry.Path || !errors.Is(err, fs.ErrNotExist) || fsboundary.IsSourceRefusal(err) {
+			return nil, err
+		}
 	}
 	resource := entry.Resource
+	resource = legacyHookToolProjection(resource)
+	if !contract.ModelProvenance {
+		resource = legacyModelProjection(resource)
+	}
 	if collection, ok := resource.(*ir.Collection); ok {
 		copy := *collection
 		copy.SourceRegistryURL = ""
@@ -342,7 +442,7 @@ func resourceSourceBytes(root string, entry catalog.Entry) ([]byte, error) {
 		copy.Source = ir.SourceRef{}
 		resource = &copy
 	}
-	data, err := json.Marshal(resource)
+	data, err = json.Marshal(resource)
 	if err != nil {
 		return nil, fmt.Errorf("encode canonical resource: %w", err)
 	}
@@ -354,13 +454,16 @@ func contentDigest(data []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func intrinsicSupportFileDigests(root string, entry catalog.Entry, contract lockfile.SourceRevisionContract) (map[string]string, error) {
+func intrinsicSupportFileDigests(root string, source *fsboundary.SourceFS, entry catalog.Entry, contract lockfile.SourceRevisionContract) (map[string]string, error) {
 	var supportFiles []string
 	if skill, ok := entry.Resource.(*ir.Skill); ok {
 		supportFiles = skill.SupportFiles
-	} else if entry.Kind == ir.KindHook && contract.HookSupport {
-		var err error
-		supportFiles, err = catalog.HookSupportFiles(entry.Path)
+	} else if entry.Kind == ir.KindHook && contract.HookSupport && entry.Path != "" {
+		rel, err := lexicallyContained(root, entry.Path)
+		if err != nil {
+			return nil, err
+		}
+		supportFiles, err = catalog.HookSupportFilesFS(source, filepath.ToSlash(rel))
 		if err != nil {
 			return nil, err
 		}
@@ -392,7 +495,11 @@ func intrinsicSupportFileDigests(root string, entry catalog.Entry, contract lock
 		if err := rejectSymlinkComponents(resourceRoot, fileName); err != nil {
 			return nil, err
 		}
-		data, err := os.ReadFile(fileName)
+		rel, err := lexicallyContained(root, fileName)
+		if err != nil {
+			return nil, err
+		}
+		data, err := source.ReadFile(filepath.ToSlash(rel))
 		if err != nil {
 			return nil, fmt.Errorf("read support file %q: %w", normalized, err)
 		}
@@ -436,7 +543,7 @@ func secureRoot(input Input) (string, error) {
 	if _, err := lexicallyContained(snapshotReal, rootReal); err != nil {
 		return "", err
 	}
-	if err := validateTreeSymlinks(rootReal); err != nil {
+	if err := validateTreeSymlinks(snapshotReal, rootReal, rootPath); err != nil {
 		return "", err
 	}
 	return rootReal, nil
@@ -461,7 +568,7 @@ func lexicallyContained(root, target string) (string, error) {
 	return rel, nil
 }
 
-func validateTreeSymlinks(rootReal string) error {
+func validateTreeSymlinks(snapshotReal, rootReal, rootPath string) error {
 	return filepath.WalkDir(rootReal, func(name string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -470,13 +577,19 @@ func validateTreeSymlinks(rootReal string) error {
 			return nil
 		}
 		resolved, err := filepath.EvalSymlinks(name)
-		if err != nil {
-			return fmt.Errorf("%w: resolve symlink %q: %v", ErrPathEscape, name, err)
+		if err == nil {
+			_, err = lexicallyContained(rootReal, resolved)
 		}
-		if _, err := lexicallyContained(rootReal, resolved); err != nil {
-			return fmt.Errorf("%w: symlink %q", err, name)
+		if err == nil {
+			return nil
 		}
-		return nil
+		target, _ := os.Readlink(name)
+		rel, relErr := filepath.Rel(snapshotReal, name)
+		if relErr != nil {
+			rel = name
+		}
+		return fmt.Errorf("%w: registry symlink %q -> %q does not resolve inside configured root %q; remove it from the registry or narrow the registry entry's path: %w",
+			ErrPathEscape, filepath.ToSlash(rel), target, rootPath, err)
 	})
 }
 

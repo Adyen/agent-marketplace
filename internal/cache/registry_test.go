@@ -2,6 +2,7 @@ package cache
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -311,7 +312,7 @@ func TestGarbageCollectPreservesCompiledCache(t *testing.T) {
 		t.Fatalf("mkdir orphan cache: %v", err)
 	}
 
-	result, err := GarbageCollect(false, &config.Config{})
+	result, err := GarbageCollect(context.Background(), false, staticReachability(nil))
 	if err != nil {
 		t.Fatalf("GarbageCollect: %v", err)
 	}
@@ -422,6 +423,8 @@ func createBareRepoWithWorkingClone(t *testing.T) (string, string) {
 	runGitCommand(t, source, "commit", "-m", "seed")
 
 	runGitCommand(t, "", "clone", "--bare", source, origin)
+	runGitCommand(t, "", "-C", origin, "config", "receive.autogc", "false")
+	runGitCommand(t, "", "-C", origin, "config", "maintenance.auto", "false")
 	runGitCommand(t, "", "clone", origin, working)
 
 	return origin, working

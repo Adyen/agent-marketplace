@@ -98,6 +98,13 @@ func PublishRegistryRevision(ctx context.Context, meta MetadataStore, blobs Blob
 			}
 			return recordPublicationBlobOwners(txCtx, tx, req, uploads)
 		}
+		alreadyCurrent, err := tx.FenceRegistryPublication(txCtx, req)
+		if err != nil {
+			return err
+		}
+		if alreadyCurrent {
+			return nil
+		}
 		for _, rev := range req.Resources {
 			if err := tx.PutResourceRevision(txCtx, rev); err != nil {
 				return err
@@ -469,6 +476,7 @@ func isSafeInspectionText(data []byte) bool {
 		}
 	}
 	if strings.HasPrefix(text, "#!") || strings.HasPrefix(text, "javascript:") ||
+		strings.HasPrefix(text, "data:") || strings.HasPrefix(text, "vbscript:") ||
 		strings.HasPrefix(text, "function ") || strings.HasPrefix(text, "async function ") ||
 		strings.HasPrefix(text, "const ") || strings.HasPrefix(text, "let ") ||
 		strings.HasPrefix(text, "var ") || strings.HasPrefix(text, "import ") ||
@@ -511,20 +519,28 @@ func prepareUploads(req RegistryRevisionPublication) ([]BlobUpload, error) {
 			archiveDigests[rev.ArchiveDigest] = struct{}{}
 		}
 	}
+	placeholders, err := verifiedPlaceholderArchives(archiveDigests, req.ExtraBlobs, req.InspectionBlobs)
+	if err != nil {
+		return nil, err
+	}
 	add := func(b BlobUpload) error {
 		if b.Digest == "" {
 			return errors.New("blob upload with empty digest")
 		}
-		// Collection manifest addresses use the manifest's content_digest,
-		// which intentionally hashes the canonical payload with that field
-		// cleared rather than the complete self-referential blob bytes.
-		if _, isCollectionManifest := collectionDigests[b.Digest]; !isCollectionManifest {
-			if got := contentDigest(b.Data); got != string(b.Digest) {
-				// Canonical artifact archives use a placeholder digest to break
-				// their self-reference, so their address is verified by the
-				// artifact verifier rather than by hashing the final bytes.
-				if _, isArchive := archiveDigests[b.Digest]; !isArchive || !verifyArchiveBlob(b) {
-					return fmt.Errorf("blob %s data digest mismatch: got %s", b.Digest, got)
+		// Placeholder archives are addressed by PlaceholderArchiveKey and were
+		// verified by hash in verifiedPlaceholderArchives.
+		if _, isPlaceholder := PlaceholderArchiveDigest(b.Digest); !isPlaceholder {
+			// Collection manifest addresses use the manifest's content_digest,
+			// which intentionally hashes the canonical payload with that field
+			// cleared rather than the complete self-referential blob bytes.
+			if _, isCollectionManifest := collectionDigests[b.Digest]; !isCollectionManifest {
+				if got := contentDigest(b.Data); got != string(b.Digest) {
+					// Canonical artifact archives use a placeholder digest to break
+					// their self-reference, so their address is verified by the
+					// artifact verifier rather than by hashing the final bytes.
+					if _, isArchive := archiveDigests[b.Digest]; !isArchive || !verifyArchiveBlob(b, placeholders) {
+						return fmt.Errorf("blob %s data digest mismatch: got %s", b.Digest, got)
+					}
 				}
 			}
 		}
@@ -773,6 +789,12 @@ type immutableBlobStore interface {
 	PutImmutable(context.Context, ArchiveDigest, []byte) error
 }
 
+// PutImmutableBlob stores data under digest with the first-writer guarantee used
+// by publication. Callers must have verified data against digest.
+func PutImmutableBlob(ctx context.Context, blobs BlobStore, digest ArchiveDigest, data []byte) error {
+	return putImmutableBlob(ctx, blobs, BlobUpload{Digest: digest, Data: data})
+}
+
 func putImmutableBlob(ctx context.Context, blobs BlobStore, upload BlobUpload) error {
 	if existing, err := blobs.Get(ctx, upload.Digest); err == nil {
 		if !bytes.Equal(existing, upload.Data) {
@@ -793,7 +815,39 @@ func contentDigest(data []byte) string {
 	return "sha256:" + hex.EncodeToString(h[:])
 }
 
-func verifyArchiveBlob(upload BlobUpload) bool {
+// verifiedPlaceholderArchives hashes every placeholder archive upload against
+// the archive digest it is keyed by and returns them by that digest. A
+// placeholder is never re-encoded, so verification does not depend on the
+// running compressor.
+func verifiedPlaceholderArchives(archiveDigests map[ArchiveDigest]struct{}, batches ...[]BlobUpload) (map[ArchiveDigest]hccartifact.CanonicalArtifact, error) {
+	placeholders := make(map[ArchiveDigest]hccartifact.CanonicalArtifact)
+	for _, batch := range batches {
+		for _, b := range batch {
+			digest, isPlaceholder := PlaceholderArchiveDigest(b.Digest)
+			if !isPlaceholder {
+				continue
+			}
+			if _, ok := archiveDigests[digest]; !ok {
+				return nil, fmt.Errorf("placeholder archive %s has no resource archive digest", b.Digest)
+			}
+			artifact, err := hccartifact.VerifyPlaceholderArchive(b.Data, string(digest))
+			if err != nil {
+				return nil, fmt.Errorf("placeholder archive %s: %w", b.Digest, err)
+			}
+			placeholders[digest] = artifact
+		}
+	}
+	return placeholders, nil
+}
+
+// verifyArchiveBlob verifies a final archive. When its verified placeholder form
+// is part of the same publication, the final bytes are checked by content
+// equality with it; otherwise the archive digest is re-derived by re-encoding.
+func verifyArchiveBlob(upload BlobUpload, placeholders map[ArchiveDigest]hccartifact.CanonicalArtifact) bool {
+	if placeholder, ok := placeholders[upload.Digest]; ok {
+		_, err := hccartifact.VerifyFinalAgainstPlaceholder(upload.Data, placeholder)
+		return err == nil
+	}
 	canonical, raw, err := hccartifact.Decode(bytes.NewReader(upload.Data))
 	if err != nil {
 		return false

@@ -18,6 +18,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"golang.org/x/sys/unix"
 )
 
@@ -83,6 +84,14 @@ type Generation struct {
 	Digest string
 }
 
+type NamespaceExpectation struct {
+	ScopePath    string `json:"scope_path"`
+	ScopeDevice  uint64 `json:"scope_device"`
+	ScopeInode   uint64 `json:"scope_inode"`
+	ParentDevice uint64 `json:"parent_device"`
+	ParentInode  uint64 `json:"parent_inode"`
+}
+
 type DesiredFile struct {
 	Path     string
 	Expected Generation
@@ -90,10 +99,12 @@ type DesiredFile struct {
 	// destination's permission bits. Zero preserves compatibility with callers
 	// that predate mode-aware transactions; transaction participants that read
 	// an existing destination should provide its mode.
-	ExpectedMode fs.FileMode
-	Bytes        []byte
-	Mode         fs.FileMode
-	Delete       bool
+	ExpectedMode       fs.FileMode
+	ExpectedLinkTarget string
+	Namespace          *NamespaceExpectation
+	Bytes              []byte
+	Mode               fs.FileMode
+	Delete             bool
 }
 
 type ReadAssertion struct {
@@ -185,25 +196,37 @@ type journal struct {
 }
 
 type journalAssertion struct {
-	Path     string      `json:"path"`
-	Expected Generation  `json:"expected"`
-	Mode     fs.FileMode `json:"mode"`
+	Path      string                `json:"path"`
+	Expected  Generation            `json:"expected"`
+	Mode      fs.FileMode           `json:"mode"`
+	Namespace *NamespaceExpectation `json:"namespace,omitempty"`
 }
 
 type journalFile struct {
-	Path      string      `json:"path"`
-	Temp      string      `json:"temp"`
-	Old       Generation  `json:"old"`
-	OldMode   fs.FileMode `json:"old_mode"`
-	NewDigest string      `json:"new_digest"`
-	NewMode   fs.FileMode `json:"new_mode"`
-	Delete    bool        `json:"delete,omitempty"`
+	Path          string                `json:"path"`
+	Temp          string                `json:"temp"`
+	Old           Generation            `json:"old"`
+	OldMode       fs.FileMode           `json:"old_mode"`
+	OldLinkTarget string                `json:"old_link_target,omitempty"`
+	NewDigest     string                `json:"new_digest"`
+	NewMode       fs.FileMode           `json:"new_mode"`
+	Delete        bool                  `json:"delete,omitempty"`
+	Namespace     *NamespaceExpectation `json:"namespace,omitempty"`
 }
 
 type preparedFile struct {
 	desired DesiredFile
 	oldMode fs.FileMode
 	temp    string
+	// bound holds the captured layer destination for managed config/lock
+	// paths, pinning the ancestor chain, honored link, and target identity
+	// from the compare-and-swap check until publication.
+	bound     *boundDestination
+	namespace *boundNamespaceDestination
+	// staging and tempName locate the staged file below the captured layer
+	// directory for a bound destination.
+	staging  *fsboundary.Dir
+	tempName string
 }
 
 const (
@@ -218,6 +241,13 @@ func Digest(data []byte) string {
 }
 
 func ReadGeneration(path string) (Generation, error) {
+	if ClassifyDestination(path) != AuthorityLegacy {
+		_, generation, _, err := readManagedSnapshot(path)
+		if err != nil {
+			return Generation{}, fmt.Errorf("dependency transaction: read generation %s: %w", path, err)
+		}
+		return generation, nil
+	}
 	raw, _, err := readRegularFile(path, maxDependencyFileSize)
 	if errors.Is(err, os.ErrNotExist) {
 		return Generation{}, nil
@@ -241,6 +271,13 @@ func ReadGenerationAndMode(path string) (Generation, fs.FileMode, error) {
 // A missing destination returns zero values without error; symlinks,
 // non-regular files, and oversize files are refused like other readers.
 func ReadSnapshot(path string) ([]byte, Generation, fs.FileMode, error) {
+	if ClassifyDestination(path) != AuthorityLegacy {
+		raw, generation, mode, err := readManagedSnapshot(path)
+		if err != nil {
+			return nil, Generation{}, 0, fmt.Errorf("dependency transaction: snapshot %s: %w", path, err)
+		}
+		return raw, generation, mode, nil
+	}
 	raw, info, err := readRegularFile(path, maxDependencyFileSize)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, Generation{}, 0, nil
@@ -406,7 +443,7 @@ func Commit(ctx context.Context, stateDir string, desired []DesiredFile, opts ..
 	return committedResult, nil
 }
 
-func commitLocked(ctx context.Context, stateDir string, files []DesiredFile, cfg options) (Result, error) {
+func commitLocked(ctx context.Context, stateDir string, files []DesiredFile, cfg options) (result Result, retErr error) {
 	paths := desiredPaths(files)
 	if err := checkPendingDestinations(stateDir, paths); err != nil {
 		return Result{}, err
@@ -414,23 +451,77 @@ func commitLocked(ctx context.Context, stateDir string, files []DesiredFile, cfg
 	if err := ValidateReadAssertions(cfg.reads); err != nil {
 		return Result{}, err
 	}
+	if err := rejectObjectAliases(files, cfg.reads); err != nil {
+		return Result{}, err
+	}
 	changed := make([]preparedFile, 0, len(files))
 	assertions := make([]journalAssertion, 0, len(files))
+	var opened []*boundDestination
+	var openedNamespaces []*boundNamespaceDestination
+	defer func() {
+		for _, bound := range opened {
+			_ = bound.Close()
+		}
+		for _, bound := range openedNamespaces {
+			if closeErr := bound.Close(); closeErr != nil {
+				retErr = errors.Join(retErr, fmt.Errorf("close namespace destination: %w", closeErr))
+			}
+		}
+	}()
 	for _, file := range files {
-		current, mode, err := inspectDestination(file.Path)
-		if err != nil {
-			return Result{}, err
+		var bound *boundDestination
+		var namespaceBound *boundNamespaceDestination
+		var current Generation
+		var mode fs.FileMode
+		var err error
+		if file.ExpectedLinkTarget != "" {
+			snapshot, err := inspectLinkDestination(file.Path)
+			if err != nil {
+				return Result{}, err
+			}
+			if !snapshot.exists || !snapshot.symlink || snapshot.target != file.ExpectedLinkTarget {
+				return Result{}, fmt.Errorf("%w: %s", ErrGenerationConflict, file.Path)
+			}
+			current = snapshot.generation
+		} else if file.Namespace != nil {
+			namespaceBound, err = bindNamespaceDestination(file.Path, file.Namespace)
+			if err != nil {
+				return Result{}, err
+			}
+			openedNamespaces = append(openedNamespaces, namespaceBound)
+			current, mode, err = namespaceBound.inspect()
+			if err != nil {
+				return Result{}, err
+			}
+		} else if ClassifyDestination(file.Path) != AuthorityLegacy {
+			bound, err = bindDestination(file.Path)
+			if err != nil {
+				return Result{}, err
+			}
+			opened = append(opened, bound)
+			current, mode, err = bound.inspect()
+			if err != nil {
+				return Result{}, err
+			}
+		} else {
+			current, mode, err = inspectDestination(file.Path)
+			if err != nil {
+				return Result{}, err
+			}
 		}
 		if current != file.Expected || file.ExpectedMode != 0 && mode != file.ExpectedMode {
 			return Result{}, fmt.Errorf("%w: %s", ErrGenerationConflict, file.Path)
 		}
 		if file.Delete && !current.Exists || !file.Delete && current.Exists && current.Digest == Digest(file.Bytes) && mode == file.Mode {
-			assertions = append(assertions, journalAssertion{Path: file.Path, Expected: current, Mode: mode})
+			assertions = append(assertions, journalAssertion{Path: file.Path, Expected: current, Mode: mode, Namespace: file.Namespace})
 			continue
 		}
-		changed = append(changed, preparedFile{desired: file, oldMode: mode})
+		changed = append(changed, preparedFile{desired: file, oldMode: mode, bound: bound, namespace: namespaceBound})
 	}
 	if err := inject(cfg, FaultPoint{Stage: FaultAfterCAS, Index: -1}); err != nil {
+		return Result{}, err
+	}
+	if err := validateNamespaceParticipants(files); err != nil {
 		return Result{}, err
 	}
 	if len(changed) == 0 {
@@ -438,27 +529,70 @@ func commitLocked(ctx context.Context, stateDir string, files []DesiredFile, cfg
 	}
 
 	journalPublished := false
+	// Deferred close runs before the unlink cleanup below only if it is
+	// registered first: defers execute last-in-first-out, and Unlink needs
+	// an open staging descriptor.
+	defer func() {
+		for _, file := range changed {
+			if file.staging != nil {
+				_ = file.staging.Close()
+			}
+		}
+	}()
 	defer func() {
 		if !journalPublished {
 			for _, file := range changed {
 				if file.temp != "" {
-					_ = os.Remove(file.temp)
+					if file.staging != nil {
+						_ = file.staging.Unlink(file.tempName)
+					} else {
+						_ = os.Remove(file.temp)
+					}
 				}
 			}
 		}
 	}()
 	stagedDirs := make(map[string]struct{}, len(changed))
+	var stagedNamespaceDirs []*fsboundary.Dir
 	for i := range changed {
 		if !changed[i].desired.Delete {
-			temp, err := stageFile(changed[i].desired.Path, changed[i].desired.Bytes, changed[i].desired.Mode)
-			if err != nil {
-				return Result{}, err
+			if changed[i].namespace != nil {
+				temp, staging, name, err := stageNamespace(changed[i].namespace, changed[i].desired.Bytes, changed[i].desired.Mode)
+				if err != nil {
+					return Result{}, err
+				}
+				changed[i].temp = temp
+				changed[i].staging = staging
+				changed[i].tempName = name
+				stagedNamespaceDirs = append(stagedNamespaceDirs, staging)
+			} else if changed[i].bound != nil {
+				temp, staging, name, err := stageManaged(changed[i].bound, changed[i].desired.Bytes, changed[i].desired.Mode)
+				if err != nil {
+					return Result{}, err
+				}
+				changed[i].temp = temp
+				changed[i].staging = staging
+				changed[i].tempName = name
+				stagedDirs[filepath.Dir(temp)] = struct{}{}
+			} else {
+				temp, err := stageFile(changed[i].desired.Path, changed[i].desired.Bytes, changed[i].desired.Mode)
+				if err != nil {
+					return Result{}, err
+				}
+				changed[i].temp = temp
+				stagedDirs[filepath.Dir(temp)] = struct{}{}
 			}
-			changed[i].temp = temp
-			stagedDirs[filepath.Dir(temp)] = struct{}{}
 		}
 		if err := inject(cfg, FaultPoint{Stage: FaultAfterStage, Index: i, Path: changed[i].desired.Path}); err != nil {
 			return Result{}, err
+		}
+		if err := validateNamespaceParticipants(files); err != nil {
+			return Result{}, err
+		}
+	}
+	for _, dir := range stagedNamespaceDirs {
+		if err := dir.Sync(); err != nil {
+			return Result{}, fmt.Errorf("dependency transaction: sync namespace staging directory: %w", err)
 		}
 	}
 	for _, dir := range sortedKeys(stagedDirs) {
@@ -473,7 +607,7 @@ func commitLocked(ctx context.Context, stateDir string, files []DesiredFile, cfg
 	}
 	j := journal{Version: journalVersion, ID: id, Files: make([]journalFile, len(changed)), Assertions: assertions, Reads: cfg.reads}
 	for i, file := range changed {
-		j.Files[i] = journalFile{Path: file.desired.Path, Temp: file.temp, Old: file.desired.Expected, OldMode: file.oldMode, Delete: file.desired.Delete, NewMode: file.desired.Mode}
+		j.Files[i] = journalFile{Path: file.desired.Path, Temp: file.temp, Old: file.desired.Expected, OldMode: file.oldMode, OldLinkTarget: file.desired.ExpectedLinkTarget, Delete: file.desired.Delete, NewMode: file.desired.Mode, Namespace: file.desired.Namespace}
 		if !file.desired.Delete {
 			j.Files[i].NewDigest = Digest(file.desired.Bytes)
 		}
@@ -500,7 +634,7 @@ func commitLocked(ctx context.Context, stateDir string, files []DesiredFile, cfg
 		if err := validatePublishPreconditions(j.Files, j.Assertions, i); err != nil {
 			return Result{}, err
 		}
-		if err := publish(file, cfg.syncDir); err != nil {
+		if err := publishPrepared(changed[i], file, cfg.syncDir); err != nil {
 			return Result{}, err
 		}
 		if err := inject(cfg, FaultPoint{Stage: FaultAfterPublish, Index: i, Path: file.Path}); err != nil {
@@ -513,7 +647,7 @@ func commitLocked(ctx context.Context, stateDir string, files []DesiredFile, cfg
 	if err := inject(cfg, FaultPoint{Stage: FaultAfterFinalize, Index: -1}); err != nil {
 		return Result{}, err
 	}
-	result := Result{Changed: make([]string, len(changed))}
+	result = Result{Changed: make([]string, len(changed))}
 	for i := range changed {
 		result.Changed[i] = changed[i].desired.Path
 	}
@@ -678,7 +812,17 @@ func recoverJournal(ctx context.Context, path, stateDir string, cfg options) err
 	for i, file := range j.Files {
 		state, _ := classify(file)
 		if state == "new" {
-			if err := cfg.syncDir(filepath.Dir(file.Path)); err != nil {
+			if file.Namespace != nil {
+				bound, err := bindNamespaceDestination(file.Path, file.Namespace)
+				if err != nil {
+					return fmt.Errorf("%w: namespace changed while syncing %s: %w", ErrRecoveryBlocked, file.Path, err)
+				}
+				syncErr := bound.parent.Sync()
+				closeErr := bound.Close()
+				if err := errors.Join(syncErr, closeErr); err != nil {
+					return err
+				}
+			} else if err := cfg.syncDir(filepath.Dir(file.Path)); err != nil {
 				return err
 			}
 			continue
@@ -715,7 +859,21 @@ func normalizeDesired(desired []DesiredFile) ([]DesiredFile, error) {
 		if int64(len(files[i].Bytes)) > maxDependencyFileSize {
 			return nil, fmt.Errorf("%w: desired file %s exceeds %d bytes", ErrRecoveryBlocked, files[i].Path, maxDependencyFileSize)
 		}
-		path, err := canonicalDestination(files[i].Path)
+		var path string
+		var err error
+		if files[i].ExpectedLinkTarget != "" {
+			if files[i].Namespace != nil {
+				return nil, fmt.Errorf("%w: namespace expectation cannot be combined with an expected link: %s", ErrUnsafePath, files[i].Path)
+			}
+			if !files[i].Expected.Exists || files[i].Expected.Digest != Digest([]byte(files[i].ExpectedLinkTarget)) || files[i].ExpectedMode != 0 || !files[i].Delete && files[i].Mode == 0 {
+				return nil, fmt.Errorf("%w: invalid link participant: %s", ErrUnsafePath, files[i].Path)
+			}
+			path, err = normalizeDestinationPath(files[i].Path)
+		} else if files[i].Namespace != nil {
+			path, files[i].Namespace, err = normalizeNamespaceParticipant(files[i].Path, files[i].Namespace)
+		} else {
+			path, err = canonicalDestination(files[i].Path)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -739,10 +897,78 @@ func normalizeDesired(desired []DesiredFile) ([]DesiredFile, error) {
 	return files, nil
 }
 
+func normalizeNamespaceParticipant(path string, namespace *NamespaceExpectation) (string, *NamespaceExpectation, error) {
+	if namespace == nil {
+		return "", nil, fmt.Errorf("%w: missing namespace expectation", ErrUnsafePath)
+	}
+	if err := validateCleanAbsolutePath(namespace.ScopePath); err != nil {
+		return "", nil, err
+	}
+	if namespace.ScopeInode == 0 || namespace.ParentInode == 0 {
+		return "", nil, fmt.Errorf("%w: namespace inode must be nonzero", ErrUnsafePath)
+	}
+	scopePath, err := normalizeDestinationPath(namespace.ScopePath)
+	if err != nil {
+		return "", nil, err
+	}
+	path, err = normalizeDestinationPath(path)
+	if err != nil {
+		return "", nil, err
+	}
+	copy := *namespace
+	copy.ScopePath = scopePath
+	if err := validateNamespaceExpectation(path, &copy); err != nil {
+		return "", nil, err
+	}
+	return path, &copy, nil
+}
+
+func validateNamespaceExpectation(path string, namespace *NamespaceExpectation) error {
+	if namespace == nil {
+		return nil
+	}
+	if err := validateCleanAbsolutePath(path); err != nil {
+		return err
+	}
+	if err := validateCleanAbsolutePath(namespace.ScopePath); err != nil {
+		return err
+	}
+	if namespace.ScopeInode == 0 || namespace.ParentInode == 0 || ClassifyDestination(path) != AuthorityLegacy {
+		return fmt.Errorf("%w: invalid legacy namespace expectation for %s", ErrUnsafePath, path)
+	}
+	rel, err := filepath.Rel(namespace.ScopePath, path)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return fmt.Errorf("%w: namespace path %s escapes scope %s", ErrUnsafePath, path, namespace.ScopePath)
+	}
+	return nil
+}
+
+func validateNamespaceParticipants(files []DesiredFile) error {
+	for _, file := range files {
+		if file.Namespace == nil {
+			continue
+		}
+		generation, mode, err := inspectNamespaceParticipant(file.Path, file.Namespace)
+		if err != nil {
+			return err
+		}
+		if generation != file.Expected || file.ExpectedMode != 0 && mode != file.ExpectedMode {
+			return fmt.Errorf("%w: %s", ErrGenerationConflict, file.Path)
+		}
+	}
+	return nil
+}
+
 // ValidateDestination validates the lexical destination used by a dependency
 // transaction. Existing ancestors are inspected with Lstat so a symlink cannot
 // be canonicalized into a different layer before the transaction starts.
+// Managed config/lock destinations are validated by their layer authority
+// instead: an approved link leaf stays named by its logical layer path and is
+// captured through the descriptor boundary.
 func ValidateDestination(path string) (string, error) {
+	if ClassifyDestination(path) != AuthorityLegacy {
+		return validateManagedDestinationPath(path)
+	}
 	path, err := normalizeDestinationPath(path)
 	if err != nil {
 		return "", err
@@ -761,7 +987,13 @@ func ValidateDestination(path string) (string, error) {
 // compatibility, but only when the target remains adjacent to the logical
 // config path. It never follows an ancestor symlink, and therefore cannot
 // redirect a config transaction (or its adjacent lock) outside its layer.
+// Managed layer destinations keep their logical layer path: approved links
+// are honored by the descriptor boundary at capture, read, and publication
+// time instead of being resolved lexically here.
 func CanonicalConfigDestination(path string) (string, error) {
+	if ClassifyDestination(path) != AuthorityLegacy {
+		return validateManagedDestinationPath(path)
+	}
 	path, err := normalizeDestinationPath(path)
 	if err != nil {
 		return "", err
@@ -893,6 +1125,9 @@ func prepareStateDir(path string) (string, error) {
 }
 
 func inspectDestination(path string) (Generation, fs.FileMode, error) {
+	if ClassifyDestination(path) != AuthorityLegacy {
+		return inspectManagedPath(path)
+	}
 	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
 		return Generation{}, 0, nil
@@ -1007,6 +1242,28 @@ func validateReadAssertions(reads []ReadAssertion, published map[string]Generati
 			return err
 		}
 		next, owned := published[read.Path]
+		if !owned && ClassifyDestination(read.RequestedPath) != AuthorityLegacy {
+			// The layer file was published through its managed path while
+			// the loader recorded the read at the link's resolved target:
+			// ownership follows the requested layer destination.
+			if canonical, err := canonicalManagedPath(read.RequestedPath); err == nil {
+				next, owned = published[canonical]
+			}
+		}
+		if ClassifyDestination(read.Path) != AuthorityLegacy {
+			// A managed read keeps its logical layer path; an approved link
+			// resolves through the descriptor boundary, so the lexical
+			// canonical comparison does not apply. The generation check
+			// below reads through that boundary.
+			generation, err := ReadGeneration(read.Path)
+			if err != nil {
+				return fmt.Errorf("%w: config read unavailable at %s: %w", ErrGenerationConflict, read.Path, err)
+			}
+			if generation != read.Expected && (!owned || generation != next) {
+				return fmt.Errorf("%w: config read changed at %s", ErrGenerationConflict, read.Path)
+			}
+			continue
+		}
 		canonical, err := filepath.EvalSymlinks(read.RequestedPath)
 		if errors.Is(err, os.ErrNotExist) && (!read.Expected.Exists || owned && !next.Exists) {
 			canonical, err = CanonicalConfigDestination(read.RequestedPath)
@@ -1051,9 +1308,22 @@ func validateJournalReads(j journal) error {
 
 func validateAssertions(assertions []journalAssertion) error {
 	for _, assertion := range assertions {
-		generation, mode, err := inspectDestination(assertion.Path)
-		if err != nil {
-			return err
+		var generation Generation
+		var mode fs.FileMode
+		var err error
+		if assertion.Namespace != nil {
+			if err := validateNamespaceExpectation(assertion.Path, assertion.Namespace); err != nil {
+				return fmt.Errorf("%w: invalid namespace assertion: %w", ErrRecoveryBlocked, err)
+			}
+			generation, mode, err = inspectNamespaceParticipant(assertion.Path, assertion.Namespace)
+			if err != nil {
+				return fmt.Errorf("%w: namespace assertion unavailable at %s: %w", ErrRecoveryBlocked, assertion.Path, err)
+			}
+		} else {
+			generation, mode, err = inspectDestination(assertion.Path)
+			if err != nil {
+				return err
+			}
 		}
 		if generation != assertion.Expected || mode != assertion.Mode {
 			return fmt.Errorf("%w: asserted generation changed at %s", ErrRecoveryBlocked, assertion.Path)
@@ -1062,7 +1332,61 @@ func validateAssertions(assertions []journalAssertion) error {
 	return nil
 }
 
+// publishPrepared publishes one journaled file during a live commit. Bound
+// destinations rename or unlink descriptor-relatively through the captured
+// layer boundary; legacy destinations keep the path-based behavior.
+func publishPrepared(prepared preparedFile, file journalFile, syncDir func(string) error) error {
+	if prepared.namespace != nil {
+		if err := prepared.namespace.verifyNamespace(); err != nil {
+			return err
+		}
+		if file.Delete {
+			if err := prepared.namespace.dest.RemoveLeaf(); err != nil {
+				return mapBoundaryErr(err)
+			}
+			return nil
+		}
+		if filepath.Base(file.Temp) != prepared.tempName {
+			return fmt.Errorf("%w: namespace staged name changed for %s", ErrRecoveryBlocked, file.Path)
+		}
+		if err := validateNamespaceStaged(prepared.namespace, file); err != nil {
+			return err
+		}
+		if err := prepared.namespace.verifyNamespace(); err != nil {
+			return err
+		}
+		if err := prepared.namespace.dest.Publish(prepared.staging, prepared.tempName); err != nil {
+			return mapBoundaryErr(err)
+		}
+		return nil
+	}
+	if prepared.bound == nil {
+		return publish(file, syncDir)
+	}
+	if file.Delete {
+		if err := prepared.bound.dest.RemoveLeaf(); err != nil {
+			return mapBoundaryErr(err)
+		}
+		return nil
+	}
+	if err := validateStaged(file); err != nil {
+		return err
+	}
+	if err := prepared.bound.dest.Publish(prepared.staging, prepared.tempName); err != nil {
+		return mapBoundaryErr(err)
+	}
+	return nil
+}
+
 func publish(file journalFile, syncDir func(string) error) error {
+	if file.Namespace != nil {
+		return publishNamespaceJournal(file)
+	}
+	if ClassifyDestination(file.Path) != AuthorityLegacy {
+		// Recovery rebinds the managed destination from its journaled path
+		// and publishes through a fresh capture of the layer boundary.
+		return publishManagedJournal(file, syncDir)
+	}
 	state, err := classify(file)
 	if err != nil {
 		return err
@@ -1074,8 +1398,16 @@ func publish(file journalFile, syncDir func(string) error) error {
 		return fmt.Errorf("%w: third-party bytes at %s", ErrRecoveryBlocked, file.Path)
 	}
 	if file.Delete {
-		if err := os.Remove(file.Path); err != nil {
+		if file.OldLinkTarget != "" {
+			if err := unlinkSymlinkAt(file.Path, file.OldLinkTarget); err != nil {
+				return err
+			}
+		} else if err := os.Remove(file.Path); err != nil {
 			return fmt.Errorf("dependency transaction: delete %s: %w", file.Path, err)
+		}
+	} else if file.OldLinkTarget != "" {
+		if err := replaceSymlinkAt(file); err != nil {
+			return err
 		}
 	} else {
 		if err := validateStaged(file); err != nil {
@@ -1088,7 +1420,113 @@ func publish(file journalFile, syncDir func(string) error) error {
 	return syncDir(filepath.Dir(file.Path))
 }
 
-func classify(file journalFile) (string, error) {
+func publishNamespaceJournal(file journalFile) (retErr error) {
+	state, err := classify(file)
+	if err != nil {
+		return err
+	}
+	if state == "new" {
+		return nil
+	}
+	if state != "old" {
+		return fmt.Errorf("%w: third-party bytes at %s", ErrRecoveryBlocked, file.Path)
+	}
+	bound, err := bindNamespaceDestination(file.Path, file.Namespace)
+	if err != nil {
+		return fmt.Errorf("%w: namespace rebind refused at %s: %w", ErrRecoveryBlocked, file.Path, err)
+	}
+	defer func() { retErr = errors.Join(retErr, bound.Close()) }()
+	if err := bound.verifyNamespace(); err != nil {
+		return fmt.Errorf("%w: namespace changed before recovery publication at %s: %w", ErrRecoveryBlocked, file.Path, err)
+	}
+	if file.Delete {
+		return mapBoundaryErr(bound.dest.RemoveLeaf())
+	}
+	if err := validateNamespaceStaged(bound, file); err != nil {
+		return err
+	}
+	staging, err := bound.dest.StagingDir()
+	if err != nil {
+		return mapBoundaryErr(err)
+	}
+	defer func() { retErr = errors.Join(retErr, staging.Close()) }()
+	if err := bound.dest.Publish(staging, filepath.Base(file.Temp)); err != nil {
+		return mapBoundaryErr(err)
+	}
+	return nil
+}
+
+func classify(file journalFile) (state string, retErr error) {
+	if file.Namespace != nil {
+		if file.OldLinkTarget != "" {
+			return "", fmt.Errorf("%w: namespace participant has a link expectation", ErrRecoveryBlocked)
+		}
+		if err := validateNamespaceExpectation(file.Path, file.Namespace); err != nil {
+			return "", fmt.Errorf("%w: invalid journal namespace: %w", ErrRecoveryBlocked, err)
+		}
+		bound, err := bindNamespaceDestination(file.Path, file.Namespace)
+		if err != nil {
+			return "", fmt.Errorf("%w: namespace changed at %s: %w", ErrRecoveryBlocked, file.Path, err)
+		}
+		defer func() { retErr = errors.Join(retErr, bound.Close()) }()
+		generation, mode, err := bound.inspect()
+		if err != nil {
+			return "", fmt.Errorf("%w: inspect namespace destination %s: %w", ErrRecoveryBlocked, file.Path, err)
+		}
+		if generation == file.Old && (!generation.Exists || mode == file.OldMode) {
+			return "old", nil
+		}
+		if generation == (Generation{Exists: !file.Delete, Digest: file.NewDigest}) && mode == file.NewMode {
+			return "new", nil
+		}
+		return "foreign", nil
+	}
+	if file.OldLinkTarget != "" {
+		parent, name, err := openParentNoFollow(file.Path)
+		if err != nil {
+			if !file.Delete {
+				return "", fmt.Errorf("%w: replacement path is unsafe: %w", ErrRecoveryBlocked, err)
+			}
+			return "", err
+		}
+		defer func() { _ = unix.Close(parent) }()
+		snapshot, err := inspectLinkAt(parent, name)
+		if err != nil {
+			return "", err
+		}
+		if !snapshot.exists {
+			if file.Delete {
+				return "new", nil
+			}
+			return "foreign", nil
+		}
+		if snapshot.symlink && snapshot.target == file.OldLinkTarget && snapshot.generation == file.Old {
+			return "old", nil
+		}
+		if file.Delete || snapshot.stat.Mode&unix.S_IFMT != unix.S_IFREG {
+			return "foreign", nil
+		}
+		if filepath.Clean(filepath.Dir(file.Temp)) != filepath.Clean(filepath.Dir(file.Path)) {
+			return "", fmt.Errorf("%w: replacement stage is not beside %s", ErrRecoveryBlocked, file.Path)
+		}
+		stageName := filepath.Base(file.Temp)
+		var stageInfo unix.Stat_t
+		if err := unix.Fstatat(parent, stageName, &stageInfo, unix.AT_SYMLINK_NOFOLLOW); err == nil {
+			return "foreign", nil
+		} else if !errors.Is(err, unix.ENOENT) {
+			return "", fmt.Errorf("%w: inspect replacement stage for %s: %v", ErrRecoveryBlocked, file.Path, err)
+		}
+		fd, data, current, err := readRegularFileAt(parent, name)
+		if err != nil {
+			return "", err
+		}
+		_ = unix.Close(fd)
+		if snapshot.stat.Dev != current.Dev || snapshot.stat.Ino != current.Ino || current.Nlink != 1 ||
+			uint32(current.Mode)&0o7777 != uint32(file.NewMode) || Digest(data) != file.NewDigest {
+			return "foreign", nil
+		}
+		return "new", nil
+	}
 	generation, mode, err := inspectDestination(file.Path)
 	if err != nil {
 		return "", err
@@ -1103,7 +1541,7 @@ func classify(file journalFile) (string, error) {
 }
 
 func validateStaged(file journalFile) error {
-	if err := ensureContained(filepath.Dir(file.Path), file.Temp); err != nil {
+	if err := validateStagingPath(file); err != nil {
 		return err
 	}
 	raw, info, err := readRegularFile(file.Temp, maxDependencyFileSize)
@@ -1128,9 +1566,23 @@ func validateJournal(j *journal) error {
 	destinations := make(map[string]struct{}, len(j.Files)+len(j.Assertions))
 	previous := ""
 	for _, file := range j.Files {
-		canonical, err := canonicalDestination(file.Path)
+		canonical := ""
+		var err error
+		if file.OldLinkTarget != "" {
+			canonical, err = normalizeDestinationPath(file.Path)
+		} else {
+			canonical, err = canonicalDestination(file.Path)
+		}
 		if err != nil || canonical != file.Path || file.Path <= previous {
 			return fmt.Errorf("%w: unsafe or unordered journal destination %s", ErrRecoveryBlocked, file.Path)
+		}
+		if file.Namespace != nil {
+			if file.OldLinkTarget != "" {
+				return fmt.Errorf("%w: namespace participant carries a link target", ErrRecoveryBlocked)
+			}
+			if err := validateNamespaceExpectation(file.Path, file.Namespace); err != nil {
+				return fmt.Errorf("%w: invalid journal namespace: %w", ErrRecoveryBlocked, err)
+			}
 		}
 		if err := validateGeneration(file.Old); err != nil {
 			return fmt.Errorf("%w: invalid journal digest for %s", ErrRecoveryBlocked, file.Path)
@@ -1141,12 +1593,29 @@ func validateJournal(j *journal) error {
 		if file.NewMode != file.NewMode.Perm() || file.OldMode != file.OldMode.Perm() {
 			return fmt.Errorf("%w: invalid journal mode for %s", ErrRecoveryBlocked, file.Path)
 		}
-		if file.Delete {
+		if file.OldLinkTarget != "" {
+			if !file.Old.Exists || file.Old.Digest != Digest([]byte(file.OldLinkTarget)) || file.OldMode != 0 {
+				return fmt.Errorf("%w: invalid link generation for %s", ErrRecoveryBlocked, file.Path)
+			}
+			if file.Delete {
+				if file.Temp != "" || file.NewDigest != "" || file.NewMode != 0 {
+					return fmt.Errorf("%w: invalid link deletion for %s", ErrRecoveryBlocked, file.Path)
+				}
+			} else {
+				if file.Temp == "" || file.NewDigest == "" || file.NewMode == 0 ||
+					filepath.Dir(file.Temp) != filepath.Dir(file.Path) {
+					return fmt.Errorf("%w: invalid link replacement for %s", ErrRecoveryBlocked, file.Path)
+				}
+				if err := ensureContained(filepath.Dir(file.Path), file.Temp); err != nil {
+					return fmt.Errorf("%w: %v", ErrRecoveryBlocked, err)
+				}
+			}
+		} else if file.Delete {
 			if !file.Old.Exists || file.Temp != "" || file.NewMode != 0 {
 				return fmt.Errorf("%w: invalid journal deletion for %s", ErrRecoveryBlocked, file.Path)
 			}
-		} else if err := ensureContained(filepath.Dir(file.Path), file.Temp); err != nil {
-			return fmt.Errorf("%w: %v", ErrRecoveryBlocked, err)
+		} else if err := validateStagingPath(file); err != nil {
+			return fmt.Errorf("%w: %w", ErrRecoveryBlocked, err)
 		}
 		destinations[file.Path] = struct{}{}
 		previous = file.Path
@@ -1157,6 +1626,11 @@ func validateJournal(j *journal) error {
 		_, duplicate := destinations[assertion.Path]
 		if err != nil || canonical != assertion.Path || assertion.Path <= previous || duplicate {
 			return fmt.Errorf("%w: unsafe, duplicate, or unordered journal assertion %s", ErrRecoveryBlocked, assertion.Path)
+		}
+		if assertion.Namespace != nil {
+			if err := validateNamespaceExpectation(assertion.Path, assertion.Namespace); err != nil {
+				return fmt.Errorf("%w: invalid journal assertion namespace: %w", ErrRecoveryBlocked, err)
+			}
 		}
 		if err := validateGeneration(assertion.Expected); err != nil || !assertion.Expected.Exists && assertion.Mode != 0 || assertion.Mode != assertion.Mode.Perm() {
 			return fmt.Errorf("%w: invalid journal assertion for %s", ErrRecoveryBlocked, assertion.Path)

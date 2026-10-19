@@ -3,6 +3,7 @@ package ingest
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -121,6 +122,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 	var collectionEntries []catalog.Entry
 	collectionPaths := make(map[string]string)
 	seen := make(map[string]string)
+	unavailableHooks := make(map[string]bool)
 	skippedResources := false
 
 	for _, root := range registry.Roots {
@@ -192,13 +194,50 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 				continue
 			}
 
+			if hook, ok := entry.Resource.(*hccir.Hook); ok && registry.Acquisition == store.AcquisitionMirror {
+				names, err := catalog.HookMaterializationSupportFiles(entry.Path, entry.SourceHarness)
+				if err != nil {
+					return rev, fmt.Errorf("discover hook support: %w", err)
+				}
+				clone := *hook
+				clone.SupportFiles = make(map[string]string, len(names))
+				for _, name := range names {
+					clone.SupportFiles[name] = ""
+				}
+				entry.Resource = &clone
+			}
 			files, modes, err := fileSetForResource(dir, entry)
 			if err != nil {
+				if _, hook := entry.Resource.(*hccir.Hook); hook && errors.Is(err, ErrHookSupportUnsafe) {
+					skippedResources = true
+					unavailableHooks[key] = true
+					rev.Diagnostics = append(rev.Diagnostics, RootDiagnostic{Root: root.Path, Code: "marketplace.ingest.hook-support-unavailable", Message: "Skipped hook with unsafe or unreadable support; other resources remain publishable"})
+					slog.Warn("skipped hook with unavailable support", "code", "marketplace.ingest.hook-support-unavailable", "resource", key)
+					continue
+				}
 				return rev, fmt.Errorf("support files for %s %q: %w", kind, entry.Name, err)
 			}
 			var archiveSupport map[string]hccartifact.SupportFile
 			if registry.Acquisition == store.AcquisitionMirror {
 				archiveSupport = archiveSupportFiles(files, modes)
+				if hook, ok := entry.Resource.(*hccir.Hook); ok {
+					bundled := make(map[string]hccartifact.SupportFile, len(archiveSupport))
+					hook.SupportFiles = make(map[string]string, len(archiveSupport))
+					for name, support := range archiveSupport {
+						relative := "hooks/" + name
+						bundled[relative] = support
+						hook.SupportFiles[relative] = hccartifact.SupportFileDigest(support)
+					}
+					archiveSupport = bundled
+					missing, unsupported, err := catalog.HookSupportReferenceStatus(hook.Command, hook.SupportFiles)
+					if err != nil {
+						return rev, fmt.Errorf("read hook support policy: %w", err)
+					}
+					if missing || unsupported {
+						rev.Diagnostics = append(rev.Diagnostics, RootDiagnostic{Root: root.Path, Code: "marketplace.ingest.hook-support-unavailable", Message: "Hook assets cannot be packaged by the adjacent-file policy; keep the Git source"})
+						slog.Warn("hook assets unavailable for mirrored publication", "code", "marketplace.ingest.hook-support-unavailable", "resource", key)
+					}
+				}
 			}
 			r, err := buildResource(ctx, registry, root, entry, origin, commit, policy, limits, files, archiveSupport, nil)
 			if err != nil {
@@ -324,6 +363,9 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 			key := kind + "/" + m.Name
 			rp, ok := resourceResults[key]
 			if !ok {
+				if unavailableHooks[key] {
+					return artifact.BuildResult{}, nil, fmt.Errorf("%w: collection depends on an unavailable hook", ErrHookSupportUnsafe)
+				}
 				return artifact.BuildResult{}, nil, fmt.Errorf("collection %q member %s %q not found in registry", name, kind, m.Name)
 			}
 			directResults = append(directResults, rp.result)
@@ -393,7 +435,7 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 		}
 		r, _, err := resolveCollection(entry.Name, make(map[string]bool))
 		if err != nil {
-			if strings.Contains(err.Error(), "rejected") {
+			if errors.Is(err, ErrHookSupportUnsafe) || strings.Contains(err.Error(), "rejected") {
 				slog.Warn("skipping collection without publishable leaves", "registry", registry.ID, "collection", entry.Name, "err", err)
 				continue
 			}
@@ -555,6 +597,9 @@ func BuildRegistryRevision(ctx context.Context, cfg config.Config, mpID store.Ma
 
 		if kind != "collection" && registry.Acquisition == store.AcquisitionMirror && p.result.RawArchive != nil {
 			extraBlobs = appendUpload(extraBlobs, store.ArchiveDigest(p.result.ArchiveDigest), p.result.RawArchive)
+			if p.result.PlaceholderArchive != nil {
+				extraBlobs = appendUpload(extraBlobs, store.PlaceholderArchiveKey(store.ArchiveDigest(p.result.ArchiveDigest)), p.result.PlaceholderArchive)
+			}
 		}
 	}
 
@@ -877,6 +922,14 @@ func fileSetForResource(dir string, entry catalog.Entry) (analyze.FileSet, map[s
 		}
 		seen[normalized] = struct{}{}
 		filePath := filepath.Join(resRoot, filepath.FromSlash(normalized))
+		if _, hook := entry.Resource.(*hccir.Hook); hook {
+			data, executable, err := readHookSupportFile(dir, filepath.ToSlash(filepath.Join(relRoot, normalized)))
+			if err != nil {
+				return nil, nil, fmt.Errorf("read hook support file %q: %w", rel, err)
+			}
+			files[normalized], modes[normalized] = data, executable
+			continue
+		}
 		if err := rejectSymlinkPath(resRoot, filePath); err != nil {
 			return nil, nil, fmt.Errorf("support file %q: %w", rel, err)
 		}
@@ -919,7 +972,12 @@ func resourceInfo(r hccir.Resource) (extra map[string]any, supportFiles []string
 	case *hccir.Rule:
 		return v.Extra, nil, nil
 	case *hccir.Hook:
-		return v.Extra, nil, nil
+		names := make([]string, 0, len(v.SupportFiles))
+		for name := range v.SupportFiles {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		return v.Extra, names, nil
 	case *hccir.McpServer:
 		return v.Extra, nil, nil
 	case *hccir.Collection:
@@ -1328,6 +1386,15 @@ func resourcePolicyDigest(policy analyze.Policy, limits config.Limits, license l
 }
 
 func toStoreFindings(findings []analyze.Finding, primaryPath string, body []byte, support analyze.FileSet) []store.Finding {
+	type offsetRequest struct {
+		location   *store.FindingLocation
+		runeOffset int
+	}
+	type sourceOffsets struct {
+		content   []byte
+		locations []offsetRequest
+	}
+	sources := make(map[string]*sourceOffsets)
 	out := make([]store.Finding, 0, len(findings))
 	for _, f := range findings {
 		finding := store.Finding{Code: f.Code, Severity: f.Severity, Policy: f.PolicyOutcome, Message: f.Message}
@@ -1335,47 +1402,72 @@ func toStoreFindings(findings []analyze.Finding, primaryPath string, body []byte
 			location := &store.FindingLocation{Path: primaryPath, Line: f.SourceRange.Line, Column: f.SourceRange.Column}
 			file := strings.ReplaceAll(f.SourceRange.File, "\\", "/")
 			content := body
+			sourceKey := "body"
 			if !strings.HasSuffix(file, "/body") && !strings.HasSuffix(file, "/name") && !strings.Contains(file, "/Description") && !strings.Contains(file, "/command") && !strings.Contains(file, "/prompt") && !strings.Contains(file, "/url") {
 				name := strings.TrimPrefix(file, "support/")
 				if data, ok := support[name]; ok {
 					location.Path, content = filepath.ToSlash(filepath.Join("support", name)), data
+					sourceKey = "support/" + name
 				}
 			}
 			if f.SourceRange.Line > 0 {
-				start, end := lineColumnBytes(content, f.SourceRange.Line, f.SourceRange.Column)
-				location.StartByte, location.EndByte = int64(start), int64(end)
+				source := sources[sourceKey]
+				if source == nil {
+					source = &sourceOffsets{content: content}
+					sources[sourceKey] = source
+				}
+				source.locations = append(source.locations, offsetRequest{location: location})
 			}
 			finding.Location = location
 		}
 		out = append(out, finding)
 	}
+	for _, source := range sources {
+		// Sort only the conversion requests, never the emitted findings.
+		slices.SortFunc(source.locations, func(a, b offsetRequest) int {
+			return cmp.Compare(a.location.Line, b.location.Line)
+		})
+		line, offset, runeOffset := 1, 0, 0
+		for i := range source.locations {
+			location := source.locations[i].location
+			for offset < len(source.content) && line < location.Line {
+				r, size := utf8.DecodeRune(source.content[offset:])
+				offset += size
+				runeOffset++
+				if r == '\n' {
+					line++
+				}
+			}
+			target := len(source.content)
+			if line == location.Line {
+				target = runeOffset
+				if location.Column > 1 {
+					target += min(location.Column-1, len(source.content)-target)
+				}
+			}
+			source.locations[i].runeOffset = target
+		}
+		// Columns may cross line endings. Absolute rune offsets retain that
+		// behavior without rescanning overlapping suffixes for malformed ranges.
+		slices.SortFunc(source.locations, func(a, b offsetRequest) int {
+			return cmp.Compare(a.runeOffset, b.runeOffset)
+		})
+		offset, runeOffset = 0, 0
+		for _, request := range source.locations {
+			for offset < len(source.content) && runeOffset < request.runeOffset {
+				_, size := utf8.DecodeRune(source.content[offset:])
+				offset += size
+				runeOffset++
+			}
+			end := offset
+			if offset < len(source.content) {
+				_, size := utf8.DecodeRune(source.content[offset:])
+				end += size
+			}
+			request.location.StartByte, request.location.EndByte = int64(offset), int64(end)
+		}
+	}
 	return out
-}
-
-func lineColumnBytes(content []byte, line, column int) (int, int) {
-	if line < 1 {
-		return 0, 0
-	}
-	start := 0
-	for current := 1; current < line; current++ {
-		n := bytes.IndexByte(content[start:], '\n')
-		if n < 0 {
-			return len(content), len(content)
-		}
-		start += n + 1
-	}
-	if column > 1 {
-		for i, current := start, 1; i < len(content) && current < column; current++ {
-			_, size := utf8.DecodeRune(content[i:])
-			i += size
-			start = i
-		}
-	}
-	if start >= len(content) {
-		return start, start
-	}
-	_, size := utf8.DecodeRune(content[start:])
-	return start, start + size
 }
 
 func appendUpload(existing []store.BlobUpload, digest store.ArchiveDigest, data []byte) []store.BlobUpload {

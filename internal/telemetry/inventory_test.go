@@ -21,6 +21,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// spec: telemetry/inventory-is-detailed-primary-only
 func TestInventoryRoutesOnlyToDetailedPrimary(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
@@ -31,12 +32,12 @@ func TestInventoryRoutesOnlyToDetailedPrimary(t *testing.T) {
 	community := metricNamesServer(t, &communityMu, &communityNames)
 	defer community.Close()
 
-	user := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{
+	user := amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{
 		Level:              tmcfg.LevelDetailed,
 		Endpoint:           primary.URL,
 		CommunityReporting: boolPtr(true),
 	}}
-	state, err := ResolveTelemetryConfig(nil, user, community.URL, "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, community.URL, "")
 	if err != nil {
 		t.Fatalf("resolve telemetry: %v", err)
 	}
@@ -96,6 +97,7 @@ func TestInventoryRoutesOnlyToDetailedPrimary(t *testing.T) {
 	}
 }
 
+// spec: telemetry/oversized-inventory-is-omitted-whole
 func TestInventoryBoundsContract(t *testing.T) {
 	if MaxInventoryRegistries != 1_000 || MaxInventoryResources != 10_000 || MaxInventoryAttributeBytes != 512 {
 		t.Fatalf("inventory bounds = %d/%d/%d", MaxInventoryRegistries, MaxInventoryResources, MaxInventoryAttributeBytes)
@@ -150,8 +152,8 @@ func TestInventoryProviderOverridesEnvironmentCardinalityLimit(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	user := amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve telemetry: %v", err)
 	}
@@ -234,8 +236,8 @@ func TestShutdownPersistsEveryAcceptedInventoryObservation(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	user := amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve telemetry: %v", err)
 	}
@@ -269,8 +271,8 @@ func TestConcurrentRecordInventoryAndRepeatedShutdown(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	user := amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve telemetry: %v", err)
 	}
@@ -308,6 +310,7 @@ func TestConcurrentRecordInventoryAndRepeatedShutdown(t *testing.T) {
 	}
 }
 
+// spec: telemetry/resolution-and-export-failures-do-not-become-inventory-success
 func TestRecordInventoryDoesNotBlockOnExport(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
@@ -326,8 +329,8 @@ func TestRecordInventoryDoesNotBlockOnExport(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	user := amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve telemetry: %v", err)
 	}
@@ -356,6 +359,7 @@ func TestRecordInventoryDoesNotBlockOnExport(t *testing.T) {
 	}
 }
 
+// spec: telemetry/fingerprints-and-observation-order-are-stable
 func TestSequentialInventorySnapshotsExportOnceInOrder(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
@@ -388,8 +392,8 @@ func TestSequentialInventorySnapshotsExportOnceInOrder(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	user := amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve telemetry: %v", err)
 	}
@@ -438,8 +442,8 @@ func TestInventoryGaugeValuesAndAttributes(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	user := amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve telemetry: %v", err)
 	}
@@ -497,6 +501,289 @@ func TestInventoryGaugeValuesAndAttributes(t *testing.T) {
 	})
 }
 
+// spec: marketplace-api/hosted-wire-identity-survives-detailed-export
+func TestInventorySourceIdentityAttributesAreDetailedAndPointScoped(t *testing.T) {
+	for _, test := range []struct {
+		level         string
+		wantInventory bool
+	}{
+		{level: tmcfg.LevelDetailed, wantInventory: true},
+		{level: tmcfg.LevelBasic},
+		{level: tmcfg.LevelOff},
+	} {
+		t.Run(test.level, func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			srv, captured := inventoryMetricsCaptureServer(t)
+			user := amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{Level: test.level, Endpoint: srv.URL}}
+			state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
+			if err != nil {
+				t.Fatalf("resolve telemetry: %v", err)
+			}
+			tel, err := New(context.Background(), state, nil)
+			if err != nil {
+				t.Fatalf("new telemetry: %v", err)
+			}
+			snapshot := inventorySnapshotWithHostedIdentity(nil, func(resource *InventoryResource) {
+				resource.Name = "café"
+			})
+			tel.RecordInventory(context.Background(), snapshot)
+			if err := tel.Shutdown(context.Background()); err != nil {
+				t.Fatalf("shutdown: %v", err)
+			}
+
+			req := captured()
+			if !test.wantInventory {
+				if req != nil {
+					t.Fatalf("%s telemetry exported inventory", test.level)
+				}
+				return
+			}
+			if req == nil {
+				t.Fatal("detailed telemetry did not export inventory")
+			}
+			snapshotMetric := findMetric(req, string(tmcfg.InventorySnapshotName))
+			if snapshotMetric == nil {
+				t.Fatal("snapshot metric missing")
+			}
+			snapshotAttrs := stringAttributes(snapshotMetric.GetGauge().GetDataPoints()[0].GetAttributes())
+			_, hasSourceKind := snapshotAttrs["source.kind"]
+			_, hasMarketplaceID := snapshotAttrs["marketplace.id"]
+			if hasSourceKind || hasMarketplaceID {
+				t.Fatalf("snapshot point gained resource identity labels: %v", snapshotAttrs)
+			}
+
+			registryPoints := findMetric(req, string(tmcfg.InventoryRegistryName)).GetGauge().GetDataPoints()
+			resourcePoints := findMetric(req, string(tmcfg.InventoryResourceName)).GetGauge().GetDataPoints()
+			if len(registryPoints) != 2 || len(resourcePoints) != 2 {
+				t.Fatalf("registry/resource points = %d/%d, want one legacy and one hosted", len(registryPoints), len(resourcePoints))
+			}
+			registryByID := make(map[string]map[string]string, len(registryPoints))
+			for _, point := range registryPoints {
+				attrs := stringAttributes(point.GetAttributes())
+				registryByID[attrs["registry.id"]] = attrs
+			}
+			resourceByName := make(map[string]map[string]string, len(resourcePoints))
+			for _, point := range resourcePoints {
+				attrs := stringAttributes(point.GetAttributes())
+				resourceByName[attrs["resource.name"]] = attrs
+			}
+			for _, attrs := range []map[string]string{registryByID["github.com/adyen/legacy"], resourceByName["legacy-review"]} {
+				_, hasSourceKind := attrs["source.kind"]
+				_, hasMarketplaceID := attrs["marketplace.id"]
+				if attrs == nil || hasSourceKind || hasMarketplaceID {
+					t.Fatalf("legacy point gained hosted identity labels: %v", attrs)
+				}
+			}
+			for _, attrs := range []map[string]string{registryByID["awesome-ai"], resourceByName["café"]} {
+				if attrs == nil || attrs["source.kind"] != "marketplace" || attrs["marketplace.id"] != "adyen" {
+					t.Fatalf("hosted point identity = %v", attrs)
+				}
+			}
+			for id, attrs := range registryByID {
+				if attrs["config.fingerprint"] != snapshotAttrs["config.fingerprint"] {
+					t.Fatalf("registry point %q fingerprint = %q, want snapshot fingerprint %q", id, attrs["config.fingerprint"], snapshotAttrs["config.fingerprint"])
+				}
+			}
+			for name, attrs := range resourceByName {
+				if attrs["config.fingerprint"] != snapshotAttrs["config.fingerprint"] {
+					t.Fatalf("resource point %q fingerprint = %q, want snapshot fingerprint %q", name, attrs["config.fingerprint"], snapshotAttrs["config.fingerprint"])
+				}
+			}
+		})
+	}
+}
+
+// spec: marketplace-api/invalid-hosted-identity-preserves-safe-omission
+func TestInventoryRejectsInvalidHostedIdentityAtRecordingBoundary(t *testing.T) {
+	tests := []struct {
+		name             string
+		registryMutation func(*InventoryRegistry)
+		resourceMutation func(*InventoryResource)
+		want             InventoryOmissionReason
+	}{
+		{
+			name:             "unknown source kind",
+			registryMutation: func(registry *InventoryRegistry) { registry.SourceKind = "unknown" },
+			resourceMutation: func(resource *InventoryResource) { resource.SourceKind = "unknown" },
+			want:             InventoryOmissionInvalid,
+		},
+		{
+			name:             "legacy identity pair mismatch",
+			registryMutation: func(registry *InventoryRegistry) { registry.SourceKind = "" },
+			resourceMutation: func(resource *InventoryResource) { resource.SourceKind = "" },
+			want:             InventoryOmissionInvalid,
+		},
+		{
+			name:             "missing hosted instance",
+			registryMutation: func(registry *InventoryRegistry) { registry.MarketplaceID = "" },
+			resourceMutation: func(resource *InventoryResource) { resource.MarketplaceID = "" },
+			want:             InventoryOmissionInvalid,
+		},
+		{
+			name:             "missing registry identity",
+			registryMutation: func(registry *InventoryRegistry) { registry.ID = "" },
+			resourceMutation: func(resource *InventoryResource) { resource.RegistryID = "" },
+			want:             InventoryOmissionInvalid,
+		},
+		{
+			name:             "missing canonical resource name",
+			resourceMutation: func(resource *InventoryResource) { resource.Name = "" },
+			want:             InventoryOmissionInvalid,
+		},
+		{
+			name:             "unsafe Marketplace ID",
+			registryMutation: func(registry *InventoryRegistry) { registry.MarketplaceID = ".." },
+			resourceMutation: func(resource *InventoryResource) { resource.MarketplaceID = ".." },
+			want:             InventoryOmissionInvalid,
+		},
+		{
+			name:             "unsafe hosted registry identity",
+			registryMutation: func(registry *InventoryRegistry) { registry.ID = "../private" },
+			resourceMutation: func(resource *InventoryResource) { resource.RegistryID = "../private" },
+			want:             InventoryOmissionInvalid,
+		},
+		{
+			name:             "unsafe canonical resource name",
+			resourceMutation: func(resource *InventoryResource) { resource.Name = "../private" },
+			want:             InventoryOmissionInvalid,
+		},
+		{
+			name:             "invalid UTF-8 Marketplace ID",
+			registryMutation: func(registry *InventoryRegistry) { registry.MarketplaceID = string([]byte{0xff}) },
+			resourceMutation: func(resource *InventoryResource) { resource.MarketplaceID = string([]byte{0xff}) },
+			want:             InventoryOmissionInvalid,
+		},
+		{
+			name: "oversized source kind",
+			registryMutation: func(registry *InventoryRegistry) {
+				registry.SourceKind = strings.Repeat("s", MaxInventoryAttributeBytes+1)
+			},
+			resourceMutation: func(resource *InventoryResource) {
+				resource.SourceKind = strings.Repeat("s", MaxInventoryAttributeBytes+1)
+			},
+			want: InventoryOmissionTooLarge,
+		},
+		{
+			name: "oversized marketplace ID",
+			registryMutation: func(registry *InventoryRegistry) {
+				registry.MarketplaceID = strings.Repeat("m", MaxInventoryAttributeBytes+1)
+			},
+			resourceMutation: func(resource *InventoryResource) {
+				resource.MarketplaceID = strings.Repeat("m", MaxInventoryAttributeBytes+1)
+			},
+			want: InventoryOmissionTooLarge,
+		},
+		{
+			name:             "oversized registry ID",
+			registryMutation: func(registry *InventoryRegistry) { registry.ID = strings.Repeat("r", MaxInventoryAttributeBytes+1) },
+			resourceMutation: func(resource *InventoryResource) {
+				resource.RegistryID = strings.Repeat("r", MaxInventoryAttributeBytes+1)
+			},
+			want: InventoryOmissionTooLarge,
+		},
+		{
+			name:             "oversized canonical name",
+			resourceMutation: func(resource *InventoryResource) { resource.Name = strings.Repeat("n", MaxInventoryAttributeBytes+1) },
+			want:             InventoryOmissionTooLarge,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			srv, captured := inventoryMetricsCaptureServer(t)
+			user := amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
+			state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
+			if err != nil {
+				t.Fatalf("resolve telemetry: %v", err)
+			}
+			tel, err := New(context.Background(), state, nil)
+			if err != nil {
+				t.Fatalf("new telemetry: %v", err)
+			}
+			tel.RecordInventory(context.Background(), inventorySnapshotWithHostedIdentity(test.registryMutation, test.resourceMutation))
+			if err := tel.Shutdown(context.Background()); err != nil {
+				t.Fatalf("shutdown: %v", err)
+			}
+
+			req := captured()
+			if req == nil {
+				t.Fatal("invalid inventory did not export its omission")
+			}
+			for _, name := range []string{string(tmcfg.InventorySnapshotName), string(tmcfg.InventoryRegistryName), string(tmcfg.InventoryResourceName)} {
+				if findMetric(req, name) != nil {
+					t.Fatalf("invalid inventory exported partial metric %q", name)
+				}
+			}
+			omissions := findMetric(req, string(tmcfg.InventoryOmissionsName))
+			if omissions == nil {
+				t.Fatal("inventory omission metric missing")
+			}
+			points := omissions.GetSum().GetDataPoints()
+			if len(points) != 1 || points[0].GetAsInt() != 1 || stringAttributes(points[0].GetAttributes())["reason"] != string(test.want) {
+				t.Fatalf("omission points = %v, want one %q omission", points, test.want)
+			}
+		})
+	}
+}
+
+func inventorySnapshotWithHostedIdentity(registryMutation func(*InventoryRegistry), resourceMutation func(*InventoryResource)) InventorySnapshot {
+	snapshot := InventorySnapshot{
+		Fingerprint: strings.Repeat("a", 64), Harnesses: "factory", HarnessScope: "repo",
+		Registries: []InventoryRegistry{
+			{ID: "github.com/adyen/legacy", Location: "https://github.com/Adyen/legacy.git", ConfigScope: "repo"},
+			{ID: "awesome-ai", SourceKind: InventorySourceMarketplace, MarketplaceID: "adyen", Location: "marketplace", ConfigScope: "repo"},
+		},
+		Resources: []InventoryResource{
+			{RegistryID: "github.com/adyen/legacy", RegistryLocation: "https://github.com/Adyen/legacy.git", Kind: "skill", Name: "legacy-review", ConfigScope: "repo"},
+			{RegistryID: "awesome-ai", SourceKind: InventorySourceMarketplace, MarketplaceID: "adyen", RegistryLocation: "marketplace", Kind: "skill", Name: "canonical-review", ConfigScope: "repo"},
+		},
+	}
+	if registryMutation != nil {
+		registryMutation(&snapshot.Registries[1])
+	}
+	if resourceMutation != nil {
+		resourceMutation(&snapshot.Resources[1])
+	}
+	return snapshot
+}
+
+func inventoryMetricsCaptureServer(t *testing.T) (*httptest.Server, func() *metricspb.ExportMetricsServiceRequest) {
+	t.Helper()
+	var mu sync.Mutex
+	var captured *metricspb.ExportMetricsServiceRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/metrics" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read metrics: %v", err)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		var req metricspb.ExportMetricsServiceRequest
+		if err := proto.Unmarshal(body, &req); err != nil {
+			t.Errorf("unmarshal metrics: %v", err)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if findMetric(&req, string(tmcfg.InventorySnapshotName)) != nil || findMetric(&req, string(tmcfg.InventoryOmissionsName)) != nil {
+			mu.Lock()
+			captured = &req
+			mu.Unlock()
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, func() *metricspb.ExportMetricsServiceRequest {
+		mu.Lock()
+		defer mu.Unlock()
+		return captured
+	}
+}
+
+// spec: telemetry/oversized-inventory-is-omitted-whole
 func TestInventoryOmissionCounterHasBoundedReason(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
@@ -517,8 +804,8 @@ func TestInventoryOmissionCounterHasBoundedReason(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	user := amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelDetailed, Endpoint: srv.URL}}
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve telemetry: %v", err)
 	}
@@ -553,8 +840,8 @@ func TestInventoryNoOpAtBasicLevel(t *testing.T) {
 	var names []string
 	srv := metricNamesServer(t, &mu, &names)
 	defer srv.Close()
-	user := &amconfig.Config{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelBasic, Endpoint: srv.URL}}
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	user := amconfig.Settings{Telemetry: &tmcfg.TelemetryConfig{Level: tmcfg.LevelBasic, Endpoint: srv.URL}}
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve telemetry: %v", err)
 	}

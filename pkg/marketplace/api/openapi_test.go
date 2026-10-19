@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/inspection"
@@ -35,6 +36,7 @@ func readOpenAPIDocument(t *testing.T) map[string]any {
 	return doc
 }
 
+// spec: marketplace-api/openapi-document-declares-the-marketplace-paths-and-schemas
 func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 	doc := readOpenAPIDocument(t)
 	paths, ok := doc["paths"].(map[string]any)
@@ -63,6 +65,7 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 		"/api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/inspection/content",
 		"/api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/inspection/content/{digest}",
 		"/api/v1/artifacts/sha256/{digest}",
+		"/api/v1/archives/sha256/{digest}",
 		"/r/{registry}/{kind}/{name}",
 		"/r/{registry}/{kind}/{name}/revisions/{revision}",
 		"/healthz",
@@ -85,6 +88,99 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 		if _, ok := schemas[name]; !ok {
 			t.Errorf("openapi missing required schema %q", name)
 		}
+	}
+}
+
+// spec: marketplace-admin-auth/published-contract-matches-browser-and-json-behavior
+func TestOpenAPIAdminAuthDocumentsBrowserAndJSONErrors(t *testing.T) {
+	paths := readOpenAPIDocument(t)["paths"].(map[string]any)
+	wantErrors := map[string]map[string][]string{
+		"/api/v1/admin/auth/login": {
+			"400": {"authentication_request_invalid"},
+			"403": {"origin_rejected"},
+			"503": {"authentication_unavailable", "admin_unavailable"},
+		},
+		"/api/v1/admin/auth/callback": {
+			"400": {"authentication_request_invalid"},
+			"401": {"authentication_rejected"},
+			"403": {"forbidden", "origin_rejected"},
+			"503": {"authentication_unavailable", "admin_unavailable"},
+		},
+	}
+	for path, statuses := range wantErrors {
+		operation := paths[path].(map[string]any)["get"].(map[string]any)
+		responses := operation["responses"].(map[string]any)
+		redirect := responses["303"].(map[string]any)["description"].(string)
+		if !strings.Contains(redirect, "instance.browser_base") || strings.Contains(redirect, "fixed same-origin /marketplace/auth/error") {
+			t.Errorf("%s 303 description does not derive the browser error page from instance.browser_base: %q", path, redirect)
+		}
+		var acceptFound bool
+		var nextDescription string
+		for _, parameter := range operation["parameters"].([]any) {
+			p := parameter.(map[string]any)
+			if p["name"] == "Accept" && p["in"] == "header" {
+				acceptFound = true
+			}
+			if p["name"] == "next" && p["in"] == "query" {
+				nextDescription, _ = p["description"].(string)
+			}
+		}
+		if !acceptFound {
+			t.Errorf("%s does not document the Accept negotiation header", path)
+		}
+		if path == "/api/v1/admin/auth/login" && (!strings.Contains(nextDescription, "instance.browser_base") || !strings.Contains(nextDescription, "/admin") || !strings.Contains(nextDescription, "/marketplace/admin")) {
+			t.Errorf("%s does not document configured and legacy administration destinations: %q", path, nextDescription)
+		}
+		for status, codes := range statuses {
+			response, ok := responses[status].(map[string]any)
+			if !ok {
+				t.Errorf("%s %s error response missing", path, status)
+				continue
+			}
+			description, _ := response["description"].(string)
+			for _, code := range codes {
+				if !strings.Contains(description, code) {
+					t.Errorf("%s %s description omits code %q: %q", path, status, code, description)
+				}
+			}
+			media, ok := response["content"].(map[string]any)["application/json"]
+			if !ok {
+				t.Errorf("%s %s lacks an application/json error body", path, status)
+				continue
+			}
+			schema, ok := media.(map[string]any)["schema"].(map[string]any)
+			if !ok || schema["type"] != "object" {
+				t.Errorf("%s %s error schema is not an object: %v", path, status, media)
+				continue
+			}
+			properties, _ := schema["properties"].(map[string]any)
+			for _, field := range []string{"code", "message"} {
+				property, ok := properties[field].(map[string]any)
+				if !ok || property["type"] != "string" {
+					t.Errorf("%s %s error schema property %q is not a string schema: %v", path, status, field, properties[field])
+				}
+				required, _ := schema["required"].([]any)
+				if !slices.ContainsFunc(required, func(item any) bool { return item == field }) {
+					t.Errorf("%s %s error schema does not require %q", path, status, field)
+				}
+			}
+		}
+	}
+}
+
+// spec: marketplace-api/capabilities-document-matches-the-openapi-contract
+func TestDefaultCapabilitiesMatchOpenAPIEnums(t *testing.T) {
+	caps := DefaultCapabilities()
+	if !slices.Equal(caps.APIVersions, []string{"v1"}) {
+		t.Errorf("APIVersions = %v, want [v1]", caps.APIVersions)
+	}
+	if !slices.Equal(caps.ArtifactSchemaVersions, []string{"v1"}) {
+		t.Errorf("ArtifactSchemaVersions = %v, want [v1]", caps.ArtifactSchemaVersions)
+	}
+	properties := readOpenAPIDocument(t)["components"].(map[string]any)["schemas"].(map[string]any)["Capabilities"].(map[string]any)["properties"].(map[string]any)
+	enum := properties["resource_kinds"].(map[string]any)["items"].(map[string]any)["enum"].([]any)
+	if !sameAnyStrings(enum, caps.ResourceKinds) {
+		t.Errorf("Capabilities.resource_kinds enum = %v, DefaultCapabilities().ResourceKinds = %v", enum, caps.ResourceKinds)
 	}
 }
 
@@ -217,6 +313,7 @@ func sameAnyStrings(raw []any, want []string) bool {
 	return true
 }
 
+// spec: marketplace-api/inspection-content-routes-serve-the-public-media-types
 func TestOpenAPIMediaTypesMatchInspectionContract(t *testing.T) {
 	doc := readOpenAPIDocument(t)
 	paths := doc["paths"].(map[string]any)
@@ -247,6 +344,7 @@ func TestOpenAPIMediaTypesMatchInspectionContract(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/well-known-document-exposes-browser-templates-only-when-configured
 func TestOpenAPIBrowserRoutesAreNuxtHTMLAndWellKnownTemplatesOptional(t *testing.T) {
 	doc := readOpenAPIDocument(t)
 	paths := doc["paths"].(map[string]any)
@@ -489,5 +587,24 @@ func TestOpenAPIPublicURLSchemasDescribeSanitizedValues(t *testing.T) {
 	publisherURL := publisher["properties"].(map[string]any)["url"].(map[string]any)
 	if publisherURL["format"] != "uri" || publisherURL["description"] == nil {
 		t.Errorf("Publisher.url is not documented as a sanitized URI: %#v", publisherURL)
+	}
+}
+
+// spec: marketplace-api/placeholder-archive-route-is-documented
+func TestOpenAPIPlaceholderArchiveRouteIsDocumented(t *testing.T) {
+	doc := readOpenAPIDocument(t)
+	paths := doc["paths"].(map[string]any)
+	path, ok := paths["/api/v1/archives/sha256/{digest}"].(map[string]any)
+	if !ok {
+		t.Fatal("openapi missing placeholder archive path")
+	}
+	responses := path["get"].(map[string]any)["responses"].(map[string]any)
+	if _, ok := responses["200"].(map[string]any)["content"].(map[string]any)["application/vnd.agent-marketplace.artifact.v1.tar+gzip"]; !ok {
+		t.Fatal("placeholder archive 200 response lacks the artifact media type")
+	}
+	for _, code := range []string{"403", "404", "410", "500"} {
+		if _, ok := responses[code]; !ok {
+			t.Fatalf("placeholder archive route missing %s response", code)
+		}
 	}
 }

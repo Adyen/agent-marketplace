@@ -185,18 +185,6 @@ func recordToggleActionSpan(ctx context.Context, act toggleAction, kind ir.Resou
 	})
 }
 
-func tabName(t tab) string {
-	switch t {
-	case tabScope:
-		return "scope"
-	case tabRegistry:
-		return "registry"
-	case tabStatus:
-		return "status"
-	}
-	return "unknown"
-}
-
 func scopeName(s scope) string {
 	switch s {
 	case scopeGlobal:

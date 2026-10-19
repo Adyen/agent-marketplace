@@ -12,6 +12,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
+// spec: deployed-acquisition-locks/git-only-lock-gains-marketplace-evidence
 func TestSyncUpgradesGitOnlyLockWhenMarketplaceSourceIsAdded(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -155,6 +156,7 @@ func TestMergeInstallBindingsRetainsLockVersionAndMarketplaceEvidence(t *testing
 	}
 }
 
+// spec: deployed-acquisition-locks/check-reports-changes-to-missing-locks
 func TestV1LockCheckReportsVersionUpgradeRequiredWithoutWriting(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

@@ -79,13 +79,15 @@ When `AGENT_MARKETPLACE_TELEMETRY_ENDPOINT` points somewhere other than your con
 | Command | What it does |
 |---|---|
 | `agent-marketplace telemetry status` | Shows the effective level and where it came from, the primary endpoint host, header names, retention policy, community reporting, whether the installation is managed by an organization, the installation ID, pending records, retained diagnostic payloads, the last delivery failure, and any fields the organization locks. |
-| `agent-marketplace telemetry enable --level <basic\|detailed> [--endpoint <url>]` | Saves the level (and optional endpoint) in your user config. Run `agent-marketplace init` first. Use `telemetry disable` to turn telemetry off. |
+| `agent-marketplace telemetry enable --level <basic\|detailed> [--endpoint <url>]` | Saves the level (and optional endpoint) in your user config. It requires an existing user config (`agent-marketplace init` creates one). `telemetry disable` turns telemetry off. |
 | `agent-marketplace telemetry disable` | Sets your user level to `off`. |
 | `agent-marketplace telemetry preview --level <basic\|detailed\|diagnostic>` | Writes an example payload with sample values to a local file and prints its path. Nothing is sent. The `diagnostic` preview asks for confirmation, or needs `--diagnostic-accept-sensitive-data` when not run in a [terminal](../glossary.md#terminal). |
 | `agent-marketplace telemetry reset-id` | Deletes the installation ID, queued records, and retained diagnostic payloads, then creates a new ID and prints it. |
 | `agent-marketplace telemetry purge` | Deletes queued records and retained diagnostic payloads, and prints how many of each it removed. |
 
 `agent-marketplace init` and the `telemetry` commands themselves never send telemetry.
+
+`telemetry reset-id` reports cleanup errors instead of claiming a completed reset or creating a replacement ID. A failure can occur after deleting the old ID and queued records. Fix the filesystem permissions and retry to finish removing retained diagnostics and create a new ID.
 
 ## What each level sends
 
@@ -122,14 +124,16 @@ At the `detailed` level, the names of your registries' Git hosts and repositorie
 
 ## Diagnostic payloads
 
-Add `--diagnostic` to a command when you want to send one detailed capture of that run, for example to help someone investigate a problem. It needs the effective level `detailed`.
+`--diagnostic` captures one run for review before export. It needs the effective level `detailed`.
 
 1. The CLI records the run's metrics, traces, and diagnostic events in memory. URL credentials are removed.
 2. When the command ends, it writes the payload to `payload-<trace-id>.json` under `$XDG_STATE_HOME/agent-marketplace/telemetry/diagnostic/` (default `~/.local/state/agent-marketplace/telemetry/diagnostic/`) and prints the path, destination host, retention policy, installation ID, and trace ID. Only you can read the file.
 3. In a terminal, it asks `Proceed with export? [y/N]`. Outside a terminal it sends nothing unless you also pass `--diagnostic-accept-sensitive-data`.
-4. If you agree, it sends the payload to the primary endpoint and deletes the file. If you decline, or the export fails, the file stays where it is.
+4. If you agree, it sends the payload to the primary endpoint and deletes the file. If delivery succeeds but local deletion fails, it reports the cleanup error and retained path instead of successful completion. If you decline, or delivery fails, the file stays where it is.
 
 The payload can contain sensitive details. Review the file before you agree to send it. Diagnostic payloads are never added to the normal delivery queue. `telemetry purge` or `telemetry reset-id` deletes retained ones.
+
+Diagnostic failures, including cleanup errors, do not change the investigated command's exit status.
 
 ## Local files
 

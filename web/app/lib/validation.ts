@@ -155,6 +155,7 @@ export function normalizeResourceListItem(input: unknown, label = 'resource'): R
     ...(object.description === undefined ? {} : { description: boundedString(object.description, `${label}.description`) }),
     ...(metadata === undefined ? {} : { metadata }),
     ...(object.score === undefined ? {} : { score: boundedNumber(object.score, `${label}.score`) }),
+    ...(object.installation_count === undefined ? {} : { installation_count: boundedInteger(object.installation_count, `${label}.installation_count`, Number.MAX_SAFE_INTEGER) }),
     ...(availability === undefined ? {} : { availability }),
   }
 }
@@ -248,6 +249,13 @@ function normalizeResourceRevisionValue(input: unknown, expected: ExpectedResour
     manifest_digest: requiredDigest(occurrenceObject.manifest_digest, 'occurrence.manifest_digest'),
   }
 
+  const sourceObject = object.source === undefined ? undefined : asObject(object.source, 'source')
+  const source = sourceObject === undefined ? undefined : {
+    repository_url: requiredString(sourceObject.repository_url, 'source.repository_url'),
+    path: requiredString(sourceObject.path, 'source.path'),
+    commit: requiredCommit(sourceObject.commit, 'source.commit'),
+  }
+
   const currentAvailabilityObject = object.current_availability === undefined ? undefined : asObject(object.current_availability, 'current_availability')
   const currentAvailability = currentAvailabilityObject === undefined ? undefined : normalizeListAvailability(currentAvailabilityObject.availability, 'current_availability.availability')
   const revocationObject = object.revocation === undefined ? undefined : asObject(object.revocation, 'revocation')
@@ -261,6 +269,7 @@ function normalizeResourceRevisionValue(input: unknown, expected: ExpectedResour
     ...optionalString(object, 'description'),
     assessment,
     occurrence,
+    ...(source === undefined ? {} : { source }),
     ...(currentAvailability === undefined ? {} : { current_availability: { availability: currentAvailability } }),
     ...(revocationObject === undefined ? {} : { revocation: {
       kind: revocationKind as NonNullable<ResourceRevision['revocation']>['kind'],
@@ -518,8 +527,8 @@ function boundedUnknown(value: unknown, label: string, depth = 0): unknown {
   return Object.fromEntries(Object.entries(object).map(([key, item]) => [boundedString(key, `${label} key`), boundedUnknown(item, `${label}.${key}`, depth + 1)]))
 }
 
-function boundedInteger(value: unknown, label: string): number {
-  if (!Number.isInteger(value) || (value as number) < 0 || (value as number) > 1_000_000_000) throw new ApiValidationError(`${label} must be a bounded non-negative integer`)
+function boundedInteger(value: unknown, label: string, max = 1_000_000_000): number {
+  if (!Number.isInteger(value) || (value as number) < 0 || (value as number) > max) throw new ApiValidationError(`${label} must be a bounded non-negative integer`)
   return value as number
 }
 

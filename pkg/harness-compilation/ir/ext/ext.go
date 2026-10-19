@@ -11,6 +11,49 @@ type Bag struct {
 	Gemini   *Gemini   `json:"gemini,omitempty"`
 	Claude   *Claude   `json:"claude,omitempty"`
 	Codex    *Codex    `json:"codex,omitempty"`
+	OpenCode *OpenCode `json:"opencode,omitempty"`
+}
+
+// OpenCode preserves native command and agent metadata. Permission rules use
+// slices because OpenCode applies them in authored order (last match wins).
+type OpenCode struct {
+	Agent       string              `json:"agent,omitempty"`
+	Model       string              `json:"model,omitempty"`
+	Mode        string              `json:"mode,omitempty"`
+	Subtask     *bool               `json:"subtask,omitempty"`
+	Hidden      *bool               `json:"hidden,omitempty"`
+	Temperature *float64            `json:"temperature,omitempty"`
+	Steps       *int                `json:"steps,omitempty"`
+	ToolsSet    bool                `json:"toolsSet,omitempty"`
+	Tools       map[string]bool     `json:"tools,omitempty"`
+	Permission  *OpenCodePermission `json:"permission,omitempty"`
+	MCP         *OpenCodeMCP        `json:"mcp,omitempty"`
+}
+
+type OpenCodePermission struct {
+	Action string                   `json:"action,omitempty"`
+	Rules  []OpenCodePermissionRule `json:"rules,omitempty"`
+}
+
+type OpenCodePermissionRule struct {
+	Tool        string                      `json:"tool"`
+	Action      string                      `json:"action,omitempty"`
+	PatternsSet bool                        `json:"patternsSet,omitempty"`
+	Patterns    []OpenCodePermissionPattern `json:"patterns,omitempty"`
+}
+
+type OpenCodePermissionPattern struct {
+	Pattern string `json:"pattern"`
+	Action  string `json:"action"`
+}
+
+type OpenCodeMCP struct {
+	// NativeValues distinguishes native reference syntax from canonical IR
+	// interpolation. Native values are never expanded by the compiler.
+	NativeValues  bool   `json:"nativeValues,omitempty"`
+	Timeout       *int   `json:"timeout,omitempty"`
+	OAuthDisabled *bool  `json:"oauthDisabled,omitempty"`
+	OAuthScope    string `json:"oauthScope,omitempty"`
 }
 
 // Codex preserves documented native fields without changing canonical semantics.
@@ -47,6 +90,9 @@ type CodexMCP struct {
 type Factory struct {
 	ReasoningEffort string `json:"reasoningEffort,omitempty"`
 	Isolation       string `json:"isolation,omitempty"`
+	// ToolsCategory records a droid's tools category string, such as
+	// read-only, instead of an explicit tool list.
+	ToolsCategory string `json:"toolsCategory,omitempty"`
 }
 
 // Cursor preserves Cursor-native values when they should be emitted verbatim
@@ -90,6 +136,7 @@ type GeminiMCPServer struct {
 	Args    []string          `json:"args,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
 	URL     string            `json:"url,omitempty"`
+	Extra   map[string]any    `json:"extra,omitempty"`
 }
 
 // GeminiTOMLCommand preserves Gemini command TOML metadata.
@@ -109,4 +156,9 @@ type Claude struct {
 	Effort    string   `json:"effort,omitempty"`
 	Isolation string   `json:"isolation,omitempty"`
 	HookType  string   `json:"hookType,omitempty"`
+	// NativeControls holds Claude execution controls (subagent permissionMode,
+	// mcpServers and hooks; skill and command hooks) recorded by Claude
+	// ingestion, keyed as authored. Claude compilation emits these controls
+	// only from here.
+	NativeControls map[string]any `json:"nativeControls,omitempty"`
 }

@@ -60,11 +60,14 @@ func TestLoadSubagent(t *testing.T) {
 	if subagent.Name() != "reviewer" {
 		t.Fatalf("Name() = %q, want %q", subagent.Name(), "reviewer")
 	}
-	if subagent.Model != "sonnet" {
-		t.Fatalf("Model = %q, want %q", subagent.Model, "sonnet")
+	if subagent.Model != "claude-sonnet-4-5-20250929" || subagent.ModelSource != "factory" {
+		t.Fatalf("native model identity lost: %+v", subagent)
 	}
-	if got, want := strings.Join(subagent.Tools, ","), "Read,Write"; got != want {
+	if got, want := strings.Join(subagent.Tools, ","), "Read,Edit,Create"; got != want {
 		t.Fatalf("Tools = %q, want %q", got, want)
+	}
+	if subagent.ToolSource != "factory" {
+		t.Fatalf("ToolSource = %q, want factory", subagent.ToolSource)
 	}
 	if subagent.Effort != "high" {
 		t.Fatalf("Effort = %q, want %q", subagent.Effort, "high")
@@ -75,8 +78,8 @@ func TestLoadSubagent(t *testing.T) {
 	if subagent.Extra["customFlag"] != true {
 		t.Fatalf("Extra[customFlag] = %v, want true", subagent.Extra["customFlag"])
 	}
-	if !diag.HasCode(diags, diag.CodeIngestFactoryReasoningEffortMappedToModel) {
-		t.Fatalf("missing diagnostic %q", diag.CodeIngestFactoryReasoningEffortMappedToModel)
+	if diag.HasCode(diags, diag.CodeIngestFactoryReasoningEffortMappedToModel) || len(diags) != 0 {
+		t.Fatalf("lossless native ingestion reported model canonicalization: %+v", diags)
 	}
 }
 
@@ -113,7 +116,7 @@ func TestLoadSubagent_StrictSecurityFields(t *testing.T) {
 func TestLoadHooks(t *testing.T) {
 	src := fstest.MapFS{
 		"hooks/hooks.json": {
-			Data: []byte(`{"PreToolUse":[{"matcher":"Read","hooks":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/check.sh"}]}]}`),
+			Data: []byte(`{"PreToolUse":[{"matcher":"Read","commandRegex":"^Read.*$","hooks":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/check.sh"}]}]}`),
 		},
 	}
 
@@ -127,11 +130,36 @@ func TestLoadHooks(t *testing.T) {
 	if len(hooks) != 1 {
 		t.Fatalf("len(hooks) = %d, want 1", len(hooks))
 	}
-	if hooks[0].Command != "${CLAUDE_PLUGIN_ROOT}/check.sh" {
-		t.Fatalf("Command = %q, want %q", hooks[0].Command, "${CLAUDE_PLUGIN_ROOT}/check.sh")
+	// The command keeps the authored Factory token; the resolver translates
+	// ${DROID_PLUGIN_ROOT} through the catalog at compile time.
+	if hooks[0].Command != "${DROID_PLUGIN_ROOT}/check.sh" {
+		t.Fatalf("Command = %q, want %q", hooks[0].Command, "${DROID_PLUGIN_ROOT}/check.sh")
 	}
 	if hooks[0].Matcher != "Read" {
 		t.Fatalf("Matcher = %q, want %q", hooks[0].Matcher, "Read")
+	}
+	if hooks[0].HookSource != "factory" {
+		t.Fatalf("HookSource = %q, want factory source provenance", hooks[0].HookSource)
+	}
+	if hooks[0].Extra["commandRegex"] != "^Read.*$" || !hooks[0].GroupExtraKeys["commandRegex"] {
+		t.Fatalf("default LoadHooks did not preserve Factory group commandRegex provenance: %#v / %#v", hooks[0].Extra, hooks[0].GroupExtraKeys)
+	}
+}
+
+func TestLoadHooksForNativeProjection(t *testing.T) {
+	src := fstest.MapFS{"hooks/hooks.json": {Data: []byte(`{"PreToolUse":[{"matcher":"Execute","commandRegex":"^make.*$","hooks":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/check.sh"}]}]}`)}}
+	hooks, diags, err := LoadHooksForNativeProjection(src, "hooks/hooks.json")
+	if err != nil {
+		t.Fatalf("LoadHooksForNativeProjection: %v", err)
+	}
+	if len(diags) != 0 || len(hooks) != 1 {
+		t.Fatalf("hooks/diagnostics = %#v / %#v", hooks, diags)
+	}
+	if hooks[0].HookSource != "factory" || hooks[0].Matcher != "Execute" || hooks[0].Command != "${DROID_PLUGIN_ROOT}/check.sh" {
+		t.Fatalf("native Factory hook = %#v", hooks[0])
+	}
+	if hooks[0].Extra["commandRegex"] != "^make.*$" {
+		t.Fatalf("native Factory extra = %#v, want group commandRegex", hooks[0].Extra)
 	}
 }
 

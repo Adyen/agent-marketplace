@@ -252,6 +252,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/archives/sha256/{digest}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download the placeholder-form canonical archive whose bytes hash to the digest
+         * @description The bytes hash to the requested archive digest, so clients verify them by hash without re-compressing. The Marketplace derives and stores the placeholder form on first request when the stored final archive reproduces the digest.
+         */
+        get: operations["getPlaceholderArchive"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/artifacts/sha256/{digest}": {
         parameters: {
             query?: never;
@@ -650,6 +670,10 @@ export interface components {
             /** Format: int64 */
             configuration_revision: number;
             expected_publication_id?: string;
+            /** @description Sanitized failure cause; never contains raw command output or credentials. Set alongside failure_code on failed and superseded attempts. */
+            failure_cause?: string;
+            /** @description Stable machine-readable failure classification; set on failed and superseded attempts, empty on started and succeeded outcomes. */
+            failure_code?: string;
             job_id: string;
             marketplace_id: string;
             operation: string;
@@ -1076,6 +1100,8 @@ export interface components {
             content_digest: string;
             /** @description Author-written one-line summary from the upstream registry. Untrusted content: control characters are stripped, whitespace is collapsed, and the value is truncated to at most 1024 bytes on a UTF-8 boundary before it is stored or served. Omitted when the resource kind declares no description (hooks and MCP servers) or the author left it empty. */
             description?: string;
+            /** @description Optional. How many distinct reporting installations enabled this resource in their latest reported configuration within the last 30 days, derived from inventory telemetry matched by Git identity or explicit coordinates from this Marketplace. Counts describe enabled configuration, not verified installation events or unique users, and can undercount non-reporting installations. Present only when the instance reports adoption for this registry; absent means unknown rather than zero. */
+            installation_count?: number;
             /** @enum {string} */
             kind: "skill" | "command" | "subagent" | "hook" | "mcpserver" | "collection";
             metadata?: {
@@ -1110,6 +1136,8 @@ export interface components {
             license?: string;
             occurrence: components["schemas"]["ResourceOccurrence"];
             revocation?: components["schemas"]["Revocation"];
+            /** @description Immutable source provenance. It is omitted when the occurrence lacks trustworthy source provenance. */
+            source?: components["schemas"]["CatalogSource"];
         };
         Revocation: {
             /** Format: date-time */
@@ -1259,13 +1287,16 @@ export interface operations {
                 code: string;
                 state: string;
             };
-            header?: never;
+            header?: {
+                /** @description When the request explicitly prefers text/html over JSON, failures respond 303 to the same-origin auth/error page beneath the path in instance.browser_base, with an allowlisted code and the validated transaction destination instead of a JSON error body. A root browser base uses /auth/error; an omitted browser base retains /marketplace/auth/error. */
+                Accept?: string;
+            };
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Sign-in completed; sets the signed host-only admin session cookie and redirects to the validated destination. HTTPS origins use the browser-enforced __Host-marketplace_admin_session name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin. */
+            /** @description Sign-in completed; sets the signed host-only admin session cookie and redirects to the validated destination. HTTPS origins use the browser-enforced __Host-marketplace_admin_session name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin. For HTML-preferring requests this response also carries browser failures to the same-origin auth/error route derived from the path in instance.browser_base; the JSON error statuses below apply to all other clients. */
             303: {
                 headers: {
                     [name: string]: unknown;
@@ -1308,7 +1339,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description Identity provider unavailable; code authentication_unavailable */
+            /** @description Identity provider unavailable or administration trust configuration unavailable; code authentication_unavailable or admin_unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -1325,16 +1356,19 @@ export interface operations {
     adminAuthLogin: {
         parameters: {
             query?: {
-                /** @description Post-sign-in destination. Only /marketplace/admin and descendant paths are accepted. */
+                /** @description Post-sign-in destination. Only the administration path beneath instance.browser_base (/admin for a root base, or the base path followed by /admin) and its descendants are accepted. When instance.browser_base is omitted, the legacy /marketplace/admin path and its descendants are accepted. */
                 next?: string;
             };
-            header?: never;
+            header?: {
+                /** @description When the request explicitly prefers text/html over JSON, failures respond 303 to the same-origin auth/error page beneath the path in instance.browser_base, with an allowlisted code and a validated destination instead of a JSON error body. A root browser base uses /auth/error; an omitted browser base retains /marketplace/auth/error. */
+                Accept?: string;
+            };
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Redirect to the identity provider authorization endpoint; sets a signed host-only login transaction cookie. HTTPS origins use the browser-enforced __Host-marketplace_admin_login name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin/auth. */
+            /** @description Redirect to the identity provider authorization endpoint; sets a signed host-only login transaction cookie. HTTPS origins use the browser-enforced __Host-marketplace_admin_login name with Secure, Path=/, and no Domain; explicit loopback HTTP uses the unprefixed name confined to /api/v1/admin/auth. For HTML-preferring requests this response also carries browser failures to the same-origin auth/error route derived from the path in instance.browser_base; the JSON error statuses below apply to all other clients. */
             303: {
                 headers: {
                     [name: string]: unknown;
@@ -1626,6 +1660,71 @@ export interface operations {
             default: components["responses"]["AdminError"];
         };
     };
+    getPlaceholderArchive: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Exactly 64 lowercase hexadecimal characters (the sha256 prefix is part of the path). */
+                digest: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Placeholder-form canonical artifact tar.gz */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.agent-marketplace.artifact.v1.tar+gzip": string;
+                };
+            };
+            /** @description The digest is not 64 lowercase hexadecimal characters */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The archive's revision is blocked by assessment */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The archive is not owned by any revision of this Marketplace, or its placeholder form is not available */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The archive's revision is revoked */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The stored archive exceeds policy.limits.artifact_bytes */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The stored archive failed digest verification */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     getArtifact: {
         parameters: {
             query?: never;
@@ -1646,6 +1745,48 @@ export interface operations {
                 content: {
                     "application/vnd.agent-marketplace.artifact.v1.tar+gzip": string;
                 };
+            };
+            /** @description The digest is not 64 lowercase hexadecimal characters */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The archive's revision is blocked by assessment */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The archive is not owned by any revision of this Marketplace */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The archive's revision is revoked */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The stored archive exceeds policy.limits.artifact_bytes */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The stored archive failed digest verification */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -2110,6 +2251,8 @@ export interface operations {
                 offset?: number;
                 q?: string;
                 registry?: string[];
+                /** @description Optional result ordering. `installations` orders the full filtered result by descending reported installation count before pagination; text relevance still precedes adoption for text searches. Omitted requests keep the existing ordering and never require a metrics backend. Other values return HTTP 400. */
+                sort?: "installations";
             };
             header?: never;
             path?: never;

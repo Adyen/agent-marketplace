@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -27,36 +28,49 @@ func registryURLs(cfg *Config) []string {
 	return out
 }
 
-func TestConfigIncludeResolutionOrderAndDeduplication(t *testing.T) {
+// A shared fragment is evaluated once per branch, not globally deduplicated.
+func TestConfigIncludeResolutionOrderAndSharedDAG(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "config.yaml")
-	writeIncludeConfig(t, filepath.Join(dir, "nested", "leaf.yaml"), "registries:\n  - path: /leaf\n")
-	writeIncludeConfig(t, filepath.Join(dir, "first.yaml"), "include: nested/leaf.yaml\nregistries:\n  - path: /first\n")
+	leaf := filepath.Join(dir, "nested", "leaf.yaml")
+	first := filepath.Join(dir, "first.yaml")
 	absolute := filepath.Join(dir, "absolute.yaml")
-	writeIncludeConfig(t, absolute, "registries:\n  - path: /absolute\n")
-	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude:\n  - first.yaml\n  - "+absolute+"\n  - nested/../first.yaml\nregistries:\n  - path: /root\n  - path: /root-second\n")
-
+	writeIncludeConfig(t, leaf, "sources: {shared: {directory: /leaf}}\nresources: {shared: [skill/leaf]}\n")
+	writeIncludeConfig(t, first, "include: nested/leaf.yaml\nresources: {shared: {exclude: [skill/leaf], include: [skill/first]}}\n")
+	writeIncludeConfig(t, absolute, "resources: {shared: [skill/absolute]}\n")
+	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v4\ninclude:\n  - first.yaml\n  - "+absolute+"\n  - nested/../first.yaml\nresources: {shared: [skill/root, skill/root-second]}\n")
+	v4, err := LoadV4ConfigFromPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFiles := []string{canonicalPath(t, leaf), canonicalPath(t, first), canonicalPath(t, absolute), canonicalPath(t, leaf), canonicalPath(t, first), canonicalPath(t, root)}
+	if !reflect.DeepEqual(v4.Files, wantFiles) {
+		t.Fatalf("files = %v, want per-branch order %v", v4.Files, wantFiles)
+	}
+	wantLocators := []string{"skill/leaf", "skill/first", "skill/leaf", "skill/absolute", "skill/leaf", "skill/first", "skill/leaf", "skill/root", "skill/root-second"}
+	wantExclusions := []string{"", "", "skill/leaf", "", "", "", "skill/leaf", "", ""}
+	if len(v4.Decisions) != len(wantLocators) {
+		t.Fatalf("decisions = %#v, want nine ordered decisions", v4.Decisions)
+	}
+	for i, decision := range v4.Decisions {
+		if decision.Locator != wantLocators[i] || decision.Exclusion != wantExclusions[i] || decision.Provenance.Precedence != i {
+			t.Errorf("decision %d = %#v", i, decision)
+		}
+	}
 	cfg, err := LoadConfigFromPath(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := registryURLs(cfg), []string{"/leaf", "/first", "/absolute", "/root", "/root-second"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("registries = %v, want %v", got, want)
-	}
-	precedence := make([]int, 0, len(cfg.Registries))
-	for _, entry := range cfg.Registries {
-		precedence = append(precedence, entry.FilePrecedence)
-	}
-	if want := []int{1, 2, 3, 4, 4}; !reflect.DeepEqual(precedence, want) {
-		t.Fatalf("file precedence = %v, want %v", precedence, want)
+	if got := registryURLs(cfg); !reflect.DeepEqual(got, []string{"/leaf"}) || !reflect.DeepEqual(cfg.Registries[0].Skills.Include, []string{"absolute", "first", "root", "root-second"}) {
+		t.Fatalf("runtime selection = %#v", cfg.Registries)
 	}
 }
 
 func TestLoadConfigTreeFromRootDataUsesSuppliedBytes(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "config.yaml")
-	writeIncludeConfig(t, filepath.Join(dir, "fragment.yaml"), "registries:\n  - path: /fragment\n")
-	data := []byte("apiVersion: agent-marketplace/v2\ninclude: fragment.yaml\nregistries:\n  - path: /root\n")
+	writeIncludeConfig(t, filepath.Join(dir, "fragment.yaml"), "sources: {a: {directory: /fragment}}\nresources: {a: [skill/fragment]}\n")
+	data := []byte("apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nsources: {b: {directory: /root}}\nresources: {b: [skill/root]}\n")
 	writeIncludeConfig(t, root, string(data))
 	canonical, err := canonicalConfigPath(root)
 	if err != nil {
@@ -65,7 +79,11 @@ func TestLoadConfigTreeFromRootDataUsesSuppliedBytes(t *testing.T) {
 	if err := os.Remove(root); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := loadConfigTreeFromRootData(canonical, data, repoLayer)
+	li, err := readLayerIntent(canonical, canonical, data, repoLayer, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := li.bind(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,38 +93,39 @@ func TestLoadConfigTreeFromRootDataUsesSuppliedBytes(t *testing.T) {
 }
 
 func TestIncludeSelectorConflictsFavorLaterFilesAndExcludes(t *testing.T) {
-	dir := t.TempDir()
-	writeIncludeConfig(t, filepath.Join(dir, "fragment.yaml"), "collections:\n  include: [' root-excludes ']\n  exclude: [' root-wins ', fragment-wins]\n")
-	root := filepath.Join(dir, "config.yaml")
-	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: fragment.yaml\ncollections:\n  include: [root-wins, same-file]\n  exclude: [' root-excludes ', same-file]\n")
-	cfg, err := LoadConfigFromPath(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantCollections := KindSelector{Include: []string{"root-wins"}, Exclude: []string{"fragment-wins", " root-excludes ", "same-file"}}
-	if !reflect.DeepEqual(cfg.Collections, wantCollections) {
-		t.Fatalf("collections = %#v, want %#v", cfg.Collections, wantCollections)
-	}
-
-	localRoot := filepath.Join(dir, "config.local.yaml")
-	writeIncludeConfig(t, filepath.Join(dir, "local-fragment.yaml"), "skills:\n  include: [' root-excludes-skill ']\n  exclude: [' root-skill ', fragment-skill]\n")
-	writeIncludeConfig(t, localRoot, "include: local-fragment.yaml\nskills:\n  include: [root-skill, same-skill]\n  exclude: [' root-excludes-skill ', same-skill]\n")
-	local, err := LoadLocalConfigFromPath(localRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantSkills := KindSelector{Include: []string{"root-skill"}, Exclude: []string{"fragment-skill", " root-excludes-skill ", "same-skill"}}
-	if !reflect.DeepEqual(local.Skills, wantSkills) {
-		t.Fatalf("local skills = %#v, want %#v", local.Skills, wantSkills)
+	for _, tc := range []struct{ filename, kind string }{
+		{"config.yaml", "collection"}, {"config.local.yaml", "skill"},
+	} {
+		t.Run(tc.filename, func(t *testing.T) {
+			dir := t.TempDir()
+			writeIncludeConfig(t, filepath.Join(dir, "fragment.yaml"), "sources: {shared: {directory: /shared}}\nresources: {shared: {include: ["+tc.kind+"/root-excludes], exclude: ["+tc.kind+"/root-wins, "+tc.kind+"/fragment-wins]}}\n")
+			root := filepath.Join(dir, tc.filename)
+			writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nresources: {shared: {include: ["+tc.kind+"/root-wins, "+tc.kind+"/same-file], exclude: ["+tc.kind+"/root-excludes, "+tc.kind+"/same-file]}}\n")
+			cfg, err := LoadConfigFromPath(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(cfg.Registries) != 1 {
+				t.Fatalf("source policy lost: %#v", cfg.Registries)
+			}
+			got := cfg.Registries[0].Collections
+			if tc.kind == "skill" {
+				got = cfg.Registries[0].Skills
+			}
+			want := KindSelector{Include: []string{"root-wins"}, Exclude: []string{"fragment-wins", "root-excludes", "same-file"}}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("%s selector = %#v, want %#v", tc.kind, got, want)
+			}
+		})
 	}
 }
 
-func TestNestedIncludesComposeDefaultsOnce(t *testing.T) {
+func TestNestedIncludesComposeSourcePolicyOnce(t *testing.T) {
 	dir := t.TempDir()
-	writeIncludeConfig(t, filepath.Join(dir, "leaf.yaml"), "registries:\n  - path: /leaf\n")
-	writeIncludeConfig(t, filepath.Join(dir, "middle.yaml"), "include: leaf.yaml\nharnesses: [claude]\nregistries:\n  - path: /middle\n")
+	writeIncludeConfig(t, filepath.Join(dir, "leaf.yaml"), "sources: {a: {directory: /leaf}}\nresources: {a: {all: true, harnesses: [factory]}}\n")
+	writeIncludeConfig(t, filepath.Join(dir, "middle.yaml"), "include: leaf.yaml\nsources: {b: {directory: /middle}}\nresources: {a: {harnesses: [claude]}, b: {all: true, harnesses: [claude]}}\n")
 	root := filepath.Join(dir, "config.yaml")
-	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: middle.yaml\nharnesses: [devin]\nregistries:\n  - path: /root\n")
+	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v4\ninclude: middle.yaml\nharnesses: [devin]\nsources: {c: {directory: /root}}\nresources: {a: {harnesses: [devin]}, c: {all: true, harnesses: [devin]}}\n")
 	cfg, err := LoadConfigFromPath(root)
 	if err != nil {
 		t.Fatal(err)
@@ -118,23 +137,25 @@ func TestNestedIncludesComposeDefaultsOnce(t *testing.T) {
 	}
 }
 
-func TestContainingDefaultsCascadeToIncludedRegistries(t *testing.T) {
+func TestContainingSourcePolicyPreservesExplicitEmptyOverrides(t *testing.T) {
 	dir := t.TempDir()
-	writeIncludeConfig(t, filepath.Join(dir, "leaf.yaml"), "registries:\n  - path: /leaf\n  - path: /explicit\n    skills: {include: []}\n    tags: []\n")
-	writeIncludeConfig(t, filepath.Join(dir, "middle.yaml"), "include: leaf.yaml\nskills: {include: [middle]}\ntags: [middle]\nregistries:\n  - path: /middle\n")
+	writeIncludeConfig(t, filepath.Join(dir, "leaf.yaml"), "sources: {a: {directory: /leaf}, b: {directory: /explicit}}\nresources: {a: {include: [skill/leaf], tags: [leaf]}, b: {include: [], tags: [], harnesses: []}}\n")
+	writeIncludeConfig(t, filepath.Join(dir, "middle.yaml"), "include: leaf.yaml\nresources: {a: {tags: [middle]}}\n")
 	root := filepath.Join(dir, "config.yaml")
-	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: middle.yaml\nskills:\n  include: [root]\n  exclude: [blocked]\ntags: [root-tag]\n")
+	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v4\ninclude: middle.yaml\nresources: {a: {include: [skill/root], exclude: [skill/blocked], tags: [root-tag]}}\n")
+	v4, err := LoadV4ConfigFromPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	cfg, err := LoadConfigFromPath(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, index := range []int{0, 2} {
-		if !reflect.DeepEqual(cfg.Registries[index].Skills.Include, []string{"root"}) || !reflect.DeepEqual(cfg.Registries[index].Skills.Exclude, []string{"blocked"}) || !reflect.DeepEqual(cfg.Registries[index].Tags, []string{"root-tag"}) {
-			t.Fatalf("registry %d defaults = %#v, want root skill and tag defaults", index, cfg.Registries[index])
-		}
+	if !reflect.DeepEqual(cfg.Registries[0].Skills.Include, []string{"leaf", "root"}) || !reflect.DeepEqual(cfg.Registries[0].Skills.Exclude, []string{"blocked"}) || !reflect.DeepEqual(cfg.Registries[0].Tags, []string{"root-tag"}) {
+		t.Fatalf("source policy = %#v", cfg.Registries[0])
 	}
-	if cfg.Registries[1].Skills.Include == nil || len(cfg.Registries[1].Skills.Include) != 0 || cfg.Registries[1].Tags == nil || len(cfg.Registries[1].Tags) != 0 {
-		t.Fatalf("explicit entry = %#v, want empty skill and tag overrides", cfg.Registries[1])
+	if len(v4.Groups["b"].Include) != 0 || cfg.Registries[1].Tags == nil || len(cfg.Registries[1].Tags) != 0 || cfg.Registries[1].Harnesses == nil || len(cfg.Registries[1].Harnesses) != 0 {
+		t.Fatalf("explicit empty overrides lost: group=%#v entry=%#v", v4.Groups["b"], cfg.Registries[1])
 	}
 }
 
@@ -142,7 +163,7 @@ func TestConfigIncludeContainingFileHasHigherPrecedence(t *testing.T) {
 	dir := t.TempDir()
 	writeIncludeConfig(t, filepath.Join(dir, "base.yaml"), "harnesses: [factory]\nmaterialization:\n  mode: symlink\n")
 	root := filepath.Join(dir, "config.yaml")
-	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: base.yaml\nharnesses: [claude]\nmaterialization:\n  mode: file\n")
+	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v4\ninclude: base.yaml\nharnesses: [claude]\nmaterialization:\n  mode: file\n")
 	cfg, err := LoadConfigFromPath(root)
 	if err != nil {
 		t.Fatal(err)
@@ -153,26 +174,31 @@ func TestConfigIncludeContainingFileHasHigherPrecedence(t *testing.T) {
 }
 
 func TestConfigIncludeFailuresIdentifyPath(t *testing.T) {
-	for _, tc := range []struct {
-		name, child string
-	}{
-		{name: "missing", child: "missing.yaml"},
-		{name: "malformed", child: "bad.yaml"},
-		{name: "wrong layer", child: "wrong.yaml"},
+	for _, tc := range []struct{ name, child, content, code string }{
+		{"missing", "missing.yaml", "", ""},
+		{"malformed", "bad.yaml", "sources: [\n", "v4.parse"},
+		{"wrong layer", "wrong.yaml", "logging: {level: debug}\n", "v4.layer-field"},
+		{"explicit legacy", "legacy.yaml", "apiVersion: agent-marketplace/v3\n", "v4.api-version"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			root := filepath.Join(dir, "config.yaml")
-			if tc.name == "malformed" {
-				writeIncludeConfig(t, filepath.Join(dir, tc.child), "registries: [\n")
+			child := filepath.Join(dir, tc.child)
+			if tc.content != "" {
+				writeIncludeConfig(t, child, tc.content)
 			}
-			if tc.name == "wrong layer" {
-				writeIncludeConfig(t, filepath.Join(dir, tc.child), "logging:\n  level: debug\n")
-			}
-			writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: "+tc.child+"\n")
+			writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v4\ninclude: "+tc.child+"\n")
 			_, err := LoadConfigFromPath(root)
-			if err == nil || !strings.Contains(err.Error(), filepath.Join(dir, tc.child)) {
+			if err == nil || !strings.Contains(err.Error(), child) {
 				t.Fatalf("error = %v, want offending path", err)
+			}
+			if tc.code != "" {
+				var validation *V4ValidationError
+				if !errors.As(err, &validation) || validation.Code != tc.code {
+					t.Fatalf("error = %v, want %s", err, tc.code)
+				}
+			} else if !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("missing include error = %v", err)
 			}
 		})
 	}
@@ -184,14 +210,14 @@ func TestUnreadableConfigIncludeFailsOwningLayer(t *testing.T) {
 	}
 	dir := t.TempDir()
 	child := filepath.Join(dir, "child.yaml")
-	writeIncludeConfig(t, child, "registries:\n  - path: /child\n")
+	writeIncludeConfig(t, child, "sources: {shared: {directory: /child}}\nresources: {shared: [skill/review]}\n")
 	if err := os.Chmod(child, 0); err != nil {
 		t.Fatal(err)
 	}
 	root := filepath.Join(dir, "config.yaml")
-	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: child.yaml\n")
+	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v4\ninclude: child.yaml\n")
 	_, err := LoadConfigFromPath(root)
-	if err == nil || !strings.Contains(err.Error(), child) {
+	if !errors.Is(err, os.ErrPermission) || !strings.Contains(err.Error(), child) {
 		t.Fatalf("error = %v, want unreadable included path", err)
 	}
 }
@@ -203,42 +229,51 @@ func TestConfigIncludeCyclesFail(t *testing.T) {
 			root := filepath.Join(dir, "config.yaml")
 			if indirect {
 				writeIncludeConfig(t, filepath.Join(dir, "child.yaml"), "include: config.yaml\n")
-				writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: child.yaml\n")
+				writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v4\ninclude: child.yaml\n")
 			} else {
-				writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: config.yaml\n")
+				writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v4\ninclude: config.yaml\n")
 			}
-			if _, err := LoadConfigFromPath(root); err == nil || !strings.Contains(err.Error(), "cycle") {
-				t.Fatalf("error = %v, want cycle", err)
+			_, err := LoadConfigFromPath(root)
+			var validation *V4ValidationError
+			if !errors.As(err, &validation) || validation.Code != "v4.include-cycle" {
+				t.Fatalf("error = %v, want v4.include-cycle", err)
 			}
 		})
 	}
 }
 
+// spec: consumer-config-format/versionless-roots-are-refused-in-every-consumer-layer
+// spec: consumer-config-format/v4-fragments-preserve-include-authority
 func TestIncludedFragmentMayOmitAPIVersionButRootMayNot(t *testing.T) {
 	dir := t.TempDir()
-	writeIncludeConfig(t, filepath.Join(dir, "fragment.yaml"), "registries:\n  - path: /fragment\n")
+	fragment := filepath.Join(dir, "fragment.yaml")
 	root := filepath.Join(dir, "config.yaml")
-	writeIncludeConfig(t, root, "include: fragment.yaml\n")
-	if _, err := LoadConfigFromPath(root); err == nil || !strings.Contains(err.Error(), "apiVersion") {
-		t.Fatalf("error = %v, want root apiVersion failure", err)
+	for _, version := range []string{"", "apiVersion: agent-marketplace/v4\n"} {
+		writeIncludeConfig(t, fragment, version+"sources: {shared: {directory: ./registry}}\nresources: {shared: [skill/review]}\n")
+		writeIncludeConfig(t, root, "include: fragment.yaml\n")
+		_, err := LoadConfigFromPath(root)
+		var validation *V4ValidationError
+		if !errors.As(err, &validation) || validation.Code != "v4.api-version-required" || validation.Path != root {
+			t.Fatalf("error = %v, want root version refusal", err)
+		}
+		writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\n")
+		cfg, err := LoadConfigFromPath(root)
+		if err != nil || cfg == nil || len(cfg.Registries) != 1 || cfg.Registries[0].URL != filepath.Join(canonicalPath(t, dir), "registry") || !reflect.DeepEqual(cfg.Registries[0].Skills.Include, []string{"review"}) {
+			t.Fatalf("accepted fragment lost selection/base: cfg=%#v err=%v", cfg, err)
+		}
 	}
 }
 
 func TestConfigIncludesAcrossAllLayers(t *testing.T) {
 	dir := t.TempDir()
-	paths := []string{"org", "user", "repo", "local"}
-	for _, name := range paths {
-		writeIncludeConfig(t, filepath.Join(dir, name+"-fragment.yaml"), "registries:\n  - path: /"+name+"-fragment\n")
+	for _, name := range []string{"org", "user", "repo", "local"} {
+		writeIncludeConfig(t, filepath.Join(dir, name+"-fragment.yaml"), "sources: {shared: {directory: /"+name+"-fragment}}\nresources: {shared: [skill/review]}\n")
 	}
-	org := filepath.Join(dir, "org.yaml")
-	user := filepath.Join(dir, "user.yaml")
-	repo := filepath.Join(dir, "repo.yaml")
-	local := filepath.Join(dir, "config.local.yaml")
-	writeIncludeConfig(t, org, "apiVersion: agent-marketplace/v2\ninclude: org-fragment.yaml\n")
-	writeIncludeConfig(t, user, "apiVersion: agent-marketplace/v2\ninclude: user-fragment.yaml\n")
-	writeIncludeConfig(t, repo, "apiVersion: agent-marketplace/v2\ninclude: repo-fragment.yaml\n")
-	writeIncludeConfig(t, local, "include: local-fragment.yaml\n")
-	ec := LoadEffective(context.Background(), LoadEffectiveOptions{OrganizationPath: org, GlobalPath: user, RepoPath: repo, LocalPath: local, RepoRoot: dir, LocalConfigDir: dir})
+	org, user, repo, local := filepath.Join(dir, "org.yaml"), filepath.Join(dir, "user.yaml"), filepath.Join(dir, "repo.yaml"), filepath.Join(dir, "config.local.yaml")
+	for name, path := range map[string]string{"org": org, "user": user, "repo": repo, "local": local} {
+		writeIncludeConfig(t, path, "apiVersion: agent-marketplace/v4\ninclude: "+name+"-fragment.yaml\n")
+	}
+	ec := loadEffectiveForTest(context.Background(), LoadEffectiveOptions{OrganizationPath: org, GlobalPath: user, RepoPath: repo, LocalPath: local, RepoRoot: dir, LocalConfigDir: dir})
 	if len(ec.Errors) != 0 {
 		t.Fatalf("errors = %v", ec.Errors)
 	}
@@ -248,31 +283,21 @@ func TestConfigIncludesAcrossAllLayers(t *testing.T) {
 }
 
 func TestPublicMachineLoadersPreserveIncludedTelemetry(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		load func(t *testing.T, root string) (*Config, error)
-	}{
-		{
-			name: "organization",
-			load: func(t *testing.T, root string) (*Config, error) {
-				SetTestV3OrganizationConfigPath(t, root)
-				return LoadOrganizationConfig()
-			},
-		},
-		{
-			name: "user",
-			load: func(t *testing.T, root string) (*Config, error) {
-				t.Setenv("HOME", filepath.Dir(filepath.Dir(root)))
-				return LoadGlobalConfig()
-			},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, name := range []string{"organization", "user"} {
+		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
 			root := filepath.Join(dir, ".agents", "config.yaml")
 			writeIncludeConfig(t, filepath.Join(dir, ".agents", "telemetry.yaml"), "telemetry:\n  level: basic\n")
-			writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: telemetry.yaml\n")
-			cfg, err := tc.load(t, root)
+			writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v4\ninclude: telemetry.yaml\n")
+			var cfg *Config
+			var err error
+			if name == "organization" {
+				SetTestOrganizationConfigPath(t, root)
+				cfg, err = LoadOrganizationConfig()
+			} else {
+				t.Setenv("HOME", dir)
+				cfg, err = LoadGlobalConfig()
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -287,7 +312,7 @@ func TestContainingFileTelemetryOverridesIncludedFragment(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	writeIncludeConfig(t, filepath.Join(home, ".agents", "telemetry.yaml"), "telemetry:\n  level: basic\n")
-	writeIncludeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\ninclude: telemetry.yaml\ntelemetry:\n  level: detailed\n")
+	writeIncludeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\ninclude: telemetry.yaml\ntelemetry:\n  level: detailed\n")
 	cfg, err := LoadGlobalConfig()
 	if err != nil {
 		t.Fatal(err)
@@ -297,11 +322,12 @@ func TestContainingFileTelemetryOverridesIncludedFragment(t *testing.T) {
 	}
 }
 
+// spec: logging/user-logging-settings-include-fragments
 func TestUserLoggingLoaderResolvesIncludes(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	writeIncludeConfig(t, filepath.Join(home, ".agents", "logging.yaml"), "logging:\n  level: debug\n")
-	writeIncludeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\ninclude: logging.yaml\n")
+	writeIncludeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\ninclude: logging.yaml\n")
 	logging, err := LoadUserLoggingConfig()
 	if err != nil {
 		t.Fatal(err)
@@ -311,16 +337,37 @@ func TestUserLoggingLoaderResolvesIncludes(t *testing.T) {
 	}
 }
 
+// spec: configuration-settings/settings-with-an-unreadable-acquisition-lock
+// spec: logging/logging-needs-no-acquisition-lock
+func TestLoadUserLoggingConfigIgnoresUnreadableLock(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeIncludeConfig(t, filepath.Join(home, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+logging: {level: debug}
+sources: {hosted: {marketplace: https://marketplace.invalid}}
+`)
+	if err := os.MkdirAll(filepath.Join(home, ".agents", "lock.yaml"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logging, err := LoadUserLoggingConfig()
+	if err != nil {
+		t.Fatalf("LoadUserLoggingConfig: %v", err)
+	}
+	if logging == nil || logging.Level == nil || *logging.Level != "debug" {
+		t.Fatalf("logging = %#v", logging)
+	}
+}
+
 func TestLoadRootConfigFromPathDoesNotExposeIncludedEntries(t *testing.T) {
 	dir := t.TempDir()
-	writeIncludeConfig(t, filepath.Join(dir, "child.yaml"), "registries:\n  - path: /child\n")
+	writeIncludeConfig(t, filepath.Join(dir, "child.yaml"), "sources: {child: {directory: /child}}\nresources: {child: [skill/child]}\n")
 	root := filepath.Join(dir, "config.yaml")
-	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: child.yaml\nregistries:\n  - path: /root\n")
+	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v4\ninclude: child.yaml\nsources: {root: {directory: /root}}\nresources: {root: [skill/root]}\n")
 	cfg, err := LoadRootConfigFromPath(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := registryURLs(cfg), []string{"/root"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("root registries = %v, want %v", got, want)
+	if got, want := registryURLs(cfg), []string{"/root"}; !reflect.DeepEqual(got, want) || !reflect.DeepEqual(cfg.Registries[0].Skills.Include, []string{"root"}) {
+		t.Fatalf("root registries = %#v, want root-only selection", cfg.Registries)
 	}
 }

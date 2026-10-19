@@ -3,9 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
@@ -13,6 +18,10 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
 func TestUpdateCommandRefreshesPinnedRefsAndSyncsWithoutChangingConfig(t *testing.T) {
@@ -29,12 +38,14 @@ func TestUpdateCommandRefreshesPinnedRefsAndSyncsWithoutChangingConfig(t *testin
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  infra:
+    git: file://`+origin+`
     ref: main
-    skills:
-      include:
-        - vm-lifecycle
+resources:
+  infra:
+    include: [skill/vm-lifecycle]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -72,6 +83,7 @@ registries:
 	}
 }
 
+// spec: update-output/verbose-organization-pin-output-omits-owner-guidance
 func TestUpdateSupportsV4GitSourcesWithTransientOrganizationMarketplace(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -146,9 +158,15 @@ harnesses: [factory, windsurf]
 	writeSkillAt(t, working, "teams/common/genai", "genai-architect", "Architect v2")
 	commitAndPushAll(t, working, "advance v4 sources")
 
-	output, err := executeCommand("update")
+	output, err := executeCommand("update", "--verbose")
 	if err != nil {
 		t.Fatalf("update: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "Organization-managed Marketplace pins: 1") || !strings.Contains(output, `"skill"/"review": not checked (organization-managed)`) {
+		t.Fatalf("verbose update did not explain and list the organization pin:\n%s", output)
+	}
+	if strings.Contains(output, "Ask your organization config owner") {
+		t.Fatalf("verbose update includes organization config owner guidance:\n%s", output)
 	}
 	afterConfig, err := os.ReadFile(configPath)
 	if err != nil {
@@ -185,12 +203,14 @@ func TestUpdateCommandWithBumpUpdatesRepoConfigRefAndSyncsNewCache(t *testing.T)
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  infra:
+    git: file://`+origin+`
     ref: v1.0
-    skills:
-      include:
-        - vm-lifecycle
+resources:
+  infra:
+    include: [skill/vm-lifecycle]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -262,15 +282,19 @@ func TestTargetedUpdateDoesNotMaterializeUnrelatedMovedBranch(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+targetOrigin+`
+apiVersion: agent-marketplace/v4
+sources:
+  target:
+    git: file://`+targetOrigin+`
     ref: main
-    skills:
-      include: [target]
-  - url: `+unrelatedOrigin+`
+  unrelated:
+    git: file://`+unrelatedOrigin+`
     ref: main
-    skills:
-      include: [unrelated]
+resources:
+  target:
+    include: [skill/target]
+  unrelated:
+    include: [skill/unrelated]
 `)
 	withWorkingDir(t, repoRoot)
 	if output, err := executeCommand("sync"); err != nil {
@@ -348,7 +372,7 @@ func TestUpdateBumpHonorsScopeAndDirectTarget(t *testing.T) {
 
 	repo := filepath.Join(t.TempDir(), "repo")
 	repoConfig := filepath.Join(repo, ".agents", "config.yaml")
-	writeConfig(t, repoConfig, "\nharnesses: [claude]\nregistries:\n  - url: "+targetOrigin+"\n    ref: v1.0\n    skills: [target]\n  - url: "+otherOrigin+"\n    ref: v1.0\n    skills: [other]\n")
+	writeConfig(t, repoConfig, "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  target:\n    git: file://"+targetOrigin+"\n    ref: v1.0\n  other:\n    git: file://"+otherOrigin+"\n    ref: v1.0\nresources:\n  target:\n    include: [skill/target]\n  other:\n    include: [skill/other]\n")
 	withWorkingDir(t, repo)
 	if output, err := executeCommand("sync"); err != nil {
 		t.Fatalf("initial sync: %v\n%s", err, output)
@@ -369,10 +393,14 @@ func TestUpdateBumpHonorsScopeAndDirectTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := after.Registries[0].Ref; got != "v1.1" {
+	refs := make(map[string]string)
+	for _, registry := range after.Registries {
+		refs[registry.URL] = registry.Ref
+	}
+	if got := refs["file://"+targetOrigin]; got != "v1.1" {
 		t.Fatalf("target ref = %q, want v1.1", got)
 	}
-	if got := after.Registries[1].Ref; got != "v1.0" {
+	if got := refs["file://"+otherOrigin]; got != "v1.0" {
 		t.Fatalf("unrelated ref mutated by targeted bump: %q", got)
 	}
 }
@@ -393,7 +421,7 @@ func TestUpdateBumpHonorsUserScope(t *testing.T) {
 	commitAndPushAll(t, working, "user v1.1")
 	createAndPushTag(t, working, "v1.1")
 
-	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "\nregistries:\n  - url: "+origin+"\n    ref: v1.0\n    skills: [user-target]\n")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources:\n  user:\n    git: file://"+origin+"\n    ref: v1.0\nresources:\n  user:\n    include: [skill/user-target]\n")
 	repo := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "\nharnesses: [claude]\n")
 	withWorkingDir(t, repo)
@@ -439,9 +467,9 @@ func TestUpdateBumpHonorsLocalScope(t *testing.T) {
 	createAndPushTag(t, repoWorking, "v1.1")
 
 	repo := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "\nharnesses: [claude]\nregistries:\n  - url: "+repoOrigin+"\n    ref: v1.0\n    skills: [repo-target]\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  repo:\n    git: file://"+repoOrigin+"\n    ref: v1.0\nresources:\n  repo:\n    include: [skill/repo-target]\n")
 	localConfig := filepath.Join(repo, ".agents", "config.local.yaml")
-	writeConfig(t, localConfig, "\nregistries:\n  - url: "+localOrigin+"\n    ref: v1.0\n    skills: [local-target]\n")
+	writeConfig(t, localConfig, "apiVersion: agent-marketplace/v4\nsources:\n  local:\n    git: file://"+localOrigin+"\n    ref: v1.0\nresources:\n  local:\n    include: [skill/local-target]\n")
 	withWorkingDir(t, repo)
 	if output, err := executeCommand("sync"); err != nil {
 		t.Fatalf("initial sync: %v\n%s", err, output)
@@ -497,7 +525,7 @@ func TestUpdateBumpSkipsOrganization(t *testing.T) {
 
 			authority := canonicalTempDir(t)
 			orgPath := filepath.Join(authority, "config.yaml")
-			registryConfig := "registries:\n  - url: " + origin + "\n    ref: v1.0\n    skills: [target]\n"
+			registryConfig := "apiVersion: agent-marketplace/v4\nsources:\n  target:\n    git: file://" + origin + "\n    ref: v1.0\nresources:\n  target:\n    include: [skill/target]\n"
 			writeConfig(t, orgPath, registryConfig)
 			orgBefore, err := os.ReadFile(orgPath)
 			if err != nil {
@@ -572,9 +600,9 @@ func TestScopedUpdateReconcilesMissingUnselectedWritableLayer(t *testing.T) {
 	writeSkill(t, repoWorking, "repo-skill", "Repo v1", nil)
 	commitAndPushAll(t, userWorking, "user v1")
 	commitAndPushAll(t, repoWorking, "repo v1")
-	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "\nregistries:\n  - url: "+userOrigin+"\n    ref: main\n")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources:\n  user:\n    git: file://"+userOrigin+"\n    ref: main\n")
 	repo := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "\nregistries:\n  - url: "+repoOrigin+"\n    ref: main\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources:\n  repo:\n    git: file://"+repoOrigin+"\n    ref: main\n")
 	withWorkingDir(t, repo)
 	if output, err := executeCommand("sync"); err != nil {
 		t.Fatalf("initial sync: %v\n%s", err, output)
@@ -620,12 +648,14 @@ func TestUpdateBumpWithSimpleTrailingInteger(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  infra:
+    git: file://`+origin+`
     ref: v1
-    skills:
-      include:
-        - vm-lifecycle
+resources:
+  infra:
+    include: [skill/vm-lifecycle]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -672,12 +702,14 @@ func TestUpdateBumpWithThreeSegmentSemver(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  infra:
+    git: file://`+origin+`
     ref: v1.0.0
-    skills:
-      include:
-        - vm-lifecycle
+resources:
+  infra:
+    include: [skill/vm-lifecycle]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -720,12 +752,14 @@ func TestUpdateBumpDoesNotCrossMajorVersion(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  infra:
+    git: file://`+origin+`
     ref: v1.0
-    skills:
-      include:
-        - vm-lifecycle
+resources:
+  infra:
+    include: [skill/vm-lifecycle]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -762,12 +796,14 @@ func TestUpdateBumpWithNonVersionRefDoesNothing(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  infra:
+    git: file://`+origin+`
     ref: main
-    skills:
-      include:
-        - vm-lifecycle
+resources:
+  infra:
+    include: [skill/vm-lifecycle]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -799,9 +835,11 @@ func TestUpdateCommandBlockedRegistryReturnsError(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
 allowed_registries: []
-registries:
-  - url: https://example.com/blocked.git
+sources:
+  blocked:
+    git: https://example.com/blocked.git
     ref: main
 `)
 
@@ -816,6 +854,7 @@ registries:
 	}
 }
 
+// spec: update-output/default-organization-pin-output-omits-owner-guidance
 func TestUpdateCommandOutputIncludesMarketplaceDecisions(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -824,25 +863,191 @@ func TestUpdateCommandOutputIncludesMarketplaceDecisions(t *testing.T) {
 	newDigest := "sha256:" + strings.Repeat("b", 64)
 	result := &pipeline.UpdateResult{
 		UpdatedRegistries: 2, Bumps: []pipeline.RefBump{{URL: "https://git.example/repo.git", OldRef: "v1", NewRef: "v2"}},
-		UpdatedMarketplacePins: 1, SkippedMarketplacePins: 1,
+		UpdatedMarketplacePins: 1, SkippedMarketplacePins: 3,
 		MarketplacePins: []pipeline.MarketplacePinUpdate{
 			{Entry: config.MarketplaceEntry{URL: "https://market.example\nunsafe"}, OldPin: config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "review", Digest: oldDigest}, NewPin: config.MarketplaceResourcePin{Digest: newDigest}, Updated: true},
-			{Entry: config.MarketplaceEntry{URL: "https://org.example"}, OldPin: config.MarketplaceResourcePin{RegistryID: "org", Kind: "skill", Name: "required"}, Required: true, Skipped: true, Reason: "organization pin is required and managed externally"},
+			{Entry: config.MarketplaceEntry{URL: "https://market.example"}, OldPin: config.MarketplaceResourcePin{RegistryID: "src", Kind: "skill", Name: "unchanged"}, Skipped: true, Reason: "content digest unchanged"},
+			{Entry: config.MarketplaceEntry{URL: "https://org.example"}, OldPin: config.MarketplaceResourcePin{RegistryID: "org", Kind: "skill", Name: "required"}, Source: config.Organization, Required: true, Skipped: true, Reason: "organization pin is required and managed externally"},
+			{Entry: config.MarketplaceEntry{URL: "https://org.example"}, OldPin: config.MarketplaceResourcePin{RegistryID: "org", Kind: "collection", Name: "onboarding"}, Source: config.Organization, Required: true, Skipped: true, Reason: "organization pin is required and managed externally"},
 		},
 	}
 	var out bytes.Buffer
-	if err := writeUpdateOutput(&out, result, true); err != nil {
+	if err := writeUpdateOutput(&out, result, true, false); err != nil {
 		t.Fatal(err)
 	}
 	text := out.String()
-	for _, want := range []string{"Updated 2 registries, bumped 1 refs", "Marketplace pins: updated 1, skipped 1", "updated \"" + oldDigest + "\" -> \"" + newDigest + "\"", "skipped (required)"} {
+	for _, want := range []string{
+		"Configured registry entries: 2, refs bumped: 1\n",
+		"Marketplace pins updated: 1\n",
+		"Other Marketplace pins skipped: 1\n",
+		"Organization-managed Marketplace pins: 2 (not checked for newer revisions; pins unchanged)\n",
+		"Use `agent-marketplace update --verbose` to list organization-managed pins.\n",
+		"updated \"" + oldDigest + "\" -> \"" + newDigest + "\"",
+		"\"unchanged\": skipped (\"content digest unchanged\")",
+	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("output missing %q: %s", want, text)
 		}
 	}
+	if strings.Contains(text, "Ask your organization config owner") {
+		t.Fatalf("default update includes organization config owner guidance: %q", text)
+	}
+	if strings.Contains(text, "\"required\"") || strings.Contains(text, "\"onboarding\"") || strings.Contains(text, "skipped (required)") {
+		t.Fatalf("default output repeats organization pins: %q", text)
+	}
 	if strings.Contains(text, "unsafe\\n") || strings.ContainsAny(text, "\x00\x1b\r\t") {
 		t.Fatalf("output contains unsafe terminal data: %q", text)
 	}
+}
+
+// spec: update-output/missing-resource-is-kept-while-other-pins-update
+// spec: update-output/lock-and-outputs-agree-after-a-partial-update
+func TestUpdateCommandContinuesPastMissingMarketplacePin(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	server := newV4UpdateServer(t, "stay", "gone")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  mp: {marketplace: "+server.URL+"}\n")
+	repo := t.TempDir()
+	withWorkingDir(t, repo)
+	for _, name := range []string{"stay", "gone"} {
+		if output, err := executeCommand("install", "tools/skill/"+name, "--marketplace", "mp", "--yes"); err != nil {
+			t.Fatalf("install %s: %v\n%s", name, err, output)
+		}
+	}
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	goneBefore := commandLockResource(t, lockPath, "gone")
+	if goneBefore == nil {
+		t.Fatal("user lock has no gone record after install")
+	}
+
+	server.setSkill(t, "stay", "stay body v2")
+	server.resources["gone"].missing.Store(true)
+
+	output, err := executeCommand("update")
+	if err == nil {
+		t.Fatalf("update succeeded, want missing-resource error:\n%s", output)
+	}
+	if !strings.Contains(output, "Marketplace pins updated: 1") {
+		t.Fatalf("update report did not print before the error:\n%s", output)
+	}
+	for _, want := range []string{server.URL, "src", "skill", "gone", "agent-marketplace remove gone"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("missing-resource error %q does not name %q", err.Error(), want)
+		}
+	}
+	goneAfter := commandLockResource(t, lockPath, "gone")
+	if goneAfter == nil || !reflect.DeepEqual(*goneAfter, *goneBefore) {
+		t.Fatalf("missing pin lock entry changed: got %#v, want %#v", goneAfter, goneBefore)
+	}
+	stayAfter := commandLockResource(t, lockPath, "stay")
+	latest := server.resources["stay"].revision.ContentDigest
+	if stayAfter == nil || string(stayAfter.ContentDigest) != string(latest) {
+		t.Fatalf("stay lock entry = %#v, want latest %s", stayAfter, latest)
+	}
+
+	checkOutput, checkErr := executeCommand("sync", "--check")
+	if checkErr != nil || strings.Contains(checkOutput, "out of sync") {
+		t.Fatalf("sync --check after partial update = (%v):\n%s", checkErr, checkOutput)
+	}
+}
+
+func commandLockResource(t *testing.T, lockPath, name string) *lockfile.MarketplaceResourceLock {
+	t.Helper()
+	doc := readLockDocument(t, lockPath)
+	for i := range doc.Marketplaces {
+		for j := range doc.Marketplaces[i].Resources {
+			if doc.Marketplaces[i].Resources[j].Name == name {
+				return &doc.Marketplaces[i].Resources[j]
+			}
+		}
+	}
+	return nil
+}
+
+type v4UpdateResource struct {
+	revision store.AssessedResourceRevision
+	raw      []byte
+	archive  string
+	missing  atomic.Bool
+}
+
+type v4UpdateServer struct {
+	*httptest.Server
+	resources map[string]*v4UpdateResource
+}
+
+func (f *v4UpdateServer) setSkill(t *testing.T, name, body string) {
+	t.Helper()
+	canonical, err := hccartifact.FromIR(ir.NewSkill(name, name+" description", body, nil, nil, ir.SourceRef{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical.Manifest.RegistryID = "src"
+	canonical.Manifest.RegistrySlug = "tools"
+	raw, archiveDigest, err := hccartifact.Encode(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource := f.resources[name]
+	if resource == nil {
+		resource = &v4UpdateResource{}
+		f.resources[name] = resource
+	}
+	resource.raw = raw
+	resource.archive = archiveDigest
+	resource.revision = testAssessedMarketplaceRevision(t, store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "mp", Registry: "src", Kind: "skill", Name: name},
+		ContentDigest: store.RevisionDigest(canonical.Manifest.ContentDigest),
+		ArchiveDigest: store.ArchiveDigest(archiveDigest),
+	})
+}
+
+func newV4UpdateServer(t *testing.T, names ...string) *v4UpdateServer {
+	t.Helper()
+	fake := &v4UpdateServer{resources: map[string]*v4UpdateResource{}}
+	fake.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/.well-known/agent-marketplace.json":
+			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("mp", "http://"+r.Host))
+		case strings.HasPrefix(r.URL.Path, "/api/v1/registries/"):
+			_ = json.NewEncoder(w).Encode(mpapi.RegistryDTO{ID: "src", Slug: "tools", Origins: []string{"https://example.com/tools.git"}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
+		case strings.HasPrefix(r.URL.Path, "/api/v1/resources/"):
+			segments := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/resources/"), "/")
+			if len(segments) < 3 || (segments[0] != "tools" && segments[0] != "src") {
+				http.NotFound(w, r)
+				return
+			}
+			resource, ok := fake.resources[segments[2]]
+			latest := len(segments) == 3
+			exact := len(segments) == 5 && segments[3] == "revisions" && ok && segments[4] == string(resource.revision.ContentDigest)
+			if (latest && (!ok || resource.missing.Load())) || (!latest && !exact) {
+				http.NotFound(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(resource.revision)
+		case strings.HasPrefix(r.URL.Path, "/api/v1/artifacts/sha256/"):
+			for _, resource := range fake.resources {
+				if strings.TrimPrefix(resource.archive, "sha256:") == strings.TrimPrefix(r.URL.Path, "/api/v1/artifacts/sha256/") {
+					w.Header().Set("Content-Type", "application/vnd.agent-marketplace.artifact.v1.tar+gzip")
+					_, _ = w.Write(resource.raw)
+					return
+				}
+			}
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(fake.Close)
+	for _, name := range names {
+		fake.setSkill(t, name, name+" body v1")
+	}
+	return fake
 }
 
 func createAndPushTag(t *testing.T, repoDir, tag string) {

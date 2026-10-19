@@ -1,8 +1,10 @@
 # PostgreSQL/S3 example
 
-This example runs PostgreSQL, separate API and worker containers, the static VitePress site, the Nuxt Marketplace UI, and an internal Nginx reverse proxy. Only the proxy publishes a port. It serves VitePress at `/`, Nuxt at `/marketplace/` (and `/_fonts/`), and routes `/.well-known/agent-marketplace.json`, `/api/`, and `/healthz` to the API. PostgreSQL, the API, and the worker are internal services. The operations endpoints are not routed or published, and public requests to `/readyz` and `/metrics` get an explicit 404. The API container's healthcheck runs `/app/marketplace-healthcheck`, which calls `/readyz` on `127.0.0.1:9090` inside the container.
+This example runs PostgreSQL, separate API and worker containers, the Nuxt Marketplace UI, and an internal Nginx reverse proxy. Local documentation is optional and disabled by default; UI documentation links use `https://agent-marketplace.io/docs`. Only the proxy publishes a port. It serves Nuxt at `/` and routes `/.well-known/agent-marketplace.json`, `/api/`, and `/healthz` to the API. Without local docs, `/docs` and `/docs/` descendants return 404. PostgreSQL, the API, and the worker are internal services. The operations endpoints are not routed or published, and public requests to `/readyz` and `/metrics` get an explicit 404. The API container's healthcheck runs `/app/marketplace-healthcheck`, which calls `/readyz` on `127.0.0.1:9090` inside the container.
 
 The API and worker are built from different targets of `Dockerfile.marketplace`. Only the `worker` image contains Git, because acquisition runs there.
+
+When upgrading from the combined site profile, the proxy temporarily redirects `/marketplace` and its descendants to the corresponding root routes while preserving query parameters. Set `instance.browser_base` to the bare external origin, move any gateway protection from `/marketplace/admin/**` to `/admin/**`, and start Compose with `--remove-orphans` so the old `site` container is removed. OIDC transactions started before the route switch may require a fresh sign-in.
 
 The default `compose.yaml` is safe for production as written. It reads the PostgreSQL password from a secret file, mounts the metadata DSN as a Compose secret at `/run/secrets/marketplace-postgres-dsn`, and declares no AWS credential environment variables. S3 credentials therefore come from the AWS SDK default credential chain; prefer workload identity or IAM roles. If roles are unavailable, use the platform's secret manager and an SDK-supported credentials file instead of adding static AWS secrets to Compose.
 
@@ -38,6 +40,24 @@ The application containers run as non-root users and are read-only apart from `/
 
 For a registry with `ca_file: /etc/agent-marketplace/ca/internal.pem`, mount the same readable PEM bundle at that absolute path in both `api` and `worker`. Both roles validate the complete operator config at startup, although only the worker uses the bundle for Git acquisition. Keep the mount read-only and readable by container UID 1000.
 
+## Bundled documentation
+
+For air-gapped environments, append the docs override. From the repository root:
+
+```bash
+docker compose -f deploy/compose/postgres-s3/compose.yaml \
+  -f deploy/compose/postgres-s3/compose.docs.yaml up --build
+```
+
+This adds the `docs` service at origin-root `/docs/`, enables its proxy
+route and healthy-service dependency, and sets `NUXT_PUBLIC_DOCS_ENABLED=true`
+for the web container. Use the same files for subsequent Compose commands.
+The override also composes with `compose.development.yaml`.
+
+Build or transfer the images before disconnecting the network. This
+docs-only switch does not disable other outbound connections. To disable
+local docs again, use the base configuration and stop the unused docs container.
+
 ## Local development usage
 
 The environment-based DSN and static AWS credentials exist only in the explicit development override. From this directory, copy `.env.example` to an untracked `.env`, replace every placeholder, and run:
@@ -51,7 +71,7 @@ docker compose --env-file .env -f compose.yaml -f compose.development.yaml up --
 
 If your image mirror provides only `linux/amd64` images, add `MARKETPLACE_PLATFORM=linux/amd64` to `.env` or export it before starting. Apple Silicon then uses emulation. Use `MARKETPLACE_PLATFORM=linux/arm64` when ARM64 images are available.
 `NGINX_IMAGE` overrides both Nginx services for mirrors that expose one image;
-set `SITE_NGINX_IMAGE` separately to keep an unprivileged site runtime.
+set `SITE_NGINX_IMAGE` separately to keep an unprivileged documentation runtime.
 
 The development override switches both application services to `config.yaml`, which uses `storage.metadata.dsn_env`, and supplies `MARKETPLACE_POSTGRES_DSN` from `.env`. It also supplies AWS credentials from `.env` for local testing only. Never use `compose.development.yaml` or static AWS environment credentials for production.
 

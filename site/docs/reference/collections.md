@@ -35,7 +35,7 @@ The top-level fields in `COLLECTION.yaml` are:
 | `description` | string | no | Short description shown in listings. |
 | `version` | string | no | Display-only version metadata. Matching uses `name` only, because the source's ref already pins which version is in use. |
 | `resources` | list | no | Member entries of any supported kind. |
-| `skills` | list | no | Legacy member list. Each item has the same fields as a `resources` item except `kind`, and every item is a skill. Use `resources` in new collections. |
+| `skills` | list | no | Legacy member list. Each item has the same fields as a `resources` item except `kind`, and every item is a skill. New collections use `resources`. |
 | `includes` | list | no | Other collections to nest inside this one. |
 
 ## `resources` item
@@ -57,7 +57,7 @@ How `registry` and `ref` combine:
 | set | omitted | The consumer's configuration must already contain that registry. The member uses the ref configured there. Otherwise expansion fails with `references registry ... which has no configured ref and none was provided`. |
 | set | set | The consumer's configuration must already contain that registry. Otherwise expansion fails with `is not present in any config layer; add it to your registry list first`. |
 
-A collection cannot add a new registry to the consumer's configuration. If members come from another registry, tell consumers to configure that registry as a source first.
+A collection cannot add a new registry to the consumer's configuration. Members from another registry require the consumer to already have that registry configured as a source.
 
 A member name that the providing registry does not contain produces a warning during `sync`, and `sync --strict` fails on it. `list` does not check members.
 
@@ -112,3 +112,4 @@ Removing a collection member records an `exclude` in the active scope while keep
 - [How to publish resource collections](../how-to/author/publish-resource-collections.md)
 - [How to install resource bundles](../how-to/install-resource-bundles.md)
 - [Registry layout reference](./registry-layout.md)
+- [How upstream changes reach consumers](../explanation/how-upstream-changes-reach-consumers.md)

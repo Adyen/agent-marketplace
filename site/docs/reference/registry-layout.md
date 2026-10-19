@@ -6,7 +6,7 @@ This page lists the files and folders `agent-marketplace` reads in a registry, a
 
 | Kind | Directory | Expected files |
 |---|---|---|
-| skill | `skills/<name>/` in most layouts; see the table below | `SKILL.md` with top-level `name`, `description`, and optional `license`; `metadata` holds `tags` and `requires`. Other files in the folder ship with the skill. |
+| skill | `skills/<name>/` in most layouts; see the table below | `SKILL.md` with top-level `name`, `description`, and optional `license`; `metadata` holds `tags` and [`requires`](./resource-prerequisites.md). Other files in the folder ship with the skill. |
 | command | source-harness-specific, for example `commands/<name>.md` for Claude or `skills/<name>/` with `x-agent-marketplace-kind: command` for Devin and Codex | Native command file, or a skill-shaped command for the source harness. |
 | subagent | source-harness-specific; see the table below | Native subagent file for the source harness. |
 | hook | source-harness-specific; see the table below | Native hook file or shared settings file for the source harness. |
@@ -28,6 +28,7 @@ Paths are relative to the registry root, or to the source's `path` when it has o
 | Gemini CLI | `.agents/skills/<name>/SKILL.md` or `.gemini/skills/<name>/SKILL.md` | `commands/<name>.toml` | `.gemini/agents/<name>.md` | `.gemini/settings.json` under `hooks` | `.gemini/settings.json` under `mcpServers`; otherwise `gemini-extension.json`, `.gemini/gemini-extension.json`, or `.gemini/mcp.json` |
 | Devin CLI | `skills/<name>/SKILL.md` | `skills/<name>/SKILL.md` with `x-agent-marketplace-kind: command` | `agents/<name>.md` or `agents/<name>/AGENT.md` | `hooks.v1.json` (project layout) or `config.json` under `hooks` | `mcp_config.json` |
 | Codex | `.agents/skills/<name>/SKILL.md` | `.agents/skills/<name>/SKILL.md` with `x-agent-marketplace-kind: command` | `.codex/agents/<name>.toml` | `.codex/hooks.json` | `.codex/config.toml` under `mcp_servers` |
+| OpenCode | `.opencode/skills/<name>/SKILL.md` | `.opencode/commands/<name>.md` | `.opencode/agents/<name>.md` with `mode: subagent` | `.opencode/hooks/agent-marketplace/<name>.json` beside the fixed adapter in `.opencode/plugins/` | `opencode.json` or `opencode.jsonc` under `mcp` |
 
 In the Claude, Factory, Cursor, Windsurf, Devin, and Codex layouts, a `SKILL.md` without a `name` takes its folder name. The Claude `mcp.json` fallback applies to current lock source revisions; a Git source locked at source revision v1 to v3 keeps reading only `.mcp.json` until its lock is upgraded (see the [lockfile reference](./lockfiles.md)).
 
@@ -45,6 +46,8 @@ The CLI detects the layout from marker files, checked in this order:
 6. A `.cursor/` workspace: Cursor.
 7. Gemini files under `.gemini/` (skills, agents, `settings.json`, `mcp.json`, or `gemini-extension.json`), or a non-empty `.agents/skills/`: Gemini.
 8. A `.windsurf/` workspace, or root-level `workflows/`, `hooks.json`, `mcp_config.json`, or `AGENTS.md`: Windsurf.
+
+An OpenCode marker is an `.opencode/` folder holding `skills/`, `commands/`, `agents/`, `plugins/` (or their singular forms), `hooks/agent-marketplace/`, or an `opencode.json`/`opencode.jsonc` file. Dependency files OpenCode writes there by itself, such as `package.json`, are not a marker. The marker is weighed against steps 3-8: when the layout they select has its own workspace folder (`.codex/`, `.claude/`, `.factory/`, `.cursor/`, `.gemini/`, or `.windsurf/`), that layout keeps precedence; otherwise OpenCode wins, including over `.agents/skills/` and bare skill folders. A root whose only layout is the OpenCode marker but that contains bundle folders stays a container of those bundles. Whenever both are present, the catalog reports the warning `ingest.autodetect.ambiguous`, because the other layout's resources are not read. Set `source_harness` to choose explicitly.
 
 When nothing matches, the CLI reads the registry as Claude and records the diagnostic `catalog.autodetect.fallback`.
 
@@ -81,7 +84,7 @@ When operating a hosted Marketplace, `roots` declare ingestion paths relative to
 
 ## Conversion direction
 
-Every supported harness can be a conversion source and a conversion destination. See [How to convert a harness layout](../how-to/convert-a-harness-layout.md).
+Every supported harness can be a conversion source and a conversion destination.
 
 ## Related documentation
 

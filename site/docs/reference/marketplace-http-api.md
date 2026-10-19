@@ -21,7 +21,7 @@ Errors that public and operations route handlers return are JSON objects with on
 
 | Status | When |
 |---|---|
-| `400` | A malformed parameter: an unknown `kind`, a digest or commit in the wrong form, a bad `limit` or `offset`, or a search query longer than 256 characters. |
+| `400` | A malformed parameter: an unknown `kind` or `sort`, a digest or commit in the wrong form, a bad `limit` or `offset`, or a search query longer than 256 characters. |
 | `403` | The content is withheld because its current assessment rejects it. |
 | `404` | The registry, resource, revision, or object does not exist or is not available. |
 | `405` | The method is not `GET` or `HEAD`. |
@@ -33,7 +33,7 @@ Errors that public and operations route handlers return are JSON objects with on
 
 Every public route except `/healthz` first checks configuration authority (see `management.mode`). If that check fails, the route returns `503` with `{"error":"configuration authority unavailable"}` and `Cache-Control: private, no-store`. In `database` management mode, public routes other than `/healthz` and the admin routes also load current availability; if that fails they return `503` with `{"error":"availability unavailable"}`.
 
-Digest-addressed routes (assessments, inspection manifests, inspection content, manifests, and artifacts) return `Cache-Control: public, max-age=31536000, immutable` and `X-Content-Type-Options: nosniff`.
+Digest-addressed routes (assessments, inspection manifests, inspection content, manifests, artifacts, and placeholder archives) return `Cache-Control: public, max-age=31536000, immutable` and `X-Content-Type-Options: nosniff`.
 
 ## Public routes
 
@@ -56,8 +56,11 @@ The response has `instance_id`, `version`, `canonical_url`, `api_base` (always `
   - `registry`: registry filter; repeat it to filter by several registries.
   - `limit`: default `100`. Values above `1000` are reduced to `1000`. Negative or non-numeric values return `400`.
   - `offset`: default `0`. Negative or non-numeric values return `400`.
+  - `sort`: optional; the only accepted value is `installations`. Any other value returns `400`. Requests that omit `sort` keep the existing relevance and coordinate ordering.
 
   The response is `{"items": [...], "total": <n>, "offset": <n>, "limit": <n>}`. Each item has `registry_id`, `registry_slug`, `kind`, `name`, `revision`, `content_digest`, and, when present, `description`, `availability`, `metadata` (for example `license`), and `score`.
+
+  With `sort=installations` and a configured `installation_metrics` endpoint, text searches keep relevance ordering first and then rank ties by reported adoption; browse (no `q`) orders by adoption. Items then carry an optional `installation_count`: the number of distinct installations whose latest enabled configuration within the last 30 days reports the resource. Counts cover only telemetry-reporting installations matched by Git identity or explicit coordinates for this Marketplace instance; hosted observations use canonical resource names rather than installed-name aliases, and non-reporting installations or older clients can cause undercount; the aggregate is refreshed in the background and bounded by the configured `installation_metrics.max_age` (five minutes by default), with an earlier registry-origin change or 30-day inventory horizon expiring it sooner. Searches only read the published aggregate and never perform or wait for telemetry; a miss may leave a non-blocking hint that asks the background worker to refresh sooner without bypassing failure backoff. Metrics requests are POSTs to `/api/v1/query` with a bounded timeout (two seconds by default), an 8 MiB response bound, and no redirect following, so credentials never leave the configured endpoint. A failed refresh keeps serving a still-fresh, identity-compatible last-good aggregate until its original expiry. When metrics are disabled or no usable aggregate is published (before the first successful refresh, after expiry, or after a registry identity change), ordering falls back to the existing behavior and `installation_count` is omitted rather than reported as zero.
 - `GET /api/v1/registries`: registry identifiers as an array of `{"id": ..., "slug": ...}`, sorted by slug, at most 1000 entries.
 - `GET /api/v1/registries/{registry}`: public registry metadata. `{registry}` is a slug or an ID. Credentials and refresh diagnostics are never included.
 - `GET /api/v1/registries/{registry}/history`: registry occurrence history, newest first, at most 1000 entries. Returns `[]` when there is no history.
@@ -108,6 +111,7 @@ The response has `api_version` (`agent-marketplace.io/catalog/v1alpha1`), `marke
 - `GET /api/v1/inspection/sha256/{digest}`: immutable inspection manifest.
 - `GET /api/v1/content/sha256/{digest}`: one allowlisted inspection file, returned as `text/plain`, `application/json`, or a PNG, JPEG, GIF, or WebP image. Other content returns `415`.
 - `GET /api/v1/artifacts/sha256/{digest}`: artifact bytes with content type `application/vnd.agent-marketplace.artifact.v1.tar+gzip`. A digest that no published revision owns returns `404`, even if a blob exists at that address. Returns `410` when revoked, `403` when blocked by assessment, and `413` above `policy.limits.artifact_bytes`.
+- `GET /api/v1/archives/sha256/{digest}`: the placeholder-form archive for the same digest, with the same content type and the same `404`, `410`, `403`, and `413` rules. Its bytes hash to `{digest}`, so clients verify them without re-compressing. The server stores it on first request, deriving it from the stored artifact; it returns `404` with `placeholder archive not available` when the stored artifact does not reproduce the digest.
 
 In these `sha256/{digest}` routes, `{digest}` is exactly 64 lowercase hexadecimal characters; the `sha256` part is a path segment. In `database` management mode, the inspection and content routes also refuse objects that no available revision owns (`404`, `403`, or `410`).
 
@@ -128,7 +132,7 @@ These routes exist on the public listener under `/api/v1/admin/`. When `admin.en
 
 Sign-in routes (OIDC mode only):
 
-- `GET /api/v1/admin/auth/login`: starts sign-in and redirects (`303`) to the identity provider. Optional `next` parameter; only `/marketplace/admin` and paths below it are accepted.
+- `GET /api/v1/admin/auth/login`: starts sign-in and redirects (`303`) to the identity provider. Optional `next` parameter; only the administration path below the configured `instance.browser_base` is accepted. A root browser base uses `/admin`; an omitted browser base retains `/marketplace/admin`.
 - `GET /api/v1/admin/auth/callback`: OIDC callback. Sets the session cookie and redirects (`303`).
 - `POST /api/v1/admin/auth/logout`: expires the admin cookies. Safe to repeat.
 
@@ -138,7 +142,7 @@ Read routes (`GET` or `HEAD`, responses use `Cache-Control: no-store`):
 - `/api/v1/admin/configuration`: the managed configuration. The `ETag` header carries the current revision.
 - `/api/v1/admin/profiles`: credential profile keys with their allowed origins, plus the accepted source harnesses.
 - `/api/v1/admin/instance`: instance name, version, management mode, and revision.
-- `/api/v1/admin/attempts`: refresh attempt history. Parameters `before`, `limit` (1 to 100), `registry_id`, and `job_id`.
+- `/api/v1/admin/attempts`: refresh attempt history. Parameters `before`, `limit` (1 to 100), `registry_id`, and `job_id`. Failed and superseded attempts may carry `failure_code`, a stable machine-readable classification, and `failure_cause`, a sanitized cause that never contains raw command output or credentials; both are omitted on started and succeeded attempts, and historical records may lack them.
 - `/api/v1/admin/activity`: audited changes, newest first. Parameters `before` and `limit` (1 to 100, default 50).
 - `/api/v1/admin/jobs/{id}`: status of one managed job.
 - `/api/v1/admin/previews/{id}`: state and result of one discovery preview.

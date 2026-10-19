@@ -25,7 +25,10 @@ func TestConfigSnapshotsTrackParsedIncludeBytes(t *testing.T) {
 	writeConfig(t, root, "include: fragment.yaml\n")
 	writeConfig(t, fragment, "harnesses: [claude]\n")
 	opts := config.LoadEffectiveOptions{RepoRoot: repo, LocalConfigDir: repo}
-	loaded, before, err := loadStableEffectiveWith(context.Background(), opts, config.LoadEffective)
+	load := func(ctx context.Context, opts config.LoadEffectiveOptions) config.EffectiveConfig {
+		return pipeline.LoadEffective(ctx, pipeline.ConfigLoadStrict, opts, nil)
+	}
+	loaded, before, err := loadStableEffectiveWith(context.Background(), opts, load)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,35 +36,12 @@ func TestConfigSnapshotsTrackParsedIncludeBytes(t *testing.T) {
 	if _, err := snapshotEffectiveConfigs(loaded, nil); !errors.Is(err, dependencytxn.ErrGenerationConflict) {
 		t.Fatalf("stale parsed bytes accepted: %v", err)
 	}
-	_, after, err := loadStableEffectiveWith(context.Background(), opts, config.LoadEffective)
+	_, after, err := loadStableEffectiveWith(context.Background(), opts, load)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if sameConfigSnapshots(before, after) {
 		t.Fatal("include-only change left snapshots equal")
-	}
-}
-
-func TestEffectiveReadAssertionsRequireTransientOrganizationLockAbsence(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
-	lockPath := filepath.Join(canonicalTempDir(t), "lock.yaml")
-	reads, err := effectiveReadAssertions(config.EffectiveConfig{
-		Organization: config.LayerResult{
-			Source: config.Organization,
-			Config: &config.Config{},
-			Reads: []config.ConfigRead{{
-				Path: lockPath, RequestedPath: lockPath, Digest: dependencytxn.Digest([]byte("runtime lock")),
-				Overlay: true, RuntimeLock: true, AcquisitionLock: true,
-			}},
-		},
-	}, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(reads) != 1 || reads[0].Path != lockPath || reads[0].RequestedPath != lockPath || reads[0].Expected.Exists {
-		t.Fatalf("runtime lock assertions = %#v, want one absence assertion", reads)
 	}
 }
 
@@ -81,7 +61,7 @@ func TestPrepareRuntimeLocksValidatesIncludedReadSet(t *testing.T) {
 			repo := canonicalTempDir(t)
 			fragments := canonicalTempDir(t)
 			leaf := filepath.Join(fragments, "leaf.yaml")
-			body := "registries:\n  - url: " + origin + "\n    ref: main\n"
+			body := "sources:\n  origin: {git: file://" + origin + ", ref: main}\n"
 			writeConfig(t, leaf, body)
 			other := filepath.Join(fragments, "other.yaml")
 			writeConfig(t, other, body)
@@ -107,7 +87,7 @@ func TestPrepareRuntimeLocksValidatesIncludedReadSet(t *testing.T) {
 			commitDependencyTransaction = func(ctx context.Context, state string, desired []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
 				switch change {
 				case "edit":
-					writeConfig(t, leaf, "registries: []\n")
+					writeConfig(t, leaf, "sources: {}\n")
 				case "delete", "retarget":
 					if err := os.Chmod(fragments, 0o755); err != nil {
 						t.Fatal(err)
@@ -203,7 +183,7 @@ func TestPrepareRuntimeLocksIncludesStagedRootThroughAlias(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	staged := []byte("apiVersion: agent-marketplace/v2\nharnesses: [claude]\nregistries:\n  - url: " + origin + "\n    ref: main\n")
+	staged := []byte("apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  origin: {git: file://" + origin + ", ref: main}\n")
 	_, _, _, err = prepareRuntimeLocks(context.Background(), repo, repo, lockMode{stagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: configPath, Path: configPath, Expected: expected, Bytes: staged, Mode: 0o644}}})
 	if err != nil {
 		t.Fatal(err)
@@ -251,7 +231,7 @@ func TestPrepareRuntimeLocksRejectsStagingGenerationRaces(t *testing.T) {
 			} else if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			staged := []byte("apiVersion: agent-marketplace/v2\nharnesses: [claude]\nregistries:\n  - url: " + origin + "\n    ref: main\n")
+			staged := []byte("apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  origin: {git: file://" + origin + ", ref: main}\n")
 			writeConfig(t, configPath, test.current)
 			current, err := os.ReadFile(configPath)
 			if err != nil {
@@ -288,7 +268,7 @@ func TestPrepareRuntimeLocksRevalidatesPublishedLockGeneration(t *testing.T) {
 
 	repo := filepath.Join(canonicalTempDir(t), "repo")
 	configPath := filepath.Join(repo, ".agents", "config.yaml")
-	writeConfig(t, configPath, "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: "+origin+"\n    ref: main\n")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  origin: {git: file://"+origin+", ref: main}\n")
 	_, _, validate, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{})
 	if err != nil {
 		t.Fatal(err)
@@ -311,8 +291,16 @@ func TestPrepareRuntimeLocksRejectsRetargetedStagedConfigSymlink(t *testing.T) {
 	dir := canonicalTempDir(t)
 	first := filepath.Join(dir, "first", "config.yaml")
 	second := filepath.Join(dir, "second", "config.yaml")
-	writeConfig(t, first, "\nharnesses: [claude]\n")
-	writeConfig(t, second, "\nharnesses: [factory]\n")
+	writeConfig(t, first, "apiVersion: agent-marketplace/v4\nharnesses: [claude]\n")
+	writeConfig(t, second, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	before := make(map[string][]byte)
+	for _, path := range []string{first, second} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[path] = raw
+	}
 	requested := filepath.Join(dir, "config.yaml")
 	if err := os.Symlink(first, requested); err != nil {
 		t.Fatal(err)
@@ -331,13 +319,13 @@ func TestPrepareRuntimeLocksRejectsRetargetedStagedConfigSymlink(t *testing.T) {
 	if err := os.Symlink(second, requested); err != nil {
 		t.Fatal(err)
 	}
-	staged := []byte("apiVersion: agent-marketplace/v2\nharnesses: [claude]\n")
+	staged := []byte("apiVersion: agent-marketplace/v4\nharnesses: [codex]\n")
 	_, _, _, err = prepareRuntimeLocks(context.Background(), dir, dir, lockMode{stagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: requested, Path: canonicalFirst, Expected: expected, Bytes: staged, Mode: 0o644}}})
 	if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
 		t.Fatalf("error = %v, want generation conflict", err)
 	}
 	for _, path := range []string{first, second} {
-		if raw, readErr := os.ReadFile(path); readErr != nil || bytes.Contains(raw, []byte("registries:")) {
+		if raw, readErr := os.ReadFile(path); readErr != nil || !bytes.Equal(raw, before[path]) {
 			t.Fatalf("destination changed at %s: %q, %v", path, raw, readErr)
 		}
 	}
@@ -351,7 +339,8 @@ func TestPrepareRuntimeLocksRejectsUnmatchedAndDuplicateStagedEdits(t *testing.T
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	repo := canonicalTempDir(t)
 	unmatched := filepath.Join(canonicalTempDir(t), "config.yaml")
-	writeConfig(t, unmatched, "\nskills: [review]\n")
+	source := t.TempDir()
+	writeConfig(t, unmatched, "apiVersion: agent-marketplace/v4\nsources:\n  local: {directory: "+source+"}\nresources:\n  local: [skill/review]\n")
 	canonical, err := canonicalizeFuturePath(unmatched)
 	if err != nil {
 		t.Fatal(err)
@@ -360,7 +349,7 @@ func TestPrepareRuntimeLocksRejectsUnmatchedAndDuplicateStagedEdits(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	edit := pipeline.StagedConfigEdit{RequestedPath: unmatched, Path: canonical, Expected: generation, Bytes: []byte("apiVersion: agent-marketplace/v2\nskills: [changed]\n"), Mode: 0o644}
+	edit := pipeline.StagedConfigEdit{RequestedPath: unmatched, Path: canonical, Expected: generation, Bytes: []byte("apiVersion: agent-marketplace/v4\nsources:\n  local: {directory: " + source + "}\nresources:\n  local: [skill/changed]\n"), Mode: 0o644}
 	for _, test := range []struct {
 		name  string
 		edits []pipeline.StagedConfigEdit
@@ -405,7 +394,7 @@ func TestPrepareRuntimeLocksRejectsRepositoryConfigAncestorSymlink(t *testing.T)
 		t.Fatal(err)
 	}
 	configPath := filepath.Join(external, "config.yaml")
-	original := []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: " + origin + "\n    ref: main\n")
+	original := []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  origin: {git: file://" + origin + ", ref: main}\n")
 	if err := os.WriteFile(configPath, original, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -451,7 +440,7 @@ func TestPrepareRuntimeLocksRejectsStagedConfigAncestorSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	destination := filepath.Join(external, "config.yaml")
-	original := []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\n")
+	original := []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 	if err := os.WriteFile(destination, original, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -459,7 +448,7 @@ func TestPrepareRuntimeLocksRejectsStagedConfigAncestorSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	staged := []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: " + origin + "\n    ref: main\n")
+	staged := []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  origin: {git: file://" + origin + ", ref: main}\n")
 	_, _, _, err = prepareRuntimeLocks(context.Background(), repo, repo, lockMode{stagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: requested, Path: destination, Expected: expected, Bytes: staged, Mode: 0o644}}})
 	if !errors.Is(err, dependencytxn.ErrUnsafePath) {
 		t.Fatalf("error = %v, want ErrUnsafePath", err)
@@ -480,7 +469,7 @@ func TestPrepareRuntimeLocksRejectsGeneratedLockSymlink(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	repo := canonicalTempDir(t)
 	configPath := filepath.Join(repo, ".agents", "config.yaml")
-	writeConfig(t, configPath, "apiVersion: agent-marketplace/v2\nharnesses: [factory]\n")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
 	target := filepath.Join(t.TempDir(), "lock.yaml")
 	original := []byte("user-owned lock target\n")
@@ -512,7 +501,7 @@ func TestPrepareRuntimeLocksRejectsWritableLayerDestinationAlias(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	target := filepath.Join(canonicalTempDir(t), "config.yaml")
-	writeConfig(t, target, "\nskills: [review]\n")
+	writeConfig(t, target, "apiVersion: agent-marketplace/v4\nsources:\n  local: {directory: "+t.TempDir()+"}\nresources:\n  local: [skill/review]\n")
 	repo := filepath.Join(canonicalTempDir(t), "repo")
 	for _, link := range []string{filepath.Join(home, ".agents", "config.yaml"), filepath.Join(repo, ".agents", "config.yaml")} {
 		if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
@@ -540,12 +529,12 @@ func TestPrepareRuntimeLocksCommitsStagedConfigAndLockTogether(t *testing.T) {
 
 	repo := filepath.Join(canonicalTempDir(t), "repo")
 	configPath := filepath.Join(repo, ".agents", "config.yaml")
-	writeConfig(t, configPath, "\nharnesses: [claude]\nregistries:\n  - url: "+origin+"\n    ref: main\n")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  origin: {git: file://"+origin+", ref: main}\n")
 	original, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	staged := append(append([]byte(nil), original...), []byte("skills: [review]\n")...)
+	staged := append(append([]byte(nil), original...), []byte("resources:\n  origin: [skill/review]\n")...)
 	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
 
 	originalCommit := commitDependencyTransaction

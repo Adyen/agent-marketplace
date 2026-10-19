@@ -3,12 +3,14 @@ package gemini
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/toolpolicy"
 )
 
 const (
@@ -22,10 +24,10 @@ const (
 //   - name: subagent name
 //   - description: one-line description
 //   - kind: always "local" for compiled subagents
-//   - model: mapped via mapping.Model() for Gemini target
-//   - tools: mapped via mapping.Tool() for Gemini target
+//   - model: resolved through the shared model catalog
+//   - tools: translated via toolpolicy.TranslateToolList for the Gemini catalog
 //
-// Effort is emitted from the canonical IR when present. Temperature,
+// Effort is omitted with a warning; agent Markdown has no field. Temperature,
 // max_turns, timeout_mins, and inline mcpServers are Gemini-specific fields
 // populated from Ext.Gemini.
 func translateSubagent(sub *ir.Subagent, opts compile.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
@@ -35,6 +37,9 @@ func translateSubagent(sub *ir.Subagent, opts compile.Options) ([]artifact.Artif
 	}
 	if sub.Isolation != "" {
 		diags = append(diags, diag.Diagnostic{Code: diag.CodeSubagentSecurityRestrictionUnsupported, Severity: diag.SeverityError, Target: string(mapping.TargetGemini), Resource: sub.Name(), Message: "Gemini cannot represent isolation; subagent artifact suppressed", Hint: "Use a target that supports isolation or remove the restriction explicitly", Source: diag.SourceRef(sub.Source)})
+	}
+	if compile.SubagentReadOnly(sub) {
+		diags = append(diags, compile.ReadOnlyUnsupported(mapping.TargetGemini, sub))
 	}
 	if len(diags) > 0 {
 		return nil, diags, nil
@@ -66,46 +71,48 @@ func translateSubagent(sub *ir.Subagent, opts compile.Options) ([]artifact.Artif
 					Args:    replaceEnvTokenSlice(server.Args),
 					Env:     replaceEnvTokenMap(server.Env),
 					URL:     replaceEnvTokens(server.URL),
+					Extra:   server.Extra,
 				}
-				diags = append(diags, compile.McpCredentialDiagnosticsForFields(
+				diags = append(diags, compile.McpCredentialDiagnosticsWithExtra(
 					sub.Name(), diag.SourceRef(sub.Source), mapping.TargetGemini,
-					server.Env, nil, "", "mcpServers."+name+".", compile.WithMcpOptions(opts),
+					server.Env, server.Extra, "mcpServers."+name+".", compile.WithMcpOptions(opts),
 				)...)
 			}
 		}
 	}
 
-	// Map model via mapping table.
-	mappedModel := sub.Model
-	if sub.Model != "" {
-		m, ok := mapping.ModelWithOverride(sub.Model, mapping.TargetGemini, opts.ModelOverride())
-		if ok {
-			mappedModel = m
-		}
-		// If not ok, the model is not in the table; passthrough unchanged.
-		// No info diagnostic needed for Gemini model passthrough in v0.
+	// Resolve model and reasoning through the shared catalog.
+	selection, modelDiags, err := compile.SubagentModel(sub, mapping.TargetGemini, opts)
+	if err != nil {
+		return nil, nil, err
 	}
+	mappedModel := selection.Model
+	// Unknown cross-target models are omitted without suppressing the agent.
+	// Gemini agent Markdown has no standalone effort representation.
+	diags = append(diags, modelDiags...)
 
-	// Map tools via mapping table.
+	// Map tools via the shipped tool catalogs (design D5).
 	var mappedTools []string
-	if sub.Tools != nil {
-		mappedTools = make([]string, 0, len(sub.Tools))
+	emittedTools, uncoveredTools, toolErr := toolpolicy.TranslateToolList(mapping.Target(sub.ToolSource), mapping.TargetGemini, toolpolicy.SurfaceSubagentTools, sub.Tools, opts.ToolOverride())
+	if toolErr != nil {
+		return nil, nil, fmt.Errorf("gemini: translate subagent tools: %w", toolErr)
 	}
-	for _, toolID := range sub.Tools {
-		mapped, ok := mapping.ToolWithOverride(toolID, mapping.TargetGemini, opts.ToolOverride())
-		if !ok {
-			diags = append(diags, diag.Diagnostic{
-				Code:     diag.CodeSubagentGeminiToolUnknown,
-				Severity: diag.SeverityError,
-				Target:   string(mapping.TargetGemini),
-				Resource: sub.Name(),
-				Message:  "Gemini cannot map an explicit subagent tool; artifact suppressed",
-				Hint:     "Add the tool to the mapping table or remove the explicit tool",
-				Source:   compile.DiagSource(sub.Source),
-			})
-		} else {
-			mappedTools = append(mappedTools, mapped...)
+	if sub.Tools != nil {
+		mappedTools = emittedTools
+		if mappedTools == nil {
+			mappedTools = []string{}
 		}
+	}
+	for range uncoveredTools {
+		diags = append(diags, diag.Diagnostic{
+			Code:     diag.CodeSubagentGeminiToolUnknown,
+			Severity: diag.SeverityError,
+			Target:   string(mapping.TargetGemini),
+			Resource: sub.Name(),
+			Message:  "Gemini cannot map an explicit subagent tool; artifact suppressed",
+			Hint:     "Add the tool to the mapping table or remove the explicit tool",
+			Source:   compile.DiagSource(sub.Source),
+		})
 	}
 	if diag.HasErrors(diags) {
 		return nil, diags, nil
@@ -122,9 +129,6 @@ func translateSubagent(sub *ir.Subagent, opts compile.Options) ([]artifact.Artif
 	if mappedTools != nil {
 		fm.Set("tools", mappedTools)
 	}
-	if sub.Effort != "" {
-		fm.Set("effort", sub.Effort)
-	}
 	if temperature != nil {
 		fm.Set("temperature", *temperature)
 	}
@@ -138,7 +142,7 @@ func translateSubagent(sub *ir.Subagent, opts compile.Options) ([]artifact.Artif
 		fm.Set("max-nesting", *sub.MaxNesting)
 	}
 
-	extraKeys, extraDiags := compile.ExtraKeys(sub.Extra, compile.PresentFields(map[string]bool{
+	extraKeys, extraDiags := compile.ModelExtraKeys(sub.Extra, compile.PresentFields(map[string]bool{
 		"name":            true,
 		"description":     true,
 		"kind":            true,
@@ -181,6 +185,11 @@ func translateSubagent(sub *ir.Subagent, opts compile.Options) ([]artifact.Artif
 			if server.URL != "" {
 				entry["url"] = server.URL
 			}
+			for key, value := range server.Extra {
+				if !modeledInlineMCPMember(key) {
+					entry[key] = value
+				}
+			}
 			entries[name] = entry
 		}
 		fm.Set("mcpServers", entries)
@@ -205,4 +214,14 @@ type extMCPServer struct {
 	Args    []string
 	Env     map[string]string
 	URL     string
+	Extra   map[string]any
+}
+
+func modeledInlineMCPMember(key string) bool {
+	for _, member := range []string{"command", "args", "env", "url"} {
+		if strings.EqualFold(key, member) {
+			return true
+		}
+	}
+	return false
 }

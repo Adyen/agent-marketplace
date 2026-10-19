@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/logging/logvalue"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	marketplaceartifact "github.com/Adyen/agent-marketplace/pkg/marketplace/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
@@ -60,6 +61,8 @@ type Server struct {
 	ops           *http.Server
 
 	metrics *serverMetrics
+
+	installations *installationMetricsReader
 }
 
 // PublicHandler returns the public API handler, useful for tests.
@@ -85,7 +88,11 @@ func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStor
 		option(s)
 	}
 
-	s.metrics = newServerMetrics()
+	s.metrics = newServerMetrics(meta)
+	if strings.TrimSpace(cfg.InstallationMetrics.URL) != "" {
+		s.installations = newInstallationMetricsReader(cfg.InstallationMetrics, s.mpID)
+		s.installations.metrics = s.metrics
+	}
 
 	publicMux := http.NewServeMux()
 	s.registerAdmin(publicMux)
@@ -104,6 +111,7 @@ func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStor
 	publicMux.Handle("/api/v1/inspection/", s.methodGet(s.handleInspectionDigest))
 	publicMux.Handle("/api/v1/content/", s.methodGet(s.handleContentDigest))
 	publicMux.Handle("/api/v1/artifacts/", s.methodGet(s.handleArtifacts))
+	publicMux.Handle("/api/v1/archives/", s.methodGet(s.handlePlaceholderArchives))
 	publicMux.Handle("/healthz", s.methodGet(s.handleHealthz))
 	// Keep operations endpoints private even when a caller reaches the public
 	// listener directly; the operations listener remains the only route.
@@ -117,7 +125,7 @@ func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStor
 	// Each mux is instrumented as a whole, not per route, so responses the
 	// mux itself generates are counted too; see serverMetrics.handler.
 	s.public = &http.Server{
-		Handler:      s.authorityHandler(s.availabilityHandler(s.metrics.handler(publicListener, publicMux))),
+		Handler:      s.metrics.publicStack(publicMux, s.authorityHandler(s.availabilityHandler(s.metrics.handler(publicListener, publicMux)))),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
@@ -149,6 +157,14 @@ func (s *Server) Start(ctx context.Context) error {
 
 	var wg sync.WaitGroup
 	errCh := make(chan error, 2)
+
+	if s.installations != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.installations.run(ctx, s.registryIndex)
+		}()
+	}
 
 	wg.Add(1)
 	go func() {
@@ -263,46 +279,74 @@ func (s *Server) handleCatalogProjection(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	page, err := s.meta.ReadCatalogProjectionPage(r.Context(), store.CatalogProjectionPageRequest{
-		Marketplace: s.mpID,
-		After:       after,
-		Limit:       limit,
-	})
-	if err != nil {
-		slog.Error("catalog projection read failed", "continuation", continuation, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to read catalog projection")
-		return
-	}
+	validator := r.Header.Get("If-None-Match")
 	view := availabilityFromContext(r.Context())
 	if s.cfg.Management.Mode == "database" && view == nil {
 		writeError(w, http.StatusServiceUnavailable, "availability unavailable")
 		return
 	}
-	for i := range page.Resources {
-		availability := s.fileResourceAvailability(page.Resources[i].AssessedResourceRevision)
-		if s.cfg.Management.Mode == "database" {
-			availability = s.evaluateAvailability(view, page.Resources[i].AssessedResourceRevision).Availability
-		}
-		switch availability {
-		case AvailabilityRevoked:
-			page.Resources[i].Availability = store.CatalogAvailabilityRevoked
-		case AvailabilityAvailable:
-			page.Resources[i].Availability = store.CatalogAvailabilityAvailable
-		case AvailabilityOperatorExposed:
-			page.Resources[i].Availability = store.CatalogAvailabilityOperatorExposed
-		default:
-			page.Resources[i].Availability = store.CatalogAvailabilityBlocked
-		}
+
+	request := store.CatalogProjectionPageRequest{
+		Marketplace: s.mpID,
+		After:       after,
+		Limit:       limit,
 	}
+	unchanged := func(version store.CatalogVersion) bool {
+		matches, err := ifNoneMatchMatches(validator, s.availabilityETag(r.Context(), version))
+		return err == nil && matches
+	}
+
+	readStarted := time.Now()
+	var page store.CatalogProjectionPage
+	matched := false
+	var readErr error
+	conditional, conditionalOK := s.meta.(store.ConditionalCatalogProjectionStore)
+	if conditionalOK && conditional.OwnsCatalogProjectionStore(s.meta) &&
+		!continuation && validator != "" {
+		page, matched, readErr = conditional.ReadCatalogProjectionPageConditional(r.Context(), request, unchanged)
+	} else {
+		page, readErr = s.meta.ReadCatalogProjectionPage(r.Context(), request)
+	}
+	s.metrics.observePhase(phaseCatalogRead, readStarted)
+	if readErr != nil {
+		slog.Error("catalog projection read failed", "continuation", continuation, "error", readErr)
+		writeError(w, http.StatusInternalServerError, "failed to read catalog projection")
+		return
+	}
+
+	if !matched {
+		availabilityStarted := time.Now()
+		for i := range page.Resources {
+			var availability Availability
+			if s.cfg.Management.Mode == "database" {
+				availability = s.evaluateAvailability(view, page.Resources[i].AssessedResourceRevision).Availability
+			} else {
+				availability = s.fileResourceAvailability(page.Resources[i].AssessedResourceRevision)
+			}
+			switch availability {
+			case AvailabilityRevoked:
+				page.Resources[i].Availability = store.CatalogAvailabilityRevoked
+			case AvailabilityAvailable:
+				page.Resources[i].Availability = store.CatalogAvailabilityAvailable
+			case AvailabilityOperatorExposed:
+				page.Resources[i].Availability = store.CatalogAvailabilityOperatorExposed
+			default:
+				page.Resources[i].Availability = store.CatalogAvailabilityBlocked
+			}
+		}
+		s.metrics.observePhase(phaseCatalogAvailability, availabilityStarted)
+	}
+	responseStarted := time.Now()
+	defer s.metrics.observePhase(phaseCatalogResponse, responseStarted)
 	etag := s.availabilityETag(r.Context(), page.CatalogVersion)
 	setCatalogHeaders(w, etag)
 	if !continuation {
-		matches, err := ifNoneMatchMatches(r.Header.Get("If-None-Match"), etag)
+		matches, err := ifNoneMatchMatches(validator, etag)
 		if err != nil {
 			s.writeCatalogError(w, err.Error(), started, continuation)
 			return
 		}
-		if matches {
+		if matched || matches {
 			slog.Debug("catalog projection not modified", "catalog_version", page.CatalogVersion, "duration", time.Since(started))
 			w.WriteHeader(http.StatusNotModified)
 			return
@@ -311,7 +355,7 @@ func (s *Server) handleCatalogProjection(w http.ResponseWriter, r *http.Request)
 
 	response, err := s.catalogPageDTO(page)
 	if err != nil {
-		slog.Error("catalog projection contained invalid public data", "error", err)
+		slog.Error("catalog projection contained invalid public data", "error", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to read catalog projection")
 		return
 	}
@@ -565,6 +609,42 @@ func publicCatalogSource(source store.CatalogProjectionSource) (CatalogSource, b
 	return CatalogSource{RepositoryURL: repositoryURL, Path: sourcePath, Commit: source.Commit}, true
 }
 
+// resourceSourceResolver returns a request-scoped resolver for optional source
+// provenance, memoizing the registry origin lookup per occurrence commit.
+func (s *Server) resourceSourceResolver(ctx context.Context) func(store.AssessedResourceRevision) *CatalogSource {
+	type occurrenceKey struct {
+		registry store.RegistryID
+		commit   string
+	}
+	origins := make(map[occurrenceKey]string)
+	return func(rev store.AssessedResourceRevision) *CatalogSource {
+		if rev.Occurrence.SourcePath == "" {
+			return nil
+		}
+		key := occurrenceKey{registry: rev.Coordinate.Registry, commit: rev.Occurrence.Commit}
+		origin, cached := origins[key]
+		if !cached {
+			occurrence, err := s.meta.GetRegistryOccurrence(ctx, key.registry, key.commit)
+			switch {
+			case errors.Is(err, store.ErrNotFound):
+			case err != nil:
+				slog.Warn("resource source origin unavailable", "registry", logvalue.Safe(key.registry), "commit", logvalue.Safe(key.commit), "err", logvalue.Safe(err))
+			default:
+				origin = occurrence.SourceOrigin
+			}
+			origins[key] = origin
+		}
+		if origin == "" {
+			return nil
+		}
+		source, ok := publicCatalogSource(store.CatalogProjectionSource{RepositoryURL: origin, Path: rev.Occurrence.SourcePath, Commit: rev.Occurrence.Commit})
+		if !ok {
+			return nil
+		}
+		return &source
+	}
+}
+
 func catalogCollectionDTO(collection *store.CatalogCollectionProjection, marketplace store.MarketplaceID) (CatalogCollection, error) {
 	out := CatalogCollection{
 		Resources:            make([]CatalogCollectionResourceReference, 0),
@@ -627,7 +707,7 @@ func writeCatalogJSON(w http.ResponseWriter, method string, page CatalogPage) {
 		return
 	}
 	if err := json.NewEncoder(w).Encode(page); err != nil {
-		slog.Error("failed to encode catalog projection response", "err", err)
+		slog.Error("failed to encode catalog projection response", "err", logvalue.Safe(err))
 	}
 }
 
@@ -638,7 +718,7 @@ func (s *Server) handleInstance(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "marketplace not found")
 			return
 		}
-		slog.Error("failed to load marketplace", "err", err)
+		slog.Error("failed to load marketplace", "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load marketplace")
 		return
 	}
@@ -646,7 +726,7 @@ func (s *Server) handleInstance(w http.ResponseWriter, r *http.Request) {
 	// response boundary so legacy canonical URLs cannot leak credentials.
 	mp.CanonicalURL = publicurl.Sanitize(mp.CanonicalURL)
 	if err := validatePublicMarketplace(mp); err != nil {
-		slog.Error("instance contains invalid public metadata", "err", err)
+		slog.Error("instance contains invalid public metadata", "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load marketplace")
 		return
 	}
@@ -663,6 +743,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid kind")
 		return
 	}
+	if sortParam := q.Get("sort"); sortParam != "" && sortParam != "installations" {
+		writeError(w, http.StatusBadRequest, "invalid sort")
+		return
+	}
+	sortByInstallations := q.Get("sort") == "installations"
 
 	registryFilters := q["registry"]
 	searchQ := q.Get("q")
@@ -689,21 +774,21 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		Query:       searchQ,
 	})
 	if err != nil {
-		slog.Error("search failed", "err", err)
+		slog.Error("search failed", "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "search failed")
 		return
 	}
 
 	registries, err := s.registryIndex(r.Context())
 	if err != nil {
-		slog.Error("registry index failed", "err", err)
+		slog.Error("registry index failed", "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "search failed")
 		return
 	}
 
 	for _, rev := range revs {
 		if err := validatePublicResourceRevision(rev); err != nil {
-			slog.Error("search returned invalid resource revision", "err", err)
+			slog.Error("search returned invalid resource revision", "err", logvalue.Safe(err))
 			writeError(w, http.StatusInternalServerError, "search failed")
 			return
 		}
@@ -715,11 +800,28 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	revs = latestEffectiveRevisions(revs, s.revocations)
 	total := len(revs)
+
+	var adoption *installationCounts
+	if sortByInstallations && s.installations != nil {
+		if counts, ok := s.installations.lookup(registries); ok {
+			adoption = counts
+		} else {
+			s.installations.hint()
+		}
+	}
+
 	sort.Slice(revs, func(i, j int) bool {
 		si := relevanceScore(revs[i].Coordinate.Name, searchQ)
 		sj := relevanceScore(revs[j].Coordinate.Name, searchQ)
 		if si != sj {
 			return si > sj
+		}
+		if adoption != nil {
+			ci := adoption.Counts[installationResourceKey{Registry: revs[i].Coordinate.Registry, Kind: revs[i].Coordinate.Kind, Name: revs[i].Coordinate.Name}]
+			cj := adoption.Counts[installationResourceKey{Registry: revs[j].Coordinate.Registry, Kind: revs[j].Coordinate.Kind, Name: revs[j].Coordinate.Name}]
+			if ci != cj {
+				return ci > cj
+			}
 		}
 		if revs[i].Coordinate.Registry != revs[j].Coordinate.Registry {
 			return revs[i].Coordinate.Registry < revs[j].Coordinate.Registry
@@ -734,6 +836,10 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	items := make([]ResourceListItem, 0, len(revs))
 	for _, rev := range revs {
 		item := s.resourceToListItem(rev, registries, relevanceScore(rev.Coordinate.Name, searchQ))
+		if adoption != nil && adoption.KnownRegistries[rev.Coordinate.Registry] {
+			count := adoption.Counts[installationResourceKey{Registry: rev.Coordinate.Registry, Kind: rev.Coordinate.Kind, Name: rev.Coordinate.Name}]
+			item.InstallationCount = &count
+		}
 		if s.cfg.Management.Mode == "database" {
 			decision := s.evaluateAvailability(availabilityFromContext(r.Context()), rev)
 			if decision.Availability != AvailabilityAvailable {
@@ -754,7 +860,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRegistryList(w http.ResponseWriter, r *http.Request) {
 	registries, err := s.meta.ListRegistries(r.Context())
 	if err != nil {
-		slog.Error("failed to list registries", "err", err)
+		slog.Error("failed to list registries", "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to list registries")
 		return
 	}
@@ -809,7 +915,7 @@ func (s *Server) handleRegistryDetail(w http.ResponseWriter, r *http.Request, sl
 			writeError(w, http.StatusNotFound, "registry not found")
 			return
 		}
-		slog.Error("failed to load registry", "registry", slugOrID, "err", err)
+		slog.Error("failed to load registry", "registry", logvalue.Safe(slugOrID), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load registry")
 		return
 	}
@@ -817,7 +923,7 @@ func (s *Server) handleRegistryDetail(w http.ResponseWriter, r *http.Request, sl
 	// refresh diagnostics that must never cross the API boundary.
 	public := registryDTO(src)
 	if err := validatePublicRegistry(public); err != nil {
-		slog.Error("registry contains invalid public metadata", "registry", slugOrID, "err", err)
+		slog.Error("registry contains invalid public metadata", "registry", logvalue.Safe(slugOrID), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load registry")
 		return
 	}
@@ -844,7 +950,7 @@ func (s *Server) handleRegistryOccurrence(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusNotFound, "registry occurrence not found")
 			return
 		}
-		slog.Error("registry occurrence failed", "registry", src.ID, "commit", commit, "err", err)
+		slog.Error("registry occurrence failed", "registry", logvalue.Safe(src.ID), "commit", logvalue.Safe(commit), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load registry occurrence")
 		return
 	}
@@ -853,7 +959,7 @@ func (s *Server) handleRegistryOccurrence(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if occurrence.RegistryID != src.ID || occurrence.Commit != commit {
-		slog.Error("registry occurrence did not match requested identity", "registry", src.ID, "commit", commit, "occurrence_registry", occurrence.RegistryID, "occurrence_commit", occurrence.Commit)
+		slog.Error("registry occurrence did not match requested identity", "registry", logvalue.Safe(src.ID), "commit", logvalue.Safe(commit), "occurrence_registry", logvalue.Safe(occurrence.RegistryID), "occurrence_commit", logvalue.Safe(occurrence.Commit))
 		writeError(w, http.StatusInternalServerError, "failed to load registry occurrence")
 		return
 	}
@@ -895,14 +1001,14 @@ func (s *Server) handleRegistryHistory(w http.ResponseWriter, r *http.Request, s
 
 	history, err := s.meta.RegistryHistory(r.Context(), src.ID)
 	if err != nil {
-		slog.Error("registry history failed", "registry", src.ID, "err", err)
+		slog.Error("registry history failed", "registry", logvalue.Safe(src.ID), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load registry history")
 		return
 	}
 	history = boundRegistryHistory(history)
 	for _, occurrence := range history {
 		if err := validatePublicRegistryOccurrence(occurrence); err != nil {
-			slog.Error("registry history contains invalid occurrence", "registry", src.ID, "err", err)
+			slog.Error("registry history contains invalid occurrence", "registry", logvalue.Safe(src.ID), "err", logvalue.Safe(err))
 			writeError(w, http.StatusInternalServerError, "failed to load registry history")
 			return
 		}
@@ -979,19 +1085,19 @@ func (s *Server) handleResourceDetail(w http.ResponseWriter, r *http.Request, re
 			writeError(w, http.StatusNotFound, "resource not found")
 			return
 		}
-		slog.Error("resource detail failed", "coord", coord, "err", err)
+		slog.Error("resource detail failed", "coord", logvalue.Safe(coord), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load resource")
 		return
 	}
 	if err := validatePublicResourceRevisionMatches(rev, coord, ""); err != nil {
-		slog.Error("resource detail contains invalid revision", "coord", coord, "err", err)
+		slog.Error("resource detail contains invalid revision", "coord", logvalue.Safe(coord), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load resource")
 		return
 	}
 	if !s.managedResourceAllowed(w, r.Context(), rev) {
 		return
 	}
-	writeJSON(w, http.StatusOK, s.availabilityResourceDTO(r.Context(), rev))
+	writeJSON(w, http.StatusOK, s.availabilityResourceDTO(r.Context(), rev, s.resourceSourceResolver(r.Context())))
 }
 
 func (s *Server) handleResourceRevisions(w http.ResponseWriter, r *http.Request, registrySlug, kind, name string) {
@@ -1012,13 +1118,13 @@ func (s *Server) handleResourceRevisions(w http.ResponseWriter, r *http.Request,
 	coord := store.ResourceCoordinate{Marketplace: s.mpID, Registry: src.ID, Kind: kind, Name: name}
 	revs, err := s.meta.ListResourceRevisions(r.Context(), coord)
 	if err != nil {
-		slog.Error("list revisions failed", "coord", coord, "err", err)
+		slog.Error("list revisions failed", "coord", logvalue.Safe(coord), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load revisions")
 		return
 	}
 	for i, rev := range revs {
 		if err := validatePublicResourceRevisionMatches(rev, coord, ""); err != nil {
-			slog.Error("resource revisions contain invalid revision", "coord", coord, "err", err)
+			slog.Error("resource revisions contain invalid revision", "coord", logvalue.Safe(coord), "err", logvalue.Safe(err))
 			writeError(w, http.StatusInternalServerError, "failed to load revisions")
 			return
 		}
@@ -1028,8 +1134,9 @@ func (s *Server) handleResourceRevisions(w http.ResponseWriter, r *http.Request,
 		revs[i] = s.applyEffectiveRevocation(rev)
 	}
 	items := make([]any, len(revs))
+	resolveSource := s.resourceSourceResolver(r.Context())
 	for i, rev := range revs {
-		items[i] = s.availabilityResourceDTO(r.Context(), rev)
+		items[i] = s.availabilityResourceDTO(r.Context(), rev, resolveSource)
 	}
 	writeJSON(w, http.StatusOK, items)
 }
@@ -1060,19 +1167,19 @@ func (s *Server) handleResourceRevision(w http.ResponseWriter, r *http.Request, 
 			writeError(w, http.StatusNotFound, "revision not found")
 			return
 		}
-		slog.Error("revision detail failed", "coord", coord, "digest", digest, "err", err)
+		slog.Error("revision detail failed", "coord", logvalue.Safe(coord), "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load revision")
 		return
 	}
 	if err := validatePublicResourceRevisionMatches(rev, coord, digest); err != nil {
-		slog.Error("revision detail contains invalid revision", "coord", coord, "digest", digest, "err", err)
+		slog.Error("revision detail contains invalid revision", "coord", logvalue.Safe(coord), "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to load revision")
 		return
 	}
 	if !s.managedResourceAllowed(w, r.Context(), rev) {
 		return
 	}
-	writeJSON(w, http.StatusOK, s.availabilityResourceDTO(r.Context(), rev))
+	writeJSON(w, http.StatusOK, s.availabilityResourceDTO(r.Context(), rev, s.resourceSourceResolver(r.Context())))
 }
 
 func (s *Server) handleResourceInspection(w http.ResponseWriter, r *http.Request, registrySlug, kind, name, digest string) {
@@ -1101,13 +1208,17 @@ func (s *Server) handleResourceInspectionContent(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusNotFound, "inspection content not available")
 		return
 	}
-	data, err := s.blobs.Get(r.Context(), store.ArchiveDigest(file.ContentDigest))
+	data, err := s.readPayloadBlob(r.Context(), store.ArchiveDigest(file.ContentDigest), s.cfg.Policy.Limits.FileBytes)
 	if err != nil {
+		if errors.Is(err, errPayloadReadLimit) {
+			writeError(w, http.StatusRequestEntityTooLarge, "inspection content exceeds size limit")
+			return
+		}
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "inspection content not found")
 			return
 		}
-		slog.Error("inspection content fetch failed", "digest", file.ContentDigest, "err", err)
+		slog.Error("inspection content fetch failed", "digest", file.ContentDigest, "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to fetch inspection content")
 		return
 	}
@@ -1116,7 +1227,7 @@ func (s *Server) handleResourceInspectionContent(w http.ResponseWriter, r *http.
 		return
 	}
 	if err := inspection.VerifyFileContent(*file, data); err != nil {
-		slog.Error("inspection content does not match manifest", "digest", file.ContentDigest, "err", err)
+		slog.Error("inspection content does not match manifest", "digest", file.ContentDigest, "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "inspection content does not match manifest")
 		return
 	}
@@ -1155,7 +1266,7 @@ func (s *Server) getResourceInspection(ctx context.Context, registrySlug, kind, 
 		return inspection.Manifest{}, nil, errInspectionUnavailable
 	}
 	manifestDigest := string(rev.Assessment.InspectionManifestDigest)
-	payload, err := s.blobs.Get(ctx, store.ArchiveDigest(manifestDigest))
+	payload, err := s.readPayloadBlob(ctx, store.ArchiveDigest(manifestDigest), inspection.MaxManifestBytes)
 	if err != nil {
 		return inspection.Manifest{}, nil, err
 	}
@@ -1196,7 +1307,7 @@ func (s *Server) writeInspectionError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid inspection revision")
 		return
 	}
-	slog.Error("inspection request failed", "err", err)
+	slog.Error("inspection request failed", "err", logvalue.Safe(err))
 	writeError(w, http.StatusInternalServerError, "failed to load inspection")
 }
 
@@ -1217,18 +1328,18 @@ func (s *Server) handleAssessmentDigest(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusNotFound, "assessment not found")
 			return
 		}
-		slog.Error("assessment fetch failed", "digest", digest, "err", err)
+		slog.Error("assessment fetch failed", "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to fetch assessment")
 		return
 	}
 	if assessment.AssessmentDigest != store.AssessmentDigest(digest) || assessment.Coordinate.Marketplace != s.mpID || validatePublicResourceAssessment(assessment) != nil {
-		slog.Error("assessment contains invalid public metadata", "digest", digest)
+		slog.Error("assessment contains invalid public metadata", "digest", logvalue.Safe(digest))
 		writeError(w, http.StatusInternalServerError, "failed to fetch assessment")
 		return
 	}
 	payload, err := json.Marshal(assessment)
 	if err != nil {
-		slog.Error("assessment encoding failed", "digest", digest, "err", err)
+		slog.Error("assessment encoding failed", "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to fetch assessment")
 		return
 	}
@@ -1244,13 +1355,17 @@ func (s *Server) handleInspectionDigest(w http.ResponseWriter, r *http.Request) 
 	if !s.managedDigestAllowed(w, r.Context(), "inspection", store.ArchiveDigest(digest)) {
 		return
 	}
-	data, err := s.blobs.Get(r.Context(), store.ArchiveDigest(digest))
+	data, err := s.readPayloadBlob(r.Context(), store.ArchiveDigest(digest), inspection.MaxManifestBytes)
 	if err != nil {
+		if errors.Is(err, errPayloadReadLimit) {
+			writeError(w, http.StatusRequestEntityTooLarge, "inspection manifest exceeds size limit")
+			return
+		}
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "inspection not found")
 			return
 		}
-		slog.Error("inspection manifest fetch failed", "digest", digest, "err", err)
+		slog.Error("inspection manifest fetch failed", "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to fetch inspection")
 		return
 	}
@@ -1275,8 +1390,12 @@ func (s *Server) handleContentDigest(w http.ResponseWriter, r *http.Request) {
 	if !s.managedDigestAllowed(w, r.Context(), "content", store.ArchiveDigest(digest)) {
 		return
 	}
-	data, err := s.blobs.Get(r.Context(), store.ArchiveDigest(digest))
+	data, err := s.readPayloadBlob(r.Context(), store.ArchiveDigest(digest), s.cfg.Policy.Limits.FileBytes)
 	if err != nil {
+		if errors.Is(err, errPayloadReadLimit) {
+			writeError(w, http.StatusRequestEntityTooLarge, "content exceeds size limit")
+			return
+		}
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "content not found")
 			return
@@ -1354,13 +1473,13 @@ func (s *Server) handleManifests(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := s.blobs.Get(r.Context(), store.ArchiveDigest(digest))
+	data, err := s.readPayloadBlob(r.Context(), store.ArchiveDigest(digest), manifestPayloadLimit(s.cfg))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "manifest not found")
 			return
 		}
-		slog.Error("manifest fetch failed", "digest", digest, "err", err)
+		slog.Error("manifest fetch failed", "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to fetch manifest")
 		return
 	}
@@ -1375,13 +1494,13 @@ func (s *Server) handleManifests(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnsupportedMediaType, "manifest media type is not supported")
 			return
 		}
-		slog.Error("manifest blob is invalid", "digest", digest, "err", err)
+		slog.Error("manifest blob is invalid", "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to fetch manifest")
 		return
 	}
 	restriction, err := s.manifestRestriction(r.Context(), store.RevisionDigest(digest), data)
 	if err != nil {
-		slog.Error("manifest ownership lookup failed", "digest", digest, "err", err)
+		slog.Error("manifest ownership lookup failed", "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to fetch manifest")
 		return
 	}
@@ -1397,39 +1516,71 @@ func (s *Server) handleManifests(w http.ResponseWriter, r *http.Request) {
 	writeImmutable(w, "application/json", data)
 }
 
-func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/artifacts/")
-	parts := strings.Split(path, "/")
-	if len(parts) != 2 || parts[0] != "sha256" || !isLowerHexDigest(parts[1]) {
-		writeError(w, http.StatusBadRequest, "invalid artifact digest")
-		return
-	}
+const artifactMediaType = "application/vnd.agent-marketplace.artifact.v1.tar+gzip"
 
-	digest := store.ArchiveDigest("sha256:" + parts[1])
+// archiveDigestFromPath parses the sha256 archive digest that ends a route path.
+func archiveDigestFromPath(path, prefix string) (store.ArchiveDigest, bool) {
+	parts := strings.Split(strings.TrimPrefix(path, prefix), "/")
+	if len(parts) != 2 || parts[0] != "sha256" || !isLowerHexDigest(parts[1]) {
+		return "", false
+	}
+	return store.ArchiveDigest("sha256:" + parts[1]), true
+}
+
+// writeArchiveAvailability refuses archives no owned revision serves. It reports
+// whether the archive may be served; unowned digests are refused before blob
+// storage is touched, so an orphaned blob at the address is never returned.
+func (s *Server) writeArchiveAvailability(w http.ResponseWriter, r *http.Request, digest store.ArchiveDigest) bool {
 	revisions, err := s.meta.ListResourceRevisionsByArchiveDigest(r.Context(), s.mpID, digest)
 	if err != nil {
-		slog.Error("artifact ownership lookup failed", "digest", digest, "err", err)
+		slog.Error("artifact ownership lookup failed", "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to fetch artifact")
-		return
+		return false
 	}
-	// The digest address is not itself authorization to read a blob. Refuse an
-	// unowned digest before touching blob storage, including when an orphaned
-	// blob happens to exist at the requested address.
 	if len(revisions) == 0 {
 		writeError(w, http.StatusNotFound, "artifact not found")
-		return
+		return false
 	}
 	restriction, err := s.managedOwnerRestriction(r.Context(), revisions)
 	if err != nil {
 		writeAvailabilityRestriction(w, restriction, err)
-		return
+		return false
 	}
 	switch restriction {
 	case AvailabilityRevoked:
 		writeError(w, http.StatusGone, "artifact is revoked")
-		return
+		return false
 	case AvailabilityBlocked:
 		writeError(w, http.StatusForbidden, "artifact is blocked by assessment")
+		return false
+	}
+	return true
+}
+
+func (s *Server) artifactLimit() int64 {
+	if limit := s.cfg.Policy.Limits.ArtifactBytes; limit > 0 {
+		return limit
+	}
+	return config.DefaultArtifactBytes
+}
+
+// archiveWithinLimit reports whether data fits the configured artifact size limit,
+// writing the refusal when it does not.
+func (s *Server) archiveWithinLimit(w http.ResponseWriter, data []byte) bool {
+	if int64(len(data)) > s.artifactLimit() {
+		writeError(w, http.StatusRequestEntityTooLarge, "artifact exceeds size limit")
+		return false
+	}
+	return true
+}
+
+func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
+	digest, ok := archiveDigestFromPath(r.URL.Path, "/api/v1/artifacts/")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid artifact digest")
+		return
+	}
+	if !s.writeArchiveAvailability(w, r, digest) {
 		return
 	}
 	data, err := s.blobs.Get(r.Context(), digest)
@@ -1438,17 +1589,36 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "artifact not found")
 			return
 		}
-		slog.Error("artifact fetch failed", "digest", digest, "err", err)
+		slog.Error("artifact fetch failed", "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "failed to fetch artifact")
 		return
 	}
-	artifactLimit := s.cfg.Policy.Limits.ArtifactBytes
-	if artifactLimit <= 0 {
-		artifactLimit = config.DefaultArtifactBytes
-	}
-	if int64(len(data)) > artifactLimit {
-		writeError(w, http.StatusRequestEntityTooLarge, "artifact exceeds size limit")
+	if !s.archiveWithinLimit(w, data) {
 		return
+	}
+	if err := s.verifyFinalArchive(r.Context(), digest, data); err != nil {
+		slog.Error("artifact blob digest mismatch", "digest", logvalue.Safe(digest), "error", logvalue.Safe(err))
+		writeError(w, http.StatusInternalServerError, "artifact digest mismatch")
+		return
+	}
+	writeImmutable(w, artifactMediaType, data)
+}
+
+// verifyFinalArchive checks a stored final archive against its digest. When the
+// placeholder-form archive is stored, the final bytes are checked by content
+// against it and never re-compressed; otherwise the archive is re-encoded.
+func (s *Server) verifyFinalArchive(ctx context.Context, digest store.ArchiveDigest, data []byte) error {
+	placeholder, err := s.blobs.Get(ctx, store.PlaceholderArchiveKey(digest))
+	if err == nil {
+		verified, err := hccartifact.VerifyPlaceholderArchive(placeholder, string(digest))
+		if err != nil {
+			return err
+		}
+		_, err = hccartifact.VerifyFinalAgainstPlaceholder(data, verified)
+		return err
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		return err
 	}
 	artifact, rawArchive, err := hccartifact.Decode(bytes.NewReader(data))
 	if err == nil && artifact.Manifest.ArchiveDigest != string(digest) {
@@ -1457,13 +1627,73 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		err = artifact.VerifyArchiveDigest(rawArchive)
 	}
-	if err != nil {
-		slog.Error("artifact blob digest mismatch", "digest", digest, "error", err)
-		writeError(w, http.StatusInternalServerError, "artifact digest mismatch")
+	return err
+}
+
+func (s *Server) handlePlaceholderArchives(w http.ResponseWriter, r *http.Request) {
+	digest, ok := archiveDigestFromPath(r.URL.Path, "/api/v1/archives/")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid placeholder archive digest")
 		return
 	}
+	if !s.writeArchiveAvailability(w, r, digest) {
+		return
+	}
+	data, err := s.placeholderArchive(r.Context(), digest)
+	switch {
+	case errors.Is(err, store.ErrNotFound), errors.Is(err, hccartifact.ErrPlaceholderNotReproducible):
+		writeError(w, http.StatusNotFound, "placeholder archive not available")
+		return
+	case errors.Is(err, errArchiveTooLarge):
+		writeError(w, http.StatusRequestEntityTooLarge, "artifact exceeds size limit")
+		return
+	case err != nil:
+		slog.Error("placeholder archive fetch failed", "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
+		writeError(w, http.StatusInternalServerError, "failed to fetch placeholder archive")
+		return
+	}
+	if !s.archiveWithinLimit(w, data) {
+		return
+	}
+	if _, err := hccartifact.VerifyPlaceholderArchive(data, string(digest)); err != nil {
+		slog.Error("placeholder archive digest mismatch", "digest", logvalue.Safe(digest), "error", logvalue.Safe(err))
+		writeError(w, http.StatusInternalServerError, "placeholder archive digest mismatch")
+		return
+	}
+	writeImmutable(w, artifactMediaType, data)
+}
 
-	writeImmutable(w, "application/vnd.agent-marketplace.artifact.v1.tar+gzip", data)
+var errArchiveTooLarge = errors.New("artifact exceeds size limit")
+
+// placeholderArchive returns the stored placeholder-form archive for digest. A
+// missing one is derived from the final archive and stored only when the derived
+// bytes hash to digest; otherwise it returns ErrPlaceholderNotReproducible. An
+// oversized final archive is refused before anything is derived or stored.
+func (s *Server) placeholderArchive(ctx context.Context, digest store.ArchiveDigest) ([]byte, error) {
+	data, err := s.blobs.Get(ctx, store.PlaceholderArchiveKey(digest))
+	if err == nil {
+		return data, nil
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		return nil, err
+	}
+	final, err := s.blobs.Get(ctx, digest)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(final)) > s.artifactLimit() {
+		return nil, errArchiveTooLarge
+	}
+	derived, err := hccartifact.DerivePlaceholderArchive(final, string(digest))
+	if err != nil {
+		return nil, err
+	}
+	// Storing the derived copy is best effort: the caller verifies the bytes by hash
+	// before serving them, so a read-only or failing blob store must not fail the request.
+	if err := store.PutImmutableBlob(ctx, s.blobs, store.PlaceholderArchiveKey(digest), derived); err != nil {
+		slog.Warn("derived placeholder archive could not be stored; serving it unstored", "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
+	}
+	return derived, nil
 }
 
 var errManifestUnsupported = errors.New("unsupported manifest payload")
@@ -1566,7 +1796,7 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	if err := s.revocationsReady(ctx); err != nil {
-		slog.Error("readyz failed: live revocations are not reconciled", "err", err)
+		slog.Error("readyz failed: live revocations are not reconciled", "err", logvalue.Safe(err))
 		writeError(w, http.StatusServiceUnavailable, "not ready")
 		return
 	}
@@ -1577,7 +1807,7 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	probeCtx, cancel := context.WithTimeout(ctx, blobProbeTimeout)
 	defer cancel()
 	if err := s.blobs.Probe(probeCtx); err != nil {
-		slog.Error("readyz failed: blob store unavailable", "err", err)
+		slog.Error("readyz failed: blob store unavailable", "err", logvalue.Safe(err))
 		writeError(w, http.StatusServiceUnavailable, "not ready")
 		return
 	}
@@ -1803,7 +2033,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		slog.Error("failed to encode json response", "err", err)
+		slog.Error("failed to encode json response", "err", logvalue.Safe(err))
 	}
 }
 

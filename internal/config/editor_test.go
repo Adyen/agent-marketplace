@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"gopkg.in/yaml.v3"
@@ -38,208 +39,108 @@ func TestValidateScopeBoundaryAllowsUserScopeForMachineSkill(t *testing.T) {
 	}
 }
 
-func TestEnsureRegistryInConfigAddsEntry(t *testing.T) {
-	configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
-	mustMkdirAll(t, filepath.Dir(configPath))
-	mustWriteFile(t, configPath, []byte(`apiVersion: agent-marketplace/v2
-registries:
-  - url: git@example.com:existing.git
-    ref: main
-`))
-
-	if err := EnsureRegistryInConfig(configPath, "git@example.com:new.git", "v2"); err != nil {
-		t.Fatalf("EnsureRegistryInConfig: %v", err)
-	}
-
-	cfg, err := loadProjectConfig(t, configPath)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if len(cfg.Registries) != 2 {
-		t.Fatalf("expected 2 registries, got %d", len(cfg.Registries))
-	}
-	if cfg.Registries[1].URL != "git@example.com:new.git" {
-		t.Fatalf("expected second registry URL, got %q", cfg.Registries[1].URL)
-	}
-	if cfg.Registries[1].Ref != "v2" {
-		t.Fatalf("expected ref=v2, got %q", cfg.Registries[1].Ref)
+func TestLayerEditorEnsureRegistryEntriesAndPaths(t *testing.T) {
+	for _, tc := range []struct {
+		name, initialSources string
+		entry                RegistryEntry
+		wantExistingPath     string
+		wantCount            int
+		wantChanged          bool
+	}{
+		{name: "adds entry", initialSources: "  existing: {git: 'git@example.com:existing.git', ref: main}\n", entry: RegistryEntry{URL: "git@example.com:new.git", Ref: "v2"}, wantCount: 2, wantChanged: true},
+		{name: "idempotent", initialSources: "  existing: {git: 'git@example.com:existing.git', ref: main}\n", entry: RegistryEntry{URL: "git@example.com:existing.git", Ref: "main"}, wantCount: 1},
+		{name: "adds path", initialSources: "  existing: {git: 'git@example.com:existing.git', ref: main}\n", entry: RegistryEntry{URL: "git@example.com:new.git", Ref: "main", Path: "skills"}, wantCount: 2, wantChanged: true},
+		{name: "omits empty path", entry: RegistryEntry{URL: "git@example.com:new.git", Ref: "main"}, wantCount: 1, wantChanged: true},
+		{name: "idempotent same path", initialSources: "  existing: {git: 'git@example.com:existing.git', ref: main, path: skills}\n", entry: RegistryEntry{URL: "git@example.com:existing.git", Ref: "main", Path: "skills"}, wantExistingPath: "skills", wantCount: 1},
+		{name: "different paths coexist", initialSources: "  existing: {git: 'git@example.com:existing.git', ref: main, path: skills}\n", entry: RegistryEntry{URL: "git@example.com:existing.git", Ref: "main", Path: "commands"}, wantExistingPath: "skills", wantCount: 2, wantChanged: true},
+		{name: "root and subpath coexist", initialSources: "  existing: {git: 'git@example.com:existing.git', ref: main, path: skills/firewall-rules-management}\n", entry: RegistryEntry{URL: "git@example.com:existing.git", Ref: "main"}, wantExistingPath: "skills/firewall-rules-management", wantCount: 2, wantChanged: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+			original := "apiVersion: agent-marketplace/v4\n# source comment\n"
+			if tc.initialSources != "" {
+				original += "sources:\n" + tc.initialSources
+			}
+			layerEditorWrite(t, configPath, original)
+			editor := openTestEditor(t, RepoCommitted, configPath, configPath)
+			binding, err := editor.EnsureRegistry(tc.entry)
+			if err != nil {
+				t.Fatalf("EnsureRegistry: %v", err)
+			}
+			candidate, err := editor.Render()
+			if err != nil {
+				t.Fatalf("Render: %v", err)
+			}
+			if candidate.Changed != tc.wantChanged || candidate.Mode.Perm() != 0o640 {
+				t.Fatalf("candidate changed=%v mode=%o", candidate.Changed, candidate.Mode.Perm())
+			}
+			cfg, err := ParseV4Config(candidate.Bytes, configPath, true)
+			if err != nil {
+				t.Fatalf("parse candidate: %v", err)
+			}
+			if len(cfg.Sources) != tc.wantCount {
+				t.Fatalf("sources = %#v, want count %d", cfg.Sources, tc.wantCount)
+			}
+			got := cfg.Sources[binding.Name]
+			if got.Git != tc.entry.URL || got.Ref != tc.entry.Ref || got.Path != tc.entry.Path {
+				t.Fatalf("bound source = %#v, want %#v", got, tc.entry)
+			}
+			if tc.initialSources != "" {
+				existing := cfg.Sources["existing"]
+				if existing.Git != "git@example.com:existing.git" || existing.Ref != "main" || existing.Path != tc.wantExistingPath {
+					t.Fatalf("existing source changed: %#v", existing)
+				}
+			}
+			if tc.entry.Path == "" && strings.Contains(string(candidate.Bytes), "path:") && tc.wantExistingPath == "" {
+				t.Fatalf("empty path was authored:\n%s", candidate.Bytes)
+			}
+			if !strings.Contains(string(candidate.Bytes), "# source comment") {
+				t.Fatalf("comment lost:\n%s", candidate.Bytes)
+			}
+			if !tc.wantChanged && string(candidate.Bytes) != original {
+				t.Fatal("idempotent ensure changed bytes")
+			}
+			if data, err := os.ReadFile(configPath); err != nil || string(data) != original {
+				t.Fatalf("editor wrote source file: %s, %v", data, err)
+			}
+			layerEditorWrite(t, configPath, string(candidate.Bytes))
+			editor = openTestEditor(t, RepoCommitted, configPath, configPath)
+			if _, err := editor.EnsureRegistry(tc.entry); err != nil {
+				t.Fatalf("repeat ensure: %v", err)
+			}
+			noop, err := editor.Render()
+			if err != nil || noop.Changed || string(noop.Bytes) != string(candidate.Bytes) {
+				t.Fatalf("repeat ensure changed bytes: %#v, %v", noop, err)
+			}
+		})
 	}
 }
 
-func TestEnsureRegistryInConfigIdempotent(t *testing.T) {
-	configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
-	mustMkdirAll(t, filepath.Dir(configPath))
-	mustWriteFile(t, configPath, []byte(`apiVersion: agent-marketplace/v2
-registries:
-  - url: git@example.com:existing.git
-    ref: main
-`))
-
-	if err := EnsureRegistryInConfig(configPath, "git@example.com:existing.git", "main"); err != nil {
-		t.Fatalf("EnsureRegistryInConfig: %v", err)
-	}
-
-	cfg, err := loadProjectConfig(t, configPath)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if len(cfg.Registries) != 1 {
-		t.Fatalf("expected 1 registry (idempotent), got %d", len(cfg.Registries))
-	}
-}
-
-func TestEnsureRegistryWithPathsInConfigRejectsRepoRelativeGlobalWrite(t *testing.T) {
+func TestLayerEditorEnsureRegistryRejectsRepoRelativeGlobalWrite(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	configPath, err := GlobalConfigPath()
 	if err != nil {
 		t.Fatalf("GlobalConfigPath: %v", err)
 	}
-
-	err = EnsureRegistryWithPathsInConfig(configPath, "./relative.git", "main", "skills")
-	if _, ok := err.(*GlobalRelativeRegistryError); !ok {
+	// Editors operate on a staged root; a refusal must not create the missing
+	// logical user root or alter the stage.
+	staged := filepath.Join(t.TempDir(), "config.yaml")
+	const original = "apiVersion: agent-marketplace/v4\n"
+	layerEditorWrite(t, staged, original)
+	editor := openTestEditor(t, UserPersonal, staged, configPath)
+	_, err = editor.EnsureRegistry(RegistryEntry{URL: "./relative", Path: "skills", V4Kind: V4SourceDirectory})
+	var boundary *GlobalRelativeRegistryError
+	if !errors.As(err, &boundary) {
 		t.Fatalf("expected GlobalRelativeRegistryError, got %T: %v", err, err)
+	}
+	if candidate, err := editor.Render(); err != nil || candidate.Changed || string(candidate.Bytes) != original {
+		t.Fatalf("refusal changed candidate: %#v, %v", candidate, err)
 	}
 	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
 		t.Fatalf("global config was written: %v", err)
 	}
-}
-
-func TestEnsureRegistryWithPathsInConfigAddsPath(t *testing.T) {
-	configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
-	mustMkdirAll(t, filepath.Dir(configPath))
-	mustWriteFile(t, configPath, []byte(`apiVersion: agent-marketplace/v2
-registries:
-  - url: git@example.com:existing.git
-    ref: main
-`))
-
-	if err := EnsureRegistryWithPathsInConfig(configPath, "git@example.com:new.git", "main", "skills"); err != nil {
-		t.Fatalf("EnsureRegistryWithPathsInConfig: %v", err)
-	}
-
-	cfg, err := loadProjectConfig(t, configPath)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if len(cfg.Registries) != 2 {
-		t.Fatalf("expected 2 registries, got %d", len(cfg.Registries))
-	}
-	got := cfg.Registries[1]
-	if got.URL != "git@example.com:new.git" {
-		t.Fatalf("expected URL, got %q", got.URL)
-	}
-	if got.Ref != "main" {
-		t.Fatalf("expected ref=main, got %q", got.Ref)
-	}
-	if got.Path != "skills" {
-		t.Fatalf("expected path=skills, got %q", got.Path)
-	}
-}
-
-func TestEnsureRegistryWithPathsInConfigOmitsEmptyPath(t *testing.T) {
-	configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
-	mustMkdirAll(t, filepath.Dir(configPath))
-	mustWriteFile(t, configPath, []byte(`apiVersion: agent-marketplace/v2
-registries: []
-`))
-
-	if err := EnsureRegistryWithPathsInConfig(configPath, "git@example.com:new.git", "main", ""); err != nil {
-		t.Fatalf("EnsureRegistryWithPathsInConfig: %v", err)
-	}
-
-	cfg, err := loadProjectConfig(t, configPath)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if cfg.Registries[0].Path != "" {
-		t.Fatalf("expected empty path when omitted, got %q", cfg.Registries[0].Path)
-	}
-}
-
-func TestEnsureRegistryWithPathsInConfigIdempotentSameURLSamePath(t *testing.T) {
-	configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
-	mustMkdirAll(t, filepath.Dir(configPath))
-	mustWriteFile(t, configPath, []byte(`apiVersion: agent-marketplace/v2
-registries:
-  - url: git@example.com:existing.git
-    ref: main
-    path: skills
-`))
-
-	// Same URL and same path — must be a no-op.
-	if err := EnsureRegistryWithPathsInConfig(configPath, "git@example.com:existing.git", "main", "skills"); err != nil {
-		t.Fatalf("EnsureRegistryWithPathsInConfig: %v", err)
-	}
-
-	cfg, err := loadProjectConfig(t, configPath)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if len(cfg.Registries) != 1 {
-		t.Fatalf("expected 1 registry (idempotent same path), got %d", len(cfg.Registries))
-	}
-	if cfg.Registries[0].Path != "skills" {
-		t.Fatalf("expected path=skills unchanged, got %q", cfg.Registries[0].Path)
-	}
-}
-
-func TestEnsureRegistryWithPathsInConfigAddsDifferentPathEntry(t *testing.T) {
-	configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
-	mustMkdirAll(t, filepath.Dir(configPath))
-	mustWriteFile(t, configPath, []byte(`apiVersion: agent-marketplace/v2
-registries:
-  - url: git@example.com:existing.git
-    ref: main
-    path: skills
-`))
-
-	// Same URL but different path — must add a second entry so both sub-paths coexist.
-	if err := EnsureRegistryWithPathsInConfig(configPath, "git@example.com:existing.git", "main", "commands"); err != nil {
-		t.Fatalf("EnsureRegistryWithPathsInConfig: %v", err)
-	}
-
-	cfg, err := loadProjectConfig(t, configPath)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if len(cfg.Registries) != 2 {
-		t.Fatalf("expected 2 registries (different paths), got %d", len(cfg.Registries))
-	}
-	if cfg.Registries[0].Path != "skills" {
-		t.Fatalf("expected first entry path=skills unchanged, got %q", cfg.Registries[0].Path)
-	}
-	if cfg.Registries[1].Path != "commands" {
-		t.Fatalf("expected second entry path=commands, got %q", cfg.Registries[1].Path)
-	}
-}
-
-func TestEnsureRegistryWithPathsInConfigAddsRootWhenSubPathExists(t *testing.T) {
-	configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
-	mustMkdirAll(t, filepath.Dir(configPath))
-	mustWriteFile(t, configPath, []byte(`apiVersion: agent-marketplace/v2
-registries:
-  - url: git@example.com:existing.git
-    ref: main
-    path: skills/firewall-rules-management
-`))
-
-	// Same URL but root-level (empty path) — must add a second entry.
-	if err := EnsureRegistryWithPathsInConfig(configPath, "git@example.com:existing.git", "main", ""); err != nil {
-		t.Fatalf("EnsureRegistryWithPathsInConfig: %v", err)
-	}
-
-	cfg, err := loadProjectConfig(t, configPath)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if len(cfg.Registries) != 2 {
-		t.Fatalf("expected 2 registries (sub-path + root), got %d", len(cfg.Registries))
-	}
-	if cfg.Registries[0].Path != "skills/firewall-rules-management" {
-		t.Fatalf("expected first entry path unchanged, got %q", cfg.Registries[0].Path)
-	}
-	if cfg.Registries[1].Path != "" {
-		t.Fatalf("expected second entry path empty (root), got %q", cfg.Registries[1].Path)
+	if data, err := os.ReadFile(staged); err != nil || string(data) != original {
+		t.Fatalf("staged config changed: %s, %v", data, err)
 	}
 }
 
@@ -249,11 +150,12 @@ func TestSetHarnessesInConfigReplacesHarnessesAndPreservesComments(t *testing.T)
 	configPath := filepath.Join(homeDir, ".agents", "config.yaml")
 	mustMkdirAll(t, filepath.Dir(configPath))
 	mustWriteFile(t, configPath, []byte(`# user config
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory # current default
-registries:
-  - url: git@example.com:infra.git
+sources:
+  infra:
+    git: git@example.com:infra.git
     ref: main
 `))
 
@@ -377,7 +279,7 @@ func TestSetUserMarketplaceExclusionRejectsLegacyConfigWithoutWriting(t *testing
 	mustWriteFile(t, path, original)
 	err := SetUserMarketplaceExclusion(path, "https://market.example", "tools", ir.KindSkill, "review", true)
 	var v4Err *V4ValidationError
-	if !errors.As(err, &v4Err) || v4Err.Code != "v4.writer-opt-in" {
+	if !errors.As(err, &v4Err) || v4Err.Code != "v4.api-version" {
 		t.Fatalf("legacy config rejection = %v", err)
 	}
 	data, err := os.ReadFile(path)
@@ -417,11 +319,54 @@ resources:
 	}
 }
 
-// TestSetHarnessesInConfigEditsV4Roots pins the TUI harness-modal save path
-// against the v4.writer-opt-in regression: init writes the user-personal
-// root as v4 directly and the TUI startup offers migration, so harness
-// editing must be an explicit v4-aware operation rather than a rejected
-// legacy write. Sources and resources must survive the edit.
+// A removal of an exclusion that is not recorded, and a repeated exclusion,
+// are no-ops: the authored bytes, mode and modification time stay untouched.
+func TestSetUserMarketplaceExclusionNoOpLeavesFileUntouched(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, ".agents", "config.yaml")
+	mustMkdirAll(t, filepath.Dir(path))
+	original := []byte("apiVersion: agent-marketplace/v4\nsources:\n  company:   {marketplace: https://market.example}\nresources:\n  company:\n    exclude:   [tools/skill/audit]   # keep\n")
+	mustWriteFile(t, path, original)
+	if err := os.Chmod(path, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	frozen := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+	if err := os.Chtimes(path, frozen, frozen); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, excluded := range []bool{false, true} {
+		name := "review"
+		if excluded {
+			name = "audit"
+		}
+		if err := SetUserMarketplaceExclusion(path, "https://market.example", "tools", ir.KindSkill, name, excluded); err != nil {
+			t.Fatalf("no-op edit (excluded=%t): %v", excluded, err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil || string(data) != string(original) {
+			t.Fatalf("no-op edit (excluded=%t) rewrote bytes: %s, %v", excluded, data, err)
+		}
+		after, err := os.Stat(path)
+		if err != nil || after.Mode() != before.Mode() || !after.ModTime().Equal(before.ModTime()) {
+			t.Fatalf("no-op edit (excluded=%t) changed mode or mtime: %v", excluded, err)
+		}
+	}
+	// Control: a real removal still writes.
+	if err := SetUserMarketplaceExclusion(path, "https://market.example", "tools", ir.KindSkill, "audit", false); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(path); err != nil || strings.Contains(string(data), "tools/skill/audit") {
+		t.Fatalf("control removal did not drop the exclusion: %s, %v", data, err)
+	}
+}
+
+// TestSetHarnessesInConfigEditsV4Roots pins the TUI harness-modal save path:
+// sources and resources in supported user and project roots survive the edit.
 func TestSetHarnessesInConfigEditsV4Roots(t *testing.T) {
 	const v4Body = `apiVersion: agent-marketplace/v4
 harnesses: [factory]
@@ -573,6 +518,50 @@ func TestSetHarnessesInConfigRejectsInvalidV4DocumentWithoutWriting(t *testing.T
 	}
 }
 
+func TestEnsureGlobalConfigLeavesAnExistingConfigAlone(t *testing.T) {
+	for _, tc := range []struct {
+		name, existing, wantCode string
+	}{
+		{name: "supported", existing: "apiVersion: agent-marketplace/v4\nharnesses: [cursor]\n"},
+		{name: "unsupported", existing: "apiVersion: agent-marketplace/v2\nharnesses: [claude]\nregistries: []\n", wantCode: "v4.api-version"},
+		{name: "empty", wantCode: "v4.api-version-required"},
+	} {
+		existing := tc.existing
+		homeDir := t.TempDir()
+		t.Setenv("HOME", homeDir)
+		globalPath := filepath.Join(homeDir, ".agents", "config.yaml")
+		if err := os.MkdirAll(filepath.Dir(globalPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		mustWriteFile(t, globalPath, []byte(existing))
+		if err := EnsureGlobalConfig(); layerEditorErrCode(err) != tc.wantCode || (tc.wantCode == "" && err != nil) {
+			t.Fatalf("EnsureGlobalConfig %s = %v, want code %q", tc.name, err, tc.wantCode)
+		}
+		data, err := os.ReadFile(globalPath)
+		if err != nil || string(data) != existing {
+			t.Fatalf("EnsureGlobalConfig rewrote an existing config to %q (err %v)", data, err)
+		}
+	}
+
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	globalPath := filepath.Join(homeDir, ".agents", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(globalPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(homeDir, "dotfiles", "agents.yaml")
+	if err := os.Symlink(target, globalPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureGlobalConfig(); err != nil {
+		t.Fatalf("EnsureGlobalConfig with a dangling symlink: %v", err)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("EnsureGlobalConfig wrote through a dangling symlink: %v", err)
+	}
+}
+
+// spec: logging/new-user-configuration-omits-logging-overrides
 func TestEnsureGlobalConfigCreatesSkeletonWithDefaults(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
@@ -592,12 +581,15 @@ func TestEnsureGlobalConfigCreatesSkeletonWithDefaults(t *testing.T) {
 	}
 	content := string(data)
 	for _, needle := range []string{
-		"apiVersion: agent-marketplace/v2",
+		"apiVersion: agent-marketplace/v4",
 		"harnesses:",
 	} {
 		if !strings.Contains(content, needle) {
 			t.Fatalf("expected skeleton to contain %q, got:\n%s", needle, content)
 		}
+	}
+	if _, err := LoadV4ConfigFromPath(globalPath); err != nil {
+		t.Fatalf("generated skeleton is not a valid v4 config: %v\n%s", err, content)
 	}
 	// Logging is intentionally omitted from the skeleton; the runtime falls
 	// back to code defaults unless the user opts in.
@@ -645,13 +637,13 @@ func TestReadOrInitConfigSkeletonOmitsHarnesses(t *testing.T) {
 	// Verify apiVersion is present.
 	found := false
 	for i := 0; i+1 < len(root.Content); i += 2 {
-		if root.Content[i].Value == "apiVersion" && root.Content[i+1].Value == APIVersionV2 {
+		if root.Content[i].Value == "apiVersion" && root.Content[i+1].Value == APIVersionV4 {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("skeleton config must contain apiVersion %q", APIVersionV2)
+		t.Fatalf("skeleton config must contain apiVersion %q", APIVersionV4)
 	}
 }
 
@@ -695,112 +687,48 @@ func TestReadOrInitConfigGlobalSkeletonIncludesHarnesses(t *testing.T) {
 	}
 }
 
-func TestFindRegistryURLNodeEmptyURLFallsBackToPath(t *testing.T) {
-	tests := []struct {
-		name      string
-		entryYAML string
-		wantKey   string // key whose value node should be returned; "" means expect nil
-		wantValue string
-	}{
-		{
-			name: "url_present",
-			entryYAML: `url: git@example.com:infra.git
-path: skills
-`,
-			wantKey:   "url",
-			wantValue: "git@example.com:infra.git",
-		},
-		{
-			name: "path_alias_when_url_absent",
-			entryYAML: `path: /local/skills
-`,
-			wantKey:   "path",
-			wantValue: "/local/skills",
-		},
-		{
-			name: "path_alias_when_url_empty",
-			entryYAML: `url: ""
-path: /local/skills
-`,
-			wantKey:   "path",
-			wantValue: "/local/skills",
-		},
-		{
-			name: "path_alias_when_url_whitespace",
-			entryYAML: `url: "   "
-path: /local/skills
-`,
-			wantKey:   "path",
-			wantValue: "/local/skills",
-		},
-		{
-			name: "nil_when_neither_present",
-			entryYAML: `ref: main
-`,
-			wantKey: "",
-		},
-		{
-			name: "nil_when_url_empty_and_no_path",
-			entryYAML: `url: ""
-ref: main
-`,
-			wantKey: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var doc yaml.Node
-			if err := yaml.Unmarshal([]byte(tt.entryYAML), &doc); err != nil {
-				t.Fatalf("unmarshal entry: %v", err)
+// The removed URL/path-alias writer must not be replaced by schema guessing.
+func TestLayerEditorRefusesLegacyRegistryLocationAliases(t *testing.T) {
+	for _, entry := range []string{
+		"{url: 'git@example.com:infra.git', path: skills, ref: main}",
+		"{path: /local/skills}",
+		"{url: '', path: /local/skills}",
+		"{url: '   ', path: /local/skills}",
+		"{ref: main}",
+		"{url: '', ref: main}",
+	} {
+		t.Run(entry, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+			original := "apiVersion: agent-marketplace/v2\nregistries:\n  - " + entry + "\n"
+			layerEditorWrite(t, configPath, original)
+			_, err := OpenLayerEditor(LayerTarget{Source: RepoCommitted, StagedPath: configPath, DeclaringPath: configPath})
+			var validation *V4ValidationError
+			if !errors.As(err, &validation) || validation.Code != "v4.api-version" || !strings.Contains(validation.Path, configPath) || !strings.Contains(validation.Msg, "apiVersion") {
+				t.Fatalf("legacy alias root error = %v", err)
 			}
-			entryNode := doc.Content[0]
-
-			got := findRegistryURLNode(entryNode)
-			if tt.wantKey == "" {
-				if got != nil {
-					t.Fatalf("expected nil node, got value %q", got.Value)
-				}
-				return
-			}
-			if got == nil {
-				t.Fatalf("expected %q node with value %q, got nil", tt.wantKey, tt.wantValue)
-			}
-			if got.Value != tt.wantValue {
-				t.Fatalf("expected node value %q, got %q", tt.wantValue, got.Value)
-			}
-			if want := findMappingValue(entryNode, tt.wantKey); want != got {
-				t.Fatalf("expected returned node to be the %q value node", tt.wantKey)
+			if data, err := os.ReadFile(configPath); err != nil || string(data) != original {
+				t.Fatalf("refusal changed bytes: %s, %v", data, err)
 			}
 		})
 	}
 }
 
-func TestEnsureRegistryInConfigMatchesEntryWithEmptyURLAndPathAlias(t *testing.T) {
-	configPath := filepath.Join(t.TempDir(), ".agents", "config.yaml")
-	mustMkdirAll(t, filepath.Dir(configPath))
-	mustWriteFile(t, configPath, []byte(`apiVersion: agent-marketplace/v2
-registries:
-  - url: ""
-    path: /local/skills
-`))
-
-	// The existing entry stores its location in "path" because "url" is
-	// empty: RegistryEntry.UnmarshalYAML treats url: "" as absent and uses
-	// "path" as the location alias. The editor must match that entry instead
-	// of appending a duplicate.
-	if err := EnsureRegistryInConfig(configPath, "/local/skills", ""); err != nil {
-		t.Fatalf("expected EnsureRegistryInConfig to succeed: %v", err)
+func TestLayerEditorEnsureRegistryMatchesDirectorySource(t *testing.T) {
+	repo := canonicalDirectoryTestRoot(t)
+	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	const original = "apiVersion: agent-marketplace/v4\nsources:\n  local: {directory: ./local/skills}\nresources:\n  local: [skill/review]\n"
+	layerEditorWrite(t, configPath, original)
+	editor := openTestEditor(t, RepoCommitted, configPath, configPath)
+	binding, err := editor.EnsureRegistry(RegistryEntry{URL: filepath.Join(repo, "local", "skills"), V4Kind: V4SourceDirectory})
+	if err != nil || binding.Name != "local" {
+		t.Fatalf("directory source binding = %#v, %v", binding, err)
 	}
-
+	candidate, err := editor.Render()
+	if err != nil || candidate.Changed || string(candidate.Bytes) != original {
+		t.Fatalf("directory source duplicated or rewritten: %#v, %v", candidate, err)
+	}
 	cfg, err := loadProjectConfig(t, configPath)
-	if err != nil {
-		t.Fatalf("expected edited config to load: %v", err)
-	}
-	if len(cfg.Registries) != 1 {
-		t.Fatalf("expected the existing entry to be reused (1 registry), got %d", len(cfg.Registries))
-	}
-	if cfg.Registries[0].URL != "/local/skills" {
-		t.Fatalf("expected registry URL /local/skills, got %q", cfg.Registries[0].URL)
+	if err != nil || len(cfg.Registries) != 1 || cfg.Registries[0].URL != filepath.Join(repo, "local", "skills") || !reflect.DeepEqual(cfg.Registries[0].Skills.Include, []string{"review"}) {
+		t.Fatalf("directory source/selection = %#v, %v", cfg, err)
 	}
 }

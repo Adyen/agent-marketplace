@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -72,17 +73,25 @@ func newDiagIssue(d diag.Diagnostic) *diagIssue {
 	resource := sanitizeDiagText(d.Resource, maxDiagResourceLen)
 	message := sanitizeDiagText(d.Message, maxDiagMessageLen)
 	hint := sanitizeDiagText(d.Hint, maxDiagHintLen)
+	target := ""
+	if d.Severity == diag.SeverityError && d.Target != "" && strings.HasPrefix(d.Code, "hook.") {
+		target = sanitizeDiagText(d.Target, maxDiagResourceLen)
+	}
 	issue := &diagIssue{
 		code:             d.Code,
 		resource:         resource,
 		source:           source,
 		hint:             hint,
-		msg:              renderDiagMessage(d.Code, message, resource, source),
+		msg:              renderDiagMessage(d.Code, message, target, resource, source),
 		message:          message,
-		presentationText: renderDiagMessage(d.Code, message, "", ""),
+		presentationText: renderDiagMessage(d.Code, message, "", "", ""),
 	}
 	issue.key = diagDedupKey(d, issue)
-	if d.Code != "" && resource != "" {
+	if target != "" {
+		issue.key += "\x00" + target
+		issue.message = issue.msg
+	}
+	if d.Code != "" && resource != "" && target == "" {
 		issue.presentationKey = strings.Join([]string{d.Code, strings.ReplaceAll(d.Hint, "\x00", ""), normalizeDiagMessageForKey(d.Message)}, "\x00")
 	}
 	return issue
@@ -122,6 +131,11 @@ func diagDedupKey(d diag.Diagnostic, issue *diagIssue) string {
 // to remove. Exporting the promotion is what makes the invariant enforceable
 // instead of aspirational.
 func PromoteDiagnostic(d diag.Diagnostic) error { return newDiagIssue(d) }
+
+func IsPromotedDiagnostic(err error) bool {
+	var promoted *diagIssue
+	return errors.As(err, &promoted)
+}
 
 // DedupIssues drops later occurrences of the same underlying problem while
 // preserving order. Errors that expose DedupKey() are collapsed on that
@@ -243,24 +257,32 @@ func (i *diagIssue) DedupKey() string { return i.key }
 // populates them; a diagnostic with neither degrades to the historical shape.
 // message, resource and source arrive already sanitized and bounded, so this
 // function never has to think about hostile bytes and never formats twice.
-func renderDiagMessage(code, message, resource, source string) string {
+func renderDiagMessage(code, message, target, resource, source string) string {
 	var b strings.Builder
-	b.Grow(len(code) + len(message) + len(resource) + len(source) + 16)
+	b.Grow(len(code) + len(message) + len(target) + len(resource) + len(source) + 16)
 	b.WriteString(code)
 	b.WriteString(": ")
 	b.WriteString(message)
-	if resource == "" && source == "" {
+	if target == "" && resource == "" && source == "" {
 		return b.String()
 	}
 	b.WriteString(" (")
+	sep := ""
+	if target != "" {
+		b.WriteString("target ")
+		b.WriteString(target)
+		sep = ", "
+	}
 	if resource != "" {
+		b.WriteString(sep)
 		b.WriteString("resource ")
 		b.WriteString(strconv.Quote(resource))
-		if source != "" {
-			b.WriteString(", ")
-		}
+		sep = ", "
 	}
-	b.WriteString(source)
+	if source != "" {
+		b.WriteString(sep)
+		b.WriteString(source)
+	}
 	b.WriteString(")")
 	return b.String()
 }

@@ -25,7 +25,7 @@ func TestMarketplaceInstallAfterCollectionMemberExclusion(t *testing.T) {
 	consumer := newEnv(t)
 	consumer.InitGitRepo()
 	consumer.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
-	consumer.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: %s\n    instance_id: behavior-marketplace\n    alias: replacement\n", fixture.server.URL))
+	consumer.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources: {replacement: {marketplace: %q}}\n", fixture.server.URL))
 	consumer.WriteOrgConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v4
 sources:
   org: {marketplace: %s}
@@ -37,7 +37,7 @@ resources:
 	consumer.AssertFileContains("/root/.factory/skills/skill-one/SKILL.md", "collection member")
 	locator := fixture.server.URL + "/r/other-source/skill/skill-one"
 	before := consumer.ReadFile("/workspace/.agents/config.yaml")
-	result := consumer.RunAM("install", locator, "--yes", "--scope", "repo")
+	result := consumer.RunAM("install", locator, "--yes", "--scope", "user")
 	if result.ExitCode == 0 || !strings.Contains(result.Combined, "marketplace.install-collision") {
 		t.Fatalf("active member collision not refused (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
@@ -55,13 +55,13 @@ resources:
   company:
     exclude: [behavior-source/skill/skill-one]
 `, fixture.server.URL))
-	consumer.MustRunAM("install", locator, "--yes", "--scope", "repo")
 	consumer.MustRunAM("sync")
 	consumer.AssertFileAbsent("/root/.factory/skills/skill-one")
 	consumer.AssertFileContains("/root/.factory/commands/command-one.md", "echo behavior")
-	consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "replacement body")
-	if cfg := consumer.ReadFile("/workspace/.agents/config.yaml"); !strings.Contains(cfg, "other-source-id") {
-		t.Fatalf("replacement source not persisted:\n%s", cfg)
+	consumer.MustRunAM("install", locator, "--yes", "--scope", "user")
+	consumer.AssertFileContains("/root/.factory/skills/skill-one/SKILL.md", "replacement body")
+	if cfg := consumer.ReadFile("/root/.agents/config.yaml"); !strings.Contains(cfg, "other-source/skill/skill-one") {
+		t.Fatalf("replacement source not persisted in user configuration:\n%s", cfg)
 	}
 }
 
@@ -83,20 +83,24 @@ func TestMarketplaceInstallChecksReconciledCollision(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			consumer := fixture.newConsumer(t, fixture.server.URL)
 			url := consumer.CreateBareRepo("git-collider", SkillsOnly(Skill{Name: "keeper", Description: "KEEPER"}))
-			mpConfig := fmt.Sprintf("apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: %s\n    instance_id: behavior-marketplace\n    alias: behavior\n", fixture.server.URL)
-			configure := func(selection string) {
-				gitConfig := fmt.Sprintf("registries:\n  - url: %s\n    ref: main\n    source_harness: claude\n%s", url, selection)
+			configure := func(selectAll bool) {
+				selection := "include: [skill/keeper]"
+				if selectAll {
+					selection = "all: true"
+				}
+				if tc.user && !tc.safeUser && selectAll {
+					selection += ", required: true"
+				}
+				gitSource := fmt.Sprintf("  git: {git: %q, ref: main, source_harness: claude}\n", url)
+				mpSource := fmt.Sprintf("  behavior: {marketplace: %q}\n", fixture.server.URL)
 				if tc.user {
-					if !tc.safeUser && strings.Contains(selection, "default: true") {
-						gitConfig += "    required: true\n"
-					}
-					consumer.WriteGlobalConfig("harnesses: [factory]\n" + gitConfig)
-					consumer.WriteRepoConfig(mpConfig)
+					consumer.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n" + gitSource + "resources:\n  git: {" + selection + "}\n")
+					consumer.WriteRepoConfig("apiVersion: agent-marketplace/v4\nsources:\n" + mpSource)
 				} else {
-					consumer.WriteRepoConfig(mpConfig + gitConfig)
+					consumer.WriteRepoConfig("apiVersion: agent-marketplace/v4\nsources:\n" + mpSource + gitSource + "resources:\n  git: {" + selection + "}\n")
 				}
 			}
-			configure("    default: true\n")
+			configure(true)
 			consumer.MustRunAM("sync")
 			consumer.MustRunAM("list", "--from", url, "--ref", "main")
 			ownerRoot := consumer.workspace
@@ -159,16 +163,21 @@ func TestMarketplaceInstallChecksReconciledCollision(t *testing.T) {
 				if result.ExitCode != 0 {
 					t.Fatalf("locked noncollision refused: %s", result.Combined)
 				}
-				if tc.safeUser && !strings.Contains(result.Combined, `skill "skill-one" is provided by multiple registries`) {
-					t.Fatalf("successful Marketplace install hid its collision warning: %s", result.Combined)
+				if tc.safeUser && strings.Contains(result.Combined, `skill "skill-one" is provided by multiple registries`) {
+					t.Fatalf("complementary user and repository selections reported a collision: %s", result.Combined)
 				}
 				consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "APPROVED MARKETPLACE BODY")
 				if tc.retainLock {
-					if got, err := os.ReadFile(lockPath); err != nil || string(got) != string(lockBytes) {
-						t.Fatalf("retained lock changed: %v", err)
+					got, err := os.ReadFile(lockPath)
+					// Installing the Marketplace pin adds its own v4 acquisition
+					// evidence; it must not rewrite the retained Git lock records.
+					gitBefore, _, _ := strings.Cut(string(lockBytes), "\nmarketplaces:")
+					gitAfter, _, _ := strings.Cut(string(got), "\nmarketplaces:")
+					if err != nil || strings.TrimSpace(gitAfter) != strings.TrimSpace(gitBefore) {
+						t.Fatalf("retained exact Git lock records changed: %v\nbefore:\n%s\nafter:\n%s", err, gitBefore, gitAfter)
 					}
 				} else {
-					consumer.AssertFileAbsent("/root/.factory/skills/skill-one")
+					consumer.AssertFileContains("/root/.factory/skills/skill-one/SKILL.md", "UNREVIEWED GIT BODY")
 					consumer.MustRunAM("lock", "--check")
 				}
 				return
@@ -197,8 +206,21 @@ func TestMarketplaceInstallChecksReconciledCollision(t *testing.T) {
 			if _, err := os.Stat(lockPath); err != nil {
 				t.Fatalf("dependency reconciliation did not run: %v", err)
 			}
+			if !tc.user {
+				// The deleted repository lock also held the resource-free
+				// registration's identity record. Reconciliation restores only
+				// Git evidence, so check reports the identity until lock records it.
+				check := consumer.RunAM("lock", "--check")
+				if check.ExitCode == 0 || !strings.Contains(check.Combined, "lock.change-required") || !strings.Contains(check.Combined, fixture.server.URL) {
+					t.Fatalf("unrecorded registration identity not reported (exit %d):\n%s", check.ExitCode, check.Combined)
+				}
+				if got, err := os.ReadFile(configPath); err != nil || string(got) != string(configBytes) {
+					t.Fatalf("lock --check changed configuration: %v\n%s", err, got)
+				}
+				consumer.MustRunAM("lock")
+			}
 			consumer.MustRunAM("lock", "--check")
-			configure("    skills: [keeper]\n")
+			configure(false)
 			consumer.MustRunAM("install", locator, "--yes", "--scope", "repo")
 			consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "APPROVED MARKETPLACE BODY")
 			if tc.collection {

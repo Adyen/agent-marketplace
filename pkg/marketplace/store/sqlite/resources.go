@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
@@ -155,7 +156,35 @@ func (s *Store) putResourceRevision(ctx context.Context, rev store.ResourceRevis
 		return err
 	}
 	if existing != rev {
-		return fmt.Errorf("%w: resource revision %q already has different immutable metadata", store.ErrConflict, rev.ContentDigest)
+		repaired := existing
+		repaired.ArchiveDigest = rev.ArchiveDigest
+		if repaired != rev {
+			return fmt.Errorf("%w: resource revision %q already has different immutable metadata", store.ErrConflict, rev.ContentDigest)
+		}
+		if _, err := s.q.ExecContext(ctx, `UPDATE resource_revisions SET archive_digest=NULLIF(?, '')
+			WHERE marketplace_id=? AND registry_id=? AND kind=? AND name=? AND content_digest=?`,
+			rev.ArchiveDigest, rev.Coordinate.Marketplace, rev.Coordinate.Registry, rev.Coordinate.Kind,
+			rev.Coordinate.Name, rev.ContentDigest); err != nil {
+			return err
+		}
+		for _, digest := range []store.ArchiveDigest{existing.ArchiveDigest, rev.ArchiveDigest} {
+			if digest == "" {
+				continue
+			}
+			if _, err := s.q.ExecContext(ctx, `INSERT INTO blob_resource_owners
+				(blob_kind,blob_digest,marketplace_id,registry_id,resource_kind,name,content_digest)
+				VALUES ('archive',?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
+				string(digest), rev.Coordinate.Marketplace, rev.Coordinate.Registry, rev.Coordinate.Kind,
+				rev.Coordinate.Name, rev.ContentDigest); err != nil {
+				return err
+			}
+		}
+		slog.WarnContext(ctx, "resource revision archive digest repaired",
+			"marketplace", rev.Coordinate.Marketplace, "registry", rev.Coordinate.Registry,
+			"kind", rev.Coordinate.Kind, "name", rev.Coordinate.Name,
+			"content_digest", rev.ContentDigest,
+			"old_archive_digest", existing.ArchiveDigest, "new_archive_digest", rev.ArchiveDigest)
+		return s.advanceCatalogVersion(ctx)
 	}
 	// An intrinsic revision is not catalog-visible until both a current
 	// occurrence and assessment point at it.
@@ -217,7 +246,18 @@ func (s *Store) putResourceOccurrence(ctx context.Context, occ store.ResourceOcc
 	core := existing
 	core.SourcePath = occ.SourcePath
 	if !occ.Equal(core) {
-		return fmt.Errorf("%w: resource occurrence for commit %q already has different immutable fields", store.ErrConflict, occ.Commit)
+		repaired := core
+		repaired.ManifestDigest = occ.ManifestDigest
+		if !occ.Equal(repaired) {
+			return fmt.Errorf("%w: resource occurrence for commit %q already has different immutable fields", store.ErrConflict, occ.Commit)
+		}
+		if _, err := s.q.ExecContext(ctx, `UPDATE resource_occurrences SET manifest_digest=?
+			WHERE marketplace_id=? AND registry_id=? AND kind=? AND name=? AND content_digest=? AND revision_commit=?`,
+			occ.ManifestDigest, occ.Coordinate.Marketplace, occ.Coordinate.Registry, occ.Coordinate.Kind, occ.Coordinate.Name, occ.ContentDigest, occ.Commit); err != nil {
+			return err
+		}
+		existing.ManifestDigest = occ.ManifestDigest
+		changed = true
 	}
 	if existing.SourcePath != "" && occ.SourcePath != "" && existing.SourcePath != occ.SourcePath {
 		return fmt.Errorf("%w: resource occurrence for commit %q already has a different source path", store.ErrConflict, occ.Commit)
@@ -372,9 +412,35 @@ func (s *Store) ListResourceRevisions(ctx context.Context, coord store.ResourceC
 
 func (s *Store) ListResourceRevisionsByArchiveDigest(ctx context.Context, marketplace store.MarketplaceID, digest store.ArchiveDigest) ([]store.AssessedResourceRevision, error) {
 	query := `SELECT ` + assessedResourceColumns + ` FROM resource_revisions rr ` + assessmentJoins + latestOccurrenceJoins + revocationJoins + `
-		WHERE rr.marketplace_id=? AND rr.archive_digest=?
+		WHERE rr.marketplace_id=? AND (rr.archive_digest=? OR EXISTS (
+			SELECT 1 FROM blob_resource_owners bo
+			WHERE bo.blob_kind='archive' AND bo.blob_digest=?
+			  AND bo.marketplace_id=rr.marketplace_id AND bo.registry_id=rr.registry_id
+			  AND bo.resource_kind=rr.kind AND bo.name=rr.name AND bo.content_digest=rr.content_digest))
 		ORDER BY rr.registry_id, rr.kind, rr.name, so.occurred_at DESC, rr.content_digest DESC`
-	return s.queryAssessedResources(ctx, query, marketplace, digest)
+	return s.queryAssessedResources(ctx, query, marketplace, digest, digest)
+}
+
+func (s *Store) ListResourceArchiveDigests(ctx context.Context, marketplace store.MarketplaceID, after store.ArchiveDigest, limit int) ([]store.ArchiveDigest, error) {
+	rows, err := s.q.QueryContext(ctx, `SELECT DISTINCT archive_digest FROM resource_revisions
+		WHERE marketplace_id=? AND archive_digest IS NOT NULL AND archive_digest<>'' AND archive_digest>?
+		ORDER BY archive_digest LIMIT ?`, marketplace, after, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list archive digests: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	digests := make([]store.ArchiveDigest, 0, limit)
+	for rows.Next() {
+		var digest string
+		if err := rows.Scan(&digest); err != nil {
+			return nil, fmt.Errorf("scan archive digest: %w", err)
+		}
+		digests = append(digests, store.ArchiveDigest(digest))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate archive digests: %w", err)
+	}
+	return digests, nil
 }
 
 func (s *Store) ListResourceRevisionsByContentDigest(ctx context.Context, marketplace store.MarketplaceID, digest store.RevisionDigest) ([]store.AssessedResourceRevision, error) {

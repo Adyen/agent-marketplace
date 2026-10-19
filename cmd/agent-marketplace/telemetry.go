@@ -14,6 +14,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/logging/logvalue"
+	"github.com/Adyen/agent-marketplace/internal/redact"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 )
@@ -129,12 +131,12 @@ func runTelemetryEnable(out io.Writer, level, endpoint string) error {
 		return err
 	}
 
-	org, err := config.LoadOrganizationPolicyConfig()
+	org, err := config.LoadOrganizationSettings()
 	if err != nil {
 		return fmt.Errorf("load organization config: %w", err)
 	}
 	orgLevel := tmcfg.LevelOff
-	if org != nil && org.Telemetry != nil {
+	if org.Telemetry != nil {
 		var normErr error
 		orgLevel, normErr = tmcfg.NormalizeLevel(org.Telemetry.Level)
 		if normErr != nil {
@@ -171,7 +173,7 @@ func runTelemetryEnable(out io.Writer, level, endpoint string) error {
 		_, _ = fmt.Fprintf(out, " with endpoint %q", endpoint)
 	}
 	_, _ = fmt.Fprintln(out)
-	slog.Info("telemetry enabled", "level", normalized, "endpoint", endpoint)
+	slog.Info("telemetry enabled", "level", normalized, "endpoint", logvalue.Safe(redact.URLValue(endpoint)))
 	return nil
 }
 

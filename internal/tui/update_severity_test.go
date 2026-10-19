@@ -26,10 +26,10 @@ func TestRunUpdateCmdSucceedsWithWarningOnlyDiagnostics(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".agents"), 0o755); err != nil {
 		t.Fatalf("mkdir repo agents: %v", err)
 	}
-	// repoV2Header, not v2Header: this test exercises a project config without
+	// repoV4Header, not v4Header: this test exercises a project config without
 	// its own target harness list, so the target set comes from the global config
 	// written below.
-	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoV2Header), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoV4Header), 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
 	}
 
@@ -41,15 +41,15 @@ func TestRunUpdateCmdSucceedsWithWarningOnlyDiagnostics(t *testing.T) {
 		t.Fatalf("write subagent: %v", err)
 	}
 
-	globalConfig := `apiVersion: agent-marketplace/v2
+	globalConfig := `apiVersion: agent-marketplace/v4
 harnesses:
   - windsurf
-registries:
-  - url: ` + registryRoot + `
-    path: .agents
+sources:
+  local:
+    directory: ` + filepath.Join(registryRoot, ".agents") + `
     source_harness: factory
-    subagents:
-      - worker
+resources:
+  local: [subagent/worker]
 `
 	if err := os.MkdirAll(filepath.Join(homeDir, ".agents"), 0o755); err != nil {
 		t.Fatalf("mkdir home agents: %v", err)
@@ -75,7 +75,7 @@ registries:
 	})
 	defer restoreLocal()
 
-	msg := runUpdateCmd(context.Background(), repoRoot, homeDir, 1)()
+	msg := runUpdateCmdForWorkspace(context.Background(), defaultTUIWorkspace(repoRoot), homeDir, 1)()
 	done, ok := msg.(updateDoneMsg)
 	if !ok {
 		t.Fatalf("runUpdateCmd returned %T, want updateDoneMsg", msg)

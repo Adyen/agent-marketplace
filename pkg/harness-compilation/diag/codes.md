@@ -4,6 +4,19 @@ Every diagnostic code emitted by the harness-compilation library is listed here.
 The test `TestDiagnosticCodes_Documented` enforces that each constant in `codes.go`
 has a corresponding entry in this file.
 
+## Model selection
+
+| Code | Meaning | Remediation |
+|---|---|---|
+| `model.unresolved` | Model omitted without suppressing the resource; target defaults apply | Update the shipped harness catalog or provide an explicit model override |
+| `model.reasoning-omitted` | Requested reasoning cannot be represented for the selected target/model | Choose a supported model and reasoning combination |
+| `model.inheritance-mismatch` | Source inheritance/default semantics differ from target omission | Specify a supported explicit model |
+| `model.reasoning-conflict` | Explicit reasoning overrides a conflicting model-encoded preference | Specify the reasoning preference once |
+| `model.selector-pinned` | A floating family selector was pinned by target catalog policy (info) | Use an exact model when version identity matters |
+| `model.provenance-conflict` | Conflicting legacy native sidecars were ignored in favor of canonical fields | Supply model source provenance and authoritative fields |
+
+Model and reasoning conversion is resolved jointly from shipped catalogs. These losses are warnings, except informational family pinning; none suppresses the resource. Existing target-specific Devin and native-Codex loss codes remain available for equivalent losses. Same-target native preservation does not certify current account availability.
+
 ## Severity ordinals count DOWN, so never compare them
 
 `SeverityError` is the **zero value** of `Severity`: error 0, warning 1, info 2.
@@ -66,10 +79,7 @@ comparison in non-test code.
 | `ingest.factory.resource-shadowed` | Factory resource was shadowed by an earlier resource of the same kind and name | Use distinct resource names or remove the lower-priority definition |
 | `subagent.windsurf.no-primitive` | Windsurf has no subagent primitive; resource dropped | Consider expressing the subagent as a Windsurf workflow instead |
 | `hook.claude.unsupported-type` | Unsupported hook type in Claude format; only command-type is universally supported in v0 | Convert the hook to a command type or remove it |
-| `hook.factory.non-command-type-dropped` | Factory only supports command-type hooks; non-command type dropped | Convert the hook to a command type or remove it |
-| `hook.cursor.unsupported-type` | Cursor only supports command-type hooks; non-command type dropped | Convert the hook to a command type or remove it |
 | `hook.windsurf.env-token-expanded` | Windsurf expanded env token to a literal path | Verify the expanded path is correct for the target environment |
-| `hook.windsurf.event-unmappable` | Claude hook event has no Windsurf equivalent; hook dropped | Consider using a mappable event (PreToolUse with a known tool matcher, UserPromptSubmit, or Stop) |
 | `ingest.gemini.hook-event-partial-mapping` | Gemini hook event has no exact Claude equivalent; original event preserved | Use BeforeTool, AfterTool, or PreCompress for lossless cross-harness mapping |
 | `ingest.windsurf.hook-event-unmappable` | Windsurf hook event has no Claude equivalent; original event preserved | Use a mappable Windsurf event or preserve the native event through the Windsurf sidecar |
 | `mcp.interpolation-unsupported` | One MCP value uses an interpolation style the target cannot represent; that value was omitted and the entry was still emitted | Replace the interpolated value with a literal value, or use an interpolation style the target documents |
@@ -77,6 +87,7 @@ comparison in non-test code.
 | `rule.gemini.no-primitive` | Gemini CLI has no rules directory primitive; rule dropped | Gemini reads project guidance from GEMINI.md; reference the rule content there instead |
 | `rule.devin.unsupported` | Rules are out of scope for the Devin target; no rule artifact was emitted | This is a scope decision, not a Devin limitation: on 3000.3.27 a rule placed at `.devin/rules/<name>.md` is discovered even though `devin rules paths` does not advertise it. Compile the rule to a target with a supported rules primitive (factory, cursor, windsurf), or place it under `.devin/rules` by hand |
 | `rule.codex.unsupported` | Rules are out of scope for the Codex target; no rule or AGENTS.md content was emitted | Use a supported resource kind or manage AGENTS.md separately |
+| `compile.claude.native-control-omitted` | A Claude-native execution control (subagent `permissionMode`, `mcpServers` or `hooks`; skill or command `hooks`) from a non-Claude source was omitted | Author the control in the Claude layout if the resource needs it on Claude |
 | `compile.codex.field-dropped` | A benign IR field has no documented Codex equivalent and was omitted | Remove the field or choose a target that represents it |
 | `subagent.codex.model-dropped` | A Codex-only subagent model was omitted for a non-Codex target | Compile to Codex to preserve the native-only model, or choose a portable canonical model |
 | `subagent.codex.effort-dropped` | A Codex-only subagent reasoning effort was omitted for a non-Codex target | Compile to Codex to preserve the native-only effort, or use a portable canonical effort |
@@ -84,19 +95,23 @@ comparison in non-test code.
 | `mcp.codex.plugin-root-unresolved` | An MCP value references the plugin root but no plugin root was configured; the token was left unexpanded | Compile with a plugin root so the value resolves, or use an absolute path |
 | `ingest.codex.prompt-deprecated` | A deprecated Codex prompt was ingested as a command | Move the prompt to a command skill under `.agents/skills` |
 | `ingest.codex.field-dropped` | A benign native Codex field has no canonical equivalent and was omitted | Remove the field or keep the resource in Codex format |
+| `ingest.codex.hook-event-unmappable` | Codex hook event is outside the documented Codex vocabulary; the original event name was preserved | Use a documented Codex event (PreToolUse, PostToolUse, UserPromptSubmit, SessionStart, SessionEnd); an undocumented event cannot be translated |
 | `rule.factory.metadata-dropped` | Factory rules are plain markdown; description/globs/alwaysApply metadata dropped | Factory does not support rule frontmatter (description or conditional glob-scoped application); the rule body is emitted verbatim |
 | `compile.canonical-field-overrides-extra` | Canonical field overrides a conflicting preserved extra | The canonical modeled value wins; rename the extension field to preserve both values |
-| `hook.prompt.unsupported` | Target cannot represent prompt hooks; hook dropped | Use a command hook on this target |
-| `hook.gemini.event-unmappable` | Gemini has no equivalent hook event; hook dropped | Use a documented Gemini hook event |
-| `hook.gemini.unsupported-type` | Gemini cannot represent this hook type; hook dropped | Use a command or prompt hook on Gemini |
-| `hook.windsurf.unsupported-type` | Windsurf cannot represent this hook type; hook dropped | Use a command hook on Windsurf |
+| `hook.timeout-rounded` | Timeout unit conversion to seconds rounded up to the next whole second | Use a whole-second timeout or accept the rounded value |
+| `hook.timeout-capped` | Timeout exceeded the documented per-event limit and was lowered to the limit | Set a timeout within the documented limit |
+| `hook.duplicate-execution-risk` | Two selected harness targets load the same hook files by default, so the hook may run twice | Deselect one of the targets for this scope, or accept the duplicate execution |
+| `materialize.hook.review` | An owned hook command or prompt was added, changed, or removed in either scope, and the exact values were printed to stdout for review | Review the printed hook changes before relying on them |
+| `materialize.hook.review-pending` | A check found a pending hook change without mutating files | A later sync will apply the pending hook change |
+| `materialize.hook.satisfied-by-unmanaged` | On a target without a target-specific code, a semantically identical handwritten hook already exists; no entry was added | No action needed; the handwritten entry satisfies the desired hook and is not adopted |
 | `skill.support-files-deferred` | Skill support file names were preserved but bytes were not materialized | Materialize source-relative support files in the owning layer |
 | `mcp.credentials.literal-secret` | MCP configuration contains a literal credential-like value | Use environment interpolation or an external secret reference |
-| `skill.devin.model-unmappable` | Explicit skill model is not a stable Devin alias; model was omitted | Use sonnet, opus, or haiku for a stable Devin model alias |
+| `skill.devin.model-unmappable` | Explicit skill model has no resolved Devin representation; model omitted | Update the shipped Devin model catalog or use an explicit model override |
 | `skill.devin.trigger-unmappable` | Trigger is outside Devin's user/model activation vocabulary; the trigger was dropped | Use the user or model trigger, or select a target that represents this trigger |
-| `subagent.devin.model-unmappable` | Explicit model is not a stable Devin alias; model was omitted | Use sonnet, opus, or haiku for a stable Devin model alias |
-| `subagent.devin.model-default` | Empty subagent model uses Devin's default subagent model | Set an explicit stable Devin model alias when a fixed model is required |
-| `subagent.devin.effort-dropped` | Devin does not represent subagent effort | Remove effort or use a target that supports it |
+| `subagent.devin.model-unmappable` | Explicit model has no resolved Devin representation; model omitted | Update the shipped Devin model catalog or use an explicit model override |
+| `subagent.devin.model-default` | Parent inheritance becomes Devin's default subagent model | Choose a supported explicit model when inheritance cannot be represented |
+| `subagent.devin.effort-dropped` | Requested reasoning has no supported Devin encoding and was omitted | Use a cataloged model and reasoning combination |
+| `skill.allowed-tools-omitted` | A skill `allowed-tools` list from another harness was omitted; it is never emitted as a pre-approval on the target | Declare pre-approved tools in the target harness's own layout if the skill needs them |
 | `skill.devin.tool-unknown` | An explicitly allowed skill or command tool has no Devin equivalent; the `allowed-tools` key was omitted and the resource was still emitted | Use one of Devin's allowed tools (read, edit, grep, glob, exec) to keep the restriction, or accept Devin's default tool set for this resource |
 | `subagent.devin.tool-unknown` | An explicitly allowed subagent tool has no Devin equivalent; the `allowed-tools` key was omitted and the profile was still emitted | Use one of Devin's allowed tools (read, edit, grep, glob, exec) to keep the restriction, or accept Devin's default tool set for this subagent |
 | `hook.devin.payload-dropped` | The hook carries the payload its type does not select; that payload was dropped | Split the hook into one command hook and one prompt hook if both payloads are required |
@@ -127,9 +142,21 @@ comparison in non-test code.
 | `doctor.devin.version-unknown` | A Devin CLI is installed but its version could not be established | The version probe failed, timed out, or printed no recognizable version; nothing is blocked, but 3000.3 compatibility could not be confirmed |
 | `doctor.repair.conflict-replaceable` | An existing unmanaged aggregate entry has the same key as a desired entry but a different value, so it is neither an exact adoption match nor an evidence-backed orphan | Run doctor --repair on a terminal to confirm replacing it with the generated entry; the existing entry is preserved until you confirm, a fresh safety backup is taken first, and --yes never replaces it |
 
+### Hook review output
+
+`materialize.hook.review` is a warning about a completed publication in either
+repository or user scope. The separate stdout review lists the changed entry's
+target, scope, file, event, matcher, and exact old and new command or prompt.
+Metadata-only updates and no-op syncs emit no listing or review diagnostic.
+`materialize.hook.review-pending` is the check-mode counterpart: it reports the
+same pending listing while writing no native file, configuration, ownership
+state, or backup. Review output is not written to application logs or
+telemetry; caller redirection that captures stdout is outside those value-free
+channels.
+
 ### Unconsumed configuration audits
 
-Unconsumed-configuration diagnostics use this fixed, ordered inventory of recognized MCP and hook paths: root `.mcp.json`, `mcp.json`, `hooks/hooks.json`; Claude `.claude/.mcp.json`, `.claude.json`, `.claude/hooks/hooks.json`; Factory `.factory/mcp.json`, `.factory/hooks/hooks.json`; Cursor `.cursor/mcp.json`, `.cursor/hooks/hooks.json`; Gemini root `gemini-extension.json`, `.gemini/mcp.json`, `.gemini/settings.json`, `.gemini/gemini-extension.json`; Windsurf `mcp_config.json`, `.windsurf/mcp_config.json`, `hooks.json`, `.windsurf/hooks.json`; Devin `hooks.v1.json`, `.devin/hooks.v1.json`, `.devin/config.json`, `.devin/mcp_config.json`; and Codex `.codex/hooks.json`, `.codex/config.toml`. The audit is file-level rather than member-level: a recognized file is considered consumed when its selected loader reads it, regardless of which entries it contains. Empty valid aggregates and files that were read but failed validation are therefore not unconsumed; empty bytes that fail parsing remain load failures. Generic root `config.json`, arbitrary JSON/support files, and personal override files governed by dedicated diagnostics are excluded. The audit never reads configuration contents and never moves files automatically; use the actionable diagnostic hint to select the matching source layout or merge definitions without overwriting existing entries. Audit warnings are non-owning traversal diagnostics: diagnostic-only containers retain their warnings while nested resources are discovered, whereas actual resource and load diagnostics still bound traversal.
+Unconsumed-configuration diagnostics use this fixed, ordered inventory of recognized MCP and hook paths: root `.mcp.json`, `mcp.json`, and `hooks/hooks.json`; Claude `.claude/.mcp.json`, `.claude.json`, `.claude/hooks/hooks.json`, and `.claude/settings.json`; Factory `.factory/hooks.json`; Cursor `.cursor/hooks.json`; the shared `.devin/hooks.json`; Factory `.factory/mcp.json` and `.factory/hooks/hooks.json`; Cursor `.cursor/mcp.json` and `.cursor/hooks/hooks.json`; Gemini `gemini-extension.json`, `.gemini/mcp.json`, `.gemini/settings.json`, and `.gemini/gemini-extension.json`; Windsurf `mcp_config.json`, `.windsurf/mcp_config.json`, `hooks.json`, and `.windsurf/hooks.json`; Devin `hooks.v1.json`, `.devin/hooks.v1.json`, `.devin/config.json`, and `.devin/mcp_config.json`; and Codex `.codex/hooks.json` and `.codex/config.toml`. The audit is file-level rather than member-level: a recognized file is considered consumed when its selected loader reads it, regardless of which entries it contains. Empty valid aggregates and files that were read but failed validation are therefore not unconsumed; empty bytes that fail parsing remain load failures. Generic root `config.json`, arbitrary JSON/support files, and personal override files governed by dedicated diagnostics are excluded. The audit never reads configuration contents and never moves files automatically; use the actionable diagnostic hint to select the matching source layout or merge definitions without overwriting existing entries. Audit warnings are non-owning traversal diagnostics: diagnostic-only containers retain their warnings while nested resources are discovered, whereas actual resource and load diagnostics still bound traversal.
 
 ### Codex diagnostics are evidence-bound and fail closed on authority loss
 
@@ -311,7 +338,7 @@ strings such as `Bash(git push --force:*)`. The resource name and source locatio
 localize the loss instead. The structured log adds `unmappable_count`,
 `scoped_count`, and `outcome=allowed-tools key omitted` — counts, not values.
 
-Every `ingest.devin.*` warning describes something a canonical Devin root expressed that canonical IR cannot hold. Dropping it can only *narrow* what a later compile emits, so none of them fails the resource. The one ingest situation that can change a privilege decision is `ingest.devin.tool-unreversible`, which is an error and skips the resource. No `ingest.devin.*` message, hint, or log attribute ever contains a command string, prompt body, matcher value, timeout value, env value, header value, OAuth client id/secret/resource, permission value, or resource body — only field names, the fixed Devin event/tool vocabulary, the resource name, and the source location.
+Every `ingest.devin.*` warning describes something a canonical Devin root expressed that canonical IR cannot hold. Dropping it can only *narrow* what a later compile emits, so none of them fails the resource. The ingest situations that can change a privilege decision are errors that skip the resource: `ingest.devin.tool-unreversible`, and `ingest.devin.command-security-unsupported` for a marked converted command skill whose permissions, execution selector, or non-user activation the command IR cannot hold. No `ingest.devin.*` message, hint, or log attribute ever contains a command string, prompt body, matcher value, timeout value, env value, header value, OAuth client id/secret/resource, permission value, or resource body — only field names, the fixed Devin event/tool vocabulary, the resource name, and the source location.
 
 The `hook.devin.*` and `mcp.devin.*` families are split by OUTCOME, not by kind.
 
@@ -344,9 +371,9 @@ are two codes and not one code with two severities (bead
 `agent-marketplace-5exj.23`).
 
 `mcp.interpolation-unsupported` is the shared, **value-level** case and stays a
-**warning**. One argument, one env value, one header value, or one OAuth member
+**warning**. One env value, one header value, or one OAuth member
 is omitted — never written as an empty string, because a defined-but-blank
-variable, header, or argument is a *different* input from the one the author
+variable or header is a *different* input from the one the author
 wrote — and the server entry is emitted with everything else the source
 authorized. It sits with `mcp.devin.field-dropped` and the two plugin-root codes
 in the emit-the-entry family: escalating it would suppress a working server over
@@ -355,8 +382,10 @@ one dropped value, which is exactly the trade `.20` rejected for that family.
 `mcp.devin.interpolation-unrepresentable` is the **entry-level** case and is an
 **error**. On Devin the unrepresentable value can be the one field the selected
 server form cannot do without: `command` on a stdio server, `url` on a remote
-server. Omitting it is not a partial loss — there is nothing left to launch or
-contact, so the whole keyed entry disappears from `mcp_config.json`. That is the
+server, or any argument of a stdio server. Omitting it is not a partial loss —
+there is nothing left to launch or contact, or the command line would change
+(for example by losing a sandbox flag) — so the whole keyed entry disappears
+from `mcp_config.json`. That is the
 same outcome as `mcp.devin.transport-ambiguous`, `-incomplete`, and
 `-unsupported`, so it carries the same severity and the same consequence: the
 entry is skipped, siblings are patched atomically, and `sync` exits non-zero.
@@ -552,16 +581,31 @@ key or a hook event name), the resource name, and content digests are reported.
 | `subagent.factory.tool-unknown` | Factory cannot map an explicit subagent tool; subagent artifact suppressed | Use a supported tool mapping or remove the restriction explicitly |
 | `skill.codex.security-restriction-unsupported` | Codex skills cannot enforce an explicit security restriction; artifact suppressed | Remove the restriction explicitly or use a target that represents it |
 | `hook.event-unmappable` | Target cannot preserve this hook event; hook suppressed | Use a hook event documented by the target |
+| `hook.gemini.event-unmappable` | Gemini has no equivalent hook event; hook suppressed | Use a Gemini native event such as BeforeTool, AfterTool, or PreCompress |
+| `hook.windsurf.event-unmappable` | Claude hook event has no Windsurf equivalent; hook suppressed | Consider using a mappable event (PreToolUse with a known tool matcher, UserPromptSubmit, or Stop) |
+| `hook.matcher-untranslatable` | No exact tool-matcher coverage exists for the target; hook suppressed | Rewrite the matcher with tools the target's catalog covers, or remove it |
+| `hook.env-unrepresentable` | The hook command references a variable with no target equivalent; hook suppressed | Rewrite the command with variables the target documents, or use an absolute path |
+| `hook.timeout-unsupported` | Target cannot represent an explicit hook timeout; hook suppressed | Remove the timeout explicitly or use a target that supports it |
+| `hook.type-unsupported` | The target's catalog does not declare this hook type for the event; hook suppressed | Use a hook type the target documents for this event |
+| `hook.support-path-unrepresentable` | The hook command references the plugin root but the target declares no repository base; hook suppressed | Use an absolute command path or a target with a repository base |
+| `hook.prompt.unsupported` | Target cannot represent prompt hooks; hook suppressed | Use a command hook on this target |
+| `hook.factory.non-command-type-dropped` | Factory only supports command-type hooks; hook suppressed | Convert the hook to a command type or remove it |
+| `hook.cursor.unsupported-type` | Cursor does not declare this hook type for the event; hook suppressed | Use a command or prompt type; the Cursor catalog declares both on every event |
+| `hook.gemini.unsupported-type` | Gemini cannot represent this hook type; hook suppressed | Use a command hook on Gemini |
+| `hook.windsurf.unsupported-type` | Windsurf cannot represent this hook type; hook suppressed | Use a command hook on Windsurf |
+| `materialize.hook.legacy-malformed` | A legacy hook file could not be parsed or reconciled safely; both files were left unchanged | Fix the legacy hook file by hand; the migration runs again on the next sync |
 | `hook.native-literal-unsupported` | Target would reinterpret a native Codex hook literal; hook suppressed | Remove the target-specific interpolation token or keep the hook in Codex format |
 | `hook.codex.native-fields-unsupported` | Target cannot preserve native Codex hook execution or context fields; hook suppressed | Remove async, commandWindows, and additionalContextLimit explicitly or keep the hook in Codex format |
 | `hook.codex.unsupported` | Codex does not execute this hook event or handler; hook suppressed | Use a documented Codex command hook event |
-| `hook.windsurf.native-fields-unsupported` | Windsurf cannot preserve conflicting native hook fields; hook suppressed | Remove the conflicting native fields explicitly or use a target that represents them |
+| `hook.windsurf.native-fields-unsupported` | Native Windsurf hook fields conflict or cannot be preserved on the target; hook suppressed | Remove the conflicting native fields explicitly or use a target that represents them |
 | `hook.windsurf.timeout-unsupported` | Windsurf cannot represent an explicit hook timeout; hook artifact suppressed | Remove the timeout explicitly or use a target that supports it |
 | `materialize.hook.support-conflict` | Conflicting desired support files block affected hooks rather than selecting a winner | Rename the conflicting support files or exclude one hook provider |
+| `materialize.hook.support-refused` | Unsafe or unreadable support sources block affected hooks while installed content is retained | Fix or remove the unsafe support source and re-run sync |
 | `mcp.security-restriction-unsupported` | Target cannot preserve native MCP authority or literal semantics; server suppressed | Keep the server in its native format or remove the unsupported security field explicitly |
 | `mcp.codex.security-unsupported` | Codex MCP output cannot preserve the requested authentication or transport semantics; server suppressed | Use documented Codex MCP fields or remove the unsupported setting explicitly |
 | `ingest.codex.load-resource-failed` | One malformed Codex resource or aggregate was skipped | Fix the reported native file; independent valid resources were retained |
 | `ingest.codex.duplicate-identity` | Duplicate Codex resource identity was suppressed without choosing a winner | Rename one duplicate native resource |
+| `ingest.windsurf.duplicate-identity` | Two Windsurf workflows or rules in one workspace root claim the same name; all of them were suppressed without choosing a winner | Give each workflow and rule a unique name |
 | `ingest.codex.hook-unsupported` | An unsupported native Codex hook event or handler was skipped | Use a documented Codex event with a command handler |
 | `ingest.codex.mcp-security-unsupported` | Security-sensitive native Codex MCP fields cannot be represented safely | Remove the unsupported restriction or keep the server in Codex format |
 | `ingest.codex.subagent-security-unsupported` | Authority-bearing native Codex subagent fields cannot be represented safely | Remove the unsupported restriction or keep the subagent in Codex format |
@@ -569,7 +613,8 @@ key or a hook event name), the resource name, and content digests are reported.
 | `subagent.factory.disallowed-tools-dropped` | Factory cannot represent disallowedTools; artifact suppressed | Use a target that supports disallowedTools or remove the restriction explicitly |
 | `subagent.factory.isolation-dropped` | Factory cannot represent isolation; artifact suppressed | Use a target that supports isolation or remove the restriction explicitly |
 | `subagent.gemini.tool-unknown` | Gemini tool is not in the mapping table; artifact suppressed | Add the tool to the mapping table or remove the explicit tool |
-| `subagent.cursor.tool-unknown` | Cursor tool is not in the mapping table; artifact suppressed | Add the tool to the mapping table or remove the explicit tool |
+| `subagent.cursor.tool-unknown` | Cursor cannot represent the authored subagent tool restriction; artifact suppressed | Remove the restriction explicitly or use a target whose subagent format can express it |
+| `subagent.claude.tool-unknown` | Claude has no tool covering a foreign-source tool name; artifact suppressed | Use a tool name the Claude tool catalog covers, or remove the restriction explicitly |
 | `subagent.security-restriction-unsupported` | Unsupported subagent security restriction suppresses the artifact | Use a target that represents the restriction or remove it explicitly |
 | `bundle.conflict.duplicate-artifact-path` | Two resources produce the same artifact output path; neither resource is emitted | Rename one of the conflicting resources or adjust the output path |
 | `bundle.conflict.cross-kind-artifact-path` | Resources of different kinds produce the same artifact output path; neither artifact is emitted | Rename one of the conflicting resources: on targets that compile commands as skills, a skill and a command cannot share a name |
@@ -600,12 +645,14 @@ key or a hook event name), the resource name, and content digests are reported.
 | `mcp.devin.transport-ambiguous` | The MCP server declares both a stdio command and a remote url, which Devin's two documented server forms cannot express together; the server entry was skipped | Split the definition into one stdio server and one remote server |
 | `mcp.devin.transport-incomplete` | The MCP server declares neither a stdio command nor a remote url; the server entry was skipped | Set a command for a stdio server or a url for a remote server |
 | `mcp.devin.transport-unsupported` | The MCP server requests a transport Devin does not document; the server entry was skipped rather than defaulted | Devin documents the http and sse remote transports |
-| `mcp.devin.interpolation-unrepresentable` | The `command` or `url` the server's documented form cannot do without uses an interpolation style Devin has no syntax for; the server entry was skipped | Devin documents `${env:VAR}` interpolation only; move the value into an environment variable, or use a literal command or url |
+| `mcp.gemini.interpolation-unrepresentable` | An MCP server value contains a bare `$NAME` literal that Gemini would expand into an environment lookup; the server entry was skipped | Write the value as `${NAME}` if it is an environment reference, or remove the dollar sign from the literal |
+| `mcp.devin.interpolation-unrepresentable` | The `command`, `url`, or an argument the server's documented form cannot do without uses an interpolation style Devin has no syntax for; the server entry was skipped | Devin documents `${env:VAR}` interpolation only; move the value into an environment variable, or use a literal command, argument, or url |
 | `ingest.devin.load-skill-failed` | Failed to load a skill directory from the Devin source layout | Check the skills/&lt;name&gt;/SKILL.md layout and its YAML frontmatter |
 | `ingest.devin.load-subagent-failed` | Failed to load a flat subagent profile from the Devin source layout | Check the agents/&lt;name&gt;.md frontmatter |
 | `ingest.devin.load-hook-failed` | Failed to load hooks from the Devin source layout | Check the hooks.v1.json event object or the hooks member of config.json |
 | `ingest.devin.load-mcp-servers-failed` | Failed to load MCP servers from the Devin source layout | Check the mcpServers object in mcp_config.json |
 | `ingest.devin.tool-unreversible` | An allowed-tools entry is outside Devin's closed read/edit/grep/glob/exec vocabulary; the resource was not ingested | Devin silently ignores unknown tool names, so the restriction is not enforced; fix the allowed-tools list rather than letting an unenforced restriction become canonical IR |
+| `ingest.devin.command-security-unsupported` | A skill marked as a converted command declares permissions, an agent or subagent selector, or triggers without user, which a command cannot hold; the resource was not ingested | Remove x-agent-marketplace-kind: command so the resource is ingested as a skill with its controls, or remove the control |
 | `json.duplicate-key` | JSON object contains the same key more than once; the document was rejected before it could be decoded | Remove the duplicate key: encoding/json would silently keep the last value and change commands, headers, env, disabled state, or hooks |
 | `json.malformed` | JSON document is not well-formed and was rejected before it could be decoded | Fix the JSON syntax reported in the message |
 | `ownership.state-corrupt` | The durable ownership record could not be read or failed validation; every existing aggregate entry is treated as unmanaged | Nothing is pruned or replaced; run doctor --repair to re-establish ownership from exact matches |
@@ -620,6 +667,8 @@ key or a hook event name), the resource name, and content digests are reported.
 | `materialize.devin.aggregate-write` | The journaled Devin aggregate mutation failed, so that file was left exactly as found | Nothing was partially written; check the reported cause and re-run sync |
 | `materialize.devin.symlink-required` | Retired; older versions refused file mode for Devin | No longer emitted; Devin supports both file and symlink modes through the generic materializer |
 | `doctor.repair.failed` | An authorized `doctor --repair` action failed; the aggregate was left exactly as found | This is the "partial repair failure" half of the repair contract and exits 1; nothing was partially written, so re-running the repair is safe |
+| `hook.native-tolerance-refused` | A native hook file was malformed, ambiguous, or unsafe to inspect, so the affected target was left exactly as found | Fix the reported native hook file by hand; no native or legacy hook bytes were changed |
+| `hook.remove-unowned` | Removal would leave a native hook active without clean ownership proof; configuration and hook files are unchanged | Review the named native file and deliberately remove the hook, or explicitly repair ownership before retrying |
 
 ### Devin doctor and repair codes
 
@@ -887,3 +936,26 @@ and the 1-based line of the offending key. The message reports the JSON key path
 Any JSON document that is not well-formed (truncated object, trailing data after
 the top-level value, nesting beyond the supported depth). Rejected with the same
 source-aware shape as `json.duplicate-key`.
+
+## OpenCode
+
+| Code | Severity | Outcome |
+|---|---|---|
+| `rule.opencode.unsupported` | warning | Rules and shared instructions are outside this target |
+| `compile.opencode.field-dropped` | warning | Metadata has no native equivalent and was omitted |
+| `skill.opencode.security-restriction-unsupported` | error | Skill execution restrictions cannot be represented; resource omitted |
+| `command.opencode.restriction-unsupported` | error | Command execution restrictions cannot be represented; resource omitted |
+| `compile.opencode.invalid-field` | error | A modeled native field has an invalid type; resource omitted |
+| `subagent.opencode.restriction-unsupported` | error | Agent execution restrictions cannot be represented; resource omitted |
+| `mcp.opencode.unrepresentable` | error | MCP transport, authentication, or reference fields cannot be represented; server omitted |
+| `hook.opencode.unsupported` | error | Hook event, matcher, handler, or deadline is unsupported; hook omitted |
+| `ingest.opencode.invalid-resource` | error | Native resource decoding failed; resource omitted |
+| `ingest.opencode.duplicate-identity` | error | Distinct native files claim the same resource identity; resources omitted |
+| `ingest.opencode.read-refused` | error | Native resource is not an admitted bounded regular file; resource omitted |
+| `ingest.opencode.plugin-unsupported` | error | Arbitrary or altered executable plugin cannot be ingested |
+| `ingest.autodetect.ambiguous` | warning | Source carries two harness layouts; the unselected layout's resources are not ingested |
+| `compile.opencode.native-semantics-unsupported` | error | Native execution or reference semantics cannot be preserved by the destination |
+| `materialize.opencode.aggregate-write` | error | Native MCP configuration could not be published |
+| `materialize.opencode.aggregate-malformed` | error | Native MCP configuration is malformed or ambiguous; existing bytes preserved |
+| `materialize.opencode.aggregate-prune-postponed` | warning | Incomplete MCP input postpones stale-entry removal |
+| `materialize.opencode.aggregate-collision` | error | Selected MCP server conflicts with an unmanaged entry; existing bytes preserved |

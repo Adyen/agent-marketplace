@@ -10,14 +10,21 @@ Gemini MCP servers and hooks share the native settings file:
 - User scope: `~/.gemini/settings.json`
 
 MCP entries go under `mcpServers`. Hook entries use Gemini's matcher-group
-shape: an outer event group that contains a `hooks` array. Gemini validates
-server properties strictly, so Gemini MCP server definitions must not contain
-Agent Marketplace's `_managed_by` marker. Agent Marketplace records their
-ownership in its durable journal instead.
+shape: an outer event group that contains a `hooks` array. New hook entries do
+not carry `_managed_by`; Agent Marketplace records hook ownership in durable
+state. Gemini validates server properties strictly, so Gemini MCP server
+definitions must not contain Agent Marketplace's `_managed_by` marker. Agent
+Marketplace records their ownership in its durable journal instead.
 
 The older plugin-style `gemini-extension.json` output stays ingestible and
 compatible. Native validation uses `settings.json` and does not silently
 register an incomplete extension document.
+
+Support files install under `.gemini/hook-support/<source>/<hook>/` in the
+scope root. Gemini hook timeouts are milliseconds, and cross-harness
+conversions scale seconds to milliseconds. A narrow compatibility migration
+moves entries that a v3.1.1 Agent Marketplace installation marked in the older
+flat settings shape into the grouped shape; it does not adopt unmarked hooks.
 
 ## Native probe
 

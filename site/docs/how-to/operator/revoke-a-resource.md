@@ -50,14 +50,22 @@ Each `serve` process makes the stored revocations match its configuration before
 
 ## 3. Verify the revocation state
 
-Request the resource and check its revocation:
+Request the resource, save the response body, and print the HTTP status:
 
 ```bash
-curl -fsS "https://marketplace.example.com/api/v1/resources/shared-agents/skill/review" -o revision.json
-python3 -c 'import json,sys; r=json.load(open("revision.json")); print(r.get("revocation"))'
+curl -sS -o revision.json -w '%{http_code}\n' "https://marketplace.example.com/api/v1/resources/shared-agents/skill/review"
+python3 -c 'import json; r=json.load(open("revision.json")); print(r.get("revocation")); print(r.get("current_availability"))'
 ```
 
-A revoked revision has a `revocation` object with `kind` (`registry`, `coordinate`, or `revision`), `target_id`, `reason`, and `applied_at`, and its `current_availability.availability` is `revoked`. `None` means the latest revision is not revoked. With `management.mode: database`, the API answers a revoked resource with `410 Gone`, so `curl -f` fails instead of saving the file.
+Typical output for a revoked revision:
+
+```text
+200
+{'kind': 'coordinate', 'target_id': 'team-marketplace/shared-agents/skill/review', 'reason': 'operator configured', 'applied_at': '2026-10-14T08:30:00Z'}
+{'availability': 'revoked', ...}
+```
+
+A revoked revision has a `revocation` object with `kind` (`registry`, `coordinate`, or `revision`), `target_id`, `reason`, and `applied_at`, and its `current_availability.availability` is `revoked`. `None` on the `revocation` line means the latest revision is not revoked. With `management.mode: database`, the API answers a revoked resource with `410 Gone` instead: the status line is `410`, and the body carries `current_availability` with `availability` set to `revoked`.
 
 Avoid `curl ... | head` for this check: without `set -o pipefail`, the pipeline reports success even when `curl` fails.
 
@@ -71,3 +79,4 @@ Avoid `curl ... | head` for this check: without `set -o pipefail`, the pipeline 
 
 - [Marketplace operator configuration reference](../../reference/marketplace-operator-configuration.md)
 - [How to reindex and monitor a Marketplace](./reindex-and-monitor.md)
+- [How to respond to a revoked resource](../respond-to-a-revoked-resource.md)

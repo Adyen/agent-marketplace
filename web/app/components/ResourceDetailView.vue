@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import CopyButton from '~/components/CopyButton.vue'
 import { useCopyText } from '~/composables/useCopyText'
 import { useResourceInspectionPreview } from '~/composables/useResourceInspectionPreview'
 import { isResourceKind } from '~/lib/api'
-import { DOCS_PATH } from '~/lib/site'
-import { installCommand, kindLabel, resourceAvailability, resourceAvailabilityCopy, resourceLatestRoute, resourceRoute, shortDigest } from '~/lib/presentation'
+import { marketplaceDocsUrl } from '~/lib/site'
+import { installCommand, kindLabel, resourceAvailability, resourceAvailabilityCopy, resourceLatestRoute, resourceRoute, shortDigest, sourceBrowseUrl, sourceRepositoryLabel } from '~/lib/presentation'
 import type { InspectionFile, InspectionManifest, Marketplace, Registry, ResourceKind, ResourceListItem, ResourceRevision } from '~/types/marketplace'
 
 type Props = {
@@ -34,9 +34,13 @@ type ContentMode = 'preview' | 'raw'
 type TechnicalEntry = { label: string, value: string, copyable?: boolean }
 type CollectionMember = { kind: ResourceKind, name: string, description?: string, to: string }
 
+const DESCRIPTION_PREVIEW_LENGTH = 320
+
 const props = defineProps<Props>()
+const docsURL = marketplaceDocsUrl(useRuntimeConfig().public.docsEnabled)
 const activeTab = ref<Tab>(props.initialTab || 'content')
 const contentMode = ref<ContentMode>('preview')
+const descriptionExpanded = ref(false)
 const { copied, copy } = useCopyText()
 
 const listItem = computed<ResourceListItem>(() => ({
@@ -52,10 +56,25 @@ const command = computed(() => installCommand(listItem.value, props.canonicalUrl
 // artifact exists. Every state stays browsable and inspectable.
 const availability = computed(() => resourceAvailability(props.resource, props.acquisition, props.kind))
 const availabilityCopy = computed(() => resourceAvailabilityCopy(props.resource, props.acquisition, props.kind))
-const revoked = computed(() => availability.value === 'revoked')
 const commandAvailable = computed(() => availabilityCopy.value.installable && Boolean(command.value))
-const installNotice = computed(() => availabilityCopy.value.installNotice
-  || (command.value ? '' : 'Actions unavailable: the Marketplace returned an invalid route value, so no locator was generated.'))
+const titleHasBrandSlash = computed(() => props.kind === 'skill' || props.kind === 'command')
+const unavailableReason = computed(() => {
+  switch (availability.value) {
+    case 'revoked': return 'This revision has been revoked and can no longer be installed.'
+    case 'policy-blocked': return 'This revision cannot be installed because it did not pass the Marketplace security policy.'
+    case 'no-artifact': return 'This revision is available for inspection only and cannot be installed from this Marketplace.'
+    default: return commandAvailable.value ? '' : 'An install command is not available for this revision.'
+  }
+})
+const descriptionCharacters = computed(() => Array.from(props.resource.description ?? ''))
+const descriptionOverflows = computed(() => descriptionCharacters.value.length > DESCRIPTION_PREVIEW_LENGTH)
+const visibleDescription = computed(() => {
+  if (descriptionExpanded.value || !descriptionOverflows.value) return props.resource.description
+  const preview = descriptionCharacters.value.slice(0, DESCRIPTION_PREVIEW_LENGTH).join('')
+  const boundary = Math.max(preview.lastIndexOf(' '), preview.lastIndexOf('\n'), preview.lastIndexOf('\t'))
+  const text = boundary >= DESCRIPTION_PREVIEW_LENGTH * 0.8 ? preview.slice(0, boundary) : preview
+  return `${text.trimEnd()}…`
+})
 const selectedIsCurrent = computed(() => props.resource.content_digest === (props.currentRevisionDigest || props.resource.content_digest))
 const currentRevision = computed(() => props.currentRevisionDigest || props.resource.content_digest)
 const currentRevisionURL = computed(() => resourceRoute({ ...listItem.value, revision: currentRevision.value, content_digest: currentRevision.value }))
@@ -98,6 +117,8 @@ const assessmentDecision = computed(() => {
   }
 })
 const assessedAt = computed(() => formatDate(props.resource.assessment.assessed_at))
+const sourceLink = computed(() => sourceBrowseUrl(props.resource.source))
+const sourceLabel = computed(() => sourceRepositoryLabel(props.resource.source?.repository_url ?? ''))
 const technicalEntries = computed<TechnicalEntry[]>(() => {
   const occurrence = props.resource.occurrence as Record<string, unknown>
   const coordinate = props.resource.coordinate
@@ -161,6 +182,10 @@ function revisionLabel(revision: ResourceRevision): string {
   return shortIdentifier(revision.content_digest)
 }
 
+function compactRevisionLabel(revision: ResourceRevision): string {
+  return revisionLabel(revision).replace(/…$/, '')
+}
+
 function revisionURL(revision: ResourceRevision): string {
   const route = resourceRoute({
     registry_id: props.registry,
@@ -191,6 +216,10 @@ function selectTab(tab: Tab) {
   activeTab.value = tab
 }
 
+watch(() => props.resource.description, () => {
+  descriptionExpanded.value = false
+})
+
 function formatValue(value: unknown): string {
   if (typeof value === 'string') return value
   if (value === undefined) return 'Not provided'
@@ -203,30 +232,40 @@ function formatValue(value: unknown): string {
 </script>
 
 <template>
-  <article class="mx-auto max-w-6xl">
+  <article data-testid="resource-detail" class="mx-auto max-w-6xl">
     <header class="pb-6">
-      <div class="flex min-w-0 items-start gap-3 sm:gap-4">
+      <div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 sm:gap-x-4">
         <!-- The same mark the index row carries, at reading size. -->
-        <ResourceFingerprint :digest="resource.content_digest" :size="40" class="mt-1 hidden sm:block" />
-        <div class="min-w-0 flex-1">
-          <div class="flex min-w-0 flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-            <h1 class="min-w-0 max-w-full break-words text-2xl font-semibold tracking-tight text-highlighted sm:text-3xl">{{ name }}</h1>
-            <span class="shrink-0 text-sm font-medium text-muted">{{ kindLabel(kind) }}</span>
+        <ResourceFingerprint :digest="resource.content_digest" :size="40" class="hidden shrink-0 sm:block" />
+        <h1 class="min-w-0 max-w-full wrap-break-word text-2xl font-semibold tracking-tight text-highlighted sm:text-3xl"><span v-if="titleHasBrandSlash" class="am-brand-slash" data-testid="resource-title-slash" aria-hidden="true">/ </span>{{ name }}</h1>
+        <span data-testid="resource-kind-badge" class="inline-flex shrink-0 rounded border border-default bg-(--am-color-bg-subtle) px-2 py-0.5 text-xs font-medium text-muted">{{ kindLabel(kind) }}</span>
+      </div>
+      <div v-if="resource.description" class="mt-2">
+        <p id="resource-description" data-testid="resource-description" class="whitespace-pre-wrap wrap-break-word text-sm leading-6 text-toned sm:text-base">{{ visibleDescription }}</p>
+        <button v-if="descriptionOverflows" type="button" class="mt-1 text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" aria-controls="resource-description" :aria-expanded="descriptionExpanded" @click="descriptionExpanded = !descriptionExpanded">{{ descriptionExpanded ? 'Show less' : 'Read more' }}</button>
+      </div>
+      <div data-testid="revision-row" class="mt-4 flex flex-col items-start gap-3 text-sm sm:flex-row sm:gap-9">
+        <div v-if="sourceLink" data-testid="source-group" class="min-w-0 max-w-full">
+          <div class="flex items-center gap-2">
+            <span data-testid="source-label" class="text-xs font-medium text-highlighted">Source</span>
           </div>
-          <p v-if="resource.description" class="mt-2 max-w-3xl text-sm leading-6 text-toned sm:text-base">{{ resource.description }}</p>
-          <div class="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-default pt-3">
-            <div>
-              <p class="text-xs text-muted">Revision</p>
-              <p class="mt-0.5 flex flex-wrap items-center gap-2 text-sm font-medium text-highlighted">
-                <span>Scanned {{ assessedAt }}</span>
-                <span v-if="selectedIsCurrent" class="text-xs font-normal text-muted">Latest</span>
-                <NuxtLink v-else-if="currentRevisionURL" :to="currentRevisionURL" class="rounded-full bg-warning/10 px-2 py-0.5 text-xs font-semibold text-warning hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Newer revision available</NuxtLink>
-              </p>
-            </div>
-            <div class="flex items-center gap-2">
-              <span class="font-mono text-xs text-muted" :title="resource.content_digest">{{ revisionLabel(resource) }}</span>
-              <CopyButton :copied="copied === 'revision'" :copy-label="`Copy revision ${revisionLabel(resource)}`" copied-label="Revision copied" icon-only @click="copy(resource.content_digest, 'revision')" />
-            </div>
+          <div class="mt-1 flex min-h-8 min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+            <a data-testid="source-link" :href="sourceLink" target="_blank" rel="noopener noreferrer" :aria-label="`View source of ${name} in ${sourceLabel} (opens in a new tab)`" class="inline-flex min-w-0 items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+              <span class="break-all">{{ sourceLabel }}</span>
+              <UIcon name="i-lucide-external-link" class="size-3.5 shrink-0" data-testid="source-external-icon" aria-hidden="true" />
+            </a>
+            <span data-testid="source-path" class="min-w-0 break-all font-mono text-xs text-muted" :title="resource.source?.path">{{ resource.source?.path }}</span>
+          </div>
+        </div>
+        <div data-testid="revision-group" class="min-w-0">
+          <div class="flex items-center gap-2">
+            <span data-testid="revision-label" class="text-xs font-medium text-highlighted">Revision<template v-if="selectedIsCurrent"> (latest)</template></span>
+            <NuxtLink v-if="!selectedIsCurrent && currentRevisionURL" :to="currentRevisionURL" class="rounded-full bg-warning/10 px-2 py-0.5 text-xs font-semibold text-warning hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Newer revision available</NuxtLink>
+          </div>
+          <div data-testid="revision-value" class="mt-1 flex min-h-8 items-center gap-1">
+            <span data-testid="revision-id" class="font-mono text-xs font-medium text-toned">{{ compactRevisionLabel(resource) }}</span>
+            <CopyButton :copied="copied === 'revision'" :copy-label="`Copy revision ${compactRevisionLabel(resource)}`" copied-label="Revision copied" icon-only variant="ghost" @click="copy(resource.content_digest, 'revision')" />
+            <span v-if="copied === 'revision'" data-testid="revision-copy-status" role="status" class="text-xs font-medium text-muted">Copied</span>
           </div>
         </div>
       </div>
@@ -235,30 +274,24 @@ function formatValue(value: unknown): string {
 
     <section data-testid="installation-panel" aria-labelledby="installation-heading">
       <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <h2 id="installation-heading" class="text-sm font-semibold text-highlighted">Install with the CLI</h2>
-        <a :href="DOCS_PATH" class="text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Set up CLI</a>
+        <h2 id="installation-heading" class="text-sm font-semibold text-highlighted">Install</h2>
+        <a v-if="commandAvailable" :href="docsURL" target="_blank" rel="noopener noreferrer" aria-label="Set up CLI (opens in a new tab)" class="inline-flex items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Set up CLI<UIcon name="i-lucide-external-link" class="size-3.5" data-testid="setup-external-icon" aria-hidden="true" /></a>
       </div>
-      <CommandBlock :command="command" :label="`pinned CLI install command for ${name}`" :disabled="!commandAvailable" />
-      <div v-if="installNotice" role="status" class="mt-3 border-l-2 border-warning pl-3 text-sm text-toned">
-        <p class="font-semibold text-highlighted">Not available</p>
-        <p class="mt-1">{{ installNotice }}</p>
+      <CommandBlock v-if="commandAvailable" :command="command" :label="`pinned CLI install command for ${name}`" />
+      <div v-else data-testid="unavailable-notice" role="status" aria-labelledby="unavailable-title" class="flex gap-2.5 rounded border border-default bg-(--am-color-bg-subtle) p-3 text-sm text-toned">
+        <UIcon name="i-lucide-circle-alert" class="mt-0.5 size-4 shrink-0" :class="availability === 'no-artifact' ? 'text-warning' : 'text-error'" data-testid="unavailable-status-icon" aria-hidden="true" />
+        <div class="min-w-0">
+          <p id="unavailable-title" class="font-semibold text-highlighted">Not available</p>
+          <p class="mt-0.5 leading-6">{{ unavailableReason }}</p>
+          <button v-if="availability === 'policy-blocked'" type="button" class="mt-1.5 text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" aria-controls="security-panel" @click="selectTab('security')">View security details</button>
+        </div>
       </div>
       <p class="sr-only" aria-live="polite">{{ copied === 'url' ? 'Detail URL copied.' : '' }}</p>
     </section>
 
-    <section v-if="revoked" role="alert" aria-live="assertive" class="mt-4 border-l-2 border-error pl-3" aria-labelledby="revocation-heading">
-      <h2 id="revocation-heading" class="text-sm font-semibold text-error">This revision is revoked</h2>
-      <p class="mt-1 text-sm leading-6 text-toned">The Marketplace has marked this exact digest as revoked. This page is read-only; do not install it.</p>
-      <p v-if="resource.revocation?.reason" class="mt-1 text-sm text-toned">Reason: {{ resource.revocation.reason }}</p>
-    </section>
-    <section v-else-if="availability === 'policy-blocked'" role="alert" aria-live="assertive" class="mt-4 border-l-2 border-error pl-3" aria-labelledby="policy-block-heading">
-      <h2 id="policy-block-heading" class="text-sm font-semibold text-error">The security policy rejected this revision</h2>
-      <p class="mt-1 text-sm leading-6 text-toned">The assessment rejected this revision, so it remains available for inspection but cannot be installed.</p>
-    </section>
-
     <div class="mt-7 border-b border-default">
       <div role="tablist" aria-label="Resource details" class="flex gap-1 overflow-x-auto">
-        <button v-for="tab in ([['content', 'Content'], ['security', 'Security'], ['revisions', 'Revisions'], ['registry', 'Registry'], ['technical', 'Technical details']] as const)" :id="`${tab[0]}-tab`" :key="tab[0]" type="button" role="tab" :aria-selected="activeTab === tab[0]" :aria-controls="`${tab[0]}-panel`" class="shrink-0 border-b-2 px-3 py-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary" :class="activeTab === tab[0] ? 'border-primary text-highlighted' : 'border-transparent text-muted hover:text-highlighted'" @click="selectTab(tab[0])">{{ tab[1] }}</button>
+        <button v-for="tab in ([['content', 'Content'], ['security', 'Security'], ['revisions', 'Revisions'], ['registry', 'Registry'], ['technical', 'Technical details']] as const)" :id="`${tab[0]}-tab`" :key="tab[0]" type="button" role="tab" :aria-selected="activeTab === tab[0]" :aria-controls="`${tab[0]}-panel`" class="shrink-0 border-b-2 px-3 py-3 text-sm font-medium focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary" :class="activeTab === tab[0] ? 'border-primary text-highlighted' : 'border-transparent text-muted hover:text-highlighted'" @click="selectTab(tab[0])">{{ tab[1] }}</button>
       </div>
     </div>
 
@@ -266,14 +299,14 @@ function formatValue(value: unknown): string {
       <div v-if="inspection">
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-default pb-3">
           <div class="min-w-0 flex-1">
-            <select v-if="selectableFiles.length > 1" id="inspection-file" v-model="selectedDigest" aria-label="Inspection file" class="block max-w-full rounded border border-[var(--am-color-border-control)] bg-[var(--am-color-bg-control)] px-2.5 py-1.5 font-mono text-sm text-highlighted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--am-color-action-focus-ring)]">
+            <select v-if="selectableFiles.length > 1" id="inspection-file" v-model="selectedDigest" aria-label="Inspection file" class="block max-w-full rounded border border-(--am-color-border-control) bg-(--am-color-bg-control) px-2.5 py-1.5 font-mono text-sm text-highlighted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--am-color-action-focus-ring)">
               <option v-for="file in selectableFiles" :key="file.content_digest" :value="file.content_digest">{{ file.path }}</option>
             </select>
             <p v-else class="truncate font-mono text-sm font-medium text-highlighted" :title="selectedFile?.path">{{ selectedFile?.path || inspection.primary_path }}</p>
           </div>
-          <div v-if="hasContentPreview" class="inline-flex shrink-0 rounded border border-default bg-[var(--am-color-bg-subtle)] p-0.5" aria-label="Content view">
-            <button type="button" class="rounded px-2.5 py-1 text-xs font-medium" :class="contentMode === 'preview' ? 'bg-[var(--am-color-bg-raised)] text-highlighted shadow-sm' : 'text-muted'" :aria-pressed="contentMode === 'preview'" @click="contentMode = 'preview'">Preview</button>
-            <button type="button" class="rounded px-2.5 py-1 text-xs font-medium" :class="contentMode === 'raw' ? 'bg-[var(--am-color-bg-raised)] text-highlighted shadow-sm' : 'text-muted'" :aria-pressed="contentMode === 'raw'" @click="contentMode = 'raw'">Raw</button>
+          <div v-if="hasContentPreview" class="inline-flex shrink-0 rounded border border-default bg-(--am-color-bg-subtle) p-0.5" aria-label="Content view">
+            <button type="button" class="rounded px-2.5 py-1 text-xs font-medium" :class="contentMode === 'preview' ? 'bg-(--am-color-bg-raised) text-highlighted shadow-sm' : 'text-muted'" :aria-pressed="contentMode === 'preview'" @click="contentMode = 'preview'">Preview</button>
+            <button type="button" class="rounded px-2.5 py-1 text-xs font-medium" :class="contentMode === 'raw' ? 'bg-(--am-color-bg-raised) text-highlighted shadow-sm' : 'text-muted'" :aria-pressed="contentMode === 'raw'" @click="contentMode = 'raw'">Raw</button>
           </div>
         </div>
 
@@ -282,7 +315,7 @@ function formatValue(value: unknown): string {
             <h2 class="text-lg font-semibold text-highlighted">Collection resources</h2>
             <span class="text-sm text-muted">{{ collectionMembers.length }} resource{{ collectionMembers.length === 1 ? '' : 's' }}</span>
           </div>
-          <ul v-if="collectionMembers.length" class="mt-3 divide-y divide-default border-y border-default">
+          <ul v-if="collectionMembers.length" class="mt-3 border-y border-default [&>*:not(:last-child)]:border-b [&>*:not(:last-child)]:border-default">
             <li v-for="member in collectionMembers" :key="`${member.kind}:${member.name}:${member.to}`" class="py-3">
               <div class="flex min-w-0 items-baseline gap-3">
                 <span class="shrink-0 text-xs font-medium text-muted">{{ kindLabel(member.kind) }}</span>
@@ -300,7 +333,7 @@ function formatValue(value: unknown): string {
         <div v-else-if="selectedContent !== undefined && selectedIsMarkdown && contentMode === 'preview'" class="py-6">
           <div class="marketplace-markdown" data-testid="safe-markdown" v-html="renderedContent" />
         </div>
-        <pre v-else-if="selectedContent !== undefined" :data-testid="selectedIsPrimary ? 'escaped-raw' : 'escaped-selected-raw'" aria-label="Escaped raw inspection text" class="my-5 max-h-[70vh] overflow-auto whitespace-pre-wrap break-words rounded border border-[var(--am-color-code-border)] bg-[var(--am-color-code-bg)] p-4 font-mono text-xs leading-6 text-[var(--am-color-code-text)]" v-html="highlightedContent" />
+        <pre v-else-if="selectedContent !== undefined" :data-testid="selectedIsPrimary ? 'escaped-raw' : 'escaped-selected-raw'" aria-label="Escaped raw inspection text" class="my-5 max-h-[70vh] overflow-auto whitespace-pre-wrap wrap-break-word rounded border border-(--am-color-code-border) bg-(--am-color-code-bg) p-4 font-mono text-xs leading-6 text-(--am-color-code-text)" v-html="highlightedContent" />
         <p v-else-if="loadingDigest === selectedFile?.content_digest" class="py-6 text-sm text-toned" role="status" aria-live="polite">Loading {{ selectedFile.path }}…</p>
         <p v-else-if="selectedContentUnavailable || !selectedIsImage" class="my-5 border-l-2 border-warning pl-3 text-sm text-toned" role="status">{{ selectedIsPrimary ? 'Primary content is unavailable or intentionally withheld for safe inspection.' : 'This file is unavailable for safe inspection.' }}</p>
       </div>
@@ -330,7 +363,7 @@ function formatValue(value: unknown): string {
       <p v-else class="mt-5 text-sm text-toned"><span class="font-medium text-highlighted">Automated scan: no issues detected.</span> Automated analysis is limited and is not a safety endorsement.</p>
       <details class="mt-6 border-t border-default pt-4">
         <summary class="cursor-pointer text-sm font-medium text-highlighted">Analyzer and assessment parameters</summary>
-        <dl class="mt-4 divide-y divide-default border-y border-default">
+        <dl class="mt-4 border-y border-default [&>*:not(:last-child)]:border-b [&>*:not(:last-child)]:border-default">
           <div class="grid gap-2 py-3 sm:grid-cols-[12rem_minmax(0,1fr)_auto] sm:items-center">
             <dt class="text-sm text-muted">Analyzer</dt>
             <dd class="text-sm text-highlighted">{{ resource.assessment.analyzer_version }}</dd>
@@ -353,8 +386,8 @@ function formatValue(value: unknown): string {
         <span class="text-xs text-muted">{{ revisionHistory.length }} revision{{ revisionHistory.length === 1 ? '' : 's' }}</span>
       </div>
       <p v-if="revisionsError" class="mt-4 border-l-2 border-warning pl-3 text-sm text-toned" role="status" aria-live="polite">Revision history is unavailable. The selected revision remains available.</p>
-      <ol v-else-if="showRevisionHistory" class="mt-4 divide-y divide-default border-y border-default" aria-label="Resource revision history">
-        <li v-for="revision in revisionHistory" :key="revision.content_digest" class="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 px-2 py-3" :class="isSelectedRevision(revision) ? 'bg-[var(--am-color-bg-subtle)]' : ''">
+      <ol v-else-if="showRevisionHistory" class="mt-4 border-y border-default [&>*:not(:last-child)]:border-b [&>*:not(:last-child)]:border-default" aria-label="Resource revision history">
+        <li v-for="revision in revisionHistory" :key="revision.content_digest" class="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 px-2 py-3" :class="isSelectedRevision(revision) ? 'bg-(--am-color-bg-subtle)' : ''">
           <NuxtLink v-if="revisionURL(revision)" :to="revisionURL(revision)" class="flex min-w-0 items-center gap-2 rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" :aria-current="isSelectedRevision(revision) ? 'page' : undefined">
             <UIcon v-if="isSelectedRevision(revision)" name="i-lucide-circle-check" class="size-4 shrink-0 text-primary" aria-hidden="true" />
             <span>
@@ -382,7 +415,7 @@ function formatValue(value: unknown): string {
       <!-- Provenance reads as a record, so it is set as label/value pairs in mono
            rather than as prose. -->
       <h2 class="text-lg font-semibold text-highlighted">Technical details</h2>
-      <dl class="mt-4 divide-y divide-default border-y border-default">
+      <dl class="mt-4 border-y border-default [&>*:not(:last-child)]:border-b [&>*:not(:last-child)]:border-default">
         <div v-for="entry in technicalEntries" :key="entry.label" class="grid gap-2 py-3 sm:grid-cols-[10rem_minmax(0,1fr)_auto] sm:items-start sm:gap-4">
           <dt class="text-sm font-medium text-muted">{{ entry.label }}</dt>
           <dd class="min-w-0 break-all font-mono text-sm text-highlighted" :title="entry.value">{{ entry.value }}</dd>

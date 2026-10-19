@@ -19,18 +19,11 @@ const (
 	lockfileExclusive = unix.LOCK_EX
 )
 
-func acquireCacheFileLock(operation int) (func(), error) {
-	return acquireCacheFileLockWithContext(context.Background(), operation)
-}
-
 func acquireCacheFileLockWithContext(ctx context.Context, operation int) (func(), error) {
 	return acquireCachePathLockWithContext(ctx, CacheDir()+".mutation.lock", operation)
 }
 
 func acquireCachePathLockWithContext(ctx context.Context, lockPath string, operation int) (func(), error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

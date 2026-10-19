@@ -27,8 +27,8 @@ func TestE2EOwnedAggregatesRejectUnsafeLeaves(t *testing.T) {
 					files := RegistryFilesEx(nil, nil, nil, []MCPServer{{Name: "fixture", Command: "fixture-server"}})
 					files["hooks/hooks.json"] = `{"hooks":{"PostToolUse":[{"type":"command","command":"echo fixture-hook","matcher":"Bash"}]}}`
 					url := env.CreateBareRepo("aggregate-read", files)
-					env.WriteGlobalConfig(fmt.Sprintf("harnesses: [%s]\nregistries: []\n", target.name))
-					env.WriteRepoConfig(fmt.Sprintf("registries:\n  - url: %s\n    ref: main\n    source_harness: claude\n    mcp: [fixture]\n    hooks: [PostToolUse-command]\n", url))
+					env.WriteGlobalConfig(fmt.Sprintf("harnesses: [%s]\n", target.name))
+					env.WriteRepoConfig(fmt.Sprintf("sources: {team: {git: %q, ref: main, source_harness: claude}}\nresources: {team: {include: [mcp/fixture, hook/PostToolUse-command]}}\n", url))
 					env.MustRunAM("sync")
 					env.MustRunAM("sync", "--check")
 					env.AssertFileContains("/workspace/"+target.mcp, "fixture-server")
@@ -98,7 +98,7 @@ func TestE2EOwnedAggregatesRejectUnsafeLeaves(t *testing.T) {
 							t.Fatalf("%v blocked: %v output=%s", args, deadlineErr, output)
 						}
 						if args[0] == "status" {
-							if runErr != nil || !strings.Contains(string(output), "DRIFT") || strings.Contains(string(output), "\nIn sync\n") || !strings.Contains(string(output), target.code) {
+							if runErr == nil || !strings.Contains(string(output), "DRIFT") || strings.Contains(string(output), "\nIn sync\n") || !strings.Contains(string(output), target.code) {
 								t.Fatalf("status did not complete its drift probe: %v output=%s", runErr, output)
 							}
 						} else if runErr == nil || !strings.Contains(string(output), target.code) {

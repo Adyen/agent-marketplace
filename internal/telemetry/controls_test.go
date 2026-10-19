@@ -143,6 +143,7 @@ func TestGetStatusInfoNoConfig(t *testing.T) {
 	}
 }
 
+// spec: telemetry/status-and-preview-expose-local-evidence
 func TestGetStatusInfoWithQueueAndFailure(t *testing.T) {
 	dir := setupTelemetryTest(t)
 	stateRoot := filepath.Join(dir, "agent-marketplace", "telemetry")
@@ -182,9 +183,10 @@ func TestGetStatusInfoWithQueueAndFailure(t *testing.T) {
 	}
 }
 
+// spec: telemetry/status-and-preview-expose-local-evidence
 func TestPreview(t *testing.T) {
 	dir := setupTelemetryTest(t)
-	state, err := ResolveTelemetryConfig(nil, nil, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, amconfig.Settings{}, "", "")
 	if err != nil {
 		t.Fatalf("ResolveTelemetryConfig: %v", err)
 	}

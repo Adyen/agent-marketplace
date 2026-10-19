@@ -17,6 +17,10 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
 )
 
+func emptyGCReachability(context.Context) (cache.GCReachability, error) {
+	return cache.GCReachability{}, nil
+}
+
 func TestSyncExactLeaseBlocksGCThroughDiscoveryAndMaterialization(t *testing.T) {
 	for _, phase := range []string{"discovery", "before-materialization"} {
 		t.Run(phase, func(t *testing.T) {
@@ -53,7 +57,7 @@ func TestSyncExactLeaseBlocksGCThroughDiscoveryAndMaterialization(t *testing.T) 
 			})
 			repoCfg := &config.Config{Registries: []config.RegistryEntry{{URL: canonical, Ref: "HEAD", SourceHarness: "factory", Skills: config.KindSelector{Include: []string{"keeper"}}}}}
 			opts := ResolveOptions{
-				RepoRoot:      repoRoot,
+				Workspace:     mustWorkspace(t, repoRoot),
 				NoBackup:      true,
 				CatalogOption: []catalog.LoadOption{exactOption},
 				Loaders: Loaders{
@@ -87,7 +91,7 @@ func TestSyncExactLeaseBlocksGCThroughDiscoveryAndMaterialization(t *testing.T) 
 
 			gcDone := make(chan error, 1)
 			go func() {
-				_, gcErr := cache.GarbageCollectWithLocks(false, nil, &config.Config{})
+				_, gcErr := cache.GarbageCollect(context.Background(), false, emptyGCReachability)
 				gcDone <- gcErr
 			}()
 			select {
@@ -166,7 +170,7 @@ func exactLockViewGCFixture(t *testing.T) (config.EffectiveConfig, string) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: "+canonical+"\n    ref: HEAD\n"), 0o644); err != nil {
+	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  lockview:\n    git: "+canonical+"\n    ref: HEAD\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	lockBytes, err := lockfile.Encode(lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeRepo, Registries: []lockfile.GitRegistry{{URL: canonical, Ref: "HEAD", Commit: commit, Roots: []lockfile.GitRoot{root}}}})
@@ -177,7 +181,7 @@ func exactLockViewGCFixture(t *testing.T) (config.EffectiveConfig, string) {
 		t.Fatal(err)
 	}
 	entry := config.RegistryEntry{URL: canonical, Ref: "HEAD", Source: config.RepoCommitted}
-	cfg := &config.Config{APIVersion: config.APIVersionV2, Registries: []config.RegistryEntry{entry}}
+	cfg := &config.Config{APIVersion: config.APIVersionV4, Registries: []config.RegistryEntry{entry}}
 	ec := config.EffectiveConfig{Repo: config.LayerResult{Source: config.RepoCommitted, Path: configPath, Config: cfg}, Merged: cfg}
 	return ec, snapshot
 }
@@ -200,7 +204,7 @@ func TestExactLockViewLeaseBlocksGCThroughCatalogConsumption(t *testing.T) {
 	gcDone := make(chan error, 1)
 	go func() {
 		close(gcStarted)
-		_, gcErr := cache.GarbageCollectWithLocks(false, nil, &config.Config{})
+		_, gcErr := cache.GarbageCollect(context.Background(), false, emptyGCReachability)
 		gcDone <- gcErr
 	}()
 	<-gcStarted
@@ -255,7 +259,7 @@ func TestMixedLockViewCacheLeaseOrdering(t *testing.T) {
 			ec, snapshot := exactLockViewGCFixture(t)
 			orgEntry := config.RegistryEntry{URL: "https://example.invalid/unlocked-org.git", Ref: "main", Source: config.Organization}
 			orgPath := filepath.Join(t.TempDir(), "config.yaml")
-			if err := os.WriteFile(orgPath, []byte("apiVersion: agent-marketplace/v2\nregistries:\n  - url: "+orgEntry.URL+"\n    ref: main\n"), 0o600); err != nil {
+			if err := os.WriteFile(orgPath, []byte("apiVersion: agent-marketplace/v4\nsources:\n  organization:\n    git: "+orgEntry.URL+"\n    ref: main\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			ec.Organization = config.LayerResult{Source: config.Organization, Path: orgPath, Config: &config.Config{Registries: []config.RegistryEntry{orgEntry}}}
@@ -285,9 +289,7 @@ func TestMixedLockViewCacheLeaseOrdering(t *testing.T) {
 				var gcErr error
 				go func() {
 					defer close(gcDone)
-					_, gcErr = cache.GarbageCollectWithReachabilityAndContext(barrier, false, func(context.Context) (cache.GCReachability, error) {
-						return cache.GCReachability{Configs: []*config.Config{{}}}, nil
-					})
+					_, gcErr = cache.GarbageCollect(barrier, false, emptyGCReachability)
 				}()
 				t.Cleanup(func() {
 					cancel()

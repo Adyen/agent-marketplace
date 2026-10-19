@@ -2,10 +2,12 @@
 name: agent-marketplace
 description: >
   How to use the agent-marketplace CLI to install shared AI agent resources
-  from Git-based or local registries and materialize them into native harness
-  layouts. Use when setting up a repo, installing/removing skills, commands,
-  subagents, hooks, or MCP servers, checking sync state, remediating config
-  structure, or updating pinned registry refs.
+  from Git, directory, or hosted Marketplace sources and materialize them into
+  native harness layouts. Use when setting up a repo, writing
+  `.agents/config.yaml`, installing/removing skills, commands, subagents,
+  hooks, MCP servers, or collections, checking sync drift, updating locks,
+  preparing pre-upgrade configuration conversion, or repairing shared harness
+  config ownership.
 metadata:
   tags:
     - cli
@@ -15,349 +17,290 @@ metadata:
 
 # agent-marketplace
 
+The full user documentation lives in the repository's
+[`site/docs`](https://github.com/Adyen/agent-marketplace/blob/main/site/docs/index.md).
+This skill caches what an agent needs most often; the
+[CLI reference](https://github.com/Adyen/agent-marketplace/blob/main/site/docs/reference/cli.md),
+[configuration reference](https://github.com/Adyen/agent-marketplace/blob/main/site/docs/reference/configuration.md),
+and `agent-marketplace <command> --help` own the exhaustive detail.
+
 ## Quick Start
 
-The project config may declare its target harness set. If omitted, targets fall back to `~/.agents/config.yaml` and then `/etc/agent-marketplace/config.yaml`.
+For a new setup, use the example below. For an existing installation, first
+follow [Convert before upgrading](#convert-before-upgrading); do not overwrite
+authored configuration or relabel legacy fields as v4.
 
 ```bash
-mkdir -p ~/.agents .agents
+agent-marketplace init --harnesses claude,codex   # ~/.agents/config.yaml (v4, targets only)
 
-# Machine-wide target harness set
-cat > ~/.agents/config.yaml << 'EOF'
-apiVersion: agent-marketplace/v2
-harnesses: [factory]
-registries: []
-EOF
-
-# Repo config selects resources from registries
+mkdir -p .agents
 cat > .agents/config.yaml << 'EOF'
-apiVersion: agent-marketplace/v2
-registries:
-  - url: git@gitlab.example.com:example-user/infra-skills.git
+apiVersion: agent-marketplace/v4
+sources:
+  infra:
+    git: git@github.com:example-org/infra-skills.git
     ref: main
-    source_harness: claude
     path: skills
-    skills:
-      include: [vm-lifecycle, enc-debugging]
+resources:
+  infra:
+    include:
+      - skill/vm-lifecycle
+      - command/deploy
 EOF
 
-agent-marketplace sync
+agent-marketplace sync      # writes .agents/lock.yaml and native harness files
 agent-marketplace status
+git add .agents/config.yaml .agents/lock.yaml
 ```
 
-The canonical v2 schema materializes native harness files instead of the old default `.agents/skills/` symlink tree, and supports skills, commands, subagents, hooks, and MCP servers. Configuration is the source of selection policy and generated locks provide exact Git acquisition; standalone artifacts are recreated by `agent-marketplace sync`, while shared native files are reconciled entry by entry according to the target's marker or external ownership policy. Keep generated harness output out of source control:
+Bare `agent-marketplace` on a terminal opens the TUI; on first launch it asks
+for the target harnesses. When no user config exists, a plain `sync` creates
+one with `harnesses: [factory, windsurf]`, so declare targets first.
 
-```gitignore
-.agents/skills/
-.factory/
-.claude/
-.cursor/
-.codex/
-.gemini/
-.windsurf/
-.devin/
-```
+## Configuration
 
-## What the Native Schema Provides
+`apiVersion: agent-marketplace/v4` is the only supported consumer schema;
+`init`, `install`, `remove`, and the TUI create v4 files. Every existing root,
+including organization and personal-local, requires that exact string. An
+omitted root version fails with `v4.api-version-required`; explicit unsupported
+or invalid values fail with `v4.api-version`, naming the authored file and
+`apiVersion` field. Included fragments under a validated v4 root may omit the
+field or declare exact v4. An existing empty/versionless file is not absent.
 
-- **Layered target harness set** — project-level `harnesses:` takes precedence; when absent, targets fall back to `~/.agents/config.yaml` and `/etc/agent-marketplace/config.yaml`.
-- **Native harness targets** — set `harnesses: [factory, claude, cursor, windsurf, gemini, devin, codex]` to compile resources into each harness' layout.
-- **Multi-resource selection** — select `skills`, `commands`, `subagents`, `hooks`, and `mcp` entries from the same registry catalog.
-- **Source harness ingestion** — use `source_harness: claude` when autodetection is not enough; registries are ingested through `harness-compilation`.
-- **Repo and machine scope outputs** — repo config materializes under repo roots like `.factory/`; global config materializes under machine roots like `~/.factory/`.
-- **Dry-run drift reporting** — `status` and `sync --check` report the same native files that `sync` writes or prunes.
-- **Resource prerequisites** — resources declare `metadata.requires`; unmet prerequisites produce warnings but are never installed automatically.
-- **Conversion and diagnostics** — `convert` translates one harness layout to another; `doctor` shows harness/root diagnostics.
+Unsupported input refuses before new acquisition, config/lock staging or
+publication, or harness writes/prunes, preserving bytes and metadata and
+creating no missing writable root or lock. Ordinary logs remain allowed. Safe
+recovery of a pre-existing journal may finish already-admitted writes before
+fresh validation; read-only dependency modes refuse pending work without replay.
+The v4 runtime adapter remains independent of on-disk consumer syntax.
 
-Typical native outputs:
+### Layers
 
-- **Factory Droid** — `.factory/skills/<skill>/SKILL.md`
-- **Factory Droid commands** — `.factory/commands/<command>.md`
-- **Claude Code** — `.claude/skills/<skill>/<skill>.md`
-- **Cursor** — `.cursor/rules/<skill>.md`
-- **Gemini CLI** — `.gemini/skills/<skill>/SKILL.md`
-- **Windsurf** — files under `.windsurf/`
-- **Devin CLI** — `.devin/skills/<skill>/SKILL.md` (repo) and `~/.config/devin/skills/<skill>/SKILL.md` (machine)
-- **Codex** — `.agents/skills/<skill>/SKILL.md` plus `.codex/` subagents and shared configuration
-
-## Codex
-
-Select `codex` in the TUI harness modal (`H`) or add it to the effective
-`harnesses:` list. Existing configs and `migrate` do not opt in automatically.
-
-| Scope | Skill/command root | Subagent/hook/MCP root |
+| Layer | Config | Lock |
 |---|---|---|
-| Repo | `<repo>/.agents` | `<repo>/.codex` |
-| Machine | `~/.agents` | absolute `$CODEX_HOME`, otherwise `~/.codex` |
+| Organization | `/etc/agent-marketplace/config.yaml` | `/etc/agent-marketplace/lock.yaml` |
+| User | `~/.agents/config.yaml` | `~/.agents/lock.yaml` |
+| Repository | `<repo>/.agents/config.yaml` | `<repo>/.agents/lock.yaml` |
+| Repository personal | `<repo>/.agents/config.local.yaml` | `<repo>/.agents/lock.local.yaml` |
 
-In default symlink mode, skills and converted commands are directory symlinks
-at `skills/<name>/`; file mode writes regular directory trees there. Each
-contains `SKILL.md`, and commands carry `x-agent-marketplace-kind: command`.
-Subagents go to `agents/<name>.toml`, hooks to `hooks.json`, and MCP servers to
-`config.toml` under the Codex root.
-`CODEX_HOME` never relocates the `.agents` partition.
+Layers merge organization → user → repository → personal. Repo and personal
+selections target the first non-empty `harnesses:` list in repository, then
+user, then organization. User and organization selections target the user list,
+then the organization list, and use the repository list only when neither sets
+one, so a repository never narrows machine output. Lists are never combined.
+Repo and personal selections install under repo roots; user and organization
+selections install under machine roots. The
+personal file cannot set `harnesses` or allowlists, and the CLI adds it and its
+lock to `.gitignore`. Every layer supports local-file `include:` (one path or a
+list); fragments merge below the including file, and editors refuse to edit a
+selection that lives in a fragment (`config.edit.include-owned`).
 
-Codex is a full conversion target (`convert --from/--to codex`,
-`source_harness: codex`). One-shot `convert --to codex` is a non-owning,
-staged publication and requires a destination without pre-existing
-`.codex/hooks.json` or `.codex/config.toml`; choose a new or empty destination
-rather than overwriting shared configuration. Autodetection requires `.codex`;
-the shared `.agents/skills` layout alone is not Codex-specific. Rules,
-`AGENTS.md` generation, and emitted legacy `.codex/prompts` are excluded.
+### Sources and resource groups
 
-`hooks.json` and `config.toml` are reconciled entry by entry through durable
-ownership state and mandatory backups. Missing or corrupt state preserves every
-existing entry, refuses collisions, and prunes nothing. A repo mutation may
-require Codex project trust review; Agent Marketplace reports it but never
-changes trust state or adds Codex output paths to `.gitignore`. It never
-installs, requires, or probes a Codex executable.
+```yaml
+apiVersion: agent-marketplace/v4
+harnesses: [claude, cursor, devin, codex]
+sources:
+  shared:                        # name is a label local to this file
+    git: https://github.com/example-org/agent-resources.git
+    ref: v1.4.0                  # required for git
+    path: resources              # optional subdirectory
+    source_harness: claude       # optional; omit to autodetect
+  local:
+    directory: ./agent-resources # read live, never locked
+  company:
+    marketplace: https://marketplace.example.com
+resources:
+  shared:
+    include: [skill/code-review, command/release, collection/platform-onboarding]
+    tags: [platform]
+    exclude: [skill/legacy-review]
+    harnesses: [claude]          # narrows targets, never widens
+  local: [skill/scratch]         # plain list = include only
+  company:
+    - shared-agents/skill/review:
+        revision: sha256:<64 lowercase hex>
+```
 
-## Devin
+- A source has exactly one of `git`, `directory`, or `marketplace`. Every
+  `resources` key must name a source declared in the same file or its includes.
+- Git/directory locators are `<kind>/<name>`; Marketplace locators are
+  `<registry-slug>/<kind>/<name>`. Kinds: `skill`, `command`, `subagent`,
+  `hook`, `mcp`, `collection`.
+- Group fields: `include`, `exclude` (`*`, `<kind>/*`, `<kind>/<name>`),
+  `tags`, `all: true`, `required: true` (protects selections from excludes and
+  `remove`, selects nothing itself), `harnesses`.
+- Exclusions apply after inclusions within a file. Required resources are never
+  excluded.
+- Relative `directory:` paths in `.agents/config.yaml`/`config.local.yaml`
+  resolve from the repo root; in other files, from the declaring file.
+- Git and directory resources take their version from the source `ref`; declare
+  a second source for another ref. `revision` is Marketplace-only.
+- Other root fields: `allowed_registries`, `allowed_marketplaces` (regex
+  allowlists), `materialization` (`mode: symlink|file`, per-target `targets`),
+  plus machine-only `backup`, `logging`, `telemetry`.
 
-Select `devin` like any other harness target: press `H` in the TUI and tick **Devin CLI**, or add `devin` to a `harnesses:` list.
+Unknown fields, YAML aliases/merge keys, and duplicate keys are rejected with
+`v4.*` diagnostics; the message names the setting.
 
-Roots are `<repo>/.devin` and `~/.config/devin`. Outputs:
+## Output paths
 
-| Kind | Devin output |
-|---|---|
-| Skill | `skills/<name>/SKILL.md` (directory symlink) |
-| Command | `skills/<name>/SKILL.md` with `x-agent-marketplace-kind: command` |
-| Subagent | `agents/<name>.md` (file symlink) |
-| Hook | repo `hooks.v1.json`; machine `config.json` → `hooks` member |
-| MCP server | `mcp_config.json` (same relative path in both scopes) |
+| Harness | Repo root | Machine root | Skill / command |
+|---|---|---|---|
+| `claude` | `.claude` | `~/.claude` | `skills/<name>/SKILL.md`, `commands/<name>.md` |
+| `factory` | `.factory` | `~/.factory` | `skills/<name>/SKILL.md`, `commands/<name>.md` (always copied) |
+| `cursor` | `.cursor` | `~/.cursor` | `skills/<name>/SKILL.md`, `commands/<name>.md` |
+| `windsurf` | `<repo>` (`.windsurf/…`) | `~/.codeium/windsurf` | `skills/<name>/SKILL.md`, `workflows/` (machine: `global_workflows/`) |
+| `gemini` | `.gemini` | `~/.gemini` | `skills/<name>/SKILL.md`, `commands/<name>.toml` |
+| `devin` | `.devin` | `~/.config/devin` | `skills/<name>/SKILL.md` for both |
+| `codex` | `.agents` + `.codex` | `~/.agents` + `$CODEX_HOME` or `~/.codex` | `.agents/skills/<name>/SKILL.md` for both |
 
-Rules are not a selectable kind and are unsupported by this target. The links shown above are the default; `materialization.mode: file` installs regular skill/command trees and subagent files through the same generic materializer used by other targets. During sync, shared hooks and MCP configuration retain ownership-safe reconciliation in both modes.
+Devin and Codex commands are skill directories whose `SKILL.md` carries
+`x-agent-marketplace-kind: command`. Shared aggregate files hold hooks and MCP
+servers: Claude MCP goes to `<repo>/.mcp.json` or `~/.claude.json`; Gemini uses
+`settings.json`; Devin uses `hooks.v1.json` (machine: `config.json#hooks`) and
+`mcp_config.json`; Codex uses `.codex/hooks.json` and `.codex/config.toml`.
+Windsurf has no subagents. The
+[output paths reference](https://github.com/Adyen/agent-marketplace/blob/main/site/docs/reference/harnesses-and-output-paths.md)
+lists every kind per harness.
 
-Devin is also a full conversion target: `convert --from devin`, `convert --to devin`, and `source_harness: devin` all work. One-shot conversion is non-owning and staged, and refuses existing shared destinations. Autodetection prefers a `.devin` workspace marker over compatibility layouts; a direct user-shaped root (`skills/`, `agents/`, `config.json`, `mcp_config.json` at the top level) is never autodetected and needs an explicit `--from devin`.
+Default `symlink` mode links skills, commands, and subagents into
+`~/.cache/agent-marketplace/compiled/<harness>/`; `materialization.mode: file`
+writes regular trees for every harness. Commit config and locks; ignore the
+generated roots you use (for example `.claude/skills/`,
+`.claude/.claude-plugin/`, `.devin/`).
 
-### Shared Devin files
+### Shared aggregate ownership
 
-`hooks.v1.json`, `config.json`, and `mcp_config.json` are shared with whatever you write by hand, so `sync` reconciles them entry by entry:
+Sync edits shared files entry by entry and keeps handwritten entries, comments,
+and unrelated settings.
 
-- Handwritten entries, their comments, key order, and relative order are preserved. Handwritten hooks run before generated ones.
-- No `_managed_by` marker is ever written into a Devin file. Ownership lives in durable state under `$XDG_STATE_HOME/agent-marketplace` (default `~/.local/state/agent-marketplace`), outside the repo and outside the cache — deleting the cache has no ownership effect.
-- If that state is missing or corrupt, every existing entry is treated as unmanaged: `sync` preserves everything, refuses collisions, and prunes nothing. It fails conservative, never destructive.
-- A raw-byte safety backup is always taken before an aggregate is mutated, even when configured backups are disabled; the five newest per file are kept.
-- Updates are atomic per file: a malformed `mcp_config.json` blocks only that file and is left exactly as found while skills, subagents, and a valid hooks file still materialize.
+- Claude, Factory, Cursor, Windsurf, and Gemini hooks mark entries with
+  `"_managed_by": "agent-marketplace"`.
+- Devin, Codex, and Gemini MCP carry no marker. Ownership lives under
+  `$XDG_STATE_HOME/agent-marketplace` (default `~/.local/state/agent-marketplace`).
+  When that state is missing or corrupt, sync preserves every entry, refuses
+  collisions, and prunes nothing. A raw safety backup (five newest per file) is
+  taken before each mutation, even with backups disabled.
+- Codex repo changes print `materialize.codex.trust-review`; the CLI never
+  edits Codex trust or `.gitignore`. `CODEX_HOME` must be absolute and moves
+  only the `.codex` partition.
 
-## Git dependency locks
+## Locks
 
-Remote Git registries resolve into generated locks owned by the organization, user, repository, or personal-local config layer. Commit `.agents/lock.yaml` with repository config and keep `.agents/lock.local.yaml` ignored. Normal sync retains compatible exact commits and reconciles writable stale locks; locked/check modes do not write. Plain directory registries remain live and unlocked. Lock v1 is Git-only; lock v2 additionally carries exact Marketplace endpoint/registry/resource/selection records written only by offline migration from verified cache evidence, backing a read-only adapter for explicit v4 Marketplace requests. Broader Marketplace lock acquisition, update, and edit flows remain unsupported.
+Each layer's lock records the exact Git commit and inventory for the sources
+that layer declares, plus verified Marketplace revisions. Directory sources are
+never locked. The CLI writes `agent-marketplace-lock/v2` (read by v4.0.9+) and
+reads v1. The organization lock may be absent permanently; only
+`lock --scope organization` writes it. A current lock does not move when the
+branch moves: use `update` or `lock --upgrade`. Never hand-edit a lock.
 
-## Daily Commands
+## Daily commands
 
 ```bash
-agent-marketplace list                         # Browse resources and collections
-agent-marketplace list --kind command          # Browse commands, subagents, hooks, or mcp
-agent-marketplace install <skill>              # Add a skill and sync
-agent-marketplace install --kind command X     # Add a non-skill resource and sync
-agent-marketplace install <collection>         # Add a collection and sync
-agent-marketplace install --tag <tag>          # Install resources matching a tag
-agent-marketplace install --tag <tag> --kind hook
-agent-marketplace install --all                # Install every discovered skill by default
-agent-marketplace install --all --kind mcp     # Install every discovered MCP server
-agent-marketplace remove <resource|collection> # Remove selection or add an exclude
-agent-marketplace remove --kind subagent X     # Disambiguate a resource kind
-agent-marketplace lock                         # Create/reconcile generated Git locks
-agent-marketplace lock --upgrade               # Advance Git requirements to current refs
-agent-marketplace sync                         # Materialize from exact Git snapshots
-agent-marketplace sync --locked                # Require fresh locks; write no config or locks
-agent-marketplace sync --check                 # Check lock and output drift without writing
-agent-marketplace status                       # Show exact locks, HARNESS TARGETS, refs, cache, drift
-agent-marketplace update                       # Advance Git locks and synchronize
-agent-marketplace update --bump                # Rewrite eligible refs before advancing locks
-agent-marketplace migrate [--scope all|user|repo|local] [--dry-run]  # Migrate legacy configs to v4
-agent-marketplace convert --from claude --to factory --out ./out ./plugin
-agent-marketplace doctor                       # Harness/root diagnostics + Devin CLI detection
-agent-marketplace doctor --repair              # Preview Devin/Codex aggregate ownership recovery
-agent-marketplace doctor --repair --yes        # Adopt exact matches without prompting
-agent-marketplace tui                          # Browse and edit selections interactively (H = harnesses)
+agent-marketplace list [--kind skill|command|subagent|hook|mcp|collection]
+agent-marketplace list --from <git-or-web-url> [--ref R] [--path P]  # ad hoc, no config write
+agent-marketplace install <name> [--kind K] [--scope repo|user|local]
+agent-marketplace install <collection>
+agent-marketplace install --tag <tag> [--kind K]       # repo scope only
+agent-marketplace install --all [--kind K] [--registry URL]  # repo scope only
+agent-marketplace install --from <url> [<name>] [--ref R] [--path P]
+agent-marketplace install <marketplace-endpoint>       # registers endpoint (user scope)
+agent-marketplace install alias:registry/kind/name[@sha256:...] [--as local-name]
+agent-marketplace search [query] [--marketplace alias|url|all]
+agent-marketplace remove <name> [--kind K] [--scope repo|user|local]
+agent-marketplace remove --from <url> [<name>] [--ref R] [--path P]
+agent-marketplace sync                 # materialize; reconcile stale writable locks
+agent-marketplace sync --locked        # CI: require fresh locks, write no config/locks
+agent-marketplace sync --check         # exit 1 on lock or output drift; writes nothing
+agent-marketplace sync --offline       # trusted caches only
+agent-marketplace sync --strict -v     # missing/unloadable selections become errors
+agent-marketplace status               # targets, locks, synced resources, drift
+agent-marketplace update [--scope S] [--registry URL]   # advance Git locks, then sync
+agent-marketplace lock [--check|--upgrade] [--scope S]
+agent-marketplace doctor [--repair [--yes]]
+agent-marketplace gc --dry-run         # cache cleanup sees only the current repo
+agent-marketplace backup create|list|restore --target <harness>
+agent-marketplace deinit               # remove managed artifacts and cache
 ```
 
-For `remove --from`, pass the registry URL and use the entry's authored
-`--path` spelling to narrow a named removal to a configured subdirectory and
-its discovered descendants. Omitting `--path` or `--ref` is only unambiguous
-when the URL identifies one logical configured location; distinct paths or
-refs require the corresponding flag. Use `--path` (and `--ref` when needed)
-for whole-registry removal when one URL has multiple entries. Equivalent
-normalized URL/path spellings identify the same entry. `--scope` chooses the
-config root and defaults to `repo` for `--from`; any diagnostic `@ref` suffix is
-only a label, not part of the URL—pass the ref separately when targeting it.
+- `remove` drops an explicit selection, or records an exclusion when a
+  collection, tag, or `all` selected the resource. Required resources cannot
+  be removed. When the same resource is enabled at machine and repo scope, an
+  unscoped `remove` reports the ambiguity; pass `--scope`. An explicit scope
+  never falls back to another, and repo/local scope cannot hide machine
+  resources.
+- `--kind` disambiguates a name used by more than one kind.
+- `update --bump` rewrites eligible refs in v4 `sources:` to newer tags that
+  differ only in the final number, then updates locks and syncs. Refs declared
+  by included fragments are reported and left unchanged.
+- Read-only commands (`sync --check/--locked/--offline`, `lock --check`,
+  `list`, `status`) fail with `dependency.recovery-required` after an
+  interrupted write; a plain `sync` or `lock` completes the recovery.
 
-`status` prints a **HARNESS TARGETS** table: one row per effective harness with its capabilities (`compile`, `ingest`, `convert`, `tui`) and both its repo and machine roots. A harness name the CLI does not recognize is still listed, so a typo shows up instead of being silently dropped.
+### `doctor` and `doctor --repair`
 
-## `doctor` and `doctor --repair`
+`doctor` reports repo detection, config diagnostics, harness roots, unmet
+prerequisites, and Devin CLI compatibility (3000.3 floor; it only recommends
+adding `devin`). `--repair` covers Devin and Codex aggregate ownership: it
+previews exact adoption matches, evidence-backed orphans, and value conflicts.
+`--yes` adopts byte-identical matches only; removing an orphan or replacing a
+conflict always needs an interactive per-entry confirmation. Off a terminal,
+`--repair` without `--yes` only previews.
 
-Plain `doctor` reports the repo root, the autodetected harness, and every install root with its declared capabilities and both roots. It also:
+## Hosted Marketplaces
 
-- detects a locally installed Devin CLI and prints its version and path;
-- warns when that version is below the 3000.3 floor, or when the version cannot be established. Neither warning blocks anything — `sync` never needs a Devin binary;
-- recommends adding `devin` to a harnesses list when a Devin CLI is installed but no layer selects it. It only recommends; it never edits a harness list.
+Register an endpoint with `install <url>` (adds a `marketplace` source), then
+install by locator. Installation resolves and verifies the exact revision,
+records it in the owning layer's lock, and prompts before accepting security
+findings (`--accept-risk`/`--yes` in automation). A Marketplace group selects
+through explicit `include` only; `tags`, `all`, and group `harnesses` fail at
+run time with `v4.marketplace-runtime-unsupported`. A missing or mismatched lock
+record fails with `v4.marketplace-lock-required`/`-mismatch`.
 
-`--repair` is the recovery surface for Devin and Codex shared-aggregate
-ownership state, and nothing else:
+## Resource prerequisites
 
-- It previews three classes: **exact adoption matches** (entries already byte-identical to what the marketplace would write), **evidence-backed orphan candidates** (entries a retained safety backup or journal ties to earlier managed output), and **value conflicts** (an unmanaged entry has the same key as a selected resource but a different value). Orphans without evidence and unrelated unmanaged entries are never nominated — edit those yourself.
-- On a terminal it then prompts per action. Off a terminal it is **preview-only** and mutates nothing.
-- `--yes` adopts exact matches without prompting. Adoption changes no bytes of the file; it only records that an already-identical entry is managed.
-- `--yes` **never** removes an orphan or replaces a conflicting entry. Both destructive actions always need an interactive per-entry confirmation and take a fresh safety backup first.
-- Exit `0` = clean, repaired, or declined. Exit `1` = corrupt ownership state, an unparseable aggregate file, or a partial repair failure.
-- `--yes` without `--repair` is an error.
+Resources declare advisory prerequisites in their own frontmatter
+(`metadata.requires`), never in `.agents/config.yaml`. A prerequisite is met
+when a resource of that kind and name is selected from any source or layer.
+Unmet prerequisites warn during `install`, `sync`, `sync --check`, and `doctor`,
+and appear under `UNMET REQUIREMENTS` in `status`; they never install anything,
+never override an exclude, and never fail `sync --check`.
 
-## Config Reference
+## Convert before upgrading
 
-```yaml
-# .agents/config.yaml (committed repo config)
-apiVersion: agent-marketplace/v2
+The shipped CLI has no `migrate` command, startup conversion prompt, TUI
+migration modal, or legacy reader/editor. Before replacing an older binary,
+use an **older released migrator** to convert every writable user, repo, and
+personal-local root and verify its entire include tree. Have the externally
+owned organization configuration converted and deployed by its administrator.
 
-registries:
-  - url: git@gitlab.example.com:example-user/infra-skills.git
-    ref: main
-    source_harness: claude
-    path: skills
-
-skills:
-  include: [vm-lifecycle]
-
-commands:
-  include: [deploy-service]
-
-subagents:
-  include: [incident-responder]
-
-hooks:
-  include: [pre-tool-audit]
-
-mcp:
-  include: [service-catalog]
-
-collections:
-  include: [platform-onboarding]
-
-tags:
-  - puppet
-```
-
-- **`apiVersion`** should be `agent-marketplace/v2`; `agent-marketplace/v3` remains accepted as a compatibility alias.
-- **`harnesses`** may be declared in project or user configuration. Project values take precedence over user and organization defaults. Valid values include `factory`, `claude`, `cursor`, `windsurf`, `gemini`, `devin`, and `codex`.
-- **`source_harness`** is optional per registry entry; empty means autodetect.
-- **`skills`**, **`commands`**, **`subagents`**, **`hooks`**, **`mcp`**, **`collections`**, and **`tags`** select what materializes via `KindSelector` (`include`/`exclude` lists or a shorthand sequence treated as `include`).
-- **Per-registry selections** override top-level `skills`, `commands`, `subagents`, `hooks`, `mcp`, and `tags`; per-entry `harnesses` narrows the effective target set.
-- **Nested collections** are resolved from configured registry ownership. The legacy `skills:` member list and typed `resources:` list are both supported and merged. Once selected, the nested owner's URL, path, ref, and required policy flow to its recursively expanded members. Its effective harness targets inherit from the containing collection unless the owner explicitly narrows them; it cannot widen the parent's targets, and an explicit empty list opts out. Shared nested collections are valid across sibling include branches; only a repeated ancestor on one branch is a cycle.
-- **`--kind`** disambiguates names that exist in multiple resource kinds and selects non-skill resources for `install --all` or `install --tag`.
-- **Local registries** can use `/absolute`, `~/home-relative`, or `./relative` paths with no `ref`. Relative paths must remain inside the directory containing the local config.
-
-### Global config: `~/.agents/config.yaml`
-
-```yaml
-apiVersion: agent-marketplace/v2
-harnesses: [factory]
-registries:
-  - url: git@gitlab.example.com:example-org/example-security-skills.git
-    ref: main
-    required: true
-
-  - url: git@gitlab.example.com:example-org/example-shared-skills.git
-    ref: main
-    default: true
-```
-
-- **`required: true`** resources always materialize and cannot be excluded.
-- **`default: true`** resources auto-select; higher-precedence config can exclude repo-scoped resources, while repo and local excludes cannot suppress machine-scoped resources.
-
-### Local config: `.agents/config.local.yaml`
-
-```yaml
-skills:
-  include: [my-personal-skill]
-  exclude: [some-skill-you-dont-want]
-```
-
-Local config is gitignored and per-checkout. Its excludes apply only to
-non-required repo-scoped resources; machine-scoped resources remain immune.
-`sync` adds `.agents/config.local.yaml` to `.gitignore` when the file exists.
-
-When the same kind and name is enabled at machine and repo scope, an unscoped
-`remove` reports the ambiguity instead of choosing a copy. Use
-`remove --scope user` or `remove --scope repo` to remove only that occurrence;
-the other scope remains enabled. An explicit scope never falls back to another
-scope when that scope has no occurrence; it reports that the resource is not
-enabled, while a machine-owned occurrence targeted from repo/local scope
-produces a boundary error. `--scope local` targets checkout-local
-selections/excludes and cannot bypass the machine/repo boundary. Required
-resources cannot be removed from any scope.
-
-## Resource Prerequisites
-
-Registry resources can declare advisory prerequisites in their own
-frontmatter. Do not put `metadata.requires` in `.agents/config.yaml`:
-
-```yaml
----
-name: smoke-test-kb
-description: Answer smoke test questions from Confluence
-metadata:
-  requires:
-    - mcp:genai-atlassian
-    - name: vm-lifecycle
-      kind: skill
-      registry: git@gitlab.example.com:example-user/infra-skills.git
-      path: skills
----
-```
-
-Use `"<kind>:<name>"` shorthand, or a map with required `name` and
-optional `kind`, `registry`, and `path`. A bare `"name"` or an omitted
-`kind` means `skill`. Supported kinds are `skill`, `command`,
-`subagent`, `hook`, and `mcp`; `collection` is not supported.
-
-Prerequisites are satisfied by selected kind and name. `registry` and
-`path` only refine the suggested install command. They do not constrain
-which selected resource satisfies the prerequisite.
-
-An unmet prerequisite is advisory: agent-marketplace never selects,
-installs, or removes an exclude for it. Warnings appear during
-`install`, `sync`, `sync --check`, and `doctor`; `status` lists them
-under `UNMET REQUIREMENTS`. Prerequisite warnings alone do not make
-`sync --check` fail:
-
-```text
-warning: skill "smoke-test-kb" requires mcp "genai-atlassian", but it is not selected
-  → agent-marketplace install "genai-atlassian" --kind mcp
-```
-
-## Config Remediation
-
-v1 configs (no `apiVersion`) are rejected by the loader. v4 is the canonical
-schema; v2 remains the legacy schema and v3 a compatibility alias. `migrate
-[--to v4] [--scope ...] [--dry-run]` upgrades representable writable v2/v3
-files to v4 transactionally. Exact legacy Marketplace pins migrate offline
-only when matching verified cache evidence exists, producing lock/v2 records;
-missing evidence refuses and leaves the v2/v3 config readable. Broader
-Marketplace lock acquisition, update, and editing remain unsupported.
-`--to v2 --harnesses` still selects the legacy structural-remediation flow:
-
-```bash
-agent-marketplace migrate --scope repo --dry-run
-agent-marketplace migrate --to v2 --harnesses factory,cursor
-agent-marketplace sync
-```
-
-Then replace old `.agents/skills/` ignore rules with the harness output roots
-you use. Keep `.agents/skills/` ignored when `codex` is selected, unless your
-repo intentionally tracks generated harness files.
+Conversion can refuse include trees, unrepresentable legacy input, or exact
+Marketplace pins without verified cache evidence. Resolve refusals before
+upgrading; never advise merely changing the version string, flattening away
+policy, or fabricating evidence. See the
+[pre-upgrade guide](https://github.com/Adyen/agent-marketplace/blob/main/site/docs/how-to/migrate-configuration.md).
+Keep backups and a compatible older binary for rollback. Lock v1 reads/v2
+writes, source-revision compatibility, Marketplace operator
+`agent-marketplace.io/marketplace/v1`, APIs/artifacts, and native harness schemas
+are independent and remain supported.
 
 ## Gotchas
 
-- **No selection means no output** — a registry with no kind-specific selections, `tags`, `collections`, `required`, or `default` only contributes to `list`.
-- **Name collisions are resolved deterministically** — same-kind resources from different registries produce a warning; the resolver chooses one winner using required policy, config precedence, normalized URL, and stable order. Same-URL+ref parent/child paths are merged as one physical source, with the deeper path winning overlapping names; non-overlapping same-scope paths remain visible but only one can materialize for that target.
-- **Collision labels may include refs** — when the same URL/path appears at multiple refs, warnings append `@<ref>` to non-empty refs to distinguish participants. The remediation command uses the URL and, when needed, an explicit `--path` rather than copying that display suffix.
-- **Ambiguous cross-kind names need `--kind`** — if a skill and command share a name, rerun `install` or `remove` with `--kind`.
-- **Prerequisites are advisory** — unmet prerequisites never change selection, and explicit excludes remain in force. Resources from a `required: true` registry cannot be excluded, so they satisfy matching prerequisites.
-- **Collection-level `requires` is ignored** — collections expand into members before prerequisite validation.
-- **Private registries should use SSH URLs** — HTTPS can fail when terminal prompts are disabled.
-- **Cache keys are URL-dependent** — changing the registry URL creates a separate cache entry.
-- **No target selection means no target output** — if you expected `.devin/` or `.codex/` output and got none, check that the target is in the effective `harnesses:` list (`status` → HARNESS TARGETS).
-- **Devin file mode writes regular trees** — `materialization.mode: file` writes regular Devin skill/command trees and subagent files, while shared hooks and MCP aggregates retain ownership-safe reconciliation.
-- **`CODEX_HOME` moves only Codex configuration** — it must be absolute; machine skills and converted commands remain under `~/.agents/skills`.
-- **Do not delete `~/.local/state/agent-marketplace` to "reset" Devin or Codex** — it is the ownership authority, not a cache. Without it every existing aggregate entry becomes unmanaged, so `sync` stops pruning what it previously wrote. Use `doctor --repair` to re-adopt instead.
+- **No selection, no output**: a source without an `include`, `tags`, or `all`
+  selection only contributes to `list`.
+- **No target, no output**: missing `.devin/` or `.codex/` output means the
+  harness is not in the effective list (`status` → `TARGET HARNESS SET`).
+- **Name collisions pick one winner**: same kind and name from different
+  sources resolves by `required`, then layer/file precedence, then
+  alphabetical normalized origin, with a warning. Hooks are the exception: all
+  are installed. A skill and a command may share a name.
+- **Collections cannot add registries**: a member naming another registry needs
+  that registry configured as a source first.
+- **Private Git sources**: prefer SSH URLs; HTTPS fails when terminal prompts
+  are disabled.
+- **`gc` sees only the current repository**: it can delete a cache entry another
+  repo needs; run `--dry-run` first.
+- **Keep `~/.local/state/agent-marketplace`**: it is the ownership authority,
+  not a cache. Deleting it stops sync from pruning what it wrote; use
+  `doctor --repair` to re-adopt.

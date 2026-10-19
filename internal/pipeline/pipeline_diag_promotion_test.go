@@ -43,7 +43,7 @@ func devinScopedToolSyncResult(t *testing.T, names ...string) SyncResult {
 	}
 
 	repoCfg := &config.Config{
-		APIVersion: "agent-marketplace/v2",
+		APIVersion: "agent-marketplace/v4",
 		Registries: []config.RegistryEntry{{
 			URL:           registry,
 			SourceHarness: "claude",
@@ -52,8 +52,8 @@ func devinScopedToolSyncResult(t *testing.T, names ...string) SyncResult {
 	}
 
 	return Sync(context.Background(), ResolveOptions{
-		RepoRoot: t.TempDir(),
-		NoBackup: true,
+		Workspace: mustWorkspace(t, t.TempDir()),
+		NoBackup:  true,
 		Loaders: Loaders{
 			Org:    func() (*config.Config, error) { return &config.Config{}, nil },
 			Global: func() (*config.Config, error) { return &config.Config{Harnesses: []string{"devin"}}, nil },
@@ -137,7 +137,7 @@ func TestSyncPromotedMaterializeErrorsCollapsePerResource(t *testing.T) {
 		"---\nname: alpha\ndescription: alpha skill\nallowed-tools:\n  - Bash(git push --force:*)\n  - Bash(git commit:*)\n---\n\n# alpha\n")
 
 	repoCfg := &config.Config{
-		APIVersion: "agent-marketplace/v2",
+		APIVersion: "agent-marketplace/v4",
 		Registries: []config.RegistryEntry{{
 			URL:           registry,
 			SourceHarness: "claude",
@@ -146,8 +146,8 @@ func TestSyncPromotedMaterializeErrorsCollapsePerResource(t *testing.T) {
 	}
 
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: t.TempDir(),
-		NoBackup: true,
+		Workspace: mustWorkspace(t, t.TempDir()),
+		NoBackup:  true,
 		Loaders: Loaders{
 			Org:    func() (*config.Config, error) { return &config.Config{}, nil },
 			Global: func() (*config.Config, error) { return &config.Config{Harnesses: []string{"devin"}}, nil },

@@ -48,6 +48,7 @@ export default defineNuxtConfig({
     apiBaseInternal: '',
     public: {
       apiBase: '/',
+      docsEnabled: false,
     },
   },
   typescript: {
@@ -57,6 +58,7 @@ export default defineNuxtConfig({
   routeRules: {
     '/admin': { ssr: false, prerender: false, headers: { 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow, noarchive' } },
     '/admin/**': { ssr: false, prerender: false, headers: { 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow, noarchive' } },
+    '/auth/error': { ssr: true, prerender: false, headers: { 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow, noarchive', 'Referrer-Policy': 'no-referrer' } },
   },
   nitro: {
     preset: 'node-server',

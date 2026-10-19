@@ -64,7 +64,7 @@ func TestDevinRootIdentityChangeIsSilentButStillFailsClosed(t *testing.T) {
 	devinEnvAt(t, repoA)
 
 	alpha := []resolver.ResolvedArtifact{
-		devinResolved("alpha", ir.NewMcpServer("alpha", "alpha-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "alpha", ir.NewMcpServer("alpha", "alpha-binary", nil, nil, nil, ir.SourceRef{}), false),
 	}
 	if _, err := Run(context.Background(), repoA, alpha); err != nil {
 		t.Fatalf("first Run: %v", err)
@@ -85,7 +85,7 @@ func TestDevinRootIdentityChangeIsSilentButStillFailsClosed(t *testing.T) {
 
 	// "alpha" has been removed from configuration; only "beta" is desired.
 	beta := []resolver.ResolvedArtifact{
-		devinResolved("beta", ir.NewMcpServer("beta", "beta-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "beta", ir.NewMcpServer("beta", "beta-binary", nil, nil, nil, ir.SourceRef{}), false),
 	}
 	report, err := Run(context.Background(), repoB, beta)
 	if err != nil {
@@ -131,7 +131,7 @@ func TestDevinFirstRunSuppressionStillFailsClosedAgainstAHandwrittenAggregate(t 
 	}
 
 	resolved := []resolver.ResolvedArtifact{
-		devinResolved("managed", ir.NewMcpServer("managed", "managed-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "managed", ir.NewMcpServer("managed", "managed-binary", nil, nil, nil, ir.SourceRef{}), false),
 	}
 	report, err := Run(context.Background(), repoRoot, resolved)
 	if err != nil {
@@ -188,8 +188,8 @@ func TestDevinPerRootStateDiagnosticsAreDistinguishable(t *testing.T) {
 		}
 	}
 	resolved := []resolver.ResolvedArtifact{
-		devinResolved("repo-mcp", ir.NewMcpServer("repo-mcp", "repo-binary", nil, nil, nil, ir.SourceRef{}), false),
-		devinResolved("user-mcp", ir.NewMcpServer("user-mcp", "user-binary", nil, nil, nil, ir.SourceRef{}), true),
+		devinResolved(t, "repo-mcp", ir.NewMcpServer("repo-mcp", "repo-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "user-mcp", ir.NewMcpServer("user-mcp", "user-binary", nil, nil, nil, ir.SourceRef{}), true),
 	}
 	// Seed a committed generation for both roots so the next run's lost records
 	// are real, reportable losses rather than a first use.
@@ -300,7 +300,7 @@ func TestDevinAggregateMessageKeepsTheAggregateWhenTheErrorAlreadyNamesIt(t *tes
 func TestDevinConcurrentFirstRunsAgainstOneRoot(t *testing.T) {
 	repoRoot, _ := devinEnv(t)
 	resolved := []resolver.ResolvedArtifact{
-		devinResolved("managed", ir.NewMcpServer("managed", "managed-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "managed", ir.NewMcpServer("managed", "managed-binary", nil, nil, nil, ir.SourceRef{}), false),
 	}
 	var wg sync.WaitGroup
 	errs := make([]error, 2)

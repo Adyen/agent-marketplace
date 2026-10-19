@@ -2,11 +2,98 @@
 
 ## Unreleased
 
+### Codex read-only agents map to read-only modes; Unicode case folding in collisions
+
+Follow-ups to review findings on #723 and #732:
+- A Codex agent with `sandbox_mode = "read-only"` was refused on every other target by the Codex sidecar guard, so it never reached the read-only mappings. It now becomes Claude `permissionMode: plan`, Cursor `readonly: true` or Factory `tools: read-only`. Gemini, Devin and Windsurf still refuse it with `subagent.security-restriction-unsupported` and OpenCode with `subagent.opencode.restriction-unsupported`; other Codex sandbox modes are still refused everywhere except Codex.
+- Artifact-path collision detection compares paths with Unicode simple case folding (`ir.CaseFoldKey`), so paths that differ only by, for example, Greek `σ` and final `ς` collide like ASCII case variants. `Materialize` applies the same key to the artifacts it is given and refuses case-folded duplicate paths before writing.
+
+### Artifact paths that differ only in letter case collide
+
+Two resources whose names differ only in letter case, such as Codex agents `Foo` and `foo`, compiled to output paths that name one file on case-insensitive filesystems (F70, #431). There the staged write failed and the whole target was left uninstalled with an opaque `file exists` error. Bundle conflict detection now compares paths case-insensitively, and `sync` refuses selected skills, commands, subagents or rules of one kind whose names differ only in letter case before any write, including across sources: they are suppressed with `bundle.conflict.duplicate-artifact-path` naming both, and the rest of the target installs. The rule holds on every host, so case-sensitive systems refuse the same pair and shared repositories stay portable. This is a breaking change on case-sensitive hosts, which previously emitted and installed both resources, and ships in the v5.0.0 major release. Migration: rename one of the resources so the names differ by more than letter case.
+
+### Newly encoded resource payloads carry no zeroed Extra member
+
+The canonical encoder wrote the IR's zeroed `Extra` field as `"Extra": null`, and decoding kept it as an extension field, so every skill, command, subagent and hook installed from a Marketplace payload compiled with a spurious `Extra: null` field (#724). The encoder now omits that member, and an extension field named exactly `Extra` with a null value; an authored `Extra` extension with a value is still encoded. Decoding is unchanged, so payloads already published keep their bytes, digests and output (the Marketplace API requirement for non-hook canonical metadata), and resources published from now on install without the field on every client version.
+
+### Claude execution controls require Claude provenance
+
+Claude reads subagent `permissionMode`, `mcpServers` and `hooks`, and skill and command `hooks`, as active controls. These keys used to pass through from any source, so a Cursor or Factory subagent declaring `permissionMode: bypassPermissions` or inline MCP servers gained them as live Claude settings (#635). Claude ingestion now records these keys in the Claude sidecar (`ext.claude.nativeControls`), and Claude compilation emits them only from there; the same keys from any other source are omitted with the warning `compile.claude.native-control-omitted`. The extension copy is kept for earlier clients. Claude-authored Marketplace payloads published before this change carry no sidecar, so their grant controls are dropped on Claude until the registry revision is published again. This ships in the v5.0.0 major release.
+
+### Read-only subagent restrictions are mapped or refused
+
+Cursor `readonly: true`, Claude `permissionMode: plan`, Codex `sandbox_mode = "read-only"` and Factory `tools: read-only` are documented read-only restrictions that other targets ignored (#636). A read-only subagent, whether the restriction is typed or an extension field, now becomes Claude `permissionMode: plan`, Cursor `readonly: true`, Codex `sandbox_mode = "read-only"` or Factory `tools: read-only`; Factory with an explicit tool list, Gemini, Devin and Windsurf refuse it with `subagent.security-restriction-unsupported`, and OpenCode with `subagent.opencode.restriction-unsupported`. Factory ingestion records the `read-only` tools category in `ext.factory.toolsCategory` instead of treating it as a tool name. This ships in the v5.0.0 major release.
+
+### Bare dollar names in MCP values stay literal
+
+Canonical MCP values treat only `${NAME}` and `${NAME:-default}` as environment references, as Claude Code does; a bare `$NAME` is literal (#638 D2). Windsurf compilation no longer rewrites a whole-value `$NAME` to `${env:NAME}`, so a literal header such as `$NOT_A_REF` stays literal, and native Codex literals of that shape now convert to Windsurf instead of being refused. Gemini expands a bare `$NAME` in settings and extension MCP values: Gemini ingestion now canonicalizes it to `${NAME}`, and Gemini compilation refuses an MCP server whose values contain a bare `$NAME` with the new error `mcp.gemini.interpolation-unrepresentable`. This is a breaking change for Gemini output and ships in the v5.0.0 major release. Migration: write environment references as `${NAME}`; a literal that must contain `$NAME` cannot be sent to Gemini.
+
+### Foreign command tool lists never become pre-approvals
+
+Converted commands now carry tool provenance like skills. `ir.Command` gains `ToolSource`; Devin, Factory and Gemini command ingestion set it when the command declares `allowed-tools`, and the Marketplace resource payload carries it (an extension field cannot supply it). Claude, Cursor and Gemini omit a foreign command `allowed-tools` list with the warning `skill.allowed-tools-omitted`, so a Devin command no longer reaches Claude as `allowed-tools: [Read, Bash]` and Factory command metadata no longer becomes a pre-approval (#637). Command payloads without provenance are unchanged; an older client decoding a payload that carries command `ToolSource` keeps it as an unknown extension field. Marketplace artifacts published before this change carry no command provenance, so their lists are still treated as canonical until the registry revision is published again.
+
+### Foreign skill tool lists never become pre-approvals
+
+Claude, Cursor and Gemini read a skill's `allowed-tools` as a pre-approval, so listed tools run without a permission prompt. A list ingested from another harness was copied verbatim, so a Factory skill's review-only `allowed-tools: [Read, Edit]` became a real Claude pre-approval for edits (#637). These targets now omit a skill `allowed-tools` list that carries another harness's tool provenance (Devin, Factory, or Gemini on a non-Gemini target) and report the warning `skill.allowed-tools-omitted`; the skill is still emitted and its tools go through the target's normal permission prompts. Canonical lists and same-harness lists are unchanged. Migration: declare pre-approved tools in the target harness's own skill if it needs them.
+
+### Removed the `hcc` command
+
+`cmd/hcc` is gone. It was an unshipped local-testing command whose single `--from` flag served as both the source path and the plugin root, and since native hook projection writes hook commands for an installed layout, its raw output could not be run as an installation (F107 in #433). Library callers use `Convert`, `CompileBundle` and `Materialize` directly; `agent-marketplace sync` with a local directory source installs exactly what users get.
+
+### Ambiguous Windsurf identities and repeated rule keys are refused
+
+Windsurf ingestion collected workflows and rules into a map keyed by name, so a later file claiming the same name silently replaced an earlier one, for example a `deploy` workflow in `zzz.md` replacing the reviewed `deploy.md`. Every claimant of a repeated name within one workspace root is now suppressed with the new error `ingest.windsurf.duplicate-identity`; unrelated resources still convert, the workspace root still overrides the user root, and a refused workspace name does not fall back to the user root's resource. The tolerant `.mdc` frontmatter parser, used when strict YAML rejects Cursor's unquoted globs, kept the last value of a repeated key, so `alwaysApply: false` followed by `alwaysApply: true` applied the rule everywhere. It now rejects repeated keys, and the rule fails to load with the strict parser's error.
+
+### Restriction-bearing native fields are preserved or refused
+
+Gemini ingestion kept only `command`, `args`, `env` and `url` of a subagent's inline MCP server, so a Gemini→Gemini conversion dropped `includeTools` and `excludeTools` and the server exposed every tool. Every member is now preserved and emitted on Gemini output; preserved members never override the modeled ones, and literal credentials in preserved headers or OAuth secrets are reported with `mcp.credentials.literal-secret` through the new `compile.McpCredentialDiagnosticsWithExtra`. Windsurf ingestion read an undocumented `working_dir` key, so the documented `working_directory` was dropped and a hook ran its relative command from the workspace root. It is now read and round-trips on Windsurf; every other target suppresses such a hook with `hook.windsurf.native-fields-unsupported`. Devin MCP compilation no longer drops a single unrepresentable argument such as `--sandbox=${file:…}`: the server is removed with `mcp.devin.interpolation-unrepresentable`, because a shortened argument list runs a different command line.
+
+### Project and plugin roots stay distinct
+
+Gemini ingestion no longer rewrites `${GEMINI_PROJECT_DIR}` and `${CLAUDE_PROJECT_DIR}` to `${CLAUDE_PLUGIN_ROOT}` in MCP server values, command prompts and subagent bodies. Those project references used to resolve inside the plugin on every target: Gemini emitted `${extensionPath}`, Claude `${CLAUDE_PLUGIN_ROOT}`, and targets with a literal plugin root pointed the server at the installed registry copy. Only `${extensionPath}` maps to the canonical plugin root now; a target that cannot represent a project reference keeps it as an environment reference or refuses the server, as Codex does for interpolated arguments. Factory MCP servers translate `${DROID_PLUGIN_ROOT}` to `${CLAUDE_PLUGIN_ROOT}` on ingestion and back on compilation, so Factory output no longer carries the Claude token and Claude output no longer carries the Factory token.
+
+### Target sidecars cannot widen canonical authority
+
+A Marketplace resource artifact carries its target sidecars, and several compilers let a sidecar replace an authority-bearing canonical value unchecked. A Claude or Cursor subagent tool sidecar now only restates or narrows the canonical tool list; an entry that is neither a canonical entry nor a target tool the canonical list covers through the tool catalogs suppresses the subagent with `subagent.security-restriction-unsupported`. `compile.SidecarToolsWithinCanonical` exposes the shared check. A Claude or Cursor hook-type sidecar must equal the canonical type, as native hook projection already required, so it can no longer turn a prompt hook into a command hook (`hook.claude.unsupported-type`, `hook.cursor.unsupported-type`). Codex compilation now applies the canonical Codex MCP match it already applied when a server leaves Codex, suppressing a contradicting sidecar with `mcp.codex.security-unsupported`. Claude, Cursor, Factory and Gemini MCP output reserves every modeled MCP connection field (`command`, `args`, `env`, `url`, `transport`, `headers` and the OAuth fields) and its case variants regardless of typed presence, so extension fields cannot supply an active `command`, `args` or `url`; they are omitted with `compile.canonical-field-overrides-extra`. `disabled` keeps its existing handling. No in-tree ingester produces Claude or Cursor sidecars, and Codex-ingested sidecars match their canonical server, so native round trips are unchanged.
+
+### Devin converted command skills keep their restrictions
+
+Devin ingestion no longer recovers a skill marked `x-agent-marketplace-kind: command` as a command when the skill declares `permissions`, an `agent` or `subagent` selector, or triggers that do not include `user`. Those controls used to be dropped with `ingest.devin.command-field-dropped`, so a Devin-to-Devin round trip lost a deny policy and made a model-only resource user-invocable. The resource is now refused with the new error `ingest.devin.command-security-unsupported`, which names the fields but never their values; removing the marker ingests it as a skill with its controls intact. `model`, and extra activation next to `user`, are still dropped with the existing warning: a converted command is user-only, so dropping them only narrows it.
+
+Devin command compilation now reserves `agent` and `subagent` alongside `permissions`, so command extension fields cannot select the execution agent of a converted command skill. The selectors are omitted with `compile.canonical-field-overrides-extra` and the mapped `allowed-tools` restriction is kept. Ordinary Devin skills keep their typed `agent` and `subagent` fields.
+
 ### The Claude plugin form no longer drops a root-level SKILL.md
 
 `LoadBundleWithOptions` selects the plugin form for both `.claude-plugin/plugin.json` manifests and bare plugin layouts, and that form only scanned `skills/` subdirectories. A repository that IS a single skill (root `SKILL.md`, no `skills/` tree) therefore ingested zero resources with no diagnostic — the layout Claude Code documents for manifest `"skills": ["./"]` and that `github.com/blader/humanizer` ships. The plugin form now loads a root `SKILL.md` through `bundle.LoadRootSkill` when one exists. A root skill whose frontmatter name duplicates a `skills/` entry is dropped with the new warning `ingest.claude.duplicate-root-skill`; the `skills/` entry wins deterministically because it loads first in sorted order. Skill support files no longer include `.git` directories at any depth: a root skill's directory is the whole checkout, a marketplace clone keeps `.git` on disk, and VCS internals were being published into installable archives and fed to bounded support reads.
 
 The consumer-side materializer walkers (`copySupportFilesExcluding` and the `--check` virtual digest in `internal/materialize`) now skip `.git` directories the same way. Previously a root skill's compiled cache copy contained the registry's entire `.git` object database, exposed to every workspace through the harness symlink and copied again by file-mode materialization; stale copies are pruned on the next sync's existing reconcile pass.
+
+### Shipped model catalogs and joint reasoning conversion
+
+Subagent compilers now share a source-aware model/reasoning resolver backed by
+`modelpolicy/catalogs/<harness>.yaml`. Unknown cross-harness models warn and omit
+only the model field; unsupported reasoning also warns without suppressing the
+resource. Automatic cross-provider approximations are removed. Floating-family
+pins are explicit catalog entries and produce informational diagnostics.
+
+Cursor reasoning uses cataloged model-parameter encodings; Gemini no longer emits
+an unsupported agent `effort` field. Devin native model strings round-trip without
+requiring a Claude alias, and native default selection is distinct from parent
+inheritance. Devin forward variant mappings are enabled from the captured
+`devin models list` CLI inventory plus the documented custom-profile `model`
+override; live acceptance in a real custom profile remains untested and is not
+claimed.
+
+Ingestion preserves native model/effort strings with `ModelSource` provenance.
+Existing constructors and legacy sidecars remain readable; source-aware editable
+fields take precedence over stale sidecars. The application adds source-revision
+v4 for provenance-bearing IR fallback hashes while retaining frozen v1/v2/v3
+projection and original-file hashing for existing exact locks.
+
+Model updates use a harness catalog plus an independent YAML conversion fixture;
+`make model-catalog-check` runs the offline maintenance gate. See the update recipe
+in the library README. No runtime catalog configuration or vendor CLI dependency
+is added.
 
 ### Validated native-layout descriptors now cover Codex, Devin, and Claude
 

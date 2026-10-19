@@ -84,7 +84,7 @@ func inventoryNumberPoints(metric *metricpb.Metric) []*metricpb.NumberDataPoint 
 func (e *inventoryCommandExporter) context(t *testing.T, command string) (context.Context, *telemetry.Telemetry) {
 	t.Helper()
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	state, err := telemetry.ResolveTelemetryConfig(nil, &config.Config{Telemetry: &tmcfg.TelemetryConfig{
+	state, err := telemetry.ResolveTelemetryConfig(config.Settings{}, config.Settings{Telemetry: &tmcfg.TelemetryConfig{
 		Level: tmcfg.LevelDetailed, Endpoint: e.server.URL,
 	}}, "", "")
 	if err != nil {
@@ -127,15 +127,19 @@ func TestDeinitPurgeConfigReportsOneFinalInventory(t *testing.T) {
 			repoRoot := filepath.Join(t.TempDir(), "repo")
 			registryRoot := filepath.Join(t.TempDir(), "registry")
 			writeSkill(t, registryRoot, "configured-skill", "configured", nil)
-			writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "registries: []")
-			writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "registries: []")
-			writeFile(t, filepath.Join(repoRoot, ".agents", "config.local.yaml"), "registries: []\n")
+			writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\n")
+			writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\n")
+			writeFile(t, filepath.Join(repoRoot, ".agents", "config.local.yaml"), "apiVersion: agent-marketplace/v4\n")
 
 			configPath, err := configFilesForScope(test.scope, repoRoot)
 			if err != nil {
 				t.Fatal(err)
 			}
-			writeFile(t, configPath[0], "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - path: "+registryRoot+"\n    source_harness: claude\n    skills: [configured-skill]\n")
+			harnesses := "harnesses: [factory]\n"
+			if test.scope == deinitScopeLocal {
+				harnesses = ""
+			}
+			writeFile(t, configPath[0], "apiVersion: agent-marketplace/v4\n"+harnesses+"sources:\n  local: {directory: "+registryRoot+", source_harness: claude}\nresources:\n  local: [skill/configured-skill]\n")
 			withWorkingDir(t, repoRoot)
 
 			exporter := newInventoryCommandExporter(t)
@@ -161,8 +165,8 @@ func TestDeinitPurgeConfigDryRunDoesNotReportMutation(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "registries: []")
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "registries: []")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\n")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\n")
 	withWorkingDir(t, repoRoot)
 
 	exporter := newInventoryCommandExporter(t)
@@ -194,8 +198,8 @@ func TestSyncPruneStaleReportsExactlyOneGeneration(t *testing.T) {
 			repoRoot := filepath.Join(t.TempDir(), "repo")
 			registryRoot := filepath.Join(t.TempDir(), "registry")
 			writeSkill(t, registryRoot, "present-skill", "present", nil)
-			writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "harnesses: [factory]\nregistries: []")
-			writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "registries:\n  - path: "+registryRoot+"\n    source_harness: claude\n    skills: ["+test.selection+"]")
+			writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+			writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources:\n  local: {directory: "+registryRoot+", source_harness: claude}\nresources:\n  local: [skill/"+test.selection+"]\n")
 			withWorkingDir(t, repoRoot)
 
 			exporter := newInventoryCommandExporter(t)
@@ -222,9 +226,9 @@ func TestDeinitFinalInventoryResolutionFailureIsBestEffort(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "registries: []")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\n")
 	repoConfig := filepath.Join(repoRoot, ".agents", "config.yaml")
-	writeConfig(t, repoConfig, "registries: []")
+	writeConfig(t, repoConfig, "apiVersion: agent-marketplace/v4\n")
 	withWorkingDir(t, repoRoot)
 
 	exporter := newInventoryCommandExporter(t)

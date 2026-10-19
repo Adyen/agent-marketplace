@@ -35,16 +35,13 @@ func TestStatusCommandPrintsSyncedSkillsOrphansAndCollisions(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+infraOrigin+`
-    ref: main
-    skills:
-      - vm-lifecycle
-      - shared-skill
-  - url: `+securityOrigin+`
-    ref: main
-    skills:
-      - shared-skill
+apiVersion: agent-marketplace/v4
+sources:
+  infra: {git: file://`+infraOrigin+`, ref: main}
+  security: {git: file://`+securityOrigin+`, ref: main}
+resources:
+  infra: [skill/vm-lifecycle, skill/shared-skill]
+  security: [skill/shared-skill]
 `)
 
 	// Create an orphaned skill as a managed SYMLINK (pointing to the cache so
@@ -112,10 +109,11 @@ func TestStatusKeepsExactLeaseThroughDryRunConsumption(t *testing.T) {
 	commitAndPushAll(t, working, "keeper")
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
-    skills: [keeper]
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/keeper]
 `)
 	withWorkingDir(t, repoRoot)
 	requireExactLocks(t)
@@ -135,7 +133,7 @@ registries:
 	<-entered
 	gcDone := make(chan error, 1)
 	go func() {
-		_, err := cache.GarbageCollectWithLocks(false, nil, &config.Config{})
+		_, err := cache.GarbageCollect(context.Background(), false, emptyGCReachability)
 		gcDone <- err
 	}()
 	select {
@@ -168,15 +166,13 @@ func TestStatusCommandMarksLockedCaches(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+freshOrigin+`
-    ref: main
-    skills:
-      - fresh-skill
-  - url: `+staleOrigin+`
-    ref: main
-    skills:
-      - stale-skill
+apiVersion: agent-marketplace/v4
+sources:
+  fresh: {git: file://`+freshOrigin+`, ref: main}
+  stale: {git: file://`+staleOrigin+`, ref: main}
+resources:
+  fresh: [skill/fresh-skill]
+  stale: [skill/stale-skill]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -207,12 +203,11 @@ func TestStatusCommandCacheFreshnessWithPathSpecificEntry(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
-    path: skills
-    skills:
-      - vm-lifecycle
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main, path: skills}
+resources:
+  hosted: [skill/vm-lifecycle]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -245,17 +240,18 @@ func TestStatusCommandShowsLocallyExcludedSkills(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - vm-lifecycle
-      - log-triage
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/vm-lifecycle, skill/log-triage]
 `)
 	writeFile(t, filepath.Join(repoRoot, ".agents", "config.local.yaml"), `
-skills:
-  exclude:
-    - log-triage
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: {exclude: [skill/log-triage]}
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -285,7 +281,8 @@ skills:
 	}
 }
 
-func TestStatusCommandShowsMalformedSkillsInErrors(t *testing.T) {
+// spec: inspection-outcomes/malformed-resource-warning
+func TestStatusCommandShowsMalformedSkillsAsWarnings(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
@@ -308,11 +305,11 @@ metadata:
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - valid-skill
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/valid-skill]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -320,11 +317,11 @@ registries:
 
 	output, err := executeCommand("status")
 	if err != nil {
-		t.Fatalf("expected status command to succeed: %v\n%s", err, output)
+		t.Fatalf("expected status command to succeed on a warning-only malformed resource: %v\n%s", err, output)
 	}
 
 	for _, needle := range []string{
-		"ERRORS",
+		"WARNINGS",
 		"broken-skill",
 		filepath.Join("skills", "broken-skill", "SKILL.md"),
 		"did not find expected ',' or ']'",
@@ -332,6 +329,9 @@ registries:
 		if !strings.Contains(output, needle) {
 			t.Fatalf("expected status output to contain %q, got:\n%s", needle, output)
 		}
+	}
+	if strings.Contains(output, filepath.Join("skills", "broken-skill", "SKILL.md", "SKILL.md")) {
+		t.Fatalf("status appended a second SKILL.md to a file path:\n%s", output)
 	}
 }
 
@@ -348,11 +348,11 @@ func TestStatusDriftSectionInSync(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - vm-lifecycle
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/vm-lifecycle]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -390,11 +390,11 @@ func TestStatusDriftSectionOutOfSync(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - vm-lifecycle
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/vm-lifecycle]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -421,6 +421,155 @@ registries:
 	}
 }
 
+// spec: status-reporting/nested-output-already-reconciled
+// spec: status-reporting/nested-output-drifts
+func TestStatusDriftNestedLocalConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "status-nested.git")
+	writeSkill(t, working, "nested-skill", "Nested skill", []string{"ops"})
+	commitAndPushAll(t, working, "nested resource")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/nested-skill]
+`)
+	nestedDir := filepath.Join(repoRoot, "nested")
+	writeFile(t, filepath.Join(nestedDir, ".agents", "config.local.yaml"), "apiVersion: agent-marketplace/v4\n")
+
+	cacheDir := cache.CacheDir()
+	if err := os.MkdirAll(filepath.Join(cacheDir, "compiled"), 0o755); err != nil {
+		t.Fatalf("mkdir cache compiled dir: %v", err)
+	}
+	parentTarget := filepath.Join(cacheDir, "compiled", "parent-skill")
+	if err := os.WriteFile(parentTarget, []byte("# parent"), 0o644); err != nil {
+		t.Fatalf("write parent target: %v", err)
+	}
+	parentArtifact := filepath.Join(repoRoot, ".factory", "skills", "parent-skill")
+	if err := os.MkdirAll(filepath.Dir(parentArtifact), 0o755); err != nil {
+		t.Fatalf("mkdir root skills dir: %v", err)
+	}
+	if err := os.Symlink(parentTarget, parentArtifact); err != nil {
+		t.Fatalf("symlink parent artifact: %v", err)
+	}
+
+	withWorkingDir(t, nestedDir)
+
+	output, err := executeCommand("sync")
+	if err != nil {
+		t.Fatalf("seed nested synchronized output: %v\n%s", err, output)
+	}
+	nestedArtifact := filepath.Join(nestedDir, ".factory", "skills", "nested-skill")
+	if _, err := os.Lstat(nestedArtifact); err != nil {
+		t.Fatalf("expected nested output at %s: %v", nestedArtifact, err)
+	}
+	if output, err = executeCommand("sync", "--check"); err != nil {
+		t.Fatalf("expected sync --check to report no drift: %v\n%s", err, output)
+	}
+
+	output, err = executeCommand("status")
+	if err != nil {
+		t.Fatalf("expected status command to succeed: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "In sync") {
+		t.Fatalf("expected DRIFT section to show 'In sync' after nested sync, got:\n%s", output)
+	}
+	if strings.Contains(output, "parent-skill") {
+		t.Fatalf("expected status not to report parent-root artifacts, got:\n%s", output)
+	}
+	if _, err := os.Lstat(parentArtifact); err != nil {
+		t.Fatalf("status must not modify parent artifact: %v", err)
+	}
+
+	if err := os.RemoveAll(nestedArtifact); err != nil {
+		t.Fatalf("remove nested output to create drift: %v", err)
+	}
+	if output, err = executeCommand("sync", "--check"); err == nil {
+		t.Fatalf("expected sync --check to report drift for missing nested output, got:\n%s", output)
+	}
+	output, err = executeCommand("status")
+	if err != nil {
+		t.Fatalf("expected status command to succeed: %v\n%s", err, output)
+	}
+	if strings.Contains(output, "In sync") {
+		t.Fatalf("expected DRIFT section NOT to show 'In sync' with missing nested output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "file(s) to write") {
+		t.Fatalf("expected DRIFT section to mention files to write, got:\n%s", output)
+	}
+	if strings.Contains(output, "parent-skill") {
+		t.Fatalf("expected status not to report parent-root removals, got:\n%s", output)
+	}
+	if _, statErr := os.Lstat(nestedArtifact); !os.IsNotExist(statErr) {
+		t.Fatalf("status must not recreate the missing nested output, stat err: %v", statErr)
+	}
+}
+
+// spec: status-reporting/root-inspection-and-exact-locks-remain-safe
+func TestStatusDriftRootLevelAndExactLockFailureReadOnly(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "status-root-lock.git")
+	writeSkill(t, working, "root-skill", "Root skill", []string{"ops"})
+	commitAndPushAll(t, working, "root resource")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/root-skill]
+`)
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("sync")
+	if err != nil {
+		t.Fatalf("seed root synchronized output: %v\n%s", err, output)
+	}
+	if err := os.RemoveAll(filepath.Join(repoRoot, ".factory", "skills", "root-skill")); err != nil {
+		t.Fatalf("remove root output to create drift: %v", err)
+	}
+	output, err = executeCommand("status")
+	if err != nil {
+		t.Fatalf("expected status command to succeed: %v\n%s", err, output)
+	}
+	if strings.Contains(output, "In sync") || !strings.Contains(output, "file(s) to write") {
+		t.Fatalf("expected root-level drift to report files to write, got:\n%s", output)
+	}
+
+	requireExactLocks(t)
+	lockPath := filepath.Join(repoRoot, ".agents", "lock.yaml")
+	corrupted := []byte("apiVersion: [broken\n")
+	if err := os.WriteFile(lockPath, corrupted, 0o644); err != nil {
+		t.Fatalf("corrupt exact lock: %v", err)
+	}
+	output, err = executeCommand("status")
+	combined := output
+	if err != nil {
+		combined += "\n" + err.Error()
+	}
+	if !strings.Contains(combined, "lock.invalid") {
+		t.Fatalf("expected status to report the exact-lock failure, err=%v\n%s", err, output)
+	}
+	data, readErr := os.ReadFile(lockPath)
+	if readErr != nil || !reflect.DeepEqual(data, corrupted) {
+		t.Fatalf("status must not modify the exact lock: %v", readErr)
+	}
+}
+
 func TestStatusCommandBlockedRegistryReturnsError(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -430,10 +579,10 @@ func TestStatusCommandBlockedRegistryReturnsError(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
 allowed_registries: []
-registries:
-  - url: https://example.com/blocked.git
-    ref: main
+sources:
+  blocked: {git: https://example.com/blocked.git, ref: main}
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -459,15 +608,13 @@ func TestStatusReportsManagedInstallation(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 
 	orgPath := filepath.Join(t.TempDir(), "org.yaml")
-	writeFile(t, orgPath, `apiVersion: agent-marketplace/v3
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: https://example.com/org.git
-    ref: main
-    skills:
-      include:
-        - managed-skill
+sources:
+  organization: {git: https://example.com/org.git, ref: main}
+resources:
+  organization: [skill/managed-skill]
 `)
 	if err := os.Chmod(orgPath, 0o664); err != nil {
 		t.Fatalf("chmod: %v", err)
@@ -475,7 +622,7 @@ registries:
 	config.SetTestOrganizationConfigPath(t, orgPath)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "registries: []\n")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\n")
 	withWorkingDir(t, repoRoot)
 
 	output, err := executeCommand("status")

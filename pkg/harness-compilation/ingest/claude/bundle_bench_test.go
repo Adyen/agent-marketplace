@@ -24,3 +24,17 @@ func BenchmarkLoadBundlePluginFormWithRootSkill(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkLoadBundleSkillsTreeWithGitMetadata(b *testing.B) {
+	src := fstest.MapFS{
+		"skills/good-skill/SKILL.md": {Data: []byte("---\nname: good-skill\ndescription: A valid skill\n---\nBody")},
+		"skills/.git/HEAD":           {Data: []byte("ref: refs/heads/main\n")},
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if _, err := LoadBundleWithOptions(src, LoadOptions{}); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

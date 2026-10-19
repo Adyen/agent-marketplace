@@ -26,13 +26,19 @@ func (s *Server) adminHandler() http.Handler {
 			writeAdminError(w, http.StatusNotFound, "not_found", "Administration is not enabled.")
 		})
 	}
-	unavailable := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	browser := resolveAdminBrowserRoutes(s.cfg.Instance.BrowserBase)
+	unavailable := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.cfg.Admin.AuthMode() == config.AdminAuthOIDC && r.Method == http.MethodGet &&
+			(r.URL.Path == adminAuthBase+"/login" || r.URL.Path == adminAuthBase+"/callback") {
+			writeAdminOIDCError(w, r, browser, http.StatusServiceUnavailable, "admin_unavailable", "Administration trust configuration is unavailable.", "")
+			return
+		}
 		writeAdminError(w, http.StatusServiceUnavailable, "admin_unavailable", "Administration trust configuration is unavailable.")
 	})
 	var oidc *adminOIDCAuthenticator
 	if s.cfg.Admin.AuthMode() == config.AdminAuthOIDC {
 		var err error
-		if oidc, err = newAdminOIDCAuthenticator(s.cfg.Admin); err != nil {
+		if oidc, err = newAdminOIDCAuthenticatorWithBrowserBase(s.cfg.Admin, s.cfg.Instance.BrowserBase); err != nil {
 			return unavailable
 		}
 	}

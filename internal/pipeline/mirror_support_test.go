@@ -88,12 +88,12 @@ func TestSyncPreservesInstalledMirrorSkillWhenArchiveOmitsDeclaredSupport(t *tes
 		}},
 	}
 	syncOpts := ResolveOptions{
-		RepoRoot: repoRoot,
-		NoBackup: true,
+		Workspace: mustWorkspace(t, repoRoot),
+		NoBackup:  true,
 		Loaders: Loaders{
 			Org: func() (*config.Config, error) { return &config.Config{}, nil },
 			Global: func() (*config.Config, error) {
-				return &config.Config{APIVersion: config.APIVersionV2, Harnesses: []string{"factory"}}, nil
+				return &config.Config{APIVersion: config.APIVersionV4, Harnesses: []string{"factory"}}, nil
 			},
 			Repo: func() (*config.Config, error) {
 				return &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, nil

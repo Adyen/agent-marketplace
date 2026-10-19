@@ -69,14 +69,14 @@ func TestNewDeliversMetricsAndTraces(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelDetailed,
 			Endpoint: srv.URL,
 		},
 	}
 
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -118,11 +118,12 @@ func TestNewDeliversMetricsAndTraces(t *testing.T) {
 	}
 }
 
+// spec: telemetry/unconfigured-telemetry-stays-off
 func TestTelemetryOffDoesNotCreateProviders(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", dir)
 
-	state, err := ResolveTelemetryConfig(nil, nil, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, amconfig.Settings{}, "", "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -155,13 +156,13 @@ func TestCounterAndHistogramDoNotLeakSDKTypes(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelBasic,
 			Endpoint: srv.URL,
 		},
 	}
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -190,6 +191,7 @@ func TestCounterAndHistogramDoNotLeakSDKTypes(t *testing.T) {
 	_ = h
 }
 
+// spec: telemetry/commands-report-basic-metrics-without-argument-data
 func TestMetricAttributeAllowlist(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", dir)
@@ -212,14 +214,14 @@ func TestMetricAttributeAllowlist(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	user := &amconfig.Config{
+	user := amconfig.Settings{
 		Telemetry: &tmcfg.TelemetryConfig{
 			Level:    tmcfg.LevelBasic,
 			Endpoint: srv.URL,
 		},
 	}
 
-	state, err := ResolveTelemetryConfig(nil, user, "", "")
+	state, err := ResolveTelemetryConfig(amconfig.Settings{}, user, "", "")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -293,6 +295,7 @@ func assertInstrumentAttributes(t *testing.T, attrs []*commonpb.KeyValue, allowe
 	}
 }
 
+// spec: telemetry/installation-identity-persists-privately-and-resets
 func TestInstallationIDPermissions(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "telemetry", "installation-id")
@@ -331,18 +334,27 @@ func TestInstallationIDPermissions(t *testing.T) {
 	}
 }
 
+// spec: telemetry/installation-identity-persists-privately-and-resets
 func TestResetInstallationID(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "telemetry", "installation-id")
 	queueRoot := filepath.Join(dir, "telemetry", "queue")
 
-	if _, err := LoadInstallationID(path); err != nil {
+	oldID, err := LoadInstallationID(path)
+	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	if err := os.MkdirAll(filepath.Join(queueRoot, "metrics"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(queueRoot, "metrics", "old.json"), []byte("payload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	diagnosticRoot := filepath.Join(dir, "telemetry", "diagnostic")
+	if err := os.MkdirAll(diagnosticRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(diagnosticRoot, "retained.json"), []byte("payload"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -356,13 +368,16 @@ func TestResetInstallationID(t *testing.T) {
 	if _, err := os.Stat(queueRoot); !os.IsNotExist(err) {
 		t.Fatal("queue root should be removed")
 	}
+	if _, err := os.Stat(diagnosticRoot); !os.IsNotExist(err) {
+		t.Fatal("retained diagnostics should be removed")
+	}
 
 	// A new ID is generated on the next load.
 	id, err := LoadInstallationID(path)
 	if err != nil {
 		t.Fatalf("load after reset: %v", err)
 	}
-	if len(id) != 64 {
+	if len(id) != 64 || id == oldID {
 		t.Fatalf("expected new id")
 	}
 }

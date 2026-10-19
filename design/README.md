@@ -29,8 +29,8 @@ element and store an explicit choice under the `vitepress-theme-appearance`
 key, so the selected theme carries over when you move between the landing site
 and the Marketplace.
 
-The VitePress default theme owns the canonical top navigation, responsive menu,
-and appearance switch. `marketplace-navigation.css` adapts the Nuxt header to
-that baseline; the Nuxt adapter imports it. Keep links and theme state in
-application code, where each application's router and rendering runtime
-controls them.
+Each application owns its top navigation presentation. The VitePress default
+theme styles the documentation site, while
+`web/app/assets/css/navigation.css` styles the Marketplace header, responsive
+menu, and appearance switch. Keep links and theme state in application code,
+where each application's router and rendering runtime controls them.

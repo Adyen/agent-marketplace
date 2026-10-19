@@ -35,6 +35,9 @@ func resolveCodexDestinations(machineScope bool, repoRoot, homeDir string) ([]De
 				root = configured
 			}
 		}
+		if err := ValidateDestinationRoot(machineScope, repoRoot, homeDir, root); err != nil {
+			return nil, fmt.Errorf("codex destination root: %w", err)
+		}
 		root, err := canonicalCodexRoot(root)
 		if err != nil {
 			return nil, err
@@ -91,6 +94,16 @@ func codexTargetInfo(partition targetmeta.NativePartition) TargetInfo {
 		}
 		resourceDirs[kind] = path.Dir(pattern)
 	}
+	for _, aggregate := range partition.Aggregates {
+		// A hook aggregate owns the per-hook support directory under this
+		// partition's root.
+		if aggregate.Kind == ir.KindHook && aggregate.SupportDir != "" {
+			if resourceDirs == nil {
+				resourceDirs = make(map[ir.ResourceKind]string)
+			}
+			resourceDirs[aggregate.Kind] = aggregate.SupportDir
+		}
+	}
 	return TargetInfo{
 		Components:                    partition.Components,
 		PlanStrategy:                  PlanSubtree,
@@ -114,6 +127,14 @@ func codexVirtualTargetInfo() (TargetInfo, error) {
 	}
 	for _, partition := range layout.Partitions {
 		info.Components = append(info.Components, partition.Prefix)
+		for _, aggregate := range partition.Aggregates {
+			if aggregate.Kind == ir.KindHook && aggregate.SupportDir != "" {
+				if info.ResourceDirs == nil {
+					info.ResourceDirs = make(map[ir.ResourceKind]string)
+				}
+				info.ResourceDirs[aggregate.Kind] = path.Join(partition.Prefix, aggregate.SupportDir)
+			}
+		}
 		for kind, pattern := range partition.ResourcePaths {
 			if kind == ir.KindSkill {
 				info.SkillPathPattern = path.Join(partition.Prefix, pattern)

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,7 +17,6 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
-	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -165,10 +166,11 @@ resources:
 	writeSkill(t, working, "git-review", "Git review", nil)
 	commitAndPushAll(t, working, "seed install source")
 	repo := t.TempDir()
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
 harnesses: [factory]
-registries:
-  - url: `+origin+`
+sources:
+  tools:
+    git: file://`+origin+`
     ref: main
 `)
 	withWorkingDir(t, repo)
@@ -214,12 +216,10 @@ resources:
 	}
 	t.Cleanup(func() { _ = os.Chmod(authority, 0o700) })
 	config.SetTestOrganizationConfigPath(t, orgPath)
-	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
 harnesses: [factory]
-marketplaces:
-  - url: `+targetServer.URL+`
-    instance_id: target-mp
-    alias: target
+sources:
+  target: {marketplace: `+targetServer.URL+`}
 `)
 	repo := t.TempDir()
 	withWorkingDir(t, repo)
@@ -268,11 +268,33 @@ resources:
 		bindings:  make(map[string][]lockfile.GitRegistry),
 	}
 	_, _, _, err := prepareRuntimeLocks(context.Background(), t.TempDir(), "", lockMode{reuseInstall: reuse})
-	if err == nil || !marketplacelock.HasRequiredError([]error{err}) {
+	if err == nil || !pipeline.NeedsLockBootstrap([]error{err}) {
 		t.Fatalf("install commit without prepared transient state error = %v, want v4 Marketplace lock requirement", err)
 	}
 	if got := requests.Load(); got != 0 {
 		t.Fatalf("install commit cache-only revalidation made %d Marketplace requests", got)
+	}
+}
+
+func TestInstallCommitReuseKeepsUnrelatedMissingLockError(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  tools:\n    git: https://example.test/a.git\n    ref: main\n")
+	reuse := &preparedInstallLocks{
+		documents: make(map[string]lockfile.Document),
+		lockPaths: map[config.Source]string{config.RepoCommitted: filepath.Join(t.TempDir(), "lock.yaml")},
+		bindings:  make(map[string][]lockfile.GitRegistry),
+	}
+	_, _, _, err := prepareRuntimeLocks(context.Background(), t.TempDir(), "", lockMode{reuseInstall: reuse})
+	var lockErr *pipeline.LockViewError
+	if !errors.As(err, &lockErr) || lockErr.Code != "lock.missing" {
+		t.Fatalf("install commit with an unrelated missing lock error = %v, want lock.missing", err)
 	}
 }
 
@@ -329,6 +351,246 @@ resources:
 	}
 }
 
+func TestDoctorAcquiresMissingV4OrganizationMarketplaceLockWithoutPublishing(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	var requests atomic.Int32
+	server := newV4MarketplaceLockServerWithHook(t, func() { requests.Add(1) })
+	defer server.Close()
+
+	authority := t.TempDir()
+	orgPath := filepath.Join(authority, "config.yaml")
+	orgConfig := `apiVersion: agent-marketplace/v4
+sources:
+  hosted: {marketplace: ` + server.URL + `}
+resources:
+  hosted: {include: [tools/skill/review]}
+`
+	writeFile(t, orgPath, orgConfig)
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	withWorkingDir(t, t.TempDir())
+
+	for _, args := range [][]string{{"doctor"}, {"doctor", "--repair"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			t.Setenv("XDG_CACHE_HOME", filepath.Join(t.TempDir(), "empty-cache"))
+			before := requests.Load()
+			output, err := executeCommand(args...)
+			if err != nil {
+				t.Fatalf("%v: %v\n%s", args, err, output)
+			}
+			if !strings.Contains(output, "path: "+orgPath) || strings.Contains(output, "v4.marketplace-lock-required") || strings.Contains(output, "CONFIGURATION ERRORS") {
+				t.Fatalf("%v did not diagnose the acquired organization layer:\n%s", args, output)
+			}
+			if args[len(args)-1] == "--repair" && !strings.Contains(output, "nothing to repair") {
+				t.Fatalf("repair did not complete its preview:\n%s", output)
+			}
+			if requests.Load() == before {
+				t.Fatalf("%v did not acquire evidence from Marketplace with an empty cache", args)
+			}
+			if _, err := os.Lstat(filepath.Join(authority, "lock.yaml")); !os.IsNotExist(err) {
+				t.Fatalf("%v wrote organization lock: %v", args, err)
+			}
+			if got, err := os.ReadFile(orgPath); err != nil || string(got) != orgConfig {
+				t.Fatalf("%v changed organization config: %v\n%s", args, err, got)
+			}
+		})
+	}
+}
+
+func TestDoctorRepairRefusesOrganizationLockDeployedDuringConfirmation(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	server := newV4MarketplaceLockServer(t)
+	defer server.Close()
+	authority := t.TempDir()
+	orgPath := filepath.Join(authority, "config.yaml")
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v4
+sources:
+  hosted: {marketplace: `+server.URL+`}
+resources:
+  hosted: {include: [tools/skill/review]}
+`)
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [devin]\n")
+	repo := t.TempDir()
+	withWorkingDir(t, repo)
+	mcpPath, selection := prepareTwoDevinConflicts(t, repo)
+	before, err := os.ReadFile(mcpPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdinReader, stdinWriter := io.Pipe()
+	watcher := newPromptWatcher()
+	done := make(chan error, 1)
+	go func() {
+		done <- runDoctor(doctorOptions{out: watcher, in: stdinReader, isTTY: true, repair: true, resolve: staticResolve(selection)})
+	}()
+
+	select {
+	case <-watcher.promptCh:
+	case err := <-done:
+		t.Fatalf("doctor finished before confirmation: %v\n%s", err, watcher.String())
+	}
+	lockPath := filepath.Join(authority, "lock.yaml")
+	deployed := []byte("present: invalid\n")
+	if err := os.WriteFile(lockPath, deployed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stdinWriter.Write([]byte("y\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := stdinWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+		t.Fatalf("doctor did not reject deployed organization lock: %v\n%s", err, watcher.String())
+	}
+	if after, err := os.ReadFile(mcpPath); err != nil || !bytes.Equal(after, before) {
+		t.Fatalf("doctor changed aggregate after organization lock appeared: %v\n%s", err, after)
+	}
+	if after, err := os.ReadFile(lockPath); err != nil || !bytes.Equal(after, deployed) {
+		t.Fatalf("doctor changed deployed organization lock: %v\n%s", err, after)
+	}
+}
+
+func TestDoctorRepairRefusesIncompleteSelectionWhenTransientAcquisitionFails(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "empty-cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	authority := t.TempDir()
+	orgPath := filepath.Join(authority, "config.yaml")
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v4
+sources:
+  hosted: {marketplace: `+server.URL+`}
+resources:
+  hosted: {include: [tools/skill/review]}
+`)
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	repo := t.TempDir()
+	withWorkingDir(t, repo)
+	mcpPath, _ := prepareDevinRepairFixture(t, repo)
+	before, err := os.ReadFile(mcpPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	err = runDoctor(doctorOptions{out: &out, in: strings.NewReader("y\n"), isTTY: true, repair: true})
+	if err == nil || !strings.Contains(out.String(), "acquire transient organization Marketplace lock") {
+		t.Fatalf("doctor --repair must report failed acquisition and refuse an incomplete selection: %v\n%s", err, out.String())
+	}
+	if strings.Contains(out.String(), "v4.marketplace-lock-required") || strings.Contains(out.String(), "remove mcp-server") {
+		t.Fatalf("doctor --repair offered an orphan after Marketplace acquisition failed:\n%s", out.String())
+	}
+	if got, err := os.ReadFile(mcpPath); err != nil || !bytes.Equal(got, before) {
+		t.Fatalf("failed acquisition changed the aggregate: %v\n%s", err, got)
+	}
+	if requests.Load() == 0 {
+		t.Fatal("doctor did not attempt Marketplace acquisition")
+	}
+	if _, err := os.Lstat(filepath.Join(authority, "lock.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("doctor created organization lock on failed acquisition: %v", err)
+	}
+}
+
+func TestDoctorDoesNotReplacePresentV4OrganizationMarketplaceLock(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	var requests atomic.Int32
+	server := newV4MarketplaceLockServerWithHook(t, func() { requests.Add(1) })
+	defer server.Close()
+	authority := t.TempDir()
+	orgPath := filepath.Join(authority, "config.yaml")
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v4
+sources:
+  hosted: {marketplace: `+server.URL+`}
+resources:
+  hosted: {include: [tools/skill/review]}
+`)
+	lock, err := lockfile.Encode(lockfile.Document{
+		APIVersion: lockfile.APIVersionV2,
+		Scope:      lockfile.ScopeOrganization,
+		Marketplaces: []lockfile.MarketplaceLock{{
+			URL: "https://different.example", InstanceID: "other",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(authority, "lock.yaml")
+	if err := os.WriteFile(lockPath, lock, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	withWorkingDir(t, t.TempDir())
+
+	output, err := executeCommand("doctor")
+	if err != nil || !strings.Contains(output, "v4.marketplace-lock-mismatch") {
+		t.Fatalf("doctor did not report the present mismatched lock: %v\n%s", err, output)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("doctor contacted Marketplace %d times despite a present mismatched lock", got)
+	}
+	if got, err := os.ReadFile(lockPath); err != nil || !bytes.Equal(got, lock) {
+		t.Fatalf("doctor modified the present organization lock: %v\n%s", err, got)
+	}
+}
+
+func TestDoctorReportsOrganizationAcquisitionFailureAcrossAliases(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	var requests atomic.Int32
+	server := newV4MarketplaceLockServerWithHook(t, func() { requests.Add(1) })
+	defer server.Close()
+	orgPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v4
+sources:
+  first: {marketplace: `+server.URL+`}
+  second: {marketplace: `+server.URL+`}
+resources:
+  first: {include: [tools/skill/review]}
+  second: {include: [tools/skill/another]}
+`)
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	withWorkingDir(t, t.TempDir())
+
+	output, err := executeCommand("doctor")
+	if err != nil || !strings.Contains(output, "acquire transient organization Marketplace lock") || !strings.Contains(output, "tools/skill/another") || strings.Contains(output, "v4.marketplace-lock-required") {
+		t.Fatalf("doctor masked organization acquisition failure across aliases: %v\n%s", err, output)
+	}
+	if requests.Load() == 0 {
+		t.Fatal("doctor did not attempt acquisition for valid endpoint aliases")
+	}
+}
+
 func TestTUISyncReusesTransientOrganizationMarketplaceLock(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -358,7 +620,7 @@ resources:
 	repo := t.TempDir()
 	withWorkingDir(t, repo)
 
-	if err := runTUIDependencyLifecycle(context.Background(), repo, false); err != nil {
+	if _, err := runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repo), false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".factory", "skills", "review", "SKILL.md")); err != nil {
@@ -396,8 +658,12 @@ resources:
 	writeConfig(t, userPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 	config.SetTestOrganizationConfigPath(t, orgPath)
 	repo := t.TempDir()
+	ws, err := pipeline.NewWorkspace(repo, "")
+	if err != nil {
+		t.Fatalf("NewWorkspace: %v", err)
+	}
 	opts := pipeline.ResolveOptions{
-		RepoRoot: repo,
+		Workspace: ws,
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: orgPath,
 			GlobalPath:       userPath,
@@ -423,6 +689,7 @@ resources:
 	}
 }
 
+// spec: deployed-acquisition-locks/selection-edit-reuses-organization-evidence
 func TestTransientOrganizationMarketplaceLockSurvivesSelectionConfigEdits(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -447,6 +714,7 @@ func TestTransientOrganizationMarketplaceLockSurvivesSelectionConfigEdits(t *tes
 	}
 }
 
+// spec: deployed-acquisition-locks/harness-change-reacquires-organization-evidence
 func TestTransientOrganizationMarketplaceLockReacquiresWhenTargetHarnessesChange(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -567,7 +835,7 @@ resources:
 	repo := t.TempDir()
 	repoPath := filepath.Join(repo, ".agents", "config.yaml")
 	opts := pipeline.ResolveOptions{
-		RepoRoot: repo,
+		Workspace: mustWorkspace(t, repo),
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: orgPath,
 			GlobalPath:       userPath,
@@ -934,7 +1202,7 @@ func TestMissingV4MarketplaceLockHonorsAllowlistBeforeNetwork(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
 	defer server.Close()
 	orgPath := filepath.Join(t.TempDir(), "config.yaml")
-	writeFile(t, orgPath, "apiVersion: agent-marketplace/v2\nallowed_marketplaces: ['^https://allowed\\.example$']\n")
+	writeFile(t, orgPath, "apiVersion: agent-marketplace/v4\nallowed_marketplaces: ['^https://allowed\\.example$']\n")
 	config.SetTestOrganizationConfigPath(t, orgPath)
 	repo := t.TempDir()
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
@@ -1073,6 +1341,15 @@ func newV4MarketplaceServer(t testing.TB, instanceID, resourceName string, selfC
 			_ = json.NewEncoder(w).Encode(registry)
 		case strings.HasPrefix(r.URL.Path, "/api/v1/resources/tools/skill/"+resourceName) || strings.HasPrefix(r.URL.Path, "/api/v1/resources/src/skill/"+resourceName):
 			_ = json.NewEncoder(w).Encode(revision)
+		case strings.HasPrefix(r.URL.Path, "/api/v1/archives/sha256/"):
+			digest := "sha256:" + strings.TrimPrefix(r.URL.Path, "/api/v1/archives/sha256/")
+			placeholder, err := hccartifact.DerivePlaceholderArchive(raw, digest)
+			if digest != string(revision.ArchiveDigest) || err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/vnd.agent-marketplace.artifact.v1.tar+gzip")
+			_, _ = w.Write(placeholder)
 		case strings.HasPrefix(r.URL.Path, "/api/v1/artifacts/"):
 			w.Header().Set("Content-Type", "application/vnd.agent-marketplace.artifact.v1.tar+gzip")
 			_, _ = w.Write(raw)

@@ -1,0 +1,22 @@
+schema: 1
+harness: opencode
+evidence:
+  checked: "2026-10-14"
+  refs:
+    - docs/harness-validation/opencode.md
+    - https://opencode.ai/docs/agents/
+    - https://opencode.ai/docs/models/
+surfaces:
+  subagent:
+    model_field: model
+    omitted_model: inherit
+models:
+  anthropic/claude-sonnet-4-5-20250929:
+    model: anthropic/claude-sonnet-4-5-20250929
+  anthropic/claude-opus-4-20250514:
+    model: anthropic/claude-opus-4-20250514
+families:
+  anthropic/sonnet:
+    pin: anthropic/claude-sonnet-4-5-20250929
+  anthropic/opus:
+    pin: anthropic/claude-opus-4-20250514

@@ -23,6 +23,7 @@ const items = [
     content_digest: digest,
     description: hostileDescription,
     metadata: { owner: 'platform' },
+    installation_count: 7,
   },
   {
     registry_id: 'team-tools',
@@ -48,6 +49,16 @@ const registry = {
   license: 'MIT',
   listed: true,
 }
+
+const registrySummaries = [
+  { id: registry.id, slug: registry.slug },
+  { id: 'community-tools', slug: 'community-tools' },
+  { id: 'registry-with-an-extremely-long-name', slug: 'registry-with-an-extremely-long-name' },
+  ...Array.from({ length: 37 }, (_, index) => {
+    const number = String(index + 4).padStart(2, '0')
+    return { id: `registry-${number}`, slug: `registry-${number}-platform-tools` }
+  }),
+]
 
 const wellKnown = {
   instance_id: 'e2e-marketplace',
@@ -85,6 +96,7 @@ function resource(item, contentDigest = item.content_digest, revocation) {
       assessed_at: '2026-01-02T03:04:05Z',
     },
     occurrence: { coordinate, content_digest: contentDigest, commit: '8'.repeat(40), manifest_digest: `sha256:${'5'.repeat(64)}` },
+    ...(item.name === 'secure-review' ? { source: { repository_url: 'https://github.com/Adyen/agent-skills.git', path: 'skills/secure-review/SKILL.md', commit: '8'.repeat(40) } } : {}),
     ...(reason ? { revocation: { kind: 'revision', target_id: contentDigest, reason, applied_at: '2026-01-03T03:04:05Z' } } : {}),
   }
 }
@@ -119,7 +131,10 @@ function search(url) {
     const matchesQuery = !q || `${item.name} ${item.description}`.toLowerCase().includes(q)
     return matchesQuery && (!kind || item.kind === kind) && (!registryIDs.length || registryIDs.includes(item.registry_id))
   })
-  return { items: filtered.slice(offset, offset + limit), total: filtered.length, offset, limit }
+  const sorted = url.searchParams.get('sort') === 'installations'
+    ? [...filtered].sort((a, b) => (b.installation_count ?? 0) - (a.installation_count ?? 0))
+    : filtered
+  return { items: sorted.slice(offset, offset + limit), total: filtered.length, offset, limit }
 }
 
 const server = createServer((request, response) => {
@@ -138,11 +153,7 @@ const server = createServer((request, response) => {
   if (url.pathname === '/.well-known/agent-marketplace.json') return sendJson(response, 200, wellKnown)
   if (parts.join('/') === 'api/v1/search') return sendJson(response, 200, search(url))
   if (parts.join('/') === 'api/v1/instance') return sendJson(response, 200, { id: 'e2e-operator', name: 'E2E Marketplace', canonical_url: appOrigin, version: 'v4.0.0-e2e' })
-  if (parts.join('/') === 'api/v1/registries') return sendJson(response, 200, [
-    { id: registry.id, slug: registry.slug },
-    { id: 'community-tools', slug: 'community-tools' },
-    { id: 'registry-with-an-extremely-long-name', slug: 'registry-with-an-extremely-long-name' },
-  ])
+  if (parts.join('/') === 'api/v1/registries') return sendJson(response, 200, registrySummaries)
   if (parts.length === 4 && parts[0] === 'api' && parts[1] === 'v1' && parts[2] === 'registries') {
     return parts[3] === registry.id ? sendJson(response, 200, registry) : sendJson(response, 404, { error: 'registry not found' })
   }

@@ -3,6 +3,7 @@ package ownership
 import (
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"sort"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
@@ -294,6 +295,10 @@ type Evidence struct {
 	// nomination requires the CURRENT entry to still match it exactly.
 	recordedValueDigest string
 	resource            string
+	store               *Store
+	directory           string
+	metadataName        string
+	observed            metadataPin
 }
 
 // Kind returns the evidence kind.
@@ -420,6 +425,10 @@ func (s *Store) retainedEvidence(rel string) (map[string]Evidence, error) {
 				generation:          b.Manifest.Generation,
 				recordedValueDigest: entry.ValueDigest,
 				resource:            entry.Resource,
+				store:               s,
+				directory:           b.relative,
+				metadataName:        filepath.Base(metaPathFor(b.Path)),
+				observed:            b.manifestObserved,
 			}, entry.ID())
 		}
 	}
@@ -442,6 +451,10 @@ func (s *Store) retainedEvidence(rel string) (map[string]Evidence, error) {
 					generation:          journal.Generation,
 					recordedValueDigest: entry.ValueDigest,
 					resource:            entry.Resource,
+					store:               s,
+					directory:           filepath.Join(ownershipDirName, s.rootKey),
+					metadataName:        journalFileName,
+					observed:            journal.observed,
 				}, entry.ID())
 			}
 		}

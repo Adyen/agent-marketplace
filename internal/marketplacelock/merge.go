@@ -42,6 +42,12 @@ type marketplaceResourceEvidence struct {
 	SourcePath               string
 }
 
+func sameEvidenceModuloArchiveDigest(a, b marketplaceResourceEvidence) bool {
+	a.ArchiveDigest = ""
+	b.ArchiveDigest = ""
+	return a == b
+}
+
 func evidenceOf(record lockfile.MarketplaceResourceLock) marketplaceResourceEvidence {
 	return marketplaceResourceEvidence{
 		RegistryName:             record.RegistryName,
@@ -107,12 +113,18 @@ func ReplacePinsToV4(v4 *config.V4Config, current lockfile.Document, entry confi
 	if registryName == "" {
 		registryName = expectedRoot.RegistryID
 	}
+	registryNames := map[string]bool{registryName: true}
+	for _, binding := range existing.RegistryBindings {
+		if binding.RegistryID == expectedRoot.RegistryID {
+			registryNames[binding.Name] = true
+		}
+	}
 	for i := range v4.Requests {
 		request := &v4.Requests[i]
 		if request.SourceName != sourceName {
 			continue
 		}
-		if request.Registry == registryName && request.MarketplaceKind() == expectedRoot.Kind && request.Name == expectedRoot.Name && request.Options.Revision != "" {
+		if registryNames[request.Registry] && request.MarketplaceKind() == expectedRoot.Kind && request.Name == expectedRoot.Name && request.Options.Revision != "" {
 			return lockfile.Document{}, lockMismatch("marketplaces", "request %q pins an explicit revision and cannot be updated", request.Locator)
 		}
 	}
@@ -131,7 +143,7 @@ func ReplacePinsToV4(v4 *config.V4Config, current lockfile.Document, entry confi
 	if err != nil {
 		return lockfile.Document{}, fmt.Errorf("verify expected %s/%s/%s lock evidence: %w", expectedRoot.RegistryID, expectedRoot.Kind, expectedRoot.Name, err)
 	}
-	if evidenceOf(existing.Resources[root]) != evidenceOf(verified) {
+	if !sameEvidenceModuloArchiveDigest(evidenceOf(existing.Resources[root]), evidenceOf(verified)) {
 		return lockfile.Document{}, lockMismatch("marketplaces", "resource %s/%s/%s lock evidence no longer matches the expected pin", expectedRoot.RegistryID, expectedRoot.Kind, expectedRoot.Name)
 	}
 	existing.Resources = append(existing.Resources[:root], existing.Resources[root+1:]...)
@@ -215,8 +227,14 @@ func beginV4MarketplaceMerge(v4 *config.V4Config, current lockfile.Document, ent
 			merged = append(merged, *kept)
 		}
 	}
-	if existing != nil && existing.InstanceID != entry.InstanceID {
-		return lockfile.Document{}, "", "", nil, nil, lockMismatch("marketplaces", "endpoint %q instance %q conflicts with prepared identity %q", canonical, existing.InstanceID, entry.InstanceID)
+	if existing != nil {
+		if existing.InstanceID != entry.InstanceID {
+			return lockfile.Document{}, "", "", nil, nil, lockMismatch("marketplaces", "endpoint %q instance %q conflicts with prepared identity %q", canonical, existing.InstanceID, entry.InstanceID)
+		}
+		// Check namespace ownership before replacement removes the old root.
+		if _, err := marketplaceRegistryIDs(existing.RegistryBindings, existing.Resources); err != nil {
+			return lockfile.Document{}, "", "", nil, nil, err
+		}
 	}
 	return doc, canonical, sourceName, merged, existing, nil
 }
@@ -224,13 +242,13 @@ func beginV4MarketplaceMerge(v4 *config.V4Config, current lockfile.Document, ent
 func finishV4MarketplaceMerge(v4 *config.V4Config, doc lockfile.Document, canonical, sourceName string, entry config.MarketplaceEntry, merged []lockfile.MarketplaceLock, existing *lockfile.MarketplaceLock, pins []config.MarketplaceResourcePin, cache *marketplace.Cache) (lockfile.Document, error) {
 	next := lockfile.MarketplaceLock{URL: canonical, InstanceID: entry.InstanceID}
 	if existing != nil {
-		retained, err := reachableResources(v4, sourceName, existing.Resources)
+		retained, err := reachableResources(v4, sourceName, existing.Resources, existing.RegistryBindings...)
 		if err != nil {
 			return lockfile.Document{}, err
 		}
 		next.Resources = retained
 	}
-	resources := make(map[string]lockfile.MarketplaceResourceLock, len(next.Resources)+len(pins))
+	resources := make(map[string]lockfile.MarketplaceResourceLock, int64(len(next.Resources))+int64(len(pins)))
 	for _, record := range next.Resources {
 		key := record.RegistryID + "\x00" + record.Kind + "\x00" + record.Name
 		resources[key] = record
@@ -242,7 +260,7 @@ func finishV4MarketplaceMerge(v4 *config.V4Config, doc lockfile.Document, canoni
 		}
 		key := record.RegistryID + "\x00" + record.Kind + "\x00" + record.Name
 		if previous, ok := resources[key]; ok {
-			if evidenceOf(previous) != evidenceOf(record) {
+			if !sameEvidenceModuloArchiveDigest(evidenceOf(previous), evidenceOf(record)) {
 				return lockfile.Document{}, lockMismatch("marketplaces", "resource %s/%s/%s evidence conflicts with existing lock record", pin.RegistryID, pin.Kind, pin.Name)
 			}
 			record.SelectedBy = mergeSelectedBy(previous.SelectedBy, record.SelectedBy)
@@ -253,26 +271,14 @@ func finishV4MarketplaceMerge(v4 *config.V4Config, doc lockfile.Document, canoni
 	for _, record := range resources {
 		next.Resources = append(next.Resources, record)
 	}
-	bindings := make(map[string]string)
-	for _, record := range next.Resources {
-		if previous, ok := bindings[record.RegistryName]; ok && previous != record.RegistryID {
-			return lockfile.Document{}, lockMismatch("marketplaces", "registry binding %q resolves to both %q and %q", record.RegistryName, previous, record.RegistryID)
-		}
-		bindings[record.RegistryName] = record.RegistryID
-	}
+	var previousBindings []lockfile.MarketplaceRegistryBinding
 	if existing != nil {
-		for _, binding := range existing.RegistryBindings {
-			if _, referenced := bindings[binding.Name]; !referenced {
-				continue
-			}
-			if bindings[binding.Name] != binding.RegistryID {
-				return lockfile.Document{}, lockMismatch("marketplaces", "registry binding %q changes %q to %q", binding.Name, binding.RegistryID, bindings[binding.Name])
-			}
-		}
+		previousBindings = existing.RegistryBindings
 	}
-	next.RegistryBindings = nil
-	for name, id := range bindings {
-		next.RegistryBindings = append(next.RegistryBindings, lockfile.MarketplaceRegistryBinding{Name: name, RegistryID: id})
+	var err error
+	next.RegistryBindings, err = retainedRegistryBindings(v4, sourceName, next.Resources, previousBindings)
+	if err != nil {
+		return lockfile.Document{}, err
 	}
 	merged = append(merged, next)
 	doc.Marketplaces = merged
@@ -293,29 +299,80 @@ func pruneEndpointRecord(v4 *config.V4Config, record lockfile.MarketplaceLock) (
 	if sourceName == "" {
 		return nil, nil
 	}
-	resources, err := reachableResources(v4, sourceName, record.Resources)
+	resources, err := reachableResources(v4, sourceName, record.Resources, record.RegistryBindings...)
 	if err != nil {
 		return nil, err
 	}
 	kept := record
 	kept.Resources = resources
-	referenced := make(map[string]bool, len(resources))
-	for _, resource := range resources {
-		referenced[resource.RegistryName] = true
+	kept.RegistryBindings, err = retainedRegistryBindings(v4, sourceName, resources, record.RegistryBindings)
+	if err != nil {
+		return nil, err
 	}
-	bindings := make([]lockfile.MarketplaceRegistryBinding, 0, len(kept.RegistryBindings))
-	for _, binding := range kept.RegistryBindings {
-		if referenced[binding.Name] {
-			bindings = append(bindings, binding)
-		}
-	}
-	kept.RegistryBindings = bindings
 	return &kept, nil
 }
 
-func reachableResources(v4 *config.V4Config, sourceName string, records []lockfile.MarketplaceResourceLock) ([]lockfile.MarketplaceResourceLock, error) {
+// marketplaceRegistryIDs checks the endpoint's namespace before pruning can
+// discard evidence of a conflicting binding.
+func marketplaceRegistryIDs(bindings []lockfile.MarketplaceRegistryBinding, records []lockfile.MarketplaceResourceLock) (map[string]string, error) {
+	if len(bindings) == 0 {
+		return nil, nil
+	}
+	ids := make(map[string]string, len(bindings))
+	for _, binding := range bindings {
+		if previous, ok := ids[binding.Name]; ok && previous != binding.RegistryID {
+			return nil, lockMismatch("marketplaces", "registry binding %q resolves to both %q and %q", binding.Name, previous, binding.RegistryID)
+		}
+		ids[binding.Name] = binding.RegistryID
+	}
+	for _, record := range records {
+		if id, ok := ids[record.RegistryName]; ok && id != record.RegistryID {
+			return nil, lockMismatch("marketplaces", "registry binding %q changes %q to %q", record.RegistryName, id, record.RegistryID)
+		}
+	}
+	return ids, nil
+}
+
+func retainedRegistryBindings(v4 *config.V4Config, sourceName string, records []lockfile.MarketplaceResourceLock, previous []lockfile.MarketplaceRegistryBinding) ([]lockfile.MarketplaceRegistryBinding, error) {
+	oldIDs, err := marketplaceRegistryIDs(previous, records)
+	if err != nil {
+		return nil, err
+	}
+	bindings := make(map[string]string)
+	resources := make(map[string]bool, len(records))
+	for _, record := range records {
+		if id, ok := bindings[record.RegistryName]; ok && id != record.RegistryID {
+			return nil, lockMismatch("marketplaces", "registry binding %q resolves to both %q and %q", record.RegistryName, id, record.RegistryID)
+		}
+		bindings[record.RegistryName] = record.RegistryID
+		resources[record.RegistryID+"\x00"+record.Kind+"\x00"+record.Name] = true
+	}
+	// A current slug and an authored alias may name the same immutable registry.
+	// Preserve only aliases still selecting a resource of that exact registry;
+	// unrelated old bindings must not grant a replacement a different identity.
+	for _, request := range v4.Requests {
+		if request.SourceName != sourceName {
+			continue
+		}
+		id, ok := oldIDs[request.Registry]
+		if ok && resources[id+"\x00"+request.MarketplaceKind()+"\x00"+request.Name] {
+			bindings[request.Registry] = id
+		}
+	}
+	var retained []lockfile.MarketplaceRegistryBinding
+	for name, id := range bindings {
+		retained = append(retained, lockfile.MarketplaceRegistryBinding{Name: name, RegistryID: id})
+	}
+	return retained, nil
+}
+
+func reachableResources(v4 *config.V4Config, sourceName string, records []lockfile.MarketplaceResourceLock, registryBindings ...lockfile.MarketplaceRegistryBinding) ([]lockfile.MarketplaceResourceLock, error) {
 	if _, ok := v4.Sources[sourceName]; !ok {
 		return nil, lockMismatch("marketplaces", "lock references missing v4 source %q", sourceName)
+	}
+	registryIDs, err := marketplaceRegistryIDs(registryBindings, records)
+	if err != nil {
+		return nil, err
 	}
 	requested := make(map[string]bool)
 	for i := range v4.Requests {
@@ -323,7 +380,15 @@ func reachableResources(v4 *config.V4Config, sourceName string, records []lockfi
 		if request.SourceName != sourceName {
 			continue
 		}
-		requested[request.Registry+"\x00"+request.MarketplaceKind()+"\x00"+request.Name] = true
+		registry := request.Registry
+		if len(registryBindings) > 0 {
+			var ok bool
+			registry, ok = registryIDs[request.Registry]
+			if !ok {
+				continue
+			}
+		}
+		requested[registry+"\x00"+request.MarketplaceKind()+"\x00"+request.Name] = true
 	}
 	retained := make([]lockfile.MarketplaceResourceLock, 0, len(records))
 	selected := make(map[string]bool)
@@ -332,7 +397,11 @@ func reachableResources(v4 *config.V4Config, sourceName string, records []lockfi
 		var next []lockfile.MarketplaceResourceLock
 		progress := false
 		for _, record := range remaining {
-			direct := requested[record.RegistryName+"\x00"+record.Kind+"\x00"+record.Name]
+			registry := record.RegistryName
+			if len(registryBindings) > 0 {
+				registry = record.RegistryID
+			}
+			direct := requested[registry+"\x00"+record.Kind+"\x00"+record.Name]
 			member := false
 			for _, edge := range record.SelectedBy {
 				if selected[edge.RegistryID+"\x00"+edge.Name+"\x00"+string(edge.Revision)] {

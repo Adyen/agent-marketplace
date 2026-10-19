@@ -2,15 +2,15 @@ import assert from "node:assert/strict";
 
 import { expect, test } from "@microsoft/tui-test";
 
-import { declineLegacyMigration, defineFixture, step, waitForExit } from "./helpers.js";
+import { defineFixture, step, waitForExit } from "./helpers.js";
 
 const journey = defineFixture("resize-and-recover", ["tui"]);
 test.use(journey.options);
 test.beforeAll(journey.setup);
 test.afterAll(journey.cleanup);
 
+// spec: tui-rendering/undersized-terminal
 test("minimum-size gate preserves selection and blocks toggles", async ({ terminal }) => {
-  await declineLegacyMigration(terminal);
   await step("settled fixture baseline", () => {}, async () => {
     await expect(terminal.getByText("beta-skill", { strict: false })).toBeVisible();
     await expect(terminal.getByText("alpha-skill", { strict: false })).toBeVisible();
@@ -46,7 +46,7 @@ test("minimum-size gate preserves selection and blocks toggles", async ({ termin
     await expect(terminal.getByText("Resize required")).not.toBeVisible();
     await expect(terminal.getByText(/Available\s+\(1\)/g)).toBeVisible();
     await expect(terminal.getByText(/Name:\s+alpha-skill/g)).toBeVisible();
-    await expect(terminal.getByText("?:help · s:sync · q:quit")).toBeVisible();
+    await expect(terminal.getByText(/: (commands|cmds) · \? help · q quit/g)).toBeVisible();
   });
 
   await step("quit", () => terminal.write("q"), async () => {

@@ -35,8 +35,8 @@ func TestComponentsForScope(t *testing.T) {
 	}{
 		{"windsurf repo scope keeps workflows", hcc.TargetWindsurf, false, []string{"skills", "workflows", "hook-support"}},
 		{"windsurf machine scope renames workflows", hcc.TargetWindsurf, true, []string{"skills", "global_workflows", "hook-support"}},
-		{"claude machine scope unchanged", hcc.TargetClaude, true, []string{"skills", "commands", "agents", "hooks", ".claude-plugin"}},
-		{"gemini machine scope unchanged", hcc.TargetGemini, true, []string{"skills", "commands"}},
+		{"claude machine scope unchanged", hcc.TargetClaude, true, []string{"skills", "commands", "agents", "hooks", "hook-support", ".claude-plugin"}},
+		{"gemini machine scope unchanged", hcc.TargetGemini, true, []string{"skills", "commands", "hook-support"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

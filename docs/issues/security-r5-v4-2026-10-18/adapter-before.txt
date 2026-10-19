@@ -1,0 +1,46 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4LockChainAdaptation/resources=1-16         	  866850	      2438 ns/op	    2986 B/op	      30 allocs/op
+BenchmarkV4LockChainAdaptation/resources=1-16         	 1000000	      2388 ns/op	    2986 B/op	      30 allocs/op
+BenchmarkV4LockChainAdaptation/resources=1-16         	  977810	      2486 ns/op	    2986 B/op	      30 allocs/op
+BenchmarkV4LockChainAdaptation/resources=1-16         	  941121	      2485 ns/op	    2986 B/op	      30 allocs/op
+BenchmarkV4LockChainAdaptation/resources=1-16         	 1000000	      2435 ns/op	    2986 B/op	      30 allocs/op
+BenchmarkV4LockChainAdaptation/resources=32-16        	   39838	     59569 ns/op	   68694 B/op	     643 allocs/op
+BenchmarkV4LockChainAdaptation/resources=32-16        	   40224	     59276 ns/op	   68695 B/op	     643 allocs/op
+BenchmarkV4LockChainAdaptation/resources=32-16        	   40742	     59826 ns/op	   68695 B/op	     643 allocs/op
+BenchmarkV4LockChainAdaptation/resources=32-16        	   41024	     60593 ns/op	   68695 B/op	     643 allocs/op
+BenchmarkV4LockChainAdaptation/resources=32-16        	   38866	     61235 ns/op	   68695 B/op	     643 allocs/op
+BenchmarkV4LockChainAdaptation/resources=128-16       	    6932	    344557 ns/op	  267138 B/op	    2478 allocs/op
+BenchmarkV4LockChainAdaptation/resources=128-16       	    6981	    338327 ns/op	  267141 B/op	    2478 allocs/op
+BenchmarkV4LockChainAdaptation/resources=128-16       	    6765	    343258 ns/op	  267141 B/op	    2478 allocs/op
+BenchmarkV4LockChainAdaptation/resources=128-16       	    6759	    339434 ns/op	  267135 B/op	    2478 allocs/op
+BenchmarkV4LockChainAdaptation/resources=128-16       	    6854	    340405 ns/op	  267140 B/op	    2478 allocs/op
+BenchmarkV4LockChainAdaptation/resources=512-16       	     752	   3180274 ns/op	 1086408 B/op	   12086 allocs/op
+BenchmarkV4LockChainAdaptation/resources=512-16       	     717	   3233345 ns/op	 1086415 B/op	   12086 allocs/op
+BenchmarkV4LockChainAdaptation/resources=512-16       	     751	   3225181 ns/op	 1086415 B/op	   12086 allocs/op
+BenchmarkV4LockChainAdaptation/resources=512-16       	     736	   3215136 ns/op	 1086418 B/op	   12086 allocs/op
+BenchmarkV4LockChainAdaptation/resources=512-16       	     732	   3217829 ns/op	 1086412 B/op	   12086 allocs/op
+BenchmarkV4ExactExclusionAdaptation/exclusions=1-16   	 3017654	       800.4 ns/op	    2112 B/op	      11 allocs/op
+BenchmarkV4ExactExclusionAdaptation/exclusions=1-16   	 3052729	       813.1 ns/op	    2112 B/op	      11 allocs/op
+BenchmarkV4ExactExclusionAdaptation/exclusions=1-16   	 2988042	       827.9 ns/op	    2112 B/op	      11 allocs/op
+BenchmarkV4ExactExclusionAdaptation/exclusions=1-16   	 2926188	       823.2 ns/op	    2112 B/op	      11 allocs/op
+BenchmarkV4ExactExclusionAdaptation/exclusions=1-16   	 3004966	       828.1 ns/op	    2112 B/op	      11 allocs/op
+BenchmarkV4ExactExclusionAdaptation/exclusions=16-16  	   27626	     87947 ns/op	  119784 B/op	     539 allocs/op
+BenchmarkV4ExactExclusionAdaptation/exclusions=16-16  	   27700	     87468 ns/op	  119784 B/op	     539 allocs/op
+BenchmarkV4ExactExclusionAdaptation/exclusions=16-16  	   27982	     87992 ns/op	  119784 B/op	     539 allocs/op
+BenchmarkV4ExactExclusionAdaptation/exclusions=16-16  	   26790	     89996 ns/op	  119784 B/op	     539 allocs/op
+BenchmarkV4ExactExclusionAdaptation/exclusions=16-16  	   27087	     89198 ns/op	  119784 B/op	     539 allocs/op
+BenchmarkV4ExactExclusionAdaptation/exclusions=64-16  	     885	   2688734 ns/op	 1855786 B/op	    5675 allocs/op
+BenchmarkV4ExactExclusionAdaptation/exclusions=64-16  	     855	   2701435 ns/op	 1855786 B/op	    5675 allocs/op
+BenchmarkV4ExactExclusionAdaptation/exclusions=64-16  	     902	   2681350 ns/op	 1855786 B/op	    5675 allocs/op
+BenchmarkV4ExactExclusionAdaptation/exclusions=64-16  	     906	   2744635 ns/op	 1855786 B/op	    5675 allocs/op
+BenchmarkV4ExactExclusionAdaptation/exclusions=64-16  	     885	   2698704 ns/op	 1855786 B/op	    5675 allocs/op
+BenchmarkV4ExactExclusionAdaptation/exclusions=128-16 	     130	  18217544 ns/op	 7241234 B/op	   20019 allocs/op
+BenchmarkV4ExactExclusionAdaptation/exclusions=128-16 	     127	  18645076 ns/op	 7241238 B/op	   20019 allocs/op
+BenchmarkV4ExactExclusionAdaptation/exclusions=128-16 	     129	  18433067 ns/op	 7241233 B/op	   20019 allocs/op
+BenchmarkV4ExactExclusionAdaptation/exclusions=128-16 	     132	  18285361 ns/op	 7241232 B/op	   20019 allocs/op
+BenchmarkV4ExactExclusionAdaptation/exclusions=128-16 	     132	  18135620 ns/op	 7241232 B/op	   20019 allocs/op
+PASS
+ok  	github.com/Adyen/agent-marketplace/internal/config	95.903s

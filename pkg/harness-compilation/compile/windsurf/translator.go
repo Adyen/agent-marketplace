@@ -13,10 +13,9 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mdc"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/hookpolicy"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
-
-const claudePluginRootToken = "${CLAUDE_PLUGIN_ROOT}"
 
 var (
 	envInterpolationPattern  = regexp.MustCompile(`^\$\{([A-Z0-9_]+)\}$`)
@@ -172,7 +171,7 @@ func translateCommand(command *ir.Command) ([]artifact.Artifact, []diag.Diagnost
 }
 
 func translateSubagent(subagent *ir.Subagent) ([]artifact.Artifact, []diag.Diagnostic) {
-	if len(subagent.DisallowedTools) > 0 || subagent.Isolation != "" {
+	if len(subagent.DisallowedTools) > 0 || subagent.Isolation != "" || compilepkg.SubagentReadOnly(subagent) {
 		return nil, []diag.Diagnostic{{
 			Code:     diag.CodeSubagentSecurityRestrictionUnsupported,
 			Severity: diag.SeverityError,
@@ -195,61 +194,39 @@ func translateSubagent(subagent *ir.Subagent) ([]artifact.Artifact, []diag.Diagn
 }
 
 func translateHook(hook *ir.Hook, opts compilepkg.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
-	command := hook.Command
 	var diags []diag.Diagnostic
 
 	if hook.Type == "prompt" || hook.Prompt != "" {
-		return nil, []diag.Diagnostic{{Code: diag.CodeHookPromptUnsupported, Severity: diag.SeverityWarning, Target: string(compilepkg.TargetWindsurf), Resource: hook.Name(), Message: "Windsurf cannot represent prompt hooks; hook artifact suppressed", Hint: "Use a command hook on Windsurf", Source: compilepkg.DiagSource(hook.Source)}}, nil
+		return nil, []diag.Diagnostic{{Code: diag.CodeHookPromptUnsupported, Severity: diag.SeverityError, Target: string(compilepkg.TargetWindsurf), Resource: hook.Name(), Message: "Windsurf cannot represent prompt hooks; hook artifact suppressed", Hint: "Use a command hook on Windsurf", Source: compilepkg.DiagSource(hook.Source)}}, nil
 	}
 	if hook.Type != "command" {
-		return nil, []diag.Diagnostic{{Code: diag.CodeHookWindsurfUnsupportedType, Severity: diag.SeverityWarning, Target: string(compilepkg.TargetWindsurf), Resource: hook.Name(), Message: "Windsurf cannot represent this hook type; hook artifact suppressed", Hint: "Use a command hook on Windsurf", Source: compilepkg.DiagSource(hook.Source)}}, nil
+		return nil, []diag.Diagnostic{{Code: diag.CodeHookWindsurfUnsupportedType, Severity: diag.SeverityError, Target: string(compilepkg.TargetWindsurf), Resource: hook.Name(), Message: "Windsurf cannot represent this hook type; hook artifact suppressed", Hint: "Use a command hook on Windsurf", Source: compilepkg.DiagSource(hook.Source)}}, nil
 	}
 
-	// Map Claude event to Windsurf event using the mapping table.
-	windsurfEvent := ""
-	if sidecar := hook.Ext.Windsurf; sidecar != nil && sidecar.OriginalHookEvent != "" {
-		windsurfEvent = sidecar.OriginalHookEvent
-	} else {
-		mappedEvent, ok := mapping.HookEvent(hook.Event, hook.Matcher, compilepkg.TargetWindsurf)
-		if !ok {
-			diags = append(diags, diag.Diagnostic{
-				Code:     diag.CodeHookWindsurfEventUnmappable,
-				Severity: diag.SeverityWarning,
-				Target:   string(compilepkg.TargetWindsurf),
-				Resource: hook.Name(),
-				Message:  fmt.Sprintf("Claude hook event %q has no Windsurf equivalent; hook dropped", hook.Event),
-				Hint:     "Consider using a mappable event (PreToolUse with a known tool matcher, UserPromptSubmit, or Stop)",
-				Source:   compilepkg.DiagSource(hook.Source),
-			})
-			return nil, diags, nil
-		}
-		windsurfEvent = mappedEvent
+	// Event, matcher, timeout, and command translation come from the
+	// catalog-driven hookpolicy resolver (OpenSpec native-hook-integration,
+	// task 3.3). A BASE-era sidecar that preserved the original Windsurf
+	// event is normalized to explicit Windsurf provenance on a clone, so the
+	// same-harness resolver sees the native event spelling and still applies
+	// the type, event, timeout, and plugin-root refusal rules.
+	resolvedHook := hook
+	if hook.HookSource == "" && hook.Ext.Windsurf != nil && hook.Ext.Windsurf.OriginalHookEvent != "" {
+		clone := *hook
+		clone.HookSource = string(compilepkg.TargetWindsurf)
+		clone.Event = hook.Ext.Windsurf.OriginalHookEvent
+		resolvedHook = &clone
 	}
-
-	if hook.Timeout != nil {
-		return nil, []diag.Diagnostic{{Code: diag.CodeHookWindsurfTimeoutUnsupported, Severity: diag.SeverityError, Target: string(compilepkg.TargetWindsurf), Resource: hook.Name(), Message: "Windsurf cannot represent an explicit hook timeout; hook artifact suppressed", Hint: "Remove the timeout explicitly or use a target that supports it", Source: compilepkg.DiagSource(hook.Source)}}, nil
+	scope := hookpolicy.ScopeRepository
+	if opts.Scope() == compilepkg.ScopeUser {
+		scope = hookpolicy.ScopeMachine
 	}
-
-	if strings.Contains(command, claudePluginRootToken) {
-		if pluginRoot := opts.PluginRoot(); pluginRoot != "" {
-			command = strings.ReplaceAll(command, claudePluginRootToken, pluginRoot)
-		} else {
-			_, literal := mapping.EnvToken(claudePluginRootToken, compilepkg.TargetWindsurf)
-			hint := "Provide compile.WithPluginRoot(...) to materialize ${CLAUDE_PLUGIN_ROOT}; leaving the raw token in place may reduce portability across Windsurf workspaces."
-			if !literal {
-				hint = "Windsurf requires a literal plugin path for ${CLAUDE_PLUGIN_ROOT}; provide compile.WithPluginRoot(...)."
-			}
-			diags = append(diags, diag.Diagnostic{
-				Code:     diag.CodeHookWindsurfEnvTokenExpanded,
-				Severity: diag.SeverityWarning,
-				Target:   string(compilepkg.TargetWindsurf),
-				Resource: hook.Name(),
-				Message:  "Windsurf could not materialize ${CLAUDE_PLUGIN_ROOT} without a compile-time plugin root",
-				Hint:     hint,
-				Source:   compilepkg.DiagSource(hook.Source),
-			})
-		}
+	resolved := hookpolicy.Resolve(resolvedHook, compilepkg.TargetWindsurf, scope, opts.PluginRoot())
+	if resolved.Failed() {
+		return nil, resolved.Diagnostics, nil
 	}
+	windsurfEvent := resolved.Event
+	command := resolved.Command
+	diags = append(diags, resolved.Diagnostics...)
 
 	extra := maps.Clone(hook.Extra)
 	for _, field := range []struct {
@@ -395,7 +372,6 @@ func translateMcpServer(server *ir.McpServer, opts compilepkg.Options) ([]artifa
 }
 
 func translateMcpEnvValue(value string) string {
-	name, shellReference := mapping.WindsurfShellEnvName(value)
 	switch {
 	case strings.HasPrefix(value, "${env:") && strings.HasSuffix(value, "}"):
 		return replaceInterpolation(mapping.McpInterpolation("${env:VAR}", compilepkg.TargetWindsurf), "VAR", strings.TrimSuffix(strings.TrimPrefix(value, "${env:"), "}"))
@@ -404,8 +380,6 @@ func translateMcpEnvValue(value string) string {
 	case envInterpolationPattern.MatchString(value):
 		match := envInterpolationPattern.FindStringSubmatch(value)
 		return replaceInterpolation(mapping.McpInterpolation("inline", compilepkg.TargetWindsurf), "VAR", match[1])
-	case shellReference:
-		return replaceInterpolation(mapping.McpInterpolation("inline", compilepkg.TargetWindsurf), "VAR", name)
 	case fileInterpolationPattern.MatchString(value):
 		match := fileInterpolationPattern.FindStringSubmatch(value)
 		return replaceInterpolation(mapping.McpInterpolation("${file:PATH}", compilepkg.TargetWindsurf), "PATH", match[1])

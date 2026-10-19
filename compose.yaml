@@ -2,7 +2,7 @@ name: agent-marketplace-sqlite
 
 x-marketplace-platform: &marketplace-platform ${MARKETPLACE_PLATFORM:-}
 x-marketplace-build-args: &marketplace-build-args
-  GO_BUILD_IMAGE: ${GO_BUILD_IMAGE:-golang:1.26.6-bookworm}
+  GO_BUILD_IMAGE: ${GO_BUILD_IMAGE:-golang:1.26.9-bookworm}
   RUNTIME_IMAGE: ${RUNTIME_IMAGE:-gcr.io/distroless/static-debian12:nonroot}
 
 services:
@@ -49,8 +49,9 @@ services:
       args:
         NODE_IMAGE: ${NODE_IMAGE:-node:24-alpine}
     environment:
-      NUXT_APP_BASE_URL: /marketplace/
+      NUXT_APP_BASE_URL: /
       NUXT_PUBLIC_API_BASE: /
+      NUXT_PUBLIC_DOCS_ENABLED: "false"
       NUXT_API_BASE_INTERNAL: http://app:8080
     read_only: true
     tmpfs:
@@ -66,35 +67,6 @@ services:
       app:
         condition: service_healthy
 
-  site:
-    platform: *marketplace-platform
-    build:
-      context: ./site
-      dockerfile: Dockerfile
-      additional_contexts:
-        design: ./design
-      args:
-        NODE_IMAGE: ${NODE_IMAGE:-node:24-alpine}
-        NGINX_IMAGE: ${SITE_NGINX_IMAGE:-${NGINX_IMAGE:-nginxinc/nginx-unprivileged:1.29-alpine}}
-    read_only: true
-    tmpfs:
-      - /var/cache/nginx
-      - /var/run
-      - /tmp
-    cap_drop:
-      - ALL
-    # Keep standard mirrored Nginx images usable locally; the default site
-    # image still runs as its unprivileged user.
-    cap_add:
-      - CHOWN
-      - SETUID
-      - SETGID
-    security_opt:
-      - no-new-privileges:true
-    expose:
-      - "8080"
-    restart: unless-stopped
-
   proxy:
     platform: *marketplace-platform
     image: ${NGINX_IMAGE:-nginx:1.27-alpine}
@@ -103,6 +75,7 @@ services:
     volumes:
       - ./deploy/compose/sqlite-filesystem/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ./deploy/compose/sqlite-filesystem/proxy-headers.conf:/etc/nginx/proxy-headers.conf:ro
+      - ./deploy/compose/shared/docs-disabled.conf:/etc/nginx/marketplace-docs.conf:ro
     read_only: true
     tmpfs:
       - /var/cache/nginx
@@ -121,8 +94,6 @@ services:
       app:
         condition: service_healthy
       web:
-        condition: service_healthy
-      site:
         condition: service_healthy
 
 volumes:

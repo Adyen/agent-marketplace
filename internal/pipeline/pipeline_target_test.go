@@ -20,25 +20,28 @@ func TestSync_SurfacesIncompatibleOrganizationDefaultAsWarning(t *testing.T) {
 	writeSkill(t, registryRoot, "default-skill", "A default skill", []string{"test"})
 
 	orgPath := filepath.Join(t.TempDir(), "org.yaml")
-	writeFile(t, orgPath, `apiVersion: agent-marketplace/v3
-registries:
-  - url: `+registryRoot+`
-    ref: main
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v4
+sources:
+  registry:
+    directory: `+registryRoot+`
     source_harness: factory
-    default: true
+resources:
+  registry:
+    required: false
+    all: true
     harnesses:
       - claude
 `)
 
 	userPath := filepath.Join(t.TempDir(), "user.yaml")
-	writeFile(t, userPath, `apiVersion: agent-marketplace/v2
+	writeFile(t, userPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
 `)
 
 	result := Sync(context.Background(), ResolveOptions{
-		RepoRoot: repoRoot,
-		NoBackup: true,
+		Workspace: mustWorkspace(t, repoRoot),
+		NoBackup:  true,
 		EffectiveOpts: config.LoadEffectiveOptions{
 			OrganizationPath: orgPath,
 			GlobalPath:       userPath,

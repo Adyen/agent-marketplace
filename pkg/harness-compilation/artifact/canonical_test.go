@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,8 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+// spec: marketplace-api/canonical-artifact-round-trip
+// spec: marketplace-api/payload-contains-resource-name
 func TestCanonicalArtifactRoundTripForKinds(t *testing.T) {
 	cases := []struct {
 		name string
@@ -61,6 +64,69 @@ func TestCanonicalArtifactRoundTripForKinds(t *testing.T) {
 				t.Fatalf("ValidateArchive: %v", err)
 			}
 		})
+	}
+}
+
+func TestCanonicalProvenanceRoundTrip(t *testing.T) {
+	cases := []struct {
+		name string
+		r    ir.Resource
+		want string
+		key  string
+	}{
+		{"hook", ir.NewHookWithOptions("h", "SessionEnd", "x", "command", nil, ir.SourceRef{}, ir.WithHookSource("codex")), "codex", "HookSource"},
+		{"subagent", ir.NewSubagentWithOptions("a", "", "", "", nil, "", nil, "", nil, ir.SourceRef{}, ir.WithSubagentToolSource("devin")), "devin", "ToolSource"},
+		{"skill", ir.NewSkillWithOptions("s", "", "", nil, nil, ir.SourceRef{}, ir.WithSkillToolSource("gemini")), "gemini", "ToolSource"},
+		{"command", commandWithToolSource("devin"), "devin", "ToolSource"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a, err := FromIR(tc.r)
+			if err != nil {
+				t.Fatalf("FromIR: %v", err)
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(a.Payload, &payload); err != nil {
+				t.Fatalf("unmarshal payload: %v", err)
+			}
+			if payload[tc.key] != tc.want {
+				t.Fatalf("payload[%q] = %v, want %q", tc.key, payload[tc.key], tc.want)
+			}
+			back, err := DecodeResource(tc.name, a.Payload)
+			if err != nil {
+				t.Fatalf("DecodeResource: %v", err)
+			}
+			var got string
+			switch r := back.(type) {
+			case *ir.Hook:
+				got = r.HookSource
+			case *ir.Subagent:
+				got = r.ToolSource
+			case *ir.Skill:
+				got = r.ToolSource
+			case *ir.Command:
+				got = r.ToolSource
+			}
+			if got != tc.want {
+				t.Fatalf("round-tripped provenance = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCanonicalProvenanceExtraCollisionSkipped(t *testing.T) {
+	hook := ir.NewHook("h", "Stop", "x", "command", map[string]any{"hooksource": "spoofed"}, ir.SourceRef{})
+	hook.HookSource = "codex"
+	a, err := FromIR(hook)
+	if err != nil {
+		t.Fatalf("FromIR: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(a.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload["HookSource"] != "codex" {
+		t.Fatalf("extra collision leaked into payload: %v", payload)
 	}
 }
 
@@ -157,6 +223,7 @@ func TestCanonicalArtifactEncodeRejectsBadPaths(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/security-rejection-during-decode
 func TestCanonicalArtifactDecodeRejectsLinks(t *testing.T) {
 	raw := writeTarGz(t, func(tw *tar.Writer) {
 		hdr := &tar.Header{
@@ -175,6 +242,7 @@ func TestCanonicalArtifactDecodeRejectsLinks(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/security-rejection-during-decode
 func TestCanonicalArtifactDecodeRejectsHardLinks(t *testing.T) {
 	raw := writeTarGz(t, func(tw *tar.Writer) {
 		hdr := &tar.Header{
@@ -193,6 +261,7 @@ func TestCanonicalArtifactDecodeRejectsHardLinks(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/security-rejection-during-decode
 func TestCanonicalArtifactDecodeRejectsAbsolutePaths(t *testing.T) {
 	raw := writeTarGz(t, func(tw *tar.Writer) {
 		hdr := &tar.Header{
@@ -211,6 +280,7 @@ func TestCanonicalArtifactDecodeRejectsAbsolutePaths(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/security-rejection-during-decode
 func TestCanonicalArtifactDecodeRejectsPathTraversal(t *testing.T) {
 	raw := writeTarGz(t, func(tw *tar.Writer) {
 		hdr := &tar.Header{
@@ -229,6 +299,25 @@ func TestCanonicalArtifactDecodeRejectsPathTraversal(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/unsafe-entry-name-is-not-echoed
+func TestCanonicalArtifactDecodeRejectionOmitsEntryName(t *testing.T) {
+	for name, reason := range map[string]string{
+		"/etc/unsafe-entry":          "absolute",
+		"foo/../../etc/unsafe-entry": "traversal",
+	} {
+		raw := writeTarGz(t, func(tw *tar.Writer) {
+			if err := tw.WriteHeader(&tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0o644}); err != nil {
+				t.Fatalf("WriteHeader: %v", err)
+			}
+		})
+		_, _, err := Decode(bytes.NewReader(raw))
+		if err == nil || !strings.Contains(err.Error(), reason) || strings.Contains(err.Error(), "unsafe-entry") {
+			t.Fatalf("Decode(%q) error = %v, want %s rejection without the entry name", name, err, reason)
+		}
+	}
+}
+
+// spec: marketplace-api/security-rejection-during-decode
 func TestCanonicalArtifactDecodeRejectsDeviceFiles(t *testing.T) {
 	raw := writeTarGz(t, func(tw *tar.Writer) {
 		hdr := &tar.Header{
@@ -258,6 +347,7 @@ func TestCanonicalArtifactVerifyRejectsBadContentDigest(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/archive-digest-verification-catches-archive-tampering
 func TestCanonicalArtifactVerifyRejectsBadArchiveDigest(t *testing.T) {
 	a, err := FromIR(ir.NewSkill("review", "Review", "body", nil, nil, ir.SourceRef{}))
 	if err != nil {
@@ -282,6 +372,7 @@ func TestCanonicalArtifactVerifyRejectsBadArchiveDigest(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/oversized-resource-rejection
 func TestCanonicalArtifactValidateRejectsOversizedPayload(t *testing.T) {
 	a, err := FromIR(ir.NewSkill("review", "Review", "body", nil, nil, ir.SourceRef{}))
 	if err != nil {
@@ -298,6 +389,7 @@ func TestCanonicalArtifactValidateRejectsOversizedPayload(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/oversized-resource-rejection
 func TestCanonicalArtifactValidateRejectsOversizedAsset(t *testing.T) {
 	a, err := FromIR(ir.NewSkill("review", "Review", "body", nil, nil, ir.SourceRef{}))
 	if err != nil {
@@ -365,6 +457,7 @@ func writeTarGz(t *testing.T, prepare func(tw *tar.Writer)) []byte {
 	return buf.Bytes()
 }
 
+// spec: marketplace-api/payload-contains-resource-name
 func TestFromIRPreservesExtraAndNameWins(t *testing.T) {
 	extra := map[string]any{
 		"x-agent-marketplace-foo": "bar",
@@ -502,5 +595,71 @@ func TestCanonicalManifestValidateFindings(t *testing.T) {
 				t.Fatalf("expected %q error, got %v", tc.wantErr, err)
 			}
 		})
+	}
+}
+
+// spec: marketplace-api/canonical-artifact-round-trip
+func TestCanonicalArtifactRoundTripCarriesAssetsLicensesAndSupport(t *testing.T) {
+	a, err := FromIR(ir.NewSkill("review", "Review", "body", nil, nil, ir.SourceRef{}))
+	if err != nil {
+		t.Fatalf("FromIR: %v", err)
+	}
+	a.Assets = map[string][]byte{"diagram.png": []byte("png-bytes")}
+	a.Licenses = map[string][]byte{"LICENSE": []byte("MIT")}
+	a.Support = map[string]SupportFile{
+		"run.sh":        {Data: []byte("#!/bin/sh\necho hi\n"), Executable: true},
+		"docs/guide.md": {Data: []byte("guide")},
+	}
+	raw, digest, err := Encode(a)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	again, digestAgain, err := Encode(a)
+	if err != nil || digestAgain != digest || !bytes.Equal(raw, again) {
+		t.Fatalf("Encode is not deterministic: err=%v digest %s vs %s", err, digest, digestAgain)
+	}
+
+	got, gotRaw, err := Decode(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if got.Manifest.ArchiveDigest != digest {
+		t.Fatalf("decoded archive digest = %s, want %s", got.Manifest.ArchiveDigest, digest)
+	}
+	if !bytes.Equal(got.Payload, a.Payload) || !reflect.DeepEqual(got.Assets, a.Assets) ||
+		!reflect.DeepEqual(got.Licenses, a.Licenses) || !reflect.DeepEqual(got.Support, a.Support) {
+		t.Fatalf("decoded artifact differs:\npayload %q\nassets %v\nlicenses %v\nsupport %v", got.Payload, got.Assets, got.Licenses, got.Support)
+	}
+	if err := got.VerifyContentDigest(); err != nil {
+		t.Fatalf("VerifyContentDigest: %v", err)
+	}
+	if err := got.VerifyArchiveDigest(gotRaw); err != nil {
+		t.Fatalf("VerifyArchiveDigest: %v", err)
+	}
+	if err := got.ValidateArchive(nil); err != nil {
+		t.Fatalf("ValidateArchive: %v", err)
+	}
+}
+
+func commandWithToolSource(source string) *ir.Command {
+	command := ir.NewCommand("c", "", "", nil, ir.SourceRef{})
+	command.ToolSource = source
+	return command
+}
+
+func TestCanonicalCommandToolSourceCannotComeFromExtra(t *testing.T) {
+	command := ir.NewCommand("c", "", "", map[string]any{"ToolSource": "factory", "toolsource": "factory"}, ir.SourceRef{})
+	a, err := FromIR(command)
+	if err != nil {
+		t.Fatalf("FromIR: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(a.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	for key := range payload {
+		if strings.EqualFold(key, "ToolSource") {
+			t.Fatalf("extension field supplied command provenance: %s", a.Payload)
+		}
 	}
 }

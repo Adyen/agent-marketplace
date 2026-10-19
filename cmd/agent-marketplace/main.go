@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/logging"
@@ -40,6 +41,7 @@ func main() {
 	}
 	schemas := e2eConfigSchemas()
 	execCmd, execErr := cmd.ExecuteC()
+	finishUpgradeNotice(os.Stderr)
 	recordE2EInvocation(cmd, execCmd, schemas, execErr)
 	finishTelemetry(execCmd, execErr)
 	if execErr != nil {
@@ -66,8 +68,8 @@ func newRootCmd() *cobra.Command {
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SetContext(pipeline.WithTransientOrganizationMarketplaceLockCache(cmd.Context()))
 			rootTUI := cmd == rootCmd && !showVersion && !noTUI && os.Getenv("AGENT_MARKETPLACE_NO_TUI") == "" && term.IsTerminal(os.Stdin.Fd())
-			if err := maybePromptV4Migration(cmd, rootTUI, showVersion); err != nil {
-				return err
+			if !rootTUI && !commandRunsAsOrUnder(cmd, "serve") && !commandRunsAsOrUnder(cmd, "tui") {
+				cmd.SetContext(cache.WithExactGitVerificationScope(cmd.Context()))
 			}
 			if err := prepareCommandDependencies(cmd, rootTUI); err != nil {
 				return err
@@ -75,6 +77,7 @@ func newRootCmd() *cobra.Command {
 			start := time.Now()
 			initRootLogging(cmd, debug)
 			initTelemetry(cmd, start)
+			startUpgradeNotice(cmd, rootTUI, showVersion)
 			if shouldSkipTargetValidation(cmd) {
 				return nil
 			}
@@ -125,8 +128,6 @@ func newRootCmd() *cobra.Command {
 		newSearchCmd(),
 		newInstallCmd(),
 		newRemoveCmd(),
-		newMigrateCmd(),
-		newConvertCmd(),
 		newDoctorCmd(),
 		newGCCmd(),
 		newUpdateCmd(),
@@ -137,43 +138,9 @@ func newRootCmd() *cobra.Command {
 		newServeCmd(),
 		newTelemetryCmd(),
 	)
+	guardCommandErrors(rootCmd)
 
 	return rootCmd
-}
-
-func maybePromptV4Migration(cmd *cobra.Command, rootTUI, showVersion bool) error {
-	if rootTUI || showVersion || skipV4MigrationPrompt(cmd) {
-		return nil
-	}
-	paths, err := currentMigratePaths()
-	if err != nil {
-		slog.Warn("v4 migration check skipped", "error", err)
-		return nil
-	}
-	pending, err := pendingV4MigrationPaths(paths)
-	if err != nil {
-		slog.Warn("v4 migration check skipped", "error", err)
-		return nil
-	}
-	if pending.User == "" && pending.Repo == "" && pending.Local == "" {
-		return nil
-	}
-	return runV4MigrationPrompt(cmd.Context(), cmd.OutOrStdout(), cmd.InOrStdin(), commandInputIsTerminal(cmd.InOrStdin()), pending)
-}
-
-func skipV4MigrationPrompt(cmd *cobra.Command) bool {
-	for current := cmd; current != nil; current = current.Parent() {
-		switch current.Name() {
-		case "init", "migrate", "convert", "serve", "telemetry", "tui", "doctor":
-			return true
-		}
-	}
-	return false
-}
-
-func commandInputIsTerminal(in io.Reader) bool {
-	fdReader, ok := in.(interface{ Fd() uintptr })
-	return ok && isTerminal(fdReader.Fd())
 }
 
 func prepareCommandDependencies(cmd *cobra.Command, rootTUI bool) error {
@@ -181,7 +148,7 @@ func prepareCommandDependencies(cmd *cobra.Command, rootTUI bool) error {
 		return prepareDependencyTransactions(cmd.Context(), false)
 	}
 	switch cmd.Name() {
-	case "tui", "gc":
+	case "tui", "gc", "install", "remove", "update", "init":
 		return prepareDependencyTransactions(cmd.Context(), false)
 	case "list", "status":
 		return prepareDependencyTransactions(cmd.Context(), true)
@@ -439,7 +406,7 @@ func newRemoveCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&scopeStr, "scope", "", "Config layer to write to: repo (default), user, or local")
 	cmd.Flags().StringVar(&kindFilter, "kind", "", "Resource kind for name disambiguation: skill, command, subagent, hook, mcp, or collection")
-	cmd.Flags().StringVar(&fromURL, "from", "", "Remove from an ad-hoc registry (git URL or GitLab/GitHub web URL)")
+	cmd.Flags().StringVar(&fromURL, "from", "", "Remove from an ad-hoc registry (git URL or GitLab/GitHub web URL), or a named resource from a configured Marketplace endpoint URL")
 	cmd.Flags().StringVar(&fromRef, "ref", "", "Git ref for --from registry; requires --from")
 	cmd.Flags().StringVar(&fromPath, "path", "", "Subdirectory within the --from registry; requires --from")
 	return cmd
@@ -501,11 +468,21 @@ func runRemove(ctx context.Context, out io.Writer, skillName string, scope pipel
 	return err
 }
 
-func shouldSkipTargetValidation(cmd *cobra.Command) bool {
+func commandOrAncestor(cmd *cobra.Command, match func(*cobra.Command) bool) bool {
 	for c := cmd; c != nil; c = c.Parent() {
-		if c.Annotations != nil && c.Annotations["skip-target-validation"] == "true" {
+		if match(c) {
 			return true
 		}
 	}
 	return false
+}
+
+func commandRunsAsOrUnder(cmd *cobra.Command, name string) bool {
+	return commandOrAncestor(cmd, func(c *cobra.Command) bool { return c.Name() == name })
+}
+
+func shouldSkipTargetValidation(cmd *cobra.Command) bool {
+	return commandOrAncestor(cmd, func(c *cobra.Command) bool {
+		return c.Annotations != nil && c.Annotations["skip-target-validation"] == "true"
+	})
 }
