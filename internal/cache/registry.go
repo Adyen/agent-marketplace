@@ -47,6 +47,9 @@ func cloneOrPull(url, ref string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("check cache path %q: %w", cachePath, err)
 	}
+	if err := validateRegistryRefCheckout(url, ref, cachePath, cacheExists); err != nil {
+		return "", err
+	}
 
 	redactedURL := redactSecrets(url)
 
@@ -168,6 +171,33 @@ func validateRegistryCachePath(path string) (bool, error) {
 		return false, fmt.Errorf("cache path %q is not a directory", path)
 	}
 	return true, nil
+}
+
+// validateRegistryRefCheckout keeps each ref's mutable cache directory its own
+// Git checkout. A slash-containing ref maps to nested directories, so without
+// this check Git would discover and mutate an enclosing repository: another
+// ref's checkout, or any repository above the cache such as a HOME dotfiles
+// checkout.
+func validateRegistryRefCheckout(url, ref, cachePath string, cacheExists bool) error {
+	registryDir := filepath.Join(CacheDir(), HashURL(url))
+	for dir := filepath.Dir(cachePath); dir != registryDir && strings.HasPrefix(dir, registryDir+string(filepath.Separator)); dir = filepath.Dir(dir) {
+		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+			return fmt.Errorf("registry ref %q cannot be cached at %q: it lies inside the cached checkout of another ref at %q", ref, cachePath, dir)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("check cache ancestor %q for ref %q: %w", dir, ref, err)
+		}
+	}
+	if !cacheExists {
+		return nil
+	}
+	info, err := os.Lstat(filepath.Join(cachePath, ".git"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("check cache checkout %q for ref %q: %w", cachePath, ref, err)
+	}
+	if err != nil || !info.IsDir() {
+		return fmt.Errorf("registry ref %q cannot be cached at %q: the directory exists but is not its own Git checkout", ref, cachePath)
+	}
+	return nil
 }
 
 func runGit(repoDir string, args ...string) error {
