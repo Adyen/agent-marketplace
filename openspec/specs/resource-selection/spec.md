@@ -272,6 +272,6 @@ On a harness target that installs resources of different kinds at the same nativ
 #### Scenario: Required skill keeps a native path a case-variant command shares
 
 - **WHEN** an organization source requires skill `audit` and the user's OpenCode-layout source selects command `Audit`, both targeting Devin CLI, Codex and Claude Code, in either materialization mode
-- **THEN** `sync` MUST install the required skill at the `audit` path for Devin CLI and Codex, MUST NOT install an `Audit` entry beside it on any host, and MUST report a `materialize.collision.shared-path` warning naming the command
+- **THEN** `sync` MUST install the required skill at the `audit` path for Devin CLI and Codex, MUST NOT install an `Audit` entry beside it for Devin CLI or Codex, on case-sensitive and case-insensitive hosts alike, and MUST report a `materialize.collision.shared-path` warning naming the command
 - **AND** the command MUST still be installed for Claude Code
 - **AND** `sync --check` MUST succeed afterwards
