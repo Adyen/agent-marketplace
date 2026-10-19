@@ -1,130 +1,103 @@
 package catalog
 
 import (
-	"github.com/Adyen/agent-marketplace/internal/collection"
+	"sort"
+
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
-	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
-// PluginExplicitSelection is one direct plugin request: its name and the
-// authored member exclusions.
-type PluginExplicitSelection struct {
-	Name    string
-	Exclude []string
-}
+// PluginSelectionEdge types recorded on a planned plugin.
+const (
+	PluginEdgeDirect     = "direct"
+	PluginEdgeCollection = "collection"
+)
 
-// PluginCollectionEdge binds a selected collection to the plugin entries of
-// one format source: the collection label and the entry names it selects.
-type PluginCollectionEdge struct {
+// PluginSelectionEdge is one resolved selection edge of a plugin: a direct
+// request or a collection-to-plugin binding.
+type PluginSelectionEdge struct {
+	Type       string
 	Collection string
-	Entries    []string
 }
 
-// PluginSelectionSpec is the config-declared selection of one format source,
-// independent of the acquired catalog content: the entry's declared selection
-// (evaluated exactly like the resolver evaluates it), the authored member
-// exclusions of its direct plugin requests, and its collection edges. The
-// plugin-v1 source-revision manifest commits to exactly this shape.
-type PluginSelectionSpec struct {
-	Entry       config.RegistryEntry
-	Explicit    []PluginExplicitSelection
-	Collections []PluginCollectionEdge
+// PlannedPlugin is the resolver's own selection of one plugin: the format
+// source entry that provides it, its selection edges, its member kind/name
+// keys after request exclusions, and the catalog entry it resolved to (which
+// carries the external source requirement for catalog entries).
+type PlannedPlugin struct {
+	Source  config.RegistryEntry
+	Name    string
+	Edges   []PluginSelectionEdge
+	Members []string
+	Entry   Entry
 }
 
-// PluginSelectedNames resolves the declared selection against the decoded
-// entries through the shared selection predicate: the plugins the entry
-// itself selects, plus every plugin named by a collection edge.
-func PluginSelectedNames(spec *PluginSelectionSpec, entries []Entry) map[string]bool {
-	selected := map[string]bool{}
-	if spec == nil {
-		return selected
-	}
-	for _, sel := range SelectedResources(spec.Entry, entries) {
-		if sel.Kind == ir.KindPlugin {
-			selected[sel.Name] = true
-		}
-	}
-	for _, edge := range spec.Collections {
-		for _, name := range edge.Entries {
-			selected[name] = true
-		}
-	}
-	return selected
+// PluginSelectionPlan is the resolver's plugin selection for a
+// configuration; every plugin-v1 manifest input derives from it.
+type PluginSelectionPlan struct {
+	Plugins []PlannedPlugin
 }
 
-// PluginSelectionSpecFor derives the selection spec of one format source
-// entry from its ordered v4 decisions. collections are the collections
-// discovered in the same configuration layer's sources, and selected names
-// the collections the layer selects.
-func PluginSelectionSpecFor(entry config.RegistryEntry, collections []collection.Collection, selected map[string]bool) PluginSelectionSpec {
-	spec := PluginSelectionSpec{Entry: entry}
-	for _, decision := range entry.V4Decisions {
-		if decision.Action != config.V4SelectionExplicit || decision.Request == nil || decision.Request.Kind != "plugin" {
-			continue
-		}
-		spec.Explicit = append(spec.Explicit, PluginExplicitSelection{Name: decision.Request.Name, Exclude: append([]string(nil), decision.Request.Options.Exclude...)})
-	}
-	canonical, err := lockfile.CanonicalGitConfigURL(entry.URL)
-	if err != nil {
-		canonical = ""
-	}
-	for i := range collections {
-		col := collections[i]
-		if !selected[col.Name] {
-			continue
-		}
-		var names []string
-		for _, member := range col.Resources {
-			if member.Kind != "plugin" {
-				continue
-			}
-			if !collectionMemberTargetsEntry(member, col, entry, canonical) {
-				continue
-			}
-			names = append(names, member.Name)
-		}
-		if len(names) > 0 {
-			spec.Collections = append(spec.Collections, PluginCollectionEdge{Collection: col.Label(), Entries: names})
+// ForEntry returns the plan items owned by the given format source entry:
+// plugins whose source resolves to the same canonical URL or directory, ref,
+// and root path.
+func (p PluginSelectionPlan) ForEntry(entry config.RegistryEntry) []PlannedPlugin {
+	out := []PlannedPlugin{}
+	for _, plugin := range p.Plugins {
+		if sameSourceLocation(plugin.Source, entry) {
+			out = append(out, plugin)
 		}
 	}
-	return spec
+	return out
 }
 
-// collectionMemberTargetsEntry reports whether a collection member entry
-// addresses the given format source: an empty registry means the
-// collection's own source; otherwise the member's registry must match the
-// entry's canonical URL or its directory URL.
-func collectionMemberTargetsEntry(member collection.CollectionEntry, col collection.Collection, entry config.RegistryEntry, canonical string) bool {
-	registry := member.Registry
-	if registry == "" {
-		registry = col.SourceRegistryURL
+// ExternalEntries returns the selected catalog entries that resolve to an
+// external repository, one per planned plugin across every format source.
+func (p PluginSelectionPlan) ExternalEntries() []PlannedPlugin {
+	var out []PlannedPlugin
+	for _, plugin := range p.Plugins {
+		if plugin.Entry.Plugin != nil && plugin.Entry.Plugin.Source.Kind == "git" {
+			out = append(out, plugin)
+		}
 	}
-	if registry == "" {
-		return false
-	}
-	if canonical != "" {
-		other, err := lockfile.CanonicalGitConfigURL(registry)
-		if err == nil {
-			if other != canonical {
-				return false
-			}
-		} else if registry != entry.URL {
+	return out
+}
+
+// sameSourceLocation reports whether two registry entries describe the same
+// source location: the same canonical git URL or directory, ref, and root
+// path.
+func sameSourceLocation(a, b config.RegistryEntry) bool {
+	if a.IsLocal() || b.IsLocal() {
+		if a.IsLocal() != b.IsLocal() {
 			return false
 		}
-	} else if registry != entry.URL {
+	} else {
+		aURL, aErr := lockfile.CanonicalGitConfigURL(a.URL)
+		bURL, bErr := lockfile.CanonicalGitConfigURL(b.URL)
+		if aErr != nil || bErr != nil || aURL != bURL {
+			return false
+		}
+	}
+	if a.IsLocal() && a.URL != b.URL {
 		return false
 	}
-	path := member.Path
+	if a.Ref != b.Ref {
+		return false
+	}
+	return normalizedRootPath(a.Path) == normalizedRootPath(b.Path)
+}
+
+func normalizedRootPath(path string) string {
 	if path == "" {
-		path = col.SourcePath
+		return "."
 	}
-	if path == "" {
-		path = "."
-	}
-	entryPath := entry.Path
-	if entryPath == "" {
-		entryPath = "."
-	}
-	return path == entryPath
+	return path
+}
+
+// SortedPlannedPlugins orders plan items by entry name for deterministic
+// manifest input.
+func SortedPlannedPlugins(plugins []PlannedPlugin) []PlannedPlugin {
+	out := append([]PlannedPlugin(nil), plugins...)
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }

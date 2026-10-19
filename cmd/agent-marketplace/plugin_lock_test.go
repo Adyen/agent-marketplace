@@ -7,8 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 func writeClaudePluginPackage(t *testing.T, dir, name, member string) {
@@ -850,48 +852,37 @@ func TestSyncMixedRecordFormatRootCollectionsAreNotDiscovered(t *testing.T) {
 	}
 }
 
-// discoverLockCollections must skip plugin-v1 roots per root, exactly like
-// the verification-side BuildPluginLockContexts.
-func TestDiscoverLockCollectionsSkipsPluginV1Roots(t *testing.T) {
+// The shared catalog loader feeds the plugin selection plan: a collections/
+// directory inside a format source is never decoded, while a loose source's
+// collections become plan edges exactly as resolution sees them.
+func TestPlanLoaderSkipsFormatSourceCollections(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
 	pluginLockFixture(t)
 
-	origin, working := writeMixedFormatRepo(t)
+	_, working := writeMixedFormatRepo(t)
 	writeCollection(t, working, "loose-bundle", "name: loose-bundle\nresources:\n  - {kind: skill, name: tooling}\n")
 	writeCollection(t, filepath.Join(working, "cat"), "cat-bundle", "name: cat-bundle\nresources:\n  - {kind: plugin, name: local-kit}\n")
-	commitAndPushAll(t, working, "seed mixed record")
 
-	canonical, err := canonicalRegistryURL("file://" + filepath.ToSlash(origin))
-	if err != nil {
-		t.Fatal(err)
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: working, V4Kind: config.V4SourceDirectory},
+		{URL: filepath.Join(working, "cat"), V4Kind: config.V4SourceDirectory, Format: "claude-marketplace"},
+	}}
+	loaded := catalog.LoadRegistriesWithContext(context.Background(), cfg, "", catalog.LoadModeCachedNoFetch)
+	if len(loaded.Errors) != 0 {
+		t.Fatalf("load: %v", loaded.Errors)
 	}
-	commit, err := lockfile.ParseGitOID("sha1:" + gitHead(t, working))
-	if err != nil {
-		t.Fatal(err)
+	var collections []string
+	for _, cat := range loaded.Catalogs {
+		for _, entry := range cat.Entries {
+			if entry.Kind == ir.KindCollection {
+				collections = append(collections, entry.Name)
+			}
+		}
 	}
-	registry := lockfile.GitRegistry{
-		URL: canonical, Ref: "main", Commit: commit,
-		Roots: []lockfile.GitRoot{
-			{Path: ".", SourceHarness: "claude"},
-			{Path: "cat", SourceHarness: "claude-marketplace", RevisionSchema: "plugin-v1"},
-		},
-	}
-	entries := []config.RegistryEntry{{URL: "file://" + filepath.ToSlash(origin), Ref: "main"}}
-	found, err := discoverLockCollections(context.Background(), []lockfile.GitRegistry{registry}, nil, entries)
-	if err != nil {
-		t.Fatalf("discoverLockCollections: %v", err)
-	}
-	names := map[string]bool{}
-	for _, col := range found {
-		names[col.Name] = true
-	}
-	if !names["loose-bundle"] {
-		t.Fatalf("loose-root collection must be discovered: %v", names)
-	}
-	if names["cat-bundle"] {
-		t.Fatalf("collection inside a plugin-v1 root must not be discovered: %v", names)
+	if len(collections) != 1 || collections[0] != "loose-bundle" {
+		t.Fatalf("collection inside a format source must not be discovered: %v", collections)
 	}
 }
 
@@ -961,5 +952,218 @@ func TestSyncSharedExternalOriginIsRefused(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(repo, ".agents", "lock.yaml")); !os.IsNotExist(statErr) {
 		t.Fatalf("no lock may be written when the selection is refused")
+	}
+}
+
+// Two catalogs each selecting a different entry of one external repo collapse
+// to one lock record; the union check refuses before any lock write.
+func TestSyncCrossCatalogSharedExternalOriginRefuses(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	root := pluginLockFixture(t)
+	repo := filepath.Join(root, "repo")
+
+	entryOrigin, entryWorking := createBareRepoWithWorkingClone(t, "entry.git")
+	writeClaudePluginPackage(t, entryWorking, "ext-kit", "ext-skill")
+	commitAndPushAll(t, entryWorking, "seed entry")
+
+	catA := filepath.Join(root, "marketplace-a")
+	writeClaudePluginPackage(t, filepath.Join(catA, "plugins", "local-a"), "local-a", "local-a-skill")
+	writeFile(t, filepath.Join(catA, ".claude-plugin", "marketplace.json"),
+		`{"name":"a","plugins":[{"name":"ext-a","source":{"source":"url","url":"`+filepath.ToSlash(entryOrigin)+`","ref":"main"}}]}`)
+	catB := filepath.Join(root, "marketplace-b")
+	writeClaudePluginPackage(t, filepath.Join(catB, "plugins", "local-b"), "local-b", "local-b-skill")
+	writeFile(t, filepath.Join(catB, ".claude-plugin", "marketplace.json"),
+		`{"name":"b","plugins":[{"name":"ext-b","source":{"source":"url","url":"`+filepath.ToSlash(entryOrigin)+`","ref":"main"}}]}`)
+
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  a: {directory: "+filepath.ToSlash(catA)+", format: claude-marketplace}\n  b: {directory: "+filepath.ToSlash(catB)+", format: claude-marketplace}\nresources:\n  a:\n    - plugin/ext-a\n  b:\n    - plugin/ext-b\n")
+	withWorkingDir(t, repo)
+	output, err := executeCommand("sync", "--no-backup")
+	if err == nil {
+		t.Fatalf("two catalogs selecting one external origin must fail:\n%s", output)
+	}
+	if !strings.Contains(output, "plugin.catalog.shared-origin") || !strings.Contains(output, "ext-a") || !strings.Contains(output, "ext-b") {
+		t.Fatalf("refusal must carry the code and name both entries:\n%s", output)
+	}
+	if _, statErr := os.Stat(filepath.Join(repo, ".agents", "lock.yaml")); !os.IsNotExist(statErr) {
+		t.Fatalf("no lock may be written when the selection is refused")
+	}
+}
+
+// lockHasPluginResource reports whether the lock holds a resource row for
+// the named plugin: a selected path plugin appears inside its format root's
+// plugin-v1 resources, a selected external entry inside its own record.
+func lockHasPluginResource(doc lockfile.Document, name string) bool {
+	for i := range doc.Registries {
+		for j := range doc.Registries[i].Roots {
+			for _, res := range doc.Registries[i].Roots[j].Resources {
+				if res.Kind == "plugin" && res.Name == name {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// A loose source selected implicitly (all:true) contributes a collection
+// naming a catalog plugin; the lock commits the collection-selected plugin
+// through the same selection the resolver performs, and read-only modes
+// recompute it identically.
+func TestSyncLooseAllCollectionLocksPlugin(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	root := pluginLockFixture(t)
+	repo := filepath.Join(root, "repo")
+
+	formatOrigin, formatWorking := createBareRepoWithWorkingClone(t, "cat.git")
+	writeCatalogRepo(t, formatWorking, "")
+	commitAndPushAll(t, formatWorking, "seed catalog")
+
+	looseOrigin, looseWorking := createBareRepoWithWorkingClone(t, "loose.git")
+	writeSkill(t, looseWorking, "tooling", "Tooling baseline", nil)
+	writeCollection(t, looseWorking, "team", "name: team\nresources:\n  - {kind: plugin, name: local-kit, registry: file://"+filepath.ToSlash(formatOrigin)+"}\n")
+	commitAndPushAll(t, looseWorking, "seed loose")
+
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  cat: {git: file://"+filepath.ToSlash(formatOrigin)+", ref: main, format: claude-marketplace}\n  loose: {git: file://"+filepath.ToSlash(looseOrigin)+", ref: main}\nresources:\n  loose:\n    all: true\n")
+	withWorkingDir(t, repo)
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	if output, err := executeCommand("sync", "--no-backup"); err != nil {
+		t.Fatalf("sync of a collection-bound plugin must succeed: %v\n%s", err, output)
+	}
+	doc, data := readLock(t, lockPath)
+	var manifest *lockfile.GitRoot
+	for i := range doc.Registries {
+		for j := range doc.Registries[i].Roots {
+			if doc.Registries[i].Roots[j].RevisionSchema == "plugin-v1" && len(doc.Registries[i].Roots[j].Resources) > 0 {
+				manifest = &doc.Registries[i].Roots[j]
+			}
+		}
+	}
+	if manifest == nil {
+		t.Fatalf("the implicitly selected collection must lock the plugin it names:\n%s", data)
+	}
+	for _, args := range [][]string{{"sync", "--check"}, {"sync", "--locked"}} {
+		if output, err := executeCommand(args...); err != nil {
+			t.Fatalf("%v must recompute the same selection and verify: %v\n%s", args, err, output)
+		}
+	}
+}
+
+// A collection member pinned to a ref the format source does not track binds
+// nothing: the plugin must not be locked, exactly as resolution drops the
+// member.
+func TestSyncCollectionMemberRefMismatchLocksNoPlugin(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	root := pluginLockFixture(t)
+	repo := filepath.Join(root, "repo")
+
+	entryOrigin, entryWorking := createBareRepoWithWorkingClone(t, "entry.git")
+	writeClaudePluginPackage(t, entryWorking, "ext-kit", "ext-skill")
+	commitAndPushAll(t, entryWorking, "seed entry")
+
+	formatOrigin, formatWorking := createBareRepoWithWorkingClone(t, "cat.git")
+	writeCatalogRepo(t, formatWorking, entryOrigin)
+	commitAndPushAll(t, formatWorking, "seed catalog")
+
+	looseOrigin, looseWorking := createBareRepoWithWorkingClone(t, "loose.git")
+	writeSkill(t, looseWorking, "tooling", "Tooling baseline", nil)
+	writeCollection(t, looseWorking, "team", "name: team\nresources:\n  - {kind: plugin, name: local-kit, registry: file://"+filepath.ToSlash(formatOrigin)+"}\n  - {kind: plugin, name: ext-kit, registry: file://"+filepath.ToSlash(formatOrigin)+", ref: other}\n")
+	commitAndPushAll(t, looseWorking, "seed loose")
+
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  cat: {git: file://"+filepath.ToSlash(formatOrigin)+", ref: main, format: claude-marketplace}\n  loose: {git: file://"+filepath.ToSlash(looseOrigin)+", ref: main}\nresources:\n  loose:\n    - collection/team\n")
+	withWorkingDir(t, repo)
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	if output, err := executeCommand("sync", "--no-backup"); err != nil {
+		t.Fatalf("sync must succeed with the unpinned miss as a warning: %v\n%s", err, output)
+	}
+	doc, data := readLock(t, lockPath)
+	if !lockHasPluginResource(doc, "local-kit") {
+		t.Fatalf("the collection-bound plugin must be locked:\n%s", data)
+	}
+	if lockHasPluginResource(doc, "ext-kit") {
+		t.Fatalf("a member pinned to a ref the source does not track must not be locked:\n%s", data)
+	}
+	for _, args := range [][]string{{"sync", "--check"}, {"sync", "--locked"}} {
+		if output, err := executeCommand(args...); err != nil {
+			t.Fatalf("%v must verify the same selection: %v\n%s", args, err, output)
+		}
+	}
+}
+
+// A required collection member that names a plugin missing from the bound
+// catalog surfaces the resolver's not-found error instead of silently
+// committing a manifest without it.
+func TestSyncCollectionMemberMissingFromCatalogRefuses(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	root := pluginLockFixture(t)
+	repo := filepath.Join(root, "repo")
+
+	formatOrigin, formatWorking := createBareRepoWithWorkingClone(t, "cat.git")
+	writeCatalogRepo(t, formatWorking, "")
+	commitAndPushAll(t, formatWorking, "seed catalog")
+
+	looseOrigin, looseWorking := createBareRepoWithWorkingClone(t, "loose.git")
+	writeSkill(t, looseWorking, "tooling", "Tooling baseline", nil)
+	writeCollection(t, looseWorking, "team", "name: team\nresources:\n  - {kind: plugin, name: ghost-kit, registry: file://"+filepath.ToSlash(formatOrigin)+"}\n")
+	commitAndPushAll(t, looseWorking, "seed loose")
+
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  cat: {git: file://"+filepath.ToSlash(formatOrigin)+", ref: main, format: claude-marketplace}\n  loose: {git: file://"+filepath.ToSlash(looseOrigin)+", ref: main}\nresources:\n  cat: {all: true, required: true}\n  loose:\n    - collection/team\n")
+	withWorkingDir(t, repo)
+	output, err := executeCommand("sync", "--no-backup")
+	if err == nil {
+		t.Fatalf("a required collection member missing from the catalog must fail:\n%s", output)
+	}
+	if !strings.Contains(output, "ghost-kit") {
+		t.Fatalf("the error must name the missing member:\n%s", output)
+	}
+	if _, statErr := os.Stat(filepath.Join(repo, ".agents", "lock.yaml")); !os.IsNotExist(statErr) {
+		t.Fatalf("no lock may be written when the selection fails")
+	}
+}
+
+// A plugin reached only through a nested collection include is locked,
+// exactly as resolution walks includes.
+func TestSyncNestedCollectionIncludeLocksPlugin(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	root := pluginLockFixture(t)
+	repo := filepath.Join(root, "repo")
+
+	entryOrigin, entryWorking := createBareRepoWithWorkingClone(t, "entry.git")
+	writeClaudePluginPackage(t, entryWorking, "ext-kit", "ext-skill")
+	commitAndPushAll(t, entryWorking, "seed entry")
+
+	formatOrigin, formatWorking := createBareRepoWithWorkingClone(t, "cat.git")
+	writeCatalogRepo(t, formatWorking, entryOrigin)
+	commitAndPushAll(t, formatWorking, "seed catalog")
+
+	looseOrigin, looseWorking := createBareRepoWithWorkingClone(t, "loose.git")
+	writeSkill(t, looseWorking, "tooling", "Tooling baseline", nil)
+	writeCollection(t, looseWorking, "outer", "name: outer\nincludes:\n  - {name: inner}\n")
+	writeCollection(t, looseWorking, "inner", "name: inner\nresources:\n  - {kind: plugin, name: ext-kit, registry: file://"+filepath.ToSlash(formatOrigin)+"}\n")
+	commitAndPushAll(t, looseWorking, "seed loose")
+
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  cat: {git: file://"+filepath.ToSlash(formatOrigin)+", ref: main, format: claude-marketplace}\n  loose: {git: file://"+filepath.ToSlash(looseOrigin)+", ref: main}\nresources:\n  loose:\n    all: true\n")
+	withWorkingDir(t, repo)
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	if output, err := executeCommand("sync", "--no-backup"); err != nil {
+		t.Fatalf("sync of a nested-collection plugin must succeed: %v\n%s", err, output)
+	}
+	doc, data := readLock(t, lockPath)
+	if !lockHasPluginResource(doc, "ext-kit") {
+		t.Fatalf("a plugin reached through a nested include must be locked:\n%s", data)
+	}
+	for _, args := range [][]string{{"sync", "--check"}, {"sync", "--locked"}} {
+		if output, err := executeCommand(args...); err != nil {
+			t.Fatalf("%v must recompute the same selection and verify: %v\n%s", args, err, output)
+		}
 	}
 }
