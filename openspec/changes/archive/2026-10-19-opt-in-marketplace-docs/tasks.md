@@ -7,4 +7,4 @@
 - [x] Update operator guides and annotate every changed scenario.
 - [x] Run focused checks, `make validate`, and relevant domain gates.
 - [x] Perform adversarial review with `open-code-review-delegate`.
-- [ ] Run `openspec archive opt-in-marketplace-docs --yes`.
+- [x] Run `openspec archive opt-in-marketplace-docs --yes`.

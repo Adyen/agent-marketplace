@@ -62,12 +62,21 @@ When a resource revision reports source provenance, the detail page header SHALL
 - **THEN** the header shows no source item
 
 ### Requirement: Marketplace header navigation
-The Marketplace primary header SHALL use its accessible logo link as the Marketplace home action without also showing a `Marketplace` text link. It SHALL provide a visibly marked external Docs link to `https://agent-marketplace.io/docs` that bypasses Nuxt routing and opens in a separate browser tab with opener isolation.
+
+The Marketplace primary header SHALL use its accessible logo link as the Marketplace home action without also showing a `Marketplace` text link. It SHALL provide a visibly marked Docs link that bypasses Nuxt routing and opens in a separate browser tab with opener isolation. Documentation links in the header, catalog footer, and CLI setup action SHALL resolve to `https://agent-marketplace.io/docs` by default. With the runtime boolean `NUXT_PUBLIC_DOCS_ENABLED=true`, they SHALL instead resolve to origin-root `/docs/`, including when the web interface uses a non-root base path. An explicit false value SHALL retain public documentation.
 
 #### Scenario: Marketplace header offers non-redundant external documentation navigation
-- **WHEN** a user views the Marketplace primary header
+
+- **WHEN** a user views the Marketplace primary header with local documentation omitted or false
 - **THEN** the logo remains a Marketplace home link and no `Marketplace` text link is shown
 - **AND** the Docs link has a visible external-link marker, resolves to `https://agent-marketplace.io/docs`, opens in a new tab, and prevents the opened page from accessing its opener
+- **AND** catalog footer and CLI setup documentation links resolve to that same public documentation
+
+#### Scenario: Marketplace links to locally hosted documentation when enabled
+
+- **WHEN** local documentation is enabled and a user follows a Marketplace documentation link
+- **THEN** the header, catalog footer, and CLI setup action MUST link to origin-root `/docs/` rather than public documentation or a path beneath the web-interface base
+- **AND** primary-header documentation navigation MUST open the local documentation in a new tab with opener isolation
 
 ### Requirement: Shared slash brand motif
 Landing and Marketplace SHALL reuse a literal weight-800 `/` in the logo green `#00D16A` at approved structural brand locations. Prefix slashes SHALL carry one authored trailing space, while coordinate delimiters SHALL carry one authored space on each side; CSS margins MUST NOT supply this spacing. Landing SHALL show the motif before every section eyebrow but SHALL NOT show it before the hero secondary line. Landing eyebrow labels SHALL use the primary text color so the green slash remains a distinct accent. Marketplace SHALL show it before the instance title. The functional Filters and Resources catalog headings SHALL NOT show the motif. Decorative slashes MUST be hidden from the accessibility tree so the existing heading and label names remain unchanged. Other content SHALL NOT gain the motif implicitly.

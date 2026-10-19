@@ -15,4 +15,6 @@ Reuse the current VitePress artifact and shared documentation source.
 Do not add a Go-server docs flag: frontend deployment owns this policy.
 Do not call this a global offline mode or change unrelated networking.
 
-The normative change is `openspec/changes/opt-in-marketplace-docs`.
+Change record: `openspec/changes/archive/2026-10-19-opt-in-marketplace-docs/`.
+Normative behavior lives in `openspec/specs/site-deployment-profiles/` and
+`openspec/specs/marketplace-web-ui/`.
