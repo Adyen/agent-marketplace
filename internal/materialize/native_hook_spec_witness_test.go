@@ -230,7 +230,7 @@ func TestNativeWindsurfDoesNotReadDevinCLIFile(t *testing.T) {
 		additiveSafetyWrite(t, devinCLI, sentinel)
 		devinBefore, devinMode, devinMtime := fileSnapshot(t, devinCLI)
 		resolved := additiveSafetyProvider(t, hcc.TargetWindsurf, false, command, "")
-		work, allOutputs, blocked, diags := buildWorkItems([]resolver.ResolvedArtifact{resolved}, repo)
+		work, allOutputs, blocked, diags, _ := buildWorkItems([]resolver.ResolvedArtifact{resolved}, repo)
 		for key := range allOutputs {
 			if key != (outputKey{target: hcc.TargetWindsurf, machineScope: false}) {
 				delete(allOutputs, key)
