@@ -1,37 +1,35 @@
 import assert from "node:assert/strict";
+import { after, before } from "node:test";
 
-import { expect, test } from "@microsoft/tui-test";
-
-import { defineFixture, step, waitForExit } from "./helpers.js";
+import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 
 const journey = defineFixture("help-and-return", ["tui"]);
-test.use(journey.options);
-test.beforeAll(journey.setup);
-test.afterAll(journey.cleanup);
+before(journey.setup);
+after(journey.cleanup);
 
-test("help closes back to the selected alpha-skill", async ({ terminal }) => {
+journey.test("help closes back to the selected alpha-skill", async (terminal) => {
   await step("settled fixture baseline", () => {}, async () => {
-    await expect(terminal.getByText("beta-skill", { strict: false })).toBeVisible();
-    await expect(terminal.getByText("alpha-skill", { strict: false })).toBeVisible();
-    await expect(terminal.getByText("~ in sync")).toBeVisible();
+    await locate(terminal, "beta-skill").expect();
+    await locate(terminal, "alpha-skill").expect();
+    await locate(terminal, "~ in sync").unique().expect();
   });
 
   await step("select available alpha-skill", () => terminal.write("G"), async () => {
-    await expect(terminal.getByText(/Name:\s+alpha-skill/g)).toBeVisible();
-    await expect(terminal.getByText(/Status:\s+available/g)).toBeVisible();
+    await locate(terminal, /Name:\s+alpha-skill/).unique().expect();
+    await locate(terminal, /Status:\s+available/).unique().expect();
   });
 
   await step("open keyboard shortcuts", () => terminal.write("?"), async () => {
-    await expect(terminal.getByText("agent-marketplace — Keyboard Shortcuts")).toBeVisible();
-    await expect(terminal.getByText("jump to bottom")).toBeVisible();
-    await expect(terminal.getByText("fuzzy search")).toBeVisible();
-    await expect(terminal.getByText("clear search / close")).toBeVisible();
+    await locate(terminal, "agent-marketplace — Keyboard Shortcuts").unique().expect();
+    await locate(terminal, "jump to bottom").unique().expect();
+    await locate(terminal, "fuzzy search").unique().expect();
+    await locate(terminal, "clear search / close").unique().expect();
   });
 
   await step("close keyboard shortcuts", () => terminal.write("?"), async () => {
-    await expect(terminal.getByText("agent-marketplace — Keyboard Shortcuts")).not.toBeVisible();
-    await expect(terminal.getByText(/Name:\s+alpha-skill/g)).toBeVisible();
-    await expect(terminal.getByText(/Status:\s+available/g)).toBeVisible();
+    await locate(terminal, "agent-marketplace — Keyboard Shortcuts").expect({ not: true });
+    await locate(terminal, /Name:\s+alpha-skill/).unique().expect();
+    await locate(terminal, /Status:\s+available/).unique().expect();
   });
 
   await step("quit", () => terminal.write("q"), async () => {

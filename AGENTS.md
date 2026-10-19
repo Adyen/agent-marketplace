@@ -59,6 +59,8 @@ E2E_PARALLEL=8 make e2e  # control concurrency (default 4, set to 1 for serial)
 
 Run direct real-terminal test typechecking with `make tui-qa-check` and all deterministic user journeys with `make tui-qa`. TUI QA requires no organization-specific infrastructure; do not place machine-specific values in tracked commands, reports, or fixtures.
 
+A failing journey keeps its GIF and `tui-test` trace under `tools/tui-qa/test-results/<journey>/` (or `AM_TUI_QA_ARTIFACTS`); in CI the `TUI QA recordings comment` job links each failed journey's GIF from one sticky pull request comment. Start each journey from the settled drift state: input sent while the TUI still shows `verifying resources...` can be discarded. Build the TUI QA binary with the `go.mod` Go version (for example `GOTOOLCHAIN=go<version>`): a newer Go gzip encoder changes the Marketplace stub's pinned archive digest and fails the organization journeys' fixture sync. Never regenerate `tools/tui-qa/pnpm-lock.yaml` through a registry mirror that records its own tarball URLs.
+
 ### Local toolchain
 
 Local toolchain notes: on macOS hosts where the system linker rejects the SDK, run Go tests with `CGO_ENABLED=0` (as the Makefile does). In `web/`, `pnpm run` may refuse to start when `node_modules` is stale; `node scripts/generate-api.mjs` and `./node_modules/.bin/{vitest,eslint,nuxt}` run the same checks directly. Tests under `tools/homebrew` require a `ruby` executable on PATH and fail rather than skip when it is absent.

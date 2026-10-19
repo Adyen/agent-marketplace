@@ -3,5 +3,4 @@ dist/
 .tui-test/
 .local/
 test-results/
-artifacts/
 *.log

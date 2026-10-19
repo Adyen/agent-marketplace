@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { after, before } from "node:test";
 
-import { expect, test } from "@microsoft/tui-test";
-
-import { defineFixture, step, waitForExit } from "./helpers.js";
+import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 import { runAM } from "./process-helpers.js";
 
 // Reproduces the reported support case: an organization v4 config declares an
@@ -16,11 +15,10 @@ const navigationCeilingMs = 1_000;
 const acknowledgementCeilingMs = 3_500;
 const warmToggleCeilingMs = 4_500;
 const journey = defineFixture("org-marketplace-lock-failure", ["tui"], 80, 24, { organization: "missing-lock" });
-test.use(journey.options);
-test.beforeAll(journey.setup);
-test.afterAll(journey.cleanup);
+before(journey.setup);
+after(journey.cleanup);
 
-test("a missing organization marketplace lock is acquired transiently without policy writes", async ({ terminal }) => {
+journey.test("a missing organization marketplace lock is acquired transiently without policy writes", async (terminal) => {
   const fixture = journey.current();
   const orgConfigPath = fixture.orgConfigPath;
   const orgLockPath = fixture.orgLockPath;
@@ -28,15 +26,14 @@ test("a missing organization marketplace lock is acquired transiently without po
   assert.ok(orgLockPath, "organization fixture must expose its lock path");
   assert.equal(fs.lstatSync(orgLockPath, { throwIfNoEntry: false }), undefined);
 
-
   await step("cold startup resolves the organization marketplace", () => {}, async () => {
-    await expect(terminal.getByText("org-review", { strict: false })).toBeVisible({ timeout: 30_000 });
-    await expect(terminal.getByText(/~ \d+ out of sync/g)).toBeVisible();
+    await locate(terminal, "org-review").expect({ timeout: 30_000 });
+    await locate(terminal, /~ \d+ out of sync/).unique().expect();
   });
 
   await step("startup has no lock failure", () => {}, async () => {
-    await expect(terminal.getByText(/! \d+ errors/g)).not.toBeVisible();
-    await expect(terminal.getByText(/~ drift unavailable/g)).not.toBeVisible();
+    await locate(terminal, /! \d+ errors/).expect({ not: true });
+    await locate(terminal, /~ drift unavailable/).expect({ not: true });
     assert.equal(fs.lstatSync(orgLockPath, { throwIfNoEntry: false }), undefined, "TUI load must not create the organization lock");
   });
 
@@ -44,13 +41,13 @@ test("a missing organization marketplace lock is acquired transiently without po
   assert.equal(beforeToggle, 4, "cold startup must acquire organization Marketplace evidence");
   const navigationStarted = performance.now();
   await step("select available alpha-skill", () => terminal.write("G"), async () => {
-    await expect(terminal.getByText(/Name:\s+alpha-skill/g)).toBeVisible();
-    await expect(terminal.getByText(/Status:\s+available/g)).toBeVisible();
+    await locate(terminal, /Name:\s+alpha-skill/).unique().expect();
+    await locate(terminal, /Status:\s+available/).unique().expect();
   });
   const navigationMs = performance.now() - navigationStarted;
   await step("open local toggle", () => terminal.write(" "), async () => {
-    await expect(terminal.getByText('"alpha-skill"', { strict: false })).toBeVisible();
-    await expect(terminal.getByText("toggle local")).toBeVisible();
+    await locate(terminal, '"alpha-skill"').expect();
+    await locate(terminal, "toggle local").unique().expect();
   });
   fixture.marketplaceDelayNextAcquisition?.(3_000);
   const toggleStarted = performance.now();
@@ -77,8 +74,8 @@ test("a missing organization marketplace lock is acquired transiently without po
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     acknowledgementMs = performance.now() - toggleStarted;
-    await expect(terminal.getByText(/Pending sync\s+\(1\)/g)).toBeVisible();
-    await expect(terminal.getByText(/Status:\s+enabled \(pending sync\)/g)).toBeVisible();
+    await locate(terminal, /Pending sync\s+\(1\)/).unique().expect();
+    await locate(terminal, /Status:\s+enabled \(pending sync\)/).unique().expect();
   });
   const toggleMs = performance.now() - toggleStarted;
   assert.equal(
@@ -98,12 +95,12 @@ test("a missing organization marketplace lock is acquired transiently without po
   assert.equal(fs.readFileSync(orgConfigPath, "utf8"), fixture.expectedOrgConfig, "toggle must not rewrite organization policy");
 
   await step("sync from the TUI materializes transient resources", () => terminal.write("s"), async () => {
-    await expect(terminal.getByText(/~ in sync/g)).toBeVisible({ timeout: 30_000 });
+    await locate(terminal, /~ in sync/).unique().expect({ timeout: 30_000 });
   });
 
   await step("update from the TUI reuses transient organization evidence", () => terminal.write("u"), async () => {
-    await expect(terminal.getByText("Update complete", { strict: false })).toBeVisible({ timeout: 30_000 });
-    await expect(terminal.getByText(/~ in sync/g)).toBeVisible();
+    await locate(terminal, "Update complete").expect({ timeout: 30_000 });
+    await locate(terminal, /~ in sync/).unique().expect();
   });
 
   await step("quit cleanly", () => terminal.write("q"), async () => {

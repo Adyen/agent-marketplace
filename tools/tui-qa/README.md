@@ -1,6 +1,6 @@
 # TUI Real-Usage Tests
 
-This package uses `@microsoft/tui-test` to launch the real `agent-marketplace` binary in a PTY and operate it. Each journey file sends the keys a user would press and checks what appears on screen, plus the resulting files on disk.
+This package uses the `@microsoft/tui-test` library to launch the real `agent-marketplace` binary in a PTY and operate it. Each journey file sends the keys a user would press and checks what appears on screen, plus the resulting files on disk.
 
 ## Test ownership
 
@@ -10,7 +10,7 @@ This package uses `@microsoft/tui-test` to launch the real `agent-marketplace` b
 
 ## Journeys
 
-Each interaction contract has its own file. The `*.spec.ts` files are PTY journeys run by `tui-test`; the `*.test.ts` files run under `node --test`.
+Each interaction contract has its own file. The `*.spec.ts` files are PTY journeys and the `*.test.ts` files are process tests; both run under `node --test`. Each journey opens its own in-process `tui-test` session and starts the program with exactly the fixture's environment.
 
 1. `tests/launch-browse-inspect.spec.ts` launches with no arguments, browses the single status view, opens details, returns, and quits.
 2. `tests/search-and-select.spec.ts` searches, checks that the match stays and a distractor disappears, and selects the match.
@@ -45,7 +45,7 @@ Lifecycle hooks give every PTY journey a fresh temporary HOME, XDG roots, worksp
 
 The two organization journeys also install a v4 organization layer at `<root>/etc/agent-marketplace` that declares one Marketplace source. A loopback stub endpoint backs it and serves the exact registry, revision, artifact, well-known identity document, and a search page that answers a matching query with the never-installed `pack-notes` skill plus its exact-revision inspection manifest and file bodies. The lock-recovery fixture publishes the matching v2 organization lock. The lock-failure fixture omits that lock and skips the fixture pre-sync. The cold TUI must then acquire verified evidence in memory, reuse it through a selection edit, refresh, sync, and update, write the resource into the harness folders, and never write organization policy. The Status-overflow journey adds thirty selected fixture skills so the list scrolls for real instead of showing two rows.
 
-Every state-changing input is followed by a visible assertion caused by that input before the next input is sent. Ordinary UI and process waits are bounded at five seconds, and Git and materialization waits at thirty seconds. The lock-failure journey also enforces 1 second for local navigation, 3.5 seconds for write acknowledgement, and 4.5 seconds for a warm authoritative toggle. These are latency ceilings, not hang timeouts. Three local baseline runs measured about 50 ms for navigation and 2.2 seconds for the settled toggle. With a three-second injected acquisition delay, the toggle took over five seconds before the fix in #302, while the fixed code stays below the ceiling. The CLI reacquisition after quitting shows that the delayed-server control was active. The suite runs with one worker and zero retries, and its timeouts are the same locally and in CI.
+Every journey waits for the settled drift state (for example `~ in sync`) before its first input, because the TUI can discard input that arrives while it is still verifying resources. Every state-changing input is followed by a visible assertion caused by that input before the next input is sent. Ordinary UI and process waits are bounded at five seconds, and Git and materialization waits at thirty seconds. The lock-failure journey also enforces 1 second for local navigation, 3.5 seconds for write acknowledgement, and 4.5 seconds for a warm authoritative toggle. These are latency ceilings, not hang timeouts. Three local baseline runs measured about 50 ms for navigation and 2.2 seconds for the settled toggle. With a three-second injected acquisition delay, the toggle took over five seconds before the fix in #302, while the fixed code stays below the ceiling. The CLI reacquisition after quitting shows that the delayed-server control was active. The journeys run one file at a time with no retries and a 60-second limit per journey, and their timeouts are the same locally and in CI.
 
 ## Commands
 
@@ -57,20 +57,15 @@ make tui-qa-check
 make tui-qa
 ```
 
-`make tui-qa-check` typechecks the journeys and confirms that the `tui-test` runner loads. `make tui-qa` builds the `e2e`-tagged test binary, runs the `node --test` files, and then runs every PTY journey once. A failure prints the test runner's console report and the current terminal screen; the suite does not write snapshots or traces.
+`make tui-qa-check` typechecks the journeys and confirms that the native `tui-test` engine loads. `make tui-qa` builds the `e2e`-tagged test binary, runs the process tests, and then runs every PTY journey once. A failure prints the failed step, the assertion and the current terminal screen.
 
 `make tui-qa` always builds its own binary and sets `AM_TUI_QA_BINARY` and `AM_TUI_QA_REPO_ROOT` itself. To test a binary you already built, run `pnpm qa` (or `pnpm qa:compiled` after `pnpm build`) in `tools/tui-qa` with `AM_TUI_QA_BINARY` set to that binary and `AM_TUI_QA_REPO_ROOT` set to its repository root. The default suite needs no direnv and no organization-specific image, certificate, registry, or infrastructure path.
 
-## Recording POC
+## Failure recordings
 
-`record-poc.sh` records the browse-and-inspect journey as a GIF, using the same isolated QA fixture as the suite:
+Every journey records its terminal as a GIF and writes a `tui-test` trace when its session closes. A passing journey deletes both without rendering the GIF. A failing journey keeps them in `test-results/<journey>/`, or under `AM_TUI_QA_ARTIFACTS` when that is set:
 
-```sh
-tools/tui-qa/record-poc.sh
-```
+- `<journey>.gif`, the recording up to the failure;
+- `trace-*/trace.html` to review in a browser, `trace-*/trace.md` for the failed operation, recent operations and screens, and `trace-*/session.cast` to replay the session in an asciinema player.
 
-The script waits for a `tui-test` assertion to pass before each step and adds short pauses only to pace the recording. It downloads the `tui-test 0.1.0-beta.4` release for the current macOS or Linux architecture and checks its published SHA-256 before running it. The npm package stays at `0.0.4` because the configured npm registry does not have the beta yet.
-
-The script writes its output to `tools/tui-qa/artifacts/tui-test-recording-poc/`. The `TUI Recording POC` workflow uploads a new GIF and PNG as an artifact kept for seven days, and its job summary shows the checked-in preview below, so the result is visible in the pipeline.
-
-![tui-test browse and inspect recording](../../docs/assets/tui-test-recording-poc.gif)
+On a pull request, each failing `TUI QA` platform uploads its kept journeys as the `tui-qa-failures-<platform>` artifact, and every GIF is also uploaded unzipped on its own. The `TUI QA recordings comment` job then posts or updates a single pull request comment that links each failed journey's GIF and its platform's evidence bundle, and updates it again once TUI QA passes. Pull requests from forks get the same table in the job summary instead. The fixtures hold no credentials, but the trace keeps program arguments and terminal input, so do not add secrets to a journey.

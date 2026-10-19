@@ -1,19 +1,17 @@
 import assert from "node:assert/strict";
+import { after, before } from "node:test";
 
-import { expect, test } from "@microsoft/tui-test";
-
-import { defineFixture, step, waitForExit } from "./helpers.js";
+import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 
 const journey = defineFixture("ctrl-c-hard-exit", ["tui"], 50, 12);
-test.use(journey.options);
-test.beforeAll(journey.setup);
-test.afterAll(journey.cleanup);
+before(journey.setup);
+after(journey.cleanup);
 
-test("Ctrl+C exits cleanly from the minimum terminal", async ({ terminal }) => {
+journey.test("Ctrl+C exits cleanly from the minimum terminal", async (terminal) => {
   await step("ready minimum-size list", () => {}, async () => {
-    await expect(terminal.getByText("beta-skill", { strict: false })).toBeVisible();
-    await expect(terminal.getByText("~ in sync")).toBeVisible();
-    await expect(terminal.getByText(/: (commands|cmds) · \? help · q quit/g)).toBeVisible();
+    await locate(terminal, "beta-skill").expect();
+    await locate(terminal, "~ in sync").unique().expect();
+    await locate(terminal, /: (commands|cmds) · \? help · q quit/).unique().expect();
   });
 
   await step("hard exit with Ctrl+C", () => terminal.write("\u0003"), async () => {

@@ -1,6 +1,5 @@
 packages:
   - .
-
 allowBuilds:
-  '@swc/core@1.15.47': true
-  'node-pty@1.2.0-beta.11': true
+  '@swc/core': set this to true or false
+  node-pty: set this to true or false
