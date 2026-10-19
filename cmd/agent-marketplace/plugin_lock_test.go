@@ -261,6 +261,139 @@ func TestSyncCollectionPluginPinToUndeclaredLayerSourceRefuses(t *testing.T) {
 	}
 }
 
+// writeTwoMemberPluginPackage seeds a claude-plugin package carrying two
+// skill members, so one layer can exclude a member another layer keeps.
+func writeTwoMemberPluginPackage(t *testing.T, dir, name, member, extra string) {
+	t.Helper()
+	writeClaudePluginPackage(t, dir, name, member)
+	skillDir := filepath.Join(dir, "skills", extra)
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: "+extra+"\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Two machine-scope layers declaring the same format source and selecting
+// the same plugin each commit their own selection: the organization lock
+// records the organization's edges and member exclusions, the personal
+// lock records the personal selection, and editing one layer's exclusion
+// stales only that layer's lock.
+func TestSyncPluginSelectionLocksInEachAuthoringLayer(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	root := pluginLockFixture(t)
+	home := filepath.Join(root, "home")
+	repo := filepath.Join(root, "repo")
+	orgCfgPath := filepath.Join(root, "org", "config.yaml")
+	orgLock := filepath.Join(filepath.Dir(orgCfgPath), "lock.yaml")
+	userLock := filepath.Join(home, ".agents", "lock.yaml")
+
+	catalogOrigin, catalogWorking := createBareRepoWithWorkingClone(t, "catalog.git")
+	writeTwoMemberPluginPackage(t, filepath.Join(catalogWorking, "plugins", "local-kit"), "local-kit", "local-skill", "extra")
+	writeFile(t, filepath.Join(catalogWorking, ".claude-plugin", "marketplace.json"),
+		`{"name":"team","plugins":[{"name":"local-kit","source":"./plugins/local-kit"}]}`)
+	commitAndPushAll(t, catalogWorking, "seed catalog")
+	formatURL := filepath.ToSlash(catalogOrigin)
+
+	orgConfig := func(request string) string {
+		return "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  cat: {git: file://" + formatURL + ", ref: main, format: claude-marketplace}\nresources:\n  cat:\n    - " + request + "\n"
+	}
+	writeConfig(t, orgCfgPath, orgConfig("{kind: plugin, name: local-kit, exclude: [skill/extra]}"))
+	config.SetTestOrganizationConfigPath(t, orgCfgPath)
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), orgConfig("plugin/local-kit"))
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\n")
+
+	withWorkingDir(t, repo)
+	for _, scope := range []string{"organization", "user"} {
+		if output, err := executeCommand("lock", "--scope", scope); err != nil {
+			t.Fatalf("lock --scope %s of a plugin-selecting layer must succeed: %v\n%s", scope, err, output)
+		}
+	}
+	orgDoc, orgData := readLock(t, orgLock)
+	if !lockHasPluginResource(orgDoc, "local-kit") {
+		t.Fatalf("the organization lock must record the plugin its layer selected:\n%s", orgData)
+	}
+	userDoc, userData := readLock(t, userLock)
+	if !lockHasPluginResource(userDoc, "local-kit") {
+		t.Fatalf("the personal lock must record the plugin its layer selected:\n%s", userData)
+	}
+	if output, err := executeCommand("lock", "--check"); err != nil {
+		t.Fatalf("lock --check must verify both layers: %v\n%s", err, output)
+	}
+
+	// Each layer's manifest commits its own member keys: dropping the
+	// organization exclusion stales the organization lock while the personal
+	// lock — which never excluded — stays fresh.
+	writeConfig(t, orgCfgPath, orgConfig("plugin/local-kit"))
+	output, err := executeCommand("lock", "--check", "--scope", "organization")
+	if err == nil {
+		t.Fatalf("the organization lock must report stale after its exclusion changed:\n%s", output)
+	}
+	if !strings.Contains(output, "lock.") {
+		t.Fatalf("expected a stale lock diagnostic, got:\n%s", output)
+	}
+	if output, err := executeCommand("lock", "--check", "--scope", "user"); err != nil {
+		t.Fatalf("the personal lock must stay fresh when another layer's exclusion changes: %v\n%s", err, output)
+	}
+}
+
+// A selection authored in a layer is committed in that layer's lock even
+// when its source loses a plugin name collision to another source: after
+// sync, dropping the losing source's selection must stale the lock.
+func TestSyncCollidedPluginSelectionStillLocked(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	root := pluginLockFixture(t)
+	repo := filepath.Join(root, "repo")
+
+	writeDupCatalog := func(working string) {
+		writeClaudePluginPackage(t, filepath.Join(working, "plugins", "dup-kit"), "dup-kit", "dup-skill")
+		writeFile(t, filepath.Join(working, ".claude-plugin", "marketplace.json"),
+			`{"name":"team","plugins":[{"name":"dup-kit","source":"./plugins/dup-kit"}]}`)
+	}
+	aOrigin, aWorking := createBareRepoWithWorkingClone(t, "a.git")
+	writeDupCatalog(aWorking)
+	commitAndPushAll(t, aWorking, "seed a")
+	bOrigin, bWorking := createBareRepoWithWorkingClone(t, "b.git")
+	writeDupCatalog(bWorking)
+	commitAndPushAll(t, bWorking, "seed b")
+
+	cfgPath := filepath.Join(repo, ".agents", "config.yaml")
+	configBody := func(withB bool) string {
+		body := "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  a: {git: file://" + filepath.ToSlash(aOrigin) + ", ref: main, format: claude-marketplace}\n  b: {git: file://" + filepath.ToSlash(bOrigin) + ", ref: main, format: claude-marketplace}\nresources:\n  a:\n    - plugin/dup-kit\n"
+		if withB {
+			body += "  b:\n    - plugin/dup-kit\n"
+		}
+		return body
+	}
+	writeConfig(t, cfgPath, configBody(true))
+	withWorkingDir(t, repo)
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	if output, err := executeCommand("sync", "--no-backup"); err != nil {
+		t.Fatalf("sync of a collided plugin selection must succeed: %v\n%s", err, output)
+	}
+	doc, data := readLock(t, lockPath)
+	if !lockHasPluginResource(doc, "dup-kit") {
+		t.Fatalf("the delivered plugin must be locked:\n%s", data)
+	}
+	if output, err := executeCommand("sync", "--check"); err != nil {
+		t.Fatalf("sync --check must verify the collided selection: %v\n%s", err, output)
+	}
+
+	writeConfig(t, cfgPath, configBody(false))
+	output, err := executeCommand("lock", "--check", "--scope", "repo")
+	if err == nil {
+		t.Fatalf("dropping the losing source's authored selection must stale the lock:\n%s", output)
+	}
+	if !strings.Contains(output, "lock.") {
+		t.Fatalf("expected a stale lock diagnostic, got:\n%s", output)
+	}
+}
+
 // spec: plugin-packages/external-catalog-entry-is-locked-to-its-own-commit
 func TestSyncExternalCatalogEntryLockedToOwnCommit(t *testing.T) {
 	if isolateCommandTest(t) {

@@ -1,6 +1,8 @@
 package catalog
 
 import (
+	"strings"
+
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
@@ -16,16 +18,19 @@ type PluginSelectionEdge struct {
 	Scope      config.Source
 }
 
-// PlannedPlugin is the resolver's own selection of one plugin: the format
-// source entry that provides it, its selection edges, its member kind/name
-// keys after request exclusions, and the catalog entry it resolved to (which
-// carries the external source requirement for catalog entries). Exclusions
-// carries authored member exclusions an external entry's decoded package
-// validates at lock time; in-repository entries match them during
-// resolution.
+// PlannedPlugin is the resolver's own selection of one plugin by one
+// configuration layer: the format source entry that provides it, that
+// layer's own selection edges, its member kind/name keys after that layer's
+// request exclusions, and the catalog entry it resolved to (which carries
+// the external source requirement for catalog entries). Layer is the
+// configuration layer that authored the selection — the layer whose own
+// acquisition lock commits it. Exclusions carries authored member
+// exclusions an external entry's decoded package validates at lock time;
+// in-repository entries match them during resolution.
 type PlannedPlugin struct {
 	Source     config.RegistryEntry
 	Name       string
+	Layer      config.Source
 	Edges      []PluginSelectionEdge
 	Members    []string
 	Exclusions []string
@@ -33,50 +38,51 @@ type PlannedPlugin struct {
 }
 
 // PluginSelectionPlan is the resolver's plugin selection for a
-// configuration; every plugin-v1 manifest input derives from it.
+// configuration; every plugin-v1 manifest input derives from it. The plan
+// carries one record per (plugin, owning source location, authoring layer)
+// and never deduplicates across layers.
 type PluginSelectionPlan struct {
 	Plugins []PlannedPlugin
 }
 
-// ForEntry returns the plan items the given format source entry's layer
-// authored: plugins whose source resolves to the same canonical URL or
-// directory, ref, and root path, and for which that layer authored at least
-// one selection edge. Each returned plugin carries only that layer's edges,
-// so a layer's plugin-v1 manifest commits exactly the selections authored in
+// ForEntry returns the plan records the given layer authored for the given
+// format source entry's location: plugins whose source resolves to the same
+// canonical URL or directory, ref, and root path, selected by that layer's
+// own configuration. Each record carries only that layer's edges, so a
+// layer's plugin-v1 manifest commits exactly the selections authored in
 // that layer's own configuration.
 func (p PluginSelectionPlan) ForEntry(entry config.RegistryEntry, scope config.Source) []PlannedPlugin {
+	if scope == config.SourceUnset {
+		scope = config.RepoCommitted
+	}
 	out := []PlannedPlugin{}
 	for _, plugin := range p.Plugins {
-		if !sameSourceLocation(plugin.Source, entry) {
-			continue
+		if plugin.Layer == scope && sameSourceLocation(plugin.Source, entry) {
+			out = append(out, plugin)
 		}
-		planned := plugin
-		planned.Edges = nil
-		for _, edge := range plugin.Edges {
-			edgeLayer := edge.Scope
-			if edgeLayer == config.SourceUnset {
-				edgeLayer = config.RepoCommitted
-			}
-			if edgeLayer == scope {
-				planned.Edges = append(planned.Edges, edge)
-			}
-		}
-		if len(planned.Edges) == 0 {
-			continue
-		}
-		out = append(out, planned)
 	}
 	return out
 }
 
 // ExternalEntries returns the selected catalog entries that resolve to an
-// external repository, one per planned plugin across every format source.
+// external repository. Records identical across authoring layers collapse
+// to one external entry; selections that differ (for example in member
+// exclusions) stay distinct.
 func (p PluginSelectionPlan) ExternalEntries() []PlannedPlugin {
 	var out []PlannedPlugin
+	seen := map[string]bool{}
 	for _, plugin := range p.Plugins {
-		if plugin.Entry.Plugin != nil && plugin.Entry.Plugin.Source.Kind == "git" {
-			out = append(out, plugin)
+		if plugin.Entry.Plugin == nil || plugin.Entry.Plugin.Source.Kind != "git" {
+			continue
 		}
+		source := plugin.Entry.Plugin.Source
+		key := plugin.Name + "\x00" + source.URL + "\x00" + source.Ref + "\x00" + source.Subdirectory +
+			"\x00" + plugin.Entry.Plugin.DefinitionDigest + "\x00" + strings.Join(plugin.Exclusions, "\x01")
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, plugin)
 	}
 	return out
 }
