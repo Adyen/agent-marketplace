@@ -1,11 +1,13 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/tui"
 )
 
@@ -26,9 +28,19 @@ func terminalSafeCommandError(err error) error {
 	if err == nil {
 		return nil
 	}
-	text := fmt.Sprint(err)
+	original := fmt.Sprint(err)
+	text := original
+	var validation *config.V4ValidationError
+	if errors.As(err, &validation) {
+		if hint := validation.Remediation(); hint != "" && !strings.Contains(text, hint) {
+			text += "\n  → " + hint
+		}
+	}
 	if safe := terminalSafeLines(text); safe != text {
-		return terminalSafeError{err: err, text: safe}
+		text = safe
+	}
+	if text != original {
+		return terminalSafeError{err: err, text: text}
 	}
 	return err
 }
