@@ -1,10 +1,11 @@
 schema: 1
 harness: gemini
 evidence:
-  checked: "2026-09-21"
+  checked: "2026-10-19"
   refs:
     - https://geminicli.com/docs/core/subagents/
     - https://github.com/google-gemini/gemini-cli/blob/cfbcaa8df13ea4610bb379b377b56d62980c0032/packages/core/src/agents/agentLoader.ts
+    - https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/config/models.ts
 surfaces:
   subagent:
     model_field: model
@@ -21,21 +22,15 @@ models:
     model: gemini-3.1-pro-preview
   google/gemini-3.5-flash:
     model: gemini-3.5-flash
-  # TODO(model-catalog-drift): stub from https://raw.githubusercontent.com/google-gemini/gemini-cli/main/packages/core/src/config/models.ts; verify native resource support and reasoning before merging.
   google/gemini-2.5-pro:
     model: gemini-2.5-pro
-  # TODO(model-catalog-drift): stub from https://raw.githubusercontent.com/google-gemini/gemini-cli/main/packages/core/src/config/models.ts; verify native resource support and reasoning before merging.
   google/gemini-3-flash:
     model: gemini-3-flash
-  # TODO(model-catalog-drift): stub from https://raw.githubusercontent.com/google-gemini/gemini-cli/main/packages/core/src/config/models.ts; verify native resource support and reasoning before merging.
   google/gemini-3.1-flash-lite:
     model: gemini-3.1-flash-lite
-  # TODO(model-catalog-drift): stub from https://raw.githubusercontent.com/google-gemini/gemini-cli/main/packages/core/src/config/models.ts; verify native resource support and reasoning before merging.
   google/gemini-3.1-pro-preview-customtools:
     model: gemini-3.1-pro-preview-customtools
-  # TODO(model-catalog-drift): stub from https://raw.githubusercontent.com/google-gemini/gemini-cli/main/packages/core/src/config/models.ts; verify native resource support and reasoning before merging.
   google/gemini-3.5-flash-lite:
     model: gemini-3.5-flash-lite
-  # TODO(model-catalog-drift): stub from https://raw.githubusercontent.com/google-gemini/gemini-cli/main/packages/core/src/config/models.ts; verify native resource support and reasoning before merging.
   google/gemini-3.8-flash:
     model: gemini-3.8-flash

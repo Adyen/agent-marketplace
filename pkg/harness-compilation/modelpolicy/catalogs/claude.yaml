@@ -1,10 +1,12 @@
 schema: 1
 harness: claude
 evidence:
-  checked: "2026-09-21"
+  checked: "2026-10-19"
   refs:
     - https://code.claude.com/docs/en/sub-agents.md
     - https://code.claude.com/docs/en/skills.md
+    - https://platform.claude.com/docs/en/about-claude/models/overview.md
+    - https://platform.claude.com/docs/en/build-with-claude/effort.md
 surfaces:
   subagent:
     model_field: model
@@ -37,18 +39,38 @@ models:
     model: claude-opus-4-20250514
   anthropic/claude-haiku-3-5-20241022:
     model: claude-haiku-3-5-20241022
-  # TODO(model-catalog-drift): stub from https://platform.claude.com/docs/en/about-claude/models/overview.md; verify native resource support and reasoning before merging.
-  anthropic/claude-fable-5-1:
+  anthropic/claude-fable-5.1:
     model: claude-fable-5-1
-  # TODO(model-catalog-drift): stub from https://platform.claude.com/docs/en/about-claude/models/overview.md; verify native resource support and reasoning before merging.
+    reasoning:
+      low: {effort: low}
+      medium: {effort: medium}
+      high: {effort: high}
+      xhigh: {effort: xhigh}
+      max: {effort: max}
   anthropic/claude-haiku-5-5:
     model: claude-haiku-5-5
-  # TODO(model-catalog-drift): stub from https://platform.claude.com/docs/en/about-claude/models/overview.md; verify native resource support and reasoning before merging.
+    reasoning:
+      low: {effort: low}
+      medium: {effort: medium}
+      high: {effort: high}
+      xhigh: {effort: xhigh}
+      max: {effort: max}
   anthropic/claude-opus-5-5:
     model: claude-opus-5-5
-  # TODO(model-catalog-drift): stub from https://platform.claude.com/docs/en/about-claude/models/overview.md; verify native resource support and reasoning before merging.
+    reasoning:
+      low: {effort: low}
+      medium: {effort: medium}
+      high: {effort: high}
+      xhigh: {effort: xhigh}
+      max: {effort: max}
   anthropic/claude-sonnet-5-5:
     model: claude-sonnet-5-5
+    reasoning:
+      low: {effort: low}
+      medium: {effort: medium}
+      high: {effort: high}
+      xhigh: {effort: xhigh}
+      max: {effort: max}
 families:
   anthropic/sonnet:
     model: sonnet
