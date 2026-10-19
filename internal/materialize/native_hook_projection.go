@@ -179,9 +179,25 @@ func prepareNativeHookProjectionSource(res resolver.ResolvedArtifact, hook *ir.H
 		if err != nil {
 			return nil, "", nil, err
 		}
+		if captured != nil && support != nil {
+			checked, checkErr := checkHookSupportReferenceRewrites(captured.Command, support, hookSupportBundlePrefixDir(projection, definitionDir))
+			if checkErr != nil {
+				return nil, "", nil, checkErr
+			}
+			if checked.Missing {
+				return nil, "", nil, errHookSupportReferenceMissing
+			}
+			if checked.Command != captured.Command {
+				clone := *captured
+				clone.Command = checked.Command
+				captured = &clone
+			}
+		}
 	}
 	return captured, digest, support, nil
 }
+
+var errHookSupportReferenceMissing = errors.New("hook support reference names no installed file")
 
 func nativeHookProjectionDestination(destinations []harness.Destination, file targetmeta.NativeHookProjectionFile) (harness.Destination, string, error) {
 	var selected harness.Destination

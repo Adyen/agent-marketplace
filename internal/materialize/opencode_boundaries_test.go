@@ -262,7 +262,7 @@ func TestOpenCodeHookSiblingDeclarationsAreNeverInstalled(t *testing.T) {
 				t.Fatal(err)
 			}
 			slices.Sort(installed)
-			if len(installed) != 3 || installed[0] != "hook-support/"+strings.Split(installed[0], "/")[1]+"/selected/check.sh" || installed[1] != "hooks/agent-marketplace/selected.json" || installed[2] != "plugins/agent-marketplace.js" {
+			if len(installed) != 3 || installed[0] != "hook-support/"+strings.Split(installed[0], "/")[1]+"/selected/agent-marketplace/check.sh" || installed[1] != "hooks/agent-marketplace/selected.json" || installed[2] != "plugins/agent-marketplace.js" {
 				t.Fatalf("installed %v, want the selected declaration, its support script, and the adapter", installed)
 			}
 		})

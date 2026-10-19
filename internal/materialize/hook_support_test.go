@@ -36,7 +36,7 @@ func TestPrepareHookSupportNamespacesSupportFiles(t *testing.T) {
 		if !strings.HasSuffix(plan.relBase, "/"+want) {
 			t.Fatalf("plan %d relBase %q missing installed name %q", i, plan.relBase, want)
 		}
-		if len(plan.artifacts) != 1 || plan.artifacts[0].Path != plan.relBase+"/shared.sh" {
+		if len(plan.artifacts) != 1 || plan.artifacts[0].Path != plan.relBase+"/hooks/shared.sh" {
 			t.Fatalf("plan %d artifacts = %#v", i, plan.artifacts)
 		}
 	}

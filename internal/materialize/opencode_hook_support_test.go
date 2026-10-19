@@ -93,7 +93,7 @@ func TestOpenCodeHookSupportInstallsBesideTheAdapter(t *testing.T) {
 					t.Fatalf("support files = %v, want the shared script only", files)
 				}
 				for rel, info := range files {
-					if !strings.HasSuffix(rel, "/guard/shared.sh") {
+					if !strings.HasSuffix(rel, "/guard/hooks/shared.sh") {
 						t.Fatalf("support path %q is not hook-support/<source>/guard/shared.sh", rel)
 					}
 					if !machine && !info.Mode().IsRegular() {

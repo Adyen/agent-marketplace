@@ -174,6 +174,24 @@ func TestRunIndependentNativeHookUnsafeSourceRetainsLegacy(t *testing.T) {
 	if !bytes.Equal(legacyHelperBefore.data, helperBytes) || legacyHelperBefore.info.Mode().Perm() != 0o640 {
 		t.Fatalf("legacy control did not preserve contained helper bytes/mode: %+v", legacyHelperBefore.info)
 	}
+	var legacyDoc struct {
+		PreToolUse []struct {
+			Hooks []struct {
+				Command string `json:"command"`
+			} `json:"hooks"`
+		} `json:"PreToolUse"`
+	}
+	if err := json.Unmarshal(legacyBefore.data, &legacyDoc); err != nil || len(legacyDoc.PreToolUse) != 1 || len(legacyDoc.PreToolUse[0].Hooks) != 1 {
+		t.Fatalf("legacy control hooks.json shape = %v / %s", err, legacyBefore.data)
+	}
+	commandedPath := strings.ReplaceAll(legacyDoc.PreToolUse[0].Hooks[0].Command, "$FACTORY_PROJECT_DIR", fixture.repoRoot)
+	commandedPath = strings.ReplaceAll(commandedPath, `"`, "")
+	commanded, err := os.ReadFile(commandedPath)
+	sourceRun, readErr := os.ReadFile(filepath.Join(sourceDir, "scripts", "run.sh"))
+	if err != nil || readErr != nil || !bytes.Equal(commanded, sourceRun) {
+		t.Fatalf("legacy command %q names %q = %q/%v, want the written support bytes %q/%v",
+			legacyDoc.PreToolUse[0].Hooks[0].Command, commandedPath, commanded, err, sourceRun, readErr)
+	}
 	hasLegacyWrite := func(report *Report) bool {
 		for _, root := range report.PerRoot {
 			for _, written := range root.Written {
@@ -197,8 +215,8 @@ func TestRunIndependentNativeHookUnsafeSourceRetainsLegacy(t *testing.T) {
 	if err := os.MkdirAll(nativeSupportRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	nativeHelperTarget := filepath.Join(nativeSupportRoot, helperTargetName)
-	nativeHelperLink := filepath.Join(nativeSupportRoot, helperLinkName)
+	nativeHelperTarget := filepath.Join(nativeSupportRoot, "hooks", helperTargetName)
+	nativeHelperLink := filepath.Join(nativeSupportRoot, "hooks", helperLinkName)
 	if err := os.WriteFile(nativeHelperTarget, helperBytes, 0o640); err != nil {
 		t.Fatal(err)
 	}
@@ -298,20 +316,20 @@ func newIndependentFactoryFixture(t *testing.T) independentFactoryFixture {
 		nativeRoot:       nativeRoot,
 		nativePath:       filepath.Join(nativeRoot, "hooks.json"),
 		legacyPath:       filepath.Join(nativeRoot, "hooks", "hooks.json"),
-		supportPath:      filepath.Join(nativeRoot, "hook-support", sourceKey, name, "scripts", "run.sh"),
+		supportPath:      filepath.Join(nativeRoot, "hook-support", sourceKey, name, "hooks", "scripts", "run.sh"),
 		nativeBody:       independentFactoryNativeBody(sourceKey, name),
 		supportBytes:     []byte("#!/bin/sh\necho witness\n"),
 	}
 }
 
 func independentFactoryNativeBody(sourceKey, name string) []byte {
-	handler := `{"type":"command","command":"\"$FACTORY_PROJECT_DIR\"/.factory/hook-support/` + sourceKey + "/" + name + `/scripts/run.sh"}`
+	handler := `{"type":"command","command":"\"$FACTORY_PROJECT_DIR\"/.factory/hook-support/` + sourceKey + "/" + name + `/hooks/scripts/run.sh"}`
 	group := `{"hooks":[` + handler + `],"matcher":"Execute","commandRegex":"^make.*$"}`
 	return []byte(`{"PostToolUse":[{"matcher":"Edit","hooks":[{"type":"command","command":"echo handwritten"}]}],"PreToolUse":[` + group + `]}` + "\n")
 }
 
 func (f independentFactoryFixture) selectedHandler() string {
-	return `{"type":"command","command":"\"$FACTORY_PROJECT_DIR\"/.factory/hook-support/` + f.sourceKey + "/" + f.name + `/scripts/run.sh"}`
+	return `{"type":"command","command":"\"$FACTORY_PROJECT_DIR\"/.factory/hook-support/` + f.sourceKey + "/" + f.name + `/hooks/scripts/run.sh"}`
 }
 
 func (f independentFactoryFixture) selectedGroup() string {
@@ -670,7 +688,7 @@ func TestRunIndependentNativeHookFactoryNativeMismatchesRetainLegacy(t *testing.
 			name: "wrong_resource_support_namespace",
 			mutate: func(t *testing.T, f independentFactoryFixture) []byte {
 				handler := f.selectedHandler()
-				changed := strings.Replace(handler, "/"+f.name+"/scripts/", "/other-resource/scripts/", 1)
+				changed := strings.Replace(handler, "/hooks/scripts/", "/other-resource/scripts/", 1)
 				return replaceIndependentText(t, f.nativeBody, handler, changed)
 			},
 		},
@@ -840,7 +858,7 @@ func TestRunIndependentNativeHookFactoryUnsafeSupportRefuses(t *testing.T) {
 			switch shape {
 			case "support_root_symlink":
 				externalRoot := t.TempDir()
-				external = filepath.Join(externalRoot, f.sourceKey, f.name, "scripts", "run.sh")
+				external = filepath.Join(externalRoot, f.sourceKey, f.name, "hooks", "scripts", "run.sh")
 				if err := os.MkdirAll(filepath.Dir(external), 0o755); err != nil {
 					t.Fatal(err)
 				}
@@ -933,7 +951,7 @@ func TestRunIndependentNativeHookNativeRootLinkRefuses(t *testing.T) {
 	if err := os.WriteFile(externalNative, f.nativeBody, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	externalSupport := filepath.Join(externalRoot, "hook-support", f.sourceKey, f.name, "scripts", "run.sh")
+	externalSupport := filepath.Join(externalRoot, "hook-support", f.sourceKey, f.name, "hooks", "scripts", "run.sh")
 	if err := os.MkdirAll(filepath.Dir(externalSupport), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1462,7 +1480,7 @@ func TestRunIndependentNativeHookFactorySupportRefusalDoesNotBlockClaude(t *test
 	f := newIndependentFactoryFixture(t)
 	f.writeNative(t, f.nativeBody)
 	externalRoot := t.TempDir()
-	externalSupport := filepath.Join(externalRoot, f.sourceKey, f.name, "scripts", "run.sh")
+	externalSupport := filepath.Join(externalRoot, f.sourceKey, f.name, "hooks", "scripts", "run.sh")
 	if err := os.MkdirAll(filepath.Dir(externalSupport), 0o755); err != nil {
 		t.Fatal(err)
 	}

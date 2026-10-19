@@ -37,6 +37,10 @@ type hookSupportPlan struct {
 	sourceDigest            string
 	sourceSnapshot          *hookSourceSnapshot
 	sourceExcludedPeers     []string
+	command                 string
+	definitionDir           string
+	referenceMissing        bool
+	referenceLegacy         bool
 	err                     error
 	supportAdmissionRefused bool
 }
@@ -56,6 +60,41 @@ type hookSupportClaim struct {
 	artifact  artifact.Artifact
 	producers []int
 	conflict  bool
+}
+
+// hookSupportBundlePrefixDir reports the bundle-prefix segment D: the name of
+// the folder holding the hook definition below the source bundle root. For
+// index-only sources the staged definition sits at the staged root, so D
+// comes from the hook's recorded source definition path — the same value
+// hookSupportProjection validates as exclusionDir.
+func hookSupportBundlePrefixDir(res resolver.ResolvedArtifact, definitionDir string) string {
+	if res.IsMarketplace && res.MarketplaceAcquisition == config.MarketplaceAcquisitionIndexOnly {
+		hook, ok := res.Resource.(*ir.Hook)
+		if !ok {
+			return ""
+		}
+		sourceFile := filepath.ToSlash(filepath.Clean(filepath.FromSlash(hook.Source.File)))
+		if dir := path.Dir(sourceFile); dir != "" && dir != "." {
+			return path.Base(dir)
+		}
+		return ""
+	}
+	if definitionDir != "" && definitionDir != "." {
+		return path.Base(definitionDir)
+	}
+	return ""
+}
+
+// checkHookSupportReferenceRewrites runs the shared literal plugin-root
+// reference check used by both the compile lane and the projection lane:
+// installed paths are the staged support artifacts, and the legacy fallback
+// prefix is the definition directory's base name (empty at the bundle root).
+func checkHookSupportReferenceRewrites(command string, files []artifact.Artifact, legacyPrefix string) (catalog.HookSupportReferenceResult, error) {
+	installed := make([]string, 0, len(files))
+	for _, file := range files {
+		installed = append(installed, file.Path)
+	}
+	return catalog.CheckHookSupportReferences(command, installed, legacyPrefix)
 }
 
 func prepareHookSupport(work []skillTarget, repoRoots ...string) (map[int]hookSupportPlan, map[int][]string) {
@@ -168,6 +207,7 @@ func prepareHookSupport(work []skillTarget, repoRoots ...string) (map[int]hookSu
 			}
 			plan.sourceSnapshot = snapshot
 			plan.sourceExcludedPeers = append([]string(nil), snapshotExcludedPeers[key]...)
+			plan.definitionDir = definitionDir
 			files, err = hookSupportArtifactsFromSnapshot(projection, snapshot)
 			if err != nil {
 				plan.err = err
@@ -192,6 +232,19 @@ func prepareHookSupport(work []skillTarget, repoRoots ...string) (map[int]hookSu
 		if plan.err != nil {
 			plans[i] = plan
 			continue
+		}
+		if files != nil {
+			if hook, ok := w.skill.Resource.(*ir.Hook); ok {
+				checked, checkErr := checkHookSupportReferenceRewrites(hook.Command, files, hookSupportBundlePrefixDir(w.skill, plan.definitionDir))
+				if checkErr != nil {
+					plan.err = checkErr
+					plans[i] = plan
+					continue
+				}
+				plan.command = checked.Command
+				plan.referenceMissing = checked.Missing
+				plan.referenceLegacy = checked.Legacy
+			}
 		}
 		for _, staged := range plan.artifacts {
 			claimKey := fmt.Sprintf("%s\x00%t\x00%s", w.target, w.machineScope, staged.Path)

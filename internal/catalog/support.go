@@ -146,6 +146,161 @@ func HookSupportReferenceStatus(command string, declared map[string]string) (mis
 	return missing, unsupported, nil
 }
 
+// HookSupportReferenceResult reports the outcome of checking literal
+// plugin-root path references in a hook command against the installed
+// bundle-relative support paths.
+type HookSupportReferenceResult struct {
+	Command string // command with legacy references rewritten to their bundle-relative path
+	Missing bool   // a literal reference resolved under neither meaning
+	Legacy  bool   // a reference resolved only under the legacy folder meaning
+}
+
+// CheckHookSupportReferences checks each literal ${TOKEN}/<path> reference in
+// command outside single quotes against the installed bundle-relative support
+// paths. A reference that resolves only under the legacy folder meaning —
+// prefixing the path with legacyPrefix — is rewritten to that path; an empty
+// legacyPrefix disables the fallback. Bare tokens and references whose path
+// carries a shell expansion or glob are not checked.
+func CheckHookSupportReferences(command string, installed []string, legacyPrefix string) (HookSupportReferenceResult, error) {
+	names, err := hookpolicy.PluginRootNames()
+	if err != nil {
+		return HookSupportReferenceResult{}, err
+	}
+	pluginNames := make(map[string]bool, len(names))
+	for _, name := range names {
+		pluginNames[name] = true
+	}
+	resolved := func(rel string) bool {
+		for _, p := range installed {
+			if p == rel || strings.HasPrefix(p, rel+"/") {
+				return true
+			}
+		}
+		return false
+	}
+	result := HookSupportReferenceResult{Command: command}
+	var out strings.Builder
+	pos := 0
+	var edits bool
+	var quote byte
+	for i := 0; i < len(command); i++ {
+		c := command[i]
+		switch quote {
+		case '\'':
+			if c == '\'' {
+				quote = 0
+			}
+			continue
+		case '"':
+			switch {
+			case c == '"':
+				quote = 0
+				continue
+			case c == '\\' && i+1 < len(command) && strings.IndexByte("$`\"\\", command[i+1]) >= 0:
+				i++
+				continue
+			case c != '$':
+				continue
+			}
+		default:
+			switch c {
+			case '\\':
+				i++
+				continue
+			case '\'', '"':
+				quote = c
+				continue
+			case '$':
+			default:
+				continue
+			}
+		}
+		// c == '$' outside a single-quoted literal.
+		if i+1 >= len(command) || command[i+1] == '(' {
+			continue
+		}
+		_, end := hookPluginRootToken(command, i, pluginNames)
+		if end <= i {
+			continue
+		}
+		if end < len(command) && command[end] == '/' {
+			pathStart := end + 1
+			k := pathStart
+			dynamic := false
+			for k < len(command) {
+				ch := command[k]
+				if ch == '\\' {
+					dynamic = true
+					k += 2
+					continue
+				}
+				if strings.IndexByte(" \t\n\"';&|<>()$`", ch) >= 0 {
+					break
+				}
+				k++
+			}
+			rel := strings.TrimRight(command[pathStart:k], "/")
+			if rel != "" && !dynamic && !strings.ContainsAny(rel, "*?[]{}") {
+				switch {
+				case resolved(rel):
+				case legacyPrefix != "" && resolved(legacyPrefix+"/"+rel):
+					out.WriteString(command[pos:pathStart])
+					out.WriteString(legacyPrefix + "/")
+					pos = pathStart
+					edits = true
+					result.Legacy = true
+				default:
+					result.Missing = true
+				}
+			}
+			i = k - 1
+			continue
+		}
+		i = end - 1
+	}
+	if edits {
+		out.WriteString(command[pos:])
+		result.Command = out.String()
+	}
+	return result, nil
+}
+
+// hookPluginRootToken parses a $NAME or ${NAME} token at command[start] and
+// returns its name and the index just past it when the name is a shipped
+// plugin-root spelling; otherwise it returns start.
+func hookPluginRootToken(command string, start int, pluginNames map[string]bool) (string, int) {
+	if start+1 >= len(command) {
+		return "", start
+	}
+	name := ""
+	end := start + 1
+	if command[end] == '{' {
+		close := strings.IndexByte(command[end:], '}')
+		if close < 0 {
+			return "", start
+		}
+		name = command[end+1 : end+close]
+		end = end + close + 1
+	} else {
+		for end < len(command) {
+			c := command[end]
+			if c == '_' || 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9' {
+				end++
+				continue
+			}
+			break
+		}
+		if end == start+1 {
+			return "", start
+		}
+		name = command[start+1 : end]
+	}
+	if !pluginNames[name] {
+		return "", start
+	}
+	return name, end
+}
+
 // HookMaterializationSupportFiles is shared by publication and installation.
 func HookMaterializationSupportFiles(sourcePath, sourceHarness string) ([]string, error) {
 	names, err := HookSupportFiles(sourcePath)

@@ -2874,7 +2874,7 @@ func TestRunHookSupportFilesAreSymlinked(t *testing.T) {
 
 	// remind.sh should be a regular copy under the hook's namespaced
 	// support directory.
-	scriptMatches, _ := filepath.Glob(filepath.Join(repoRoot, ".factory", "hook-support", "*", "post-tool-use-remind", "remind.sh"))
+	scriptMatches, _ := filepath.Glob(filepath.Join(repoRoot, ".factory", "hook-support", "*", "post-tool-use-remind", "hooks", "remind.sh"))
 	if len(scriptMatches) != 1 {
 		t.Fatalf("expected one namespaced remind.sh, got %v", scriptMatches)
 	}
