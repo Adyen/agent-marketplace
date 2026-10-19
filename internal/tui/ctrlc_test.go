@@ -87,7 +87,7 @@ func TestCtrlCQuitsFromToggleModal(t *testing.T) {
 func TestCtrlCQuitsFromConfirmDialog(t *testing.T) {
 	m := newTestModel()
 	m.pane = paneConfirm
-	m.confirmMsg = "2 pending changes not synced. Sync+quit? y/n/esc"
+	m.confirmMsg = "2 pending changes not synced. Sync+quit?"
 
 	_, cmd := m.Update(ctrlCKey())
 	if cmd == nil {

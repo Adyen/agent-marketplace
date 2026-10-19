@@ -127,15 +127,13 @@ func renderErrors(m Model) string {
 }
 
 func renderConfirm(m Model) string {
+	t := m.currentTheme()
 	m.ensureSyncQuitForm()
-	form := ""
+	body := []string{sanitizeTerminalData(m.confirmMsg, terminalSingleLine)}
 	if m.syncQuitForm != nil {
-		form = m.syncQuitForm.View() + "\n\n"
+		body = append(body, "", m.syncQuitForm.View())
 	}
-	return styleHelpOverlay.Render(
-		styleConfirmTitle.Render("Confirm") +
-			"\n\n" + sanitizeTerminalData(m.confirmMsg, terminalSingleLine) +
-			"\n\n" + form +
-			"y = yes · n = no · esc = cancel",
-	)
+	return modalFrame(m, t.warn, warnBoldStyle(t).Render("Confirm"), body, []footerHint{
+		{"y", "sync+quit"}, {"n", "quit"}, {"esc", "cancel"},
+	})
 }
