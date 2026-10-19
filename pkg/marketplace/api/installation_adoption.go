@@ -208,9 +208,8 @@ func installationMetricsQuery(labels map[string]string, plan installationQueryPl
 	}
 	suspiciousRows := make([]string, 0, 3)
 	for _, name := range []string{"marketplace_id", "registry_id", "resource_name"} {
-		matchers := append(append([]string{}, selectors...), suspiciousMatchers...)
-		matchers = append(matchers, name+"=~"+strconv.Quote(suspiciousPattern))
-		suspiciousRows = append(suspiciousRows, resource(matchers[len(selectors):]...))
+		matchers := append(append([]string{}, suspiciousMatchers...), name+"=~"+strconv.Quote(suspiciousPattern))
+		suspiciousRows = append(suspiciousRows, resource(matchers...))
 	}
 	suspiciousLatest := `((` + strings.Join(suspiciousRows, ` or `) + `) and on (installation_id, config_fingerprint) ` + latest + `)`
 	suspicious := `label_replace(max by (source_kind, marketplace_id, registry_id, resource_kind, resource_name) (` +
@@ -236,7 +235,7 @@ func aggregateInstallationMetrics(samples []inventoryMetricSample, plan installa
 	freshSeen, validUntilSeen := false, false
 	var validUntil int64
 	for _, sample := range samples {
-		if sample.Metric == nil || math.IsNaN(sample.Value) || math.IsInf(sample.Value, 0) {
+		if math.IsNaN(sample.Value) || math.IsInf(sample.Value, 0) {
 			return installationCounts{}, errInvalidInstallationMetrics
 		}
 		switch sample.Metric["inventory_type"] {

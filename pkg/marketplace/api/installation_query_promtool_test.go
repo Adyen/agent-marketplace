@@ -121,29 +121,23 @@ func malformedObservationCase(name, fingerprint, sourceKind, marketplaceID, regi
 	if marketplaceID != "" {
 		labels["marketplace_id"] = marketplaceID
 	}
-	series := []promtoolSeries{snapshotSeries(name, fingerprint, promtoolNow)}
-	if kind != "-" {
-		series = append(series, resourceSeries(name, fingerprint, registry, kind, resource, labels, value))
+	series := []promtoolSeries{
+		snapshotSeries(name, fingerprint, promtoolNow),
+		resourceSeries(name, fingerprint, registry, kind, resource, labels, value),
 	}
 	expected := append(promtoolFreshSamples(1, promtoolNow), invalidMarkerSamples()...)
-	switch {
-	case sourceKind == "marketplace" && resource != "":
-		expected = append([]promtoolExpectedSample{
-			{Labels: `{am_registry="` + registry + `",inventory_type="count",resource_kind="` + kind + `",resource_name="` + resource + `",value="1"}`, Value: 1},
-		}, expected...)
-	case sourceKind == "" && marketplaceID == "" && registry == telemetryAlpha && resource != "":
-		expected = append([]promtoolExpectedSample{
-			{Labels: `{am_registry="rA",inventory_type="count",resource_kind="` + kind + `",resource_name="` + resource + `",value="1"}`, Value: 1},
-		}, expected...)
-	case sourceKind == "" && marketplaceID == "" && registry == telemetryAlpha && resource == "":
-		expected = append([]promtoolExpectedSample{
-			{Labels: `{am_registry="rA",inventory_type="count",resource_kind="` + kind + `",value="1"}`, Value: 1},
-		}, expected...)
-	}
-	if name == "bad-gauge" {
-		expected = append(promtoolFreshSamples(1, promtoolNow),
-			promtoolExpectedSample{Labels: `{am_registry="rA",inventory_type="count",resource_kind="skill",resource_name="bad-gauge",value="2"}`, Value: 1},
-		)
+	if sourceKind == "" && marketplaceID == "" && registry == telemetryAlpha {
+		countLabels := `{am_registry="rA",inventory_type="count",resource_kind="` + kind + `"`
+		if resource != "" {
+			countLabels += `,resource_name="` + resource + `"`
+		}
+		countLabels += `,value="` + value + `"}`
+		countSample := promtoolExpectedSample{Labels: countLabels, Value: 1}
+		if value == "1" {
+			expected = append([]promtoolExpectedSample{countSample}, expected...)
+		} else {
+			expected = append(promtoolFreshSamples(1, promtoolNow), countSample)
+		}
 	}
 	return promtoolTestCase{
 		Interval:    "1d",
