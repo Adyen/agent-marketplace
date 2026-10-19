@@ -158,3 +158,71 @@ resources:
 		}
 	}
 }
+
+// R-A49: when the organization blocks a registry during an incident, its
+// already-installed machine output must be withdrawn, and removing another
+// registry must not rebuild it.
+func TestLedger215A49OrganizationBlockKeepsInstalledOutput(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	blockedOrigin, blockedWorking := createBareRepoWithWorkingClone(t, "a-blocked.git")
+	writeSkill(t, blockedWorking, "incident-tool", "COMPROMISED TOOL", nil)
+	commitAndPushAll(t, blockedWorking, "blocked registry")
+	allowedOrigin, allowedWorking := createBareRepoWithWorkingClone(t, "b-allowed.git")
+	writeSkill(t, allowedWorking, "other-tool", "UNRELATED TOOL", nil)
+	commitAndPushAll(t, allowedWorking, "allowed registry")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  blocked:
+    git: file://`+blockedOrigin+`
+    ref: main
+  allowed:
+    git: file://`+allowedOrigin+`
+    ref: main
+resources:
+  blocked:
+    include: [skill/incident-tool]
+  allowed:
+    include: [skill/other-tool]
+`)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withWorkingDir(t, repoRoot)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync: %v\n%s", err, output)
+	}
+	installed := filepath.Join(home, ".factory", "skills", "incident-tool")
+	if _, err := os.Lstat(filepath.Join(installed, "SKILL.md")); err != nil {
+		t.Fatalf("control: blocked-to-be skill not installed: %v", err)
+	}
+
+	orgPath := filepath.Join(t.TempDir(), "org.yaml")
+	writeConfig(t, orgPath, "apiVersion: agent-marketplace/v4\nallowed_registries:\n  - b-allowed\n")
+	config.SetTestOrganizationConfigPath(t, orgPath)
+
+	output, err := executeCommand("sync")
+	t.Logf("sync after organization block: err=%v\n%s", err, output)
+	if _, statErr := os.Lstat(installed); statErr == nil {
+		t.Errorf("REPRODUCED: organization block left the installed output in place (sync err=%v)", err)
+	}
+
+	if err := os.RemoveAll(installed); err != nil {
+		t.Fatal(err)
+	}
+	output, err = executeCommand("remove", "other-tool", "--from", "file://"+allowedOrigin, "--scope", "user")
+	t.Logf("remove --from allowed registry: err=%v\n%s", err, output)
+	if _, statErr := os.Lstat(installed); statErr == nil {
+		t.Errorf("REPRODUCED: removing another registry's resource rebuilt the blocked registry's output (remove err=%v)", err)
+	}
+	output, err = executeCommand("remove", "--from", "file://"+allowedOrigin, "--scope", "user")
+	t.Logf("remove --from allowed registry (whole entry): err=%v\n%s", err, output)
+	if _, statErr := os.Lstat(installed); statErr == nil {
+		t.Errorf("REPRODUCED: removing another registry entry rebuilt the blocked registry's output (remove err=%v)", err)
+	}
+}

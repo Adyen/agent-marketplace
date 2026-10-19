@@ -18,8 +18,9 @@ the user selected, and other OS accounts on the same machine. A case is a real
 threat only when such input makes the CLI do something to the user that the
 input's author could not already do: write, delete or overwrite files outside
 the checkout, expose the user's files or secrets, install something that
-executes, or remove or replace tooling the user or organization installed
-machine-wide. The user's own HOME, state, environment and configuration are
+executes, remove or replace tooling the user or organization installed
+machine-wide, keep content the organization has blocked, or hide executable
+content from the review the user or organization relies on. The user's own HOME, state, environment and configuration are
 not boundaries (R3.4 in [#432]).
 
 Two consequences decide most cases in this scope:
@@ -49,11 +50,11 @@ already made is.
 
 | Section | Cases | Status |
 |---|---:|---|
-| Real threats | 10 | 8 fixed, **2 open** (P11, P19) |
-| Not a security boundary | 30 | 5 fixed anyway, 17 no action, 2 removed, 6 ordinary bugs |
+| Real threats | 12 | 9 fixed, **3 open** (P09, P11, P19) |
+| Not a security boundary | 28 | 4 fixed anyway, 16 no action, 2 removed, 6 ordinary bugs |
 
-Both open threats are reproduced on the baseline. Neither needs a policy
-decision.
+All three open threats are reproduced on the baseline. P11 and P19 need no
+policy decision; P09 needs the withdrawal contract in #NEW-A49.
 
 ## Source Provenance
 
@@ -75,6 +76,8 @@ order. The check at the end verifies this.
 
 | Case | Report Aliases | Route | Untrusted Input and Harm | Evidence on the Baseline | Status |
 |---|---|---|---|---|---|
+| P03 | A15 | r1 | A registry commit whose root is an empty container: its nested hooks and MCP servers were left out of the lock's source-revision inventory, so a reviewed lock change did not show executable resources that sync then installed | `3d8ac4f4` from #242; `TestNestedRevisionInventoryMatchesDiscovery`, `TestLockedNestedHookAndMCPInventory` | Fixed |
+| P09 | A49 / F34 | r1 | The organization blocks a registry during an incident. Every `sync` then refuses and leaves that registry's installed output in place, and removing another registry entry rebuilds the blocked output from cache. The organization cannot withdraw tooling it has blocked | Reproduction R-A49: after the block, `sync` fails with `Installed 0  Removed 0  Malformed 0  Errors 1` and the skill stays; after deleting it, `remove --from <other registry>` restores it (a named `remove <name> --from` does not). No new content is fetched (#216; `TestResolveBlockedRegistryRemovalDoesNotAcquire`, `TestRemoveBlockedRegistryRefusesNewAcquisition`) | **Open** (#NEW-A49) |
 | P10 | A50 / F35 | r1 | A repository, or another lower-precedence selection, selects a resource named like a member of a required organization collection, and the member is suppressed | #426, #684; `TestResolveRequiredCollectionSelectionSuppressesRepositorySource`, `TestResolveRequiredCollectionMemberDisplacesOptionalSameScopeSelection`, `TestSyncRequiredCollectionMemberDisplacesUserSelection` | Fixed |
 | P11 | A51 / F33 | r1 | A command the user selected from a registry or Marketplace, named like an organization-required skill, takes that skill's `skills/<name>/SKILL.md` on Devin and Codex. Sync reports success | Reproduction R-A51: replaced in 3 of 4 runs (symlink mode when the organization source's cache path sorts first, file mode in both orders), with no warning or error | **Open** (#759) |
 | P12 | A65 | r1 | A repository commits two Marketplace pins whose colon-joined TUI keys collide; enabling the benign row globally writes the other pin into user configuration | NUL-separated keys over validated segments (`config.MarketplaceCatalogKey`); `TestMarketplaceCatalogKeyDimensionsAndAliases`, `TestMarketplaceSelectionIndexKeepsDistinctPins` | Fixed |
@@ -92,19 +95,25 @@ P16. In P11 the resolver's projection keys collisions by kind and name, so a
 skill and a command never compete, although Devin and Codex write both to the
 same directory. File mode even writes both and counts them (`Installed 4`).
 
+P03 and P09 are maintainer decisions (2026-10-19). P03 counts because hiding
+executable resources from the lock a team reviews is the behavior the lock
+exists to prevent, even though the registry author already controlled them.
+P09 counts because an organization block is the incident-response control: it
+must withdraw installed output, not only refuse new work. Only **organization**
+policy may withdraw. A repository or user `allowed_registries` that removed
+machine output would reopen FS08, so those layers keep today's refusal.
+
 ## Not a Security Boundary
 
 | Case | Report Aliases | Route | Claim | Why It Is Not a Boundary | Status |
 |---|---|---|---|---|---|
 | P01 | A2 / F6 | r1 | A rerun with `--accept-risk` accepts whatever revision the unpinned locator resolves to then | Consent is not a boundary against a publisher (threat model, point 2). The flags are documented as applying to the revision verified in that run, and `name@sha256:<digest>` pins one exactly | No action |
 | P02 | A3 | r1 | A first install from an unlocked mutable ref can lock a newer commit than the one discovered | The registry owner controls both commits, and no pin existed yet | Fixed anyway |
-| P03 | A15 | r1 | Nested bundles below an empty root were missing from the lock's source-revision manifest | The commit ID already pins the bytes, and a `default` or `required` selection already accepts every resource the author ships. The gap hid resources from lock review; it granted no authority | Fixed anyway |
 | P04 | A18 / F14 | r1 | A configured install edits a same-URL, same-path entry at another ref | The other entry is the repository author's and the edit stays in repository scope. The v4 editor's source identity now includes the ref | Fixed anyway |
 | P05 | A23 / F18 | r1 | `repo` and `repo.git` share one lock identity but can fetch different routes | Needs a hostile repository or personal entry plus a server that routes the two spellings differently; the effect stays in that entry's own scope | No action |
 | P06 | A32 | r1 | Two paths of one registry ship same-name Devin MCP servers, and the first wins | Both paths are selected by the user's configuration. A deterministic winner with a collision warning is the documented contract, and required sources still win | Fixed anyway |
 | P07 | A43 | r1 | A repository-selected Git hook or MCP server beats the Marketplace artifact the user reviewed | It lands in repository scope, which the repository author controls | Fixed anyway |
 | P08 | A45 / F30 | r1 | A web URL `tree/release/v1/...` resolves ref `release` | The registry owner controls both refs, as in FS25. It still installs the wrong content silently | Bug |
-| P09 | A49 / F34 | r1 | `remove --from` for another registry rebuilds a blocked registry's previously installed output from cache | No new content is fetched (#216). Locked layers rebuild from their lock's exact snapshot: the bytes ordinary sync already leaves in place | No action |
 | P15 | F2 | r1 | Name-based removal edits a decoy entry and leaves the resource enabled | The decoy, the resource and the scope all belong to the repository author | No action |
 | P17 | F138 | r1 | Legacy v2/v3 installs clear `exclude_all` | The v2/v3 editors no longer exist (`consumer-config-format`) | Removed |
 | P18 | F143 | r1 | Codex repair shows one of two duplicate MCP identities and installs the other | The user selected both; ordinary sync refuses the duplicate, and repair asks per entry | No action |
@@ -128,13 +137,11 @@ same directory. File mode even writes both and counts them (`Installed 4`).
 | P40 | F163 | parent | The MCP analyzer scans only the server name | Intentional, to keep credentials out of findings; CLI output escapes controls and bidi characters (`QuoteTerminal`) | No action |
 
 Evidence for the fixed rows: P02 #229, #230 (`TestConfiguredInstallFreezesDiscoveryBeforePublication`,
-`TestAdHocInstallPreparationPinsOriginalMutableRef`); P03 `3d8ac4f4` from #242
-(`TestNestedRevisionInventoryMatchesDiscovery`, `TestLockedNestedHookAndMCPInventory`);
+`TestAdHocInstallPreparationPinsOriginalMutableRef`);
 P04 `v4EditSourcePhysicalMatches` in `internal/config/v4_editor.go` (the witness
 `TestLayerEditorRemoveSourcePreservesSiblings` covers the removal path only);
 P06 `resolver.MaterializationWinners` (`TestMaterializationWinnersLegacyEmptyPriorityAndOrdering`);
-P07 #264 (`TestMarketplaceResolvedCollision`). P09's no-acquisition control is #216
-(`TestResolveBlockedRegistryRemovalDoesNotAcquire`, `TestRemoveBlockedRegistryRefusesNewAcquisition`).
+P07 #264 (`TestMarketplaceResolvedCollision`).
 
 The six bugs are ordinary defects, not #215 gates. They group into three
 issues: #760 (P26, P33, P36, P39: digest and inspection routes serve
@@ -172,19 +179,26 @@ The classifications were challenged before freezing:
   groups it did: P08, P26/P33/P36/P39 and P29 moved from "no action" to "bug".
   They stay out of the security count.
 - **Does every real threat pass "could the author already do this?"** P03 did
-  not: the registry author already controls every resource a `default` or
-  `required` selection accepts, so it moved from real threat to "fixed anyway".
+  not, because the registry author already controls every resource a
+  `default` or `required` selection accepts. Review moved it to "fixed anyway";
+  the maintainer moved it back, since review visibility is part of the harm
+  (threat model). P09 was "no action" because nothing new is fetched; the
+  maintainer moved it to real, since the organization must be able to withdraw.
 - **Was any "needs a probe" case quietly closed?** No. P11 was the open
   question; its reproduction confirmed it, so it moved to Real/Open. P19's
-  earlier helper-only result was replaced by an end-to-end reproduction.
+  earlier helper-only result was replaced by an end-to-end reproduction. P09's
+  two claims were probed separately: the block keeping output reproduces, and
+  so does the rebuild through a whole-entry `remove --from`; a named removal
+  does not rebuild.
+- **Could P09's fix create a new FS08?** Yes, if any layer's allowlist could
+  withdraw: a repository may set `allowed_registries` when the organization and
+  user do not. Withdrawal is therefore organization-only (#NEW-A49).
 - **Do the fixed rows rest on current tests?** All 24 witnesses ran fresh on
   the baseline and passed. P28's witness uses SQLite; the PostgreSQL run is
   #440's.
 
-Judgement calls a maintainer may reverse:
+Judgement calls: P03 and P09 are decided above. Still open for the maintainer:
 
-- P03: whether resources missing from lock review count as a security property.
-- P09: whether an organization block should remove output that is already installed. That is a product decision; today ordinary sync leaves it in place too.
 - P38: one invalid byte turns off text scanning for a whole file.
 - P18: the repair prompt names the wrong resource of a duplicate pair.
 
@@ -232,9 +246,10 @@ evidence.
   the `update` and documentation mismatch.
 - **Decision (45), ambiguous web refs:** not a boundary (P08); tracked as a bug.
 - **New processing budgets:** only D2, for the R5 security graph rows.
-- **R1 targeted blocked-registry removal carry-over:** it protects the user's
-  own edits next to blocked output. That is robustness, not security; moved to
-  #764.
+- **R1 blocked-registry carry-over:** withdrawing a blocked registry's output is
+  now security (P09, #NEW-A49). Making `remove` of a blocked registry touch only
+  its own output for every artifact kind protects the user's own edits; that
+  part stays robustness in #764.
 - **Hosted-service follow-ups:** secret exposure is P29, redirects P27, stale
   assessments P28, images P31, and lease and telemetry authority P25, P23 and
   P24.
@@ -243,11 +258,11 @@ evidence.
 
 - [x] Freeze both source hashes and P01-P40 against the unchanged R2 index.
 - [x] Classify every case against the threat model with baseline evidence, and
-  reproduce both open threats.
-- [ ] Fix P19 (#758) and P11 (#759): failing-first regressions, an
+  reproduce all three open threats.
+- [ ] Fix P19 (#758), P11 (#759) and P09 (#NEW-A49): failing-first regressions, an
   archived OpenSpec delta, `make validate`, `make spec-check`,
-  `make validate-e2e` and an `open-code-review-delegate` review. Rerun R-F149
-  and R-A51 on `main` after each merge.
+  `make validate-e2e` and an `open-code-review-delegate` review. Rerun R-F149,
+  R-A51 and R-A49 on `main` after each merge.
 - [ ] Close the R5 security track: R61 and the D2 graph rows in [#434].
 - [ ] Update #215 and close it.
 
@@ -272,6 +287,7 @@ All checks ran on the baseline on 2026-10-19, macOS arm64, `CGO_ENABLED=0`.
 |---|---|---|
 | R-F149 `TestLedger215F149UpdateBumpReplacesCommitPin` | `cmd/agent-marketplace` | Fails: P19 confirmed (`refs bumped: 1`, replacement content installed) |
 | R-A51 `TestLedger215A51RequiredSkillVersusSameNameCommand` | `cmd/agent-marketplace` | Fails: P11 confirmed in `org-sorts-first/symlink`, `org-sorts-first/file` and `user-sorts-first/file`; `user-sorts-first/symlink` keeps the required skill |
+| R-A49 `TestLedger215A49OrganizationBlockKeepsInstalledOutput` | `cmd/agent-marketplace` | Fails: P09 confirmed (blocked output stays; whole-entry `remove --from` rebuilds it; named removal does not) |
 
 To rerun them, copy the source into its package from a checkout of the
 baseline:
@@ -369,7 +385,7 @@ def section(title):
 
 
 threats, others = section("Real Threats"), section("Not a Security Boundary")
-check(len(threats) == 10 and len(others) == 30, "section row counts")
+check(len(threats) == 12 and len(others) == 28, "section row counts")
 listed = [case for case, _, _, _ in threats + others]
 check(len(listed) == len(set(listed)) and set(listed) == set(cases), "every case listed once")
 for case, aliases, route, _ in threats + others:
@@ -378,7 +394,7 @@ for case, aliases, route, _ in threats + others:
     check(set(re.findall(r"[AF]\d+", aliases)) ==
           {row[key] for key in ("a_ref", "f_ref") if row[key]}, f"{case} aliases")
 # Unlisted threats are Fixed; unlisted non-boundary cases are No action.
-status = {"P11": "Open", "P19": "Open", "P02": "Fixed anyway", "P03": "Fixed anyway",
+status = {"P09": "Open", "P11": "Open", "P19": "Open", "P02": "Fixed anyway",
           "P04": "Fixed anyway", "P06": "Fixed anyway", "P07": "Fixed anyway",
           "P17": "Removed", "P21": "Removed", "P08": "Bug", "P26": "Bug", "P29": "Bug",
           "P33": "Bug", "P36": "Bug", "P39": "Bug"}
@@ -416,7 +432,7 @@ check({case for case, _ in detail} == set(security), "every security row has a d
 for case, aliases in detail:
     check(set(re.findall(r"[AF]\d+", aliases)) ==
           {r5[case][key] for key in ("a_ref", "f_ref") if r5[case][key]}, f"{case} aliases")
-print(f"PASS: 304 occurrences, 211 IDs, 10 threats, 30 non-boundary, "
+print(f"PASS: 304 occurrences, 211 IDs, 12 threats, 28 non-boundary, "
       f"R5 split {len(security)}/{len(performance)}")
 PY
 ```
