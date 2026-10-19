@@ -265,6 +265,29 @@ func TestProposeFailedStubInsertionLeavesFilesUnchanged(t *testing.T) {
 	}
 }
 
+func TestProposeRejectsSymlinkEscape(t *testing.T) {
+	root := writeProposeTree(t, nil)
+	baselinesBefore := readProposeFile(t, root, baselinesPath)
+	outside := filepath.Join(t.TempDir(), "baselines.json")
+	if err := os.WriteFile(outside, []byte(baselinesBefore), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, baselinesPath)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, baselinesPath)); err != nil {
+		t.Fatal(err)
+	}
+	r := proposeReport(sourceReport{Name: "claude-subagents", Status: "drift", ObservedSHA256: digest([]byte("new-claude")), Baseline: baseline{SHA256: digest([]byte("claude-subagents"))}, URL: "https://code.claude.com/docs/en/sub-agents.md", Findings: []finding{{Code: "source.evidence-changed"}}})
+	var out bytes.Buffer
+	if err := run([]string{"propose", "--root", root}, strings.NewReader(mustJSON(t, r)), &out, nil, time.Now()); err == nil {
+		t.Fatal("symlinked baselines must be rejected")
+	}
+	if got, err := os.ReadFile(outside); err != nil || string(got) != baselinesBefore {
+		t.Fatal("symlink target outside the repository was modified")
+	}
+}
+
 func TestInsertStubsBeforeNextTopLevelKeyAndAtEOF(t *testing.T) {
 	stubs := []stub{
 		{harness: "factory", key: "openai/gpt-z", model: "gpt-z", url: "https://x.example/models"},

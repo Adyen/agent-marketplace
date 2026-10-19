@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"maps"
 	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -46,9 +45,14 @@ func proposeChanges(root string, r report, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("invalid report checked_at: %w", err)
 	}
+	repo, err := os.OpenRoot(root)
+	if err != nil {
+		return fmt.Errorf("open repository root: %w", err)
+	}
+	defer func() { _ = repo.Close() }()
 	var p proposal
 	updates := p.planBaselines(r, checked.Format(time.DateOnly))
-	cs, err := loadCatalogs(os.DirFS(root))
+	cs, err := loadCatalogs(repo.FS())
 	if err != nil {
 		return err
 	}
@@ -58,15 +62,15 @@ func proposeChanges(root string, r report, out io.Writer) error {
 	}
 	planned := map[string][]byte{}
 	if len(updates) > 0 {
-		if err := planBaselineFile(root, updates, planned); err != nil {
+		if err := planBaselineFile(repo.FS(), updates, planned); err != nil {
 			return err
 		}
 	}
-	if err := planStubFiles(root, p.stubs, planned); err != nil {
+	if err := planStubFiles(repo.FS(), p.stubs, planned); err != nil {
 		return err
 	}
 	for _, name := range slices.Sorted(maps.Keys(planned)) {
-		if err := os.WriteFile(filepath.Join(root, name), planned[name], 0o644); err != nil {
+		if err := repo.WriteFile(name, planned[name], 0o644); err != nil {
 			return err
 		}
 	}
@@ -225,8 +229,8 @@ func loadCatalogs(files fs.FS) ([]catalog, error) {
 	return cs, nil
 }
 
-func planBaselineFile(root string, updates map[string]baseline, planned map[string][]byte) error {
-	body, err := readBounded(os.DirFS(root), baselinesPath)
+func planBaselineFile(files fs.FS, updates map[string]baseline, planned map[string][]byte) error {
+	body, err := readBounded(files, baselinesPath)
 	if err != nil {
 		return err
 	}
@@ -250,12 +254,11 @@ func planBaselineFile(root string, updates map[string]baseline, planned map[stri
 	return nil
 }
 
-func planStubFiles(root string, stubs []stub, planned map[string][]byte) error {
+func planStubFiles(files fs.FS, stubs []stub, planned map[string][]byte) error {
 	byHarness := map[string][]stub{}
 	for _, s := range stubs {
 		byHarness[s.harness] = append(byHarness[s.harness], s)
 	}
-	files := os.DirFS(root)
 	for _, harness := range slices.Sorted(maps.Keys(byHarness)) {
 		name := catalogPath(harness)
 		body, err := readBounded(files, name)
