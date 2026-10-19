@@ -72,7 +72,7 @@ func makeHookSupportSource(t *testing.T, script string, mode os.FileMode) string
 	if err := os.MkdirAll(filepath.Dir(hooks), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(hooks, []byte(`{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/shared.sh"}]}]}`), 0o644); err != nil {
+	if err := os.WriteFile(hooks, []byte(`{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/shared.sh"}]}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "hooks", "shared.sh"), []byte(script), mode); err != nil {

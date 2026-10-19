@@ -757,11 +757,11 @@ func TestNativeHookSupportNamespacesDeselectAndIdempotent(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/%s", scope, mode), func(t *testing.T) {
 				repo, home := additiveSafetyEnv(t)
 				filesA := map[string]string{
-					"hooks/hooks.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/check.sh"}]}]}`,
+					"hooks/hooks.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/check.sh"}]}]}`,
 					"hooks/check.sh":   "echo first-script\n",
 				}
 				filesB := map[string]string{
-					"hooks/hooks.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/check.sh"}]}]}`,
+					"hooks/hooks.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/check.sh"}]}]}`,
 					"hooks/check.sh":   "echo second-script\n",
 				}
 				providerA := nativeSupportSource(t, "claude", "hooks/hooks.json", filesA)
@@ -939,7 +939,7 @@ func TestNativeHookSupportSameIdentityConflictBlocksBoth(t *testing.T) {
 				sourceRoot := filepath.Join(root, dir)
 				hooksDir := filepath.Join(sourceRoot, "hooks")
 				definition := filepath.Join(hooksDir, "hooks.json")
-				additiveSafetyWrite(t, definition, `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/check.sh"}]}]}`)
+				additiveSafetyWrite(t, definition, `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/check.sh"}]}]}`)
 				check := filepath.Join(hooksDir, "check.sh")
 				additiveSafetyWrite(t, check, body)
 				if err := os.Chmod(check, mode); err != nil {
@@ -4227,11 +4227,11 @@ func TestNativeHookSupportDryRunWritesNothing(t *testing.T) {
 	t.Run("deselection", func(t *testing.T) {
 		repo, home := additiveSafetyEnv(t)
 		filesA := map[string]string{
-			"hooks/hooks.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/check.sh"}]}]}`,
+			"hooks/hooks.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/check.sh"}]}]}`,
 			"hooks/check.sh":   "echo first\n",
 		}
 		filesB := map[string]string{
-			"hooks/hooks.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/check.sh"}]}]}`,
+			"hooks/hooks.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/check.sh"}]}]}`,
 			"hooks/check.sh":   "echo second\n",
 		}
 		providerA := nativeSupportSource(t, "claude", "hooks/hooks.json", filesA)

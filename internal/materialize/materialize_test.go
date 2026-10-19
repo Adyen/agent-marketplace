@@ -2765,12 +2765,12 @@ func TestRunExcludedHookEntryRemovedFromMergedFile(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 
 	// Create source dirs with hook definitions and scripts.
-	definition1 := []byte(`{"PostToolUse":[{"matcher":"Write|Edit","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/remind.sh"}]}]}`)
+	definition1 := []byte(`{"PostToolUse":[{"matcher":"Write|Edit","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/remind.sh"}]}]}`)
 	resolved1, sourceDir1 := sourceBackedHookFixtures(t, "claude", config.RepoCommitted, hcc.TargetFactory, "post-tool-use-remind", definition1, map[string][]byte{"hooks/remind.sh": []byte("#!/bin/bash\necho remind\n")})
 	if err := os.Chmod(filepath.Join(sourceDir1, "hooks", "remind.sh"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	definition2 := []byte(`{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/check.sh"}]}]}`)
+	definition2 := []byte(`{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/check.sh"}]}]}`)
 	resolved2, sourceDir2 := sourceBackedHookFixtures(t, "claude", config.RepoCommitted, hcc.TargetFactory, "pre-tool-use-check", definition2, map[string][]byte{"hooks/check.sh": []byte("#!/bin/bash\necho check\n")})
 	if err := os.Chmod(filepath.Join(sourceDir2, "hooks", "check.sh"), 0o755); err != nil {
 		t.Fatal(err)
@@ -2848,7 +2848,7 @@ func TestRunHookSupportFilesAreSymlinked(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 
 	// Create a source directory with hooks.json and its referenced support script.
-	command := "${CLAUDE_PLUGIN_ROOT}/remind.sh"
+	command := "${CLAUDE_PLUGIN_ROOT}/hooks/remind.sh"
 	hooks := fmt.Sprintf(`{"PostToolUse":[{"matcher":"Write|Edit","hooks":[{"type":"command","command":%q}]}]}`, command)
 	scriptContent := []byte("#!/bin/bash\necho 'remind to fix isolated builds'\n")
 	resolved, sourceDir := sourceBackedHookFixtures(t, "claude", config.RepoCommitted, hcc.TargetFactory, "post-tool-use-remind", []byte(hooks), map[string][]byte{"hooks/remind.sh": scriptContent})

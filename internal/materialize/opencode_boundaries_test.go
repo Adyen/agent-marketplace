@@ -166,7 +166,7 @@ func TestOpenCodeHookSupportRefusalRetainsInstallation(t *testing.T) {
 	for _, machine := range []bool{false, true} {
 		t.Run(fmt.Sprintf("machine=%t", machine), func(t *testing.T) {
 			repo := openCodeSandbox(t)
-			selected := additiveSafetyProvider(t, hcc.TargetOpenCode, machine, `/bin/sh "${DROID_PLUGIN_ROOT}/shared.sh"`, "exit 0\n")
+			selected := additiveSafetyProvider(t, hcc.TargetOpenCode, machine, `/bin/sh "${DROID_PLUGIN_ROOT}/hooks/shared.sh"`, "exit 0\n")
 			if report, err := Run(t.Context(), repo, []resolver.ResolvedArtifact{selected}); err != nil || diag.HasErrors(report.Diags) {
 				t.Fatalf("seed: %v %v", err, report.Diags)
 			}
