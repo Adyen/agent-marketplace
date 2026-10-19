@@ -148,6 +148,9 @@ resources:
 				}
 				output, err := executeCommand("sync")
 				t.Logf("sync: err=%v\n%s", err, output)
+				if err != nil {
+					t.Errorf("sync failed for a valid selection: %v", err)
+				}
 				for _, skill := range []string{
 					filepath.Join(home, ".config", "devin", "skills", "audit", "SKILL.md"),
 					filepath.Join(home, ".agents", "skills", "audit", "SKILL.md"),
@@ -160,7 +163,7 @@ resources:
 					case readErr != nil && err == nil:
 						t.Errorf("REPRODUCED: required skill missing at %s and sync reported success", skill)
 					case readErr != nil:
-						t.Logf("required skill missing at %s; sync failed visibly", skill)
+						t.Errorf("required skill missing at %s after the failed sync", skill)
 					}
 				}
 			})
