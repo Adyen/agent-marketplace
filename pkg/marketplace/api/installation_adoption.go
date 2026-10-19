@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"math"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 const (
 	installationInventoryWindow      = 30 * 24 * time.Hour
 	maxHostedInventoryAttributeBytes = 512
+	maxExactMetricValue              = 1 << 53
 )
 
 var (
@@ -40,95 +42,26 @@ type installationCounts struct {
 	ValidUntil      time.Time
 }
 
-func installationMetricsQuery(labels map[string]string) string {
-	keys := make([]string, 0, len(labels))
-	for key := range labels {
-		keys = append(keys, key)
+type installationQueryPlan struct {
+	Hosted     []store.RegistryID
+	Identities []struct {
+		Identity string
+		Registry store.RegistryID
 	}
-	sort.Strings(keys)
-	selectors := make([]string, 0, len(keys))
-	for _, key := range keys {
-		selectors = append(selectors, key+"="+strconv.Quote(labels[key]))
-	}
-	selector := "{" + strings.Join(selectors, ",") + "}[30d]"
-	snapshots := `max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot` + selector + `))`
-	latest := `(` + snapshots + ` == on (installation_id) group_left max by (installation_id) (` + snapshots + `))`
-	resourceSelector := "{" + strings.Join(append(selectors, `resource_kind!="rule"`), ",") + "}[30d]"
-	resources := `max by (installation_id, config_fingerprint, source_kind, marketplace_id, registry_id, resource_kind, resource_name) (last_over_time(agent_marketplace_config_resource` + resourceSelector + `))`
-	return `label_replace(` + latest + `, "inventory_type", "snapshot", "", "") or label_replace((` + resources + ` and on (installation_id, config_fingerprint) ` + latest + `), "inventory_type", "resource", "", "")`
+	KnownRegistries map[store.RegistryID]bool
+	MarketplaceID   store.MarketplaceID
 }
 
-func aggregateInstallationMetrics(samples []inventoryMetricSample, registries map[store.RegistryID]store.Registry, marketplaceID store.MarketplaceID, now time.Time) (installationCounts, error) {
-	type generation struct {
-		fingerprint string
-		observedAt  int64
-		ambiguous   bool
+func newInstallationQueryPlan(registries map[store.RegistryID]store.Registry, marketplaceID store.MarketplaceID) installationQueryPlan {
+	plan := installationQueryPlan{
+		Hosted:          make([]store.RegistryID, 0, len(registries)),
+		KnownRegistries: make(map[store.RegistryID]bool, len(registries)),
+		MarketplaceID:   marketplaceID,
 	}
-	latest := make(map[string]generation)
-	for _, sample := range samples {
-		installation := sample.Metric["installation_id"]
-		fingerprint := sample.Metric["config_fingerprint"]
-		if installation == "" || fingerprint == "" || math.IsNaN(sample.Value) || math.IsInf(sample.Value, 0) {
-			return installationCounts{}, errInvalidInstallationMetrics
-		}
-		switch sample.Metric["inventory_type"] {
-		case "snapshot":
-			if sample.Value <= 0 || sample.Value > 1<<53 || math.Trunc(sample.Value) != sample.Value {
-				return installationCounts{}, errInvalidInstallationMetrics
-			}
-			observedAt := int64(sample.Value)
-			previous, exists := latest[installation]
-			if !exists || observedAt > previous.observedAt {
-				latest[installation] = generation{fingerprint: fingerprint, observedAt: observedAt}
-			} else if observedAt == previous.observedAt && fingerprint != previous.fingerprint {
-				previous.ambiguous = true
-				latest[installation] = previous
-			}
-		case "resource":
-			kind := sample.Metric["resource_kind"]
-			validKind := IsMarketplaceKind(kind) || kind == "rule"
-			if sample.Value != 1 || sample.Metric["registry_id"] == "" || sample.Metric["resource_name"] == "" || !validKind {
-				return installationCounts{}, errInvalidInstallationMetrics
-			}
-			sourceKind := sample.Metric["source_kind"]
-			metricMarketplaceID := sample.Metric["marketplace_id"]
-			switch sourceKind {
-			case "":
-				if metricMarketplaceID != "" {
-					return installationCounts{}, errInvalidInstallationMetrics
-				}
-			case "marketplace":
-				if !validHostedInventoryIdentity(metricMarketplaceID, sample.Metric["registry_id"], sample.Metric["resource_name"]) {
-					return installationCounts{}, errInvalidInstallationMetrics
-				}
-			default:
-				return installationCounts{}, errInvalidInstallationMetrics
-			}
-		default:
-			return installationCounts{}, errInvalidInstallationMetrics
-		}
-	}
-
-	counts := installationCounts{Counts: make(map[installationResourceKey]int64), KnownRegistries: make(map[store.RegistryID]bool)}
-	cutoff := now.Add(-installationInventoryWindow).UnixMicro()
-	fresh := 0
-	for installation, selected := range latest {
-		if selected.ambiguous || selected.observedAt < cutoff || selected.observedAt > now.UnixMicro() {
-			delete(latest, installation)
-			continue
-		}
-		fresh++
-		expires := time.UnixMicro(selected.observedAt).Add(installationInventoryWindow)
-		if counts.ValidUntil.IsZero() || expires.Before(counts.ValidUntil) {
-			counts.ValidUntil = expires
-		}
-	}
-	if fresh == 0 {
-		return installationCounts{}, errInstallationMetricsUnavailable
-	}
-
 	owners := make(map[string]map[store.RegistryID]struct{})
 	for id, registry := range registries {
+		plan.Hosted = append(plan.Hosted, id)
+		plan.KnownRegistries[id] = false
 		for _, origin := range registry.Origins {
 			identity, _, local, ok := registryid.SanitizeRegistryTelemetry(origin)
 			if !ok || local {
@@ -138,66 +71,224 @@ func aggregateInstallationMetrics(samples []inventoryMetricSample, registries ma
 				owners[identity] = make(map[store.RegistryID]struct{})
 			}
 			owners[identity][id] = struct{}{}
-			counts.KnownRegistries[id] = true
+			plan.KnownRegistries[id] = true
 		}
 	}
-	for _, identities := range owners {
-		if len(identities) > 1 {
-			for id := range identities {
-				counts.KnownRegistries[id] = false
+	sort.Slice(plan.Hosted, func(i, j int) bool { return plan.Hosted[i] < plan.Hosted[j] })
+	for identity, ids := range owners {
+		if len(ids) > 1 {
+			for id := range ids {
+				plan.KnownRegistries[id] = false
 			}
+			continue
+		}
+		for id := range ids {
+			plan.Identities = append(plan.Identities, struct {
+				Identity string
+				Registry store.RegistryID
+			}{Identity: identity, Registry: id})
 		}
 	}
-	identityIndex := make(map[string]store.RegistryID)
-	for identity, identities := range owners {
-		if len(identities) == 1 {
-			for id := range identities {
-				if counts.KnownRegistries[id] {
-					identityIndex[identity] = id
-				}
-			}
+	sort.Slice(plan.Identities, func(i, j int) bool {
+		if plan.Identities[i].Identity != plan.Identities[j].Identity {
+			return plan.Identities[i].Identity < plan.Identities[j].Identity
 		}
+		return plan.Identities[i].Registry < plan.Identities[j].Registry
+	})
+	return plan
+}
+
+func installationMetricsQuery(labels map[string]string, plan installationQueryPlan) string {
+	selectors := make([]string, 0, len(labels))
+	for key := range labels {
+		selectors = append(selectors, key)
+	}
+	sort.Strings(selectors)
+	for i, key := range selectors {
+		selectors[i] = key + "=" + strconv.Quote(labels[key])
+	}
+	baseSelector := strings.Join(selectors, ",")
+	snapshotSelector := "{" + baseSelector + "}"
+	snapshot := `max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot` + snapshotSelector + `[30d]))`
+	latest := `(` + snapshot + ` == on (installation_id) group_left max by (installation_id) (` + snapshot + `))`
+	fresh := `((` + latest + ` unless on (installation_id) (count by (installation_id) (` + latest + `) > 1)) >= (time() - 2592000) * 1e6 <= time() * 1e6)`
+
+	resourceGroups := "installation_id, config_fingerprint, source_kind, marketplace_id, registry_id, resource_kind, resource_name"
+	resource := func(extraMatchers ...string) string {
+		matchers := append(append([]string{}, selectors...), extraMatchers...)
+		selector := "{" + strings.Join(matchers, ",") + "}"
+		return `max by (` + resourceGroups + `) (last_over_time(agent_marketplace_config_resource` + selector + `[30d]))`
 	}
 
-	type observation struct {
-		installation string
-		resource     installationResourceKey
+	var hosted string
+	if len(plan.Hosted) > 0 {
+		registryIDs := make([]string, len(plan.Hosted))
+		for i, id := range plan.Hosted {
+			registryIDs[i] = regexp.QuoteMeta(string(id))
+		}
+		hostedMatchers := append(append([]string{}, selectors...),
+			`resource_kind!="rule"`,
+			`source_kind="marketplace"`,
+			`marketplace_id=`+strconv.Quote(string(plan.MarketplaceID)),
+			`registry_id=~`+strconv.Quote(strings.Join(registryIDs, "|")),
+		)
+		hosted = `label_replace(max by (installation_id, config_fingerprint, registry_id, resource_kind, resource_name) (last_over_time(agent_marketplace_config_resource{` +
+			strings.Join(hostedMatchers, ",") + `}[30d])), "am_registry", "$1", "registry_id", "(.*)")`
 	}
-	seen := make(map[observation]struct{})
+	var git string
+	if len(plan.Identities) > 0 {
+		identities := make([]string, len(plan.Identities))
+		for i, identity := range plan.Identities {
+			identities[i] = regexp.QuoteMeta(identity.Identity)
+		}
+		gitMatchers := append(append([]string{}, selectors...),
+			`resource_kind!="rule"`,
+			`source_kind=""`,
+			`marketplace_id=""`,
+			`registry_id=~`+strconv.Quote(strings.Join(identities, "|")),
+		)
+		git = `max by (` + resourceGroups + `) (last_over_time(agent_marketplace_config_resource{` + strings.Join(gitMatchers, ",") + `}[30d]))`
+		for _, identity := range plan.Identities {
+			git = `label_replace(` + git + `, "am_registry", ` + strconv.Quote(string(identity.Registry)) +
+				`, "registry_id", ` + strconv.Quote(regexp.QuoteMeta(identity.Identity)) + `)`
+		}
+	}
+	var contributing string
+	switch {
+	case hosted != "" && git != "":
+		contributing = `(` + hosted + ` or ` + git + `)`
+	case hosted != "":
+		contributing = hosted
+	case git != "":
+		contributing = git
+	}
+
+	var output []string
+	if contributing != "" {
+		matched := `(` + contributing + ` and on (installation_id, config_fingerprint) ` + fresh + `)`
+		counts := `count by (am_registry, resource_kind, resource_name, value) (count_values by (installation_id, am_registry, resource_kind, resource_name) ("value", ` + matched + `))`
+		output = append(output, `label_replace(`+counts+`, "inventory_type", "count", "", "")`)
+	}
+	output = append(output,
+		`label_replace(count(`+fresh+`), "inventory_type", "fresh", "", "")`,
+		`label_replace(min(`+fresh+`), "inventory_type", "valid_until", "", "")`,
+	)
+
+	invalidRows := []string{
+		`((clamp(` + latest + `, 1, 9007199254740992) - floor(` + latest + `)) != 0)`,
+	}
+	resourceInvalidMatchers := []string{
+		`source_kind!~"|marketplace"`,
+		`source_kind="",marketplace_id!=""`,
+		`resource_kind!~"skill|command|subagent|hook|mcpserver|collection|rule"`,
+		`registry_id=""`,
+		`resource_name=""`,
+	}
+	resourceInvalidRollups := make([]string, len(resourceInvalidMatchers))
+	for i, matcher := range resourceInvalidMatchers {
+		resourceInvalidRollups[i] = resource(matcher)
+	}
+	invalidResourceRows := `max by (` + resourceGroups + `) (` + strings.Join(resourceInvalidRollups, ` or `) + `)`
+	invalidRows = append(invalidRows, `(`+invalidResourceRows+` and on (installation_id, config_fingerprint) `+latest+`)`)
+	for _, name := range []string{"installation_id", "config_fingerprint"} {
+		identityMatchers := append(append([]string{}, selectors...), name+`=""`)
+		identitySelector := strings.Join(identityMatchers, ",")
+		invalidRows = append(invalidRows,
+			`last_over_time(agent_marketplace_config_snapshot{`+identitySelector+`}[30d])`,
+			`last_over_time(agent_marketplace_config_resource{`+identitySelector+`}[30d])`,
+		)
+	}
+	invalid := `label_replace(count(` + strings.Join(invalidRows, ` or `) + `), "inventory_type", "invalid", "", "")`
+	output = append(output, invalid)
+
+	const suspiciousPattern = `|.*[^!-~].*|.{513,}|\.|\.\.|.*[/\\].*`
+	suspiciousMatchers := []string{
+		`source_kind="marketplace"`,
+		`resource_kind!="rule"`,
+	}
+	suspiciousRows := make([]string, 0, 3)
+	for _, name := range []string{"marketplace_id", "registry_id", "resource_name"} {
+		matchers := append(append([]string{}, selectors...), suspiciousMatchers...)
+		matchers = append(matchers, name+"=~"+strconv.Quote(suspiciousPattern))
+		suspiciousRows = append(suspiciousRows, resource(matchers[len(selectors):]...))
+	}
+	suspiciousLatest := `((` + strings.Join(suspiciousRows, ` or `) + `) and on (installation_id, config_fingerprint) ` + latest + `)`
+	suspicious := `label_replace(max by (source_kind, marketplace_id, registry_id, resource_kind, resource_name) (` +
+		suspiciousLatest + `), "inventory_type", "suspicious", "", "")`
+	output = append(output, suspicious)
+	return strings.Join(output, ` or `)
+}
+
+func aggregateInstallationMetrics(samples []inventoryMetricSample, plan installationQueryPlan, now time.Time) (installationCounts, error) {
+	counts := installationCounts{
+		Counts:          make(map[installationResourceKey]int64),
+		KnownRegistries: make(map[store.RegistryID]bool, len(plan.KnownRegistries)),
+	}
+	knownIDs := make(map[store.RegistryID]struct{}, len(plan.Hosted))
+	for _, id := range plan.Hosted {
+		knownIDs[id] = struct{}{}
+	}
+	for id, known := range plan.KnownRegistries {
+		counts.KnownRegistries[id] = known
+	}
+
+	cutoff := now.Add(-installationInventoryWindow).UnixMicro()
+	freshSeen, validUntilSeen := false, false
+	var validUntil int64
 	for _, sample := range samples {
-		if sample.Metric["inventory_type"] != "resource" || sample.Metric["resource_kind"] == "rule" {
-			continue
+		if sample.Metric == nil || math.IsNaN(sample.Value) || math.IsInf(sample.Value, 0) {
+			return installationCounts{}, errInvalidInstallationMetrics
 		}
-		installation := sample.Metric["installation_id"]
-		selected, fresh := latest[installation]
-		if !fresh || selected.fingerprint != sample.Metric["config_fingerprint"] {
-			continue
-		}
-		var registry store.RegistryID
-		if sample.Metric["source_kind"] == "marketplace" {
-			if store.MarketplaceID(sample.Metric["marketplace_id"]) != marketplaceID {
+		switch sample.Metric["inventory_type"] {
+		case "count":
+			registry := store.RegistryID(sample.Metric["am_registry"])
+			kind, name := sample.Metric["resource_kind"], sample.Metric["resource_name"]
+			if registry == "" || kind == "" || name == "" || sample.Metric["value"] != "1" || !isExactPositiveMetricValue(sample.Value) {
+				return installationCounts{}, errInvalidInstallationMetrics
+			}
+			if _, known := knownIDs[registry]; !known {
 				continue
 			}
-			registry = store.RegistryID(sample.Metric["registry_id"])
-			if _, known := registries[registry]; !known {
-				continue
-			}
+			key := installationResourceKey{Registry: registry, Kind: kind, Name: name}
+			counts.Counts[key] = int64(sample.Value)
 			counts.KnownRegistries[registry] = true
-		} else {
-			var known bool
-			registry, known = identityIndex[sample.Metric["registry_id"]]
-			if !known {
-				continue
+		case "fresh":
+			if freshSeen || !isExactPositiveMetricValue(sample.Value) {
+				return installationCounts{}, errInvalidInstallationMetrics
 			}
-		}
-		key := installationResourceKey{Registry: registry, Kind: sample.Metric["resource_kind"], Name: sample.Metric["resource_name"]}
-		observed := observation{installation: installation, resource: key}
-		if _, duplicate := seen[observed]; !duplicate {
-			seen[observed] = struct{}{}
-			counts.Counts[key]++
+			freshSeen = true
+		case "valid_until":
+			if validUntilSeen || math.Trunc(sample.Value) != sample.Value || sample.Value < float64(cutoff) || sample.Value > float64(now.UnixMicro()) {
+				return installationCounts{}, errInvalidInstallationMetrics
+			}
+			validUntilSeen = true
+			validUntil = int64(sample.Value)
+		case "invalid":
+			return installationCounts{}, errInvalidInstallationMetrics
+		case "suspicious":
+			if !validHostedInventoryIdentity(
+				sample.Metric["marketplace_id"],
+				sample.Metric["registry_id"],
+				sample.Metric["resource_name"],
+			) {
+				return installationCounts{}, errInvalidInstallationMetrics
+			}
+		default:
+			return installationCounts{}, errInvalidInstallationMetrics
 		}
 	}
+	if !freshSeen {
+		return installationCounts{}, errInstallationMetricsUnavailable
+	}
+	if !validUntilSeen {
+		return installationCounts{}, errInvalidInstallationMetrics
+	}
+	counts.ValidUntil = time.UnixMicro(validUntil).Add(installationInventoryWindow)
 	return counts, nil
+}
+
+func isExactPositiveMetricValue(value float64) bool {
+	return value > 0 && value <= maxExactMetricValue && math.Trunc(value) == value
 }
 
 func validHostedInventoryIdentity(marketplaceID, registryID, resourceName string) bool {

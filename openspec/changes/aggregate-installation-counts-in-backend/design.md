@@ -33,7 +33,7 @@ H  = label_replace(max by (installation_id, config_fingerprint, registry_id, res
 G0 = max by (installation_id, config_fingerprint, registry_id, resource_kind, resource_name) (last_over_time(agent_marketplace_config_resource{SEL,resource_kind!="rule",source_kind="",marketplace_id="",registry_id=~"<identity alternation>"}W))
 G  = label_replace(... label_replace(G0, "am_registry", "<registry 1>", "registry_id", "<QuoteMeta identity 1>") ..., "am_registry", "<registry n>", "registry_id", "<QuoteMeta identity n>")
 P  = (H or G)                      // omit H or G when its list is empty; omit P and C when both are
-C  = count by (am_registry, resource_kind, resource_name) (max by (installation_id, am_registry, resource_kind, resource_name) (P and on (installation_id, config_fingerprint) F))
+C  = count by (am_registry, resource_kind, resource_name, value) (count_values by (installation_id, am_registry, resource_kind, resource_name) ("value", P and on (installation_id, config_fingerprint) F))
 I  = invalid markers (decision 3)
 U  = suspicious hosted identities (decision 3)
 
@@ -43,24 +43,27 @@ query = label_replace(C, "inventory_type", "count", "", "")
      or I or U
 ```
 
-Freshness and ambiguity are evaluated against the snapshot value (Unix microseconds) at the request's `time`, matching the Go rules: keep `cutoff <= observed <= now`, drop installations with more than one fingerprint at their maximum. `max by (installation_id, am_registry, …)` collapses Git and hosted observations of one coordinate and multiple origins of one registry before counting distinct installations. Hosted IDs are path-free segments and Git identities contain a host path, so `H or G` cannot drop a distinct observation.
+Freshness and ambiguity are evaluated against the snapshot value (Unix microseconds) at the request's `time`, matching the Go rules: keep `cutoff <= observed <= now`, drop installations with more than one fingerprint at their maximum. `count_values by (installation_id, am_registry, …)` collapses Git and hosted observations of one coordinate and multiple origins of one registry into one series per installation, coordinate and distinct observed value before counting distinct installations, so a `value="1"` row counts each installation once. Hosted IDs are path-free segments and Git identities contain a host path, so `H or G` cannot drop a distinct observation.
+
+Prometheus evaluates every occurrence of a subexpression separately. `P` (the hosted and Git rollups, about 1.1 s in production) must therefore appear exactly once, and each malformed-data family joins `L` once. A first implementation that repeated them took 4.1–4.3 s; a hand-built query with this shape returned identical counts in 1.96–2.10 s.
 
 ### 3. Malformed data
 
 Exact checks become marker rows with `inventory_type="invalid"`; any marker makes the result invalid. Every marker drops identity labels with `count(...)` so no Installation ID is returned:
 
-- snapshot values in `L` that are `<= 0`, `> 9007199254740992`, or `!= floor(L)`;
-- latest resource rows (raw resource series `and on (installation_id, config_fingerprint) L`) selected by label matchers: `source_kind!~"|marketplace"`; `source_kind="",marketplace_id!=""`; `resource_kind!~"skill|command|subagent|hook|mcpserver|collection|rule"`; `registry_id=""`; `resource_name=""`;
-- snapshot or resource series in the window with `installation_id=""` or `config_fingerprint=""`;
-- contributing rows `P != 1`.
+- snapshot values in `L` outside the positive integers up to 2^53, as one comparison: `(clamp(L, 1, 9007199254740992) - floor(L)) != 0` (also true for NaN);
+- latest resource rows: one `max by (installation_id, config_fingerprint, source_kind, marketplace_id, registry_id, resource_kind, resource_name)` over the `or` of raw rollups selected by `source_kind!~"|marketplace"`; `source_kind="",marketplace_id!=""`; `resource_kind!~"skill|command|subagent|hook|mcpserver|collection|rule"`; `registry_id=""`; `resource_name=""`, then a single `and on (installation_id, config_fingerprint) L`;
+- snapshot or resource series in the window with `installation_id=""` or `config_fingerprint=""`.
 
-Hosted identity validity (`validHostedInventoryIdentity`: Unicode whitespace, control characters, path separators, dot components, 512-byte bound) is not exactly expressible in RE2, so the query returns a superset: latest hosted resource rows whose `marketplace_id`, `registry_id` or `resource_name` matches `|.*[^!-~].*|.{513,}|\.|\.\.|.*[/\\].*`, aggregated `max by (source_kind, marketplace_id, registry_id, resource_kind, resource_name)` with `inventory_type="suspicious"`. Go validates each with the existing rules; a failure is invalid, a pass is ignored.
+A value other than one on a contributing fresh observation surfaces as a `count` row whose `value` label is not `"1"` (decision 4), so it needs no separate rollup of `P`.
+
+Hosted identity validity (`validHostedInventoryIdentity`: Unicode whitespace, control characters, path separators, dot components, 512-byte bound) is not exactly expressible in RE2, so the query returns a superset from latest inventories only: the `or` of the three raw hosted rollups whose `marketplace_id`, `registry_id` or `resource_name` matches `|.*[^!-~].*|.{513,}|\.|\.\.|.*[/\\].*`, joined once with `and on (installation_id, config_fingerprint) L`, aggregated `max by (source_kind, marketplace_id, registry_id, resource_kind, resource_name)` with `inventory_type="suspicious"`. A superseded inventory therefore cannot force the fallback. Go validates each row with the existing rules; a failure is invalid, a pass is ignored.
 
 ### 4. Response parsing
 
 `aggregateInstallationMetrics(samples, plan, now)` accepts only these `inventory_type` values:
 
-- `count`: non-empty `am_registry`, `resource_kind`, `resource_name`; value a positive integer at most 2^53. Rows for a registry absent from `registries` are ignored. A counted registry becomes known.
+- `count`: non-empty `am_registry`, `resource_kind`, `resource_name`; label `value` exactly `"1"`, otherwise the result is invalid; sample value a positive integer at most 2^53. Rows for a registry absent from `registries` are ignored. A counted registry becomes known.
 - `fresh`: exactly one when present; positive integer. Absent means no fresh installation: `errInstallationMetricsUnavailable`.
 - `valid_until`: exactly one when `fresh` is present; integer within `[cutoff, now]` in microseconds; `ValidUntil = UnixMicro(value) + 30 days`.
 - `invalid`: any row returns `errInvalidInstallationMetrics`.

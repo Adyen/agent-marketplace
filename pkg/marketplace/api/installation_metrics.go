@@ -192,8 +192,9 @@ func minTime(a, b time.Time) time.Time {
 }
 
 func (r *installationMetricsReader) fetch(ctx context.Context, registries map[store.RegistryID]store.Registry, evalTime time.Time) (installationCounts, error) {
+	plan := newInstallationQueryPlan(registries, r.marketplaceID)
 	form := url.Values{
-		"query": {installationMetricsQuery(r.labels)},
+		"query": {installationMetricsQuery(r.labels, plan)},
 		"time":  {strconv.FormatInt(evalTime.Unix(), 10)},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.url+"/api/v1/query", strings.NewReader(form.Encode()))
@@ -225,7 +226,7 @@ func (r *installationMetricsReader) fetch(ctx context.Context, registries map[st
 	if err != nil {
 		return installationCounts{}, err
 	}
-	return aggregateInstallationMetrics(samples, registries, r.marketplaceID, evalTime)
+	return aggregateInstallationMetrics(samples, plan, evalTime)
 }
 
 type prometheusVectorResponse struct {
