@@ -5,4 +5,4 @@
 - [x] Prove each check with a negative mutation and rerun the frozen nested-ref reproduction.
 - [x] Verify scoped tests of mutable acquisition consumers, lint, build and strict specs.
 - [x] Adversarially review every changed entry.
-- [ ] `openspec archive refuse-nested-mutable-ref-caches --yes`
+- [x] `openspec archive refuse-nested-mutable-ref-caches --yes`
