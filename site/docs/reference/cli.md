@@ -318,7 +318,7 @@ agent-marketplace update [resource ...] [flags]
 
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
-| `--bump` | boolean | no | `false` | Rewrites eligible refs in v4 `sources:` to newer matching tags before updating locks. A ref that an included config file declares is reported and left unchanged. |
+| `--bump` | boolean | no | `false` | Rewrites eligible refs in v4 `sources:` to newer matching tags before updating locks. A ref that an included config file declares is reported and left unchanged. A full commit ID is never rewritten. |
 | `--scope` | string | no | `all` | Update scope: `user`, `repo`, `local`, or `all`. `organization` is refused. |
 | `--registry` | string | no | none | Targets one configured Git registry. |
 | `--ref` | string | no | none | Narrows `--registry` to a declared ref. |
