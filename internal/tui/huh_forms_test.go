@@ -49,7 +49,7 @@ func TestEditConfigModalCarriesHuhForm(t *testing.T) {
 func TestSyncQuitConfirmCarriesHuhForm(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.pane = paneConfirm
-	m.confirmMsg = "1 pending changes not synced. Sync+quit? y/n/esc"
+	m.confirmMsg = "1 pending changes not synced. Sync+quit?"
 	m.ensureSyncQuitForm()
 	if m.syncQuitForm == nil {
 		t.Fatal("sync+quit confirm must own a Huh form")
