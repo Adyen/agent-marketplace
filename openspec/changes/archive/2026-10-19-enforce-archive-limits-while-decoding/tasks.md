@@ -5,4 +5,4 @@
 - [x] Prove each limit with a negative mutation and run the Marketplace client, server and library consumers.
 - [x] Verify scoped tests, lint, build and strict specs.
 - [x] Adversarially review every changed entry.
-- [ ] `openspec archive enforce-archive-limits-while-decoding --yes`
+- [x] `openspec archive enforce-archive-limits-while-decoding --yes`
