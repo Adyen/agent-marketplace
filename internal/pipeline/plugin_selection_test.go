@@ -14,7 +14,7 @@ func plannedPlugin(name string, source plugindecode.CatalogSource, owner config.
 	return catalog.PlannedPlugin{
 		Name:   name,
 		Source: owner,
-		Edges:  []catalog.PluginSelectionEdge{{Type: catalog.PluginEdgeDirect}},
+		Edges:  []catalog.PluginSelectionEdge{{Type: "direct"}},
 		Entry:  catalog.Entry{Kind: ir.KindPlugin, Name: name, Plugin: &catalog.PluginEntry{Format: "claude-plugin", Source: source}},
 	}
 }

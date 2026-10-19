@@ -167,7 +167,7 @@ func buildPluginRevision(input Input, contract lockfile.SourceRevisionContract) 
 		manifest.CatalogIndexDigest = indexDigest
 
 		byName := catalogEntriesByName(loaded.Entries)
-		for _, planned := range catalog.SortedPlannedPlugins(input.PluginSelection) {
+		for _, planned := range input.PluginSelection {
 			name := planned.Name
 			entry, ok := byName[name]
 			if !ok || entry.Plugin == nil || entry.Plugin.Refusal != nil {

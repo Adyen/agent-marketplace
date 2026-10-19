@@ -63,7 +63,7 @@ func (s *pluginPlanSource) get(ctx context.Context) (catalog.PluginSelectionPlan
 		path, err := cache.AcquireExactGitWithContext(ctx, registry.URL, s.fetchURL(registry), oid)
 		return path, nil, err
 	}
-	exactDocs, release := pipeline.DocExactSnapshots(s.docs(), s.fetchURLs, openDoc)
+	exactDocs, release := pipeline.DocExactSnapshots(s.docs(), openDoc)
 	defer release()
 	// Acquired registries are not yet present in any lock document, so their
 	// snapshots bind ahead of document records.

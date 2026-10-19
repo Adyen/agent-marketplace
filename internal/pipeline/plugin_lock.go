@@ -354,9 +354,9 @@ func PluginPlanErrors(errs []error) []error {
 
 // DocExactSnapshots maps configured registry entries to the committed
 // snapshots of the given locked documents. open supplies one snapshot of a
-// record — acquiring it in writable modes or leasing it read-only — and may
+// record, acquiring it in writable modes or leasing it read-only, and may
 // return a release invoked once loading completes.
-func DocExactSnapshots(docs []lockfile.Document, fetchURLs map[string]string, open func(registry lockfile.GitRegistry) (path string, release func(), err error)) (catalog.ExactSnapshotFunc, func()) {
+func DocExactSnapshots(docs []lockfile.Document, open func(registry lockfile.GitRegistry) (path string, release func(), err error)) (catalog.ExactSnapshotFunc, func()) {
 	var releases []func()
 	releaseAll := func() {
 		for i := len(releases) - 1; i >= 0; i-- {
