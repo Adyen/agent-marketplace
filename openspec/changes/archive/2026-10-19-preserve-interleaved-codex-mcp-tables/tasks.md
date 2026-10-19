@@ -5,4 +5,4 @@
 - [x] Prove span splitting and array-table attribution with negative mutations and rerun the frozen interleaved-table reproduction.
 - [x] Verify scoped materialization tests, lint, build and strict specs.
 - [x] Adversarially review every changed entry.
-- [ ] `openspec archive preserve-interleaved-codex-mcp-tables --yes`
+- [x] `openspec archive preserve-interleaved-codex-mcp-tables --yes`
