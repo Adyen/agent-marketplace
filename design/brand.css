@@ -5,6 +5,39 @@
 }
 
 .am-brand-slash {
+  --am-brand-slash-run: 0.219em;
+  --am-brand-slash-stroke: 0.145em;
+
+  position: relative;
+  display: inline-block;
+  width: calc(var(--am-brand-slash-run) + var(--am-brand-slash-stroke));
+  height: 0.8em;
+  overflow: hidden;
   color: var(--am-brand-slash-color);
-  font-weight: 800;
+  line-height: 1;
+  text-indent: -100vw;
+  white-space: nowrap;
+}
+
+.am-brand-slash::before {
+  position: absolute;
+  inset: 0;
+  background: currentcolor;
+  /* Normalized from the green slash path in the horizontal logo. */
+  clip-path: polygon(var(--am-brand-slash-run) 0, 100% 0, var(--am-brand-slash-stroke) 100%, 0 100%);
+  content: "";
+}
+
+.am-brand-slash--eyebrow {
+  margin-inline-end: 0.375em;
+}
+
+.am-brand-slash--separator {
+  --am-brand-slash-stroke: 0.12em;
+
+  margin-inline: 0.2em;
+}
+
+.am-brand-slash--title {
+  margin-inline-end: 0.2em;
 }
