@@ -296,7 +296,7 @@ hook matrix goldens deliberately.
   `hookpolicy` and `internal/materialize` tests pass
 - [x] 10.4 Prove an interrupted support move is refused by read-only commands
   and completed by the next mutating command, with no staging residue
-- [ ] 10.5 Update existing fixtures that use the folder-relative form, the
+- [x] 10.5 Update existing fixtures that use the folder-relative form, the
   author guide `site/docs/how-to/author/publish-a-hook-with-support-files.md`,
   and `pkg/harness-compilation/diag/codes.md`. Verify `make spec-check`,
   `make validate`, and `make validate-e2e` pass
