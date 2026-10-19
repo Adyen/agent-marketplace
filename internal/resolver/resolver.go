@@ -231,7 +231,7 @@ func WithMalformed(malformed map[string][]skill.MalformedSkill) ResolveOption {
 // withPluginPlanSink collects the per-layer plugin selection records
 // PlanPluginSelection projects into the plugin-v1 manifests. It is internal
 // because the sink captures selections ahead of deduplication, collisions,
-// and displacement — before the delivered artifact stream exists.
+// and displacement, before the delivered artifact stream exists.
 func withPluginPlanSink(sink *pluginPlanSink) ResolveOption {
 	return func(opts *resolveOptions) {
 		opts.pluginSink = sink
