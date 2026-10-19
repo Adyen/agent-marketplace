@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/tui"
@@ -53,7 +54,7 @@ func runProductionTUI(ctx context.Context, repoRoot, homeDir string) error {
 
 var (
 	prepareTUILocks = func(ctx context.Context, repoRoot, localDir string, mode lockMode) (exactLockLeaseFunc, error) {
-		_, _, lease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, mode)
+		_, _, lease, err := prepareRuntimeLocks(cache.WithFreshExactGitVerificationScope(ctx), repoRoot, localDir, mode)
 		return lease, err
 	}
 	runTUIExactSync = pipeline.Sync
@@ -69,6 +70,7 @@ func runTUIConfigMutation(ctx context.Context, workspace pipeline.Workspace, mut
 
 func runTUIDependencyLifecycle(ctx context.Context, workspace pipeline.Workspace, upgrade bool) ([]error, error) {
 	ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(ctx)
+	ctx = cache.WithFreshExactGitVerificationScope(ctx)
 	ws, err := pipeline.NewWorkspace(workspace.RepoRoot(), workspace.LocalConfigDir())
 	if err != nil {
 		return nil, err

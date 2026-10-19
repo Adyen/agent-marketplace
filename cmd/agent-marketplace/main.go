@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/logging"
@@ -67,6 +68,9 @@ func newRootCmd() *cobra.Command {
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SetContext(pipeline.WithTransientOrganizationMarketplaceLockCache(cmd.Context()))
 			rootTUI := cmd == rootCmd && !showVersion && !noTUI && os.Getenv("AGENT_MARKETPLACE_NO_TUI") == "" && term.IsTerminal(os.Stdin.Fd())
+			if !rootTUI && !commandRunsAsOrUnder(cmd, "serve") && !commandRunsAsOrUnder(cmd, "tui") {
+				cmd.SetContext(cache.WithExactGitVerificationScope(cmd.Context()))
+			}
 			if err := prepareCommandDependencies(cmd, rootTUI); err != nil {
 				return err
 			}
@@ -464,11 +468,21 @@ func runRemove(ctx context.Context, out io.Writer, skillName string, scope pipel
 	return err
 }
 
-func shouldSkipTargetValidation(cmd *cobra.Command) bool {
+func commandOrAncestor(cmd *cobra.Command, match func(*cobra.Command) bool) bool {
 	for c := cmd; c != nil; c = c.Parent() {
-		if c.Annotations != nil && c.Annotations["skip-target-validation"] == "true" {
+		if match(c) {
 			return true
 		}
 	}
 	return false
+}
+
+func commandRunsAsOrUnder(cmd *cobra.Command, name string) bool {
+	return commandOrAncestor(cmd, func(c *cobra.Command) bool { return c.Name() == name })
+}
+
+func shouldSkipTargetValidation(cmd *cobra.Command) bool {
+	return commandOrAncestor(cmd, func(c *cobra.Command) bool {
+		return c.Annotations != nil && c.Annotations["skip-target-validation"] == "true"
+	})
 }

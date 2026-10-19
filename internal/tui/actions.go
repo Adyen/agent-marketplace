@@ -325,6 +325,7 @@ func readSnapshotForWorkspace(ctx context.Context, ws pipeline.Workspace, homeDi
 }
 
 func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir string, mode catalogLoadMode, progressive bool, emit func(snapshotLoadedMsg)) {
+	ctx = cache.WithFreshExactGitVerificationScope(ctx)
 	ws, err := validatedTUIWorkspace(ws)
 	if err != nil {
 		emit(invalidWorkspaceSnapshot(err))
