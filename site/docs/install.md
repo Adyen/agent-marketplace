@@ -7,7 +7,7 @@ The [quick start](./quick-start.md) installs `agent-marketplace` with one `go in
 Pick a method below, then [check that it works](#verify). You also need [Git](./glossary.md#git) to install resources from Git registries. Run `git --version` to check.
 
 ::: tip Upgrading an existing installation
-`agent-marketplace` refuses to load a configuration file that doesn't declare `apiVersion: agent-marketplace/v4`: commands exit with an error and the TUI shows it, naming the file. [Convert configuration before upgrading](./how-to/migrate-configuration.md) explains how to fix it.
+`agent-marketplace` refuses to load a root configuration file that doesn't declare `apiVersion: agent-marketplace/v4` (included fragments may omit it): commands exit with an error and the TUI shows it, naming the file. [Convert configuration before upgrading](./how-to/migrate-configuration.md) explains how to fix it.
 :::
 
 ## From GitHub Releases
