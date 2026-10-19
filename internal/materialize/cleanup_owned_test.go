@@ -242,7 +242,7 @@ func TestRemoveOwnedPreservesDriftedAndHandwrittenSiblings(t *testing.T) {
 				if !ok {
 					t.Fatal("edited keep table missing")
 				}
-				retainedSpan = append([]byte(nil), edited[section.start:section.end]...)
+				retainedSpan = section.bytes(edited)
 			}
 			if len(retainedSpan) == 0 || !bytes.Contains(edited, retainedSpan) {
 				t.Fatal("retained raw span missing before cleanup")
