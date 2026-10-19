@@ -13,6 +13,7 @@ import (
 
 	toml "github.com/pelletier/go-toml/v2"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/bundle"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/hookpolicy"
@@ -268,6 +269,12 @@ func skillSupportFiles(src fs.FS, root string) ([]string, error) {
 	err := fs.WalkDir(src, root, func(current string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		if bundle.IsSkillSupportMetadataName(entry.Name()) {
+			if entry.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
 		}
 		if entry.IsDir() {
 			return nil

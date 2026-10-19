@@ -41,6 +41,26 @@ Model updates use a harness catalog plus an independent YAML conversion fixture;
 in the library README. No runtime catalog configuration or vendor CLI dependency
 is added.
 
+### Conversion assembles complete resource bundles from the source harness
+
+`Convert` (and `CompileBundle`, which delegates to it) now performs
+source-aware support-file assembly. Declared skill `SupportFiles` and
+hook/MCP assets explicitly referenced through the canonical root token are
+resolved against the source `fs.FS` and emitted as additional artifacts under
+the compiled resource root with exact bytes and modes; per-resource `Compile`
+stays filesystem-free and still defers the names with
+`skill.support-files-deferred`. A missing or unsafe (traversal, symlink,
+non-regular) support path fails closed with `bundle.support-file.missing` or
+`bundle.support-file.unsafe` and suppresses the owning resource's complete
+output, fragments included.
+
+Factory and Cursor MCP ingestion normalize their plugin-root tokens
+(`${DROID_PLUGIN_ROOT}`, `${CURSOR_PLUGIN_ROOT}`) to the canonical IR
+spelling across command, args, env, URL, and headers. Hook source provenance
+stays native; source-aware assembly recognizes canonical and source-native
+root tokens without using the author-machine source path as a compile-time
+plugin root.
+
 ### Validated native-layout descriptors now cover Codex, Devin, and Claude
 
 `target/native_layout.go` now carries a complete `NativeLayout` descriptor for

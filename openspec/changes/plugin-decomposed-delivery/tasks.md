@@ -1,6 +1,6 @@
 ## 1. Support-file assembly
 
-- [ ] 1.1 Port PR #273's `pkg/harness-compilation` changes (design D5),
+- [x] 1.1 Port PR #273's `pkg/harness-compilation` changes (design D5),
   dropping the `convert` hunks, and add the three library-level
   `Convert` + `Materialize` regressions
 

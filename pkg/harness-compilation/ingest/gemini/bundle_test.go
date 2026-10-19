@@ -46,6 +46,33 @@ func TestLoadSkillPreservesSupportFileNames(t *testing.T) {
 	}
 }
 
+func TestLoadSkillExcludesMetadataFromSupportFiles(t *testing.T) {
+	src := fstest.MapFS{
+		".gemini/skills/review/SKILL.md":          {Data: []byte("---\nname: review\n---\nBody\n")},
+		".gemini/skills/review/scripts/run.sh":    {Data: []byte("#!/bin/sh\n")},
+		".gemini/skills/review/notes/example.txt": {Data: []byte("note\n")},
+		".gemini/skills/review/.git/config":       {Data: []byte("[core]")},
+		".gemini/skills/review/.svn/entries":      {Data: []byte("12")},
+		".gemini/skills/review/.hg/dirstate":      {Data: []byte("hg")},
+		".gemini/skills/review/.DS_Store":         {Data: []byte("ds")},
+		".gemini/skills/review/notes/.DS_Store":   {Data: []byte("ds")},
+		".gemini/skills/review/notes/.git/HEAD":   {Data: []byte("ref")},
+	}
+	skill, err := gemini.LoadSkill(src, ".gemini/skills/review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"notes/example.txt", "scripts/run.sh"}
+	if len(skill.SupportFiles) != len(want) {
+		t.Fatalf("SupportFiles = %v, want %v", skill.SupportFiles, want)
+	}
+	for i := range want {
+		if skill.SupportFiles[i] != want[i] {
+			t.Fatalf("SupportFiles = %v, want %v", skill.SupportFiles, want)
+		}
+	}
+}
+
 func TestLoadCommand(t *testing.T) {
 	command, diags, err := gemini.LoadCommand(geminiPluginFS(), "commands/review.toml")
 	if err != nil {
