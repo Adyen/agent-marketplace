@@ -463,9 +463,12 @@ and a prompt for one handler.
 
 ### Requirement: Plugin-root tokens resolve to the installed hook support directory
 
-When a hook command contains `${CLAUDE_PLUGIN_ROOT}`, or a plugin-root token
-of the source harness, materialization SHALL replace the token with a
-reference to that hook's installed support directory:
+A plugin-root token, `${CLAUDE_PLUGIN_ROOT}` or the plugin-root token of the
+source harness, denotes the source bundle root: the folder that contains the
+folder holding the hook definition, as in Claude Code. The meaning is the same
+for Git, `directory`, and Marketplace sources. When a hook command contains a
+plugin-root token, materialization SHALL replace the token with a reference to
+that hook's installed support directory:
 
 - At repository scope, the reference SHALL be the target catalog's
   repository base followed by the support directory's repository-relative
@@ -490,6 +493,78 @@ contains a plugin-root token SHALL be suppressed with the error
 SHALL be emitted unchanged. A plugin-root token inside an authored single-quoted
 shell literal SHALL be refused with `hook.env-unrepresentable` rather than
 changing literal shell semantics or emitting malformed executable output.
+
+Each plugin-root reference whose path below the token is literal (no shell
+expansion or glob) SHALL name an installed support file or a directory that
+contains one. A reference that names nothing under the bundle-root meaning,
+and nothing under the legacy meaning described below, SHALL suppress that hook
+with the error `hook.support-reference-missing`; sibling hooks SHALL still
+install. A bare token and a reference whose path contains a shell expansion or
+glob SHALL NOT be checked. The diagnostic SHALL NOT quote the command or the
+referenced path.
+
+Until the next minor release after this behavior ships, a reference that names
+nothing under the bundle-root meaning but names an installed file or directory
+when read relative to the folder holding the hook definition (the legacy
+meaning) SHALL be rewritten to that installed path and SHALL emit the
+value-free warning `hook.support-reference-legacy`. A reference that resolves
+under both meanings SHALL use the bundle-root meaning without a warning.
+Marketplace mirror sources keep their existing support admission refusals.
+
+#### Scenario: Bundle-root references resolve on every source path
+
+- **WHEN** a Claude-layout registry ships `hooks/hooks.json` and
+  `hooks/scripts/check.sh`, the command is
+  `"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/check.sh"`, and the hook is synced
+  from a Git source, a `directory` source, and a Marketplace index-only source
+- **THEN** each materialized command MUST reference an installed file inside
+  that hook's support directory
+- **AND** no hook diagnostic MUST be emitted
+
+#### Scenario: Git and mirror delivery produce the same support layout
+
+- **WHEN** a Claude-layout hook whose support files sit directly beside
+  `hooks/hooks.json` is synced once from a Git source and once from a
+  Marketplace mirror of the same revision
+- **THEN** the installed support paths relative to each hook's support
+  directory MUST be identical
+- **AND** the materialized commands MUST be identical apart from the source
+  key in the support directory path
+
+#### Scenario: A reference to a missing support file refuses the hook
+
+- **WHEN** a hook command references
+  `${CLAUDE_PLUGIN_ROOT}/hooks/scripts/absent.sh` and no such support file
+  exists under either meaning, while a sibling hook in the same file has no
+  such reference
+- **THEN** no artifact MUST be emitted for that hook and the diagnostic MUST
+  be the error `hook.support-reference-missing`
+- **AND** the sibling hook MUST still install
+- **AND** the diagnostic MUST NOT contain the command or the referenced path
+
+#### Scenario: Bare and dynamic plugin-root references are not checked
+
+- **WHEN** a hook command contains `cd "${CLAUDE_PLUGIN_ROOT}"` or
+  `"${CLAUDE_PLUGIN_ROOT}/hooks/$SCRIPT"`
+- **THEN** the token MUST be rewritten to the support directory reference
+- **AND** `hook.support-reference-missing` MUST NOT be emitted
+
+#### Scenario: Legacy folder-relative references keep working with a warning
+
+- **WHEN** a hook whose definition is `hooks/hooks.json` has the command
+  `"${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"` and ships
+  `hooks/scripts/check.sh`
+- **THEN** the materialized command MUST reference the installed
+  `hooks/scripts/check.sh` inside that hook's support directory
+- **AND** the warning `hook.support-reference-legacy` MUST be emitted without
+  the command or the referenced path
+
+#### Scenario: References that resolve under both meanings use the bundle root
+
+- **WHEN** a reference names an installed path under the bundle-root meaning
+  and also under the legacy meaning
+- **THEN** the command MUST reference the bundle-root path
+- **AND** `hook.support-reference-legacy` MUST NOT be emitted
 
 #### Scenario: Single-quoted plugin-root literals refuse safely
 
@@ -541,7 +616,14 @@ file, except the hook definition itself and native aggregate siblings, into
 `hook-support/<source>/<hook>/` under the harness target's root for that
 scope. `<source>` is a filesystem-safe identifier derived deterministically
 from the hook's registry source, and `<hook>` is the hook's installed name.
-Relative paths below the source directory SHALL be preserved. Repository-scope
+Paths SHALL be preserved relative to the source bundle root: a file at
+`<rel>` below the folder `<D>` that holds the hook definition SHALL install at
+`<D>/<rel>` inside the support directory, on every source path. A hook
+definition located at the bundle root SHALL install its files at `<rel>`.
+When an earlier sync installed support files at the folder-relative paths,
+the next sync SHALL remove those owned files and install the bundle-relative
+copies in the same transaction; read-only checks SHALL report the pending
+change without writing. Repository-scope
 hook support SHALL be installed as portable regular copies with the verified
 source bytes and permission bits, regardless of the configured materialization
 mode. Machine-scope hook support and non-hook resources SHALL retain their
@@ -573,6 +655,25 @@ kept.
 - **THEN** its support directory MUST be removed
 - **AND** files in the target root that Agent Marketplace does not own MUST
   be kept
+
+#### Scenario: Support files keep their bundle-relative paths
+
+- **WHEN** a hook defined in `hooks/hooks.json` ships `hooks/scripts/check.sh`
+  and is synced to any harness target in either scope
+- **THEN** the script MUST be installed at `hooks/scripts/check.sh` inside that
+  hook's support directory
+
+#### Scenario: Folder-relative support from an earlier sync moves in one sync
+
+- **WHEN** an earlier sync installed `scripts/check.sh` directly inside a
+  hook's support directory and the consumer syncs again
+- **THEN** the owned `scripts/check.sh` copy MUST be removed and
+  `hooks/scripts/check.sh` installed in the same transaction
+- **AND** the hook review listing MUST report the changed command
+- **AND** files in the support directory that Agent Marketplace does not own
+  MUST be kept
+- **AND** a preceding `sync --check` MUST report the pending change without
+  writing
 
 #### Scenario: Repository support copies preserve machine and non-hook policy
 

@@ -273,3 +273,30 @@ hook matrix goldens deliberately.
 - [ ] 9.3 Run `openspec archive native-hook-integration --yes` in this pull
   request. Verify `openspec validate --all --strict` and `make spec-check`
   pass afterward
+
+## 10. Plugin-root tokens mean the bundle root (#733)
+
+- [ ] 10.1 Write red tests first for the new `hook-resources` scenarios:
+  `bundle-root-references-resolve-on-every-source-path`,
+  `git-and-mirror-delivery-produce-the-same-support-layout`,
+  `a-reference-to-a-missing-support-file-refuses-the-hook`,
+  `bare-and-dynamic-plugin-root-references-are-not-checked`,
+  `legacy-folder-relative-references-keep-working-with-a-warning`,
+  `references-that-resolve-under-both-meanings-use-the-bundle-root`,
+  `support-files-keep-their-bundle-relative-paths`, and
+  `folder-relative-support-from-an-earlier-sync-moves-in-one-sync`. Verify
+  each fails on the base for the intended reason
+- [ ] 10.2 Install non-mirror hook support at bundle-relative paths, keeping
+  mirror publication, acquisition-lock bytes, and support inventory hashing
+  unchanged. Verify the focused `internal/materialize` tests pass
+- [ ] 10.3 Check literal plugin-root references against the installed
+  support set: emit `hook.support-reference-missing` (error, hook suppressed)
+  and the legacy fallback with `hook.support-reference-legacy` (warning).
+  Register both codes in `pkg/harness-compilation/diag`. Verify the focused
+  `hookpolicy` and `internal/materialize` tests pass
+- [ ] 10.4 Prove an interrupted support move is refused by read-only commands
+  and completed by the next mutating command, with no staging residue
+- [ ] 10.5 Update existing fixtures that use the folder-relative form, the
+  author guide `site/docs/how-to/author/publish-a-hook-with-support-files.md`,
+  and `pkg/harness-compilation/diag/codes.md`. Verify `make spec-check`,
+  `make validate`, and `make validate-e2e` pass
