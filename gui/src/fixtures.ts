@@ -18,7 +18,6 @@ export function snapshot(rows: Row[] = [], overrides: Partial<Snapshot> = {}): S
     diagnostics: [],
     harnesses: ['devin'],
     pendingChanges: 0,
-    migrationOffered: false,
     discoveryEnabled: false,
     discoveryHealth: [],
     discoveryQuery: '',

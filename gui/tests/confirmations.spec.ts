@@ -77,112 +77,20 @@ function observeRequests(page: Page, pathname: string): string[] {
   return bodies
 }
 
-// spec: session-interactions/declining-the-offer-continues-through-the-legacy-reader
-// spec: session-interactions/confirmation-retains-all-user-choices
-test('built GUI declines the legacy migration offer with Leave unchanged and Cancel', async ({ page }, testInfo) => {
-  if (!distIndexExists()) {
-    throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
-  }
-
-  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'legacy' })
-  const { bootstrap } = harness
-  const userConfigPath = join(bootstrap.home!, '.agents', 'config.yaml')
-  const repoConfigPath = join(bootstrap.repo!, '.agents', 'config.yaml')
-  const repoLocalPath = join(bootstrap.repo!, '.agents', 'config.local.yaml')
-  const configBefore = await readFile(userConfigPath)
-  const repoConfigBefore = await readFile(repoConfigPath)
-  const repoLocalBefore = await readFile(repoLocalPath)
-
-  try {
-    const actionBodies = observeRequests(page, '/api/actions')
-    await launchBuiltUserApp(page, bootstrap)
-
-    const migration = page.getByRole('dialog', { name: 'Migrate configuration' })
-    await expect(migration).toBeVisible({ timeout: 60_000 })
-    await expect(migration.getByRole('button', { name: 'Migrate' })).toBeVisible()
-    await migration.screenshot({ path: artifactPath(testInfo, 'migration-offer-visible.png'), animations: 'disabled' })
-
-    await migration.getByRole('button', { name: 'Leave unchanged' }).press('Enter')
-    await expect(migration).not.toBeVisible()
-    expect(actionBodies).toHaveLength(0)
-    expect((await readFile(userConfigPath)).equals(configBefore)).toBe(true)
-    await expect(page.getByRole('option').filter({ hasText: 'solo' }).first()).toBeVisible()
-
-    await page.reload({ waitUntil: 'domcontentloaded' })
-    await expect(migration).toBeVisible({ timeout: 60_000 })
-    await migration.getByRole('button', { name: 'Cancel migration offer' }).press('Enter')
-    await expect(migration).not.toBeVisible()
-    expect(actionBodies).toHaveLength(0)
-    expect((await readFile(userConfigPath)).equals(configBefore)).toBe(true)
-    expect((await readFile(repoConfigPath)).equals(repoConfigBefore)).toBe(true)
-    expect((await readFile(repoLocalPath)).equals(repoLocalBefore)).toBe(true)
-    await expect(page.getByRole('option').filter({ hasText: 'solo' }).first()).toBeVisible()
-    await page.screenshot({ path: artifactPath(testInfo, 'migration-declined-settled.png'), fullPage: true, animations: 'disabled' })
-  } finally {
-    await harness.stop()
-  }
-})
-
-// spec: session-interactions/accepting-the-offer-migrates-the-user-personal-root
-test('built GUI migrates the legacy user root through the confirmation', async ({ page }, testInfo) => {
-  if (!distIndexExists()) {
-    throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
-  }
-
-  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'legacy' })
-  const { bootstrap } = harness
-  const home = bootstrap.home!
-  const repo = bootstrap.repo!
-  const source = join(home, 'fixture-source')
-  const userConfigPath = join(home, '.agents', 'config.yaml')
-  const repoConfigPath = join(repo, '.agents', 'config.yaml')
-  const repoLocalPath = join(repo, '.agents', 'config.local.yaml')
-  const repoConfigBefore = await readFile(repoConfigPath)
-  const repoLocalBefore = await readFile(repoLocalPath)
-
-  try {
-    const actionBodies = observeRequests(page, '/api/actions')
-    await launchBuiltUserApp(page, bootstrap)
-
-    const migration = page.getByRole('dialog', { name: 'Migrate configuration' })
-    await expect(migration).toBeVisible({ timeout: 60_000 })
-    await migration.getByRole('button', { name: 'Migrate' }).press('Enter')
-
-    await expect.poll(() => actionBodies.length).toBe(1)
-    expect(JSON.parse(actionBodies[0])).toEqual({ action: 'migrate' })
-    await expect(migration).not.toBeVisible({ timeout: 60_000 })
-    await expect(page.getByRole('option').filter({ hasText: 'solo' }).first()).toBeVisible()
-    await page.screenshot({ path: artifactPath(testInfo, 'migration-accepted-settled.png'), fullPage: true, animations: 'disabled' })
-
-    const migrated = await readFile(userConfigPath, 'utf8')
-    expect(migrated).toContain('agent-marketplace/v4')
-    expect(migrated).toContain('devin')
-    expect(migrated).toContain(source)
-    expect((await readFile(repoConfigPath)).equals(repoConfigBefore)).toBe(true)
-    expect((await readFile(repoLocalPath)).equals(repoLocalBefore)).toBe(true)
-  } finally {
-    await harness.stop()
-  }
-})
-
 // spec: session-interactions/confirmation-retains-all-user-choices
 test('built GUI drives ordinary quit choices through the native Quit bridge', async ({ page }, testInfo) => {
   if (!distIndexExists()) {
     throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
   }
 
-  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'legacy' })
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'pending-sync' })
   const { bootstrap } = harness
 
   try {
     const actionBodies = observeRequests(page, '/api/actions')
     await launchWithNativeBridge(page, bootstrap)
 
-    const migration = page.getByRole('dialog', { name: 'Migrate configuration' })
-    await expect(migration).toBeVisible({ timeout: 60_000 })
-    await migration.getByRole('button', { name: 'Leave unchanged' }).press('Enter')
-    await expect(migration).not.toBeVisible()
-    await expect(page.getByRole('option').filter({ hasText: 'solo' }).first()).toBeVisible()
+    await expect(page.getByRole('option').filter({ hasText: 'solo' }).first()).toBeVisible({ timeout: 60_000 })
 
     await page.getByRole('button', { name: 'Sync', exact: true }).press('Enter')
     await expect(page.getByText('sync complete')).toBeVisible({ timeout: 60_000 })
@@ -221,7 +129,7 @@ test('built GUI pending-change quit offers sync-and-quit and quit-without-syncin
     throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
   }
 
-  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'legacy' })
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'pending-sync' })
   const { bootstrap } = harness
   const home = bootstrap.home!
   const materialized = join(home, '.config', 'devin', 'skills', 'solo', 'SKILL.md')
@@ -231,10 +139,6 @@ test('built GUI pending-change quit offers sync-and-quit and quit-without-syncin
     const actionBodies = observeRequests(page, '/api/actions')
     await launchWithNativeBridge(page, bootstrap)
 
-    const migration = page.getByRole('dialog', { name: 'Migrate configuration' })
-    await expect(migration).toBeVisible({ timeout: 60_000 })
-    await migration.getByRole('button', { name: 'Leave unchanged' }).press('Enter')
-    await expect(migration).not.toBeVisible()
 
     const quit = page.getByRole('button', { name: 'Quit', exact: true })
     const quitDialog = page.getByRole('dialog', { name: 'Quit Agent Marketplace' })

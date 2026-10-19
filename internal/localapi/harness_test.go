@@ -260,10 +260,11 @@ func TestLocalAPIUserHarness(t *testing.T) {
 		config.SetTestOrganizationConfigPath(t, orgPath)
 		orgConfigPath = orgPath
 	}
-	if fixture == "legacy" {
+	if fixture == "pending-sync" {
 		source := filepath.Join(home, "fixture-source")
 		writeFile(t, filepath.Join(source, "solo", "SKILL.md"), fixtureSkillBody)
-		writeLegacyUserRoot(t, home, legacyUserRootBody("agent-marketplace/v2", source))
+		writeFile(t, filepath.Join(home, ".agents", "config.yaml"),
+			"apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  local: {directory: "+source+"}\nresources:\n  local: {all: true}\n")
 	}
 	bootstrap := map[string]string{
 		"home":      home,

@@ -425,36 +425,6 @@ resources:
 		t.Fatalf("v4 described sources = %#v, want %#v", got, want)
 	}
 
-	legacyPath := filepath.Join(dir, "legacy.yaml")
-	legacyBytes := []byte(`apiVersion: agent-marketplace/v3
-harnesses: [devin]
-registries:
-  - url: https://example.com/legacy.git
-    ref: v1
-    path: sub/dir
-    source_harness: claude
-  - path: ` + filepath.Join(dir, "local-regs") + `
-    source_harness: windsurf
-marketplaces:
-  - url: https://mp.example
-    instance_id: main
-`)
-	if err := os.WriteFile(legacyPath, legacyBytes, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	ll := loadLayerIntent(UserPersonal, legacyPath, userLayer, nil)
-	if err := ll.Err(); err != nil {
-		t.Fatal(err)
-	}
-	wantLegacy := []SourceDescription{
-		{Kind: V4SourceGit, Location: "https://example.com/legacy.git", Ref: "v1", Path: "sub/dir", SourceHarness: "claude"},
-		{Kind: V4SourceDirectory, Location: filepath.Join(dir, "local-regs"), SourceHarness: "windsurf"},
-		{Kind: V4SourceMarketplace, Location: "https://mp.example", InstanceID: "main"},
-	}
-	if got := ll.DescribeSources(); !reflect.DeepEqual(got, wantLegacy) {
-		t.Fatalf("legacy described sources = %#v, want %#v", got, wantLegacy)
-	}
-
 	if got := (LayerIntent{Source: UserPersonal}).DescribeSources(); got != nil {
 		t.Fatalf("absent layer described sources = %#v, want nil", got)
 	}
@@ -902,13 +872,5 @@ func TestOrganizationIntentReadsKeepDistinctRequestedAliases(t *testing.T) {
 				t.Fatalf("logical root alias lost: read = %#v, want requested %q", read, orgAbs)
 			}
 		}
-	})
-	t.Run("legacy root include", func(t *testing.T) {
-		dir := t.TempDir()
-		orgPath := filepath.Join(dir, "organization.yaml")
-		fragmentPath := filepath.Join(dir, "fragment.yaml")
-		layerEditorWrite(t, fragmentPath, "harnesses: [claude]\n")
-		layerEditorWrite(t, orgPath, "apiVersion: agent-marketplace/v2\ninclude: fragment.yaml\nharnesses: [devin]\n")
-		assertDistinctAliases(t, orgPath, fragmentPath)
 	})
 }

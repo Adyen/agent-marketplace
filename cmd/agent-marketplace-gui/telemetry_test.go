@@ -411,9 +411,6 @@ func TestAppTelemetryDetailedActionsAndSingleClose(t *testing.T) {
 	if status, _ := requestGUIAPI(t, app, http.MethodPost, "/api/telemetry", string(browse), true); status != http.StatusNoContent {
 		t.Fatalf("browse telemetry status = %d, want 204", status)
 	}
-	if status, _ := requestGUIAPI(t, app, http.MethodPost, "/api/actions", `{"action":"migrate"}`, true); status != http.StatusBadRequest {
-		t.Fatalf("unoffered migration status = %d, want 400", status)
-	}
 
 	syncID := startGUIAction(t, app, "sync")
 	select {

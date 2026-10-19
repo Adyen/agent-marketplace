@@ -89,7 +89,6 @@ type snapshotDTO struct {
 	Diagnostics        []diagnosticDTO      `json:"diagnostics"`
 	Harnesses          []string             `json:"harnesses"`
 	PendingChanges     int                  `json:"pendingChanges"`
-	MigrationOffered   bool                 `json:"migrationOffered"`
 	DiscoveryEnabled   bool                 `json:"discoveryEnabled"`
 	DiscoveryHealth    []discoveryHealthDTO `json:"discoveryHealth"`
 	DiscoveryQuery     string               `json:"discoveryQuery"`
@@ -554,7 +553,6 @@ func (a *API) snapshotPresentationLocked(snapshot session.Snapshot, op *operatio
 		Diagnostics:        []diagnosticDTO{},
 		Harnesses:          []string{},
 		PendingChanges:     snapshot.DriftReport.PendingCount(),
-		MigrationOffered:   false,
 		DiscoveryEnabled:   a.discovery.enabled,
 		DiscoveryHealth:    health,
 		DiscoveryQuery:     a.discovery.query,

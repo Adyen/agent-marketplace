@@ -170,10 +170,11 @@ func SeedCollection(t *testing.T, cache *marketplace.Cache, baseURL, name string
 }
 
 func (f *Fixture) OrganizationConfig(required bool) []byte {
+	requiredLine := ""
 	if required {
-		return []byte(fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [devin]\ntelemetry:\n  level: off\nsources:\n  mp: {marketplace: %q}\nresources:\n  mp:\n    include:\n      - tools/skill/audit: {revision: %q}\n      - tools/skill/review: {revision: %q}\n    required: true\n", f.Server.URL, f.Revisions["audit"], f.Revisions["review"]))
+		requiredLine = "    required: true\n"
 	}
-	return []byte(fmt.Sprintf("apiVersion: agent-marketplace/v3\nharnesses: [devin]\ntelemetry:\n  level: off\nmarketplaces:\n  - url: %q\n    instance_id: mp\n    resources:\n      - registry_id: tools\n        registry_slug: tools\n        kind: skill\n        name: audit\n        revision: %q\n        digest: %q\n        acquisition: mirror\n        direct: true\n      - registry_id: tools\n        registry_slug: tools\n        kind: skill\n        name: review\n        revision: %q\n        digest: %q\n        acquisition: mirror\n        direct: true\n", f.Server.URL, f.Revisions["audit"], f.Revisions["audit"], f.Revisions["review"], f.Revisions["review"]))
+	return []byte(fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [devin]\ntelemetry:\n  level: off\nsources:\n  mp: {marketplace: %q}\nresources:\n  mp:\n    include:\n      - tools/skill/audit: {revision: %q}\n      - tools/skill/review: {revision: %q}\n%s", f.Server.URL, f.Revisions["audit"], f.Revisions["review"], requiredLine))
 }
 
 func (f *Fixture) CollectionDigest() string {

@@ -68,7 +68,6 @@ export interface WorkspaceState {
   harnesses: string[]
   diagnostics: Diagnostic[]
   pendingChanges: number
-  migrationOffered: boolean
   discoveryEnabled: boolean
   discoveryHealth: Snapshot['discoveryHealth']
   discoveryQuery: string
@@ -113,7 +112,6 @@ export class WorkspaceController {
     harnesses: [],
     diagnostics: [],
     pendingChanges: 0,
-    migrationOffered: false,
     discoveryEnabled: false,
     discoveryHealth: [],
     discoveryQuery: '',
@@ -660,7 +658,7 @@ export class WorkspaceController {
             this.state.operation = null
             this.state.phase = null
           }
-          if (settled.kind === 'targets' || settled.kind === 'mutation' || settled.kind === 'migration') {
+          if (settled.kind === 'targets' || settled.kind === 'mutation') {
             void this.loadConfiguration()
           }
           if (this.pendingQuitId != null && settled.id === this.pendingQuitId && settled.kind === 'sync') {
@@ -700,7 +698,6 @@ export class WorkspaceController {
     this.state.harnesses = snapshot.harnesses
     this.state.diagnostics = snapshot.diagnostics
     this.state.pendingChanges = snapshot.pendingChanges ?? 0
-    this.state.migrationOffered = snapshot.migrationOffered === true
     const wasDiscoveryEnabled = this.state.discoveryEnabled
     const pendingDiscoveryIntent = this.browserDiscoveryRequestId > snapshot.discoveryRequestId
     this.state.discoveryEnabled = snapshot.discoveryEnabled === true

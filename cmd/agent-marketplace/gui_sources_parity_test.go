@@ -287,7 +287,7 @@ func TestGUIRegistryRemovalMatchesCLI(t *testing.T) {
 			repo := t.TempDir()
 			writeFile(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [devin]\n")
 			repoLocal := filepath.Join(repo, ".agents", "config.local.yaml")
-			writeFile(t, repoLocal, "{}\n")
+			writeFile(t, repoLocal, "apiVersion: agent-marketplace/v4\n")
 			repoBefore, _ := os.ReadFile(filepath.Join(repo, ".agents", "config.yaml"))
 			localBefore, _ := os.ReadFile(repoLocal)
 

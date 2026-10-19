@@ -163,7 +163,7 @@ func TestUserConfigurationSourceProjection(t *testing.T) {
 	writeFile(t, filepath.Join(home, ".agents", "fragment.yaml"), string(fragBytes))
 	orgDir := t.TempDir()
 	orgPath := filepath.Join(t.TempDir(), "org.yaml")
-	orgBytes := []byte("apiVersion: agent-marketplace/v3\nharnesses: [claude]\nregistries:\n  - url: https://YOUR_USER_HERE:YOUR_TOKEN_HERE@example.com/org.git?token=hint#frag\n    ref: main\n    path: nested\n    source_harness: devin\n  - path: " + orgDir + "\nmarketplaces:\n  - url: https://org-mp.example\n    instance_id: main\n")
+	orgBytes := []byte("apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  orggit: {git: \"https://YOUR_USER_HERE:YOUR_TOKEN_HERE@example.com/org.git?token=hint#frag\", ref: main, path: nested, source_harness: devin}\n  orgdir: {directory: " + orgDir + "}\n  orgmp: {marketplace: https://org-mp.example}\n")
 	writeFile(t, orgPath, string(orgBytes))
 	config.SetTestOrganizationConfigPath(t, orgPath)
 	repoConfig := filepath.Join(repo, ".agents", "config.yaml")
@@ -191,8 +191,8 @@ func TestUserConfigurationSourceProjection(t *testing.T) {
 		t.Fatalf("userSources = %#v, want %#v", got, wantUser)
 	}
 	wantOrg := []configurationSourceView{
-		{Kind: "git", Location: "https://***@example.com/org.git?***", Ref: "main", Path: "nested", SourceHarness: "devin"},
 		{Kind: "directory", Location: orgDir},
+		{Kind: "git", Location: "https://***@example.com/org.git?***", Ref: "main", Path: "nested", SourceHarness: "devin"},
 		{Kind: "marketplace", Location: "https://org-mp.example"},
 	}
 	if got := configurationSources(t, decoded, "organizationSources"); !reflect.DeepEqual(got, wantOrg) {
@@ -451,117 +451,96 @@ func notificationSeverity(t *testing.T, event sessionEvent) string {
 
 // spec: gui-configuration/organization-harness-targets-are-read-only
 func TestConfigurationSaveTargetsMatchesSharedWriter(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		root   string
-		target string
-	}{
-		{name: "v4", root: "apiVersion: agent-marketplace/v4\nharnesses: [devin, future-harness]\n", target: "devin"},
-		{name: "v3", root: "apiVersion: agent-marketplace/v3\nharnesses: [devin, future-harness]\nregistries: []\n", target: "devin"},
-		{name: "v2", root: "apiVersion: agent-marketplace/v2\nharnesses: [devin, future-harness]\nregistries: []\n", target: "devin"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			home, repo := newUserAPIFixture(t, false)
-			userConfig := filepath.Join(home, ".agents", "config.yaml")
-			root := tc.root
-			var fragmentPath string
-			var fragmentBytes []byte
-			if tc.name == "v4" {
-				source := t.TempDir()
-				writeFile(t, filepath.Join(source, "solo", "SKILL.md"), fixtureSkillBody)
-				fragmentBytes = []byte("sources:\n  local: {directory: " + source + "}\nresources:\n  local: {all: true, harnesses: [devin]}\n")
-				fragmentPath = filepath.Join(home, ".agents", "fragment.yaml")
-				writeFile(t, fragmentPath, string(fragmentBytes))
-				root = "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin, future-harness]\n"
-			}
-			writeFile(t, userConfig, root)
-			repoConfig := filepath.Join(repo, ".agents", "config.yaml")
-			repoLocal := filepath.Join(repo, ".agents", "config.local.yaml")
-			repoBefore, _ := os.ReadFile(repoConfig)
-			localBefore, _ := os.ReadFile(repoLocal)
-			orgPath := filepath.Join(t.TempDir(), "org.yaml")
-			orgBytes := []byte("apiVersion: agent-marketplace/v4\nharnesses: [claude]\n")
-			writeFile(t, orgPath, string(orgBytes))
-			config.SetTestOrganizationConfigPath(t, orgPath)
+	home, repo := newUserAPIFixture(t, false)
+	userConfig := filepath.Join(home, ".agents", "config.yaml")
+	source := t.TempDir()
+	writeFile(t, filepath.Join(source, "solo", "SKILL.md"), fixtureSkillBody)
+	fragmentBytes := []byte("sources:\n  local: {directory: " + source + "}\nresources:\n  local: {all: true, harnesses: [devin]}\n")
+	fragmentPath := filepath.Join(home, ".agents", "fragment.yaml")
+	writeFile(t, fragmentPath, string(fragmentBytes))
+	root := "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin, future-harness]\n"
+	writeFile(t, userConfig, root)
+	repoConfig := filepath.Join(repo, ".agents", "config.yaml")
+	repoLocal := filepath.Join(repo, ".agents", "config.local.yaml")
+	repoBefore, _ := os.ReadFile(repoConfig)
+	localBefore, _ := os.ReadFile(repoLocal)
+	orgPath := filepath.Join(t.TempDir(), "org.yaml")
+	orgBytes := []byte("apiVersion: agent-marketplace/v4\nharnesses: [claude]\n")
+	writeFile(t, orgPath, string(orgBytes))
+	config.SetTestOrganizationConfigPath(t, orgPath)
 
-			api, err := NewUser(context.Background(), home, session.DependencyLifecycle{}, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(api.Close)
+	api, err := NewUser(context.Background(), home, session.DependencyLifecycle{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(api.Close)
 
-			events := streamEvents(t, api)
-			for nextEvent(t, events).snapshotStage() != "final" {
-			}
+	events := streamEvents(t, api)
+	for nextEvent(t, events).snapshotStage() != "final" {
+	}
 
-			status, decoded := saveTargets(t, api, `["claude","future-harness"]`)
-			if status != http.StatusAccepted {
-				t.Fatalf("save-targets status = %d, body = %v", status, decoded)
+	status, decoded := saveTargets(t, api, `["claude","future-harness"]`)
+	if status != http.StatusAccepted {
+		t.Fatalf("save-targets status = %d, body = %v", status, decoded)
+	}
+	operation, _ := decoded["operation"].(map[string]any)
+	if operation["kind"] != "targets" {
+		t.Fatalf("operation kind = %v, want targets", operation["kind"])
+	}
+	var announced bool
+	for {
+		event := nextEvent(t, events)
+		if event.Type == "snapshot" && event.Operation != nil && event.Operation.Kind == "targets" {
+			announced = true
+		}
+		if event.Type == "notification" {
+			if got := notificationSeverity(t, event); got != "info" {
+				t.Fatalf("notification severity = %q", got)
 			}
-			operation, _ := decoded["operation"].(map[string]any)
-			if operation["kind"] != "targets" {
-				t.Fatalf("operation kind = %v, want targets", operation["kind"])
-			}
-			var announced bool
-			for {
-				event := nextEvent(t, events)
-				if event.Type == "snapshot" && event.Operation != nil && event.Operation.Kind == "targets" {
-					announced = true
-				}
-				if event.Type == "notification" {
-					if got := notificationSeverity(t, event); got != "info" {
-						t.Fatalf("notification severity = %q", got)
-					}
-					break
-				}
-			}
-			if !announced {
-				t.Fatal("no snapshot event announced the targets operation")
-			}
+			break
+		}
+	}
+	if !announced {
+		t.Fatal("no snapshot event announced the targets operation")
+	}
 
-			guiBytes, err := os.ReadFile(userConfig)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Contains(guiBytes, []byte("future-harness")) {
-				t.Fatalf("unknown identifier lost: %s", guiBytes)
-			}
+	guiBytes, err := os.ReadFile(userConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(guiBytes, []byte("future-harness")) {
+		t.Fatalf("unknown identifier lost: %s", guiBytes)
+	}
 
-			oracleHome := t.TempDir()
-			oraclePath := filepath.Join(oracleHome, ".agents", "config.yaml")
-			writeFile(t, oraclePath, root)
-			if fragmentBytes != nil {
-				writeFile(t, filepath.Join(oracleHome, ".agents", "fragment.yaml"), string(fragmentBytes))
-			}
-			if err := config.SetHarnessesInConfig(oraclePath, []string{"claude", "future-harness"}); err != nil {
-				t.Fatalf("shared writer oracle failed: %v", err)
-			}
-			oracleBytes, err := os.ReadFile(oraclePath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(guiBytes, oracleBytes) {
-				t.Fatalf("GUI save bytes differ from shared writer:\nGUI:\n%s\nwriter:\n%s", guiBytes, oracleBytes)
-			}
+	oracleHome := t.TempDir()
+	oraclePath := filepath.Join(oracleHome, ".agents", "config.yaml")
+	writeFile(t, oraclePath, root)
+	writeFile(t, filepath.Join(oracleHome, ".agents", "fragment.yaml"), string(fragmentBytes))
+	if err := config.SetHarnessesInConfig(oraclePath, []string{"claude", "future-harness"}); err != nil {
+		t.Fatalf("shared writer oracle failed: %v", err)
+	}
+	oracleBytes, err := os.ReadFile(oraclePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(guiBytes, oracleBytes) {
+		t.Fatalf("GUI save bytes differ from shared writer:\nGUI:\n%s\nwriter:\n%s", guiBytes, oracleBytes)
+	}
 
-			if after, _ := os.ReadFile(repoConfig); !bytes.Equal(after, repoBefore) {
-				t.Fatal("repo-committed config changed")
-			}
-			if after, _ := os.ReadFile(repoLocal); !bytes.Equal(after, localBefore) {
-				t.Fatal("personal-local config changed")
-			}
-			if after, err := os.ReadFile(orgPath); err != nil || !bytes.Equal(after, orgBytes) {
-				t.Fatal("organization config changed")
-			}
-			if fragmentPath != "" {
-				if after, err := os.ReadFile(fragmentPath); err != nil || !bytes.Equal(after, fragmentBytes) {
-					t.Fatal("included fragment changed")
-				}
-			}
-			if _, err := os.Stat(filepath.Join(home, ".future-harness")); !os.IsNotExist(err) {
-				t.Fatal("unsupported target materialized output")
-			}
-		})
+	if after, _ := os.ReadFile(repoConfig); !bytes.Equal(after, repoBefore) {
+		t.Fatal("repo-committed config changed")
+	}
+	if after, _ := os.ReadFile(repoLocal); !bytes.Equal(after, localBefore) {
+		t.Fatal("personal-local config changed")
+	}
+	if after, err := os.ReadFile(orgPath); err != nil || !bytes.Equal(after, orgBytes) {
+		t.Fatal("organization config changed")
+	}
+	if after, err := os.ReadFile(fragmentPath); err != nil || !bytes.Equal(after, fragmentBytes) {
+		t.Fatal("included fragment changed")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".future-harness")); !os.IsNotExist(err) {
+		t.Fatal("unsupported target materialized output")
 	}
 }
 

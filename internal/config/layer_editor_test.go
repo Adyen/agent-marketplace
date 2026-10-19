@@ -2048,16 +2048,6 @@ func TestLayerEditorRemoveMarketplaceRegistrationV4RootOnly(t *testing.T) {
 	}
 }
 
-func marketplaceEditorSortedEntries(entries []MarketplaceEntry) []MarketplaceEntry {
-	out := append([]MarketplaceEntry(nil), entries...)
-	sort.Slice(out, func(i, j int) bool {
-		left := out[i].URL + "\x00" + out[i].InstanceID
-		right := out[j].URL + "\x00" + out[j].InstanceID
-		return left < right
-	})
-	return out
-}
-
 func TestLayerEditorRemoveMarketplaceRegistrationRefusesV4Groups(t *testing.T) {
 	targetURL := "http://127.0.0.1:12345/services/catalog"
 	for _, tc := range []struct {

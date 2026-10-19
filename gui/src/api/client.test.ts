@@ -49,7 +49,6 @@ function snapshotEvent(sequence: number, generation: number, stage = 'final', op
       harnesses: ['devin'],
       operation: ref,
       pendingChanges: 0,
-      migrationOffered: false,
       discoveryEnabled: false,
       discoveryHealth: [],
       discoveryQuery: '',

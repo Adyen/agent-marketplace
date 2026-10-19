@@ -1673,41 +1673,6 @@ func TestUserSourceActionRequestControls(t *testing.T) {
 	}
 }
 
-func TestMarketplaceSourceIDsIncludeLegacyInstanceID(t *testing.T) {
-	home, _ := newUserAPIFixture(t, false)
-	userConfig := filepath.Join(home, ".agents", "config.yaml")
-	endpoint := "http://127.0.0.1:12345/services/catalog"
-	writeFile(t, userConfig, "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nmarketplaces:\n  - url: "+endpoint+"\n    instance_id: instance-one\n  - url: "+endpoint+"\n    instance_id: instance-two\n")
-
-	api := &API{homeDir: home, token: "work21-literal-key"}
-	metadata := api.configurationMetadata(context.Background())
-	if len(metadata.UserSources) != 2 {
-		t.Fatalf("projected user Marketplace sources = %#v, want two", metadata.UserSources)
-	}
-	if metadata.UserSources[0].ID != "5b1eb108603c7c694934729dd117c9581908ce2e91674df345fc2ae66ae70fe1" {
-		t.Fatalf("first Marketplace source ID = %q, want independent literal HMAC", metadata.UserSources[0].ID)
-	}
-	if metadata.UserSources[1].ID != "ea1e03f818c553d87f796cfd98f68d363cdccbcb448f5033620177ba975f86fc" {
-		t.Fatalf("second Marketplace source ID = %q, want independent literal HMAC", metadata.UserSources[1].ID)
-	}
-	if metadata.UserSources[0].ID == metadata.UserSources[1].ID {
-		t.Fatal("same URL with different legacy instance IDs projected the same opaque ID")
-	}
-	body, err := json.Marshal(metadata.UserSources)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, instanceID := range []string{"instance-one", "instance-two"} {
-		if bytes.Contains(body, []byte(instanceID)) {
-			t.Fatalf("Marketplace DTO leaked instance ID %q: %s", instanceID, body)
-		}
-	}
-	otherLaunch := (&API{homeDir: home, token: "another-work21-launch-key"}).configurationMetadata(context.Background())
-	if otherLaunch.UserSources[0].ID == metadata.UserSources[0].ID {
-		t.Fatal("Marketplace source ID was not bound to the launch token")
-	}
-}
-
 func TestUserMarketplaceEndpointRegistrationRemovalRoundTrip(t *testing.T) {
 	userConfig, fragment, organization := marketplaceSourceTestContents(t, "", "")
 	fixture := newMarketplaceSourceFixture(t, userConfig, fragment, organization, nil)
@@ -1813,53 +1778,6 @@ func TestUserMarketplaceEndpointRegistrationRemovalRoundTrip(t *testing.T) {
 	}
 }
 
-func TestUserMarketplaceLegacyEndpointOnlyRemoval(t *testing.T) {
-	endpoint := newMarketplaceEndpointTestServer(t, "/services/catalog", "legacy-instance", "", 0)
-	userConfig := "apiVersion: agent-marketplace/v2\ninclude: fragment.yaml\nharnesses: [devin]\nlogging: {level: debug}\nmarketplaces:\n  - url: " + endpoint.endpoint + "\n    instance_id: legacy-instance\n    alias: legacy\n"
-	fragment := "registries: []\n"
-	organization := "apiVersion: agent-marketplace/v4\nharnesses: [claude]\ntelemetry: {level: off}\n"
-	fixture := newMarketplaceSourceFixture(t, userConfig, fragment, organization, marketplaceEndpointLock(endpoint.endpoint, "legacy-instance"))
-	id := userSourceIDs(t, fixture.api)["marketplace|"+endpoint.endpoint+"|||"]
-	if id == "" {
-		t.Fatal("legacy Marketplace endpoint has no projected ID")
-	}
-	endpoint.requests.Store(0)
-	status, decoded := sourceAction(t, fixture.api, `{"action":"remove-source","id":"`+id+`"}`)
-	if status != http.StatusAccepted {
-		t.Fatalf("legacy Marketplace removal status = %d, body = %v; want 202", status, decoded)
-	}
-	if got := notificationSeverity(t, awaitNotification(t, fixture.events)); got != "info" {
-		t.Fatalf("legacy Marketplace removal severity = %q, want info", got)
-	}
-	wantRoot := "apiVersion: agent-marketplace/v2\ninclude: fragment.yaml\nharnesses: [devin]\nlogging: {level: debug}\n"
-	if current, err := os.ReadFile(fixture.userConfigPath); err != nil || string(current) != wantRoot {
-		t.Fatalf("legacy user root after removal =\n%s\nerr=%v\nwant\n%s", current, err, wantRoot)
-	}
-	if after, err := os.ReadFile(fixture.fragmentPath); err != nil || !bytes.Equal(after, []byte(fragment)) {
-		t.Fatalf("legacy removal changed fragment: %q (err=%v)", after, err)
-	}
-	assertMarketplaceEndpointOnlyLock(t, fixture.lockPath, endpoint.endpoint, "legacy-instance", fixture.lockBefore)
-	if got := endpoint.requests.Load(); got != 0 {
-		t.Fatalf("legacy endpoint-only removal made %d network request(s), want no fetch", got)
-	}
-	status, decoded = sourceAction(t, fixture.api, `{"action":"remove-source","id":"`+id+`"}`)
-	if status != http.StatusBadRequest || decoded["code"] != codeInvalidRequest {
-		t.Fatalf("repeated stale legacy Marketplace removal status/code = %d/%v, want 400/%s", status, decoded["code"], codeInvalidRequest)
-	}
-	if current, err := os.ReadFile(fixture.userConfigPath); err != nil || string(current) != wantRoot {
-		t.Fatalf("stale legacy removal changed root: %q (err=%v)", current, err)
-	}
-	assertMarketplaceEndpointOnlyLock(t, fixture.lockPath, endpoint.endpoint, "legacy-instance", fixture.lockBefore)
-	if got := endpoint.requests.Load(); got != 0 {
-		t.Fatalf("stale legacy removal made %d network request(s), want no fetch", got)
-	}
-	assertNoSourceNativeOutput(t, fixture.home)
-	residue, err := filepath.Glob(filepath.Join(fixture.tmpDir, ".agent-marketplace-config-*"))
-	if err != nil || len(residue) != 0 {
-		t.Fatalf("legacy Marketplace removal left staging residue %v (err=%v)", residue, err)
-	}
-}
-
 func assertMarketplaceEndpointOnlyLock(t *testing.T, path, endpoint, instanceID string, wantBytes []byte) {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -1910,11 +1828,11 @@ func marketplaceMutationRequestCounter(api *API, endpoint *marketplaceEndpointTe
 
 func TestUserMarketplaceEndpointRemovalRefusesIncludedOnlySource(t *testing.T) {
 	endpoint := newMarketplaceEndpointTestServer(t, "/services/catalog", "included-instance", "", 0)
-	userConfig := "apiVersion: agent-marketplace/v2\ninclude: fragment.yaml\nharnesses: [devin]\nlogging: {level: debug}\n"
-	fragment := "marketplaces:\n  - url: " + endpoint.endpoint + "\n    instance_id: included-instance\n    alias: included\n"
+	userConfig := "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin]\nlogging: {level: debug}\n"
+	fragment := "sources:\n  included: {marketplace: " + endpoint.endpoint + "}\n"
 	organization := "apiVersion: agent-marketplace/v4\nharnesses: [claude]\ntelemetry: {level: off}\n"
 	fixture := newMarketplaceSourceFixture(t, userConfig, fragment, organization, marketplaceEndpointLock(endpoint.endpoint, "included-instance"))
-	if bytes.Contains(fixture.userBefore, []byte("marketplaces:")) {
+	if bytes.Contains(fixture.userBefore, []byte("sources:")) {
 		t.Fatal("included-only fixture redundantly declares a root Marketplace")
 	}
 	id := userSourceIDs(t, fixture.api)["marketplace|"+endpoint.endpoint+"|||"]
@@ -1933,60 +1851,11 @@ func TestUserMarketplaceEndpointRemovalRefusesIncludedOnlySource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(rootAfter, []byte("marketplaces:")) {
+	if bytes.Contains(rootAfter, []byte("sources:")) {
 		t.Fatal("included-only removal added a redundant root Marketplace")
 	}
 	if got := requestsAtMutationReturn.Load(); got != 0 {
 		t.Fatalf("included-only removal mutation made %d network request(s), want no identity lookup", got)
-	}
-}
-
-func TestUserMarketplaceEndpointRemovalRefusesLegacyPins(t *testing.T) {
-	endpoint := newMarketplaceEndpointTestServer(t, "/services/catalog", "pinned-instance", "", 0)
-	digest := "sha256:" + strings.Repeat("a", 64)
-	archiveDigest := "sha256:" + strings.Repeat("b", 64)
-	userConfig := "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nmarketplaces:\n  - url: " + endpoint.endpoint + "\n    instance_id: pinned-instance\n    alias: protected\n    resources:\n      - registry_id: tools-id\n        registry_slug: tools\n        kind: skill\n        name: protected\n        revision: rev-one\n        digest: " + digest + "\n        acquisition: mirror\n        direct: true\n"
-	fragment := "registries: []\n"
-	organization := "apiVersion: agent-marketplace/v4\nharnesses: [claude]\ntelemetry: {level: off}\n"
-	lockData, err := lockfile.Encode(lockfile.Document{
-		APIVersion: lockfile.APIVersionV2,
-		Scope:      lockfile.ScopeUser,
-		Marketplaces: []lockfile.MarketplaceLock{{
-			URL:        endpoint.endpoint,
-			InstanceID: "pinned-instance",
-			RegistryBindings: []lockfile.MarketplaceRegistryBinding{
-				{Name: "tools", RegistryID: "tools-id"},
-			},
-			Resources: []lockfile.MarketplaceResourceLock{{
-				RegistryName:  "tools",
-				RegistryID:    "tools-id",
-				Kind:          "skill",
-				Name:          "protected",
-				Revision:      "rev-one",
-				ContentDigest: lockfile.Digest(digest),
-				ArchiveDigest: lockfile.Digest(archiveDigest),
-				Acquisition:   lockfile.MarketplaceAcquisitionMirror,
-			}},
-		}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	fixture := newMarketplaceSourceFixture(t, userConfig, fragment, organization, lockData)
-	id := userSourceIDs(t, fixture.api)["marketplace|"+endpoint.endpoint+"|||"]
-	if id == "" {
-		t.Fatal("pin-bearing Marketplace has no projected user ID")
-	}
-	requestsAtMutationReturn := marketplaceMutationRequestCounter(fixture.api, endpoint)
-	endpoint.requests.Store(0)
-
-	status, decoded := sourceAction(t, fixture.api, `{"action":"remove-source","id":"`+id+`"}`)
-	if status != http.StatusAccepted {
-		t.Fatalf("pin-bearing Marketplace removal status = %d, body = %v; want 202", status, decoded)
-	}
-	assertMarketplaceRemovalFailure(t, fixture, "config.edit.source-in-use")
-	if got := requestsAtMutationReturn.Load(); got != 0 {
-		t.Fatalf("pin-bearing removal mutation made %d network request(s), want no identity lookup", got)
 	}
 }
 
@@ -2035,74 +1904,6 @@ func TestUserMarketplaceRemovalRejectsAmbiguousDescriptors(t *testing.T) {
 		t.Fatalf("ambiguous removal made %d network request(s), want no identity lookup", got)
 	}
 	assertNoSourceNativeOutput(t, home)
-}
-
-func TestUserMarketplaceLegacyRemovalRevalidatesInstanceIdentity(t *testing.T) {
-	endpoint := newMarketplaceEndpointTestServer(t, "/services/catalog", "before-instance", "", 0)
-	userConfig := "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nmarketplaces:\n  - url: " + endpoint.endpoint + "\n    instance_id: before-instance\n"
-	fragment := "registries: []\n"
-	organization := "apiVersion: agent-marketplace/v4\nharnesses: [claude]\ntelemetry: {level: off}\n"
-	fixture := newMarketplaceSourceFixture(t, userConfig, fragment, organization, marketplaceEndpointLock(endpoint.endpoint, "before-instance"))
-	actorBytes := []byte(strings.Replace(userConfig, "instance_id: before-instance", "instance_id: after-instance", 1))
-	if bytes.Equal(actorBytes, []byte(userConfig)) {
-		t.Fatal("staged identity actor fixture did not change the instance ID")
-	}
-	id := userSourceIDs(t, fixture.api)["marketplace|"+endpoint.endpoint+"|||"]
-	if id == "" {
-		t.Fatal("legacy Marketplace endpoint has no projected ID")
-	}
-	runtime := session.RuntimeLifecycle()
-	var requestsAtMutationReturn atomic.Int32
-	fixture.api.lifecycle = session.DependencyLifecycle{
-		Sync:   runtime.Sync,
-		Update: runtime.Update,
-		Mutate: func(ctx context.Context, workspace pipeline.Workspace, mutation func(pipeline.ConfigPathMapper) error) error {
-			writeFile(t, fixture.userConfigPath, string(actorBytes))
-			err := runtime.Mutate(ctx, workspace, mutation)
-			requestsAtMutationReturn.Store(endpoint.requests.Load())
-			return err
-		},
-	}
-	endpoint.requests.Store(0)
-
-	status, decoded := sourceAction(t, fixture.api, `{"action":"remove-source","id":"`+id+`"}`)
-	if status != http.StatusAccepted {
-		t.Fatalf("legacy Marketplace removal status = %d, body = %v; want 202", status, decoded)
-	}
-	if got := notificationSeverity(t, awaitNotification(t, fixture.events)); got != "error" {
-		t.Fatalf("stale legacy Marketplace removal severity = %q, want error", got)
-	}
-	diagnostics := mutationDiagnostics(t, fixture.api)
-	if len(diagnostics) != 1 || diagnostics[0].Severity != "error" ||
-		!strings.Contains(diagnostics[0].Message, "generation conflict") {
-		t.Fatalf("stale legacy removal diagnostics = %#v, want one generation-conflict error", diagnostics)
-	}
-	if current, err := os.ReadFile(fixture.userConfigPath); err != nil || !bytes.Equal(current, actorBytes) {
-		t.Fatalf("stale removal changed actor root: %q (err=%v), want %q", current, err, actorBytes)
-	}
-	if current, err := os.ReadFile(fixture.lockPath); err != nil || !bytes.Equal(current, fixture.lockBefore) {
-		t.Fatalf("stale removal changed lock: %q (err=%v)", current, err)
-	}
-	for _, check := range []struct {
-		path string
-		want []byte
-	}{
-		{path: fixture.fragmentPath, want: fixture.fragmentBefore},
-		{path: fixture.organizationPath, want: fixture.organizationBefore},
-		{path: fixture.repoConfigPath, want: fixture.repoBefore},
-		{path: fixture.localConfigPath, want: fixture.localBefore},
-	} {
-		if current, err := os.ReadFile(check.path); err != nil || !bytes.Equal(current, check.want) {
-			t.Fatalf("stale removal changed %s: %q (err=%v)", check.path, current, err)
-		}
-	}
-	if got := requestsAtMutationReturn.Load(); got != 0 {
-		t.Fatalf("stale removal mutation made %d network request(s), want no identity lookup", got)
-	}
-	residue, err := filepath.Glob(filepath.Join(fixture.tmpDir, ".agent-marketplace-config-*"))
-	if err != nil || len(residue) != 0 {
-		t.Fatalf("stale removal left staging residue %v (err=%v)", residue, err)
-	}
 }
 
 func TestUserMarketplaceRemovalPreflightControlsNoWrite(t *testing.T) {

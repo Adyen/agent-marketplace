@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/session"
 	startupfixture "github.com/Adyen/agent-marketplace/internal/testutil/marketplace/startup"
@@ -27,7 +28,7 @@ type work49CacheSeed struct {
 	metadataTime time.Time
 }
 
-type work49OrgConfigBuilder func(*testing.T, *marketplace.Cache, string) []byte
+type work49OrgConfigBuilder func(*testing.T, *marketplace.Cache, string, string) []byte
 
 func seedWork49Collection(t *testing.T, cache *marketplace.Cache, marketURL string, seed work49CacheSeed) (string, string) {
 	t.Helper()
@@ -42,8 +43,40 @@ func seedWork49Collection(t *testing.T, cache *marketplace.Cache, marketURL stri
 	return digest, manifestPath
 }
 
-func work49LegacyOrganizationConfig(marketURL, collectionName, revision string) []byte {
-	return []byte(fmt.Sprintf("apiVersion: agent-marketplace/v3\nharnesses: [devin]\ntelemetry:\n  level: off\nmarketplaces:\n  - url: %q\n    instance_id: mp\n    resources:\n      - registry_id: tools\n        registry_slug: tools\n        kind: collection\n        name: %q\n        revision: %q\n        digest: %q\n        acquisition: mirror\n        direct: true\n", marketURL, collectionName, revision, revision))
+func writeWork49OrganizationLock(t *testing.T, orgPath, marketURL, collectionName, digest string, members []string) {
+	t.Helper()
+	selectedBy := []lockfile.MarketplaceSelectionLock{{RegistryID: "tools", Name: collectionName, Revision: lockfile.Digest(digest)}}
+	resources := []lockfile.MarketplaceResourceLock{{
+		RegistryName: "tools", RegistryID: "tools", Kind: "collection", Name: collectionName,
+		Revision: digest, ContentDigest: lockfile.Digest(digest), CollectionManifestDigest: lockfile.Digest(digest),
+		Acquisition: lockfile.MarketplaceAcquisitionMirror,
+	}}
+	memberRevision := "sha256:" + strings.Repeat("a", 64)
+	for _, member := range members {
+		resources = append(resources, lockfile.MarketplaceResourceLock{
+			RegistryName: "tools", RegistryID: "tools", Kind: "skill", Name: member,
+			Revision: memberRevision, ContentDigest: lockfile.Digest(memberRevision), ArchiveDigest: lockfile.Digest(memberRevision),
+			Acquisition: lockfile.MarketplaceAcquisitionMirror, SelectedBy: selectedBy,
+		})
+	}
+	data, err := lockfile.Encode(lockfile.Document{
+		APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeOrganization,
+		Marketplaces: []lockfile.MarketplaceLock{{
+			URL: marketURL, InstanceID: "mp",
+			RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: "tools", RegistryID: "tools"}},
+			Resources:        resources,
+		}},
+	})
+	if err != nil {
+		t.Fatal("encode organization collection lock")
+	}
+	if err := os.WriteFile(config.Organization.LockPath(orgPath), data, 0o600); err != nil {
+		t.Fatal("write organization collection lock")
+	}
+}
+
+func work49OrganizationConfig(marketURL, collectionName, revision string) []byte {
+	return []byte(fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [devin]\ntelemetry:\n  level: off\nsources:\n  mp: {marketplace: %q}\nresources:\n  mp:\n    include:\n      - tools/collection/%s: {revision: %q}\n", marketURL, collectionName, revision))
 }
 
 func work49ProvisionalRows(t *testing.T, userConfig func(source, marketURL string) string, buildOrg work49OrgConfigBuilder) []acquisitionHostRow {
@@ -57,7 +90,7 @@ func work49ProvisionalRows(t *testing.T, userConfig func(source, marketURL strin
 	})
 	orgDir := t.TempDir()
 	orgPath := filepath.Join(orgDir, "config.yaml")
-	orgConfig := buildOrg(t, marketplace.DefaultCache(), marketURL)
+	orgConfig := buildOrg(t, marketplace.DefaultCache(), marketURL, orgPath)
 	if err := os.WriteFile(orgPath, orgConfig, 0o600); err != nil {
 		t.Fatal("write private organization collection fixture")
 	}
@@ -154,21 +187,22 @@ func TestGuiHostCachedCollectionRevisionChoice(t *testing.T) {
 		build work49OrgConfigBuilder
 		want  []string
 	}{
-		{name: "exact-old", build: func(t *testing.T, cache *marketplace.Cache, url string) []byte {
+		{name: "exact-old", build: func(t *testing.T, cache *marketplace.Cache, url, orgPath string) []byte {
 			old, _ := seedWork49Collection(t, cache, url, work49CacheSeed{name: "bundle", members: []string{"old-only"}, verified: true, metadataTime: time.Unix(10, 0)})
 			seedWork49Collection(t, cache, url, work49CacheSeed{name: "bundle", members: []string{"new-only"}, verified: true, metadataTime: time.Unix(20, 0)})
-			return work49LegacyOrganizationConfig(url, "bundle", old)
+			writeWork49OrganizationLock(t, orgPath, url, "bundle", old, []string{"old-only"})
+			return work49OrganizationConfig(url, "bundle", old)
 		}, want: []string{"old-only"}},
-		{name: "newest-skips-unverified", build: func(t *testing.T, cache *marketplace.Cache, url string) []byte {
+		{name: "newest-skips-unverified", build: func(t *testing.T, cache *marketplace.Cache, url, orgPath string) []byte {
 			seedWork49Collection(t, cache, url, work49CacheSeed{name: "bundle", members: []string{"old-only"}, verified: true, metadataTime: time.Unix(10, 0)})
 			seedWork49Collection(t, cache, url, work49CacheSeed{name: "bundle", members: []string{"new-only"}, verified: true, metadataTime: time.Unix(20, 0)})
 			seedWork49Collection(t, cache, url, work49CacheSeed{name: "bundle", members: []string{"unverified-only"}, metadataTime: time.Unix(30, 0)})
-			return work49LegacyOrganizationConfig(url, "bundle", zero)
+			return work49OrganizationConfig(url, "bundle", zero)
 		}, want: []string{"new-only"}},
-		{name: "missing", build: func(t *testing.T, cache *marketplace.Cache, url string) []byte {
+		{name: "missing", build: func(t *testing.T, cache *marketplace.Cache, url, orgPath string) []byte {
 			seedWork49Collection(t, cache, url, work49CacheSeed{name: "bundle", members: []string{"old-only"}, verified: true, metadataTime: time.Unix(10, 0)})
 			seedWork49Collection(t, cache, url, work49CacheSeed{name: "bundle", members: []string{"new-only"}, verified: true, metadataTime: time.Unix(20, 0)})
-			return work49LegacyOrganizationConfig(url, "missing", zero)
+			return work49OrganizationConfig(url, "missing", zero)
 		}, want: nil},
 	}
 	for _, tc := range cases {
@@ -180,7 +214,7 @@ func TestGuiHostCachedCollectionRevisionChoice(t *testing.T) {
 
 // spec: session-startup/tampered-cached-manifests-are-rejected
 func TestGuiHostRejectsTamperedCachedCollection(t *testing.T) {
-	rows := work49ProvisionalRows(t, nil, func(t *testing.T, cache *marketplace.Cache, url string) []byte {
+	rows := work49ProvisionalRows(t, nil, func(t *testing.T, cache *marketplace.Cache, url, orgPath string) []byte {
 		digest, manifestPath := seedWork49Collection(t, cache, url, work49CacheSeed{name: "bundle", members: []string{"lone"}, verified: true, metadataTime: time.Unix(10, 0)})
 		raw, err := os.ReadFile(manifestPath)
 		if err != nil {
@@ -193,7 +227,7 @@ func TestGuiHostRejectsTamperedCachedCollection(t *testing.T) {
 		if err := os.WriteFile(manifestPath, tampered, 0o644); err != nil {
 			t.Fatal("tamper test-owned manifest")
 		}
-		return work49LegacyOrganizationConfig(url, "bundle", digest)
+		return work49OrganizationConfig(url, "bundle", digest)
 	})
 	assertWork49Rows(t, rows, nil)
 }
@@ -203,9 +237,9 @@ func TestGuiHostExpandsOrganizationCollectionFromVerifiedCache(t *testing.T) {
 	zero := "sha256:" + strings.Repeat("0", 64)
 	rows := work49ProvisionalRows(t, func(source, marketURL string) string {
 		return fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [devin]\ntelemetry:\n  level: off\nsources:\n  local:\n    directory: %q\n  mp: {marketplace: %q}\nresources:\n  local: {all: true}\n  mp:\n    exclude: [tools/skill/review]\n", source, marketURL)
-	}, func(t *testing.T, cache *marketplace.Cache, url string) []byte {
+	}, func(t *testing.T, cache *marketplace.Cache, url, orgPath string) []byte {
 		seedWork49Collection(t, cache, url, work49CacheSeed{name: "bundle", members: []string{"audit", "review"}, verified: true, metadataTime: time.Unix(10, 0)})
-		return work49LegacyOrganizationConfig(url, "bundle", zero)
+		return work49OrganizationConfig(url, "bundle", zero)
 	})
 	local, organization := make([]string, 0, 2), make([]string, 0, 2)
 	var audit, review acquisitionHostRow
@@ -245,9 +279,9 @@ func TestGuiHostExpandsOrganizationCollectionFromVerifiedCache(t *testing.T) {
 // spec: session-startup/optional-collection-member-yields-to-a-configured-selection-of-the-same-resource
 func TestGuiHostCollectionMemberYieldsToConfiguredSelection(t *testing.T) {
 	zero := "sha256:" + strings.Repeat("0", 64)
-	rows := work49ProvisionalRows(t, nil, func(t *testing.T, cache *marketplace.Cache, url string) []byte {
+	rows := work49ProvisionalRows(t, nil, func(t *testing.T, cache *marketplace.Cache, url, orgPath string) []byte {
 		seedWork49Collection(t, cache, url, work49CacheSeed{name: "bundle", members: []string{"alpha", "gamma"}, verified: true, metadataTime: time.Unix(10, 0)})
-		return work49LegacyOrganizationConfig(url, "bundle", zero)
+		return work49OrganizationConfig(url, "bundle", zero)
 	})
 	assertWork49Rows(t, rows, []string{"gamma"})
 	alphas := 0

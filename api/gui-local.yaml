@@ -313,15 +313,11 @@ paths:
   /api/actions:
     post:
       operationId: runAction
-      summary: Run a guarded session action (sync, update, or migrate)
+      summary: Run a guarded session action (sync or update)
       description: |
         Mutating actions hold the same guarded operation serializer as the
         TUI. A request arriving while another guarded operation is active is
-        rejected as busy before any side effect. migrate is available only
-        in user-scope mode and only while a legacy user-personal root is
-        offered for migration; the session recomputes the pending migration
-        itself and migrates exactly that root to v4 through the shared
-        transactional migration.
+        rejected as busy before any side effect.
       security:
         - launchToken: []
       requestBody:
@@ -338,7 +334,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ActionAccepted'
         '400':
-          description: Unknown action, malformed body, session state not ready for mutation, unsupported session mode, or no pending user migration; code localapi.invalid_request, localapi.not_ready, or localapi.not_supported
+          description: Unknown action, malformed body, session state not ready for mutation, or unsupported session mode; code localapi.invalid_request, localapi.not_ready, or localapi.not_supported
           content:
             application/json:
               schema:
@@ -585,7 +581,7 @@ components:
       enum: [pending, ready, failed]
     OperationKind:
       type: string
-      enum: [mutation, targets, sync, update, migration, editor]
+      enum: [mutation, targets, sync, update, editor]
     OperationRef:
       type: object
       required: [id, kind]
@@ -862,7 +858,7 @@ components:
           description: Empty for text; static safe metadata-only message for unsupported members.
     Snapshot:
       type: object
-      required: [stage, drift, rows, groups, diagnostics, harnesses, pendingChanges, migrationOffered, discoveryEnabled, discoveryHealth, discoveryQuery, discoveryRequestId, discoverySequence, discoveryLoading, operation]
+      required: [stage, drift, rows, groups, diagnostics, harnesses, pendingChanges, discoveryEnabled, discoveryHealth, discoveryQuery, discoveryRequestId, discoverySequence, discoveryLoading, operation]
       properties:
         stage:
           $ref: '#/components/schemas/SnapshotStage'
@@ -887,9 +883,6 @@ components:
         pendingChanges:
           type: integer
           description: Count of drifted items awaiting materialization, derived from the accepted snapshot's drift assessment.
-        migrationOffered:
-          type: boolean
-          description: Whether the accepted snapshot carries a pending legacy user-personal migration offer; scalar metadata only, never paths or prompt contents.
         discoveryEnabled:
           type: boolean
           description: Whether a validated accepted user-scope configuration enables Marketplace discovery.
@@ -928,7 +921,7 @@ components:
       properties:
         action:
           type: string
-          enum: [sync, update, migrate]
+          enum: [sync, update]
     ActionAccepted:
       type: object
       required: [operation]

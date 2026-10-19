@@ -192,10 +192,8 @@ func work50TUIStages(t *testing.T, required, excludeReview bool) ([][]row, []str
 	}
 	config.SetTestOrganizationConfigPath(t, orgPath)
 	orgLockPath := config.Organization.LockPath(orgPath)
-	if required {
-		if err := os.WriteFile(orgLockPath, market.OrganizationLock(t), 0o600); err != nil {
-			t.Fatal("write private mixed-pin organization lock")
-		}
+	if err := os.WriteFile(orgLockPath, market.OrganizationLock(t), 0o600); err != nil {
+		t.Fatal("write private mixed-pin organization lock")
 	}
 	protected := append([]string(nil), fixture.protected...)
 	protected = append(protected, orgDir, orgPath, orgLockPath)

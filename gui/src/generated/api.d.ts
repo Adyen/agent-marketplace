@@ -14,14 +14,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Run a guarded session action (sync, update, or migrate)
+         * Run a guarded session action (sync or update)
          * @description Mutating actions hold the same guarded operation serializer as the
          *     TUI. A request arriving while another guarded operation is active is
-         *     rejected as busy before any side effect. migrate is available only
-         *     in user-scope mode and only while a legacy user-personal root is
-         *     offered for migration; the session recomputes the pending migration
-         *     itself and migrates exactly that root to v4 through the shared
-         *     transactional migration.
+         *     rejected as busy before any side effect.
          *
          */
         post: operations["runAction"];
@@ -356,7 +352,7 @@ export interface components {
         };
         ActionRequest: {
             /** @enum {string} */
-            action: "sync" | "update" | "migrate";
+            action: "sync" | "update";
         };
         AddSourceActionRequest: {
             /**
@@ -617,7 +613,7 @@ export interface components {
             type: "notification";
         };
         /** @enum {string} */
-        OperationKind: "mutation" | "targets" | "sync" | "update" | "migration" | "editor";
+        OperationKind: "mutation" | "targets" | "sync" | "update" | "editor";
         OperationRef: {
             /** Format: uint64 */
             id: number;
@@ -724,8 +720,6 @@ export interface components {
             groups: components["schemas"]["StatusGroup"][];
             /** @description Effective target harness IDs for the session. */
             harnesses: string[];
-            /** @description Whether the accepted snapshot carries a pending legacy user-personal migration offer; scalar metadata only, never paths or prompt contents. */
-            migrationOffered: boolean;
             /** @description Active guarded operation, or null. */
             operation: components["schemas"]["OperationRef"] | null;
             /** @description Count of drifted items awaiting materialization, derived from the accepted snapshot's drift assessment. */
@@ -885,7 +879,7 @@ export interface operations {
                     "application/json": components["schemas"]["ActionAccepted"];
                 };
             };
-            /** @description Unknown action, malformed body, session state not ready for mutation, unsupported session mode, or no pending user migration; code localapi.invalid_request, localapi.not_ready, or localapi.not_supported */
+            /** @description Unknown action, malformed body, session state not ready for mutation, or unsupported session mode; code localapi.invalid_request, localapi.not_ready, or localapi.not_supported */
             400: {
                 headers: {
                     [name: string]: unknown;

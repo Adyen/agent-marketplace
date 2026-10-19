@@ -200,10 +200,8 @@ func work50HostRun(t *testing.T, required bool, orgConfig func(fixture *startupf
 	}
 	config.SetTestOrganizationConfigPath(t, orgPath)
 	orgLockPath := config.Organization.LockPath(orgPath)
-	if required {
-		if err := os.WriteFile(orgLockPath, fixture.OrganizationLock(t), 0o600); err != nil {
-			t.Fatal("write owned mixed-pin organization lock")
-		}
+	if err := os.WriteFile(orgLockPath, fixture.OrganizationLock(t), 0o600); err != nil {
+		t.Fatal("write owned mixed-pin organization lock")
 	}
 	paths = append(paths, orgDir, orgPath, orgLockPath)
 	before := captureProtectedHostPaths(t, paths)

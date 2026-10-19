@@ -6,16 +6,9 @@ import GuiModal from './GuiModal.vue'
 const props = defineProps<{ controller: WorkspaceController }>()
 const quitOpen = defineModel<boolean>('quitOpen', { default: false })
 
-const migrationOpen = ref(false)
-const migrationSeen = ref(false)
-const migrationPending = ref(false)
-const migrationError = ref<string | null>(null)
 const quitPending = ref(false)
 
 const state = computed(() => props.controller.state)
-const migrationDiagnostics = computed(() =>
-  state.value.diagnostics.filter((d) => d.category === 'migration' && d.severity === 'error'),
-)
 const syncRunning = computed(() => state.value.operation?.kind === 'sync')
 const showSyncChoices = computed(() => state.value.pendingChanges > 0 || syncRunning.value)
 const syncQuitBlocked = computed(
@@ -50,41 +43,6 @@ watch(
   },
   { flush: 'sync' },
 )
-
-watch(
-  () => state.value.migrationOffered,
-  (offered, was) => {
-    if (offered && !migrationSeen.value) {
-      migrationSeen.value = true
-      migrationOpen.value = true
-    }
-    if (was && !offered) {
-      migrationOpen.value = false
-      migrationPending.value = false
-      migrationError.value = null
-    }
-  },
-  { immediate: true },
-)
-
-async function migrate() {
-  if (migrationPending.value) {
-    return
-  }
-  migrationPending.value = true
-  migrationError.value = null
-  try {
-    if (!(await props.controller.runAction('migrate'))) {
-      migrationError.value = state.value.error ?? 'The action could not be started'
-    }
-  } finally {
-    migrationPending.value = false
-  }
-}
-
-function dismissMigration() {
-  migrationOpen.value = false
-}
 
 async function syncAndQuit() {
   if (syncQuitBlocked.value) {
@@ -122,27 +80,6 @@ function cancelQuit() {
 </script>
 
 <template>
-  <GuiModal
-    v-model:open="migrationOpen"
-    title="Migrate configuration"
-    icon="sync"
-    :dismissible="!migrationPending"
-  >
-    <p>Your user configuration uses an older format. Migrate it to the current format? Other configuration layers are left unchanged.</p>
-    <p v-if="migrationError != null" role="alert">{{ migrationError }}</p>
-    <p v-for="d in migrationDiagnostics" :key="d.code + d.message" role="alert">{{ d.message }}</p>
-    <template #footer>
-      <UButton
-        label="Migrate"
-        aria-label="Migrate"
-        :disabled="migrationPending || state.operation != null || state.requesting"
-        @click="migrate"
-      />
-      <UButton label="Leave unchanged" color="neutral" variant="outline" aria-label="Leave unchanged" :disabled="migrationPending" @click="dismissMigration" />
-      <UButton label="Cancel" color="neutral" variant="outline" aria-label="Cancel migration offer" :disabled="migrationPending" @click="dismissMigration" />
-    </template>
-  </GuiModal>
-
   <GuiModal
     v-model:open="quitOpen"
     title="Quit Agent Marketplace"
