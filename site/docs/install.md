@@ -134,7 +134,7 @@ The output depends on how you installed it:
 
 | Installed with | Prints, for example |
 |---|---|
-| A release download | `v4.1.4` |
+| The install script or a release download | `v4.1.4` |
 | `go install ...@latest` | a Go pseudo-version such as `v0.0.0-20260927180313-baeda4e602ab` |
 | `make build` | the output of `git describe`: `v4.1.4` on the release tag, or something like `v4.1.4-3-gbaeda4e` on a later commit |
 | A plain `go build` without version flags | a Go pseudo-version such as `v0.0.0-2026...`, or `dev` when Go recorded no version |

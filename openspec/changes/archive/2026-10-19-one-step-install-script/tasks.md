@@ -15,4 +15,4 @@
 
 ## 4. Archive
 
-- [ ] 4.1 `openspec archive one-step-install-script --yes`
+- [x] 4.1 `openspec archive one-step-install-script --yes`
