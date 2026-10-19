@@ -376,8 +376,8 @@ When two selected resources produce the same Codex MCP server key, repair SHALL 
 
 #### Scenario: Duplicate desired Codex MCP identity is refused by repair
 
-- **WHEN** two selected resources produce the same Codex MCP server key and `config.toml` holds an unmanaged entry with that key
-- **THEN** the repair preview SHALL report `materialize.codex.duplicate-identity` naming the key and both resources, offer no adoption, replacement or removal for that key, and leave the file unchanged
+- **WHEN** two selected resources produce the same Codex MCP server key, whether `config.toml` is absent or holds an unmanaged entry with that key that matches or differs from either generated value
+- **THEN** the repair preview SHALL report `materialize.codex.duplicate-identity` naming the key and both resources, offer no adoption, replacement or removal for that key, and leave the file unchanged or absent
 - **AND** an unrelated conflicting entry in the same file SHALL still be offered for replacement under its own resource
 
 #### Scenario: Replacement confirmation names the written resource

@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,6 +25,11 @@ import (
 // conflictSecret is a recognizable non-credential stand-in for MCP entry
 // content. No repair output may ever contain it.
 const conflictSecret = "NOT-A-REAL-SECRET-c0ffee"
+
+func conflictGeneratedPromptPart() string {
+	sum := sha256.Sum256([]byte(`{"command":"generated-binary"}`))
+	return "with the entry generated for resource \"genai-atlassian\" (generated value digest sha256:" + hex.EncodeToString(sum[:]) + ")? this deletes the existing value [y/N]"
+}
 
 // prepareDevinConflictFixture reproduces the state a beta tester could not get
 // out of: a hand-written mcp_config.json entry whose KEY equals a selected MCP
@@ -177,7 +184,7 @@ func TestDoctorRepairYesOnATTYStillPromptsBeforeReplacing(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("--repair --yes on a terminal must exit 0: %v\n%s", err, out.String())
 	}
-	if !strings.Contains(out.String(), "with the entry generated for resource \"genai-atlassian\" (generated value digest sha256:") || !strings.Contains(out.String(), ")? this deletes the existing value [y/N]") {
+	if !strings.Contains(out.String(), conflictGeneratedPromptPart()) {
 		t.Fatalf("--yes on a terminal skipped the per-entry confirmation:\n%s", out.String())
 	}
 	if !strings.Contains(out.String(), "declined: mcp-server \"genai-atlassian\" in mcp_config.json left unchanged (the existing value is kept)") {
@@ -211,8 +218,7 @@ func TestDoctorRepairConflictPromptsPerEntry(t *testing.T) {
 			answers:      "n\n",
 			wantReplaced: false,
 			wantOut: []string{
-				"replace mcp-server \"genai-atlassian\" in mcp_config.json with the entry generated for resource \"genai-atlassian\" (generated value digest sha256:",
-				")? this deletes the existing value [y/N]",
+				"replace mcp-server \"genai-atlassian\" in mcp_config.json " + conflictGeneratedPromptPart(),
 				"declined: mcp-server \"genai-atlassian\" in mcp_config.json left unchanged (the existing value is kept)",
 			},
 		},

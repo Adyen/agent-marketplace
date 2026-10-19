@@ -73,6 +73,8 @@ func CodexRepairPreview(ctx context.Context, repoRoot string, resolved []resolve
 }
 
 func previewCodexRoot(preview *RepairPreview, key outputKey, root string, hooks *ownedJSONAggregateWork, mcps []codexMCPEntry) {
+	duplicates, duplicateDiags := codexMCPDuplicateIdentities(key, mcps)
+	preview.Diags = append(preview.Diags, duplicateDiags...)
 	var store *ownership.Store
 	for _, rel := range []string{codexHooksFile, codexMCPFile} {
 		var desiredHooks []ownedJSONEntry
@@ -122,8 +124,6 @@ func previewCodexRoot(preview *RepairPreview, key outputKey, root string, hooks 
 			hookFile := ownedJSONFileSpec{rel: codexHooksFile, container: codexHooksContainer, rawValueDigest: true}
 			file, fileDiags = previewOwnedJSONAggregateFile(store, key, root, hookFile, codexHookJSONOptions(), true, desiredHooks)
 		case codexMCPFile:
-			duplicates, duplicateDiags := codexMCPDuplicateIdentities(key, mcps)
-			preview.Diags = append(preview.Diags, duplicateDiags...)
 			file, fileDiags = previewCodexMCPFile(store, key, root, mcps, duplicates)
 		}
 		preview.Diags = append(preview.Diags, redactCodexRepairDiags(root, fileDiags)...)
@@ -162,9 +162,7 @@ func previewCodexMCPFile(store *ownership.Store, key outputKey, root string, des
 	desiredValues := repairDesiredValues(desiredEntries)
 	resourceByID := make(map[string]string, len(desired))
 	for _, entry := range desired {
-		if _, seen := resourceByID[ownedAggregateIDKey(entry.id())]; !seen {
-			resourceByID[ownedAggregateIDKey(entry.id())] = entry.resource
-		}
+		resourceByID[ownedAggregateIDKey(entry.id())] = entry.resource
 	}
 	file := &RepairFile{
 		Target:          key.target,

@@ -4,8 +4,8 @@ When two selected MCP resources under different names compile to the same Codex 
 
 ## What Changes
 
-- Codex repair reports `materialize.codex.duplicate-identity` for a key that two selected resources produce, naming the key and both resources, and offers neither adoption nor replacement for it. The key stays desired, so no orphan removal is offered for it. Other entries in the file remain repairable.
-- An offered adoption or replacement names the resource whose generated value it writes.
+- Codex repair reports `materialize.codex.duplicate-identity` for a key that two selected resources produce, naming the key and both resources, whether or not `config.toml` exists, and offers neither adoption nor replacement for it. The key stays desired, so no orphan removal is offered for it. Other entries in the file remain repairable.
+- An offered adoption or replacement names the resource whose generated value it writes, and that value's digest is the one the conflict reports.
 - The interactive replacement confirmation names that resource and the generated value digest.
 
 ## Capabilities
