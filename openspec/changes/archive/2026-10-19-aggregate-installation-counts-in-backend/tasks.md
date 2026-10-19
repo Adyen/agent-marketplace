@@ -12,4 +12,4 @@
 ## 3. Verification and completion
 
 - [ ] 3.1 Run focused API tests, `make installation-query-check`, `make validate` and `make spec-check`, and measure the generated query once against production Prometheus (read-only, at most 2 s and 1 MiB); verify each result is recorded.
-- [ ] 3.2 Run `openspec archive aggregate-installation-counts-in-backend --yes` in the same pull request; verify the archive succeeds and `make spec-check` passes.
+- [x] 3.2 Run `openspec archive aggregate-installation-counts-in-backend --yes` in the same pull request; verify the archive succeeds and `make spec-check` passes.
