@@ -1,20 +1,13 @@
 package catalog
 
 import (
-	"sort"
-
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
-// PluginSelectionEdge types recorded on a planned plugin.
-const (
-	PluginEdgeDirect     = "direct"
-	PluginEdgeCollection = "collection"
-)
-
 // PluginSelectionEdge is one resolved selection edge of a plugin: a direct
-// request or a collection-to-plugin binding.
+// request or a collection-to-plugin binding. Type carries the resolver's
+// edge kind ("direct" or "collection").
 type PluginSelectionEdge struct {
 	Type       string
 	Collection string
@@ -92,12 +85,4 @@ func normalizedRootPath(path string) string {
 		return "."
 	}
 	return path
-}
-
-// SortedPlannedPlugins orders plan items by entry name for deterministic
-// manifest input.
-func SortedPlannedPlugins(plugins []PlannedPlugin) []PlannedPlugin {
-	out := append([]PlannedPlugin(nil), plugins...)
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out
 }

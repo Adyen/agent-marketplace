@@ -157,7 +157,7 @@ func intentPluginLockContexts(ctx context.Context, intent config.Intent, docs ma
 		}
 	}
 	cfg := &config.Config{Registries: registries}
-	exact, release := DocExactSnapshots(locked, nil, func(registry lockfile.GitRegistry) (string, func(), error) {
+	exact, release := DocExactSnapshots(locked, func(registry lockfile.GitRegistry) (string, func(), error) {
 		return leaseRegistrySnapshot(ctx, registry)
 	})
 	defer release()
