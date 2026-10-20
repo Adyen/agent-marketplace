@@ -6,8 +6,7 @@ In this tutorial you build a small [registry](../glossary.md#registry): a [Git](
 
 You need:
 
-- A terminal. If you have not used one before, read [Terminal basics](../terminal-basics.md) first.
-- Git. [Terminal basics](../terminal-basics.md#install-git) shows how to check that it is installed.
+- Git. Run `git --version` to check that it is installed.
 - `agent-marketplace` installed and on your `PATH`. See [Install](../install.md). Running `agent-marketplace --version` should print a version number.
 
 You do not need Claude Code installed. The tutorial only checks that the files appear where Claude Code would read them.

@@ -172,10 +172,12 @@ type v4TelemetryFields struct {
 // V4ValidationError carries a stable diagnostic code while retaining useful
 // path and line context in Error().
 type V4ValidationError struct {
-	Code string
-	Path string
-	Line int
-	Msg  string
+	Code       string
+	Path       string
+	Line       int
+	Msg        string
+	layer      layerKind
+	layerKnown bool
 }
 
 func (e *V4ValidationError) Error() string {
@@ -190,6 +192,28 @@ func (e *V4ValidationError) Error() string {
 		return e.Code + ": " + e.Msg
 	}
 	return fmt.Sprintf("%s: %s: %s", e.Code, where, e.Msg)
+}
+
+func (e *V4ValidationError) Remediation() string {
+	if (e.Code != "v4.api-version-required" && e.Code != "v4.api-version") || !e.layerKnown {
+		return ""
+	}
+	const guide = "https://github.com/Adyen/agent-marketplace/blob/main/site/docs/how-to/migrate-configuration.md"
+	scope := ""
+	switch e.layer {
+	case organizationLayer:
+		return "Ask your administrator to convert and deploy this configuration before upgrading. See " + guide + "."
+	case userLayer:
+		scope = "user"
+	case repoLayer:
+		scope = "repo"
+	case localLayer:
+		scope = "local"
+	}
+	if scope == "" {
+		return ""
+	}
+	return fmt.Sprintf("The older released migrator is agent-marketplace v4.1.4. Run `agent-marketplace migrate --to v4 --scope %s --dry-run` with that older binary to preview conversion. Conversion can refuse include trees or unrepresentable input. Before upgrading, see %s.", scope, guide)
 }
 
 func v4err(code, p string, line int, format string, args ...any) error {
@@ -1315,6 +1339,10 @@ func loadV4TreeWithResolvedRoot(file, resolvedRoot string, root bool, visiting m
 		var validation *V4ValidationError
 		if errors.As(err, &validation) && (validation.Code == "v4.api-version" || validation.Code == "v4.api-version-required") {
 			validation.Path = file
+			if len(kinds) > 0 {
+				validation.layer = kinds[0]
+				validation.layerKnown = true
+			}
 		}
 		return nil, err
 	}

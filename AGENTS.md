@@ -59,9 +59,11 @@ E2E_PARALLEL=8 make e2e  # control concurrency (default 4, set to 1 for serial)
 
 Run direct real-terminal test typechecking with `make tui-qa-check` and all deterministic user journeys with `make tui-qa`. TUI QA requires no organization-specific infrastructure; do not place machine-specific values in tracked commands, reports, or fixtures.
 
+A failing journey keeps its GIF and `tui-test` trace under `tools/tui-qa/test-results/<journey>/` (or `AM_TUI_QA_ARTIFACTS`); in CI the `TUI QA recordings comment` job links each failed journey's GIF from one sticky pull request comment. Start each journey from the settled drift state: input sent while the TUI still shows `verifying resources...` can be discarded. The Marketplace stub serves the placeholder-form archive route with archives compressed by Node's zlib, which no Go toolchain reproduces, so the Marketplace journeys pass under any Go version only while clients verify archives by the bytes they receive (`marketplace-archive-integrity` proves the hash check); keep it that way rather than pinning a toolchain. Never regenerate `tools/tui-qa/pnpm-lock.yaml` through a registry mirror that records its own tarball URLs.
+
 ### Local toolchain
 
-Local toolchain notes: on macOS hosts where the system linker rejects the SDK, run Go tests with `CGO_ENABLED=0` (as the Makefile does). In `web/`, `pnpm run` may refuse to start when `node_modules` is stale; `node scripts/generate-api.mjs` and `./node_modules/.bin/{vitest,eslint,nuxt}` run the same checks directly. Tests under `tools/homebrew` require a `ruby` executable on PATH and fail rather than skip when it is absent.
+Local toolchain notes: on macOS hosts where the system linker rejects the SDK, run Go tests with `CGO_ENABLED=0` (as the Makefile does). In `web/`, `pnpm run` may refuse to start when `node_modules` is stale; `node scripts/generate-api.mjs` and `./node_modules/.bin/{vitest,eslint,nuxt}` run the same checks directly. Tests under `tools/homebrew` require a `ruby` executable on PATH, and the TUI QA recording tests under `tools/ci-plan` require `jq` (shipped with macOS and GitHub runners); both fail rather than skip when the executable is absent.
 
 Temporary worktrees should use sibling paths rather than paths nested in the repository: `specaudit trace` scans ignored directories, so nested worktrees can contribute unrelated scenario annotations. Remove only task-created worktrees before final gates; leave existing worktrees untouched.
 

@@ -12,8 +12,6 @@ You need:
 - Git and Claude Code; and
 - access to your organization's Marketplace from both your browser and the terminal, including any VPN or other access setup your operator requires.
 
-If you rarely use a terminal, read [Terminal basics](../terminal-basics.md) first.
-
 ::: warning There is no public Marketplace for this tutorial
 `https://marketplace.example.com` is a placeholder, not a working service. Ask your Marketplace operator for the Marketplace address and for a published, approved skill with no security findings that suits a first installation. The examples use a code-review skill named `review` in a registry called `shared-agents`. Replace the address, registry, and skill name with yours in every command.
 :::

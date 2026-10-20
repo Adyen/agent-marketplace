@@ -733,7 +733,12 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 		"machine_mode", rc.modes.Machine, "project_mode", rc.modes.Project)
 
 	// Phase 1: Group skills by target and track all output keys.
-	work, allOutputs, blocked, allDiags := buildWorkItems(resolved, repoRoot)
+	work, allOutputs, blocked, allDiags, displaced := buildWorkItems(resolved, repoRoot)
+	// Report shared-path displacements only for the scopes this run processes.
+	if rc.scopeFilter != nil {
+		displaced = slices.DeleteFunc(displaced, func(d resolver.SharedPathDisplacement) bool { return d.MachineScope != *rc.scopeFilter })
+	}
+	allDiags = append(sharedPathDiagnostics(displaced), allDiags...)
 	slog.Debug("materialize work built", "work_items", len(work), "outputs", len(allOutputs), "blocked", len(blocked), "diagnostics", len(allDiags))
 	if refusal := normalizeOpenCodeScopes(work, allOutputs, repoRoot); refusal != nil {
 		return &Report{Diags: append(allDiags, *refusal), PerTarget: map[hcc.Target]TargetReport{}}, nil
@@ -811,13 +816,14 @@ func markNilSharedNativeMCPInputs(resolved []resolver.ResolvedArtifact, repoRoot
 
 // buildWorkItems groups resolved skills by target and identifies all output
 // keys (including empty targets that need pruning).
-func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]skillTarget, map[outputKey]bool, blockedOutputs, []diag.Diagnostic) {
+func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]skillTarget, map[outputKey]bool, blockedOutputs, []diag.Diagnostic, []resolver.SharedPathDisplacement) {
 	var work []skillTarget
 	var allDiags []diag.Diagnostic
 	allOutputs := make(map[outputKey]bool)
 	blocked := make(blockedOutputs)
 
-	for _, s := range resolver.MaterializationWinners(resolved) {
+	winners, displaced := resolver.MaterializationProjection(resolved)
+	for _, s := range winners {
 		if s.Unresolved {
 			// Metadata-only status rows do not materialize and should not
 			// claim output keys.
@@ -867,7 +873,7 @@ func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]sk
 	addPortableManifestOutputKeys(repoRoot, false, allOutputs, &allDiags)
 	addPortableManifestOutputKeys(repoRoot, true, allOutputs, &allDiags)
 
-	return work, allOutputs, blocked, allDiags
+	return work, allOutputs, blocked, allDiags, displaced
 }
 
 func addPortableManifestOutputKeys(repoRoot string, machineScope bool, allOutputs map[outputKey]bool, diags *[]diag.Diagnostic) {

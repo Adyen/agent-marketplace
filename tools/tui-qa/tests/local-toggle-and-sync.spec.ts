@@ -1,51 +1,49 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { after, before } from "node:test";
 
-import { expect, test } from "@microsoft/tui-test";
-
-import { defineFixture, step, waitForExit } from "./helpers.js";
+import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 import { runNonTTY } from "./process-helpers.js";
 
 const journey = defineFixture("local-toggle-and-sync", ["tui"]);
-test.use(journey.options);
-test.beforeAll(journey.setup);
-test.afterAll(journey.cleanup);
+before(journey.setup);
+after(journey.cleanup);
 
-test("local toggle reaches pending state before sync", async ({ terminal }) => {
+journey.test("local toggle reaches pending state before sync", async (terminal) => {
   const fixture = journey.current();
   const generatedSkill = path.join(fixture.repo, ".factory", "skills", "alpha-skill");
   const generatedContent = path.join(generatedSkill, "SKILL.md");
   const localConfig = path.join(fixture.repo, ".agents", "config.local.yaml");
 
   await step("settled fixture baseline", () => {}, async () => {
-    await expect(terminal.getByText("beta-skill", { strict: false })).toBeVisible();
-    await expect(terminal.getByText("alpha-skill", { strict: false })).toBeVisible();
-    await expect(terminal.getByText("~ in sync")).toBeVisible();
+    await locate(terminal, "beta-skill").expect();
+    await locate(terminal, "alpha-skill").expect();
+    await locate(terminal, "~ in sync").unique().expect();
   });
   assert.equal(fs.lstatSync(generatedSkill, { throwIfNoEntry: false }), undefined);
 
   await step("select available alpha-skill", () => terminal.write("G"), async () => {
-    await expect(terminal.getByText(/Name:\s+alpha-skill/g)).toBeVisible();
-    await expect(terminal.getByText(/Status:\s+available/g)).toBeVisible();
+    await locate(terminal, /Name:\s+alpha-skill/).unique().expect();
+    await locate(terminal, /Status:\s+available/).unique().expect();
   });
 
   await step("open scope toggle", () => terminal.write(" "), async () => {
-    await expect(terminal.getByText('"alpha-skill"', { strict: false })).toBeVisible();
-    await expect(terminal.getByText("toggle local")).toBeVisible();
+    await locate(terminal, '"alpha-skill"').expect();
+    await locate(terminal, "toggle local").unique().expect();
   });
 
   await step("toggle local", () => terminal.write("l"), async () => {
-    await expect(terminal.getByText(/Pending sync\s+\(1\)/g)).toBeVisible();
-    await expect(terminal.getByText(/Status:\s+enabled \(pending sync\)/g)).toBeVisible();
-    await expect(terminal.getByText("~ 1 out of sync")).toBeVisible();
+    await locate(terminal, /Pending sync\s+\(1\)/).unique().expect();
+    await locate(terminal, /Status:\s+enabled \(pending sync\)/).unique().expect();
+    await locate(terminal, "~ 1 out of sync").unique().expect();
   });
   assert.equal(fs.readFileSync(localConfig, "utf8"), fixture.expectedLocalConfig);
   assert.equal(fs.lstatSync(generatedSkill, { throwIfNoEntry: false }), undefined);
 
   await step("sync pending alpha-skill", () => terminal.write("s"), async () => {
-    await expect(terminal.getByText("Sync complete")).toBeVisible({ timeout: 30_000 });
-    await expect(terminal.getByText("~ in sync")).toBeVisible({ timeout: 30_000 });
+    await locate(terminal, "Sync complete").unique().expect({ timeout: 30_000 });
+    await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
   });
   assert.equal(fs.lstatSync(generatedSkill).isSymbolicLink(), true);
   assert.equal(fs.readFileSync(generatedContent, "utf8"), fixture.expectedAlphaSkillContent);

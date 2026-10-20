@@ -1,21 +1,36 @@
 # Quick start
 
-In about ten minutes you will connect a project to a public skill registry, install one skill for Claude Code, look at it in the terminal UI, and commit the files that let teammates get the same setup with one command.
+In about ten minutes you will install `agent-marketplace`, connect a project to a public skill registry, install one skill for Claude Code, look at it in the terminal UI, and commit the files that let teammates get the same setup with one command.
 
 ## Before you begin
 
 You need:
 
-- `agent-marketplace` installed. Run `agent-marketplace --version` to check. If the terminal answers `command not found`, follow [Install](./install.md) first.
-- Git. Run `git --version` to check. [Terminal basics](./terminal-basics.md#install-git) explains how to install it.
+- Git. Run `git --version` to check.
 - A project folder that is a Git repository. If it isn't one yet, run `git init` inside it.
 - Claude Code, if you want to use the skill at the end.
 
-If you rarely use a terminal, [Terminal basics](./terminal-basics.md) explains how to run the commands on this page.
+## Install
 
-::: warning Existing configurations
-Every existing consumer root, including organization and personal-local, must declare exact `apiVersion: agent-marketplace/v4`. Included fragments may omit the field or declare exact v4. If you have older configuration, [convert it with an older released migrator before upgrading](./how-to/migrate-configuration.md), and have an administrator convert organization configuration. Conversion may refuse includes, unrepresentable input, or missing verified Marketplace evidence. Don't overwrite an existing configuration with this tutorial, and don't only change its version: the new CLI and TUI refuse unsupported input and have no migration command or prompt.
+With Go 1.26.9 or newer, install in one step:
+
+```bash
+go install github.com/Adyen/agent-marketplace/cmd/agent-marketplace@latest
+```
+
+Check that it works:
+
+```bash
+agent-marketplace --version
+```
+
+If Go reports a `404` or an authentication error, run `export GOPRIVATE="${GOPRIVATE:+$GOPRIVATE,}github.com/Adyen/agent-marketplace"` and try again. If the terminal answers `command not found`, add Go's install folder to your `PATH`: `$(go env GOBIN)` if set, otherwise `$(go env GOPATH)/bin` (usually `~/go/bin`). To download a release binary instead, or to build from source, see [more install options](./install.md).
+
+::: tip Coming from an older version?
+`agent-marketplace` refuses to load a root configuration file that doesn't declare `apiVersion: agent-marketplace/v4` (included fragments may omit it): commands exit with an error and the TUI shows it, naming the file. [Convert configuration before upgrading](./how-to/migrate-configuration.md) explains how to fix it.
 :::
+
+## Open your project
 
 Open a terminal and move into your project folder. Replace the path with your own:
 
@@ -39,7 +54,7 @@ On first launch you have no personal configuration yet, so the TUI asks which ha
 
 ![First-run modal listing the seven harnesses, with Claude Code pre-selected](./images/quick-start/first-run-harness-modal.png)
 
-Make sure only **Claude Code** is checked. Move with `j` and `k` (or the arrow keys), check or uncheck a harness with `space`, and press `enter` to save. The TUI saves your choice to `~/.agents/config.yaml`, your personal configuration file.
+Make sure only **Claude Code** is checked. Move with the arrow keys, check or uncheck a harness with `space`, and press `enter` to save. The TUI saves your choice to `~/.agents/config.yaml`, your personal configuration file.
 
 If the TUI opens without asking, you already have a personal configuration. Press `H` to see or change its harness list.
 
@@ -49,7 +64,7 @@ Press `q` to leave the TUI for now.
 
 A [registry](./glossary.md#registry) is a Git repository that holds skills, commands, subagents, hooks, or MCP servers. You tell `agent-marketplace` about it in the project's configuration file, `.agents/config.yaml`. The file has two parts: `sources` names where resources come from, and `resources` says which of them to install from each source. [Sources and resources](./explanation/sources-and-resources.md) explains how the two fit together.
 
-Copy this whole block, including the final `EOF` line, and run it. It creates the folder `.agents` and writes the configuration file:
+Copy this whole block, including the final `EOF` line, and run it. It creates the folder `.agents` and writes the configuration file. If the project already has `.agents/config.yaml`, add the source and resource to it by hand instead, because the block replaces the file:
 
 ```bash
 mkdir -p .agents
@@ -104,7 +119,7 @@ agent-marketplace
 
 The single list groups every resource by status; the source's resources appear under **Available**, and the right pane describes the highlighted one.
 
-You can read a skill before you install it. Highlight a row and press `enter` to open its files. `SKILL.md` opens first, and `j` and `k` move through the other files. Press `esc` to go back to the list.
+You can read a skill before you install it. Highlight a row and press `enter` to open its files. `SKILL.md` opens first, and the arrow keys move through the other files. Press `esc` to go back to the list.
 
 ![File browser for the pdf skill: a file tree on the left with SKILL.md selected and its rendered contents on the right](./images/quick-start/skill-file-browser.png)
 

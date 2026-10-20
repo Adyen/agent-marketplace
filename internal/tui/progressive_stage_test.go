@@ -786,6 +786,9 @@ func TestProvisionalLayoutMatchesVerifiedInventory(t *testing.T) {
 		Entry: catalog.Entry{Kind: ir.KindSkill, Name: "audit"}, RegistryURL: market.URL, Source: config.Organization,
 		CatalogKey: marketplaceCatalogKey(market, audit), IsMarketplace: true, MarketplaceURL: market.URL,
 		MarketplaceInstanceID: market.InstanceID, MarketplaceRegistryID: "tools", MarketplaceResourceName: "audit",
+	}, {
+		Entry: catalog.Entry{Kind: ir.KindCollection, Name: "bundle"}, RegistryURL: "./plugins/local", Source: config.RepoCommitted,
+		CatalogKey: "local-key",
 	}}
 
 	verified := statusLayout(buildRows(cfg, catalogs, resolved, nil, materialize.DriftReport{}))
@@ -796,7 +799,7 @@ func TestProvisionalLayoutMatchesVerifiedInventory(t *testing.T) {
 	for _, want := range []string{
 		"  [x] G   skill market.example/audit",
 		"  [ ]     skill market.example/review",
-		"  [ ]     collection local/bundle",
+		"  [x] P   collection local/bundle",
 	} {
 		if !slices.Contains(verified, want) {
 			t.Fatalf("verified layout lacks rendered row %q: %q", want, verified)
@@ -840,10 +843,10 @@ func TestProvisionalStageExpandsOrganizationCollectionFromVerifiedCache(t *testi
 	leaf := func(kind, name string) config.MarketplaceResourcePin {
 		return config.MarketplaceResourcePin{RegistryID: "tools", RegistrySlug: "tools", Kind: kind, Name: name, Revision: leafRevision, Digest: leafRevision, SelectedBy: selectedBy}
 	}
-	acquired := config.MarketplaceEntry{URL: url, InstanceID: "mp", Source: config.Organization, Resources: []config.MarketplaceResourcePin{leaf("skill", "audit"), leaf("mcpserver", "hub"), leaf("skill", "review")}}
+	acquired := config.MarketplaceEntry{URL: url, InstanceID: "mp", Source: config.Organization, Resources: []config.MarketplaceResourcePin{collection, leaf("skill", "audit"), leaf("mcpserver", "hub"), leaf("skill", "review")}}
 	verifiedCfg := &config.Config{MarketplaceExclusions: exclusions, Marketplaces: []config.MarketplaceEntry{acquired}}
 	var resolved []resolver.ResolvedArtifact
-	for _, pin := range acquired.Resources[:2] {
+	for _, pin := range acquired.Resources[1:3] {
 		kind, _ := mpapi.ToIR(pin.Kind)
 		resolved = append(resolved, resolver.ResolvedArtifact{
 			Entry: catalog.Entry{Kind: kind, Name: pin.Name}, RegistryURL: url, Source: config.Organization,
@@ -851,6 +854,8 @@ func TestProvisionalStageExpandsOrganizationCollectionFromVerifiedCache(t *testi
 			MarketplaceInstanceID: acquired.InstanceID, MarketplaceRegistryID: "tools", MarketplaceResourceName: pin.Name,
 		})
 	}
+	root, _ := marketplace.PinArtifact(acquired, collection)
+	resolved = append(resolved, root)
 
 	rows := buildProvisionalRows(withCachedCollectionLeaves(preAcquisition, cache), nil, nil)
 	verified := statusLayout(buildRows(verifiedCfg, nil, resolved, nil, materialize.DriftReport{}))

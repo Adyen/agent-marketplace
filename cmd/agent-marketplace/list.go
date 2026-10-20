@@ -90,9 +90,10 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 		return err
 	}
 	result, releaseExactLease := pipeline.ResolveWithExactLockLease(ctx, pipeline.ResolveOptions{
-		Workspace:          ws,
-		CatalogMode:        catalog.LoadModeInspect,
-		ReadOnlyExactLocks: true,
+		Workspace:                     ws,
+		CatalogMode:                   catalog.LoadModeInspect,
+		ReadOnlyExactLocks:            true,
+		MarketplaceArtifactsFromCache: true,
 	})
 	defer releaseExactLease()
 
@@ -138,7 +139,7 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 		return errors.Join(result.Errors...)
 	}
 
-	rows := buildListRows(result.LoadedCfg, result.CatalogLoad.Catalogs, result.Resolved)
+	rows := buildListRows(result.LoadedCfg, result.CatalogLoad.Catalogs, result.DisplayArtifacts())
 	if hasKind {
 		rows = filterListRowsByKind(rows, skill.KindLabel(kind))
 	}

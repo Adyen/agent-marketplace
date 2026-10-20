@@ -210,7 +210,7 @@ test.describe('Marketplace browser discovery', () => {
       await expect(popup).toHaveURL(`${sharedOriginURL}/docs/`)
       await expect(popup.getByRole('heading', { level: 1, name: /^Documentation\b/ })).toBeVisible()
       expect(await popup.evaluate(() => window.opener === null)).toBe(true)
-      await popup.getByRole('link', { name: 'Install', exact: true }).first().click()
+      await popup.getByRole('link', { name: 'More install options', exact: true }).first().click()
       await expect(popup).toHaveURL(`${sharedOriginURL}/docs/install`)
     }
     finally {

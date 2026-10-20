@@ -1,7 +1,7 @@
 schema: 1
 harness: factory
 evidence:
-  checked: "2026-09-26"
+  checked: "2026-10-19"
   refs:
     - https://docs.factory.ai/harness/subagents
     - https://docs.factory.ai/models.md
@@ -187,6 +187,18 @@ models:
   minimax/minimax-m2.7:
     model: minimax-m2.7
     reasoning: {high: {effort: high}}
+  anthropic/claude-haiku-5-5:
+    model: claude-haiku-5-5
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  anthropic/claude-sonnet-5-5:
+    model: claude-sonnet-5-5
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  mistral/mistral-large-4:
+    model: mistral-large-4
+    reasoning: {high: {effort: high}}
+  openai/gpt-6.1-sol:
+    model: gpt-6.1-sol
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
 families:
   anthropic/sonnet:
     pin: anthropic/claude-sonnet-5

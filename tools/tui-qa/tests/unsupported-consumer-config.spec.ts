@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { after, before, describe } from "node:test";
 
-import { expect, test } from "@microsoft/tui-test";
-
-import { defineFixture, step, waitForExit } from "./helpers.js";
+import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 
 // Read bytes and metadata from one descriptor so both describe the same file.
 function snapshotFile(file: string): { bytes: Buffer; mtime: number; mode: number } {
@@ -19,12 +18,11 @@ function snapshotFile(file: string): { bytes: Buffer; mtime: number; mode: numbe
 
 // One refusal journey through both launch routes, not another config-policy matrix.
 for (const [route, args] of [["bare", []], ["explicit", ["tui"]]] as const) {
-  test.describe(`${route} TTY startup`, () => {
+  describe(`${route} TTY startup`, () => {
     const journey = defineFixture(`unsupported-consumer-config-${route}`, [...args]);
     const unsupported = "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n";
-    const before = new Map<string, { bytes: Buffer; mtime: number; mode: number }>();
-    test.use(journey.options);
-    test.beforeAll(async () => {
+    const baseline = new Map<string, { bytes: Buffer; mtime: number; mode: number }>();
+    before(async () => {
       await journey.setup();
       const fixture = journey.current();
       fs.writeFileSync(path.join(fixture.home, ".agents", "config.yaml"), unsupported);
@@ -34,37 +32,37 @@ for (const [route, args] of [["bare", []], ["explicit", ["tui"]]] as const) {
         path.join(fixture.repo, ".agents", "lock.yaml"),
         path.join(fixture.repo, ".factory", "skills", "beta-skill", "SKILL.md")
       ]) {
-        before.set(file, snapshotFile(file));
+        baseline.set(file, snapshotFile(file));
       }
     });
-    test.afterAll(journey.cleanup);
+    after(journey.cleanup);
 
     // spec: consumer-config-format/consumers-do-not-offer-in-process-conversion
     // spec: tui-interactions/guarded-submission
-    test("unsupported consumer startup shows a format refusal and blocks new work", async ({ terminal }) => {
+    journey.test("unsupported consumer startup shows a format refusal and blocks new work", async (terminal) => {
       const fixture = journey.current();
       await step("startup refuses instead of offering conversion", () => {}, async () => {
-        await expect(terminal.getByText(/! \d+ errors/g)).toBeVisible();
-        await expect(terminal.getByText("Configuration migration required", { strict: false })).not.toBeVisible();
+        await locate(terminal, /! \d+ errors/).unique().expect();
+        await locate(terminal, "Configuration migration required").expect({ not: true });
       });
       await step("open the path-specific format diagnostic", () => terminal.write("e"), async () => {
-        await expect(terminal.getByText("v4.api-version", { strict: false })).toBeVisible();
-        await expect(terminal.getByText("apiVersion", { strict: false })).toBeVisible();
-        await expect(terminal.getByText("config.yaml", { strict: false })).toBeVisible();
+        await locate(terminal, "v4.api-version").expect();
+        await locate(terminal, "apiVersion").expect();
+        await locate(terminal, "config.yaml").expect();
       });
       await step("return from diagnostics", () => terminal.write("\x1b"), async () => {
-        await expect(terminal.getByText(/! \d+ errors/g)).toBeVisible();
+        await locate(terminal, /! \d+ errors/).unique().expect();
       });
       for (const key of ["s", "u", "H"]) {
         await step(`refuse ${key} without a conversion action`, () => terminal.write(key), async () => {
-          await expect(terminal.getByText("configuration is invalid", { strict: false })).toBeVisible();
-          await expect(terminal.getByText("Configuration migration required", { strict: false })).not.toBeVisible();
+          await locate(terminal, "configuration is invalid").expect();
+          await locate(terminal, "Configuration migration required").expect({ not: true });
         });
       }
       await step("quit the refused workspace", () => terminal.write("q"), async () => {
         assert.equal((await waitForExit(terminal)).exitCode, 0);
       });
-      for (const [file, prior] of before) {
+      for (const [file, prior] of baseline) {
         const after = snapshotFile(file);
         assert.deepEqual(after.bytes, prior.bytes, `refusal changed ${file}`);
         assert.equal(after.mtime, prior.mtime, `refusal rewrote ${file}`);
