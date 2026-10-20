@@ -160,6 +160,9 @@ func TestReleasedClientHookOutputUpgrades(t *testing.T) {
 					}
 				}
 				files := hookInvariantHookFiles(target, scope == "user")
+				// copies is discovery-only: it counts the command token in
+				// every plugin-layout and native file, which is all the
+				// release's own output can be held to.
 				copies := func(stage string, wantPre, wantPrompt int) {
 					t.Helper()
 					if got := hookInvariantCount(t, root, files, pre); got != wantPre {
@@ -167,6 +170,17 @@ func TestReleasedClientHookOutputUpgrades(t *testing.T) {
 					}
 					if got := hookInvariantCount(t, root, files, prompt); got != wantPrompt {
 						t.Errorf("%s: UserPromptSubmit hook installed %d times, want %d", stage, got, wantPrompt)
+					}
+				}
+				// loaded requires the candidate's output to be parsed
+				// executable handlers in the file the target's loader reads.
+				loaded := func(stage string, wantPre, wantPrompt int) {
+					t.Helper()
+					if got := hookInvariantLoadedCount(t, target, root, scope == "user", pre); got != wantPre {
+						t.Errorf("%s: PreToolUse hook loads %d times, want %d", stage, got, wantPre)
+					}
+					if got := hookInvariantLoadedCount(t, target, root, scope == "user", prompt); got != wantPrompt {
+						t.Errorf("%s: UserPromptSubmit hook loads %d times, want %d", stage, got, wantPrompt)
 					}
 				}
 
@@ -177,10 +191,12 @@ func TestReleasedClientHookOutputUpgrades(t *testing.T) {
 				}
 				step(candidate, "sync")
 				copies("candidate upgrade sync", 1, 1)
+				loaded("candidate upgrade sync", 1, 1)
 				step(candidate, "sync", "--check")
 				step(candidate, "remove", "UserPromptSubmit-command", "--kind", "hook", "--scope", scope)
 				step(candidate, "sync")
 				copies("candidate deselection", 1, 0)
+				loaded("candidate deselection", 1, 0)
 			})
 		}
 	}

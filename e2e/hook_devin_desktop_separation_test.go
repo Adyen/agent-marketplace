@@ -1,6 +1,7 @@
 package e2e_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -29,15 +30,15 @@ func TestHookInvariantDevinCLIAndDesktopFilesStaySeparate(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		seed map[string]string
-		// wantDesktop is the ordered command list of the Desktop file after
-		// the first sync.
+		// wantDesktop is the ordered pre_run_command list of the Desktop
+		// file after the first sync: handwritten handlers come first.
 		wantDesktop []string
 	}{
 		{
 			name: "cli-and-desktop-files",
 			seed: map[string]string{
 				cliFile:     `{"PreToolUse":[{"matcher":"Read","hooks":[{"type":"command","command":"` + cli + `"}]}]}` + "\n",
-				desktopFile: `{"hooks":{"post_write_code":[{"command":"` + desktop + `"}]}}` + "\n",
+				desktopFile: `{"hooks":{"pre_run_command":[{"command":"` + desktop + `"}]}}` + "\n",
 			},
 			wantDesktop: []string{desktop, managed},
 		},
@@ -45,7 +46,7 @@ func TestHookInvariantDevinCLIAndDesktopFilesStaySeparate(t *testing.T) {
 			name: "windsurf-fallback",
 			seed: map[string]string{
 				cliFile:     `{"PreToolUse":[{"matcher":"Read","hooks":[{"type":"command","command":"` + cli + `"}]}]}` + "\n",
-				fallbackRel: `{"hooks":{"post_write_code":[{"command":"` + fallback + `"}]}}` + "\n",
+				fallbackRel: `{"hooks":{"pre_run_command":[{"command":"` + fallback + `"}]}}` + "\n",
 			},
 			wantDesktop: []string{fallback, managed},
 		},
@@ -91,8 +92,20 @@ func TestHookInvariantDevinCLIAndDesktopFilesStaySeparate(t *testing.T) {
 
 			e.MustRunAM("sync")
 			assertCommands("sync", cliFile, []string{cli, managed})
-			if got := commands(desktopFile); !slices.Equal(got, tc.wantDesktop) {
-				t.Fatalf("sync: %s commands in order = %q, want %q", desktopFile, got, tc.wantDesktop)
+			var desktopDocument struct {
+				Hooks map[string][]struct {
+					Command string `json:"command"`
+				} `json:"hooks"`
+			}
+			if err := json.Unmarshal([]byte(e.ReadFile("/workspace/"+desktopFile)), &desktopDocument); err != nil {
+				t.Fatal(err)
+			}
+			var ordered []string
+			for _, handler := range desktopDocument.Hooks["pre_run_command"] {
+				ordered = append(ordered, handler.Command)
+			}
+			if len(desktopDocument.Hooks) != 1 || !slices.Equal(ordered, tc.wantDesktop) {
+				t.Fatalf("sync: %s pre_run_command handlers = %q (events %d), want %q", desktopFile, ordered, len(desktopDocument.Hooks), tc.wantDesktop)
 			}
 			if content, ok := tc.seed[fallbackRel]; ok {
 				e.AssertFileContains("/workspace/"+fallbackRel, fallback)
