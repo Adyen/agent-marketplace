@@ -10,11 +10,13 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/fsblob"
 )
 
-// immutableReadProbe counts blob bytes returned by bounded and unbounded reads.
+// immutableReadProbe counts blob bytes returned by bounded and unbounded reads
+// and records the largest bounded-read limit requested.
 type immutableReadProbe struct {
 	*fsblob.Store
 	unbounded int
 	read      int
+	limit     int64
 }
 
 func (p *immutableReadProbe) Get(ctx context.Context, digest store.ArchiveDigest) ([]byte, error) {
@@ -25,6 +27,7 @@ func (p *immutableReadProbe) Get(ctx context.Context, digest store.ArchiveDigest
 }
 
 func (p *immutableReadProbe) GetBounded(ctx context.Context, digest store.ArchiveDigest, limit int64) ([]byte, error) {
+	p.limit = max(p.limit, limit)
 	data, err := p.Store.GetBounded(ctx, digest, limit)
 	p.read += len(data)
 	return data, err
@@ -58,8 +61,8 @@ func TestPutImmutableBlobComparesExistingBlobsWithinTheUploadSize(t *testing.T) 
 			if tc.conflict != errors.Is(err, store.ErrConflict) || (!tc.conflict && err != nil) {
 				t.Fatalf("PutImmutableBlob error = %v, want conflict %t", err, tc.conflict)
 			}
-			if limit := max(len(tc.data), 1); blobs.unbounded != 0 || blobs.read > limit {
-				t.Fatalf("existing blob read: unbounded=%d bytes=%d, want bounded reads of at most %d bytes", blobs.unbounded, blobs.read, limit)
+			if limit := max(len(tc.data), 1); blobs.unbounded != 0 || blobs.limit != int64(limit) || blobs.read > limit {
+				t.Fatalf("existing blob read: unbounded=%d limit=%d bytes=%d, want one bounded read limited to %d bytes", blobs.unbounded, blobs.limit, blobs.read, limit)
 			}
 			if stored, err := blobs.Store.Get(ctx, digest); err != nil || (!tc.conflict && !bytes.Equal(stored, tc.data)) || (tc.conflict && !bytes.Equal(stored, tc.existing)) {
 				t.Fatalf("stored blob = %q, %v", stored, err)
