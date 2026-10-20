@@ -75,9 +75,12 @@ are "worker" (background indexing), "api" (HTTP API), and "all" (both).`,
 
 			var wg sync.WaitGroup
 			errCh := make(chan error, 2)
+			backfillCtx, stopBackfill := context.WithCancel(ctx)
+			defer stopBackfill()
+			var backfillDone <-chan struct{}
 
 			if role == "worker" || role == "all" {
-				worker.StartPlaceholderBackfill(ctx, deps)
+				backfillDone = worker.StartPlaceholderBackfill(backfillCtx, deps)
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
@@ -101,6 +104,11 @@ are "worker" (background indexing), "api" (HTTP API), and "all" (both).`,
 			}
 
 			wg.Wait()
+			// The backfill reads the stores; stop it and wait before they close.
+			stopBackfill()
+			if backfillDone != nil {
+				<-backfillDone
+			}
 			close(errCh)
 			for err := range errCh {
 				if err != nil {
