@@ -33,8 +33,8 @@ const STATUS_META: Record<Status, { badge: string; note: string }> = {
 
 const metaFor = (status: Status) => STATUS_META[status] ?? { badge: status, note: '' }
 
-/** Claude Code leads when present: it is the harness most visitors know. */
-const active = ref(targets.find((target) => target.id === 'claude')?.id ?? targets[0]?.id ?? '')
+/** Display order owns the default; harnesses.json intentionally puts Claude first. */
+const active = ref(targets[0]?.id ?? '')
 
 const rows = computed(() => outputRows(active.value, KINDS, EXAMPLE_NAMES))
 const supportingArtifacts = computed(() =>

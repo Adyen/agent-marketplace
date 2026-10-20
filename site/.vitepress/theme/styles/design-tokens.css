@@ -2,104 +2,18 @@
 @import "../../../../design/semantic-colors.css";
 
 /**
- * VitePress and landing-site adapters.
+ * Shared design sources and logo geometry.
  *
- * Shared color values stay in design/semantic-colors.css. This file owns the
- * framework mappings and the landing site's non-color design tokens.
+ * Site role tokens and VitePress adapters live in landing-tokens.css. Keep
+ * only cross-surface design imports and brand artwork geometry here.
  */
 
 :root {
-  color-scheme: light;
-
-  --vp-font-family-base: system-ui, sans-serif;
-  --vp-font-family-mono: ui-monospace, SFMono-Regular, monospace;
-  --vp-c-brand-1: var(--am-color-action-primary);
-  --vp-c-brand-2: var(--am-color-action-hover);
-  --vp-c-brand-3: var(--am-color-action-active);
-  --vp-c-brand-soft: var(--am-color-action-soft);
-
-  --am-accent-soft: var(--am-color-action-soft);
-  --am-accent-border: var(--am-color-action-focus-ring);
-  --am-on-accent: var(--am-color-text-on-action);
-  --am-danger: var(--am-color-status-danger);
-
-  --am-maxw: 1200px;
-  --am-text-supporting: 13px;
-  --am-text-body-sm: 14px;
-  --am-text-body: 17px;
-  --am-font-medium: 500;
-  --am-font-semibold: 600;
-  --am-font-bold: 700;
-  --am-section-padding: 96px;
-  --am-section-heading-width: 760px;
-  --am-section-heading-size: 36px;
-  --am-section-heading-gap: 36px;
-  --am-radius-sm: 6px;
-  --am-radius: 12px;
-  --am-radius-lg: 18px;
-  --am-surface: var(--am-color-bg-surface);
-  --am-surface-soft: var(--am-color-bg-subtle);
-  --am-surface-raised: var(--am-color-bg-raised);
-  --am-border: var(--am-color-border-default);
-  --am-border-strong: var(--am-color-border-strong);
-  --am-code-bg: var(--am-color-code-bg);
-  --am-code-bg-raised: var(--am-color-code-bg-raised);
-  --am-code-border: var(--am-color-code-border);
-  --am-code-shadow: var(--am-color-code-shadow);
-  --am-code-text: var(--am-color-code-text);
-  --am-code-muted: var(--am-color-code-text-muted);
-  --am-code-cyan: var(--am-color-status-info);
-  --am-code-warning: var(--am-color-status-warning);
-  --am-code-selection: var(--am-color-action-selection);
-  --am-terminal-bg: var(--am-color-terminal-bg);
-  --am-terminal-bg-raised: var(--am-color-terminal-bg-raised);
-  --am-terminal-border: var(--am-color-terminal-border);
-  --am-terminal-text: var(--am-color-terminal-text);
-  --am-terminal-muted: var(--am-color-terminal-text-muted);
-  --am-terminal-accent: var(--am-color-terminal-accent);
-  --am-terminal-cyan: var(--am-color-terminal-info);
-  --am-terminal-warning: var(--am-color-terminal-warning);
-  --am-terminal-danger: var(--am-color-terminal-danger);
-  --am-terminal-selection: var(--am-color-terminal-selection);
-  --am-terminal-shadow-strong: var(--am-color-terminal-shadow-strong);
-  --am-technical-padding: 16px;
-  --am-technical-font-size: var(--am-text-supporting);
-  --am-technical-line-height: 1.8;
-  --am-hero-bg: var(--am-color-hero-bg);
-  --am-hero-text: var(--am-color-hero-text);
-  --am-hero-text-muted: var(--am-color-hero-text-muted);
-  --am-hero-grid: var(--am-color-hero-grid);
-  --am-hero-glow: var(--am-color-hero-glow);
-  --am-hero-ring: var(--am-color-hero-ring);
-  --am-hero-surface: var(--am-color-hero-surface);
-  --am-footer-bg: var(--am-color-footer-bg);
-
-  --vp-code-font-size: 13px;
+  --vp-code-font-size: 0.8125rem;
 }
 
 .VPNavBarTitle .logo {
   width: var(--am-brand-logo-width);
   height: auto;
   transform: translateY(var(--am-brand-logo-offset-y));
-}
-
-.dark {
-  color-scheme: dark;
-
-  --vp-c-bg: var(--am-color-bg-canvas);
-  --vp-c-bg-alt: var(--am-color-bg-subtle);
-  --vp-c-bg-elv: var(--am-color-bg-raised);
-  --vp-c-bg-soft: var(--am-color-bg-subtle);
-  --vp-c-text-1: var(--am-color-text-primary);
-  --vp-c-text-2: var(--am-color-text-secondary);
-  --vp-c-text-3: var(--am-color-text-muted);
-  --vp-c-divider: var(--am-color-border-default);
-  --vp-c-gutter: var(--am-color-border-default);
-}
-
-@media (max-width: 680px) {
-  :root {
-    --am-section-padding: 80px;
-    --am-section-heading-size: 30px;
-  }
 }

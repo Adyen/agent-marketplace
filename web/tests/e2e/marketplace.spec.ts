@@ -522,6 +522,27 @@ test.describe('Marketplace browser discovery', () => {
     await expect(tabs.getByRole('tab', { selected: true })).not.toHaveText(selectedText)
   })
 
+  // spec: marketplace-web-ui/scope-selection-updates-the-example-command
+  test('keeps Landing scope outcomes comparable while selection updates the example', async ({ page }) => {
+    await page.goto(publicSiteURL)
+
+    const scopeCards = page.locator('.scope-card')
+    await expect(scopeCards).toHaveCount(3)
+    await expect(page.locator('.scope-fact--config')).toHaveCount(3)
+
+    const repository = page.locator('input[name="installation-scope"][value="repo"]')
+    const user = page.locator('input[name="installation-scope"][value="user"]')
+    await expect(repository).toBeChecked()
+    await user.check()
+    await expect(user).toBeChecked()
+    await expect(repository).not.toBeChecked()
+    await expect(page.locator('.scope-command')).toContainText('--scope user')
+
+    const harnessTabs = page.getByRole('tablist', { name: 'Harness target' }).getByRole('tab')
+    await expect(harnessTabs.first()).toHaveText('Claude Code')
+    await expect(harnessTabs.first()).toHaveAttribute('aria-selected', 'true')
+  })
+
   test('applies the Marketplace palette in both themes', async ({ page }) => {
     const themes = {
       light: {

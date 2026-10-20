@@ -108,7 +108,7 @@ const resources = [
             </span>
             <div class="resource-row__copy">
               <span class="resource-row__title">
-                <span class="resource-kind">Collection · team</span>
+                <span class="resource-kind">Collection</span>
                 <span class="resource-separator" aria-hidden="true">·</span>
                 <strong>{{ resource.name }}</strong>
               </span>
@@ -119,7 +119,7 @@ const resources = [
                 <rect x="8" y="8" width="11" height="11" rx="2" />
                 <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
               </svg>
-              Copy install command
+              Copy
             </span>
           </article>
         </div>
