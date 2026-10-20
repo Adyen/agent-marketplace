@@ -226,6 +226,7 @@ func CheckHookSupportReferences(command string, installed []string, legacyPrefix
 			pathStart := end + 1
 			k := pathStart
 			dynamic := false
+			quoted := quote == '"'
 			for k < len(command) {
 				ch := command[k]
 				if ch == '\\' {
@@ -238,7 +239,11 @@ func CheckHookSupportReferences(command string, installed []string, legacyPrefix
 					k++
 					continue
 				}
-				if strings.IndexByte(" \t\n\"';&|<>()", ch) >= 0 {
+				if quoted {
+					if ch == '"' {
+						break
+					}
+				} else if strings.IndexByte(" \t\n\"';&|<>()", ch) >= 0 {
 					break
 				}
 				k++

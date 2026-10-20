@@ -110,6 +110,24 @@ func TestCheckHookSupportReferences(t *testing.T) {
 			wantLegacy:   true,
 		},
 		{
+			name:        "quoted path with parens resolves",
+			command:     `"${CLAUDE_PLUGIN_ROOT}/hooks/a(1).sh"`,
+			installed:   []string{"hooks/a(1).sh"},
+			wantCommand: `"${CLAUDE_PLUGIN_ROOT}/hooks/a(1).sh"`,
+		},
+		{
+			name:        "quoted path with space resolves",
+			command:     `"${CLAUDE_PLUGIN_ROOT}/hooks/a b.sh"`,
+			installed:   []string{"hooks/a b.sh"},
+			wantCommand: `"${CLAUDE_PLUGIN_ROOT}/hooks/a b.sh"`,
+		},
+		{
+			name:        "unquoted path stops at delimiter",
+			command:     `${CLAUDE_PLUGIN_ROOT}/hooks/check.sh;echo`,
+			installed:   []string{"hooks/check.sh"},
+			wantCommand: `${CLAUDE_PLUGIN_ROOT}/hooks/check.sh;echo`,
+		},
+		{
 			name:         "single-quoted token untouched",
 			command:      `echo '${CLAUDE_PLUGIN_ROOT}/absent.sh'`,
 			installed:    []string{"hooks/check.sh"},
