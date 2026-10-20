@@ -205,6 +205,14 @@ export const assertPlaceholderArchivesFetched = (fixture: Fixture, ...digests: (
   }
 };
 
+// lockedGitCommit returns the commit an acquisition lock pins for its only Git
+// registry.
+export const lockedGitCommit = (lock: string): string => {
+  const match = /^\s+commit: (\S+)$/m.exec(lock);
+  assert.ok(match, `acquisition lock has no Git commit:\n${lock}`);
+  return match[1];
+};
+
 export const waitForExit = async (
   terminal: TestTerminal,
   timeoutMs = 5_000

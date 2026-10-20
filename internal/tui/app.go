@@ -36,6 +36,9 @@ type DependencyLifecycle struct {
 	Sync   DependencyLifecycleFunc
 	Update DependencyLifecycleFunc
 	Mutate DependencyMutationFunc
+	// InstallReconcile prepares acquisition locks for the sync that follows a
+	// Marketplace install, so other sources stay at their locked revisions.
+	InstallReconcile pipeline.DependencyReconciler
 }
 
 type Option func(*Model)
