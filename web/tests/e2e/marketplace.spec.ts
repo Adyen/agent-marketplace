@@ -269,6 +269,15 @@ test.describe('Marketplace browser discovery', () => {
     })
 
     await page.goto(publicSiteURL)
+    await expect.poll(fontStatus).toMatchObject({
+      bodyFamily: 'Adyen, Helvetica, Arial, sans-serif',
+      fontSmoothing: 'antialiased',
+    })
+    expect((await fontStatus()).downloadedFonts).toBeGreaterThan(0)
+    await expect.poll(() => page.evaluate(() => ({
+      black: getComputedStyle(document.documentElement).getPropertyValue('--am-brand-black').trim(),
+      green: getComputedStyle(document.documentElement).getPropertyValue('--am-brand-green').trim(),
+    }))).toEqual({ black: '#121a18', green: '#00d16a' })
     await expect(page.locator('.h1-sub .am-brand-slash')).toHaveCount(0)
     const eyebrowSlash = page.locator('.eyebrow .am-brand-slash').first()
     await expect(eyebrowSlash).toHaveCSS('color', 'rgb(0, 209, 106)')
@@ -401,22 +410,11 @@ test.describe('Marketplace browser discovery', () => {
     await expect(docsNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('href', '/')
     await expect(docsNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/docs/')
     await expect(page.locator('html')).toHaveClass(/\bdark\b/)
-    await expect.poll(() => page.evaluate(() => {
-      const bodyStyle = getComputedStyle(document.body)
-      return {
-        bodyFamily: bodyStyle.fontFamily,
-        fontSmoothing: bodyStyle.getPropertyValue('-webkit-font-smoothing'),
-        textRendering: bodyStyle.textRendering,
-        downloadedFonts: performance.getEntriesByType('resource')
-          .filter(entry => /\.(?:woff2?|ttf|otf)(?:\?|$)/.test(entry.name))
-          .length,
-      }
-    })).toEqual({
-      bodyFamily: 'system-ui, sans-serif',
+    await expect.poll(fontStatus).toMatchObject({
+      bodyFamily: 'Adyen, Helvetica, Arial, sans-serif',
       fontSmoothing: 'antialiased',
-      textRendering: 'optimizelegibility',
-      downloadedFonts: 0,
     })
+    expect((await fontStatus()).downloadedFonts).toBeGreaterThan(0)
 
     const docsSwitch = page.locator('.VPNavBarAppearance .VPSwitchAppearance')
     await docsSwitch.click()
