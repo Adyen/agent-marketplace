@@ -45,6 +45,7 @@ func TestPutImmutableBlobComparesExistingBlobsWithinTheUploadSize(t *testing.T) 
 		{"longer", bytes.Repeat([]byte("x"), 1<<20), upload, true},
 		{"same size, different", []byte("uplo4d"), upload, true},
 		{"empty upload over an empty blob", []byte{}, []byte{}, false},
+		{"empty upload over a longer blob", bytes.Repeat([]byte("x"), 1<<20), []byte{}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			blobs := &immutableReadProbe{Store: fsblob.New(t.TempDir())}
@@ -57,8 +58,8 @@ func TestPutImmutableBlobComparesExistingBlobsWithinTheUploadSize(t *testing.T) 
 			if tc.conflict != errors.Is(err, store.ErrConflict) || (!tc.conflict && err != nil) {
 				t.Fatalf("PutImmutableBlob error = %v, want conflict %t", err, tc.conflict)
 			}
-			if len(tc.data) > 0 && (blobs.unbounded != 0 || blobs.read > len(tc.data)) {
-				t.Fatalf("existing blob read: unbounded=%d bytes=%d, want bounded reads of at most %d bytes", blobs.unbounded, blobs.read, len(tc.data))
+			if limit := max(len(tc.data), 1); blobs.unbounded != 0 || blobs.read > limit {
+				t.Fatalf("existing blob read: unbounded=%d bytes=%d, want bounded reads of at most %d bytes", blobs.unbounded, blobs.read, limit)
 			}
 			if stored, err := blobs.Store.Get(ctx, digest); err != nil || (!tc.conflict && !bytes.Equal(stored, tc.data)) || (tc.conflict && !bytes.Equal(stored, tc.existing)) {
 				t.Fatalf("stored blob = %q, %v", stored, err)

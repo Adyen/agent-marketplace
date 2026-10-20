@@ -814,10 +814,11 @@ func putImmutableBlob(ctx context.Context, blobs BlobStore, upload BlobUpload) e
 
 // existingImmutableBlob reads the blob already stored at the upload's digest.
 // A bounded store reads at most one byte more than the upload, which is enough
-// to tell an equal blob from a different one.
+// to tell an equal blob from a different one. An empty upload uses a one-byte
+// bound, since a zero limit cannot read even an empty blob.
 func existingImmutableBlob(ctx context.Context, blobs BlobStore, upload BlobUpload) ([]byte, error) {
-	if bounded, ok := blobs.(BoundedBlobStore); ok && len(upload.Data) > 0 {
-		return bounded.GetBounded(ctx, upload.Digest, int64(len(upload.Data)))
+	if bounded, ok := blobs.(BoundedBlobStore); ok {
+		return bounded.GetBounded(ctx, upload.Digest, max(int64(len(upload.Data)), 1))
 	}
 	return blobs.Get(ctx, upload.Digest)
 }
