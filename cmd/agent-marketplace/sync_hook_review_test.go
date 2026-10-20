@@ -2,27 +2,16 @@ package main
 
 import (
 	"bytes"
-	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
-	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
-
-	metricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
-	tracespb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
-	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/proto"
 )
 
 func hookReviewRegistry(t *testing.T, dir, command string) string {
@@ -383,83 +372,15 @@ func TestSyncHookReviewCommandsNeverReachLogs(t *testing.T) {
 	t.Setenv("AGENT_MARKETPLACE_LOG_LEVEL", "debug")
 	t.Setenv("AGENT_MARKETPLACE_TELEMETRY_COMMUNITY_REPORTING", "false")
 
-	var mu sync.Mutex
-	var metricsReqs []*metricspb.ExportMetricsServiceRequest
-	var traceReqs []*tracespb.ExportTraceServiceRequest
-	var rawBodies [][]byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(io.LimitReader(r.Body, 4<<20))
-		if err != nil {
-			t.Errorf("read telemetry body: %v", err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		if r.Header.Get("Content-Encoding") == "gzip" {
-			reader, err := gzip.NewReader(bytes.NewReader(body))
-			if err != nil {
-				t.Errorf("telemetry body claims gzip but does not decode: %v", err)
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			plain, err := io.ReadAll(io.LimitReader(reader, 8<<20))
-			_ = reader.Close()
-			if err != nil {
-				t.Errorf("gunzip telemetry body: %v", err)
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			body = plain
-		}
-		if len(body) == 0 {
-			t.Errorf("empty telemetry export to %s", r.URL.Path)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		mu.Lock()
-		rawBodies = append(rawBodies, body)
-		mu.Unlock()
-		w.Header().Set("Content-Type", "application/x-protobuf")
-		switch r.URL.Path {
-		case "/v1/metrics":
-			var req metricspb.ExportMetricsServiceRequest
-			if err := proto.Unmarshal(body, &req); err != nil {
-				t.Errorf("malformed metrics export: %v", err)
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			mu.Lock()
-			metricsReqs = append(metricsReqs, &req)
-			mu.Unlock()
-			resp, _ := proto.Marshal(&metricspb.ExportMetricsServiceResponse{})
-			_, _ = w.Write(resp)
-		case "/v1/traces":
-			var req tracespb.ExportTraceServiceRequest
-			if err := proto.Unmarshal(body, &req); err != nil {
-				t.Errorf("malformed trace export: %v", err)
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			mu.Lock()
-			traceReqs = append(traceReqs, &req)
-			mu.Unlock()
-			resp, _ := proto.Marshal(&tracespb.ExportTraceServiceResponse{})
-			_, _ = w.Write(resp)
-		default:
-			t.Errorf("unexpected telemetry path %s", r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer srv.Close()
+	capture := startOTLPCapture(t)
 
 	if out, err := executeCommand("init", "--harnesses", "claude"); err != nil {
 		t.Fatalf("init: %v\n%s", err, out)
 	}
-	if out, err := executeCommand("telemetry", "enable", "--level", "detailed", "--endpoint", srv.URL); err != nil {
+	if out, err := executeCommand("telemetry", "enable", "--level", "detailed", "--endpoint", capture.URL); err != nil {
 		t.Fatalf("telemetry enable: %v\n%s", err, out)
 	}
-	mu.Lock()
-	metricsReqs, traceReqs, rawBodies = nil, nil, nil
-	mu.Unlock()
+	capture.reset()
 
 	registryCmd := t.TempDir()
 	writeFile(t, filepath.Join(registryCmd, ".factory", "hooks", "hooks.json"),
@@ -507,104 +428,8 @@ resources:
 		t.Fatalf("legacy hooks file = %q, err %v, want the marked entry removed and the handwritten handler kept", legacyData, err)
 	}
 
-	logBytes, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("read log file: %v", err)
-	}
-	if len(logBytes) == 0 || !bytes.Contains(logBytes, []byte("pipeline sync end")) {
-		t.Fatalf("log file = %d bytes; expected an actual sync record", len(logBytes))
-	}
-	for _, payload := range payloads {
-		if bytes.Contains(logBytes, []byte(payload)) {
-			t.Fatalf("log file contains the reviewed payload %q", payload)
-		}
-	}
-
-	mu.Lock()
-	metricsCopy := append([]*metricspb.ExportMetricsServiceRequest{}, metricsReqs...)
-	tracesCopy := append([]*tracespb.ExportTraceServiceRequest{}, traceReqs...)
-	bodiesCopy := append([][]byte{}, rawBodies...)
-	mu.Unlock()
-
-	if len(metricsCopy) == 0 {
-		t.Fatal("expected at least one metrics export from the sync")
-	}
-	var sawSyncInvocation bool
-	for _, req := range metricsCopy {
-		for _, rm := range req.ResourceMetrics {
-			for _, sm := range rm.ScopeMetrics {
-				for _, m := range sm.Metrics {
-					for _, dp := range m.GetSum().GetDataPoints() {
-						if keyValueMap(dp.GetAttributes())[string(tmcfg.ResourceAttrCommandName)] == "agent-marketplace sync" && dp.GetAsInt() > 0 {
-							sawSyncInvocation = true
-						}
-					}
-				}
-			}
-		}
-	}
-	if !sawSyncInvocation {
-		t.Fatal("no metrics data point carried command.name=agent-marketplace sync with a positive value")
-	}
-	if len(tracesCopy) == 0 {
-		t.Fatal("expected at least one trace export from the detailed sync")
-	}
-	spanNames := map[string]int{}
-	for _, req := range tracesCopy {
-		for _, rs := range req.ResourceSpans {
-			for _, ss := range rs.ScopeSpans {
-				for _, sp := range ss.Spans {
-					spanNames[sp.Name]++
-				}
-			}
-		}
-	}
-	if spanNames["agent_marketplace.command"] == 0 {
-		t.Fatalf("no agent_marketplace.command span exported; spans = %v", spanNames)
-	}
-	var detailedSpan bool
-	for name := range spanNames {
-		if strings.HasPrefix(name, "agent_marketplace.pipeline.") {
-			detailedSpan = true
-		}
-	}
-	if !detailedSpan {
-		t.Fatalf("no detailed pipeline span exported; spans = %v", spanNames)
-	}
-
-	for i, body := range bodiesCopy {
-		var req metricspb.ExportMetricsServiceRequest
-		decoded := body
-		if err := proto.Unmarshal(body, &req); err == nil {
-			if rendered, err := protojson.Marshal(&req); err == nil {
-				decoded = rendered
-			}
-		}
-		for _, payload := range payloads {
-			if bytes.Contains(decoded, []byte(payload)) || bytes.Contains(body, []byte(payload)) {
-				t.Fatalf("telemetry request %d contains the reviewed payload %q", i, payload)
-			}
-		}
-	}
-	telemetryRoot := filepath.Join(homeDir, "state", "agent-marketplace", "telemetry")
-	err = filepath.WalkDir(telemetryRoot, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		for _, payload := range payloads {
-			if bytes.Contains(data, []byte(payload)) {
-				t.Fatalf("pending telemetry file %s contains the reviewed payload %q", path, payload)
-			}
-		}
-		return nil
-	})
-	if err != nil && !os.IsNotExist(err) {
-		t.Fatalf("walk telemetry queue: %v", err)
-	}
+	assertLogRecordsWithout(t, logPath, "pipeline sync end", payloads)
+	capture.assertExportedWithout(t, "agent-marketplace sync", filepath.Join(homeDir, "state", "agent-marketplace", "telemetry"), payloads)
 }
 
 // spec: hook-resources/changed-hook-commands-are-listed-with-exact-values
