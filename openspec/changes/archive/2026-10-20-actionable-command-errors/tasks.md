@@ -19,5 +19,5 @@
 
 ## 4. Documentation and archive
 
-- [ ] 4.1 Add a what-to-do section to `site/docs/reference/diagnostics.md` consistent with the catalog, and reconcile the configuration and troubleshooting references
-- [ ] 4.2 `openspec archive actionable-command-errors --yes`
+- [x] 4.1 Add a what-to-do section to `site/docs/reference/diagnostics.md` consistent with the catalog, and reconcile the configuration and troubleshooting references
+- [x] 4.2 `openspec archive actionable-command-errors --yes`
