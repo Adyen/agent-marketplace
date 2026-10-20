@@ -25,6 +25,9 @@ export interface FixtureOptions {
   userMarketplaceDrift?: boolean;
   // The stub serves placeholder archives that do not hash to their digest.
   mismatchedPlaceholderArchive?: boolean;
+  // Leaves ~/.agents/config.yaml absent and skips the fixture sync so the TUI
+  // opens first-run harness setup. ~/.claude marks Claude Code as installed.
+  firstRun?: boolean;
 }
 
 export interface Fixture {
@@ -72,6 +75,9 @@ const orgLockContent = (stub: MarketplaceStub): string =>
 export const createFixture = async (name: string, options: FixtureOptions = {}): Promise<Fixture> => {
   if (!/^[a-z0-9-]+$/.test(name)) throw new Error(`unsafe fixture name ${JSON.stringify(name)}`);
   if (!fs.existsSync(binary)) throw new Error(`TUI QA binary not found: ${binary}`);
+  if (options.firstRun && (options.directorySource || options.userMarketplaceDrift || options.organization)) {
+    throw new Error("firstRun fixtures start without a user config and cannot combine with other layers");
+  }
   const root = fs.mkdtempSync(path.join(os.tmpdir(), `agent-marketplace-tui-${name}-`));
   let stub: MarketplaceStub | undefined;
   try {
@@ -140,6 +146,8 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       expectedRepoConfig = `apiVersion: agent-marketplace/v4\nsources:\n  fixture:\n    git: ${registryURL}\n    ref: main\n    path: skills\nresources:\n  fixture:\n    include:\n      - skill/beta-skill\n${overflowSkills.map((name) => `      - skill/${name}\n`).join("")}`;
       if (options.userMarketplaceDrift && stub) {
         write(path.join(home, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources:\n  user-market:\n    marketplace: ${stub.url}\nresources:\n  user-market:\n    include:\n      - tools/skill/org-review\n    required: true\n`);
+      } else if (options.firstRun) {
+        fs.mkdirSync(path.join(home, ".claude"), { recursive: true, mode: 0o700 });
       } else {
         write(path.join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources: {}\n");
       }
@@ -148,10 +156,11 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
     git(repo, env, ["init", "--quiet", "--initial-branch=main"]);
 
     // Keep the missing-lock fixture cold so the TUI's first real-terminal load
-    // must perform transient acquisition. The published-lock counterpart gets
-    // the normal preflight sync. It runs without blocking the event loop so the
-    // organization Marketplace stub can answer it.
-    if (options.organization !== "missing-lock") {
+    // must perform transient acquisition, and the first-run fixture cold so the
+    // TUI's first sync follows harness setup. The published-lock counterpart
+    // gets the normal preflight sync. It runs without blocking the event loop
+    // so the organization Marketplace stub can answer it.
+    if (options.organization !== "missing-lock" && !options.firstRun) {
       const initialSync = await runAM({ repo, env }, ["sync"]);
       if (initialSync.status !== 0) {
         throw new Error(`fixture sync failed (exit ${initialSync.status}):\n${initialSync.stdout}\n${initialSync.stderr}`);
@@ -226,6 +235,7 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
         fs.rmSync(path.join(repo, ".devin"), { recursive: true, force: true });
         fs.rmSync(path.join(repo, ".codex"), { recursive: true, force: true });
         fs.rmSync(path.join(xdg, "state", "agent-marketplace"), { recursive: true, force: true });
+        if (options.firstRun) fs.mkdirSync(path.join(home, ".claude"), { recursive: true, mode: 0o700 });
         if (!options.directorySource) {
           const repoConfigPath = path.join(repo, ".agents", "config.yaml");
           fs.mkdirSync(path.dirname(repoConfigPath), { recursive: true, mode: 0o700 });
