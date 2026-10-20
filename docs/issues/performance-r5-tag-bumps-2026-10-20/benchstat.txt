@@ -4,20 +4,20 @@ pkg: github.com/Adyen/agent-marketplace/internal/pipeline
 cpu: Apple M4 Max
                          │ docs/issues/performance-r5-tag-bumps-2026-10-20/before.txt │ docs/issues/performance-r5-tag-bumps-2026-10-20/after.txt │
                          │                           sec/op                           │               sec/op                 vs base              │
-DiscoverTagBump/0-16                                                     11.32m ± ∞ ¹                          11.58m ± ∞ ¹       ~ (p=0.095 n=5)
-DiscoverTagBump/32-16                                                    10.80m ± ∞ ¹                          11.48m ± ∞ ¹  +6.37% (p=0.032 n=5)
-DiscoverTagBump/2048-16                                                  12.45m ± ∞ ¹                          13.16m ± ∞ ¹       ~ (p=0.310 n=5)
-DiscoverTagBump/16384-16                                                 21.44m ± ∞ ¹                          23.35m ± ∞ ¹       ~ (p=0.056 n=5)
-geomean                                                                  13.44m                                14.22m        +5.80%
+DiscoverTagBump/0-16                                                     11.32m ± ∞ ¹                          11.50m ± ∞ ¹       ~ (p=0.690 n=5)
+DiscoverTagBump/32-16                                                    10.80m ± ∞ ¹                          11.66m ± ∞ ¹  +8.00% (p=0.032 n=5)
+DiscoverTagBump/2048-16                                                  12.45m ± ∞ ¹                          13.58m ± ∞ ¹       ~ (p=0.095 n=5)
+DiscoverTagBump/16384-16                                                 21.44m ± ∞ ¹                          23.55m ± ∞ ¹       ~ (p=0.548 n=5)
+geomean                                                                  13.44m                                14.39m        +7.09%
 ¹ need >= 6 samples for confidence interval at level 0.95
 
                          │ docs/issues/performance-r5-tag-bumps-2026-10-20/before.txt │ docs/issues/performance-r5-tag-bumps-2026-10-20/after.txt │
                          │                            B/op                            │                B/op                 vs base               │
-DiscoverTagBump/0-16                                                    62.62Ki ± ∞ ¹                        56.51Ki ± ∞ ¹   -9.76% (p=0.008 n=5)
-DiscoverTagBump/32-16                                                   80.27Ki ± ∞ ¹                        56.59Ki ± ∞ ¹  -29.50% (p=0.008 n=5)
-DiscoverTagBump/2048-16                                                854.60Ki ± ∞ ¹                        56.73Ki ± ∞ ¹  -93.36% (p=0.008 n=5)
-DiscoverTagBump/16384-16                                              6294.16Ki ± ∞ ¹                        56.65Ki ± ∞ ¹  -99.10% (p=0.008 n=5)
-geomean                                                                 405.5Ki                              56.62Ki        -86.04%
+DiscoverTagBump/0-16                                                    62.62Ki ± ∞ ¹                        56.61Ki ± ∞ ¹   -9.61% (p=0.008 n=5)
+DiscoverTagBump/32-16                                                   80.27Ki ± ∞ ¹                        56.61Ki ± ∞ ¹  -29.47% (p=0.008 n=5)
+DiscoverTagBump/2048-16                                                854.60Ki ± ∞ ¹                        56.54Ki ± ∞ ¹  -93.38% (p=0.008 n=5)
+DiscoverTagBump/16384-16                                              6294.16Ki ± ∞ ¹                        57.00Ki ± ∞ ¹  -99.09% (p=0.008 n=5)
+geomean                                                                 405.5Ki                              56.69Ki        -86.02%
 ¹ need >= 6 samples for confidence interval at level 0.95
 
                          │ docs/issues/performance-r5-tag-bumps-2026-10-20/before.txt │ docs/issues/performance-r5-tag-bumps-2026-10-20/after.txt │

@@ -28,3 +28,21 @@ func BenchmarkDiscoverTagBump(b *testing.B) {
 		})
 	}
 }
+
+// Measures only in-memory selection, including numeric validation and parsing;
+// unlike BenchmarkDiscoverTagBump, no Git process or filesystem is involved.
+func BenchmarkSelectTagBumpNumericSuffix(b *testing.B) {
+	for _, n := range []int{8, 128, 70_000} {
+		b.Run(strconv.Itoa(n), func(b *testing.B) {
+			want := "v1." + strings.Repeat("0", n) + "2"
+			output := want + "\n"
+			b.ReportAllocs()
+			for b.Loop() {
+				got, err := selectTagBump(strings.NewReader(output), "v1.", 0)
+				if err != nil || got != want {
+					b.Fatalf("numeric selection: err=%v, matched=%v", err, got == want)
+				}
+			}
+		})
+	}
+}

@@ -886,8 +886,13 @@ func selectTagBump(r io.Reader, prefix string, currentNumber int) (string, error
 	bestNumber := currentNumber
 	consider := func(tag []byte) error {
 		suffix := bytes.TrimPrefix(tag, []byte(prefix))
-		if len(suffix) == 0 || bytes.ContainsFunc(suffix, func(r rune) bool { return r < '0' || r > '9' }) {
+		if len(suffix) == 0 {
 			return nil
+		}
+		for _, digit := range suffix {
+			if digit < '0' || digit > '9' {
+				return nil
+			}
 		}
 
 		tagNumber, err := strconv.Atoi(string(suffix))

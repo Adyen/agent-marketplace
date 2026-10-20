@@ -2,25 +2,25 @@ goos: darwin
 goarch: arm64
 pkg: github.com/Adyen/agent-marketplace/internal/pipeline
 cpu: Apple M4 Max
-BenchmarkDiscoverTagBump/0-16  	     200	  11725477 ns/op	   57659 B/op	      54 allocs/op
-BenchmarkDiscoverTagBump/0-16  	     207	  11537237 ns/op	   58008 B/op	      54 allocs/op
-BenchmarkDiscoverTagBump/0-16  	     212	  11576072 ns/op	   57986 B/op	      54 allocs/op
-BenchmarkDiscoverTagBump/0-16  	     195	  12129693 ns/op	   57865 B/op	      54 allocs/op
-BenchmarkDiscoverTagBump/0-16  	     230	  11261683 ns/op	   57452 B/op	      54 allocs/op
-BenchmarkDiscoverTagBump/32-16 	     210	  11484645 ns/op	   57947 B/op	      55 allocs/op
-BenchmarkDiscoverTagBump/32-16 	     198	  11895339 ns/op	   57793 B/op	      55 allocs/op
-BenchmarkDiscoverTagBump/32-16 	     206	  11524516 ns/op	   58141 B/op	      55 allocs/op
-BenchmarkDiscoverTagBump/32-16 	     206	  11408334 ns/op	   57961 B/op	      55 allocs/op
-BenchmarkDiscoverTagBump/32-16 	     224	  10932793 ns/op	   57898 B/op	      55 allocs/op
-BenchmarkDiscoverTagBump/2048-16         	     190	  12684292 ns/op	   58210 B/op	      55 allocs/op
-BenchmarkDiscoverTagBump/2048-16         	     174	  13202081 ns/op	   58090 B/op	      55 allocs/op
-BenchmarkDiscoverTagBump/2048-16         	     180	  13464581 ns/op	   57854 B/op	      55 allocs/op
-BenchmarkDiscoverTagBump/2048-16         	     172	  13156862 ns/op	   58101 B/op	      55 allocs/op
-BenchmarkDiscoverTagBump/2048-16         	     181	  12848244 ns/op	   58055 B/op	      55 allocs/op
-BenchmarkDiscoverTagBump/16384-16        	     100	  23344118 ns/op	   57949 B/op	      55 allocs/op
-BenchmarkDiscoverTagBump/16384-16        	      98	  24274386 ns/op	   58012 B/op	      55 allocs/op
-BenchmarkDiscoverTagBump/16384-16        	      96	  25463626 ns/op	   57619 B/op	      55 allocs/op
-BenchmarkDiscoverTagBump/16384-16        	     100	  23354631 ns/op	   58367 B/op	      55 allocs/op
-BenchmarkDiscoverTagBump/16384-16        	      93	  23270740 ns/op	   58456 B/op	      55 allocs/op
+BenchmarkDiscoverTagBump/0-16  	     220	  10614078 ns/op	   57976 B/op	      54 allocs/op
+BenchmarkDiscoverTagBump/0-16  	     217	  11496534 ns/op	   57964 B/op	      54 allocs/op
+BenchmarkDiscoverTagBump/0-16  	     190	  11708608 ns/op	   57886 B/op	      54 allocs/op
+BenchmarkDiscoverTagBump/0-16  	     212	  11175949 ns/op	   57986 B/op	      54 allocs/op
+BenchmarkDiscoverTagBump/0-16  	     199	  12005381 ns/op	   57662 B/op	      54 allocs/op
+BenchmarkDiscoverTagBump/32-16 	     214	  11660817 ns/op	   57772 B/op	      55 allocs/op
+BenchmarkDiscoverTagBump/32-16 	     200	  11887511 ns/op	   57973 B/op	      55 allocs/op
+BenchmarkDiscoverTagBump/32-16 	     213	  11465218 ns/op	   57576 B/op	      55 allocs/op
+BenchmarkDiscoverTagBump/32-16 	     200	  12486947 ns/op	   57973 B/op	      55 allocs/op
+BenchmarkDiscoverTagBump/32-16 	     234	  10810972 ns/op	   58026 B/op	      55 allocs/op
+BenchmarkDiscoverTagBump/2048-16         	     175	  13271118 ns/op	   57661 B/op	      55 allocs/op
+BenchmarkDiscoverTagBump/2048-16         	     176	  13582375 ns/op	   57869 B/op	      55 allocs/op
+BenchmarkDiscoverTagBump/2048-16         	     172	  13857029 ns/op	   58101 B/op	      55 allocs/op
+BenchmarkDiscoverTagBump/2048-16         	     176	  13261345 ns/op	   58080 B/op	      55 allocs/op
+BenchmarkDiscoverTagBump/2048-16         	     170	  14007358 ns/op	   57893 B/op	      55 allocs/op
+BenchmarkDiscoverTagBump/16384-16        	      98	  24315663 ns/op	   57586 B/op	      55 allocs/op
+BenchmarkDiscoverTagBump/16384-16        	      94	  23562576 ns/op	   58048 B/op	      55 allocs/op
+BenchmarkDiscoverTagBump/16384-16        	     100	  23549924 ns/op	   58367 B/op	      55 allocs/op
+BenchmarkDiscoverTagBump/16384-16        	     100	  22241009 ns/op	   58367 B/op	      55 allocs/op
+BenchmarkDiscoverTagBump/16384-16        	     100	  20159490 ns/op	   58367 B/op	      55 allocs/op
 PASS
-ok  	github.com/Adyen/agent-marketplace/internal/pipeline	48.597s
+ok  	github.com/Adyen/agent-marketplace/internal/pipeline	48.003s

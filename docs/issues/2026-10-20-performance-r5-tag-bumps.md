@@ -3,7 +3,7 @@
 ## Scope And Evidence
 
 Baseline: local `origin/main`, `99c26d07`. Implementation production blob:
-`89fb14ab4428ab19199a247a75717fd45427ebd5` (`internal/pipeline/update.go`).
+`c2ff9b30451de10ce1f1f3e8cc71813599cc6819` (`internal/pipeline/update.go`).
 The frozen ledger and source index remain unchanged.
 
 R10/A47/F31 has instance ID
@@ -50,7 +50,7 @@ OpenSpec delta is claimed.
   UTF-8, carriage returns, and whole-output versus interior Unicode
   whitespace. Read failure discards an otherwise valid candidate.
 - The frozen buffered-selection oracle is independent of the new scanner.
-  A final 10-second, two-worker fuzz run passes 83,542 executions, comparing
+  A final 10-second, two-worker fuzz run passes 85,378 executions, comparing
   selected refs and the first overflowing suffix's typed error context.
 - A bounded child process supplies a parse overflow followed by more than
   a pipe buffer of output. Both successful and failing Git exits complete
@@ -83,14 +83,14 @@ possible numeric-tag ordering.
 
 | Nonnumeric tags | Before ns/op | After ns/op | Before B/op | After B/op | Before allocs/op | After allocs/op |
 |---:|---:|---:|---:|---:|---:|---:|
-| 0 | 11,315,133 | 11,576,072 | 64,125 | 57,865 | 75 | 54 |
-| 32 | 10,796,736 | 11,484,645 | 82,199 | 57,947 | 78 | 55 |
-| 2,048 | 12,446,951 | 13,156,862 | 875,114 | 58,090 | 85 | 55 |
-| 16,384 | 21,439,716 | 23,354,631 | 6,445,220 | 58,012 | 91 | 55 |
+| 0 | 11,315,133 | 11,496,534 | 64,125 | 57,964 | 75 | 54 |
+| 32 | 10,796,736 | 11,660,817 | 82,199 | 57,973 | 78 | 55 |
+| 2,048 | 12,446,951 | 13,582,375 | 875,114 | 57,893 | 85 | 55 |
+| 16,384 | 21,439,716 | 23,549,924 | 6,445,220 | 58,367 | 91 | 55 |
 
-The largest fixture reduces Go allocation bytes by 99.10% and allocation
-count by 39.56%. Its median time increases by 8.93% (`p=0.056`, `n=5`);
-the 32-tag case increases by 6.37% (`p=0.032`). This is an allocation
+The largest fixture reduces Go allocation bytes by 99.09% and allocation
+count by 39.56%. Its median time increases by 9.84% (`p=0.548`, `n=5`);
+the 32-tag case increases by 8.00% (`p=0.032`). This is an allocation
 improvement with a measured latency tradeoff, not a speed-up claim.
 Benchstat warns that five samples cannot supply its 95% confidence interval.
 No timing threshold enters the tests.
@@ -105,7 +105,44 @@ benchstat docs/issues/performance-r5-tag-bumps-2026-10-20/before.txt \
   docs/issues/performance-r5-tag-bumps-2026-10-20/after.txt
 ```
 
+### ASCII Validation Follow-up
+
+Gemini suggested replacing rune decoding with a byte loop for the
+ASCII-only numeric suffix. This preserves the predicate for every byte
+sequence, including invalid UTF-8 and non-ASCII digits. The final
+end-to-end samples above include that follow-up.
+
+`BenchmarkSelectTagBumpNumericSuffix` separately measures in-memory
+selection of one numeric tag with 8, 128, or 70,000 leading zeroes followed
+by `2`. Its input, reader, and expected selection remain identical across
+the rune and byte implementations; there is no Git process or filesystem
+in this timed path. Five two-second samples compare the streaming rune
+implementation (`89fb14ab4428ab19199a247a75717fd45427ebd5`) with the final
+byte-loop implementation, not with the original buffered Git path.
+
+| Leading zeroes | Rune median ns/op | Byte median ns/op | Change |
+|---:|---:|---:|---:|
+| 8 | 1,140 | 1,186 | No significant difference, p=1.000 |
+| 128 | 1,485 | 1,321 | -11.04%, p=0.008 |
+| 70,000 | 194,043 | 109,951 | -43.34%, p=0.008 |
+
+Allocation bytes and counts are identical in every selector fixture.
+The eight-zero case is noisy in both runs; all samples are retained.
+These are numeric-validation microbenchmarks, not evidence of a faster
+end-to-end update. Raw samples and comparison are the `selector-*.txt`
+files in the same evidence directory.
+
+```sh
+CGO_ENABLED=0 go test ./internal/pipeline -run '^$' \
+  -bench '^BenchmarkSelectTagBumpNumericSuffix$' -benchtime 2s -count 5 -benchmem
+benchstat docs/issues/performance-r5-tag-bumps-2026-10-20/selector-before.txt \
+  docs/issues/performance-r5-tag-bumps-2026-10-20/selector-after.txt
+```
+
 ## Validation
+
+Final validation includes `873d0b22` from main merged into PR #828; the
+recorded performance baseline remains `99c26d07`.
 
 - `make validate TEST_PACKAGES=./internal/pipeline` passes all selected
   short-mode pipeline tests, whole-root vet, CI lint (zero issues), and build.
@@ -113,9 +150,9 @@ benchstat docs/issues/performance-r5-tag-bumps-2026-10-20/before.txt \
   successful bump/scope/target/exact-pin controls and the new refusal test.
 - Final focused pipeline tests, differential fuzzing, and focused race
   tests pass. Race tests use `CGO_ENABLED=1`.
-- `make spec-check` passes: 64 items, 1,097 scenarios, 1,743 annotations,
+- `make spec-check` passes: 64 items, 1,102 scenarios, 1,759 annotations,
   and the two pre-existing active changes. Pinned npm tooling runs offline.
-- `make validate-e2e` passes: 2,972 invocations, all 113 command requirements
+- `make validate-e2e` passes: 3,389 invocations, all 113 command requirements
   covered, zero listed gaps, and all three required refusal witnesses ran
   and passed. Native harness probes are explicitly unavailable in this
   configuration-only gate.
@@ -129,7 +166,7 @@ probe, or PostgreSQL performance result is claimed.
 Host-driven `open-code-review-delegate` supplies deterministic file
 selection and rule resolution; the host reviews the implementation,
 consumer paths, tests, design, this report, and raw measurements, including
-OCR's default exclusions. Coverage: 9 total files, 9 reviewed, 0 skipped,
+OCR's default exclusions. Coverage: 12 total files, 12 reviewed, 0 skipped,
 100%. No unresolved actionable critical/high/medium finding remains.
 
 Review checks include overflow/error precedence, pipe lifecycle, borrowed
@@ -137,6 +174,19 @@ scanner-buffer lifetime, Unicode/CR trimming, accepted long tags,
 publication refusal, command-test isolation, and benchmark overclaims.
 The measured time tradeoff and missing aggregate quota are not hidden.
 A clean review and passing tests are not proof of defect absence.
+
+PR #828 also receives CodeRabbit and Gemini reviews. Gemini's ASCII
+validation suggestion is implemented and measured above. Its proposed
+8 MiB and 10 MiB scanner ceilings are not adopted: the previous buffered
+implementation had no such ceiling, and silently introducing one would
+change supported inputs and require the separate D5 quota decision.
+That disposition is recorded in the review threads, not presented as
+security closure or denial that a single long tag can consume memory.
+CodeRabbit's supported-Linux portability finding is fixed by resolving
+`cat` through `PATH` in the drain fixture instead of requiring `/bin/cat`.
+A failed tail read exits unsuccessfully so the fixture cannot pass without
+the payload that makes draining necessary. Fresh focused race checks and
+both negative overlay controls pass after that fixture change.
 
 This is local slice evidence, not an integrated-main disposition or an
 external issue-status update. The remaining R5 decision gates stay open.

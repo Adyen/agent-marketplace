@@ -130,7 +130,7 @@ func TestDiscoverTagBumpDrainsOutputBeforeWait(t *testing.T) {
 		return
 	}
 	root := t.TempDir()
-	script := "#!/bin/sh\nprintf 'v2\\nv" + strings.Repeat("9", 40) + "\\n'\n/bin/cat \"$AM_TEST_TAG_STREAM_ROOT/tail\"\nexit \"$AM_TEST_TAG_STREAM_EXIT\"\n"
+	script := "#!/bin/sh\nprintf 'v2\\nv" + strings.Repeat("9", 40) + "\\n'\ncat \"$AM_TEST_TAG_STREAM_ROOT/tail\" || exit 1\nexit \"$AM_TEST_TAG_STREAM_EXIT\"\n"
 	if err := os.WriteFile(filepath.Join(root, "git"), []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
