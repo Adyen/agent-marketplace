@@ -221,9 +221,7 @@ func pluginSourceRevision(source config.RegistryEntry, locks []pipeline.LockMeta
 		return "local"
 	}
 	for _, lock := range locks {
-		if lock.Source == source.Source &&
-			config.NormalizeGitURL(lock.URL) == config.NormalizeGitURL(source.URL) &&
-			lock.Ref == source.Ref {
+		if lock.Matches(source.Source, source.URL, source.Ref) {
 			return lock.Commit
 		}
 	}
