@@ -326,10 +326,7 @@ func hasPluginResources(src fs.FS) bool {
 			return true
 		}
 	}
-	if regularFileExists(src, "mcp.json") {
-		return true
-	}
-	return false
+	return regularFileExists(src, "mcp.json")
 }
 
 // listRuleFiles lists Cursor rule files (.mdc, plus .md for tolerance) in root.

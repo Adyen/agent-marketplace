@@ -132,10 +132,7 @@ func hasBarePluginForm(src fs.FS) bool {
 			return true
 		}
 	}
-	if regularFileExists(src, ".mcp.json") {
-		return true
-	}
-	return false
+	return regularFileExists(src, ".mcp.json")
 }
 
 // hasBareSkillsDirForm reports whether the filesystem represents a bare
