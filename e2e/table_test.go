@@ -97,6 +97,8 @@ type Step struct {
 	PathsUnchanged  []string // files or trees whose bytes and metadata must be unchanged by this step
 	Symlinks        []string
 	RegularFiles    []string          // paths that must exist and not be symbolic links
+	GlobsExist      []string          // container path glob patterns that must each match at least one path
+	GlobsAbsent     []string          // container path glob patterns that must match nothing
 	FileContains    map[string]string // path -> substring
 	FileNotContains map[string]string // path -> substring that must NOT appear
 }
@@ -5261,6 +5263,29 @@ func TestE2E(t *testing.T) {
 						errMsg := fmt.Sprintf("step %d: file %q unexpectedly exists", i, p)
 						if err != nil {
 							errMsg = fmt.Sprintf("step %d: cannot inspect %q: %v", i, p, err)
+						}
+						if firstErr == "" {
+							firstErr = errMsg
+						}
+						t.Errorf("%s", errMsg)
+					}
+				}
+				for _, globs := range []struct {
+					patterns []string
+					absent   bool
+				}{{step.GlobsExist, false}, {step.GlobsAbsent, true}} {
+					for _, pattern := range globs.patterns {
+						matches, err := filepath.Glob(env.mustResolvePath(pattern))
+						var errMsg string
+						switch {
+						case err != nil:
+							errMsg = fmt.Sprintf("step %d: glob %q: %v", i, pattern, err)
+						case globs.absent && len(matches) > 0:
+							errMsg = fmt.Sprintf("step %d: glob %q matched %v", i, pattern, matches)
+						case !globs.absent && len(matches) == 0:
+							errMsg = fmt.Sprintf("step %d: glob %q matched no path", i, pattern)
+						default:
+							continue
 						}
 						if firstErr == "" {
 							firstErr = errMsg
