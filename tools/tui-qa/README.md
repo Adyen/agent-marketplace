@@ -8,6 +8,17 @@ This package uses the `@microsoft/tui-test` library to launch the real `agent-ma
 - Go E2E tests own the configuration, resource, scope, collision, ownership, harness-target, and materialization matrices.
 - This package owns direct user interaction through a real PTY.
 
+## Every TUI change adds or extends a journey
+
+Go tests do not prove that a user's key presses reach the changed behavior, and TUI changes merged without a journey have broken user flows. A pull request that changes non-test files under `internal/tui/` or `cmd/agent-marketplace/tui*.go` must add or modify a `tests/*.spec.ts` or `tests/*.test.ts` file here. `specaudit gate` in the `Specs` CI job enforces this. Changing only `fixture.ts`, `helpers.ts`, or this README does not count, and neither does deleting a journey.
+
+1. Extend the journey below that already reaches the changed flow, or add `tests/<flow>.spec.ts` for a new interaction.
+2. Drive the flow as a user would, following the timing rules at the end of the Journeys section: settle first, then assert the visible result of each state-changing input before sending the next one. When the flow writes configuration or harness files, check those files too.
+3. For a bug fix, confirm the journey fails without the fix.
+4. Add or update its entry in the list below, then run `make tui-qa`.
+
+Only a change with no user-observable TUI effect, such as comments, renames, or dead code, may carry a `TUI-QA-Impact: none — <reason>` commit trailer instead. It does not replace `Spec-Impact`, and "covered by Go tests" is not a reason.
+
 ## Journeys
 
 Each interaction contract has its own file. The `*.spec.ts` files are PTY journeys and the `*.test.ts` files are process tests; both run under `node --test`. Each journey opens its own in-process `tui-test` session and starts the program with exactly the fixture's environment.
