@@ -91,7 +91,7 @@ const (
 	CodeRuleFactoryMetadataDropped          = "rule.factory.metadata-dropped"           // Factory rules are plain markdown; globs/alwaysApply dropped
 	CodeCanonicalFieldOverridesExtra        = "compile.canonical-field-overrides-extra" // Canonical field wins over conflicting preserved extra
 	CodeHookTimeoutRounded                  = "hook.timeout-rounded"                    // Timeout conversion to seconds rounded up to the next whole second
-	CodeHookTimeoutCapped                   = "hook.timeout-capped"                     // Timeout above a documented per-event limit; lowered to the limit
+	CodeHookTimeoutCapped                   = "hook.timeout-capped"                     // Timeout outside a documented per-event limit; moved to the limit
 	CodeHookDuplicateExecutionRisk          = "hook.duplicate-execution-risk"           // Two selected targets load the same hook files by default
 	CodeMaterializeHookReview               = "materialize.hook.review"                 // Repository hook output changed on a target that may require trust review
 	CodeMaterializeHookReviewPending        = "materialize.hook.review-pending"         // A check found a pending hook change without mutating files
@@ -334,7 +334,7 @@ const (
 	CodeHookWindsurfEventUnmappable              = "hook.windsurf.event-unmappable"               // Claude hook event has no Windsurf equivalent
 	CodeHookMatcherUntranslatable                = "hook.matcher-untranslatable"                  // No exact tool-matcher coverage for the target; hook suppressed
 	CodeHookEnvUnrepresentable                   = "hook.env-unrepresentable"                     // Referenced variable has no target equivalent; hook suppressed
-	CodeHookTimeoutUnsupported                   = "hook.timeout-unsupported"                     // Target cannot represent a hook timeout; hook suppressed
+	CodeHookTimeoutUnsupported                   = "hook.timeout-unsupported"                     // Target cannot represent the hook timeout; hook suppressed
 	CodeHookTypeUnsupported                      = "hook.type-unsupported"                        // Target catalog does not declare this hook type for the event; hook suppressed
 	CodeHookSupportPathUnrepresentable           = "hook.support-path-unrepresentable"            // Plugin-root token has no repository base on this target; hook suppressed
 	CodeHookPromptUnsupported                    = "hook.prompt.unsupported"                      // Target cannot represent prompt hooks
@@ -657,7 +657,7 @@ var codeCatalog = []CodeDoc{
 	{CodeHookWindsurfEventUnmappable, SeverityError, "Claude hook event has no Windsurf equivalent; hook suppressed", "Consider using a mappable event (PreToolUse with a known tool matcher, UserPromptSubmit, or Stop)"},
 	{CodeHookMatcherUntranslatable, SeverityError, "No exact tool-matcher coverage exists for the target; hook suppressed", "Rewrite the matcher with tools the target's catalog covers, or remove it"},
 	{CodeHookEnvUnrepresentable, SeverityError, "The hook command references a variable with no target equivalent; hook suppressed", "Rewrite the command with variables the target documents, or use an absolute path"},
-	{CodeHookTimeoutUnsupported, SeverityError, "Target cannot represent an explicit hook timeout; hook suppressed", "Remove the timeout explicitly or use a target that supports it"},
+	{CodeHookTimeoutUnsupported, SeverityError, "Target cannot represent the explicit hook timeout (unsupported, negative, or beyond the exact integer range); hook suppressed", "Remove or reduce the timeout, or use a target that supports it"},
 	{CodeHookTypeUnsupported, SeverityError, "The target's catalog does not declare this hook type for the event; hook suppressed", "Use a hook type the target documents for this event"},
 	{CodeHookSupportPathUnrepresentable, SeverityError, "The hook command references the plugin root but the target declares no repository base; hook suppressed", "Use an absolute command path or a target with a repository base"},
 	{CodeHookPromptUnsupported, SeverityError, "Target cannot represent prompt hooks; hook suppressed", "Use a command hook on this target"},
