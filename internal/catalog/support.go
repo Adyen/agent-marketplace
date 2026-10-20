@@ -248,7 +248,18 @@ func CheckHookSupportReferences(command string, installed []string, legacyPrefix
 				}
 				k++
 			}
-			rel := strings.TrimRight(command[pathStart:k], "/")
+			if !dynamic {
+				if !quoted {
+					// A quote inside an unquoted word means the shell word
+					// continues past the scanned fragment.
+					dynamic = k < len(command) && (command[k] == '"' || command[k] == '\'')
+				} else if k < len(command) {
+					// The scan stopped at the closing quote; anything but a
+					// word delimiter after it concatenates onto the word.
+					dynamic = k+1 < len(command) && strings.IndexByte(" \t\n;&|<>()", command[k+1]) < 0
+				}
+			}
+			rel := strings.TrimLeft(strings.TrimRight(command[pathStart:k], "/"), "/")
 			if rel != "" && !dynamic && !strings.ContainsAny(rel, "*?[]{}") {
 				cleaned := path.Clean(rel)
 				switch {
