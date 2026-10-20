@@ -271,7 +271,7 @@ func TestHookBundleRootMissingReferenceRefusesHook(t *testing.T) {
 // spec: hook-resources/bare-and-dynamic-plugin-root-references-are-not-checked
 func TestHookBundleRootBareAndDynamicReferencesUnchecked(t *testing.T) {
 	repo, _ := additiveSafetyEnv(t)
-	definition := `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"cd \"${CLAUDE_PLUGIN_ROOT}\" && \"${CLAUDE_PLUGIN_ROOT}/hooks/$SCRIPT\" && ${CLAUDE_PLUGIN_ROOT}/hooks/*.sh"}]}]}`
+	definition := `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"cd \"${CLAUDE_PLUGIN_ROOT}\" && \"${CLAUDE_PLUGIN_ROOT}/hooks/$SCRIPT\" && ${CLAUDE_PLUGIN_ROOT}/hooks/*.sh && ${CLAUDE_PLUGIN_ROOT}/missing/$SCRIPT"}]}]}`
 	providers := bundleRootHookProviders(t, "claude", "hooks/hooks.json", map[string]string{
 		"hooks/hooks.json":       definition,
 		"hooks/scripts/check.sh": "#!/bin/sh\necho support\n",

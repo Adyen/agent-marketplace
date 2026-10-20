@@ -233,16 +233,24 @@ func CheckHookSupportReferences(command string, installed []string, legacyPrefix
 					k += 2
 					continue
 				}
-				if strings.IndexByte(" \t\n\"';&|<>()$`", ch) >= 0 {
+				if ch == '$' || ch == '`' {
+					dynamic = true
+					k++
+					continue
+				}
+				if strings.IndexByte(" \t\n\"';&|<>()", ch) >= 0 {
 					break
 				}
 				k++
 			}
 			rel := strings.TrimRight(command[pathStart:k], "/")
 			if rel != "" && !dynamic && !strings.ContainsAny(rel, "*?[]{}") {
+				cleaned := path.Clean(rel)
 				switch {
-				case resolved(rel):
-				case legacyPrefix != "" && resolved(legacyPrefix+"/"+rel):
+				case cleaned == ".." || strings.HasPrefix(cleaned, "../"):
+					result.Missing = true
+				case resolved(cleaned):
+				case legacyPrefix != "" && resolved(legacyPrefix+"/"+cleaned):
 					out.WriteString(command[pos:pathStart])
 					out.WriteString(legacyPrefix + "/")
 					pos = pathStart
