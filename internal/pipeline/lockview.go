@@ -26,6 +26,14 @@ type LockMetadata struct {
 	SnapshotAvailable bool
 }
 
+// Matches reports whether the metadata pins the registry identified by
+// source, url, and ref.
+func (m LockMetadata) Matches(source config.Source, url, ref string) bool {
+	return m.Source == source &&
+		config.NormalizeGitURL(m.URL) == config.NormalizeGitURL(url) &&
+		m.Ref == ref
+}
+
 type LockViewError struct {
 	Code  string
 	Scope lockfile.Scope
