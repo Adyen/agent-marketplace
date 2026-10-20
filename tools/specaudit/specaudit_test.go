@@ -350,7 +350,7 @@ func TestEvaluateGate(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			findings, summary := evaluateGate(tc.paths, tc.trailers)
+			findings, summary := evaluateGate(changed(tc.paths...), map[string][]string{"Spec-Impact": tc.trailers})
 			if got := kinds(findings); !slices.Equal(got, tc.wantKinds) {
 				t.Fatalf("kinds = %v, want %v\n%s", got, tc.wantKinds, details(findings))
 			}
@@ -364,7 +364,142 @@ func TestEvaluateGate(t *testing.T) {
 	}
 }
 
-func TestGateReadsGitRange(t *testing.T) {
+func changed(paths ...string) []changedFile {
+	out := make([]changedFile, len(paths))
+	for i, p := range paths {
+		out[i] = changedFile{path: p}
+	}
+	return out
+}
+
+func TestEvaluateTUIQAGate(t *testing.T) {
+	const delta = "openspec/changes/c1/specs/alpha/spec.md"
+	cases := []struct {
+		name        string
+		files       []changedFile
+		trailers    map[string][]string
+		wantKinds   []string
+		wantSummary string
+		wantDetail  string
+		notDetail   []string
+	}{
+		// spec: spec-governance/tui-change-without-journey-fails
+		{
+			name:       "TUI change without journey",
+			files:      changed("internal/tui/app.go", "internal/tui/footer.go", "docs/x.md", delta),
+			wantKinds:  []string{kindMissingTUIQAJourney},
+			wantDetail: "internal/tui/app.go, internal/tui/footer.go",
+		},
+		// spec: spec-governance/tui-launch-wiring-is-tui-bearing
+		{
+			name: "TUI launch wiring without journey",
+			files: changed(
+				"cmd/agent-marketplace/tui.go", "cmd/agent-marketplace/sync.go",
+				"cmd/agent-marketplace/tui_lifecycle_test.go", "cmd/other/tui.go", delta,
+			),
+			wantKinds:  []string{kindMissingTUIQAJourney},
+			wantDetail: "cmd/agent-marketplace/tui.go",
+			notDetail:  []string{"sync.go", "cmd/other"},
+		},
+		// spec: spec-governance/tui-change-with-journey-passes
+		{
+			name:        "TUI change with PTY journey",
+			files:       changed("internal/tui/app.go", "tools/tui-qa/tests/new-flow.spec.ts", delta),
+			wantSummary: "1 TUI-bearing files with TUI QA journey",
+		},
+		{
+			name:  "TUI launch wiring with node journey",
+			files: changed("cmd/agent-marketplace/tui.go", "tools/tui-qa/tests/non-tty.test.ts", delta),
+		},
+		// spec: spec-governance/deleted-journey-does-not-count
+		{
+			name:      "deleted journey",
+			files:     append(changed("internal/tui/app.go", delta), changedFile{path: "tools/tui-qa/tests/old-flow.spec.ts", deleted: true}),
+			wantKinds: []string{kindMissingTUIQAJourney},
+		},
+		// spec: spec-governance/journey-helpers-do-not-count
+		{
+			name: "helpers, fixtures, README, and misplaced specs",
+			files: changed(
+				"internal/tui/app.go", "tools/tui-qa/tests/helpers.ts", "tools/tui-qa/tests/fixture.ts",
+				"tools/tui-qa/README.md", "tools/tui-qa/package.json", "tools/tui-qa/flow.spec.ts", delta,
+			),
+			wantKinds: []string{kindMissingTUIQAJourney},
+		},
+		// spec: spec-governance/tui-test-only-change-needs-no-journey
+		{
+			name: "TUI tests, markdown, and testdata only",
+			files: changed(
+				"internal/tui/app_test.go", "internal/tui/README.md",
+				"internal/tui/testdata/golden/list.txt", "cmd/agent-marketplace/tui_workspace_test.go",
+			),
+			wantSummary: "no TUI-bearing changes",
+		},
+		// spec: spec-governance/tui-qa-trailer-with-reason-passes
+		{
+			name:        "TUI-QA-Impact with em dash reason",
+			files:       changed("internal/tui/app.go", delta),
+			trailers:    map[string][]string{"TUI-QA-Impact": {"", "none — comment-only change"}},
+			wantSummary: "TUI-QA-Impact: none — comment-only change",
+		},
+		{
+			name:        "TUI-QA-Impact with ASCII dash reason",
+			files:       changed("internal/tui/app.go", delta),
+			trailers:    map[string][]string{"TUI-QA-Impact": {"none - rename only"}},
+			wantSummary: "rename only",
+		},
+		// spec: spec-governance/tui-qa-trailer-without-reason-fails
+		{
+			name:       "TUI-QA-Impact without reason",
+			files:      changed("internal/tui/app.go", delta),
+			trailers:   map[string][]string{"TUI-QA-Impact": {"none", "", "none —  "}},
+			wantKinds:  []string{kindTUIQAImpactNoReason},
+			wantDetail: "TUI-QA-Impact: none — <reason>",
+		},
+		// spec: spec-governance/impact-trailers-are-not-interchangeable
+		{
+			name:      "Spec-Impact does not excuse a missing journey",
+			files:     changed("internal/tui/app.go"),
+			trailers:  map[string][]string{"Spec-Impact": {"none — refactor"}},
+			wantKinds: []string{kindMissingTUIQAJourney},
+		},
+		{
+			name:      "TUI-QA-Impact does not excuse a missing spec delta",
+			files:     changed("internal/tui/app.go"),
+			trailers:  map[string][]string{"TUI-QA-Impact": {"none — refactor"}},
+			wantKinds: []string{kindMissingSpecDelta},
+		},
+		{
+			name:      "both obligations missing",
+			files:     changed("internal/tui/app.go"),
+			wantKinds: []string{kindMissingSpecDelta, kindMissingTUIQAJourney},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			findings, summary := evaluateGate(tc.files, tc.trailers)
+			if got := kinds(findings); !slices.Equal(got, tc.wantKinds) {
+				t.Fatalf("kinds = %v, want %v\n%s", got, tc.wantKinds, details(findings))
+			}
+			if !strings.Contains(summary, tc.wantSummary) {
+				t.Errorf("summary %q does not contain %q", summary, tc.wantSummary)
+			}
+			if tc.wantDetail != "" && !strings.Contains(details(findings), tc.wantDetail) {
+				t.Errorf("findings do not mention %q:\n%s", tc.wantDetail, details(findings))
+			}
+			for _, absent := range tc.notDetail {
+				if strings.Contains(details(findings), absent) {
+					t.Errorf("findings mention %q:\n%s", absent, details(findings))
+				}
+			}
+		})
+	}
+}
+
+// gitRepo creates an isolated repository and returns its root, a git runner,
+// and a helper that writes one file and commits it with the given message.
+func gitRepo(t *testing.T) (string, func(...string) string, func(rel, msg string) string) {
+	t.Helper()
 	root := t.TempDir()
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
@@ -393,6 +528,11 @@ func TestGateReadsGitRange(t *testing.T) {
 		return run("rev-parse", "HEAD")
 	}
 	run("init", "-q")
+	return root, run, commit
+}
+
+func TestGateReadsGitRange(t *testing.T) {
+	root, _, commit := gitRepo(t)
 	base := commit("README.md", "init")
 	plain := commit("internal/x/x.go", "change behavior")
 
@@ -412,6 +552,37 @@ func TestGateReadsGitRange(t *testing.T) {
 	if len(findings) != 0 || !strings.Contains(summary, "pure rename") {
 		t.Fatalf("findings = %v, summary = %q; want pass citing the trailer reason", findings, summary)
 	}
+}
+
+func TestGateReadsTUIQAEvidenceFromGitRange(t *testing.T) {
+	root, run, commit := gitRepo(t)
+	base := commit("tools/tui-qa/tests/old-flow.spec.ts", "init")
+	check := func(from, to string, wantKinds []string, wantSummary string) {
+		t.Helper()
+		findings, summary, err := gate(root, from, to)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := kinds(findings); !slices.Equal(got, wantKinds) {
+			t.Fatalf("kinds = %v, want %v\n%s", got, wantKinds, details(findings))
+		}
+		if !strings.Contains(summary, wantSummary) {
+			t.Fatalf("summary %q does not contain %q", summary, wantSummary)
+		}
+	}
+
+	tuiChange := commit("internal/tui/app.go", "change footer\n\nSpec-Impact: none — copy only")
+	check(base, tuiChange, []string{kindMissingTUIQAJourney}, "")
+
+	run("rm", "-q", "tools/tui-qa/tests/old-flow.spec.ts")
+	run("commit", "-q", "-m", "drop journey")
+	check(base, run("rev-parse", "HEAD"), []string{kindMissingTUIQAJourney}, "")
+
+	journey := commit("tools/tui-qa/tests/new-flow.spec.ts", "prove footer")
+	check(base, journey, nil, "1 TUI-bearing files with TUI QA journey")
+
+	trailed := commit("internal/tui/footer.go", "reword comment\n\nSpec-Impact: none — comment only\nTUI-QA-Impact: none — comment-only change")
+	check(journey, trailed, nil, "TUI-QA-Impact: none — comment-only change")
 }
 
 func TestRun(t *testing.T) {
