@@ -45,10 +45,12 @@ journey.test("a broken user config is reported with recovery steps and fixed by 
     await locate(terminal, "v4.parse:").expect();
     await locate(terminal, "Fix the file and field named above.").unique().expect();
     await locate(terminal, "press `r` to reload.").unique().expect();
-    // The parser's explanation follows a temporary path of varying length, so
-    // compare without whitespace to ignore where the screen wraps it.
+    // The guidance points at the file "named above", so the cause must keep the
+    // config path. The screen wraps that temporary path at varying points and
+    // macOS may resolve it through /private, so match its suffix without
+    // whitespace.
     const screen = (await terminal.text()).replace(/\s+/g, "");
-    assert.ok(screen.includes("didnotfindexpected','or']'"), `the errors screen lost the YAML parse cause:\n${await terminal.text()}`);
+    assert.ok(screen.includes("/home/.agents/config.yaml:"), `the errors screen lost the cause's config path:\n${await terminal.text()}`);
   });
   await step("close the errors screen", () => terminal.write("e"), async () => {
     await locate(terminal, "Errors (1)").expect({ not: true });
