@@ -75,6 +75,21 @@ var hookInvariantNativeTargets = append(slices.Clone(hookInvariantTargets), "ope
 func hookInvariantLoadedCommands(t *testing.T, target, root string, machine bool) []string {
 	t.Helper()
 	var commands []string
+	for _, handler := range hookInvariantLoadedHandlers(t, target, root, machine) {
+		commands = append(commands, handler.command)
+	}
+	return commands
+}
+
+// hookInvariantHandler is one parsed executable hook handler. dir is the
+// Windsurf working_directory, when the handler declares one.
+type hookInvariantHandler struct{ command, dir string }
+
+// hookInvariantLoadedHandlers is hookInvariantLoadedCommands with each
+// handler's declared working directory.
+func hookInvariantLoadedHandlers(t *testing.T, target, root string, machine bool) []hookInvariantHandler {
+	t.Helper()
+	var commands []hookInvariantHandler
 	read := func(rel string) (map[string]json.RawMessage, bool) {
 		t.Helper()
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
@@ -131,7 +146,7 @@ func hookInvariantLoadedCommands(t *testing.T, target, root string, machine bool
 				}
 				for _, handler := range group.Hooks {
 					if handler.Type == "command" && handler.Command != "" {
-						commands = append(commands, handler.Command)
+						commands = append(commands, hookInvariantHandler{command: handler.Command})
 					}
 				}
 			}
@@ -142,13 +157,14 @@ func hookInvariantLoadedCommands(t *testing.T, target, root string, machine bool
 		for event, handlers := range events(rel, "hooks") {
 			for _, raw := range handlers {
 				var handler struct {
-					Command string `json:"command"`
+					Command          string `json:"command"`
+					WorkingDirectory string `json:"working_directory"`
 				}
 				if err := json.Unmarshal(raw, &handler); err != nil {
 					t.Fatalf("decode %s %s handler: %v", rel, event, err)
 				}
 				if handler.Command != "" {
-					commands = append(commands, handler.Command)
+					commands = append(commands, hookInvariantHandler{command: handler.Command, dir: handler.WorkingDirectory})
 				}
 			}
 		}
@@ -221,10 +237,10 @@ func hookInvariantLoadedCommands(t *testing.T, target, root string, machine bool
 				hasMatcher && json.Unmarshal(document["matcher"], &matcher) != nil || hasMatcher && string(document["matcher"]) == "null" {
 				t.Fatalf("OpenCode adapter would reject hook declaration %s: %v", rel, document)
 			}
-			commands = append(commands, command)
+			commands = append(commands, hookInvariantHandler{command: command})
 		}
 	default:
-		t.Fatalf("hookInvariantLoadedCommands: unknown target %s", target)
+		t.Fatalf("hookInvariantLoadedHandlers: unknown target %s", target)
 	}
 	return commands
 }
