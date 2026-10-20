@@ -197,6 +197,22 @@ func installMarketplaceCollectionForTest(t *testing.T) (string, *httptest.Server
 	return home, server, &downloads, configPath, lockPath, readTestFile(t, configPath), readTestFile(t, lockPath)
 }
 
+// moveToFreshMarketplaceHomeForTest recreates the pin in a new home with no
+// Marketplace cache, ownership state, or materialized outputs, which is the
+// state of a pin that was never acquired.
+func moveToFreshMarketplaceHomeForTest(t *testing.T, configBytes, lockBytes []byte) (configPath, lockPath string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	configPath = filepath.Join(home, ".agents", "config.yaml")
+	lockPath = filepath.Join(home, ".agents", "lock.yaml")
+	writeFile(t, configPath, string(configBytes))
+	writeFile(t, lockPath, string(lockBytes))
+	return configPath, lockPath
+}
+
 func assertMarketplaceReadOnly(t *testing.T, command string, downloads *atomic.Int32, configPath, lockPath string, configBefore, lockBefore []byte) {
 	t.Helper()
 	if n := downloads.Load(); n != 0 || !bytes.Equal(configBefore, readTestFile(t, configPath)) ||
@@ -356,7 +372,7 @@ func TestStatusReportsUnknownDriftWhenMarketplaceCacheIsMissingOrNeverAcquired(t
 	if isolateCommandTest(t) {
 		return
 	}
-	home, server, downloads, configPath, lockPath, configBefore, lockBefore := installMarketplaceCollectionForTest(t)
+	_, server, downloads, configPath, lockPath, configBefore, lockBefore := installMarketplaceCollectionForTest(t)
 	defer server.Close()
 	if err := os.RemoveAll(filepath.Join(cache.CacheDir(), "marketplace")); err != nil {
 		t.Fatalf("remove Marketplace cache: %v", err)
@@ -369,10 +385,9 @@ func TestStatusReportsUnknownDriftWhenMarketplaceCacheIsMissingOrNeverAcquired(t
 	if !strings.Contains(output, "src/collection/bundle") {
 		t.Errorf("status warning did not retain the Marketplace pin coordinate:\n%s", output)
 	}
-	if err := os.RemoveAll(filepath.Join(home, ".factory", "skills", "review")); err != nil {
-		t.Fatalf("remove materialized collection member: %v", err)
-	}
+	assertMarketplaceReadOnly(t, "status", downloads, configPath, lockPath, configBefore, lockBefore)
 
+	configPath, lockPath = moveToFreshMarketplaceHomeForTest(t, configBefore, lockBefore)
 	output, err = executeCommand("status")
 	if err != nil {
 		t.Errorf("status failed for a never-acquired Marketplace pin: %v\n%s", err, output)

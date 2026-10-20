@@ -156,7 +156,7 @@ func TestListReportsUnknownSyncStateWhenMarketplaceCacheIsMissingOrNeverAcquired
 	if isolateCommandTest(t) {
 		return
 	}
-	home, server, downloads, configPath, lockPath, configBefore, lockBefore := installMarketplaceCollectionForTest(t)
+	_, server, downloads, configPath, lockPath, configBefore, lockBefore := installMarketplaceCollectionForTest(t)
 	defer server.Close()
 	if err := os.RemoveAll(filepath.Join(cache.CacheDir(), "marketplace")); err != nil {
 		t.Fatalf("remove Marketplace cache: %v", err)
@@ -169,10 +169,9 @@ func TestListReportsUnknownSyncStateWhenMarketplaceCacheIsMissingOrNeverAcquired
 		t.Errorf("selected collection status = %q, want enabled\n%s", got, output)
 	}
 	assertMarketplaceListUnknown(t, output)
-	if err := os.RemoveAll(filepath.Join(home, ".factory", "skills", "review")); err != nil {
-		t.Fatalf("remove materialized collection member: %v", err)
-	}
+	assertMarketplaceReadOnly(t, "list", downloads, configPath, lockPath, configBefore, lockBefore)
 
+	configPath, lockPath = moveToFreshMarketplaceHomeForTest(t, configBefore, lockBefore)
 	output, err = executeCommand("list")
 	if err != nil {
 		t.Errorf("list failed for a never-acquired Marketplace pin: %v\n%s", err, output)
