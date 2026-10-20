@@ -190,8 +190,8 @@ func TestDocumentTextNormalization(t *testing.T) {
 // Offline integrity only: every catalog evidence ref is bound to a source
 // the live audit monitors for that harness and domain, and every monitored
 // source is cited. Model catalogs may also cite an immutable commit-pinned
-// revision or a document in this repository; those cannot drift and are
-// listed exactly. Passing says nothing about live freshness (the online
+// revision or a document in this repository; neither is monitored, so both
+// are listed exactly. Passing says nothing about live freshness (the online
 // audit) or about vendor-native model acceptance (harness probes).
 func TestEveryCatalogEvidenceRefIsBound(t *testing.T) {
 	monitored := map[string][]source{}

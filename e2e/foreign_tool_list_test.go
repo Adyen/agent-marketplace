@@ -87,6 +87,12 @@ func TestForeignToolListsNeverBecomeInstalledPreApprovals(t *testing.T) {
 					if got := strings.Contains(sync.Combined, "skill.allowed-tools-omitted"); got != source.foreign {
 						t.Fatalf("sync reported skill.allowed-tools-omitted = %t, want %t:\n%s", got, source.foreign, sync.Combined)
 					}
+					// Both the skill's and the command's omission must be reported,
+					// grouped under one code with each resource named.
+					if source.foreign && (!strings.Contains(sync.Combined, "skill.allowed-tools-omitted (2 problems, 2 resources)") ||
+						!strings.Contains(sync.Combined, "\n    review\n") || !strings.Contains(sync.Combined, "\n    deploy\n")) {
+						t.Fatalf("sync did not report the omission for both the skill and the command:\n%s", sync.Combined)
+					}
 					for _, installed := range []string{skillPath("review"), commandPath} {
 						body := env.ReadFile(installed)
 						if source.foreign && (strings.Contains(body, "allowed-tools") || strings.Contains(body, source.list)) {
