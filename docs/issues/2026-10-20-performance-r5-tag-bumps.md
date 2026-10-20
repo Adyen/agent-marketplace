@@ -1,0 +1,142 @@
+# R5 Performance: Streaming Git Tag Bumps (R10)
+
+## Scope And Evidence
+
+Baseline: local `origin/main`, `99c26d07`. Implementation production blob:
+`89fb14ab4428ab19199a247a75717fd45427ebd5` (`internal/pipeline/update.go`).
+The frozen ledger and source index remain unchanged.
+
+R10/A47/F31 has instance ID
+`01a0a06b-ae64-74f1-b1c4-036b618c1260`. Both original exports were checked
+against the frozen hashes and both versions of this finding were read.
+They make the same full-tag-output buffering complaint.
+
+The supported path is CLI `update --bump`, `pipeline.Update`,
+`bumpRepoRegistryRefs`, then `discoverTagBump`. A configured registry supplies
+the tag names. Previously `git tag -l` stdout was accumulated, converted to
+a string, and split into a complete tag slice before selecting one ref.
+Bounded local fixtures reproduce the allocation growth without exhausting
+memory, executing resources, or contacting external services.
+
+The implementation scans the unchanged Git command's output, retaining the
+scanner buffer, one pending line, and the best candidate instead of the
+full tag set. The pending line preserves the old whole-output whitespace
+trimming, including Unicode whitespace in otherwise accepted Git refs.
+Scanner growth is not restricted to its default 64 KiB token ceiling.
+On a parse refusal, remaining output is drained before waiting for Git;
+a failing Git exit still takes precedence and no partial bump escapes.
+
+This is performance-track work under #765, not security closure for #434.
+No tag count/byte cap, timeout, cancellation contract, truncation, source
+ownership rule, config/lock format, or publication policy changes.
+Git acquisition, Git's own sorting/storage costs, and D5 remain separate.
+The implementation does not establish a hard memory bound: a single long
+tag can still require a large buffer, and successively better numeric tags
+can allocate replacement candidate strings.
+
+`Spec-Impact: none` applies because observable selection, error identities,
+and publication behavior are preserved. No new normative scenario or
+OpenSpec delta is claimed.
+
+## Preservation And Adversarial Controls
+
+- Real local Git tests retain trailing-integer families, numeric rather
+  than lexical ordering, empty/non-version inputs, equal-current results,
+  lexical ties, authored whitespace, numeric overflow, and Git exit errors.
+  Three configured Git sort orders and a tag longer than 70,000 bytes run.
+  A Go overlay restoring the default 64 KiB token limit makes that long-tag
+  witness fail with the scanner's token-too-long refusal.
+- Stream controls cover one-byte reads, absent final newlines, invalid
+  UTF-8, carriage returns, and whole-output versus interior Unicode
+  whitespace. Read failure discards an otherwise valid candidate.
+- The frozen buffered-selection oracle is independent of the new scanner.
+  A final 10-second, two-worker fuzz run passes 83,542 executions, comparing
+  selected refs and the first overflowing suffix's typed error context.
+- A bounded child process supplies a parse overflow followed by more than
+  a pipe buffer of output. Both successful and failing Git exits complete
+  with the expected error identity and no partial result. Removing the
+  drain through a Go overlay makes the success-exit witness fail at its
+  10-second deadline; the normal implementation passes.
+- The first streaming candidate changed final-tag Unicode trimming; the
+  independently authored Git test failed before the pending-line fix.
+- A sandboxed CLI test starts with an actual v4 selection, generated lock,
+  and materialized Claude skill, then advertises both new content at `v2`
+  and an overflowing tag. Refusal retains repository membership, config
+  and lock bytes/modes/mtimes, native link target, and native payload
+  bytes/mode/mtime/inode, with no config-staging residue. Git cache writes
+  and ordinary logging are explicitly outside that no-publication claim.
+
+## Measurements
+
+Five two-second samples per size, macOS arm64, Apple M4 Max, Go 1.27.1,
+`CGO_ENABLED=0`. Each size is the number of matching but nonnumeric tags
+with 96-byte name padding, plus one valid `v1.2` control. Thus size zero
+is a one-tag control, not an empty repository.
+
+The timed path includes Git process startup, local packed-ref reads,
+stdout transport, and selection. It excludes fixture construction,
+clone/fetch, configuration edits, dependency reconciliation, and native
+materialization. Allocation metrics describe the Go parent process, not
+the Git child's RSS or total peak memory. These measurements do not claim
+an end-to-end update latency improvement or flat allocations for every
+possible numeric-tag ordering.
+
+| Nonnumeric tags | Before ns/op | After ns/op | Before B/op | After B/op | Before allocs/op | After allocs/op |
+|---:|---:|---:|---:|---:|---:|---:|
+| 0 | 11,315,133 | 11,576,072 | 64,125 | 57,865 | 75 | 54 |
+| 32 | 10,796,736 | 11,484,645 | 82,199 | 57,947 | 78 | 55 |
+| 2,048 | 12,446,951 | 13,156,862 | 875,114 | 58,090 | 85 | 55 |
+| 16,384 | 21,439,716 | 23,354,631 | 6,445,220 | 58,012 | 91 | 55 |
+
+The largest fixture reduces Go allocation bytes by 99.10% and allocation
+count by 39.56%. Its median time increases by 8.93% (`p=0.056`, `n=5`);
+the 32-tag case increases by 6.37% (`p=0.032`). This is an allocation
+improvement with a measured latency tradeoff, not a speed-up claim.
+Benchstat warns that five samples cannot supply its 95% confidence interval.
+No timing threshold enters the tests.
+
+Raw before/after samples and benchstat output:
+`docs/issues/performance-r5-tag-bumps-2026-10-20/`.
+
+```sh
+CGO_ENABLED=0 go test ./internal/pipeline -run '^$' \
+  -bench '^BenchmarkDiscoverTagBump$' -benchtime 2s -count 5 -benchmem
+benchstat docs/issues/performance-r5-tag-bumps-2026-10-20/before.txt \
+  docs/issues/performance-r5-tag-bumps-2026-10-20/after.txt
+```
+
+## Validation
+
+- `make validate TEST_PACKAGES=./internal/pipeline` passes all selected
+  short-mode pipeline tests, whole-root vet, CI lint (zero issues), and build.
+- CLI `TestUpdate*` and `TestCommandIsolationGuard` pass freshly, including
+  successful bump/scope/target/exact-pin controls and the new refusal test.
+- Final focused pipeline tests, differential fuzzing, and focused race
+  tests pass. Race tests use `CGO_ENABLED=1`.
+- `make spec-check` passes: 64 items, 1,097 scenarios, 1,743 annotations,
+  and the two pre-existing active changes. Pinned npm tooling runs offline.
+- `make validate-e2e` passes: 2,972 invocations, all 113 command requirements
+  covered, zero listed gaps, and all three required refusal witnesses ran
+  and passed. Native harness probes are explicitly unavailable in this
+  configuration-only gate.
+
+These are scoped root checks, not `make validate-full`. No TUI behavior
+changes, real-terminal QA, released-client container gate, vendor-native
+probe, or PostgreSQL performance result is claimed.
+
+## Adversarial Review
+
+Host-driven `open-code-review-delegate` supplies deterministic file
+selection and rule resolution; the host reviews the implementation,
+consumer paths, tests, design, this report, and raw measurements, including
+OCR's default exclusions. Coverage: 9 total files, 9 reviewed, 0 skipped,
+100%. No unresolved actionable critical/high/medium finding remains.
+
+Review checks include overflow/error precedence, pipe lifecycle, borrowed
+scanner-buffer lifetime, Unicode/CR trimming, accepted long tags,
+publication refusal, command-test isolation, and benchmark overclaims.
+The measured time tradeoff and missing aggregate quota are not hidden.
+A clean review and passing tests are not proof of defect absence.
+
+This is local slice evidence, not an integrated-main disposition or an
+external issue-status update. The remaining R5 decision gates stay open.

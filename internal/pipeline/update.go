@@ -1,11 +1,14 @@
 package pipeline
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"math"
 	"os"
 	"os/exec"
 	pathpkg "path"
@@ -13,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -839,55 +843,87 @@ func discoverTagBump(repoDir, currentRef string) (string, bool, error) {
 		return "", false, fmt.Errorf("parse current ref %q: %w", currentRef, err)
 	}
 
-	tags, err := listGitTags(repoDir, matches[1]+"*")
-	if err != nil {
-		return "", false, err
-	}
-
-	bestRef := ""
-	bestNumber := currentNumber
-	for _, tag := range tags {
-		suffix := strings.TrimPrefix(tag, matches[1])
-		if suffix == "" || strings.ContainsFunc(suffix, func(r rune) bool { return r < '0' || r > '9' }) {
-			continue
-		}
-
-		tagNumber, err := strconv.Atoi(suffix)
-		if err != nil {
-			return "", false, fmt.Errorf("parse tag %q: %w", tag, err)
-		}
-
-		if tagNumber > bestNumber || (tagNumber == bestNumber && tag > bestRef) {
-			bestRef = tag
-			bestNumber = tagNumber
-		}
-	}
-
-	if bestRef == "" {
-		return "", false, nil
-	}
-
-	return bestRef, true, nil
-}
-
-func listGitTags(repoDir, pattern string) ([]string, error) {
-	args := []string{"tag", "-l"}
-	if strings.TrimSpace(pattern) != "" {
-		args = append(args, pattern)
-	}
-
+	args := []string{"tag", "-l", matches[1] + "*"}
 	cmd := exec.Command("git", args...)
 	cmd.Dir = repoDir
-
-	output, err := cmd.Output()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, fmt.Errorf("git %s in %q: %w", strings.Join(args, " "), repoDir, err)
+		return "", false, fmt.Errorf("prepare git tag output: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return "", false, fmt.Errorf("git %s in %q: %w", strings.Join(args, " "), repoDir, err)
 	}
 
-	trimmed := strings.TrimSpace(string(output))
-	if trimmed == "" {
-		return nil, nil
+	bestRef, scanErr := selectTagBump(stdout, matches[1], currentNumber)
+	// Drain after a parse failure so Git can finish; its exit error still takes
+	// precedence, as it did when Output collected everything before parsing.
+	if scanErr != nil {
+		_, _ = io.Copy(io.Discard, stdout)
 	}
+	if err := cmd.Wait(); err != nil {
+		return "", false, fmt.Errorf("git %s in %q: %w", strings.Join(args, " "), repoDir, err)
+	}
+	if scanErr != nil {
+		return "", false, scanErr
+	}
+	return bestRef, bestRef != "", nil
+}
 
-	return strings.Split(trimmed, "\n"), nil
+func selectTagBump(r io.Reader, prefix string, currentNumber int) (string, error) {
+	scanner := bufio.NewScanner(r)
+	// Do not turn Scanner's default token limit into a new Git tag policy.
+	scanner.Buffer(make([]byte, 32*1024), math.MaxInt)
+	scanner.Split(func(data []byte, atEOF bool) (int, []byte, error) {
+		if i := bytes.IndexByte(data, '\n'); i >= 0 {
+			return i + 1, data[:i], nil
+		}
+		if atEOF && len(data) > 0 {
+			return len(data), data, nil
+		}
+		return 0, nil, nil
+	})
+	bestRef := ""
+	bestNumber := currentNumber
+	consider := func(tag []byte) error {
+		suffix := bytes.TrimPrefix(tag, []byte(prefix))
+		if len(suffix) == 0 || bytes.ContainsFunc(suffix, func(r rune) bool { return r < '0' || r > '9' }) {
+			return nil
+		}
+
+		tagNumber, err := strconv.Atoi(string(suffix))
+		if err != nil {
+			return fmt.Errorf("parse tag %q: %w", tag, err)
+		}
+
+		if tagNumber > bestNumber || (tagNumber == bestNumber && string(tag) > bestRef) {
+			bestRef = string(tag)
+			bestNumber = tagNumber
+		}
+		return nil
+	}
+	var pending []byte
+	leading := true
+	for scanner.Scan() {
+		tag := scanner.Bytes()
+		if leading {
+			tag = bytes.TrimLeftFunc(tag, unicode.IsSpace)
+		}
+		if len(bytes.TrimSpace(tag)) == 0 {
+			continue
+		}
+		leading = false
+		if err := consider(pending); err != nil {
+			return "", err
+		}
+		// Delay the last nonblank line to retain TrimSpace's original treatment
+		// of the entire output, including Unicode whitespace in valid Git refs.
+		pending = append(pending[:0], tag...)
+	}
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("read git tags: %w", err)
+	}
+	if err := consider(bytes.TrimRightFunc(pending, unicode.IsSpace)); err != nil {
+		return "", err
+	}
+	return bestRef, nil
 }
