@@ -375,6 +375,109 @@ func supportPathFromMember(member string) (string, error) {
 // Decode reads a canonical artifact archive and returns the parsed artifact plus
 // the raw archive bytes.
 func Decode(r io.Reader) (CanonicalArtifact, []byte, error) {
+	return decode(r, nil)
+}
+
+// canonicalLayoutEntries counts the archive entries the canonical layout writes
+// besides its files: the manifest and up to four directories.
+const canonicalLayoutEntries = 5
+
+// ErrArchiveLimitExceeded reports an archive refused while decoding because it
+// exceeds an archive limit.
+var ErrArchiveLimitExceeded = errors.New("archive limit exceeded")
+
+// decodeBudget enforces archive limits while an archive is decoded, so a
+// highly compressed archive is refused before its members are expanded.
+type decodeBudget struct {
+	limits    *ArchiveLimits
+	entries   int64
+	files     int64
+	assets    int64
+	support   int64
+	manifests int
+	bytes     int64
+}
+
+func (b *decodeBudget) entry() error {
+	if b == nil {
+		return nil
+	}
+	b.entries++
+	if max := b.limits.MaxTotalFiles; max > 0 && b.entries > max+canonicalLayoutEntries {
+		return fmt.Errorf("%w: too many archive entries: more than %d", ErrArchiveLimitExceeded, max+canonicalLayoutEntries)
+	}
+	return nil
+}
+
+// admit accounts for one regular member of the given layout kind before its
+// declared size is read.
+func (b *decodeBudget) admit(kind string, size int64) error {
+	if b == nil {
+		return nil
+	}
+	if size < 0 {
+		return fmt.Errorf("%w: negative member size", ErrArchiveLimitExceeded)
+	}
+	l := b.limits
+	limit := l.MaxAssetBytes
+	switch kind {
+	case CanonicalManifestPath:
+		if b.manifests++; b.manifests > 1 {
+			return fmt.Errorf("%w: duplicate manifest member", ErrArchiveLimitExceeded)
+		}
+		limit = safeTarReadCeiling
+	case CanonicalPayloadDir:
+		limit = l.MaxPayloadBytes
+		b.files++
+	case CanonicalAssetsDir:
+		if b.assets++; b.assets > l.MaxAssetFiles {
+			return fmt.Errorf("%w: too many asset files: more than %d", ErrArchiveLimitExceeded, l.MaxAssetFiles)
+		}
+		b.files++
+	case CanonicalLicensesDir:
+		b.files++
+	case CanonicalSupportDir:
+		if b.support++; b.support > l.MaxAssetFiles {
+			return fmt.Errorf("%w: too many support files: more than %d", ErrArchiveLimitExceeded, l.MaxAssetFiles)
+		}
+		b.files++
+	default:
+		limit = -1
+	}
+	if l.MaxTotalFiles > 0 && b.files > l.MaxTotalFiles {
+		return fmt.Errorf("%w: total files exceed max %d", ErrArchiveLimitExceeded, l.MaxTotalFiles)
+	}
+	if limit >= 0 && size > limit {
+		return fmt.Errorf("%w: %s member exceeds max bytes %d", ErrArchiveLimitExceeded, kind, limit)
+	}
+	if l.MaxTotalBytes > 0 && size > l.MaxTotalBytes-b.bytes {
+		return fmt.Errorf("%w: total archive size exceeds max %d", ErrArchiveLimitExceeded, l.MaxTotalBytes)
+	}
+	b.bytes += size
+	return nil
+}
+
+// archiveMemberKind names the canonical layout location of a regular member:
+// the manifest path, a layout directory, or "" for a member the decoder ignores.
+func archiveMemberKind(name string) string {
+	if name == CanonicalManifestPath {
+		return name
+	}
+	switch dir := path.Dir(name); dir {
+	case CanonicalPayloadDir, CanonicalAssetsDir, CanonicalLicensesDir, CanonicalSupportDir:
+		return dir
+	}
+	return ""
+}
+
+// decodeWithinLimits decodes raw while enforcing limits on entries, files and
+// decoded bytes, before any member beyond them is expanded.
+func decodeWithinLimits(raw []byte, limits *ArchiveLimits) (CanonicalArtifact, error) {
+	a, _, err := decode(bytes.NewReader(raw), &decodeBudget{limits: limits})
+	return a, err
+}
+
+func decode(r io.Reader, budget *decodeBudget) (CanonicalArtifact, []byte, error) {
 	var raw bytes.Buffer
 	tr, err := gzipToTar(io.TeeReader(r, &raw))
 	if err != nil {
@@ -390,6 +493,9 @@ func Decode(r io.Reader) (CanonicalArtifact, []byte, error) {
 		if err != nil {
 			return CanonicalArtifact{}, nil, fmt.Errorf("tar next: %w", err)
 		}
+		if err := budget.entry(); err != nil {
+			return CanonicalArtifact{}, nil, err
+		}
 
 		name, err := validateTarHeaderPath(hdr.Name)
 		if err != nil {
@@ -398,6 +504,9 @@ func Decode(r io.Reader) (CanonicalArtifact, []byte, error) {
 
 		switch hdr.Typeflag {
 		case tar.TypeReg:
+			if err := budget.admit(archiveMemberKind(name), hdr.Size); err != nil {
+				return CanonicalArtifact{}, nil, err
+			}
 			data, err := safeTarRead(tr, hdr.Size)
 			if err != nil {
 				return CanonicalArtifact{}, nil, fmt.Errorf("read tar body for %s: %w", hdr.Name, err)
@@ -469,13 +578,15 @@ func validateTarHeaderPath(p string) (string, error) {
 // safeTarRead reads a regular file body, capping the read to a generous ceiling
 // so a malformed archive cannot exhaust memory. Callers validate sizes later.
 func safeTarRead(r io.Reader, declared int64) ([]byte, error) {
-	const ceiling = 64 * 1024 * 1024 // 64 MiB safety ceiling
 	limit := declared
-	if limit <= 0 || limit > ceiling {
-		limit = ceiling
+	if limit <= 0 || limit > safeTarReadCeiling {
+		limit = safeTarReadCeiling
 	}
 	return io.ReadAll(io.LimitReader(r, limit+1))
 }
+
+// safeTarReadCeiling caps one member read when no archive limits apply.
+const safeTarReadCeiling = 64 * 1024 * 1024
 
 func gzipToTar(r io.Reader) (*tar.Reader, error) {
 	gr, err := gzip.NewReader(r)
@@ -547,7 +658,7 @@ func VerifyPlaceholderArchive(raw []byte, digest string) (CanonicalArtifact, err
 	if got := ArchiveDigest(raw); got != digest {
 		return CanonicalArtifact{}, fmt.Errorf("placeholder archive digest mismatch: got %s, want %s", got, digest)
 	}
-	a, _, err := Decode(bytes.NewReader(raw))
+	a, err := decodeWithinLimits(raw, DefaultArchiveLimits())
 	if err != nil {
 		return CanonicalArtifact{}, err
 	}
@@ -570,7 +681,7 @@ func VerifyPlaceholderArchive(raw []byte, digest string) (CanonicalArtifact, err
 // accepted when they decode to the same content and carry the same archive
 // digest; their compression is deliberately not reproduced.
 func VerifyFinalAgainstPlaceholder(final []byte, placeholder CanonicalArtifact) (CanonicalArtifact, error) {
-	a, _, err := Decode(bytes.NewReader(final))
+	a, err := decodeWithinLimits(final, DefaultArchiveLimits())
 	if err != nil {
 		return CanonicalArtifact{}, err
 	}
@@ -609,7 +720,7 @@ func VerifyArchiveBytes(raw []byte, digest string) (CanonicalArtifact, error) {
 	if ArchiveDigest(raw) == digest {
 		return VerifyPlaceholderArchive(raw, digest)
 	}
-	a, rawArchive, err := Decode(bytes.NewReader(raw))
+	a, rawArchive, err := decode(bytes.NewReader(raw), &decodeBudget{limits: DefaultArchiveLimits()})
 	if err != nil {
 		return CanonicalArtifact{}, err
 	}
@@ -639,7 +750,7 @@ func VerifyArchiveBytes(raw []byte, digest string) (CanonicalArtifact, error) {
 // DecodeContentArchive decodes an archive and verifies its fields, limits, and
 // content digest without binding it to any archive digest or re-encoding it.
 func DecodeContentArchive(raw []byte) (CanonicalArtifact, error) {
-	a, _, err := Decode(bytes.NewReader(raw))
+	a, err := decodeWithinLimits(raw, DefaultArchiveLimits())
 	if err != nil {
 		return CanonicalArtifact{}, err
 	}

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Archive verification enforces the archive limits while decoding
+
+`VerifyArchiveBytes`, `VerifyPlaceholderArchive`, `VerifyFinalAgainstPlaceholder` and `DecodeContentArchive` checked `DefaultArchiveLimits` only after the whole archive was decoded, so a small, highly compressed archive could expand into many 64 MiB members first (R61, F172). They now check each member's declared size, the asset, support and total file counts, the total decoded bytes (with an overflow-safe comparison) and the entry count while decoding, count the manifest and members outside the layout directories toward the total, refuse a repeated manifest, and stop at the first member over a limit. Such refusals wrap the new exported sentinel `ErrArchiveLimitExceeded`. No limit changes value, archives within the limits verify as before, and the unchecked `Decode` is unchanged.
+
 ### `materialize.collision.shared-path` warning
 
 The catalog adds the consumer-side warning `materialize.collision.shared-path`. Agent Marketplace reports it when resources of different kinds with the same installed name share one native path on a target, such as a skill and a converted command skill on Devin or Codex, including names that differ only in letter case, and only the winner by selection precedence is installed there (#759). It also reports a resource whose name differs only in letter case from a required resource of the same kind: the required resource is installed instead of both being refused (#781). Library compilation and its existing `bundle.conflict.cross-kind-artifact-path` refusal are unchanged.
