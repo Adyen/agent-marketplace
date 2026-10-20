@@ -94,6 +94,7 @@ func TestOrganizationScopedHintsDirectUsersToTheirAdministrator(t *testing.T) {
 		"lock.stale",
 		"lock.snapshot-unavailable",
 		"organization.trust.lock.read",
+		"organization.trust.include.missing",
 		"v4.api-version-required",
 		"v4.marketplace-lock-mismatch",
 		"v4.source-name",

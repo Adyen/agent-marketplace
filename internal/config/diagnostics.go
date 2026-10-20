@@ -243,9 +243,18 @@ func isPathWithin(root, candidate string) bool {
 func validateOrganizationNode(path, configPath, kind string) error {
 	info, err := os.Lstat(path)
 	if err != nil {
-		code := "organization.trust." + kind + ".inspect"
+		inspectCode, missingCode := "", ""
+		switch kind {
+		case "config":
+			inspectCode, missingCode = "organization.trust.config.inspect", "organization.trust.config.missing"
+		case "include":
+			inspectCode, missingCode = "organization.trust.include.inspect", "organization.trust.include.missing"
+		case "lock":
+			inspectCode, missingCode = "organization.trust.lock.inspect", "organization.trust.lock.missing"
+		}
+		code := inspectCode
 		if errors.Is(err, fs.ErrNotExist) {
-			code = "organization.trust." + kind + ".missing"
+			code = missingCode
 		}
 		return organizationTrustError(code, path, err)
 	}

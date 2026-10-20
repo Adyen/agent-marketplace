@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/remedy"
 )
 
@@ -160,6 +161,40 @@ func TestCommandErrorsPrintActionableHints(t *testing.T) {
 		}
 		if stdout.Len() != 0 {
 			t.Fatalf("error hint leaked to stdout: %q", stdout.String())
+		}
+	})
+
+	t.Run("coded wrappers keep their catalog hints and messages", func(t *testing.T) {
+		_, lockErr := lockfile.Decode([]byte("malformed: ["))
+		if lockErr == nil {
+			t.Fatal("lockfile.Decode succeeded")
+		}
+		orgErr := config.ValidateOrganizationConfigAuthority(filepath.Join(t.TempDir(), "config.yaml"))
+		var trustErr *config.OrganizationTrustError
+		if !errors.As(orgErr, &trustErr) {
+			t.Fatalf("organization error = %v, want OrganizationTrustError", orgErr)
+		}
+		cases := []struct {
+			name, hint string
+			err        error
+		}{
+			{
+				name: "lockfile error", err: lockErr,
+				hint: "hint: Restore valid YAML in the acquisition lock, then run `agent-marketplace sync --check`",
+			},
+			{
+				name: "organization trust error", err: orgErr,
+				hint: "hint: Ask your administrator to restore the missing organization configuration",
+			},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				rendered := terminalSafeCommandError(tc.err, "sync")
+				if !errors.Is(rendered, tc.err) || !strings.Contains(rendered.Error(), tc.err.Error()) ||
+					!strings.Contains(rendered.Error(), tc.hint) {
+					t.Fatalf("rendered error = %q, want original message and %q", rendered, tc.hint)
+				}
+			})
 		}
 	})
 

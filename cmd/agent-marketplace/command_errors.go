@@ -89,6 +89,14 @@ func commandErrorGroups(err error) []commandErrorGroup {
 		outer, inner := err.Error(), child.Error()
 		if prefix, ok := strings.CutSuffix(outer, inner); ok && len(groups) > 0 && len(groups[0].lines) > 0 {
 			groups[0].lines[0] = prefix + groups[0].lines[0]
+			if remediable, ok := err.(interface{ Remediation() string }); ok && strings.TrimSpace(remediable.Remediation()) != "" {
+				groups[0].err = err
+			} else if coded, ok := err.(interface{ DiagnosticCode() string }); ok && coded.DiagnosticCode() != "" {
+				innerCoded, innerOK := groups[0].err.(interface{ DiagnosticCode() string })
+				if !innerOK || innerCoded.DiagnosticCode() == "" {
+					groups[0].err = err
+				}
+			}
 			return groups
 		}
 	}
