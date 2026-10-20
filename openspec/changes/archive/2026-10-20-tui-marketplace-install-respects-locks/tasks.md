@@ -9,4 +9,4 @@
 ## 3. Documentation and archive
 
 - [x] 3.1 Describe the journeys in `tools/tui-qa/README.md`; verify `make spec-check` passes
-- [ ] 3.2 Run `openspec archive tui-marketplace-install-respects-locks --yes`
+- [x] 3.2 Run `openspec archive tui-marketplace-install-respects-locks --yes`
