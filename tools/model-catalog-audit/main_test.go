@@ -111,6 +111,16 @@ func TestSummaryPreservesFailureAndEscapesEvidence(t *testing.T) {
 	if strings.Contains(out.String(), "<script>") || !strings.Contains(out.String(), "FAIL") || !strings.Contains(out.String(), "catalog.model-missing") {
 		t.Fatalf("unsafe or incomplete summary: %s", out.String())
 	}
+	// The summary must not overstate its scope: it covers monitored sources
+	// only, and unmonitored evidence is checked offline for exact listing.
+	for _, clause := range []string{
+		"This report covers the monitored sources only: their documentation changes, inventory differences against the catalogs, and sources whose evidence is unknown.",
+		"except the commit-pinned revisions and repository documents they check only for exact listing",
+	} {
+		if !strings.Contains(out.String(), clause) {
+			t.Fatalf("summary lacks the scope clause %q:\n%s", clause, out.String())
+		}
+	}
 	for _, body := range []string{"", "{}", "{\"schema\":1}", "not-json"} {
 		if run([]string{"summary"}, strings.NewReader(body), io.Discard, nil, time.Now()) == nil {
 			t.Fatalf("accepted incomplete summary input %q", body)
