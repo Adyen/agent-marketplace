@@ -6,4 +6,4 @@
 - [x] Prove the bounds with negative mutations; run Marketplace API, store and E2E consumers.
 - [x] Verify scoped tests, lint, build and strict specs.
 - [x] Adversarially review every changed entry.
-- [ ] `openspec archive bound-archive-delivery-reads --yes`
+- [x] `openspec archive bound-archive-delivery-reads --yes`
