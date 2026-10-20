@@ -159,7 +159,7 @@ func (s *Store) withTx(ctx context.Context, fn func(*Store) error) error {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	txStore := &Store{path: s.path, db: s.db, q: cachedTx{Tx: tx, cache: s.stmts}, tx: tx, stmts: s.stmts}
+	txStore := &Store{path: s.path, db: s.db, q: newCachedTx(tx, s.stmts), tx: tx, stmts: s.stmts}
 	if err := fn(txStore); err != nil {
 		return err
 	}

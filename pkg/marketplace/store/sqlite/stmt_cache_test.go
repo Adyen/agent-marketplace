@@ -126,3 +126,76 @@ func TestStatementCacheRunsQueriesUnpreparedPastItsBound(t *testing.T) {
 		t.Fatalf("cache holds %d statements, want the bound %d", size, maxCachedStatements)
 	}
 }
+
+func TestRequestShapedQueriesDoNotFillTheStatementCache(t *testing.T) {
+	ctx := context.Background()
+	s := openStmtCacheStore(t)
+	if _, err := s.SearchResourceRevisions(ctx, store.ResourceSearchFilter{Marketplace: "mp", Registries: []string{"r0"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.catalogCoordinatesVisible(ctx, []store.ResourceCoordinate{{Marketplace: "mp", Registry: "r", Kind: "skill", Name: "n0"}}); err != nil {
+		t.Fatal(err)
+	}
+	prepared := s.stmts.size()
+	var registries []string
+	var coordinates []store.ResourceCoordinate
+	for i := range 300 {
+		registries = append(registries, fmt.Sprintf("r%d", i))
+		coordinates = append(coordinates, store.ResourceCoordinate{Marketplace: "mp", Registry: "r", Kind: "skill", Name: fmt.Sprintf("n%d", i)})
+		if _, err := s.SearchResourceRevisions(ctx, store.ResourceSearchFilter{Marketplace: "mp", Registries: registries}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.catalogCoordinatesVisible(ctx, coordinates); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := s.stmts.size(); got != prepared {
+		t.Fatalf("request-shaped searches and catalog checks grew the cache from %d to %d statements", prepared, got)
+	}
+}
+
+func TestClosedStatementCacheNeitherServesNorCaches(t *testing.T) {
+	ctx := context.Background()
+	s := openStmtCacheStore(t)
+	if stmt := s.stmts.prepare(ctx, "SELECT 1"); stmt == nil {
+		t.Fatal("open cache did not prepare")
+	}
+	if err := s.stmts.close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.stmts.close(); err != nil {
+		t.Fatalf("second close: %v", err)
+	}
+	if s.stmts.cached("SELECT 1") != nil || s.stmts.prepare(ctx, "SELECT 2") != nil || s.stmts.size() != 0 {
+		t.Fatalf("closed cache served or cached a statement; size %d", s.stmts.size())
+	}
+}
+
+func TestTransactionBindsOneStatementPerQuery(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	s := openStmtCacheStore(t)
+	if err := s.PutRegistry(ctx, stmtCacheRegistry("bound")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetRegistry(ctx, "bound"); err != nil {
+		t.Fatal(err)
+	}
+	err := s.withTx(ctx, func(tx *Store) error {
+		for range 5 {
+			if _, err := tx.GetRegistry(ctx, "bound"); err != nil {
+				return err
+			}
+		}
+		bound := tx.q.(cachedTx).bound
+		bound.mu.Lock()
+		defer bound.mu.Unlock()
+		if len(bound.stmts) != 1 {
+			return fmt.Errorf("transaction bound %d statements for one repeated query", len(bound.stmts))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

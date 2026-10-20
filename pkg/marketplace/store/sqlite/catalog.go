@@ -396,7 +396,8 @@ func (s *Store) catalogCoordinatesVisible(ctx context.Context, coordinates []sto
 			conditions = append(conditions, "(rr.marketplace_id=? AND rr.registry_id=? AND rr.kind=? AND rr.name=?)")
 			args = append(args, coordinate.Marketplace, coordinate.Registry, coordinate.Kind, coordinate.Name)
 		}
-		rows, err := s.q.QueryContext(ctx, `SELECT DISTINCT rr.marketplace_id, rr.registry_id, rr.kind, rr.name FROM resource_revisions rr
+		// One condition per coordinate makes the text request-shaped.
+		rows, err := s.uncached().QueryContext(ctx, `SELECT DISTINCT rr.marketplace_id, rr.registry_id, rr.kind, rr.name FROM resource_revisions rr
 			JOIN registries r ON r.id=rr.registry_id AND r.listed=1
 			JOIN current_resource_occurrences ro ON ro.marketplace_id=rr.marketplace_id AND ro.registry_id=rr.registry_id
 			  AND ro.kind=rr.kind AND ro.name=rr.name AND ro.content_digest=rr.content_digest
