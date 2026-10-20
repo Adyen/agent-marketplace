@@ -50,6 +50,11 @@ func runGC(ctx context.Context, out io.Writer, dryRun bool) error {
 	if printErr := print(report.Marketplace.Removed, "marketplace artifact directories"); printErr != nil {
 		return printErr
 	}
+	if len(report.Packages) > 0 {
+		if printErr := print(report.Packages, "package generations"); printErr != nil {
+			return printErr
+		}
+	}
 
 	return err
 }

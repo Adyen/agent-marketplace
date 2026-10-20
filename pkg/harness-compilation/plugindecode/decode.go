@@ -23,6 +23,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/bundle"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
@@ -33,8 +34,10 @@ import (
 // Read limits. JSON configuration reads (manifest, MCP, hooks files) are
 // bounded at maxJSONBytes; contained-file digests at maxPluginFileBytes.
 const (
-	maxJSONBytes       = 1 << 20
-	maxPluginFileBytes = 32 << 20
+	maxJSONBytes = 1 << 20
+	// MaxPackageFileBytes bounds individual files in a plugin package.
+	MaxPackageFileBytes = 32 << 20
+	maxPluginFileBytes  = MaxPackageFileBytes
 )
 
 // Bundled Agent Plugins 1.0.0 schemas, fetched once at authoring time and
@@ -237,6 +240,12 @@ func (d *decoder) containedFiles() ([]ir.PluginFile, error) {
 			return walkErr
 		}
 		if p == "." {
+			return nil
+		}
+		if bundle.IsSkillSupportMetadataName(path.Base(p)) {
+			if entry.IsDir() {
+				return fs.SkipDir
+			}
 			return nil
 		}
 		folded := strings.ToLower(p)

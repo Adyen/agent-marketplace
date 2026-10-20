@@ -70,6 +70,10 @@ type Entry struct {
 	// never add tuples while reading, and a tuple only ever matches its
 	// exact pair.
 	SourceEvidence []HookSourceEvidence `json:"source_evidence,omitempty"`
+	// PluginGenerations records the package generations that contributed to
+	// this owned aggregate entry. It carries identities only, never payloads
+	// or package contents.
+	PluginGenerations []PluginGenerationRef `json:"plugin_generations,omitempty"`
 }
 
 // HookSourceEvidence is one additional contributing source for an owned
@@ -250,6 +254,23 @@ func validateEntry(e Entry) error {
 		if !digestPattern.MatchString(ev.SourceDigest) {
 			return fmt.Errorf("%w: source evidence digest is not a sha256 digest", ErrUnsafeStateValue)
 		}
+	}
+	seenPluginGenerations := make(map[string]string, len(e.PluginGenerations))
+	for _, ref := range e.PluginGenerations {
+		if !pluginDigestToken.MatchString(ref.InstanceKey) ||
+			!pluginDigestToken.MatchString(ref.GenerationKey) ||
+			!safeToken.MatchString(ref.Name) ||
+			!safeToken.MatchString(ref.Target) ||
+			!safeToken.MatchString(ref.Scope) {
+			return fmt.Errorf("%w: plugin generation reference", ErrUnsafeStateValue)
+		}
+		if generation, exists := seenPluginGenerations[ref.InstanceKey]; exists {
+			if generation != ref.GenerationKey {
+				return fmt.Errorf("%w: plugin instance names multiple generations", ErrUnsafeStateValue)
+			}
+			return fmt.Errorf("%w: duplicate plugin generation reference", ErrUnsafeStateValue)
+		}
+		seenPluginGenerations[ref.InstanceKey] = ref.GenerationKey
 	}
 	return nil
 }
