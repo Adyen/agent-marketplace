@@ -106,6 +106,51 @@ h1 {
   text-wrap: pretty;
 }
 
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes arrive {
+    from {
+      opacity: 0;
+      transform: translateY(var(--arrive-y, 9px));
+    }
+
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  :is(h1, .lede, .install, .actions, .preview, .preview-caption) {
+    animation: arrive var(--lp-motion-arrive) var(--lp-ease) backwards;
+    animation-delay: calc(var(--lp-motion-stagger) * var(--arrive-step, 0));
+  }
+
+  h1 {
+    --arrive-y: 3px;
+  }
+
+  .lede {
+    --arrive-step: 1;
+  }
+
+  .install {
+    --arrive-step: 2;
+    --arrive-y: 12px;
+  }
+
+  .actions {
+    --arrive-step: 3;
+    --arrive-y: 12px;
+  }
+
+  .preview {
+    --arrive-step: 2;
+  }
+
+  .preview-caption {
+    --arrive-step: 3;
+  }
+}
+
 @media (max-width: 959px) {
   .grid {
     grid-template-columns: 1fr;

@@ -9,6 +9,7 @@ import {
   targets,
   type Status
 } from '../data/harnesses'
+import LandingTabList from '../components/LandingTabList.vue'
 import SectionShell from '../components/SectionShell.vue'
 
 const KINDS = kinds.map((kind) => kind.id)
@@ -44,7 +45,6 @@ const supportingArtifacts = computed(() =>
 <template>
   <SectionShell
     id="harnesses"
-    density="compact"
     eyebrow="Native output"
     title="Same resources. Different native layouts"
   >
@@ -53,21 +53,20 @@ const supportingArtifacts = computed(() =>
       handles those differences for you.
     </template>
 
-    <div class="tablist" role="tablist">
-      <button
-        v-for="target in targets"
-        :key="target.id"
-        class="tab"
-        :class="{ 'is-on': target.id === active }"
-        role="tab"
-        :aria-selected="target.id === active"
-        @click="active = target.id"
-      >
-        {{ target.label }}
-      </button>
-    </div>
+    <LandingTabList
+      v-model="active"
+      class="native-tabs"
+      id-prefix="native-output"
+      label="Harness target"
+      :tabs="targets"
+    />
 
-    <div class="pane">
+    <div
+      :id="`native-output-panel-${active}`"
+      class="pane"
+      role="tabpanel"
+      :aria-labelledby="`native-output-tab-${active}`"
+    >
       <div
         v-for="row in rows"
         :key="row.kindId"
@@ -86,7 +85,7 @@ const supportingArtifacts = computed(() =>
         <button
           v-if="metaFor(row.status).badge"
           type="button"
-          class="status-tag"
+          class="status-tag am-outline-chip am-hit-target"
           :aria-label="metaFor(row.status).badge"
           :aria-describedby="`output-note-${row.kindId}`"
         >
@@ -104,7 +103,7 @@ const supportingArtifacts = computed(() =>
     </div>
 
     <p class="configuration-note">
-      <svg aria-hidden="true" viewBox="0 0 24 24">
+      <svg class="am-stroke-icon" aria-hidden="true" viewBox="0 0 24 24">
         <path d="M12 3 20 6v5c0 5-3.4 8.5-8 10-4.6-1.5-8-5-8-10V6z" />
       </svg>
       <span>
@@ -116,229 +115,186 @@ const supportingArtifacts = computed(() =>
 </template>
 
 <style scoped>
-.tablist {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-bottom: 14px;
-}
-
-.tab {
-  padding: 8px 14px;
-  border-radius: var(--am-radius-sm);
-  border: 1px solid var(--am-border);
-  background-color: var(--am-surface);
-  color: var(--vp-c-text-2);
-  font-size: var(--am-text-body-sm);
-  cursor: pointer;
-}
-
-.tab:hover {
-  color: var(--vp-c-text-1);
-  border-color: var(--am-border-strong);
-  background: var(--am-surface-raised);
-}
-
-.tab.is-on {
-  background-color: var(--vp-c-brand-1);
-  border-color: var(--vp-c-brand-1);
-  color: var(--am-on-accent);
-  font-weight: var(--am-font-semibold);
-}
-
-.pane {
-  overflow-x: auto;
-  padding: 10px 18px 14px;
-  border: 1px solid var(--am-code-border);
-  border-radius: var(--am-radius-lg);
-  background: var(--am-code-bg);
-  color: var(--am-code-text);
-  font-family: var(--vp-font-family-mono), monospace;
+.native-tabs {
+  margin-bottom: var(--lp-space-default);
 }
 
 .row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  height: 43px;
-  border-bottom: 1px solid var(--am-code-border);
-  font-size: var(--am-text-body-sm);
+  display: grid;
+  grid-template-columns: 6rem var(--lp-inset) var(--lp-inset) minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: var(--lp-space-related);
+  padding: var(--lp-space-related) 0;
+  border-top: 1px solid var(--lp-divider);
+}
+
+.pane-footer {
+  border-top: 1px solid var(--lp-divider);
+}
+
+.row:last-child,
+.pane-footer:last-child {
+  border-bottom: 1px solid var(--lp-divider);
 }
 
 .kind {
-  width: 88px;
-  flex: none;
-  font-weight: var(--am-font-semibold);
-  line-height: 1;
+  color: var(--lp-text-2);
+  font: var(--lp-font-label);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
 }
 
-.kind,
-.arrow,
-.pane-footer {
-  color: var(--am-code-muted);
-}
-
-.kind,
-.pane-footer {
-  font-size: var(--am-text-supporting);
-}
-
-.status-mark {
-  flex: 0 0 14px;
-  color: var(--vp-c-brand-1);
-  font-size: var(--am-text-body-sm);
-  font-weight: var(--am-font-bold);
+.arrow {
+  color: var(--lp-text-muted);
+  font: var(--lp-font-label);
   text-align: center;
 }
 
-.status-mark.is-none {
-  color: var(--vp-c-text-3);
-  font-weight: normal;
+.status-mark {
+  display: grid;
+  width: var(--lp-inset);
+  height: var(--lp-inset);
+  align-self: center;
+  place-items: center;
+  border-radius: var(--lp-radius-mark);
+  background: var(--lp-green);
+  color: var(--lp-on-green);
+  font: var(--lp-font-symbol);
 }
 
-.row code {
-  flex: 1;
+.status-mark.is-none {
+  background: none;
+  box-shadow: var(--lp-outline-shadow);
+  color: var(--lp-text-2);
+}
+
+.row code,
+.pane-footer code {
   min-width: 0;
-  overflow: hidden;
-  font-size: var(--am-text-supporting);
-  text-overflow: ellipsis;
+  padding-block: 0.25rem;
+  margin-block: -0.25rem;
+  overflow-x: auto;
+  color: var(--lp-text);
+  font: var(--lp-font-label);
+  scrollbar-color: var(--lp-outline) transparent;
+  scrollbar-width: thin;
   white-space: nowrap;
 }
 
-.row.is-drop code {
-  color: var(--am-code-muted);
-  font-style: italic;
+.row.is-drop :is(.kind, code) {
+  color: var(--lp-text-2);
 }
 
 .status-tag {
   position: relative;
-  flex: none;
-  padding: 3px 6px;
-  border: 1px solid var(--am-code-border);
-  border-radius: 4px;
-  background: var(--am-code-bg-raised);
-  color: var(--am-code-muted);
-  font-family: inherit;
-  font-size: var(--am-text-supporting);
-  line-height: 1.2;
+  justify-self: end;
+  border: 0;
+  background: none;
   cursor: help;
+  transition: color var(--lp-motion-feedback) var(--lp-ease);
 }
 
-.status-tag:is(:hover, :focus) {
-  border-color: var(--am-border-strong);
-  color: var(--am-code-text);
-}
-
-.status-tag:focus-visible {
-  outline: 2px solid var(--vp-c-brand-1);
-  outline-offset: 2px;
+.status-tag:is(:hover, :focus-visible) {
+  color: var(--lp-text);
 }
 
 .status-tooltip {
   position: absolute;
   z-index: 5;
   right: 0;
-  bottom: calc(100% + 8px);
-  display: none;
+  bottom: calc(100% + var(--lp-space-tight));
   width: max-content;
-  max-width: min(240px, 70vw);
-  padding: 8px 10px;
-  border: 1px solid var(--am-terminal-border);
-  border-radius: var(--am-radius-sm);
-  background: var(--am-terminal-bg-raised);
-  color: var(--am-terminal-text);
-  font-family: var(--vp-font-family-base), sans-serif;
-  font-size: var(--am-text-supporting);
-  line-height: 1.4;
+  max-width: min(15rem, 70vw);
+  padding: var(--lp-space-related);
+  border-radius: var(--lp-radius-control);
+  background: var(--lp-fill-solid);
+  color: var(--lp-text);
+  font: var(--lp-font-caption);
   text-align: left;
+  text-transform: none;
+  text-wrap: pretty;
   white-space: normal;
+  opacity: 0;
   pointer-events: none;
+  visibility: hidden;
+  transition:
+    opacity var(--lp-motion-feedback) var(--lp-ease),
+    visibility var(--lp-motion-feedback);
 }
 
-.status-tag:is(:hover, :focus) .status-tooltip {
-  display: block;
+.status-tag:is(:hover, :focus-visible) .status-tooltip {
+  opacity: 1;
+  visibility: visible;
 }
 
 .pane-footer {
   display: flex;
-  min-height: 38px;
-  align-items: center;
   flex-wrap: wrap;
-  gap: 6px 9px;
-  padding-top: 8px;
+  align-items: center;
+  gap: var(--lp-space-related);
+  padding: var(--lp-space-related) 0;
+  font: var(--lp-font-label);
 }
 
-.pane-footer code {
-  color: var(--am-code-text);
+.pane-footer > span {
+  color: var(--lp-text-2);
+  text-transform: uppercase;
 }
 
 .configuration-note {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  margin: 18px 0 0;
-  color: var(--vp-c-text-2);
-  font-size: var(--am-text-supporting);
-  line-height: 1.55;
+  gap: var(--lp-space-tight);
+  margin: var(--lp-space-default) 0 0;
+  color: var(--lp-text-2);
+  font: var(--lp-font-caption);
 }
 
 .configuration-note svg {
-  width: 15px;
-  height: 15px;
-  flex: 0 0 auto;
-  margin-top: 2px;
-  fill: none;
-  stroke: var(--vp-c-brand-1);
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.7;
 }
 
 .configuration-note a {
-  color: var(--vp-c-brand-1);
-  font-weight: var(--am-font-semibold);
-  text-decoration: none;
-}
-
-.configuration-note a:hover {
-  color: var(--vp-c-brand-2);
+  color: var(--lp-text);
   text-decoration: underline;
+  text-decoration-skip-ink: none;
+  text-decoration-thickness: 1px;
   text-underline-offset: 3px;
 }
 
-.configuration-note a:focus-visible {
-  border-radius: 2px;
-  outline: 2px solid var(--vp-c-brand-1);
-  outline-offset: 3px;
-}
-
 .product-name {
-  display: inline-block;
-  padding: 2px 6px;
-  border: 1px solid var(--am-accent-border);
-  border-radius: var(--am-radius-sm);
-  background: var(--am-accent-soft);
-  color: var(--vp-c-text-1);
-  font-family: var(--vp-font-family-mono), monospace;
-  font-size: 0.9em;
-  line-height: 1.2;
+  white-space: nowrap;
 }
 
-@media (max-width: 680px) {
-  .tab {
-    padding-inline: 10px;
-    font-size: var(--am-text-supporting);
+@media (max-width: 959px) {
+  .row {
+    grid-template-columns: 4.5rem var(--lp-inset) var(--lp-inset) minmax(0, 1fr);
+    row-gap: var(--lp-space-tight);
   }
 
+  .status-tag {
+    grid-column: 4;
+    justify-self: start;
+  }
+
+}
+
+@media (max-width: 639px) {
   .row {
-    gap: 8px;
+    grid-template-columns: var(--lp-inset) var(--lp-inset) minmax(0, 1fr);
   }
 
   .kind {
-    width: 74px;
+    grid-column: 1 / -1;
+  }
+
+  .status-tag {
+    grid-column: 3;
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .status-tag,
+  .status-tooltip {
+    transition: none;
+  }
+}
 </style>

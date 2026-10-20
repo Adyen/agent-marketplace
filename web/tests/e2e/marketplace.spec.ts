@@ -493,6 +493,35 @@ test.describe('Marketplace browser discovery', () => {
     }
   })
 
+  // spec: marketplace-web-ui/reduced-motion-preserves-final-landing-content-and-controls
+  // spec: marketplace-web-ui/successful-command-copy-is-visible-and-announced
+  test('keeps Landing feedback functional with and without motion', async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { writeText: async () => undefined },
+      })
+    })
+    await page.goto(publicSiteURL)
+
+    const copy = page.getByRole('button', { name: 'Copy command' }).first()
+    await copy.click()
+    await expect(copy).toContainText('Copied')
+    await expect(page.getByRole('status').first()).toHaveText('Command copied')
+
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.reload()
+    await expect(page.locator('.hero h1')).toHaveCSS('animation-name', 'none')
+    await expect(page.locator('.eyebrow-text .noise')).toHaveCount(0)
+
+    const tabs = page.getByRole('tablist', { name: 'Harness target' })
+    const selected = tabs.getByRole('tab', { selected: true })
+    const selectedText = await selected.textContent() ?? ''
+    await selected.focus()
+    await selected.press('ArrowRight')
+    await expect(tabs.getByRole('tab', { selected: true })).not.toHaveText(selectedText)
+  })
+
   test('applies the Marketplace palette in both themes', async ({ page }) => {
     const themes = {
       light: {

@@ -24,7 +24,6 @@ const state = ref<State>('idle')
 let reset: ReturnType<typeof setTimeout> | undefined
 let unmounted = false
 
-const labels: Record<State, string> = { idle: 'Copy', copied: 'Copied', failed: '⌘C' }
 const announcement = computed(
   () => ({ idle: '', copied: 'Command copied', failed: 'Copy failed' })[state.value],
 )
@@ -62,10 +61,14 @@ onUnmounted(() => {
       class="copy am-hit-target"
       type="button"
       :class="{ 'is-done': state === 'copied' }"
+      :data-roll-active="state === 'copied'"
       aria-label="Copy command"
       @click="copy(command)"
     >
-      {{ labels[state] }}
+      <span class="am-roll-label copy__label">
+        <span class="am-roll-face copy__face">{{ state === 'failed' ? '⌘C' : 'Copy' }}</span>
+        <span class="am-roll-face am-roll-face-copy copy__face" aria-hidden="true">Copied</span>
+      </span>
     </button>
     <span class="visually-hidden" role="status">{{ announcement }}</span>
   </div>
@@ -149,6 +152,17 @@ code {
 .copy.is-done {
   background: var(--lp-green);
   color: var(--lp-on-green);
+}
+
+/* Both labels share one grid cell so the control reserves the wider one. */
+.copy__label {
+  height: 100%;
+  margin-inline: -0.125rem;
+  padding-inline: 0.125rem;
+}
+
+.copy__face {
+  justify-content: center;
 }
 
 @media (prefers-reduced-motion: reduce) {
