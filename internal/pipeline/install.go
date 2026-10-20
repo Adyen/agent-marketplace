@@ -518,12 +518,23 @@ func planNamedInstalls(args []string, catalogs map[string]catalog.LoadedCatalog,
 		if name == "" {
 			return nil, nil, fmt.Errorf("resource name must not be empty")
 		}
+		requestKind, requestHasKind := kind, hasKind
+		if strings.HasPrefix(name, "plugin/") {
+			if hasKind && kind != ir.KindPlugin {
+				return nil, nil, fmt.Errorf("plugin locator %q cannot be combined with --kind %s", name, skill.KindLabel(kind))
+			}
+			requestKind, requestHasKind = ir.KindPlugin, true
+			name = strings.TrimPrefix(name, "plugin/")
+			if strings.TrimSpace(name) == "" {
+				return nil, nil, fmt.Errorf("plugin locator must include a name")
+			}
+		}
 		if seen[name] {
 			continue
 		}
 		seen[name] = true
 		// Detect collection install unless the caller has fixed another kind.
-		if col := collection.Find(collections, name); col != nil && (!hasKind || kind == ir.KindCollection) {
+		if col := collection.Find(collections, name); requestKind != ir.KindPlugin && col != nil && (!hasKind || kind == ir.KindCollection) {
 			members, err := collectionInstallResources(col.Name, expansion, cfg.Registries, scope)
 			if err != nil {
 				return nil, nil, err
@@ -557,10 +568,12 @@ func planNamedInstalls(args []string, catalogs map[string]catalog.LoadedCatalog,
 			warnings = append(warnings, members...)
 			continue
 		}
-		if malformedErr := malformedSkillInstallError(catalogs, name, malformedKindFilter(kind, hasKind)); malformedErr != nil {
-			return nil, nil, malformedErr
+		if requestKind != ir.KindPlugin {
+			if malformedErr := malformedSkillInstallError(catalogs, name, malformedKindFilter(kind, hasKind)); malformedErr != nil {
+				return nil, nil, malformedErr
+			}
 		}
-		match, err := findCatalogResource(catalogs, name, kind, hasKind)
+		match, err := findCatalogResource(catalogs, name, requestKind, requestHasKind)
 		if err != nil {
 			return nil, nil, err
 		}

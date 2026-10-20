@@ -3,6 +3,7 @@ package plugindecode_test
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"syscall"
@@ -230,6 +231,23 @@ func TestDecodeClaudePlugin(t *testing.T) {
 	}
 	if len(plugin.Files) == 0 {
 		t.Fatal("the contained file set must not be empty")
+	}
+}
+
+func TestDecodePluginRecordsDeclaredDependenciesInPackageIR(t *testing.T) {
+	plugin, _, err := decode(t, map[string]string{
+		".claude-plugin/plugin.json": `{"name":"review-kit","dependencies":["base-kit"]}`,
+		"skills/review/SKILL.md":     "---\nname: review\ndescription: d\n---\nbody\n",
+	}, "claude-plugin")
+	if err != nil {
+		t.Fatalf("dependency-declaring plugin must decode for inspection: %v", err)
+	}
+	dependencies := reflect.ValueOf(plugin).Elem().FieldByName("Dependencies")
+	if !dependencies.IsValid() {
+		t.Fatal("plugin IR does not record declared dependencies")
+	}
+	if got := dependencies.Interface(); !reflect.DeepEqual(got, []any{"base-kit"}) {
+		t.Fatalf("plugin dependencies = %#v, want []any{\"base-kit\"}", got)
 	}
 }
 
