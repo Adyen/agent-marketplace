@@ -168,6 +168,54 @@ func readTestFile(t *testing.T, path string) []byte {
 	return data
 }
 
+func installMarketplaceCollectionForTest(t *testing.T) (string, *httptest.Server, *atomic.Int32, string, string, []byte, []byte) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	server := newV4MarketplaceCollectionServer(t, "mp", "bundle", "review")
+	var downloads atomic.Int32
+	inner := server.Config.Handler
+	server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/artifacts/") {
+			downloads.Add(1)
+		}
+		inner.ServeHTTP(w, r)
+	})
+	configPath := filepath.Join(home, ".agents", "config.yaml")
+	lockPath := filepath.Join(home, ".agents", "lock.yaml")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	withWorkingDir(t, t.TempDir())
+	if output, err := executeCommand("install", server.URL+"/r/tools/collection/bundle", "--scope", "user", "--yes"); err != nil {
+		t.Fatalf("install Marketplace collection: %v\n%s", err, output)
+	}
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("sync Marketplace collection: %v\n%s", err, output)
+	}
+	downloads.Store(0)
+	return home, server, &downloads, configPath, lockPath, readTestFile(t, configPath), readTestFile(t, lockPath)
+}
+
+func assertMarketplaceReadOnly(t *testing.T, command string, downloads *atomic.Int32, configPath, lockPath string, configBefore, lockBefore []byte) {
+	t.Helper()
+	if n := downloads.Load(); n != 0 || !bytes.Equal(configBefore, readTestFile(t, configPath)) ||
+		!bytes.Equal(lockBefore, readTestFile(t, lockPath)) {
+		t.Errorf("%s downloaded artifacts or changed config/lock (downloads: %d)", command, n)
+	}
+}
+
+func assertMarketplaceStatusUnknown(t *testing.T, output string) {
+	t.Helper()
+	drift := statusSection(output, "DRIFT")
+	if !strings.Contains(drift, "Unknown") || !strings.Contains(drift, "Marketplace cache evidence") ||
+		!strings.Contains(drift, "agent-marketplace sync") || strings.Contains(drift, "In sync") || strings.Contains(drift, "file(s) to remove") ||
+		strings.Contains(drift, "file(s) to write") ||
+		strings.Contains(output, "ORPHANED FILES") {
+		t.Errorf("status did not report unknown Marketplace drift without orphan rows or file counts:\n%s", output)
+	}
+}
+
 // writeSkillRequiring writes a skill that declares a prerequisite, which is the
 // only way to make the resolver's requirement validation observable.
 func writeSkillRequiring(t *testing.T, root, name, description string, requires []string) {
@@ -188,6 +236,7 @@ func writeSkillRequiring(t *testing.T, root, name, description string, requires 
 
 // spec: status-reporting/synced-marketplace-selection-appears-in-synced-resources
 // spec: status-reporting/status-downloads-no-artifacts-and-writes-no-files
+// spec: status-reporting/status-counts-drift-when-marketplace-cache-evidence-is-complete
 func TestStatusIncludesSyncedMarketplaceSelection(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -241,6 +290,18 @@ func TestStatusIncludesSyncedMarketplaceSelection(t *testing.T) {
 	if checkOutput, checkErr := executeCommand("sync", "--check"); checkErr != nil {
 		t.Fatalf("sync --check disagreed with a clean status: %v\n%s", checkErr, checkOutput)
 	}
+
+	if err := os.Remove(filepath.Join(home, ".factory", "skills", "review", "SKILL.md")); err != nil {
+		t.Fatalf("remove materialized Marketplace output: %v", err)
+	}
+	output, err = executeCommand("status")
+	if err != nil {
+		t.Fatalf("status failed for cached Marketplace drift: %v\n%s", err, output)
+	}
+	drift := statusSection(output, "DRIFT")
+	if !strings.Contains(drift, "file(s) to write") || strings.Contains(drift, "Unknown") {
+		t.Fatalf("status did not report real drift with complete Marketplace cache evidence:\n%s", output)
+	}
 }
 
 // spec: status-reporting/organization-collection-members-are-not-orphaned-without-an-organization-lock
@@ -289,6 +350,37 @@ resources:
 	}
 }
 
+// spec: status-reporting/missing-marketplace-cache-reports-unknown-drift-without-orphan-rows
+// spec: status-reporting/never-acquired-marketplace-pin-reports-unknown-drift
+func TestStatusReportsUnknownDriftWhenMarketplaceCacheIsMissingOrNeverAcquired(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home, server, downloads, configPath, lockPath, configBefore, lockBefore := installMarketplaceCollectionForTest(t)
+	defer server.Close()
+	if err := os.RemoveAll(filepath.Join(cache.CacheDir(), "marketplace")); err != nil {
+		t.Fatalf("remove Marketplace cache: %v", err)
+	}
+	output, err := executeCommand("status")
+	if err != nil {
+		t.Errorf("status failed for a soft missing-cache pin: %v\n%s", err, output)
+	}
+	assertMarketplaceStatusUnknown(t, output)
+	if !strings.Contains(output, "src/collection/bundle") {
+		t.Errorf("status warning did not retain the Marketplace pin coordinate:\n%s", output)
+	}
+	if err := os.RemoveAll(filepath.Join(home, ".factory", "skills", "review")); err != nil {
+		t.Fatalf("remove materialized collection member: %v", err)
+	}
+
+	output, err = executeCommand("status")
+	if err != nil {
+		t.Errorf("status failed for a never-acquired Marketplace pin: %v\n%s", err, output)
+	}
+	assertMarketplaceStatusUnknown(t, output)
+	assertMarketplaceReadOnly(t, "status", downloads, configPath, lockPath, configBefore, lockBefore)
+}
+
 // spec: status-reporting/unsynced-marketplace-pin-reports-an-attributable-error-without-orphan-rows
 func TestStatusReportsUnresolvableMarketplacePinWithoutOrphanRows(t *testing.T) {
 	if isolateCommandTest(t) {
@@ -298,14 +390,18 @@ func TestStatusReportsUnresolvableMarketplacePinWithoutOrphanRows(t *testing.T) 
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
-	server, _ := newCountingV4MarketplaceServer(t, "mp", "review")
+	server, artifactDownloads := newCountingV4MarketplaceServer(t, "mp", "review")
 	defer server.Close()
-	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	configPath := filepath.Join(home, ".agents", "config.yaml")
+	lockPath := filepath.Join(home, ".agents", "lock.yaml")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 	withWorkingDir(t, t.TempDir())
 
 	if output, err := executeCommand("install", server.URL+"/r/tools/skill/review", "--scope", "user", "--yes"); err != nil {
 		t.Fatalf("install Marketplace resource: %v\n%s", err, output)
 	}
+	configBefore := readTestFile(t, configPath)
+	lockBefore := readTestFile(t, lockPath)
 
 	// Drop the verified artifact evidence the pin needs. The pin stays
 	// selected and its outputs stay on disk, which is exactly the state that
@@ -314,6 +410,7 @@ func TestStatusReportsUnresolvableMarketplacePinWithoutOrphanRows(t *testing.T) 
 	if err := os.RemoveAll(artifacts); err != nil {
 		t.Fatalf("remove cached Marketplace artifacts: %v", err)
 	}
+	artifactDownloads.Store(0)
 
 	output, err := executeCommand("status")
 	if err == nil {
@@ -329,6 +426,11 @@ func TestStatusReportsUnresolvableMarketplacePinWithoutOrphanRows(t *testing.T) 
 	if strings.Contains(output, "ORPHANED FILES") {
 		t.Fatalf("status orphaned the outputs of a pin it could not resolve:\n%s", output)
 	}
+	assertMarketplaceStatusUnknown(t, output)
+	if strings.Contains(statusSection(output, "DRIFT"), "exact registry view incomplete") {
+		t.Fatalf("status used generic unknown-drift wording:\n%s", output)
+	}
+	assertMarketplaceReadOnly(t, "status", artifactDownloads, configPath, lockPath, configBefore, lockBefore)
 }
 
 // spec: resource-prerequisites/doctor-treats-a-marketplace-selection-as-a-satisfied-prerequisite
