@@ -15,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
 
@@ -44,6 +45,13 @@ func newSearchCmd() *cobra.Command {
 }
 
 func runSearchContext(ctx context.Context, out io.Writer, errOut io.Writer, args []string, marketplaceFlag, kindFilter, output string, limit, offset int) error {
+	kind, hasKind, err := parseOptionalKind(kindFilter)
+	if err != nil {
+		return err
+	}
+	if hasKind && kind == ir.KindPlugin {
+		return errors.New("search does not support --kind plugin: hosted Marketplace endpoints do not index plugins")
+	}
 	query := strings.Join(args, " ")
 
 	ws, err := pipeline.DiscoverWorkspace()
@@ -60,10 +68,6 @@ func runSearchContext(ctx context.Context, out io.Writer, errOut io.Writer, args
 		return errors.Join(ec.Errors...)
 	}
 
-	kind, hasKind, err := parseOptionalKind(kindFilter)
-	if err != nil {
-		return err
-	}
 	apiKind := ""
 	if hasKind {
 		apiKind = mpapi.FromIR(kind)

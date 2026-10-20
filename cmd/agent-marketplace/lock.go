@@ -62,7 +62,8 @@ type lockMode struct {
 	// previewNoCommit prepares candidate state without publishing: no
 	// dependency transaction commit and no post-commit lock expectation
 	// reindex.
-	previewNoCommit bool
+	previewNoCommit  bool
+	lockMetadataSink *[]pipeline.LockMetadata
 
 	allowTransientOrganization bool
 }
@@ -556,11 +557,12 @@ func prepareExactLocks(ctx context.Context, repoRoot, localDir string, mode lock
 
 func reconcileCommandDependencies(ctx context.Context, repoRoot, localDir string, ignoreBlocked bool, edits []pipeline.StagedConfigEdit) (pipeline.DependencyLockView, error) {
 	var warnings []error
-	option, _, lease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{ignoreBlocked: ignoreBlocked, stagedConfigEdits: edits, warningSink: &warnings})
+	var lockMetadata []pipeline.LockMetadata
+	option, _, lease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{ignoreBlocked: ignoreBlocked, stagedConfigEdits: edits, warningSink: &warnings, lockMetadataSink: &lockMetadata})
 	if err != nil {
 		return pipeline.DependencyLockView{}, err
 	}
-	return pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, Warnings: warnings}, nil
+	return pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, LockMetadata: lockMetadata, Warnings: warnings}, nil
 }
 
 func reconcileCleanupDependencies(ctx context.Context, root string, edits []pipeline.StagedConfigEdit, reads []dependencytxn.ReadAssertion, scope dependencytxn.CommitScope) error {
@@ -1292,6 +1294,28 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}); err != nil {
 			return nil, changed, nil, err
 		}
+	}
+	if mode.lockMetadataSink != nil {
+		seen := make(map[string]bool)
+		var metadata []pipeline.LockMetadata
+		for _, job := range snapshots {
+			for _, registry := range job.doc.Registries {
+				key := job.source.String() + "\x00" + registry.URL + "\x00" + registry.Ref
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				metadata = append(metadata, pipeline.LockMetadata{
+					Source:            job.source,
+					Scope:             lockScopeForSource(job.source),
+					URL:               registry.URL,
+					Ref:               registry.Ref,
+					Commit:            registry.Commit.String(),
+					SnapshotAvailable: true,
+				})
+			}
+		}
+		*mode.lockMetadataSink = metadata
 	}
 	if !mode.check && !mode.previewNoCommit {
 		for _, layer := range ec.PresentLayers() {

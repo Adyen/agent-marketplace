@@ -178,6 +178,7 @@ func TestPublicCommandPathsHaveBehaviorTests(t *testing.T) {
 	witnesses := map[string]func(*testing.T){
 		"init":                  TestInitCreatesV4UserPersonalConfig,
 		"list":                  TestListCommandPrintsCatalogWithStatuses,
+		"inspect":               TestInspectPluginReportsPackageDetailsWithoutWriting,
 		"search":                TestSearchCommandJSONOutput,
 		"install":               TestInstallCommandAddsSkillToRepoConfigAndSyncsIt,
 		"remove":                TestInstallThenRemove_RepoScope,

@@ -13,11 +13,12 @@ import (
 )
 
 type PluginGenerationRef struct {
-	InstanceKey   string `json:"instance_key"`
-	Name          string `json:"name"`
-	Target        string `json:"target"`
-	Scope         string `json:"scope"`
-	GenerationKey string `json:"generation_key"`
+	InstanceKey    string `json:"instance_key"`
+	Name           string `json:"name"`
+	Target         string `json:"target"`
+	Scope          string `json:"scope"`
+	GenerationKey  string `json:"generation_key"`
+	SourceRevision string `json:"source_revision,omitempty"`
 }
 
 type PluginState struct {
@@ -45,6 +46,7 @@ type PluginMemberRef struct {
 }
 
 var pluginDigestToken = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var pluginSourceRevisionToken = regexp.MustCompile(`^(sha1:[0-9a-f]{40}|sha256:[0-9a-f]{64})$`)
 var pluginMarkerFieldToken = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,127}$`)
 
 func PluginStatePath(instanceKey string) (string, error) {
@@ -112,6 +114,7 @@ func validatePluginState(state *PluginState) error {
 		!pluginDigestToken.MatchString(instance.GenerationKey) ||
 		!safeToken.MatchString(instance.Name) ||
 		!safeToken.MatchString(instance.Target) ||
+		instance.SourceRevision != "" && !pluginSourceRevisionToken.MatchString(instance.SourceRevision) ||
 		!validScope {
 		return fmt.Errorf("ownership: invalid plugin generation reference")
 	}
