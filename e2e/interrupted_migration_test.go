@@ -2,7 +2,10 @@ package e2e_test
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -188,6 +191,29 @@ type nativeHookMigrationFileSnapshot struct {
 	data     []byte
 	mode     os.FileMode
 	modified int64
+	absent   bool
+	link     string
+}
+
+// snapshotNativeHookMigrationEntry records a transaction participant that may
+// be a regular file, a link, or already removed.
+func snapshotNativeHookMigrationEntry(t *testing.T, path string) nativeHookMigrationFileSnapshot {
+	t.Helper()
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nativeHookMigrationFileSnapshot{absent: true}
+	}
+	if err != nil {
+		t.Fatalf("lstat %s: %v", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		link, err := os.Readlink(path)
+		if err != nil {
+			t.Fatalf("read link %s: %v", path, err)
+		}
+		return nativeHookMigrationFileSnapshot{mode: info.Mode(), modified: info.ModTime().UnixNano(), link: link}
+	}
+	return snapshotNativeHookMigrationFile(t, path)
 }
 
 func snapshotNativeHookMigrationFile(t *testing.T, path string) nativeHookMigrationFileSnapshot {
@@ -208,18 +234,20 @@ func snapshotNativeHookMigrationFile(t *testing.T, path string) nativeHookMigrat
 
 func assertNativeHookMigrationFileUnchanged(t *testing.T, phase, path string, before nativeHookMigrationFileSnapshot) {
 	t.Helper()
-	if !sameNativeHookMigrationFileSnapshot(snapshotNativeHookMigrationFile(t, path), before) {
+	if !sameNativeHookMigrationFileSnapshot(snapshotNativeHookMigrationEntry(t, path), before) {
 		t.Fatalf("%s changed %s", phase, path)
 	}
 }
 
+// canonicalNativeHookMigrationPath resolves a participant's parent, so a link
+// participant names the link itself and a removed one still resolves.
 func canonicalNativeHookMigrationPath(t *testing.T, path string) string {
 	t.Helper()
-	resolved, err := filepath.EvalSymlinks(path)
+	parent, err := filepath.EvalSymlinks(filepath.Dir(path))
 	if err != nil || !filepath.IsAbs(path) {
 		t.Fatalf("resolve absolute transaction participant %s: %v", path, err)
 	}
-	return filepath.Clean(resolved)
+	return filepath.Join(parent, filepath.Base(path))
 }
 
 func nativeHookMigrationSourceDigest(t *testing.T, data []byte) string {
@@ -317,8 +345,8 @@ func assertNativeHookMigrationJournalParticipants(t *testing.T, journalPath stri
 	if err := json.Unmarshal(snapshot.data, &journal); err != nil {
 		t.Fatalf("decode dependency transaction journal: %v", err)
 	}
-	if len(journal.Files) != 3 {
-		t.Fatalf("dependency transaction participants = %d, want exactly 3", len(journal.Files))
+	if len(journal.Files) != len(participants) {
+		t.Fatalf("dependency transaction participants = %d, want exactly %d", len(journal.Files), len(participants))
 	}
 	want := make(map[string]bool, len(participants))
 	for _, path := range participants {
@@ -333,7 +361,7 @@ func assertNativeHookMigrationJournalParticipants(t *testing.T, journalPath stri
 		got[path] = true
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("dependency transaction participant paths = %v, want native/state/legacy %v", got, want)
+		t.Fatalf("dependency transaction participant paths = %v, want %v", got, want)
 	}
 	return snapshot
 }
@@ -347,132 +375,316 @@ func nativeHookMigrationJournals(t *testing.T, stateDir string) []string {
 	return paths
 }
 
+type nativeHookMigrationBackup struct {
+	file, priorDigest string
+	priorSize         int64
+	priorAbsent       bool
+	data              []byte
+}
+
+// nativeHookMigrationBackups reads every retained safety backup under the
+// state root, requiring private files and directories and a manifest beside
+// each backup.
+func nativeHookMigrationBackups(t *testing.T, stateRoot string) []nativeHookMigrationBackup {
+	t.Helper()
+	var backups []nativeHookMigrationBackup
+	root := filepath.Join(stateRoot, "safety-backups")
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if info.Mode().Perm() != 0o700 {
+				t.Fatalf("safety backup directory %s mode = %v, want 0700", path, info.Mode().Perm())
+			}
+			return nil
+		}
+		if info.Mode().Perm() != 0o600 || !info.Mode().IsRegular() {
+			t.Fatalf("safety backup file %s mode = %v, want a private 0600 regular file", path, info.Mode())
+		}
+		if !strings.HasSuffix(path, ".meta.json") {
+			return nil
+		}
+		var manifest struct {
+			File        string `json:"file"`
+			PriorDigest string `json:"prior_digest"`
+			PriorAbsent bool   `json:"prior_absent"`
+			PriorSize   int64  `json:"prior_size"`
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(raw, &manifest); err != nil {
+			return err
+		}
+		data, err := os.ReadFile(strings.TrimSuffix(path, ".meta.json") + ".bak")
+		if err != nil {
+			return err
+		}
+		backups = append(backups, nativeHookMigrationBackup{file: manifest.File, priorDigest: manifest.PriorDigest, priorSize: manifest.PriorSize, priorAbsent: manifest.PriorAbsent, data: data})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("read safety backups: %v", err)
+	}
+	return backups
+}
+
+// assertNativeHookMigrationBackup requires a retained backup of rel holding
+// exactly want, with a manifest digest and size computed here independently.
+func assertNativeHookMigrationBackup(t *testing.T, backups []nativeHookMigrationBackup, rel string, want []byte) {
+	t.Helper()
+	sum := sha256.Sum256(want)
+	for _, backup := range backups {
+		if backup.file == rel && bytes.Equal(backup.data, want) && !backup.priorAbsent &&
+			backup.priorDigest == "sha256:"+hex.EncodeToString(sum[:]) && backup.priorSize == int64(len(want)) {
+			return
+		}
+	}
+	t.Fatalf("no faithful safety backup of %s among %d retained backups", rel, len(backups))
+}
+
+// assertNoNativeHookTransactionResidue requires that no dependency journal,
+// staged publication, or staged journal survives under roots.
+func assertNoNativeHookTransactionResidue(t *testing.T, phase string, roots ...string) {
+	t.Helper()
+	for _, root := range roots {
+		if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				if os.IsNotExist(err) {
+					return nil
+				}
+				return err
+			}
+			if strings.HasPrefix(entry.Name(), ".dependencytxn-") {
+				t.Errorf("%s left transaction residue: %s", phase, path)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// Every crash window of the journaled Factory Native/Legacy/ownership
+// migration, with and without a cache-linked Legacy support script whose
+// removal joins the transaction: read-only commands refuse pending work
+// without changing a participant, the journal, or the retained backups, while
+// a finalized transaction is never reported as pending. Backups taken before
+// publication hold the exact prior bytes privately. The next sync, including
+// after a second crash during recovery, completes the admitted write set,
+// converges forward, keeps handwritten Legacy files and the cache referent,
+// and leaves no transaction residue.
 // spec: hook-resources/owned-factory-entries-move-to-the-native-file
 func TestInterruptedNativeHookMigrationRecoversOnNextMutation(t *testing.T) {
-	for _, fault := range []string{"after-publish:0", "after-publish:1"} {
-		t.Run(fault, func(t *testing.T) {
-			env := newEnv(t)
-			env.InitGitRepo()
-			env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {}\nresources: {}")
-			nativeV1 := `{"PreToolUse":[{"matcher":"Execute","hooks":[{"type":"command","command":"echo native-v1"}]}]}` + "\n"
-			nativeV2 := `{"PreToolUse":[{"matcher":"Execute","hooks":[{"type":"command","command":"echo native-v2"}]}]}` + "\n"
-			env.WriteFile("/workspace/vendor/registry/hooks/hooks.json", nativeV1)
-			env.WriteRepoConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {hooks: {directory: ./vendor/registry, source_harness: factory}}\nresources: {hooks: {include: [hook/PreToolUse-command]}}")
-			configPath := filepath.Join(env.workspace, ".agents", "config.yaml")
-			configBefore := snapshotNativeHookMigrationFile(t, configPath)
+	type window struct {
+		name, fault, recoveryFault string
+		published                  int
+		finalized                  bool
+	}
+	windows := func(participants int) []window {
+		return []window{
+			{name: "journal-before-publication", fault: "after-journal:-1", published: 0},
+			{name: "first-publication", fault: "after-publish:0", published: 1},
+			{name: "second-publication", fault: "after-publish:1", published: 2},
+			{name: "all-published-with-journal", fault: fmt.Sprintf("after-publish:%d", participants-1), published: participants},
+			{name: "finalized-before-exit", fault: "after-finalize:-1", published: participants, finalized: true},
+			{name: "interrupted-recovery", fault: "after-publish:0", published: 1, recoveryFault: "before-publish:1"},
+		}
+	}
+	for _, supportLink := range []bool{false, true} {
+		participantCount, variant := 3, "aggregates"
+		if supportLink {
+			participantCount, variant = 4, "support-link"
+		}
+		for _, tc := range windows(participantCount) {
+			t.Run(variant+"/"+tc.name, func(t *testing.T) {
+				t.Parallel()
+				env := newEnv(t)
+				env.InitGitRepo()
+				env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {}\nresources: {}")
+				nativeV1 := `{"PreToolUse":[{"matcher":"Execute","hooks":[{"type":"command","command":"echo native-v1"}]}]}` + "\n"
+				nativeV2 := `{"PreToolUse":[{"matcher":"Execute","hooks":[{"type":"command","command":"echo native-v2"}]}]}` + "\n"
+				env.WriteFile("/workspace/vendor/registry/hooks/hooks.json", nativeV1)
+				env.WriteRepoConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {hooks: {directory: ./vendor/registry, source_harness: factory}}\nresources: {hooks: {include: [hook/PreToolUse-command]}}")
+				configPath := filepath.Join(env.workspace, ".agents", "config.yaml")
+				configBefore := snapshotNativeHookMigrationFile(t, configPath)
 
-			env.MustRunAM("sync")
-			nativePath := filepath.Join(env.workspace, ".factory", "hooks.json")
-			legacyPath := filepath.Join(env.workspace, ".factory", "hooks", "hooks.json")
-			nativeBefore := assertNativeHookMigrationFactoryFile(t, nativePath, "echo native-v1")
-			if nativeBefore.mode.Perm() != 0o600 {
-				t.Fatalf("new Native hooks mode = %v, want private 0600", nativeBefore.mode.Perm())
-			}
-			if _, err := os.Lstat(legacyPath); !os.IsNotExist(err) {
-				t.Fatalf("initial sync created a Legacy hooks file: %v", err)
-			}
-			stateRoot := filepath.Join(env.home, ".local", "state", "agent-marketplace")
-			stateFiles, err := filepath.Glob(filepath.Join(stateRoot, "ownership", "*", "state.json"))
-			if err != nil || len(stateFiles) != 1 {
-				t.Fatalf("ownership state files = %v / %v, want one fixture record", stateFiles, err)
-			}
-			statePath := stateFiles[0]
-			stateBefore := snapshotNativeHookMigrationFile(t, statePath)
-			initialDigest := nativeHookMigrationSourceDigest(t, stateBefore.data)
-
-			const rootComment = "// preserve legacy root comment"
-			const manualGroup = `{ "matcher" : "Manual", "hooks" : [{"type":"command","command":"echo handwritten"}] }`
-			markedGroup := `{"_managed_by":"agent-marketplace","matcher":"Execute","hooks":[{"type":"command","command":"echo legacy-owned"}]}`
-			legacySeed := "{\n  " + rootComment + "\n  \"unrelated\" : { \"keep\" : \"legacy-setting\" },\n  \"PreToolUse\" : [\n    " + markedGroup + ",\n    " + manualGroup + "\n  ]\n}\n"
-			env.WriteFile("/workspace/.factory/hooks/hooks.json", legacySeed)
-			if err := os.Chmod(legacyPath, 0o640); err != nil {
-				t.Fatal(err)
-			}
-			legacyBefore := snapshotNativeHookMigrationFile(t, legacyPath)
-			env.WriteFile("/workspace/vendor/registry/hooks/hooks.json", nativeV2)
-
-			participants := []string{nativePath, statePath, legacyPath}
-			before := map[string]nativeHookMigrationFileSnapshot{
-				nativePath: nativeBefore,
-				statePath:  stateBefore,
-				legacyPath: legacyBefore,
-			}
-			crash := env.RunAMWithEnv(map[string]string{"AGENT_MARKETPLACE_E2E_CRASH_AT": fault}, "sync")
-			if crash.ExitCode != 137 {
-				t.Fatalf("injected sync crash at %s exited %d:\n%s", fault, crash.ExitCode, crash.Combined)
-			}
-
-			journals := nativeHookMigrationJournals(t, stateRoot)
-			if len(journals) != 1 {
-				t.Fatalf("interrupted dependency journals = %v, want exactly one", journals)
-			}
-			journalPath := journals[0]
-			journalBefore := assertNativeHookMigrationJournalParticipants(t, journalPath, participants)
-			interrupted := map[string]nativeHookMigrationFileSnapshot{
-				nativePath:  snapshotNativeHookMigrationFile(t, nativePath),
-				statePath:   snapshotNativeHookMigrationFile(t, statePath),
-				legacyPath:  snapshotNativeHookMigrationFile(t, legacyPath),
-				journalPath: journalBefore,
-				configPath:  configBefore,
-			}
-			changed := 0
-			for _, path := range participants {
-				if !sameNativeHookMigrationFileSnapshot(before[path], interrupted[path]) {
-					changed++
+				env.MustRunAM("sync")
+				nativePath := filepath.Join(env.workspace, ".factory", "hooks.json")
+				legacyPath := filepath.Join(env.workspace, ".factory", "hooks", "hooks.json")
+				nativeBefore := assertNativeHookMigrationFactoryFile(t, nativePath, "echo native-v1")
+				if nativeBefore.mode.Perm() != 0o600 {
+					t.Fatalf("new Native hooks mode = %v, want private 0600", nativeBefore.mode.Perm())
 				}
-			}
-			if changed < 1 || changed > 2 {
-				t.Fatalf("crash changed %d of the 3 transaction participants, want a proper non-empty subset", changed)
-			}
-
-			for _, args := range [][]string{{"sync", "--check"}, {"status"}} {
-				result := env.RunAM(args...)
-				if result.ExitCode == 0 || !strings.Contains(result.Combined, "dependency.recovery-required") {
-					t.Fatalf("read-only %v did not refuse the interrupted transaction (exit %d):\n%s", args, result.ExitCode, result.Combined)
+				if _, err := os.Lstat(legacyPath); !os.IsNotExist(err) {
+					t.Fatalf("initial sync created a Legacy hooks file: %v", err)
 				}
-				for path, want := range interrupted {
-					assertNativeHookMigrationFileUnchanged(t, strings.Join(args, " "), path, want)
+				stateRoot := filepath.Join(env.home, ".local", "state", "agent-marketplace")
+				stateFiles, err := filepath.Glob(filepath.Join(stateRoot, "ownership", "*", "state.json"))
+				if err != nil || len(stateFiles) != 1 {
+					t.Fatalf("ownership state files = %v / %v, want one fixture record", stateFiles, err)
 				}
-			}
+				statePath := stateFiles[0]
+				stateBefore := snapshotNativeHookMigrationFile(t, statePath)
+				initialDigest := nativeHookMigrationSourceDigest(t, stateBefore.data)
 
-			env.MustRunAM("sync")
-			if remaining := nativeHookMigrationJournals(t, stateRoot); len(remaining) != 0 {
-				t.Fatalf("recovery left dependency journals: %v", remaining)
-			}
-			nativeAfter := assertNativeHookMigrationFactoryFile(t, nativePath, "echo native-v2")
-			if nativeAfter.mode.Perm() != nativeBefore.mode.Perm() || strings.Contains(string(nativeAfter.data), "echo native-v1") || strings.Contains(string(nativeAfter.data), "echo legacy-owned") {
-				t.Fatalf("recovered Native hooks mode/content invalid: mode=%v content=%s", nativeAfter.mode.Perm(), nativeAfter.data)
-			}
-			legacyAfter := assertNativeHookMigrationLegacyManual(t, legacyPath, manualGroup, rootComment)
-			stateAfter := snapshotNativeHookMigrationFile(t, statePath)
-			nextDigest := nativeHookMigrationSourceDigest(t, stateAfter.data)
-			if nextDigest == "" || nextDigest == initialDigest {
-				t.Fatal("recovered source digest did not track the updated physical definition")
-			}
-			check := env.RunAM("sync", "--check")
-			if check.ExitCode != 0 {
-				t.Fatalf("sync --check after recovery exited %d:\n%s", check.ExitCode, check.Combined)
-			}
-			recovered := map[string]nativeHookMigrationFileSnapshot{
-				nativePath: nativeAfter,
-				statePath:  stateAfter,
-				legacyPath: legacyAfter,
-				configPath: configBefore,
-			}
-			for path, want := range recovered {
-				assertNativeHookMigrationFileUnchanged(t, "post-recovery sync --check", path, want)
-			}
-			env.MustRunAM("sync")
-			for path, want := range recovered {
-				assertNativeHookMigrationFileUnchanged(t, "repeat sync", path, want)
-			}
-			if remaining := nativeHookMigrationJournals(t, stateRoot); len(remaining) != 0 {
-				t.Fatalf("repeat sync left dependency journals: %v", remaining)
-			}
-		})
+				const rootComment = "// preserve legacy root comment"
+				const manualGroup = `{ "matcher" : "Manual", "hooks" : [{"type":"command","command":"echo handwritten"}] }`
+				markedGroup := `{"_managed_by":"agent-marketplace","matcher":"Execute","hooks":[{"type":"command","command":"echo legacy-owned"}]}`
+				legacySeed := "{\n  " + rootComment + "\n  \"unrelated\" : { \"keep\" : \"legacy-setting\" },\n  \"PreToolUse\" : [\n    " + markedGroup + ",\n    " + manualGroup + "\n  ]\n}\n"
+				env.WriteFile("/workspace/.factory/hooks/hooks.json", legacySeed)
+				if err := os.Chmod(legacyPath, 0o640); err != nil {
+					t.Fatal(err)
+				}
+				legacyBefore := snapshotNativeHookMigrationFile(t, legacyPath)
+				env.WriteFile("/workspace/.factory/hooks/handwritten.sh", "#!/bin/sh\necho handwritten-support\n")
+				handwrittenPath := filepath.Join(env.workspace, ".factory", "hooks", "handwritten.sh")
+				handwrittenBefore := snapshotNativeHookMigrationFile(t, handwrittenPath)
+				env.WriteFile("/workspace/vendor/registry/hooks/hooks.json", nativeV2)
+
+				participants := []string{nativePath, statePath, legacyPath}
+				before := map[string]nativeHookMigrationFileSnapshot{
+					nativePath: nativeBefore,
+					statePath:  stateBefore,
+					legacyPath: legacyBefore,
+				}
+				referentPath := filepath.Join(env.home, ".cache", "agent-marketplace", "legacy-hook-support", "guard.sh")
+				supportPath := filepath.Join(env.workspace, ".factory", "hooks", "scripts", "guard.sh")
+				var referentBefore nativeHookMigrationFileSnapshot
+				if supportLink {
+					env.WriteFile("/root/.cache/agent-marketplace/legacy-hook-support/guard.sh", "#!/bin/sh\necho legacy-support\n")
+					referentBefore = snapshotNativeHookMigrationFile(t, referentPath)
+					if err := os.MkdirAll(filepath.Dir(supportPath), 0o755); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Symlink(referentPath, supportPath); err != nil {
+						t.Fatal(err)
+					}
+					participants = append(participants, supportPath)
+					before[supportPath] = snapshotNativeHookMigrationEntry(t, supportPath)
+				}
+				residueRoots := []string{filepath.Join(env.workspace, ".factory"), stateRoot}
+				crash := env.RunAMWithEnv(map[string]string{"AGENT_MARKETPLACE_E2E_CRASH_AT": tc.fault}, "sync")
+				if crash.ExitCode != 137 {
+					t.Fatalf("injected sync crash at %s exited %d:\n%s", tc.fault, crash.ExitCode, crash.Combined)
+				}
+				backups := nativeHookMigrationBackups(t, stateRoot)
+				assertNativeHookMigrationBackup(t, backups, "hooks.json", nativeBefore.data)
+				assertNativeHookMigrationBackup(t, backups, "hooks/hooks.json", legacyBefore.data)
+
+				interrupted := map[string]nativeHookMigrationFileSnapshot{configPath: configBefore, handwrittenPath: handwrittenBefore}
+				for _, path := range participants {
+					interrupted[path] = snapshotNativeHookMigrationEntry(t, path)
+				}
+				journals := nativeHookMigrationJournals(t, stateRoot)
+				if tc.finalized {
+					if len(journals) != 0 {
+						t.Fatalf("finalized transaction left dependency journals: %v", journals)
+					}
+				} else {
+					if len(journals) != 1 {
+						t.Fatalf("interrupted dependency journals = %v, want exactly one", journals)
+					}
+					interrupted[journals[0]] = assertNativeHookMigrationJournalParticipants(t, journals[0], participants)
+				}
+				published := func() int {
+					t.Helper()
+					changed := 0
+					for _, path := range participants {
+						if !sameNativeHookMigrationFileSnapshot(before[path], snapshotNativeHookMigrationEntry(t, path)) {
+							changed++
+						}
+					}
+					return changed
+				}
+				if got := published(); got != tc.published {
+					t.Fatalf("crash at %s published %d of the %d transaction participants, want %d", tc.fault, got, len(participants), tc.published)
+				}
+
+				assertReadOnly := func(phase string, pending bool) {
+					t.Helper()
+					backupsBefore := nativeHookMigrationBackups(t, stateRoot)
+					for _, args := range [][]string{{"sync", "--check"}, {"status"}} {
+						result := env.RunAM(args...)
+						refused := strings.Contains(result.Combined, "dependency.recovery-required")
+						if pending && (result.ExitCode == 0 || !refused) || !pending && refused {
+							t.Fatalf("%s: read-only %v exit %d, recovery-required %t, want pending %t:\n%s", phase, args, result.ExitCode, refused, pending, result.Combined)
+						}
+						for path, want := range interrupted {
+							assertNativeHookMigrationFileUnchanged(t, phase+" "+strings.Join(args, " "), path, want)
+						}
+						if !reflect.DeepEqual(nativeHookMigrationBackups(t, stateRoot), backupsBefore) {
+							t.Fatalf("%s: read-only %v changed the retained safety backups", phase, args)
+						}
+					}
+				}
+				assertReadOnly("after crash", !tc.finalized)
+				if tc.recoveryFault != "" {
+					crash = env.RunAMWithEnv(map[string]string{"AGENT_MARKETPLACE_E2E_CRASH_AT": tc.recoveryFault}, "sync")
+					if crash.ExitCode != 137 {
+						t.Fatalf("injected recovery crash at %s exited %d:\n%s", tc.recoveryFault, crash.ExitCode, crash.Combined)
+					}
+					if got := nativeHookMigrationJournals(t, stateRoot); len(got) != 1 || got[0] != journals[0] {
+						t.Fatalf("interrupted recovery journals = %v, want the original %v", got, journals)
+					}
+					if got := published(); got != tc.published {
+						t.Fatalf("recovery crash before entry 1 published %d participants, want still %d", got, tc.published)
+					}
+					for _, path := range participants {
+						interrupted[path] = snapshotNativeHookMigrationEntry(t, path)
+					}
+					assertReadOnly("after interrupted recovery", true)
+				}
+
+				env.MustRunAM("sync")
+				if remaining := nativeHookMigrationJournals(t, stateRoot); len(remaining) != 0 {
+					t.Fatalf("recovery left dependency journals: %v", remaining)
+				}
+				assertNoNativeHookTransactionResidue(t, "recovery", residueRoots...)
+				nativeAfter := assertNativeHookMigrationFactoryFile(t, nativePath, "echo native-v2")
+				if nativeAfter.mode.Perm() != nativeBefore.mode.Perm() || strings.Contains(string(nativeAfter.data), "echo native-v1") || strings.Contains(string(nativeAfter.data), "echo legacy-owned") {
+					t.Fatalf("recovered Native hooks mode/content invalid: mode=%v content=%s", nativeAfter.mode.Perm(), nativeAfter.data)
+				}
+				legacyAfter := assertNativeHookMigrationLegacyManual(t, legacyPath, manualGroup, rootComment)
+				stateAfter := snapshotNativeHookMigrationFile(t, statePath)
+				nextDigest := nativeHookMigrationSourceDigest(t, stateAfter.data)
+				if nextDigest == "" || nextDigest == initialDigest {
+					t.Fatal("recovered source digest did not track the updated physical definition")
+				}
+				check := env.RunAM("sync", "--check")
+				if check.ExitCode != 0 {
+					t.Fatalf("sync --check after recovery exited %d:\n%s", check.ExitCode, check.Combined)
+				}
+				recovered := map[string]nativeHookMigrationFileSnapshot{
+					nativePath:      nativeAfter,
+					statePath:       stateAfter,
+					legacyPath:      legacyAfter,
+					configPath:      configBefore,
+					handwrittenPath: handwrittenBefore,
+				}
+				if supportLink {
+					recovered[supportPath] = nativeHookMigrationFileSnapshot{absent: true}
+					recovered[referentPath] = referentBefore
+				}
+				for path, want := range recovered {
+					assertNativeHookMigrationFileUnchanged(t, "post-recovery sync --check", path, want)
+				}
+				env.MustRunAM("sync")
+				for path, want := range recovered {
+					assertNativeHookMigrationFileUnchanged(t, "repeat sync", path, want)
+				}
+				assertNoNativeHookTransactionResidue(t, "repeat sync", residueRoots...)
+			})
+		}
 	}
 }
 
 func sameNativeHookMigrationFileSnapshot(a, b nativeHookMigrationFileSnapshot) bool {
-	return bytes.Equal(a.data, b.data) && a.mode == b.mode && a.modified == b.modified
+	return bytes.Equal(a.data, b.data) && a.mode == b.mode && a.modified == b.modified && a.absent == b.absent && a.link == b.link
 }
