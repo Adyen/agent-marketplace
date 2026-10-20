@@ -90,23 +90,45 @@ func TestHookInvariantDevinCLIAndDesktopFilesStaySeparate(t *testing.T) {
 				}
 			}
 
+			// assertDesktopHandlers requires the Desktop file's hooks member
+			// to hold exactly want, in order, under pre_run_command and no
+			// handler under any other event.
+			assertDesktopHandlers := func(phase string, want []string) {
+				t.Helper()
+				data, err := os.ReadFile(filepath.Join(e.workspace, filepath.FromSlash(desktopFile)))
+				if os.IsNotExist(err) && len(want) == 0 {
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				var desktopDocument struct {
+					Hooks map[string][]struct {
+						Command string `json:"command"`
+					} `json:"hooks"`
+				}
+				if err := json.Unmarshal(data, &desktopDocument); err != nil {
+					t.Fatalf("%s: decode %s: %v", phase, desktopFile, err)
+				}
+				var ordered []string
+				others := 0
+				for event, handlers := range desktopDocument.Hooks {
+					for _, handler := range handlers {
+						if event == "pre_run_command" {
+							ordered = append(ordered, handler.Command)
+						} else {
+							others++
+						}
+					}
+				}
+				if others != 0 || !slices.Equal(ordered, want) {
+					t.Fatalf("%s: %s pre_run_command handlers = %q (%d under other events), want %q", phase, desktopFile, ordered, others, want)
+				}
+			}
+
 			e.MustRunAM("sync")
 			assertCommands("sync", cliFile, []string{cli, managed})
-			var desktopDocument struct {
-				Hooks map[string][]struct {
-					Command string `json:"command"`
-				} `json:"hooks"`
-			}
-			if err := json.Unmarshal([]byte(e.ReadFile("/workspace/"+desktopFile)), &desktopDocument); err != nil {
-				t.Fatal(err)
-			}
-			var ordered []string
-			for _, handler := range desktopDocument.Hooks["pre_run_command"] {
-				ordered = append(ordered, handler.Command)
-			}
-			if len(desktopDocument.Hooks) != 1 || !slices.Equal(ordered, tc.wantDesktop) {
-				t.Fatalf("sync: %s pre_run_command handlers = %q (events %d), want %q", desktopFile, ordered, len(desktopDocument.Hooks), tc.wantDesktop)
-			}
+			assertDesktopHandlers("sync", tc.wantDesktop)
 			if content, ok := tc.seed[fallbackRel]; ok {
 				e.AssertFileContains("/workspace/"+fallbackRel, fallback)
 				if got := e.ReadFile("/workspace/" + fallbackRel); got != content {
@@ -133,7 +155,7 @@ func TestHookInvariantDevinCLIAndDesktopFilesStaySeparate(t *testing.T) {
 				t.Fatalf("deselecting Windsurf changed %s", cliFile)
 			}
 			wantDesktopHandwritten := tc.wantDesktop[:len(tc.wantDesktop)-1]
-			assertCommands("windsurf deselection", desktopFile, wantDesktopHandwritten)
+			assertDesktopHandlers("windsurf deselection", wantDesktopHandwritten)
 			desktopAfter := fingerprint(desktopFile)
 
 			// Deselecting the hook removes only Devin CLI's owned entry.

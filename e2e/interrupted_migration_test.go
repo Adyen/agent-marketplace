@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -334,12 +335,16 @@ func assertNativeHookMigrationLegacyManual(t *testing.T, path, manualGroup, root
 	return snapshot
 }
 
-func assertNativeHookMigrationJournalParticipants(t *testing.T, journalPath string, participants []string) nativeHookMigrationFileSnapshot {
+// assertNativeHookMigrationJournalParticipants checks that the journal names
+// exactly the given participants and returns its snapshot and the staged
+// temporary paths it records.
+func assertNativeHookMigrationJournalParticipants(t *testing.T, journalPath string, participants []string) (nativeHookMigrationFileSnapshot, []string) {
 	t.Helper()
 	snapshot := snapshotNativeHookMigrationFile(t, journalPath)
 	var journal struct {
 		Files []struct {
 			Path string `json:"path"`
+			Temp string `json:"temp"`
 		} `json:"files"`
 	}
 	if err := json.Unmarshal(snapshot.data, &journal); err != nil {
@@ -353,17 +358,21 @@ func assertNativeHookMigrationJournalParticipants(t *testing.T, journalPath stri
 		want[canonicalNativeHookMigrationPath(t, path)] = true
 	}
 	got := make(map[string]bool, len(journal.Files))
+	var temps []string
 	for _, file := range journal.Files {
 		path := canonicalNativeHookMigrationPath(t, file.Path)
 		if got[path] {
 			t.Fatalf("duplicate dependency transaction participant %s", path)
 		}
 		got[path] = true
+		if file.Temp != "" {
+			temps = append(temps, file.Temp)
+		}
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("dependency transaction participant paths = %v, want %v", got, want)
 	}
-	return snapshot
+	return snapshot, temps
 }
 
 func nativeHookMigrationJournals(t *testing.T, stateDir string) []string {
@@ -482,20 +491,27 @@ func assertNoNativeHookTransactionResidue(t *testing.T, phase string, roots ...s
 // and leaves no transaction residue.
 // spec: hook-resources/owned-factory-entries-move-to-the-native-file
 func TestInterruptedNativeHookMigrationRecoversOnNextMutation(t *testing.T) {
+	// recoveryPublished is the published prefix after the recovery crash;
+	// recovery skips entry 0, which the first crash already published.
 	type window struct {
-		name, fault, recoveryFault string
-		published                  int
-		finalized                  bool
+		name, fault, recoveryFault   string
+		published, recoveryPublished int
+		finalized                    bool
 	}
 	windows := func(participants int) []window {
-		return []window{
+		cases := []window{
 			{name: "journal-before-publication", fault: "after-journal:-1", published: 0},
+			{name: "before-first-publication", fault: "before-publish:0", published: 0},
 			{name: "first-publication", fault: "after-publish:0", published: 1},
 			{name: "second-publication", fault: "after-publish:1", published: 2},
 			{name: "all-published-with-journal", fault: fmt.Sprintf("after-publish:%d", participants-1), published: participants},
 			{name: "finalized-before-exit", fault: "after-finalize:-1", published: participants, finalized: true},
-			{name: "interrupted-recovery", fault: "after-publish:0", published: 1, recoveryFault: "before-publish:1"},
+			{name: "interrupted-recovery", fault: "after-publish:0", published: 1, recoveryFault: "before-publish:1", recoveryPublished: 1},
 		}
+		for i := 1; i < participants; i++ {
+			cases = append(cases, window{name: fmt.Sprintf("recovery-publication-%d", i), fault: "after-publish:0", published: 1, recoveryFault: fmt.Sprintf("after-publish:%d", i), recoveryPublished: i + 1})
+		}
+		return cases
 	}
 	for _, supportLink := range []bool{false, true} {
 		participantCount, variant := 3, "aggregates"
@@ -583,6 +599,7 @@ func TestInterruptedNativeHookMigrationRecoversOnNextMutation(t *testing.T) {
 					interrupted[path] = snapshotNativeHookMigrationEntry(t, path)
 				}
 				journals := nativeHookMigrationJournals(t, stateRoot)
+				var stagedTemps []string
 				if tc.finalized {
 					if len(journals) != 0 {
 						t.Fatalf("finalized transaction left dependency journals: %v", journals)
@@ -591,7 +608,14 @@ func TestInterruptedNativeHookMigrationRecoversOnNextMutation(t *testing.T) {
 					if len(journals) != 1 {
 						t.Fatalf("interrupted dependency journals = %v, want exactly one", journals)
 					}
-					interrupted[journals[0]] = assertNativeHookMigrationJournalParticipants(t, journals[0], participants)
+					var temps []string
+					interrupted[journals[0]], temps = assertNativeHookMigrationJournalParticipants(t, journals[0], participants)
+					// Staged temporary files are journaled state too: read-only
+					// commands must not touch them either.
+					for _, temp := range temps {
+						interrupted[temp] = snapshotNativeHookMigrationEntry(t, temp)
+					}
+					stagedTemps = temps
 				}
 				published := func() int {
 					t.Helper()
@@ -633,10 +657,11 @@ func TestInterruptedNativeHookMigrationRecoversOnNextMutation(t *testing.T) {
 					if got := nativeHookMigrationJournals(t, stateRoot); len(got) != 1 || got[0] != journals[0] {
 						t.Fatalf("interrupted recovery journals = %v, want the original %v", got, journals)
 					}
-					if got := published(); got != tc.published {
-						t.Fatalf("recovery crash before entry 1 published %d participants, want still %d", got, tc.published)
+					if got := published(); got != tc.recoveryPublished {
+						t.Fatalf("recovery crash at %s published %d participants, want %d", tc.recoveryFault, got, tc.recoveryPublished)
 					}
-					for _, path := range participants {
+					interrupted[journals[0]] = snapshotNativeHookMigrationFile(t, journals[0])
+					for _, path := range append(slices.Clone(participants), stagedTemps...) {
 						interrupted[path] = snapshotNativeHookMigrationEntry(t, path)
 					}
 					assertReadOnly("after interrupted recovery", true)

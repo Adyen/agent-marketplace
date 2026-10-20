@@ -205,11 +205,21 @@ func hookInvariantLoadedCommands(t *testing.T, target, root string, machine bool
 			if err != nil {
 				t.Fatal(err)
 			}
+			// Mirror the adapter: other formats are skipped, and a v1
+			// declaration it would reject fails every OpenCode hook.
 			document, _ := read(filepath.ToSlash(rel))
-			var format, command string
-			if json.Unmarshal(document["format"], &format) != nil || json.Unmarshal(document["command"], &command) != nil ||
-				format != "agent-marketplace/opencode-hook-v1" || command == "" {
-				t.Fatalf("OpenCode hook declaration %s is not loadable: %v", rel, document)
+			var format string
+			if json.Unmarshal(document["format"], &format) != nil || format != "agent-marketplace/opencode-hook-v1" {
+				continue
+			}
+			var event, command, matcher string
+			var timeout float64
+			_, hasMatcher := document["matcher"]
+			if json.Unmarshal(document["event"], &event) != nil || event != "PreToolUse" ||
+				json.Unmarshal(document["command"], &command) != nil || command == "" ||
+				json.Unmarshal(document["timeout"], &timeout) != nil || timeout != float64(int(timeout)) || timeout < 1 || timeout > 600 ||
+				hasMatcher && json.Unmarshal(document["matcher"], &matcher) != nil || hasMatcher && string(document["matcher"]) == "null" {
+				t.Fatalf("OpenCode adapter would reject hook declaration %s: %v", rel, document)
 			}
 			commands = append(commands, command)
 		}

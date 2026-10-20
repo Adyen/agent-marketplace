@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -172,8 +173,8 @@ func TestReleasedClientHookOutputUpgrades(t *testing.T) {
 						t.Errorf("%s: UserPromptSubmit hook installed %d times, want %d", stage, got, wantPrompt)
 					}
 				}
-				// loaded requires the candidate's output to be parsed
-				// executable handlers in the file the target's loader reads.
+				// loaded counts parsed executable handlers in the file the
+				// target's own loader reads.
 				loaded := func(stage string, wantPre, wantPrompt int) {
 					t.Helper()
 					if got := hookInvariantLoadedCount(t, target, root, scope == "user", pre); got != wantPre {
@@ -186,6 +187,15 @@ func TestReleasedClientHookOutputUpgrades(t *testing.T) {
 
 				step(released, "sync")
 				copies(releasedClientVersion+" sync", 1, 1)
+				// The release writes Claude, Factory and Cursor hooks only in
+				// the plugin layout those harnesses never load, which is what
+				// the candidate's upgrade repairs; its other targets' output
+				// already loads.
+				if releasedLoads := !slices.Contains([]string{"claude", "factory", "cursor"}, target); releasedLoads {
+					loaded(releasedClientVersion+" sync", 1, 1)
+				} else {
+					loaded(releasedClientVersion+" sync", 0, 0)
+				}
 				if t.Failed() {
 					t.FailNow()
 				}
