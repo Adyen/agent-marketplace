@@ -30,7 +30,7 @@ func New() *Loader { return &Loader{} }
 func (l *Loader) Source() ingest.Harness { return ingest.HarnessFactory }
 
 func (l *Loader) Detect(src fs.FS) bool {
-	if _, err := fs.ReadFile(src, factoryPluginManifest); err == nil {
+	if ingest.RegularFileExists(src, factoryPluginManifest) {
 		return true
 	}
 	if hasBarePluginForm(src) {
@@ -361,8 +361,7 @@ func loadRulesFromRoot(src fs.FS, root string, seen map[string]bool) ([]ir.Resou
 }
 
 func hasPluginForm(src fs.FS) bool {
-	_, err := fs.ReadFile(src, factoryPluginManifest)
-	return err == nil
+	return ingest.RegularFileExists(src, factoryPluginManifest)
 }
 
 func hasWorkspaceForm(src fs.FS) bool {
@@ -378,11 +377,10 @@ func hasWorkspaceForm(src fs.FS) bool {
 			return true
 		}
 	}
-	if _, err := fs.ReadFile(src, ".factory/hooks.json"); err == nil {
+	if ingest.RegularFileExists(src, ".factory/hooks.json") {
 		return true
 	}
-	_, err := fs.ReadFile(src, ".factory/mcp.json")
-	return err == nil
+	return ingest.RegularFileExists(src, ".factory/mcp.json")
 }
 
 func hasBarePluginForm(src fs.FS) bool {
@@ -398,8 +396,7 @@ func hasBarePluginForm(src fs.FS) bool {
 			return true
 		}
 	}
-	_, err := fs.ReadFile(src, "mcp.json")
-	return err == nil
+	return ingest.RegularFileExists(src, "mcp.json")
 }
 
 func isNotExist(err error) bool {
