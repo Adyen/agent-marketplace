@@ -12,12 +12,14 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	"github.com/Adyen/agent-marketplace/internal/packagegen"
 )
 
 // GCReport carries the per-collector GC results for command output.
 type GCReport struct {
 	Registry    cache.GCResult
 	Marketplace marketplace.GCResult
+	Packages    []string
 }
 
 // RecoverDependencyTransactions recovers interrupted dependency lock
@@ -150,7 +152,8 @@ func garbageCollectUnderLease(ctx context.Context, ws Workspace, dryRun bool) (G
 	if dryRun {
 		report.Registry, registryErr = cache.GarbageCollect(ctx, true, readReachability)
 		report.Marketplace, marketplaceErr = marketplaceCache.GarbageCollect(true, roots)
-		return report, errors.Join(registryErr, marketplaceErr)
+		report.Packages, err = packagegen.GarbageCollect(true)
+		return report, errors.Join(registryErr, marketplaceErr, err)
 	}
 	if _, registryErr = cache.GarbageCollect(ctx, true, readReachability); registryErr != nil {
 		registryErr = fmt.Errorf("cache garbage collection preflight: %w", registryErr)
@@ -158,13 +161,20 @@ func garbageCollectUnderLease(ctx context.Context, ws Workspace, dryRun bool) (G
 	if _, marketplaceErr = marketplaceCache.GarbageCollect(true, roots); marketplaceErr != nil {
 		marketplaceErr = fmt.Errorf("marketplace cache garbage collection preflight: %w", marketplaceErr)
 	}
-	if registryErr == nil && marketplaceErr == nil {
+	var packageErr error
+	if report.Packages, packageErr = packagegen.GarbageCollect(true); packageErr != nil {
+		packageErr = fmt.Errorf("package generation garbage collection preflight: %w", packageErr)
+	}
+	if registryErr == nil && marketplaceErr == nil && packageErr == nil {
 		if err := dependencytxn.ValidateReadAssertions(reads); err != nil {
 			return report, fmt.Errorf("cache garbage collection policy changed after preflight: %w", err)
 		}
 		if report.Marketplace, marketplaceErr = marketplaceCache.GarbageCollect(false, roots); marketplaceErr == nil {
 			report.Registry, registryErr = cache.GarbageCollect(ctx, false, readReachability)
 		}
+		if registryErr == nil && marketplaceErr == nil {
+			report.Packages, packageErr = packagegen.GarbageCollect(false)
+		}
 	}
-	return report, errors.Join(registryErr, marketplaceErr)
+	return report, errors.Join(registryErr, marketplaceErr, packageErr)
 }

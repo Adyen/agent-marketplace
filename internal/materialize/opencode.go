@@ -32,7 +32,7 @@ func openCodeWork(state ownedAggregateState, key outputKey) *ownedJSONAggregateW
 	return work
 }
 
-func (openCodeOwnedAggregateHandler) extract(state ownedAggregateState, key outputKey, artifacts []artifact.Artifact, resource string) ([]artifact.Artifact, error) {
+func (openCodeOwnedAggregateHandler) extract(state ownedAggregateState, key outputKey, artifacts []artifact.Artifact, resource string, pluginGenerations []ownership.PluginGenerationRef) ([]artifact.Artifact, error) {
 	var rest []artifact.Artifact
 	for _, a := range artifacts {
 		if a.Path != "opencode.json" {
@@ -51,7 +51,7 @@ func (openCodeOwnedAggregateHandler) extract(state ownedAggregateState, key outp
 			if err != nil {
 				return nil, err
 			}
-			openCodeWork(state, key).add(ownedJSONEntry{rel: "opencode.json", kind: ownership.KindMcpServer, container: "mcp", key: name, identity: ownership.McpIdentityDigest(name), raw: raw, resource: resource})
+			openCodeWork(state, key).add(ownedJSONEntry{rel: "opencode.json", kind: ownership.KindMcpServer, container: "mcp", key: name, identity: ownership.McpIdentityDigest(name), raw: raw, resource: resource, pluginGenerations: append([]ownership.PluginGenerationRef(nil), pluginGenerations...)})
 		}
 	}
 	return rest, nil

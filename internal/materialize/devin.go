@@ -177,10 +177,13 @@ func (devinOwnedAggregateHandler) nativeHookReconcileOptions() ownedJSONReconcil
 
 type devinOwnedAggregateHandler struct{}
 
-func (devinOwnedAggregateHandler) extract(state ownedAggregateState, key outputKey, artifacts []artifact.Artifact, resource string) ([]artifact.Artifact, error) {
+func (devinOwnedAggregateHandler) extract(state ownedAggregateState, key outputKey, artifacts []artifact.Artifact, resource string, pluginGenerations []ownership.PluginGenerationRef) ([]artifact.Artifact, error) {
 	rest, entries, err := splitDevinAggregateArtifacts(artifacts, key.machineScope, resource)
 	if err != nil {
 		return nil, err
+	}
+	for i := range entries {
+		entries[i].pluginGenerations = append([]ownership.PluginGenerationRef(nil), pluginGenerations...)
 	}
 	if len(entries) == 0 {
 		return rest, nil

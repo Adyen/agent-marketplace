@@ -130,6 +130,13 @@ func materializationURL(a ResolvedArtifact) string {
 // without harnesses; projected artifacts receive their own copy.
 var defaultMaterializationTargets = []hcc.Target{hcc.TargetClaude}
 
+func HarnessTargets(targets []hcc.Target) []hcc.Target {
+	if targets == nil {
+		return []hcc.Target{hcc.TargetClaude}
+	}
+	return targets
+}
+
 func MaterializationWinners(resolved []ResolvedArtifact) []ResolvedArtifact {
 	winners, _ := materializationProjection(resolved, true)
 	return winners

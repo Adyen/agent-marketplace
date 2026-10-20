@@ -3,11 +3,15 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
@@ -194,10 +198,21 @@ func TestSyncPersonalPluginSelectionLocksInPersonalLayer(t *testing.T) {
 			// A teammate world whose personal config carries no plugin
 			// selection must still verify against the committed lock; a real
 			// teammate machine has no personal lock, so remove the one this
-			// world's selection wrote.
+			// world's selection wrote. A writable sync removes the now
+			// deselected machine-scope member while retaining the committed
+			// repository selection.
 			writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), baselineHome)
 			if err := os.Remove(filepath.Join(home, ".agents", "lock.yaml")); err != nil {
 				t.Fatalf("remove personal lock for the teammate world: %v", err)
+			}
+			if output, err := executeCommand("sync", "--no-backup"); err != nil {
+				t.Fatalf("sync without the personal selection must remove its member and preserve the repository selection: %v\n%s", err, output)
+			}
+			if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "kit-b-skill-b", "SKILL.md")); !os.IsNotExist(err) {
+				t.Fatalf("deselected personal plugin member remained installed: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(repo, ".claude", "skills", "kit-a-skill-a", "SKILL.md")); err != nil {
+				t.Fatalf("committed repository plugin member was removed with personal selection: %v", err)
 			}
 			if output, err := executeCommand("sync", "--check"); err != nil {
 				t.Fatalf("sync --check without the personal selection must stay fresh: %v\n%s", err, output)
@@ -811,13 +826,17 @@ func TestSyncDeselectedExternalEntryMakesLockStale(t *testing.T) {
 	writeConfig(t, cfgPath, configBody(true))
 	withWorkingDir(t, repo)
 	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
-	if output, err := executeCommand("sync", "--no-backup"); err != nil {
+	output, err := executeCommand("sync", "--no-backup")
+	if err != nil {
 		t.Fatalf("sync of an external plugin selection must succeed: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "plugin.delivery.pending") || !strings.Contains(output, "ext-kit") {
+		t.Fatalf("external plugin delivery must remain visibly pending:\n%s", output)
 	}
 	_, before := readLock(t, lockPath)
 
 	writeConfig(t, cfgPath, configBody(false))
-	output, err := executeCommand("sync", "--check")
+	output, err = executeCommand("sync", "--check")
 	if err == nil {
 		t.Fatalf("sync --check must report stale after the external entry was deselected:\n%s", output)
 	}
@@ -870,9 +889,158 @@ func TestSyncDirectoryCatalogWithoutExternalEntriesWritesNoLock(t *testing.T) {
 	}
 }
 
-// Interim sync writes plugin lock records, delivers non-plugin resources,
-// and skips plugin member delivery with plugin.delivery.pending.
-func TestSyncDeliversOtherResourcesAndWarnsPendingPluginDelivery(t *testing.T) {
+func TestSyncUsesPerLayerPluginMemberKeysAndUnionsSameLayerExclusions(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	root := pluginLockFixture(t)
+	home, repo := filepath.Join(root, "home"), filepath.Join(root, "repo")
+	catalogOrigin, catalogWorking := createBareRepoWithWorkingClone(t, "catalog.git")
+	packageDir := filepath.Join(catalogWorking, "plugins", "local-kit")
+	writePluginSourceFixture(t, packageDir, ".claude-plugin", "local-kit", "a")
+	for _, name := range []string{"b", "c"} {
+		skillDir := filepath.Join(packageDir, "skills", name)
+		if err := os.MkdirAll(skillDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: "+name+"\n---\n"+name+"\n")
+	}
+	writeFile(t, filepath.Join(catalogWorking, ".claude-plugin", "marketplace.json"),
+		`{"name":"team","plugins":[{"name":"local-kit","source":"./plugins/local-kit"}]}`)
+	commitAndPushAll(t, catalogWorking, "seed multi-member plugin")
+
+	source := "team: {git: file://" + filepath.ToSlash(catalogOrigin) + ", ref: main, format: claude-marketplace}\n"
+	secondSource := "team2: {git: file://" + filepath.ToSlash(catalogOrigin) + ", ref: main, format: claude-marketplace}\n"
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"),
+		"apiVersion: agent-marketplace/v4\nharnesses: [claude]\nmaterialization: {mode: file}\nsources:\n  "+source+"  "+secondSource+
+			"resources:\n  team:\n    - {kind: plugin, name: local-kit, exclude: [skill/a]}\n  team2:\n    - {kind: plugin, name: local-kit, exclude: [skill/b]}\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"),
+		"apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  "+source+
+			"resources:\n  team:\n    - {kind: plugin, name: local-kit, exclude: [skill/a]}\n")
+	withWorkingDir(t, repo)
+
+	output, err := executeCommand("sync", "--no-backup")
+	if err != nil {
+		t.Fatalf("sync must deliver each layer's committed plugin member keys: %v\n%s", err, output)
+	}
+	for _, tc := range []struct {
+		root string
+		name string
+		want bool
+	}{
+		{repo, "a", false},
+		{repo, "b", true},
+		{repo, "c", true},
+		{home, "a", false},
+		{home, "b", false},
+		{home, "c", true},
+	} {
+		path := filepath.Join(tc.root, ".claude", "skills", "local-kit-"+tc.name, "SKILL.md")
+		_, statErr := os.Stat(path)
+		if got := statErr == nil; got != tc.want {
+			t.Errorf("member %s at %s exists = %t, want %t (stat error: %v)", tc.name, tc.root, got, tc.want, statErr)
+		}
+	}
+}
+
+// spec: plugin-delivery/decomposed-skill-gets-a-namespaced-installed-name
+func TestSyncRepositoryAndPersonalLocalPluginKeysFollowTheWinningLayer(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	root := pluginLockFixture(t)
+	repo := filepath.Join(root, "repo")
+	catalogOrigin, catalogWorking := createBareRepoWithWorkingClone(t, "catalog.git")
+	writeTwoMemberPluginPackage(t, filepath.Join(catalogWorking, "plugins", "local-kit"), "local-kit", "a", "b")
+	writeFile(t, filepath.Join(catalogWorking, ".claude-plugin", "marketplace.json"),
+		`{"name":"team","plugins":[{"name":"local-kit","source":"./plugins/local-kit"}]}`)
+	commitAndPushAll(t, catalogWorking, "seed plugin member layers")
+	source := "team: {git: file://" + filepath.ToSlash(catalogOrigin) + ", ref: main, format: claude-marketplace}\n"
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"),
+		"apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  "+source+
+			"resources:\n  team:\n    - plugin/local-kit\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.local.yaml"),
+		"apiVersion: agent-marketplace/v4\nsources:\n  "+source+
+			"resources:\n  team:\n    - {kind: plugin, name: local-kit, exclude: [skill/b]}\n")
+	withWorkingDir(t, repo)
+
+	output, err := executeCommand("sync", "--no-backup")
+	if err != nil {
+		t.Fatalf("sync with repository and personal-local plugin selections failed: %v\n%s", err, output)
+	}
+	for _, tc := range []struct {
+		member string
+		want   bool
+	}{
+		{member: "a", want: true},
+		{member: "b", want: false},
+	} {
+		memberPath := filepath.Join(repo, ".claude", "skills", "local-kit-"+tc.member, "SKILL.md")
+		_, statErr := os.Stat(memberPath)
+		if got := statErr == nil; got != tc.want {
+			t.Errorf("personal-local member %s exists = %t, want %t (stat error: %v)", tc.member, got, tc.want, statErr)
+		}
+	}
+	repoLock, _ := readLock(t, filepath.Join(repo, ".agents", "lock.yaml"))
+	if !lockHasPluginResource(repoLock, "local-kit") {
+		t.Fatal("repository lock did not retain its plugin-v1 selection")
+	}
+	localLock, _ := readLock(t, filepath.Join(repo, ".agents", "lock.local.yaml"))
+	if !lockHasPluginResource(localLock, "local-kit") {
+		t.Fatal("personal-local lock did not retain its plugin-v1 selection")
+	}
+}
+
+// spec: plugin-delivery/cache-deletion-keeps-installed-plugins-working
+func TestSyncCheckWorksAfterPluginAcquisitionCacheIsDeleted(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	root := pluginLockFixture(t)
+	repo := filepath.Join(root, "repo")
+	origin, working := createBareRepoWithWorkingClone(t, "plugin.git")
+	writeClaudePluginPackage(t, working, "ext-kit", "ext-skill")
+	commitAndPushAll(t, working, "seed plugin package")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"),
+		"apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {git: file://"+
+			filepath.ToSlash(origin)+", ref: main, format: claude-plugin}\nresources:\n  team:\n    - plugin/ext-kit\n")
+	withWorkingDir(t, repo)
+
+	output, err := executeCommand("sync", "--no-backup")
+	if err != nil {
+		t.Fatalf("initial plugin sync failed: %v\n%s", err, output)
+	}
+	generations, err := filepath.Glob(filepath.Join(root, "state", "agent-marketplace", "packages", "*", ".claude-plugin", "plugin.json"))
+	if err != nil || len(generations) != 1 {
+		t.Fatalf("published plugin generations = %v / %v; sync: %s", generations, err, output)
+	}
+	generationDir := filepath.Dir(generations[0])
+	before := snapshotPluginGeneration(t, generationDir)
+	sourceURL := "file://" + filepath.ToSlash(origin)
+	canonicalSource, err := lockfile.CanonicalGitConfigURL(sourceURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	objectKey := sha256.Sum256([]byte(canonicalSource))
+	acquisitionCache := filepath.Join(cache.CacheDir(), "exact-git", "objects", hex.EncodeToString(objectKey[:])+".git")
+	if _, err := os.Stat(acquisitionCache); err != nil {
+		t.Fatalf("external plugin acquisition cache was not created: %v", err)
+	}
+	if err := os.RemoveAll(acquisitionCache); err != nil {
+		t.Fatalf("remove acquisition cache: %v", err)
+	}
+
+	output, err = executeCommand("sync", "--check")
+	if err != nil {
+		t.Fatalf("sync --check must not depend on the removed acquisition cache: %v\n%s", err, output)
+	}
+	after := snapshotPluginGeneration(t, generationDir)
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("sync --check changed the immutable package generation: before=%v after=%v", before, after)
+	}
+}
+
+func TestSyncDeliversOtherResourcesAndDecomposesPluginMembers(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
@@ -890,16 +1058,16 @@ func TestSyncDeliversOtherResourcesAndWarnsPendingPluginDelivery(t *testing.T) {
 	withWorkingDir(t, repo)
 	output, err := executeCommand("sync", "--no-backup")
 	if err != nil {
-		t.Fatalf("sync must deliver non-plugin resources despite a pending plugin delivery: %v\n%s", err, output)
+		t.Fatalf("sync must deliver plugin members with non-plugin resources: %v\n%s", err, output)
 	}
-	if !strings.Contains(output, "plugin.delivery.pending") || !strings.Contains(output, "local-kit") {
-		t.Fatalf("sync must warn plugin.delivery.pending naming the plugin:\n%s", output)
+	if strings.Contains(output, "plugin.delivery.pending") {
+		t.Fatalf("auto delivery must not remain pending:\n%s", output)
 	}
 	if _, err := os.Stat(filepath.Join(repo, ".claude", "skills", "tooling", "SKILL.md")); err != nil {
 		t.Fatalf("non-plugin resource must be delivered: %v", err)
 	}
-	if _, statErr := os.Lstat(filepath.Join(repo, ".claude", "skills", "local-skill")); !os.IsNotExist(statErr) {
-		t.Fatalf("plugin member files must not be written: %v", statErr)
+	if _, statErr := os.Stat(filepath.Join(repo, ".claude", "skills", "local-kit-local-skill", "SKILL.md")); statErr != nil {
+		t.Fatalf("plugin member must use the plugin namespace: %v", statErr)
 	}
 	doc, _ := readLock(t, filepath.Join(repo, ".agents", "lock.yaml"))
 	if plugins := pluginResources(doc); len(plugins) != 1 || plugins[0].Name != "local-kit" {
@@ -907,10 +1075,7 @@ func TestSyncDeliversOtherResourcesAndWarnsPendingPluginDelivery(t *testing.T) {
 	}
 }
 
-// A healthy plugin-selecting lock passes sync --check: plugin member
-// delivery is skipped with plugin.delivery.pending, exactly like a writable
-// sync, and nothing is written.
-func TestSyncCheckSkipsPendingPluginDelivery(t *testing.T) {
+func TestSyncCheckConfirmsPluginMemberDeliveryWithoutWriting(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
@@ -947,8 +1112,8 @@ func TestSyncCheckSkipsPendingPluginDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sync --check on a healthy plugin lock must succeed: %v\n%s", err, output)
 	}
-	if !strings.Contains(output, "plugin.delivery.pending") || !strings.Contains(output, "local-kit") {
-		t.Fatalf("sync --check must warn plugin.delivery.pending naming the plugin:\n%s", output)
+	if strings.Contains(output, "plugin.delivery.pending") {
+		t.Fatalf("auto delivery must not remain pending in check mode:\n%s", output)
 	}
 	after := snapshot()
 	for rel, data := range before {
@@ -956,8 +1121,8 @@ func TestSyncCheckSkipsPendingPluginDelivery(t *testing.T) {
 			t.Fatalf("sync --check must write nothing; %s changed", rel)
 		}
 	}
-	if _, statErr := os.Lstat(filepath.Join(repo, ".claude", "skills", "local-skill")); !os.IsNotExist(statErr) {
-		t.Fatalf("plugin member files must not be written by sync --check")
+	if _, statErr := os.Stat(filepath.Join(repo, ".claude", "skills", "local-kit-local-skill", "SKILL.md")); statErr != nil {
+		t.Fatalf("plugin member must remain installed after sync --check: %v", statErr)
 	}
 }
 
