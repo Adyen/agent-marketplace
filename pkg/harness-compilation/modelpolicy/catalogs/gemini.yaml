@@ -3,9 +3,9 @@ harness: gemini
 evidence:
   checked: "2026-10-19"
   refs:
-    - https://geminicli.com/docs/core/subagents/
+    - https://raw.githubusercontent.com/google-gemini/gemini-cli/main/docs/core/subagents.md
     - https://github.com/google-gemini/gemini-cli/blob/cfbcaa8df13ea4610bb379b377b56d62980c0032/packages/core/src/agents/agentLoader.ts
-    - https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/config/models.ts
+    - https://raw.githubusercontent.com/google-gemini/gemini-cli/main/packages/core/src/config/models.ts
 surfaces:
   subagent:
     model_field: model

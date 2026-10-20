@@ -7,6 +7,7 @@ package hookpolicy
 
 import (
 	"maps"
+	"math"
 	"regexp"
 	"slices"
 	"strings"
@@ -380,6 +381,11 @@ func resolveMatcher(h *ir.Hook, dst target.Target, srcCat, dstCat catalog, srcEv
 // (no provenance) measures timeouts in seconds.
 func srcUnit(c catalog) timeoutPolicy { return c.Timeout }
 
+// maxExactTimeout is the largest integer every JSON reader, including the
+// JavaScript-based harnesses, decodes exactly (2^53-1). Arithmetic runs in
+// int64 so the bound also holds, and compiles, where int is 32 bits.
+const maxExactTimeout int64 = 1<<53 - 1
+
 // resolveTimeout converts the timeout into the target's unit, applies
 // documented per-event bounds, and refuses values the target cannot
 // represent. sameHarness skips unit conversion but keeps the refusal rules.
@@ -394,23 +400,39 @@ func resolveTimeout(h *ir.Hook, dst target.Target, src, dstUnit timeoutPolicy, d
 	if dstUnit.Unit == TimeoutNone {
 		return fail(timeoutUnsupportedCode(dst), "The target cannot represent a hook timeout; hook suppressed", "Remove the timeout")
 	}
-	value := *h.Timeout
+	value := int64(*h.Timeout)
+	tooLarge := func() bool {
+		return fail(timeoutUnsupportedCode(dst), "The hook timeout exceeds the largest integer the target's unit represents exactly; hook suppressed", "Use a smaller timeout")
+	}
 	if !sameHarness {
 		switch {
 		case src.Unit == TimeoutMilliseconds && dstUnit.Unit == TimeoutSeconds:
 			if value%1000 != 0 {
 				warn(diag.CodeHookTimeoutRounded, "Timeout converted to seconds rounded up to the next whole second", "")
 			}
-			value = (value + 999) / 1000
+			value = value/1000 + min(value%1000, 1)
 		case src.Unit == TimeoutSeconds && dstUnit.Unit == TimeoutMilliseconds:
+			if value > maxExactTimeout/1000 {
+				return tooLarge()
+			}
 			value *= 1000
 		}
 	}
-	if dstEvent.Timeout != nil && value > dstEvent.Timeout.Max {
-		value = dstEvent.Timeout.Max
+	// Documented per-event bounds apply first, so a bounded event keeps its
+	// clamped timeout however large the authored value.
+	if dstEvent.Timeout != nil && value > int64(dstEvent.Timeout.Max) {
+		value = int64(dstEvent.Timeout.Max)
 		warn(timeoutCappedCode(dst), "Timeout above the documented per-event limit; lowered to the limit", "")
 	}
-	res.Timeout = &value
+	if dstEvent.Timeout != nil && value < int64(dstEvent.Timeout.Min) {
+		value = int64(dstEvent.Timeout.Min)
+		warn(timeoutCappedCode(dst), "Timeout below the documented per-event limit; raised to the limit", "")
+	}
+	if value > maxExactTimeout || value > math.MaxInt {
+		return tooLarge()
+	}
+	native := int(value)
+	res.Timeout = &native
 	return true
 }
 

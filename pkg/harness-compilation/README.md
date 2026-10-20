@@ -86,6 +86,8 @@ To reproduce the proposal locally from a saved report, run `go run ./tools/model
 
 Read the report's coverage notes: Claude, Codex, Factory, and Gemini have exact-ID inventory adapters; Cursor watches display-name inventory and resource documentation without guessing native IDs; Devin watches public model/resource documentation, which does not enumerate concrete IDs. Windsurf has no model-bearing resource surface in the shipped catalog and is explicitly not applicable. Source adapters and their scope live in [`tools/model-catalog-audit/sources.go`](../../tools/model-catalog-audit/sources.go).
 
+Every model, hook, and tool catalog `evidence.refs` entry is bound to a monitored source with the exact same URL, and every monitored source is cited by its catalog. Model catalogs may also cite a commit-pinned upstream revision, which cannot change, or a repository document, which changes only through reviewed commits. Neither is monitored, and `go test ./tools/model-catalog-audit` lists them exactly. The live audit also refuses a model source its catalog does not cite. These checks establish three different things: the offline test proves evidence integrity, the online audit reports freshness of the monitored sources, and neither proves that a vendor's native loader or account accepts a given model.
+
 ## How to Consume This Library
 
 ### The only import you need

@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -184,13 +187,23 @@ func TestDocumentTextNormalization(t *testing.T) {
 	}
 }
 
-func TestEveryCatalogEvidenceRefHasAnAuditSource(t *testing.T) {
-	byDomainHarness := map[string][]source{}
-	for _, s := range hookToolSources {
-		byDomainHarness[s.Domain+"/"+s.Harness] = append(byDomainHarness[s.Domain+"/"+s.Harness], s)
+// Offline integrity only: every catalog evidence ref is bound to a source
+// the live audit monitors for that harness and domain, and every monitored
+// source is cited. Model catalogs may also cite an immutable commit-pinned
+// revision or a document in this repository; neither is monitored, so both
+// are listed exactly. Passing says nothing about live freshness (the online
+// audit) or about vendor-native model acceptance (harness probes).
+func TestEveryCatalogEvidenceRefIsBound(t *testing.T) {
+	monitored := map[string][]source{}
+	modelSources := 0
+	for _, s := range sources {
+		monitored[s.Domain+"/"+s.Harness] = append(monitored[s.Domain+"/"+s.Harness], s)
+		if s.Domain == "" {
+			modelSources++
+		}
 	}
-	if len(hookToolSources) != 33 {
-		t.Fatalf("hook/tool audit sources = %d, want 33", len(hookToolSources))
+	if len(hookToolSources) != 33 || modelSources != 20 {
+		t.Fatalf("hook/tool audit sources = %d, model audit sources = %d, want 33 and 20", len(hookToolSources), modelSources)
 	}
 	baselineBody, err := os.ReadFile("baselines.json")
 	if err != nil {
@@ -200,7 +213,18 @@ func TestEveryCatalogEvidenceRefHasAnAuditSource(t *testing.T) {
 	if err := json.Unmarshal(baselineBody, &baselines); err != nil {
 		t.Fatal(err)
 	}
-	for _, domain := range []string{"hookpolicy", "toolpolicy"} {
+	pinnedRevision := regexp.MustCompile(`^https://github\.com/[^/]+/[^/]+/blob/[0-9a-f]{40}/[^?#]+$`)
+	wantUnmonitored := []string{
+		"modelpolicy/gemini pinned https://github.com/google-gemini/gemini-cli/blob/cfbcaa8df13ea4610bb379b377b56d62980c0032/packages/core/src/agents/agentLoader.ts",
+		"modelpolicy/opencode repository docs/harness-validation/opencode.md",
+		"modelpolicy/windsurf repository pkg/harness-compilation/field-matrix.md",
+	}
+	var unmonitored []string
+	for _, domain := range []string{"modelpolicy", "hookpolicy", "toolpolicy"} {
+		sourceDomain := domain
+		if domain == "modelpolicy" {
+			sourceDomain = ""
+		}
 		entries, err := os.ReadDir("../../pkg/harness-compilation/" + domain + "/catalogs")
 		if err != nil {
 			t.Fatal(err)
@@ -222,23 +246,29 @@ func TestEveryCatalogEvidenceRefHasAnAuditSource(t *testing.T) {
 			if err := yaml.Unmarshal(body, &c); err != nil {
 				t.Fatal(err)
 			}
+			if len(c.Evidence.Refs) == 0 {
+				t.Fatalf("%s/%s cites no evidence", domain, harness)
+			}
 			seen := map[string]bool{}
 			for _, ref := range c.Evidence.Refs {
-				if !strings.HasPrefix(ref, "https://") {
-					t.Fatalf("%s/%s ref %q is not an HTTPS first-party URL", domain, harness, ref)
+				for _, s := range monitored[sourceDomain+"/"+harness] {
+					seen[ref] = seen[ref] || s.URL == ref
 				}
-				matched := false
-				for _, s := range byDomainHarness[domain+"/"+harness] {
-					if s.URL == ref {
-						matched = true
-						seen[ref] = true
+				switch {
+				case seen[ref]:
+				case domain == "modelpolicy" && pinnedRevision.MatchString(ref):
+					unmonitored = append(unmonitored, domain+"/"+harness+" pinned "+ref)
+				case domain == "modelpolicy" && !strings.Contains(ref, "://") && filepath.IsLocal(ref):
+					info, err := os.Lstat(filepath.Join("../..", filepath.FromSlash(ref)))
+					if err != nil || !info.Mode().IsRegular() {
+						t.Fatalf("%s/%s repository evidence %q is not a regular file: %v", domain, harness, ref, err)
 					}
-				}
-				if !matched {
+					unmonitored = append(unmonitored, domain+"/"+harness+" repository "+ref)
+				default:
 					t.Fatalf("%s/%s evidence ref %q has no audit source", domain, harness, ref)
 				}
 			}
-			for _, s := range byDomainHarness[domain+"/"+harness] {
+			for _, s := range monitored[sourceDomain+"/"+harness] {
 				if !seen[s.URL] {
 					t.Fatalf("audit source %s (%s) is not an evidence ref of %s/%s", s.Name, s.URL, domain, harness)
 				}
@@ -247,6 +277,9 @@ func TestEveryCatalogEvidenceRefHasAnAuditSource(t *testing.T) {
 				}
 			}
 		}
+	}
+	if !slices.Equal(unmonitored, wantUnmonitored) {
+		t.Fatalf("unmonitored evidence = %q, want %q", unmonitored, wantUnmonitored)
 	}
 }
 

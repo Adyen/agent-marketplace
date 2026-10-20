@@ -99,7 +99,7 @@ comparison in non-test code.
 | `rule.factory.metadata-dropped` | Factory rules are plain markdown; description/globs/alwaysApply metadata dropped | Factory does not support rule frontmatter (description or conditional glob-scoped application); the rule body is emitted verbatim |
 | `compile.canonical-field-overrides-extra` | Canonical field overrides a conflicting preserved extra | The canonical modeled value wins; rename the extension field to preserve both values |
 | `hook.timeout-rounded` | Timeout unit conversion to seconds rounded up to the next whole second | Use a whole-second timeout or accept the rounded value |
-| `hook.timeout-capped` | Timeout exceeded the documented per-event limit and was lowered to the limit | Set a timeout within the documented limit |
+| `hook.timeout-capped` | Timeout was outside the documented per-event limit and was moved to the nearest limit | Set a timeout within the documented limit |
 | `hook.duplicate-execution-risk` | Two selected harness targets load the same hook files by default, so the hook may run twice | Deselect one of the targets for this scope, or accept the duplicate execution |
 | `materialize.hook.review` | An owned hook command or prompt was added, changed, or removed in either scope, and the exact values were printed to stdout for review | Review the printed hook changes before relying on them |
 | `materialize.hook.review-pending` | A check found a pending hook change without mutating files | A later sync will apply the pending hook change |
@@ -586,7 +586,7 @@ key or a hook event name), the resource name, and content digests are reported.
 | `hook.windsurf.event-unmappable` | Claude hook event has no Windsurf equivalent; hook suppressed | Consider using a mappable event (PreToolUse with a known tool matcher, UserPromptSubmit, or Stop) |
 | `hook.matcher-untranslatable` | No exact tool-matcher coverage exists for the target; hook suppressed | Rewrite the matcher with tools the target's catalog covers, or remove it |
 | `hook.env-unrepresentable` | The hook command references a variable with no target equivalent; hook suppressed | Rewrite the command with variables the target documents, or use an absolute path |
-| `hook.timeout-unsupported` | Target cannot represent an explicit hook timeout; hook suppressed | Remove the timeout explicitly or use a target that supports it |
+| `hook.timeout-unsupported` | Target cannot represent the explicit hook timeout (unsupported, negative, or beyond the exact integer range); hook suppressed | Remove or reduce the timeout, or use a target that supports it |
 | `hook.type-unsupported` | The target's catalog does not declare this hook type for the event; hook suppressed | Use a hook type the target documents for this event |
 | `hook.support-path-unrepresentable` | The hook command references the plugin root but the target declares no repository base; hook suppressed | Use an absolute command path or a target with a repository base |
 | `hook.prompt.unsupported` | Target cannot represent prompt hooks; hook suppressed | Use a command hook on this target |

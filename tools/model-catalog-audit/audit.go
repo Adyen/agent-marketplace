@@ -71,8 +71,11 @@ type catalogRecord struct {
 }
 
 type catalog struct {
-	Schema   int                      `yaml:"schema"`
-	Harness  string                   `yaml:"harness"`
+	Schema   int    `yaml:"schema"`
+	Harness  string `yaml:"harness"`
+	Evidence struct {
+		Refs []string `yaml:"refs"`
+	} `yaml:"evidence"`
 	Models   map[string]catalogRecord `yaml:"models"`
 	Families map[string]catalogRecord `yaml:"families"`
 	Surfaces map[string]any           `yaml:"surfaces"`
@@ -133,8 +136,8 @@ func audit(ctx context.Context, files fs.FS, sources []source, baselines map[str
 		}
 		body, err := readBounded(files, catalogPath(s.Harness))
 		var c catalog
-		if err != nil || yaml.Unmarshal(body, &c) != nil || c.Schema != 1 || c.Harness != s.Harness || len(c.Surfaces) == 0 {
-			r.add("unknown", "catalog.invalid", "", "Cannot read a valid model catalog for this harness.")
+		if err != nil || yaml.Unmarshal(body, &c) != nil || c.Schema != 1 || c.Harness != s.Harness || len(c.Surfaces) == 0 || !slices.Contains(c.Evidence.Refs, s.URL) {
+			r.add("unknown", "catalog.invalid", "", "Cannot read a valid model catalog for this harness with matching first-party evidence.")
 		} else {
 			r.CatalogSHA256 = digest(body)
 			for id, family := range c.Families {

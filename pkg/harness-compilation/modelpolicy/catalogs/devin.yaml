@@ -3,9 +3,9 @@ harness: devin
 evidence:
   checked: "2026-09-26"
   refs:
-    - https://docs.devin.ai/cli/subagents
-    - https://docs.devin.ai/cli/models
-    - https://docs.devin.ai/cli/extensibility/skills/creating-skills
+    - https://docs.devin.ai/cli/subagents.md
+    - https://docs.devin.ai/cli/models.md
+    - https://docs.devin.ai/cli/extensibility/skills/creating-skills.md
 surfaces:
   subagent:
     model_field: model
