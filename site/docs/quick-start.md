@@ -1,6 +1,6 @@
 # Quick start
 
-In about ten minutes you will install `agent-marketplace`, connect a project to a public skill registry, install one skill for Claude Code, look at it in the terminal UI, and commit the files that let teammates get the same setup with one command.
+`agent-marketplace` installs shared skills, commands, subagents, hooks, and MCP servers from Git into the folders your coding tools read. In about ten minutes you will install it, add Anthropic's `frontend-design` skill to a project for Claude Code, browse the skill in the terminal UI, and commit the configuration so every teammate gets the same skill with one command.
 
 ## Before you begin
 
@@ -38,7 +38,7 @@ Open a terminal and move into your project folder. Replace the path with your ow
 cd ~/code/my-project
 ```
 
-This quick start uses Claude Code so the paths and screenshots match. The same steps work for the other six supported [harnesses](./glossary.md#harness), which are coding tools such as Claude Code or Cursor. The [harnesses and output paths reference](./reference/harnesses-and-output-paths.md) lists where each keeps its files, and [How to configure multiple harnesses](./how-to/configure-multiple-harnesses.md) covers switching later.
+This quick start uses Claude Code so the paths and screenshots match. The same steps work for the other seven supported [harnesses](./glossary.md#harness), which are coding tools such as Claude Code or Cursor. The [harnesses and output paths reference](./reference/harnesses-and-output-paths.md) lists where each keeps its files, and [How to configure multiple harnesses](./how-to/configure-multiple-harnesses.md) covers switching later.
 
 ## Launch
 
@@ -52,7 +52,7 @@ This opens the terminal UI (TUI), a full-screen interface that you control with 
 
 On first launch you have no personal configuration yet, so the TUI asks which harnesses it should install resources into. Harnesses it finds on your computer are already checked:
 
-![First-run modal listing the seven harnesses, with Claude Code pre-selected](./images/quick-start/first-run-harness-modal.png)
+![First-run modal listing the eight harnesses, with Claude Code pre-selected](./images/quick-start/first-run-harness-modal.png)
 
 Make sure only **Claude Code** is checked. Move with the arrow keys, check or uncheck a harness with `space`, and press `enter` to save. The TUI saves your choice to `~/.agents/config.yaml`, your personal configuration file.
 
@@ -117,13 +117,15 @@ Open the TUI again:
 agent-marketplace
 ```
 
-The single list groups every resource by status; the source's resources appear under **Available**, and the right pane describes the highlighted one.
+The list groups resources by status. `frontend-design` sits under **Enabled**, and the registry's other skills sit under **Available**. Move with the arrow keys; the right pane describes the highlighted skill.
 
-You can read a skill before you install it. Highlight a row and press `enter` to open its files. `SKILL.md` opens first, and the arrow keys move through the other files. Press `esc` to go back to the list.
+![The TUI list with frontend-design under Enabled, 18 skills under Available, and the pdf skill highlighted with its details in the right pane](./images/quick-start/browse-list.png)
 
-![File browser for the pdf skill: a file tree on the left with SKILL.md selected and its rendered contents on the right](./images/quick-start/skill-file-browser.png)
+You can read a skill before you install it. Highlight a skill and press `enter` to open its files: the tree on the left lists them, and the right side shows `SKILL.md`. Use the arrow keys to open another file, and press `esc` to go back to the list. On a group heading such as **Enabled**, `enter` folds the group instead.
 
-To install another skill from the list, highlight it and press `space`, then press `p` to add it to the project configuration. Press `s` to sync it. You can also edit the `resources` part of `.agents/config.yaml` by hand and run `agent-marketplace sync`.
+![File browser for the frontend-design skill: a file tree on the left with SKILL.md selected and its rendered contents on the right](./images/quick-start/skill-file-browser.png)
+
+To install another skill, highlight it and press `space`. In the menu that opens, press `p` (toggle project) to add the skill to the project configuration, then press `s` to sync it. You can also edit the `resources` part of `.agents/config.yaml` by hand and run `agent-marketplace sync`.
 
 Press `q` to quit. If you selected something and didn't sync it yet, the TUI asks whether to sync before quitting.
 
@@ -142,11 +144,11 @@ claude            REPO
 
 EXACT REGISTRY LOCKS
 SOURCE  REGISTRY                              REF   COMMIT                                         SNAPSHOT
-REPO    https://github.com/anthropics/skills  main  sha1:34040c9c568585f6929bedeaad110ad08f079624  available
+REPO    https://github.com/anthropics/skills  main  sha1:dbd4588f9e1033efb41dad4bef2f7947c8993d44  available
 
 SYNCED RESOURCES
 KIND   NAME             HARNESS  SOURCE  ...  REGISTRY                                  REF   CACHE
-skill  frontend-design  claude   REPO    ...  https://github.com/anthropics/skills.git  main  locked: sha1:34040c9c...
+skill  frontend-design  claude   REPO    ...  https://github.com/anthropics/skills.git  main  locked: sha1:dbd4588f...
 
 DRIFT
 In sync
