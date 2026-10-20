@@ -14,14 +14,17 @@ import (
 // spec: hook-native-location-tolerance/malformed-native-file-leaves-both-locations-unchanged
 func TestHookInvariantMalformedNativeEnvelopeRefusesOnlyItsTarget(t *testing.T) {
 	const command = "echo am-malformed-envelope"
-	for _, tc := range []struct{ target, sibling, envelope string }{
-		{"claude", "factory", `{"hooks": ["not an event map"]}`},
-		{"factory", "claude", `{"PreToolUse": {"not": "a group list"}}`},
-		{"cursor", "claude", `{"version": 1, "hooks": ["not an event map"]}`},
-		{"gemini", "claude", `{"hooks": ["not an event map"]}`},
-		{"windsurf", "claude", `{"hooks": ["not an event map"]}`},
-		{"devin", "claude", `{"PreToolUse": {"not": "a group list"}}`},
-		{"codex", "claude", `{"hooks": ["not an event map"]}`},
+	// Targets with a native-location compatibility check refuse with
+	// hook.native-tolerance-refused; Devin CLI and Codex, which never had a
+	// legacy location, refuse through their aggregate writers' own codes.
+	for _, tc := range []struct{ target, sibling, envelope, code string }{
+		{"claude", "factory", `{"hooks": ["not an event map"]}`, "hook.native-tolerance-refused"},
+		{"factory", "claude", `{"PreToolUse": {"not": "a group list"}}`, "hook.native-tolerance-refused"},
+		{"cursor", "claude", `{"version": 1, "hooks": ["not an event map"]}`, "hook.native-tolerance-refused"},
+		{"gemini", "claude", `{"hooks": ["not an event map"]}`, "hook.native-tolerance-refused"},
+		{"windsurf", "claude", `{"hooks": ["not an event map"]}`, "hook.native-tolerance-refused"},
+		{"devin", "claude", `{"PreToolUse": {"not": "a group list"}}`, "materialize.devin.aggregate-shape"},
+		{"codex", "claude", `{"hooks": ["not an event map"]}`, "materialize.codex.aggregate-malformed"},
 	} {
 		t.Run(tc.target, func(t *testing.T) {
 			t.Parallel()
@@ -42,8 +45,8 @@ func TestHookInvariantMalformedNativeEnvelopeRefusesOnlyItsTarget(t *testing.T) 
 				// Devin and Codex name the target through their code namespace
 				// and every target names the refused file, so the error must
 				// name the malformed file and never the sibling's.
-				if r.ExitCode == 0 || !hookInvariantErrorMentions(r.Combined, "/"+loaded+":") {
-					t.Fatalf("%v exited %d without a coded error naming %s:\n%s", args, r.ExitCode, loaded, r.Combined)
+				if r.ExitCode == 0 || !hookInvariantErrorMentions(r.Combined, "/"+loaded+":", tc.code+": ") {
+					t.Fatalf("%v exited %d without a %s error naming %s:\n%s", args, r.ExitCode, tc.code, loaded, r.Combined)
 				}
 				if sibling := hookInvariantLoadedFile(t, tc.sibling); hookInvariantErrorMentions(r.Combined, "/"+sibling) {
 					t.Fatalf("%v refused the valid sibling target %s:\n%s", args, tc.sibling, r.Combined)
