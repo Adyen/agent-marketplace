@@ -4,7 +4,7 @@ import path from "node:path";
 import { after, before } from "node:test";
 
 import { defineFixture, locate, step, waitForExit } from "./helpers.js";
-import { runNonTTY } from "./process-helpers.js";
+import { runAM } from "./process-helpers.js";
 
 // spec: tui-interactions/discovered-marketplace-skill-installs-at-the-chosen-scope
 // spec: tui-interactions/marketplace-install-keeps-locked-sources-at-their-locked-revision
@@ -67,6 +67,7 @@ journey.test("installs a discovered Marketplace skill while locked Git sources s
     assert.equal((await waitForExit(terminal)).exitCode, 0);
   });
 
-  const check = runNonTTY(fixture, ["sync", "--check"], 30_000);
+  // runAM keeps the event loop free so the in-process Marketplace stub can answer.
+  const check = await runAM(fixture, ["sync", "--check"]);
   assert.equal(check.status, 0, `${check.stdout}\n${check.stderr}`);
 });

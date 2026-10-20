@@ -5,7 +5,7 @@ import { after, before } from "node:test";
 
 import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 import { installFinding } from "./marketplace-stub.js";
-import { runNonTTY } from "./process-helpers.js";
+import { runAM } from "./process-helpers.js";
 
 // spec: tui-interactions/marketplace-findings-require-consent-before-install
 const journey = defineFixture("marketplace-install-consent", ["tui"], 80, 24, { marketplaceDiscovery: "findings" });
@@ -65,6 +65,7 @@ journey.test("a Marketplace skill with findings installs only after consent", as
     assert.equal((await waitForExit(terminal)).exitCode, 0);
   });
 
-  const check = runNonTTY(fixture, ["sync", "--check"], 30_000);
+  // runAM keeps the event loop free so the in-process Marketplace stub can answer.
+  const check = await runAM(fixture, ["sync", "--check"]);
   assert.equal(check.status, 0, `${check.stdout}\n${check.stderr}`);
 });
