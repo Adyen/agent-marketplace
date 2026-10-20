@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Plugin manifests with declared dependencies decode instead of failing
+
+`plugindecode` no longer rejects a plugin manifest that declares
+`dependencies`; the declared dependencies are recorded on `ir.Plugin` so the
+package stays inspectable. Installation remains unsupported: the consumer
+fails that plugin's delivery with the new error
+`plugin.format.dependencies-unsupported` and installs none of its members,
+while other selected plugins and resources still deliver.
+
 ### Devin converted command skills keep their restrictions
 
 Devin ingestion no longer recovers a skill marked `x-agent-marketplace-kind: command` as a command when the skill declares `permissions`, an `agent` or `subagent` selector, or triggers that do not include `user`. Those controls used to be dropped with `ingest.devin.command-field-dropped`, so a Devin-to-Devin round trip lost a deny policy and made a model-only resource user-invocable. The resource is now refused with the new error `ingest.devin.command-security-unsupported`, which names the fields but never their values; removing the marker ingests it as a skill with its controls intact. `model`, and extra activation next to `user`, are still dropped with the existing warning: a converted command is user-only, so dropping them only narrows it.
