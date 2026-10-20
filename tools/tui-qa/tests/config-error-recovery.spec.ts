@@ -45,6 +45,10 @@ journey.test("a broken user config is reported with recovery steps and fixed by 
     await locate(terminal, "v4.parse:").expect();
     await locate(terminal, "Fix the file and field named above.").unique().expect();
     await locate(terminal, "press `r` to reload.").unique().expect();
+    // The parser's explanation follows a temporary path of varying length, so
+    // compare without whitespace to ignore where the screen wraps it.
+    const screen = (await terminal.text()).replace(/\s+/g, "");
+    assert.ok(screen.includes("didnotfindexpected','or']'"), `the errors screen lost the YAML parse cause:\n${await terminal.text()}`);
   });
   await step("close the errors screen", () => terminal.write("e"), async () => {
     await locate(terminal, "Errors (1)").expect({ not: true });
@@ -58,6 +62,7 @@ journey.test("a broken user config is reported with recovery steps and fixed by 
     await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
     await locate(terminal, /! \d+ errors/).expect({ not: true });
   });
+  assert.deepEqual(fs.readFileSync(userConfig), goodConfig, "reloading rewrote the repaired user config");
   assertWorkspaceUnchanged(snapshot, link, "the recovery");
 
   await step("quit", () => terminal.write("q"), async () => {
@@ -65,5 +70,6 @@ journey.test("a broken user config is reported with recovery steps and fixed by 
   });
 
   const check = runNonTTY(fixture, ["sync", "--check"], 30_000);
+  if (check.error) throw check.error;
   assert.equal(check.status, 0, `${check.stdout}\n${check.stderr}`);
 });
