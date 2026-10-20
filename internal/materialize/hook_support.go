@@ -26,6 +26,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	compilepkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
@@ -83,6 +84,19 @@ func hookSupportBundlePrefixDir(res resolver.ResolvedArtifact, definitionDir str
 		return path.Base(definitionDir)
 	}
 	return ""
+}
+
+// hookSupportReferenceMissingDiag builds the value-free refusal emitted when
+// a literal plugin-root reference names nothing under either meaning.
+func hookSupportReferenceMissingDiag(target, resource string) diag.Diagnostic {
+	return diag.Diagnostic{
+		Code:     diag.CodeHookSupportReferenceMissing,
+		Severity: diag.SeverityError,
+		Target:   target,
+		Resource: resource,
+		Message:  "A plugin-root reference names no installed support file or directory under either meaning; hook suppressed",
+		Hint:     "Ship the referenced file in the hook bundle or remove the reference",
+	}
 }
 
 // checkHookSupportReferenceRewrites runs the shared literal plugin-root

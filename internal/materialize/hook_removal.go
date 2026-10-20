@@ -153,14 +153,7 @@ func CheckHookRemoval(repoRoot string, before, after []resolver.ResolvedArtifact
 						continue
 					}
 					if errors.Is(err, errHookSupportReferenceMissing) {
-						return nil, []diag.Diagnostic{{
-							Code:     diag.CodeHookSupportReferenceMissing,
-							Severity: diag.SeverityError,
-							Target:   string(key.target),
-							Resource: resource.Name,
-							Message:  "A plugin-root reference names no installed support file or directory under either meaning; hook suppressed",
-							Hint:     "Ship the referenced file in the hook bundle or remove the reference",
-						}}
+						return nil, []diag.Diagnostic{hookSupportReferenceMissingDiag(string(key.target), resource.Name)}
 					}
 					return nil, []diag.Diagnostic{hookRemovalRefusal(key, resource.Name, filepath.Join(destination.Root, file.rel))}
 				}

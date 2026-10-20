@@ -184,8 +184,6 @@ func TestHookBundleRootGitAndMirrorProduceSameSupportLayout(t *testing.T) {
 	if layouts[0] != layouts[1] {
 		t.Fatalf("git layout %q != mirror layout %q", layouts[0], layouts[1])
 	}
-	// The only difference between the commands is the source-key path
-	// segment of each support directory.
 	gitParts := strings.Split(commands[0], "/")
 	mirrorParts := strings.Split(commands[1], "/")
 	if len(gitParts) != len(mirrorParts) {
@@ -253,8 +251,6 @@ func TestHookBundleRootMissingReferenceRefusesHook(t *testing.T) {
 			t.Fatalf("diagnostic leaks a command or path value %q: %+v", protected, *missing)
 		}
 	}
-	// The sibling hook still installs: the native file carries PostToolUse
-	// only.
 	nativePath := filepath.Join(repo, ".factory", "hooks.json")
 	data, err := os.ReadFile(nativePath)
 	if err != nil {
@@ -365,34 +361,11 @@ func TestHookBundleRootBothMeaningsUseBundleRoot(t *testing.T) {
 	}
 }
 
-// spec: hook-resources/folder-relative-support-from-an-earlier-sync-moves-in-one-sync
-func TestHookBundleRootFolderRelativeSupportMovesInOneSync(t *testing.T) {
-	repo, _ := additiveSafetyEnv(t)
-	provider := nativeSupportSource(t, "claude", "hooks/hooks.json", bundleRootHookFiles("${CLAUDE_PLUGIN_ROOT}/hooks/scripts/check.sh", nil))
-	resolved := nativeSupportResolve(t, hcc.TargetFactory, false, []resolver.ResolvedArtifact{provider})
-	modes := config.MaterializationModes{Project: config.MaterializationModeFile, Machine: config.MaterializationModeFile}
-	report, err := Run(context.Background(), repo, resolved, WithMaterializationModes(modes))
-	if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
-		t.Fatalf("seed run: %v / %v", err, report)
-	}
-	factoryRoot := filepath.Join(repo, ".factory")
-	nativePath := filepath.Join(factoryRoot, "hooks.json")
-	supportDirs := hookSupportGlob(t, factoryRoot, "hook-support", "*", "*")
-	if len(supportDirs) != 1 {
-		t.Fatalf("support dirs = %v, want one", supportDirs)
-	}
-	supportDir := supportDirs[0]
-	newFile := filepath.Join(supportDir, "hooks", "scripts", "check.sh")
-	oldFile := filepath.Join(supportDir, "scripts", "check.sh")
-	if _, err := os.Stat(newFile); err != nil {
-		t.Fatalf("seed support missing at %s: %v", newFile, err)
-	}
-	unownedPath := filepath.Join(supportDir, "unowned.txt")
-	additiveSafetyWrite(t, unownedPath, "keep me\n")
-
-	// Roll the installation back to the earlier folder-relative layout: move
-	// the file, point the portable manifest entry at the old relative path,
-	// and restore the old command inside the owned native entry.
+// regressSupportLayout simulates support installed by an earlier sync: it
+// moves newFile back to the folder-relative oldFile and repoints the portable
+// manifest entry.
+func regressSupportLayout(t *testing.T, repo, factoryRoot, supportDir, newFile, oldFile string) {
+	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(oldFile), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -422,6 +395,34 @@ func TestHookBundleRootFolderRelativeSupportMovesInOneSync(t *testing.T) {
 	if err := manifest.save(false); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// spec: hook-resources/folder-relative-support-from-an-earlier-sync-moves-in-one-sync
+func TestHookBundleRootFolderRelativeSupportMovesInOneSync(t *testing.T) {
+	repo, _ := additiveSafetyEnv(t)
+	provider := nativeSupportSource(t, "claude", "hooks/hooks.json", bundleRootHookFiles("${CLAUDE_PLUGIN_ROOT}/hooks/scripts/check.sh", nil))
+	resolved := nativeSupportResolve(t, hcc.TargetFactory, false, []resolver.ResolvedArtifact{provider})
+	modes := config.MaterializationModes{Project: config.MaterializationModeFile, Machine: config.MaterializationModeFile}
+	report, err := Run(context.Background(), repo, resolved, WithMaterializationModes(modes))
+	if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
+		t.Fatalf("seed run: %v / %v", err, report)
+	}
+	factoryRoot := filepath.Join(repo, ".factory")
+	nativePath := filepath.Join(factoryRoot, "hooks.json")
+	supportDirs := hookSupportGlob(t, factoryRoot, "hook-support", "*", "*")
+	if len(supportDirs) != 1 {
+		t.Fatalf("support dirs = %v, want one", supportDirs)
+	}
+	supportDir := supportDirs[0]
+	newFile := filepath.Join(supportDir, "hooks", "scripts", "check.sh")
+	oldFile := filepath.Join(supportDir, "scripts", "check.sh")
+	if _, err := os.Stat(newFile); err != nil {
+		t.Fatalf("seed support missing at %s: %v", newFile, err)
+	}
+	unownedPath := filepath.Join(supportDir, "unowned.txt")
+	additiveSafetyWrite(t, unownedPath, "keep me\n")
+
+	regressSupportLayout(t, repo, factoryRoot, supportDir, newFile, oldFile)
 	nativeBytes, err := os.ReadFile(nativePath)
 	if err != nil {
 		t.Fatal(err)
@@ -458,7 +459,6 @@ func TestHookBundleRootFolderRelativeSupportMovesInOneSync(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// sync --check reports the pending change and writes nothing.
 	check, err := Run(context.Background(), repo, resolved, WithMaterializationModes(modes), WithDryRun())
 	if err != nil || check == nil {
 		t.Fatalf("check run: %v", err)
@@ -477,7 +477,6 @@ func TestHookBundleRootFolderRelativeSupportMovesInOneSync(t *testing.T) {
 		t.Fatalf("check rewrote the native file: %v", err)
 	}
 
-	// One sync moves the support file and updates the command.
 	report, err = Run(context.Background(), repo, resolved, WithMaterializationModes(modes))
 	if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("move run: %v / %v", err, report)
@@ -526,35 +525,7 @@ func TestHookBundleRootInterruptedSupportMoveRecovers(t *testing.T) {
 	supportDir := supportDirs[0]
 	newFile := filepath.Join(supportDir, "hooks", "scripts", "check.sh")
 	oldFile := filepath.Join(supportDir, "scripts", "check.sh")
-	if err := os.MkdirAll(filepath.Dir(oldFile), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(newFile, oldFile); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.RemoveAll(filepath.Join(supportDir, "hooks")); err != nil {
-		t.Fatal(err)
-	}
-	manifest, err := loadPortableState(repo, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rel := func(p string) string {
-		r, err := filepath.Rel(factoryRoot, p)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return filepath.ToSlash(r)
-	}
-	entry, ok := manifest.entry(hcc.TargetFactory, rel(newFile))
-	if !ok {
-		t.Fatalf("seed manifest lacks %q", rel(newFile))
-	}
-	manifest.add(hcc.TargetFactory, rel(oldFile), entry.Digest)
-	manifest.remove(hcc.TargetFactory, rel(newFile))
-	if err := manifest.save(false); err != nil {
-		t.Fatal(err)
-	}
+	regressSupportLayout(t, repo, factoryRoot, supportDir, newFile, oldFile)
 
 	stateDir, err := dependencytxn.StateDir()
 	if err != nil {
@@ -636,7 +607,6 @@ func TestHookBundleRootResourceFileLaneReferenceDiagnostics(t *testing.T) {
 			}
 		}
 	}
-	// The refused hook emits no resource file; the sibling installs.
 	root := openCodeSupportRoot(t, repo, false)
 	declarations, err := filepath.Glob(filepath.Join(root, "hooks", "agent-marketplace", "*.json"))
 	if err != nil || len(declarations) != 1 {

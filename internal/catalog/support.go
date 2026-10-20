@@ -157,8 +157,8 @@ type HookSupportReferenceResult struct {
 
 // CheckHookSupportReferences checks each literal ${TOKEN}/<path> reference in
 // command outside single quotes against the installed bundle-relative support
-// paths. A reference that resolves only under the legacy folder meaning —
-// prefixing the path with legacyPrefix — is rewritten to that path; an empty
+// paths. A reference that resolves only under the legacy folder meaning,
+// prefixing the path with legacyPrefix, is rewritten to that path; an empty
 // legacyPrefix disables the fallback. Bare tokens and references whose path
 // carries a shell expansion or glob are not checked.
 func CheckHookSupportReferences(command string, installed []string, legacyPrefix string) (HookSupportReferenceResult, error) {
@@ -215,11 +215,10 @@ func CheckHookSupportReferences(command string, installed []string, legacyPrefix
 				continue
 			}
 		}
-		// c == '$' outside a single-quoted literal.
 		if i+1 >= len(command) || command[i+1] == '(' {
 			continue
 		}
-		_, end := hookPluginRootToken(command, i, pluginNames)
+		end := hookPluginRootTokenEnd(command, i, pluginNames)
 		if end <= i {
 			continue
 		}
@@ -265,19 +264,19 @@ func CheckHookSupportReferences(command string, installed []string, legacyPrefix
 	return result, nil
 }
 
-// hookPluginRootToken parses a $NAME or ${NAME} token at command[start] and
-// returns its name and the index just past it when the name is a shipped
-// plugin-root spelling; otherwise it returns start.
-func hookPluginRootToken(command string, start int, pluginNames map[string]bool) (string, int) {
+// hookPluginRootTokenEnd parses a $NAME or ${NAME} token at command[start] and
+// returns the index just past it when the name is a shipped plugin-root
+// spelling; otherwise it returns start.
+func hookPluginRootTokenEnd(command string, start int, pluginNames map[string]bool) int {
 	if start+1 >= len(command) {
-		return "", start
+		return start
 	}
 	name := ""
 	end := start + 1
 	if command[end] == '{' {
 		close := strings.IndexByte(command[end:], '}')
 		if close < 0 {
-			return "", start
+			return start
 		}
 		name = command[end+1 : end+close]
 		end = end + close + 1
@@ -291,14 +290,14 @@ func hookPluginRootToken(command string, start int, pluginNames map[string]bool)
 			break
 		}
 		if end == start+1 {
-			return "", start
+			return start
 		}
 		name = command[start+1 : end]
 	}
 	if !pluginNames[name] {
-		return "", start
+		return start
 	}
-	return name, end
+	return end
 }
 
 // HookMaterializationSupportFiles is shared by publication and installation.

@@ -1239,15 +1239,9 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			unknownHookSelection[key] = true
 			blockResource(key, w)
 			markResourceIncomplete(key, w, aggregateHandler)
-			allDiags = append(allDiags, diag.Diagnostic{
-				Code:     diag.CodeHookSupportReferenceMissing,
-				Severity: diag.SeverityError,
-				Target:   string(w.target),
-				Resource: w.skill.Name,
-				Message:  "A plugin-root reference names no installed support file or directory under either meaning; hook suppressed",
-				Hint:     "Ship the referenced file in the hook bundle or remove the reference",
-				Source:   compilepkg.SourceOf(w.skill.Resource),
-			})
+			missingDiag := hookSupportReferenceMissingDiag(string(w.target), w.skill.Name)
+			missingDiag.Source = compilepkg.SourceOf(w.skill.Resource)
+			allDiags = append(allDiags, missingDiag)
 			continue
 		}
 		if isHook && plan.referenceLegacy {

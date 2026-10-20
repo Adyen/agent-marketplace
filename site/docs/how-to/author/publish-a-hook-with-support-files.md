@@ -184,7 +184,7 @@ Consumers on `ref: v1.6.0` get it on their next `agent-marketplace sync`. For br
 
 ## If consumers install from a Marketplace
 
-A Marketplace that mirrors your registry packages only the files that sit directly beside `hooks.json`. It skips subfolders. It stores each file as `hooks/<name>`, with its bytes and executable bit, and binds them to the hook's content revision. The command form is the same as everywhere else — `${CLAUDE_PLUGIN_ROOT}/hooks/<name>` — but `<name>` cannot contain a `/`, so a hook that must also be Marketplace-mirrored keeps its scripts flat in `hooks/`. Move the script from step 1 up one level, out of `scripts/`:
+A Marketplace that mirrors your registry packages only the files that sit directly beside `hooks.json`. It skips subfolders. It stores each file as `hooks/<name>`, with its bytes and executable bit, and binds them to the hook's content revision. The command form is the same as everywhere else, `${CLAUDE_PLUGIN_ROOT}/hooks/<name>`, but `<name>` cannot contain a `/`, so a hook that must also be Marketplace-mirrored keeps its scripts flat in `hooks/`. Move the script from step 1 up one level, out of `scripts/`:
 
 ```bash
 git mv hooks/scripts/block-force-push.sh hooks/block-force-push.sh
