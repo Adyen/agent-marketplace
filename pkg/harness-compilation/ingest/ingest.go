@@ -199,7 +199,7 @@ func explicitManifest(src fs.FS) (Harness, bool) {
 		{"gemini-extension.json", HarnessGemini},
 	}
 	for _, candidate := range explicit {
-		if _, err := fs.ReadFile(src, candidate.path); err == nil {
+		if regularFileExists(src, candidate.path) {
 			return candidate.harness, true
 		}
 	}
@@ -314,4 +314,11 @@ var autodetectOrder = []Harness{
 	HarnessCursor,
 	HarnessGemini,
 	HarnessWindsurf,
+}
+
+// regularFileExists reports whether name is a regular file, without reading
+// its content.
+func regularFileExists(src fs.FS, name string) bool {
+	info, err := fs.Stat(src, name)
+	return err == nil && info.Mode().IsRegular()
 }

@@ -30,7 +30,7 @@ func New() *Loader { return &Loader{} }
 func (l *Loader) Source() ingest.Harness { return ingest.HarnessFactory }
 
 func (l *Loader) Detect(src fs.FS) bool {
-	if _, err := fs.ReadFile(src, factoryPluginManifest); err == nil {
+	if regularFileExists(src, factoryPluginManifest) {
 		return true
 	}
 	if hasBarePluginForm(src) {
@@ -361,8 +361,7 @@ func loadRulesFromRoot(src fs.FS, root string, seen map[string]bool) ([]ir.Resou
 }
 
 func hasPluginForm(src fs.FS) bool {
-	_, err := fs.ReadFile(src, factoryPluginManifest)
-	return err == nil
+	return regularFileExists(src, factoryPluginManifest)
 }
 
 func hasWorkspaceForm(src fs.FS) bool {
@@ -378,11 +377,10 @@ func hasWorkspaceForm(src fs.FS) bool {
 			return true
 		}
 	}
-	if _, err := fs.ReadFile(src, ".factory/hooks.json"); err == nil {
+	if regularFileExists(src, ".factory/hooks.json") {
 		return true
 	}
-	_, err := fs.ReadFile(src, ".factory/mcp.json")
-	return err == nil
+	return regularFileExists(src, ".factory/mcp.json")
 }
 
 func hasBarePluginForm(src fs.FS) bool {
@@ -398,8 +396,7 @@ func hasBarePluginForm(src fs.FS) bool {
 			return true
 		}
 	}
-	_, err := fs.ReadFile(src, "mcp.json")
-	return err == nil
+	return regularFileExists(src, "mcp.json")
 }
 
 func isNotExist(err error) bool {
@@ -469,4 +466,11 @@ func listRuleFiles(src fs.FS, root string) ([]string, error) {
 func shadowedResourceDiagnostic(resource ir.Resource, source ir.SourceRef) diag.Diagnostic {
 	slog.Warn("Factory resource shadowed", "kind", resource.Kind(), "resource", resource.Name(), "code", diag.CodeIngestFactoryResourceShadowed)
 	return diag.Diagnostic{Code: diag.CodeIngestFactoryResourceShadowed, Severity: diag.SeverityWarning, Target: "factory", Resource: resource.Name(), Message: "Factory resource was shadowed by an earlier resource of the same kind and name", Hint: "Use distinct resource names or remove the lower-priority definition", Source: diag.SourceRef(source)}
+}
+
+// regularFileExists reports whether name is a regular file, without reading
+// its content.
+func regularFileExists(src fs.FS, name string) bool {
+	info, err := fs.Stat(src, name)
+	return err == nil && info.Mode().IsRegular()
 }
