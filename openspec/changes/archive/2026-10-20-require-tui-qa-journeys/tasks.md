@@ -9,4 +9,4 @@
 ## 3. Guidance and archive
 
 - [x] 3.1 State the rule, what a journey must prove, and how to run it in `AGENTS.md`, `CODING_STANDARDS.md`, `skills/agent-marketplace-development/SKILL.md`, and `tools/tui-qa/README.md`; verify `make spec-check` passes
-- [ ] 3.2 Run `openspec archive require-tui-qa-journeys --yes`
+- [x] 3.2 Run `openspec archive require-tui-qa-journeys --yes`
