@@ -23,9 +23,29 @@ type PluginGenerationRef struct {
 type PluginState struct {
 	Version  int                 `json:"version"`
 	Instance PluginGenerationRef `json:"instance"`
+	Outputs  []PluginOutputRef   `json:"outputs,omitempty"`
+	Members  []PluginMemberRef   `json:"members,omitempty"`
+}
+
+type PluginOutputRef struct {
+	Path         string   `json:"path"`
+	ManifestPath string   `json:"manifest_path,omitempty"`
+	Digest       string   `json:"digest"`
+	Mode         uint32   `json:"mode"`
+	LinkTarget   string   `json:"link_target,omitempty"`
+	MarkerField  string   `json:"marker_field,omitempty"`
+	MarkerValue  string   `json:"marker_value,omitempty"`
+	Containers   []string `json:"containers,omitempty"`
+	MarkerShapes []string `json:"marker_shapes,omitempty"`
+}
+
+type PluginMemberRef struct {
+	Kind string `json:"kind"`
+	Name string `json:"name"`
 }
 
 var pluginDigestToken = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var pluginMarkerFieldToken = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,127}$`)
 
 func PluginStatePath(instanceKey string) (string, error) {
 	if !pluginDigestToken.MatchString(instanceKey) {
@@ -94,6 +114,48 @@ func validatePluginState(state *PluginState) error {
 		!safeToken.MatchString(instance.Target) ||
 		!validScope {
 		return fmt.Errorf("ownership: invalid plugin generation reference")
+	}
+	seenOutputs := make(map[string]bool, len(state.Outputs))
+	for _, output := range state.Outputs {
+		if !filepath.IsAbs(output.Path) || filepath.Clean(output.Path) != output.Path ||
+			!digestPattern.MatchString(output.Digest) || output.Mode&^0o777 != 0 || seenOutputs[output.Path] {
+			return fmt.Errorf("ownership: invalid plugin output reference")
+		}
+		if output.ManifestPath != "" {
+			clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(output.ManifestPath)))
+			if clean != output.ManifestPath || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || filepath.IsAbs(output.ManifestPath) {
+				return fmt.Errorf("ownership: invalid plugin output manifest path")
+			}
+		}
+		if output.MarkerField != "" || output.MarkerValue != "" || len(output.Containers) > 0 || len(output.MarkerShapes) > 0 {
+			if !pluginMarkerFieldToken.MatchString(output.MarkerField) ||
+				output.MarkerField != "_managed_by" && output.MarkerField != "managed-by" ||
+				output.MarkerValue != "agent-marketplace-plugin-"+instance.InstanceKey ||
+				len(output.Containers) == 0 || len(output.Containers) != len(output.MarkerShapes) {
+				return fmt.Errorf("ownership: invalid plugin aggregate output reference")
+			}
+			seenContainers := make(map[string]bool, len(output.Containers))
+			for i, container := range output.Containers {
+				shape := output.MarkerShapes[i]
+				if !safeToken.MatchString(container) || seenContainers[container] ||
+					shape != "object" && shape != "array" && shape != "map-arrays" {
+					return fmt.Errorf("ownership: invalid plugin aggregate container")
+				}
+				seenContainers[container] = true
+			}
+		}
+		if output.LinkTarget != "" && (!filepath.IsAbs(output.LinkTarget) || filepath.Clean(output.LinkTarget) != output.LinkTarget) {
+			return fmt.Errorf("ownership: invalid plugin output link target")
+		}
+		seenOutputs[output.Path] = true
+	}
+	seenMembers := make(map[string]bool, len(state.Members))
+	for _, member := range state.Members {
+		key := member.Kind + "\x00" + member.Name
+		if !safeToken.MatchString(member.Kind) || !safeToken.MatchString(member.Name) || seenMembers[key] {
+			return fmt.Errorf("ownership: invalid plugin member reference")
+		}
+		seenMembers[key] = true
 	}
 	return nil
 }
@@ -185,11 +247,6 @@ func ReadAllPluginGenerationRefs() ([]PluginGenerationRef, error) {
 		if record.RootKey != entry.Name() {
 			return nil, fmt.Errorf("ownership: aggregate ownership filename does not match its root key")
 		}
-		for _, file := range record.Files {
-			for _, owned := range file.Entries {
-				refs = append(refs, owned.PluginGenerations...)
-			}
-		}
 	}
 	return refs, nil
 }
@@ -229,9 +286,7 @@ func ReadPendingPluginGenerationRefs() ([]PluginGenerationRef, error) {
 		}
 		for _, file := range journal.Files {
 			isPluginState := filepath.Dir(file.Path) == pluginStateDir && filepath.Ext(file.Path) == ".json"
-			isRootOwnershipState := filepath.Base(file.Path) == stateFileName &&
-				filepath.Dir(filepath.Dir(file.Path)) == filepath.Join(stateRoot, ownershipDirName)
-			if !isPluginState && !isRootOwnershipState {
+			if !isPluginState {
 				continue
 			}
 			candidates := []string{file.Path}
@@ -246,32 +301,17 @@ func ReadPendingPluginGenerationRefs() ([]PluginGenerationRef, error) {
 				if !generation.Exists {
 					continue
 				}
-				if isPluginState {
-					var state PluginState
-					if err := json.Unmarshal(data, &state); err != nil {
-						return nil, fmt.Errorf("ownership: invalid pending plugin generation state")
-					}
-					if err := validatePluginState(&state); err != nil {
-						return nil, err
-					}
-					if filepath.Base(file.Path) != state.Instance.InstanceKey+".json" {
-						return nil, fmt.Errorf("ownership: pending plugin generation state filename does not match its instance key")
-					}
-					refs = append(refs, state.Instance)
-					continue
+				var state PluginState
+				if err := json.Unmarshal(data, &state); err != nil {
+					return nil, fmt.Errorf("ownership: invalid pending plugin generation state")
 				}
-				var record Record
-				if err := json.Unmarshal(data, &record); err != nil {
-					return nil, fmt.Errorf("ownership: invalid pending aggregate ownership state")
-				}
-				if err := validateRecord(&record, record.CanonicalRoot, record.RootKey); err != nil {
+				if err := validatePluginState(&state); err != nil {
 					return nil, err
 				}
-				for _, file := range record.Files {
-					for _, owned := range file.Entries {
-						refs = append(refs, owned.PluginGenerations...)
-					}
+				if filepath.Base(file.Path) != state.Instance.InstanceKey+".json" {
+					return nil, fmt.Errorf("ownership: pending plugin generation state filename does not match its instance key")
 				}
+				refs = append(refs, state.Instance)
 			}
 		}
 	}

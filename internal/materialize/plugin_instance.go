@@ -3,7 +3,6 @@ package materialize
 import (
 	"fmt"
 
-	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
@@ -144,25 +143,11 @@ func pluginMemberLabel(resource resolver.ResolvedArtifact) string {
 	return resource.Name
 }
 
-func pluginGenerationReference(pkg *resolver.PluginPackage, target hcc.Target) []ownership.PluginGenerationRef {
-	if pkg == nil || pkg.InstanceKey == "" || pkg.GenerationKey == "" {
-		return nil
-	}
-	return []ownership.PluginGenerationRef{{
-		InstanceKey:   pkg.InstanceKey,
-		Name:          pkg.Name,
-		Target:        string(target),
-		Scope:         pkg.GenerationScope,
-		GenerationKey: pkg.GenerationKey,
-	}}
-}
-
-func attachPluginGenerationReferences(entries []ownedJSONEntry, pkg *resolver.PluginPackage, target hcc.Target) {
-	refs := pluginGenerationReference(pkg, target)
-	if len(refs) == 0 {
+func attachPluginInstanceOwner(entries []ownedJSONEntry, pkg *resolver.PluginPackage) {
+	if pkg == nil || pkg.InstanceKey == "" {
 		return
 	}
 	for i := range entries {
-		entries[i].pluginGenerations = append([]ownership.PluginGenerationRef(nil), refs...)
+		entries[i].pluginInstanceKey = pkg.InstanceKey
 	}
 }

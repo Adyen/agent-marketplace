@@ -63,6 +63,26 @@ func StateRoot() (string, error) {
 	return filepath.Dir(stateDir), nil
 }
 
+func WithPackagesLock(ctx context.Context, fn func() error) error {
+	stateRoot, err := StateRoot()
+	if err != nil {
+		return err
+	}
+	packagesDir := filepath.Join(stateRoot, "packages")
+	if err := os.MkdirAll(packagesDir, 0o700); err != nil {
+		return err
+	}
+	return dependencytxn.WithPathLock(ctx, packagesDir, func() error {
+		if err := requireDirectory(packagesDir); err != nil {
+			return err
+		}
+		if _, err := cleanupPackageStages(packagesDir, false); err != nil {
+			return err
+		}
+		return fn()
+	})
+}
+
 func BuildKey(input Input) string {
 	h := sha256.New()
 	writeIdentity(h, "agent-marketplace/package-generation/v1")
@@ -90,6 +110,20 @@ func InstanceKey(plugin string, target hcc.Target, scope string) string {
 }
 
 func Publish(input Input) (Generation, error) {
+	var result Generation
+	err := WithPackagesLock(context.Background(), func() error {
+		var err error
+		result, err = PublishUnderPackagesLock(input)
+		return err
+	})
+	if err != nil {
+		return Generation{}, err
+	}
+	return result, nil
+}
+
+// PublishUnderPackagesLock publishes while the caller holds WithPackagesLock.
+func PublishUnderPackagesLock(input Input) (Generation, error) {
 	generation, err := Plan(input)
 	if err != nil {
 		return Generation{}, err
@@ -99,24 +133,10 @@ func Publish(input Input) (Generation, error) {
 		return Generation{}, err
 	}
 	packagesDir := filepath.Dir(generation.Path)
-	if err := os.MkdirAll(packagesDir, 0o700); err != nil {
+	if err := requireDirectory(packagesDir); err != nil {
 		return Generation{}, err
 	}
-	var result Generation
-	err = dependencytxn.WithPathLock(context.Background(), packagesDir, func() error {
-		if err := requireDirectory(packagesDir); err != nil {
-			return err
-		}
-		if _, err := cleanupPackageStages(packagesDir, false); err != nil {
-			return err
-		}
-		result, err = publishLocked(input, generation, files, packagesDir)
-		return err
-	})
-	if err != nil {
-		return Generation{}, err
-	}
-	return result, nil
+	return publishLocked(input, generation, files, packagesDir)
 }
 
 func publishLocked(input Input, generation Generation, files []ir.PluginFile, packagesDir string) (result Generation, retErr error) {

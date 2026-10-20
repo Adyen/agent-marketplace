@@ -333,3 +333,55 @@ func (s *portableState) publishManifest(data []byte) (err error) {
 	}
 	return refreshNativeHookManifestCommit(nativeHookManifestCommit{state: s, participant: participant})
 }
+
+func (s *portableState) manifestParticipant(outputDir string) (dependencytxn.DesiredFile, bool, error) {
+	data, hasEntries, err := s.serialized()
+	if err != nil {
+		return dependencytxn.DesiredFile{}, false, err
+	}
+	if !hasEntries && !s.exists {
+		return dependencytxn.DesiredFile{}, false, nil
+	}
+	if hasEntries {
+		if err := s.prepareManifestParentForOutput(outputDir); err != nil {
+			return dependencytxn.DesiredFile{}, false, err
+		}
+	}
+	parent, err := s.captureManifestParent(hasEntries)
+	if err != nil {
+		return dependencytxn.DesiredFile{}, false, err
+	}
+	defer func() { _ = parent.Close() }()
+	destination, err := s.captureManifestDestination(parent)
+	if err != nil {
+		return dependencytxn.DesiredFile{}, false, err
+	}
+	defer func() { _ = destination.Close() }()
+	if err := s.verifyManifestParent(parent); err != nil {
+		return dependencytxn.DesiredFile{}, false, err
+	}
+	namespace, err := s.manifestNamespaceExpectation(parent)
+	if err != nil {
+		return dependencytxn.DesiredFile{}, false, err
+	}
+	expected := dependencytxn.Generation{}
+	if s.exists {
+		expected = dependencytxn.Generation{Exists: true, Digest: dependencytxn.Digest(s.raw)}
+	}
+	participant := dependencytxn.DesiredFile{
+		Path:         s.path,
+		Expected:     expected,
+		ExpectedMode: s.mode,
+		Namespace:    namespace,
+	}
+	if hasEntries {
+		participant.Bytes = data
+		participant.Mode = s.mode
+		if participant.Mode == 0 {
+			participant.Mode = 0o644
+		}
+	} else {
+		participant.Delete = true
+	}
+	return participant, true, nil
+}
