@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Hook timeouts stay exact within documented bounds
+
+A hook timeout above 2^53-1 seconds was emitted as a different number (`9007199254740993` became `9007199254740992`), and converting seconds to Gemini's milliseconds could overflow and wrap (#652). Compilation now refuses a timeout whose value in the target's unit exceeds 9007199254740991, the largest integer every JSON reader decodes exactly, with the target's existing timeout-unsupported error. Gemini's conversion is checked before it multiplies. A timeout below a documented per-event minimum is raised to the minimum with the warning the cap already uses, so a Codex `SessionEnd` or `Interrupt` timeout of `0` becomes `1` with `compile.codex.field-dropped`. Per-event bounds apply before the exact-range check, so such an event still lowers any larger value to its maximum instead of refusing it. A zero timeout on an event without a minimum and every value within range are emitted unchanged.
+
 ### Layout detection checks markers without reading them
 
 Autodetection and the Claude, Cursor and Factory layout checks read whole marker files (`plugin.json`, `.mcp.json`, `SKILL.md`, hooks files) only to learn that they exist, and the Claude bare skills directory listing read every `SKILL.md` before loading it again (R39). Presence checks now stat the path and require a regular file, through the new exported helper `ingest.RegularFileExists`, so detection reads no content and each skill is read once. Detection results are unchanged for readable regular files; a marker path that is a directory, FIFO or device is no longer treated as present. On a generic `fs.FS` whose `Stat` does not open the file, such as `os.DirFS`, an unreadable regular marker now counts as present, so its harness is selected and loading then fails visibly instead of silently falling back to a lower-priority layout. Agent Marketplace's source filesystem opens a file to stat it, so the CLI still treats an unreadable marker as absent.

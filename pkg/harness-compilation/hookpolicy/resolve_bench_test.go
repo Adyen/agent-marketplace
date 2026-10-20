@@ -49,3 +49,33 @@ func BenchmarkResolveWindsurfProjectDirectoryReferences(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkResolveHookTimeouts(b *testing.B) {
+	for _, tc := range []struct {
+		name, event, source string
+		target              target.Target
+		timeout             int
+	}{
+		{"claude-seconds", "PreToolUse", "", target.TargetClaude, 30},
+		{"gemini-milliseconds", "PreToolUse", "", target.TargetGemini, 30},
+		{"codex-sessionend-bound", "SessionEnd", string(target.TargetCodex), target.TargetCodex, 0},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			matcher := "Bash"
+			if tc.event != "PreToolUse" {
+				matcher = ""
+			}
+			options := []ir.HookOption{ir.WithHookTimeout(tc.timeout)}
+			if tc.source != "" {
+				options = append(options, ir.WithHookSource(tc.source))
+			}
+			hook := ir.NewHookWithMatcherOptions("guard", tc.event, matcher, "echo check", "command", nil, ir.SourceRef{}, options...)
+			Resolve(hook, tc.target, ScopeRepository, "")
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				resolveBenchmarkResult = Resolve(hook, tc.target, ScopeRepository, "")
+			}
+		})
+	}
+}
