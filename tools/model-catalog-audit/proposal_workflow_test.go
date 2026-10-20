@@ -126,8 +126,21 @@ esac
 			run("git", "add", ".")
 			run("git", "commit", "-m", "fixture")
 			run("git", "remote", "add", "origin", remote)
+			var remoteBaselinesBefore string
 			if tt.existingPR != "" {
+				run("git", "switch", "-c", "automation/model-catalog-drift")
+				existingBaselines := strings.Replace(before, `"checked": "2026-09-23"`, `"checked": "2026-10-18"`, 1)
+				if err := os.WriteFile(filepath.Join(root, baselinesPath), []byte(existingBaselines), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				run("git", "add", baselinesPath)
+				run("git", "commit", "-m", "existing baseline-only proposal")
 				run("git", "push", "origin", "HEAD:refs/heads/automation/model-catalog-drift")
+				remoteBaselinesBefore = run("git", "--git-dir", remote, "show", "refs/heads/automation/model-catalog-drift:"+baselinesPath)
+				if remoteBaselinesBefore == before {
+					t.Fatal("existing proposal must have distinct baseline content")
+				}
+				run("git", "switch", "main")
 			}
 			remoteBefore := run("git", "ls-remote", "--heads", "origin", "automation/model-catalog-drift")
 			run("bash", "-c", script)
@@ -162,6 +175,14 @@ esac
 				}
 				if readProposeFile(t, root, catalogPath("claude")) != claudeCatalog {
 					t.Fatal("non-actionable proposal edited the catalog")
+				}
+				if tt.existingPR != "" {
+					if got := run("git", "--git-dir", remote, "show", "refs/heads/automation/model-catalog-drift:"+baselinesPath); got != remoteBaselinesBefore {
+						t.Fatal("no-change workflow rewrote existing proposal baselines")
+					}
+					if got := run("git", "--git-dir", remote, "show", "refs/heads/automation/model-catalog-drift:"+catalogPath("claude")); got != claudeCatalog {
+						t.Fatal("no-change workflow rewrote the remote catalog")
+					}
 				}
 			}
 		})
