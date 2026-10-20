@@ -49,14 +49,19 @@ journey.test("saved harness setup writes the user config and the first sync inst
     await locate(terminal, "> [•] Factory Droid").unique().expect();
     await locate(terminal, "[•] Claude Code").unique().expect();
   });
+  await step("move the cursor off the first choice", () => terminal.write("\x1b[B"), async () => {
+    await locate(terminal, "> [•] Claude Code").unique().expect();
+    await locate(terminal, "> [•] Factory Droid").expect({ not: true });
+  });
   await step("compact terminal switches to the compact setup layout", () => terminal.resize(50, 12), async () => {
     await locate(terminal, "Detected targets are pre-selected.").unique().expect();
     await locate(terminal, "OpenCode").expect({ not: true });
   });
   await step("full size restores every choice with the same cursor and selection", () => terminal.resize(80, 24), async () => {
     await locate(terminal, "[ ] OpenCode").unique().expect();
-    await locate(terminal, "> [•] Factory Droid").unique().expect();
-    await locate(terminal, "[•] Claude Code").unique().expect();
+    await locate(terminal, "> [•] Claude Code").unique().expect();
+    await locate(terminal, "[•] Factory Droid").unique().expect();
+    await locate(terminal, "> [•] Factory Droid").expect({ not: true });
   });
   await step("save the selection", () => terminal.write("\r"), async () => {
     await locate(terminal, "Saved user harnesses").unique().expect();
@@ -75,7 +80,9 @@ journey.test("saved harness setup writes the user config and the first sync inst
     await locate(terminal, /Enabled\s+\(1\)/).unique().expect();
   });
   for (const harnessRoot of [".factory", ".claude"]) {
-    assert.equal(fs.lstatSync(installed(harnessRoot)).isSymbolicLink(), true, `${harnessRoot} beta-skill is not a symlink`);
+    const link = fs.lstatSync(installed(harnessRoot), { throwIfNoEntry: false });
+    assert.ok(link, `${harnessRoot} beta-skill was not installed at ${installed(harnessRoot)}`);
+    assert.equal(link.isSymbolicLink(), true, `${harnessRoot} beta-skill is not a symlink`);
     assert.equal(fs.readFileSync(path.join(installed(harnessRoot), "SKILL.md"), "utf8"), fixture.expectedBetaSkillContent);
   }
   assert.equal(fs.lstatSync(path.join(fixture.repo, ".factory", "skills", "alpha-skill"), { throwIfNoEntry: false }), undefined);

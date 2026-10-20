@@ -235,6 +235,7 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
         fs.rmSync(path.join(repo, ".devin"), { recursive: true, force: true });
         fs.rmSync(path.join(repo, ".codex"), { recursive: true, force: true });
         fs.rmSync(path.join(xdg, "state", "agent-marketplace"), { recursive: true, force: true });
+        if (options.firstRun) fs.mkdirSync(path.join(home, ".claude"), { recursive: true, mode: 0o700 });
         if (!options.directorySource) {
           const repoConfigPath = path.join(repo, ".agents", "config.yaml");
           fs.mkdirSync(path.dirname(repoConfigPath), { recursive: true, mode: 0o700 });
