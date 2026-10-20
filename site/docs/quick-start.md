@@ -117,7 +117,7 @@ Open the TUI again:
 agent-marketplace
 ```
 
-The list groups resources by status. `frontend-design` sits under **Enabled**, and the registry's other skills sit under **Available**. Move with the arrow keys; the right pane describes the highlighted skill.
+The list groups resources by status. `frontend-design` sits under **Enabled**, and the registry's other skills sit under **Available**. The cursor starts on the **Enabled** heading. Move with the arrow keys; the right pane describes the highlighted skill. To group the list by source or kind instead, press `v` to open **View settings**; the [TUI reference](./reference/tui.md#resource-list) describes the options.
 
 ![The TUI list with frontend-design under Enabled, 18 skills under Available, and the pdf skill highlighted with its details in the right pane](./images/quick-start/browse-list.png)
 
