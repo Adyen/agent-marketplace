@@ -372,6 +372,9 @@ func TestInstallationMetricsQueryPromtool(t *testing.T) {
 	if err := os.WriteFile(fixturePath, fixture, 0o644); err != nil {
 		t.Fatalf("write promtool fixture: %v", err)
 	}
+	if err := os.Chmod(fixturePath, 0o644); err != nil {
+		t.Fatalf("make promtool fixture readable: %v", err)
+	}
 	command := exec.Command("docker", "run", "--rm", "-v", dir+":/work", "--entrypoint", "promtool", image, "test", "rules", "/work/installation_query_test.yaml")
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("promtool query semantics failed: %v\n%s", err, output)

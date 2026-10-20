@@ -264,15 +264,20 @@ func TestInstallationMetricsReaderOriginChangeInvalidatesCache(t *testing.T) {
 	if _, err := reader.refresh(context.Background(), changed); err != nil {
 		t.Fatalf("refresh() after origin change error = %v", err)
 	}
-	counts, ok := reader.lookup(changed)
+	_, ok := reader.lookup(changed)
 	if !ok {
 		t.Fatal("lookup() after origin change refresh returned no snapshot")
 	}
 	if hits := fixture.hits.Load(); hits != 2 {
 		t.Fatalf("origin change did not invalidate aggregate cache: hits = %d, want 2", hits)
 	}
-	if got := counts.Counts[installationResourceKey{Registry: "rA", Kind: "skill", Name: "res-a"}]; got != 0 {
-		t.Fatalf("moved origin still contributed a count to rA: %d", got)
+	<-fixture.requests
+	query := (<-fixture.requests).Form.Get("query")
+	if !strings.Contains(query, "team/moved-alpha") {
+		t.Fatalf("query after origin change omitted moved identity: %q", query)
+	}
+	if strings.Contains(query, "team/alpha") {
+		t.Fatalf("query after origin change retained old identity example.test/team/alpha: %q", query)
 	}
 }
 
