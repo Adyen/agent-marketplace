@@ -3,7 +3,7 @@ harness: factory
 evidence:
   checked: "2026-10-19"
   refs:
-    - https://docs.factory.ai/harness/subagents
+    - https://docs.factory.ai/harness/subagents.md
     - https://docs.factory.ai/models.md
 surfaces:
   subagent:
