@@ -244,6 +244,13 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	if err := writeHookChanges(out, report, false); err != nil {
 		return err
 	}
+	if report != nil {
+		for _, path := range report.RetainedPluginData {
+			if _, err := fmt.Fprintf(out, "Retained plugin data: %s\n", path); err != nil {
+				return err
+			}
+		}
+	}
 
 	// Under verbose, list malformed resources with their path and parse error
 	// so the user can fix them without re-running `status`.

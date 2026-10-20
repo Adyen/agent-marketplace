@@ -28,15 +28,16 @@ const ownedJSONEmptyDocument = "{}\n"
 // ownedJSONEntry is one desired JSON aggregate entry with its ownership
 // identity and canonical value bytes.
 type ownedJSONEntry struct {
-	rel            string
-	kind           ownership.EntryKind
-	container      string
-	key            string
-	raw            []byte
-	identity       string
-	resource       string
-	sourceDigest   string
-	sourceEvidence []ownership.HookSourceEvidence
+	rel               string
+	kind              ownership.EntryKind
+	container         string
+	key               string
+	raw               []byte
+	identity          string
+	resource          string
+	sourceDigest      string
+	sourceEvidence    []ownership.HookSourceEvidence
+	pluginInstanceKey string
 }
 
 func (e ownedJSONEntry) id() ownership.EntryID {
@@ -53,6 +54,7 @@ func (e ownedJSONEntry) ownershipEntry() ownership.Entry {
 		IdentityDigest: e.identity,
 		ValueDigest:    e.valueDigest(),
 		Resource:       e.resource,
+		PluginInstance: e.pluginInstanceKey,
 	}
 	if e.kind == ownership.KindHook {
 		entry.SourceDigest = e.sourceDigest
@@ -243,6 +245,7 @@ type ownedAggregateState struct {
 	values        map[outputKey]any
 	nativeHooks   map[outputKey]bool
 	writeSessions map[string]ownedAggregateWriteSession
+	batches       map[outputKey]*pluginInstanceBatch
 }
 
 func (s ownedAggregateState) reconcilesNativeHooks(key outputKey) bool {
@@ -256,6 +259,10 @@ func (s ownedAggregateState) writeSession(root string) (ownedAggregateWriteSessi
 	}
 	session, ok := s.writeSessions[ownership.RootKey(canonical)]
 	return session, ok
+}
+
+func (s ownedAggregateState) pluginBatch(key outputKey) *pluginInstanceBatch {
+	return s.batches[key]
 }
 
 func (s *ownedAggregateState) setWriteSession(session ownedAggregateWriteSession) {
@@ -296,7 +303,7 @@ func (s ownedAggregateState) put(key outputKey, value any) {
 // ownedAggregateHandler lets the materializer orchestrate owned aggregate
 // files without knowing a target's filenames, identities, or patch format.
 type ownedAggregateHandler interface {
-	extract(ownedAggregateState, outputKey, []artifact.Artifact, string) ([]artifact.Artifact, error)
+	extract(ownedAggregateState, outputKey, []artifact.Artifact, string, string) ([]artifact.Artifact, error)
 	markIncomplete(ownedAggregateState, outputKey, ir.ResourceKind)
 	aggregateRels(ir.ResourceKind, bool) []string
 	malformedDiagnostic(outputKey, string, error) diag.Diagnostic
@@ -383,6 +390,10 @@ type ownedJSONReconcileOptions struct {
 	nativeHookFinalize        nativeHookFinalizer
 	selectedHookResources     map[string]bool
 	legacyHandwrittenFiles    []string
+	pluginInstanceKey         string
+	pluginInstanceKeys        map[string]bool
+	activePluginInstances     map[string]bool
+	batch                     *pluginInstanceBatch
 }
 
 type nativeHookReconcileOptionsProvider interface {

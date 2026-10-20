@@ -5,6 +5,13 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+func HarnessTargets(targets []hcc.Target) []hcc.Target {
+	if targets == nil {
+		return []hcc.Target{hcc.TargetClaude}
+	}
+	return targets
+}
+
 func MaterializationWinners(resolved []ResolvedArtifact) []ResolvedArtifact {
 	type key struct {
 		kind    ir.ResourceKind
@@ -12,12 +19,7 @@ func MaterializationWinners(resolved []ResolvedArtifact) []ResolvedArtifact {
 		target  hcc.Target
 		machine bool
 	}
-	targetsOf := func(a ResolvedArtifact) []hcc.Target {
-		if a.Harnesses == nil {
-			return []hcc.Target{hcc.TargetClaude}
-		}
-		return a.Harnesses
-	}
+	targetsOf := func(a ResolvedArtifact) []hcc.Target { return HarnessTargets(a.Harnesses) }
 	urlOf := func(a ResolvedArtifact) string {
 		if a.IsMarketplace {
 			return a.MarketplaceURL

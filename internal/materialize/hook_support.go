@@ -77,6 +77,11 @@ func prepareHookSupport(work []skillTarget, repoRoots ...string) (map[int]hookSu
 			continue
 		}
 		plan := hookSupportPlan{}
+		if w.skill.PluginPackage != nil {
+			plan.sourceDigest, plan.err = nativeHookFingerprint(w.skill, w.target, w.machineScope)
+			plans[i] = plan
+			continue
+		}
 		var files []artifact.Artifact
 		if w.skill.IsMarketplace && w.skill.MarketplaceAcquisition == config.MarketplaceAcquisitionMirror && w.skill.MarketplaceHookSupport != nil {
 			sourceKey, err := hookSupportSourceKeyForScope(w, repoRoot)
@@ -337,6 +342,12 @@ func hookSupportSlug(res resolver.ResolvedArtifact) string {
 }
 
 func hookSupportCommandBase(w skillTarget, repoRoot, relBase string) (string, error) {
+	if w.skill.PluginPackage != nil {
+		if w.skill.PluginPackage.GenerationPath == "" {
+			return "", errors.New("plugin package generation is unavailable")
+		}
+		return w.skill.PluginPackage.GenerationPath, nil
+	}
 	if relBase == "" {
 		return "", nil
 	}

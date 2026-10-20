@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -20,6 +21,7 @@ type PluginEntry struct {
 	Format           string
 	Source           plugindecode.CatalogSource
 	Members          []ir.PluginMember
+	Invalid          []ir.PluginRecord
 	DefinitionDigest string
 	// Strict and Overlay carry the catalog entry's overlay input for
 	// formats whose catalog declares an entry-overlay policy; they matter
@@ -42,13 +44,38 @@ func DiscoverPluginSource(dir, format string) (LoadedCatalog, error) {
 	if !known {
 		return LoadedCatalog{}, fmt.Errorf("plugin format %q is not a recognized package or catalog format", format)
 	}
+	var loaded LoadedCatalog
 	switch info.Role {
 	case pluginpolicy.RolePackage:
-		return discoverPluginPackage(dir, format)
+		loaded, err = discoverPluginPackage(dir, format)
 	case pluginpolicy.RoleCatalog:
-		return discoverPluginCatalog(dir, format)
+		loaded, err = discoverPluginCatalog(dir, format)
+	default:
+		err = fmt.Errorf("plugin format %q is not a recognized package or catalog format", format)
 	}
-	return LoadedCatalog{}, fmt.Errorf("plugin format %q is not a recognized package or catalog format", format)
+	if err != nil {
+		return LoadedCatalog{}, err
+	}
+	root, err := filepath.Abs(dir)
+	if err != nil {
+		return LoadedCatalog{}, fmt.Errorf("resolve plugin source root %q: %w", dir, err)
+	}
+	for i := range loaded.Entries {
+		entry := &loaded.Entries[i]
+		if entry.Kind != ir.KindPlugin || entry.Plugin == nil || entry.Plugin.Source.Kind != "path" {
+			continue
+		}
+		packageRoot := root
+		if entry.Plugin.Source.Path != "" && entry.Plugin.Source.Path != "." {
+			packageRoot = filepath.Join(root, filepath.FromSlash(entry.Plugin.Source.Path))
+		}
+		rel, relErr := filepath.Rel(root, packageRoot)
+		if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return LoadedCatalog{}, fmt.Errorf("plugin package source %q escapes its catalog root", entry.Plugin.Source.Path)
+		}
+		entry.PackageRoot = filepath.Clean(packageRoot)
+	}
+	return loaded, nil
 }
 
 func discoverPluginPackage(dir, format string) (LoadedCatalog, error) {
@@ -127,6 +154,7 @@ func applyPlugin(entry *Entry, plugin *ir.Plugin) {
 		entry.Plugin = &PluginEntry{Format: plugin.Format}
 	}
 	entry.Resource = plugin
+	entry.Plugin.Invalid = append([]ir.PluginRecord(nil), plugin.Invalid...)
 	if entry.Name == "" {
 		entry.Name = plugin.Name()
 	}
@@ -134,6 +162,42 @@ func applyPlugin(entry *Entry, plugin *ir.Plugin) {
 	if entry.Description == "" {
 		entry.Description = plugin.Manifest.Description
 	}
+}
+
+// InvalidPluginMemberLocator maps an invalid member record path to the
+// resource kind and member name it names.
+func InvalidPluginMemberLocator(file string) (ir.ResourceKind, string, bool) {
+	parts := strings.Split(filepath.ToSlash(filepath.Clean(file)), "/")
+	if len(parts) < 2 {
+		return ir.ResourceKind(-1), "", false
+	}
+	name := strings.TrimSuffix(path.Base(parts[len(parts)-1]), path.Ext(parts[len(parts)-1]))
+	switch parts[0] {
+	case "skills":
+		return ir.KindSkill, parts[1], true
+	case "commands":
+		return ir.KindCommand, name, true
+	case "agents", "droids":
+		return ir.KindSubagent, name, true
+	}
+	return ir.ResourceKind(-1), "", false
+}
+
+func PluginInvalidMemberExclusionMatch(exclusion string, invalid []ir.PluginRecord) bool {
+	kind, name, ok := strings.Cut(exclusion, "/")
+	if !ok {
+		return false
+	}
+	for _, record := range invalid {
+		if record.Kind != "member" {
+			continue
+		}
+		memberKind, memberName, ok := InvalidPluginMemberLocator(record.Path)
+		if ok && DecisionKind(kind) == memberKind && name == memberName {
+			return true
+		}
+	}
+	return false
 }
 
 // PluginMemberExclusionMatch reports whether an authored member exclusion

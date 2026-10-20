@@ -23,6 +23,10 @@ import (
 // no ownership marker. The function is pure: it performs no I/O and does not
 // change what the default Compile path emits.
 func NativeHookProjection(h *ir.Hook, dst Target, scope Scope, supportBase string) (*Result, error) {
+	return nativeHookProjection(h, dst, scope, supportBase, false)
+}
+
+func nativeHookProjection(h *ir.Hook, dst Target, scope Scope, supportBase string, generationRoot bool) (*Result, error) {
 	if h == nil {
 		return nil, fmt.Errorf("native hook projection requires a hook resource")
 	}
@@ -41,7 +45,7 @@ func NativeHookProjection(h *ir.Hook, dst Target, scope Scope, supportBase strin
 	default:
 		return nil, fmt.Errorf("invalid native hook scope %q", scope)
 	}
-	if err := validateNativeSupportBase(supportBase, machineScope); err != nil {
+	if err := validateNativeSupportBase(supportBase, machineScope, generationRoot); err != nil {
 		return nil, err
 	}
 	artifacts, diags, err := GuardNativeCodexTranslation(h, dst, func(resource ir.Resource) ([]artifact.Artifact, []diag.Diagnostic, error) {
@@ -64,12 +68,18 @@ func NativeHookProjection(h *ir.Hook, dst Target, scope Scope, supportBase strin
 // the caller's responsibility; an empty base stays valid so hooks without a
 // plugin-root reference need none, and the catalog resolver refuses a base
 // that a plugin-root reference requires but cannot represent.
-func validateNativeSupportBase(supportBase string, machineScope bool) error {
+func validateNativeSupportBase(supportBase string, machineScope, generationRoot bool) error {
 	if supportBase == "" {
 		return nil
 	}
 	if strings.ContainsAny(supportBase, "\\\x00") {
 		return fmt.Errorf("invalid native hook support base %q", supportBase)
+	}
+	if generationRoot {
+		if !filepath.IsAbs(supportBase) || filepath.Clean(supportBase) != supportBase {
+			return fmt.Errorf("native hook package generation root %q must be a clean absolute path", supportBase)
+		}
+		return nil
 	}
 	if machineScope {
 		if !filepath.IsAbs(supportBase) || filepath.Clean(supportBase) != supportBase {

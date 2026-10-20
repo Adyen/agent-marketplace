@@ -63,15 +63,16 @@ const (
 
 // Options holds the resolved compilation options for a compile invocation.
 type Options struct {
-	modelOverride           map[string]string
-	toolOverride            map[string]string
-	pluginRoot              string
-	managedByField          string
-	managedByValue          string
-	nativeHookOutput        bool
-	scope                   Scope
-	mcpCredentialKeyTokens  []string
-	mcpInterpolationPattern *regexp.Regexp
+	modelOverride            map[string]string
+	toolOverride             map[string]string
+	pluginRoot               string
+	nativeHookGenerationRoot string
+	managedByField           string
+	managedByValue           string
+	nativeHookOutput         bool
+	scope                    Scope
+	mcpCredentialKeyTokens   []string
+	mcpInterpolationPattern  *regexp.Regexp
 }
 
 // ModelOverride returns the configured model override table, if any.
@@ -238,6 +239,12 @@ func WithPluginRoot(path string) Option {
 	return func(o *Options) { o.pluginRoot = path }
 }
 
+// WithNativeHookGenerationRoot identifies an absolute, immutable package root
+// for a hook projected into native output.
+func WithNativeHookGenerationRoot(path string) Option {
+	return func(o *Options) { o.nativeHookGenerationRoot = path }
+}
+
 func WithManagedBy(field, value string) Option {
 	return func(o *Options) {
 		o.managedByField = field
@@ -340,6 +347,9 @@ func Compile(r ir.Resource, t Target, opts ...Option) (*Result, error) {
 		hook, ok := r.(*ir.Hook)
 		if !ok {
 			return nil, fmt.Errorf("compile: native hook output requires a hook resource")
+		}
+		if cfg.nativeHookGenerationRoot != "" {
+			return nativeHookProjection(hook, t, cfg.Scope(), cfg.nativeHookGenerationRoot, true)
 		}
 		return NativeHookProjection(hook, t, cfg.Scope(), cfg.pluginRoot)
 	}

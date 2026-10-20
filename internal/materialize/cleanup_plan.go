@@ -84,14 +84,14 @@ func PrepareOwnedMCPRemoval(ctx context.Context, repoRoot string, target resolve
 				root := targetFile.store.CanonicalRoot()
 				file := remainingFiles[cleanupFileKey(string(view.Target), target.Source.IsMachineScope(), root, targetFile.Rel)]
 				if file == nil {
-					copy := *targetFile
-					copy.desired = nil
+					copied := *targetFile
+					copied.desired = nil
 					if shared, ok := stores[root]; ok {
-						copy.store = shared
+						copied.store = shared
 					} else {
-						stores[root] = copy.store
+						stores[root] = copied.store
 					}
-					file = &copy
+					file = &copied
 				}
 				for _, remainingDesired := range file.repairDesiredValues() {
 					if remainingDesired.ID == desired.value.ID {

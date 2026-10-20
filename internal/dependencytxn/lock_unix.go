@@ -51,6 +51,17 @@ func acquireLocks(ctx context.Context, paths []string) ([]heldLock, error) {
 	return locks, nil
 }
 
+// WithPathLock holds the dependency transaction's cross-process lock for path
+// while fn runs.
+func WithPathLock(ctx context.Context, path string, fn func() error) error {
+	locks, err := acquireLocks(ctx, []string{path})
+	if err != nil {
+		return err
+	}
+	defer releaseLocks(locks)
+	return fn()
+}
+
 func acquireLock(ctx context.Context, path string) (heldLock, error) {
 	if err := ctx.Err(); err != nil {
 		return heldLock{}, errors.Join(ErrLockTimeout, err)

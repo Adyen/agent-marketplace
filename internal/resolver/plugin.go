@@ -33,6 +33,7 @@ type PluginSelection struct {
 	Edges      []PluginEdge
 	Members    []ir.PluginMember
 	Exclusions []string
+	Delivery   string
 }
 
 // PluginMemberDirectSelectionError refuses a leaf locator that names a
@@ -137,8 +138,12 @@ func pluginRequestsFor(entry config.RegistryEntry, name string) []config.V4Resou
 // instead of being matched here.
 func applyPluginRequestOptions(selection *PluginSelection, name string, options []config.V4ResourceOptions, entry config.RegistryEntry, plugin *catalog.PluginEntry) error {
 	var excluded []string
+	selection.Delivery = "auto"
 	for _, opts := range options {
 		excluded = append(excluded, opts.Exclude...)
+		if opts.Delivery == "native" || (selection.Delivery != "native" && opts.Delivery == "decompose") {
+			selection.Delivery = opts.Delivery
+		}
 	}
 	members := selection.Members
 	deferred := plugin != nil && plugin.Source.Kind == "git"
@@ -155,6 +160,9 @@ func applyPluginRequestOptions(selection *PluginSelection, name string, options 
 				continue
 			}
 			kept = append(kept, member)
+		}
+		if !matched && plugin != nil && catalog.PluginInvalidMemberExclusionMatch(exclusion, plugin.Invalid) {
+			matched = true
 		}
 		if !matched {
 			return &PluginUnknownExclusionError{PluginName: name, Exclusion: exclusion, URL: entry.URL}

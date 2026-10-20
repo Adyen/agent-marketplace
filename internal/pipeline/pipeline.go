@@ -2,6 +2,8 @@ package pipeline
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -24,8 +27,10 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/plugindecode"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
@@ -105,6 +110,7 @@ type ResolveResult struct {
 	MaterializationModes  config.MaterializationModes
 	CatalogLoad           catalog.LoadResult
 	Resolved              []resolver.ResolvedArtifact
+	PluginPlan            catalog.PluginSelectionPlan
 	LockMetadata          []LockMetadata
 	MarketplaceStatuses   []marketplace.PinStatus
 	MarketplaceInspection *marketplace.Inspection
@@ -639,7 +645,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		}
 		marketplaceCfg = &filtered
 	}
-	resolved, resolveErrs := resolver.Resolve(
+	resolved, resolveErrs, pluginPlan := resolver.ResolveWithPluginSelectionPlan(
 		marketplaceCfg,
 		catalog.EntriesByKey(loadResult.Catalogs),
 		result.LocalCfg,
@@ -651,6 +657,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		resolver.WithMarketplaceResolveMode(mpMode),
 		resolver.WithMarketplaceRevocationPolicy(opts.MarketplaceRevocationPolicy),
 	)
+	result.PluginPlan = pluginPlan
 	result.LoadedCfg = loadedCfg
 	result.Resolved = resolved
 	result.ResolveErrors = append(resolveErrs, readOnlyView.errors...)
@@ -910,9 +917,13 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 			"resolved.count": strconv.Itoa(len(resolved.Resolved)),
 		})
 	}
-	deliverable, pending := DeliverableArtifacts(resolved.Resolved)
+	deliverable, pending := DeliverableArtifacts(resolved.Resolved, resolved.PluginPlan)
 	result.Warnings = append(result.Warnings, pending...)
-	report, err := materialize.Run(ctx, matRoot, deliverable, materialize.WithMaterializationModes(resolved.MaterializationModes))
+	materializeOptions := []materialize.RunOption{materialize.WithMaterializationModes(resolved.MaterializationModes)}
+	if len(resolved.ConfigErrors) == 0 && len(resolved.CatalogErrors) == 0 {
+		materializeOptions = append(materializeOptions, materialize.WithPluginStateReconciliation())
+	}
+	report, err := materialize.Run(ctx, matRoot, deliverable, materializeOptions...)
 	if materializeSpan != (telemetry.Span{}) {
 		materializeSpan.SetAttributes(materializationResultAttrs(report, err))
 		materializeSpan.End()
@@ -941,27 +952,377 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 	return result
 }
 
-// DeliverableArtifacts splits resolved artifacts into the set materialize.Run
-// can consume and one plugin.delivery.pending warning per plugin artifact.
-// Plugin members have no harness delivery yet, so every entry point that
-// hands resolved artifacts to materialize.Run, writable sync and the
-// dry-run/inspection paths alike, must apply this same skip.
-func DeliverableArtifacts(resolved []resolver.ResolvedArtifact) ([]resolver.ResolvedArtifact, []error) {
+func DeliverableArtifacts(resolved []resolver.ResolvedArtifact, plan catalog.PluginSelectionPlan) ([]resolver.ResolvedArtifact, []error) {
 	deliverable := make([]resolver.ResolvedArtifact, 0, len(resolved))
 	var pending []error
 	for _, artifact := range resolved {
-		if artifact.Kind == ir.KindPlugin {
+		if artifact.Kind != ir.KindPlugin {
+			deliverable = append(deliverable, artifact)
+			continue
+		}
+		delivery := "auto"
+		if artifact.Selection != nil && artifact.Selection.Delivery != "" {
+			delivery = artifact.Selection.Delivery
+		}
+		if delivery == "native" {
 			pending = append(pending, newDiagIssue(diag.Diagnostic{
 				Code:     diag.CodePluginDeliveryPending,
 				Severity: diag.SeverityWarning,
 				Resource: "plugin/" + artifact.Name,
-				Message:  "plugin is acquired and locked; harness delivery of plugin members is not available yet",
+				Message:  "native plugin delivery is not available yet",
 			}))
 			continue
 		}
-		deliverable = append(deliverable, artifact)
+		if artifact.Plugin != nil && artifact.Plugin.Source.Kind == "git" {
+			pending = append(pending, newDiagIssue(diag.Diagnostic{
+				Code:     diag.CodePluginDeliveryPending,
+				Severity: diag.SeverityWarning,
+				Resource: "plugin/" + artifact.Name,
+				Message:  "external plugin package acquisition is not available for decomposed delivery yet",
+			}))
+			continue
+		}
+		if artifact.Unresolved || artifact.Resource == nil {
+			continue
+		}
+		plugin, ok := artifact.Resource.(*ir.Plugin)
+		if !ok {
+			continue
+		}
+		packageRoot, err := pluginPackageRoot(artifact, plugin)
+		if err != nil {
+			pending = append(pending, newDiagIssue(diag.Diagnostic{
+				Code:     diag.CodePluginGenerationPublish,
+				Severity: diag.SeverityError,
+				Resource: "plugin/" + artifact.Name,
+				Message:  "plugin package root could not be resolved safely",
+			}))
+			continue
+		}
+		members, foundPlan, authoredExclusions := plannedPluginMemberKeys(plan, artifact)
+		if !foundPlan {
+			pending = append(pending, newDiagIssue(diag.Diagnostic{
+				Code:     diag.CodePluginDeliveryPending,
+				Severity: diag.SeverityWarning,
+				Resource: "plugin/" + artifact.Name,
+				Message:  "plugin member selection plan is unavailable",
+			}))
+			continue
+		}
+		decodeFailures, decodeKinds := pluginDecodeFailures(plugin, authoredExclusions)
+		excluded := make([]string, 0)
+		for _, member := range plugin.Members {
+			if !members[member.Key()] {
+				excluded = append(excluded, member.Key())
+			}
+		}
+		excluded = append(excluded, authoredExclusions...)
+		slices.Sort(excluded)
+		excluded = slices.Compact(excluded)
+		fingerprint := plugin.Format
+		if artifact.Plugin != nil && artifact.Plugin.DefinitionDigest != "" {
+			fingerprint = artifact.Plugin.DefinitionDigest
+		}
+		pluginPackage := &resolver.PluginPackage{
+			Name:               plugin.Name(),
+			PackageRoot:        packageRoot,
+			CatalogFingerprint: fingerprint,
+			Delivery:           delivery,
+			Scope:              artifact.Source.String(),
+			Exclusions:         append([]string(nil), excluded...),
+			DecodeFailures:     decodeFailures,
+			DecodeKinds:        decodeKinds,
+			Package:            plugin,
+		}
+		added := false
+		for _, member := range plugin.Members {
+			if !members[member.Key()] || member.Resource == nil {
+				continue
+			}
+			for _, target := range resolver.HarnessTargets(artifact.Harnesses) {
+				memberPath := pluginMemberSourcePath(packageRoot, compile.SourceOf(member.Resource).File, plugin.Files)
+				memberRelPath, _ := filepath.Rel(packageRoot, memberPath)
+				memberArtifact := artifact
+				memberArtifact.Harnesses = []hcc.Target{target}
+				memberArtifact.Kind = member.Resource.Kind()
+				memberArtifact.Name = member.Resource.Name()
+				memberArtifact.Resource = member.Resource
+				memberArtifact.Path = memberPath
+				memberArtifact.Plugin = nil
+				memberArtifact.Selection = nil
+				memberPackage := *pluginPackage
+				memberPackage.MemberPath = filepath.ToSlash(memberRelPath)
+				memberArtifact.PluginPackage = &memberPackage
+				memberArtifact.InstalledName = plugin.Name() + "-" + member.Resource.Name()
+				deliverable = append(deliverable, memberArtifact)
+				added = true
+			}
+		}
+		if !added && len(decodeFailures) > 0 {
+			for _, target := range resolver.HarnessTargets(artifact.Harnesses) {
+				marker := artifact
+				marker.Harnesses = []hcc.Target{target}
+				marker.Selection = nil
+				marker.PluginPackage = pluginPackage
+				deliverable = append(deliverable, marker)
+			}
+		}
 	}
 	return deliverable, pending
+}
+
+func plannedPluginMemberKeys(plan catalog.PluginSelectionPlan, artifact resolver.ResolvedArtifact) (map[string]bool, bool, []string) {
+	keys := map[string]bool{}
+	found := false
+	var exclusions []string
+	for _, planned := range plan.Plugins {
+		if planned.Name != artifact.Name || planned.Layer != artifact.Source {
+			continue
+		}
+		if filepath.Clean(planned.Entry.Path) != filepath.Clean(artifact.Path) {
+			continue
+		}
+		found = true
+		for _, key := range planned.Members {
+			keys[key] = true
+		}
+		exclusions = append(exclusions, planned.Exclusions...)
+	}
+	slices.Sort(exclusions)
+	exclusions = slices.Compact(exclusions)
+	return keys, found, exclusions
+}
+
+func pluginDecodeFailures(plugin *ir.Plugin, exclusions []string) ([]string, []ir.ResourceKind) {
+	if plugin == nil {
+		return nil, nil
+	}
+	exclude := make(map[string]bool, len(exclusions))
+	for _, key := range exclusions {
+		exclude[key] = true
+	}
+	var failures []string
+	var kinds []ir.ResourceKind
+	add := func(name string, kind ir.ResourceKind) {
+		if name == "" {
+			name = kind.String() + "/unknown"
+		}
+		if !slices.Contains(failures, name) {
+			failures = append(failures, name)
+		}
+		if kind != ir.KindPlugin && !slices.Contains(kinds, kind) {
+			kinds = append(kinds, kind)
+		}
+	}
+	for _, invalid := range plugin.Invalid {
+		switch invalid.Kind {
+		case "member":
+			key, kind := invalidPluginMemberKey(invalid.Path)
+			if key != "" && exclude[key] {
+				continue
+			}
+			add(key, kind)
+		case "entry":
+			add("mcpserver/unknown", ir.KindMcpServer)
+		case "component":
+			kind := invalidPluginComponentKind(invalid.Path)
+			if kind != ir.KindPlugin {
+				add(kind.String()+"/component", kind)
+			}
+		}
+	}
+	slices.Sort(failures)
+	slices.SortFunc(kinds, func(a, b ir.ResourceKind) int { return strings.Compare(a.String(), b.String()) })
+	return failures, kinds
+}
+
+func invalidPluginMemberKey(file string) (string, ir.ResourceKind) {
+	if strings.HasPrefix(path.Clean(filepath.ToSlash(file)), "hooks/") {
+		return "hook/unknown", ir.KindHook
+	}
+	kind, name, ok := catalog.InvalidPluginMemberLocator(file)
+	if !ok {
+		return "", ir.KindPlugin
+	}
+	return kind.String() + "/" + name, kind
+}
+
+func invalidPluginComponentKind(file string) ir.ResourceKind {
+	switch strings.Split(path.Clean(filepath.ToSlash(file)), "/")[0] {
+	case "skills":
+		return ir.KindSkill
+	case "commands":
+		return ir.KindCommand
+	case "agents", "droids":
+		return ir.KindSubagent
+	case "hooks":
+		return ir.KindHook
+	case "mcp", "mcpServers", "mcp.json":
+		return ir.KindMcpServer
+	default:
+		return ir.KindPlugin
+	}
+}
+
+func pluginPackageRoot(artifact resolver.ResolvedArtifact, plugin *ir.Plugin) (string, error) {
+	if plugin == nil {
+		return "", fmt.Errorf("plugin package is unavailable")
+	}
+	if packageRootMatches(artifact.PackageRoot, plugin.Files) {
+		return filepath.Clean(artifact.PackageRoot), nil
+	}
+	layout, ok := targetmeta.LookupPackageLayout(plugin.Format)
+	if !ok {
+		return "", fmt.Errorf("plugin package manifest root is unavailable")
+	}
+	if artifact.Plugin != nil {
+		source := artifact.Plugin.Source
+		if source.Kind == "git" {
+			root := filepath.Join(cache.RegistryCachePath(source.URL, source.Ref), filepath.FromSlash(source.Subdirectory))
+			if packageRootMatches(root, plugin.Files) {
+				return filepath.Clean(root), nil
+			}
+		}
+		if source.Kind == "path" && !artifact.IsLocal() {
+			base := cache.RegistryCachePath(artifact.RegistryURL, artifact.Ref)
+			if artifact.RegistryPath != "" && artifact.RegistryPath != "." {
+				base = filepath.Join(base, filepath.FromSlash(artifact.RegistryPath))
+			}
+			root := filepath.Join(base, filepath.FromSlash(source.Path))
+			if packageRootMatches(root, plugin.Files) {
+				return filepath.Clean(root), nil
+			}
+		}
+	}
+	if manifestPath := artifact.PrimarySourcePath; manifestPath != "" {
+		if !filepath.IsAbs(manifestPath) {
+			manifestPath = filepath.Join(artifact.RegistryURL, filepath.FromSlash(manifestPath))
+		}
+		root := catalog.PackageRootFromManifest(manifestPath, layout.ManifestPath)
+		if packageRootMatches(root, plugin.Files) {
+			return root, nil
+		}
+	}
+	if manifestPath := artifact.Path; manifestPath != "" {
+		if !filepath.IsAbs(manifestPath) && artifact.IsLocal() {
+			manifestPath = filepath.Join(artifact.RegistryURL, filepath.FromSlash(manifestPath))
+		}
+		if !filepath.IsAbs(manifestPath) {
+			manifestPath = filepath.Join(cache.RegistryCachePath(artifact.RegistryURL, artifact.Ref), filepath.FromSlash(manifestPath))
+		}
+		root := catalog.PackageRootFromManifest(manifestPath, layout.ManifestPath)
+		if packageRootMatches(root, plugin.Files) {
+			return root, nil
+		}
+	}
+	for _, snapshot := range exactGitSnapshotRoots() {
+		base := snapshot
+		if artifact.Plugin != nil && artifact.Plugin.Source.Kind == "git" {
+			if artifact.Plugin.Source.Subdirectory != "" && artifact.Plugin.Source.Subdirectory != "." {
+				base = filepath.Join(base, filepath.FromSlash(artifact.Plugin.Source.Subdirectory))
+			}
+		} else {
+			if artifact.RegistryPath != "" && artifact.RegistryPath != "." {
+				base = filepath.Join(base, filepath.FromSlash(artifact.RegistryPath))
+			}
+			if artifact.Plugin != nil && artifact.Plugin.Source.Kind == "path" && artifact.Plugin.Source.Path != "" && artifact.Plugin.Source.Path != "." {
+				base = filepath.Join(base, filepath.FromSlash(artifact.Plugin.Source.Path))
+			}
+		}
+		if packageRootMatches(base, plugin.Files) {
+			return filepath.Clean(base), nil
+		}
+	}
+	return "", fmt.Errorf("plugin package source root is unavailable")
+}
+
+func pluginMemberSourcePath(root, source string, inventory []ir.PluginFile) string {
+	if source == "" {
+		return ""
+	}
+	if filepath.IsAbs(source) {
+		cleanSource := filepath.Clean(source)
+		rel, err := filepath.Rel(root, cleanSource)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+			return cleanSource
+		}
+		slashSource := filepath.ToSlash(cleanSource)
+		var match string
+		for _, file := range inventory {
+			if strings.HasSuffix(slashSource, "/"+file.Path) {
+				if match != "" {
+					return ""
+				}
+				match = file.Path
+			}
+		}
+		if match != "" {
+			return filepath.Join(root, filepath.FromSlash(match))
+		}
+		return ""
+	}
+	candidate := filepath.Clean(filepath.Join(root, filepath.FromSlash(source)))
+	rel, err := filepath.Rel(root, candidate)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return ""
+	}
+	return candidate
+}
+
+func packageRootMatches(root string, files []ir.PluginFile) (matched bool) {
+	if root == "" {
+		return false
+	}
+	info, err := os.Lstat(root)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return false
+	}
+	opened, err := os.OpenRoot(root)
+	if err != nil {
+		return false
+	}
+	defer func() {
+		if err := opened.Close(); err != nil {
+			matched = false
+		}
+	}()
+	source := opened.FS()
+	for _, file := range files {
+		handle, err := source.Open(file.Path)
+		if err != nil {
+			return false
+		}
+		fileInfo, statErr := handle.Stat()
+		if statErr == nil && (fileInfo.Size() < 0 || fileInfo.Size() > plugindecode.MaxPackageFileBytes) {
+			_ = handle.Close()
+			return false
+		}
+		data, readErr := io.ReadAll(io.LimitReader(handle, plugindecode.MaxPackageFileBytes+1))
+		closeErr := handle.Close()
+		if statErr != nil || readErr != nil || closeErr != nil || !fileInfo.Mode().IsRegular() || len(data) > plugindecode.MaxPackageFileBytes {
+			return false
+		}
+		digest := sha256.Sum256(data)
+		if hex.EncodeToString(digest[:]) != file.Digest || (fileInfo.Mode().Perm()&0o111 != 0) != file.Executable {
+			return false
+		}
+	}
+	return len(files) > 0
+}
+
+func exactGitSnapshotRoots() []string {
+	root := filepath.Join(cache.CacheDir(), "exact-git", "snapshots")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	var roots []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			roots = append(roots, filepath.Join(root, entry.Name()))
+		}
+	}
+	return roots
 }
 
 // CollectManagedPaths returns the managed paths (component subdirectories and
