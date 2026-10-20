@@ -39,33 +39,46 @@ func releasedHookWriteTree(t *testing.T, root string, files map[string]string) {
 // A committed lock written by the latest release keeps verifying for the
 // candidate, and a lock the candidate refreshes keeps verifying for the
 // release, for registries that also carry harness-native hook files or a
-// project .claude/settings.json beside their resources.
+// project .claude/settings.json beside their resources, and for registries
+// of native structured agents whose model, reasoning and tool fields the
+// candidate's model and tool catalogs now translate. The release writes the
+// lock's source revisions in its frozen format and the candidate's update
+// writes the current one, so both directions are exercised.
 func TestReleasedClientLockVerifiesNativeHookSourceLayouts(t *testing.T) {
 	world, released, candidate := releasedHookGate(t)
 	skill := skillDocument("review", "Review body")
 	for _, shape := range []struct {
-		name, harness, skillPath string
-		files                    map[string]string
+		name, harness, skillPath, include string
+		files                             map[string]string
 	}{
-		{"factory-native-hooks", "factory", ".factory/skills/review/SKILL.md", map[string]string{
+		{"factory-native-hooks", "factory", ".factory/skills/review/SKILL.md", "", map[string]string{
 			".factory/skills/review/SKILL.md": skill,
 			".factory/hooks.json":             `{"PreToolUse":[{"matcher":"Execute","hooks":[{"type":"command","command":"echo maintainer"}]}]}`,
 		}},
-		{"cursor-native-hooks", "cursor", ".cursor/skills/review/SKILL.md", map[string]string{
+		{"cursor-native-hooks", "cursor", ".cursor/skills/review/SKILL.md", "", map[string]string{
 			".cursor/skills/review/SKILL.md": skill,
 			".cursor/hooks.json":             `{"version":1,"hooks":{"preToolUse":[{"command":"echo maintainer","matcher":"Shell"}]}}`,
 		}},
-		{"devin-desktop-workspace-hooks", "windsurf", ".windsurf/skills/review/SKILL.md", map[string]string{
+		{"devin-desktop-workspace-hooks", "windsurf", ".windsurf/skills/review/SKILL.md", "", map[string]string{
 			".windsurf/skills/review/SKILL.md": skill,
 			".devin/hooks.json":                `{"hooks":{"pre_run_command":[{"command":"echo maintainer"}]}}`,
 		}},
-		{"claude-settings-hooks", "claude", ".claude/skills/review/SKILL.md", map[string]string{
+		{"claude-settings-hooks", "claude", ".claude/skills/review/SKILL.md", "", map[string]string{
 			".claude/skills/review/SKILL.md": skill,
 			".claude/settings.json":          `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo maintainer"}]}]}}`,
 		}},
-		{"root-skills-with-claude-settings", "claude", ".claude/skills/review/SKILL.md", map[string]string{
+		{"root-skills-with-claude-settings", "claude", ".claude/skills/review/SKILL.md", "", map[string]string{
 			"skills/review/SKILL.md": skill,
 			".claude/settings.json":  `{"permissions":{"allow":["Bash(make test)"]}}`,
+		}},
+		{"claude-structured-agent", "claude", ".claude/agents/reader.md", "subagent/reader", map[string]string{
+			".claude/agents/reader.md": "---\nname: reader\ndescription: Reads code\nmodel: sonnet\ntools: Read, Grep\n---\nRead carefully.\n",
+		}},
+		{"factory-structured-droid", "factory", ".factory/droids/reader.md", "subagent/reader", map[string]string{
+			".factory/droids/reader.md": "---\nname: reader\ndescription: Reads code\nmodel: claude-sonnet-5\nreasoningEffort: high\ntools: [\"Read\", \"Grep\"]\n---\nRead carefully.\n",
+		}},
+		{"codex-structured-agent", "codex", ".codex/agents/reader.toml", "subagent/reader", map[string]string{
+			".codex/agents/reader.toml": "name = 'reader'\ndescription = 'Reads code'\ndeveloper_instructions = 'Read carefully.'\nmodel = 'gpt-5.6'\nmodel_reasoning_effort = 'high'\n",
 		}},
 	} {
 		t.Run(shape.name, func(t *testing.T) {
@@ -76,8 +89,12 @@ func TestReleasedClientLockVerifiesNativeHookSourceLayouts(t *testing.T) {
 			gitRun(t, "", "init", "-q", "-b", "main", source)
 			(&gitRegistry{t: t, source: source}).commit("seed")
 			gitRun(t, "", "clone", "-q", "--bare", source, bare)
+			include := shape.include
+			if include == "" {
+				include = "skill/review"
+			}
 			releasedHookWriteTree(t, workspace, map[string]string{".agents/config.yaml": fmt.Sprintf(
-				"apiVersion: agent-marketplace/v4\nharnesses: [%s]\nsources:\n  reg: {git: 'file://%s', ref: main}\nresources:\n  reg: {include: [skill/review]}\n", shape.harness, bare)})
+				"apiVersion: agent-marketplace/v4\nharnesses: [%s]\nsources:\n  reg: {git: 'file://%s', ref: main}\nresources:\n  reg: {include: [%s]}\n", shape.harness, bare, include)})
 			gitRun(t, "", "init", "-q", "-b", "main", workspace)
 			for _, home := range homes {
 				if err := os.MkdirAll(home, 0o700); err != nil {
@@ -111,7 +128,7 @@ func TestReleasedClientLockVerifiesNativeHookSourceLayouts(t *testing.T) {
 				}
 			}
 			if _, err := os.Stat(filepath.Join(workspace, filepath.FromSlash(shape.skillPath))); err != nil {
-				t.Fatalf("candidate did not materialize the locked skill: %v", err)
+				t.Fatalf("candidate did not materialize the locked %s: %v", include, err)
 			}
 
 			step(candidate, "update", "--scope", "repo")
