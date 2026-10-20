@@ -401,6 +401,11 @@ func TestEvaluateTUIQAGate(t *testing.T) {
 			wantDetail: "cmd/agent-marketplace/tui.go",
 			notDetail:  []string{"sync.go", "cmd/other"},
 		},
+		{
+			name:        "non-Go tui files are not launch wiring",
+			files:       changed("cmd/agent-marketplace/tui.yaml", "cmd/agent-marketplace/tuistate.json", delta),
+			wantSummary: "no TUI-bearing changes",
+		},
 		// spec: spec-governance/tui-change-with-journey-passes
 		{
 			name:        "TUI change with PTY journey",

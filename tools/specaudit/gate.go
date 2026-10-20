@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -67,7 +68,8 @@ func isTUIBearing(p string) bool {
 		return false
 	}
 	dir, name := path.Split(p)
-	return strings.HasPrefix(p, "internal/tui/") || (dir == "cmd/agent-marketplace/" && strings.HasPrefix(name, "tui"))
+	return strings.HasPrefix(p, "internal/tui/") ||
+		(dir == "cmd/agent-marketplace/" && strings.HasPrefix(name, "tui") && strings.HasSuffix(name, ".go"))
 }
 
 func isExempt(p string) bool {
@@ -176,8 +178,7 @@ func gate(root, base, head string) ([]finding, string, error) {
 }
 
 func diffPaths(root, rng string, extra ...string) ([]string, error) {
-	args := append([]string{"diff", "--no-renames", "--name-only", "-z"}, extra...)
-	out, err := git(root, append(args, rng)...)
+	out, err := git(root, slices.Concat([]string{"diff", "--no-renames", "--name-only", "-z"}, extra, []string{rng})...)
 	if err != nil {
 		return nil, err
 	}

@@ -171,8 +171,8 @@ The traceability check SHALL apply RENAMED requirement mappings before other ope
 
 A pull request SHALL add or modify at least one TUI QA journey whenever it
 changes a TUI-bearing file. TUI-bearing files are files under `internal/tui/`
-and files directly under `cmd/agent-marketplace/` whose name starts with `tui`,
-excluding test files, Markdown files, and anything under a `testdata/`
+and `.go` files directly under `cmd/agent-marketplace/` whose name starts with
+`tui`, excluding test files, Markdown files, and anything under a `testdata/`
 directory. TUI QA journeys are `*.spec.ts` and `*.test.ts` files under
 `tools/tui-qa/tests/`. Deleting a journey MUST NOT count as adding or modifying
 one. This requirement is independent of the spec delta requirement: a journey
