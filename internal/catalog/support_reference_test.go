@@ -171,6 +171,30 @@ func TestCheckHookSupportReferences(t *testing.T) {
 			wantMissing: true,
 		},
 		{
+			name:        "trailing backslash unchecked no panic",
+			command:     `${CLAUDE_PLUGIN_ROOT}/hooks/x\`,
+			installed:   []string{"hooks/check.sh"},
+			wantCommand: `${CLAUDE_PLUGIN_ROOT}/hooks/x\`,
+		},
+		{
+			name:        "dot path names bundle root",
+			command:     `${CLAUDE_PLUGIN_ROOT}/.`,
+			installed:   []string{"hooks/check.sh"},
+			wantCommand: `${CLAUDE_PLUGIN_ROOT}/.`,
+		},
+		{
+			name:        "slash-dot path names bundle root",
+			command:     `${CLAUDE_PLUGIN_ROOT}/./`,
+			installed:   []string{"hooks/check.sh"},
+			wantCommand: `${CLAUDE_PLUGIN_ROOT}/./`,
+		},
+		{
+			name:        "unterminated quote unchecked",
+			command:     `"${CLAUDE_PLUGIN_ROOT}/hooks/miss`,
+			installed:   []string{"hooks/check.sh"},
+			wantCommand: `"${CLAUDE_PLUGIN_ROOT}/hooks/miss`,
+		},
+		{
 			name:         "single-quoted token untouched",
 			command:      `echo '${CLAUDE_PLUGIN_ROOT}/absent.sh'`,
 			installed:    []string{"hooks/check.sh"},

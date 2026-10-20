@@ -688,7 +688,7 @@ func TestRunIndependentNativeHookFactoryNativeMismatchesRetainLegacy(t *testing.
 			name: "wrong_resource_support_namespace",
 			mutate: func(t *testing.T, f independentFactoryFixture) []byte {
 				handler := f.selectedHandler()
-				changed := strings.Replace(handler, "/hooks/scripts/", "/other-resource/scripts/", 1)
+				changed := strings.Replace(handler, "/"+f.name+"/hooks/scripts/", "/other-resource/hooks/scripts/", 1)
 				return replaceIndependentText(t, f.nativeBody, handler, changed)
 			},
 		},

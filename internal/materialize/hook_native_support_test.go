@@ -1331,7 +1331,7 @@ func TestNativeHookSupportPinnedGitSnapshot(t *testing.T) {
 			if err != nil || command != loc.repoBase+filepath.ToSlash(rel) {
 				t.Fatal("Factory hook command did not point to its installed support script")
 			}
-			mcpMatches, err := filepath.Glob(filepath.Join(repo, filepath.FromSlash(loc.repoSupportRoot), "*", "pinned-check", "mcp.json"))
+			mcpMatches, err := filepath.Glob(filepath.Join(repo, filepath.FromSlash(loc.repoSupportRoot), "*", "pinned-check", ".factory", "mcp.json"))
 			if err != nil || len(mcpMatches) != 0 {
 				t.Fatal("native MCP peer was installed as hook support")
 			}

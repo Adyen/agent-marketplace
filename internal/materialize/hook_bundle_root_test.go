@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -545,7 +546,7 @@ func TestHookBundleRootInterruptedSupportMoveRecovers(t *testing.T) {
 		t.Fatalf("interrupted move = %v / %v, want failure", err, report)
 	}
 	if !faultCalled {
-		t.Skip("dependency transaction fault point was not reached by the support move")
+		t.Fatal("dependency transaction fault point was not reached by the support move")
 	}
 	readOnly, err := Run(context.Background(), repo, resolved, WithMaterializationModes(modes), WithDryRun())
 	if err == nil && (readOnly == nil || !hasErrorDiagnostics(readOnly.Diags)) {
@@ -567,7 +568,19 @@ func TestHookBundleRootInterruptedSupportMoveRecovers(t *testing.T) {
 	if _, err := os.Stat(newFile); err != nil {
 		t.Fatalf("bundle-relative support missing after recovery: %v", err)
 	}
-	staging := hookSupportGlob(t, repo, ".factory", "hook-support", "**", "*.staging")
+	var staging []string
+	supportRoot := filepath.Join(repo, ".factory", "hook-support")
+	if err := filepath.WalkDir(supportRoot, func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil || d.IsDir() {
+			return walkErr
+		}
+		if strings.HasPrefix(d.Name(), ".dependencytxn-") && strings.HasSuffix(d.Name(), ".tmp") {
+			staging = append(staging, p)
+		}
+		return nil
+	}); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
 	if len(staging) != 0 {
 		t.Fatalf("staging residue after recovery: %v", staging)
 	}

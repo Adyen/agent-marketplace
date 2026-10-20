@@ -185,7 +185,7 @@ func prepareNativeHookProjectionSource(res resolver.ResolvedArtifact, hook *ir.H
 				return nil, "", nil, checkErr
 			}
 			if checked.Missing {
-				return nil, "", nil, errHookSupportReferenceMissing
+				checked.Command = captured.Command
 			}
 			if checked.Command != captured.Command {
 				clone := *captured
@@ -196,8 +196,6 @@ func prepareNativeHookProjectionSource(res resolver.ResolvedArtifact, hook *ir.H
 	}
 	return captured, digest, support, nil
 }
-
-var errHookSupportReferenceMissing = errors.New("hook support reference names no installed file")
 
 func nativeHookProjectionDestination(destinations []harness.Destination, file targetmeta.NativeHookProjectionFile) (harness.Destination, string, error) {
 	var selected harness.Destination

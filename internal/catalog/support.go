@@ -231,7 +231,7 @@ func CheckHookSupportReferences(command string, installed []string, legacyPrefix
 				ch := command[k]
 				if ch == '\\' {
 					dynamic = true
-					k += 2
+					k = min(k+2, len(command))
 					continue
 				}
 				if ch == '$' || ch == '`' {
@@ -257,12 +257,16 @@ func CheckHookSupportReferences(command string, installed []string, legacyPrefix
 					// The scan stopped at the closing quote; anything but a
 					// word delimiter after it concatenates onto the word.
 					dynamic = k+1 < len(command) && strings.IndexByte(" \t\n;&|<>()", command[k+1]) < 0
+				} else {
+					// An unterminated quote leaves the word open.
+					dynamic = true
 				}
 			}
-			rel := strings.TrimLeft(strings.TrimRight(command[pathStart:k], "/"), "/")
+			rel := strings.Trim(command[pathStart:k], "/")
 			if rel != "" && !dynamic && !strings.ContainsAny(rel, "*?[]{}") {
 				cleaned := path.Clean(rel)
 				switch {
+				case cleaned == ".":
 				case cleaned == ".." || strings.HasPrefix(cleaned, "../"):
 					result.Missing = true
 				case resolved(cleaned):
