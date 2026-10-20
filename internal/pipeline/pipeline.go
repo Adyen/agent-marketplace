@@ -1056,7 +1056,6 @@ func DeliverableArtifacts(resolved []resolver.ResolvedArtifact, plan catalog.Plu
 		}
 		pluginPackage := &resolver.PluginPackage{
 			Name:               plugin.Name(),
-			Format:             plugin.Format,
 			PackageRoot:        packageRoot,
 			CatalogFingerprint: fingerprint,
 			Delivery:           delivery,
@@ -1085,7 +1084,6 @@ func DeliverableArtifacts(resolved []resolver.ResolvedArtifact, plan catalog.Plu
 				memberPackage := *pluginPackage
 				memberPackage.MemberPath = filepath.ToSlash(memberRelPath)
 				memberArtifact.PluginPackage = &memberPackage
-				memberArtifact.Path = memberPath
 				memberArtifact.InstalledName = plugin.Name() + "-" + member.Resource.Name()
 				deliverable = append(deliverable, memberArtifact)
 				added = true
@@ -1170,23 +1168,14 @@ func pluginDecodeFailures(plugin *ir.Plugin, exclusions []string) ([]string, []i
 }
 
 func invalidPluginMemberKey(file string) (string, ir.ResourceKind) {
-	clean := path.Clean(filepath.ToSlash(file))
-	parts := strings.Split(clean, "/")
-	if len(parts) < 2 {
-		return "", ir.KindPlugin
-	}
-	switch parts[0] {
-	case "skills":
-		return "skill/" + parts[1], ir.KindSkill
-	case "commands":
-		return "command/" + strings.TrimSuffix(path.Base(parts[len(parts)-1]), path.Ext(parts[len(parts)-1])), ir.KindCommand
-	case "agents", "droids":
-		return "subagent/" + strings.TrimSuffix(path.Base(parts[len(parts)-1]), path.Ext(parts[len(parts)-1])), ir.KindSubagent
-	case "hooks":
+	if strings.HasPrefix(path.Clean(filepath.ToSlash(file)), "hooks/") {
 		return "hook/unknown", ir.KindHook
-	default:
+	}
+	kind, name, ok := catalog.InvalidPluginMemberLocator(file)
+	if !ok {
 		return "", ir.KindPlugin
 	}
+	return kind.String() + "/" + name, kind
 }
 
 func invalidPluginComponentKind(file string) ir.ResourceKind {
@@ -1240,7 +1229,7 @@ func pluginPackageRoot(artifact resolver.ResolvedArtifact, plugin *ir.Plugin) (s
 		if !filepath.IsAbs(manifestPath) {
 			manifestPath = filepath.Join(artifact.RegistryURL, filepath.FromSlash(manifestPath))
 		}
-		root := packageRootFromManifest(manifestPath, layout.ManifestPath)
+		root := catalog.PackageRootFromManifest(manifestPath, layout.ManifestPath)
 		if packageRootMatches(root, plugin.Files) {
 			return root, nil
 		}
@@ -1252,7 +1241,7 @@ func pluginPackageRoot(artifact resolver.ResolvedArtifact, plugin *ir.Plugin) (s
 		if !filepath.IsAbs(manifestPath) {
 			manifestPath = filepath.Join(cache.RegistryCachePath(artifact.RegistryURL, artifact.Ref), filepath.FromSlash(manifestPath))
 		}
-		root := packageRootFromManifest(manifestPath, layout.ManifestPath)
+		root := catalog.PackageRootFromManifest(manifestPath, layout.ManifestPath)
 		if packageRootMatches(root, plugin.Files) {
 			return root, nil
 		}
@@ -1309,21 +1298,6 @@ func pluginMemberSourcePath(root, source string, inventory []ir.PluginFile) stri
 		return ""
 	}
 	return candidate
-}
-
-func packageRootFromManifest(manifestPath, manifestRel string) string {
-	if !filepath.IsAbs(manifestPath) {
-		absolute, err := filepath.Abs(manifestPath)
-		if err != nil {
-			return ""
-		}
-		manifestPath = absolute
-	}
-	root := filepath.Clean(manifestPath)
-	for range strings.Split(filepath.FromSlash(manifestRel), string(os.PathSeparator)) {
-		root = filepath.Dir(root)
-	}
-	return root
 }
 
 func packageRootMatches(root string, files []ir.PluginFile) (matched bool) {

@@ -102,9 +102,6 @@ func Publish(input Input) (Generation, error) {
 	if err := os.MkdirAll(packagesDir, 0o700); err != nil {
 		return Generation{}, err
 	}
-	if err := requireDirectory(packagesDir); err != nil {
-		return Generation{}, err
-	}
 	var result Generation
 	err = dependencytxn.WithPathLock(context.Background(), packagesDir, func() error {
 		if err := requireDirectory(packagesDir); err != nil {
