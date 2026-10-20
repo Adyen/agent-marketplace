@@ -163,12 +163,19 @@ func hookInvariantLoadedCommands(t *testing.T, target, root string, machine bool
 	case "gemini":
 		grouped(".gemini/settings.json", "hooks")
 	case "windsurf":
-		switch {
-		case machine:
+		if machine {
 			flat(".codeium/windsurf/hooks.json")
-		case len(events(".devin/hooks.json", "hooks")) > 0:
+			break
+		}
+		// Desktop falls back only while no event holds a handler; an empty
+		// event list defines no hook.
+		defines := false
+		for _, handlers := range events(".devin/hooks.json", "hooks") {
+			defines = defines || len(handlers) > 0
+		}
+		if defines {
 			flat(".devin/hooks.json")
-		default:
+		} else {
 			flat(".windsurf/hooks.json")
 		}
 	case "devin":
