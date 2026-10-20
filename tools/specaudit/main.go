@@ -16,7 +16,8 @@ const usage = `usage: specaudit <command> [flags]
 commands:
   trace     every known scenario has a // spec: test annotation and vice versa
   archived  no active change has every task checked
-  gate      a behavior change carries a spec delta or a Spec-Impact trailer
+  gate      a behavior change carries a spec delta or a Spec-Impact trailer, and
+            a TUI change carries a TUI QA journey or a TUI-QA-Impact trailer
 
 flags:
   -root dir     repository root (default ".")
@@ -32,12 +33,14 @@ type finding struct {
 }
 
 const (
-	kindDuplicateSlug      = "duplicate-slug"
-	kindUnboundScenario    = "unbound-scenario"
-	kindDanglingAnnotation = "dangling-annotation"
-	kindUnarchivedChange   = "unarchived-change"
-	kindMissingSpecDelta   = "missing-spec-delta"
-	kindSpecImpactNoReason = "spec-impact-reason-required"
+	kindDuplicateSlug       = "duplicate-slug"
+	kindUnboundScenario     = "unbound-scenario"
+	kindDanglingAnnotation  = "dangling-annotation"
+	kindUnarchivedChange    = "unarchived-change"
+	kindMissingSpecDelta    = "missing-spec-delta"
+	kindSpecImpactNoReason  = "spec-impact-reason-required"
+	kindMissingTUIQAJourney = "missing-tui-qa-journey"
+	kindTUIQAImpactNoReason = "tui-qa-impact-reason-required"
 )
 
 // errFindings signals that findings were already printed.
