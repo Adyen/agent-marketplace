@@ -50,6 +50,7 @@ journey.test("keeps the v4 mutation error visible at narrow widths", async (term
   await step("open complete error diagnostic", () => terminal.write("e"), async () => {
     await locate(terminal, "Errors (1)").unique().expect();
     await locate(terminal, "unknown_field").expect();
+    await locate(terminal, "unknown top-level field").expect();
     await locate(terminal, "esc/e close").expect();
   });
   assert.equal(fs.readFileSync(globalConfig, "utf8"), invalidConfig);

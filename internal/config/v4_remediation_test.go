@@ -77,6 +77,38 @@ func TestV4ValidationErrorNamesAuthoredFileAndLine(t *testing.T) {
 	}
 }
 
+func TestV4ValidationErrorIncludesPathUnlessMessageContainsIt(t *testing.T) {
+	t.Run("unknown field", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+		_, err := ParseV4Config([]byte("apiVersion: agent-marketplace/v4\nunknown_field: true\n"), file, true)
+		var validation *V4ValidationError
+		if !errors.As(err, &validation) || validation.Code != "v4.unknown-field" {
+			t.Fatalf("error = %v, want v4.unknown-field validation error", err)
+		}
+		want := "v4.unknown-field: " + file + ":2: unknown_field: unknown top-level field"
+		if got := validation.Error(); got != want {
+			t.Fatalf("validation error = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("marketplace lock mismatch does not duplicate locator", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+		locator := "awesome-ai/collection/coderabbit-skills"
+		validation := &V4ValidationError{
+			Code: v4MarketplaceLockMismatchCode, File: file, Line: 6,
+			Path: locator, LockFile: ".agents/lock.yaml", Variant: "resource-missing",
+		}
+		want := "v4.marketplace-lock-mismatch: " + file + ":6: resource \"" + locator +
+			"\" is missing from the lock file .agents/lock.yaml"
+		if got := validation.Error(); got != want {
+			t.Fatalf("validation error = %q, want %q", got, want)
+		}
+		if got := strings.Count(validation.Error(), locator); got != 1 {
+			t.Fatalf("locator appears %d times in %q, want exactly once", got, validation.Error())
+		}
+	})
+}
+
 func TestV4MarketplaceLockMismatchNamesLockFile(t *testing.T) {
 	lockPath := ".agents/lock.yaml"
 	for _, tc := range []struct {

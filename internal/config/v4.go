@@ -196,6 +196,9 @@ func (e *V4ValidationError) Error() string {
 		}
 	}
 	if e.File != "" {
+		if e.Path != "" && !strings.Contains(message, e.Path) {
+			message = e.Path + ": " + message
+		}
 		if e.Line > 0 {
 			return fmt.Sprintf("%s: %s:%d: %s", e.Code, e.File, e.Line, message)
 		}
@@ -848,7 +851,7 @@ func parseV4Sources(n *yaml.Node, file, directoryBase string) (map[string]V4Sour
 		nameNode, value := n.Content[i], n.Content[i+1]
 		name := nameNode.Value
 		if !v4SourceNameRE.MatchString(name) {
-			return nil, v4err("v4.source-name", "sources."+name, nameNode.Line, "must match [a-zA-Z0-9][a-zA-Z0-9._-]*")
+			return nil, v4err("v4.source-name", "sources."+name, nameNode.Line, "source name %q must contain only letters, numbers, dots, underscores, or hyphens", name)
 		}
 		if value.Kind != yaml.MappingNode {
 			return nil, v4err("v4.source-type", "sources."+name, value.Line, "must be a mapping")

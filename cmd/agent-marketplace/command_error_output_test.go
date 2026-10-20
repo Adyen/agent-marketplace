@@ -18,7 +18,11 @@ import (
 const (
 	hostileSourceConfig  = "apiVersion: agent-marketplace/v4\nsources:\n  \"\\e]0;TITLE\\a\\e[2J\\u202EEVIL\\N\":\n    directory: ./missing\n"
 	ordinarySourceConfig = "apiVersion: agent-marketplace/v4\nsources:\n  \"bad name — café\":\n    directory: ./missing\n"
-	sourceNameRule       = "must match [a-zA-Z0-9][a-zA-Z0-9._-]*"
+	sourceNameRule       = "must contain only letters, numbers, dots, underscores, or hyphens"
+	hostileSourceName    = `source name "\x1b]0;TITLE\a\x1b[2J\u202eEVIL\u0085" ` + sourceNameRule
+	ordinarySourceName   = `source name "bad name — café" ` + sourceNameRule
+	hostileSourcePath    = `sources.\x1B]0;TITLE\x07\x1B[2J\u202EEVIL\x85: ` + hostileSourceName
+	ordinarySourcePath   = `sources.bad name — café: ` + ordinarySourceName
 )
 
 // spec: command-error-output/configuration-errors-cannot-control-the-terminal
@@ -46,9 +50,11 @@ func TestCommandErrorsAreTerminalSafe(t *testing.T) {
 			if want := "Error: validate config "; !strings.Contains(output, want) {
 				t.Fatalf("%s: command error does not name the authored file, want %q in:\n%q", command, want, output)
 			}
-			for _, filename := range []string{"config.yaml", "config.local.yaml"} {
-				path := filepath.Join(repo, ".agents", filename)
-				want := `"` + path + `": v4.source-name: ` + path + `:3: ` + sourceNameRule
+			for _, tc := range []struct {
+				filename, message string
+			}{{"config.yaml", hostileSourcePath}, {"config.local.yaml", ordinarySourcePath}} {
+				path := filepath.Join(repo, ".agents", tc.filename)
+				want := `"` + path + `": v4.source-name: ` + path + `:3: ` + tc.message
 				if !strings.Contains(output, want) {
 					t.Fatalf("%s: command error does not name authored file and line, want %q in:\n%q", command, want, output)
 				}
@@ -60,9 +66,11 @@ func TestCommandErrorsAreTerminalSafe(t *testing.T) {
 			t.Fatalf("doctor: %v\n%q", err, output)
 		}
 		assertNoTerminalControls(t, "doctor", output)
-		for _, filename := range []string{"config.yaml", "config.local.yaml"} {
-			path := filepath.Join(repo, ".agents", filename)
-			want := `"` + path + `": v4.source-name: ` + path + `:3: ` + sourceNameRule
+		for _, tc := range []struct {
+			filename, message string
+		}{{"config.yaml", hostileSourcePath}, {"config.local.yaml", ordinarySourcePath}} {
+			path := filepath.Join(repo, ".agents", tc.filename)
+			want := `"` + path + `": v4.source-name: ` + path + `:3: ` + tc.message
 			if !strings.Contains(output, want) || !strings.Contains(output, "error: validate config ") {
 				t.Fatalf("doctor: configuration error does not name authored file and line, want %q in:\n%q", want, output)
 			}
@@ -117,7 +125,7 @@ func TestCommandErrorsAreTerminalSafe(t *testing.T) {
 
 		output, err := executeCommand("list")
 		if err == nil || !strings.HasPrefix(err.Error(), "validate config ") ||
-			!strings.Contains(err.Error(), `config.yaml": v4.source-name: `+filepath.Join(repo, ".agents", "config.yaml")+`:3: `+sourceNameRule) ||
+			!strings.Contains(err.Error(), `config.yaml": v4.source-name: `+filepath.Join(repo, ".agents", "config.yaml")+`:3: `+ordinarySourcePath) ||
 			!strings.Contains(err.Error(), "hint: In "+filepath.Join(repo, ".agents", "config.yaml")+":3, rename the source") {
 			t.Fatalf("list: unexpected error %v\n%q", err, output)
 		}
