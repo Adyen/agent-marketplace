@@ -47,7 +47,7 @@ func (a hookInvariantActor) run(e *Env, args ...string) ExecResult {
 		"XDG_CACHE_HOME":  a.cache,
 		"CODEX_HOME":      a.codexHome,
 	})
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(e.t.Context(), 60*time.Second)
 	defer cancel()
 	c := exec.CommandContext(ctx, e.binary, args...)
 	c.Dir, c.Env = a.checkout, env
@@ -76,7 +76,7 @@ func (a hookInvariantActor) execute(t *testing.T, handler hookInvariantHandler) 
 			cwd = filepath.Join(a.checkout, cwd)
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	c := exec.CommandContext(ctx, "/bin/sh", "-c", handler.command)
 	c.Dir = cwd

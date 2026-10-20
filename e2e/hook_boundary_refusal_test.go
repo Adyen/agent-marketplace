@@ -39,8 +39,14 @@ func TestHookInvariantMalformedNativeEnvelopeRefusesOnlyItsTarget(t *testing.T) 
 
 			for _, args := range [][]string{{"sync"}, {"sync", "--check"}} {
 				r := e.RunAM(args...)
-				if r.ExitCode == 0 || !strings.Contains(r.Combined, "error: ") || !strings.Contains(r.Combined, tc.target) {
-					t.Fatalf("%v exited %d without a coded refusal naming %s:\n%s", args, r.ExitCode, tc.target, r.Combined)
+				// Devin and Codex name the target through their code namespace
+				// and every target names the refused file, so the error must
+				// name the malformed file and never the sibling's.
+				if r.ExitCode == 0 || !hookInvariantErrorMentions(r.Combined, "/"+loaded+":") {
+					t.Fatalf("%v exited %d without a coded error naming %s:\n%s", args, r.ExitCode, loaded, r.Combined)
+				}
+				if sibling := hookInvariantLoadedFile(t, tc.sibling); hookInvariantErrorMentions(r.Combined, "/"+sibling) {
+					t.Fatalf("%v refused the valid sibling target %s:\n%s", args, tc.sibling, r.Combined)
 				}
 				if outside := hookInvariantOutsideReview(r.Combined); strings.Contains(outside, command) {
 					t.Fatalf("%v quotes the hook payload outside the hook review:\n%s", args, outside)
@@ -144,11 +150,14 @@ func TestHookInvariantTimeoutBeyondOneTargetsRangeRefusesOnlyThere(t *testing.T)
 	e.WriteRepoConfig(hookInvariantV4Config("claude, gemini", registry, "hook/PreToolUse-command", "hook/PreToolUse-command-2"))
 	e.InitGitRepo()
 	r := e.RunAM("sync")
-	if r.ExitCode == 0 || !strings.Contains(r.Combined, "hook.timeout-unsupported") || !strings.Contains(r.Combined, "target gemini") {
+	if r.ExitCode == 0 || !hookInvariantErrorMentions(r.Combined, "(target gemini,", "hook.timeout-unsupported") {
 		t.Fatalf("Gemini did not refuse the out-of-range timeout (exit %d):\n%s", r.ExitCode, r.Combined)
 	}
-	if strings.Contains(r.Combined, "target claude") {
+	if hookInvariantErrorMentions(r.Combined, "(target claude,") {
 		t.Fatalf("Claude refused a timeout it represents exactly:\n%s", r.Combined)
+	}
+	if outside := hookInvariantOutsideReview(r.Combined); strings.Contains(outside, "9007199254741") || strings.Contains(outside, large) {
+		t.Fatalf("refusal quotes the timeout or command outside the hook review:\n%s", outside)
 	}
 	for target, want := range map[string]map[string]int{"claude": {large: 1, ordinary: 1}, "gemini": {large: 0, ordinary: 1}} {
 		for command, count := range want {
@@ -164,6 +173,32 @@ func TestHookInvariantTimeoutBeyondOneTargetsRangeRefusesOnlyThere(t *testing.T)
 	if gemini := e.ReadFile("/workspace/.gemini/settings.json"); !strings.Contains(gemini, "30000") {
 		t.Errorf("Gemini sibling timeout was not converted to milliseconds:\n%s", gemini)
 	}
+}
+
+// hookInvariantErrorMentions reports whether an error diagnostic in output, a
+// top-level "error:" line or an indented line grouped beneath one, contains
+// token and every given code.
+func hookInvariantErrorMentions(output, token string, codes ...string) bool {
+	inError := false
+	for _, line := range strings.Split(output, "\n") {
+		head := strings.TrimPrefix(line, "Error: ")
+		switch {
+		case strings.HasPrefix(head, "error: "):
+			inError = true
+		case strings.HasPrefix(line, "  ") && inError:
+		default:
+			inError = false
+			continue
+		}
+		matched := strings.Contains(line, token)
+		for _, code := range codes {
+			matched = matched && strings.Contains(line, code)
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
 }
 
 // hookInvariantOutsideReview drops the "Hook changes" listing, whose rows may

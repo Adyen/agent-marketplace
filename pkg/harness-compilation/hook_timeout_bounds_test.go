@@ -2,6 +2,7 @@ package harnesscompile
 
 import (
 	"regexp"
+	"strconv"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
@@ -123,7 +124,7 @@ func TestHookTimeoutsBeyondTheExactRangeAreRefused(t *testing.T) {
 			if !diag.HasCode(result.Diagnostics, diag.CodeHookTimeoutUnsupported) {
 				t.Fatalf("want %s; diagnostics = %+v", diag.CodeHookTimeoutUnsupported, result.Diagnostics)
 			}
-			assertHookDiagnosticsValueFree(t, result.Diagnostics, "echo check")
+			assertHookDiagnosticsValueFree(t, result.Diagnostics, "echo check", strconv.Itoa(tc.timeout))
 		})
 	}
 }
