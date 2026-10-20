@@ -139,18 +139,27 @@ func TestRequestShapedQueriesDoNotFillTheStatementCache(t *testing.T) {
 	prepared := s.stmts.size()
 	var registries []string
 	var coordinates []store.ResourceCoordinate
+	var collections []store.CatalogProjectionResource
 	for i := range 300 {
 		registries = append(registries, fmt.Sprintf("r%d", i))
-		coordinates = append(coordinates, store.ResourceCoordinate{Marketplace: "mp", Registry: "r", Kind: "skill", Name: fmt.Sprintf("n%d", i)})
+		coordinate := store.ResourceCoordinate{Marketplace: "mp", Registry: "r", Kind: "collection", Name: fmt.Sprintf("n%d", i)}
+		coordinates = append(coordinates, coordinate)
+		collection := store.CatalogProjectionResource{}
+		collection.Coordinate = coordinate
+		collection.ContentDigest = store.RevisionDigest(fmt.Sprintf("sha256:%064x", i))
+		collections = append(collections, collection)
 		if _, err := s.SearchResourceRevisions(ctx, store.ResourceSearchFilter{Marketplace: "mp", Registries: registries}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := s.catalogCoordinatesVisible(ctx, coordinates); err != nil {
 			t.Fatal(err)
 		}
+		if err := s.loadCatalogCollections(ctx, collections); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if got := s.stmts.size(); got != prepared {
-		t.Fatalf("request-shaped searches and catalog checks grew the cache from %d to %d statements", prepared, got)
+		t.Fatalf("request-shaped search, visibility and collection queries grew the cache from %d to %d statements", prepared, got)
 	}
 }
 

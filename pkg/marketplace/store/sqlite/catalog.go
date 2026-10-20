@@ -280,8 +280,9 @@ func (s *Store) loadCatalogCollections(ctx context.Context, resources []store.Ca
 			args = append(args, resource.ContentDigest)
 		}
 		// collection_revisions.id is the PRIMARY KEY (the content digest), so
-		// no further columns are needed to identify the row.
-		rows, err := s.q.QueryContext(ctx, "SELECT id, registry_id, manifest_digest, members, includes FROM collection_revisions WHERE id IN ("+strings.Join(conditions, ", ")+")", args...)
+		// no further columns are needed to identify the row. One placeholder
+		// per collection makes the text request-shaped.
+		rows, err := s.uncached().QueryContext(ctx, "SELECT id, registry_id, manifest_digest, members, includes FROM collection_revisions WHERE id IN ("+strings.Join(conditions, ", ")+")", args...)
 		if err != nil {
 			return err
 		}
