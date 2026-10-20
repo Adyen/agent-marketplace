@@ -664,9 +664,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 			continue
 		}
 		for _, metadata := range result.LockMetadata {
-			if metadata.Source == resolved[i].Source &&
-				config.NormalizeGitURL(metadata.URL) == config.NormalizeGitURL(resolved[i].RegistryURL) &&
-				metadata.Ref == resolved[i].Ref {
+			if metadata.Matches(resolved[i].Source, resolved[i].RegistryURL, resolved[i].Ref) {
 				resolved[i].SourceRevision = metadata.Commit
 				break
 			}

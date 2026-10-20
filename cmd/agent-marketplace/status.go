@@ -487,9 +487,7 @@ func buildPluginRevisionRows(repoRoot string, resolved []resolver.ResolvedArtifa
 		}
 		locked := "unlocked"
 		for _, metadata := range locks {
-			if metadata.Source == artifact.Source &&
-				config.NormalizeGitURL(metadata.URL) == config.NormalizeGitURL(artifact.RegistryURL) &&
-				metadata.Ref == artifact.Ref {
+			if metadata.Matches(artifact.Source, artifact.RegistryURL, artifact.Ref) {
 				locked = metadata.Commit
 				break
 			}

@@ -242,11 +242,7 @@ func TestDecodePluginRecordsDeclaredDependenciesInPackageIR(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dependency-declaring plugin must decode for inspection: %v", err)
 	}
-	dependencies := reflect.ValueOf(plugin).Elem().FieldByName("Dependencies")
-	if !dependencies.IsValid() {
-		t.Fatal("plugin IR does not record declared dependencies")
-	}
-	if got := dependencies.Interface(); !reflect.DeepEqual(got, []any{"base-kit"}) {
+	if got := plugin.Dependencies; !reflect.DeepEqual(got, []any{"base-kit"}) {
 		t.Fatalf("plugin dependencies = %#v, want []any{\"base-kit\"}", got)
 	}
 }

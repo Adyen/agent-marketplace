@@ -152,7 +152,6 @@ func TestInstallPluginWritesRequestAndSyncsIt(t *testing.T) {
 		return
 	}
 	repo, run := pluginCommandFixture(t, "    include: []\n")
-	configurePluginResources(t, repo, "    include: []\n")
 
 	output, err := run("install", "plugin/review-kit")
 	if err != nil {
@@ -176,7 +175,6 @@ func TestInstallUnknownPluginLeavesConfigAndLockUnchanged(t *testing.T) {
 		return
 	}
 	repo, run := pluginCommandFixture(t, "    include: []\n")
-	configurePluginResources(t, repo, "    include: []\n")
 	configPath := filepath.Join(repo, ".agents", "config.yaml")
 	before, err := os.ReadFile(configPath)
 	if err != nil {
