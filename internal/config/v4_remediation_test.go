@@ -63,6 +63,68 @@ func TestV4OtherDiagnosticsHaveNoVersionRefusalRemediation(t *testing.T) {
 	}
 }
 
+// spec: command-error-output/validation-errors-name-the-authored-file
+func TestV4ValidationErrorNamesAuthoredFileAndLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+	_, err := ParseV4Config([]byte("apiVersion: agent-marketplace/v4\nsources:\n  bad name: {directory: ./registry}\n"), path, true)
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != "v4.source-name" {
+		t.Fatalf("error = %v, want v4.source-name validation error", err)
+	}
+	want := "v4.source-name: " + path + ":3:"
+	if !strings.HasPrefix(validation.Error(), want) {
+		t.Fatalf("validation message = %q, want prefix %q", validation, want)
+	}
+}
+
+func TestV4MarketplaceLockMismatchNamesLockFile(t *testing.T) {
+	lockPath := ".agents/lock.yaml"
+	for _, tc := range []struct {
+		name, variant, message, want string
+	}{
+		{
+			name: "missing resource", variant: "resource-missing",
+			message: `resource "awesome-ai/collection/coderabbit-skills" is missing from the acquisition lock`,
+			want:    `resource "awesome-ai/collection/coderabbit-skills" is missing from the lock file .agents/lock.yaml`,
+		},
+		{
+			name: "unrecorded endpoint", variant: "",
+			message: `Marketplace source "hosted" has no lock record for endpoint "https://marketplace.example"`,
+			want:    `Marketplace source "hosted" has no lock record for endpoint "https://marketplace.example" (lock file .agents/lock.yaml)`,
+		},
+		{
+			name: "configuration mismatch", variant: "configuration",
+			message: `duplicate Marketplace source declaration for endpoint "https://marketplace.example"`,
+			want:    `duplicate Marketplace source declaration for endpoint "https://marketplace.example" (lock file .agents/lock.yaml)`,
+		},
+		{
+			name: "duplicate request", variant: "duplicate-request",
+			message: `requests "tools/skill/review" and "tools/skill/review-copy" refer to the same locked resource`,
+			want:    `requests "tools/skill/review" and "tools/skill/review-copy" refer to the same locked resource (lock file .agents/lock.yaml)`,
+		},
+		{
+			name: "lock restore", variant: "lock-restore",
+			message: `lock scope "user" does not match "repo"`,
+			want:    `lock scope "user" does not match "repo" (lock file .agents/lock.yaml)`,
+		},
+		{
+			name: "lock read", variant: "lock-read",
+			message: `the acquisition lock could not be read: invalid document`,
+			want:    `the acquisition lock could not be read: invalid document (lock file .agents/lock.yaml)`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := (&V4ValidationError{
+				Code: v4MarketplaceLockMismatchCode, File: "/workspace/.agents/config.yaml", Path: "awesome-ai/collection/coderabbit-skills",
+				Line: 6, LockFile: lockPath, Variant: tc.variant, Msg: tc.message,
+			}).Error()
+			if !strings.HasSuffix(err, tc.want) {
+				t.Fatalf("mismatch error = %q, want suffix %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func assertV4Remediation(t *testing.T, err error, scope string, admin bool, code string) {
 	t.Helper()
 	var validation *V4ValidationError

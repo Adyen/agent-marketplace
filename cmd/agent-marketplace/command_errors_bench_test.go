@@ -17,7 +17,8 @@ func BenchmarkNewRootCmd(b *testing.B) {
 // BenchmarkTerminalSafeCommandError measures the failing-command path for an
 // ordinary two-line joined configuration error.
 func BenchmarkTerminalSafeCommandError(b *testing.B) {
-	err := errors.Join(errors.New(ordinaryError), errors.New(ordinaryError))
+	message := "v4.source-name: .agents/config.yaml:3: " + sourceNameRule
+	err := errors.Join(errors.New(message), errors.New(message))
 	b.ReportAllocs()
 	for b.Loop() {
 		_ = terminalSafeCommandError(err)

@@ -31,6 +31,12 @@ type Error struct {
 
 func (e *Error) Error() string { return fmt.Sprintf("%s: %v", e.Code, e.Err) }
 func (e *Error) Unwrap() error { return e.Err }
+func (e *Error) DiagnosticCode() string {
+	if e == nil {
+		return ""
+	}
+	return string(e.Code)
+}
 
 func coded(code ErrorCode, format string, args ...any) error {
 	return &Error{Code: code, Err: fmt.Errorf(format, args...)}

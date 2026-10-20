@@ -84,6 +84,19 @@ func (e *OrganizationTrustError) Error() string {
 	return fmt.Sprintf("%s: organization authority %q: %v", e.Code, e.Path, e.Err)
 }
 func (e *OrganizationTrustError) Unwrap() error { return e.Err }
+func (e *OrganizationTrustError) DiagnosticCode() string {
+	if e == nil {
+		return ""
+	}
+	return e.Code
+}
+func (e *OrganizationTrustError) DiagnosticScope() string { return "organization" }
+func (e *OrganizationTrustError) DiagnosticPath() string {
+	if e == nil {
+		return ""
+	}
+	return e.Path
+}
 
 // trustedOwnerFn is the predicate used to decide whether a file's owner is
 // trusted for the managed-installation organization config. It is a variable

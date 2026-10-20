@@ -9,6 +9,7 @@ Most command errors say what went wrong but not how to fix it. A user who sees `
 - Every stable consumer diagnostic code has a specific hint that names a supported command or concrete action, filled with the file, layer scope, or resource when known. Organization-owned failures direct the user to their administrator and never suggest editing organization files.
 - Consumer configuration validation errors name the authored file and line and describe the problem in plain words. Diagnostic codes do not change.
 - The TUI errors screen shows the same code hints before its category fallback.
+- A writing `sync` or `lock` records Marketplace resources that the configuration selects but an existing acquisition lock does not record, so the hint for that error has a command that fixes it. Existing pins stay unchanged.
 - Machine-readable output, error identity, and exit status do not change. Warning remediation keeps its `→` lines.
 
 ## Capabilities
@@ -19,7 +20,8 @@ Most command errors say what went wrong but not how to fix it. A user who sees `
 - `command-error-output`: printed command and `doctor` errors carry a next-step hint, and configuration validation errors name their file and line.
 - `consumer-config-format`: version refusal guidance is printed on the hint line, and other diagnostics get their own code-specific guidance.
 - `tui-error-recovery`: the errors screen uses code-specific guidance before category fallbacks.
+- `deployed-acquisition-locks`: writing commands record selected Marketplace resources missing from an existing lock.
 
 ## Impact
 
-CLI command error output, `doctor` output, consumer configuration validation messages, the TUI errors screen, and the diagnostics, configuration, and troubleshooting reference docs. No configuration, lock, JSON, or exit-code behavior changes.
+CLI command error output, `doctor` output, consumer configuration validation messages, the TUI errors screen, and the diagnostics, configuration, and troubleshooting reference docs. Writing `sync` and `lock` can now add missing Marketplace resource records to an existing lock. No configuration, JSON, or exit-code behavior changes.

@@ -11,10 +11,15 @@ Agent Marketplace MUST follow every error printed by a CLI command, and every er
 
 #### Scenario: A resource missing from the lock names its file and the command that records it
 
-- **WHEN** a repository configuration selects a hosted Marketplace resource that has no record in the repository acquisition lock, and `doctor` or a read-only command reports `v4.marketplace-lock-mismatch`
+- **WHEN** a repository configuration selects a hosted Marketplace resource that has no record in an existing repository acquisition lock that already records its endpoint, and `doctor` or a read-only command reports `v4.marketplace-lock-mismatch`
 - **THEN** the error MUST name the configuration file and line that select the resource and the acquisition lock it is missing from
-- **AND** the hint MUST tell the user to run a writing `agent-marketplace sync` while online and commit the updated lock
+- **AND** the hint MUST tell the user to run a writing `agent-marketplace sync` while online, without `--check`, `--locked`, or `--offline`, and commit the updated lock
 - **AND** after the user runs that command, the same check MUST no longer report the error
+
+#### Scenario: A Marketplace endpoint missing from the lock names the command that records it
+
+- **WHEN** a repository configuration selects resources from a hosted Marketplace endpoint that the repository acquisition lock does not record, or the lock is missing, and `doctor` or a read-only command reports `v4.marketplace-lock-mismatch` or `v4.marketplace-lock-required`
+- **THEN** the hint MUST tell the user to run a writing `agent-marketplace sync` while online, without `--check`, `--locked`, or `--offline`, and commit the updated lock
 
 #### Scenario: Uncoded errors print a diagnostic next step
 

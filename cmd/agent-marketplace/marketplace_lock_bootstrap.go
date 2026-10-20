@@ -58,12 +58,15 @@ func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir st
 		if err != nil {
 			return 0, err
 		}
-		// An existing v2 lock with Marketplace records keeps every record it
-		// has; it only gains identities for registrations it does not record.
+		// An existing v2 lock keeps its recorded pins and gains only selected
+		// resource and registration records it does not already contain.
 		var unrecorded []string
 		existingMarketplaceLock := exists && current.APIVersion != lockfile.APIVersionV1 && len(current.Marketplaces) > 0
+		missingResources := false
 		if existingMarketplaceLock {
-			if unrecorded = unrecordedRegistrations(layer, current); len(unrecorded) == 0 {
+			unrecorded = unrecordedRegistrations(layer, current)
+			missingResources = selectedMarketplaceResourcesMissing(layer, current)
+			if len(unrecorded) == 0 && !missingResources {
 				continue
 			}
 		}
@@ -77,10 +80,25 @@ func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir st
 		}
 		var doc lockfile.Document
 		if existingMarketplaceLock {
-			if doc, err = appendRegistrationIdentities(ctx, *current, unrecorded); err != nil {
-				return 0, fmt.Errorf("record Marketplace registrations in lock %q: %w", lockPath, err)
+			if missingResources {
+				resolved, resolveErr := marketplacelock.Resolve(ctx, resolver, layer, targets, policy)
+				if resolveErr != nil {
+					return 0, fmt.Errorf("record selected Marketplace resources in lock %q: %w", lockPath, resolveErr)
+				}
+				doc, err = mergeMissingMarketplaceRecords(layer, *current, resolved)
+				if err != nil {
+					return 0, fmt.Errorf("record selected Marketplace resources in lock %q: %w", lockPath, err)
+				}
+			} else {
+				if doc, err = appendRegistrationIdentities(ctx, *current, unrecorded); err != nil {
+					return 0, fmt.Errorf("record Marketplace registrations in lock %q: %w", lockPath, err)
+				}
 			}
-			slog.Info("marketplace registration identities recorded", "scope", scope, "count", len(unrecorded))
+			if missingResources {
+				slog.Info("selected Marketplace resource records reconciled", "scope", scope)
+			} else {
+				slog.Info("marketplace registration identities recorded", "scope", scope, "count", len(unrecorded))
+			}
 		} else if doc, err = marketplacelock.Resolve(ctx, resolver, layer, targets, policy); err != nil {
 			return 0, fmt.Errorf("create Marketplace lock %q: %w", lockPath, err)
 		}
@@ -113,6 +131,126 @@ func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir st
 	}
 	slog.Info("missing Marketplace locks created", "count", len(desired))
 	return len(desired), nil
+}
+
+func selectedMarketplaceResourcesMissing(layer config.LayerIntent, current *lockfile.Document) bool {
+	if current == nil {
+		return false
+	}
+	for _, source := range layer.MarketplaceSources() {
+		var existing *lockfile.MarketplaceLock
+		for i := range current.Marketplaces {
+			if current.Marketplaces[i].URL == source.URL {
+				existing = &current.Marketplaces[i]
+				break
+			}
+		}
+		if existing == nil {
+			return len(source.Requests) > 0
+		}
+		registryIDs := make(map[string]string, len(existing.RegistryBindings))
+		for _, binding := range existing.RegistryBindings {
+			registryIDs[binding.Name] = binding.RegistryID
+		}
+		for _, request := range source.Requests {
+			registryID := registryIDs[request.Registry]
+			if registryID == "" {
+				return true
+			}
+			found := false
+			for _, resource := range existing.Resources {
+				if resource.RegistryID == registryID && resource.Kind == request.MarketplaceKind() && resource.Name == request.Name {
+					if request.Options.Revision != "" && resource.Revision != request.Options.Revision {
+						return true
+					}
+					found = true
+					break
+				}
+			}
+			if !found {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func mergeMissingMarketplaceRecords(layer config.LayerIntent, current, resolved lockfile.Document) (lockfile.Document, error) {
+	doc := current
+	doc.Marketplaces = slices.Clone(current.Marketplaces)
+	for _, fresh := range resolved.Marketplaces {
+		index := -1
+		for i := range doc.Marketplaces {
+			if doc.Marketplaces[i].URL == fresh.URL {
+				index = i
+				break
+			}
+		}
+		if index < 0 {
+			doc.Marketplaces = append(doc.Marketplaces, fresh)
+			continue
+		}
+		existing := doc.Marketplaces[index]
+		if existing.InstanceID != fresh.InstanceID {
+			return lockfile.Document{}, fmt.Errorf("marketplace endpoint %q changed instance identity during lock bootstrap", fresh.URL)
+		}
+		existing.RegistryBindings = slices.Clone(existing.RegistryBindings)
+		for _, binding := range fresh.RegistryBindings {
+			found := false
+			for _, old := range existing.RegistryBindings {
+				if old.Name != binding.Name {
+					continue
+				}
+				if old.RegistryID != binding.RegistryID {
+					return lockfile.Document{}, fmt.Errorf("marketplace registry %q changed identity during lock bootstrap", binding.Name)
+				}
+				found = true
+				break
+			}
+			if !found {
+				existing.RegistryBindings = append(existing.RegistryBindings, binding)
+			}
+		}
+		existing.Resources = slices.Clone(existing.Resources)
+		for _, resource := range fresh.Resources {
+			resourceIndex := -1
+			for i, old := range existing.Resources {
+				if marketplaceResourceKey(old) == marketplaceResourceKey(resource) {
+					resourceIndex = i
+					break
+				}
+			}
+			if resourceIndex < 0 {
+				existing.Resources = append(existing.Resources, resource)
+			} else if marketplaceResourceRevisionExplicit(layer, fresh.URL, resource) &&
+				existing.Resources[resourceIndex].Revision != resource.Revision {
+				existing.Resources[resourceIndex] = resource
+			}
+		}
+		doc.Marketplaces[index] = existing
+	}
+	return lockfile.Normalize(doc)
+}
+
+func marketplaceResourceKey(resource lockfile.MarketplaceResourceLock) string {
+	return resource.RegistryID + "\x00" + resource.Kind + "\x00" + resource.Name
+}
+
+func marketplaceResourceRevisionExplicit(layer config.LayerIntent, endpoint string, resource lockfile.MarketplaceResourceLock) bool {
+	for _, source := range layer.MarketplaceSources() {
+		if source.URL != endpoint {
+			continue
+		}
+		for _, request := range source.Requests {
+			if request.Options.Revision != "" &&
+				(request.Registry == resource.RegistryName || request.Registry == resource.RegistryID) &&
+				request.MarketplaceKind() == resource.Kind &&
+				request.Name == resource.Name {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // unrecordedRegistrations returns the canonical endpoints of the layer's
