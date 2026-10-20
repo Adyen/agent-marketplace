@@ -56,6 +56,20 @@ func TestHookInvariantSelectedHookReachesEachNativeLoader(t *testing.T) {
 				if got := hookInvariantLoadedCommands(t, target, root, machine); len(got) != 0 {
 					t.Fatalf("deselection left loaded handlers %q", got)
 				}
+				// Non-vacuity: a plugin-layout copy that no harness loads is
+				// visible to the discovery-only token count but never to the
+				// loaded-handler count.
+				if decoy, ok := map[string]string{"claude": ".claude/hooks/hooks.json", "factory": ".factory/hooks/hooks.json", "cursor": ".cursor/hooks/hooks.json"}[target]; ok {
+					if err := os.MkdirAll(filepath.Dir(filepath.Join(root, decoy)), 0o755); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(root, decoy), []byte(hookInvariantDocument(hookInvariantGroup("Bash", command))), 0o644); err != nil {
+						t.Fatal(err)
+					}
+					if hookInvariantCount(t, root, hookInvariantHookFiles(target, machine), command) != 1 || hookInvariantLoadedCount(t, target, root, machine, command) != 0 {
+						t.Fatalf("plugin-layout decoy %s was not seen only by the discovery count", decoy)
+					}
+				}
 			})
 		}
 	}
