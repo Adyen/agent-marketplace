@@ -63,8 +63,8 @@ export interface Fixture {
   marketplaceDelayNextAcquisition?: (ms: number) => void;
   marketplaceDelayedAcquisitionCount?: () => number;
   // Commits a file change to the Git registry and pushes it, moving the ref
-  // past the commit the repository lock pins.
-  pushRegistryChange(relativePath: string, content: string): void;
+  // past the commit the repository lock pins. Null content removes the path.
+  pushRegistryChange(relativePath: string, content: string | null): void;
   resetPersonalState(): void;
   cleanup(): void;
 }
@@ -237,8 +237,12 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       marketplaceDelayedAcquisitionCount,
       pushRegistryChange: (relativePath, content) => {
         if (options.directorySource) throw new Error("directory sources have no Git registry to advance");
-        write(path.join(source, relativePath), content);
-        git(source, env, ["add", "--", relativePath]);
+        if (content === null) {
+          git(source, env, ["rm", "-r", "--quiet", "--", relativePath]);
+        } else {
+          write(path.join(source, relativePath), content);
+          git(source, env, ["add", "--", relativePath]);
+        }
         git(source, env, ["-c", "user.name=TUI QA", "-c", "user.email=tui-qa@example.invalid", "commit", "--quiet", "-m", `Change ${relativePath}`]);
         git(source, env, ["push", "--quiet", path.join(registries, "fixture.git"), "main"]);
       },
