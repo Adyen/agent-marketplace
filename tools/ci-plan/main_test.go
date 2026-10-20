@@ -11,6 +11,7 @@ import (
 var expectedCategories = []string{
 	"go_build",
 	"go_test",
+	"installation_query",
 	"benchmark",
 	"harness_compatibility",
 	"marketplace_e2e",
@@ -72,6 +73,8 @@ func TestPlanCategories(t *testing.T) {
 		{"--all", nil, true, all},
 		{"docs-only", []string{"README.md", "docs/architecture.md"}, false, want()},
 		{"product Go", []string{"internal/resolver/source.go"}, false, want("go_build", "go_test", "benchmark", "harness_compatibility", "marketplace_e2e", "tui_qa", "container_marketplace")},
+		{"installation query source", []string{"pkg/marketplace/api/installation_adoption.go"}, false, want("go_build", "go_test", "installation_query", "harness_compatibility", "marketplace_e2e", "tui_qa", "container_marketplace")},
+		{"installation query fixture", []string{"pkg/marketplace/api/installation_query_test.yaml"}, false, want("go_build", "go_test", "installation_query", "harness_compatibility", "marketplace_e2e", "tui_qa", "container_marketplace")},
 		{"unbenchmarked tool Go", []string{"tools/harness-compat/main.go"}, false, want("go_test", "harness_compatibility")},
 		{"benchmark report", []string{"tools/benchmark-report/main.go"}, false, want("go_test", "benchmark")},
 		{"E2E", []string{"e2e/marketplace_test.go"}, false, want("marketplace_e2e")},

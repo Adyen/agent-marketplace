@@ -11,9 +11,16 @@ import (
 )
 
 func benchColdInventory(now time.Time) string {
-	samples := []inventoryMetricSample{inventorySnapshotSample("install-cold", "gen-cold", now.Add(-time.Hour))}
+	samples := []inventoryMetricSample{
+		aggregateResponseSample("fresh", 1, nil),
+		aggregateResponseSample("valid_until", float64(now.Add(-time.Hour).UnixMicro()), nil),
+	}
 	for i := 0; i < 100; i++ {
-		samples = append(samples, hostedInventoryResourceSample("install-cold", "gen-cold", "bench-mp", "bench-source", "skill", fmt.Sprintf("skill-%04d", i)))
+		samples = append(samples, aggregateResponseSample("count", 1, map[string]string{
+			"am_registry":   "bench-source",
+			"resource_kind": "skill",
+			"resource_name": fmt.Sprintf("skill-%04d", i),
+		}))
 	}
 	return prometheusVector(samples, now)
 }

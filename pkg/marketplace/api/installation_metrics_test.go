@@ -8,14 +8,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
-	"gopkg.in/yaml.v3"
 )
 
 type metricsRequest struct {
@@ -71,10 +69,10 @@ func prometheusVector(samples []inventoryMetricSample, observedAt time.Time) str
 }
 
 func adoptionSamples() []inventoryMetricSample {
-	fresh := adoptionFixedNow.Add(-time.Hour)
 	return []inventoryMetricSample{
-		inventorySnapshotSample("install-1", "gen-1", fresh),
-		inventoryResourceSample("install-1", "gen-1", telemetryAlpha, "skill", "res-a"),
+		aggregateResponseSample("count", 1, map[string]string{"am_registry": "rA", "resource_kind": "skill", "resource_name": "res-a"}),
+		aggregateResponseSample("fresh", 1, nil),
+		aggregateResponseSample("valid_until", float64(adoptionFixedNow.Add(-time.Hour).UnixMicro()), nil),
 	}
 }
 
@@ -84,83 +82,6 @@ func newTestReader(t *testing.T, fixture *metricsFixture) *installationMetricsRe
 		URL:    fixture.server.URL,
 		Labels: map[string]string{"namespace": "ops"},
 	}, "mp")
-}
-
-// spec: marketplace-api/superseded-inventory-history-does-not-exhaust-the-response-budget
-func TestInstallationMetricsQueryLatestInventoryProjection(t *testing.T) {
-	const wantNamespace = `label_replace((max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{namespace="ops"}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{namespace="ops"}[30d])))), "inventory_type", "snapshot", "", "") or label_replace((max by (installation_id, config_fingerprint, source_kind, marketplace_id, registry_id, resource_kind, resource_name) (last_over_time(agent_marketplace_config_resource{namespace="ops",resource_kind!="rule"}[30d])) and on (installation_id, config_fingerprint) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{namespace="ops"}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{namespace="ops"}[30d]))))), "inventory_type", "resource", "", "")`
-	const wantEmpty = `label_replace((max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d])))), "inventory_type", "snapshot", "", "") or label_replace((max by (installation_id, config_fingerprint, source_kind, marketplace_id, registry_id, resource_kind, resource_name) (last_over_time(agent_marketplace_config_resource{resource_kind!="rule"}[30d])) and on (installation_id, config_fingerprint) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d]))))), "inventory_type", "resource", "", "")`
-	const escapedLabels = `alpha="first",zeta="quote\n\"line\""`
-
-	tests := []struct {
-		name   string
-		labels map[string]string
-		want   string
-	}{
-		{name: "namespace", labels: map[string]string{"namespace": "ops"}, want: wantNamespace},
-		{name: "empty labels", labels: map[string]string{}, want: wantEmpty},
-		{
-			name:   "sorted and escaped labels",
-			labels: map[string]string{"zeta": "quote\n\"line\"", "alpha": "first"},
-			want:   strings.ReplaceAll(wantNamespace, `namespace="ops"`, escapedLabels),
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := installationMetricsQuery(test.labels); got != test.want {
-				t.Errorf("installationMetricsQuery() = %q, want %q", got, test.want)
-			}
-		})
-	}
-
-	data, err := os.ReadFile("installation_query_test.yaml")
-	if err != nil {
-		t.Fatalf("read query evaluator fixture: %v", err)
-	}
-	var fixture struct {
-		Tests []struct {
-			PromQLExprTest []struct {
-				Expr string `yaml:"expr"`
-			} `yaml:"promql_expr_test"`
-		} `yaml:"tests"`
-	}
-	if err := yaml.Unmarshal(data, &fixture); err != nil {
-		t.Fatalf("unmarshal query evaluator fixture: %v", err)
-	}
-	if len(fixture.Tests) == 0 || len(fixture.Tests[0].PromQLExprTest) == 0 {
-		t.Fatal("query evaluator fixture has no PromQL expression test")
-	}
-	if got := fixture.Tests[0].PromQLExprTest[0].Expr; got != wantNamespace {
-		t.Errorf("query evaluator expression = %q, want %q", got, wantNamespace)
-	}
-	if got := installationMetricsQuery(map[string]string{"namespace": "ops"}); got != wantNamespace {
-		t.Errorf("installationMetricsQuery(namespace=ops) = %q, want %q", got, wantNamespace)
-	}
-}
-
-// spec: marketplace-api/superseded-inventory-history-does-not-exhaust-the-response-budget
-func TestInstallationMetricsProjectedInventoryReaderCounts(t *testing.T) {
-	body, err := os.ReadFile("installation_query_result_test.json")
-	if err != nil {
-		t.Fatalf("read frozen evaluator result: %v", err)
-	}
-	fixture := newMetricsFixture(t, func() string { return string(body) })
-	reader := newTestReader(t, fixture)
-	reader.now = func() time.Time { return time.Unix(3456000, 0) }
-
-	if _, err := reader.refresh(context.Background(), adoptionTestRegistries()); err != nil {
-		t.Fatalf("reader refresh() error = %v", err)
-	}
-	snapshot, ok := reader.lookup(adoptionTestRegistries())
-	if !ok {
-		t.Fatal("lookup() after refresh returned no snapshot")
-	}
-	assertAdoptionCounts(t, *snapshot, map[installationResourceKey]int64{
-		adoptionKey("rA", "skill", "alpha"): 1,
-	}, nil)
-	if hits := fixture.hits.Load(); hits != 1 {
-		t.Fatalf("metrics reader hits = %d, want 1", hits)
-	}
 }
 
 // spec: marketplace-api/metrics-configuration-and-requests-preserve-the-server-boundary
@@ -283,8 +204,9 @@ func TestInstallationMetricsReaderExpiryFailureAndBackoff(t *testing.T) {
 func TestInstallationMetricsReaderObservationHorizonExpiresEarlier(t *testing.T) {
 	almostStale := adoptionFixedNow.Add(-30*24*time.Hour + 2*time.Minute)
 	samples := []inventoryMetricSample{
-		inventorySnapshotSample("install-1", "gen-1", almostStale),
-		inventoryResourceSample("install-1", "gen-1", telemetryAlpha, "skill", "res-a"),
+		aggregateResponseSample("count", 1, map[string]string{"am_registry": "rA", "resource_kind": "skill", "resource_name": "res-a"}),
+		aggregateResponseSample("fresh", 1, nil),
+		aggregateResponseSample("valid_until", float64(almostStale.UnixMicro()), nil),
 	}
 	fixture := newMetricsFixture(t, func() string { return prometheusVector(samples, adoptionFixedNow) })
 	reader := newTestReader(t, fixture)
@@ -332,18 +254,30 @@ func TestInstallationMetricsReaderOriginChangeInvalidatesCache(t *testing.T) {
 	if hits := fixture.hits.Load(); hits != 1 {
 		t.Fatalf("identity-mismatched lookup issued telemetry: hits = %d, want 1", hits)
 	}
+	fixture.handler.Store(func(w http.ResponseWriter, _ *http.Request) {
+		samples := []inventoryMetricSample{
+			aggregateResponseSample("fresh", 1, nil),
+			aggregateResponseSample("valid_until", float64(adoptionFixedNow.UnixMicro()), nil),
+		}
+		_, _ = fmt.Fprint(w, prometheusVector(samples, adoptionFixedNow))
+	})
 	if _, err := reader.refresh(context.Background(), changed); err != nil {
 		t.Fatalf("refresh() after origin change error = %v", err)
 	}
-	counts, ok := reader.lookup(changed)
+	_, ok := reader.lookup(changed)
 	if !ok {
 		t.Fatal("lookup() after origin change refresh returned no snapshot")
 	}
 	if hits := fixture.hits.Load(); hits != 2 {
 		t.Fatalf("origin change did not invalidate aggregate cache: hits = %d, want 2", hits)
 	}
-	if got := counts.Counts[installationResourceKey{Registry: "rA", Kind: "skill", Name: "res-a"}]; got != 0 {
-		t.Fatalf("moved origin still contributed a count to rA: %d", got)
+	<-fixture.requests
+	query := (<-fixture.requests).Form.Get("query")
+	if !strings.Contains(query, "team/moved-alpha") {
+		t.Fatalf("query after origin change omitted moved identity: %q", query)
+	}
+	if strings.Contains(query, "team/alpha") {
+		t.Fatalf("query after origin change retained old identity example.test/team/alpha: %q", query)
 	}
 }
 

@@ -16,7 +16,7 @@ func TestInstallationMetricsTimingDefaultsIndependentOfReindex(t *testing.T) {
 	timing := ResolveInstallationMetricsTiming(cfg.InstallationMetrics)
 	want := InstallationMetricsTiming{
 		Interval: 4 * time.Minute, RetryInterval: 30 * time.Second,
-		Jitter: 15 * time.Second, MaxAge: 5 * time.Minute, Timeout: 2 * time.Second,
+		Jitter: 15 * time.Second, MaxAge: 5 * time.Minute, Timeout: 3 * time.Second,
 	}
 	if timing != want {
 		t.Fatalf("resolved timing = %+v, want defaults %+v", timing, want)

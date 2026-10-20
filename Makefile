@@ -22,6 +22,7 @@ NODE_IMAGE ?= node:24-alpine
 POSTGRES_IMAGE ?= postgres:17.5-alpine
 NGINX_IMAGE ?= nginx:1.27-alpine
 SITE_NGINX_IMAGE ?= nginxinc/nginx-unprivileged:1.29-alpine
+PROMETHEUS_IMAGE ?= prom/prometheus:v3.5.0
 MARKETPLACE_CONTAINER_IMAGE ?= agent-marketplace:$(VERSION)
 WEB_CONTAINER_IMAGE ?= agent-marketplace-web:$(VERSION)
 SITE_CONTAINER_IMAGE ?= agent-marketplace-site:$(VERSION)
@@ -95,7 +96,10 @@ validate-e2e:
 lint: LINT_MODE=fix
 lint: lint-common
 
-.PHONY: model-catalog-check model-catalog-audit
+.PHONY: model-catalog-check model-catalog-audit installation-query-check
+installation-query-check:
+	AM_PROMTOOL_IMAGE="$(PROMETHEUS_IMAGE)" CGO_ENABLED=0 $(GO) test -json -count=1 -timeout 2m -run '^TestInstallationMetricsQueryPromtool$$' ./pkg/marketplace/api | CGO_ENABLED=0 $(GO) run ./tools/witness-check -require TestInstallationMetricsQueryPromtool
+
 model-catalog-audit:
 	CGO_ENABLED=0 $(GO) run ./tools/model-catalog-audit check
 
