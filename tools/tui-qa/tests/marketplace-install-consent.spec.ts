@@ -16,14 +16,16 @@ journey.test("a Marketplace skill with findings installs only after consent", as
   const fixture = journey.current();
   const repoConfig = path.join(fixture.repo, ".agents", "config.yaml");
   const repoLock = path.join(fixture.repo, ".agents", "lock.yaml");
+  const userConfig = path.join(fixture.home, ".agents", "config.yaml");
+  const userLock = path.join(fixture.home, ".agents", "lock.yaml");
+  const betaSkill = path.join(fixture.repo, ".factory", "skills", "beta-skill", "SKILL.md");
   const installed = path.join(fixture.repo, ".factory", "skills", "org-review");
 
   await step("settled fixture baseline", () => {}, async () => {
     await locate(terminal, "beta-skill").expect();
     await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
   });
-  const configBefore = fs.readFileSync(repoConfig);
-  const lockBefore = fs.readFileSync(repoLock);
+  const unchangedByDecline = [repoConfig, repoLock, userConfig, userLock, betaSkill].map((file) => ({ file, bytes: fs.readFileSync(file) }));
 
   await step("search the Marketplace", () => terminal.write("/org-review"), async () => {
     await locate(terminal, "market/tools/org-review").expect({ timeout: 10_000 });
@@ -48,8 +50,9 @@ journey.test("a Marketplace skill with findings installs only after consent", as
     await locate(terminal, "Verified Marketplace install").expect({ not: true });
     await locate(terminal, /Status:\s+available via Marketplace/).unique().expect();
   });
-  assert.deepEqual(fs.readFileSync(repoConfig), configBefore, "declining changed the repository config");
-  assert.deepEqual(fs.readFileSync(repoLock), lockBefore, "declining changed the repository lock");
+  for (const { file, bytes } of unchangedByDecline) {
+    assert.deepEqual(fs.readFileSync(file), bytes, `declining changed ${file}`);
+  }
   assert.equal(fs.lstatSync(installed, { throwIfNoEntry: false }), undefined, "declining installed the skill");
 
   await requestInstall("second request");
