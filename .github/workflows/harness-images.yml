@@ -186,11 +186,11 @@ jobs:
           fi
           git switch -C "$branch"
           go run ./tools/model-catalog-audit propose < "$report" > "$body"
-          if [[ -z "$(git status --porcelain)" ]]; then
+          if git diff --quiet -- pkg/harness-compilation/modelpolicy/catalogs; then
             if [[ -s "$body" ]]; then
               cat "$body" >> "$GITHUB_STEP_SUMMARY"
             fi
-            echo '::notice::Audit drift produced no baseline or catalog changes; any manual-entry proposal is in the job summary.'
+            echo '::notice::No catalog changes proposed; evidence drift and manual-entry candidates remain in the job summaries and audit artifact. No PR opened.'
             exit 0
           fi
           if go test ./pkg/harness-compilation/modelpolicy ./tools/model-catalog-audit -count=1 > "$test_log" 2>&1; then
@@ -210,7 +210,7 @@ jobs:
               echo '</details>'
             } >> "$body"
           fi
-          git add pkg/harness-compilation/modelpolicy/catalogs tools/model-catalog-audit/baselines.json
+          git add pkg/harness-compilation/modelpolicy/catalogs
           git -c user.name='github-actions[bot]' -c user.email="$bot_email" commit -m "Propose model catalog drift updates from run $RUN_ID" -m "Spec-Impact: none — automated proposal for human review"
           if [[ -n "$remote_sha" ]] && git diff --quiet "$remote_sha" HEAD; then
             echo '::notice::Regenerated changes match the remote branch; refreshing the PR body without pushing.'
