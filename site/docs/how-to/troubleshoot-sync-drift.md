@@ -19,7 +19,7 @@ Check these sections:
 - `EXACT REGISTRY LOCKS` shows the commit each Git registry is locked to.
 - `SYNCED RESOURCES` lists the resources sync expects to write, with their harness, layer, and registry.
 - `ORPHANED FILES`, `NAME COLLISIONS`, and `UNMET REQUIREMENTS` appear only when there is something to report.
-- `DRIFT` shows `In sync`, a count of files to write and remove, or `Unknown (exact registry view incomplete)` when an error stopped the check.
+- `DRIFT` shows `In sync`, a count of files to write and remove, `Unknown (exact registry view incomplete)` when an error stopped the check, or `Unknown (Marketplace cache evidence missing; run 'agent-marketplace sync')` when a selected Marketplace pin lacks verified local cache evidence.
 - `ERRORS` lists failures such as unreachable registries, invalid configuration, or broken resources.
 
 ## 2. Inspect or fix
