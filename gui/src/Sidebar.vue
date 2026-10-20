@@ -20,6 +20,7 @@ const props = defineProps<{
   overlay: boolean
   groups: SidebarGroup[]
   pendingCount: number
+  pendingSectionId: string
   sources: SidebarSource[]
   harnesses: string[]
   latestVersion: string
@@ -63,6 +64,7 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | 'signal' | null 
     return null
   }
   switch (group.id) {
+    case 'attention':
     case 'malformed':
     case 'stale':
       return 'warning'
@@ -99,7 +101,7 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | 'signal' | null 
         <GuiIcon name="folder" />
         <span class="gui-nav-row__label">Resources</span>
       </button>
-      <button type="button" class="gui-nav-row" aria-label="Pending sync group" @click="emit('selectGroup', 'pending')">
+      <button type="button" class="gui-nav-row" aria-label="Pending sync group" @click="emit('selectGroup', pendingSectionId)">
         <GuiIcon name="sync" />
         <span class="gui-nav-row__label">Pending sync</span>
         <span class="gui-nav-row__count">{{ pendingCount }}</span>

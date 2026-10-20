@@ -172,12 +172,13 @@ in Codex's selected-thread row.
        word "Search", and `⌘` `K` kbd hints. Activating it expands it in place
        into the search input. The local match status and a "Clear search" ×
        sit inside the pill.
-    2. A Refresh icon button.
-    3. A **Sync** button, styled like Codex's "Commit" button, with a sync
+    2. A **View** icon button (stacked rows), which opens the View menu.
+    3. A Refresh icon button.
+    4. A **Sync** button, styled like Codex's "Commit" button, with a sync
        icon and a pending badge (`~2`) in mono.
-    4. An **Update** button, a separate visible secondary button next to Sync.
-    5. A "Set up" button, shown only during first run.
-    6. A divider, then a "Toggle inspector" icon button (◨).
+    5. An **Update** button, a separate visible secondary button next to Sync.
+    6. A "Set up" button, shown only during first run.
+    7. A divider, then a "Toggle inspector" icon button (◨).
 - **Banners** sit under the toolbar for errors, the no-harness notice, and
   operation progress. A banner is a 32 px row on `--gui-s0100` with an icon
   and text. An operation in progress also shows a 2 px indeterminate progress
@@ -196,6 +197,14 @@ in Codex's selected-thread row.
     - harness-override tag, when one applies
   - Hover and selection use the `--gui-layer` overlay; selection also has a
     2 px `--gui-signal` bar on the inline start edge.
+- **View menu**: a popover under the View button with two radio fieldsets,
+  "Group by" (Status, Source, Kind) and "Then by" (None, plus whichever of
+  Kind or Source is not the primary axis). A choice applies at once and is
+  kept in the webview's local storage, with no request to the local API.
+  Escape closes it and returns focus to the View button; an outside press closes it without moving focus.
+  A Then by section nests one level under its parent, indented, and only
+  leaf sections list resources. Needs attention pins to the top outside
+  Status grouping.
 - **Status bar** (32 px, bottom), styled after the design's `.activity` row
   and Codex's composer footer ("Local ▾ … main"). On the left, the sync status
   in mono, for example `~ 2 pending sync`, which changes to
@@ -315,6 +324,7 @@ New bindings, each of which mirrors a visible control:
 | ⌘⌥B | Toggle the inspector | Toggle inspector |
 | ⌘, | Open Settings | ⚙ Settings |
 | ⌘R | Refresh | Refresh |
+| `v` | Open the View menu | View |
 | `s` (focus on the list) | Sync | Sync |
 
 Single-letter keys are ignored while focus is in a text input or a modal is

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import GuiIcon from './GuiIcon.vue'
+import type { ViewSettings } from './grouping'
+import ViewMenu from './ViewMenu.vue'
 
 const props = defineProps<{
   sidebarFolded: boolean
@@ -14,6 +16,7 @@ const props = defineProps<{
   ready: boolean
   pendingCount: number
   showSetup: boolean
+  viewSettings: ViewSettings
 }>()
 
 const emit = defineEmits<{
@@ -24,6 +27,7 @@ const emit = defineEmits<{
   confirmSearch: []
   cancelSearch: []
   clearSearch: []
+  changeView: [settings: ViewSettings]
   refresh: []
   sync: []
   update: []
@@ -35,6 +39,7 @@ const inspectorToggle = ref<HTMLButtonElement | null>(null)
 const searchButton = ref<HTMLButtonElement | null>(null)
 const searchInput = ref<HTMLInputElement | null>(null)
 const setupButton = ref<{ $el: HTMLElement } | null>(null)
+const viewMenu = ref<InstanceType<typeof ViewMenu> | null>(null)
 
 watch(
   () => props.searchEditing,
@@ -52,6 +57,7 @@ defineExpose({
   focusSearchInput: () => searchInput.value?.focus(),
   focusSidebarToggle: () => sidebarToggle.value?.focus(),
   focusInspectorToggle: () => inspectorToggle.value?.focus(),
+  openViewMenu: () => viewMenu.value?.open(),
   focusSetup(): boolean {
     const element = setupButton.value?.$el
     if (element instanceof HTMLElement) {
@@ -112,6 +118,7 @@ defineExpose({
         aria-label="Clear search"
         @click="emit('clearSearch')"
       ><GuiIcon name="close" /></button>
+      <ViewMenu ref="viewMenu" :settings="viewSettings" @change="emit('changeView', $event)" />
       <button type="button" class="gui-icon-button" aria-label="Refresh" :disabled="busy" @click="emit('refresh')"><GuiIcon name="refresh" /></button>
       <UButton aria-label="Sync" :disabled="!ready" @click="emit('sync')">
         <GuiIcon name="sync" />

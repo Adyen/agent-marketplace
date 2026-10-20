@@ -51,6 +51,7 @@ function resourceRow(name: string, id: string, options: Partial<SnapshotRow> = {
     kind: 'skill',
     description: `Pending ${name} details`,
     registry: 'source',
+    source: { id: 'local', label: '(local)' },
     scope: 'user',
     required: false,
     pendingVerification: true,

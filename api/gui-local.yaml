@@ -609,7 +609,7 @@ components:
         title: { type: string }
     SnapshotRow:
       type: object
-      required: [id, name, displayName, searchName, searchWords, kind, description, registry, scope, required, pendingVerification, checked, harnessOverride, harnesses, status, group, discovery, inspectable, installedFiles, resourceAction]
+      required: [id, name, displayName, searchName, searchWords, kind, description, registry, source, scope, required, pendingVerification, checked, harnessOverride, harnesses, status, group, discovery, inspectable, installedFiles, resourceAction]
       properties:
         id:
           type: string
@@ -630,6 +630,16 @@ components:
         kind: { type: string }
         description: { type: string }
         registry: { type: string }
+        source:
+          type: object
+          required: [id, label]
+          properties:
+            id:
+              type: string
+              description: Raw source identity (normalized URL, ref, and registry subpath) used to group rows by source; "local" for rows without a registry URL.
+            label:
+              type: string
+              description: Sanitized single-line source label, the registry display name with its subpath, or "(local)".
         scope:
           type: string
           enum: [organization, user, project, local, available]

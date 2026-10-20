@@ -39,6 +39,7 @@ export function row(name: string, overrides: Partial<Row> = {}): Row {
     kind: 'skill',
     description: `${name} description`,
     registry: 'local',
+    source: { id: 'local', label: '(local)' },
     scope: 'user',
     required: false,
     pendingVerification: false,

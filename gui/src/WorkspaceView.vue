@@ -2,8 +2,10 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { createClient } from './api/client'
 import { closeRequestEvent, launchRequestEvent, nativeQuit, resolveBootstrap } from './bootstrap'
-import { eligible, WorkspaceController, type Row, type WorkspaceState } from './controller'
-import { compareRows, hasSearchTerms, highlightNameParts, rankRows, type NameSegment, type SearchMatch } from './search'
+import { eligible, WorkspaceController, type Row } from './controller'
+import { buildSections, readViewSettings, sectionPathsContaining, writeViewSettings, type Section, type ViewSettings } from './grouping'
+import { hasSearchTerms, highlightNameParts, rankRows, type NameSegment, type SearchMatch } from './search'
+import { readStoredValue, writeStoredValue } from './storage'
 import Confirmations from './Confirmations.vue'
 import FirstRun from './FirstRun.vue'
 import GuiIcon from './GuiIcon.vue'
@@ -17,8 +19,7 @@ import Sidebar, { type SidebarGroup, type SidebarSource } from './Sidebar.vue'
 import SourcesSettings from './SourcesSettings.vue'
 import StatusBar from './StatusBar.vue'
 
-type GroupMetadata = WorkspaceState['groups'][number]
-type GroupView = GroupMetadata & { rows: Row[]; collapsed: boolean }
+type SectionView = Omit<Section, 'children'> & { collapsed: boolean; children: SectionView[] }
 type VisibleEntry =
   | { key: string; kind: 'section'; elementId: string }
   | { key: string; kind: 'row'; elementId: string; row: Row }
@@ -32,7 +33,8 @@ const props = defineProps<{ controller?: WorkspaceController }>()
 const state = shallowRef<WorkspaceController | null>(props.controller ?? null)
 const selectedKey = ref<string | null>(null)
 const selectionTouched = ref(false)
-const foldedGroups = ref<Record<string, boolean>>({})
+const viewSettings = ref<ViewSettings>(readViewSettings())
+const foldedGroups = ref<Record<string, Record<string, boolean>>>({})
 const temporarySearchFolds = ref<SearchFoldState>({ query: '', groups: {} })
 const activeQuery = ref('')
 const draftQuery = ref('')
@@ -57,20 +59,12 @@ const inspectorOverlayWidth = 1000
 const viewportWidth = ref(window.innerWidth)
 
 function readPanelChoice(key: string): boolean | null {
-  try {
-    const value = window.localStorage.getItem(key)
-    return value === 'folded' ? true : value === 'open' ? false : null
-  } catch {
-    return null
-  }
+  const value = readStoredValue(key)
+  return value === 'folded' ? true : value === 'open' ? false : null
 }
 
 function writePanelChoice(key: string, folded: boolean) {
-  try {
-    window.localStorage.setItem(key, folded ? 'folded' : 'open')
-  } catch {
-    // The panel still folds when browser storage is unavailable.
-  }
+  writeStoredValue(key, folded ? 'folded' : 'open')
 }
 
 const sidebarChoice = ref<boolean | null>(readPanelChoice(storageKeys.sidebar))
@@ -249,7 +243,7 @@ function showAll() {
 }
 
 function selectGroup(groupID: string) {
-  const group = groups.value.find((candidate) => candidate.id === groupID)
+  const group = sectionViews.value.find((candidate) => candidate.path === groupID)
   if (group == null) {
     return
   }
@@ -268,9 +262,10 @@ function selectGroup(groupID: string) {
 }
 
 const navGroups = computed<SidebarGroup[]>(() =>
-  groups.value.map((group) => ({ id: group.id, title: group.title, count: group.rows.length })),
+  sectionViews.value.map((section) => ({ id: section.path, title: section.title, count: section.count })),
 )
 const pendingCount = computed(() => (view.value?.rows ?? []).filter((row) => row.group === 'pending').length)
+const pendingSectionId = computed(() => (viewSettings.value.groupBy === 'status' ? 'pending' : 'attention'))
 const sidebarSources = computed<SidebarSource[]>(() => {
   const config = configuration.value
   if (config == null) {
@@ -338,6 +333,9 @@ function onKeydown(event: KeyboardEvent) {
   if (event.key === '/') {
     event.preventDefault()
     openSearch()
+  } else if (event.key === 'v') {
+    event.preventDefault()
+    toolbar.value?.openViewMenu()
   } else if (event.key === 's' && ready.value && listElement()?.contains(document.activeElement) === true) {
     event.preventDefault()
     void run('sync')
@@ -416,38 +414,41 @@ function nameParts(row: Row): NameSegment[] {
   return highlightNameParts(row.displayName, row.searchName, match?.nameMatch === true ? match.indexes : [])
 }
 
-const groups = computed<GroupView[]>(() => {
-  const rowsByGroup = new Map<string, Row[]>()
-  for (const match of searchMatches.value) {
-    const groupRows = rowsByGroup.get(match.row.group) ?? []
-    groupRows.push(match.row)
-    rowsByGroup.set(match.row.group, groupRows)
+const foldKey = computed(() => `${viewSettings.value.groupBy}/${viewSettings.value.thenBy}`)
+
+function isCollapsed(path: string): boolean {
+  if (filteredSearch.value) {
+    return temporarySearchFolds.value.query === activeQuery.value && temporarySearchFolds.value.groups[path] === true
   }
-  return (view.value?.groups ?? []).flatMap((group) => {
-    const rows = rowsByGroup.get(group.id) ?? []
-    if (rows.length === 0) {
-      return []
-    }
-    if (!filteredSearch.value) {
-      rows.sort(compareRows)
-    }
-    const collapsed = filteredSearch.value
-      ? temporarySearchFolds.value.query === activeQuery.value && temporarySearchFolds.value.groups[group.id] === true
-      : foldedGroups.value[group.id] === true
-    return [{ ...group, rows, collapsed }]
+  return foldedGroups.value[foldKey.value]?.[path] === true
+}
+
+const sections = computed<Section[]>(() =>
+  buildSections(searchMatches.value, view.value?.groups ?? [], viewSettings.value, filteredSearch.value),
+)
+
+const sectionViews = computed<SectionView[]>(() => {
+  const toView = (section: Section): SectionView => ({
+    ...section,
+    collapsed: isCollapsed(section.path),
+    children: section.children.map(toView),
   })
+  return sections.value.map(toView)
 })
 
 const visibleEntries = computed<VisibleEntry[]>(() => {
   const entries: VisibleEntry[] = []
-  for (const group of groups.value) {
-    entries.push({ key: sectionKey(group.id), kind: 'section', elementId: sectionElementId(group.id) })
-    if (!group.collapsed) {
-      for (const row of group.rows) {
-        entries.push({ key: rowKey(row.id), kind: 'row', elementId: rowElementId(row.id), row })
-      }
+  const visit = (section: SectionView) => {
+    entries.push({ key: sectionKey(section.path), kind: 'section', elementId: sectionElementId(section.path) })
+    if (section.collapsed) {
+      return
+    }
+    section.children.forEach(visit)
+    for (const row of section.rows) {
+      entries.push({ key: rowKey(row.id), kind: 'row', elementId: rowElementId(row.id), row })
     }
   }
+  sectionViews.value.forEach(visit)
   return entries
 })
 
@@ -685,7 +686,7 @@ function activateRow(row: Row) {
   }
 }
 
-function toggleGroup(groupID: string) {
+function toggleGroup(path: string) {
   selectionTouched.value = true
   pendingResourceSelection = null
   if (filteredSearch.value) {
@@ -694,12 +695,50 @@ function toggleGroup(groupID: string) {
       : {}
     temporarySearchFolds.value = {
       query: activeQuery.value,
-      groups: { ...groups, [groupID]: groups[groupID] !== true },
+      groups: { ...groups, [path]: groups[path] !== true },
     }
   } else {
-    foldedGroups.value = { ...foldedGroups.value, [groupID]: !foldedGroups.value[groupID] }
+    const combination = foldedGroups.value[foldKey.value] ?? {}
+    foldedGroups.value = {
+      ...foldedGroups.value,
+      [foldKey.value]: { ...combination, [path]: combination[path] !== true },
+    }
   }
-  selectedKey.value = sectionKey(groupID)
+  selectedKey.value = sectionKey(path)
+}
+
+function selectionAfterRegrouping(key: string | null, entries: VisibleEntry[]): string | null {
+  const visible = new Set(entries.map((entry) => entry.key))
+  if (key != null && visible.has(key)) {
+    return key
+  }
+  if (key != null && key.startsWith('row:')) {
+    const enclosing = sectionPathsContaining(sections.value, key.slice('row:'.length)).map((path) => sectionKey(path))
+    const deepest = enclosing.reverse().find((candidate) => visible.has(candidate))
+    if (deepest != null) {
+      return deepest
+    }
+  }
+  return entries[0]?.key ?? null
+}
+
+function applyView(next: ViewSettings) {
+  const current = viewSettings.value
+  if (current.groupBy === next.groupBy && current.thenBy === next.thenBy) {
+    return
+  }
+  selectionTouched.value = true
+  pendingResourceSelection = null
+  viewSettings.value = next
+  writeViewSettings(next)
+  temporarySearchFolds.value = { query: activeQuery.value, groups: {} }
+  const entries = visibleEntries.value
+  const previousKey = selectedKey.value
+  selectedKey.value = selectionAfterRegrouping(previousKey, entries)
+  const selectedEntry = entries.find((entry) => entry.key === selectedKey.value)
+  if (selectedKey.value !== previousKey && selectedEntry?.kind === 'row') {
+    state.value?.browse(selectedEntry.row)
+  }
 }
 
 async function moveSelection(direction: 1 | -1) {
@@ -835,6 +874,7 @@ async function run(action: 'sync' | 'update') {
       :inert="sidebarFolded"
       :groups="navGroups"
       :pending-count="pendingCount"
+      :pending-section-id="pendingSectionId"
       :sources="sidebarSources"
       :harnesses="view?.harnesses ?? []"
       :latest-version="view?.latestVersion ?? ''"
@@ -861,6 +901,7 @@ async function run(action: 'sync' | 'update') {
         :ready="ready"
         :pending-count="pendingCount"
         :show-setup="configuration?.firstRun === true || setupOpen"
+        :view-settings="viewSettings"
         @toggle-sidebar="toggleSidebar"
         @toggle-inspector="toggleInspector"
         @open-search="openSearch"
@@ -868,6 +909,7 @@ async function run(action: 'sync' | 'update') {
         @confirm-search="confirmSearch"
         @cancel-search="cancelSearch"
         @clear-search="clearSearch"
+        @change-view="applyView"
         @refresh="refresh"
         @sync="run('sync')"
         @update="run('update')"
@@ -887,7 +929,7 @@ async function run(action: 'sync' | 'update') {
 
       <ResourceList
         ref="resourceList"
-        :groups="groups"
+        :sections="sectionViews"
         :selected-key="selectedKey"
         :name-parts="nameParts"
         @toggle-group="toggleGroup"

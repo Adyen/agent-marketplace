@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -46,27 +47,33 @@ type operationRef struct {
 	Kind string `json:"kind"`
 }
 
+type sourceDTO struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
 type rowDTO struct {
-	ID                  string   `json:"id"`
-	Name                string   `json:"name"`
-	DisplayName         string   `json:"displayName"`
-	SearchName          string   `json:"searchName"`
-	SearchWords         []string `json:"searchWords"`
-	Kind                string   `json:"kind"`
-	Description         string   `json:"description"`
-	Registry            string   `json:"registry"`
-	Scope               string   `json:"scope"`
-	Required            bool     `json:"required"`
-	PendingVerification bool     `json:"pendingVerification"`
-	Checked             bool     `json:"checked"`
-	HarnessOverride     bool     `json:"harnessOverride"`
-	Harnesses           []string `json:"harnesses"`
-	Status              string   `json:"status"`
-	Group               string   `json:"group"`
-	Discovery           bool     `json:"discovery"`
-	Inspectable         bool     `json:"inspectable"`
-	InstalledFiles      bool     `json:"installedFiles"`
-	ResourceAction      string   `json:"resourceAction"`
+	ID                  string    `json:"id"`
+	Name                string    `json:"name"`
+	DisplayName         string    `json:"displayName"`
+	SearchName          string    `json:"searchName"`
+	SearchWords         []string  `json:"searchWords"`
+	Kind                string    `json:"kind"`
+	Description         string    `json:"description"`
+	Registry            string    `json:"registry"`
+	Source              sourceDTO `json:"source"`
+	Scope               string    `json:"scope"`
+	Required            bool      `json:"required"`
+	PendingVerification bool      `json:"pendingVerification"`
+	Checked             bool      `json:"checked"`
+	HarnessOverride     bool      `json:"harnessOverride"`
+	Harnesses           []string  `json:"harnesses"`
+	Status              string    `json:"status"`
+	Group               string    `json:"group"`
+	Discovery           bool      `json:"discovery"`
+	Inspectable         bool      `json:"inspectable"`
+	InstalledFiles      bool      `json:"installedFiles"`
+	ResourceAction      string    `json:"resourceAction"`
 }
 
 type diagnosticDTO struct {
@@ -614,6 +621,19 @@ func rowPresentation(row session.Row) rowDTO {
 	return rowPresentationForUser(row, false)
 }
 
+// sourceIdentityPresentation mirrors the TUI source grouping key: rows without
+// a registry URL share the local identity, and labels are sanitized for display.
+func sourceIdentityPresentation(row session.Row) sourceDTO {
+	id := "local"
+	if strings.TrimSpace(row.RegistryURL) != "" {
+		id = session.RegistryIdentityKey(row.RegistryURL, row.RegistryRef, row.RegistryPath)
+	}
+	return sourceDTO{
+		ID:    id,
+		Label: session.SanitizeTerminalData(session.SourceLabel(row), session.TerminalSingleLine),
+	}
+}
+
 func rowPresentationForUser(row session.Row, userOnly bool) rowDTO {
 	row.EnsureSearchable()
 	displayName := session.SanitizeTerminalData(row.Artifact.Name, session.TerminalSingleLine)
@@ -677,6 +697,7 @@ func rowPresentationForUser(row session.Row, userOnly bool) rowDTO {
 		Kind:                kind,
 		Description:         description,
 		Registry:            registry,
+		Source:              sourceIdentityPresentation(row),
 		Scope:               scope,
 		Required:            row.Artifact.Required,
 		PendingVerification: row.PendingVerification,

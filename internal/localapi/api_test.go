@@ -1323,6 +1323,38 @@ func TestRowIDsBoundToRegistryIdentityAndStable(t *testing.T) {
 	}
 }
 
+// spec: gui-local-api/rows-from-distinct-sources-carry-distinct-identities
+func TestRowSourceIdentityDistinguishesSources(t *testing.T) {
+	base := session.Row{
+		Artifact:       resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}},
+		RegistryURL:    "https://example.com/team.git",
+		RegistryName:   "team",
+		RegistryRef:    "main",
+		EnabledProject: true,
+	}
+	otherRef := base
+	otherRef.RegistryRef = "release"
+	subpath := base
+	subpath.RegistryPath = "plugins/a"
+	local := session.Row{Artifact: base.Artifact, EnabledProject: true}
+	hostile := base
+	hostile.RegistryName = "team\x1b[31m"
+
+	baseSource := rowPresentation(base).Source
+	if got := rowPresentation(otherRef).Source; got.ID == baseSource.ID || got.Label != "team" {
+		t.Fatalf("other ref source = %+v, base %+v", got, baseSource)
+	}
+	if got := rowPresentation(subpath).Source; got.ID == baseSource.ID || got.Label != "team / plugins/a" {
+		t.Fatalf("subpath source = %+v, base %+v", got, baseSource)
+	}
+	if got := rowPresentation(local).Source; got.ID != "local" || got.Label != "(local)" {
+		t.Fatalf("local source = %+v, want id local and label (local)", got)
+	}
+	if got := rowPresentation(hostile).Source; strings.ContainsRune(got.Label, '\x1b') || !strings.HasPrefix(got.Label, "team") {
+		t.Fatalf("hostile source label = %q, want sanitized team label", got.Label)
+	}
+}
+
 func TestSnapshotStatusGroupPresentation(t *testing.T) {
 	api := &API{}
 	rows := []session.Row{

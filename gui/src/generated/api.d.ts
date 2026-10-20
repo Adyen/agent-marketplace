@@ -773,6 +773,12 @@ export interface components {
             searchName: string;
             /** @description Sorted, deduplicated lowercased name and metadata words used for local prefix matching. */
             searchWords: string[];
+            source: {
+                /** @description Raw source identity (normalized URL, ref, and registry subpath) used to group rows by source; "local" for rows without a registry URL. */
+                id: string;
+                /** @description Sanitized single-line source label, the registry display name with its subpath, or "(local)". */
+                label: string;
+            };
             status: string;
         };
         /** @enum {string} */

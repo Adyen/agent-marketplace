@@ -7,6 +7,18 @@ export interface PreviewScenario {
   configuration: Configuration
 }
 
+const hubMain = { id: 'https://hub.example.com/agent-skills.git\x01main\x01', label: 'agent-skills-hub' }
+const sourceByRegistry: Record<string, Row['source']> = {
+  'platform-core': { id: 'https://git.example.com/platform/core.git\x01main\x01', label: 'platform-core' },
+  'team-tools': { id: 'https://git.example.com/platform/team-tools.git\x01main\x01', label: 'team-tools' },
+  'agent-skills-hub': hubMain,
+}
+
+function withRegistrySource(candidate: Row): Row {
+  const source = sourceByRegistry[candidate.registry]
+  return candidate.source.id === 'local' && source != null ? { ...candidate, source } : candidate
+}
+
 const workspaceRows: Row[] = [
   row('audit-trail', {
     id: 'organization/platform-core/skill/audit-trail',
@@ -76,6 +88,7 @@ const workspaceRows: Row[] = [
     id: 'user/agent-skills-hub/skill/k8s-debug',
     scope: 'user',
     registry: 'agent-skills-hub',
+    source: { id: 'https://hub.example.com/agent-skills.git\x01release\x01', label: 'agent-skills-hub' },
     installedFiles: true,
     resourceAction: 'remove',
     harnesses: ['devin', 'claude'],
@@ -165,7 +178,7 @@ const workspaceRows: Row[] = [
     discovery: true,
     inspectable: true,
   }),
-]
+].map(withRegistrySource)
 
 const workspaceDiagnostics: Snapshot['diagnostics'] = [
   {

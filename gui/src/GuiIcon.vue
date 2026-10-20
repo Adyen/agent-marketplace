@@ -29,6 +29,7 @@ export const iconPaths = {
   external: ['M9 2.5h4.5V7', 'M13.5 2.5l-6 6', 'M11.5 9.5v3.5h-9v-9h3.5'],
   quit: ['M9.5 2.5h-6a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h6', 'M7 8h7M11 5.5L13.5 8 11 10.5'],
   sparkle: ['M8 2v3M8 11v3M2 8h3M11 8h3'],
+  view: ['M3 4h10', 'M3 8h10', 'M3 12h6'],
 } satisfies Record<string, string[]>
 
 export type IconName = keyof typeof iconPaths

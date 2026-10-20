@@ -429,6 +429,48 @@ textarea:focus-visible,
   margin-left: auto;
 }
 
+.gui-view-menu {
+  position: relative;
+}
+
+.gui-view-panel {
+  background: var(--gui-canvas);
+  border: 1px solid var(--gui-line);
+  border-radius: var(--gui-radius-card);
+  box-shadow: var(--gui-shadow);
+  display: flex;
+  gap: 16px;
+  padding: 12px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 20;
+}
+
+.gui-view-panel__group {
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  min-width: 112px;
+  padding: 0;
+}
+
+.gui-view-panel__group legend {
+  padding: 0 0 6px;
+}
+
+.gui-view-panel__option {
+  align-items: center;
+  color: var(--gui-ink);
+  cursor: pointer;
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+  height: 26px;
+}
+
 .workspace__search-input {
   background: var(--gui-canvas);
   border: 1px solid var(--gui-line);
@@ -532,6 +574,18 @@ textarea:focus-visible,
   list-style: none;
   margin: 0;
   padding: 0;
+}
+
+.workspace__group--nested h3 {
+  margin: 0;
+}
+
+.workspace__group--nested .workspace__group-toggle {
+  padding-inline-start: 20px;
+}
+
+.workspace__group--nested ul {
+  margin-inline-start: 12px;
 }
 
 .workspace__row {

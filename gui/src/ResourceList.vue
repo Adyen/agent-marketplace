@@ -17,29 +17,28 @@ export function sectionElementId(id: string): string {
 </script>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { Row } from './controller'
+import type { Section } from './grouping'
 import type { NameSegment } from './search'
 import GuiIcon from './GuiIcon.vue'
 
-export interface ResourceGroup {
-  id: string
-  title: string
-  collapsed: boolean
-  rows: Row[]
-}
+export type ResourceSection = Omit<Section, 'children'> & { collapsed: boolean; children: ResourceSection[] }
 
 const props = defineProps<{
-  groups: ResourceGroup[]
+  sections: ResourceSection[]
   selectedKey: string | null
   nameParts: (row: Row) => NameSegment[]
 }>()
 
 const emit = defineEmits<{
-  toggleGroup: [id: string]
+  toggleGroup: [path: string]
   select: [row: Row]
   activate: [row: Row]
   move: [direction: 1 | -1]
 }>()
+
+const entries = computed(() => props.sections.flatMap((section) => (section.collapsed ? [section] : [section, ...section.children])))
 
 function scopeIsTag(scope: string): boolean {
   return scope === 'organization' || scope === 'project' || scope === 'local'
@@ -49,29 +48,30 @@ function scopeIsTag(scope: string): boolean {
 <template>
   <section aria-label="Resources" class="workspace__list gui-list">
     <div
-      v-for="group in props.groups"
-      :key="group.id"
+      v-for="group in entries"
+      :key="group.path"
       class="workspace__group"
+      :class="{ 'workspace__group--nested': group.depth === 1 }"
     >
-      <h2>
+      <component :is="group.depth === 0 ? 'h2' : 'h3'">
         <button
-          :id="sectionElementId(group.id)"
+          :id="sectionElementId(group.path)"
           type="button"
-          :class="{ 'workspace__group-toggle--selected': selectedKey === sectionKey(group.id) }"
+          :class="{ 'workspace__group-toggle--selected': selectedKey === sectionKey(group.path) }"
           class="workspace__group-toggle"
           :aria-label="group.title"
           :aria-expanded="!group.collapsed"
-          :aria-current="selectedKey === sectionKey(group.id) ? 'true' : undefined"
-          @click="emit('toggleGroup', group.id)"
+          :aria-current="selectedKey === sectionKey(group.path) ? 'true' : undefined"
+          @click="emit('toggleGroup', group.path)"
           @keydown.down.prevent="emit('move', 1)"
           @keydown.up.prevent="emit('move', -1)"
         >
           <GuiIcon :name="group.collapsed ? 'chevronRight' : 'chevronDown'" class="gui-group-heading__caret" />
           <span class="gui-group-heading__title">{{ group.title }}</span>
-          <span class="gui-group-heading__count mono">{{ group.rows.length }}</span>
+          <span class="gui-group-heading__count mono">{{ group.count }}</span>
         </button>
-      </h2>
-      <ul v-if="!group.collapsed" role="listbox" :aria-label="'Resources: ' + group.title">
+      </component>
+      <ul v-if="!group.collapsed && group.children.length === 0" role="listbox" :aria-label="'Resources: ' + group.title">
         <li
           v-for="row in group.rows"
           :id="rowElementId(row.id)"

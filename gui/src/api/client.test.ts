@@ -22,6 +22,7 @@ function snapshotEvent(sequence: number, generation: number, stage = 'final', op
           kind: 'skill',
           description: '',
           registry: 'local',
+          source: { id: 'local', label: '(local)' },
           scope: 'project',
           required: false,
           pendingVerification: false,
