@@ -40,24 +40,24 @@ func pluginNamespaceRefusals(resolved []resolver.ResolvedArtifact) (map[string]b
 	type occupant struct {
 		resource resolver.ResolvedArtifact
 		target   hcc.Target
-		name     string
 	}
 	groups := map[string][]occupant{}
 	blocked := map[string]bool{}
 	var diagnostics []diag.Diagnostic
 	reported := map[string]bool{}
 	for _, resource := range resolver.MaterializationWinners(resolved) {
-		if resource.PluginPackage == nil || resource.Resource == nil || resource.Resource.Kind() == ir.KindPlugin {
+		if resource.Resource == nil || resource.Resource.Kind() == ir.KindPlugin {
 			continue
 		}
+		isMember := resource.PluginPackage != nil
 		targets := resolver.HarnessTargets(resource.Harnesses)
 		name := resource.InstalledName
 		if name == "" {
 			name = resource.Name
 		}
 		for _, target := range targets {
-			identity := pluginInstanceIdentity(resource, target)
-			if !validPluginInstalledName(target, resource.Resource.Kind(), name) {
+			if isMember && !validPluginInstalledName(target, resource.Resource.Kind(), name) {
+				identity := pluginInstanceIdentity(resource, target)
 				blocked[identity] = true
 				if !reported[identity] {
 					diagnostics = append(diagnostics, diag.Diagnostic{
@@ -73,21 +73,7 @@ func pluginNamespaceRefusals(resolved []resolver.ResolvedArtifact) (map[string]b
 				continue
 			}
 			key := strings.Join([]string{string(target), boolToken(resource.Source.IsMachineScope()), name}, "\x00")
-			groups[key] = append(groups[key], occupant{resource: resource, target: target, name: name})
-		}
-	}
-	for _, resource := range resolver.MaterializationWinners(resolved) {
-		if resource.PluginPackage != nil || resource.Resource == nil {
-			continue
-		}
-		targets := resolver.HarnessTargets(resource.Harnesses)
-		name := resource.InstalledName
-		if name == "" {
-			name = resource.Name
-		}
-		for _, target := range targets {
-			key := strings.Join([]string{string(target), boolToken(resource.Source.IsMachineScope()), name}, "\x00")
-			groups[key] = append(groups[key], occupant{resource: resource, target: target, name: name})
+			groups[key] = append(groups[key], occupant{resource: resource, target: target})
 		}
 	}
 	for _, occupants := range groups {

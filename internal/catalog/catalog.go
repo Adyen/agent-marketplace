@@ -368,8 +368,21 @@ func pluginPackageRoot(root, manifestPath, format string) string {
 	if !filepath.IsAbs(manifest) {
 		manifest = filepath.Join(root, filepath.FromSlash(manifest))
 	}
-	packageRoot := filepath.Clean(manifest)
-	for range strings.Split(filepath.FromSlash(layout.ManifestPath), string(os.PathSeparator)) {
+	return PackageRootFromManifest(manifest, layout.ManifestPath)
+}
+
+// PackageRootFromManifest walks a manifest path up to the package root its
+// layout declares.
+func PackageRootFromManifest(manifestPath, manifestRel string) string {
+	if !filepath.IsAbs(manifestPath) {
+		absolute, err := filepath.Abs(manifestPath)
+		if err != nil {
+			return ""
+		}
+		manifestPath = absolute
+	}
+	packageRoot := filepath.Clean(manifestPath)
+	for range strings.Split(filepath.FromSlash(manifestRel), string(os.PathSeparator)) {
 		packageRoot = filepath.Dir(packageRoot)
 	}
 	return packageRoot

@@ -164,6 +164,25 @@ func applyPlugin(entry *Entry, plugin *ir.Plugin) {
 	}
 }
 
+// InvalidPluginMemberLocator maps an invalid member record path to the
+// resource kind and member name it names.
+func InvalidPluginMemberLocator(file string) (ir.ResourceKind, string, bool) {
+	parts := strings.Split(filepath.ToSlash(filepath.Clean(file)), "/")
+	if len(parts) < 2 {
+		return ir.ResourceKind(-1), "", false
+	}
+	name := strings.TrimSuffix(path.Base(parts[len(parts)-1]), path.Ext(parts[len(parts)-1]))
+	switch parts[0] {
+	case "skills":
+		return ir.KindSkill, parts[1], true
+	case "commands":
+		return ir.KindCommand, name, true
+	case "agents", "droids":
+		return ir.KindSubagent, name, true
+	}
+	return ir.ResourceKind(-1), "", false
+}
+
 func PluginInvalidMemberExclusionMatch(exclusion string, invalid []ir.PluginRecord) bool {
 	kind, name, ok := strings.Cut(exclusion, "/")
 	if !ok {
@@ -173,21 +192,8 @@ func PluginInvalidMemberExclusionMatch(exclusion string, invalid []ir.PluginReco
 		if record.Kind != "member" {
 			continue
 		}
-		parts := strings.Split(filepath.ToSlash(filepath.Clean(record.Path)), "/")
-		if len(parts) < 2 {
-			continue
-		}
-		memberKind := ir.ResourceKind(-1)
-		var memberName string
-		switch parts[0] {
-		case "skills":
-			memberKind, memberName = ir.KindSkill, parts[1]
-		case "commands":
-			memberKind, memberName = ir.KindCommand, strings.TrimSuffix(path.Base(parts[len(parts)-1]), path.Ext(parts[len(parts)-1]))
-		case "agents", "droids":
-			memberKind, memberName = ir.KindSubagent, strings.TrimSuffix(path.Base(parts[len(parts)-1]), path.Ext(parts[len(parts)-1]))
-		}
-		if memberKind >= 0 && DecisionKind(kind) == memberKind && name == memberName {
+		memberKind, memberName, ok := InvalidPluginMemberLocator(record.Path)
+		if ok && DecisionKind(kind) == memberKind && name == memberName {
 			return true
 		}
 	}
