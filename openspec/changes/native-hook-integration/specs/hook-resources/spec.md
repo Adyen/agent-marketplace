@@ -574,11 +574,11 @@ Marketplace mirror sources keep their existing support admission refusals.
 
 #### Scenario: Repository-scope commands use the project-directory variable
 
-- **WHEN** a hook whose command is `${CLAUDE_PLUGIN_ROOT}/scripts/check.sh` is
-  synced to Claude Code at repository scope
+- **WHEN** a hook whose command is `${CLAUDE_PLUGIN_ROOT}/hooks/scripts/check.sh`
+  is synced to Claude Code at repository scope
 - **THEN** the command MUST be `"$CLAUDE_PROJECT_DIR"/` followed by the
-  repository-relative path of `scripts/check.sh` inside that hook's support
-  directory
+  repository-relative path of `hooks/scripts/check.sh` inside that hook's
+  support directory
 
 #### Scenario: Codex and Windsurf repository commands use their documented base
 
@@ -592,8 +592,8 @@ Marketplace mirror sources keep their existing support admission refusals.
 #### Scenario: Machine-scope commands use absolute support paths
 
 - **WHEN** the same hook is synced to any harness target at machine scope
-- **THEN** the command MUST reference the absolute path of `scripts/check.sh`
-  inside that hook's machine-scope support directory
+- **THEN** the command MUST reference the absolute path of
+  `hooks/scripts/check.sh` inside that hook's machine-scope support directory
 
 #### Scenario: No plugin-only variable or cache path is emitted
 
