@@ -418,9 +418,8 @@ func resolveTimeout(h *ir.Hook, dst target.Target, src, dstUnit timeoutPolicy, d
 			value *= 1000
 		}
 	}
-	if value > maxExactTimeout || value > math.MaxInt {
-		return tooLarge()
-	}
+	// Documented per-event bounds apply first, so a bounded event keeps its
+	// clamped timeout however large the authored value.
 	if dstEvent.Timeout != nil && value > int64(dstEvent.Timeout.Max) {
 		value = int64(dstEvent.Timeout.Max)
 		warn(timeoutCappedCode(dst), "Timeout above the documented per-event limit; lowered to the limit", "")
@@ -428,6 +427,9 @@ func resolveTimeout(h *ir.Hook, dst target.Target, src, dstUnit timeoutPolicy, d
 	if dstEvent.Timeout != nil && value < int64(dstEvent.Timeout.Min) {
 		value = int64(dstEvent.Timeout.Min)
 		warn(timeoutCappedCode(dst), "Timeout below the documented per-event limit; raised to the limit", "")
+	}
+	if value > maxExactTimeout || value > math.MaxInt {
+		return tooLarge()
 	}
 	native := int(value)
 	res.Timeout = &native

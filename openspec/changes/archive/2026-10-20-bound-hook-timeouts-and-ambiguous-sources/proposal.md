@@ -5,7 +5,7 @@ Hook timeouts had no specified lower or upper bound (#652). A zero timeout passe
 ## What Changes
 
 - A zero timeout passes through unchanged wherever the target emits timeouts and declares no minimum.
-- A timeout below a documented per-event minimum is raised to the minimum, with the same warning as the existing cap.
+- A timeout below a documented per-event minimum is raised to the minimum, with the same warning as the existing cap. Per-event bounds apply before the exact-range check, so a bounded event never refuses a value it can clamp.
 - A timeout whose value in the target's unit exceeds 2^53-1, the largest integer every JSON reader decodes exactly, is refused with the target's timeout-unsupported error, including after a seconds-to-milliseconds conversion. Smaller values are emitted exactly.
 - A registry whose hook source declares an ambiguous typed field fails to load with `json.duplicate-key`. `sync` and `sync --check` refuse without changing any installed output and without quoting the payload.
 

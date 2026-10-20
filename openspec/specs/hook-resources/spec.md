@@ -480,7 +480,7 @@ preflight SHALL NOT inspect, adopt or rewrite their declaration or adapter files
 
 ### Requirement: Hook timeouts stay exact within documented bounds
 
-A hook timeout SHALL be emitted as the exact integer in the target's unit. A zero timeout SHALL be emitted unchanged wherever the target emits timeouts and declares no minimum for the event. A timeout below a documented per-event minimum SHALL be raised to the minimum with the warning the target uses for its per-event cap. A timeout whose value in the target's unit exceeds 9007199254740991 (2^53-1), the largest integer every JSON reader decodes exactly, SHALL be refused with the target's timeout-unsupported error and no artifact. A seconds-to-milliseconds conversion SHALL refuse before it can exceed that value or overflow. Refusal diagnostics SHALL NOT quote the hook payload.
+A hook timeout SHALL be emitted as the exact integer in the target's unit. A zero timeout SHALL be emitted unchanged wherever the target emits timeouts and declares no minimum for the event. Documented per-event bounds SHALL apply first: a timeout below a per-event minimum SHALL be raised to it, and one above a per-event maximum lowered to it, with the warning the target uses for its per-event cap. A timeout whose value in the target's unit still exceeds 9007199254740991 (2^53-1), the largest integer every JSON reader decodes exactly, SHALL be refused with the target's timeout-unsupported error and no artifact. A seconds-to-milliseconds conversion SHALL refuse before it can exceed that value or overflow. Refusal diagnostics SHALL NOT quote the hook payload.
 
 #### Scenario: Zero timeouts pass through unchanged
 
@@ -491,6 +491,7 @@ A hook timeout SHALL be emitted as the exact integer in the target's unit. A zer
 
 - **WHEN** a Codex `SessionEnd` hook with timeout `0` is compiled for Codex
 - **THEN** the emitted timeout MUST be `1` and the warning `compile.codex.field-dropped` MUST be reported
+- **AND** a Codex `SessionEnd` timeout of `9007199254740992` MUST be lowered to `3` with the same warning rather than refused
 
 #### Scenario: The largest exact timeout is emitted exactly
 

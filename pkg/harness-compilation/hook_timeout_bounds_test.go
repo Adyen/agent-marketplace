@@ -61,14 +61,22 @@ func TestZeroHookTimeoutsPassThroughUnchanged(t *testing.T) {
 	}
 }
 
+// A bounded event clamps first: below its minimum the timeout is raised, and
+// above its maximum, even beyond the exact integer range, it is lowered
+// rather than refused.
 // spec: hook-resources/timeouts-below-a-documented-minimum-are-raised
 func TestCodexSessionEndTimeoutBelowMinimumIsRaised(t *testing.T) {
-	result := compileTimeoutHook(t, TargetCodex, "SessionEnd", 0, "codex")
-	if got := emittedTimeout(t, result); got != "1" {
-		t.Fatalf("emitted SessionEnd timeout = %s, want the documented minimum 1", got)
-	}
-	if !diag.HasCode(result.Diagnostics, diag.CodeCodexFieldDropped) || diag.HasErrors(result.Diagnostics) {
-		t.Fatalf("want only the %s warning; diagnostics = %+v", diag.CodeCodexFieldDropped, result.Diagnostics)
+	for _, tc := range []struct {
+		timeout int
+		want    string
+	}{{0, "1"}, {9007199254740992, "3"}} {
+		result := compileTimeoutHook(t, TargetCodex, "SessionEnd", tc.timeout, "codex")
+		if got := emittedTimeout(t, result); got != tc.want {
+			t.Fatalf("emitted SessionEnd timeout for %d = %s, want the documented limit %s", tc.timeout, got, tc.want)
+		}
+		if !diag.HasCode(result.Diagnostics, diag.CodeCodexFieldDropped) || diag.HasErrors(result.Diagnostics) {
+			t.Fatalf("timeout %d: want only the %s warning; diagnostics = %+v", tc.timeout, diag.CodeCodexFieldDropped, result.Diagnostics)
+		}
 	}
 }
 
