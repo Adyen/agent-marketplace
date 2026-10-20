@@ -502,6 +502,45 @@ func TestLowRiskMarketplaceDiscoveryCommitsPreparedPlanWithoutConsent(t *testing
 	}
 }
 
+// spec: tui-interactions/marketplace-install-keeps-locked-sources-at-their-locked-revision
+func TestMarketplaceDiscoveryInstallSyncsThroughTheDependencyReconciler(t *testing.T) {
+	oldPrepare := prepareDiscoveryMarketplaceInstall
+	t.Cleanup(func() { prepareDiscoveryMarketplaceInstall = oldPrepare })
+	var prepared []pipeline.InstallOptions
+	prepareDiscoveryMarketplaceInstall = func(_ context.Context, options pipeline.InstallOptions) (*pipeline.PreparedMarketplaceInstall, error) {
+		prepared = append(prepared, options)
+		return &pipeline.PreparedMarketplaceInstall{}, nil
+	}
+	reconciled := 0
+	m := newTestModel()
+	m.repoRoot = t.TempDir()
+	m.dependencyLifecycle.InstallReconcile = func(context.Context, string, string, bool, []pipeline.StagedConfigEdit) (pipeline.DependencyLockView, error) {
+		reconciled++
+		return pipeline.DependencyLockView{}, nil
+	}
+	r := row{MarketplaceDiscovery: &marketplaceDiscovery{
+		Endpoint: config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market", Alias: "public"},
+		Item:     mpapi.ResourceListItem{RegistryID: "registry", Kind: "skill", Name: "review", Revision: "revision", ContentDigest: "sha256:" + strings.Repeat("a", 64), Availability: mpapi.AvailabilityAvailable},
+	}}
+
+	_, cmd := m.startDiscoveryInstall(r, scopeProject)
+	for _, c := range batchCmds(cmd) {
+		if _, ok := c().(discoveryInstallMsg); ok {
+			break
+		}
+	}
+	if len(prepared) != 1 {
+		t.Fatalf("prepare ran %d times, want once", len(prepared))
+	}
+	reconcile := prepared[0].DependencyReconcile
+	if reconcile == nil {
+		t.Fatal("discovery install prepared without a dependency reconciler, so its sync would bypass exact acquisition locks")
+	}
+	if _, err := reconcile(context.Background(), m.repoRoot, "", false, nil); err != nil || reconciled != 1 {
+		t.Fatalf("install reconciler is not the lifecycle reconciler: err=%v calls=%d", err, reconciled)
+	}
+}
+
 func TestMarketplaceConsentRetainsAndDelegatesPreparedInstall(t *testing.T) {
 	m := newTestModel()
 	operation, ok := m.beginOperation(operationMutation)
