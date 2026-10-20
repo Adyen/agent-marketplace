@@ -115,6 +115,11 @@ interface ServedArchive {
 export interface MarketplaceStubOptions {
   // Serve placeholder-form bytes that do not hash to the requested digest.
   mismatchedPlaceholderArchive?: boolean;
+  // Answer a query matching the installable skill with its exact revision.
+  searchableInstall?: boolean;
+  // Assess the installable skill with one warning finding, so installing it
+  // requires consent.
+  installFindings?: boolean;
 }
 
 // servedArchive serves a canonical artifact the way a current Marketplace
@@ -193,6 +198,41 @@ const revision = {
   }
 };
 
+export const installFinding = {
+  code: "tui-qa.shell-access",
+  severity: "medium",
+  policy: "warn",
+  message: "Fixture skill runs shell commands"
+};
+// The digest covers the same fields, in the same order, as the Go canonical
+// assessment identity (pkg/marketplace/store/assessment.go).
+const findingsAssessment = {
+  ...revision.assessment,
+  decision: "warn",
+  findings: [installFinding],
+  assessment_digest: sha256(
+    JSON.stringify({
+      coordinate: revision.assessment.coordinate,
+      content_digest: revision.assessment.content_digest,
+      analyzer_version: revision.assessment.analyzer_version,
+      policy_digest: revision.assessment.policy_digest,
+      decision: "warn",
+      findings: [installFinding],
+      inspection_manifest_digest: revision.assessment.inspection_manifest_digest
+    })
+  )
+};
+const installSearchItem = {
+  registry_id: registryID,
+  registry_slug: registrySlug,
+  kind: "skill",
+  name: resourceName,
+  revision: contentDigest,
+  content_digest: contentDigest,
+  description: "Organization review fixture",
+  availability: "available"
+};
+
 // A loopback stand-in for a hosted Marketplace endpoint. It serves one exact,
 // assessed skill and both forms of its canonical archive so a missing
 // organization lock exercises acquisition, verification by received bytes,
@@ -238,9 +278,10 @@ export const createMarketplaceStub = async (options: MarketplaceStubOptions = {}
       const offset = Number(url.searchParams.get("offset") ?? "") || 0;
       const limit = Number(url.searchParams.get("limit") ?? "") || 0;
       const terms = (url.searchParams.get("q") ?? "").toLowerCase().split(/\s+/).filter(Boolean);
-      const items = terms.some((term) => inspectionSkillName.includes(term))
-        ? [inspectionSearchItem]
-        : [];
+      const items = [
+        ...(terms.some((term) => inspectionSkillName.includes(term)) ? [inspectionSearchItem] : []),
+        ...(options.searchableInstall && terms.some((term) => resourceName.includes(term)) ? [installSearchItem] : [])
+      ];
       response.end(JSON.stringify({ items, total: items.length, offset, limit }));
       return;
     }
@@ -298,7 +339,8 @@ export const createMarketplaceStub = async (options: MarketplaceStubOptions = {}
         url.pathname.startsWith(`/api/v1/resources/${registryID}/skill/${resourceName}/revisions/`))
     ) {
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ ...revision, archive_digest: servedArchiveDigest }));
+      const assessment = options.installFindings ? findingsAssessment : revision.assessment;
+      response.end(JSON.stringify({ ...revision, assessment, archive_digest: servedArchiveDigest }));
       return;
     }
     const archiveRoute = /^\/api\/v1\/(archives|artifacts)\/sha256\/([0-9a-f]{64})$/.exec(url.pathname);
