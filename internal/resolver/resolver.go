@@ -89,7 +89,6 @@ type ResolvedArtifact struct {
 
 type PluginPackage struct {
 	Name               string
-	Format             string
 	PackageRoot        string
 	CatalogFingerprint string
 	Delivery           string

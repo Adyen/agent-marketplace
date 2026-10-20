@@ -16,9 +16,6 @@ import (
 )
 
 func reconcilePluginState(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtifact, report *Report, namespaceBlocked map[string]bool) {
-	if report == nil {
-		return
-	}
 	priorRefs, err := ownership.ReadPluginInstanceStates()
 	if err != nil {
 		report.Diags = append(report.Diags, diag.Diagnostic{
@@ -82,7 +79,7 @@ func reconcilePluginState(ctx context.Context, repoRoot string, resolved []resol
 		}
 	}
 	for key, ref := range old {
-		if _, stillReferenced := current[key]; stillReferenced || blocked[key] {
+		if _, stillReferenced := current[key]; stillReferenced {
 			continue
 		}
 		stateRoot, stateErr := packagegen.StateRoot()
