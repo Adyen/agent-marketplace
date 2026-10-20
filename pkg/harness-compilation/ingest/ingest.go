@@ -199,7 +199,7 @@ func explicitManifest(src fs.FS) (Harness, bool) {
 		{"gemini-extension.json", HarnessGemini},
 	}
 	for _, candidate := range explicit {
-		if regularFileExists(src, candidate.path) {
+		if RegularFileExists(src, candidate.path) {
 			return candidate.harness, true
 		}
 	}
@@ -316,9 +316,9 @@ var autodetectOrder = []Harness{
 	HarnessWindsurf,
 }
 
-// regularFileExists reports whether name is a regular file, without reading
-// its content.
-func regularFileExists(src fs.FS, name string) bool {
+// RegularFileExists reports whether name is a regular file in src, without
+// reading its content. Layout detection uses it for marker files.
+func RegularFileExists(src fs.FS, name string) bool {
 	info, err := fs.Stat(src, name)
 	return err == nil && info.Mode().IsRegular()
 }

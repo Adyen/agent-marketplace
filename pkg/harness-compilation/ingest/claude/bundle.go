@@ -42,7 +42,7 @@ func (c *claudeIngester) Source() ingest.Harness {
 //  4. Bare skills directory: immediate subdirectories with SKILL.md, or the directory itself contains SKILL.md
 func (c *claudeIngester) Detect(src fs.FS) bool {
 	// Plugin form: .claude-plugin/plugin.json
-	if regularFileExists(src, claudePluginManifest) {
+	if ingest.RegularFileExists(src, claudePluginManifest) {
 		return true
 	}
 	// Workspace form: .claude/ with at least one resource subdirectory
@@ -69,7 +69,7 @@ func (c *claudeIngester) Detect(src fs.FS) bool {
 // independent bundle roots.
 func (c *claudeIngester) DetectStrict(src fs.FS) bool {
 	// Plugin form: .claude-plugin/plugin.json
-	if regularFileExists(src, claudePluginManifest) {
+	if ingest.RegularFileExists(src, claudePluginManifest) {
 		return true
 	}
 	// Workspace form: .claude/ with at least one resource subdirectory
@@ -103,7 +103,7 @@ func hasClaudeWorkspaceForm(src fs.FS) bool {
 		}
 	}
 	// Also check .claude/.mcp.json
-	if regularFileExists(src, ".claude/.mcp.json") {
+	if ingest.RegularFileExists(src, ".claude/.mcp.json") {
 		return true
 	}
 	return false
@@ -113,10 +113,10 @@ func hasClaudeWorkspaceForm(src fs.FS) bool {
 func hasBarePluginForm(src fs.FS) bool {
 	// If another plugin-form harness marker is present, root-level resources are
 	// more likely siblings for that harness than a bare Claude plugin.
-	if regularFileExists(src, ".factory-plugin/plugin.json") {
+	if ingest.RegularFileExists(src, ".factory-plugin/plugin.json") {
 		return false
 	}
-	if regularFileExists(src, ".cursor-plugin/plugin.json") {
+	if ingest.RegularFileExists(src, ".cursor-plugin/plugin.json") {
 		return false
 	}
 	// droids/ is Factory-specific; defer to the factory ingester rather than
@@ -132,7 +132,7 @@ func hasBarePluginForm(src fs.FS) bool {
 			return true
 		}
 	}
-	return regularFileExists(src, ".mcp.json")
+	return ingest.RegularFileExists(src, ".mcp.json")
 }
 
 // hasBareSkillsDirForm reports whether the filesystem represents a bare
@@ -142,7 +142,7 @@ func hasBarePluginForm(src fs.FS) bool {
 // directly rather than a bundle root containing skills/ as a child.
 func hasBareSkillsDirForm(src fs.FS) bool {
 	// Single skill at root: the directory itself is a skill directory.
-	if regularFileExists(src, "SKILL.md") {
+	if ingest.RegularFileExists(src, "SKILL.md") {
 		return true
 	}
 	// Directory of skill subdirectories: immediate subdirs containing SKILL.md.
@@ -154,7 +154,7 @@ func hasBareSkillsDirForm(src fs.FS) bool {
 		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
-		if regularFileExists(src, e.Name()+"/SKILL.md") {
+		if ingest.RegularFileExists(src, path.Join(e.Name(), "SKILL.md")) {
 			return true
 		}
 	}
@@ -217,7 +217,7 @@ func loadBundleForm(src fs.FS, opts LoadOptions) (*ingest.Bundle, error) {
 	// Try plugin form first (.claude-plugin/plugin.json or bare form).
 	// The explicit plugin manifest is Detect's highest-priority marker, so
 	// honor it here too to keep Detect and LoadBundle in agreement.
-	if regularFileExists(src, claudePluginManifest) {
+	if ingest.RegularFileExists(src, claudePluginManifest) {
 		return loadPluginForm(src, false)
 	}
 	if hasBarePluginForm(src) && !hasClaudeWorkspaceForm(src) {
@@ -522,7 +522,7 @@ func loadBareSkillsDirForm(src fs.FS) (*ingest.Bundle, error) {
 	// When a root SKILL.md exists, this is a single-skill directory —
 	// return it immediately without scanning for sibling subdirectories
 	// to avoid double-publishing in mixed layouts.
-	if regularFileExists(src, "SKILL.md") {
+	if ingest.RegularFileExists(src, "SKILL.md") {
 		skill, err := bundle.LoadRootSkill(src)
 		if err != nil {
 			diags = append(diags, ingest.LoadFailure(diag.CodeIngestClaudeLoadSkillFailed, "root skill", ".", ".", err))
@@ -570,7 +570,7 @@ func listSkillSubdirs(src fs.FS) ([]string, error) {
 		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
-		if regularFileExists(src, path.Join(e.Name(), "SKILL.md")) {
+		if ingest.RegularFileExists(src, path.Join(e.Name(), "SKILL.md")) {
 			dirs = append(dirs, e.Name())
 		}
 	}
@@ -615,11 +615,4 @@ func listMDFiles(src fs.FS, root string) ([]string, error) {
 	}
 	sort.Strings(files)
 	return files, nil
-}
-
-// regularFileExists reports whether name is a regular file, without reading
-// its content.
-func regularFileExists(src fs.FS, name string) bool {
-	info, err := fs.Stat(src, name)
-	return err == nil && info.Mode().IsRegular()
 }

@@ -53,9 +53,14 @@ func TestAutodetectChecksMarkersWithoutReadingThem(t *testing.T) {
 		{"claude bare mcp", fstest.MapFS{".mcp.json": {Data: []byte(`{"mcpServers":{}}`)}}, ingest.HarnessClaude},
 		{"claude single skill", fstest.MapFS{"SKILL.md": {Data: skill}}, ingest.HarnessClaude},
 		{"claude skills directory", fstest.MapFS{"demo/SKILL.md": {Data: skill}}, ingest.HarnessClaude},
+		{"claude workspace mcp", fstest.MapFS{".claude/.mcp.json": {Data: []byte(`{"mcpServers":{}}`)}}, ingest.HarnessClaude},
 		{"factory plugin manifest", fstest.MapFS{".factory-plugin/plugin.json": {Data: []byte(`{"name":"p"}`)}, "skills/demo/SKILL.md": {Data: skill}}, ingest.HarnessFactory},
+		{"factory workspace hooks", fstest.MapFS{".factory/hooks.json": {Data: []byte(`{"hooks":{}}`)}}, ingest.HarnessFactory},
+		{"factory workspace mcp", fstest.MapFS{".factory/mcp.json": {Data: []byte(`{"mcpServers":{}}`)}}, ingest.HarnessFactory},
+		{"factory bare mcp", fstest.MapFS{"mcp.json": {Data: []byte(`{"mcpServers":{}}`)}}, ingest.HarnessFactory},
 		{"cursor plugin manifest", fstest.MapFS{".cursor-plugin/plugin.json": {Data: []byte(`{"name":"p"}`)}, "skills/demo/SKILL.md": {Data: skill}}, ingest.HarnessCursor},
 		{"cursor workspace mcp", fstest.MapFS{".cursor/mcp.json": {Data: []byte(`{"mcpServers":{}}`)}}, ingest.HarnessCursor},
+		{"cursor workspace hooks", fstest.MapFS{".cursor/hooks.json": {Data: []byte(`{"version":1,"hooks":{}}`)}}, ingest.HarnessCursor},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var read int64
@@ -71,6 +76,14 @@ func TestAutodetectChecksMarkersWithoutReadingThem(t *testing.T) {
 }
 
 func TestAutodetectIgnoresMarkerPathsThatAreNotRegularFiles(t *testing.T) {
+	control := fstest.MapFS{
+		".claude-plugin/plugin.json":  {Data: []byte(`{"name":"p"}`)},
+		"skills/demo/SKILL.md":        {Data: []byte("---\nname: demo\ndescription: d\n---\nbody\n")},
+		".factory-plugin/plugin.json": {Data: []byte(`{"name":"p"}`)},
+	}
+	if got, ok := ingest.Autodetect(control); !ok || got != ingest.HarnessClaude {
+		t.Fatalf("Autodetect = %q, %t; want a regular Claude manifest to win over the Factory manifest", got, ok)
+	}
 	src := fstest.MapFS{
 		".claude-plugin/plugin.json/nested": {Data: []byte("x")},
 		"skills/demo/SKILL.md":              {Data: []byte("---\nname: demo\ndescription: d\n---\nbody\n")},
