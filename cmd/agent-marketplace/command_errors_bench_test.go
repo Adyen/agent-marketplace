@@ -21,6 +21,6 @@ func BenchmarkTerminalSafeCommandError(b *testing.B) {
 	err := errors.Join(errors.New(message), errors.New(message))
 	b.ReportAllocs()
 	for b.Loop() {
-		_ = terminalSafeCommandError(err)
+		_ = terminalSafeCommandError(err, "agent-marketplace sync")
 	}
 }

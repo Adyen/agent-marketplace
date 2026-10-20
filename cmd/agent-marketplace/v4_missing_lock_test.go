@@ -426,7 +426,6 @@ resources:
 	if doctorErr != nil {
 		t.Fatalf("doctor: %v\n%s", doctorErr, doctorOutput)
 	}
-	t.Logf("reported case doctor stdout+stderr:\n%s", doctorOutput)
 	wantErrorLine := "v4.marketplace-lock-mismatch: " + configPath +
 		`:6: resource "awesome-ai/collection/coderabbit-skills" is missing from the lock file .agents/lock.yaml`
 	wantDoctorErrorLine := "error: " + wantErrorLine
@@ -454,7 +453,6 @@ resources:
 	if checkErr == nil || !strings.Contains(checkOutput, "v4.marketplace-lock-mismatch") {
 		t.Fatalf("sync --check did not keep reporting the missing lock resource: %v\n%s", checkErr, checkOutput)
 	}
-	t.Logf("reported case sync --check stdout+stderr:\n%s", checkOutput)
 	if !hasExactLine(checkOutput, "Error: lock.change-required: "+wantErrorLine) ||
 		!hasExactLine(checkOutput, wantHintLine) {
 		t.Fatalf("sync --check output lacks the expected error and hint lines:\n%s", checkOutput)

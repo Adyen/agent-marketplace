@@ -29,13 +29,9 @@ func (e terminalSafeJoinedError) Error() string   { return e.text }
 func (e terminalSafeJoinedError) Unwrap() []error { return e.err.Unwrap() }
 
 // terminalSafeCommandError renders every error in the chain with its next step.
-func terminalSafeCommandError(err error, command ...string) error {
+func terminalSafeCommandError(err error, commandPath string) error {
 	if err == nil {
 		return nil
-	}
-	commandPath := ""
-	if len(command) > 0 {
-		commandPath = command[0]
 	}
 	var lines []string
 	hints := make(map[string]struct{})
