@@ -827,7 +827,7 @@ func runMaterialization(ctx context.Context, repoRoot string, resolved []resolve
 	compileResult.manifestPublicationHook = rc.manifestPublicationHook
 	report := executeMaterializePlans(ctx, compileResult, rc.dryRun, repoRoot, rc.modes, rc.beforeSupportWrite)
 	if rc.pluginStateReconcile {
-		reconcilePluginInstances(ctx, repoRoot, resolved, compileResult, report, pluginNamespaceBlocked, rc.dryRun, rc.modes, rc.supportCommitFault)
+		reconcilePluginInstances(ctx, repoRoot, resolved, compileResult, report, pluginNamespaceBlocked, rc.dryRun, rc.supportCommitFault)
 	}
 	slog.Info("materialize end",
 		"duration_ms", time.Since(start).Milliseconds(),
