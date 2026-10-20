@@ -369,8 +369,8 @@ Go tests in `internal/tui` construct a `Model` and feed it messages. They
 cannot show that a user pressing keys in a real terminal reaches the changed
 behavior, and TUI changes merged with only those tests have broken user
 flows. So a change to non-test files under `internal/tui/` or
-`cmd/agent-marketplace/tui*.go` also changes a journey under
-`tools/tui-qa/tests/`:
+`cmd/agent-marketplace/tui*.go` also changes a journey directly under
+`tools/tui-qa/tests/` (the suite does not run subdirectories):
 
 1. **Pick the journey.** Extend the existing `*.spec.ts` that already reaches
    the flow (the list in `tools/tui-qa/README.md` says what each covers), or
@@ -459,9 +459,9 @@ them independently. When designing new flows:
    `Update(tea.KeyMsg{...})`. Mock file I/O with the `swap*` helpers in
    `toggle_flow_test.go` if the keybinding writes configs.
 4. Update `site/docs/reference/tui.md`.
-5. Add or extend a journey under `tools/tui-qa/tests/` that presses the key
-   and asserts its visible effect, then run `make tui-qa`. This step is
-   required, not optional (see
+5. Add or extend a journey directly under `tools/tui-qa/tests/` that presses
+   the key and asserts its visible effect, then run `make tui-qa`. This step
+   is required, not optional (see
    [Every TUI change ships a TUI QA journey](#every-tui-change-ships-a-tui-qa-journey)).
 
 ## CLI Conventions (Cobra)

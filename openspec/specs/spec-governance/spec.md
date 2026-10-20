@@ -173,10 +173,11 @@ A pull request SHALL add or modify at least one TUI QA journey whenever it
 changes a TUI-bearing file. TUI-bearing files are files under `internal/tui/`
 and `.go` files directly under `cmd/agent-marketplace/` whose name starts with
 `tui`, excluding test files, Markdown files, and anything under a `testdata/`
-directory. TUI QA journeys are `*.spec.ts` and `*.test.ts` files under
-`tools/tui-qa/tests/`. Deleting a journey MUST NOT count as adding or modifying
-one. This requirement is independent of the spec delta requirement: a journey
-does not replace a spec delta, and a spec delta does not replace a journey.
+directory. TUI QA journeys are `*.spec.ts` and `*.test.ts` files directly
+under `tools/tui-qa/tests/`, which the TUI QA suite runs. Deleting a journey
+MUST NOT count as adding or modifying one. This requirement is independent of
+the spec delta requirement: a journey does not replace a spec delta, and a spec
+delta does not replace a journey.
 
 #### Scenario: TUI change without journey fails
 
@@ -207,6 +208,13 @@ does not replace a spec delta, and a spec delta does not replace a journey.
 - **WHEN** the pull request range changes a TUI-bearing file and changes only
   non-journey files under `tools/tui-qa/`, such as fixtures, helpers, or its
   README
+- **THEN** the change gate MUST fail and report the missing TUI QA journey
+
+#### Scenario: Nested journeys do not count
+
+- **WHEN** the pull request range changes a TUI-bearing file and its only
+  `*.spec.ts` or `*.test.ts` change is in a subdirectory of
+  `tools/tui-qa/tests/`
 - **THEN** the change gate MUST fail and report the missing TUI QA journey
 
 #### Scenario: TUI test-only change needs no journey

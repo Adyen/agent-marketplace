@@ -50,7 +50,7 @@ var gateRules = []gateRule{
 		trailer:      "TUI-QA-Impact",
 		missingKind:  kindMissingTUIQAJourney,
 		reasonKind:   kindTUIQAImpactNoReason,
-		hint:         "; add or extend a journey under " + tuiJourneyDir + " that drives the changed flow in the real terminal",
+		hint:         "; add or extend a journey directly under " + tuiJourneyDir + " that drives the changed flow in the real terminal",
 		bearing:      isTUIBearing,
 		satisfies:    func(f changedFile) bool { return !f.deleted && isTUIJourney(f.path) },
 	},
@@ -77,7 +77,8 @@ func isExempt(p string) bool {
 }
 
 func isTUIJourney(p string) bool {
-	return strings.HasPrefix(p, tuiJourneyDir) && (strings.HasSuffix(p, ".spec.ts") || strings.HasSuffix(p, ".test.ts"))
+	dir, name := path.Split(p)
+	return dir == tuiJourneyDir && (strings.HasSuffix(name, ".spec.ts") || strings.HasSuffix(name, ".test.ts"))
 }
 
 func isSpecFile(p string) bool {

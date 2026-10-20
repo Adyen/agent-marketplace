@@ -12,7 +12,7 @@
 
 - **Extend the existing change gate instead of adding a command or CI step.** Both rules share the same input (changed paths plus trailers) and the same CI step, so contributors see both verdicts in one place. The gate becomes a list of rules that each have a trigger set, evidence, a trailer key, and stable finding kinds; the spec-delta rule keeps its existing output.
 - **TUI-bearing files are `internal/tui/` and `cmd/agent-marketplace/tui*.go`, excluding tests, Markdown, and `testdata/`.** That is the TUI package plus its launch wiring. Shared packages are excluded because they are not TUI-specific, and requiring a journey for every resolver change would make the trailer routine and so meaningless.
-- **Evidence is an added or modified `*.spec.ts` or `*.test.ts` under `tools/tui-qa/tests/`.** Helpers and fixtures enable journeys but prove nothing alone. Deletions are read from a second `--diff-filter=D` diff, so a deleted journey cannot count as evidence.
+- **Evidence is an added or modified `*.spec.ts` or `*.test.ts` directly under `tools/tui-qa/tests/`.** `pnpm qa` runs only the flat `dist/tests/*.spec.js` and `dist/tests/*.test.js` globs, so a nested file would satisfy the gate without ever running. Helpers and fixtures enable journeys but prove nothing alone. Deletions are read from a second `--diff-filter=D` diff, so a deleted journey cannot count as evidence.
 - **Separate `TUI-QA-Impact` trailer.** Reusing `Spec-Impact` would let one trailer excuse both obligations, and these are different claims: "no spec-visible behavior change" versus "no user-observable TUI effect".
 
 ## Risks / Trade-offs

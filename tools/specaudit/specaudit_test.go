@@ -431,6 +431,15 @@ func TestEvaluateTUIQAGate(t *testing.T) {
 			),
 			wantKinds: []string{kindMissingTUIQAJourney},
 		},
+		// spec: spec-governance/nested-journeys-do-not-count
+		{
+			name: "journeys nested below the suite directory",
+			files: changed(
+				"internal/tui/app.go", "tools/tui-qa/tests/flows/new-flow.spec.ts",
+				"tools/tui-qa/tests/flows/process.test.ts", delta,
+			),
+			wantKinds: []string{kindMissingTUIQAJourney},
+		},
 		// spec: spec-governance/tui-test-only-change-needs-no-journey
 		{
 			name: "TUI tests, markdown, and testdata only",
