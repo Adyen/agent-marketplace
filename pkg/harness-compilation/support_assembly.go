@@ -122,14 +122,14 @@ func assembleResourceSupportArtifacts(srcFS fs.FS, resource ir.Resource, compile
 			diagnostics = append(diagnostics, supportFileDiagnostic(diag.CodeBundleSupportFileUnsafe, t, name, kind, candidate.sourcePath, "does not map to a clean target-relative path", resource))
 			continue
 		}
-		data, mode, code, detail, skippable := readSupportFile(srcFS, candidate.sourcePath)
+		data, mode, code, detail, skippable := readSupportFile(srcFS, candidate.sourcePath, 0)
 		if code == diag.CodeBundleSupportFileMissing && !candidate.strict {
 			if i := strings.Index(candidate.sourcePath, ":$"); i > 0 {
 				fallback := candidate.targetPath[:i]
 				if !seen[fallback] {
 					candidate.sourcePath = candidate.sourcePath[:i]
 					candidate.targetPath = fallback
-					data, mode, code, detail, skippable = readSupportFile(srcFS, candidate.sourcePath)
+					data, mode, code, detail, skippable = readSupportFile(srcFS, candidate.sourcePath, 0)
 				}
 			}
 		}
@@ -365,11 +365,15 @@ func urlEmbeddedToken(value string, idx int) bool {
 	return !strings.ContainsRune(assetTerminators, rune(value[idx-1]))
 }
 
-// readSupportFile validates rel against the source filesystem and reads its
-// bytes and mode. It fails closed on traversal, absolute or unclean paths,
-// symlink components, non-regular files, and read errors. The returned code
-// is a stable diagnostic code; empty means success.
-func readSupportFile(srcFS fs.FS, rel string) (data []byte, mode fs.FileMode, code string, detail string, skippable bool) {
+// ReadContainedSupportFile validates and reads a regular file beneath an fs.FS
+// root. A positive maxBytes bounds the read; code is a stable diagnostic code,
+// and empty means success.
+func ReadContainedSupportFile(srcFS fs.FS, rel string, maxBytes int64) ([]byte, fs.FileMode, string) {
+	data, mode, code, _, _ := readSupportFile(srcFS, rel, maxBytes)
+	return data, mode, code
+}
+
+func readSupportFile(srcFS fs.FS, rel string, maxBytes int64) (data []byte, mode fs.FileMode, code string, detail string, skippable bool) {
 	if !isCleanRelativePath(rel) {
 		return nil, 0, diag.CodeBundleSupportFileUnsafe, "is not a clean bundle-relative path", false
 	}
@@ -413,6 +417,9 @@ func readSupportFile(srcFS fs.FS, rel string) (data []byte, mode fs.FileMode, co
 		if !info.Mode().IsRegular() {
 			return nil, 0, diag.CodeBundleSupportFileUnsafe, "is not a regular file", false
 		}
+		if maxBytes > 0 && info.Size() > maxBytes {
+			return nil, 0, diag.CodeBundleSupportFileUnsafe, "exceeds the file size limit", false
+		}
 		file, err := srcFS.Open(rel)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
@@ -425,9 +432,16 @@ func readSupportFile(srcFS fs.FS, rel string) (data []byte, mode fs.FileMode, co
 		if err != nil || !opened.Mode().IsRegular() || !sameSupportFile(info, opened) {
 			return nil, 0, diag.CodeBundleSupportFileUnsafe, "changed during inspection or is not a regular file", false
 		}
-		data, err = io.ReadAll(file)
+		var reader io.Reader = file
+		if maxBytes > 0 {
+			reader = io.LimitReader(file, maxBytes+1)
+		}
+		data, err = io.ReadAll(reader)
 		if err != nil {
 			return nil, 0, diag.CodeBundleSupportFileUnsafe, "could not be read from the source bundle", false
+		}
+		if maxBytes > 0 && int64(len(data)) > maxBytes {
+			return nil, 0, diag.CodeBundleSupportFileUnsafe, "grew beyond the file size limit", false
 		}
 		return data, opened.Mode().Perm(), "", "", false
 	}

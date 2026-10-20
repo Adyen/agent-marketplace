@@ -53,10 +53,16 @@ func codexState(state ownedAggregateState, key outputKey) *codexOwnedAggregateSt
 	return current
 }
 
-func (codexOwnedAggregateHandler) extract(state ownedAggregateState, key outputKey, artifacts []artifact.Artifact, resource string) ([]artifact.Artifact, error) {
+func (codexOwnedAggregateHandler) extract(state ownedAggregateState, key outputKey, artifacts []artifact.Artifact, resource string, pluginGenerations []ownership.PluginGenerationRef) ([]artifact.Artifact, error) {
 	rest, hooks, mcps, err := splitCodexOwnedArtifacts(artifacts, resource)
 	if err != nil {
 		return nil, err
+	}
+	for i := range hooks {
+		hooks[i].pluginGenerations = append([]ownership.PluginGenerationRef(nil), pluginGenerations...)
+	}
+	for i := range mcps {
+		mcps[i].pluginGenerations = append([]ownership.PluginGenerationRef(nil), pluginGenerations...)
 	}
 	current := codexState(state, key)
 	current.mcps = append(current.mcps, mcps...)
@@ -154,9 +160,10 @@ func (codexOwnedAggregateHandler) nativeHookReconcileOptions() ownedJSONReconcil
 }
 
 type codexMCPEntry struct {
-	name, resource string
-	raw            []byte
-	valueDigest    string
+	name, resource    string
+	raw               []byte
+	valueDigest       string
+	pluginGenerations []ownership.PluginGenerationRef
 }
 
 func (e codexMCPEntry) id() ownership.EntryID {
@@ -165,7 +172,15 @@ func (e codexMCPEntry) id() ownership.EntryID {
 
 func (e codexMCPEntry) owned() ownership.Entry {
 	id := e.id()
-	return ownership.Entry{Kind: id.Kind, Container: id.Container, Key: id.Key, IdentityDigest: id.IdentityDigest, ValueDigest: e.valueDigest, Resource: e.resource}
+	return ownership.Entry{
+		Kind:              id.Kind,
+		Container:         id.Container,
+		Key:               id.Key,
+		IdentityDigest:    id.IdentityDigest,
+		ValueDigest:       e.valueDigest,
+		Resource:          e.resource,
+		PluginGenerations: append([]ownership.PluginGenerationRef(nil), e.pluginGenerations...),
+	}
 }
 
 // splitCodexOwnedArtifacts keeps ownership-reconciled files out of the generic

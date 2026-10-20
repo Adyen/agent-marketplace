@@ -4132,14 +4132,14 @@ func TestNativeHookRepoRootAliasPreservesMachineFactorySupport(t *testing.T) {
 	}
 	stateBefore, stateMode, stateMtime := fileSnapshot(t, store.StateFile())
 
-	_, autoOutputs, _, _ := buildWorkItems(selection, home)
+	_, autoOutputs, _, _ := buildWorkItems(selection, home, nil)
 	repoKey := outputKey{target: hcc.TargetFactory, machineScope: false}
 	machineKey := outputKey{target: hcc.TargetFactory, machineScope: true}
 	if autoOutputs[repoKey] || !autoOutputs[machineKey] {
 		t.Fatalf("automatic Native output keys = repo %v / machine %v, want repo absent and machine present", autoOutputs[repoKey], autoOutputs[machineKey])
 	}
 	repoSelection := nativeSupportResolve(t, hcc.TargetFactory, false, []resolver.ResolvedArtifact{provider})
-	_, explicitOutputs, _, _ := buildWorkItems(repoSelection, home)
+	_, explicitOutputs, _, _ := buildWorkItems(repoSelection, home, nil)
 	if !explicitOutputs[repoKey] {
 		t.Fatal("explicit repo selection was dropped for its machine-root alias")
 	}

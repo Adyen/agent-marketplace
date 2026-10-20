@@ -28,15 +28,16 @@ const ownedJSONEmptyDocument = "{}\n"
 // ownedJSONEntry is one desired JSON aggregate entry with its ownership
 // identity and canonical value bytes.
 type ownedJSONEntry struct {
-	rel            string
-	kind           ownership.EntryKind
-	container      string
-	key            string
-	raw            []byte
-	identity       string
-	resource       string
-	sourceDigest   string
-	sourceEvidence []ownership.HookSourceEvidence
+	rel               string
+	kind              ownership.EntryKind
+	container         string
+	key               string
+	raw               []byte
+	identity          string
+	resource          string
+	sourceDigest      string
+	sourceEvidence    []ownership.HookSourceEvidence
+	pluginGenerations []ownership.PluginGenerationRef
 }
 
 func (e ownedJSONEntry) id() ownership.EntryID {
@@ -54,6 +55,7 @@ func (e ownedJSONEntry) ownershipEntry() ownership.Entry {
 		ValueDigest:    e.valueDigest(),
 		Resource:       e.resource,
 	}
+	entry.PluginGenerations = append([]ownership.PluginGenerationRef(nil), e.pluginGenerations...)
 	if e.kind == ownership.KindHook {
 		entry.SourceDigest = e.sourceDigest
 		entry.SourceEvidence = append([]ownership.HookSourceEvidence(nil), e.sourceEvidence...)
@@ -79,6 +81,7 @@ func (w *ownedJSONAggregateWork) add(entry ownedJSONEntry) {
 		if entry.kind == ownership.KindHook {
 			normalizeOwnedJSONHookSources(&w.entries[index], entry)
 		}
+		normalizePluginGenerationRefs(&w.entries[index], entry)
 		slog.Debug("owned JSON aggregate desired entry collapsed as a duplicate identity",
 			"file", entry.rel, "kind", string(entry.kind), "container", entry.container,
 			"key", entry.key, "resource", entry.resource)
@@ -89,6 +92,21 @@ func (w *ownedJSONAggregateWork) add(entry ownedJSONEntry) {
 	}
 	w.seen[id] = len(w.entries)
 	w.entries = append(w.entries, entry)
+}
+
+func normalizePluginGenerationRefs(existing *ownedJSONEntry, incoming ownedJSONEntry) {
+	if len(incoming.pluginGenerations) == 0 {
+		return
+	}
+	refs := append(append([]ownership.PluginGenerationRef(nil), existing.pluginGenerations...), incoming.pluginGenerations...)
+	sort.Slice(refs, func(i, j int) bool { return refs[i].InstanceKey < refs[j].InstanceKey })
+	unique := refs[:0]
+	for _, ref := range refs {
+		if len(unique) == 0 || unique[len(unique)-1].InstanceKey != ref.InstanceKey {
+			unique = append(unique, ref)
+		}
+	}
+	existing.pluginGenerations = unique
 }
 
 func normalizeOwnedJSONHookSources(entry *ownedJSONEntry, contributors ...ownedJSONEntry) {
@@ -296,7 +314,7 @@ func (s ownedAggregateState) put(key outputKey, value any) {
 // ownedAggregateHandler lets the materializer orchestrate owned aggregate
 // files without knowing a target's filenames, identities, or patch format.
 type ownedAggregateHandler interface {
-	extract(ownedAggregateState, outputKey, []artifact.Artifact, string) ([]artifact.Artifact, error)
+	extract(ownedAggregateState, outputKey, []artifact.Artifact, string, []ownership.PluginGenerationRef) ([]artifact.Artifact, error)
 	markIncomplete(ownedAggregateState, outputKey, ir.ResourceKind)
 	aggregateRels(ir.ResourceKind, bool) []string
 	malformedDiagnostic(outputKey, string, error) diag.Diagnostic

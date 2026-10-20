@@ -1730,6 +1730,9 @@ func compileOptions(cfg *config) []compile.Option {
 	if cfg.pluginRoot != "" {
 		copts = append(copts, compile.WithPluginRoot(cfg.pluginRoot))
 	}
+	if cfg.nativeHookGenerationRoot != "" {
+		copts = append(copts, compile.WithNativeHookGenerationRoot(cfg.nativeHookGenerationRoot))
+	}
 	if cfg.managedByField != "" {
 		copts = append(copts, compile.WithManagedBy(cfg.managedByField, cfg.managedByValue))
 	}
@@ -1746,13 +1749,14 @@ func compileOptions(cfg *config) []compile.Option {
 type Option func(*config)
 
 type config struct {
-	modelOverride    map[string]string
-	toolOverride     map[string]string
-	pluginRoot       string
-	managedByField   string
-	managedByValue   string
-	nativeHookOutput bool
-	scope            Scope
+	modelOverride            map[string]string
+	toolOverride             map[string]string
+	pluginRoot               string
+	nativeHookGenerationRoot string
+	managedByField           string
+	managedByValue           string
+	nativeHookOutput         bool
+	scope                    Scope
 }
 
 // Scope is the installation scope a caller compiles for. It is re-exported
@@ -1788,6 +1792,12 @@ func WithToolOverride(m map[string]string) Option {
 // compile-time expansion of ${CLAUDE_PLUGIN_ROOT}.
 func WithPluginRoot(path string) Option {
 	return func(c *config) { c.pluginRoot = path }
+}
+
+// WithNativeHookGenerationRoot supplies the package generation used by native
+// hook commands; it is never a repository output directory.
+func WithNativeHookGenerationRoot(path string) Option {
+	return func(c *config) { c.nativeHookGenerationRoot = path }
 }
 
 func WithManagedBy(field, value string) Option {

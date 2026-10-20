@@ -20,9 +20,16 @@ import (
 // that layer even when delivery resolves it away. Records merge only within
 // one layer; the plan never deduplicates across layers.
 func PlanPluginSelection(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *config.LocalConfig, opts ...ResolveOption) (catalog.PluginSelectionPlan, []error) {
+	_, errs, plan := ResolveWithPluginSelectionPlan(cfg, catalogs, localCfg, opts...)
+	return plan, errs
+}
+
+// ResolveWithPluginSelectionPlan resolves materializable artifacts and the
+// per-layer plugin selections in one resolver pass.
+func ResolveWithPluginSelectionPlan(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *config.LocalConfig, opts ...ResolveOption) ([]ResolvedArtifact, []error, catalog.PluginSelectionPlan) {
 	sink := newPluginPlanSink()
-	_, errs := Resolve(cfg, catalogs, localCfg, append(opts, withPluginPlanSink(sink))...)
-	return sink.plan(), errs
+	resolved, errs := Resolve(cfg, catalogs, localCfg, append(opts, withPluginPlanSink(sink))...)
+	return resolved, errs, sink.plan()
 }
 
 // pluginPlanKey identifies one per-layer plan record: the plugin name, the

@@ -416,9 +416,13 @@ const (
 	CodePluginMemberLiteralUnrepresentable = "plugin.member.literal-unrepresentable" // A literal placeholder has no escape on the destination; member blocked
 	CodePluginMemberRestrictionUnsupported = "plugin.member.restriction-unsupported" // A plugin member field is a restriction the target cannot enforce; member blocked
 	CodePluginCompilePackageRequired       = "plugin.compile.package-required"       // A plugin resource was passed to the per-resource Compile boundary
-	CodePluginDeliveryPending              = "plugin.delivery.pending"               // WARNING: the plugin is acquired and locked but harness delivery is not yet implemented
+	CodePluginDeliveryPending              = "plugin.delivery.pending"               // WARNING: native plugin delivery is not available yet
 	CodePluginCatalogSharedOrigin          = "plugin.catalog.shared-origin"          // Two selected catalog entries resolve to the same external origin; the selection is refused
 	CodePluginSelectionUndeclaredSource    = "plugin.selection.undeclared-source"    // A layer's collection selects a plugin from a format source that layer does not declare; the selection is refused
+	CodePluginNamespaceCollision           = "plugin.namespace-collision"            // A plugin member's installed name collides with another selected resource
+	CodePluginNamespaceInvalid             = "plugin.namespace-invalid"              // A plugin member's installed name is invalid for the target
+	CodePluginGenerationPublish            = "plugin.generation.publish"             // An immutable package generation could not be published
+	CodePluginGenerationMissing            = "plugin.generation.missing"             // A required immutable package generation is missing or changed
 
 	// Devin hook and MCP ENTRY-SKIP codes.
 	//
@@ -741,6 +745,10 @@ var codeCatalog = []CodeDoc{
 	{CodePluginCatalogSourceUnsupported, SeverityWarning, "A plugin catalog entry declares a source type its format refuses; the entry is inspectable but not installable", "Acquire the plugin through a source type the format accepts, or install it from a different source"},
 	{CodePluginCatalogDuplicateEntry, SeverityWarning, "Two plugin catalog entries share one name; neither copy is installable", "Rename one entry or remove the duplicate"},
 	{CodePluginCatalogManifestConflict, SeverityWarning, "A catalog entry opts out of strict overlay while carrying component fields, so the entry and its plugin.json disagree; the entry is inspectable but not installable", "Drop the entry's component fields or remove strict: false"},
+	{CodePluginNamespaceCollision, SeverityError, "A decomposed plugin member's installed name collides with another selected resource in the same target and scope; the plugin instance was refused", "Rename or exclude the conflicting resource; plugin member names are not suffixed"},
+	{CodePluginNamespaceInvalid, SeverityError, "A decomposed plugin member's installed name is invalid for the target; the plugin instance was refused", "Use a plugin and member name that satisfy the target's resource-name rules"},
+	{CodePluginGenerationPublish, SeverityError, "An immutable plugin package generation could not be published; the previous plugin projection was retained", "Restore a readable, contained plugin package and re-run sync"},
+	{CodePluginGenerationMissing, SeverityError, "A required immutable plugin package generation is missing or changed; plugin drift could not be checked safely", "Re-run writable sync to publish the verified package generation"},
 
 	{CodePluginFormatUnsupported, SeverityError, "The source is not a recognized plugin package format, or the destination harness does not accept it", "Use a supported package format and a harness whose plugin catalog accepts it"},
 	{CodePluginFormatVersionUnsupported, SeverityError, "The package declares a format version no decoder supports; the package is not installable", "Pin the package to a supported format version"},

@@ -68,6 +68,10 @@ func (b blockedOutputs) blockResource(key outputKey, w skillTarget) {
 	b.mark(key, blockedComponentsFor(key, w)...)
 }
 
+func (b blockedOutputs) blockKind(key outputKey, kind ir.ResourceKind) {
+	b.mark(key, blockedComponentsForKind(key, kind)...)
+}
+
 // componentsFor returns the blocked component set for one output key.
 func (b blockedOutputs) componentsFor(key outputKey) map[string]bool { return b[key] }
 
@@ -113,11 +117,14 @@ func blockedComponentsFor(key outputKey, w skillTarget) []string {
 	if w.skill.Resource == nil {
 		return []string{blockedAllComponents}
 	}
+	return blockedComponentsForKind(key, w.skill.Resource.Kind())
+}
+
+func blockedComponentsForKind(key outputKey, kind ir.ResourceKind) []string {
 	info, ok := harness.TargetInfoFor(key.target)
 	if !ok {
 		return []string{blockedAllComponents}
 	}
-	kind := w.skill.Resource.Kind()
 	if handler := ownedAggregateHandlerFor(key.target); handler != nil && len(handler.aggregateRels(kind, key.machineScope)) > 0 {
 		if kind == ir.KindHook {
 			// A skipped hook still owns its installed support directory:

@@ -79,6 +79,30 @@ type ResolvedArtifact struct {
 	// Selection carries the resolved plugin selection edges and effective
 	// members when Kind == ir.KindPlugin; nil for other resources.
 	Selection *PluginSelection `json:"-"`
+	// PluginPackage identifies an ordinary leaf artifact projected from a
+	// plugin package. It remains attached through materialization so package
+	// roots, data roots, ownership, and instance blocking use the plugin.
+	PluginPackage *PluginPackage `json:"-"`
+}
+
+type PluginPackage struct {
+	Name               string
+	Format             string
+	PackageRoot        string
+	CatalogFingerprint string
+	Delivery           string
+	Scope              string
+	GenerationScope    string
+	MemberPath         string
+	Exclusions         []string
+	Package            *ir.Plugin
+	DecodeFailures     []string
+	DecodeKinds        []ir.ResourceKind
+	GenerationKey      string
+	GenerationPath     string
+	DataPath           string
+	InstanceKey        string
+	GenerationError    string
 }
 
 func HasAdditiveSources(kind ir.ResourceKind) bool {
@@ -1924,7 +1948,7 @@ func expandMembersRecursive(
 					edge := PluginEdge{Kind: PluginEdgeCollection, Collection: col.Label(), Source: edgeSource}
 					admissions.pluginEdges[scopedKey] = append(admissions.pluginEdges[scopedKey], edge)
 					if memberEntryFound {
-						admissions.plan.record(memberEntry, memberName, catEntry.Plugin, attachResource(catEntry, resources, memberCatalogKey), &PluginSelection{Edges: []PluginEdge{edge}})
+						admissions.plan.record(memberEntry, memberName, catEntry.Plugin, attachResource(catEntry, resources, memberCatalogKey), &PluginSelection{Edges: []PluginEdge{edge}, Delivery: "auto"})
 					}
 				}
 				continue
@@ -1957,8 +1981,9 @@ func expandMembersRecursive(
 		}
 		if member.Kind == ir.KindPlugin && catEntry.Plugin != nil {
 			admitted.Selection = &PluginSelection{
-				Edges:   []PluginEdge{{Kind: PluginEdgeCollection, Collection: col.Label(), Source: edgeSource}},
-				Members: catEntry.Plugin.Members,
+				Edges:    []PluginEdge{{Kind: PluginEdgeCollection, Collection: col.Label(), Source: edgeSource}},
+				Members:  catEntry.Plugin.Members,
+				Delivery: "auto",
 			}
 			if memberEntryFound {
 				admissions.plan.record(memberEntry, memberName, catEntry.Plugin, admitted.Entry, admitted.Selection)

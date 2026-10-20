@@ -46,7 +46,7 @@ func BenchmarkBuildWorkItemsSelectionPolicy(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		buildWorkItems(resolved, repoRoot)
+		buildWorkItems(resolved, repoRoot, nil)
 	}
 }
 

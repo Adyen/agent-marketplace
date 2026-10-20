@@ -90,6 +90,30 @@ func TestFormatPackageSourceYieldsOnePluginEntry(t *testing.T) {
 	}
 }
 
+func TestInvalidPluginMemberIsExcludedByItsSourceKey(t *testing.T) {
+	dir := t.TempDir()
+	writePluginFixture(t, dir, "agent-plugin", "kit", map[string][]string{"skills": {"good"}})
+	badSkill := filepath.Join(dir, "skills", "bad")
+	if err := os.MkdirAll(badSkill, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(badSkill, "SKILL.md"), []byte("---\nname: bad\ninvalid: [\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result := formatSourceResult(t, dir, "agent-plugin")
+	if len(result.Errors) != 0 {
+		t.Fatalf("catalog load errors: %v", result.Errors)
+	}
+	key := result.Config.Registries[0].CatalogKey
+	entries := pluginEntries(result, key)
+	if len(entries) != 1 || entries[0].Plugin == nil {
+		t.Fatalf("plugin entry = %#v", entries)
+	}
+	if !PluginInvalidMemberExclusionMatch("skill/bad", entries[0].Plugin.Invalid) {
+		t.Fatalf("decoded invalid records do not recognize the member exclusion: %#v", entries[0].Plugin.Invalid)
+	}
+}
+
 func TestFormatSourceSkipsLooseIngestion(t *testing.T) {
 	dir := t.TempDir()
 	writePluginFixture(t, dir, "agent-plugin", "kit", map[string][]string{"skills": {"vault"}})
