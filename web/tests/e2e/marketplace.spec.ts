@@ -273,7 +273,7 @@ test.describe('Marketplace browser discovery', () => {
       bodyFamily: 'Adyen, Helvetica, Arial, sans-serif',
       fontSmoothing: 'antialiased',
     })
-    expect((await fontStatus()).downloadedFonts).toBeGreaterThan(0)
+    await expect.poll(async () => (await fontStatus()).downloadedFonts).toBeGreaterThan(0)
     await expect.poll(() => page.evaluate(() => ({
       black: getComputedStyle(document.documentElement).getPropertyValue('--am-brand-black').trim(),
       green: getComputedStyle(document.documentElement).getPropertyValue('--am-brand-green').trim(),
@@ -414,7 +414,7 @@ test.describe('Marketplace browser discovery', () => {
       bodyFamily: 'Adyen, Helvetica, Arial, sans-serif',
       fontSmoothing: 'antialiased',
     })
-    expect((await fontStatus()).downloadedFonts).toBeGreaterThan(0)
+    await expect.poll(async () => (await fontStatus()).downloadedFonts).toBeGreaterThan(0)
 
     const docsSwitch = page.locator('.VPNavBarAppearance .VPSwitchAppearance')
     await docsSwitch.click()
