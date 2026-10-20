@@ -600,13 +600,7 @@ func reconcileOwnedJSONAggregateFile(ctx context.Context, store *ownership.Store
 				out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel, err, options.writeCode))
 				return out
 			}
-			var backupErr error
-			if options.batch != nil {
-				backupErr = options.batch.backupPreparedMutation(ctx, store, mutation, raw, readErr)
-			} else {
-				_, backupErr = store.BackupPreparedMutation(mutation)
-			}
-			if backupErr != nil {
+			if backupErr := options.batch.backupPreparedMutation(ctx, store, mutation, raw, readErr); backupErr != nil {
 				out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel, backupErr, diag.CodeOwnershipSafetyBackup))
 				return out
 			}
@@ -771,6 +765,9 @@ func finishNativeOwnedJSONFile(ctx context.Context, out ownedJSONAggregateReport
 				return out
 			}
 		}
+		for _, manifestCommit := range extras.manifestCommits {
+			options.batch.addManifestCommit(manifestCommit)
+		}
 		out.written = changed || extras.pending
 		out.hookChanges = changes
 		return out
@@ -784,20 +781,6 @@ func finishNativeOwnedJSONFile(ctx context.Context, out ownedJSONAggregateReport
 				fmt.Sprintf("prepare transaction directory for %q: %v", ownedAggregateLabel(outDir, rel), err)))
 			return out
 		}
-	}
-	if options.batch != nil {
-		for _, participant := range desired {
-			if err := options.batch.addParticipant(participant); err != nil {
-				out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel, err, options.writeCode))
-				return out
-			}
-		}
-		for _, manifestCommit := range extras.manifestCommits {
-			options.batch.addManifestCommit(manifestCommit)
-		}
-		out.written = changed || extras.pending
-		out.hookChanges = changes
-		return out
 	}
 	if _, err := commitNativeHookFiles(ctx, desired, extras.commitOptions...); err != nil {
 		out.diags = append(out.diags, ownedAggregateCodedDiag(key, outDir, rel, err, options.writeCode))

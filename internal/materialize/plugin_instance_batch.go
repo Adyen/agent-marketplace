@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
@@ -68,7 +67,7 @@ func mergePluginAggregateState(dst *ownedAggregateState, src ownedAggregateState
 	}
 }
 
-func reconcilePluginInstances(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtifact, compiled compilePhaseResult, report *Report, namespaceBlocked map[string]bool, dryRun bool, _ config.MaterializationModes, fault dependencytxn.FaultHook) {
+func reconcilePluginInstances(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtifact, compiled compilePhaseResult, report *Report, namespaceBlocked map[string]bool, dryRun bool, fault dependencytxn.FaultHook) {
 	canonicalRoot, err := ownership.CanonicalRoot(repoRoot)
 	if err != nil {
 		report.Diags = append(report.Diags, pluginBatchDiagnostic("", err))
