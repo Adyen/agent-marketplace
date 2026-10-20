@@ -102,6 +102,16 @@ type PluginPackage struct {
 	DataPath           string
 	InstanceKey        string
 	GenerationError    string
+	TargetGenerations  map[string]PluginTargetGeneration
+}
+
+type PluginTargetGeneration struct {
+	Scope           string
+	InstanceKey     string
+	GenerationKey   string
+	GenerationPath  string
+	DataPath        string
+	GenerationError string
 }
 
 func HasAdditiveSources(kind ir.ResourceKind) bool {

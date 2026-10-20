@@ -70,7 +70,8 @@ func Inspect(ctx context.Context, opts InspectOptions) (InspectionResult, func()
 		}
 		deliverable, _ := DeliverableArtifacts(resolved.Resolved, resolved.PluginPlan)
 		report, matErr = dryRun(ctx, opts.Resolve.Workspace.MaterializeRoot(), deliverable,
-			materialize.WithDryRun(), materialize.WithMaterializationModes(resolved.MaterializationModes))
+			materialize.WithDryRun(), materialize.WithMaterializationModes(resolved.MaterializationModes),
+			materialize.WithPluginStateReconciliation())
 	}
 	return buildInspection(resolved, report, matErr), release
 }
