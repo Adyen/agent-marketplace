@@ -365,8 +365,11 @@ func TestInstallationMetricsQueryPromtool(t *testing.T) {
 		t.Fatalf("marshal promtool fixture: %v", err)
 	}
 	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatalf("make promtool fixture directory readable: %v", err)
+	}
 	fixturePath := filepath.Join(dir, "installation_query_test.yaml")
-	if err := os.WriteFile(fixturePath, fixture, 0o600); err != nil {
+	if err := os.WriteFile(fixturePath, fixture, 0o644); err != nil {
 		t.Fatalf("write promtool fixture: %v", err)
 	}
 	command := exec.Command("docker", "run", "--rm", "-v", dir+":/work", "--entrypoint", "promtool", image, "test", "rules", "/work/installation_query_test.yaml")
