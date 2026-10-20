@@ -58,6 +58,9 @@ type Entry struct {
 	ValueDigest string `json:"value_digest"`
 	// Resource is the marketplace resource name that produced the entry.
 	Resource string `json:"resource"`
+	// PluginInstance is non-empty when a decomposed plugin instance owns the
+	// entry. Leaf reconciliation preserves entries owned by an instance.
+	PluginInstance string `json:"plugin_instance,omitempty"`
 	// SourceDigest optionally records the version-1 source-hook fingerprint
 	// ("sha256:" + hex) that binds an owned native hook entry to the source
 	// hook a different client version selected. Only hook entries may carry
@@ -69,10 +72,7 @@ type Entry struct {
 	// same non-secret validation rules as the scalar evidence. Readers must
 	// never add tuples while reading, and a tuple only ever matches its
 	// exact pair.
-	SourceEvidence []HookSourceEvidence `json:"source_evidence,omitempty"`
-	// PluginGenerations records the package generations that contributed to
-	// this owned aggregate entry. It carries identities only, never payloads
-	// or package contents.
+	SourceEvidence    []HookSourceEvidence  `json:"source_evidence,omitempty"`
 	PluginGenerations []PluginGenerationRef `json:"plugin_generations,omitempty"`
 }
 
@@ -88,6 +88,7 @@ type HookSatisfaction struct {
 	Container      string               `json:"container"`
 	IdentityDigest string               `json:"identity_digest"`
 	ValueDigest    string               `json:"value_digest"`
+	PluginInstance string               `json:"plugin_instance,omitempty"`
 	Sources        []HookSourceEvidence `json:"sources"`
 }
 
@@ -235,6 +236,26 @@ func validateEntry(e Entry) error {
 	if !safeToken.MatchString(e.Resource) {
 		return fmt.Errorf("%w: entry resource name", ErrUnsafeStateValue)
 	}
+	if e.PluginInstance != "" && !pluginDigestToken.MatchString(e.PluginInstance) {
+		return fmt.Errorf("%w: plugin instance owner", ErrUnsafeStateValue)
+	}
+	seenPluginGenerations := make(map[string]string, len(e.PluginGenerations))
+	for _, ref := range e.PluginGenerations {
+		if !pluginDigestToken.MatchString(ref.InstanceKey) ||
+			!pluginDigestToken.MatchString(ref.GenerationKey) ||
+			!safeToken.MatchString(ref.Name) ||
+			!safeToken.MatchString(ref.Target) ||
+			!safeToken.MatchString(ref.Scope) {
+			return fmt.Errorf("%w: plugin generation reference", ErrUnsafeStateValue)
+		}
+		if generation, exists := seenPluginGenerations[ref.InstanceKey]; exists {
+			if generation != ref.GenerationKey {
+				return fmt.Errorf("%w: plugin instance names multiple generations", ErrUnsafeStateValue)
+			}
+			return fmt.Errorf("%w: duplicate plugin generation reference", ErrUnsafeStateValue)
+		}
+		seenPluginGenerations[ref.InstanceKey] = ref.GenerationKey
+	}
 	if !digestPattern.MatchString(e.IdentityDigest) {
 		return fmt.Errorf("%w: identity digest is not a sha256 digest", ErrUnsafeStateValue)
 	}
@@ -255,23 +276,6 @@ func validateEntry(e Entry) error {
 			return fmt.Errorf("%w: source evidence digest is not a sha256 digest", ErrUnsafeStateValue)
 		}
 	}
-	seenPluginGenerations := make(map[string]string, len(e.PluginGenerations))
-	for _, ref := range e.PluginGenerations {
-		if !pluginDigestToken.MatchString(ref.InstanceKey) ||
-			!pluginDigestToken.MatchString(ref.GenerationKey) ||
-			!safeToken.MatchString(ref.Name) ||
-			!safeToken.MatchString(ref.Target) ||
-			!safeToken.MatchString(ref.Scope) {
-			return fmt.Errorf("%w: plugin generation reference", ErrUnsafeStateValue)
-		}
-		if generation, exists := seenPluginGenerations[ref.InstanceKey]; exists {
-			if generation != ref.GenerationKey {
-				return fmt.Errorf("%w: plugin instance names multiple generations", ErrUnsafeStateValue)
-			}
-			return fmt.Errorf("%w: duplicate plugin generation reference", ErrUnsafeStateValue)
-		}
-		seenPluginGenerations[ref.InstanceKey] = ref.GenerationKey
-	}
 	return nil
 }
 
@@ -290,6 +294,9 @@ func validateHookSatisfaction(s HookSatisfaction) error {
 	}
 	if len(s.Sources) == 0 {
 		return fmt.Errorf("%w: hook satisfaction has no source evidence", ErrUnsafeStateValue)
+	}
+	if s.PluginInstance != "" && !pluginDigestToken.MatchString(s.PluginInstance) {
+		return fmt.Errorf("%w: hook satisfaction plugin instance", ErrUnsafeStateValue)
 	}
 	seenSources := make(map[string]struct{}, len(s.Sources))
 	for _, source := range s.Sources {
@@ -789,6 +796,136 @@ func (p Proof) Entry(id EntryID) (Entry, bool) {
 	}
 	e.SourceEvidence = append([]HookSourceEvidence(nil), e.SourceEvidence...)
 	return e, true
+}
+
+func (p Proof) ForPluginInstance(instanceKey string, activeInstances map[string]bool) (Proof, []Entry, []HookSatisfaction) {
+	filtered := p
+	filtered.entries = make(map[string]Entry, len(p.entries))
+	var retained []Entry
+	for key, entry := range p.entries {
+		owners := make(map[string]bool, len(entry.PluginGenerations)+1)
+		if entry.PluginInstance != "" {
+			owners[entry.PluginInstance] = true
+		}
+		for _, ref := range entry.PluginGenerations {
+			owners[ref.InstanceKey] = true
+		}
+		if len(owners) == 0 && instanceKey == "" {
+			filtered.entries[key] = entry
+			continue
+		}
+		ownerKeys := make([]string, 0, len(owners))
+		for owner := range owners {
+			ownerKeys = append(ownerKeys, owner)
+		}
+		sort.Strings(ownerKeys)
+		ownedByCurrent := owners[instanceKey] && instanceKey != ""
+		otherOwner := ""
+		for _, owner := range ownerKeys {
+			if owner != instanceKey && activeInstances[owner] {
+				otherOwner = owner
+				break
+			}
+		}
+		satisfactionOwner := firstActivePluginSatisfaction(p.hookSatisfactions, entry.ID(), activeInstances, instanceKey)
+		if ownedByCurrent && otherOwner == "" && satisfactionOwner == "" {
+			entry.PluginGenerations = nil
+			entry.PluginInstance = instanceKey
+			filtered.entries[key] = entry
+			continue
+		}
+		if otherOwner == "" {
+			otherOwner = satisfactionOwner
+		}
+		if otherOwner == "" {
+			if len(ownerKeys) > 0 {
+				otherOwner = ownerKeys[0]
+			}
+		}
+		if otherOwner == "" {
+			retained = append(retained, entry)
+			continue
+		}
+		entry.SourceEvidence = append([]HookSourceEvidence(nil), entry.SourceEvidence...)
+		entry.PluginGenerations = nil
+		entry.PluginInstance = otherOwner
+		retained = append(retained, entry)
+	}
+	filtered.hookSatisfactions = nil
+	var retainedSatisfactions []HookSatisfaction
+	for _, satisfaction := range p.hookSatisfactions {
+		satisfaction.Sources = append([]HookSourceEvidence(nil), satisfaction.Sources...)
+		if satisfaction.PluginInstance == instanceKey {
+			filtered.hookSatisfactions = append(filtered.hookSatisfactions, satisfaction)
+		} else if satisfaction.PluginInstance != "" || instanceKey != "" {
+			retainedSatisfactions = append(retainedSatisfactions, satisfaction)
+		}
+	}
+	sort.Slice(retained, func(i, j int) bool { return retained[i].ID().mapKey() < retained[j].ID().mapKey() })
+	sort.Slice(retainedSatisfactions, func(i, j int) bool {
+		return retainedSatisfactions[i].ID().mapKey() < retainedSatisfactions[j].ID().mapKey()
+	})
+	return filtered, retained, retainedSatisfactions
+}
+
+func (p Proof) ForPluginInstances(instanceKeys, activeInstances map[string]bool) (Proof, []Entry, []HookSatisfaction) {
+	filtered := p
+	filtered.entries = make(map[string]Entry, len(p.entries))
+	var retained []Entry
+	for key, entry := range p.entries {
+		ownedByBatch := instanceKeys[entry.PluginInstance]
+		for _, ref := range entry.PluginGenerations {
+			ownedByBatch = ownedByBatch || instanceKeys[ref.InstanceKey]
+		}
+		if !ownedByBatch {
+			entry.SourceEvidence = append([]HookSourceEvidence(nil), entry.SourceEvidence...)
+			if entry.PluginInstance == "" && len(entry.PluginGenerations) > 0 {
+				owners := make([]string, 0, len(entry.PluginGenerations))
+				for _, ref := range entry.PluginGenerations {
+					owners = append(owners, ref.InstanceKey)
+				}
+				sort.Strings(owners)
+				for _, owner := range owners {
+					if activeInstances[owner] {
+						entry.PluginInstance = owner
+						break
+					}
+				}
+				if entry.PluginInstance == "" {
+					entry.PluginInstance = owners[0]
+				}
+			}
+			entry.PluginGenerations = nil
+			retained = append(retained, entry)
+			continue
+		}
+		entry.PluginGenerations = nil
+		filtered.entries[key] = entry
+	}
+	filtered.hookSatisfactions = nil
+	var retainedSatisfactions []HookSatisfaction
+	for _, satisfaction := range p.hookSatisfactions {
+		if instanceKeys[satisfaction.PluginInstance] && satisfaction.PluginInstance != "" {
+			filtered.hookSatisfactions = append(filtered.hookSatisfactions, satisfaction)
+		} else {
+			satisfaction.Sources = append([]HookSourceEvidence(nil), satisfaction.Sources...)
+			retainedSatisfactions = append(retainedSatisfactions, satisfaction)
+		}
+	}
+	sort.Slice(retained, func(i, j int) bool { return retained[i].ID().mapKey() < retained[j].ID().mapKey() })
+	sort.Slice(retainedSatisfactions, func(i, j int) bool {
+		return retainedSatisfactions[i].ID().mapKey() < retainedSatisfactions[j].ID().mapKey()
+	})
+	return filtered, retained, retainedSatisfactions
+}
+
+func firstActivePluginSatisfaction(satisfactions []HookSatisfaction, id EntryID, active map[string]bool, current string) string {
+	for _, satisfaction := range satisfactions {
+		if satisfaction.ID().mapKey() == id.mapKey() && satisfaction.PluginInstance != current && active[satisfaction.PluginInstance] {
+			return satisfaction.PluginInstance
+		}
+	}
+	return ""
 }
 
 // Resource returns the marketplace resource recorded for an owned identity.

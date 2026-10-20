@@ -146,13 +146,19 @@ func TestInterruptedPluginDeliveryRecoversAsOneUnit(t *testing.T) {
 	if err != nil || len(generations) != 1 {
 		t.Fatalf("recovered plugin generations = %v / %v", generations, err)
 	}
-	stateFiles, err := filepath.Glob(filepath.Join(stateRoot, "ownership", "*", "state.json"))
+	stateFiles, err := filepath.Glob(filepath.Join(stateRoot, "ownership", "plugin-packages", "*.json"))
 	if err != nil || len(stateFiles) != 1 {
-		t.Fatalf("recovered aggregate ownership states = %v / %v", stateFiles, err)
+		t.Fatalf("recovered per-instance plugin states = %v / %v", stateFiles, err)
 	}
 	state, err := os.ReadFile(stateFiles[0])
-	if err != nil || !strings.Contains(string(state), filepath.Base(filepath.Dir(filepath.Dir(generations[0])))) {
-		t.Fatalf("recovered ownership state does not reference plugin generation: %v\n%s", err, state)
+	var pluginState struct {
+		Instance struct {
+			GenerationKey string `json:"generation_key"`
+		} `json:"instance"`
+	}
+	if err != nil || json.Unmarshal(state, &pluginState) != nil ||
+		pluginState.Instance.GenerationKey != filepath.Base(filepath.Dir(filepath.Dir(generations[0]))) {
+		t.Fatalf("recovered per-instance state does not reference plugin generation: %v\n%s", err, state)
 	}
 }
 
@@ -217,6 +223,8 @@ func TestInterruptedPluginInstanceStateCommitRecoversAllInstances(t *testing.T) 
 			t.Fatal(err)
 		}
 	}
+	env.WriteFile("/workspace/vendor/plugins/crash-kit/skills/review/SKILL.md", "---\nname: review\ndescription: Review updated\n---\nUpdated review body\n")
+	env.WriteFile("/workspace/vendor/plugins/crash-kit/hooks/hooks.json", `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo plugin-hook-updated"}]}]}`)
 
 	crash := env.RunAMWithEnv(map[string]string{"AGENT_MARKETPLACE_E2E_CRASH_AT": "after-publish:0"}, "sync", "--no-backup")
 	if crash.ExitCode != 137 {
@@ -239,10 +247,19 @@ func TestInterruptedPluginInstanceStateCommitRecoversAllInstances(t *testing.T) 
 	if err := json.Unmarshal(journalBytes, &journal); err != nil {
 		t.Fatalf("decode instance-state journal: %v", err)
 	}
-	if len(journal.Files) != 2 {
-		t.Fatalf("journal participants = %+v, want exactly both instance records", journal.Files)
+	canonicalPath := func(path string) string {
+		t.Helper()
+		parent, err := filepath.EvalSymlinks(filepath.Dir(path))
+		if err != nil {
+			t.Fatalf("resolve participant parent for %s: %v", path, err)
+		}
+		return filepath.Clean(filepath.Join(parent, filepath.Base(path)))
 	}
-	expected := map[string]bool{stateByName["crash-kit"]: true, stateByName["other-kit"]: true}
+	expected := map[string]bool{
+		stateByName["crash-kit"]: true,
+		canonicalPath(env.mustResolvePath("/workspace/.claude/skills/crash-kit-review/SKILL.md")): true,
+		canonicalPath(env.mustResolvePath("/workspace/.claude/settings.json")):                    true,
+	}
 	type fileSnapshot struct {
 		exists bool
 		data   []byte
@@ -265,18 +282,21 @@ func TestInterruptedPluginInstanceStateCommitRecoversAllInstances(t *testing.T) 
 	}
 	participants := make(map[string]fileSnapshot, len(journal.Files)*2)
 	for _, file := range journal.Files {
-		if !expected[file.Path] {
-			t.Fatalf("unrecognized transaction participant %s; expected %v", file.Path, stateByName)
+		path := filepath.Clean(file.Path)
+		if path == stateByName["other-kit"] ||
+			path == filepath.Clean(env.mustResolvePath("/workspace/.claude/skills/other-kit-check/SKILL.md")) ||
+			strings.Contains(path, "other-kit") {
+			t.Fatalf("crash-kit transaction contains a participant belonging to other-kit: %s", path)
 		}
-		delete(expected, file.Path)
-		participants[file.Path] = snapshot(file.Path)
-		if file.Temp == "" || filepath.Dir(file.Temp) != filepath.Dir(file.Path) {
-			t.Fatalf("invalid transaction temporary path for %s: %s", file.Path, file.Temp)
+		delete(expected, path)
+		participants[path] = snapshot(path)
+		if file.Temp == "" || filepath.Dir(file.Temp) != filepath.Dir(path) {
+			t.Fatalf("invalid transaction temporary path for %s: %s", path, file.Temp)
 		}
 		participants[file.Temp] = snapshot(file.Temp)
 	}
 	if len(expected) != 0 {
-		t.Fatalf("instance-state journal omitted participants %v", expected)
+		t.Fatalf("instance-state journal omitted participants %v; journal=%+v", expected, journal.Files)
 	}
 	assertReadOnly := func(args ...string) {
 		t.Helper()
@@ -346,5 +366,201 @@ func TestInterruptedPluginInstanceStateCommitRecoversAllInstances(t *testing.T) 
 		return nil
 	}); err != nil {
 		t.Fatalf("inspect state for staging residue: %v", err)
+	}
+}
+
+// spec: plugin-delivery/a-failing-member-blocks-the-whole-instance-update
+func TestInterruptedPluginInstanceOutputsAndStateRecoverTogether(t *testing.T) {
+	env := newEnv(t)
+	env.InitGitRepo()
+	env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [claude]\n")
+	env.WriteFile("/workspace/vendor/.claude-plugin/marketplace.json",
+		`{"name":"team","plugins":[{"name":"crash-kit","source":"./plugins/crash-kit"},{"name":"other-kit","source":"./plugins/other-kit"}]}`)
+	env.WriteFile("/workspace/vendor/plugins/crash-kit/.claude-plugin/plugin.json", `{"name":"crash-kit"}`)
+	env.WriteFile("/workspace/vendor/plugins/crash-kit/skills/review/SKILL.md", "---\nname: review\ndescription: Review\n---\nReview body\n")
+	env.WriteFile("/workspace/vendor/plugins/crash-kit/hooks/hooks.json", `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo plugin-hook"}]}]}`)
+	env.WriteFile("/workspace/vendor/plugins/other-kit/.claude-plugin/plugin.json", `{"name":"other-kit"}`)
+	env.WriteFile("/workspace/vendor/plugins/other-kit/skills/check/SKILL.md", "---\nname: check\ndescription: Check\n---\nCheck body\n")
+	env.WriteRepoConfig("apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources: {catalog: {directory: ./vendor, format: claude-marketplace}}\nresources: {catalog: {include: [plugin/crash-kit, plugin/other-kit]}}\n")
+
+	crash := env.RunAMWithEnv(map[string]string{"AGENT_MARKETPLACE_E2E_CRASH_AT": "after-publish:0"}, "sync", "--no-backup")
+	if crash.ExitCode != 137 {
+		t.Fatalf("plugin instance commit crash exited %d:\n%s", crash.ExitCode, crash.Combined)
+	}
+	stateRoot := filepath.Join(env.home, ".local", "state", "agent-marketplace")
+	journals, err := filepath.Glob(filepath.Join(stateRoot, "dependencies", ".dependencytxn-*.json"))
+	if err != nil || len(journals) != 1 {
+		t.Fatalf("plugin instance journals = %v / %v, want one interrupted commit", journals, err)
+	}
+	data, err := os.ReadFile(journals[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var journal struct {
+		Files []struct {
+			Path string `json:"path"`
+			Temp string `json:"temp"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(data, &journal); err != nil {
+		t.Fatalf("decode plugin instance journal: %v", err)
+	}
+	type snapshot struct {
+		exists bool
+		data   []byte
+		mode   os.FileMode
+	}
+	read := func(path string) snapshot {
+		t.Helper()
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			return snapshot{}
+		}
+		if err != nil {
+			t.Fatalf("inspect participant %s: %v", path, err)
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read participant %s: %v", path, err)
+		}
+		return snapshot{exists: true, data: content, mode: info.Mode()}
+	}
+	asserted := map[string]bool{"skill": false, "hook": false, "instance-state": false}
+	participants := make(map[string]snapshot, len(journal.Files)*2)
+	seen := make(map[string]bool, len(journal.Files))
+	for _, file := range journal.Files {
+		if file.Path == "" || file.Temp == "" || seen[file.Path] {
+			t.Fatalf("invalid or duplicate participant: %+v", file)
+		}
+		seen[file.Path] = true
+		path := filepath.ToSlash(file.Path)
+		asserted["skill"] = asserted["skill"] || strings.HasSuffix(path, "/.claude/skills/crash-kit-review/SKILL.md")
+		asserted["hook"] = asserted["hook"] || strings.HasSuffix(path, "/.claude/settings.json")
+		if strings.Contains(path, "/ownership/plugin-packages/") {
+			asserted["instance-state"] = true
+		}
+		participants[file.Path] = read(file.Path)
+		participants[file.Temp] = read(file.Temp)
+	}
+	for name, found := range asserted {
+		if !found {
+			t.Errorf("instance journal omitted its %s participant: %+v", name, journal.Files)
+		}
+	}
+	assertReadOnly := func(args ...string) {
+		t.Helper()
+		result := env.RunAM(args...)
+		if result.ExitCode == 0 || !strings.Contains(result.Combined, "dependency.recovery-required") {
+			t.Fatalf("read-only %v did not refuse pending plugin commit (exit %d):\n%s", args, result.ExitCode, result.Combined)
+		}
+		for path, before := range participants {
+			after := read(path)
+			if before.exists != after.exists || string(before.data) != string(after.data) || before.mode != after.mode {
+				t.Fatalf("read-only %v replayed or changed participant %s", args, path)
+			}
+		}
+	}
+	assertReadOnly("sync", "--check")
+	assertReadOnly("status")
+	if _, err := os.Stat(env.mustResolvePath("/workspace/.claude/skills/crash-kit-review/SKILL.md")); !os.IsNotExist(err) {
+		t.Fatalf("plugin skill appeared outside its journaled participant before recovery: %v", err)
+	}
+
+	env.MustRunAM("sync", "--no-backup")
+	for _, rel := range []string{
+		"/workspace/.claude/skills/crash-kit-review/SKILL.md",
+		"/workspace/.claude/skills/other-kit-check/SKILL.md",
+	} {
+		if _, err := os.Stat(env.mustResolvePath(rel)); err != nil {
+			t.Fatalf("recovered plugin output %s is missing: %v", rel, err)
+		}
+	}
+	settings, err := os.ReadFile(env.mustResolvePath("/workspace/.claude/settings.json"))
+	if err != nil || !strings.Contains(string(settings), "plugin-hook") {
+		t.Fatalf("recovered plugin hook output is missing: %v\n%s", err, settings)
+	}
+	stateFiles, err := filepath.Glob(filepath.Join(stateRoot, "ownership", "plugin-packages", "*.json"))
+	if err != nil || len(stateFiles) != 2 {
+		t.Fatalf("recovered instance state files = %v / %v, want both plugin instances", stateFiles, err)
+	}
+	if remaining, err := filepath.Glob(filepath.Join(stateRoot, "dependencies", ".dependencytxn-*.json")); err != nil || len(remaining) != 0 {
+		t.Fatalf("recovered plugin instance commit left journals %v / %v", remaining, err)
+	}
+	if err := filepath.Walk(stateRoot, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if strings.HasPrefix(info.Name(), ".dependencytxn-") || strings.HasPrefix(info.Name(), ".packagegen-") {
+			t.Errorf("recovery left staging residue %s", path)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("inspect state for staging residue: %v", err)
+	}
+}
+
+// spec: plugin-delivery/remove-keeps-plugin-data-and-reports-it
+func TestPluginRemovalRetainsAndReportsInstanceData(t *testing.T) {
+	env := newEnv(t)
+	env.InitGitRepo()
+	env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [claude]\n")
+	env.WriteFile("/workspace/vendor/.claude-plugin/marketplace.json",
+		`{"name":"team","plugins":[{"name":"retain-kit","source":"./plugins/retain-kit"}]}`)
+	env.WriteFile("/workspace/vendor/plugins/retain-kit/.claude-plugin/plugin.json", `{"name":"retain-kit"}`)
+	env.WriteFile("/workspace/vendor/plugins/retain-kit/skills/store/SKILL.md",
+		"---\nname: store\ndescription: Store\n---\nFirst revision\n")
+	env.WriteRepoConfig("apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources: {catalog: {directory: ./vendor, format: claude-marketplace}}\nresources: {catalog: {include: [plugin/retain-kit]}}\n")
+	env.MustRunAM("sync", "--no-backup")
+
+	stateRoot := filepath.Join(env.home, ".local", "state", "agent-marketplace")
+	stateFiles, err := filepath.Glob(filepath.Join(stateRoot, "ownership", "plugin-packages", "*.json"))
+	if err != nil || len(stateFiles) != 1 {
+		t.Fatalf("plugin instance state = %v / %v, want one record", stateFiles, err)
+	}
+	var state struct {
+		Instance struct {
+			InstanceKey   string `json:"instance_key"`
+			GenerationKey string `json:"generation_key"`
+		} `json:"instance"`
+	}
+	stateBytes, err := os.ReadFile(stateFiles[0])
+	if err != nil || json.Unmarshal(stateBytes, &state) != nil {
+		t.Fatalf("read plugin instance state: %v\n%s", err, stateBytes)
+	}
+	dataPath := filepath.Join(stateRoot, "plugin-data", state.Instance.InstanceKey)
+	if err := os.MkdirAll(dataPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dataPath, err = filepath.EvalSymlinks(dataPath)
+	if err != nil {
+		t.Fatalf("resolve plugin data path: %v", err)
+	}
+	dataFile := filepath.Join(dataPath, "user-state.json")
+	if err := os.WriteFile(dataFile, []byte(`{"kept":true}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	env.WriteFile("/workspace/vendor/plugins/retain-kit/skills/store/SKILL.md",
+		"---\nname: store\ndescription: Store\n---\nUpdated revision\n")
+	env.MustRunAM("sync", "--no-backup")
+	if data, err := os.ReadFile(dataFile); err != nil || string(data) != "{\"kept\":true}\n" {
+		t.Fatalf("plugin data did not survive update: %v / %q", err, data)
+	}
+	env.WriteRepoConfig("apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources: {catalog: {directory: ./vendor, format: claude-marketplace}}\nresources: {catalog: {include: []}}\n")
+	result := env.MustRunAM("sync", "--no-backup")
+	if !strings.Contains(result.Combined, "Retained plugin data: "+dataPath) {
+		t.Fatalf("removal did not report retained data path %s:\n%s", dataPath, result.Combined)
+	}
+	if _, err := os.Stat(env.mustResolvePath("/workspace/.claude/skills/retain-kit-store/SKILL.md")); !os.IsNotExist(err) {
+		t.Fatalf("plugin member remained after deselection: %v", err)
+	}
+	if _, err := os.Stat(dataFile); err != nil {
+		t.Fatalf("plugin data was removed with its instance: %v", err)
+	}
+	if _, err := os.Stat(stateFiles[0]); !os.IsNotExist(err) {
+		t.Fatalf("removed plugin instance state remains: %v", err)
 	}
 }
