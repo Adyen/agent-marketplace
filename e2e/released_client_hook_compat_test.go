@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -160,6 +161,9 @@ func TestReleasedClientHookOutputUpgrades(t *testing.T) {
 					}
 				}
 				files := hookInvariantHookFiles(target, scope == "user")
+				// copies is discovery-only: it counts the command token in
+				// every plugin-layout and native file, which is all the
+				// release's own output can be held to.
 				copies := func(stage string, wantPre, wantPrompt int) {
 					t.Helper()
 					if got := hookInvariantCount(t, root, files, pre); got != wantPre {
@@ -169,18 +173,40 @@ func TestReleasedClientHookOutputUpgrades(t *testing.T) {
 						t.Errorf("%s: UserPromptSubmit hook installed %d times, want %d", stage, got, wantPrompt)
 					}
 				}
+				// loaded counts parsed executable handlers in the file the
+				// target's own loader reads.
+				loaded := func(stage string, wantPre, wantPrompt int) {
+					t.Helper()
+					if got := hookInvariantLoadedCount(t, target, root, scope == "user", pre); got != wantPre {
+						t.Errorf("%s: PreToolUse hook loads %d times, want %d", stage, got, wantPre)
+					}
+					if got := hookInvariantLoadedCount(t, target, root, scope == "user", prompt); got != wantPrompt {
+						t.Errorf("%s: UserPromptSubmit hook loads %d times, want %d", stage, got, wantPrompt)
+					}
+				}
 
 				step(released, "sync")
 				copies(releasedClientVersion+" sync", 1, 1)
+				// The release writes Claude, Factory and Cursor hooks only in
+				// the plugin layout those harnesses never load, which is what
+				// the candidate's upgrade repairs; its other targets' output
+				// already loads.
+				if releasedLoads := !slices.Contains([]string{"claude", "factory", "cursor"}, target); releasedLoads {
+					loaded(releasedClientVersion+" sync", 1, 1)
+				} else {
+					loaded(releasedClientVersion+" sync", 0, 0)
+				}
 				if t.Failed() {
 					t.FailNow()
 				}
 				step(candidate, "sync")
 				copies("candidate upgrade sync", 1, 1)
+				loaded("candidate upgrade sync", 1, 1)
 				step(candidate, "sync", "--check")
 				step(candidate, "remove", "UserPromptSubmit-command", "--kind", "hook", "--scope", scope)
 				step(candidate, "sync")
 				copies("candidate deselection", 1, 0)
+				loaded("candidate deselection", 1, 0)
 			})
 		}
 	}
