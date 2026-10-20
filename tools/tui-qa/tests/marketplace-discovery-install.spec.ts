@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { after, before } from "node:test";
 
-import { defineFixture, locate, step, waitForExit } from "./helpers.js";
+import { defineFixture, locate, lockedGitCommit, step, waitForExit } from "./helpers.js";
 import { runAM } from "./process-helpers.js";
 
 // spec: tui-interactions/discovered-marketplace-skill-installs-at-the-chosen-scope
@@ -11,12 +11,6 @@ import { runAM } from "./process-helpers.js";
 const journey = defineFixture("marketplace-discovery-install", ["tui"], 80, 24, { marketplaceDiscovery: "plain" });
 before(journey.setup);
 after(journey.cleanup);
-
-const lockedCommit = (lock: string): string => {
-  const match = /^\s+commit: (\S+)$/m.exec(lock);
-  assert.ok(match, `repository lock has no Git commit:\n${lock}`);
-  return match[1];
-};
 
 journey.test("installs a discovered Marketplace skill while locked Git sources stay at their locked revision", async (terminal) => {
   const fixture = journey.current();
@@ -28,7 +22,7 @@ journey.test("installs a discovered Marketplace skill while locked Git sources s
     await locate(terminal, "beta-skill").expect();
     await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
   });
-  const commitBefore = lockedCommit(fs.readFileSync(repoLock, "utf8"));
+  const commitBefore = lockedGitCommit(fs.readFileSync(repoLock, "utf8"));
   fixture.pushRegistryChange(
     "skills/beta-skill/SKILL.md",
     "---\nname: beta-skill\ndescription: Unlocked upstream revision\n---\n\n# Beta Skill\n\nNot pinned by the lock.\n"
@@ -59,7 +53,7 @@ journey.test("installs a discovered Marketplace skill while locked Git sources s
   assert.match(config, /\n      - tools\/skill\/org-review\n/);
   const lock = fs.readFileSync(repoLock, "utf8");
   assert.ok(lock.includes(`\n        name: org-review\n        revision: ${fixture.marketplaceContentDigest}\n`), `repository lock does not pin org-review:\n${lock}`);
-  assert.equal(lockedCommit(lock), commitBefore, "the install moved the Git source's locked commit");
+  assert.equal(lockedGitCommit(lock), commitBefore, "the install moved the Git source's locked commit");
   assert.equal(fs.readFileSync(path.join(skills, "org-review", "SKILL.md"), "utf8"), fixture.expectedOrgSkillContent);
   assert.equal(fs.readFileSync(path.join(skills, "beta-skill", "SKILL.md"), "utf8"), fixture.expectedBetaSkillContent, "beta-skill left its locked revision");
 

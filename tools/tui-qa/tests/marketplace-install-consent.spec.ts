@@ -3,11 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { after, before } from "node:test";
 
-import { defineFixture, locate, step, waitForExit } from "./helpers.js";
+import { defineFixture, locate, lockedGitCommit, step, waitForExit } from "./helpers.js";
 import { installFinding } from "./marketplace-stub.js";
 import { runAM } from "./process-helpers.js";
 
 // spec: tui-interactions/marketplace-findings-require-consent-before-install
+// spec: tui-interactions/marketplace-install-keeps-locked-sources-at-their-locked-revision
 const journey = defineFixture("marketplace-install-consent", ["tui"], 80, 24, { marketplaceDiscovery: "findings" });
 before(journey.setup);
 after(journey.cleanup);
@@ -26,6 +27,11 @@ journey.test("a Marketplace skill with findings installs only after consent", as
     await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
   });
   const unchangedByDecline = [repoConfig, repoLock, userConfig, userLock, betaSkill].map((file) => ({ file, bytes: fs.readFileSync(file) }));
+  const commitBefore = lockedGitCommit(fs.readFileSync(repoLock, "utf8"));
+  fixture.pushRegistryChange(
+    "skills/beta-skill/SKILL.md",
+    "---\nname: beta-skill\ndescription: Unlocked upstream revision\n---\n\n# Beta Skill\n\nNot pinned by the lock.\n"
+  );
 
   await step("search the Marketplace", () => terminal.write("/org-review"), async () => {
     await locate(terminal, "market/tools/org-review").expect({ timeout: 10_000 });
@@ -61,7 +67,10 @@ journey.test("a Marketplace skill with findings installs only after consent", as
     await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
   });
   assert.match(fs.readFileSync(repoConfig, "utf8"), /\n      - tools\/skill\/org-review\n/);
-  assert.ok(fs.readFileSync(repoLock, "utf8").includes(`\n        name: org-review\n        revision: ${fixture.marketplaceContentDigest}\n`));
+  const lock = fs.readFileSync(repoLock, "utf8");
+  assert.ok(lock.includes(`\n        name: org-review\n        revision: ${fixture.marketplaceContentDigest}\n`), `repository lock does not pin org-review:\n${lock}`);
+  assert.equal(lockedGitCommit(lock), commitBefore, "the consented install moved the Git source's locked commit");
+  assert.equal(fs.readFileSync(betaSkill, "utf8"), fixture.expectedBetaSkillContent, "beta-skill left its locked revision");
   assert.equal(fs.readFileSync(path.join(installed, "SKILL.md"), "utf8"), fixture.expectedOrgSkillContent);
 
   await step("quit", () => terminal.write("q"), async () => {
