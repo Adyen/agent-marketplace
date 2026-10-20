@@ -4,7 +4,7 @@
 
 ### Layout detection checks markers without reading them
 
-Autodetection and the Claude, Cursor and Factory layout checks read whole marker files (`plugin.json`, `.mcp.json`, `SKILL.md`, hooks files) only to learn that they exist, and the Claude bare skills directory listing read every `SKILL.md` before loading it again (R39). Presence checks now stat the path and require a regular file, through the new exported helper `ingest.RegularFileExists`, so detection reads no content and each skill is read once. Detection results are unchanged for regular files; a marker path that is a directory, FIFO or device is no longer treated as present.
+Autodetection and the Claude, Cursor and Factory layout checks read whole marker files (`plugin.json`, `.mcp.json`, `SKILL.md`, hooks files) only to learn that they exist, and the Claude bare skills directory listing read every `SKILL.md` before loading it again (R39). Presence checks now stat the path and require a regular file, through the new exported helper `ingest.RegularFileExists`, so detection reads no content and each skill is read once. Detection results are unchanged for readable regular files; a marker path that is a directory, FIFO or device is no longer treated as present. On a generic `fs.FS` whose `Stat` does not open the file, such as `os.DirFS`, an unreadable regular marker now counts as present, so its harness is selected and loading then fails visibly instead of silently falling back to a lower-priority layout. Agent Marketplace's source filesystem opens a file to stat it, so the CLI still treats an unreadable marker as absent.
 
 ### Archive verification enforces the archive limits while decoding
 
