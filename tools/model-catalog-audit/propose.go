@@ -1,14 +1,12 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"html"
 	"io"
 	"io/fs"
 	"maps"
 	"os"
-	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -18,7 +16,7 @@ import (
 
 var reviewOnlyCodes = []string{"catalog.model-not-observed", "catalog.reasoning-not-observed", "catalog.family-pin-review"}
 
-type baselineChange struct {
+type evidenceChange struct {
 	name, oldSHA, newSHA, url string
 }
 
@@ -28,7 +26,7 @@ type stub struct {
 }
 
 type proposal struct {
-	baselines  []baselineChange
+	evidence   []evidenceChange
 	skipped    []string
 	stubs      []stub
 	manual     []string
@@ -41,8 +39,7 @@ type keyIndex struct {
 }
 
 func proposeChanges(root string, r report, out io.Writer) error {
-	checked, err := time.Parse(time.RFC3339, r.CheckedAt)
-	if err != nil {
+	if _, err := time.Parse(time.RFC3339, r.CheckedAt); err != nil {
 		return fmt.Errorf("invalid report checked_at: %w", err)
 	}
 	repo, err := os.OpenRoot(root)
@@ -51,7 +48,7 @@ func proposeChanges(root string, r report, out io.Writer) error {
 	}
 	defer func() { _ = repo.Close() }()
 	var p proposal
-	updates := p.planBaselines(r, checked.Format(time.DateOnly))
+	p.collectEvidence(r)
 	cs, err := loadCatalogs(repo.FS())
 	if err != nil {
 		return err
@@ -61,11 +58,6 @@ func proposeChanges(root string, r report, out io.Writer) error {
 		return nil
 	}
 	planned := map[string][]byte{}
-	if len(updates) > 0 {
-		if err := planBaselineFile(repo.FS(), updates, planned); err != nil {
-			return err
-		}
-	}
 	if err := planStubFiles(repo.FS(), p.stubs, planned); err != nil {
 		return err
 	}
@@ -78,11 +70,10 @@ func proposeChanges(root string, r report, out io.Writer) error {
 }
 
 func (p proposal) empty() bool {
-	return len(p.baselines)+len(p.skipped)+len(p.stubs)+len(p.manual)+len(p.collisions) == 0
+	return len(p.evidence)+len(p.skipped)+len(p.stubs)+len(p.manual)+len(p.collisions) == 0
 }
 
-func (p *proposal) planBaselines(r report, checked string) map[string]baseline {
-	updates := map[string]baseline{}
+func (p *proposal) collectEvidence(r report) {
 	for _, s := range r.Sources {
 		if s.Status == "unknown" || !hasFinding(s, "source.evidence-changed") {
 			continue
@@ -91,10 +82,8 @@ func (p *proposal) planBaselines(r report, checked string) map[string]baseline {
 			p.skipped = append(p.skipped, s.Name)
 			continue
 		}
-		updates[s.Name] = baseline{Checked: checked, SHA256: s.ObservedSHA256}
-		p.baselines = append(p.baselines, baselineChange{s.Name, s.Baseline.SHA256, s.ObservedSHA256, s.URL})
+		p.evidence = append(p.evidence, evidenceChange{s.Name, s.Baseline.SHA256, s.ObservedSHA256, s.URL})
 	}
-	return updates
 }
 
 func (p *proposal) planStubs(r report, cs []catalog) {
@@ -229,31 +218,6 @@ func loadCatalogs(files fs.FS) ([]catalog, error) {
 	return cs, nil
 }
 
-func planBaselineFile(files fs.FS, updates map[string]baseline, planned map[string][]byte) error {
-	body, err := readBounded(files, baselinesPath)
-	if err != nil {
-		return err
-	}
-	text := string(body)
-	for _, name := range slices.Sorted(maps.Keys(updates)) {
-		pattern := regexp.MustCompile(`(?m)^([ \t]*"` + regexp.QuoteMeta(name) + `": \{"checked": ")[^"]*(", "sha256": ")[^"]*(")`)
-		if len(pattern.FindAllStringIndex(text, -1)) != 1 {
-			return fmt.Errorf("baseline %s must match exactly one line", name)
-		}
-		b := updates[name]
-		text = pattern.ReplaceAllString(text, "${1}"+b.Checked+"${2}"+b.SHA256+"${3}")
-	}
-	var baselines map[string]baseline
-	if err := json.Unmarshal([]byte(text), &baselines); err != nil {
-		return fmt.Errorf("decode updated baselines: %w", err)
-	}
-	if err := validateBaselines(baselines, sources); err != nil {
-		return err
-	}
-	planned[baselinesPath] = []byte(text)
-	return nil
-}
-
 func planStubFiles(files fs.FS, stubs []stub, planned map[string][]byte) error {
 	byHarness := map[string][]stub{}
 	for _, s := range stubs {
@@ -340,9 +304,9 @@ func writeProposal(out io.Writer, r report, p proposal) error {
 		}
 		b.WriteString("\n")
 	}
-	var baselineItems, stubItems, reviewItems, unknownItems, skippedItems []string
-	for _, c := range p.baselines {
-		baselineItems = append(baselineItems, fmt.Sprintf("**%s**: `%s` → `%s` ([source](%s))", esc(c.name), short(c.oldSHA), short(c.newSHA), esc(c.url)))
+	var evidenceItems, stubItems, reviewItems, unknownItems, skippedItems []string
+	for _, c := range p.evidence {
+		evidenceItems = append(evidenceItems, fmt.Sprintf("**%s**: `%s` → `%s` ([source](%s))", esc(c.name), short(c.oldSHA), short(c.newSHA), esc(c.url)))
 	}
 	for _, name := range p.skipped {
 		skippedItems = append(skippedItems, fmt.Sprintf("**%s**: observed digest is not a 64-character lowercase hex value; baseline unchanged", esc(name)))
@@ -360,19 +324,24 @@ func writeProposal(out io.Writer, r report, p proposal) error {
 			}
 		}
 	}
-	section("Evidence baselines refreshed", baselineItems)
+	section("Evidence drift requiring review (baselines unchanged)", evidenceItems)
 	section("Catalog stubs added", stubItems)
 	section("Needs a manual catalog entry", p.manual)
 	section("Collisions with existing keys (not changed)", p.collisions)
 	section("Review only (not changed automatically)", reviewItems)
 	section("Sources without a freshness conclusion", unknownItems)
-	section("Baselines skipped", skippedItems)
+	section("Evidence digests skipped", skippedItems)
 	b.WriteString("### Reviewer checklist\n\n")
 	b.WriteString("- [ ] Verify each stub against first-party documentation.\n")
 	b.WriteString("- [ ] Add reasoning and aliases where the native resource format requires them.\n")
 	b.WriteString("- [ ] Add conversion fixtures per `pkg/harness-compilation/README.md` → \"Update a shipped model catalog\".\n")
+	b.WriteString("- [ ] Review evidence drift before manually updating any baseline hash or checked date.\n")
 	b.WriteString("- [ ] Run `make model-catalog-check`.\n\n")
-	b.WriteString("This PR was opened with GITHUB_TOKEN, so CI does not run automatically; push a commit (or close and reopen) to trigger checks.\n")
+	if len(p.stubs) > 0 {
+		b.WriteString("This PR was opened with GITHUB_TOKEN, so CI does not run automatically; push a commit (or close and reopen) to trigger checks.\n")
+	} else {
+		b.WriteString("No catalog changes proposed; no pull request will be opened. Review the audit evidence before manually updating any baseline.\n")
+	}
 	_, err := io.WriteString(out, b.String())
 	return err
 }
