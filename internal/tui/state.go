@@ -73,11 +73,15 @@ type row struct {
 
 	// Per-scope enablement: which config file(s) enable this skill.
 	// A skill may be enabled in multiple scopes simultaneously.
-	EnabledGlobal   bool
-	EnabledProject  bool
-	EnabledLocal    bool
-	ExcludedLocally bool
-	ExcludedByUser  bool
+	EnabledGlobal         bool
+	EnabledProject        bool
+	EnabledLocal          bool
+	ExcludedLocally       bool
+	ExcludedByUser        bool
+	PluginSelectedGlobal  bool
+	PluginSelectedProject bool
+	PluginSelectedLocal   bool
+	PluginMemberExcluded  bool
 
 	// Source registry of the skill. For available (non-enabled) skills, set
 	// to the first registry whose catalog contained the skill, in cfg order.

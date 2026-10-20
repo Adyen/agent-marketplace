@@ -14,6 +14,7 @@ export type OrganizationFixtureMode = "missing-lock" | "published-lock";
 
 export interface FixtureOptions {
   directorySource?: boolean;
+  pluginSource?: boolean;
   overflowStatus?: boolean;
   // Installs a v4 organization layer at <root>/etc/agent-marketplace that
   // declares one exact Marketplace skill:
@@ -122,7 +123,24 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
     }
     let registryURL: string;
     let expectedRepoConfig: string;
-    if (options.directorySource) {
+    if (options.pluginSource) {
+      const pluginCatalog = path.join(registries, "t");
+      write(path.join(pluginCatalog, ".claude-plugin", "marketplace.json"),
+        `{"name":"team","plugins":[{"name":"kit","source":"./plugins/kit"}]}`);
+      write(path.join(pluginCatalog, "plugins", "kit", ".claude-plugin", "plugin.json"),
+        `{"name":"kit","description":"Review fixture plugin"}`);
+      write(path.join(pluginCatalog, "plugins", "kit", "skills", "review", "SKILL.md"),
+        "---\nname: review\ndescription: Review plugin member\n---\n\nReview member.\n");
+      write(path.join(pluginCatalog, "plugins", "kit", "hooks", "hooks.json"),
+        `{"Stop":[{"hooks":[{"type":"command","command":"echo notify"}]}]}`);
+      write(path.join(pluginCatalog, "plugins", "kit", ".mcp.json"),
+        `{"mcpServers":{"idx":{"command":"echo"}}}`);
+      registryURL = pluginCatalog;
+      expectedRepoConfig =
+        `apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team:\n    directory: ${pluginCatalog}\n    format: claude-marketplace\nresources:\n  team:\n    include:\n      - plugin/kit\n`;
+      write(path.join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [claude]\n");
+      write(path.join(repo, ".agents", "config.yaml"), expectedRepoConfig);
+    } else if (options.directorySource) {
       registryURL = source;
       expectedRepoConfig = "";
       write(path.join(home, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4\nharnesses: [factory, gemini, devin]\nsources:\n  local:\n    directory: ${source}\n`);
@@ -153,7 +171,16 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
         throw new Error(`fixture sync failed (exit ${initialSync.status}):\n${initialSync.stdout}\n${initialSync.stderr}`);
       }
 
-      if (options.directorySource) {
+      if (options.pluginSource) {
+        const pluginSkill = path.join(repo, ".claude", "skills", "kit-review", "SKILL.md");
+        if (!fs.lstatSync(pluginSkill, { throwIfNoEntry: false })) {
+          const repoSkills = path.join(repo, ".claude", "skills");
+          const homeSkills = path.join(home, ".claude", "skills");
+          const repoEntries = fs.readdirSync(repoSkills, { withFileTypes: true }).map((entry) => entry.name).join(", ");
+          const homeEntries = fs.existsSync(homeSkills) ? fs.readdirSync(homeSkills, { withFileTypes: true }).map((entry) => entry.name).join(", ") : "missing";
+          throw new Error(`fixture kit plugin member was not materialized: repo=[${repoEntries}] home=[${homeEntries}]\n${initialSync.stdout}\n${initialSync.stderr}`);
+        }
+      } else if (options.directorySource) {
         for (const skill of ["alpha-skill", "beta-skill"]) {
           for (const rootPath of [path.join(home, ".factory", "skills"), path.join(home, ".gemini", "skills"), path.join(home, ".config", "devin", "skills")]) {
             if (fs.lstatSync(path.join(rootPath, skill), { throwIfNoEntry: false })) throw new Error(`fixture ${skill} was unexpectedly materialized`);

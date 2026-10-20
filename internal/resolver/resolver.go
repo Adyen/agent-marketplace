@@ -28,6 +28,7 @@ type ResolvedArtifact struct {
 	RegistryURL    string
 	RegistryPath   string // path from the registry entry; empty for root
 	Ref            string
+	SourceRevision string
 	V4Kind         config.V4SourceKind // explicit v4 source kind, when authored by v4
 	Source         config.Source
 	FilePrecedence int
@@ -87,6 +88,7 @@ type ResolvedArtifact struct {
 
 type PluginPackage struct {
 	Name               string
+	SourceRevision     string
 	PackageRoot        string
 	CatalogFingerprint string
 	Delivery           string

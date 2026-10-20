@@ -3,6 +3,7 @@ package ir
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -21,6 +22,9 @@ type Plugin struct {
 	// Manifest is the package manifest metadata; Extra preserves
 	// unrecognized manifest fields for formats that tolerate them.
 	Manifest Manifest
+	// Dependencies retains the authored manifest dependency value. The CLI
+	// can inspect it even though sync refuses dependency-bearing packages.
+	Dependencies any `json:"-"`
 	// Members is the ordered member set decoded from the package's
 	// component locations.
 	Members []PluginMember
@@ -70,6 +74,38 @@ func (p *Plugin) Kind() ResourceKind { return KindPlugin }
 
 // Name returns the plugin manifest name.
 func (p *Plugin) Name() string { return p.Manifest.Name }
+
+func (p *Plugin) DeclaredDependencies() []string {
+	if p == nil || p.Dependencies == nil {
+		return nil
+	}
+	switch dependencies := p.Dependencies.(type) {
+	case []any:
+		values := make([]string, 0, len(dependencies))
+		for _, dependency := range dependencies {
+			values = append(values, fmt.Sprint(dependency))
+		}
+		return values
+	case map[string]any:
+		values := make([]string, 0, len(dependencies))
+		for name := range dependencies {
+			values = append(values, name)
+		}
+		sort.Strings(values)
+		return values
+	case string:
+		if strings.TrimSpace(dependencies) == "" {
+			return nil
+		}
+		return []string{dependencies}
+	default:
+		return []string{fmt.Sprint(dependencies)}
+	}
+}
+
+func (p *Plugin) HasDependencies() bool {
+	return len(p.DeclaredDependencies()) > 0
+}
 
 // agentPluginNamePattern is the character grammar declared by the bundled
 // Agent Plugins 1.0.0 plugin schema (kept in sync with

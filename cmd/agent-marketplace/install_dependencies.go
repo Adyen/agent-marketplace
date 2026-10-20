@@ -26,7 +26,8 @@ type preparedInstallLocks struct {
 func prepareInstallDependencies(ctx context.Context, root, local string, edits []pipeline.StagedConfigEdit) (pipeline.PreparedInstallDependencies, error) {
 	state := &preparedInstallLocks{documents: make(map[string]lockfile.Document), lockPaths: make(map[config.Source]string), bindings: make(map[string][]lockfile.GitRegistry)}
 	var warnings []error
-	option, _, lease, err := prepareRuntimeLocks(ctx, root, local, lockMode{stagedConfigEdits: edits, prepareInstall: state, warningSink: &warnings})
+	var lockMetadata []pipeline.LockMetadata
+	option, _, lease, err := prepareRuntimeLocks(ctx, root, local, lockMode{stagedConfigEdits: edits, prepareInstall: state, warningSink: &warnings, lockMetadataSink: &lockMetadata})
 	if err != nil {
 		return pipeline.PreparedInstallDependencies{}, err
 	}
@@ -50,11 +51,12 @@ func prepareInstallDependencies(ctx context.Context, root, local string, edits [
 		}
 		used = true
 		var warnings []error
-		option, _, lease, err := prepareRuntimeLocks(ctx, root, local, lockMode{offline: true, stagedConfigEdits: finalEdits, commitReads: state.reads, reuseInstall: state, warningSink: &warnings})
+		var lockMetadata []pipeline.LockMetadata
+		option, _, lease, err := prepareRuntimeLocks(ctx, root, local, lockMode{offline: true, stagedConfigEdits: finalEdits, commitReads: state.reads, reuseInstall: state, warningSink: &warnings, lockMetadataSink: &lockMetadata})
 		if err != nil {
 			return pipeline.DependencyLockView{}, err
 		}
-		return pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, Warnings: warnings}, nil
+		return pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, LockMetadata: lockMetadata, Warnings: warnings}, nil
 	}
 	bind := func(target config.Source, entry config.RegistryEntry) error {
 		mu.Lock()
@@ -64,7 +66,7 @@ func prepareInstallDependencies(ctx context.Context, root, local string, edits [
 		}
 		return state.bindRegistry(target, entry)
 	}
-	return pipeline.PreparedInstallDependencies{Context: state.ctx, DiscoveryConfig: state.discoveryConfig, View: pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, Warnings: warnings}, Reconcile: reconcile, BindRegistry: bind, Release: release}, nil
+	return pipeline.PreparedInstallDependencies{Context: state.ctx, DiscoveryConfig: state.discoveryConfig, View: pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, LockMetadata: lockMetadata, Warnings: warnings}, Reconcile: reconcile, BindRegistry: bind, Release: release}, nil
 }
 
 func installPreparationReads(ec config.EffectiveConfig, staged map[string]pipeline.StagedConfigEdit, plan *preparedInstallLocks) ([]dependencytxn.ReadAssertion, error) {

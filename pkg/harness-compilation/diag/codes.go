@@ -405,24 +405,25 @@ const (
 	// member or entry, the package format, and the decode or projection
 	// stage — never a command value, an env value, a header value, or a
 	// manifest field value.
-	CodePluginFormatUnsupported            = "plugin.format.unsupported"             // Source is not a recognized package format, or the harness does not accept it
-	CodePluginFormatVersionUnsupported     = "plugin.format.version-unsupported"     // The package declares a format version no decoder supports
-	CodePluginFormatManifestInvalid        = "plugin.format.manifest-invalid"        // Required manifest data is missing or invalid; the package is rejected before discovery
-	CodePluginPackagePathEscape            = "plugin.package.path-escape"            // A package path resolves outside the package root, or a symlink is unresolvable (escape, dangling, or cyclic)
-	CodePluginPackageSymlinkCycle          = "plugin.package.symlink-cycle"          // A package symlinked directory resolves to the root or an ancestor of the link
-	CodePluginPackageSpecialFile           = "plugin.package.special-file"           // A package entry is a device, socket, or FIFO
-	CodePluginPackageCaseCollision         = "plugin.package.case-collision"         // Two package paths differ only by letter case
-	CodePluginPackageOversized             = "plugin.package.oversized"              // A package file exceeds the bounded-read limit
-	CodePluginMemberLiteralUnrepresentable = "plugin.member.literal-unrepresentable" // A literal placeholder has no escape on the destination; member blocked
-	CodePluginMemberRestrictionUnsupported = "plugin.member.restriction-unsupported" // A plugin member field is a restriction the target cannot enforce; member blocked
-	CodePluginCompilePackageRequired       = "plugin.compile.package-required"       // A plugin resource was passed to the per-resource Compile boundary
-	CodePluginDeliveryPending              = "plugin.delivery.pending"               // WARNING: native plugin delivery is not available yet
-	CodePluginCatalogSharedOrigin          = "plugin.catalog.shared-origin"          // Two selected catalog entries resolve to the same external origin; the selection is refused
-	CodePluginSelectionUndeclaredSource    = "plugin.selection.undeclared-source"    // A layer's collection selects a plugin from a format source that layer does not declare; the selection is refused
-	CodePluginNamespaceCollision           = "plugin.namespace-collision"            // A plugin member's installed name collides with another selected resource
-	CodePluginNamespaceInvalid             = "plugin.namespace-invalid"              // A plugin member's installed name is invalid for the target
-	CodePluginGenerationPublish            = "plugin.generation.publish"             // An immutable package generation could not be published
-	CodePluginGenerationMissing            = "plugin.generation.missing"             // A required immutable package generation is missing or changed
+	CodePluginFormatUnsupported             = "plugin.format.unsupported"              // Source is not a recognized package format, or the harness does not accept it
+	CodePluginFormatVersionUnsupported      = "plugin.format.version-unsupported"      // The package declares a format version no decoder supports
+	CodePluginFormatManifestInvalid         = "plugin.format.manifest-invalid"         // Required manifest data is missing or invalid; the package is rejected before discovery
+	CodePluginFormatDependenciesUnsupported = "plugin.format.dependencies-unsupported" // The plugin declares dependencies that sync cannot install
+	CodePluginPackagePathEscape             = "plugin.package.path-escape"             // A package path resolves outside the package root, or a symlink is unresolvable (escape, dangling, or cyclic)
+	CodePluginPackageSymlinkCycle           = "plugin.package.symlink-cycle"           // A package symlinked directory resolves to the root or an ancestor of the link
+	CodePluginPackageSpecialFile            = "plugin.package.special-file"            // A package entry is a device, socket, or FIFO
+	CodePluginPackageCaseCollision          = "plugin.package.case-collision"          // Two package paths differ only by letter case
+	CodePluginPackageOversized              = "plugin.package.oversized"               // A package file exceeds the bounded-read limit
+	CodePluginMemberLiteralUnrepresentable  = "plugin.member.literal-unrepresentable"  // A literal placeholder has no escape on the destination; member blocked
+	CodePluginMemberRestrictionUnsupported  = "plugin.member.restriction-unsupported"  // A plugin member field is a restriction the target cannot enforce; member blocked
+	CodePluginCompilePackageRequired        = "plugin.compile.package-required"        // A plugin resource was passed to the per-resource Compile boundary
+	CodePluginDeliveryPending               = "plugin.delivery.pending"                // WARNING: native plugin delivery is not available yet
+	CodePluginCatalogSharedOrigin           = "plugin.catalog.shared-origin"           // Two selected catalog entries resolve to the same external origin; the selection is refused
+	CodePluginSelectionUndeclaredSource     = "plugin.selection.undeclared-source"     // A layer's collection selects a plugin from a format source that layer does not declare; the selection is refused
+	CodePluginNamespaceCollision            = "plugin.namespace-collision"             // A plugin member's installed name collides with another selected resource
+	CodePluginNamespaceInvalid              = "plugin.namespace-invalid"               // A plugin member's installed name is invalid for the target
+	CodePluginGenerationPublish             = "plugin.generation.publish"              // An immutable package generation could not be published
+	CodePluginGenerationMissing             = "plugin.generation.missing"              // A required immutable package generation is missing or changed
 
 	// Devin hook and MCP ENTRY-SKIP codes.
 	//
@@ -753,6 +754,7 @@ var codeCatalog = []CodeDoc{
 	{CodePluginFormatUnsupported, SeverityError, "The source is not a recognized plugin package format, or the destination harness does not accept it", "Use a supported package format and a harness whose plugin catalog accepts it"},
 	{CodePluginFormatVersionUnsupported, SeverityError, "The package declares a format version no decoder supports; the package is not installable", "Pin the package to a supported format version"},
 	{CodePluginFormatManifestInvalid, SeverityError, "Required plugin manifest data is missing or invalid; the package was rejected before component discovery", "Fix the manifest's required fields"},
+	{CodePluginFormatDependenciesUnsupported, SeverityError, "The plugin declares dependencies that sync cannot install; no members were installed", "Remove the declared dependencies or wait for plugin dependency support"},
 	{CodePluginPackagePathEscape, SeverityError, "A package path resolves outside the package root or a symlink cannot be resolved inside it (escape, dangling, or cyclic link); the package was rejected", "Remove the escaping or unresolvable path or symlink; package content must stay inside the plugin root"},
 	{CodePluginPackageSymlinkCycle, SeverityError, "A package symlinked directory resolves to the package root or an ancestor directory of the link; the package was rejected", "Remove the cyclic symlink; links resolving elsewhere inside the root are allowed"},
 	{CodePluginPackageSpecialFile, SeverityError, "A package entry is a device, socket, or FIFO rather than a regular file or directory; the package was rejected", "Remove the special file; a plugin package carries regular files and directories only"},

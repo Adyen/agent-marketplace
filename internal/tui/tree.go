@@ -3,11 +3,15 @@ package tui
 import (
 	"encoding/base64"
 	"fmt"
+	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
+	compilepkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -71,8 +75,9 @@ type flatItem struct {
 	Collapsed    bool   // true when the fold state hides this section's children
 
 	// For skill rows.
-	Row   row
-	Depth int // indentation depth; matches SectionDepth+1 of the owning section
+	Row          row
+	Depth        int // indentation depth; matches SectionDepth+1 of the owning section
+	PluginParent bool
 }
 
 // statusBucket groups skills by their sync/lifecycle status.
@@ -377,9 +382,83 @@ func emitSection(out []flatItem, sec groupedSection, depth int, foldState map[st
 		return out
 	}
 	for _, r := range sec.members {
-		out = append(out, flatItem{Kind: flatArtifact, Row: r, Depth: depth + 1})
+		out = emitResourceRow(out, r, depth+1, foldState)
 	}
 	return out
+}
+
+func emitResourceRow(out []flatItem, resource row, depth int, foldState map[string]bool) []flatItem {
+	plugin, ok := resource.Artifact.Resource.(*ir.Plugin)
+	if !ok {
+		return append(out, flatItem{Kind: flatArtifact, Row: resource, Depth: depth})
+	}
+	key := "plugin:" + rowKey(resource)
+	collapsed := foldState[key]
+	out = append(out, flatItem{
+		Kind:         flatArtifact,
+		Row:          resource,
+		Depth:        depth,
+		PluginParent: true,
+		SectionPath:  key,
+		Collapsed:    collapsed,
+	})
+	if collapsed {
+		return out
+	}
+	for _, member := range pluginMemberRows(resource, plugin) {
+		out = append(out, flatItem{Kind: flatArtifact, Row: member, Depth: depth + 1})
+	}
+	return out
+}
+
+func pluginMemberRows(parent row, plugin *ir.Plugin) []row {
+	if plugin == nil {
+		return nil
+	}
+	var exclusions []string
+	if parent.Artifact.Selection != nil {
+		exclusions = parent.Artifact.Selection.Exclusions
+	}
+	children := make([]row, 0, len(plugin.Members))
+	for _, member := range plugin.Members {
+		if member.Resource == nil {
+			continue
+		}
+		key := member.Key()
+		excluded := slices.Contains(exclusions, key)
+		child := parent
+		child.Artifact.Kind = member.Resource.Kind()
+		child.Artifact.Name = member.Resource.Name()
+		child.Artifact.Description = ""
+		child.Artifact.Resource = member.Resource
+		memberPath := compilepkg.SourceOf(member.Resource).File
+		if parent.Artifact.PackageRoot != "" {
+			memberPath = filepath.Join(parent.Artifact.PackageRoot, filepath.FromSlash(memberPath))
+		}
+		child.Artifact.Path = memberPath
+		child.Artifact.Selection = nil
+		child.Artifact.Plugin = nil
+		child.Artifact.PluginPackage = &resolver.PluginPackage{
+			Name:       plugin.Name(),
+			Package:    plugin,
+			Exclusions: append([]string(nil), exclusions...),
+		}
+		child.EnabledGlobal = parent.EnabledGlobal && !excluded
+		child.EnabledProject = parent.EnabledProject && !excluded
+		child.EnabledLocal = parent.EnabledLocal && !excluded
+		child.PluginSelectedGlobal = parent.EnabledGlobal
+		child.PluginSelectedProject = parent.EnabledProject
+		child.PluginSelectedLocal = parent.EnabledLocal
+		child.IsAvailable = parent.IsAvailable || excluded
+		child.IsExcluded = excluded
+		child.ExcludedLocally = false
+		child.PluginMemberExcluded = excluded
+		child.searchReady = false
+		child.searchWords = nil
+		child.labelMemo = nil
+		children = append(children, child)
+	}
+	return children
 }
 
 func emitAxisSections(out []flatItem, rows []row, settings viewSettings, axis groupingAxis, prefix string, depth int, foldState map[string]bool) []flatItem {
@@ -446,7 +525,7 @@ func buildGroupedTree(rows []row, settings viewSettings, foldState map[string]bo
 			})
 			if !collapsed {
 				for _, r := range attention {
-					out = append(out, flatItem{Kind: flatArtifact, Row: r, Depth: 1})
+					out = emitResourceRow(out, r, 1, foldState)
 				}
 			}
 		}
