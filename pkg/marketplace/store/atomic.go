@@ -796,11 +796,13 @@ func PutImmutableBlob(ctx context.Context, blobs BlobStore, digest ArchiveDigest
 }
 
 func putImmutableBlob(ctx context.Context, blobs BlobStore, upload BlobUpload) error {
-	if existing, err := blobs.Get(ctx, upload.Digest); err == nil {
+	if existing, err := existingImmutableBlob(ctx, blobs, upload); err == nil {
 		if !bytes.Equal(existing, upload.Data) {
 			return fmt.Errorf("%w: blob %s already contains different data", ErrConflict, upload.Digest)
 		}
 		return nil
+	} else if errors.Is(err, ErrBlobTooLarge) {
+		return fmt.Errorf("%w: blob %s already contains different data", ErrConflict, upload.Digest)
 	} else if !errors.Is(err, ErrNotFound) {
 		return err
 	}
@@ -808,6 +810,16 @@ func putImmutableBlob(ctx context.Context, blobs BlobStore, upload BlobUpload) e
 		return immutable.PutImmutable(ctx, upload.Digest, upload.Data)
 	}
 	return blobs.Put(ctx, upload.Digest, upload.Data)
+}
+
+// existingImmutableBlob reads the blob already stored at the upload's digest.
+// A bounded store reads at most one byte more than the upload, which is enough
+// to tell an equal blob from a different one.
+func existingImmutableBlob(ctx context.Context, blobs BlobStore, upload BlobUpload) ([]byte, error) {
+	if bounded, ok := blobs.(BoundedBlobStore); ok && len(upload.Data) > 0 {
+		return bounded.GetBounded(ctx, upload.Digest, int64(len(upload.Data)))
+	}
+	return blobs.Get(ctx, upload.Digest)
 }
 
 func contentDigest(data []byte) string {
