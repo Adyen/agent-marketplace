@@ -38,6 +38,7 @@ main() {
   home=${HOME:-}
   [[ -n "$home" ]] || fail "HOME is not set"
   install_dir=${AGENT_MARKETPLACE_INSTALL_DIR:-"$home/.local/bin"}
+  install_dir=${install_dir%/}
   asset="agent-marketplace-$tag-$os-$arch"
   base_url="https://github.com/$repo/releases/download/$tag"
   workdir=$(mktemp -d 2>/dev/null) || fail "could not create a temporary directory"

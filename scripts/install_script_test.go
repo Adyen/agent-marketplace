@@ -117,12 +117,17 @@ func TestInstallerSupportedPlatforms(t *testing.T) {
 
 // spec: install-script/unsupported-platform-is-refused-before-download
 func TestInstallerRejectsUnsupportedPlatform(t *testing.T) {
-	for _, tc := range []struct{ system, machine, value string }{{"FreeBSD", "x86_64", "FreeBSD"}, {"Linux", "i386", "i386"}} {
-		i := newInstaller(t, tc.system, tc.machine)
-		_, stderr, err := i.run(t, latestURL, "", "", i.path("/usr/bin", "/bin"))
-		if err == nil || !strings.Contains(stderr, tc.value) || i.requests(t) != "" {
-			t.Fatalf("unsupported platform accepted: err=%v stderr=%q requests=%s", err, stderr, i.requests(t))
-		}
+	for _, tc := range []struct{ name, system, machine, value string }{
+		{"unsupported operating system", "FreeBSD", "x86_64", "FreeBSD"},
+		{"unsupported processor architecture", "Linux", "i386", "i386"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			i := newInstaller(t, tc.system, tc.machine)
+			_, stderr, err := i.run(t, latestURL, "", "", i.path("/usr/bin", "/bin"))
+			if err == nil || !strings.Contains(stderr, tc.value) || i.requests(t) != "" {
+				t.Fatalf("unsupported platform accepted: err=%v stderr=%q requests=%s", err, stderr, i.requests(t))
+			}
+		})
 	}
 }
 
@@ -130,35 +135,45 @@ func TestInstallerRejectsUnsupportedPlatform(t *testing.T) {
 // spec: install-script/pinned-version-is-installed
 func TestInstallerSelectsLatestOrPinnedRelease(t *testing.T) {
 	for _, tc := range []struct {
+		name   string
 		pin    string
 		latest bool
-	}{{"", true}, {"v1.2.3", false}} {
-		i := newInstaller(t, "Linux", "amd64")
-		i.addAsset(t, linuxAMD, []byte(fixtureBin), "", "")
-		_, stderr, err := i.run(t, latestURL, tc.pin, "", i.path("/usr/bin", "/bin"))
-		requests := i.requests(t)
-		if err != nil || strings.Contains(requests, "/releases/latest") != tc.latest ||
-			!strings.Contains(requests, "/releases/download/v1.2.3/"+linuxAMD) {
-			t.Fatalf("release selection err=%v stderr=%q requests=%s", err, stderr, requests)
-		}
+	}{
+		{"latest stable release", "", true},
+		{"pinned release", "v1.2.3", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			i := newInstaller(t, "Linux", "amd64")
+			i.addAsset(t, linuxAMD, []byte(fixtureBin), "", "")
+			_, stderr, err := i.run(t, latestURL, tc.pin, "", i.path("/usr/bin", "/bin"))
+			requests := i.requests(t)
+			if err != nil || strings.Contains(requests, "/releases/latest") != tc.latest ||
+				!strings.Contains(requests, "/releases/download/v1.2.3/"+linuxAMD) {
+				t.Fatalf("release selection err=%v stderr=%q requests=%s", err, stderr, requests)
+			}
+		})
 	}
 }
 
 // spec: install-script/malformed-or-unresolvable-version-is-refused
 func TestInstallerRejectsBadVersion(t *testing.T) {
 	for _, tc := range []struct {
+		name        string
 		pin, latest string
 		lookup      bool
 	}{
-		{"latest", latestURL, false}, {"", "https://github.com/Adyen/agent-marketplace/releases/tag/preview", true},
+		{"malformed pin", "latest", latestURL, false},
+		{"unresolvable latest tag", "", "https://github.com/Adyen/agent-marketplace/releases/tag/preview", true},
 	} {
-		i := newInstaller(t, "Linux", "amd64")
-		_, stderr, err := i.run(t, tc.latest, tc.pin, "", i.path("/usr/bin", "/bin"))
-		requests := i.requests(t)
-		if err == nil || !strings.HasPrefix(stderr, "agent-marketplace install: ") ||
-			strings.Contains(requests, "/releases/download/") || strings.Contains(requests, "/releases/latest") != tc.lookup {
-			t.Fatalf("bad version accepted: err=%v stderr=%q requests=%s", err, stderr, requests)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			i := newInstaller(t, "Linux", "amd64")
+			_, stderr, err := i.run(t, tc.latest, tc.pin, "", i.path("/usr/bin", "/bin"))
+			requests := i.requests(t)
+			if err == nil || !strings.HasPrefix(stderr, "agent-marketplace install: ") ||
+				strings.Contains(requests, "/releases/download/") || strings.Contains(requests, "/releases/latest") != tc.lookup {
+				t.Fatalf("bad version accepted: err=%v stderr=%q requests=%s", err, stderr, requests)
+			}
+		})
 	}
 }
 
@@ -205,9 +220,12 @@ func TestInstallerVerificationFailuresPreserveInstall(t *testing.T) {
 			_, stderr, err := i.run(t, latestURL, "", dir, path)
 			got, readErr := os.ReadFile(target)
 			entries, tempErr := os.ReadDir(i.tmp)
+			dirEntries, dirReadErr := os.ReadDir(dir)
 			if err == nil || !strings.HasPrefix(stderr, "agent-marketplace install: ") || !strings.Contains(stderr, tc.want) ||
-				readErr != nil || string(got) != old || tempErr != nil || len(entries) != 0 {
-				t.Fatalf("failure did not preserve install: err=%v stderr=%q bytes=%q readErr=%v tmp=%v tempErr=%v", err, stderr, got, readErr, entries, tempErr)
+				readErr != nil || string(got) != old || tempErr != nil || len(entries) != 0 ||
+				dirReadErr != nil || len(dirEntries) != 1 || dirEntries[0].Name() != "agent-marketplace" {
+				t.Fatalf("failure did not preserve install: err=%v stderr=%q bytes=%q readErr=%v dir=%v dirReadErr=%v tmp=%v tempErr=%v",
+					err, stderr, got, readErr, dirEntries, dirReadErr, entries, tempErr)
 			}
 		})
 	}
@@ -217,44 +235,67 @@ func TestInstallerVerificationFailuresPreserveInstall(t *testing.T) {
 // spec: install-script/binary-is-installed-into-the-default-or-overridden-directory
 // spec: install-script/existing-installation-is-replaced
 func TestInstallerInstallsVerifiedBinaryInUserDirectory(t *testing.T) {
-	for _, override := range []bool{false, true} {
-		i := newInstaller(t, "Linux", "amd64")
-		binary, dir := []byte(fixtureBin), ""
-		wantDir := filepath.Join(i.home, ".local/bin")
-		if override {
-			dir, wantDir = filepath.Join(i.home, "custom-bin"), filepath.Join(i.home, "custom-bin")
-		}
-		i.addAsset(t, linuxAMD, binary, "", "")
-		if err := os.MkdirAll(wantDir, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		writeFile(t, filepath.Join(wantDir, "agent-marketplace"), "old", 0o700)
-		stdout, stderr, err := i.run(t, latestURL, "", dir, i.path("/usr/bin", "/bin"))
-		target := filepath.Join(wantDir, "agent-marketplace")
-		got, readErr := os.ReadFile(target)
-		info, statErr := os.Stat(target)
-		if err != nil || readErr != nil || statErr != nil || string(got) != string(binary) ||
-			info.Mode()&0o111 == 0 || !strings.Contains(stdout, "agent-marketplace v1.2.3") {
-			t.Fatalf("install err=%v readErr=%v statErr=%v stderr=%q stdout=%q bytes=%q", err, readErr, statErr, stderr, stdout, got)
-		}
+	for _, tc := range []struct {
+		name     string
+		override bool
+	}{
+		{"default directory", false},
+		{"overridden directory", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			i := newInstaller(t, "Linux", "amd64")
+			binary, dir := []byte(fixtureBin), ""
+			wantDir := filepath.Join(i.home, ".local/bin")
+			if tc.override {
+				dir = filepath.Join(i.home, "custom-bin")
+				wantDir = dir
+			}
+			i.addAsset(t, linuxAMD, binary, "", "")
+			if err := os.MkdirAll(wantDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, filepath.Join(wantDir, "agent-marketplace"), "old", 0o700)
+			stdout, stderr, err := i.run(t, latestURL, "", dir, i.path("/usr/bin", "/bin"))
+			target := filepath.Join(wantDir, "agent-marketplace")
+			got, readErr := os.ReadFile(target)
+			info, statErr := os.Stat(target)
+			if err != nil || readErr != nil || statErr != nil || string(got) != string(binary) ||
+				info.Mode()&0o111 == 0 || !strings.Contains(stdout, "agent-marketplace v1.2.3") {
+				t.Fatalf("install err=%v readErr=%v statErr=%v stderr=%q stdout=%q bytes=%q", err, readErr, statErr, stderr, stdout, got)
+			}
+		})
 	}
 }
 
 // spec: install-script/path-hint-is-shown-only-when-needed
 func TestInstallerPathHintFollowsPathMembership(t *testing.T) {
-	for _, onPath := range []bool{false, true} {
-		i := newInstaller(t, "Linux", "amd64")
-		i.addAsset(t, linuxAMD, []byte(fixtureBin), "", "")
-		dir := filepath.Join(i.home, ".local/bin")
-		extra := []string{"/usr/bin", "/bin"}
-		if onPath {
-			extra = append([]string{dir}, extra...)
-		}
-		stdout, stderr, err := i.run(t, latestURL, "", "", i.path(extra...))
-		hint := fmt.Sprintf("export PATH=\"%s:$PATH\"", dir)
-		if err != nil || strings.Contains(stdout, hint) == onPath || strings.Contains(stdout, "is not on PATH") == onPath {
-			t.Fatalf("path hint err=%v stderr=%q stdout=%q onPath=%v", err, stderr, stdout, onPath)
-		}
+	for _, tc := range []struct {
+		name          string
+		onPath        bool
+		trailingSlash bool
+	}{
+		{"directory not on PATH", false, false},
+		{"directory on PATH", true, false},
+		{"directory with trailing slash on PATH", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			i := newInstaller(t, "Linux", "amd64")
+			i.addAsset(t, linuxAMD, []byte(fixtureBin), "", "")
+			dir := filepath.Join(i.home, ".local/bin")
+			installDir := ""
+			if tc.trailingSlash {
+				installDir = dir + string(os.PathSeparator)
+			}
+			extra := []string{"/usr/bin", "/bin"}
+			if tc.onPath {
+				extra = append([]string{dir}, extra...)
+			}
+			stdout, stderr, err := i.run(t, latestURL, "", installDir, i.path(extra...))
+			hint := fmt.Sprintf("export PATH=\"%s:$PATH\"", dir)
+			if err != nil || strings.Contains(stdout, hint) == tc.onPath || strings.Contains(stdout, "is not on PATH") == tc.onPath {
+				t.Fatalf("path hint err=%v stderr=%q stdout=%q onPath=%v", err, stderr, stdout, tc.onPath)
+			}
+		})
 	}
 }
 
