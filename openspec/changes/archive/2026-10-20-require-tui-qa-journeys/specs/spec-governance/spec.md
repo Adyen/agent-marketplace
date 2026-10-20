@@ -85,3 +85,50 @@ excuse a missing spec delta.
 - **THEN** the change gate MUST fail and report the missing TUI QA journey
 - **AND** the same range carrying only a `TUI-QA-Impact: none — <reason>`
   trailer MUST fail and report the missing spec delta
+
+## MODIFIED Requirements
+
+### Requirement: Behavior changes carry a spec delta
+
+A pull request SHALL change a spec file under `openspec/specs/` or
+`openspec/changes/**/specs/` whenever it changes a behavior-bearing file.
+Behavior-bearing files are files under `cmd/`, `internal/`, `pkg/`, `api/`, or
+`web/`, excluding test files, Markdown files, and anything under a `testdata/`
+or `web/tests/` directory.
+
+#### Scenario: Behavior change without delta fails
+
+- **WHEN** the pull request range changes a behavior-bearing file and no spec
+  file
+- **THEN** the change gate MUST fail and list the behavior-bearing files
+
+#### Scenario: Behavior change with delta passes
+
+- **WHEN** the pull request range changes a behavior-bearing file and at least
+  one spec file
+- **THEN** the change gate MUST NOT report a missing spec delta
+
+#### Scenario: Test-only change passes
+
+- **WHEN** the pull request range changes only test files, Markdown files, or
+  `testdata/` content
+- **THEN** the change gate MUST pass without a spec delta
+
+### Requirement: Spec-impact escape trailer
+
+A pull request SHALL be allowed to change behavior-bearing files without a spec
+delta when at least one commit in its range carries a
+`Spec-Impact: none — <reason>` Git trailer with a non-empty reason. An ASCII
+`-` separator MUST be accepted in place of `—`.
+
+#### Scenario: Trailer with reason passes
+
+- **WHEN** a commit in the range has the trailer
+  `Spec-Impact: none — dependency bump only`
+- **THEN** the change gate MUST NOT report a missing spec delta and MUST report
+  the reason
+
+#### Scenario: Trailer without reason fails
+
+- **WHEN** the only Spec-Impact trailer in the range is `Spec-Impact: none`
+- **THEN** the change gate MUST fail and state that a reason is required

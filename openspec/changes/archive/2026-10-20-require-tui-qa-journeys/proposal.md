@@ -15,7 +15,7 @@ Recent TUI changes merged with only Go model tests, and user flows broke in the 
 ### New Capabilities
 
 ### Modified Capabilities
-- `spec-governance`: the change gate requires a TUI QA journey for TUI changes, with its own escape trailer.
+- `spec-governance`: the change gate requires a TUI QA journey for TUI changes, with its own escape trailer. The spec-delta pass scenarios now state only that no missing spec delta is reported, because a TUI change can still fail the journey rule.
 
 ## Impact
 

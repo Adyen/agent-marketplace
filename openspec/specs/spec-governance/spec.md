@@ -88,7 +88,7 @@ or `web/tests/` directory.
 
 - **WHEN** the pull request range changes a behavior-bearing file and at least
   one spec file
-- **THEN** the change gate MUST pass
+- **THEN** the change gate MUST NOT report a missing spec delta
 
 #### Scenario: Test-only change passes
 
@@ -107,7 +107,8 @@ delta when at least one commit in its range carries a
 
 - **WHEN** a commit in the range has the trailer
   `Spec-Impact: none — dependency bump only`
-- **THEN** the change gate MUST pass and report the reason
+- **THEN** the change gate MUST NOT report a missing spec delta and MUST report
+  the reason
 
 #### Scenario: Trailer without reason fails
 

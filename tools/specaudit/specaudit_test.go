@@ -313,6 +313,12 @@ func TestEvaluateGate(t *testing.T) {
 			name:  "behavior with archived delta",
 			paths: []string{"pkg/marketplace/api/types.go", "openspec/changes/archive/2026-01-01-c1/specs/alpha/spec.md"},
 		},
+		// spec: spec-governance/behavior-change-with-delta-passes
+		{
+			name:      "TUI behavior with delta reports only the missing journey",
+			paths:     []string{"internal/tui/app.go", "openspec/specs/alpha/spec.md"},
+			wantKinds: []string{kindMissingTUIQAJourney},
+		},
 		{
 			name:      "proposal alone is not a delta",
 			paths:     []string{"pkg/marketplace/api/types.go", "openspec/changes/c1/proposal.md"},
@@ -339,6 +345,14 @@ func TestEvaluateGate(t *testing.T) {
 			paths:       []string{"internal/x/x.go"},
 			trailers:    []string{"none - refactor"},
 			wantSummary: "refactor",
+		},
+		// spec: spec-governance/trailer-with-reason-passes
+		{
+			name:        "TUI trailer with reason reports only the missing journey",
+			paths:       []string{"internal/tui/app.go"},
+			trailers:    []string{"none — copy only"},
+			wantKinds:   []string{kindMissingTUIQAJourney},
+			wantSummary: "Spec-Impact: none — copy only",
 		},
 		// spec: spec-governance/trailer-without-reason-fails
 		{
