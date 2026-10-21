@@ -74,7 +74,7 @@ function navigate(event: KeyboardEvent, current: number) {
       :aria-controls="panelID(tab.id)"
       :aria-selected="tab.id === modelValue"
       :tabindex="tab.id === modelValue ? 0 : -1"
-      @click="emit('update:modelValue', tab.id)"
+      @click="select(index)"
       @keydown="navigate($event, index)"
     >
       {{ tab.label }}

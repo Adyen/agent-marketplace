@@ -12,7 +12,8 @@ const running = new Map<Element, () => void>()
 let observer: IntersectionObserver | undefined
 
 function prefersReducedMotion() {
-  return matchMedia('(prefers-reduced-motion: reduce)').matches
+  return typeof matchMedia !== 'undefined'
+    && matchMedia('(prefers-reduced-motion: reduce)').matches
 }
 
 function run(decoder: Decoder, delay: number) {

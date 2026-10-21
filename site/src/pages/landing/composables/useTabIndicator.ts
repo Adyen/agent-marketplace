@@ -28,7 +28,7 @@ export function useTabIndicator(list: Ref<HTMLElement | null>, selected: WatchSo
       resizeObserver = new ResizeObserver(() => place(false))
       resizeObserver.observe(list.value)
     }
-    document.fonts?.ready.then(() => !disposed && place(false))
+    document.fonts?.ready?.then(() => !disposed && place(false))
   })
 
   onBeforeUnmount(() => {
