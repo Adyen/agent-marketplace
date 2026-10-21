@@ -15,7 +15,7 @@
 
 - [x] 3.1 Run scoped tests, container/Compose checks, and Helm validation.
 - [ ] 3.2 Verify base images and run the real container smoke checks.
-- [ ] 3.3 Run make validate and spec-check, review all changes with OCR
+- [x] 3.3 Run make validate and spec-check, review all changes with OCR
   delegation, and archive the completed change.
 
 ## Verification Notes
