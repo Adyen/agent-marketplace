@@ -10,6 +10,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/bundle"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/plugindecode"
@@ -28,7 +29,7 @@ func TestExportBuildsAgentPluginAndReimportsEquivalently(t *testing.T) {
 		map[string]any{"license": "MIT", "compatibility": "Go projects", "metadata": map[string]any{"team": "platform"}},
 		ir.SourceRef{File: "skills/review/SKILL.md"},
 		ir.WithSkillAllowedTools([]string{"Read", "Edit"}))
-	server := ir.NewMcpServer("local-index", "${PLUGIN_ROOT}/bin/server", []string{"${PLUGIN_ROOT}/config"}, map[string]string{"MODE": "safe"}, nil,
+	server := ir.NewMcpServer("local-index", bundle.CanonicalRootToken+"/bin/server", []string{bundle.CanonicalRootToken + "/config"}, map[string]string{"MODE": "safe"}, nil,
 		ir.SourceRef{File: ".mcp.json"})
 	server.Cwd = "${PLUGIN_DATA}"
 	sse := ir.NewMcpServerWithOptions("event-stream", "", nil, nil, nil, ir.SourceRef{File: ".mcp.json"},
@@ -122,7 +123,7 @@ func TestExportBuildsAgentPluginAndReimportsEquivalently(t *testing.T) {
 	if gotServer == nil || gotSSE == nil || gotHTTP == nil {
 		t.Fatalf("re-imported MCP names differ: %#v", gotServers)
 	}
-	if gotServer.Command != "./bin/server" || !reflect.DeepEqual(gotServer.Args, server.Args) ||
+	if gotServer.Command != "./bin/server" || !reflect.DeepEqual(gotServer.Args, []string{"${PLUGIN_ROOT}/config"}) ||
 		!reflect.DeepEqual(gotServer.Env, server.Env) || gotServer.Cwd != server.Cwd ||
 		gotSSE.Transport != sse.Transport || gotSSE.URL != sse.URL || !reflect.DeepEqual(gotSSE.Headers, sse.Headers) ||
 		gotHTTP.Transport != http.Transport || gotHTTP.URL != http.URL {
@@ -237,13 +238,15 @@ func TestExportDropsMCPMembersWhoseSourceInterpolationWouldBecomeLiteral(t *test
 	tests := []struct {
 		field, value string
 	}{
-		{"args", "${TOKEN}"}, {"env", "${env:AUTH_TOKEN}"}, {"cwd", "${file:config/workdir}"},
+		{"command", "${NODE_BIN}"}, {"args", "${TOKEN}"}, {"env", "${env:AUTH_TOKEN}"}, {"cwd", "${file:config/workdir}"},
 		{"headers", "${TOKEN}"}, {"url", "https://${HOST}/mcp"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.field, func(t *testing.T) {
 			server := interpolationServer()
 			switch tt.field {
+			case "command":
+				server.Command = tt.value
 			case "args":
 				server.Args = []string{tt.value}
 			case "env":
@@ -265,6 +268,45 @@ func TestExportDropsMCPMembersWhoseSourceInterpolationWouldBecomeLiteral(t *test
 			}
 			if hasFile(result, "mcp.json") {
 				t.Fatalf("server with source interpolation was emitted: %+v", result.Files)
+			}
+		})
+	}
+}
+
+func TestExportConsumesNativeMCPTypeExtra(t *testing.T) {
+	tests := []struct {
+		name, native, want string
+		server             *ir.McpServer
+		wantLoss           bool
+	}{
+		{"stdio", "stdio", "stdio", ir.NewMcpServer("interpolated", "node", nil, nil, map[string]any{"type": "stdio"}, ir.SourceRef{File: ".mcp.json"}), false},
+		{"http", "http", "streamable-http", ir.NewMcpServer("interpolated", "", nil, nil, map[string]any{"type": "http"}, ir.SourceRef{File: ".mcp.json"}), false},
+		{"unknown", "unknown", "", ir.NewMcpServer("interpolated", "node", nil, nil, map[string]any{"type": "custom"}, ir.SourceRef{File: ".mcp.json"}), true},
+		{"mismatch", "mismatch", "", ir.NewMcpServer("interpolated", "node", nil, nil, map[string]any{"type": "sse"}, ir.SourceRef{File: ".mcp.json"}), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.native == "http" {
+				tt.server.URL = "https://example.test/mcp"
+			}
+			result, err := Export(interpolationPlugin("claude-plugin", tt.server), interpolationFiles(), Options{})
+			if tt.wantLoss {
+				if coded, ok := diag.AsCodedError(err); !ok || coded.Code != diag.CodePluginExportLoss {
+					t.Fatalf("invalid native type error = %v", err)
+				}
+				return
+			}
+			if err != nil || len(result.Losses) != 0 {
+				t.Fatalf("native %s type was not mapped: result=%+v error=%v", tt.native, result, err)
+			}
+			var config struct {
+				MCPServers map[string]map[string]any `json:"mcpServers"`
+			}
+			if err := json.Unmarshal(resultFileEntry(t, result, "mcp.json").Bytes, &config); err != nil {
+				t.Fatal(err)
+			}
+			if config.MCPServers[tt.server.Name()]["type"] != tt.want {
+				t.Fatalf("exported MCP type = %#v, want %q", config.MCPServers, tt.want)
 			}
 		})
 	}

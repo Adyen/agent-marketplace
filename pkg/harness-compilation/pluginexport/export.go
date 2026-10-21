@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/bundle"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/yamlfm"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -362,11 +363,56 @@ func skillFieldValid(key string, value any) bool {
 }
 
 func exportMcpServer(server *ir.McpServer, sourceFormat string) (map[string]any, []Loss, *Loss, bool) {
+	if sourceFormat != "agent-plugin" {
+		server = normalizeNativeRootReferences(server)
+	}
 	base := "mcpServers/" + server.Name()
 	entry := map[string]any{}
 	var losses []Loss
 	add := func(field, reason string) {
 		losses = append(losses, Loss{Path: base + "/" + field, Reason: reason})
+	}
+	transport, typeConsumed := server.Transport, false
+	if sourceFormat != "agent-plugin" {
+		if value, present := server.Extra["type"]; present {
+			nativeType, ok := value.(string)
+			if !ok {
+				add("type", "MCP transport type is not recognized")
+				return nil, losses, nil, false
+			}
+			switch nativeType {
+			case "stdio":
+				if server.Command == "" || server.URL != "" || transport != "" {
+					add("type", "MCP transport type conflicts with its command and URL")
+					return nil, losses, nil, false
+				}
+			case "http", "streamable-http", "sse":
+				remoteType := nativeType
+				if nativeType == "http" {
+					remoteType = "streamable-http"
+				}
+				if server.URL == "" || server.Command != "" || (transport != "" && transport != remoteType) {
+					add("type", "MCP transport type conflicts with its command and URL")
+					return nil, losses, nil, false
+				}
+				transport = remoteType
+			default:
+				add("type", "MCP transport type is not recognized")
+				return nil, losses, nil, false
+			}
+			typeConsumed = true
+		}
+	}
+	cwd := server.Cwd
+	cwdConsumed := false
+	if value, present := server.Extra["cwd"]; present {
+		if authored, ok := value.(string); ok && (sourceFormat != "agent-plugin" || server.Cwd != "") {
+			if cwd != "" && cwd != authored {
+				add("cwd", "MCP working directory has conflicting values")
+				return nil, losses, nil, false
+			}
+			cwd, cwdConsumed = authored, true
+		}
 	}
 	if sourceFormat != "agent-plugin" && mcpHasSourceInterpolation(server) {
 		add("", "source-format interpolation would become literal")
@@ -382,9 +428,10 @@ func exportMcpServer(server *ir.McpServer, sourceFormat string) (map[string]any,
 		add("oauth.resource", "OAuth data is not represented by Agent Plugins")
 	}
 	for key := range server.Extra {
-		if key != "cwd" || server.Cwd == "" {
-			add(key, "MCP extension field is not represented by Agent Plugins")
+		if (key == "type" && typeConsumed) || (key == "cwd" && cwdConsumed) {
+			continue
 		}
+		add(key, "MCP extension field is not represented by Agent Plugins")
 	}
 	if server.Ext != (ext.Bag{}) {
 		add("extensions", "MCP format sidecar is not represented by Agent Plugins")
@@ -416,8 +463,7 @@ func exportMcpServer(server *ir.McpServer, sourceFormat string) (map[string]any,
 				entry["env"] = env
 			}
 		}
-		if server.Cwd != "" {
-			cwd := server.Cwd
+		if cwd != "" {
 			if cwd == "." {
 				cwd = "./"
 			}
@@ -428,11 +474,11 @@ func exportMcpServer(server *ir.McpServer, sourceFormat string) (map[string]any,
 			}
 		}
 	case server.Command == "" && server.URL != "":
-		if server.Transport != "streamable-http" && server.Transport != "sse" {
+		if transport != "streamable-http" && transport != "sse" {
 			add("", "remote transport is not represented by Agent Plugins")
 			return nil, losses, nil, false
 		}
-		entry["type"], entry["url"] = server.Transport, server.URL
+		entry["type"], entry["url"] = transport, server.URL
 		if server.Headers != nil {
 			entry["headers"] = server.Headers
 		}
@@ -447,8 +493,33 @@ func exportMcpServer(server *ir.McpServer, sourceFormat string) (map[string]any,
 	return entry, losses, nil, true
 }
 
+func normalizeNativeRootReferences(server *ir.McpServer) *ir.McpServer {
+	normalized := *server
+	replace := func(value string) string {
+		return strings.ReplaceAll(value, bundle.CanonicalRootToken, "${PLUGIN_ROOT}")
+	}
+	normalized.Command = replace(server.Command)
+	normalized.Cwd = replace(server.Cwd)
+	normalized.Args = slices.Clone(server.Args)
+	for i, arg := range normalized.Args {
+		normalized.Args[i] = replace(arg)
+	}
+	normalized.Env = maps.Clone(server.Env)
+	for key, value := range normalized.Env {
+		normalized.Env[key] = replace(value)
+	}
+	normalized.Extra = maps.Clone(server.Extra)
+	if cwd, ok := normalized.Extra["cwd"].(string); ok {
+		normalized.Extra["cwd"] = replace(cwd)
+	}
+	return &normalized
+}
+
 func mcpHasSourceInterpolation(server *ir.McpServer) bool {
 	conflicts := pluginpolicy.HasCanonicalInterpolationConflict
+	if conflicts(server.Command) {
+		return true
+	}
 	for _, arg := range server.Args {
 		if conflicts(arg) {
 			return true
