@@ -554,7 +554,8 @@ legacy case when you touch it, then remove its baseline line. Check tags with
 `Marketplaces`, `{{REG:name}}`, `{{MKT:name}}`, `{{GITHTTP:name}}`,
 `ActionPushRegistry`, `ActionReindexMarketplace`, `ActionRevokeMarketplace`,
 `Step.Env`, and `Step.Cwd`. In `e2e/table_test.go`, `PathsUnchanged` asserts
-paths a step must leave byte-identical and `v4Cfg` builds a v4 config root.
+files or trees a step must leave byte- and metadata-identical, and `v4Cfg`
+emits v4 config content for the `*Cfg` layers.
 
 Run one case with `go -C e2e test -run '^TestE2E$/<name>' -count=1 .`;
 run the full table with `make validate-e2e`.
