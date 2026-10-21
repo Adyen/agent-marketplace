@@ -69,6 +69,15 @@ journey.test("filtered command palette actions run sync, fold and clear-search",
   await step("esc closes the palette", () => terminal.write("\x1b"), async () => {
     await locate(terminal, "Command palette").expect({ not: true });
   });
+  // Modal-only scope controls are not palette actions.
+  for (const control of ["global", "exclude"]) {
+    await step(`the toggle modal's ${control} control is absent`, () => terminal.write(`:${control}`), async () => {
+      await locate(terminal, "no matching actions").unique().expect();
+    });
+    await step(`close the palette after ${control}`, () => terminal.write("\x1b"), async () => {
+      await locate(terminal, "Command palette").expect({ not: true });
+    });
+  }
 
   await step("quit", () => terminal.write("q"), async () => {
     assert.equal((await waitForExit(terminal)).exitCode, 0);
