@@ -39,22 +39,25 @@ test("member toggles edit only the selected plugin exclusion", async ({ terminal
   assert.match(config, /exclude:\n\s+- skill\/review/);
   assert.doesNotMatch(config, /^      - skill\/review$/m);
 
+  await step("confirm excluded plugin member state", () => terminal.write("G"), async () => {
+    await expect(terminal.getByText(/Status:\s+excluded\b/g)).toBeVisible();
+  });
+
   await selectReviewMember(terminal);
   await step("reopen member toggle options", () => terminal.write(" "), async () => {
     await expect(terminal.getByText("toggle project")).toBeVisible();
   });
   await step("restore member in selected plugin", () => terminal.write("p"), async () => {
     await expect(terminal.getByText(/●.*skill t\/review/g)).toBeVisible();
+    await expect(terminal.getByText(/Status:\s+enabled(?! \(pending sync\))/g)).toBeVisible();
+    await expect(terminal.getByText(/Pending sync\s+\(\d+\)/g)).not.toBeVisible();
   });
   config = fs.readFileSync(configPath, "utf8");
   assert.match(config, /include:\n\s+- kind: plugin\n\s+name: kit/);
   assert.doesNotMatch(config, /exclude:[\s\S]*?skill\/review/);
   assert.doesNotMatch(config, /^      - skill\/review$/m);
 
-  await step("request quit with unsynced plugin changes", () => terminal.write("q"), async () => {
-    await expect(terminal.getByText(/Sync\+quit\?/g)).toBeVisible();
-  });
-  await step("quit without syncing", () => terminal.write("n"), async () => {
+  await step("quit with Ctrl+C", () => terminal.write("\u0003"), async () => {
     assert.equal((await waitForExit(terminal)).exitCode, 0);
   });
 });
