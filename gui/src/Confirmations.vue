@@ -90,14 +90,14 @@ function cancelQuit() {
     <p v-else-if="state.pendingChanges > 0">{{ state.pendingChanges }} change(s) not synced. Sync before quitting?</p>
     <template #footer>
       <template v-if="showSyncChoices">
-        <UButton label="Sync and quit" aria-label="Sync and quit" :disabled="syncQuitBlocked" @click="syncAndQuit" />
-        <UButton label="Quit without syncing" color="neutral" variant="outline" aria-label="Quit without syncing" :disabled="quitPending" @click="quitNow" />
         <UButton label="Cancel" color="neutral" variant="outline" aria-label="Cancel quit" @click="cancelQuit" />
+        <UButton label="Quit without syncing" color="neutral" variant="outline" aria-label="Quit without syncing" :disabled="quitPending" @click="quitNow" />
+        <UButton label="Sync and quit" aria-label="Sync and quit" :disabled="syncQuitBlocked" @click="syncAndQuit" />
       </template>
       <template v-else>
-        <UButton label="Quit" aria-label="Quit now" :disabled="quitPending" @click="quitNow" />
-        <UButton label="Stay" color="neutral" variant="outline" aria-label="Stay" @click="cancelQuit" />
         <UButton label="Cancel" color="neutral" variant="outline" aria-label="Cancel quit" @click="cancelQuit" />
+        <UButton label="Stay" color="neutral" variant="outline" aria-label="Stay" @click="cancelQuit" />
+        <UButton label="Quit" aria-label="Quit now" :disabled="quitPending" @click="quitNow" />
       </template>
     </template>
   </GuiModal>

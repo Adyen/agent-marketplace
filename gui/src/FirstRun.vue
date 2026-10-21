@@ -189,6 +189,7 @@ async function finish() {
     </template>
 
     <template #footer>
+      <UButton label="Cancel" color="neutral" variant="outline" aria-label="Cancel" :disabled="submitting" @click="cancel" />
       <template v-if="step === 'targets'">
         <UButton
           v-if="needsConsent || showSources"
@@ -206,6 +207,7 @@ async function finish() {
         />
       </template>
       <template v-else-if="step === 'consent'">
+        <UButton label="Back" color="neutral" variant="outline" aria-label="Back" :disabled="submitting" @click="step = 'targets'" />
         <UButton
           v-if="showSources"
           label="Next"
@@ -220,18 +222,16 @@ async function finish() {
           :disabled="!canInitialize || consent === null || submitting"
           @click="finish"
         />
-        <UButton label="Back" color="neutral" variant="outline" aria-label="Back" :disabled="submitting" @click="step = 'targets'" />
       </template>
       <template v-else>
+        <UButton label="Back" color="neutral" variant="outline" aria-label="Back" :disabled="submitting" @click="backFromSources" />
         <UButton
           label="Finish setup"
           aria-label="Finish setup"
           :disabled="!canInitialize || submitting"
           @click="finish"
         />
-        <UButton label="Back" color="neutral" variant="outline" aria-label="Back" :disabled="submitting" @click="backFromSources" />
       </template>
-      <UButton label="Cancel" color="neutral" variant="outline" aria-label="Cancel" :disabled="submitting" @click="cancel" />
     </template>
   </GuiModal>
 </template>

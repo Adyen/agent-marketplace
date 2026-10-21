@@ -6,6 +6,7 @@ import {
   type Configuration,
   type OperationRef,
 } from './api/client'
+import { source } from './fixtures'
 import {
   configuration,
   event,
@@ -100,7 +101,7 @@ describe('Harness settings dialog', () => {
     expect(dialog.querySelector('[aria-label="Organization sources"]')).toBeNull()
     expect(dialog.textContent).not.toContain('/var/regs')
 
-    const manage = Array.from(dialog.querySelectorAll<HTMLElement>('button')).find((b) => b.textContent?.trim() === 'Manage sources')!
+    const manage = dialog.querySelector<HTMLElement>('button[aria-label="Manage sources"]')!
     manage.click()
     await tick()
     expect(document.body.querySelector('.gui-modal__frame[aria-label="Settings"]')).toBeNull()
@@ -427,6 +428,60 @@ describe('Harness settings dialog', () => {
     expect(offered).not.toContain('Target brand-new-unknown')
     expect(offered).toEqual(
       expect.arrayContaining(['Target claude', 'Target devin', 'Target windsurf', 'Target future-harness']),
+    )
+  })
+
+  it('shows Unsaved changes while the draft differs and toggles once from the row name', async () => {
+    const { client, push } = settingsClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1 }))
+    await tick()
+
+    await openSettings(wrapper)
+    const dialog = document.body.querySelector('[role="dialog"]')!
+    const unsaved = () => dialog.querySelector('.settings__dirty')
+    expect(unsaved()).toBeNull()
+
+    const devinName = Array.from(dialog.querySelectorAll<HTMLElement>('.settings__target')).find((el) => el.textContent === 'devin')!
+    devinName.click()
+    await tick()
+    expect(isChecked(checkboxByLabel('devin'))).toBe(false)
+    expect(unsaved()?.textContent).toContain('Unsaved changes')
+
+    devinName.click()
+    await tick()
+    expect(isChecked(checkboxByLabel('devin'))).toBe(true)
+    expect(unsaved()).toBeNull()
+  })
+
+  it('marks a user target that the organization also sets', async () => {
+    const { client, push } = settingsClient({ userTargets: ['claude', 'devin'], organizationTargets: ['claude'] })
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1 }))
+    await tick()
+
+    await openSettings(wrapper)
+    const dialog = document.body.querySelector('[role="dialog"]')!
+    const claudeRow = checkboxByLabel('claude').closest('label')!
+    expect(claudeRow.textContent).toContain('Also set by organization')
+    const devinRow = checkboxByLabel('devin').closest('label')!
+    expect(devinRow.textContent).not.toContain('Also set by organization')
+    expect(dialog.querySelector('[aria-label="Organization targets"] input[type="checkbox"]')).toBeNull()
+  })
+
+  it('summarizes configured sources with the organization count on the Sources row', async () => {
+    const { client, push } = settingsClient({
+      userSources: [source({ id: 'user-src', kind: 'directory', location: '/var/regs' })],
+      organizationSources: [source({ id: 'org-src', kind: 'directory', location: '/opt/org-regs' })],
+    })
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1 }))
+    await tick()
+
+    await openSettings(wrapper)
+    const dialog = document.body.querySelector('[role="dialog"]')!
+    expect(dialog.querySelector('button[aria-label="Manage sources"] .settings__nav-meta')?.textContent).toBe(
+      '2 configured · 1 from organization',
     )
   })
 })

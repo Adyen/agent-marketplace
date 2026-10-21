@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import type { Configuration } from './api/client'
 import { useAppearance, type AppearancePreference } from './appearance'
+import GuiIcon from './GuiIcon.vue'
 import GuiModal from './GuiModal.vue'
 import type { WorkspaceController } from './controller'
 
@@ -47,6 +48,30 @@ const busy = computed(() => props.controller.state.operation != null || props.co
 const editable = computed(() => configuration.value?.editable === true)
 const fieldsDisabled = computed(() => loading.value || busy.value || !editable.value)
 const saveDisabled = computed(() => loading.value || !editable.value || draft.value.size === 0 || busy.value)
+const organizationIds = computed(() => new Set(configuration.value?.organizationTargets ?? []))
+const dirty = computed(() => {
+  if (loading.value || configuration.value == null) {
+    return false
+  }
+  const saved = configuration.value.userTargets
+  return draft.value.size !== saved.length || saved.some((id) => !draft.value.has(id))
+})
+const sourceSummary = computed(() => {
+  const config = configuration.value
+  if (config == null) {
+    return ''
+  }
+  const total = config.userSources.length + config.organizationSources.length
+  if (total === 0) {
+    return 'No sources yet'
+  }
+  const organization = config.organizationSources.length
+  return `${total} configured${organization > 0 ? ` · ${organization} from organization` : ''}`
+})
+const managedOutsideText = computed(() => {
+  const list = new Intl.ListFormat('en', { style: 'long', type: 'conjunction' }).format(configuration.value?.managedOutsideGUI ?? [])
+  return `${list.charAt(0).toUpperCase()}${list.slice(1)} are managed outside the GUI.`
+})
 
 watch(open, () => {
   const epoch = ++openEpoch
@@ -108,74 +133,126 @@ async function save() {
 
 <template>
   <GuiModal v-model:open="open" title="Settings" icon="gear">
-    <p v-if="actionError" role="alert" class="settings__error">{{ actionError }}</p>
-    <p v-if="configuration == null && !actionError" role="status">Loading settings…</p>
-    <template v-if="configuration != null">
-      <p v-if="!configuration.editable" role="status">The user configuration is not editable.</p>
-      <fieldset class="settings__group" :disabled="fieldsDisabled">
-        <legend>Harness targets</legend>
-        <label
-          v-for="option in options"
-          :key="option.id"
-          class="settings__option"
-        >
-          <UCheckbox
-            :model-value="draft.has(option.id)"
-            :label="option.id"
-            :aria-label="`Target ${option.id}`"
-            @update:model-value="toggle(option.id, $event)"
-          />
-          <span v-if="!option.supported" class="settings__badge">Unsupported by this version</span>
-        </label>
-      </fieldset>
+    <div class="settings-body">
+      <p v-if="actionError" role="alert" class="settings__notice settings__notice--danger">
+        <GuiIcon name="error" class="settings__notice-icon" />
+        <span>{{ actionError }}</span>
+      </p>
+      <p v-if="configuration == null && !actionError" role="status" class="settings__notice settings__notice--loading">Loading settings…</p>
+      <template v-if="configuration != null">
+        <p v-if="!configuration.editable" role="status" class="settings__notice">
+          <GuiIcon name="info" class="settings__notice-icon" />
+          <span>The user configuration is not editable.</span>
+        </p>
+        <p v-else-if="busy" role="status" class="settings__notice">
+          <GuiIcon name="info" class="settings__notice-icon" />
+          <span>Settings are locked while an operation runs.</span>
+        </p>
 
-      <section v-if="configuration.organizationTargets.length > 0" class="settings__group" aria-label="Organization targets">
-        <h3>Organization targets</h3>
-        <p>Managed by your organization; read-only.</p>
-        <p>Organization targets always apply, in addition to yours.</p>
-        <ul>
-          <li v-for="id in configuration.organizationTargets" :key="id" class="mono">{{ id }} <span class="settings__badge">ORG</span></li>
-        </ul>
-      </section>
+        <fieldset class="settings__group" :disabled="fieldsDisabled">
+          <legend>Harness targets</legend>
+          <p class="settings__hint">Synced resources are written into each selected harness.</p>
+          <div class="settings__list">
+            <label v-for="option in options" :key="option.id" class="settings__option">
+              <span class="settings__row-main">
+                <span class="mono settings__target">{{ option.id }}</span>
+                <span v-if="!option.supported" class="settings__badge settings__badge--warning">Unsupported by this version</span>
+                <span v-if="organizationIds.has(option.id)" class="settings__row-hint">Also set by organization</span>
+              </span>
+              <UCheckbox
+                :model-value="draft.has(option.id)"
+                :aria-label="`Target ${option.id}`"
+                @update:model-value="toggle(option.id, $event)"
+              />
+            </label>
+          </div>
+        </fieldset>
 
-      <fieldset class="settings__group" aria-label="Appearance">
-        <legend>Appearance</legend>
-        <div class="segmented" role="radiogroup">
-          <label
-            v-for="option in appearanceOptions"
-            :key="option.value"
-            class="segmented__option"
-            :class="{ 'segmented__option--selected': preference === option.value }"
-          >
-            <input
-              type="radio"
-              name="am-appearance"
-              :value="option.value"
-              :checked="preference === option.value"
-              @change="setPreference(option.value)"
-            />
-            <span>{{ option.label }}</span>
-          </label>
-        </div>
-      </fieldset>
+        <section v-if="configuration.organizationTargets.length > 0" class="settings__group" aria-label="Organization targets">
+          <h3>Organization</h3>
+          <ul class="settings__list">
+            <li v-for="id in configuration.organizationTargets" :key="id" class="settings__option settings__option--static">
+              <span class="settings__row-main">
+                <span class="mono settings__target">{{ id }}</span>
+                <span class="settings__badge">ORG</span>
+              </span>
+              <GuiIcon name="lock" class="settings__lock" />
+            </li>
+          </ul>
+          <p class="settings__caption">Managed by your organization. Always applied in addition to your targets.</p>
+        </section>
 
-      <section v-if="configuration.managedOutsideGUI.length > 0" class="settings__group settings__card" aria-label="Managed outside the GUI">
-        <h3>Managed outside the GUI</h3>
-        <ul>
-          <li v-for="label in configuration.managedOutsideGUI" :key="label">{{ label }} — managed outside the GUI</li>
-        </ul>
-      </section>
+        <fieldset class="settings__group" aria-label="Appearance">
+          <legend>Appearance</legend>
+          <div class="theme-tiles" role="radiogroup">
+            <label
+              v-for="option in appearanceOptions"
+              :key="option.value"
+              class="theme-tile"
+              :class="{ 'theme-tile--selected': preference === option.value }"
+            >
+              <input
+                class="gui-visually-hidden"
+                type="radio"
+                name="am-appearance"
+                :value="option.value"
+                :checked="preference === option.value"
+                @change="setPreference(option.value)"
+              />
+              <span class="theme-tile__preview" aria-hidden="true">
+                <span class="theme-tile__window" data-preview="light">
+                  <span class="theme-tile__side" />
+                  <span class="theme-tile__main">
+                    <span class="theme-tile__bar" />
+                    <span class="theme-tile__line" />
+                    <span class="theme-tile__line theme-tile__line--short" />
+                    <span class="theme-tile__line theme-tile__line--mid" />
+                    <span class="theme-tile__accent" />
+                  </span>
+                </span>
+                <span
+                  v-if="option.value === 'dark' || option.value === 'system'"
+                  class="theme-tile__window"
+                  :class="{ 'theme-tile__window--diagonal': option.value === 'system' }"
+                  data-preview="dark"
+                >
+                  <span class="theme-tile__side" />
+                  <span class="theme-tile__main">
+                    <span class="theme-tile__bar" />
+                    <span class="theme-tile__line" />
+                    <span class="theme-tile__line theme-tile__line--short" />
+                    <span class="theme-tile__line theme-tile__line--mid" />
+                    <span class="theme-tile__accent" />
+                  </span>
+                </span>
+              </span>
+              <span class="theme-tile__label">{{ option.label }}</span>
+            </label>
+          </div>
+          <p class="settings__caption">Applies immediately.</p>
+        </fieldset>
 
-      <UButton
-        label="Manage sources"
-        aria-label="Manage sources"
-        class="gui-button--secondary"
-        color="neutral"
-        variant="soft"
-        @click="manageSources"
-      />
-    </template>
+        <section class="settings__group" aria-label="Sources">
+          <h3>Sources</h3>
+          <button type="button" class="settings__nav" aria-label="Manage sources" @click="manageSources">
+            <span class="settings__nav-tile"><GuiIcon name="folder" /></span>
+            <span class="settings__nav-text">
+              <span class="settings__nav-title">Manage sources</span>
+              <span class="settings__nav-meta">{{ sourceSummary }}</span>
+            </span>
+            <GuiIcon name="chevronRight" class="settings__nav-chevron" />
+          </button>
+        </section>
+
+        <section v-if="configuration.managedOutsideGUI.length > 0" class="settings__footnote" aria-label="Managed outside the GUI">
+          <GuiIcon name="info" class="settings__notice-icon" />
+          <p>{{ managedOutsideText }}</p>
+        </section>
+      </template>
+    </div>
     <template #footer>
+      <span class="settings__status" aria-live="polite"><span v-if="dirty" class="settings__dirty"><span class="settings__dirty-dot" aria-hidden="true" />Unsaved changes</span></span>
+      <UButton label="Cancel" color="neutral" variant="outline" aria-label="Cancel" @click="cancel" />
       <UButton
         v-if="configuration != null"
         label="Save targets"
@@ -183,7 +260,6 @@ async function save() {
         :disabled="saveDisabled"
         @click="save"
       />
-      <UButton label="Cancel" color="neutral" variant="outline" aria-label="Cancel" @click="cancel" />
     </template>
   </GuiModal>
 </template>

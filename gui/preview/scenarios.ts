@@ -239,6 +239,7 @@ const defaultScenario = (): PreviewScenario => ({
   configuration: configuration({
     userTargets: ['devin', 'claude'],
     organizationTargets: ['devin'],
+    managedOutsideGUI: ['included files', 'per-source configuration', 'other settings'],
     supportedTargets: ['devin', 'claude', 'codex'],
     userSources: [
       { id: 'src-local', kind: 'directory', location: '/home/dev/workspaces/agent-platform/resources/skills', path: '', ref: '', sourceHarness: '', rowSourceId: '' },

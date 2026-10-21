@@ -22,6 +22,7 @@ export const iconPaths = {
   ],
   close: ['M4 4l8 8M12 4l-8 8'],
   trash: ['M2.5 4h11', 'M6 4V2.8h4V4', 'M4 4l.7 9.2h6.6L12 4', 'M6.6 7v4', 'M9.4 7v4'],
+  lock: ['M4 7V5.2a4 4 0 0 1 8 0V7', 'M3.5 7h9v6.5h-9z'],
   check: ['M3.5 8.5l3 3 6-7'],
   warning: ['M8 2.5L14 13H2z', 'M8 6.5v3', 'M8 11.3v.2'],
   info: [circle(8, 8, 6), 'M8 7.2v3.6', 'M8 5v.2'],

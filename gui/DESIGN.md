@@ -9,7 +9,8 @@ This document describes the visual and interaction design of the desktop GUI
   restrained motion.
 - **Application shell**: the Codex desktop app. It has foldable left and right
   sidebars around a central work area, a compact toolbar with icon buttons and
-  split buttons, and clean centered modals with a full-width primary action.
+  split buttons, and clean centered modals with a solid primary action at the
+  right of the footer.
 
 Behavior is defined in `openspec/specs/gui-*` and `session-*`. This document
 covers presentation only. A restyle must not change what an action does, its
@@ -269,7 +270,7 @@ The empty state, "Select a resource to inspect it.", is shown centered in
 |---|---|
 | Icon button | 28×28, radius 8, transparent; hover `--gui-layer`; icon 16 px `--gui-ink-2` → `--gui-ink` |
 | Secondary button | height 28, padding 10, radius 8, `--gui-s0200` background; hover `--gui-s0400` |
-| Primary button | height 28 (toolbar) or 40 (modal), `--gui-solid-bg` / `--gui-solid-ink`; full width in modals |
+| Primary button | height 28 (toolbar) or 32 (modal footer), `--gui-solid-bg` / `--gui-solid-ink`; the last button in a modal footer |
 | Tag | height 20, padding 6, radius 4, `--gui-s0200`, mono caps 11 px `--gui-ink-2` |
 | kbd | mono 11 px, padding 2/4, radius 4, `--gui-layer` |
 | Toggle switch | 36×20 pill; on: `--gui-solid-bg` track with a `--gui-solid-ink` knob, as in Codex's "Include unstaged" toggle |
@@ -303,9 +304,9 @@ All modals follow the Codex "Commit your changes" pattern:
   `--gui-s0100` separated by hairlines, each with a leading icon, a label, and
   a trailing ✓ on the selected row. These replace radio groups where a modal
   asks the user to choose one option.
-- Footer: one full-width primary button. When there is a secondary or
-  destructive choice, it sits below the primary button as a full-width
-  secondary button.
+- Footer: every modal footer is a right-aligned row, with secondary buttons
+  first (Cancel, Back, Stay) and the solid primary last. The row wraps to a
+  second line rather than overflowing. Buttons are 32 px high.
 - Focus is trapped while a modal is open. Escape is the cancel choice, and
   focus returns to the opener. The existing watchers already do this.
 
@@ -313,7 +314,7 @@ Per modal:
 
 | Modal | Icon | Content |
 |---|---|---|
-| **Settings** (`HarnessSettings`) | gear | Section "Harness targets": a checkbox list, with organization targets shown read-only and tagged ORG. Section "Appearance": a System/Light/Dark segmented control. The "managed outside the GUI" panel sits at the bottom as a quiet `--gui-s0100` card. Primary: "Save". |
+| **Settings** (`HarnessSettings`) | gear | Grouped target lists under "Harness targets", an organization sub-list with a caption, Appearance as three theme preview tiles, a "Manage sources" row with counts, and a footnote for items managed outside the GUI. Footer row: "Unsaved changes" status, Cancel, and the solid "Save targets". |
 | **Sources** | folder | The source list as cards (location in mono, type tag, Remove icon button), then "Add source", which reveals `SourceForm` inline. Organization sources are read-only. |
 | **First run** | sparkle | A three-step flow with a step indicator (`1 Targets · 2 Telemetry · 3 Sources`). Telemetry consent is a choice list with *no* preselected row ("Share basic telemetry" / "Don't share"), and Continue stays disabled until the user picks one. Cancel writes nothing. |
 | **Resource action** (Install/Remove) | plus / minus | Label/value rows for the resource, the plan preview as a code card (12 px radius, mono, diff-colored lines), the risk acknowledgement as a toggle switch row, and the primary button "Install" or "Remove". |
@@ -618,10 +619,20 @@ conflicts with an earlier section, this section wins.
 - *Observed*: Settings repeats the source lists that the Sources modal
   already shows. Its title, "Harness targets", names only one of its
   sections.
-- *Rule*: the title is "Settings". Its caps sections are "Harness targets"
-  (user targets, then organization targets with the note that they always
-  apply) and "Appearance". Sources are managed from a secondary
-  "Manage sources" button, which closes Settings and opens Sources.
+- *Rule*: the title is "Settings". Its caps sections are "Harness targets",
+  "Appearance", and "Sources".
+- Targets are rows in an inset `--gui-s0100` list. Each row toggles on a click
+  anywhere in it. A target that the organization also sets shows "Also set
+  by organization". Organization targets are a second read-only list under
+  "Organization", with a caption that says they always apply.
+- Appearance is three theme preview tiles (System, Light, Dark). Each tile
+  draws its own fixed palette, so the light tile stays light in dark mode.
+  The caption reads "Applies immediately."
+- "Manage sources" is one navigation row with a count, such as "2 configured
+  · 1 from organization", and a chevron. It closes Settings and opens Sources.
+- Items managed outside the GUI are a footnote, not a card.
+- The footer holds "Unsaved changes" on the left, shown only while the draft
+  differs from the saved targets. Then Cancel, then the solid Save targets.
 
 ### Toolbar search
 

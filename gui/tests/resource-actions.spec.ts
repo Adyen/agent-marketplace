@@ -182,7 +182,7 @@ function countRequests(page: Page) {
 }
 
 function mutationStatus(page: Page): Locator {
-  return page.getByRole('status').filter({ hasText: /^mutation(?:\s|$)/i })
+  return page.locator('.gui-toast--progress').filter({ hasText: 'Applying changes' })
 }
 
 async function launchWorkspace(page: Page, bootstrap: Work39Bootstrap, actions: string[]): Promise<Locator> {

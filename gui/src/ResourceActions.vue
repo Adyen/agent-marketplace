@@ -79,13 +79,7 @@ function close() {
       </label>
     </div>
     <template #footer>
-      <UButton
-        v-if="showConfirm"
-        :label="confirmLabel"
-        :aria-label="confirmLabel"
-        :disabled="!canConfirm"
-        @click="controller.confirmResourceAction()"
-      />
+      <UButton label="Cancel" aria-label="Cancel" color="neutral" variant="outline" :disabled="controller.resourceActionSubmitting" @click="close" />
       <UButton
         v-if="state?.error"
         label="Retry plan"
@@ -95,7 +89,13 @@ function close() {
         :disabled="state.loading || controller.resourceActionSubmitting"
         @click="controller.retryResourceActionPlan()"
       />
-      <UButton label="Cancel" aria-label="Cancel" color="neutral" variant="outline" :disabled="controller.resourceActionSubmitting" @click="close" />
+      <UButton
+        v-if="showConfirm"
+        :label="confirmLabel"
+        :aria-label="confirmLabel"
+        :disabled="!canConfirm"
+        @click="controller.confirmResourceAction()"
+      />
     </template>
   </GuiModal>
 </template>

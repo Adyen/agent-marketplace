@@ -2142,7 +2142,7 @@ describe('Event stream reconnect', () => {
       expect(alert?.textContent).toBe('Resource action could not be prepared; refresh this resource and retry.')
       expect(alert?.textContent).not.toContain('resource_action_unavailable')
       expect(document.body.querySelector('button[aria-label="Confirm install"]')).toBeNull()
-      expect(document.body.querySelector('.gui-modal__footer > button')?.getAttribute('aria-label')).toBe('Retry resource action plan')
+      expect(document.body.querySelector('.gui-modal__footer > button:last-child')?.getAttribute('aria-label')).toBe('Retry resource action plan')
       const retry = document.body.querySelector('button[aria-label="Retry resource action plan"]') as HTMLButtonElement | null
       expect(retry).not.toBeNull()
       retry?.click()
