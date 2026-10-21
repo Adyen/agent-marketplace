@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { after, before } from "node:test";
 
-import { clipboardWrites, defineFixture, findTextRun, locate, sgrDrag as drag, step, waitForExit, waitForInverse } from "./helpers.js";
+import { clipboardWrites, defineFixture, findTextRun, locate, sgr, sgrDrag as drag, step, waitForExit, waitForInverse } from "./helpers.js";
 
 // spec: tui-mouse-navigation/terminal-drag-transport-copies-selected-error-text
 // spec: tui-mouse-navigation/error-screen-gestures-outside-displayed-text-do-not-copy
@@ -58,7 +58,7 @@ journey.test("errors-screen drags copy displayed error text and other gestures c
 
   await step("a click without a drag copies nothing", async () => {
     const run = await findTextRun(terminal, selected);
-    await terminal.write(drag(run.x, run.y, run.x, run.y));
+    await terminal.write(sgr(0, run.x, run.y, "M") + sgr(0, run.x, run.y, "m"));
   }, async () => {
     await waitForInverse(terminal, selected, 0);
   });
