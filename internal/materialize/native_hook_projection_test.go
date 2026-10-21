@@ -382,7 +382,7 @@ func TestPrepareIndependentNativeHookProjection(t *testing.T) {
 		t.Fatalf("support = %d, want 1", len(projection.support))
 	}
 	file := projection.support[0]
-	if file.Path != "guard.sh" || string(file.Bytes) != string(supportBytes) || file.Mode.Perm() != 0o755 {
+	if file.Path != "hooks/guard.sh" || string(file.Bytes) != string(supportBytes) || file.Mode.Perm() != 0o755 {
 		t.Fatalf("support artifact = %#v", file)
 	}
 
@@ -548,15 +548,15 @@ func TestPrepareIndependentNativeHookProjectionFactoryNativeSourceProjects(t *te
 	if !ok || handler["type"] != "command" {
 		t.Fatalf("native Factory handler = %v, want command", handlers[0])
 	}
-	wantCommand := `"$FACTORY_PROJECT_DIR"/` + filepath.ToSlash(filepath.Join(".factory", wantSupportRelBase, "scripts/run.sh"))
+	wantCommand := `"$FACTORY_PROJECT_DIR"/` + filepath.ToSlash(filepath.Join(".factory", wantSupportRelBase, "hooks", "scripts", "run.sh"))
 	if handler["command"] != wantCommand {
 		t.Fatalf("command = %v, want exact native support base %q", handler["command"], wantCommand)
 	}
 	if _, leaked := handler["commandRegex"]; leaked {
 		t.Fatalf("commandRegex leaked into handler: %v", handler)
 	}
-	if len(projection.support) != 1 || projection.support[0].Path != "scripts/run.sh" || projection.support[0].Mode.Perm() != 0o755 {
-		t.Fatalf("support = %#v, want executable scripts/run.sh", projection.support)
+	if len(projection.support) != 1 || projection.support[0].Path != "hooks/scripts/run.sh" || projection.support[0].Mode.Perm() != 0o755 {
+		t.Fatalf("support = %#v, want staged hooks/scripts/run.sh", projection.support)
 	}
 	if entries, err := os.ReadDir(repoRoot); err != nil || len(entries) != 0 {
 		t.Fatalf("repoRoot mutated during pure preparation: %v %v", entries, err)
@@ -1295,12 +1295,12 @@ func TestPrepareIndependentNativeHookProjectionStagedIndexOnly(t *testing.T) {
 	}
 	found := false
 	for _, file := range projection.support {
-		if file.Path == "scripts/run.sh" && bytes.Equal(file.Bytes, []byte{0x00, 0x41, 0xff, 0x0a}) && file.Mode.Perm() == 0o751 {
+		if file.Path == "hooks/scripts/run.sh" && bytes.Equal(file.Bytes, []byte{0x00, 0x41, 0xff, 0x0a}) && file.Mode.Perm() == 0o751 {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("support = %#v, want staged scripts/run.sh", projection.support)
+		t.Fatalf("support = %#v, want staged hooks/scripts/run.sh", projection.support)
 	}
 	if err := os.RemoveAll(staged); err != nil {
 		t.Fatal(err)

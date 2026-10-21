@@ -154,6 +154,7 @@ func TestIndexOnlyResolverChecksExactCommitAndReingestedDigests(t *testing.T) {
 }
 
 // spec: hook-resources/every-harness-target-receives-hooks-in-its-native-file
+// spec: hook-resources/bundle-root-references-resolve-on-every-source-path
 func TestIndexOnlyResolverStagesNativeHookDefinitionsAndMaterializesOffline(t *testing.T) {
 	isolateHarnessState(t)
 	repo := t.TempDir()
@@ -171,6 +172,7 @@ func TestIndexOnlyResolverStagesNativeHookDefinitionsAndMaterializesOffline(t *t
 		supportScript    []byte
 		supportMode      os.FileMode
 		installedName    string
+		wantHookDiag     string
 		extraSourceFiles map[string][]byte
 		hookName         string
 	}
@@ -183,6 +185,19 @@ func TestIndexOnlyResolverStagesNativeHookDefinitionsAndMaterializesOffline(t *t
 			nativeFile: ".factory/hooks.json", payload: "scripts/check.sh",
 			peerFile: ".factory/mcp.json", peerContents: `{"mcpServers":{"peer-factory":{"command":"peer-binary"}}}`, peerMarker: "peer-factory",
 			supportScript: []byte("#!/bin/sh\necho index-factory support\n"), supportMode: 0o755, installedName: "installed-factory",
+			wantHookDiag: "hook.support-reference-legacy",
+			extraSourceFiles: map[string][]byte{
+				".factory/bundle/scripts/nested.sh": []byte("echo nested payload\n"),
+				"verified.marker":                   []byte("staging metadata\n"),
+				"sibling/other.sh":                  []byte("not hook support\n"),
+			},
+		},
+		{
+			name: "factory-bundle-root", harness: hcc.HarnessFactory, target: hcc.TargetFactory,
+			sourceFile: ".factory/hooks.json",
+			definition: []byte(`{"SessionStart":[{"matcher":"Execute","hooks":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/.factory/scripts/check.sh"}]}]}`),
+			nativeFile: ".factory/hooks.json", payload: "scripts/check.sh",
+			supportScript: []byte("#!/bin/sh\necho index-factory support\n"), supportMode: 0o755, installedName: "installed-factory-bundle",
 			extraSourceFiles: map[string][]byte{
 				".factory/bundle/scripts/nested.sh": []byte("echo nested payload\n"),
 				"verified.marker":                   []byte("staging metadata\n"),
@@ -358,6 +373,19 @@ func TestIndexOnlyResolverStagesNativeHookDefinitionsAndMaterializesOffline(t *t
 			if err != nil || diag.HasErrors(report.Diags) {
 				t.Fatalf("materialize online hook: %v / %v", err, report)
 			}
+			foundHookDiag := false
+			for _, d := range report.Diags {
+				if strings.HasPrefix(d.Code, "hook.") {
+					if d.Code == tc.wantHookDiag {
+						foundHookDiag = true
+						continue
+					}
+					t.Fatalf("unexpected hook diagnostic: %+v", d)
+				}
+			}
+			if tc.wantHookDiag != "" && !foundHookDiag {
+				t.Fatalf("missing expected hook diagnostic %q: %+v", tc.wantHookDiag, report.Diags)
+			}
 			nativePath := filepath.Join(workspace, filepath.FromSlash(tc.nativeFile))
 			before, err := os.ReadFile(nativePath)
 			if err != nil || !bytes.Contains(before, []byte(tc.payload)) || bytes.Contains(before, []byte("_managed_by")) {
@@ -368,10 +396,10 @@ func TestIndexOnlyResolverStagesNativeHookDefinitionsAndMaterializesOffline(t *t
 				t.Fatal(err)
 			}
 			if len(tc.supportScript) > 0 {
-				if !bytes.Contains(before, []byte(filepath.ToSlash(filepath.Join(tc.installedName, "scripts", "check.sh")))) {
+				if !bytes.Contains(before, []byte(filepath.ToSlash(filepath.Join(tc.installedName, ".factory", "scripts", "check.sh")))) {
 					t.Fatalf("Native command does not reference the selected support name: %s", before)
 				}
-				matches, err := filepath.Glob(filepath.Join(workspace, ".factory", "hook-support", "*", tc.installedName, "scripts", "check.sh"))
+				matches, err := filepath.Glob(filepath.Join(workspace, ".factory", "hook-support", "*", tc.installedName, ".factory", "scripts", "check.sh"))
 				if err != nil || len(matches) != 1 {
 					t.Fatalf("index-only support scripts = %v / %v, want one selected script", matches, err)
 				}
@@ -384,7 +412,7 @@ func TestIndexOnlyResolverStagesNativeHookDefinitionsAndMaterializesOffline(t *t
 				if err != nil || info.Mode().Perm() != tc.supportMode {
 					t.Fatalf("index-only support mode = %v / %v, want %v", info, err, tc.supportMode)
 				}
-				nestedScript, err := filepath.Glob(filepath.Join(workspace, ".factory", "hook-support", "*", tc.installedName, "bundle", "scripts", "nested.sh"))
+				nestedScript, err := filepath.Glob(filepath.Join(workspace, ".factory", "hook-support", "*", tc.installedName, ".factory", "bundle", "scripts", "nested.sh"))
 				if err != nil || len(nestedScript) != 1 {
 					t.Fatalf("nested source support file = %v / %v, want one relative-path-preserved file", nestedScript, err)
 				}
@@ -393,7 +421,7 @@ func TestIndexOnlyResolverStagesNativeHookDefinitionsAndMaterializesOffline(t *t
 					t.Fatalf("nested source support bytes = %q / %v", nestedBytes, err)
 				}
 				for _, excluded := range []string{"verified.marker", filepath.Join("sibling", "other.sh"), "mcp.json"} {
-					matches, err := filepath.Glob(filepath.Join(workspace, ".factory", "hook-support", "*", tc.installedName, filepath.FromSlash(excluded)))
+					matches, err := filepath.Glob(filepath.Join(workspace, ".factory", "hook-support", "*", tc.installedName, ".factory", filepath.FromSlash(excluded)))
 					if err != nil || len(matches) != 0 {
 						t.Fatalf("excluded source file %s was installed: %v / %v", excluded, matches, err)
 					}
