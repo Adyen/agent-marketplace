@@ -389,7 +389,7 @@ type Model struct {
 	// excludeCompetingRegistriesCmd after the primary toggle succeeds.
 	// Set when enabling a colliding resource; cleared on configWrittenMsg.
 	pendingExcludeAction  *toggleAction
-	selectionAfterDisable string
+	selectionAfterDisable rebuildAnchor
 
 	// spinner provides an animated indicator in the footer while
 	// loading, refreshing, or syncing.

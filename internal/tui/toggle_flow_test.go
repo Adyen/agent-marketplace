@@ -669,6 +669,131 @@ func TestDisableSelectsAdjacentResourceAfterSnapshot(t *testing.T) {
 	}
 }
 
+// The first write in a workspace without an acquisition lock creates the
+// lock, so the reload loads Git rows from the locked snapshot instead of the
+// mutable cache and every catalog key changes.
+// spec: tui-navigation/selection-survives-a-reload-that-locks-its-source
+func TestEnableKeepsSelectionWhenTheReloadLocksItsSource(t *testing.T) {
+	const mutable, locked = "/cache/c4f28a20/main:32c1cf49", "file:///registries/fixture@sha1:87aecb6b:skills"
+	gitRow := func(name, catalogKey string, opts ...func(*row)) row {
+		r := mkRow(name, append([]func(*row){withRegistry("file:///registries/fixture.git", "fixture"), withRegistryMeta("main", "skills")}, opts...)...)
+		r.Artifact.CatalogKey = catalogKey
+		return r
+	}
+	for _, tc := range []struct {
+		name  string
+		after []row
+		want  string
+	}{
+		{
+			name:  "unique resource follows its new catalog key",
+			after: []row{gitRow("alpha-skill", locked, withLocal), gitRow("beta-skill", locked, withProject)},
+			want:  "alpha-skill",
+		},
+		{
+			// Two rows share the resource identity, so the rebuild must not guess
+			// between them and keeps the position-based fallback.
+			name:  "ambiguous resource is not guessed",
+			after: []row{gitRow("alpha-skill", locked, withLocal), gitRow("alpha-skill", locked+"-copy", withLocal), gitRow("beta-skill", locked, withProject)},
+			want:  "beta-skill",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewModel("/repo", "/home")
+			m.loading = false
+			m.rows = []row{gitRow("beta-skill", mutable, withProject), gitRow("alpha-skill", mutable, withAvailable)}
+			m.filteredRows = m.rows
+			m.rebuildFlatItems()
+			for i, item := range m.flatItems {
+				if item.Kind == flatArtifact && item.Row.Artifact.Name == "alpha-skill" {
+					m.cursor = i
+				}
+			}
+			operation, ok := m.beginOperation(operationMutation)
+			if !ok {
+				t.Fatal("mutation operation was not accepted")
+			}
+			updated, _ := m.Update(configWrittenMsg{operation: operation, skillName: "alpha-skill", enabled: true})
+			m = updated.(Model)
+			updated, _ = m.Update(snapshotLoadedMsg{generation: m.requests.active(requestSnapshot), rows: tc.after})
+			m = updated.(Model)
+
+			selected, ok := m.selectedRow()
+			if !ok || selected.Artifact.Name != tc.want {
+				t.Fatalf("selection after the locking reload = %q (ok=%v), want %q", selected.Artifact.Name, ok, tc.want)
+			}
+		})
+	}
+}
+
+// Disabling selects the next row even when the same write creates the lock and
+// changes every catalog key, instead of following the disabled row.
+func TestDisableSelectsAdjacentResourceWhenTheReloadLocksItsSource(t *testing.T) {
+	gitRow := func(name, catalogKey string, opts ...func(*row)) row {
+		r := mkRow(name, append([]func(*row){withRegistry("file:///registries/fixture.git", "fixture"), withRegistryMeta("main", "skills")}, opts...)...)
+		r.Artifact.CatalogKey = catalogKey
+		return r
+	}
+	const mutable, locked = "/cache/c4f28a20/main:32c1cf49", "file:///registries/fixture@sha1:87aecb6b:skills"
+	m := NewModel("/repo", "/home")
+	m.loading = false
+	m.rows = []row{gitRow("alpha", mutable, withProject), gitRow("bravo", mutable, withProject), gitRow("charlie", mutable, withProject)}
+	m.filteredRows = m.rows
+	m.rebuildFlatItems()
+	for i, item := range m.flatItems {
+		if item.Kind == flatArtifact && item.Row.Artifact.Name == "bravo" {
+			m.cursor = i
+		}
+	}
+	operation, ok := m.beginOperation(operationMutation)
+	if !ok {
+		t.Fatal("mutation operation was not accepted")
+	}
+	updated, _ := m.Update(configWrittenMsg{operation: operation, skillName: "bravo", selectNext: true})
+	m = updated.(Model)
+	after := []row{gitRow("alpha", locked, withProject), gitRow("bravo", locked, withAvailable), gitRow("charlie", locked, withProject)}
+	updated, _ = m.Update(snapshotLoadedMsg{generation: m.requests.active(requestSnapshot), rows: after})
+	m = updated.(Model)
+
+	selected, ok := m.selectedRow()
+	if !ok || selected.Artifact.Name != "charlie" {
+		t.Fatalf("selection after disabling bravo through a locking reload = %q (ok=%v), want charlie", selected.Artifact.Name, ok)
+	}
+}
+
+// spec: tui-navigation/selection-survives-a-reload-that-locks-its-source
+func TestOpenDetailFollowsItsResourceWhenTheReloadLocksItsSource(t *testing.T) {
+	gitRow := func(name, catalogKey string, opts ...func(*row)) row {
+		r := mkRow(name, append([]func(*row){withRegistry("file:///registries/fixture.git", "fixture"), withRegistryMeta("main", "skills")}, opts...)...)
+		r.Artifact.CatalogKey = catalogKey
+		return r
+	}
+	alpha := gitRow("alpha-skill", "/cache/c4f28a20/main:32c1cf49", withAvailable)
+	m := NewModel("/repo", "/home")
+	m.loading = false
+	m.rows = []row{gitRow("beta-skill", "/cache/c4f28a20/main:32c1cf49", withProject), alpha}
+	m.filteredRows = m.rows
+	m.rebuildFlatItems()
+	m.pane = paneDetail
+	m.detailKey = rowKey(alpha)
+	operation, ok := m.beginOperation(operationMutation)
+	if !ok {
+		t.Fatal("mutation operation was not accepted")
+	}
+	updated, _ := m.Update(configWrittenMsg{operation: operation, skillName: "alpha-skill", enabled: true})
+	m = updated.(Model)
+	locked := "file:///registries/fixture@sha1:87aecb6b:skills"
+	updated, _ = m.Update(snapshotLoadedMsg{generation: m.requests.active(requestSnapshot), rows: []row{gitRow("alpha-skill", locked, withLocal), gitRow("beta-skill", locked, withProject)}})
+	m = updated.(Model)
+
+	if m.pane != paneDetail || m.detailKey == "" {
+		t.Fatalf("detail closed after the locking reload: pane=%v key=%q", m.pane, m.detailKey)
+	}
+	if want := rowKey(gitRow("alpha-skill", locked, withLocal)); m.detailKey != want {
+		t.Fatalf("detail key = %q, want the reloaded alpha-skill row %q", m.detailKey, want)
+	}
+}
+
 // A disabled row moves to a different Status bucket, so the snapshot rebuild
 // must not scroll to its new position before selecting the neighbouring row.
 func TestDisableInStatusTabKeepsListScrollPosition(t *testing.T) {

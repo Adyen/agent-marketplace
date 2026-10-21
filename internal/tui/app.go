@@ -333,7 +333,7 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	selection := m.captureRebuildAnchor()
 	listOffset := m.listOffset
 	selectionAfterDisable := m.selectionAfterDisable
-	m.selectionAfterDisable = ""
+	m.selectionAfterDisable = rebuildAnchor{}
 	var previousDetail row
 	hadPreviousDetail := false
 	if m.pane == paneDetail && m.detailKey != "" {
@@ -358,7 +358,7 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	// a disabled row now in Available); keep the previous viewport and scroll
 	// only as far as the final selection needs.
 	m.listOffset = listOffset
-	if !m.restoreSelectionKey(selectionAfterDisable) {
+	if !m.restoreAnchor(selectionAfterDisable) {
 		m.restoreSelectionAfterRebuild(selection)
 	}
 	m.clampListOffset()
@@ -711,7 +711,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshing = false
 		m.driftAssessment = driftUnknown
 		if msg.selectNext {
-			m.selectionAfterDisable = m.nextRowSelectionKey()
+			m.selectionAfterDisable = m.nextRowSelection()
 		}
 		// If a collision-aware enable was pending, emit the exclude
 		// command now that the primary toggle has succeeded.
@@ -1479,6 +1479,9 @@ func (m *Model) rebuildOpenBundle(previous row, hadPrevious bool) {
 			current, found = r, true
 			break
 		}
+	}
+	if !found && hadPrevious {
+		current, found = uniqueRowByIdentity(m.rows, rowSelectionIdentity(previous))
 	}
 	if !found {
 		m.detailKey = ""

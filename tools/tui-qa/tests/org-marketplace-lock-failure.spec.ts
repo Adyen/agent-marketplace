@@ -14,6 +14,7 @@ import { runAM } from "./process-helpers.js";
 // acquisition also proves that verification does not depend on the Go
 // toolchain that built the client.
 // spec: marketplace-api/client-verifies-placeholder-archives-by-hash
+// spec: tui-navigation/selection-survives-a-reload-that-locks-its-source
 const navigationCeilingMs = 1_000;
 const acknowledgementCeilingMs = 3_500;
 const warmToggleCeilingMs = 4_500;
@@ -77,7 +78,13 @@ journey.test("a missing organization marketplace lock is acquired transiently wi
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     acknowledgementMs = performance.now() - toggleStarted;
-    await locate(terminal, /Pending sync\s+\(1\)/).unique().expect();
+    // The fixture skipped its pre-sync, so beta-skill is already pending and
+    // the settled list holds both skills. The write also creates the missing
+    // repository lock, and the toggled skill must stay selected through that
+    // reload.
+    await locate(terminal, /Pending sync\s+\(2\)/).unique().expect();
+    await locate(terminal, "~ 3 out of sync").unique().expect();
+    await locate(terminal, /Name:\s+alpha-skill/).unique().expect();
     await locate(terminal, /Status:\s+enabled \(pending sync\)/).unique().expect();
   });
   const toggleMs = performance.now() - toggleStarted;
