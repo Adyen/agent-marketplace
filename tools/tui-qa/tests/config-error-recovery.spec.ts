@@ -51,7 +51,16 @@ journey.test("a broken user config is reported with recovery steps and fixed by 
     // and macOS may resolve them through /private, so match the suffix without
     // whitespace.
     const screen = (await terminal.text()).replace(/\s+/g, "");
-    assert.ok(screen.includes("/home/.agents/config.yaml:"), `the errors screen lost the cause's config path:\n${await terminal.text()}`);
+    const configPath = "/home/.agents/config.yaml";
+    assert.ok(
+      screen.includes(`${configPath}:`),
+      `the errors screen lost the cause's config path:\n${await terminal.text()}`
+    );
+    assert.equal(
+      screen.split(configPath).length - 1,
+      2,
+      `the cause and hint should each name the config once:\n${await terminal.text()}`
+    );
   });
   await step("close the errors screen", () => terminal.write("e"), async () => {
     await locate(terminal, "Errors (1)").expect({ not: true });

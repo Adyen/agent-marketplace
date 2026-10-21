@@ -196,10 +196,7 @@ func (e *V4ValidationError) Error() string {
 		}
 	}
 	if e.File != "" {
-		if prefix := e.File + ": "; strings.HasPrefix(message, prefix) {
-			message = strings.TrimPrefix(message, prefix)
-		}
-		if e.Path != "" && !strings.Contains(message, e.Path) {
+		if e.Path != "" && e.Path != e.File && !strings.Contains(message, e.Path) {
 			message = e.Path + ": " + message
 		}
 		if e.Line > 0 {
