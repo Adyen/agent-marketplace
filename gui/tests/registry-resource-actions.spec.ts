@@ -242,7 +242,7 @@ async function confirmPlan(page: Page, dialog: Locator, verb: 'Install' | 'Remov
 }
 
 function mutationStatus(page: Page): Locator {
-  return page.getByRole('status').filter({ hasText: /^mutation(?:\s|$)/i })
+  return page.locator('.gui-toast--progress').filter({ hasText: 'Applying changes' })
 }
 
 function countActionRequests(page: Page) {
