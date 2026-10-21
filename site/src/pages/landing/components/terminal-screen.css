@@ -1,0 +1,242 @@
+/*
+ * Product depictions: a flat raised surface with quiet internal divisions.
+ * Shared by the hero preview, the interactive demo and the Marketplace window.
+ */
+
+.terminal-frame {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  margin: 0;
+  container-type: inline-size;
+  border-radius: var(--lp-radius-preview);
+  background: var(--lp-surface);
+  color: var(--lp-text);
+  font: var(--lp-font-label);
+}
+
+.terminal-frame.is-wide {
+  min-height: calc(100cqw / 3);
+}
+
+.terminal-header {
+  display: flex;
+  min-height: var(--lp-h-control);
+  align-items: center;
+  gap: var(--lp-space-related);
+  padding: 0 var(--lp-inset);
+  border-bottom: 1px solid var(--lp-divider);
+  font: var(--lp-font-label);
+}
+
+.window-controls {
+  display: flex;
+  gap: var(--lp-space-tight);
+}
+
+.window-controls i {
+  display: block;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  background: var(--lp-dot-red);
+}
+
+.window-controls i:nth-child(2) {
+  background: var(--lp-dot-yellow);
+}
+
+.window-controls i:nth-child(3) {
+  background: var(--lp-green);
+}
+
+.terminal-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--lp-text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-frame.is-titled .terminal-label {
+  text-transform: uppercase;
+}
+
+.terminal-status {
+  display: flex;
+  align-items: center;
+}
+
+.terminal-body {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.terminal-body > * {
+  flex: 1 1 auto;
+}
+
+/* The TUI screen: resources and details side by side, status bar below. */
+.terminal-frame .screen {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  grid-template-rows: auto 1fr auto;
+}
+
+.terminal-frame .screen .title {
+  grid-area: 1 / 1;
+  padding: var(--lp-inset) var(--lp-inset) var(--lp-space-related);
+  color: var(--lp-text);
+}
+
+.terminal-frame .screen .panes {
+  display: contents;
+}
+
+.terminal-frame .screen .resources {
+  grid-area: 2 / 1;
+  min-width: 0;
+  padding: 0 var(--lp-space-related) var(--lp-inset);
+}
+
+.terminal-frame .screen .resources > div + div {
+  margin-top: var(--lp-space-related);
+}
+
+.terminal-frame .screen .details {
+  grid-area: 1 / 2 / 3;
+  min-width: 0;
+  padding: var(--lp-inset);
+  border-left: 1px solid var(--lp-divider);
+}
+
+.terminal-frame .screen .details dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--lp-space-tight) var(--lp-space-related);
+  margin: 0;
+}
+
+.terminal-frame .screen .details dt {
+  color: var(--lp-text-2);
+}
+
+.terminal-frame .screen .details dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--lp-text);
+  overflow-wrap: anywhere;
+}
+
+.terminal-frame .registry-title {
+  min-width: 0;
+  overflow: hidden;
+  padding: var(--lp-space-tight) var(--lp-space-related);
+  color: var(--lp-text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-frame .resource {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--lp-space-related);
+  padding: var(--lp-space-tight) var(--lp-space-related);
+  border-radius: var(--lp-radius-control);
+}
+
+.terminal-frame .resource.selected {
+  background: var(--lp-fill);
+}
+
+.terminal-frame .resource :is(.check, .toggle) {
+  color: var(--lp-text-2);
+  white-space: pre;
+}
+
+.terminal-frame .resource.selected :is(.check, .toggle) {
+  color: var(--lp-text);
+}
+
+.terminal-frame .resource :is(.kind, .scope) {
+  color: var(--lp-text-2);
+}
+
+.terminal-frame .resource .kind {
+  flex: 0 0 7ch;
+}
+
+.terminal-frame .resource .name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--lp-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-frame .resource .resource-row {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: var(--lp-space-related);
+}
+
+.terminal-frame .screen .activity {
+  display: flex;
+  grid-area: 3 / 1 / 4 / -1;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--lp-space-related);
+  padding: var(--lp-space-related) var(--lp-inset);
+  border-top: 1px solid var(--lp-divider);
+  color: var(--lp-text-2);
+}
+
+.terminal-frame .screen .pending,
+.terminal-frame .screen .sync-status {
+  color: var(--lp-status-warning);
+}
+
+.terminal-frame .screen .positive {
+  color: var(--lp-status-ready);
+}
+
+.terminal-frame .screen kbd {
+  display: inline-block;
+  padding: var(--lp-space-tight);
+  border-radius: var(--lp-radius-mark);
+  box-shadow: var(--lp-outline-shadow);
+  color: var(--lp-text);
+  font: inherit;
+}
+
+@supports (text-box: trim-both cap alphabetic) {
+  .terminal-frame .screen kbd {
+    text-box: trim-both cap alphabetic;
+  }
+}
+
+/* Stack by the width the depiction is given, not by the page width. */
+@container (max-width: 40rem) {
+  .terminal-frame .screen {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto auto;
+  }
+
+  .terminal-frame .screen .details {
+    grid-area: 3 / 1;
+    border-top: 1px solid var(--lp-divider);
+    border-left: 0;
+  }
+
+  .terminal-frame .screen .activity {
+    grid-area: 4 / 1;
+  }
+}

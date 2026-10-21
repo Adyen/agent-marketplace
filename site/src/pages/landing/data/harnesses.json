@@ -3,13 +3,13 @@
   "_source": "pkg/harness-compilation/target (targets) and probed compilation (matrix)",
   "targets": [
     {
-      "id": "factory",
-      "label": "Factory Droid",
+      "id": "claude",
+      "label": "Claude Code",
       "repoRoots": [
-        ".factory"
+        ".claude"
       ],
       "machineRoots": [
-        "~/.factory"
+        "~/.claude"
       ],
       "capabilities": {
         "compile": true,
@@ -19,13 +19,13 @@
       }
     },
     {
-      "id": "claude",
-      "label": "Claude Code",
+      "id": "factory",
+      "label": "Factory Droid",
       "repoRoots": [
-        ".claude"
+        ".factory"
       ],
       "machineRoots": [
-        "~/.claude"
+        "~/.factory"
       ],
       "capabilities": {
         "compile": true,
