@@ -16,4 +16,4 @@
 
 ## 3. Gates
 
-- [ ] 3.1 Run `make validate` and `make spec-check`
+- [x] 3.1 Run `make validate` and `make spec-check`
