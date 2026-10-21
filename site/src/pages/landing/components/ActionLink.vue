@@ -24,16 +24,16 @@ withDefaults(
     <span class="am-roll-label action-link__label">
       <span class="am-roll-face action-link__face">
         {{ label }}
-        <svg v-if="icon" class="am-stroke-icon action-link__icon" aria-hidden="true" viewBox="0 0 16 16">
-          <path v-if="icon === 'arrow'" d="M2 8h11M9 4l4 4-4 4" />
-          <path v-else d="M5 3.75h7.25V11M12 4 4 12" />
+        <svg v-if="icon" class="am-fill-icon action-link__icon" aria-hidden="true" viewBox="0 0 16 16">
+          <path v-if="icon === 'arrow'" d="M8.75 2.75 14 8l-5.25 5.25v-4H2v-2.5h6.75v-4Z" />
+          <path v-else d="M9 2h5v5h-2V5.4l-5.8 5.8-1.4-1.4L10.6 4H9V2ZM3 4h4v2H5v6h6v-2h2v4H3V4Z" />
         </svg>
       </span>
       <span class="am-roll-face am-roll-face-copy action-link__face" aria-hidden="true">
         {{ label }}
-        <svg v-if="icon" class="am-stroke-icon action-link__icon" aria-hidden="true" viewBox="0 0 16 16">
-          <path v-if="icon === 'arrow'" d="M2 8h11M9 4l4 4-4 4" />
-          <path v-else d="M5 3.75h7.25V11M12 4 4 12" />
+        <svg v-if="icon" class="am-fill-icon action-link__icon" aria-hidden="true" viewBox="0 0 16 16">
+          <path v-if="icon === 'arrow'" d="M8.75 2.75 14 8l-5.25 5.25v-4H2v-2.5h6.75v-4Z" />
+          <path v-else d="M9 2h5v5h-2V5.4l-5.8 5.8-1.4-1.4L10.6 4H9V2ZM3 4h4v2H5v6h6v-2h2v4H3V4Z" />
         </svg>
       </span>
     </span>
@@ -104,11 +104,6 @@ withDefaults(
 
 .action-link__face {
   gap: var(--lp-space-tight);
-}
-
-.action-link__icon {
-  stroke-linecap: square;
-  stroke-linejoin: miter;
 }
 
 @media (prefers-reduced-motion: reduce) {

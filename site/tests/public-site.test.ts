@@ -8,6 +8,7 @@ const dist = new URL('../.vitepress/dist/', import.meta.url)
 const base = process.env.SITE_BASE ?? '/'
 const docsPath = `${base.replace(/\/?$/, '/')}docs/`
 
+// spec: marketplace-web-ui/default-harness-leads-the-tab-order
 // spec: site-deployment-profiles/public-project-site-exposes-only-landing-and-documentation
 test('public project site exposes landing and documentation without a local Marketplace', async () => {
   const [landing, docs, nestedDocs] = await Promise.all([
@@ -25,6 +26,11 @@ test('public project site exposes landing and documentation without a local Mark
   assert.match(landing, /data-section-edge="top bottom"/)
   assert.match(landing, /data-section-edge="top"/)
   assert.match(landing, /data-section-edge="bottom"/)
+  assert.ok(
+    landing.indexOf('Claude Code') < landing.indexOf('Factory Droid'),
+    'the first harness tab is the intentional default',
+  )
+
   for (const html of [landing, nestedDocs]) {
     assert.doesNotMatch(html, /(?:href|rel="prefetch" href)="\/marketplace\/?"/)
   }

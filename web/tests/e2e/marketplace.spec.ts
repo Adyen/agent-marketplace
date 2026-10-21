@@ -227,11 +227,15 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.getByRole('link', { name: 'Docs', exact: true }).first()).toHaveAttribute('href', '/docs/')
     await expect(page.getByRole('link', { name: 'Marketplace', exact: true })).toHaveCount(0)
 
-    const lightHero = await page.locator('.hero').evaluate(element => getComputedStyle(element).getPropertyValue('--am-hero-bg').trim())
+    const lightBackground = await page.locator('.landing').evaluate(
+      element => getComputedStyle(element).backgroundColor,
+    )
     await page.evaluate(() => document.documentElement.classList.add('dark'))
-    const darkHero = await page.locator('.hero').evaluate(element => getComputedStyle(element).getPropertyValue('--am-hero-bg').trim())
-    expect(lightHero).not.toBe('')
-    expect(darkHero).not.toBe(lightHero)
+    const darkBackground = await page.locator('.landing').evaluate(
+      element => getComputedStyle(element).backgroundColor,
+    )
+    expect(lightBackground).not.toBe('rgba(0, 0, 0, 0)')
+    expect(darkBackground).not.toBe(lightBackground)
   })
 
   // spec: site-deployment-profiles/marketplace-deployment-uses-root-ui-with-same-origin-services
@@ -520,6 +524,31 @@ test.describe('Marketplace browser discovery', () => {
     await selected.focus()
     await selected.press('ArrowRight')
     await expect(tabs.getByRole('tab', { selected: true })).not.toHaveText(selectedText)
+  })
+
+  // spec: marketplace-web-ui/scope-comparison-identifies-the-repository-default
+  test('keeps Landing scope outcomes comparable without implying selection', async ({ page }) => {
+    await page.goto(publicSiteURL)
+
+    const scopes = page.locator('#scopes')
+    const scopeCards = page.locator('.scope-card')
+    await expect(scopeCards).toHaveCount(3)
+    await expect(page.locator('.scope-fact--config')).toHaveCount(3)
+    await expect(scopes.getByRole('radio')).toHaveCount(0)
+    await expect(scopes).toContainText('--scope user')
+    await expect(scopes).toContainText('--scope repo')
+    await expect(scopes).toContainText('--scope local')
+    const repositoryScope = scopes
+      .getByRole('heading', { name: 'Repository Default', exact: true })
+      .locator('..')
+    await expect(repositoryScope).toContainText('Default')
+    await expect(page.locator('.scope-command')).toContainText(
+      'agent-marketplace install pdf --scope repo',
+    )
+
+    const harnessTabs = page.getByRole('tablist', { name: 'Harness target' }).getByRole('tab')
+    await expect(harnessTabs.first()).toHaveText('Claude Code')
+    await expect(harnessTabs.first()).toHaveAttribute('aria-selected', 'true')
   })
 
   test('applies the Marketplace palette in both themes', async ({ page }) => {

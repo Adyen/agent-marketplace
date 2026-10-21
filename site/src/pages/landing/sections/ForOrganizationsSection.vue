@@ -95,9 +95,12 @@ const resources = [
 
         <div class="catalog">
           <div class="search">
-            <svg class="am-stroke-icon" aria-hidden="true" viewBox="0 0 24 24">
-              <circle cx="11" cy="11" r="6" />
-              <path d="m16 16 4 4" />
+            <svg class="am-fill-icon" aria-hidden="true" viewBox="0 0 24 24">
+              <path
+                fill-rule="evenodd"
+                d="M10.5 3a7.5 7.5 0 1 0 4.7 13.35l4.7 4.7 1.15-1.15-4.7-4.7A7.5 7.5 0 0 0 10.5 3Zm0 2.5a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z"
+                clip-rule="evenodd"
+              />
             </svg>
             <span>Search resources...</span>
           </div>
@@ -108,18 +111,17 @@ const resources = [
             </span>
             <div class="resource-row__copy">
               <span class="resource-row__title">
-                <span class="resource-kind">Collection · team</span>
+                <span class="resource-kind">Collection</span>
                 <span class="resource-separator" aria-hidden="true">·</span>
                 <strong>{{ resource.name }}</strong>
               </span>
               <p>{{ resource.description }}</p>
             </div>
             <span class="install-button">
-              <svg class="am-stroke-icon" aria-hidden="true" viewBox="0 0 24 24">
-                <rect x="8" y="8" width="11" height="11" rx="2" />
-                <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+              <svg class="am-fill-icon" aria-hidden="true" viewBox="0 0 24 24">
+                <path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1Zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H8V7h11v14Z" />
               </svg>
-              Copy install command
+              Copy
             </span>
           </article>
         </div>
@@ -137,7 +139,7 @@ const resources = [
   }
 
   .organizations :deep(.head) {
-    margin-bottom: var(--lp-space-default);
+    margin-bottom: var(--lp-space-group);
   }
 }
 
@@ -183,7 +185,7 @@ const resources = [
 
 .benefit p {
   max-width: var(--lp-measure);
-  margin: var(--lp-space-related) 0 0;
+  margin: var(--lp-space-tight) 0 0;
   color: var(--lp-text-2);
   font: var(--lp-font-body);
   text-wrap: pretty;
@@ -356,10 +358,6 @@ const resources = [
 @media (min-width: 960px) and (max-height: 800px) {
   .organizations {
     --lp-section-pad: var(--lp-space-related);
-  }
-
-  .organizations :deep(.head) {
-    margin-bottom: var(--lp-space-default);
   }
 }
 </style>
