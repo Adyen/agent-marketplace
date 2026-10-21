@@ -86,6 +86,8 @@ journey.test("the accepted Source → Kind grouping survives restart", async (te
     await locate(terminal, "alpha-skill").expect();
     await locate(terminal, "beta-skill").expect();
     await locate(terminal, /Enabled\s+\(/).expect({ not: true });
+    // Quit asks to sync only once the drift assessment has settled.
+    await locate(terminal, /~ \d+ out of sync/).unique().expect({ timeout: 30_000 });
   });
   await step("offer sync before quitting with pending drift", () => terminal.write("q"), async () => {
     await locate(terminal, "pending changes not synced").expect();
