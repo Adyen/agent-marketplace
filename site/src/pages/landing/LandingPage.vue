@@ -12,12 +12,12 @@ import GetStartedSection from './sections/GetStartedSection.vue'
 
 <template>
   <div class="landing">
-    <HeroSection />
+    <HeroSection data-section-edge="top bottom" />
     <CompatibilityStrip />
-    <WorkflowSection />
+    <WorkflowSection data-section-edge="top" />
     <NativeOutputSection />
     <ScopesPolicySection />
     <ForOrganizationsSection />
-    <GetStartedSection />
+    <GetStartedSection data-section-edge="bottom" />
   </div>
 </template>

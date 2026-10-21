@@ -255,6 +255,7 @@ test.describe('Marketplace browser discovery', () => {
 
   // spec: marketplace-web-ui/browser-surfaces-present-accessible-adaptive-branding
   // spec: marketplace-web-ui/browser-surfaces-carry-the-approved-slash-motif
+  // spec: marketplace-web-ui/landing-presents-the-shared-flat-visual-system
   test('shares navigation, appearance, and branding across browser surfaces', async ({ page }) => {
     const fontStatus = () => page.evaluate(() => {
       const bodyStyle = getComputedStyle(document.body)
@@ -303,7 +304,26 @@ test.describe('Marketplace browser discovery', () => {
       slash: getComputedStyle(element.querySelector('.am-brand-slash')!).color,
     }))
     expect(eyebrowColors.label).not.toBe(eyebrowColors.slash)
-    await expect(page.getByRole('heading', { name: /Manage AI agent tooling once Sync it everywhere you work/ })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /Manage AI agent tooling once\. Sync it everywhere you work/ })).toBeVisible()
+    const landingVisuals = await page.locator('.hero').evaluate((hero) => {
+      const heading = hero.querySelector('h1')!
+      const secondary = hero.querySelector('.h1-sub')!
+      const preview = hero.querySelector('.terminal-frame')!
+      return {
+        heroBackground: getComputedStyle(hero).backgroundImage,
+        headingFamily: getComputedStyle(heading).fontFamily,
+        headingSize: getComputedStyle(heading).fontSize,
+        secondarySize: getComputedStyle(secondary).fontSize,
+        previewShadow: getComputedStyle(preview).boxShadow,
+      }
+    })
+    expect(landingVisuals).toEqual({
+      heroBackground: 'none',
+      headingFamily: 'Adyen, Helvetica, Arial, sans-serif',
+      headingSize: '48px',
+      secondarySize: '48px',
+      previewShadow: 'none',
+    })
     const landingBrand = page.locator('.VPNavBarTitle').getByRole('link', { name: 'agent-marketplace', exact: true })
     await expect(landingBrand).toHaveAttribute('href', '/')
     await expect(landingBrand.locator('img.light')).toHaveAttribute('src', '/brand/logo-horizontal-black.svg')

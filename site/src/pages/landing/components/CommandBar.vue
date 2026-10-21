@@ -18,93 +18,143 @@ const commandParts = computed(() => {
 })
 
 type State = 'idle' | 'copied' | 'failed'
+const COPIED_HOLD_MS = 1500
+
 const state = ref<State>('idle')
 let reset: ReturnType<typeof setTimeout> | undefined
+let unmounted = false
 
-const labels: Record<State, string> = { idle: 'copy', copied: 'copied', failed: '⌘C' }
+const labels: Record<State, string> = { idle: 'Copy', copied: 'Copied', failed: '⌘C' }
+const announcement = computed(
+  () => ({ idle: '', copied: 'Command copied', failed: 'Copy failed' })[state.value],
+)
 
 async function copy(command: string) {
+  let next: State = 'copied'
   try {
     await navigator.clipboard.writeText(command)
-    state.value = 'copied'
   } catch {
-    state.value = 'failed'
+    next = 'failed'
   }
+  if (unmounted) return
   clearTimeout(reset)
-  reset = setTimeout(() => (state.value = 'idle'), 1400)
+  state.value = next
+  reset = setTimeout(() => (state.value = 'idle'), COPIED_HOLD_MS)
 }
 
-onUnmounted(() => clearTimeout(reset))
+onUnmounted(() => {
+  unmounted = true
+  clearTimeout(reset)
+})
 </script>
 
 <template>
-  <div class="command-bar">
-    <span class="prompt">$</span>
+  <div class="command-bar" :class="{ 'is-copyless': !copyable }">
+    <span class="prompt" aria-hidden="true">$</span>
     <code>
       <template v-if="commandParts">
         {{ commandParts.before }}<span class="highlight">{{ commandParts.highlight }}</span>{{ commandParts.after }}
       </template>
       <template v-else>{{ command }}</template>
     </code>
-    <button v-if="copyable" class="copy" :class="{ 'is-done': state === 'copied' }" aria-label="Copy command" @click="copy(command)">
+    <button
+      v-if="copyable"
+      class="copy am-hit-target"
+      type="button"
+      :class="{ 'is-done': state === 'copied' }"
+      aria-label="Copy command"
+      @click="copy(command)"
+    >
       {{ labels[state] }}
     </button>
+    <span class="visually-hidden" role="status">{{ announcement }}</span>
   </div>
 </template>
 
 <style scoped>
 .command-bar {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  display: flex;
+  min-width: 0;
+  height: var(--lp-h-control);
   align-items: center;
-  gap: 11px;
-  padding: 12px var(--am-technical-padding);
-  border: 1px solid var(--am-code-border);
-  border-radius: var(--am-radius-lg);
-  background: var(--am-code-bg);
-  box-shadow: 0 12px 30px -25px var(--am-code-shadow);
-  font-family: var(--vp-font-family-mono), monospace;
-  font-size: var(--am-technical-font-size);
-  line-height: var(--am-technical-line-height);
+  gap: var(--lp-space-tight);
+  padding: 0 var(--lp-space-related) 0 var(--lp-space-default);
+  border-radius: var(--lp-radius-control);
+  box-shadow: var(--lp-outline-shadow);
+  font: var(--lp-font-label);
+}
+
+.command-bar.is-copyless {
+  padding-right: var(--lp-space-default);
+}
+
+.prompt {
+  color: var(--lp-text-2);
+  user-select: none;
 }
 
 code {
+  flex: 1;
   min-width: 0;
+  padding-block: 0.25rem;
+  margin-block: -0.25rem;
   overflow-x: auto;
-  color: var(--am-code-text);
+  color: var(--lp-text);
   font: inherit;
-  scrollbar-color: var(--am-code-border) transparent;
+  scrollbar-color: var(--lp-outline) transparent;
   scrollbar-width: thin;
   white-space: nowrap;
 }
 
-code::-webkit-scrollbar {
-  height: 4px;
+.highlight {
+  color: var(--lp-code-flag);
 }
 
-code::-webkit-scrollbar-thumb {
-  border-radius: 999px;
-  background: var(--am-code-border);
-}
-
-.highlight { color: var(--vp-c-brand-1); }
-.prompt { color: var(--vp-c-brand-1); user-select: none; }
 .copy {
-  padding: 8px 12px;
-  border: 1px solid var(--vp-c-brand-1);
-  border-radius: var(--am-radius-sm);
-  background: var(--vp-c-brand-1);
-  color: var(--am-on-accent);
-  font-size: var(--am-text-supporting);
-  font-weight: var(--am-font-semibold);
-  line-height: 1;
+  position: relative;
+  isolation: isolate;
+  display: block;
+  flex: none;
+  height: var(--lp-h-depiction);
+  padding: 0 var(--lp-space-related);
+  border: 0;
+  border-radius: var(--lp-radius-control);
+  background: var(--lp-fill);
+  color: var(--lp-text);
+  font: inherit;
+  text-transform: uppercase;
   cursor: pointer;
+  transition: background-color var(--lp-motion-feedback) var(--lp-ease);
 }
-.copy:hover, .copy.is-done {
-  border-color: var(--vp-c-brand-2);
-  background: var(--vp-c-brand-2);
-  color: var(--am-on-accent);
+
+.copy::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--lp-surface);
+  content: "";
+  opacity: 0;
+  transition: opacity var(--lp-motion-feedback) var(--lp-ease);
 }
-.copy:active { transform: translateY(1px); }
-.copy:focus-visible { outline: 2px solid var(--vp-c-brand-1); outline-offset: 2px; }
+
+.copy:hover::before {
+  opacity: 1;
+}
+
+.copy:active::before {
+  opacity: 0;
+}
+
+.copy.is-done {
+  background: var(--lp-green);
+  color: var(--lp-on-green);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .copy,
+  .copy::before {
+    transition: none;
+  }
+}
 </style>
