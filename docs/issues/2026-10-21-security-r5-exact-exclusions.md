@@ -98,7 +98,8 @@ GOMAXPROCS=2 CGO_ENABLED=0 go test ./internal/config -run '^$' \
 For an interleaved comparison, compile both variants with `go test -c`
 first and invoke the binaries with the corresponding `-test.*` flags.
 Replace only the production file with the recorded baseline blob through a
-Go overlay to retain identical benchmark sources.
+Go overlay to retain identical benchmark sources. Use canonical physical paths
+for both overlay keys and replacements, not a symlink spelling of the worktree.
 
 ## Preservation And Negative Controls
 
@@ -185,6 +186,59 @@ Pinned pnpm 11.20.0 installs the exact locked dependencies from the offline
 cache; an isolated per-process tool configuration avoids malformed host registry
 settings without changing global configuration or the lockfile. The R53
 production blob and all CPU measurements remain unchanged.
+
+## Review Measurement Refinement
+
+Gemini's three benchmark comments move result assertions outside the timed
+`b.Loop` bodies. The rebuilt configuration and public parser's final result and
+error remain checked; no parse error is discarded. `b.Loop` stops timing before
+the post-loop checks. The current benchmark blob is
+`f30439eb6a13a74369acc57eec4b202dc612f1d4`; the six original raw files above
+retain the earlier definitions and are not relabeled.
+
+Main `37d79f88` adds only a terminal journey and its README entry. Its baseline
+production blob remains `cbf1f1cf`; the optimized production blob remains
+`2ab38628`. Recompile both variants with identical revised benchmark sources
+and repeat the same six alternating pairs, two seconds per case,
+`GOMAXPROCS=2`, with no concurrent validation workload.
+
+A first refresh accidentally uses the lexical `/tmp` overlay key while Go
+compiles the physical `/private/tmp` source. Both binaries therefore run the
+optimized implementation. The matching results expose the setup error; retain
+that accidental A/A control separately as `overlay-self-control-before.txt`,
+`overlay-self-control-after.txt`, and `overlay-self-control-benchstat.txt`.
+It is not a baseline comparison and contributes no samples to any A/B result.
+
+The corrected baseline overlay canonicalizes both source and replacement paths.
+Before collecting the final series, verify distinct binary build IDs and the
+expected slow/fast 1,024-request smoke results (11.535 ms versus 359.1 us).
+The preservation suite also passes on the corrected baseline with 1,000 Rapid
+histories. This control guards the measurement setup rather than adding a
+production timing requirement.
+
+The revised, verified A/B series gives:
+
+| CPU case | Requests | Before median | After median | Change |
+|---|---:|---:|---:|---:|
+| Rebuilding, exact | 1,024 | 11.2738 ms | 349.2 us | -96.90% |
+| Public parsing, exact | 1,024 | 13.1145 ms | 2.1564 ms | -83.56% |
+| Public parsing, exact | 1 | 11.3235 us | 11.2785 us | Not significant, p=1.000 |
+| Public parsing, wildcard | 1,024 | 1.2688 ms | 1.2463 ms | Not significant, p=0.132 |
+
+The significant CPU changes have `p=0.002, n=6`. At 1,024 exact requests, public
+parsing retains 22,530 allocations; median bytes move from 3,025,989 to
+3,025,941.5 per operation. Tiny byte-count differences are not a meaningful
+memory reduction. All nine cases and their confidence ranges remain in
+[before](security-r5-exact-exclusions-2026-10-21/reviewed-before.txt),
+[after](security-r5-exact-exclusions-2026-10-21/reviewed-after.txt), and
+[comparison](security-r5-exact-exclusions-2026-10-21/reviewed-benchstat.txt).
+The original series, A/A diagnostic, and revised A/B series are not pooled.
+
+After integrating `37d79f88`, fresh selected config/pipeline/resolver/TUI
+validation, vet, zero-issue lint, build, strict specs, and the 1,000-history
+focused race check pass. The enlarged terminal suite passes all 38 PTY journeys
+and four utility/process tests, zero skipped or cancelled. The lockfile and
+global tool configuration remain unchanged.
 
 ## Remaining Scope
 

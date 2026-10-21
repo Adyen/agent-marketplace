@@ -38,9 +38,9 @@ func BenchmarkV4RebuildExactExclusionsCPU(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				cfg.rebuildRequests()
-				if len(cfg.Requests) != 0 || len(cfg.Decisions) != 2*count {
-					b.Fatal("request rebuilding changed exact exclusions")
-				}
+			}
+			if len(cfg.Requests) != 0 || len(cfg.Decisions) != 2*count {
+				b.Fatal("request rebuilding changed exact exclusions")
 			}
 		})
 	}
@@ -50,23 +50,27 @@ func BenchmarkParseV4ExclusionsCPU(b *testing.B) {
 	for _, count := range []int{1, 32, 256, 1024} {
 		b.Run(fmt.Sprintf("exact/requests=%d", count), func(b *testing.B) {
 			data := v4RebuildDocument(b, count, false)
+			var cfg *V4Config
+			var err error
 			b.ReportAllocs()
 			for b.Loop() {
-				cfg, err := ParseV4(data)
-				if err != nil || len(cfg.Requests) != 0 || len(cfg.Decisions) != 2*count {
-					b.Fatalf("exact-exclusion parsing changed: %v", err)
-				}
+				cfg, err = ParseV4(data)
+			}
+			if err != nil || len(cfg.Requests) != 0 || len(cfg.Decisions) != 2*count {
+				b.Fatalf("exact-exclusion parsing changed: %v", err)
 			}
 		})
 	}
 	b.Run("wildcard/requests=1024", func(b *testing.B) {
 		data := v4RebuildDocument(b, 1024, true)
+		var cfg *V4Config
+		var err error
 		b.ReportAllocs()
 		for b.Loop() {
-			cfg, err := ParseV4(data)
-			if err != nil || len(cfg.Requests) != 0 || len(cfg.Decisions) != 1025 {
-				b.Fatalf("wildcard-exclusion parsing changed: %v", err)
-			}
+			cfg, err = ParseV4(data)
+		}
+		if err != nil || len(cfg.Requests) != 0 || len(cfg.Decisions) != 1025 {
+			b.Fatalf("wildcard-exclusion parsing changed: %v", err)
 		}
 	})
 }
