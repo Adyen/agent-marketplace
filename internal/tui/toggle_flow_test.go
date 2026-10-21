@@ -822,6 +822,35 @@ func TestPendingDetailIsNotGuessedBetweenRowsSharingItsIdentity(t *testing.T) {
 	}
 }
 
+// Rows inserted above the selected header keep it on its screen line only
+// while the list overflows; when every row fits, the list starts at the top
+// instead of hiding rows above blank space.
+// spec: tui-navigation/reload-with-room-for-every-row-shows-the-whole-list
+func TestReloadDoesNotHideTopRowsWhileTheListHasRoom(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.loading = false
+	m.width, m.height = 80, 24
+	m.rows = []row{mkRow("beta", withProject), mkRow("alpha", withAvailable)}
+	m.authoritativeRows = m.rows
+	m.filteredRows = m.rows
+	m.rebuildFlatItems()
+	for i, item := range m.flatItems {
+		if item.Kind == flatSection && item.SectionPath == "status:available" {
+			m.cursor = i
+		}
+	}
+	m.applySnapshotData(snapshotLoadedMsg{rows: []row{
+		mkRow("beta", withProject), mkRow("delta", withProject), mkRow("echo", withProject), mkRow("foxtrot", withProject), mkRow("alpha", withAvailable),
+	}})
+
+	if item := m.flatItems[m.cursor]; item.Kind != flatSection || item.SectionPath != "status:available" {
+		t.Fatalf("reload lost the selected header: %+v", item)
+	}
+	if m.listOffset != 0 {
+		t.Fatalf("list offset = %d with room for all %d rows; rows above the viewport are hidden", m.listOffset, len(m.flatItems))
+	}
+}
+
 // A disabled row moves to a different Status bucket, so the snapshot rebuild
 // must not scroll to its new position before selecting the neighbouring row.
 func TestDisableInStatusTabKeepsListScrollPosition(t *testing.T) {

@@ -233,8 +233,8 @@ detail's resource identity as rows are inserted or reordered between stages.
 
 #### Scenario: Verified rows inserted above a selection keep it on the same screen line
 
-- **WHEN** a pending row is selected and verified inventory inserts rows
-  above it
+- **WHEN** a pending row is selected in a list that overflows the viewport and
+  verified inventory inserts rows above it
 - **THEN** the selection MUST follow the same resource
 - **AND** the selected row MUST keep its line within the list viewport rather
   than shifting on screen
