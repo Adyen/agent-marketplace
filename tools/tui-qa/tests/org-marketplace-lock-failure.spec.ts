@@ -26,13 +26,16 @@ journey.test("a missing organization marketplace lock is acquired transiently wi
   const fixture = journey.current();
   const orgConfigPath = fixture.orgConfigPath;
   const orgLockPath = fixture.orgLockPath;
+  const betaSkill = path.join(fixture.repo, ".factory", "skills", "beta-skill");
   assert.ok(orgConfigPath, "organization fixture must expose its config path");
   assert.ok(orgLockPath, "organization fixture must expose its lock path");
   assert.equal(fs.lstatSync(orgLockPath, { throwIfNoEntry: false }), undefined);
+  assert.equal(fs.lstatSync(betaSkill, { throwIfNoEntry: false }), undefined, "cold fixture must leave beta-skill unsynced");
 
   await step("cold startup resolves the organization marketplace", () => {}, async () => {
     await locate(terminal, "org-review").expect({ timeout: 30_000 });
     await locate(terminal, /~ \d+ out of sync/).unique().expect();
+    await locate(terminal, /Pending sync\s+\(1\)/).unique().expect();
   });
 
   await step("startup has no lock failure", () => {}, async () => {
@@ -119,7 +122,6 @@ journey.test("a missing organization marketplace lock is acquired transiently wi
   // The fixture skipped its pre-sync, so the TUI made this acquisition.
   assertPlaceholderArchivesFetched(fixture, fixture.marketplaceArchiveDigest);
 
-  const betaSkill = path.join(fixture.repo, ".factory", "skills", "beta-skill");
   const alphaSkill = path.join(fixture.repo, ".factory", "skills", "alpha-skill");
   const orgSkill = path.join(fixture.home, ".factory", "skills", "org-review");
   assert.equal(fs.lstatSync(betaSkill).isSymbolicLink(), true, "TUI sync must materialize beta-skill");

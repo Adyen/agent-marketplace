@@ -1,0 +1,29 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/pipeline
+cpu: Apple M4 Max
+                                    │ docs/issues/performance-r5-tag-bumps-2026-10-20/selector-before.txt │ docs/issues/performance-r5-tag-bumps-2026-10-20/selector-after.txt │
+                                    │                               sec/op                                │                   sec/op                     vs base               │
+SelectTagBumpNumericSuffix/8-16                                                              1.140µ ± ∞ ¹                                  1.186µ ± ∞ ¹        ~ (p=1.000 n=5)
+SelectTagBumpNumericSuffix/128-16                                                            1.485µ ± ∞ ¹                                  1.321µ ± ∞ ¹  -11.04% (p=0.008 n=5)
+SelectTagBumpNumericSuffix/70000-16                                                          194.0µ ± ∞ ¹                                  110.0µ ± ∞ ¹  -43.34% (p=0.008 n=5)
+geomean                                                                                      6.900µ                                        5.564µ        -19.36%
+¹ need >= 6 samples for confidence interval at level 0.95
+
+                                    │ docs/issues/performance-r5-tag-bumps-2026-10-20/selector-before.txt │ docs/issues/performance-r5-tag-bumps-2026-10-20/selector-after.txt │
+                                    │                                B/op                                 │                    B/op                     vs base                │
+SelectTagBumpNumericSuffix/8-16                                                             32.06Ki ± ∞ ¹                                32.06Ki ± ∞ ¹       ~ (p=1.000 n=5) ²
+SelectTagBumpNumericSuffix/128-16                                                           32.45Ki ± ∞ ¹                                32.45Ki ± ∞ ¹       ~ (p=1.000 n=5) ²
+SelectTagBumpNumericSuffix/70000-16                                                         440.0Ki ± ∞ ¹                                440.0Ki ± ∞ ¹       ~ (p=1.000 n=5) ²
+geomean                                                                                     77.07Ki                                      77.07Ki        +0.00%
+¹ need >= 6 samples for confidence interval at level 0.95
+² all samples are equal
+
+                                    │ docs/issues/performance-r5-tag-bumps-2026-10-20/selector-before.txt │ docs/issues/performance-r5-tag-bumps-2026-10-20/selector-after.txt │
+                                    │                              allocs/op                              │                 allocs/op                   vs base                │
+SelectTagBumpNumericSuffix/8-16                                                               4.000 ± ∞ ¹                                  4.000 ± ∞ ¹       ~ (p=1.000 n=5) ²
+SelectTagBumpNumericSuffix/128-16                                                             5.000 ± ∞ ¹                                  5.000 ± ∞ ¹       ~ (p=1.000 n=5) ²
+SelectTagBumpNumericSuffix/70000-16                                                           7.000 ± ∞ ¹                                  7.000 ± ∞ ¹       ~ (p=1.000 n=5) ²
+geomean                                                                                       5.192                                        5.192        +0.00%
+¹ need >= 6 samples for confidence interval at level 0.95
+² all samples are equal

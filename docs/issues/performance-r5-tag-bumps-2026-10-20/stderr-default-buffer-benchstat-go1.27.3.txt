@@ -1,0 +1,30 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/pipeline
+cpu: Apple M4 Max
+                         │ docs/issues/performance-r5-tag-bumps-2026-10-20/buffered-go1.27.3.txt │ docs/issues/performance-r5-tag-bumps-2026-10-20/streaming-stderr-default-buffer-go1.27.3.txt │
+                         │                                sec/op                                 │                                 sec/op                                  vs base              │
+DiscoverTagBump/0-16                                                                12.43m ± ∞ ¹                                                             11.79m ± ∞ ¹       ~ (p=0.421 n=5)
+DiscoverTagBump/32-16                                                               12.07m ± ∞ ¹                                                             11.97m ± ∞ ¹       ~ (p=0.548 n=5)
+DiscoverTagBump/2048-16                                                             14.72m ± ∞ ¹                                                             13.38m ± ∞ ¹  -9.10% (p=0.032 n=5)
+DiscoverTagBump/16384-16                                                            24.40m ± ∞ ¹                                                             23.64m ± ∞ ¹  -3.12% (p=0.016 n=5)
+geomean                                                                             15.24m                                                                   14.53m        -4.62%
+¹ need >= 6 samples for confidence interval at level 0.95
+
+                         │ docs/issues/performance-r5-tag-bumps-2026-10-20/buffered-go1.27.3.txt │ docs/issues/performance-r5-tag-bumps-2026-10-20/streaming-stderr-default-buffer-go1.27.3.txt │
+                         │                                 B/op                                  │                                 B/op                                   vs base               │
+DiscoverTagBump/0-16                                                               61.09Ki ± ∞ ¹                                                           92.18Ki ± ∞ ¹  +50.88% (p=0.008 n=5)
+DiscoverTagBump/32-16                                                              79.98Ki ± ∞ ¹                                                           92.36Ki ± ∞ ¹  +15.48% (p=0.008 n=5)
+DiscoverTagBump/2048-16                                                           855.30Ki ± ∞ ¹                                                           92.39Ki ± ∞ ¹  -89.20% (p=0.008 n=5)
+DiscoverTagBump/16384-16                                                         6295.12Ki ± ∞ ¹                                                           93.86Ki ± ∞ ¹  -98.51% (p=0.008 n=5)
+geomean                                                                            402.7Ki                                                                 92.69Ki        -76.98%
+¹ need >= 6 samples for confidence interval at level 0.95
+
+                         │ docs/issues/performance-r5-tag-bumps-2026-10-20/buffered-go1.27.3.txt │ docs/issues/performance-r5-tag-bumps-2026-10-20/streaming-stderr-default-buffer-go1.27.3.txt │
+                         │                               allocs/op                               │                               allocs/op                                vs base               │
+DiscoverTagBump/0-16                                                                 79.00 ± ∞ ¹                                                             71.00 ± ∞ ¹  -10.13% (p=0.008 n=5)
+DiscoverTagBump/32-16                                                                82.00 ± ∞ ¹                                                             72.00 ± ∞ ¹  -12.20% (p=0.008 n=5)
+DiscoverTagBump/2048-16                                                              89.00 ± ∞ ¹                                                             72.00 ± ∞ ¹  -19.10% (p=0.008 n=5)
+DiscoverTagBump/16384-16                                                             95.00 ± ∞ ¹                                                             72.00 ± ∞ ¹  -24.21% (p=0.008 n=5)
+geomean                                                                              86.03                                                                   71.75        -16.60%
+¹ need >= 6 samples for confidence interval at level 0.95
