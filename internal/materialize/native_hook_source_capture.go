@@ -216,6 +216,10 @@ func hookSupportArtifactsFromSnapshot(res resolver.ResolvedArtifact, snapshot *h
 	if snapshot.definitionRel != "" {
 		definitionName = path.Base(snapshot.definitionRel)
 	}
+	bundlePrefix := ""
+	if dir := hookSupportBundlePrefixDir(res, snapshot.definitionDir); dir != "" {
+		bundlePrefix = dir + "/"
+	}
 	files := make([]artifact.Artifact, 0, len(snapshot.files))
 	for _, source := range snapshot.files {
 		if source.rel == definitionName || excluded[source.rel] {
@@ -229,7 +233,7 @@ func hookSupportArtifactsFromSnapshot(res resolver.ResolvedArtifact, snapshot *h
 		if inventoryDir && !strings.Contains(source.rel, "/") && strings.HasSuffix(source.rel, ".json") {
 			continue
 		}
-		file := artifact.Artifact{Path: source.rel, Bytes: bytes.Clone(source.data), Mode: source.mode.Perm()}
+		file := artifact.Artifact{Path: bundlePrefix + source.rel, Bytes: bytes.Clone(source.data), Mode: source.mode.Perm()}
 		if err := file.Validate(); err != nil {
 			return nil, err
 		}

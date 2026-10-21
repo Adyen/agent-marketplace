@@ -3,6 +3,7 @@
   --am-brand-black: #121a18;
   --am-brand-white: #ffffff;
   --am-brand-logo-width: 160px;
+  --am-brand-logo-aspect-ratio: 154 / 17;
   --am-brand-logo-offset-y: 1px;
   --am-brand-slash-color: var(--am-brand-green);
 }

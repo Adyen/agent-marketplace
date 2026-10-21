@@ -81,7 +81,7 @@ func TestOpenCodeHookSupportInstallsBesideTheAdapter(t *testing.T) {
 			t.Run(fmt.Sprintf("machine=%t/%s", machine, mode), func(t *testing.T) {
 				repo := openCodeSandbox(t)
 				marker := filepath.Join(t.TempDir(), "ran")
-				selected := additiveSafetyProvider(t, hcc.TargetOpenCode, machine, `/bin/sh "${DROID_PLUGIN_ROOT}/shared.sh" `+marker, "#!/bin/sh\nprintf support > \"$1\"\n")
+				selected := additiveSafetyProvider(t, hcc.TargetOpenCode, machine, `/bin/sh "${DROID_PLUGIN_ROOT}/hooks/shared.sh" `+marker, "#!/bin/sh\nprintf support > \"$1\"\n")
 				options := []RunOption{WithMaterializationModes(config.MaterializationModes{Project: mode, Machine: mode})}
 				report, err := Run(t.Context(), repo, []resolver.ResolvedArtifact{selected}, options...)
 				if err != nil || diag.HasErrors(report.Diags) {
@@ -93,7 +93,7 @@ func TestOpenCodeHookSupportInstallsBesideTheAdapter(t *testing.T) {
 					t.Fatalf("support files = %v, want the shared script only", files)
 				}
 				for rel, info := range files {
-					if !strings.HasSuffix(rel, "/guard/shared.sh") {
+					if !strings.HasSuffix(rel, "/guard/hooks/shared.sh") {
 						t.Fatalf("support path %q is not hook-support/<source>/guard/shared.sh", rel)
 					}
 					if !machine && !info.Mode().IsRegular() {

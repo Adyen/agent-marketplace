@@ -1,0 +1,84 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4RebuildExactExclusionsCPU/requests=1-2         	 8586236	       269.5 ns/op	     528 B/op	       3 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=32-2        	  269433	      8949 ns/op	   29296 B/op	      54 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=256-2       	   31972	     77284 ns/op	  242224 B/op	     293 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=1024-2      	    5899	    351988 ns/op	 1062672 B/op	    1078 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=1-2          	  216672	     11166 ns/op	   16355 B/op	     161 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=32-2         	   32811	     74965 ns/op	  101147 B/op	     856 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=256-2        	    4519	    527317 ns/op	  728836 B/op	    5593 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=1024-2       	    1154	   2130708 ns/op	 3025956 B/op	   22530 allocs/op
+BenchmarkParseV4ExclusionsCPU/wildcard/requests=1024-2    	    1982	   1258893 ns/op	 2107298 B/op	   15331 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4RebuildExactExclusionsCPU/requests=1-2         	 8666737	       267.4 ns/op	     528 B/op	       3 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=32-2        	  269043	      9298 ns/op	   29296 B/op	      54 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=256-2       	   29806	     79519 ns/op	  242224 B/op	     293 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=1024-2      	    6822	    353391 ns/op	 1062672 B/op	    1078 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=1-2          	  211278	     11294 ns/op	   16355 B/op	     161 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=32-2         	   31946	     75481 ns/op	  101147 B/op	     856 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=256-2        	    4622	    520598 ns/op	  728834 B/op	    5593 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=1024-2       	    1141	   2181644 ns/op	 3025953 B/op	   22530 allocs/op
+BenchmarkParseV4ExclusionsCPU/wildcard/requests=1024-2    	    1900	   1282478 ns/op	 2107300 B/op	   15331 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4RebuildExactExclusionsCPU/requests=1-2         	 8808968	       271.5 ns/op	     528 B/op	       3 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=32-2        	  259159	      9382 ns/op	   29296 B/op	      54 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=256-2       	   30784	     78169 ns/op	  242224 B/op	     293 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=1024-2      	    6655	    349575 ns/op	 1062672 B/op	    1078 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=1-2          	  204099	     11338 ns/op	   16354 B/op	     161 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=32-2         	   31866	     75176 ns/op	  101147 B/op	     856 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=256-2        	    4584	    521914 ns/op	  728834 B/op	    5593 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=1024-2       	    1132	   2128850 ns/op	 3025961 B/op	   22530 allocs/op
+BenchmarkParseV4ExclusionsCPU/wildcard/requests=1024-2    	    1942	   1223688 ns/op	 2107296 B/op	   15331 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4RebuildExactExclusionsCPU/requests=1-2         	 8777047	       275.7 ns/op	     528 B/op	       3 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=32-2        	  254974	      9224 ns/op	   29296 B/op	      54 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=256-2       	   31168	     76580 ns/op	  242224 B/op	     293 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=1024-2      	    7077	    341222 ns/op	 1062672 B/op	    1078 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=1-2          	  219632	     11365 ns/op	   16355 B/op	     161 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=32-2         	   31020	     76801 ns/op	  101147 B/op	     856 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=256-2        	    4411	    538568 ns/op	  728835 B/op	    5593 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=1024-2       	    1107	   2217584 ns/op	 3025946 B/op	   22530 allocs/op
+BenchmarkParseV4ExclusionsCPU/wildcard/requests=1024-2    	    1952	   1240082 ns/op	 2107301 B/op	   15331 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4RebuildExactExclusionsCPU/requests=1-2         	 8740438	       278.5 ns/op	     528 B/op	       3 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=32-2        	  259774	      9439 ns/op	   29296 B/op	      54 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=256-2       	   31237	     76712 ns/op	  242224 B/op	     293 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=1024-2      	    6878	    347252 ns/op	 1062672 B/op	    1078 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=1-2          	  218491	     11045 ns/op	   16355 B/op	     161 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=32-2         	   32332	     74318 ns/op	  101147 B/op	     856 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=256-2        	    4603	    521597 ns/op	  728839 B/op	    5594 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=1024-2       	    1056	   2195916 ns/op	 3025937 B/op	   22530 allocs/op
+BenchmarkParseV4ExclusionsCPU/wildcard/requests=1024-2    	    1896	   1241005 ns/op	 2107301 B/op	   15331 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4RebuildExactExclusionsCPU/requests=1-2         	 8877430	       275.8 ns/op	     528 B/op	       3 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=32-2        	  251509	      9237 ns/op	   29296 B/op	      54 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=256-2       	   31609	     77033 ns/op	  242224 B/op	     293 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=1024-2      	    7044	    340321 ns/op	 1062672 B/op	    1078 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=1-2          	  206215	     11225 ns/op	   16355 B/op	     161 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=32-2         	   31444	     74400 ns/op	  101148 B/op	     856 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=256-2        	    4285	    543651 ns/op	  728843 B/op	    5594 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=1024-2       	    1095	   2161548 ns/op	 3025953 B/op	   22530 allocs/op
+BenchmarkParseV4ExclusionsCPU/wildcard/requests=1024-2    	    1964	   1242454 ns/op	 2107288 B/op	   15331 allocs/op
+PASS

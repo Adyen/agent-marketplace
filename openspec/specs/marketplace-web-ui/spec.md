@@ -40,26 +40,20 @@ When installation is unavailable, the Marketplace SHALL replace setup and comman
 - **THEN** one Not available notice gives the applicable concise reason without setup, command, copy, duplicate warning controls, or a security-details action
 
 ### Requirement: Shared browser brand identity
-The Landing and Docs public-site surfaces SHALL use the approved Adyen variable
-Sans and Mono fonts and the shared Agent Marketplace Green `#00D16A`, custom
-Black `#121A18`, and white palette through common semantic roles in light and
-dark appearance. Their shared navigation and footer SHALL use those same roles.
-The Landing, Docs, and Marketplace surfaces SHALL present the
-agent-marketplace logo artwork at one consistent displayed width of 160 CSS
-pixels and optical vertical alignment in their primary navigation, select a
-contrasting supplied logo variant for light and dark appearance, and publish
-the supplied favicon at each surface's configured base path. Route-dependent
-navigation wrappers MAY retain different widths. The logo link MUST retain the
-accessible product name and existing home destination. Marketplace application
-typography and surface colors SHALL remain owned by its separate application
-theme.
+The Landing, Docs, and Marketplace surfaces SHALL use the approved Adyen
+variable Sans and Mono fonts and shared Agent Marketplace brand palette through
+surface-owned semantic adapters. Their primary navigation SHALL present the
+supplied logo at one stable size and optical alignment. Public Marketplace
+navigation, browse content, and footer SHALL use the same responsive maximum
+width and outer gutters as Landing and Docs. Marketplace availability, warning,
+error, control, and inspection semantics SHALL remain distinct.
 
 #### Scenario: Browser surfaces present accessible adaptive branding
-- **WHEN** a user visits Landing, a Docs page with a sidebar, or Marketplace in light or dark appearance
-- **THEN** Landing and Docs use the approved Adyen variable fonts and shared Agent Marketplace palette
-- **AND** their navigation and footer use the same public-site semantic roles
-- **AND** the Marketplace application retains its application-owned typography and surfaces
-- **AND** the primary navigation shows the contrasting agent-marketplace logo artwork at a displayed width of 160 CSS pixels and the same optical vertical alignment on every surface, its home link is named `agent-marketplace`, and the document references the supplied favicon from that surface's configured base path
+- **WHEN** a user visits Landing, Docs, or Marketplace in light or dark appearance
+- **THEN** every surface uses the approved fonts and shared brand palette
+- **AND** each surface retains its framework-specific semantic adapter
+- **AND** Marketplace browse content shares the Landing/Docs left and right edges
+- **AND** the accessible logo and existing destinations remain unchanged
 
 ### Requirement: Resource source origin link
 When a resource revision reports source provenance, the detail page header SHALL show the source repository and resource path as its first metadata item, linked to the original resource in a new tab. For GitHub, GitLab, and bitbucket.org hosts the link SHALL address the resource file at the exact occurrence commit; for other hosts it SHALL address the repository. When no source provenance is reported, the header SHALL omit the source item.
@@ -94,27 +88,33 @@ The Marketplace primary header SHALL use its accessible logo link as the Marketp
 - **AND** primary-header documentation navigation MUST open the local documentation in a new tab with opener isolation
 
 ### Requirement: Shared slash brand motif
-Landing and Marketplace SHALL reuse a logo-green `#00D16A` slash mark at approved structural brand locations. Every mark SHALL retain the angle of the slash in the shared horizontal logo, with dimensions scaling from the surrounding font size and a shared negative eight-hundredths-em vertical alignment that optically balances it against adjacent text. Ordinary title prefixes and coordinate separators SHALL use a one-fifth-em spacing rhythm, applied after title prefixes and on both sides of separators. Section-eyebrow prefixes SHALL use a three-eighth-em trailing interval as the intentional exception for letter-spaced uppercase typography. Resource-coordinate separators SHALL use an optically reduced stroke beside medium-weight text while retaining the shared angle and font-relative height. Landing SHALL show the motif before every section eyebrow but SHALL NOT show it before the hero secondary line. Marketplace SHALL show it before the instance title, between registry and resource names in result rows, and before skill or command detail titles. Other detail-title kinds, the Filters heading, and the Resources heading SHALL remain unprefixed. Decorative prefix slashes MUST be hidden from the accessibility tree. Coordinate separators SHALL preserve the accessible `registry/name` value, route, and truncation behavior, and coordinate hover SHALL show one continuous straight underline. Other content SHALL NOT gain the motif implicitly.
+Landing and Marketplace SHALL reuse a logo-green `#00D16A` slash mark at
+approved structural brand locations. Every mark SHALL retain the angle of the
+slash in the shared horizontal logo. Landing SHALL show the motif before every
+section eyebrow but SHALL NOT show it before the hero secondary line.
+Marketplace SHALL show it before the instance title, between registry and
+resource names in result rows, and before skill or command detail titles.
+Resource rows SHALL retain their leading `type · registry / name` arrangement,
+with the linked coordinate accessible as `registry/name`. Filters, Resources,
+and other detail-title kinds SHALL remain unprefixed. Decorative prefix slashes
+MUST be hidden from the accessibility tree.
 
 #### Scenario: Browser surfaces carry the approved slash motif
 - **WHEN** a user visits Landing or the Marketplace catalog
-- **THEN** a `#00D16A` slash matching the shared logo geometry appears at each approved section-label and instance-title location
-- **AND** every slash uses the shared font-relative optical baseline offset
-- **AND** titles use one-fifth-em trailing spacing while eyebrows use three-eighth-em trailing spacing
-- **AND** Landing eyebrow labels use the primary text color while the hero secondary line has no motif slash
-- **AND** no motif slash appears in the Filters or Resources catalog heading
+- **THEN** approved structural labels and the Marketplace instance title show the shared green slash
+- **AND** Filters and Resources remain unprefixed
 - **AND** accessible heading and label names remain unchanged
 
 #### Scenario: Resource row highlights its meaningful coordinate separator
 - **WHEN** the Marketplace displays a resource result row
-- **THEN** its coordinate remains accessible as `registry/name`
-- **AND** the delimiter retains the shared slash angle, height, and optical baseline offset with a lighter optical stroke
-- **AND** it carries one-fifth-em spacing on each side
-- **AND** hovering the coordinate shows one continuous straight underline across its full width
+- **THEN** resource type, registry, separator, and resource name remain on the leading line
+- **AND** the resource name is primary while type and registry use regular muted styling
+- **AND** the linked coordinate remains accessible as `registry/name` and retains its route
+- **AND** hovering the linked coordinate shows one continuous straight underline
 
 #### Scenario: Skill and command detail titles use the slash motif
 - **WHEN** a user views a skill or command detail page
-- **THEN** the visible title is prefixed by the shared slash mark with the shared optical baseline offset and one-fifth-em trailing space
+- **THEN** the visible title is prefixed by the shared slash mark
 - **AND** the accessible heading name remains the resource name without the slash
 
 #### Scenario: Other resource detail titles remain unprefixed
@@ -194,3 +194,59 @@ NOT change the supported harness set or capability data.
 - **WHEN** a user reaches the Landing harness depiction
 - **THEN** Claude Code is the first and selected harness tab
 - **AND** every previously listed harness and its capability data remains present
+
+### Requirement: Marketplace catalog remains an efficient index
+The catalog SHALL preserve search, URL-backed kind and registry filters,
+active filters, result status, incremental loading, resource actions, and
+responsive filter disclosure. Wide layouts SHALL keep the filter rail and
+result controls available while browsing. Narrow layouts SHALL contain long
+content without page-level horizontal scrolling.
+
+#### Scenario: Catalog remains usable across viewport sizes
+- **WHEN** a user browses or filters Marketplace at narrow, medium, or wide widths
+- **THEN** search, filters, result status, and available row actions remain reachable
+- **AND** wide layouts retain the filter rail while narrow layouts disclose it on demand
+- **AND** the page does not introduce horizontal overflow
+
+### Requirement: Marketplace browse typography remains cohesive
+The Marketplace browse page SHALL use Adyen Sans for page headings,
+introduction copy, resource identity and description, filters, search, actions,
+metadata, counts, and availability labels. Adyen Mono SHALL be reserved for
+actual installation commands and code blocks. Shared roles SHALL define a
+32/40px weight-600 page title, 16/24px weight-400 introduction, 22/28px
+weight-600 Resources heading, 16/24px resource coordinate with a weight-600
+name and weight-400 context, 14/20px description and controls, 14/20px
+weight-500 buttons, 12/18px metadata and statuses, and 12/18px weight-600
+filter headings. Labels SHALL use sentence case without added letter spacing.
+
+#### Scenario: Browse roles use the approved hierarchy
+- **WHEN** a user browses resources in either appearance at wide or narrow widths
+- **THEN** every browse role uses its shared Sans typography token
+- **AND** the unchanged top-line identity emphasizes the resource name by weight and color
+- **AND** descriptions remain less prominent than names
+- **AND** long resource and registry names remain contained without page overflow
+- **AND** installation-count placement, controls, and behavior remain unchanged
+
+### Requirement: Public Marketplace record visual hierarchy
+Public resource detail, exact revision, registry history, and public state
+surfaces SHALL use the shared typography, spacing, focus, geometry, motion,
+maximum width, and outer gutters. Record presentation SHALL remain flat and
+information-dense while technical values and status meaning remain visually
+distinct.
+
+#### Scenario: Public routes use shared foundations without changing behavior
+- **WHEN** a user visits a public Marketplace record or state route
+- **THEN** the route uses the shared visual foundations and aligned content edge
+- **AND** resource identity, status, provenance, and technical values remain readable
+- **AND** existing controls, destinations, responsive behavior, and safe rendering remain available
+
+### Requirement: Marketplace records preserve technical context
+Resource and registry record surfaces SHALL preserve identity, source,
+revision, installation, content, security, registry, and technical information
+through a consistent public hierarchy. Loading, unavailable, empty, and error
+states SHALL retain their status text and recovery actions.
+
+#### Scenario: Record hierarchy preserves inspection and recovery
+- **WHEN** a user views a loaded or non-success resource or registry route
+- **THEN** applicable identity, status, technical context, and recovery actions remain available
+- **AND** copy, tabs, installation, and long-content containment retain their behavior

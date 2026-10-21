@@ -10,7 +10,8 @@ RUN if [ -n "${NPM_CONFIG_REGISTRY}" ]; then \
     fi; \
     pnpm install --frozen-lockfile --ignore-scripts
 COPY --chown=1000:1000 . .
-COPY --from=design --chown=1000:1000 semantic-colors.css brand.css /src/design/
+COPY --from=design --chown=1000:1000 semantic-colors.css brand.css foundations.css /src/design/
+COPY --from=design --chown=1000:1000 fonts/ /src/design/fonts/
 RUN pnpm build
 
 FROM ${NODE_IMAGE} AS runtime

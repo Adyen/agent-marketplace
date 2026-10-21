@@ -38,9 +38,10 @@ describe('ResourceRow', () => {
     })
 
     expect(wrapper.get('h2').text()).toBe(`${hostile}/${hostile}`)
+    expect(wrapper.get('.resource-row__kind').text()).toBe('Skill')
+    expect(wrapper.get('.resource-row__registry').text()).toBe(hostile)
     expect(wrapper.get('.resource-coordinate__separator').text()).toBe('/')
     expect(wrapper.get('.resource-coordinate__separator').classes()).toContain('am-brand-slash')
-    expect(wrapper.get('.resource-coordinate__separator').classes()).toContain('am-brand-slash--separator')
     expect(wrapper.get('h2').html()).toContain('&lt;img')
     expect(wrapper.find('img').exists()).toBe(false)
     expect(wrapper.find('[onerror]').exists()).toBe(false)
@@ -67,6 +68,8 @@ describe('ResourceRow', () => {
     expect(coordinateLink.text()).toBe('registry-id/review')
     expect(coordinateLink.attributes('aria-label')).toBe('registry-id/review')
     expect(coordinateLink.classes()).toContain('resource-coordinate-link')
+    expect(wrapper.get('.resource-row__kind').text()).toBe('Skill')
+    expect(wrapper.get('.resource-row__registry').text()).toBe('registry-id')
   })
 
   const digest = 'sha256:' + 'c'.repeat(64)
@@ -88,7 +91,7 @@ describe('ResourceRow', () => {
   it('renders reported installation counts including zero with their meaning', () => {
     const positive = mount(ResourceRow, { props: { ...listed(), item: { ...listed().item, installation_count: 12 } }, global: { stubs } })
     expect(positive.text()).toContain('12 reported installations')
-    const explanation = positive.find('[title]')
+    const explanation = positive.get('.resource-row__installations')
     expect(explanation.attributes('title')).toMatch(/latest configuration.*30 days/i)
     expect(explanation.attributes('aria-label')).toMatch(/12 reported installations.*latest configuration.*30 days/i)
 
