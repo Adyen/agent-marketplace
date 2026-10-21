@@ -17,6 +17,8 @@ journey.test("errors-screen drags copy displayed error text and other gestures c
   const source = (name: string): string => `  ${name}:\n    git: ${fixture.registryURL}\n    ref: main\n    path: skills\n`;
   const copied = "was selected but not found";
   const selected = /was selected but not found/;
+  const innerCopied = "selected but not";
+  const innerSelected = /selected but not/;
 
   await step("settled fixture baseline", () => {}, async () => {
     await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
@@ -34,26 +36,33 @@ journey.test("errors-screen drags copy displayed error text and other gestures c
     await locate(terminal, selected).unique().expect();
   });
 
-  await step("a forward drag across error text highlights and copies it on release", async () => {
-    const run = await findTextRun(terminal, selected);
-    await terminal.write(drag(run.x, run.y, run.x + run.width - 1, run.y));
-  }, async () => {
+  const run = await findTextRun(terminal, selected);
+  const first = run.x;
+  const last = run.x + run.width - 1;
+  await step("dragging forward across error text highlights it before release", () => terminal.write(sgr(0, first, run.y, "M") + sgr(32, last, run.y, "M")), async () => {
     await waitForInverse(terminal, selected, 1);
+    assert.equal(await terminal.getClipboard(), "", "the drag copied before release");
+  });
+  await step("releasing copies the highlighted text", () => terminal.write(sgr(0, last, run.y, "m")), async () => {
     await terminal.waitClipboard(copied);
   });
   await step("escape clears the selection and keeps the errors screen", () => terminal.write("\x1b"), async () => {
     await waitForInverse(terminal, selected, 0);
     await locate(terminal, "Errors (1)").unique().expect();
   });
-  await step("a backward drag copies the same text", async () => {
-    const run = await findTextRun(terminal, selected);
-    await terminal.write(drag(run.x + run.width - 1, run.y, run.x, run.y));
-  }, async () => {
-    await waitForInverse(terminal, selected, 1);
-    await terminal.waitClipboard(copied);
+  // The backward drag selects a shorter run, so its copy is a new value.
+  const inner = await findTextRun(terminal, innerSelected);
+  const innerFirst = inner.x;
+  const innerLast = inner.x + inner.width - 1;
+  await step("dragging backward highlights the shorter run before release", () => terminal.write(sgr(0, innerLast, inner.y, "M") + sgr(32, innerFirst, inner.y, "M")), async () => {
+    await waitForInverse(terminal, innerSelected, 1);
+    assert.equal(await terminal.getClipboard(), copied, "the backward drag copied before release");
+  });
+  await step("releasing copies the shorter run", () => terminal.write(sgr(0, innerFirst, inner.y, "m")), async () => {
+    await terminal.waitClipboard(innerCopied);
   });
   await step("escape clears the backward selection", () => terminal.write("\x1b"), async () => {
-    await waitForInverse(terminal, selected, 0);
+    await waitForInverse(terminal, innerSelected, 0);
   });
 
   await step("a click without a drag copies nothing", async () => {
@@ -82,5 +91,5 @@ journey.test("errors-screen drags copy displayed error text and other gestures c
   });
   // Only the two drags wrote to the clipboard; the click and the footer drag
   // wrote nothing.
-  assert.deepEqual(await clipboardWrites(terminal), [copied, copied]);
+  assert.deepEqual(await clipboardWrites(terminal), [copied, innerCopied]);
 });

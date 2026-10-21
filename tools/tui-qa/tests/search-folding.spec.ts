@@ -31,6 +31,7 @@ journey.test("fold keys work in an applied search without touching the query or 
     await locate(terminal, "/ alpha  1 match").unique().expect();
     await locate(terminal, expanded("Available")).unique().expect();
     await locate(terminal, /Name:\s+alpha-skill/).unique().expect();
+    await locate(terminal, "fixture/alpha-skill").unique().expect();
   });
   await step("select the matching category", () => terminal.write("k"), async () => {
     await locate(terminal, "Select a resource to see details").unique().expect();
@@ -43,6 +44,7 @@ journey.test("fold keys work in an applied search without touching the query or 
   await step("reopening the unchanged query keeps the search fold", () => terminal.write("/\r"), async () => {
     await locate(terminal, "/ alpha  1 match").unique().expect();
     await locate(terminal, folded("Available")).unique().expect();
+    await locate(terminal, "fixture/alpha-skill").expect({ not: true });
   });
   await step("zR expands every category", () => terminal.write("zR"), async () => {
     await locate(terminal, expanded("Available")).unique().expect();
@@ -64,6 +66,7 @@ journey.test("fold keys work in an applied search without touching the query or 
     await locate(terminal, "/ alph  1 match").unique().expect();
     await locate(terminal, expanded("Available")).unique().expect();
     await locate(terminal, /Name:\s+alpha-skill/).unique().expect();
+    await locate(terminal, "fixture/alpha-skill").unique().expect();
   });
 
   await step("clearing the query restores the browsing folds", () => terminal.write("\x1b"), async () => {
