@@ -142,7 +142,7 @@ benchstat docs/issues/performance-r5-tag-bumps-2026-10-20/selector-before.txt \
 ## Validation
 
 The performance and combined E2E evidence includes main at `873d0b22`.
-Latest integration includes main at `2d6310d4`; the measured production
+The security integration includes main at `2d6310d4`; the measured production
 blob is unchanged by those main merges. The recorded performance baseline
 remains `99c26d07`.
 
@@ -186,6 +186,9 @@ compiler is also affected and below the new minimum; those checks are
 not patched-compiler security evidence. CI verifies the Go 1.27.3 integration.
 The unchanged audit tool separately passes trace, archive, and committed
 gate checks after integration.
+The subsequent main drift-fix integration at `93f7fe53` leaves that blob
+unchanged; its audit checkpoint passes 1,111 scenarios, 1,772 annotations,
+two active changes, and the committed gate.
 The benchmark measurements remain historical Go 1.27.1 comparisons of the
 unchanged production blob, not a performance claim about the patched compiler.
 
