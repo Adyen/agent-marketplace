@@ -43,14 +43,16 @@ When installation is unavailable, the Marketplace SHALL replace setup and comman
 The Landing, Docs, and Marketplace surfaces SHALL use the approved Adyen
 variable Sans and Mono fonts and shared Agent Marketplace brand palette through
 surface-owned semantic adapters. Their primary navigation SHALL present the
-supplied logo at one stable size and optical alignment. Marketplace
-availability, warning, error, control, and inspection semantics SHALL remain
-distinct.
+supplied logo at one stable size and optical alignment. Public Marketplace
+navigation, browse content, and footer SHALL use the same responsive maximum
+width and outer gutters as Landing and Docs. Marketplace availability, warning,
+error, control, and inspection semantics SHALL remain distinct.
 
 #### Scenario: Browser surfaces present accessible adaptive branding
 - **WHEN** a user visits Landing, Docs, or Marketplace in light or dark appearance
 - **THEN** every surface uses the approved fonts and shared brand palette
 - **AND** each surface retains its framework-specific semantic adapter
+- **AND** Marketplace browse content shares the Landing/Docs left and right edges
 - **AND** the accessible logo and existing destinations remain unchanged
 
 ### Requirement: Resource source origin link
@@ -86,27 +88,33 @@ The Marketplace primary header SHALL use its accessible logo link as the Marketp
 - **AND** primary-header documentation navigation MUST open the local documentation in a new tab with opener isolation
 
 ### Requirement: Shared slash brand motif
-Landing and Marketplace SHALL reuse a logo-green `#00D16A` slash mark at approved structural brand locations. Every mark SHALL retain the angle of the slash in the shared horizontal logo, with dimensions scaling from the surrounding font size and a shared negative eight-hundredths-em vertical alignment that optically balances it against adjacent text. Ordinary title prefixes and coordinate separators SHALL use a one-fifth-em spacing rhythm, applied after title prefixes and on both sides of separators. Section-eyebrow prefixes SHALL use a three-eighth-em trailing interval as the intentional exception for letter-spaced uppercase typography. Resource-coordinate separators SHALL use an optically reduced stroke beside medium-weight text while retaining the shared angle and font-relative height. Landing SHALL show the motif before every section eyebrow but SHALL NOT show it before the hero secondary line. Marketplace SHALL show it before the instance title, between registry and resource names in result rows, and before skill or command detail titles. Other detail-title kinds, the Filters heading, and the Resources heading SHALL remain unprefixed. Decorative prefix slashes MUST be hidden from the accessibility tree. Coordinate separators SHALL preserve the accessible `registry/name` value, route, and truncation behavior, and coordinate hover SHALL show one continuous straight underline. Other content SHALL NOT gain the motif implicitly.
+Landing and Marketplace SHALL reuse a logo-green `#00D16A` slash mark at
+approved structural brand locations. Every mark SHALL retain the angle of the
+slash in the shared horizontal logo. Landing SHALL show the motif before every
+section eyebrow but SHALL NOT show it before the hero secondary line.
+Marketplace SHALL show it before the instance title, between registry and
+resource names in result rows, and before skill or command detail titles.
+Resource rows SHALL retain their leading `type · registry / name` arrangement,
+with the linked coordinate accessible as `registry/name`. Filters, Resources,
+and other detail-title kinds SHALL remain unprefixed. Decorative prefix slashes
+MUST be hidden from the accessibility tree.
 
 #### Scenario: Browser surfaces carry the approved slash motif
 - **WHEN** a user visits Landing or the Marketplace catalog
-- **THEN** a `#00D16A` slash matching the shared logo geometry appears at each approved section-label and instance-title location
-- **AND** every slash uses the shared font-relative optical baseline offset
-- **AND** titles use one-fifth-em trailing spacing while eyebrows use three-eighth-em trailing spacing
-- **AND** Landing eyebrow labels use the primary text color while the hero secondary line has no motif slash
-- **AND** no motif slash appears in the Filters or Resources catalog heading
+- **THEN** approved structural labels and the Marketplace instance title show the shared green slash
+- **AND** Filters and Resources remain unprefixed
 - **AND** accessible heading and label names remain unchanged
 
 #### Scenario: Resource row highlights its meaningful coordinate separator
 - **WHEN** the Marketplace displays a resource result row
-- **THEN** its coordinate remains accessible as `registry/name`
-- **AND** the delimiter retains the shared slash angle, height, and optical baseline offset with a lighter optical stroke
-- **AND** it carries one-fifth-em spacing on each side
-- **AND** hovering the coordinate shows one continuous straight underline across its full width
+- **THEN** resource type, registry, separator, and resource name remain on the leading line
+- **AND** the resource name is primary while type and registry use regular muted styling
+- **AND** the linked coordinate remains accessible as `registry/name` and retains its route
+- **AND** hovering the linked coordinate shows one continuous straight underline
 
 #### Scenario: Skill and command detail titles use the slash motif
 - **WHEN** a user views a skill or command detail page
-- **THEN** the visible title is prefixed by the shared slash mark with the shared optical baseline offset and one-fifth-em trailing space
+- **THEN** the visible title is prefixed by the shared slash mark
 - **AND** the accessible heading name remains the resource name without the slash
 
 #### Scenario: Other resource detail titles remain unprefixed
@@ -186,3 +194,35 @@ NOT change the supported harness set or capability data.
 - **WHEN** a user reaches the Landing harness depiction
 - **THEN** Claude Code is the first and selected harness tab
 - **AND** every previously listed harness and its capability data remains present
+
+### Requirement: Marketplace catalog remains an efficient index
+The catalog SHALL preserve search, URL-backed kind and registry filters,
+active filters, result status, incremental loading, resource actions, and
+responsive filter disclosure. Wide layouts SHALL keep the filter rail and
+result controls available while browsing. Narrow layouts SHALL contain long
+content without page-level horizontal scrolling.
+
+#### Scenario: Catalog remains usable across viewport sizes
+- **WHEN** a user browses or filters Marketplace at narrow, medium, or wide widths
+- **THEN** search, filters, result status, and available row actions remain reachable
+- **AND** wide layouts retain the filter rail while narrow layouts disclose it on demand
+- **AND** the page does not introduce horizontal overflow
+
+### Requirement: Marketplace browse typography remains cohesive
+The Marketplace browse page SHALL use Adyen Sans for page headings,
+introduction copy, resource identity and description, filters, search, actions,
+metadata, counts, and availability labels. Adyen Mono SHALL be reserved for
+actual installation commands and code blocks. Shared roles SHALL define a
+32/40px weight-600 page title, 16/24px weight-400 introduction, 22/28px
+weight-600 Resources heading, 16/24px resource coordinate with a weight-600
+name and weight-400 context, 14/20px description and controls, 14/20px
+weight-500 buttons, 12/18px metadata and statuses, and 12/18px weight-600
+filter headings. Labels SHALL use sentence case without added letter spacing.
+
+#### Scenario: Browse roles use the approved hierarchy
+- **WHEN** a user browses resources in either appearance at wide or narrow widths
+- **THEN** every browse role uses its shared Sans typography token
+- **AND** the unchanged top-line identity emphasizes the resource name by weight and color
+- **AND** descriptions remain less prominent than names
+- **AND** long resource and registry names remain contained without page overflow
+- **AND** installation-count placement, controls, and behavior remain unchanged

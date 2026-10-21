@@ -353,10 +353,9 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.locator('#results-heading .am-brand-slash')).toHaveCount(0)
     await expect(page.getByRole('heading', { name: 'Filters', exact: true })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Resources', exact: true })).toBeVisible()
-    const coordinateSlash = page.locator('.resource-coordinate__separator').first()
-    await expect(coordinateSlash).toHaveText('/')
-    await expect(coordinateSlash).toHaveCSS('color', 'rgb(0, 209, 106)')
-    const slashMetrics = await Promise.all([introSlash, coordinateSlash].map(locator => locator.evaluate((element) => {
+    await expect(page.locator('.resource-coordinate__separator')).toHaveCount(2)
+    await expect(page.locator('.resource-coordinate__separator').first()).toHaveCSS('color', 'rgb(0, 209, 106)')
+    const slashMetrics = await introSlash.evaluate((element) => {
       const style = getComputedStyle(element)
       const before = getComputedStyle(element, '::before')
       return {
@@ -370,26 +369,13 @@ test.describe('Marketplace browser discovery', () => {
         stroke: Number.parseFloat(style.getPropertyValue('--am-brand-slash-stroke')),
         clipPath: before.clipPath,
       }
-    })))
-    expect(slashMetrics[0].width / slashMetrics[0].fontSize).toBeCloseTo(0.364, 2)
-    expect(slashMetrics[0].height / slashMetrics[0].fontSize).toBeCloseTo(0.8, 2)
-    expect(slashMetrics[0].verticalAlign / slashMetrics[0].fontSize).toBeCloseTo(-0.08, 2)
-    expect(slashMetrics[0].marginRight / slashMetrics[0].fontSize).toBeCloseTo(0.2, 2)
-    expect(slashMetrics[1].width / slashMetrics[1].fontSize).toBeCloseTo(0.339, 2)
-    expect(slashMetrics[1].height / slashMetrics[1].fontSize).toBeCloseTo(0.8, 2)
-    expect(slashMetrics[1].verticalAlign / slashMetrics[1].fontSize).toBeCloseTo(-0.08, 2)
-    expect(slashMetrics[1].marginLeft / slashMetrics[1].fontSize).toBeCloseTo(0.2, 2)
-    expect(slashMetrics[1].marginRight / slashMetrics[1].fontSize).toBeCloseTo(0.2, 2)
-    expect(slashMetrics[0].run).toBeCloseTo(slashMetrics[1].run, 3)
-    expect(slashMetrics[0].stroke).toBeCloseTo(0.145, 3)
-    expect(slashMetrics[1].stroke).toBeCloseTo(0.12, 3)
-    expect(slashMetrics[0].clipPath).not.toBe('none')
-    expect(slashMetrics[1].clipPath).not.toBe('none')
-    const coordinateWeights = await coordinateSlash.evaluate(element => ({
-      registry: getComputedStyle(element.previousElementSibling!).fontWeight,
-      name: getComputedStyle(element.nextElementSibling!).fontWeight,
-    }))
-    expect(coordinateWeights.name).toBe(coordinateWeights.registry)
+    })
+    expect(slashMetrics.width / slashMetrics.fontSize).toBeCloseTo(0.364, 2)
+    expect(slashMetrics.height / slashMetrics.fontSize).toBeCloseTo(0.8, 2)
+    expect(slashMetrics.verticalAlign / slashMetrics.fontSize).toBeCloseTo(-0.08, 2)
+    expect(slashMetrics.marginRight / slashMetrics.fontSize).toBeCloseTo(0.2, 2)
+    expect(slashMetrics.stroke).toBeCloseTo(0.145, 3)
+    expect(slashMetrics.clipPath).not.toBe('none')
     const marketplaceBrand = marketplaceNav.getByRole('link', { name: 'agent-marketplace', exact: true })
     await expect(marketplaceBrand).toHaveAttribute('href', '/')
     await expect(marketplaceBrand.locator('.am-site-nav__brand-logo--light')).toHaveAttribute('src', '/brand/logo-horizontal-black.svg')
@@ -559,11 +545,11 @@ test.describe('Marketplace browser discovery', () => {
           surface: 'rgb(255, 255, 255)',
           subtle: 'rgb(245, 246, 245)',
           raised: 'rgb(255, 255, 255)',
-          chrome: 'rgb(255, 255, 255)',
+          chrome: 'rgb(245, 246, 245)',
           control: 'rgb(255, 255, 255)',
           hover: 'rgb(244, 245, 244)',
           code: 'rgb(245, 246, 245)',
-          primaryText: 'rgb(27, 38, 32)',
+          primaryText: 'rgb(18, 26, 24)',
           secondaryText: 'rgb(83, 97, 90)',
           mutedText: 'rgb(95, 110, 101)',
           border: 'rgb(222, 223, 222)',
@@ -574,8 +560,8 @@ test.describe('Marketplace browser discovery', () => {
       },
       dark: {
         marketplace: {
-          canvas: 'rgb(20, 26, 24)',
-          surface: 'rgb(27, 35, 32)',
+          canvas: 'rgb(18, 26, 24)',
+          surface: 'rgb(18, 26, 24)',
           subtle: 'rgb(35, 46, 40)',
           raised: 'rgb(40, 52, 45)',
           chrome: 'rgb(27, 35, 32)',
@@ -625,7 +611,7 @@ test.describe('Marketplace browser discovery', () => {
 
       const header = page.locator('.am-site-header')
       await expect(header).toHaveCSS('background-color', theme.marketplace.chrome)
-      await expect(header).toHaveCSS('border-bottom-color', theme.marketplace.border)
+      await expect(header).toHaveCSS('border-bottom-width', '0px')
 
       const search = page.getByLabel('Search', { exact: true })
       await expect(search).toHaveCSS('background-color', theme.marketplace.control)
@@ -701,38 +687,79 @@ test.describe('Marketplace browser discovery', () => {
     }
   })
 
-  test('keeps dense Marketplace copy readable in dark mode', async ({ page }) => {
-    await page.goto('/')
-    await page.evaluate(key => localStorage.setItem(key, 'dark'), sharedAppearanceKey)
-    await page.reload()
-    await expect(page.locator('html')).toHaveClass(/\bdark\b/)
+  // spec: marketplace-web-ui/browse-roles-use-the-approved-hierarchy
+  // spec: marketplace-web-ui/resource-row-highlights-its-meaningful-coordinate-separator
+  test('uses the cohesive browse typography hierarchy in both themes', async ({ page }) => {
+    for (const appearance of ['light', 'dark']) {
+      await page.goto('/')
+      await page.evaluate(
+        ({ key, appearance }) => localStorage.setItem(key, appearance),
+        { key: sharedAppearanceKey, appearance },
+      )
+      await page.reload()
 
-    const typography = await page.evaluate(() => {
-      const metrics = (selector: string) => {
-        const element = document.querySelector(selector)
-        if (!element) throw new Error(`Missing typography probe: ${selector}`)
-        const style = getComputedStyle(element)
-        return {
-          size: Number.parseFloat(style.fontSize),
-          weight: Number.parseInt(style.fontWeight, 10),
+      const typography = await page.evaluate(() => {
+        const metrics = (selector: string) => {
+          const element = document.querySelector(selector)
+          if (!element) throw new Error(`Missing typography probe: ${selector}`)
+          const style = getComputedStyle(element)
+          return {
+            family: style.fontFamily,
+            size: style.fontSize,
+            lineHeight: style.lineHeight,
+            weight: style.fontWeight,
+            letterSpacing: style.letterSpacing,
+            textTransform: style.textTransform,
+          }
         }
-      }
 
-      return {
-        kind: metrics('article:first-of-type span.font-mono'),
-        coordinate: metrics('article:first-of-type h2'),
-        description: metrics('article:first-of-type p.text-toned'),
-        copyAction: metrics('article:first-of-type button'),
-      }
-    })
+        return {
+          pageTitle: metrics('.marketplace-intro h1'),
+          introduction: metrics('.marketplace-intro__description'),
+          resourcesHeading: metrics('#results-heading'),
+          resourceName: metrics('.resource-row__name'),
+          resourceRegistry: metrics('.resource-row__registry'),
+          resourceDescription: metrics('.resource-row__description'),
+          filterOption: metrics('.catalog-filter-option'),
+          searchInput: metrics('#search-query'),
+          copyButton: metrics('article:first-of-type .copy-button'),
+          resourceKind: metrics('.resource-row__kind'),
+          installationCount: metrics('.resource-row__installations'),
+          availability: metrics('article:nth-of-type(2) .resource-row__availability'),
+          resultCount: metrics('.catalog-results__header > p'),
+          endMessage: metrics('.catalog-stream-complete'),
+          filterHeading: metrics('.catalog-filter-label'),
+          fontSynthesis: getComputedStyle(document.body).fontSynthesis,
+          sans600Loaded: document.fonts.check('600 16px Adyen'),
+        }
+      })
 
-    expect(typography.kind.size).toBeGreaterThanOrEqual(13)
-    expect(typography.coordinate.size).toBeGreaterThanOrEqual(15)
-    expect(typography.description.size).toBeGreaterThanOrEqual(15)
-    expect(typography.copyAction.size).toBeGreaterThanOrEqual(13)
-    expect(typography.kind.weight).toBeGreaterThanOrEqual(450)
-    expect(typography.coordinate.weight).toBeGreaterThanOrEqual(450)
-    expect(typography.description.weight).toBeGreaterThanOrEqual(450)
+      const sansFamily = 'Adyen, Helvetica, Arial, sans-serif'
+      expect(typography.pageTitle).toMatchObject({ family: sansFamily, size: '32px', lineHeight: '40px', weight: '600' })
+      expect(typography.introduction).toMatchObject({ family: sansFamily, size: '16px', lineHeight: '24px', weight: '400' })
+      expect(typography.resourcesHeading).toMatchObject({ family: sansFamily, size: '22px', lineHeight: '28px', weight: '600' })
+      expect(typography.resourceName).toMatchObject({ family: sansFamily, size: '16px', lineHeight: '24px', weight: '600' })
+      expect(typography.resourceRegistry).toMatchObject({ family: sansFamily, size: '16px', lineHeight: '24px', weight: '400' })
+      expect(typography.resourceKind).toMatchObject({ family: sansFamily, size: '16px', lineHeight: '24px', weight: '400' })
+      expect(typography.resourceDescription).toMatchObject({ family: sansFamily, size: '14px', lineHeight: '20px', weight: '400' })
+      expect(typography.filterOption).toMatchObject({ family: sansFamily, size: '14px', lineHeight: '20px', weight: '400', letterSpacing: 'normal', textTransform: 'none' })
+      expect(typography.searchInput).toMatchObject({ family: sansFamily, size: '14px', lineHeight: '20px', weight: '400' })
+      expect(typography.copyButton).toMatchObject({ family: sansFamily, size: '14px', lineHeight: '20px', weight: '500' })
+      for (const role of ['installationCount', 'availability', 'resultCount', 'endMessage'] as const) {
+        expect(typography[role]).toMatchObject({ family: sansFamily, size: '12px', lineHeight: '18px', weight: '400' })
+      }
+      expect(typography.filterHeading).toMatchObject({ family: sansFamily, size: '12px', lineHeight: '18px', weight: '600', letterSpacing: 'normal', textTransform: 'none' })
+      expect(typography.fontSynthesis).toBe('none')
+      expect(typography.sans600Loaded).toBe(true)
+
+      const firstRow = page.locator('article').first()
+      await expect(firstRow.getByRole('link', { name: 'team-tools/secure-review', exact: true })).toHaveText('team-tools/secure-review')
+      await expect(firstRow.locator('.resource-row__kind')).toHaveText('Skill')
+      await expect(firstRow.locator('.resource-row__registry')).toHaveText('team-tools')
+      await expect(firstRow.locator('.resource-coordinate__separator')).toHaveText('/')
+      const rowHeights = await page.locator('article').evaluateAll(rows => rows.map(row => row.getBoundingClientRect().height))
+      expect(rowHeights[0]).toBeCloseTo(rowHeights[1], 0)
+    }
   })
 
   test('exposes the shared navigation from a keyboard-operable mobile menu', async ({ page }) => {
@@ -779,7 +806,7 @@ test.describe('Marketplace browser discovery', () => {
 
     await expect(page.getByRole('heading', { name: 'e2e-marketplace', exact: true })).toBeVisible()
     await expect(page.getByText('Browse resources for AI agents, with every revision pinned and analyzed before publication.', { exact: true })).toBeVisible()
-    await expect(page.getByText(/To use a resource, install the agent-marketplace CLI, then copy and run its install command\./)).toBeVisible()
+    await expect(page.getByText(/To use a resource, install the agent-marketplace CLI, then copy and run its install command\./)).toHaveCount(0)
     await expect(page.getByText(`agent-marketplace install "${appURL}"`, { exact: true })).toHaveCount(0)
     const copyInstall = page.getByRole('button', { name: 'Copy install command for secure-review', exact: true })
     await copyInstall.click()

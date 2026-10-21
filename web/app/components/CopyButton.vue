@@ -23,7 +23,7 @@ withDefaults(defineProps<Props>(), {
 <template>
   <button
     type="button"
-    class="inline-flex min-h-8 shrink-0 items-center rounded text-xs font-semibold transition-colors disabled:shadow-none motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--am-color-action-focus-ring)"
+    class="copy-button inline-flex min-h-8 shrink-0 items-center rounded transition-colors disabled:shadow-none motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--am-color-action-focus-ring)"
     :class="[
       disabled ? 'cursor-not-allowed text-(--am-color-text-muted)' : 'cursor-pointer text-(--am-color-text-primary)',
       iconOnly ? 'size-8 justify-center p-0' : 'gap-1.5 px-2',
@@ -39,3 +39,9 @@ withDefaults(defineProps<Props>(), {
     <span v-if="!iconOnly">{{ copied ? copiedText : copyText }}</span>
   </button>
 </template>
+
+<style scoped>
+.copy-button {
+  font: var(--am-type-button);
+}
+</style>

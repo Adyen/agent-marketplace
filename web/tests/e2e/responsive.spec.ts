@@ -54,6 +54,15 @@ test.describe('Marketplace layout at 390px', () => {
     await expect(page.locator('#mobile-resource-filters')).toBeVisible()
     await expect(page.getByRole('radio', { name: 'All kinds', exact: true })).toBeVisible()
     await expect(page.getByRole('checkbox', { name: 'team-tools', exact: true })).toBeVisible()
+
+    const longName = `resource-${'long-name-'.repeat(30)}`
+    const longRegistry = `registry-${'long-identifier-'.repeat(24)}`
+    await firstResult.locator('.resource-row__name').evaluate((element, value) => { element.textContent = value }, longName)
+    await firstResult.locator('.resource-row__registry').evaluate((element, value) => { element.textContent = value }, longRegistry)
+    await page.getByRole('checkbox', { name: 'team-tools', exact: true }).locator('..').locator('span').evaluate((element, value) => { element.textContent = value }, longRegistry)
+
+    await expect(firstResult.locator('.resource-row__coordinate')).toHaveCSS('text-overflow', 'ellipsis')
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   })
 
   test('keeps long resource identity and command content contained while copy remains visible', async ({ page }) => {
@@ -136,7 +145,7 @@ test.describe('Marketplace layout at 768px', () => {
     await sidebar.getByRole('button', { name: 'Show all (40)' }).click()
 
     await expect(filterRail).toHaveAttribute('data-expanded', 'true')
-    await expect(filterRail).toHaveCSS('max-height', '872px')
+    await expect(filterRail).toHaveCSS('max-height', '868px')
     await expect(filterRail).toHaveCSS('overflow-y', 'auto')
     await expect(filterRail).toHaveCSS('scrollbar-width', 'thin')
     await expect(filterRail.getByRole('checkbox')).toHaveCount(40)
@@ -281,6 +290,7 @@ test.describe('Marketplace layout at 1440px', () => {
     expect(Math.abs(resultAfter!.x - resultBefore!.x)).toBeLessThanOrEqual(1)
   })
 
+  // spec: marketplace-web-ui/catalog-remains-usable-across-viewport-sizes
   test('uses a shared container, sticky filter rail, and unified results column', async ({ page }) => {
     await page.goto('/?kind=skill&registry=team-tools')
 
@@ -310,9 +320,8 @@ test.describe('Marketplace layout at 1440px', () => {
     expect(resultsBox).not.toBeNull()
     expect(introductionBox!.height).toBeLessThan(50)
     expect((await introduction.boundingBox())!.height).toBeLessThan(140)
-    await expect(introductionParagraphs).toHaveCount(2)
-    await expect(introductionParagraphs.first()).toHaveCSS('display', 'inline')
-    await expect(introductionParagraphs.last()).toHaveCSS('display', 'inline')
+    await expect(introductionParagraphs).toHaveCount(1)
+    await expect(introductionParagraphs.first()).toHaveCSS('display', 'block')
     expect(searchBox!.x).toBeGreaterThan(sidebarBox!.x + sidebarBox!.width)
     expect(catalogBox!.y).toBeGreaterThan(searchBox!.y + searchBox!.height)
     expect(Math.abs(introductionBox!.x - sidebarBox!.x)).toBeLessThanOrEqual(1)
@@ -332,7 +341,7 @@ test.describe('Marketplace layout at 1440px', () => {
     await expect(activeFilters).toHaveCSS('gap', '6px')
     await expect(skillChip).toHaveCSS('min-height', '30px')
     await expect(skillChip).toHaveCSS('gap', '5px')
-    await expect(skillChip).toHaveCSS('font-size', '13px')
+    await expect(skillChip).toHaveCSS('font-size', '14px')
     await expect(skillChip).toHaveCSS('font-weight', '500')
     const chipPadding = await skillChip.evaluate((element) => {
       const style = getComputedStyle(element)
@@ -357,10 +366,10 @@ test.describe('Marketplace layout at 1440px', () => {
     ])
     expect(countBox!.x - (headingBox!.x + headingBox!.width)).toBeCloseTo(8, 0)
     expect(filtersBox!.y - (headerBox!.y + headerBox!.height)).toBeCloseTo(10, 0)
-    expect(resultBox!.y - (filtersBox!.y + filtersBox!.height)).toBeCloseTo(14, 0)
+    expect(resultBox!.y - (filtersBox!.y + filtersBox!.height)).toBeCloseTo(17, 0)
     expect(chipBox!.y + chipBox!.height / 2).toBeCloseTo(clearBox!.y + clearBox!.height / 2, 0)
 
-    const description = firstResult.locator('p').first()
+    const description = firstResult.locator('.resource-row__description')
     const copyAction = firstResult.getByRole('button', { name: /Copy install command/ })
     const descriptionBox = await description.boundingBox()
     const copyActionBox = await copyAction.boundingBox()

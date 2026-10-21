@@ -24,7 +24,7 @@
   overflow: visible;
   clip: auto;
   clip-path: none;
-  border-radius: 6px;
+  border-radius: var(--am-radius-control);
   background: var(--am-color-action-primary);
   padding: 10px 16px;
   color: var(--am-color-text-on-action);
@@ -37,7 +37,6 @@
   position: sticky;
   top: 0;
   z-index: 50;
-  border-bottom: 1px solid var(--am-color-border-default);
   background: var(--am-color-bg-chrome);
   color: var(--am-color-text-primary);
 }
@@ -47,18 +46,18 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  width: 100%;
-  max-width: 1440px;
-  height: 64px;
+  width: min(calc(100% - 2 * var(--am-page-gutter)), var(--am-content-max));
+  max-width: none;
+  height: var(--am-nav-height);
   margin-inline: auto;
-  padding-inline: 32px;
-  font-family: var(--font-sans);
+  padding: 0;
+  font-family: var(--am-font-sans);
 }
 
 .am-site-nav a:focus-visible,
 .am-site-nav button:focus-visible {
-  outline: 2px solid var(--am-color-action-focus-ring);
-  outline-offset: 4px;
+  outline: var(--am-focus-width) solid var(--am-color-action-focus-ring);
+  outline-offset: var(--am-focus-offset);
 }
 
 button[role="switch"] {
@@ -77,6 +76,7 @@ button[role="switch"] {
   display: block;
   width: var(--am-brand-logo-width);
   height: auto;
+  aspect-ratio: var(--am-brand-logo-aspect-ratio);
   transform: translateY(var(--am-brand-logo-offset-y));
 }
 
@@ -114,17 +114,17 @@ button[role="switch"] {
   align-items: center;
   gap: 4px;
   padding: 0 12px;
-  color: var(--am-color-text-primary);
-  font-size: var(--am-text-body-sm);
-  font-weight: var(--am-font-medium);
-  line-height: 64px;
+  color: var(--am-color-text-secondary);
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: var(--am-nav-height);
   text-decoration: none;
-  transition: color 250ms;
+  transition: color var(--am-motion-feedback) var(--am-motion-ease);
 }
 
 .am-site-nav__link:hover,
 .am-site-nav__link[aria-current="page"] {
-  color: var(--am-color-action-primary);
+  color: var(--am-color-text-primary);
 }
 
 .am-site-nav__icon-link,
@@ -132,8 +132,8 @@ button[role="switch"] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: var(--am-hit-target);
+  height: var(--am-hit-target);
   border: 0;
   background: transparent;
   color: var(--am-color-text-secondary);
@@ -141,7 +141,7 @@ button[role="switch"] {
 
 .am-site-nav__icon-link:hover,
 .am-site-nav__menu-button:hover {
-  color: var(--am-color-action-primary);
+  color: var(--am-color-text-primary);
 }
 
 .am-site-nav__icon-link svg {
@@ -225,19 +225,21 @@ button[role="switch"] {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 36px;
-  height: 36px;
+  width: var(--am-hit-target);
+  height: var(--am-hit-target);
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--am-radius-control);
   background: transparent;
   color: var(--am-color-text-secondary);
   cursor: pointer;
-  transition: background-color 250ms, color 250ms;
+  transition:
+    background-color var(--am-motion-feedback) var(--am-motion-ease),
+    color var(--am-motion-feedback) var(--am-motion-ease);
 }
 
 .am-theme-switch:hover {
   background: var(--am-color-bg-subtle);
-  color: var(--am-color-action-primary);
+  color: var(--am-color-text-primary);
 }
 
 .am-theme-switch__icon {
@@ -246,10 +248,6 @@ button[role="switch"] {
 }
 
 @media (max-width: 767px) {
-  .am-site-nav {
-    padding: 0 8px 0 24px;
-  }
-
   .am-site-nav__brand {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -262,15 +260,16 @@ button[role="switch"] {
 
   .am-site-nav__actions {
     position: absolute;
-    top: 64px;
-    right: 0;
-    left: 0;
+    top: var(--am-nav-height);
+    right: calc(-1 * var(--am-page-gutter));
+    left: calc(-1 * var(--am-page-gutter));
     display: none;
     align-items: stretch;
     flex-direction: column;
     gap: 16px;
     background: var(--am-color-bg-chrome);
-    padding: 0 32px 32px;
+    border-bottom: 1px solid var(--am-color-border-default);
+    padding: 0 var(--am-page-gutter) var(--am-page-gutter);
   }
 
   .am-site-nav__actions[data-open="true"] {
