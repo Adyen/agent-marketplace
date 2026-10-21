@@ -7,9 +7,10 @@ for the compact product depiction.
 
 ## What Changes
 
-- Show all installation scopes as comparable selectable cards.
-- Keep repository scope selected by default and update the example command when
-  another scope is chosen.
+- Show all installation scopes as comparable informational columns in one
+  quiet panel.
+- Identify repository scope as the default and show one valid repository-scope
+  example command.
 - Put Claude Code first so the selected default leads the harness tabs.
 - Tighten labels in the organization Marketplace depiction.
 - Remove superseded compatibility token definitions after every Landing
@@ -24,6 +25,6 @@ for the compact product depiction.
 
 ## Impact
 
-The change affects Landing-only fixtures, content presentation, and controls.
+The change affects Landing-only fixtures and content presentation.
 It does not change CLI defaults, harness support, installation semantics, or
 Marketplace application behavior.

@@ -137,7 +137,7 @@ const resources = [
   }
 
   .organizations :deep(.head) {
-    margin-bottom: var(--lp-space-default);
+    margin-bottom: var(--lp-space-group);
   }
 }
 
@@ -183,7 +183,7 @@ const resources = [
 
 .benefit p {
   max-width: var(--lp-measure);
-  margin: var(--lp-space-related) 0 0;
+  margin: var(--lp-space-tight) 0 0;
   color: var(--lp-text-2);
   font: var(--lp-font-body);
   text-wrap: pretty;
@@ -356,10 +356,6 @@ const resources = [
 @media (min-width: 960px) and (max-height: 800px) {
   .organizations {
     --lp-section-pad: var(--lp-space-related);
-  }
-
-  .organizations :deep(.head) {
-    margin-bottom: var(--lp-space-default);
   }
 }
 </style>

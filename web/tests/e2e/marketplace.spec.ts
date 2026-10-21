@@ -522,21 +522,25 @@ test.describe('Marketplace browser discovery', () => {
     await expect(tabs.getByRole('tab', { selected: true })).not.toHaveText(selectedText)
   })
 
-  // spec: marketplace-web-ui/scope-selection-updates-the-example-command
-  test('keeps Landing scope outcomes comparable while selection updates the example', async ({ page }) => {
+  // spec: marketplace-web-ui/scope-comparison-identifies-the-repository-default
+  test('keeps Landing scope outcomes comparable without implying selection', async ({ page }) => {
     await page.goto(publicSiteURL)
 
+    const scopes = page.locator('#scopes')
     const scopeCards = page.locator('.scope-card')
     await expect(scopeCards).toHaveCount(3)
     await expect(page.locator('.scope-fact--config')).toHaveCount(3)
-
-    const repository = page.locator('input[name="installation-scope"][value="repo"]')
-    const user = page.locator('input[name="installation-scope"][value="user"]')
-    await expect(repository).toBeChecked()
-    await user.check()
-    await expect(user).toBeChecked()
-    await expect(repository).not.toBeChecked()
-    await expect(page.locator('.scope-command')).toContainText('--scope user')
+    await expect(scopes.getByRole('radio')).toHaveCount(0)
+    await expect(scopes).toContainText('--scope user')
+    await expect(scopes).toContainText('--scope repo')
+    await expect(scopes).toContainText('--scope local')
+    const repositoryScope = scopes
+      .getByRole('heading', { name: 'Repository Default', exact: true })
+      .locator('..')
+    await expect(repositoryScope).toContainText('Default')
+    await expect(page.locator('.scope-command')).toContainText(
+      'agent-marketplace install pdf --scope repo',
+    )
 
     const harnessTabs = page.getByRole('tablist', { name: 'Harness target' }).getByRole('tab')
     await expect(harnessTabs.first()).toHaveText('Claude Code')

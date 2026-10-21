@@ -8,7 +8,7 @@ Factory before the intentionally selected Claude default.
 
 **Goals:**
 - Make scope outcomes directly comparable.
-- Keep selection semantics and generated example commands clear.
+- Keep CLI scope values and the default example command clear.
 - Align visible harness order with the existing default.
 - Keep the organization preview compact.
 
@@ -18,19 +18,19 @@ Factory before the intentionally selected Claude default.
 
 ## Decisions
 
-Scopes use native radio inputs inside visible cards, preserving browser keyboard
-behavior and one selected value. All three outcomes remain visible; selection
-only changes the example command. The checked repository scope remains the
-default. Harness data is reordered without changing any entry so Claude leads
-the tabs it already defaulted. Depiction-only labels are shortened without
-changing destinations or actions.
+Scopes use three informational columns in one quiet panel. Inset dividers
+preserve comparison structure without implying that the columns are controls.
+Each column exposes its CLI value, while Repository carries the default label
+and one valid static example command. Harness data is reordered without
+changing any entry so Claude leads the tabs it already defaulted.
+Depiction-only labels are shortened without changing destinations or actions.
 
 ## Risks / Trade-offs
 
-Showing all scope details uses more vertical space on narrow screens. Cards
-stack to preserve complete text and touch targets.
+Showing all scope details uses more vertical space on narrow screens. Columns
+stack with horizontal inset dividers to preserve complete text.
 
 ## Migration Plan
 
 Apply the Landing-only refinements, remove obsolete compatibility tokens,
-verify the selection witnesses, and archive the change.
+verify the comparison witnesses, and archive the change.

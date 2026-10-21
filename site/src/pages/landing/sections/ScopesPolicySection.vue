@@ -1,13 +1,10 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
 import CommandBar from '../components/CommandBar.vue'
 import SectionShell from '../components/SectionShell.vue'
 
-type ScopeID = 'user' | 'repo' | 'local'
-
 const scopes = [
   {
-    id: 'user' as ScopeID,
+    id: 'user',
     title: 'User',
     context: 'Personal',
     summary: 'Available to you in every repository on this machine.',
@@ -16,7 +13,7 @@ const scopes = [
     versionControl: 'Not committed',
   },
   {
-    id: 'repo' as ScopeID,
+    id: 'repo',
     title: 'Repository',
     context: 'Team shared',
     summary: 'Shared with the team and committed to this repository.',
@@ -26,7 +23,7 @@ const scopes = [
     isDefault: true,
   },
   {
-    id: 'local' as ScopeID,
+    id: 'local',
     title: 'Local',
     context: 'Private',
     summary: 'Available only to you in this repository and kept out of Git.',
@@ -35,14 +32,6 @@ const scopes = [
     versionControl: 'Gitignored',
   },
 ]
-
-const activeScopeID = ref<ScopeID>('repo')
-const activeScope = computed(
-  () => scopes.find((scope) => scope.id === activeScopeID.value) ?? scopes[1],
-)
-const installCommand = computed(
-  () => `agent-marketplace install pdf --scope ${activeScope.value.id}`,
-)
 </script>
 
 <template>
@@ -53,60 +42,55 @@ const installCommand = computed(
     title="Control where tools apply"
   >
     <template #sub>
-      Choose who receives a tool and whether its configuration is shared.
+      Compare who receives a tool and whether its configuration is shared.
     </template>
 
     <div class="scope-explorer">
-      <fieldset class="scope-fieldset">
-        <legend class="visually-hidden">Select an installation scope</legend>
-        <div class="scope-grid">
-          <label v-for="(scope, index) in scopes" :key="scope.id" class="scope-card">
-            <input
-              v-model="activeScopeID"
-              class="scope-radio visually-hidden"
-              type="radio"
-              name="installation-scope"
-              :value="scope.id"
-            >
-            <span class="scope-card__surface">
-              <span class="scope-card__context">
-                <span>{{ String(index + 1).padStart(2, '0') }}</span>
-                <span aria-hidden="true">/</span>
-                {{ scope.context }}
-              </span>
-
-              <span class="scope-card__title">
-                <span>{{ scope.title }}</span>
-                <span v-if="scope.isDefault" class="default-tag">Default</span>
-              </span>
-
-              <span class="scope-card__summary">{{ scope.summary }}</span>
-
-              <span class="scope-facts">
-                <span class="scope-fact scope-fact--config">
-                  <span class="scope-fact__label">Config file</span>
-                  <code>{{ scope.configPath }}</code>
-                </span>
-                <span class="scope-fact">
-                  <span class="scope-fact__label">Applies to</span>
-                  <span>{{ scope.reach }}</span>
-                </span>
-                <span class="scope-fact">
-                  <span class="scope-fact__label">Version control</span>
-                  <span>{{ scope.versionControl }}</span>
-                </span>
-              </span>
+      <div class="scope-grid">
+        <article v-for="(scope, index) in scopes" :key="scope.id" class="scope-card">
+          <div class="scope-card__context">
+            <span class="scope-card__index">
+              <span>{{ String(index + 1).padStart(2, '0') }}</span>
+              <span aria-hidden="true">/</span>
+              {{ scope.context }}
             </span>
-          </label>
-        </div>
-      </fieldset>
+            <code>--scope {{ scope.id }}</code>
+          </div>
 
-      <CommandBar
-        :command="installCommand"
-        :highlight="`--scope ${activeScope.id}`"
-        :copyable="false"
-        class="scope-command"
-      />
+          <h3 class="scope-card__title">
+            <span>{{ scope.title }}</span>
+            <span v-if="scope.isDefault" class="default-tag">Default</span>
+          </h3>
+
+          <p class="scope-card__summary">{{ scope.summary }}</p>
+
+          <div class="scope-facts">
+            <div class="scope-fact scope-fact--config">
+              <span class="scope-fact__label">Config file</span>
+              <code>{{ scope.configPath }}</code>
+            </div>
+            <div class="scope-fact">
+              <span class="scope-fact__label">Applies to</span>
+              <span>{{ scope.reach }}</span>
+            </div>
+            <div class="scope-fact">
+              <span class="scope-fact__label">Version control</span>
+              <span>{{ scope.versionControl }}</span>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <div class="scope-command">
+        <p class="scope-command__label">
+          <span>Example</span>
+          <span>Repository scope</span>
+        </p>
+        <CommandBar
+          command="agent-marketplace install pdf --scope repo"
+          highlight="--scope repo"
+        />
+      </div>
 
       <aside class="organization-baseline">
         <div class="policy-copy">
@@ -132,74 +116,60 @@ const installCommand = computed(
   margin-bottom: var(--lp-space-default);
 }
 
-.scope-fieldset {
-  min-width: 0;
-  padding: 0;
-  margin: 0;
-  border: 0;
-}
-
 .scope-grid {
   display: grid;
-  padding: var(--lp-space-tight);
   overflow: hidden;
   border-radius: var(--lp-radius-preview);
-  background: var(--lp-surface);
+  background: var(--lp-canvas);
   box-shadow: var(--lp-outline-shadow);
-  gap: var(--lp-space-tight);
   grid-auto-rows: 1fr;
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .scope-card {
   position: relative;
-  min-width: 0;
-  cursor: pointer;
-}
-
-.scope-card__surface {
-  position: relative;
   display: flex;
-  height: 100%;
   min-height: 19.5rem;
+  min-width: 0;
   flex-direction: column;
   padding: var(--lp-space-default);
-  overflow: hidden;
-  border-radius: calc(var(--lp-radius-preview) - var(--lp-space-tight));
-  background: var(--lp-canvas);
   color: var(--lp-text);
-  transition:
-    background-color var(--lp-motion-feedback) var(--lp-ease),
-    box-shadow var(--lp-motion-feedback) var(--lp-ease);
 }
 
-.scope-card:hover .scope-card__surface {
-  background: var(--lp-surface);
-}
-
-.scope-radio:checked + .scope-card__surface {
-  background: var(--lp-fill);
-  box-shadow: inset 0 0 0 1px var(--lp-outline);
-}
-
-.scope-radio:focus-visible + .scope-card__surface {
-  z-index: 1;
-  border-radius: var(--lp-radius-control);
-  outline: var(--lp-focus-width) solid var(--lp-focus);
-  outline-offset: calc(-1 * var(--lp-focus-width));
+.scope-card + .scope-card::before {
+  position: absolute;
+  top: var(--lp-space-default);
+  bottom: var(--lp-space-default);
+  left: 0;
+  width: 1px;
+  background: var(--lp-outline);
+  content: "";
 }
 
 .scope-card__context {
   display: flex;
   align-items: center;
-  gap: var(--lp-space-tight);
+  justify-content: space-between;
+  gap: var(--lp-space-related);
   color: var(--lp-text-2);
   font: var(--lp-font-label);
   text-transform: uppercase;
 }
 
-.scope-card__context > span:first-child {
+.scope-card__index {
+  display: flex;
+  align-items: center;
+  gap: var(--lp-space-tight);
+}
+
+.scope-card__index > span:first-child {
   color: var(--lp-text);
+}
+
+.scope-card__context code {
+  color: var(--lp-text);
+  font: inherit;
+  text-transform: none;
 }
 
 .scope-card__title {
@@ -207,7 +177,7 @@ const installCommand = computed(
   align-items: center;
   justify-content: space-between;
   gap: var(--lp-space-related);
-  margin-top: var(--lp-space-default);
+  margin: var(--lp-space-default) 0 0;
   font: var(--lp-font-heading);
 }
 
@@ -225,7 +195,7 @@ const installCommand = computed(
 
 .scope-card__summary {
   min-height: 2.75rem;
-  margin-top: var(--lp-space-related);
+  margin: var(--lp-space-related) 0 0;
   color: var(--lp-text-2);
   font: var(--lp-font-body);
   text-wrap: pretty;
@@ -267,6 +237,15 @@ const installCommand = computed(
   margin-top: var(--lp-space-default);
 }
 
+.scope-command__label {
+  display: flex;
+  justify-content: space-between;
+  margin: 0 0 var(--lp-space-tight);
+  color: var(--lp-text-2);
+  font: var(--lp-font-label);
+  text-transform: uppercase;
+}
+
 .organization-baseline {
   margin-top: var(--lp-space-default);
 }
@@ -292,25 +271,22 @@ const installCommand = computed(
   text-wrap: pretty;
 }
 
-@media (max-width: 959px) {
-  .scope-card__surface {
-    min-height: 21rem;
-  }
-}
-
 @media (max-width: 767px) {
   .scope-grid {
     grid-template-columns: 1fr;
   }
 
-  .scope-card__surface {
-    min-height: 18.5rem;
+  .scope-card {
+    min-height: auto;
   }
-}
 
-@media (prefers-reduced-motion: reduce) {
-  .scope-card__surface {
-    transition: none;
+  .scope-card + .scope-card::before {
+    top: 0;
+    right: var(--lp-space-default);
+    bottom: auto;
+    left: var(--lp-space-default);
+    width: auto;
+    height: 1px;
   }
 }
 </style>
