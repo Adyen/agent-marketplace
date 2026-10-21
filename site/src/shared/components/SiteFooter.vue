@@ -13,7 +13,7 @@ const links = [
 </script>
 
 <template>
-  <footer class="site-footer">
+  <footer class="site-footer am-rule-top">
     <div class="footer-row">
       <p>
         Built at <span class="adyen">Adyen</span>
@@ -23,6 +23,7 @@ const links = [
         <template v-for="(link, index) in links" :key="link.label">
           <span v-if="index" aria-hidden="true">·</span>
           <a
+            class="am-hit-target"
             :href="link.href"
             :target="link.external ? '_blank' : undefined"
             :rel="link.external ? 'noreferrer' : undefined"
@@ -37,58 +38,75 @@ const links = [
 
 <style scoped>
 .site-footer {
-  padding: 24px 0;
-  border-top: 1px solid var(--am-border);
-  background: var(--vp-c-bg);
-  font-family: var(--vp-font-family-base), sans-serif;
+  padding: var(--lp-space-default) 0;
+  background: var(--lp-canvas);
+  font-family: var(--lp-sans);
 }
 
 .footer-row {
   display: flex;
-  max-width: var(--am-maxw);
+  width: min(100% - 2 * var(--lp-gutter), var(--lp-content-max));
+  max-width: none;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 16px 32px;
-  margin: 0 auto;
-  padding: 0 24px;
+  gap: var(--lp-space-related) var(--lp-space-default);
+  margin-inline: auto;
+  padding: 0;
 }
 
 p,
 nav {
   margin: 0;
-  color: var(--vp-c-text-2);
-  font-size: var(--am-text-body-sm);
-  font-weight: var(--am-font-medium);
+  color: var(--lp-text-2);
+  font: var(--lp-font-label);
+  text-transform: uppercase;
 }
 
 .adyen {
-  color: var(--vp-c-brand-1);
-  font-weight: var(--am-font-semibold);
+  color: var(--lp-text);
+  font-weight: inherit;
 }
 
 nav {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: var(--lp-space-related);
+}
+
+nav span {
+  color: var(--lp-text-muted);
 }
 
 a {
+  display: inline-flex;
+  min-height: 1.5rem;
+  align-items: center;
   color: inherit;
   text-decoration: none;
   white-space: nowrap;
+  transition: color var(--lp-motion-feedback) var(--lp-ease);
 }
 
 a:hover {
-  color: var(--vp-c-brand-2);
+  color: var(--lp-text);
 }
 
-a:focus-visible {
-  border-radius: 2px;
-  outline: 2px solid var(--vp-c-brand-1);
-  outline-offset: 3px;
+@media (max-width: 959px) {
+  nav {
+    row-gap: var(--lp-space-default);
+  }
+
 }
 
-@media (max-width: 680px) {
+@media (prefers-reduced-motion: reduce) {
+  a {
+    transition: none;
+  }
+}
+
+@media (max-width: 639px) {
   .footer-row {
     align-items: flex-start;
     flex-direction: column;
