@@ -38,6 +38,7 @@ journey.test("fold keys work in an applied search without touching the query or 
   await step("za folds it inside the search", () => terminal.write("za"), async () => {
     await locate(terminal, folded("Available")).unique().expect();
     await locate(terminal, "/ alpha  1 match").unique().expect();
+    await locate(terminal, "fixture/alpha-skill").expect({ not: true });
   });
   await step("reopening the unchanged query keeps the search fold", () => terminal.write("/\r"), async () => {
     await locate(terminal, "/ alpha  1 match").unique().expect();
@@ -50,6 +51,7 @@ journey.test("fold keys work in an applied search without touching the query or 
   await step("zM folds every category", () => terminal.write("zM"), async () => {
     await locate(terminal, folded("Available")).unique().expect();
     await locate(terminal, "/ alpha  1 match").unique().expect();
+    await locate(terminal, "fixture/alpha-skill").expect({ not: true });
   });
   await step("enter on the header expands it and keeps it selected", () => terminal.write("\r"), async () => {
     await locate(terminal, expanded("Available")).unique().expect();
