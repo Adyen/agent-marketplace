@@ -1942,6 +1942,12 @@ func (c *V4Config) rebuildRequests() {
 		for _, d := range g.Decisions {
 			c.Decisions = append(c.Decisions, d)
 			if d.Action == V4SelectionExclude {
+				if d.Exclusion != "*" && !strings.HasSuffix(d.Exclusion, "/*") {
+					if request, ok := byLocator[d.Exclusion]; ok && !request.Required {
+						excluded[d.Exclusion] = true
+					}
+					continue
+				}
 				for loc, request := range byLocator {
 					if v4ExclusionMatches(d.Exclusion, loc) && !request.Required {
 						excluded[loc] = true
