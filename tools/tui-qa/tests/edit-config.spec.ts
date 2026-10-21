@@ -9,10 +9,10 @@ import { runNonTTY } from "./process-helpers.js";
 // spec: tui-rendering/editor-running
 // spec: tui-rendering/editor-exit-reloads-and-frees-writes
 const journey = defineFixture("edit-config", ["tui"]);
-before(journey.setup);
 // The scripted editor waits for the journey to release it, so the handoff
 // screen can be observed, then fails or writes the prepared config.
-before(() => {
+before(async () => {
+  await journey.setup();
   const fixture = journey.current();
   const dir = path.join(fixture.root, "editor");
   fs.mkdirSync(dir, { recursive: true });
@@ -59,7 +59,7 @@ journey.test("E hands the project config to $EDITOR, reloads the edit, and keeps
   await step("a failing editor is reported with recovery guidance", () => fs.writeFileSync(path.join(dir, "release"), ""), async () => {
     await locate(terminal, "! 1 errors: exit status 3").unique().expect({ timeout: 10_000 });
   });
-  assert.equal(fs.readFileSync(repoConfig, "utf8"), fixture.expectedRepoConfig, "the failed editor changed the project config");
+  assert.equal(fs.readFileSync(repoConfig, "utf8"), fixture.expectedRepoConfig, "the TUI wrote the project config after the editor failed");
   await step("the errors screen explains how to fix the editor", () => terminal.write("e"), async () => {
     await locate(terminal, "Errors (1)").unique().expect();
     assert.ok((await screenText()).includes("Checkthatyourconfigurededitorisinstalled"), `the editor error lost its guidance:\n${await terminal.text()}`);
