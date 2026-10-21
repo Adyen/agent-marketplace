@@ -537,6 +537,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(harnessTabs.first()).toHaveAttribute('aria-selected', 'true')
   })
 
+  // spec: marketplace-web-ui/public-routes-use-shared-foundations-without-changing-behavior
   test('applies the Marketplace palette in both themes', async ({ page }) => {
     const themes = {
       light: {
@@ -1078,6 +1079,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.getByRole('button', { name: /Copy detail URL/ })).toHaveCount(0)
   })
 
+  // spec: marketplace-web-ui/record-hierarchy-preserves-inspection-and-recovery
   test('shows registry details in the resource tab and redirects the standalone route', async ({ page }) => {
     await page.goto('/r/team-tools/skill/secure-review')
 
