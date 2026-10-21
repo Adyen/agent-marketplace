@@ -15,6 +15,7 @@ after(journey.cleanup);
 journey.test("filtered command palette actions run sync, fold and clear-search", async (terminal) => {
   const fixture = journey.current();
   const alphaSkill = path.join(fixture.repo, ".factory", "skills", "alpha-skill", "SKILL.md");
+  const repoConfig = path.join(fixture.repo, ".agents", "config.yaml");
   const runAction = async (query: string, label: string, assertion: () => Promise<void>): Promise<void> => {
     await step(`the palette filters to ${label}`, () => terminal.write(`:${query}`), async () => {
       await locate(terminal, "Command palette").unique().expect();
@@ -39,6 +40,11 @@ journey.test("filtered command palette actions run sync, fold and clear-search",
   await step("enable it in the project", () => terminal.write("p"), async () => {
     await locate(terminal, "~ 1 out of sync").unique().expect({ timeout: 30_000 });
   });
+  assert.equal(
+    fs.readFileSync(repoConfig, "utf8"),
+    fixture.expectedRepoConfig.replace("      - skill/beta-skill\n", "      - skill/beta-skill\n      - skill/alpha-skill\n"),
+    "enabling alpha-skill did not add it next to beta-skill"
+  );
   assert.equal(fs.existsSync(alphaSkill), false, "alpha-skill was installed before the palette sync");
 
   await runAction("sync", "Sync pending changes", async () => {
