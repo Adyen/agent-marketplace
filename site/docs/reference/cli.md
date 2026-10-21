@@ -674,4 +674,4 @@ The script is written to standard output.
 | `1` | `sync --check` found drift, or `lock --check` found a lock that would change. |
 | `1` | `sync --strict` found a selected resource that was missing or malformed, or an unmet prerequisite. |
 
-The CLI defines no other numeric statuses. Argument and runtime errors are printed to standard error. Reports and normal results are printed to standard output.
+The CLI defines no other numeric statuses. Argument and runtime errors are printed to standard error, each followed by at least one `hint: ` line naming the suggested next step; see [What to do](./diagnostics.md#what-to-do) in the diagnostics reference. Reports and normal results are printed to standard output.

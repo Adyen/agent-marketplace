@@ -65,7 +65,8 @@ func evidenceOf(record lockfile.MarketplaceResourceLock) marketplaceResourceEvid
 	}
 }
 
-func mergeSelectedBy(existing, added []lockfile.MarketplaceSelectionLock) []lockfile.MarketplaceSelectionLock {
+// MergeSelectedBy combines selection edges without duplicates.
+func MergeSelectedBy(existing, added []lockfile.MarketplaceSelectionLock) []lockfile.MarketplaceSelectionLock {
 	seen := make(map[string]bool, len(existing)+len(added))
 	merged := make([]lockfile.MarketplaceSelectionLock, 0, len(existing)+len(added))
 	for _, selections := range [][]lockfile.MarketplaceSelectionLock{existing, added} {
@@ -263,7 +264,7 @@ func finishV4MarketplaceMerge(v4 *config.V4Config, doc lockfile.Document, canoni
 			if !sameEvidenceModuloArchiveDigest(evidenceOf(previous), evidenceOf(record)) {
 				return lockfile.Document{}, lockMismatch("marketplaces", "resource %s/%s/%s evidence conflicts with existing lock record", pin.RegistryID, pin.Kind, pin.Name)
 			}
-			record.SelectedBy = mergeSelectedBy(previous.SelectedBy, record.SelectedBy)
+			record.SelectedBy = MergeSelectedBy(previous.SelectedBy, record.SelectedBy)
 		}
 		resources[key] = record
 	}

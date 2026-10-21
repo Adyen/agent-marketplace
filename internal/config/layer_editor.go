@@ -197,7 +197,7 @@ func (e *LayerEditor) occupiedSourceNames() map[string]struct{} {
 
 func (e *LayerEditor) checkBinding(binding SourceBinding) error {
 	if issued, ok := e.bindings[binding.id]; binding.id == "" || !ok || issued.Name != binding.Name {
-		return v4err("config.edit.invalid-binding", e.target.DeclaringPath, 0, "source binding was not issued by this editor")
+		return v4err("config.edit.invalid-binding", e.target.DeclaringPath, 0, "source selection was not created for this configuration editor")
 	}
 	return nil
 }
