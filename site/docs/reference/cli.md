@@ -101,6 +101,12 @@ When configured output is out of sync, the command appends a summary like this:
 3 resources out of sync — run 'agent-marketplace sync'
 ```
 
+When a selected [Marketplace](../glossary.md#marketplace) pin cannot be resolved from verified local cache evidence, `list` cannot compute drift and instead prints the following line, with no out-of-sync count:
+
+```text
+Sync state unknown: Marketplace cache evidence missing — run 'agent-marketplace sync'
+```
+
 ## `search`
 
 Searches hosted [Marketplace](../glossary.md#marketplace) endpoints. It does not edit configuration. An empty query returns the endpoint's default result page.
@@ -361,7 +367,7 @@ The report prints these sections in this order. Sections other than `TARGET HARN
 | `NAME COLLISIONS` | Registry overlap and resource-name collision diagnostics. |
 | `UNMET REQUIREMENTS` | Advisory [resource prerequisites](./resource-prerequisites.md) and install hints. |
 | `WARNINGS` | Configuration, resolution, and materialization warnings, with a remediation hint where one exists. |
-| `DRIFT` | `In sync`, the number of files to write and remove, or `Unknown (exact registry view incomplete)`. |
+| `DRIFT` | `In sync`, the number of files to write and remove, `Unknown (exact registry view incomplete)`, or `Unknown (Marketplace cache evidence missing; run 'agent-marketplace sync')` when a selected Marketplace pin lacks verified local cache evidence. |
 | `ERRORS` | Configuration, catalog, materialization, or drift-inspection failures. |
 
 Fatal resolution and error-severity materialization diagnostics return exit status 1 after the report is printed; warning-severity diagnostics do not affect the exit status.
