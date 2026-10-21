@@ -7,7 +7,21 @@ Run the hosted Marketplace with separate API and worker processes, external stor
 - PostgreSQL and an S3-compatible bucket. SQLite and filesystem storage suit only a single all-in-one replica.
 - A TLS-terminating reverse proxy or ingress that enforces authentication. The application has none.
 - A secret store for the database DSN and any registry credentials.
-- Container images at an immutable tag or digest: the API and worker images built from `Dockerfile.marketplace`, the Nuxt UI image, and the documentation-only VitePress image. Only the worker image contains Git, which acquisition needs. Every release publishes ready-made images to GHCR: `ghcr.io/adyen/agent-marketplace/worker`, `ghcr.io/adyen/agent-marketplace/api`, and `ghcr.io/adyen/agent-marketplace/web`, tagged with the release tag.
+- Container images pinned by verified digest: the API and worker images built from `Dockerfile.marketplace`, the Nuxt UI image, and the documentation-only VitePress image. Only the worker image contains Git, which acquisition needs. Every release publishes ready-made images to GHCR: `ghcr.io/adyen/agent-marketplace/worker`, `ghcr.io/adyen/agent-marketplace/api`, and `ghcr.io/adyen/agent-marketplace/web`, tagged with the release tag.
+
+Resolve each release image to a digest, verify its provenance according to your
+organization's policy, and record `repository@sha256:<verified-digest>` in the
+deployment configuration. A version tag alone can be moved. In Helm, set the
+`digest` field for each enabled image (including role-specific overrides); it
+takes precedence over `tag`. The chart has no implicit `latest` fallback.
+
+When building your own images, pin every base-image override by verified digest
+too: `GO_BUILD_IMAGE`, `RUNTIME_IMAGE`, `NODE_IMAGE`, `NODE_RUNTIME_IMAGE`,
+and `SITE_NGINX_IMAGE`. Pin Compose's `POSTGRES_IMAGE` and `NGINX_IMAGE` as well.
+Apply this to internal mirrors, not only public registries, and promote the
+same verified digests between environments rather than rebuilding from moving
+tags. Repository defaults are development conveniences. Rebuild, scan, and
+deliberately update the pins when shipping security updates.
 
 ## 1. Pick a packaging
 

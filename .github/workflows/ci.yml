@@ -147,6 +147,15 @@ jobs:
         with:
           version: v3.18.4
 
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify explicit Helm image selection
+        run: AM_HELM_CHECK=1 go test ./tools/ci-plan -run '^TestHelmImageSelection$' -count=1
+
       - name: Validate and package Helm chart
         shell: bash
         env:
@@ -159,6 +168,8 @@ jobs:
 
           cat > "$values_file" <<'EOF'
           mode: split
+          image:
+            tag: ci
           fullnameOverride: agent-marketplace
           persistence:
             enabled: false
@@ -202,11 +213,15 @@ jobs:
                 readOnly: true
           web:
             enabled: true
+            image:
+              tag: ci
             podSecurityContext:
               runAsUser: 1000
               runAsGroup: 1000
           docs:
             enabled: true
+            image:
+              tag: ci
           ingress:
             enabled: true
             className: example-ingress
@@ -254,9 +269,9 @@ jobs:
             ingressNamespaces: null
           EOF
 
-          helm lint --strict "$CHART_DIR"
+          helm lint --strict "$CHART_DIR" --set image.tag=ci
           helm lint --strict "$CHART_DIR" --values "$values_file"
-          helm template marketplace "$CHART_DIR" --namespace marketplace > "$package_dir/default-rendered.yaml"
+          helm template marketplace "$CHART_DIR" --namespace marketplace --set image.tag=ci > "$package_dir/default-rendered.yaml"
           helm template marketplace "$CHART_DIR" --namespace marketplace --values "$values_file" > "$package_dir/configured-rendered.yaml"
           if [[ "$(grep -c '^kind: Deployment$' "$package_dir/default-rendered.yaml")" -ne 1 ]]; then
             echo "default chart should render exactly one Deployment" >&2
@@ -347,7 +362,7 @@ jobs:
             echo "assertion failed: docs.enabled must enable local web documentation links" >&2
             exit 1
           fi
-          helm template marketplace "$CHART_DIR" --set fullnameOverride=agent-marketplace --set web.enabled=true > "$package_dir/public-docs-rendered.yaml"
+          helm template marketplace "$CHART_DIR" --set fullnameOverride=agent-marketplace --set image.tag=ci --set web.enabled=true --set web.image.tag=ci > "$package_dir/public-docs-rendered.yaml"
           public_web_doc="$(extract_doc Deployment agent-marketplace-web "$package_dir/public-docs-rendered.yaml")"
           if [[ "$(env_value NUXT_PUBLIC_DOCS_ENABLED "$public_web_doc")" != "false" ]]; then
             echo "assertion failed: local web documentation must default to false" >&2
@@ -443,8 +458,8 @@ jobs:
             exit 1
           fi
 
-          helm template marketplace "$CHART_DIR" --namespace marketplace --values "$null_env_values_file" > "$package_dir/null-env-rendered.yaml"
-          if helm template marketplace "$CHART_DIR" --namespace marketplace --values "$null_network_values_file" > /dev/null 2>"$package_dir/null-network-error.txt"; then
+          helm template marketplace "$CHART_DIR" --namespace marketplace --values "$null_env_values_file" --set image.tag=ci > "$package_dir/null-env-rendered.yaml"
+          if helm template marketplace "$CHART_DIR" --namespace marketplace --values "$null_network_values_file" --set image.tag=ci > /dev/null 2>"$package_dir/null-network-error.txt"; then
             echo "null ingressNamespaces should fail network policy validation" >&2
             exit 1
           fi
@@ -499,6 +514,33 @@ jobs:
       - name: Build web image
         if: needs.changes.outputs.container_web == 'true'
         run: make WEB_CONTAINER_IMAGE=agent-marketplace-web:ci container-web
+
+      - name: Verify shell-free web runtime and healthcheck
+        if: needs.changes.outputs.container_web == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for base in / /marketplace/; do
+            container=$(docker run --detach --read-only --cap-drop ALL \
+              --security-opt no-new-privileges --tmpfs /tmp \
+              --health-interval=1s --health-start-period=0s --health-retries=20 \
+              --env NUXT_APP_BASE_URL="$base" agent-marketplace-web:ci)
+            trap 'docker logs "$container"; docker rm --force "$container" >/dev/null' EXIT
+            docker exec "$container" /nodejs/bin/node -e \
+              "const fs = require('node:fs'); if (process.getuid() !== 1000 || ['/bin/sh', '/bin/bash', '/usr/bin/apt', '/usr/local/bin/npm', '/usr/bin/npm'].some(p => fs.existsSync(p))) process.exit(1)"
+            for ((attempt = 0; attempt < 30; attempt++)); do
+              status=$(docker inspect --format '{{.State.Health.Status}}' "$container")
+              if [[ "$status" == healthy ]]; then break; fi
+              if [[ "$status" == unhealthy ]]; then break; fi
+              sleep 1
+            done
+            if [[ "$status" != healthy ]]; then
+              echo "web runtime did not become healthy at $base" >&2
+              exit 1
+            fi
+            docker rm --force "$container" >/dev/null
+            trap - EXIT
+          done
 
       - name: Build site images
         if: needs.changes.outputs.container_site == 'true'
