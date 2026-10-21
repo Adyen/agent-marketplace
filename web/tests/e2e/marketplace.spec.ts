@@ -405,12 +405,12 @@ test.describe('Marketplace browser discovery', () => {
     await expect(marketplaceNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('rel', 'noopener noreferrer')
     await expect(marketplaceNav.getByTestId('docs-external-icon')).toBeVisible()
     await expect(page.locator('html')).not.toHaveClass(/\bdark\b/)
-    await expect.poll(fontStatus).toEqual({
-      bodyFamily: 'system-ui, sans-serif',
+    await expect.poll(fontStatus).toMatchObject({
+      bodyFamily: 'Adyen, Helvetica, Arial, sans-serif',
       fontSmoothing: 'antialiased',
       textRendering: 'optimizelegibility',
-      downloadedFonts: 0,
     })
+    await expect.poll(async () => (await fontStatus()).downloadedFonts).toBeGreaterThan(0)
 
     const marketplaceSwitch = marketplaceNav.getByRole('switch', { name: 'Switch to dark theme' })
     await marketplaceSwitch.click()

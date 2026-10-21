@@ -15,5 +15,6 @@
 .VPNavBarTitle .logo {
   width: var(--am-brand-logo-width);
   height: auto;
+  aspect-ratio: var(--am-brand-logo-aspect-ratio);
   transform: translateY(var(--am-brand-logo-offset-y));
 }

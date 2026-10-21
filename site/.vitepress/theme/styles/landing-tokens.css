@@ -37,8 +37,8 @@
   --lp-dot-yellow: #f9c500;
 
   /* Typography */
-  --lp-sans: Adyen, Helvetica, Arial, sans-serif;
-  --lp-mono: AdyenMono, monospace;
+  --lp-sans: var(--am-font-sans);
+  --lp-mono: var(--am-font-mono);
   --lp-font-hero: 468 3rem/1.02 var(--lp-sans);
   --lp-font-cta: 452 4rem/1.02 var(--lp-sans);
   --lp-font-section: 484 2rem/1.18 var(--lp-sans);
@@ -59,33 +59,33 @@
   --lp-space-group: 3rem;
   --lp-section-pad: 4.5rem;
   --lp-section-boundary: 7.5rem;
-  --lp-content-max: 90rem;
-  --lp-gutter: 2rem;
+  --lp-content-max: var(--am-content-max);
+  --lp-gutter: var(--am-page-gutter);
   --lp-inset: 1.125rem;
 
   /* Geometry */
   --lp-h-control: 3rem;
   --lp-h-compact: 2.25rem;
   --lp-h-depiction: 1.875rem;
-  --lp-radius-mark: 3px;
-  --lp-radius-control: 6px;
-  --lp-radius-preview: 12px;
+  --lp-radius-mark: var(--am-radius-mark);
+  --lp-radius-control: var(--am-radius-control);
+  --lp-radius-preview: var(--am-radius-panel);
   --lp-radius-pill: 999px;
-  --lp-nav-height: 3.75rem;
-  --lp-hit-target: 2.75rem;
-  --lp-icon-size: 1rem;
+  --lp-nav-height: var(--am-nav-height);
+  --lp-hit-target: var(--am-hit-target);
+  --lp-icon-size: var(--am-icon-size);
   --lp-outline-shadow: inset 0 0 0 1px var(--lp-outline);
   --lp-rule-width: 1px;
-  --lp-focus-width: 2px;
-  --lp-focus-offset: 3px;
+  --lp-focus-width: var(--am-focus-width);
+  --lp-focus-offset: var(--am-focus-offset);
 
   /* Motion */
-  --lp-motion-feedback: 250ms;
+  --lp-motion-feedback: var(--am-motion-feedback);
   --lp-motion-crossfade: 500ms;
   --lp-motion-arrive: 1000ms;
   --lp-motion-stagger: 80ms;
   --lp-motion-roll: 700ms;
-  --lp-ease: cubic-bezier(0.2, 0, 0, 1);
+  --lp-ease: var(--am-motion-ease);
   --lp-ease-spring: linear(0 0%, 0.0059 1%, 0.0225 2%, 0.0479 3%, 0.0806 4%, 0.1191 5%, 0.1621 6%, 0.2085 7%, 0.2573 8%, 0.3075 9%, 0.3583 10%, 0.4092 11%, 0.4593 12%, 0.5084 13%, 0.556 14%, 0.6018 15%, 0.6454 16%, 0.6867 17%, 0.7256 18%, 0.762 19%, 0.7958 20%, 0.827 21%, 0.8557 22%, 0.8818 23%, 0.9054 24%, 0.9267 25%, 0.9457 26%, 0.9626 27%, 0.9774 28%, 0.9903 29%, 1.0014 30%, 1.0109 31%, 1.0189 32%, 1.0255 33%, 1.0308 34%, 1.035 35%, 1.0382 36%, 1.0404 37%, 1.0419 38%, 1.0427 39%, 1.0428 40%, 1.0425 41%, 1.0417 42%, 1.0405 43%, 1.0391 44%, 1.0374 45%, 1.0355 46%, 1.0335 47%, 1.0314 48%, 1.0292 49%, 1.027 50%, 1.0249 51%, 1.0227 52%, 1.0206 53%, 1.0186 54%, 1.0167 55%, 1.0148 56%, 1.0131 57%, 1.0114 58%, 1.0099 59%, 1.0085 60%, 1.0071 61%, 1.0059 62%, 1.0048 63%, 1.0039 64%, 1.003 65%, 1.0022 66%, 1.0015 67%, 1.0008 68%, 1.0003 69%, 0.9998 70%, 0.9995 71%, 0.9991 72%, 0.9989 73%, 0.9986 74%, 0.9985 75%, 0.9983 76%, 0.9983 77%, 0.9982 78%, 0.9982 79%, 0.9982 80%, 0.9982 81%, 0.9982 82%, 0.9983 83%, 0.9983 84%, 0.9984 85%, 0.9985 86%, 0.9986 87%, 0.9987 88%, 0.9988 89%, 0.9989 90%, 0.999 91%, 0.999 92%, 0.9991 93%, 0.9992 94%, 0.9993 95%, 0.9994 96%, 0.9995 97%, 0.9995 98%, 0.9996 99%, 0.9997 100%);
 
   /* VitePress mapping for the shared header */
