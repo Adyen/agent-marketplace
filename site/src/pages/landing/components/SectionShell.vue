@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import EyebrowText from './EyebrowText.vue'
+
 defineProps<{
   id?: string
   eyebrow: string
@@ -13,7 +15,7 @@ defineProps<{
         <div class="head-copy">
           <span class="eyebrow am-text-trim">
             <span class="am-brand-slash am-brand-slash--eyebrow" aria-hidden="true">/</span>
-            <span>{{ eyebrow }}</span>
+            <EyebrowText :text="eyebrow" />
           </span>
           <h2 class="am-text-trim"><slot name="title">{{ title }}</slot></h2>
           <p v-if="$slots.sub" class="sub"><slot name="sub" /></p>

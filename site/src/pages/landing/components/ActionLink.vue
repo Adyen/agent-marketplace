@@ -19,13 +19,23 @@ withDefaults(
       'is-text': variant === 'text',
     }"
     :href="href"
+    data-roll-on-hover
   >
-    <span class="action-link__face">
-      {{ label }}
-      <svg v-if="icon" class="am-stroke-icon action-link__icon" aria-hidden="true" viewBox="0 0 16 16">
-        <path v-if="icon === 'arrow'" d="M2 8h11M9 4l4 4-4 4" />
-        <path v-else d="M5 3.75h7.25V11M12 4 4 12" />
-      </svg>
+    <span class="am-roll-label action-link__label">
+      <span class="am-roll-face action-link__face">
+        {{ label }}
+        <svg v-if="icon" class="am-stroke-icon action-link__icon" aria-hidden="true" viewBox="0 0 16 16">
+          <path v-if="icon === 'arrow'" d="M2 8h11M9 4l4 4-4 4" />
+          <path v-else d="M5 3.75h7.25V11M12 4 4 12" />
+        </svg>
+      </span>
+      <span class="am-roll-face am-roll-face-copy action-link__face" aria-hidden="true">
+        {{ label }}
+        <svg v-if="icon" class="am-stroke-icon action-link__icon" aria-hidden="true" viewBox="0 0 16 16">
+          <path v-if="icon === 'arrow'" d="M2 8h11M9 4l4 4-4 4" />
+          <path v-else d="M5 3.75h7.25V11M12 4 4 12" />
+        </svg>
+      </span>
     </span>
   </a>
 </template>
@@ -86,9 +96,13 @@ withDefaults(
   color: var(--lp-text);
 }
 
+/* The clip box carries the ink so descenders and icons are never cut. */
+.action-link__label {
+  margin: -0.125rem -0.25rem -0.1875rem;
+  padding: 0.125rem 0.25rem 0.1875rem;
+}
+
 .action-link__face {
-  display: flex;
-  align-items: center;
   gap: var(--lp-space-tight);
 }
 
