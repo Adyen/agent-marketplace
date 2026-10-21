@@ -201,6 +201,38 @@ func rowKey(r row) string {
 	return r.Artifact.Kind.String() + "\x00" + r.Artifact.Name + "\x00" + r.Artifact.CatalogKey + "\x00" + r.RegistryURL + "\x00" + r.RegistryRef + "\x00" + r.RegistryPath + "\x00" + r.Artifact.Path + "\x00" + malformed
 }
 
+// rowSelectionIdentity names a resource independently of the catalog that
+// loaded it. A reload can switch a Git row from the mutable cache to a locked
+// snapshot, or to a newer locked commit, which changes its catalog key and
+// cache path but not the resource the user selected.
+func rowSelectionIdentity(r row) string {
+	if r.MarketplaceDiscovery != nil || (r.DriftItem != nil && r.DriftItem.Reason == materialize.DriftOrphaned) {
+		return rowKey(r)
+	}
+	malformed := "0"
+	if r.IsMalformed {
+		malformed = "1"
+	}
+	return r.Artifact.Kind.String() + "\x00" + r.Artifact.Name + "\x00" + registryIdentityKey(r.RegistryURL, r.RegistryRef, r.RegistryPath) + "\x00" + malformed
+}
+
+// uniqueRowByIdentity returns the only row with identity, so a rebuild never
+// guesses between resources that share it.
+func uniqueRowByIdentity(rows []row, identity string) (row, bool) {
+	var match row
+	found := false
+	for _, r := range rows {
+		if rowSelectionIdentity(r) != identity {
+			continue
+		}
+		if found {
+			return row{}, false
+		}
+		match, found = r, true
+	}
+	return match, found
+}
+
 // flatItemKey adds a namespace to row and section identities so a snapshot
 // rebuild cannot confuse a section path with resource data.
 func flatItemKey(item flatItem) string {
@@ -217,21 +249,23 @@ func (m Model) selectionKey() string {
 	return flatItemKey(m.flatItems[m.cursor])
 }
 
-func (m Model) nextRowSelectionKey() string {
+// nextRowSelection anchors the resource below the cursor, or above it at the
+// end of the list, so a disable can select it after the rebuild.
+func (m Model) nextRowSelection() rebuildAnchor {
 	if m.cursor < 0 || m.cursor >= len(m.flatItems) {
-		return ""
+		return rebuildAnchor{}
 	}
 	for i := m.cursor + 1; i < len(m.flatItems); i++ {
 		if m.flatItems[i].Kind == flatArtifact {
-			return flatItemKey(m.flatItems[i])
+			return rebuildAnchor{key: flatItemKey(m.flatItems[i]), identity: rowSelectionIdentity(m.flatItems[i].Row)}
 		}
 	}
 	for i := m.cursor - 1; i >= 0; i-- {
 		if m.flatItems[i].Kind == flatArtifact {
-			return flatItemKey(m.flatItems[i])
+			return rebuildAnchor{key: flatItemKey(m.flatItems[i]), identity: rowSelectionIdentity(m.flatItems[i].Row)}
 		}
 	}
-	return ""
+	return rebuildAnchor{}
 }
 
 func (m *Model) restoreSelectionKey(key string) bool {
@@ -262,17 +296,63 @@ func (m Model) selectionKeyForRebuild() string {
 
 // rebuildAnchor is the item under the cursor and its line within the
 // viewport, so rows inserted above it by a rebuild do not shift it on screen.
+// identity is the selected resource's catalog-independent identity, used when
+// the rebuild changed its row key.
 type rebuildAnchor struct {
-	key  string
-	line int
+	key      string
+	identity string
+	line     int
 }
 
 func (m Model) captureRebuildAnchor() rebuildAnchor {
-	return rebuildAnchor{key: m.selectionKeyForRebuild(), line: m.cursor - m.listOffset}
+	anchor := rebuildAnchor{key: m.selectionKeyForRebuild(), line: m.cursor - m.listOffset}
+	if anchor.key == "" {
+		return anchor
+	}
+	if m.pane == paneDetail && m.detailKey != "" {
+		for _, r := range m.rows {
+			if rowKey(r) == m.detailKey {
+				anchor.identity = rowSelectionIdentity(r)
+				break
+			}
+		}
+	} else if item := m.flatItems[m.cursor]; item.Kind == flatArtifact {
+		anchor.identity = rowSelectionIdentity(item.Row)
+	}
+	return anchor
+}
+
+// restoreSelectionIdentity selects the only artifact with identity.
+func (m *Model) restoreSelectionIdentity(identity string) bool {
+	if identity == "" {
+		return false
+	}
+	match := -1
+	for i, item := range m.flatItems {
+		if item.Kind != flatArtifact || rowSelectionIdentity(item.Row) != identity {
+			continue
+		}
+		if match >= 0 {
+			return false
+		}
+		match = i
+	}
+	if match < 0 {
+		return false
+	}
+	m.cursor = match
+	m.clampListOffset()
+	return true
+}
+
+// restoreAnchor selects the anchored item by key, or its resource by identity
+// when the rebuild changed the key.
+func (m *Model) restoreAnchor(anchor rebuildAnchor) bool {
+	return m.restoreSelectionKey(anchor.key) || m.restoreSelectionIdentity(anchor.identity)
 }
 
 func (m *Model) restoreSelectionAfterRebuild(anchor rebuildAnchor) {
-	if !m.restoreSelectionKey(anchor.key) {
+	if !m.restoreAnchor(anchor) {
 		return
 	}
 	m.listOffset = m.cursor - anchor.line
