@@ -78,6 +78,9 @@ func skipInspectionDryRun(resolved ResolveResult, onAnyError bool) bool {
 	if len(resolved.ConfigErrors) > 0 {
 		return true
 	}
+	if HasUnresolvedMarketplaceCacheEvidence(resolved.ResolveErrors) {
+		return true
+	}
 	if len(resolved.Errors) == 0 {
 		return false
 	}

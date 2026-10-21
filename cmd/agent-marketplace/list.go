@@ -135,6 +135,7 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 		}
 	}
 
+	marketplaceCacheUnknown := pipeline.HasUnresolvedMarketplaceCacheEvidence(result.ResolveErrors)
 	if result.LoadedCfg == nil && len(result.Errors) > 0 {
 		return errors.Join(result.Errors...)
 	}
@@ -152,7 +153,11 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 	if err != nil {
 		return err
 	}
-	dryRunReport, dryRunErr := runListMaterialize(ctx, ws.MaterializeRoot(), result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
+	var dryRunReport *materialize.Report
+	var dryRunErr error
+	if !marketplaceCacheUnknown {
+		dryRunReport, dryRunErr = runListMaterialize(ctx, ws.MaterializeRoot(), result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
+	}
 	if dryRunErr != nil {
 		// A failed drift probe must not hide the listing itself, but file mode
 		// returns manifest and containment problems as hard errors that would
@@ -162,7 +167,11 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 			return err
 		}
 	}
-	if dryRunReport != nil && !dryRunReport.InSync() {
+	if marketplaceCacheUnknown {
+		if _, err := fmt.Fprintln(out, "Sync state unknown: Marketplace cache evidence missing — run 'agent-marketplace sync'"); err != nil {
+			return err
+		}
+	} else if dryRunReport != nil && !dryRunReport.InSync() {
 		pending := dryRunReport.TotalWritten() + dryRunReport.TotalRemoved()
 		if _, err := fmt.Fprintf(out, "%d resources out of sync — run 'agent-marketplace sync'\n", pending); err != nil {
 			return err
