@@ -162,7 +162,7 @@ func leadingTableNameString(expr ast.Expr) (string, bool, error) {
 }
 
 func appendedTableSpecCases(file *ast.File, fset *token.FileSet, fn *ast.FuncDecl) ([]tableSpecCase, error) {
-	literals := make(map[string]*ast.CompositeLit)
+	literals := make(map[string][]*ast.CompositeLit)
 	var loops []ast.Node
 	ast.Inspect(fn.Body, func(node ast.Node) bool {
 		switch value := node.(type) {
@@ -174,7 +174,7 @@ func appendedTableSpecCases(file *ast.File, fset *token.FileSet, fn *ast.FuncDec
 				}
 				literal, ok := value.Rhs[index].(*ast.CompositeLit)
 				if ok && isTestCaseLiteral(literal) {
-					literals[ident.Name] = literal
+					literals[ident.Name] = append(literals[ident.Name], literal)
 				}
 			}
 		case *ast.RangeStmt:
@@ -215,7 +215,11 @@ func appendedTableSpecCases(file *ast.File, fset *token.FileSet, fn *ast.FuncDec
 			case *ast.CompositeLit:
 				literal = value
 			case *ast.Ident:
-				literal = literals[value.Name]
+				for _, candidate := range literals[value.Name] {
+					if candidate.Pos() < statement.Pos() && (literal == nil || candidate.Pos() > literal.Pos()) {
+						literal = candidate
+					}
+				}
 			}
 			if literal == nil {
 				caseErr = fmt.Errorf("%s:%d: cannot resolve appended TestCase literal", fset.Position(statement.Pos()).Filename, fset.Position(statement.Pos()).Line)
@@ -388,6 +392,22 @@ func init() {
 	}
 	if err := checkTableSpecTags(sources, "native_mcp/*\n"); err != nil {
 		t.Fatalf("checkTableSpecTags() did not resolve the identifier's dynamic name: %v", err)
+	}
+}
+
+func TestTableSpecTagsCheckResolvesReassignedIdentifier(t *testing.T) {
+	sources := map[string]string{
+		"native_test.go": `package e2e_test
+func init() {
+	tc := TestCase{Name: "a"}
+	testTable = append(testTable, tc)
+	tc = TestCase{Name: "b"}
+	testTable = append(testTable, tc)
+}
+`,
+	}
+	if err := checkTableSpecTags(sources, "a\nb\n"); err != nil {
+		t.Fatalf("checkTableSpecTags() did not resolve each append's latest identifier assignment: %v", err)
 	}
 }
 
