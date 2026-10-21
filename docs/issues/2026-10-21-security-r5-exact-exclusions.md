@@ -240,6 +240,15 @@ focused race check pass. The enlarged terminal suite passes all 38 PTY journeys
 and four utility/process tests, zero skipped or cancelled. The lockfile and
 global tool configuration remain unchanged.
 
+Later main `a78f9342` is integrated without conflicts. Its unrelated TUI,
+browser, and site changes remain upstream work; the R53 production and benchmark
+blobs are unchanged. Fresh selected validation and strict specs pass (64 items,
+1,144 scenarios, 1,830 annotations, two active changes), followed by all 39 PTY
+journeys and four utility/process tests, zero skipped or cancelled. Fresh
+canonical overlays reproduce all four expected semantic mutation failures;
+additional exact and wildcard mutations fail the new post-loop benchmark
+guards rather than compilation. No failing control is counted as a passing gate.
+
 ## Remaining Scope
 
 R53 stays **partial**. The ordered request interpreter, wildcard exclusion
