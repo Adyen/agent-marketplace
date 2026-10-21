@@ -34,9 +34,7 @@ func newMarketplaceBehaviorFixture(t *testing.T, files map[string]string) *marke
 		RegistryDef{Files: files},
 		gitServer.URL,
 		"behavior-marketplace",
-		"Behavior Marketplace",
 		"behavior-source",
-		"behavior-source-id",
 		t.TempDir(),
 	)}
 }

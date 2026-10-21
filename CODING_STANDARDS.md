@@ -87,7 +87,7 @@ Add a new `TestCase` to `testTable` in `e2e/table_test.go` when:
 
 Add a standalone test function in a separate file when:
 - The test needs non-standard setup (e.g. no git repo)
-- The test uses `Env` framework features not exposed through the `Steps` model
+- The test uses framework features not exposed through the `Steps` model
 
 Use the structured fixture builders in `e2e/harness_test.go` (`Skill`, `Command`, `Subagent`, `MCPServer`) to define registry contents. Keep `Desc` fields as Given/When/Then descriptions.
 

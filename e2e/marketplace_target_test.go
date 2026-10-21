@@ -30,11 +30,11 @@ type marketplaceTarget struct {
 	slug      string
 }
 
-func newMarketplaceTarget(t *testing.T, env *Env, repoName string, registry RegistryDef, gitServerURL, instanceID, instanceName, slug, registryID, stateDir string) *marketplaceTarget {
+func newMarketplaceTarget(t *testing.T, env *Env, repoName string, registry RegistryDef, gitServerURL, instanceID, slug, stateDir string) *marketplaceTarget {
 	t.Helper()
 	bareURL := env.CreateBareRepo(repoName, registry.FilesMap())
 	origin := strings.TrimRight(gitServerURL, "/") + "/" + repoName + ".git"
-	cfgPath := writeMarketplaceConfig(t, stateDir, instanceID, instanceName, slug, registryID, origin)
+	cfgPath := writeMarketplaceConfig(t, stateDir, instanceID, slug, slug+"-id", origin)
 	result := env.RunAM("serve", "reindex", "--config", cfgPath)
 	if result.ExitCode != 0 {
 		t.Fatalf("initial Marketplace reindex failed (exit %d):\n%s", result.ExitCode, result.Combined)
@@ -58,7 +58,7 @@ func newMarketplaceTarget(t *testing.T, env *Env, repoName string, registry Regi
 	return target
 }
 
-func writeMarketplaceConfig(t *testing.T, stateDir, instanceID, instanceName, slug, registryID, origin string) string {
+func writeMarketplaceConfig(t *testing.T, stateDir, instanceID, slug, registryID, origin string) string {
 	t.Helper()
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		t.Fatalf("create Marketplace state directory: %v", err)
@@ -105,7 +105,7 @@ revocations:
   registry_ids: []
   coordinates: []
   revisions: []
-`, instanceID, instanceName, dbPath, blobsPath, registryID, slug, origin)
+`, instanceID, instanceID, dbPath, blobsPath, registryID, slug, origin)
 	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
 		t.Fatalf("write Marketplace config: %v", err)
 	}

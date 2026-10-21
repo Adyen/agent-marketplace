@@ -5381,29 +5381,27 @@ func runTableCase(t *testing.T, tc TestCase, firstErr *string) {
 	env := newEnv(t)
 	env.InitGitRepo()
 
-	registryURLs := make(map[string]string, len(tc.Registries))
 	// Seed registries and collect their fixture URLs.
+	bareURLs := make(map[string]string, len(tc.Registries)+len(tc.Marketplaces))
 	for _, registry := range tc.Registries {
-		registryURLs[registry.Name] = env.CreateBareRepo(registry.Name, registry.FilesMap())
+		bareURLs[registry.Name] = env.CreateBareRepo(registry.Name, registry.FilesMap())
 	}
 	var gitServerURL string
-	if len(tc.Registries)+len(tc.Marketplaces) > 0 {
+	if len(bareURLs)+len(tc.Marketplaces) > 0 {
 		gitServer := newGitHTTPServer(t, env.repos)
 		gitServerURL = gitServer.URL
 		t.Cleanup(gitServer.Close)
 	}
 
-	tokens := make(map[string]string, len(registryURLs)+2*(len(tc.Registries)+len(tc.Marketplaces)))
-	bareURLs := make(map[string]string, len(registryURLs)+len(tc.Marketplaces))
-	for name, url := range registryURLs {
+	tokens := make(map[string]string, 2*len(bareURLs)+2*len(tc.Marketplaces))
+	for name, url := range bareURLs {
 		tokens["{{REG:"+name+"}}"] = url
 		tokens["{{GITHTTP:"+name+"}}"] = gitServerURL + "/" + name + ".git"
-		bareURLs[name] = url
 	}
 	marketplaces := make(map[string]*marketplaceTarget, len(tc.Marketplaces))
 	for _, definition := range tc.Marketplaces {
 		target := newMarketplaceTarget(t, env, definition.Name, definition.Registry, gitServerURL,
-			definition.Name+"-marketplace", definition.Name+" Marketplace", definition.Name, definition.Name+"-id", t.TempDir())
+			definition.Name+"-marketplace", definition.Name, t.TempDir())
 		marketplaces[definition.Name] = target
 		bareURLs[definition.Name] = target.bareURL
 		tokens["{{GITHTTP:"+definition.Name+"}}"] = target.origin
