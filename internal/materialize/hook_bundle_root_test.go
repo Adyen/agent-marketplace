@@ -331,6 +331,90 @@ func TestHookBundleRootLegacyReferenceRewrittenWithWarning(t *testing.T) {
 	if _, err := os.Stat(installed); err != nil {
 		t.Fatalf("legacy command %q does not reference an installed file: %v", commands[0], err)
 	}
+	if !strings.Contains(legacy.Hint, "hooks/") {
+		t.Fatalf("legacy hint %q does not name the hooks/ bundle prefix", legacy.Hint)
+	}
+
+	workspace, _ := additiveSafetyEnv(t)
+	workspaceProvider := nativeSupportSource(t, "claude", ".claude/settings.json", map[string]string{
+		".claude/settings.json":    `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"}]}]}}`,
+		".claude/scripts/check.sh": "#!/bin/sh\necho workspace support\n",
+	})
+	workspaceResolved := nativeSupportResolve(t, hcc.TargetFactory, false, []resolver.ResolvedArtifact{workspaceProvider})
+	workspaceReport, err := Run(context.Background(), workspace, workspaceResolved, WithMaterializationModes(modes))
+	if err != nil || workspaceReport == nil {
+		t.Fatalf("run workspace: %v", err)
+	}
+	workspaceLegacy := findDiagnostic(workspaceReport, "hook.support-reference-legacy")
+	if workspaceLegacy == nil || workspaceLegacy.Severity != diag.SeverityWarning {
+		t.Fatalf("workspace legacy diagnostic = %+v, want hook.support-reference-legacy warning", workspaceReport.Diags)
+	}
+	if !strings.Contains(workspaceLegacy.Hint, ".claude/") {
+		t.Fatalf("workspace legacy hint %q does not name the .claude/ bundle prefix", workspaceLegacy.Hint)
+	}
+}
+
+func findDiagnostic(report *Report, code string) *diag.Diagnostic {
+	for i, d := range report.Diags {
+		if d.Code == code {
+			return &report.Diags[i]
+		}
+	}
+	return nil
+}
+
+// spec: hook-resources/quoting-only-the-plugin-root-token-keeps-the-reference-checked
+func TestHookBundleRootQuotedTokenKeepsReferenceChecked(t *testing.T) {
+	repo, home := additiveSafetyEnv(t)
+	definition := `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"\"${CLAUDE_PLUGIN_ROOT}\"/hooks/scripts/check.sh"}]}],` +
+		`"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"\"${CLAUDE_PLUGIN_ROOT}\"/scripts/check.sh"}]}],` +
+		`"Stop":[{"hooks":[{"type":"command","command":"\"${CLAUDE_PLUGIN_ROOT}\"/hooks/scripts/absent.sh"}]}]}`
+	providers := bundleRootHookProviders(t, "claude", "hooks/hooks.json", map[string]string{
+		"hooks/hooks.json":       definition,
+		"hooks/scripts/check.sh": "#!/bin/sh\necho quoted\n",
+	})
+	resolved := nativeSupportResolve(t, hcc.TargetFactory, false, providers)
+	modes := config.MaterializationModes{Project: config.MaterializationModeFile, Machine: config.MaterializationModeFile}
+	report, err := Run(context.Background(), repo, resolved, WithMaterializationModes(modes))
+	if err != nil || report == nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !reportHasDiagCode(report, "hook.support-reference-missing", diag.SeverityError) {
+		t.Fatalf("quoted missing reference not refused: %+v", report.Diags)
+	}
+	if !reportHasDiagCode(report, "hook.support-reference-legacy", diag.SeverityWarning) {
+		t.Fatalf("quoted legacy reference not warned: %+v", report.Diags)
+	}
+	nativePath := filepath.Join(repo, ".factory", "hooks.json")
+	data, err := os.ReadFile(nativePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string][]struct {
+		Hooks []struct {
+			Command string `json:"command"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := document["Stop"]; ok {
+		t.Fatalf("refused sibling hook present in %s: %s", nativePath, data)
+	}
+	loc := nativeSupportLocationFor(t, hcc.TargetFactory)
+	for _, event := range []string{"PreToolUse", "PostToolUse"} {
+		groups := document[event]
+		if len(groups) != 1 || len(groups[0].Hooks) != 1 {
+			t.Fatalf("event %s = %+v, want one command", event, groups)
+		}
+		installed, _ := loc.installedRef(t, groups[0].Hooks[0].Command, repo, home, false)
+		if !strings.HasSuffix(filepath.ToSlash(installed), "hooks/scripts/check.sh") {
+			t.Fatalf("event %s command %q does not reference hooks/scripts/check.sh", event, groups[0].Hooks[0].Command)
+		}
+		if _, err := os.Stat(installed); err != nil {
+			t.Fatalf("event %s command %q does not reference an installed file: %v", event, groups[0].Hooks[0].Command, err)
+		}
+	}
 }
 
 // spec: hook-resources/references-that-resolve-under-both-meanings-use-the-bundle-root

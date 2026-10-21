@@ -1251,7 +1251,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 				Target:   string(w.target),
 				Resource: w.skill.Name,
 				Message:  "A plugin-root reference resolved only under the deprecated folder-relative meaning; rewritten to the bundle-root path",
-				Hint:     "Repoint the reference at the bundle root so it keeps working after the legacy meaning is removed",
+				Hint:     fmt.Sprintf("Prefix the path after the plugin-root token with %s/ so it keeps working after the legacy meaning is removed", plan.bundlePrefixDir),
 				Source:   compilepkg.SourceOf(w.skill.Resource),
 			})
 		}

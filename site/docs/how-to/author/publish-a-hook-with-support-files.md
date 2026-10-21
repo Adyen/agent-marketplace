@@ -8,11 +8,11 @@ Ship a hook whose command runs a script stored in your [registry](../../glossary
 - `agent-marketplace` on your `PATH`.
 - Permission to push to the registry repository.
 
-## One command form for every consumer
+## The bundle root and the command form
 
-`${CLAUDE_PLUGIN_ROOT}` means the same thing wherever consumers install your hook from: it is the bundle root, the folder that holds `hooks/`. Write the command as `${CLAUDE_PLUGIN_ROOT}/hooks/<path>`, where `<path>` is the script's path below `hooks/` in your registry. Git, `directory`, and Marketplace sources all install the file and rewrite the command to reach it.
+`${CLAUDE_PLUGIN_ROOT}` stands for the bundle root: the folder that contains the folder holding the hook definition. For `hooks/hooks.json` that is the registry folder, so the path after the token starts with `hooks/`. For a workspace layout the path starts with that workspace folder: a Claude workspace hook in `.claude/settings.json` writes `${CLAUDE_PLUGIN_ROOT}/.claude/scripts/check.sh`, and Factory's `.factory/` and Cursor's `.cursor/` work the same way. Git and `directory` sources install the file and rewrite the command to reach it.
 
-One constraint remains for hooks that consumers install from a hosted Marketplace mirror: the mirror packages only the files that sit directly beside `hooks.json`, so a mirrored hook keeps its scripts flat in `hooks/` and names them `${CLAUDE_PLUGIN_ROOT}/hooks/<name>` with no `/` in `<name>`. See [If consumers install from a Marketplace](#if-consumers-install-from-a-marketplace).
+A Marketplace mirror always packages the files beside `hooks.json` as `hooks/<name>`, whatever folder holds the definition. So only a hook defined in `hooks/hooks.json` gets the same command on Git, `directory`, and mirror delivery. A hook that must be mirrored should use `hooks/hooks.json`. See [If consumers install from a Marketplace](#if-consumers-install-from-a-marketplace).
 
 ## 1. Put the hook and its files in one folder
 
@@ -57,7 +57,9 @@ EOF
 
 Both commands print nothing. Follow these rules for the command:
 
-- Write `${CLAUDE_PLUGIN_ROOT}/hooks/scripts/...`, matching the file's path in the registry. Sync checks the reference against the files the hook ships: a path that names no shipped file or folder refuses the hook with `hook.support-reference-missing`. Commands written against the old folder-relative meaning, such as `${CLAUDE_PLUGIN_ROOT}/scripts/...`, still install for one minor release with a `hook.support-reference-legacy` warning; repoint them at the bundle root.
+- Write `${CLAUDE_PLUGIN_ROOT}/hooks/scripts/...`, matching the file's path in the registry. Sync checks the reference against the files the hook ships: a path that names no shipped file or folder refuses the hook with `hook.support-reference-missing`. Commands written against the old folder-relative meaning, such as `${CLAUDE_PLUGIN_ROOT}/scripts/...`, still install for one minor release with a `hook.support-reference-legacy` warning; prefix the path with the folder named in the hint.
+- Both `"${CLAUDE_PLUGIN_ROOT}/hooks/x.sh"` and `"${CLAUDE_PLUGIN_ROOT}"/hooks/x.sh` (only the token quoted) are checked.
+- A literal reference to a file the hook does not ship refuses the hook with `hook.support-reference-missing`. That includes a log or state file the script writes at runtime, and `${CLAUDE_PLUGIN_ROOT}/..`. Write runtime files outside the support folder, for example under `$TMPDIR`.
 - A bare `${CLAUDE_PLUGIN_ROOT}` or a path that contains a shell expansion or glob is not checked, so prefer a literal path and let sync catch a typo for you.
 - Wrap the path in double quotes. Sync refuses a token inside single quotes with `hook.env-unrepresentable`.
 - Use a matcher made of exact tool names, such as `Bash` or `Edit|Write`, if consumers target other harnesses. Sync translates exact names and refuses patterns it cannot map. The [hook and tool names reference](../../reference/hook-and-tool-names.md) lists the names and events each harness accepts.
@@ -206,11 +208,15 @@ The scratch project from step 5 works for this flat layout too: a `directory` so
 
 When the Marketplace operator next refreshes your registry, the changed hook gets a new content revision. Consumers already pinned to the old revision keep it until they install the new one.
 
+## Upgrade note: support folder layout
+
+This release installs support files at `<key>/<D>/<rel>`, where `<D>` is the folder that holds the hook definition (`hooks`, `.claude`, and so on). Earlier releases installed them at `<key>/<rel>`. A client older than this release moves them back to the old layout on its next sync, so `sync --check` reports drift on whichever client did not sync last, including in CI. Upgrade every client that syncs the same repository, CI's pinned client included, together. See [How to troubleshoot sync drift](../troubleshoot-sync-drift.md) for the symptom.
+
 ## Troubleshooting
 
 - **The hook runs but reports `No such file or directory`:** the command path does not match a file below the hook's support folder. Open the `Hook changes` listing or the target's hook file, and check that the path after `PreToolUse-command/` exists under `hook-support/`. A literal `${CLAUDE_PLUGIN_ROOT}/...` reference is checked at sync, so this happens only with a bare token, a shell expansion, or a glob in the path.
-- **Sync refuses the hook with `hook.support-reference-missing`:** the path after `${CLAUDE_PLUGIN_ROOT}` names no file the hook ships, read from the bundle root. The hook is skipped and sibling hooks still install. Fix the path or add the file. A missing `hooks/` prefix is the usual cause: write `${CLAUDE_PLUGIN_ROOT}/hooks/scripts/...`, not `${CLAUDE_PLUGIN_ROOT}/scripts/...`.
-- **Sync warns `hook.support-reference-legacy`:** the command uses the old folder-relative form, such as `${CLAUDE_PLUGIN_ROOT}/scripts/...`, which still installs for one minor release. Repoint it at the bundle root (`${CLAUDE_PLUGIN_ROOT}/hooks/scripts/...`) before the fallback is removed.
+- **Sync refuses the hook with `hook.support-reference-missing`:** the path after `${CLAUDE_PLUGIN_ROOT}` names no file the hook ships, read from the bundle root. The hook is skipped and sibling hooks still install. Fix the path or add the file. A missing folder prefix is the usual cause: write the bundle-root path, such as `${CLAUDE_PLUGIN_ROOT}/hooks/scripts/...` for `hooks/hooks.json`, not `${CLAUDE_PLUGIN_ROOT}/scripts/...`.
+- **Sync warns `hook.support-reference-legacy`:** the command uses the old folder-relative form, such as `${CLAUDE_PLUGIN_ROOT}/scripts/...`, which still installs for one minor release. Prefix the path after the token with the folder named in the warning's hint, such as `hooks/`, before the fallback is removed.
 - **The hook reports `Permission denied`:** the script was committed without the executable bit. Run `chmod +x` on it, commit, and release again.
 - **Sync reports `hook.env-unrepresentable`:** the command puts the token inside single quotes. Use double quotes. For some targets, such as Windsurf, sync also refuses a project-folder variable joined to other text, as in `${CLAUDE_PROJECT_DIR}-backup`; put a `/` after the variable.
 - **The hook installs for one harness but not another:** that harness has no exact match for the event, matcher, handler type, or timeout. Sync names the cause in an error such as `hook.event-unmappable` and still installs the hook for the other targets. Check the [hook and tool names reference](../../reference/hook-and-tool-names.md).

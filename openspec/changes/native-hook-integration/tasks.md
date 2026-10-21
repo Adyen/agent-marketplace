@@ -300,3 +300,8 @@ hook matrix goldens deliberately.
   author guide `site/docs/how-to/author/publish-a-hook-with-support-files.md`,
   and `pkg/harness-compilation/diag/codes.md`. Verify `make spec-check`,
   `make validate`, and `make validate-e2e` pass
+- [x] 10.6 Check the quote-only idiom `"${CLAUDE_PLUGIN_ROOT}"/path` through the
+  same shared plugin-root reference scanner as `rewriteCommand`, so the isolated
+  form is checked, legacy-rewritten, and refused when missing like the
+  whole-word form. Verify the `hookpolicy` reference table, the catalog
+  reference tests, and the `internal/materialize` quoted-token test pass

@@ -150,6 +150,22 @@ func init() {
 	}
 }
 
+// spec: hook-resources/quoting-only-the-plugin-root-token-keeps-the-reference-checked
+func init() {
+	files := bundleRootFiles(bundleRootHooks(`"${CLAUDE_PLUGIN_ROOT}"/scripts/check.sh`, ""), "hooks/scripts/check.sh")
+	native, root := bundleRootNative("claude", "repo")
+	support := root + "/.claude/hook-support"
+	testTable = append(testTable, bundleRootCase(
+		"quoted-token-legacy/git",
+		"Given a hook defined in hooks/hooks.json that references \"${CLAUDE_PLUGIN_ROOT}\"/scripts/check.sh with only the token quoted and ships only hooks/scripts/check.sh, "+
+			"When sync and check run for claude in repository scope from a git source, "+
+			"Then the command references the installed hooks/scripts/check.sh, sync warns hook.support-reference-legacy, and check agrees",
+		"claude", "repo", true, files,
+		Step{Args: []string{"sync"}, MustPass: true, OutContains: []string{"hook.support-reference-legacy"}, FileContains: map[string]string{native: "/PreToolUse-command/hooks/scripts/check.sh"}, FileNotContains: map[string]string{native: "CLAUDE_PLUGIN_ROOT"}, GlobsExist: []string{support + "/*/PreToolUse-command/hooks/scripts/check.sh"}},
+		Step{Args: []string{"sync", "--check"}, MustPass: true},
+	))
+}
+
 // spec: hook-resources/references-that-resolve-under-both-meanings-use-the-bundle-root
 func init() {
 	files := bundleRootFiles(bundleRootHooks(`"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/check.sh"`, ""), "hooks/scripts/check.sh", "hooks/hooks/scripts/check.sh")

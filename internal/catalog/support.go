@@ -162,13 +162,9 @@ type HookSupportReferenceResult struct {
 // legacyPrefix disables the fallback. Bare tokens and references whose path
 // carries a shell expansion or glob are not checked.
 func CheckHookSupportReferences(command string, installed []string, legacyPrefix string) (HookSupportReferenceResult, error) {
-	names, err := hookpolicy.PluginRootNames()
+	references, err := hookpolicy.PluginRootReferences(command)
 	if err != nil {
 		return HookSupportReferenceResult{}, err
-	}
-	pluginNames := make(map[string]bool, len(names))
-	for _, name := range names {
-		pluginNames[name] = true
 	}
 	resolved := func(rel string) bool {
 		for _, p := range installed {
@@ -182,150 +178,35 @@ func CheckHookSupportReferences(command string, installed []string, legacyPrefix
 	var out strings.Builder
 	pos := 0
 	var edits bool
-	var quote byte
-	for i := 0; i < len(command); i++ {
-		c := command[i]
-		switch quote {
-		case '\'':
-			if c == '\'' {
-				quote = 0
-			}
+	for _, ref := range references {
+		if ref.Quote == '\'' || ref.PathStart < 0 || ref.Dynamic {
 			continue
-		case '"':
-			switch {
-			case c == '"':
-				quote = 0
-				continue
-			case c == '\\' && i+1 < len(command) && strings.IndexByte("$`\"\\", command[i+1]) >= 0:
-				i++
-				continue
-			case c != '$':
-				continue
-			}
+		}
+		rel := strings.Trim(command[ref.PathStart:ref.PathEnd], "/")
+		if rel == "" {
+			continue
+		}
+		cleaned := path.Clean(rel)
+		switch {
+		case cleaned == ".":
+		case cleaned == ".." || strings.HasPrefix(cleaned, "../"):
+			result.Missing = true
+		case resolved(cleaned):
+		case legacyPrefix != "" && resolved(legacyPrefix+"/"+cleaned):
+			out.WriteString(command[pos:ref.PathStart])
+			out.WriteString(legacyPrefix + "/")
+			pos = ref.PathStart
+			edits = true
+			result.Legacy = true
 		default:
-			switch c {
-			case '\\':
-				i++
-				continue
-			case '\'', '"':
-				quote = c
-				continue
-			case '$':
-			default:
-				continue
-			}
+			result.Missing = true
 		}
-		if i+1 >= len(command) || command[i+1] == '(' {
-			continue
-		}
-		end := hookPluginRootTokenEnd(command, i, pluginNames)
-		if end <= i {
-			continue
-		}
-		if end < len(command) && command[end] == '/' {
-			pathStart := end + 1
-			k := pathStart
-			dynamic := false
-			quoted := quote == '"'
-			for k < len(command) {
-				ch := command[k]
-				if ch == '\\' {
-					dynamic = true
-					k = min(k+2, len(command))
-					continue
-				}
-				if ch == '$' || ch == '`' {
-					dynamic = true
-					k++
-					continue
-				}
-				if quoted {
-					if ch == '"' {
-						break
-					}
-				} else if strings.IndexByte(" \t\n\"';&|<>()", ch) >= 0 {
-					break
-				}
-				k++
-			}
-			if !dynamic {
-				if !quoted {
-					// A quote inside an unquoted word means the shell word
-					// continues past the scanned fragment.
-					dynamic = k < len(command) && (command[k] == '"' || command[k] == '\'')
-				} else if k < len(command) {
-					// The scan stopped at the closing quote; anything but a
-					// word delimiter after it concatenates onto the word.
-					dynamic = k+1 < len(command) && strings.IndexByte(" \t\n;&|<>()", command[k+1]) < 0
-				} else {
-					// An unterminated quote leaves the word open.
-					dynamic = true
-				}
-			}
-			rel := strings.Trim(command[pathStart:k], "/")
-			if rel != "" && !dynamic && !strings.ContainsAny(rel, "*?[]{}") {
-				cleaned := path.Clean(rel)
-				switch {
-				case cleaned == ".":
-				case cleaned == ".." || strings.HasPrefix(cleaned, "../"):
-					result.Missing = true
-				case resolved(cleaned):
-				case legacyPrefix != "" && resolved(legacyPrefix+"/"+cleaned):
-					out.WriteString(command[pos:pathStart])
-					out.WriteString(legacyPrefix + "/")
-					pos = pathStart
-					edits = true
-					result.Legacy = true
-				default:
-					result.Missing = true
-				}
-			}
-			i = k - 1
-			continue
-		}
-		i = end - 1
 	}
 	if edits {
 		out.WriteString(command[pos:])
 		result.Command = out.String()
 	}
 	return result, nil
-}
-
-// hookPluginRootTokenEnd parses a $NAME or ${NAME} token at command[start] and
-// returns the index just past it when the name is a shipped plugin-root
-// spelling; otherwise it returns start.
-func hookPluginRootTokenEnd(command string, start int, pluginNames map[string]bool) int {
-	if start+1 >= len(command) {
-		return start
-	}
-	name := ""
-	end := start + 1
-	if command[end] == '{' {
-		close := strings.IndexByte(command[end:], '}')
-		if close < 0 {
-			return start
-		}
-		name = command[end+1 : end+close]
-		end = end + close + 1
-	} else {
-		for end < len(command) {
-			c := command[end]
-			if c == '_' || 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9' {
-				end++
-				continue
-			}
-			break
-		}
-		if end == start+1 {
-			return start
-		}
-		name = command[start+1 : end]
-	}
-	if !pluginNames[name] {
-		return start
-	}
-	return end
 }
 
 // HookMaterializationSupportFiles is shared by publication and installation.

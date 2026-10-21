@@ -216,6 +216,50 @@ func TestCheckHookSupportReferences(t *testing.T) {
 			wantCommand: `${CLAUDE_PLUGIN_ROOT}/check.sh`,
 			wantMissing: true,
 		},
+		{
+			name:        "isolated braced bundle hit",
+			command:     `"${CLAUDE_PLUGIN_ROOT}"/hooks/scripts/check.sh`,
+			installed:   []string{"hooks/scripts/check.sh"},
+			wantCommand: `"${CLAUDE_PLUGIN_ROOT}"/hooks/scripts/check.sh`,
+		},
+		{
+			name:        "isolated unbraced bundle hit",
+			command:     `"$CLAUDE_PLUGIN_ROOT"/hooks/scripts/check.sh`,
+			installed:   []string{"hooks/scripts/check.sh"},
+			wantCommand: `"$CLAUDE_PLUGIN_ROOT"/hooks/scripts/check.sh`,
+		},
+		{
+			name:         "isolated braced legacy rewrites",
+			command:      `"${CLAUDE_PLUGIN_ROOT}"/scripts/check.sh`,
+			installed:    []string{"hooks/scripts/check.sh"},
+			legacyPrefix: "hooks",
+			wantCommand:  `"${CLAUDE_PLUGIN_ROOT}"/hooks/scripts/check.sh`,
+			wantLegacy:   true,
+		},
+		{
+			name:         "isolated unbraced legacy rewrites",
+			command:      `"$CLAUDE_PLUGIN_ROOT"/scripts/check.sh`,
+			installed:    []string{"hooks/scripts/check.sh"},
+			legacyPrefix: "hooks",
+			wantCommand:  `"$CLAUDE_PLUGIN_ROOT"/hooks/scripts/check.sh`,
+			wantLegacy:   true,
+		},
+		{
+			name:         "isolated braced missing",
+			command:      `"${CLAUDE_PLUGIN_ROOT}"/hooks/scripts/absent.sh`,
+			installed:    []string{"hooks/scripts/check.sh"},
+			legacyPrefix: "hooks",
+			wantCommand:  `"${CLAUDE_PLUGIN_ROOT}"/hooks/scripts/absent.sh`,
+			wantMissing:  true,
+		},
+		{
+			name:         "isolated unbraced missing",
+			command:      `"$CLAUDE_PLUGIN_ROOT"/hooks/scripts/absent.sh`,
+			installed:    []string{"hooks/scripts/check.sh"},
+			legacyPrefix: "hooks",
+			wantCommand:  `"$CLAUDE_PLUGIN_ROOT"/hooks/scripts/absent.sh`,
+			wantMissing:  true,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

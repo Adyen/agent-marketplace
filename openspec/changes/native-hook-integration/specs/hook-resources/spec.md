@@ -549,6 +549,17 @@ Marketplace mirror sources keep their existing support admission refusals.
 - **THEN** the token MUST be rewritten to the support directory reference
 - **AND** `hook.support-reference-missing` MUST NOT be emitted
 
+#### Scenario: Quoting only the plugin-root token keeps the reference checked
+
+- **WHEN** a hook command is `"${CLAUDE_PLUGIN_ROOT}"/hooks/scripts/check.sh`
+  or `"${CLAUDE_PLUGIN_ROOT}"/scripts/check.sh` and the hook ships
+  `hooks/scripts/check.sh`, and a sibling command is
+  `"${CLAUDE_PLUGIN_ROOT}"/hooks/scripts/absent.sh`
+- **THEN** the first two commands MUST reference the installed
+  `hooks/scripts/check.sh` inside that hook's support directory, the second
+  with the warning `hook.support-reference-legacy`
+- **AND** the sibling hook MUST be refused with `hook.support-reference-missing`
+
 #### Scenario: Legacy folder-relative references keep working with a warning
 
 - **WHEN** a hook whose definition is `hooks/hooks.json` has the command

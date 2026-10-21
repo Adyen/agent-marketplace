@@ -40,6 +40,7 @@ type hookSupportPlan struct {
 	sourceExcludedPeers     []string
 	command                 string
 	definitionDir           string
+	bundlePrefixDir         string
 	referenceMissing        bool
 	referenceLegacy         bool
 	err                     error
@@ -249,7 +250,8 @@ func prepareHookSupport(work []skillTarget, repoRoots ...string) (map[int]hookSu
 		}
 		if files != nil {
 			if hook, ok := w.skill.Resource.(*ir.Hook); ok {
-				checked, checkErr := checkHookSupportReferenceRewrites(hook.Command, files, hookSupportBundlePrefixDir(w.skill, plan.definitionDir))
+				plan.bundlePrefixDir = hookSupportBundlePrefixDir(w.skill, plan.definitionDir)
+				checked, checkErr := checkHookSupportReferenceRewrites(hook.Command, files, plan.bundlePrefixDir)
 				if checkErr != nil {
 					plan.err = checkErr
 					plans[i] = plan
