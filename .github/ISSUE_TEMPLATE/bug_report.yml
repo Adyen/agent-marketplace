@@ -59,6 +59,7 @@ body:
         - Devin CLI (devin)
         - Factory Droid (factory)
         - Gemini CLI (gemini)
+        - OpenCode (opencode)
         - Windsurf (windsurf)
         - Not related to a harness
   - type: input

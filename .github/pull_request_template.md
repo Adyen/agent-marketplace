@@ -8,7 +8,7 @@ Fixes #<!-- issue number, or remove this line -->
 
 - [ ] Bug fix
 - [ ] New feature or behavior change
-- [ ] Support for a harness (`claude`, `codex`, `cursor`, `devin`, `factory`, `gemini`, `windsurf`)
+- [ ] Support for a harness (`claude`, `codex`, `cursor`, `devin`, `factory`, `gemini`, `opencode`, `windsurf`)
 - [ ] Documentation only
 - [ ] Build, CI, or tooling
 
