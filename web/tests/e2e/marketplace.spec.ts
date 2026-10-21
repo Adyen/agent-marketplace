@@ -304,7 +304,7 @@ test.describe('Marketplace browser discovery', () => {
       slash: getComputedStyle(element.querySelector('.am-brand-slash')!).color,
     }))
     expect(eyebrowColors.label).not.toBe(eyebrowColors.slash)
-    await expect(page.getByRole('heading', { name: /Manage AI agent tooling once Sync it everywhere you work/ })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /Manage AI agent tooling once\. Sync it everywhere you work/ })).toBeVisible()
     const landingVisuals = await page.locator('.hero').evaluate((hero) => {
       const heading = hero.querySelector('h1')!
       const secondary = hero.querySelector('.h1-sub')!
