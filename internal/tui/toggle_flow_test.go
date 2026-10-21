@@ -699,7 +699,7 @@ func TestEnableKeepsSelectionWhenTheReloadLocksItsSource(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			m := NewModel("/repo", "/home")
+			m := NewModel(t.TempDir(), t.TempDir())
 			m.loading = false
 			m.rows = []row{gitRow("beta-skill", mutable, withProject), gitRow("alpha-skill", mutable, withAvailable)}
 			m.filteredRows = m.rows
@@ -735,7 +735,7 @@ func TestDisableSelectsAdjacentResourceWhenTheReloadLocksItsSource(t *testing.T)
 		return r
 	}
 	const mutable, locked = "/cache/c4f28a20/main:32c1cf49", "file:///registries/fixture@sha1:87aecb6b:skills"
-	m := NewModel("/repo", "/home")
+	m := NewModel(t.TempDir(), t.TempDir())
 	m.loading = false
 	m.rows = []row{gitRow("alpha", mutable, withProject), gitRow("bravo", mutable, withProject), gitRow("charlie", mutable, withProject)}
 	m.filteredRows = m.rows
@@ -769,7 +769,7 @@ func TestOpenDetailFollowsItsResourceWhenTheReloadLocksItsSource(t *testing.T) {
 		return r
 	}
 	alpha := gitRow("alpha-skill", "/cache/c4f28a20/main:32c1cf49", withAvailable)
-	m := NewModel("/repo", "/home")
+	m := NewModel(t.TempDir(), t.TempDir())
 	m.loading = false
 	m.rows = []row{gitRow("beta-skill", "/cache/c4f28a20/main:32c1cf49", withProject), alpha}
 	m.filteredRows = m.rows
@@ -791,6 +791,34 @@ func TestOpenDetailFollowsItsResourceWhenTheReloadLocksItsSource(t *testing.T) {
 	}
 	if want := rowKey(gitRow("alpha-skill", locked, withLocal)); m.detailKey != want {
 		t.Fatalf("detail key = %q, want the reloaded alpha-skill row %q", m.detailKey, want)
+	}
+}
+
+// A pending-verification detail resolves only to a single verified row; two
+// rows with the same resource identity close the detail instead of picking one.
+// spec: tui-navigation/selection-survives-a-reload-that-locks-its-source
+func TestPendingDetailIsNotGuessedBetweenRowsSharingItsIdentity(t *testing.T) {
+	gitRow := func(name, catalogKey string, opts ...func(*row)) row {
+		r := mkRow(name, append([]func(*row){withRegistry("file:///registries/fixture.git", "fixture"), withRegistryMeta("main", "skills")}, opts...)...)
+		r.Artifact.CatalogKey = catalogKey
+		return r
+	}
+	pending := gitRow("alpha-skill", "", withProject)
+	pending.PendingVerification = true
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.loading = false
+	m.pane = paneDetail
+	m.detailKey = rowKey(pending)
+	m.rows = []row{gitRow("alpha-skill", "snapshot-a", withProject), gitRow("alpha-skill", "snapshot-b", withProject)}
+	m.rebuildOpenBundle(pending, true)
+	if m.detailKey != "" {
+		t.Fatalf("detail followed one of two rows sharing its identity: key=%q", m.detailKey)
+	}
+	m.pane, m.detailKey = paneDetail, rowKey(pending)
+	m.rows = []row{gitRow("alpha-skill", "snapshot-a", withProject)}
+	m.rebuildOpenBundle(pending, true)
+	if want := rowKey(m.rows[0]); m.detailKey != want {
+		t.Fatalf("detail key = %q, want the single verified row %q", m.detailKey, want)
 	}
 }
 

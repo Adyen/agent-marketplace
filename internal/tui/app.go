@@ -1463,6 +1463,7 @@ func (m *Model) rebuildOpenBundle(previous row, hadPrevious bool) {
 	}
 	if !found && hadPrevious {
 		identity := registryIdentityKey(previous.RegistryURL, previous.RegistryRef, previous.RegistryPath)
+		matches := 0
 		for _, r := range m.rows {
 			if r.UnavailableReason == "" && !previous.PendingVerification {
 				continue
@@ -1476,9 +1477,10 @@ func (m *Model) rebuildOpenBundle(previous row, hadPrevious bool) {
 			if registryIdentityKey(r.RegistryURL, r.RegistryRef, r.RegistryPath) != identity {
 				continue
 			}
-			current, found = r, true
-			break
+			current = r
+			matches++
 		}
+		found = matches == 1
 	}
 	if !found && hadPrevious {
 		current, found = uniqueRowByIdentity(m.rows, rowSelectionIdentity(previous))
