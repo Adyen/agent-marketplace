@@ -102,13 +102,18 @@ func (m Model) openConfigEditor(scope, path string) (tea.Model, tea.Cmd) {
 	}
 	slog.Debug("opening config editor", "scope", scope, "path", path)
 	m.pane = paneList
-	return m, correlateOperation(openEditorCmd(path), operation, false)
+	return m, openEditorCmd(path, operation)
 }
+
+// execEditor hands the editor process to Bubble Tea; tests replace it to
+// observe the exit callback without starting a process.
+var execEditor = tea.Exec
 
 // openEditorCmd returns a tea.Cmd that suspends the TUI and launches $EDITOR
 // (or vi as fallback) with the given file path. When the editor exits, the
-// TUI resumes and reloads the snapshot.
-func openEditorCmd(path string) tea.Cmd {
+// TUI resumes and reloads the snapshot. Both results carry operation: the
+// exit message comes from the exec callback, after this command returned.
+func openEditorCmd(path string, operation operationID) tea.Cmd {
 	editor := strings.TrimSpace(os.Getenv("EDITOR"))
 	if editor == "" {
 		editor = "vi"
@@ -119,12 +124,12 @@ func openEditorCmd(path string) tea.Cmd {
 
 	return func() tea.Msg {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return editConfigPathMsg{path: path, err: fmt.Errorf("create config directory for %q: %w", path, err)}
+			return editConfigPathMsg{operation: operation, path: path, err: fmt.Errorf("create config directory for %q: %w", path, err)}
 		}
 		c := exec.Command(parts[0], append(parts[1:], path)...)
-		return tea.Exec(newEditorProcess(c).withWaitingScreen(path, parts[0]), func(err error) tea.Msg {
+		return execEditor(newEditorProcess(c).withWaitingScreen(path, parts[0]), func(err error) tea.Msg {
 			slog.Debug("config editor process exited", "editor", editor, "path", path, "err", err)
-			return editConfigPathMsg{path: path, err: err}
+			return editConfigPathMsg{operation: operation, path: path, err: err}
 		})()
 	}
 }

@@ -49,7 +49,7 @@ func TestRunWindsurfDeclaredSupportPortableLifecycle(t *testing.T) {
 	if proof := windsurfNativeProof(t, repo); proof.OwnedCount() != 1 {
 		t.Fatalf("owned entries after install = %d, want one private proof", proof.OwnedCount())
 	}
-	scripts := windsurfSupportLeaves(t, repo, "check", "scripts/check.sh")
+	scripts := windsurfSupportLeaves(t, repo, "check", "hooks/scripts/check.sh")
 	if len(scripts) != 1 {
 		t.Fatalf("published support scripts = %v, want exactly one", scripts)
 	}

@@ -468,8 +468,8 @@ func TestNativeHookSupportAllTargetsScopesAndModes(t *testing.T) {
 					if installedName == "" {
 						installedName = provider.Name
 					}
-					if len(elements) != 4 || elements[0] == "" || elements[1] != installedName ||
-						elements[2] != "scripts" || elements[3] != "check.sh" {
+					if len(elements) != 5 || elements[0] == "" || elements[1] != installedName ||
+						elements[2] != "hooks" || elements[3] != "scripts" || elements[4] != "check.sh" {
 						t.Fatalf("installed command %q does not use the support source and installed name", command)
 					}
 					data, err := os.ReadFile(installed)
@@ -757,11 +757,11 @@ func TestNativeHookSupportNamespacesDeselectAndIdempotent(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/%s", scope, mode), func(t *testing.T) {
 				repo, home := additiveSafetyEnv(t)
 				filesA := map[string]string{
-					"hooks/hooks.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/check.sh"}]}]}`,
+					"hooks/hooks.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/check.sh"}]}]}`,
 					"hooks/check.sh":   "echo first-script\n",
 				}
 				filesB := map[string]string{
-					"hooks/hooks.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/check.sh"}]}]}`,
+					"hooks/hooks.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/check.sh"}]}]}`,
 					"hooks/check.sh":   "echo second-script\n",
 				}
 				providerA := nativeSupportSource(t, "claude", "hooks/hooks.json", filesA)
@@ -801,7 +801,7 @@ func TestNativeHookSupportNamespacesDeselectAndIdempotent(t *testing.T) {
 					supportRel = loc.userSupportRoot
 				}
 				supportRoot := filepath.Join(supportBase, filepath.FromSlash(supportRel))
-				matches, err := filepath.Glob(filepath.Join(supportRoot, "*", "*", "check.sh"))
+				matches, err := filepath.Glob(filepath.Join(supportRoot, "*", "*", "hooks", "check.sh"))
 				if err != nil || len(matches) != 2 {
 					t.Fatalf("expected two per-hook scripts under %s, got %v (%v)", supportRoot, matches, err)
 				}
@@ -939,7 +939,7 @@ func TestNativeHookSupportSameIdentityConflictBlocksBoth(t *testing.T) {
 				sourceRoot := filepath.Join(root, dir)
 				hooksDir := filepath.Join(sourceRoot, "hooks")
 				definition := filepath.Join(hooksDir, "hooks.json")
-				additiveSafetyWrite(t, definition, `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/check.sh"}]}]}`)
+				additiveSafetyWrite(t, definition, `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/check.sh"}]}]}`)
 				check := filepath.Join(hooksDir, "check.sh")
 				additiveSafetyWrite(t, check, body)
 				if err := os.Chmod(check, mode); err != nil {
@@ -968,7 +968,7 @@ func TestNativeHookSupportSameIdentityConflictBlocksBoth(t *testing.T) {
 			factoryRoot := filepath.Join(repo, ".factory")
 			hookFile := filepath.Join(factoryRoot, "hooks.json")
 			supportRoot := filepath.Join(factoryRoot, "hook-support")
-			matches, err := filepath.Glob(filepath.Join(supportRoot, "*", "guard", "check.sh"))
+			matches, err := filepath.Glob(filepath.Join(supportRoot, "*", "guard", "hooks", "check.sh"))
 			if err != nil || len(matches) != 1 {
 				t.Fatalf("seed support file: %v (%v)", matches, err)
 			}
@@ -1050,7 +1050,7 @@ func TestNativeHookSupportExcludesSourceAggregates(t *testing.T) {
 			},
 			supportRoot: ".devin/hook-support",
 			excluded:    []string{"hooks.v1.json", "config.json", "mcp_config.json"},
-			wantFiles:   []string{"run.sh", "payload.json", "nested/tool.sh", "nested/hooks.v1.json", "nested/config.json"},
+			wantFiles:   []string{".devin/run.sh", ".devin/payload.json", ".devin/nested/tool.sh", ".devin/nested/hooks.v1.json", ".devin/nested/config.json"},
 		},
 		{
 			name:          "codex native",
@@ -1068,7 +1068,7 @@ func TestNativeHookSupportExcludesSourceAggregates(t *testing.T) {
 			},
 			supportRoot: ".codex/hook-support",
 			excluded:    []string{"hooks.json", "config.toml"},
-			wantFiles:   []string{"run.sh", "payload.json", "nested/tool.sh", "nested/hooks.json", "nested/config.toml"},
+			wantFiles:   []string{".codex/run.sh", ".codex/payload.json", ".codex/nested/tool.sh", ".codex/nested/hooks.json", ".codex/nested/config.toml"},
 		},
 		{
 			name:          "factory native",
@@ -1086,7 +1086,7 @@ func TestNativeHookSupportExcludesSourceAggregates(t *testing.T) {
 			},
 			supportRoot: ".factory/hook-support",
 			excluded:    []string{"hooks.json", "mcp.json"},
-			wantFiles:   []string{"run.sh", "payload.json", "nested/tool.sh", "nested/hooks.json", "nested/mcp.json"},
+			wantFiles:   []string{".factory/run.sh", ".factory/payload.json", ".factory/nested/tool.sh", ".factory/nested/hooks.json", ".factory/nested/mcp.json"},
 		},
 		{
 			name:          "factory legacy inventory",
@@ -1103,7 +1103,7 @@ func TestNativeHookSupportExcludesSourceAggregates(t *testing.T) {
 				".factory/mcp.json":                `{"mcpServers":{}}`,
 			},
 			supportRoot: ".factory/hook-support",
-			wantFiles:   []string{"mcp.json", "run.sh", "payload.json", "nested/tool.sh", "nested/hooks.json"},
+			wantFiles:   []string{"hooks/mcp.json", "hooks/run.sh", "hooks/payload.json", "hooks/nested/tool.sh", "hooks/nested/hooks.json"},
 		},
 	}
 	for _, tc := range cases {
@@ -1314,7 +1314,7 @@ func TestNativeHookSupportPinnedGitSnapshot(t *testing.T) {
 			hookFile := filepath.Join(repo, filepath.FromSlash(loc.repoFile))
 			command = nativeSupportCommands(t, loc, hookFile, 1)[0]
 
-			matches, err := filepath.Glob(filepath.Join(repo, filepath.FromSlash(loc.repoSupportRoot), "*", "pinned-check", "scripts", "check.sh"))
+			matches, err := filepath.Glob(filepath.Join(repo, filepath.FromSlash(loc.repoSupportRoot), "*", "pinned-check", ".factory", "scripts", "check.sh"))
 			if err != nil || len(matches) != 1 {
 				t.Fatal("installed support script is missing")
 			}
@@ -1331,7 +1331,7 @@ func TestNativeHookSupportPinnedGitSnapshot(t *testing.T) {
 			if err != nil || command != loc.repoBase+filepath.ToSlash(rel) {
 				t.Fatal("Factory hook command did not point to its installed support script")
 			}
-			mcpMatches, err := filepath.Glob(filepath.Join(repo, filepath.FromSlash(loc.repoSupportRoot), "*", "pinned-check", "mcp.json"))
+			mcpMatches, err := filepath.Glob(filepath.Join(repo, filepath.FromSlash(loc.repoSupportRoot), "*", "pinned-check", ".factory", "mcp.json"))
 			if err != nil || len(mcpMatches) != 0 {
 				t.Fatal("native MCP peer was installed as hook support")
 			}
@@ -1357,7 +1357,7 @@ func TestNativeHookSupportWindsurfUsesGenericRootAndKeepsLegacyComponent(t *test
 		t.Fatalf("Windsurf support run: %v %v", err, report.Diags)
 	}
 	newRoot := filepath.Join(repo, "hook-support")
-	matches, err := filepath.Glob(filepath.Join(newRoot, "*", "*", "scripts", "check.sh"))
+	matches, err := filepath.Glob(filepath.Join(newRoot, "*", "*", "hooks", "scripts", "check.sh"))
 	if err != nil || len(matches) != 1 {
 		t.Fatalf("Windsurf support file not installed under repository root: %v (%v)", matches, err)
 	}
@@ -1423,7 +1423,7 @@ func TestNativeHookSupportRequiresConfiguredIdentity(t *testing.T) {
 			t.Fatalf("configured support control: %v", err)
 		}
 		loc := nativeSupportLocationFor(t, hcc.TargetFactory)
-		installed, err := filepath.Glob(filepath.Join(repo, filepath.FromSlash(loc.repoSupportRoot), "*", "*", "scripts", "check.sh"))
+		installed, err := filepath.Glob(filepath.Join(repo, filepath.FromSlash(loc.repoSupportRoot), "*", "*", "hooks", "scripts", "check.sh"))
 		if err != nil || len(installed) != 1 {
 			t.Fatalf("configured support control missing: %v (%v)", installed, err)
 		}
@@ -4227,11 +4227,11 @@ func TestNativeHookSupportDryRunWritesNothing(t *testing.T) {
 	t.Run("deselection", func(t *testing.T) {
 		repo, home := additiveSafetyEnv(t)
 		filesA := map[string]string{
-			"hooks/hooks.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/check.sh"}]}]}`,
+			"hooks/hooks.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/check.sh"}]}]}`,
 			"hooks/check.sh":   "echo first\n",
 		}
 		filesB := map[string]string{
-			"hooks/hooks.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/check.sh"}]}]}`,
+			"hooks/hooks.json": `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/check.sh"}]}]}`,
 			"hooks/check.sh":   "echo second\n",
 		}
 		providerA := nativeSupportSource(t, "claude", "hooks/hooks.json", filesA)
@@ -4240,7 +4240,7 @@ func TestNativeHookSupportDryRunWritesNothing(t *testing.T) {
 		if _, err := Run(context.Background(), repo, resolved); err != nil {
 			t.Fatal(err)
 		}
-		matches, err := filepath.Glob(filepath.Join(repo, ".factory", "hook-support", "*", "*", "check.sh"))
+		matches, err := filepath.Glob(filepath.Join(repo, ".factory", "hook-support", "*", "*", "hooks", "check.sh"))
 		if err != nil || len(matches) != 2 {
 			t.Fatalf("deselection fixture has %d support files: %v (%v)", len(matches), matches, err)
 		}
