@@ -110,6 +110,20 @@ Inspects a configured plugin package without installing it or changing files.
 agent-marketplace inspect plugin/<name> [flags]
 ```
 
+## `export`
+
+Writes a locked plugin as an Agent Plugins 1.0.0 package. The plugin must be locked. If the package would lose any member, field, or file, export lists the losses, fails with `plugin.export.loss`, and writes nothing. It never drops a security restriction: an explicitly disabled MCP server, skill permissions, or skill triggers that forbid model invocation.
+
+```text
+agent-marketplace export plugin/<name> --format agent-plugin --out <dir> [flags]
+```
+
+| Flag | Type | Required | Default | Description |
+|---|---|:---:|---|---|
+| `--format` | string | yes | | Package format to write. Only `agent-plugin` is supported. |
+| `--out` | path | yes | | Absent or empty directory to write the package into. |
+| `--allow-loss` | bool | no | `false` | Omits and lists content the format cannot represent, except security restrictions. |
+
 ## `search`
 
 Searches hosted [Marketplace](../glossary.md#marketplace) endpoints. It does not edit configuration. An empty query returns the endpoint's default result page.

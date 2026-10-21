@@ -681,6 +681,9 @@ key or a hook event name), the resource name, and content digests are reported.
 | `plugin.package.special-file` | A plugin package entry is a device, socket, or FIFO rather than a regular file or directory; the package was rejected | Remove the special file; a plugin package carries regular files and directories only |
 | `plugin.package.case-collision` | Two plugin package paths differ only by letter case and cannot coexist on case-insensitive filesystems; the package was rejected | Rename one of the colliding paths |
 | `plugin.package.oversized` | A plugin package file exceeds the bounded-read limit; the package was rejected | Reduce the file below the read limit |
+| `plugin.export.loss` | Plugin export would lose non-security package content | Review the listed losses; use `--allow-loss` only when those omissions are acceptable |
+| `plugin.export.restriction` | Plugin export would drop a security restriction and was refused | Retain the restriction or use a package format that represents it |
+| `plugin.export.out-not-empty` | Export output directory contains files; no package was written | Choose an absent or empty output directory |
 | `plugin.member.literal-unrepresentable` | A plugin MCP member carries placeholder-like text the destination harness would reinterpret, and no literal escape exists; the member was blocked | Rewrite the value without placeholder-like text, or deliver to a target that can carry it literally |
 | `plugin.member.restriction-unsupported` | A plugin member field is a restriction the destination plugin surface cannot enforce; the member was blocked rather than installed without it | Remove the restricted field, or deliver to a target that enforces it |
 | `plugin.compile.package-required` | A plugin resource reached the per-resource Compile boundary; plugins compile through the package compile entry point | Call the package compile entry point instead of Compile |
