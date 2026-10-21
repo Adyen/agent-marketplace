@@ -115,8 +115,8 @@ button:disabled,
 
 .marketplace-markdown {
   color: var(--ui-text);
-  font-size: 0.9375rem;
-  line-height: 1.75;
+  font-size: 1rem;
+  line-height: 1.7;
   overflow-wrap: anywhere;
 }
 
@@ -131,7 +131,7 @@ button:disabled,
 .marketplace-markdown :where(h1, h2, h3, h4, h5, h6) {
   margin-block: 1.75em 0.65em;
   color: var(--ui-text-highlighted);
-  font-weight: 650;
+  font-weight: 500;
   line-height: 1.25;
   letter-spacing: -0.02em;
 }
