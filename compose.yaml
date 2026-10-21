@@ -2,7 +2,7 @@ name: agent-marketplace-sqlite
 
 x-marketplace-platform: &marketplace-platform ${MARKETPLACE_PLATFORM:-}
 x-marketplace-build-args: &marketplace-build-args
-  GO_BUILD_IMAGE: ${GO_BUILD_IMAGE:-golang:1.26.10-bookworm}
+  GO_BUILD_IMAGE: ${GO_BUILD_IMAGE:-golang:1.27.3-bookworm}
   RUNTIME_IMAGE: ${RUNTIME_IMAGE:-gcr.io/distroless/static-debian12:nonroot}
 
 services:

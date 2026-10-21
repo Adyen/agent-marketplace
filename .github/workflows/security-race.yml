@@ -52,7 +52,7 @@ jobs:
         run: |
           set -euo pipefail
           go version | tee "$RUNNER_TEMP/go-version.txt"
-          grep -q '^go version go1\.26\.9 linux/' "$RUNNER_TEMP/go-version.txt"
+          grep -q '^go version go1\.27\.3 linux/' "$RUNNER_TEMP/go-version.txt"
 
       - name: Run contract race selections
         shell: bash

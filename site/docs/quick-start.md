@@ -12,7 +12,7 @@ You need:
 
 ## Install
 
-With Go 1.26.10 or newer, install in one step:
+With Go 1.27.3 or newer, install in one step:
 
 ```bash
 go install github.com/Adyen/agent-marketplace/cmd/agent-marketplace@latest
