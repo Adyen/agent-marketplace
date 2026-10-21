@@ -1,10 +1,6 @@
 package tui
 
-import (
-	"strings"
-
-	"github.com/Adyen/agent-marketplace/internal/materialize"
-)
+import "strings"
 
 // flat-items helpers on Model: the cursor indexes into m.flatItems, which is
 // computed from filteredRows + the status-grouped foldState. These helpers
@@ -191,9 +187,6 @@ func rowKey(r row) string {
 	if d := r.MarketplaceDiscovery; d != nil {
 		return "marketplace-discovery\x00" + d.Endpoint.InstanceID + "\x00" + d.Item.RegistryID + "\x00" + d.Item.Kind + "\x00" + d.Item.Name + "\x00" + d.Item.Revision + "\x00" + d.Item.ContentDigest
 	}
-	if r.DriftItem != nil && r.DriftItem.Reason == materialize.DriftOrphaned {
-		return "orphan\x00" + r.DriftItem.Name
-	}
 	malformed := "0"
 	if r.IsMalformed {
 		malformed = "1"
@@ -206,7 +199,7 @@ func rowKey(r row) string {
 // snapshot, or to a newer locked commit, which changes its catalog key and
 // cache path but not the resource the user selected.
 func rowSelectionIdentity(r row) string {
-	if r.MarketplaceDiscovery != nil || (r.DriftItem != nil && r.DriftItem.Reason == materialize.DriftOrphaned) {
+	if r.MarketplaceDiscovery != nil {
 		return rowKey(r)
 	}
 	malformed := "0"

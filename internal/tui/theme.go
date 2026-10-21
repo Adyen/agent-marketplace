@@ -152,7 +152,6 @@ var (
 	styleGlyphStale    = lipgloss.NewStyle().Foreground(paletteErr)
 	styleGlyphBroken   = lipgloss.NewStyle().Foreground(paletteErr)
 	styleGlyphRequired = lipgloss.NewStyle().Foreground(paletteAccent)
-	styleGlyphOrphaned = lipgloss.NewStyle().Foreground(paletteMuted)
 	styleGlyphDefault  = lipgloss.NewStyle().Foreground(paletteMuted)
 
 	styleSelected = lipgloss.NewStyle().
@@ -240,8 +239,6 @@ func glyphStyle(glyph string) lipgloss.Style {
 		return styleGlyphPending
 	case "[~]":
 		return styleGlyphStale
-	case "[-]", "◌":
-		return styleGlyphOrphaned
 	case "[!]", "✗":
 		return styleGlyphBroken
 	case "[R]", "■":

@@ -53,50 +53,58 @@ const installationCountLabel = computed(() =>
 
       <div class="min-w-0">
         <div class="flex min-w-0 items-baseline gap-2">
-          <span class="shrink-0 font-mono text-xs font-medium text-muted">{{ kindLabel(item.kind) }}</span>
-          <span class="text-xs text-dimmed" aria-hidden="true">·</span>
-          <h2 class="relative z-10 min-w-0 truncate font-mono text-sm font-medium leading-5 tracking-tight">
-            <NuxtLink v-if="browserUrl" :to="browserUrl" :aria-label="`${registryLabel(item)}/${item.name}`" class="resource-coordinate-link relative cursor-pointer rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
-              <span class="text-muted">{{ registryLabel(item) }}</span><span class="resource-coordinate__separator am-brand-slash am-brand-slash--separator">/</span><span class="font-medium text-highlighted">{{ item.name }}</span>
+          <span class="resource-row__kind shrink-0 text-muted">{{ kindLabel(item.kind) }}</span>
+          <span class="resource-row__metadata-separator text-dimmed" aria-hidden="true">·</span>
+          <h2 class="resource-row__coordinate relative z-10 min-w-0 truncate">
+            <NuxtLink v-if="browserUrl" :to="browserUrl" :aria-label="`${registryLabel(item)}/${item.name}`" class="resource-coordinate-link relative cursor-pointer rounded text-highlighted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--am-color-action-focus-ring)">
+              <span class="resource-row__registry text-muted">{{ registryLabel(item) }}</span><span class="resource-coordinate__separator am-brand-slash am-brand-slash--separator">/</span><span class="resource-row__name text-highlighted">{{ item.name }}</span>
             </NuxtLink>
-            <span v-else :aria-label="`${registryLabel(item)}/${item.name}`"><span class="text-muted">{{ registryLabel(item) }}</span><span class="resource-coordinate__separator am-brand-slash am-brand-slash--separator">/</span><span class="font-medium text-highlighted">{{ item.name }}</span></span>
+            <span v-else :aria-label="`${registryLabel(item)}/${item.name}`"><span class="resource-row__registry text-muted">{{ registryLabel(item) }}</span><span class="resource-coordinate__separator am-brand-slash am-brand-slash--separator">/</span><span class="resource-row__name text-highlighted">{{ item.name }}</span></span>
           </h2>
         </div>
-
-        <p v-if="item.description" class="mt-1 truncate text-sm font-medium leading-5 text-toned">{{ item.description }}</p>
-        <p v-else class="mt-1 truncate text-sm italic leading-5 text-dimmed">No description provided.</p>
-        <p v-if="installationCountText !== undefined" :aria-label="installationCountLabel" :title="installationCountDescription" class="mt-1 truncate text-xs leading-4 text-dimmed">{{ installationCountText }}</p>
+        <p v-if="item.description" class="resource-row__description truncate text-toned">{{ item.description }}</p>
+        <p v-else class="resource-row__description truncate italic text-dimmed">No description provided.</p>
       </div>
 
-      <div class="relative z-10 col-start-2 mt-2 flex min-h-16 min-w-20 flex-col items-start justify-center sm:col-start-3 sm:row-start-1 sm:mt-0 sm:min-w-28 sm:items-end">
-        <UTooltip
-          v-if="availability && !installable"
-          :delay-duration="0"
-          :content="{ side: 'bottom', sideOffset: 8 }"
-          :ui="{ content: 'h-auto max-w-sm rounded bg-inverted px-4 py-3 text-inverted shadow-lg ring-0' }"
-        >
-          <button
-            type="button"
-            :aria-label="`${availability.label} for ${item.name}. More information`"
-            :class="statusTextClass"
-            class="inline-flex min-h-11 cursor-help items-center gap-1.5 whitespace-nowrap rounded text-xs leading-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+      <div class="resource-row__utility">
+        <div class="resource-row__action">
+          <UTooltip
+            v-if="availability && !installable"
+            :delay-duration="0"
+            :content="{ side: 'bottom', sideOffset: 8 }"
+            :ui="{ content: 'h-auto max-w-sm rounded bg-inverted px-4 py-3 text-inverted shadow-lg ring-0' }"
           >
-            <span>{{ availability.label }}</span>
-            <UIcon name="i-lucide-info" class="size-4 shrink-0" aria-hidden="true" />
-          </button>
-          <template #content>
-            <p class="whitespace-normal text-sm leading-6">{{ availability.installNotice }}</p>
-          </template>
-        </UTooltip>
-        <CopyButton
-          v-if="installable"
-          :copied="copied === 'command'"
-          :copy-label="commandLabel"
-          :copied-label="`Install command copied for ${item.name}`"
-          copy-text="Copy install command"
-          :disabled="!commandAvailable"
-          @click="copy(command, 'command')"
-        />
+            <button
+              type="button"
+              :aria-label="`${availability.label} for ${item.name}. More information`"
+              :class="statusTextClass"
+              class="resource-row__availability inline-flex min-h-11 cursor-help items-center gap-1.5 whitespace-nowrap rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--am-color-action-focus-ring)"
+            >
+              <span>{{ availability.label }}</span>
+              <UIcon name="i-lucide-info" class="size-4 shrink-0" aria-hidden="true" />
+            </button>
+            <template #content>
+              <p class="whitespace-normal text-sm leading-6">{{ availability.installNotice }}</p>
+            </template>
+          </UTooltip>
+          <CopyButton
+            v-if="installable"
+            :copied="copied === 'command'"
+            :copy-label="commandLabel"
+            :copied-label="`Install command copied for ${item.name}`"
+            copy-text="Copy install command"
+            :disabled="!commandAvailable"
+            @click="copy(command, 'command')"
+          />
+        </div>
+        <p
+          v-if="installationCountText !== undefined"
+          :aria-label="installationCountLabel"
+          :title="installationCountDescription"
+          class="resource-row__installations"
+        >
+          {{ installationCountText }}
+        </p>
       </div>
 
       <div v-if="copyError" role="alert" class="relative z-10 col-span-2 mt-1 text-xs text-error sm:col-span-3">
@@ -111,10 +119,40 @@ const installationCountLabel = computed(() =>
 </template>
 
 <style scoped>
+.resource-coordinate-link {
+  display: inline-block;
+  max-width: 100%;
+}
+
+.resource-row__kind,
+.resource-row__metadata-separator,
+.resource-row__registry {
+  font: var(--am-type-resource-registry);
+}
+
+.resource-row__coordinate {
+  font-family: var(--am-font-sans);
+  line-height: 1.5rem;
+}
+
+.resource-row__name {
+  font: var(--am-type-resource-name);
+}
+
+.resource-row__description {
+  margin-top: 0.25rem;
+  font: var(--am-type-resource-description);
+}
+
+.resource-row__availability,
+.resource-row__installations {
+  font: var(--am-type-metadata);
+}
+
 .resource-coordinate-link::after {
   position: absolute;
   right: 0;
-  bottom: -2px;
+  bottom: 0;
   left: 0;
   height: 1px;
   background: var(--am-color-action-primary);
@@ -124,8 +162,62 @@ const installationCountLabel = computed(() =>
   transition: opacity 150ms;
 }
 
-.resource-coordinate-link:hover::after {
+.resource-coordinate-link:hover::after,
+.resource-coordinate-link:focus-visible::after {
   opacity: 1;
+}
+
+.resource-row__utility {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 0.75rem;
+  min-width: 0;
+  margin-top: 0.75rem;
+}
+
+.resource-row__action {
+  display: flex;
+  min-height: var(--am-hit-target);
+  align-items: center;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.resource-row__installations {
+  order: -1;
+  overflow: hidden;
+  color: var(--am-color-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (min-width: 40rem) {
+  .resource-row__utility {
+    display: grid;
+    grid-row: 1;
+    grid-column: 3;
+    grid-template-rows: var(--am-hit-target) 1.25rem;
+    align-content: center;
+    justify-items: end;
+    gap: 0.375rem;
+    min-width: 9rem;
+    min-height: calc(var(--am-hit-target) + 1.625rem);
+    margin-top: 0;
+  }
+
+  .resource-row__action {
+    margin-left: 0;
+  }
+
+  .resource-row__installations {
+    order: initial;
+    text-align: right;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

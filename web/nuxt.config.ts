@@ -1,5 +1,8 @@
 import { devApiProxyTargets } from './app/lib/api-base'
 import { SHARED_APPEARANCE_KEY } from './app/lib/site'
+import { fileURLToPath, URL as NodeURL } from 'node:url'
+
+const workspaceRoot = fileURLToPath(new NodeURL('..', import.meta.url))
 
 const devApiProxy = process.env.NODE_ENV === 'development'
   ? devApiProxyTargets(process.env.NUXT_PUBLIC_API_BASE)
@@ -54,6 +57,13 @@ export default defineNuxtConfig({
   typescript: {
     strict: true,
     typeCheck: true,
+  },
+  vite: {
+    server: {
+      fs: {
+        allow: [workspaceRoot],
+      },
+    },
   },
   routeRules: {
     '/admin': { ssr: false, prerender: false, headers: { 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow, noarchive' } },

@@ -64,7 +64,7 @@ func TestStatusSymbolsColorProfile(t *testing.T) {
 		{"enabled", mkRow("s"), "[x]", "●"},
 		{"available", mkRow("s", withAvailable), "[ ]", "○"},
 		{"pending", mkRow("s", withDrift(materialize.DriftMissing)), "[*]", "◐"},
-		{"orphaned", mkRow("s", withDrift(materialize.DriftOrphaned)), "[-]", "◌"},
+		{"orphaned copy", mkRow("s", withDrift(materialize.DriftOrphaned)), "[*]", "◐"},
 		{"broken", mkRow("s", withDrift(materialize.DriftBroken)), "[!]", "✗"},
 		{"required", mkRow("s", withRequired), "[R]", "■"},
 	}

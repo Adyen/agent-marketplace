@@ -257,10 +257,10 @@ func (r row) status() rowStatus {
 	}
 	if r.DriftItem != nil {
 		switch r.DriftItem.Reason {
-		case materialize.DriftMissing:
+		// Drift attaches only to selected rows, so an orphaned item is a
+		// stale copy in a harness the resource no longer targets.
+		case materialize.DriftMissing, materialize.DriftOrphaned:
 			return rowStatus{"[*]", "◐", "enabled (pending sync)"}
-		case materialize.DriftOrphaned:
-			return rowStatus{"[-]", "◌", "orphaned"}
 		case materialize.DriftBroken:
 			return rowStatus{"[!]", "✗", "broken"}
 		}

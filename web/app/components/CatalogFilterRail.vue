@@ -134,10 +134,7 @@ function updateRegistry(value: string, checked: boolean) {
 .catalog-filter-label {
   margin-bottom: 0.8rem;
   color: var(--am-color-text-secondary);
-  font-size: 0.74rem;
-  font-weight: 750;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
+  font: var(--am-type-filter-heading);
 }
 
 .catalog-filter-option {
@@ -147,8 +144,7 @@ function updateRegistry(value: string, checked: boolean) {
   gap: 0.65rem;
   min-height: 2rem;
   color: var(--am-color-text-secondary);
-  font-size: 0.875rem;
-  line-height: 1.35;
+  font: var(--am-type-control);
   cursor: pointer;
 }
 
@@ -174,7 +170,7 @@ function updateRegistry(value: string, checked: boolean) {
 
 .catalog-filter-empty {
   color: var(--am-color-text-muted);
-  font-size: 0.825rem;
+  font: var(--am-type-metadata);
 }
 
 .catalog-filter-more {
@@ -184,9 +180,7 @@ function updateRegistry(value: string, checked: boolean) {
   border: 0;
   background: transparent;
   color: var(--am-color-action-primary);
-  font: inherit;
-  font-size: 0.825rem;
-  font-weight: 700;
+  font: var(--am-type-button);
   cursor: pointer;
 }
 
