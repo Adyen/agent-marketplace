@@ -1,11 +1,8 @@
 import { devApiProxyTargets } from './app/lib/api-base'
 import { SHARED_APPEARANCE_KEY } from './app/lib/site'
 import { fileURLToPath, URL as NodeURL } from 'node:url'
-import { resolve } from 'node:path'
 
-const workspaceRoot = import.meta.url.startsWith('file:')
-  ? fileURLToPath(new NodeURL('..', import.meta.url))
-  : resolve(process.cwd(), '..')
+const workspaceRoot = fileURLToPath(new NodeURL('..', import.meta.url))
 
 const devApiProxy = process.env.NODE_ENV === 'development'
   ? devApiProxyTargets(process.env.NUXT_PUBLIC_API_BASE)
