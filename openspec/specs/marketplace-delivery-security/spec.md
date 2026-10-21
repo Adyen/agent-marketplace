@@ -62,3 +62,15 @@ explicit Helm tags remain development conveniences rather than immutable pins.
 - **THEN** its final stage MUST use distroless Node rather than the builder
 - **AND** startup and healthchecks MUST invoke Node without a shell
 - **AND** the final stage MUST run as a non-root user
+
+### Requirement: Web healthcheck requests are bounded
+
+The supplied web image's exec-form healthcheck SHALL configure Node fetch with
+a four-second request deadline, before Docker's five-second process timeout.
+Failed and aborted requests SHALL exit nonzero without requiring a shell.
+
+#### Scenario: Web healthcheck has an explicit request deadline
+
+- **WHEN** the supplied web image's healthcheck is configured
+- **THEN** its native Node fetch MUST use a four-second AbortSignal deadline
+- **AND** failed or aborted requests MUST produce a nonzero exit

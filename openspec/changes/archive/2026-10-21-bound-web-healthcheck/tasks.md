@@ -11,7 +11,8 @@
 - [x] 2.1 Run CI-plan tests with real Helm rendering.
 - [x] 2.2 Address the remaining bot feedback and run scoped validation,
   spec-check, and the final adversarial OCR delegation review.
-- [ ] 2.3 Archive the change as the final commit and verify the updated PR.
+- [x] 2.3 Archive the change as the final commit and verify the committed spec
+  gate. Updated CI results are recorded on the PR.
 
 ## Review Decisions
 
