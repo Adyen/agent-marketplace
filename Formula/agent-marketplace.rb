@@ -1,51 +1,28 @@
-class AgentMarketplacePrivateDownloadStrategy < NoUnzipCurlDownloadStrategy
-  def basename
-    Pathname.new(meta.fetch(:filename))
-  end
-
-  def fetch(timeout: nil)
-    token = ENV["HOMEBREW_AGENT_MARKETPLACE_TOKEN"]
-    odie "HOMEBREW_AGENT_MARKETPLACE_TOKEN is required to download this private release asset" if token.nil? || token.empty?
-
-    headers = meta[:headers] ||= []
-    auth = "Authorization: Bearer #{token}"
-    headers << "Accept: application/octet-stream" << auth
-    begin
-      super
-    rescue StandardError => e
-      raise CurlDownloadStrategyError.new(url, e.message.gsub(token, "<redacted>"))
-    ensure
-      headers.delete("Accept: application/octet-stream")
-      headers.delete(auth)
-    end
-  end
-end
-
 class AgentMarketplace < Formula
   desc "Sync shared AI agent resources from Git-based or local registries"
   homepage "https://github.com/Adyen/agent-marketplace"
-  version "5.0.0"
+  version "5.0.2"
   license "Apache-2.0"
 
   on_macos do
     on_arm do
-      url "https://api.github.com/repos/Adyen/agent-marketplace/releases/assets/654689261", using: AgentMarketplacePrivateDownloadStrategy, filename: "agent-marketplace-v5.0.0-darwin-arm64"
-      sha256 "b593f3a35d597912f24b1aa95b13446ecd37df72603978aa85bfc040edaf8fcd"
+      url "https://github.com/Adyen/agent-marketplace/releases/download/v5.0.2/agent-marketplace-v5.0.2-darwin-arm64", using: :nounzip
+      sha256 "2e899d2ae111d9d16fef464f1355a7c4762b215c588a81d6ad96dad9f3ea8a09"
     end
     on_intel do
-      url "https://api.github.com/repos/Adyen/agent-marketplace/releases/assets/654689259", using: AgentMarketplacePrivateDownloadStrategy, filename: "agent-marketplace-v5.0.0-darwin-amd64"
-      sha256 "540d12a7d923e3239504e80d98ea901a8eeb78e1b7dcd011bcb898d4a42e713c"
+      url "https://github.com/Adyen/agent-marketplace/releases/download/v5.0.2/agent-marketplace-v5.0.2-darwin-amd64", using: :nounzip
+      sha256 "f4ae19aeab0e6cec2925168344085025b8341ca2e583e267a3555125c5565953"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://api.github.com/repos/Adyen/agent-marketplace/releases/assets/654689258", using: AgentMarketplacePrivateDownloadStrategy, filename: "agent-marketplace-v5.0.0-linux-arm64"
-      sha256 "b3c41045ed4847379c0c0a0bdd99bb47ecefbc5519a9c9bd03f05d00956fc3ae"
+      url "https://github.com/Adyen/agent-marketplace/releases/download/v5.0.2/agent-marketplace-v5.0.2-linux-arm64", using: :nounzip
+      sha256 "42c1055dec3777d0eb6ea6e35c63523a9ba1aea3636f0be493c32b340cfe3f1a"
     end
     on_intel do
-      url "https://api.github.com/repos/Adyen/agent-marketplace/releases/assets/654689260", using: AgentMarketplacePrivateDownloadStrategy, filename: "agent-marketplace-v5.0.0-linux-amd64"
-      sha256 "eb54cd8f8cdc50fa4f97c6c801e3a12d915004399ba03e5a8b01bd639eb6e2f9"
+      url "https://github.com/Adyen/agent-marketplace/releases/download/v5.0.2/agent-marketplace-v5.0.2-linux-amd64", using: :nounzip
+      sha256 "9f213234c3139f98cf82d2c845bd44b8970f34c03fc57ac0bffbb0d91322ffe9"
     end
   end
 
@@ -65,10 +42,10 @@ class AgentMarketplace < Formula
     else
       odie "agent-marketplace supports only macOS and Linux"
     end
-    bin.install "agent-marketplace-v5.0.0-#{os}-#{arch}" => "agent-marketplace"
+    bin.install "agent-marketplace-v5.0.2-#{os}-#{arch}" => "agent-marketplace"
   end
 
   test do
-    assert_equal "v5.0.0", shell_output("#{bin}/agent-marketplace --version").strip
+    assert_equal "v5.0.2", shell_output("#{bin}/agent-marketplace --version").strip
   end
 end
