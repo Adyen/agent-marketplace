@@ -455,6 +455,8 @@ func TestConfigStageStartsDiscoveryBeforeLocalVerification(t *testing.T) {
 // spec: tui-startup/verified-rows-inserted-above-a-selection-keep-it-on-the-same-screen-line
 func TestVerifiedRowsInsertedAboveSelectionKeepItOnTheSameScreenLine(t *testing.T) {
 	m := newProvisionalStageModel()
+	// The anchored line is kept only while the list overflows the viewport.
+	m.height = 24
 	generation := m.requests.active(requestSnapshot)
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
