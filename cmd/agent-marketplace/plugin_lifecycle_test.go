@@ -383,7 +383,7 @@ func TestPluginLifecycleDoesNotRunPackageScripts(t *testing.T) {
 		return
 	}
 	marker := filepath.Join(t.TempDir(), "ran-package-process")
-	root, _, run := lockedPluginExportFixture(t, "", false, func(pluginDir string) {
+	root, run := lockedPluginExportFixture(t, "", false, func(pluginDir string) {
 		script := filepath.Join(pluginDir, "scripts", "run.sh")
 		writeFile(t, script, "#!/bin/sh\nprintf ran > "+marker+"\n")
 		if err := os.Chmod(script, 0o755); err != nil {

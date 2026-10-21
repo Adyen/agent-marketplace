@@ -275,18 +275,18 @@ func TestExportDropsMCPMembersWhoseSourceInterpolationWouldBecomeLiteral(t *test
 
 func TestExportConsumesNativeMCPTypeExtra(t *testing.T) {
 	tests := []struct {
-		name, native, want string
-		server             *ir.McpServer
-		wantLoss           bool
+		name, want string
+		server     *ir.McpServer
+		wantLoss   bool
 	}{
-		{"stdio", "stdio", "stdio", ir.NewMcpServer("interpolated", "node", nil, nil, map[string]any{"type": "stdio"}, ir.SourceRef{File: ".mcp.json"}), false},
-		{"http", "http", "streamable-http", ir.NewMcpServer("interpolated", "", nil, nil, map[string]any{"type": "http"}, ir.SourceRef{File: ".mcp.json"}), false},
-		{"unknown", "unknown", "", ir.NewMcpServer("interpolated", "node", nil, nil, map[string]any{"type": "custom"}, ir.SourceRef{File: ".mcp.json"}), true},
-		{"mismatch", "mismatch", "", ir.NewMcpServer("interpolated", "node", nil, nil, map[string]any{"type": "sse"}, ir.SourceRef{File: ".mcp.json"}), true},
+		{"stdio", "stdio", ir.NewMcpServer("interpolated", "node", nil, nil, map[string]any{"type": "stdio"}, ir.SourceRef{File: ".mcp.json"}), false},
+		{"http", "streamable-http", ir.NewMcpServer("interpolated", "", nil, nil, map[string]any{"type": "http"}, ir.SourceRef{File: ".mcp.json"}), false},
+		{"unknown", "", ir.NewMcpServer("interpolated", "node", nil, nil, map[string]any{"type": "custom"}, ir.SourceRef{File: ".mcp.json"}), true},
+		{"mismatch", "", ir.NewMcpServer("interpolated", "node", nil, nil, map[string]any{"type": "sse"}, ir.SourceRef{File: ".mcp.json"}), true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.native == "http" {
+			if tt.name == "http" {
 				tt.server.URL = "https://example.test/mcp"
 			}
 			result, err := Export(interpolationPlugin("claude-plugin", tt.server), interpolationFiles(), Options{})
@@ -297,7 +297,7 @@ func TestExportConsumesNativeMCPTypeExtra(t *testing.T) {
 				return
 			}
 			if err != nil || len(result.Losses) != 0 {
-				t.Fatalf("native %s type was not mapped: result=%+v error=%v", tt.native, result, err)
+				t.Fatalf("native %s type was not mapped: result=%+v error=%v", tt.name, result, err)
 			}
 			var config struct {
 				MCPServers map[string]map[string]any `json:"mcpServers"`
