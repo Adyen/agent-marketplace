@@ -24,10 +24,10 @@ token adapter maps those colors and the Adyen font faces into semantic roles
 and VitePress variables. Landing and Docs share those roles because they are
 one product; route-specific layout remains in Landing and shell styles.
 
-The VitePress layout adds explicit Landing and Docs classes so later changes
-can target page structure without creating another color or type system.
-Navigation and footer presentation use the same public-site roles while
-VitePress continues to own their behavior.
+The VitePress layout adds one public-site scope. Documentation-specific
+structure is identified through VitePress's existing `VPDoc` marker rather than
+duplicating route state in custom classes. Navigation and footer presentation
+use the same public-site roles while VitePress continues to own their behavior.
 
 ## Risks / Trade-offs
 

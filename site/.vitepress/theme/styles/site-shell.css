@@ -15,11 +15,11 @@
   padding-top: 0;
 }
 
-.am-docs .VPDoc {
+.am-site .VPDoc {
   padding-inline: var(--lp-gutter);
 }
 
-.am-docs .VPDoc > .container > .content {
+.am-site .VPDoc > .container > .content {
   padding-inline: 0;
 }
 
