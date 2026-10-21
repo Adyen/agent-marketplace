@@ -227,11 +227,15 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.getByRole('link', { name: 'Docs', exact: true }).first()).toHaveAttribute('href', '/docs/')
     await expect(page.getByRole('link', { name: 'Marketplace', exact: true })).toHaveCount(0)
 
-    const lightHero = await page.locator('.hero').evaluate(element => getComputedStyle(element).getPropertyValue('--am-hero-bg').trim())
+    const lightBackground = await page.locator('.landing').evaluate(
+      element => getComputedStyle(element).backgroundColor,
+    )
     await page.evaluate(() => document.documentElement.classList.add('dark'))
-    const darkHero = await page.locator('.hero').evaluate(element => getComputedStyle(element).getPropertyValue('--am-hero-bg').trim())
-    expect(lightHero).not.toBe('')
-    expect(darkHero).not.toBe(lightHero)
+    const darkBackground = await page.locator('.landing').evaluate(
+      element => getComputedStyle(element).backgroundColor,
+    )
+    expect(lightBackground).not.toBe('rgba(0, 0, 0, 0)')
+    expect(darkBackground).not.toBe(lightBackground)
   })
 
   // spec: site-deployment-profiles/marketplace-deployment-uses-root-ui-with-same-origin-services
