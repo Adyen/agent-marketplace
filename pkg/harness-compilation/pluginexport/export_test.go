@@ -31,7 +31,7 @@ func TestExportBuildsAgentPluginAndReimportsEquivalently(t *testing.T) {
 		ir.WithSkillAllowedTools([]string{"Read", "Edit"}))
 	server := ir.NewMcpServer("local-index", bundle.CanonicalRootToken+"/bin/server", []string{bundle.CanonicalRootToken + "/config"}, map[string]string{"MODE": "safe"}, nil,
 		ir.SourceRef{File: ".mcp.json"})
-	server.Cwd = "${PLUGIN_DATA}"
+	server.Cwd = bundle.CanonicalRootToken + "/data"
 	sse := ir.NewMcpServerWithOptions("event-stream", "", nil, nil, nil, ir.SourceRef{File: ".mcp.json"},
 		ir.WithMcpURL("https://example.test/events"), ir.WithMcpTransport("sse"),
 		ir.WithMcpHeaders(map[string]string{"Accept": "text/event-stream"}))
@@ -56,16 +56,17 @@ func TestExportBuildsAgentPluginAndReimportsEquivalently(t *testing.T) {
 
 	result, err := Export(plugin, files, Options{})
 	if err != nil {
-		t.Fatalf("Export: %v", err)
+		t.Fatalf("Export: %v; losses=%+v", err, result.Losses)
 	}
-	wantPaths := []string{"mcp.json", "plugin.json", "skills/review/SKILL.md", "skills/review/scripts/run.sh"}
-	gotPaths := make([]string, len(result.Files))
-	for i, file := range result.Files {
-		gotPaths[i] = file.Path
-	}
-	if !reflect.DeepEqual(gotPaths, wantPaths) {
-		t.Fatalf("exported paths = %v, want %v", gotPaths, wantPaths)
-	}
+	assertFilePartition(t, plugin, result,
+		map[string]map[string]bool{
+			".claude-plugin/plugin.json": {"plugin.json": true},
+			".mcp.json":                  {"mcp.json": true},
+		},
+		map[string]string{
+			"skills/review/SKILL.md":       "skills/review/SKILL.md",
+			"skills/review/scripts/run.sh": "skills/review/scripts/run.sh",
+		}, nil)
 	support := resultFileEntry(t, result, "skills/review/scripts/run.sh")
 	if !support.Executable || string(support.Bytes) != "#!/bin/sh\n" {
 		t.Fatalf("support file metadata = %+v", support)
@@ -124,7 +125,7 @@ func TestExportBuildsAgentPluginAndReimportsEquivalently(t *testing.T) {
 		t.Fatalf("re-imported MCP names differ: %#v", gotServers)
 	}
 	if gotServer.Command != "./bin/server" || !reflect.DeepEqual(gotServer.Args, []string{"${PLUGIN_ROOT}/config"}) ||
-		!reflect.DeepEqual(gotServer.Env, server.Env) || gotServer.Cwd != server.Cwd ||
+		!reflect.DeepEqual(gotServer.Env, server.Env) || gotServer.Cwd != "${PLUGIN_ROOT}/data" ||
 		gotSSE.Transport != sse.Transport || gotSSE.URL != sse.URL || !reflect.DeepEqual(gotSSE.Headers, sse.Headers) ||
 		gotHTTP.Transport != http.Transport || gotHTTP.URL != http.URL {
 		t.Fatalf("re-imported MCP servers differ: %#v", gotServers)
@@ -174,6 +175,11 @@ func TestExportLossIsIntolerantAndAllowLossRewritesOnlyUnsupportedSkillFields(t 
 	if err != nil {
 		t.Fatalf("allow-loss export: %v", err)
 	}
+	assertFilePartition(t, plugin, result, map[string]map[string]bool{
+		".claude-plugin/plugin.json": {"plugin.json": true},
+	},
+		map[string]string{"skills/review/SKILL.md": "skills/review/SKILL.md"},
+		map[string]string{"hooks/hooks.json": "hook/pre-check"})
 	if !containsLoss(result.Losses, "hook/pre-check") {
 		t.Fatalf("omitted hook was not reported: %+v", result.Losses)
 	}
@@ -194,26 +200,30 @@ func TestExportLossIsIntolerantAndAllowLossRewritesOnlyUnsupportedSkillFields(t 
 func TestExportCannotDropSecurityRestrictionsWithAllowLoss(t *testing.T) {
 	// spec: plugin-portable-format/allow-loss-cannot-drop-a-restriction
 	tests := []struct {
-		name   string
-		member ir.Resource
-		files  fstest.MapFS
+		name        string
+		member      ir.Resource
+		files       fstest.MapFS
+		packageFile string
 	}{
 		{
-			name: "disabled MCP",
+			name:        "disabled MCP",
+			packageFile: "mcp/servers.json",
 			member: ir.NewMcpServerWithOptions("local", "node", nil, nil, nil,
 				ir.SourceRef{File: "mcp/servers.json"}, ir.WithMcpDisabled(true)),
 			files: fstest.MapFS{"mcp/servers.json": {Data: []byte("{}")}},
 		},
 		{
-			name: "skill permissions",
+			name:        "skill permissions",
+			packageFile: "skills/limited/SKILL.md",
 			member: ir.NewSkillWithOptions("limited", "", "Body\n", nil, nil, ir.SourceRef{File: "skills/limited/SKILL.md"},
 				ir.WithSkillPermissions(ir.Permissions{Allow: []string{"Read"}})),
 			files: fstest.MapFS{"skills/limited/SKILL.md": {Data: []byte("---\nname: limited\npermissions:\n  allow: [Read]\n---\nBody\n")}},
 		},
 		{
-			name:   "model-excluding triggers",
-			member: ir.NewSkill("manual", "", "Body\n", []string{"user"}, nil, ir.SourceRef{File: "skills/manual/SKILL.md"}),
-			files:  fstest.MapFS{"skills/manual/SKILL.md": {Data: []byte("---\nname: manual\ntriggers: [user]\n---\nBody\n")}},
+			name:        "model-excluding triggers",
+			packageFile: "skills/manual/SKILL.md",
+			member:      ir.NewSkill("manual", "", "Body\n", []string{"user"}, nil, ir.SourceRef{File: "skills/manual/SKILL.md"}),
+			files:       fstest.MapFS{"skills/manual/SKILL.md": {Data: []byte("---\nname: manual\ntriggers: [user]\n---\nBody\n")}},
 		},
 	}
 	for _, tt := range tests {
@@ -222,10 +232,11 @@ func TestExportCannotDropSecurityRestrictionsWithAllowLoss(t *testing.T) {
 				Format:   "claude-plugin",
 				Manifest: ir.Manifest{Name: "secure-kit"},
 				Members:  []ir.PluginMember{{Resource: tt.member}},
+				Files:    []ir.PluginFile{{Path: tt.packageFile}},
 			}
 			result, err := Export(plugin, tt.files, Options{AllowLoss: true})
 			if coded, ok := diag.AsCodedError(err); !ok || coded.Code != diag.CodePluginExportRestriction {
-				t.Fatalf("restriction error = %v, want %s", err, diag.CodePluginExportRestriction)
+				t.Fatalf("restriction result=%+v error=%v, want %s", result, err, diag.CodePluginExportRestriction)
 			}
 			if len(result.Files) != 0 {
 				t.Fatalf("restriction refusal returned writable files: %+v", result.Files)
@@ -234,15 +245,26 @@ func TestExportCannotDropSecurityRestrictionsWithAllowLoss(t *testing.T) {
 	}
 }
 
-func TestExportDropsMCPMembersWhoseSourceInterpolationWouldBecomeLiteral(t *testing.T) {
+func TestExportMCPMappingAndSourceInterpolation(t *testing.T) {
 	tests := []struct {
-		field, value string
+		name, field, value, wantType string
+		allowLoss, wantLoss          bool
 	}{
-		{"command", "${NODE_BIN}"}, {"args", "${TOKEN}"}, {"env", "${env:AUTH_TOKEN}"}, {"cwd", "${file:config/workdir}"},
-		{"headers", "${TOKEN}"}, {"url", "https://${HOST}/mcp"},
+		{"command ${NODE_BIN}", "command", "${NODE_BIN}", "", true, true},
+		{"args", "args", "${TOKEN}", "", true, true},
+		{"env", "env", "${env:AUTH_TOKEN}", "", true, true},
+		{"native plugin-root args", "args", "${PLUGIN_ROOT}/cfg.json", "", true, true},
+		{"native plugin-data env", "env", "${PLUGIN_DATA}/secrets", "", true, true},
+		{"cwd", "cwd", "${file:config/workdir}", "", true, true},
+		{"headers", "headers", "${TOKEN}", "", true, true},
+		{"url", "url", "https://${HOST}/mcp", "", true, true},
+		{"native stdio type", "type", "stdio", "stdio", false, false},
+		{"native http type", "type", "http", "streamable-http", false, false},
+		{"unknown native type", "type", "custom", "", false, true},
+		{"mismatched native type", "type", "sse", "", false, true},
 	}
 	for _, tt := range tests {
-		t.Run(tt.field, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			server := interpolationServer()
 			switch tt.field {
 			case "command":
@@ -258,46 +280,25 @@ func TestExportDropsMCPMembersWhoseSourceInterpolationWouldBecomeLiteral(t *test
 				server.Headers = map[string]string{"Authorization": tt.value}
 			case "url":
 				server.Command, server.URL, server.Transport = "", tt.value, "streamable-http"
+			case "type":
+				server.Extra = map[string]any{"type": tt.value}
+				if tt.value == "http" {
+					server.Command, server.URL = "", "https://example.test/mcp"
+				}
 			}
-			result, err := Export(interpolationPlugin("claude-plugin", server), interpolationFiles(), Options{AllowLoss: true})
-			if err != nil {
-				t.Fatalf("allow-loss export: %v", err)
-			}
-			if !containsLoss(result.Losses, "mcpServers/interpolated") {
-				t.Fatalf("source interpolation was not reported as a member loss: %+v", result.Losses)
-			}
-			if hasFile(result, "mcp.json") {
-				t.Fatalf("server with source interpolation was emitted: %+v", result.Files)
-			}
-		})
-	}
-}
-
-func TestExportConsumesNativeMCPTypeExtra(t *testing.T) {
-	tests := []struct {
-		name, want string
-		server     *ir.McpServer
-		wantLoss   bool
-	}{
-		{"stdio", "stdio", ir.NewMcpServer("interpolated", "node", nil, nil, map[string]any{"type": "stdio"}, ir.SourceRef{File: ".mcp.json"}), false},
-		{"http", "streamable-http", ir.NewMcpServer("interpolated", "", nil, nil, map[string]any{"type": "http"}, ir.SourceRef{File: ".mcp.json"}), false},
-		{"unknown", "", ir.NewMcpServer("interpolated", "node", nil, nil, map[string]any{"type": "custom"}, ir.SourceRef{File: ".mcp.json"}), true},
-		{"mismatch", "", ir.NewMcpServer("interpolated", "node", nil, nil, map[string]any{"type": "sse"}, ir.SourceRef{File: ".mcp.json"}), true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.name == "http" {
-				tt.server.URL = "https://example.test/mcp"
-			}
-			result, err := Export(interpolationPlugin("claude-plugin", tt.server), interpolationFiles(), Options{})
+			result, err := Export(interpolationPlugin("claude-plugin", server), interpolationFiles(), Options{AllowLoss: tt.allowLoss})
 			if tt.wantLoss {
-				if coded, ok := diag.AsCodedError(err); !ok || coded.Code != diag.CodePluginExportLoss {
+				if tt.allowLoss {
+					if err != nil || !containsLoss(result.Losses, "mcpServers/interpolated") || hasFile(result, "mcp.json") {
+						t.Fatalf("unrepresentable member was not omitted: result=%+v error=%v", result, err)
+					}
+				} else if coded, ok := diag.AsCodedError(err); !ok || coded.Code != diag.CodePluginExportLoss {
 					t.Fatalf("invalid native type error = %v", err)
 				}
 				return
 			}
 			if err != nil || len(result.Losses) != 0 {
-				t.Fatalf("native %s type was not mapped: result=%+v error=%v", tt.name, result, err)
+				t.Fatalf("MCP mapping %s was lossy: result=%+v error=%v", tt.name, result, err)
 			}
 			var config struct {
 				MCPServers map[string]map[string]any `json:"mcpServers"`
@@ -305,19 +306,108 @@ func TestExportConsumesNativeMCPTypeExtra(t *testing.T) {
 			if err := json.Unmarshal(resultFileEntry(t, result, "mcp.json").Bytes, &config); err != nil {
 				t.Fatal(err)
 			}
-			if config.MCPServers[tt.server.Name()]["type"] != tt.want {
-				t.Fatalf("exported MCP type = %#v, want %q", config.MCPServers, tt.want)
+			if config.MCPServers["interpolated"]["type"] != tt.wantType {
+				t.Fatalf("exported MCP type = %#v, want %q", config.MCPServers, tt.wantType)
 			}
 		})
 	}
 }
 
+func TestExportAccountsForStrayMCPFiles(t *testing.T) {
+	server := interpolationServer()
+	claude := interpolationPlugin("claude-plugin", server)
+	claude.Files = append(claude.Files, ir.PluginFile{Path: "mcp.json"})
+	nonstandardServer := interpolationServer()
+	nonstandardServer.Source.File = "mcp-extra.json"
+	nonstandard := interpolationPlugin("claude-plugin", nonstandardServer)
+	nonstandard.Files = []ir.PluginFile{{Path: ".claude-plugin/plugin.json"}, {Path: "mcp-extra.json"}, {Path: "mcp.json"}}
+	nonstandardFiles := interpolationFiles()
+	nonstandardFiles["mcp-extra.json"] = &fstest.MapFile{Data: []byte(`{"source":"member"}`)}
+	tests := []struct {
+		name, stray, member string
+		plugin              *ir.Plugin
+		files               fstest.MapFS
+		consumed            map[string]string
+	}{
+		{"claude twin configs", "mcp.json", "interpolated", claude, interpolationFiles(), map[string]string{".claude-plugin/plugin.json": "plugin.json", ".mcp.json": "mcp.json"}},
+		{"agent-only stray", ".mcp.json", "", &ir.Plugin{Format: "agent-plugin", Manifest: ir.Manifest{Name: "portable-kit"}, Files: []ir.PluginFile{{Path: ".mcp.json"}}}, fstest.MapFS{".mcp.json": {Data: []byte(`{"mcpServers":{}}`)}}, nil},
+		{"nonstandard source file", "mcp.json", "interpolated", nonstandard, nonstandardFiles, map[string]string{".claude-plugin/plugin.json": "plugin.json", "mcp-extra.json": "mcp.json"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := Export(tt.plugin, tt.files, Options{})
+			if coded, ok := diag.AsCodedError(err); !ok || coded.Code != diag.CodePluginExportLoss || !containsLoss(result.Losses, tt.stray) {
+				t.Fatalf("stray MCP file was not refused: result=%+v error=%v", result, err)
+			}
+			result, err = Export(tt.plugin, tt.files, Options{AllowLoss: true})
+			if err != nil || !containsLoss(result.Losses, tt.stray) {
+				t.Fatalf("allow-loss did not report the stray: result=%+v error=%v", result, err)
+			}
+			if tt.member == "" {
+				if hasFile(result, "mcp.json") || hasFile(result, ".mcp.json") {
+					t.Fatalf("stray-only package emitted MCP configuration: %+v", result.Files)
+				}
+			} else {
+				var config struct {
+					MCPServers map[string]map[string]any `json:"mcpServers"`
+				}
+				if err := json.Unmarshal(resultFileEntry(t, result, "mcp.json").Bytes, &config); err != nil {
+					t.Fatal(err)
+				}
+				if config.MCPServers[tt.member]["command"] != "node" {
+					t.Fatalf("generated MCP configuration differs: %#v", config.MCPServers)
+				}
+			}
+			consumed := map[string]map[string]bool{}
+			for sourcePath, artifact := range tt.consumed {
+				consumed[sourcePath] = map[string]bool{artifact: true}
+			}
+			assertFilePartition(t, tt.plugin, result, consumed, nil, map[string]string{tt.stray: tt.stray})
+		})
+	}
+}
+
+func TestExportReportsRenamedSkillOutputCollision(t *testing.T) {
+	plugin := &ir.Plugin{
+		Format: "claude-plugin", Manifest: ir.Manifest{Name: "portable-kit"},
+		Members: []ir.PluginMember{{Resource: ir.NewSkill("renamed", "", "Body\n", nil, nil, ir.SourceRef{File: "skills/source/SKILL.md"})}},
+		Files: []ir.PluginFile{
+			{Path: ".claude-plugin/plugin.json"}, {Path: "skills/source/SKILL.md"},
+			{Path: "skills/source/asset.txt"}, {Path: "skills/renamed/asset.txt"},
+		},
+	}
+	source := fstest.MapFS{
+		".claude-plugin/plugin.json": {Data: []byte(`{"name":"portable-kit"}`)},
+		"skills/source/SKILL.md":     {Data: []byte("---\nname: renamed\n---\nBody\n")},
+		"skills/source/asset.txt":    {Data: []byte("member")},
+		"skills/renamed/asset.txt":   {Data: []byte("literal")},
+	}
+	result, err := Export(plugin, source, Options{})
+	if coded, ok := diag.AsCodedError(err); !ok || coded.Code != diag.CodePluginExportLoss ||
+		!containsLoss(result.Losses, "skills/source/asset.txt") {
+		t.Fatalf("renamed skill collision was not refused: result=%+v error=%v", result, err)
+	}
+	result, err = Export(plugin, source, Options{AllowLoss: true})
+	if err != nil {
+		t.Fatalf("allow-loss collision export: %v", err)
+	}
+	assertFilePartition(t, plugin, result, map[string]map[string]bool{
+		".claude-plugin/plugin.json": {"plugin.json": true},
+	},
+		map[string]string{
+			"skills/source/SKILL.md":   "skills/renamed/SKILL.md",
+			"skills/renamed/asset.txt": "skills/renamed/asset.txt",
+		}, map[string]string{"skills/source/asset.txt": "skills/source/asset.txt"})
+}
+
 func TestExportKeepsCanonicalInterpolationLiteralForAgentPluginSources(t *testing.T) {
 	stdio := interpolationServer()
+	stdio.Source.File = "mcp.json"
 	stdio.Args = []string{"${TOKEN}"}
 	stdio.Env = map[string]string{"TOKEN": "${env:AUTH_TOKEN}"}
 	stdio.Cwd = "${PLUGIN_DATA}"
 	remote := interpolationServer()
+	remote.Source.File = "mcp.json"
 	remote.SetName("remote")
 	remote.Command = ""
 	remote.URL = "https://${HOST}/mcp"
@@ -378,6 +468,46 @@ func hasFile(result Result, name string) bool {
 		}
 	}
 	return false
+}
+
+func assertFilePartition(t *testing.T, plugin *ir.Plugin, result Result, consumed map[string]map[string]bool, emitted, lost map[string]string) {
+	t.Helper()
+	outputs := map[string]bool{}
+	for _, file := range result.Files {
+		if outputs[file.Path] {
+			t.Fatalf("duplicate output path %q", file.Path)
+		}
+		outputs[file.Path] = true
+	}
+	for _, file := range plugin.Files {
+		categories := 0
+		if artifacts := consumed[file.Path]; len(artifacts) > 0 {
+			categories++
+			for artifact := range artifacts {
+				if !outputs[artifact] {
+					t.Errorf("input %q consumed into missing artifact %q", file.Path, artifact)
+				}
+				if file.Path != artifact && outputs[file.Path] {
+					t.Errorf("consumed input %q was also emitted as a file", file.Path)
+				}
+			}
+		}
+		if output, ok := emitted[file.Path]; ok {
+			categories++
+			if !outputs[output] {
+				t.Errorf("input %q mapped to missing output %q", file.Path, output)
+			}
+		}
+		if loss, ok := lost[file.Path]; ok {
+			categories++
+			if !containsLoss(result.Losses, loss) {
+				t.Errorf("input %q lacks loss %q: %+v", file.Path, loss, result.Losses)
+			}
+		}
+		if categories != 1 {
+			t.Errorf("input %q has %d accounting categories", file.Path, categories)
+		}
+	}
 }
 
 func containsLoss(losses []Loss, fragment string) bool {

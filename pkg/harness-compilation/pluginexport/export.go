@@ -48,6 +48,13 @@ type Result struct {
 	Restrictions []Loss
 }
 
+type fileState struct {
+	file     ir.PluginFile
+	consumed map[string]bool
+	output   File
+	lost     bool
+}
+
 // Export computes a complete Agent Plugins package without writing to disk.
 func Export(plugin *ir.Plugin, source fs.FS, options Options) (Result, error) {
 	result := Result{}
@@ -61,34 +68,48 @@ func Export(plugin *ir.Plugin, source fs.FS, options Options) (Result, error) {
 		return result, exportError(diag.CodePluginExportLoss, "plugin.json", "plugin name cannot be represented")
 	}
 
-	filesByPath := make(map[string]ir.PluginFile, len(plugin.Files))
+	files := make(map[string]*fileState, len(plugin.Files))
 	for _, file := range plugin.Files {
+		state := &fileState{file: file}
+		files[file.Path] = state
 		if !fs.ValidPath(file.Path) || file.Path == "." {
 			addLoss(&result.Losses, file.Path, "package file path is invalid")
-			continue
+			state.lost = true
 		}
-		filesByPath[file.Path] = file
 	}
 	manifest, manifestLosses := exportManifest(plugin, source, layout.ManifestPath)
 	for _, loss := range manifestLosses {
 		addLoss(&result.Losses, loss.Path, loss.Reason)
 	}
 
-	skillDirectories, skillRewrites := map[string]string{}, map[string]bool{}
-	mcpServers := map[string]any{}
-	omittedPaths := map[string]bool{layout.ManifestPath: true}
-	omittedPaths["mcp.json"], omittedPaths[".mcp.json"] = true, true
-	if layout.ManifestPath != "plugin.json" {
-		omittedPaths["plugin.json"] = true
-		if _, exists := filesByPath["plugin.json"]; exists {
-			addLoss(&result.Losses, "plugin.json", "source file conflicts with the exported manifest")
+	markLost := func(sourcePath string) {
+		for filePath, state := range files {
+			if (filePath == sourcePath || strings.HasPrefix(filePath, strings.TrimSuffix(sourcePath, "/")+"/")) &&
+				len(state.consumed) == 0 && state.output.Path == "" {
+				state.lost = true
+			}
 		}
 	}
+	consume := func(sourcePath, artifact string) {
+		state := files[sourcePath]
+		if state == nil || !fs.ValidPath(sourcePath) || sourcePath == "." {
+			addLoss(&result.Losses, sourcePath, "source artifact file is absent from the package file inventory")
+			return
+		}
+		if state.consumed == nil {
+			state.consumed = map[string]bool{}
+		}
+		state.consumed[artifact] = true
+		state.lost = false
+	}
+	if files[layout.ManifestPath] != nil && !files[layout.ManifestPath].lost {
+		consume(layout.ManifestPath, "plugin.json")
+	}
+	skillDirectories, skillContents := map[string]string{}, map[string][]byte{}
+	mcpServers := map[string]any{}
 	for _, invalid := range plugin.Invalid {
 		addLoss(&result.Losses, invalid.Path, "source content was skipped during package decoding")
-		if fs.ValidPath(invalid.Path) {
-			omittedPaths[invalid.Path] = true
-		}
+		markLost(invalid.Path)
 	}
 
 	for _, member := range plugin.Members {
@@ -105,26 +126,35 @@ func Export(plugin *ir.Plugin, source fs.FS, options Options) (Result, error) {
 			dir := path.Dir(sourceFile)
 			if !fs.ValidPath(sourceFile) || !strings.HasPrefix(dir, "skills/") || strings.Contains(strings.TrimPrefix(dir, "skills/"), "/") {
 				addLoss(&result.Losses, member.Key(), "skill is not an immediate child of skills/")
-				omittedPaths[dir] = true
+				markLost(dir)
 				continue
 			}
 			if !validAgentSkillName(resource.Name()) {
 				addLoss(&result.Losses, member.Key(), "skill name is invalid for Agent Skills")
-				omittedPaths[dir] = true
+				markLost(dir)
 				continue
 			}
 			skillDirectories[dir] = resource.Name()
-			frontmatterLosses, err := skillLosses(resource, source, sourceFile)
+			frontmatterLosses, skillSource, err := skillLosses(resource, source, sourceFile)
 			for _, loss := range frontmatterLosses {
 				addLoss(&result.Losses, loss.Path, loss.Reason)
 			}
 			if err != nil {
 				addLoss(&result.Losses, sourceFile, "skill definition cannot be read or parsed")
-				omittedPaths[dir] = true
+				markLost(dir)
 				delete(skillDirectories, dir)
 				continue
 			}
-			skillRewrites[dir] = len(frontmatterLosses) > 0
+			if len(frontmatterLosses) > 0 {
+				skillSource, err = rewriteSkill(skillSource)
+				if err != nil {
+					addLoss(&result.Losses, sourceFile, "skill definition cannot be rewritten safely")
+					markLost(dir)
+					delete(skillDirectories, dir)
+					continue
+				}
+			}
+			skillContents[dir] = skillSource
 			if resource.PermissionsSet {
 				addLoss(&result.Restrictions, sourceFile+":permissions", "skill permissions are not represented by Agent Skills")
 			}
@@ -141,46 +171,68 @@ func Export(plugin *ir.Plugin, source fs.FS, options Options) (Result, error) {
 			}
 			if representable {
 				mcpServers[resource.Name()] = entry
+				if resource.Source.File != "" {
+					consume(resource.Source.File, "mcp.json")
+				}
 			} else if resource.Source.File != "" {
-				omittedPaths[resource.Source.File] = true
+				markLost(resource.Source.File)
 			}
 		default:
-			omitMemberFiles(omittedPaths, member.Resource)
+			omitMemberFiles(markLost, member.Resource)
 			addLoss(&result.Losses, member.Key(), "member kind is not represented by Agent Plugins")
 		}
 	}
 
-	for dir := range skillDirectories {
-		if _, ok := filesByPath[path.Join(dir, "SKILL.md")]; !ok {
-			addLoss(&result.Losses, path.Join(dir, "SKILL.md"), "skill definition is missing from the package file inventory")
-			omittedPaths[dir] = true
-		}
+	mcpGenerated := len(mcpServers) > 0
+	destinationSources := map[string]string{"plugin.json": "generated plugin.json"}
+	if mcpGenerated {
+		destinationSources["mcp.json"] = "generated mcp.json"
 	}
-
-	copied := map[string][]byte{}
-	for _, sourcePath := range slices.Sorted(maps.Keys(filesByPath)) {
-		if omittedPaths[sourcePath] || insideAny(sourcePath, omittedPaths) {
+	for _, sourcePath := range slices.Sorted(maps.Keys(files)) {
+		state := files[sourcePath]
+		if len(state.consumed) > 0 || state.lost {
 			continue
 		}
-		file, err := readPackageFile(source, sourcePath, plugindecode.MaxPackageFileBytes)
-		if err != nil {
-			addLoss(&result.Losses, sourcePath, "package file cannot be read")
-			if dir, _ := skillDirectory(sourcePath, skillDirectories); dir != "" &&
-				sourcePath == path.Join(dir, "SKILL.md") {
-				omittedPaths[dir] = true
-			}
+		if sourcePath == ".mcp.json" || (sourcePath == "mcp.json" && !mcpGenerated) {
+			addLoss(&result.Losses, sourcePath, "source file is not represented by Agent Plugins")
+			markLost(sourcePath)
 			continue
 		}
-		if dir, _ := skillDirectory(sourcePath, skillDirectories); dir != "" &&
-			sourcePath == path.Join(dir, "SKILL.md") && skillRewrites[dir] {
-			file, err = rewriteSkill(file)
+		dir, name := skillDirectory(sourcePath, skillDirectories)
+		var data []byte
+		if name != "" && sourcePath == path.Join(dir, "SKILL.md") {
+			data = skillContents[dir]
+		} else {
+			var err error
+			data, err = readPackageFile(source, sourcePath, plugindecode.MaxPackageFileBytes)
 			if err != nil {
-				addLoss(&result.Losses, sourcePath, "skill definition cannot be rewritten safely")
-				omittedPaths[dir] = true
+				addLoss(&result.Losses, sourcePath, "package file cannot be read")
+				markLost(sourcePath)
 				continue
 			}
 		}
-		copied[sourcePath] = file
+		destPath := sourcePath
+		if name != "" {
+			destPath = path.Join("skills", name, strings.TrimPrefix(sourcePath, dir+"/"))
+		}
+		if previous, exists := destinationSources[destPath]; exists {
+			reason := "source file conflicts with " + previous
+			if !strings.HasPrefix(previous, "generated ") {
+				reason = "multiple source files map to the same output path"
+			}
+			addLoss(&result.Losses, sourcePath, reason)
+			markLost(sourcePath)
+			continue
+		}
+		destinationSources[destPath] = sourcePath
+		state.output = File{Path: destPath, Bytes: data, Executable: state.file.Executable}
+	}
+	for _, file := range plugin.Files {
+		state := files[file.Path]
+		if len(state.consumed) == 0 && state.output.Path == "" && !state.lost {
+			addLoss(&result.Losses, file.Path, "source file is not represented by Agent Plugins")
+			state.lost = true
+		}
 	}
 	sortLosses(&result)
 	if len(result.Restrictions) > 0 {
@@ -190,16 +242,11 @@ func Export(plugin *ir.Plugin, source fs.FS, options Options) (Result, error) {
 		return result, exportError(diag.CodePluginExportLoss, "", "package contains content Agent Plugins cannot represent")
 	}
 
-	output := make([]File, 0, len(copied)+2)
-	for _, sourcePath := range slices.Sorted(maps.Keys(copied)) {
-		if omittedPaths[sourcePath] || insideAny(sourcePath, omittedPaths) {
-			continue
+	output := make([]File, 0, len(files)+2)
+	for _, state := range files {
+		if state.output.Path != "" {
+			output = append(output, state.output)
 		}
-		destPath := sourcePath
-		if dir, name := skillDirectory(sourcePath, skillDirectories); name != "" {
-			destPath = path.Join("skills", name, strings.TrimPrefix(sourcePath, dir+"/"))
-		}
-		output = append(output, File{Path: destPath, Bytes: copied[sourcePath], Executable: filesByPath[sourcePath].Executable})
 	}
 
 	manifestBytes, err := json.MarshalIndent(manifest, "", "  ")
@@ -207,7 +254,7 @@ func Export(plugin *ir.Plugin, source fs.FS, options Options) (Result, error) {
 		return result, fmt.Errorf("encode plugin.json: %w", err)
 	}
 	output = append(output, File{Path: "plugin.json", Bytes: append(manifestBytes, '\n')})
-	if len(mcpServers) > 0 {
+	if mcpGenerated {
 		mcpBytes, err := json.MarshalIndent(map[string]any{"$schema": mcpSchemaID, "mcpServers": mcpServers}, "", "  ")
 		if err != nil {
 			return result, fmt.Errorf("encode mcp.json: %w", err)
@@ -292,14 +339,14 @@ func manifestFieldValid(key string, value any) bool {
 	}
 }
 
-func skillLosses(skill *ir.Skill, source fs.FS, file string) ([]Loss, error) {
+func skillLosses(skill *ir.Skill, source fs.FS, file string) ([]Loss, []byte, error) {
 	raw, err := readPackageFile(source, file, plugindecode.MaxPackageFileBytes)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	fields, _, err := yamlfm.ParseYAMLFrontmatter(strings.NewReader(string(raw)))
 	if err != nil {
-		return nil, err
+		return nil, raw, err
 	}
 	allowed := map[string]bool{
 		"name": true, "description": true, "license": true, "compatibility": true, "metadata": true, "allowed-tools": true,
@@ -332,7 +379,7 @@ func skillLosses(skill *ir.Skill, source fs.FS, file string) ([]Loss, error) {
 	if skill.Triggers != nil {
 		add("triggers")
 	}
-	return losses, nil
+	return losses, raw, nil
 }
 
 func skillFieldValid(key string, value any) bool {
@@ -363,14 +410,18 @@ func skillFieldValid(key string, value any) bool {
 }
 
 func exportMcpServer(server *ir.McpServer, sourceFormat string) (map[string]any, []Loss, *Loss, bool) {
-	if sourceFormat != "agent-plugin" {
-		server = normalizeNativeRootReferences(server)
-	}
 	base := "mcpServers/" + server.Name()
 	entry := map[string]any{}
 	var losses []Loss
 	add := func(field, reason string) {
 		losses = append(losses, Loss{Path: base + "/" + field, Reason: reason})
+	}
+	if sourceFormat != "agent-plugin" {
+		if hasNativePluginRootToken(server) {
+			add("", "native plugin-root text would gain expansion meaning")
+			return nil, losses, nil, false
+		}
+		server = normalizeNativeRootReferences(server)
 	}
 	transport, typeConsumed := server.Transport, false
 	if sourceFormat != "agent-plugin" {
@@ -493,6 +544,29 @@ func exportMcpServer(server *ir.McpServer, sourceFormat string) (map[string]any,
 	return entry, losses, nil, true
 }
 
+func hasNativePluginRootToken(server *ir.McpServer) bool {
+	contains := func(value string) bool {
+		return strings.Contains(value, "${PLUGIN_ROOT}") || strings.Contains(value, "${PLUGIN_DATA}")
+	}
+	if contains(server.Command) || contains(server.Cwd) {
+		return true
+	}
+	for _, arg := range server.Args {
+		if contains(arg) {
+			return true
+		}
+	}
+	for _, value := range server.Env {
+		if contains(value) {
+			return true
+		}
+	}
+	if cwd, ok := server.Extra["cwd"].(string); ok {
+		return contains(cwd)
+	}
+	return false
+}
+
 func normalizeNativeRootReferences(server *ir.McpServer) *ir.McpServer {
 	normalized := *server
 	replace := func(value string) string {
@@ -613,7 +687,7 @@ func skillDirectory(sourcePath string, directories map[string]string) (string, s
 	return "", ""
 }
 
-func omitMemberFiles(paths map[string]bool, resource ir.Resource) {
+func omitMemberFiles(markLost func(string), resource ir.Resource) {
 	var file string
 	switch typed := resource.(type) {
 	case *ir.Command:
@@ -626,17 +700,8 @@ func omitMemberFiles(paths map[string]bool, resource ir.Resource) {
 		file = typed.Source.File
 	}
 	if file != "" {
-		paths[file] = true
+		markLost(file)
 	}
-}
-
-func insideAny(file string, omitted map[string]bool) bool {
-	for name := range omitted {
-		if name != "" && strings.HasPrefix(file, strings.TrimSuffix(name, "/")+"/") {
-			return true
-		}
-	}
-	return false
 }
 
 func validAgentSkillName(name string) bool {
