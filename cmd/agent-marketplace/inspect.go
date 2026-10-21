@@ -37,16 +37,25 @@ func newInspectCmd() *cobra.Command {
 }
 
 func runInspectPlugin(ctx context.Context, out io.Writer, locator string) error {
-	name, err := pluginNameFromLocator(locator)
+	result, release, inspection, err := loadPluginForInspection(ctx, locator)
 	if err != nil {
 		return err
 	}
+	defer release()
+	return writePluginInspection(out, inspection, result.LockMetadata)
+}
+
+func loadPluginForInspection(ctx context.Context, locator string) (pipeline.ResolveResult, func(), pluginInspection, error) {
+	name, err := pluginNameFromLocator(locator)
+	if err != nil {
+		return pipeline.ResolveResult{}, nil, pluginInspection{}, err
+	}
 	if err := prepareDependencyTransactions(ctx, true); err != nil {
-		return err
+		return pipeline.ResolveResult{}, nil, pluginInspection{}, err
 	}
 	workspace, err := pipeline.NewWorkspace(config.FindRepoRoot(), config.FindLocalConfigDir())
 	if err != nil {
-		return err
+		return pipeline.ResolveResult{}, nil, pluginInspection{}, err
 	}
 	result, release := pipeline.ResolveWithExactLockLease(ctx, pipeline.ResolveOptions{
 		Workspace:                 workspace,
@@ -54,24 +63,25 @@ func runInspectPlugin(ctx context.Context, out io.Writer, locator string) error 
 		ReadOnlyExactLocks:        true,
 		AllowMissingReadOnlyLocks: true,
 	})
-	defer release()
 	if result.LoadedCfg == nil {
+		release()
 		if len(result.Errors) > 0 {
-			return errors.Join(result.Errors...)
+			return pipeline.ResolveResult{}, nil, pluginInspection{}, errors.Join(result.Errors...)
 		}
-		return errors.New("configuration could not be loaded")
+		return pipeline.ResolveResult{}, nil, pluginInspection{}, errors.New("configuration could not be loaded")
 	}
 	inspection, err := findPluginForInspection(result, name)
 	if err != nil {
-		return err
+		release()
+		return pipeline.ResolveResult{}, nil, pluginInspection{}, err
 	}
-	return writePluginInspection(out, inspection, result.LockMetadata)
+	return result, release, inspection, nil
 }
 
 func pluginNameFromLocator(locator string) (string, error) {
 	const prefix = "plugin/"
 	if !strings.HasPrefix(locator, prefix) || strings.TrimSpace(strings.TrimPrefix(locator, prefix)) == "" {
-		return "", fmt.Errorf("inspect requires a plugin locator in the form plugin/<name>")
+		return "", fmt.Errorf("plugin operation requires a locator in the form plugin/<name>")
 	}
 	return strings.TrimPrefix(locator, prefix), nil
 }

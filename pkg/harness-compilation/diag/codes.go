@@ -424,6 +424,9 @@ const (
 	CodePluginNamespaceInvalid              = "plugin.namespace-invalid"               // A plugin member's installed name is invalid for the target
 	CodePluginGenerationPublish             = "plugin.generation.publish"              // An immutable package generation could not be published
 	CodePluginGenerationMissing             = "plugin.generation.missing"              // A required immutable package generation is missing or changed
+	CodePluginExportLoss                    = "plugin.export.loss"                     // Export would lose non-security package content
+	CodePluginExportRestriction             = "plugin.export.restriction"              // Export would drop a security restriction
+	CodePluginExportOutNotEmpty             = "plugin.export.out-not-empty"            // Export output directory is not empty
 
 	// Devin hook and MCP ENTRY-SKIP codes.
 	//
@@ -750,6 +753,9 @@ var codeCatalog = []CodeDoc{
 	{CodePluginNamespaceInvalid, SeverityError, "A decomposed plugin member's installed name is invalid for the target; the plugin instance was refused", "Use a plugin and member name that satisfy the target's resource-name rules"},
 	{CodePluginGenerationPublish, SeverityError, "An immutable plugin package generation could not be published; the previous plugin projection was retained", "Restore a readable, contained plugin package and re-run sync"},
 	{CodePluginGenerationMissing, SeverityError, "A required immutable plugin package generation is missing or changed; plugin drift could not be checked safely", "Re-run writable sync to publish the verified package generation"},
+	{CodePluginExportLoss, SeverityError, "Plugin export would lose non-security package content", "Review the listed losses; use --allow-loss only when those omissions are acceptable"},
+	{CodePluginExportRestriction, SeverityError, "Plugin export would drop a security restriction and was refused", "Retain the restriction or use a package format that represents it"},
+	{CodePluginExportOutNotEmpty, SeverityError, "Export output directory contains files; no package was written", "Choose an absent or empty output directory"},
 
 	{CodePluginFormatUnsupported, SeverityError, "The source is not a recognized plugin package format, or the destination harness does not accept it", "Use a supported package format and a harness whose plugin catalog accepts it"},
 	{CodePluginFormatVersionUnsupported, SeverityError, "The package declares a format version no decoder supports; the package is not installable", "Pin the package to a supported format version"},

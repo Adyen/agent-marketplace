@@ -382,17 +382,16 @@ func TestPluginLifecycleDoesNotRunPackageScripts(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	repo, run := pluginCommandFixture(t, "    - plugin/review-kit\n")
-	root := filepath.Dir(repo)
-	pluginDir := filepath.Join(root, "marketplace", "plugins", "review-kit")
-	marker := filepath.Join(root, "ran-package-process")
-	script := filepath.Join(pluginDir, "scripts", "run.sh")
-	writeFile(t, script, "#!/bin/sh\nprintf ran > "+marker+"\n")
-	if err := os.Chmod(script, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, filepath.Join(pluginDir, "hooks", "hooks.json"),
-		`{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"`+script+`"}]}]}`)
+	marker := filepath.Join(t.TempDir(), "ran-package-process")
+	root, _, run := lockedPluginExportFixture(t, "", false, func(pluginDir string) {
+		script := filepath.Join(pluginDir, "scripts", "run.sh")
+		writeFile(t, script, "#!/bin/sh\nprintf ran > "+marker+"\n")
+		if err := os.Chmod(script, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(pluginDir, "hooks", "hooks.json"),
+			`{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"`+script+`"}]}]}`)
+	})
 
 	original := processstart.Command
 	var starts []string
@@ -403,8 +402,9 @@ func TestPluginLifecycleDoesNotRunPackageScripts(t *testing.T) {
 	defer func() { processstart.Command = original }()
 
 	for _, args := range [][]string{
-		{"list"}, {"inspect", "plugin/review-kit"}, {"lock", "--check"},
+		{"list"}, {"inspect", "plugin/local-kit"}, {"lock", "--check"},
 		{"sync", "--no-backup"}, {"status"},
+		{"export", "plugin/local-kit", "--format", "agent-plugin", "--out", filepath.Join(root, "exported"), "--allow-loss"},
 	} {
 		output, err := run(args...)
 		if err != nil {
