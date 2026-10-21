@@ -82,6 +82,7 @@ async function capture(browser: Browser, url: string, theme: Theme, size: { widt
     }
     await page.evaluate(() => document.fonts.ready)
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+    await page.waitForTimeout(400)
     if (errors.length > 0) {
       throw new Error(`page errors for ${name}-${theme}: ${errors.join('; ')}`)
     }

@@ -4,6 +4,7 @@ import { createClient } from './api/client'
 import { closeRequestEvent, launchRequestEvent, nativeQuit, resolveBootstrap } from './bootstrap'
 import { eligible, WorkspaceController, type Row } from './controller'
 import { buildSections, readViewSettings, sectionPathsContaining, writeViewSettings, type Section, type ViewSettings } from './grouping'
+import { notificationPresentation, operationDetail, operationLabel } from './feedback'
 import { hasSearchTerms, highlightNameParts, rankRows, type NameSegment, type SearchMatch } from './search'
 import { readStoredValue, writeStoredValue } from './storage'
 import Confirmations from './Confirmations.vue'
@@ -936,9 +937,6 @@ async function run(action: 'sync' | 'update') {
       <p v-else-if="view && view.stage !== '' && view.harnesses.length === 0" class="workspace__notice" role="status">
         No supported target harnesses are configured.
       </p>
-      <p v-else-if="view?.operation" class="workspace__notice" role="status">
-        {{ view.operation.kind }} {{ view.phase ?? 'running' }}
-      </p>
       <p v-if="view?.latestVersion" class="workspace__notice" role="status">
         Agent Marketplace {{ view.latestVersion }} is available.
       </p>
@@ -973,12 +971,29 @@ async function run(action: 'sync' | 'update') {
 
       <StatusBar :pending-count="view == null ? null : pendingCount" />
 
-      <ul class="workspace__notifications" aria-live="polite" aria-label="Notifications">
-        <li v-for="n in view?.notifications" :key="n.id" :class="`notification--${n.severity}`">
-          <GuiIcon v-if="n.severity === 'error'" name="error" class="gui-toast__icon" />
-          {{ n.message }}
-        </li>
-      </ul>
+      <div class="gui-toasts">
+        <Transition name="gui-toast-fade">
+          <div v-if="view?.operation" class="gui-toast gui-toast--progress" role="status" aria-live="polite">
+            <span class="gui-toast__spinner" aria-hidden="true" />
+            <div class="gui-toast__body">
+              <p class="gui-toast__title">{{ operationLabel(view.operation.kind) }}</p>
+              <p class="gui-toast__detail">{{ operationDetail(view.phase) }}</p>
+            </div>
+            <span class="gui-toast__bar" aria-hidden="true" />
+          </div>
+        </Transition>
+        <TransitionGroup tag="ul" name="gui-toast-fade" class="gui-toasts__list" aria-live="polite" aria-label="Notifications">
+          <li
+            v-for="n in view?.notifications"
+            :key="n.id"
+            class="gui-toast gui-toast--notification"
+            :class="`gui-toast--${notificationPresentation(n).tone}`"
+          >
+            <GuiIcon :name="notificationPresentation(n).icon" class="gui-toast__icon" />
+            <span class="gui-toast__title">{{ n.message }}</span>
+          </li>
+        </TransitionGroup>
+      </div>
     </div>
 
     <Inspector

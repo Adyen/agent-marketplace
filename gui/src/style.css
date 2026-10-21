@@ -830,43 +830,160 @@ textarea:focus-visible,
 
 /* Toasts */
 
-.workspace__notifications {
-  align-items: center;
-  bottom: 40px;
+.gui-toasts {
+  bottom: calc(var(--gui-statusbar-height) + 12px);
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  left: 50%;
-  list-style: none;
-  margin: 0;
-  padding: 0;
+  gap: 8px;
   pointer-events: none;
   position: absolute;
-  transform: translateX(-50%);
+  right: 16px;
+  width: min(22rem, calc(100% - 32px));
   z-index: 10;
 }
 
-.workspace__notifications li {
+.gui-toasts__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.gui-toast {
   align-items: center;
-  background: var(--gui-solid-bg);
-  border-radius: 999px;
+  background: var(--gui-canvas);
+  border: 1px solid var(--gui-line);
+  border-radius: var(--gui-radius-card);
   box-shadow: var(--gui-shadow);
-  color: var(--gui-solid-ink);
-  display: inline-flex;
+  box-sizing: border-box;
+  color: var(--gui-ink);
+  display: grid;
   font-size: 13px;
-  gap: 6px;
-  max-width: min(32rem, calc(100vw - 2rem));
-  padding: 6px 12px;
+  gap: 10px;
+  grid-template-columns: 16px minmax(0, 1fr);
+  overflow: hidden;
+  padding: 10px 12px;
   pointer-events: auto;
+  position: relative;
+  width: 100%;
+}
+
+.gui-toast--notification::before {
+  background: var(--gui-line);
+  bottom: 0;
+  content: "";
+  left: 0;
+  position: absolute;
+  top: 0;
+  width: 3px;
+}
+
+.gui-toast--success::before {
+  background: var(--gui-signal);
+}
+
+.gui-toast--warning::before {
+  background: var(--am-color-status-warning);
+}
+
+.gui-toast--danger::before {
+  background: var(--am-color-status-danger);
+}
+
+.gui-toast__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.gui-toast__title {
+  display: block;
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.gui-toast--notification .gui-toast__title::first-letter {
+  text-transform: uppercase;
+}
+
+.gui-toast__detail {
+  color: var(--gui-ink-2);
+  font-size: 12px;
+  margin: 0;
 }
 
 .gui-toast__icon {
+  flex: none;
+}
+
+.gui-toast--success .gui-toast__icon {
+  color: var(--gui-signal);
+}
+
+.gui-toast--info .gui-toast__icon {
+  color: var(--gui-ink-2);
+}
+
+.gui-toast--warning .gui-toast__icon {
+  color: var(--am-color-status-warning);
+}
+
+.gui-toast--danger .gui-toast__icon {
   color: var(--am-color-status-danger);
 }
 
-.notification--info,
-.notification--warning {
-  color: var(--gui-solid-ink);
+.gui-toast__spinner {
+  animation: gui-spin 900ms linear infinite;
+  border: 2px solid var(--gui-line);
+  border-radius: 50%;
+  border-top-color: var(--gui-signal);
+  box-sizing: border-box;
+  height: 16px;
+  width: 16px;
+}
+
+.gui-toast__bar {
+  animation: gui-sweep 1400ms var(--gui-ease) infinite;
+  background: var(--gui-signal);
+  bottom: 0;
+  height: 2px;
+  left: 0;
+  position: absolute;
+  width: 40%;
+}
+
+@keyframes gui-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes gui-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(250%);
+  }
+}
+
+.gui-toast-fade-enter-active,
+.gui-toast-fade-leave-active {
+  transition: opacity 180ms var(--gui-ease), transform 180ms var(--gui-ease);
+}
+
+.gui-toast-fade-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+.gui-toast-fade-leave-to {
+  opacity: 0;
 }
 
 /* Right inspector */
@@ -1624,5 +1741,13 @@ textarea:focus-visible,
 
   .gui-inspector__resource {
     animation: none;
+  }
+
+  .gui-toast-fade-enter-active,
+  .gui-toast-fade-leave-active,
+  .gui-toast__spinner,
+  .gui-toast__bar {
+    animation: none;
+    transition: none;
   }
 }

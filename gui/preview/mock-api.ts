@@ -32,6 +32,19 @@ export function mockLocalApi(): Plugin {
               connection: 'keep-alive',
             })
             res.write(`data: ${JSON.stringify(event({ sequence: 1, generation: 1, payload: current.snapshot }))}\n\n`)
+            if (current.operation !== undefined) {
+              const operation = current.operation
+              const frames = [
+                event({ sequence: 2, generation: 2, operation, payload: current.snapshot }),
+                event({ sequence: 3, generation: 2, operation, type: 'progress', payload: { progressSequence: 1, phase: current.phase ?? '' } }),
+                ...(current.notifications ?? []).map((notification, index) =>
+                  event({ sequence: 4 + index, generation: 2, operation, type: 'notification', payload: notification }),
+                ),
+              ]
+              for (const frame of frames) {
+                res.write(`data: ${JSON.stringify(frame)}\n\n`)
+              }
+            }
             return
           case '/api/release':
             sendJSON(res, 200, { latestVersion: '' })

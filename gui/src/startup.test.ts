@@ -261,7 +261,8 @@ describe('startup stage consumers', () => {
     expect(controller.state.settledMutation).toBeNull()
     expect(controller.state.rows.map((candidate) => candidate.id)).toEqual([owned.id, second.id])
     expect(controller.state.diagnostics).toEqual([priorWarning])
-    expect(wrapper.find('p[role="status"]').text()).toBe('targets running')
+    expect(wrapper.get('.gui-toast--progress .gui-toast__title').text()).toBe('Saving harness targets')
+    expect(wrapper.get('.gui-toast--progress .gui-toast__detail').text()).toBe(acceptedPhase ?? 'Working…')
     expect((wrapper.get('button[aria-label="Sync"]').element as HTMLButtonElement).disabled).toBe(true)
 
     const finalOwned: ReturnType<typeof row> = { ...owned, group: 'enabled', status: 'enabled' }
@@ -271,7 +272,7 @@ describe('startup stage consumers', () => {
     expect(controller.state.phase).toBeNull()
     expect(controller.state.rows).toEqual([finalOwned])
     expect(controller.state.diagnostics).toEqual([finalWarning])
-    expect(wrapper.find('p[role="status"]').exists()).toBe(false)
+    expect(wrapper.find('.gui-toast--progress').exists()).toBe(false)
     expect(wrapper.find(`[role="option"][id="row-${finalOwned.id}"]`).exists()).toBe(true)
     expect(wrapper.get('aside[aria-label="Detail"]').text()).toContain('Verified owned detail')
     expect(wrapper.get('aside[aria-label="Detail"]').text()).toContain('enabled')

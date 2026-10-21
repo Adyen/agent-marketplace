@@ -51,9 +51,7 @@ async function completeResponse(responsePromise: ReturnType<typeof armPost>, sta
 
 async function waitForOperationCompletion(page: Page, action: 'sync' | 'update'): Promise<void> {
   await expect(page.getByLabel('Notifications').getByText(`${action} complete`, { exact: true })).toBeVisible({ timeout: 60_000 })
-  await expect(
-    page.locator('p.workspace__notice[role="status"]').filter({ hasText: new RegExp(`^${action} `) }),
-  ).toHaveCount(0)
+  await expect(page.locator('.gui-toast--progress')).toHaveCount(0)
 }
 
 async function saveActions(testInfo: TestInfo, name: string, actions: string[]): Promise<void> {

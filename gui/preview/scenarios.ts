@@ -1,10 +1,13 @@
 import { configuration, row, snapshot } from '../src/fixtures.ts'
-import type { Configuration, Snapshot } from '../src/api/client.ts'
+import type { Configuration, OperationRef, Snapshot } from '../src/api/client.ts'
 import type { Row } from '../src/controller.ts'
 
 export interface PreviewScenario {
   snapshot: Snapshot
   configuration: Configuration
+  operation?: OperationRef
+  phase?: string
+  notifications?: { severity: 'info' | 'warning' | 'error'; message: string }[]
 }
 
 const hubMain = { id: 'https://hub.example.com/agent-skills.git\x01main\x01', label: 'agent-skills-hub' }
@@ -269,9 +272,26 @@ const emptyScenario = (): PreviewScenario => ({
   configuration: configuration(),
 })
 
+const syncingScenario = (): PreviewScenario => ({
+  ...defaultScenario(),
+  operation: { id: 9, kind: 'sync' },
+  phase: 'materialize',
+})
+
+const toastsScenario = (): PreviewScenario => ({
+  ...syncingScenario(),
+  notifications: [
+    { severity: 'info', message: 'sync complete' },
+    { severity: 'warning', message: 'lock file was refreshed while syncing' },
+    { severity: 'error', message: 'mutation failed' },
+  ],
+})
+
 export const scenarios: Record<string, () => PreviewScenario> = {
   default: defaultScenario,
   empty: emptyScenario,
+  syncing: syncingScenario,
+  toasts: toastsScenario,
 }
 
 export function scenario(name: string): PreviewScenario {

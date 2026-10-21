@@ -179,10 +179,9 @@ in Codex's selected-thread row.
     5. An **Update** button, a separate visible secondary button next to Sync.
     6. A "Set up" button, shown only during first run.
     7. A divider, then a "Toggle inspector" icon button (◨).
-- **Banners** sit under the toolbar for errors, the no-harness notice, and
-  operation progress. A banner is a 32 px row on `--gui-s0100` with an icon
-  and text. An operation in progress also shows a 2 px indeterminate progress
-  line at the top of the main column, in `--gui-signal`.
+- **Banners** sit under the toolbar for errors, the no-harness notice, and the
+  latest-version notice. A banner is a 32 px row on `--gui-s0100` with an icon
+  and text. Operation progress is a toast, not a banner (see Notifications).
 - **Resource list**:
   - Group header: a sticky row with a caret, the caps title, and a count on
     the right. Selecting it toggles the group. This resembles Codex's
@@ -210,12 +209,23 @@ in Codex's selected-thread row.
   in mono, for example `~ 2 pending sync`, which changes to
   `✓ in sync` in `--gui-signal-ink`. On the right, keyboard hints:
   `↑↓ move · space select · ⏎ open · s sync`.
-- **Notifications** are toasts stacked in the bottom center of the main
-  column, styled as a floating pill on the `--gui-solid` colors, like Codex's
-  "Revert all / Stage all" pill. The element remains the existing
-  `aria-live="polite"` list named "Notifications". Error toasts carry a danger
-  icon. Toasts stay visible until the next snapshot replaces them; there is no
-  timer.
+- **Toasts** stack in the bottom-right corner of the main column, above the
+  status bar, 16 px from the edge. Each is a card on the View-menu surface
+  (`--gui-canvas`, 1 px `--gui-line`, 12 px radius, the shared shadow) with
+  an icon and text. The newest notification sits at the bottom. A toast
+  never covers the status bar, and its container ignores the pointer.
+  - **Progress** shows while an operation runs: a 16 px `--gui-signal` spinner,
+    the humanized operation name ("Syncing"), and the observed phase. With no
+    phase, it reads "Working…". A 2 px `--gui-signal` bar sweeps along the
+    bottom edge. The toast fades and rises 6 px in on entry.
+  - **Notifications** are the existing `aria-live="polite"` list named
+    "Notifications". Each has a 3 px accent stripe. Success (a message ending in
+    " complete") uses a `--gui-signal` check. Other info uses a `--gui-line`
+    stripe and an info icon. Warnings use the warning colour, and errors use
+    the danger colour. The first letter is capitalized by CSS only.
+  - Notifications expire on the controller's timer, and at most three show.
+  - Under `prefers-reduced-motion`, the spinner, the bar, and the entry and
+    exit fades do not animate.
 
 ### Right inspector (foldable)
 

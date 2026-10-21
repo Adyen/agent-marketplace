@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import type { Configuration, SourceDescription, SourceInput } from './api/client'
 import type { WorkspaceController } from './controller'
+import { operationLabel } from './feedback'
 import GuiIcon from './GuiIcon.vue'
 import GuiModal from './GuiModal.vue'
 import SourceForm from './SourceForm.vue'
@@ -85,7 +86,7 @@ function cancel() {
   <GuiModal v-model:open="open" title="Sources" icon="folder">
     <p v-if="actionError" role="alert" class="settings__error">{{ actionError }}</p>
     <p v-for="d in mutationErrors" :key="d.code" role="alert" class="settings__error">{{ d.message }}</p>
-    <p v-if="controller.state.operation" role="status">{{ controller.state.operation.kind }} running</p>
+    <p v-if="controller.state.operation" role="status">{{ operationLabel(controller.state.operation.kind) }}…</p>
     <p v-if="configuration == null && !actionError" role="status">Loading sources…</p>
     <template v-if="configuration != null">
       <p v-if="!configuration.editable" role="status">The user configuration is not editable.</p>

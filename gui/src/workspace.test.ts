@@ -742,11 +742,12 @@ describe('WorkspaceView', () => {
     push(event({ sequence: 1, generation: 2, operation, payload: snapshot([row('a')], { diagnostics: [diagnostic] }) }))
     push(event({ sequence: 2, generation: 2, operation, type: 'progress', payload: { progressSequence: 1, phase: 'resolve' } }))
     await tick()
-    expect(wrapper.text()).toContain('update resolve')
+    expect(wrapper.get('.gui-toast--progress .gui-toast__title').text()).toBe('Updating')
+    expect(wrapper.get('.gui-toast--progress .gui-toast__detail').text()).toBe('resolve')
     push(event({ sequence: 3, generation: 2, operation, type: 'notification', payload: { severity: 'warning', message: 'Still working' } }))
     push(event({ sequence: 4, generation: 2, operation, type: 'progress', payload: { progressSequence: 2, phase: 'materialize' } }))
     await tick()
-    expect(wrapper.text()).toContain('update materialize')
+    expect(wrapper.get('.gui-toast--progress .gui-toast__detail').text()).toBe('materialize')
     expect(controller.state.operation).toEqual(operation)
     expect(controller.state.diagnostics).toEqual([diagnostic])
     expect(wrapper.find('button[aria-label="Update"]').attributes('disabled')).toBeDefined()
@@ -759,20 +760,20 @@ describe('WorkspaceView', () => {
     const { controller, wrapper } = mountWorkspace(client)
     const operation: OperationRef = { id: 30, kind: 'update' }
     const diagnostic = { severity: 'warning' as const, category: 'catalog', code: 'retained', message: 'Retained warning' }
-    const notifications = () => wrapper.findAll('ul[aria-label="Notifications"] li')
+    const notifications = () => wrapper.findAll('[aria-label="Notifications"] > li')
     const expectCurrentFeedback = () => {
       expect(controller.state.operation).toEqual(operation)
       expect(controller.state.phase).toBe('materialize')
       expect(controller.state.diagnostics).toEqual([diagnostic])
       expect(wrapper.find('ul[aria-label="Diagnostics"]').text()).toContain('Retained warning')
-      expect(wrapper.findAll('[role="status"]').map((status) => status.text())).toContain('update materialize')
+      expect(wrapper.get('.gui-toast--progress .gui-toast__detail').text()).toBe('materialize')
       expect(notifications()).toHaveLength(0)
     }
 
     push(event({ sequence: 1, generation: 2, operation, payload: snapshot([row('a')], { operation, diagnostics: [diagnostic] }) }))
     push(event({ sequence: 2, generation: 2, operation, type: 'progress', payload: { progressSequence: 1, phase: 'resolve' } }))
     await tick()
-    expect(wrapper.findAll('[role="status"]').map((status) => status.text())).toContain('update resolve')
+    expect(wrapper.get('.gui-toast--progress .gui-toast__detail').text()).toBe('resolve')
     expect(controller.state.operation).toEqual(operation)
     expect(controller.state.diagnostics).toEqual([diagnostic])
     expect(wrapper.find('ul[aria-label="Diagnostics"]').text()).toContain('Retained warning')
@@ -824,11 +825,12 @@ describe('WorkspaceView', () => {
     push(event({ sequence: 2, generation: 2, operation, payload: snapshot([row('a')]) }))
     push(event({ sequence: 3, generation: 2, operation, type: 'progress', payload: { progressSequence: 1, phase: '' } }))
     await tick()
-    expect(wrapper.text()).toContain('sync running')
+    expect(wrapper.get('.gui-toast--progress .gui-toast__title').text()).toBe('Syncing')
+    expect(wrapper.get('.gui-toast--progress .gui-toast__detail').text()).toBe('Working…')
 
     push(event({ sequence: 4, generation: 2, operation, type: 'progress', payload: { progressSequence: 2, phase: 'materialize' } }))
     await tick()
-    expect(wrapper.text()).toContain('sync materialize')
+    expect(wrapper.get('.gui-toast--progress .gui-toast__detail').text()).toBe('materialize')
 
     push(
       event({
@@ -940,7 +942,7 @@ describe('WorkspaceView', () => {
     vi.useFakeTimers()
     const { client, push } = fakeClient()
     const { controller, wrapper } = mountWorkspace(client)
-    const notifications = () => wrapper.findAll('ul[aria-label="Notifications"] li')
+    const notifications = () => wrapper.findAll('[aria-label="Notifications"] > li')
     const expectRequiredControlsUsable = () => {
       for (const label of ['Sync', 'Update']) {
         const control = wrapper.find(`button[aria-label="${label}"]`)
