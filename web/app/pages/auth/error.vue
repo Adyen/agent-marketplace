@@ -51,7 +51,8 @@ useHead(computed(() => ({
   display: flex;
   width: 100%;
   max-width: 34rem;
-  border-block: 1px solid var(--ui-border);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius);
   background: var(--ui-bg);
   overflow: hidden;
 }

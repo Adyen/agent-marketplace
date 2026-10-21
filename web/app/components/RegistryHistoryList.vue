@@ -8,8 +8,8 @@ defineProps<{
 
 <template>
   <div v-if="occurrences.length" class="relative">
-    <ol aria-label="Registry occurrence timeline" class="border-y border-default">
-      <li v-for="(occurrence, index) in occurrences" :key="`${occurrence.commit}-${occurrence.occurred_at}-${index}`" class="relative px-1 py-6 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-default">
+    <ol aria-label="Registry occurrence timeline" class="divide-y divide-default border-y border-default">
+      <li v-for="(occurrence, index) in occurrences" :key="`${occurrence.commit}-${occurrence.occurred_at}-${index}`" class="relative px-1 py-6">
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p class="text-sm font-semibold text-highlighted">Occurrence {{ occurrences.length - index }}</p>
