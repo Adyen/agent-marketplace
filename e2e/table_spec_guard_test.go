@@ -196,9 +196,6 @@ func appendedTableSpecCases(file *ast.File, fset *token.FileSet, fn *ast.FuncDec
 		if !ok || !isAppendCall(call) {
 			return true
 		}
-		if len(call.Args) < 2 {
-			return true
-		}
 		tagged := hasTableSpecTagBefore(file, fset, statement)
 		var outermost ast.Node
 		for _, loop := range loops {
