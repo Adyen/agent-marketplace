@@ -413,7 +413,7 @@ useHead({
 }
 
 .marketplace-intro__inner {
-  width: min(calc(100% - 2 * var(--am-marketplace-gutter)), var(--am-marketplace-content-max));
+  width: min(calc(100% - 2 * var(--am-page-gutter)), var(--am-content-max));
   max-width: none;
   margin: 0 auto;
   padding: 1.5rem 0 1rem;
@@ -440,7 +440,7 @@ useHead({
 }
 
 .marketplace-catalog__inner {
-  width: min(calc(100% - 2 * var(--am-marketplace-gutter)), var(--am-marketplace-content-max));
+  width: min(calc(100% - 2 * var(--am-page-gutter)), var(--am-content-max));
   max-width: none;
   margin: 0 auto;
   padding: 0;
@@ -600,7 +600,7 @@ useHead({
 
 .marketplace-footer > div {
   display: flex;
-  width: min(calc(100% - 2 * var(--am-marketplace-gutter)), var(--am-marketplace-content-max));
+  width: min(calc(100% - 2 * var(--am-page-gutter)), var(--am-content-max));
   max-width: none;
   flex-direction: column;
   gap: 0.5rem;

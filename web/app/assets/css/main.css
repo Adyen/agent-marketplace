@@ -10,8 +10,8 @@
  *
  *   1. Saturated colour means an action or verdict. A coloured status mark in a
  *      row is always a claim about whether that revision can be installed.
- *   2. Identity is typeset in mono. A coordinate, a digest and a command are
- *      the things a reader compares character by character or retypes.
+ *   2. Mono is reserved for commands, digests, paths, and code that readers
+ *      compare character by character or retype.
  *
  * Shared colors and the Nuxt UI mappings live in design-tokens.css. This file
  * owns Marketplace-specific document styling.
@@ -20,10 +20,6 @@
 html {
   overflow-y: scroll;
   scrollbar-gutter: stable;
-}
-
-.am-site-nav {
-  max-width: var(--am-marketplace-content-max);
 }
 
 button:not(:disabled),
@@ -58,7 +54,7 @@ button:disabled,
 }
 
 .marketplace-record-main {
-  width: min(calc(100% - 2 * var(--am-marketplace-gutter)), var(--am-marketplace-content-max));
+  width: min(calc(100% - 2 * var(--am-page-gutter)), var(--am-content-max));
   margin-inline: auto;
   padding-block: clamp(1.5rem, 4vw, 3rem) 5rem;
 }

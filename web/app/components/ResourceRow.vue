@@ -56,7 +56,7 @@ const installationCountLabel = computed(() =>
           <span class="resource-row__kind shrink-0 text-muted">{{ kindLabel(item.kind) }}</span>
           <span class="resource-row__metadata-separator text-dimmed" aria-hidden="true">·</span>
           <h2 class="resource-row__coordinate relative z-10 min-w-0 truncate">
-            <NuxtLink v-if="browserUrl" :to="browserUrl" :aria-label="`${registryLabel(item)}/${item.name}`" class="resource-coordinate-link relative cursor-pointer rounded text-highlighted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+            <NuxtLink v-if="browserUrl" :to="browserUrl" :aria-label="`${registryLabel(item)}/${item.name}`" class="resource-coordinate-link relative cursor-pointer rounded text-highlighted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--am-color-action-focus-ring)">
               <span class="resource-row__registry text-muted">{{ registryLabel(item) }}</span><span class="resource-coordinate__separator am-brand-slash am-brand-slash--separator">/</span><span class="resource-row__name text-highlighted">{{ item.name }}</span>
             </NuxtLink>
             <span v-else :aria-label="`${registryLabel(item)}/${item.name}`"><span class="resource-row__registry text-muted">{{ registryLabel(item) }}</span><span class="resource-coordinate__separator am-brand-slash am-brand-slash--separator">/</span><span class="resource-row__name text-highlighted">{{ item.name }}</span></span>
@@ -78,7 +78,7 @@ const installationCountLabel = computed(() =>
               type="button"
               :aria-label="`${availability.label} for ${item.name}. More information`"
               :class="statusTextClass"
-              class="resource-row__availability inline-flex min-h-11 cursor-help items-center gap-1.5 whitespace-nowrap rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+              class="resource-row__availability inline-flex min-h-11 cursor-help items-center gap-1.5 whitespace-nowrap rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--am-color-action-focus-ring)"
             >
               <span>{{ availability.label }}</span>
               <UIcon name="i-lucide-info" class="size-4 shrink-0" aria-hidden="true" />
