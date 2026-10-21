@@ -9,4 +9,4 @@
 ## 3. Documentation and archive
 
 - [x] 3.1 Update the telemetry and CLI reference pages under `site/docs`; verify `make spec-check` passes
-- [ ] 3.2 Run `openspec archive remove-diagnostic-accept-sensitive-data --yes`
+- [x] 3.2 Run `openspec archive remove-diagnostic-accept-sensitive-data --yes`
