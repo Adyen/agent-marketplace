@@ -238,12 +238,28 @@ const defaultScenario = (): PreviewScenario => ({
     organizationTargets: ['devin'],
     supportedTargets: ['devin', 'claude', 'codex'],
     userSources: [
-      { id: 'src-local', kind: 'directory', location: '/home/dev/workspaces/agent-platform/resources/skills', path: '', ref: '', sourceHarness: '' },
-      { id: 'src-team', kind: 'git', location: 'https://git.example.com/platform/agent-skills.git', path: 'skills', ref: 'main', sourceHarness: '' },
-      { id: 'src-hub', kind: 'marketplace', location: 'https://marketplace.example.com/api', path: '', ref: '', sourceHarness: '' },
+      { id: 'src-local', kind: 'directory', location: '/home/dev/workspaces/agent-platform/resources/skills', path: '', ref: '', sourceHarness: '', rowSourceId: '' },
+      {
+        id: 'src-team',
+        kind: 'git',
+        location: 'https://git.example.com/platform/team-tools.git',
+        path: '',
+        ref: 'main',
+        sourceHarness: '',
+        rowSourceId: 'https://git.example.com/platform/team-tools.git\x01main\x01',
+      },
+      { id: 'src-hub', kind: 'marketplace', location: 'https://marketplace.example.com/api', path: '', ref: '', sourceHarness: '', rowSourceId: '' },
     ],
     organizationSources: [
-      { id: 'src-org', kind: 'directory', location: '/etc/agent-marketplace/registry', path: '', ref: '', sourceHarness: '' },
+      {
+        id: 'src-org',
+        kind: 'git',
+        location: 'https://git.example.com/platform/core.git',
+        path: '',
+        ref: 'main',
+        sourceHarness: '',
+        rowSourceId: 'https://git.example.com/platform/core.git\x01main\x01',
+      },
     ],
   }),
 })

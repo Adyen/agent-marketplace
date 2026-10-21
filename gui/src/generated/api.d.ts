@@ -797,6 +797,8 @@ export interface components {
             path: string;
             /** @description Declared Git ref, or empty. */
             ref: string;
+            /** @description Identity that snapshot rows from this source carry in row source.id, for matching a configured source to its rows. Empty for marketplace sources, which can map to many registries. */
+            rowSourceId: string;
             /** @description Declared source layout, or empty. */
             sourceHarness: string;
         };

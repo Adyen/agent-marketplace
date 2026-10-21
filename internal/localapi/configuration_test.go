@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/session"
@@ -236,6 +237,93 @@ func TestUserConfigurationSourceProjection(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".devin")); !os.IsNotExist(err) {
 		t.Fatal("metadata read materialized native output")
+	}
+}
+
+func TestConfiguredSourceRowSourceIDMatchesSnapshotRows(t *testing.T) {
+	home, _ := newUserAPIFixture(t, false)
+	dirSource := t.TempDir()
+	writeFile(t, filepath.Join(dirSource, "dir-skill", "SKILL.md"), "---\nname: dir-skill\ndescription: Dir\n---\n# Dir\n")
+	base := t.TempDir()
+	work := filepath.Join(base, "work")
+	bare := filepath.Join(base, "repo.git")
+	sourceGit(t, "", "init", "--initial-branch=main", work)
+	writeFile(t, filepath.Join(work, "git-skill", "SKILL.md"), "---\nname: git-skill\ndescription: Git\n---\n# Git\n")
+	sourceGit(t, work, "add", ".")
+	sourceGit(t, work, "commit", "-m", "seed")
+	sourceGit(t, "", "clone", "--bare", work, bare)
+	gitLocation := "file://" + filepath.ToSlash(bare)
+	writeFile(t, filepath.Join(home, ".agents", "config.yaml"),
+		"apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  local: {directory: "+dirSource+"}\n  remote: {git: "+gitLocation+", ref: main}\nresources:\n  local: {all: true}\n  remote: {all: true}\n")
+	config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+
+	api, err := NewUser(context.Background(), home, session.DependencyLifecycle{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(api.Close)
+
+	status, decoded := postRaw(t, api, "/api/configuration", "")
+	if status != http.StatusOK {
+		t.Fatalf("configuration status = %d, body = %v", status, decoded)
+	}
+	data, err := json.Marshal(decoded["userSources"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var configured []struct {
+		Kind        string `json:"kind"`
+		RowSourceID string `json:"rowSourceId"`
+	}
+	if err := json.Unmarshal(data, &configured); err != nil {
+		t.Fatal(err)
+	}
+	rowSourceByName := map[string]string{}
+	deadline := time.Now().Add(60 * time.Second)
+	synced := false
+	for {
+		snapshot := postSnapshot(t, api)
+		clear(rowSourceByName)
+		for _, row := range snapshot.Rows {
+			rowSourceByName[row.Name] = row.Source.ID
+		}
+		_, hasDir := rowSourceByName["dir-skill"]
+		_, hasGit := rowSourceByName["git-skill"]
+		if snapshot.Stage == "final" && snapshot.Operation == nil {
+			if hasDir && hasGit {
+				break
+			}
+			if !synced {
+				status, body := postRaw(t, api, "/api/actions", `{"action":"sync"}`)
+				switch status {
+				case http.StatusAccepted:
+					synced = true
+				case http.StatusBadRequest:
+				default:
+					t.Fatalf("sync status = %d, body = %v", status, body)
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("rows after sync = %v", rowSourceByName)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	wantByKind := map[string]string{"directory": rowSourceByName["dir-skill"], "git": rowSourceByName["git-skill"]}
+	if len(configured) != len(wantByKind) {
+		t.Fatalf("userSources = %+v, want one per kind", configured)
+	}
+	for _, source := range configured {
+		want, ok := wantByKind[source.Kind]
+		if !ok {
+			t.Fatalf("unexpected source kind %q", source.Kind)
+		}
+		if source.RowSourceID != want {
+			t.Fatalf("%s rowSourceId = %q, rows from that source carry %q", source.Kind, source.RowSourceID, want)
+		}
+	}
+	if wantByKind["directory"] == "" || wantByKind["git"] == "" {
+		t.Fatalf("snapshot rows by name = %v, want dir-skill and git-skill", rowSourceByName)
 	}
 }
 

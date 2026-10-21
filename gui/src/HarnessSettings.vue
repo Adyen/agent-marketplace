@@ -4,10 +4,10 @@ import type { Configuration } from './api/client'
 import { useAppearance, type AppearancePreference } from './appearance'
 import GuiModal from './GuiModal.vue'
 import type { WorkspaceController } from './controller'
-import SourceList from './SourceList.vue'
 
 const props = defineProps<{ controller: WorkspaceController }>()
 const open = defineModel<boolean>('open', { default: false })
+const emit = defineEmits<{ manageSources: [] }>()
 
 const draft = ref<Set<string>>(new Set())
 const loading = ref(false)
@@ -84,6 +84,11 @@ function cancel() {
   open.value = false
 }
 
+function manageSources() {
+  cancel()
+  emit('manageSources')
+}
+
 async function save() {
   const order = options.value.map((option) => option.id)
   const targets = order.filter((id) => draft.value.has(id))
@@ -102,13 +107,13 @@ async function save() {
 </script>
 
 <template>
-  <GuiModal v-model:open="open" title="Harness targets" icon="gear">
+  <GuiModal v-model:open="open" title="Settings" icon="gear">
     <p v-if="actionError" role="alert" class="settings__error">{{ actionError }}</p>
     <p v-if="configuration == null && !actionError" role="status">Loading settings…</p>
     <template v-if="configuration != null">
       <p v-if="!configuration.editable" role="status">The user configuration is not editable.</p>
       <fieldset class="settings__group" :disabled="fieldsDisabled">
-        <legend>User targets</legend>
+        <legend>Harness targets</legend>
         <label
           v-for="option in options"
           :key="option.id"
@@ -127,6 +132,7 @@ async function save() {
       <section v-if="configuration.organizationTargets.length > 0" class="settings__group" aria-label="Organization targets">
         <h3>Organization targets</h3>
         <p>Managed by your organization; read-only.</p>
+        <p>Organization targets always apply, in addition to yours.</p>
         <ul>
           <li v-for="id in configuration.organizationTargets" :key="id" class="mono">{{ id }} <span class="settings__badge">ORG</span></li>
         </ul>
@@ -153,15 +159,21 @@ async function save() {
         </div>
       </fieldset>
 
-      <SourceList title="User sources" :sources="configuration.userSources" :organization="false" />
-      <SourceList title="Organization sources" :sources="configuration.organizationSources" :organization="true" />
-
       <section v-if="configuration.managedOutsideGUI.length > 0" class="settings__group settings__card" aria-label="Managed outside the GUI">
         <h3>Managed outside the GUI</h3>
         <ul>
           <li v-for="label in configuration.managedOutsideGUI" :key="label">{{ label }} — managed outside the GUI</li>
         </ul>
       </section>
+
+      <UButton
+        label="Manage sources"
+        aria-label="Manage sources"
+        class="gui-button--secondary"
+        color="neutral"
+        variant="soft"
+        @click="manageSources"
+      />
     </template>
     <template #footer>
       <UButton

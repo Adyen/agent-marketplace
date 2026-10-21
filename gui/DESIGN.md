@@ -573,3 +573,102 @@ wins.
    - Screenshots in light and dark at 1440×900 and 900×700, with each panel
      open and folded, and with each modal open.
    - A keyboard-only pass over every control.
+
+## Refinements from the third review
+
+A third review (1280×832 and 900×700, light and dark, a 40-character search
+query, an empty workspace) found the problems below. Where a rule here
+conflicts with an earlier section, this section wins.
+
+### Source form and source list
+
+- *Observed*: the Location, Ref, and Subpath inputs have no border and a
+  transparent background, so the fields are invisible. The source kind is a
+  column of radio rows above the form.
+- *Rule*: inputs use the shared `.gui-input` class: 40 px high with a 12 px
+  radius in modals, a 1 px `--gui-line` border, a `--gui-canvas` background,
+  and `--gui-ink-3` placeholders. Each field is a label above a full-width
+  input. Placeholders are `~/code/my-registry`,
+  `https://github.com/org/repo.git`, and `https://marketplace.example.com`
+  for the location, `main` for Ref, and `optional` for Subpath. The source
+  kind is a `.segmented` control, as in Appearance.
+- *Observed*: each source is a row of text with a labelled Remove button. The
+  footer button reads "Cancel", but the dialog applies each change at once.
+- *Rule*: each source is a card (`--gui-s0100`, 12 px radius, 12 px padding)
+  with the kind icon, the location in mono (wrapping), and a `DIRECTORY`,
+  `GIT`, or `MARKETPLACE` tag. A meta line in mono `--gui-ink-2` joins the
+  ref, the subpath, and `layout <harness>`, each when set, with ` · `, as in
+  `main · skills · layout devin`. Remove is a 28×28 trash icon button in
+  `--am-color-status-danger`. Organization sources carry an `ORG` tag and no
+  Remove. The modal has one solid button, "Done". "Add source" is the
+  secondary style.
+
+### Settings
+
+- *Observed*: Settings repeats the source lists that the Sources modal
+  already shows. Its title, "Harness targets", names only one of its
+  sections.
+- *Rule*: the title is "Settings". Its caps sections are "Harness targets"
+  (user targets, then organization targets with the note that they always
+  apply) and "Appearance". Sources are managed from a secondary
+  "Manage sources" button, which closes Settings and opens Sources.
+
+### Toolbar search
+
+- *Observed*: while editing, the search pill stays as an empty icon box
+  beside a separate input. After Enter the pill reverts to "Search ⌘K", and
+  the query sits in a status line that overflows into the Update button. The
+  title "Resources" clips at 900 px.
+- *Rule*: the pill and the input share one slot. While editing, the input
+  replaces the pill, with the search icon inside its box at about 14 rem.
+  When a query is applied, the pill shows the query, ellipsized at about
+  10 rem, and the local count, as in `review · 2`. The `role="status"`
+  element keeps its text and is visually hidden. The title never shrinks,
+  and the toolbar does not overlap at 900 px or 1280 px with a 40-character
+  query.
+
+### Modals
+
+- *Observed*: in Sources and Settings, the primary button scrolls below the
+  fold at 832 px height.
+- *Rule*: the modal header and footer stay fixed, and only the body scrolls.
+
+### Resource action dialog
+
+- *Observed*: Decline and Cancel do the same thing. When the plan fails,
+  the disabled "Confirm install" sits first, above "Retry plan".
+- *Rule*: Decline is removed. With a plan error and no plan, Confirm is not
+  rendered, so "Retry plan" is the first, solid button. When a plan exists,
+  Confirm stays first.
+
+### Resource rows
+
+- *Observed*: grouping by source repeats the registry on every row, and
+  grouping by kind repeats the kind.
+- *Rule*: when Group by or Then by is `source`, the registry column is
+  hidden and the name column takes its space. The kind column is hidden
+  when either axis is `kind`. Hidden columns keep their text for assistive
+  technology.
+- *Observed*: a broken, malformed, or stale row shows its group but not the
+  reason in its status.
+- *Rule*: such a row shows the reason as an inline tag after the name. The
+  reason is the part of the status after the first `": "`, or the whole
+  status when there is none. Broken uses danger text. Malformed and stale use
+  warning text. The tag never shrinks, and the name truncates first.
+
+### Empty states and sidebar
+
+- *Observed*: a workspace with no resources shows an empty list, and so does
+  a search with no matches.
+- *Rule*: a final snapshot with no resources shows a centered empty state,
+  "No resources yet", with a secondary "Add a source" button that opens
+  Sources. A search with no matches shows "No resources match “{query}”." in
+  `--gui-ink-3`. The sidebar omits the Groups section when there are no
+  groups.
+- *Observed*: a sidebar source shows its location, such as
+  `platform/agent-skills`, while the rows and group headers from that source
+  show the registry name, so the two do not match.
+- *Rule*: a configured source that has a matching row identity is labelled
+  with the rows' source label. Other sources keep the location label. The
+  full location stays in the tooltip and the accessible name.
+

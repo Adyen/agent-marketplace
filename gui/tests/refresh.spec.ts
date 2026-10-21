@@ -59,7 +59,7 @@ test('built GUI loads external user-config changes only on refresh triggers', as
     await expect(page.getByRole('option').filter({ hasText: 'solo' }).first()).toBeVisible({ timeout: 60_000 })
 
     const settingsButton = page.getByRole('button', { name: 'Settings' })
-    const dialog = page.getByRole('dialog', { name: 'Harness targets' })
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
     const saveTargets = dialog.getByRole('button', { name: 'Save targets' })
     const detail = page.locator('.workspace__detail')
     const sync = page.getByRole('button', { name: 'Sync', exact: true })

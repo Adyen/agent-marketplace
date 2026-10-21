@@ -256,7 +256,7 @@ test('built GUI keyboard input never opens a raw configuration editor', async ({
       }
     }
 
-    const settingsDialog = page.getByRole('dialog', { name: 'Harness targets' })
+    const settingsDialog = page.getByRole('dialog', { name: 'Settings' })
     await page.getByRole('button', { name: 'Settings', exact: true }).press('Enter')
     await expect(settingsDialog).toBeVisible()
     await settingsDialog.screenshot({ path: artifactPath(testInfo, 'no-editor-settings-open.png'), animations: 'disabled' })
@@ -277,7 +277,7 @@ test('built GUI keyboard input never opens a raw configuration editor', async ({
         await control.press('e')
       }
     }
-    await sourcesDialog.getByRole('button', { name: 'Cancel' }).press('Enter')
+    await sourcesDialog.getByRole('button', { name: 'Done' }).press('Enter')
     await expect(sourcesDialog).not.toBeVisible()
 
     await expect(page.locator('textarea')).toHaveCount(0)

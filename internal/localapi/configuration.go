@@ -33,6 +33,7 @@ type sourceDescriptionDTO struct {
 	Ref           string `json:"ref"`
 	Path          string `json:"path"`
 	SourceHarness string `json:"sourceHarness"`
+	RowSourceID   string `json:"rowSourceId"`
 }
 
 func (a *API) sourceID(scope string, desc config.SourceDescription) string {
@@ -45,14 +46,23 @@ func (a *API) sourceID(scope string, desc config.SourceDescription) string {
 func (a *API) projectSources(scope string, descs []config.SourceDescription) []sourceDescriptionDTO {
 	out := make([]sourceDescriptionDTO, 0, len(descs))
 	for _, desc := range descs {
-		out = append(out, sourceDescriptionDTO{
+		dto := sourceDescriptionDTO{
 			ID:            a.sourceID(scope, desc),
 			Kind:          string(desc.Kind),
 			Location:      redact.URL(desc.Location),
 			Ref:           desc.Ref,
 			Path:          desc.Path,
 			SourceHarness: desc.SourceHarness,
-		})
+		}
+		// Rows key on the raw registry URL, so a location with redacted parts has no safe key to expose.
+		switch desc.Kind {
+		case config.V4SourceGit, config.V4SourceDirectory:
+			if dto.Location == desc.Location {
+				entry := sourceEntry(desc)
+				dto.RowSourceID = session.RegistryIdentityKey(entry.URL, entry.Ref, entry.Path)
+			}
+		}
+		out = append(out, dto)
 	}
 	return out
 }

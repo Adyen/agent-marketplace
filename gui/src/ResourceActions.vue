@@ -30,6 +30,7 @@ function actionName(value: ResourceAction): string {
 const title = computed(() => `${actionName(action.value)} Resource`)
 const iconName = computed<IconName>(() => (action.value === 'install' || action.value === 'restore' ? 'plus' : 'minus'))
 const confirmLabel = computed(() => `Confirm ${actionName(action.value).toLowerCase()}`)
+const showConfirm = computed(() => state.value?.error == null || state.value.plan != null)
 const canConfirm = computed(() => {
   const current = state.value
   const plan = current?.plan
@@ -78,7 +79,13 @@ function close() {
       </label>
     </div>
     <template #footer>
-      <UButton :label="confirmLabel" :aria-label="confirmLabel" :disabled="!canConfirm" @click="controller.confirmResourceAction()" />
+      <UButton
+        v-if="showConfirm"
+        :label="confirmLabel"
+        :aria-label="confirmLabel"
+        :disabled="!canConfirm"
+        @click="controller.confirmResourceAction()"
+      />
       <UButton
         v-if="state?.error"
         label="Retry plan"
@@ -88,7 +95,6 @@ function close() {
         :disabled="state.loading || controller.resourceActionSubmitting"
         @click="controller.retryResourceActionPlan()"
       />
-      <UButton label="Decline" aria-label="Decline" color="neutral" variant="outline" :disabled="controller.resourceActionSubmitting" @click="close" />
       <UButton label="Cancel" aria-label="Cancel" color="neutral" variant="outline" :disabled="controller.resourceActionSubmitting" @click="close" />
     </template>
   </GuiModal>

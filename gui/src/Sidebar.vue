@@ -22,6 +22,7 @@ const props = defineProps<{
   pendingCount: number
   pendingSectionId: string
   sources: SidebarSource[]
+  rowSourceLabels: ReadonlyMap<string, string>
   harnesses: string[]
   latestVersion: string
 }>()
@@ -57,6 +58,11 @@ const sourceIcons: Record<SourceDescription['kind'], IconName> = {
   directory: 'folder',
   git: 'branch',
   marketplace: 'globe',
+}
+
+function sourceName(source: SourceDescription): string {
+  const rowLabel = source.rowSourceId === '' ? undefined : props.rowSourceLabels.get(source.rowSourceId)
+  return rowLabel || sourceLabel(source)
 }
 
 function groupTone(group: SidebarGroup): 'warning' | 'danger' | 'signal' | null {
@@ -113,7 +119,7 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | 'signal' | null 
       </button>
     </nav>
 
-    <section class="gui-sidebar__section" aria-label="Groups">
+    <section v-if="groups.length > 0" class="gui-sidebar__section" aria-label="Groups">
       <h2 class="gui-caps">Groups</h2>
       <ul class="gui-sidebar__list">
         <li v-for="group in groups" :key="group.id">
@@ -152,7 +158,7 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | 'signal' | null 
             @click="emit('openSources')"
           >
             <GuiIcon :name="sourceIcons[entry.source.kind]" />
-            <span class="gui-source-row__location">{{ sourceLabel(entry.source) }}</span>
+            <span class="gui-source-row__location">{{ sourceName(entry.source) }}</span>
             <span v-if="entry.organization" class="gui-tag">ORG</span>
           </button>
         </li>

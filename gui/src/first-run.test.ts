@@ -479,8 +479,8 @@ describe('First-run setup', () => {
     await setSourceField('Source subpath', 'skills')
     dialogButton('Add source').click()
     await tick()
-    expect(dialog().querySelector('[aria-label="Pending sources"]')?.textContent).toContain('Ref main')
-    expect(dialog().querySelector('[aria-label="Pending sources"]')?.textContent).toContain('Subpath skills')
+    expect(dialog().querySelector('[aria-label="Pending sources"]')?.textContent).toContain('main')
+    expect(dialog().querySelector('[aria-label="Pending sources"]')?.textContent).toContain('skills')
     expect(client.configure).not.toHaveBeenCalled()
 
     const endpoint = 'https://marketplace.example/services/catalog'
@@ -516,9 +516,9 @@ describe('First-run setup', () => {
   })
 
   const organizationSourceKinds = [
-    { kind: 'directory', source: { id: 'org-dir', kind: 'directory', location: '/org/directory', ref: '', path: '', sourceHarness: '' } },
-    { kind: 'git', source: { id: 'org-git', kind: 'git', location: 'https://org.example/repo.git', ref: 'main', path: '', sourceHarness: '' } },
-    { kind: 'marketplace', source: { id: 'org-marketplace', kind: 'marketplace', location: 'https://org.example/services/catalog', ref: '', path: '', sourceHarness: '' } },
+    { kind: 'directory', source: { id: 'org-dir', kind: 'directory', location: '/org/directory', ref: '', path: '', sourceHarness: '', rowSourceId: '' } },
+    { kind: 'git', source: { id: 'org-git', kind: 'git', location: 'https://org.example/repo.git', ref: 'main', path: '', sourceHarness: '', rowSourceId: '' } },
+    { kind: 'marketplace', source: { id: 'org-marketplace', kind: 'marketplace', location: 'https://org.example/services/catalog', ref: '', path: '', sourceHarness: '', rowSourceId: '' } },
   ] as const
 
   // spec: gui-first-run/organization-sources-skip-the-source-step
@@ -628,7 +628,7 @@ describe('First-run setup', () => {
     const { controller, wrapper } = mountWorkspace(client)
     push(event({ sequence: 1 }))
     await tick()
-    const directory = { id: 'first-directory-id', kind: 'directory' as const, location: '/first-directory', ref: '', path: '', sourceHarness: '' }
+    const directory = { id: 'first-directory-id', kind: 'directory' as const, location: '/first-directory', ref: '', path: '', sourceHarness: '', rowSourceId: '' }
     const afterInit = firstRunConfiguration({
       firstRun: false,
       canInitialize: false,

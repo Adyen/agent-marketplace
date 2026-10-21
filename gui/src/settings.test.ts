@@ -80,22 +80,13 @@ describe('Harness settings dialog', () => {
   })
 
   // spec: gui-configuration/organization-sources-are-read-only
-  it('lists declared user and organization sources as read-only text', async () => {
+  it('keeps source lists out of Settings and hands off to the Sources modal', async () => {
     const { client, push } = settingsClient({
       userSources: [
-        {
-          id: 'user-git',
-          kind: 'git',
-          location: 'https://example.com/repo.git',
-          ref: 'main',
-          path: 'sub/dir',
-          sourceHarness: 'claude',
-        },
-        { id: 'user-dir', kind: 'directory', location: '/var/regs', ref: '', path: '', sourceHarness: '' },
-        { id: 'user-mp', kind: 'marketplace', location: 'https://market.example', ref: '', path: '', sourceHarness: '' },
+        { id: 'user-dir', kind: 'directory', location: '/var/regs', ref: '', path: '', sourceHarness: '', rowSourceId: '' },
       ],
       organizationSources: [
-        { id: 'org-dir', kind: 'directory', location: '/opt/org-regs', ref: '', path: '', sourceHarness: '' },
+        { id: 'org-dir', kind: 'directory', location: '/opt/org-regs', ref: '', path: '', sourceHarness: '', rowSourceId: '' },
       ],
     })
     const { wrapper } = mountWorkspace(client)
@@ -104,32 +95,17 @@ describe('Harness settings dialog', () => {
 
     await openSettings(wrapper)
     const dialog = document.body.querySelector('[role="dialog"]')!
+    expect(dialog.querySelector('.gui-modal__frame')?.getAttribute('aria-label')).toBe('Settings')
+    expect(dialog.querySelector('[aria-label="User sources"]')).toBeNull()
+    expect(dialog.querySelector('[aria-label="Organization sources"]')).toBeNull()
+    expect(dialog.textContent).not.toContain('/var/regs')
 
-    const userSection = dialog.querySelector('[aria-label="User sources"]')
-    expect(userSection).not.toBeNull()
-    expect(userSection!.textContent).toContain('Git registry')
-    expect(userSection!.textContent).toContain('Directory registry')
-    expect(userSection!.textContent).toContain('Marketplace endpoint')
-    expect(userSection!.textContent).toContain('https://example.com/repo.git')
-    expect(userSection!.textContent).toContain('main')
-    expect(userSection!.textContent).toContain('sub/dir')
-    expect(userSection!.textContent).toContain('claude')
-    expect(userSection!.textContent).toContain('/var/regs')
-    expect(userSection!.textContent).toContain('https://market.example')
-    expect(userSection!.querySelectorAll('button, input, select, [role="checkbox"]')).toHaveLength(0)
-
-    const orgSection = dialog.querySelector('[aria-label="Organization sources"]')
-    expect(orgSection).not.toBeNull()
-    expect(orgSection!.textContent).toContain('Managed by your organization; read-only.')
-    expect(orgSection!.textContent).toContain('Directory registry')
-    expect(orgSection!.textContent).toContain('/opt/org-regs')
-    expect(orgSection!.querySelectorAll('button, input, [role="checkbox"], a')).toHaveLength(0)
-
-    const cancel = Array.from(dialog.querySelectorAll<HTMLElement>('button')).find(
-      (b) => b.textContent === 'Cancel',
-    )!
-    cancel.click()
+    const manage = Array.from(dialog.querySelectorAll<HTMLElement>('button')).find((b) => b.textContent?.trim() === 'Manage sources')!
+    manage.click()
     await tick()
+    expect(document.body.querySelector('.gui-modal__frame[aria-label="Settings"]')).toBeNull()
+    const sources = document.body.querySelector('.gui-modal__frame[aria-label="Sources"]')!
+    expect(sources.querySelector('[aria-label="Organization sources"]')?.textContent).toContain('/opt/org-regs')
     expect(client.configure).not.toHaveBeenCalled()
     expect(client.action).not.toHaveBeenCalled()
   })
@@ -137,23 +113,22 @@ describe('Harness settings dialog', () => {
   // spec: gui-configuration/organization-sources-are-read-only
   it('renders hostile source declarations as inert text', async () => {
     const hostile = '<img src=x onerror=alert(1)>'
-    const hostileLayout = '<script>alert(1)</script>'
     const { client, push } = settingsClient({
       organizationSources: [
-        { id: 'org-hostile', kind: 'directory', location: hostile, ref: '', path: '', sourceHarness: hostileLayout },
+        { id: 'org-hostile', kind: 'directory', location: hostile, ref: '', path: '', sourceHarness: '<script>alert(1)</script>', rowSourceId: '' },
       ],
     })
     const { wrapper } = mountWorkspace(client)
     push(event({ sequence: 1 }))
     await tick()
 
-    await openSettings(wrapper)
+    await wrapper.find('button[aria-label="Sources"]').trigger('click')
+    await tick()
     const dialog = document.body.querySelector('[role="dialog"]')!
     const orgSection = dialog.querySelector('[aria-label="Organization sources"]')!
     expect(orgSection.querySelector('img')).toBeNull()
     expect(orgSection.querySelector('script')).toBeNull()
     expect(orgSection.textContent).toContain(hostile)
-    expect(orgSection.textContent).toContain(hostileLayout)
     expect(client.configure).not.toHaveBeenCalled()
   })
 

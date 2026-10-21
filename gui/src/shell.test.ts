@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { source } from './fixtures'
 import { event, fakeClient, mountWorkspace, row, snapshot, tick } from './test-support'
 
 const sidebarStorageKey = 'am-gui-sidebar'
@@ -229,5 +230,54 @@ describe('keyboard shortcuts', () => {
     await button(wrapper, 'Update').trigger('click')
     await tick()
     expect(client.action).toHaveBeenCalledWith('update')
+  })
+})
+
+describe('empty states and sidebar labels', () => {
+  it('shows the add-source empty state only after a final snapshot with no resources', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([], { stage: 'inventory' }) }))
+    await tick()
+    expect(wrapper.find('.gui-empty').exists()).toBe(false)
+
+    push(event({ sequence: 2, payload: snapshot([]) }))
+    await tick()
+    expect(wrapper.get('.gui-empty').text()).toContain('No resources yet')
+    await wrapper.get('button[aria-label="Add a source"]').trigger('click')
+    await tick()
+    expect(document.body.querySelector('.gui-modal__frame[aria-label="Sources"]')).not.toBeNull()
+  })
+
+  it('omits the Groups section when there are no groups', async () => {
+    const { wrapper } = await mountShell([])
+    expect(wrapper.find('section[aria-label="Groups"]').exists()).toBe(false)
+    expect(wrapper.find('.gui-sidebar').text()).not.toContain('Groups')
+  })
+
+  it('labels a configured source with its rows label when the identities match, else with its location label', async () => {
+    const { client, push } = fakeClient({
+      configuration: {
+        userSources: [
+          source({ id: 'src-dir', kind: 'directory', location: '/home/dev/platform/agent-skills', rowSourceId: 'dir-key' }),
+          source({ id: 'src-git', kind: 'git', location: 'https://github.com/org/tools.git', ref: 'main', rowSourceId: 'git-unmatched' }),
+        ],
+      },
+    })
+    const { wrapper } = mountWorkspace(client)
+    push(
+      event({
+        sequence: 1,
+        payload: snapshot([row('a', { source: { id: 'dir-key', label: 'platform registry' } })]),
+      }),
+    )
+    await tick()
+
+    const dirRow = wrapper.get('button[aria-label="Open source /home/dev/platform/agent-skills"]')
+    expect(dirRow.text()).toContain('platform registry')
+    expect(dirRow.attributes('title')).toBe('/home/dev/platform/agent-skills')
+    const gitRow = wrapper.get('button[aria-label="Open source https://github.com/org/tools.git"]')
+    expect(gitRow.text()).toContain('org/tools')
+    expect(gitRow.attributes('title')).toBe('https://github.com/org/tools.git')
   })
 })

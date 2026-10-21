@@ -266,7 +266,7 @@ test('built GUI traverses shell, resource, sources, settings, and quit controls 
 
     await tabTo(page, settingsButton, 'Settings button', actions)
     await pressKey(page, 'Enter', 'Open Settings', actions)
-    const settingsDialog = page.getByRole('dialog', { name: 'Harness targets' })
+    const settingsDialog = page.getByRole('dialog', { name: 'Settings' })
     await expect(settingsDialog).toBeVisible()
     const devin = settingsDialog.getByRole('checkbox', { name: 'Target devin' })
     const claude = settingsDialog.getByRole('checkbox', { name: 'Target claude' })

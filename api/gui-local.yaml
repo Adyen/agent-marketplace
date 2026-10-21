@@ -940,11 +940,14 @@ components:
           $ref: '#/components/schemas/OperationRef'
     SourceDescription:
       type: object
-      required: [id, kind, location, ref, path, sourceHarness]
+      required: [id, kind, location, ref, path, sourceHarness, rowSourceId]
       properties:
         id:
           type: string
           description: Opaque stable identity derived from the typed source descriptor tuple under its scope; usable only with remove-source while the descriptor is unchanged.
+        rowSourceId:
+          type: string
+          description: Identity that snapshot rows from this source carry in row source.id, for matching a configured source to its rows. Empty for marketplace sources, which can map to many registries.
         kind:
           type: string
           enum: [git, directory, marketplace]

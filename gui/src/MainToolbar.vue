@@ -84,31 +84,39 @@ defineExpose({
       <h1 class="gui-pane-title">Resources</h1>
     </div>
     <div class="workspace__actions gui-toolbar__actions" role="toolbar" aria-label="Session actions">
+      <div v-if="searchEditing" class="gui-search-field">
+        <GuiIcon name="search" />
+        <input
+          id="workspace-search"
+          ref="searchInput"
+          class="gui-input gui-input--toolbar workspace__search-input"
+          type="search"
+          aria-label="Search resources"
+          :value="draftQuery"
+          @input="onSearchInput"
+          @keydown.enter.prevent="emit('confirmSearch')"
+          @keydown.esc.prevent="emit('cancelSearch')"
+        />
+      </div>
       <button
+        v-else
         ref="searchButton"
         type="button"
         class="gui-search-pill"
+        :class="{ 'gui-search-pill--applied': activeQuery !== '' }"
         aria-label="Search"
         :aria-expanded="searchEditing"
         @click="emit('openSearch')"
       >
         <GuiIcon name="search" />
-        <span v-if="!searchEditing">Search</span>
-        <kbd v-if="!searchEditing" class="gui-kbd">⌘K</kbd>
+        <span v-if="activeQuery !== ''" class="gui-search-pill__query">{{ activeQuery }}</span>
+        <span v-if="activeQuery !== ''" class="mono">· {{ localMatchCount }}</span>
+        <template v-else>
+          <span>Search</span>
+          <kbd class="gui-kbd">⌘K</kbd>
+        </template>
       </button>
-      <input
-        v-if="searchEditing"
-        id="workspace-search"
-        ref="searchInput"
-        class="workspace__search-input"
-        type="search"
-        aria-label="Search resources"
-        :value="draftQuery"
-        @input="onSearchInput"
-        @keydown.enter.prevent="emit('confirmSearch')"
-        @keydown.esc.prevent="emit('cancelSearch')"
-      />
-      <span v-if="activeQuery !== ''" class="workspace__search-status" role="status" aria-live="polite">
+      <span v-if="activeQuery !== ''" class="workspace__search-status gui-visually-hidden" role="status" aria-live="polite">
         {{ activeQuery }} · {{ localMatchCount }} local {{ localMatchCount === 1 ? 'match' : 'matches' }}
       </span>
       <button

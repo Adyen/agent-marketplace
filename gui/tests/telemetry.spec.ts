@@ -428,13 +428,13 @@ test('built GUI records detailed toggle cancellation spans for explicit Director
 
     dialog = await openWork40InstallPlan(page, actions)
     const declineResponse = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/telemetry')
-    await tabTo(page, dialog.getByRole('button', { name: 'Decline', exact: true }), 'Decline', actions, dialog)
+    await tabTo(page, dialog.getByRole('button', { name: 'Cancel', exact: true }), 'Cancel', actions, dialog)
     await page.keyboard.press('Enter')
     expect((await declineResponse).status()).toBe(204)
     await expect(dialog).toBeHidden()
     assertWork40FilesUnchanged(before, await captureWork40Files(paths))
     expect(events.count()).toBe(2)
-    actions.push('Dismissed the static Directory plan with Decline; one additional telemetry response and no protected-file changes')
+    actions.push('Dismissed the static Directory plan with Cancel; one additional telemetry response and no protected-file changes')
 
     dialog = await openWork40InstallPlan(page, actions)
     const cancelResponse = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/telemetry')

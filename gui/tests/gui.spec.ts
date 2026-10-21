@@ -144,7 +144,7 @@ test('built GUI saves Harness targets through the real user-scope core', async (
     const settingsButton = page.getByRole('button', { name: 'Settings' })
     await settingsButton.focus()
     await page.keyboard.press('Enter')
-    const dialog = page.getByRole('dialog', { name: 'Harness targets' })
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
     await expect(dialog).toBeVisible()
 
     const devin = page.getByRole('checkbox', { name: 'Target devin' })
@@ -153,11 +153,9 @@ test('built GUI saves Harness targets through the real user-scope core', async (
     await expect(dialog.getByText('Unsupported by this version')).toBeVisible()
     await expect(dialog.getByLabel('Organization targets')).toContainText('claude')
     await expect(dialog.getByLabel('Organization targets').getByRole('checkbox')).toHaveCount(0)
-    const orgSources = dialog.getByLabel('Organization sources')
-    await expect(orgSources).toContainText('Directory registry')
-    await expect(orgSources).toContainText('Managed by your organization; read-only.')
-    await expect(orgSources.getByRole('button')).toHaveCount(0)
-    await expect(dialog.getByLabel('User sources')).toContainText('Directory registry')
+    await expect(dialog.getByLabel('Organization sources')).toHaveCount(0)
+    await expect(dialog.getByLabel('User sources')).toHaveCount(0)
+    await expect(dialog.getByRole('button', { name: 'Manage sources' })).toBeVisible()
     await expect(dialog).toContainText('managed outside the GUI')
 
     await devin.focus()

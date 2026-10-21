@@ -235,3 +235,58 @@ describe('View menu', () => {
     expect(wrapper.find(`[role="option"][id="row-${alpha.id}"]`).exists()).toBe(false)
   })
 })
+
+describe('redundant columns and problem reasons', () => {
+  const broken = row('broken-skill', { group: 'broken', status: 'broken: missing SKILL.md', checked: false, source: TEAM_MAIN, registry: 'team' })
+  const stale = row('stale-skill', { group: 'stale', status: 'stale', source: TEAM_MAIN, registry: 'team' })
+
+  it('hides the registry column for a source axis and the kind column for a kind axis', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([alpha, bravo, charlie]) }))
+    await tick()
+
+    const registry = () => optionFor(wrapper, alpha.id).get('.workspace__registry')
+    const kind = () => optionFor(wrapper, alpha.id).get('.workspace__kind')
+    const columns = () => (optionFor(wrapper, alpha.id).element as HTMLElement).style.gridTemplateColumns
+
+    expect(registry().classes()).not.toContain('gui-visually-hidden')
+    expect(kind().classes()).not.toContain('gui-visually-hidden')
+    expect(columns()).toContain('24ch')
+
+    await chooseGroupBy(wrapper, 'source')
+    expect(registry().classes()).toContain('gui-visually-hidden')
+    expect(registry().text()).toBe('team')
+    expect(kind().classes()).not.toContain('gui-visually-hidden')
+    expect(columns()).not.toContain('24ch')
+    expect(columns()).toContain('10ch')
+
+    await chooseGroupBy(wrapper, 'status')
+    await chooseThenBy(wrapper, 'source')
+    expect(registry().classes()).toContain('gui-visually-hidden')
+
+    await chooseThenBy(wrapper, 'none')
+    await chooseGroupBy(wrapper, 'kind')
+    expect(kind().classes()).toContain('gui-visually-hidden')
+    expect(registry().classes()).not.toContain('gui-visually-hidden')
+    expect(columns()).not.toContain('10ch')
+    expect(columns()).toContain('24ch')
+  })
+
+  it('tags broken, malformed, and stale rows with their reason in the tone of their group', async () => {
+    const malformed = row('malformed-skill', { group: 'malformed', status: 'malformed: bad frontmatter', checked: false })
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([broken, malformed, stale, alpha]) }))
+    await tick()
+
+    const reason = (id: string) => optionFor(wrapper, id).find('.workspace__reason')
+    expect(reason(broken.id).text()).toBe('missing SKILL.md')
+    expect(reason(broken.id).classes()).toContain('workspace__reason--danger')
+    expect(reason(malformed.id).text()).toBe('bad frontmatter')
+    expect(reason(malformed.id).classes()).toContain('workspace__reason--warning')
+    expect(reason(stale.id).text()).toBe('stale')
+    expect(reason(stale.id).classes()).toContain('workspace__reason--warning')
+    expect(reason(alpha.id).exists()).toBe(false)
+  })
+})

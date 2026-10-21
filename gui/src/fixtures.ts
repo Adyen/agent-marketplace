@@ -1,4 +1,4 @@
-import type { Configuration, SessionEvent, Snapshot } from './api/client'
+import type { Configuration, SessionEvent, Snapshot, SourceDescription } from './api/client'
 import type { Row } from './controller'
 
 export function snapshot(rows: Row[] = [], overrides: Partial<Snapshot> = {}): Snapshot {
@@ -58,6 +58,19 @@ export function row(name: string, overrides: Partial<Row> = {}): Row {
 
 export function event(overrides: Partial<SessionEvent>): SessionEvent {
   return { type: 'snapshot', sequence: 0, generation: 1, operation: null, payload: snapshot(), ...overrides } as SessionEvent
+}
+
+export function source(overrides: Partial<SourceDescription> = {}): SourceDescription {
+  return {
+    id: 'src-1',
+    kind: 'directory',
+    location: '/home/dev/registry',
+    path: '',
+    ref: '',
+    sourceHarness: '',
+    rowSourceId: '',
+    ...overrides,
+  }
 }
 
 export function configuration(overrides: Partial<Configuration> = {}): Configuration {

@@ -90,10 +90,15 @@ watch(searchEditing, (isEditing, wasEditing) => {
 })
 
 watch(settingsOpen, (isOpen, wasOpen) => {
-  if (!isOpen && wasOpen) {
+  if (!isOpen && wasOpen && !sourcesOpen.value) {
     void nextTick(() => sidebar.value?.focusSettings())
   }
 })
+
+function openSourcesFromSettings() {
+  settingsOpen.value = false
+  sourcesOpen.value = true
+}
 
 watch(sourcesOpen, (isOpen, wasOpen) => {
   if (!isOpen && wasOpen) {
@@ -265,6 +270,7 @@ const navGroups = computed<SidebarGroup[]>(() =>
   sectionViews.value.map((section) => ({ id: section.path, title: section.title, count: section.count })),
 )
 const pendingCount = computed(() => (view.value?.rows ?? []).filter((row) => row.group === 'pending').length)
+const rowSourceLabels = computed(() => new Map((view.value?.rows ?? []).map((row) => [row.source.id, row.source.label])))
 const pendingSectionId = computed(() => (viewSettings.value.groupBy === 'status' ? 'pending' : 'attention'))
 const sidebarSources = computed<SidebarSource[]>(() => {
   const config = configuration.value
@@ -407,6 +413,15 @@ const searchMatches = computed<SearchMatch[]>(() => rankRows(view.value?.rows ??
 const searchMatchesByID = computed(() => new Map<string, SearchMatch>(searchMatches.value.map((match) => [match.row.id, match])))
 const filteredSearch = computed(() => hasSearchTerms(activeQuery.value))
 const localMatchCount = computed(() => searchMatches.value.filter((match) => !match.row.discovery).length)
+const emptyState = computed<'resources' | 'search' | null>(() => {
+  if (view.value?.stage !== 'final') {
+    return null
+  }
+  if (filteredSearch.value) {
+    return searchMatches.value.length === 0 ? 'search' : null
+  }
+  return (view.value.rows ?? []).length === 0 ? 'resources' : null
+})
 const discoveryFailed = computed(() => view.value?.discoveryError != null || (view.value?.discoveryHealth ?? []).some((health) => health.message !== ''))
 
 function nameParts(row: Row): NameSegment[] {
@@ -876,6 +891,7 @@ async function run(action: 'sync' | 'update') {
       :pending-count="pendingCount"
       :pending-section-id="pendingSectionId"
       :sources="sidebarSources"
+      :row-source-labels="rowSourceLabels"
       :harnesses="view?.harnesses ?? []"
       :latest-version="view?.latestVersion ?? ''"
       @toggle="toggleSidebar"
@@ -927,11 +943,28 @@ async function run(action: 'sync' | 'update') {
         Agent Marketplace {{ view.latestVersion }} is available.
       </p>
 
+      <section v-if="emptyState === 'resources'" class="gui-empty" aria-label="No resources">
+        <GuiIcon name="folder" />
+        <h2 class="gui-empty__title">No resources yet</h2>
+        <p class="gui-empty__body">Add a source to see the skills, commands, and other resources it provides.</p>
+        <UButton
+          label="Add a source"
+          aria-label="Add a source"
+          class="gui-button--secondary"
+          color="neutral"
+          variant="soft"
+          @click="sourcesOpen = true"
+        />
+      </section>
+      <p v-else-if="emptyState === 'search'" class="gui-empty gui-empty--muted">No resources match “{{ activeQuery }}”.</p>
+
       <ResourceList
+        v-show="emptyState == null"
         ref="resourceList"
         :sections="sectionViews"
         :selected-key="selectedKey"
         :name-parts="nameParts"
+        :view-settings="viewSettings"
         @toggle-group="toggleGroup"
         @select="select"
         @activate="activateRow"
@@ -974,7 +1007,7 @@ async function run(action: 'sync' | 'update') {
       @click="dismissOverlays"
     />
 
-    <HarnessSettings v-if="state" v-model:open="settingsOpen" :controller="state" />
+    <HarnessSettings v-if="state" v-model:open="settingsOpen" :controller="state" @manage-sources="openSourcesFromSettings" />
     <SourcesSettings v-if="state" v-model:open="sourcesOpen" :controller="state" />
     <FirstRun v-if="state" v-model:open="setupOpen" :controller="state" @cancel="onSetupCancel" />
     <Confirmations v-if="state" v-model:quit-open="quitOpen" :controller="state" />

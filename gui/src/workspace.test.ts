@@ -2013,7 +2013,7 @@ describe('Event stream reconnect', () => {
       expect(previewRegion?.getAttribute('role')).toBe('region')
       expect(previewRegion?.tabIndex).toBe(0)
       expect(dialog.querySelector('script, img')).toBeNull()
-      expect(dialog.querySelector('button[aria-label="Decline"]')).not.toBeNull()
+      expect(dialog.querySelector('button[aria-label="Decline"]')).toBeNull()
       expect(dialog.querySelector('button[aria-label="Cancel"]')).not.toBeNull()
       const confirm = dialog.querySelector('button[aria-label="Confirm install"]') as HTMLButtonElement | null
       const risk = dialog.querySelector('input[type="checkbox"]') as HTMLInputElement | null
@@ -2036,7 +2036,6 @@ describe('Event stream reconnect', () => {
       expect(controller.resourceActionSubmitting).toBe(true)
       expect(controller.state.settledMutation).toBeNull()
       expect((dialog.querySelector('button[aria-label="Cancel"]') as HTMLButtonElement | null)?.disabled).toBe(true)
-      expect((dialog.querySelector('button[aria-label="Decline"]') as HTMLButtonElement | null)?.disabled).toBe(true)
       confirm.click()
       await tick()
       expect(client.resourceAction).toHaveBeenCalledTimes(1)
@@ -2124,7 +2123,7 @@ describe('Event stream reconnect', () => {
     })
 
     // spec: session-interactions/guarded-submission
-    it('shows static preparation failures and keeps decline and cancel write-free', async () => {
+    it('shows static preparation failures and keeps cancel write-free', async () => {
       const resource = work39Row('review', 'opaque-user-source-review', 'install')
       const plan = work39Plan(resource.id, 1, 'install')
       const { client, push } = fakeClient()
@@ -2140,15 +2139,18 @@ describe('Event stream reconnect', () => {
       const alert = document.body.querySelector('[role="alert"]')
       expect(alert?.textContent).toBe('Resource action could not be prepared; refresh this resource and retry.')
       expect(alert?.textContent).not.toContain('resource_action_unavailable')
+      expect(document.body.querySelector('button[aria-label="Confirm install"]')).toBeNull()
+      expect(document.body.querySelector('.gui-modal__footer > button')?.getAttribute('aria-label')).toBe('Retry resource action plan')
       const retry = document.body.querySelector('button[aria-label="Retry resource action plan"]') as HTMLButtonElement | null
       expect(retry).not.toBeNull()
       retry?.click()
       await tick()
       expect(controller.state.resourceAction?.plan?.planId).toBe(plan.planId)
 
-      const decline = document.body.querySelector('button[aria-label="Decline"]') as HTMLButtonElement | null
-      expect(decline).not.toBeNull()
-      decline?.click()
+      expect(document.body.querySelector('button[aria-label="Decline"]')).toBeNull()
+      const cancelPrepared = document.body.querySelector('button[aria-label="Cancel"]') as HTMLButtonElement | null
+      expect(cancelPrepared).not.toBeNull()
+      cancelPrepared?.click()
       await tick()
       expect(controller.state.resourceAction).toBeNull()
       expect(client.resourceAction).not.toHaveBeenCalled()
@@ -2496,7 +2498,7 @@ describe('Event stream reconnect', () => {
     }
 
     // spec: gui-shell/gui-actions-use-existing-telemetry-policy
-    it('emits one toggle-cancel event for explicit Cancel, Decline, and Escape dismissal', async () => {
+    it('emits one toggle-cancel event for explicit Cancel and Escape dismissal', async () => {
       const { client, controller, resource, wrapper } = await mountWork41ResourceAction()
       const expectedEvent = {
         action: 'modal_outcome' as const,
@@ -2517,11 +2519,11 @@ describe('Event stream reconnect', () => {
       expect(client.resourceAction).not.toHaveBeenCalled()
 
       dialog = await openWork41InstallPlan(wrapper)
-      const decline = dialog.querySelector('button[aria-label="Decline"]') as HTMLButtonElement | null
-      if (decline == null) {
-        throw new Error('Work41 Decline button was not rendered')
+      const secondCancel = dialog.querySelector('button[aria-label="Cancel"]') as HTMLButtonElement | null
+      if (secondCancel == null) {
+        throw new Error('Work41 Cancel button was not rendered')
       }
-      decline.click()
+      secondCancel.click()
       await tick()
       expect(controller.state.resourceAction).toBeNull()
       expect(client.telemetry).toHaveBeenNthCalledWith(2, expectedEvent)

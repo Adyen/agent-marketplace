@@ -338,3 +338,43 @@ describe('local resource search', () => {
     expect(client.telemetry).not.toHaveBeenCalled()
   })
 })
+
+describe('search toolbar slot', () => {
+  it('puts the input in the pill slot while editing and shows the applied query and count in the pill', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('review-a'), row('review-b'), row('other')]) }))
+    await tick()
+
+    const input = await openSearch(wrapper)
+    expect(wrapper.find('button[aria-label="Search"]').exists()).toBe(false)
+    await input.setValue('review')
+    await tick()
+    await input.trigger('keydown', { key: 'Enter' })
+    await tick()
+
+    const pill = wrapper.get('button[aria-label="Search"]')
+    expect(pill.text()).toContain('review')
+    expect(pill.text()).toContain('· 2')
+    expect(pill.text()).not.toContain('⌘K')
+    const status = wrapper.get('.workspace__search-status')
+    expect(status.text()).toContain('review · 2 local matches')
+    expect(status.classes()).toContain('gui-visually-hidden')
+  })
+
+  it('explains when the applied search matches no resource', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('alpha')]) }))
+    await tick()
+
+    const input = await openSearch(wrapper)
+    await input.setValue('zzqx')
+    await tick()
+    await input.trigger('keydown', { key: 'Enter' })
+    await tick()
+
+    expect(wrapper.get('.gui-empty--muted').text()).toBe('No resources match “zzqx”.')
+    expect(wrapper.find('[role="option"]').exists()).toBe(false)
+  })
+})

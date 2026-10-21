@@ -11,6 +11,7 @@ const dirSource = {
   ref: '',
   path: '',
   sourceHarness: '',
+  rowSourceId: '',
 }
 const gitSource = {
   id: 'user-git-id',
@@ -19,6 +20,7 @@ const gitSource = {
   ref: 'main',
   path: '',
   sourceHarness: '',
+  rowSourceId: '',
 }
 const marketplaceSource = {
   id: 'user-mp-id',
@@ -27,6 +29,7 @@ const marketplaceSource = {
   ref: '',
   path: '',
   sourceHarness: '',
+  rowSourceId: '',
 }
 
 const sourcesConfiguration = (overrides: Partial<Configuration> = {}): Configuration =>
@@ -260,8 +263,8 @@ describe('Source settings', () => {
 
   it.each([
     {
-      source: { id: 'org-dir', kind: 'directory' as const, location: '/opt/org-regs', ref: '', path: '', sourceHarness: '' },
-      texts: ['Directory registry', '/opt/org-regs'],
+      source: { id: 'org-dir', kind: 'directory' as const, location: '/opt/org-regs', ref: '', path: '', sourceHarness: '', rowSourceId: '' },
+      texts: ['DIRECTORY', 'ORG', '/opt/org-regs'],
       absent: ['Ref ', 'Subpath '],
     },
     {
@@ -272,13 +275,14 @@ describe('Source settings', () => {
         ref: 'main',
         path: 'nested',
         sourceHarness: 'devin',
+        rowSourceId: '',
       },
-      texts: ['Git registry', 'https://example.com/org.git', 'Ref main', 'Subpath nested', 'Source layout devin'],
+      texts: ['GIT', 'https://example.com/org.git', 'main · nested · layout devin'],
       absent: [],
     },
     {
-      source: { id: 'org-mp', kind: 'marketplace' as const, location: 'https://org-mp.example', ref: '', path: '', sourceHarness: '' },
-      texts: ['Marketplace endpoint', 'https://org-mp.example'],
+      source: { id: 'org-mp', kind: 'marketplace' as const, location: 'https://org-mp.example', ref: '', path: '', sourceHarness: '', rowSourceId: '' },
+      texts: ['MARKETPLACE', 'ORG', 'https://org-mp.example'],
       absent: ['Ref ', 'Subpath '],
     },
   ])('keeps the organization $source.kind source free of any controls', async ({ source, texts, absent }) => {
@@ -402,7 +406,7 @@ describe('Source settings', () => {
 
     await openSources(wrapper)
     await setInput('Source location', '/draft')
-    button('Cancel').click()
+    button('Done').click()
     await tick()
 
     expect(dialog).toThrow()
@@ -423,7 +427,7 @@ describe('Source settings', () => {
     await tick()
     expect(dialog().querySelector('[aria-label="Confirm removal"]')).not.toBeNull()
 
-    button('Cancel').click()
+    button('Done').click()
     await tick()
     await openSources(wrapper)
 
@@ -684,7 +688,7 @@ describe('Source settings', () => {
 
     const list = dialog().querySelector('[aria-label="User sources"]')!
     expect(list.textContent).toContain(marketplaceSource.location)
-    expect(list.textContent).toContain('Marketplace endpoint')
+    expect(list.textContent).toContain('MARKETPLACE')
     expect(dialog()).toBeDefined()
     expect(controller.state.operation).toBeNull()
     expect(controller.state.requesting).toBe(false)

@@ -292,12 +292,12 @@ async function scrollRiskPreviewWithKeyboard(page: Page, dialog: Locator, testIn
   actions.push('Scrolled the overflowing risk preview with End; the risk finding is visible and the preview remains plain text')
 }
 
-async function cancelAction(page: Page, dialog: Locator, label: 'Cancel' | 'Decline', actions: string[]): Promise<void> {
-  const button = dialog.getByRole('button', { name: label, exact: true })
-  await tabTo(page, button, `${label} resource action button`, actions, dialog)
+async function cancelAction(page: Page, dialog: Locator, actions: string[]): Promise<void> {
+  const button = dialog.getByRole('button', { name: 'Cancel', exact: true })
+  await tabTo(page, button, 'Cancel resource action button', actions, dialog)
   await page.keyboard.press('Enter')
   await expect(dialog).toBeHidden()
-  actions.push(`${label === 'Decline' ? 'Declined' : 'Cancelled'} the prepared resource action with Enter`)
+  actions.push('Cancelled the prepared resource action with Enter')
 }
 
 // spec: session-interactions/guarded-submission
@@ -326,7 +326,7 @@ test('built user GUI cancels, installs, and removes a warned Marketplace Resourc
     const preview = await cancelDialog.locator('pre').textContent()
     assertPreviewContainsNoLocalPaths(preview, [bootstrap.home!, bootstrap.repo!])
     await cancelDialog.screenshot({ path: testInfo.outputPath('available-install-preview.png'), animations: 'disabled' })
-    await cancelAction(page, cancelDialog, 'Cancel', actions)
+    await cancelAction(page, cancelDialog, actions)
     await expect(page.getByRole('button', { name: 'Install Resource', exact: true })).toBeFocused()
     assertFilesUnchanged(beforeCancel, await captureFiles(rootPaths), 'cancelled prepare modified protected fixture files')
     expect(counts.plans).toBe(1)
@@ -462,7 +462,7 @@ test('built user GUI excludes and restores an optional organization pin without 
     const cancelDialog = await openActionPlan(page, 'Exclude', actions)
     const preview = await cancelDialog.locator('pre').textContent()
     assertPreviewContainsNoLocalPaths(preview, [bootstrap.home!, bootstrap.repo!])
-    await cancelAction(page, cancelDialog, 'Cancel', actions)
+    await cancelAction(page, cancelDialog, actions)
     await expect(page.getByRole('button', { name: 'Exclude Resource', exact: true })).toBeFocused()
     assertFilesUnchanged(baseline, await captureFiles(protectedPaths), 'cancelled organization exclusion modified protected fixture files')
     actions.push('Cancelled the optional organization exclusion plan without changing user, organization, lock, materialized, or CWD bytes')

@@ -46,6 +46,7 @@ const pendingDescriptions = computed<SourceDescription[]>(() =>
     ref: source.kind === 'git' ? source.ref : '',
     path: source.kind === 'git' ? (source.path ?? '') : '',
     sourceHarness: '',
+    rowSourceId: '',
   })),
 )
 

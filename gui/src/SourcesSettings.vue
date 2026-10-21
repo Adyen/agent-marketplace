@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import type { Configuration, SourceDescription, SourceInput } from './api/client'
 import type { WorkspaceController } from './controller'
+import GuiIcon from './GuiIcon.vue'
 import GuiModal from './GuiModal.vue'
 import SourceForm from './SourceForm.vue'
 import SourceList from './SourceList.vue'
@@ -91,15 +92,14 @@ function cancel() {
 
       <SourceList title="User sources" :sources="configuration.userSources" :organization="false">
         <template #actions="{ source }">
-          <UButton
+          <button
             v-if="removable(source)"
-            label="Remove"
-            color="neutral"
-            variant="outline"
+            type="button"
+            class="gui-icon-button gui-icon-button--danger"
             :aria-label="`Remove source ${source.location}`"
             :disabled="fieldsDisabled"
             @click="pendingRemove = source"
-          />
+          ><GuiIcon name="trash" /></button>
         </template>
       </SourceList>
 
@@ -139,7 +139,7 @@ function cancel() {
       </section>
     </template>
     <template #footer>
-      <UButton label="Cancel" color="neutral" variant="outline" aria-label="Cancel" @click="cancel" />
+      <UButton label="Done" aria-label="Done" @click="cancel" />
     </template>
   </GuiModal>
 </template>

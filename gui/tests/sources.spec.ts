@@ -26,7 +26,7 @@ async function actionVisibility(page: Page, dialog: Locator, action: Locator, na
 
 async function sourceListVisibility(page: Page, dialog: Locator, sources: Locator, longLocation: string) {
   const item = sources.locator('li').filter({ hasText: longLocation })
-  const kind = item.getByText('Directory registry', { exact: true })
+  const kind = item.getByText('DIRECTORY', { exact: true })
   const location = item.getByText(longLocation, { exact: true })
   const [dialogBox, kindBox, locationBox] = await Promise.all([
     dialog.boundingBox(), kind.boundingBox(), location.boundingBox(),
@@ -45,7 +45,7 @@ async function sourceListVisibility(page: Page, dialog: Locator, sources: Locato
   ])
   const viewport = page.viewportSize()
   return {
-    kindAboveLocation: kindBox != null && locationBox != null && kindBox.y + kindBox.height <= locationBox.y,
+    kindOnLocationRow: kindBox != null && locationBox != null && kindBox.y < locationBox.y + locationBox.height && locationBox.y < kindBox.y + kindBox.height,
     locationLines: new Set(textRects.map((rect) => Math.round(rect.top))).size,
     locationWithinDialog: dialogBox != null && viewport != null && textRects.length > 0 && textRects.every((rect) =>
       rect.left >= dialogBox.x && rect.right <= dialogBox.x + dialogBox.width &&
@@ -110,7 +110,7 @@ test('built GUI adds and removes a user directory source against the real user-s
     await expect(addSection.getByRole('group', { name: 'Source kind' }).getByRole('radio', { name: 'Directory registry' })).toBeChecked()
     await expect(addSection.getByLabel('Source location')).toBeEnabled()
     await addSection.getByLabel('Source location').pressSequentially(sourceDir)
-    await dialog.getByRole('button', { name: 'Cancel', exact: true }).press('Enter')
+    await dialog.getByRole('button', { name: 'Done', exact: true }).press('Enter')
     await expect(dialog).not.toBeVisible()
     expect(await readFile(userConfigPath, 'utf8')).toBe(original)
 
@@ -126,7 +126,7 @@ test('built GUI adds and removes a user directory source against the real user-s
 
     const userSources = dialog.getByLabel('User sources')
     await expect(userSources).toContainText(sourceDir, { timeout: 60_000 })
-    await expect(userSources).toContainText('Directory registry')
+    await expect(userSources).toContainText('DIRECTORY')
     await expect(notifications.getByText('mutation complete')).toBeVisible()
     await expect(dialog.getByText('mutation running')).toHaveCount(0)
     await expect(addButton).toBeEnabled()
@@ -266,14 +266,14 @@ test('built GUI adds and removes a Marketplace endpoint registration in the open
     await expect(userSources).toContainText(longLocation)
 
     const listMetrics = await sourceListVisibility(page, dialog, userSources, longLocation)
-    const scrollBefore = await dialog.evaluate((element) => element.scrollTop)
+    const scrollBefore = await dialog.locator('.gui-modal__body').evaluate((element) => element.scrollTop)
     const dialogBox = await dialog.boundingBox()
     if (dialogBox != null) {
       await page.mouse.move(dialogBox.x + dialogBox.width / 2, dialogBox.y + dialogBox.height / 2)
       await page.mouse.wheel(0, 600)
     }
-    await expect.poll(async () => await dialog.evaluate((element) => element.scrollTop), { timeout: 1_000 }).toBeGreaterThan(scrollBefore)
-    const scrollAfter = await dialog.evaluate((element) => element.scrollTop)
+    await expect.poll(async () => await dialog.locator('.gui-modal__body').evaluate((element) => element.scrollTop), { timeout: 1_000 }).toBeGreaterThan(scrollBefore)
+    const scrollAfter = await dialog.locator('.gui-modal__body').evaluate((element) => element.scrollTop)
     await page.mouse.wheel(0, -600)
     await dialog.evaluate((element) => {
       element.scrollTop = 0
@@ -290,9 +290,9 @@ test('built GUI adds and removes a Marketplace endpoint registration in the open
     const location = addSection.getByLabel('Source location')
     await location.pressSequentially(endpoint)
     const addButton = addSection.getByRole('button', { name: 'Add source' })
-    const cancelButton = dialog.getByRole('button', { name: 'Cancel', exact: true })
+    const cancelButton = dialog.getByRole('button', { name: 'Done', exact: true })
     await expect(addButton).toBeEnabled()
-    const cancelMetrics = await actionVisibility(page, dialog, cancelButton, 'Cancel')
+    const cancelMetrics = await actionVisibility(page, dialog, cancelButton, 'Done')
     const addMetrics = await actionVisibility(page, dialog, addButton, 'Add source')
     await page.screenshot({ path: formActionScreenshotPath, fullPage: true })
     const viewport = page.viewportSize()
@@ -306,14 +306,14 @@ test('built GUI adds and removes a Marketplace endpoint registration in the open
       viewport: { width: 1280, height: 720 },
       wheelScrolled: true,
       list: {
-        kindAboveLocation: true,
+        kindOnLocationRow: true,
         locationWithinDialog: true,
         dialogHasNoHorizontalOverflow: true,
         sourcesHaveNoHorizontalOverflow: true,
         pageHasNoHorizontalOverflow: true,
       },
       actions: [
-        { name: 'Cancel', insideDialog: true, insideViewport: true, hittable: true },
+        { name: 'Done', insideDialog: true, insideViewport: true, hittable: true },
         { name: 'Add source', insideDialog: true, insideViewport: true, hittable: true },
       ],
     })
@@ -337,7 +337,7 @@ test('built GUI adds and removes a Marketplace endpoint registration in the open
     await addButton.press('Enter')
 
     await expect(userSources).toContainText(endpoint, { timeout: 60_000 })
-    await expect(userSources).toContainText('Marketplace endpoint')
+    await expect(userSources).toContainText('MARKETPLACE')
     await expect(page.getByLabel('Notifications').getByText('mutation complete')).toBeVisible()
     await expect(dialog.getByText('mutation running')).toHaveCount(0)
     await expect(addButton).toBeEnabled()
@@ -347,7 +347,7 @@ test('built GUI adds and removes a Marketplace endpoint registration in the open
     await userSources.screenshot({ path: marketplacePresentScreenshotPath })
     const updatedListMetrics = await sourceListVisibility(page, dialog, userSources, longLocation)
     expect(updatedListMetrics).toMatchObject({
-      kindAboveLocation: true,
+      kindOnLocationRow: true,
       locationWithinDialog: true,
       dialogHasNoHorizontalOverflow: true,
       sourcesHaveNoHorizontalOverflow: true,
@@ -414,7 +414,7 @@ test('built GUI adds and removes a Marketplace endpoint registration in the open
     ).not.toContain('devin')
     const removedListMetrics = await sourceListVisibility(page, dialog, userSources, longLocation)
     expect(removedListMetrics).toMatchObject({
-      kindAboveLocation: true,
+      kindOnLocationRow: true,
       locationWithinDialog: true,
       dialogHasNoHorizontalOverflow: true,
       sourcesHaveNoHorizontalOverflow: true,
@@ -494,7 +494,7 @@ test('built GUI adds and removes a user Git source with ref and subpath by keybo
     }
     const orgSection = dialog.getByLabel('Organization sources')
     await expect(orgSection.getByText('Managed by your organization; read-only.')).toBeVisible()
-    await expect(orgSection).toContainText('Directory registry')
+    await expect(orgSection).toContainText('DIRECTORY')
     await expect(orgSection.locator('button, input, select, a')).toHaveCount(0)
     await page.screenshot({ path: artifactPath('git-source-before.png'), fullPage: true })
 
@@ -532,9 +532,8 @@ test('built GUI adds and removes a user Git source with ref and subpath by keybo
 
     const userSources = dialog.getByLabel('User sources')
     await expect(userSources).toContainText(gitURL, { timeout: 60_000 })
-    await expect(userSources).toContainText('Git registry')
-    await expect(userSources).toContainText('Ref main')
-    await expect(userSources).toContainText('Subpath solo')
+    await expect(userSources).toContainText('GIT')
+    await expect(userSources).toContainText('main · solo')
     await expect(notifications.getByText('mutation complete')).toBeVisible()
     await expect(dialog.getByText('mutation running')).toHaveCount(0)
     await expect(addButton).toBeEnabled()
