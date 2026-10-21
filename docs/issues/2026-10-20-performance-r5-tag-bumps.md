@@ -72,6 +72,12 @@ OpenSpec delta is claimed.
   over a parse refusal, and the unchanged public error message. Writer
   fragmentation down to one byte is compared with `exec.Cmd.Output`;
   focused normal and race checks pass with Go 1.27.3.
+- Real-Git fixtures isolate HOME, global/system configuration, explicit
+  repository/object/configuration environment, and ancestor discovery.
+  Controlled regressions poison `GIT_DIR` plus injected config, and put
+  `TMPDIR` inside an enclosing repository. Disabling the isolator makes
+  both select the ambient `v9` instead of the fixture's `v2` or exit 128.
+  Normal and race checks pass with isolation; no caller repository is used.
 - The first streaming candidate changed final-tag Unicode trimming; the
   independently authored Git test failed before the pending-line fix.
 - A sandboxed CLI test starts with an actual v4 selection, generated lock,
@@ -136,6 +142,9 @@ from `2a72a7f5` remain only to compile the permanent benchmark; they are
 not called on the buffered timed path. The comparison therefore includes
 the original stderr capture on both sides and changes no fixture or ref.
 The current production source is the compatibility-restored blob above.
+These samples use the fixture harness at `485af695`, before the later
+test-only ambient-Git isolation. That hardening does not change production
+source; the recorded samples are retained, not rerun or relabeled.
 
 | Nonnumeric tags | Buffered ns/op | Restored stream ns/op | Buffered B/op | Restored stream B/op | Buffered allocs/op | Restored stream allocs/op |
 |---:|---:|---:|---:|---:|---:|---:|

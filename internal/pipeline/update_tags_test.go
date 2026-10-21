@@ -17,6 +17,7 @@ import (
 )
 
 func TestDiscoverTagBump(t *testing.T) {
+	isolateTagBumpGit(t)
 	for _, tc := range []struct {
 		name    string
 		current string
@@ -68,6 +69,7 @@ func TestDiscoverTagBumpErrors(t *testing.T) {
 		}
 	})
 	t.Run("git_failure", func(t *testing.T) {
+		isolateTagBumpGit(t)
 		repo := t.TempDir()
 		cmd := exec.Command("git", "tag", "-l", "v*")
 		cmd.Dir = repo
@@ -84,6 +86,32 @@ func TestDiscoverTagBumpErrors(t *testing.T) {
 		if string(exit.Stderr) != string(wantExit.Stderr) {
 			t.Fatalf("Git failure stderr = %q; want buffered oracle %q", exit.Stderr, wantExit.Stderr)
 		}
+	})
+}
+
+func TestTagBumpGitIsolation(t *testing.T) {
+	t.Run("explicit_repository", func(t *testing.T) {
+		ambient := tagBumpRepository(t, []string{"v9"})
+		t.Setenv("GIT_DIR", ambient)
+		t.Setenv("GIT_CONFIG_COUNT", "1")
+		t.Setenv("GIT_CONFIG_KEY_0", "core.repositoryformatversion")
+		t.Setenv("GIT_CONFIG_VALUE_0", "99")
+		repo := tagBumpRepository(t, []string{"v2"})
+		if got, ok, err := discoverTagBump(repo, "v1"); got != "v2" || !ok || err != nil {
+			t.Fatalf("ambient Git state escaped isolation: %q, %v, %v", got, ok, err)
+		}
+	})
+	t.Run("enclosing_repository", func(t *testing.T) {
+		ambient := tagBumpRepository(t, []string{"v9"})
+		t.Setenv("TMPDIR", ambient)
+		t.Run("git_failure", func(t *testing.T) {
+			isolateTagBumpGit(t)
+			got, ok, err := discoverTagBump(t.TempDir(), "v1")
+			var exit *exec.ExitError
+			if got != "" || ok || !errors.As(err, &exit) || exit.ExitCode() != 128 {
+				t.Fatalf("Git discovery escaped fixture ceiling: %q, %v, %v", got, ok, err)
+			}
+		})
 	})
 }
 
@@ -287,9 +315,29 @@ func bufferedTagBumpOracle(output string) (string, error) {
 	return best, nil
 }
 
+func isolateTagBumpGit(t testing.TB) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(home))
+	for _, name := range []string{
+		"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+		"GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+		"GIT_CONFIG", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS",
+	} {
+		t.Setenv(name, "")
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // Packed refs keep fixture setup proportional without one subprocess per tag.
 func tagBumpRepository(t testing.TB, tags []string) string {
 	t.Helper()
+	isolateTagBumpGit(t)
 	repo := t.TempDir()
 	cmd := exec.Command("git", "init", "--bare", "--object-format=sha1", repo)
 	if output, err := cmd.CombinedOutput(); err != nil {
