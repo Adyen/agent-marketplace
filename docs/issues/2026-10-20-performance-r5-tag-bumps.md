@@ -141,8 +141,10 @@ benchstat docs/issues/performance-r5-tag-bumps-2026-10-20/selector-before.txt \
 
 ## Validation
 
-Final validation includes `873d0b22` from main merged into PR #828; the
-recorded performance baseline remains `99c26d07`.
+The performance and combined E2E evidence includes main at `873d0b22`.
+Latest integration includes main at `7f659eff`; the measured production
+blob is unchanged by those main merges. The recorded performance baseline
+remains `99c26d07`.
 
 - `make validate TEST_PACKAGES=./internal/pipeline` passes all selected
   short-mode pipeline tests, whole-root vet, CI lint (zero issues), and build.
@@ -150,28 +152,37 @@ recorded performance baseline remains `99c26d07`.
   successful bump/scope/target/exact-pin controls and the new refusal test.
 - Final focused pipeline tests, differential fuzzing, and focused race
   tests pass. Race tests use `CGO_ENABLED=1`.
-- `make spec-check` passes: 64 items, 1,102 scenarios, 1,759 annotations,
+- `make spec-check` passes: 64 items, 1,105 scenarios, 1,766 annotations,
   and the two pre-existing active changes. Pinned npm tooling runs offline.
 - `make validate-e2e` passes: 3,389 invocations, all 113 command requirements
   covered, zero listed gaps, and all three required refusal witnesses ran
   and passed. Native harness probes are explicitly unavailable in this
   configuration-only gate.
+- `make tui-qa` passes all 33 current real-terminal journeys and four QA
+  utility tests, with zero skips, after the cold-fixture assertion repair.
+  The missing-lock fixture deliberately leaves beta unsynced. Its journey
+  now proves that absent native output and waits for the initial one-item
+  pending group before timing input; selecting alpha must show two pending
+  items. The obsolete one-item assertion can match a pre-toggle frame; a
+  control gated on the updated frame rejects it. No timing ceiling is raised.
 
 These are scoped root checks, not `make validate-full`. No TUI behavior
-changes, real-terminal QA, released-client container gate, vendor-native
-probe, or PostgreSQL performance result is claimed.
+change, local released-client container gate, vendor-native probe, or
+PostgreSQL performance result is claimed.
 
 ## Adversarial Review
 
 Host-driven `open-code-review-delegate` supplies deterministic file
 selection and rule resolution; the host reviews the implementation,
 consumer paths, tests, design, this report, and raw measurements, including
-OCR's default exclusions. Coverage: 12 total files, 12 reviewed, 0 skipped,
+OCR's default exclusions. Coverage: 13 total files, 13 reviewed, 0 skipped,
 100%. No unresolved actionable critical/high/medium finding remains.
 
 Review checks include overflow/error precedence, pipe lifecycle, borrowed
 scanner-buffer lifetime, Unicode/CR trimming, accepted long tags,
 publication refusal, command-test isolation, and benchmark overclaims.
+The TUI assertion review checks the cold filesystem baseline, settled
+input, actual post-toggle frame, and unchanged timing and acquisition controls.
 The measured time tradeoff and missing aggregate quota are not hidden.
 A clean review and passing tests are not proof of defect absence.
 
@@ -182,6 +193,10 @@ implementation had no such ceiling, and silently introducing one would
 change supported inputs and require the separate D5 quota decision.
 That disposition is recorded in the review threads, not presented as
 security closure or denial that a single long tag can consume memory.
+The further decimal-parser shortcut is not adopted: returning bare
+`ErrRange` loses `Atoi`'s typed error context, and its overlay fails the
+existing overflow oracle. Compiler escape analysis also confirms that
+the tie comparison's temporary string does not escape.
 CodeRabbit's supported-Linux portability finding is fixed by resolving
 `cat` through `PATH` in the drain fixture instead of requiring `/bin/cat`.
 A failed tail read exits unsuccessfully so the fixture cannot pass without
