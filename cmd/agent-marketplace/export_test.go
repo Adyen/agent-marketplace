@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func lockedPluginExportFixture(t *testing.T, skill string, withHook bool, configure ...func(string)) (root, repo string, run func(...string) (string, error)) {
+func lockedPluginExportFixture(t *testing.T, skill string, withHook bool, configure ...func(string)) (root string, run func(...string) (string, error)) {
 	t.Helper()
 	root = pluginLockFixture(t)
 	origin, working := createBareRepoWithWorkingClone(t, "plugin-export.git")
@@ -25,7 +25,7 @@ func lockedPluginExportFixture(t *testing.T, skill string, withHook bool, config
 	}
 	commitAndPushAll(t, working, "seed export plugin")
 
-	repo = filepath.Join(root, "repo")
+	repo := filepath.Join(root, "repo")
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"),
 		"apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {git: file://"+
 			filepath.ToSlash(origin)+", ref: main, format: claude-marketplace}\nresources:\n  team:\n    - plugin/local-kit\n")
@@ -34,7 +34,7 @@ func lockedPluginExportFixture(t *testing.T, skill string, withHook bool, config
 	if output, err := run("sync", "--no-backup"); err != nil {
 		t.Fatalf("lock export fixture plugin: %v\n%s", err, output)
 	}
-	return root, repo, run
+	return root, run
 }
 
 // spec: plugin-portable-format/export-with-a-loss-writes-nothing
@@ -42,7 +42,7 @@ func TestExportPluginLossDefaultLeavesOutputAbsent(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	root, _, run := lockedPluginExportFixture(t, "", true)
+	root, run := lockedPluginExportFixture(t, "", true)
 	out := filepath.Join(root, "exported")
 	output, err := run("export", "plugin/local-kit", "--format", "agent-plugin", "--out", out)
 	if err == nil || !strings.Contains(output+err.Error(), "plugin.export.loss") {
@@ -62,7 +62,7 @@ func TestExportPluginAllowsLossAndReportsOmittedHook(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	root, _, run := lockedPluginExportFixture(t, "", true)
+	root, run := lockedPluginExportFixture(t, "", true)
 	out := filepath.Join(root, "exported")
 	if err := os.Mkdir(out, 0o755); err != nil {
 		t.Fatal(err)
@@ -98,7 +98,7 @@ func TestExportPluginAllowLossCannotDropSkillRestriction(t *testing.T) {
 		return
 	}
 	skill := "---\nname: local-skill\ndescription: Local skill\ntriggers: [user]\n---\nBody\n"
-	root, _, run := lockedPluginExportFixture(t, skill, false)
+	root, run := lockedPluginExportFixture(t, skill, false)
 	out := filepath.Join(root, "exported")
 	output, err := run("export", "plugin/local-kit", "--format", "agent-plugin", "--out", out, "--allow-loss")
 	if err == nil || !strings.Contains(output+err.Error(), "plugin.export.restriction") {
@@ -114,7 +114,7 @@ func TestExportPluginRefusesNonEmptyOutputDirectory(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	root, _, run := lockedPluginExportFixture(t, "", false)
+	root, run := lockedPluginExportFixture(t, "", false)
 	out := filepath.Join(root, "existing")
 	if err := os.Mkdir(out, 0o755); err != nil {
 		t.Fatal(err)
@@ -150,7 +150,7 @@ func TestExportPluginRefusesUnlockedMissingAmbiguousAndNonDirectoryTargets(t *te
 		}
 	})
 	t.Run("missing", func(t *testing.T) {
-		root, _, run := lockedPluginExportFixture(t, "", false)
+		root, run := lockedPluginExportFixture(t, "", false)
 		out := filepath.Join(root, "missing")
 		output, err := run("export", "plugin/absent", "--format", "agent-plugin", "--out", out)
 		if err == nil || !strings.Contains(output+err.Error(), "not found") {
@@ -182,7 +182,7 @@ func TestExportPluginRefusesUnlockedMissingAmbiguousAndNonDirectoryTargets(t *te
 			t.Fatalf("ambiguous-plugin refusal wrote output: %v", statErr)
 		}
 	})
-	root, _, run := lockedPluginExportFixture(t, "", false)
+	root, run := lockedPluginExportFixture(t, "", false)
 	out := filepath.Join(root, "regular-file")
 	writeFile(t, out, "preserve")
 	target := filepath.Join(root, "target")
@@ -211,7 +211,7 @@ func TestExportPluginRejectsUnsupportedFormatBeforeWriting(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	root, _, run := lockedPluginExportFixture(t, "", false)
+	root, run := lockedPluginExportFixture(t, "", false)
 	out := filepath.Join(root, "unsupported")
 	output, err := run("export", "plugin/local-kit", "--format", "claude-plugin", "--out", out)
 	if err == nil || !strings.Contains(output+err.Error(), "plugin.format.unsupported") {
