@@ -1,6 +1,6 @@
 # Public default Go base image. Override with --build-arg BASE_IMAGE=... if
 # your environment cannot pull Docker Hub directly.
-ARG BASE_IMAGE=golang:1.26-alpine
+ARG BASE_IMAGE=golang:1.27-alpine
 FROM ${BASE_IMAGE}
 
 # Install the E2E tools if the base image doesn't already provide them.
