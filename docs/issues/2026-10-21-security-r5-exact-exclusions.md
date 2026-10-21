@@ -135,6 +135,14 @@ The fresh integrated combined E2E/configuration gate also passes: 3,389
 invocations, 113/113 command requirements, zero listed gaps, all three required
 refusal witnesses executed and passed, and compatibility shell checks.
 
+Cached main then advances to `98e064b8`, the TUI-only viewport fix in PR #864.
+It is integrated without conflicts; the R53 production blob, command-mode
+CLI/configuration/lock paths, and all benchmark evidence remain unchanged.
+Fresh selected validation, strict specs, and the committed spec gate pass
+after that integration (64 items, 1,134 scenarios, 1,815 annotations, two active
+changes). The combined E2E result above names the earlier `733e1e65` integration;
+it is not relabeled as a rerun after the TUI-only merge.
+
 The first broader TUI test run fails the existing include-format error-view
 assertion: a long macOS temporary path makes the renderer wrap `v4.api-version`
 as `v4.api-` and `version`. The diagnostic is present, but the test searches

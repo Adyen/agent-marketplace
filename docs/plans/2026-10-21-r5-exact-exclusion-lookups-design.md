@@ -6,6 +6,8 @@ This is a follow-on to frozen R53/F136, measured from main `d59363cf`,
 independently of R10 tag-streaming PR #828. The slice is subsequently based
 on cached main `733e1e65`, which contains the separately merged R10 PR and
 a TUI QA journey; its v4 request-rebuilding baseline is byte-identical.
+The final cached-main integration is `98e064b8`, a TUI-only viewport fix;
+the R53 production blob and CLI/configuration paths remain unchanged.
 The frozen ledger and source index remain unchanged.
 
 `rebuildRequests` already indexes the current request for each locator.
