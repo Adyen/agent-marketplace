@@ -50,9 +50,6 @@ type Result struct {
 // Export computes a complete Agent Plugins package without writing to disk.
 func Export(plugin *ir.Plugin, source fs.FS, options Options) (Result, error) {
 	result := Result{}
-	if plugin == nil || source == nil {
-		return result, exportError(diag.CodePluginFormatUnsupported, "", "plugin and package files are required")
-	}
 	info, known, err := pluginpolicy.LookupPackageFormat(plugin.Format)
 	layout, hasLayout := target.LookupPackageLayout(plugin.Format)
 	if err != nil || !known || !hasLayout || info.Role != pluginpolicy.RolePackage {
@@ -281,9 +278,6 @@ func manifestFieldValid(key string, value any) bool {
 	case "keywords":
 		values, ok := value.([]any)
 		if !ok {
-			if _, ok := value.([]string); ok {
-				return true
-			}
 			return false
 		}
 		for _, item := range values {
@@ -347,7 +341,7 @@ func skillFieldValid(key string, value any) bool {
 		return ok
 	case "allowed-tools":
 		switch value.(type) {
-		case string, []any, []string:
+		case string, []any:
 			return true
 		}
 		return false
@@ -491,26 +485,15 @@ func agentCommand(command string) bool {
 }
 
 func agentCwd(cwd string) bool {
-	rest := cwd
-	for _, prefix := range []string{"./", "${PLUGIN_ROOT}/", "${PLUGIN_DATA}/"} {
-		if strings.HasPrefix(rest, prefix) {
-			rest = strings.TrimPrefix(rest, prefix)
-			break
+	for _, prefix := range []string{".", "${PLUGIN_ROOT}", "${PLUGIN_DATA}"} {
+		if cwd == prefix {
+			return true
+		}
+		if rest, ok := strings.CutPrefix(cwd, prefix+"/"); ok {
+			return !slices.Contains(strings.Split(rest, "/"), "..")
 		}
 	}
-	if cwd == "${PLUGIN_ROOT}" || cwd == "${PLUGIN_DATA}" {
-		return true
-	}
-	if !strings.HasPrefix(cwd, "./") && !strings.HasPrefix(cwd, "${PLUGIN_ROOT}/") &&
-		!strings.HasPrefix(cwd, "${PLUGIN_DATA}/") {
-		return false
-	}
-	for _, element := range strings.Split(rest, "/") {
-		if element == ".." {
-			return false
-		}
-	}
-	return true
+	return false
 }
 
 func rewriteSkill(raw []byte) ([]byte, error) {
