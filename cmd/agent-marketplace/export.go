@@ -12,8 +12,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Adyen/agent-marketplace/internal/config"
-	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/pluginexport"
@@ -61,7 +59,14 @@ func runExportPlugin(ctx context.Context, out io.Writer, locator, format, output
 		return err
 	}
 	defer release()
-	if !pluginHasExactLock(inspection.source, result.LockMetadata) {
+	locked := false
+	for _, lock := range result.LockMetadata {
+		if lock.SnapshotAvailable && lock.Matches(inspection.source.Source, inspection.source.URL, inspection.source.Ref) {
+			locked = true
+			break
+		}
+	}
+	if !locked {
 		return errors.New("plugin is not locked; export requires an exact lock")
 	}
 	plugin, ok := inspection.entry.Resource.(*ir.Plugin)
@@ -87,15 +92,6 @@ func runExportPlugin(ctx context.Context, out io.Writer, locator, format, output
 		return errors.Join(err, writeExportReport(out, exported, true))
 	}
 	return writeExportReport(out, exported, false)
-}
-
-func pluginHasExactLock(source config.RegistryEntry, locks []pipeline.LockMetadata) bool {
-	for _, lock := range locks {
-		if lock.SnapshotAvailable && lock.Matches(source.Source, source.URL, source.Ref) {
-			return true
-		}
-	}
-	return false
 }
 
 func exportTargetWithinPackage(output, packageRoot string) bool {
