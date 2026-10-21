@@ -228,7 +228,7 @@ CodeRabbit's supported-Linux portability finding is fixed by resolving
 `cat` through `PATH` in the drain fixture instead of requiring `/bin/cat`.
 A failed tail read exits unsuccessfully so the fixture cannot pass without
 the payload that makes draining necessary. Fresh focused race checks and
-both negative overlay controls pass after that fixture change.
+both negative-overlay controls pass after that fixture change.
 
 This is local slice evidence, not an integrated-main disposition or an
 external issue-status update. The remaining R5 decision gates stay open.
