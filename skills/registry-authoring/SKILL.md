@@ -119,7 +119,7 @@ For example, a Claude `PreToolUse` hook that runs only for `Bash` can ship in
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/check.sh\""
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/.claude/scripts/check.sh\""
           }
         ]
       }
@@ -128,10 +128,15 @@ For example, a Claude `PreToolUse` hook that runs only for `Bash` can ship in
 }
 ```
 
-Keep `scripts/check.sh` below `.claude/` beside the hook definition. Sync copies
-regular support files byte-for-byte into `hook-support/<source>/<hook>/` for
+`${CLAUDE_PLUGIN_ROOT}` is the bundle root, the folder that contains `.claude/`,
+so the path after the token includes `.claude/`. Keep `scripts/check.sh` below
+`.claude/` beside the hook definition. Sync copies regular support files
+byte-for-byte into `hook-support/<source>/<hook>/.claude/scripts/check.sh` for
 each selected target and rewrites the plugin-root token to that installed
-location. Repository-scope commands use the target's documented
+location. A command that omits `.claude/`, such as
+`${CLAUDE_PLUGIN_ROOT}/scripts/check.sh`, still installs for one minor release
+with a `hook.support-reference-legacy` warning; change it to the bundle-root
+path. Repository-scope commands use the target's documented
 project-directory variable or working-directory base; user-scope commands use
 the absolute installed path. The definition JSON itself is not copied into
 support output.

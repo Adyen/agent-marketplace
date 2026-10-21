@@ -320,7 +320,7 @@ func TestAdditiveHookSupportConflictPreservesInstalledBytes(t *testing.T) {
 					}
 					supportOf := func(t *testing.T) string {
 						t.Helper()
-						matches, err := filepath.Glob(filepath.Join(supportRoot, "*", "*", "shared.sh"))
+						matches, err := filepath.Glob(filepath.Join(supportRoot, "*", "*", "*", "shared.sh"))
 						if err != nil || len(matches) != 1 {
 							t.Fatalf("installed support script under %s: %v %v", supportRoot, matches, err)
 						}
@@ -334,7 +334,7 @@ func TestAdditiveHookSupportConflictPreservesInstalledBytes(t *testing.T) {
 							t.Fatalf("conflicting fresh output exists at %s: %v", file, err)
 						}
 					}
-					if matches, _ := filepath.Glob(filepath.Join(supportRoot, "*", "*", "shared.sh")); len(matches) != 0 {
+					if matches, _ := filepath.Glob(filepath.Join(supportRoot, "*", "*", "*", "shared.sh")); len(matches) != 0 {
 						t.Fatalf("conflicting support tree installed: %v", matches)
 					}
 					if report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{first}, opts...); err != nil || hasErrorDiagnostics(report.Diags) {
