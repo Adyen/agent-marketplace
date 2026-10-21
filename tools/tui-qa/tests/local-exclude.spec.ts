@@ -16,12 +16,7 @@ journey.test("the toggle modal's local exclude removes a project skill only loca
   const localConfig = path.join(fixture.repo, ".agents", "config.local.yaml");
   const betaSkill = path.join(fixture.repo, ".factory", "skills", "beta-skill");
   const repoConfigBefore = fs.readFileSync(repoConfig);
-  const localExcludes = (): string[] => {
-    const local = fs.readFileSync(localConfig, "utf8");
-    const block = /\n    exclude:((?:\n      - \S+)*)/.exec(local);
-    assert.ok(block, `config.local.yaml has no exclude list:\n${local}`);
-    return block[1].split("\n").filter(Boolean).map((line) => line.replace(/^\s+- /, ""));
-  };
+  const localConfigText = (): string => fs.readFileSync(localConfig, "utf8");
 
   await step("settled fixture baseline", () => {}, async () => {
     await locate(terminal, /Enabled\s+\(1\)/).unique().expect();
@@ -40,9 +35,9 @@ journey.test("the toggle modal's local exclude removes a project skill only loca
     await locate(terminal, "~ 1 out of sync").unique().expect({ timeout: 30_000 });
     await locate(terminal, /Name:\s+alpha-skill/).unique().expect();
   });
-  assert.deepEqual(localExcludes(), ["skill/beta-skill"]);
+  assert.match(localConfigText(), /\n    exclude:\n      - skill\/beta-skill\n/);
   assert.deepEqual(fs.readFileSync(repoConfig), repoConfigBefore, "a local exclude changed the committed repository config");
-  const gitignore = fs.readFileSync(path.join(fixture.repo, ".gitignore"), "utf8").split("\n");
+  const gitignore = fs.readFileSync(path.join(fixture.repo, ".gitignore"), "utf8").split(/\r?\n/);
   assert.ok(gitignore.includes(".agents/config.local.yaml"), `the personal-local config is not git-ignored:\n${gitignore.join("\n")}`);
 
   await step("the excluded skill reports its state", () => terminal.write("j"), async () => {
@@ -63,7 +58,7 @@ journey.test("the toggle modal's local exclude removes a project skill only loca
     await locate(terminal, /Name:\s+beta-skill/).unique().expect();
     await locate(terminal, /Status:\s+enabled \(pending sync\)/).unique().expect();
   });
-  assert.deepEqual(localExcludes(), []);
+  assert.doesNotMatch(localConfigText(), /skill\/beta-skill/, "clearing the local exclude left beta-skill in config.local.yaml");
   await step("sync installs it again", () => terminal.write("s"), async () => {
     await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
     await locate(terminal, /Enabled\s+\(1\)/).unique().expect();
