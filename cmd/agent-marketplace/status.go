@@ -86,6 +86,7 @@ type statusView struct {
 	requirements        []requirementRow
 	errorRows           []errorRow
 	dryRunReport        *materialize.Report
+	cacheUnknown        bool
 	targetHarnesses     []string
 	targetSource        config.Source
 	machineTargets      []string
@@ -279,6 +280,7 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 		requirements:        requirementRows,
 		errorRows:           errorRows,
 		dryRunReport:        dryRunReport,
+		cacheUnknown:        pipeline.HasUnresolvedMarketplaceCacheEvidence(result.ResolveErrors),
 		targetHarnesses:     targetHarnesses,
 		targetSource:        result.TargetHarnessSource,
 		machineTargets:      machineTargets,
@@ -924,7 +926,11 @@ func writeStatusSections(out io.Writer, view statusView) error {
 		return err
 	}
 	if dryRunReport == nil {
-		if _, err := fmt.Fprintln(out, "Unknown (exact registry view incomplete)"); err != nil {
+		unknown := "Unknown (exact registry view incomplete)"
+		if view.cacheUnknown {
+			unknown = "Unknown (Marketplace cache evidence missing; run 'agent-marketplace sync')"
+		}
+		if _, err := fmt.Fprintln(out, unknown); err != nil {
 			return err
 		}
 		if _, err := fmt.Fprintln(out); err != nil {
