@@ -50,7 +50,7 @@ type Result struct {
 
 type fileState struct {
 	file     ir.PluginFile
-	consumed map[string]bool
+	consumed bool
 	output   File
 	lost     bool
 }
@@ -85,25 +85,22 @@ func Export(plugin *ir.Plugin, source fs.FS, options Options) (Result, error) {
 	markLost := func(sourcePath string) {
 		for filePath, state := range files {
 			if (filePath == sourcePath || strings.HasPrefix(filePath, strings.TrimSuffix(sourcePath, "/")+"/")) &&
-				len(state.consumed) == 0 && state.output.Path == "" {
+				!state.consumed && state.output.Path == "" {
 				state.lost = true
 			}
 		}
 	}
-	consume := func(sourcePath, artifact string) {
+	consume := func(sourcePath string) {
 		state := files[sourcePath]
 		if state == nil || !fs.ValidPath(sourcePath) || sourcePath == "." {
 			addLoss(&result.Losses, sourcePath, "source artifact file is absent from the package file inventory")
 			return
 		}
-		if state.consumed == nil {
-			state.consumed = map[string]bool{}
-		}
-		state.consumed[artifact] = true
+		state.consumed = true
 		state.lost = false
 	}
-	if files[layout.ManifestPath] != nil && !files[layout.ManifestPath].lost {
-		consume(layout.ManifestPath, "plugin.json")
+	if files[layout.ManifestPath] != nil {
+		consume(layout.ManifestPath)
 	}
 	skillDirectories, skillContents := map[string]string{}, map[string][]byte{}
 	mcpServers := map[string]any{}
@@ -172,13 +169,26 @@ func Export(plugin *ir.Plugin, source fs.FS, options Options) (Result, error) {
 			if representable {
 				mcpServers[resource.Name()] = entry
 				if resource.Source.File != "" {
-					consume(resource.Source.File, "mcp.json")
+					consume(resource.Source.File)
 				}
 			} else if resource.Source.File != "" {
 				markLost(resource.Source.File)
 			}
 		default:
-			omitMemberFiles(markLost, member.Resource)
+			var file string
+			switch typed := resource.(type) {
+			case *ir.Command:
+				file = typed.Source.File
+			case *ir.Subagent:
+				file = typed.Source.File
+			case *ir.Hook:
+				file = typed.Source.File
+			case *ir.Rule:
+				file = typed.Source.File
+			}
+			if file != "" {
+				markLost(file)
+			}
 			addLoss(&result.Losses, member.Key(), "member kind is not represented by Agent Plugins")
 		}
 	}
@@ -190,7 +200,7 @@ func Export(plugin *ir.Plugin, source fs.FS, options Options) (Result, error) {
 	}
 	for _, sourcePath := range slices.Sorted(maps.Keys(files)) {
 		state := files[sourcePath]
-		if len(state.consumed) > 0 || state.lost {
+		if state.consumed || state.lost {
 			continue
 		}
 		if sourcePath == ".mcp.json" || (sourcePath == "mcp.json" && !mcpGenerated) {
@@ -198,7 +208,13 @@ func Export(plugin *ir.Plugin, source fs.FS, options Options) (Result, error) {
 			markLost(sourcePath)
 			continue
 		}
-		dir, name := skillDirectory(sourcePath, skillDirectories)
+		dir, name := "", ""
+		if rel, ok := strings.CutPrefix(sourcePath, "skills/"); ok {
+			if base, _, nested := strings.Cut(rel, "/"); nested {
+				dir = "skills/" + base
+				name = skillDirectories[dir]
+			}
+		}
 		var data []byte
 		if name != "" && sourcePath == path.Join(dir, "SKILL.md") {
 			data = skillContents[dir]
@@ -229,7 +245,7 @@ func Export(plugin *ir.Plugin, source fs.FS, options Options) (Result, error) {
 	}
 	for _, file := range plugin.Files {
 		state := files[file.Path]
-		if len(state.consumed) == 0 && state.output.Path == "" && !state.lost {
+		if !state.consumed && state.output.Path == "" && !state.lost {
 			addLoss(&result.Losses, file.Path, "source file is not represented by Agent Plugins")
 			state.lost = true
 		}
@@ -676,32 +692,6 @@ func readPackageFile(source fs.FS, name string, limit int64) ([]byte, error) {
 		return nil, errors.New("package file exceeds the bounded read limit")
 	}
 	return data, nil
-}
-
-func skillDirectory(sourcePath string, directories map[string]string) (string, string) {
-	for dir, name := range directories {
-		if sourcePath == dir || strings.HasPrefix(sourcePath, dir+"/") {
-			return dir, name
-		}
-	}
-	return "", ""
-}
-
-func omitMemberFiles(markLost func(string), resource ir.Resource) {
-	var file string
-	switch typed := resource.(type) {
-	case *ir.Command:
-		file = typed.Source.File
-	case *ir.Subagent:
-		file = typed.Source.File
-	case *ir.Hook:
-		file = typed.Source.File
-	case *ir.Rule:
-		file = typed.Source.File
-	}
-	if file != "" {
-		markLost(file)
-	}
 }
 
 func validAgentSkillName(name string) bool {
