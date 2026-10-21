@@ -24,6 +24,9 @@ Each column exposes its CLI value, while Repository carries the default label
 and one valid static example command. Harness data is reordered without
 changing any entry so Claude leads the tabs it already defaulted.
 Depiction-only labels are shortened without changing destinations or actions.
+Icons that communicate UI actions use filled silhouettes for more visual
+weight. Explanatory icons paired with prose remain outlined so they continue
+to read as supporting content rather than controls.
 
 ## Risks / Trade-offs
 

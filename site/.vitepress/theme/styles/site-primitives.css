@@ -21,6 +21,13 @@
   stroke-width: 1.5;
 }
 
+.am-fill-icon {
+  width: var(--lp-icon-size);
+  height: var(--lp-icon-size);
+  flex: none;
+  fill: currentcolor;
+}
+
 .am-rule-top {
   border-top: var(--lp-rule-width) solid var(--lp-divider);
 }

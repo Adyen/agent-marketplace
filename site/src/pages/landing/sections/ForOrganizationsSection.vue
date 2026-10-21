@@ -95,9 +95,12 @@ const resources = [
 
         <div class="catalog">
           <div class="search">
-            <svg class="am-stroke-icon" aria-hidden="true" viewBox="0 0 24 24">
-              <circle cx="11" cy="11" r="6" />
-              <path d="m16 16 4 4" />
+            <svg class="am-fill-icon" aria-hidden="true" viewBox="0 0 24 24">
+              <path
+                fill-rule="evenodd"
+                d="M10.5 3a7.5 7.5 0 1 0 4.7 13.35l4.7 4.7 1.15-1.15-4.7-4.7A7.5 7.5 0 0 0 10.5 3Zm0 2.5a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z"
+                clip-rule="evenodd"
+              />
             </svg>
             <span>Search resources...</span>
           </div>
@@ -115,9 +118,8 @@ const resources = [
               <p>{{ resource.description }}</p>
             </div>
             <span class="install-button">
-              <svg class="am-stroke-icon" aria-hidden="true" viewBox="0 0 24 24">
-                <rect x="8" y="8" width="11" height="11" rx="2" />
-                <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+              <svg class="am-fill-icon" aria-hidden="true" viewBox="0 0 24 24">
+                <path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1Zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H8V7h11v14Z" />
               </svg>
               Copy
             </span>
