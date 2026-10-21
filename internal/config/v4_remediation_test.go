@@ -78,6 +78,16 @@ func TestV4ValidationErrorNamesAuthoredFileAndLine(t *testing.T) {
 }
 
 func TestV4ValidationErrorIncludesPathUnlessMessageContainsIt(t *testing.T) {
+	t.Run("parse message already starts with authored file", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+		message := file + ": yaml: line 1: did not find expected ',' or ']'"
+		validation := &V4ValidationError{Code: "v4.parse", File: file, Msg: message}
+		want := "v4.parse: " + file + ": yaml: line 1: did not find expected ',' or ']'"
+		if got := validation.Error(); got != want {
+			t.Fatalf("validation error = %q, want %q", got, want)
+		}
+	})
+
 	t.Run("unknown field", func(t *testing.T) {
 		file := filepath.Join(t.TempDir(), ".agents", "config.yaml")
 		_, err := ParseV4Config([]byte("apiVersion: agent-marketplace/v4\nunknown_field: true\n"), file, true)

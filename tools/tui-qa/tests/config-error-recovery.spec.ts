@@ -6,7 +6,7 @@ import { after, before } from "node:test";
 import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 import { runNonTTY } from "./process-helpers.js";
 
-// spec: tui-error-recovery/errors-preserve-specific-remediation-and-add-safe-fallbacks
+// spec: tui-error-recovery/coded-errors-show-the-same-guidance-as-the-cli
 const journey = defineFixture("config-error-recovery", ["tui"]);
 before(journey.setup);
 after(journey.cleanup);
@@ -43,11 +43,12 @@ journey.test("a broken user config is reported with recovery steps and fixed by 
   await step("the errors screen keeps the cause and adds config recovery steps", () => terminal.write("e"), async () => {
     await locate(terminal, "Errors (1)").unique().expect();
     await locate(terminal, "v4.parse:").expect();
-    await locate(terminal, "Fix the file and field named above.").unique().expect();
-    await locate(terminal, "press `r` to reload.").unique().expect();
-    // The guidance points at the file "named above", so the cause must keep the
-    // config path. The screen wraps that temporary path at varying points and
-    // macOS may resolve it through /private, so match its suffix without
+    await locate(terminal, "correct").unique().expect();
+    await locate(terminal, "YAML").unique().expect();
+    await locate(terminal, "doctor").unique().expect();
+    await locate(terminal, "reload").unique().expect();
+    // The cause and hint paths wrap at varying points in the 50-column layout,
+    // and macOS may resolve them through /private, so match the suffix without
     // whitespace.
     const screen = (await terminal.text()).replace(/\s+/g, "");
     assert.ok(screen.includes("/home/.agents/config.yaml:"), `the errors screen lost the cause's config path:\n${await terminal.text()}`);
