@@ -9,6 +9,12 @@ Run the hosted Marketplace with separate API and worker processes, external stor
 - A secret store for the database DSN and any registry credentials.
 - Container images pinned by verified digest: the API and worker images built from `Dockerfile.marketplace`, the Nuxt UI image, and the documentation-only VitePress image. Only the worker image contains Git, which acquisition needs. Every release publishes ready-made images to GHCR: `ghcr.io/adyen/agent-marketplace/worker`, `ghcr.io/adyen/agent-marketplace/api`, and `ghcr.io/adyen/agent-marketplace/web`, tagged with the release tag.
 
+The documentation-only VitePress image is not published by the release workflow.
+If `docs.enabled: true`, run `make container-docs` with `DOCS_CONTAINER_IMAGE`
+set to an image reference in your approved registry. Push that image, resolve
+and verify its digest, and configure `docs.image.repository` and
+`docs.image.digest` before deployment.
+
 Resolve each release image to a digest, verify its provenance according to your
 organization's policy, and record `repository@sha256:<verified-digest>` in the
 deployment configuration. A version tag alone can be moved. In Helm, set the
@@ -26,8 +32,10 @@ deliberately update the pins when shipping security updates.
 ### Upgrading Existing Helm Values
 
 The chart no longer supplies `latest` for `image.tag`, `web.image.tag`, or
-`docs.image.tag`. Previously accepted values that omitted these versions now
-fail rendering. Before upgrading, add verified digests for the backend and
+`docs.image.tag`. For image-version validation, rendering fails only when an
+enabled workload has neither a digest nor a tag after role inheritance. A
+digest takes precedence, so the corresponding tag may be omitted.
+Before upgrading, add verified digests for the backend and
 each enabled frontend, including any role-specific image repositories.
 Render the new chart with the complete values before rollout and retain the
 previous chart, values, and image references for rollback. Reused values can
