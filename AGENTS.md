@@ -56,6 +56,8 @@ E2E_SKIP_DOCKER=1 make e2e  # for CI runners that cannot spawn Docker
 E2E_PARALLEL=8 make e2e  # control concurrency (default 4, set to 1 for serial)
 ```
 
+Keep declarative table cases spec-tagged; see [Declarative E2E table](skills/agent-marketplace-development/SKILL.md#declarative-e2e-table) and run `go -C e2e test -run '^TestTableSpecTags' -count=1 .`.
+
 ### TUI QA
 
 **Every TUI change ships a journey.** Go tests under `internal/tui` build a `Model` and feed it messages; they cannot show that a user's key presses reach the changed behavior, and TUI changes merged with only those tests have broken user flows. Any change to TUI behavior (keys, modals, footer/help, layout, rendering, mouse input, async loading, diagnostics and recovery copy, launch wiring) adds `tools/tui-qa/tests/<flow>.spec.ts` or extends the existing journey that already reaches that flow. The journey launches the real binary, presses the keys a user would, asserts the visible result after each state-changing input, and checks resulting config and harness files when the flow writes them. For a bug fix, the journey must fail without the fix. List new journeys in `tools/tui-qa/README.md` and run `make tui-qa` before handoff; it passes only when every journey ran and none were skipped. Use `TUI-QA-Impact: none — <reason>` only for changes with no user-observable TUI effect, such as comments, renames, or dead code. "Covered by Go tests" is not a valid reason.

@@ -537,6 +537,28 @@ signals.
 
 ## Testing Playbook
 
+### Declarative E2E table
+
+For any user-observable CLI behavior change, add or extend a case in
+`e2e/table_test.go`; use `e2e/table_marketplace_test.go` for Marketplace
+flows. Use a bespoke `e2e/*_test.go` test only when the table cannot express
+the flow, such as crash injection or concurrency.
+
+Put `// spec: <capability>/<scenario-slug>` directly above every new case.
+For OpenSpec changes, cite table case names in `tasks.md` as proof for the
+scenarios. `e2e/testdata/table_untagged_baseline.txt` only shrinks: tag a
+legacy case when you touch it, then remove its baseline line. Check tags with
+`go -C e2e test -run '^TestTableSpecTags' -count=1 .`.
+
+See `CODING_STANDARDS.md` for table vocabulary and definitions. Use
+`Registries`, `Marketplaces`, `{{REG:name}}`, `{{MKT:name}}`,
+`{{GITHTTP:name}}`, `ActionPushRegistry`, `ActionReindexMarketplace`,
+`ActionRevokeMarketplace`, `Step.Env`, `Step.Cwd`, `PathsUnchanged`, and
+`v4Cfg`.
+
+Run one case with `go -C e2e test -run '^TestE2E$/<name>' -count=1 .`;
+run the full table with `make validate-e2e`.
+
 ### Consumer launch and interoperability gates
 
 Successful consumer command/flag coverage is v4-only, requiring exact v4 in
