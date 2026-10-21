@@ -84,6 +84,19 @@ func (e *OrganizationTrustError) Error() string {
 	return fmt.Sprintf("%s: organization authority %q: %v", e.Code, e.Path, e.Err)
 }
 func (e *OrganizationTrustError) Unwrap() error { return e.Err }
+func (e *OrganizationTrustError) DiagnosticCode() string {
+	if e == nil {
+		return ""
+	}
+	return e.Code
+}
+func (e *OrganizationTrustError) DiagnosticScope() string { return "organization" }
+func (e *OrganizationTrustError) DiagnosticPath() string {
+	if e == nil {
+		return ""
+	}
+	return e.Path
+}
 
 // trustedOwnerFn is the predicate used to decide whether a file's owner is
 // trusted for the managed-installation organization config. It is a variable
@@ -230,9 +243,18 @@ func isPathWithin(root, candidate string) bool {
 func validateOrganizationNode(path, configPath, kind string) error {
 	info, err := os.Lstat(path)
 	if err != nil {
-		code := "organization.trust." + kind + ".inspect"
+		inspectCode, missingCode := "", ""
+		switch kind {
+		case "config":
+			inspectCode, missingCode = "organization.trust.config.inspect", "organization.trust.config.missing"
+		case "include":
+			inspectCode, missingCode = "organization.trust.include.inspect", "organization.trust.include.missing"
+		case "lock":
+			inspectCode, missingCode = "organization.trust.lock.inspect", "organization.trust.lock.missing"
+		}
+		code := inspectCode
 		if errors.Is(err, fs.ErrNotExist) {
-			code = "organization.trust." + kind + ".missing"
+			code = missingCode
 		}
 		return organizationTrustError(code, path, err)
 	}

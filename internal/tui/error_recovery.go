@@ -2,13 +2,12 @@ package tui
 
 import (
 	"errors"
-	"fmt"
+	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
-	"github.com/Adyen/agent-marketplace/internal/pipeline"
-	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/remedy"
 )
 
 const (
@@ -23,8 +22,6 @@ const (
 	interruptedWriteRecoveryCopy = "Run `agent-marketplace sync` in this workspace to finish the interrupted write. Do not use `--check`, `--locked`, or `--offline` for this step. Then press `r` in the resource list to reload."
 	organizationLockRecoveryCopy = "Ask your administrator to fix the organization config or acquisition lock named above. Do not edit or delete organization files to bypass the check. After they fix it, run `agent-marketplace sync --check` in this workspace, then press `r` in the resource list to reload."
 	restoreLockRecoveryCopy      = "Restore the acquisition lock named above from a known-good copy, or fix its read permissions. Do not delete the lock or run `update` to bypass verification. Run `agent-marketplace sync --check` in this workspace, then press `r` in the resource list to reload."
-	snapshotLockRecoveryCopy     = "Check your network and Git access, then run `agent-marketplace sync --locked` in this workspace to fetch the pinned source and sync without changing acquisition locks. Press `r` in the resource list to reload. If verification still fails, keep the lock and ask the registry owner to investigate."
-	manifestLockRecoveryCopy     = "Run `agent-marketplace sync --locked` in this workspace to recheck the pinned source without changing acquisition locks. If verification still fails, ask the registry owner to investigate. Do not delete the lock or run `update` to bypass verification."
 )
 
 type resourceStateUnverifiedError struct{}
@@ -53,7 +50,7 @@ func (m Model) diagnosticCategories() map[diagnosticCategoryKey][]diagnosticCate
 }
 
 func diagnosticRemediation(err error, category diagnosticCategory) string {
-	var remediable resolver.Remediable
+	var remediable remedy.Remediable
 	if errors.As(err, &remediable) {
 		if hint := remediable.Remediation(); hint != "" {
 			return hint
@@ -62,10 +59,24 @@ func diagnosticRemediation(err error, category diagnosticCategory) string {
 	if errors.Is(err, errResourceStateUnverified) {
 		return ""
 	}
+	if hint := remedy.For(err, ""); hint != "" {
+		return appendCatalogReload(hint)
+	}
 	if hint := typedRecoveryRemediation(err); hint != "" {
 		return hint
 	}
 	return categoryRecoveryRemediation(category)
+}
+
+func appendCatalogReload(hint string) string {
+	hint = strings.TrimSpace(hint)
+	if hint == "" {
+		return ""
+	}
+	if !strings.HasSuffix(hint, ".") {
+		hint += "."
+	}
+	return hint + " Then press `r` in the resource list to reload."
 }
 
 func typedRecoveryRemediation(err error) string {
@@ -76,47 +87,8 @@ func typedRecoveryRemediation(err error) string {
 	if errors.As(err, &trustErr) {
 		return organizationLockRecoveryCopy
 	}
-	var lockErr *pipeline.LockViewError
-	if errors.As(err, &lockErr) {
-		return lockViewRecoveryRemediation(lockErr)
-	}
 	var lockfileErr *lockfile.Error
 	if errors.As(err, &lockfileErr) {
-		return restoreLockRecoveryCopy
-	}
-	return ""
-}
-
-func writableLockScope(scope lockfile.Scope) bool {
-	switch scope {
-	case lockfile.ScopeRepo, lockfile.ScopeUser, lockfile.ScopeLocal:
-		return true
-	}
-	return false
-}
-
-func syncableLockScope(scope lockfile.Scope) bool {
-	return scope == "" || writableLockScope(scope)
-}
-
-func lockViewRecoveryRemediation(lockErr *pipeline.LockViewError) string {
-	if lockErr.Scope == lockfile.ScopeOrganization {
-		return organizationLockRecoveryCopy
-	}
-	switch lockErr.Code {
-	case "lock.missing", "lock.stale":
-		if writableLockScope(lockErr.Scope) {
-			return fmt.Sprintf("Run `agent-marketplace lock --scope %s` in this workspace to create or reconcile this acquisition lock without upgrading a current pin. Then run `agent-marketplace sync --check` and press `r` in the resource list to reload.", lockErr.Scope)
-		}
-	case "lock.snapshot-unavailable", "lock.offline-snapshot-missing":
-		if syncableLockScope(lockErr.Scope) {
-			return snapshotLockRecoveryCopy
-		}
-	case "lock.manifest-mismatch":
-		if syncableLockScope(lockErr.Scope) {
-			return manifestLockRecoveryCopy
-		}
-	case "lock.invalid", "lock.read", "lock.lookup":
 		return restoreLockRecoveryCopy
 	}
 	return ""
