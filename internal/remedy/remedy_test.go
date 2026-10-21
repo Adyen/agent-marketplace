@@ -135,6 +135,18 @@ func TestUnknownLockScopeDoesNotGuessRepository(t *testing.T) {
 	}
 }
 
+// spec: command-error-output/coded-errors-print-code-specific-guidance
+func TestLockRestoreHintPlacesPathBeforeGuidance(t *testing.T) {
+	got := For(testCodedError{
+		code: "lock.invalid", path: "/workspace/.agents/lock.yaml", text: "invalid lock",
+	}, "doctor")
+	want := strings.TrimSuffix(restoreLockGuidance, ".") + " (lock file: /workspace/.agents/lock.yaml)."
+	if got != want {
+		t.Fatalf("hint = %q, want %q", got, want)
+	}
+}
+
+// spec: command-error-output/coded-errors-print-code-specific-guidance
 func TestMarketplaceLockMismatchVariantsUseStructuredGuidance(t *testing.T) {
 	file := "/workspace/.agents/config.yaml"
 	cases := []struct {
@@ -157,6 +169,10 @@ func TestMarketplaceLockMismatchVariantsUseStructuredGuidance(t *testing.T) {
 			want: "In " + file + ":7, change the Marketplace requests so each selects a distinct locked resource, then run `agent-marketplace doctor` to check the fix.",
 		},
 		{
+			name: "stale endpoint", variant: "stale-endpoint", scope: "repo", lockFile: ".agents/lock.yaml",
+			want: "In .agents/lock.yaml, remove the stale Marketplace endpoint or add its matching Marketplace source, then run `agent-marketplace doctor` to check the fix.",
+		},
+		{
 			name: "unreadable lock", variant: "lock-read", scope: "repo", lockFile: ".agents/lock.yaml",
 			want: "Restore the acquisition lock file .agents/lock.yaml from a known-good copy or correct its permissions, then run `agent-marketplace sync --check` to verify it.",
 		},
@@ -172,6 +188,13 @@ func TestMarketplaceLockMismatchVariantsUseStructuredGuidance(t *testing.T) {
 				t.Fatalf("hint = %q, want %q", hint, tc.want)
 			}
 		})
+	}
+}
+
+// spec: command-error-output/coded-errors-print-code-specific-guidance
+func TestLowerFirstPreservesUTF8(t *testing.T) {
+	if got := lowerFirst("Ändern"); got != "ändern" {
+		t.Fatalf("lowerFirst() = %q, want %q", got, "ändern")
 	}
 }
 

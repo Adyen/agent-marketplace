@@ -146,7 +146,10 @@ func selectedMarketplaceResourcesMissing(layer config.LayerIntent, current *lock
 			}
 		}
 		if existing == nil {
-			return len(source.Requests) > 0
+			if len(source.Requests) > 0 {
+				return true
+			}
+			continue
 		}
 		registryIDs := make(map[string]string, len(existing.RegistryBindings))
 		for _, binding := range existing.RegistryBindings {
@@ -178,6 +181,7 @@ func selectedMarketplaceResourcesMissing(layer config.LayerIntent, current *lock
 func mergeMissingMarketplaceRecords(layer config.LayerIntent, current, resolved lockfile.Document) (lockfile.Document, error) {
 	doc := current
 	doc.Marketplaces = slices.Clone(current.Marketplaces)
+	changedResources := make(map[string]map[string]bool)
 	for _, fresh := range resolved.Marketplaces {
 		index := -1
 		for i := range doc.Marketplaces {
@@ -187,6 +191,13 @@ func mergeMissingMarketplaceRecords(layer config.LayerIntent, current, resolved 
 			}
 		}
 		if index < 0 {
+			fresh.Resources = slices.Clone(fresh.Resources)
+			for i := range fresh.Resources {
+				resource := fresh.Resources[i]
+				resource.SelectedBy = marketplacelock.MergeSelectedBy(nil, resource.SelectedBy)
+				fresh.Resources[i] = resource
+				markMarketplaceResourceChanged(changedResources, fresh.URL, resource)
+			}
 			doc.Marketplaces = append(doc.Marketplaces, fresh)
 			continue
 		}
@@ -221,15 +232,82 @@ func mergeMissingMarketplaceRecords(layer config.LayerIntent, current, resolved 
 				}
 			}
 			if resourceIndex < 0 {
+				resource.SelectedBy = marketplacelock.MergeSelectedBy(nil, resource.SelectedBy)
 				existing.Resources = append(existing.Resources, resource)
+				markMarketplaceResourceChanged(changedResources, fresh.URL, resource)
 			} else if marketplaceResourceRevisionExplicit(layer, fresh.URL, resource) &&
 				existing.Resources[resourceIndex].Revision != resource.Revision {
+				resource.SelectedBy = marketplacelock.MergeSelectedBy(existing.Resources[resourceIndex].SelectedBy, resource.SelectedBy)
 				existing.Resources[resourceIndex] = resource
+				markMarketplaceResourceChanged(changedResources, fresh.URL, resource)
 			}
 		}
 		doc.Marketplaces[index] = existing
 	}
+	for i := range doc.Marketplaces {
+		retainConsistentMarketplaceResources(layer, &doc.Marketplaces[i], changedResources[doc.Marketplaces[i].URL])
+	}
 	return lockfile.Normalize(doc)
+}
+
+func markMarketplaceResourceChanged(changed map[string]map[string]bool, endpoint string, resource lockfile.MarketplaceResourceLock) {
+	if changed[endpoint] == nil {
+		changed[endpoint] = make(map[string]bool)
+	}
+	changed[endpoint][marketplaceResourceKey(resource)] = true
+}
+
+func retainConsistentMarketplaceResources(layer config.LayerIntent, record *lockfile.MarketplaceLock, changed map[string]bool) {
+	if len(changed) == 0 {
+		return
+	}
+	for {
+		collections := make(map[string]lockfile.Digest)
+		for _, resource := range record.Resources {
+			if resource.Kind == "collection" {
+				collections[resource.RegistryID+"\x00"+resource.Name] = resource.ContentDigest
+			}
+		}
+		removed := false
+		resources := record.Resources[:0]
+		for i := range record.Resources {
+			resource := &record.Resources[i]
+			if changed[marketplaceResourceKey(*resource)] {
+				hadSelectionEdges := len(resource.SelectedBy) > 0
+				kept := resource.SelectedBy[:0]
+				for _, edge := range resource.SelectedBy {
+					if digest, ok := collections[edge.RegistryID+"\x00"+edge.Name]; ok && digest == edge.Revision {
+						kept = append(kept, edge)
+					}
+				}
+				resource.SelectedBy = kept
+				if hadSelectionEdges && len(kept) == 0 && !marketplaceResourceDirectlySelected(layer, record.URL, *resource) {
+					removed = true
+					continue
+				}
+			}
+			resources = append(resources, *resource)
+		}
+		record.Resources = resources
+		if !removed {
+			return
+		}
+	}
+}
+
+func marketplaceResourceDirectlySelected(layer config.LayerIntent, endpoint string, resource lockfile.MarketplaceResourceLock) bool {
+	for _, source := range layer.MarketplaceSources() {
+		if source.URL != endpoint {
+			continue
+		}
+		for _, request := range source.Requests {
+			if (request.Registry == resource.RegistryName || request.Registry == resource.RegistryID) &&
+				request.MarketplaceKind() == resource.Kind && request.Name == resource.Name {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func marketplaceResourceKey(resource lockfile.MarketplaceResourceLock) string {

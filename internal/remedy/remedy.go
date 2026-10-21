@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 type Remediable interface {
@@ -171,7 +172,8 @@ func lowerFirst(text string) string {
 	if text == "" {
 		return text
 	}
-	return strings.ToLower(text[:1]) + text[1:]
+	first, size := utf8.DecodeRuneInString(text)
+	return strings.ToLower(string(first)) + text[size:]
 }
 
 func organizationConfigHint(ctx hintContext) string {
@@ -205,7 +207,7 @@ func lockHint(action string) hintFunc {
 			return organizationLockGuidance
 		}
 		if ctx.Path != "" {
-			return fmt.Sprintf("%s: %s", action, ctx.Path)
+			return fmt.Sprintf("%s (lock file: %s).", strings.TrimSuffix(action, "."), ctx.Path)
 		}
 		return action
 	}
@@ -241,10 +243,23 @@ func marketplaceLockMismatchHint(ctx hintContext) string {
 	switch ctx.Variant {
 	case "configuration", "duplicate-request":
 		return marketplaceConfigurationMismatchHint(ctx)
+	case "stale-endpoint":
+		return marketplaceStaleEndpointHint(ctx)
 	case "lock-restore", "lock-read":
 		return marketplaceRestoreLockHint(ctx)
 	}
 	return marketplaceBootstrapHint(ctx.Scope, ctx.Locator, ctx.LockFile)
+}
+
+func marketplaceStaleEndpointHint(ctx hintContext) string {
+	if ctx.Scope == "organization" {
+		return organizationLockGuidance
+	}
+	lockPath := ctx.LockFile
+	if lockPath == "" {
+		lockPath = "the acquisition lock"
+	}
+	return fmt.Sprintf("In %s, remove the stale Marketplace endpoint or add its matching Marketplace source, then run `agent-marketplace doctor` to check the fix.", lockPath)
 }
 
 func marketplaceBootstrapHint(scope, locator, lockFile string) string {

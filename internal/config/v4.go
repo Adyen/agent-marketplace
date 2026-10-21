@@ -2121,7 +2121,7 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document, mo
 				if exclusionOnlyEndpoints[mp.URL] || projection {
 					continue
 				}
-				return nil, v4errVariant(v4MarketplaceLockMismatchCode, "", 0, "configuration", "lock endpoint %q has no matching Marketplace source", mp.URL)
+				return nil, v4errVariant(v4MarketplaceLockMismatchCode, "", 0, "stale-endpoint", "lock endpoint %q has no matching Marketplace source", mp.URL)
 			}
 			lockByEndpoint[mp.URL] = mp
 		}
@@ -2239,7 +2239,7 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document, mo
 
 func firstV4File(c *V4Config) string {
 	if c != nil && len(c.Files) > 0 {
-		return c.Files[0]
+		return c.Files[len(c.Files)-1]
 	}
 	return ""
 }

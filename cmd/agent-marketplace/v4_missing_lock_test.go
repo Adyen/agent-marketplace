@@ -158,6 +158,38 @@ func TestSyncAddsMissingSelectedMarketplaceResourceAndPreservesExistingPins(t *t
 	}
 }
 
+// spec: deployed-acquisition-locks/writing-sync-adds-a-missing-selected-resource-and-keeps-existing-pins
+func TestSyncRecordsMissingResourceAfterUnrecordedResourceFreeMarketplace(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+
+	resourceFree := newV4MarketplaceLockServer(t)
+	defer resourceFree.Close()
+	selected := newV4MarketplaceServerWithResources(t, "selected", []string{"review", "second"}, false, nil, nil)
+	defer selected.Close()
+
+	repo := t.TempDir()
+	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  b: {marketplace: "+selected.URL+"}\nresources:\n  b: {include: [tools/skill/review]}\n")
+	withWorkingDir(t, repo)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync: %v\n%s", err, output)
+	}
+
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  a: {marketplace: "+resourceFree.URL+"}\n  b: {marketplace: "+selected.URL+"}\nresources:\n  b: {include: [tools/skill/review, tools/skill/second]}\n")
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("sync after adding an unrecorded registration: %v\n%s", err, output)
+	}
+	document := readLockDocument(t, lockPath)
+	marketplaceLockResourceByURL(t, document, selected.URL, "second")
+}
+
 // spec: command-error-output/a-resource-missing-from-the-lock-names-its-file-and-the-command-that-records-it
 func TestMarketplaceLockMismatchHintRepairsEmptyResourceLockWithSync(t *testing.T) {
 	if isolateCommandTest(t) {
@@ -385,6 +417,78 @@ resources:
 	if got := marketplaceLockResourceByURL(t, explicitMerged, "https://other.example", "other"); !reflect.DeepEqual(got, otherResource) {
 		t.Fatalf("explicit revision changed another Marketplace record: %#v", got)
 	}
+
+	t.Run("new member edges match the kept collection revision", func(t *testing.T) {
+		oldCollectionDigest := lockfile.Digest("sha256:" + strings.Repeat("1", 64))
+		resolvedCollectionDigest := lockfile.Digest("sha256:" + strings.Repeat("2", 64))
+		oldCollection := lockfile.MarketplaceResourceLock{
+			RegistryName: "tools", RegistryID: "src", Kind: "collection", Name: "bundle",
+			Revision: string(oldCollectionDigest), ContentDigest: oldCollectionDigest,
+			CollectionManifestDigest: oldCollectionDigest, Acquisition: lockfile.MarketplaceAcquisitionMirror,
+		}
+		resolvedCollection := oldCollection
+		resolvedCollection.Revision = string(resolvedCollectionDigest)
+		resolvedCollection.ContentDigest = resolvedCollectionDigest
+		resolvedCollection.CollectionManifestDigest = resolvedCollectionDigest
+		member := lockfile.MarketplaceResourceLock{
+			RegistryName: "tools", RegistryID: "src", Kind: "skill", Name: "member",
+			Revision: "member-revision", ContentDigest: lockfile.Digest("sha256:" + strings.Repeat("3", 64)),
+			ArchiveDigest: lockfile.Digest("sha256:" + strings.Repeat("4", 64)),
+			Acquisition:   lockfile.MarketplaceAcquisitionMirror,
+			SelectedBy:    []lockfile.MarketplaceSelectionLock{{RegistryID: "src", Name: "bundle", Revision: resolvedCollectionDigest}},
+		}
+		indirectMember := member
+		indirectMember.Name = "only-in-new-bundle"
+		indirectMember.ContentDigest = lockfile.Digest("sha256:" + strings.Repeat("5", 64))
+		indirectMember.ArchiveDigest = lockfile.Digest("sha256:" + strings.Repeat("6", 64))
+		currentCollection := lockfile.Document{
+			APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeRepo,
+			Marketplaces: []lockfile.MarketplaceLock{{
+				URL: "https://market.example", InstanceID: "market-id",
+				RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: "tools", RegistryID: "src"}},
+				Resources:        []lockfile.MarketplaceResourceLock{oldCollection},
+			}},
+		}
+		resolvedCollectionDoc := lockfile.Document{
+			APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeRepo,
+			Marketplaces: []lockfile.MarketplaceLock{{
+				URL: "https://market.example", InstanceID: "market-id",
+				RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: "tools", RegistryID: "src"}},
+				Resources:        []lockfile.MarketplaceResourceLock{resolvedCollection, member, indirectMember},
+			}},
+		}
+		repo := t.TempDir()
+		writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources:
+  hosted: {marketplace: https://market.example}
+resources:
+  hosted:
+    include: [tools/collection/bundle, tools/skill/member]
+`)
+		intent := config.ReadIntent(context.Background(), config.LoadEffectiveOptions{RepoRoot: repo, LocalConfigDir: repo})
+		currentCollection, err := lockfile.Normalize(currentCollection)
+		if err != nil {
+			t.Fatal(err)
+		}
+		merged, err := mergeMissingMarketplaceRecords(intent.Layers[config.RepoCommitted], currentCollection, resolvedCollectionDoc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := lockfile.Validate(merged); err != nil {
+			t.Fatalf("merged lock is invalid: %v", err)
+		}
+		gotCollection := marketplaceLockResourceByURL(t, merged, "https://market.example", "bundle")
+		if !reflect.DeepEqual(gotCollection, oldCollection) {
+			t.Fatalf("existing collection pin changed: %#v, want %#v", gotCollection, oldCollection)
+		}
+		gotMember := marketplaceLockResourceByURL(t, merged, "https://market.example", "member")
+		if len(gotMember.SelectedBy) != 0 {
+			t.Fatalf("new member kept an edge to the unresolved collection revision: %#v", gotMember.SelectedBy)
+		}
+		if _, ok := marketplaceLockResource(merged, "only-in-new-bundle"); ok {
+			t.Fatalf("unselected member from the changed collection revision was added to the lock: %#v", merged.Marketplaces)
+		}
+	})
 }
 
 // spec: command-error-output/a-resource-missing-from-the-lock-names-its-file-and-the-command-that-records-it

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -166,6 +167,48 @@ func TestV4MarketplaceLockMismatchNamesLockFile(t *testing.T) {
 				t.Fatalf("mismatch error = %q, want suffix %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// spec: command-error-output/validation-errors-name-the-authored-file
+func TestV4IncludedMarketplaceConflictUsesRootDiagnosticProvenance(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, ".agents", "config.yaml")
+	fragment := filepath.Join(dir, ".agents", "fragment.yaml")
+	writeIncludeConfig(t, fragment, "sources:\n  first: {marketplace: https://market.example}\n")
+	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v4\ninclude: [fragment.yaml]\nsources:\n  second: {marketplace: https://market.example}\n")
+
+	v4, err := LoadV4ConfigIfPresent(root, RepoCommitted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = v4.toLegacyConfig(repoLayer, nil)
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != v4MarketplaceLockMismatchCode {
+		t.Fatalf("error = %v, want Marketplace lock mismatch", err)
+	}
+	wantRoot := canonicalPath(t, root)
+	if validation.File != wantRoot || validation.Line != 4 || validation.LockFile != ".agents/lock.yaml" {
+		t.Fatalf("diagnostic provenance = file %q line %d, lock %q; want root %q:4 and its acquisition lock", validation.File, validation.Line, validation.LockFile, wantRoot)
+	}
+}
+
+// spec: command-error-output/coded-errors-print-code-specific-guidance
+func TestV4StaleMarketplaceEndpointUsesStaleEndpointVariant(t *testing.T) {
+	v4, err := ParseV4Config([]byte("apiVersion: agent-marketplace/v4\nsources:\n  hosted: {marketplace: https://market.example}\n"), "config.yaml", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = v4.toLegacyConfig(repoLayer, &lockfile.Document{
+		APIVersion: lockfile.APIVersionV2,
+		Scope:      lockfile.ScopeRepo,
+		Marketplaces: []lockfile.MarketplaceLock{{
+			URL: "https://stale.example", InstanceID: "stale-instance",
+		}},
+	})
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != v4MarketplaceLockMismatchCode || validation.Variant != "stale-endpoint" {
+		t.Fatalf("error = %#v, want a stale-endpoint Marketplace lock mismatch", validation)
 	}
 }
 
