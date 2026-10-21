@@ -40,11 +40,26 @@ When installation is unavailable, the Marketplace SHALL replace setup and comman
 - **THEN** one Not available notice gives the applicable concise reason without setup, command, copy, duplicate warning controls, or a security-details action
 
 ### Requirement: Shared browser brand identity
-The Landing, Docs, and Marketplace surfaces SHALL present the agent-marketplace logo artwork at one consistent displayed width of 160 CSS pixels and optical vertical alignment in their primary navigation, select a contrasting supplied logo variant for light and dark appearance, and publish the supplied favicon at each surface's configured base path. Route-dependent navigation wrappers MAY retain different widths. The logo link MUST retain the accessible product name and existing home destination.
+The Landing and Docs public-site surfaces SHALL use the approved Adyen variable
+Sans and Mono fonts and the shared Agent Marketplace Green `#00D16A`, custom
+Black `#121A18`, and white palette through common semantic roles in light and
+dark appearance. Their shared navigation and footer SHALL use those same roles.
+The Landing, Docs, and Marketplace surfaces SHALL present the
+agent-marketplace logo artwork at one consistent displayed width of 160 CSS
+pixels and optical vertical alignment in their primary navigation, select a
+contrasting supplied logo variant for light and dark appearance, and publish
+the supplied favicon at each surface's configured base path. Route-dependent
+navigation wrappers MAY retain different widths. The logo link MUST retain the
+accessible product name and existing home destination. Marketplace application
+typography and surface colors SHALL remain owned by its separate application
+theme.
 
 #### Scenario: Browser surfaces present accessible adaptive branding
 - **WHEN** a user visits Landing, a Docs page with a sidebar, or Marketplace in light or dark appearance
-- **THEN** the primary navigation shows the contrasting agent-marketplace logo artwork at a displayed width of 160 CSS pixels and the same optical vertical alignment on every surface, its home link is named `agent-marketplace`, and the document references the supplied favicon from that surface's configured base path
+- **THEN** Landing and Docs use the approved Adyen variable fonts and shared Agent Marketplace palette
+- **AND** their navigation and footer use the same public-site semantic roles
+- **AND** the Marketplace application retains its application-owned typography and surfaces
+- **AND** the primary navigation shows the contrasting agent-marketplace logo artwork at a displayed width of 160 CSS pixels and the same optical vertical alignment on every surface, its home link is named `agent-marketplace`, and the document references the supplied favicon from that surface's configured base path
 
 ### Requirement: Resource source origin link
 When a resource revision reports source provenance, the detail page header SHALL show the source repository and resource path as its first metadata item, linked to the original resource in a new tab. For GitHub, GitLab, and bitbucket.org hosts the link SHALL address the resource file at the exact occurrence commit; for other hosts it SHALL address the repository. When no source provenance is reported, the header SHALL omit the source item.
@@ -105,3 +120,77 @@ Landing and Marketplace SHALL reuse a logo-green `#00D16A` slash mark at approve
 #### Scenario: Other resource detail titles remain unprefixed
 - **WHEN** a user views a detail page for any other resource kind
 - **THEN** its visible and accessible title remains the unprefixed resource name
+
+### Requirement: Public Landing visual hierarchy
+Landing SHALL use the shared public-site typography, palette, spacing, and
+geometry roles while preserving its existing section order, destinations,
+product content, and controls. The hero SHALL keep its text and product-preview
+arrangement on wide screens and stack responsively on narrower screens. Its two
+headline phrases SHALL use the same size and weight with primary and muted
+tones. Landing surfaces SHALL remain flat without decorative background grids,
+glows, ornamental gradients, or drop shadows.
+
+#### Scenario: Landing presents the shared flat visual system
+- **WHEN** a user visits Landing in light or dark appearance
+- **THEN** the hero uses the shared public-site type roles with equal-sized primary and muted headline phrases
+- **AND** its page and product surfaces use the shared flat palette without decorative grids, glows, ornamental gradients, or drop shadows
+- **AND** the existing sections, destinations, product content, and controls remain available
+
+### Requirement: Landing motion remains accessible and resilient
+Landing SHALL animate the hero once on page entry and decode section eyebrow
+labels once when they first become visible. Real content MUST remain in the DOM
+and accessible throughout; decorative duplicate or noise text MUST be hidden
+from assistive technology. A live reduced-motion preference SHALL show final
+content without arrival, label-roll, decode, or travelling-indicator movement
+while preserving copy, selection, and keyboard functionality.
+
+#### Scenario: Reduced motion preserves final Landing content and controls
+- **WHEN** a user visits Landing with reduced motion enabled
+- **THEN** hero and eyebrow content is immediately visible without displacement or decoding noise
+- **AND** action, copy, and tab controls remain functional without movement
+
+### Requirement: Command copying reports truthful feedback
+After a Landing command is successfully copied, its control SHALL show
+`Copied`, use the success fill, announce success politely, and restore `Copy`
+after the feedback interval. A rejected clipboard write MUST NOT show success.
+The copied command bytes MUST remain unchanged, and pending feedback work MUST
+be cancelled when the component unmounts.
+
+#### Scenario: Successful command copy is visible and announced
+- **WHEN** a user activates Copy and the clipboard write succeeds
+- **THEN** the control shows `Copied` with success presentation and a polite success announcement
+- **AND** the clipboard receives the exact displayed command
+
+### Requirement: Harness tabs provide one accessible selection model
+Landing harness tabs SHALL expose tab and tabpanel relationships, one roving
+tab stop, and automatic selection with wrapping Left, Right, Up, and Down arrow
+navigation plus Home and End. A single decorative indicator MAY follow the
+selected tab but MUST NOT create a second selection model.
+
+#### Scenario: Harness tabs wrap keyboard selection
+- **WHEN** a user navigates the harness tabs with arrows, Home, or End
+- **THEN** focus and selection move together according to the wrapping tab order
+- **AND** exactly one tab remains selected and keyboard-focusable
+
+### Requirement: Landing scope choices remain comparable
+Landing SHALL present user, repository, and personal-local installation scopes
+as one informational comparison panel with every scope's CLI value,
+configuration path, reach, and version-control outcome visible. The comparison
+MUST NOT expose a selection model. Repository scope SHALL be identified as the
+default, and Landing SHALL show a valid repository-scope example command.
+
+#### Scenario: Scope comparison identifies the repository default
+- **WHEN** a user reaches the Landing scope comparison
+- **THEN** all scope outcomes and corresponding CLI values are visible without a scope selector
+- **AND** repository scope is identified as the default
+- **AND** the example command uses repository scope without performing an installation
+
+### Requirement: Landing harness order leads with its default
+Landing SHALL keep Claude Code as the initially selected harness depiction and
+place it first in the visible harness tab order. Reordering the depiction MUST
+NOT change the supported harness set or capability data.
+
+#### Scenario: Default harness leads the tab order
+- **WHEN** a user reaches the Landing harness depiction
+- **THEN** Claude Code is the first and selected harness tab
+- **AND** every previously listed harness and its capability data remains present

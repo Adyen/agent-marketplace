@@ -1,0 +1,257 @@
+/**
+ * Shared site header. VitePress owns the markup and behaviour (search,
+ * appearance switch, menu); landing and documentation routes share this
+ * visual treatment and content gutter.
+ */
+
+.am-site .VPNav {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: var(--lp-canvas);
+}
+
+.am-site .VPContent {
+  padding-top: 0;
+}
+
+.am-site .VPDoc {
+  padding-inline: var(--lp-gutter);
+}
+
+.am-site .VPDoc > .container > .content {
+  padding-inline: 0;
+}
+
+.am-site .VPNavBar,
+.am-site .VPNavBar.top,
+.am-site .VPNavBar:not(.home.top) {
+  position: relative;
+  padding: 0;
+  border: 0;
+  background: var(--lp-canvas);
+}
+
+.am-site .Layout .VPNavBar > .wrapper {
+  box-sizing: border-box;
+  width: min(100% - 2 * var(--lp-gutter), var(--lp-content-max));
+  max-width: none;
+  margin-inline: auto;
+  padding: 0;
+}
+
+.am-site .Layout .VPNavBar > .wrapper > .container {
+  display: flex;
+  max-width: none;
+  align-items: center;
+  height: var(--lp-nav-height);
+  gap: var(--lp-space-default);
+}
+
+.am-site .Layout .VPNavBar > .wrapper > .container > .title {
+  position: static;
+  display: flex;
+  width: auto;
+  height: auto;
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.am-site .Layout .VPNavBar > .wrapper > .container > .content {
+  display: flex;
+  flex: 1;
+  justify-content: flex-end;
+  padding: 0;
+}
+
+.am-site .VPNavBar .content-body {
+  display: flex;
+  align-items: center;
+  gap: var(--lp-space-related);
+  height: auto;
+  background: none;
+}
+
+.am-site .Layout .VPNavBar .divider {
+  width: 100%;
+  padding: 0;
+}
+
+.am-site .VPNavBar .divider-line {
+  width: 100%;
+  height: 1px;
+  background: var(--lp-divider);
+}
+
+/* Plain text destinations */
+.am-site .VPNavBarMenu {
+  align-items: center;
+}
+
+.am-site .VPNavBarMenuLink {
+  display: flex;
+  height: var(--lp-h-compact);
+  align-items: center;
+  padding: 0 var(--lp-space-related);
+  color: var(--lp-text-2);
+  font: var(--lp-font-nav);
+  transition: color var(--lp-motion-feedback) var(--lp-ease);
+}
+
+.am-site .VPNavBarMenuLink:hover,
+.am-site .VPNavBarMenuLink.active {
+  color: var(--lp-text);
+}
+
+/* Search is the one filled control */
+.am-site .VPNavBarSearch {
+  display: flex;
+  align-items: center;
+  padding: 0;
+}
+
+.am-site .VPNavBarSearch .DocSearch-Button {
+  display: inline-flex;
+  height: var(--lp-h-compact);
+  align-items: center;
+  gap: var(--lp-space-related);
+  margin: 0;
+  padding: 0 var(--lp-space-related);
+  border: 0;
+  border-radius: var(--lp-radius-control);
+  background: var(--lp-fill);
+  color: var(--lp-text);
+  transition: background-color var(--lp-motion-feedback) var(--lp-ease);
+}
+
+.am-site .VPNavBarSearch .DocSearch-Button:hover {
+  background: var(--lp-fill-solid);
+  box-shadow: var(--lp-outline-shadow);
+}
+
+.am-site .VPNavBarSearch .DocSearch-Button-Container {
+  display: flex;
+  align-items: center;
+  gap: var(--lp-space-tight);
+}
+
+.am-site .VPNavBarSearch .DocSearch-Button-Placeholder {
+  padding: 0;
+  color: var(--lp-text);
+  font: var(--lp-font-label);
+  text-transform: uppercase;
+}
+
+.am-site .VPNavBarSearch .DocSearch-Search-Icon {
+  width: var(--lp-icon-size);
+  height: var(--lp-icon-size);
+  color: var(--lp-text);
+}
+
+.am-site .VPNavBarSearch .DocSearch-Button-Keys {
+  min-width: 0;
+  gap: 3px;
+  margin: 0;
+}
+
+.am-site .VPNavBarSearch .DocSearch-Button-Key {
+  display: flex;
+  min-width: var(--lp-inset);
+  height: var(--lp-inset);
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0 var(--lp-space-tight);
+  border: 0;
+  border-radius: var(--lp-radius-mark);
+  background: none;
+  box-shadow: var(--lp-outline-shadow);
+  color: var(--lp-text);
+  font: var(--lp-font-label);
+  line-height: 1;
+}
+
+/* Unboxed icon controls */
+.am-site .VPSocialLink,
+.am-site .VPNavBarExtra .button,
+.am-site .VPNavBarHamburger {
+  display: flex;
+  width: var(--lp-hit-target);
+  height: var(--lp-hit-target);
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--lp-radius-control);
+  background: none;
+  color: var(--lp-text-2);
+  transition: color var(--lp-motion-feedback) var(--lp-ease);
+}
+
+.am-site .VPSocialLink:hover,
+.am-site .VPNavBarExtra .button:hover,
+.am-site .VPNavBarHamburger:hover {
+  color: var(--lp-text);
+}
+
+.am-site .VPNavBarExtra {
+  margin: 0;
+  padding: 0;
+}
+
+.am-site .VPNavBarExtra .button {
+  padding: 0;
+}
+
+.am-site .VPMenu {
+  border: 0;
+  border-radius: var(--lp-radius-control);
+  background: var(--lp-fill-solid);
+  box-shadow: none;
+}
+
+.am-site .VPNavBarAppearance {
+  align-items: center;
+  margin: 0;
+  padding: 0;
+}
+
+.am-site .VPNav .VPNavBarAppearance::before,
+.am-site .VPNav .VPNavBarSocialLinks::before,
+.am-site .VPNav .VPNavBarExtra::before {
+  content: none;
+}
+
+.am-site .VPNavBarHamburger .container {
+  height: var(--lp-icon-size);
+}
+
+@media (min-width: 768px) {
+  .am-site .VPNavBar .VPNavBarHamburger {
+    display: none;
+  }
+}
+
+@media (max-width: 767px) {
+  .am-site .Layout .VPNavBar > .wrapper > .container,
+  .am-site .VPNavBar .content-body {
+    gap: var(--lp-space-tight);
+  }
+
+  .am-site .VPNavBarSearch .DocSearch-Button {
+    width: var(--lp-hit-target);
+    padding: 0;
+    justify-content: center;
+  }
+
+  .am-site .VPNavBarSearch :is(.DocSearch-Button-Placeholder, .DocSearch-Button-Keys) {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .am-site .VPNav * {
+    transition-duration: 0s;
+  }
+}
