@@ -9,4 +9,4 @@
 ## 3. Journey, documentation and archive
 
 - [x] 3.1 Add the `harness-project-scope` TUI QA journey with its README entry, and verify `make spec-check`
-- [ ] 3.2 Run `openspec archive tui-retargeted-resource-pending --yes`
+- [x] 3.2 Run `openspec archive tui-retargeted-resource-pending --yes`
