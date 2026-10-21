@@ -542,7 +542,7 @@ func TestHookInvariantTeammateCheckoutPathDoesNotDuplicateHooks(t *testing.T) {
 	if err := os.Chmod(e.mustResolvePath("/workspace/vendor/reg/hooks/scripts/guard.sh"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	const authored = "${CLAUDE_PLUGIN_ROOT}/scripts/guard.sh"
+	const authored = "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/guard.sh"
 	e.WriteFile("/workspace/vendor/reg/hooks/hooks.json", `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"`+authored+`"}]}]}}`)
 	e.WriteRepoConfig(hookInvariantV4Config("claude", "./vendor/reg", "hook/PreToolUse-command"))
 	e.InitGitRepo()
