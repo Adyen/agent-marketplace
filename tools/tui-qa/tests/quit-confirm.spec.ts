@@ -57,7 +57,9 @@ journey.test("quit confirmation cancels with esc and syncs before quitting with 
     assert.equal((await waitForExit(terminal, 30_000)).exitCode, 0);
   });
   assert.deepEqual(fs.readFileSync(repoConfig), configAfterToggle, "sync+quit changed the repository config");
-  assert.equal(fs.lstatSync(alphaSkill).isSymbolicLink(), true, "sync+quit did not install alpha-skill");
+  const installed = fs.lstatSync(alphaSkill, { throwIfNoEntry: false });
+  assert.ok(installed, "sync+quit did not install alpha-skill");
+  assert.equal(installed.isSymbolicLink(), true, "alpha-skill is not a symbolic link");
   assert.equal(fs.readFileSync(path.join(alphaSkill, "SKILL.md"), "utf8"), fixture.expectedAlphaSkillContent);
   assert.equal(fs.readFileSync(path.join(fixture.repo, ".factory", "skills", "beta-skill", "SKILL.md"), "utf8"), fixture.expectedBetaSkillContent);
 
