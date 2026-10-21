@@ -12,11 +12,13 @@ after(journey.cleanup);
 
 journey.test("space on a required organization resource is refused without writes", async (terminal) => {
   const fixture = journey.current();
-  assert.ok(fixture.orgConfigPath && fixture.orgLockPath, "organization fixture must expose its config and lock paths");
+  const { orgConfigPath, orgLockPath } = fixture;
+  assert.ok(orgConfigPath, "organization fixture must expose its config path");
+  assert.ok(orgLockPath, "organization fixture must expose its lock path");
   const orgReview = path.join(fixture.home, ".factory", "skills", "org-review");
   const watched = [
-    fixture.orgConfigPath,
-    fixture.orgLockPath,
+    orgConfigPath,
+    orgLockPath,
     path.join(fixture.home, ".agents", "config.yaml"),
     path.join(fixture.home, ".agents", "lock.yaml"),
     path.join(fixture.repo, ".agents", "config.yaml"),
