@@ -2171,6 +2171,13 @@ func (m *Model) clampListOffset() {
 	listWidth, _ := paneWidths(m.width)
 	visibleHeight := m.listVisibleHeight()
 	heights := m.listHeightOffsets(listWidth)
+	// When every row fits, show the whole list. Keeping a reload anchor's
+	// screen line would otherwise hide rows above blank space; overflowing
+	// lists keep the anchored line.
+	if heights[len(m.flatItems)] <= visibleHeight {
+		m.listOffset = 0
+		return
+	}
 	cursorBottom := heights[m.cursor+1]
 	if cursorBottom-heights[m.listOffset] <= visibleHeight {
 		return
