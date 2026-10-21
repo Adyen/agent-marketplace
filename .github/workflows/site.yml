@@ -21,7 +21,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions: {}
 
@@ -32,25 +32,55 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+      pages: read
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Set up pnpm
-        run: |
-          corepack enable pnpm
-          corepack install --global pnpm@10.4.1
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
 
-      - name: Build website
-        run: make site-build
+      - name: Enable pnpm
+        run: corepack enable
 
-      - name: Verify public site routes and links
+      - name: Configure Pages
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        id: pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - name: Build and verify website
         env:
-          SITE_BASE: /agent-marketplace/
+          SITE_BASE: ${{ steps.pages.outcome == 'success' && format('{0}/', steps.pages.outputs.base_path) || '/agent-marketplace/' }}
         run: |
+          make site-build
           cd site
-          pnpm run build
-          pnpm run test:public
-          pnpm run test:docs
+          node --test tests/public-site.test.ts
+          pnpm run build:docs
+          node --test tests/docs-profile.test.ts
+
+      - name: Upload public site
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site/.vitepress/dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

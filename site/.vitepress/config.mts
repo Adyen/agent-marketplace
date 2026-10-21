@@ -10,9 +10,8 @@ function deploymentBase(name: string, value: string): string {
   return value
 }
 
-// The hosting target is deliberately undecided. SITE_BASE lets a project-path
-// deployment (e.g. GitHub Pages at /agent-marketplace/) be selected at build
-// time without touching any link in the content.
+// Pages supplies SITE_BASE for its project URL or custom domain; standalone
+// builds can select the same deployment path without changing content links.
 const base = docsOnly ? '/docs/' : deploymentBase('SITE_BASE', process.env.SITE_BASE ?? '/')
 const marketplaceBase = docsOnly ? deploymentBase('MARKETPLACE_BASE', process.env.MARKETPLACE_BASE ?? '/') : '/'
 const DOCS_PATH = docsOnly ? '/' : PUBLIC_DOCS_PATH
