@@ -1,0 +1,107 @@
+name: Bug report
+description: Something doesn't work as documented
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Check the [documentation](https://agent-marketplace.io/docs/) and the existing issues first.
+
+        Don't paste secrets, tokens, private registry URLs, or internal hostnames. Redact them before you submit.
+
+        To report a security vulnerability, don't open an issue. Use the private report link on the New issue page.
+  - type: input
+    id: version
+    attributes:
+      label: agent-marketplace version
+      description: Run `agent-marketplace --version`.
+      placeholder: v4.0.9
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      description: Builds exist for macOS and Linux. There is no Windows build.
+      options:
+        - macOS (Apple silicon)
+        - macOS (Intel)
+        - Linux (arm64)
+        - Linux (amd64)
+        - Other (describe below)
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Which part is affected?
+      options:
+        - CLI command
+        - Terminal UI (`agent-marketplace tui`)
+        - Marketplace service (`agent-marketplace serve`)
+        - Files written for a harness
+        - Configuration or lock files
+        - Documentation or website
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: harnesses
+    attributes:
+      label: Target harnesses
+      description: Select every harness involved. The value in brackets is the name used in `harnesses:` in your configuration.
+      multiple: true
+      options:
+        - Claude Code (claude)
+        - Codex (codex)
+        - Cursor (cursor)
+        - Devin CLI (devin)
+        - Factory Droid (factory)
+        - Gemini CLI (gemini)
+        - Windsurf (windsurf)
+        - Not related to a harness
+  - type: input
+    id: command
+    attributes:
+      label: Command you ran
+      placeholder: agent-marketplace sync
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the problem and paste the full error. If the output shows a diagnostic code such as `v4.undefined-source`, include it.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include a minimal `.agents/config.yaml` with secrets and private URLs removed.
+      placeholder: |
+        1. Create `.agents/config.yaml` with ...
+        2. Run `agent-marketplace sync`
+        3. See the error
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostic output
+      description: Paste the output of `agent-marketplace status` and `agent-marketplace doctor`. For the failing command, add the output of the same command with `--debug`.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched the existing issues and found no duplicate.
+          required: true
+        - label: I removed secrets, tokens, private URLs, and internal hostnames from everything above.
+          required: true

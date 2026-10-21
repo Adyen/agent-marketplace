@@ -1,0 +1,69 @@
+name: Feature request
+description: Suggest an improvement or a new capability
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. Check the [documentation](https://agent-marketplace.io/docs/) and the existing issues first, in case it already exists or is planned.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe what you're doing and what gets in the way. Start with the problem, not the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to happen?
+      description: Describe the behavior you want. Include example commands or configuration if you can.
+      placeholder: |
+        agent-marketplace <command> --<flag>
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Other approaches, or workarounds you use today.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Which part would change?
+      options:
+        - CLI command
+        - Terminal UI (`agent-marketplace tui`)
+        - Marketplace service (`agent-marketplace serve`)
+        - Support for a harness
+        - Configuration or lock files
+        - Documentation or website
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: harnesses
+    attributes:
+      label: Harnesses involved
+      description: Select every harness this affects. The value in brackets is the name used in `harnesses:` in your configuration.
+      multiple: true
+      options:
+        - Claude Code (claude)
+        - Codex (codex)
+        - Cursor (cursor)
+        - Devin CLI (devin)
+        - Factory Droid (factory)
+        - Gemini CLI (gemini)
+        - Windsurf (windsurf)
+        - A harness not supported yet (name it above)
+        - Not related to a harness
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched the existing issues and found no duplicate.
+          required: true
+        - label: I'd be willing to help build this.
+          required: false
