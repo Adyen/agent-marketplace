@@ -184,6 +184,13 @@ func formatFlatItem(it flatItem, width int, compact bool) string {
 		g := statusSymbol(r)
 		badge := scopeBadgeColumn(r)
 		name := resourceLabel(r)
+		if it.PluginParent {
+			glyph := "▼"
+			if it.Collapsed {
+				glyph = "▶"
+			}
+			name = glyph + " " + name
+		}
 		harnessSuffix := ""
 		if hb := harnessBadge(r); hb != "" {
 			harnessSuffix = " " + hb
@@ -210,6 +217,13 @@ func stylizeFlatItem(it flatItem, width int, compact bool) string {
 		r := it.Row
 		g := statusSymbol(r)
 		name := resourceLabel(r)
+		if it.PluginParent {
+			glyph := "▼"
+			if it.Collapsed {
+				glyph = "▶"
+			}
+			name = glyph + " " + name
+		}
 		if len(r.searchMatchRunes) > 0 {
 			name = highlightNameMatches(r, name)
 		}

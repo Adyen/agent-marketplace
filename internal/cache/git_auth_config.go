@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+
+	"github.com/Adyen/agent-marketplace/internal/processstart"
 )
 
 const (
@@ -70,7 +72,7 @@ func gitAuthTrustedOwners() []uint32 {
 // Keeping this native interface also supports Git versions without git var's
 // newer GIT_CONFIG_SYSTEM variable.
 func gitSystemAuthConfigPath(ctx context.Context, env []string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "config", "--system", "--no-includes", "--null", "--show-origin", "--name-only", "--get-regexp", `^(credential\.|http\.|include\.|includeif\.)`)
+	cmd := processstart.Command(ctx, "git", "config", "--system", "--no-includes", "--null", "--show-origin", "--name-only", "--get-regexp", `^(credential\.|http\.|include\.|includeif\.)`)
 	for _, entry := range env {
 		if !strings.HasPrefix(entry, "GIT_CONFIG_NOSYSTEM=") {
 			cmd.Env = append(cmd.Env, entry)
@@ -108,7 +110,7 @@ func gitSystemAuthConfigPath(ctx context.Context, env []string) (string, error) 
 // only the installed Git knows. The value travels through the environment so
 // it needs no config quoting and is never itself treated as an include.
 func gitPrefixIncludePath(ctx context.Context, env []string, value string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "config", "--null", "--type=path", "--get", "agent-marketplace.include")
+	cmd := processstart.Command(ctx, "git", "config", "--null", "--type=path", "--get", "agent-marketplace.include")
 	cmd.Env = append(append([]string(nil), env...), "GIT_DIR=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=agent-marketplace.include", "GIT_CONFIG_VALUE_0="+value)
 	output := &gitAuthOutput{}
@@ -187,7 +189,7 @@ func (r *gitAuthConfigReader) read(path string, depth int) error {
 	if err != nil || after.Size() != info.Size() || after.Mode() != info.Mode() || !after.ModTime().Equal(info.ModTime()) {
 		return ErrGitAuthConfigUntrusted
 	}
-	cmd := exec.CommandContext(r.ctx, "git", "config", "--file", "-", "--no-includes", "--null", "--list")
+	cmd := processstart.Command(r.ctx, "git", "config", "--file", "-", "--no-includes", "--null", "--list")
 	cmd.Env = append(append([]string(nil), r.env...), "GIT_DIR=/dev/null")
 	cmd.Stdin = bytes.NewReader(data)
 	output := &gitAuthOutput{}

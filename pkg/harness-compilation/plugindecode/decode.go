@@ -103,6 +103,7 @@ func decodePackage(rootPath, format string, overlay *EntryOverlay) (*ir.Plugin, 
 		Format:        format,
 		FormatVersion: d.formatVersion,
 		Manifest:      d.manifest,
+		Dependencies:  d.dependencies,
 		Members:       d.members,
 		Files:         files,
 		Extensions:    d.extensions,
@@ -145,6 +146,7 @@ type decoder struct {
 
 	formatVersion string
 	manifest      ir.Manifest
+	dependencies  any
 	extensions    map[string]any
 	members       []ir.PluginMember
 	invalid       []ir.PluginRecord

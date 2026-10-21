@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/Adyen/agent-marketplace/internal/processstart"
 
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
@@ -90,7 +91,7 @@ func gitAuthKey(key string) bool {
 
 func gitAuthEnvironment(ctx context.Context, repoDir string, env []string, source string) ([]string, string, error) {
 	if repoDir != "" {
-		cmd := exec.CommandContext(ctx, "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "config", "--local", "--no-includes", "--null", "--list")
+		cmd := processstart.Command(ctx, "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "config", "--local", "--no-includes", "--null", "--list")
 		cmd.Dir, cmd.Env = repoDir, env
 		output, err := cmd.Output()
 		if err != nil {
@@ -110,7 +111,7 @@ func gitAuthEnvironment(ctx context.Context, repoDir string, env []string, sourc
 			hasRewrite = hasRewrite || strings.HasPrefix(key, "url.") && strings.HasSuffix(key, ".insteadof")
 		}
 		if hasRewrite {
-			cmd := exec.CommandContext(ctx, "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "ls-remote", "--get-url", "--", source)
+			cmd := processstart.Command(ctx, "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "ls-remote", "--get-url", "--", source)
 			cmd.Dir, cmd.Env = repoDir, env
 			output, err := cmd.Output()
 			if err != nil {

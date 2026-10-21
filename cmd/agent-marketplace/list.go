@@ -65,7 +65,7 @@ func newListCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&kindFilter, "kind", "", "Filter resources by kind: skill, command, subagent, hook, mcp, or collection")
+	cmd.Flags().StringVar(&kindFilter, "kind", "", "Filter resources by kind: skill, command, subagent, hook, mcp, collection, or plugin")
 	cmd.Flags().StringVar(&fromURL, "from", "", "List resources from an ad-hoc registry URL (git URL or GitLab/GitHub web URL)")
 	cmd.Flags().StringVar(&fromRef, "ref", "", "Git ref (branch/tag/sha) for --from registry; requires --from")
 	cmd.Flags().StringVar(&fromPath, "path", "", "Subdirectory within the --from registry; requires --from")
@@ -395,7 +395,7 @@ func parseOptionalKind(value string) (ir.ResourceKind, bool, error) {
 	}
 	kind, ok := skill.ParseKind(value)
 	if !ok {
-		return 0, false, fmt.Errorf("unknown kind %q: must be one of skill, command, subagent, hook, mcp, collection", value)
+		return 0, false, fmt.Errorf("unknown kind %q: must be one of skill, command, subagent, hook, mcp, collection, plugin", value)
 	}
 	return kind, true, nil
 }

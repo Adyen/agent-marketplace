@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/giturl"
+	"github.com/Adyen/agent-marketplace/internal/processstart"
 	"github.com/Adyen/agent-marketplace/internal/redact"
 )
 
@@ -299,7 +299,7 @@ func execGitContext(ctx context.Context, repoDir string, args []string) ([]byte,
 		"-c", "protocol.remote.allow=never",
 		"-c", "protocol.file.allow=always",
 	}
-	cmd := exec.CommandContext(ctx, "git", append(hardened, args...)...)
+	cmd := processstart.Command(ctx, "git", append(hardened, args...)...)
 	if repoDir != "" {
 		cmd.Dir = repoDir
 	}

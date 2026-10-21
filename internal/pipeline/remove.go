@@ -1186,6 +1186,22 @@ func projectExplicitlySelects(cfg *config.Config, target resolver.ResolvedArtifa
 	if cfg == nil {
 		return false
 	}
+	if target.Kind == ir.KindPlugin {
+		for _, entry := range cfg.Registries {
+			if strings.TrimSpace(entry.URL) != strings.TrimSpace(target.RegistryURL) ||
+				config.NormalizeRegistryPath(entry.Path) != config.NormalizeRegistryPath(target.RegistryPath) ||
+				strings.TrimSpace(entry.Ref) != strings.TrimSpace(target.Ref) {
+				continue
+			}
+			for _, decision := range entry.V4Decisions {
+				if decision.Action == config.V4SelectionExplicit && decision.Request != nil &&
+					decision.Request.Kind == "plugin" && decision.Request.Name == target.Name {
+					return true
+				}
+			}
+		}
+		return false
+	}
 	if stringListContains(configResourcesForKind(cfg, target.Kind), target.Name) {
 		return true
 	}

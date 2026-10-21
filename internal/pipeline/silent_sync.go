@@ -14,6 +14,7 @@ import (
 type DependencyLockView struct {
 	CatalogOption  catalog.LoadOption
 	ExactLockLease func(context.Context) (func(), error)
+	LockMetadata   []LockMetadata
 	Warnings       []error
 }
 
@@ -66,10 +67,11 @@ func silentSyncCollect(ctx context.Context, ws Workspace, opts ...silentSyncOpt)
 			o.CatalogOption = append(o.CatalogOption, view.CatalogOption)
 		}
 		o.ExactLockLease = view.ExactLockLease
+		o.LockMetadata = view.LockMetadata
 		dependencyWarnings = view.Warnings
 		o.DependencyCommitted = true
 	}
-	resolveOpts := ResolveOptions{Workspace: ws, IgnoreBlockedRegistries: o.IgnoreBlockedRegistries, CatalogMode: o.CatalogMode, CatalogOption: o.CatalogOption, ExactLockLease: o.ExactLockLease, MarketplaceMode: o.MarketplaceMode, marketplaceInstall: o.marketplaceInstall, marketplaceInstallSource: o.marketplaceInstallSource}
+	resolveOpts := ResolveOptions{Workspace: ws, IgnoreBlockedRegistries: o.IgnoreBlockedRegistries, CatalogMode: o.CatalogMode, CatalogOption: o.CatalogOption, ExactLockLease: o.ExactLockLease, LockMetadata: o.LockMetadata, MarketplaceMode: o.MarketplaceMode, marketplaceInstall: o.marketplaceInstall, marketplaceInstallSource: o.marketplaceInstallSource}
 	syncResult := Sync(ctx, resolveOpts)
 	if o.resolved != nil {
 		*o.resolved = syncResult.Resolved
@@ -87,6 +89,7 @@ type silentSyncOptions struct {
 	CatalogMode              catalog.LoadMode
 	CatalogOption            []catalog.LoadOption
 	ExactLockLease           func(context.Context) (func(), error)
+	LockMetadata             []LockMetadata
 	DependencyReconciler     DependencyReconciler
 	StagedConfigEdits        []StagedConfigEdit
 	ConfigStaging            *configStagingManager

@@ -156,6 +156,7 @@ func (d *decoder) decodeAgentManifest(obj map[string]any) error {
 		Description: stringField(obj, "description"),
 		Extra:       map[string]any{},
 	}
+	d.dependencies = obj["dependencies"]
 	d.formatVersion = "1.0.0"
 	return nil
 }
@@ -182,11 +183,10 @@ func (d *decoder) decodeNativeManifest(obj map[string]any) error {
 				fmt.Sprintf("manifest field %q is not a %s; it is ignored", field, rule.Type), file)
 		}
 	}
-	if _, present := obj["dependencies"]; present && d.info.Dependencies == "refuse-package" {
-		return codedErr(diag.CodePluginFormatManifestInvalid, file,
-			"manifest declares dependencies, which the %s catalog refuses", d.format)
+	if dependencies, present := obj["dependencies"]; present {
+		d.dependencies = dependencies
+		delete(extra, "dependencies")
 	}
-	delete(extra, "dependencies")
 	name, _ := obj["name"].(string)
 	if err := ir.ValidatePluginName(d.format, name); err != nil {
 		return codedErr(diag.CodePluginFormatManifestInvalid, file, "manifest lacks a valid required name: %v", err)

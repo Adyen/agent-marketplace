@@ -786,11 +786,16 @@ func runMaterialization(ctx context.Context, repoRoot string, resolved []resolve
 		"machine_mode", rc.modes.Machine, "project_mode", rc.modes.Project)
 
 	pluginNamespaceBlocked, pluginNamespaceDiags := pluginNamespaceRefusals(resolved)
+	pluginDependencyBlocked, pluginDependencyDiags := pluginDependencyRefusals(resolved)
+	for identity := range pluginDependencyBlocked {
+		pluginNamespaceBlocked[identity] = true
+	}
 	resolved, pluginGenerationDiags := preparePluginGenerations(resolved, repoRoot, rc.dryRun, packagesLocked, pluginNamespaceBlocked)
 	// Phase 1: Group skills by target and track all output keys.
 	work, allOutputs, blocked, allDiags := buildWorkItems(resolved, repoRoot, pluginNamespaceBlocked)
 	allDiags = append(allDiags, pluginGenerationDiags...)
 	allDiags = append(allDiags, pluginNamespaceDiags...)
+	allDiags = append(allDiags, pluginDependencyDiags...)
 	slog.Debug("materialize work built", "work_items", len(work), "outputs", len(allOutputs), "blocked", len(blocked), "diagnostics", len(allDiags))
 
 	// Apply scope filter: remove output keys that don't match the requested scope.
@@ -835,6 +840,35 @@ func runMaterialization(ctx context.Context, repoRoot string, resolved []resolve
 		"diagnostics", len(report.Diags),
 	)
 	return report, nil
+}
+
+func pluginDependencyRefusals(resolved []resolver.ResolvedArtifact) (map[string]bool, []diag.Diagnostic) {
+	blocked := make(map[string]bool)
+	reported := make(map[string]bool)
+	var diagnostics []diag.Diagnostic
+	for _, resource := range resolver.MaterializationWinners(resolved) {
+		pkg := resource.PluginPackage
+		if pkg == nil || pkg.Package == nil || !pkg.Package.HasDependencies() {
+			continue
+		}
+		for _, target := range resolver.HarnessTargets(resource.Harnesses) {
+			identity := pluginInstanceIdentity(resource, target)
+			blocked[identity] = true
+			if reported[identity] {
+				continue
+			}
+			diagnostics = append(diagnostics, diag.Diagnostic{
+				Code:     diag.CodePluginFormatDependenciesUnsupported,
+				Severity: diag.SeverityError,
+				Target:   string(target),
+				Resource: "plugin/" + pkg.Name,
+				Message:  "plugin declares dependencies that cannot be installed; no members were installed",
+				Source:   diag.SourceRef{File: pkg.PackageRoot},
+			})
+			reported[identity] = true
+		}
+	}
+	return blocked, diagnostics
 }
 
 func preparePluginGenerations(resolved []resolver.ResolvedArtifact, repoRoot string, dryRun, packagesLocked bool, namespaceBlocked map[string]bool) ([]resolver.ResolvedArtifact, []diag.Diagnostic) {
@@ -1247,11 +1281,12 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			plan = &pluginInstancePlan{
 				key: outputKey{target: w.target, machineScope: w.machineScope},
 				ref: ownership.PluginGenerationRef{
-					InstanceKey:   pkg.InstanceKey,
-					Name:          pkg.Name,
-					Target:        string(w.target),
-					Scope:         pkg.GenerationScope,
-					GenerationKey: pkg.GenerationKey,
+					InstanceKey:    pkg.InstanceKey,
+					Name:           pkg.Name,
+					Target:         string(w.target),
+					Scope:          pkg.GenerationScope,
+					GenerationKey:  pkg.GenerationKey,
+					SourceRevision: pkg.SourceRevision,
 				},
 			}
 			pluginInstances[pkg.InstanceKey] = plan

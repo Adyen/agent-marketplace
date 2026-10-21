@@ -72,6 +72,7 @@ type ResolveOptions struct {
 	// remain exact and malformed or stale locks still fail closed.
 	AllowMissingReadOnlyLocks   bool
 	ExactLockLease              func(context.Context) (func(), error)
+	LockMetadata                []LockMetadata
 	MarketplaceRevocationPolicy resolver.MarketplaceRevocationPolicy
 	// MarketplaceMode overrides the mode derived from CatalogMode when set,
 	// except that Offline always forces CachedNoFetch.
@@ -295,6 +296,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	}
 	slog.Debug("pipeline resolve start", "repo_root", opts.Workspace.RepoRoot(), "catalog_mode", opts.CatalogMode, "offline", opts.Offline)
 	var result ResolveResult
+	result.LockMetadata = append([]LockMetadata(nil), opts.LockMetadata...)
 	// Every early return below must still hand back a valid policy: an unset
 	// mode matches neither "symlink" nor "file" and would silently pick a
 	// branch in materialize.Run for callers that materialize before checking
@@ -657,6 +659,17 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		resolver.WithMarketplaceResolveMode(mpMode),
 		resolver.WithMarketplaceRevocationPolicy(opts.MarketplaceRevocationPolicy),
 	)
+	for i := range resolved {
+		if resolved[i].Kind != ir.KindPlugin {
+			continue
+		}
+		for _, metadata := range result.LockMetadata {
+			if metadata.Matches(resolved[i].Source, resolved[i].RegistryURL, resolved[i].Ref) {
+				resolved[i].SourceRevision = metadata.Commit
+				break
+			}
+		}
+	}
 	result.PluginPlan = pluginPlan
 	result.LoadedCfg = loadedCfg
 	result.Resolved = resolved
@@ -1025,6 +1038,7 @@ func DeliverableArtifacts(resolved []resolver.ResolvedArtifact, plan catalog.Plu
 		}
 		pluginPackage := &resolver.PluginPackage{
 			Name:               plugin.Name(),
+			SourceRevision:     artifact.SourceRevision,
 			PackageRoot:        packageRoot,
 			CatalogFingerprint: fingerprint,
 			Delivery:           delivery,
@@ -1058,7 +1072,7 @@ func DeliverableArtifacts(resolved []resolver.ResolvedArtifact, plan catalog.Plu
 				added = true
 			}
 		}
-		if !added && len(decodeFailures) > 0 {
+		if !added && (len(decodeFailures) > 0 || plugin.HasDependencies()) {
 			for _, target := range resolver.HarnessTargets(artifact.Harnesses) {
 				marker := artifact
 				marker.Harnesses = []hcc.Target{target}

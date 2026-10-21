@@ -76,8 +76,9 @@ func runUpdate(ctx context.Context, out io.Writer, bump, verbose bool, selected 
 		RepoRoot: repoRoot, Bump: bump, BumpScopes: selected, BumpTarget: updateBumpTarget(targets),
 		DependencyReconcile: func(ctx context.Context, repoRoot, localDir string, bumps []pipeline.RefBump, edits []pipeline.StagedConfigEdit, lockEdits []pipeline.StagedLockEdit) (pipeline.DependencyLockView, error) {
 			advanceUpgradeTargetRefs(targets, bumps)
-			option, _, lease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{upgrade: true, selects: selected, upgradeTargets: targets, upgradeResult: targetResult, reconcileUnselected: true, stagedConfigEdits: edits, stagedLockEdits: lockEdits, warningSink: &warnings})
-			return pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, Warnings: warnings}, err
+			var lockMetadata []pipeline.LockMetadata
+			option, _, lease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{upgrade: true, selects: selected, upgradeTargets: targets, upgradeResult: targetResult, reconcileUnselected: true, stagedConfigEdits: edits, stagedLockEdits: lockEdits, warningSink: &warnings, lockMetadataSink: &lockMetadata})
+			return pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, LockMetadata: lockMetadata, Warnings: warnings}, err
 		},
 	}
 	if localDir != "" && localDir != repoRoot {

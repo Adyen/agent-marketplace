@@ -334,12 +334,7 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	var previousDetail row
 	hadPreviousDetail := false
 	if m.pane == paneDetail && m.detailKey != "" {
-		for _, r := range m.rows {
-			if rowKey(r) == m.detailKey {
-				previousDetail, hadPreviousDetail = r, true
-				break
-			}
-		}
+		previousDetail, hadPreviousDetail = m.rowByKey(m.detailKey)
 	}
 	m.authoritativeRows = msg.rows
 	m.provisionalRows = nil
@@ -1451,13 +1446,7 @@ func (m *Model) rebuildOpenBundle(previous row, hadPrevious bool) {
 		return
 	}
 	var current row
-	found := false
-	for _, r := range m.rows {
-		if rowKey(r) == m.detailKey {
-			current, found = r, true
-			break
-		}
-	}
+	current, found := m.rowByKey(m.detailKey)
 	if !found && hadPrevious {
 		identity := registryIdentityKey(previous.RegistryURL, previous.RegistryRef, previous.RegistryPath)
 		for _, r := range m.rows {
@@ -1599,14 +1588,10 @@ func (m Model) applyRowSpaceEligibility(r row) (tea.Model, tea.Cmd) {
 
 func (m Model) handleDetailKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, m.keys.Space) {
-		for _, r := range m.rows {
-			if rowKey(r) != m.detailKey {
-				continue
-			}
+		if r, found := m.rowByKey(m.detailKey); found {
 			if r.UnavailableReason != "" || marketplaceDiscoveryInstallable(r) {
 				return m.applyRowSpaceEligibility(r)
 			}
-			break
 		}
 	}
 	switch {
@@ -1706,12 +1691,10 @@ func (m Model) queueBundlePreview(keepScroll bool) (tea.Model, tea.Cmd) {
 	if m.bundle == nil || m.detailSelectedPath == "" {
 		return m, nil
 	}
-	for _, r := range m.rows {
-		if rowKey(r) == m.detailKey {
-			generation := m.beginRequest(requestDetail)
-			m.detailViewport.SetContent("Loading…")
-			return m, loadBundleDetailContent(ctxOrBackground(m.ctx), m.currentTheme(), m.bundle, m.detailSelectedPath, generation, m.previewWidth(), keepScroll)
-		}
+	if _, found := m.rowByKey(m.detailKey); found {
+		generation := m.beginRequest(requestDetail)
+		m.detailViewport.SetContent("Loading…")
+		return m, loadBundleDetailContent(ctxOrBackground(m.ctx), m.currentTheme(), m.bundle, m.detailSelectedPath, generation, m.previewWidth(), keepScroll)
 	}
 	return m, nil
 }
@@ -1785,20 +1768,15 @@ func (m *Model) rerenderDetailAtWidth(width int) tea.Cmd {
 	if m.detailKey == "" {
 		return nil
 	}
-	for _, r := range m.rows {
-		if rowKey(r) != m.detailKey {
-			continue
-		}
-		if r.Artifact.Path == "" && (m.bundle == nil || m.bundle.inspection == nil) {
-			continue
-		}
-		generation := m.beginRequest(requestDetail)
-		if m.detailLegacyRender || m.bundle == nil || m.detailSelectedPath == "" {
-			return loadDetailContent(m.currentTheme(), r, generation, width, true)
-		}
-		return loadBundleDetailContent(ctxOrBackground(m.ctx), m.currentTheme(), m.bundle, m.detailSelectedPath, generation, previewWidthFor(width), true)
+	r, found := m.rowByKey(m.detailKey)
+	if !found || r.Artifact.Path == "" && (m.bundle == nil || m.bundle.inspection == nil) {
+		return nil
 	}
-	return nil
+	generation := m.beginRequest(requestDetail)
+	if m.detailLegacyRender || m.bundle == nil || m.detailSelectedPath == "" {
+		return loadDetailContent(m.currentTheme(), r, generation, width, true)
+	}
+	return loadBundleDetailContent(ctxOrBackground(m.ctx), m.currentTheme(), m.bundle, m.detailSelectedPath, generation, previewWidthFor(width), true)
 }
 
 func (m Model) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
