@@ -57,46 +57,48 @@ const installCommand = computed(
     </template>
 
     <div class="scope-explorer">
-      <fieldset class="scope-grid">
+      <fieldset class="scope-fieldset">
         <legend class="visually-hidden">Select an installation scope</legend>
-        <label v-for="(scope, index) in scopes" :key="scope.id" class="scope-card">
-          <input
-            v-model="activeScopeID"
-            class="scope-radio visually-hidden"
-            type="radio"
-            name="installation-scope"
-            :value="scope.id"
-          >
-          <span class="scope-card__surface">
-            <span class="scope-card__context">
-              <span>{{ String(index + 1).padStart(2, '0') }}</span>
-              <span aria-hidden="true">/</span>
-              {{ scope.context }}
-            </span>
-
-            <span class="scope-card__title">
-              <span>{{ scope.title }}</span>
-              <span v-if="scope.isDefault" class="default-tag">Default</span>
-            </span>
-
-            <span class="scope-card__summary">{{ scope.summary }}</span>
-
-            <span class="scope-facts">
-              <span class="scope-fact scope-fact--config">
-                <span class="scope-fact__label">Config file</span>
-                <code>{{ scope.configPath }}</code>
+        <div class="scope-grid">
+          <label v-for="(scope, index) in scopes" :key="scope.id" class="scope-card">
+            <input
+              v-model="activeScopeID"
+              class="scope-radio visually-hidden"
+              type="radio"
+              name="installation-scope"
+              :value="scope.id"
+            >
+            <span class="scope-card__surface">
+              <span class="scope-card__context">
+                <span>{{ String(index + 1).padStart(2, '0') }}</span>
+                <span aria-hidden="true">/</span>
+                {{ scope.context }}
               </span>
-              <span class="scope-fact">
-                <span class="scope-fact__label">Applies to</span>
-                <span>{{ scope.reach }}</span>
+
+              <span class="scope-card__title">
+                <span>{{ scope.title }}</span>
+                <span v-if="scope.isDefault" class="default-tag">Default</span>
               </span>
-              <span class="scope-fact">
-                <span class="scope-fact__label">Version control</span>
-                <span>{{ scope.versionControl }}</span>
+
+              <span class="scope-card__summary">{{ scope.summary }}</span>
+
+              <span class="scope-facts">
+                <span class="scope-fact scope-fact--config">
+                  <span class="scope-fact__label">Config file</span>
+                  <code>{{ scope.configPath }}</code>
+                </span>
+                <span class="scope-fact">
+                  <span class="scope-fact__label">Applies to</span>
+                  <span>{{ scope.reach }}</span>
+                </span>
+                <span class="scope-fact">
+                  <span class="scope-fact__label">Version control</span>
+                  <span>{{ scope.versionControl }}</span>
+                </span>
               </span>
             </span>
-          </span>
-        </label>
+          </label>
+        </div>
       </fieldset>
 
       <CommandBar
@@ -130,12 +132,17 @@ const installCommand = computed(
   margin-bottom: var(--lp-space-default);
 }
 
+.scope-fieldset {
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+
 .scope-grid {
   display: grid;
   padding: var(--lp-space-tight);
-  margin: 0;
   overflow: hidden;
-  border: 0;
   border-radius: var(--lp-radius-preview);
   background: var(--lp-surface);
   box-shadow: var(--lp-outline-shadow);
