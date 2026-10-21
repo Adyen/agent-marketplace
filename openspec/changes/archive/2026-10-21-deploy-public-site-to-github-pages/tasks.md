@@ -12,7 +12,7 @@
 
 - [x] 3.1 Run focused workflow and site tests, `make validate`, and `make spec-check`.
 - [x] 3.2 Review the changes with the open-code-review-delegate workflow and resolve actionable findings.
-- [ ] 3.3 Run `openspec archive deploy-public-site-to-github-pages --yes` in the same pull request as the implementation.
+- [x] 3.3 Run `openspec archive deploy-public-site-to-github-pages --yes` in the same pull request as the implementation.
 
 ## Verification Record
 
