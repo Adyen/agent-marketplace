@@ -67,6 +67,18 @@ journey.test("E hands the project config to $EDITOR, reloads the edit, and keeps
   await step("close the errors screen", () => terminal.write("e"), async () => {
     await locate(terminal, "Errors (1)").expect({ not: true });
   });
+  await step("select beta-skill", () => terminal.write("j"), async () => {
+    await locate(terminal, /Name:\s+beta-skill/).unique().expect();
+  });
+  await step("open its toggle modal", () => terminal.write(" "), async () => {
+    await locate(terminal, /Project ✓/).unique().expect();
+  });
+  // The footer keeps the editor error until an editor run succeeds, so the
+  // list and the config show the write.
+  await step("a config write after the failed editor still applies", () => terminal.write("p"), async () => {
+    await locate(terminal, /Available\s+\(2\)/).unique().expect({ timeout: 30_000 });
+  });
+  assert.notEqual(fs.readFileSync(repoConfig, "utf8"), fixture.expectedRepoConfig, "the toggle after the failed editor wrote nothing");
 
   await openProjectEditor();
   await step("the edit is reloaded as soon as the editor exits", () => fs.writeFileSync(path.join(dir, "release"), ""), async () => {
