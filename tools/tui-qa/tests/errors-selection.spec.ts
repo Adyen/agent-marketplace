@@ -34,22 +34,24 @@ journey.test("errors-screen drags copy displayed error text and other gestures c
     await locate(terminal, selected).unique().expect();
   });
 
-  await step("a forward drag across error text highlights and copies it on release", async () => {
-    const run = await findTextRun(terminal, selected);
-    await terminal.write(drag(run.x, run.y, run.x + run.width - 1, run.y));
-  }, async () => {
+  const run = await findTextRun(terminal, selected);
+  const first = run.x;
+  const last = run.x + run.width - 1;
+  await step("dragging forward across error text highlights it before release", () => terminal.write(sgr(0, first, run.y, "M") + sgr(32, last, run.y, "M")), async () => {
     await waitForInverse(terminal, selected, 1);
+    assert.equal(await terminal.getClipboard(), "", "the drag copied before release");
+  });
+  await step("releasing copies the highlighted text", () => terminal.write(sgr(0, last, run.y, "m")), async () => {
     await terminal.waitClipboard(copied);
   });
   await step("escape clears the selection and keeps the errors screen", () => terminal.write("\x1b"), async () => {
     await waitForInverse(terminal, selected, 0);
     await locate(terminal, "Errors (1)").unique().expect();
   });
-  await step("a backward drag copies the same text", async () => {
-    const run = await findTextRun(terminal, selected);
-    await terminal.write(drag(run.x + run.width - 1, run.y, run.x, run.y));
-  }, async () => {
+  await step("dragging backward highlights the same text before release", () => terminal.write(sgr(0, last, run.y, "M") + sgr(32, first, run.y, "M")), async () => {
     await waitForInverse(terminal, selected, 1);
+  });
+  await step("releasing copies the same text", () => terminal.write(sgr(0, first, run.y, "m")), async () => {
     await terminal.waitClipboard(copied);
   });
   await step("escape clears the backward selection", () => terminal.write("\x1b"), async () => {
