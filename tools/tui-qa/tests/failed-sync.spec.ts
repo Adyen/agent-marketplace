@@ -15,6 +15,7 @@ journey.test("a sync that cannot write reports the error, keeps the pending chan
   const fixture = journey.current();
   const skills = path.join(fixture.repo, ".factory", "skills");
   const alphaSkill = path.join(skills, "alpha-skill");
+  const repoConfig = path.join(fixture.repo, ".agents", "config.yaml");
   const screenText = async (): Promise<string> => (await terminal.text()).replace(/\s+/g, "");
 
   await step("settled fixture baseline", () => {}, async () => {
@@ -29,6 +30,11 @@ journey.test("a sync that cannot write reports the error, keeps the pending chan
   await step("enable it in the project", () => terminal.write("p"), async () => {
     await locate(terminal, "~ 1 out of sync").unique().expect({ timeout: 30_000 });
   });
+  assert.equal(
+    fs.readFileSync(repoConfig, "utf8"),
+    fixture.expectedRepoConfig.replace("      - skill/beta-skill\n", "      - skill/beta-skill\n      - skill/alpha-skill\n"),
+    "enabling alpha-skill did not add it next to beta-skill"
+  );
 
   // A read-only harness folder makes the sync's write fail.
   fs.chmodSync(skills, 0o555);
