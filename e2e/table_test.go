@@ -369,8 +369,8 @@ var testTable = []TestCase{
 		Desc:    "Given a repository source name carrying terminal controls, When status fails and doctor reports configuration errors, Then both print visible escapes without changing the configuration",
 		RepoCfg: "apiVersion: agent-marketplace/v4\nsources:\n  \"\\e]0;TITLE\\a\\e[2J\\u202EEVIL\\N\":\n    directory: ./missing\n",
 		Steps: []Step{
-			{Args: []string{"status"}, AssertExitCode: intPtr(1), OutContains: []string{`Error: validate config "`, `/workspace/.agents/config.yaml": v4.source-name: sources.\x1B]0;TITLE\x07\x1B[2J\u202EEVIL\x85 (line 3)`}, OutNotContains: []string{"\x1b", "\a", "\u202e", "\u0085"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml"}},
-			{Args: []string{"doctor"}, MustPass: true, OutContains: []string{`error: validate config "`, `/workspace/.agents/config.yaml": v4.source-name: sources.\x1B]0;TITLE\x07\x1B[2J\u202EEVIL\x85 (line 3)`}, OutNotContains: []string{"\x1b", "\a", "\u202e", "\u0085"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml"}},
+			{Args: []string{"status"}, AssertExitCode: intPtr(1), OutContains: []string{`Error: validate config "`, `/workspace/.agents/config.yaml": v4.source-name:`, `/workspace/.agents/config.yaml:3: sources.\x1B]0;TITLE\x07\x1B[2J\u202EEVIL\x85: source name "\x1b]0;TITLE\a\x1b[2J\u202eEVIL\u0085" must contain only letters, numbers, dots, underscores, or hyphens`, "hint: In ", "rename the source"}, OutNotContains: []string{"\x1b", "\a", "\u202e", "\u0085"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml"}},
+			{Args: []string{"doctor"}, MustPass: true, OutContains: []string{`error: validate config "`, `/workspace/.agents/config.yaml": v4.source-name:`, `/workspace/.agents/config.yaml:3: sources.\x1B]0;TITLE\x07\x1B[2J\u202EEVIL\x85: source name "\x1b]0;TITLE\a\x1b[2J\u202eEVIL\u0085" must contain only letters, numbers, dots, underscores, or hyphens`, "hint: In ", "rename the source"}, OutNotContains: []string{"\x1b", "\a", "\u202e", "\u0085"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml"}},
 		},
 	},
 	{

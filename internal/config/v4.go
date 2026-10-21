@@ -173,9 +173,12 @@ type v4TelemetryFields struct {
 // path and line context in Error().
 type V4ValidationError struct {
 	Code       string
+	File       string
+	LockFile   string
 	Path       string
 	Line       int
 	Msg        string
+	Variant    string
 	layer      layerKind
 	layerKnown bool
 }
@@ -184,14 +187,98 @@ func (e *V4ValidationError) Error() string {
 	if e == nil {
 		return ""
 	}
+	message := e.Msg
+	if e.Code == v4MarketplaceLockMismatchCode && e.LockFile != "" {
+		if e.Variant == "resource-missing" && e.Path != "" {
+			message = fmt.Sprintf("resource %q is missing from the lock file %s", e.Path, e.LockFile)
+		} else {
+			message += " (lock file " + e.LockFile + ")"
+		}
+	}
+	if e.File != "" {
+		if e.Path != "" && e.Path != e.File && !strings.Contains(message, e.Path) {
+			message = e.Path + ": " + message
+		}
+		if e.Line > 0 {
+			return fmt.Sprintf("%s: %s:%d: %s", e.Code, e.File, e.Line, message)
+		}
+		return fmt.Sprintf("%s: %s: %s", e.Code, e.File, message)
+	}
 	where := e.Path
 	if e.Line > 0 {
 		where = fmt.Sprintf("%s (line %d)", where, e.Line)
 	}
 	if where == "" {
-		return e.Code + ": " + e.Msg
+		return e.Code + ": " + message
 	}
-	return fmt.Sprintf("%s: %s: %s", e.Code, where, e.Msg)
+	return fmt.Sprintf("%s: %s: %s", e.Code, where, message)
+}
+
+func (e *V4ValidationError) DiagnosticCode() string {
+	if e == nil {
+		return ""
+	}
+	return e.Code
+}
+
+func (e *V4ValidationError) DiagnosticFile() string {
+	if e == nil {
+		return ""
+	}
+	return e.File
+}
+
+func (e *V4ValidationError) DiagnosticLine() int {
+	if e == nil {
+		return 0
+	}
+	return e.Line
+}
+
+func (e *V4ValidationError) DiagnosticScope() string {
+	if e == nil || !e.layerKnown {
+		return ""
+	}
+	switch e.layer {
+	case organizationLayer:
+		return "organization"
+	case userLayer:
+		return "user"
+	case repoLayer:
+		return "repo"
+	case localLayer:
+		return "local"
+	default:
+		return ""
+	}
+}
+
+func (e *V4ValidationError) DiagnosticPath() string {
+	if e == nil {
+		return ""
+	}
+	return e.Path
+}
+
+func (e *V4ValidationError) DiagnosticLocator() string {
+	if e == nil || e.Code != v4MarketplaceLockMismatchCode || strings.Count(e.Path, "/") < 2 {
+		return ""
+	}
+	return e.Path
+}
+
+func (e *V4ValidationError) DiagnosticVariant() string {
+	if e == nil {
+		return ""
+	}
+	return e.Variant
+}
+
+func (e *V4ValidationError) DiagnosticLockFile() string {
+	if e == nil {
+		return ""
+	}
+	return e.LockFile
 }
 
 func (e *V4ValidationError) Remediation() string {
@@ -218,6 +305,25 @@ func (e *V4ValidationError) Remediation() string {
 
 func v4err(code, p string, line int, format string, args ...any) error {
 	return &V4ValidationError{Code: code, Path: p, Line: line, Msg: fmt.Sprintf(format, args...)}
+}
+
+func v4errVariant(code, p string, line int, variant, format string, args ...any) error {
+	return &V4ValidationError{Code: code, Path: p, Line: line, Msg: fmt.Sprintf(format, args...), Variant: variant}
+}
+
+func v4RequestError(code string, request V4ResourceRequest, format string, args ...any) *V4ValidationError {
+	err := &V4ValidationError{Code: code, Path: request.Locator, Msg: fmt.Sprintf(format, args...)}
+	if len(request.Provenance) > 0 {
+		err.File = request.Provenance[0].File
+		err.Line = request.Provenance[0].Line
+	}
+	return err
+}
+
+func v4RequestErrorVariant(code string, request V4ResourceRequest, variant, format string, args ...any) *V4ValidationError {
+	err := v4RequestError(code, request, format, args...)
+	err.Variant = variant
+	return err
 }
 
 const (
@@ -271,9 +377,52 @@ func ParseV4Config(data []byte, declaringPath string, root bool) (*V4Config, err
 	}
 	out := &V4Config{APIVersion: APIVersionV4, Sources: doc.sources, Groups: doc.groups, Files: []string{declaringPath}, Harnesses: cloneV4StringList(doc.harnesses), HasHarnesses: doc.hasHarnesses, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, UpdateCheck: doc.updateCheck, Telemetry: doc.telemetry, Materialization: doc.materialization, telemetryFields: doc.telemetryFields}
 	if err := normalizeV4Tree(out); err != nil {
+		attachV4ValidationFile(err, declaringPath)
 		return nil, err
 	}
 	return out, nil
+}
+
+func attachV4ValidationFile(err error, file string) {
+	var validation *V4ValidationError
+	if file != "" && errors.As(err, &validation) && validation.File == "" {
+		validation.File = file
+	}
+}
+
+func attachV4ValidationContext(err error, file string, kind layerKind) {
+	attachV4ValidationFile(err, file)
+	var validation *V4ValidationError
+	if errors.As(err, &validation) {
+		validation.layer = kind
+		validation.layerKnown = true
+	}
+}
+
+func attachV4ValidationLockFile(err error, configPath string) {
+	var validation *V4ValidationError
+	if configPath == "" || !errors.As(err, &validation) || validation.LockFile != "" {
+		return
+	}
+	paths, resolveErr := ResolveConfigLockPaths(configPath)
+	if resolveErr != nil {
+		return
+	}
+	lockPath := paths.CanonicalLock
+	if validation.layerKnown && (validation.layer == repoLayer || validation.layer == localLayer) {
+		configPath, absErr := filepath.Abs(configPath)
+		if absErr == nil {
+			base := filepath.Dir(configPath)
+			if filepath.Base(base) == ".agents" {
+				base = filepath.Dir(base)
+			}
+			if relative, relErr := filepath.Rel(base, lockPath); relErr == nil &&
+				relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+				lockPath = filepath.ToSlash(relative)
+			}
+		}
+	}
+	validation.LockFile = filepath.ToSlash(lockPath)
 }
 
 // LoadV4ConfigFromPath loads a v4 root and all explicit local includes.
@@ -303,6 +452,7 @@ func LoadV4ConfigIfPresent(file string, source Source) (*V4Config, error) {
 		return nil, err
 	}
 	if err := cfg.validateLayerFields(kind); err != nil {
+		attachV4ValidationContext(err, file, kind)
 		return nil, err
 	}
 	return cfg, nil
@@ -342,7 +492,19 @@ type v4Document struct {
 	telemetryFields     v4TelemetryFields
 }
 
-func parseV4Document(data []byte, file string, root bool, kinds ...layerKind) (*v4Document, error) {
+func parseV4Document(data []byte, file string, root bool, kinds ...layerKind) (result *v4Document, err error) {
+	defer func() {
+		var validation *V4ValidationError
+		if errors.As(err, &validation) {
+			if validation.File == "" {
+				validation.File = file
+			}
+			if len(kinds) > 0 {
+				validation.layer = kinds[0]
+				validation.layerKnown = true
+			}
+		}
+	}()
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	var node yaml.Node
 	if err := dec.Decode(&node); err != nil {
@@ -425,27 +587,32 @@ func parseV4Document(data []byte, file string, root bool, kinds ...layerKind) (*
 
 func v4DocumentError(file string, root *yaml.Node, err error, fragment bool) error {
 	var validation *V4ValidationError
-	if fragment && errors.As(err, &validation) && validation.Line == 0 {
-		field := strings.FieldsFunc(validation.Path, func(r rune) bool { return r == '.' || r == '[' })
-		var node *yaml.Node
-		if len(field) > 0 {
-			node = mappingValue(root, field[0])
+	if errors.As(err, &validation) {
+		copy := *validation
+		if copy.File == "" {
+			copy.File = file
 		}
-		if validation.Path == "auxiliary" {
-			for _, key := range []string{"backup", "logging", "telemetry"} {
-				if value := mappingValue(root, key); value != nil && value.Tag != "!!null" {
-					node = value
-					break
-				}
+		if fragment && copy.Line == 0 {
+			field := strings.FieldsFunc(copy.Path, func(r rune) bool { return r == '.' || r == '[' })
+			var node *yaml.Node
+			if len(field) > 0 {
+				node = mappingValue(root, field[0])
 			}
-		} else if node == nil && validation.Path == "allowed_registries" {
-			node = mappingValue(root, "allowed_marketplaces")
+			if copy.Path == "auxiliary" {
+				for _, key := range []string{"backup", "logging", "telemetry"} {
+					if value := mappingValue(root, key); value != nil && value.Tag != "!!null" {
+						node = value
+						break
+					}
+				}
+			} else if node == nil && copy.Path == "allowed_registries" {
+				node = mappingValue(root, "allowed_marketplaces")
+			}
+			if node != nil {
+				copy.Line = node.Line
+			}
 		}
-		if node != nil {
-			copy := *validation
-			copy.Line = node.Line
-			err = &copy
-		}
+		err = &copy
 	}
 	return fmt.Errorf("validate config %q: %w", file, err)
 }
@@ -684,7 +851,7 @@ func parseV4Sources(n *yaml.Node, file, directoryBase string) (map[string]V4Sour
 		nameNode, value := n.Content[i], n.Content[i+1]
 		name := nameNode.Value
 		if !v4SourceNameRE.MatchString(name) {
-			return nil, v4err("v4.source-name", "sources."+name, nameNode.Line, "must match [a-zA-Z0-9][a-zA-Z0-9._-]*")
+			return nil, v4err("v4.source-name", "sources."+name, nameNode.Line, "source name %q must contain only letters, numbers, dots, underscores, or hyphens", name)
 		}
 		if value.Kind != yaml.MappingNode {
 			return nil, v4err("v4.source-type", "sources."+name, value.Line, "must be a mapping")
@@ -1378,11 +1545,21 @@ func loadV4TreeWithResolvedRoot(file, resolvedRoot string, root bool, visiting m
 		}
 	}
 	if err := mergeV4Document(result, doc); err != nil {
+		if len(kinds) > 0 {
+			attachV4ValidationContext(err, canonical, kinds[0])
+		} else {
+			attachV4ValidationFile(err, canonical)
+		}
 		return nil, err
 	}
 	result.reads = append(result.reads, read)
 	if root {
 		if err := normalizeV4Tree(result); err != nil {
+			if len(kinds) > 0 {
+				attachV4ValidationContext(err, canonical, kinds[0])
+			} else {
+				attachV4ValidationFile(err, canonical)
+			}
 			return nil, err
 		}
 	}
@@ -1830,7 +2007,10 @@ func (c *V4Config) ToLegacyConfigWithLock(kind layerKind, doc *lockfile.Document
 	if doc != nil && doc.APIVersion == lockfile.APIVersionV2 {
 		normalized, err := lockfile.Normalize(*doc)
 		if err != nil {
-			return nil, v4err(v4MarketplaceLockMismatchCode, "", 0, "lock failed codec normalization: %v", err)
+			validation := v4errVariant(v4MarketplaceLockMismatchCode, "", 0, "lock-restore", "the acquisition lock could not be read: %v", err)
+			attachV4ValidationContext(validation, firstV4File(c), kind)
+			attachV4ValidationLockFile(validation, firstV4File(c))
+			return nil, validation
 		}
 		doc = &normalized
 	}
@@ -1888,7 +2068,11 @@ const (
 	v4RootProjectionBinding
 )
 
-func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document, modes ...v4BindingMode) (*Config, error) {
+func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document, modes ...v4BindingMode) (result *Config, resultErr error) {
+	defer func() {
+		attachV4ValidationContext(resultErr, firstV4File(c), kind)
+		attachV4ValidationLockFile(resultErr, firstV4File(c))
+	}()
 	if c == nil {
 		return nil, v4err("v4.runtime", "", 0, "nil configuration")
 	}
@@ -1920,14 +2104,14 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document, mo
 			continue
 		}
 		if _, duplicate := marketplaceEndpoints[src.CanonicalURL]; duplicate {
-			return nil, v4err(v4MarketplaceLockMismatchCode, "sources."+name, src.Line, "duplicate source binding for Marketplace endpoint %q", src.CanonicalURL)
+			return nil, v4errVariant(v4MarketplaceLockMismatchCode, "sources."+name, src.Line, "configuration", "duplicate Marketplace source declaration for endpoint %q", src.CanonicalURL)
 		}
 		marketplaceEndpoints[src.CanonicalURL] = name
 	}
 	if len(marketplaceEndpoints) > 0 && lockDoc != nil && lockDoc.APIVersion == lockfile.APIVersionV2 {
 		expected := lockfile.Scope(sourceForLayer(kind).LockScope())
 		if lockDoc.Scope != expected {
-			return nil, v4err(v4MarketplaceLockMismatchCode, "", 0, "lock scope %q does not match %q", lockDoc.Scope, expected)
+			return nil, v4errVariant(v4MarketplaceLockMismatchCode, "", 0, "lock-restore", "lock scope %q does not match %q", lockDoc.Scope, expected)
 		}
 		lockByEndpoint = make(map[string]lockfile.MarketplaceLock, len(lockDoc.Marketplaces))
 		for _, mp := range lockDoc.Marketplaces {
@@ -1937,7 +2121,7 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document, mo
 				if exclusionOnlyEndpoints[mp.URL] || projection {
 					continue
 				}
-				return nil, v4err(v4MarketplaceLockMismatchCode, "", 0, "lock endpoint %q has no matching Marketplace source", mp.URL)
+				return nil, v4errVariant(v4MarketplaceLockMismatchCode, "", 0, "stale-endpoint", "lock endpoint %q has no matching Marketplace source", mp.URL)
 			}
 			lockByEndpoint[mp.URL] = mp
 		}
@@ -1977,7 +2161,7 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document, mo
 				continue
 			}
 			if locked.InstanceID == "" {
-				return nil, v4err(v4MarketplaceLockMismatchCode, "sources."+name, src.Line, "deployed Marketplace evidence has no instance identity")
+				return nil, &V4ValidationError{Code: v4MarketplaceLockMismatchCode, File: src.File, Path: "sources." + name, Line: src.Line, Msg: "the acquisition lock has no Marketplace instance identity"}
 			}
 			entry, err := c.marketplaceEntryForLock(name, src, group, locked, kind, projection)
 			if err != nil {
@@ -2053,6 +2237,13 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document, mo
 	return out, nil
 }
 
+func firstV4File(c *V4Config) string {
+	if c != nil && len(c.Files) > 0 {
+		return c.Files[len(c.Files)-1]
+	}
+	return ""
+}
+
 func effectiveV4GroupPrecedence(group V4ResourceGroup) int {
 	precedence := -1
 	for _, decision := range group.Decisions {
@@ -2081,22 +2272,22 @@ func (c *V4Config) marketplaceEntryForLock(name string, src V4Source, group V4Re
 	direct := make(map[int]V4ResourceRequest)
 	for _, request := range effectiveV4Requests(group) {
 		if request.HasHarnesses {
-			return nil, v4err("v4.marketplace-runtime-unsupported", request.Locator, src.Line, "Marketplace requests do not support harnesses options")
+			return nil, v4RequestError("v4.marketplace-runtime-unsupported", request, "Marketplace requests do not support harness options")
 		}
 		registryID, ok := bindings[request.Registry]
 		if !ok {
-			return nil, v4err(v4MarketplaceLockMismatchCode, request.Locator, src.Line, "registry binding %q is not in the lock", request.Registry)
+			return nil, v4RequestError(v4MarketplaceLockMismatchCode, request, "Marketplace registry %q is missing from the acquisition lock", request.Registry)
 		}
 		lockKind := request.MarketplaceKind()
 		index, ok := resources[registryID+"\x00"+lockKind+"\x00"+request.Name]
 		if !ok {
-			return nil, v4err(v4MarketplaceLockMismatchCode, request.Locator, src.Line, "resource %q is not in the lock", request.Locator)
+			return nil, v4RequestErrorVariant(v4MarketplaceLockMismatchCode, request, "resource-missing", "resource %q is missing from the acquisition lock", request.Locator)
 		}
 		if request.Options.Revision != "" && request.Options.Revision != mp.Resources[index].Revision {
-			return nil, v4err(v4MarketplaceLockMismatchCode, request.Locator, src.Line, "requested revision %q does not match locked revision %q", request.Options.Revision, mp.Resources[index].Revision)
+			return nil, v4RequestError(v4MarketplaceLockMismatchCode, request, "requested revision %q does not match the acquisition lock's revision %q", request.Options.Revision, mp.Resources[index].Revision)
 		}
 		if previous, exists := direct[index]; exists {
-			return nil, v4err(v4MarketplaceLockMismatchCode, request.Locator, src.Line, "requests %q and %q resolve to the same locked resource", previous.Locator, request.Locator)
+			return nil, v4RequestErrorVariant(v4MarketplaceLockMismatchCode, request, "duplicate-request", "requests %q and %q refer to the same locked resource", previous.Locator, request.Locator)
 		}
 		direct[index] = request
 	}
@@ -2145,7 +2336,7 @@ func (c *V4Config) marketplaceEntryForLock(name string, src V4Source, group V4Re
 				continue
 			}
 			r := &mp.Resources[i]
-			return nil, v4err(v4MarketplaceLockMismatchCode, sourcePath, src.Line, "locked resource %s/%s/%s is not requested or reachable from a requested collection", r.RegistryID, r.Kind, r.Name)
+			return nil, &V4ValidationError{Code: v4MarketplaceLockMismatchCode, File: src.File, Path: sourcePath, Line: src.Line, Variant: "configuration", Msg: fmt.Sprintf("acquisition lock resource %s/%s/%s is not selected directly or through a selected collection", r.RegistryID, r.Kind, r.Name)}
 		}
 		r := &mp.Resources[i]
 		pin := MarketplaceResourcePin{

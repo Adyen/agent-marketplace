@@ -25,10 +25,12 @@ const resources = [
       Give your team a shared place to discover and install AI agent resources.
     </template>
     <template #action>
-      <ActionLink :href="deploymentGuidePath" variant="outline">
-        Deployment guide
-        <span aria-hidden="true">→</span>
-      </ActionLink>
+      <ActionLink
+        :href="deploymentGuidePath"
+        label="Deployment guide"
+        variant="text"
+        icon="arrow"
+      />
     </template>
 
     <div class="benefits">
@@ -74,12 +76,12 @@ const resources = [
     </div>
 
     <TerminalFrame
-      class="marketplace-window"
+      class="marketplace-window is-titled"
       label="Team Marketplace"
       aria-label="Example team Marketplace resource catalog"
     >
       <template #status>
-        <span class="preview-status">Preview</span>
+        <span class="preview-status am-outline-chip">Preview</span>
       </template>
 
       <div class="marketplace-window__body">
@@ -93,9 +95,12 @@ const resources = [
 
         <div class="catalog">
           <div class="search">
-            <svg aria-hidden="true" viewBox="0 0 24 24">
-              <circle cx="11" cy="11" r="6" />
-              <path d="m16 16 4 4" />
+            <svg class="am-fill-icon" aria-hidden="true" viewBox="0 0 24 24">
+              <path
+                fill-rule="evenodd"
+                d="M10.5 3a7.5 7.5 0 1 0 4.7 13.35l4.7 4.7 1.15-1.15-4.7-4.7A7.5 7.5 0 0 0 10.5 3Zm0 2.5a5 5 0 1 0 0 10 5 5 0 0 0 0-10Z"
+                clip-rule="evenodd"
+              />
             </svg>
             <span>Search resources...</span>
           </div>
@@ -105,16 +110,18 @@ const resources = [
               <i /><i /><i /><i /><i /><i /><i /><i /><i />
             </span>
             <div class="resource-row__copy">
-              <span>Collection · team</span>
-              <strong>{{ resource.name }}</strong>
+              <span class="resource-row__title">
+                <span class="resource-kind">Collection</span>
+                <span class="resource-separator" aria-hidden="true">·</span>
+                <strong>{{ resource.name }}</strong>
+              </span>
               <p>{{ resource.description }}</p>
             </div>
             <span class="install-button">
-              <svg aria-hidden="true" viewBox="0 0 24 24">
-                <rect x="8" y="8" width="11" height="11" rx="2" />
-                <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+              <svg class="am-fill-icon" aria-hidden="true" viewBox="0 0 24 24">
+                <path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1Zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H8V7h11v14Z" />
               </svg>
-              Copy install command
+              Copy
             </span>
           </article>
         </div>
@@ -124,182 +131,139 @@ const resources = [
 </template>
 
 <style scoped>
-.organizations {
-  --am-section-heading-width: 100%;
+@media (min-width: 960px) {
+  .organizations {
+    --lp-section-pad: var(--lp-space-group);
+
+    min-height: calc(100svh - var(--lp-nav-height));
+  }
+
+  .organizations :deep(.head) {
+    margin-bottom: var(--lp-space-group);
+  }
 }
 
 .benefits {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 32px;
-  margin-bottom: 38px;
+  column-gap: var(--lp-gutter);
+  margin-bottom: var(--lp-space-default);
 }
 
 .benefit {
   display: flex;
-  align-items: flex-start;
-  gap: 16px;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--lp-space-default);
+  padding-left: var(--lp-space-default);
+  box-shadow: inset 1px 0 0 var(--lp-outline);
 }
 
 .benefit__icon {
-  display: grid;
-  width: 52px;
-  height: 52px;
-  flex: 0 0 auto;
-  place-items: center;
-  border-radius: var(--am-radius);
-  background: var(--am-accent-soft);
-  color: var(--vp-c-brand-1);
-}
-
-:is(.benefit__icon, .search, .install-button) svg {
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  display: block;
+  width: var(--lp-space-default);
+  height: var(--lp-space-default);
+  color: var(--lp-text);
 }
 
 .benefit__icon svg {
-  width: 28px;
-  height: 28px;
-  stroke-width: 1.7;
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
 }
 
-:is(.benefit h3, .catalog > h3) {
-  font-size: var(--am-text-body);
-  font-weight: var(--am-font-semibold);
-}
-
-.benefit h3 {
-  margin: 2px 0 5px;
-  line-height: 1.35;
+.benefit h3,
+.catalog > h3 {
+  margin: 0;
+  color: var(--lp-text);
+  font: var(--lp-font-heading);
 }
 
 .benefit p {
-  margin: 0;
-  font-size: var(--am-text-body-sm);
-  line-height: 1.5;
-}
-
-.marketplace-window {
-  --am-terminal-bg: var(--am-surface);
-  --am-terminal-bg-raised: var(--am-surface-raised);
-  --am-terminal-border: var(--am-border);
-  --am-terminal-font-family: var(--vp-font-family-base), sans-serif;
-  --am-terminal-muted: var(--vp-c-text-2);
-  --am-terminal-shadow: 0 24px 50px -34px var(--am-code-shadow);
-  --am-terminal-text: var(--vp-c-text-1);
-}
-
-.preview-status {
-  color: var(--am-terminal-muted);
-  font-weight: var(--am-font-semibold);
-}
-
-:is(.benefit p, .filters strong, .filter, .search, .resource-row__copy > span, .resource-row__copy p) {
-  color: var(--vp-c-text-2);
-}
-
-:is(.filter, .search, .resource-row__copy strong, .resource-row__copy p) {
-  font-size: var(--am-text-supporting);
-}
-
-:is(.filters strong, .resource-row__copy > span) {
-  font-family: var(--vp-font-family-mono), monospace;
-  font-size: 10px;
+  max-width: var(--lp-measure);
+  margin: var(--lp-space-tight) 0 0;
+  color: var(--lp-text-2);
+  font: var(--lp-font-body);
+  text-wrap: pretty;
 }
 
 .marketplace-window__body {
   display: grid;
-  grid-template-columns: 176px minmax(0, 1fr);
+  font: var(--lp-font-depiction);
+  grid-template-columns: 12rem minmax(0, 1fr);
 }
 
 .filters {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 24px;
-  border-right: 1px solid var(--am-border);
+  gap: var(--lp-space-related);
+  padding: var(--lp-inset);
+  border-right: 1px solid var(--lp-divider);
 }
 
 .filters strong {
-  margin-bottom: 4px;
-  font-weight: var(--am-font-semibold);
-  letter-spacing: 0.08em;
+  color: var(--lp-text);
+  font: var(--lp-font-label);
   text-transform: uppercase;
 }
 
 .filter {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.filter i {
-  width: 16px;
-  height: 16px;
-  border: 1px solid var(--am-border-strong);
-  border-radius: 50%;
+  color: var(--lp-text-2);
 }
 
 .filter.is-selected {
-  color: var(--vp-c-text-1);
+  color: var(--lp-text);
 }
 
-.filter.is-selected i {
-  border: 4px solid var(--am-surface);
-  background: var(--vp-c-brand-1);
-  box-shadow: 0 0 0 1px var(--vp-c-brand-1);
+.filter i {
+  display: none;
 }
 
 .catalog {
   min-width: 0;
-  padding: 18px 24px 6px;
+  padding: var(--lp-inset);
 }
 
 .search {
   display: flex;
+  height: var(--lp-h-depiction);
   align-items: center;
-  gap: 9px;
-  height: 38px;
-  padding: 0 12px;
-  border: 1px solid var(--am-border-strong);
-  border-radius: var(--am-radius-sm);
-}
-
-.search svg,
-.install-button svg {
-  width: 16px;
-  height: 16px;
-  stroke-width: 1.8;
+  gap: var(--lp-space-tight);
+  padding: 0 var(--lp-space-related);
+  border-radius: var(--lp-radius-control);
+  box-shadow: var(--lp-outline-shadow);
+  color: var(--lp-text-2);
 }
 
 .catalog > h3 {
-  margin: 15px 0 5px;
+  margin: var(--lp-space-related) 0 0;
+  padding-bottom: var(--lp-space-related);
+  font: var(--lp-font-depiction);
 }
 
 .resource-row {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
-  gap: 14px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  min-height: 88px;
-  border-bottom: 1px solid var(--am-border);
-}
-
-.resource-row:last-child {
-  border-bottom: 0;
+  gap: var(--lp-space-related);
+  padding: var(--lp-space-related) 0;
+  border-top: 1px solid var(--lp-divider);
 }
 
 .fingerprint {
   display: grid;
-  width: 24px;
-  height: 24px;
+  width: 1.5rem;
+  height: 1.5rem;
   grid-template-columns: repeat(3, 1fr);
+  gap: 3px;
 }
 
 .fingerprint i {
-  background: var(--vp-c-text-1);
+  background: var(--lp-text);
   opacity: 0.16;
 }
 
@@ -316,60 +280,84 @@ const resources = [
   min-width: 0;
 }
 
-.resource-row__copy > span {
-  display: block;
-  margin-bottom: 2px;
+.resource-row__title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--lp-space-tight);
 }
 
 .resource-row__copy strong {
-  display: block;
-  line-height: 1.4;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--lp-text);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resource-kind {
+  color: var(--lp-text-2);
+  font: var(--lp-font-label);
+  white-space: nowrap;
+}
+
+.resource-separator {
+  color: var(--lp-text-2);
+  font: var(--lp-font-label);
 }
 
 .resource-row__copy p {
-  margin: 2px 0 0;
+  margin: var(--lp-space-tight) 0 0;
   overflow: hidden;
-  line-height: 1.4;
+  color: var(--lp-text-2);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .install-button {
-  display: inline-flex;
+  display: flex;
+  height: var(--lp-h-depiction);
   align-items: center;
-  gap: 7px;
-  min-height: 34px;
-  padding: 0 11px;
-  border: 1px solid var(--am-border);
-  border-radius: var(--am-radius-sm);
-  background: var(--am-surface-soft);
-  font-size: 11px;
-  font-weight: var(--am-font-semibold);
+  gap: var(--lp-space-tight);
+  padding: 0 var(--lp-space-related);
+  border-radius: var(--lp-radius-control);
+  box-shadow: var(--lp-outline-shadow);
+  color: var(--lp-text);
+  font: var(--lp-font-label);
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
-@media (max-width: 820px) {
+@media (max-width: 959px) {
   .benefits {
     grid-template-columns: 1fr;
-    gap: 24px;
+    row-gap: var(--lp-space-group);
   }
-}
 
-@media (max-width: 680px) {
   .marketplace-window__body {
     grid-template-columns: 1fr;
   }
 
-  :is(.filters, .install-button) {
+  .filters {
+    border-right: 0;
+    border-bottom: 1px solid var(--lp-divider);
+  }
+}
+
+@media (max-width: 639px) {
+  .install-button {
     display: none;
   }
 
-  .catalog {
-    padding: 14px 16px 4px;
-  }
-
   .resource-row {
-    grid-template-columns: 24px minmax(0, 1fr);
-    min-height: 82px;
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+}
+
+@media (min-width: 960px) and (max-height: 800px) {
+  .organizations {
+    --lp-section-pad: var(--lp-space-related);
   }
 }
 </style>

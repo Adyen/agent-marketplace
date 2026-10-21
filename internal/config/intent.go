@@ -263,6 +263,10 @@ func (l LayerIntent) deployedLock(overlays map[string][]byte) (*lockfile.Documen
 		return nil, nil
 	}
 	doc, _, err := readDeployedLock(l.Path, lockfile.Scope(l.Source.LockScope()), overlays)
+	if err != nil {
+		attachV4ValidationContext(err, l.Path, layerForIntentSource(l.Source))
+		attachV4ValidationLockFile(err, l.Path)
+	}
 	return doc, err
 }
 

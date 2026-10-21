@@ -13,8 +13,8 @@ import TuiPreview from '../components/TuiPreview.vue'
     <div class="am-wrap">
       <div class="grid">
         <div class="copy">
-          <h1>
-            Manage AI agent tooling once
+          <h1 class="am-text-trim">
+            Manage AI agent tooling once<span>.</span>
             <span class="h1-sub">
               Sync it everywhere you work
             </span>
@@ -28,173 +28,139 @@ import TuiPreview from '../components/TuiPreview.vue'
 
           <div class="actions">
             <ActionLink
-              class="hero-action"
               :href="GITHUB_REPOSITORY_URL"
+              label="View on GitHub"
               variant="outline"
+              icon="external"
               target="_blank"
               rel="noreferrer"
-            >
-              View on GitHub
-              <span aria-hidden="true">↗</span>
-            </ActionLink>
+            />
           </div>
         </div>
 
         <div class="product-stage">
-        <TuiPreview />
+          <TuiPreview class="preview" />
           <p class="preview-caption">
             Select resources, review their targets, then sync.
           </p>
         </div>
       </div>
-
     </div>
   </header>
 </template>
 
 <style scoped>
 .hero {
-  position: relative;
-  z-index: 1;
-  overflow: hidden;
-  padding: 120px 0 80px;
-  background:
-    radial-gradient(circle at 76% 44%, var(--am-hero-glow), transparent 31rem),
-    linear-gradient(var(--am-hero-grid) 1px, transparent 1px),
-    linear-gradient(90deg, var(--am-hero-grid) 1px, transparent 1px),
-    var(--am-hero-bg);
-  background-size: auto, 44px 44px, 44px 44px, auto;
-  color: var(--am-hero-text);
-}
-
-.hero::after {
-  position: absolute;
-  right: -14rem;
-  bottom: -22rem;
-  width: 44rem;
-  height: 44rem;
-  border: 1px solid var(--am-hero-ring);
-  border-radius: 50%;
-  background: radial-gradient(circle, var(--am-hero-glow), transparent 65%);
-  content: "";
-  pointer-events: none;
+  padding-top: var(--lp-edge-top, var(--lp-section-pad));
+  padding-bottom: var(--lp-edge-bottom, var(--lp-section-pad));
 }
 
 .grid {
-  position: relative;
-  z-index: 1;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(480px, 1fr);
-  gap: clamp(52px, 6vw, 88px);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--lp-space-default);
   align-items: start;
 }
 
-.copy {
+.copy,
+.product-stage {
   min-width: 0;
 }
 
 h1 {
-  margin: 0 0 20px;
-  color: var(--am-hero-text);
-  font-size: clamp(56px, 5.2vw, 72px);
-  line-height: 0.99;
-  letter-spacing: -0.052em;
-  font-weight: var(--am-font-bold);
+  margin: 0;
+  color: var(--lp-text);
+  font: var(--lp-font-hero);
+  text-wrap: balance;
 }
 
 .h1-sub {
   display: block;
-  margin-top: 20px;
-  color: var(--am-hero-text-muted);
-  font-size: clamp(23px, 2.1vw, 29px);
-  font-weight: var(--am-font-medium);
-  line-height: 1.32;
-  letter-spacing: -0.025em;
+  color: var(--lp-text-muted);
 }
 
 .lede {
-  max-width: 56ch;
-  margin: 0;
-  color: var(--am-hero-text-muted);
-  font-size: 18px;
-  line-height: 1.66;
+  max-width: var(--lp-measure);
+  margin: var(--lp-space-default) 0 0;
+  color: var(--lp-text-2);
+  font: var(--lp-font-body);
+  text-wrap: pretty;
+}
+
+.install {
+  margin-top: var(--lp-space-group);
 }
 
 .actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 14px;
-}
-
-.install {
-  --am-technical-font-size: var(--am-text-body-sm);
-  --am-technical-padding: 15px;
-  margin-top: 30px;
-  padding-block: 9px;
-  box-shadow:
-    0 20px 50px -30px color-mix(in srgb, var(--am-color-bg-canvas) 90%, transparent),
-    inset 0 1px color-mix(in srgb, var(--am-color-text-primary) 3%, transparent);
-}
-
-.product-stage {
-  position: relative;
-  min-width: 0;
-  padding: 0 14px 14px;
+  gap: var(--lp-space-related);
+  margin-top: var(--lp-space-default);
 }
 
 .preview-caption {
-  margin: 12px 20px 2px;
-  color: var(--am-hero-text-muted);
-  font-size: var(--am-text-supporting);
-  line-height: 1.5;
+  max-width: var(--lp-measure);
+  margin: var(--lp-space-related) 0 0;
+  color: var(--lp-text-2);
+  font: var(--lp-font-caption);
+  text-wrap: pretty;
 }
 
-@media (max-width: 1020px) {
-  .hero {
-    padding-top: 104px;
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes arrive {
+    from {
+      opacity: 0;
+      transform: translateY(var(--arrive-y, 9px));
+    }
+
+    to {
+      opacity: 1;
+      transform: none;
+    }
   }
 
-  .grid {
-    grid-template-columns: 1fr;
-    gap: 42px;
-  }
-
-  .copy {
-    max-width: 720px;
-  }
-
-}
-
-@media (max-width: 680px) {
-  .hero {
-    padding: 88px 0 64px;
-    background-size: auto, 30px 30px, 30px 30px, auto;
+  :is(h1, .lede, .install, .actions, .preview, .preview-caption) {
+    animation: arrive var(--lp-motion-arrive) var(--lp-ease) backwards;
+    animation-delay: calc(var(--lp-motion-stagger) * var(--arrive-step, 0));
   }
 
   h1 {
-    font-size: 43px;
-    letter-spacing: -0.045em;
-  }
-
-  .h1-sub {
-    margin-top: 15px;
-    font-size: 22px;
+    --arrive-y: 3px;
   }
 
   .lede {
-    font-size: 16px;
-  }
-
-  .hero-action {
-    flex: 1;
+    --arrive-step: 1;
   }
 
   .install {
-    --am-technical-font-size: var(--am-text-supporting);
-    padding-block: 7px;
+    --arrive-step: 2;
+    --arrive-y: 12px;
   }
 
+  .actions {
+    --arrive-step: 3;
+    --arrive-y: 12px;
+  }
+
+  .preview {
+    --arrive-step: 2;
+  }
+
+  .preview-caption {
+    --arrive-step: 3;
+  }
 }
 
+@media (max-width: 959px) {
+  .grid {
+    grid-template-columns: 1fr;
+    row-gap: var(--lp-space-group);
+  }
+}
+
+@media (max-width: 479px) {
+  .actions > :deep(.action-link) {
+    flex: 1;
+  }
+}
 </style>

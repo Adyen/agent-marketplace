@@ -54,7 +54,7 @@ type MarketplaceInstallSummary struct {
 	Capabilities []string
 }
 
-var ErrMarketplaceInstallCollision = errors.New("marketplace.install-collision")
+var ErrMarketplaceInstallCollision error = consumerDiagnosticError("marketplace.install-collision")
 
 type PreparedMarketplaceInstall struct {
 	options             InstallOptions

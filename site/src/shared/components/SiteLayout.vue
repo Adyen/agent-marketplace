@@ -7,9 +7,11 @@ const { Layout } = DefaultTheme
 </script>
 
 <template>
-  <Layout>
-    <template #layout-bottom>
-      <SiteFooter />
-    </template>
-  </Layout>
+  <div class="am-site">
+    <Layout>
+      <template #layout-bottom>
+        <SiteFooter />
+      </template>
+    </Layout>
+  </div>
 </template>

@@ -175,7 +175,7 @@ onUnmounted(clearSyncTimers)
 <template>
   <TerminalFrame
     ref="terminal"
-    class="demo"
+    class="demo is-wide"
     :class="{ 'is-focused': hasFocus }"
     tag="figure"
     label="agent-marketplace tui"
@@ -188,7 +188,7 @@ onUnmounted(clearSyncTimers)
   >
     <template #status>
       <button
-        class="focus-control"
+        class="focus-control am-hit-target"
         type="button"
         :aria-pressed="hasFocus"
         @click.stop="focusDemo"
@@ -275,128 +275,44 @@ onUnmounted(clearSyncTimers)
 </template>
 
 <style scoped>
-.demo {
-  --tui-bg-raised: var(--am-terminal-bg-raised);
-  --tui-border: var(--am-terminal-border);
-  --tui-text: var(--am-terminal-text);
-  --tui-muted: var(--am-terminal-muted);
-  --tui-cyan: var(--am-terminal-cyan);
-  --tui-green: var(--am-terminal-accent);
-  --tui-orange: var(--am-terminal-warning);
-  --tui-selection: var(--am-terminal-selection);
-  --am-terminal-font-size: var(--am-text-body-sm);
-  --am-terminal-line-height: 1.45;
-}
-
-.activity {
-  align-items: center;
-  gap: 12px;
-}
-
-.activity {
-  display: flex;
-  justify-content: space-between;
-}
-
 .focus-control {
-  justify-self: end;
-  padding: 3px 7px;
-  border: 1px solid var(--tui-green);
-  border-radius: var(--am-radius-sm);
-  background: transparent;
-  color: var(--tui-green);
+  position: relative;
+  isolation: isolate;
+  height: var(--lp-h-depiction);
+  padding: 0 var(--lp-space-related);
+  border: 0;
+  border-radius: var(--lp-radius-control);
+  background: var(--lp-fill);
+  color: var(--lp-text);
   font: inherit;
-  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
   cursor: pointer;
+  transition: background-color var(--lp-motion-feedback) var(--lp-ease);
 }
 
-.focus-control:hover,
-.is-focused .focus-control {
-  background: var(--tui-selection);
+.focus-control::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--lp-surface);
+  content: "";
+  opacity: 0;
+  transition: opacity var(--lp-motion-feedback) var(--lp-ease);
 }
 
-.screen {
-  padding: 16px 20px;
+.focus-control:hover::before {
+  opacity: 1;
 }
 
-.title {
-  margin-bottom: 9px;
-  color: var(--tui-text);
-  font-weight: var(--am-font-semibold);
+.focus-control[aria-pressed="true"] {
+  background: var(--lp-green);
+  color: var(--lp-on-green);
 }
 
-.panes {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
-  gap: 18px;
-  min-height: 226px;
-}
-
-.resources > div + div {
-  margin-top: 9px;
-}
-
-.registry-title {
-  margin-bottom: 2px;
-  color: var(--tui-text);
-  font-weight: var(--am-font-semibold);
-  white-space: nowrap;
-}
-
-.resource {
-  display: grid;
-  grid-template-columns: 31px minmax(0, 1fr);
-  min-height: 22px;
-  padding: 0 4px;
-}
-
-.resource.selected {
-  background: var(--tui-selection);
-}
-
-.toggle {
-  color: var(--tui-green);
-}
-
-.resource-row {
-  display: grid;
-  grid-template-columns: 54px minmax(0, 1fr) 12px;
-  min-width: 0;
-}
-
-.kind,
-.scope {
-  color: var(--tui-muted);
-}
-
-.name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.details {
-  min-width: 0;
-  padding-left: 18px;
-  border-left: 1px solid var(--tui-border);
-}
-
-.details dl {
-  display: grid;
-  grid-template-columns: 62px minmax(0, 1fr);
-  gap: 3px 24px;
-  margin: 0;
-}
-
-.details dt {
-  color: var(--tui-cyan);
-  font-weight: var(--am-font-semibold);
-}
-
-.details dd {
-  min-width: 0;
-  margin: 0;
-  overflow-wrap: anywhere;
+.demo.is-focused {
+  background: var(--lp-focus-fill);
 }
 
 .target-list {
@@ -409,17 +325,8 @@ onUnmounted(clearSyncTimers)
 }
 
 .target-separator {
-  margin: 0 6px;
-  color: var(--tui-muted);
-}
-
-.pending,
-.sync-status {
-  color: var(--tui-orange);
-}
-
-.positive {
-  color: var(--tui-green);
+  margin: 0 var(--lp-space-tight);
+  color: var(--lp-text-muted);
 }
 
 .spinner {
@@ -427,46 +334,10 @@ onUnmounted(clearSyncTimers)
   width: 1ch;
 }
 
-.activity {
-  margin-top: 12px;
-  padding-top: 9px;
-  border-top: 1px solid var(--tui-border);
-  font-size: var(--am-text-supporting);
-}
-
-kbd {
-  padding: 1px 4px;
-  border: 1px solid var(--tui-border);
-  border-radius: 3px;
-  background: var(--tui-bg-raised);
-  color: var(--tui-text);
-  font: inherit;
-}
-
-.demo.is-focused {
-  --am-terminal-border: var(--tui-green);
-  --am-terminal-shadow:
-    0 34px 72px -34px var(--am-terminal-shadow-strong),
-    0 0 0 3px var(--vp-c-brand-soft),
-    0 0 70px color-mix(in srgb, var(--am-color-action-active) 15%, transparent);
-}
-
-@media (max-width: 680px) {
-  .demo {
-    --am-terminal-font-size: var(--am-text-supporting);
-  }
-
-  .panes {
-    grid-template-columns: 1fr;
-    min-height: auto;
-  }
-
-  .details {
-    padding-top: 12px;
-    padding-left: 0;
-    border-top: 1px solid var(--tui-border);
-    border-left: 0;
+@media (prefers-reduced-motion: reduce) {
+  .focus-control,
+  .focus-control::before {
+    transition: none;
   }
 }
-
 </style>

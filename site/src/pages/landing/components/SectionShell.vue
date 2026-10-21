@@ -1,27 +1,23 @@
 <script setup lang="ts">
-withDefaults(
-  defineProps<{
-    id?: string
-    eyebrow: string
-    title: string
-    soft?: boolean
-    density?: 'regular' | 'compact'
-  }>(),
-  { soft: false, density: 'regular' }
-)
+import EyebrowText from './EyebrowText.vue'
+
+defineProps<{
+  id?: string
+  eyebrow: string
+  title: string
+}>()
 </script>
 
 <template>
-  <section
-    :id="id"
-    class="sec"
-    :class="{ 'is-soft': soft, 'is-compact': density === 'compact' }"
-  >
+  <section :id="id" class="sec">
     <div class="am-wrap">
       <div class="head">
         <div class="head-copy">
-          <span class="eyebrow"><span class="am-brand-slash am-brand-slash--eyebrow" aria-hidden="true">/</span>{{ eyebrow }}</span>
-          <h2><slot name="title">{{ title }}</slot></h2>
+          <span class="eyebrow am-text-trim">
+            <span class="am-brand-slash am-brand-slash--eyebrow" aria-hidden="true">/</span>
+            <EyebrowText :text="eyebrow" />
+          </span>
+          <h2 class="am-text-trim"><slot name="title">{{ title }}</slot></h2>
           <p v-if="$slots.sub" class="sub"><slot name="sub" /></p>
         </div>
         <slot name="action" />
@@ -34,70 +30,55 @@ withDefaults(
 
 <style scoped>
 .sec {
-  padding: var(--am-section-padding) 0;
-  border-top: 1px solid var(--am-border);
-  background: var(--vp-c-bg);
-}
-
-.is-soft {
-  background:
-    radial-gradient(circle at 82% 18%, color-mix(in srgb, var(--am-color-action-primary) 4.5%, transparent), transparent 28rem),
-    var(--am-surface-soft);
-}
-
-.is-compact {
-  --am-section-heading-gap: 28px;
-  --am-section-padding: 72px;
+  padding-top: var(--lp-edge-top, var(--lp-section-pad));
+  padding-bottom: var(--lp-edge-bottom, var(--lp-section-pad));
+  background: var(--lp-canvas);
 }
 
 .head {
   display: flex;
-  max-width: var(--am-section-heading-width);
   align-items: flex-end;
   justify-content: space-between;
-  gap: 32px;
-  margin-bottom: var(--am-section-heading-gap);
+  gap: var(--lp-space-default);
+  min-width: 0;
+  margin-bottom: var(--lp-space-group);
 }
 
 .head-copy {
   min-width: 0;
+  max-width: calc(50% - var(--lp-space-related));
 }
 
 .eyebrow {
-  display: block;
-  font-family: var(--vp-font-family-mono), monospace;
-  font-size: var(--am-text-supporting);
-  letter-spacing: 0.08em;
+  display: flex;
+  align-items: center;
+  color: var(--lp-text-2);
+  font: var(--lp-font-label);
   text-transform: uppercase;
-  color: var(--vp-c-text-1);
-  margin-bottom: 14px;
 }
 
 h2 {
-  margin: 0 0 10px;
-  font-size: var(--am-section-heading-size);
-  line-height: 1.12;
-  letter-spacing: -0.035em;
-  font-weight: var(--am-font-bold);
+  margin: var(--lp-space-default) 0 0;
+  color: var(--lp-text);
+  font: var(--lp-font-section);
+  text-wrap: pretty;
 }
 
 .sub {
-  margin: 0;
-  color: var(--vp-c-text-2);
-  font-size: var(--am-text-body);
-  line-height: 1.6;
+  max-width: var(--lp-measure);
+  margin: var(--lp-space-default) 0 0;
+  color: var(--lp-text-2);
+  font: var(--lp-font-body);
+  text-wrap: pretty;
 }
 
-@media (max-width: 680px) {
-  .is-compact {
-    --am-section-padding: 64px;
-  }
-
+@media (max-width: 959px) {
   .head {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 20px;
+    flex-wrap: wrap;
+  }
+
+  .head-copy {
+    max-width: none;
   }
 }
-
 </style>

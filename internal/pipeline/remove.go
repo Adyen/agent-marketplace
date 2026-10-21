@@ -1668,10 +1668,10 @@ func removalEditEntry(entry config.RegistryEntry, url, path, ref string) config.
 
 // Stable diagnostic codes for Marketplace removal refusals.
 var (
-	ErrMarketplaceRemoveUnsupportedQualifier   = errors.New("marketplace.remove-unsupported-qualifier")
-	ErrMarketplaceRemoveNotSelected            = errors.New("marketplace.remove-not-selected")
-	ErrMarketplaceRemoveAmbiguousSource        = errors.New("marketplace.remove-ambiguous-source")
-	ErrMarketplaceRemoveOrganizationCollection = errors.New("marketplace.remove-organization-collection")
+	ErrMarketplaceRemoveUnsupportedQualifier   error = consumerDiagnosticError("marketplace.remove-unsupported-qualifier")
+	ErrMarketplaceRemoveNotSelected            error = consumerDiagnosticError("marketplace.remove-not-selected")
+	ErrMarketplaceRemoveAmbiguousSource        error = consumerDiagnosticError("marketplace.remove-ambiguous-source")
+	ErrMarketplaceRemoveOrganizationCollection error = consumerDiagnosticError("marketplace.remove-organization-collection")
 )
 
 // marketplaceRemovalSource narrows named --from removal to a configured

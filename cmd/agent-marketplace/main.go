@@ -112,6 +112,9 @@ func newRootCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
+	rootCmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		return terminalSafeUsageError(err, cmd.CommandPath())
+	})
 
 	rootCmd.Flags().BoolVar(&showVersion, "version", false, "Print the agent-marketplace version")
 	rootCmd.Flags().BoolVar(&noTUI, "no-tui", false, "Skip the interactive TUI and print help instead")
