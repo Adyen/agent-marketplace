@@ -483,21 +483,26 @@ func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir stri
 	emit(base)
 }
 
+// driftItemsByResource keys drift items by resource. A resource can have
+// several, for example missing from a new target harness and orphaned in the
+// one it left, so the most actionable wins: broken, then missing, then an
+// orphaned copy.
+func driftItemsByResource(driftReport materialize.DriftReport) map[string]materialize.DriftItem {
+	byName := make(map[string]materialize.DriftItem, len(driftReport.Missing)+len(driftReport.Broken)+len(driftReport.Orphaned))
+	for _, items := range [][]materialize.DriftItem{driftReport.Orphaned, driftReport.Missing, driftReport.Broken} {
+		for _, item := range items {
+			byName[item.Name] = item
+		}
+	}
+	return byName
+}
+
 func applyDriftItems(rows []row, driftReport materialize.DriftReport) []row {
 	out := slices.Clone(rows)
 	if len(driftReport.Missing)+len(driftReport.Broken)+len(driftReport.Orphaned) == 0 {
 		return out
 	}
-	driftByName := make(map[string]materialize.DriftItem, len(driftReport.Missing)+len(driftReport.Broken)+len(driftReport.Orphaned))
-	for _, item := range driftReport.Missing {
-		driftByName[item.Name] = item
-	}
-	for _, item := range driftReport.Broken {
-		driftByName[item.Name] = item
-	}
-	for _, item := range driftReport.Orphaned {
-		driftByName[item.Name] = item
-	}
+	driftByName := driftItemsByResource(driftReport)
 	for i := range out {
 		if out[i].IsAvailable || out[i].DriftItem != nil {
 			continue
@@ -877,16 +882,7 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 		}
 	}
 
-	driftByName := make(map[string]materialize.DriftItem, len(driftReport.Missing)+len(driftReport.Broken)+len(driftReport.Orphaned))
-	for _, item := range driftReport.Missing {
-		driftByName[item.Name] = item
-	}
-	for _, item := range driftReport.Broken {
-		driftByName[item.Name] = item
-	}
-	for _, item := range driftReport.Orphaned {
-		driftByName[item.Name] = item
-	}
+	driftByName := driftItemsByResource(driftReport)
 
 	// seen is keyed by (kind, name, catalogKey) so same-name skills from
 	// different registries each get their own row.
