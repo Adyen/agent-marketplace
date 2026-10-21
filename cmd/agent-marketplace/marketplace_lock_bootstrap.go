@@ -182,6 +182,7 @@ func mergeMissingMarketplaceRecords(layer config.LayerIntent, current, resolved 
 	doc := current
 	doc.Marketplaces = slices.Clone(current.Marketplaces)
 	changedResources := make(map[string]map[string]bool)
+	changedCollections := make(map[string]bool)
 	for _, fresh := range resolved.Marketplaces {
 		index := -1
 		for i := range doc.Marketplaces {
@@ -197,6 +198,9 @@ func mergeMissingMarketplaceRecords(layer config.LayerIntent, current, resolved 
 				resource.SelectedBy = marketplacelock.MergeSelectedBy(nil, resource.SelectedBy)
 				fresh.Resources[i] = resource
 				markMarketplaceResourceChanged(changedResources, fresh.URL, resource)
+				if resource.Kind == "collection" {
+					changedCollections[fresh.URL] = true
+				}
 			}
 			doc.Marketplaces = append(doc.Marketplaces, fresh)
 			continue
@@ -235,14 +239,46 @@ func mergeMissingMarketplaceRecords(layer config.LayerIntent, current, resolved 
 				resource.SelectedBy = marketplacelock.MergeSelectedBy(nil, resource.SelectedBy)
 				existing.Resources = append(existing.Resources, resource)
 				markMarketplaceResourceChanged(changedResources, fresh.URL, resource)
+				if resource.Kind == "collection" {
+					changedCollections[fresh.URL] = true
+				}
 			} else if marketplaceResourceRevisionExplicit(layer, fresh.URL, resource) &&
 				existing.Resources[resourceIndex].Revision != resource.Revision {
 				resource.SelectedBy = marketplacelock.MergeSelectedBy(existing.Resources[resourceIndex].SelectedBy, resource.SelectedBy)
 				existing.Resources[resourceIndex] = resource
 				markMarketplaceResourceChanged(changedResources, fresh.URL, resource)
+				if resource.Kind == "collection" {
+					changedCollections[fresh.URL] = true
+				}
 			}
 		}
 		doc.Marketplaces[index] = existing
+	}
+	for _, fresh := range resolved.Marketplaces {
+		if !changedCollections[fresh.URL] {
+			continue
+		}
+		for i := range doc.Marketplaces {
+			if doc.Marketplaces[i].URL != fresh.URL {
+				continue
+			}
+			record := &doc.Marketplaces[i]
+			for _, resolvedResource := range fresh.Resources {
+				for j := range record.Resources {
+					resource := &record.Resources[j]
+					if marketplaceResourceKey(*resource) != marketplaceResourceKey(resolvedResource) {
+						continue
+					}
+					resource.SelectedBy = marketplacelock.MergeSelectedBy(resource.SelectedBy, resolvedResource.SelectedBy)
+					markMarketplaceResourceChanged(changedResources, fresh.URL, *resource)
+					break
+				}
+			}
+			for _, resource := range record.Resources {
+				markMarketplaceResourceChanged(changedResources, fresh.URL, resource)
+			}
+			break
+		}
 	}
 	for i := range doc.Marketplaces {
 		retainConsistentMarketplaceResources(layer, &doc.Marketplaces[i], changedResources[doc.Marketplaces[i].URL])
