@@ -70,6 +70,20 @@ A digest takes precedence over a tag. API, worker, and all-in-one roles inherit
 the top-level image; set each role's own digest when using different images,
 including the API-only image. Frontends need their own versions.
 
+### Upgrading From Implicit Image Tags
+
+Before upgrading from chart defaults that supplied `latest`, add explicit
+image versions to existing values files: `image.digest`, plus
+`web.image.digest` and `docs.image.digest` for enabled frontends. Set each
+role's own digest when its repository differs from the top-level image.
+Use verified digests of the intended image bytes rather than assuming a
+moving tag still identifies the currently deployed image.
+
+Render the new chart with the complete values file before rollout. Do not
+use `--reuse-values` as a migration shortcut: it can retain an explicit
+`latest`, which still renders but is not immutable. Keep the previous chart,
+values, and image references available for rollback.
+
 Use the images published to GHCR for each release, or the ones supplied by your
 own release pipeline. Explicit tags remain available for local development,
 as in this example; resolve and verify the digests before production rollout:

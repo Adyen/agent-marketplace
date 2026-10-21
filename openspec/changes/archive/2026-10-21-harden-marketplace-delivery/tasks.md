@@ -14,7 +14,7 @@
 ## 3. Verification
 
 - [x] 3.1 Run scoped tests, container/Compose checks, and Helm validation.
-- [ ] 3.2 Verify base images and run the real container smoke checks.
+- [x] 3.2 Verify base images and run the real container smoke checks.
 - [x] 3.3 Run make validate and spec-check, review all changes with OCR
   delegation, and archive the completed change.
 
@@ -41,5 +41,6 @@
   approved mirror) and the public distroless runtime, including the runtime's
   Node entrypoint and non-root default. A digest-pinned local web-image build
   was attempted but blocked by Docker Desktop's registry allowlist. No policy
-  bypass was attempted. Actual container startup and healthcheck validation
-  remain pending the container CI job; task 3.2 intentionally stays unchecked.
+  bypass was attempted. Container CI run 39664031599 subsequently built both
+  backend images, the distroless web image, and both site profiles; its real
+  non-root/read-only root and subpath healthcheck smoke checks passed.

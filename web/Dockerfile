@@ -25,6 +25,6 @@ COPY --from=build --chown=1000:1000 /src/web/.output ./.output
 USER 1000:1000
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:3000' + (process.env.NUXT_APP_BASE_URL || '/')).then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+    CMD ["/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:3000' + (process.env.NUXT_APP_BASE_URL || '/'), { signal: AbortSignal.timeout(4000) }).then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
 ENTRYPOINT ["/nodejs/bin/node"]
 CMD [".output/server/index.mjs"]

@@ -20,8 +20,12 @@ func TestSecretScanFailsClosed(t *testing.T) {
 	if job["continue-on-error"] != nil && job["continue-on-error"] != false {
 		t.Fatal("secret scan job must not tolerate failure")
 	}
+	found := false
 	for _, step := range getSlice(t, job, "steps") {
 		m := stepMap(t, step)
+		if condition, ok := m["if"].(string); ok && strings.Contains(condition, "steps.trufflehog.outcome") {
+			t.Errorf("step %v must not repair the scanner's failure status", m["name"])
+		}
 		if m["name"] != "TruffleHog OSS" {
 			continue
 		}
@@ -34,12 +38,15 @@ func TestSecretScanFailsClosed(t *testing.T) {
 		if !strings.HasPrefix(m["uses"].(string), "trufflesecurity/trufflehog@") {
 			t.Error("secret scanner action is missing")
 		}
-		return
+		found = true
 	}
-	t.Fatal("TruffleHog step missing")
+	if !found {
+		t.Fatal("TruffleHog step missing")
+	}
 }
 
 // spec: marketplace-delivery-security/web-runtime-is-independent-of-the-builder
+// spec: marketplace-delivery-security/web-healthcheck-has-an-explicit-request-deadline
 func TestWebRuntimeIsolation(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "web", "Dockerfile"))
 	if err != nil {
@@ -55,6 +62,8 @@ func TestWebRuntimeIsolation(t *testing.T) {
 		`ENTRYPOINT ["/nodejs/bin/node"]`,
 		`CMD [".output/server/index.mjs"]`,
 		`CMD ["/nodejs/bin/node", "-e",`,
+		"signal: AbortSignal.timeout(4000)",
+		".catch(() => process.exit(1))",
 	} {
 		if !strings.Contains(dockerfile, want) {
 			t.Errorf("web Dockerfile missing %q", want)
@@ -73,10 +82,11 @@ func TestHelmImageSelection(t *testing.T) {
 	webDigest := "sha256:" + strings.Repeat("b", 64)
 	docsDigest := "sha256:" + strings.Repeat("c", 64)
 	for _, tc := range []struct {
-		name string
-		set  []string
-		want []string
-		fail bool
+		name   string
+		values string
+		set    []string
+		want   []string
+		fail   bool
 	}{
 		{name: "missing version", fail: true},
 		{name: "explicit tag", set: []string{"image.tag=dev"}, want: []string{"agent-marketplace:dev"}},
@@ -100,9 +110,21 @@ func TestHelmImageSelection(t *testing.T) {
 			set:  []string{"mode=split", "api.image.tag=api-dev", "worker.image.digest=" + digest},
 			want: []string{"agent-marketplace:api-dev", "agent-marketplace@" + digest},
 		},
+		{name: "previous values require explicit versions", values: "helm-pre-hardening-values.yaml", fail: true},
+		{name: "previous values need a web version", values: "helm-pre-hardening-values.yaml", set: []string{"image.digest=" + digest}, fail: true},
+		{name: "previous values need a docs version", values: "helm-pre-hardening-values.yaml", set: []string{"image.digest=" + digest, "web.image.digest=" + webDigest}, fail: true},
+		{
+			name:   "previous values upgraded with explicit digests",
+			values: "helm-pre-hardening-values.yaml",
+			set:    []string{"image.digest=" + digest, "web.image.digest=" + webDigest, "docs.image.digest=" + docsDigest},
+			want:   []string{"example.invalid/marketplace-worker@" + digest, "example.invalid/marketplace-web@" + webDigest, "example.invalid/marketplace-docs@" + docsDigest},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			args := []string{"template", "marketplace", chart}
+			if tc.values != "" {
+				args = append(args, "--values", filepath.Join("testdata", tc.values))
+			}
 			for _, value := range tc.set {
 				args = append(args, "--set", value)
 			}
@@ -156,6 +178,8 @@ func TestHelmImageSelection(t *testing.T) {
 	}
 }
 
+// TestChartPublisherUsesExplicitImageVersion keeps release validation independent
+// of the intentionally empty deployment defaults.
 func TestChartPublisherUsesExplicitImageVersion(t *testing.T) {
 	jobs := getMap(t, loadWorkflow(t, "marketplace-chart.yml"), "jobs")
 	for _, step := range getSlice(t, getMap(t, jobs, "publish"), "steps") {

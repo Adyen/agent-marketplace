@@ -23,6 +23,16 @@ same verified digests between environments rather than rebuilding from moving
 tags. Repository defaults are development conveniences. Rebuild, scan, and
 deliberately update the pins when shipping security updates.
 
+### Upgrading Existing Helm Values
+
+The chart no longer supplies `latest` for `image.tag`, `web.image.tag`, or
+`docs.image.tag`. Previously accepted values that omitted these versions now
+fail rendering. Before upgrading, add verified digests for the backend and
+each enabled frontend, including any role-specific image repositories.
+Render the new chart with the complete values before rollout and retain the
+previous chart, values, and image references for rollback. Reused values can
+retain an explicit `latest`; that is not an immutable production pin.
+
 ## 1. Pick a packaging
 
 | Packaging | Guide | Use when |

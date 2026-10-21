@@ -8,7 +8,8 @@ The web image builds on Debian Node 24 and runs on a separate distroless Node 24
 image, without a shell or package manager. `NODE_IMAGE` selects the builder;
 `NODE_RUNTIME_IMAGE` selects the runtime. Mirrored runtimes must provide
 `/nodejs/bin/node` and remain compatible with Debian 13 / Node 24 build output.
-The healthcheck uses Node directly, so no shell utility is required.
+The healthcheck uses Node directly, so no shell utility is required. Requests
+abort after four seconds, before Docker's five-second healthcheck timeout.
 
 Before production, pin every image override in `.env` with
 `@sha256:<verified-digest>`, including build images, distroless runtimes,
