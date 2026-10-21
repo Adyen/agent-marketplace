@@ -26,6 +26,9 @@ prefix matching, rejection of nonnumeric suffixes, integer overflow errors,
 lexicographic ties, equal-current results, and no partial result on failure.
 Git failure must still win over a candidate/parse result. Do not introduce
 Scanner's default 64 KiB token ceiling for otherwise accepted long tags.
+Retain `Output`'s typed `ExitError.Stderr` payload: its existing 32 KiB
+prefix/tail capture and omission marker, without unbounded stderr buffering
+or a new public diagnostic format.
 
 Exercise real local Git repositories in preservation tests at different
 configured tag orders. Retain a multi-size benchmark including process and

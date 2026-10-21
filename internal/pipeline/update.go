@@ -846,6 +846,8 @@ func discoverTagBump(repoDir, currentRef string) (string, bool, error) {
 	args := []string{"tag", "-l", matches[1] + "*"}
 	cmd := exec.Command("git", args...)
 	cmd.Dir = repoDir
+	var stderr tagBumpStderr
+	cmd.Stderr = &stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", false, fmt.Errorf("prepare git tag output: %w", err)
@@ -861,6 +863,9 @@ func discoverTagBump(repoDir, currentRef string) (string, bool, error) {
 		_, _ = io.Copy(io.Discard, stdout)
 	}
 	if err := cmd.Wait(); err != nil {
+		if exit, ok := err.(*exec.ExitError); ok {
+			exit.Stderr = stderr.Bytes()
+		}
 		return "", false, fmt.Errorf("git %s in %q: %w", strings.Join(args, " "), repoDir, err)
 	}
 	if scanErr != nil {
@@ -931,4 +936,55 @@ func selectTagBump(r io.Reader, prefix string, currentNumber int) (string, error
 		return "", err
 	}
 	return bestRef, nil
+}
+
+const tagBumpStderrLimit = 32 * 1024
+
+// Retain Output's bounded stderr payload on ExitError without buffering stdout.
+type tagBumpStderr struct {
+	prefix       []byte
+	suffix       []byte
+	suffixOffset int
+	size         int64
+}
+
+func (w *tagBumpStderr) ReadFrom(r io.Reader) (int64, error) {
+	// Avoid a second 32 KiB copy buffer even when Git emits no stderr.
+	var buffer [4096]byte
+	return io.CopyBuffer(struct{ io.Writer }{w}, struct{ io.Reader }{r}, buffer[:])
+}
+
+func (w *tagBumpStderr) Write(p []byte) (int, error) {
+	n := len(p)
+	w.size += int64(n)
+	head := min(len(p), tagBumpStderrLimit-len(w.prefix))
+	w.prefix = append(w.prefix, p[:head]...)
+	p = p[head:]
+	if len(p) == 0 {
+		return n, nil
+	}
+	if w.suffix == nil {
+		w.suffix = make([]byte, tagBumpStderrLimit)
+	}
+	if len(p) >= tagBumpStderrLimit {
+		copy(w.suffix, p[len(p)-tagBumpStderrLimit:])
+		w.suffixOffset = 0
+	} else {
+		written := copy(w.suffix[w.suffixOffset:], p)
+		copy(w.suffix, p[written:])
+		w.suffixOffset = (w.suffixOffset + len(p)) % tagBumpStderrLimit
+	}
+	return n, nil
+}
+
+func (w *tagBumpStderr) Bytes() []byte {
+	if w.size <= tagBumpStderrLimit {
+		return w.prefix
+	}
+	if w.size <= 2*tagBumpStderrLimit {
+		return append(w.prefix, w.suffix[:int(w.size)-tagBumpStderrLimit]...)
+	}
+	out := fmt.Appendf(w.prefix, "\n... omitting %d bytes ...\n", w.size-2*tagBumpStderrLimit)
+	out = append(out, w.suffix[w.suffixOffset:]...)
+	return append(out, w.suffix[:w.suffixOffset]...)
 }

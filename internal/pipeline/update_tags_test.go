@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -67,12 +68,98 @@ func TestDiscoverTagBumpErrors(t *testing.T) {
 		}
 	})
 	t.Run("git_failure", func(t *testing.T) {
-		got, ok, err := discoverTagBump(t.TempDir(), "v1")
+		repo := t.TempDir()
+		cmd := exec.Command("git", "tag", "-l", "v*")
+		cmd.Dir = repo
+		_, wantErr := cmd.Output()
+		var wantExit *exec.ExitError
+		if !errors.As(wantErr, &wantExit) || len(wantExit.Stderr) == 0 {
+			t.Fatalf("buffered Git oracle must capture stderr: %v", wantErr)
+		}
+		got, ok, err := discoverTagBump(repo, "v1")
 		var exit *exec.ExitError
 		if got != "" || ok || !errors.As(err, &exit) || exit.ExitCode() != 128 {
 			t.Fatalf("Git failure = %q, %v, %v; want no partial bump and exit 128", got, ok, err)
 		}
+		if string(exit.Stderr) != string(wantExit.Stderr) {
+			t.Fatalf("Git failure stderr = %q; want buffered oracle %q", exit.Stderr, wantExit.Stderr)
+		}
 	})
+}
+
+func TestDiscoverTagBumpStderrMatchesOutput(t *testing.T) {
+	if os.Getenv("AM_TEST_TAG_STDERR_CHILD") != "1" {
+		executable, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, executable, "-test.run=^TestDiscoverTagBumpStderrMatchesOutput$")
+		cmd.Env = append(os.Environ(), "AM_TEST_TAG_STDERR_CHILD=1")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("bounded stderr witness: %v (context: %v)\n%s", err, ctx.Err(), output)
+		}
+		return
+	}
+	root := t.TempDir()
+	payloadPath := filepath.Join(root, "stderr")
+	script := "#!/bin/sh\ncat \"$AM_TEST_TAG_STDERR\" >&2 || exit 1\nprintf 'v2\\nv" + strings.Repeat("9", 40) + "\\n'\nexit 23\n"
+	if err := os.WriteFile(filepath.Join(root, "git"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("AM_TEST_TAG_STDERR", payloadPath)
+	for _, size := range []int{0, 1, 32767, 32768, 32769, 65535, 65536, 65537, 3*32768 + 41, 1024*1024 + 53} {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
+			payload := make([]byte, size)
+			for i := range payload {
+				payload[i] = byte(i*31 + i/32768)
+			}
+			if err := os.WriteFile(payloadPath, payload, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("git", "tag", "-l", "v*")
+			cmd.Dir = root
+			_, wantErr := cmd.Output()
+			var wantExit *exec.ExitError
+			if !errors.As(wantErr, &wantExit) || wantExit.ExitCode() != 23 {
+				t.Fatalf("buffered oracle: %v", wantErr)
+			}
+			got, ok, err := discoverTagBump(root, "v1")
+			var exit *exec.ExitError
+			if got != "" || ok || !errors.As(err, &exit) || exit.ExitCode() != wantExit.ExitCode() {
+				t.Fatalf("Git error must precede parse error without a partial bump: %q, %v, %v", got, ok, err)
+			}
+			if !bytes.Equal(exit.Stderr, wantExit.Stderr) || (exit.Stderr == nil) != (wantExit.Stderr == nil) {
+				t.Fatalf("stderr differs from Output: got %d bytes, want %d", len(exit.Stderr), len(wantExit.Stderr))
+			}
+			wantMessage := fmt.Sprintf("git tag -l v* in %q: %v", root, wantErr)
+			if err.Error() != wantMessage {
+				t.Fatalf("diagnostic changed: %q; want %q", err, wantMessage)
+			}
+			var from tagBumpStderr
+			n, readErr := from.ReadFrom(iotest.OneByteReader(bytes.NewReader(payload)))
+			if readErr != nil || n != int64(len(payload)) || !bytes.Equal(from.Bytes(), wantExit.Stderr) {
+				t.Fatalf("fragmented ReadFrom differs from Output: %d bytes, %v", n, readErr)
+			}
+			for _, chunk := range []int{1, 31, 1023, 32768, 65537, len(payload) + 1} {
+				var capture tagBumpStderr
+				for start := 0; start < len(payload); start += chunk {
+					part := payload[start:min(start+chunk, len(payload))]
+					if n, err := capture.Write(part); err != nil || n != len(part) {
+						t.Fatalf("write chunk %d = %d, %v", chunk, n, err)
+					}
+					if len(capture.prefix) > 32768 || len(capture.suffix) > 32768 {
+						t.Fatal("capture exceeded Output's prefix/suffix bounds")
+					}
+				}
+				if !bytes.Equal(capture.Bytes(), wantExit.Stderr) {
+					t.Fatalf("chunk %d differs from Output oracle", chunk)
+				}
+			}
+		})
+	}
 }
 
 func TestSelectTagBumpStreams(t *testing.T) {
