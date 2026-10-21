@@ -59,6 +59,10 @@
   background: none;
 }
 
+.am-site .VPNavBarTitle > .title {
+  border-bottom: 0;
+}
+
 .am-site .Layout .VPNavBar > .wrapper > .container > .content {
   display: flex;
   flex: 1;
