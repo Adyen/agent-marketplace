@@ -9,4 +9,4 @@
 ## 3. Journey, documentation and archive
 
 - [x] 3.1 Add the `reload-shows-every-row` TUI QA journey with its README entry, and verify `make spec-check`
-- [ ] 3.2 Run `openspec archive tui-fitting-list-shows-every-row --yes`
+- [x] 3.2 Run `openspec archive tui-fitting-list-shows-every-row --yes`
