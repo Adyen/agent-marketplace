@@ -550,11 +550,11 @@ scenarios. `e2e/testdata/table_untagged_baseline.txt` only shrinks: tag a
 legacy case when you touch it, then remove its baseline line. Check tags with
 `go -C e2e test -run '^TestTableSpecTags' -count=1 .`.
 
-See `CODING_STANDARDS.md` for table vocabulary and definitions. Use
-`Registries`, `Marketplaces`, `{{REG:name}}`, `{{MKT:name}}`,
-`{{GITHTTP:name}}`, `ActionPushRegistry`, `ActionReindexMarketplace`,
-`ActionRevokeMarketplace`, `Step.Env`, `Step.Cwd`, `PathsUnchanged`, and
-`v4Cfg`.
+`CODING_STANDARDS.md` defines the table vocabulary: `Registries`,
+`Marketplaces`, `{{REG:name}}`, `{{MKT:name}}`, `{{GITHTTP:name}}`,
+`ActionPushRegistry`, `ActionReindexMarketplace`, `ActionRevokeMarketplace`,
+`Step.Env`, and `Step.Cwd`. In `e2e/table_test.go`, `PathsUnchanged` asserts
+paths a step must leave byte-identical and `v4Cfg` builds a v4 config root.
 
 Run one case with `go -C e2e test -run '^TestE2E$/<name>' -count=1 .`;
 run the full table with `make validate-e2e`.
