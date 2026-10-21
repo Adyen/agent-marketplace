@@ -33,6 +33,14 @@ journey.test("E hands the project config to $EDITOR, reloads the edit, and keeps
   const edited = fixture.expectedRepoConfig.replace("      - skill/beta-skill\n", "      - skill/beta-skill\n      - skill/alpha-skill\n");
   fs.writeFileSync(path.join(dir, "next.yaml"), edited);
   const screenText = async (): Promise<string> => (await terminal.text()).replace(/\s+/g, "");
+  // A toggle rewrites only the resources block: the sources keep their bytes,
+  // and the lists are compared as the Go config writer emits them.
+  const sourcesBlock = fixture.expectedRepoConfig.slice(0, fixture.expectedRepoConfig.indexOf("resources:\n"));
+  const selection = (): { sources: string; include: string; exclude: string } => {
+    const config = fs.readFileSync(repoConfig, "utf8");
+    const list = (key: string): string => new RegExp(`\n    ${key}:\n((?: {6}- \\S+\n)*)`).exec(config)?.[1] ?? "";
+    return { sources: config.slice(0, config.indexOf("resources:\n")), include: list("include"), exclude: list("exclude") };
+  };
   const openProjectEditor = async (): Promise<void> => {
     await step("E opens the config picker", () => terminal.write("E"), async () => {
       await locate(terminal, "Edit Config").unique().expect();
@@ -57,7 +65,7 @@ journey.test("E hands the project config to $EDITOR, reloads the edit, and keeps
   fs.writeFileSync(path.join(dir, "fail"), "");
   await openProjectEditor();
   await step("a failing editor is reported with recovery guidance", () => fs.writeFileSync(path.join(dir, "release"), ""), async () => {
-    await locate(terminal, "! 1 errors: exit status 3").unique().expect({ timeout: 10_000 });
+    await locate(terminal, "! 1 errors: exit status 3").unique().expect();
   });
   assert.equal(fs.readFileSync(repoConfig, "utf8"), fixture.expectedRepoConfig, "the TUI wrote the project config after the editor failed");
   await step("the errors screen explains how to fix the editor", () => terminal.write("e"), async () => {
@@ -78,7 +86,7 @@ journey.test("E hands the project config to $EDITOR, reloads the edit, and keeps
   await step("a config write after the failed editor still applies", () => terminal.write("p"), async () => {
     await locate(terminal, /Available\s+\(2\)/).unique().expect({ timeout: 30_000 });
   });
-  assert.notEqual(fs.readFileSync(repoConfig, "utf8"), fixture.expectedRepoConfig, "the toggle after the failed editor wrote nothing");
+  assert.deepEqual(selection(), { sources: sourcesBlock, include: "", exclude: "      - skill/beta-skill\n" }, "the toggle after the failed editor did not deselect exactly beta-skill");
 
   await openProjectEditor();
   await step("the edit is reloaded as soon as the editor exits", () => fs.writeFileSync(path.join(dir, "release"), ""), async () => {
@@ -98,7 +106,7 @@ journey.test("E hands the project config to $EDITOR, reloads the edit, and keeps
     await locate(terminal, /Available\s+\(1\)/).unique().expect({ timeout: 30_000 });
     await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
   });
-  assert.notEqual(fs.readFileSync(repoConfig, "utf8"), edited, "the toggle after the editor wrote nothing");
+  assert.deepEqual(selection(), { sources: sourcesBlock, include: "      - skill/beta-skill\n", exclude: "      - skill/alpha-skill\n" }, "the toggle after the editor did not deselect exactly alpha-skill");
 
   await step("quit", () => terminal.write("q"), async () => {
     assert.equal((await waitForExit(terminal)).exitCode, 0);
