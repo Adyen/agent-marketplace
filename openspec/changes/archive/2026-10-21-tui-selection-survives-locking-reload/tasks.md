@@ -9,4 +9,4 @@
 ## 3. Journey, documentation and archive
 
 - [x] 3.1 Make `org-marketplace-lock-failure` assert the settled state after its local toggle, update its README entry, and verify `make spec-check`
-- [ ] 3.2 Run `openspec archive tui-selection-survives-locking-reload --yes`
+- [x] 3.2 Run `openspec archive tui-selection-survives-locking-reload --yes`
