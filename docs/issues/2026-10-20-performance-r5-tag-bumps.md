@@ -142,7 +142,7 @@ benchstat docs/issues/performance-r5-tag-bumps-2026-10-20/selector-before.txt \
 ## Validation
 
 The performance and combined E2E evidence includes main at `873d0b22`.
-Latest integration includes main at `7f659eff`; the measured production
+Latest integration includes main at `2d6310d4`; the measured production
 blob is unchanged by those main merges. The recorded performance baseline
 remains `99c26d07`.
 
@@ -170,6 +170,25 @@ These are scoped root checks, not `make validate-full`. No TUI behavior
 change, local released-client container gate, vendor-native probe, or
 PostgreSQL performance result is claimed.
 
+### Go Security CI Repair
+
+CI on `eed919a3` reported the newly published standard-library advisory
+[GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809): Go 1.26.9 can trust
+compromised intermediate certificates. Main's PR #846 fixes this using
+Go 1.27.3 across the shared toolchain and public build-image pins. This
+branch integrates that upstream fix at `2d6310d4`, rather than carrying
+duplicate pin changes. No custom certificate logic or scanner suppression
+is introduced by this slice.
+
+Container static checks, the documentation build, and local compatibility
+validation pass before the toolchain integration. The local Go 1.27.1
+compiler is also affected and below the new minimum; those checks are
+not patched-compiler security evidence. CI verifies the Go 1.27.3 integration.
+The unchanged audit tool separately passes trace, archive, and committed
+gate checks after integration.
+The benchmark measurements remain historical Go 1.27.1 comparisons of the
+unchanged production blob, not a performance claim about the patched compiler.
+
 ## Adversarial Review
 
 Host-driven `open-code-review-delegate` supplies deterministic file
@@ -183,6 +202,8 @@ scanner-buffer lifetime, Unicode/CR trimming, accepted long tags,
 publication refusal, command-test isolation, and benchmark overclaims.
 The TUI assertion review checks the cold filesystem baseline, settled
 input, actual post-toggle frame, and unchanged timing and acquisition controls.
+The security integration review checks the unchanged production blob and
+audit tool, passing container static guards, and compiler-specific claims.
 The measured time tradeoff and missing aggregate quota are not hidden.
 A clean review and passing tests are not proof of defect absence.
 
@@ -197,6 +218,9 @@ The further decimal-parser shortcut is not adopted: returning bare
 `ErrRange` loses `Atoi`'s typed error context, and its overlay fails the
 existing overflow oracle. Compiler escape analysis also confirms that
 the tie comparison's temporary string does not escape.
+The requested prefix-byte hoist is not adopted either: the pre-security-update
+CI Go 1.26.9 compiler reports a non-escaping, zero-copy conversion, and recorded
+allocations stay at 55 across 32, 2,048, and 16,384 ignored tags.
 CodeRabbit's supported-Linux portability finding is fixed by resolving
 `cat` through `PATH` in the drain fixture instead of requiring `/bin/cat`.
 A failed tail read exits unsuccessfully so the fixture cannot pass without
