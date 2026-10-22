@@ -5,4 +5,4 @@
 
 ## 2. Archive
 
-- [ ] 2.1 Run `openspec archive prune-removed-gemini-subagents --yes`
+- [x] 2.1 Run `openspec archive prune-removed-gemini-subagents --yes`
