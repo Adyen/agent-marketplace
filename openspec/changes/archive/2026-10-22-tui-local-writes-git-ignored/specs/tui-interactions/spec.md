@@ -2,7 +2,7 @@
 
 ### Requirement: Personal-local writes are git-ignored at once
 
-A successful TUI write to the personal-local layer, whether a single toggle, a local exclude, or a section bulk toggle, SHALL ensure in the same operation that `.agents/config.local.yaml` and `.agents/lock.local.yaml` are git-ignored, as sync does, so the personal-local files never appear as untracked repository files while a sync is pending. Writes to other layers SHALL leave `.gitignore` unchanged.
+A successful TUI write to the personal-local layer, whether a single toggle, a local exclude, or a section bulk toggle, SHALL apply in the same operation the git-ignore step that sync applies, adding `.agents/config.local.yaml` and `.agents/lock.local.yaml` to `.gitignore`, so the personal-local files do not appear as untracked repository files while a sync is pending. Like sync, the step SHALL leave an unsafe `.gitignore`, such as a symbolic link, untouched and log the refusal instead of failing the write. Writes to other layers SHALL leave `.gitignore` unchanged.
 
 #### Scenario: Personal-local writes are git-ignored at once
 
