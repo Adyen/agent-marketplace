@@ -105,7 +105,7 @@ The stages are not pooled, relabeled, or summarized with a mixed geomean.
   interpreter tests and public parser benchmark guards: eight actual semantic
   failures. An initial unused-variable mutant compilation failure is rejected
   as invalid evidence, repaired, and rerun; it is not credited as a control.
-- An exploratory fixture repeated the same same-document wildcard. The
+- An exploratory fixture repeated a same-document wildcard. The
   existing `v4.duplicate` refusal correctly rejects it. That fixture is not
   benchmark evidence, and duplicate acceptance is not changed.
 
@@ -125,5 +125,32 @@ On `81c6a6e2` plus this slice, before the subsequent main integration:
 
 Main subsequently advances through unrelated TUI changes. Its `v4.go`,
 `internal/config`, `go.mod`, and `go.sum` remain unchanged from the measured
-base. Integration validation and adversarial review must still finish before
-publication; these initial results are not relabeled as later-head runs.
+base. These initial results are not relabeled as later-head runs.
+
+## Integration Validation
+
+After merging main `97069234` without rewriting history, full production
+and benchmark blobs remain `20369985` and `b335506b`.
+
+- Selected validation, vet, zero-issue lint, and build pass again.
+- Focused update-selection/refusal command tests pass in 12.243 seconds.
+- Fresh combined E2E/configuration validation passes in 788.133 seconds:
+  3,423 invocations, all 113 requirements, all three required refusal
+  witnesses executed and passed, and included shellcheck passes.
+- Go spec audits pass: 1,164 scenarios, 1,886 annotations, two active changes,
+  and the committed `Spec-Impact: none` gate.
+- The subsequent strict OpenSpec CLI run stops because the externally
+  installed Homebrew Node cannot load its simdjson dynamic library. The
+  post-integration terminal rerun consequently does not execute. An available
+  Node 22 runtime is outside the QA package's declared Node 24 range and is
+  not substituted. No engine constraint, test, or global installation is
+  modified to hide this tooling failure. CI's pinned runtime must verify
+  strict specs and the current complete terminal suite before handoff.
+
+The host adversarial `open-code-review-delegate` review covers all eleven own
+files, including OCR-excluded tests, documentation, and all six evidence
+files. All 288 numeric rows, sample counts, source/build distinctions, and
+recomputed statistics are verified; zero files are skipped and no actionable
+finding remains. Later upstream-only integrations retain the measured
+configuration and dependency bytes; they do not turn these recorded local
+checks into executions on a newer head. Current-head CI remains authoritative.
