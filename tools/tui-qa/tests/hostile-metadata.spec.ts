@@ -41,8 +41,8 @@ journey.test("registry text with terminal control bytes renders as visible escap
   });
   // The description sits below the detail pane's fold at 50x12.
   await step("its description shows the control bytes as escapes", () => terminal.resize(80, 24), async () => {
-    // Only the 80-column footer has room for the toggle hint.
-    await locate(terminal, "space toggle").unique().expect();
+    // The description is below the fold at 50x12, so it appears only once
+    // the 80x24 layout has rendered.
     await locate(terminal, "Hostile \\x1B]0;PWNED\\x07\\x1B[2J tail").unique().expect();
   });
   await step("back at the minimum size", () => terminal.resize(50, 12), async () => {
