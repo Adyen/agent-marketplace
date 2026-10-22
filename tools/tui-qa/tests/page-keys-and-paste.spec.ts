@@ -50,9 +50,10 @@ journey.test("page keys move by half and full pages, and pasted text only ever b
     await locate(terminal, "~ in sync").unique().expect();
   });
   await step("apply the pasted query", () => terminal.write("\r"), () => selected("skill-29"));
-  await step("clear the search", () => terminal.write("\x1b"), async () => {
+  await step("clearing the search keeps skill-29 selected in the full list", () => terminal.write("\x1b"), async () => {
     await locate(terminal, "/ skill-29").expect({ not: true });
-    await locate(terminal, /Enabled\s+\(31\)/).unique().expect();
+    await locate(terminal, "fixture/skill-28").unique().expect();
+    await selected("skill-29");
   });
 
   await step("select beta-skill", () => terminal.write("gj"), () => selected("beta-skill"));
