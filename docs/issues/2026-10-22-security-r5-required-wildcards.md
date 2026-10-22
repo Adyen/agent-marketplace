@@ -154,3 +154,16 @@ recomputed statistics are verified; zero files are skipped and no actionable
 finding remains. Later upstream-only integrations retain the measured
 configuration and dependency bytes; they do not turn these recorded local
 checks into executions on a newer head. Current-head CI remains authoritative.
+
+After integrating main `1f2b3b41`, those configuration and benchmark blobs
+remain identical. Selected validation additionally covers `internal/skill`;
+list-kind/malformed and update-refusal command controls pass in 10.343
+seconds. Go audits pass with 1,167 scenarios and 1,891 annotations.
+One initial TUI package run fails only during TempDir removal in
+`TestV4ScopedToggleActionsUseOneEditorAcrossScopes` (cache directory not
+empty), after its functional assertions. Its fixtures contain no wildcard
+exclusions and do not exercise the changed guard. Ten isolated repetitions
+on the unchanged matcher-before-guard baseline and ten on this variant pass,
+as does the complete selected validation rerun. The failed log is retained;
+no assertion, cleanup check, or timing bound is weakened. The external Node
+ABI block on strict specs and terminal validation remains explicit.
