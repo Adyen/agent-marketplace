@@ -251,7 +251,7 @@ func renderDetail(m Model) string {
 	// Hint line
 	b.WriteString("\n")
 	hint := "enter = full view"
-	if !r.IsAvailable && rowToggleDenial(r) == toggleEligible {
+	if rowToggleDenial(r) == toggleEligible {
 		hint = "space = toggle · enter = full view"
 	}
 	b.WriteString(styleDim.Render(hint))

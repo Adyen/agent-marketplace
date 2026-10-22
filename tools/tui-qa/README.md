@@ -23,7 +23,7 @@ Only a change with no user-observable TUI effect, such as comments, renames, or 
 
 Each interaction contract has its own file. The `*.spec.ts` files are PTY journeys and the `*.test.ts` files are process tests; both run under `node --test`. Each journey opens its own in-process `tui-test` session and starts the program with exactly the fixture's environment.
 
-1. `tests/launch-browse-inspect.spec.ts` launches with no arguments, browses the single status view, opens details, returns, and quits.
+1. `tests/launch-browse-inspect.spec.ts` launches with no arguments, browses the single status view, selects the available `alpha-skill` (whose detail offers `space = toggle · enter = full view`), opens details, returns, and quits.
 2. `tests/search-and-select.spec.ts` searches, checks that the match stays and a distractor disappears, and selects the match.
 3. `tests/local-toggle-and-sync.spec.ts` toggles an available skill locally, observes pending drift, syncs, and verifies the config and the files written to the harness folders.
 4. `tests/help-and-return.spec.ts` opens help and returns to the same selection.
