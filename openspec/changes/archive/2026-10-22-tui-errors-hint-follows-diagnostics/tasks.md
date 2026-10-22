@@ -6,4 +6,4 @@
 ## 2. Journeys and archive
 
 - [x] 2.1 Extend the `palette-action` and `missing-selection` journeys and their README entries
-- [ ] 2.2 Run `openspec archive tui-errors-hint-follows-diagnostics --yes`
+- [x] 2.2 Run `openspec archive tui-errors-hint-follows-diagnostics --yes`
