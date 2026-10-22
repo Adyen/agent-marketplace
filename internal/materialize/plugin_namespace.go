@@ -49,7 +49,8 @@ func pluginNamespaceRefusals(resolved []resolver.ResolvedArtifact) (map[string]b
 	// keeps one resource per installed path, which would otherwise hide a
 	// plugin member behind the resource it collides with.
 	for _, resource := range resolved {
-		if resource.Unresolved || resource.Resource == nil || resource.Resource.Kind() == ir.KindPlugin {
+		if resource.Unresolved || resource.Resource == nil || resource.Resource.Kind() == ir.KindPlugin ||
+			resource.PluginPackage != nil && resource.PluginPackage.Delivery == "native" {
 			continue
 		}
 		isMember := resource.PluginPackage != nil

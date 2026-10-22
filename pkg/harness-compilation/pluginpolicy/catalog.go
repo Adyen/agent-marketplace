@@ -39,6 +39,8 @@ const (
 	DeliveryUnsupported = "unsupported"
 )
 
+const NativeRefreshRestartRequired = "restart-required"
+
 // Invalid-value outcomes for manifest fields.
 const (
 	InvalidRefusePackage     = "refuse-package"
@@ -121,9 +123,10 @@ type deliveryStatus struct {
 }
 
 type nativeDelivery struct {
-	Status string `yaml:"status"`
-	Format string `yaml:"format"`
-	Probe  string `yaml:"probe"`
+	Status  string `yaml:"status"`
+	Format  string `yaml:"format"`
+	Probe   string `yaml:"probe"`
+	Refresh string `yaml:"refresh"`
 }
 
 type delivery struct {
@@ -344,6 +347,9 @@ func (c *harnessCatalog) validate(name string, formats map[string]formatCatalog,
 	}
 	if native.Status != DeliveryVerified && (native.Format != "" || native.Probe != "") {
 		return fmt.Errorf("%s: delivery.native.format/probe require verified status", file)
+	}
+	if native.Refresh != "" && native.Refresh != NativeRefreshRestartRequired {
+		return fmt.Errorf("%s: delivery.native.refresh %q is invalid", file, native.Refresh)
 	}
 	if native.Status == DeliveryVerified {
 		if native.Probe == "" {

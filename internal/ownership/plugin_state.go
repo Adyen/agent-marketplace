@@ -18,6 +18,9 @@ type PluginGenerationRef struct {
 	Target         string `json:"target"`
 	Scope          string `json:"scope"`
 	GenerationKey  string `json:"generation_key"`
+	Delivery       string `json:"delivery,omitempty"`
+	Refresh        string `json:"refresh,omitempty"`
+	ReloadRequired bool   `json:"reload_required,omitempty"`
 	SourceRevision string `json:"source_revision,omitempty"`
 }
 
@@ -114,6 +117,9 @@ func validatePluginState(state *PluginState) error {
 		!pluginDigestToken.MatchString(instance.GenerationKey) ||
 		!safeToken.MatchString(instance.Name) ||
 		!safeToken.MatchString(instance.Target) ||
+		instance.Delivery != "" && instance.Delivery != "native" && instance.Delivery != "decompose" ||
+		instance.Refresh != "" && instance.Refresh != "restart-required" ||
+		instance.ReloadRequired && instance.Delivery != "native" ||
 		instance.SourceRevision != "" && !pluginSourceRevisionToken.MatchString(instance.SourceRevision) ||
 		!validScope {
 		return fmt.Errorf("ownership: invalid plugin generation reference")
