@@ -79,6 +79,94 @@ sources:
 	)
 }
 
+// spec: resource-installation/install-without-scope-writes-user-configuration
+func TestInstallWithoutScopeWritesUserConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "skills.git")
+	writeSkill(t, working, "default-scope-skill", "Default scope", []string{"scope"})
+	commitAndPushAll(t, working, "Add default-scope skill")
+
+	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
+    ref: main
+`)
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "default-scope-skill")
+	if err != nil {
+		t.Fatalf("expected install without --scope to succeed: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "Installed default-scope-skill user-wide") {
+		t.Fatalf("expected user scope label in output, got:\n%s", output)
+	}
+
+	globalCfg, err := config.LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("load global config: %v", err)
+	}
+	if globalCfg == nil || !containsStr(configSkillsInclude(globalCfg), "default-scope-skill") {
+		t.Fatalf("expected default-scope-skill in global config skills, got %v", globalCfg)
+	}
+
+	assertSymlinkTarget(t,
+		filepath.Join(homeDir, ".agents", "skills", "default-scope-skill"),
+		filepath.Join(cache.RegistryCachePath(origin, "main"), "default-scope-skill"),
+	)
+	if _, err := os.Lstat(filepath.Join(repoRoot, ".agents")); !os.IsNotExist(err) {
+		t.Fatalf("expected repository .agents root to stay absent, got err=%v", err)
+	}
+}
+
+// spec: resource-installation/relative-directory-source-without-scope-is-refused
+func TestInstallFromRelativeDirectoryWithoutScopeIsRefused(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	skillDir := filepath.Join(repoRoot, "rel-dir", "skills", "rel-skill")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: rel-skill\n---\n"), 0o644); err != nil {
+		t.Fatalf("write skill: %v", err)
+	}
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "--from", "./rel-dir", "rel-skill")
+	if err == nil {
+		t.Fatalf("expected install --from relative directory without --scope to fail, got output:\n%s", output)
+	}
+	combined := err.Error() + "\n" + output
+	if !strings.Contains(combined, "repo-relative") || !strings.Contains(combined, "global config") {
+		t.Fatalf("expected repo-relative global config refusal, got err=%v output=%s", err, output)
+	}
+	for _, path := range []string{
+		filepath.Join(homeDir, ".agents", "config.yaml"),
+		filepath.Join(homeDir, ".agents", "lock.yaml"),
+		filepath.Join(homeDir, ".agents", "skills", "rel-skill"),
+	} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("refused install created %s: %v", path, err)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // install --scope local
 // ---------------------------------------------------------------------------
@@ -729,7 +817,7 @@ func TestInstallScopeMatrixWritesExpectedLayer(t *testing.T) {
 		expectLocal   bool
 		expectSymlink string
 	}{
-		{name: "default-repo-scope", scopeArg: "", expectRepo: true, expectSymlink: "repo"},
+		{name: "default-user-scope", scopeArg: "", expectUser: true, expectSymlink: "user"},
 		{name: "explicit-repo-scope", scopeArg: "repo", expectRepo: true, expectSymlink: "repo"},
 		{name: "user-scope", scopeArg: "user", expectUser: true, expectSymlink: "user"},
 		{name: "local-scope", scopeArg: "local", expectLocal: true, expectSymlink: "repo"},

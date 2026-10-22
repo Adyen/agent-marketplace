@@ -29,7 +29,7 @@ func TestRemoveFromDropsAnExplicitSelectionWithoutExcluding(t *testing.T) {
 		for _, withRef := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/ref=%t", schema, withRef), func(t *testing.T) {
 				env, url := newSelectionEnv(t, schema)
-				env.AssertExitCode(env.RunAM("install", "review", "--from", url, "--ref", "main"), 0)
+				env.AssertExitCode(env.RunAM("install", "--scope", "repo", "review", "--from", url, "--ref", "main"), 0)
 				env.AssertFileExists("/workspace/.factory/skills/review/SKILL.md")
 
 				remove := []string{"remove", "review", "--from", url}
@@ -42,7 +42,7 @@ func TestRemoveFromDropsAnExplicitSelectionWithoutExcluding(t *testing.T) {
 					t.Fatalf("remove --from left a selection or exclusion for review, or changed the schema:\n%s", config)
 				}
 
-				tagged := env.RunAM("install", "--tag", "k8s")
+				tagged := env.RunAM("install", "--scope", "repo", "--tag", "k8s")
 				if tagged.ExitCode != 0 || !strings.Contains(tagged.Combined, "Installed review") {
 					t.Fatalf("install --tag after the removal did not install review (exit %d):\n%s", tagged.ExitCode, tagged.Combined)
 				}
@@ -63,8 +63,8 @@ func TestInstallReportsResourcesTheConfigurationStillExcludes(t *testing.T) {
 			args            func(url string) []string
 			materialized    []string
 		}{
-			{"tag", "", func(string) []string { return []string{"install", "--tag", "k8s"} }, nil},
-			{"bundle", "Installed cmd-one, deploy ", func(url string) []string { return []string{"install", "--from", url, "--ref", "main"} }, []string{"/workspace/.factory/skills/deploy/SKILL.md", "/workspace/.factory/commands/cmd-one.md"}},
+			{"tag", "", func(string) []string { return []string{"install", "--scope", "repo", "--tag", "k8s"} }, nil},
+			{"bundle", "Installed cmd-one, deploy ", func(url string) []string { return []string{"install", "--scope", "repo", "--from", url, "--ref", "main"} }, []string{"/workspace/.factory/skills/deploy/SKILL.md", "/workspace/.factory/commands/cmd-one.md"}},
 		} {
 			t.Run(schema+"/"+tc.name, func(t *testing.T) {
 				env, url := newSelectionEnv(t, schema)

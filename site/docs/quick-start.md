@@ -39,7 +39,7 @@ Press `q` to leave the TUI.
 From your project folder, run:
 
 ```bash
-agent-marketplace install agent-marketplace --from https://github.com/Adyen/agent-marketplace --path skills
+agent-marketplace install agent-marketplace --from https://github.com/Adyen/agent-marketplace --path skills --scope repo
 ```
 
 This adds the `skills` folder of the `Adyen/agent-marketplace` repository as a source in `.agents/config.yaml`, installs the `agent-marketplace` skill into each harness you selected, and records the exact commit in `.agents/lock.yaml`. Start a new agent session and ask it to set up more resources for you.

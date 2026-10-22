@@ -268,7 +268,7 @@ var testTable = []TestCase{
 		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {team: {git: '{{REG:migrated-bulk}}', ref: main}}\nresources: {team: {include: [skill/review]}}\n",
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}},
-			{Args: []string{"install", "--all"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/skills/review/SKILL.md": "Review fixture", "/workspace/.factory/skills/deploy/SKILL.md": "Deploy fixture"}},
+			{Args: []string{ "install", "--scope", "repo",  "--all"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/skills/review/SKILL.md": "Review fixture", "/workspace/.factory/skills/deploy/SKILL.md": "Deploy fixture"}},
 			{Args: []string{"remove", "deploy"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
 			{Args: []string{"sync"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
 			{Args: []string{"sync", "--check"}, MustPass: true},
@@ -287,7 +287,7 @@ var testTable = []TestCase{
 		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {team: {git: '{{REG:migrated-tag}}', ref: main}}\nresources: {team: {include: [skill/review]}}\n",
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}, FilesAbsent: []string{"/workspace/.factory/skills/deploy", "/workspace/.factory/skills/unselected"}},
-			{Args: []string{"install", "--tag", "ops"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/skills/review/SKILL.md": "Review fixture", "/workspace/.factory/skills/deploy/SKILL.md": "Deploy fixture"}, FilesAbsent: []string{"/workspace/.factory/skills/unselected"}},
+			{Args: []string{ "install", "--scope", "repo",  "--tag", "ops"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/skills/review/SKILL.md": "Review fixture", "/workspace/.factory/skills/deploy/SKILL.md": "Deploy fixture"}, FilesAbsent: []string{"/workspace/.factory/skills/unselected"}},
 			{Args: []string{"remove", "deploy"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
 			{Args: []string{"sync"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/deploy", "/workspace/.factory/skills/unselected"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
 			{Args: []string{"sync", "--check"}, MustPass: true},
@@ -642,7 +642,7 @@ sources:
   second: {git: '{{REG:second}}', ref: main, source_harness: factory}
 `,
 		Steps: []Step{
-			{Args: []string{"install", "--all", "--kind", "hook"}, MustPass: true, OutContains: []string{"PreToolUse-command"}, OutNotContains: []string{"multiple registries"}, RegularFiles: []string{"/workspace/.factory/hooks.json"}, FileContains: map[string]string{"/workspace/.factory/hooks.json": "echo first"}},
+			{Args: []string{ "install", "--scope", "repo",  "--all", "--kind", "hook"}, MustPass: true, OutContains: []string{"PreToolUse-command"}, OutNotContains: []string{"multiple registries"}, RegularFiles: []string{"/workspace/.factory/hooks.json"}, FileContains: map[string]string{"/workspace/.factory/hooks.json": "echo first"}},
 			{Args: []string{"list", "--kind", "hook"}, MustPass: true, OutContains: []string{"PreToolUse-command"}, FileContains: map[string]string{"/workspace/.factory/hooks.json": "echo second"}},
 			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/workspace/.factory/hooks.json", "/workspace/.agents/lock.yaml"}},
 			{Args: []string{"sync"}, MustPass: true, PathsUnchanged: []string{"/workspace/.factory/hooks.json"}},
@@ -1631,7 +1631,7 @@ resources: {team: {include: [skill/keep]}}
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
 				FilesExist: []string{"/workspace/.factory/skills/keep/SKILL.md"}},
-			{Args: []string{"install", "first", "second", "--from", "{{REG:multi-src}}", "--ref", "main", "--path", "bundles"}, MustPass: true,
+			{Args: []string{ "install", "--scope", "repo",  "first", "second", "--from", "{{REG:multi-src}}", "--ref", "main", "--path", "bundles"}, MustPass: true,
 				OutContains: []string{"first", "second"},
 				FilesExist: []string{
 					"/workspace/.factory/skills/first/SKILL.md",
@@ -1688,7 +1688,7 @@ sources: {}
 `,
 		Steps: []Step{
 			{Action: ActionWriteFile, Path: "/workspace/local-registry/README.md", Body: "local registry\n"},
-			{Args: []string{"install", "some-skill", "--from", "./local-registry", "--path", "missing"}, AssertExitCode: intPtr(1),
+			{Args: []string{"install", "--scope", "repo", "some-skill", "--from", "./local-registry", "--path", "missing"}, AssertExitCode: intPtr(1),
 				OutContains: []string{"local registry path does not exist"},
 				FileNotContains: map[string]string{
 					"/workspace/.agents/config.yaml": "local-registry",
@@ -3338,7 +3338,7 @@ resources: {team: {include: [command/prunable-cmd]}}
 sources: {}
 `,
 		Steps: []Step{
-			{Args: []string{"install", "adhoc-cmd", "--from", "{{REG:cmd-adhoc}}", "--ref", "main", "--kind", "command"}, MustPass: true,
+			{Args: []string{ "install", "--scope", "repo",  "adhoc-cmd", "--from", "{{REG:cmd-adhoc}}", "--ref", "main", "--kind", "command"}, MustPass: true,
 				OutContains: []string{"adhoc-cmd"}},
 			{Args: []string{"sync"}, MustPass: true,
 				FilesExist: []string{"/workspace/.factory/commands/adhoc-cmd.md"}},
@@ -4855,9 +4855,9 @@ harnesses:
 		RepoCfg:    "apiVersion: agent-marketplace/v4\nsources:\n  tools: {git: '{{REG:v4-selectors}}', ref: main}\n",
 		Steps: []Step{
 			{Args: []string{"list", "--from", "{{REG:v4-selectors}}", "--ref", "main", "--path", "skills", "--kind", "skill"}, MustPass: true, OutContains: []string{"review", "deploy"}, OutNotContains: []string{"cmd-one"}},
-			{Args: []string{"install", "--tag", "k8s"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}, FileContains: map[string]string{"/workspace/.agents/config.yaml": "k8s"}},
-			{Args: []string{"install", "--all", "--kind", "command", "--registry", "{{REG:v4-selectors}}"}, MustPass: true, FilesExist: []string{"/workspace/.factory/commands/cmd-one.md"}},
-			{Args: []string{"install", "deploy", "--kind", "skill", "--verbose"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/deploy/SKILL.md"}},
+			{Args: []string{"install", "--tag", "k8s", "--scope", "repo"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}, FileContains: map[string]string{"/workspace/.agents/config.yaml": "k8s"}},
+			{Args: []string{"install", "--all", "--kind", "command", "--registry", "{{REG:v4-selectors}}", "--scope", "repo"}, MustPass: true, FilesExist: []string{"/workspace/.factory/commands/cmd-one.md"}},
+			{Args: []string{"install", "deploy", "--kind", "skill", "--verbose", "--scope", "repo"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/deploy/SKILL.md"}},
 			{Args: []string{"list", "--kind", "command"}, MustPass: true, OutContains: []string{"cmd-one"}, OutNotContains: []string{"deploy"}},
 			{Args: []string{"sync", "--verbose", "--no-backup"}, MustPass: true},
 			{Args: []string{"sync", "--check"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v4"}, FileNotContains: map[string]string{"/workspace/.agents/config.yaml": "registries:"}},
@@ -4875,9 +4875,9 @@ harnesses:
 		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {}\n",
 		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {team: {git: '{{REG:v4-flags}}', ref: main}}\n",
 		Steps: []Step{
-			{Args: []string{"install", "--all", "--registry", "{{REG:v4-flags}}"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md", "/workspace/.factory/skills/deploy/SKILL.md"}},
+			{Args: []string{"install", "--all", "--registry", "{{REG:v4-flags}}", "--scope", "repo"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md", "/workspace/.factory/skills/deploy/SKILL.md"}},
 			{Args: []string{"list", "--from", "{{REG:v4-adhoc}}", "--ref", "main", "--path", "skills"}, MustPass: true, OutContains: []string{"adhoc-skill"}},
-			{Args: []string{"install", "adhoc-skill", "--from", "{{REG:v4-adhoc}}", "--ref", "main", "--path", "skills"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/adhoc-skill/SKILL.md"}, FileContains: map[string]string{"/workspace/.agents/config.yaml": "path: skills"}},
+			{Args: []string{"install", "adhoc-skill", "--from", "{{REG:v4-adhoc}}", "--ref", "main", "--path", "skills", "--scope", "repo"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/adhoc-skill/SKILL.md"}, FileContains: map[string]string{"/workspace/.agents/config.yaml": "path: skills"}},
 			{Args: []string{"remove", "adhoc-skill", "--from", "{{REG:v4-adhoc}}", "--ref", "main", "--path", "skills"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/adhoc-skill"}},
 			{Args: []string{"sync", "--verbose"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/adhoc-skill"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
 			{Args: []string{"sync", "--check"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v4"}},

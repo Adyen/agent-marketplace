@@ -512,7 +512,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(tabs.getByRole('tab', { selected: true })).not.toHaveText(selectedText)
   })
 
-  // spec: marketplace-web-ui/scope-comparison-identifies-the-repository-default
+  // spec: marketplace-web-ui/scope-comparison-identifies-the-user-default
   test('keeps Landing scope outcomes comparable without implying selection', async ({ page }) => {
     await page.goto(publicSiteURL)
 
@@ -524,12 +524,12 @@ test.describe('Marketplace browser discovery', () => {
     await expect(scopes).toContainText('--scope user')
     await expect(scopes).toContainText('--scope repo')
     await expect(scopes).toContainText('--scope local')
-    const repositoryScope = scopes
-      .getByRole('heading', { name: 'Repository Default', exact: true })
+    const userScope = scopes
+      .getByRole('heading', { name: 'User Default', exact: true })
       .locator('..')
-    await expect(repositoryScope).toContainText('Default')
+    await expect(userScope).toContainText('Default')
     await expect(page.locator('.scope-command')).toContainText(
-      'agent-marketplace install pdf --scope repo',
+      'agent-marketplace install pdf --scope user',
     )
 
     const harnessTabs = page.getByRole('tablist', { name: 'Harness target' }).getByRole('tab')

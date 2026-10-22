@@ -817,7 +817,7 @@ sources:
 `)
 	withWorkingDir(t, repo)
 
-	output, err := executeCommand("install", "git-review")
+	output, err := executeCommand("install", "--scope", "repo", "git-review")
 	if err != nil {
 		t.Fatalf("install: %v\n%s", err, output)
 	}
@@ -866,7 +866,7 @@ sources:
 	repo := t.TempDir()
 	withWorkingDir(t, repo)
 
-	output, err := executeCommand("install", "tools/skill/target-review", "--marketplace", "target", "--yes")
+	output, err := executeCommand("install", "--scope", "repo", "tools/skill/target-review", "--marketplace", "target", "--yes")
 	if err != nil {
 		t.Fatalf("Marketplace install: %v\n%s", err, output)
 	}
