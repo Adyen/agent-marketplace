@@ -95,7 +95,8 @@ services:
       additional_contexts:
         design: ../../../design
       args:
-        NODE_IMAGE: ${NODE_IMAGE:-node:24-alpine}
+        NODE_IMAGE: ${NODE_IMAGE:-node:24-trixie-slim}
+        NODE_RUNTIME_IMAGE: ${NODE_RUNTIME_IMAGE:-gcr.io/distroless/nodejs24-debian13:nonroot}
     environment:
       NUXT_APP_BASE_URL: /
       NUXT_PUBLIC_API_BASE: /
