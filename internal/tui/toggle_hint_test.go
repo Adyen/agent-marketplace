@@ -6,6 +6,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -20,12 +21,28 @@ func TestToggleHintsFollowRowEligibility(t *testing.T) {
 	collectionOnly.MarketplaceCollectionOnly = true
 	pendingVerification := mkRow("pend", withProject)
 	pendingVerification.PendingVerification = true
+	available := mkRow("avail", withKind(ir.KindSkill))
+	available.IsAvailable = true
+	discoveryInstallable := mkRow("disc", withKind(ir.KindSkill))
+	discoveryInstallable.IsAvailable = true
+	discoveryInstallable.MarketplaceDiscovery = &marketplaceDiscovery{
+		Item: mpapi.ResourceListItem{Kind: "skill", Name: "disc", Availability: mpapi.AvailabilityAvailable},
+	}
+	discoveryBlocked := mkRow("disc-b", withKind(ir.KindSkill))
+	discoveryBlocked.IsAvailable = true
+	discoveryBlocked.MarketplaceDiscovery = &marketplaceDiscovery{
+		Item: mpapi.ResourceListItem{Kind: "skill", Name: "disc-b", Availability: mpapi.AvailabilityBlocked},
+	}
 	cases := []struct {
 		name       string
 		r          row
 		wantToggle bool
 	}{
 		{"eligible", mkRow("plain", withProject), true},
+		// Space in the list opens the toggle modal for available rows too.
+		{"available", available, true},
+		{"installable discovery", discoveryInstallable, true},
+		{"blocked discovery", discoveryBlocked, false},
 		{"required", mkRow("org-review", withGlobal, withRequired), false},
 		{"collection only", collectionOnly, false},
 		{"pending verification", pendingVerification, false},
