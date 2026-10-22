@@ -31,6 +31,11 @@ func TestV4RebuildRequestsPreservesDecisions(t *testing.T) {
 		{"kind", []string{"include:skill/a", "include:command/a", "exclude:skill/*"}, []string{"command/a"}},
 		{"registry", []string{"include:tools/skill/a", "include:other/skill/a", "exclude:tools/*"}, []string{"other/skill/a"}},
 		{"registry-kind", []string{"include:tools/skill/a", "include:tools/command/a", "exclude:tools/skill/*"}, []string{"tools/command/a"}},
+		{"required-kind", []string{"required:skill/a", "include:command/a", "exclude:skill/*"}, []string{"command/a", "skill/a"}},
+		{"required-registry", []string{"required:tools/skill/a", "include:tools/command/a", "exclude:tools/*"}, []string{"tools/skill/a"}},
+		{"required-registry-kind", []string{"required:tools/skill/a", "include:tools/command/a", "exclude:tools/skill/*"}, []string{"tools/command/a", "tools/skill/a"}},
+		{"required-replaced-before-wildcard", []string{"required:tools/skill/a", "include:tools/skill/a", "exclude:tools/skill/*"}, nil},
+		{"replacement-required-before-wildcard", []string{"include:tools/skill/a", "required:tools/skill/a", "exclude:tools/skill/*"}, []string{"tools/skill/a"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			group := v4ExclusionDecisions(tc.actions...)
