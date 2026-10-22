@@ -182,6 +182,10 @@ func legacyToleranceSupportArtifacts(selection resolver.ResolvedArtifact, target
 		return nil
 	}
 	prefix := plan.relBase + "/"
+	bundlePrefix := hookSupportBundlePrefixDir(selection, plan.definitionDir)
+	if bundlePrefix != "" {
+		bundlePrefix += "/"
+	}
 	files := make([]artifact.Artifact, 0, len(plan.artifacts))
 	for _, file := range plan.artifacts {
 		if !strings.HasPrefix(file.Path, prefix) {
@@ -191,6 +195,7 @@ func legacyToleranceSupportArtifacts(selection resolver.ResolvedArtifact, target
 		if relative == "" {
 			return nil
 		}
+		relative = strings.TrimPrefix(relative, bundlePrefix)
 		file.Path = path.Join("hooks", relative)
 		if err := file.Validate(); err != nil {
 			return nil

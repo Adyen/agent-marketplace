@@ -143,6 +143,27 @@ func TestCheckHookRemoval(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/remaining-contributors-and-owned-removal-stay-supported
+func TestCheckHookRemovalMissingSupportReferenceDoesNotBlock(t *testing.T) {
+	isolateIndependentHookRun(t)
+	repo := t.TempDir()
+	fixture := writeProjectionSource(t, `${CLAUDE_PLUGIN_ROOT}/hooks/guard.sh`)
+	if err := os.WriteFile(filepath.Join(fixture.root, "hooks", "keep.sh"), []byte("echo keep\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fixture.resolved.Harnesses = []hcc.Target{hcc.TargetFactory}
+	before := []resolver.ResolvedArtifact{fixture.resolved}
+	if report, err := Run(context.Background(), repo, before); err != nil || diag.HasErrors(report.Diags) {
+		t.Fatalf("install: %v / %+v", err, report)
+	}
+	if err := os.Remove(fixture.support); err != nil {
+		t.Fatal(err)
+	}
+	if diagnostics := CheckHookRemoval(repo, before, nil); len(diagnostics) != 0 {
+		t.Fatalf("removal of a hook whose support reference went missing was blocked: %+v", diagnostics)
+	}
+}
+
 // spec: hook-resources/file-based-hook-targets-keep-ordinary-removal-behavior
 func TestCheckHookRemovalFileBasedTarget(t *testing.T) {
 	repo := openCodeSandbox(t)

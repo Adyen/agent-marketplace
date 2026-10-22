@@ -208,7 +208,7 @@ test.describe('Marketplace browser discovery', () => {
     const popup = await popupPromise
     try {
       await expect(popup).toHaveURL(`${sharedOriginURL}/docs/`)
-      await expect(popup.getByRole('heading', { level: 1, name: /^Documentation\b/ })).toBeVisible()
+      await expect(popup.getByRole('heading', { level: 1, name: /^Agent Marketplace\b/ })).toBeVisible()
       expect(await popup.evaluate(() => window.opener === null)).toBe(true)
       await popup.getByRole('link', { name: 'More install options', exact: true }).first().click()
       await expect(popup).toHaveURL(`${sharedOriginURL}/docs/install`)
@@ -250,7 +250,7 @@ test.describe('Marketplace browser discovery', () => {
       request.get(`${sharedOriginURL}/.well-known/agent-marketplace.json`),
     ])
     expect(docs.ok()).toBe(true)
-    expect(await docs.text()).toMatch(/<h1[^>]*>Documentation\b/)
+    expect(await docs.text()).toMatch(/<h1[^>]*>Agent Marketplace\b/)
     expect(instance.ok()).toBe(true)
     expect((await instance.json()).name).toBe('E2E Marketplace')
     expect(discovery.ok()).toBe(true)
@@ -406,7 +406,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect.poll(() => page.evaluate(key => localStorage.getItem(key), sharedAppearanceKey)).toBe('dark')
 
     await page.goto(`${sharedOriginURL}/docs/`)
-    await expect(page.getByRole('heading', { name: /Documentation/ })).toBeVisible()
+    await expect(page.getByRole('heading', { level: 1, name: /^Agent Marketplace\b/ })).toBeVisible()
     const docsNav = page.getByRole('navigation', { name: 'Main Navigation' })
     const docsBrand = page.locator('.VPNavBarTitle').getByRole('link', { name: 'agent-marketplace', exact: true })
     await expect(docsBrand).toHaveAttribute('href', '/docs/')

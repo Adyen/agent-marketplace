@@ -1,0 +1,44 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+                                              │ /tmp/am-r5-r53-exact.UVZsj9/reviewed-before.txt │ /tmp/am-r5-r53-exact.UVZsj9/reviewed-after.txt │
+                                              │                     sec/op                      │         sec/op           vs base               │
+V4RebuildExactExclusionsCPU/requests=1-2                                            301.6n ± 2%               274.9n ± 1%   -8.84% (p=0.002 n=6)
+V4RebuildExactExclusionsCPU/requests=32-2                                          20.072µ ± 4%               9.476µ ± 2%  -52.79% (p=0.002 n=6)
+V4RebuildExactExclusionsCPU/requests=256-2                                         683.25µ ± 1%               79.55µ ± 4%  -88.36% (p=0.002 n=6)
+V4RebuildExactExclusionsCPU/requests=1024-2                                       11273.8µ ± 1%               349.2µ ± 3%  -96.90% (p=0.002 n=6)
+ParseV4ExclusionsCPU/exact/requests=1-2                                             11.32µ ± 1%               11.28µ ± 2%        ~ (p=1.000 n=6)
+ParseV4ExclusionsCPU/exact/requests=32-2                                            88.07µ ± 4%               76.03µ ± 2%  -13.67% (p=0.002 n=6)
+ParseV4ExclusionsCPU/exact/requests=256-2                                          1160.3µ ± 2%               540.5µ ± 2%  -53.42% (p=0.002 n=6)
+ParseV4ExclusionsCPU/exact/requests=1024-2                                         13.114m ± 1%               2.156m ± 5%  -83.56% (p=0.002 n=6)
+ParseV4ExclusionsCPU/wildcard/requests=1024-2                                       1.269m ± 1%               1.246m ± 5%        ~ (p=0.132 n=6)
+geomean                                                                             212.9µ                    76.54µ       -64.05%
+
+                                              │ /tmp/am-r5-r53-exact.UVZsj9/reviewed-before.txt │ /tmp/am-r5-r53-exact.UVZsj9/reviewed-after.txt │
+                                              │                      B/op                       │          B/op           vs base                │
+V4RebuildExactExclusionsCPU/requests=1-2                                             528.0 ± 0%               528.0 ± 0%       ~ (p=1.000 n=6) ¹
+V4RebuildExactExclusionsCPU/requests=32-2                                          28.61Ki ± 0%             28.61Ki ± 0%       ~ (p=1.000 n=6) ¹
+V4RebuildExactExclusionsCPU/requests=256-2                                         236.5Ki ± 0%             236.5Ki ± 0%       ~ (p=1.000 n=6) ¹
+V4RebuildExactExclusionsCPU/requests=1024-2                                        1.013Mi ± 0%             1.013Mi ± 0%       ~ (p=1.000 n=6) ¹
+ParseV4ExclusionsCPU/exact/requests=1-2                                            15.97Ki ± 0%             15.97Ki ± 0%       ~ (p=1.000 n=6)
+ParseV4ExclusionsCPU/exact/requests=32-2                                           98.78Ki ± 0%             98.78Ki ± 0%  -0.00% (p=0.009 n=6)
+ParseV4ExclusionsCPU/exact/requests=256-2                                          711.8Ki ± 0%             711.8Ki ± 0%  -0.00% (p=0.002 n=6)
+ParseV4ExclusionsCPU/exact/requests=1024-2                                         2.886Mi ± 0%             2.886Mi ± 0%  -0.00% (p=0.004 n=6)
+ParseV4ExclusionsCPU/wildcard/requests=1024-2                                      2.010Mi ± 0%             2.010Mi ± 0%       ~ (p=0.333 n=6)
+geomean                                                                            142.8Ki                  142.8Ki       -0.00%
+¹ all samples are equal
+
+                                              │ /tmp/am-r5-r53-exact.UVZsj9/reviewed-before.txt │ /tmp/am-r5-r53-exact.UVZsj9/reviewed-after.txt │
+                                              │                    allocs/op                    │       allocs/op         vs base                │
+V4RebuildExactExclusionsCPU/requests=1-2                                             3.000 ± 0%               3.000 ± 0%       ~ (p=1.000 n=6) ¹
+V4RebuildExactExclusionsCPU/requests=32-2                                            54.00 ± 0%               54.00 ± 0%       ~ (p=1.000 n=6) ¹
+V4RebuildExactExclusionsCPU/requests=256-2                                           293.0 ± 0%               293.0 ± 0%       ~ (p=1.000 n=6) ¹
+V4RebuildExactExclusionsCPU/requests=1024-2                                         1.078k ± 0%              1.078k ± 0%       ~ (p=1.000 n=6) ¹
+ParseV4ExclusionsCPU/exact/requests=1-2                                              161.0 ± 0%               161.0 ± 0%       ~ (p=1.000 n=6) ¹
+ParseV4ExclusionsCPU/exact/requests=32-2                                             856.0 ± 0%               856.0 ± 0%       ~ (p=1.000 n=6) ¹
+ParseV4ExclusionsCPU/exact/requests=256-2                                           5.594k ± 0%              5.594k ± 0%       ~ (p=1.000 n=6)
+ParseV4ExclusionsCPU/exact/requests=1024-2                                          22.53k ± 0%              22.53k ± 0%       ~ (p=0.455 n=6)
+ParseV4ExclusionsCPU/wildcard/requests=1024-2                                       15.33k ± 0%              15.33k ± 0%       ~ (p=1.000 n=6) ¹
+geomean                                                                              620.4                    620.4       +0.00%
+¹ all samples are equal
