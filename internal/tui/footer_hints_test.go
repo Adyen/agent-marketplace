@@ -8,6 +8,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -76,6 +77,32 @@ func TestFooterErrorStateKeepsDiagnosticsAndFloor(t *testing.T) {
 		m := footerFixture(width)
 		m.errs = []error{errors.New("boom")}
 		assertFooterFits(t, renderFooter(m), width, "! 1 errors", "e errors", "r reload", ": c", "q quit")
+	}
+}
+
+// The errors hint appears only when the errors view has something to show:
+// plain pending drift keeps sync as its recovery hint.
+// spec: tui-feedback/errors-hint-only-with-diagnostics
+func TestFooterOffersErrorsOnlyWithDiagnostics(t *testing.T) {
+	pending := func(m *Model) {
+		m.driftAssessment = driftReady
+		m.driftReport = materialize.DriftReport{Missing: []materialize.DriftItem{{Name: "audit"}}}
+	}
+	m := footerFixture(120)
+	pending(&m)
+	footer := ansi.Strip(renderFooter(m))
+	assertFooterFits(t, footer, 120, "~ 1 out of sync", "s sync", "r reload")
+	if strings.Contains(footer, "e errors") {
+		t.Fatalf("plain drift offered the errors view, which has nothing to show: %q", footer)
+	}
+	if m.actionEligible(actionDiagnostics) {
+		t.Fatal("the palette offered the errors view for plain drift")
+	}
+
+	m.warnings = []error{errors.New("w1")}
+	assertFooterFits(t, renderFooter(m), 120, "⚠ 1 warnings", "e errors")
+	if !m.actionEligible(actionDiagnostics) {
+		t.Fatal("the palette hid the errors view while a warning is present")
 	}
 }
 

@@ -1268,7 +1268,7 @@ func (m Model) dispatchAction(id paletteActionID) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case actionDiagnostics:
-		if len(m.errs) > 0 || len(m.warnings) > 0 || len(m.discoveryErrs) > 0 {
+		if m.hasDiagnostics() {
 			m.pane = paneErrors
 		}
 		return m, nil
@@ -1592,6 +1592,12 @@ func (m Model) rowToggleEligibility(r row) toggleDenial {
 	if m.configInvalid {
 		return toggleConfigInvalid
 	}
+	return rowToggleDenial(r)
+}
+
+// rowToggleDenial evaluates the guards that belong to the row itself, so
+// hints can follow what the row supports regardless of transient states.
+func rowToggleDenial(r row) toggleDenial {
 	switch {
 	case r.IsMalformed:
 		return toggleMalformed

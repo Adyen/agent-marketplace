@@ -41,6 +41,8 @@ export interface FixtureOptions {
   // carry terminal control bytes, and a skill folder whose name carries an
   // erase-display sequence, which makes it malformed.
   hostileMetadata?: boolean;
+  // Writes the Git registry URL with a trailing slash, as users may.
+  trailingSlashRegistry?: boolean;
 }
 
 export interface Fixture {
@@ -178,7 +180,7 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       git(source, env, ["-c", "user.name=TUI QA", "-c", "user.email=tui-qa@example.invalid", "commit", "--quiet", "-m", "Seed TUI fixture"]);
       const bareRegistry = path.join(registries, "fixture.git");
       git(registries, env, ["clone", "--quiet", "--bare", source, bareRegistry]);
-      registryURL = pathToFileURL(bareRegistry).href;
+      registryURL = `${pathToFileURL(bareRegistry).href}${options.trailingSlashRegistry ? "/" : ""}`;
       expectedRepoConfig = `apiVersion: agent-marketplace/v4\nsources:\n  fixture:\n    git: ${registryURL}\n    ref: main\n    path: skills\nresources:\n  fixture:\n    include:\n      - skill/beta-skill\n${overflowSkills.map((name) => `      - skill/${name}\n`).join("")}`;
       if (options.userMarketplaceDrift && stub) {
         write(path.join(home, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources:\n  user-market:\n    marketplace: ${stub.url}\nresources:\n  user-market:\n    include:\n      - tools/skill/org-review\n    required: true\n`);

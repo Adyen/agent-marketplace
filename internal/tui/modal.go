@@ -358,21 +358,36 @@ func applyMarketplacePinAction(m *pipeline.LayerMutation, act toggleAction) erro
 	return m.RemoveMarketplacePins(binding, []config.MarketplaceResourcePin{selection.Pin})
 }
 
+// ignoreLocalConfigAfterWrite keeps the personal-local layer out of Git as
+// soon as a TUI write to it succeeds, as sync and the CLI's write-then-sync
+// commands do, rather than leaving it untracked until the next sync.
+func ignoreLocalConfigAfterWrite(ws pipeline.Workspace, local bool, err error) {
+	if local && err == nil {
+		pipeline.EnsureLocalConfigGitignored(ws.LocalConfigDir())
+	}
+}
+
 func runDependencyScopedToggle(ctx context.Context, workspace pipeline.Workspace, act toggleAction, mutate DependencyMutationFunc) tea.Cmd {
 	return func() tea.Msg {
 		ws, err := validatedTUIWorkspace(workspace)
 		if err != nil {
 			return configWrittenMsg{skillName: act.skillName, enabled: act.enable, selectNext: act.disablesResource(), err: err}
 		}
+		local := act.scope == scopeLocal || act.scope == scopeLocalExclude
 		writeRoot := ws.RepoRoot()
-		if act.scope == scopeLocal || act.scope == scopeLocalExclude {
+		if local {
 			writeRoot = ws.LocalConfigDir()
 		}
 		if mutate == nil {
-			return runScopedToggle(writeRoot, act)()
+			msg := runScopedToggle(writeRoot, act)()
+			if written, ok := msg.(configWrittenMsg); ok {
+				ignoreLocalConfigAfterWrite(ws, local, written.err)
+			}
+			return msg
 		}
 		if act.isMarketplace && act.scope != scopeUserExclude {
 			err = runMarketplaceScopedToggle(ctx, ws.RepoRoot(), ws.LocalConfigDir(), act, nil)
+			ignoreLocalConfigAfterWrite(ws, local, err)
 			return configWrittenMsg{skillName: act.skillName, enabled: act.enable, selectNext: act.disablesResource(), err: err}
 		}
 		err = mutate(ctx, ws, func(mapper pipeline.ConfigPathMapper) error {
@@ -382,6 +397,7 @@ func runDependencyScopedToggle(ctx context.Context, workspace pipeline.Workspace
 			}
 			return msg.err
 		})
+		ignoreLocalConfigAfterWrite(ws, local, err)
 		return configWrittenMsg{skillName: act.skillName, enabled: act.enable, selectNext: act.disablesResource(), err: err}
 	}
 }

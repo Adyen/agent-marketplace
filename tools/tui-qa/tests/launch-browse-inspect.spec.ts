@@ -40,6 +40,8 @@ journey.test("bare launch browses the single status view and inspects alpha-skil
   await step("select available alpha-skill", () => terminal.write("G"), async () => {
     await locate(terminal, /Name:\s+alpha-skill/).unique().expect();
     await locate(terminal, /Status:\s+available/).unique().expect();
+    // Space in the list toggles available rows too, so the hint offers it.
+    await locate(terminal, "space = toggle · enter = full view").unique().expect();
   });
 
   await step("open full alpha-skill detail", () => terminal.write("\r"), async () => {

@@ -38,6 +38,7 @@ journey.test("a missing optional selection warns and keeps drift, while a missin
     await locate(terminal, "fixture/gamma-skill").unique().expect();
     await locate(terminal, "~ 1 out of sync").unique().expect();
     await locate(terminal, "⚠ 1 warnings").unique().expect();
+    await locate(terminal, "e errors").unique().expect();
     await locate(terminal, /! \d+ errors/).expect({ not: true });
   });
   assert.deepEqual(fs.readFileSync(repoLock), lockBefore, "reloading a missing optional selection changed the repository lock");
