@@ -6,10 +6,11 @@ const props = withDefaults(
   defineProps<{
     title: string
     icon: IconName
-    size?: 'sm' | 'lg' | 'xl'
+    size?: 'sm' | 'lg' | 'xl' | 'settings'
     dismissible?: boolean
+    bare?: boolean
   }>(),
-  { size: 'sm', dismissible: true },
+  { size: 'sm', dismissible: true, bare: false },
 )
 const open = defineModel<boolean>('open', { default: false })
 
@@ -25,7 +26,10 @@ const contentClass = computed(() => `gui-modal gui-modal--${props.size}`)
     :ui="{ content: contentClass, overlay: 'gui-scrim-modal' }"
   >
     <template #content>
-      <section class="gui-modal__frame" :aria-label="title">
+      <section v-if="bare" class="gui-modal__frame gui-modal__frame--bare" :aria-label="title">
+        <slot />
+      </section>
+      <section v-else class="gui-modal__frame" :aria-label="title">
         <header class="gui-modal__header">
           <span class="gui-modal__tile"><GuiIcon :name="icon" /></span>
           <button

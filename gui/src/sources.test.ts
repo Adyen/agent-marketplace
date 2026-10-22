@@ -314,15 +314,11 @@ describe('Source settings', () => {
 
     await openSources(wrapper)
     const section = dialog().querySelector('[aria-label="Managed outside the GUI"]')!
-    for (const label of ['included files', 'per-source configuration', 'other settings']) {
-      expect(section.textContent).toContain(`${label} — managed outside the GUI`)
-    }
+    expect(section.textContent).toContain('Included files, per-source configuration, and other settings are managed outside the GUI.')
 
     button(`Remove source ${dirSource.location}`).click()
     await tick()
-    for (const label of ['included files', 'per-source configuration', 'other settings']) {
-      expect(section.textContent).toContain(`${label} — managed outside the GUI`)
-    }
+    expect(section.textContent).toContain('Included files, per-source configuration, and other settings are managed outside the GUI.')
     button('Cancel remove').click()
     await tick()
     expect(client.configure).not.toHaveBeenCalled()
@@ -406,7 +402,7 @@ describe('Source settings', () => {
 
     await openSources(wrapper)
     await setInput('Source location', '/draft')
-    button('Done').click()
+    button('Close dialog').click()
     await tick()
 
     expect(dialog).toThrow()
@@ -427,7 +423,7 @@ describe('Source settings', () => {
     await tick()
     expect(dialog().querySelector('[aria-label="Confirm removal"]')).not.toBeNull()
 
-    button('Done').click()
+    button('Close dialog').click()
     await tick()
     await openSources(wrapper)
 
@@ -608,7 +604,8 @@ describe('Source settings', () => {
     expect(dialog().textContent).toContain('The action could not be started')
     expect(sourceKindRadio('marketplace', 'Marketplace endpoint').checked).toBe(true)
     expect(field('Source location').value).toBe(endpoint)
-    expect(dialog().querySelector('[aria-label="Sources"]')).not.toBeNull()
+    expect(dialog().querySelector('.gui-modal__frame')?.getAttribute('aria-label')).toBe('Settings')
+    expect(dialog().querySelector('#settings-panel-sources')).not.toBeNull()
   })
 
   it('keeps a Marketplace draft after an accepted operation fails', async () => {

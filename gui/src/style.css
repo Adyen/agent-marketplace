@@ -1781,6 +1781,185 @@ textarea:focus-visible,
   }
 }
 
+/* Settings window */
+
+.settings-window {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  height: min(680px, calc(100vh - 48px));
+  min-height: 0;
+}
+
+.gui-modal--settings {
+  max-width: min(960px, calc(100vw - 48px));
+  width: min(960px, calc(100vw - 48px));
+}
+
+.gui-modal__frame--bare {
+  padding: 0;
+}
+
+.settings-window__rail {
+  background: var(--gui-s0100);
+  border-right: 1px solid var(--gui-line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  padding: 20px 12px;
+}
+
+.settings-window__rail-label {
+  margin: 0 8px;
+}
+
+.settings-window__tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-window__tab {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--gui-ink-2);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  gap: 10px;
+  height: 32px;
+  padding: 0 8px;
+  text-align: left;
+}
+
+.settings-window__tab:hover {
+  background: var(--gui-layer);
+  color: var(--gui-ink);
+}
+
+.settings-window__tab--selected {
+  background: var(--gui-s0200);
+  color: var(--gui-ink);
+}
+
+.settings-window__pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.settings-window__pane-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  padding: 20px 24px 12px;
+}
+
+.settings-window__pane-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.settings-window__content {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 20px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 24px 24px;
+}
+
+.settings-window__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.settings-window__panel--targets {
+  flex: 1 1 auto;
+}
+
+.settings-window__section {
+  border: 0;
+  margin: 0;
+  min-width: 0;
+  padding: 0;
+}
+
+.settings-window__section > legend {
+  padding: 0;
+}
+
+.settings-window__row {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+
+.settings-window__row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-window__row-title {
+  font-size: 13px;
+  font-weight: 500;
+  margin: 0;
+}
+
+.settings-window__row-hint {
+  color: var(--gui-ink-3);
+  font-size: 12px;
+  margin: 0;
+}
+
+.settings-window__savebar {
+  align-items: center;
+  background: var(--gui-canvas);
+  border-top: 1px solid var(--gui-line);
+  bottom: 0;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: auto;
+  padding: 12px 0 0;
+  position: sticky;
+}
+
+.settings-window__savebar .settings__status {
+  margin-right: auto;
+}
+
+@media (max-width: 720px) {
+  .settings-window {
+    grid-template-columns: 56px minmax(0, 1fr);
+  }
+
+  .settings-window__tab-label,
+  .settings-window__rail-label {
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    height: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+  }
+
+  .settings-window__tab {
+    justify-content: center;
+    padding: 0;
+  }
+}
+
 /* Settings modal */
 
 .settings-body {

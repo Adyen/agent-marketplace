@@ -146,6 +146,7 @@ test('built GUI saves Harness targets through the real user-scope core', async (
     await page.keyboard.press('Enter')
     const dialog = page.getByRole('dialog', { name: 'Settings' })
     await expect(dialog).toBeVisible()
+    await dialog.getByRole('tab', { name: 'Harness targets' }).click()
 
     const devin = page.getByRole('checkbox', { name: 'Target devin' })
     const future = page.getByRole('checkbox', { name: 'Target e2e-future-harness' })
@@ -153,10 +154,7 @@ test('built GUI saves Harness targets through the real user-scope core', async (
     await expect(dialog.getByText('Unsupported by this version')).toBeVisible()
     await expect(dialog.getByLabel('Organization targets')).toContainText('claude')
     await expect(dialog.getByLabel('Organization targets').getByRole('checkbox')).toHaveCount(0)
-    await expect(dialog.getByLabel('Organization sources')).toHaveCount(0)
-    await expect(dialog.getByLabel('User sources')).toHaveCount(0)
-    await expect(dialog.getByRole('button', { name: 'Manage sources' })).toBeVisible()
-    await expect(dialog).toContainText('managed outside the GUI')
+    await expect(dialog.getByRole('tab', { name: 'Sources' })).toBeVisible()
 
     await devin.focus()
     await page.keyboard.press('Space')
@@ -168,6 +166,7 @@ test('built GUI saves Harness targets through the real user-scope core', async (
 
     await settingsButton.press('Enter')
     await expect(dialog).toBeVisible()
+    await dialog.getByRole('tab', { name: 'Harness targets' }).click()
     await expect(devin).toBeChecked()
     await devin.press('Space')
     await expect(devin).not.toBeChecked()
@@ -175,6 +174,8 @@ test('built GUI saves Harness targets through the real user-scope core', async (
 
     await page.getByRole('button', { name: 'Save targets' }).press('Enter')
     await expect(page.getByText('targets complete')).toBeVisible({ timeout: 60_000 })
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole('button', { name: 'Close dialog' }).press('Enter')
     await expect(dialog).not.toBeVisible()
     await expect(settingsButton).toBeFocused()
 
@@ -454,7 +455,7 @@ test('built GUI initializes a queued directory source only after Finish setup', 
     const sourcesButton = page.getByRole('button', { name: 'Sources' })
     await focusAndCheckControl(page, page.locator('body'), sourcesButton)
     await page.keyboard.press('Enter')
-    const sourcesDialog = page.getByRole('dialog', { name: 'Sources' })
+    const sourcesDialog = page.getByRole('dialog', { name: 'Settings' })
     await expect(sourcesDialog).toBeVisible()
     await expect(sourcesDialog.getByLabel('User sources')).toContainText(sourceDir)
     await page.screenshot({ path: artifactPath('first-run-valid-source-registered.png'), fullPage: true })
@@ -586,7 +587,7 @@ test('built GUI keeps initialized sources on optional failure and retries from S
     const sourcesButton = page.getByRole('button', { name: 'Sources' })
     await focusAndCheckControl(page, page.locator('body'), sourcesButton)
     await page.keyboard.press('Enter')
-    const sourcesDialog = page.getByRole('dialog', { name: 'Sources' })
+    const sourcesDialog = page.getByRole('dialog', { name: 'Settings' })
     await expect(sourcesDialog).toBeVisible()
     const userSources = sourcesDialog.getByLabel('User sources')
     await expect(userSources).toContainText(sourceDir)

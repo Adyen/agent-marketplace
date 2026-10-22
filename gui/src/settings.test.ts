@@ -81,7 +81,7 @@ describe('Harness settings dialog', () => {
   })
 
   // spec: gui-configuration/organization-sources-are-read-only
-  it('keeps source lists out of Settings and hands off to the Sources modal', async () => {
+  it('opens Settings on General and keeps sources under the Sources tab', async () => {
     const { client, push } = settingsClient({
       userSources: [
         { id: 'user-dir', kind: 'directory', location: '/var/regs', ref: '', path: '', sourceHarness: '', rowSourceId: '' },
@@ -97,16 +97,14 @@ describe('Harness settings dialog', () => {
     await openSettings(wrapper)
     const dialog = document.body.querySelector('[role="dialog"]')!
     expect(dialog.querySelector('.gui-modal__frame')?.getAttribute('aria-label')).toBe('Settings')
-    expect(dialog.querySelector('[aria-label="User sources"]')).toBeNull()
-    expect(dialog.querySelector('[aria-label="Organization sources"]')).toBeNull()
-    expect(dialog.textContent).not.toContain('/var/regs')
+    expect(dialog.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain('General')
+    expect(dialog.querySelector('button[aria-label="Manage sources"]')).toBeNull()
 
-    const manage = dialog.querySelector<HTMLElement>('button[aria-label="Manage sources"]')!
-    manage.click()
+    dialog.querySelector<HTMLElement>('#settings-tab-sources')!.click()
     await tick()
-    expect(document.body.querySelector('.gui-modal__frame[aria-label="Settings"]')).toBeNull()
-    const sources = document.body.querySelector('.gui-modal__frame[aria-label="Sources"]')!
+    const sources = dialog.querySelector('#settings-panel-sources')!
     expect(sources.querySelector('[aria-label="Organization sources"]')?.textContent).toContain('/opt/org-regs')
+    expect(sources.querySelector('[aria-label="User sources"]')?.textContent).toContain('/var/regs')
     expect(client.configure).not.toHaveBeenCalled()
     expect(client.action).not.toHaveBeenCalled()
   })
@@ -147,9 +145,7 @@ describe('Harness settings dialog', () => {
     expect(client.configure).not.toHaveBeenCalled()
     expect(client.action).not.toHaveBeenCalled()
 
-    const cancel = Array.from(document.body.querySelectorAll<HTMLElement>('[role="dialog"] button')).find(
-      (b) => b.textContent === 'Cancel',
-    )!
+    const cancel = document.body.querySelector<HTMLElement>('button[aria-label="Close dialog"]')!
     cancel.click()
     await tick()
 
@@ -292,7 +288,7 @@ describe('Harness settings dialog', () => {
     expect(dialog!.textContent).toContain('The action could not be started')
   })
 
-  it('closes the dialog after an accepted save even when settlement arrived first', async () => {
+  it('keeps the window open after an accepted save even when settlement arrived first', async () => {
     const { client, push } = settingsClient()
     const { controller, wrapper } = mountWorkspace(client)
     push(event({ sequence: 1 }))
@@ -325,9 +321,7 @@ describe('Harness settings dialog', () => {
     expect(client.configure).toHaveBeenCalledTimes(1)
     expect(controller.state.operation).toBeNull()
     expect(controller.state.phase).toBeNull()
-    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
-    const settingsButton = wrapper.find('button[aria-label="Settings"]')
-    expect(document.activeElement).toBe(settingsButton.element)
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
   })
 
   it('keeps fields disabled until the opening metadata load resolves', async () => {
@@ -337,9 +331,7 @@ describe('Harness settings dialog', () => {
     await tick()
 
     await openSettings(wrapper)
-    const cancel = Array.from(document.body.querySelectorAll<HTMLElement>('[role="dialog"] button')).find(
-      (b) => b.textContent === 'Cancel',
-    )!
+    const cancel = document.body.querySelector<HTMLElement>('button[aria-label="Close dialog"]')!
     cancel.click()
     await tick()
 
@@ -353,7 +345,7 @@ describe('Harness settings dialog', () => {
 
     const dialog = document.body.querySelector('[role="dialog"]')!
     expect(dialog).not.toBeNull()
-    const fieldset = dialog.querySelector<HTMLFieldSetElement>('fieldset')!
+    const fieldset = dialog.querySelector<HTMLFieldSetElement>('#settings-panel-targets fieldset')!
     const save = Array.from(dialog.querySelectorAll<HTMLElement>('button')).find(
       (b) => b.textContent === 'Save targets',
     ) as HTMLButtonElement
@@ -384,9 +376,7 @@ describe('Harness settings dialog', () => {
     await button.trigger('click')
     await tick()
 
-    const cancel = Array.from(document.body.querySelectorAll<HTMLElement>('[role="dialog"] button')).find(
-      (b) => b.textContent === 'Cancel',
-    )!
+    const cancel = document.body.querySelector<HTMLElement>('button[aria-label="Close dialog"]')!
     cancel.click()
     await tick()
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
@@ -410,7 +400,7 @@ describe('Harness settings dialog', () => {
     await tick()
 
     await openSettings(wrapper)
-    const fieldset = document.body.querySelector<HTMLFieldSetElement>('[role="dialog"] fieldset')
+    const fieldset = document.body.querySelector<HTMLFieldSetElement>('#settings-panel-targets fieldset')
     expect(fieldset).not.toBeNull()
     expect(fieldset!.disabled).toBe(true)
   })
@@ -469,19 +459,83 @@ describe('Harness settings dialog', () => {
     expect(dialog.querySelector('[aria-label="Organization targets"] input[type="checkbox"]')).toBeNull()
   })
 
-  it('summarizes configured sources with the organization count on the Sources row', async () => {
-    const { client, push } = settingsClient({
-      userSources: [source({ id: 'user-src', kind: 'directory', location: '/var/regs' })],
-      organizationSources: [source({ id: 'org-src', kind: 'directory', location: '/opt/org-regs' })],
-    })
+})
+
+describe('tabbed Settings window', () => {
+  it('opens on General from the gear and on Sources from the sidebar Sources control', async () => {
+    const { client, push } = settingsClient()
     const { wrapper } = mountWorkspace(client)
     push(event({ sequence: 1 }))
     await tick()
 
     await openSettings(wrapper)
     const dialog = document.body.querySelector('[role="dialog"]')!
-    expect(dialog.querySelector('button[aria-label="Manage sources"] .settings__nav-meta')?.textContent).toBe(
-      '2 configured · 1 from organization',
-    )
+    expect(dialog.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain('General')
+    expect(dialog.querySelector('#settings-tab-targets')?.getAttribute('aria-selected')).toBe('false')
+    expect(dialog.querySelector('#settings-tab-general')?.getAttribute('aria-controls')).toBe('settings-panel-general')
+    dialog.querySelector<HTMLElement>('button[aria-label="Close dialog"]')!.click()
+    await tick()
+
+    await wrapper.get('button[aria-label="Sources"]').trigger('click')
+    await tick()
+    expect(document.querySelector('#settings-tab-sources')?.getAttribute('aria-selected')).toBe('true')
+  })
+
+  it('moves between tabs with the arrow and Home/End keys', async () => {
+    const { client, push } = settingsClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1 }))
+    await tick()
+    await openSettings(wrapper)
+    const dialog = document.body.querySelector('[role="dialog"]')!
+    const tab = (id: string) => dialog.querySelector<HTMLElement>(`#settings-tab-${id}`)!
+    const selected = () => dialog.querySelector('[role="tab"][aria-selected="true"]')?.id
+
+    tab('general').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    await tick()
+    expect(selected()).toBe('settings-tab-targets')
+    tab('targets').dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }))
+    await tick()
+    expect(selected()).toBe('settings-tab-sources')
+    tab('sources').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    await tick()
+    expect(selected()).toBe('settings-tab-general')
+    tab('general').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))
+    await tick()
+    expect(selected()).toBe('settings-tab-general')
+  })
+
+  it('keeps the target draft across tab switches, reverts it, and keeps the window open after Save', async () => {
+    const { client, push } = settingsClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1 }))
+    await tick()
+    await openSettings(wrapper)
+    const dialog = document.body.querySelector('[role="dialog"]')!
+    dialog.querySelector<HTMLElement>('#settings-tab-targets')!.click()
+    await tick()
+    checkboxByLabel('devin').click()
+    await tick()
+    expect(dialog.textContent).toContain('Unsaved changes')
+
+    dialog.querySelector<HTMLElement>('#settings-tab-general')!.click()
+    await tick()
+    dialog.querySelector<HTMLElement>('#settings-tab-targets')!.click()
+    await tick()
+    expect(isChecked(checkboxByLabel('devin'))).toBe(false)
+
+    const revert = Array.from(dialog.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent?.trim() === 'Revert')!
+    revert.click()
+    await tick()
+    expect(isChecked(checkboxByLabel('devin'))).toBe(true)
+    expect(dialog.textContent).not.toContain('Unsaved changes')
+
+    checkboxByLabel('devin').click()
+    await tick()
+    const save = Array.from(dialog.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent?.trim() === 'Save targets')!
+    save.click()
+    await tick()
+    expect(client.configure).toHaveBeenCalledWith({ action: 'save-targets', targets: expect.any(Array) })
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
   })
 })

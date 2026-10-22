@@ -642,7 +642,7 @@ describe('no raw configuration editor', () => {
           el.dispatchEvent(new KeyboardEvent('keydown', { key: 'E', bubbles: true }))
         }
         await nextTick()
-        open!.querySelector<HTMLElement>('button[aria-label="Cancel"], button[aria-label="Done"]')!.click()
+        open!.querySelector<HTMLElement>('button[aria-label="Close dialog"]')!.click()
         await tick()
         expect(dialog()).toBeNull()
       }

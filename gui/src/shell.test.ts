@@ -246,7 +246,8 @@ describe('empty states and sidebar labels', () => {
     expect(wrapper.get('.gui-empty').text()).toContain('No resources yet')
     await wrapper.get('button[aria-label="Add a source"]').trigger('click')
     await tick()
-    expect(document.body.querySelector('.gui-modal__frame[aria-label="Sources"]')).not.toBeNull()
+    expect(document.body.querySelector('.gui-modal__frame')?.getAttribute('aria-label')).toBe('Settings')
+    expect(document.querySelector('#settings-tab-sources')?.getAttribute('aria-selected')).toBe('true')
   })
 
   it('omits the Groups section when there are no groups', async () => {

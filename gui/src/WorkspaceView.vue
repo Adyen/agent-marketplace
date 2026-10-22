@@ -10,7 +10,7 @@ import { readStoredValue, writeStoredValue } from './storage'
 import Confirmations from './Confirmations.vue'
 import FirstRun from './FirstRun.vue'
 import GuiIcon from './GuiIcon.vue'
-import HarnessSettings from './HarnessSettings.vue'
+import SettingsWindow, { type SettingsTab } from './SettingsWindow.vue'
 import Inspector from './Inspector.vue'
 import MainToolbar from './MainToolbar.vue'
 import ResourceActions from './ResourceActions.vue'
@@ -18,7 +18,6 @@ import ResourceInspection from './ResourceInspection.vue'
 import DiagnosticsView from './DiagnosticsView.vue'
 import ResourceList, { rowElementId, rowKey, sectionElementId, sectionKey } from './ResourceList.vue'
 import Sidebar, { type SidebarGroup, type SidebarSource } from './Sidebar.vue'
-import SourcesSettings from './SourcesSettings.vue'
 import StatusBar from './StatusBar.vue'
 
 type SectionView = Omit<Section, 'children'> & { collapsed: boolean; children: SectionView[] }
@@ -44,7 +43,8 @@ const appliedQuery = ref('')
 const searchEditing = ref(false)
 const error = ref<string | null>(null)
 const settingsOpen = ref(false)
-const sourcesOpen = ref(false)
+const settingsTab = ref<SettingsTab>('general')
+let settingsOpener: 'settings' | 'sources' = 'settings'
 const setupOpen = ref(false)
 const setupDismissed = ref(false)
 const setupOpened = ref(false)
@@ -92,20 +92,15 @@ watch(searchEditing, (isEditing, wasEditing) => {
   }
 })
 
-watch(settingsOpen, (isOpen, wasOpen) => {
-  if (!isOpen && wasOpen && !sourcesOpen.value) {
-    void nextTick(() => sidebar.value?.focusSettings())
-  }
-})
-
-function openSourcesFromSettings() {
-  settingsOpen.value = false
-  sourcesOpen.value = true
+function openSettingsWindow(tab: SettingsTab) {
+  settingsOpener = tab === 'sources' ? 'sources' : 'settings'
+  settingsTab.value = tab
+  settingsOpen.value = true
 }
 
-watch(sourcesOpen, (isOpen, wasOpen) => {
+watch(settingsOpen, (isOpen, wasOpen) => {
   if (!isOpen && wasOpen) {
-    void nextTick(() => sidebar.value?.focusSources())
+    void nextTick(() => (settingsOpener === 'sources' ? sidebar.value?.focusSources() : sidebar.value?.focusSettings()))
   }
 })
 
@@ -346,7 +341,7 @@ function onKeydown(event: KeyboardEvent) {
       openSearch()
     } else if (event.key === ',') {
       event.preventDefault()
-      settingsOpen.value = true
+      openSettingsWindow('general')
     } else if (event.code === 'KeyR' && !busy.value) {
       event.preventDefault()
       void refresh()
@@ -938,8 +933,8 @@ async function run(action: 'sync' | 'update') {
       @show-all="showAll"
       @show-diagnostics="showDiagnostics"
       @select-group="selectGroup"
-      @open-sources="sourcesOpen = true"
-      @open-settings="settingsOpen = true"
+      @open-sources="openSettingsWindow('sources')"
+      @open-settings="openSettingsWindow('general')"
       @quit="requestQuit"
     />
 
@@ -1003,7 +998,7 @@ async function run(action: 'sync' | 'update') {
           class="gui-button--secondary"
           color="neutral"
           variant="soft"
-          @click="sourcesOpen = true"
+          @click="openSettingsWindow('sources')"
         />
       </section>
       <p v-else-if="mainView === 'resources' && emptyState === 'search'" class="gui-empty gui-empty--muted">No resources match “{{ activeQuery }}”.</p>
@@ -1066,8 +1061,7 @@ async function run(action: 'sync' | 'update') {
       @click="dismissOverlays"
     />
 
-    <HarnessSettings v-if="state" v-model:open="settingsOpen" :controller="state" @manage-sources="openSourcesFromSettings" />
-    <SourcesSettings v-if="state" v-model:open="sourcesOpen" :controller="state" />
+    <SettingsWindow v-if="state" v-model:open="settingsOpen" :tab="settingsTab" :controller="state" />
     <FirstRun v-if="state" v-model:open="setupOpen" :controller="state" @cancel="onSetupCancel" />
     <Confirmations v-if="state" v-model:quit-open="quitOpen" :controller="state" />
     <ResourceActions v-if="state" v-model:open="resourceActionOpen" :controller="state" />

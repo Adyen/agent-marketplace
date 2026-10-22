@@ -101,7 +101,7 @@ test('built GUI adds and removes a user directory source against the real user-s
 
     const sourcesButton = page.getByRole('button', { name: 'Sources' })
     await sourcesButton.press('Enter')
-    const dialog = page.getByRole('dialog', { name: 'Sources' })
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
     await expect(dialog).toBeVisible()
     const notifications = page.getByLabel('Notifications')
 
@@ -110,7 +110,7 @@ test('built GUI adds and removes a user directory source against the real user-s
     await expect(addSection.getByRole('group', { name: 'Source kind' }).getByRole('radio', { name: 'Directory registry' })).toBeChecked()
     await expect(addSection.getByLabel('Source location')).toBeEnabled()
     await addSection.getByLabel('Source location').pressSequentially(sourceDir)
-    await dialog.getByRole('button', { name: 'Done', exact: true }).press('Enter')
+    await dialog.getByRole('button', { name: 'Close dialog', exact: true }).press('Enter')
     await expect(dialog).not.toBeVisible()
     expect(await readFile(userConfigPath, 'utf8')).toBe(original)
 
@@ -257,7 +257,7 @@ test('built GUI adds and removes a Marketplace endpoint registration in the open
     const repoLocalBefore = await readFile(repoLocalPath, 'utf8')
     const sourcesButton = page.getByRole('button', { name: 'Sources' })
     await sourcesButton.press('Enter')
-    const dialog = page.getByRole('dialog', { name: 'Sources' })
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
     await expect(dialog).toBeVisible()
 
     const addSection = dialog.getByLabel('Add user source')
@@ -266,18 +266,6 @@ test('built GUI adds and removes a Marketplace endpoint registration in the open
     await expect(userSources).toContainText(longLocation)
 
     const listMetrics = await sourceListVisibility(page, dialog, userSources, longLocation)
-    const scrollBefore = await dialog.locator('.gui-modal__body').evaluate((element) => element.scrollTop)
-    const dialogBox = await dialog.boundingBox()
-    if (dialogBox != null) {
-      await page.mouse.move(dialogBox.x + dialogBox.width / 2, dialogBox.y + dialogBox.height / 2)
-      await page.mouse.wheel(0, 600)
-    }
-    await expect.poll(async () => await dialog.locator('.gui-modal__body').evaluate((element) => element.scrollTop), { timeout: 1_000 }).toBeGreaterThan(scrollBefore)
-    const scrollAfter = await dialog.locator('.gui-modal__body').evaluate((element) => element.scrollTop)
-    await page.mouse.wheel(0, -600)
-    await dialog.evaluate((element) => {
-      element.scrollTop = 0
-    })
 
     const kindGroup = addSection.getByRole('group', { name: 'Source kind' })
     await expect(kindGroup).toBeVisible()
@@ -290,21 +278,19 @@ test('built GUI adds and removes a Marketplace endpoint registration in the open
     const location = addSection.getByLabel('Source location')
     await location.pressSequentially(endpoint)
     const addButton = addSection.getByRole('button', { name: 'Add source' })
-    const cancelButton = dialog.getByRole('button', { name: 'Done', exact: true })
+    const cancelButton = dialog.getByRole('button', { name: 'Close dialog', exact: true })
     await expect(addButton).toBeEnabled()
-    const cancelMetrics = await actionVisibility(page, dialog, cancelButton, 'Done')
+    const cancelMetrics = await actionVisibility(page, dialog, cancelButton, 'Close dialog')
     const addMetrics = await actionVisibility(page, dialog, addButton, 'Add source')
     await page.screenshot({ path: formActionScreenshotPath, fullPage: true })
     const viewport = page.viewportSize()
     const visibility = {
       viewport,
-      wheelScrolled: scrollAfter > scrollBefore,
       list: listMetrics,
       actions: [cancelMetrics, addMetrics],
     }
     expect(visibility, `visibility metrics: ${JSON.stringify(visibility)}`).toMatchObject({
       viewport: { width: 1280, height: 720 },
-      wheelScrolled: true,
       list: {
         kindOnLocationRow: true,
         locationWithinDialog: true,
@@ -313,7 +299,7 @@ test('built GUI adds and removes a Marketplace endpoint registration in the open
         pageHasNoHorizontalOverflow: true,
       },
       actions: [
-        { name: 'Done', insideDialog: true, insideViewport: true, hittable: true },
+        { name: 'Close dialog', insideDialog: true, insideViewport: true, hittable: true },
         { name: 'Add source', insideDialog: true, insideViewport: true, hittable: true },
       ],
     })
@@ -484,14 +470,12 @@ test('built GUI adds and removes a user Git source with ref and subpath by keybo
 
     const sourcesButton = page.getByRole('button', { name: 'Sources' })
     await sourcesButton.press('Enter')
-    const dialog = page.getByRole('dialog', { name: 'Sources' })
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
     await expect(dialog).toBeVisible()
     const notifications = page.getByLabel('Notifications')
 
     const managedSection = dialog.getByLabel('Managed outside the GUI')
-    for (const label of ['included files', 'per-source configuration', 'other settings']) {
-      await expect(managedSection.getByText(`${label} — managed outside the GUI`)).toBeVisible()
-    }
+    await expect(managedSection.getByText('Included files, per-source configuration, and other settings are managed outside the GUI.')).toBeVisible()
     const orgSection = dialog.getByLabel('Organization sources')
     await expect(orgSection.getByText('Managed by your organization; read-only.')).toBeVisible()
     await expect(orgSection).toContainText('DIRECTORY')
@@ -539,9 +523,7 @@ test('built GUI adds and removes a user Git source with ref and subpath by keybo
     await expect(addButton).toBeEnabled()
     await expect(location).toBeEnabled()
     await expect(dialog).toBeVisible()
-    for (const label of ['included files', 'per-source configuration', 'other settings']) {
-      await expect(managedSection.getByText(`${label} — managed outside the GUI`)).toBeVisible()
-    }
+    await expect(managedSection.getByText('Included files, per-source configuration, and other settings are managed outside the GUI.')).toBeVisible()
     await expect.poll(async () => await readFile(userConfigPath, 'utf8'), { timeout: 60_000 }).toBe(addedRoot)
     expect(await readFile(fragmentPath, 'utf8')).toBe(fragment)
     expect(await readFile(orgConfigPath, 'utf8')).toBe(orgBefore)

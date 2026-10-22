@@ -256,10 +256,10 @@ test('built GUI keyboard input never opens a raw configuration editor', async ({
         await control.press('E')
       }
     }
-    await settingsDialog.getByRole('button', { name: 'Cancel' }).press('Enter')
+    await settingsDialog.getByRole('button', { name: 'Close dialog' }).press('Enter')
     await expect(settingsDialog).not.toBeVisible()
 
-    const sourcesDialog = page.getByRole('dialog', { name: 'Sources' })
+    const sourcesDialog = page.getByRole('dialog', { name: 'Settings' })
     await page.getByRole('button', { name: 'Sources', exact: true }).press('Enter')
     await expect(sourcesDialog).toBeVisible()
     for (const control of await sourcesDialog.getByRole('button').all()) {
@@ -267,7 +267,7 @@ test('built GUI keyboard input never opens a raw configuration editor', async ({
         await control.press('e')
       }
     }
-    await sourcesDialog.getByRole('button', { name: 'Done' }).press('Enter')
+    await sourcesDialog.getByRole('button', { name: 'Close dialog' }).press('Enter')
     await expect(sourcesDialog).not.toBeVisible()
 
     await expect(page.locator('textarea')).toHaveCount(0)
