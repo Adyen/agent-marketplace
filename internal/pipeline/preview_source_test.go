@@ -281,11 +281,12 @@ func TestPreviewSourceReturnsMalformedResourcesAndGoodEntries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PreviewSource: %v", err)
 	}
-	if len(preview.Catalog.Entries) != 1 || preview.Catalog.Entries[0].Name != "alpha" {
-		t.Fatalf("catalog entries = %#v, want only alpha", preview.Catalog.Entries)
+	loaded := singlePreviewCatalog(t, preview)
+	if len(loaded.Entries) != 1 || loaded.Entries[0].Name != "alpha" {
+		t.Fatalf("catalog entries = %#v, want only alpha", loaded.Entries)
 	}
-	if len(preview.Catalog.Malformed) != 1 {
-		t.Fatalf("malformed resources = %#v, want broken resource", preview.Catalog.Malformed)
+	if len(loaded.Malformed) != 1 {
+		t.Fatalf("malformed resources = %#v, want broken resource", loaded.Malformed)
 	}
 }
 
@@ -313,9 +314,20 @@ func TestPreviewSourceResolvesGitDefaultBranchAndCommit(t *testing.T) {
 	if preview.Ref != "stable" || len(preview.Commit) != 40 {
 		t.Fatalf("resolved ref/commit = %q/%q, want stable and a full commit", preview.Ref, preview.Commit)
 	}
-	if len(preview.Catalog.Entries) != 1 || preview.Catalog.Entries[0].Name != "alpha" {
-		t.Fatalf("catalog entries = %#v, want alpha", preview.Catalog.Entries)
+	if loaded := singlePreviewCatalog(t, preview); len(loaded.Entries) != 1 || loaded.Entries[0].Name != "alpha" {
+		t.Fatalf("catalog entries = %#v, want alpha", loaded.Entries)
 	}
+}
+
+func singlePreviewCatalog(t *testing.T, preview SourcePreview) catalog.LoadedCatalog {
+	t.Helper()
+	if len(preview.Catalogs) != 1 {
+		t.Fatalf("preview catalogs = %d, want exactly one", len(preview.Catalogs))
+	}
+	for _, loaded := range preview.Catalogs {
+		return loaded
+	}
+	return catalog.LoadedCatalog{}
 }
 
 func writeSourceFile(t *testing.T, root, name, content string) {

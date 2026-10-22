@@ -1382,9 +1382,6 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 			if err != nil {
 				return nil, fmt.Errorf("resolve prepared source commit: %w", err)
 			}
-			if actual == "" {
-				return nil, errors.New("expected commit cannot be checked because exact source commit was not prepared")
-			}
 			if actual != opts.ExpectedCommit {
 				return nil, &SourceMovedError{Ref: fromRef, Expected: opts.ExpectedCommit, Actual: actual}
 			}
@@ -1558,9 +1555,6 @@ type SourceMovedError struct {
 }
 
 func (e *SourceMovedError) Error() string {
-	if e == nil {
-		return "source moved since preview"
-	}
 	return fmt.Sprintf("source ref %q moved since preview: expected commit %s, actual commit %s", e.Ref, e.Expected, e.Actual)
 }
 

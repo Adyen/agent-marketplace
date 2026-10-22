@@ -695,10 +695,7 @@ func installSourceScopeError(s installSourceModal, target scope) error {
 
 func (m Model) startInstallSourcePreview(preserveNotice bool) (tea.Model, tea.Cmd) {
 	s := &m.installSource
-	if s.cancel != nil {
-		s.cancel()
-	}
-	m.cancelRequest(requestInstallPreview)
+	m.cancelInstallSourcePreview()
 	if !preserveNotice {
 		s.notice = ""
 	}
@@ -738,7 +735,6 @@ func (m Model) updateInstallSourcePreview(msg installSourcePreviewLoadedMsg) (te
 			s.step = installSourceStepSource
 			return m, nil
 		}
-		s.step = installSourceStepPick
 		return m, nil
 	}
 	s.preview = msg.preview

@@ -19,7 +19,6 @@ type SourcePreview struct {
 	Ref         string
 	Path        string
 	Commit      string
-	Catalog     catalog.LoadedCatalog
 	Catalogs    map[string]catalog.LoadedCatalog
 	Collections []collection.Collection
 	BundlePaths []string
@@ -32,16 +31,10 @@ type SourceRejectedError struct {
 }
 
 func (e *SourceRejectedError) Error() string {
-	if e == nil || e.Err == nil {
-		return "source rejected"
-	}
 	return e.Err.Error()
 }
 
 func (e *SourceRejectedError) Unwrap() error {
-	if e == nil {
-		return nil
-	}
 	return e.Err
 }
 
@@ -97,11 +90,6 @@ func PreviewSource(ctx context.Context, ws Workspace, rawURL, ref, path string) 
 	preview.Warnings = append(preview.Warnings, RequiresInvalidWarnings(result.Catalogs)...)
 	preview.Catalogs = result.Catalogs
 	preview.Collections = result.Collections
-	if len(result.Catalogs) == 1 {
-		for _, loaded := range result.Catalogs {
-			preview.Catalog = loaded
-		}
-	}
 	if len(result.Catalogs) > 1 {
 		for _, resolved := range result.Config.Registries {
 			if sourceEntryMatches(resolved, entry) {

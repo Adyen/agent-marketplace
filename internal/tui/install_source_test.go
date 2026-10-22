@@ -98,7 +98,7 @@ func TestInstallSourceFilterTreatsQAsInputAndEscLeavesFilter(t *testing.T) {
 	next, _ = m.Update(installSourcePreviewLoadedMsg{
 		generation: generation,
 		preview: &pipeline.SourcePreview{
-			URL: "https://example.invalid/source.git", Catalog: loaded,
+			URL:      "https://example.invalid/source.git",
 			Catalogs: map[string]catalog.LoadedCatalog{"source": loaded},
 		},
 	})
@@ -127,7 +127,6 @@ func TestInstallSourceMovedCommitReturnsToPickAndPreservesSelections(t *testing.
 	const actual = "89abcdef0123456789abcdef0123456789abcdef"
 	preview := &pipeline.SourcePreview{
 		URL: "https://example.invalid/source.git", Ref: "main", Commit: expected,
-		Catalog:  catalog.LoadedCatalog{Entries: []catalog.Entry{{Kind: ir.KindSkill, Name: "alpha"}}},
 		Catalogs: map[string]catalog.LoadedCatalog{"source": {Entries: []catalog.Entry{{Kind: ir.KindSkill, Name: "alpha"}}}},
 	}
 	m.installSource = installSourceModal{
@@ -221,7 +220,8 @@ func TestInstallSourceBundleSelectionRepreviewsChosenPath(t *testing.T) {
 	}
 	next, _ = m.Update(cmd())
 	m = next.(Model)
-	if m.installSource.preview == nil || m.installSource.preview.Path != "alpha" || len(m.installSource.preview.BundlePaths) != 0 || len(m.installSource.preview.Catalog.Entries) != 1 || m.installSource.preview.Catalog.Entries[0].Name != "alpha" {
+	choices := installSourceChoices(m.installSource.preview)
+	if m.installSource.preview == nil || m.installSource.preview.Path != "alpha" || len(m.installSource.preview.BundlePaths) != 0 || len(choices) != 1 || choices[0].name != "alpha" {
 		t.Fatalf("selected bundle preview = %#v", m.installSource.preview)
 	}
 }
@@ -239,7 +239,7 @@ func TestInstallSourcePickReviewAndScopeEligibility(t *testing.T) {
 	m.installSource.generation = generation
 	next, _ = m.Update(installSourcePreviewLoadedMsg{
 		generation: generation,
-		preview:    &pipeline.SourcePreview{URL: "./source", Catalog: loaded, Catalogs: map[string]catalog.LoadedCatalog{"source": loaded}},
+		preview:    &pipeline.SourcePreview{URL: "./source", Catalogs: map[string]catalog.LoadedCatalog{"source": loaded}},
 	})
 	m = next.(Model)
 	if m.installSource.step != installSourceStepPick || !strings.Contains(renderInstallSourceModal(m), "alpha") {
@@ -302,7 +302,7 @@ func TestInstallSourcePickWindowKeepsCursorAndSelectedCountVisible(t *testing.T)
 	}
 	loaded := catalog.LoadedCatalog{Entries: entries}
 	preview := &pipeline.SourcePreview{
-		URL: "https://example.invalid/source.git", Catalog: loaded,
+		URL:      "https://example.invalid/source.git",
 		Catalogs: map[string]catalog.LoadedCatalog{"source": loaded},
 	}
 	generation := m.beginRequest(requestInstallPreview)
