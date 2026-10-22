@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -470,6 +471,12 @@ func reconcileOwnedJSONAggregateFile(ctx context.Context, store *ownership.Store
 			return out
 		}
 	}
+	registrations, shapeErr := ownedJSONExistingRegistrationEntries(file, doc)
+	if shapeErr != nil {
+		out.diags = append(out.diags, ownedJSONShapeDiag(options.shapeCode, key, outDir, rel, shapeErr))
+		return out
+	}
+	existing = append(existing, registrations...)
 	var fallbackSnapshots []nativeHookAggregateSnapshot
 	if len(options.legacyHandwrittenFiles) > 0 {
 		imported, snapshots, importErr := importLegacyHandwrittenFallbacks(outDir, file, options.legacyHandwrittenFiles, existing, len(desired) > 0)
@@ -1139,6 +1146,19 @@ func validateOwnedJSONDesiredHooks(file ownedJSONFileSpec, desired []ownedJSONEn
 		return nil
 	}
 	for _, entry := range desired {
+		if entry.kind == ownership.KindPluginRegistration {
+			if !slices.Contains(file.additionalKeyedContainers, entry.container) ||
+				entry.key == "" || entry.identity != ownership.PluginRegistrationIdentityDigest(entry.container, entry.key) {
+				return fmt.Errorf("aggregate %q has an invalid plugin registration entry", file.rel)
+			}
+			if _, err := canonicalOwnedJSON(entry.raw); err != nil {
+				return fmt.Errorf("aggregate %q plugin registration entry is invalid", file.rel)
+			}
+			continue
+		}
+		if entry.kind != ownership.KindHook {
+			return fmt.Errorf("aggregate %q has an unsupported desired entry kind", file.rel)
+		}
 		if entry.rel != file.rel || entry.container == "" {
 			return fmt.Errorf("aggregate %q has an invalid desired hook entry", file.rel)
 		}
@@ -1275,6 +1295,42 @@ func ownedJSONExistingEntries(file ownedJSONFileSpec, container *jsonc.Node, leg
 	return out, nil
 }
 
+func ownedJSONExistingRegistrationEntries(file ownedJSONFileSpec, doc *jsonc.Document) ([]ownedJSONExistingEntry, error) {
+	var out []ownedJSONExistingEntry
+	for _, container := range file.additionalKeyedContainers {
+		node, present := doc.Root().Member(container)
+		if !present {
+			continue
+		}
+		if node.Kind() != jsonc.KindObject {
+			return nil, fmt.Errorf("aggregate %q registration member %q is not an object; it was left unchanged", file.rel, container)
+		}
+		for _, key := range node.Keys() {
+			value, _ := node.Member(key)
+			canonical, err := jsonc.Canonicalize(file.rel, value.Raw())
+			if err != nil {
+				return nil, fmt.Errorf("aggregate %q registration %q entry %q is not valid JSON; it was left unchanged", file.rel, container, key)
+			}
+			normalized, err := canonicalOwnedJSON(canonical)
+			if err != nil {
+				return nil, fmt.Errorf("aggregate %q registration %q entry %q could not be normalized; it was left unchanged", file.rel, container, key)
+			}
+			out = append(out, ownedJSONExistingEntry{
+				value: ownership.EntryValue{
+					ID: ownership.EntryID{
+						Kind: ownership.KindPluginRegistration, Container: container, Key: key,
+						IdentityDigest: ownership.PluginRegistrationIdentityDigest(container, key),
+					},
+					ValueDigest: ownership.Digest(normalized),
+				},
+				container: container,
+				raw:       value.Raw(),
+			})
+		}
+	}
+	return out, nil
+}
+
 func ownedJSONLegacyFlatHookRuleIsOwned(file ownedJSONFileSpec, rule *jsonc.Node, value ownership.EntryValue, proof ownership.Proof) bool {
 	if file.hookShape != targetmeta.HookShapeMatcherGroups || rule == nil || rule.Kind() != jsonc.KindObject {
 		return false
@@ -1298,7 +1354,8 @@ type ownedJSONPatch struct {
 	rel    string
 	// write maps a container key ("mcpServers" key, or hook event) to the entry
 	// bytes to store there.
-	writeMcp map[string][]byte
+	writeMcp       map[string][]byte
+	writeRootKeyed map[string]map[string][]byte
 	// hookElements maps a hook event to its complete new element list:
 	// preserved handwritten elements first, in their original order, then
 	// generated ones in deterministic resource order.
@@ -1306,18 +1363,20 @@ type ownedJSONPatch struct {
 	// deleteMcp / deleteHookEvent are keys whose entries are pruned entirely.
 	deleteMcp       []string
 	deleteHookEvent []string
+	deleteRootKeyed map[string][]string
 	// owned is the entry set the new content claims: what ownership state
 	// records for the next generation.
 	owned []ownership.Entry
 
-	collisions      []ownership.EntryID
-	drifted         []ownership.EntryID
-	prune           []ownership.EntryID
-	satisfied       []ownedJSONEntry
-	satisfactions   []ownership.HookSatisfaction
-	prunePostponed  []ownership.EntryID
-	pruneSuppressed bool
-	reconciledKinds map[ownership.EntryKind]bool
+	collisions             []ownership.EntryID
+	registrationCollisions []ownership.EntryID
+	drifted                []ownership.EntryID
+	prune                  []ownership.EntryID
+	satisfied              []ownedJSONEntry
+	satisfactions          []ownership.HookSatisfaction
+	prunePostponed         []ownership.EntryID
+	pruneSuppressed        bool
+	reconciledKinds        map[ownership.EntryKind]bool
 }
 
 // ownedJSONPatchPlan decides every edit for one file.
@@ -1344,7 +1403,91 @@ func ownedJSONPatchPlan(outDir string, file ownedJSONFileSpec, desired []ownedJS
 		selection = selected[0]
 	}
 	rel := file.rel
-	patch := ownedJSONPatch{outDir: outDir, rel: rel, writeMcp: map[string][]byte{}, hookElements: map[string][][]byte{}}
+	patch := ownedJSONPatch{
+		outDir: outDir, rel: rel, writeMcp: map[string][]byte{}, hookElements: map[string][][]byte{},
+		writeRootKeyed: map[string]map[string][]byte{}, deleteRootKeyed: map[string][]string{},
+	}
+	var registrationStale, registrationPostponed []ownership.EntryID
+	if len(file.additionalKeyedContainers) > 0 {
+		containers := make(map[string]bool, len(file.additionalKeyedContainers))
+		for _, container := range file.additionalKeyedContainers {
+			containers[container] = true
+		}
+		var registrationDesired []ownedJSONEntry
+		var registrationExisting []ownedJSONExistingEntry
+		var remainingDesired []ownedJSONEntry
+		var remainingExisting []ownedJSONExistingEntry
+		for _, entry := range desired {
+			if entry.kind == ownership.KindPluginRegistration && containers[entry.container] {
+				registrationDesired = append(registrationDesired, entry)
+			} else {
+				remainingDesired = append(remainingDesired, entry)
+			}
+		}
+		for _, entry := range existing {
+			if entry.value.ID.Kind == ownership.KindPluginRegistration && containers[entry.container] {
+				registrationExisting = append(registrationExisting, entry)
+			} else {
+				remainingExisting = append(remainingExisting, entry)
+			}
+		}
+		registrationValues := make([]ownership.EntryValue, 0, len(registrationExisting))
+		for _, entry := range registrationExisting {
+			registrationValues = append(registrationValues, entry.value)
+		}
+		registrationWants := make([]ownership.EntryValue, 0, len(registrationDesired))
+		for _, entry := range registrationDesired {
+			registrationWants = append(registrationWants, ownership.EntryValue{ID: entry.id(), ValueDigest: entry.valueDigest()})
+		}
+		registrationDrift := ownership.Classify(proof, registrationValues, registrationWants)
+		patch.drifted = append(patch.drifted, registrationDrift.Drifted...)
+		if incomplete {
+			registrationPostponed = registrationDrift.Stale
+			patch.prunePostponed = append(patch.prunePostponed, registrationPostponed...)
+			patch.pruneSuppressed = len(registrationPostponed) > 0
+			for _, id := range registrationPostponed {
+				if entry, ok := proof.Entry(id); ok {
+					patch.owned = append(patch.owned, entry)
+				}
+			}
+		} else {
+			registrationStale = registrationDrift.Stale
+			patch.prune = append(patch.prune, registrationStale...)
+			for _, id := range registrationStale {
+				if patch.deleteRootKeyed[id.Container] == nil {
+					patch.deleteRootKeyed[id.Container] = []string{}
+				}
+				patch.deleteRootKeyed[id.Container] = append(patch.deleteRootKeyed[id.Container], id.Key)
+			}
+		}
+		collisions := make(map[string]bool, len(registrationDrift.Collisions))
+		for _, id := range registrationDrift.Collisions {
+			collisions[ownedAggregateIDKey(id)] = true
+			patch.registrationCollisions = append(patch.registrationCollisions, id)
+		}
+		for _, entry := range registrationDesired {
+			if collisions[ownedAggregateIDKey(entry.id())] {
+				continue
+			}
+			if patch.writeRootKeyed[entry.container] == nil {
+				patch.writeRootKeyed[entry.container] = make(map[string][]byte)
+			}
+			patch.writeRootKeyed[entry.container][entry.key] = entry.raw
+			patch.owned = append(patch.owned, entry.ownershipEntry())
+		}
+		patch.reconciledKinds = map[ownership.EntryKind]bool{ownership.KindPluginRegistration: true}
+		desired = remainingDesired
+		existing = remainingExisting
+		existingValues := make([]ownership.EntryValue, 0, len(existing))
+		for _, entry := range existing {
+			existingValues = append(existingValues, entry.value)
+		}
+		desiredValues := make([]ownership.EntryValue, 0, len(desired))
+		for _, entry := range desired {
+			desiredValues = append(desiredValues, ownership.EntryValue{ID: entry.id(), ValueDigest: entry.valueDigest()})
+		}
+		drift = ownership.Classify(proof, existingValues, desiredValues)
+	}
 
 	collision := make(map[string]bool, len(drift.Collisions))
 	for _, id := range drift.Collisions {
@@ -1361,18 +1504,18 @@ func ownedJSONPatchPlan(outDir string, file ownedJSONFileSpec, desired []ownedJS
 	}
 	if incomplete {
 		allowed, postponed := partitionIncompleteStale(drift.Stale, proof, selection)
-		patch.prune = allowed
-		patch.prunePostponed = postponed
-		patch.pruneSuppressed = len(postponed) > 0
+		patch.prune = append(patch.prune, allowed...)
+		patch.prunePostponed = append(patch.prunePostponed, postponed...)
+		patch.pruneSuppressed = patch.pruneSuppressed || len(postponed) > 0
 		postponedStale = postponed
 		stale = make(map[string]bool, len(allowed))
 		for _, id := range allowed {
 			stale[ownedAggregateIDKey(id)] = true
 		}
 	} else {
-		patch.prune = drift.Stale
+		patch.prune = append(patch.prune, drift.Stale...)
 	}
-	patch.drifted = drift.Drifted
+	patch.drifted = append(patch.drifted, drift.Drifted...)
 	if file.keyed {
 		// Only a KEYED primitive can genuinely collide: "An unmanaged MCP key
 		// collision is preserved and causes only the generated entry to fail."
@@ -1674,12 +1817,12 @@ func applyOwnedJSONPatch(doc *jsonc.Document, container *jsonc.Node, containerMe
 			return err
 		}
 		if raw == nil {
-			return nil
+			return applyOwnedJSONRootKeyed(doc, rel, patch)
 		}
 		if !doc.SetMember(doc.Root(), containerMember, raw) {
 			return fmt.Errorf("aggregate %q could not create member %q", rel, containerMember)
 		}
-		return nil
+		return applyOwnedJSONRootKeyed(doc, rel, patch)
 	}
 	if file.keyed {
 		for _, key := range sortedKeys(patch.writeMcp) {
@@ -1711,6 +1854,44 @@ func applyOwnedJSONPatch(doc *jsonc.Document, container *jsonc.Node, containerMe
 	}
 	for _, event := range patch.deleteHookEvent {
 		doc.DeleteMember(container, event)
+	}
+	return applyOwnedJSONRootKeyed(doc, rel, patch)
+}
+
+func applyOwnedJSONRootKeyed(doc *jsonc.Document, rel string, patch ownedJSONPatch) error {
+	for _, container := range sortedKeys(patch.writeRootKeyed) {
+		rootMember, present := doc.Root().Member(container)
+		if !present {
+			values := make(map[string]json.RawMessage, len(patch.writeRootKeyed[container]))
+			for key, raw := range patch.writeRootKeyed[container] {
+				values[key] = json.RawMessage(raw)
+			}
+			raw, err := json.Marshal(values)
+			if err != nil || !doc.SetMember(doc.Root(), container, raw) {
+				return fmt.Errorf("aggregate %q could not create registration member %q", rel, container)
+			}
+			continue
+		}
+		if rootMember.Kind() != jsonc.KindObject {
+			return fmt.Errorf("aggregate %q registration member %q is not an object", rel, container)
+		}
+		for _, key := range sortedKeys(patch.writeRootKeyed[container]) {
+			if !doc.SetMember(rootMember, key, patch.writeRootKeyed[container][key]) {
+				return fmt.Errorf("aggregate %q could not set registration key %q", rel, key)
+			}
+		}
+	}
+	for _, container := range sortedKeys(patch.deleteRootKeyed) {
+		rootMember, present := doc.Root().Member(container)
+		if !present {
+			continue
+		}
+		if rootMember.Kind() != jsonc.KindObject {
+			return fmt.Errorf("aggregate %q registration member %q is not an object", rel, container)
+		}
+		for _, key := range patch.deleteRootKeyed[container] {
+			doc.DeleteMember(rootMember, key)
+		}
 	}
 	return nil
 }
@@ -1790,6 +1971,17 @@ func ownedJSONHookArrayRaw(elements [][]byte) ([]byte, error) {
 func (p ownedJSONPatch) diags(key outputKey, options ownedJSONReconcileOptions) []diag.Diagnostic {
 	var out []diag.Diagnostic
 	file := ownedAggregateLabel(p.outDir, p.rel)
+	for _, id := range p.registrationCollisions {
+		out = append(out, diag.Diagnostic{
+			Code:     diag.CodePluginRegistrationCollision,
+			Severity: diag.SeverityError,
+			Target:   string(key.target),
+			Resource: id.Key,
+			Source:   diag.SourceRef{File: p.rel},
+			Message:  "an unmanaged native plugin registration uses a desired key; the existing entry was preserved",
+			Hint:     "Remove the handwritten collision or run sync after establishing ownership through a supported path",
+		})
+	}
 	for _, id := range p.collisions {
 		out = append(out, diag.Diagnostic{
 			Code:     diag.CodeOwnershipUnmanagedKey,

@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
@@ -32,7 +33,8 @@ const (
 	// the digest of a hook/v2 prefix, the event name, and the digest of the
 	// canonical JSON rule. Any byte difference in the canonical rule produces a
 	// different identity, so only the DIGEST ever reaches state.
-	KindHook EntryKind = "hook"
+	KindHook               EntryKind = "hook"
+	KindPluginRegistration EntryKind = "plugin-registration"
 )
 
 // Entry is the non-secret record of one owned aggregate entry.
@@ -227,6 +229,11 @@ func validateEntry(e Entry) error {
 		if e.IdentityDigest != HookIdentityDigest(e.Container, e.ValueDigest) {
 			return fmt.Errorf("%w: hook identity digest does not match value", ErrUnsafeStateValue)
 		}
+	case KindPluginRegistration:
+		if !validPluginRegistrationKey(e.Container, e.Key) ||
+			e.IdentityDigest != PluginRegistrationIdentityDigest(e.Container, e.Key) {
+			return fmt.Errorf("%w: plugin registration identity", ErrUnsafeStateValue)
+		}
 	default:
 		return fmt.Errorf("%w: unknown entry kind", ErrUnsafeStateValue)
 	}
@@ -277,6 +284,22 @@ func validateEntry(e Entry) error {
 		}
 	}
 	return nil
+}
+
+func validPluginRegistrationKey(container, key string) bool {
+	switch container {
+	case "extraKnownMarketplaces", "marketplaces":
+		return safeToken.MatchString(key)
+	case "enabledPlugins", "plugins":
+		plugin, catalog, ok := strings.Cut(key, "@")
+		return ok && safeToken.MatchString(plugin) && safeToken.MatchString(catalog) && !strings.Contains(catalog, "@")
+	default:
+		return false
+	}
+}
+
+func PluginRegistrationIdentityDigest(container, key string) string {
+	return Digest([]byte(container + "\x00" + key))
 }
 
 func validateHookSatisfaction(s HookSatisfaction) error {

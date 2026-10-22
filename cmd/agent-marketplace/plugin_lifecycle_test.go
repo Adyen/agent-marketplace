@@ -119,7 +119,7 @@ func TestInspectPluginReportsPackageDetailsWithoutWriting(t *testing.T) {
 	}
 }
 
-func TestInspectPluginShowsNativeDeliveryPending(t *testing.T) {
+func TestInspectPluginShowsUnverifiedNativeDeliveryBlocked(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
@@ -128,8 +128,8 @@ func TestInspectPluginShowsNativeDeliveryPending(t *testing.T) {
 	if err != nil {
 		t.Fatalf("inspect native plugin: %v\n%s", err, output)
 	}
-	if !strings.Contains(output, "claude: native (pending)") {
-		t.Fatalf("inspect must report native delivery as pending:\n%s", output)
+	if !strings.Contains(output, "claude: blocked (plugin.delivery.native-unverified)") {
+		t.Fatalf("inspect must report the native delivery refusal for Claude:\n%s", output)
 	}
 }
 

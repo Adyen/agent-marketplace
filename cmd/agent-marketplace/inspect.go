@@ -20,9 +20,9 @@ import (
 )
 
 type pluginInspection struct {
-	entry    catalog.Entry
-	source   config.RegistryEntry
-	delivery string
+	entry           catalog.Entry
+	source          config.RegistryEntry
+	deliveryRequest string
 }
 
 func newInspectCmd() *cobra.Command {
@@ -98,12 +98,12 @@ func findPluginForInspection(result pipeline.ResolveResult, name string) (plugin
 		}
 		for _, entry := range loaded.Entries {
 			if entry.Kind == ir.KindPlugin && entry.Name == name {
-				inspection := pluginInspection{entry: entry, source: source, delivery: "auto"}
+				inspection := pluginInspection{entry: entry, source: source, deliveryRequest: "auto"}
 				for _, artifact := range result.Resolved {
 					if artifact.Kind == ir.KindPlugin && artifact.Name == name &&
 						artifact.Source == source.Source && artifact.CatalogKey == key &&
 						artifact.Selection != nil && artifact.Selection.Delivery != "" {
-						inspection.delivery = artifact.Selection.Delivery
+						inspection.deliveryRequest = artifact.Selection.Delivery
 						break
 					}
 				}
@@ -200,13 +200,17 @@ func writePluginInspection(out io.Writer, inspection pluginInspection, locks []p
 		})
 	}
 	fmt.Fprintln(&report, "TARGET DELIVERY:")
+	sourceKind := ""
+	if entry.Plugin != nil {
+		sourceKind = entry.Plugin.Source.Kind
+	}
 	for _, target := range harnesscompile.TargetNames() {
 		state := "unavailable"
 		if plugin != nil {
-			state = "decomposed"
-			if inspection.delivery == "native" {
-				state = "native (pending)"
-			}
+			resolution := pipeline.ResolvePluginDelivery(
+				inspection.deliveryRequest, plugin.Format, sourceKind, harnesscompile.Target(target),
+			)
+			state = resolution.String()
 		}
 		for _, blocker := range blockers {
 			if blocker.Target == "" || blocker.Target == target {

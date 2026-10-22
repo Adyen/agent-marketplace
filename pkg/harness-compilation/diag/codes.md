@@ -687,13 +687,17 @@ key or a hook event name), the resource name, and content digests are reported.
 | `plugin.member.literal-unrepresentable` | A plugin MCP member carries placeholder-like text the destination harness would reinterpret, and no literal escape exists; the member was blocked | Rewrite the value without placeholder-like text, or deliver to a target that can carry it literally |
 | `plugin.member.restriction-unsupported` | A plugin member field is a restriction the destination plugin surface cannot enforce; the member was blocked rather than installed without it | Remove the restricted field, or deliver to a target that enforces it |
 | `plugin.compile.package-required` | A plugin resource reached the per-resource Compile boundary; plugins compile through the package compile entry point | Call the package compile entry point instead of Compile |
-| `plugin.delivery.pending` (warning) | A selected plugin requests native delivery, which is not available yet; the plugin was not decomposed | Use `auto` or `decompose` for member delivery, or wait for native delivery support |
+| `plugin.delivery.pending` (warning) | An external Git plugin package cannot be acquired for delivery, or the plugin has no member selection plan; no members were delivered | Use a local directory package, or refresh the plugin selection and run sync again |
+| `plugin.delivery.native-unverified` | Native plugin delivery was requested for a harness whose catalog does not verify it; no plugin members were written | Use `auto` or `decompose`, or wait until a native-delivery probe verifies the target |
 | `plugin.catalog.shared-origin` | Two selected catalog entries resolve to the same external origin, ref, and subdirectory; their lock records would collapse into one, so the selection is refused | Select only one of the entries, or split the packages into distinct origins or subdirectories |
 | `plugin.selection.undeclared-source` | A collection authored in one config layer selects a plugin from a format source that layer does not declare; the selection would record in no acquisition lock, so it is refused | Declare the format source in the selecting layer, or author the selection in the layer that declares it |
 | `plugin.namespace-collision` | A decomposed plugin member's installed name collides with another selected resource in the same target and scope; the plugin instance was refused | Rename or exclude the conflicting resource; plugin member names are not suffixed |
 | `plugin.namespace-invalid` | A decomposed plugin member's installed name is invalid for the target; the plugin instance was refused | Use a plugin and member name that satisfy the target's resource-name rules |
 | `plugin.generation.publish` | An immutable plugin package generation could not be published; the previous plugin projection was retained | Restore a readable, contained plugin package and re-run sync |
 | `plugin.generation.missing` | A required immutable plugin package generation is missing or changed; plugin drift could not be checked safely | Re-run writable sync to publish the verified package generation |
+| `plugin.registration.unsupported` | The target has no declared native plugin registration layout; no plugin output was written | Use `decompose` or select a target with native plugin registration support |
+| `plugin.registration.collision` | An unmanaged native plugin registration uses a desired key; the existing entry was preserved | Remove the handwritten collision or run sync after establishing ownership through a supported path |
+| `plugin.registration.reload-required` (warning) | A changed native plugin generation requires a harness reload | Restart or reload the harness before using the updated plugin |
 
 ### Devin doctor and repair codes
 

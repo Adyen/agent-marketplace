@@ -46,7 +46,8 @@ func pluginNamespaceRefusals(resolved []resolver.ResolvedArtifact) (map[string]b
 	var diagnostics []diag.Diagnostic
 	reported := map[string]bool{}
 	for _, resource := range resolver.MaterializationWinners(resolved) {
-		if resource.Resource == nil || resource.Resource.Kind() == ir.KindPlugin {
+		if resource.Resource == nil || resource.Resource.Kind() == ir.KindPlugin ||
+			resource.PluginPackage != nil && resource.PluginPackage.Delivery == "native" {
 			continue
 		}
 		isMember := resource.PluginPackage != nil

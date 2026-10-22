@@ -195,12 +195,18 @@ func nativeHookJSONLayout(key outputKey, repoRoot string) (harness.Destination, 
 	if matches != 1 {
 		return harness.Destination{}, ownedJSONFileSpec{}, fmt.Errorf("target %s has no unique native hook destination", key.target)
 	}
+	var registrationContainers []string
+	if registration, ok := targetmeta.NativePluginRegistration(targetmeta.Target(key.target)); ok &&
+		registration.Shape == targetmeta.NativeRegistrationClaudeSettings && registration.Path == artifactPath {
+		registrationContainers = []string{"enabledPlugins", "extraKnownMarketplaces"}
+	}
 	return destination, ownedJSONFileSpec{
-		rel:                   rel,
-		container:             declaration.file.Member,
-		envelope:              declaration.file.Envelope,
-		hookShape:             declaration.aggregate.Shape,
-		legacyMarkedFlatHooks: declaration.aggregate.LegacyMarkedFlatHooks || declaration.file.LegacyMarkedFlatHooks,
+		rel:                       rel,
+		container:                 declaration.file.Member,
+		additionalKeyedContainers: registrationContainers,
+		envelope:                  declaration.file.Envelope,
+		hookShape:                 declaration.aggregate.Shape,
+		legacyMarkedFlatHooks:     declaration.aggregate.LegacyMarkedFlatHooks || declaration.file.LegacyMarkedFlatHooks,
 	}, nil
 }
 

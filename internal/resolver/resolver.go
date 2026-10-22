@@ -92,6 +92,8 @@ type PluginPackage struct {
 	PackageRoot        string
 	CatalogFingerprint string
 	Delivery           string
+	NativeRefresh      string
+	ReloadRequired     bool
 	Scope              string
 	GenerationScope    string
 	MemberPath         string
@@ -109,6 +111,9 @@ type PluginPackage struct {
 
 type PluginTargetGeneration struct {
 	Scope           string
+	Delivery        string
+	NativeRefresh   string
+	ReloadRequired  bool
 	InstanceKey     string
 	GenerationKey   string
 	GenerationPath  string

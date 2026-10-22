@@ -110,18 +110,18 @@ func TestSyncSelectedPluginDecomposesMember(t *testing.T) {
 	}
 }
 
-func TestSyncNativePluginRemainsPending(t *testing.T) {
+func TestSyncNativePluginUnverifiedFailsWithoutDecomposing(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
 	repo, run := pluginCommandFixture(t, "    - {kind: plugin, name: review-kit, delivery: native}\n")
 
 	output, err := run("sync", "--no-backup")
-	if err != nil {
-		t.Fatalf("sync with native delivery selected must complete with a pending warning: %v\n%s", err, output)
+	if err == nil {
+		t.Fatalf("sync with unverified native delivery must fail:\n%s", output)
 	}
-	if !strings.Contains(output, "plugin.delivery.pending") || !strings.Contains(output, "review-kit") {
-		t.Fatalf("native delivery must remain pending for review-kit:\n%s", output)
+	if !strings.Contains(output, "plugin.delivery.native-unverified") || !strings.Contains(output, "review-kit") {
+		t.Fatalf("native delivery must fail as unverified for review-kit:\n%s", output)
 	}
 	if _, statErr := os.Lstat(filepath.Join(repo, ".claude", "skills", "review")); !os.IsNotExist(statErr) {
 		t.Fatalf("native delivery must not decompose plugin members: %v", statErr)

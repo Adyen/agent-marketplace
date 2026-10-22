@@ -62,6 +62,7 @@ func TestCodexNativeLayoutIsAvailable(t *testing.T) {
 					User:    NativeAggregateFile{Path: "config.toml", Member: "mcp_servers"},
 				},
 			},
+			Registrations: []NativeRegistration{{Path: "config.toml", Shape: NativeRegistrationCodexConfig}},
 		},
 	}}
 
@@ -71,6 +72,9 @@ func TestCodexNativeLayoutIsAvailable(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("LookupNativeLayout(codex) = %#v, want %#v", got, want)
+	}
+	if got, ok := NativePluginRegistration(TargetCodex); !ok || got != (NativeRegistration{Path: ".codex/config.toml", Shape: NativeRegistrationCodexConfig}) {
+		t.Errorf("NativePluginRegistration(codex) = %#v, %v; want .codex/config.toml registration", got, ok)
 	}
 
 	got.Partitions[0].Components[0] = "changed"
