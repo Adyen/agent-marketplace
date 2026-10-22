@@ -20,3 +20,7 @@ In symlink mode, the default, a Gemini subagent was never removed once it was th
 ## Impact
 
 The `pkg/harness-compilation/target` native layout, read through `internal/harness` by `internal/materialize` and `internal/pipeline`. How Gemini subagents install, their link targets and blocked-registry removal are unchanged.
+
+## Release note
+
+A Gemini subagent that is no longer selected is now removed by `sync` and `deinit`, including the last one and in symlink mode, and `~/.gemini/agents` is included in machine-scope backups.
