@@ -37,6 +37,10 @@ journey.test("space on a required organization resource is refused without write
   await step("select the required resource", () => terminal.write("j"), async () => {
     await locate(terminal, /Name:\s+org-review/).unique().expect();
     await locate(terminal, /Status:\s+required \(org\)/).unique().expect();
+    // Neither the detail pane nor the footer offers a toggle the row refuses.
+    await locate(terminal, "enter = full view").unique().expect();
+    await locate(terminal, "space = toggle").expect({ not: true });
+    await locate(terminal, "space toggle").expect({ not: true });
   });
   await step("space is refused with an explanation and no scope modal", () => terminal.write(" "), async () => {
     await locate(terminal, "required items cannot be toggled").expect();
