@@ -51,6 +51,8 @@ journey.test("registry text with terminal control bytes renders as visible escap
   });
   await step("its full view shows the body's control bytes as escapes", () => terminal.write("\r"), async () => {
     await locate(terminal, "esc/q back").unique().expect();
+    // The body loads after the frame, so wait for it before reading it whole.
+    await locate(terminal, "\\x1B[31mred\\x1B[0m").unique().expect();
     await assertScreenHas("Hostile\\x1B[31mred\\x1B[0m");
   });
   await step("leaving the full view restores the list unchanged", () => terminal.write("\x1b"), async () => {
