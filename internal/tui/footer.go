@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -88,6 +89,9 @@ func (m Model) footerFloor() []footerItem {
 // they drop individually from the end when the footer runs out of room.
 func (m Model) footerActionHints() []footerItem {
 	actions := [][2]string{{"/", "search"}, {"space", "toggle"}, {"s", "sync"}, {"H", "harnesses"}, {"E", "config"}, {"v", "view"}}
+	if r, ok := m.selectedRow(); ok && rowToggleDenial(r) != toggleEligible {
+		actions = slices.DeleteFunc(actions, func(a [2]string) bool { return a[0] == "space" })
+	}
 	if m.failuresOrDrift() || len(m.discoveryErrs) > 0 {
 		actions = append([][2]string{{"r", "reload"}}, actions...)
 	}
@@ -225,7 +229,7 @@ func renderErrorFooter(m Model) string {
 	}
 	latest := ""
 	if err := m.errs[len(m.errs)-1]; err != nil {
-		latest = sanitizeTerminalData(fmt.Sprint(err), terminalSingleLine)
+		latest = sanitizeTerminalData(diagnosticCause(err), terminalSingleLine)
 	}
 	if latest == "" {
 		return footer

@@ -47,10 +47,35 @@ overrides:
   "devalue@<5.9.3": "5.9.3"
   "esbuild": "0.28.1"
   "js-yaml": "4.3.2"
+  "launch-editor@<2.14.2": "2.14.2"
   "nanoid": "6.0.1"
   "prosemirror-view@<1.42.3": "1.42.3"
   "semver@^6.0.0": "7.7.3"
+  "shell-quote@<1.11.0": "1.11.0"
+  # 4.0.2 also upgrades the exact-pinned argv-parser to patched 2.0.1.
+  "simple-git@<4.0.2": "4.0.2"
+  "source-map-js@<1.2.2": "1.2.2"
   "svgo": "4.1.0"
   "undici": "8.10.2"
+  "vite@>=8.2.0 <8.2.4": "8.2.4"
 minimumReleaseAgeExclude:
   - undici
+  # Targeted exceptions for security fixes; retain the general cooldown.
+  - "@simple-git/*"
+  - "@vitest/*"
+  - launch-editor
+  - markdown-it
+  - sanitize-html
+  - shell-quote
+  - simple-git
+  - source-map-js
+  - vite
+  - vitest
+patchedDependencies:
+  # simple-git v4 removes its default export; keep the existing consumer working.
+  "@nuxt/devtools@3.4.0": patches/nuxt-devtools@3.4.0.patch
+  # No fixed releases yet. Keep these patches until upstream releases fixes.
+  # GHSA-vfj7-8cjw-p6xm; bounds parsed AST depth, including parentheses.
+  braces@3.0.3: patches/braces@3.0.3.patch
+  # GHSA-86w9-cpqp-85rv; digitalbazaar/forge#1152.
+  node-forge@1.4.0: patches/node-forge@1.4.0.patch
