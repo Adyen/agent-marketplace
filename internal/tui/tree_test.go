@@ -248,6 +248,29 @@ func TestBuildRowsMalformedRowsCarryTheirRegistry(t *testing.T) {
 	}
 }
 
+// A malformed row reports the kind its failed load was for in its label and
+// detail, and "unknown" when the producer could not classify it.
+// spec: tui-rendering/malformed-rows-show-their-kind
+func TestBuildRowsMalformedRowsShowTheirKind(t *testing.T) {
+	catalogs := map[string]catalog.LoadedCatalog{"k": {Malformed: []skill.MalformedSkill{
+		{DirName: "deploy.md", Path: "commands/deploy.md", Kind: ir.KindCommand.String(), Error: fmt.Errorf("ingest.claude.load-command-failed: yaml")},
+		{DirName: "catalog.discover.sub-bundles-ignored", Path: "skills", Error: fmt.Errorf("catalog.discover.sub-bundles-ignored: ignored")},
+	}}}
+	cfg := &config.Config{Registries: []config.RegistryEntry{{URL: "file:///registries/fixture.git", Ref: "main", CatalogKey: "k"}}}
+	labels := map[string]string{}
+	for _, r := range buildRows(cfg, catalogs, nil, nil, materialize.DriftReport{}) {
+		if r.IsMalformed {
+			labels[r.Artifact.Name] = resourceLabel(r)
+		}
+	}
+	if got := labels["deploy.md"]; got != "command fixture/deploy.md" {
+		t.Fatalf("malformed command label = %q, want command fixture/deploy.md", got)
+	}
+	if got := labels["catalog.discover.sub-bundles-ignored"]; !strings.HasPrefix(got, "unknown ") {
+		t.Fatalf("unclassified malformed label = %q, want an unknown kind", got)
+	}
+}
+
 func TestBuildRowsIncludesMalformedFromCatalog(t *testing.T) {
 	// Regression test: malformed skills from catalog must
 	// appear in buildRows output so the TUI renders them.

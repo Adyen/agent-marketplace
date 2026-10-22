@@ -22,6 +22,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 // maxFrontmatterLines bounds the best-effort frontmatter scan in
@@ -99,6 +101,28 @@ func kindsCompatible(entryKind, wantKind string) bool {
 		return true
 	}
 	return entryKind == wantKind
+}
+
+// MalformedKind returns the resource kind a malformed entry's failed load was
+// for, and false when the producer could not classify it.
+func MalformedKind(m MalformedSkill) (ir.ResourceKind, bool) {
+	value := strings.TrimSpace(m.Kind)
+	if value == ir.KindRule.String() {
+		return ir.KindRule, true
+	}
+	if value == "" || value == "all" {
+		return 0, false
+	}
+	return ParseKind(value)
+}
+
+// MalformedKindLabel is the kind label shown for a malformed entry: its known
+// kind, or "unknown" when the failure was not classified.
+func MalformedKindLabel(m MalformedSkill) string {
+	if kind, ok := MalformedKind(m); ok {
+		return KindLabel(kind)
+	}
+	return "unknown"
 }
 
 // KindsCompatible reports whether a malformed entry of kind entryKind can

@@ -1032,11 +1032,13 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 			}
 			seen[seenKey] = struct{}{}
 
+			kind, _ := skill.MalformedKind(m)
 			rows = append(rows, row{
-				IsMalformed:  true,
-				MalformedMsg: m.Error.Error(),
+				IsMalformed:   true,
+				MalformedMsg:  m.Error.Error(),
+				MalformedKind: skill.MalformedKindLabel(m),
 				Artifact: resolver.ResolvedArtifact{
-					Entry:      catalog.Entry{Name: name, Path: m.Path},
+					Entry:      catalog.Entry{Name: name, Kind: kind, Path: m.Path},
 					CatalogKey: catalogKey,
 				},
 				RegistryURL:  registry.URL,

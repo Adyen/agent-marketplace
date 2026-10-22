@@ -274,7 +274,7 @@ func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, 
 		for _, malformed := range catalogForEntry.Malformed {
 			rows = append(rows, listRow{
 				Registry: displayName,
-				Kind:     "skill",
+				Kind:     skill.MalformedKindLabel(malformed),
 				Name:     malformed.DirName,
 				Tags:     "",
 				Status:   fmt.Sprintf("malformed: %v", malformed.Error),
@@ -347,7 +347,7 @@ func buildListRows(cfg *config.Config, catalogs map[string]loadedCatalog, resolv
 		for _, malformed := range catalogs[entry.CatalogKey].Malformed {
 			rows = append(rows, listRow{
 				Registry: registryDisplayName(entry.URL),
-				Kind:     "skill",
+				Kind:     skill.MalformedKindLabel(malformed),
 				Name:     malformed.DirName,
 				Tags:     "",
 				Status:   fmt.Sprintf("malformed: %v", malformed.Error),
