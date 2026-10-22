@@ -122,6 +122,7 @@ func deduplicateDiagnostics(diagnostics []tuiDiagnostic) []tuiDiagnostic {
 }
 
 func (s *diagnosticStore) replaceSnapshot(diagnostics []tuiDiagnostic) {
+	previousWarnings := warningKeys(s.snapshot)
 	diagnostics = append([]tuiDiagnostic(nil), diagnostics...)
 	clear(s.snapshot)
 	for i := range diagnostics {
@@ -133,7 +134,47 @@ func (s *diagnosticStore) replaceSnapshot(diagnostics []tuiDiagnostic) {
 		}
 	}
 	s.snapshot = deduplicateDiagnostics(diagnostics)
+	s.retireOperationCopies(previousWarnings, warningKeys(s.snapshot))
 	slog.Debug("tui snapshot diagnostics replaced", "count", len(s.snapshot))
+}
+
+// warningKeys returns the stable keys of the warnings among diagnostics.
+func warningKeys(diagnostics []tuiDiagnostic) map[string]struct{} {
+	keys := make(map[string]struct{}, len(diagnostics))
+	for _, d := range diagnostics {
+		if d.severity == diagnosticWarning && d.err != nil {
+			keys[d.stableKey] = struct{}{}
+		}
+	}
+	return keys
+}
+
+// retireOperationCopies drops operation warnings that repeated a warning of
+// the previous snapshot which the accepted snapshot no longer reports: both
+// described the same configuration state, which has been resolved.
+func (s *diagnosticStore) retireOperationCopies(previous, current map[string]struct{}) {
+	if len(previous) == 0 {
+		return
+	}
+	originalLength := len(s.operations)
+	kept := s.operations[:0]
+	retired := 0
+	for _, d := range s.operations {
+		if d.severity == diagnosticWarning {
+			_, reported := previous[d.stableKey]
+			_, still := current[d.stableKey]
+			if reported && !still {
+				retired++
+				continue
+			}
+		}
+		kept = append(kept, d)
+	}
+	clear(s.operations[len(kept):originalLength])
+	s.operations = kept
+	if retired > 0 {
+		slog.Debug("tui operation warnings retired by snapshot", "retired", retired)
+	}
 }
 
 func (s *diagnosticStore) recordOperationFailure(operation operationKind, category diagnosticCategory, errs ...error) {
@@ -208,6 +249,22 @@ func (s *diagnosticStore) recordOperationSuccess(operation operationKind) {
 	}
 }
 
+// visible returns the diagnostics the user can still act on: an operation
+// warning that repeats a current snapshot warning is hidden, because the
+// snapshot copy already reports the same state.
+func (s diagnosticStore) visible() []tuiDiagnostic {
+	snapshotWarnings := warningKeys(s.snapshot)
+	visible := make([]tuiDiagnostic, 0, len(s.snapshot)+len(s.operations))
+	visible = append(visible, s.snapshot...)
+	for _, d := range s.operations {
+		if _, repeated := snapshotWarnings[d.stableKey]; repeated && d.severity == diagnosticWarning {
+			continue
+		}
+		visible = append(visible, d)
+	}
+	return visible
+}
+
 func (s diagnosticStore) all() []tuiDiagnostic {
 	all := make([]tuiDiagnostic, 0, len(s.snapshot)+len(s.operations))
 	all = append(all, s.snapshot...)
@@ -235,8 +292,9 @@ func diagnosticValues(diagnostics []tuiDiagnostic, severity diagnosticSeverity) 
 }
 
 func (m *Model) syncDiagnosticViews() {
-	m.errs = diagnosticValues(m.diagnostics.all(), diagnosticError)
-	m.warnings = diagnosticValues(m.diagnostics.all(), diagnosticWarning)
+	visible := m.diagnostics.visible()
+	m.errs = diagnosticValues(visible, diagnosticError)
+	m.warnings = diagnosticValues(visible, diagnosticWarning)
 }
 
 func (m *Model) replaceSnapshotDiagnostics(diagnostics []tuiDiagnostic, errs, warnings []error) {
