@@ -56,7 +56,8 @@ journey.test("page keys move by half and full pages, and pasted text only ever b
     await selected("skill-29");
   });
 
-  await step("select beta-skill", () => terminal.write("gj"), () => selected("beta-skill"));
+  await step("jump to the top", () => terminal.write("g"), onHeader);
+  await step("select beta-skill", () => terminal.write("j"), () => selected("beta-skill"));
   await step("open its toggle modal", () => terminal.write(" "), async () => {
     await locate(terminal, "Local exclude: no").unique().expect();
   });
