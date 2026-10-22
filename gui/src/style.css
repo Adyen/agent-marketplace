@@ -323,6 +323,14 @@ textarea:focus-visible,
   margin-left: auto;
 }
 
+.gui-nav-row__count--danger {
+  color: var(--am-color-status-danger);
+}
+
+.gui-nav-row__count--warning {
+  color: var(--am-color-status-warning);
+}
+
 .gui-nav-row--compact {
   padding-left: 12px;
 }
@@ -1063,6 +1071,53 @@ textarea:focus-visible,
 .gui-inspector__description {
   color: var(--gui-ink-2);
   margin: 0 0 12px;
+}
+
+.gui-inspector__head {
+  align-items: flex-start;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.gui-inspector__heading {
+  min-width: 0;
+}
+
+.gui-diagnostics-view {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 24px 24px;
+}
+
+.gui-diagnostics-view__card {
+  min-width: 0;
+}
+
+.gui-diagnostics-view__meta {
+  color: var(--gui-ink-2);
+}
+
+.gui-diagnostics-view__empty {
+  align-items: center;
+  color: var(--gui-ink-2);
+  display: flex;
+  gap: 8px;
+  margin: 0;
+}
+
+.gui-diagnostics-view .gui-diagnostics__message {
+  -webkit-box-orient: unset;
+  -webkit-line-clamp: unset;
+  display: block;
+}
+
+.gui-diagnostics-view .gui-diagnostics__message--single {
+  display: block;
 }
 
 .gui-inspector__actions {

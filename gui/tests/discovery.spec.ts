@@ -80,7 +80,8 @@ test('built GUI consumes cached-first Marketplace discovery across a held truste
     await expect(localPending).toBeVisible({ timeout: 10_000 })
     await expect(cachedRemote).toBeVisible({ timeout: 10_000 })
     await expect(detail).toContainText('verification', { timeout: 10_000 })
-    await expect(detail).toContainText('Drift: pending', { timeout: 10_000 })
+    await page.getByRole('button', { name: 'Show diagnostics' }).click()
+    await expect(page.locator('.gui-diagnostics-view')).toContainText('Drift: pending', { timeout: 10_000 })
     await page.screenshot({ path: testInfo.outputPath('discovery-held-cache.png'), fullPage: true, animations: 'disabled' })
     await expect(discoveryHealth).toContainText('fresh', { timeout: 10_000 })
     if (bootstrap.marketplaceEndpoint == null) {
@@ -93,6 +94,7 @@ test('built GUI consumes cached-first Marketplace discovery across a held truste
     actions.push('Pending local row and fresh cached Marketplace row rendered while held')
     await saveActions(testInfo, actions)
     await page.screenshot({ path: testInfo.outputPath('discovery-held-cache.png'), fullPage: true, animations: 'disabled' })
+    await page.getByRole('button', { name: 'Show all groups' }).click()
 
     const telemetryBefore = telemetryRequests
 
@@ -128,7 +130,9 @@ test('built GUI consumes cached-first Marketplace discovery across a held truste
     await expect(remote).toBeVisible({ timeout: 60_000 })
     await expect(remote).toHaveAttribute('aria-selected', 'true')
     await expect(page.locator('.workspace__search-status')).toContainText('0 local matches')
+    await page.getByRole('button', { name: 'Show diagnostics' }).click()
     await expect(discoveryHealth).toContainText('miss')
+    await page.getByRole('button', { name: 'Show all groups' }).click()
     expect(discoveryRequests).toBeGreaterThan(1)
     expect(telemetryRequests).toBe(telemetryBefore)
     await expect(detail).toContainText('remote-beta')
@@ -141,10 +145,12 @@ test('built GUI consumes cached-first Marketplace discovery across a held truste
     }
     await writeFile(bootstrap.discoveryRelease, 'released\n')
     released = true
-    await expect.poll(async () => /Drift: (ready|failed)/.test((await detail.innerText()) ?? ''), { timeout: 60_000 }).toBe(true)
+    await page.getByRole('button', { name: 'Show diagnostics' }).click()
+    await expect.poll(async () => /Drift: (ready|failed)/.test((await page.locator('.gui-diagnostics-view').innerText()) ?? ''), { timeout: 60_000 }).toBe(true)
+    await expect(discoveryHealth).toContainText('Marketplace')
+    await page.getByRole('button', { name: 'Show all groups' }).click()
     await expect(remote).toBeVisible({ timeout: 60_000 })
     await expect(remote).toHaveAttribute('aria-selected', 'true')
-    await expect(discoveryHealth).toContainText('Marketplace')
     actions.push('Released startup verification; the authoritative final view retained the current discovery selection and health')
     await saveActions(testInfo, actions)
     await page.screenshot({ path: testInfo.outputPath('discovery-final.png'), fullPage: true, animations: 'disabled' })

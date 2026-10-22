@@ -307,3 +307,76 @@ describe('target harness loading', () => {
     expect(wrapper.text()).not.toContain('Loading targets…')
   })
 })
+
+describe('diagnostics view', () => {
+  const warning = { severity: 'warning' as const, category: 'catalog', code: 'w', message: 'Retained warning' }
+  const failure = { severity: 'error' as const, category: 'config', code: 'e', message: 'Broken config' }
+
+  it('shows the sidebar count tinted by the worst severity and swaps the main column', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('a')], { diagnostics: [warning, failure] }) }))
+    await tick()
+
+    const nav = wrapper.get('button[aria-label="Show diagnostics"]')
+    expect(nav.text()).toContain('Diagnostics')
+    expect(nav.get('.gui-nav-row__count').text()).toBe('2')
+    expect(nav.get('.gui-nav-row__count').classes()).toContain('gui-nav-row__count--danger')
+    expect(wrapper.find('[role="option"]').exists()).toBe(true)
+
+    await nav.trigger('click')
+    await tick()
+    expect(nav.attributes('aria-current')).toBe('page')
+    expect(wrapper.get('.gui-pane-title').text()).toBe('Diagnostics')
+    expect(wrapper.get('.gui-diagnostics-view ul[aria-label="Diagnostics"]').text()).toContain('Retained warning')
+    expect(wrapper.get('[role="option"]').isVisible()).toBe(false)
+  })
+
+  it('returns to resources from the Resources row and shows no problems when clean', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('a')]) }))
+    await tick()
+
+    await wrapper.get('button[aria-label="Show diagnostics"]').trigger('click')
+    await tick()
+    expect(wrapper.get('.gui-diagnostics-view').text()).toContain('No problems found.')
+    expect(wrapper.get('button[aria-label="Show diagnostics"] .gui-nav-row__count').classes()).not.toContain('gui-nav-row__count--danger')
+
+    await wrapper.get('button[aria-label="Show all groups"]').trigger('click')
+    await tick()
+    expect(wrapper.find('.gui-diagnostics-view').exists()).toBe(false)
+    expect(wrapper.get('.gui-pane-title').text()).toBe('Resources')
+  })
+
+  it('keeps list shortcuts inert while diagnostics are shown', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('a')], { diagnostics: [warning] }) }))
+    await tick()
+    await wrapper.get('button[aria-label="Show diagnostics"]').trigger('click')
+    await tick()
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'v', bubbles: true }))
+    await tick()
+    expect(document.querySelector('[role="menu"], .gui-view-panel')).toBeNull()
+  })
+})
+
+describe('inspector remove action', () => {
+  it('shows remove as a trash icon in the resource header rather than a text button', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('a', { id: 'row-a', resourceAction: 'remove', checked: true })]) }))
+    await tick()
+    await wrapper.get('[role="option"][id="row-row-a"]').trigger('click')
+    await tick()
+
+    const detail = wrapper.get('aside[aria-label="Detail"]')
+    const trash = detail.get('button[aria-label="Remove Resource"]')
+    expect(trash.classes()).toContain('gui-icon-button--danger')
+    expect(trash.attributes('title')).toBe('Remove')
+    expect(trash.find('svg').exists()).toBe(true)
+    expect(detail.findAll('.gui-inspector__actions button').map((b) => b.text())).not.toContain('Remove')
+  })
+})

@@ -15,6 +15,7 @@ import Inspector from './Inspector.vue'
 import MainToolbar from './MainToolbar.vue'
 import ResourceActions from './ResourceActions.vue'
 import ResourceInspection from './ResourceInspection.vue'
+import DiagnosticsView from './DiagnosticsView.vue'
 import ResourceList, { rowElementId, rowKey, sectionElementId, sectionKey } from './ResourceList.vue'
 import Sidebar, { type SidebarGroup, type SidebarSource } from './Sidebar.vue'
 import SourcesSettings from './SourcesSettings.vue'
@@ -49,6 +50,7 @@ const setupDismissed = ref(false)
 const setupOpened = ref(false)
 const inspectionOpen = ref(false)
 const quitOpen = ref(false)
+const mainView = ref<'resources' | 'diagnostics'>('resources')
 const sidebar = ref<InstanceType<typeof Sidebar> | null>(null)
 const toolbar = ref<InstanceType<typeof MainToolbar> | null>(null)
 const inspector = ref<InstanceType<typeof Inspector> | null>(null)
@@ -167,6 +169,7 @@ function onSetupCancel() {
 }
 
 function openSearch() {
+  showResources()
   if (searchEditing.value) {
     return
   }
@@ -256,6 +259,7 @@ function dismissOverlays() {
 }
 
 function showAll() {
+  showResources()
   const list = listElement()
   if (list != null) {
     list.scrollTop = 0
@@ -263,6 +267,7 @@ function showAll() {
 }
 
 function selectGroup(groupID: string) {
+  showResources()
   const group = sectionViews.value.find((candidate) => candidate.path === groupID)
   if (group == null) {
     return
@@ -354,6 +359,8 @@ function onKeydown(event: KeyboardEvent) {
   if (event.key === '/') {
     event.preventDefault()
     openSearch()
+  } else if (mainView.value === 'diagnostics') {
+    return
   } else if (event.key === 'v') {
     event.preventDefault()
     toolbar.value?.openViewMenu()
@@ -436,6 +443,21 @@ const emptyState = computed<'resources' | 'search' | null>(() => {
   return (view.value.rows ?? []).length === 0 ? 'resources' : null
 })
 const discoveryFailed = computed(() => view.value?.discoveryError != null || (view.value?.discoveryHealth ?? []).some((health) => health.message !== ''))
+const diagnosticsCount = computed(() => view.value?.diagnostics.length ?? 0)
+const diagnosticsTone = computed<'danger' | 'warning' | 'info' | null>(() => {
+  const severities = new Set((view.value?.diagnostics ?? []).map((diagnostic) => diagnostic.severity))
+  if (severities.has('error')) return 'danger'
+  if (severities.has('warning')) return 'warning'
+  return null
+})
+
+function showDiagnostics() {
+  mainView.value = 'diagnostics'
+}
+
+function showResources() {
+  mainView.value = 'resources'
+}
 
 function nameParts(row: Row): NameSegment[] {
   const match = searchMatchesByID.value.get(row.id)
@@ -903,6 +925,9 @@ async function run(action: 'sync' | 'update') {
       :groups="navGroups"
       :pending-count="pendingCount"
       :pending-section-id="pendingSectionId"
+      :main-view="mainView"
+      :diagnostics-count="diagnosticsCount"
+      :diagnostics-tone="diagnosticsTone"
       :sources="sidebarSources"
       :row-source-labels="rowSourceLabels"
       :harnesses="view?.harnesses ?? []"
@@ -911,6 +936,7 @@ async function run(action: 'sync' | 'update') {
       @toggle="toggleSidebar"
       @search="openSearch"
       @show-all="showAll"
+      @show-diagnostics="showDiagnostics"
       @select-group="selectGroup"
       @open-sources="sourcesOpen = true"
       @open-settings="settingsOpen = true"
@@ -932,6 +958,7 @@ async function run(action: 'sync' | 'update') {
         :pending-count="pendingCount"
         :show-setup="configuration?.firstRun === true || setupOpen"
         :view-settings="viewSettings"
+        :title="mainView === 'diagnostics' ? 'Diagnostics' : 'Resources'"
         @toggle-sidebar="toggleSidebar"
         @toggle-inspector="toggleInspector"
         @open-search="openSearch"
@@ -954,7 +981,19 @@ async function run(action: 'sync' | 'update') {
         Agent Marketplace {{ view.latestVersion }} is available.
       </p>
 
-      <section v-if="emptyState === 'resources'" class="gui-empty" aria-label="No resources">
+      <DiagnosticsView
+        v-if="mainView === 'diagnostics'"
+        :drift="view?.drift ?? ''"
+        :discovery-enabled="view?.discoveryEnabled === true"
+        :discovery-loading="view?.discoveryLoading === true"
+        :discovery-error="view?.discoveryError ?? null"
+        :discovery-health="view?.discoveryHealth ?? []"
+        :discovery-failed="discoveryFailed"
+        :diagnostics="view?.diagnostics ?? []"
+        @retry-discovery="state?.retryDiscovery()"
+      />
+
+      <section v-if="mainView === 'resources' && emptyState === 'resources'" class="gui-empty" aria-label="No resources">
         <GuiIcon name="folder" />
         <h2 class="gui-empty__title">No resources yet</h2>
         <p class="gui-empty__body">Add a source to see the skills, commands, and other resources it provides.</p>
@@ -967,10 +1006,10 @@ async function run(action: 'sync' | 'update') {
           @click="sourcesOpen = true"
         />
       </section>
-      <p v-else-if="emptyState === 'search'" class="gui-empty gui-empty--muted">No resources match “{{ activeQuery }}”.</p>
+      <p v-else-if="mainView === 'resources' && emptyState === 'search'" class="gui-empty gui-empty--muted">No resources match “{{ activeQuery }}”.</p>
 
       <ResourceList
-        v-show="emptyState == null"
+        v-show="mainView === 'resources' && emptyState == null"
         ref="resourceList"
         :sections="sectionViews"
         :selected-key="selectedKey"
@@ -1015,17 +1054,9 @@ async function run(action: 'sync' | 'update') {
       :overlay="inspectorOverlay"
       :inert="inspectorFolded"
       :selected="selected"
-      :drift="view?.drift ?? ''"
-      :discovery-enabled="view?.discoveryEnabled === true"
-      :discovery-loading="view?.discoveryLoading === true"
-      :discovery-error="view?.discoveryError ?? null"
-      :discovery-health="view?.discoveryHealth ?? []"
-      :discovery-failed="discoveryFailed"
-      :diagnostics="view?.diagnostics ?? []"
       :action-disabled="!ready || configuration?.editable !== true || busy || resourceActionOpen"
       @open-resource-action="openResourceAction"
       @open-inspection="openInspection"
-      @retry-discovery="state?.retryDiscovery()"
     />
 
     <div

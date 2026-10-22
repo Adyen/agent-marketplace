@@ -50,7 +50,9 @@ test('built GUI searches the accepted local index by keyboard and restores saved
 
     await expect(list).toBeVisible({ timeout: 60_000 })
     await expect(options).toHaveCount(60, { timeout: 60_000 })
-    await expect(detail).toContainText('Drift: ready', { timeout: 60_000 })
+    await page.getByRole('button', { name: 'Show diagnostics' }).click()
+    await expect(page.locator('.gui-diagnostics-view')).toContainText('Drift: ready', { timeout: 60_000 })
+    await page.getByRole('button', { name: 'Show all groups' }).click()
     await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeEnabled({ timeout: 60_000 })
     actions.push('Startup ready: 60 local resources, Detail Drift: ready, Refresh enabled')
 

@@ -136,7 +136,9 @@ test('organization version_check false sends no release request and shows no not
     const refreshedRelease = waitForReleaseResponse(page)
     await page.getByRole('button', { name: 'Refresh' }).press('Enter')
     await expectReleaseResponse(refreshedRelease, '')
+    await page.getByRole('button', { name: 'Show diagnostics' }).click()
     await expect(page.getByText('Drift: ready')).toBeVisible({ timeout: 60_000 })
+    await page.getByRole('button', { name: 'Show all groups' }).click()
     expect(await readMark(mark)).toHaveLength(0)
     await expect(page.getByText('is available.')).not.toBeVisible()
     await expect(page.locator('.workspace__error')).toHaveCount(0)
@@ -157,7 +159,8 @@ test('user-layer version_check false is ignored with a warning while checks stay
     await expect(page.getByText('Agent Marketplace v2.0.0 is available.')).toBeVisible({ timeout: 60_000 })
     await expect(page.getByRole('option').filter({ hasText: 'solo' }).first()).toBeVisible({ timeout: 60_000 })
     expect(await readMark(mark)).toHaveLength(1)
-    await expect(page.locator('.workspace__detail')).toContainText('version_check', { timeout: 60_000 })
+    await page.getByRole('button', { name: 'Show diagnostics' }).click()
+    await expect(page.locator('.gui-diagnostics-view')).toContainText('version_check', { timeout: 60_000 })
   } finally {
     await harness.stop()
   }

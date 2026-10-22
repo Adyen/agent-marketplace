@@ -1,20 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { Snapshot } from './api/client'
-import type { Diagnostic, Row } from './controller'
-import { groupDiagnostics } from './diagnostics'
+import type { Row } from './controller'
 import GuiIcon from './GuiIcon.vue'
 
 const props = defineProps<{
   folded: boolean
   selected: Row | null
-  drift: string
-  discoveryEnabled: boolean
-  discoveryLoading: boolean
-  discoveryError: string | null
-  discoveryHealth: Snapshot['discoveryHealth']
-  discoveryFailed: boolean
-  diagnostics: Diagnostic[]
   actionDisabled: boolean
   overlay: boolean
 }>()
@@ -22,11 +13,10 @@ const props = defineProps<{
 const emit = defineEmits<{
   openResourceAction: [row: Row]
   openInspection: [row: Row]
-  retryDiscovery: []
 }>()
 
-type ButtonRef = { $el: HTMLElement } | null
-const openResourceButton = ref<ButtonRef>(null)
+type ButtonRef = { $el: HTMLElement } | HTMLElement | null
+const openResourceButton = ref<{ $el: HTMLElement } | null>(null)
 const resourceActionButton = ref<ButtonRef>(null)
 
 const resourceActionVerbs: Partial<Record<Row['resourceAction'], string>> = {
@@ -40,45 +30,19 @@ const resourceActionVerb = computed(() => resourceActionVerbs[props.selected?.re
 
 const resourceActionLabel = computed(() => (resourceActionVerb.value ? `${resourceActionVerb.value} Resource` : 'Resource action'))
 
-const resourceActionDanger = computed(() => props.selected?.resourceAction === 'remove' || props.selected?.resourceAction === 'exclude')
+const resourceActionIcon = computed(() => props.selected?.resourceAction === 'remove' || props.selected?.resourceAction === 'exclude')
 
 const statusTone = computed(() => (props.selected?.status === 'enabled' || props.selected?.status === 'installed' ? 'signal' : 'warning'))
-
-const driftTone = computed(() => {
-  switch (props.drift) {
-    case 'ready':
-      return 'signal'
-    case 'pending':
-      return 'warning'
-    case 'failed':
-      return 'danger'
-    default:
-      return null
-  }
-})
-
-const diagnosticGroups = computed(() => groupDiagnostics(props.diagnostics))
-
-const expandedDiagnostics = ref(new Set<string>())
-
-function toggleDiagnostic(key: string) {
-  const next = new Set(expandedDiagnostics.value)
-  if (next.has(key)) {
-    next.delete(key)
-  } else {
-    next.add(key)
-  }
-  expandedDiagnostics.value = next
-}
 
 defineExpose({
   focusOpenResource: () => openResourceButton.value?.$el.focus(),
   focusResourceAction(): boolean {
-    const button = resourceActionButton.value?.$el
-    if (!(button instanceof HTMLButtonElement) || button.disabled) {
+    const button = resourceActionButton.value
+    const element = button instanceof HTMLElement ? button : button?.$el
+    if (!(element instanceof HTMLButtonElement) || element.disabled) {
       return false
     }
-    button.focus()
+    element.focus()
     return true
   },
 })
@@ -97,8 +61,22 @@ defineExpose({
       <section class="gui-inspector__section">
         <template v-if="selected">
           <div :key="selected.id" class="gui-inspector__resource">
-            <p class="gui-caps gui-inspector__eyebrow">{{ selected.kind }}</p>
-            <h2 class="gui-inspector__title mono">{{ selected.displayName }}</h2>
+            <div class="gui-inspector__head">
+              <div class="gui-inspector__heading">
+                <p class="gui-caps gui-inspector__eyebrow">{{ selected.kind }}</p>
+                <h2 class="gui-inspector__title mono">{{ selected.displayName }}</h2>
+              </div>
+              <button
+                v-if="resourceActionIcon"
+                ref="resourceActionButton"
+                type="button"
+                class="gui-icon-button gui-icon-button--danger"
+                :aria-label="resourceActionLabel"
+                :title="resourceActionVerb"
+                :disabled="actionDisabled"
+                @click="emit('openResourceAction', selected)"
+              ><GuiIcon name="trash" /></button>
+            </div>
             <p class="gui-inspector__description">{{ selected.description }}</p>
             <dl>
               <dt>Registry</dt>
@@ -112,10 +90,10 @@ defineExpose({
             </dl>
             <div class="gui-inspector__actions">
               <UButton
-                v-if="selected.resourceAction !== 'none'"
+                v-if="selected.resourceAction !== 'none' && !resourceActionIcon"
                 ref="resourceActionButton"
                 :aria-label="resourceActionLabel"
-                :class="['gui-button--secondary', { 'gui-button--danger': resourceActionDanger }]"
+                class="gui-button--secondary"
                 color="neutral"
                 variant="soft"
                 :disabled="actionDisabled"
@@ -137,44 +115,6 @@ defineExpose({
           <GuiIcon name="file" />
           <p>Select a resource to inspect it.</p>
         </div>
-      </section>
-
-      <section class="gui-inspector__section">
-        <h2 class="gui-caps">Session</h2>
-        <p class="gui-kv">
-          <span v-if="driftTone" class="gui-dot" :class="`gui-dot--${driftTone}`" aria-hidden="true" /><span class="gui-kv__key">Drift:</span> <span class="mono">{{ drift }}</span>
-        </p>
-      </section>
-
-      <section v-if="discoveryEnabled" role="region" aria-label="Marketplace discovery health" class="gui-inspector__section workspace__discovery-health">
-        <h2 class="gui-caps">Marketplace discovery</h2>
-        <p v-if="discoveryLoading" role="status" aria-live="polite">Marketplace discovery is updating.</p>
-        <p v-if="discoveryError" role="status">{{ discoveryError }}</p>
-        <button v-if="discoveryFailed" type="button" aria-label="Retry Marketplace search" @click="emit('retryDiscovery')">Retry Marketplace search</button>
-        <ul v-if="discoveryHealth.length" aria-label="Marketplace endpoint health">
-          <li v-for="health in discoveryHealth" :key="health.id">
-            <p><strong>{{ health.label }}</strong><span class="mono gui-inspector__meta"> · {{ health.cacheState }} · {{ health.total }} {{ health.total === 1 ? 'result' : 'results' }}<span v-if="health.truncated"> · truncated</span></span></p>
-            <p v-if="health.message">{{ health.message }}</p>
-          </li>
-        </ul>
-      </section>
-
-      <section class="gui-inspector__section">
-        <h2 class="gui-caps">Diagnostics<span v-if="diagnostics.length > 0" class="gui-caps__count">{{ diagnostics.length }}</span></h2>
-        <ul v-if="diagnostics.length > 0" aria-label="Diagnostics" class="gui-diagnostics">
-          <li v-for="group in diagnosticGroups" :key="group.key" :class="`diag--${group.severity}`">
-            <button type="button" class="gui-diagnostics__row" :aria-expanded="expandedDiagnostics.has(group.key)" @click="toggleDiagnostic(group.key)">
-              <GuiIcon :name="group.severity === 'error' ? 'error' : group.severity === 'warning' ? 'warning' : 'info'" class="gui-diagnostics__icon" />
-              <span class="gui-visually-hidden">{{ group.severity }}: </span>
-              <span class="gui-diagnostics__message" :class="{ 'gui-diagnostics__message--single': group.messages.length === 1 }">{{ group.messages[0] }}</span>
-              <span v-if="group.messages.length > 1" class="gui-tag">×{{ group.messages.length }}</span>
-            </button>
-            <ul v-if="group.messages.length > 1 && expandedDiagnostics.has(group.key)" class="gui-diagnostics__messages">
-              <li v-for="(message, index) in group.messages" :key="index">{{ message }}</li>
-            </ul>
-          </li>
-        </ul>
-        <p v-else>None</p>
       </section>
     </div>
   </aside>

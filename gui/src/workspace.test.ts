@@ -191,6 +191,11 @@ async function startWork39HeldRemoval() {
   return { actionRequest, client, controller, next, plan, push, removed, wrapper }
 }
 
+async function openDiagnostics(wrapper: { get(selector: string): { trigger(event: string): Promise<unknown> } }) {
+  await wrapper.get('button[aria-label="Show diagnostics"]').trigger('click')
+  await tick()
+}
+
 describe('WorkspaceView', () => {
   it('groups rows by status with registry-qualified names, scope, and harness badges', async () => {
     const { client, push } = fakeClient()
@@ -267,6 +272,7 @@ describe('WorkspaceView', () => {
     )
     await tick()
 
+    await openDiagnostics(wrapper)
     const toggle = wrapper.get('ul[aria-label="Diagnostics"] button')
     expect(toggle.attributes('aria-expanded')).toBe('false')
     expect(toggle.text()).toContain(message)
@@ -295,6 +301,7 @@ describe('WorkspaceView', () => {
     )
     await tick()
 
+    await openDiagnostics(wrapper)
     const list = wrapper.get('ul[aria-label="Diagnostics"]')
     const toggles = list.findAll('button')
     expect(toggles).toHaveLength(2)
@@ -776,6 +783,7 @@ describe('WorkspaceView', () => {
     expect(wrapper.get('.gui-toast--progress .gui-toast__detail').text()).toBe('resolve')
     expect(controller.state.operation).toEqual(operation)
     expect(controller.state.diagnostics).toEqual([diagnostic])
+    await openDiagnostics(wrapper)
     expect(wrapper.find('ul[aria-label="Diagnostics"]').text()).toContain('Retained warning')
 
     push(event({ sequence: 3, generation: 2, operation, type: 'progress', payload: { progressSequence: 2, phase: 'materialize' } }))
@@ -1484,6 +1492,7 @@ describe('Event stream reconnect', () => {
     }))
     await tick()
 
+    await openDiagnostics(wrapper)
     const health = wrapper.get('[aria-label="Marketplace discovery health"]')
     expect(health.text()).toContain(label)
     expect(health.text()).toContain(message)
@@ -1530,6 +1539,7 @@ describe('Event stream reconnect', () => {
       },
     } as SessionEvent)
     await tick()
+    await openDiagnostics(wrapper)
     const retry = wrapper.find('button[aria-label="Retry Marketplace search"]')
     expect(retry.exists()).toBe(true)
     await retry.trigger('click')

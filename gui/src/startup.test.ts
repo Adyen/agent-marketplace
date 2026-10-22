@@ -98,6 +98,11 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
+async function openDiagnostics(wrapper: { get(selector: string): { trigger(event: string): Promise<unknown> } }) {
+  await wrapper.get('button[aria-label="Show diagnostics"]').trigger('click')
+  await tick()
+}
+
 describe('startup stage consumers', () => {
   // spec: session-startup/superseded-stage-delivery-cannot-overwrite-newer-state
   // spec: session-startup/a-stale-provisional-stage-cannot-publish-rows
@@ -202,7 +207,8 @@ describe('startup stage consumers', () => {
     const detail = wrapper.get('aside[aria-label="Detail"]')
     expect(detail.text()).toContain('Verified owned detail')
     expect(detail.text()).toContain('pending sync')
-    expect(detail.text()).toContain('Drift: pending')
+    await openDiagnostics(wrapper)
+    expect(wrapper.get('.gui-diagnostics-view').text()).toContain('Drift: pending')
     expect((wrapper.get('button[aria-label="Remove Resource"]').element as HTMLButtonElement).disabled).toBe(false)
 
     const finalOwned: ReturnType<typeof row> = { ...owned, group: 'enabled', status: 'enabled' }
@@ -213,10 +219,10 @@ describe('startup stage consumers', () => {
     expect(controller.state.rows).toEqual([finalOwned])
     expect(controller.state.rows[0]?.pendingVerification).toBe(false)
     expect(controller.state.diagnostics).toEqual([assessmentWarning])
-    expect(detail.text()).toContain('Assessment fixture warning')
+    expect(wrapper.get('.gui-diagnostics-view').text()).toContain('Assessment fixture warning')
     expect(detail.text()).toContain('enabled')
-    expect(detail.text()).toContain('Drift: ready')
-    expect(detail.text()).not.toContain('Drift: pending')
+    expect(wrapper.get('.gui-diagnostics-view').text()).toContain('Drift: ready')
+    expect(wrapper.get('.gui-diagnostics-view').text()).not.toContain('Drift: pending')
     expect(wrapper.text()).not.toContain('pending verification')
   })
 
@@ -276,6 +282,7 @@ describe('startup stage consumers', () => {
     expect(wrapper.find(`[role="option"][id="row-${finalOwned.id}"]`).exists()).toBe(true)
     expect(wrapper.get('aside[aria-label="Detail"]').text()).toContain('Verified owned detail')
     expect(wrapper.get('aside[aria-label="Detail"]').text()).toContain('enabled')
+    await openDiagnostics(wrapper)
     expect(wrapper.get('ul[aria-label="Diagnostics"]').text()).toContain('Final assessment warning')
     expect(client.action).not.toHaveBeenCalled()
     expect(client.configure).toHaveBeenCalledTimes(1)
@@ -303,6 +310,7 @@ describe('startup stage consumers', () => {
     expect(controller.state.rows).toEqual([])
     expect(controller.state.diagnostics).toEqual([failure])
     expect(wrapper.find(`[role="option"][id="row-${pendingOwned.id}"]`).exists()).toBe(false)
+    await openDiagnostics(wrapper)
     expect(wrapper.get('ul[aria-label="Diagnostics"]').text()).toContain('Startup resolution failed')
     expect((wrapper.get('button[aria-label="Sync"]').element as HTMLButtonElement).disabled).toBe(true)
     expect((wrapper.get('button[aria-label="Update"]').element as HTMLButtonElement).disabled).toBe(true)
@@ -373,7 +381,8 @@ describe('startup stage consumers', () => {
       expect(selectedOptionID(wrapper)).toBe(selectedDOMID)
       expect(detail.find('h2').text()).toBe(ownedHeading)
       expect(detail.find('p').text()).toBe(ownedDescription)
-      expect(detail.text()).toContain('Drift: ready')
+      await openDiagnostics(wrapper)
+      expect(wrapper.get('.gui-diagnostics-view').text()).toContain('Drift: ready')
       expect(wrapper.get('ul[aria-label="Diagnostics"]').text()).toContain('Previous assessment warning')
       expect(wrapper.get('ul[aria-label="Diagnostics"]').text()).not.toContain(stageDiagnostic.message)
       expect(wrapper.find(`[role="option"][id="row-${newPending.id}"]`).exists()).toBe(false)
@@ -386,6 +395,7 @@ describe('startup stage consumers', () => {
     expect(controller.state.drift).toBe('ready')
     expect(controller.state.diagnostics).toEqual([finalWarning])
     expect(wrapper.find(`[role="option"][id="row-${owned.id}"]`).exists()).toBe(false)
+    await openDiagnostics(wrapper)
     expect(wrapper.get('ul[aria-label="Diagnostics"]').text()).toContain('Final assessment warning')
     expect(wrapper.get('aside[aria-label="Detail"]').find('.gui-inspector__description').text()).toBe('Verified replacement detail')
   })

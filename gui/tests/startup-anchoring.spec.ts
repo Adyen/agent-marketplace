@@ -317,7 +317,9 @@ test('built GUI preserves a keyboard-selected pending Resource and its viewport 
     await config.send([snapshotEvent(1, 7, 'config', rows, { operation })])
     await expect(page.getByRole('option')).toHaveCount(40)
     await expect(detail).toContainText('Pending resource-00 details')
-    await expect(detail).toContainText('Drift: pending')
+    await page.getByRole('button', { name: 'Show diagnostics' }).click()
+    await expect(page.locator('.gui-diagnostics-view')).toContainText('Drift: pending')
+    await page.getByRole('button', { name: 'Show all groups' }).click()
 
     const first = page.getByRole('option').nth(0)
     await tabTo(page, first, 'first resource row', actions)

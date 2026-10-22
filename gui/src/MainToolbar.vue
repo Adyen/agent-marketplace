@@ -17,6 +17,7 @@ const props = defineProps<{
   pendingCount: number
   showSetup: boolean
   viewSettings: ViewSettings
+  title: string
 }>()
 
 const emit = defineEmits<{
@@ -81,7 +82,7 @@ defineExpose({
         aria-expanded="false"
         @click="emit('toggleSidebar')"
       ><GuiIcon name="sidebar" /></button>
-      <h1 class="gui-pane-title">Resources</h1>
+      <h1 class="gui-pane-title">{{ title }}</h1>
     </div>
     <div class="workspace__actions gui-toolbar__actions" role="toolbar" aria-label="Session actions">
       <div v-if="searchEditing" class="gui-search-field">

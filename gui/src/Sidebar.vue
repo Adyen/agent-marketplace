@@ -21,6 +21,9 @@ const props = defineProps<{
   groups: SidebarGroup[]
   pendingCount: number
   pendingSectionId: string
+  mainView: 'resources' | 'diagnostics'
+  diagnosticsCount: number
+  diagnosticsTone: 'danger' | 'warning' | 'info' | null
   sources: SidebarSource[]
   rowSourceLabels: ReadonlyMap<string, string>
   harnesses: string[]
@@ -35,6 +38,7 @@ const emit = defineEmits<{
   selectGroup: [id: string]
   openSources: []
   openSettings: []
+  showDiagnostics: []
   quit: []
 }>()
 
@@ -104,7 +108,7 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | 'signal' | null 
     </div>
 
     <nav class="gui-sidebar__nav">
-      <button type="button" class="gui-nav-row" aria-label="Show all groups" @click="emit('showAll')">
+      <button type="button" class="gui-nav-row" aria-label="Show all groups" :aria-current="mainView === 'resources' ? 'page' : undefined" @click="emit('showAll')">
         <GuiIcon name="folder" />
         <span class="gui-nav-row__label">Resources</span>
       </button>
@@ -112,6 +116,17 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | 'signal' | null 
         <GuiIcon name="sync" />
         <span class="gui-nav-row__label">Pending sync</span>
         <span class="gui-nav-row__count">{{ pendingCount }}</span>
+      </button>
+      <button
+        type="button"
+        class="gui-nav-row"
+        aria-label="Show diagnostics"
+        :aria-current="mainView === 'diagnostics' ? 'page' : undefined"
+        @click="emit('showDiagnostics')"
+      >
+        <GuiIcon :name="diagnosticsCount > 0 ? 'warning' : 'info'" />
+        <span class="gui-nav-row__label">Diagnostics</span>
+        <span class="gui-nav-row__count" :class="diagnosticsTone ? `gui-nav-row__count--${diagnosticsTone}` : ''">{{ diagnosticsCount }}</span>
       </button>
       <button type="button" class="gui-nav-row" aria-label="Open search" aria-keyshortcuts="Meta+K" @click="emit('search')">
         <GuiIcon name="search" />

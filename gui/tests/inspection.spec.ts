@@ -93,7 +93,9 @@ test('built GUI inspects an exact uninstalled Marketplace skill read-only', asyn
     const discoveryHealth = page.getByRole('region', { name: 'Marketplace discovery health' })
     await expect(list).toBeVisible({ timeout: 60_000 })
     await expect(remote).toBeVisible({ timeout: 30_000 })
+    await page.getByRole('button', { name: 'Show diagnostics' }).click()
     await expect(discoveryHealth).toContainText('fresh')
+    await page.getByRole('button', { name: 'Show all groups' }).click()
     if (bootstrap.marketplaceEndpoint == null) {
       throw new Error('Work36 verified Marketplace endpoint fixture missing')
     }
