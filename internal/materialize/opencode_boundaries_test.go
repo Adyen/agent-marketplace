@@ -166,7 +166,7 @@ func TestOpenCodeHookSupportRefusalRetainsInstallation(t *testing.T) {
 	for _, machine := range []bool{false, true} {
 		t.Run(fmt.Sprintf("machine=%t", machine), func(t *testing.T) {
 			repo := openCodeSandbox(t)
-			selected := additiveSafetyProvider(t, hcc.TargetOpenCode, machine, `/bin/sh "${DROID_PLUGIN_ROOT}/shared.sh"`, "exit 0\n")
+			selected := additiveSafetyProvider(t, hcc.TargetOpenCode, machine, `/bin/sh "${DROID_PLUGIN_ROOT}/hooks/shared.sh"`, "exit 0\n")
 			if report, err := Run(t.Context(), repo, []resolver.ResolvedArtifact{selected}); err != nil || diag.HasErrors(report.Diags) {
 				t.Fatalf("seed: %v %v", err, report.Diags)
 			}
@@ -262,7 +262,7 @@ func TestOpenCodeHookSiblingDeclarationsAreNeverInstalled(t *testing.T) {
 				t.Fatal(err)
 			}
 			slices.Sort(installed)
-			if len(installed) != 3 || installed[0] != "hook-support/"+strings.Split(installed[0], "/")[1]+"/selected/check.sh" || installed[1] != "hooks/agent-marketplace/selected.json" || installed[2] != "plugins/agent-marketplace.js" {
+			if len(installed) != 3 || installed[0] != "hook-support/"+strings.Split(installed[0], "/")[1]+"/selected/agent-marketplace/check.sh" || installed[1] != "hooks/agent-marketplace/selected.json" || installed[2] != "plugins/agent-marketplace.js" {
 				t.Fatalf("installed %v, want the selected declaration, its support script, and the adapter", installed)
 			}
 		})

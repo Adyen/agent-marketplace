@@ -146,6 +146,69 @@ func HookSupportReferenceStatus(command string, declared map[string]string) (mis
 	return missing, unsupported, nil
 }
 
+// HookSupportReferenceResult reports the outcome of checking literal
+// plugin-root path references in a hook command against the installed
+// bundle-relative support paths.
+type HookSupportReferenceResult struct {
+	Command string // command with legacy references rewritten to their bundle-relative path
+	Missing bool   // a literal reference resolved under neither meaning
+	Legacy  bool   // a reference resolved only under the legacy folder meaning
+}
+
+// CheckHookSupportReferences checks each literal ${TOKEN}/<path> reference in
+// command outside single quotes against the installed bundle-relative support
+// paths. A reference that resolves only under the legacy folder meaning,
+// prefixing the path with legacyPrefix, is rewritten to that path; an empty
+// legacyPrefix disables the fallback. Bare tokens and references whose path
+// carries a shell expansion or glob are not checked.
+func CheckHookSupportReferences(command string, installed []string, legacyPrefix string) (HookSupportReferenceResult, error) {
+	references, err := hookpolicy.PluginRootReferences(command)
+	if err != nil {
+		return HookSupportReferenceResult{}, err
+	}
+	resolved := func(rel string) bool {
+		for _, p := range installed {
+			if p == rel || strings.HasPrefix(p, rel+"/") {
+				return true
+			}
+		}
+		return false
+	}
+	result := HookSupportReferenceResult{Command: command}
+	var out strings.Builder
+	pos := 0
+	var edits bool
+	for _, ref := range references {
+		if ref.Quote == '\'' || ref.PathStart < 0 || ref.Dynamic {
+			continue
+		}
+		rel := strings.Trim(command[ref.PathStart:ref.PathEnd], "/")
+		if rel == "" {
+			continue
+		}
+		cleaned := path.Clean(rel)
+		switch {
+		case cleaned == ".":
+		case cleaned == ".." || strings.HasPrefix(cleaned, "../"):
+			result.Missing = true
+		case resolved(cleaned):
+		case legacyPrefix != "" && resolved(legacyPrefix+"/"+cleaned):
+			out.WriteString(command[pos:ref.PathStart])
+			out.WriteString(legacyPrefix + "/")
+			pos = ref.PathStart
+			edits = true
+			result.Legacy = true
+		default:
+			result.Missing = true
+		}
+	}
+	if edits {
+		out.WriteString(command[pos:])
+		result.Command = out.String()
+	}
+	return result, nil
+}
+
 // HookMaterializationSupportFiles is shared by publication and installation.
 func HookMaterializationSupportFiles(sourcePath, sourceHarness string) ([]string, error) {
 	names, err := HookSupportFiles(sourcePath)

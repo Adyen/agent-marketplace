@@ -62,11 +62,11 @@ func TestFilesystemHookSupportSourceAdmission(t *testing.T) {
 			if bytes.Contains(nativeBytes, []byte("_managed_by")) {
 				t.Fatalf("Factory native hook output contains an in-file marker: %s", nativeBytes)
 			}
-			aliasMatches, err := filepath.Glob(filepath.Join(env.workspace, ".factory", "hook-support", "*", "PostToolUse-command", "alias.txt"))
+			aliasMatches, err := filepath.Glob(filepath.Join(env.workspace, ".factory", "hook-support", "*", "PostToolUse-command", "hooks", "alias.txt"))
 			if err != nil || len(aliasMatches) != 1 {
 				t.Fatalf("Factory alias support matches = %v / %v", aliasMatches, err)
 			}
-			helperMatches, err := filepath.Glob(filepath.Join(env.workspace, ".factory", "hook-support", "*", "PostToolUse-command", "helper.txt"))
+			helperMatches, err := filepath.Glob(filepath.Join(env.workspace, ".factory", "hook-support", "*", "PostToolUse-command", "hooks", "helper.txt"))
 			if err != nil || len(helperMatches) != 1 || filepath.Dir(helperMatches[0]) != filepath.Dir(aliasMatches[0]) {
 				t.Fatalf("Factory helper support matches = %v / %v", helperMatches, err)
 			}

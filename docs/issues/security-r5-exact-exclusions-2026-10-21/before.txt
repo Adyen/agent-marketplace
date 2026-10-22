@@ -1,0 +1,50 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4RebuildExactExclusionsCPU/requests=1-16         	 7738354	       308.3 ns/op	     528 B/op	       3 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=1-16         	 7665878	       312.2 ns/op	     528 B/op	       3 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=1-16         	 7686466	       312.9 ns/op	     528 B/op	       3 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=1-16         	 7701262	       310.5 ns/op	     528 B/op	       3 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=1-16         	 7730322	       311.2 ns/op	     528 B/op	       3 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=32-16        	  116874	     20509 ns/op	   29296 B/op	      54 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=32-16        	  116521	     20411 ns/op	   29296 B/op	      54 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=32-16        	  117081	     20404 ns/op	   29296 B/op	      54 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=32-16        	  117754	     20413 ns/op	   29296 B/op	      54 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=32-16        	  110736	     20506 ns/op	   29296 B/op	      54 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=256-16       	    3392	    704026 ns/op	  242224 B/op	     293 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=256-16       	    3469	    702647 ns/op	  242224 B/op	     293 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=256-16       	    3409	    703307 ns/op	  242224 B/op	     293 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=256-16       	    3400	    703308 ns/op	  242224 B/op	     293 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=256-16       	    3340	    703014 ns/op	  242224 B/op	     293 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=1024-16      	     205	  11695725 ns/op	 1062672 B/op	    1078 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=1024-16      	     204	  11664562 ns/op	 1062672 B/op	    1078 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=1024-16      	     205	  11655162 ns/op	 1062673 B/op	    1078 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=1024-16      	     205	  11687863 ns/op	 1062674 B/op	    1078 allocs/op
+BenchmarkV4RebuildExactExclusionsCPU/requests=1024-16      	     201	  11795149 ns/op	 1062674 B/op	    1078 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=1-16          	  199466	     12086 ns/op	   16374 B/op	     161 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=1-16          	  203058	     12226 ns/op	   16374 B/op	     161 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=1-16          	  197768	     12054 ns/op	   16374 B/op	     161 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=1-16          	  194013	     12155 ns/op	   16374 B/op	     161 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=1-16          	  196022	     12144 ns/op	   16374 B/op	     161 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=32-16         	   25681	     93063 ns/op	  101266 B/op	     856 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=32-16         	   25447	     93384 ns/op	  101266 B/op	     856 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=32-16         	   25982	     95533 ns/op	  101265 B/op	     856 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=32-16         	   25646	     92718 ns/op	  101266 B/op	     856 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=32-16         	   25903	     92515 ns/op	  101266 B/op	     856 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=256-16        	    2036	   1188794 ns/op	  729554 B/op	    5594 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=256-16        	    2019	   1185869 ns/op	  729545 B/op	    5594 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=256-16        	    2014	   1193191 ns/op	  729548 B/op	    5594 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=256-16        	    2041	   1184962 ns/op	  729545 B/op	    5594 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=256-16        	    2002	   1183707 ns/op	  729552 B/op	    5594 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=1024-16       	     175	  13600801 ns/op	 3028531 B/op	   22531 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=1024-16       	     175	  13634645 ns/op	 3028576 B/op	   22531 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=1024-16       	     175	  13666114 ns/op	 3028582 B/op	   22531 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=1024-16       	     175	  13636525 ns/op	 3028537 B/op	   22531 allocs/op
+BenchmarkParseV4ExclusionsCPU/exact/requests=1024-16       	     174	  13643898 ns/op	 3028557 B/op	   22531 allocs/op
+BenchmarkParseV4ExclusionsCPU/wildcard/requests=1024-16    	    1860	   1289205 ns/op	 2109277 B/op	   15332 allocs/op
+BenchmarkParseV4ExclusionsCPU/wildcard/requests=1024-16    	    1880	   1290515 ns/op	 2109286 B/op	   15332 allocs/op
+BenchmarkParseV4ExclusionsCPU/wildcard/requests=1024-16    	    1869	   1283813 ns/op	 2109270 B/op	   15332 allocs/op
+BenchmarkParseV4ExclusionsCPU/wildcard/requests=1024-16    	    1888	   1296343 ns/op	 2109278 B/op	   15332 allocs/op
+BenchmarkParseV4ExclusionsCPU/wildcard/requests=1024-16    	    1819	   1302887 ns/op	 2109273 B/op	   15332 allocs/op
+PASS

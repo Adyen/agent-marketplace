@@ -1241,6 +1241,26 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			}
 			continue
 		}
+		if isHook && plan.referenceMissing {
+			unknownHookSelection[key] = true
+			blockResource(key, w)
+			markResourceIncomplete(key, w, aggregateHandler)
+			missingDiag := hookSupportReferenceMissingDiag(string(w.target), w.skill.Name)
+			missingDiag.Source = compilepkg.SourceOf(w.skill.Resource)
+			allDiags = append(allDiags, missingDiag)
+			continue
+		}
+		if isHook && plan.referenceLegacy {
+			allDiags = append(allDiags, diag.Diagnostic{
+				Code:     diag.CodeHookSupportReferenceLegacy,
+				Severity: diag.SeverityWarning,
+				Target:   string(w.target),
+				Resource: w.skill.Name,
+				Message:  "A plugin-root reference resolved only under the deprecated folder-relative meaning; rewritten to the bundle-root path",
+				Hint:     fmt.Sprintf("Prefix the path after the plugin-root token with %s/ so it keeps working after the legacy meaning is removed", plan.bundlePrefixDir),
+				Source:   compilepkg.SourceOf(w.skill.Resource),
+			})
+		}
 		if nativeHook && plan.sourceDigest == "" {
 			unknownHookSelection[key] = true
 			blockResource(key, w)
@@ -1333,7 +1353,15 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			// machine-scope pass has to say so.
 			compileOptions = append(compileOptions, hcc.WithScope(hcc.ScopeUser))
 		}
-		result, err := hcc.Compile(w.skill.Resource, w.target, compileOptions...)
+		compileResource := w.skill.Resource
+		if isHook && plan.command != "" {
+			if hook, ok := compileResource.(*ir.Hook); ok && hook.Command != plan.command {
+				clone := *hook
+				clone.Command = plan.command
+				compileResource = &clone
+			}
+		}
+		result, err := hcc.Compile(compileResource, w.target, compileOptions...)
 		if err != nil {
 			blockResource(key, w)
 			markResourceIncomplete(key, w, aggregateHandler)

@@ -122,6 +122,8 @@ type Step struct {
 	PathsUnchanged  []string // files or trees whose bytes and metadata must be unchanged by this step
 	Symlinks        []string
 	RegularFiles    []string          // paths that must exist and not be symbolic links
+	GlobsExist      []string          // container path glob patterns that must each match at least one path
+	GlobsAbsent     []string          // container path glob patterns that must match nothing
 	FileContains    map[string]string // path -> substring
 	FileNotContains map[string]string // path -> substring that must NOT appear
 }
@@ -5553,6 +5555,22 @@ func assertTableStep(t *testing.T, env *Env, step Step, unchanged map[string]str
 				message = fmt.Sprintf("step %d: cannot inspect %q: %v", index, path, err)
 			}
 			tableStepError(t, firstErr, message, "", false)
+		}
+	}
+	for _, globs := range []struct {
+		patterns []string
+		absent   bool
+	}{{step.GlobsExist, false}, {step.GlobsAbsent, true}} {
+		for _, pattern := range globs.patterns {
+			matches, err := filepath.Glob(env.mustResolvePath(pattern))
+			switch {
+			case err != nil:
+				tableStepError(t, firstErr, fmt.Sprintf("step %d: glob %q: %v", index, pattern, err), "", false)
+			case globs.absent && len(matches) > 0:
+				tableStepError(t, firstErr, fmt.Sprintf("step %d: glob %q matched %v", index, pattern, matches), "", false)
+			case !globs.absent && len(matches) == 0:
+				tableStepError(t, firstErr, fmt.Sprintf("step %d: glob %q matched no path", index, pattern), "", false)
+			}
 		}
 	}
 	for path, before := range unchanged {
