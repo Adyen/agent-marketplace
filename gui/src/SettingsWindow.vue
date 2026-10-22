@@ -163,8 +163,7 @@ async function save() {
   }
   if (await props.controller.saveTargets(targets)) {
     actionError.value = null
-    await props.controller.loadConfiguration()
-    draft.value = new Set(configuration.value?.userTargets ?? targets)
+    draft.value = new Set(targets)
     return
   }
   actionError.value = props.controller.state.error ?? 'The action could not be started'

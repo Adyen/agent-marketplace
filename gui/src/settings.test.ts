@@ -12,6 +12,8 @@ import {
   event,
   fakeClient,
   mountWorkspace,
+  snapshot,
+  row,
   tick,
 } from './test-support'
 
@@ -537,5 +539,43 @@ describe('tabbed Settings window', () => {
     await tick()
     expect(client.configure).toHaveBeenCalledWith({ action: 'save-targets', targets: expect.any(Array) })
     expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
+  })
+})
+
+describe('accepted target save', () => {
+  it('keeps the submitted selection until the write settles and then reports it clean', async () => {
+    const { client, push } = settingsClient()
+    const { controller, wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1 }))
+    await tick()
+    await openSettings(wrapper)
+    const dialog = document.body.querySelector('[role="dialog"]')!
+    dialog.querySelector<HTMLElement>('#settings-tab-targets')!.click()
+    await tick()
+    checkboxByLabel('claude').click()
+    await tick()
+
+    const operation: OperationRef = { id: 12, kind: 'targets' }
+    ;(client.configure as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      push(event({ sequence: 2, generation: 2, operation }))
+      return operation
+    })
+    const save = Array.from(dialog.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent?.trim() === 'Save targets')!
+    save.click()
+    await tick()
+
+    expect(client.configure).toHaveBeenCalledTimes(1)
+    expect(controller.state.operation).toEqual(operation)
+    expect(isChecked(checkboxByLabel('claude'))).toBe(true)
+    expect(isChecked(checkboxByLabel('devin'))).toBe(true)
+
+    ;(client.configuration as ReturnType<typeof vi.fn>).mockResolvedValue(
+      settingsConfiguration({ userTargets: ['devin', 'future-harness', 'claude'] }),
+    )
+    push(event({ sequence: 3, generation: 2, operation: null, payload: snapshot([row('solo')], { settledOperation: operation }) }))
+    await tick()
+
+    expect(isChecked(checkboxByLabel('claude'))).toBe(true)
+    expect(dialog.textContent).not.toContain('Unsaved changes')
   })
 })

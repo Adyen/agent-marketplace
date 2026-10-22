@@ -45,7 +45,7 @@ describe('quit confirmation', () => {
   }
 
   // spec: session-interactions/confirmation-retains-all-user-choices
-  // spec: gui-shell/quit-confirms-only-unsynced-or-running-work
+  // spec: gui-shell/quit-with-nothing-pending-exits-immediately
   it('quit with nothing pending exits immediately without a confirmation or a sync', async () => {
     const { wrapper, onQuit, client } = quitMount(0)
     await tick()
@@ -58,7 +58,7 @@ describe('quit confirmation', () => {
     expect(client.telemetry).not.toHaveBeenCalled()
   })
 
-  // spec: gui-shell/quit-confirms-only-unsynced-or-running-work
+  // spec: gui-shell/quit-with-pending-or-running-work-confirms
   it('quit while a non-sync operation runs offers Cancel, Stay, and Quit', async () => {
     const { wrapper, onQuit, client, push } = quitMount(0)
     push(operationSnapshot(2, { id: 7, kind: 'update' }, 2))
@@ -84,7 +84,7 @@ describe('quit confirmation', () => {
     expect(client.telemetry).not.toHaveBeenCalled()
   })
 
-  // spec: gui-shell/quit-confirms-only-unsynced-or-running-work
+  // spec: gui-shell/quit-with-pending-or-running-work-confirms
   it('quit before the session finishes loading explains that unsynced changes are still being checked', async () => {
     const { client, push } = fakeClient()
     const onQuit = vi.fn()
@@ -106,7 +106,7 @@ describe('quit confirmation', () => {
     expect(client.action).not.toHaveBeenCalled()
   })
 
-  // spec: gui-shell/quit-confirms-only-unsynced-or-running-work
+  // spec: gui-shell/quit-with-nothing-pending-exits-immediately
   it('native close request with nothing pending exits without opening the confirmation', async () => {
     const listeners: Record<string, (() => void) | undefined> = {}
     const previousRuntime = window.runtime
@@ -131,7 +131,7 @@ describe('quit confirmation', () => {
     }
   })
 
-  // spec: gui-shell/quit-confirms-only-unsynced-or-running-work
+  // spec: gui-shell/quit-with-pending-or-running-work-confirms
   it('native close request with pending changes opens the confirmation and Stay keeps the app open', async () => {
     const listeners: Record<string, (() => void) | undefined> = {}
     const previousRuntime = window.runtime

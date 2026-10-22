@@ -152,10 +152,10 @@ alone separates it from the main column.
   Selecting a row scrolls the main list to that group's header and moves
   selection there, using the existing section selection.
 - **Sources**: a caps label with a ＋ icon button ("Sources") that opens the
-  Sources modal. Below it, one folder-icon row per configured source shows the
-  location, truncated in the middle, with a "managed outside the GUI" or
-  organization tag where it applies. Selecting a row opens the Sources modal
-  focused on that entry. The list is read-only; the modal performs all edits.
+  Settings window on its Sources tab. Below it, one folder-icon row per
+  configured source shows the location, truncated in the middle, with an ORG
+  tag where it applies. Selecting a row opens the same tab. The list is
+  read-only; the Settings window performs all edits.
 - **Footer**: the configured Harness targets as a compact mono summary (for
   example `Claude · Codex +1`), a newer-version notice when there is one (a
   green dot and "v4.3 available"), and a ⚙ icon button ("Settings").
@@ -231,24 +231,12 @@ in Codex's selected-thread row.
 ### Right inspector (foldable)
 
 The inspector uses the `--gui-s0100` surface and has its own 44 px header with
-the title "Details", resembling Codex's "Uncommitted changes" pane header. It
-is a vertical stack of sections, each with a caps label:
-
-1. **Resource**: the title `registry/kind/name` in mono, the description in
-   `--gui-ink-2`, and a `dl` laid out like the design's `.term-dl`
-   (`dt` in `--gui-ink-3`): Registry, Scope, Status, and Harnesses. Under it
-   is an action row with the primary resource action (Install or Remove, as a
-   solid button) and "Open resource" (secondary).
-2. **Session**: drift and Harness targets.
-3. **Marketplace discovery**: shown only when discovery is enabled. Each
-   endpoint is a row with its label, cache state, and result count, plus the
-   retry button.
-4. **Diagnostics**: one row per diagnostic, with a severity icon, the message,
-   and the severity color on the icon only. When there are none, the section
-   shows "None".
-
-The empty state, "Select a resource to inspect it.", is shown centered in
-`--gui-ink-3`.
+the title "Details". It holds only the selected resource: the caps eyebrow
+(kind), the display name in mono, the description in `--gui-ink-2`, and a
+`dl` with Registry, Scope, Status, and Harnesses. Session drift, Marketplace
+discovery, and diagnostics moved to the Diagnostics view (see the fourth
+review). The empty state, "Select a resource to inspect it.", is shown
+centered in `--gui-ink-3`.
 
 ### Folding behavior
 
@@ -314,8 +302,7 @@ Per modal:
 
 | Modal | Icon | Content |
 |---|---|---|
-| **Settings** (`HarnessSettings`) | gear | Grouped target lists under "Harness targets", an organization sub-list with a caption, Appearance as three theme preview tiles, a "Manage sources" row with counts, and a footnote for items managed outside the GUI. Footer row: "Unsaved changes" status, Cancel, and the solid "Save targets". |
-| **Sources** | folder | The source list as cards (location in mono, type tag, Remove icon button), then "Add source", which reveals `SourceForm` inline. Organization sources are read-only. |
+| **Settings** (`SettingsWindow`) | gear | A wide window with General, Harness targets, and Sources tabs. See the fourth review. |
 | **First run** | sparkle | A three-step flow with a step indicator (`1 Targets · 2 Telemetry · 3 Sources`). Telemetry consent is a choice list with *no* preselected row ("Share basic telemetry" / "Don't share"), and Continue stays disabled until the user picks one. Cancel writes nothing. |
 | **Resource action** (Install/Remove) | plus / minus | Label/value rows for the resource, the plan preview as a code card (12 px radius, mono, diff-colored lines), the risk acknowledgement as a toggle switch row, and the primary button "Install" or "Remove". |
 | **Confirmations** (quit, sync-and-quit, migration) | exit / sync | The question, then a choice list with the affirmative, negative, and cancel options from `session-interactions`, then "Continue". Escape maps to cancel. |
@@ -616,23 +603,13 @@ conflicts with an earlier section, this section wins.
 
 ### Settings
 
-- *Observed*: Settings repeats the source lists that the Sources modal
-  already shows. Its title, "Harness targets", names only one of its
-  sections.
-- *Rule*: the title is "Settings". Its caps sections are "Harness targets",
-  "Appearance", and "Sources".
-- Targets are rows in an inset `--gui-s0100` list. Each row toggles on a click
-  anywhere in it. A target that the organization also sets shows "Also set
-  by organization". Organization targets are a second read-only list under
-  "Organization", with a caption that says they always apply.
-- Appearance is three theme preview tiles (System, Light, Dark). Each tile
-  draws its own fixed palette, so the light tile stays light in dark mode.
-  The caption reads "Applies immediately."
-- "Manage sources" is one navigation row with a count, such as "2 configured
-  · 1 from organization", and a chevron. It closes Settings and opens Sources.
-- Items managed outside the GUI are a footnote, not a card.
-- The footer holds "Unsaved changes" on the left, shown only while the draft
-  differs from the saved targets. Then Cancel, then the solid Save targets.
+- *Observed*: Settings and Sources were separate modals, and Settings
+  repeated the source lists.
+- *Rule*: one window, titled "Settings", with three tabs. The entry points
+  decide the first tab: the gear opens General, and the sidebar Sources
+  control, source rows, and the empty-state "Add a source" open Sources. The
+  window is 960 px wide and a fixed height, so switching tabs does not resize
+  it. Its sections are described in the fourth review.
 
 ### Toolbar search
 
@@ -693,3 +670,64 @@ conflicts with an earlier section, this section wins.
   with the rows' source label. Other sources keep the location label. The
   full location stays in the tooltip and the accessible name.
 
+## Refinements from the fourth review
+
+A fourth review covered the tabbed Settings window, the Diagnostics view, the
+resource header, quit, and target loading. Where a rule here conflicts with an
+earlier section, this section wins.
+
+### Settings window
+
+- A left rail (220 px, `--gui-s0100`, right hairline) holds a caps "Settings"
+  label and three tabs with icons: General (gear), Harness targets (target),
+  and Sources (folder). The tablist is vertical. Arrow keys, Home, and End
+  move between tabs. Each tab has `aria-controls`, and the tabs roving-focus.
+- Below 720 px the rail collapses to icons. The labels stay as visually hidden
+  text, so the tabs keep their accessible names.
+- The pane shows the tab title as its heading and scrolls. Content is rows: a
+  label, a one-line hint, and a control on the right, separated by hairlines.
+- General has one Theme row with the preview tiles. The caption reads
+  "Applies immediately."
+- Harness targets lists the user targets as rows with checkboxes, organization
+  targets as a read-only list with a lock, and a sticky bottom bar. The bar
+  shows "Unsaved changes" while the draft differs, then Revert (disabled when
+  clean) and the solid Save targets.
+- The draft survives tab switches. Saving keeps the window open: the submitted
+  selection stays on screen until the write settles, and the controller then
+  reloads the saved configuration. Closing the window discards an unsaved draft.
+- Sources holds the user source cards with trash buttons, the inline removal
+  confirmation, organization sources, the add form, and the managed-outside
+  footnote at the bottom.
+
+### Diagnostics view
+
+- A "Diagnostics" row in the sidebar sits after Pending sync. Its count is
+  tinted danger when any diagnostic is an error, warning when any is a
+  warning. The active view row carries `aria-current="page"`.
+- Selecting it replaces the main column with the Diagnostics view: a Session
+  card (drift), the Marketplace discovery region when discovery is enabled, and
+  the grouped diagnostics list. Messages wrap rather than truncate. An empty
+  list reads "No problems found."
+- Resources, a group, a search, or the empty-state action returns to the
+  resource list. The toolbar title follows the view. List shortcuts are inert
+  while Diagnostics is shown.
+
+### Resource header
+
+- Remove and Exclude are a trash icon at the top right of the resource
+  header. The accessible name stays "Remove Resource" or "Exclude Resource",
+  and the tooltip is the verb. Install and Restore keep their text buttons in
+  the action row.
+
+### Quit
+
+- The sidebar Quit button and a native close request exit at once when no
+  changes are pending and no operation is running or requested. Otherwise they
+  open the confirmation. A quit before the final snapshot also opens it, with
+  the copy "Still checking for unsynced changes."
+
+### Startup
+
+- Until inventory resolves, the sidebar shows "Loading targets…" in place of
+  "No harnesses", and the no-targets notice stays hidden. The notice appears
+  only after inventory or final with no targets.
