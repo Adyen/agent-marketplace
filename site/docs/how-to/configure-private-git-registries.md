@@ -63,6 +63,8 @@ resources:
 
 For HTTPS, replace the `git:` value with `https://github.com/example-org/private-skills.git`.
 
+With `install --from` or `list --from`, a GitHub or GitLab web URL such as `https://github.com/example-org/private-skills` is fetched over SSH. If SSH cannot reach the repository and anonymous HTTPS can, as with a public repository on a machine without an SSH key, the command uses `https://github.com/example-org/private-skills.git` instead and `install` records that URL. A private repository is not readable anonymously, so for it the command keeps SSH and reports the SSH error. To use HTTPS with a credential helper, pass the URL ending in `.git`.
+
 `agent-marketplace` copies credential settings only from regular, singly linked Git configuration files that group and other users cannot write to, and that are owned by you, `root`, or the account that owns the `git` executable it runs. Symlinks to such files are supported.
 
 The last case covers Git installed under a dedicated account, such as a Homebrew installation with a separate install user. Git's system configuration (`$(brew --prefix)/etc/gitconfig`) then belongs to that account. `agent-marketplace` finds `git` on your `PATH`, follows symlinks to the real executable, and trusts its owner only if it was found through an absolute `PATH` entry and no group or other user can write to it. That account can already change the `git` program itself, so trusting its configuration grants it nothing new.
