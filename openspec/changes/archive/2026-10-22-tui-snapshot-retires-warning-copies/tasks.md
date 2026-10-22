@@ -6,4 +6,4 @@
 ## 2. Journey and archive
 
 - [x] 2.1 Extend the `missing-selection` journey and its README entry
-- [ ] 2.2 Run `openspec archive tui-snapshot-retires-warning-copies --yes`
+- [x] 2.2 Run `openspec archive tui-snapshot-retires-warning-copies --yes`
