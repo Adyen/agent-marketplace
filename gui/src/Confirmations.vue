@@ -88,6 +88,8 @@ function cancelQuit() {
   >
     <p v-if="syncRunning">A sync is running. Sync and quit when it finishes, quit now, or stay?</p>
     <p v-else-if="state.pendingChanges > 0">{{ state.pendingChanges }} change(s) not synced. Sync before quitting?</p>
+    <p v-else-if="state.operation != null || state.requesting">Changes are still being applied. Quit anyway?</p>
+    <p v-else>Still checking for unsynced changes. Quit anyway?</p>
     <template #footer>
       <template v-if="showSyncChoices">
         <UButton label="Cancel" color="neutral" variant="outline" aria-label="Cancel quit" @click="cancelQuit" />

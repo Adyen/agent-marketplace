@@ -45,12 +45,28 @@ describe('quit confirmation', () => {
   }
 
   // spec: session-interactions/confirmation-retains-all-user-choices
-  it('ordinary quit offers Quit, Stay, and Cancel', async () => {
+  // spec: gui-shell/quit-confirms-only-unsynced-or-running-work
+  it('quit with nothing pending exits immediately without a confirmation or a sync', async () => {
     const { wrapper, onQuit, client } = quitMount(0)
     await tick()
 
     await wrapper.find('button[aria-label="Quit"]').trigger('click')
     await tick()
+    expect(dialog()).toBeNull()
+    expect(onQuit).toHaveBeenCalledTimes(1)
+    expect(client.action).not.toHaveBeenCalled()
+    expect(client.telemetry).not.toHaveBeenCalled()
+  })
+
+  // spec: gui-shell/quit-confirms-only-unsynced-or-running-work
+  it('quit while a non-sync operation runs offers Cancel, Stay, and Quit', async () => {
+    const { wrapper, onQuit, client, push } = quitMount(0)
+    push(operationSnapshot(2, { id: 7, kind: 'update' }, 2))
+    await tick()
+
+    await wrapper.find('button[aria-label="Quit"]').trigger('click')
+    await tick()
+    expect(dialog()?.textContent).toContain('Changes are still being applied. Quit anyway?')
     expect(dialogButton('Stay')).toBeDefined()
     expect(dialogButton('Cancel quit')).toBeDefined()
 
@@ -58,7 +74,6 @@ describe('quit confirmation', () => {
     await tick()
     expect(onQuit).not.toHaveBeenCalled()
     expect(client.action).not.toHaveBeenCalled()
-    expect(client.telemetry).not.toHaveBeenCalled()
     expect(dialog()).toBeNull()
 
     await wrapper.find('button[aria-label="Quit"]').trigger('click')
@@ -66,12 +81,33 @@ describe('quit confirmation', () => {
     dialogButton('Quit now')!.click()
     await tick()
     expect(onQuit).toHaveBeenCalledTimes(1)
-    expect(client.action).not.toHaveBeenCalled()
     expect(client.telemetry).not.toHaveBeenCalled()
   })
 
-  // spec: session-interactions/confirmation-retains-all-user-choices
-  it('native close request opens the same confirmation', async () => {
+  // spec: gui-shell/quit-confirms-only-unsynced-or-running-work
+  it('quit before the session finishes loading explains that unsynced changes are still being checked', async () => {
+    const { client, push } = fakeClient()
+    const onQuit = vi.fn()
+    const { wrapper } = mountWorkspace(client, 60_000, onQuit)
+    push(event({ sequence: 1, payload: snapshot([row('solo')], { stage: 'config', pendingChanges: 0 }) }))
+    await tick()
+
+    await wrapper.find('button[aria-label="Quit"]').trigger('click')
+    await tick()
+    expect(dialog()?.textContent).toContain('Still checking for unsynced changes. Quit anyway?')
+    expect(dialog()?.textContent).not.toContain('Changes are still being applied')
+    expect(dialogButton('Stay')).toBeDefined()
+    expect(dialogButton('Cancel quit')).toBeDefined()
+    expect(dialogButton('Quit now')).toBeDefined()
+
+    dialogButton('Stay')!.click()
+    await tick()
+    expect(onQuit).not.toHaveBeenCalled()
+    expect(client.action).not.toHaveBeenCalled()
+  })
+
+  // spec: gui-shell/quit-confirms-only-unsynced-or-running-work
+  it('native close request with nothing pending exits without opening the confirmation', async () => {
     const listeners: Record<string, (() => void) | undefined> = {}
     const previousRuntime = window.runtime
     window.runtime = {
@@ -88,8 +124,32 @@ describe('quit confirmation', () => {
       expect(listeners[closeRequestEvent]).toBeDefined()
       listeners[closeRequestEvent]?.()
       await tick()
-      expect(dialogButton('Quit now')).toBeDefined()
-      dialogButton('Stay')!.click()
+      expect(dialog()).toBeNull()
+      expect(onQuit).toHaveBeenCalledTimes(1)
+    } finally {
+      window.runtime = previousRuntime
+    }
+  })
+
+  // spec: gui-shell/quit-confirms-only-unsynced-or-running-work
+  it('native close request with pending changes opens the confirmation and Stay keeps the app open', async () => {
+    const listeners: Record<string, (() => void) | undefined> = {}
+    const previousRuntime = window.runtime
+    window.runtime = {
+      EventsOn: (event: string, callback: () => void) => {
+        listeners[event] = callback
+        return () => {
+          delete listeners[event]
+        }
+      },
+    }
+    try {
+      const { onQuit } = quitMount(2)
+      await tick()
+      listeners[closeRequestEvent]?.()
+      await tick()
+      expect(dialogButton('Sync and quit')).toBeDefined()
+      dialogButton('Cancel quit')!.click()
       await tick()
       expect(onQuit).not.toHaveBeenCalled()
       expect(dialog()).toBeNull()
@@ -98,7 +158,6 @@ describe('quit confirmation', () => {
     }
   })
 
-  // spec: gui-shell/gui-actions-use-existing-telemetry-policy
   it('Escape dismissal records one cancellation when sync choices were offered', async () => {
     const { client, wrapper, onQuit } = quitMount(1)
     await tick()
@@ -120,11 +179,13 @@ describe('quit confirmation', () => {
   it('tracks sync choices first offered while the quit dialog is open', async () => {
     const { client, push, wrapper } = quitMount(0)
     await tick()
+    push(operationSnapshot(2, { id: 7, kind: 'update' }, 2))
+    await tick()
     await wrapper.find('button[aria-label="Quit"]').trigger('click')
     await tick()
     expect(dialogButton('Sync and quit')).toBeUndefined()
 
-    push(snapshotEvent(2, { pendingChanges: 1 }))
+    push(snapshotEvent(3, { pendingChanges: 1 }, 2))
     await tick()
     expect(dialogButton('Sync and quit')).toBeDefined()
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))

@@ -100,23 +100,12 @@ test('built GUI drives ordinary quit choices through the native Quit bridge', as
     const quitDialog = page.getByRole('dialog', { name: 'Quit Agent Marketplace' })
 
     await quit.press('Enter')
-    await expect(quitDialog).toBeVisible()
-    await expect(quitDialog.getByRole('button', { name: 'Quit now' })).toBeVisible()
-    await quitDialog.screenshot({ path: artifactPath(testInfo, 'quit-dialog-settled.png'), animations: 'disabled' })
-    await quitDialog.getByRole('button', { name: 'Stay' }).press('Enter')
-    await expect(quitDialog).not.toBeVisible()
-    expect(await quitCount(page)).toBe(0)
-
-    await closeRequest(page)
-    await expect(quitDialog).toBeVisible()
-    await quitDialog.getByRole('button', { name: 'Cancel quit' }).press('Enter')
-    await expect(quitDialog).not.toBeVisible()
-    expect(await quitCount(page)).toBe(0)
-
-    await closeRequest(page)
-    await expect(quitDialog).toBeVisible()
-    await quitDialog.getByRole('button', { name: 'Quit now' }).press('Enter')
     await expect.poll(() => quitCount(page)).toBe(1)
+    await expect(quitDialog).toHaveCount(0)
+
+    await closeRequest(page)
+    await expect.poll(() => quitCount(page)).toBe(2)
+    await expect(quitDialog).toHaveCount(0)
     expect(actionBodies.filter((b) => JSON.parse(b).action === 'sync')).toHaveLength(1)
   } finally {
     await harness.stop()
@@ -138,7 +127,7 @@ test('built GUI pending-change quit offers sync-and-quit and quit-without-syncin
   try {
     const actionBodies = observeRequests(page, '/api/actions')
     await launchWithNativeBridge(page, bootstrap)
-
+    await expect(page.getByText('pending sync')).toBeVisible({ timeout: 60_000 })
 
     const quit = page.getByRole('button', { name: 'Quit', exact: true })
     const quitDialog = page.getByRole('dialog', { name: 'Quit Agent Marketplace' })
@@ -195,6 +184,7 @@ test('built GUI attaches native close to a running sync and quits on its settlem
     const actionBodies = observeRequests(page, '/api/actions')
     await launchWithNativeBridge(page, bootstrap)
     await expect(page.getByRole('option').filter({ hasText: 'solo' }).first()).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByRole('button', { name: 'Sync', exact: true })).toBeEnabled({ timeout: 60_000 })
 
     await page.getByRole('button', { name: 'Sync', exact: true }).press('Enter')
     await expect.poll(() => actionBodies.filter((b) => JSON.parse(b).action === 'sync').length).toBe(1)

@@ -144,6 +144,20 @@ watch(
   },
 )
 
+function requestQuit() {
+  const controller = state.value
+  if (controller == null) {
+    nativeQuit()?.()
+    return
+  }
+  const view = controller.state
+  if (view.stage !== 'final' || view.pendingChanges > 0 || view.operation != null || view.requesting) {
+    quitOpen.value = true
+    return
+  }
+  controller.quit()
+}
+
 function onFocus() {
   void state.value?.refresh()
 }
@@ -361,9 +375,7 @@ onMounted(async () => {
   window.addEventListener('resize', onResize)
   window.addEventListener('focus', onFocus)
   detachLaunchRequest = window.runtime?.EventsOn?.(launchRequestEvent, onFocus)
-  detachCloseRequest = window.runtime?.EventsOn?.(closeRequestEvent, () => {
-    quitOpen.value = true
-  })
+  detachCloseRequest = window.runtime?.EventsOn?.(closeRequestEvent, requestQuit)
   if (state.value) {
     if (activeQuery.value !== '') {
       state.value.setDiscoveryQuery(activeQuery.value)
@@ -902,7 +914,7 @@ async function run(action: 'sync' | 'update') {
       @select-group="selectGroup"
       @open-sources="sourcesOpen = true"
       @open-settings="settingsOpen = true"
-      @quit="quitOpen = true"
+      @quit="requestQuit"
     />
 
     <div class="workspace__main gui-main">
