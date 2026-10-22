@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"flag"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -299,11 +300,15 @@ func executeCommand(args ...string) (string, error) {
 }
 
 func executeCommandContext(ctx context.Context, args ...string) (string, error) {
+	return executeCommandWithInput(ctx, &bytes.Buffer{}, args...)
+}
+
+func executeCommandWithInput(ctx context.Context, in io.Reader, args ...string) (string, error) {
 	cmd := newRootCmd()
 	var output bytes.Buffer
 	cmd.SetOut(&output)
 	cmd.SetErr(&output)
-	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetIn(in)
 	cmd.SetArgs(args)
 	cmd.SetContext(ctx)
 

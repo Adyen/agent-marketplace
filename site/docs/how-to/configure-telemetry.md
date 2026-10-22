@@ -90,7 +90,7 @@ Preview payload written to /home/you/.local/state/agent-marketplace/telemetry/pr
   headers:       none
 ```
 
-The level is `basic`, `detailed`, or `diagnostic`. A `diagnostic` preview may contain sensitive data, so the command asks for confirmation; in a non-interactive shell, pass `--diagnostic-accept-sensitive-data`.
+The level is `basic`, `detailed`, or `diagnostic`. A `diagnostic` preview may contain sensitive data, so the command asks for confirmation. In a non-interactive shell the command is refused, so run it from a terminal.
 
 ## 6. Clear local telemetry data
 

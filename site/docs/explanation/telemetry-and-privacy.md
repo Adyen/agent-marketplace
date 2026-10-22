@@ -31,7 +31,7 @@ An organization's policy in `/etc/agent-marketplace/config.yaml` can set the tel
 
 ## Reviewing a diagnostic capture
 
-A `--diagnostic` capture writes a JSON file to `$XDG_STATE_HOME/agent-marketplace/telemetry/diagnostic/` (by default `~/.local/state/agent-marketplace/telemetry/diagnostic/`) and prints its path, the destination hostname, and a warning that the file may contain sensitive information. Read the file before you agree to send it. In a terminal, the CLI asks for confirmation. Without a terminal, it sends nothing unless you also pass `--diagnostic-accept-sensitive-data`. The CLI deletes the file after a successful export. If you decline, or the export fails, the file stays in place, and `agent-marketplace telemetry purge` removes it. See [How to configure telemetry](../how-to/configure-telemetry.md).
+A `--diagnostic` capture writes a JSON file to `$XDG_STATE_HOME/agent-marketplace/telemetry/diagnostic/` (by default `~/.local/state/agent-marketplace/telemetry/diagnostic/`) and prints its path, the destination hostname, and a warning that the file may contain sensitive information. Read the file before you agree to send it. The CLI asks for confirmation in a terminal. Without a terminal, it never sends the payload, because export requires an interactive acknowledgement. The CLI deletes the file after a successful export. If you decline, or the export fails, the file stays in place, and `agent-marketplace telemetry purge` removes it. See [How to configure telemetry](../how-to/configure-telemetry.md).
 
 ## Community reporting
 
