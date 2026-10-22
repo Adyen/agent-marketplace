@@ -60,6 +60,32 @@ func (e *updateSelectionRefusedError) Error() string {
 	return b.String()
 }
 
+// DiagnosticCause is the refusal's cause on one line for the TUI errors
+// screen: each missing selection and each prior revision that could not be
+// loaded.
+func (e *updateSelectionRefusedError) DiagnosticCause() string {
+	parts := make([]string, 0, len(e.misses)+len(e.loadErrors))
+	for _, miss := range e.misses {
+		parts = append(parts, miss.Error())
+	}
+	for _, loadErr := range e.loadErrors {
+		parts = append(parts, fmt.Sprintf(updateSelectionLoadNote, loadErr.lockPath, loadErr.err))
+	}
+	return strings.Join(parts, "; ")
+}
+
+// DiagnosticRemediation is the refusal's remediation on one line for the TUI
+// errors screen: each miss's remediation, then the closing line. It replaces
+// the generic operation guidance there.
+func (e *updateSelectionRefusedError) DiagnosticRemediation() string {
+	parts := make([]string, 0, len(e.misses)+1)
+	for _, miss := range e.misses {
+		parts = append(parts, strings.TrimPrefix(missRemediationLine(miss), "  → "))
+	}
+	parts = append(parts, updateSelectionRefusalHint)
+	return strings.Join(parts, "; ")
+}
+
 func missRemediationLine(miss *resolver.SelectedNotFoundError) string {
 	if miss.Required {
 		return updateSelectionRequiredLine
