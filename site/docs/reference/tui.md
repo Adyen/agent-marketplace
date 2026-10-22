@@ -1,6 +1,6 @@
 # Terminal UI reference
 
-Keys, dialogs, and states of the [TUI](../glossary.md#tui), and what it saves when. For a guided first run, see the [quick start](../quick-start.md).
+Keys, dialogs, and states of the [TUI](../glossary.md#tui), and what it saves when. To get started, see the [quick start](../quick-start.md).
 
 ## Launch
 
