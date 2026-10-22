@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/huh/v2"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
@@ -318,6 +320,153 @@ func TestInstallSourcePickWindowKeepsCursorAndSelectedCountVisible(t *testing.T)
 	}
 	if !strings.Contains(view, "1 selected") {
 		t.Fatalf("selection count is not visible in windowed Pick view:\n%s", view)
+	}
+}
+
+func installSourcePickModel(t *testing.T, url string) Model {
+	t.Helper()
+	m := NewModel(t.TempDir(), t.TempDir())
+	next, _ := m.Update(keyPress('i'))
+	m = next.(Model)
+	m.installSource.values.url = url
+	generation := m.beginRequest(requestInstallPreview)
+	m.installSource.generation = generation
+	loaded := catalog.LoadedCatalog{Entries: []catalog.Entry{{Kind: ir.KindSkill, Name: "alpha", Description: "Alpha"}}}
+	next, _ = m.Update(installSourcePreviewLoadedMsg{generation: generation, preview: &pipeline.SourcePreview{URL: url, Catalogs: map[string]catalog.LoadedCatalog{"source": loaded}}})
+	m = next.(Model)
+	next, _ = m.Update(keyPress(' '))
+	return next.(Model)
+}
+
+func TestInstallSourceArrowKeysWalkSteps(t *testing.T) {
+	m := installSourcePickModel(t, "https://example.invalid/source.git")
+	next, cmd := m.Update(keyNamed("right"))
+	m = next.(Model)
+	if cmd != nil || m.installSource.step != installSourceStepReview {
+		t.Fatalf("right on Pick = step %v cmd=%t, want Review", m.installSource.step, cmd != nil)
+	}
+	next, cmd = m.Update(keyNamed("right"))
+	m = next.(Model)
+	if cmd != nil || m.installSource.step != installSourceStepReview {
+		t.Fatalf("right on Review = step %v cmd=%t, want Review without install", m.installSource.step, cmd != nil)
+	}
+	next, _ = m.Update(keyNamed("left"))
+	m = next.(Model)
+	if m.installSource.step != installSourceStepPick {
+		t.Fatalf("left on Review = step %v, want Pick", m.installSource.step)
+	}
+	next, _ = m.Update(keyNamed("left"))
+	m = next.(Model)
+	if m.installSource.step != installSourceStepSource {
+		t.Fatalf("left on Pick = step %v, want Source", m.installSource.step)
+	}
+}
+
+func TestInstallSourceFilterEditingKeepsArrowKeys(t *testing.T) {
+	m := installSourcePickModel(t, "https://example.invalid/source.git")
+	next, _ := m.Update(keyPress('/'))
+	m = next.(Model)
+	for _, name := range []string{"left", "right"} {
+		next, _ = m.Update(keyNamed(name))
+		m = next.(Model)
+	}
+	if m.installSource.step != installSourceStepPick || !m.installSource.filtering {
+		t.Fatalf("arrows while filtering: step=%v filtering=%t, want Pick still filtering", m.installSource.step, m.installSource.filtering)
+	}
+}
+
+func TestInstallSourceUnchangedSourceReusesPreview(t *testing.T) {
+	m := installSourcePickModel(t, "https://example.invalid/source.git")
+	preview := m.installSource.preview
+	next, _ := m.Update(keyNamed("left"))
+	m = next.(Model)
+	next, cmd := m.Update(keyNamed("enter"))
+	m = next.(Model)
+	if cmd != nil || m.installSource.step != installSourceStepPick || m.installSource.preview != preview || !m.installSource.picked["skill\x00alpha"] {
+		t.Fatalf("unchanged enter = step %v cmd=%t reused=%t picked=%#v", m.installSource.step, cmd != nil, m.installSource.preview == preview, m.installSource.picked)
+	}
+
+	next, _ = m.Update(keyNamed("left"))
+	m = next.(Model)
+	m.installSource.values.ref = "v2"
+	next, cmd = m.Update(keyNamed("enter"))
+	m = next.(Model)
+	if cmd == nil || !m.installSource.loading {
+		t.Fatalf("changed ref enter = cmd=%t loading=%t, want a new preview", cmd != nil, m.installSource.loading)
+	}
+}
+
+func TestInstallSourceReviewArrowsMoveScope(t *testing.T) {
+	m := installSourcePickModel(t, "./source")
+	next, _ := m.Update(keyNamed("right"))
+	m = next.(Model)
+	next, _ = m.Update(keyNamed("up"))
+	m = next.(Model)
+	if m.installSource.scope != scopeProject || !strings.Contains(m.installSource.error, "repo-relative") {
+		t.Fatalf("up onto refused User scope = %v error=%q, want Project and the refusal", m.installSource.scope, m.installSource.error)
+	}
+	next, _ = m.Update(keyNamed("down"))
+	m = next.(Model)
+	if m.installSource.scope != scopeLocal || m.installSource.error != "" {
+		t.Fatalf("down onto Local = %v error=%q", m.installSource.scope, m.installSource.error)
+	}
+	next, _ = m.Update(keyNamed("down"))
+	m = next.(Model)
+	if m.installSource.scope != scopeLocal {
+		t.Fatalf("down past Local = %v, want Local without wrapping", m.installSource.scope)
+	}
+
+	m = installSourcePickModel(t, "https://example.invalid/source.git")
+	next, _ = m.Update(keyNamed("right"))
+	m = next.(Model)
+	for range 2 {
+		next, _ = m.Update(keyNamed("up"))
+		m = next.(Model)
+	}
+	if m.installSource.scope != scopeGlobal || m.installSource.error != "" {
+		t.Fatalf("up to User = %v error=%q, want User without wrapping", m.installSource.scope, m.installSource.error)
+	}
+}
+
+func installSourceTypeSequence(t *testing.T, m Model, steps ...tea.Msg) Model {
+	t.Helper()
+	for _, step := range steps {
+		next, _ := m.Update(step)
+		m = next.(Model)
+	}
+	return m
+}
+
+func TestInstallSourceTabMovesTypingAcrossFields(t *testing.T) {
+	m := installSourceTypeSequence(t, NewModel(t.TempDir(), t.TempDir()),
+		keyPress('i'), keyNamed("tab"), keyPress('r'), keyNamed("tab"), keyPress('p'), keyNamed("tab"), keyPress('u'))
+	if v := m.installSource.values; v.ref != "r" || v.path != "p" || v.url != "u" {
+		t.Fatalf("typing after Tab landed url=%q ref=%q path=%q, want u r p", v.url, v.ref, v.path)
+	}
+}
+
+func TestInstallSourceShiftTabMovesTypingBack(t *testing.T) {
+	m := installSourceTypeSequence(t, NewModel(t.TempDir(), t.TempDir()),
+		keyPress('i'), keyNamed("shift+tab"), keyPress('p'), keyNamed("shift+tab"), keyPress('r'), keyNamed("shift+tab"), keyPress('u'))
+	if v := m.installSource.values; v.ref != "r" || v.path != "p" || v.url != "u" {
+		t.Fatalf("typing after Shift+Tab landed url=%q ref=%q path=%q, want u r p", v.url, v.ref, v.path)
+	}
+}
+
+func TestInstallSourceFieldsStayUsableAfterTabOnPath(t *testing.T) {
+	m := installSourceTypeSequence(t, NewModel(t.TempDir(), t.TempDir()),
+		keyPress('i'), keyNamed("tab"), keyNamed("tab"), keyPress('p'), keyNamed("tab"), keyPress('z'))
+	if m.installSource.form == nil || m.installSource.form.State != huh.StateNormal {
+		t.Fatalf("form after Tab past Path = %#v, want an active form", m.installSource.form)
+	}
+	if v := m.installSource.values; v.path != "p" || v.url != "z" {
+		t.Fatalf("typing after Tab past Path landed url=%q path=%q, want z and p", v.url, v.path)
+	}
+	view := ansi.Strip(renderInstallSourceModal(m))
+	for _, label := range []string{"URL", "Ref", "Path"} {
+		if !strings.Contains(view, label) {
+			t.Fatalf("Source form no longer renders the %s field:\n%s", label, view)
+		}
 	}
 }
 

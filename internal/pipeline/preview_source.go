@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/collection"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/giturl"
 )
 
 // SourcePreview is the resolved identity and read-only catalog for an unconfigured source.
@@ -64,18 +66,25 @@ func PreviewSource(ctx context.Context, ws Workspace, rawURL, ref, path string) 
 		return preview, &SourceRejectedError{Err: err}
 	}
 
+	advertised := ""
 	if !entry.IsLocal() && ref == "" {
-		defaultBranch, err := cache.DefaultBranch(rawURL)
+		defaultBranch, commit, err := cache.RemoteDefaultBranch(rawURL)
 		if err != nil {
 			return preview, err
 		}
-		ref = defaultBranch
+		ref, advertised = defaultBranch, commit
 		entry.Ref = ref
 		preview.Ref = ref
+	} else if !entry.IsLocal() && giturl.IsFullObjectID(ref) {
+		advertised = ref
 	}
 
+	loadMode := catalog.LoadModeRefresh
+	if advertised != "" && cache.CheckoutAt(rawURL, ref, advertised) && isDirectory(entry.BundlePath(cache.RegistryCachePath(rawURL, ref))) {
+		loadMode = catalog.LoadModeCachedNoFetch
+	}
 	cfg := &config.Config{APIVersion: config.APIVersionV4, Registries: []config.RegistryEntry{entry}}
-	result := catalog.LoadRegistriesWithContext(ctx, cfg, ws.RepoRoot(), catalog.LoadModeRefresh, catalog.WithLocalConfigDir(ws.LocalConfigDir()))
+	result := previewLoadRegistries(ctx, cfg, ws.RepoRoot(), loadMode, catalog.WithLocalConfigDir(ws.LocalConfigDir()))
 	var hardErrors []error
 	for _, loadErr := range result.Errors {
 		if catalog.IsOverlapWarning(loadErr) {
@@ -100,13 +109,25 @@ func PreviewSource(ctx context.Context, ws Workspace, rawURL, ref, path string) 
 		preview.BundlePaths = slices.Compact(preview.BundlePaths)
 	}
 	if !entry.IsLocal() {
-		commit, err := cache.ResolveRemoteRef(cache.RegistryCachePath(rawURL, ref), ref)
-		if err != nil {
-			return preview, fmt.Errorf("resolve preview commit for %s@%s: %w", rawURL, ref, err)
+		commit := advertised
+		if loadMode == catalog.LoadModeRefresh {
+			resolved, err := cache.ResolveRemoteRef(cache.RegistryCachePath(rawURL, ref), ref)
+			if err != nil {
+				return preview, fmt.Errorf("resolve preview commit for %s@%s: %w", rawURL, ref, err)
+			}
+			commit = resolved
 		}
 		preview.Commit = commit
 	}
 	return preview, nil
+}
+
+// previewLoadRegistries is a seam so tests can observe the catalog load mode.
+var previewLoadRegistries = catalog.LoadRegistriesWithContext
+
+func isDirectory(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 // RequiresInvalidWarnings returns the deterministic soft warnings for invalid resource prerequisites.

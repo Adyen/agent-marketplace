@@ -15,6 +15,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/giturl"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -133,6 +134,29 @@ func updateInstallSourceForm(s *installSourceModal, msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
+var installSourceFieldKeys = []string{"url", "ref", "path"}
+
+// moveInstallSourceFocus wraps focus across the Source fields. huh completes
+// a single-group form when Tab leaves its last field, so the wrap steps back
+// through the fields instead of asking huh to advance past the end. Focus
+// moves synchronously inside huh; only the returned cursor commands are async.
+func moveInstallSourceFocus(s *installSourceModal, delta int) tea.Cmd {
+	if s.form == nil {
+		return nil
+	}
+	n := len(installSourceFieldKeys)
+	index := slices.Index(installSourceFieldKeys, s.form.GetFocusedField().GetKey())
+	target := (index + delta + n) % n
+	var cmds []tea.Cmd
+	for ; index < target; index++ {
+		cmds = append(cmds, s.form.NextField())
+	}
+	for ; index > target; index-- {
+		cmds = append(cmds, s.form.PrevField())
+	}
+	return tea.Batch(cmds...)
+}
+
 func renderInstallSourceModal(m Model) string {
 	s := m.installSource
 	t := m.currentTheme()
@@ -204,10 +228,10 @@ func renderInstallSourceModal(m Model) string {
 		start, end := installSourceChoiceWindow(m, s, len(choices), prefix, suffix)
 		body = append(prefix, installSourceChoiceLines(m, s, choices, start, end)...)
 		body = append(body, suffix...)
-		hints = append(hints, footerHint{"space", "toggle"}, footerHint{"a", "all"}, footerHint{"/", "filter"}, footerHint{"enter", "review"}, footerHint{"⌫", "back"}, footerHint{"d", "details"})
+		hints = append(hints, footerHint{"space", "toggle"}, footerHint{"a", "all"}, footerHint{"/", "filter"}, footerHint{"→/enter", "review"}, footerHint{"←/⌫", "back"}, footerHint{"d", "details"})
 	case installSourceStepReview:
 		body = append(body, installSourceReviewLines(m, s)...)
-		hints = append(hints, footerHint{"g/p/l", "scope"}, footerHint{"y/enter", "install"}, footerHint{"⌫", "back"})
+		hints = append(hints, footerHint{"↑↓/g/p/l", "scope"}, footerHint{"y/enter", "install"}, footerHint{"←/⌫", "back"})
 	}
 	return modalFrame(m, t.accent, title, body, hints)
 }
@@ -475,7 +499,7 @@ func installSourceReviewLines(m Model, s installSourceModal) []string {
 	}
 	path, _ := installSourceConfigPath(m, s.scope)
 	lines = append(lines, "", "Writes: "+shortenPath(path, m.homeDir, modalInnerWidth(m)-8))
-	if s.preview.Commit != "" && !isCommitRef(s.preview.Ref) {
+	if s.preview.Commit != "" && !giturl.IsFullObjectID(strings.TrimSpace(s.preview.Ref)) {
 		lines = append(lines, fmt.Sprintf("%s is a branch; it can move before install. Use a commit SHA in Ref to pin.", sanitizeTerminalData(s.preview.Ref, terminalSingleLine)))
 	}
 	if s.error != "" {
@@ -490,19 +514,6 @@ func installSourceConfigPath(m Model, target scope) (string, error) {
 		root = m.workspace.LocalConfigDir()
 	}
 	return pipeline.ScopedConfigPath(root, pipelineScope(target))
-}
-
-func isCommitRef(ref string) bool {
-	ref = strings.TrimSpace(ref)
-	if len(ref) != 40 && len(ref) != 64 {
-		return false
-	}
-	for _, r := range ref {
-		if !strings.ContainsRune("0123456789abcdefABCDEF", r) {
-			return false
-		}
-	}
-	return true
 }
 
 func installSourceSelectedCount(s installSourceModal) int {
@@ -527,7 +538,17 @@ func (m Model) handleInstallSourceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 				s.error = "enter a source URL or directory"
 				return m, nil
 			}
+			if s.preview != nil && installSourceUnchanged(*s) {
+				s.step, s.error, s.cursor = installSourceStepPick, "", 0
+				return m, nil
+			}
 			return m.startInstallSourcePreview(false)
+		}
+		switch msg.String() {
+		case "tab":
+			return m, moveInstallSourceFocus(s, 1)
+		case "shift+tab":
+			return m, moveInstallSourceFocus(s, -1)
 		}
 		return m, updateInstallSourceForm(s, msg)
 	case installSourceStepPick:
@@ -558,11 +579,11 @@ func (m Model) handleInstallSourceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 			s.filterInput.SetValue(s.filter)
 			return m, s.filterInput.Focus()
 		}
-		if key.Matches(msg, m.keys.Enter) {
+		if key.Matches(msg, m.keys.Enter) || msg.String() == "right" {
 			return m.advanceInstallSourcePick()
 		}
 		switch msg.String() {
-		case "backspace":
+		case "backspace", "left":
 			s.step = installSourceStepSource
 			s.error = ""
 			s.cursor = 0
@@ -597,26 +618,41 @@ func (m Model) handleInstallSourceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 			return m.cancelInstallSourceModal()
 		}
 		switch msg.String() {
-		case "backspace":
+		case "backspace", "left":
 			s.step = installSourceStepPick
 			s.error = ""
 			return m, nil
+		case "up", "k":
+			index := slices.Index(installSourceScopes, s.scope)
+			s.selectScope(installSourceScopes[max(0, index-1)])
+		case "down", "j":
+			index := slices.Index(installSourceScopes, s.scope)
+			s.selectScope(installSourceScopes[min(index+1, len(installSourceScopes)-1)])
 		case "g":
-			if err := installSourceScopeError(*s, scopeGlobal); err != nil {
-				s.error = err.Error()
-			} else {
-				s.scope, s.error = scopeGlobal, ""
-			}
-			return m, nil
+			s.selectScope(scopeGlobal)
 		case "p":
-			s.scope, s.error = scopeProject, ""
-			return m, nil
+			s.selectScope(scopeProject)
 		case "l":
-			s.scope, s.error = scopeLocal, ""
-			return m, nil
+			s.selectScope(scopeLocal)
 		}
 	}
 	return m, nil
+}
+
+var installSourceScopes = []scope{scopeGlobal, scopeProject, scopeLocal}
+
+func (s *installSourceModal) selectScope(target scope) {
+	if err := installSourceScopeError(*s, target); err != nil {
+		s.error = err.Error()
+		return
+	}
+	s.scope, s.error = target, ""
+}
+
+func installSourceUnchanged(s installSourceModal) bool {
+	return strings.TrimSpace(s.values.url) == s.preview.URL &&
+		strings.TrimSpace(s.values.ref) == s.preview.Ref &&
+		strings.TrimSpace(s.values.path) == s.preview.Path
 }
 
 func (m Model) cancelInstallSourceModal() (tea.Model, tea.Cmd) {
@@ -738,6 +774,7 @@ func (m Model) updateInstallSourcePreview(msg installSourcePreviewLoadedMsg) (te
 		return m, nil
 	}
 	s.preview = msg.preview
+	s.form = nil
 	s.values.url, s.values.ref, s.values.path = msg.preview.URL, msg.preview.Ref, msg.preview.Path
 	available := make(map[string]bool)
 	for _, choice := range installSourceChoices(msg.preview) {

@@ -59,6 +59,8 @@ Pressing `i` in the resource list opens a Source → Pick → Review modal for a
 
 The user selects kind-qualified resources, chooses a writable user, project, or local scope, and reviews the configuration file and picks before confirming. Git installs carry the previewed commit; when the ref moves, the install is refused with both commits, the modal returns to Pick, and picks still present after re-preview remain selected. Cancel from any step leaves configuration, acquisition lock, and harness bytes unchanged. The install uses one guarded mutation and an authoritative snapshot reload.
 
+`→` acts as enter on Pick and `←` returns one step; `→` on Review never installs, and on Source the arrows move the text cursor. Review moves the scope with `↑`/`↓` (or `k`/`j`) through User, Project, and Local without wrapping; a scope the source cannot be written to keeps the current scope and shows the reason. Confirming Source with the URL, ref, and path of the shown preview returns to Pick with that preview and the current picks, without previewing again. A Git preview without a ref, or pinned to a full commit SHA, reads the cache without fetching when the cached checkout is already at that commit.
+
 ### Marketplace row detail
 
 Opening a Marketplace row's detail never resolves a registry-relative path against the consumer workspace.

@@ -3,7 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { after, before } from "node:test";
 
-import { defineFixture, locate, step, waitForExit } from "./helpers.js";
+import type { Fixture } from "./fixture.js";
+import { defineFixture, locate, step, waitForExit, type TestTerminal } from "./helpers.js";
 
 // spec: tui-interactions/previewing-a-source-writes-nothing
 // spec: tui-interactions/picked-resources-install-at-the-chosen-scope
@@ -163,4 +164,229 @@ journey.test("previews, picks, rejects a moved ref, then installs the selected r
   await step("quit after install", () => terminal.write("q"), async () => {
     assert.equal((await waitForExit(terminal)).exitCode, 0);
   });
+});
+
+const RIGHT = "\x1b[C";
+const LEFT = "\x1b[D";
+const UP = "\x1b[A";
+const DOWN = "\x1b[B";
+
+const adHocURL = (fixture: Fixture): string => {
+  assert.ok(fixture.adHocSourceURL, "adHocSource fixture omitted its source URL");
+  return fixture.adHocSourceURL;
+};
+
+const snapshotRepo = (fixture: Fixture): (() => void) => {
+  const files = [
+    path.join(fixture.repo, ".agents", "config.yaml"),
+    path.join(fixture.repo, ".agents", "lock.yaml"),
+    path.join(fixture.repo, ".factory", "skills", "beta-skill", "SKILL.md"),
+  ];
+  const contents = files.map((file) => fs.readFileSync(file));
+  return () => files.forEach((file, index) => assert.deepEqual(fs.readFileSync(file), contents[index]));
+};
+
+const openPreview = async (terminal: TestTerminal, source: string): Promise<void> => {
+  await step("open source modal", () => terminal.write("i"), async () => {
+    await locate(terminal, "Install from source").unique().expect();
+  });
+  await step("enter source", () => terminal.write(source), async () => {
+    await locate(terminal, "Source").expect();
+  });
+  await step("preview source", () => terminal.write("\r"), async () => {
+    await locate(terminal, /3 resources at/).unique().expect({ timeout: 30_000 });
+    await locate(terminal, "ad-hoc-alpha").expect();
+  });
+};
+
+const cancelAndQuit = async (terminal: TestTerminal): Promise<void> => {
+  await step("cancel the modal", () => terminal.write("\x1b"), async () => {
+    await locate(terminal, "~ in sync").unique().expect();
+    await locate(terminal, "Install from source").expect({ not: true });
+  });
+  await step("quit", () => terminal.write("q"), async () => {
+    assert.equal((await waitForExit(terminal)).exitCode, 0);
+  });
+};
+
+// spec: tui-interactions/arrow-keys-walk-the-steps-without-installing
+const walk = defineFixture("install-from-source-walk", ["tui"], 80, 24, { adHocSource: true });
+before(walk.setup);
+after(walk.cleanup);
+
+walk.test("arrow keys walk the install steps without installing", async (terminal) => {
+  const fixture = walk.current();
+  const assertUnchanged = snapshotRepo(fixture);
+  await step("settled source list", () => {}, async () => {
+    await locate(terminal, "~ in sync").unique().expect();
+  });
+  await openPreview(terminal, adHocURL(fixture));
+  await step("pick a skill", () => terminal.write(" "), async () => {
+    await locate(terminal, "1 selected").unique().expect();
+  });
+  await step("right moves to Review", () => terminal.write(RIGHT), async () => {
+    await locate(terminal, "Selected resources:").unique().expect();
+  });
+  await step("right on Review does not install", () => terminal.write(RIGHT), async () => {
+    await locate(terminal, "Selected resources:").unique().expect();
+    await locate(terminal, "Install from source").unique().expect();
+  });
+  assertUnchanged();
+  await step("left returns to Pick", () => terminal.write(LEFT), async () => {
+    await locate(terminal, "1 selected").unique().expect();
+  });
+  await step("left returns to Source", () => terminal.write(LEFT), async () => {
+    await locate(terminal, "Web URLs fill ref and path automatically.").unique().expect();
+  });
+  assertUnchanged();
+  await cancelAndQuit(terminal);
+  assertUnchanged();
+});
+
+// spec: tui-interactions/unchanged-source-reuses-the-preview
+const reuse = defineFixture("install-from-source-reuse", ["tui"], 80, 24, { adHocSource: true });
+before(reuse.setup);
+after(reuse.cleanup);
+
+reuse.test("an unchanged source keeps its preview after the source gains a resource", async (terminal) => {
+  const fixture = reuse.current();
+  const assertUnchanged = snapshotRepo(fixture);
+  await step("settled source list", () => {}, async () => {
+    await locate(terminal, "~ in sync").unique().expect();
+  });
+  await openPreview(terminal, adHocURL(fixture));
+  await step("pick a skill", () => terminal.write(" "), async () => {
+    await locate(terminal, "1 selected").unique().expect();
+  });
+  fixture.pushRegistryChange("skills/ad-hoc-new/SKILL.md", "---\nname: ad-hoc-new\ndescription: Gained after preview\n---\n\n# Ad Hoc New\n");
+  await step("return to Source", () => terminal.write(LEFT), async () => {
+    await locate(terminal, "Web URLs fill ref and path automatically.").unique().expect();
+  });
+  await step("confirm the unchanged source", () => terminal.write("\r"), async () => {
+    await locate(terminal, "1 selected").unique().expect();
+    await locate(terminal, "ad-hoc-alpha").expect();
+    await locate(terminal, "ad-hoc-new").expect({ not: true });
+  });
+  assertUnchanged();
+  await cancelAndQuit(terminal);
+  assertUnchanged();
+});
+
+// spec: tui-interactions/changed-source-previews-again
+const changed = defineFixture("install-from-source-path", ["tui"], 80, 24, { adHocSource: true });
+before(changed.setup);
+after(changed.cleanup);
+
+changed.test("a changed source previews again", async (terminal) => {
+  const fixture = changed.current();
+  const url = adHocURL(fixture);
+  const assertUnchanged = snapshotRepo(fixture);
+  await step("settled source list", () => {}, async () => {
+    await locate(terminal, "~ in sync").unique().expect();
+  });
+  await openPreview(terminal, url);
+  await step("return to Source", () => terminal.write(LEFT), async () => {
+    await locate(terminal, "Web URLs fill ref and path automatically.").unique().expect();
+  });
+  await step("tab moves typing into Ref", async () => {
+    await terminal.write("\t");
+    await terminal.write("x");
+  }, async () => {
+    await locate(terminal, "> mainx").unique().expect();
+  });
+  await step("restore Ref", () => terminal.write("\x7f"), async () => {
+    await locate(terminal, "> main").unique().expect();
+  });
+  await step("tab moves typing into Path", async () => {
+    await terminal.write("\t");
+    await terminal.write("skills");
+  }, async () => {
+    await locate(terminal, "> skills").unique().expect();
+  });
+  await step("preview the skills path", () => terminal.write("\r"), async () => {
+    await locate(terminal, "ad-hoc-second").unique().expect({ timeout: 30_000 });
+    await locate(terminal, "ad-hoc-command").expect({ not: true });
+  });
+  assertUnchanged();
+  await cancelAndQuit(terminal);
+  assertUnchanged();
+});
+
+// spec: tui-interactions/arrow-keys-choose-the-review-scope
+const scope = defineFixture("install-from-source-scope", ["tui"], 80, 24, { adHocSource: true });
+before(scope.setup);
+after(scope.cleanup);
+
+scope.test("arrow keys choose the Local review scope and write the local configuration", async (terminal) => {
+  const fixture = scope.current();
+  await step("settled source list", () => {}, async () => {
+    await locate(terminal, "~ in sync").unique().expect();
+  });
+  await openPreview(terminal, adHocURL(fixture));
+  await step("pick a skill", () => terminal.write(" "), async () => {
+    await locate(terminal, "1 selected").unique().expect();
+  });
+  await step("review the install", () => terminal.write("\r"), async () => {
+    await locate(terminal, "Selected resources:").unique().expect();
+    await locate(terminal, /› \[p\] Project/).unique().expect();
+  });
+  await step("move the scope down to Local", () => terminal.write(DOWN), async () => {
+    await locate(terminal, /› \[l\] Local/).unique().expect();
+    await locate(terminal, /› \[p\] Project/).expect({ not: true });
+  });
+  await step("confirm the Local install", () => terminal.write("\r"), async () => {
+    await locate(terminal, /Installed 1 from/).unique().expect({ timeout: 30_000 });
+    await locate(terminal, "Install from source").expect({ not: true });
+  });
+  const localConfig = fs.readFileSync(path.join(fixture.repo, ".agents", "config.local.yaml"), "utf8");
+  assert.match(localConfig, /ad-hoc-alpha/);
+  assert.ok(localConfig.includes(adHocURL(fixture)), `config.local.yaml does not record the source:\n${localConfig}`);
+  await step("sync the Local install", () => terminal.write("s"), async () => {
+    await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
+  });
+  assert.equal(fs.existsSync(path.join(fixture.repo, ".factory", "skills", "ad-hoc-alpha", "SKILL.md")), true);
+  await step("quit", () => terminal.write("q"), async () => {
+    assert.equal((await waitForExit(terminal)).exitCode, 0);
+  });
+});
+
+// spec: tui-interactions/arrow-keys-skip-an-unwritable-scope
+const refusal = defineFixture("install-from-source-refusal", ["tui"], 80, 24, { adHocSource: true });
+before(refusal.setup);
+after(refusal.cleanup);
+
+refusal.test("up from Project keeps Project when user configuration cannot take the source", async (terminal) => {
+  const fixture = refusal.current();
+  const assertUnchanged = snapshotRepo(fixture);
+  fs.cpSync(path.join(fixture.root, "registries", "ad-hoc-source"), path.join(fixture.repo, "local-source"), {
+    recursive: true,
+    filter: (source) => path.basename(source) !== ".git",
+  });
+  await step("settled source list", () => {}, async () => {
+    await locate(terminal, "~ in sync").unique().expect();
+  });
+  await step("open source modal", () => terminal.write("i"), async () => {
+    await locate(terminal, "Install from source").unique().expect();
+  });
+  await step("enter repo-relative directory", () => terminal.write("./local-source"), async () => {
+    await locate(terminal, "local-source").expect();
+  });
+  await step("preview the directory", () => terminal.write("\r"), async () => {
+    await locate(terminal, /3 resources at/).unique().expect({ timeout: 30_000 });
+    await locate(terminal, "ad-hoc-alpha").expect();
+  });
+  await step("pick a skill", () => terminal.write(" "), async () => {
+    await locate(terminal, "1 selected").unique().expect();
+  });
+  await step("review the install", () => terminal.write(RIGHT), async () => {
+    await locate(terminal, "Selected resources:").unique().expect();
+    await locate(terminal, /› \[p\] Project/).unique().expect();
+  });
+  await step("move the scope up from Project", () => terminal.write(UP), async () => {
+    await locate(terminal, /› \[p\] Project/).unique().expect();
+    await locate(terminal, "repo-relative").expect();
+  });
+  assertUnchanged();
+  await cancelAndQuit(terminal);
+  assertUnchanged();
 });

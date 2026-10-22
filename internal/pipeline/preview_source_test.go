@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -395,4 +396,146 @@ func TestInstallFromAdHocLocatorsSelectKindsAndCollection(t *testing.T) {
 			t.Errorf("selected resource was not materialized at %s: %v", path, err)
 		}
 	}
+}
+
+// spec: resource-installation/default-branch-preview-skips-the-fetch-when-the-cache-is-current
+func TestPreviewSourceSkipsFetchWhenDefaultBranchCacheIsCurrent(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	bare, _ := newPreviewSourceRepo(t)
+	repo := t.TempDir()
+	ws, err := NewWorkspace(repo, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modes := observePreviewLoadModes(t)
+	source := "file://" + filepath.ToSlash(bare)
+
+	first, err := PreviewSource(context.Background(), ws, source, "", "")
+	if err != nil {
+		t.Fatalf("first PreviewSource: %v", err)
+	}
+	second, err := PreviewSource(context.Background(), ws, source, "", "")
+	if err != nil {
+		t.Fatalf("second PreviewSource: %v", err)
+	}
+	if want := []catalog.LoadMode{catalog.LoadModeRefresh, catalog.LoadModeCachedNoFetch}; !slices.Equal(*modes, want) {
+		t.Fatalf("load modes = %v, want %v", *modes, want)
+	}
+	if second.Commit != first.Commit || previewEntryNames(t, second) != "alpha" {
+		t.Fatalf("second preview = commit %q entries %q, want commit %q entries alpha", second.Commit, previewEntryNames(t, second), first.Commit)
+	}
+}
+
+// spec: resource-installation/default-branch-preview-refreshes-a-stale-cache
+func TestPreviewSourceRefreshesStaleDefaultBranchCache(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	bare, work := newPreviewSourceRepo(t)
+	repo := t.TempDir()
+	ws, err := NewWorkspace(repo, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modes := observePreviewLoadModes(t)
+	source := "file://" + filepath.ToSlash(bare)
+
+	first, err := PreviewSource(context.Background(), ws, source, "", "")
+	if err != nil {
+		t.Fatalf("first PreviewSource: %v", err)
+	}
+	commitPreviewSkill(t, work, "beta")
+	runGit(t, work, "push", "origin", "main")
+	second, err := PreviewSource(context.Background(), ws, source, "", "")
+	if err != nil {
+		t.Fatalf("second PreviewSource: %v", err)
+	}
+	if want := []catalog.LoadMode{catalog.LoadModeRefresh, catalog.LoadModeRefresh}; !slices.Equal(*modes, want) {
+		t.Fatalf("load modes = %v, want %v", *modes, want)
+	}
+	if second.Commit == first.Commit || previewEntryNames(t, second) != "alpha,beta" {
+		t.Fatalf("second preview = commit %q entries %q, want a new commit with alpha,beta", second.Commit, previewEntryNames(t, second))
+	}
+}
+
+// spec: resource-installation/commit-pinned-preview-works-from-the-cache-offline
+func TestPreviewSourceServesCachedCommitPinWhenRemoteIsUnreachable(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	bare, work := newPreviewSourceRepo(t)
+	repo := t.TempDir()
+	ws, err := NewWorkspace(repo, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modes := observePreviewLoadModes(t)
+	source := "file://" + filepath.ToSlash(bare)
+	commit := strings.TrimSpace(gitOutput(t, work, "rev-parse", "HEAD"))
+
+	if _, err := PreviewSource(context.Background(), ws, source, commit, ""); err != nil {
+		t.Fatalf("populating PreviewSource: %v", err)
+	}
+	if err := os.Rename(bare, bare+".unreachable"); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := PreviewSource(context.Background(), ws, source, commit, "")
+	if err != nil {
+		t.Fatalf("offline PreviewSource: %v", err)
+	}
+	if want := []catalog.LoadMode{catalog.LoadModeRefresh, catalog.LoadModeCachedNoFetch}; !slices.Equal(*modes, want) {
+		t.Fatalf("load modes = %v, want %v", *modes, want)
+	}
+	if preview.Commit != commit || previewEntryNames(t, preview) != "alpha" {
+		t.Fatalf("offline preview = commit %q entries %q, want commit %q entries alpha", preview.Commit, previewEntryNames(t, preview), commit)
+	}
+}
+
+func newPreviewSourceRepo(t *testing.T) (bare, work string) {
+	t.Helper()
+	bare = filepath.Join(t.TempDir(), "source.git")
+	work = filepath.Join(t.TempDir(), "work")
+	runGit(t, "", "init", "--bare", "--initial-branch=main", bare)
+	runGit(t, "", "clone", bare, work)
+	commitPreviewSkill(t, work, "alpha")
+	runGit(t, work, "push", "origin", "main")
+	return bare, work
+}
+
+func commitPreviewSkill(t *testing.T, work, name string) {
+	t.Helper()
+	writeSourceFile(t, work, "skills/"+name+"/SKILL.md", "---\nname: "+name+"\ndescription: "+name+"\n---\n\n"+name+"\n")
+	runGit(t, work, "add", ".")
+	runGit(t, work, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "add "+name)
+}
+
+func observePreviewLoadModes(t *testing.T) *[]catalog.LoadMode {
+	t.Helper()
+	var modes []catalog.LoadMode
+	previous := previewLoadRegistries
+	previewLoadRegistries = func(ctx context.Context, cfg *config.Config, repoRoot string, mode catalog.LoadMode, opts ...catalog.LoadOption) catalog.LoadResult {
+		modes = append(modes, mode)
+		return previous(ctx, cfg, repoRoot, mode, opts...)
+	}
+	t.Cleanup(func() { previewLoadRegistries = previous })
+	return &modes
+}
+
+func previewEntryNames(t *testing.T, preview SourcePreview) string {
+	t.Helper()
+	var names []string
+	for _, loaded := range preview.Catalogs {
+		for _, entry := range loaded.Entries {
+			names = append(names, entry.Name)
+		}
+	}
+	slices.Sort(names)
+	return strings.Join(names, ",")
+}
+
+func gitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git %v: %v", args, err)
+	}
+	return string(output)
 }
