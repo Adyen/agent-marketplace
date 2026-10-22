@@ -1250,6 +1250,167 @@ sources: {team: {git: '{{REG:droid-remove-survive}}', ref: main}}
 				}},
 		},
 	},
+	// spec: materialization/deselected-gemini-subagents-are-removed
+	{
+		Name: "materialize/gemini_last_subagent_deselection_prunes_user_output",
+		Desc: "Given a synced user-scope Gemini subagent that is the only managed Gemini subagent, alongside a user-authored one, When it is dropped from the selection and sync re-runs, Then the managed subagent is pruned, the user-authored one survives and check reports no drift",
+		Registries: []RegistryDef{
+			{Name: "gemini-subagent-deselect", Subagents: []Subagent{
+				{Name: "reviewer", Description: "Managed by agent-marketplace"},
+			}},
+		},
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+harnesses: [gemini]
+sources: {team: {git: '{{REG:gemini-subagent-deselect}}', ref: main}}
+resources: {team: {include: [subagent/reviewer]}}
+`,
+		Steps: []Step{
+			{Action: ActionWriteFile,
+				Path: "/root/.gemini/agents/worker.md",
+				Body: `---
+name: worker
+description: my hand-written worker subagent
+---
+
+# worker (user-owned)
+`},
+			{Args: []string{"sync"}, MustPass: true,
+				Symlinks:   []string{"/root/.gemini/agents/reviewer.md"},
+				FilesExist: []string{"/root/.gemini/agents/worker.md"}},
+			{Action: ActionWriteGlobalConfig,
+				Body: `apiVersion: agent-marketplace/v4
+harnesses: [gemini]
+sources: {team: {git: '{{REG:gemini-subagent-deselect}}', ref: main}}
+`},
+			{Args: []string{"sync"}, MustPass: true,
+				FilesAbsent: []string{"/root/.gemini/agents/reviewer.md"},
+				FilesExist:  []string{"/root/.gemini/agents/worker.md"},
+				FileContains: map[string]string{
+					"/root/.gemini/agents/worker.md": "# worker (user-owned)",
+				}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+		},
+	},
+	// spec: materialization/deselected-gemini-subagents-are-removed
+	{
+		Name: "remove/gemini_last_subagent_removes_repo_output",
+		Desc: "Given a Gemini subagent and skill installed in the repository, When the subagent is removed and sync re-runs, Then its output is gone, the skill stays and check reports no drift",
+		Registries: []RegistryDef{
+			{Name: "gemini-subagent-remove",
+				Skills:    []Skill{{Name: "keep-skill", Description: "Stays installed"}},
+				Subagents: []Subagent{{Name: "helper", Description: "Removed by the test"}}},
+		},
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [gemini]\n",
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:gemini-subagent-remove}}', ref: main}}
+resources: {team: {include: [skill/keep-skill, subagent/helper]}}
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true,
+				Symlinks:   []string{"/workspace/.gemini/agents/helper.md"},
+				FilesExist: []string{"/workspace/.gemini/skills/keep-skill/SKILL.md"}},
+			{Args: []string{"remove", "--scope", "repo", "helper"}, MustPass: true},
+			{Args: []string{"sync"}, MustPass: true,
+				FilesAbsent: []string{"/workspace/.gemini/agents/helper.md"},
+				FilesExist:  []string{"/workspace/.gemini/skills/keep-skill/SKILL.md"}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+		},
+	},
+	// spec: materialization/deselected-gemini-subagents-are-removed
+	{
+		Name: "remove/gemini_last_subagent_removes_user_output",
+		Desc: "Given a Gemini subagent and skill installed user-wide, When the subagent is removed with --scope user and sync re-runs, Then its output is gone, the skill stays and check reports no drift",
+		Registries: []RegistryDef{
+			{Name: "gemini-subagent-remove-user",
+				Skills:    []Skill{{Name: "keep-skill", Description: "Stays installed"}},
+				Subagents: []Subagent{{Name: "helper", Description: "Removed by the test"}}},
+		},
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+harnesses: [gemini]
+sources: {team: {git: '{{REG:gemini-subagent-remove-user}}', ref: main}}
+resources: {team: {include: [skill/keep-skill, subagent/helper]}}
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true,
+				Symlinks:   []string{"/root/.gemini/agents/helper.md"},
+				FilesExist: []string{"/root/.gemini/skills/keep-skill/SKILL.md"}},
+			{Args: []string{"remove", "--scope", "user", "helper"}, MustPass: true},
+			{Args: []string{"sync"}, MustPass: true,
+				FilesAbsent: []string{"/root/.gemini/agents/helper.md"},
+				FilesExist:  []string{"/root/.gemini/skills/keep-skill/SKILL.md"}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+		},
+	},
+	// spec: materialization/deinit-removes-gemini-subagents
+	{
+		Name: "deinit/gemini_repo_subagent_output_is_removed",
+		Desc: "Given a Gemini subagent installed in the repository next to a user-authored one, When deinit runs for the repository, Then the managed subagent is removed and the user-authored one survives",
+		Registries: []RegistryDef{
+			{Name: "gemini-subagent-deinit", Subagents: []Subagent{
+				{Name: "helper", Description: "Removed by deinit"},
+			}},
+		},
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [gemini]\n",
+		RepoCfg: `apiVersion: agent-marketplace/v4
+sources: {team: {git: '{{REG:gemini-subagent-deinit}}', ref: main}}
+resources: {team: {include: [subagent/helper]}}
+`,
+		Steps: []Step{
+			{Action: ActionWriteFile,
+				Path: "/workspace/.gemini/agents/worker.md",
+				Body: `---
+name: worker
+description: my hand-written worker subagent
+---
+
+# worker (user-owned)
+`},
+			{Args: []string{"sync"}, MustPass: true,
+				Symlinks:   []string{"/workspace/.gemini/agents/helper.md"},
+				FilesExist: []string{"/workspace/.gemini/agents/worker.md"}},
+			{Args: []string{"deinit", "--scope", "repo"}, MustPass: true,
+				FilesAbsent: []string{"/workspace/.gemini/agents/helper.md"},
+				FilesExist:  []string{"/workspace/.gemini/agents/worker.md"},
+				FileContains: map[string]string{
+					"/workspace/.gemini/agents/worker.md": "# worker (user-owned)",
+				}},
+		},
+	},
+	// spec: materialization/deinit-removes-gemini-subagents
+	{
+		Name: "deinit/gemini_user_subagent_output_is_removed",
+		Desc: "Given a Gemini subagent installed user-wide next to a user-authored one, When deinit runs for the user scope, Then the managed subagent is removed and the user-authored one survives",
+		Registries: []RegistryDef{
+			{Name: "gemini-subagent-deinit-user", Subagents: []Subagent{
+				{Name: "helper", Description: "Removed by deinit"},
+			}},
+		},
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+harnesses: [gemini]
+sources: {team: {git: '{{REG:gemini-subagent-deinit-user}}', ref: main}}
+resources: {team: {include: [subagent/helper]}}
+`,
+		Steps: []Step{
+			{Action: ActionWriteFile,
+				Path: "/root/.gemini/agents/worker.md",
+				Body: `---
+name: worker
+description: my hand-written worker subagent
+---
+
+# worker (user-owned)
+`},
+			{Args: []string{"sync"}, MustPass: true,
+				Symlinks:   []string{"/root/.gemini/agents/helper.md"},
+				FilesExist: []string{"/root/.gemini/agents/worker.md"}},
+			{Args: []string{"deinit", "--scope", "user"}, MustPass: true,
+				FilesAbsent: []string{"/root/.gemini/agents/helper.md"},
+				FilesExist:  []string{"/root/.gemini/agents/worker.md"},
+				FileContains: map[string]string{
+					"/root/.gemini/agents/worker.md": "# worker (user-owned)",
+				}},
+		},
+	},
 	{
 		// spec: materialization/cli-check-refuses-stale-linked-content-without-repairing-it
 		Name:      "materialize/sync_check_detects_linked_content_drift",
