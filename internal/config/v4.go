@@ -1987,11 +1987,12 @@ func v4ExclusionMatches(exclude, locator string) bool {
 	}
 	if strings.HasSuffix(exclude, "/*") {
 		base := strings.TrimSuffix(exclude, "/*")
-		parts := strings.Split(locator, "/")
-		if len(parts) == 2 && base == parts[0] {
+		first, rest, hasSlash := strings.Cut(locator, "/")
+		kind, name, qualified := strings.Cut(rest, "/")
+		if hasSlash && !qualified && base == first {
 			return true
 		}
-		if len(parts) == 3 && (base == parts[0] || base == parts[0]+"/"+parts[1]) {
+		if hasSlash && qualified && !strings.Contains(name, "/") && (base == first || base == first+"/"+kind) {
 			return true
 		}
 	}
