@@ -36,6 +36,16 @@ journey.test("registry text with terminal control bytes renders as visible escap
   await step("select hostile-skill", () => terminal.write("kk"), async () => {
     await locate(terminal, /Name:\s+hostile-skill/).unique().expect();
   });
+  // The description sits below the detail pane's fold at 50x12.
+  await step("its description shows the control bytes as escapes", () => terminal.resize(80, 24), async () => {
+    // Only the 80-column footer has room for the toggle hint.
+    await locate(terminal, "space toggle").unique().expect();
+    await locate(terminal, "Hostile \\x1B]0;PWNED\\x07\\x1B[2J tail").unique().expect();
+  });
+  await step("back at the minimum size", () => terminal.resize(50, 12), async () => {
+    await locate(terminal, /Name:\s+hostile-skill/).unique().expect();
+    await locate(terminal, "q quit").unique().expect();
+  });
   await step("its full view shows the body's control bytes as escapes", () => terminal.write("\r"), async () => {
     await locate(terminal, "esc/q back").unique().expect();
     await assertScreenHas("Hostile\\x1B[31mred\\x1B[0m");
