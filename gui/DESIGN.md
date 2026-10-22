@@ -60,7 +60,7 @@ The design's ink-alpha scale. `--ink-rgb` is `17 17 17` in light mode and
 | `--gui-s0200` | `/ .074` | Buttons, kbd, tags, dividers |
 | `--gui-s0400` | `/ .145` | Button hover |
 | `--gui-layer` | `/ .042` | Hover or selection overlay on any surface |
-| `--gui-signal` | `#00d16a` | On, synced, focus ring, selected tab |
+| `--gui-signal` | `#0abf53` | On, synced, focus ring, selected tab |
 | `--gui-signal-ink` | light `--gui-ink`, dark `--gui-signal` | Status text that reads as "good" |
 | `--gui-solid-bg` / `--gui-solid-ink` | light `#111`/`#fff`, dark `#fff`/`#111` | Primary button |
 

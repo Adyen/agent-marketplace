@@ -16,7 +16,7 @@
   --gui-s0200: rgb(var(--ink-rgb) / 0.074);
   --gui-s0400: rgb(var(--ink-rgb) / 0.145);
   --gui-layer: rgb(var(--ink-rgb) / 0.042);
-  --gui-signal: #00d16a;
+  --gui-signal: #0abf53;
   --gui-signal-ink: var(--gui-ink);
   --gui-solid-bg: #111111;
   --gui-solid-ink: #ffffff;
