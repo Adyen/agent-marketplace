@@ -4,6 +4,7 @@ FROM ${NODE_IMAGE} AS build
 ARG NPM_CONFIG_REGISTRY
 WORKDIR /src/web
 COPY --chown=1000:1000 package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY --chown=1000:1000 patches/ ./patches/
 RUN npm install --global "$(node -p 'require("./package.json").packageManager')" && npm cache clean --force
 RUN if [ -n "${NPM_CONFIG_REGISTRY}" ]; then \
         export PNPM_CONFIG_REGISTRY="${NPM_CONFIG_REGISTRY}"; \
