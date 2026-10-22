@@ -7,107 +7,36 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
-	mpconfig "github.com/Adyen/agent-marketplace/pkg/marketplace/config"
-	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/worker"
 	"gopkg.in/yaml.v3"
 )
 
 type marketplaceBehaviorFixture struct {
-	env       *Env
-	bareURL   string
-	cfg       mpconfig.Config
-	meta      store.MetadataStore
-	blobs     store.BlobStore
-	handlerMu sync.RWMutex
-	handler   http.Handler
-	server    *httptest.Server
+	*marketplaceTarget
 }
 
 func newMarketplaceBehaviorFixture(t *testing.T, files map[string]string) *marketplaceBehaviorFixture {
 	t.Helper()
 	env := newEnv(t)
 	env.InitGitRepo()
-	bareURL := env.CreateBareRepo("marketplace-behavior", files)
 	gitServer := newGitHTTPServer(t, env.repos)
 	t.Cleanup(gitServer.Close)
-	origin := gitServer.URL + "/marketplace-behavior.git"
-	dbPath := filepath.Join(env.workspace, "marketplace.db")
-	blobsPath := filepath.Join(env.workspace, "blobs")
-	env.WriteFile("/workspace/marketplace.yaml", fmt.Sprintf(`apiVersion: agent-marketplace.io/marketplace/v1
-instance:
-  id: behavior-marketplace
-  name: Behavior Marketplace
-  canonical_url: https://example.invalid
-storage:
-  metadata:
-    driver: sqlite
-    dsn: %s
-  blobs:
-    driver: filesystem
-    path: %s
-acquisition_default: mirror
-refresh:
-  interval: 1h
-policy:
-  hidden_content: warn
-  license_allowlist: [MIT]
-  limits:
-    repository_bytes: 104857600
-    file_count: 1024
-    file_bytes: 2097152
-    artifact_bytes: 16777216
-    clone_duration: 300s
-    ingestion_duration: 120s
-registries:
-  - id: behavior-source-id
-    slug: behavior-source
-    origin: %s
-    ref: main
-    acquisition: mirror
-    license: MIT
-    roots:
-      - path: .
-        source_harness: claude
-revocations:
-  registry_ids: []
-  coordinates: []
-  revisions: []
-`, dbPath, blobsPath, origin))
-	result := env.RunAM("serve", "reindex", "--config", "marketplace.yaml")
-	if result.ExitCode != 0 {
-		t.Fatalf("initial Marketplace reindex failed (exit %d):\n%s", result.ExitCode, result.Combined)
-	}
-	cfg, meta, blobs := openPublicGateStores(t, env.mustResolvePath("/workspace/marketplace.yaml"))
-	handler := mpapi.NewServer(cfg, meta, blobs).PublicHandler()
-	fixture := &marketplaceBehaviorFixture{env: env, bareURL: bareURL, cfg: cfg, meta: meta, blobs: blobs, handler: handler}
-	server := httptest.NewServer(http.HandlerFunc(fixture.serveHTTP))
-	fixture.server = server
-	t.Cleanup(func() {
-		server.Close()
-		_ = meta.Close()
-	})
-	return fixture
-}
-
-func (f *marketplaceBehaviorFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
-	f.handlerMu.RLock()
-	defer f.handlerMu.RUnlock()
-	f.handler.ServeHTTP(w, r)
-}
-
-func (f *marketplaceBehaviorFixture) setHandler(handler http.Handler) {
-	f.handlerMu.Lock()
-	defer f.handlerMu.Unlock()
-	f.handler = handler
+	return &marketplaceBehaviorFixture{marketplaceTarget: newMarketplaceTarget(
+		t,
+		env,
+		"marketplace-behavior",
+		RegistryDef{Files: files},
+		gitServer.URL,
+		"behavior-marketplace",
+		"behavior-source",
+		t.TempDir(),
+	)}
 }
 
 func marketplaceBehaviorFiles(body string, collection bool) map[string]string {
@@ -157,29 +86,9 @@ func (f *marketplaceBehaviorFixture) resourceDigest(t *testing.T, kind, name str
 	return revision.ContentDigest
 }
 
-func (f *marketplaceBehaviorFixture) mutateSource(t *testing.T, path, content string) {
+func (m *marketplaceTarget) mutateSource(t *testing.T, path, content string) {
 	t.Helper()
-	work := t.TempDir()
-	gitRun(t, "", "clone", "-b", "main", strings.TrimPrefix(f.bareURL, "file://"), work)
-	fullPath := filepath.Join(work, filepath.FromSlash(path))
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitRun(t, work, "config", "user.email", "e2e@example.com")
-	gitRun(t, work, "config", "user.name", "E2E")
-	gitRun(t, work, "add", ".")
-	gitRun(t, work, "commit", "-m", "update source")
-	gitRun(t, work, "push", "origin", "main")
-}
-
-func (f *marketplaceBehaviorFixture) reindex(t *testing.T, cfg mpconfig.Config) {
-	t.Helper()
-	if err := worker.Reindex(context.Background(), worker.Deps{Config: cfg, MetadataStore: f.meta, BlobStore: f.blobs}, cfg, "behavior-source"); err != nil {
-		t.Fatalf("Marketplace reindex: %v", err)
-	}
+	pushRegistryFiles(t, m.bareURL, map[string]string{path: content})
 }
 
 func TestOrganizationMarketplaceCollectionMemberUserOverride(t *testing.T) {

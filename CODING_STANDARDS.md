@@ -61,7 +61,7 @@ The `e2e/` directory contains E2E tests that validate end-to-end CLI behavior by
 There are **two types** of E2E tests:
 
 1. **Declarative (table-driven)** — defined as `TestCase` structs in `e2e/table_test.go`. These are the preferred format for tests that follow a standard setup/run/assert pattern: write config, run a command, check output and filesystem. Use these when the test fits the `Steps` model (actions + assertions on a single workspace).
-2. **Standalone** — individual `func TestXxx(t *testing.T)` functions in separate files (e.g. `e2e/install_test.go`). Use these when the test requires non-standard setup that the declarative model doesn't support, such as running commands from a non-default working directory or skipping git repo initialization.
+2. **Standalone** — individual `func TestXxx(t *testing.T)` functions in separate files (e.g. `e2e/install_test.go`). Use these when the test requires non-standard setup that the declarative model doesn't support, such as skipping git repo initialization.
 
 #### Running
 
@@ -75,7 +75,7 @@ E2E_PARALLEL=8 make e2e  # control concurrency (default 4, set to 1 for serial)
 
 - **Process-based sandbox**: each test gets its own temp root with `home/`, `workspace/`, `repos/`, `etc/` directories. Subprocesses strip inherited `AGENT_MARKETPLACE_*` settings and override `HOME`, the XDG state/config/cache roots, `CODEX_HOME`, the organization-config test path, and a sanitized `PATH`, so application-controlled paths and policy cannot escape the sandbox or vary with the host. Fixture-specific environment overrides are applied explicitly after this baseline.
 - **Path mapping**: test table uses container-style paths (`/root/...`, `/workspace/...`) which are automatically resolved to the temp sandbox by `Env.resolvePath()`.
-- **Declarative test cases**: defined as `TestCase` structs in `e2e/table_test.go` with `Registries`, config layers (`GlobalCfg`/`RepoCfg`/`LocalCfg`/`OrgCfg`), and `Steps` (actions + assertions). `{{REG:name}}` placeholders are resolved to `file://` URLs of seeded bare git repos.
+- **Declarative test cases**: defined as `TestCase` structs in `e2e/table_test.go` with `Registries`, `Marketplaces` (in-process Marketplace servers backed by seeded bare repos), config layers (`GlobalCfg`/`RepoCfg`/`LocalCfg`/`OrgCfg`), and `Steps` (actions + assertions). `{{REG:name}}` placeholders are resolved to `file://` URLs of seeded bare git repos, `{{MKT:name}}` to the base URL of a named `Marketplaces` server, and `{{GITHTTP:name}}` to the Git-over-HTTP origin URL of a `Registries` or `Marketplaces` entry. Step actions cover config/file writes plus `ActionPushRegistry`, `ActionReindexMarketplace`, and `ActionRevokeMarketplace`; `Step.Env` sets subprocess environment overrides and `Step.Cwd` selects the subprocess working directory.
 - **FIFO concurrency handshakes**: use `openFIFOWriter` so writer setup is bounded, reports a subprocess that exits before opening its reader, and keeps the writer descriptor close-on-exec; use `waitForProcess` to bound subprocess completion.
 
 #### When to add a test
@@ -86,8 +86,8 @@ Add a new `TestCase` to `testTable` in `e2e/table_test.go` when:
 - Changing resource selection/exclusion semantics (`required`, `default`, `tags`, `exclude`)
 
 Add a standalone test function in a separate file when:
-- The test needs non-standard setup (e.g. no git repo, custom working directory)
-- The test uses `RunAMFrom` or other framework features not exposed through the `Steps` model
+- The test needs non-standard setup (e.g. no git repo)
+- The test uses framework features not exposed through the `Steps` model
 
 Use the structured fixture builders in `e2e/harness_test.go` (`Skill`, `Command`, `Subagent`, `MCPServer`) to define registry contents. Keep `Desc` fields as Given/When/Then descriptions.
 
