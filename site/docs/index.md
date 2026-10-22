@@ -26,6 +26,7 @@ The [user-journey map](./explanation/user-journeys.md) follows a resource from f
 | Remove a resource, or keep one out of a team default | [Remove or override resources](./how-to/remove-or-override-resources.md) · [Personal repository overrides](./how-to/use-personal-repository-overrides.md) |
 | Install from a curated Marketplace instead of a raw Git URL | [Install from a hosted Marketplace](./how-to/install-from-a-marketplace.md) |
 | Understand what the tool does | [How agent-marketplace works](./explanation/how-agent-marketplace-works.md) |
+| See how it differs from APM or skills.sh | [Compared with APM and skills.sh](./explanation/compared-with-other-tools.md) |
 
 Other guides for people who use resources:
 
@@ -79,6 +80,6 @@ Exact descriptions of commands, files, and fields.
 
 Why it works this way.
 
-- Start here: [user journeys](./explanation/user-journeys.md) · [how agent-marketplace works](./explanation/how-agent-marketplace-works.md) · [sources and resources](./explanation/sources-and-resources.md)
+- Start here: [user journeys](./explanation/user-journeys.md) · [how agent-marketplace works](./explanation/how-agent-marketplace-works.md) · [sources and resources](./explanation/sources-and-resources.md) · [compared with APM and skills.sh](./explanation/compared-with-other-tools.md)
 - Core model: [scopes, selection, and precedence](./explanation/scopes-selection-and-precedence.md) · [native harness materialization](./explanation/native-harness-materialization.md) · [reproducibility and lockfiles](./explanation/reproducibility-and-lockfiles.md) · [shared configuration ownership](./explanation/shared-configuration-ownership.md)
 - Marketplace and privacy: [Git registries and hosted Marketplaces](./explanation/git-registries-and-hosted-marketplaces.md) · [Marketplace architecture](./explanation/marketplace-architecture.md) · [Marketplace trust model](./explanation/marketplace-trust-model.md) · [telemetry and privacy](./explanation/telemetry-and-privacy.md)
