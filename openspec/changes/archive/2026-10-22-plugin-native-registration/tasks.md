@@ -21,4 +21,8 @@
 
 ## 3. Gates
 
-- [ ] 3.1 Run `make validate`, `make spec-check`, and `make validate-e2e`
+- [x] 3.1 Run `make validate`, `make spec-check`, and `make validate-e2e`
+  (reported by the writer on this candidate: `make validate` with
+  `TEST_LOCAL_BASE=origin/feat/plugin-export`, `make spec-check`, and
+  `make validate-e2e` on the prior iteration; the parent native gate
+  reruns them on the final commit)
