@@ -9,4 +9,4 @@
 ## 3. Journey, documentation and archive
 
 - [x] 3.1 Add the `hostile-metadata` 50×12 TUI QA journey and its README entry, and verify `make spec-check`
-- [ ] 3.2 Run `openspec archive tui-malformed-rows-name-registry --yes`
+- [x] 3.2 Run `openspec archive tui-malformed-rows-name-registry --yes`
