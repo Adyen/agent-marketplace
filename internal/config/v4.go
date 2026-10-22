@@ -1949,7 +1949,7 @@ func (c *V4Config) rebuildRequests() {
 					continue
 				}
 				for loc, request := range byLocator {
-					if v4ExclusionMatches(d.Exclusion, loc) && !request.Required {
+					if !request.Required && v4ExclusionMatches(d.Exclusion, loc) {
 						excluded[loc] = true
 					}
 				}
