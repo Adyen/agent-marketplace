@@ -35,6 +35,10 @@ export interface FixtureOptions {
   // Seeds the Git registry with collection "starter", whose only member is
   // alpha-skill.
   collection?: boolean;
+  // Seeds the Git registry with hostile-skill, whose description and body
+  // carry terminal control bytes, and a skill folder whose name carries an
+  // erase-display sequence, which makes it malformed.
+  hostileMetadata?: boolean;
 }
 
 export interface Fixture {
@@ -145,6 +149,13 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
     const source = path.join(registries, "source");
     write(path.join(source, "skills", "alpha-skill", "SKILL.md"), alphaSkillContent);
     write(path.join(source, "skills", "beta-skill", "SKILL.md"), betaSkillContent);
+    if (options.hostileMetadata) {
+      write(
+        path.join(source, "skills", "hostile-skill", "SKILL.md"),
+        '---\nname: hostile-skill\ndescription: "Hostile \\e]0;PWNED\\a\\e[2J tail"\n---\n\n# Hostile \x1b[31mred\x1b[0m\n'
+      );
+      write(path.join(source, "skills", "evil\x1b[2Jname", "SKILL.md"), "---\nname: evil\x1b[2Jname\ndescription: Evil name\n---\n");
+    }
     if (options.collection) {
       write(path.join(source, "skills", "collections", "starter", "COLLECTION.yaml"), "name: starter\nversion: 1.0.0\nresources:\n  - name: alpha-skill\n    kind: skill\n");
     }
