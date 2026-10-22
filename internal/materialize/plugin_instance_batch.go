@@ -213,8 +213,9 @@ func reconcilePluginInstance(ctx context.Context, repoRoot string, item pluginIn
 	if !item.removed {
 		ref := item.ref
 		if ref.Delivery == "native" {
-			ref.ReloadRequired = prior.Instance.ReloadRequired ||
-				ref.Refresh == "restart-required" && ref.GenerationKey != prior.Instance.GenerationKey
+			generationChanged := ref.Refresh == "restart-required" &&
+				ref.GenerationKey != prior.Instance.GenerationKey
+			ref.ReloadRequired = generationChanged || dryRun && prior.Instance.ReloadRequired
 			if ref.ReloadRequired {
 				report.Diags = append(report.Diags, diag.Diagnostic{
 					Code: diag.CodePluginRegistrationReloadRequired, Severity: diag.SeverityWarning,
@@ -229,8 +230,7 @@ func reconcilePluginInstance(ctx context.Context, repoRoot string, item pluginIn
 		item.ref = ref
 		plan.ref = ref
 	}
-	hasNativeRegistration := !item.removed &&
-		(priorDelivery == "native" || item.ref.Delivery == "native" || len(plan.catalog.entries) > 0)
+	hasNativeRegistration := priorDelivery == "native" || item.ref.Delivery == "native" || len(plan.catalog.entries) > 0
 	if hasNativeRegistration {
 		batch.ownerInstances[plan.catalog.scopeOwner] = true
 		participants, catalogErr := nativePluginCatalogParticipants(plan.catalog)
@@ -328,7 +328,9 @@ func reconcilePluginInstance(ctx context.Context, repoRoot string, item pluginIn
 
 	handler := plan.handler
 	if handler == nil {
-		if adapter, ok := materializeBindingCatalog()[string(key.target)]; ok {
+		if item.removed && priorDelivery == "native" {
+			handler = ownedAggregateHandlerFor(key.target)
+		} else if adapter, ok := materializeBindingCatalog()[string(key.target)]; ok {
 			handler = adapter.handler
 		}
 	}

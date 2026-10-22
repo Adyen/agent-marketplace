@@ -55,6 +55,12 @@ func nativePluginConfig(delivery string) string {
 		"  vendor:\n    - {kind: plugin, name: native-kit, delivery: " + delivery + "}\n"
 }
 
+func nativePluginDeselectedConfig() string {
+	return "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n" +
+		"  vendor: {directory: ./vendor/native-kit, format: claude-plugin}\nresources:\n" +
+		"  vendor: []\n"
+}
+
 func nativeCatalogEnv(path string) map[string]string {
 	return map[string]string{"AGENT_MARKETPLACE_E2E_PLUGIN_CATALOG": path}
 }
@@ -381,6 +387,10 @@ func TestNativePluginGenerationReloadRequirementIsReported(t *testing.T) {
 	if status.ExitCode != 0 || !strings.Contains(status.Combined, "reload-required") {
 		t.Fatalf("status did not report the native reload requirement (exit %d):\n%s", status.ExitCode, status.Combined)
 	}
+	nextSync := runNativeAM(env, catalogPath, "sync", "--no-backup")
+	if nextSync.ExitCode != 0 || strings.Contains(nextSync.Combined, "reload-required") {
+		t.Fatalf("unchanged native generation retained reload-required (exit %d):\n%s", nextSync.ExitCode, nextSync.Combined)
+	}
 }
 
 // spec: plugin-delivery/switching-to-decompose-removes-the-native-registration
@@ -462,7 +472,7 @@ func TestInterruptedNativePluginDeliverySwitchRecoversWithoutDuplicates(t *testi
 func TestVerifiedNativeDeliveryWithoutRegistrationLayoutFailsClosed(t *testing.T) {
 	env, catalogPath := newNativePluginEnv(t, "devin", "native")
 	result := runNativeAM(env, catalogPath, "sync", "--no-backup")
-	if result.ExitCode == 0 || (!strings.Contains(result.Combined, "plugin.delivery.") && !strings.Contains(result.Combined, "plugin.registration.")) {
+	if result.ExitCode == 0 || !strings.Contains(result.Combined, "plugin.registration.unsupported") {
 		t.Fatalf("verified native delivery to Devin did not fail closed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
 	if _, err := os.Lstat(env.mustResolvePath("/workspace/.devin")); !os.IsNotExist(err) {
@@ -471,5 +481,81 @@ func TestVerifiedNativeDeliveryWithoutRegistrationLayoutFailsClosed(t *testing.T
 	generations, err := filepath.Glob(filepath.Join(env.home, ".local", "state", "agent-marketplace", "packages", "*"))
 	if err != nil || len(generations) != 0 {
 		t.Fatalf("unsupported native delivery published a generation: %v / %v", generations, err)
+	}
+}
+
+func TestRemovingNativePluginRetiresOnlyOwnedRegistrations(t *testing.T) {
+	for _, target := range []string{"claude", "codex"} {
+		t.Run(target, func(t *testing.T) {
+			env, catalogPath := newNativePluginEnv(t, target, "native")
+			if target == "claude" {
+				env.WriteFile("/workspace/.claude/settings.json",
+					"{\n  // handwritten setting\n  \"enabledPlugins\": {\"handwritten@local\": true},\n  \"handwrittenSetting\": true\n}\n")
+			} else {
+				env.WriteFile("/workspace/.codex/config.toml",
+					"[marketplaces.\"handwritten\"]\nsource = { source = \"local\", path = \"/handwritten\" }\n"+
+						"[plugins.\"handwritten@handwritten\"]\nenabled = true\n")
+			}
+			first := runNativeAM(env, catalogPath, "sync", "--no-backup")
+			if first.ExitCode != 0 {
+				t.Fatalf("initial native sync failed (exit %d):\n%s", first.ExitCode, first.Combined)
+			}
+			assertNativePluginCatalog(t, env, "native-kit", target)
+
+			env.WriteRepoConfig(nativePluginDeselectedConfig())
+			removed := runNativeAM(env, catalogPath, "sync", "--no-backup")
+			if removed.ExitCode != 0 {
+				t.Fatalf("sync after deselection failed (exit %d):\n%s", removed.ExitCode, removed.Combined)
+			}
+			if target == "claude" {
+				settings := readNativeSettings(t, env, "/workspace/.claude/settings.json")
+				if strings.Contains(string(settings), "native-kit@") || strings.Contains(string(settings), "am-") {
+					t.Fatalf("native Claude registration remained after removal:\n%s", settings)
+				}
+				if !strings.Contains(string(settings), "handwritten@local") || !strings.Contains(string(settings), "handwrittenSetting") {
+					t.Fatalf("removal changed handwritten Claude settings:\n%s", settings)
+				}
+			} else {
+				config, err := os.ReadFile(env.mustResolvePath("/workspace/.codex/config.toml"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(string(config), "native-kit@") || strings.Contains(string(config), "am-") {
+					t.Fatalf("native Codex registration remained after removal:\n%s", config)
+				}
+				if !strings.Contains(string(config), "handwritten@handwritten") || !strings.Contains(string(config), "handwritten") {
+					t.Fatalf("removal changed handwritten Codex entries:\n%s", config)
+				}
+			}
+			assertNativePluginCatalogEmpty(t, env, target)
+		})
+	}
+}
+
+func assertNativePluginCatalogEmpty(t *testing.T, env *Env, target string) {
+	t.Helper()
+	manifestRel := filepath.Join(".claude-plugin", "marketplace.json")
+	if target == "codex" {
+		manifestRel = filepath.Join(".agents", "plugins", "marketplace.json")
+	}
+	stateRoot := filepath.Join(env.home, ".local", "state", "agent-marketplace")
+	paths, err := filepath.Glob(filepath.Join(stateRoot, "native-plugins", target, "*", manifestRel))
+	if err != nil || len(paths) != 1 {
+		t.Fatalf("native %s catalog manifests = %v / %v, want one", target, paths, err)
+	}
+	data, err := os.ReadFile(paths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Plugins []struct {
+			Name string `json:"name"`
+		} `json:"plugins"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("decode empty native catalog: %v\n%s", err, data)
+	}
+	if len(manifest.Plugins) != 0 {
+		t.Fatalf("native catalog still lists removed plugins: %+v", manifest.Plugins)
 	}
 }
