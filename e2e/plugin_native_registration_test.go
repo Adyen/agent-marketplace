@@ -18,7 +18,7 @@ description: Review plugin changes
 Review plugin changes.
 `
 
-func nativePluginCatalog(target, refresh string) string {
+func nativePluginCatalog(target string) string {
 	return fmt.Sprintf(`schema: 1
 harness: %s
 evidence:
@@ -27,8 +27,8 @@ evidence:
 accepts: [claude-plugin]
 delivery:
   decompose: {status: verified}
-  native: {status: verified, format: claude-plugin, probe: e2e-test-probe, refresh: %s}
-`, target, refresh)
+  native: {status: verified, format: claude-plugin, probe: e2e-test-probe, refresh: restart-required}
+`, target)
 }
 
 func newNativePluginEnv(t *testing.T, target, delivery string) (*Env, string) {
@@ -36,25 +36,20 @@ func newNativePluginEnv(t *testing.T, target, delivery string) (*Env, string) {
 	env := newEnv(t)
 	env.InitGitRepo()
 	env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [" + target + "]\n")
-	writeNativePlugin(env, "/workspace/vendor/native-kit", "native-kit", true)
+	writeNativePlugin(env, "/workspace/vendor/native-kit", "native-kit")
 	env.WriteRepoConfig(nativePluginConfig(delivery))
 	catalog := "/workspace/test-catalogs/" + target + ".yaml"
-	env.WriteFile(catalog, nativePluginCatalog(target, "restart-required"))
+	env.WriteFile(catalog, nativePluginCatalog(target))
 	return env, env.mustResolvePath(catalog)
 }
 
-func writeNativePlugin(env *Env, root, name string, withHook bool) {
+func writeNativePlugin(env *Env, root, name string) {
 	env.WriteFile(root+"/.claude-plugin/plugin.json", `{"name":"`+name+`"}`)
 	env.WriteFile(root+"/skills/review/SKILL.md", nativePluginSource)
-	if withHook {
-		env.WriteFile(root+"/hooks/hooks.json", `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo `+name+`"}]}]}`)
-	}
+	env.WriteFile(root+"/hooks/hooks.json", `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo `+name+`"}]}]}`)
 }
 
 func nativePluginConfig(delivery string) string {
-	if delivery == "" {
-		delivery = "auto"
-	}
 	return "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n" +
 		"  vendor: {directory: ./vendor/native-kit, format: claude-plugin}\nresources:\n" +
 		"  vendor:\n    - {kind: plugin, name: native-kit, delivery: " + delivery + "}\n"
