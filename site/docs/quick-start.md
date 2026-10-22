@@ -11,7 +11,7 @@ go install github.com/Adyen/agent-marketplace/cmd/agent-marketplace@latest
 agent-marketplace --version
 ```
 
-If the terminal answers `command not found`, add `$(go env GOPATH)/bin` (usually `~/go/bin`) to your `PATH`. For release binaries and other options, see [more install options](./install.md).
+If the terminal answers `command not found`, add Go's install folder to your `PATH`: `$(go env GOBIN)` if set, otherwise `$(go env GOPATH)/bin` (usually `~/go/bin`). For release binaries and other options, see [more install options](./install.md).
 
 ## Launch
 
