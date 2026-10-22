@@ -1013,8 +1013,16 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 	}
 
 	// Add malformed skills. Deduplicate by (catalogKey, DirName) so
-	// same-name malformed entries from different catalogs each appear.
+	// same-name malformed entries from different catalogs each appear, each
+	// labelled with the registry whose catalog it came from.
+	registriesByCatalog := map[string]config.RegistryEntry{}
+	if cfg != nil {
+		for _, entry := range cfg.Registries {
+			registriesByCatalog[entry.CatalogKey] = entry
+		}
+	}
 	for catalogKey, cat := range catalogs {
+		registry := registriesByCatalog[catalogKey]
 		for _, m := range cat.Malformed {
 			name := m.DirName
 			seenKey := name + "\x01" + catalogKey
@@ -1027,8 +1035,13 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 				IsMalformed:  true,
 				MalformedMsg: m.Error.Error(),
 				Artifact: resolver.ResolvedArtifact{
-					Entry: catalog.Entry{Name: name, Path: m.Path},
+					Entry:      catalog.Entry{Name: name, Path: m.Path},
+					CatalogKey: catalogKey,
 				},
+				RegistryURL:  registry.URL,
+				RegistryName: registryDisplayName(registry.URL),
+				RegistryRef:  registry.Ref,
+				RegistryPath: registry.Path,
 			})
 		}
 	}

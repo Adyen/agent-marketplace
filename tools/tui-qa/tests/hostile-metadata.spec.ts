@@ -1,0 +1,48 @@
+import assert from "node:assert/strict";
+import { after, before } from "node:test";
+
+import { defineFixture, locate, step, waitForExit } from "./helpers.js";
+
+// spec: tui-rendering/hostile-input-at-minimum-size
+// spec: tui-rendering/malformed-rows-name-their-registry
+const journey = defineFixture("hostile-metadata", ["tui"], 50, 12, { hostileMetadata: true });
+before(journey.setup);
+after(journey.cleanup);
+
+journey.test("registry text with terminal control bytes renders as visible escapes at 50x12", async (terminal) => {
+  // Narrow panes wrap long values, so compare without whitespace.
+  const screenText = async (): Promise<string> => (await terminal.text()).replace(/\s+/g, "");
+  const assertScreenHas = async (...expected: string[]): Promise<void> => {
+    const screen = await screenText();
+    for (const value of expected) {
+      assert.ok(screen.includes(value), `the screen lost ${JSON.stringify(value)}:\n${await terminal.text()}`);
+    }
+  };
+
+  await step("settled fixture baseline at the minimum size", () => {}, async () => {
+    await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
+    await locate(terminal, "q quit").unique().expect();
+  });
+  await step("the malformed skill's name and error render as escapes", () => terminal.write("G"), async () => {
+    await locate(terminal, /Malformed\s+\(1\)/).unique().expect();
+    await locate(terminal, /Name:\s+evil\\x1B\[2Jname/).unique().expect();
+    await assertScreenHas("fixture/evil\\x1B[2Jname", "controlcharactersarenot");
+    await locate(terminal, "(local)/evil").expect({ not: true });
+    await locate(terminal, "q quit").unique().expect();
+  });
+  await step("select hostile-skill", () => terminal.write("kk"), async () => {
+    await locate(terminal, /Name:\s+hostile-skill/).unique().expect();
+  });
+  await step("its full view shows the body's control bytes as escapes", () => terminal.write("\r"), async () => {
+    await locate(terminal, "esc/q back").unique().expect();
+    await assertScreenHas("Hostile\\x1B[31mred\\x1B[0m");
+  });
+  await step("leaving the full view restores the list unchanged", () => terminal.write("\x1b"), async () => {
+    await locate(terminal, "agent-marketplace — workspace").unique().expect();
+    await locate(terminal, /Name:\s+hostile-skill/).unique().expect();
+    await locate(terminal, "~ in sync").unique().expect();
+  });
+  await step("quit", () => terminal.write("q"), async () => {
+    assert.equal((await waitForExit(terminal)).exitCode, 0);
+  });
+});
