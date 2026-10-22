@@ -41,6 +41,9 @@ export interface FixtureOptions {
   hostileMetadata?: boolean;
   // Writes the Git registry URL with a trailing slash, as users may.
   trailingSlashRegistry?: boolean;
+  // Adds commands/broken-command.md with unparseable frontmatter next to the
+  // skills/ folder. Only a directorySource root discovers commands there.
+  malformedCommand?: boolean;
 }
 
 export interface Fixture {
@@ -151,6 +154,10 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
     const source = path.join(registries, "source");
     write(path.join(source, "skills", "alpha-skill", "SKILL.md"), alphaSkillContent);
     write(path.join(source, "skills", "beta-skill", "SKILL.md"), betaSkillContent);
+    if (options.malformedCommand) {
+      if (!options.directorySource) throw new Error("malformedCommand needs directorySource, whose root discovers commands/");
+      write(path.join(source, "commands", "broken-command.md"), "---\ndescription: [unterminated\n---\n\nBroken command\n");
+    }
     if (options.hostileMetadata) {
       write(
         path.join(source, "skills", "hostile-skill", "SKILL.md"),
