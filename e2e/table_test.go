@@ -4906,8 +4906,8 @@ harnesses:
 		},
 	},
 	{
-		Name:       "update/verbose_registry_summary",
-		Desc:       "Given an unchanged Git registry, When updating with verbose output, Then the CLI reports the configured entry without claiming its revision changed",
+		Name:       "update/verbose_registry_summary_repo_only",
+		Desc:       "Given an unchanged Git registry selected only by repository config, When updating with verbose output, Then the CLI reports the configured entry without claiming its revision changed",
 		Registries: []RegistryDef{{Name: "update-output", Skills: []Skill{{Name: "review"}}}},
 		RepoCfg:    "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {team: {git: '{{REG:update-output}}', ref: main}}\nresources: {team: {include: [skill/review]}}\n",
 		Steps: []Step{
@@ -4916,8 +4916,8 @@ harnesses:
 		},
 	},
 	{
-		Name:       "update/verbose_registry_summary_v4",
-		Desc:       "Given an unchanged Git source in v4 user and repository configs, When updating with verbose output, Then the CLI reports the configured entry without claiming its revision changed",
+		Name:       "update/verbose_registry_summary_user_and_repo",
+		Desc:       "Given v4 user config with a harness target and v4 repository config with an unchanged Git source, When updating with verbose output, Then the CLI reports the configured entry without claiming its revision changed",
 		Registries: []RegistryDef{{Name: "update-output-v4", Skills: []Skill{{Name: "review"}}}},
 		GlobalCfg:  "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n",
 		RepoCfg:    "apiVersion: agent-marketplace/v4\nsources:\n  tools: {git: '{{REG:update-output-v4}}', ref: main}\nresources:\n  tools: {include: [skill/review]}\n",
