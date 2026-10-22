@@ -26,7 +26,10 @@ journey.test("registry text with terminal control bytes renders as visible escap
   await step("the malformed skill's name and error render as escapes", () => terminal.write("G"), async () => {
     await locate(terminal, /Malformed\s+\(1\)/).unique().expect();
     await locate(terminal, /Name:\s+evil\\x1B\[2Jname/).unique().expect();
-    await assertScreenHas("fixture/evil\\x1B[2Jname", "controlcharactersarenot");
+    // The label wraps inside the list pane, beside the detail pane, so match
+    // its first row.
+    await locate(terminal, "fixture/evil\\x1B[2Jn").unique().expect();
+    await assertScreenHas("controlcharactersarenot");
     await locate(terminal, "(local)/evil").expect({ not: true });
     await locate(terminal, "q quit").unique().expect();
   });
