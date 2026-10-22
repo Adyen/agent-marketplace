@@ -7,4 +7,4 @@
 ## 2. Journey and archive
 
 - [x] 2.1 Add the `malformed-kind` journey, its fixture option and README entry
-- [ ] 2.2 Run `openspec archive malformed-resources-show-kind --yes`
+- [x] 2.2 Run `openspec archive malformed-resources-show-kind --yes`
