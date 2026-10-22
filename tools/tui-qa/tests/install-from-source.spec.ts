@@ -457,6 +457,7 @@ before(async () => {
 after(lockPinned.cleanup);
 
 // spec: tui-interactions/lock-pinned-source-returns-to-review-with-update-remediation
+// spec: tui-interactions/lock-pinned-source-installs-into-another-scope
 lockPinned.test("a lock-pinned source returns to Review with update remediation", async (terminal) => {
   const fixture = lockPinned.current();
   assert.ok(lockPinnedCommits, "lock-pinned fixture did not record its commits");
@@ -495,8 +496,22 @@ lockPinned.test("a lock-pinned source returns to Review with update remediation"
     await locate(terminal, "--scope repo").expect();
     await locate(terminal, "Selected resources:").unique().expect();
     await locate(terminal, "preview again").expect({ not: true });
+    await locate(terminal, "another scope").expect();
   });
   assertRepoUnchanged();
-  await cancelAndQuit(terminal);
+  await step("choose another scope", () => terminal.write("l"), async () => {
+    await locate(terminal, /› \[l\] Local/).unique().expect();
+  });
+  await step("confirm the Local install", () => terminal.write("\r"), async () => {
+    await locate(terminal, /Installed 1 from/).unique().expect({ timeout: 30_000 });
+    await locate(terminal, "Install from source").expect({ not: true });
+  });
+  assert.match(fs.readFileSync(path.join(fixture.repo, ".agents", "config.local.yaml"), "utf8"), /ad-hoc-second/);
   assertRepoUnchanged();
+  await step("sync the installs", () => terminal.write("s"), async () => {
+    await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
+  });
+  await step("quit", () => terminal.write("q"), async () => {
+    assert.equal((await waitForExit(terminal)).exitCode, 0);
+  });
 });

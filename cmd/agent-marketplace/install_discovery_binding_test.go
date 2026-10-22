@@ -193,6 +193,64 @@ func TestConfiguredInstallRefusesLockPinnedSourceWithUpdateRemediation(t *testin
 	}
 }
 
+// spec: resource-installation/source-locked-in-another-scope-installs-into-the-target-scope
+func TestSourceLockedInAnotherScopeInstallsIntoTargetScope(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, expect := range []bool{true, false} {
+		t.Run(map[bool]string{true: "expected commit", false: "plain install"}[expect], func(t *testing.T) {
+			f := newInstallBindingFixture(t)
+			f.seedLock(t)
+			f.advance(t)
+			ws, err := pipeline.NewWorkspace(f.repo, f.repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			preview, err := pipeline.PreviewSource(context.Background(), ws, f.origin, "main", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			files := []string{config.ProjectConfigPath(f.repo), filepath.Join(f.repo, ".agents", "lock.yaml")}
+			before := readInstallBindingFiles(t, files)
+			localConfig, err := pipeline.ScopedConfigPath(f.repo, pipeline.ScopeLocal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if expect {
+				opts := f.options()
+				opts.Scope = pipeline.ScopeLocal
+				opts.ExpectedCommit = preview.Commit
+				if result, err := pipeline.Install(context.Background(), opts); err != nil || result == nil {
+					t.Fatalf("local install = %#v, %v", result, err)
+				}
+			} else if out, err := executeCommand("install", "--from", f.origin, "--ref", "main", "review", "--scope", "local"); err != nil {
+				t.Fatalf("local install: %v\n%s", err, out)
+			}
+			if raw := string(readInstallBindingFiles(t, []string{localConfig})[localConfig]); !strings.Contains(raw, f.origin) || !strings.Contains(raw, "review") {
+				t.Fatalf("local config does not record the source and resource:\n%s", raw)
+			}
+			localLock, err := lockfile.PathForConfig(localConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			localDoc := readExactManifestLock(t, localLock)
+			if len(localDoc.Registries) != 1 || localDoc.Registries[0].Commit.Hex() != preview.Commit {
+				t.Fatalf("local lock = %#v, want commit %s", localDoc.Registries, preview.Commit)
+			}
+			if after := readInstallBindingFiles(t, files); !reflect.DeepEqual(before, after) {
+				t.Fatalf("local install changed the project layer:\nbefore=%#v\nafter=%#v", before, after)
+			}
+			if out, err := executeCommand("sync"); err != nil {
+				t.Fatalf("sync after local install: %v\n%s", err, out)
+			}
+			if out, err := executeCommand("sync", "--check"); err != nil {
+				t.Fatalf("sync --check after local install: %v\n%s", err, out)
+			}
+		})
+	}
+}
+
 func TestConfiguredInstallSelectorsAndScopesKeepPreparedPins(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

@@ -1410,7 +1410,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	catalogKeys := map[string]bool{}
 	for i := range discoveryCfg.Registries {
 		entry := &discoveryCfg.Registries[i]
-		if !adHocEntryMatchesBinding(*entry, binding.Entry) {
+		if entry.Source != layer.Source || !adHocEntryMatchesBinding(*entry, binding.Entry) {
 			continue
 		}
 		catalogKeys[entry.CatalogKey] = true

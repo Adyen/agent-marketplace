@@ -225,7 +225,7 @@ func TestInstallMatchingExpectedCommitKeepsRequestedRefInStagedConfig(t *testing
 			Context: ctx,
 			DiscoveryConfig: &config.Config{
 				APIVersion: config.APIVersionV4,
-				Registries: []config.RegistryEntry{{URL: sourceURL, Ref: "main"}},
+				Registries: []config.RegistryEntry{{URL: sourceURL, Ref: "main", Source: config.RepoCommitted}},
 			},
 			View:         DependencyLockView{CatalogOption: catalogOption},
 			Reconcile:    reconcile,

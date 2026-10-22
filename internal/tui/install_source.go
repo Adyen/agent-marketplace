@@ -870,7 +870,7 @@ func (m Model) updateInstallSourceInstall(msg installSourceInstallMsg) (tea.Mode
 			m.marketplaceInstallIsSource = false
 			m.pane = paneInstallSource
 			m.installSource.step = installSourceStepReview
-			m.installSource.error = fmt.Sprintf("%s lock pins %s at %s; preview showed %s. Run %s, then install again.",
+			m.installSource.error = fmt.Sprintf("%s lock pins %s at %s; preview showed %s. Run %s, or choose another scope.",
 				installSourceScopeName(locked.Scope),
 				sanitizeTerminalData(locked.Ref, terminalSingleLine),
 				sanitizeTerminalData(shortCommit(locked.Locked), terminalSingleLine),
