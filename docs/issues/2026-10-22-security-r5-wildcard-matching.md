@@ -155,6 +155,29 @@ no lockfile or global configuration change.
 Native harness probes, released-client/container gates, and frontend checks
 are not claimed as locally executed. Relevant CI gates remain authoritative.
 
+## Publication Integration And Review
+
+Merge main `8ed852a8` without rewriting history. Its nine files add upstream
+TUI diagnostics/journeys and test-only upgrade-notice controls; they are not
+own R53 changes. The measured production and benchmark blobs remain identical.
+No raw measurements are refreshed, relabeled, or pooled at this stage.
+
+Fresh selected validation, vet, zero-issue lint, and build pass. Strict specs
+pass 65 items, 1,160 scenarios, 1,879 annotations, and two active changes. The
+expanded terminal run passes all 51 executed PTY tests and four separate
+utility/process tests, with zero failures or skips. The earlier
+3,423-invocation E2E gate is evidence from the unchanged configuration/matcher
+implementation before this last TUI integration, not a new run on that head.
+
+Host `open-code-review-delegate` adversarial review covers all eleven own
+files, including both Go tests, the plan/report, and all six raw evidence
+files. Eleven reviewed, zero skipped, no unresolved actionable findings.
+The review checks all seven production call sites, raw token equivalence,
+editor refusal/healthy controls, semantic mutants, fixture assertions,
+canonical overlays and variant proof, and measurement/validation provenance.
+This is host review, not an external model or bot review, and is not a claim
+that passing checks proves absence of defects.
+
 ## Remaining Scope
 
 R53 remains **partial**. Wildcard scans still scale with selected locators and
