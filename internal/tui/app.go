@@ -1241,7 +1241,7 @@ func (m Model) dispatchAction(id paletteActionID) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case actionDiagnostics:
-		if len(m.errs) > 0 || len(m.warnings) > 0 || len(m.discoveryErrs) > 0 {
+		if m.hasDiagnostics() {
 			m.pane = paneErrors
 		}
 		return m, nil

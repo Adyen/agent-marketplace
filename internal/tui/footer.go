@@ -89,7 +89,10 @@ func (m Model) footerFloor() []footerItem {
 func (m Model) footerActionHints() []footerItem {
 	actions := [][2]string{{"/", "search"}, {"space", "toggle"}, {"s", "sync"}, {"H", "harnesses"}, {"E", "config"}, {"v", "view"}}
 	if m.failuresOrDrift() || len(m.discoveryErrs) > 0 {
-		actions = append([][2]string{{"e", "errors"}, {"r", "reload"}}, actions...)
+		actions = append([][2]string{{"r", "reload"}}, actions...)
+	}
+	if m.hasDiagnostics() {
+		actions = append([][2]string{{"e", "errors"}}, actions...)
 	}
 	hints := make([]footerItem, len(actions))
 	for i, a := range actions {
@@ -325,6 +328,11 @@ func rowsHaveUnavailable(rows []row) bool {
 
 func (m Model) hasUnavailableRows() bool {
 	return rowsHaveUnavailable(m.rows)
+}
+
+// hasDiagnostics reports whether the errors view has anything to show.
+func (m Model) hasDiagnostics() bool {
+	return len(m.errs) > 0 || len(m.warnings) > 0 || len(m.discoveryErrs) > 0
 }
 
 func (m Model) failuresOrDrift() bool {

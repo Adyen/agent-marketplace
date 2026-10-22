@@ -111,7 +111,7 @@ func (m Model) actionEligible(id paletteActionID) bool {
 	case actionHarness:
 		return !m.configInvalid
 	case actionDiagnostics:
-		return len(m.errs) > 0 || len(m.warnings) > 0 || len(m.discoveryErrs) > 0
+		return m.hasDiagnostics()
 	case actionClearSearch:
 		return m.filter != ""
 	case actionToggle:

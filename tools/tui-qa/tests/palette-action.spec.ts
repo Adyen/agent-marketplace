@@ -39,6 +39,10 @@ journey.test("filtered command palette actions run sync, fold and clear-search",
   });
   await step("enable it in the project", () => terminal.write("p"), async () => {
     await locate(terminal, "~ 1 out of sync").unique().expect({ timeout: 30_000 });
+    // Plain drift has nothing for the errors view, so the footer offers
+    // reload and sync but not errors.
+    await locate(terminal, "r reload").unique().expect();
+    await locate(terminal, "e errors").expect({ not: true });
   });
   assert.equal(
     fs.readFileSync(repoConfig, "utf8"),
