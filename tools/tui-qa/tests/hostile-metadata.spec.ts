@@ -33,7 +33,10 @@ journey.test("registry text with terminal control bytes renders as visible escap
     await locate(terminal, "(local)/evil").expect({ not: true });
     await locate(terminal, "q quit").unique().expect();
   });
-  await step("select hostile-skill", () => terminal.write("kk"), async () => {
+  await step("select the Malformed header", () => terminal.write("k"), async () => {
+    await locate(terminal, /Name:\s+evil/).expect({ not: true });
+  });
+  await step("select hostile-skill", () => terminal.write("k"), async () => {
     await locate(terminal, /Name:\s+hostile-skill/).unique().expect();
   });
   // The description sits below the detail pane's fold at 50x12.
