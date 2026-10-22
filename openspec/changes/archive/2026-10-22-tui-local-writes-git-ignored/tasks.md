@@ -6,4 +6,4 @@
 ## 2. Journey and archive
 
 - [x] 2.1 Move the `local-exclude` journey's `.gitignore` check to right after the write, and update its README entry
-- [ ] 2.2 Run `openspec archive tui-local-writes-git-ignored --yes`
+- [x] 2.2 Run `openspec archive tui-local-writes-git-ignored --yes`
