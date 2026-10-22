@@ -1,6 +1,7 @@
 package e2e_test
 
 import (
+	"encoding/json"
 	"strings"
 )
 
@@ -475,4 +476,167 @@ description: my hand-written worker droid
 			})
 		}
 	}
+}
+
+// bundleRootHandlers is the handler list for one hook group running command.
+func bundleRootHandlers(command string) []any {
+	return []any{map[string]any{"type": "command", "command": command}}
+}
+
+// bundleRootHooks returns a Claude-layout hooks/hooks.json with a PreToolUse hook and, when stop is set, a Stop hook.
+// Stop has no matcher, so its group omits one.
+func bundleRootHooks(pre, stop string) string {
+	hooks := map[string]any{"PreToolUse": []any{map[string]any{"matcher": "Bash", "hooks": bundleRootHandlers(pre)}}}
+	if stop != "" {
+		hooks["Stop"] = []any{map[string]any{"hooks": bundleRootHandlers(stop)}}
+	}
+	data, err := json.Marshal(map[string]any{"hooks": hooks})
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
+}
+
+// bundleRootFiles returns a bundle with hooks/hooks.json and an executable-looking support script at each path.
+func bundleRootFiles(hooks string, scripts ...string) map[string]string {
+	files := map[string]string{"hooks/hooks.json": hooks}
+	for _, rel := range scripts {
+		files[rel] = "#!/bin/sh\necho bundle support\n"
+	}
+	return files
+}
+
+// bundleRootNative returns the native hook file for harness in scope and the scope root that holds the harness directory.
+func bundleRootNative(harness, scope string) (native, root string) {
+	root, file := "/workspace", "hooks.json"
+	if scope == "user" {
+		root = "/root"
+	}
+	if harness == "claude" {
+		file = "settings.json"
+	}
+	return root + "/." + harness + "/" + file, root
+}
+
+// bundleRootCase builds a case whose bundle comes from a Git registry or, when git is false, from a directory source written by the case's first steps.
+func bundleRootCase(name, harness, scope string, git bool, files map[string]string, steps ...Step) TestCase {
+	tc := TestCase{Name: "hooks/bundle_root/" + name}
+	cfg := "apiVersion: agent-marketplace/v4\nharnesses: [" + harness + "]\n"
+	var writes []Step
+	if git {
+		tc.Registries = []RegistryDef{{Name: "bundle", Files: files}}
+		cfg += "sources: {team: {git: '{{REG:bundle}}', ref: main}}\n"
+	} else {
+		writeRoot := "/workspace/resources"
+		if scope == "user" {
+			writeRoot = "/root/.agents/resources"
+		}
+		cfg += "sources: {team: {directory: ./resources}}\n"
+		for rel, body := range files {
+			writes = append(writes, writeFile(writeRoot+"/"+rel, body))
+		}
+	}
+	cfg += "resources: {team: {all: true}}\n"
+	if scope == "user" {
+		tc.GlobalCfg = cfg
+	} else {
+		tc.RepoCfg = cfg
+		tc.GlobalCfg = "apiVersion: agent-marketplace/v4\nharnesses: [" + harness + "]\n"
+	}
+	tc.Steps = append(writes, steps...)
+	return tc
+}
+
+func bundleRootSourceName(git bool) string {
+	if git {
+		return "git"
+	}
+	return "directory"
+}
+
+// spec: hook-resources/bundle-root-references-resolve-on-every-source-path
+// spec: hook-resources/support-files-keep-their-bundle-relative-paths
+func init() {
+	files := bundleRootFiles(bundleRootHooks(`"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/check.sh"`, ""), "hooks/scripts/check.sh", "hooks/scripts/nested/deep.sh")
+	for _, git := range []bool{true, false} {
+		for _, harness := range []string{"claude", "factory"} {
+			for _, scope := range []string{"repo", "user"} {
+				native, root := bundleRootNative(harness, scope)
+				support := root + "/." + harness + "/hook-support"
+				testTable = append(testTable, bundleRootCase(
+					bundleRootSourceName(git)+"/"+harness+"/"+scope,
+					harness, scope, git, files,
+					ok("sync").notOut("hook.support-reference").has(native, "/PreToolUse-command/hooks/scripts/check.sh").lacks(native, "CLAUDE_PLUGIN_ROOT").
+						globs(support+"/*/PreToolUse-command/hooks/scripts/check.sh", support+"/*/PreToolUse-command/hooks/scripts/nested/deep.sh").
+						noGlobs(support+"/*/PreToolUse-command/scripts"),
+					ok("sync", "--check").unchanged(native),
+					ok("sync").unchanged(native, support),
+				))
+			}
+		}
+	}
+}
+
+// spec: hook-resources/a-reference-to-a-missing-support-file-refuses-the-hook
+func init() {
+	files := bundleRootFiles(bundleRootHooks(`"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/absent.sh"`, "echo sibling-ok"), "hooks/scripts/check.sh")
+	native, root := bundleRootNative("claude", "repo")
+	for _, git := range []bool{true, false} {
+		testTable = append(testTable, bundleRootCase(
+			"missing-reference/"+bundleRootSourceName(git),
+			"claude", "repo", git, files,
+			exits(1, "sync").out("hook.support-reference-missing").notOut("absent.sh").has(native, "echo sibling-ok").lacks(native, "absent.sh").
+				noGlobs(root+"/.claude/hook-support/*/PreToolUse-command"),
+		))
+	}
+}
+
+// spec: hook-resources/bare-and-dynamic-plugin-root-references-are-not-checked
+func init() {
+	files := bundleRootFiles(bundleRootHooks(`cd "${CLAUDE_PLUGIN_ROOT}" && ./hooks/scripts/check.sh`, `"${CLAUDE_PLUGIN_ROOT}/hooks/$SCRIPT"`), "hooks/scripts/check.sh")
+	native, _ := bundleRootNative("claude", "repo")
+	testTable = append(testTable, bundleRootCase(
+		"bare-and-dynamic/git",
+		"claude", "repo", true, files,
+		ok("sync").notOut("hook.support-reference-missing").has(native, "/Stop-command/hooks/$SCRIPT").lacks(native, "CLAUDE_PLUGIN_ROOT"),
+	))
+}
+
+// spec: hook-resources/legacy-folder-relative-references-keep-working-with-a-warning
+func init() {
+	files := bundleRootFiles(bundleRootHooks(`"${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"`, ""), "hooks/scripts/check.sh")
+	native, root := bundleRootNative("claude", "repo")
+	support := root + "/.claude/hook-support"
+	for _, git := range []bool{true, false} {
+		testTable = append(testTable, bundleRootCase(
+			"legacy-reference/"+bundleRootSourceName(git),
+			"claude", "repo", git, files,
+			ok("sync").out("hook.support-reference-legacy").has(native, "/PreToolUse-command/hooks/scripts/check.sh").globs(support+"/*/PreToolUse-command/hooks/scripts/check.sh"),
+			ok("sync", "--check"),
+		))
+	}
+}
+
+// spec: hook-resources/quoting-only-the-plugin-root-token-keeps-the-reference-checked
+func init() {
+	files := bundleRootFiles(bundleRootHooks(`"${CLAUDE_PLUGIN_ROOT}"/scripts/check.sh`, ""), "hooks/scripts/check.sh")
+	native, root := bundleRootNative("claude", "repo")
+	support := root + "/.claude/hook-support"
+	testTable = append(testTable, bundleRootCase(
+		"quoted-token-legacy/git",
+		"claude", "repo", true, files,
+		ok("sync").out("hook.support-reference-legacy").has(native, "/PreToolUse-command/hooks/scripts/check.sh").lacks(native, "CLAUDE_PLUGIN_ROOT").globs(support+"/*/PreToolUse-command/hooks/scripts/check.sh"),
+		ok("sync", "--check"),
+	))
+}
+
+// spec: hook-resources/references-that-resolve-under-both-meanings-use-the-bundle-root
+func init() {
+	files := bundleRootFiles(bundleRootHooks(`"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/check.sh"`, ""), "hooks/scripts/check.sh", "hooks/hooks/scripts/check.sh")
+	native, _ := bundleRootNative("claude", "repo")
+	testTable = append(testTable, bundleRootCase(
+		"both-meanings/git",
+		"claude", "repo", true, files,
+		ok("sync").notOut("hook.support-reference-legacy").has(native, "/PreToolUse-command/hooks/scripts/check.sh").lacks(native, "/PreToolUse-command/hooks/hooks/scripts/check.sh"),
+	))
 }

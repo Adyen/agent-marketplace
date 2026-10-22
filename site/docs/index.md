@@ -1,4 +1,4 @@
-# Documentation
+# Agent Marketplace
 
 `agent-marketplace` is a command-line tool that installs shared AI agent resources into your coding tools. A resource is a skill, command, subagent, hook, or MCP server. The tool downloads resources from Git registries or a hosted Marketplace and writes each one into the folders your coding tool reads. These docs call each coding tool a [harness](./glossary.md#harness). Eight are supported: Claude Code, Codex, Cursor, Devin, Factory Droid, Gemini CLI, OpenCode, and Windsurf.
 

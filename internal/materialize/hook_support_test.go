@@ -36,7 +36,7 @@ func TestPrepareHookSupportNamespacesSupportFiles(t *testing.T) {
 		if !strings.HasSuffix(plan.relBase, "/"+want) {
 			t.Fatalf("plan %d relBase %q missing installed name %q", i, plan.relBase, want)
 		}
-		if len(plan.artifacts) != 1 || plan.artifacts[0].Path != plan.relBase+"/shared.sh" {
+		if len(plan.artifacts) != 1 || plan.artifacts[0].Path != plan.relBase+"/hooks/shared.sh" {
 			t.Fatalf("plan %d artifacts = %#v", i, plan.artifacts)
 		}
 	}
@@ -72,7 +72,7 @@ func makeHookSupportSource(t *testing.T, script string, mode os.FileMode) string
 	if err := os.MkdirAll(filepath.Dir(hooks), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(hooks, []byte(`{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/shared.sh"}]}]}`), 0o644); err != nil {
+	if err := os.WriteFile(hooks, []byte(`{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/shared.sh"}]}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "hooks", "shared.sh"), []byte(script), mode); err != nil {

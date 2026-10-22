@@ -93,6 +93,7 @@ const (
 	CodeHookTimeoutRounded                  = "hook.timeout-rounded"                    // Timeout conversion to seconds rounded up to the next whole second
 	CodeHookTimeoutCapped                   = "hook.timeout-capped"                     // Timeout outside a documented per-event limit; moved to the limit
 	CodeHookDuplicateExecutionRisk          = "hook.duplicate-execution-risk"           // Two selected targets load the same hook files by default
+	CodeHookSupportReferenceLegacy          = "hook.support-reference-legacy"           // Plugin-root reference resolved only under the deprecated folder meaning; rewritten to the bundle-root path
 	CodeMaterializeHookReview               = "materialize.hook.review"                 // Repository hook output changed on a target that may require trust review
 	CodeMaterializeHookReviewPending        = "materialize.hook.review-pending"         // A check found a pending hook change without mutating files
 	CodeMaterializeHookSatisfiedByUnmanaged = "materialize.hook.satisfied-by-unmanaged" // A semantically identical handwritten hook already exists; no entry was added
@@ -337,6 +338,7 @@ const (
 	CodeHookTimeoutUnsupported                   = "hook.timeout-unsupported"                     // Target cannot represent the hook timeout; hook suppressed
 	CodeHookTypeUnsupported                      = "hook.type-unsupported"                        // Target catalog does not declare this hook type for the event; hook suppressed
 	CodeHookSupportPathUnrepresentable           = "hook.support-path-unrepresentable"            // Plugin-root token has no repository base on this target; hook suppressed
+	CodeHookSupportReferenceMissing              = "hook.support-reference-missing"               // Plugin-root reference names no installed support file under either meaning; hook suppressed
 	CodeHookPromptUnsupported                    = "hook.prompt.unsupported"                      // Target cannot represent prompt hooks
 	CodeHookFactoryNonCommandTypeDropped         = "hook.factory.non-command-type-dropped"        // Factory dropped non-command hook type
 	CodeHookCursorUnsupportedType                = "hook.cursor.unsupported-type"                 // Cursor dropped non-command hook type

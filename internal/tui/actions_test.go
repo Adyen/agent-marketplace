@@ -707,7 +707,8 @@ func TestReadSnapshotRowsIncludeAllFactoryResourceKinds(t *testing.T) {
 		".agents/skills/audit/SKILL.md": "---\nname: audit\ndescription: Audit workflows\n---\n# Audit\n",
 		".agents/commands/continue.md":  "# Continue\n",
 		".agents/droids/worker.md":      "---\nname: worker\ndescription: Do work\n---\nWork\n",
-		".agents/hooks/hooks.json":      `{"hooks":{"PreToolUse":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/check.sh","matcher":"Read"}]}}`,
+		".agents/hooks/hooks.json":      `{"hooks":{"PreToolUse":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/hooks/check.sh","matcher":"Read"}]}}`,
+		".agents/hooks/check.sh":        "#!/bin/sh\necho check\n",
 		".agents/mcp.json":              `{"mcpServers":{"memory":{"command":"memory-server"}}}`,
 	} {
 		fullPath := filepath.Join(registryRoot, path)

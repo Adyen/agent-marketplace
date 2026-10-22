@@ -123,6 +123,8 @@ type Step struct {
 	PathsUnchanged  []string // files or trees whose bytes and metadata must be unchanged by this step
 	Symlinks        []string
 	RegularFiles    []string          // paths that must exist and not be symbolic links
+	GlobsExist      []string          // container path glob patterns that must each match at least one path
+	GlobsAbsent     []string          // container path glob patterns that must match nothing
 	FileContains    map[string]string // path -> substring
 	FileNotContains map[string]string // path -> substring that must NOT appear
 }
@@ -433,6 +435,16 @@ func (s Step) absent(paths ...string) Step {
 	return s
 }
 
+func (s Step) globs(patterns ...string) Step {
+	s.GlobsExist = withStrings(s.GlobsExist, patterns...)
+	return s
+}
+
+func (s Step) noGlobs(patterns ...string) Step {
+	s.GlobsAbsent = withStrings(s.GlobsAbsent, patterns...)
+	return s
+}
+
 func (s Step) unchanged(paths ...string) Step {
 	s.PathsUnchanged = withStrings(s.PathsUnchanged, paths...)
 	return s
@@ -482,6 +494,8 @@ func expandTablePathShorthand(tc TestCase) TestCase {
 		step.Cwd = expandTablePath(step.Cwd)
 		step.FilesExist = expandTablePaths(step.FilesExist)
 		step.FilesAbsent = expandTablePaths(step.FilesAbsent)
+		step.GlobsExist = expandTablePaths(step.GlobsExist)
+		step.GlobsAbsent = expandTablePaths(step.GlobsAbsent)
 		step.PathsUnchanged = expandTablePaths(step.PathsUnchanged)
 		step.Symlinks = expandTablePaths(step.Symlinks)
 		step.RegularFiles = expandTablePaths(step.RegularFiles)
@@ -531,12 +545,16 @@ func TestResolveTableCaseExpandsPathShorthand(t *testing.T) {
 		Cwd:          "~/b",
 		FilesExist:   []string{"./c", "/workspace/d"},
 		FileContains: map[string]string{"~/e": "x"},
+		GlobsExist:   []string{"./f*"},
+		GlobsAbsent:  []string{"~/g*"},
 		Args:         []string{"./resources"},
 		Body:         "./unchanged",
 	}}}
 	got := resolveTableCase(t, tc, nil).Steps[0]
 	if got.Path != "/workspace/a" || got.Cwd != "/root/b" || got.Body != "./unchanged" ||
 		!reflect.DeepEqual(got.FilesExist, []string{"/workspace/c", "/workspace/d"}) ||
+		!reflect.DeepEqual(got.GlobsExist, []string{"/workspace/f*"}) ||
+		!reflect.DeepEqual(got.GlobsAbsent, []string{"/root/g*"}) ||
 		!reflect.DeepEqual(got.FileContains, map[string]string{"/root/e": "x"}) ||
 		!reflect.DeepEqual(got.Args, []string{"./resources"}) {
 		t.Fatalf("resolveTableCase() step = %+v", got)
@@ -554,8 +572,8 @@ func TestTableCaseNamesAreUnique(t *testing.T) {
 }
 
 func TestStepBuildersMatchLiterals(t *testing.T) {
-	got := ok("sync").out("a").exists("./x").has("./y", "z")
-	want := Step{Args: []string{"sync"}, MustPass: true, OutContains: []string{"a"}, FilesExist: []string{"./x"}, FileContains: map[string]string{"./y": "z"}}
+	got := ok("sync").out("a").exists("./x").globs("./f*").noGlobs("./g*").has("./y", "z")
+	want := Step{Args: []string{"sync"}, MustPass: true, OutContains: []string{"a"}, FilesExist: []string{"./x"}, GlobsExist: []string{"./f*"}, GlobsAbsent: []string{"./g*"}, FileContains: map[string]string{"./y": "z"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("builder step = %+v, want %+v", got, want)
 	}
@@ -916,6 +934,22 @@ func assertTableStep(t *testing.T, env *Env, step Step, unchanged map[string]str
 				message = fmt.Sprintf("step %d: cannot inspect %q: %v", index, path, err)
 			}
 			tableStepError(t, firstErr, message, "", false)
+		}
+	}
+	for _, globs := range []struct {
+		patterns []string
+		absent   bool
+	}{{step.GlobsExist, false}, {step.GlobsAbsent, true}} {
+		for _, pattern := range globs.patterns {
+			matches, err := filepath.Glob(env.mustResolvePath(pattern))
+			switch {
+			case err != nil:
+				tableStepError(t, firstErr, fmt.Sprintf("step %d: glob %q: %v", index, pattern, err), "", false)
+			case globs.absent && len(matches) > 0:
+				tableStepError(t, firstErr, fmt.Sprintf("step %d: glob %q matched %v", index, pattern, matches), "", false)
+			case !globs.absent && len(matches) == 0:
+				tableStepError(t, firstErr, fmt.Sprintf("step %d: glob %q matched no path", index, pattern), "", false)
+			}
 		}
 	}
 	for path, before := range unchanged {
