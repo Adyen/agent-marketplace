@@ -125,7 +125,9 @@ func TestInstallRefusesMovedSourceWithoutPublishing(t *testing.T) {
 			Reconcile:       reconcile,
 			BindRegistry:    func(config.Source, config.RegistryEntry) error { return nil },
 			Release:         func() {},
-			ResolvedCommit:  func(config.RegistryEntry) (string, error) { return actual, nil },
+			ResolvedCommit: func(config.RegistryEntry) (PreparedSourceCommit, error) {
+				return PreparedSourceCommit{Commit: actual}, nil
+			},
 		}, nil
 	}
 
@@ -225,11 +227,13 @@ func TestInstallMatchingExpectedCommitKeepsRequestedRefInStagedConfig(t *testing
 				APIVersion: config.APIVersionV4,
 				Registries: []config.RegistryEntry{{URL: sourceURL, Ref: "main"}},
 			},
-			View:           DependencyLockView{CatalogOption: catalogOption},
-			Reconcile:      reconcile,
-			BindRegistry:   func(config.Source, config.RegistryEntry) error { return nil },
-			Release:        func() {},
-			ResolvedCommit: func(config.RegistryEntry) (string, error) { return commit, nil },
+			View:         DependencyLockView{CatalogOption: catalogOption},
+			Reconcile:    reconcile,
+			BindRegistry: func(config.Source, config.RegistryEntry) error { return nil },
+			Release:      func() {},
+			ResolvedCommit: func(config.RegistryEntry) (PreparedSourceCommit, error) {
+				return PreparedSourceCommit{Commit: commit}, nil
+			},
 		}, nil
 	}
 

@@ -27,8 +27,14 @@ type PreparedInstallDependencies struct {
 	View            DependencyLockView
 	Reconcile       DependencyReconciler
 	BindRegistry    func(config.Source, config.RegistryEntry) error
-	ResolvedCommit  func(config.RegistryEntry) (string, error)
+	ResolvedCommit  func(config.RegistryEntry) (PreparedSourceCommit, error)
 	Release         func()
+}
+
+// PreparedSourceCommit is the exact commit a prepared install will lock for a source.
+type PreparedSourceCommit struct {
+	Commit string
+	Locked bool // kept from the target layer's existing acquisition lock
 }
 
 type InstallDependencyPreparer func(context.Context, string, string, []StagedConfigEdit) (PreparedInstallDependencies, error)
@@ -1382,8 +1388,11 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 			if err != nil {
 				return nil, fmt.Errorf("resolve prepared source commit: %w", err)
 			}
-			if actual != opts.ExpectedCommit {
-				return nil, &SourceMovedError{Ref: fromRef, Expected: opts.ExpectedCommit, Actual: actual}
+			if actual.Commit != opts.ExpectedCommit {
+				if actual.Locked {
+					return nil, &SourceLockedError{URL: binding.Entry.URL, Ref: fromRef, Scope: opts.Scope, Locked: actual.Commit, Expected: opts.ExpectedCommit}
+				}
+				return nil, &SourceMovedError{Ref: fromRef, Expected: opts.ExpectedCommit, Actual: actual.Commit}
 			}
 		}
 		ctx = prepared.Context
@@ -1556,6 +1565,28 @@ type SourceMovedError struct {
 
 func (e *SourceMovedError) Error() string {
 	return fmt.Sprintf("source ref %q moved since preview: expected commit %s, actual commit %s", e.Ref, e.Expected, e.Actual)
+}
+
+// SourceLockedError reports that the target layer's lock keeps an explicit source at a commit other than the previewed one.
+type SourceLockedError struct {
+	URL      string
+	Ref      string
+	Scope    Scope
+	Locked   string
+	Expected string
+}
+
+// UpdateCommand returns the update command that advances the locked source in its scope.
+func (e *SourceLockedError) UpdateCommand() string {
+	command := "agent-marketplace update --registry " + e.URL
+	if e.Ref != "" {
+		command += " --ref " + e.Ref
+	}
+	return command + " --scope " + string(e.Scope)
+}
+
+func (e *SourceLockedError) Error() string {
+	return fmt.Sprintf("%s lock pins source ref %q at commit %s, not the expected commit %s; run %q to advance it", e.Scope, e.Ref, e.Locked, e.Expected, e.UpdateCommand())
 }
 
 func adHocEntryMatchesBinding(candidate, bound config.RegistryEntry) bool {

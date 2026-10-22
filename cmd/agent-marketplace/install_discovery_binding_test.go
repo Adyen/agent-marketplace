@@ -127,6 +127,72 @@ func TestConfiguredInstallFreezesDiscoveryBeforePublication(t *testing.T) {
 	}
 }
 
+func readInstallBindingFiles(t *testing.T, paths []string) map[string]string {
+	t.Helper()
+	contents := make(map[string]string, len(paths))
+	for _, path := range paths {
+		raw, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			contents[path] = "absent"
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		contents[path] = string(raw)
+	}
+	return contents
+}
+
+// spec: resource-installation/lock-pinned-source-refuses-an-expected-commit-install-with-update-remediation
+func TestConfiguredInstallRefusesLockPinnedSourceWithUpdateRemediation(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	f := newInstallBindingFixture(t)
+	f.seedLock(t)
+	f.advance(t)
+	ws, err := pipeline.NewWorkspace(f.repo, f.repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := pipeline.PreviewSource(context.Background(), ws, f.origin, "main", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Commit == f.commit {
+		t.Fatalf("preview commit %s did not advance past the locked commit", preview.Commit)
+	}
+	files := []string{config.ProjectConfigPath(f.repo), filepath.Join(f.repo, ".agents", "lock.yaml"), filepath.Join(f.repo, ".factory", "skills", "review", "SKILL.md")}
+	before := readInstallBindingFiles(t, files)
+	opts := f.options()
+	opts.ExpectedCommit = preview.Commit
+	_, err = pipeline.Install(context.Background(), opts)
+	var locked *pipeline.SourceLockedError
+	if !errors.As(err, &locked) || locked.Locked != f.commit || locked.Expected != preview.Commit || locked.Scope != pipeline.ScopeRepo {
+		t.Fatalf("Install error = %v, want SourceLockedError locked=%s expected=%s scope=repo", err, f.commit, preview.Commit)
+	}
+	var moved *pipeline.SourceMovedError
+	if errors.As(err, &moved) || strings.Contains(err.Error(), "moved") {
+		t.Fatalf("lock-pinned refusal reported a move: %v", err)
+	}
+	if after := readInstallBindingFiles(t, files); !reflect.DeepEqual(before, after) {
+		t.Fatalf("refused install changed files:\nbefore=%#v\nafter=%#v", before, after)
+	}
+	if out, err := executeCommand(strings.Fields(locked.UpdateCommand())[1:]...); err != nil {
+		t.Fatalf("%s: %v\n%s", locked.UpdateCommand(), err, out)
+	}
+	opts = f.options()
+	opts.ExpectedCommit = preview.Commit
+	if result, err := pipeline.Install(context.Background(), opts); err != nil || result == nil {
+		t.Fatalf("install after update = %#v, %v", result, err)
+	}
+	doc := readExactManifestLock(t, filepath.Join(f.repo, ".agents", "lock.yaml"))
+	if len(doc.Registries) != 1 || doc.Registries[0].Commit.Hex() != preview.Commit {
+		t.Fatalf("lock after update = %#v, want commit %s", doc.Registries, preview.Commit)
+	}
+}
+
 func TestConfiguredInstallSelectorsAndScopesKeepPreparedPins(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -368,8 +434,8 @@ func TestAdHocInstallPreparationPinsOriginalMutableRef(t *testing.T) {
 					return p, err
 				}
 				resolved, err := p.ResolvedCommit(config.RegistryEntry{URL: f.origin, Ref: "main"})
-				if err != nil || resolved != f.commit {
-					t.Fatalf("prepared commit=%q err=%v, want exact original commit %s", resolved, err, f.commit)
+				if err != nil || resolved.Commit != f.commit {
+					t.Fatalf("prepared commit=%q err=%v, want exact original commit %s", resolved.Commit, err, f.commit)
 				}
 				original := p.Reconcile
 				p.Reconcile = func(ctx context.Context, root, local string, blocked bool, edits []pipeline.StagedConfigEdit) (pipeline.DependencyLockView, error) {

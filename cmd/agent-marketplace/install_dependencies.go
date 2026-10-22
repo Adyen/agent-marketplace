@@ -18,6 +18,7 @@ type preparedInstallLocks struct {
 	lockPaths       map[config.Source]string
 	bindings        map[string][]lockfile.GitRegistry
 	commits         map[string]string
+	locked          map[string]bool
 	targetLockPaths map[string]bool
 	discoveryConfig *config.Config
 	reads           []dependencytxn.ReadAssertion
@@ -29,7 +30,7 @@ func prepareInstallDependencies(ctx context.Context, root, local string, edits [
 	state := &preparedInstallLocks{
 		documents: make(map[string]lockfile.Document), lockPaths: make(map[config.Source]string),
 		bindings: make(map[string][]lockfile.GitRegistry), commits: make(map[string]string),
-		targetLockPaths: make(map[string]bool),
+		locked: make(map[string]bool), targetLockPaths: make(map[string]bool),
 	}
 	for _, edit := range edits {
 		lockPath, err := lockfile.PathForConfig(edit.Path)
@@ -77,22 +78,36 @@ func prepareInstallDependencies(ctx context.Context, root, local string, edits [
 		}
 		return state.bindRegistry(target, entry)
 	}
-	resolvedCommit := func(entry config.RegistryEntry) (string, error) {
+	resolvedCommit := func(entry config.RegistryEntry) (pipeline.PreparedSourceCommit, error) {
 		canonical, err := canonicalRegistryURL(entry.URL)
 		if err != nil {
-			return "", err
+			return pipeline.PreparedSourceCommit{}, err
 		}
-		commit, ok := state.commits[gitLockIdentity(canonical, entry.Ref)]
+		identity := gitLockIdentity(canonical, entry.Ref)
+		commit, ok := state.commits[identity]
 		if !ok || commit == "" {
-			return "", fmt.Errorf("prepared install has no exact commit for %s@%s", canonical, entry.Ref)
+			return pipeline.PreparedSourceCommit{}, fmt.Errorf("prepared install has no exact commit for %s@%s", canonical, entry.Ref)
 		}
-		return commit, nil
+		return pipeline.PreparedSourceCommit{Commit: commit, Locked: state.locked[identity]}, nil
 	}
 	return pipeline.PreparedInstallDependencies{
 		Context: state.ctx, DiscoveryConfig: state.discoveryConfig,
 		View:      pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, Warnings: warnings},
 		Reconcile: reconcile, BindRegistry: bind, ResolvedCommit: resolvedCommit, Release: release,
 	}, nil
+}
+
+// lockedCommitIs reports whether the existing lock already pins identity at commit.
+func lockedCommitIs(current *lockfile.Document, identity, commit string) bool {
+	if current == nil {
+		return false
+	}
+	for _, registry := range current.Registries {
+		if gitLockIdentity(registry.URL, registry.Ref) == identity {
+			return registry.Commit.Hex() == commit
+		}
+	}
+	return false
 }
 
 func installPreparationReads(ec config.EffectiveConfig, staged map[string]pipeline.StagedConfigEdit, plan *preparedInstallLocks) ([]dependencytxn.ReadAssertion, error) {

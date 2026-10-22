@@ -6,9 +6,7 @@ When the install-from-source modal's install is refused because the chosen
 scope's acquisition lock pins the source at a commit other than the previewed
 one, the modal SHALL return to the Review step with the picks and the chosen
 scope kept, SHALL show the locked and previewed commits and the `update`
-command that advances the source, and SHALL NOT preview again. Choosing a
-scope whose lock does not pin the source and confirming SHALL install
-normally.
+command that advances the source, and SHALL NOT preview again.
 
 #### Scenario: Lock-pinned source returns to Review with update remediation
 

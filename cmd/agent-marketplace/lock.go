@@ -996,7 +996,9 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			mode.prepareInstall.documents[lockPath] = doc
 			if mode.prepareInstall.targetLockPaths[lockPath] {
 				for _, registry := range doc.Registries {
-					mode.prepareInstall.commits[gitLockIdentity(registry.URL, registry.Ref)] = registry.Commit.Hex()
+					identity := gitLockIdentity(registry.URL, registry.Ref)
+					mode.prepareInstall.commits[identity] = registry.Commit.Hex()
+					mode.prepareInstall.locked[identity] = lockedCommitIs(current, identity, registry.Commit.Hex())
 				}
 			}
 		}

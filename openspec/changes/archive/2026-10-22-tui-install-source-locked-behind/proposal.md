@@ -17,7 +17,6 @@ remedy is `update`, not another preview.
   reports that the source moved.
 - The modal handles that refusal by returning to the Review step with the
   picks and scope kept and the remediation shown. It does not preview again.
-  Choosing a scope whose lock does not pin the source then installs normally.
 - Real moves (a freshly resolved commit differing from the preview) keep the
   existing "moved; preview again" behavior.
 

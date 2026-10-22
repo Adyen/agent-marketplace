@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -5,6 +6,7 @@ import { after, before } from "node:test";
 
 import type { Fixture } from "./fixture.js";
 import { defineFixture, locate, step, waitForExit, type TestTerminal } from "./helpers.js";
+import { runAM } from "./process-helpers.js";
 
 // spec: tui-interactions/previewing-a-source-writes-nothing
 // spec: tui-interactions/picked-resources-install-at-the-chosen-scope
@@ -437,4 +439,64 @@ refusal.test("up from Project keeps Project when user configuration cannot take 
   assertUnchanged();
   await cancelAndQuit(terminal);
   assertUnchanged();
+});
+
+const headOf = (repo: string): string => execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+
+const lockPinned = defineFixture("install-from-source-lock-pinned", ["tui"], 80, 24, { adHocSource: true });
+let lockPinnedCommits: { locked: string; advanced: string } | undefined;
+before(async () => {
+  await lockPinned.setup();
+  const fixture = lockPinned.current();
+  const seed = await runAM(fixture, ["install", "--from", adHocURL(fixture), "ad-hoc-alpha", "--scope", "repo"]);
+  if (seed.status !== 0) throw new Error(`seed install failed (exit ${seed.status}):\n${seed.stdout}\n${seed.stderr}`);
+  const locked = headOf(path.join(fixture.root, "registries", "ad-hoc-source"));
+  fixture.pushRegistryChange("README.md", "Advanced past the locked commit.\n");
+  lockPinnedCommits = { locked, advanced: headOf(path.join(fixture.root, "registries", "ad-hoc-source")) };
+});
+after(lockPinned.cleanup);
+
+// spec: tui-interactions/lock-pinned-source-returns-to-review-with-update-remediation
+lockPinned.test("a lock-pinned source returns to Review with update remediation", async (terminal) => {
+  const fixture = lockPinned.current();
+  assert.ok(lockPinnedCommits, "lock-pinned fixture did not record its commits");
+  const { locked, advanced } = lockPinnedCommits;
+  const repoFiles = [path.join(fixture.repo, ".agents", "config.yaml"), path.join(fixture.repo, ".agents", "lock.yaml")];
+  const contents = repoFiles.map((file) => fs.readFileSync(file));
+  const assertRepoUnchanged = () => repoFiles.forEach((file, index) => assert.deepEqual(fs.readFileSync(file), contents[index]));
+  await step("settled source list", () => {}, async () => {
+    await locate(terminal, "~ in sync").unique().expect();
+  });
+  await step("open source modal", () => terminal.write("i"), async () => {
+    await locate(terminal, "Install from source").unique().expect();
+  });
+  await step("enter the configured source", () => terminal.write(adHocURL(fixture)), async () => {
+    await locate(terminal, "source.git").unique().expect();
+  });
+  await step("preview shows the advanced commit", () => terminal.write("\r"), async () => {
+    await locate(terminal, `resources at ${advanced.slice(0, 8)}`).unique().expect({ timeout: 30_000 });
+  });
+  await step("move to ad-hoc-second", () => terminal.write("j"), async () => {
+    await locate(terminal, /› \[ \] skill\s+ad-hoc-second/).unique().expect();
+  });
+  await step("pick ad-hoc-second", () => terminal.write(" "), async () => {
+    await locate(terminal, "1 selected").unique().expect();
+  });
+  await step("review the project install", () => terminal.write("\r"), async () => {
+    await locate(terminal, "Selected resources:").unique().expect();
+    await locate(terminal, /› \[p\] Project/).unique().expect();
+  });
+  assertRepoUnchanged();
+  await step("confirm the project install", () => terminal.write("\r"), async () => {
+    await locate(terminal, "lock pins").unique().expect({ timeout: 30_000 });
+    await locate(terminal, `${locked.slice(0, 8)}`).expect();
+    await locate(terminal, `${advanced.slice(0, 8)}`).expect();
+    await locate(terminal, "update --registry").expect();
+    await locate(terminal, "--scope repo").expect();
+    await locate(terminal, "Selected resources:").unique().expect();
+    await locate(terminal, "preview again").expect({ not: true });
+  });
+  assertRepoUnchanged();
+  await cancelAndQuit(terminal);
+  assertRepoUnchanged();
 });

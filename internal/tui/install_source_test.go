@@ -149,6 +149,41 @@ func TestInstallSourceMovedCommitReturnsToPickAndPreservesSelections(t *testing.
 	}
 }
 
+func TestInstallSourceLockedCommitReturnsToReviewWithRemediation(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	operation, ok := m.beginOperation(operationMutation)
+	if !ok {
+		t.Fatal("could not start the install operation fixture")
+	}
+	const expected = "0123456789abcdef0123456789abcdef01234567"
+	const locked = "89abcdef0123456789abcdef0123456789abcdef"
+	preview := &pipeline.SourcePreview{
+		URL: "https://example.invalid/source.git", Ref: "main", Commit: expected,
+		Catalogs: map[string]catalog.LoadedCatalog{"source": {Entries: []catalog.Entry{{Kind: ir.KindSkill, Name: "alpha"}}}},
+	}
+	m.installSource = installSourceModal{
+		step: installSourceStepReview, values: &installSourceValues{url: preview.URL, ref: preview.Ref},
+		preview: preview, picked: map[string]bool{"skill\x00alpha": true}, scope: scopeLocal,
+	}
+	next, cmd := m.Update(installSourceInstallMsg{
+		operation: operation,
+		options:   pipeline.InstallOptions{FromURL: preview.URL, FromRef: preview.Ref, ExpectedCommit: expected},
+		err:       &pipeline.SourceLockedError{URL: preview.URL, Ref: "main", Scope: pipeline.ScopeLocal, Locked: locked, Expected: expected},
+	})
+	m = next.(Model)
+	if cmd != nil || m.pane != paneInstallSource || m.installSource.step != installSourceStepReview || m.installSource.loading {
+		t.Fatalf("locked commit result = pane %v step %v loading=%t cmd=%t, want Review without a preview", m.pane, m.installSource.step, m.installSource.loading, cmd != nil)
+	}
+	if !m.installSource.picked["skill\x00alpha"] || m.installSource.scope != scopeLocal {
+		t.Fatalf("locked commit lost picks or scope: picked=%#v scope=%v", m.installSource.picked, m.installSource.scope)
+	}
+	for _, want := range []string{"Local lock pins main at 89abcdef", "preview showed 01234567", "agent-marketplace update --registry " + preview.URL + " --ref main --scope local"} {
+		if !strings.Contains(m.installSource.error, want) {
+			t.Fatalf("locked commit error = %q, want it to contain %q", m.installSource.error, want)
+		}
+	}
+}
+
 // spec: tui-interactions/blocked-source-is-refused-before-network-access
 func TestInstallSourceBlockedPreviewReturnsToSourceWithoutWriting(t *testing.T) {
 	repo := t.TempDir()

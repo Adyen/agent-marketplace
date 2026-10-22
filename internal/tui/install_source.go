@@ -469,13 +469,7 @@ func installSourceReviewLines(m Model, s installSourceModal) []string {
 			lines = append(lines, "Collision warning: "+status)
 		}
 	}
-	for _, option := range []struct {
-		scope scope
-		key   string
-		name  string
-	}{
-		{scopeGlobal, "g", "User"}, {scopeProject, "p", "Project"}, {scopeLocal, "l", "Local"},
-	} {
+	for _, option := range installSourceScopeOptions {
 		path, err := installSourceConfigPath(m, option.scope)
 		if err != nil {
 			path = "configuration path unavailable"
@@ -509,9 +503,28 @@ func installSourceReviewLines(m Model, s installSourceModal) []string {
 		lines = append(lines, fmt.Sprintf("%s is a branch; it can move before install. Use a commit SHA in Ref to pin.", sanitizeTerminalData(s.preview.Ref, terminalSingleLine)))
 	}
 	if s.error != "" {
-		lines = append(lines, styleErrorTitle.Render(sanitizeTerminalData(s.error, terminalSingleLine)))
+		for _, line := range strings.Split(ansi.Wrap(sanitizeTerminalData(s.error, terminalSingleLine), modalInnerWidth(m), ""), "\n") {
+			lines = append(lines, styleErrorTitle.Render(line))
+		}
 	}
 	return lines
+}
+
+var installSourceScopeOptions = []struct {
+	scope scope
+	key   string
+	name  string
+}{
+	{scopeGlobal, "g", "User"}, {scopeProject, "p", "Project"}, {scopeLocal, "l", "Local"},
+}
+
+func installSourceScopeName(target pipeline.Scope) string {
+	for _, option := range installSourceScopeOptions {
+		if pipelineScope(option.scope) == target {
+			return option.name
+		}
+	}
+	return string(target)
 }
 
 func installSourceConfigPath(m Model, target scope) (string, error) {
@@ -849,6 +862,22 @@ func (m Model) updateInstallSourceInstall(msg installSourceInstallMsg) (tea.Mode
 		return m, nil
 	}
 	if msg.err != nil {
+		var locked *pipeline.SourceLockedError
+		if errors.As(msg.err, &locked) {
+			m.clearOperationProgress()
+			m.finishOperation(msg.operation)
+			m.marketplaceInstallOperation = 0
+			m.marketplaceInstallIsSource = false
+			m.pane = paneInstallSource
+			m.installSource.step = installSourceStepReview
+			m.installSource.error = fmt.Sprintf("%s lock pins %s at %s; preview showed %s. Run %s, then install again.",
+				installSourceScopeName(locked.Scope),
+				sanitizeTerminalData(locked.Ref, terminalSingleLine),
+				sanitizeTerminalData(shortCommit(locked.Locked), terminalSingleLine),
+				sanitizeTerminalData(shortCommit(locked.Expected), terminalSingleLine),
+				sanitizeTerminalData(locked.UpdateCommand(), terminalSingleLine))
+			return m, nil
+		}
 		var moved *pipeline.SourceMovedError
 		if errors.As(msg.err, &moved) {
 			m.clearOperationProgress()
