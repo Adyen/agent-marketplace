@@ -40,7 +40,8 @@ journey.test("footer, palette and modals stay framed and discoverable", async (t
   });
   await step("clear the search", () => terminal.write("\x1b"), async () => {
     await locate(terminal, "/ skill").expect({ not: true });
-    await locate(terminal, "skill").getByStyle({ foreground: "14" }).expect({ not: true });
+    // Intersect cells, so a single character left in the accent colour fails.
+    await locate(terminal, "skill").and(terminal.getByStyle({ foreground: "14" })).expect({ not: true });
   });
 
   await step("toggle modal is one bounded frame", () => terminal.write("G "), async () => {
