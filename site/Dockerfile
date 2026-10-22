@@ -1,4 +1,4 @@
-ARG NODE_IMAGE=node:24-alpine
+ARG NODE_IMAGE=node:24-trixie-slim
 ARG NGINX_IMAGE=nginxinc/nginx-unprivileged:1.29-alpine
 
 FROM ${NODE_IMAGE} AS build

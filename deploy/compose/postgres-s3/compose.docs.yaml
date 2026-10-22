@@ -12,7 +12,7 @@ services:
       additional_contexts:
         design: ../../../design
       args:
-        NODE_IMAGE: ${NODE_IMAGE:-node:24-alpine}
+        NODE_IMAGE: ${NODE_IMAGE:-node:24-trixie-slim}
         NGINX_IMAGE: ${SITE_NGINX_IMAGE:-${NGINX_IMAGE:-nginxinc/nginx-unprivileged:1.29-alpine}}
         SITE_PROFILE: docs
         SITE_BASE: /docs/

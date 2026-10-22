@@ -2412,6 +2412,12 @@ func effectiveV4Requests(group V4ResourceGroup) []V4ResourceRequest {
 	excluded := map[string]bool{}
 	for _, decision := range group.Decisions {
 		if decision.Action == V4SelectionExclude {
+			if decision.Exclusion != "*" && !strings.HasSuffix(decision.Exclusion, "/*") {
+				if request, ok := requests[decision.Exclusion]; ok && !request.Required {
+					excluded[decision.Exclusion] = true
+				}
+				continue
+			}
 			for locator, request := range requests {
 				if !request.Required && v4ExclusionMatches(decision.Exclusion, locator) {
 					excluded[locator] = true
