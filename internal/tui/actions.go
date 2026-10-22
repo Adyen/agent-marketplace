@@ -1292,6 +1292,11 @@ func appendUnavailableSelectionRows(rows []row, cfg *config.Config, localCfg *co
 	seen := make(map[string]struct{}, len(rows)+len(resolveErrs))
 	available := make(map[string]struct{}, len(rows))
 	for i := range rows {
+		// A malformed row's kind is unknown, so it cannot stand in for a
+		// missing selection that happens to share its name.
+		if rows[i].IsMalformed {
+			continue
+		}
 		key := skill.ResourceKey(rows[i].Artifact.Kind, rows[i].Artifact.Name)
 		seen[key+"\x01"+registryIdentityKey(rows[i].RegistryURL, rows[i].RegistryRef, rows[i].RegistryPath)] = struct{}{}
 		if rows[i].IsAvailable {
@@ -1452,7 +1457,7 @@ func registryDisplayName(url string) string {
 	if url == "" {
 		return ""
 	}
-	url = strings.TrimSuffix(url, ".git")
+	url = strings.TrimSuffix(strings.TrimRight(url, "/"), ".git")
 	if idx := strings.LastIndexAny(url, "/:"); idx >= 0 {
 		url = url[idx+1:]
 	}
