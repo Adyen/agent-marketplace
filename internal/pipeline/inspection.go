@@ -9,6 +9,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 )
 
 type IssueSeverity uint8
@@ -125,7 +126,13 @@ func buildInspection(resolved ResolveResult, report *materialize.Report, matErr 
 	}
 	if _, pending := DeliverableArtifacts(resolved.Resolved, resolved.PluginPlan); len(pending) > 0 {
 		for _, w := range pending {
-			add(IssueWarning, IssueMaterialization, w)
+			var diagnostic interface{ DiagnosticSeverity() diag.Severity }
+			if errors.As(w, &diagnostic) && diagnostic.DiagnosticSeverity() == diag.SeverityError {
+				mark(w)
+				add(IssueError, IssueMaterialization, w)
+			} else {
+				add(IssueWarning, IssueMaterialization, w)
+			}
 		}
 	}
 	for _, malformed := range resolved.CatalogLoad.Malformed {

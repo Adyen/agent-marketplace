@@ -226,6 +226,11 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	if err := writeSyncSummary(out, style, totalWritten, totalRemoved, malformedCount, len(errs)); err != nil {
 		return err
 	}
+	for _, choice := range syncResult.PluginDeliveries {
+		if _, err := fmt.Fprintf(out, "Plugin delivery: plugin/%s on %s: %s\n", choice.Plugin, choice.Target, choice.Delivery); err != nil {
+			return err
+		}
+	}
 
 	// Show which output directories were written to so users know where files
 	// landed. Default output lists each directory with its write/remove counts;

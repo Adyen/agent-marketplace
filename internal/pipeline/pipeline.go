@@ -147,7 +147,8 @@ func (e *TargetHarnessSetMissingError) Remediation() string {
 
 type SyncResult struct {
 	ResolveResult
-	Report *materialize.Report
+	Report           *materialize.Report
+	PluginDeliveries []PluginDeliveryChoice
 
 	// CatalogTrustErrors are the hard failures raised BEFORE materialization:
 	// config load/validation, catalog load, and resolve. They are the errors
@@ -168,6 +169,12 @@ type SyncResult struct {
 	// must read these fields rather than string-match or type-sniff Errors.
 	CatalogTrustErrors []error
 	MaterializeErrors  []error
+}
+
+type PluginDeliveryChoice struct {
+	Plugin   string
+	Target   string
+	Delivery string
 }
 
 // hccTargetsFromStrings converts a []string harness list into []hcc.Target.
@@ -931,7 +938,15 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 		})
 	}
 	deliverable, pending := DeliverableArtifacts(resolved.Resolved, resolved.PluginPlan)
-	result.Warnings = append(result.Warnings, pending...)
+	result.PluginDeliveries = pluginDeliveryChoices(deliverable)
+	for _, issue := range pending {
+		var diagnostic interface{ DiagnosticSeverity() diag.Severity }
+		if errors.As(issue, &diagnostic) && diagnostic.DiagnosticSeverity() == diag.SeverityError {
+			result.addMaterializeError(issue)
+		} else {
+			result.Warnings = append(result.Warnings, issue)
+		}
+	}
 	materializeOptions := []materialize.RunOption{materialize.WithMaterializationModes(resolved.MaterializationModes)}
 	if len(resolved.ConfigErrors) == 0 && len(resolved.CatalogErrors) == 0 {
 		materializeOptions = append(materializeOptions, materialize.WithPluginStateReconciliation())
@@ -977,22 +992,16 @@ func DeliverableArtifacts(resolved []resolver.ResolvedArtifact, plan catalog.Plu
 		if artifact.Selection != nil && artifact.Selection.Delivery != "" {
 			delivery = artifact.Selection.Delivery
 		}
-		if delivery == "native" {
-			pending = append(pending, newDiagIssue(diag.Diagnostic{
-				Code:     diag.CodePluginDeliveryPending,
-				Severity: diag.SeverityWarning,
-				Resource: "plugin/" + artifact.Name,
-				Message:  "native plugin delivery is not available yet",
-			}))
-			continue
-		}
 		if artifact.Plugin != nil && artifact.Plugin.Source.Kind == "git" {
-			pending = append(pending, newDiagIssue(diag.Diagnostic{
-				Code:     diag.CodePluginDeliveryPending,
-				Severity: diag.SeverityWarning,
-				Resource: "plugin/" + artifact.Name,
-				Message:  "external plugin package acquisition is not available for decomposed delivery yet",
-			}))
+			for _, target := range resolver.HarnessTargets(artifact.Harnesses) {
+				resolution := ResolvePluginDelivery(delivery, artifact.Plugin.Format, "git", target)
+				if resolution.Diagnostic == nil {
+					continue
+				}
+				diagnostic := *resolution.Diagnostic
+				diagnostic.Resource = "plugin/" + artifact.Name
+				pending = append(pending, newDiagIssue(diagnostic))
+			}
 			continue
 		}
 		if artifact.Unresolved || artifact.Resource == nil {
@@ -1000,6 +1009,25 @@ func DeliverableArtifacts(resolved []resolver.ResolvedArtifact, plan catalog.Plu
 		}
 		plugin, ok := artifact.Resource.(*ir.Plugin)
 		if !ok {
+			continue
+		}
+		targets := resolver.HarnessTargets(artifact.Harnesses)
+		deliveries := make(map[hcc.Target]PluginDeliveryResolution, len(targets))
+		sourceKind := ""
+		if artifact.Plugin != nil {
+			sourceKind = artifact.Plugin.Source.Kind
+		}
+		for _, target := range targets {
+			resolution := ResolvePluginDelivery(delivery, plugin.Format, sourceKind, target)
+			if resolution.Diagnostic != nil {
+				diagnostic := *resolution.Diagnostic
+				diagnostic.Resource = "plugin/" + artifact.Name
+				pending = append(pending, newDiagIssue(diagnostic))
+				continue
+			}
+			deliveries[target] = resolution
+		}
+		if len(deliveries) == 0 {
 			continue
 		}
 		packageRoot, err := pluginPackageRoot(artifact, plugin)
@@ -1036,24 +1064,30 @@ func DeliverableArtifacts(resolved []resolver.ResolvedArtifact, plan catalog.Plu
 		if artifact.Plugin != nil && artifact.Plugin.DefinitionDigest != "" {
 			fingerprint = artifact.Plugin.DefinitionDigest
 		}
-		pluginPackage := &resolver.PluginPackage{
+		basePackage := resolver.PluginPackage{
 			Name:               plugin.Name(),
 			SourceRevision:     artifact.SourceRevision,
 			PackageRoot:        packageRoot,
 			CatalogFingerprint: fingerprint,
-			Delivery:           delivery,
 			Scope:              artifact.Source.String(),
 			Exclusions:         append([]string(nil), excluded...),
 			DecodeFailures:     decodeFailures,
 			DecodeKinds:        decodeKinds,
 			Package:            plugin,
 		}
-		added := false
-		for _, member := range plugin.Members {
-			if !members[member.Key()] || member.Resource == nil {
+		added := make(map[hcc.Target]bool, len(targets))
+		for _, target := range targets {
+			resolution, ok := deliveries[target]
+			if !ok {
 				continue
 			}
-			for _, target := range resolver.HarnessTargets(artifact.Harnesses) {
+			pluginPackage := basePackage
+			pluginPackage.Delivery = resolution.Delivery
+			pluginPackage.NativeRefresh = resolution.Refresh
+			for _, member := range plugin.Members {
+				if !members[member.Key()] || member.Resource == nil {
+					continue
+				}
 				memberPath := pluginMemberSourcePath(packageRoot, compile.SourceOf(member.Resource).File, plugin.Files)
 				memberRelPath, _ := filepath.Rel(packageRoot, memberPath)
 				memberArtifact := artifact
@@ -1063,26 +1097,71 @@ func DeliverableArtifacts(resolved []resolver.ResolvedArtifact, plan catalog.Plu
 				memberArtifact.Resource = member.Resource
 				memberArtifact.Path = memberPath
 				memberArtifact.Plugin = nil
-				memberArtifact.Selection = nil
-				memberPackage := *pluginPackage
+				if artifact.Selection != nil {
+					selection := *artifact.Selection
+					selection.Delivery = resolution.Delivery
+					memberArtifact.Selection = &selection
+				} else {
+					memberArtifact.Selection = nil
+				}
+				memberPackage := pluginPackage
 				memberPackage.MemberPath = filepath.ToSlash(memberRelPath)
 				memberArtifact.PluginPackage = &memberPackage
 				memberArtifact.InstalledName = plugin.Name() + "-" + member.Resource.Name()
 				deliverable = append(deliverable, memberArtifact)
-				added = true
+				added[target] = true
 			}
 		}
-		if !added && (len(decodeFailures) > 0 || plugin.HasDependencies()) {
-			for _, target := range resolver.HarnessTargets(artifact.Harnesses) {
+		if len(decodeFailures) > 0 || plugin.HasDependencies() {
+			for _, target := range targets {
+				if added[target] {
+					continue
+				}
+				resolution, ok := deliveries[target]
+				if !ok {
+					continue
+				}
 				marker := artifact
 				marker.Harnesses = []hcc.Target{target}
-				marker.Selection = nil
-				marker.PluginPackage = pluginPackage
+				markerPackage := basePackage
+				markerPackage.Delivery = resolution.Delivery
+				markerPackage.NativeRefresh = resolution.Refresh
+				marker.PluginPackage = &markerPackage
 				deliverable = append(deliverable, marker)
 			}
 		}
 	}
 	return deliverable, pending
+}
+
+func pluginDeliveryChoices(artifacts []resolver.ResolvedArtifact) []PluginDeliveryChoice {
+	seen := make(map[string]bool)
+	var choices []PluginDeliveryChoice
+	for _, artifact := range artifacts {
+		if artifact.Kind == ir.KindPlugin || artifact.PluginPackage == nil || artifact.PluginPackage.Delivery == "" {
+			continue
+		}
+		for _, target := range resolver.HarnessTargets(artifact.Harnesses) {
+			key := strings.Join([]string{artifact.PluginPackage.Name, string(target), artifact.PluginPackage.Delivery}, "\x00")
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			choices = append(choices, PluginDeliveryChoice{
+				Plugin: artifact.PluginPackage.Name, Target: string(target), Delivery: artifact.PluginPackage.Delivery,
+			})
+		}
+	}
+	slices.SortFunc(choices, func(a, b PluginDeliveryChoice) int {
+		if a.Plugin != b.Plugin {
+			return strings.Compare(a.Plugin, b.Plugin)
+		}
+		if a.Target != b.Target {
+			return strings.Compare(a.Target, b.Target)
+		}
+		return strings.Compare(a.Delivery, b.Delivery)
+	})
+	return choices
 }
 
 func plannedPluginMemberKeys(plan catalog.PluginSelectionPlan, artifact resolver.ResolvedArtifact) (map[string]bool, bool, []string) {

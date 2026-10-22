@@ -37,8 +37,31 @@ type PackageFormat struct {
 }
 
 var shippedRegistry = sync.OnceValues(func() (*registry, error) {
-	return loadCatalogs(catalogFiles, "formats/*.yaml", "catalogs/*.yaml", nil)
+	files, probes, err := runtimeCatalogSource()
+	if err != nil {
+		return nil, err
+	}
+	return loadCatalogs(files, "formats/*.yaml", "catalogs/*.yaml", probes)
 })
+
+type NativeDeliveryPolicy struct {
+	Status  string
+	Format  string
+	Probe   string
+	Refresh string
+}
+
+func LookupNativeDelivery(t target.Target) (NativeDeliveryPolicy, error) {
+	r, err := shippedRegistry()
+	if err != nil {
+		return NativeDeliveryPolicy{}, err
+	}
+	c, ok := r.catalogs[t]
+	if !ok {
+		return NativeDeliveryPolicy{}, fmt.Errorf("pluginpolicy: no harness catalog for target %q", t)
+	}
+	return NativeDeliveryPolicy(c.Delivery.Native), nil
+}
 
 // LookupPackageFormat returns the shipped catalog data for format. ok is
 // false when no catalog declares the format.

@@ -417,7 +417,11 @@ const (
 	CodePluginMemberLiteralUnrepresentable  = "plugin.member.literal-unrepresentable"  // A literal placeholder has no escape on the destination; member blocked
 	CodePluginMemberRestrictionUnsupported  = "plugin.member.restriction-unsupported"  // A plugin member field is a restriction the target cannot enforce; member blocked
 	CodePluginCompilePackageRequired        = "plugin.compile.package-required"        // A plugin resource was passed to the per-resource Compile boundary
-	CodePluginDeliveryPending               = "plugin.delivery.pending"                // WARNING: native plugin delivery is not available yet
+	CodePluginDeliveryPending               = "plugin.delivery.pending"                // WARNING: an external Git plugin package or its member selection plan is unavailable
+	CodePluginDeliveryNativeUnverified      = "plugin.delivery.native-unverified"      // Native delivery was requested where the target catalog is unverified
+	CodePluginRegistrationUnsupported       = "plugin.registration.unsupported"        // Native registration is unavailable for this target
+	CodePluginRegistrationCollision         = "plugin.registration.collision"          // An unowned native plugin registration key already exists
+	CodePluginRegistrationReloadRequired    = "plugin.registration.reload-required"    // A changed native generation requires a harness reload
 	CodePluginCatalogSharedOrigin           = "plugin.catalog.shared-origin"           // Two selected catalog entries resolve to the same external origin; the selection is refused
 	CodePluginSelectionUndeclaredSource     = "plugin.selection.undeclared-source"     // A layer's collection selects a plugin from a format source that layer does not declare; the selection is refused
 	CodePluginNamespaceCollision            = "plugin.namespace-collision"             // A plugin member's installed name collides with another selected resource
@@ -644,6 +648,7 @@ var codeCatalog = []CodeDoc{
 	{CodeDoctorDevinVersionUnknown, SeverityWarning, "A Devin CLI is installed but its version could not be established", "The version probe failed, timed out, or printed no recognizable version; nothing is blocked, but 3000.3 compatibility could not be confirmed"},
 	{CodeDoctorRepairConflictReplaceable, SeverityWarning, "An existing unmanaged aggregate entry has the same key as a desired entry but a different value, so it is neither an exact adoption match nor an evidence-backed orphan", "Run doctor --repair on a terminal to confirm replacing it with the generated entry; the existing entry is preserved until you confirm, a fresh safety backup is taken first, and --yes never replaces it"},
 	{CodeIngestClaudeDuplicateRootSkill, SeverityWarning, "A plugin-form bundle's root SKILL.md declared a name already loaded from skills/; the skills/ entry is kept", "Rename the root skill or remove the duplicate; skills/ entries load first and win deterministically"},
+	{CodePluginRegistrationReloadRequired, SeverityWarning, "A changed native plugin generation requires a harness reload", "Restart or reload the harness before using the updated plugin"},
 
 	// Error
 	{CodeSubagentFactoryToolUnknown, SeverityError, "Factory cannot map an explicit subagent tool; subagent artifact suppressed", "Use a supported tool mapping or remove the restriction explicitly"},
@@ -770,6 +775,9 @@ var codeCatalog = []CodeDoc{
 	{CodePluginMemberRestrictionUnsupported, SeverityError, "A plugin member field is a restriction the target plugin surface cannot enforce; the member was blocked rather than installed without it", "Remove the restricted field, or deliver to a target that enforces it"},
 	{CodePluginCompilePackageRequired, SeverityError, "A plugin resource reached the per-resource Compile boundary; plugins compile through the package compile entry point", "Call the package compile entry point instead of Compile"},
 	{CodePluginCatalogSharedOrigin, SeverityError, "Two selected catalog entries resolve to the same external origin, ref, and subdirectory; their lock records would collapse into one, so the selection is refused", "Select only one of the entries, or split the packages into distinct origins or subdirectories"},
+	{CodePluginDeliveryNativeUnverified, SeverityError, "Native plugin delivery was requested for a harness whose catalog does not verify it; no plugin members were written", "Use auto or decompose, or wait until a native-delivery probe verifies the target"},
+	{CodePluginRegistrationUnsupported, SeverityError, "The target has no declared native plugin registration layout; no plugin output was written", "Use decompose or select a target with native plugin registration support"},
+	{CodePluginRegistrationCollision, SeverityError, "An unmanaged native plugin registration uses a desired key; the existing entry was preserved", "Remove the handwritten collision or run sync after establishing ownership through a supported path"},
 }
 
 // DocForCode returns the documentation entry for the given diagnostic code.

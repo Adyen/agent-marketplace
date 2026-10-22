@@ -18,6 +18,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 type pluginInstanceBatchWork struct {
@@ -59,6 +60,7 @@ func mergePluginAggregateState(dst *ownedAggregateState, src ownedAggregateState
 		}
 		current.hooks = mergeOwnedJSONAggregateWork(current.hooks, source.hooks)
 		current.mcps = append(current.mcps, source.mcps...)
+		current.registrations = append(current.registrations, source.registrations...)
 		current.blocked = current.blocked || source.blocked
 		dst.values[key] = current
 	case nil:
@@ -77,6 +79,11 @@ func reconcilePluginInstances(ctx context.Context, repoRoot string, resolved []r
 	activeByOutput := make(map[outputKey]map[string]bool)
 	selected := make(map[string]bool)
 	blocked := make(map[string]bool)
+	catalogSelections, err := nativePluginCatalogSelections(resolved, repoRoot)
+	if err != nil {
+		report.Diags = append(report.Diags, pluginBatchDiagnostic("", err))
+		return
+	}
 	for _, resource := range resolved {
 		pkg := resource.PluginPackage
 		if pkg == nil || len(resource.Harnesses) == 0 {
@@ -98,10 +105,18 @@ func reconcilePluginInstances(ctx context.Context, repoRoot string, resolved []r
 				activeByOutput[key] = make(map[string]bool)
 			}
 			activeByOutput[key][instanceKey] = true
+			if pkg.Delivery == "native" {
+				catalog, catalogErr := nativePluginCatalogFor(target, targetScope, catalogSelections[nativePluginCatalogSelectionKey(target, targetScope)])
+				if catalogErr != nil {
+					report.Diags = append(report.Diags, pluginBatchDiagnostic(pkg.Name, catalogErr))
+					return
+				}
+				activeByOutput[key][catalog.scopeOwner] = true
+			}
 			selected[instanceKey] = true
 			identity := pluginInstanceIdentity(resource, target)
 			if namespaceBlocked[identity] || compiled.pluginBlocked[identity] || generation.GenerationError != "" ||
-				len(pkg.DecodeFailures) > 0 || generation.GenerationKey == "" {
+				pkg.Delivery != "native" && len(pkg.DecodeFailures) > 0 || generation.GenerationKey == "" {
 				blocked[instanceKey] = true
 			}
 		}
@@ -109,6 +124,12 @@ func reconcilePluginInstances(ctx context.Context, repoRoot string, resolved []r
 	var work []pluginInstanceBatchWork
 	for instanceKey, plan := range compiled.plugins {
 		if blocked[instanceKey] || plan == nil {
+			continue
+		}
+		plan.catalog, err = nativePluginCatalogFor(plan.key.target, plan.ref.Scope,
+			catalogSelections[nativePluginCatalogSelectionKey(plan.key.target, plan.ref.Scope)])
+		if err != nil {
+			report.Diags = append(report.Diags, pluginBatchDiagnostic(plan.ref.Name, err))
 			continue
 		}
 		work = append(work, pluginInstanceBatchWork{plan: plan, ref: plan.ref})
@@ -127,8 +148,14 @@ func reconcilePluginInstances(ctx context.Context, repoRoot string, resolved []r
 		}
 		target := hcc.Target(ref.Target)
 		key := outputKey{target: target, machineScope: ref.Scope == "machine"}
+		catalog, catalogErr := nativePluginCatalogFor(target, ref.Scope,
+			catalogSelections[nativePluginCatalogSelectionKey(target, ref.Scope)])
+		if catalogErr != nil {
+			report.Diags = append(report.Diags, pluginBatchDiagnostic(ref.Name, catalogErr))
+			continue
+		}
 		work = append(work, pluginInstanceBatchWork{
-			plan: &pluginInstancePlan{key: key, ref: ref, removed: true},
+			plan: &pluginInstancePlan{key: key, ref: ref, catalog: catalog, removed: true},
 			ref:  ref, removed: true,
 		})
 	}
@@ -181,6 +208,51 @@ func reconcilePluginInstance(ctx context.Context, repoRoot string, item pluginIn
 	if err != nil {
 		report.Diags = append(report.Diags, pluginBatchDiagnostic(item.ref.Name, err))
 		return report
+	}
+	priorDelivery := prior.Instance.Delivery
+	if !item.removed {
+		ref := item.ref
+		if ref.Delivery == "native" {
+			ref.ReloadRequired = prior.Instance.ReloadRequired ||
+				ref.Refresh == "restart-required" && ref.GenerationKey != prior.Instance.GenerationKey
+			if ref.ReloadRequired {
+				report.Diags = append(report.Diags, diag.Diagnostic{
+					Code: diag.CodePluginRegistrationReloadRequired, Severity: diag.SeverityWarning,
+					Target: string(key.target), Resource: "plugin/" + ref.Name,
+					Message: "the changed native plugin generation requires a harness reload",
+				})
+			}
+		} else {
+			ref.ReloadRequired = false
+			ref.Refresh = ""
+		}
+		item.ref = ref
+		plan.ref = ref
+	}
+	hasNativeRegistration := !item.removed &&
+		(priorDelivery == "native" || item.ref.Delivery == "native" || len(plan.catalog.entries) > 0)
+	if hasNativeRegistration {
+		batch.ownerInstances[plan.catalog.scopeOwner] = true
+		participants, catalogErr := nativePluginCatalogParticipants(plan.catalog)
+		if catalogErr != nil {
+			report.Diags = append(report.Diags, pluginBatchDiagnostic(item.ref.Name, catalogErr))
+			return report
+		}
+		for _, participant := range participants {
+			if err := batch.addParticipant(participant); err != nil {
+				report.Diags = append(report.Diags, pluginBatchDiagnostic(item.ref.Name, err))
+				return report
+			}
+		}
+		registrationRef := item.ref
+		if item.removed {
+			registrationRef.Delivery = "decompose"
+		}
+		plan.registrations, err = nativeRegistrationEntries(key, repoRoot, registrationRef, plan.catalog, destinations)
+		if err != nil {
+			report.Diags = append(report.Diags, pluginBatchDiagnostic(item.ref.Name, err))
+			return report
+		}
 	}
 	var outputPlans []pluginOutputPlan
 	var outputRefs []ownership.PluginOutputRef
@@ -279,6 +351,18 @@ func reconcilePluginInstance(ctx context.Context, repoRoot string, item pluginIn
 		}
 		hasHook = true
 	}
+	registration, hasRegistrationLayout := targetmeta.NativePluginRegistration(targetmeta.Target(key.target))
+	hasNativeHooksRegistration := hasNativeRegistration && hasRegistrationLayout && registration.Shape == targetmeta.NativeRegistrationClaudeSettings
+	hasCodexRegistration := hasNativeRegistration && hasRegistrationLayout && registration.Shape == targetmeta.NativeRegistrationCodexConfig
+	if hasNativeHooksRegistration {
+		if plan.hooks == nil {
+			plan.hooks = &ownedJSONAggregateWork{}
+		}
+		for _, entry := range plan.registrations {
+			plan.hooks.add(entry)
+		}
+		hasHook = true
+	}
 	if hasHook {
 		group.nativeHooks = plan.hooks
 		if group.nativeHooks == nil {
@@ -288,7 +372,22 @@ func reconcilePluginInstance(ctx context.Context, repoRoot string, item pluginIn
 		group.nativeHook = true
 		group.handler = handler
 	}
-	if handler != nil && (plan.aggregateSet || hasMCP) {
+	if hasCodexRegistration {
+		if plan.aggregate.values == nil {
+			plan.aggregate.values = make(map[outputKey]any)
+		}
+		codex := codexState(plan.aggregate, key)
+		registrations, conversionErr := codexPluginRegistrations(plan.registrations)
+		if conversionErr != nil {
+			report.Diags = append(report.Diags, pluginBatchDiagnostic(item.ref.Name, conversionErr))
+			return report
+		}
+		codex.registrations = append(codex.registrations, registrations...)
+		plan.aggregate.put(key, codex)
+		plan.aggregateSet = true
+		plan.handler = handler
+	}
+	if handler != nil && (plan.aggregateSet || hasMCP || hasCodexRegistration) {
 		group.aggregateSet = true
 		group.handler = handler
 		mergePluginAggregateState(&group.aggregateState, plan.aggregate, key)

@@ -82,7 +82,8 @@ type NativePartition struct {
 	SkillDirKinds map[ir.ResourceKind]bool
 	// Aggregates are the shared target files resource kinds contribute
 	// entries to.
-	Aggregates []NativeAggregate
+	Aggregates    []NativeAggregate
+	Registrations []NativeRegistration
 }
 
 // HookShape names the entry encoding a hook aggregate file carries: how an
@@ -164,6 +165,18 @@ type NativeAggregate struct {
 	LegacyMarkedFlatHooks bool
 }
 
+type NativeRegistrationShape string
+
+const (
+	NativeRegistrationClaudeSettings NativeRegistrationShape = "claude-settings"
+	NativeRegistrationCodexConfig    NativeRegistrationShape = "codex-config"
+)
+
+type NativeRegistration struct {
+	Path  string
+	Shape NativeRegistrationShape
+}
+
 var nativeLayouts = map[Target]NativeLayout{
 	TargetClaude: {Partitions: []NativePartition{
 		{
@@ -193,6 +206,7 @@ var nativeLayouts = map[Target]NativeLayout{
 					User:    NativeAggregateFile{Path: ".mcp.json", Member: "mcpServers"},
 				},
 			},
+			Registrations: []NativeRegistration{{Path: "settings.json", Shape: NativeRegistrationClaudeSettings}},
 		},
 	}},
 	TargetFactory: {Partitions: []NativePartition{
@@ -382,6 +396,7 @@ var nativeLayouts = map[Target]NativeLayout{
 					User:    NativeAggregateFile{Path: "config.toml", Member: "mcp_servers"},
 				},
 			},
+			Registrations: []NativeRegistration{{Path: "config.toml", Shape: NativeRegistrationCodexConfig}},
 		},
 	}},
 }
@@ -414,6 +429,7 @@ func LookupNativeLayout(target Target) (NativeLayout, bool) {
 		partition.ResourcePaths = maps.Clone(partition.ResourcePaths)
 		partition.SkillDirKinds = maps.Clone(partition.SkillDirKinds)
 		partition.Aggregates = slices.Clone(partition.Aggregates)
+		partition.Registrations = slices.Clone(partition.Registrations)
 		for j := range partition.Aggregates {
 			partition.Aggregates[j].Project.Envelope = maps.Clone(partition.Aggregates[j].Project.Envelope)
 			partition.Aggregates[j].Project.Legacy = slices.Clone(partition.Aggregates[j].Project.Legacy)
@@ -423,6 +439,20 @@ func LookupNativeLayout(target Target) (NativeLayout, bool) {
 		cloned.Partitions[i] = partition
 	}
 	return cloned, true
+}
+
+func NativePluginRegistration(target Target) (NativeRegistration, bool) {
+	layout, ok := nativeLayouts[target]
+	if !ok {
+		return NativeRegistration{}, false
+	}
+	for _, partition := range layout.Partitions {
+		for _, registration := range partition.Registrations {
+			registration.Path = path.Join(partition.Prefix, registration.Path)
+			return registration, true
+		}
+	}
+	return NativeRegistration{}, false
 }
 
 // NativeResourcePattern returns the scope-neutral path pattern the target
@@ -616,6 +646,26 @@ func ValidateNativeLayout(t Target, layout NativeLayout) error {
 			}
 		}
 		errs = append(errs, validatePartitionContent(t, partition, resourceKinds, aggregateKinds)...)
+		for _, registration := range partition.Registrations {
+			fullPath := path.Join(partition.Prefix, registration.Path)
+			validShape := registration.Shape == NativeRegistrationClaudeSettings && t == TargetClaude ||
+				registration.Shape == NativeRegistrationCodexConfig && t == TargetCodex
+			if !fs.ValidPath(registration.Path) || registration.Path == "." || !validShape {
+				errs = append(errs, fmt.Errorf("target %q partition %q declares an invalid plugin registration %q", t, partition.ID, registration.Path))
+				continue
+			}
+			for _, component := range partition.Components {
+				if fullPath == path.Join(partition.Prefix, component) || isPathPrefix(fullPath, path.Join(partition.Prefix, component)) {
+					errs = append(errs, fmt.Errorf("target %q plugin registration path %q collides with component %q", t, fullPath, component))
+				}
+			}
+			for kind, pattern := range partition.ResourcePaths {
+				resourcePath := path.Join(partition.Prefix, strings.Replace(pattern, "%s", "name", 1))
+				if fullPath == resourcePath {
+					errs = append(errs, fmt.Errorf("target %q plugin registration path %q collides with %s resources", t, fullPath, kind))
+				}
+			}
+		}
 	}
 	return errors.Join(errs...)
 }
@@ -632,7 +682,8 @@ func isPathPrefix(ancestor, descendant string) bool {
 // partitions is rejected as ambiguous.
 func validatePartitionContent(t Target, partition NativePartition, resourceKinds, aggregateKinds map[ir.ResourceKind]string) []error {
 	var errs []error
-	if len(partition.Components) == 0 && len(partition.ResourcePaths) == 0 && len(partition.Aggregates) == 0 {
+	if len(partition.Components) == 0 && len(partition.ResourcePaths) == 0 &&
+		len(partition.Aggregates) == 0 && len(partition.Registrations) == 0 {
 		errs = append(errs, fmt.Errorf("target %q partition %q is empty: a declared root must populate at least one component, resource path, or aggregate", t, partition.ID))
 	}
 	// dirClaims collects every directory the partition declares — its
