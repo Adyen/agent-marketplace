@@ -1,0 +1,54 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+                                       │  before.txt   │             after.txt              │
+                                       │    sec/op     │   sec/op     vs base               │
+V4WildcardMatchCPU/kind-match-2          21.380n ±  5%   9.982n ± 4%  -53.31% (p=0.002 n=6)
+V4WildcardMatchCPU/kind-miss-2           20.980n ±  6%   9.129n ± 5%  -56.49% (p=0.002 n=6)
+V4WildcardMatchCPU/registry-2             29.72n ±  7%   12.58n ± 7%  -57.65% (p=0.002 n=6)
+V4WildcardMatchCPU/registry-kind-2        39.30n ±  6%   22.25n ± 2%  -43.40% (p=0.002 n=6)
+V4WildcardMatchCPU/exact-control-2        2.486n ±  7%   2.345n ± 4%   -5.65% (p=0.004 n=6)
+V4WildcardMatchCPU/global-control-2       1.803n ±  6%   1.808n ± 1%        ~ (p=0.859 n=6)
+V4WildcardAdapterCPU/requests=1-2         973.4n ±  8%   934.7n ± 5%        ~ (p=0.065 n=6)
+V4WildcardAdapterCPU/requests=256-2       84.13µ ± 11%   84.95µ ± 5%        ~ (p=0.699 n=6)
+V4WildcardAdapterCPU/requests=1024-2      345.8µ ± 10%   348.4µ ± 3%        ~ (p=1.000 n=6)
+ParseV4KindWildcardCPU/requests=256-2     343.5µ ±  8%   344.5µ ± 3%        ~ (p=0.937 n=6)
+ParseV4KindWildcardCPU/requests=1024-2    1.338m ± 10%   1.366m ± 4%        ~ (p=0.937 n=6)
+geomean                                   728.3n         550.5n       -24.40%
+
+                                       │   before.txt   │                after.txt                 │
+                                       │      B/op      │     B/op      vs base                    │
+V4WildcardMatchCPU/kind-match-2            32.00 ± 0%        0.00 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardMatchCPU/kind-miss-2             32.00 ± 0%        0.00 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardMatchCPU/registry-2              48.00 ± 0%        0.00 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardMatchCPU/registry-kind-2         48.00 ± 0%        0.00 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardMatchCPU/exact-control-2         0.000 ± 0%       0.000 ± 0%         ~ (p=1.000 n=6) ¹
+V4WildcardMatchCPU/global-control-2        0.000 ± 0%       0.000 ± 0%         ~ (p=1.000 n=6) ¹
+V4WildcardAdapterCPU/requests=1-2        2.664Ki ± 0%     2.602Ki ± 0%    -2.35% (p=0.002 n=6)
+V4WildcardAdapterCPU/requests=256-2      205.7Ki ± 0%     197.7Ki ± 0%    -3.90% (p=0.002 n=6)
+V4WildcardAdapterCPU/requests=1024-2     824.3Ki ± 0%     792.3Ki ± 0%    -3.89% (p=0.002 n=6)
+ParseV4KindWildcardCPU/requests=256-2    521.2Ki ± 0%     513.1Ki ± 0%    -1.54% (p=0.002 n=6)
+ParseV4KindWildcardCPU/requests=1024-2   2.058Mi ± 0%     2.026Mi ± 0%    -1.52% (p=0.002 n=6)
+geomean                                               ²                 ?                      ² ³
+¹ all samples are equal
+² summaries must be >0 to compute geomean
+³ ratios must be >0 to compute geomean
+
+                                       │  before.txt   │                after.txt                │
+                                       │   allocs/op   │  allocs/op   vs base                    │
+V4WildcardMatchCPU/kind-match-2           1.000 ± 0%      0.000 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardMatchCPU/kind-miss-2            1.000 ± 0%      0.000 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardMatchCPU/registry-2             1.000 ± 0%      0.000 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardMatchCPU/registry-kind-2        1.000 ± 0%      0.000 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardMatchCPU/exact-control-2        0.000 ± 0%      0.000 ± 0%         ~ (p=1.000 n=6) ¹
+V4WildcardMatchCPU/global-control-2       0.000 ± 0%      0.000 ± 0%         ~ (p=1.000 n=6) ¹
+V4WildcardAdapterCPU/requests=1-2         19.00 ± 0%      17.00 ± 0%   -10.53% (p=0.002 n=6)
+V4WildcardAdapterCPU/requests=256-2      1066.0 ± 0%      809.0 ± 0%   -24.11% (p=0.002 n=6)
+V4WildcardAdapterCPU/requests=1024-2     4.152k ± 0%     3.127k ± 0%   -24.69% (p=0.002 n=6)
+ParseV4KindWildcardCPU/requests=256-2    4.058k ± 0%     3.800k ± 0%    -6.35% (p=0.002 n=6)
+ParseV4KindWildcardCPU/requests=1024-2   16.38k ± 0%     15.35k ± 0%    -6.26% (p=0.002 n=6)
+geomean                                              ²                ?                      ² ³
+¹ all samples are equal
+² summaries must be >0 to compute geomean
+³ ratios must be >0 to compute geomean
