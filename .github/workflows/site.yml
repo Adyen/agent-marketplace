@@ -55,9 +55,11 @@ jobs:
       - name: Build and verify website
         env:
           SITE_BASE: ${{ steps.pages.outcome == 'success' && format('{0}/', steps.pages.outputs.base_path) || '/agent-marketplace/' }}
+          SITE_CLOUDFLARE_ANALYTICS_TOKEN: ${{ steps.pages.outcome == 'success' && vars.CLOUDFLARE_WEB_ANALYTICS_TOKEN || '' }}
         run: |
           make site-build
           cd site
+          node --test tests/analytics.test.ts
           node --test tests/public-site.test.ts
           pnpm run build:docs
           node --test tests/docs-profile.test.ts

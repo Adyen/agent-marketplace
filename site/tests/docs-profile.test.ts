@@ -22,6 +22,7 @@ async function filesBelow(directory: URL): Promise<URL[]> {
 }
 
 // spec: site-deployment-profiles/documentation-build-is-self-contained-below-docs
+// spec: site-deployment-profiles/unpublished-and-self-hosted-builds-load-no-analytics
 test('documentation-only build is contained below /docs/', async () => {
   const files = await filesBelow(docsDist)
   const htmlFiles = files.filter(file => file.pathname.endsWith('.html'))
@@ -35,6 +36,7 @@ test('documentation-only build is contained below /docs/', async () => {
 
   for (const file of htmlFiles) {
     const html = await readFile(file, 'utf8')
+    assert.doesNotMatch(html, /cloudflareinsights/)
     const pageURL = new URL(relative(fileURLToPath(docsDist), fileURLToPath(file)), docsOrigin)
     for (const [, target] of html.matchAll(/(?:href|src)="([^"]+)"/g)) {
       const resolved = new URL(target, pageURL)

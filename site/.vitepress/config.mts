@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitepress'
+import { analyticsHead } from '../src/shared/analytics'
 import { DOCS_PATH as PUBLIC_DOCS_PATH, GITHUB_REPOSITORY_URL } from '../src/shared/site'
 
 const docsOnly = process.env.SITE_PROFILE === 'docs'
@@ -52,7 +53,8 @@ export default defineConfig({
     ['meta', { property: 'og:image:width', content: '960' }],
     ['meta', { property: 'og:image:height', content: '960' }],
     ['meta', { property: 'og:image:alt', content: 'agent-marketplace logo' }],
-    ['meta', { name: 'twitter:card', content: 'summary_large_image' }]
+    ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
+    ...analyticsHead(docsOnly ? 'docs' : 'public', process.env.SITE_CLOUDFLARE_ANALYTICS_TOKEN)
   ],
 
   themeConfig: {

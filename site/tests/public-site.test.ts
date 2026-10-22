@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import test from 'node:test'
 
 import { nextTabIndex } from '../src/pages/landing/composables/tabNavigation.ts'
+import { CLOUDFLARE_BEACON_SRC } from '../src/shared/analytics.ts'
 
 const dist = new URL('../.vitepress/dist/', import.meta.url)
 const base = process.env.SITE_BASE ?? '/'
@@ -43,6 +44,25 @@ test('public project site exposes landing and documentation without a local Mark
 
   for (const html of [landing, nestedDocs]) {
     assert.doesNotMatch(html, /(?:href|rel="prefetch" href)="\/marketplace\/?"/)
+  }
+})
+
+// spec: site-deployment-profiles/published-public-site-loads-cloudflare-web-analytics
+// spec: site-deployment-profiles/unpublished-and-self-hosted-builds-load-no-analytics
+test('public pages load Cloudflare Web Analytics only when a token is configured', async () => {
+  const token = process.env.SITE_CLOUDFLARE_ANALYTICS_TOKEN
+  const [landing, nestedDocs] = await Promise.all([
+    readFile(new URL('index.html', dist), 'utf8'),
+    readFile(new URL('docs/reference/cli.html', dist), 'utf8'),
+  ])
+
+  for (const html of [landing, nestedDocs]) {
+    if (token) {
+      assert.ok(html.includes(CLOUDFLARE_BEACON_SRC))
+      assert.ok(html.includes(token))
+    } else {
+      assert.doesNotMatch(html, /cloudflareinsights/)
+    }
   }
 })
 

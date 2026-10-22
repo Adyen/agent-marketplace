@@ -97,8 +97,12 @@ func TestSiteWorkflowPublishesValidatedArtifact(t *testing.T) {
 				if step.If != "" || step.Env["SITE_BASE"] != wantBase {
 					t.Errorf("build must use configured Pages base, including an empty root base: %+v", step)
 				}
+				if step.Env["SITE_CLOUDFLARE_ANALYTICS_TOKEN"] != "${{ steps.pages.outcome == 'success' && vars.CLOUDFLARE_WEB_ANALYTICS_TOKEN || '' }}" {
+					t.Errorf("only the publishing build may receive the analytics token: %+v", step)
+				}
 				commands := []string{
 					"make site-build",
+					"node --test tests/analytics.test.ts",
 					"node --test tests/public-site.test.ts",
 					"pnpm run build:docs",
 					"node --test tests/docs-profile.test.ts",

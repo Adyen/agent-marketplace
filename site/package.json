@@ -11,7 +11,7 @@
     "build": "SITE_PROFILE=public vitepress build",
     "build:docs": "SITE_PROFILE=docs vitepress build",
     "preview": "vitepress preview",
-    "test:public": "pnpm run build && node --test tests/public-site.test.ts",
+    "test:public": "pnpm run build && node --test tests/analytics.test.ts tests/public-site.test.ts",
     "test:docs": "pnpm run build && pnpm run build:docs && node --test tests/docs-profile.test.ts"
   },
   "devDependencies": {
