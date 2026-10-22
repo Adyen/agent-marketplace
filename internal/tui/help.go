@@ -90,7 +90,7 @@ func renderErrors(m Model) string {
 		b.WriteString(styleErrorTitle.Render(fmt.Sprintf("Errors (%d)", len(m.errs))))
 		b.WriteString("\n\n")
 		for _, err := range m.errs {
-			writeDiagnostic(textStyle(m.currentTheme()), "• ", err.Error())
+			writeDiagnostic(textStyle(m.currentTheme()), "• ", diagnosticCause(err))
 			writeRecovery(textStyle(m.currentTheme()), err, categoryFor(diagnosticError, err))
 		}
 	}
@@ -114,7 +114,7 @@ func renderErrors(m Model) string {
 		b.WriteString(styleWarningTitle.Render(fmt.Sprintf("Warnings (%d)", len(m.warnings))))
 		b.WriteString("\n\n")
 		for _, w := range m.warnings {
-			writeDiagnostic(styleWarningMsg, "• ", w.Error())
+			writeDiagnostic(styleWarningMsg, "• ", diagnosticCause(w))
 			// Print remediation hint for remediable warnings
 			writeRecovery(styleWarningMsg, w, categoryFor(diagnosticWarning, w))
 		}
