@@ -14,6 +14,8 @@ func TestV4WildcardMatchingPreservesRawShapes(t *testing.T) {
 		"tools/command/a", "other/skill/a", "tools-extra/skill/a",
 		"tools//a", "tools/skill/", "/skill/a", "//", "tools/skill/a/extra",
 		"tools/skill/*/extra", "tools/*/*", "*/*", "skill/\xc3\xa9", "skill/\xff",
+		strings.Repeat("registry-", 16) + "/skill/*",
+		strings.Repeat("registry-", 16) + "/skill/a",
 	}
 	for _, selector := range values {
 		for _, locator := range values {
@@ -28,7 +30,7 @@ func TestV4WildcardMatchingPreservesRawShapes(t *testing.T) {
 
 func TestV4WildcardMatchingMatchesTokenOracle(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		component := rapid.SampledFrom([]string{"", "skill", "command", "tools", "tools-extra", "a", "*", "\xc3\xa9", "\xff"})
+		component := rapid.SampledFrom([]string{"", "skill", "command", "tools", "tools-extra", strings.Repeat("registry-", 16), "a", "*", "\xc3\xa9", "\xff"})
 		locator := strings.Join(rapid.SliceOfN(component, 0, 5).Draw(t, "locator"), "/")
 		selector := strings.Join(rapid.SliceOfN(component, 0, 4).Draw(t, "selector"), "/")
 		if rapid.Bool().Draw(t, "terminal-wildcard") {

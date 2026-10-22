@@ -1,6 +1,6 @@
-# R5 / R53: Allocation-Free Wildcard Matching
+# R5 / R53: Slice-Free Wildcard Matching
 
-Start from main `e1c844c3`, independently of open PR #888. This is another
+Start from main `e1c844c3`, independently of PR #888. This is another
 partial R53/F136 repeated-work investigation, not a new policy or closure.
 
 `v4ExclusionMatches` splits every wildcard comparison's locator into a fresh
@@ -20,6 +20,10 @@ change. A wildcard index would add state and change much more code; defer it.
 No new limits, deadlines, truncation, cache, dependency, or accepted-input
 restriction is needed.
 
+Keep the existing qualified-selector concatenation unchanged. Long qualified
+names may still allocate that temporary string; removing locator slices is
+not a claim that every possible match is allocation-free.
+
 Pin raw matching results against the independently authored token-based
 oracle, including malformed strings, and retain structured-history controls.
 Verify public parsing, runtime adaptation, editor refusal/healthy-control
@@ -37,3 +41,7 @@ Run selected validation, specs, combined E2E, terminal tests, and host
 `open-code-review-delegate` across all changes before every push/handoff.
 Publish and address actionable CodeRabbit/Gemini/CI feedback; ignore major-
 release commentary and leave the clean PR open before taking another slice.
+
+Before publication, integrate main `e8dcaba9`, including merged #888 and
+upstream TUI/deployment-security work. Refresh both measured variants on this
+base, keep the initial `e1c844c3` dataset separate, and do not pool results.
