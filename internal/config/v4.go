@@ -1942,6 +1942,12 @@ func (c *V4Config) rebuildRequests() {
 		for _, d := range g.Decisions {
 			c.Decisions = append(c.Decisions, d)
 			if d.Action == V4SelectionExclude {
+				if d.Exclusion != "*" && !strings.HasSuffix(d.Exclusion, "/*") {
+					if request, ok := byLocator[d.Exclusion]; ok && !request.Required {
+						excluded[d.Exclusion] = true
+					}
+					continue
+				}
 				for loc, request := range byLocator {
 					if v4ExclusionMatches(d.Exclusion, loc) && !request.Required {
 						excluded[loc] = true
@@ -2406,6 +2412,12 @@ func effectiveV4Requests(group V4ResourceGroup) []V4ResourceRequest {
 	excluded := map[string]bool{}
 	for _, decision := range group.Decisions {
 		if decision.Action == V4SelectionExclude {
+			if decision.Exclusion != "*" && !strings.HasSuffix(decision.Exclusion, "/*") {
+				if request, ok := requests[decision.Exclusion]; ok && !request.Required {
+					excluded[decision.Exclusion] = true
+				}
+				continue
+			}
 			for locator, request := range requests {
 				if !request.Required && v4ExclusionMatches(decision.Exclusion, locator) {
 					excluded[locator] = true

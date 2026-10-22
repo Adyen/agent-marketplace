@@ -1,0 +1,90 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4EffectiveRequestsCPU/exact/exclusions=1-2         	 8697156	       281.2 ns/op	     624 B/op	       3 allocs/op
+BenchmarkV4EffectiveRequestsCPU/exact/exclusions=32-2        	  166726	     14304 ns/op	   14064 B/op	      49 allocs/op
+BenchmarkV4EffectiveRequestsCPU/exact/exclusions=256-2       	    4416	    541706 ns/op	  112240 B/op	     285 allocs/op
+BenchmarkV4EffectiveRequestsCPU/exact/exclusions=1024-2      	     289	   8304009 ns/op	  449360 B/op	    1067 allocs/op
+BenchmarkV4EffectiveRequestsCPU/wildcard/requests=1024-2     	   13890	    173656 ns/op	  448944 B/op	    1065 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/exact/exclusions=1-2  	 1911656	      1261 ns/op	    3592 B/op	      23 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/exact/exclusions=32-2 	   66038	     36737 ns/op	   51504 B/op	     254 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/exact/exclusions=256-2         	    2112	   1138106 ns/op	  406800 B/op	    1634 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/exact/exclusions=1024-2        	     144	  16576859 ns/op	 1661120 B/op	    6283 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/wildcard/requests=1024-2       	    9310	    267529 ns/op	  810600 B/op	    3121 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4EffectiveRequestsCPU/exact/exclusions=1-2         	 8606967	       285.0 ns/op	     624 B/op	       3 allocs/op
+BenchmarkV4EffectiveRequestsCPU/exact/exclusions=32-2        	  171453	     14023 ns/op	   14064 B/op	      49 allocs/op
+BenchmarkV4EffectiveRequestsCPU/exact/exclusions=256-2       	    4448	    543267 ns/op	  112240 B/op	     285 allocs/op
+BenchmarkV4EffectiveRequestsCPU/exact/exclusions=1024-2      	     290	   8260782 ns/op	  449360 B/op	    1067 allocs/op
+BenchmarkV4EffectiveRequestsCPU/wildcard/requests=1024-2     	   13953	    171450 ns/op	  448944 B/op	    1065 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/exact/exclusions=1-2  	 1892110	      1261 ns/op	    3592 B/op	      23 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/exact/exclusions=32-2 	   66405	     36802 ns/op	   51504 B/op	     254 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/exact/exclusions=256-2         	    2090	   1146517 ns/op	  406800 B/op	    1634 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/exact/exclusions=1024-2        	     140	  17149026 ns/op	 1661120 B/op	    6283 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/wildcard/requests=1024-2       	    9559	    252677 ns/op	  810600 B/op	    3121 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4EffectiveRequestsCPU/exact/exclusions=1-2         	 8396126	       282.2 ns/op	     624 B/op	       3 allocs/op
+BenchmarkV4EffectiveRequestsCPU/exact/exclusions=32-2        	  164889	     14076 ns/op	   14064 B/op	      49 allocs/op
+BenchmarkV4EffectiveRequestsCPU/exact/exclusions=256-2       	    4561	    540491 ns/op	  112240 B/op	     285 allocs/op
+BenchmarkV4EffectiveRequestsCPU/exact/exclusions=1024-2      	     294	   8217642 ns/op	  449360 B/op	    1067 allocs/op
+BenchmarkV4EffectiveRequestsCPU/wildcard/requests=1024-2     	   13099	    182167 ns/op	  448944 B/op	    1065 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/exact/exclusions=1-2  	 1808110	      1326 ns/op	    3592 B/op	      23 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/exact/exclusions=32-2 	   62726	     36593 ns/op	   51504 B/op	     254 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/exact/exclusions=256-2         	    2137	   1130865 ns/op	  406800 B/op	    1634 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/exact/exclusions=1024-2        	     141	  16832444 ns/op	 1661120 B/op	    6283 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/wildcard/requests=1024-2       	    9480	    252415 ns/op	  810600 B/op	    3121 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4EffectiveRequestsCPU/exact/exclusions=1-2         	 8460835	       281.8 ns/op	     624 B/op	       3 allocs/op
+BenchmarkV4EffectiveRequestsCPU/exact/exclusions=32-2        	  170290	     14040 ns/op	   14064 B/op	      49 allocs/op
+BenchmarkV4EffectiveRequestsCPU/exact/exclusions=256-2       	    4342	    550804 ns/op	  112240 B/op	     285 allocs/op
+BenchmarkV4EffectiveRequestsCPU/exact/exclusions=1024-2      	     282	   8430257 ns/op	  449360 B/op	    1067 allocs/op
+BenchmarkV4EffectiveRequestsCPU/wildcard/requests=1024-2     	   13978	    171856 ns/op	  448944 B/op	    1065 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/exact/exclusions=1-2  	 1897506	      1276 ns/op	    3592 B/op	      23 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/exact/exclusions=32-2 	   66242	     36635 ns/op	   51504 B/op	     254 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/exact/exclusions=256-2         	    2050	   1163645 ns/op	  406800 B/op	    1634 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/exact/exclusions=1024-2        	     139	  17148583 ns/op	 1661120 B/op	    6283 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/wildcard/requests=1024-2       	    9356	    252615 ns/op	  810600 B/op	    3121 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4EffectiveRequestsCPU/exact/exclusions=1-2         	 8484464	       281.9 ns/op	     624 B/op	       3 allocs/op
+BenchmarkV4EffectiveRequestsCPU/exact/exclusions=32-2        	  169202	     14055 ns/op	   14064 B/op	      49 allocs/op
+BenchmarkV4EffectiveRequestsCPU/exact/exclusions=256-2       	    4454	    540979 ns/op	  112240 B/op	     285 allocs/op
+BenchmarkV4EffectiveRequestsCPU/exact/exclusions=1024-2      	     290	   8257566 ns/op	  449360 B/op	    1067 allocs/op
+BenchmarkV4EffectiveRequestsCPU/wildcard/requests=1024-2     	   13872	    172760 ns/op	  448944 B/op	    1065 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/exact/exclusions=1-2  	 1868750	      1271 ns/op	    3592 B/op	      23 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/exact/exclusions=32-2 	   68403	     36426 ns/op	   51504 B/op	     254 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/exact/exclusions=256-2         	    2114	   1138029 ns/op	  406800 B/op	    1634 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/exact/exclusions=1024-2        	     145	  16526878 ns/op	 1661120 B/op	    6283 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/wildcard/requests=1024-2       	    9799	    242254 ns/op	  810600 B/op	    3121 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4EffectiveRequestsCPU/exact/exclusions=1-2         	 7605402	       313.4 ns/op	     624 B/op	       3 allocs/op
+BenchmarkV4EffectiveRequestsCPU/exact/exclusions=32-2        	  155077	     15415 ns/op	   14064 B/op	      49 allocs/op
+BenchmarkV4EffectiveRequestsCPU/exact/exclusions=256-2       	    4194	    595889 ns/op	  112240 B/op	     285 allocs/op
+BenchmarkV4EffectiveRequestsCPU/exact/exclusions=1024-2      	     262	   9068487 ns/op	  449360 B/op	    1067 allocs/op
+BenchmarkV4EffectiveRequestsCPU/wildcard/requests=1024-2     	    9913	    211827 ns/op	  448944 B/op	    1065 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/exact/exclusions=1-2  	 1511756	      1590 ns/op	    3592 B/op	      23 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/exact/exclusions=32-2 	   58146	     44569 ns/op	   51504 B/op	     254 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/exact/exclusions=256-2         	    1951	   1303945 ns/op	  406800 B/op	    1634 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/exact/exclusions=1024-2        	     129	  18347633 ns/op	 1661120 B/op	    6283 allocs/op
+BenchmarkV4EffectiveRequestsAdapterCPU/wildcard/requests=1024-2       	    7735	    315876 ns/op	  810600 B/op	    3121 allocs/op
+PASS

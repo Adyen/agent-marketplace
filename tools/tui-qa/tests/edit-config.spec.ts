@@ -1,0 +1,117 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { after, before } from "node:test";
+
+import { defineFixture, locate, step, waitForExit } from "./helpers.js";
+import { runNonTTY } from "./process-helpers.js";
+
+// spec: tui-rendering/editor-running
+// spec: tui-rendering/editor-exit-reloads-and-frees-writes
+const journey = defineFixture("edit-config", ["tui"]);
+// The scripted editor waits for the journey to release it, so the handoff
+// screen can be observed, then fails or writes the prepared config.
+before(async () => {
+  await journey.setup();
+  const fixture = journey.current();
+  const dir = path.join(fixture.root, "editor");
+  fs.mkdirSync(dir, { recursive: true });
+  const script = path.join(dir, "edit.sh");
+  fs.writeFileSync(
+    script,
+    `#!/bin/sh\nwhile [ ! -e "${dir}/release" ]; do sleep 0.05; done\nrm -f "${dir}/release"\nif [ -e "${dir}/fail" ]; then rm -f "${dir}/fail"; exit 3; fi\ncp "${dir}/next.yaml" "$1"\n`,
+    { mode: 0o755 }
+  );
+  fixture.env.EDITOR = script;
+});
+after(journey.cleanup);
+
+journey.test("E hands the project config to $EDITOR, reloads the edit, and keeps later writes working", async (terminal) => {
+  const fixture = journey.current();
+  const dir = path.join(fixture.root, "editor");
+  const repoConfig = path.join(fixture.repo, ".agents", "config.yaml");
+  const edited = fixture.expectedRepoConfig.replace("      - skill/beta-skill\n", "      - skill/beta-skill\n      - skill/alpha-skill\n");
+  fs.writeFileSync(path.join(dir, "next.yaml"), edited);
+  const screenText = async (): Promise<string> => (await terminal.text()).replace(/\s+/g, "");
+  // A toggle rewrites only the resources block: the sources keep their bytes,
+  // and the lists are compared as the Go config writer emits them.
+  const sourcesBlock = fixture.expectedRepoConfig.slice(0, fixture.expectedRepoConfig.indexOf("resources:\n"));
+  const selection = (): { sources: string; include: string; exclude: string } => {
+    const config = fs.readFileSync(repoConfig, "utf8");
+    const list = (key: string): string => new RegExp(`\n    ${key}:\n((?: {6}- \\S+\n)*)`).exec(config)?.[1] ?? "";
+    return { sources: config.slice(0, config.indexOf("resources:\n")), include: list("include"), exclude: list("exclude") };
+  };
+  const openProjectEditor = async (): Promise<void> => {
+    await step("E opens the config picker", () => terminal.write("E"), async () => {
+      await locate(terminal, "Edit Config").unique().expect();
+      await locate(terminal, "[p]  edit project config").unique().expect();
+    });
+    await step("p hands the project config to the editor", () => terminal.write("p"), async () => {
+      await locate(terminal, "Waiting for").expect();
+      // Long temporary paths wrap and may print canonicalized, so compare
+      // path suffixes without whitespace.
+      const screen = await screenText();
+      for (const expected of [`/${path.basename(fixture.repo)}/.agents/config.yaml`, "/editor/edit.shtoexit", "Editing/", "Waitingfor/"]) {
+        assert.ok(screen.includes(expected), `the handoff screen lost ${JSON.stringify(expected)}:\n${await terminal.text()}`);
+      }
+      await locate(terminal, "~ in sync").expect({ not: true });
+    });
+  };
+
+  await step("settled fixture baseline", () => {}, async () => {
+    await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
+  });
+
+  fs.writeFileSync(path.join(dir, "fail"), "");
+  await openProjectEditor();
+  await step("a failing editor is reported with recovery guidance", () => fs.writeFileSync(path.join(dir, "release"), ""), async () => {
+    await locate(terminal, "! 1 errors: exit status 3").unique().expect();
+  });
+  assert.equal(fs.readFileSync(repoConfig, "utf8"), fixture.expectedRepoConfig, "the TUI wrote the project config after the editor failed");
+  await step("the errors screen explains how to fix the editor", () => terminal.write("e"), async () => {
+    await locate(terminal, "Errors (1)").unique().expect();
+    assert.ok((await screenText()).includes("Checkthatyourconfigurededitorisinstalled"), `the editor error lost its guidance:\n${await terminal.text()}`);
+  });
+  await step("close the errors screen", () => terminal.write("e"), async () => {
+    await locate(terminal, "Errors (1)").expect({ not: true });
+  });
+  await step("select beta-skill", () => terminal.write("j"), async () => {
+    await locate(terminal, /Name:\s+beta-skill/).unique().expect();
+  });
+  await step("open its toggle modal", () => terminal.write(" "), async () => {
+    await locate(terminal, /Project ✓/).unique().expect();
+  });
+  // The footer keeps the editor error until an editor run succeeds, so the
+  // list and the config show the write.
+  await step("a config write after the failed editor still applies", () => terminal.write("p"), async () => {
+    await locate(terminal, /Available\s+\(2\)/).unique().expect({ timeout: 30_000 });
+  });
+  assert.deepEqual(selection(), { sources: sourcesBlock, include: "", exclude: "      - skill/beta-skill\n" }, "the toggle after the failed editor did not deselect exactly beta-skill");
+
+  await openProjectEditor();
+  await step("the edit is reloaded as soon as the editor exits", () => fs.writeFileSync(path.join(dir, "release"), ""), async () => {
+    await locate(terminal, /Pending sync\s+\(1\)/).unique().expect({ timeout: 30_000 });
+    await locate(terminal, "~ 1 out of sync").unique().expect({ timeout: 30_000 });
+    await locate(terminal, /! \d+ errors/).expect({ not: true });
+  });
+  assert.equal(fs.readFileSync(repoConfig, "utf8"), edited);
+
+  await step("select alpha-skill", () => terminal.write("G"), async () => {
+    await locate(terminal, /Name:\s+alpha-skill/).unique().expect();
+  });
+  await step("open its toggle modal", () => terminal.write(" "), async () => {
+    await locate(terminal, /Project ✓/).unique().expect();
+  });
+  await step("a config write after the editor still applies", () => terminal.write("p"), async () => {
+    await locate(terminal, /Available\s+\(1\)/).unique().expect({ timeout: 30_000 });
+    await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
+  });
+  assert.deepEqual(selection(), { sources: sourcesBlock, include: "      - skill/beta-skill\n", exclude: "      - skill/alpha-skill\n" }, "the toggle after the editor did not deselect exactly alpha-skill");
+
+  await step("quit", () => terminal.write("q"), async () => {
+    assert.equal((await waitForExit(terminal)).exitCode, 0);
+  });
+  const check = runNonTTY(fixture, ["sync", "--check"], 30_000);
+  if (check.error) throw check.error;
+  assert.equal(check.status, 0, `${check.stdout}\n${check.stderr}`);
+});
