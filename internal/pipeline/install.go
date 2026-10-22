@@ -1258,6 +1258,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 
 	// Resolve the URL: parse web URLs (GitLab/GitHub) into git URL + ref + path.
 	// Explicit --ref/--path flags take precedence over values parsed from the URL.
+	rawFromURL := fromURL
 	resolvedURL, resolvedRef, resolvedPath, _ := ResolveFromURL(fromURL, opts.FromRef, opts.FromPath)
 	fromURL = resolvedURL
 	fromRef := resolvedRef
@@ -1273,6 +1274,10 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 		slog.Warn("install rejected invalid registry path", "error", err)
 		return nil, err
 	}
+	// A web URL becomes an SSH URL; fall back to anonymous HTTPS when SSH
+	// cannot reach the registry, e.g. a public repository without SSH keys.
+	fromURL = PreferReachableTransport(rawFromURL, fromURL, RegistryURLPolicy(syntheticEntry, ec.Allowed))
+	syntheticEntry.URL = fromURL
 	if !syntheticEntry.IsLocal() && fromRef == "" {
 		defaultBranch, err := cache.DefaultBranch(fromURL)
 		if err != nil {
