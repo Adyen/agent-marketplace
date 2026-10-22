@@ -1452,7 +1452,7 @@ func registryDisplayName(url string) string {
 	if url == "" {
 		return ""
 	}
-	url = strings.TrimSuffix(url, ".git")
+	url = strings.TrimSuffix(strings.TrimRight(url, "/"), ".git")
 	if idx := strings.LastIndexAny(url, "/:"); idx >= 0 {
 		url = url[idx+1:]
 	}
