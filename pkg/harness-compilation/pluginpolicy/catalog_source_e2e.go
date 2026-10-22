@@ -23,7 +23,7 @@ func runtimeCatalogSource() (fs.FS, []string, error) {
 		return nil, nil, err
 	}
 	target := strings.TrimSuffix(filepath.Base(overridePath), filepath.Ext(overridePath))
-	if target == "" || target == "." || target == "/" {
+	if target == "" {
 		return nil, nil, errors.New("invalid e2e plugin catalog override path")
 	}
 	files := fstest.MapFS{}

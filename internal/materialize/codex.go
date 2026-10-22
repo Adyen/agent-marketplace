@@ -180,7 +180,6 @@ type codexMCPEntry struct {
 type codexPluginRegistration struct {
 	container, key, resource string
 	source, path             string
-	enabled                  bool
 	valueDigest              string
 	pluginInstanceKey        string
 }
@@ -209,7 +208,6 @@ func codexPluginRegistrations(entries []ownedJSONEntry) ([]codexPluginRegistrati
 			if err := json.Unmarshal(entry.raw, &value); err != nil || !value.Enabled {
 				return nil, fmt.Errorf("invalid Codex plugin registration")
 			}
-			registration.enabled = value.Enabled
 		default:
 			return nil, fmt.Errorf("unsupported Codex plugin registration container")
 		}
