@@ -12,21 +12,23 @@ type requestKind string
 type requestGeneration uint64
 
 const (
-	requestDetail    requestKind = "detail"
-	requestSnapshot  requestKind = "snapshot"
-	requestDiscovery requestKind = "marketplace-discovery"
+	requestDetail         requestKind = "detail"
+	requestSnapshot       requestKind = "snapshot"
+	requestDiscovery      requestKind = "marketplace-discovery"
+	requestInstallPreview requestKind = "install-source-preview"
 )
 
 type requestState struct {
-	next      requestGeneration
-	detail    requestGeneration
-	snapshot  requestGeneration
-	discovery requestGeneration
+	next           requestGeneration
+	detail         requestGeneration
+	snapshot       requestGeneration
+	discovery      requestGeneration
+	installPreview requestGeneration
 }
 
 func (r *requestState) begin(kind requestKind) requestGeneration {
 	switch kind {
-	case requestDetail, requestSnapshot, requestDiscovery:
+	case requestDetail, requestSnapshot, requestDiscovery, requestInstallPreview:
 	default:
 		return 0
 	}
@@ -39,6 +41,8 @@ func (r *requestState) begin(kind requestKind) requestGeneration {
 		r.snapshot = r.next
 	case requestDiscovery:
 		r.discovery = r.next
+	case requestInstallPreview:
+		r.installPreview = r.next
 	}
 	return r.next
 }
@@ -51,6 +55,8 @@ func (r requestState) active(kind requestKind) requestGeneration {
 		return r.snapshot
 	case requestDiscovery:
 		return r.discovery
+	case requestInstallPreview:
+		return r.installPreview
 	default:
 		return 0
 	}
@@ -65,6 +71,8 @@ func (r *requestState) cancel(kind requestKind) requestGeneration {
 		r.snapshot = 0
 	case requestDiscovery:
 		r.discovery = 0
+	case requestInstallPreview:
+		r.installPreview = 0
 	}
 	return generation
 }

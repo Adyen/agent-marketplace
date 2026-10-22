@@ -27,6 +27,7 @@ type PreparedInstallDependencies struct {
 	View            DependencyLockView
 	Reconcile       DependencyReconciler
 	BindRegistry    func(config.Source, config.RegistryEntry) error
+	ResolvedCommit  func(config.RegistryEntry) (string, error)
 	Release         func()
 }
 
@@ -46,6 +47,8 @@ type InstallOptions struct {
 	FromURL                 string // --from flag: ad-hoc registry URL
 	FromRef                 string // --ref flag: git ref for --from
 	FromPath                string // --path flag: subdirectory for --from
+	Locators                []config.ResourceLocator
+	ExpectedCommit          string
 	InstalledName           string // --as for Marketplace installs
 	AcceptRisk              bool   // --accept-risk/--yes for Marketplace installs
 	Marketplace             string // --marketplace alias or endpoint selector
@@ -508,8 +511,8 @@ func planNamedInstalls(args []string, catalogs map[string]catalog.LoadedCatalog,
 			continue
 		}
 		seen[name] = true
-		// Detect collection install.
-		if col := collection.Find(collections, name); col != nil {
+		// Detect collection install unless the caller has fixed another kind.
+		if col := collection.Find(collections, name); col != nil && (!hasKind || kind == ir.KindCollection) {
 			members, err := collectionInstallResources(col.Name, expansion, cfg.Registries, scope)
 			if err != nil {
 				return nil, nil, err
@@ -1266,6 +1269,9 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	// Validate the --from URL against the effective allowlist before
 	// writing to config or fetching anything.
 	syntheticEntry := config.RegistryEntry{URL: fromURL, Ref: fromRef, Path: fromPath}
+	if opts.ExpectedCommit != "" && syntheticEntry.IsLocal() {
+		return nil, errors.New("expected commit cannot be used with a directory source")
+	}
 	if err := config.ValidateRegistryURLs([]config.RegistryEntry{syntheticEntry}, ec.Allowed); err != nil {
 		return nil, err
 	}
@@ -1281,6 +1287,9 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 		fromRef = defaultBranch
 		syntheticEntry.Ref = fromRef
 		slog.Info("install using registry default branch", "ref", fromRef)
+	}
+	if opts.ExpectedCommit != "" && opts.PrepareDependencies == nil {
+		return nil, errors.New("expected commit requires an exact prepared source commit")
 	}
 
 	// Repo-relative local registries are project-local and cannot be written to
@@ -1365,6 +1374,18 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 			return nil, err
 		}
 		defer prepared.Release()
+		if opts.ExpectedCommit != "" {
+			if prepared.ResolvedCommit == nil {
+				return nil, errors.New("expected commit cannot be checked because exact source commit was not prepared")
+			}
+			actual, err := prepared.ResolvedCommit(syntheticEntry)
+			if err != nil {
+				return nil, fmt.Errorf("resolve prepared source commit: %w", err)
+			}
+			if actual != opts.ExpectedCommit {
+				return nil, &SourceMovedError{Ref: fromRef, Expected: opts.ExpectedCommit, Actual: actual}
+			}
+		}
 		ctx = prepared.Context
 		discoveryCfg = prepared.DiscoveryConfig
 		discoveryOptions = append(discoveryOptions, prepared.View.CatalogOption)
@@ -1406,9 +1427,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 		})
 	}
 
-	// If name args are given, install just those resources from this source.
-	if len(opts.Args) > 0 {
-		// Check collections.
+	if len(opts.Args) > 0 || len(opts.Locators) > 0 {
 		selectedCollections := make([]collection.Collection, 0)
 		for _, col := range discoveredCollections {
 			if col.SourceCatalogKey == catalogKey {
@@ -1416,9 +1435,28 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 			}
 		}
 		source := &namedInstallSource{apply: syntheticEntry, excludes: binding.Entry, fromURL: fromURL}
-		plan, warnIdentities, err := planNamedInstalls(opts.Args, selectedCatalogs, selectedCollections, discoveredCollections, discoveryCfg, kind, hasKind, opts.Scope, source)
-		if err != nil {
-			return nil, err
+		var plan []namedInstallSelection
+		var warnIdentities []resourceIdentity
+		if len(opts.Locators) > 0 {
+			for _, locator := range opts.Locators {
+				if strings.TrimSpace(locator.Name) == "" {
+					return nil, errors.New("kind-qualified resource locator requires a kind and name")
+				}
+				if _, ok := syntheticEntry.SelectorForKindOk(locator.Kind); !ok {
+					return nil, fmt.Errorf("resource locator has invalid kind %q", locator.Kind)
+				}
+				locatorPlan, locatorWarnings, err := planNamedInstalls([]string{locator.Name}, selectedCatalogs, selectedCollections, discoveredCollections, discoveryCfg, locator.Kind, true, opts.Scope, source)
+				if err != nil {
+					return nil, err
+				}
+				plan = append(plan, locatorPlan...)
+				warnIdentities = append(warnIdentities, locatorWarnings...)
+			}
+		} else {
+			plan, warnIdentities, err = planNamedInstalls(opts.Args, selectedCatalogs, selectedCollections, discoveredCollections, discoveryCfg, kind, hasKind, opts.Scope, source)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if err := applyNamedInstalls(func(mutate func(*LayerMutation) error) error {
 			return EditLayerAtPath(layer, mutate)
@@ -1507,6 +1545,17 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 		return nil, err
 	}
 	return syncInstalledResources(ctx, opts, allInstalled, installedResources, silentSyncOptsForInstall(opts)...)
+}
+
+// SourceMovedError reports that an explicit source no longer matches its previewed commit.
+type SourceMovedError struct {
+	Ref      string
+	Expected string
+	Actual   string
+}
+
+func (e *SourceMovedError) Error() string {
+	return fmt.Sprintf("source ref %q moved since preview: expected commit %s, actual commit %s", e.Ref, e.Expected, e.Actual)
 }
 
 func adHocEntryMatchesBinding(candidate, bound config.RegistryEntry) bool {

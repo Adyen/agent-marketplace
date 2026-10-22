@@ -342,6 +342,7 @@ func TestConfiguredInstallUnlockedOrganizationOutputSurvivesGC(t *testing.T) {
 	}
 }
 
+// spec: resource-installation/matching-expected-commit-installs-at-the-requested-ref
 func TestAdHocInstallPreparationPinsOriginalMutableRef(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -350,6 +351,7 @@ func TestAdHocInstallPreparationPinsOriginalMutableRef(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			f := newInstallBindingFixture(t)
 			opts := f.options()
+			opts.ExpectedCommit = f.commit
 			if mode == "bundle" || mode == "inferred" {
 				opts.Args = nil
 			}
@@ -364,6 +366,10 @@ func TestAdHocInstallPreparationPinsOriginalMutableRef(t *testing.T) {
 				p, err := prepareInstallDependencies(ctx, root, local, edits)
 				if err != nil {
 					return p, err
+				}
+				resolved, err := p.ResolvedCommit(config.RegistryEntry{URL: f.origin, Ref: "main"})
+				if err != nil || resolved != f.commit {
+					t.Fatalf("prepared commit=%q err=%v, want exact original commit %s", resolved, err, f.commit)
 				}
 				original := p.Reconcile
 				p.Reconcile = func(ctx context.Context, root, local string, blocked bool, edits []pipeline.StagedConfigEdit) (pipeline.DependencyLockView, error) {

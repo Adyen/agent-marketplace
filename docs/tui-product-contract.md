@@ -53,6 +53,14 @@ Discovery rows show their Marketplace and Registry identity, and the TUI sanitiz
 - It writes exact pins atomically to an explicit user, project, or local scope.
 - The mutation operation stays active until the subsequent authoritative snapshot reload succeeds or reports failure.
 
+### Install from source
+
+Pressing `i` in the resource list opens a Source → Pick → Review modal for an unconfigured Git URL, GitHub/GitLab web URL, or directory. A web URL supplies its encoded ref and path. Preview checks the effective registry allowlist and path before network access and performs no config, lock, or harness writes. It shows discovered resources grouped by kind, malformed rows as unselectable, and bundle paths when the source expands into several catalogs.
+
+The user selects kind-qualified resources, chooses a writable user, project, or local scope, and reviews the configuration file and picks before confirming. Git installs carry the previewed commit; when the ref moves, the install is refused with both commits, the modal returns to Pick, and picks still present after re-preview remain selected. Cancel from any step leaves configuration, acquisition lock, and harness bytes unchanged. The install uses one guarded mutation and an authoritative snapshot reload.
+
+On Source, `↓` and `↑` move focus URL→Ref→Path and back without wrapping, and `tab`/`shift+tab` move between the fields with wrapping; `k` and `j` remain text. `→` acts as enter on Pick and `←` returns one step; `→` on Review never installs, and on Source `←` and `→` move the text cursor. Review moves the scope with `↑`/`↓` (or `k`/`j`) through User, Project, and Local without wrapping; a scope the source cannot be written to keeps the current scope and shows the reason. Confirming Source with the URL, ref, and path of the shown preview returns to Pick with that preview and the current picks, without previewing again. A Git preview without a ref, or pinned to a full commit SHA, reads the cache without fetching when the cached checkout is already at that commit.
+
 ### Marketplace row detail
 
 Opening a Marketplace row's detail never resolves a registry-relative path against the consumer workspace.

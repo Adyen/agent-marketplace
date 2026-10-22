@@ -123,6 +123,7 @@ func (m Model) startDiscoveryInstall(r row, s scope) (tea.Model, tea.Cmd) {
 		return m, operationBlockedCmd()
 	}
 	m.pane = paneList
+	m.marketplaceInstallIsSource = false
 	m.marketplaceInstallOptions = options
 	m.marketplaceInstallOperation = operation
 	m.beginOperationProgressFor(operation, "install", m.requests.active(requestSnapshot))
@@ -142,11 +143,24 @@ func (m *Model) finishMarketplaceInstallReload(generation requestGeneration, err
 	m.marketplaceInstallReload = 0
 	if err != nil {
 		m.recordOperationFailure(operationMutation, diagnosticMutation, err)
-		m.pushToast("Marketplace install reload failed: "+err.Error(), 5*time.Second)
+		message := "Marketplace install reload failed: " + err.Error()
+		if m.marketplaceInstallIsSource {
+			message = "Source install reload failed: " + err.Error()
+		}
+		m.marketplaceInstallIsSource = false
+		m.pushToast(message, 5*time.Second)
 		return toastExpiryCmd(5 * time.Second)
 	}
 	m.recordOperationSuccess(operationMutation)
-	m.pushToast("Marketplace resource installed", 2*time.Second)
+	message := "Marketplace resource installed"
+	if m.marketplaceInstallIsSource {
+		count := len(m.marketplaceInstallOptions.Locators)
+		message = fmt.Sprintf("Installed %d from %s %s", count, registryDisplayName(m.marketplaceInstallOptions.FromURL), pipeline.InstallScopeLabel(m.marketplaceInstallOptions.Scope))
+		m.cancelInstallSourcePreview()
+		m.installSource = installSourceModal{}
+	}
+	m.marketplaceInstallIsSource = false
+	m.pushToast(message, 2*time.Second)
 	return toastExpiryCmd(2 * time.Second)
 }
 
@@ -168,6 +182,7 @@ func (m *Model) clearMarketplaceConsent() {
 	m.clearOperationProgress()
 	m.finishOperation(m.marketplaceInstallOperation)
 	m.marketplaceInstallOperation = 0
+	m.marketplaceInstallIsSource = false
 	m.marketplacePreparedInstall = nil
 	m.marketplaceInstallPreview = ""
 	m.marketplaceConsentViewport.SetContent("")

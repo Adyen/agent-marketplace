@@ -17,6 +17,8 @@ type preparedInstallLocks struct {
 	documents       map[string]lockfile.Document
 	lockPaths       map[config.Source]string
 	bindings        map[string][]lockfile.GitRegistry
+	commits         map[string]string
+	targetLockPaths map[string]bool
 	discoveryConfig *config.Config
 	reads           []dependencytxn.ReadAssertion
 	ctx             context.Context
@@ -24,7 +26,18 @@ type preparedInstallLocks struct {
 }
 
 func prepareInstallDependencies(ctx context.Context, root, local string, edits []pipeline.StagedConfigEdit) (pipeline.PreparedInstallDependencies, error) {
-	state := &preparedInstallLocks{documents: make(map[string]lockfile.Document), lockPaths: make(map[config.Source]string), bindings: make(map[string][]lockfile.GitRegistry)}
+	state := &preparedInstallLocks{
+		documents: make(map[string]lockfile.Document), lockPaths: make(map[config.Source]string),
+		bindings: make(map[string][]lockfile.GitRegistry), commits: make(map[string]string),
+		targetLockPaths: make(map[string]bool),
+	}
+	for _, edit := range edits {
+		lockPath, err := lockfile.PathForConfig(edit.Path)
+		if err != nil {
+			return pipeline.PreparedInstallDependencies{}, err
+		}
+		state.targetLockPaths[lockPath] = true
+	}
 	var warnings []error
 	option, _, lease, err := prepareRuntimeLocks(ctx, root, local, lockMode{stagedConfigEdits: edits, prepareInstall: state, warningSink: &warnings})
 	if err != nil {
@@ -64,7 +77,22 @@ func prepareInstallDependencies(ctx context.Context, root, local string, edits [
 		}
 		return state.bindRegistry(target, entry)
 	}
-	return pipeline.PreparedInstallDependencies{Context: state.ctx, DiscoveryConfig: state.discoveryConfig, View: pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, Warnings: warnings}, Reconcile: reconcile, BindRegistry: bind, Release: release}, nil
+	resolvedCommit := func(entry config.RegistryEntry) (string, error) {
+		canonical, err := canonicalRegistryURL(entry.URL)
+		if err != nil {
+			return "", err
+		}
+		commit, ok := state.commits[gitLockIdentity(canonical, entry.Ref)]
+		if !ok || commit == "" {
+			return "", fmt.Errorf("prepared install has no exact commit for %s@%s", canonical, entry.Ref)
+		}
+		return commit, nil
+	}
+	return pipeline.PreparedInstallDependencies{
+		Context: state.ctx, DiscoveryConfig: state.discoveryConfig,
+		View:      pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, Warnings: warnings},
+		Reconcile: reconcile, BindRegistry: bind, ResolvedCommit: resolvedCommit, Release: release,
+	}, nil
 }
 
 func installPreparationReads(ec config.EffectiveConfig, staged map[string]pipeline.StagedConfigEdit, plan *preparedInstallLocks) ([]dependencytxn.ReadAssertion, error) {

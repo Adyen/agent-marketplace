@@ -108,29 +108,68 @@ func cloneOrPull(url, ref string) (string, error) {
 
 // DefaultBranch returns the branch advertised by a remote repository's HEAD.
 func DefaultBranch(url string) (string, error) {
+	branch, _, err := RemoteDefaultBranch(url)
+	return branch, err
+}
+
+// RemoteDefaultBranch returns the branch and commit advertised by a remote
+// repository's HEAD in one ls-remote request.
+func RemoteDefaultBranch(url string) (branch, commit string, err error) {
 	url = strings.TrimSpace(url)
 	if url == "" {
-		return "", errors.New("registry url is required")
+		return "", "", errors.New("registry url is required")
 	}
 
 	output, err := runGitOutput("", "ls-remote", "--symref", url, "HEAD")
 	if err != nil {
-		return "", fmt.Errorf("determine default branch for registry %q: %w", redactSecrets(url), err)
+		return "", "", fmt.Errorf("determine default branch for registry %q: %w", redactSecrets(url), err)
 	}
 
 	for _, line := range strings.Split(output, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) != 3 || fields[0] != "ref:" || fields[2] != "HEAD" {
-			continue
+		switch {
+		case len(fields) == 3 && fields[0] == "ref:" && fields[2] == "HEAD":
+			const prefix = "refs/heads/"
+			if strings.HasPrefix(fields[1], prefix) && len(fields[1]) > len(prefix) {
+				branch = strings.TrimPrefix(fields[1], prefix)
+			}
+		case len(fields) == 2 && fields[1] == "HEAD":
+			commit = fields[0]
 		}
-		const prefix = "refs/heads/"
-		if !strings.HasPrefix(fields[1], prefix) || len(fields[1]) == len(prefix) {
-			continue
-		}
-		return strings.TrimPrefix(fields[1], prefix), nil
 	}
 
-	return "", fmt.Errorf("remote did not advertise a default branch")
+	if branch == "" {
+		return "", "", fmt.Errorf("remote did not advertise a default branch")
+	}
+	if !giturl.IsFullObjectID(commit) {
+		return "", "", fmt.Errorf("remote did not advertise a commit for default branch %q", branch)
+	}
+	return branch, commit, nil
+}
+
+// CheckoutAt reports whether the cached checkout of url at ref is already at
+// commit, without touching the network.
+func CheckoutAt(url, ref, commit string) bool {
+	cachePath := RegistryCachePath(url, ref)
+	current, err := WithRegistryReadLockWithContext(context.Background(), []string{url}, func() (bool, error) {
+		cacheExists, err := validateRegistryCachePath(cachePath)
+		if err != nil || !cacheExists {
+			return false, err
+		}
+		if err := validateRegistryRefCheckout(url, ref, cachePath, true); err != nil {
+			return false, err
+		}
+		resolved, err := resolveRemoteRef(cachePath, ref)
+		if err != nil {
+			return false, err
+		}
+		head, err := runGitOutput(cachePath, "rev-parse", "HEAD")
+		if err != nil {
+			return false, err
+		}
+		return resolved == commit && strings.TrimSpace(head) == commit, nil
+	})
+	return err == nil && current
 }
 
 func checkoutResolvedRef(repoDir, ref string) error {

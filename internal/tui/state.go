@@ -47,6 +47,7 @@ const (
 	paneMarketplaceConsent
 	paneViewSettings
 	paneBulkToggle
+	paneInstallSource
 )
 
 type marketplaceSelection struct {
@@ -365,7 +366,9 @@ type Model struct {
 	marketplaceInstallOptions   pipeline.InstallOptions
 	marketplacePreparedInstall  *pipeline.PreparedMarketplaceInstall
 	marketplaceInstallOperation operationID
+	marketplaceInstallIsSource  bool
 	marketplaceInstallReload    requestGeneration
+	installSource               installSourceModal
 	marketplaceInstallPreview   string
 	harnessModal                harnessModalState
 	initModal                   initModalState
