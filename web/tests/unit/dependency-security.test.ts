@@ -55,7 +55,7 @@ describe('braces recursion bounds (CVE-2026-93687)', () => {
 
 describe('node-forge DigestAlgorithm validation (CVE-2026-85393)', () => {
   const keys = generateKeyPairSync('rsa', {
-    modulusLength: 1024,
+    modulusLength: 2048,
     publicExponent: 3,
     privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
     publicKeyEncoding: { type: 'pkcs1', format: 'pem' },
