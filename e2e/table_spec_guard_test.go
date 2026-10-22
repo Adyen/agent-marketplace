@@ -61,13 +61,30 @@ func tableSpecCases(sources map[string]string) ([]tableSpecCase, error) {
 	}
 	sort.Strings(paths)
 
-	var cases []tableSpecCase
+	type parsedTableSpecFile struct {
+		path string
+		file *ast.File
+		fset *token.FileSet
+	}
+	var parsed []parsedTableSpecFile
+	helpers := make(map[string]*ast.FuncDecl)
 	for _, path := range paths {
 		fset := token.NewFileSet()
 		file, err := parser.ParseFile(fset, path, sources[path], parser.ParseComments)
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", path, err)
 		}
+		parsed = append(parsed, parsedTableSpecFile{path: path, file: file, fset: fset})
+		for _, decl := range file.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv == nil && fn.Name.Name != "init" && returnsTestCase(fn) {
+				helpers[fn.Name.Name] = fn
+			}
+		}
+	}
+
+	var cases []tableSpecCase
+	for _, source := range parsed {
+		path, file, fset := source.path, source.file, source.fset
 		for _, decl := range file.Decls {
 			gen, ok := decl.(*ast.GenDecl)
 			if !ok || gen.Tok != token.VAR {
@@ -108,7 +125,7 @@ func tableSpecCases(sources map[string]string) ([]tableSpecCase, error) {
 			if !ok || fn.Name.Name != "init" || fn.Body == nil {
 				continue
 			}
-			appended, err := appendedTableSpecCases(file, fset, fn)
+			appended, err := appendedTableSpecCases(file, fset, fn, helpers)
 			if err != nil {
 				return nil, fmt.Errorf("%s: %w", path, err)
 			}
@@ -161,7 +178,8 @@ func leadingTableNameString(expr ast.Expr) (string, bool, error) {
 	}
 }
 
-func appendedTableSpecCases(file *ast.File, fset *token.FileSet, fn *ast.FuncDecl) ([]tableSpecCase, error) {
+func appendedTableSpecCases(file *ast.File, fset *token.FileSet, fn *ast.FuncDecl, helpers map[string]*ast.FuncDecl) ([]tableSpecCase, error) {
+	initTagged := docHasTableSpecTag(fn.Doc)
 	literals := make(map[string][]*ast.CompositeLit)
 	var loops []ast.Node
 	ast.Inspect(fn.Body, func(node ast.Node) bool {
@@ -196,7 +214,7 @@ func appendedTableSpecCases(file *ast.File, fset *token.FileSet, fn *ast.FuncDec
 		if !ok || !isAppendCall(call) {
 			return true
 		}
-		tagged := hasTableSpecTagBefore(file, fset, statement)
+		tagged := initTagged || hasTableSpecTagBefore(file, fset, statement)
 		var outermost ast.Node
 		for _, loop := range loops {
 			if loop.Pos() > statement.Pos() || loop.End() < statement.End() {
@@ -220,6 +238,10 @@ func appendedTableSpecCases(file *ast.File, fset *token.FileSet, fn *ast.FuncDec
 						literal = candidate
 					}
 				}
+			case *ast.CallExpr:
+				if helper, ok := value.Fun.(*ast.Ident); ok && helpers[helper.Name] != nil {
+					literal = tableSpecHelperLiteral(helpers[helper.Name])
+				}
 			}
 			if literal == nil {
 				caseErr = fmt.Errorf("%s:%d: cannot resolve appended TestCase literal", fset.Position(statement.Pos()).Filename, fset.Position(statement.Pos()).Line)
@@ -235,6 +257,58 @@ func appendedTableSpecCases(file *ast.File, fset *token.FileSet, fn *ast.FuncDec
 		return true
 	})
 	return cases, caseErr
+}
+
+func returnsTestCase(fn *ast.FuncDecl) bool {
+	if fn.Type.Results == nil || len(fn.Type.Results.List) != 1 {
+		return false
+	}
+	ident, ok := fn.Type.Results.List[0].Type.(*ast.Ident)
+	return ok && ident.Name == "TestCase"
+}
+
+func tableSpecHelperLiteral(fn *ast.FuncDecl) *ast.CompositeLit {
+	var literal *ast.CompositeLit
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		statement, ok := node.(*ast.ReturnStmt)
+		if !ok {
+			return true
+		}
+		for _, result := range statement.Results {
+			if lit, ok := result.(*ast.CompositeLit); ok && isTestCaseLiteral(lit) {
+				literal = lit
+			}
+		}
+		return true
+	})
+	if literal != nil {
+		return literal
+	}
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		statement, ok := node.(*ast.AssignStmt)
+		if !ok {
+			return true
+		}
+		for _, rhs := range statement.Rhs {
+			if lit, ok := rhs.(*ast.CompositeLit); ok && isTestCaseLiteral(lit) {
+				literal = lit
+			}
+		}
+		return true
+	})
+	return literal
+}
+
+func docHasTableSpecTag(group *ast.CommentGroup) bool {
+	if group == nil {
+		return false
+	}
+	for _, comment := range group.List {
+		if strings.HasPrefix(strings.TrimSpace(comment.Text), "// spec:") {
+			return true
+		}
+	}
+	return false
 }
 
 func assignsTestTable(statement *ast.AssignStmt) bool {
@@ -423,6 +497,41 @@ func TestTableSpecTagsCheckRequiresAdjacentTag(t *testing.T) {
 	err := checkTableSpecTags(sources, "")
 	if err == nil || !strings.Contains(err.Error(), "blank/gap") {
 		t.Fatalf("checkTableSpecTags() error = %v, want an untagged blank/gap case", err)
+	}
+}
+
+func TestTableSpecTagsCheckResolvesHelperCall(t *testing.T) {
+	tag := "/" + "/ spec: capability/scenario"
+	helper := `package e2e_test
+func bundleCase(name string) TestCase {
+	tc := TestCase{Name: "hooks/bundle_root/" + name}
+	return tc
+}
+`
+	tagged := "package e2e_test\n" + tag + `
+func init() {
+	for _, name := range []string{"a", "b"} {
+		testTable = append(testTable, bundleCase(name))
+	}
+}
+`
+	if err := checkTableSpecTags(map[string]string{"helper_test.go": helper, "cases_test.go": tagged}, ""); err != nil {
+		t.Fatalf("checkTableSpecTags() did not resolve the helper-built case or the init doc tag: %v", err)
+	}
+	untagged := strings.Replace(tagged, tag+"\n", "", 1)
+	err := checkTableSpecTags(map[string]string{"helper_test.go": helper, "cases_test.go": untagged}, "")
+	if err == nil || !strings.Contains(err.Error(), "hooks/bundle_root/*") {
+		t.Fatalf("checkTableSpecTags() error = %v, want the untagged helper-built case hooks/bundle_root/* to be rejected", err)
+	}
+}
+
+func TestTableSpecTagsCheckRecognizesInitDocTag(t *testing.T) {
+	tag := "/" + "/ spec: capability/scenario"
+	sources := map[string]string{
+		"table_test.go": "package e2e_test\n" + tag + "\nfunc init() {\n\ttestTable = append(testTable, TestCase{Name: \"doc/tagged\"})\n}\n",
+	}
+	if err := checkTableSpecTags(sources, ""); err != nil {
+		t.Fatalf("checkTableSpecTags() rejected an append tagged by its init doc comment: %v", err)
 	}
 }
 

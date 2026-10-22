@@ -29,7 +29,7 @@ func TestSyncIndependentNativeHookPreservesCommittedLock(t *testing.T) {
 
 	registryOrigin, registryWork := createBareRepoWithWorkingClone(t, "independent-native-hooks.git")
 	sourceHook := filepath.Join(registryWork, ".factory", "hooks", "hooks.json")
-	writeFile(t, sourceHook, `{"PreToolUse":[{"matcher":"Execute","commandRegex":"^make.*$","hooks":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/scripts/run.sh"}]}]}`)
+	writeFile(t, sourceHook, `{"PreToolUse":[{"matcher":"Execute","commandRegex":"^make.*$","hooks":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/hooks/scripts/run.sh"}]}]}`)
 	sourceSupportBytes := []byte("#!/bin/sh\necho independent witness\n")
 	sourceSupport := filepath.Join(registryWork, ".factory", "hooks", "scripts", "run.sh")
 	writeFile(t, sourceSupport, string(sourceSupportBytes))
@@ -98,11 +98,11 @@ resources:
 	nativeRoot := filepath.Join(repoRoot, ".factory")
 	nativePath := filepath.Join(nativeRoot, "hooks.json")
 	legacyPath := filepath.Join(nativeRoot, "hooks", "hooks.json")
-	supportPath := filepath.Join(nativeRoot, "hook-support", sourceKey, "PreToolUse-command", "scripts", "run.sh")
+	supportPath := filepath.Join(nativeRoot, "hook-support", sourceKey, "PreToolUse-command", "hooks", "scripts", "run.sh")
 	if err := os.MkdirAll(nativeRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	nativeCommand := `\"$FACTORY_PROJECT_DIR\"/.factory/hook-support/` + sourceKey + `/PreToolUse-command/scripts/run.sh`
+	nativeCommand := `\"$FACTORY_PROJECT_DIR\"/.factory/hook-support/` + sourceKey + `/PreToolUse-command/hooks/scripts/run.sh`
 	nativeGroup := `{"hooks":[{"type":"command","command":"` + nativeCommand + `"}],"matcher":"Execute","commandRegex":"^make.*$"}`
 	handwrittenGroup := `{"matcher":"Edit","hooks":[{"type":"command","command":"echo handwritten"}]}`
 	nativeBytes := []byte(`{"PostToolUse":[` + handwrittenGroup + `],"PreToolUse":[` + nativeGroup + `]}` + "\n")

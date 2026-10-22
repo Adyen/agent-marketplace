@@ -20,7 +20,7 @@ func TestSyncCrossScopeSkillAndHookStayInSync(t *testing.T) {
 	t.Setenv("HOME", home)
 	origin, working := createBareRepoWithWorkingClone(t, "user-resources.git")
 	writeSkill(t, working, "shared", "User selection", nil)
-	writeFile(t, filepath.Join(working, "hooks", "hooks.json"), `{"PreToolUse":[{"matcher":"Execute","hooks":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/user-check.sh"}]}]}`)
+	writeFile(t, filepath.Join(working, "hooks", "hooks.json"), `{"PreToolUse":[{"matcher":"Execute","hooks":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/hooks/user-check.sh"}]}]}`)
 	writeFile(t, filepath.Join(working, "hooks", "user-check.sh"), "#!/bin/sh\necho user-scope-check\n")
 	commitAndPushAll(t, working, "Add user resources")
 	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory, devin]\nsources: {user: {git: 'file://"+origin+"', ref: main, source_harness: factory}}\nresources: {user: {include: [skill/shared, hook/PreToolUse-command]}}\n")
@@ -28,7 +28,7 @@ func TestSyncCrossScopeSkillAndHookStayInSync(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "repo")
 	local := filepath.Join(repo, "resources")
 	writeSkill(t, local, "shared", "Repository selection", nil)
-	writeFile(t, filepath.Join(local, "hooks", "hooks.json"), `{"PreToolUse":[{"matcher":"Execute","hooks":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/repo-check.sh"}]}]}`)
+	writeFile(t, filepath.Join(local, "hooks", "hooks.json"), `{"PreToolUse":[{"matcher":"Execute","hooks":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/hooks/repo-check.sh"}]}]}`)
 	writeFile(t, filepath.Join(local, "hooks", "repo-check.sh"), "#!/bin/sh\necho repo-scope-check\n")
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources: {repo: {directory: ./resources, source_harness: factory}}\nresources: {repo: {include: [skill/shared, hook/PreToolUse-command]}}\n")
 	withWorkingDir(t, repo)
@@ -74,7 +74,7 @@ func TestSyncCrossScopeSkillAndHookStayInSync(t *testing.T) {
 		}
 		installedScript := func(base, name, wantContent string) string {
 			t.Helper()
-			matches, err := filepath.Glob(filepath.Join(base, ".factory", "hook-support", "*", "PreToolUse-command", name))
+			matches, err := filepath.Glob(filepath.Join(base, ".factory", "hook-support", "*", "PreToolUse-command", "hooks", name))
 			if err != nil || len(matches) != 1 {
 				t.Fatalf("installed %s script matches = %v, %v; want exactly one", name, matches, err)
 			}
