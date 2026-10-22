@@ -15,4 +15,4 @@
 - [x] 3.1 Add the `adHocSource` fixture option and `tools/tui-qa/tests/install-from-source.spec.ts` covering every `tui-interactions` scenario of this change with `// spec:` annotations, register it in `tools/tui-qa/README.md`; verify `make tui-qa-check` and `make tui-qa` pass
 - [x] 3.2 Document the `i` binding and flow in `site/docs/reference/tui.md` and `docs/tui-product-contract.md`; verify the docs match the help overlay
 - [x] 3.3 Run `make spec-check`, `make validate`, and `go run ./tools/specaudit gate -base origin/main -head HEAD`; verify all pass
-- [ ] 3.4 Run `openspec archive tui-install-from-source --yes`
+- [x] 3.4 Run `openspec archive tui-install-from-source --yes`
