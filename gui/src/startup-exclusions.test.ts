@@ -57,7 +57,7 @@ describe('startup exclusion consumers', () => {
     const options = wrapper.findAll('[role="option"]')
     expect(options).toHaveLength(2)
     for (const option of options) {
-      expect(option.find('.workspace__check').text()).toBe('[*]')
+      expect(option.find('.workspace__check').classes()).toContain('workspace__check--on')
       expect(option.find('.workspace__scope').text()).toBe('user')
     }
     expectNoMutations(client)
@@ -81,7 +81,7 @@ describe('startup exclusion consumers', () => {
     expect(controller.state.drift).toBe('pending')
     expect(controller.state.rows.every((item) => item.scope === 'available' && !item.checked && !item.pendingVerification)).toBe(true)
     for (const option of wrapper.findAll('[role="option"]')) {
-      expect(option.find('.workspace__check').text()).toBe('[ ]')
+      expect(option.find('.workspace__check').classes()).not.toContain('workspace__check--on')
       expect(option.find('.workspace__scope').text()).toBe('available')
     }
     expectNoMutations(client)
@@ -98,8 +98,8 @@ describe('startup exclusion consumers', () => {
     expect(wrapper.findAll('[role="option"]').map((option) => option.attributes('id'))).toEqual([
       'row-organization-audit', 'row-organization-review',
     ])
-    expect(audit.find('.workspace__check').text()).toBe('[*]')
-    expect(review.find('.workspace__check').text()).toBe('[ ]')
+    expect(audit.find('.workspace__check').classes()).toContain('workspace__check--on')
+    expect(review.find('.workspace__check').classes()).not.toContain('workspace__check--on')
     expect(review.find('.workspace__scope').text()).toBe('organization')
     expect(controller.state.rows[1]?.checked).toBe(false)
     expect(controller.state.rows[1]?.pendingVerification).toBe(true)
@@ -110,7 +110,7 @@ describe('startup exclusion consumers', () => {
     await review.trigger('click')
     await tick()
     expect(review.attributes('aria-selected')).toBe('true')
-    expect(review.find('.workspace__check').text()).toBe('[ ]')
+    expect(review.find('.workspace__check').classes()).not.toContain('workspace__check--on')
     expect(controller.state.rows[1]?.checked).toBe(false)
     expect(wrapper.get('aside[aria-label="Detail"]').text()).toContain('excluded; verification pending')
     expect(wrapper.find('button[aria-label="Install Resource"]').exists()).toBe(false)
@@ -132,8 +132,8 @@ describe('startup exclusion consumers', () => {
     expect(controller.state.rows[1]?.pendingVerification).toBe(false)
     expect(wrapper.get('[role="option"][id="row-organization-review"]').attributes('aria-selected')).toBe('true')
     expect(wrapper.find('button[aria-label="Restore Resource"]').exists()).toBe(true)
-    expect(wrapper.get('[role="option"][id="row-organization-audit"]').find('.workspace__check').text()).toBe('[*]')
-    expect(wrapper.get('[role="option"][id="row-organization-review"]').find('.workspace__check').text()).toBe('[ ]')
+    expect(wrapper.get('[role="option"][id="row-organization-audit"]').find('.workspace__check').classes()).toContain('workspace__check--on')
+    expect(wrapper.get('[role="option"][id="row-organization-review"]').find('.workspace__check').classes()).not.toContain('workspace__check--on')
     expectNoMutations(client)
   })
 
@@ -144,7 +144,7 @@ describe('startup exclusion consumers', () => {
     await pushInitialStages(push, 10, rows)
     expect(controller.state.rows.every((item) => item.required && item.checked && item.group === 'required')).toBe(true)
     const review = wrapper.get('[role="option"][id="row-organization-review"]')
-    expect(review.find('.workspace__check').text()).toBe('[*]')
+    expect(review.find('.workspace__check').classes()).toContain('workspace__check--on')
     expect(review.find('.workspace__scope').text()).toBe('organization')
     await review.trigger('click')
     await tick()

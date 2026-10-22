@@ -37,7 +37,6 @@ textarea:focus-visible,
 
 .mono,
 .workspace__name,
-.workspace__check,
 .workspace__scope,
 .gui-kbd,
 .gui-badge,
@@ -702,7 +701,7 @@ textarea:focus-visible,
   font-family: var(--gui-mono);
   font-size: 12px;
   gap: 8px;
-  grid-template-columns: 3ch 10ch minmax(0, 1fr) minmax(0, 24ch);
+  grid-template-columns: 12px 10ch minmax(0, 1fr) minmax(0, 24ch);
   height: 32px;
   padding: 0 8px;
   position: relative;
@@ -730,13 +729,20 @@ textarea:focus-visible,
 }
 
 .workspace__check {
-  color: var(--gui-ink-3);
-  white-space: pre;
+  align-self: center;
+  border-radius: 50%;
+  box-sizing: border-box;
+  display: block;
+  height: 8px;
+  width: 8px;
+  box-shadow: inset 0 0 0 1.5px var(--gui-ink-3);
 }
 
-.workspace__check--on .workspace__check-mark {
-  color: var(--gui-signal);
+.workspace__check--on {
+  background: var(--gui-signal);
+  box-shadow: none;
 }
+
 
 .workspace__kind,
 .workspace__registry {

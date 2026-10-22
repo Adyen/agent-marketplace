@@ -43,7 +43,7 @@ const entries = computed(() => props.sections.flatMap((section) => (section.coll
 const hideKind = computed(() => props.viewSettings.groupBy === 'kind' || props.viewSettings.thenBy === 'kind')
 const hideRegistry = computed(() => props.viewSettings.groupBy === 'source' || props.viewSettings.thenBy === 'source')
 const rowColumns = computed(() =>
-  ['3ch', ...(hideKind.value ? [] : ['10ch']), 'minmax(0, 1fr)', ...(hideRegistry.value ? [] : ['minmax(0, 24ch)'])].join(' '),
+  ['12px', ...(hideKind.value ? [] : ['10ch']), 'minmax(0, 1fr)', ...(hideRegistry.value ? [] : ['minmax(0, 24ch)'])].join(' '),
 )
 
 function scopeIsTag(scope: string): boolean {
@@ -103,7 +103,7 @@ function problemReason(row: Row): { text: string; tone: 'danger' | 'warning' } |
           @keydown.down.prevent="emit('move', 1)"
           @keydown.up.prevent="emit('move', -1)"
         >
-          <span class="workspace__check" :class="{ 'workspace__check--on': row.checked }" aria-hidden="true">[<span class="workspace__check-mark">{{ row.checked ? '*' : ' ' }}</span>]</span>
+          <span class="workspace__check" :class="{ 'workspace__check--on': row.checked }" aria-hidden="true" />
           <span class="workspace__kind" :class="{ 'gui-visually-hidden': hideKind }">{{ row.kind }}</span>
           <span class="workspace__name-cell">
             <span class="workspace__name"><template v-for="(part, index) in nameParts(row)" :key="index"><mark v-if="part.matched" class="workspace__name-match">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></span>
