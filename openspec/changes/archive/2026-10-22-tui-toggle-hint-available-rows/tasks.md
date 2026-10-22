@@ -6,4 +6,4 @@
 ## 2. Journey and archive
 
 - [x] 2.1 Extend the `launch-browse-inspect` journey and its README entry
-- [ ] 2.2 Run `openspec archive tui-toggle-hint-available-rows --yes`
+- [x] 2.2 Run `openspec archive tui-toggle-hint-available-rows --yes`
