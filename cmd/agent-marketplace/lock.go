@@ -994,6 +994,11 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		doc := gitDesired.doc
 		if mode.prepareInstall != nil {
 			mode.prepareInstall.documents[lockPath] = doc
+			if mode.prepareInstall.targetLockPaths[lockPath] {
+				for _, registry := range doc.Registries {
+					mode.prepareInstall.commits[gitLockIdentity(registry.URL, registry.Ref)] = registry.Commit.Hex()
+				}
+			}
 		}
 		fresh := exists && gitFresh && !hasStagedLock
 		if !fresh {

@@ -53,6 +53,12 @@ Discovery rows show their Marketplace and Registry identity, and the TUI sanitiz
 - It writes exact pins atomically to an explicit user, project, or local scope.
 - The mutation operation stays active until the subsequent authoritative snapshot reload succeeds or reports failure.
 
+### Install from source
+
+Pressing `i` in the resource list opens a Source → Pick → Review modal for an unconfigured Git URL, GitHub/GitLab web URL, or directory. A web URL supplies its encoded ref and path. Preview checks the effective registry allowlist and path before network access and performs no config, lock, or harness writes. It shows discovered resources grouped by kind, malformed rows as unselectable, and bundle paths when the source expands into several catalogs.
+
+The user selects kind-qualified resources, chooses a writable user, project, or local scope, and reviews the configuration file and picks before confirming. Git installs carry the previewed commit; when the ref moves, the install is refused with both commits, the modal returns to Pick, and picks still present after re-preview remain selected. Cancel from any step leaves configuration, acquisition lock, and harness bytes unchanged. The install uses one guarded mutation and an authoritative snapshot reload.
+
 ### Marketplace row detail
 
 Opening a Marketplace row's detail never resolves a registry-relative path against the consumer workspace.

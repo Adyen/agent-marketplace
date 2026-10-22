@@ -87,7 +87,7 @@ func (m Model) footerFloor() []footerItem {
 // footerActionHints lists the optional list-pane hints in priority order;
 // they drop individually from the end when the footer runs out of room.
 func (m Model) footerActionHints() []footerItem {
-	actions := [][2]string{{"/", "search"}, {"space", "toggle"}, {"s", "sync"}, {"H", "harnesses"}, {"E", "config"}, {"v", "view"}}
+	actions := [][2]string{{"/", "search"}, {"space", "toggle"}, {"s", "sync"}, {"H", "harnesses"}, {"E", "config"}, {"v", "view"}, {"i", "install from source"}}
 	if m.failuresOrDrift() || len(m.discoveryErrs) > 0 {
 		actions = append([][2]string{{"e", "errors"}, {"r", "reload"}}, actions...)
 	}
