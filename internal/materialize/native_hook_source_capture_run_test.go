@@ -122,7 +122,7 @@ func TestRunRejectsStaleIngestedFactoryHookDefinition(t *testing.T) {
 		t.Fatalf("fresh Factory output = %v %s", err, freshOutput)
 	}
 	for _, want := range []struct{ name, data string }{{"changed.sh", "echo changed\n"}, {"sibling.sh", "echo sibling\n"}} {
-		matches, err := filepath.Glob(filepath.Join(repo, ".factory", "hook-support", "*", "*", "scripts", want.name))
+		matches, err := filepath.Glob(filepath.Join(repo, ".factory", "hook-support", "*", "*", "*", "scripts", want.name))
 		if err != nil || len(matches) != 1 {
 			t.Fatalf("fresh support %s matches=%v err=%v", want.name, matches, err)
 		}

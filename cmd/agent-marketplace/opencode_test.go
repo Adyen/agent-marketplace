@@ -27,7 +27,7 @@ func TestSyncOpenCodeHookReviewAndSupport(t *testing.T) {
 	registry := t.TempDir()
 	definition := filepath.Join(registry, "hooks", "hooks.json")
 	write := func(command string) {
-		writeFile(t, definition, `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/bin/sh \"${CLAUDE_PLUGIN_ROOT}/check.sh\" `+command+`"}]}]}`+"\n")
+		writeFile(t, definition, `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/bin/sh \"${CLAUDE_PLUGIN_ROOT}/hooks/check.sh\" `+command+`"}]}]}`+"\n")
 	}
 	write("opencode-review-old-3a9e")
 	writeFile(t, filepath.Join(registry, "hooks", "check.sh"), "exit 0\n")
@@ -55,7 +55,7 @@ resources:
 			t.Fatalf("initial sync output = %q, missing %q", output, want)
 		}
 	}
-	supports, _ := filepath.Glob(filepath.Join(repoRoot, ".opencode", "hook-support", "*", "PreToolUse-command", "check.sh"))
+	supports, _ := filepath.Glob(filepath.Join(repoRoot, ".opencode", "hook-support", "*", "PreToolUse-command", "hooks", "check.sh"))
 	data, readErr := os.ReadFile(declaration)
 	if len(supports) != 1 || readErr != nil || !strings.Contains(string(data), `$AGENT_MARKETPLACE_PROJECT_DIR/.opencode/hook-support/`) || strings.Contains(string(data), registry) {
 		t.Fatalf("support %v / declaration %s (%v) do not reference installed support", supports, data, readErr)
