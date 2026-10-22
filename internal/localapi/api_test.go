@@ -26,6 +26,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/session"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
@@ -2046,4 +2047,29 @@ func TestCanceledRequestLeavesOperationGuarded(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("gate still held after the blocked callback finished")
+}
+
+// spec: gui-local-api/configuration-stage-reports-target-harnesses
+func TestConfigStageSnapshotPresentsTargetHarnesses(t *testing.T) {
+	api := &API{}
+	body, err := json.Marshal(api.snapshotPresentationLocked(session.Snapshot{
+		Stage:           session.SnapshotStageConfig,
+		TargetHarnesses: []hcc.Target{"devin", "claude"},
+	}, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Stage     string   `json:"stage"`
+		Harnesses []string `json:"harnesses"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Stage != "config" {
+		t.Fatalf("stage = %q, want config", got.Stage)
+	}
+	if strings.Join(got.Harnesses, ",") != "devin,claude" {
+		t.Fatalf("config-stage harnesses = %v, want [devin claude]", got.Harnesses)
+	}
 }

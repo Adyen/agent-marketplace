@@ -281,3 +281,29 @@ describe('empty states and sidebar labels', () => {
     expect(gitRow.attributes('title')).toBe('https://github.com/org/tools.git')
   })
 })
+
+describe('target harness loading', () => {
+  it('does not claim that no targets are configured before inventory resolves', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([], { stage: 'config', harnesses: [] }) }))
+    await tick()
+    expect(wrapper.text()).not.toContain('No supported target harnesses are configured')
+    expect(wrapper.find('.gui-sidebar__harnesses').text()).toContain('Loading targets…')
+
+    push(event({ sequence: 2, payload: snapshot([], { stage: 'final', harnesses: [] }) }))
+    await tick()
+    expect(wrapper.text()).toContain('No supported target harnesses are configured')
+    expect(wrapper.find('.gui-sidebar__harnesses').text()).toContain('No harnesses')
+    expect(wrapper.find('.gui-sidebar__harnesses').text()).not.toContain('Loading targets…')
+  })
+
+  it('shows configured targets in the sidebar as soon as the config stage reports them', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([], { stage: 'config', harnesses: ['devin', 'claude'] }) }))
+    await tick()
+    expect(wrapper.find('.gui-sidebar__harnesses').text()).toContain('devin · claude')
+    expect(wrapper.text()).not.toContain('Loading targets…')
+  })
+})

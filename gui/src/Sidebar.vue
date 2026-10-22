@@ -24,6 +24,7 @@ const props = defineProps<{
   sources: SidebarSource[]
   rowSourceLabels: ReadonlyMap<string, string>
   harnesses: string[]
+  targetsLoading: boolean
   latestVersion: string
 }>()
 
@@ -176,6 +177,7 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | 'signal' | null 
             <span class="gui-dot" aria-hidden="true" />
             <span class="gui-sidebar__harnesses-prefix">targets</span> {{ harnessSummary }}
           </template>
+          <template v-else-if="targetsLoading">Loading targets…</template>
           <template v-else>No harnesses</template>
         </p>
         <div class="gui-sidebar__footer-actions">

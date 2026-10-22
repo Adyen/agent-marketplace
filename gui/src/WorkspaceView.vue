@@ -894,6 +894,7 @@ async function run(action: 'sync' | 'update') {
       :sources="sidebarSources"
       :row-source-labels="rowSourceLabels"
       :harnesses="view?.harnesses ?? []"
+      :targets-loading="view == null || (view.harnesses.length === 0 && view.stage !== 'inventory' && view.stage !== 'final')"
       :latest-version="view?.latestVersion ?? ''"
       @toggle="toggleSidebar"
       @search="openSearch"
@@ -934,7 +935,7 @@ async function run(action: 'sync' | 'update') {
       />
 
       <p v-if="error || view?.error" class="workspace__error" role="alert">{{ error ?? view?.error }}</p>
-      <p v-else-if="view && view.stage !== '' && view.harnesses.length === 0" class="workspace__notice" role="status">
+      <p v-else-if="view && (view.stage === 'inventory' || view.stage === 'final') && view.harnesses.length === 0" class="workspace__notice" role="status">
         No supported target harnesses are configured.
       </p>
       <p v-if="view?.latestVersion" class="workspace__notice" role="status">

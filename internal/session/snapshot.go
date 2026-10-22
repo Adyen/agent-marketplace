@@ -281,8 +281,8 @@ func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir stri
 			}
 			emit(Snapshot{Stage: SnapshotStageConfig, ProvisionalCfg: merged, ProvisionalRows: BuildProvisionalRows(WithCachedCollectionLeaves(merged, marketplace.DefaultCache()), local, provisionalLocalCatalogs(merged, ws), defaults)})
 		}
-		inspectOptions.Resolve.ConfigReady = func(merged *config.Config) {
-			emit(Snapshot{Stage: SnapshotStageConfig, MergedCfg: merged})
+		inspectOptions.Resolve.ConfigReady = func(merged *config.Config, targets []hcc.Target) {
+			emit(Snapshot{Stage: SnapshotStageConfig, MergedCfg: merged, TargetHarnesses: targets})
 		}
 	}
 	inspection, releaseExactLease := pipeline.Inspect(ctx, inspectOptions)

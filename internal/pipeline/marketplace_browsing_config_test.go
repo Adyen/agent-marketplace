@@ -12,6 +12,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 )
 
 func gateMarketplaceAcquisition(t *testing.T, fake *layerMarketplaceServer) func() {
@@ -74,7 +75,7 @@ func TestBrowsingConfigReadyPublishesVerifiedEndpointBeforeAcquisition(t *testin
 			BrowsingConfigReady: func(merged *config.Config) {
 				browsingSeen <- merged
 			},
-			ConfigReady: func(merged *config.Config) {
+			ConfigReady: func(merged *config.Config, _ []hcc.Target) {
 				authoritativeSeen <- merged
 			},
 		})
