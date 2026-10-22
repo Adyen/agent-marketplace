@@ -401,10 +401,14 @@ func parseOptionalKind(value string) (ir.ResourceKind, bool, error) {
 	return kind, true, nil
 }
 
+// filterListRowsByKind keeps the rows of kind, plus unclassified malformed
+// entries such as registry-level audit diagnostics, which no kind filter can
+// rule out.
 func filterListRowsByKind(rows []listRow, kind string) []listRow {
+	unknown := skill.MalformedKindLabel(skill.MalformedSkill{})
 	filtered := rows[:0]
 	for _, row := range rows {
-		if row.Kind == kind {
+		if row.Kind == kind || row.Kind == unknown {
 			filtered = append(filtered, row)
 		}
 	}

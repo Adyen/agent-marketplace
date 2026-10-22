@@ -61,7 +61,7 @@ A collection selected by a configured layer, from a Git or local registry or as 
 
 ### Requirement: Malformed resources show their kind
 
-`list` SHALL label a malformed resource with the kind its failed load was for, such as `command` for a command file whose frontmatter does not parse, and SHALL label it `unknown` when the failure was not classified by kind. `list --kind <kind>` SHALL include a malformed resource only under its own kind.
+`list` SHALL label a malformed resource with the kind its failed load was for, such as `command` for a command file whose frontmatter does not parse, and SHALL label it `unknown` when the failure was not classified by kind. `list --kind <kind>` SHALL include a malformed resource only under its own kind, and SHALL include an unclassified malformed entry, such as a registry-level audit diagnostic, under every kind, because no kind can rule it out.
 
 #### Scenario: Malformed resources show their kind
 

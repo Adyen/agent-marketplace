@@ -294,6 +294,17 @@ resources:
 	if got := malformedRow(rows); got != "" {
 		t.Fatalf("list --kind skill included the malformed command: %q", got)
 	}
+
+	// An unclassified malformed entry, such as a registry-level audit
+	// diagnostic, stays visible under every kind filter.
+	filtered := filterListRowsByKind([]listRow{
+		{Kind: "skill", Name: "demo"},
+		{Kind: "command", Name: "deploy.md"},
+		{Kind: "unknown", Name: "ingest.factory.unconsumed-config"},
+	}, "skill")
+	if len(filtered) != 2 || filtered[0].Name != "demo" || filtered[1].Name != "ingest.factory.unconsumed-config" {
+		t.Fatalf("list --kind skill kept %+v, want the skill and the unclassified entry", filtered)
+	}
 }
 
 func TestListCommandShowsDriftFooterWhenOutOfSync(t *testing.T) {
