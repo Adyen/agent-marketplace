@@ -539,9 +539,10 @@ signals.
 
 ### Declarative E2E table
 
-For any user-observable CLI behavior change, add or extend a case in
-`e2e/table_test.go`; use `e2e/table_marketplace_test.go` for Marketplace
-flows. Use a bespoke `e2e/*_test.go` test only when the table cannot express
+For any user-observable CLI behavior change, add or extend a case in the
+`e2e/table_<area>_test.go` file for its Name prefix (`table_runner_test.go`
+holds the runner and builders; `table_marketplace_test.go` for Marketplace
+flows). Use a bespoke `e2e/*_test.go` test only when the table cannot express
 the flow, such as crash injection or concurrency.
 
 Put `// spec: <capability>/<scenario-slug>` directly above every new case.
@@ -553,9 +554,12 @@ legacy case when you touch it, then remove its baseline line. Check tags with
 `CODING_STANDARDS.md` defines the table vocabulary: `Registries`,
 `Marketplaces`, `{{REG:name}}`, `{{MKT:name}}`, `{{GITHTTP:name}}`,
 `ActionPushRegistry`, `ActionReindexMarketplace`, `ActionRevokeMarketplace`,
-`Step.Env`, and `Step.Cwd`. In `e2e/table_test.go`, `PathsUnchanged` asserts
-files or trees a step must leave byte- and metadata-identical, and `v4Cfg`
-emits v4 config content for the `*Cfg` layers.
+`Step.Env`, and `Step.Cwd`. Steps are built with `ok`/`run`/`exits` plus
+chainable assertions (`.out`, `.exists`, `.unchanged`, `.has`, ...);
+`PathsUnchanged` asserts files or trees a step must leave byte- and
+metadata-identical. `v4(...)` emits v4 config content for the `*Cfg` layers,
+and `./` and `~/` path shorthands mean `/workspace/` and `/root/`. A spec-tagged
+case takes no `Desc`; its `// spec:` line is the description.
 
 Run one case with `go -C e2e test -run '^TestE2E$/<name>' -count=1 .`;
 run the full table with `make validate-e2e`.

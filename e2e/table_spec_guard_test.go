@@ -14,8 +14,9 @@ import (
 )
 
 type tableSpecCase struct {
-	name   string
-	tagged bool
+	name      string
+	tagged    bool
+	described bool
 }
 
 func checkTableSpecTags(sources map[string]string, baselineText string) error {
@@ -36,6 +37,11 @@ func checkTableSpecTags(sources map[string]string, baselineText string) error {
 			failures = append(failures, tableSpecFailure(testCase.name, "is tagged but remains in the untagged baseline; remove the baseline entry"))
 		} else if !testCase.tagged && !baseline[testCase.name] {
 			failures = append(failures, tableSpecFailure(testCase.name, "is untagged and missing from the frozen baseline"))
+		}
+		if testCase.tagged && testCase.described {
+			failures = append(failures, fmt.Sprintf("case %q is tagged and must not set Desc; its `// spec:` line is the description", testCase.name))
+		} else if !testCase.tagged && !testCase.described {
+			failures = append(failures, fmt.Sprintf("case %q is untagged and needs a non-empty Desc describing its scenario", testCase.name))
 		}
 	}
 	for name := range baseline {
@@ -113,8 +119,9 @@ func tableSpecCases(sources map[string]string) ([]tableSpecCase, error) {
 							return nil, fmt.Errorf("%s:%d: %w", path, fset.Position(literal.Pos()).Line, err)
 						}
 						cases = append(cases, tableSpecCase{
-							name:   name,
-							tagged: hasTableSpecTagBefore(file, fset, literal),
+							name:      name,
+							tagged:    hasTableSpecTagBefore(file, fset, literal),
+							described: tableSpecDescribed(literal),
 						})
 					}
 				}
@@ -133,6 +140,24 @@ func tableSpecCases(sources map[string]string) ([]tableSpecCase, error) {
 		}
 	}
 	return cases, nil
+}
+
+func tableSpecDescribed(literal *ast.CompositeLit) bool {
+	for _, element := range literal.Elts {
+		field, ok := element.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		if key, ok := field.Key.(*ast.Ident); !ok || key.Name != "Desc" {
+			continue
+		}
+		if lit, ok := field.Value.(*ast.BasicLit); ok {
+			text, err := strconv.Unquote(lit.Value)
+			return err != nil || text != ""
+		}
+		return true
+	}
+	return false
 }
 
 func tableSpecCaseName(literal *ast.CompositeLit) (string, error) {
@@ -252,7 +277,7 @@ func appendedTableSpecCases(file *ast.File, fset *token.FileSet, fn *ast.FuncDec
 				caseErr = fmt.Errorf("%s:%d: %w", fset.Position(literal.Pos()).Filename, fset.Position(literal.Pos()).Line, err)
 				continue
 			}
-			cases = append(cases, tableSpecCase{name: name, tagged: tagged})
+			cases = append(cases, tableSpecCase{name: name, tagged: tagged, described: tableSpecDescribed(literal)})
 		}
 		return true
 	})
@@ -458,7 +483,7 @@ func TestTableSpecTagsCheckResolvesIdentifierAndDynamicName(t *testing.T) {
 		"native_test.go": `package e2e_test
 func init() {
 	for _, target := range []string{"claude", "gemini"} {
-		tc := TestCase{Name: "native_mcp/" + target + "/user"}
+		tc := TestCase{Name: "native_mcp/" + target + "/user", Desc: "native"}
 		testTable = append(testTable, tc)
 	}
 }
@@ -473,9 +498,9 @@ func TestTableSpecTagsCheckResolvesReassignedIdentifier(t *testing.T) {
 	sources := map[string]string{
 		"native_test.go": `package e2e_test
 func init() {
-	tc := TestCase{Name: "a"}
+	tc := TestCase{Name: "a", Desc: "a"}
 	testTable = append(testTable, tc)
-	tc = TestCase{Name: "b"}
+	tc = TestCase{Name: "b", Desc: "b"}
 	testTable = append(testTable, tc)
 }
 `,
@@ -497,6 +522,32 @@ func TestTableSpecTagsCheckRequiresAdjacentTag(t *testing.T) {
 	err := checkTableSpecTags(sources, "")
 	if err == nil || !strings.Contains(err.Error(), "blank/gap") {
 		t.Fatalf("checkTableSpecTags() error = %v, want an untagged blank/gap case", err)
+	}
+}
+
+func TestTableSpecTagsCheckRejectsDescOnTaggedCase(t *testing.T) {
+	tag := "/" + "/ spec: capability/scenario"
+	err := checkTableSpecTags(map[string]string{
+		"table_test.go": "package e2e_test\nvar testTable = []TestCase{\n\t" + tag + `
+	{Name: "tagged/desc", Desc: "redundant"},
+}
+`,
+	}, "")
+	if err == nil || !strings.Contains(err.Error(), "tagged/desc") || !strings.Contains(err.Error(), "must not set Desc") {
+		t.Fatalf("checkTableSpecTags() error = %v, want a tagged case that sets Desc to be rejected", err)
+	}
+}
+
+func TestTableSpecTagsCheckRejectsUntaggedCaseWithoutDesc(t *testing.T) {
+	err := checkTableSpecTags(map[string]string{
+		"table_test.go": `package e2e_test
+var testTable = []TestCase{
+	{Name: "undescribed/case"},
+}
+`,
+	}, "undescribed/case\n")
+	if err == nil || !strings.Contains(err.Error(), "undescribed/case") || !strings.Contains(err.Error(), "needs a non-empty Desc") {
+		t.Fatalf("checkTableSpecTags() error = %v, want an untagged case without Desc to be rejected", err)
 	}
 }
 
