@@ -7,4 +7,4 @@
 
 ## 2. Archive
 
-- [ ] 2.1 Run `openspec archive split-comma-separated-subagent-tools --yes`
+- [x] 2.1 Run `openspec archive split-comma-separated-subagent-tools --yes`
