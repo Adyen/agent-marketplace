@@ -9,7 +9,8 @@ It follows the exact-exclusion slices without changing wildcard policy.
 `v4ExclusionMatches` used `strings.Split(locator, "/")` for every non-global
 wildcard comparison. Replace that slice with two `strings.Cut` operations,
 retaining two/three-component recognition and the final literal comparison.
-The production change is four added lines and three removed lines.
+Qualified selectors use a third `Cut` instead of concatenating components.
+The final production change is eleven added lines and four removed lines.
 
 Seven production call sites share the helper: request rebuilding, effective
 request interpretation, low-level v4 editor wildcard/suppression checks,
@@ -23,19 +24,23 @@ wildcard spellings retain the old private-helper results; this adds no input
 validation rule. There are no new limits, deadlines, truncation, persistent
 caches, dependencies, or release-version changes.
 
-The existing qualified-selector concatenation is deliberately unchanged.
-Long qualified names may still allocate its temporary string. The claim is
-removal of locator slices, not allocation-free matching for every input.
+The initial locator-only version retained qualified-selector concatenation.
+Gemini correctly identified that long names could still allocate its
+temporary string. The reviewed refinement removes that remaining string
+construction using the standard library, without manual indexing.
 
 ## Measurements
 
 Go 1.27.3, Apple M4 Max, darwin/arm64, `CGO_ENABLED=0`, `GOMAXPROCS=2`.
-Each dataset has six alternating before/after pairs, two seconds per case,
-eleven cases, and 132 raw benchmark samples. Pair order alternates AB/BA.
+Each dataset has six alternating before/after pairs and two seconds per case.
+The initial and intermediate stages have eleven cases and 132 samples each.
+The final refined stage has fourteen cases and 168 samples. All 432 samples
+are retained separately. Pair order alternates AB/BA.
 No own heavy validation runs concurrently with collection.
 
 Both variants in each stage use identical benchmark sources and preservation
-test sources. The benchmark source blob is
+test sources. The final benchmark source blob is
+`608caba0669c237f9708d56fd9d573ebecbfbafe`; both earlier stages use
 `e08f1b1a8628182cda07907ba74fa025a708d7dd`. All result/error assertions are
 outside `b.Loop`; fixture construction is outside timing.
 
@@ -45,7 +50,42 @@ baseline source hash, different executable build IDs, and a slow/allocating
 versus fast/nonallocating smoke comparison are checked before each collection.
 Measurements come from immutable executables, not source edits between runs.
 
-### Integrated Main Baseline
+### Final Review Refinement
+
+The baseline is original main `b8b4b90b` source blob
+`b27ab6a567a78b45bbafd938acafd47f6cb3f893`. The refined source blob is
+`bfe754265bd9091be94ccedac070b4ef867633ed`. Main since `e8dcaba9` adds
+upstream TUI changes but no configuration implementation change.
+
+Primary final evidence:
+[before](security-r5-wildcard-2026-10-22/before.txt),
+[after](security-r5-wildcard-2026-10-22/after.txt),
+[benchstat](security-r5-wildcard-2026-10-22/benchstat.txt).
+
+| Final case | Before | After | Result |
+|---|---:|---:|---|
+| Short registry/kind | 39.44 ns, 48 B, 1 alloc | 17.20 ns, 0 B, 0 alloc | CPU -56.37% |
+| Long registry/kind match | 65.48 ns, 208 B, 2 allocs | 20.37 ns, 0 B, 0 alloc | CPU -68.89% |
+| Long registry/kind miss | 62.94 ns, 208 B, 2 allocs | 19.41 ns, 0 B, 0 alloc | CPU -69.15% |
+| Public adapter, 1,024 skills plus retained command | 276.2 us, 844,088 B, 4,152 allocs | 271.9 us, 811,288 B, 3,127 allocs | CPU not significant; bytes -3.89%; allocs -24.69% |
+| Public parser, same fixture | 1.372 ms | 1.299 ms | CPU not significant |
+
+All seven wildcard/malformed microbenchmark CPU comparisons have
+`p=0.002, n=6`; exact/global controls have no significant timing change and
+retain zero allocations. Final adapter CPU is not significant
+(`p=0.699, n=6`), nor parser CPU (`p=0.394, n=6`). Host noise makes several
+timing intervals wide, including parser intervals up to 111%. Retain that
+uncertainty rather than selecting faster samples or claiming a public-path
+speed-up. Stable allocation reductions remain the primary public-path result.
+
+The long registry name is 144 bytes. An exploratory three-way comparison
+confirms the intermediate locator-only implementation still uses 160 bytes
+and one allocation there, versus the original 208 bytes and two allocations
+and the refined implementation's zero. This motivated the review fix; the
+table and raw final evidence use the repeated original-versus-refined runs,
+not that exploratory timing sample.
+
+### Locator-Only Intermediate Main Baseline
 
 Main `e8dcaba9` includes merged #888 and upstream TUI/deployment-security
 changes. Both variants include all of those changes; they differ only in the
@@ -54,10 +94,13 @@ wildcard matcher. Production blobs:
 - Before: `b27ab6a567a78b45bbafd938acafd47f6cb3f893`.
 - After: `8d4a211a6b10e34193f08b0e5acc5ea27b86b71a`.
 
-Primary raw evidence:
-[before](security-r5-wildcard-2026-10-22/before.txt),
-[after](security-r5-wildcard-2026-10-22/after.txt),
-[benchstat](security-r5-wildcard-2026-10-22/benchstat.txt).
+Historical intermediate raw evidence:
+[before](security-r5-wildcard-2026-10-22/locator-only-e8dcaba9/before.txt),
+[after](security-r5-wildcard-2026-10-22/locator-only-e8dcaba9/after.txt),
+[benchstat](security-r5-wildcard-2026-10-22/locator-only-e8dcaba9/benchstat.txt).
+These results describe the locator-only implementation, not the final
+Gemini-refined code. In particular its 4.91% public adapter CPU difference
+must not be attributed to the final implementation.
 
 | Case | Before | After | Result |
 |---|---:|---:|---|
@@ -178,9 +221,36 @@ canonical overlays and variant proof, and measurement/validation provenance.
 This is host review, not an external model or bot review, and is not a claim
 that passing checks proves absence of defects.
 
+## Final Refinement Validation
+
+The Gemini refinement passes the original-baseline oracle/editor controls
+with 1,000 generated cases, corresponding optimized focused races, all six
+semantic mutants, and both public benchmark failure controls. The bounded
+native fuzz run passes 11,703 executions.
+
+Selected validation, vet, zero-issue lint, and build pass. Strict specs pass
+65 items, 1,160 scenarios, 1,880 annotations, and two active changes. The full
+terminal suite passes 52 executed PTY tests plus four separate utility/process
+tests, with zero failures or skips. Fresh combined E2E passes in 849.8 seconds:
+3,423 invocations, all 113 requirements, all three required refusal witnesses,
+and shellcheck.
+
+The first selected validation run encounters a TempDir cleanup failure in
+`TestRunUpdateCmdSucceedsWithWarningOnlyDiagnostics`: a cache `.git`
+directory is not empty during removal. Its functional assertions pass; the
+fixture uses a directory source without exclusions. Ten isolated repetitions
+pass on both the original and refined implementations, and the complete
+selected package run then passes unchanged. The failed log is retained;
+neither cleanup assertions nor timing guards are weakened.
+
+The final own scope is fourteen files: production, two Go test files, plan,
+report, and nine raw evidence files. All three measurement stages remain
+separate; the earlier eleven-file host review describes the originally
+published locator-only version, not coverage of this refinement.
+
 ## Remaining Scope
 
 R53 remains **partial**. Wildcard scans still scale with selected locators and
-wildcard decisions. Qualified-name concatenation, other source/group/include
-processing, aggregate memory/work budgets, and acquisition-lock costs are not
+wildcard decisions. Other source/group/include processing, aggregate
+memory/work budgets, and acquisition-lock costs are not
 bounded or closed here. Do not mark R53 or R5 complete.

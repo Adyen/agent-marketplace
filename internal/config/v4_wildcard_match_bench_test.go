@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -18,6 +19,7 @@ func v4KindWildcardDocument(tb testing.TB, count int) []byte {
 }
 
 func BenchmarkV4WildcardMatchCPU(b *testing.B) {
+	longRegistry := strings.Repeat("registry-", 16)
 	for _, tc := range []struct {
 		name, selector, locator string
 		want                    bool
@@ -26,6 +28,9 @@ func BenchmarkV4WildcardMatchCPU(b *testing.B) {
 		{"kind-miss", "skill/*", "command/item", false},
 		{"registry", "tools/*", "tools/skill/item", true},
 		{"registry-kind", "tools/skill/*", "tools/skill/item", true},
+		{"registry-kind-long", longRegistry + "/skill/*", longRegistry + "/skill/item", true},
+		{"registry-kind-long-miss", longRegistry + "/command/*", longRegistry + "/skill/item", false},
+		{"malformed-control", "tools/*", "tools/skill/item/extra", false},
 		{"exact-control", "skill/item", "skill/item", true},
 		{"global-control", "*", "tools/skill/item", true},
 	} {

@@ -20,9 +20,11 @@ change. A wildcard index would add state and change much more code; defer it.
 No new limits, deadlines, truncation, cache, dependency, or accepted-input
 restriction is needed.
 
-Keep the existing qualified-selector concatenation unchanged. Long qualified
-names may still allocate that temporary string; removing locator slices is
-not a claim that every possible match is allocation-free.
+The initial locator-only version keeps qualified-selector concatenation.
+Gemini review identifies its remaining allocation for long names. Measure
+that case independently and refine qualified comparison with a third
+standard-library `Cut`, not manual length/index arithmetic, preserving the
+same raw-shape contract. Retain the intermediate dataset separately.
 
 Pin raw matching results against the independently authored token-based
 oracle, including malformed strings, and retain structured-history controls.

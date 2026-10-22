@@ -2,53 +2,62 @@ goos: darwin
 goarch: arm64
 pkg: github.com/Adyen/agent-marketplace/internal/config
 cpu: Apple M4 Max
-                                       │  before.txt  │             after.txt              │
-                                       │    sec/op    │   sec/op     vs base               │
-V4WildcardMatchCPU/kind-match-2          21.110n ± 2%   9.980n ± 1%  -52.72% (p=0.002 n=6)
-V4WildcardMatchCPU/kind-miss-2           21.145n ± 3%   9.336n ± 2%  -55.85% (p=0.002 n=6)
-V4WildcardMatchCPU/registry-2             28.93n ± 3%   12.35n ± 2%  -57.32% (p=0.002 n=6)
-V4WildcardMatchCPU/registry-kind-2        38.48n ± 4%   21.70n ± 2%  -43.62% (p=0.002 n=6)
-V4WildcardMatchCPU/exact-control-2        2.443n ± 2%   2.355n ± 4%        ~ (p=0.065 n=6)
-V4WildcardMatchCPU/global-control-2       1.797n ± 2%   1.792n ± 1%        ~ (p=0.669 n=6)
-V4WildcardAdapterCPU/requests=1-2         908.8n ± 5%   887.9n ± 2%   -2.31% (p=0.041 n=6)
-V4WildcardAdapterCPU/requests=256-2       67.09µ ± 6%   62.92µ ± 2%   -6.21% (p=0.002 n=6)
-V4WildcardAdapterCPU/requests=1024-2      265.8µ ± 8%   252.8µ ± 3%   -4.91% (p=0.009 n=6)
-ParseV4KindWildcardCPU/requests=256-2     326.2µ ± 6%   313.0µ ± 4%        ~ (p=0.065 n=6)
-ParseV4KindWildcardCPU/requests=1024-2    1.281m ± 7%   1.264m ± 2%        ~ (p=0.240 n=6)
-geomean                                   681.7n        508.6n       -25.40%
+                                             │  before.txt   │              after.txt               │
+                                             │    sec/op     │    sec/op      vs base               │
+V4WildcardMatchCPU/kind-match-2                 22.68n ± 55%   10.33n ±  10%  -54.44% (p=0.002 n=6)
+V4WildcardMatchCPU/kind-miss-2                 21.835n ±  4%   9.513n ±  15%  -56.43% (p=0.002 n=6)
+V4WildcardMatchCPU/registry-2                   29.84n ± 11%   12.70n ±   3%  -57.43% (p=0.002 n=6)
+V4WildcardMatchCPU/registry-kind-2              39.44n ±  4%   17.20n ±   4%  -56.37% (p=0.002 n=6)
+V4WildcardMatchCPU/registry-kind-long-2         65.48n ± 11%   20.37n ±   6%  -68.89% (p=0.002 n=6)
+V4WildcardMatchCPU/registry-kind-long-miss-2    62.94n ± 27%   19.41n ±   5%  -69.15% (p=0.002 n=6)
+V4WildcardMatchCPU/malformed-control-2          38.04n ± 85%   11.75n ±   5%  -69.11% (p=0.002 n=6)
+V4WildcardMatchCPU/exact-control-2              2.560n ± 29%   2.448n ±   3%        ~ (p=0.240 n=6)
+V4WildcardMatchCPU/global-control-2             1.841n ± 39%   1.833n ±   5%        ~ (p=0.485 n=6)
+V4WildcardAdapterCPU/requests=1-2               970.0n ± 10%   938.6n ±   7%        ~ (p=0.485 n=6)
+V4WildcardAdapterCPU/requests=256-2             68.29µ ± 10%   66.19µ ±   8%        ~ (p=0.310 n=6)
+V4WildcardAdapterCPU/requests=1024-2            276.2µ ±  7%   271.9µ ±  21%        ~ (p=0.699 n=6)
+ParseV4KindWildcardCPU/requests=256-2           329.2µ ±  8%   333.4µ ±  49%        ~ (p=0.937 n=6)
+ParseV4KindWildcardCPU/requests=1024-2          1.372m ± 59%   1.299m ± 111%        ~ (p=0.394 n=6)
+geomean                                         408.1n         247.7n         -39.30%
 
-                                       │   before.txt   │                after.txt                 │
-                                       │      B/op      │     B/op      vs base                    │
-V4WildcardMatchCPU/kind-match-2            32.00 ± 0%        0.00 ± 0%  -100.00% (p=0.002 n=6)
-V4WildcardMatchCPU/kind-miss-2             32.00 ± 0%        0.00 ± 0%  -100.00% (p=0.002 n=6)
-V4WildcardMatchCPU/registry-2              48.00 ± 0%        0.00 ± 0%  -100.00% (p=0.002 n=6)
-V4WildcardMatchCPU/registry-kind-2         48.00 ± 0%        0.00 ± 0%  -100.00% (p=0.002 n=6)
-V4WildcardMatchCPU/exact-control-2         0.000 ± 0%       0.000 ± 0%         ~ (p=1.000 n=6) ¹
-V4WildcardMatchCPU/global-control-2        0.000 ± 0%       0.000 ± 0%         ~ (p=1.000 n=6) ¹
-V4WildcardAdapterCPU/requests=1-2        2.664Ki ± 0%     2.602Ki ± 0%    -2.35% (p=0.002 n=6)
-V4WildcardAdapterCPU/requests=256-2      205.7Ki ± 0%     197.7Ki ± 0%    -3.90% (p=0.002 n=6)
-V4WildcardAdapterCPU/requests=1024-2     824.3Ki ± 0%     792.3Ki ± 0%    -3.89% (p=0.002 n=6)
-ParseV4KindWildcardCPU/requests=256-2    521.2Ki ± 0%     513.1Ki ± 0%    -1.54% (p=0.002 n=6)
-ParseV4KindWildcardCPU/requests=1024-2   2.058Mi ± 0%     2.026Mi ± 0%    -1.52% (p=0.002 n=6)
-geomean                                               ²                 ?                      ² ³
+                                             │   before.txt   │                after.txt                 │
+                                             │      B/op      │     B/op      vs base                    │
+V4WildcardMatchCPU/kind-match-2                  32.00 ± 0%        0.00 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardMatchCPU/kind-miss-2                   32.00 ± 0%        0.00 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardMatchCPU/registry-2                    48.00 ± 0%        0.00 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardMatchCPU/registry-kind-2               48.00 ± 0%        0.00 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardMatchCPU/registry-kind-long-2          208.0 ± 0%         0.0 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardMatchCPU/registry-kind-long-miss-2     208.0 ± 0%         0.0 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardMatchCPU/malformed-control-2           64.00 ± 0%        0.00 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardMatchCPU/exact-control-2               0.000 ± 0%       0.000 ± 0%         ~ (p=1.000 n=6) ¹
+V4WildcardMatchCPU/global-control-2              0.000 ± 0%       0.000 ± 0%         ~ (p=1.000 n=6) ¹
+V4WildcardAdapterCPU/requests=1-2              2.664Ki ± 0%     2.602Ki ± 0%    -2.35% (p=0.002 n=6)
+V4WildcardAdapterCPU/requests=256-2            205.7Ki ± 0%     197.7Ki ± 0%    -3.90% (p=0.002 n=6)
+V4WildcardAdapterCPU/requests=1024-2           824.3Ki ± 0%     792.3Ki ± 0%    -3.89% (p=0.002 n=6)
+ParseV4KindWildcardCPU/requests=256-2          521.2Ki ± 0%     513.1Ki ± 0%    -1.54% (p=0.002 n=6)
+ParseV4KindWildcardCPU/requests=1024-2         2.058Mi ± 0%     2.026Mi ± 0%    -1.52% (p=0.002 n=6)
+geomean                                                     ²                 ?                      ² ³
 ¹ all samples are equal
 ² summaries must be >0 to compute geomean
 ³ ratios must be >0 to compute geomean
 
-                                       │  before.txt   │                after.txt                │
-                                       │   allocs/op   │  allocs/op   vs base                    │
-V4WildcardMatchCPU/kind-match-2           1.000 ± 0%      0.000 ± 0%  -100.00% (p=0.002 n=6)
-V4WildcardMatchCPU/kind-miss-2            1.000 ± 0%      0.000 ± 0%  -100.00% (p=0.002 n=6)
-V4WildcardMatchCPU/registry-2             1.000 ± 0%      0.000 ± 0%  -100.00% (p=0.002 n=6)
-V4WildcardMatchCPU/registry-kind-2        1.000 ± 0%      0.000 ± 0%  -100.00% (p=0.002 n=6)
-V4WildcardMatchCPU/exact-control-2        0.000 ± 0%      0.000 ± 0%         ~ (p=1.000 n=6) ¹
-V4WildcardMatchCPU/global-control-2       0.000 ± 0%      0.000 ± 0%         ~ (p=1.000 n=6) ¹
-V4WildcardAdapterCPU/requests=1-2         19.00 ± 0%      17.00 ± 0%   -10.53% (p=0.002 n=6)
-V4WildcardAdapterCPU/requests=256-2      1066.0 ± 0%      809.0 ± 0%   -24.11% (p=0.002 n=6)
-V4WildcardAdapterCPU/requests=1024-2     4.152k ± 0%     3.127k ± 0%   -24.69% (p=0.002 n=6)
-ParseV4KindWildcardCPU/requests=256-2    4.058k ± 0%     3.800k ± 0%    -6.35% (p=0.002 n=6)
-ParseV4KindWildcardCPU/requests=1024-2   16.38k ± 0%     15.35k ± 0%    -6.26% (p=0.002 n=6)
-geomean                                              ²                ?                      ² ³
+                                             │  before.txt   │                after.txt                │
+                                             │   allocs/op   │  allocs/op   vs base                    │
+V4WildcardMatchCPU/kind-match-2                 1.000 ± 0%      0.000 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardMatchCPU/kind-miss-2                  1.000 ± 0%      0.000 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardMatchCPU/registry-2                   1.000 ± 0%      0.000 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardMatchCPU/registry-kind-2              1.000 ± 0%      0.000 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardMatchCPU/registry-kind-long-2         2.000 ± 0%      0.000 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardMatchCPU/registry-kind-long-miss-2    2.000 ± 0%      0.000 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardMatchCPU/malformed-control-2          1.000 ± 0%      0.000 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardMatchCPU/exact-control-2              0.000 ± 0%      0.000 ± 0%         ~ (p=1.000 n=6) ¹
+V4WildcardMatchCPU/global-control-2             0.000 ± 0%      0.000 ± 0%         ~ (p=1.000 n=6) ¹
+V4WildcardAdapterCPU/requests=1-2               19.00 ± 0%      17.00 ± 0%   -10.53% (p=0.002 n=6)
+V4WildcardAdapterCPU/requests=256-2            1066.0 ± 0%      809.0 ± 0%   -24.11% (p=0.002 n=6)
+V4WildcardAdapterCPU/requests=1024-2           4.152k ± 0%     3.127k ± 0%   -24.69% (p=0.002 n=6)
+ParseV4KindWildcardCPU/requests=256-2          4.058k ± 0%     3.800k ± 0%    -6.36% (p=0.002 n=6)
+ParseV4KindWildcardCPU/requests=1024-2         16.38k ± 0%     15.35k ± 0%    -6.26% (p=0.002 n=6)
+geomean                                                    ²                ?                      ² ³
 ¹ all samples are equal
 ² summaries must be >0 to compute geomean
 ³ ratios must be >0 to compute geomean

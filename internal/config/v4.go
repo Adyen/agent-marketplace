@@ -1992,8 +1992,14 @@ func v4ExclusionMatches(exclude, locator string) bool {
 		if hasSlash && !qualified && base == first {
 			return true
 		}
-		if hasSlash && qualified && !strings.Contains(name, "/") && (base == first || base == first+"/"+kind) {
-			return true
+		if hasSlash && qualified && !strings.Contains(name, "/") {
+			if base == first {
+				return true
+			}
+			registry, excludedKind, scoped := strings.Cut(base, "/")
+			if scoped && registry == first && excludedKind == kind {
+				return true
+			}
 		}
 	}
 	return exclude == locator
