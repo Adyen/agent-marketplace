@@ -1023,6 +1023,7 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 	}
 	for catalogKey, cat := range catalogs {
 		registry := registriesByCatalog[catalogKey]
+		registryName := registryDisplayName(registry.URL)
 		for _, m := range cat.Malformed {
 			name := m.DirName
 			seenKey := name + "\x01" + catalogKey
@@ -1039,7 +1040,7 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 					CatalogKey: catalogKey,
 				},
 				RegistryURL:  registry.URL,
-				RegistryName: registryDisplayName(registry.URL),
+				RegistryName: registryName,
 				RegistryRef:  registry.Ref,
 				RegistryPath: registry.Path,
 			})
