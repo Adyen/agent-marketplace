@@ -172,6 +172,21 @@ input immutability, positive and mutation controls, and measurement provenance.
 This is host review, not an external Kimi or bot review, and is not a claim
 that clean checks prove absence of defects.
 
+## Publication Integration
+
+Before publication, merge main `61f52b44` without rewriting history. Its
+changes since `0e8b2ac2` are confined to five upstream TUI QA files. The
+R53 production and benchmark blobs still match the measured variants.
+No raw measurements are refreshed or pooled.
+
+Fresh selected config/pipeline/resolver/TUI validation, vet, zero-issue lint,
+and build pass. Strict specs pass 64 items, 1,154 scenarios, 1,867 annotations,
+and two active changes. The enlarged terminal run passes all 46 executed PTY
+tests and four separate utility/process tests, with zero skips or failures.
+The earlier 3,423-invocation E2E result remains evidence for the unchanged Go
+implementation, not a newly executed E2E run on this TUI-test-only integration.
+Host adversarial delegation review still covers all eight own changed files.
+
 ## Remaining Scope
 
 R53 remains **partial**. Wildcard scans, other source/group/include-tree
