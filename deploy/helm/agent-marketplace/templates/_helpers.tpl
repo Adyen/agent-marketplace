@@ -62,11 +62,14 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- define "agent-marketplace.image" -}}
 {{- $root := .root -}}
-{{- $image := mergeOverwrite (deepCopy $root.Values.image) (default (dict) .image) -}}
+{{- $image := default (dict) .image -}}
+{{- if .inherit -}}
+{{- $image = mergeOverwrite (deepCopy $root.Values.image) $image -}}
+{{- end -}}
 {{- if $image.digest }}
 {{- printf "%s@%s" $image.repository $image.digest }}
 {{- else }}
-{{- printf "%s:%s" $image.repository $image.tag }}
+{{- printf "%s:%s" $image.repository (required (printf "%s: set an explicit image.tag or image.digest (use a verified digest in production)" $image.repository) $image.tag) }}
 {{- end }}
 {{- end }}
 
@@ -171,7 +174,7 @@ spec:
       {{- end }}
       containers:
         - name: {{ $role }}
-          image: {{ include "agent-marketplace.image" (dict "root" $root "image" $component.image) }}
+          image: {{ include "agent-marketplace.image" (dict "root" $root "image" $component.image "inherit" $isMarketplace) }}
           imagePullPolicy: {{ default $root.Values.image.pullPolicy $component.image.pullPolicy }}
           {{- with $component.command }}
           command:

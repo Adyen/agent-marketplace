@@ -4,9 +4,23 @@ This example runs PostgreSQL, separate API and worker containers, the Nuxt Marke
 
 The API and worker are built from different targets of `Dockerfile.marketplace`. Only the `worker` image contains Git, because acquisition runs there.
 
+The web image builds on Debian Node 24 and runs on a separate distroless Node 24
+image, without a shell or package manager. `NODE_IMAGE` selects the builder;
+`NODE_RUNTIME_IMAGE` selects the runtime. Mirrored runtimes must provide
+`/nodejs/bin/node` and remain compatible with Debian 13 / Node 24 build output.
+The healthcheck uses Node directly, so no shell utility is required. Requests
+abort after four seconds, before Docker's five-second healthcheck timeout.
+
+Before production, pin every image override in `.env` with
+`@sha256:<verified-digest>`, including build images, distroless runtimes,
+PostgreSQL, and both Nginx images. Apply the same rule to internal mirrors;
+the example's tags are only development defaults. Verify provenance and
+refresh the pins deliberately for security updates. See the
+[production deployment guide](../../../site/docs/how-to/operator/deploy-a-production-marketplace.md).
+
 When upgrading from the combined site profile, the proxy temporarily redirects `/marketplace` and its descendants to the corresponding root routes while preserving query parameters. Set `instance.browser_base` to the bare external origin, move any gateway protection from `/marketplace/admin/**` to `/admin/**`, and start Compose with `--remove-orphans` so the old `site` container is removed. OIDC transactions started before the route switch may require a fresh sign-in.
 
-The default `compose.yaml` is safe for production as written. It reads the PostgreSQL password from a secret file, mounts the metadata DSN as a Compose secret at `/run/secrets/marketplace-postgres-dsn`, and declares no AWS credential environment variables. S3 credentials therefore come from the AWS SDK default credential chain; prefer workload identity or IAM roles. If roles are unavailable, use the platform's secret manager and an SDK-supported credentials file instead of adding static AWS secrets to Compose.
+The default `compose.yaml` uses production-oriented secret handling; pin its images as described above before rollout. It reads the PostgreSQL password from a secret file, mounts the metadata DSN as a Compose secret at `/run/secrets/marketplace-postgres-dsn`, and declares no AWS credential environment variables. S3 credentials therefore come from the AWS SDK default credential chain; prefer workload identity or IAM roles. If roles are unavailable, use the platform's secret manager and an SDK-supported credentials file instead of adding static AWS secrets to Compose.
 
 The mounted `config.dsn-file.example.yaml` is the source of truth for the S3 bucket, region, endpoint, canonical URL, browser base, and API configuration. Copy it to a deployment-specific config file or edit the checked-in example before starting. Do not put passwords in committed YAML, Compose files, image layers, command arguments, or logs.
 

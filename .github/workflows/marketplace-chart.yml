@@ -68,11 +68,11 @@ jobs:
           source_revision="$(git rev-parse HEAD)"
           printf '\nannotations:\n  org.opencontainers.image.source: "%s"\n  org.opencontainers.image.revision: "%s"\n  org.opencontainers.image.version: "%s"\n' \
             "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$source_revision" "$RELEASE_TAG" >> "$chart_dir/Chart.yaml"
-          helm lint --strict "$chart_dir"
+          helm lint --strict "$chart_dir" --set-string image.tag="$RELEASE_TAG"
           mkdir -p "$RUNNER_TEMP/marketplace-chart"
           helm package "$chart_dir" --destination "$RUNNER_TEMP/marketplace-chart" --version "${RELEASE_TAG#v}" --app-version "$RELEASE_TAG"
           package="$RUNNER_TEMP/marketplace-chart/agent-marketplace-${RELEASE_TAG#v}.tgz"
-          helm template marketplace "$package" --namespace marketplace > "$RUNNER_TEMP/marketplace-chart/rendered.yaml"
+          helm template marketplace "$package" --namespace marketplace --set-string image.tag="$RELEASE_TAG" > "$RUNNER_TEMP/marketplace-chart/rendered.yaml"
           helm show chart "$package" > "$RUNNER_TEMP/marketplace-chart/Chart.yaml"
       - name: Authenticate chart publisher
         env:

@@ -1,6 +1,6 @@
 # Deploy Agent Marketplace on Kubernetes
 
-This guide deploys the Agent Marketplace service with the reusable Helm chart in this directory. By default the chart renders one all-in-one Deployment (`mode: all`), and it can add the web and documentation frontends. Use `mode: split` when you have external shared storage and want to scale the API and worker separately.
+This guide deploys the Agent Marketplace service with the reusable Helm chart in this directory. With an explicit image version, the default topology renders one all-in-one Deployment (`mode: all`), and it can add the web and documentation frontends. Use `mode: split` when you have external shared storage and want to scale the API and worker separately.
 
 ## Prerequisites
 
@@ -62,7 +62,31 @@ The chart's container ports are fixed at 8080 (`http`) and 9090 (`operations`), 
 
 ## 2. Configure images and optional frontends
 
-Set the image repositories and immutable tags or digests. Use the images published to GHCR for each release, or the ones supplied by your own release pipeline:
+Set an image version for every enabled workload; the chart intentionally has
+no default tag or digest and refuses to render an unspecified image version.
+For production, use verified `image.digest`, `web.image.digest`, and
+`docs.image.digest` values (`sha256:` followed by the 64 hexadecimal characters).
+A digest takes precedence over a tag. API, worker, and all-in-one roles inherit
+the top-level image; set each role's own digest when using different images,
+including the API-only image. Frontends need their own versions.
+
+### Upgrading From Implicit Image Tags
+
+Before upgrading from chart defaults that supplied `latest`, add explicit
+image versions to existing values files: `image.digest`, plus
+`web.image.digest` and `docs.image.digest` for enabled frontends. Set each
+role's own digest when its repository differs from the top-level image.
+Use verified digests of the intended image bytes rather than assuming a
+moving tag still identifies the currently deployed image.
+
+Render the new chart with the complete values file before rollout. Do not
+use `--reuse-values` as a migration shortcut: it can retain an explicit
+`latest`, which still renders but is not immutable. Keep the previous chart,
+values, and image references available for rollback.
+
+Use the images published to GHCR for each release, or the ones supplied by your
+own release pipeline. Explicit tags remain available for local development,
+as in this example; resolve and verify the digests before production rollout:
 
 ```yaml
 image:
