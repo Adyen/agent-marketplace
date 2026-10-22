@@ -122,6 +122,7 @@ func TestClaudeNativeLayoutIsAvailable(t *testing.T) {
 					User:    NativeAggregateFile{Path: ".mcp.json", Member: "mcpServers"},
 				},
 			},
+			Registrations: []NativeRegistration{{Path: "settings.json", Shape: NativeRegistrationClaudeSettings}},
 		},
 	}}
 
@@ -137,6 +138,9 @@ func TestClaudeNativeLayoutIsAvailable(t *testing.T) {
 	}
 	if got, ok := NativeAggregatePath(TargetClaude, ir.KindSubagent); ok || got != "" {
 		t.Errorf("NativeAggregatePath(claude, subagent) = %q, %v; want no aggregate", got, ok)
+	}
+	if got, ok := NativePluginRegistration(TargetClaude); !ok || got != (NativeRegistration{Path: "settings.json", Shape: NativeRegistrationClaudeSettings}) {
+		t.Errorf("NativePluginRegistration(claude) = %#v, %v; want settings.json registration", got, ok)
 	}
 }
 

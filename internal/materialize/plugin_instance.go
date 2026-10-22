@@ -26,6 +26,9 @@ func preflightPluginInstances(work []skillTarget) (map[string]bool, []diag.Diagn
 	blocked := make(map[string]bool)
 	var diagnostics []diag.Diagnostic
 	for _, identity := range identities {
+		if len(groups[identity]) > 0 && groups[identity][0].skill.PluginPackage.Delivery == "native" {
+			continue
+		}
 		for _, item := range groups[identity] {
 			if len(item.skill.PluginPackage.DecodeFailures) > 0 {
 				blocked[identity] = true
