@@ -453,6 +453,18 @@ func TestInstallSourceShiftTabMovesTypingBack(t *testing.T) {
 	}
 }
 
+func TestInstallSourceArrowsMoveTypingAcrossFields(t *testing.T) {
+	m := installSourceTypeSequence(t, NewModel(t.TempDir(), t.TempDir()),
+		keyPress('i'), keyNamed("up"), keyPress('u'), keyNamed("down"), keyNamed("down"), keyPress('p'),
+		keyNamed("down"), keyPress('q'), keyNamed("up"), keyPress('r'))
+	if v := m.installSource.values; v.url != "u" || v.ref != "r" || v.path != "pq" {
+		t.Fatalf("typing after arrows landed url=%q ref=%q path=%q, want u r pq", v.url, v.ref, v.path)
+	}
+	if m.installSource.form == nil || m.installSource.form.State != huh.StateNormal || m.installSource.step != installSourceStepSource {
+		t.Fatalf("arrows left the Source step: step=%v form=%#v", m.installSource.step, m.installSource.form)
+	}
+}
+
 func TestInstallSourceFieldsStayUsableAfterTabOnPath(t *testing.T) {
 	m := installSourceTypeSequence(t, NewModel(t.TempDir(), t.TempDir()),
 		keyPress('i'), keyNamed("tab"), keyNamed("tab"), keyPress('p'), keyNamed("tab"), keyPress('z'))

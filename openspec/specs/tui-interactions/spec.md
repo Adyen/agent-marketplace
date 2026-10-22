@@ -238,13 +238,15 @@ In the install-from-source modal, `→` SHALL act as `enter` on the Pick step
 and `←` SHALL return from Pick to Source and from Review to Pick. `→` on the
 Review step SHALL NOT install. On the Source step `←` and `→` SHALL keep
 moving the text cursor, and while the Pick filter is being edited they SHALL
-edit the filter. Confirming the Source step with the same URL, ref, and path
-as the shown preview SHALL return to Pick with that preview and the current
-picks without previewing the source again; any changed field SHALL preview
-again. On the Review step `↑`/`k` and `↓`/`j` SHALL move the scope selection
-through User, Project, and Local in that order without wrapping; moving onto
-a scope the source cannot be written to SHALL keep the current scope and show
-the reason.
+edit the filter. On the Source step `↓` SHALL move focus from URL to Ref to
+Path and `↑` SHALL move it back, without wrapping and without completing the
+step; `k` and `j` SHALL remain text input. Confirming the Source step with
+the same URL, ref, and path as the shown preview SHALL return to Pick with
+that preview and the current picks without previewing the source again; any
+changed field SHALL preview again. On the Review step `↑`/`k` and `↓`/`j`
+SHALL move the scope selection through User, Project, and Local in that order
+without wrapping; moving onto a scope the source cannot be written to SHALL
+keep the current scope and show the reason.
 
 #### Scenario: Arrow keys walk the steps without installing
 
@@ -253,6 +255,13 @@ the reason.
 - **THEN** the modal MUST show Review after the first `→`, MUST stay on Review
   without installing after the second, and MUST show Pick and then Source,
   and configuration, acquisition lock, and harness bytes MUST be unchanged
+
+#### Scenario: Arrow keys move between Source fields
+
+- **WHEN** a user on the Source step presses `↑` on URL, types, presses `↓`
+  twice and types, presses `↓` again and types, then presses `↑` and types
+- **THEN** the first text MUST go to URL, the second and third to Path, the
+  last to Ref, and the Source step MUST stay open without previewing
 
 #### Scenario: Unchanged source reuses the preview
 

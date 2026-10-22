@@ -312,6 +312,54 @@ changed.test("a changed source previews again", async (terminal) => {
   assertUnchanged();
 });
 
+// spec: tui-interactions/arrow-keys-move-between-source-fields
+const fields = defineFixture("install-from-source-fields", ["tui"], 80, 24, { adHocSource: true });
+before(fields.setup);
+after(fields.cleanup);
+
+fields.test("arrow keys move typing between Source fields without leaving the step", async (terminal) => {
+  const fixture = fields.current();
+  const assertUnchanged = snapshotRepo(fixture);
+  await step("settled source list", () => {}, async () => {
+    await locate(terminal, "~ in sync").unique().expect();
+  });
+  await step("open source modal", () => terminal.write("i"), async () => {
+    await locate(terminal, "Web URLs fill ref and path automatically.").unique().expect();
+  });
+  await step("up on URL keeps focus on URL", () => terminal.write(UP), async () => {
+    await locate(terminal, "Web URLs fill ref and path automatically.").unique().expect();
+  });
+  await step("type into URL", () => terminal.write("u"), async () => {
+    await locate(terminal, "> u").unique().expect();
+  });
+  await step("down moves to Ref", () => terminal.write(DOWN), async () => {
+    await locate(terminal, "Web URLs fill ref and path automatically.").unique().expect();
+  });
+  await step("down moves to Path", () => terminal.write(DOWN), async () => {
+    await locate(terminal, "Web URLs fill ref and path automatically.").unique().expect();
+  });
+  await step("type into Path", () => terminal.write("p"), async () => {
+    await locate(terminal, "> p").unique().expect();
+  });
+  await step("down on Path keeps focus on Path", () => terminal.write(DOWN), async () => {
+    await locate(terminal, "Web URLs fill ref and path automatically.").unique().expect();
+  });
+  await step("type again into Path", () => terminal.write("q"), async () => {
+    await locate(terminal, "> pq").unique().expect();
+  });
+  await step("up moves back to Ref", () => terminal.write(UP), async () => {
+    await locate(terminal, "Web URLs fill ref and path automatically.").unique().expect();
+  });
+  await step("type into Ref", () => terminal.write("r"), async () => {
+    await locate(terminal, "> r").unique().expect();
+    await locate(terminal, "> u").unique().expect();
+    await locate(terminal, "Previewing source…").expect({ not: true });
+  });
+  assertUnchanged();
+  await cancelAndQuit(terminal);
+  assertUnchanged();
+});
+
 // spec: tui-interactions/arrow-keys-choose-the-review-scope
 const scope = defineFixture("install-from-source-scope", ["tui"], 80, 24, { adHocSource: true });
 before(scope.setup);

@@ -136,17 +136,23 @@ func updateInstallSourceForm(s *installSourceModal, msg tea.Msg) tea.Cmd {
 
 var installSourceFieldKeys = []string{"url", "ref", "path"}
 
-// moveInstallSourceFocus wraps focus across the Source fields. huh completes
-// a single-group form when Tab leaves its last field, so the wrap steps back
-// through the fields instead of asking huh to advance past the end. Focus
-// moves synchronously inside huh; only the returned cursor commands are async.
-func moveInstallSourceFocus(s *installSourceModal, delta int) tea.Cmd {
+// moveInstallSourceFocus moves focus across the Source fields, wrapping at the
+// ends when wrap is set. huh completes a single-group form when Tab leaves its
+// last field, so the step goes back through the fields instead of asking huh
+// to advance past the end. Focus moves synchronously inside huh; only the
+// returned cursor commands are async.
+func moveInstallSourceFocus(s *installSourceModal, delta int, wrap bool) tea.Cmd {
 	if s.form == nil {
 		return nil
 	}
 	n := len(installSourceFieldKeys)
 	index := slices.Index(installSourceFieldKeys, s.form.GetFocusedField().GetKey())
-	target := (index + delta + n) % n
+	target := index + delta
+	if wrap {
+		target = (target + n) % n
+	} else {
+		target = min(max(target, 0), n-1)
+	}
 	var cmds []tea.Cmd
 	for ; index < target; index++ {
 		cmds = append(cmds, s.form.NextField())
@@ -183,7 +189,7 @@ func renderInstallSourceModal(m Model) string {
 		if s.error != "" {
 			body = append(body, "", styleErrorTitle.Render(sanitizeTerminalData(s.error, terminalSingleLine)))
 		}
-		hints = append(hints, footerHint{"tab", "next field"}, footerHint{"enter", "preview"})
+		hints = append(hints, footerHint{"tab/↑↓", "field"}, footerHint{"enter", "preview"})
 	case installSourceStepPick:
 		body = append(body, installSourceHeader(s))
 		if sourceAlreadyConfigured(m, s.preview) {
@@ -546,9 +552,13 @@ func (m Model) handleInstallSourceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		}
 		switch msg.String() {
 		case "tab":
-			return m, moveInstallSourceFocus(s, 1)
+			return m, moveInstallSourceFocus(s, 1, true)
 		case "shift+tab":
-			return m, moveInstallSourceFocus(s, -1)
+			return m, moveInstallSourceFocus(s, -1, true)
+		case "down":
+			return m, moveInstallSourceFocus(s, 1, false)
+		case "up":
+			return m, moveInstallSourceFocus(s, -1, false)
 		}
 		return m, updateInstallSourceForm(s, msg)
 	case installSourceStepPick:
