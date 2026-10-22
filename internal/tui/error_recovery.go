@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -49,7 +50,44 @@ func (m Model) diagnosticCategories() map[diagnosticCategoryKey][]diagnosticCate
 	return categories
 }
 
+// structuredDiagnostic is implemented by errors whose Error text embeds their
+// own remediation lines, such as the update selection refusal. The errors
+// screen shows the cause as the diagnostic and the remediation as its recovery
+// line, each on one line, instead of flattening the embedded line breaks.
+type structuredDiagnostic interface {
+	error
+	DiagnosticCause() string
+	DiagnosticRemediation() string
+}
+
+// diagnosticCause is the diagnostic text the TUI shows for err: its Error
+// text, with a structured diagnostic's embedded remediation removed while any
+// wrapping prefix, such as "update refresh failed: ", is kept.
+func diagnosticCause(err error) (text string) {
+	// fmt.Sprint renders a typed nil error as "<nil>" instead of panicking;
+	// unwrapping one can still panic, so fall back to that text.
+	text = fmt.Sprint(err)
+	defer func() {
+		if recover() != nil {
+			text = fmt.Sprint(err)
+		}
+	}()
+	var structured structuredDiagnostic
+	if errors.As(err, &structured) {
+		if cause := strings.TrimSpace(structured.DiagnosticCause()); cause != "" {
+			return strings.Replace(text, structured.Error(), cause, 1)
+		}
+	}
+	return text
+}
+
 func diagnosticRemediation(err error, category diagnosticCategory) string {
+	var structured structuredDiagnostic
+	if errors.As(err, &structured) {
+		if hint := strings.TrimSpace(structured.DiagnosticRemediation()); hint != "" {
+			return hint
+		}
+	}
 	var remediable remedy.Remediable
 	if errors.As(err, &remediable) {
 		if hint := remediable.Remediation(); hint != "" {

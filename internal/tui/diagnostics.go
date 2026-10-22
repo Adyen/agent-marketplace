@@ -153,6 +153,9 @@ func warningKeys(diagnostics []tuiDiagnostic) map[string]struct{} {
 // the previous snapshot which the accepted snapshot no longer reports: both
 // described the same configuration state, which has been resolved.
 func (s *diagnosticStore) retireOperationCopies(previous, current map[string]struct{}) {
+	if len(previous) == 0 {
+		return
+	}
 	originalLength := len(s.operations)
 	kept := s.operations[:0]
 	retired := 0
