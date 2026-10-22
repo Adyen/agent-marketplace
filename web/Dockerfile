@@ -1,4 +1,5 @@
-ARG NODE_IMAGE=node:24-alpine
+ARG NODE_IMAGE=node:24-trixie-slim
+ARG NODE_RUNTIME_IMAGE=gcr.io/distroless/nodejs24-debian13:nonroot
 
 FROM ${NODE_IMAGE} AS build
 ARG NPM_CONFIG_REGISTRY
@@ -14,7 +15,7 @@ COPY --from=design --chown=1000:1000 semantic-colors.css brand.css foundations.c
 COPY --from=design --chown=1000:1000 fonts/ /src/design/fonts/
 RUN pnpm build
 
-FROM ${NODE_IMAGE} AS runtime
+FROM ${NODE_RUNTIME_IMAGE} AS runtime
 WORKDIR /app
 ENV NODE_ENV=production \
     NITRO_HOST=0.0.0.0 \
@@ -24,5 +25,6 @@ COPY --from=build --chown=1000:1000 /src/web/.output ./.output
 USER 1000:1000
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD node -e "fetch('http://127.0.0.1:3000' + (process.env.NUXT_APP_BASE_URL || '/')).then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
-CMD ["node", ".output/server/index.mjs"]
+    CMD ["/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:3000' + (process.env.NUXT_APP_BASE_URL || '/'), { signal: AbortSignal.timeout(4000) }).then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+ENTRYPOINT ["/nodejs/bin/node"]
+CMD [".output/server/index.mjs"]

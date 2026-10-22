@@ -47,6 +47,11 @@ export default defineConfig({
     ['link', { rel: 'icon', type: 'image/png', sizes: '64x64', href: publicAsset('brand/favicon-64x64.png') }],
     ['meta', { property: 'og:type', content: 'website' }],
     ['meta', { property: 'og:site_name', content: 'agent-marketplace' }],
+    ['meta', { property: 'og:image', content: 'https://agent-marketplace.io' + publicAsset('brand/social-preview.png') }],
+    ['meta', { property: 'og:image:type', content: 'image/png' }],
+    ['meta', { property: 'og:image:width', content: '960' }],
+    ['meta', { property: 'og:image:height', content: '960' }],
+    ['meta', { property: 'og:image:alt', content: 'agent-marketplace logo' }],
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }]
   ],
 
