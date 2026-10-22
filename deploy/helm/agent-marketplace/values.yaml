@@ -2,7 +2,8 @@ mode: all
 
 image:
   repository: agent-marketplace
-  tag: latest
+  # Set an explicit tag for development or a verified digest for production.
+  tag: ""
   digest: ""
   pullPolicy: IfNotPresent
 
@@ -187,7 +188,7 @@ web:
   replicas: 1
   image:
     repository: agent-marketplace-web
-    tag: latest
+    tag: ""
     digest: ""
     pullPolicy: IfNotPresent
   basePath: /
@@ -225,7 +226,7 @@ docs:
   replicas: 1
   image:
     repository: agent-marketplace-docs
-    tag: latest
+    tag: ""
     digest: ""
     pullPolicy: IfNotPresent
   env: []
