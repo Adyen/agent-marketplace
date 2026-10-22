@@ -56,6 +56,8 @@ journey.test("a missing optional selection warns and keeps drift, while a missin
   await step("sync succeeds despite the missing optional selection", () => terminal.write("s"), async () => {
     await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
     await locate(terminal, /! \d+ errors/).expect({ not: true });
+    // The sync repeats the snapshot's warning; the footer counts it once.
+    await locate(terminal, "⚠ 1 warnings").unique().expect();
   });
   assert.equal(fs.readFileSync(path.join(skills, "alpha-skill", "SKILL.md"), "utf8"), fixture.expectedAlphaSkillContent);
   assert.equal(fs.lstatSync(path.join(skills, "gamma-skill"), { throwIfNoEntry: false }), undefined, "sync installed the missing selection");
@@ -87,6 +89,8 @@ journey.test("a missing optional selection warns and keeps drift, while a missin
     await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
     await locate(terminal, /! \d+ errors/).expect({ not: true });
     await locate(terminal, "fixture/gamma-skill").expect({ not: true });
+    // No warning outlives the selection it was about.
+    await locate(terminal, /⚠ \d+ warnings/).expect({ not: true });
   });
 
   await step("quit", () => terminal.write("q"), async () => {
