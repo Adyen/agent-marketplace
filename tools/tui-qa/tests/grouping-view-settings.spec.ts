@@ -26,14 +26,17 @@ journey.test("view settings preview, discard and accept groupings, which keep th
   await step("settled Status grouping", () => {}, async () => {
     await locate(terminal, /Available\s+\(2\)/).unique().expect({ timeout: 30_000 });
     await locate(terminal, /Malformed\s+\(1\)/).unique().expect();
+    await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
   });
   await step("select alpha-skill", () => terminal.write("j"), async () => {
     await locate(terminal, /Name:\s+alpha-skill/).unique().expect();
   });
 
   // Discarding a preview, from the command palette entry point.
-  await step("the palette opens View settings", () => terminal.write(":view\r"), async () => {
-    await locate(terminal, "View settings").unique().expect();
+  await step("the palette filters to View settings", () => terminal.write(":view"), async () => {
+    await locate(terminal, "▸ View settings (grouping)").unique().expect();
+  });
+  await step("enter opens View settings", () => terminal.write("\r"), async () => {
     await locate(terminal, /▸ Group by:\s+\[Status\]/).unique().expect();
   });
   await step("previewing Source pins the malformed row into Needs attention", () => terminal.write("l"), async () => {
@@ -77,20 +80,44 @@ journey.test("view settings preview, discard and accept groupings, which keep th
     await locate(terminal, "source/alpha-skill").expect({ not: true });
     await locate(terminal, "Select a resource to see details").unique().expect();
   });
-  await step("Kind grouping has its own unfolded Skills section", () => terminal.write("vl\r"), async () => {
+  await step("open View settings to switch to Kind", () => terminal.write("v"), async () => {
+    await locate(terminal, /▸ Group by:\s+Status\s+\[Source\]/).unique().expect();
+  });
+  await step("Kind grouping previews its own unfolded Skills section", () => terminal.write("l"), async () => {
+    await locate(terminal, /▸ Group by:.*\[Kind\]/).unique().expect();
     await locate(terminal, /▼ Skills\s+\(2\)/).unique().expect();
     await locate(terminal, /source\s+\(2\)/).expect({ not: true });
+  });
+  await step("accept Kind", () => terminal.write("\r"), async () => {
+    await locate(terminal, "View settings").expect({ not: true });
     await eachResourceOnce();
   });
   assert.deepEqual(savedView(), { groupBy: "kind", thenBy: "none" });
-  await step("returning to Source then Kind restores its fold", () => terminal.write("vh\tl\r"), async () => {
+  await step("open View settings to return to Source", () => terminal.write("v"), async () => {
+    await locate(terminal, /▸ Group by:.*\[Kind\]/).unique().expect();
+  });
+  await step("preview Source", () => terminal.write("h"), async () => {
+    await locate(terminal, /▸ Group by:\s+Status\s+\[Source\]/).unique().expect();
     await locate(terminal, /source\s+\(2\)/).unique().expect();
+  });
+  await step("focus the secondary axis again", () => terminal.write("\t"), async () => {
+    await locate(terminal, /▸ Then by:\s+\[None\]/).unique().expect();
+  });
+  await step("previewing Kind under Source restores its fold", () => terminal.write("l"), async () => {
+    await locate(terminal, /▶ Skills\s+\(2\)/).unique().expect();
+  });
+  await step("accept Source then Kind", () => terminal.write("\r"), async () => {
+    await locate(terminal, "View settings").expect({ not: true });
     await locate(terminal, /▶ Skills\s+\(2\)/).unique().expect();
     await locate(terminal, "source/alpha-skill").expect({ not: true });
   });
   assert.deepEqual(savedView(), { groupBy: "source", thenBy: "kind" });
 
-  await step("a source-label search reaches every resource from it", () => terminal.write("/source\r"), async () => {
+  await step("type a source-label query", () => terminal.write("/source"), async () => {
+    await locate(terminal, "enter apply · esc cancel").unique().expect();
+    await locate(terminal, "/ source").unique().expect();
+  });
+  await step("applying it reaches every resource from that source", () => terminal.write("\r"), async () => {
     await locate(terminal, "/ source  3 matches").unique().expect();
     await locate(terminal, "source/alpha-skill").unique().expect();
   });
@@ -98,7 +125,10 @@ journey.test("view settings preview, discard and accept groupings, which keep th
     await locate(terminal, "/ source").expect({ not: true });
     await locate(terminal, /▶ Skills\s+\(2\)/).unique().expect();
   });
-  await step("a query with no matches leaves an empty list", () => terminal.write("/zzzz\r"), async () => {
+  await step("type a query with no matches", () => terminal.write("/zzzz"), async () => {
+    await locate(terminal, "/ zzzz").unique().expect();
+  });
+  await step("applying it leaves an empty list", () => terminal.write("\r"), async () => {
     await locate(terminal, "/ zzzz  0 matches").unique().expect();
     await locate(terminal, "No resources found").unique().expect();
   });
