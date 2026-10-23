@@ -5,8 +5,7 @@ import { after, before } from "node:test";
 
 import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 
-// spec: tui-interactions/save-selected-harnesses
-// spec: tui-interactions/harness-options-return-after-compact-resize
+// Unknown-ID save/resize bindings await #935; this fixture uses known IDs only.
 // spec: tui-interactions/slash-leaves-fixed-choice-dialogs-unchanged
 const journey = defineFixture("harness-global-and-fixed-choices", ["tui"]);
 before(journey.setup);

@@ -50,7 +50,7 @@ metadata:
 In a consumer project that has your registry configured but does not select `docs-server`, run:
 
 ```bash
-agent-marketplace install review-code
+agent-marketplace install review-code --scope repo
 ```
 
 The resource installs anyway. For the sample `registry` and `path` hints above, the output includes:
