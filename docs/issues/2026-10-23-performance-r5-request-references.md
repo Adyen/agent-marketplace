@@ -119,10 +119,18 @@ The tracked production bytes remain unchanged.
   skips, using the pinned Node/pnpm toolchain and frozen offline dependencies.
 - The initial combined local E2E attempt, run alongside terminal QA,
   reached the 20-minute package deadline and the wrapper reported only a
-  package failure (1,224.679 seconds including setup). This is not a passing
-  local E2E result. Complete E2E/released-client acceptance is tracked by
-  the required PR CI gate; a standalone full run with the unchanged deadline
-  and private Go-event capture supplies additional local evidence.
+  package failure (1,224.679 seconds including setup).
+- An unfiltered host retry with isolated Git configuration and a 40-minute
+  local package deadline passes 1,446 tests and subtests, with no failures,
+  in 1,304.308 seconds. All three required refusal witnesses pass. Command
+  coverage records 3,427 invocations, 113 of 113 requirements, and zero
+  listed gaps; ShellCheck passes both compatibility scripts. This does not
+  change the repository's 20-minute deadline or count the earlier attempts
+  as passing. Nine existing skips remain: five hook defects tracked by
+  #814, #806, #810, #813, and #631, plus four tests reserved for the dedicated
+  released-client gate. These skipped cases are not counted as passed.
+  Standard E2E/released-client acceptance and the full root suite must pass
+  in PR CI.
 
 ## Review Coverage
 
