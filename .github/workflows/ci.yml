@@ -1201,10 +1201,24 @@ jobs:
       - name: Build release artifacts
         run: make release
 
+      - name: Render curated release notes
+        id: notes
+        run: |
+          previous=$(git tag --merged "$VERSION^" --list 'v*' --sort=-v:refname | grep -m1 -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true)
+          if [ -z "$previous" ]; then
+            echo "No previous stable tag; the release uses GitHub's generated notes only."
+            exit 0
+          fi
+          go run ./tools/specaudit release-notes -base "$previous" -head "$VERSION" -o release-notes.md
+          echo "previous_tag=$previous" >> "$GITHUB_OUTPUT"
+          echo "body_path=release-notes.md" >> "$GITHUB_OUTPUT"
+
       - name: Upload release binaries
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           files: dist/*
+          body_path: ${{ steps.notes.outputs.body_path }}
+          previous_tag: ${{ steps.notes.outputs.previous_tag }}
           generate_release_notes: true
 
   homebrew:
