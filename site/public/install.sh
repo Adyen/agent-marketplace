@@ -93,12 +93,12 @@ main() {
   if ! chmod 0755 "$install_tmp" 2>/dev/null; then
     fail "could not make installed binary executable"
   fi
+  "$install_tmp" --version || fail "verified binary does not run: $asset"
   if ! mv -f "$install_tmp" "$install_dir/agent-marketplace" 2>/dev/null; then
     fail "could not install binary in $install_dir"
   fi
   install_tmp=
 
-  "$install_dir/agent-marketplace" --version
   resolved=$(command -v agent-marketplace || true)
   if [[ -n "$resolved" && "$resolved" != "$install_dir/agent-marketplace" ]]; then
     printf 'agent-marketplace install: warning: %s shadows %s/agent-marketplace on PATH\n' "$resolved" "$install_dir" >&2

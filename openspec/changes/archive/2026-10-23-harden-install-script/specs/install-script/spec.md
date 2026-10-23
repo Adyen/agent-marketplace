@@ -9,7 +9,7 @@ The install script SHALL download the release's `SHA256SUMS` first, and the bina
 - **THEN** the script installs it
 
 #### Scenario: Unverifiable download leaves the installation unchanged
-- **WHEN** a download fails, `SHA256SUMS` is missing or lacks the binary's entry, the checksum does not match, a hash tool fails, a temporary file cannot be created, the binary cannot be copied, made executable, or moved into place, or no hash tool is available
+- **WHEN** a download fails, `SHA256SUMS` is missing or lacks the binary's entry, the checksum does not match, a hash tool fails, a temporary file cannot be created, the binary cannot be copied, made executable, run, or moved into place, or no hash tool is available
 - **THEN** the script exits non-zero with an error naming the cause
 - **AND** the install directory, including any existing `agent-marketplace`, is unchanged
 - **AND** no temporary download or staged file remains
@@ -39,7 +39,7 @@ The install script SHALL download the release's `SHA256SUMS` first, and the bina
 
 ### Requirement: Install script installs into a user directory
 
-The install script SHALL install the verified binary as `agent-marketplace` in `AGENT_MARKETPLACE_INSTALL_DIR` when set, otherwise in `$HOME/.local/bin`, creating the directory when missing. A leading `~` in `AGENT_MARKETPLACE_INSTALL_DIR`, meaning exactly `~` or `~/...`, MUST expand to `$HOME`. The directory MUST be an absolute path after expansion. `HOME` MUST be required only for the default directory or a `~` expansion, and that check MUST happen before any network request. A directory at the target `agent-marketplace` path MUST be refused before any network request. The installed file MUST be executable and MUST replace an existing `agent-marketplace` atomically. The script SHALL print the installed program's `--version` output, and SHALL print how to add the directory to `PATH` when it is not already on `PATH`. When another `agent-marketplace` executable earlier on `PATH` shadows the installed one, the script SHALL warn on standard error.
+The install script SHALL install the verified binary as `agent-marketplace` in `AGENT_MARKETPLACE_INSTALL_DIR` when set, otherwise in `$HOME/.local/bin`, creating the directory when missing. A leading `~` in `AGENT_MARKETPLACE_INSTALL_DIR`, meaning exactly `~` or `~/...`, MUST expand to `$HOME`. The directory MUST be an absolute path after expansion. `HOME` MUST be required only for the default directory or a `~` expansion, and that check MUST happen before any network request. A directory at the target `agent-marketplace` path MUST be refused before any network request. The installed file MUST be executable and MUST replace an existing `agent-marketplace` atomically. The script MUST run the staged binary with `--version` before replacing an existing `agent-marketplace`, and a failing run MUST leave the existing installation in place. The script SHALL print the installed program's `--version` output, and SHALL print how to add the directory to `PATH` when it is not already on `PATH`. When another `agent-marketplace` executable earlier on `PATH` shadows the installed one, the script SHALL warn on standard error.
 
 #### Scenario: Binary is installed into the default or overridden directory
 - **WHEN** verification succeeds

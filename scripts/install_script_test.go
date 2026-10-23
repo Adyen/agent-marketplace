@@ -506,6 +506,11 @@ var verificationFailures = []struct {
 			i.fakeTool(t, "chmod", "exit 1")
 			return ""
 		}},
+	{name: "binary does not run", want: "does not run",
+		prepare: func(t *testing.T, i installer) string {
+			i.addAsset(t, linuxAMD, []byte("#!/bin/sh\nexit 1\n"), "", "")
+			return ""
+		}},
 	{name: "move fails", want: "could not install binary in",
 		prepare: func(t *testing.T, i installer) string {
 			prepareRelease(t, i)
@@ -607,7 +612,7 @@ func TestInstallScriptTruncatedStreamRunsNoCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cut := strings.Index(string(source), `"$install_dir/agent-marketplace" --version`)
+	cut := strings.Index(string(source), `"$install_tmp" --version`)
 	if cut < 0 {
 		t.Fatal("could not identify the end of the installer body")
 	}
