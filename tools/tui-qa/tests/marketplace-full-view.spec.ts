@@ -45,6 +45,9 @@ const treeDigest = (root: string): Map<string, string> => {
   return snapshot;
 };
 
+// spec: tui-navigation/inspect-an-exact-skill-before-installation-without-writes
+// spec: tui-mouse-navigation/bundle-tree-and-preview-receive-their-own-wheel-input
+// spec: tui-mouse-navigation/marketplace-selection-and-scrolling-preserve-clipboard-boundaries
 journey.test("marketplace full view browses inspection content, selects preview text, and keeps wheel routing", async (terminal) => {
   const fixture = journey.current();
   const controlledPaths = [

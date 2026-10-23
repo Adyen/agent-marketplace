@@ -6,6 +6,7 @@ import { after, before } from "node:test";
 import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 import { runAM } from "./process-helpers.js";
 
+// spec: tui-feedback/toggle-hints-follow-row-eligibility
 const journey = defineFixture("required-toggle-refusal", ["tui"], 80, 24, { organization: "published-lock" });
 before(journey.setup);
 after(journey.cleanup);

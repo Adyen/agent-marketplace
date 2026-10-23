@@ -7,6 +7,7 @@ import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 import { runNonTTY } from "./process-helpers.js";
 
 // spec: resource-selection/tui-update-refuses-a-newly-missing-selection
+// spec: tui-error-recovery/structured-refusals-render-their-own-remediation
 const journey = defineFixture("update-selection-refusal", ["tui"]);
 before(journey.setup);
 after(journey.cleanup);
