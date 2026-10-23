@@ -168,4 +168,7 @@ func TestReleaseNotesMakeTargetPreviewsStableRange(t *testing.T) {
 	if !strings.Contains(recipe, "./tools/specaudit release-notes") || !strings.Contains(recipe, "-head HEAD") {
 		t.Errorf("make release-notes does not render the stable tag through HEAD:\n%s", recipe)
 	}
+	if !strings.Contains(recipe, `grep -m1 -E '^v[0-9]+\.[0-9]+\.[0-9]+$$'`) || !strings.Contains(recipe, "--merged HEAD^ ") {
+		t.Errorf("make release-notes does not select the previous stable tag before HEAD:\n%s", recipe)
+	}
 }
