@@ -41,6 +41,8 @@ const (
 	kindSpecImpactNoReason  = "spec-impact-reason-required"
 	kindMissingTUIQAJourney = "missing-tui-qa-journey"
 	kindTUIQAImpactNoReason = "tui-qa-impact-reason-required"
+	kindMissingReleaseNote  = "missing-release-note"
+	kindReleaseNoteNoReason = "release-note-reason-required"
 )
 
 // errFindings signals that findings were already printed.

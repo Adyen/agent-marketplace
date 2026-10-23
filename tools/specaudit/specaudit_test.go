@@ -613,6 +613,118 @@ func TestGateReadsTUIQAEvidenceFromGitRange(t *testing.T) {
 	check(journey, trailed, nil, "TUI-QA-Impact: none — comment-only change")
 }
 
+func TestEvaluateReleaseNotes(t *testing.T) {
+	const proposal = "openspec/changes/c1/proposal.md"
+	cases := []struct {
+		name        string
+		content     string
+		wantKinds   []string
+		wantSummary string
+	}{
+		{
+			name:        "normal note",
+			content:     "## Why\n\nx\n\n## Release note\n\nUsers see a faster sync.\n",
+			wantSummary: "1 added change proposals with release notes",
+		},
+		{
+			name:        "breaking note",
+			content:     "## Release note\n\nBreaking: rename the flag; run the migration first.\n\n## Impact\n",
+			wantSummary: "1 added change proposals with release notes",
+		},
+		// spec: spec-governance/proposal-without-release-note-fails
+		{
+			name:      "missing section",
+			content:   "## Why\n\nx\n",
+			wantKinds: []string{kindMissingReleaseNote},
+		},
+		{
+			name:      "heading with empty body",
+			content:   "## Release note\n\n## Why\n",
+			wantKinds: []string{kindMissingReleaseNote},
+		},
+		{
+			name:      "bare breaking prefix",
+			content:   "## Release note\n\nBreaking:\n",
+			wantKinds: []string{kindMissingReleaseNote},
+		},
+		{
+			name:      "breaking prefix with only spaces",
+			content:   "## Release note\n\nBreaking:   \n",
+			wantKinds: []string{kindMissingReleaseNote},
+		},
+		{
+			name:      "section inside a fenced block does not count",
+			content:   "```\n## Release note\n\nx\n```\n",
+			wantKinds: []string{kindMissingReleaseNote},
+		},
+		// spec: spec-governance/release-note-none-without-reason-fails
+		{
+			name:      "none without reason",
+			content:   "## Release note\n\nnone\n",
+			wantKinds: []string{kindReleaseNoteNoReason},
+		},
+		{
+			name:      "none with dash and no reason",
+			content:   "## Release note\n\nnone —\n",
+			wantKinds: []string{kindReleaseNoteNoReason},
+		},
+		// spec: spec-governance/release-note-none-with-reason-passes
+		{
+			name:        "none with em dash reason",
+			content:     "## Release note\n\nnone — refactor only\n",
+			wantSummary: "1 added change proposals with release notes",
+		},
+		{
+			name:        "none with ASCII dash reason",
+			content:     "## Release note\n\nnone - refactor only\n",
+			wantSummary: "1 added change proposals with release notes",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			findings, summary := evaluateReleaseNotes(map[string]string{proposal: tc.content})
+			if got := kinds(findings); !slices.Equal(got, tc.wantKinds) {
+				t.Fatalf("kinds = %v, want %v\n%s", got, tc.wantKinds, details(findings))
+			}
+			if !strings.Contains(summary, tc.wantSummary) {
+				t.Errorf("summary %q does not contain %q", summary, tc.wantSummary)
+			}
+		})
+	}
+	if findings, summary := evaluateReleaseNotes(nil); len(findings) != 0 || summary != "no added change proposals" {
+		t.Errorf("no proposals: findings = %v, summary = %q", findings, summary)
+	}
+}
+
+// spec: spec-governance/pre-existing-proposals-are-not-checked
+func TestGateReadsReleaseNotesFromGitRange(t *testing.T) {
+	root, run, commit := gitRepo(t)
+	base := commit("openspec/changes/old/proposal.md", "## Why\n\nold\n")
+	check := func(from, to string, wantKinds []string) {
+		t.Helper()
+		findings, _, err := gate(root, from, to)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := kinds(findings); !slices.Equal(got, wantKinds) {
+			t.Fatalf("kinds = %v, want %v\n%s", got, wantKinds, details(findings))
+		}
+	}
+
+	edited := commit("openspec/changes/old/proposal.md", "## Why\n\nold, reworded\n")
+	check(base, edited, nil)
+
+	added := commit("openspec/changes/new/proposal.md", "## Why\n\nnew\n")
+	check(edited, added, []string{kindMissingReleaseNote})
+
+	if err := os.MkdirAll(filepath.Join(root, "openspec/changes/archive/2026-01-01-old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run("mv", "openspec/changes/old/proposal.md", "openspec/changes/archive/2026-01-01-old/proposal.md")
+	run("commit", "-q", "-m", "archive old")
+	check(added, run("rev-parse", "HEAD"), []string{kindMissingReleaseNote})
+}
+
 func TestRun(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if err := run([]string{"--help"}, &out, &errOut); err != nil || !strings.Contains(out.String(), "usage: specaudit") {

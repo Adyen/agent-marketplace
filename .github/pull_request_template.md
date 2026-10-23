@@ -29,6 +29,7 @@ Fixes #<!-- issue number, or remove this line -->
 
 - [ ] This change updates `openspec/` with a spec delta, or the commit carries a `Spec-Impact: none - <reason>` trailer because behavior is unchanged
 - [ ] User-facing changes are reflected in `site/docs`
+- [ ] Each new `openspec/changes/*/proposal.md` has a `## Release note` (user-facing sentences, `Breaking: ...` with upgrade steps, or `none - <reason>`)
 
 ## Before you submit
 
