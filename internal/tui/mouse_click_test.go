@@ -216,6 +216,38 @@ func bundleRowOf(t *testing.T, m Model, relPath string) int {
 	return 0
 }
 
+// A bundle root label wider than the tree pane stays on one row, so a click
+// selects the entry drawn under the pointer rather than the one below it.
+// spec: tui-mouse-navigation/clicking-a-bundle-tree-entry-selects-and-previews-it
+func TestMouseClickBundleTreeEntryUnderALongRootLabel(t *testing.T) {
+	m := bundleClickModelWithRefs(t, false)
+	root := filepath.Join(t.TempDir(), strings.Repeat("long-bundle-name-", 4))
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"a.md", "b.md"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m.bundle = newBundleTree(root, "")
+	m.detailSelectedPath = m.bundle.selectedPath()
+	row := -1
+	for y, line := range strings.Split(ansi.Strip(m.viewContent()), "\n") {
+		if strings.Contains(line, "b.md") {
+			row = y
+			break
+		}
+	}
+	if row < 0 {
+		t.Fatalf("b.md is not drawn:\n%s", ansi.Strip(m.viewContent()))
+	}
+	model, cmd := clickAt(t, wrapClickModel(m), 2, row)
+	if got := innerListModel(t, model).detailSelectedPath; got != "b.md" || cmd == nil {
+		t.Fatalf("clicking the drawn b.md row %d selected %q (preview requested %t), want b.md", row, got, cmd != nil)
+	}
+}
+
 // spec: tui-mouse-navigation/clicking-a-bundle-tree-entry-selects-and-previews-it
 func TestMouseClickSelectsBundleTreeEntry(t *testing.T) {
 	m := bundleClickModel(t)
