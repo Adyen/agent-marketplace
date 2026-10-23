@@ -7,6 +7,11 @@ import { after, before } from "node:test";
 import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 import { readRegularFile, runAM, write } from "./process-helpers.js";
 
+const assertContent = (file: string, expected: string): void => {
+  assert.ok(fs.statSync(file, { throwIfNoEntry: false })?.isFile(), `expected fixture file to exist: ${file}`);
+  assert.equal(fs.readFileSync(file, "utf8"), expected, file);
+};
+
 const snapshot = (roots: string[]): Map<string, string> => {
   const files = new Map<string, string>();
   const visit = (file: string): void => {
@@ -60,13 +65,18 @@ for (const relative of [false, true]) {
   // spec: tui-navigation/missing-or-unsafe-local-content-fails-read-only
   journey.test(`${label} local sources browse their own skill and command, and refuse missing or unsafe payloads`, async (terminal) => {
     const fixture = journey.current();
+    await step("settled local source and real materialized control", () => {}, async () => {
+      await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
+      await locate(terminal, /Enabled\s+\(1\)/).unique().expect();
+      await locate(terminal, /Available\s+\(2\)/).unique().expect();
+    });
     const nativeRoot = relative ? fixture.repo : fixture.home;
     const generated = [".factory", ".gemini", relative ? ".devin" : ".config/devin"].map((harness) => {
       const installed = path.join(nativeRoot, harness, "skills", "beta-skill");
       assert.equal(fs.lstatSync(installed).isSymbolicLink(), true, installed);
       const target = fs.realpathSync(installed);
       assert.ok(target.startsWith(`${fs.realpathSync(fixture.root)}${path.sep}`), "native control escapes the task-owned fixture");
-      assert.equal(fs.readFileSync(path.join(target, "SKILL.md"), "utf8"), fixture.expectedBetaSkillContent);
+      assertContent(path.join(target, "SKILL.md"), fixture.expectedBetaSkillContent);
       return target;
     });
     const primary = path.join(source, "skills", "alpha-skill", "SKILL.md");
@@ -80,11 +90,6 @@ for (const relative of [false, true]) {
       path.join(fixture.home, ".gemini"),
       path.join(fixture.home, ".config", "devin")
     ];
-    await step("settled local source and real materialized control", () => {}, async () => {
-      await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
-      await locate(terminal, /Enabled\s+\(1\)/).unique().expect();
-      await locate(terminal, /Available\s+\(2\)/).unique().expect();
-    });
     let baseline = snapshot(controlled);
     const unchanged = (): void => assert.deepEqual(snapshot(controlled), baseline, "browsing changed controlled files or metadata");
     const noDecoy = async (): Promise<void> => {
@@ -176,16 +181,22 @@ marketplace.test("installed Marketplace content previews its definition and stag
   const fixture = marketplace.current();
   assert.ok(fixture.marketplaceArchiveDigest);
   assert.ok(fixture.orgConfigPath);
+  assert.ok(fixture.expectedOrgSkillContent);
+  // Startup may restage cached support; check its files only after verification.
+  await step("settled installed Marketplace fixture", () => {}, async () => {
+    await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
+    await locate(terminal, /Required\s+\(1\)/).unique().expect();
+  });
   const digest = fixture.marketplaceArchiveDigest.replace(":", "-");
   const staged = path.join(fixture.cacheDir, "marketplace", "compiled", "marketplace-artifacts", digest);
   const notes = path.join(staged, "notes.md");
   const installed = path.join(fixture.home, ".factory", "skills", "org-review");
   assert.equal(fs.lstatSync(path.join(staged, "SKILL.md"), { throwIfNoEntry: false }), undefined, "the fixture must keep its canonical definition separate from staged support");
-  assert.equal(fs.readFileSync(notes, "utf8"), "# Review Notes\n\nVerified supporting instructions.\n");
-  assert.equal(fs.readFileSync(path.join(installed, "notes.md"), "utf8"), "# Review Notes\n\nVerified supporting instructions.\n");
+  assertContent(notes, "# Review Notes\n\nVerified supporting instructions.\n");
+  assertContent(path.join(installed, "notes.md"), "# Review Notes\n\nVerified supporting instructions.\n");
   const generated = fs.realpathSync(installed);
   assert.ok(generated.startsWith(`${fs.realpathSync(fixture.root)}${path.sep}`), "installed Marketplace control escapes the task-owned fixture");
-  assert.equal(fs.readFileSync(path.join(generated, "SKILL.md"), "utf8"), fixture.expectedOrgSkillContent);
+  assertContent(path.join(generated, "SKILL.md"), fixture.expectedOrgSkillContent);
   const controlled = [
     path.dirname(staged), generated, fixture.repo,
     ...["artifacts", "placeholder-artifacts"].map((form) => path.join(fixture.cacheDir, "marketplace", form, digest)),
@@ -193,10 +204,6 @@ marketplace.test("installed Marketplace content previews its definition and stag
     path.join(fixture.home, ".factory"),
     path.dirname(fixture.orgConfigPath)
   ];
-  await step("settled installed Marketplace fixture", () => {}, async () => {
-    await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
-    await locate(terminal, /Required\s+\(1\)/).unique().expect();
-  });
   assert.ok(fixture.marketplaceAcquisitionDataRequestCount);
   const acquired = fixture.marketplaceAcquisitionDataRequestCount();
   assert.ok(acquired > 0, "the fixture must actually acquire verified Marketplace content");
@@ -207,7 +214,11 @@ marketplace.test("installed Marketplace content previews its definition and stag
     await locate(terminal, "verified.marker").expect({ not: true });
     await locate(terminal, ".cache").expect({ not: true });
   };
-  await step("select the installed Marketplace skill", () => terminal.write("/org-review\r"), async () => {
+  await step("search the installed Marketplace skill", () => terminal.write("/org-review"), async () => {
+    await locate(terminal, "/ org-review").unique().expect();
+    await locate(terminal, /enter apply.*esc cancel/).unique().expect();
+  });
+  await step("select the installed Marketplace skill", () => terminal.write("\r"), async () => {
     await locate(terminal, "/ org-review  1 match").unique().expect();
     await locate(terminal, /Name:\s+org-review/).unique().expect();
     await locate(terminal, /enter apply.*esc cancel/).expect({ not: true });
@@ -248,7 +259,7 @@ marketplace.test("installed Marketplace content previews its definition and stag
   unchanged();
   fs.symlinkSync(unavailable, staged, "dir");
   assert.equal(fs.lstatSync(staged).isSymbolicLink(), true);
-  assert.equal(fs.readFileSync(path.join(unavailable, "notes.md"), "utf8"), "# Review Notes\n\nVerified supporting instructions.\n");
+  assertContent(path.join(unavailable, "notes.md"), "# Review Notes\n\nVerified supporting instructions.\n");
   baseline = snapshot(controlled);
   await step("an unsafe staged root fails instead of following its live target", () => terminal.write("\r"), async () => {
     await locate(terminal, /Error reading resource:/).unique().expect();
