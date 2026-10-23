@@ -55,7 +55,8 @@ Named batches MUST preserve existing single-name selection semantics, collection
 #### Scenario: Singleton and no-name install behavior is retained
 
 - **WHEN** a user installs one resource or collection, or uses `--from` without names
-- **THEN** existing selection, collection expansion, inferred-name or bulk behavior, and output MUST remain unchanged
+- **THEN** existing selection, collection expansion, inferred-name or bulk behavior, and output MUST remain unchanged apart from the target scope
+- **AND** the target scope MUST follow `--scope` when given and otherwise the user-scope install default
 
 #### Scenario: Incompatible batch arguments are rejected before writes
 
