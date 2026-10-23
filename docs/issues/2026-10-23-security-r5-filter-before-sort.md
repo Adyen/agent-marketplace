@@ -3,8 +3,9 @@
 ## Scope And Contract
 
 This independent R53/F136 slice starts at main `c364c7a6`, after PRs #900
-and #912 merged, and integrates main `2968b44f`. The frozen ledger and
-source index remain unchanged. This is not closure of R53, R5, or #434.
+and #912 merged, and later integrates main `2968b44f`, `9f71ff74`, and
+`385b067e`. The frozen ledger and source index remain unchanged.
+This is not closure of R53, R5, or #434.
 
 `V4Config.rebuildRequests` previously collected and sorted every locator
 before discarding excluded requests during emission. It now filters keys
@@ -165,8 +166,8 @@ spec gate pass. Strict specs pass 65 items, 1,172 scenarios, and 1,926
 annotations; the enlarged terminal suite passes 57 journeys plus four
 utilities, zero skips. CI's lint log on `d379c7d2` fetches the exact
 checksum-pinned test dependency, completes module hygiene without errors or
-diffs, and reports zero lint issues. The local cache is left untouched;
-the offline local output is not retroactively called a pass.
+diffs, and reports zero lint issues. No local dependency download is
+performed by this work; the offline output is not retroactively called a pass.
 
 ## Terminal Journey Repair
 
@@ -183,6 +184,29 @@ There is no runtime change, sleep, timeout increase, or retry-policy change.
 Omitting the search input in a private generated-JavaScript mutation fails
 at the new search-frame guard as intended. The repaired journey and full
 57-journey/four-utility suite pass, with zero skips; strict specs still pass.
+
+## Final Main Integration
+
+Main `385b067e` merges its already-decided default-install-scope change.
+That upstream policy and its specs/tests are retained, not introduced or
+reinterpreted by the R5 diff. Configuration, benchmark, and dependency
+bytes remain identical to the refreshed measured variants.
+
+On that integration plus this slice:
+
+- Selected config/pipeline/resolver/TUI validation, vet, zero-issue lint,
+  and build pass. Six targeted command scope regressions pass in 8.924 seconds.
+- Strict specs pass 65 items, 1,174 scenarios, 1,928 annotations, and two
+  active changes; the committed spec gate passes.
+- All 57 terminal journeys plus four utilities pass, with zero skips.
+- Fresh combined E2E/configuration validation passes in 721.191 seconds:
+  3,427 invocations, all 113 requirements, no gaps, all three required
+  refusal witnesses executed and passed, and included shellcheck.
+- The shared dependency cache becomes populated outside this session.
+  Explicit `GOPROXY=off GOWORK=off go mod tidy -diff` passes with no
+  output or dependency-file changes, independently of the validation
+  recipe's exit handling. No new dependency download is performed by
+  this work and no global settings change.
 
 Host `open-code-review-delegate` initially covers eleven own files and then
 all twelve after this journey repair, including OCR-excluded tests,
