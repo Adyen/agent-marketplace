@@ -2158,7 +2158,7 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document, mo
 		src := c.Sources[name]
 		if src.Kind == V4SourceMarketplace {
 			group := c.Groups[name]
-			for _, exclusion := range effectiveV4Exclusions(group) {
+			for _, exclusion := range effectiveV4Exclusions(group, nil) {
 				if kind != userLayer && !c.AcquiresMarketplace(name) {
 					return nil, v4err("v4.layer-field", "resources."+name+".exclude", src.Line, "Marketplace overrides are only supported in the user configuration")
 				}
@@ -2220,7 +2220,8 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document, mo
 			if entry.Required && len(group.Include) == 0 && (!group.HasTags || len(group.Tags) == 0) && (!group.HasAll || group.All == nil || !*group.All) {
 				entry.Required = false
 			}
-			for _, request := range effectiveV4Requests(group) {
+			requests := effectiveV4Requests(group)
+			for _, request := range requests {
 				if request.Options.HasAs && request.Options.As != request.Name {
 					return nil, v4err("v4.runtime-option", "resources."+name+".include", 0, "installed aliases are not supported for consumer selections")
 				}
@@ -2230,7 +2231,7 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document, mo
 				}
 				selector.Include = append(selector.Include, request.Name)
 			}
-			for _, exclusion := range effectiveV4Exclusions(group) {
+			for _, exclusion := range effectiveV4Exclusions(group, requests) {
 				if exclusion == "*" {
 					entry.ExcludeAll = true
 					continue
@@ -2456,7 +2457,9 @@ func effectiveV4Requests(group V4ResourceGroup) []V4ResourceRequest {
 	return out
 }
 
-func effectiveV4Exclusions(group V4ResourceGroup) []string {
+// effectiveV4Exclusions preserves first-exclusion order. A non-nil requests
+// slice must be the effective requests for this group; nil computes it lazily.
+func effectiveV4Exclusions(group V4ResourceGroup, requests []V4ResourceRequest) []string {
 	seen := map[string]bool{}
 	var active map[string]bool
 	var out []string
@@ -2468,7 +2471,9 @@ func effectiveV4Exclusions(group V4ResourceGroup) []string {
 		_, resourceName := v4ExclusionKindName(decision.Exclusion)
 		if resourceName != "*" {
 			if active == nil {
-				requests := effectiveV4Requests(group)
+				if requests == nil {
+					requests = effectiveV4Requests(group)
+				}
 				active = make(map[string]bool, len(requests))
 				for _, request := range requests {
 					active[request.Locator] = true
