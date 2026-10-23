@@ -399,6 +399,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errorsViewport.SetHeight(max(1, msg.Height-1))
 		m.resizeMarketplaceConsentViewport(false)
 		m.clampListOffset()
+		m.refreshHarnessFormsForSize()
 		layout := screenLayoutFor(m.height, m.searchRowVisible())
 		listWidth, detailWidth := paneWidths(m.width)
 		slog.Debug("tui resized", "old_width", oldWidth, "old_height", oldHeight, "width", m.width, "height", m.height, "list_width", listWidth, "detail_width", detailWidth, "visible_height", layout.mainHeight)
