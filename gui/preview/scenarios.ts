@@ -288,11 +288,23 @@ const toastsScenario = (): PreviewScenario => ({
   ],
 })
 
+const syncCompleteScenario = (): PreviewScenario => ({
+  ...defaultScenario(),
+  notifications: [{ severity: 'info', message: 'sync complete' }],
+})
+
+const syncWarningsScenario = (): PreviewScenario => ({
+  ...defaultScenario(),
+  notifications: [{ severity: 'warning', message: 'sync complete with 2 warning(s)' }],
+})
+
 export const scenarios: Record<string, () => PreviewScenario> = {
   default: defaultScenario,
   empty: emptyScenario,
   syncing: syncingScenario,
   toasts: toastsScenario,
+  'sync-complete': syncCompleteScenario,
+  'sync-warnings': syncWarningsScenario,
 }
 
 export function scenario(name: string): PreviewScenario {
