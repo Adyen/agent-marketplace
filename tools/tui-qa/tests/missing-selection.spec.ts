@@ -8,6 +8,8 @@ import { runNonTTY } from "./process-helpers.js";
 
 // spec: tui-startup/optional-missing-selection-keeps-the-assessment
 // spec: tui-startup/unverifiable-selections-still-fail-the-assessment
+// spec: tui-error-recovery/operation-copies-of-snapshot-warnings-follow-the-snapshot
+// spec: tui-feedback/errors-hint-only-with-diagnostics
 const journey = defineFixture("missing-selection", ["tui"]);
 before(journey.setup);
 after(journey.cleanup);
@@ -39,6 +41,12 @@ journey.test("a missing optional selection warns and keeps drift, while a missin
     await locate(terminal, "~ 1 out of sync").unique().expect();
     await locate(terminal, "⚠ 1 warnings").unique().expect();
     await locate(terminal, "e errors").unique().expect();
+  });
+  await step("the palette offers the errors action while a warning is present", () => terminal.write(":diagnostics"), async () => {
+    await locate(terminal, "View errors and diagnostics").unique().expect();
+  });
+  await step("close the palette", () => terminal.write("\x1b"), async () => {
+    await locate(terminal, "Command palette").expect({ not: true });
     await locate(terminal, /! \d+ errors/).expect({ not: true });
   });
   assert.deepEqual(fs.readFileSync(repoLock), lockBefore, "reloading a missing optional selection changed the repository lock");

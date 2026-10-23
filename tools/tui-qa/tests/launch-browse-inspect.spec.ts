@@ -3,6 +3,7 @@ import { after, before } from "node:test";
 
 import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 
+// spec: tui-feedback/toggle-hints-follow-row-eligibility
 const journey = defineFixture("launch-browse-inspect", []);
 before(journey.setup);
 after(journey.cleanup);

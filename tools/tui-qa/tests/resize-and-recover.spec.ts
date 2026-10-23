@@ -8,6 +8,7 @@ before(journey.setup);
 after(journey.cleanup);
 
 // spec: tui-rendering/undersized-terminal
+// spec: tui-mouse-navigation/wheel-input-below-the-minimum-terminal-size-is-ignored
 journey.test("minimum-size gate preserves selection and blocks toggles", async (terminal) => {
   await step("settled fixture baseline", () => {}, async () => {
     await locate(terminal, "beta-skill").expect();
@@ -28,8 +29,10 @@ journey.test("minimum-size gate preserves selection and blocks toggles", async (
     await locate(terminal, "beta-skill").expect({ not: true });
   });
 
-  await step("ignore toggle below minimum", async () => {
+  await step("ignore toggle and wheel below minimum", async () => {
     await terminal.write(" ");
+    // Wheel up would select the Available header above alpha-skill.
+    await terminal.write("\x1b[<64;4;6M");
     await new Promise((resolve) => setTimeout(resolve, 250));
   }, async () => {
     await locate(terminal, "Resize required").unique().expect();

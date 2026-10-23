@@ -6,6 +6,7 @@ import { after, before } from "node:test";
 import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 import { runNonTTY } from "./process-helpers.js";
 
+// spec: tui-interactions/personal-local-writes-are-git-ignored-at-once
 const journey = defineFixture("local-exclude", ["tui"]);
 before(journey.setup);
 after(journey.cleanup);

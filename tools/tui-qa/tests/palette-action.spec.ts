@@ -8,6 +8,7 @@ import { runNonTTY } from "./process-helpers.js";
 
 // spec: tui-feedback/clear-search-from-the-palette
 // spec: tui-feedback/prefix-action-and-excluded-controls
+// spec: tui-feedback/errors-hint-only-with-diagnostics
 const journey = defineFixture("palette-action", ["tui"]);
 before(journey.setup);
 after(journey.cleanup);
@@ -43,6 +44,12 @@ journey.test("filtered command palette actions run sync, fold and clear-search",
     // reload and sync but not errors.
     await locate(terminal, "r reload").unique().expect();
     await locate(terminal, "e errors").expect({ not: true });
+  });
+  await step("the palette offers no errors action for plain drift", () => terminal.write(":diagnostics"), async () => {
+    await locate(terminal, "no matching actions").unique().expect();
+  });
+  await step("close the palette before syncing", () => terminal.write("\x1b"), async () => {
+    await locate(terminal, "Command palette").expect({ not: true });
   });
   assert.equal(
     fs.readFileSync(repoConfig, "utf8"),
