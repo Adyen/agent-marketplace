@@ -199,7 +199,12 @@ resources:
 	if err == nil {
 		t.Fatalf("expected non-zero exit")
 	}
-	nErrLines := len(strings.Split(err.Error(), "\n"))
+	nErrLines := 0
+	for _, line := range strings.Split(err.Error(), "\n") {
+		if !strings.HasPrefix(line, "hint: ") && strings.TrimSpace(line) != "" {
+			nErrLines++
+		}
+	}
 	if nErrLines != 1 {
 		t.Errorf("expected 1 error line, got %d; err:\n%s", nErrLines, err)
 	}

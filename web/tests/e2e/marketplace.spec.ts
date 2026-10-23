@@ -208,7 +208,7 @@ test.describe('Marketplace browser discovery', () => {
     const popup = await popupPromise
     try {
       await expect(popup).toHaveURL(`${sharedOriginURL}/docs/`)
-      await expect(popup.getByRole('heading', { level: 1, name: /^Documentation\b/ })).toBeVisible()
+      await expect(popup.getByRole('heading', { level: 1, name: /^Agent Marketplace\b/ })).toBeVisible()
       expect(await popup.evaluate(() => window.opener === null)).toBe(true)
       await popup.getByRole('link', { name: 'More install options', exact: true }).first().click()
       await expect(popup).toHaveURL(`${sharedOriginURL}/docs/install`)
@@ -227,11 +227,15 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.getByRole('link', { name: 'Docs', exact: true }).first()).toHaveAttribute('href', '/docs/')
     await expect(page.getByRole('link', { name: 'Marketplace', exact: true })).toHaveCount(0)
 
-    const lightHero = await page.locator('.hero').evaluate(element => getComputedStyle(element).getPropertyValue('--am-hero-bg').trim())
+    const lightBackground = await page.locator('.landing').evaluate(
+      element => getComputedStyle(element).backgroundColor,
+    )
     await page.evaluate(() => document.documentElement.classList.add('dark'))
-    const darkHero = await page.locator('.hero').evaluate(element => getComputedStyle(element).getPropertyValue('--am-hero-bg').trim())
-    expect(lightHero).not.toBe('')
-    expect(darkHero).not.toBe(lightHero)
+    const darkBackground = await page.locator('.landing').evaluate(
+      element => getComputedStyle(element).backgroundColor,
+    )
+    expect(lightBackground).not.toBe('rgba(0, 0, 0, 0)')
+    expect(darkBackground).not.toBe(lightBackground)
   })
 
   // spec: site-deployment-profiles/marketplace-deployment-uses-root-ui-with-same-origin-services
@@ -246,7 +250,7 @@ test.describe('Marketplace browser discovery', () => {
       request.get(`${sharedOriginURL}/.well-known/agent-marketplace.json`),
     ])
     expect(docs.ok()).toBe(true)
-    expect(await docs.text()).toMatch(/<h1[^>]*>Documentation\b/)
+    expect(await docs.text()).toMatch(/<h1[^>]*>Agent Marketplace\b/)
     expect(instance.ok()).toBe(true)
     expect((await instance.json()).name).toBe('E2E Marketplace')
     expect(discovery.ok()).toBe(true)
@@ -255,6 +259,7 @@ test.describe('Marketplace browser discovery', () => {
 
   // spec: marketplace-web-ui/browser-surfaces-present-accessible-adaptive-branding
   // spec: marketplace-web-ui/browser-surfaces-carry-the-approved-slash-motif
+  // spec: marketplace-web-ui/landing-presents-the-shared-flat-visual-system
   test('shares navigation, appearance, and branding across browser surfaces', async ({ page }) => {
     const fontStatus = () => page.evaluate(() => {
       const bodyStyle = getComputedStyle(document.body)
@@ -269,6 +274,15 @@ test.describe('Marketplace browser discovery', () => {
     })
 
     await page.goto(publicSiteURL)
+    await expect.poll(fontStatus).toMatchObject({
+      bodyFamily: 'Adyen, Helvetica, Arial, sans-serif',
+      fontSmoothing: 'antialiased',
+    })
+    await expect.poll(async () => (await fontStatus()).downloadedFonts).toBeGreaterThan(0)
+    await expect.poll(() => page.evaluate(() => ({
+      black: getComputedStyle(document.documentElement).getPropertyValue('--am-brand-black').trim(),
+      green: getComputedStyle(document.documentElement).getPropertyValue('--am-brand-green').trim(),
+    }))).toEqual({ black: '#121a18', green: '#00d16a' })
     await expect(page.locator('.h1-sub .am-brand-slash')).toHaveCount(0)
     const eyebrowSlash = page.locator('.eyebrow .am-brand-slash').first()
     await expect(eyebrowSlash).toHaveCSS('color', 'rgb(0, 209, 106)')
@@ -294,7 +308,26 @@ test.describe('Marketplace browser discovery', () => {
       slash: getComputedStyle(element.querySelector('.am-brand-slash')!).color,
     }))
     expect(eyebrowColors.label).not.toBe(eyebrowColors.slash)
-    await expect(page.getByRole('heading', { name: /Manage AI agent tooling once Sync it everywhere you work/ })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /Manage AI agent tooling once\. Sync it everywhere you work/ })).toBeVisible()
+    const landingVisuals = await page.locator('.hero').evaluate((hero) => {
+      const heading = hero.querySelector('h1')!
+      const secondary = hero.querySelector('.h1-sub')!
+      const preview = hero.querySelector('.terminal-frame')!
+      return {
+        heroBackground: getComputedStyle(hero).backgroundImage,
+        headingFamily: getComputedStyle(heading).fontFamily,
+        headingSize: getComputedStyle(heading).fontSize,
+        secondarySize: getComputedStyle(secondary).fontSize,
+        previewShadow: getComputedStyle(preview).boxShadow,
+      }
+    })
+    expect(landingVisuals).toEqual({
+      heroBackground: 'none',
+      headingFamily: 'Adyen, Helvetica, Arial, sans-serif',
+      headingSize: '48px',
+      secondarySize: '48px',
+      previewShadow: 'none',
+    })
     const landingBrand = page.locator('.VPNavBarTitle').getByRole('link', { name: 'agent-marketplace', exact: true })
     await expect(landingBrand).toHaveAttribute('href', '/')
     await expect(landingBrand.locator('img.light')).toHaveAttribute('src', '/brand/logo-horizontal-black.svg')
@@ -320,10 +353,9 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.locator('#results-heading .am-brand-slash')).toHaveCount(0)
     await expect(page.getByRole('heading', { name: 'Filters', exact: true })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Resources', exact: true })).toBeVisible()
-    const coordinateSlash = page.locator('.resource-coordinate__separator').first()
-    await expect(coordinateSlash).toHaveText('/')
-    await expect(coordinateSlash).toHaveCSS('color', 'rgb(0, 209, 106)')
-    const slashMetrics = await Promise.all([introSlash, coordinateSlash].map(locator => locator.evaluate((element) => {
+    await expect(page.locator('.resource-coordinate__separator')).toHaveCount(2)
+    await expect(page.locator('.resource-coordinate__separator').first()).toHaveCSS('color', 'rgb(0, 209, 106)')
+    const slashMetrics = await introSlash.evaluate((element) => {
       const style = getComputedStyle(element)
       const before = getComputedStyle(element, '::before')
       return {
@@ -337,26 +369,13 @@ test.describe('Marketplace browser discovery', () => {
         stroke: Number.parseFloat(style.getPropertyValue('--am-brand-slash-stroke')),
         clipPath: before.clipPath,
       }
-    })))
-    expect(slashMetrics[0].width / slashMetrics[0].fontSize).toBeCloseTo(0.364, 2)
-    expect(slashMetrics[0].height / slashMetrics[0].fontSize).toBeCloseTo(0.8, 2)
-    expect(slashMetrics[0].verticalAlign / slashMetrics[0].fontSize).toBeCloseTo(-0.08, 2)
-    expect(slashMetrics[0].marginRight / slashMetrics[0].fontSize).toBeCloseTo(0.2, 2)
-    expect(slashMetrics[1].width / slashMetrics[1].fontSize).toBeCloseTo(0.339, 2)
-    expect(slashMetrics[1].height / slashMetrics[1].fontSize).toBeCloseTo(0.8, 2)
-    expect(slashMetrics[1].verticalAlign / slashMetrics[1].fontSize).toBeCloseTo(-0.08, 2)
-    expect(slashMetrics[1].marginLeft / slashMetrics[1].fontSize).toBeCloseTo(0.2, 2)
-    expect(slashMetrics[1].marginRight / slashMetrics[1].fontSize).toBeCloseTo(0.2, 2)
-    expect(slashMetrics[0].run).toBeCloseTo(slashMetrics[1].run, 3)
-    expect(slashMetrics[0].stroke).toBeCloseTo(0.145, 3)
-    expect(slashMetrics[1].stroke).toBeCloseTo(0.12, 3)
-    expect(slashMetrics[0].clipPath).not.toBe('none')
-    expect(slashMetrics[1].clipPath).not.toBe('none')
-    const coordinateWeights = await coordinateSlash.evaluate(element => ({
-      registry: getComputedStyle(element.previousElementSibling!).fontWeight,
-      name: getComputedStyle(element.nextElementSibling!).fontWeight,
-    }))
-    expect(coordinateWeights.name).toBe(coordinateWeights.registry)
+    })
+    expect(slashMetrics.width / slashMetrics.fontSize).toBeCloseTo(0.364, 2)
+    expect(slashMetrics.height / slashMetrics.fontSize).toBeCloseTo(0.8, 2)
+    expect(slashMetrics.verticalAlign / slashMetrics.fontSize).toBeCloseTo(-0.08, 2)
+    expect(slashMetrics.marginRight / slashMetrics.fontSize).toBeCloseTo(0.2, 2)
+    expect(slashMetrics.stroke).toBeCloseTo(0.145, 3)
+    expect(slashMetrics.clipPath).not.toBe('none')
     const marketplaceBrand = marketplaceNav.getByRole('link', { name: 'agent-marketplace', exact: true })
     await expect(marketplaceBrand).toHaveAttribute('href', '/')
     await expect(marketplaceBrand.locator('.am-site-nav__brand-logo--light')).toHaveAttribute('src', '/brand/logo-horizontal-black.svg')
@@ -372,12 +391,12 @@ test.describe('Marketplace browser discovery', () => {
     await expect(marketplaceNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('rel', 'noopener noreferrer')
     await expect(marketplaceNav.getByTestId('docs-external-icon')).toBeVisible()
     await expect(page.locator('html')).not.toHaveClass(/\bdark\b/)
-    await expect.poll(fontStatus).toEqual({
-      bodyFamily: 'system-ui, sans-serif',
+    await expect.poll(fontStatus).toMatchObject({
+      bodyFamily: 'Adyen, Helvetica, Arial, sans-serif',
       fontSmoothing: 'antialiased',
       textRendering: 'optimizelegibility',
-      downloadedFonts: 0,
     })
+    await expect.poll(async () => (await fontStatus()).downloadedFonts).toBeGreaterThan(0)
 
     const marketplaceSwitch = marketplaceNav.getByRole('switch', { name: 'Switch to dark theme' })
     await marketplaceSwitch.click()
@@ -387,7 +406,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect.poll(() => page.evaluate(key => localStorage.getItem(key), sharedAppearanceKey)).toBe('dark')
 
     await page.goto(`${sharedOriginURL}/docs/`)
-    await expect(page.getByRole('heading', { name: /Documentation/ })).toBeVisible()
+    await expect(page.getByRole('heading', { level: 1, name: /^Agent Marketplace\b/ })).toBeVisible()
     const docsNav = page.getByRole('navigation', { name: 'Main Navigation' })
     const docsBrand = page.locator('.VPNavBarTitle').getByRole('link', { name: 'agent-marketplace', exact: true })
     await expect(docsBrand).toHaveAttribute('href', '/docs/')
@@ -401,22 +420,11 @@ test.describe('Marketplace browser discovery', () => {
     await expect(docsNav.getByRole('link', { name: 'Marketplace', exact: true })).toHaveAttribute('href', '/')
     await expect(docsNav.getByRole('link', { name: 'Docs', exact: true })).toHaveAttribute('href', '/docs/')
     await expect(page.locator('html')).toHaveClass(/\bdark\b/)
-    await expect.poll(() => page.evaluate(() => {
-      const bodyStyle = getComputedStyle(document.body)
-      return {
-        bodyFamily: bodyStyle.fontFamily,
-        fontSmoothing: bodyStyle.getPropertyValue('-webkit-font-smoothing'),
-        textRendering: bodyStyle.textRendering,
-        downloadedFonts: performance.getEntriesByType('resource')
-          .filter(entry => /\.(?:woff2?|ttf|otf)(?:\?|$)/.test(entry.name))
-          .length,
-      }
-    })).toEqual({
-      bodyFamily: 'system-ui, sans-serif',
+    await expect.poll(fontStatus).toMatchObject({
+      bodyFamily: 'Adyen, Helvetica, Arial, sans-serif',
       fontSmoothing: 'antialiased',
-      textRendering: 'optimizelegibility',
-      downloadedFonts: 0,
     })
+    await expect.poll(async () => (await fontStatus()).downloadedFonts).toBeGreaterThan(0)
 
     const docsSwitch = page.locator('.VPNavBarAppearance .VPSwitchAppearance')
     await docsSwitch.click()
@@ -475,6 +483,61 @@ test.describe('Marketplace browser discovery', () => {
     }
   })
 
+  // spec: marketplace-web-ui/reduced-motion-preserves-final-landing-content-and-controls
+  // spec: marketplace-web-ui/successful-command-copy-is-visible-and-announced
+  test('keeps Landing feedback functional with and without motion', async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { writeText: async () => undefined },
+      })
+    })
+    await page.goto(publicSiteURL)
+
+    const copy = page.getByRole('button', { name: 'Copy command' }).first()
+    await copy.click()
+    await expect(copy).toContainText('Copied')
+    await expect(page.getByRole('status').first()).toHaveText('Command copied')
+
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.reload()
+    await expect(page.locator('.hero h1')).toHaveCSS('animation-name', 'none')
+    await expect(page.locator('.eyebrow-text .noise')).toHaveCount(0)
+
+    const tabs = page.getByRole('tablist', { name: 'Harness target' })
+    const selected = tabs.getByRole('tab', { selected: true })
+    const selectedText = await selected.textContent() ?? ''
+    await selected.focus()
+    await selected.press('ArrowRight')
+    await expect(tabs.getByRole('tab', { selected: true })).not.toHaveText(selectedText)
+  })
+
+  // spec: marketplace-web-ui/scope-comparison-identifies-the-repository-default
+  test('keeps Landing scope outcomes comparable without implying selection', async ({ page }) => {
+    await page.goto(publicSiteURL)
+
+    const scopes = page.locator('#scopes')
+    const scopeCards = page.locator('.scope-card')
+    await expect(scopeCards).toHaveCount(3)
+    await expect(page.locator('.scope-fact--config')).toHaveCount(3)
+    await expect(scopes.getByRole('radio')).toHaveCount(0)
+    await expect(scopes).toContainText('--scope user')
+    await expect(scopes).toContainText('--scope repo')
+    await expect(scopes).toContainText('--scope local')
+    const repositoryScope = scopes
+      .getByRole('heading', { name: 'Repository Default', exact: true })
+      .locator('..')
+    await expect(repositoryScope).toContainText('Default')
+    await expect(page.locator('.scope-command')).toContainText(
+      'agent-marketplace install pdf --scope repo',
+    )
+
+    const harnessTabs = page.getByRole('tablist', { name: 'Harness target' }).getByRole('tab')
+    await expect(harnessTabs.first()).toHaveText('Claude Code')
+    await expect(harnessTabs.first()).toHaveAttribute('aria-selected', 'true')
+  })
+
+  // spec: marketplace-web-ui/public-routes-use-shared-foundations-without-changing-behavior
   test('applies the Marketplace palette in both themes', async ({ page }) => {
     const themes = {
       light: {
@@ -483,11 +546,11 @@ test.describe('Marketplace browser discovery', () => {
           surface: 'rgb(255, 255, 255)',
           subtle: 'rgb(245, 246, 245)',
           raised: 'rgb(255, 255, 255)',
-          chrome: 'rgb(255, 255, 255)',
+          chrome: 'rgb(245, 246, 245)',
           control: 'rgb(255, 255, 255)',
           hover: 'rgb(244, 245, 244)',
           code: 'rgb(245, 246, 245)',
-          primaryText: 'rgb(27, 38, 32)',
+          primaryText: 'rgb(18, 26, 24)',
           secondaryText: 'rgb(83, 97, 90)',
           mutedText: 'rgb(95, 110, 101)',
           border: 'rgb(222, 223, 222)',
@@ -498,8 +561,8 @@ test.describe('Marketplace browser discovery', () => {
       },
       dark: {
         marketplace: {
-          canvas: 'rgb(20, 26, 24)',
-          surface: 'rgb(27, 35, 32)',
+          canvas: 'rgb(18, 26, 24)',
+          surface: 'rgb(18, 26, 24)',
           subtle: 'rgb(35, 46, 40)',
           raised: 'rgb(40, 52, 45)',
           chrome: 'rgb(27, 35, 32)',
@@ -549,7 +612,7 @@ test.describe('Marketplace browser discovery', () => {
 
       const header = page.locator('.am-site-header')
       await expect(header).toHaveCSS('background-color', theme.marketplace.chrome)
-      await expect(header).toHaveCSS('border-bottom-color', theme.marketplace.border)
+      await expect(header).toHaveCSS('border-bottom-width', '0px')
 
       const search = page.getByLabel('Search', { exact: true })
       await expect(search).toHaveCSS('background-color', theme.marketplace.control)
@@ -625,38 +688,79 @@ test.describe('Marketplace browser discovery', () => {
     }
   })
 
-  test('keeps dense Marketplace copy readable in dark mode', async ({ page }) => {
-    await page.goto('/')
-    await page.evaluate(key => localStorage.setItem(key, 'dark'), sharedAppearanceKey)
-    await page.reload()
-    await expect(page.locator('html')).toHaveClass(/\bdark\b/)
+  // spec: marketplace-web-ui/browse-roles-use-the-approved-hierarchy
+  // spec: marketplace-web-ui/resource-row-highlights-its-meaningful-coordinate-separator
+  test('uses the cohesive browse typography hierarchy in both themes', async ({ page }) => {
+    for (const appearance of ['light', 'dark']) {
+      await page.goto('/')
+      await page.evaluate(
+        ({ key, appearance }) => localStorage.setItem(key, appearance),
+        { key: sharedAppearanceKey, appearance },
+      )
+      await page.reload()
 
-    const typography = await page.evaluate(() => {
-      const metrics = (selector: string) => {
-        const element = document.querySelector(selector)
-        if (!element) throw new Error(`Missing typography probe: ${selector}`)
-        const style = getComputedStyle(element)
-        return {
-          size: Number.parseFloat(style.fontSize),
-          weight: Number.parseInt(style.fontWeight, 10),
+      const typography = await page.evaluate(() => {
+        const metrics = (selector: string) => {
+          const element = document.querySelector(selector)
+          if (!element) throw new Error(`Missing typography probe: ${selector}`)
+          const style = getComputedStyle(element)
+          return {
+            family: style.fontFamily,
+            size: style.fontSize,
+            lineHeight: style.lineHeight,
+            weight: style.fontWeight,
+            letterSpacing: style.letterSpacing,
+            textTransform: style.textTransform,
+          }
         }
-      }
 
-      return {
-        kind: metrics('article:first-of-type span.font-mono'),
-        coordinate: metrics('article:first-of-type h2'),
-        description: metrics('article:first-of-type p.text-toned'),
-        copyAction: metrics('article:first-of-type button'),
-      }
-    })
+        return {
+          pageTitle: metrics('.marketplace-intro h1'),
+          introduction: metrics('.marketplace-intro__description'),
+          resourcesHeading: metrics('#results-heading'),
+          resourceName: metrics('.resource-row__name'),
+          resourceRegistry: metrics('.resource-row__registry'),
+          resourceDescription: metrics('.resource-row__description'),
+          filterOption: metrics('.catalog-filter-option'),
+          searchInput: metrics('#search-query'),
+          copyButton: metrics('article:first-of-type .copy-button'),
+          resourceKind: metrics('.resource-row__kind'),
+          installationCount: metrics('.resource-row__installations'),
+          availability: metrics('article:nth-of-type(2) .resource-row__availability'),
+          resultCount: metrics('.catalog-results__header > p'),
+          endMessage: metrics('.catalog-stream-complete'),
+          filterHeading: metrics('.catalog-filter-label'),
+          fontSynthesis: getComputedStyle(document.body).fontSynthesis,
+          sans600Loaded: document.fonts.check('600 16px Adyen'),
+        }
+      })
 
-    expect(typography.kind.size).toBeGreaterThanOrEqual(13)
-    expect(typography.coordinate.size).toBeGreaterThanOrEqual(15)
-    expect(typography.description.size).toBeGreaterThanOrEqual(15)
-    expect(typography.copyAction.size).toBeGreaterThanOrEqual(13)
-    expect(typography.kind.weight).toBeGreaterThanOrEqual(450)
-    expect(typography.coordinate.weight).toBeGreaterThanOrEqual(450)
-    expect(typography.description.weight).toBeGreaterThanOrEqual(450)
+      const sansFamily = 'Adyen, Helvetica, Arial, sans-serif'
+      expect(typography.pageTitle).toMatchObject({ family: sansFamily, size: '32px', lineHeight: '40px', weight: '600' })
+      expect(typography.introduction).toMatchObject({ family: sansFamily, size: '16px', lineHeight: '24px', weight: '400' })
+      expect(typography.resourcesHeading).toMatchObject({ family: sansFamily, size: '22px', lineHeight: '28px', weight: '600' })
+      expect(typography.resourceName).toMatchObject({ family: sansFamily, size: '16px', lineHeight: '24px', weight: '600' })
+      expect(typography.resourceRegistry).toMatchObject({ family: sansFamily, size: '16px', lineHeight: '24px', weight: '400' })
+      expect(typography.resourceKind).toMatchObject({ family: sansFamily, size: '16px', lineHeight: '24px', weight: '400' })
+      expect(typography.resourceDescription).toMatchObject({ family: sansFamily, size: '14px', lineHeight: '20px', weight: '400' })
+      expect(typography.filterOption).toMatchObject({ family: sansFamily, size: '14px', lineHeight: '20px', weight: '400', letterSpacing: 'normal', textTransform: 'none' })
+      expect(typography.searchInput).toMatchObject({ family: sansFamily, size: '14px', lineHeight: '20px', weight: '400' })
+      expect(typography.copyButton).toMatchObject({ family: sansFamily, size: '14px', lineHeight: '20px', weight: '500' })
+      for (const role of ['installationCount', 'availability', 'resultCount', 'endMessage'] as const) {
+        expect(typography[role]).toMatchObject({ family: sansFamily, size: '12px', lineHeight: '18px', weight: '400' })
+      }
+      expect(typography.filterHeading).toMatchObject({ family: sansFamily, size: '12px', lineHeight: '18px', weight: '600', letterSpacing: 'normal', textTransform: 'none' })
+      expect(typography.fontSynthesis).toBe('none')
+      expect(typography.sans600Loaded).toBe(true)
+
+      const firstRow = page.locator('article').first()
+      await expect(firstRow.getByRole('link', { name: 'team-tools/secure-review', exact: true })).toHaveText('team-tools/secure-review')
+      await expect(firstRow.locator('.resource-row__kind')).toHaveText('Skill')
+      await expect(firstRow.locator('.resource-row__registry')).toHaveText('team-tools')
+      await expect(firstRow.locator('.resource-coordinate__separator')).toHaveText('/')
+      const rowHeights = await page.locator('article').evaluateAll(rows => rows.map(row => row.getBoundingClientRect().height))
+      expect(rowHeights[0]).toBeCloseTo(rowHeights[1], 0)
+    }
   })
 
   test('exposes the shared navigation from a keyboard-operable mobile menu', async ({ page }) => {
@@ -703,7 +807,7 @@ test.describe('Marketplace browser discovery', () => {
 
     await expect(page.getByRole('heading', { name: 'e2e-marketplace', exact: true })).toBeVisible()
     await expect(page.getByText('Browse resources for AI agents, with every revision pinned and analyzed before publication.', { exact: true })).toBeVisible()
-    await expect(page.getByText(/To use a resource, install the agent-marketplace CLI, then copy and run its install command\./)).toBeVisible()
+    await expect(page.getByText(/To use a resource, install the agent-marketplace CLI, then copy and run its install command\./)).toHaveCount(0)
     await expect(page.getByText(`agent-marketplace install "${appURL}"`, { exact: true })).toHaveCount(0)
     const copyInstall = page.getByRole('button', { name: 'Copy install command for secure-review', exact: true })
     await copyInstall.click()
@@ -975,6 +1079,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(page.getByRole('button', { name: /Copy detail URL/ })).toHaveCount(0)
   })
 
+  // spec: marketplace-web-ui/record-hierarchy-preserves-inspection-and-recovery
   test('shows registry details in the resource tab and redirects the standalone route', async ({ page }) => {
     await page.goto('/r/team-tools/skill/secure-review')
 

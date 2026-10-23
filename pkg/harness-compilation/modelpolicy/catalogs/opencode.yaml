@@ -4,8 +4,8 @@ evidence:
   checked: "2026-10-14"
   refs:
     - docs/harness-validation/opencode.md
-    - https://opencode.ai/docs/agents/
-    - https://opencode.ai/docs/models/
+    - https://opencode.ai/docs/agents.md
+    - https://opencode.ai/docs/models.md
 surfaces:
   subagent:
     model_field: model

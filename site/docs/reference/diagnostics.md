@@ -51,7 +51,25 @@ The first part of a code names the area that reported it.
 - `v4.api-version`: a root or explicitly versioned included fragment has an unsupported or invalid version. Only the exact string `agent-marketplace/v4` is accepted; fragments under a validated v4 root may omit the field.
 - `v4.legacy-key`: a v4-validated root or included fragment still contains legacy installation keys. Changing only the version string is not conversion.
 
-Format diagnostics identify the offending file and `apiVersion` field (or legacy key), with line context when available. [Convert before upgrading](../how-to/migrate-configuration.md) with an older released migrator; the shipped CLI and TUI never offer conversion. A refused new operation does not acquire resources or change config, locks, or harness output. Existing pending-journal recovery and ordinary logs are separate: read-only modes report `dependency.recovery-required` without replay, while recovery-capable commands can finish previously admitted writes before validating fresh input.
+Format diagnostics identify the offending file and `apiVersion` field (or legacy key), with line context when available. `v4.api-version-required` and `v4.api-version` also print a next step: for a user, repository, or personal-local layer the message names the older released migrator (agent-marketplace v4.1.4), its `agent-marketplace migrate --to v4 --scope <user|repo|local> --dry-run` preview command, and the conversion guide; for organization configuration it says to ask the administrator and links the same guide. [Convert before upgrading](../how-to/migrate-configuration.md) with an older released migrator; the shipped CLI and TUI never offer conversion. A refused new operation does not acquire resources or change config, locks, or harness output. Existing pending-journal recovery and ordinary logs are separate: read-only modes report `dependency.recovery-required` without replay, while recovery-capable commands can finish previously admitted writes before validating fresh input.
+
+## What to do
+
+Every error a CLI command prints is followed by at least one `hint: ` line naming a supported command or a concrete next action. `doctor` prints the same `hint:` line under each error in its configuration and organization error sections, and the TUI errors view shows the same guidance before its own category copy. An error that carries its own remediation uses that text; otherwise the hint comes from the stable code the error carries; otherwise it names a diagnostic command suited to the command you ran (for example `agent-marketplace doctor`, `<command> --check`, or `<command> --help` for usage errors). Hints never appear in `--json` output and never change the exit status.
+
+Where each prefix's hints send you:
+
+| Prefix | What the hint tells you to do |
+|---|---|
+| `v4.*` | Fix the named configuration file and line, then run `agent-marketplace doctor`. `v4.api-version-required` and `v4.api-version` instead name the older released migrator (or your administrator for organization configuration) and link the [conversion guide](../how-to/migrate-configuration.md). `v4.marketplace-lock-required` and `v4.marketplace-lock-mismatch` name a writing `agent-marketplace sync` run while online to record the selected resource in the lock, then commit it. |
+| `lock.*` | Restore or reconcile the named lock, then run `agent-marketplace sync --check`. Stale, missing, or outdated locks point at `agent-marketplace lock` or a writing `sync`; verification failures warn you not to delete the lock or bypass the check. |
+| `config.edit.*` | Adjust the named selection or rerun the edit as the hint describes, then run `agent-marketplace doctor`. |
+| `dependency.*` | Run a writing `agent-marketplace sync` or `lock` while online to finish an interrupted write. |
+| `ownership.*` | Retry after the other process finishes, run `agent-marketplace doctor --repair`, or fix the named cause, as the hint says. |
+| `organization.trust.*` | Ask your administrator. Hints for organization-owned configuration, locks, and trust never suggest editing or deleting organization files yourself. |
+| `git.*` | Check credentials, your SSH agent, or move authentication settings to trusted Git configuration, then rerun the command. |
+| `marketplace.*` install/remove refusals | Run `agent-marketplace list` to confirm names, use `remove --scope` or `remove --from` to disambiguate, or ask your administrator for organization-owned selections. |
+| no code | A command-aware fallback: the command's own `--check` mode for sync and lock, `doctor --debug` for doctor, `doctor` (and the command's `--help` for install, remove, and update) for the rest, or `<command> --help` for usage errors. |
 
 ## Viewing diagnostics
 

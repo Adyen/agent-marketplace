@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Hook timeouts stay exact within documented bounds
+
+A hook timeout above 2^53-1 seconds was emitted as a different number (`9007199254740993` became `9007199254740992`), and converting seconds to Gemini's milliseconds could overflow and wrap (#652). Compilation now refuses a timeout whose value in the target's unit exceeds 9007199254740991, the largest integer every JSON reader decodes exactly, with the target's existing timeout-unsupported error. Gemini's conversion is checked before it multiplies. A timeout below a documented per-event minimum is raised to the minimum with the warning the cap already uses, so a Codex `SessionEnd` or `Interrupt` timeout of `0` becomes `1` with `compile.codex.field-dropped`. Per-event bounds apply before the exact-range check, so such an event still lowers any larger value to its maximum instead of refusing it. A zero timeout on an event without a minimum and every value within range are emitted unchanged.
+
+### Layout detection checks markers without reading them
+
+Autodetection and the Claude, Cursor and Factory layout checks read whole marker files (`plugin.json`, `.mcp.json`, `SKILL.md`, hooks files) only to learn that they exist, and the Claude bare skills directory listing read every `SKILL.md` before loading it again (R39). Presence checks now stat the path and require a regular file, through the new exported helper `ingest.RegularFileExists`, so detection reads no content and each skill is read once. Detection results are unchanged for readable regular files; a marker path that is a directory, FIFO or device is no longer treated as present. On a generic `fs.FS` whose `Stat` does not open the file, such as `os.DirFS`, an unreadable regular marker now counts as present, so its harness is selected and loading then fails visibly instead of silently falling back to a lower-priority layout. Agent Marketplace's source filesystem opens a file to stat it, so the CLI still treats an unreadable marker as absent.
+
+### Archive verification enforces the archive limits while decoding
+
+`VerifyArchiveBytes`, `VerifyPlaceholderArchive`, `VerifyFinalAgainstPlaceholder` and `DecodeContentArchive` checked `DefaultArchiveLimits` only after the whole archive was decoded, so a small, highly compressed archive could expand into many 64 MiB members first (R61, F172). They now check each member's declared size, the asset, support and total file counts, the total decoded bytes (with an overflow-safe comparison) and the entry count while decoding, count the manifest and members outside the layout directories toward the total, refuse a repeated manifest, and stop at the first member over a limit. Such refusals wrap the new exported sentinel `ErrArchiveLimitExceeded`. No limit changes value, archives within the limits verify as before, and the unchecked `Decode` is unchanged.
+
 ### `materialize.collision.shared-path` warning
 
 The catalog adds the consumer-side warning `materialize.collision.shared-path`. Agent Marketplace reports it when resources of different kinds with the same installed name share one native path on a target, such as a skill and a converted command skill on Devin or Codex, including names that differ only in letter case, and only the winner by selection precedence is installed there (#759). It also reports a resource whose name differs only in letter case from a required resource of the same kind: the required resource is installed instead of both being refused (#781). Library compilation and its existing `bundle.conflict.cross-kind-artifact-path` refusal are unchanged.

@@ -97,6 +97,8 @@ type Step struct {
 	PathsUnchanged  []string // files or trees whose bytes and metadata must be unchanged by this step
 	Symlinks        []string
 	RegularFiles    []string          // paths that must exist and not be symbolic links
+	GlobsExist      []string          // container path glob patterns that must each match at least one path
+	GlobsAbsent     []string          // container path glob patterns that must match nothing
 	FileContains    map[string]string // path -> substring
 	FileNotContains map[string]string // path -> substring that must NOT appear
 }
@@ -369,8 +371,8 @@ var testTable = []TestCase{
 		Desc:    "Given a repository source name carrying terminal controls, When status fails and doctor reports configuration errors, Then both print visible escapes without changing the configuration",
 		RepoCfg: "apiVersion: agent-marketplace/v4\nsources:\n  \"\\e]0;TITLE\\a\\e[2J\\u202EEVIL\\N\":\n    directory: ./missing\n",
 		Steps: []Step{
-			{Args: []string{"status"}, AssertExitCode: intPtr(1), OutContains: []string{`Error: validate config "`, `/workspace/.agents/config.yaml": v4.source-name: sources.\x1B]0;TITLE\x07\x1B[2J\u202EEVIL\x85 (line 3)`}, OutNotContains: []string{"\x1b", "\a", "\u202e", "\u0085"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml"}},
-			{Args: []string{"doctor"}, MustPass: true, OutContains: []string{`error: validate config "`, `/workspace/.agents/config.yaml": v4.source-name: sources.\x1B]0;TITLE\x07\x1B[2J\u202EEVIL\x85 (line 3)`}, OutNotContains: []string{"\x1b", "\a", "\u202e", "\u0085"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml"}},
+			{Args: []string{"status"}, AssertExitCode: intPtr(1), OutContains: []string{`Error: validate config "`, `/workspace/.agents/config.yaml": v4.source-name:`, `/workspace/.agents/config.yaml:3: sources.\x1B]0;TITLE\x07\x1B[2J\u202EEVIL\x85: source name "\x1b]0;TITLE\a\x1b[2J\u202eEVIL\u0085" must contain only letters, numbers, dots, underscores, or hyphens`, "hint: In ", "rename the source"}, OutNotContains: []string{"\x1b", "\a", "\u202e", "\u0085"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml"}},
+			{Args: []string{"doctor"}, MustPass: true, OutContains: []string{`error: validate config "`, `/workspace/.agents/config.yaml": v4.source-name:`, `/workspace/.agents/config.yaml:3: sources.\x1B]0;TITLE\x07\x1B[2J\u202EEVIL\x85: source name "\x1b]0;TITLE\a\x1b[2J\u202eEVIL\u0085" must contain only letters, numbers, dots, underscores, or hyphens`, "hint: In ", "rename the source"}, OutNotContains: []string{"\x1b", "\a", "\u202e", "\u0085"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml"}},
 		},
 	},
 	{
@@ -5302,6 +5304,29 @@ func TestE2E(t *testing.T) {
 						errMsg := fmt.Sprintf("step %d: file %q unexpectedly exists", i, p)
 						if err != nil {
 							errMsg = fmt.Sprintf("step %d: cannot inspect %q: %v", i, p, err)
+						}
+						if firstErr == "" {
+							firstErr = errMsg
+						}
+						t.Errorf("%s", errMsg)
+					}
+				}
+				for _, globs := range []struct {
+					patterns []string
+					absent   bool
+				}{{step.GlobsExist, false}, {step.GlobsAbsent, true}} {
+					for _, pattern := range globs.patterns {
+						matches, err := filepath.Glob(env.mustResolvePath(pattern))
+						var errMsg string
+						switch {
+						case err != nil:
+							errMsg = fmt.Sprintf("step %d: glob %q: %v", i, pattern, err)
+						case globs.absent && len(matches) > 0:
+							errMsg = fmt.Sprintf("step %d: glob %q matched %v", i, pattern, matches)
+						case !globs.absent && len(matches) == 0:
+							errMsg = fmt.Sprintf("step %d: glob %q matched no path", i, pattern)
+						default:
+							continue
 						}
 						if firstErr == "" {
 							firstErr = errMsg

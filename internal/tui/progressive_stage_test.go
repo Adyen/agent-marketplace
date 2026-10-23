@@ -455,6 +455,8 @@ func TestConfigStageStartsDiscoveryBeforeLocalVerification(t *testing.T) {
 // spec: tui-startup/verified-rows-inserted-above-a-selection-keep-it-on-the-same-screen-line
 func TestVerifiedRowsInsertedAboveSelectionKeepItOnTheSameScreenLine(t *testing.T) {
 	m := newProvisionalStageModel()
+	// The anchored line is kept only while the list overflows the viewport.
+	m.height = 24
 	generation := m.requests.active(requestSnapshot)
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
@@ -586,6 +588,74 @@ func TestApplyDriftItemsMarksOnlySelectedRows(t *testing.T) {
 	}
 	if out[2].DriftItem == nil || out[2].DriftItem.Reason != materialize.DriftBroken {
 		t.Fatalf("unavailable recovery row lost its drift: %#v", out[2].DriftItem)
+	}
+}
+
+// A target harness change leaves the selected resource missing from its new
+// target and orphaned in the old one; the row reports the work for its
+// selection, not the cleanup of the former target.
+// spec: tui-interactions/retargeted-resource-is-pending-sync
+func TestSelectedRowDriftPrefersItsCurrentTargetOverAnOrphanedCopy(t *testing.T) {
+	key := skill.ResourceKey(ir.KindSkill, "beta-skill")
+	selected := row{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "beta-skill", Path: "skills/beta-skill"}, CatalogKey: "cat"}}
+	missing := materialize.DriftItem{Name: key, Reason: materialize.DriftMissing}
+	broken := materialize.DriftItem{Name: key, Reason: materialize.DriftBroken}
+	orphaned := materialize.DriftItem{Name: key, Reason: materialize.DriftOrphaned}
+	for _, tc := range []struct {
+		name   string
+		report materialize.DriftReport
+		want   materialize.DriftReason
+	}{
+		{name: "missing in the new target beats an orphaned copy", report: materialize.DriftReport{Missing: []materialize.DriftItem{missing}, Orphaned: []materialize.DriftItem{orphaned}}, want: materialize.DriftMissing},
+		{name: "broken beats missing and orphaned", report: materialize.DriftReport{Missing: []materialize.DriftItem{missing}, Broken: []materialize.DriftItem{broken}, Orphaned: []materialize.DriftItem{orphaned}}, want: materialize.DriftBroken},
+		{name: "an orphaned copy alone is still reported", report: materialize.DriftReport{Orphaned: []materialize.DriftItem{orphaned}}, want: materialize.DriftOrphaned},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := applyDriftItems([]row{selected}, tc.report)
+			if out[0].DriftItem == nil || out[0].DriftItem.Reason != tc.want {
+				t.Fatalf("selected row drift = %#v, want %v", out[0].DriftItem, tc.want)
+			}
+			if got := driftItemsByResource(tc.report)[key].Reason; got != tc.want {
+				t.Fatalf("row build drift = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// Removing a harness leaves a selected resource in sync in its remaining
+// target with only a stale copy in the removed one: still pending sync.
+// spec: tui-interactions/removed-target-harness-is-pending-cleanup
+func TestSelectedRowWithOnlyAnOrphanedCopyIsPendingSync(t *testing.T) {
+	r := mkRow("beta-skill", withProject)
+	r.DriftItem = &materialize.DriftItem{Name: skill.ResourceKey(ir.KindSkill, "beta-skill"), Reason: materialize.DriftOrphaned}
+	if got := r.StatusText(); got != "enabled (pending sync)" {
+		t.Fatalf("status = %q, want enabled (pending sync)", got)
+	}
+	if got := classifyStatus(r); got != statusPending {
+		t.Fatalf("status bucket = %v, want pending", got)
+	}
+}
+
+// A selected row keeps its identity when the sync clears its stale copy.
+// spec: tui-interactions/removed-target-harness-is-pending-cleanup
+func TestSelectionStaysOnARowWhoseOrphanedCopyIsCleared(t *testing.T) {
+	stale := mkRow("beta", withProject)
+	stale.DriftItem = &materialize.DriftItem{Name: skill.ResourceKey(ir.KindSkill, "beta"), Reason: materialize.DriftOrphaned}
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.loading = false
+	m.width, m.height = 80, 24
+	m.rows = []row{mkRow("gamma", withProject), stale}
+	m.authoritativeRows = m.rows
+	m.filteredRows = m.rows
+	m.rebuildFlatItems()
+	for i, item := range m.flatItems {
+		if item.Kind == flatArtifact && item.Row.Artifact.Name == "beta" {
+			m.cursor = i
+		}
+	}
+	m.applySnapshotData(snapshotLoadedMsg{rows: []row{mkRow("gamma", withProject), mkRow("beta", withProject)}})
+	if selected, ok := m.selectedRow(); !ok || selected.Artifact.Name != "beta" {
+		t.Fatalf("selection after the stale copy was cleared = %q (ok=%v), want beta", selected.Artifact.Name, ok)
 	}
 }
 

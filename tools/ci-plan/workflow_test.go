@@ -358,6 +358,24 @@ func TestTestJobWarmsModulesBeforeWitnessedTests(t *testing.T) {
 	}
 }
 
+func TestInstallationQueryJob(t *testing.T) {
+	jobs := getMap(t, loadCIWorkflow(t), "jobs")
+	changes := getMap(t, jobs, "changes")
+	if got := getMap(t, changes, "outputs")["installation_query"]; got != "${{ steps.changes.outputs.installation_query }}" {
+		t.Fatalf("installation_query output = %v", got)
+	}
+	job := getMap(t, jobs, "installation-query")
+	if job["name"] != "Installation query" || job["if"] != "needs.changes.outputs.installation_query == 'true'" {
+		t.Fatalf("installation query job = name %v, if %v", job["name"], job["if"])
+	}
+	for _, step := range getSlice(t, job, "steps") {
+		if stepMap(t, step)["run"] == "make installation-query-check" {
+			return
+		}
+	}
+	t.Fatal("installation query job does not run make installation-query-check")
+}
+
 func TestHarnessImageAuditUsesRunnerStepDirectory(t *testing.T) {
 	doc := loadWorkflow(t, "harness-images.yml")
 	on := getMap(t, doc, "on")

@@ -95,24 +95,27 @@ func adoptionSearchSetup(t *testing.T, samples []inventoryMetricSample, seed ...
 }
 
 func adoptionSearchSamples() []inventoryMetricSample {
-	fresh := adoptionFixedNow.Add(-time.Hour)
-	var samples []inventoryMetricSample
-	report := map[string][]string{
-		telemetryAlpha: {"alpha", "preview"},
-		telemetryBeta:  {"beta", "zulu", "preview-extra"},
+	validUntil := float64(adoptionFixedNow.Add(-time.Hour).UnixMicro())
+	samples := []inventoryMetricSample{
+		aggregateResponseSample("fresh", 9, nil),
+		aggregateResponseSample("valid_until", validUntil, nil),
 	}
-	for i := 1; i <= 9; i++ {
-		installation := fmt.Sprintf("install-%d", i)
-		fingerprint := fmt.Sprintf("gen-%d", i)
-		samples = append(samples, inventorySnapshotSample(installation, fingerprint, fresh))
-		for identity, names := range report {
-			for _, name := range names {
-				limit := map[string]int{"alpha": 1, "preview": 2, "beta": 3, "zulu": 3, "preview-extra": 9}[name]
-				if i <= limit {
-					samples = append(samples, inventoryResourceSample(installation, fingerprint, identity, "skill", name))
-				}
-			}
-		}
+	for _, entry := range []struct {
+		registry string
+		name     string
+		count    float64
+	}{
+		{"rA", "alpha", 1},
+		{"rA", "preview", 2},
+		{"rB", "beta", 3},
+		{"rB", "zulu", 3},
+		{"rB", "preview-extra", 9},
+	} {
+		samples = append(samples, aggregateResponseSample("count", entry.count, map[string]string{
+			"am_registry":   entry.registry,
+			"resource_kind": "skill",
+			"resource_name": entry.name,
+		}))
 	}
 	return samples
 }
@@ -146,7 +149,11 @@ func searchNames(result adoptionSearchResult) []string {
 
 // spec: marketplace-api/rule-observations-preserve-selectable-resource-adoption
 func TestSearchInstallationsRuleObservationPreservesSkillAdoption(t *testing.T) {
-	public, fixture := adoptionSearchFixture(t, installationRuleAdoptionSamples())
+	public, fixture := adoptionSearchFixture(t, []inventoryMetricSample{
+		aggregateResponseSample("fresh", 1, nil),
+		aggregateResponseSample("valid_until", float64(adoptionFixedNow.Add(-time.Hour).UnixMicro()), nil),
+		aggregateResponseSample("count", 1, map[string]string{"am_registry": "rA", "resource_kind": "skill", "resource_name": "alpha"}),
+	})
 	result, _ := getSearch(t, public.URL, "?sort=installations")
 	if hits := fixture.hits.Load(); hits != 1 {
 		t.Fatalf("metrics backend hits = %d, want one real reader request", hits)
@@ -334,23 +341,12 @@ func TestSearchInstallationsFallsBackWithoutCounts(t *testing.T) {
 
 // spec: marketplace-api/hosted-adoption-is-isolated-and-deduplicated
 func TestSearchInstallationsCountsHostedCoordinatesForServingMarketplace(t *testing.T) {
-	fresh := adoptionFixedNow.Add(-time.Hour)
-	older := adoptionFixedNow.Add(-2 * time.Hour)
 	samples := []inventoryMetricSample{
-		inventorySnapshotSample("install-git-and-hosted", "gen-1", fresh),
-		inventoryResourceSample("install-git-and-hosted", "gen-1", telemetryAlpha, "skill", "alpha"),
-		hostedInventoryResourceSample("install-git-and-hosted", "gen-1", "mp", "rA", "skill", "alpha"),
-		inventorySnapshotSample("install-hosted-again", "gen-2", fresh),
-		hostedInventoryResourceSample("install-hosted-again", "gen-2", "mp", "rA", "skill", "alpha"),
-		inventorySnapshotSample("install-foreign", "gen-3", fresh),
-		hostedInventoryResourceSample("install-foreign", "gen-3", "other-marketplace", "rA", "skill", "alpha"),
-		inventorySnapshotSample("install-other-registry", "gen-4", fresh),
-		hostedInventoryResourceSample("install-other-registry", "gen-4", "mp", "rB", "skill", "alpha"),
-		inventorySnapshotSample("install-local-registry", "gen-5", fresh),
-		hostedInventoryResourceSample("install-local-registry", "gen-5", "mp", "rL", "skill", "local-only"),
-		inventorySnapshotSample("install-removed", "gen-old", older),
-		hostedInventoryResourceSample("install-removed", "gen-old", "mp", "rA", "skill", "alpha"),
-		inventorySnapshotSample("install-removed", "gen-new", fresh),
+		aggregateResponseSample("fresh", 5, nil),
+		aggregateResponseSample("valid_until", float64(adoptionFixedNow.Add(-time.Hour).UnixMicro()), nil),
+		aggregateResponseSample("count", 2, map[string]string{"am_registry": "rA", "resource_kind": "skill", "resource_name": "alpha"}),
+		aggregateResponseSample("count", 1, map[string]string{"am_registry": "rB", "resource_kind": "skill", "resource_name": "alpha"}),
+		aggregateResponseSample("count", 1, map[string]string{"am_registry": "rL", "resource_kind": "skill", "resource_name": "local-only"}),
 	}
 	public, _, _, meta := adoptionSearchSetup(t, samples, true)
 	publishAssessedTestRevision(context.Background(), t, meta, store.ResourceRevision{
@@ -382,42 +378,18 @@ func TestSearchInstallationsCountsHostedCoordinatesForServingMarketplace(t *test
 
 // spec: marketplace-api/invalid-hosted-identity-preserves-safe-omission
 func TestSearchInstallationsFallsBackForInvalidSourceIdentity(t *testing.T) {
-	fresh := adoptionFixedNow.Add(-time.Hour)
-	tests := []struct {
-		name          string
-		sourceKind    string
-		marketplaceID string
-	}{
-		{name: "unknown source kind", sourceKind: "future"},
-		{name: "incoherent legacy pair", marketplaceID: "mp"},
+	public, fixture := adoptionSearchFixture(t, []inventoryMetricSample{
+		aggregateResponseSample("invalid", 1, nil),
+	})
+	result, body := getSearch(t, public.URL, "?sort=installations")
+	want := []string{"alpha", "preview", "beta", "preview-extra", "zulu", "local-only"}
+	if !slices.Equal(searchNames(result), want) {
+		t.Fatalf("fallback order = %v, want legacy %v", searchNames(result), want)
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			invalid := inventoryResourceSample("install-invalid", "gen-invalid", telemetryAlpha, "skill", "alpha")
-			if test.sourceKind != "" {
-				invalid.Metric["source_kind"] = test.sourceKind
-			}
-			if test.marketplaceID != "" {
-				invalid.Metric["marketplace_id"] = test.marketplaceID
-			}
-			samples := []inventoryMetricSample{
-				inventorySnapshotSample("install-control", "gen-control", fresh),
-				inventoryResourceSample("install-control", "gen-control", telemetryAlpha, "skill", "alpha"),
-				inventorySnapshotSample("install-invalid", "gen-invalid", fresh),
-				invalid,
-			}
-			public, fixture := adoptionSearchFixture(t, samples)
-			result, body := getSearch(t, public.URL, "?sort=installations")
-			want := []string{"alpha", "preview", "beta", "preview-extra", "zulu", "local-only"}
-			if !slices.Equal(searchNames(result), want) {
-				t.Fatalf("fallback order = %v, want legacy %v", searchNames(result), want)
-			}
-			if strings.Contains(body, "installation_count") {
-				t.Fatalf("invalid metrics still emitted counts: %s", body)
-			}
-			if hits := fixture.hits.Load(); hits != 1 {
-				t.Fatalf("metrics backend hits = %d, want 1", hits)
-			}
-		})
+	if strings.Contains(body, "installation_count") {
+		t.Fatalf("invalid metrics still emitted counts: %s", body)
+	}
+	if hits := fixture.hits.Load(); hits != 1 {
+		t.Fatalf("metrics backend hits = %d, want 1", hits)
 	}
 }

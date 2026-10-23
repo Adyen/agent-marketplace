@@ -10,8 +10,8 @@
  *
  *   1. Saturated colour means an action or verdict. A coloured status mark in a
  *      row is always a claim about whether that revision can be installed.
- *   2. Identity is typeset in mono. A coordinate, a digest and a command are
- *      the things a reader compares character by character or retypes.
+ *   2. Mono is reserved for commands, digests, paths, and code that readers
+ *      compare character by character or retype.
  *
  * Shared colors and the Nuxt UI mappings live in design-tokens.css. This file
  * owns Marketplace-specific document styling.
@@ -22,13 +22,16 @@ html {
   scrollbar-gutter: stable;
 }
 
-.am-site-nav {
-  max-width: 72rem;
-}
-
 button:not(:disabled),
 [role="button"]:not([aria-disabled="true"]) {
   cursor: pointer;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
 }
 
 button:disabled,
@@ -40,10 +43,80 @@ button:disabled,
   background: var(--am-color-bg-hover);
 }
 
+.marketplace-resource-row {
+  border-color: var(--am-color-border-default);
+}
+
+.marketplace-public-page {
+  min-height: calc(100vh - var(--am-nav-height));
+  background: var(--am-color-bg-canvas);
+  color: var(--am-color-text-primary);
+}
+
+.marketplace-record-main {
+  width: min(calc(100% - 2 * var(--am-page-gutter)), var(--am-content-max));
+  margin-inline: auto;
+  padding-block: clamp(1.5rem, 4vw, 3rem) 5rem;
+}
+
+.marketplace-record-state {
+  padding: clamp(2rem, 6vw, 4rem) 0;
+  border-block: var(--am-marketplace-rule);
+}
+
+.marketplace-record-state h1 {
+  font: var(--am-marketplace-font-record-title);
+  letter-spacing: -0.035em;
+}
+
+.marketplace-record-state p {
+  max-width: 42rem;
+}
+
+.marketplace-record {
+  width: 100%;
+}
+
+.marketplace-record__hero {
+  padding-bottom: 2rem;
+  border-bottom: var(--am-marketplace-rule);
+}
+
+.marketplace-record__title {
+  font: var(--am-marketplace-font-record-title);
+  letter-spacing: -0.035em;
+}
+
+.marketplace-record__kind {
+  border-radius: var(--am-radius-mark);
+  font: var(--am-marketplace-font-label);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.marketplace-record__metadata {
+  padding-top: 1rem;
+  border-top: var(--am-marketplace-rule);
+}
+
+.marketplace-installation {
+  padding-block: 1.5rem;
+  border-bottom: var(--am-marketplace-rule);
+}
+
+.marketplace-record-tabs {
+  margin-top: 0;
+  border-bottom: var(--am-marketplace-rule);
+}
+
+.marketplace-record-tabs [role="tab"] {
+  min-height: var(--am-hit-target);
+}
+
 .marketplace-markdown {
   color: var(--ui-text);
-  font-size: 0.9375rem;
-  line-height: 1.75;
+  font-size: 1rem;
+  line-height: 1.7;
   overflow-wrap: anywhere;
 }
 
@@ -58,7 +131,7 @@ button:disabled,
 .marketplace-markdown :where(h1, h2, h3, h4, h5, h6) {
   margin-block: 1.75em 0.65em;
   color: var(--ui-text-highlighted);
-  font-weight: 650;
+  font-weight: 500;
   line-height: 1.25;
   letter-spacing: -0.02em;
 }

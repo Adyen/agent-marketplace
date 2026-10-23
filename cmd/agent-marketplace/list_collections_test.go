@@ -2,12 +2,12 @@ package main
 
 import (
 	"bytes"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/cache"
 )
 
 func writeGitCollection(t *testing.T, working, name string, members ...string) {
@@ -45,6 +45,15 @@ func listRowStatus(t *testing.T, output, kind, name string) string {
 		t.Fatalf("want exactly one %s %q row, got %d in list output:\n%s", kind, name, len(statuses), output)
 	}
 	return statuses[0]
+}
+
+func assertMarketplaceListUnknown(t *testing.T, output string) {
+	t.Helper()
+	if strings.Contains(output, "out of sync") || strings.Count(output, "Sync state unknown") != 1 ||
+		!strings.Contains(output, "Marketplace cache evidence missing") ||
+		!strings.Contains(output, "agent-marketplace sync") {
+		t.Errorf("list did not report exactly one unknown sync-state line with the remedy:\n%s", output)
+	}
 }
 
 // spec: resource-listing/selected-git-collection-listed-enabled
@@ -96,35 +105,13 @@ resources:
 // spec: resource-listing/synced-marketplace-selection-is-listed-enabled
 // spec: resource-listing/selected-marketplace-collection-listed-enabled
 // spec: resource-listing/list-downloads-nothing-and-writes-nothing
+// spec: resource-listing/list-counts-drift-when-marketplace-cache-is-complete
 func TestListShowsSyncedMarketplaceCollectionEnabledWithoutDownloads(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
-	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
-	server := newV4MarketplaceCollectionServer(t, "mp", "bundle", "review")
+	home, server, downloads, configPath, lockPath, configBefore, lockBefore := installMarketplaceCollectionForTest(t)
 	defer server.Close()
-	configPath := filepath.Join(home, ".agents", "config.yaml")
-	lockPath := filepath.Join(home, ".agents", "lock.yaml")
-	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
-	withWorkingDir(t, t.TempDir())
-
-	if output, err := executeCommand("install", server.URL+"/r/tools/collection/bundle", "--scope", "user", "--yes"); err != nil {
-		t.Fatalf("install Marketplace collection: %v\n%s", err, output)
-	}
-	configBefore := readTestFile(t, configPath)
-	lockBefore := readTestFile(t, lockPath)
-
-	var downloads atomic.Int32
-	inner := server.Config.Handler
-	server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/v1/artifacts/") {
-			downloads.Add(1)
-		}
-		inner.ServeHTTP(w, r)
-	})
 
 	output, err := executeCommand("list")
 	if err != nil {
@@ -151,4 +138,44 @@ func TestListShowsSyncedMarketplaceCollectionEnabledWithoutDownloads(t *testing.
 	if checkOutput, checkErr := executeCommand("sync", "--check"); checkErr != nil {
 		t.Fatalf("sync --check disagreed with list: %v\n%s", checkErr, checkOutput)
 	}
+	if err := os.Remove(filepath.Join(home, ".factory", "skills", "review", "SKILL.md")); err != nil {
+		t.Fatalf("remove materialized Marketplace output: %v", err)
+	}
+	output, err = executeCommand("list")
+	if err != nil {
+		t.Fatalf("list failed for cached Marketplace drift: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "out of sync") || strings.Contains(output, "Sync state unknown") {
+		t.Fatalf("list did not report real drift with complete Marketplace cache evidence:\n%s", output)
+	}
+}
+
+// spec: resource-listing/missing-marketplace-cache-lists-unknown-sync-state
+// spec: resource-listing/never-acquired-marketplace-pin-lists-unknown-sync-state
+func TestListReportsUnknownSyncStateWhenMarketplaceCacheIsMissingOrNeverAcquired(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	_, server, downloads, configPath, lockPath, configBefore, lockBefore := installMarketplaceCollectionForTest(t)
+	defer server.Close()
+	if err := os.RemoveAll(filepath.Join(cache.CacheDir(), "marketplace")); err != nil {
+		t.Fatalf("remove Marketplace cache: %v", err)
+	}
+	output, err := executeCommand("list")
+	if err != nil {
+		t.Errorf("list failed for missing Marketplace cache evidence: %v\n%s", err, output)
+	}
+	if got := listRowStatus(t, output, "collection", "bundle"); got != "enabled" {
+		t.Errorf("selected collection status = %q, want enabled\n%s", got, output)
+	}
+	assertMarketplaceListUnknown(t, output)
+	assertMarketplaceReadOnly(t, "list", downloads, configPath, lockPath, configBefore, lockBefore)
+
+	configPath, lockPath = moveToFreshMarketplaceHomeForTest(t, configBefore, lockBefore)
+	output, err = executeCommand("list")
+	if err != nil {
+		t.Errorf("list failed for a never-acquired Marketplace pin: %v\n%s", err, output)
+	}
+	assertMarketplaceListUnknown(t, output)
+	assertMarketplaceReadOnly(t, "list", downloads, configPath, lockPath, configBefore, lockBefore)
 }

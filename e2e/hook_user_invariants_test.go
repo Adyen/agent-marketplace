@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -48,13 +49,219 @@ func hookInvariantHookFiles(target string, machine bool) []string {
 		return []string{".devin/hooks.v1.json"}
 	case "codex":
 		return []string{".codex/hooks.json"}
+	case "opencode":
+		// OpenCode declarations are named after the hook; these fixtures
+		// install PreToolUse-command.
+		base := ".opencode"
+		if machine {
+			base = ".config/opencode"
+		}
+		return []string{base + "/hooks/agent-marketplace/PreToolUse-command.json", base + "/plugins/agent-marketplace.js"}
 	}
 	panic("hookInvariantHookFiles: unknown target " + target)
 }
 
 var hookInvariantTargets = []string{"claude", "factory", "cursor", "gemini", "windsurf", "devin", "codex"}
 
+// hookInvariantNativeTargets adds OpenCode, which shipped after the pinned
+// released client and so is absent from the released-client matrices.
+var hookInvariantNativeTargets = append(slices.Clone(hookInvariantTargets), "opencode")
+
+// hookInvariantLoadedCommands parses the executable hook handlers a target's
+// own loader reads, relative to the scope root: the native file only, never a
+// plugin-layout copy. Windsurf reads the repository .windsurf/hooks.json only
+// while .devin/hooks.json defines no hook, and OpenCode reads its hook
+// declarations only through the installed adapter plugin.
+func hookInvariantLoadedCommands(t *testing.T, target, root string, machine bool) []string {
+	t.Helper()
+	var commands []string
+	for _, handler := range hookInvariantLoadedHandlers(t, target, root, machine) {
+		commands = append(commands, handler.command)
+	}
+	return commands
+}
+
+// hookInvariantHandler is one parsed executable hook handler. dir is the
+// Windsurf working_directory, when the handler declares one.
+type hookInvariantHandler struct{ command, dir string }
+
+// hookInvariantLoadedHandlers is hookInvariantLoadedCommands with each
+// handler's declared working directory.
+func hookInvariantLoadedHandlers(t *testing.T, target, root string, machine bool) []hookInvariantHandler {
+	t.Helper()
+	var commands []hookInvariantHandler
+	read := func(rel string) (map[string]json.RawMessage, bool) {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, false
+		}
+		if err != nil {
+			t.Fatalf("read loaded hook file %s: %v", rel, err)
+		}
+		var document map[string]json.RawMessage
+		if err := json.Unmarshal(data, &document); err != nil {
+			t.Fatalf("decode loaded hook file %s: %v\n%s", rel, err, data)
+		}
+		return document, true
+	}
+	events := func(rel, member string) map[string][]json.RawMessage {
+		t.Helper()
+		document, ok := read(rel)
+		if !ok {
+			return nil
+		}
+		if member != "" {
+			raw := document[member]
+			if raw == nil {
+				return nil
+			}
+			document = nil
+			if err := json.Unmarshal(raw, &document); err != nil {
+				t.Fatalf("decode %s %s member: %v", rel, member, err)
+			}
+		}
+		byEvent := make(map[string][]json.RawMessage, len(document))
+		for event, raw := range document {
+			var groups []json.RawMessage
+			if err := json.Unmarshal(raw, &groups); err != nil {
+				t.Fatalf("decode %s %s handlers: %v", rel, event, err)
+			}
+			byEvent[event] = groups
+		}
+		return byEvent
+	}
+	grouped := func(rel, member string) {
+		t.Helper()
+		for event, groups := range events(rel, member) {
+			for _, raw := range groups {
+				var group struct {
+					Hooks []struct {
+						Type    string `json:"type"`
+						Command string `json:"command"`
+					} `json:"hooks"`
+				}
+				if err := json.Unmarshal(raw, &group); err != nil {
+					t.Fatalf("decode %s %s matcher group: %v", rel, event, err)
+				}
+				for _, handler := range group.Hooks {
+					if handler.Type == "command" && handler.Command != "" {
+						commands = append(commands, hookInvariantHandler{command: handler.Command})
+					}
+				}
+			}
+		}
+	}
+	flat := func(rel string) {
+		t.Helper()
+		for event, handlers := range events(rel, "hooks") {
+			for _, raw := range handlers {
+				var handler struct {
+					Command          string `json:"command"`
+					WorkingDirectory string `json:"working_directory"`
+				}
+				if err := json.Unmarshal(raw, &handler); err != nil {
+					t.Fatalf("decode %s %s handler: %v", rel, event, err)
+				}
+				if handler.Command != "" {
+					commands = append(commands, hookInvariantHandler{command: handler.Command, dir: handler.WorkingDirectory})
+				}
+			}
+		}
+	}
+	switch target {
+	case "claude":
+		grouped(".claude/settings.json", "hooks")
+	case "factory":
+		grouped(".factory/hooks.json", "")
+	case "cursor":
+		flat(".cursor/hooks.json")
+	case "gemini":
+		grouped(".gemini/settings.json", "hooks")
+	case "windsurf":
+		if machine {
+			flat(".codeium/windsurf/hooks.json")
+			break
+		}
+		// Desktop falls back only while no event holds a handler; an empty
+		// event list defines no hook.
+		defines := false
+		for _, handlers := range events(".devin/hooks.json", "hooks") {
+			defines = defines || len(handlers) > 0
+		}
+		if defines {
+			flat(".devin/hooks.json")
+		} else {
+			flat(".windsurf/hooks.json")
+		}
+	case "devin":
+		if machine {
+			grouped(".config/devin/config.json", "hooks")
+		} else {
+			grouped(".devin/hooks.v1.json", "")
+		}
+	case "codex":
+		grouped(".codex/hooks.json", "hooks")
+	case "opencode":
+		base := ".opencode"
+		if machine {
+			base = ".config/opencode"
+		}
+		paths, err := filepath.Glob(filepath.Join(root, base, "hooks", "agent-marketplace", "*.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(paths) > 0 {
+			if _, err := os.Stat(filepath.Join(root, base, "plugins", "agent-marketplace.js")); err != nil {
+				t.Fatalf("OpenCode hook declarations exist without the adapter plugin that loads them: %v", err)
+			}
+		}
+		for _, path := range paths {
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Mirror the adapter: other formats are skipped, and a v1
+			// declaration it would reject fails every OpenCode hook.
+			document, _ := read(filepath.ToSlash(rel))
+			var format string
+			if json.Unmarshal(document["format"], &format) != nil || format != "agent-marketplace/opencode-hook-v1" {
+				continue
+			}
+			var event, command, matcher string
+			var timeout float64
+			_, hasMatcher := document["matcher"]
+			if json.Unmarshal(document["event"], &event) != nil || event != "PreToolUse" ||
+				json.Unmarshal(document["command"], &command) != nil || command == "" ||
+				json.Unmarshal(document["timeout"], &timeout) != nil || timeout != float64(int(timeout)) || timeout < 1 || timeout > 600 ||
+				hasMatcher && json.Unmarshal(document["matcher"], &matcher) != nil || hasMatcher && string(document["matcher"]) == "null" {
+				t.Fatalf("OpenCode adapter would reject hook declaration %s: %v", rel, document)
+			}
+			commands = append(commands, hookInvariantHandler{command: command})
+		}
+	default:
+		t.Fatalf("hookInvariantLoadedHandlers: unknown target %s", target)
+	}
+	return commands
+}
+
+// hookInvariantLoadedCount returns how many loaded executable handlers run a
+// command containing token.
+func hookInvariantLoadedCount(t *testing.T, target, root string, machine bool, token string) int {
+	t.Helper()
+	count := 0
+	for _, command := range hookInvariantLoadedCommands(t, target, root, machine) {
+		if strings.Contains(command, token) {
+			count++
+		}
+	}
+	return count
+}
+
 // hookInvariantCount returns how often token occurs across files under root.
+// It is discovery-only evidence: a token in a plugin-layout file proves
+// neither that the harness loads it nor that it is executable. Prefer
+// hookInvariantLoadedCount wherever the outcome is a working hook.
 func hookInvariantCount(t *testing.T, root string, files []string, token string) int {
 	t.Helper()
 	count := 0
@@ -147,7 +354,7 @@ func TestHookInvariantBareRegistryWithClaudeSettingsKeepsResources(t *testing.T)
 func TestHookInvariantMatchAllRegexMatcherSyncsLikeStar(t *testing.T) {
 	type outcome struct{ exit, copies int }
 	installedStar := 0
-	for _, target := range hookInvariantTargets {
+	for _, target := range hookInvariantNativeTargets {
 		t.Run(target, func(t *testing.T) {
 			sync := func(matcher string) (outcome, ExecResult) {
 				t.Helper()
@@ -157,7 +364,7 @@ func TestHookInvariantMatchAllRegexMatcherSyncsLikeStar(t *testing.T) {
 				registry := hookInvariantRegistry(e, "match-all", fmt.Sprintf(`{"hooks":{"PreToolUse":[{"matcher":%q,"hooks":[{"type":"command","command":"echo %s"}]}]}}`, matcher, token))
 				e.WriteRepoConfig(hookInvariantV4Config(target, registry, "hook/PreToolUse-command"))
 				r := e.RunAM("sync")
-				return outcome{exit: r.ExitCode, copies: hookInvariantCount(t, e.workspace, hookInvariantHookFiles(target, false), token)}, r
+				return outcome{exit: r.ExitCode, copies: hookInvariantLoadedCount(t, target, e.workspace, false, token)}, r
 			}
 			star, starResult := sync("*")
 			regex, _ := sync(".*")
@@ -194,14 +401,13 @@ func TestHookInvariantRefusedSiblingDoesNotBlockDeselection(t *testing.T) {
 	// Windsurf has no subagent lifecycle event, so SubagentStop is refused.
 	registry := hookInvariantRegistry(e, "refused-sibling", fmt.Sprintf(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo %s"}]}],"SubagentStop":[{"hooks":[{"type":"command","command":"echo %s"}]}]}}`, valid, refused))
 	e.WriteRepoConfig(hookInvariantV4Config("windsurf", registry, "hook/PreToolUse-command", "hook/SubagentStop-command"))
-	files := hookInvariantHookFiles("windsurf", false)
 
 	first := e.RunAM("sync")
 	e.AssertOutputContains(first, "hook.windsurf.event-unmappable")
-	if got := hookInvariantCount(t, e.workspace, files, refused); got != 0 {
+	if got := hookInvariantCount(t, e.workspace, hookInvariantHookFiles("windsurf", false), refused); got != 0 {
 		t.Fatalf("refused sibling installed %d times; the fixture no longer exercises a refusal", got)
 	}
-	if got := hookInvariantCount(t, e.workspace, files, valid); got != 1 {
+	if got := hookInvariantLoadedCount(t, "windsurf", e.workspace, false, valid); got != 1 {
 		t.Fatalf("valid hook installed %d times before deselection, want 1\n%s", got, first.Combined)
 	}
 
@@ -212,7 +418,7 @@ func TestHookInvariantRefusedSiblingDoesNotBlockDeselection(t *testing.T) {
 		t.Fatalf("remove left the hook selected:\n%s", e.ReadFile("/workspace/.agents/config.yaml"))
 	}
 	last := e.RunAM("sync")
-	if got := hookInvariantCount(t, e.workspace, files, valid); got != 0 {
+	if got := hookInvariantLoadedCount(t, "windsurf", e.workspace, false, valid); got != 0 {
 		t.Errorf("deselected hook still installed %d times\n%s", got, last.Combined)
 	}
 }
@@ -336,15 +542,15 @@ func TestHookInvariantTeammateCheckoutPathDoesNotDuplicateHooks(t *testing.T) {
 	if err := os.Chmod(e.mustResolvePath("/workspace/vendor/reg/hooks/scripts/guard.sh"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	const authored = "${CLAUDE_PLUGIN_ROOT}/scripts/guard.sh"
+	const authored = "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/guard.sh"
 	e.WriteFile("/workspace/vendor/reg/hooks/hooks.json", `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"`+authored+`"}]}]}}`)
 	e.WriteRepoConfig(hookInvariantV4Config("claude", "./vendor/reg", "hook/PreToolUse-command"))
 	e.InitGitRepo()
 	e.MustRunAM("sync")
 	hookInvariantCommitAll(e, "first teammate syncs hooks")
 	files := hookInvariantHookFiles("claude", false)
-	if got := hookInvariantCount(t, e.workspace, files, "scripts/guard.sh"); got != 1 {
-		t.Fatalf("first teammate installed %d hook entries, want 1", got)
+	if got := hookInvariantLoadedCount(t, "claude", e.workspace, false, "scripts/guard.sh"); got != 1 {
+		t.Fatalf("first teammate installed %d loaded hook handlers, want 1", got)
 	}
 
 	sandbox := filepath.Dir(e.home)
@@ -359,8 +565,8 @@ func TestHookInvariantTeammateCheckoutPathDoesNotDuplicateHooks(t *testing.T) {
 	r := hookInvariantRunAs(e, home, checkout, "sync")
 	e.AssertExitCode(r, 0)
 
-	if got := hookInvariantCount(t, checkout, files, "scripts/guard.sh"); got != 1 {
-		t.Errorf("teammate's sync left %d hook entries, want 1", got)
+	if got := hookInvariantLoadedCount(t, "claude", checkout, false, "scripts/guard.sh"); got != 1 {
+		t.Errorf("teammate's sync left %d loaded hook handlers, want 1", got)
 	}
 	// Claude Code loads hooks from .claude/settings.json; it never reads the
 	// plugin-layout .claude/hooks/hooks.json, so a command there cannot run
@@ -411,8 +617,8 @@ func TestHookInvariantHandwrittenWindsurfHooksAreNotShadowed(t *testing.T) {
 	e.InitGitRepo()
 
 	e.AssertExitCode(e.RunAM("sync"), 0)
-	if got := hookInvariantCount(t, e.workspace, hookInvariantHookFiles("windsurf", false), managed); got != 1 {
-		t.Fatalf("managed Windsurf hook installed %d times, want 1", got)
+	if got := hookInvariantLoadedCount(t, "windsurf", e.workspace, false, managed); got != 1 {
+		t.Fatalf("managed Windsurf hook loads %d times, want 1", got)
 	}
 	e.AssertFileContains("/workspace/.windsurf/hooks.json", handwritten)
 
@@ -452,8 +658,8 @@ func TestHookInvariantLegacyFileURLWorkingTreeHooksSync(t *testing.T) {
 	e.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources: {team: {git: 'file://%s', ref: main}}\nresources: {team: {include: [hook/PreToolUse-command]}}\n", checkout))
 
 	e.AssertExitCode(e.RunAM("sync"), 0)
-	if got := hookInvariantCount(t, e.workspace, hookInvariantHookFiles("claude", false), token); got != 1 {
-		t.Errorf("hook from a file:// working tree installed %d times, want 1", got)
+	if got := hookInvariantLoadedCount(t, "claude", e.workspace, false, token); got != 1 {
+		t.Errorf("hook from a file:// working tree loads %d times, want 1", got)
 	}
 }
 
@@ -650,8 +856,8 @@ func TestHookInvariantTeammateHookRemovalRefusesWithoutOwnership(t *testing.T) {
 			e.MustRunAM("sync")
 			hookInvariantCommitAll(e, "first teammate syncs hooks")
 			files := hookInvariantHookFiles(target, false)
-			if got := hookInvariantCount(t, e.workspace, files, token); got != 1 {
-				t.Fatalf("first teammate installed %d copies, want 1", got)
+			if got := hookInvariantLoadedCount(t, target, e.workspace, false, token); got != 1 {
+				t.Fatalf("first teammate installed %d loaded copies, want 1", got)
 			}
 
 			home := filepath.Join(filepath.Dir(e.home), "teammate-home")
@@ -698,12 +904,12 @@ func TestHookInvariantTeammateHookRemovalRefusesWithoutOwnership(t *testing.T) {
 				t.Errorf("refused remove created ownership state: %v", err)
 			}
 			e.AssertExitCode(hookInvariantRunAs(e, home, checkout, "sync", "--check"), 0)
-			if got := hookInvariantCount(t, checkout, files, token); got != 1 {
-				t.Errorf("refused remove left %d copies, want the unchanged active hook", got)
+			if got := hookInvariantLoadedCount(t, target, checkout, false, token); got != 1 {
+				t.Errorf("refused remove left %d loaded copies, want the unchanged active hook", got)
 			}
 			e.MustRunAM("remove", "PreToolUse-command", "--kind", "hook", "--scope", "repo")
 			if got := hookInvariantCount(t, e.workspace, files, token); got != 0 {
-				t.Errorf("same-owner removal left %d copies, want none", got)
+				t.Errorf("same-owner removal left %d copies in any hook file, want none", got)
 			}
 		})
 	}

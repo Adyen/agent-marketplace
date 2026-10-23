@@ -280,8 +280,9 @@ func TestInstallationRunRetriesAfterFailureWithoutTraffic(t *testing.T) {
 func TestInstallationRunEarlierInventoryHorizon(t *testing.T) {
 	almostStale := time.Now().Add(-30*24*time.Hour + 60*time.Millisecond)
 	samples := []inventoryMetricSample{
-		inventorySnapshotSample("install-1", "gen-1", almostStale),
-		inventoryResourceSample("install-1", "gen-1", telemetryAlpha, "skill", "res-a"),
+		aggregateResponseSample("count", 1, map[string]string{"am_registry": "rA", "resource_kind": "skill", "resource_name": "res-a"}),
+		aggregateResponseSample("fresh", 1, nil),
+		aggregateResponseSample("valid_until", float64(almostStale.UnixMicro()), nil),
 	}
 	body := prometheusVector(samples, time.Now())
 	fixture := newMetricsFixture(t, func() string { return body })

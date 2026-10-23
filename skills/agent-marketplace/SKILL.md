@@ -256,7 +256,10 @@ records it in the owning layer's lock, and prompts before accepting security
 findings (`--accept-risk`/`--yes` in automation). A Marketplace group selects
 through explicit `include` only; `tags`, `all`, and group `harnesses` fail at
 run time with `v4.marketplace-runtime-unsupported`. A missing or mismatched lock
-record fails with `v4.marketplace-lock-required`/`-mismatch`.
+record fails with `v4.marketplace-lock-required`/`-mismatch`; a writing `sync`
+or `lock` records selected Marketplace resources missing from an existing lock
+while keeping existing pins, and read-only modes (`--check`, `--locked`,
+`--offline`, `doctor`) never write.
 
 ## Resource prerequisites
 

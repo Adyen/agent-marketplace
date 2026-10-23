@@ -117,6 +117,7 @@ func (m Model) startDiscoveryInstall(r row, s scope) (tea.Model, tea.Cmd) {
 	if err != nil {
 		return m, func() tea.Msg { return toastMsg{text: err.Error(), duration: 3 * time.Second} }
 	}
+	options.DependencyReconcile = m.dependencyLifecycle.InstallReconcile
 	operation, ok := m.beginOperation(operationMutation)
 	if !ok {
 		return m, operationBlockedCmd()

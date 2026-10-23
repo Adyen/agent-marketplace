@@ -483,21 +483,26 @@ func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir stri
 	emit(base)
 }
 
+// driftItemsByResource keys drift items by resource. A resource can have
+// several, for example missing from a new target harness and orphaned in the
+// one it left, so the most actionable wins: broken, then missing, then an
+// orphaned copy.
+func driftItemsByResource(driftReport materialize.DriftReport) map[string]materialize.DriftItem {
+	byName := make(map[string]materialize.DriftItem, len(driftReport.Missing)+len(driftReport.Broken)+len(driftReport.Orphaned))
+	for _, items := range [][]materialize.DriftItem{driftReport.Orphaned, driftReport.Missing, driftReport.Broken} {
+		for _, item := range items {
+			byName[item.Name] = item
+		}
+	}
+	return byName
+}
+
 func applyDriftItems(rows []row, driftReport materialize.DriftReport) []row {
 	out := slices.Clone(rows)
 	if len(driftReport.Missing)+len(driftReport.Broken)+len(driftReport.Orphaned) == 0 {
 		return out
 	}
-	driftByName := make(map[string]materialize.DriftItem, len(driftReport.Missing)+len(driftReport.Broken)+len(driftReport.Orphaned))
-	for _, item := range driftReport.Missing {
-		driftByName[item.Name] = item
-	}
-	for _, item := range driftReport.Broken {
-		driftByName[item.Name] = item
-	}
-	for _, item := range driftReport.Orphaned {
-		driftByName[item.Name] = item
-	}
+	driftByName := driftItemsByResource(driftReport)
 	for i := range out {
 		if out[i].IsAvailable || out[i].DriftItem != nil {
 			continue
@@ -877,16 +882,7 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 		}
 	}
 
-	driftByName := make(map[string]materialize.DriftItem, len(driftReport.Missing)+len(driftReport.Broken)+len(driftReport.Orphaned))
-	for _, item := range driftReport.Missing {
-		driftByName[item.Name] = item
-	}
-	for _, item := range driftReport.Broken {
-		driftByName[item.Name] = item
-	}
-	for _, item := range driftReport.Orphaned {
-		driftByName[item.Name] = item
-	}
+	driftByName := driftItemsByResource(driftReport)
 
 	// seen is keyed by (kind, name, catalogKey) so same-name skills from
 	// different registries each get their own row.
@@ -1017,8 +1013,17 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 	}
 
 	// Add malformed skills. Deduplicate by (catalogKey, DirName) so
-	// same-name malformed entries from different catalogs each appear.
+	// same-name malformed entries from different catalogs each appear, each
+	// labelled with the registry whose catalog it came from.
+	registriesByCatalog := map[string]config.RegistryEntry{}
+	if cfg != nil {
+		for _, entry := range cfg.Registries {
+			registriesByCatalog[entry.CatalogKey] = entry
+		}
+	}
 	for catalogKey, cat := range catalogs {
+		registry := registriesByCatalog[catalogKey]
+		registryName := registryDisplayName(registry.URL)
 		for _, m := range cat.Malformed {
 			name := m.DirName
 			seenKey := name + "\x01" + catalogKey
@@ -1027,12 +1032,19 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 			}
 			seen[seenKey] = struct{}{}
 
+			kind, _ := skill.MalformedKind(m)
 			rows = append(rows, row{
-				IsMalformed:  true,
-				MalformedMsg: m.Error.Error(),
+				IsMalformed:   true,
+				MalformedMsg:  m.Error.Error(),
+				MalformedKind: skill.MalformedKindLabel(m),
 				Artifact: resolver.ResolvedArtifact{
-					Entry: catalog.Entry{Name: name, Path: m.Path},
+					Entry:      catalog.Entry{Name: name, Kind: kind, Path: m.Path},
+					CatalogKey: catalogKey,
 				},
+				RegistryURL:  registry.URL,
+				RegistryName: registryName,
+				RegistryRef:  registry.Ref,
+				RegistryPath: registry.Path,
 			})
 		}
 	}
@@ -1282,6 +1294,11 @@ func appendUnavailableSelectionRows(rows []row, cfg *config.Config, localCfg *co
 	seen := make(map[string]struct{}, len(rows)+len(resolveErrs))
 	available := make(map[string]struct{}, len(rows))
 	for i := range rows {
+		// A malformed row's kind is unknown, so it cannot stand in for a
+		// missing selection that happens to share its name.
+		if rows[i].IsMalformed {
+			continue
+		}
 		key := skill.ResourceKey(rows[i].Artifact.Kind, rows[i].Artifact.Name)
 		seen[key+"\x01"+registryIdentityKey(rows[i].RegistryURL, rows[i].RegistryRef, rows[i].RegistryPath)] = struct{}{}
 		if rows[i].IsAvailable {
@@ -1442,7 +1459,7 @@ func registryDisplayName(url string) string {
 	if url == "" {
 		return ""
 	}
-	url = strings.TrimSuffix(url, ".git")
+	url = strings.TrimSuffix(strings.TrimRight(url, "/"), ".git")
 	if idx := strings.LastIndexAny(url, "/:"); idx >= 0 {
 		url = url[idx+1:]
 	}

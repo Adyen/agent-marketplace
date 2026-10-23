@@ -370,7 +370,7 @@ other plugin directories remain unsupported and MUST have an achievable remedy.
 
 ### Requirement: Current reported installation counts
 
-The Marketplace SHALL derive adoption from distinct reporting Installation IDs whose latest complete inventory observation is no older than 30 days. A resource SHALL count at most once per Installation ID and resource coordinate, including observations of the same coordinate through both Git and Marketplace acquisition. Legacy Git observations SHALL contribute only through unambiguous matches between telemetry registry identities and Marketplace registry origins. Explicit hosted observations SHALL contribute only when their Marketplace instance ID matches the serving Marketplace and their registry ID is known to that Marketplace. Counts describe enabled configuration, not verified materialization or unique users. Legitimate rule observations SHALL NOT contribute to adoption or invalidate counts for Marketplace-selectable resources. Superseded inventories SHALL NOT consume the metrics response budget when the latest-inventory projection fits within that budget.
+The Marketplace SHALL derive adoption from distinct reporting Installation IDs whose latest complete inventory observation is no older than 30 days. A resource SHALL count at most once per Installation ID and resource coordinate, including observations of the same coordinate through both Git and Marketplace acquisition. Legacy Git observations SHALL contribute only through unambiguous matches between telemetry registry identities and Marketplace registry origins. Explicit hosted observations SHALL contribute only when their Marketplace instance ID matches the serving Marketplace and their registry ID is known to that Marketplace. Counts describe enabled configuration, not verified materialization or unique users. Legitimate rule observations SHALL NOT contribute to adoption or invalidate counts for Marketplace-selectable resources. Superseded inventories SHALL NOT consume the metrics response budget when the latest-inventory projection fits within that budget. The metrics backend SHALL evaluate these rules and return aggregate counts per counted resource coordinate together with the fresh-installation count and the oldest fresh observation, so the metrics response grows with counted coordinates rather than with reporting installations. Well-formed metrics responses SHALL NOT contain Installation IDs or configuration fingerprints.
 
 #### Scenario: Latest inventory excludes removed and stale resources
 
@@ -403,6 +403,19 @@ The Marketplace SHALL derive adoption from distinct reporting Installation IDs w
 - **THEN** installation-ordered search SHALL count only the serving Marketplace's coordinates and count the shared Git and hosted coordinate once per Installation ID
 - **AND** different registry IDs SHALL remain distinct even when resource names match
 - **AND** a newer complete generation without the resource SHALL remove its contribution
+
+#### Scenario: Adoption growth does not exhaust the response budget
+
+- **WHEN** many fresh installations report the same resource coordinates, alongside local and unknown registry observations, so that per-installation latest inventories would exceed the metrics response budget
+- **THEN** the metrics response SHALL contain one count per counted resource coordinate, one fresh-installation count and one oldest fresh observation, and installation-ordered search SHALL return those counts
+- **AND** the response SHALL contain no Installation ID, configuration fingerprint, local registry or unknown registry observation
+- **AND** no fresh installation SHALL leave counts unavailable rather than fabricate zero values
+
+#### Scenario: Malformed observations retain the fallback under aggregation
+
+- **WHEN** latest inventories contain an unknown source kind, an incoherent hosted identity pair, an invalid hosted identity, an unknown resource kind, an empty registry or resource name, a non-positive, non-integer or oversized snapshot value, or a value other than one on an observation that would contribute to counts
+- **THEN** installation-ordered search SHALL use the existing unavailable-count fallback
+- **AND** well-formed hosted identities that merely resemble violations SHALL NOT cause the fallback
 
 ### Requirement: Optional popularity search order
 
@@ -457,12 +470,12 @@ Marketplace operator configuration SHALL optionally select a Prometheus-compatib
 
 ### Requirement: Installation metrics timing is independently configurable
 
-Marketplace operator configuration SHALL accept optional `installation_metrics.refresh.interval`, `installation_metrics.refresh.retry_interval`, `installation_metrics.refresh.jitter`, `installation_metrics.max_age` and `installation_metrics.timeout` with defaults of four minutes, thirty seconds, fifteen seconds, five minutes and two seconds respectively. Successful refresh scheduling SHALL use the evaluation time plus interval and additional jitter between zero and its configured bound, or just after an earlier inventory validity horizon. A refresh loop SHALL have at most one active attempt. Unavailable-count or identity-change search hints SHALL be non-blocking and coalesced, SHALL NOT repeat work for a still-fresh compatible aggregate, and SHALL NOT bypass the minimum failure retry delay measured from attempt completion. Construction and handler access SHALL NOT start refresh work; API shutdown SHALL cancel outstanding refresh work and await its termination. Metrics without a configured URL SHALL remain disabled and SHALL NOT affect readiness. Registry reindex timing SHALL remain independent.
+Marketplace operator configuration SHALL accept optional `installation_metrics.refresh.interval`, `installation_metrics.refresh.retry_interval`, `installation_metrics.refresh.jitter`, `installation_metrics.max_age` and `installation_metrics.timeout` with defaults of four minutes, thirty seconds, fifteen seconds, five minutes and three seconds respectively. Successful refresh scheduling SHALL use the evaluation time plus interval and additional jitter between zero and its configured bound, or just after an earlier inventory validity horizon. A refresh loop SHALL have at most one active attempt. Unavailable-count or identity-change search hints SHALL be non-blocking and coalesced, SHALL NOT repeat work for a still-fresh compatible aggregate, and SHALL NOT bypass the minimum failure retry delay measured from attempt completion. Construction and handler access SHALL NOT start refresh work; API shutdown SHALL cancel outstanding refresh work and await its termination. Metrics without a configured URL SHALL remain disabled and SHALL NOT affect readiness. Registry reindex timing SHALL remain independent.
 
 #### Scenario: Existing configuration uses defaults independently of reindexing
 
 - **WHEN** an operator leaves the new installation metrics timing settings absent or changes only registry reindex timing
-- **THEN** installation refresh SHALL use its own four-minute interval, thirty-second retry, fifteen-second jitter, five-minute maximum age and two-second timeout
+- **THEN** installation refresh SHALL use its own four-minute interval, thirty-second retry, fifteen-second jitter, five-minute maximum age and three-second timeout
 - **AND** leaving the metrics URL absent SHALL start no telemetry worker
 
 #### Scenario: Timing overrides and explicit zero jitter are honored
@@ -735,7 +748,7 @@ unknown metadata and native output.
 
 ### Requirement: Stored payload reads enforce existing byte ceilings
 
-Public inspection, content and manifest reads using the built-in filesystem and S3 backends SHALL enforce applicable existing inspection-manifest, configured file and manifest byte ceilings during reading, before fully materializing an oversized stored object. GET and HEAD SHALL retain availability checks, identity verification and their existing success and refusal behavior. This requirement introduces no new ceiling and does not change the existing meaning of an unlimited configured file ceiling or the compatibility interface for custom blob stores.
+Public inspection, content, manifest and archive reads using the built-in filesystem and S3 backends SHALL enforce applicable existing inspection-manifest, configured file, manifest and artifact byte ceilings during reading, before fully materializing an oversized stored object. Archive reads cover the final archive served by the artifact route, the placeholder-form archive served or derived by the archive route, and the placeholder-form archive used to verify a final archive. Checking whether an immutable blob already holds the same bytes SHALL read at most one byte more than the bytes being stored. GET and HEAD SHALL retain availability checks, identity verification and their existing success and refusal behavior. This requirement introduces no new ceiling and does not change the existing meaning of an unlimited configured file ceiling or the compatibility interface for custom blob stores.
 
 #### Scenario: Oversized payloads stop at the existing read ceiling
 
@@ -747,3 +760,20 @@ Public inspection, content and manifest reads using the built-in filesystem and 
 
 - **WHEN** public content fits its applicable existing byte ceiling
 - **THEN** its content bytes, verified digest, media type and immutable success response SHALL remain unchanged
+
+#### Scenario: Oversized archives stop at the artifact ceiling
+
+- **WHEN** the artifact or placeholder archive route reads a final or placeholder-form archive, with or without a stored placeholder
+- **THEN** every archive blob read SHALL be bounded by the configured artifact limit, and an archive larger than it SHALL be refused with the existing `413` response without immutable success caching
+- **AND** an archive within the limit SHALL still be served with its existing bytes and verification
+
+### Requirement: Verified archive decoding stops at the archive limits
+
+Verifying a resource archive by digest, verifying a final archive against its verified placeholder, and decoding an archive for its content SHALL enforce the archive limits while the archive is decoded, not only after decoding completes. A member whose declared size exceeds its per-member limit, a member that would raise the asset, support or total file count or the total decoded bytes beyond the limits, more archive entries than the limits' files plus the canonical manifest and directories, and a repeated manifest SHALL be refused before that member's body is read and before any later entry is decoded. The manifest and members outside the canonical layout directories SHALL count toward the total decoded bytes. Archives within the limits SHALL verify as before.
+
+#### Scenario: Verified archive decoding stops at the archive limits
+
+- **WHEN** an archive verified by digest or decoded for content exceeds the total decoded bytes, the asset, support or total file count, the per-member size, or the entry count, or repeats its manifest, and is followed by an entry that decoding would otherwise reject
+- **THEN** verification MUST fail with the limit that was exceeded
+- **AND** the later entry MUST NOT be decoded
+- **AND** an encoded archive with the maximum asset count and a member at the per-member limit MUST still verify

@@ -41,7 +41,7 @@ func (c *cursorIngester) Source() ingest.Harness {
 }
 
 func (c *cursorIngester) Detect(src fs.FS) bool {
-	if _, err := fs.ReadFile(src, cursorPluginManifest); err == nil {
+	if ingest.RegularFileExists(src, cursorPluginManifest) {
 		return true
 	}
 	if hasWorkspaceForm(src) {
@@ -310,10 +310,10 @@ func hasWorkspaceForm(src fs.FS) bool {
 			return true
 		}
 	}
-	if _, err := fs.ReadFile(src, ".cursor/mcp.json"); err == nil {
+	if ingest.RegularFileExists(src, ".cursor/mcp.json") {
 		return true
 	}
-	if _, err := fs.ReadFile(src, cursorNativeHooksFile); err == nil {
+	if ingest.RegularFileExists(src, cursorNativeHooksFile) {
 		return true
 	}
 	return false
@@ -326,10 +326,7 @@ func hasPluginResources(src fs.FS) bool {
 			return true
 		}
 	}
-	if _, err := fs.ReadFile(src, "mcp.json"); err == nil {
-		return true
-	}
-	return false
+	return ingest.RegularFileExists(src, "mcp.json")
 }
 
 // listRuleFiles lists Cursor rule files (.mdc, plus .md for tolerance) in root.

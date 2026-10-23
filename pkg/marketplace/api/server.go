@@ -1583,10 +1583,14 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 	if !s.writeArchiveAvailability(w, r, digest) {
 		return
 	}
-	data, err := s.blobs.Get(r.Context(), digest)
+	data, err := s.readPayloadBlob(r.Context(), digest, s.artifactLimit())
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "artifact not found")
+			return
+		}
+		if errors.Is(err, errPayloadReadLimit) {
+			writeError(w, http.StatusRequestEntityTooLarge, "artifact exceeds size limit")
 			return
 		}
 		slog.Error("artifact fetch failed", "digest", logvalue.Safe(digest), "err", logvalue.Safe(err))
@@ -1597,6 +1601,10 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.verifyFinalArchive(r.Context(), digest, data); err != nil {
+		if errors.Is(err, errPayloadReadLimit) {
+			writeError(w, http.StatusRequestEntityTooLarge, "artifact exceeds size limit")
+			return
+		}
 		slog.Error("artifact blob digest mismatch", "digest", logvalue.Safe(digest), "error", logvalue.Safe(err))
 		writeError(w, http.StatusInternalServerError, "artifact digest mismatch")
 		return
@@ -1608,7 +1616,7 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 // placeholder-form archive is stored, the final bytes are checked by content
 // against it and never re-compressed; otherwise the archive is re-encoded.
 func (s *Server) verifyFinalArchive(ctx context.Context, digest store.ArchiveDigest, data []byte) error {
-	placeholder, err := s.blobs.Get(ctx, store.PlaceholderArchiveKey(digest))
+	placeholder, err := s.readPayloadBlob(ctx, store.PlaceholderArchiveKey(digest), s.artifactLimit())
 	if err == nil {
 		verified, err := hccartifact.VerifyPlaceholderArchive(placeholder, string(digest))
 		if err != nil {
@@ -1670,14 +1678,20 @@ var errArchiveTooLarge = errors.New("artifact exceeds size limit")
 // bytes hash to digest; otherwise it returns ErrPlaceholderNotReproducible. An
 // oversized final archive is refused before anything is derived or stored.
 func (s *Server) placeholderArchive(ctx context.Context, digest store.ArchiveDigest) ([]byte, error) {
-	data, err := s.blobs.Get(ctx, store.PlaceholderArchiveKey(digest))
+	data, err := s.readPayloadBlob(ctx, store.PlaceholderArchiveKey(digest), s.artifactLimit())
 	if err == nil {
 		return data, nil
+	}
+	if errors.Is(err, errPayloadReadLimit) {
+		return nil, errArchiveTooLarge
 	}
 	if !errors.Is(err, store.ErrNotFound) {
 		return nil, err
 	}
-	final, err := s.blobs.Get(ctx, digest)
+	final, err := s.readPayloadBlob(ctx, digest, s.artifactLimit())
+	if errors.Is(err, errPayloadReadLimit) {
+		return nil, errArchiveTooLarge
+	}
 	if err != nil {
 		return nil, err
 	}

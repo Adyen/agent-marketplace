@@ -26,7 +26,9 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/remedy"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/tui"
 )
 
 // doctorOptions carries everything doctor needs that a test must be able to
@@ -691,8 +693,8 @@ func applyRepairActions(out io.Writer, opts doctorOptions, preview *materialize.
 				logDoctorRepairDecision(file, "replace", "deferred", candidate.EntryKind(), candidate.Identity(), "non-interactive")
 				continue
 			}
-			prompt := fmt.Sprintf("  replace %s %q in %s with the generated entry? this deletes the existing value [y/N] ",
-				candidate.EntryKind(), candidate.Identity(), file.Rel)
+			prompt := fmt.Sprintf("  replace %s %q in %s with the entry generated for resource %q (generated value digest %s)? this deletes the existing value [y/N] ",
+				candidate.EntryKind(), candidate.Identity(), file.Rel, candidate.Resource, candidate.DesiredValueDigest())
 			confirmed, err := confirmPrompt(out, reader, prompt)
 			if err != nil {
 				slog.Error("doctor repair decision failed", "target", file.Target, "file", file.Rel, "action", "replace", "kind", candidate.EntryKind(), "identity", candidate.Identity(), "code", diag.CodeDoctorRepairFailed)
@@ -869,8 +871,17 @@ func writeDoctorConfigurationErrorsSection(out io.Writer, ec config.EffectiveCon
 }
 
 func writeDoctorErrorList(out io.Writer, errs []error) error {
+	seenHints := make(map[string]struct{}, len(errs))
 	for _, e := range errs {
 		if _, err := fmt.Fprintf(out, "error: %s\n", terminalSafeLines(fmt.Sprint(e))); err != nil {
+			return err
+		}
+		hint := tui.TerminalSafeLine(remedy.For(e, "doctor"))
+		if _, exists := seenHints[hint]; exists {
+			continue
+		}
+		seenHints[hint] = struct{}{}
+		if _, err := fmt.Fprintf(out, "hint: %s\n", hint); err != nil {
 			return err
 		}
 	}

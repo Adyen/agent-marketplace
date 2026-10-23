@@ -44,7 +44,8 @@ func runProductionTUI(ctx context.Context, repoRoot, homeDir string) error {
 		Update: func(ctx context.Context, workspace pipeline.Workspace) ([]error, error) {
 			return runTUIDependencyLifecycle(ctx, workspace, true)
 		},
-		Mutate: runTUIConfigMutation,
+		Mutate:           runTUIConfigMutation,
+		InstallReconcile: reconcileCommandDependencies,
 	})}
 	if checker := newUpgradeChecker(); checker != nil {
 		options = append(options, tui.WithUpgradeCheck(checker))

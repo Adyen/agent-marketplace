@@ -1,6 +1,6 @@
 # Terminal UI reference
 
-Keys, dialogs, and states of the [TUI](../glossary.md#tui), and what it saves when. For a guided first run, see the [quick start](../quick-start.md).
+Keys, dialogs, and states of the [TUI](../glossary.md#tui), and what it saves when. To get started, see the [quick start](../quick-start.md).
 
 ## Launch
 
@@ -39,7 +39,7 @@ A selection change is saved to config as soon as you accept it, and stays saved 
 
 ## Sync state
 
-`s` syncs pending changes into the harness folders. The **Pending sync** group and the diagnostics view (`e`) show that run's materialization errors and warnings.
+`s` syncs pending changes into the harness folders. The **Pending sync** group and the diagnostics view (`e`) show that run's materialization errors and warnings. Each error shows the same next-step guidance the CLI prints on its `hint:` line when the error's code has any, falling back to the view's own recovery copy otherwise.
 
 ## Hosted Marketplace discovery
 

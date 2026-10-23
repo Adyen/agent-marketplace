@@ -1,6 +1,6 @@
 module github.com/Adyen/agent-marketplace/e2e
 
-go 1.26.9
+go 1.27.3
 
 require (
 	github.com/Adyen/agent-marketplace v0.0.0

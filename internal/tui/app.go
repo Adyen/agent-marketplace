@@ -36,6 +36,9 @@ type DependencyLifecycle struct {
 	Sync   DependencyLifecycleFunc
 	Update DependencyLifecycleFunc
 	Mutate DependencyMutationFunc
+	// InstallReconcile prepares acquisition locks for the sync that follows a
+	// Marketplace install, so other sources stay at their locked revisions.
+	InstallReconcile pipeline.DependencyReconciler
 }
 
 type Option func(*Model)
@@ -330,7 +333,7 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	selection := m.captureRebuildAnchor()
 	listOffset := m.listOffset
 	selectionAfterDisable := m.selectionAfterDisable
-	m.selectionAfterDisable = ""
+	m.selectionAfterDisable = rebuildAnchor{}
 	var previousDetail row
 	hadPreviousDetail := false
 	if m.pane == paneDetail && m.detailKey != "" {
@@ -355,7 +358,7 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	// a disabled row now in Available); keep the previous viewport and scroll
 	// only as far as the final selection needs.
 	m.listOffset = listOffset
-	if !m.restoreSelectionKey(selectionAfterDisable) {
+	if !m.restoreAnchor(selectionAfterDisable) {
 		m.restoreSelectionAfterRebuild(selection)
 	}
 	m.clampListOffset()
@@ -708,7 +711,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshing = false
 		m.driftAssessment = driftUnknown
 		if msg.selectNext {
-			m.selectionAfterDisable = m.nextRowSelectionKey()
+			m.selectionAfterDisable = m.nextRowSelection()
 		}
 		// If a collision-aware enable was pending, emit the exclude
 		// command now that the primary toggle has succeeded.
@@ -1238,7 +1241,7 @@ func (m Model) dispatchAction(id paletteActionID) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case actionDiagnostics:
-		if len(m.errs) > 0 || len(m.warnings) > 0 || len(m.discoveryErrs) > 0 {
+		if m.hasDiagnostics() {
 			m.pane = paneErrors
 		}
 		return m, nil
@@ -1460,6 +1463,7 @@ func (m *Model) rebuildOpenBundle(previous row, hadPrevious bool) {
 	}
 	if !found && hadPrevious {
 		identity := registryIdentityKey(previous.RegistryURL, previous.RegistryRef, previous.RegistryPath)
+		matches := 0
 		for _, r := range m.rows {
 			if r.UnavailableReason == "" && !previous.PendingVerification {
 				continue
@@ -1473,9 +1477,13 @@ func (m *Model) rebuildOpenBundle(previous row, hadPrevious bool) {
 			if registryIdentityKey(r.RegistryURL, r.RegistryRef, r.RegistryPath) != identity {
 				continue
 			}
-			current, found = r, true
-			break
+			current = r
+			matches++
 		}
+		found = matches == 1
+	}
+	if !found && hadPrevious {
+		current, found = uniqueRowByIdentity(m.rows, rowSelectionIdentity(previous))
 	}
 	if !found {
 		m.detailKey = ""
@@ -1557,6 +1565,12 @@ func (m Model) rowToggleEligibility(r row) toggleDenial {
 	if m.configInvalid {
 		return toggleConfigInvalid
 	}
+	return rowToggleDenial(r)
+}
+
+// rowToggleDenial evaluates the guards that belong to the row itself, so
+// hints can follow what the row supports regardless of transient states.
+func rowToggleDenial(r row) toggleDenial {
 	switch {
 	case r.IsMalformed:
 		return toggleMalformed
@@ -2163,6 +2177,13 @@ func (m *Model) clampListOffset() {
 	listWidth, _ := paneWidths(m.width)
 	visibleHeight := m.listVisibleHeight()
 	heights := m.listHeightOffsets(listWidth)
+	// When every row fits, show the whole list. Keeping a reload anchor's
+	// screen line would otherwise hide rows above blank space; overflowing
+	// lists keep the anchored line.
+	if heights[len(m.flatItems)] <= visibleHeight {
+		m.listOffset = 0
+		return
+	}
 	cursorBottom := heights[m.cursor+1]
 	if cursorBottom-heights[m.listOffset] <= visibleHeight {
 		return

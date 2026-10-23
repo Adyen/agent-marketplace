@@ -135,6 +135,7 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 		}
 	}
 
+	marketplaceCacheUnknown := pipeline.HasUnresolvedMarketplaceCacheEvidence(result.ResolveErrors)
 	if result.LoadedCfg == nil && len(result.Errors) > 0 {
 		return errors.Join(result.Errors...)
 	}
@@ -152,7 +153,11 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 	if err != nil {
 		return err
 	}
-	dryRunReport, dryRunErr := runListMaterialize(ctx, ws.MaterializeRoot(), result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
+	var dryRunReport *materialize.Report
+	var dryRunErr error
+	if !marketplaceCacheUnknown {
+		dryRunReport, dryRunErr = runListMaterialize(ctx, ws.MaterializeRoot(), result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
+	}
 	if dryRunErr != nil {
 		// A failed drift probe must not hide the listing itself, but file mode
 		// returns manifest and containment problems as hard errors that would
@@ -162,7 +167,11 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 			return err
 		}
 	}
-	if dryRunReport != nil && !dryRunReport.InSync() {
+	if marketplaceCacheUnknown {
+		if _, err := fmt.Fprintln(out, "Sync state unknown: Marketplace cache evidence missing — run 'agent-marketplace sync'"); err != nil {
+			return err
+		}
+	} else if dryRunReport != nil && !dryRunReport.InSync() {
 		pending := dryRunReport.TotalWritten() + dryRunReport.TotalRemoved()
 		if _, err := fmt.Fprintf(out, "%d resources out of sync — run 'agent-marketplace sync'\n", pending); err != nil {
 			return err
@@ -265,7 +274,7 @@ func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, 
 		for _, malformed := range catalogForEntry.Malformed {
 			rows = append(rows, listRow{
 				Registry: displayName,
-				Kind:     "skill",
+				Kind:     skill.MalformedKindLabel(malformed),
 				Name:     malformed.DirName,
 				Tags:     "",
 				Status:   fmt.Sprintf("malformed: %v", malformed.Error),
@@ -338,7 +347,7 @@ func buildListRows(cfg *config.Config, catalogs map[string]loadedCatalog, resolv
 		for _, malformed := range catalogs[entry.CatalogKey].Malformed {
 			rows = append(rows, listRow{
 				Registry: registryDisplayName(entry.URL),
-				Kind:     "skill",
+				Kind:     skill.MalformedKindLabel(malformed),
 				Name:     malformed.DirName,
 				Tags:     "",
 				Status:   fmt.Sprintf("malformed: %v", malformed.Error),
@@ -392,10 +401,14 @@ func parseOptionalKind(value string) (ir.ResourceKind, bool, error) {
 	return kind, true, nil
 }
 
+// filterListRowsByKind keeps the rows of kind, plus unclassified malformed
+// entries such as registry-level audit diagnostics, which no kind filter can
+// rule out.
 func filterListRowsByKind(rows []listRow, kind string) []listRow {
+	unknown := skill.MalformedKindLabel(skill.MalformedSkill{})
 	filtered := rows[:0]
 	for _, row := range rows {
-		if row.Kind == kind {
+		if row.Kind == kind || row.Kind == unknown {
 			filtered = append(filtered, row)
 		}
 	}

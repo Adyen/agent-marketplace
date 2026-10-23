@@ -54,7 +54,8 @@ func proposeReport(sources ...sourceReport) report {
 	return report{Schema: 1, CheckedAt: "2026-10-19T05:04:13Z", Sources: sources}
 }
 
-func TestProposeRefreshesBaselinesAndSkipsUnusableDigests(t *testing.T) {
+// spec: model-catalog-audit/evidence-only-drift-does-not-edit-reviewed-data
+func TestProposeReportsEvidenceDriftWithoutEditing(t *testing.T) {
 	root := writeProposeTree(t, nil)
 	before := readProposeFile(t, root, baselinesPath)
 	newDigest := digest([]byte("new-claude"))
@@ -67,23 +68,51 @@ func TestProposeRefreshesBaselinesAndSkipsUnusableDigests(t *testing.T) {
 	if err := run([]string{"propose", "--root", root}, strings.NewReader(mustJSON(t, r)), &out, nil, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	after := readProposeFile(t, root, baselinesPath)
-	want := fmt.Sprintf(`  "claude-subagents": {"checked": "2026-10-19", "sha256": "%s"},`, newDigest)
-	if !strings.Contains(after, want) {
-		t.Fatalf("baseline line not refreshed:\n%s", after)
+	if readProposeFile(t, root, baselinesPath) != before {
+		t.Fatal("evidence-only drift changed reviewed baselines")
 	}
-	beforeLines, afterLines := strings.Split(before, "\n"), strings.Split(after, "\n")
-	if len(beforeLines) != len(afterLines) {
-		t.Fatalf("line count changed: %d -> %d", len(beforeLines), len(afterLines))
-	}
-	changed := 0
-	for i := range beforeLines {
-		if beforeLines[i] != afterLines[i] {
-			changed++
+	for _, want := range []string{"Evidence drift requiring review (baselines unchanged)", "**claude-subagents**", short(newDigest), "**cursor-models**: observed digest is not", "**codex-models**: no freshness conclusion"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing %q from evidence alert:\n%s", want, out.String())
 		}
 	}
-	if changed != 1 || !strings.Contains(out.String(), "**cursor-models**: observed digest is not") || !strings.Contains(out.String(), "**codex-models**: no freshness conclusion") {
-		t.Fatalf("changed lines = %d, output:\n%s", changed, out.String())
+}
+
+// spec: model-catalog-audit/catalog-additions-do-not-acknowledge-evidence-drift
+func TestProposeCatalogAdditionPreservesBaselines(t *testing.T) {
+	const claudeCatalog = "schema: 1\nharness: claude\nsurfaces:\n  subagent:\n    model_field: model\nmodels:\n  anthropic/claude-opus-5:\n    model: claude-opus-5\n"
+	root := writeProposeTree(t, map[string]string{"claude": claudeCatalog})
+	before := readProposeFile(t, root, baselinesPath)
+	path := filepath.Join(root, baselinesPath)
+	stamp := time.Unix(1_700_000_000, 0)
+	if err := os.Chtimes(path, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	r := proposeReport(
+		sourceReport{Name: "claude-models", Harness: "claude", Status: "drift", URL: proposeSourceURL, ObservedSHA256: digest([]byte("new inventory")), Findings: []finding{
+			{Code: "source.evidence-changed"},
+			{Code: "catalog.model-missing", Model: "claude-sonnet-5-5"},
+		}},
+		sourceReport{Name: "hook-claude", Harness: "claude", CatalogDomain: "hookpolicy", Status: "drift", ObservedSHA256: digest([]byte("new hooks")), Findings: []finding{{Code: "source.evidence-changed"}}},
+	)
+	var out bytes.Buffer
+	if err := run([]string{"propose", "--root", root}, strings.NewReader(mustJSON(t, r)), &out, nil, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(readProposeFile(t, root, catalogPath("claude")), "  anthropic/claude-sonnet-5-5:\n    model: claude-sonnet-5-5\n") {
+		t.Fatal("missing model did not produce an actual catalog addition")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readProposeFile(t, root, baselinesPath) != before || !info.ModTime().Equal(stamp) {
+		t.Fatal("catalog proposal changed reviewed baseline bytes or metadata")
+	}
+	for _, want := range []string{"Catalog stubs added", "claude-sonnet-5-5", "Evidence drift requiring review (baselines unchanged)", "**claude-models**", "**hook-claude**"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing %q from mixed proposal:\n%s", want, out.String())
+		}
 	}
 }
 
@@ -230,11 +259,15 @@ func TestProposeWithoutChangesPrintsNothing(t *testing.T) {
 	}
 }
 
+// spec: model-catalog-audit/manual-candidates-remain-visible-without-file-edits
 func TestProposeListsManualOnlyFindingsWithoutEditing(t *testing.T) {
 	const geminiCatalog = "schema: 1\nharness: gemini\nsurfaces:\n  subagent:\n    model_field: model\nmodels:\n  google/gemini-3-pro:\n    model: gemini-3-pro\n"
 	root := writeProposeTree(t, map[string]string{"gemini": geminiCatalog})
 	baselinesBefore := readProposeFile(t, root, baselinesPath)
-	r := proposeReport(sourceReport{Name: "gemini-models", Harness: "gemini", Status: "drift", Findings: []finding{{Code: "catalog.model-missing", Model: "gemma-4-31b-it"}}})
+	r := proposeReport(
+		sourceReport{Name: "gemini-models", Harness: "gemini", Status: "drift", Findings: []finding{{Code: "catalog.model-missing", Model: "gemma-4-31b-it"}}},
+		sourceReport{Name: "hook-claude", Harness: "claude", CatalogDomain: "hookpolicy", Status: "drift", ObservedSHA256: digest([]byte("new hooks")), Findings: []finding{{Code: "source.evidence-changed"}}},
+	)
 	var out bytes.Buffer
 	if err := run([]string{"propose", "--root", root}, strings.NewReader(mustJSON(t, r)), &out, nil, time.Now()); err != nil {
 		t.Fatal(err)
@@ -266,24 +299,24 @@ func TestProposeFailedStubInsertionLeavesFilesUnchanged(t *testing.T) {
 }
 
 func TestProposeRejectsSymlinkEscape(t *testing.T) {
-	root := writeProposeTree(t, nil)
-	baselinesBefore := readProposeFile(t, root, baselinesPath)
-	outside := filepath.Join(t.TempDir(), "baselines.json")
-	if err := os.WriteFile(outside, []byte(baselinesBefore), 0o644); err != nil {
+	const claudeCatalog = "schema: 1\nharness: claude\nsurfaces:\n  subagent:\n    model_field: model\nmodels:\n  anthropic/claude-opus-5:\n    model: claude-opus-5\n"
+	root := writeProposeTree(t, map[string]string{"claude": claudeCatalog})
+	outside := filepath.Join(t.TempDir(), "claude.yaml")
+	if err := os.WriteFile(outside, []byte(claudeCatalog), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(root, baselinesPath)); err != nil {
+	if err := os.Remove(filepath.Join(root, catalogPath("claude"))); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(outside, filepath.Join(root, baselinesPath)); err != nil {
+	if err := os.Symlink(outside, filepath.Join(root, catalogPath("claude"))); err != nil {
 		t.Fatal(err)
 	}
-	r := proposeReport(sourceReport{Name: "claude-subagents", Status: "drift", ObservedSHA256: digest([]byte("new-claude")), Baseline: baseline{SHA256: digest([]byte("claude-subagents"))}, URL: "https://code.claude.com/docs/en/sub-agents.md", Findings: []finding{{Code: "source.evidence-changed"}}})
+	r := proposeReport(sourceReport{Name: "claude-models", Harness: "claude", Status: "drift", URL: proposeSourceURL, Findings: []finding{{Code: "catalog.model-missing", Model: "claude-sonnet-5-5"}}})
 	var out bytes.Buffer
 	if err := run([]string{"propose", "--root", root}, strings.NewReader(mustJSON(t, r)), &out, nil, time.Now()); err == nil {
-		t.Fatal("symlinked baselines must be rejected")
+		t.Fatal("symlinked catalogs outside the repository must be rejected")
 	}
-	if got, err := os.ReadFile(outside); err != nil || string(got) != baselinesBefore {
+	if got, err := os.ReadFile(outside); err != nil || string(got) != claudeCatalog {
 		t.Fatal("symlink target outside the repository was modified")
 	}
 }

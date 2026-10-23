@@ -62,12 +62,14 @@ type marketplaceDiscovery struct {
 }
 
 type row struct {
-	Artifact          resolver.ResolvedArtifact
-	DetailSource      *detailSourceSnapshot // immutable bounded copy captured while the exact snapshot lease is held
-	IsAvailable       bool                  // not in resolved (available but not enabled)
-	IsExcluded        bool                  // legacy: skill is in localCfg.Exclude (mirrors ExcludedLocally)
-	IsMalformed       bool
-	MalformedMsg      string
+	Artifact     resolver.ResolvedArtifact
+	DetailSource *detailSourceSnapshot // immutable bounded copy captured while the exact snapshot lease is held
+	IsAvailable  bool                  // not in resolved (available but not enabled)
+	IsExcluded   bool                  // legacy: skill is in localCfg.Exclude (mirrors ExcludedLocally)
+	IsMalformed  bool
+	MalformedMsg string
+	// MalformedKind is the kind label of a malformed row, or "unknown".
+	MalformedKind     string
 	UnavailableReason string
 	UnavailableSoft   bool                   // absent from a loaded registry; a warning that does not block drift
 	DriftItem         *materialize.DriftItem // nil if in sync or available-only
@@ -201,6 +203,15 @@ func (r *row) hasWordWithPrefix(term string) bool {
 	return i < len(r.searchWords) && strings.HasPrefix(r.searchWords[i], term)
 }
 
+// kindLabel is the row's kind label; a malformed row reports the kind its
+// failed load was for.
+func (r row) kindLabel() string {
+	if r.IsMalformed && r.MalformedKind != "" {
+		return r.MalformedKind
+	}
+	return skill.KindLabel(r.Artifact.Kind)
+}
+
 func (r row) canOverrideMarketplace() bool {
 	return r.Artifact.IsMarketplace && r.Artifact.Source == config.Organization && !r.Artifact.Required
 }
@@ -257,10 +268,10 @@ func (r row) status() rowStatus {
 	}
 	if r.DriftItem != nil {
 		switch r.DriftItem.Reason {
-		case materialize.DriftMissing:
+		// Drift attaches only to selected rows, so an orphaned item is a
+		// stale copy in a harness the resource no longer targets.
+		case materialize.DriftMissing, materialize.DriftOrphaned:
 			return rowStatus{"[*]", "◐", "enabled (pending sync)"}
-		case materialize.DriftOrphaned:
-			return rowStatus{"[-]", "◌", "orphaned"}
 		case materialize.DriftBroken:
 			return rowStatus{"[!]", "✗", "broken"}
 		}
@@ -389,7 +400,7 @@ type Model struct {
 	// excludeCompetingRegistriesCmd after the primary toggle succeeds.
 	// Set when enabling a colliding resource; cleared on configWrittenMsg.
 	pendingExcludeAction  *toggleAction
-	selectionAfterDisable string
+	selectionAfterDisable rebuildAnchor
 
 	// spinner provides an animated indicator in the footer while
 	// loading, refreshing, or syncing.

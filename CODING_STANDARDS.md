@@ -101,7 +101,9 @@ The pre-v4 success `upgrade-gate` and CI job are retired. Preserve their indepen
 
 ### TUI test ownership
 
-Go tests under `internal/tui` own model state, asynchronous behavior, rendering contracts, and terminal-guard details. Go E2E tests own configuration and filesystem policy matrices. `tools/tui-qa` owns a small set of direct real-terminal user journeys and must not duplicate those matrices or introduce a separate inventory, classifier, result authority, or retry system.
+Go tests under `internal/tui` own model state, asynchronous behavior, rendering contracts, and terminal-guard details. Go E2E tests own configuration and filesystem policy matrices. `tools/tui-qa` owns focused, direct real-terminal user journeys and must not duplicate those matrices or introduce a separate inventory, classifier, result authority, or retry system.
+
+Go tests never replace a journey. Every change to TUI behavior adds or extends a journey directly under `tools/tui-qa/tests/` that drives the changed flow through the real binary and asserts what the user sees (and the files written, when the flow writes them). Extend an existing journey when it already reaches the flow; otherwise add one file per interaction. `specaudit gate` fails pull requests that change non-test `internal/tui/` or `cmd/agent-marketplace/tui*.go` files without a journey change, unless a commit carries `TUI-QA-Impact: none — <reason>` for a change with no user-observable TUI effect.
 
 TUI QA commands must run without direnv or organization-specific infrastructure. Optional local values may come from the environment or ignored `.envrc.local`; tracked commands, reports, and fixtures must not contain organization-specific image, certificate, registry, or infrastructure identifiers.
 
