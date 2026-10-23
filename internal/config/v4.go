@@ -1957,7 +1957,10 @@ func (c *V4Config) rebuildRequests() {
 			}
 			if d.Request != nil {
 				byLocator[d.Locator] = *d.Request
-				excluded[d.Locator] = false
+				// Missing markers are already false; keep include-only streams sparse.
+				if len(excluded) > 0 {
+					excluded[d.Locator] = false
+				}
 			}
 		}
 		for _, r := range g.Include {
@@ -2433,7 +2436,9 @@ func effectiveV4Requests(group V4ResourceGroup) []V4ResourceRequest {
 		}
 		if decision.Request != nil {
 			requests[decision.Locator] = *decision.Request
-			excluded[decision.Locator] = false
+			if len(excluded) > 0 {
+				excluded[decision.Locator] = false
+			}
 		}
 	}
 	locators := make([]string, 0, len(requests))
