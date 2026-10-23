@@ -1,0 +1,103 @@
+{
+  "base": "656ef4db6a922dbf9c492532851bafbc8bd96c89",
+  "source_sha256": {
+    "internal/config/v4.go": "e44563524e2151b39d00342c8e882abb9887592d38a28a0f2c50220ebb9c3dd9",
+    "internal/config/v4_filter_sort_bench_test.go": "91f655dbc904615c309d9fbed63f2f3ddde079854681fb00f212495d84f1abf0",
+    "internal/config/v4_sparse_exclusion_bench_test.go": "9e1931fd9f69db7b91c39d5bca17b2455883b510f60296a8958ea821ad5a857f",
+    "internal/config/v4_rebuild_test.go": "efee3fbeff1cd1e83f37a4b3e83fe519845c3def6005088b07c254061e877a62",
+    "internal/config/v4_effective_requests_test.go": "12e66fc6c5b8ef560a3b52d5e1a82236b347e4c6982e1090fadd1346574d8b7d",
+    "go.mod": "7acf048264b55ddb16f4a7e5e23a57811df317841d31be8835664aa8e446130e",
+    "go.sum": "cbc73d426b4d8c90050ed6868594e64f3d93a105df8de2e547a3030aa3e33806",
+    "go.work": "3325da4e2fb15a145d8a6d34061fc9990b65c4b2620cf855f576dfc0ce5d3f6d"
+  },
+  "baseline_v4_sha256": "cf8bc2d9a1c80323b3b1843f35d2e87bea6584ca652b81bcbf60d83e0468b8fd",
+  "binary_sha256": {
+    "before": "ad9baf6419458b1ccc4355834ea186a57c9a24ca2d27ef99be8a7c8ec2919df3",
+    "after": "c6d9ffa8229307834cab9b691dd98186a56fbe16dd189be7fee95820e7d2d63a"
+  },
+  "go_version": "go version go1.27.3 darwin/arm64",
+  "settings": {
+    "GOMAXPROCS": "16",
+    "GOGC": "100",
+    "GOMEMLIMIT": "off",
+    "GOTOOLCHAIN": "local",
+    "GOPROXY": "off",
+    "CGO_ENABLED": "0"
+  },
+  "pattern": "^(BenchmarkV4FilterSortRebuildCPU|BenchmarkParseV4FilterSortCPU|BenchmarkV4SparseExclusion(Effective|Adapter|Churn)CPU)$",
+  "benchtime": "1s",
+  "trials": [
+    {
+      "trial": 1,
+      "variant": "before",
+      "start": 1792761351.856391,
+      "seconds": 43.14646005630493
+    },
+    {
+      "trial": 1,
+      "variant": "after",
+      "start": 1792761395.023345,
+      "seconds": 43.220372915267944
+    },
+    {
+      "trial": 2,
+      "variant": "after",
+      "start": 1792761438.261178,
+      "seconds": 43.124627113342285
+    },
+    {
+      "trial": 2,
+      "variant": "before",
+      "start": 1792761481.406827,
+      "seconds": 43.171908140182495
+    },
+    {
+      "trial": 3,
+      "variant": "before",
+      "start": 1792761524.596809,
+      "seconds": 43.062877893447876
+    },
+    {
+      "trial": 3,
+      "variant": "after",
+      "start": 1792761567.677792,
+      "seconds": 43.06386876106262
+    },
+    {
+      "trial": 4,
+      "variant": "after",
+      "start": 1792761610.76209,
+      "seconds": 43.22925806045532
+    },
+    {
+      "trial": 4,
+      "variant": "before",
+      "start": 1792761654.0115469,
+      "seconds": 43.101423025131226
+    },
+    {
+      "trial": 5,
+      "variant": "before",
+      "start": 1792761697.13311,
+      "seconds": 43.10386681556702
+    },
+    {
+      "trial": 5,
+      "variant": "after",
+      "start": 1792761740.2566028,
+      "seconds": 43.22172737121582
+    },
+    {
+      "trial": 6,
+      "variant": "after",
+      "start": 1792761783.495954,
+      "seconds": 43.28348779678345
+    },
+    {
+      "trial": 6,
+      "variant": "before",
+      "start": 1792761826.7982998,
+      "seconds": 43.087926149368286
+    }
+  ]
+}
