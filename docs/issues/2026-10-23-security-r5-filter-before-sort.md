@@ -158,10 +158,36 @@ On `2968b44f` plus the identical measured candidate:
   3,427 invocations, all 113 requirements, no gaps, all three required
   refusal witnesses executed and passed, and included shellcheck.
 
-Host `open-code-review-delegate` review covers all eleven own files,
-including OCR-excluded tests, documentation, and all six evidence files.
-All 384 rows, sample counts, source/build distinctions, statistics, and
-stage-specific claims are checked; zero files are skipped and no actionable
-finding remains. CodeRabbit, Gemini, and all current-head required CI checks
-must be clear before handoff. Leave the PR open, unmerged, unqueued, and with
-auto-merge disabled.
+GitHub-required integration through main `9f71ff74` adds its compact-dialog
+fix and terminal coverage without changing the measured configuration,
+benchmark, or dependency bytes. Selected Go/vet/lint/build and the committed
+spec gate pass. Strict specs pass 65 items, 1,172 scenarios, and 1,926
+annotations; the enlarged terminal suite passes 57 journeys plus four
+utilities, zero skips. CI's lint log on `d379c7d2` fetches the exact
+checksum-pinned test dependency, completes module hygiene without errors or
+diffs, and reports zero lint issues. The local cache is left untouched;
+the offline local output is not retroactively called a pass.
+
+## Terminal Journey Repair
+
+Initial-head Linux CI fails `launch-browse-inspect`: the journey expects to
+fold Enabled, but its captured screen is still filtered to alpha and shows
+folded Available. Its search assertion can accept an existing detail pane;
+its clear assertion can accept the pre-search headings. Neither proves the
+intended query-frame transition.
+
+The journey now observes the alpha query banner and absence of beta before
+clearing, then observes the absent query banner and restored beta before
+folding. Existing selection, heading, detail, and output assertions remain.
+There is no runtime change, sleep, timeout increase, or retry-policy change.
+Omitting the search input in a private generated-JavaScript mutation fails
+at the new search-frame guard as intended. The repaired journey and full
+57-journey/four-utility suite pass, with zero skips; strict specs still pass.
+
+Host `open-code-review-delegate` initially covers eleven own files and then
+all twelve after this journey repair, including OCR-excluded tests,
+documentation, and all six evidence files. All 384 rows, sample counts,
+source/build distinctions, statistics, and stage-specific claims are checked;
+zero files are skipped and no actionable finding remains. CodeRabbit,
+Gemini, and all current-head required CI checks must be clear before
+handoff. Leave the PR open, unmerged, unqueued, and with auto-merge disabled.
