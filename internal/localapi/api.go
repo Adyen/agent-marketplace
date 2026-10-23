@@ -965,12 +965,8 @@ func (a *API) runOperation(operation session.OperationID, kind session.Operation
 	dto := a.snapshotPresentationLocked(final, nil)
 	a.gate.Finish(operation)
 	a.emitLocked("snapshot", generation, nil, &dto)
-	severity, message := severityFor(warnings), string(kind)+" complete"
-	if failed != nil {
-		severity, message = "error", string(kind)+" failed"
-	} else if kind != session.OperationTargets && kind != session.OperationMutation && (dto.Drift == "failed" || hasErrorDiagnostic(dto.Diagnostics)) {
-		severity, message = "error", string(kind)+" failed"
-	}
+	failedOutcome := failed != nil || (kind != session.OperationTargets && kind != session.OperationMutation && (dto.Drift == "failed" || hasErrorDiagnostic(dto.Diagnostics)))
+	severity, message := operationOutcomeNotification(string(kind), len(warnings), failedOutcome)
 	a.emitLocked("notification", generation, op, notificationPayload{Severity: severity, Message: message})
 	a.mu.Unlock()
 	a.launchDiscovery(launch)
@@ -988,9 +984,13 @@ func hasErrorDiagnostic(diagnostics []diagnosticDTO) bool {
 	return false
 }
 
-func severityFor(warnings []error) string {
-	if len(warnings) > 0 {
-		return "warning"
+func operationOutcomeNotification(kind string, warningCount int, failed bool) (severity, message string) {
+	switch {
+	case failed:
+		return "error", kind + " failed"
+	case warningCount > 0:
+		return "warning", fmt.Sprintf("%s complete with %d warning(s)", kind, warningCount)
+	default:
+		return "info", kind + " complete"
 	}
-	return "info"
 }

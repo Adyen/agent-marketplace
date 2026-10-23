@@ -2073,3 +2073,25 @@ func TestConfigStageSnapshotPresentsTargetHarnesses(t *testing.T) {
 		t.Fatalf("config-stage harnesses = %v, want [devin claude]", got.Harnesses)
 	}
 }
+
+func TestOperationOutcomeNotificationWording(t *testing.T) {
+	cases := []struct {
+		name     string
+		warnings int
+		failed   bool
+		severity string
+		message  string
+	}{
+		{"plain success", 0, false, "info", "sync complete"},
+		{"success with warnings", 2, false, "warning", "sync complete with 2 warning(s)"},
+		{"failure", 2, true, "error", "sync failed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			severity, message := operationOutcomeNotification("sync", tc.warnings, tc.failed)
+			if severity != tc.severity || message != tc.message {
+				t.Fatalf("got (%q, %q), want (%q, %q)", severity, message, tc.severity, tc.message)
+			}
+		})
+	}
+}

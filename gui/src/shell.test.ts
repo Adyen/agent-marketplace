@@ -381,3 +381,26 @@ describe('inspector remove action', () => {
     expect(detail.findAll('.gui-inspector__actions button').map((b) => b.text())).not.toContain('Remove')
   })
 })
+
+describe('notification toasts', () => {
+  it('links a warning toast to diagnostics and gives info toasts no action', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('a')]) }))
+    await tick()
+
+    push(event({ sequence: 2, type: 'notification', payload: { severity: 'info', message: 'sync complete' } }))
+    await tick()
+    expect(wrapper.get('.gui-toast--success').text()).toContain('sync complete')
+    expect(wrapper.find('.gui-toast--success .gui-toast__action').exists()).toBe(false)
+
+    push(event({ sequence: 3, type: 'notification', payload: { severity: 'warning', message: 'sync complete with 2 warning(s)' } }))
+    await tick()
+    const action = wrapper.get('.gui-toast--warning .gui-toast__action')
+    expect(action.text()).toBe('View diagnostics')
+
+    await action.trigger('click')
+    await tick()
+    expect(wrapper.get('.gui-pane-title').text()).toBe('Diagnostics')
+  })
+})

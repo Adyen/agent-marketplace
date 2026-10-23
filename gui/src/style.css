@@ -876,12 +876,29 @@ textarea:focus-visible,
   display: grid;
   font-size: 13px;
   gap: 10px;
-  grid-template-columns: 16px minmax(0, 1fr);
+  grid-template-columns: 16px minmax(0, 1fr) auto;
   overflow: hidden;
   padding: 10px 12px;
   pointer-events: auto;
   position: relative;
   width: 100%;
+}
+
+.gui-toast__action {
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  color: var(--gui-signal-ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+
+.gui-toast__action:hover {
+  background: var(--gui-s0100);
 }
 
 .gui-toast--notification::before {

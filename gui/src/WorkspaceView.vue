@@ -1038,6 +1038,12 @@ async function run(action: 'sync' | 'update') {
           >
             <GuiIcon :name="notificationPresentation(n).icon" class="gui-toast__icon" />
             <span class="gui-toast__title">{{ n.message }}</span>
+            <button
+              v-if="notificationPresentation(n).tone === 'warning' || notificationPresentation(n).tone === 'danger'"
+              type="button"
+              class="gui-toast__action"
+              @click="showDiagnostics"
+            >View diagnostics</button>
           </li>
         </TransitionGroup>
       </div>

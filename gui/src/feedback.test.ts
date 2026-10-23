@@ -23,5 +23,6 @@ describe('operation feedback labels', () => {
     expect(notificationPresentation({ id: 2, severity: 'info', message: 'still working' })).toEqual({ icon: 'info', tone: 'info' })
     expect(notificationPresentation({ id: 3, severity: 'warning', message: 'stale lock' })).toEqual({ icon: 'warning', tone: 'warning' })
     expect(notificationPresentation({ id: 4, severity: 'error', message: 'mutation failed' })).toEqual({ icon: 'error', tone: 'danger' })
+    expect(notificationPresentation({ id: 5, severity: 'warning', message: 'sync complete with 2 warning(s)' })).toEqual({ icon: 'warning', tone: 'warning' })
   })
 })
