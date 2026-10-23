@@ -763,6 +763,23 @@ test.describe('Marketplace browser discovery', () => {
     }
   })
 
+  // spec: marketplace-web-ui/slash-focuses-catalog-search
+  test('focuses catalog search with the slash shortcut', async ({ page }) => {
+    await page.goto('/')
+    await expect(page.locator('article').first()).toBeVisible()
+    await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe('BODY')
+
+    const search = page.locator('#search-query')
+    await page.keyboard.press('/')
+    await expect(search).toBeFocused()
+    await expect(search).toHaveValue('')
+    await expect(search).toHaveAttribute('aria-keyshortcuts', '/')
+    await expect(page.getByRole('search').locator('kbd', { hasText: '/' })).toBeVisible()
+
+    await page.keyboard.press('/')
+    await expect(search).toHaveValue('/')
+  })
+
   test('exposes the shared navigation from a keyboard-operable mobile menu', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 })
 

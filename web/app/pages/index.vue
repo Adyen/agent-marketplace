@@ -19,6 +19,7 @@ const additionalItems = ref<ResourceListItem[]>([])
 const loadingMore = ref(false)
 const loadMoreError = ref<unknown>(null)
 const loadMoreTrigger = ref<HTMLElement | null>(null)
+const searchInput = useTemplateRef('searchInput')
 let syncingDraft = false
 let searchGeneration = 0
 let searchTimer: ReturnType<typeof setTimeout> | undefined
@@ -84,6 +85,11 @@ watch(loadMoreTrigger, (element, _previous, onCleanup) => {
   onCleanup(() => observer.disconnect())
 })
 onBeforeUnmount(() => clearTimeout(searchTimer))
+defineShortcuts({ '/': focusSearch })
+
+function focusSearch() {
+  searchInput.value?.inputRef?.focus()
+}
 
 function applyDraft() {
   if (syncingDraft) return
@@ -203,15 +209,21 @@ useHead({
                   <label for="search-query" class="sr-only">Search</label>
                   <UInput
                     id="search-query"
+                    ref="searchInput"
                     v-model="draft.q"
                     size="lg"
                     placeholder="Search resources..."
                     autocomplete="off"
+                    aria-keyshortcuts="/"
                     icon="i-lucide-search"
                     color="primary"
                     class="catalog-search-input w-full"
                     :ui="{ base: 'h-10 focus-visible:ring-primary' }"
-                  />
+                  >
+                    <template #trailing>
+                      <UKbd value="/" aria-hidden="true" />
+                    </template>
+                  </UInput>
                   <UButton
                     type="button"
                     size="sm"
