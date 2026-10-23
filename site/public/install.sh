@@ -7,6 +7,16 @@ main() {
     printf 'agent-marketplace install: %s\n' "$*" >&2
     exit 1
   }
+  download() {
+    local url=$1 out=$2 missing=$3 status
+    status=$(curl -sSL --proto '=https' -o "$out" -w '%{http_code}' "$url" 2>/dev/null) ||
+      fail "could not reach $url"
+    case "$status" in
+      200) ;;
+      404) fail "$missing" ;;
+      *) fail "download failed (HTTP $status): $url" ;;
+    esac
+  }
 
   system=$(uname -s)
   case "$system" in
@@ -22,6 +32,17 @@ main() {
     *) fail "unsupported processor architecture: $machine" ;;
   esac
 
+  install_dir=${AGENT_MARKETPLACE_INSTALL_DIR:-'~/.local/bin'}
+  case "$install_dir" in
+    \~|\~/*)
+      [[ -n "${HOME:-}" ]] || fail "HOME is not set"
+      install_dir=$HOME${install_dir#\~}
+      ;;
+  esac
+  [[ "$install_dir" == /* ]] || fail "AGENT_MARKETPLACE_INSTALL_DIR must be an absolute path: $install_dir"
+  install_dir=${install_dir%/}
+  [[ ! -d "$install_dir/agent-marketplace" ]] || fail "$install_dir/agent-marketplace is a directory"
+
   tag=${AGENT_MARKETPLACE_VERSION:-}
   if [[ -n "$tag" ]]; then
     [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "invalid version: $tag"
@@ -35,10 +56,6 @@ main() {
     [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "latest release resolved to an invalid tag: $tag"
   fi
 
-  home=${HOME:-}
-  [[ -n "$home" ]] || fail "HOME is not set"
-  install_dir=${AGENT_MARKETPLACE_INSTALL_DIR:-"$home/.local/bin"}
-  install_dir=${install_dir%/}
   asset="agent-marketplace-$tag-$os-$arch"
   base_url="https://github.com/$repo/releases/download/$tag"
   workdir=$(mktemp -d 2>/dev/null) || fail "could not create a temporary directory"
@@ -49,19 +66,16 @@ main() {
   }
   trap cleanup EXIT
 
-  if ! curl -fsSL --proto '=https' -o "$workdir/$asset" "$base_url/$asset" 2>/dev/null; then
-    fail "download failed: $base_url/$asset"
-  fi
-  if ! curl -fsSL --proto '=https' -o "$workdir/SHA256SUMS" "$base_url/SHA256SUMS" 2>/dev/null; then
-    fail "download failed: $base_url/SHA256SUMS"
-  fi
+  download "$base_url/SHA256SUMS" "$workdir/SHA256SUMS" \
+    "release $tag does not publish SHA256SUMS; see https://agent-marketplace.io/docs/install for other install methods"
   if ! expected=$(awk -v filename="$asset" '$2 == filename { print $1; found=1; exit } END { if (!found) exit 1 }' "$workdir/SHA256SUMS" 2>/dev/null); then
     fail "SHA256SUMS has no entry for $asset"
   fi
+  download "$base_url/$asset" "$workdir/$asset" "release $tag has no asset $asset"
   if command -v sha256sum >/dev/null 2>&1; then
-    actual=$(sha256sum "$workdir/$asset" 2>/dev/null) || fail "could not calculate SHA-256 for $asset"
+    actual=$(sha256sum < "$workdir/$asset" 2>/dev/null) || fail "could not calculate SHA-256 for $asset"
   elif command -v shasum >/dev/null 2>&1; then
-    actual=$(shasum -a 256 "$workdir/$asset" 2>/dev/null) || fail "could not calculate SHA-256 for $asset"
+    actual=$(shasum -a 256 < "$workdir/$asset" 2>/dev/null) || fail "could not calculate SHA-256 for $asset"
   else
     fail "sha256sum or shasum is required to verify $asset"
   fi
@@ -85,6 +99,10 @@ main() {
   install_tmp=
 
   "$install_dir/agent-marketplace" --version
+  resolved=$(command -v agent-marketplace || true)
+  if [[ -n "$resolved" && "$resolved" != "$install_dir/agent-marketplace" ]]; then
+    printf 'agent-marketplace install: warning: %s shadows %s/agent-marketplace on PATH\n' "$resolved" "$install_dir" >&2
+  fi
   case ":${PATH:-}:" in
     *":$install_dir:"*) ;;
     *) printf "Install directory %s is not on PATH.\nAdd it with:\nexport PATH=\"%s:\$PATH\"\n" "$install_dir" "$install_dir" ;;

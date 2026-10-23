@@ -1,5 +1,5 @@
 export const INSTALL_COMMAND =
-  'curl -fsSL https://agent-marketplace.io/install.sh | bash'
+  'go install github.com/Adyen/agent-marketplace/cmd/agent-marketplace@latest'
 
 export const GITHUB_REPOSITORY_URL = 'https://github.com/Adyen/agent-marketplace'
 

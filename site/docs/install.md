@@ -1,6 +1,6 @@
 # More install options
 
-The [quick start](./quick-start.md) installs `agent-marketplace` with the install script. This page covers the script's options and the other ways to install it.
+The [quick start](./quick-start.md) installs `agent-marketplace` with one `go install` command. This page covers the other ways to install it.
 
 `agent-marketplace` is one program file with no other runtime dependencies. It runs on macOS and Linux, on Intel (`amd64`) and ARM (`arm64`) processors. There is no Windows build.
 
@@ -9,22 +9,6 @@ Pick a method below, then [check that it works](#verify). You also need [Git](./
 ::: tip Upgrading an existing installation
 `agent-marketplace` refuses to load a root configuration file that doesn't declare `apiVersion: agent-marketplace/v4` (included fragments may omit it): commands exit with an error and the TUI shows it, naming the file. [Convert configuration before upgrading](./how-to/migrate-configuration.md) explains how to fix it.
 :::
-
-## Install script
-
-Run the installer to detect your platform, download the latest release, verify its `SHA256SUMS`, and install to `~/.local/bin` without `sudo`:
-
-```bash
-curl -fsSL https://agent-marketplace.io/install.sh | bash
-```
-
-Set `AGENT_MARKETPLACE_VERSION` to pin a release or `AGENT_MARKETPLACE_INSTALL_DIR` to choose another directory. For example, with `vX.Y.Z` replaced by a release tag:
-
-```bash
-curl -fsSL https://agent-marketplace.io/install.sh | AGENT_MARKETPLACE_VERSION=vX.Y.Z AGENT_MARKETPLACE_INSTALL_DIR="$HOME/bin" bash
-```
-
-To inspect the script first, download it with `curl -fsSL https://agent-marketplace.io/install.sh -o install.sh`, read it, then run `bash install.sh`. Releases up to v5.0.0 do not publish `SHA256SUMS`, so the installer refuses them; use the options below for those releases.
 
 ## From GitHub Releases
 
@@ -115,6 +99,24 @@ make build
 ```
 
 Leave out `--branch v5.0.0` to build the main branch instead. `make build` writes the program to `./agent-marketplace` in the repository folder. Copy it onto your `PATH` as described above. `make release` builds all four release platforms into `dist/`.
+
+## Install script
+
+Run the installer to detect your platform, download the latest release, verify its `SHA256SUMS`, and install to `~/.local/bin` without `sudo`:
+
+```bash
+curl -fsSL https://agent-marketplace.io/install.sh | bash
+```
+
+Set `AGENT_MARKETPLACE_VERSION` to pin a release or `AGENT_MARKETPLACE_INSTALL_DIR` to choose another directory. For example, with `vX.Y.Z` replaced by a release tag:
+
+```bash
+curl -fsSL https://agent-marketplace.io/install.sh | AGENT_MARKETPLACE_VERSION=vX.Y.Z AGENT_MARKETPLACE_INSTALL_DIR="$HOME/bin" bash
+```
+
+The checksum comes from the same release as the binary, so it confirms the download is intact, not who published it. To check authenticity, verify the asset against the release attestation with `gh release verify-asset <tag> agent-marketplace-<tag>-<os>-<arch> --repo Adyen/agent-marketplace`, for example `agent-marketplace-v5.0.3-darwin-arm64`.
+
+To inspect the script first, download it with `curl -fsSL https://agent-marketplace.io/install.sh -o install.sh`, read it, then run `bash install.sh`. The installer refuses a release without a `SHA256SUMS` asset; use one of the other methods on this page for such a release.
 
 ## Upgrade notices
 

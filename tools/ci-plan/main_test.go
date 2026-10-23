@@ -88,6 +88,7 @@ func TestPlanCategories(t *testing.T) {
 		{"root dockerignore", []string{".dockerignore"}, false, want("container_config", "container_marketplace")},
 		{"web", []string{"web/app/main.ts"}, false, want("container_web")},
 		{"site", []string{"site/index.md"}, false, want("container_site")},
+		{"install script", []string{"site/public/install.sh"}, false, want("go_test", "container_site")},
 		{"design", []string{"design/colors.css"}, false, want("container_config", "container_web", "container_site")},
 		{"Helm", []string{"deploy/helm/agent-marketplace/values.yaml"}, false, want("container_config", "helm")},
 		{"backend non-Go under benchmark root", []string{"internal/resolver/fixture.json"}, false, want("go_build", "go_test", "benchmark", "harness_compatibility", "marketplace_e2e", "tui_qa", "container_marketplace")},

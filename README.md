@@ -14,28 +14,6 @@ dependencies.
 
 ## Install
 
-Run the installer to detect your platform, download the latest release, verify
-its `SHA256SUMS`, and install to `~/.local/bin` without `sudo`:
-
-```bash
-curl -fsSL https://agent-marketplace.io/install.sh | bash
-```
-
-Set `AGENT_MARKETPLACE_VERSION` to pin a release or
-`AGENT_MARKETPLACE_INSTALL_DIR` to choose another directory. For example,
-with `vX.Y.Z` replaced by a release tag:
-
-```bash
-curl -fsSL https://agent-marketplace.io/install.sh | AGENT_MARKETPLACE_VERSION=vX.Y.Z AGENT_MARKETPLACE_INSTALL_DIR="$HOME/bin" bash
-```
-
-To inspect it first, download the script with
-`curl -fsSL https://agent-marketplace.io/install.sh -o install.sh`, read it,
-then run `bash install.sh`. Releases up to v5.0.0 do not publish `SHA256SUMS`,
-so the installer refuses them; use the options below for those releases.
-
-### More install options
-
 Download the binary for your platform from the
 [latest release](https://github.com/Adyen/agent-marketplace/releases/latest),
 make it executable, and put it on your `PATH`:

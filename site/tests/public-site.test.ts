@@ -19,15 +19,13 @@ async function generatedFilePaths(directory: URL): Promise<string[]> {
 }
 
 // spec: install-script/site-build-publishes-the-install-script
-test('public site publishes the install script unchanged and shows its command', async () => {
-  const [source, built, landing] = await Promise.all([
+test('public site publishes the install script byte-for-byte', async () => {
+  const [source, built] = await Promise.all([
     readFile(new URL('../public/install.sh', import.meta.url)),
     readFile(new URL('install.sh', dist)),
-    readFile(new URL('index.html', dist), 'utf8'),
   ])
 
   assert.deepEqual(built, source)
-  assert.ok(landing.includes('curl -fsSL https://agent-marketplace.io/install.sh | bash'))
 })
 
 // spec: marketplace-web-ui/default-harness-leads-the-tab-order
