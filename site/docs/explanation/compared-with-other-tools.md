@@ -10,9 +10,9 @@ This page answers the questions people ask most often. The facts about APM and s
 |---|---|---|---|
 | What you install | Resources picked from a [registry](../glossary.md#registry) | Packages and their dependencies | Skills |
 | Resource kinds | Skills, commands, subagents, hooks, MCP servers | Instructions, skills, prompts, agents, hooks, commands, plugins, MCP servers, LSP servers | Skills |
-| Manifest | Up to four layered config files | One `apm.yml` per project, or a user manifest with `-g` | None; you run `add` per source |
-| Lockfile | Exact commit or Marketplace revision per source, plus a digest per resource | Exact ref and content hash per package | Source, ref, and content hash per skill |
-| Dependencies | Advisory [prerequisites](../reference/resource-prerequisites.md); nothing installs on its own | Resolves the full tree, including indirect dependencies | None |
+| Manifest | Up to four layered config files | One `apm.yml` per project, or a user manifest with `-g` | No dedicated manifest for basic `add`; `package.json` `skills` declarations for `experimental_sync` |
+| Lockfile | Exact commit or Marketplace revision per source, plus a digest per resource | Exact ref and content hash per package | Project `skills-lock.json` with source, ref, and content hash per skill; `experimental_install` restores supported entries |
+| Dependencies | Advisory [prerequisites](../reference/resource-prerequisites.md); nothing installs on its own | Resolves the full tree, including indirect dependencies | No APM-style resolution; `experimental_sync` syncs skills from installed npm dependencies and `package.json` `skills` declarations |
 | Organization control | An organization config layer that adds or requires resources on every machine | A policy file that limits what may install | None |
 | Hosted catalog | A Marketplace service you run, with ingestion policy and revocation | A curated index file in a Git repository | The public skills.sh directory and leaderboard |
 | Coding tools | 8 (Claude Code, Codex, Cursor, Devin, Factory Droid, Gemini CLI, OpenCode, Windsurf) | More than ten, including GitHub Copilot, Kiro, and IntelliJ | 79, mostly by linking the same `SKILL.md` into each tool's skills folder |
