@@ -84,11 +84,28 @@ watch(loadMoreTrigger, (element, _previous, onCleanup) => {
   observer.observe(element)
   onCleanup(() => observer.disconnect())
 })
-onBeforeUnmount(() => clearTimeout(searchTimer))
-defineShortcuts({ '/': focusSearch })
+const NON_TEXT_INPUT_TYPES = new Set(['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit'])
+
+onMounted(() => window.addEventListener('keydown', focusSearchOnSlash))
+onBeforeUnmount(() => {
+  clearTimeout(searchTimer)
+  window.removeEventListener('keydown', focusSearchOnSlash)
+})
 
 function focusSearch() {
   searchInput.value?.inputRef?.focus()
+}
+
+function acceptsText(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false
+  if (target.isContentEditable || target instanceof HTMLTextAreaElement) return true
+  return target instanceof HTMLInputElement && !NON_TEXT_INPUT_TYPES.has(target.type)
+}
+
+function focusSearchOnSlash(event: KeyboardEvent) {
+  if (event.key !== '/' || event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey || acceptsText(event.target)) return
+  event.preventDefault()
+  focusSearch()
 }
 
 function applyDraft() {
