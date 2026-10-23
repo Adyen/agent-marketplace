@@ -67,6 +67,10 @@ repoJourney.test("the section bulk modal writes nothing when cancelled at any st
     await locate(terminal, /Available\s+\(1\)/).unique().expect();
     await locate(terminal, "~ in sync").unique().expect();
   });
+  // Any header shows the same detail text, so reopening the modal proves the
+  // last cancellation left the Available header selected.
+  await openModal("after the last cancellation");
+  await cancel("reopened scope");
   await step("quit", () => terminal.write("q"), async () => {
     assert.equal((await waitForExit(terminal)).exitCode, 0);
   });
