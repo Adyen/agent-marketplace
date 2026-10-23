@@ -11,6 +11,6 @@
 
 ## 3. Verification and review
 
-- [ ] 3.1 Run focused tests, relevant benchmarks, make validate, make spec-check, make validate-e2e, and make tui-qa.
+- [x] 3.1 Run focused tests, relevant benchmarks, make validate, make spec-check, make validate-e2e, and make tui-qa.
 - [x] 3.2 Privacy-screen the exact change, run OCR and adversarial review, address confirmed findings, and record review coverage.
-- [ ] 3.3 Run openspec archive show-mutation-hook-reviews --yes as the final implementation commit.
+- [x] 3.3 Run openspec archive show-mutation-hook-reviews --yes as the final implementation commit.
