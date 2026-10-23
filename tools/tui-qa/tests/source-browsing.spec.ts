@@ -8,8 +8,9 @@ import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 import { readRegularFile, runAM, write } from "./process-helpers.js";
 
 const assertContent = (file: string, expected: string): void => {
-  assert.ok(fs.statSync(file, { throwIfNoEntry: false })?.isFile(), `expected fixture file to exist: ${file}`);
-  assert.equal(fs.readFileSync(file, "utf8"), expected, file);
+  let actual: Buffer | undefined;
+  assert.doesNotThrow(() => { actual = readRegularFile(file); }, `expected readable fixture file: ${file}`);
+  assert.deepEqual(actual, Buffer.from(expected), file);
 };
 
 const snapshot = (roots: string[]): Map<string, string> => {
