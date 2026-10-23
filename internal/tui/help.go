@@ -6,6 +6,7 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/lipgloss/v2"
+	"github.com/Adyen/agent-marketplace/internal/hookreview"
 	"github.com/charmbracelet/x/cellbuf"
 )
 
@@ -52,11 +53,17 @@ func renderHelp(m Model) string {
 }
 
 func renderErrors(m Model) string {
-	if len(m.errs) == 0 && len(m.warnings) == 0 && len(m.discoveryErrs) == 0 {
+	if len(m.errs) == 0 && len(m.warnings) == 0 && len(m.discoveryErrs) == 0 && len(m.hookChanges) == 0 {
 		return styleGlyphSynced.Render("No errors")
 	}
 
 	var b strings.Builder
+	if len(m.hookChanges) > 0 {
+		var review strings.Builder
+		_ = hookreview.Write(&review, m.hookChanges, m.homeDir, false) // strings.Builder writes cannot fail.
+		b.WriteString(cellbuf.Wrap(sanitizeTerminalData(review.String(), terminalMarkdownBody), max(1, m.width), ""))
+		b.WriteString("\n")
+	}
 
 	// Diagnostics render inside the bounded scrollable viewport: wrap each
 	// message to the overlay width so complete text stays readable through
