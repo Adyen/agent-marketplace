@@ -5,7 +5,7 @@ This document describes the visual and interaction design of the desktop GUI
 
 - **Visual language**: the agent-marketplace landing design
   (`agent-marketplace-design.html`). It uses an ink-alpha surface scale, one
-  green signal color, monospace uppercase labels, `[*]` resource checks, and
+  green signal color, monospace uppercase labels, dot resource checks, and
   restrained motion.
 - **Application shell**: the Codex desktop app. It has a fixed left sidebar and
   a foldable right inspector around a central work area, a compact toolbar with
@@ -187,7 +187,8 @@ in Codex's selected-thread row.
     the right. Selecting it toggles the group. This resembles Codex's
     "99 unmodified lines" separators.
   - Resource row: 32 px, mono, laid out as in the design's `.resource`:
-    - check (`[*]` in `--gui-signal-ink` when on, `[ ]` in `--gui-ink-3`)
+    - check (an 8 px dot: filled `--gui-signal` when on, a 1.5 px
+      `--gui-ink-3` ring when off)
     - kind (`--gui-ink-2`)
     - name (`--gui-ink`, ellipsis; search matches use a `--gui-layer`
       highlight and weight 600)
@@ -383,10 +384,10 @@ here conflicts with an earlier section, this section wins.
   `[x]`, not `[*]`.
 - *Rule*: a row is a grid of fixed columns:
   `check 3ch · kind 9ch · name 1fr · registry minmax(0, 16ch) · scope 6ch · override auto`.
-  - **check**: `[*]` when on, `[ ]` when off. The brackets are
-    `--gui-ink-3`; only the `*` takes `--gui-signal`, in both themes. A
-    column of black `[x]` read as noise; a column of green stars reads as
-    "these are on".
+  - **check**: an 8 px dot, filled `--gui-signal` when on and a 1.5 px
+    `--gui-ink-3` ring when off, in both themes. A column of black `[x]`
+    read as noise, and bracket glyphs still read as code; a column of green
+    dots reads as "these are on".
   - **kind**: the kind ID in `--gui-ink-2` (`skill`, `command`, `subagent`,
     `hook`, `mcpserver`). Kind, registry, and scope use `--gui-ink-2`, not
     `--gui-ink-3`: at 11–12 px, ink-3 measures about 3.3:1 on white, below
