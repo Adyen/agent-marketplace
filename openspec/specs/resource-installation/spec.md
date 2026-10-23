@@ -55,7 +55,8 @@ Named batches MUST preserve existing single-name selection semantics, collection
 #### Scenario: Singleton and no-name install behavior is retained
 
 - **WHEN** a user installs one resource or collection, or uses `--from` without names
-- **THEN** existing selection, collection expansion, inferred-name or bulk behavior, and output MUST remain unchanged
+- **THEN** existing selection, collection expansion, inferred-name or bulk behavior, and output MUST remain unchanged apart from the target scope
+- **AND** the target scope MUST follow `--scope` when given and otherwise the user-scope install default
 
 #### Scenario: Incompatible batch arguments are rejected before writes
 
@@ -86,3 +87,19 @@ Bulk installation MUST retain existing selection semantics: unqualified tags rem
 - **WHEN** a bulk install in user scope would copy a repository-relative directory source into user configuration
 - **THEN** the command MUST refuse with the existing scope-boundary error
 - **AND** existing configuration, acquisition locks, and materialized resources MUST remain unchanged and an absent target root MUST remain absent
+
+### Requirement: Install defaults to user scope
+
+Without `--scope`, the install command SHALL write resource selections to the user configuration layer and materialize them at the machine destination for named, collection, `--tag`, `--all`, `--from`, and Marketplace locator installs. Marketplace endpoint registration MUST continue to default to user scope. Explicit `--scope repo` and `--scope local` MUST retain their existing behavior. The default MUST NOT relax the user-scope boundary, and `remove` MUST retain its existing scope inference.
+
+#### Scenario: Install without scope writes user configuration
+
+- **WHEN** a user installs a configured Git resource without `--scope` from inside a repository
+- **THEN** the user configuration MUST select the resource and the resource MUST materialize at the machine destination
+- **AND** the repository and personal-local configuration MUST remain unchanged, and an absent repository root MUST remain absent
+
+#### Scenario: Relative directory source without scope is refused
+
+- **WHEN** a user runs `install --from` with a repository-relative directory source and no `--scope`
+- **THEN** the command MUST refuse with the existing scope-boundary error
+- **AND** existing configuration, acquisition locks, and materialized resources MUST remain unchanged and an absent user root MUST remain absent
