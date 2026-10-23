@@ -180,7 +180,7 @@ marketplace.test("installed Marketplace content previews its definition and stag
   const staged = path.join(fixture.cacheDir, "marketplace", "compiled", "marketplace-artifacts", digest);
   const notes = path.join(staged, "notes.md");
   const installed = path.join(fixture.home, ".factory", "skills", "org-review");
-  assert.equal(fs.existsSync(path.join(staged, "SKILL.md")), false, "the fixture must keep its canonical definition separate from staged support");
+  assert.equal(fs.lstatSync(path.join(staged, "SKILL.md"), { throwIfNoEntry: false }), undefined, "the fixture must keep its canonical definition separate from staged support");
   assert.equal(fs.readFileSync(notes, "utf8"), "# Review Notes\n\nVerified supporting instructions.\n");
   assert.equal(fs.readFileSync(path.join(installed, "notes.md"), "utf8"), "# Review Notes\n\nVerified supporting instructions.\n");
   const generated = fs.realpathSync(installed);
