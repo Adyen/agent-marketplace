@@ -2,9 +2,9 @@
 
 ## Scope
 
-This independent R53/F136 performance slice starts from main `4dfa9dae`.
-The neighboring request-reuse PR changes how often interpretation runs;
-this slice changes the allocation cost of each interpretation. R53, R5,
+This independent R53/F136 performance slice is delivered on main `027056e3`,
+including effective-request reuse. It changes the allocation cost of each
+interpretation. The initial measurement matrix starts from `4dfa9dae`. R53, R5,
 and the performance tracker remain partial. Frozen artifacts stay unchanged.
 
 ## Measured Cost And Change
@@ -39,6 +39,9 @@ change rather than inventing an observable requirement.
 - Compile original and changed sources with identical test/benchmark files.
   Retain separate baseline probes and six interleaved AB/BA pairs using
   two-second samples, source/binary identities, and all 39 case identities.
+- After main integration, verify both replay function bodies are identical
+  to the measured versions. Retain a separate six-pair, eight-case public
+  Git adapter comparison against `027056e3`; do not pool baselines.
 - Run selected validation, strict specs, combined E2E, and terminal QA.
 - Screen outgoing content, use OCR plus host delegated adversarial review
   for every changed file, and address confirmed GitHub bot findings.
