@@ -2205,6 +2205,54 @@ resources: {team: {include: [subagent/unk-tool-agent, subagent/known-tool-agent]
 			},
 		},
 	},
+	// spec: harness-compilation/comma-separated-subagent-tool-strings-become-separate-tools
+	{
+		Name: "subagent/comma_separated_tools_sync_as_separate_tools",
+		Desc: "Given a Claude-layout subagent whose tools are the string \"Read, Grep\", When sync runs for Claude, Factory and Gemini, Then each native file lists the tools as separate entries and check reports no drift",
+		Registries: []RegistryDef{
+			{Name: "sub-tool-string", Files: map[string]string{
+				".claude/agents/reader.md": "---\nname: reader\ndescription: Reader\ntools: Read, Grep\n---\nRead only.\n",
+			}},
+		},
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+harnesses: [claude, factory, gemini]
+sources: {team: {git: '{{REG:sub-tool-string}}', ref: main}}
+resources: {team: {include: [subagent/reader]}}
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true,
+				FileContains: map[string]string{
+					"/root/.claude/agents/reader.md":  "tools:\n  - Read\n  - Grep\n",
+					"/root/.factory/droids/reader.md": "tools:\n  - Read\n  - Grep\n",
+					"/root/.gemini/agents/reader.md":  "tools:\n  - read_file\n  - read_many_files\n  - grep_search\n",
+				}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+		},
+	},
+	// spec: harness-compilation/a-subagent-tool-string-that-is-not-well-formed-is-kept-as-a-single-entry
+	{
+		Name: "subagent/malformed_tools_string_stays_one_entry",
+		Desc: "Given a Claude-layout subagent whose tools string has an unmatched parenthesis next to a valid sibling, When sync runs for Claude, Then both are installed, the malformed string stays one entry exactly as written, as in earlier versions, and check reports no drift",
+		Registries: []RegistryDef{
+			{Name: "sub-tool-malformed", Files: map[string]string{
+				".claude/agents/malformed.md": "---\nname: malformed\ndescription: Malformed\ntools: Read, Bash(git diff\n---\nMalformed.\n",
+				".claude/agents/valid.md":     "---\nname: valid\ndescription: Valid\ntools: [Read, Grep]\n---\nValid.\n",
+			}},
+		},
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+harnesses: [claude]
+sources: {team: {git: '{{REG:sub-tool-malformed}}', ref: main}}
+resources: {team: {include: [subagent/malformed, subagent/valid]}}
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true,
+				FileContains: map[string]string{
+					"/root/.claude/agents/malformed.md": "tools:\n  - Read, Bash(git diff\n",
+					"/root/.claude/agents/valid.md":     "tools:\n  - Read\n  - Grep\n",
+				}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+		},
+	},
 	{
 		Name: "subagent/effort_renamed_to_reasoning_effort",
 		Desc: "Given a registry with a subagent using effort=high, When sync is run for factory, Then the droid file contains reasoningEffort: high and not effort:",
