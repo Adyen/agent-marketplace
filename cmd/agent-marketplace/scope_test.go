@@ -156,14 +156,8 @@ func TestInstallFromRelativeDirectoryWithoutScopeIsRefused(t *testing.T) {
 	if !strings.Contains(combined, "repo-relative") || !strings.Contains(combined, "global config") {
 		t.Fatalf("expected repo-relative global config refusal, got err=%v output=%s", err, output)
 	}
-	for _, path := range []string{
-		filepath.Join(homeDir, ".agents", "config.yaml"),
-		filepath.Join(homeDir, ".agents", "lock.yaml"),
-		filepath.Join(homeDir, ".agents", "skills", "rel-skill"),
-	} {
-		if _, err := os.Lstat(path); !os.IsNotExist(err) {
-			t.Fatalf("refused install created %s: %v", path, err)
-		}
+	if _, err := os.Lstat(filepath.Join(homeDir, ".agents")); !os.IsNotExist(err) {
+		t.Fatalf("expected user .agents root to stay absent, got err=%v", err)
 	}
 }
 
