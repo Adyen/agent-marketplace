@@ -29,19 +29,24 @@ journey.test("minimum-size gate preserves selection and blocks toggles", async (
     await locate(terminal, "beta-skill").expect({ not: true });
   });
 
-  await step("ignore toggle and wheel below minimum", async () => {
-    await terminal.write(" ");
-    // Wheel up would select the Available header above alpha-skill.
-    await terminal.write("\x1b[<64;4;6M");
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }, async () => {
+  const stillResizeRequired = async (): Promise<void> => {
     await locate(terminal, "Resize required").unique().expect();
     await locate(terminal, "Minimum terminal: 50x12").unique().expect();
     await locate(terminal, "q quit · Ctrl+C quit").unique().expect();
     await locate(terminal, "toggle local").expect({ not: true });
     await locate(terminal, "alpha-skill").expect({ not: true });
     await locate(terminal, "beta-skill").expect({ not: true });
-  });
+  };
+  await step("ignore toggle below minimum", async () => {
+    await terminal.write(" ");
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }, stillResizeRequired);
+  // Wheel up would select the Available header above alpha-skill; recovery
+  // below shows the selection unchanged.
+  await step("ignore wheel below minimum", async () => {
+    await terminal.write("\x1b[<64;4;6M");
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }, stillResizeRequired);
 
   await step("recover at exact minimum", () => terminal.resize(50, 12), async () => {
     await locate(terminal, "Resize required").expect({ not: true });
