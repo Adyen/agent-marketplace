@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -86,6 +87,121 @@ func TestGeminiSubagentIsRemovedWhenNoLongerSelected(t *testing.T) {
 					check, err := Run(context.Background(), repo, remaining, append(opts, WithDryRun())...)
 					if err != nil || !check.InSync() {
 						t.Errorf("check after the removal reports drift: %+v %v", check, err)
+					}
+				})
+			}
+		}
+	}
+}
+
+// spec: materialization/a-symlinked-gemini-agents-directory-is-refused-without-a-selected-subagent
+func TestSymlinkedGeminiAgentsDirectoryIsRefusedWithoutASelectedSubagent(t *testing.T) {
+	for _, mode := range []config.MaterializationMode{config.MaterializationModeSymlink, config.MaterializationModeFile} {
+		for _, machine := range []bool{false, true} {
+			for _, skillSelected := range []bool{true, false} {
+				t.Run(fmt.Sprintf("%s/machine=%t/skill-selected=%t", mode, machine, skillSelected), func(t *testing.T) {
+					home, repo := isolateSelectionEnvironment(t)
+					t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+					root, source := filepath.Join(repo, ".gemini"), config.RepoCommitted
+					if machine {
+						root, source = filepath.Join(home, ".gemini"), config.UserPersonal
+					}
+					external := t.TempDir()
+					sentinel := filepath.Join(external, "dotfile.md")
+					if err := os.WriteFile(sentinel, []byte("dotfile\n"), 0o644); err != nil {
+						t.Fatal(err)
+					}
+					data, fileMode, mtime := fileSnapshot(t, sentinel)
+					if err := os.MkdirAll(root, 0o755); err != nil {
+						t.Fatal(err)
+					}
+					link := filepath.Join(root, "agents")
+					if err := os.Symlink(external, link); err != nil {
+						t.Fatal(err)
+					}
+					canonicalRoot, err := filepath.EvalSymlinks(root)
+					if err != nil {
+						t.Fatal(err)
+					}
+					var selected []resolver.ResolvedArtifact
+					if skillSelected {
+						selected = append(selected, geminiSelection(ir.NewSkill("keep", "Kept", "Body\n", nil, nil, ir.SourceRef{}), source))
+					}
+					modes := WithMaterializationModes(config.MaterializationModes{Project: mode, Machine: mode})
+
+					for _, check := range []bool{false, true} {
+						opts := []RunOption{modes}
+						if check {
+							opts = append(opts, WithDryRun())
+						}
+						report, err := Run(context.Background(), repo, selected, opts...)
+						message := requireRootBoundaryRefusal(t, report, err, hcc.TargetGemini)
+						if want := filepath.Join(canonicalRoot, "agents"); !strings.Contains(message, want) || !strings.Contains(message, "is a symbolic link") {
+							t.Fatalf("check=%t: refusal %q does not name %s as a symbolic link", check, message, want)
+						}
+						if target, err := os.Readlink(link); err != nil || target != external {
+							t.Fatalf("check=%t: link changed: %q, %v", check, target, err)
+						}
+						if entries, err := os.ReadDir(external); err != nil || len(entries) != 1 {
+							t.Fatalf("check=%t: something was written through the link: %v, %v", check, entries, err)
+						}
+						assertFileUnchanged(t, sentinel, data, fileMode, mtime)
+						if entries, err := os.ReadDir(root); err != nil || len(entries) != 1 {
+							t.Fatalf("check=%t: output was written next to the refused link: %v, %v", check, entries, err)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
+// spec: materialization/a-dangling-gemini-agents-link-is-ignored-without-a-selected-subagent
+func TestDanglingGeminiAgentsLinkIsIgnoredWithoutASelectedSubagent(t *testing.T) {
+	for _, mode := range []config.MaterializationMode{config.MaterializationModeSymlink, config.MaterializationModeFile} {
+		for _, machine := range []bool{false, true} {
+			for _, skillSelected := range []bool{true, false} {
+				t.Run(fmt.Sprintf("%s/machine=%t/skill-selected=%t", mode, machine, skillSelected), func(t *testing.T) {
+					home, repo := isolateSelectionEnvironment(t)
+					t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+					root, source := filepath.Join(repo, ".gemini"), config.RepoCommitted
+					if machine {
+						root, source = filepath.Join(home, ".gemini"), config.UserPersonal
+					}
+					missing := filepath.Join(t.TempDir(), "missing")
+					if err := os.MkdirAll(root, 0o755); err != nil {
+						t.Fatal(err)
+					}
+					link := filepath.Join(root, "agents")
+					if err := os.Symlink(missing, link); err != nil {
+						t.Fatal(err)
+					}
+					var selected []resolver.ResolvedArtifact
+					if skillSelected {
+						selected = append(selected, geminiSelection(ir.NewSkill("keep", "Kept", "Body\n", nil, nil, ir.SourceRef{}), source))
+					}
+					opts := []RunOption{WithMaterializationModes(config.MaterializationModes{Project: mode, Machine: mode})}
+
+					report, err := Run(context.Background(), repo, selected, opts...)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if len(report.Diags) != 0 {
+						t.Fatalf("the dangling link produced diagnostics: %+v", report.Diags)
+					}
+					if _, err := os.Lstat(filepath.Join(root, "skills", "keep")); skillSelected && err != nil {
+						t.Errorf("selected skill was not installed next to the dangling link: %v", err)
+					}
+					if target, err := os.Readlink(link); err != nil || target != missing {
+						t.Errorf("dangling link changed: %q, %v", target, err)
+					}
+					if _, err := os.Stat(missing); !os.IsNotExist(err) {
+						t.Errorf("something was created behind the dangling link (stat = %v)", err)
+					}
+
+					check, err := Run(context.Background(), repo, selected, append(opts, WithDryRun())...)
+					if err != nil || !check.InSync() || len(check.Diags) != 0 {
+						t.Errorf("check after the sync reports drift or diagnostics: %+v %v", check, err)
 					}
 				})
 			}
