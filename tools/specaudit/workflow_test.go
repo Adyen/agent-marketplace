@@ -12,6 +12,7 @@ import (
 
 type workflowStep struct {
 	Name string            `yaml:"name"`
+	ID   string            `yaml:"id"`
 	If   string            `yaml:"if"`
 	Uses string            `yaml:"uses"`
 	Run  string            `yaml:"run"`
@@ -34,7 +35,7 @@ func readRepoFile(t *testing.T, rel string) string {
 	return string(data)
 }
 
-func specsJob(t *testing.T) workflowJob {
+func ciJob(t *testing.T, name string) workflowJob {
 	t.Helper()
 	var doc struct {
 		Jobs map[string]workflowJob `yaml:"jobs"`
@@ -42,9 +43,9 @@ func specsJob(t *testing.T) workflowJob {
 	if err := yaml.Unmarshal([]byte(readRepoFile(t, ".github/workflows/ci.yml")), &doc); err != nil {
 		t.Fatalf("parse ci.yml: %v", err)
 	}
-	job, ok := doc.Jobs["specs"]
+	job, ok := doc.Jobs[name]
 	if !ok {
-		t.Fatal("ci.yml has no specs job")
+		t.Fatalf("ci.yml has no %s job", name)
 	}
 	return job
 }
@@ -69,7 +70,7 @@ func makeRecipe(t *testing.T, target string) []string {
 
 // spec: spec-governance/invalid-spec-fails-ci
 func TestSpecsJobRunsStrictValidationOnEveryEvent(t *testing.T) {
-	job := specsJob(t)
+	job := ciJob(t, "specs")
 	if job.If != "" || job.Needs != nil {
 		t.Fatalf("specs job is conditional (if=%q needs=%v); it must run on every pull request", job.If, job.Needs)
 	}
@@ -118,5 +119,53 @@ func TestOpenSpecCLIVersionIsPinned(t *testing.T) {
 	}
 	if strings.Contains(readRepoFile(t, ".github/workflows/ci.yml"), "openspec@") {
 		t.Error("ci.yml references an OpenSpec version directly; use make spec-check so the pin lives in one place")
+	}
+}
+
+func TestReleaseJobRendersCuratedNotes(t *testing.T) {
+	steps := ciJob(t, "release").Steps
+	stepIndex := func(match func(workflowStep) bool) int {
+		for i, s := range steps {
+			if match(s) {
+				return i
+			}
+		}
+		return -1
+	}
+	build := stepIndex(func(s workflowStep) bool { return s.Run == "make release" })
+	notesAt := stepIndex(func(s workflowStep) bool { return s.ID == "notes" })
+	publish := stepIndex(func(s workflowStep) bool { return strings.HasPrefix(s.Uses, "softprops/action-gh-release@") })
+	if build < 0 || notesAt <= build || publish <= notesAt {
+		t.Fatalf("release steps out of order: build=%d notes=%d publish=%d", build, notesAt, publish)
+	}
+
+	notes := steps[notesAt]
+	target := regexp.MustCompile(`-o (\S+)`).FindStringSubmatch(notes.Run)
+	if !strings.Contains(notes.Run, "./tools/specaudit release-notes") || target == nil || strings.HasPrefix(target[1], "dist/") {
+		t.Errorf("notes step = %q, want specaudit release-notes writing outside dist/", notes.Run)
+	}
+	if !strings.Contains(notes.Run, `grep -m1 -E '^v[0-9]+\.[0-9]+\.[0-9]+$'`) || !strings.Contains(notes.Run, `"$VERSION^"`) {
+		t.Errorf("notes step does not select the previous stable tag before this release:\n%s", notes.Run)
+	}
+
+	publishStep := steps[publish]
+	for key, want := range map[string]string{
+		"body_path":    "${{ steps.notes.outputs.body_path }}",
+		"previous_tag": "${{ steps.notes.outputs.previous_tag }}",
+		"files":        "dist/*",
+	} {
+		if publishStep.With[key] != want {
+			t.Errorf("release action %s = %v, want %q", key, publishStep.With[key], want)
+		}
+	}
+	if publishStep.With["generate_release_notes"] != true {
+		t.Errorf("release action generate_release_notes = %v, want true", publishStep.With["generate_release_notes"])
+	}
+}
+
+func TestReleaseNotesMakeTargetPreviewsStableRange(t *testing.T) {
+	recipe := strings.Join(makeRecipe(t, "release-notes"), "\n")
+	if !strings.Contains(recipe, "./tools/specaudit release-notes") || !strings.Contains(recipe, "-head HEAD") {
+		t.Errorf("make release-notes does not render the stable tag through HEAD:\n%s", recipe)
 	}
 }
