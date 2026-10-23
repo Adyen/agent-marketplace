@@ -159,7 +159,7 @@ spec-check:
 
 # Curated release notes the release job would publish: stable tag to HEAD.
 release-notes:
-	@prev=$$(git tag --merged HEAD --list 'v*' --sort=-v:refname | grep -m1 -E '^v[0-9]+\.[0-9]+\.[0-9]+$$'); \
+	@prev=$$(git tag --merged HEAD^ --list 'v*' --sort=-v:refname | grep -m1 -E '^v[0-9]+\.[0-9]+\.[0-9]+$$'); \
 	if [ -z "$$prev" ]; then echo "release-notes: no stable tag reachable from HEAD" >&2; exit 1; fi; \
 	CGO_ENABLED=0 $(GO) run ./tools/specaudit release-notes -base "$$prev" -head HEAD
 

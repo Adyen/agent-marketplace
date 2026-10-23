@@ -17,7 +17,7 @@
 #### Scenario: Entries link the merging pull request
 
 - **WHEN** an archived proposal's commit is an ancestor of the second parent of a `Merge pull request #N` commit in the range, and not of its first parent
-- **THEN** the first paragraph of its entry MUST end with a link to pull request N
+- **THEN** the first paragraph of its entry MUST end with a link to pull request N when a repository URL is available, or with `(#N)` when no repository URL can be resolved
 - **AND** an entry whose commit was committed directly to the base branch and not merged in by a pull request MUST have no pull request reference
 
 #### Scenario: Multi-line notes keep their structure
