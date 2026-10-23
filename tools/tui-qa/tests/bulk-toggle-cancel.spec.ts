@@ -20,7 +20,7 @@ repoJourney.test("the section bulk modal writes nothing when cancelled at any st
     path.join(fixture.repo, ".agents", "config.local.yaml"),
     path.join(fixture.home, ".agents", "config.yaml")
   ];
-  const before = configSnapshot(files);
+  const baseline = configSnapshot(files);
   const openModal = async (attempt: string): Promise<void> => {
     await step(`open the Available section's bulk modal (${attempt})`, () => terminal.write(" "), async () => {
       await locate(terminal, "Toggle all in Available").unique().expect();
@@ -32,7 +32,7 @@ repoJourney.test("the section bulk modal writes nothing when cancelled at any st
       await locate(terminal, "Toggle all in Available").expect({ not: true });
       await locate(terminal, "Select a resource to see details").unique().expect();
     });
-    assert.deepEqual(configSnapshot(files), before, `cancelling at the ${stage} stage wrote config`);
+    assert.deepEqual(configSnapshot(files), baseline, `cancelling at the ${stage} stage wrote config`);
   };
 
   await step("settled fixture baseline", () => {}, async () => {
