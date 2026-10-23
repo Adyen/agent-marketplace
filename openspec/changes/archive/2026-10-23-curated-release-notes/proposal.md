@@ -4,7 +4,7 @@ GitHub release bodies contain only pull request titles. Users upgrading across a
 
 ## What Changes
 
-- Every newly added `openspec/changes/**/proposal.md` must carry a `## Release note` section: user-facing sentences, `Breaking: ...` with upgrade steps, or `none — <reason>`. `specaudit gate` enforces this for proposals the diff adds, and never checks pre-existing ones.
+- Every newly added `openspec/changes/**/proposal.md` must carry a `## Release note` section: user-facing sentences, `Breaking: ...` with upgrade steps, or `none — <reason>`. `specaudit gate` enforces this for proposals the diff adds, including proposals a pull request moves into the archive, and skips pre-existing proposals edited in place.
 - `specaudit release-notes` renders curated Markdown from the release notes of archived proposals added between two refs, grouped into breaking changes and changes, with each entry linked to the pull request that merged it.
 - The release job uploads that Markdown as the release body, prepended to GitHub's generated notes, relative to the previous stable tag. `make release-notes` previews it locally.
 - The author rule is added to `openspec/config.yaml` and to the pull request template.

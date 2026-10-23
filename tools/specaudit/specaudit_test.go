@@ -700,7 +700,7 @@ func TestEvaluateReleaseNotes(t *testing.T) {
 func TestGateReadsReleaseNotesFromGitRange(t *testing.T) {
 	root, run, commit := gitRepo(t)
 	base := commit("openspec/changes/old/proposal.md", "## Why\n\nold\n")
-	check := func(from, to string, wantKinds []string) {
+	check := func(from, to string, wantKinds []string) []finding {
 		t.Helper()
 		findings, _, err := gate(root, from, to)
 		if err != nil {
@@ -709,6 +709,7 @@ func TestGateReadsReleaseNotesFromGitRange(t *testing.T) {
 		if got := kinds(findings); !slices.Equal(got, wantKinds) {
 			t.Fatalf("kinds = %v, want %v\n%s", got, wantKinds, details(findings))
 		}
+		return findings
 	}
 
 	edited := commit("openspec/changes/old/proposal.md", "## Why\n\nold, reworded\n")
@@ -717,12 +718,16 @@ func TestGateReadsReleaseNotesFromGitRange(t *testing.T) {
 	added := commit("openspec/changes/new/proposal.md", "## Why\n\nnew\n")
 	check(edited, added, []string{kindMissingReleaseNote})
 
-	if err := os.MkdirAll(filepath.Join(root, "openspec/changes/archive/2026-01-01-old"), 0o755); err != nil {
+	// spec: spec-governance/archived-proposal-without-release-note-fails
+	archived := "openspec/changes/archive/2026-01-01-old/proposal.md"
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(root, archived)), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	run("mv", "openspec/changes/old/proposal.md", "openspec/changes/archive/2026-01-01-old/proposal.md")
+	run("mv", "openspec/changes/old/proposal.md", archived)
 	run("commit", "-q", "-m", "archive old")
-	check(added, run("rev-parse", "HEAD"), []string{kindMissingReleaseNote})
+	if got := details(check(added, run("rev-parse", "HEAD"), []string{kindMissingReleaseNote})); !strings.Contains(got, archived) {
+		t.Errorf("finding does not name %s:\n%s", archived, got)
+	}
 }
 
 // releaseNotesRepo tags v1.0.0, merges four pull requests that each add one
