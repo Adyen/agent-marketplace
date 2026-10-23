@@ -8,7 +8,7 @@ import { defineFixture, findTextRun, locate, step, waitForExit } from "./helpers
 // spec: tui-interactions/accept-and-discard-live-grouping-preview
 // spec: tui-navigation/attention-rows-move-without-duplication
 // spec: tui-navigation/grouping-changes-preserve-folds-and-resource-selection
-// spec: tui-navigation/kind-and-source-searches-work-across-groupings
+// Kind-only queries need a separate fixture; source-label coverage here is partial.
 const journey = defineFixture("grouping-view-settings", ["tui"], 80, 24, { directorySource: true, malformedCommand: true });
 before(journey.setup);
 after(journey.cleanup);
