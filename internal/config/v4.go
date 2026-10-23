@@ -1970,14 +1970,13 @@ func (c *V4Config) rebuildRequests() {
 		}
 		locators := make([]string, 0, len(byLocator))
 		for locator := range byLocator {
-			locators = append(locators, locator)
+			if !excluded[locator] {
+				locators = append(locators, locator)
+			}
 		}
 		sort.Strings(locators)
 		for _, locator := range locators {
-			r := byLocator[locator]
-			if !excluded[locator] {
-				c.Requests = append(c.Requests, r)
-			}
+			c.Requests = append(c.Requests, byLocator[locator])
 		}
 	}
 }
