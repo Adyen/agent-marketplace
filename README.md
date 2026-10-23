@@ -32,7 +32,7 @@ from source.
 
 ```bash
 agent-marketplace init                     # choose your target harnesses
-agent-marketplace install <name> --from <git-url> --ref main
+agent-marketplace install <name> --from <git-url> --ref main --scope repo
 agent-marketplace sync                     # write resources into your harness folders
 agent-marketplace status                   # see what is installed and from where
 ```

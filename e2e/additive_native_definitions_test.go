@@ -97,7 +97,7 @@ func TestE2EAdditiveNativeDefinitions(t *testing.T) {
 		}
 	}
 
-	r := e.RunAM("install", "--all", "--kind", "hook")
+	r := e.RunAM("install", "--scope", "repo", "--all", "--kind", "hook")
 	if r.ExitCode != 0 {
 		t.Fatalf("install --all --kind hook failed (exit %d):\n%s", r.ExitCode, r.Combined)
 	}

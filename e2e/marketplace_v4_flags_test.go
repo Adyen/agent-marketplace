@@ -52,7 +52,7 @@ func TestMarketplaceInstallAndSearchFlagsAgainstV4UserConfig(t *testing.T) {
 func TestMarketplaceInstallAcceptRiskAgainstV4RepositoryConfig(t *testing.T) {
 	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("Accepted risk", false))
 	consumer := fixture.newConsumer(t, fixture.server.URL)
-	result := consumer.RunAM("install", "behavior:behavior-source/skill/skill-one", "--accept-risk")
+	result := consumer.RunAM("install", "--scope", "repo", "behavior:behavior-source/skill/skill-one", "--accept-risk")
 	if result.ExitCode != 0 {
 		t.Fatalf("install --accept-risk into a v4 repository config failed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
