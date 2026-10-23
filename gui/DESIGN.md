@@ -7,10 +7,10 @@ This document describes the visual and interaction design of the desktop GUI
   (`agent-marketplace-design.html`). It uses an ink-alpha surface scale, one
   green signal color, monospace uppercase labels, `[*]` resource checks, and
   restrained motion.
-- **Application shell**: the Codex desktop app. It has foldable left and right
-  sidebars around a central work area, a compact toolbar with icon buttons and
-  split buttons, and clean centered modals with a solid primary action at the
-  right of the footer.
+- **Application shell**: the Codex desktop app. It has a fixed left sidebar and
+  a foldable right inspector around a central work area, a compact toolbar with
+  icon buttons and split buttons, and clean centered modals with a solid primary
+  action at the right of the footer.
 
 Behavior is defined in `openspec/specs/gui-*` and `session-*`. This document
 covers presentation only. A restyle must not change what an action does, its
@@ -92,8 +92,8 @@ platform font, use these stacks:
 - Radius: 4 px for tags, kbd, and rows. 8 px for buttons, inputs, and nav
   items. 12 px for cards and preview panels. 20 px for modals.
 - Motion uses one easing, `cubic-bezier(.2,.8,.2,1)`. Colors fade in 150 ms.
-  Sidebars slide in 200 ms. Modals fade and rise 4 px in 200 ms. When
-  `prefers-reduced-motion` is set, all of these are disabled.
+  The inspector overlay slides in 200 ms. Modals fade and rise 4 px in 200 ms.
+  When `prefers-reduced-motion` is set, all of these are disabled.
 - Focus: a 2 px `--gui-signal` outline at a 2 px offset, shown only with
   `:focus-visible`.
 
@@ -129,19 +129,18 @@ changes live.
 ```
 
 The shell is a three-column CSS grid:
-`[sidebar 260px] [main minmax(0,1fr)] [inspector 360px]`. A folded sidebar's
-column collapses to `0`, and its contents are removed from the tab order with
-`inert`.
+`[sidebar 260px] [main minmax(0,1fr)] [inspector 360px]`. The sidebar column is
+always docked. A folded inspector's column collapses to `0`, and its contents
+are removed from the tab order with `inert`.
 
-### Left sidebar (foldable)
+### Left sidebar
 
 The sidebar uses the `--gui-s0100` surface and carries no border; the tone step
-alone separates it from the main column.
+alone separates it from the main column. It never folds.
 
-- **Top bar** (44 px): a "Toggle sidebar" icon button (◧), placed like Codex's
-  sidebar toggle. On macOS, the bar leaves 72 px of inset on the left for the
-  window's traffic lights, and its empty area is a window drag region
-  (`--wails-draggable: drag`).
+- **Top bar** (44 px): empty. On macOS, the bar leaves 72 px of inset on the
+  left for the window's traffic lights, and its empty area is a window drag
+  region (`--wails-draggable: drag`).
 - **Primary navigation**: icon rows that resemble Codex's "New thread",
   "Automations", and "Skills" rows.
   - *Resources* shows all groups.
@@ -240,15 +239,14 @@ centered in `--gui-ink-3`.
 
 ### Folding behavior
 
-- The left sidebar folds with ⌘B and the "Toggle sidebar" button. The right
-  inspector folds with ⌘⌥B and the "Toggle inspector" button. Both buttons
-  remain visible when their panel is folded: the sidebar button moves into the
-  main toolbar, as Codex does.
-- The fold state of each panel is stored in `localStorage`
-  (`am-gui-sidebar`, `am-gui-inspector`).
+- The left sidebar has no fold control. The right inspector folds with ⌘⌥B
+  and the "Toggle inspector" button, which stays visible in the main toolbar
+  when the inspector is folded.
+- The fold state of the inspector is stored in `localStorage`
+  (`am-gui-inspector`). A sidebar value left by an earlier build is ignored.
 - When the window is narrower than 1000 px, the inspector starts folded and
-  opens as an overlay sheet over the main column. Below 720 px, the sidebar
-  behaves the same way. Escape and selecting outside the overlay close it.
+  opens as an overlay sheet over the main column. Escape and selecting outside
+  the overlay close it.
 - Folding a panel that contains the focused element moves focus to that
   panel's toggle button.
 
@@ -272,7 +270,7 @@ not override per instance.
 **Icons**: Nuxt UI's default icon set loads from the Iconify network API,
 which a desktop app must not depend on. Add a small `GuiIcon.vue` with inline
 16 px SVG paths (1.5 stroke, round joins, as in the design file) for the icons
-used: sidebar, inspector, search, refresh, sync, chevron, plus, folder, gear,
+used: inspector, search, refresh, sync, chevron, plus, folder, gear,
 close, check, warning, info, error, file, and external. Set
 `aria-hidden="true"` on every icon; the parent control provides the name.
 
@@ -318,7 +316,6 @@ New bindings, each of which mirrors a visible control:
 | Keys | Action | Control |
 |---|---|---|
 | ⌘K or `/` | Open the search field | Search pill |
-| ⌘B | Toggle the left sidebar | Toggle sidebar |
 | ⌘⌥B | Toggle the inspector | Toggle inspector |
 | ⌘, | Open Settings | ⚙ Settings |
 | ⌘R | Refresh | Refresh |
@@ -352,7 +349,7 @@ open.
 
 ## Spec impact
 
-The restyle changes no session behavior. Folding sidebars, the theme choice,
+The restyle changes no session behavior. Folding the inspector, the theme choice,
 and the new shortcuts are additional presentation controls under the existing
 `gui-shell` keyboard and accessible-name requirement. Commits that only
 restyle carry `Spec-Impact: none — presentation-only GUI restyle`.
@@ -372,9 +369,10 @@ here conflicts with an earlier section, this section wins.
   space.
 - *Rule*: on macOS the window uses a hidden-inset title bar with full-size
   content (Wails `mac.TitleBarHiddenInset()`). The traffic lights sit inside
-  the sidebar's 44 px top bar, and the toggle follows them after the 72 px
-  inset, as in Codex. The window title stays set for the Dock, the window
-  menu, and accessibility. Linux keeps its native decorations.
+  the sidebar's 44 px top bar, after the 72 px inset. The window title stays
+  set for the Dock, the window menu, and accessibility. Linux keeps its native
+  decorations. The window's minimum size is 760×520 px, so the docked sidebar
+  and the main column always fit.
 
 ### Resource rows: a name-first ledger
 

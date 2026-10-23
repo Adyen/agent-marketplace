@@ -3,7 +3,6 @@ const circle = (cx: number, cy: number, r: number) =>
   `M${cx - r} ${cy}a${r} ${r} 0 1 0 ${2 * r} 0a${r} ${r} 0 1 0 ${-2 * r} 0`
 
 export const iconPaths = {
-  sidebar: ['M3 4.5a1.5 1.5 0 0 1 1.5-1.5h7a1.5 1.5 0 0 1 1.5 1.5v7a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 3 11.5z', 'M6.5 3v10'],
   inspector: ['M3 4.5a1.5 1.5 0 0 1 1.5-1.5h7a1.5 1.5 0 0 1 1.5 1.5v7a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 3 11.5z', 'M9.5 3v10'],
   search: [circle(7, 7, 4.5), 'M10.5 10.5l3 3'],
   refresh: ['M13 8a5 5 0 1 1-1.5-3.5', 'M13 2.5V5h-2.5'],

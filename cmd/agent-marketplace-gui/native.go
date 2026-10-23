@@ -51,9 +51,11 @@ func (app *App) appOptions(hooks lifecycleHooks) *options.App {
 		wailsruntime.Quit(windowCtx)
 	}
 	return &options.App{
-		Title:  "Agent Marketplace",
-		Width:  1280,
-		Height: 832,
+		Title:     "Agent Marketplace",
+		Width:     1280,
+		Height:    832,
+		MinWidth:  760,
+		MinHeight: 520,
 		Mac: &mac.Options{
 			TitleBar: mac.TitleBarHiddenInset(),
 		},

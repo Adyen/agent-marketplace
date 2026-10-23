@@ -56,8 +56,7 @@ const toolbar = ref<InstanceType<typeof MainToolbar> | null>(null)
 const inspector = ref<InstanceType<typeof Inspector> | null>(null)
 const resourceList = ref<ElementHost>(null)
 
-const storageKeys = { sidebar: 'am-gui-sidebar', inspector: 'am-gui-inspector' }
-const sidebarOverlayWidth = 720
+const storageKeys = { inspector: 'am-gui-inspector' }
 const inspectorOverlayWidth = 1000
 const viewportWidth = ref(window.innerWidth)
 
@@ -70,18 +69,13 @@ function writePanelChoice(key: string, folded: boolean) {
   writeStoredValue(key, folded ? 'folded' : 'open')
 }
 
-const sidebarChoice = ref<boolean | null>(readPanelChoice(storageKeys.sidebar))
 const inspectorChoice = ref<boolean | null>(readPanelChoice(storageKeys.inspector))
-const sidebarOverlay = computed(() => viewportWidth.value < sidebarOverlayWidth)
 const inspectorOverlay = computed(() => viewportWidth.value < inspectorOverlayWidth)
-const sidebarFolded = computed(() => sidebarChoice.value ?? sidebarOverlay.value)
 const inspectorFolded = computed(() => inspectorChoice.value ?? inspectorOverlay.value)
-const sidebarOverlayOpen = computed(() => sidebarOverlay.value && !sidebarFolded.value)
 const inspectorOverlayOpen = computed(() => inspectorOverlay.value && !inspectorFolded.value)
 const shellColumns = computed(() => {
-  const sidebarColumn = sidebarFolded.value || sidebarOverlay.value ? '0px' : 'var(--gui-sidebar-width)'
   const inspectorColumn = inspectorFolded.value || inspectorOverlay.value ? '0px' : 'var(--gui-inspector-width)'
-  return `${sidebarColumn} minmax(0, 1fr) ${inspectorColumn}`
+  return `var(--gui-sidebar-width) minmax(0, 1fr) ${inspectorColumn}`
 })
 
 const configuration = computed(() => state.value?.state.configuration ?? null)
@@ -213,15 +207,6 @@ function hasFocusWithin(element: unknown): boolean {
   return element instanceof HTMLElement && element.contains(document.activeElement)
 }
 
-function setSidebarFolded(folded: boolean) {
-  const focusWasInside = hasFocusWithin(sidebar.value?.$el)
-  sidebarChoice.value = folded
-  writePanelChoice(storageKeys.sidebar, folded)
-  if (folded && focusWasInside) {
-    void nextTick(() => toolbar.value?.focusSidebarToggle())
-  }
-}
-
 function setInspectorFolded(folded: boolean) {
   const focusWasInside = hasFocusWithin(inspector.value?.$el)
   inspectorChoice.value = folded
@@ -231,23 +216,11 @@ function setInspectorFolded(folded: boolean) {
   }
 }
 
-function toggleSidebar() {
-  const unfolding = sidebarFolded.value
-  const focusOnToggle = document.activeElement?.closest('.gui-toolbar__leading') != null
-  setSidebarFolded(!unfolding)
-  if (unfolding && focusOnToggle) {
-    void nextTick(() => sidebar.value?.focusToggle())
-  }
-}
-
 function toggleInspector() {
   setInspectorFolded(!inspectorFolded.value)
 }
 
 function dismissOverlays() {
-  if (sidebarOverlayOpen.value) {
-    setSidebarFolded(true)
-  }
   if (inspectorOverlayOpen.value) {
     setInspectorFolded(true)
   }
@@ -317,7 +290,7 @@ function onKeydown(event: KeyboardEvent) {
     return
   }
   if (event.key === 'Escape') {
-    if ((sidebarOverlayOpen.value || inspectorOverlayOpen.value) && !modalIsOpen()) {
+    if (inspectorOverlayOpen.value && !modalIsOpen()) {
       event.preventDefault()
       dismissOverlays()
     }
@@ -327,13 +300,9 @@ function onKeydown(event: KeyboardEvent) {
     return
   }
   if (event.metaKey) {
-    if (event.code === 'KeyB') {
+    if (event.code === 'KeyB' && event.altKey) {
       event.preventDefault()
-      if (event.altKey) {
-        toggleInspector()
-      } else {
-        toggleSidebar()
-      }
+      toggleInspector()
     } else if (event.altKey) {
       return
     } else if (event.key === 'k') {
@@ -914,9 +883,6 @@ async function run(action: 'sync' | 'update') {
   <div class="workspace gui-shell" :style="{ gridTemplateColumns: shellColumns }">
     <Sidebar
       ref="sidebar"
-      :folded="sidebarFolded"
-      :overlay="sidebarOverlay"
-      :inert="sidebarFolded"
       :groups="navGroups"
       :pending-count="pendingCount"
       :pending-section-id="pendingSectionId"
@@ -928,7 +894,6 @@ async function run(action: 'sync' | 'update') {
       :harnesses="view?.harnesses ?? []"
       :targets-loading="view == null || (view.harnesses.length === 0 && view.stage !== 'inventory' && view.stage !== 'final')"
       :latest-version="view?.latestVersion ?? ''"
-      @toggle="toggleSidebar"
       @search="openSearch"
       @show-all="showAll"
       @show-diagnostics="showDiagnostics"
@@ -941,7 +906,6 @@ async function run(action: 'sync' | 'update') {
     <div class="workspace__main gui-main">
       <MainToolbar
         ref="toolbar"
-        :sidebar-folded="sidebarFolded"
         :inspector-folded="inspectorFolded"
         :search-editing="searchEditing"
         :draft-query="draftQuery"
@@ -954,7 +918,6 @@ async function run(action: 'sync' | 'update') {
         :show-setup="configuration?.firstRun === true || setupOpen"
         :view-settings="viewSettings"
         :title="mainView === 'diagnostics' ? 'Diagnostics' : 'Resources'"
-        @toggle-sidebar="toggleSidebar"
         @toggle-inspector="toggleInspector"
         @open-search="openSearch"
         @search-input="updateSearch"
@@ -1061,7 +1024,7 @@ async function run(action: 'sync' | 'update') {
     />
 
     <div
-      v-if="sidebarOverlayOpen || inspectorOverlayOpen"
+      v-if="inspectorOverlayOpen"
       class="gui-scrim"
       aria-hidden="true"
       @click="dismissOverlays"

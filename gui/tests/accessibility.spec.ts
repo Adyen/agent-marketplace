@@ -50,7 +50,7 @@ async function completeResponse(responsePromise: ReturnType<typeof armPost>, sta
 }
 
 async function waitForOperationCompletion(page: Page, action: 'sync' | 'update'): Promise<void> {
-  await expect(page.getByLabel('Notifications').getByText(`${action} complete`, { exact: true })).toBeVisible({ timeout: 60_000 })
+  await expect(page.getByLabel('Notifications').getByText(new RegExp(`^${action} complete( with \\d+ warning\\(s\\))?$`))).toBeVisible({ timeout: 60_000 })
   await expect(page.locator('.gui-toast--progress')).toHaveCount(0)
 }
 

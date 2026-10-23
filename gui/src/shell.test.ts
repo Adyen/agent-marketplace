@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { source } from './fixtures'
 import { event, fakeClient, mountWorkspace, row, snapshot, tick } from './test-support'
 
-const sidebarStorageKey = 'am-gui-sidebar'
 const inspectorStorageKey = 'am-gui-inspector'
 const appearanceStorageKey = 'vitepress-theme-appearance'
 
@@ -41,27 +40,14 @@ afterEach(() => {
 })
 
 describe('panel toggles', () => {
-  it('folds the sidebar from its named toggle, moves the toggle to the toolbar, and persists the choice', async () => {
+  it('keeps the sidebar docked without a toggle at every width', async () => {
+    setViewportWidth(500)
     const { wrapper } = await mountShell()
     const sidebar = wrapper.get('aside[aria-label="Navigation"]')
-    expect(sidebar.classes()).not.toContain('gui-sidebar--folded')
-
-    await button(wrapper, 'Toggle sidebar').trigger('click')
-    await tick()
-
-    expect(sidebar.classes()).toContain('gui-sidebar--folded')
-    expect(sidebar.element.hasAttribute('inert')).toBe(true)
-    expect(window.localStorage.getItem(sidebarStorageKey)).toBe('folded')
-    expect(wrapper.findAll('button[aria-label="Toggle sidebar"]')).toHaveLength(1)
-    expect(wrapper.get('.gui-toolbar__leading button[aria-label="Toggle sidebar"]').attributes('aria-expanded')).toBe('false')
-
-    await button(wrapper, 'Toggle sidebar').trigger('click')
-    await tick()
-
-    expect(sidebar.classes()).not.toContain('gui-sidebar--folded')
+    expect(sidebar.classes()).not.toContain('gui-sidebar--overlay')
     expect(sidebar.element.hasAttribute('inert')).toBe(false)
-    expect(window.localStorage.getItem(sidebarStorageKey)).toBe('open')
-    expect(button(wrapper, 'Toggle sidebar').attributes('aria-expanded')).toBe('true')
+    expect(wrapper.findAll('button[aria-label="Toggle sidebar"]')).toHaveLength(0)
+    expect(wrapper.find('.gui-scrim').exists()).toBe(false)
   })
 
   it('folds the inspector from its named toggle and restores the stored fold on mount', async () => {
@@ -78,14 +64,15 @@ describe('panel toggles', () => {
     expect(window.localStorage.getItem(inspectorStorageKey)).toBe('open')
   })
 
-  it('toggles the sidebar with ⌘B and the inspector with ⌘⌥B', async () => {
+  it('toggles the inspector with ⌘⌥B and leaves ⌘B alone', async () => {
     const { wrapper } = await mountShell()
     const sidebar = wrapper.get('aside[aria-label="Navigation"]')
     const inspector = wrapper.get('aside[aria-label="Detail"]')
 
     keydown(document.body, { key: 'b', code: 'KeyB', metaKey: true })
     await tick()
-    expect(sidebar.classes()).toContain('gui-sidebar--folded')
+    expect(sidebar.element.hasAttribute('inert')).toBe(false)
+    expect(inspector.classes()).not.toContain('gui-inspector--folded')
 
     keydown(document.body, { key: '∫', code: 'KeyB', metaKey: true, altKey: true })
     await tick()
@@ -95,14 +82,6 @@ describe('panel toggles', () => {
 
   it('moves focus to the toggle when folding the panel that holds focus', async () => {
     const { wrapper } = await mountShell([row('a', { inspectable: true })])
-    const sidebarSettings = button(wrapper, 'Settings').element as HTMLButtonElement
-    sidebarSettings.focus()
-    expect(document.activeElement).toBe(sidebarSettings)
-
-    keydown(document.body, { key: 'b', code: 'KeyB', metaKey: true })
-    await tick()
-    expect(document.activeElement).toBe(button(wrapper, 'Toggle sidebar').element)
-
     const openResource = button(wrapper, 'Open resource').element as HTMLButtonElement
     openResource.focus()
     keydown(document.body, { key: '∫', code: 'KeyB', metaKey: true, altKey: true })

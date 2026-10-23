@@ -5,7 +5,6 @@ import type { ViewSettings } from './grouping'
 import ViewMenu from './ViewMenu.vue'
 
 const props = defineProps<{
-  sidebarFolded: boolean
   inspectorFolded: boolean
   searchEditing: boolean
   draftQuery: string
@@ -21,7 +20,6 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  toggleSidebar: []
   toggleInspector: []
   openSearch: []
   searchInput: [query: string]
@@ -35,7 +33,6 @@ const emit = defineEmits<{
   setup: []
 }>()
 
-const sidebarToggle = ref<HTMLButtonElement | null>(null)
 const inspectorToggle = ref<HTMLButtonElement | null>(null)
 const searchButton = ref<HTMLButtonElement | null>(null)
 const searchInput = ref<HTMLInputElement | null>(null)
@@ -56,7 +53,6 @@ function onSearchInput(event: Event) {
 defineExpose({
   focusSearchButton: () => searchButton.value?.focus(),
   focusSearchInput: () => searchInput.value?.focus(),
-  focusSidebarToggle: () => sidebarToggle.value?.focus(),
   focusInspectorToggle: () => inspectorToggle.value?.focus(),
   openViewMenu: () => viewMenu.value?.open(),
   focusSetup(): boolean {
@@ -73,15 +69,6 @@ defineExpose({
 <template>
   <header class="gui-toolbar">
     <div class="gui-toolbar__leading">
-      <button
-        v-if="sidebarFolded"
-        ref="sidebarToggle"
-        type="button"
-        class="gui-icon-button"
-        aria-label="Toggle sidebar"
-        aria-expanded="false"
-        @click="emit('toggleSidebar')"
-      ><GuiIcon name="sidebar" /></button>
       <h1 class="gui-pane-title">{{ title }}</h1>
     </div>
     <div class="workspace__actions gui-toolbar__actions" role="toolbar" aria-label="Session actions">

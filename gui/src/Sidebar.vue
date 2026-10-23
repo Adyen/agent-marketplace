@@ -16,8 +16,6 @@ export interface SidebarSource {
 }
 
 const props = defineProps<{
-  folded: boolean
-  overlay: boolean
   groups: SidebarGroup[]
   pendingCount: number
   pendingSectionId: string
@@ -32,7 +30,6 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  toggle: []
   search: []
   showAll: []
   selectGroup: [id: string]
@@ -43,12 +40,10 @@ const emit = defineEmits<{
 }>()
 
 const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform)
-const toggleButton = ref<HTMLButtonElement | null>(null)
 const sourcesButton = ref<HTMLButtonElement | null>(null)
 const settingsButton = ref<HTMLButtonElement | null>(null)
 
 defineExpose({
-  focusToggle: () => toggleButton.value?.focus(),
   focusSources: () => sourcesButton.value?.focus(),
   focusSettings: () => settingsButton.value?.focus(),
 })
@@ -93,19 +88,9 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | 'signal' | null 
   <aside
     class="gui-sidebar"
     aria-label="Navigation"
-    :class="{ 'gui-sidebar--overlay': overlay && !folded, 'gui-sidebar--folded': folded, 'gui-sidebar--mac': isMac }"
+    :class="{ 'gui-sidebar--mac': isMac }"
   >
-    <div class="gui-sidebar__top">
-      <button
-        v-if="!folded"
-        ref="toggleButton"
-        type="button"
-        class="gui-icon-button"
-        aria-label="Toggle sidebar"
-        aria-expanded="true"
-        @click="emit('toggle')"
-      ><GuiIcon name="sidebar" /></button>
-    </div>
+    <div class="gui-sidebar__top" />
 
     <nav class="gui-sidebar__nav">
       <button type="button" class="gui-nav-row" aria-label="Show all groups" :aria-current="mainView === 'resources' ? 'page' : undefined" @click="emit('showAll')">

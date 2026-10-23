@@ -237,20 +237,6 @@ textarea:focus-visible,
   --wails-draggable: drag;
 }
 
-.gui-sidebar--folded {
-  visibility: hidden;
-}
-
-.gui-sidebar--overlay {
-  box-shadow: var(--gui-shadow);
-  height: 100%;
-  left: 0;
-  position: fixed;
-  top: 0;
-  width: var(--gui-sidebar-width);
-  z-index: 30;
-}
-
 .gui-sidebar__top {
   align-items: center;
   display: flex;
