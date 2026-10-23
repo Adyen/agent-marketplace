@@ -100,6 +100,24 @@ make build
 
 Leave out `--branch v5.0.0` to build the main branch instead. `make build` writes the program to `./agent-marketplace` in the repository folder. Copy it onto your `PATH` as described above. `make release` builds all four release platforms into `dist/`.
 
+## Install script
+
+Run the installer to detect your platform, download the latest release, verify its `SHA256SUMS`, and install to `~/.local/bin` without `sudo`:
+
+```bash
+curl -fsSL https://agent-marketplace.io/install.sh | bash
+```
+
+Set `AGENT_MARKETPLACE_VERSION` to pin a release or `AGENT_MARKETPLACE_INSTALL_DIR` to choose another directory. For example, with `vX.Y.Z` replaced by a release tag:
+
+```bash
+curl -fsSL https://agent-marketplace.io/install.sh | AGENT_MARKETPLACE_VERSION=vX.Y.Z AGENT_MARKETPLACE_INSTALL_DIR="$HOME/bin" bash
+```
+
+The checksum comes from the same release as the binary, so it confirms the download is intact, not who published it. To check authenticity, verify the asset against the release attestation with `gh release verify-asset <tag> agent-marketplace-<tag>-<os>-<arch> --repo Adyen/agent-marketplace`, for example `agent-marketplace-v5.0.3-darwin-arm64`.
+
+To inspect the script first, download it with `curl -fsSL https://agent-marketplace.io/install.sh -o install.sh`, read it, then run `bash install.sh`. The installer refuses a release without a `SHA256SUMS` asset; use one of the other methods on this page for such a release.
+
 ## Upgrade notices
 
 About once a day the program checks GitHub for a newer release. When one exists, a command run in a terminal prints one `info:` line after it finishes, and the TUI shows the same notice once. The check never changes a command's output or exit status, and failed checks stay silent. Builds from `go install ...@latest` are compared by commit date, so the notice says a release came out after your build.
@@ -118,6 +136,7 @@ The output depends on how you installed it:
 
 | Installed with | Prints, for example |
 |---|---|
+| The install script | the release tag it installed |
 | A release download | `v5.0.0` |
 | `go install ...@latest` | a Go pseudo-version such as `v0.0.0-20260927180313-baeda4e602ab` |
 | `make build` | the output of `git describe`: `v5.0.0` on the release tag, or something like `v5.0.0-3-gbaeda4e` on a later commit |

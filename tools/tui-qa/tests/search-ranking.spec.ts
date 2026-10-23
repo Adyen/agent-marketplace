@@ -80,6 +80,12 @@ journey.test("name matches rank above metadata, and kind-only searches work acro
       });
       await step(`accept ${grouping}`, () => terminal.write("\r"), async () => {
         await locate(terminal, "View settings").expect({ not: true });
+        if (grouping === "Source") {
+          await locate(terminal, /source\s+\(6\)/).unique().expect();
+        } else {
+          await locate(terminal, /Skills\s+\(5\)/).unique().expect();
+          await locate(terminal, /Commands\s+\(1\)/).unique().expect();
+        }
         await allRows();
       });
     }
@@ -144,6 +150,9 @@ journey.test("name matches rank above metadata, and kind-only searches work acro
   });
   for (const { file, bytes } of snapshot) {
     if (bytes === undefined) assert.equal(fs.existsSync(file), false, `search created ${file}`);
-    else assert.deepEqual(fs.readFileSync(file), bytes, `search changed ${file}`);
+    else {
+      assert.equal(fs.existsSync(file), true, `search deleted ${file}`);
+      assert.deepEqual(fs.readFileSync(file), bytes, `search changed ${file}`);
+    }
   }
 });
