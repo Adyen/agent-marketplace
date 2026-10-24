@@ -199,6 +199,30 @@ models:
   openai/gpt-6.1-sol:
     model: gpt-6.1-sol
     reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  # TODO(model-catalog-drift): stub from https://docs.factory.ai/models.md; verify native resource support and reasoning before merging.
+  deepseek/deepseek-v4.1-flash-1017:
+    model: deepseek-v4.1-flash-1017
+    reasoning: {low: {effort: low}, high: {effort: high}}
+  # TODO(model-catalog-drift): stub from https://docs.factory.ai/models.md; verify native resource support and reasoning before merging.
+  minimax/minimax-m3.1-flash:
+    model: minimax-m3.1-flash
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  # TODO(model-catalog-drift): stub from https://docs.factory.ai/models.md; verify native resource support and reasoning before merging.
+  nvidia/nemotron-3.5-super:
+    model: nemotron-3.5-super
+    reasoning: {high: {effort: high}}
+  # TODO(model-catalog-drift): stub from https://docs.factory.ai/models.md; verify native resource support and reasoning before merging.
+  openai/gpt-6-luna-fast:
+    model: gpt-6-luna-fast
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  # TODO(model-catalog-drift): stub from https://docs.factory.ai/models.md; verify native resource support and reasoning before merging.
+  openai/gpt-6-sol-fast:
+    model: gpt-6-sol-fast
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  # TODO(model-catalog-drift): stub from https://docs.factory.ai/models.md; verify native resource support and reasoning before merging.
+  openai/gpt-6.1-sol-ultrafast:
+    model: gpt-6.1-sol-ultrafast
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
 families:
   anthropic/sonnet:
     pin: anthropic/claude-sonnet-5
