@@ -51,8 +51,10 @@ type installSourceModal struct {
 	notice      string
 	loading     bool
 	details     bool
-	generation  requestGeneration
-	cancel      context.CancelFunc
+	// pendingRefusal marks a refused install whose state was kept while another
+	// pane was open; the next `i` resumes it instead of resetting.
+	pendingRefusal bool
+	cancel         context.CancelFunc
 }
 
 type installSourceChoice struct {
@@ -72,7 +74,6 @@ type installSourcePreviewLoadedMsg struct {
 type installSourceInstallMsg struct {
 	operation operationID
 	options   pipeline.InstallOptions
-	result    *pipeline.InstallResult
 	err       error
 }
 
@@ -82,6 +83,14 @@ func (m Model) openInstallSource() (tea.Model, tea.Cmd) {
 	}
 	if m.operations.active != nil || m.syncing {
 		return m, operationBlockedCmd()
+	}
+	if m.installSource.pendingRefusal {
+		m.installSource.pendingRefusal = false
+		m.pane = paneInstallSource
+		if m.installSource.step == installSourceStepPick {
+			return m.startInstallSourcePreview(true)
+		}
+		return m, nil
 	}
 	values := &installSourceValues{}
 	filter := textinput.New()
@@ -402,8 +411,12 @@ func installSourceChoiceLines(m Model, s installSourceModal, choices []installSo
 }
 
 func installSourceBadge(m Model, url string, choice installSourceChoice) string {
+	conflict := ""
 	for _, installed := range m.rows {
 		if installed.Artifact.Kind != choice.kind || installed.Artifact.Name != choice.name {
+			continue
+		}
+		if !installed.EnabledGlobal && !installed.EnabledProject && !installed.EnabledLocal {
 			continue
 		}
 		sourceURL := installed.RegistryURL
@@ -421,18 +434,17 @@ func installSourceBadge(m Model, url string, choice installSourceChoice) string 
 			if installed.EnabledLocal {
 				scopes = append(scopes, "L")
 			}
-			if len(scopes) > 0 {
-				return "✓ already installed (" + strings.Join(scopes, "") + ")"
+			return "✓ already installed (" + strings.Join(scopes, "") + ")"
+		}
+		if conflict == "" {
+			name := installed.RegistryName
+			if name == "" {
+				name = registryDisplayName(sourceURL)
 			}
-			return "✓ already installed"
+			conflict = "conflicts: installed from " + sanitizeTerminalData(name, terminalSingleLine)
 		}
-		name := installed.RegistryName
-		if name == "" {
-			name = registryDisplayName(sourceURL)
-		}
-		return "conflicts: installed from " + sanitizeTerminalData(name, terminalSingleLine)
 	}
-	return ""
+	return conflict
 }
 
 func sourceAlreadyConfigured(m Model, preview *pipeline.SourcePreview) bool {
@@ -607,6 +619,7 @@ func (m Model) handleInstallSourceKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		}
 		switch msg.String() {
 		case "backspace", "left":
+			m.cancelInstallSourcePreview()
 			s.step = installSourceStepSource
 			s.error = ""
 			s.cursor = 0
@@ -763,7 +776,6 @@ func (m Model) startInstallSourcePreview(preserveNotice bool) (tea.Model, tea.Cm
 	s.loading = true
 	s.step = installSourceStepPick
 	generation := m.beginRequest(requestInstallPreview)
-	s.generation = generation
 	ctx, cancel := context.WithCancel(ctxOrBackground(m.ctx))
 	s.cancel = cancel
 	return m, loadInstallSourcePreview(ctx, m.workspace, s.values.url, s.values.ref, s.values.path, generation)
@@ -852,8 +864,8 @@ func (m Model) startInstallSourceInstall() (tea.Model, tea.Cmd) {
 
 func runInstallSource(ctx context.Context, operation operationID, options pipeline.InstallOptions) tea.Cmd {
 	return func() tea.Msg {
-		result, err := pipeline.Install(ctx, options)
-		return installSourceInstallMsg{operation: operation, options: options, result: result, err: err}
+		_, err := pipeline.Install(ctx, options)
+		return installSourceInstallMsg{operation: operation, options: options, err: err}
 	}
 }
 
@@ -864,11 +876,7 @@ func (m Model) updateInstallSourceInstall(msg installSourceInstallMsg) (tea.Mode
 	if msg.err != nil {
 		var locked *pipeline.SourceLockedError
 		if errors.As(msg.err, &locked) {
-			m.clearOperationProgress()
-			m.finishOperation(msg.operation)
-			m.marketplaceInstallOperation = 0
-			m.marketplaceInstallIsSource = false
-			m.pane = paneInstallSource
+			m.finishInstallSourceOperation(msg.operation)
 			m.installSource.step = installSourceStepReview
 			m.installSource.error = fmt.Sprintf("%s lock pins %s at %s; preview showed %s. Run %s, or choose another scope.",
 				installSourceScopeName(locked.Scope),
@@ -876,27 +884,24 @@ func (m Model) updateInstallSourceInstall(msg installSourceInstallMsg) (tea.Mode
 				sanitizeTerminalData(shortCommit(locked.Locked), terminalSingleLine),
 				sanitizeTerminalData(shortCommit(locked.Expected), terminalSingleLine),
 				sanitizeTerminalData(locked.UpdateCommand(), terminalSingleLine))
-			return m, nil
+			return m.reenterInstallSourceRefusal(m.installSource.error)
 		}
 		var moved *pipeline.SourceMovedError
 		if errors.As(msg.err, &moved) {
-			m.clearOperationProgress()
-			m.finishOperation(msg.operation)
-			m.marketplaceInstallOperation = 0
-			m.marketplaceInstallIsSource = false
-			m.pane = paneInstallSource
+			m.finishInstallSourceOperation(msg.operation)
 			m.installSource.step = installSourceStepPick
 			m.installSource.notice = fmt.Sprintf("%s moved from %s to %s; preview again",
 				sanitizeTerminalData(moved.Ref, terminalSingleLine),
 				sanitizeTerminalData(shortCommit(moved.Expected), terminalSingleLine),
 				sanitizeTerminalData(shortCommit(moved.Actual), terminalSingleLine))
 			m.installSource.error = ""
+			if m.pane != paneList {
+				return m.reenterInstallSourceRefusal(m.installSource.notice)
+			}
+			m.pane = paneInstallSource
 			return m.startInstallSourcePreview(true)
 		}
-		m.clearOperationProgress()
-		m.finishOperation(msg.operation)
-		m.marketplaceInstallOperation = 0
-		m.marketplaceInstallIsSource = false
+		m.finishInstallSourceOperation(msg.operation)
 		m.recordOperationFailure(operationMutation, diagnosticMutation, msg.err)
 		m.pushToast("Source install failed: "+sanitizeTerminalData(msg.err.Error(), terminalSingleLine), 5*time.Second)
 		return m, toastExpiryCmd(5 * time.Second)
@@ -907,6 +912,26 @@ func (m Model) updateInstallSourceInstall(msg installSourceInstallMsg) (tea.Mode
 		m.operationPhase = string(pipeline.PhaseReload)
 	}
 	return m, loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation)
+}
+
+func (m *Model) finishInstallSourceOperation(operation operationID) {
+	m.clearOperationProgress()
+	m.finishOperation(operation)
+	m.marketplaceInstallOperation = 0
+	m.marketplaceInstallIsSource = false
+}
+
+// reenterInstallSourceRefusal shows a refused install in the modal when the
+// user is still on the list. Otherwise it leaves the open pane alone, keeps the
+// modal state for the next `i`, and reports the refusal as a toast.
+func (m Model) reenterInstallSourceRefusal(message string) (tea.Model, tea.Cmd) {
+	if m.pane == paneList {
+		m.pane = paneInstallSource
+		return m, nil
+	}
+	m.installSource.pendingRefusal = true
+	m.pushToast(message, 5*time.Second)
+	return m, toastExpiryCmd(5 * time.Second)
 }
 
 func (m *Model) cancelInstallSourcePreview() {

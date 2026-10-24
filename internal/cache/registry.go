@@ -149,9 +149,9 @@ func RemoteDefaultBranch(url string) (branch, commit string, err error) {
 
 // CheckoutAt reports whether the cached checkout of url at ref is already at
 // commit, without touching the network.
-func CheckoutAt(url, ref, commit string) bool {
+func CheckoutAt(ctx context.Context, url, ref, commit string) bool {
 	cachePath := RegistryCachePath(url, ref)
-	current, err := WithRegistryReadLockWithContext(context.Background(), []string{url}, func() (bool, error) {
+	current, err := WithRegistryReadLockWithContext(ctx, []string{url}, func() (bool, error) {
 		cacheExists, err := validateRegistryCachePath(cachePath)
 		if err != nil || !cacheExists {
 			return false, err

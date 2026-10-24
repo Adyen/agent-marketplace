@@ -433,6 +433,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.PasteMsg:
 		if m.pane == paneInstallSource {
+			if m.installSource.step == installSourceStepPick && m.installSource.filtering {
+				var cmd tea.Cmd
+				m.installSource.filterInput, cmd = m.installSource.filterInput.Update(msg)
+				return m, cmd
+			}
 			return m, updateInstallSourceForm(&m.installSource, msg)
 		}
 		return m.handlePaste(msg)

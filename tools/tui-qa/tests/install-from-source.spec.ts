@@ -290,19 +290,20 @@ changed.test("a changed source previews again", async (terminal) => {
   await step("return to Source", () => terminal.write(LEFT), async () => {
     await locate(terminal, "Web URLs fill ref and path automatically.").unique().expect();
   });
-  await step("tab moves typing into Ref", async () => {
-    await terminal.write("\t");
-    await terminal.write("x");
-  }, async () => {
+  await step("tab moves focus to Ref", () => terminal.write("\t"), async () => {
+    await locate(terminal, "> main").unique().expect();
+  });
+  await step("type into Ref", () => terminal.write("x"), async () => {
     await locate(terminal, "> mainx").unique().expect();
   });
   await step("restore Ref", () => terminal.write("\x7f"), async () => {
     await locate(terminal, "> main").unique().expect();
   });
-  await step("tab moves typing into Path", async () => {
-    await terminal.write("\t");
-    await terminal.write("skills");
-  }, async () => {
+  await step("tab moves focus to Path", () => terminal.write("\t"), async () => {
+    await locate(terminal, "registry root").unique().expect();
+    await locate(terminal, "> main").unique().expect();
+  });
+  await step("type into Path", () => terminal.write("skills"), async () => {
     await locate(terminal, "> skills").unique().expect();
   });
   await step("preview the skills path", () => terminal.write("\r"), async () => {
@@ -330,31 +331,41 @@ fields.test("arrow keys move typing between Source fields without leaving the st
   });
   await step("up on URL keeps focus on URL", () => terminal.write(UP), async () => {
     await locate(terminal, "Web URLs fill ref and path automatically.").unique().expect();
+    await locate(terminal, "Previewing source…").expect({ not: true });
   });
   await step("type into URL", () => terminal.write("u"), async () => {
     await locate(terminal, "> u").unique().expect();
   });
-  await step("down moves to Ref", () => terminal.write(DOWN), async () => {
-    await locate(terminal, "Web URLs fill ref and path automatically.").unique().expect();
-  });
-  await step("down moves to Path", () => terminal.write(DOWN), async () => {
-    await locate(terminal, "Web URLs fill ref and path automatically.").unique().expect();
-  });
-  await step("type into Path", () => terminal.write("p"), async () => {
-    await locate(terminal, "> p").unique().expect();
-  });
-  await step("down on Path keeps focus on Path", () => terminal.write(DOWN), async () => {
-    await locate(terminal, "Web URLs fill ref and path automatically.").unique().expect();
-  });
-  await step("type again into Path", () => terminal.write("q"), async () => {
-    await locate(terminal, "> pq").unique().expect();
-  });
-  await step("up moves back to Ref", () => terminal.write(UP), async () => {
+  await step("down key moves toward Ref", () => terminal.write(DOWN), async () => {
+    await locate(terminal, "> u").unique().expect();
     await locate(terminal, "Web URLs fill ref and path automatically.").unique().expect();
   });
   await step("type into Ref", () => terminal.write("r"), async () => {
     await locate(terminal, "> r").unique().expect();
     await locate(terminal, "> u").unique().expect();
+  });
+  await step("down key moves toward Path", () => terminal.write(DOWN), async () => {
+    await locate(terminal, "> r").unique().expect();
+    await locate(terminal, "Web URLs fill ref and path automatically.").unique().expect();
+  });
+  await step("type into Path", () => terminal.write("p"), async () => {
+    await locate(terminal, "> p").unique().expect();
+    await locate(terminal, "> r").unique().expect();
+  });
+  await step("down on Path keeps focus on Path", () => terminal.write(DOWN), async () => {
+    await locate(terminal, "> p").unique().expect();
+    await locate(terminal, "> r").unique().expect();
+  });
+  await step("type on Path again", () => terminal.write("q"), async () => {
+    await locate(terminal, "> pq").unique().expect();
+  });
+  await step("up key moves back toward Ref", () => terminal.write(UP), async () => {
+    await locate(terminal, "> pq").unique().expect();
+    await locate(terminal, "> r").unique().expect();
+  });
+  await step("type into Ref again", () => terminal.write("s"), async () => {
+    await locate(terminal, "> rs").unique().expect();
+    await locate(terminal, "> pq").unique().expect();
     await locate(terminal, "Previewing source…").expect({ not: true });
   });
   assertUnchanged();
@@ -462,7 +473,11 @@ lockPinned.test("a lock-pinned source returns to Review with update remediation"
   const fixture = lockPinned.current();
   assert.ok(lockPinnedCommits, "lock-pinned fixture did not record its commits");
   const { locked, advanced } = lockPinnedCommits;
-  const repoFiles = [path.join(fixture.repo, ".agents", "config.yaml"), path.join(fixture.repo, ".agents", "lock.yaml")];
+  const repoFiles = [
+    path.join(fixture.repo, ".agents", "config.yaml"),
+    path.join(fixture.repo, ".agents", "lock.yaml"),
+    path.join(fixture.repo, ".factory", "skills", "ad-hoc-alpha", "SKILL.md"),
+  ];
   const contents = repoFiles.map((file) => fs.readFileSync(file));
   const assertRepoUnchanged = () => repoFiles.forEach((file, index) => assert.deepEqual(fs.readFileSync(file), contents[index]));
   await step("settled source list", () => {}, async () => {
@@ -476,6 +491,24 @@ lockPinned.test("a lock-pinned source returns to Review with update remediation"
   });
   await step("preview shows the advanced commit", () => terminal.write("\r"), async () => {
     await locate(terminal, `resources at ${advanced.slice(0, 8)}`).unique().expect({ timeout: 30_000 });
+  });
+  await step("open the filter", () => terminal.write("/"), async () => {
+    await locate(terminal, /\/ /).expect();
+  });
+  await step("paste into the filter", () => terminal.write("\x1b[200~ad-hoc-second\x1b[201~"), async () => {
+    await locate(terminal, /\/ ad-hoc-second/).unique().expect();
+    await locate(terminal, /\[ \] skill\s+ad-hoc-alpha/).unique().expect();
+  });
+  await step("confirm the pasted filter", () => terminal.write("\r"), async () => {
+    await locate(terminal, /Filter: ad-hoc-second/).unique().expect();
+    await locate(terminal, /\[ \] skill\s+ad-hoc-alpha/).expect({ not: true });
+    await locate(terminal, /\[ \] skill\s+ad-hoc-second/).unique().expect();
+  });
+  await step("reopen the filter to clear it", () => terminal.write("/"), async () => {
+    await locate(terminal, /\/ ad-hoc-second/).unique().expect();
+  });
+  await step("clear the filter", () => terminal.write("\x1b"), async () => {
+    await locate(terminal, /\[ \] skill\s+ad-hoc-alpha/).unique().expect();
   });
   await step("move to ad-hoc-second", () => terminal.write("j"), async () => {
     await locate(terminal, /› \[ \] skill\s+ad-hoc-second/).unique().expect();
@@ -507,10 +540,12 @@ lockPinned.test("a lock-pinned source returns to Review with update remediation"
     await locate(terminal, "Install from source").expect({ not: true });
   });
   assert.match(fs.readFileSync(path.join(fixture.repo, ".agents", "config.local.yaml"), "utf8"), /ad-hoc-second/);
+  assert.match(fs.readFileSync(path.join(fixture.repo, ".agents", "lock.local.yaml"), "utf8"), new RegExp(advanced));
   assertRepoUnchanged();
   await step("sync the installs", () => terminal.write("s"), async () => {
     await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
   });
+  assert.equal(fs.existsSync(path.join(fixture.repo, ".factory", "skills", "ad-hoc-second", "SKILL.md")), true);
   await step("quit", () => terminal.write("q"), async () => {
     assert.equal((await waitForExit(terminal)).exitCode, 0);
   });

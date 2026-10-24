@@ -402,6 +402,70 @@ func TestInstallFromAdHocLocatorsSelectKindsAndCollection(t *testing.T) {
 	}
 }
 
+func TestInstallRefusesInvalidLocatorsWithoutWriting(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "registry")
+	writeSourceFile(t, source, "skills/alpha/SKILL.md", "---\nname: alpha\ndescription: Alpha\n---\n\nAlpha.\n")
+	cases := []struct {
+		name    string
+		locator config.ResourceLocator
+		want    string
+	}{
+		{name: "empty name", locator: config.ResourceLocator{Kind: ir.KindSkill, Name: " "}, want: "requires a kind and name"},
+		{name: "invalid kind", locator: config.ResourceLocator{Kind: ir.ResourceKind(99), Name: "alpha"}, want: "invalid kind"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			configPath := config.ProjectConfigPath(repo)
+			before := []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+			writeSourceFile(t, repo, ".agents/config.yaml", string(before))
+
+			_, err := Install(context.Background(), InstallOptions{
+				RepoRoot: repo, FromURL: source, Scope: ScopeRepo,
+				Locators: []config.ResourceLocator{tc.locator},
+			})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Install error = %v, want %q refusal", err, tc.want)
+			}
+			after, readErr := os.ReadFile(configPath)
+			if readErr != nil || string(after) != string(before) {
+				t.Fatalf("config after refusal = %q, %v; want original bytes %q", after, readErr, before)
+			}
+		})
+	}
+}
+
+// spec: resource-installation/kind-qualified-picks-select-resources-that-share-a-name
+func TestInstallKindLocatorPicksResourceBesideMalformedSameName(t *testing.T) {
+	repo := t.TempDir()
+	source := filepath.Join(t.TempDir(), "registry")
+	writeSourceFile(t, source, "commands/foo.md", "---\nname: foo\ndescription: Foo command\n---\n\nFoo command.\n")
+	writeSourceFile(t, source, "skills/foo/SKILL.md", "---\nname: [\n---\nBroken.\n")
+	writeSourceFile(t, repo, ".agents/config.yaml", "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+
+	if _, err := Install(context.Background(), InstallOptions{
+		RepoRoot: repo, FromURL: source, Scope: ScopeRepo,
+		Locators: []config.ResourceLocator{{Kind: ir.KindCommand, Name: "foo"}},
+	}); err != nil {
+		t.Fatalf("Install command locator beside malformed skill: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".factory", "commands", "foo.md")); err != nil {
+		t.Fatalf("command was not materialized: %v", err)
+	}
+
+	if _, err := Install(context.Background(), InstallOptions{
+		RepoRoot: repo, FromURL: source, Scope: ScopeRepo,
+		Locators: []config.ResourceLocator{{Kind: ir.KindSkill, Name: "foo"}},
+	}); err == nil || !strings.Contains(err.Error(), "cannot be installed") {
+		t.Fatalf("skill-qualified Install error = %v, want malformed refusal", err)
+	}
+	if _, err := Install(context.Background(), InstallOptions{
+		RepoRoot: repo, FromURL: source, Scope: ScopeRepo, Args: []string{"foo"},
+	}); err == nil || !strings.Contains(err.Error(), "cannot be installed") {
+		t.Fatalf("unqualified Install error = %v, want malformed refusal", err)
+	}
+}
+
 // spec: resource-installation/default-branch-preview-skips-the-fetch-when-the-cache-is-current
 func TestPreviewSourceSkipsFetchWhenDefaultBranchCacheIsCurrent(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())

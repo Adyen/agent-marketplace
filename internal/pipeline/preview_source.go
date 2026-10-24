@@ -80,7 +80,7 @@ func PreviewSource(ctx context.Context, ws Workspace, rawURL, ref, path string) 
 	}
 
 	loadMode := catalog.LoadModeRefresh
-	if advertised != "" && cache.CheckoutAt(rawURL, ref, advertised) && isDirectory(entry.BundlePath(cache.RegistryCachePath(rawURL, ref))) {
+	if advertised != "" && cache.CheckoutAt(ctx, rawURL, ref, advertised) && isDirectory(entry.BundlePath(cache.RegistryCachePath(rawURL, ref))) {
 		loadMode = catalog.LoadModeCachedNoFetch
 	}
 	cfg := &config.Config{APIVersion: config.APIVersionV4, Registries: []config.RegistryEntry{entry}}

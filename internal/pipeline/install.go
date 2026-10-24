@@ -552,7 +552,7 @@ func planNamedInstalls(args []string, catalogs map[string]catalog.LoadedCatalog,
 			warnings = append(warnings, members...)
 			continue
 		}
-		if malformedErr := malformedSkillInstallError(catalogs, name); malformedErr != nil {
+		if malformedErr := malformedSkillInstallError(catalogs, name, malformedKindFilter(kind, hasKind)); malformedErr != nil {
 			return nil, nil, malformedErr
 		}
 		match, err := findCatalogResource(catalogs, name, kind, hasKind)
@@ -1197,19 +1197,28 @@ func matchingResourceNamesByTag(catalogs map[string]catalog.LoadedCatalog, tag s
 // paths on one matcher is deliberate: they diagnose the same condition, and when
 // install and sync disagree about whether a selection is malformed or missing,
 // the user is told to delete a selection that install just refused to re-add.
-func malformedSkillInstallError(catalogs map[string]catalog.LoadedCatalog, wanted string) error {
+func malformedSkillInstallError(catalogs map[string]catalog.LoadedCatalog, wanted, kind string) error {
 	wanted = strings.TrimSpace(wanted)
 	if wanted == "" {
 		return nil
 	}
 
 	for _, catalogForEntry := range catalogs {
-		if match, found := skill.MatchMalformed(catalogForEntry.Malformed, wanted); found {
+		if match, found := skill.MatchMalformedForKind(catalogForEntry.Malformed, kind, wanted); found {
 			return fmt.Errorf("skill %q cannot be installed: %s: %w", wanted, skill.ParseFailure(match), match.Error)
 		}
 	}
 
 	return nil
+}
+
+// malformedKindFilter returns the kind label malformed-resource correlation
+// should match, or "" when the request names no kind.
+func malformedKindFilter(kind ir.ResourceKind, hasKind bool) string {
+	if !hasKind {
+		return ""
+	}
+	return kind.String()
 }
 
 func validateRegistryWriteScope(scope Scope, entries ...config.RegistryEntry) error {
@@ -1285,6 +1294,17 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 		slog.Warn("install rejected invalid registry path", "error", err)
 		return nil, err
 	}
+	if opts.ExpectedCommit != "" && opts.PrepareDependencies == nil {
+		return nil, errors.New("expected commit requires an exact prepared source commit")
+	}
+	for _, locator := range opts.Locators {
+		if strings.TrimSpace(locator.Name) == "" {
+			return nil, errors.New("kind-qualified resource locator requires a kind and name")
+		}
+		if _, ok := syntheticEntry.SelectorForKindOk(locator.Kind); !ok {
+			return nil, fmt.Errorf("resource locator has invalid kind %q", locator.Kind)
+		}
+	}
 	if !syntheticEntry.IsLocal() && fromRef == "" {
 		defaultBranch, err := cache.DefaultBranch(fromURL)
 		if err != nil {
@@ -1293,9 +1313,6 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 		fromRef = defaultBranch
 		syntheticEntry.Ref = fromRef
 		slog.Info("install using registry default branch", "ref", fromRef)
-	}
-	if opts.ExpectedCommit != "" && opts.PrepareDependencies == nil {
-		return nil, errors.New("expected commit requires an exact prepared source commit")
 	}
 
 	// Repo-relative local registries are project-local and cannot be written to
@@ -1448,12 +1465,6 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 		var warnIdentities []resourceIdentity
 		if len(opts.Locators) > 0 {
 			for _, locator := range opts.Locators {
-				if strings.TrimSpace(locator.Name) == "" {
-					return nil, errors.New("kind-qualified resource locator requires a kind and name")
-				}
-				if _, ok := syntheticEntry.SelectorForKindOk(locator.Kind); !ok {
-					return nil, fmt.Errorf("resource locator has invalid kind %q", locator.Kind)
-				}
 				locatorPlan, locatorWarnings, err := planNamedInstalls([]string{locator.Name}, selectedCatalogs, selectedCollections, discoveredCollections, discoveryCfg, locator.Kind, true, opts.Scope, source)
 				if err != nil {
 					return nil, err
@@ -1491,7 +1502,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	if inferredName != "" {
 		// Try to find the inferred name in the catalog.
 		if _, ok := selectedCatalogs[catalogKey]; ok {
-			if malformedErr := malformedSkillInstallError(selectedCatalogs, inferredName); malformedErr != nil {
+			if malformedErr := malformedSkillInstallError(selectedCatalogs, inferredName, malformedKindFilter(kind, hasKind)); malformedErr != nil {
 				return nil, malformedErr
 			}
 			match, err := findCatalogResource(selectedCatalogs, inferredName, kind, hasKind)

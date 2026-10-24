@@ -15,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"github.com/charmbracelet/x/ansi"
@@ -96,7 +97,6 @@ func TestInstallSourceFilterTreatsQAsInputAndEscLeavesFilter(t *testing.T) {
 	m = next.(Model)
 	loaded := catalog.LoadedCatalog{Entries: []catalog.Entry{{Kind: ir.KindSkill, Name: "query"}}}
 	generation := m.beginRequest(requestInstallPreview)
-	m.installSource.generation = generation
 	next, _ = m.Update(installSourcePreviewLoadedMsg{
 		generation: generation,
 		preview: &pipeline.SourcePreview{
@@ -116,6 +116,148 @@ func TestInstallSourceFilterTreatsQAsInputAndEscLeavesFilter(t *testing.T) {
 	m = next.(Model)
 	if m.pane != paneInstallSource || m.installSource.filtering || m.installSource.filter != "" {
 		t.Fatalf("Esc did not exit filtering without closing modal: pane=%v filtering=%t filter=%q", m.pane, m.installSource.filtering, m.installSource.filter)
+	}
+}
+
+func TestInstallSourceBackspaceDuringPreviewDropsStalePreview(t *testing.T) {
+	const url = "https://example.invalid/slow.git"
+	m := NewModel(t.TempDir(), t.TempDir())
+	next, _ := m.Update(keyPress('i'))
+	m = next.(Model)
+	m.installSource.values.url = url
+	next, _ = m.Update(keyNamed("enter"))
+	m = next.(Model)
+	generation := m.requests.active(requestInstallPreview)
+	if generation == 0 || !m.installSource.loading {
+		t.Fatalf("preview did not start: generation=%d loading=%t", generation, m.installSource.loading)
+	}
+	next, _ = m.Update(keyNamed("backspace"))
+	m = next.(Model)
+	if m.installSource.step != installSourceStepSource {
+		t.Fatalf("backspace step = %v, want Source", m.installSource.step)
+	}
+	next, _ = m.Update(installSourcePreviewLoadedMsg{
+		generation: generation,
+		preview:    &pipeline.SourcePreview{URL: "https://example.invalid/other.git", Ref: "main"},
+	})
+	m = next.(Model)
+	if m.installSource.step != installSourceStepSource || m.installSource.values.url != url || m.installSource.error != "" {
+		t.Fatalf("stale preview changed modal: step=%v url=%q error=%q", m.installSource.step, m.installSource.values.url, m.installSource.error)
+	}
+}
+
+func TestInstallSourceBadgeSkipsUnenrolledRowsAndPrefersSameSource(t *testing.T) {
+	const url = "https://example.invalid/source.git"
+	const other = "https://example.invalid/other.git"
+	choice := installSourceChoice{kind: ir.KindSkill, name: "alpha"}
+	artifact := func(registry string) resolver.ResolvedArtifact {
+		return resolver.ResolvedArtifact{Kind: ir.KindSkill, Name: "alpha", RegistryURL: registry}
+	}
+	for _, tc := range []struct {
+		name string
+		rows []row
+		want string
+	}{
+		{name: "available from same source", rows: []row{{Artifact: artifact(url), IsAvailable: true}}, want: ""},
+		{name: "available from another registry", rows: []row{{Artifact: artifact(other), IsAvailable: true}}, want: ""},
+		{name: "installed conflict ahead of same source", rows: []row{{Artifact: artifact(other), EnabledProject: true}, {Artifact: artifact(url), EnabledProject: true}}, want: "✓ already installed (P)"},
+		{name: "installed conflict only", rows: []row{{Artifact: artifact(other), EnabledProject: true}}, want: "conflicts: installed from other"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewModel(t.TempDir(), t.TempDir())
+			m.rows = tc.rows
+			if got := installSourceBadge(m, url, choice); got != tc.want {
+				t.Fatalf("badge = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestInstallSourceRefusalWhileAnotherPaneIsOpen(t *testing.T) {
+	const url = "https://example.invalid/source.git"
+	const expected = "0123456789abcdef0123456789abcdef01234567"
+	const actual = "89abcdef0123456789abcdef0123456789abcdef"
+	preview := &pipeline.SourcePreview{
+		URL: url, Ref: "main", Commit: expected,
+		Catalogs: map[string]catalog.LoadedCatalog{"source": {Entries: []catalog.Entry{{Kind: ir.KindSkill, Name: "alpha"}}}},
+	}
+	for _, tc := range []struct {
+		name      string
+		refusal   error
+		wantStep  installSourceStep
+		wantToast string
+	}{
+		{name: "locked", refusal: &pipeline.SourceLockedError{URL: url, Ref: "main", Scope: pipeline.ScopeLocal, Locked: actual, Expected: expected}, wantStep: installSourceStepReview, wantToast: "Local lock pins main"},
+		{name: "moved", refusal: &pipeline.SourceMovedError{Ref: "main", Expected: expected, Actual: actual}, wantStep: installSourceStepPick, wantToast: "main moved"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewModel(t.TempDir(), t.TempDir())
+			operation, ok := m.beginOperation(operationMutation)
+			if !ok {
+				t.Fatal("could not start the install operation fixture")
+			}
+			m.pane = paneHelp
+			m.installSource = installSourceModal{
+				step: installSourceStepReview, values: &installSourceValues{url: url, ref: "main"},
+				preview: preview, picked: map[string]bool{"skill\x00alpha": true}, scope: scopeLocal,
+			}
+			next, cmd := m.Update(installSourceInstallMsg{
+				operation: operation,
+				options:   pipeline.InstallOptions{FromURL: url, FromRef: "main", ExpectedCommit: expected},
+				err:       tc.refusal,
+			})
+			m = next.(Model)
+			if m.pane != paneHelp {
+				t.Fatalf("refusal changed the open pane to %v, want paneHelp", m.pane)
+			}
+			if m.installSource.step != tc.wantStep || m.installSource.loading || m.requests.active(requestInstallPreview) != 0 {
+				t.Fatalf("refusal state = step %v loading=%t preview request=%d, want step %v without a preview",
+					m.installSource.step, m.installSource.loading, m.requests.active(requestInstallPreview), tc.wantStep)
+			}
+			if !strings.Contains(m.toast, tc.wantToast) || cmd == nil {
+				t.Fatalf("refusal toast = %q cmd=%t, want toast containing %q", m.toast, cmd != nil, tc.wantToast)
+			}
+
+			m.pane = paneList
+			next, _ = m.Update(keyPress('i'))
+			m = next.(Model)
+			if m.pane != paneInstallSource || m.installSource.step != tc.wantStep {
+				t.Fatalf("next i = pane %v step %v, want resumed refusal state at step %v", m.pane, m.installSource.step, tc.wantStep)
+			}
+			if tc.wantStep == installSourceStepPick {
+				if !m.installSource.loading || m.requests.active(requestInstallPreview) == 0 {
+					t.Fatalf("moved resume did not re-preview: loading=%t request=%d", m.installSource.loading, m.requests.active(requestInstallPreview))
+				}
+				if m.installSource.notice != "main moved from 01234567 to 89abcdef; preview again" {
+					t.Fatalf("moved resume lost its notice: %q", m.installSource.notice)
+				}
+			} else if m.installSource.preview == nil {
+				t.Fatal("locked resume lost its preview")
+			}
+		})
+	}
+}
+
+func TestInstallSourcePasteFillsOpenFilter(t *testing.T) {
+	m := NewModel(t.TempDir(), t.TempDir())
+	next, _ := m.Update(keyPress('i'))
+	m = next.(Model)
+	loaded := catalog.LoadedCatalog{Entries: []catalog.Entry{{Kind: ir.KindSkill, Name: "query"}}}
+	generation := m.beginRequest(requestInstallPreview)
+	next, _ = m.Update(installSourcePreviewLoadedMsg{
+		generation: generation,
+		preview: &pipeline.SourcePreview{
+			URL:      "https://example.invalid/source.git",
+			Catalogs: map[string]catalog.LoadedCatalog{"source": loaded},
+		},
+	})
+	m = next.(Model)
+	next, _ = m.Update(keyPress('/'))
+	m = next.(Model)
+	next, _ = m.Update(tea.PasteMsg{Content: "query"})
+	m = next.(Model)
+	if m.installSource.filterInput.Value() != "query" || !m.installSource.filtering {
+		t.Fatalf("paste did not fill the open filter: value=%q filtering=%t", m.installSource.filterInput.Value(), m.installSource.filtering)
 	}
 }
 
@@ -243,7 +385,6 @@ func TestInstallSourceBundleSelectionRepreviewsChosenPath(t *testing.T) {
 	next, _ := m.Update(keyPress('i'))
 	m = next.(Model)
 	generation := m.beginRequest(requestInstallPreview)
-	m.installSource.generation = generation
 	next, _ = m.Update(installSourcePreviewLoadedMsg{generation: generation, preview: &preview})
 	m = next.(Model)
 	if got := installSourceChoices(m.installSource.preview); len(got) != 2 || got[0].bundlePath != "alpha" {
@@ -273,7 +414,6 @@ func TestInstallSourcePickReviewAndScopeEligibility(t *testing.T) {
 		Malformed: []skill.MalformedSkill{{Kind: "skill", DirName: "broken", Error: errors.New("invalid frontmatter")}},
 	}
 	generation := m.beginRequest(requestInstallPreview)
-	m.installSource.generation = generation
 	next, _ = m.Update(installSourcePreviewLoadedMsg{
 		generation: generation,
 		preview:    &pipeline.SourcePreview{URL: "./source", Catalogs: map[string]catalog.LoadedCatalog{"source": loaded}},
@@ -315,7 +455,6 @@ func TestInstallSourceEmptyPreviewCannotEnterReview(t *testing.T) {
 	next, _ := m.Update(keyPress('i'))
 	m = next.(Model)
 	generation := m.beginRequest(requestInstallPreview)
-	m.installSource.generation = generation
 	next, _ = m.Update(installSourcePreviewLoadedMsg{
 		generation: generation,
 		preview:    &pipeline.SourcePreview{URL: "/empty/source", Catalogs: map[string]catalog.LoadedCatalog{}},
@@ -343,7 +482,6 @@ func TestInstallSourcePickWindowKeepsCursorAndSelectedCountVisible(t *testing.T)
 		Catalogs: map[string]catalog.LoadedCatalog{"source": loaded},
 	}
 	generation := m.beginRequest(requestInstallPreview)
-	m.installSource.generation = generation
 	next, _ = m.Update(installSourcePreviewLoadedMsg{generation: generation, preview: preview})
 	m = next.(Model)
 	m.installSource.cursor = 45
@@ -365,7 +503,6 @@ func installSourcePickModel(t *testing.T, url string) Model {
 	m = next.(Model)
 	m.installSource.values.url = url
 	generation := m.beginRequest(requestInstallPreview)
-	m.installSource.generation = generation
 	loaded := catalog.LoadedCatalog{Entries: []catalog.Entry{{Kind: ir.KindSkill, Name: "alpha", Description: "Alpha"}}}
 	next, _ = m.Update(installSourcePreviewLoadedMsg{generation: generation, preview: &pipeline.SourcePreview{URL: url, Catalogs: map[string]catalog.LoadedCatalog{"source": loaded}}})
 	m = next.(Model)
