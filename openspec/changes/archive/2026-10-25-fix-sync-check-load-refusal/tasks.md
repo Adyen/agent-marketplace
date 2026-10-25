@@ -5,5 +5,7 @@
 - [x] Repair the local-registry benchmark fixtures and capture a before measurement.
 - [x] Enable strict pre-materialization refusal for synchronization checks and verify focused regressions and benchmark results.
 - [x] Review consumer reachability, refusal behavior, scope/ownership boundaries, and regression validity with adversarial and OCR delegate review.
-- [ ] Run required validation.
-- [ ] Run `openspec archive fix-sync-check-load-refusal --yes`.
+- [x] Run scoped `make validate` and rerun timed-out command scenarios serially.
+- [x] Run `make spec-check` before and after archival.
+- [x] Pass the mandatory `make validate-e2e` gate.
+- [x] Run `openspec archive fix-sync-check-load-refusal --yes`.
