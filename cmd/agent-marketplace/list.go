@@ -196,6 +196,7 @@ func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, 
 	}
 
 	// Resolve web URLs into git URL + ref + path. Explicit flags win.
+	rawFromURL := fromURL
 	fromURL, fromRef, fromPath, _ = pipeline.ResolveFromURL(fromURL, fromRef, fromPath)
 
 	// Validate the ad-hoc URL against the allowlist resolved by ReadIntent
@@ -215,15 +216,24 @@ func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, 
 	if err := config.ValidateRegistryURLs([]config.RegistryEntry{syntheticEntry}, intent.AllowedRegistries()); err != nil {
 		return err
 	}
+	// Like install --from: use anonymous HTTPS when SSH cannot reach a web URL.
+	choice := pipeline.PreferReachableTransport(rawFromURL, fromURL, pipeline.RegistryURLPolicy(syntheticEntry, intent.AllowedRegistries()))
+	fromURL = choice.URL
+	syntheticEntry.URL = fromURL
+	if notice := choice.Notice("using"); notice != "" {
+		fmt.Fprintf(errOut, "warning: %s\n", terminalSafeText(notice)) //nolint:errcheck // best-effort warning on stderr
+	}
 
 	// A Git registry without an explicit ref uses the branch its remote HEAD
 	// advertises, matching install --from. Local directory registries ignore
 	// the ref entirely. Resolving after the allowlist check keeps a blocked URL
 	// offline.
 	if !syntheticEntry.IsLocal() && fromRef == "" {
-		defaultBranch, err := cache.DefaultBranch(fromURL)
-		if err != nil {
-			return err
+		defaultBranch := choice.DefaultBranch
+		if defaultBranch == "" {
+			if defaultBranch, err = cache.DefaultBranch(fromURL); err != nil {
+				return err
+			}
 		}
 		fromRef = defaultBranch
 		syntheticEntry.Ref = fromRef

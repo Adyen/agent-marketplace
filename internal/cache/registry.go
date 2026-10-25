@@ -112,12 +112,34 @@ func DefaultBranch(url string) (string, error) {
 	if url == "" {
 		return "", errors.New("registry url is required")
 	}
-
 	output, err := runGitOutput("", "ls-remote", "--symref", url, "HEAD")
 	if err != nil {
 		return "", fmt.Errorf("determine default branch for registry %q: %w", redactSecrets(url), err)
 	}
+	return advertisedDefaultBranch(output)
+}
 
+// ProbeDefaultBranch is DefaultBranch with every Git credential helper
+// disabled, including helpers from the current directory's repository
+// configuration. A transport reachability probe uses it so that a helper
+// cannot make a repository look anonymously reachable.
+func ProbeDefaultBranch(url string) (string, error) {
+	url = strings.TrimSpace(url)
+	if url == "" {
+		return "", errors.New("registry url is required")
+	}
+	if err := validateGitURL(url); err != nil {
+		return "", err
+	}
+	output, err := runGitRawOutput("", []string{"-c", "credential.helper=", "ls-remote", "--symref", "--", url, "HEAD"}, time.Now())
+	if err != nil {
+		return "", fmt.Errorf("probe default branch for registry %q: %w", redactSecrets(url), err)
+	}
+	return advertisedDefaultBranch(output)
+}
+
+// advertisedDefaultBranch parses `git ls-remote --symref <url> HEAD` output.
+func advertisedDefaultBranch(output string) (string, error) {
 	for _, line := range strings.Split(output, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) != 3 || fields[0] != "ref:" || fields[2] != "HEAD" {

@@ -187,6 +187,11 @@ func runInstall(ctx context.Context, out io.Writer, in io.Reader, interactive, v
 		return err
 	}
 
+	if result.TransportNotice != "" {
+		if _, err := fmt.Fprintf(out, "warning: %s\n", terminalSafeText(result.TransportNotice)); err != nil {
+			return err
+		}
+	}
 	if err := writeGroupedWarnings(out, result.RequirementWarnings, false); err != nil {
 		return err
 	}

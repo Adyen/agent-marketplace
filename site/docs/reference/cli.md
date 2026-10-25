@@ -89,7 +89,7 @@ agent-marketplace list [flags]
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
 | `--kind` | string | no | all kinds | Filters by `skill`, `command`, `subagent`, `hook`, `mcp`, or `collection`. |
-| `--from` | string | no | configured registries | Reads an ad hoc Git URL, GitHub web URL, or GitLab web URL without writing it to configuration. |
+| `--from` | string | no | configured registries | Reads an ad hoc Git URL, GitHub web URL, or GitLab web URL without writing it to configuration. Web URLs fall back to HTTPS as for `install --from`. |
 | `--ref` | string | no | inferred or registry default | Selects a branch, tag, or commit for `--from`. Requires `--from`. |
 | `--path` | string | no | inferred or registry root | Selects a subdirectory for `--from`. Requires `--from`. |
 
@@ -165,7 +165,7 @@ https://host/r/registry/kind/name[/revisions/sha256:<64 lowercase hex>]
 | `--tag` | string | no | none | Installs registry resources whose metadata contains the tag. Without `--kind`, at least one skill must carry the tag. Supports `user` (default), `repo`, and `local` scope. Cannot be combined with a resource name, `--all`, `--from`, or a Marketplace locator. |
 | `--all` | boolean | no | `false` | Installs every discovered registry resource, or only those of `--kind` when you give it. Supports `user` (default), `repo`, and `local` scope. |
 | `--registry` | string | no | all configured registries | Limits `--all` to one configured registry. Requires `--all`. Matches the URL the way `update` and `lock` do, so a `.git` suffix or a trailing slash makes no difference, and looks in every config layer. The same source declared in several layers counts as one. If the URL names entries with different refs or paths, the command refuses and lists them. |
-| `--from` | string | no | configured registries | Installs directly from an ad hoc Git URL, GitHub web URL, or GitLab web URL. Without a resource name, installs the whole registry. |
+| `--from` | string | no | configured registries | Installs directly from an ad hoc Git URL, GitHub web URL, or GitLab web URL. Without a resource name, installs the whole registry. A web URL is fetched over SSH, or over HTTPS when SSH cannot reach it and HTTPS can, as for a public repository on a machine without an SSH key; a warning names both URLs. If the configuration already records either form of the repository, install reuses it. |
 | `--ref` | string | no | inferred or registry default | Selects a branch, tag, or commit for `--from`. Requires `--from`. |
 | `--path` | string | no | inferred or registry root | Selects a subdirectory for `--from`. Requires `--from`. |
 | `--marketplace` | alias or endpoint URL | no | locator prefix | Resolves a Marketplace resource locator against the selected endpoint. Valid only for one Marketplace resource. |

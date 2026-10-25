@@ -98,6 +98,9 @@ type InstallResult struct {
 	MarketplaceEndpoint          string
 	MarketplaceConfigPath        string
 	MarketplaceAlreadyConfigured bool
+	// TransportNotice reports that install --from recorded the HTTPS form of
+	// a web URL because SSH could not reach it; "" otherwise.
+	TransportNotice string
 }
 
 type resourceIdentity struct {
@@ -1258,6 +1261,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 
 	// Resolve the URL: parse web URLs (GitLab/GitHub) into git URL + ref + path.
 	// Explicit --ref/--path flags take precedence over values parsed from the URL.
+	rawFromURL := fromURL
 	resolvedURL, resolvedRef, resolvedPath, _ := ResolveFromURL(fromURL, opts.FromRef, opts.FromPath)
 	fromURL = resolvedURL
 	fromRef := resolvedRef
@@ -1273,10 +1277,27 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 		slog.Warn("install rejected invalid registry path", "error", err)
 		return nil, err
 	}
+	// A web URL becomes an SSH URL. Reuse the form a configuration already
+	// records for it, so install does not add a second source for the same
+	// repository; otherwise fall back to HTTPS when SSH cannot reach the
+	// registry, e.g. a public repository without SSH keys.
+	choice := SelectAdHocTransport(ec.Merged, scopeToConfigSource(opts.Scope), rawFromURL, fromURL, fromPath, fromRef, RegistryURLPolicy(syntheticEntry, ec.Allowed))
+	fromURL, probedBranch := choice.URL, choice.DefaultBranch
+	if notice := choice.Notice("recorded"); notice != "" {
+		defer func() {
+			if result != nil && retErr == nil {
+				result.TransportNotice = notice
+			}
+		}()
+	}
+	syntheticEntry.URL = fromURL
 	if !syntheticEntry.IsLocal() && fromRef == "" {
-		defaultBranch, err := cache.DefaultBranch(fromURL)
-		if err != nil {
-			return nil, err
+		defaultBranch := probedBranch
+		if defaultBranch == "" {
+			var err error
+			if defaultBranch, err = cache.DefaultBranch(fromURL); err != nil {
+				return nil, err
+			}
 		}
 		fromRef = defaultBranch
 		syntheticEntry.Ref = fromRef
