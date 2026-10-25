@@ -6,5 +6,5 @@
 
 ## 2. Verification and review
 
-- [ ] 2.1 Run focused checks, validation, spec checks, and real-terminal QA; review the privacy-screened correction with OCR and an adversarial pass.
-- [ ] 2.2 Run openspec archive escape-hook-review-fallback --yes as the final commit of the correction.
+- [x] 2.1 Run focused checks, validation, spec checks, and real-terminal QA; review the privacy-screened correction with OCR and an adversarial pass.
+- [x] 2.2 Run openspec archive escape-hook-review-fallback --yes as the final commit of the correction.
