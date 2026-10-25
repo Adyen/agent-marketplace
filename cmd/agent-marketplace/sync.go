@@ -486,8 +486,9 @@ func runSyncCheck(ctx context.Context, out io.Writer, strict bool, offline ...bo
 	// Use materialize in dry-run mode to check for drift; the Workspace derives
 	// the same materialization root the real sync would write beneath.
 	inspection, inspectRelease := pipeline.Inspect(ctx, pipeline.InspectOptions{
-		Resolve: resolveOpts,
-		DryRun:  runSyncCheckMaterialize,
+		Resolve:                        resolveOpts,
+		DryRun:                         runSyncCheckMaterialize,
+		SkipMaterializeOnResolveErrors: true,
 	})
 	defer inspectRelease()
 	resolvedResult := inspection.ResolveResult
