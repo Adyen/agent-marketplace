@@ -1937,7 +1937,7 @@ func (c *V4Config) rebuildRequests() {
 	sort.Strings(groupNames)
 	for _, name := range groupNames {
 		g := c.Groups[name]
-		byLocator := map[string]V4ResourceRequest{}
+		byLocator := map[string]*V4ResourceRequest{}
 		excluded := map[string]bool{}
 		for _, d := range g.Decisions {
 			c.Decisions = append(c.Decisions, d)
@@ -1956,14 +1956,15 @@ func (c *V4Config) rebuildRequests() {
 				continue
 			}
 			if d.Request != nil {
-				byLocator[d.Locator] = *d.Request
+				byLocator[d.Locator] = d.Request
 				// Missing markers are already false; keep include-only streams sparse.
 				if len(excluded) > 0 {
 					excluded[d.Locator] = false
 				}
 			}
 		}
-		for _, r := range g.Include {
+		for i := range g.Include {
+			r := &g.Include[i]
 			if _, ok := byLocator[r.Locator]; !ok {
 				byLocator[r.Locator] = r
 			}
@@ -1979,7 +1980,7 @@ func (c *V4Config) rebuildRequests() {
 		}
 		sort.Strings(locators)
 		for _, locator := range locators {
-			c.Requests = append(c.Requests, byLocator[locator])
+			c.Requests = append(c.Requests, *byLocator[locator])
 		}
 	}
 }
@@ -2418,7 +2419,7 @@ func cloneV4Decisions(values []V4SelectionDecision) []V4SelectionDecision {
 // effectiveV4Requests applies the ordered decision stream to explicit
 // locators, preserving a later include after an earlier exclusion.
 func effectiveV4Requests(group V4ResourceGroup) []V4ResourceRequest {
-	requests := map[string]V4ResourceRequest{}
+	requests := map[string]*V4ResourceRequest{}
 	excluded := map[string]bool{}
 	for _, decision := range group.Decisions {
 		if decision.Action == V4SelectionExclude {
@@ -2436,23 +2437,22 @@ func effectiveV4Requests(group V4ResourceGroup) []V4ResourceRequest {
 			continue
 		}
 		if decision.Request != nil {
-			requests[decision.Locator] = *decision.Request
+			requests[decision.Locator] = decision.Request
 			if len(excluded) > 0 {
 				excluded[decision.Locator] = false
 			}
 		}
 	}
 	locators := make([]string, 0, len(requests))
-	for locator, request := range requests {
+	for locator := range requests {
 		if !excluded[locator] {
-			_ = request
 			locators = append(locators, locator)
 		}
 	}
 	sort.Strings(locators)
 	out := make([]V4ResourceRequest, 0, len(locators))
 	for _, locator := range locators {
-		out = append(out, requests[locator])
+		out = append(out, *requests[locator])
 	}
 	return out
 }

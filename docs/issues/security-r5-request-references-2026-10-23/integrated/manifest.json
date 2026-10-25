@@ -1,0 +1,168 @@
+{
+  "baseline_commit": "027056e3a24dd58355ba1aac5048666bf1a9de09",
+  "go_version": "go version go1.27.3 darwin/arm64",
+  "environment": {
+    "CGO_ENABLED": "0",
+    "GOTOOLCHAIN": "local",
+    "GOPROXY": "off",
+    "GOSUMDB": "off",
+    "GOWORK": "off",
+    "GOMAXPROCS": "16",
+    "GOGC": "100",
+    "GOMEMLIMIT": "off"
+  },
+  "benchmark_pattern": "^BenchmarkV4SparseExclusionAdapterCPU$",
+  "benchtime": "2s",
+  "samples_per_case_per_variant": 6,
+  "cpu_only": true,
+  "scope": "Public Git runtime adapter after effective-request reuse; parsing and I/O excluded",
+  "sources": {
+    "before": "2fff199d6391ee57a96c84cc84c4e6b0ea3fbbee865e2f029858ea7457404eae",
+    "after": "2b8be2d2dbb97403fc4e7e63ccdf43eea85d5f3ac7b32a6020d2de9373a2e564"
+  },
+  "unchanged_replay_function_bodies": {
+    "rebuild": {
+      "before": "0e5442bd411f713d4c7692b7bf522e0dbed065fd32cba1216500b75528c5ee7a",
+      "after": "7945a11e50f858bdfd27983e7731a9fc36136c94ff789a8ef95d42ec9c313096"
+    },
+    "effective": {
+      "before": "9dd3c12a7e8a2a13abc5273f16f494a4f991f6a948237ac0ff8e28b111d252c8",
+      "after": "5c40200670f06b21b3901ca8439ad401823a94fe81c01f99f9780ea5aabf0a19"
+    }
+  },
+  "shared_test_dependency_sources": {
+    "internal/config/v4_bench_test.go": "604075e85155d56383e7946a53131fbfdff57e4128680e23849b8f60a187942b",
+    "internal/config/v4_boundary_test.go": "ee5a51fc8fdd841ab3ce3e39b0d226b4415c436c6df8f550be0b01b475264258",
+    "internal/config/v4_diagnostic_paths_test.go": "2085ec610dd75871ef9cd5e6f350f1fb6389890bd8c601df9aa3010e0407bf26",
+    "internal/config/v4_directory_bench_test.go": "be2a915d34bb46bf49ce30bf317432adcd989f3c977ba7b53344afd22c341a06",
+    "internal/config/v4_directory_test.go": "576c6a2427dd288fa9a2d4ed466b52f389dcf98a10f784a4ee91e55c71aaebea",
+    "internal/config/v4_editor_repeat_test.go": "ee64d9057be5f83a2dd9ecc8a97d3f0edcc07b9a1fb35721979318a73886e81b",
+    "internal/config/v4_effective_requests_bench_test.go": "5c37a67996434eb9d8f1788ab0cec622626e35d779ced3fbd04d1271ce924f71",
+    "internal/config/v4_effective_requests_test.go": "12e66fc6c5b8ef560a3b52d5e1a82236b347e4c6982e1090fadd1346574d8b7d",
+    "internal/config/v4_exclusion_processing_test.go": "1ab7bdc7cdc42ea4a83931fa69902d500d1a3015da978892f91f4b6c669cb0e9",
+    "internal/config/v4_filter_sort_bench_test.go": "91f655dbc904615c309d9fbed63f2f3ddde079854681fb00f212495d84f1abf0",
+    "internal/config/v4_include_policy_test.go": "a8733a3e42fbe63afd683f2025997da152057af2e2b3fb6a0fde8580b6cf0f5a",
+    "internal/config/v4_kind_mapping_test.go": "af5298b9601a5ef478f99d4dbe617470957fbac2db9373d1814e6370ccad5d60",
+    "internal/config/v4_layer_fields_test.go": "4666f2980007ae3d44fe6db79653761d1322ee0a81df0104f65ea4abfc8d7a01",
+    "internal/config/v4_layering_test.go": "aa84c2190d1b9bb8e7a130fe764958de073b8763806a9dd42802ab2295d7a72c",
+    "internal/config/v4_lock_test.go": "dce534119cb0b71d777a4b4d810cbef09d63c1e61704874c7283538f27c1e041",
+    "internal/config/v4_migration_marketplace_test.go": "6b569bc323bffe89f677a7a1cfbf973ca34fc47f69fc1d7db2f75bcec42c2b09",
+    "internal/config/v4_only_test.go": "6e33dcb88d6917d6ab61fd4799d5ef911069efedb848c194e49ed84eee77b982",
+    "internal/config/v4_processing_bench_test.go": "15d1cc14d639d19140c84ffe70e41d03cce90ebecc66c9abd2d0df64bd90fffc",
+    "internal/config/v4_projection_lock_boundary_test.go": "d3e6577662e37bdf610448ea7731bc368487308454d8d9e0c0481f07b8c0f48c",
+    "internal/config/v4_reachability_processing_test.go": "1e8f8cb6d4d79d536d30bc5c0a652378c61d4cf164f9f107dc65c6f31157e18e",
+    "internal/config/v4_rebuild_bench_test.go": "b778f957edbb244e85f47caef821374e1822f327f54540760ea53e5669e9534a",
+    "internal/config/v4_rebuild_test.go": "efee3fbeff1cd1e83f37a4b3e83fe519845c3def6005088b07c254061e877a62",
+    "internal/config/v4_remediation_test.go": "51309f48b47f50f65670a191bc21222132ba8c0921d59732e16583d20281d47d",
+    "internal/config/v4_request_replay_bench_test.go": "4db5f669fcb470ff1718fa2d171e89902ec12956ab0ce8cc3e02e5a2cbf5a96a",
+    "internal/config/v4_request_replay_test.go": "96d61f96f8986522a34bc07717498f2faaa1685096e2a5b31d75540094072123",
+    "internal/config/v4_request_reuse_bench_test.go": "05c526c277452cfcbc1b347b844c7da3ce990891aa5d9388d3f82ffc9cb1d99c",
+    "internal/config/v4_request_reuse_marketplace_test.go": "e1757830e36e3e7a0f0942e5c120cd81703dcfcbd5ff2e8f685f58d7a9830c08",
+    "internal/config/v4_request_reuse_test.go": "58fd07384720909e15276814951d3e8c159718ff841eab25590eb79a959cea0e",
+    "internal/config/v4_required_wildcard_bench_test.go": "0ff935ad333905b00b42f0bfeb9cfbc5072aad26ab4472f9ef6f91cb076f0906",
+    "internal/config/v4_root_inheritance_test.go": "f0d863b347deceaa7c0351278b30f97bbcec0bf3cf7d89b0a2ab86a61afd6959",
+    "internal/config/v4_root_projection_test.go": "bad2635c8084bd2fc6efee7bf60a7ac8118f8dd24bdc000c4d16d2400c42068c",
+    "internal/config/v4_selection_retention_test.go": "de70d7ec4b4849714d20666b60e5d0a8ee4231594669fa48829238d595d6e20b",
+    "internal/config/v4_sparse_exclusion_bench_test.go": "f47ef925a6c7ef5dc2cf14e51af9344376cd11409b986842d20f1f765bab0645",
+    "internal/config/v4_test.go": "dd4f861fb0957efa9811518984c153d348a60943d4374b6fc44cabadfdbeae67",
+    "internal/config/v4_wildcard_match_bench_test.go": "b94ac7d5468d06962e7b9d31fd23510deedb307f3d80941f8b3202ac1ced606c",
+    "internal/config/v4_wildcard_match_test.go": "3b420d98dc9155dfa4d0928a30ca4e9916ddda1bf16fb5290d9a51ad399d4b43",
+    "go.mod": "7acf048264b55ddb16f4a7e5e23a57811df317841d31be8835664aa8e446130e",
+    "go.sum": "cbc73d426b4d8c90050ed6868594e64f3d93a105df8de2e547a3030aa3e33806"
+  },
+  "binaries": {
+    "before": "98c0bb5ada997b610f47481a9f91de6bc3a4a9c26797f9573a45340039ee8691",
+    "after": "7e2a211ce24f9ec44b2258171d9d45cda6a6bcb04ca3c53c3ad774fa58bf307b"
+  },
+  "trials": [
+    {
+      "trial": 1,
+      "variant": "before",
+      "rows": 8,
+      "elapsed_seconds": 19.243
+    },
+    {
+      "trial": 1,
+      "variant": "after",
+      "rows": 8,
+      "elapsed_seconds": 19.36
+    },
+    {
+      "trial": 2,
+      "variant": "after",
+      "rows": 8,
+      "elapsed_seconds": 19.145
+    },
+    {
+      "trial": 2,
+      "variant": "before",
+      "rows": 8,
+      "elapsed_seconds": 19.126
+    },
+    {
+      "trial": 3,
+      "variant": "before",
+      "rows": 8,
+      "elapsed_seconds": 19.173
+    },
+    {
+      "trial": 3,
+      "variant": "after",
+      "rows": 8,
+      "elapsed_seconds": 19.917
+    },
+    {
+      "trial": 4,
+      "variant": "after",
+      "rows": 8,
+      "elapsed_seconds": 19.434
+    },
+    {
+      "trial": 4,
+      "variant": "before",
+      "rows": 8,
+      "elapsed_seconds": 23.153
+    },
+    {
+      "trial": 5,
+      "variant": "before",
+      "rows": 8,
+      "elapsed_seconds": 20.008
+    },
+    {
+      "trial": 5,
+      "variant": "after",
+      "rows": 8,
+      "elapsed_seconds": 22.248
+    },
+    {
+      "trial": 6,
+      "variant": "after",
+      "rows": 8,
+      "elapsed_seconds": 20.028
+    },
+    {
+      "trial": 6,
+      "variant": "before",
+      "rows": 8,
+      "elapsed_seconds": 25.406
+    }
+  ],
+  "benchmark_cases": [
+    "BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=0-16",
+    "BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=1-16",
+    "BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=0-16",
+    "BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16",
+    "BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=512-16",
+    "BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=0-16",
+    "BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=128-16",
+    "BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=256-16"
+  ],
+  "artifact_sha256": {
+    "before.txt": "d98603bf89a0cd5101d45e4ec2af6803447cbd6e1789626784f7b62e81db48d5",
+    "after.txt": "05535722cecc7c55ce87fd9426fd634a8e675cf6ed5176c4e86046cb7c9812af",
+    "benchstat.txt": "10f74147373c6b395b1b946fb114a227f69a765c8bf6ab17e2d337e2d42b817f"
+  },
+  "verification": "8 adapter cases, 6 samples per case per variant, 96 rows; all cases and source/binary hashes verified",
+  "benchstat_module": "mod\tgolang.org/x/perf\tv0.0.0-20260615155930-9e4b9ddef5b6\th1:YTGOochus7nQXtT5KnsVfJ3/1yslyOyP3m9vMG1qMuQ="
+}
