@@ -6,6 +6,13 @@ This independent R53/F136 slice starts from main `027056e3`, including
 #944 and #945. R53/R5 and performance track #765 remain partial. No ledger,
 source index, admission limit, deadline, or selection policy changes.
 
+During PR review, main merged #947's independent request-reference
+optimization as `6e7f0134`. Integrate it without rewriting history and
+repeat the same 34-case paired measurement on that base. Preserve the
+original 408 rows separately from the integrated 408 rows; do not attribute
+#947's gains to this parser change. Refresh consumer validation on the
+integrated code before the next push.
+
 `v4ExclusionKindName` allocates a `strings.Split` slice only to inspect its
 length and return at most two components. Its callers are runtime Git/
 directory selector adaptation and effective-exclusion processing, including
