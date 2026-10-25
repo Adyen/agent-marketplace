@@ -6,6 +6,12 @@ import { after, before } from "node:test";
 import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 import { readRegularFile, write } from "./process-helpers.js";
 
+const assertContent = (file: string, expected: string): void => {
+  let actual: Buffer | undefined;
+  assert.doesNotThrow(() => { actual = readRegularFile(file); }, `expected readable materialized skill: ${file}`);
+  assert.deepEqual(actual, Buffer.from(expected), file);
+};
+
 let markBlocked: () => void;
 const blocked = new Promise<void>((resolve) => { markBlocked = resolve; });
 let releaseAcquisition: () => void;
@@ -186,14 +192,14 @@ journey.test("startup shows guarded configured rows while acquisition is blocked
   });
   for (const harness of [".factory", ".gemini", ".config/devin"]) {
     for (const [name, expected] of [["alpha-skill", fixture.expectedAlphaSkillContent], ["beta-skill", fixture.expectedBetaSkillContent]]) {
-      assert.deepEqual(readRegularFile(path.join(fixture.home, harness, "skills", name, "SKILL.md")), Buffer.from(expected));
+      assertContent(path.join(fixture.home, harness, "skills", name, "SKILL.md"), expected);
     }
   }
   assert.ok(fixture.expectedOrgSkillContent);
-  assert.deepEqual(readRegularFile(path.join(fixture.home, ".factory", "skills", "org-review", "SKILL.md")), Buffer.from(fixture.expectedOrgSkillContent));
+  assertContent(path.join(fixture.home, ".factory", "skills", "org-review", "SKILL.md"), fixture.expectedOrgSkillContent);
   for (const harness of [".factory", ".gemini", ".devin"]) {
-    assert.deepEqual(readRegularFile(path.join(fixture.repo, harness, "skills", "project-skill", "SKILL.md")),
-      Buffer.from("---\nname: project-skill\ndescription: Project startup control\n---\n\nProject control.\n"));
+    assertContent(path.join(fixture.repo, harness, "skills", "project-skill", "SKILL.md"),
+      "---\nname: project-skill\ndescription: Project startup control\n---\n\nProject control.\n");
     for (const name of ["committed-hidden", "personal-hidden"]) {
       assert.equal(fs.lstatSync(path.join(fixture.repo, harness, "skills", name), { throwIfNoEntry: false }), undefined, name);
     }
