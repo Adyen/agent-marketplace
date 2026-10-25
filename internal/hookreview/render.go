@@ -98,6 +98,9 @@ func displayText(value string) string {
 	return quoted[1 : len(quoted)-1]
 }
 
+// Restore printable JSON syntax while retaining displayText's control escapes.
+var jsonPrintableSyntax = strings.NewReplacer(`\\`, `\`, `\"`, `"`)
+
 func hookChangePayloadLines(raw json.RawMessage) []string {
 	if len(raw) == 0 {
 		return nil
@@ -133,7 +136,7 @@ func hookChangePayloadLines(raw json.RawMessage) []string {
 			if err != nil {
 				continue
 			}
-			lines = append(lines, string(compact))
+			lines = append(lines, jsonPrintableSyntax.Replace(displayText(string(compact))))
 		}
 	}
 	return lines

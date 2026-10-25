@@ -1,12 +1,58 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// spec: hook-sync-diagnostics/fallback-json-preserves-readable-syntax-while-escaping-controls
+func TestMutationHookFallbackEscapesTerminalControls(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home, registry, repo := t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	writeFile(t, filepath.Join(registry, "hooks", "hooks.json"), "{\"PreToolUse\":[{\"matcher\":\"Bash\",\"hooks\":[{\"type\":\"http\",\"url\":\"https://example.test/hooks\",\"headers\":{\"X-Review\":\"\u009b31m\u202evalue\"}}]}]}")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  fixture:\n    directory: "+registry+"\n    source_harness: claude\n")
+	withWorkingDir(t, repo)
+	output, err := executeCommand("install", "--all", "--kind", "hook", "--scope", "repo")
+	if err != nil {
+		t.Fatalf("HTTP hook install: %v\n%s", err, output)
+	}
+	if strings.ContainsAny(output, "\u009b\u202e") {
+		t.Fatalf("CLI review contains terminal controls: %q", output)
+	}
+	for _, want := range []string{"Hook changes:", `"type":"http"`, `"X-Review":"\u009b31m\u202evalue"`} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("CLI review lost %q: %q", want, output)
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(repo, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var native struct {
+		Hooks map[string][]struct {
+			Hooks []struct {
+				Headers map[string]string `json:"headers"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &native); err != nil {
+		t.Fatal(err)
+	}
+	groups := native.Hooks["PreToolUse"]
+	if len(groups) != 1 || len(groups[0].Hooks) != 1 || groups[0].Hooks[0].Headers["X-Review"] != "\u009b31m\u202evalue" {
+		t.Fatalf("native hook payload changed: %q", data)
+	}
+}
 
 // spec: hook-sync-diagnostics/mutation-commands-list-completed-hook-changes
 func TestMutationCommandsPrintHookReview(t *testing.T) {

@@ -82,6 +82,8 @@ Each interaction contract has its own file. The `*.spec.ts` files are PTY journe
 
 `tests/hook-review.spec.ts` selects a hook from a directory source, confirms sync-and-quit, and reviews the actual addition before leaving the TUI. It closes and reopens diagnostics, updates the hook and reviews both commands, proves an unchanged update clears the review, then deselects and syncs to review removal. The journey checks the native hook file after each publication.
 
+`tests/hook-review-json.spec.ts` installs an HTTP hook, reviews C1 and bidi controls as visible JSON escapes, and verifies that the native header value is preserved.
+
 `tests/materialization-warning.spec.ts` selects a Factory skill for Claude, confirms sync-and-quit, and reviews `skill.allowed-tools-omitted` before exiting. It checks that the skill installed with the intended body and omitted tool grant, and that quitting still succeeds.
 
 All normal PTY journeys start on exact-v4 consumer roots. No startup conversion prompt is offered. The unsupported-config journey checks the visible format refusal and blocked operations while preserving existing configuration, lock and harness bytes.
