@@ -7,6 +7,7 @@ import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 import { runAM } from "./process-helpers.js";
 
 // spec: tui-feedback/toggle-hints-follow-row-eligibility
+// spec: tui-feedback/notification-overflow
 const journey = defineFixture("required-toggle-refusal", ["tui"], 80, 24, { organization: "published-lock" });
 before(journey.setup);
 after(journey.cleanup);
@@ -43,9 +44,29 @@ journey.test("space on a required organization resource is refused without write
     await locate(terminal, "space = toggle").expect({ not: true });
     await locate(terminal, "space toggle").expect({ not: true });
   });
+  const firstNoticeStarted = performance.now();
   await step("space is refused with an explanation and no scope modal", () => terminal.write(" "), async () => {
     await locate(terminal, "required items cannot be toggled").expect();
     await locate(terminal, "toggle project").expect({ not: true });
+    await locate(terminal, /Status:\s+required \(org\)/).unique().expect();
+    await locate(terminal, "~ in sync").unique().expect();
+  });
+  for (let count = 1; count <= 3; count += 1) {
+    await step(`in-sync confirmation ${count} joins the notification stack`, () => terminal.write("s"), async () => {
+      await locate(terminal, "already in sync").nth(count - 1).expect();
+      assert.equal(await locate(terminal, "already in sync").count(), count);
+      if (count < 3) await locate(terminal, "required items cannot be toggled").unique().expect();
+    });
+  }
+  await step("the fourth notice evicts the first and leaves three visible", () => {}, async () => {
+    assert.equal(await locate(terminal, "required items cannot be toggled").count(), 0, "the oldest notice must be evicted, not awaited until expiry");
+    assert.equal(await locate(terminal, "already in sync").count(), 3);
+    assert.ok(performance.now() - firstNoticeStarted < 2_000, "all four notifications and the cap check must precede the first two-second expiry");
+    await locate(terminal, /Name:\s+org-review/).unique().expect();
+    await locate(terminal, /: (commands|cmds) · \? help · q quit/).unique().expect();
+  });
+  await step("all three notifications expire without further input", () => {}, async () => {
+    await locate(terminal, "already in sync").expect({ not: true });
     await locate(terminal, /Status:\s+required \(org\)/).unique().expect();
     await locate(terminal, "~ in sync").unique().expect();
   });
