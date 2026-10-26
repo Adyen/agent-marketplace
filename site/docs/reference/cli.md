@@ -318,6 +318,8 @@ If `~/.agents/config.yaml` does not exist, a plain `sync` creates it the way `ag
 
 With `--check`, an in-sync result prints no verdict and returns exit status 0. Drift prints a summary such as `sync: 2 out of sync (1 missing, 1 orphaned)`, lists the planned changes, and returns exit status 1. Materialization and configuration errors also return exit status 1, including a dry-run materialization failure, which is printed as an `error:` line alongside the run's warnings. Warning-severity materialization diagnostics are printed as `warning:` lines and do not affect the exit status. `--check` writes nothing: not config, locks, transaction state, or harness output. It does not recover pending transactions or fetch a cold exact snapshot, and it reports `lock.snapshot-unavailable` when snapshot files it needs are missing.
 
+A hard configuration, registry-load, or resolution error stops `--check` before it predicts output changes. It reports the refusal without treating an unloadable registry's installed hooks as deselected or counting them as drift. Warning-only checks still report genuine pending changes.
+
 If an earlier write was interrupted and left a dependency transaction pending, `sync --locked`, `sync --offline`, `sync --check`, `lock --check`, `list`, and `status` fail with `dependency.recovery-required` before reading configuration or registries. They leave config, locks, recovery records, and permissions unchanged. A plain `sync` or `lock` (without those flags) attempts recovery before continuing. The failed command can be retried after recovery succeeds; blocked recovery leaves it incomplete. A missing transaction-state directory needs no recovery, and these commands do not create it.
 
 ## `update`

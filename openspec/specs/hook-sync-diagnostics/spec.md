@@ -42,6 +42,29 @@ Hook review output SHALL label each pending hook change as an addition, a replac
 - **WHEN** `sync --check` finds pending output writes, removals, or support cleanup
 - **THEN** the summary MUST report writes and removals, return an error that counts outputs rather than missing skills, and keep the error-only and clean behaviors unchanged
 
+### Requirement: Sync checks distinguish load refusal from hook drift
+
+When configuration, registry loading, or resource resolution has a hard error
+that prevents ordinary `sync` from materializing, `sync --check` SHALL refuse
+before predicting materialized output changes. It SHALL report the actual
+refusal diagnostics and SHALL NOT print a pending hook review, a deselection
+explanation, or an output drift count derived from the incomplete inventory.
+Installed hook files and existing ownership state SHALL retain their bytes,
+modes, and modification times. This does not make warning-only inspection fatal
+or suppress genuine hook drift after successful loading and resolution.
+
+#### Scenario: Unloadable hook source refuses without pending changes
+
+- **GIVEN** a selected hook is already installed
+- **WHEN** its registry cannot load because the source contains ambiguous modeled fields
+- **THEN** `sync` and `sync --check` MUST refuse with `json.duplicate-key`, preserve installed files and existing ownership state including bytes, modes, and modification times, and report no pending hook removal, deselection explanation, or output drift count
+
+#### Scenario: Loadable hook sources retain genuine drift reports
+
+- **GIVEN** an installed hook whose source loads successfully
+- **WHEN** the hook changes or is deselected
+- **THEN** `sync --check` MUST report the genuine replacement or removal and a nonzero drift count without changing installed files or ownership state, and subsequent `sync` MUST apply the reviewed operation
+
 ### Requirement: Resource mutations report completed hook changes and materialization warnings
 
 The CLI commands `install`, `remove`, and `update` SHALL show the same completed hook review listing and warning diagnostics as `sync` when their materialization adds, replaces, or removes owned hook entries. This SHALL apply to every supported harness target and selecting scope, including ad-hoc, configured, Marketplace, and collection selections. The listing SHALL identify the harness target, scope, file, event, matcher, action, and exact before and after command or prompt. Repository-scope Codex changes SHALL keep `materialize.codex.trust-review`; other hook review diagnostics SHALL keep their existing codes and warning severity. Materialization warnings unrelated to hook changes SHALL also remain visible. Reporting SHALL NOT change acquisition, selection, ownership, configuration formats, or command success criteria. A completed partial materialization SHALL remain reviewable when another resource fails; a refusal before materialization SHALL NOT invent completed hook changes. Hook payloads SHALL appear only in the review listing, never logs or telemetry, and terminal control characters SHALL be escaped.
