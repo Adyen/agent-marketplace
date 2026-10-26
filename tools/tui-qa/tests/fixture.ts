@@ -13,6 +13,7 @@ const betaSkillContent = "---\nname: beta-skill\ndescription: Synced beta fixtur
 export type OrganizationFixtureMode = "missing-lock" | "published-lock";
 
 export interface FixtureOptions {
+  marketplaceAcquisitionGate?: () => Promise<void>;
   directorySource?: boolean;
   overflowStatus?: boolean;
   // Installs a v4 organization layer at <root>/etc/agent-marketplace that
@@ -122,6 +123,7 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
     let marketplaceDelayedAcquisitionCount: (() => number) | undefined;
     if (options.organization || options.userMarketplaceDrift || options.marketplaceDiscovery) {
       stub = await createMarketplaceStub({
+        acquisitionGate: options.marketplaceAcquisitionGate,
         mismatchedPlaceholderArchive: options.mismatchedPlaceholderArchive,
         searchableInstall: Boolean(options.marketplaceDiscovery),
         installFindings: options.marketplaceDiscovery === "findings"
