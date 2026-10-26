@@ -112,7 +112,7 @@ func TestV4LocatorParsingPublicKinds(t *testing.T) {
 }
 
 func TestV4LocatorParsingPublicRefusals(t *testing.T) {
-	for _, value := range []string{"skill/review/extra/parts", "tools/skill/a*b", "tools/skill/..", "-tools/skill/review", " tools/skill/review"} {
+	for _, value := range []string{"skill", "skill/review/extra/parts", "tools/skill/a*b", "tools/skill/..", "-tools/skill/review", " tools/skill/review"} {
 		t.Run(value, func(t *testing.T) {
 			_, _, _, want := legacyParseV4Locator(value, "g")
 			if want == nil {
@@ -128,7 +128,7 @@ func TestV4LocatorParsingPublicRefusals(t *testing.T) {
 				}
 				if cfg != nil || !errors.As(err, &refusal) || refusal.Code != code ||
 					refusal.Path != path || refusal.Msg != want.Error() {
-					t.Fatalf("%s refusal = %#v (%v), want %s at %s: %v", operation, refusal, err, code, path, want)
+					t.Errorf("%s refusal = %#v (%v), want %s at %s: %v", operation, refusal, err, code, path, want)
 				}
 			}
 		})

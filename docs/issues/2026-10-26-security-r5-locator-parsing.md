@@ -144,8 +144,9 @@ For exact probe-source reconstruction, its before file is the published
 `v4.go`; produce the after file by changing only
 `if !hasSlash || strings.Contains(last, "/") {` to
 `if !hasSlash || (qualified && strings.Contains(last, "/")) {`.
-The probe uses the final, isolated unit-test source, not the older
-measured-test snapshot used by the original two matrices.
+The probe uses the isolated unit-test source from its Git base
+`b41fb806`, not the older measured-test snapshot used by the original
+two matrices or the later public-refusal coverage addition.
 
 ## Initial Results And Reproduction
 
@@ -177,6 +178,10 @@ directory for that unit case. Only untimed test setup changes; production,
 the oracle, and benchmark functions are unchanged. Preserve the measured
 test source instead of silently replacing its fingerprint with the final
 file, and revalidate the final test form on both production variants.
+After the probe, add a public missing-first-separator case and allow
+both include and exclusion assertions to execute when a mutation fails.
+These untimed test-only changes are not part of the frozen probe input;
+use its Git base's test file when checking that measured source SHA.
 
 ## Correctness And Negative Controls
 
@@ -192,10 +197,22 @@ file, and revalidate the final test form on both production variants.
   operations without changing rendered state or user bytes. A successful
   include proves that the exercised editor can change a selection.
 - All five semantic mutations fail direct replay without compilation
-  failures. Extra-slash and registry mutations also fail public parsing.
-  Missing first separator, blank error outputs, and source-refusal
-  precedence are caught only by direct replay in this control suite;
-  public fixtures still pass those three mutants.
+  failures. The original suite catches extra-slash and registry mutations
+  through public parsing. CodeRabbit's follow-up adds the missing-first-
+  separator case: its mutation now fails both include and exclusion
+  typed-diagnostic assertions. The current suite has three public
+  mutation witnesses and two direct-only contracts.
+- Blank helper return fields are not observable through these consumers:
+  includes return the typed error before using the fields, while
+  exclusions and editors discard those fields. Empty-source refusal
+  precedence is also behind normal parsed source/group-name admission;
+  Marketplace request parsing uses a nonempty constant or an admitted
+  binding. Keep direct replay for those helper contracts rather than
+  invent public observability.
+- Typed editor locators always construct a slash before calling the
+  parser, so a missing first separator cannot arrive through that API.
+  Its four-operation malformed-arity/no-state-change witness remains
+  the relevant editor control.
 - Both production variants pass native two-string byte fuzzing:
   359,959 before and 353,370 after executions. These are correctness runs,
   not comparable throughput measurements.
@@ -249,6 +266,14 @@ witnesses executed and passed, plus shellcheck. The config package does
 not depend on pipeline or resourcediff, and its measured source and
 dependency inputs remain unchanged. Preserve every earlier measurement
 base and gate result rather than relabeling them as this later run.
+
+The final missing-separator follow-up passes both production variants:
+before-overlay replay/public/editor tests pass in 0.469 seconds, and
+fresh affected-config tests in 5.151 seconds, plus vet, zero-issue lint,
+and build. All five semantic controls rerun successfully; the first-
+separator mutant fails both public include and exclusion diagnostics.
+Both native fuzz variants pass again. Production and timed definitions
+are unchanged, and all 768 historical observations still verify.
 
 Host adversarial `open-code-review-delegate` covers all 19 own files,
 including excluded tests/docs, both raw datasets, both measured-source
