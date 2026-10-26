@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, relative, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -97,4 +97,52 @@ test('landing tabs use one wrapping keyboard-navigation rule', () => {
   assert.equal(nextTabIndex('End', 0, 3), 2)
   assert.equal(nextTabIndex('Tab', 1, 3), null)
   assert.equal(nextTabIndex('ArrowRight', 0, 0), null)
+})
+
+const sourceDocs = new URL('../docs/', import.meta.url)
+
+async function sourceMarkdown(directory: URL, prefix = ''): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true })
+  const files = await Promise.all(entries.map(entry => {
+    if (entry.isDirectory()) {
+      return entry.name === 'images' ? [] : sourceMarkdown(new URL(`${entry.name}/`, directory), `${prefix}${entry.name}/`)
+    }
+    return entry.name.endsWith('.md') ? [`${prefix}${entry.name}`] : []
+  }))
+  return files.flat()
+}
+
+// spec: site-deployment-profiles/llm-index-lists-every-documentation-page
+test('llms.txt lists every documentation page as a Markdown link under the base', async () => {
+  const llms = await readFile(new URL('llms.txt', dist), 'utf8')
+  assert.match(llms, /^# agent-marketplace\n\n> .+\n/)
+
+  const links = [...llms.matchAll(/\]\(([^)]+)\)/g)].map(([, url]) => url)
+  for (const url of links) {
+    assert.ok(url.startsWith(docsPath) && url.endsWith('.md'), url)
+    await access(new URL(url.slice(base.length), dist))
+  }
+  assert.deepEqual(links.slice(0, 4), ['index.md', 'quick-start.md', 'install.md', 'glossary.md'].map(rel => `${docsPath}${rel}`))
+  const expected = (await sourceMarkdown(sourceDocs)).map(rel => `${docsPath}${rel}`).sort()
+  assert.deepEqual([...links].sort(), expected)
+})
+
+// spec: site-deployment-profiles/markdown-copies-mirror-documentation-sources
+test('Markdown copies mirror their sources without front matter', async () => {
+  for (const rel of await sourceMarkdown(sourceDocs)) {
+    const [source, copy] = await Promise.all([
+      readFile(new URL(rel, sourceDocs), 'utf8'),
+      readFile(new URL(`docs/${rel}`, dist), 'utf8'),
+    ])
+    assert.equal(copy, source.replace(/^---\n[\s\S]*?\n---\n/, ''), rel)
+  }
+
+  const metadata = await readFile(new URL('docs/reference/resource-metadata.md', dist), 'utf8')
+  assert.doesNotMatch(metadata, /^---\n/)
+
+  const tutorialUrl = new URL('docs/tutorials/add-your-first-marketplace-registry.md', dist)
+  const tutorial = await readFile(tutorialUrl, 'utf8')
+  const images = [...tutorial.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)].map(([, target]) => target)
+  assert.ok(images.length > 0)
+  for (const target of images) await access(new URL(target, tutorialUrl))
 })
