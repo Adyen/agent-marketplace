@@ -1296,13 +1296,14 @@ func parseV4Locator(value, source string) (kind, registry, name string, err erro
 	if strings.TrimSpace(value) != value || strings.ContainsAny(value, "\\\x00\r\n") {
 		return "", "", "", errors.New("must be a clean locator")
 	}
-	parts := strings.Split(value, "/")
-	if len(parts) == 2 {
-		kind, name = parts[0], parts[1]
-	} else if len(parts) == 3 {
-		registry, kind, name = parts[0], parts[1], parts[2]
-	} else {
+	first, rest, hasSlash := strings.Cut(value, "/")
+	second, last, qualified := strings.Cut(rest, "/")
+	if !hasSlash || strings.Contains(last, "/") {
 		return "", "", "", errors.New("must be kind/name or registry/kind/name")
+	}
+	kind, name = first, rest
+	if qualified {
+		registry, kind, name = first, second, last
 	}
 	if _, ok := v4Kinds[kind]; !ok || !v4NameRE.MatchString(name) || name == "." || name == ".." || strings.ContainsAny(name, "*?") {
 		return "", "", "", errors.New("has invalid kind or resource name")
@@ -1310,7 +1311,7 @@ func parseV4Locator(value, source string) (kind, registry, name string, err erro
 	if err := validateMarketplaceSegment("name", name); err != nil {
 		return "", "", "", err
 	}
-	if len(parts) == 3 && !v4SlugRE.MatchString(registry) {
+	if qualified && !v4SlugRE.MatchString(registry) {
 		return "", "", "", errors.New("has invalid registry slug")
 	}
 	if source == "" {
