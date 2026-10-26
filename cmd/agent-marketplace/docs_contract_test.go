@@ -297,6 +297,8 @@ func TestPublicCommandPathsHaveBehaviorTests(t *testing.T) {
 		"telemetry enable --level":                TestTelemetryEnableAndDisable,
 		"telemetry preview --level":               TestTelemetryPreview,
 		"update --bump":                           TestUpdateCommandWithBumpUpdatesRepoConfigRefAndSyncsNewCache,
+		"update --dry-run":                        TestUpdateDryRunSummarizesRealUpdateWithoutApplying,
+		"update --include-diff":                   TestUpdateIncludeDiffAppliesPreparedCandidatesAndReportsDiffs,
 		"update --kind":                           TestUpdateBumpHonorsScopeAndDirectTarget,
 		"update --path":                           TestUpdateBumpHonorsScopeAndDirectTarget,
 		"update --ref":                            TestUpdateBumpHonorsScopeAndDirectTarget,

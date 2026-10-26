@@ -26,6 +26,12 @@ func gitRun(t *testing.T, dir string, args ...string) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
+	// Fixture git operations must not read host-global configuration: a
+	// developer machine with mandatory commit signing (for example through a
+	// hardware key) would otherwise make every fixture commit interactive and
+	// intermittently fail the suite. Test-local `-c` and repository config
+	// remain in effect; every `git init` in this suite names its branch.
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
