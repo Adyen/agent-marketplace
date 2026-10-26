@@ -12,7 +12,11 @@ import (
 
 var behaviorRoots = []string{"cmd/", "internal/", "pkg/", "api/", "web/"}
 
-const tuiJourneyDir = "tools/tui-qa/tests/"
+const (
+	tuiJourneyDir   = "tools/tui-qa/tests/"
+	releaseNoteHint = `add a "## Release note" section: 1-3 user-facing sentences, "Breaking: <what breaks and how to upgrade>", or "none — <reason>"`
+	breakingHint    = `the "Breaking:" release note has no text; write "Breaking: <what breaks and how to upgrade>"`
+)
 
 var impactValue = regexp.MustCompile(`^none\s*(?:—|-)\s*(\S.*)$`)
 
@@ -149,6 +153,36 @@ func evaluateGate(files []changedFile, trailers map[string][]string) ([]finding,
 	return findings, strings.Join(summaries, "; ")
 }
 
+func isChangeProposal(p string) bool {
+	return strings.HasPrefix(p, changesDir+"/") && path.Base(p) == "proposal.md"
+}
+
+// evaluateReleaseNotes checks the release note of every added change proposal,
+// keyed by path to its content at the pull request head.
+func evaluateReleaseNotes(proposals map[string]string) ([]finding, string) {
+	if len(proposals) == 0 {
+		return nil, "no added change proposals"
+	}
+	var findings []finding
+	passed := 0
+	for _, p := range sortedKeys(proposals) {
+		lines, found := releaseNote(proposals[p])
+		text := normalizedNote(lines)
+		body, isBreaking := breakingText(text)
+		switch {
+		case !found || text == "":
+			findings = append(findings, finding{kindMissingReleaseNote, p + ": " + releaseNoteHint})
+		case isBreaking && body == "":
+			findings = append(findings, finding{kindMissingReleaseNote, p + ": " + breakingHint})
+		case isNoneNote(text) && !impactValue.MatchString(text):
+			findings = append(findings, finding{kindReleaseNoteNoReason, fmt.Sprintf("%s: use %q", p, "none — <reason>")})
+		default:
+			passed++
+		}
+	}
+	return findings, fmt.Sprintf("%d added change proposals with release notes", passed)
+}
+
 func gate(root, base, head string) ([]finding, string, error) {
 	paths, err := diffPaths(root, base+"..."+head)
 	if err != nil {
@@ -175,7 +209,25 @@ func gate(root, base, head string) ([]finding, string, error) {
 		trailers[r.trailer] = strings.Split(logOut, "\n")
 	}
 	findings, summary := evaluateGate(files, trailers)
-	return findings, summary, nil
+
+	added, err := diffPaths(root, base+"..."+head, "--diff-filter=A")
+	if err != nil {
+		return nil, "", err
+	}
+	proposals := map[string]string{}
+	for _, p := range added {
+		if !isChangeProposal(p) {
+			continue
+		}
+		content, err := git(root, "show", head+":"+p)
+		if err != nil {
+			return nil, "", err
+		}
+		proposals[p] = content
+	}
+	releaseFindings, releaseSummary := evaluateReleaseNotes(proposals)
+	findings = append(findings, releaseFindings...)
+	return findings, summary + "; " + releaseSummary, nil
 }
 
 func diffPaths(root, rng string, extra ...string) ([]string, error) {
