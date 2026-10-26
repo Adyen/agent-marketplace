@@ -51,7 +51,7 @@ async function markdownFiles(dir: string): Promise<string[]> {
 }
 
 export function stripFrontMatter(markdown: string): string {
-  return markdown.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '')
+  return markdown.replace(/^---\r?\n(?:[\s\S]*?\r?\n)?---\r?\n/, '')
 }
 
 // Writes llms.txt and a Markdown copy of each sidebar page beside its HTML route.

@@ -143,6 +143,8 @@ test('llms.txt lists every documentation page as a Markdown link under the base'
 test('front matter is stripped from LF and CRLF sources', () => {
   assert.equal(stripFrontMatter('---\ntitle: x\n---\n# Body\n'), '# Body\n')
   assert.equal(stripFrontMatter('---\r\ntitle: x\r\n---\r\n# Body\r\n'), '# Body\r\n')
+  assert.equal(stripFrontMatter('---\n---\n# Body\n'), '# Body\n')
+  assert.equal(stripFrontMatter('---\r\n---\r\n# Body\r\n'), '# Body\r\n')
   assert.equal(stripFrontMatter('# Body\n'), '# Body\n')
 })
 
