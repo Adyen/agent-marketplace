@@ -39,6 +39,7 @@ type DependencyLifecycle struct {
 	// InstallReconcile prepares acquisition locks for the sync that follows a
 	// Marketplace install, so other sources stay at their locked revisions.
 	InstallReconcile pipeline.DependencyReconciler
+	InstallPrepare   pipeline.InstallDependencyPreparer
 }
 
 type Option func(*Model)
@@ -213,6 +214,11 @@ func (m *Model) dismissInvalidConfigMutationPane() bool {
 	}
 	switch m.pane {
 	case paneToggleModal, paneHarnessModal, paneInitModal, paneBulkToggle:
+		m.pane = paneList
+		return true
+	case paneInstallSource:
+		m.cancelInstallSourcePreview()
+		m.installSource = installSourceModal{}
 		m.pane = paneList
 		return true
 	case paneMarketplaceConsent:
@@ -428,6 +434,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errorsViewport.SetWidth(msg.Width)
 		m.errorsViewport.SetHeight(max(1, msg.Height-1))
 		m.resizeMarketplaceConsentViewport(false)
+		m.resizeInstallSourceForm()
 		m.clampListOffset()
 		m.refreshHarnessFormsForSize()
 		layout := screenLayoutFor(m.height, m.searchRowVisible())
@@ -456,6 +463,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handlePreviewSelection(msg)
 
 	case tea.PasteMsg:
+		if m.pane == paneInstallSource {
+			if m.installSource.step == installSourceStepPick && m.installSource.filtering {
+				var cmd tea.Cmd
+				m.installSource.filterInput, cmd = m.installSource.filterInput.Update(msg)
+				return m, cmd
+			}
+			return m, updateInstallSourceForm(&m.installSource, msg)
+		}
 		return m.handlePaste(msg)
 
 	case tea.BackgroundColorMsg:
@@ -477,6 +492,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.searchInput, cmd = m.searchInput.Update(msg)
 			return m, cmd
+		}
+		if m.pane == paneInstallSource && m.installSource.form != nil {
+			return m, updateInstallSourceForm(&m.installSource, msg)
 		}
 		return m, nil
 
@@ -696,6 +714,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.operationPhase = string(pipeline.PhaseReload)
 		}
 		return m, loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation)
+
+	case installSourcePreviewLoadedMsg:
+		return m.updateInstallSourcePreview(msg)
+
+	case installSourceInstallMsg:
+		return m.updateInstallSourceInstall(msg)
 
 	case operationProgressMsg:
 		if !m.applyOperationProgress(msg) {
@@ -1048,6 +1072,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// modals. Unlike the 'q' key, Ctrl+C does not prompt for unsaved
 	// changes — it is a hard exit that restores the terminal cleanly.
 	if msg.Code == 'c' && msg.Mod.Contains(tea.ModCtrl) {
+		if m.pane == paneInstallSource {
+			m.cancelInstallSourcePreview()
+		}
 		return m, tea.Quit
 	}
 	if m.previewSel.active && msg.Code == tea.KeyEscape {
@@ -1131,6 +1158,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleViewSettingsKey(msg)
 	case paneBulkToggle:
 		return m.handleBulkToggleKey(msg)
+	case paneInstallSource:
+		return m.handleInstallSourceKey(msg)
 	}
 
 	// The command palette owns all keys while open (its input takes
@@ -1219,6 +1248,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Help):
 		return m.dispatchAction(actionHelp)
+
+	case key.Matches(msg, m.keys.InstallSource):
+		return m.openInstallSource()
 
 	case key.Matches(msg, m.keys.Errors):
 		return m.dispatchAction(actionDiagnostics)
@@ -1992,6 +2024,8 @@ func (m Model) viewContent() string {
 		modal = renderViewSettingsModal(m)
 	case paneBulkToggle:
 		modal = renderBulkToggleModal(m)
+	case paneInstallSource:
+		modal = renderInstallSourceModal(m)
 	}
 	if modal == "" {
 		return m.applyPreviewSelection(compositeToasts(base, m.layeredToasts(), m.width, m.height))

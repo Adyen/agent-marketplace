@@ -67,6 +67,11 @@ func TestFooterShowsActionHintsWhenWide(t *testing.T) {
 	assertFooterFits(t, renderFooter(m), 120, "~ drift unavailable", "/ search", "s sync", ": commands", "v view")
 }
 
+func TestFooterShowsInstallSourceHintWhenWide(t *testing.T) {
+	m := footerFixture(160)
+	assertFooterFits(t, renderFooter(m), 160, "i install from source")
+}
+
 func TestFooterErrorStateKeepsDiagnosticsAndFloor(t *testing.T) {
 	for _, width := range []int{50, 120} {
 		m := footerFixture(width)

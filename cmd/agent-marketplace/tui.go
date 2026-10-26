@@ -46,6 +46,7 @@ func runProductionTUI(ctx context.Context, repoRoot, homeDir string) error {
 		},
 		Mutate:           runTUIConfigMutation,
 		InstallReconcile: reconcileCommandDependencies,
+		InstallPrepare:   prepareInstallDependencies,
 	})}
 	if checker := newUpgradeChecker(); checker != nil {
 		options = append(options, tui.WithUpgradeCheck(checker))
