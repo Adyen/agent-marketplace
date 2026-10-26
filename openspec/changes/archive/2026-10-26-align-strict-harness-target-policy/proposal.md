@@ -30,3 +30,8 @@ None.
 
 TUI specifications, tests and documentation only. ADR 0010 records the accepted
 decision and examples. Issues #935 and #928 track implementation until merge.
+
+## Release note
+
+none - Specification, decision-record and test alignment only. Unknown harness
+target IDs remain configuration errors; runtime behavior is unchanged.
