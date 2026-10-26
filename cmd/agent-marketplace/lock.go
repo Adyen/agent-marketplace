@@ -157,6 +157,9 @@ func (set *exactLockSet) gitRevision(source config.Source, url, ref string) (str
 	if commit, ok := set.gitRevisionExact(source, canonical, ref); ok {
 		return commit, true
 	}
+	if locked, ok := set.bySource[sourceLockKey(source, canonical, ref)]; ok && locked.unlocked {
+		return "", false
+	}
 	prefix := canonical + "\x00"
 	unique := ""
 	for identity, lockedList := range set.byIdentity {

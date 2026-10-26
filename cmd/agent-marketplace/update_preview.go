@@ -24,6 +24,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/resourcediff"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"golang.org/x/sys/unix"
 )
 
 // preparedUpdateView carries the prepared prior/candidate state to the update
@@ -384,22 +385,23 @@ func normalizeSupportRelPath(rel string) (string, error) {
 
 // readPreviewSupportFile reads one admitted supporting file from a verified
 // resource root with the existing containment and special-file contracts: it
-// refuses symlink components, non-regular files, and paths escaping the root.
+// refuses final symlinks, non-regular files, and paths escaping the root.
 // A diff must read and print the body, so an unreadable symlink target refuses
 // the comparison rather than following it. A digest-only summary does not
 // print bodies, so it records the file without its body — the change still
 // surfaces as a content change against the previously readable body instead
 // of blocking the summary of an update the applying invocation accepts.
-func readPreviewSupportFile(root, rel string, keepBodies bool) (resourcediff.SupportFile, error) {
-	target := filepath.Join(root, filepath.FromSlash(rel))
-	if lexRel, err := filepath.Rel(root, target); err != nil || lexRel == ".." || strings.HasPrefix(lexRel, ".."+string(filepath.Separator)) {
+func readPreviewSupportFile(root, rel string, keepBodies bool) (file resourcediff.SupportFile, retErr error) {
+	target := filepath.FromSlash(rel)
+	if !filepath.IsLocal(target) {
 		return resourcediff.SupportFile{}, fmt.Errorf("supporting file escapes the resource root")
 	}
-	realRoot, err := filepath.EvalSymlinks(root)
+	resourceRoot, err := os.OpenRoot(root)
 	if err != nil {
-		return resourcediff.SupportFile{}, fmt.Errorf("resolve resource root: %w", err)
+		return resourcediff.SupportFile{}, fmt.Errorf("open resource root: %w", err)
 	}
-	info, err := os.Lstat(target)
+	defer func() { retErr = errors.Join(retErr, resourceRoot.Close()) }()
+	info, err := resourceRoot.Lstat(target)
 	if err != nil {
 		return resourcediff.SupportFile{}, err
 	}
@@ -412,15 +414,23 @@ func readPreviewSupportFile(root, rel string, keepBodies bool) (resourcediff.Sup
 		}
 		return resourcediff.SupportFile{}, fmt.Errorf("supporting file is not a regular file")
 	}
-	resolved, err := filepath.EvalSymlinks(target)
+	opened, err := resourceRoot.OpenFile(target, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return resourcediff.SupportFile{}, err
 	}
-	if relResolved, err := filepath.Rel(realRoot, resolved); err != nil || relResolved == ".." || strings.HasPrefix(relResolved, ".."+string(filepath.Separator)) {
-		return resourcediff.SupportFile{}, fmt.Errorf("supporting file resolves outside the resource root")
+	defer func() { retErr = errors.Join(retErr, opened.Close()) }()
+	info, err = opened.Stat()
+	if err != nil {
+		return resourcediff.SupportFile{}, err
 	}
-	file := resourcediff.SupportFile{Executable: info.Mode()&0o111 != 0}
-	data, err := os.ReadFile(target)
+	if !info.Mode().IsRegular() {
+		if !keepBodies {
+			return resourcediff.SupportFile{Executable: info.Mode()&0o111 != 0}, nil
+		}
+		return resourcediff.SupportFile{}, fmt.Errorf("supporting file is not a regular file")
+	}
+	file = resourcediff.SupportFile{Executable: info.Mode()&0o111 != 0}
+	data, err := io.ReadAll(opened)
 	if err != nil {
 		return resourcediff.SupportFile{}, err
 	}
@@ -584,17 +594,17 @@ func writeUpdatePreviewOutput(out io.Writer, preview *updatePreview, result *pip
 			if err := writePreviewResourceSummary(out, preview); err != nil {
 				return err
 			}
-			if len(preview.ResourceChanges) == 0 && len(preview.Locks) == 0 {
-				if _, err := fmt.Fprintln(out, "No versioned updates are available."); err != nil {
-					return err
-				}
-			}
 			if err := writePreviewLiveSources(out, preview); err != nil {
 				return err
 			}
-			if _, err := fmt.Fprintln(out, "This preview does not enumerate every subsequent materialization change."); err != nil {
+		}
+		if preview == nil || (len(preview.ResourceChanges) == 0 && len(preview.Locks) == 0) {
+			if _, err := fmt.Fprintln(out, "No versioned updates are available."); err != nil {
 				return err
 			}
+		}
+		if _, err := fmt.Fprintln(out, "This preview does not enumerate every subsequent materialization change."); err != nil {
+			return err
 		}
 	}
 	if includeDiffs && preview != nil {
@@ -860,6 +870,13 @@ func writePreviewSupportDiffs(out io.Writer, change resourcediff.ResourceChange)
 }
 
 func writePreviewSupportDiff(out io.Writer, support resourcediff.SupportChange) error {
+	if (support.Kind == resourcediff.SupportAdded && !resourcediff.RenderableText(support.New.Data)) ||
+		(support.Kind == resourcediff.SupportRemoved && !resourcediff.RenderableText(support.Old.Data)) {
+		_, err := fmt.Fprintf(out, "    %s: binary content %s (%s -> %s; executable mode %s -> %s)\n",
+			marketplace.QuoteTerminal(support.Path), support.Kind, previewByteSummary(support.Old), previewByteSummary(support.New),
+			previewModeLabel(support.Old), previewModeLabel(support.New))
+		return err
+	}
 	switch support.Kind {
 	case resourcediff.SupportText:
 		hunks := resourcediff.Unified(support.Path+" (locked revision)", support.Path+" (candidate revision)", support.Old.Data, support.New.Data)
@@ -909,7 +926,10 @@ func previewByteSummary(file *resourcediff.SupportFile) string {
 }
 
 func previewModeLabel(file *resourcediff.SupportFile) string {
-	if file != nil && file.Executable {
+	if file == nil {
+		return "absent"
+	}
+	if file.Executable {
 		return "executable"
 	}
 	return "not executable"

@@ -167,11 +167,8 @@ func resolvePriorAndDesired(ctx context.Context, ws pipeline.Workspace, offline 
 	// refusals. Only never-locked sources (initial acquisition) fall back.
 	recorded := make(map[string]bool)
 	for _, job := range priorJobs {
-		for _, entry := range job.entries {
-			canonical, err := canonicalRegistryURL(entry.URL)
-			if err == nil {
-				recorded[gitLockIdentity(canonical, entry.Ref)] = true
-			}
+		for _, registry := range job.doc.Registries {
+			recorded[gitLockIdentity(registry.URL, registry.Ref)] = true
 		}
 	}
 	for _, job := range priorJobs {

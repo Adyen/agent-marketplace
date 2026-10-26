@@ -24,10 +24,9 @@ func RenderableText(data []byte) bool {
 }
 
 // SanitizeReviewLine neutralizes terminal control characters in one review
-// line while keeping the line readable: carriage returns, vertical tabs, and
-// form feeds become literal escapes, and C1/bidi/zero-width runes become
-// \u escapes. Plain text passes through unchanged, so rendering stays
-// deterministic for identical input.
+// line while keeping the line readable: C0 (except tab), DEL, C1, bidi, and
+// zero-width controls become literal escapes. Plain text passes through
+// unchanged, so rendering stays deterministic for identical input.
 func SanitizeReviewLine(line string) string {
 	if line == "" {
 		return line
@@ -63,7 +62,7 @@ func SanitizeReviewLine(line string) string {
 
 func needsEscape(r rune) bool {
 	switch {
-	case r == '\r' || r == '\v' || r == '\f':
+	case r < 0x20 && r != '\t', r == 0x7f:
 		return true
 	case r >= 0x80 && r <= 0x9f:
 		return true
@@ -178,7 +177,7 @@ type hunk struct {
 
 func myersMatches(a, b []string) ([][2]int, bool) {
 	n, m := len(a), len(b)
-	if n+m > maxDiffLines {
+	if n > maxDiffLines || m > maxDiffLines-n {
 		return nil, false
 	}
 	if n == 0 && m == 0 {
@@ -279,7 +278,7 @@ func myersMatches(a, b []string) ([][2]int, bool) {
 }
 
 func opsFromMatches(a, b []string, matches [][2]int) []diffOp {
-	ops := make([]diffOp, 0, len(a)+len(b))
+	ops := make([]diffOp, 0, max(len(a), len(b)))
 	ai, bi := 0, 0
 	for _, pair := range matches {
 		for ai < pair[0] {

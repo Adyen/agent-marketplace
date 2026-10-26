@@ -204,10 +204,51 @@ func TestSanitizeReviewLineNeutralizesTerminalControls(t *testing.T) {
 			t.Fatalf("terminal control %q must be neutralized: %q", danger, got)
 		}
 	}
-	// ANSI escapes never survive: they are rejected earlier by the text
-	// gate, and sanitizing must be deterministic.
+	for control := rune(0); control <= 0x9f; control++ {
+		if control == '\t' || (control >= 0x20 && control < 0x7f) {
+			continue
+		}
+		input := "before" + string(control) + "after"
+		sanitized := SanitizeReviewLine(input)
+		if strings.ContainsRune(sanitized, control) || !strings.Contains(sanitized, "before") || !strings.Contains(sanitized, "after") {
+			t.Errorf("control U+%04X was not safely escaped: %q", control, sanitized)
+		}
+	}
+	if got := SanitizeReviewLine("readable\ttext"); got != "readable\ttext" {
+		t.Errorf("tab was not preserved: %q", got)
+	}
 	if SanitizeReviewLine("plain") != "plain" {
 		t.Fatalf("plain lines must pass through unchanged: %q", SanitizeReviewLine("plain"))
+	}
+}
+
+func TestDefinitionPreservesNestedNilMap(t *testing.T) {
+	t.Parallel()
+	resource := ir.NewSkill("review", "d", "body", nil, map[string]any{
+		"null":  map[string]any(nil),
+		"empty": map[string]any{},
+	}, ir.SourceRef{})
+	_, doc, err := Definition(resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"null": null`, `"empty": {}`} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("definition omitted %q:\n%s", want, doc)
+		}
+	}
+}
+
+func TestDefinitionPreservesAuthoredShellCharacters(t *testing.T) {
+	t.Parallel()
+	command := "npm test && cat < input > output"
+	hook := ir.NewHook("review", "PreToolUse", command, "command", nil, ir.SourceRef{})
+	_, doc, err := Definition(hook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(doc, `"command": "`+command+`"`) {
+		t.Errorf("authored shell characters were HTML-escaped:\n%s", doc)
 	}
 }
 

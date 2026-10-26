@@ -48,14 +48,17 @@ func Definition(r ir.Resource) (reviewPath string, doc string, err error) {
 	default:
 		return "", "", fmt.Errorf("unsupported review resource %T", r)
 	}
-	encoded, err := json.MarshalIndent(metadata, "", "  ")
-	if err != nil {
+	var encoded strings.Builder
+	encoder := json.NewEncoder(&encoded)
+	encoder.SetIndent("", "  ")
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(metadata); err != nil {
 		return "", "", fmt.Errorf("render normalized definition of %s %q: %w", r.Kind(), r.Name(), err)
 	}
 	if body == "" {
-		return mpinspection.PrimaryPath(r.Kind().String()), string(encoded) + "\n", nil
+		return mpinspection.PrimaryPath(r.Kind().String()), encoded.String(), nil
 	}
-	out := string(encoded) + "\n\n" + body
+	out := encoded.String() + "\n" + body
 	if !strings.HasSuffix(out, "\n") {
 		out += "\n"
 	}
@@ -253,6 +256,9 @@ func normalizeValue(v reflect.Value) any {
 		}
 		return normalizeValue(v.Elem())
 	case reflect.Map:
+		if v.IsNil() {
+			return nil
+		}
 		out := make(map[string]any, v.Len())
 		keys := make([]reflect.Value, 0, v.Len())
 		iter := v.MapRange()
