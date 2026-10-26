@@ -16,6 +16,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/redact"
+	"github.com/Adyen/agent-marketplace/internal/remedy"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 )
 
@@ -260,9 +261,7 @@ func WithMachineTargetHarnesses(targets []hcc.Target) ResolveOption {
 }
 
 // Remediable is an error that provides a user-facing remediation hint.
-type Remediable interface {
-	Remediation() string
-}
+type Remediable = remedy.Remediable
 
 type skillOccurrence struct {
 	resolved ResolvedArtifact

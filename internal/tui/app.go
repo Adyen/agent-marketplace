@@ -29,7 +29,7 @@ import (
 	"github.com/sahilm/fuzzy"
 )
 
-type DependencyLifecycleFunc func(context.Context, pipeline.Workspace) ([]error, error)
+type DependencyLifecycleFunc func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error)
 type DependencyMutationFunc func(context.Context, pipeline.Workspace, func(pipeline.ConfigPathMapper) error) error
 
 type DependencyLifecycle struct {
@@ -197,11 +197,13 @@ func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
 	slog.Info("tui toggle authoritative reload completed", "generation", msg.generation, "healthy", !m.rowsStale)
 	if !m.rowsStale {
 		m.recordOperationSuccess(operationMutation)
+		m.finishMutationReview()
 		return
 	}
 	msg.driftAssessment = m.driftAssessment
 	failure := snapshotAcceptanceError(msg)
 	m.recordOperationFailure(operationMutation, diagnosticMutation, failure)
+	m.finishMutationReview()
 	m.pushToast(fmt.Sprintf("error: %v", failure), 5*time.Second)
 }
 
@@ -239,6 +241,17 @@ func (m *Model) finishUpdateReload(generation requestGeneration, reloadErr error
 	m.updateReload = 0
 	pendingErr := m.updatePendingErr
 	pendingWarnings := m.updatePendingWarnings
+	report := m.updatePendingReport
+	m.setHookReview(report)
+	m.updatePendingReport = nil
+	defer func() {
+		if len(pendingWarnings) > 0 {
+			m.recordOperationWarnings(operationUpdate, diagnosticUpdate, pendingWarnings...)
+		}
+		if report != nil {
+			m.presentHookReview()
+		}
+	}()
 	m.updatePendingErr = nil
 	m.updatePendingWarnings = nil
 	m.syncing = false
@@ -257,7 +270,6 @@ func (m *Model) finishUpdateReload(generation requestGeneration, reloadErr error
 	default:
 		m.recordOperationSuccess(operationUpdate)
 		if len(pendingWarnings) > 0 {
-			m.recordOperationWarnings(operationUpdate, diagnosticUpdate, pendingWarnings...)
 			m.pushToast(fmt.Sprintf("Update complete with %d warning(s)", len(pendingWarnings)), 2*time.Second)
 		} else {
 			m.pushToast("Update complete", 2*time.Second)
@@ -277,6 +289,20 @@ func (m *Model) finishSyncReload(generation requestGeneration, reloadErr error) 
 	m.syncReload = 0
 	pendingErr := m.syncPendingErr
 	pendingWarnings := m.syncPendingWarnings
+	report := m.syncPendingReport
+	m.syncPendingReport = nil
+	m.setHookReview(report)
+	reviewBeforeQuit := m.quitAfterSync && ((report != nil && len(report.HookChanges) > 0) || slices.ContainsFunc(pendingWarnings, pipeline.IsPromotedDiagnostic))
+	defer func() {
+		if len(pendingWarnings) > 0 {
+			m.recordOperationWarnings(operationSync, diagnosticSync, pendingWarnings...)
+		}
+		if reviewBeforeQuit {
+			m.openMaterializationReview()
+		} else if report != nil {
+			m.presentHookReview()
+		}
+	}()
 	m.syncPendingErr = nil
 	m.syncPendingWarnings = nil
 	m.syncing = false
@@ -284,7 +310,7 @@ func (m *Model) finishSyncReload(generation requestGeneration, reloadErr error) 
 	// A sync+quit confirmed while the reload was already in flight still
 	// quits once the authoritative reload lands; the verdict is carried to
 	// Run() rather than toasted.
-	if m.quitAfterSync {
+	if m.quitAfterSync && !reviewBeforeQuit {
 		m.quitAfterSync = false
 		m.syncQuitErr = pendingErr
 		if m.syncQuitErr == nil {
@@ -293,6 +319,10 @@ func (m *Model) finishSyncReload(generation requestGeneration, reloadErr error) 
 		slog.Debug("sync reload complete, quitting as requested", "err", m.syncQuitErr)
 		return tea.Quit
 	}
+	if m.quitAfterSync {
+		m.syncQuitErr = errors.Join(pendingErr, reloadErr)
+	}
+	m.quitAfterSync = false
 	switch {
 	case pendingErr != nil:
 		m.recordOperationFailure(operationSync, diagnosticSync, pendingErr)
@@ -305,9 +335,9 @@ func (m *Model) finishSyncReload(generation requestGeneration, reloadErr error) 
 		m.pushToast(fmt.Sprintf("sync reload failed: %v", reloadErr), 5*time.Second)
 		return toastExpiryCmd(5 * time.Second)
 	default:
+		m.syncQuitErr = nil
 		m.recordOperationSuccess(operationSync)
 		if len(pendingWarnings) > 0 {
-			m.recordOperationWarnings(operationSync, diagnosticSync, pendingWarnings...)
 			m.pushToast(fmt.Sprintf("Sync complete with %d warning(s)", len(pendingWarnings)), 2*time.Second)
 		} else {
 			m.pushToast("Sync complete", 2*time.Second)
@@ -333,7 +363,7 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	selection := m.captureRebuildAnchor()
 	listOffset := m.listOffset
 	selectionAfterDisable := m.selectionAfterDisable
-	m.selectionAfterDisable = ""
+	m.selectionAfterDisable = rebuildAnchor{}
 	var previousDetail row
 	hadPreviousDetail := false
 	if m.pane == paneDetail && m.detailKey != "" {
@@ -358,7 +388,7 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	// a disabled row now in Available); keep the previous viewport and scroll
 	// only as far as the final selection needs.
 	m.listOffset = listOffset
-	if !m.restoreSelectionKey(selectionAfterDisable) {
+	if !m.restoreAnchor(selectionAfterDisable) {
 		m.restoreSelectionAfterRebuild(selection)
 	}
 	m.clampListOffset()
@@ -399,6 +429,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errorsViewport.SetHeight(max(1, msg.Height-1))
 		m.resizeMarketplaceConsentViewport(false)
 		m.clampListOffset()
+		m.refreshHarnessFormsForSize()
 		layout := screenLayoutFor(m.height, m.searchRowVisible())
 		listWidth, detailWidth := paneWidths(m.width)
 		slog.Debug("tui resized", "old_width", oldWidth, "old_height", oldHeight, "width", m.width, "height", m.height, "list_width", listWidth, "detail_width", detailWidth, "visible_height", layout.mainHeight)
@@ -646,11 +677,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.marketplacePreparedInstall = nil
 		m.marketplaceInstallPreview = ""
+		if msg.result != nil {
+			m.mutationPendingReport = msg.result.Report
+			m.mutationPendingWarnings = msg.result.RequirementWarnings
+		}
 		if msg.err != nil {
 			m.clearOperationProgress()
 			m.finishOperation(msg.operation)
 			m.marketplaceInstallOperation = 0
 			m.recordOperationFailure(operationMutation, diagnosticMutation, msg.err)
+			m.finishMutationReview()
 			m.pushToast("Marketplace install failed: "+msg.err.Error(), 5*time.Second)
 			return m, toastExpiryCmd(5 * time.Second)
 		}
@@ -690,9 +726,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.acceptsOperation(msg.operation) {
 			return m, nil
 		}
+		if msg.report != nil {
+			m.mutationPendingReport = msg.report
+		}
+		m.mutationPendingWarnings = append(m.mutationPendingWarnings, msg.warnings...)
 		if msg.err != nil {
 			m.finishOperation(msg.operation)
 			m.recordOperationFailure(operationMutation, diagnosticMutation, msg.err)
+			m.finishMutationReview()
 			m.pendingExcludeAction = nil
 			m.pushToast(fmt.Sprintf("error: %v", msg.err), 5*time.Second)
 			slog.Error("config write failed", "resource", msg.skillName, "enabled", msg.enabled, "err", msg.err)
@@ -711,7 +752,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshing = false
 		m.driftAssessment = driftUnknown
 		if msg.selectNext {
-			m.selectionAfterDisable = m.nextRowSelectionKey()
+			m.selectionAfterDisable = m.nextRowSelection()
 		}
 		// If a collision-aware enable was pending, emit the exclude
 		// command now that the primary toggle has succeeded.
@@ -753,7 +794,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// If the user confirmed "sync+quit", quit now that the sync has
 		// actually completed. This avoids the race where tea.Quit in a
 		// tea.Batch kills the program before the sync goroutine finishes.
-		if m.quitAfterSync {
+		if m.quitAfterSync && (msg.report == nil || len(msg.report.HookChanges) == 0) && !slices.ContainsFunc(msg.warnings, pipeline.IsPromotedDiagnostic) {
 			m.syncing = false
 			m.quitAfterSync = false
 			m.clearOperationProgress()
@@ -767,6 +808,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// is retained so a failed sync can never be reported as success.
 		m.syncPendingErr = msg.err
 		m.syncPendingWarnings = append([]error(nil), msg.warnings...)
+		m.syncPendingReport = msg.report
 		if m.progress != nil {
 			m.operationPhase = string(pipeline.PhaseReload)
 		}
@@ -782,6 +824,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// end only when the superseding reload is accepted or fails.
 			m.updatePendingErr = msg.err
 			m.updatePendingWarnings = append([]error(nil), msg.warnings...)
+			m.updatePendingReport = msg.report
 			if m.progress != nil {
 				m.operationPhase = string(pipeline.PhaseReload)
 			}
@@ -789,6 +832,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateReload = generation
 			return m, loadSnapshot(ctxOrBackground(m.ctx), m.workspace, m.homeDir, generation)
 		}
+		m.setHookReview(msg.report)
 		m.syncing = false
 		m.clearOperationProgress()
 		var installCmd tea.Cmd
@@ -804,16 +848,26 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.quitAfterSync = false
 		if msg.err != nil {
 			m.recordOperationFailure(operationUpdate, diagnosticUpdate, msg.err)
+			if len(msg.warnings) > 0 {
+				m.recordOperationWarnings(operationUpdate, diagnosticUpdate, msg.warnings...)
+			}
 			m.pushToast(fmt.Sprintf("update error: %v", msg.err), 5*time.Second)
 			slog.Error("update failed", "err", msg.err)
 			recordControlledErrorSpan(m.ctx, "update", msg.err)
 			if msg.snapshot.generation != 0 {
 				installCmd = m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg.snapshot))
 			}
+			if msg.report != nil {
+				m.presentHookReview()
+			}
 			return m, tea.Batch(toastExpiryCmd(5*time.Second), installCmd)
 		} else {
 			m.recordOperationSuccess(operationUpdate)
 			if len(msg.warnings) > 0 {
+				materializationWarnings := slices.DeleteFunc(slices.Clone(msg.warnings), func(w error) bool { return !pipeline.IsPromotedDiagnostic(w) })
+				if len(materializationWarnings) > 0 {
+					m.recordOperationWarnings(operationUpdate, diagnosticUpdate, materializationWarnings...)
+				}
 				m.pushToast(fmt.Sprintf("Update complete with %d warning(s)", len(msg.warnings)), 2*time.Second)
 			} else {
 				m.pushToast("Update complete", 2*time.Second)
@@ -821,6 +875,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.snapshot.generation != 0 {
 			installCmd = m.finishMarketplaceInstallReload(msg.generation, snapshotAcceptanceError(msg.snapshot))
+		}
+		if msg.report != nil {
+			m.presentHookReview()
 		}
 		return m, tea.Batch(toastExpiryCmd(2*time.Second), installCmd)
 
@@ -1241,7 +1298,7 @@ func (m Model) dispatchAction(id paletteActionID) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case actionDiagnostics:
-		if len(m.errs) > 0 || len(m.warnings) > 0 || len(m.discoveryErrs) > 0 {
+		if m.hasDiagnostics() {
 			m.pane = paneErrors
 		}
 		return m, nil
@@ -1463,6 +1520,7 @@ func (m *Model) rebuildOpenBundle(previous row, hadPrevious bool) {
 	}
 	if !found && hadPrevious {
 		identity := registryIdentityKey(previous.RegistryURL, previous.RegistryRef, previous.RegistryPath)
+		matches := 0
 		for _, r := range m.rows {
 			if r.UnavailableReason == "" && !previous.PendingVerification {
 				continue
@@ -1476,9 +1534,13 @@ func (m *Model) rebuildOpenBundle(previous row, hadPrevious bool) {
 			if registryIdentityKey(r.RegistryURL, r.RegistryRef, r.RegistryPath) != identity {
 				continue
 			}
-			current, found = r, true
-			break
+			current = r
+			matches++
 		}
+		found = matches == 1
+	}
+	if !found && hadPrevious {
+		current, found = uniqueRowByIdentity(m.rows, rowSelectionIdentity(previous))
 	}
 	if !found {
 		m.detailKey = ""
@@ -1560,6 +1622,12 @@ func (m Model) rowToggleEligibility(r row) toggleDenial {
 	if m.configInvalid {
 		return toggleConfigInvalid
 	}
+	return rowToggleDenial(r)
+}
+
+// rowToggleDenial evaluates the guards that belong to the row itself, so
+// hints can follow what the row supports regardless of transient states.
+func rowToggleDenial(r row) toggleDenial {
 	switch {
 	case r.IsMalformed:
 		return toggleMalformed
@@ -2166,6 +2234,13 @@ func (m *Model) clampListOffset() {
 	listWidth, _ := paneWidths(m.width)
 	visibleHeight := m.listVisibleHeight()
 	heights := m.listHeightOffsets(listWidth)
+	// When every row fits, show the whole list. Keeping a reload anchor's
+	// screen line would otherwise hide rows above blank space; overflowing
+	// lists keep the anchored line.
+	if heights[len(m.flatItems)] <= visibleHeight {
+		m.listOffset = 0
+		return
+	}
 	cursorBottom := heights[m.cursor+1]
 	if cursorBottom-heights[m.listOffset] <= visibleHeight {
 		return

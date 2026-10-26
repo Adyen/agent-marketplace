@@ -10,9 +10,8 @@ function deploymentBase(name: string, value: string): string {
   return value
 }
 
-// The hosting target is deliberately undecided. SITE_BASE lets a project-path
-// deployment (e.g. GitHub Pages at /agent-marketplace/) be selected at build
-// time without touching any link in the content.
+// Pages supplies SITE_BASE for its project URL or custom domain; standalone
+// builds can select the same deployment path without changing content links.
 const base = docsOnly ? '/docs/' : deploymentBase('SITE_BASE', process.env.SITE_BASE ?? '/')
 const marketplaceBase = docsOnly ? deploymentBase('MARKETPLACE_BASE', process.env.MARKETPLACE_BASE ?? '/') : '/'
 const DOCS_PATH = docsOnly ? '/' : PUBLIC_DOCS_PATH
@@ -48,6 +47,11 @@ export default defineConfig({
     ['link', { rel: 'icon', type: 'image/png', sizes: '64x64', href: publicAsset('brand/favicon-64x64.png') }],
     ['meta', { property: 'og:type', content: 'website' }],
     ['meta', { property: 'og:site_name', content: 'agent-marketplace' }],
+    ['meta', { property: 'og:image', content: 'https://agent-marketplace.io' + publicAsset('brand/social-preview.png') }],
+    ['meta', { property: 'og:image:type', content: 'image/png' }],
+    ['meta', { property: 'og:image:width', content: '960' }],
+    ['meta', { property: 'og:image:height', content: '960' }],
+    ['meta', { property: 'og:image:alt', content: 'agent-marketplace logo' }],
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }]
   ],
 
@@ -262,7 +266,8 @@ export default defineConfig({
               items: [
                 { text: 'User journeys', link: `${DOCS_PATH}explanation/user-journeys` },
                 { text: 'How agent-marketplace works', link: `${DOCS_PATH}explanation/how-agent-marketplace-works` },
-                { text: 'Sources and resources', link: `${DOCS_PATH}explanation/sources-and-resources` }
+                { text: 'Sources and resources', link: `${DOCS_PATH}explanation/sources-and-resources` },
+                { text: 'Compared with APM and skills.sh', link: `${DOCS_PATH}explanation/compared-with-other-tools` }
               ]
             },
             {

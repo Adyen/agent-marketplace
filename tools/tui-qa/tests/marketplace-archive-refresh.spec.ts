@@ -25,7 +25,9 @@ journey.test("update refreshes drifted marketplace archive evidence with a visib
   assert.ok(!lockedBefore.includes(fixture.marketplaceDriftedArchiveDigest), `user lock already carried the drifted digest:\n${lockedBefore}`);
 
   await step("update refreshes and reports the drifted archive evidence", () => terminal.write("u"), async () => {
-    await locate(terminal, /Update complete/).unique().expect();
+    // The update acquires from the Marketplace stub, which can take longer
+    // than the default wait; its 2-second toast then confirms the outcome.
+    await locate(terminal, /Update complete/).unique().expect({ timeout: 30_000 });
     await locate(terminal, "⚠ 1 warnings").expect();
   });
 

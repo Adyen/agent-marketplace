@@ -37,6 +37,12 @@ journey.test("keeps the v4 mutation error visible at narrow widths", async (term
     await locate(terminal, /! 1 errors/).unique().expect();
     await locate(terminal, "e errors").expect();
   });
+  await step("catalog remediation is visible in the diagnostic", () => terminal.write("e"), async () => {
+    await locate(terminal, "unsupported").expect();
+  });
+  await step("close diagnostic before narrowing", () => terminal.write("e"), async () => {
+    await locate(terminal, "e errors").expect();
+  });
   await step("narrow error footer keeps recovery actions", () => terminal.resize(50, 12), async () => {
     await locate(terminal, /! 1 errors/).unique().expect();
     await locate(terminal, "e errors").expect();
@@ -50,6 +56,7 @@ journey.test("keeps the v4 mutation error visible at narrow widths", async (term
   await step("open complete error diagnostic", () => terminal.write("e"), async () => {
     await locate(terminal, "Errors (1)").unique().expect();
     await locate(terminal, "unknown_field").expect();
+    await locate(terminal, "top-level").expect();
     await locate(terminal, "esc/e close").expect();
   });
   assert.equal(fs.readFileSync(globalConfig, "utf8"), invalidConfig);

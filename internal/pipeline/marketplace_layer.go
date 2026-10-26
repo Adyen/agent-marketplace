@@ -460,11 +460,12 @@ func marketplaceLayerReadAssertions(ec config.EffectiveConfig, configEdit Staged
 	return reads, nil
 }
 
-func ToggleMarketplacePin(ctx context.Context, repoRoot, localConfigDir, configPath string, source config.Source, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, enable bool) error {
+func ToggleMarketplacePin(ctx context.Context, repoRoot, localConfigDir, configPath string, source config.Source, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, enable bool) (SyncResult, error) {
 	ws, err := NewWorkspace(repoRoot, localConfigDir)
 	if err != nil {
-		return err
+		return SyncResult{}, err
 	}
+	var synced SyncResult
 	_, err = MutateMarketplaceLayer(ctx, repoRoot, localConfigDir, configPath, source, func(m *MarketplaceLayerMutation) error {
 		if enable {
 			pin := pin
@@ -474,7 +475,9 @@ func ToggleMarketplacePin(ctx context.Context, repoRoot, localConfigDir, configP
 		}
 		return m.RemoveDirectPin(entry, pin)
 	}, func() ([]error, error) {
-		return nil, silentSync(ctx, ws, withMarketplaceMode(resolver.MarketplaceResolveModeCachedNoFetch))
+		var syncErr error
+		synced, syncErr = silentSyncCollect(ctx, ws, withMarketplaceMode(resolver.MarketplaceResolveModeCachedNoFetch))
+		return synced.Warnings, syncErr
 	})
-	return err
+	return synced, err
 }

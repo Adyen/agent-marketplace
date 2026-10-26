@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -111,6 +112,9 @@ func newRootCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
+	rootCmd.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		return terminalSafeUsageError(err, cmd.CommandPath())
+	})
 
 	rootCmd.Flags().BoolVar(&showVersion, "version", false, "Print the agent-marketplace version")
 	rootCmd.Flags().BoolVar(&noTUI, "no-tui", false, "Skip the interactive TUI and print help instead")
@@ -402,7 +406,7 @@ func newRemoveCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&scopeStr, "scope", "", "Config layer to write to: repo (default), user, or local")
+	cmd.Flags().StringVar(&scopeStr, "scope", "", "Config layer to write to: repo, user, or local (default: inferred from where the resource is selected; --from defaults to repo)")
 	cmd.Flags().StringVar(&kindFilter, "kind", "", "Resource kind for name disambiguation: skill, command, subagent, hook, mcp, or collection")
 	cmd.Flags().StringVar(&fromURL, "from", "", "Remove from an ad-hoc registry (git URL or GitLab/GitHub web URL), or a named resource from a configured Marketplace endpoint URL")
 	cmd.Flags().StringVar(&fromRef, "ref", "", "Git ref for --from registry; requires --from")
@@ -430,11 +434,18 @@ func runRemove(ctx context.Context, out io.Writer, skillName string, scope pipel
 		DependencyReconcile: reconcileCommandDependencies,
 		CleanupDependencies: reconcileCleanupDependencies,
 	})
-	if err != nil {
+	if err != nil && result == nil {
 		return err
 	}
+	removeErr := err
+	if err := writeHookChanges(out, result.Report, false); err != nil {
+		return errors.Join(removeErr, err)
+	}
 	if err := writeGroupedWarnings(out, result.Warnings, false); err != nil {
-		return err
+		return errors.Join(removeErr, err)
+	}
+	if removeErr != nil {
+		return removeErr
 	}
 
 	if result.IsCollection {

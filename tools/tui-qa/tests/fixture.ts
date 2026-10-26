@@ -13,6 +13,7 @@ const betaSkillContent = "---\nname: beta-skill\ndescription: Synced beta fixtur
 export type OrganizationFixtureMode = "missing-lock" | "published-lock";
 
 export interface FixtureOptions {
+  marketplaceAcquisitionGate?: () => Promise<void>;
   directorySource?: boolean;
   overflowStatus?: boolean;
   // Installs a v4 organization layer at <root>/etc/agent-marketplace that
@@ -32,6 +33,18 @@ export interface FixtureOptions {
   // anything, and lets a search find its installable skill. "findings"
   // assesses that skill with a warning so installing it requires consent.
   marketplaceDiscovery?: "plain" | "findings";
+  // Seeds the Git registry with collection "starter", whose only member is
+  // alpha-skill.
+  collection?: boolean;
+  // Seeds the Git registry with hostile-skill, whose description and body
+  // carry terminal control bytes, and a skill folder whose name carries an
+  // erase-display sequence, which makes it malformed.
+  hostileMetadata?: boolean;
+  // Writes the Git registry URL with a trailing slash, as users may.
+  trailingSlashRegistry?: boolean;
+  // Adds commands/broken-command.md with unparseable frontmatter next to the
+  // skills/ folder. Only a directorySource root discovers commands there.
+  malformedCommand?: boolean;
 }
 
 export interface Fixture {
@@ -110,6 +123,7 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
     let marketplaceDelayedAcquisitionCount: (() => number) | undefined;
     if (options.organization || options.userMarketplaceDrift || options.marketplaceDiscovery) {
       stub = await createMarketplaceStub({
+        acquisitionGate: options.marketplaceAcquisitionGate,
         mismatchedPlaceholderArchive: options.mismatchedPlaceholderArchive,
         searchableInstall: Boolean(options.marketplaceDiscovery),
         installFindings: options.marketplaceDiscovery === "findings"
@@ -142,6 +156,20 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
     const source = path.join(registries, "source");
     write(path.join(source, "skills", "alpha-skill", "SKILL.md"), alphaSkillContent);
     write(path.join(source, "skills", "beta-skill", "SKILL.md"), betaSkillContent);
+    if (options.malformedCommand) {
+      if (!options.directorySource) throw new Error("malformedCommand needs directorySource, whose root discovers commands/");
+      write(path.join(source, "commands", "broken-command.md"), "---\ndescription: [unterminated\n---\n\nBroken command\n");
+    }
+    if (options.hostileMetadata) {
+      write(
+        path.join(source, "skills", "hostile-skill", "SKILL.md"),
+        '---\nname: hostile-skill\ndescription: "Hostile \\e]0;PWNED\\a\\e[2J tail"\n---\n\n# Hostile \x1b[31mred\x1b[0m\n'
+      );
+      write(path.join(source, "skills", "evil\x1b[2Jname", "SKILL.md"), "---\nname: evil\x1b[2Jname\ndescription: Evil name\n---\n");
+    }
+    if (options.collection) {
+      write(path.join(source, "skills", "collections", "starter", "COLLECTION.yaml"), "name: starter\nversion: 1.0.0\nresources:\n  - name: alpha-skill\n    kind: skill\n");
+    }
     const overflowSkills = options.overflowStatus ? Array.from({ length: 30 }, (_, index) => `skill-${String(index).padStart(2, "0")}`) : [];
     for (const name of overflowSkills) {
       write(path.join(source, "skills", name, "SKILL.md"), `---\nname: ${name}\ndescription: Status overflow fixture\n---\n\n# ${name}\n`);
@@ -158,7 +186,7 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       git(source, env, ["-c", "user.name=TUI QA", "-c", "user.email=tui-qa@example.invalid", "commit", "--quiet", "-m", "Seed TUI fixture"]);
       const bareRegistry = path.join(registries, "fixture.git");
       git(registries, env, ["clone", "--quiet", "--bare", source, bareRegistry]);
-      registryURL = pathToFileURL(bareRegistry).href;
+      registryURL = `${pathToFileURL(bareRegistry).href}${options.trailingSlashRegistry ? "/" : ""}`;
       expectedRepoConfig = `apiVersion: agent-marketplace/v4\nsources:\n  fixture:\n    git: ${registryURL}\n    ref: main\n    path: skills\nresources:\n  fixture:\n    include:\n      - skill/beta-skill\n${overflowSkills.map((name) => `      - skill/${name}\n`).join("")}`;
       if (options.userMarketplaceDrift && stub) {
         write(path.join(home, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources:\n  user-market:\n    marketplace: ${stub.url}\nresources:\n  user-market:\n    include:\n      - tools/skill/org-review\n    required: true\n`);

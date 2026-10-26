@@ -34,7 +34,7 @@ func TestInstallAllRegistryTargetsOnePhysicalSource(t *testing.T) {
 				user := env.ReadFile("/root/.agents/config.yaml")
 
 				for _, spelling := range []string{url, strings.TrimSuffix(url, ".git"), url + "/"} {
-					result := env.RunAM("install", "--all", "--kind", "command", "--registry", spelling)
+					result := env.RunAM("install", "--scope", "repo", "--all", "--kind", "command", "--registry", spelling)
 					if result.ExitCode != 0 || !strings.Contains(result.Combined, "Installed cmd-one") {
 						t.Fatalf("install --all --registry %s failed (exit %d):\n%s", spelling, result.ExitCode, result.Combined)
 					}

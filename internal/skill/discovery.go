@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 // discoveredEntry represents a skill candidate found during directory walk.
@@ -60,6 +62,7 @@ func DiscoverSkills(registryDir string) ([]Skill, []MalformedSkill, error) {
 			malformed = append(malformed, MalformedSkill{
 				DirName: entry.name,
 				Path:    entry.skillPath,
+				Kind:    ir.KindSkill.String(),
 				Error:   err,
 			})
 			continue

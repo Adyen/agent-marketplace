@@ -179,6 +179,20 @@ func prepareNativeHookProjectionSource(res resolver.ResolvedArtifact, hook *ir.H
 		if err != nil {
 			return nil, "", nil, err
 		}
+		if captured != nil && support != nil {
+			checked, checkErr := checkHookSupportReferenceRewrites(captured.Command, support, hookSupportBundlePrefixDir(projection, definitionDir))
+			if checkErr != nil {
+				return nil, "", nil, checkErr
+			}
+			if checked.Missing {
+				checked.Command = captured.Command
+			}
+			if checked.Command != captured.Command {
+				clone := *captured
+				clone.Command = checked.Command
+				captured = &clone
+			}
+		}
 	}
 	return captured, digest, support, nil
 }

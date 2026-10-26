@@ -238,6 +238,7 @@ context: |
 rules:
   proposal:
     - "Link no bead, Task-SME contract, or other tracker; changes are independent of task tracking."
+    - "Every proposal carries a `## Release note` section whose body is 1-3 user-facing sentences, or text starting `Breaking:` with what breaks and the upgrade steps, or `none — <reason>` for changes users will not notice."
   specs:
     - "Specify only behavior observable by users or downstream systems: CLI output and exit codes, configuration and lockfile compatibility, materialized files, shared-file ownership, diagnostic codes, and wire formats. Never specify package layout, function names, or migration history."
     - "Use the domain language from the project context verbatim."

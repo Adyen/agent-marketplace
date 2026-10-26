@@ -36,7 +36,7 @@ sources:
 `)
 		withWorkingDir(t, repoRoot)
 
-		if out, err := executeCommand("install", "feature-only"); err == nil || !strings.Contains(err.Error(), "not found in configured registries") {
+		if out, err := executeCommand("install", "--scope", "repo", "feature-only"); err == nil || !strings.Contains(err.Error(), "not found in configured registries") {
 			t.Fatalf("expected feature-only to fail on main ref, err=%v output=%s", err, out)
 		}
 
@@ -45,7 +45,7 @@ apiVersion: agent-marketplace/v4
 sources:
   hosted: {git: file://`+origin+`, ref: feature/ref-test}
 `)
-		if out, err := executeCommand("install", "feature-only"); err != nil {
+		if out, err := executeCommand("install", "--scope", "repo", "feature-only"); err != nil {
 			t.Fatalf("expected feature-only to install on feature ref: %v\n%s", err, out)
 		}
 		assertFactorySkillExists(t, repoRoot, "feature-only")
@@ -76,7 +76,7 @@ sources:
 		// With kind-scoped selectors, install writes to the specific registry
 		// that provides the skill. alpha-tool exists in registry-a only, so
 		// install succeeds and adds it to that entry's skills list.
-		out, err := executeCommand("install", "alpha-tool")
+		out, err := executeCommand("install", "--scope", "repo", "alpha-tool")
 		if err != nil {
 			t.Fatalf("expected install to succeed when skill is found in at least one registry: %v\n%s", err, out)
 		}

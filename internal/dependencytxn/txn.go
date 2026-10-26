@@ -71,13 +71,24 @@ func canonicalizeStatePath(name string) (string, error) {
 }
 
 var (
-	ErrGenerationConflict = errors.New("dependency transaction: generation conflict")
-	ErrUnsafePath         = errors.New("dependency transaction: unsafe path")
-	ErrRecoveryBlocked    = errors.New("dependency transaction: recovery blocked")
-	ErrRecoveryRequired   = errors.New("dependency.recovery-required: pending transaction; run sync or lock without --locked, --offline, or --check to recover")
-	ErrLockTimeout        = errors.New("dependency transaction: lock timeout")
-	ErrCommitScopeClosed  = errors.New("dependency transaction: commit scope is closed")
+	ErrGenerationConflict       = errors.New("dependency transaction: generation conflict")
+	ErrUnsafePath               = errors.New("dependency transaction: unsafe path")
+	ErrRecoveryBlocked          = errors.New("dependency transaction: recovery blocked")
+	ErrRecoveryRequired   error = codedSentinel{
+		code:    "dependency.recovery-required",
+		message: "dependency.recovery-required: pending transaction; run sync or lock without --locked, --offline, or --check to recover",
+	}
+	ErrLockTimeout       = errors.New("dependency transaction: lock timeout")
+	ErrCommitScopeClosed = errors.New("dependency transaction: commit scope is closed")
 )
+
+type codedSentinel struct {
+	code    string
+	message string
+}
+
+func (e codedSentinel) Error() string          { return e.message }
+func (e codedSentinel) DiagnosticCode() string { return e.code }
 
 type Generation struct {
 	Exists bool

@@ -172,7 +172,7 @@ func TestAdHocInstallHonorsExactDiscovery(t *testing.T) {
 	beforeConfig := fixture.env.ReadFile("/workspace/.agents/config.yaml")
 	beforeLock := fixture.env.ReadFile("/workspace/.agents/lock.yaml")
 	fixture.replaceSkills(t, "move main", Skill{Name: "review", Description: "Changed version B"}, Skill{Name: "new", Description: "Only in B"})
-	result := fixture.env.RunAM("install", "new", "--from", fixture.url, "--ref", "main")
+	result := fixture.env.RunAM("install", "--scope", "repo", "new", "--from", fixture.url, "--ref", "main")
 	if result.ExitCode == 0 || !strings.Contains(result.Combined, "not found") {
 		t.Fatalf("mutable-only resource was not safely refused: %s", result.Combined)
 	}
@@ -182,7 +182,7 @@ func TestAdHocInstallHonorsExactDiscovery(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(fixture.env.workspace, ".factory", "skills", "new")); !os.IsNotExist(err) {
 		t.Fatalf("mutable-only output exists: %v", err)
 	}
-	result = fixture.env.RunAM("install", "review", "--from", fixture.url, "--ref", "main")
+	result = fixture.env.RunAM("install", "--scope", "repo", "review", "--from", fixture.url, "--ref", "main")
 	if result.ExitCode != 0 {
 		t.Fatalf("locked resource install: %s", result.Combined)
 	}
@@ -212,7 +212,7 @@ func TestConfiguredInstallCopiesProviderPinAcrossScopes(t *testing.T) {
 		t.Fatal("user fixture has no exact commit")
 	}
 	fixture.replaceSkills(t, "move main", Skill{Name: "review", Description: "Unselected version B"})
-	if result := fixture.env.RunAM("install", "review"); result.ExitCode != 0 {
+	if result := fixture.env.RunAM("install", "--scope", "repo", "review"); result.ExitCode != 0 {
 		t.Fatalf("configured install: %s", result.Combined)
 	}
 	fixture.env.AssertFileContains("/workspace/.agents/lock.yaml", commitLine)

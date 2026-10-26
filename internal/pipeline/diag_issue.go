@@ -64,6 +64,11 @@ type diagIssue struct {
 	key string
 }
 
+type consumerDiagnosticError string
+
+func (e consumerDiagnosticError) Error() string          { return string(e) }
+func (e consumerDiagnosticError) DiagnosticCode() string { return string(e) }
+
 // newDiagIssue promotes one diagnostic. It runs once per entry of
 // materialize.Report.Diags on every sync, so the source location is formatted
 // ONCE and threaded into the message rather than formatted again there

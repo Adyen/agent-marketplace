@@ -118,4 +118,7 @@ func assertVersionRefusalHint(t *testing.T, output, command string) {
 	if strings.Count(output, versionRefusalGuide) != 1 {
 		t.Fatalf("refusal guidance appeared %d times:\n%s", strings.Count(output, versionRefusalGuide), output)
 	}
+	if !strings.Contains(output, "hint: ") || strings.Contains(output, "  → "+versionRefusalGuide) {
+		t.Fatalf("refusal guidance is not on its single hint line:\n%s", output)
+	}
 }

@@ -14,7 +14,12 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
-var ErrGitAuthConfigUntrusted = errors.New("git.auth-config-untrusted: authentication configuration must use trusted system/global files and ordinary include chains; conditional includes and repository-local authentication settings are unsupported")
+type gitAuthConfigError string
+
+func (e gitAuthConfigError) Error() string          { return string(e) }
+func (e gitAuthConfigError) DiagnosticCode() string { return "git.auth-config-untrusted" }
+
+var ErrGitAuthConfigUntrusted error = gitAuthConfigError("git.auth-config-untrusted: authentication configuration must use trusted system/global files and ordinary include chains; conditional includes and repository-local authentication settings are unsupported")
 
 func gitAcquisition(args []string) (string, bool) {
 	for len(args) >= 2 && args[0] == "-c" {
@@ -47,6 +52,8 @@ func (e *gitTransportFailure) Error() string {
 func (e *gitTransportFailure) Unwrap() error {
 	return e.cause
 }
+
+func (e *gitTransportFailure) DiagnosticCode() string { return "git.auth-transport-failed" }
 
 func isGitTransportFailure(err error) bool {
 	var failure *gitTransportFailure

@@ -91,8 +91,11 @@ func runUpdate(ctx context.Context, out io.Writer, bump, verbose bool, selected 
 		}
 		return updateErr
 	}
-	if err := writeGroupedWarnings(out, warnings, false); err != nil {
-		return err
+	if err := writeHookChanges(out, result.Report, false); err != nil {
+		return errors.Join(updateErr, err)
+	}
+	if err := writeGroupedWarnings(out, dedupIssues(append(warnings, result.Warnings...)), false); err != nil {
+		return errors.Join(updateErr, err)
 	}
 	for _, notice := range targetResult.notices {
 		if _, err := fmt.Fprintln(out, notice); err != nil {

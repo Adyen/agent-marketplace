@@ -19,6 +19,7 @@ const additionalItems = ref<ResourceListItem[]>([])
 const loadingMore = ref(false)
 const loadMoreError = ref<unknown>(null)
 const loadMoreTrigger = ref<HTMLElement | null>(null)
+const searchInput = useTemplateRef('searchInput')
 let syncingDraft = false
 let searchGeneration = 0
 let searchTimer: ReturnType<typeof setTimeout> | undefined
@@ -83,7 +84,29 @@ watch(loadMoreTrigger, (element, _previous, onCleanup) => {
   observer.observe(element)
   onCleanup(() => observer.disconnect())
 })
-onBeforeUnmount(() => clearTimeout(searchTimer))
+const NON_TEXT_INPUT_TYPES = new Set(['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit'])
+
+onMounted(() => window.addEventListener('keydown', focusSearchOnSlash))
+onBeforeUnmount(() => {
+  clearTimeout(searchTimer)
+  window.removeEventListener('keydown', focusSearchOnSlash)
+})
+
+function focusSearch() {
+  searchInput.value?.inputRef?.focus()
+}
+
+function acceptsText(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false
+  if (target.isContentEditable || target instanceof HTMLTextAreaElement) return true
+  return target instanceof HTMLInputElement && !NON_TEXT_INPUT_TYPES.has(target.type)
+}
+
+function focusSearchOnSlash(event: KeyboardEvent) {
+  if (event.key !== '/' || event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey || acceptsText(event.target)) return
+  event.preventDefault()
+  focusSearch()
+}
 
 function applyDraft() {
   if (syncingDraft) return
@@ -167,11 +190,6 @@ useHead({
           <h1><span class="am-brand-slash am-brand-slash--title" aria-hidden="true">/</span>{{ metadata?.instance_id ?? 'Agent Marketplace' }}</h1>
           <div class="marketplace-intro__description">
             <p>Browse resources for AI agents, with every revision pinned and analyzed before publication.</p>
-            <p>
-              To use a resource, install the
-              <a href="/">agent-marketplace</a>
-              CLI, then copy and run its install command.
-            </p>
           </div>
         </div>
       </section>
@@ -208,15 +226,21 @@ useHead({
                   <label for="search-query" class="sr-only">Search</label>
                   <UInput
                     id="search-query"
+                    ref="searchInput"
                     v-model="draft.q"
                     size="lg"
                     placeholder="Search resources..."
                     autocomplete="off"
+                    aria-keyshortcuts="/"
                     icon="i-lucide-search"
                     color="primary"
-                    class="w-full"
+                    class="catalog-search-input w-full"
                     :ui="{ base: 'h-10 focus-visible:ring-primary' }"
-                  />
+                  >
+                    <template #trailing>
+                      <UKbd value="/" aria-hidden="true" />
+                    </template>
+                  </UInput>
                   <UButton
                     type="button"
                     size="sm"
@@ -400,7 +424,7 @@ useHead({
 <style scoped>
 .marketplace-home {
   display: flex;
-  min-height: calc(100vh - 4rem);
+  min-height: calc(100vh - var(--am-nav-height));
   flex-direction: column;
   background: var(--am-color-bg-canvas);
   color: var(--am-color-text-primary);
@@ -413,57 +437,42 @@ useHead({
 }
 
 .marketplace-intro {
-  border-bottom: 1px solid var(--am-color-border-default);
+  border-bottom: var(--am-marketplace-rule);
   background: var(--am-color-bg-canvas);
 }
 
 .marketplace-intro__inner {
-  width: 100%;
-  max-width: 72rem;
+  width: min(calc(100% - 2 * var(--am-page-gutter)), var(--am-content-max));
+  max-width: none;
   margin: 0 auto;
-  padding: 1rem;
+  padding: 1.5rem 0 1rem;
 }
 
 .marketplace-intro h1 {
-  font-size: clamp(1.85rem, 4vw, 2.4rem);
-  font-weight: 750;
-  letter-spacing: -0.035em;
-  line-height: 1.12;
+  font: var(--am-type-page-title);
 }
 
 .marketplace-intro__description {
-  margin-top: 0.5rem;
+  max-width: none;
+  margin-top: 0.75rem;
   color: var(--am-color-text-secondary);
-  font-size: 1rem;
-  line-height: 1.5;
+  font: var(--am-type-page-introduction);
 }
 
 .marketplace-intro__description p {
-  display: inline;
-}
-
-.marketplace-intro__description p + p {
-  margin-left: 0.25rem;
-}
-
-.marketplace-intro__description a {
-  color: var(--am-color-action-primary);
-  font-weight: 500;
-  text-decoration: underline;
-  text-underline-offset: 4px;
-  white-space: nowrap;
+  display: block;
 }
 
 .marketplace-catalog {
   flex: 1;
-  background: var(--am-color-bg-surface);
+  background: var(--am-color-bg-canvas);
 }
 
 .marketplace-catalog__inner {
-  width: 100%;
-  max-width: 72rem;
+  width: min(calc(100% - 2 * var(--am-page-gutter)), var(--am-content-max));
+  max-width: none;
   margin: 0 auto;
-  padding: 0 1rem;
+  padding: 0;
 }
 
 .marketplace-catalog__layout,
@@ -476,7 +485,7 @@ useHead({
 }
 
 .catalog-results {
-  padding-top: 1.25rem;
+  padding-top: 1.5rem;
 }
 
 .catalog-search {
@@ -485,8 +494,13 @@ useHead({
   gap: 0.65rem;
 }
 
+.catalog-search-input :deep(input) {
+  font: var(--am-type-control);
+}
+
 .mobile-filter-toggle {
   min-height: 2.5rem;
+  font: var(--am-type-button);
   cursor: pointer;
 }
 
@@ -495,7 +509,7 @@ useHead({
   margin-top: 0.8rem;
   padding: 1rem;
   border: 1px solid var(--am-color-border-default);
-  border-radius: 0.55rem;
+  border-radius: var(--am-radius-control);
   background: var(--am-color-bg-canvas);
 }
 
@@ -507,15 +521,15 @@ useHead({
   display: flex;
   align-items: baseline;
   gap: 8px;
-  margin-top: 1rem;
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: var(--am-marketplace-rule);
 }
 
 .catalog-results__header h2 {
   width: fit-content;
   border-radius: 0.2rem;
-  font-size: 1.35rem;
-  font-weight: 750;
-  letter-spacing: -0.025em;
+  font: var(--am-type-results-heading);
 }
 
 .catalog-results__header h2:focus-visible {
@@ -526,8 +540,7 @@ useHead({
 .catalog-results__header p {
   margin: 0;
   color: var(--am-color-text-muted);
-  font-size: 0.8rem;
-  font-weight: 550;
+  font: var(--am-type-metadata);
 }
 
 .catalog-results__updating {
@@ -554,11 +567,10 @@ useHead({
   gap: 5px;
   padding: 3px 8px 3px 10px;
   border: 1px solid var(--am-color-border-default);
-  border-radius: 999px;
+  border-radius: var(--am-radius-mark);
   background: var(--am-color-bg-subtle);
   color: var(--am-color-text-secondary);
-  font-size: 13px;
-  font-weight: 500;
+  font: var(--am-type-button);
   cursor: pointer;
 }
 
@@ -581,11 +593,13 @@ useHead({
 .clear-filters {
   min-height: 30px;
   padding: 3px 6px;
+  font: var(--am-type-button);
   cursor: pointer;
 }
 
 .catalog-search-content {
-  margin-top: 14px;
+  margin-top: 0;
+  border-top: var(--am-marketplace-rule);
 }
 
 .catalog-stream-status {
@@ -600,7 +614,7 @@ useHead({
 .catalog-stream-complete {
   padding: 1.25rem 0;
   color: var(--am-color-text-muted);
-  font-size: 0.8rem;
+  font: var(--am-type-metadata);
   text-align: center;
 }
 
@@ -615,14 +629,14 @@ useHead({
 
 .marketplace-footer > div {
   display: flex;
-  width: 100%;
-  max-width: 72rem;
+  width: min(calc(100% - 2 * var(--am-page-gutter)), var(--am-content-max));
+  max-width: none;
   flex-direction: column;
   gap: 0.5rem;
   margin: 0 auto;
-  padding: 1.25rem 1rem;
+  padding: 1.5rem 0;
   color: var(--am-color-text-muted);
-  font-family: var(--font-sans);
+  font-family: var(--am-font-sans);
   font-size: var(--am-text-body-sm);
   font-weight: var(--am-font-medium);
 }
@@ -643,42 +657,34 @@ useHead({
 }
 
 @media (min-width: 40rem) {
-  .marketplace-intro__inner,
-  .marketplace-catalog__inner {
-    padding-right: 1.5rem;
-    padding-left: 1.5rem;
-  }
-
   .marketplace-footer > div {
     flex-direction: row;
     align-items: center;
     justify-content: space-between;
-    padding-right: 1.5rem;
-    padding-left: 1.5rem;
   }
 }
 
 @media (min-width: 48rem) {
   .marketplace-catalog__layout {
     display: grid;
-    grid-template-columns: 13.5rem minmax(0, 1fr);
-    gap: 1.5rem;
+    grid-template-columns: 14.5rem minmax(0, 1fr);
+    gap: 2rem;
   }
 
   .catalog-sidebar {
     display: block;
     min-width: 0;
-    padding: 1.55rem 1rem 2rem 0;
+    padding: 1.75rem 2rem 2rem 0;
     border-right: 1px solid var(--am-color-border-default);
   }
 
   .catalog-sidebar__sticky {
     position: sticky;
-    top: 88px;
+    top: calc(var(--am-nav-height) + 1.75rem);
   }
 
   .catalog-sidebar :deep(.catalog-filter-rail[data-expanded="true"]) {
-    max-height: max(0px, calc(100dvh - 152px));
+    max-height: max(0px, calc(100dvh - var(--am-nav-height) - 6rem));
     overflow-y: auto;
     overscroll-behavior: contain;
     scrollbar-color: transparent transparent;
@@ -706,31 +712,28 @@ useHead({
 
   .catalog-sidebar h2 {
     margin-bottom: 1.3rem;
-    font-size: 0.8rem;
-    font-weight: 800;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
+    font: var(--am-type-filter-heading);
   }
 
   .catalog-results {
-    padding-top: 1.55rem;
+    padding-top: 1.75rem;
   }
 
   .catalog-results__controls {
     position: sticky;
-    top: 88px;
+    top: calc(var(--am-nav-height) + 1.75rem);
     z-index: 20;
     display: flow-root;
     isolation: isolate;
-    padding-bottom: 14px;
-    background: var(--am-color-bg-surface);
+    padding-bottom: 1rem;
+    background: var(--am-color-bg-canvas);
   }
 
   .catalog-results__controls::before {
     position: absolute;
     z-index: -1;
-    inset: -24px 0 0;
-    background: var(--am-color-bg-surface);
+    inset: -1.75rem 0 0;
+    background: var(--am-color-bg-canvas);
     content: "";
   }
 
@@ -750,8 +753,8 @@ useHead({
 
 @media (min-width: 64rem) {
   .marketplace-catalog__layout {
-    grid-template-columns: 15rem minmax(0, 1fr);
-    gap: 1.5rem;
+    grid-template-columns: 16rem minmax(0, 1fr);
+    gap: 2.5rem;
   }
 }
 </style>

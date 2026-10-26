@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/remedy"
 	"github.com/Adyen/agent-marketplace/internal/tui"
 )
 
@@ -20,39 +20,107 @@ type terminalSafeError struct {
 func (e terminalSafeError) Error() string { return e.text }
 func (e terminalSafeError) Unwrap() error { return e.err }
 
-// terminalSafeCommandError returns err unchanged unless its text carries
-// terminal controls. Line breaks between joined errors are kept; every other
-// control inside a line becomes a visible escape.
-func terminalSafeCommandError(err error) error {
+type terminalSafeJoinedError struct {
+	err  interface{ Unwrap() []error }
+	text string
+}
+
+func (e terminalSafeJoinedError) Error() string   { return e.text }
+func (e terminalSafeJoinedError) Unwrap() []error { return e.err.Unwrap() }
+
+// terminalSafeCommandError renders every error in the chain with its next step.
+func terminalSafeCommandError(err error, commandPath string) error {
 	if err == nil {
 		return nil
 	}
-	original := fmt.Sprint(err)
-	text := appendV4RemediationHints(err, original)
-	if safe := terminalSafeLines(text); safe != text {
-		text = safe
+	var lines []string
+	hints := make(map[string]struct{})
+	for _, group := range commandErrorGroups(err) {
+		hint := remedy.For(group.err, commandPath)
+		errorLines := group.lines
+		if hint == "" {
+			lines = append(lines, errorLines...)
+			continue
+		}
+		errorLines = withoutRenderedRemediation(errorLines, hint)
+		lines = append(lines, errorLines...)
+		if _, exists := hints[hint]; exists {
+			continue
+		}
+		hints[hint] = struct{}{}
+		lines = append(lines, "hint: "+tui.TerminalSafeLine(hint))
 	}
-	if text != original {
-		return terminalSafeError{err: err, text: text}
+	text := terminalSafeLines(strings.Join(lines, "\n"))
+	if text == "" {
+		text = terminalSafeLines(fmt.Sprint(err))
 	}
-	return err
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		return terminalSafeJoinedError{err: joined, text: text}
+	}
+	return terminalSafeError{err: err, text: text}
 }
 
-func appendV4RemediationHints(err error, text string) string {
-	if validation, ok := err.(*config.V4ValidationError); ok && validation != nil {
-		if hint := validation.Remediation(); hint != "" && !strings.Contains(text, hint) {
-			text += "\n  → " + hint
+type commandErrorGroup struct {
+	err   error
+	lines []string
+}
+
+func commandErrorGroups(err error) []commandErrorGroup {
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		children := joined.Unwrap()
+		childText := make([]string, 0, len(children))
+		for _, child := range children {
+			if child != nil {
+				childText = append(childText, child.Error())
+			}
+		}
+		if err.Error() != strings.Join(childText, "\n") {
+			return []commandErrorGroup{{err: err, lines: strings.Split(err.Error(), "\n")}}
+		}
+		var groups []commandErrorGroup
+		for _, child := range children {
+			groups = append(groups, commandErrorGroups(child)...)
+		}
+		return groups
+	}
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok && wrapped.Unwrap() != nil {
+		child := wrapped.Unwrap()
+		groups := commandErrorGroups(child)
+		outer, inner := err.Error(), child.Error()
+		if prefix, ok := strings.CutSuffix(outer, inner); ok && len(groups) > 0 && len(groups[0].lines) > 0 {
+			groups[0].lines[0] = prefix + groups[0].lines[0]
+			if remediable, ok := err.(interface{ Remediation() string }); ok && strings.TrimSpace(remediable.Remediation()) != "" {
+				groups[0].err = err
+			} else if coded, ok := err.(interface{ DiagnosticCode() string }); ok && coded.DiagnosticCode() != "" {
+				innerCoded, innerOK := groups[0].err.(interface{ DiagnosticCode() string })
+				if !innerOK || innerCoded.DiagnosticCode() == "" {
+					groups[0].err = err
+				}
+			}
+			return groups
 		}
 	}
-	switch wrapped := err.(type) {
-	case interface{ Unwrap() []error }:
-		for _, child := range wrapped.Unwrap() {
-			text = appendV4RemediationHints(child, text)
+	return []commandErrorGroup{{err: err, lines: strings.Split(err.Error(), "\n")}}
+}
+
+func withoutRenderedRemediation(lines []string, hint string) []string {
+	filtered := lines[:0]
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "→ "+hint {
+			continue
 		}
-	case interface{ Unwrap() error }:
-		text = appendV4RemediationHints(wrapped.Unwrap(), text)
+		filtered = append(filtered, line)
 	}
-	return text
+	return filtered
+}
+
+func terminalSafeUsageError(err error, command string) error {
+	if err == nil {
+		return nil
+	}
+	hint := fmt.Sprintf("Run `%s --help` to see this command's usage.", command)
+	text := terminalSafeLines(err.Error()) + "\nhint: " + tui.TerminalSafeLine(hint)
+	return terminalSafeError{err: err, text: text}
 }
 
 func terminalSafeLines(text string) string {
@@ -63,16 +131,19 @@ func terminalSafeLines(text string) string {
 	return strings.Join(lines, "\n")
 }
 
-// guardCommandErrors routes every error returned by the command tree's hooks
-// through terminalSafeCommandError before Cobra prints it as "Error: ...".
+// guardCommandErrors routes every command-hook error through the shared hint renderer.
 func guardCommandErrors(cmd *cobra.Command) {
 	for _, hook := range []*func(*cobra.Command, []string) error{&cmd.PersistentPreRunE, &cmd.PreRunE, &cmd.RunE, &cmd.PostRunE, &cmd.PersistentPostRunE} {
 		if run := *hook; run != nil {
-			*hook = func(c *cobra.Command, args []string) error { return terminalSafeCommandError(run(c, args)) }
+			*hook = func(c *cobra.Command, args []string) error {
+				return terminalSafeCommandError(run(c, args), c.CommandPath())
+			}
 		}
 	}
 	if validate := cmd.Args; validate != nil {
-		cmd.Args = func(c *cobra.Command, args []string) error { return terminalSafeCommandError(validate(c, args)) }
+		cmd.Args = func(c *cobra.Command, args []string) error {
+			return terminalSafeUsageError(validate(c, args), c.CommandPath())
+		}
 	}
 	for _, child := range cmd.Commands() {
 		guardCommandErrors(child)
