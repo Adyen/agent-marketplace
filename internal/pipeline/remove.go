@@ -61,10 +61,12 @@ type RemoveOptions struct {
 	configStaging       *configStagingManager
 	workspace           *Workspace
 	warningSink         *[]error
+	reportSink          **materialize.Report
 }
 
 // RemoveResult holds the outcome of a remove operation.
 type RemoveResult struct {
+	Report            *materialize.Report
 	RemovedName       string
 	IsCollection      bool
 	CollectionVia     string // non-empty when a collection member was excluded
@@ -101,16 +103,21 @@ func syncAfterRemove(ctx context.Context, opts RemoveOptions, extra ...silentSyn
 		}
 		extra = append(extra, withDependencyReconciler(opts.DependencyReconcile), withConfigStaging(opts.configStaging))
 	}
-	warnings, err := silentSyncCollect(ctx, ws, extra...)
+	synced, err := silentSyncCollect(ctx, ws, extra...)
+	if opts.reportSink != nil {
+		*opts.reportSink = synced.Report
+	}
 	if opts.warningSink != nil {
-		*opts.warningSink = append(*opts.warningSink, warnings...)
+		*opts.warningSink = append(*opts.warningSink, synced.Warnings...)
 	}
 	return err
 }
 
 func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retErr error) {
 	var warnings []error
+	var report *materialize.Report
 	opts.warningSink = &warnings
+	opts.reportSink = &report
 	ws, err := workspaceForRoots(opts.RepoRoot, "")
 	if err != nil {
 		return nil, err
@@ -123,8 +130,12 @@ func Remove(ctx context.Context, opts RemoveOptions) (result *RemoveResult, retE
 	}
 	opts.workspace = &ws
 	defer func() {
+		if result == nil && report != nil {
+			result = &RemoveResult{}
+		}
 		if result != nil {
 			result.Warnings = warnings
+			result.Report = report
 		}
 	}()
 	if opts.DependencyReconcile == nil && materialize.HasActiveNativeHooks(ws.MaterializeRoot()) {

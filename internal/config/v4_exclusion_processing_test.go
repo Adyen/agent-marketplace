@@ -141,7 +141,7 @@ func replayV4Exclusions(group V4ResourceGroup) []string {
 			continue
 		}
 		// An exact exclusion superseded by a later include is no longer active.
-		_, resourceName := v4ExclusionKindName(decision.Exclusion)
+		_, resourceName := legacyV4ExclusionKindName(decision.Exclusion)
 		if resourceName != "*" {
 			reincluded := false
 			for _, request := range effectiveV4Requests(group) {

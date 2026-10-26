@@ -2163,7 +2163,10 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document, mo
 				if kind != userLayer && !c.AcquiresMarketplace(name) {
 					return nil, v4err("v4.layer-field", "resources."+name+".exclude", src.Line, "Marketplace overrides are only supported in the user configuration")
 				}
-				if parts := strings.Split(exclusion, "/"); len(parts) != 3 || parts[1] == "collection" || parts[2] == "*" {
+				_, rest, hasRegistry := strings.Cut(exclusion, "/")
+				resourceKind, resourceName, hasName := strings.Cut(rest, "/")
+				if !hasRegistry || !hasName || strings.Contains(resourceName, "/") ||
+					resourceKind == "collection" || resourceName == "*" {
 					return nil, v4err("v4.marketplace-runtime-unsupported", "resources."+name+".exclude", src.Line, "Marketplace exclusions require an exact non-collection registry/kind/name locator")
 				}
 				out.MarketplaceExclusions = append(out.MarketplaceExclusions, MarketplaceExclusion{URL: src.CanonicalURL, Locator: exclusion, Source: sourceForLayer(kind)})
@@ -2510,12 +2513,12 @@ func v4KindToIR(kind string) ir.ResourceKind {
 }
 
 func v4ExclusionKindName(value string) (string, string) {
-	parts := strings.Split(strings.TrimSuffix(value, "/*"), "/")
-	if len(parts) == 1 {
-		return parts[0], "*"
+	kind, name, hasSlash := strings.Cut(strings.TrimSuffix(value, "/*"), "/")
+	if !hasSlash {
+		return kind, "*"
 	}
-	if len(parts) == 2 {
-		return parts[0], parts[1]
+	if strings.Contains(name, "/") {
+		return "", ""
 	}
-	return "", ""
+	return kind, name
 }

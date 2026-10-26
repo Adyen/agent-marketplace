@@ -336,6 +336,9 @@ func (m Model) hasUnavailableRows() bool {
 
 // hasDiagnostics reports whether the errors view has anything to show.
 func (m Model) hasDiagnostics() bool {
+	if len(m.hookChanges) > 0 {
+		return true
+	}
 	return len(m.errs) > 0 || len(m.warnings) > 0 || len(m.discoveryErrs) > 0
 }
 

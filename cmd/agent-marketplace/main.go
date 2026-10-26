@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -435,11 +436,18 @@ func runRemove(ctx context.Context, out io.Writer, skillName string, scope pipel
 		DependencyReconcile: reconcileCommandDependencies,
 		CleanupDependencies: reconcileCleanupDependencies,
 	})
-	if err != nil {
+	if err != nil && result == nil {
 		return err
 	}
+	removeErr := err
+	if err := writeHookChanges(out, result.Report, false); err != nil {
+		return errors.Join(removeErr, err)
+	}
 	if err := writeGroupedWarnings(out, result.Warnings, false); err != nil {
-		return err
+		return errors.Join(removeErr, err)
+	}
+	if removeErr != nil {
+		return removeErr
 	}
 
 	if result.IsCollection {

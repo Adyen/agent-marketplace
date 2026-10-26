@@ -74,6 +74,7 @@ type installSourcePreviewLoadedMsg struct {
 type installSourceInstallMsg struct {
 	operation operationID
 	options   pipeline.InstallOptions
+	result    *pipeline.InstallResult
 	err       error
 }
 
@@ -858,20 +859,26 @@ func (m Model) startInstallSourceInstall() (tea.Model, tea.Cmd) {
 	m.marketplaceInstallOptions = options
 	m.marketplaceInstallOperation = operation
 	m.marketplaceInstallIsSource = true
+	m.mutationPendingWarnings = nil
+	m.mutationPendingReport = nil
 	m.beginOperationProgressFor(operation, "install", m.requests.active(requestSnapshot))
 	return m, tea.Batch(runInstallSource(m.observedContext(ctxOrBackground(m.ctx)), operation, options), m.operationProgressCmd())
 }
 
 func runInstallSource(ctx context.Context, operation operationID, options pipeline.InstallOptions) tea.Cmd {
 	return func() tea.Msg {
-		_, err := pipeline.Install(ctx, options)
-		return installSourceInstallMsg{operation: operation, options: options, err: err}
+		result, err := pipeline.Install(ctx, options)
+		return installSourceInstallMsg{operation: operation, options: options, result: result, err: err}
 	}
 }
 
 func (m Model) updateInstallSourceInstall(msg installSourceInstallMsg) (tea.Model, tea.Cmd) {
 	if !m.acceptsOperation(msg.operation) {
 		return m, nil
+	}
+	if msg.result != nil {
+		m.mutationPendingReport = msg.result.Report
+		m.mutationPendingWarnings = msg.result.RequirementWarnings
 	}
 	if msg.err != nil {
 		var locked *pipeline.SourceLockedError
@@ -903,6 +910,7 @@ func (m Model) updateInstallSourceInstall(msg installSourceInstallMsg) (tea.Mode
 		}
 		m.finishInstallSourceOperation(msg.operation)
 		m.recordOperationFailure(operationMutation, diagnosticMutation, msg.err)
+		m.finishMutationReview()
 		m.pushToast("Source install failed: "+sanitizeTerminalData(msg.err.Error(), terminalSingleLine), 5*time.Second)
 		return m, toastExpiryCmd(5 * time.Second)
 	}

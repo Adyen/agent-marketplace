@@ -67,6 +67,8 @@ The status bar shows sync drift, Marketplace endpoint health, the running operat
 
 ## Keys
 
+When sync, update, or a Marketplace install changes owned hooks, diagnostics opens with the completed **Hook changes** listing and review warning. Press `esc` to close it and `e` to reopen it. Reloading preserves the review; the next completed materialization replaces it, clearing it if no hooks changed. A refusal before materialization keeps the previous review available.
+
 | Action | Key |
 |---|---|
 | Move up or down | `k` / `j` or arrow keys |
@@ -87,7 +89,7 @@ The status bar shows sync drift, Marketplace endpoint health, the running operat
 | Upgrade Git locks and sync | `u` |
 | Change target harnesses | `H` |
 | Choose a config to open in `$EDITOR` | `E` |
-| View errors and warnings | `e` |
+| View hook reviews, errors, and warnings | `e` |
 | Show every binding | `?` |
 | Quit | `q` |
 
@@ -123,7 +125,7 @@ While the TUI is on screen, logs go to the log file and are never printed to the
 
 ## Exit
 
-- `q` asks what to do when changes still need a sync: `y` syncs and quits, `n` quits without syncing, `esc` stays. None of these undoes config edits already saved.
+- `q` asks what to do when changes still need a sync: `y` syncs and quits, `n` quits without syncing, `esc` stays. If sync produces a new hook review or materialization warning, it opens diagnostics before leaving; review it, press `esc`, then `q` to quit. None of these undoes config edits already saved.
 - `ctrl+c`, `SIGINT`, and `SIGTERM` exit immediately. Finished filesystem work is not rolled back; the next launch shows the result.
 
 ## Related documentation

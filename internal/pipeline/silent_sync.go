@@ -31,7 +31,7 @@ func silentSync(ctx context.Context, ws Workspace, opts ...silentSyncOpt) error 
 	return err
 }
 
-func silentSyncCollect(ctx context.Context, ws Workspace, opts ...silentSyncOpt) ([]error, error) {
+func silentSyncCollect(ctx context.Context, ws Workspace, opts ...silentSyncOpt) (SyncResult, error) {
 	var o silentSyncOptions
 	for _, opt := range opts {
 		opt(&o)
@@ -41,14 +41,14 @@ func silentSyncCollect(ctx context.Context, ws Workspace, opts ...silentSyncOpt)
 	// dependency reconciler runs: both would otherwise operate on the ambient
 	// working directory ahead of the ErrInvalidWorkspace Sync already returns.
 	if err := ws.validate(); err != nil {
-		return nil, err
+		return SyncResult{}, err
 	}
 	if o.DependencyReconciler != nil {
 		if o.ConfigStaging != nil {
 			var err error
 			o.StagedConfigEdits, err = o.ConfigStaging.Edits()
 			if err != nil {
-				return nil, fmt.Errorf("collect staged config edits: %w", err)
+				return SyncResult{}, fmt.Errorf("collect staged config edits: %w", err)
 			}
 		}
 		// The reconciler keeps the pre-Workspace contract: an empty local dir
@@ -60,7 +60,7 @@ func silentSyncCollect(ctx context.Context, ws Workspace, opts ...silentSyncOpt)
 		}
 		view, err := o.DependencyReconciler(ctx, ws.RepoRoot(), localDir, o.IgnoreBlockedRegistries, o.StagedConfigEdits)
 		if err != nil {
-			return nil, fmt.Errorf("reconcile dependency locks: %w", err)
+			return SyncResult{}, fmt.Errorf("reconcile dependency locks: %w", err)
 		}
 		if view.CatalogOption != nil {
 			o.CatalogOption = append(o.CatalogOption, view.CatalogOption)
@@ -78,8 +78,8 @@ func silentSyncCollect(ctx context.Context, ws Workspace, opts ...silentSyncOpt)
 	if err != nil && o.DependencyCommitted {
 		err = &DependencyCommittedSyncError{Err: err}
 	}
-	warnings := append(dependencyWarnings, syncResult.Warnings...)
-	return warnings, err
+	syncResult.Warnings = append(dependencyWarnings, syncResult.Warnings...)
+	return syncResult, err
 }
 
 type silentSyncOptions struct {
