@@ -41,3 +41,7 @@ None.
   a check that a cached checkout is at a given commit.
 - `tools/tui-qa`: install-from-source journey.
 - Docs: `site/docs/reference/tui.md`, `docs/tui-product-contract.md`.
+
+## Release note
+
+Previews from `list --from` and the TUI install modal no longer fetch when the cached checkout already matches the remote's default branch, and a cached full commit SHA previews offline. In the install modal, arrow keys move between steps and scopes, and returning to an unchanged source keeps your picks.

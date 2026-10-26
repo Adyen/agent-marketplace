@@ -27,3 +27,7 @@ None.
 - `internal/tui`: install-from-source Source-step key handling, footer hint.
 - `tools/tui-qa`: install-from-source journey.
 - Docs: `site/docs/reference/tui.md`, `docs/tui-product-contract.md`.
+
+## Release note
+
+none — refines the install-from-source modal introduced in this release, which has its own release note.

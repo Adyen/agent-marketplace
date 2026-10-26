@@ -42,3 +42,7 @@ None.
   preparation exposes the commit it resolved.
 - `tools/tui-qa`: new journey and fixture option.
 - Docs: `site/docs/reference/tui.md`, `docs/tui-product-contract.md`.
+
+## Release note
+
+Press `i` in the TUI to install resources from a Git, web, or directory source that is not configured yet. You can preview what the source contains without writing anything, pick resources, and choose user, project, or local scope. The install refuses without writing anything if the source moved since the preview.

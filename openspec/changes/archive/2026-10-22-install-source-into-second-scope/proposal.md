@@ -34,3 +34,7 @@ None.
 - `internal/pipeline`: explicit-source catalog selection in install.
 - `internal/tui`: lock-pinned remediation text.
 - `tools/tui-qa`: install-from-source lock-pinned journey.
+
+## Release note
+
+`install --from` into one scope no longer fails with "did not resolve to exactly one catalog" when another scope already declares the same source locked at a different commit. The other scope's configuration and lock stay unchanged.

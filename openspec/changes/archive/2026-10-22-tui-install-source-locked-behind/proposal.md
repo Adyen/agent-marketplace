@@ -41,3 +41,7 @@ None.
   kept from the existing lock.
 - `internal/tui`: install-from-source install-error handling.
 - `tools/tui-qa`: install-from-source journey.
+
+## Release note
+
+none — changes only how the install-from-source modal introduced in this release recovers from a lock-pinned source; that modal has its own release note.
