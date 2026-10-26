@@ -30,3 +30,8 @@ The synchronization check uses the existing strict inspection policy already
 used by status. Warning-only checks and materialization-time diagnostics retain
 their existing behavior. No compilation, selection, ownership, configuration,
 acquisition-lock, or TUI behavior changes.
+
+## Release note
+
+`sync --check` now reports registry-loading errors without incorrectly predicting
+hook removals or output drift.

@@ -58,6 +58,12 @@ When `install` or `remove` gets a name that more than one resource kind uses, `-
 
 Installing a resource defaults to `user`, and registering a Marketplace endpoint also defaults to `user`. When you remove a named resource without `--scope`, the command picks the scope from the selection it finds. `remove --from` defaults to `repo`, and `deinit` defaults to `user`.
 
+## Hook review
+
+When `install`, `remove`, `update`, or `sync` changes owned hook entries, it prints a **Hook changes** listing with the target, scope, file, event, matcher, and exact before and after command or prompt. Review this listing before using the hooks. Unchanged runs print no hook review.
+
+These commands also show materialization warnings, including lossy translation warnings. Warnings keep their diagnostic codes and do not make a successful operation fail. If an operation publishes a hook but another resource fails, its completed hook changes remain visible alongside the failure.
+
 ## `init`
 
 Creates a minimal v4 user config (`~/.agents/config.yaml`) with an explicit harness list. It adds no sources or resources. If a valid user file already exists, `init` leaves it unchanged and prints `User personal config already initialized.` Existing unsupported roots or fragments produce the path-specific format refusal instead of being treated as initialized or overwritten. CLI and TUI edits use the v4 source/resource model.

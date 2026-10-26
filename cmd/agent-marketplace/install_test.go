@@ -1134,7 +1134,7 @@ sources:
 		t.Fatalf("expected subagent install to succeed for windsurf target: %v\n%s", err, output)
 	}
 
-	if output != "Installed worker-generic in this repo\n" {
+	if !strings.Contains(output, "Installed worker-generic in this repo\n") || !strings.Contains(output, "subagent.windsurf.no-primitive") {
 		t.Fatalf("expected install output, got %q", output)
 	}
 

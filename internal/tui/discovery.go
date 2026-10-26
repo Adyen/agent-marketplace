@@ -123,6 +123,8 @@ func (m Model) startDiscoveryInstall(r row, s scope) (tea.Model, tea.Cmd) {
 		return m, operationBlockedCmd()
 	}
 	m.pane = paneList
+	m.mutationPendingWarnings = nil
+	m.mutationPendingReport = nil
 	m.marketplaceInstallOptions = options
 	m.marketplaceInstallOperation = operation
 	m.beginOperationProgressFor(operation, "install", m.requests.active(requestSnapshot))
@@ -142,10 +144,12 @@ func (m *Model) finishMarketplaceInstallReload(generation requestGeneration, err
 	m.marketplaceInstallReload = 0
 	if err != nil {
 		m.recordOperationFailure(operationMutation, diagnosticMutation, err)
+		m.finishMutationReview()
 		m.pushToast("Marketplace install reload failed: "+err.Error(), 5*time.Second)
 		return toastExpiryCmd(5 * time.Second)
 	}
 	m.recordOperationSuccess(operationMutation)
+	m.finishMutationReview()
 	m.pushToast("Marketplace resource installed", 2*time.Second)
 	return toastExpiryCmd(2 * time.Second)
 }

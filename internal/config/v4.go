@@ -2510,12 +2510,12 @@ func v4KindToIR(kind string) ir.ResourceKind {
 }
 
 func v4ExclusionKindName(value string) (string, string) {
-	parts := strings.Split(strings.TrimSuffix(value, "/*"), "/")
-	if len(parts) == 1 {
-		return parts[0], "*"
+	kind, name, hasSlash := strings.Cut(strings.TrimSuffix(value, "/*"), "/")
+	if !hasSlash {
+		return kind, "*"
 	}
-	if len(parts) == 2 {
-		return parts[0], parts[1]
+	if strings.Contains(name, "/") {
+		return "", ""
 	}
-	return "", ""
+	return kind, name
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/collection"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
@@ -85,6 +86,7 @@ func silentSyncOptsForInstall(opts InstallOptions) []silentSyncOpt {
 
 // InstallResult holds the outcome of an install operation.
 type InstallResult struct {
+	Report    *materialize.Report
 	Installed []string
 	// NotSelected names resources the install asked for that the effective
 	// configuration still does not select, for example because an exclusion
@@ -645,15 +647,16 @@ func namedInstallNames(plan []namedInstallSelection) []string {
 
 func syncNamedInstallResult(ctx context.Context, opts InstallOptions, plan []namedInstallSelection, warnings []resourceIdentity, syncOpts ...silentSyncOpt) (*InstallResult, error) {
 	if len(plan) == 1 && plan[0].collection {
-		requirementWarnings, err := syncAfterInstall(ctx, opts, plan[0].members, syncOpts...)
-		if err != nil {
+		synced, err := syncAfterInstall(ctx, opts, plan[0].members, syncOpts...)
+		if err != nil && synced.Report == nil {
 			return nil, err
 		}
 		return &InstallResult{
 			IsCollection:        true,
 			CollectionLabel:     plan[0].label,
-			RequirementWarnings: requirementWarnings,
-		}, nil
+			RequirementWarnings: synced.Warnings,
+			Report:              synced.Report,
+		}, err
 	}
 	return syncInstalledResources(ctx, opts, namedInstallNames(plan), warnings, syncOpts...)
 }
@@ -699,12 +702,12 @@ func expandInstalledCollectionResources(installed []resourceIdentity, available 
 // resources the final resolution selected separately from those it did not.
 func syncInstalledResources(ctx context.Context, iopts InstallOptions, names []string, resources []resourceIdentity, opts ...silentSyncOpt) (*InstallResult, error) {
 	var resolved []resolver.ResolvedArtifact
-	requirementWarnings, err := syncAfterInstall(ctx, iopts, resources, append(slices.Clip(opts), withResolvedCapture(&resolved))...)
-	if err != nil {
+	synced, err := syncAfterInstall(ctx, iopts, resources, append(slices.Clip(opts), withResolvedCapture(&resolved))...)
+	if err != nil && synced.Report == nil {
 		return nil, err
 	}
 	installed, notSelected := partitionInstalledNames(names, resources, resolved)
-	return &InstallResult{Installed: installed, NotSelected: notSelected, RequirementWarnings: requirementWarnings}, nil
+	return &InstallResult{Installed: installed, NotSelected: notSelected, RequirementWarnings: synced.Warnings, Report: synced.Report}, err
 }
 
 // partitionInstalledNames keeps a name as installed when the resolution
@@ -734,20 +737,18 @@ func partitionInstalledNames(names []string, resources []resourceIdentity, resol
 	return installed, notSelected
 }
 
-func syncAfterInstall(ctx context.Context, iopts InstallOptions, installed []resourceIdentity, opts ...silentSyncOpt) ([]error, error) {
+func syncAfterInstall(ctx context.Context, iopts InstallOptions, installed []resourceIdentity, opts ...silentSyncOpt) (SyncResult, error) {
 	ws := iopts.workspace
 	if ws == nil {
 		resolved, err := workspaceForRoots(iopts.RepoRoot, iopts.LocalConfigDir)
 		if err != nil {
-			return nil, err
+			return SyncResult{}, err
 		}
 		ws = &resolved
 	}
-	warnings, err := silentSyncCollect(ctx, *ws, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return filterInstallWarnings(warnings, installed), nil
+	synced, err := silentSyncCollect(ctx, *ws, opts...)
+	synced.Warnings = filterInstallWarnings(synced.Warnings, installed)
+	return synced, err
 }
 
 func filterInstallWarnings(warnings []error, installed []resourceIdentity) []error {
@@ -762,6 +763,10 @@ func filterInstallWarnings(warnings []error, installed []resourceIdentity) []err
 
 	installWarnings := make([]error, 0)
 	for _, warning := range warnings {
+		if IsPromotedDiagnostic(warning) {
+			installWarnings = append(installWarnings, warning)
+			continue
+		}
 		var requirement *resolver.UnmetRequirementWarning
 		var resource resourceIdentity
 		if errors.As(warning, &requirement) && requirement != nil {
