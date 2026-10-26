@@ -63,12 +63,14 @@ type marketplaceDiscovery struct {
 }
 
 type row struct {
-	Artifact          resolver.ResolvedArtifact
-	DetailSource      *detailSourceSnapshot // immutable bounded copy captured while the exact snapshot lease is held
-	IsAvailable       bool                  // not in resolved (available but not enabled)
-	IsExcluded        bool                  // legacy: skill is in localCfg.Exclude (mirrors ExcludedLocally)
-	IsMalformed       bool
-	MalformedMsg      string
+	Artifact     resolver.ResolvedArtifact
+	DetailSource *detailSourceSnapshot // immutable bounded copy captured while the exact snapshot lease is held
+	IsAvailable  bool                  // not in resolved (available but not enabled)
+	IsExcluded   bool                  // legacy: skill is in localCfg.Exclude (mirrors ExcludedLocally)
+	IsMalformed  bool
+	MalformedMsg string
+	// MalformedKind is the kind label of a malformed row, or "unknown".
+	MalformedKind     string
 	UnavailableReason string
 	UnavailableSoft   bool                   // absent from a loaded registry; a warning that does not block drift
 	DriftItem         *materialize.DriftItem // nil if in sync or available-only
@@ -200,6 +202,15 @@ func searchTerms(text string) []string {
 func (r *row) hasWordWithPrefix(term string) bool {
 	i, _ := slices.BinarySearch(r.searchWords, term)
 	return i < len(r.searchWords) && strings.HasPrefix(r.searchWords[i], term)
+}
+
+// kindLabel is the row's kind label; a malformed row reports the kind its
+// failed load was for.
+func (r row) kindLabel() string {
+	if r.IsMalformed && r.MalformedKind != "" {
+		return r.MalformedKind
+	}
+	return skill.KindLabel(r.Artifact.Kind)
 }
 
 func (r row) canOverrideMarketplace() bool {

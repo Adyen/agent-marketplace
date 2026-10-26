@@ -1937,7 +1937,7 @@ func (c *V4Config) rebuildRequests() {
 	sort.Strings(groupNames)
 	for _, name := range groupNames {
 		g := c.Groups[name]
-		byLocator := map[string]V4ResourceRequest{}
+		byLocator := map[string]*V4ResourceRequest{}
 		excluded := map[string]bool{}
 		for _, d := range g.Decisions {
 			c.Decisions = append(c.Decisions, d)
@@ -1949,18 +1949,22 @@ func (c *V4Config) rebuildRequests() {
 					continue
 				}
 				for loc, request := range byLocator {
-					if v4ExclusionMatches(d.Exclusion, loc) && !request.Required {
+					if !request.Required && v4ExclusionMatches(d.Exclusion, loc) {
 						excluded[loc] = true
 					}
 				}
 				continue
 			}
 			if d.Request != nil {
-				byLocator[d.Locator] = *d.Request
-				excluded[d.Locator] = false
+				byLocator[d.Locator] = d.Request
+				// Missing markers are already false; keep include-only streams sparse.
+				if len(excluded) > 0 {
+					excluded[d.Locator] = false
+				}
 			}
 		}
-		for _, r := range g.Include {
+		for i := range g.Include {
+			r := &g.Include[i]
 			if _, ok := byLocator[r.Locator]; !ok {
 				byLocator[r.Locator] = r
 			}
@@ -1970,14 +1974,13 @@ func (c *V4Config) rebuildRequests() {
 		}
 		locators := make([]string, 0, len(byLocator))
 		for locator := range byLocator {
-			locators = append(locators, locator)
+			if !excluded[locator] {
+				locators = append(locators, locator)
+			}
 		}
 		sort.Strings(locators)
 		for _, locator := range locators {
-			r := byLocator[locator]
-			if !excluded[locator] {
-				c.Requests = append(c.Requests, r)
-			}
+			c.Requests = append(c.Requests, *byLocator[locator])
 		}
 	}
 }
@@ -1987,12 +1990,19 @@ func v4ExclusionMatches(exclude, locator string) bool {
 	}
 	if strings.HasSuffix(exclude, "/*") {
 		base := strings.TrimSuffix(exclude, "/*")
-		parts := strings.Split(locator, "/")
-		if len(parts) == 2 && base == parts[0] {
+		first, rest, hasSlash := strings.Cut(locator, "/")
+		kind, name, qualified := strings.Cut(rest, "/")
+		if hasSlash && !qualified && base == first {
 			return true
 		}
-		if len(parts) == 3 && (base == parts[0] || base == parts[0]+"/"+parts[1]) {
-			return true
+		if hasSlash && qualified && !strings.Contains(name, "/") {
+			if base == first {
+				return true
+			}
+			registry, excludedKind, scoped := strings.Cut(base, "/")
+			if scoped && registry == first && excludedKind == kind {
+				return true
+			}
 		}
 	}
 	return exclude == locator
@@ -2149,7 +2159,7 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document, mo
 		src := c.Sources[name]
 		if src.Kind == V4SourceMarketplace {
 			group := c.Groups[name]
-			for _, exclusion := range effectiveV4Exclusions(group) {
+			for _, exclusion := range effectiveV4Exclusions(group, nil) {
 				if kind != userLayer && !c.AcquiresMarketplace(name) {
 					return nil, v4err("v4.layer-field", "resources."+name+".exclude", src.Line, "Marketplace overrides are only supported in the user configuration")
 				}
@@ -2211,7 +2221,8 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document, mo
 			if entry.Required && len(group.Include) == 0 && (!group.HasTags || len(group.Tags) == 0) && (!group.HasAll || group.All == nil || !*group.All) {
 				entry.Required = false
 			}
-			for _, request := range effectiveV4Requests(group) {
+			requests := effectiveV4Requests(group)
+			for _, request := range requests {
 				if request.Options.HasAs && request.Options.As != request.Name {
 					return nil, v4err("v4.runtime-option", "resources."+name+".include", 0, "installed aliases are not supported for consumer selections")
 				}
@@ -2221,7 +2232,7 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document, mo
 				}
 				selector.Include = append(selector.Include, request.Name)
 			}
-			for _, exclusion := range effectiveV4Exclusions(group) {
+			for _, exclusion := range effectiveV4Exclusions(group, requests) {
 				if exclusion == "*" {
 					entry.ExcludeAll = true
 					continue
@@ -2408,7 +2419,7 @@ func cloneV4Decisions(values []V4SelectionDecision) []V4SelectionDecision {
 // effectiveV4Requests applies the ordered decision stream to explicit
 // locators, preserving a later include after an earlier exclusion.
 func effectiveV4Requests(group V4ResourceGroup) []V4ResourceRequest {
-	requests := map[string]V4ResourceRequest{}
+	requests := map[string]*V4ResourceRequest{}
 	excluded := map[string]bool{}
 	for _, decision := range group.Decisions {
 		if decision.Action == V4SelectionExclude {
@@ -2426,26 +2437,29 @@ func effectiveV4Requests(group V4ResourceGroup) []V4ResourceRequest {
 			continue
 		}
 		if decision.Request != nil {
-			requests[decision.Locator] = *decision.Request
-			excluded[decision.Locator] = false
+			requests[decision.Locator] = decision.Request
+			if len(excluded) > 0 {
+				excluded[decision.Locator] = false
+			}
 		}
 	}
 	locators := make([]string, 0, len(requests))
-	for locator, request := range requests {
+	for locator := range requests {
 		if !excluded[locator] {
-			_ = request
 			locators = append(locators, locator)
 		}
 	}
 	sort.Strings(locators)
 	out := make([]V4ResourceRequest, 0, len(locators))
 	for _, locator := range locators {
-		out = append(out, requests[locator])
+		out = append(out, *requests[locator])
 	}
 	return out
 }
 
-func effectiveV4Exclusions(group V4ResourceGroup) []string {
+// effectiveV4Exclusions preserves first-exclusion order. A non-nil requests
+// slice must be the effective requests for this group; nil computes it lazily.
+func effectiveV4Exclusions(group V4ResourceGroup, requests []V4ResourceRequest) []string {
 	seen := map[string]bool{}
 	var active map[string]bool
 	var out []string
@@ -2457,7 +2471,9 @@ func effectiveV4Exclusions(group V4ResourceGroup) []string {
 		_, resourceName := v4ExclusionKindName(decision.Exclusion)
 		if resourceName != "*" {
 			if active == nil {
-				requests := effectiveV4Requests(group)
+				if requests == nil {
+					requests = effectiveV4Requests(group)
+				}
 				active = make(map[string]bool, len(requests))
 				for _, request := range requests {
 					active[request.Locator] = true

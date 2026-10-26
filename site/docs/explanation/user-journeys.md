@@ -18,7 +18,7 @@ Every existing root, including organization and personal-local, must declare exa
 
 ## Where a resource lives
 
-Before anything is installed, the [scope](../glossary.md#scope) decides which configuration file records the selection and which folders receive the output. A resource can belong to the machine (every project sees it, from the organization or user file), to the repository (shared with the team through the committed file), or to one checkout (the personal-local file, which writes into the repository's harness folders without a separate installation folder). Installing a resource defaults to `repo`; registering a Marketplace defaults to `user`. [Scopes, selection, and precedence](./scopes-selection-and-precedence.md) explains the model.
+Before anything is installed, the [scope](../glossary.md#scope) decides which configuration file records the selection and which folders receive the output. A resource can belong to the machine (every project sees it, from the organization or user file), to the repository (shared with the team through the committed file), or to one checkout (the personal-local file, which writes into the repository's harness folders without a separate installation folder). Installing a resource defaults to `user`, and so does registering a Marketplace. Use `--scope repo` to share an install through the repository. [Scopes, selection, and precedence](./scopes-selection-and-precedence.md) explains the model.
 
 ## Finding and choosing a resource
 

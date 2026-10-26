@@ -40,7 +40,7 @@ resources: {team: {all: true}}
 
 	// Run install --all from the HOME directory (not workspace).
 	// This should fail with the home-directory guard error.
-	r := env.RunAMFrom("/root", "install", "--all")
+	r := env.RunAMFrom("/root", "install", "--scope", "repo", "--all")
 	if r.ExitCode == 0 {
 		t.Fatalf("install --all from home dir should have failed, but exited 0\noutput:\n%s", r.Combined)
 	}

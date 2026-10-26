@@ -266,7 +266,8 @@ export default defineConfig({
               items: [
                 { text: 'User journeys', link: `${DOCS_PATH}explanation/user-journeys` },
                 { text: 'How agent-marketplace works', link: `${DOCS_PATH}explanation/how-agent-marketplace-works` },
-                { text: 'Sources and resources', link: `${DOCS_PATH}explanation/sources-and-resources` }
+                { text: 'Sources and resources', link: `${DOCS_PATH}explanation/sources-and-resources` },
+                { text: 'Compared with APM and skills.sh', link: `${DOCS_PATH}explanation/compared-with-other-tools` }
               ]
             },
             {

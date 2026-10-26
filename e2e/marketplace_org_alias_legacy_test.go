@@ -103,7 +103,7 @@ func TestOrganizationMarketplaceAliasUserPinSurvivesLockedAndOfflineSync(t *test
 	// Locked/offline reads require the organization collection's own exact
 	// evidence, deployed externally rather than written by the user mutation.
 	publisher := fixture.newConsumer(t, fixture.server.URL)
-	publisher.MustRunAM("install", "behavior:behavior-source/collection/behavior-bundle", "--yes")
+	publisher.MustRunAM("install", "--scope", "repo", "behavior:behavior-source/collection/behavior-bundle", "--yes")
 	organizationLock := strings.Replace(publisher.ReadFile("/workspace/.agents/lock.yaml"), "scope: repo", "scope: organization", 1)
 	consumer.WriteFile("/etc/agent-marketplace/lock.yaml", organizationLock)
 	consumer.MustRunAM("install", "org:behavior-source/skill/skill-one", "--scope", "user", "--yes")

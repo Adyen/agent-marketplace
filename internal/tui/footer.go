@@ -229,7 +229,7 @@ func renderErrorFooter(m Model) string {
 	}
 	latest := ""
 	if err := m.errs[len(m.errs)-1]; err != nil {
-		latest = sanitizeTerminalData(fmt.Sprint(err), terminalSingleLine)
+		latest = sanitizeTerminalData(diagnosticCause(err), terminalSingleLine)
 	}
 	if latest == "" {
 		return footer

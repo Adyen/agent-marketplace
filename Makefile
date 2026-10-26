@@ -12,7 +12,7 @@ TEST_LOCAL_BASE ?= origin/main
 VALIDATE_JOBS ?= 2
 OPENSPEC_VERSION ?= 1.12.0
 
-.PHONY: test-fast test-witnessed validate validate-fast validate-full validate-e2e spec-check
+.PHONY: test-fast test-witnessed validate validate-fast validate-full validate-e2e spec-check release-notes
 
 # Public container defaults. Override these generic variables in the environment
 # when builds must use a registry mirror. Pin all production overrides by digest.
@@ -32,6 +32,7 @@ export GO_BUILD_IMAGE RUNTIME_IMAGE NODE_IMAGE NODE_RUNTIME_IMAGE POSTGRES_IMAGE
 
 # Platform targets
 PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64 linux-arm64
+RELEASE_ASSETS := $(addprefix $(RELEASE_BINARY)-,$(PLATFORMS))
 DIST_DIR := dist
 
 .PHONY: build test test-full lint ci-lint lint-full lint-common tidy version release clean e2e marketplace-gate marketplace-proxy-check released-client-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build site-docs-build secrets-check container container-marketplace container-web container-site container-docs container-check compose-config $(PLATFORMS)
@@ -156,6 +157,12 @@ spec-check:
 	npx --yes @fission-ai/openspec@$(OPENSPEC_VERSION) validate --all --strict --no-interactive
 	CGO_ENABLED=0 $(GO) run ./tools/specaudit trace
 	CGO_ENABLED=0 $(GO) run ./tools/specaudit archived
+
+# Curated release notes the release job would publish: stable tag to HEAD.
+release-notes:
+	@prev=$$(git tag --merged HEAD^ --list 'v*' --sort=-v:refname | grep -m1 -E '^v[0-9]+\.[0-9]+\.[0-9]+$$'); \
+	if [ -z "$$prev" ]; then echo "release-notes: no stable tag reachable from HEAD" >&2; exit 1; fi; \
+	CGO_ENABLED=0 $(GO) run ./tools/specaudit release-notes -base "$$prev" -head HEAD
 
 container: container-marketplace container-web container-site container-docs
 
@@ -299,6 +306,15 @@ linux-arm64:
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags "$(RELEASE_LDFLAGS)" -o $(DIST_DIR)/$(RELEASE_BINARY)-linux-arm64 $(CMD)
 
 release: $(PLATFORMS)
+	@cd $(DIST_DIR) && { \
+		if command -v sha256sum >/dev/null 2>&1; then \
+			sha256sum $(RELEASE_ASSETS); \
+		elif command -v shasum >/dev/null 2>&1; then \
+			shasum -a 256 $(RELEASE_ASSETS); \
+		else \
+			echo "sha256sum or shasum is required to create release checksums" >&2; exit 1; \
+		fi; \
+	} > SHA256SUMS
 
 # Release build that injects the community telemetry endpoint and retention
 # policy URL at link time. Set AGENT_MARKETPLACE_RELEASE_TELEMETRY_ENDPOINT

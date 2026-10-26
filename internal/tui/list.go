@@ -7,7 +7,6 @@ import (
 	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
-	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -232,7 +231,7 @@ func resourceLabel(r row) string {
 	if registry == "" {
 		registry = "(local)"
 	}
-	return sanitizeTerminalData(skill.KindLabel(r.Artifact.Kind)+" "+registry+"/"+r.Artifact.Name, terminalSingleLine)
+	return sanitizeTerminalData(r.kindLabel()+" "+registry+"/"+r.Artifact.Name, terminalSingleLine)
 }
 
 func scopeBadgeColumn(r row) string {

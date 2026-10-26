@@ -18,6 +18,16 @@ async function generatedFilePaths(directory: URL): Promise<string[]> {
     .map(entry => relative(fileURLToPath(directory), join(entry.parentPath, entry.name)).split(sep).join('/'))
 }
 
+// spec: install-script/site-build-publishes-the-install-script
+test('public site publishes the install script byte-for-byte', async () => {
+  const [source, built] = await Promise.all([
+    readFile(new URL('../public/install.sh', import.meta.url)),
+    readFile(new URL('install.sh', dist)),
+  ])
+
+  assert.deepEqual(built, source)
+})
+
 // spec: marketplace-web-ui/default-harness-leads-the-tab-order
 // spec: site-deployment-profiles/public-project-site-exposes-only-landing-and-documentation
 test('public project site exposes landing and documentation without a local Marketplace', async () => {

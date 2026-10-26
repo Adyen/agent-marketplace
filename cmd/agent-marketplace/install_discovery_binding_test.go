@@ -378,14 +378,14 @@ func TestConfiguredInstallRejectsIncompatibleScopePins(t *testing.T) {
 		t.Fatalf("lock repo B: %v\n%s", err, out)
 	}
 	before := ownedCommandSnapshot(t, f.base)
-	out, err := executeCommand("install", "review")
+	out, err := executeCommand("install", "--scope", "repo", "review")
 	if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
 		t.Fatalf("incompatible scope pins were not refused: %v\n%s", err, out)
 	}
 	if after := ownedCommandSnapshot(t, f.base); !reflect.DeepEqual(before, after) {
 		t.Fatal("incompatible pin refusal changed disk state")
 	}
-	if out, err := executeCommand("install", "new"); err != nil {
+	if out, err := executeCommand("install", "--scope", "repo", "new"); err != nil {
 		t.Fatalf("compatible target-scope control: %v\n%s", err, out)
 	}
 	raw := ownedCommandRead(t, filepath.Join(f.repo, ".factory", "skills", "new", "SKILL.md"))

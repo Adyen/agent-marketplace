@@ -108,6 +108,56 @@ func toStringSlice(v any) ([]string, error) {
 	}
 }
 
+// toToolList reads a subagent tool list. Claude documents tools and
+// disallowedTools as either a YAML list, taken as written, or a
+// comma-separated string such as "Read, Grep, Bash". A comma inside
+// parentheses belongs to a scoped tool such as Agent(worker, researcher) and
+// does not split it, and a backslash makes the next character literal, as in
+// permission rules. A string that names no tool, whose parentheses do not
+// balance, or that ends in a backslash with nothing after it is not a
+// well-formed list: it keeps the single entry that earlier versions produced
+// for every string, so a subagent that loaded before still loads and a source
+// revision that lists it still verifies.
+func toToolList(v any) ([]string, error) {
+	text, ok := v.(string)
+	if !ok {
+		return toStringSlice(v)
+	}
+	tools := make([]string, 0, strings.Count(text, ",")+1)
+	depth, start := 0, 0
+	appendTool := func(end int) {
+		if tool := strings.TrimSpace(text[start:end]); tool != "" {
+			tools = append(tools, tool)
+		}
+	}
+	for i := 0; i < len(text); i++ {
+		switch text[i] {
+		case '\\':
+			if i+1 == len(text) {
+				return toStringSlice(v)
+			}
+			i++
+		case '(':
+			depth++
+		case ')':
+			if depth == 0 {
+				return toStringSlice(v)
+			}
+			depth--
+		case ',':
+			if depth == 0 {
+				appendTool(i)
+				start = i + 1
+			}
+		}
+	}
+	appendTool(len(text))
+	if depth != 0 || len(tools) == 0 {
+		return toStringSlice(v)
+	}
+	return tools, nil
+}
+
 func toIntPtr(v any) (*int, error) {
 	if v == nil {
 		return nil, nil
