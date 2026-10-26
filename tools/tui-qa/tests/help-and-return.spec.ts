@@ -69,26 +69,44 @@ narrow.test("every help binding is reachable at 50x12 and reopening retains the 
     await oldScreen.expect();
     await step(`scroll narrow help line ${line + 1}`, () => terminal.write("j"), async () => {
       await oldScreen.expect({ not: true });
+      assert.deepEqual((await terminal.text()).split("\n").slice(0, -2), screen.split("\n").slice(1, -1),
+        "each help scroll must expose one new line above the fixed footer");
     });
   }
   assert.notEqual(bottom, "", "the final help group must be reachable by scrolling");
-  const visible = seen.map((screen) => screen.replace(/\s+/g, " ")).join("\n");
-  for (const section of ["Navigation", "Actions", "Toggle Modal", "Harness Modal", "Edit Config Modal", "Other"]) {
-    assert.ok(seen.some((screen) => screen.split("\n").includes(section)), `unreachable help group: ${section}`);
-  }
-  for (const binding of [
-    "\u2191/k move up", "\u2193/j move down", "ctrl+d half-page down", "ctrl+u half-page up",
-    "f/ctrl+f/pgdn page down", "b/ctrl+b/pgup page up", "g/home jump to top", "G/end jump to bottom",
-    "/ fuzzy search", "esc clear search / close", "enter view details / toggle fold",
-    "space toggle resource / all in section", "h/\u2190 collapse section", "l/\u2192 expand section",
-    "za toggle current fold", "zM collapse all", "zR expand all", "v view settings",
-    "H harness defaults", "E edit config", "s sync pending", "u update caches", "ctrl+k/: command palette",
-    "g toggle global", "p toggle project", "l toggle local", "e toggle local exclude", "esc cancel",
-    "g edit global", "p edit project", "space toggle resource / all in section", "enter save", "esc cancel",
-    "g edit global", "p edit project", "l edit local", "esc cancel",
-    "r reload from disk", "e view errors", "? this help", "q quit"
-  ]) {
-    assert.ok(visible.includes(binding), `unreachable help binding: ${binding}`);
+  // Reconstruct the observed content once, without overlapping frames or the fixed footer.
+  const content = seen.flatMap((screen, index) => {
+    const lines = screen.split("\n").slice(0, -1);
+    return index === 0 ? lines : lines.slice(-1);
+  }).join("\n");
+  const groups = [
+    { title: "Navigation", bindings: [
+      "\u2191/k move up", "\u2193/j move down", "ctrl+d half-page down", "ctrl+u half-page up",
+      "f/ctrl+f/pgdn page down", "b/ctrl+b/pgup page up", "g/home jump to top", "G/end jump to bottom"
+    ] },
+    { title: "Actions", bindings: [
+      "/ fuzzy search", "esc clear search / close", "enter view details / toggle fold",
+      "space toggle resource / all in section", "h/\u2190 collapse section", "l/\u2192 expand section",
+      "za toggle current fold", "zM collapse all", "zR expand all", "v view settings",
+      "H harness defaults", "E edit config", "s sync pending", "u update caches", "ctrl+k/: command palette"
+    ] },
+    { title: "Toggle Modal", bindings: [
+      "g toggle global", "p toggle project", "l toggle local", "e toggle local exclude", "esc cancel"
+    ] },
+    { title: "Harness Modal", bindings: [
+      "g edit global", "p edit project", "space toggle resource / all in section", "enter save", "esc cancel"
+    ] },
+    { title: "Edit Config Modal", bindings: ["g edit global", "p edit project", "l edit local", "esc cancel"] },
+    { title: "Other", bindings: ["r reload from disk", "e view errors", "? this help", "q quit"] }
+  ];
+  for (const [index, group] of groups.entries()) {
+    const start = content.indexOf(`\n${group.title}\n`);
+    const end = index + 1 < groups.length ? content.indexOf(`\n${groups[index + 1].title}\n`) : content.length;
+    assert.ok(start >= 0 && end > start, `unreachable or misordered help group: ${group.title}`);
+    const visible = content.slice(start, end).replace(/\s+/g, " ");
+    for (const binding of group.bindings) {
+      assert.ok(visible.includes(binding), `unreachable ${group.title} binding: ${binding}`);
+    }
   }
   await step("close narrow help", () => terminal.write("\x1b"), async () => {
     await locate(terminal, "Press esc or ? to close").expect({ not: true });
