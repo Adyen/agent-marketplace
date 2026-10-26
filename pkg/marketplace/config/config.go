@@ -140,6 +140,7 @@ type InstallationMetrics struct {
 	BearerTokenEnv string                     `yaml:"bearer_token_env"`
 	Labels         map[string]string          `yaml:"labels"`
 	MaxAge         *Duration                  `yaml:"max_age"`
+	MaxStale       *Duration                  `yaml:"max_stale"`
 	Timeout        *Duration                  `yaml:"timeout"`
 	Refresh        InstallationMetricsRefresh `yaml:"refresh"`
 }
@@ -155,6 +156,7 @@ type InstallationMetricsTiming struct {
 	RetryInterval time.Duration
 	Jitter        time.Duration
 	MaxAge        time.Duration
+	MaxStale      time.Duration
 	Timeout       time.Duration
 }
 
@@ -163,6 +165,7 @@ const (
 	defaultInstallationMetricsRetry    = 30 * time.Second
 	defaultInstallationMetricsJitter   = 15 * time.Second
 	defaultInstallationMetricsMaxAge   = 5 * time.Minute
+	defaultInstallationMetricsMaxStale = 24 * time.Hour
 	defaultInstallationMetricsTimeout  = 3 * time.Second
 )
 
@@ -172,6 +175,7 @@ func ResolveInstallationMetricsTiming(m InstallationMetrics) InstallationMetrics
 		RetryInterval: defaultInstallationMetricsRetry,
 		Jitter:        defaultInstallationMetricsJitter,
 		MaxAge:        defaultInstallationMetricsMaxAge,
+		MaxStale:      defaultInstallationMetricsMaxStale,
 		Timeout:       defaultInstallationMetricsTimeout,
 	}
 	if m.Refresh.Interval != nil {
@@ -185,6 +189,9 @@ func ResolveInstallationMetricsTiming(m InstallationMetrics) InstallationMetrics
 	}
 	if m.MaxAge != nil {
 		timing.MaxAge = m.MaxAge.Duration()
+	}
+	if m.MaxStale != nil {
+		timing.MaxStale = m.MaxStale.Duration()
 	}
 	if m.Timeout != nil {
 		timing.Timeout = m.Timeout.Duration()
@@ -262,6 +269,11 @@ func validateInstallationMetricsTiming(timing InstallationMetricsTiming) []error
 	}
 	if timing.MaxAge <= 0 {
 		errs = append(errs, errors.New("installation_metrics.max_age must be a positive duration"))
+	}
+	if timing.MaxStale <= 0 {
+		errs = append(errs, errors.New("installation_metrics.max_stale must be a positive duration"))
+	} else if timing.MaxAge > 0 && timing.MaxStale < timing.MaxAge {
+		errs = append(errs, errors.New("installation_metrics.max_stale must not be shorter than installation_metrics.max_age"))
 	}
 	if timing.Timeout <= 0 {
 		errs = append(errs, errors.New("installation_metrics.timeout must be a positive duration"))

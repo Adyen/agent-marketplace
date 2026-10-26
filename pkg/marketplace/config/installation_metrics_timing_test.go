@@ -16,7 +16,7 @@ func TestInstallationMetricsTimingDefaultsIndependentOfReindex(t *testing.T) {
 	timing := ResolveInstallationMetricsTiming(cfg.InstallationMetrics)
 	want := InstallationMetricsTiming{
 		Interval: 4 * time.Minute, RetryInterval: 30 * time.Second,
-		Jitter: 15 * time.Second, MaxAge: 5 * time.Minute, Timeout: 3 * time.Second,
+		Jitter: 15 * time.Second, MaxAge: 5 * time.Minute, MaxStale: 24 * time.Hour, Timeout: 3 * time.Second,
 	}
 	if timing != want {
 		t.Fatalf("resolved timing = %+v, want defaults %+v", timing, want)
@@ -40,6 +40,7 @@ func TestInstallationMetricsTimingOverrides(t *testing.T) {
 	cfg, err := LoadConfig(writeConfig(t, validConfigYAML()+`installation_metrics:
   url: https://metrics.internal
   max_age: 30m
+  max_stale: 2h
   timeout: 5s
   refresh:
     interval: 10m
@@ -52,7 +53,7 @@ func TestInstallationMetricsTimingOverrides(t *testing.T) {
 	timing := ResolveInstallationMetricsTiming(cfg.InstallationMetrics)
 	want := InstallationMetricsTiming{
 		Interval: 10 * time.Minute, RetryInterval: 2 * time.Minute,
-		Jitter: 0, MaxAge: 30 * time.Minute, Timeout: 5 * time.Second,
+		Jitter: 0, MaxAge: 30 * time.Minute, MaxStale: 2 * time.Hour, Timeout: 5 * time.Second,
 	}
 	if timing != want {
 		t.Fatalf("resolved timing = %+v, want overrides %+v", timing, want)
@@ -77,6 +78,9 @@ func TestInstallationMetricsTimingRejectsInvalidValues(t *testing.T) {
 		{name: "negative retry interval", yaml: block("  refresh:\n    retry_interval: -30s\n")},
 		{name: "zero max age", yaml: block("  max_age: 0s\n")},
 		{name: "negative max age", yaml: block("  max_age: -5m\n")},
+		{name: "zero max stale", yaml: block("  max_stale: 0s\n")},
+		{name: "negative max stale", yaml: block("  max_stale: -1h\n")},
+		{name: "max stale shorter than max age", yaml: block("  max_age: 10m\n  max_stale: 5m\n")},
 		{name: "zero timeout", yaml: block("  timeout: 0s\n")},
 		{name: "negative timeout", yaml: block("  timeout: -2s\n")},
 		{name: "negative jitter", yaml: block("  refresh:\n    jitter: -1s\n")},

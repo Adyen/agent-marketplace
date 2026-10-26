@@ -803,9 +803,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	var adoption *installationCounts
 	if sortByInstallations && s.installations != nil {
-		if counts, ok := s.installations.lookup(registries); ok {
-			adoption = counts
-		} else {
+		counts, fresh := s.installations.lookup(registries)
+		adoption = counts
+		if !fresh {
 			s.installations.hint()
 		}
 	}
