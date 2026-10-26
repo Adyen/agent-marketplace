@@ -18,3 +18,7 @@ The root flag `--diagnostic-accept-sensitive-data` let a script or CI job send a
 ## Impact
 
 Root flag registration and diagnostic completion in `cmd/agent-marketplace`, `Telemetry.FinishDiagnostic` in `internal/telemetry`, command, package, and E2E telemetry tests, and the telemetry and CLI reference pages under `site/docs`.
+
+## Release note
+
+Breaking: The `--diagnostic-accept-sensitive-data` flag is removed, and commands that pass it now fail with an unknown-flag error. Remove it from scripts and CI jobs. Diagnostic export now requires answering the y/N prompt at a terminal; without a terminal the payload stays local and `telemetry preview --level diagnostic` is refused.
