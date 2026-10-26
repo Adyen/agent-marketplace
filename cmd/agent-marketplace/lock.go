@@ -54,6 +54,15 @@ type lockMode struct {
 	marketplacePolicy    resolver.MarketplaceRevocationPolicy
 	selectionGuard       bool
 
+	// updatePreview, when set, receives the prepared prior/candidate view
+	// before any new publication. Its error aborts preparation and nothing
+	// is committed.
+	updatePreview func(ctx context.Context, view preparedUpdateView) error
+	// previewNoCommit prepares candidate state without publishing: no
+	// dependency transaction commit and no post-commit lock expectation
+	// reindex.
+	previewNoCommit bool
+
 	allowTransientOrganization bool
 }
 
@@ -68,6 +77,10 @@ func lockModeName(mode lockMode) string {
 		return "install-prepare"
 	case mode.reuseInstall != nil:
 		return "install-commit"
+	case mode.updatePreview != nil && mode.previewNoCommit:
+		return "update-preview"
+	case mode.updatePreview != nil:
+		return "update-diff"
 	case mode.upgrade:
 		return "upgrade"
 	case mode.locked:
@@ -128,6 +141,58 @@ type lockedGit struct {
 	commit    lockfile.GitOID
 	snapshot  string
 	unlocked  bool
+}
+
+// gitRevision returns the exact commit locked for a Git registry occurrence in
+// this set, or ok=false for unlocked or unknown sources (live directories and
+// intentionally unlocked organization sources have no versioned revision).
+// When the configured ref does not match a recorded one — a ref bump rewrites
+// the configured ref after the lock recorded the old one — a unique commit for
+// the canonical repository still identifies the locked revision.
+func (set *exactLockSet) gitRevision(source config.Source, url, ref string) (string, bool) {
+	canonical, err := canonicalRegistryURL(url)
+	if err != nil {
+		return "", false
+	}
+	if commit, ok := set.gitRevisionExact(source, canonical, ref); ok {
+		return commit, true
+	}
+	prefix := canonical + "\x00"
+	unique := ""
+	for identity, lockedList := range set.byIdentity {
+		if !strings.HasPrefix(identity, prefix) {
+			continue
+		}
+		for _, locked := range lockedList {
+			if locked.unlocked {
+				continue
+			}
+			commit := locked.commit.String()
+			if unique != "" && unique != commit {
+				return "", false
+			}
+			unique = commit
+		}
+	}
+	if unique == "" {
+		return "", false
+	}
+	return unique, true
+}
+
+func (set *exactLockSet) gitRevisionExact(source config.Source, canonical, ref string) (string, bool) {
+	locked, ok := set.bySource[sourceLockKey(source, canonical, ref)]
+	if !ok {
+		candidates := set.byIdentity[gitLockIdentity(canonical, ref)]
+		if len(candidates) != 1 {
+			return "", false
+		}
+		locked = candidates[0]
+	}
+	if locked.unlocked {
+		return "", false
+	}
+	return locked.commit.String(), true
 }
 
 func newLockCmd() *cobra.Command {
@@ -709,7 +774,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	canBootstrapMarketplace := !mode.readOnlyDependencies() && mode.prepareInstall == nil && mode.reuseInstall == nil && len(mode.stagedConfigEdits) == 0 && len(mode.stagedLockEdits) == 0 && mode.commitScope == nil
+	canBootstrapMarketplace := !mode.readOnlyDependencies() && mode.prepareInstall == nil && mode.reuseInstall == nil && len(mode.stagedConfigEdits) == 0 && len(mode.stagedLockEdits) == 0 && mode.commitScope == nil && !mode.previewNoCommit
 	missingMarketplaceEvidence := pipeline.NeedsLockBootstrap(ec.Errors)
 	// Resource-free registrations bind without lock evidence, so they never
 	// surface as missing-evidence errors. Only a clean read may acquire for
@@ -1071,7 +1136,24 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			return nil, changed, nil, err
 		}
 	}
-	if !mode.check {
+	// Requested preview comparisons complete before any new publication: the
+	// callback resolves the prepared prior/candidate state and its error
+	// aborts preparation with nothing committed.
+	if mode.updatePreview != nil {
+		if err := mode.updatePreview(ctx, preparedUpdateView{
+			ws:          ws,
+			offline:     mode.offline,
+			priorJobs:   priorSnapshots,
+			overlays:    overlays,
+			lockDesired: lockDesired,
+			desiredSet:  &set,
+			lookup:      exactSnapshot,
+			ec:          ec,
+		}); err != nil {
+			return nil, changed, nil, err
+		}
+	}
+	if !mode.check && !mode.previewNoCommit {
 		for _, layer := range ec.PresentLayers() {
 			snapshot, ok := configSnapshots[layer.Source]
 			if !ok {
@@ -1083,7 +1165,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			}
 		}
 	}
-	if !mode.check && mode.prepareInstall == nil && (len(desiredFiles) > 0 || mode.commitScope != nil) {
+	if !mode.check && !mode.previewNoCommit && mode.prepareInstall == nil && (len(desiredFiles) > 0 || mode.commitScope != nil) {
 		for _, layer := range ec.PresentLayers() {
 			if !layer.Source.IsWritable() && !mode.explicitOrganization {
 				continue
@@ -1133,7 +1215,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 		slog.Info("lock transaction commit completed", "files", len(desiredFiles), "changed", len(commitResult.Changed), "duration_ms", time.Since(commitStarted).Milliseconds())
 	} else {
-		slog.Debug("lock transaction commit skipped", "check", mode.check, "files", len(desiredFiles))
+		slog.Debug("lock transaction commit skipped", "check", mode.check, "preview", mode.previewNoCommit, "files", len(desiredFiles))
 	}
 	if mode.explicitOrganization && organizationRequiresLock && !mode.check {
 		verificationStarted := time.Now()
@@ -1143,7 +1225,9 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 		slog.Info("organization lock verification completed", "duration_ms", time.Since(verificationStarted).Milliseconds())
 	}
-	if mode.prepareInstall == nil {
+	// Preview preparation never publishes: expectations keep describing the
+	// on-disk generations the validate callback re-reads.
+	if mode.prepareInstall == nil && !mode.previewNoCommit {
 		for path, data := range lockDesired {
 			lockExpectations[path] = dependencytxn.Generation{Exists: true, Digest: dependencytxn.Digest(data)}
 		}
@@ -1437,12 +1521,26 @@ func addLayerSnapshots(ctx context.Context, set *exactLockSet, source config.Sou
 		slog.Debug("lock snapshot verification completed", attrs...)
 	}()
 	fetchURLs := map[string]string{}
+	fetchURLsByCanonical := map[string]string{}
 	for _, entry := range entries {
 		canonical, err := canonicalRegistryURL(entry.URL)
 		if err != nil {
 			return err
 		}
 		fetchURLs[gitLockIdentity(canonical, entry.Ref)] = entry.URL
+		if _, seen := fetchURLsByCanonical[canonical]; !seen {
+			fetchURLsByCanonical[canonical] = entry.URL
+		}
+	}
+	// A ref bump rewrites the configured ref before the prior document is
+	// re-verified, so the exact (canonical, ref) key can miss while the same
+	// repository remains configured. Any entry for the canonical URL provides
+	// a valid fetch URL for the recorded commit.
+	fetchURLFor := func(canonical, ref string) string {
+		if url, ok := fetchURLs[gitLockIdentity(canonical, ref)]; ok {
+			return url
+		}
+		return fetchURLsByCanonical[canonical]
 	}
 	results := make([]struct {
 		locked   lockedGit
@@ -1481,7 +1579,7 @@ func addLayerSnapshots(ctx context.Context, set *exactLockSet, source config.Sou
 			return nil
 		}
 		if !offline && !readOnly {
-			err = cache.WithAcquiredExactGit(ctx, registry.URL, fetchURLs[gitLockIdentity(registry.URL, registry.Ref)], cacheOID, consume)
+			err = cache.WithAcquiredExactGit(ctx, registry.URL, fetchURLFor(registry.URL, registry.Ref), cacheOID, consume)
 		} else {
 			err = cache.WithExactGitReadOnly(ctx, registry.URL, cacheOID, consume)
 		}
@@ -1496,7 +1594,7 @@ func addLayerSnapshots(ctx context.Context, set *exactLockSet, source config.Sou
 			}
 			return &lockLifecycleError{Code: code, Err: err}
 		}
-		result.locked = lockedGit{canonical: registry.URL, fetchURL: fetchURLs[gitLockIdentity(registry.URL, registry.Ref)], ref: registry.Ref, commit: registry.Commit, snapshot: snapshot}
+		result.locked = lockedGit{canonical: registry.URL, fetchURL: fetchURLFor(registry.URL, registry.Ref), ref: registry.Ref, commit: registry.Commit, snapshot: snapshot}
 		return nil
 	})
 	for _, result := range results {

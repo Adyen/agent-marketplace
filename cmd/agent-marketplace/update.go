@@ -15,15 +15,18 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
-// newUpdateCmd builds the update command with scope, Git target, ref bump, and
-// verbose output flags. Execution rejects organization scope and invalid target
-// combinations, then returns any error from runUpdate.
+// newUpdateCmd builds the update command with scope, Git target, ref bump,
+// preview, and verbose output flags. Execution rejects organization scope and
+// invalid target combinations, then returns any error from runUpdate.
 func newUpdateCmd() *cobra.Command {
-	var bump, verbose bool
+	var bump, verbose, dryRun, includeDiff bool
 	var scope, registry, ref, registryPath, kind string
 	cmd := &cobra.Command{
 		Use:   "update [resource ...]",
 		Short: "Refresh pinned registries and sync enabled skills",
+		Long: "Advance exact Git acquisition locks and Marketplace pins to newer revisions and sync enabled resources.\n" +
+			"\nUse --dry-run to preview proposed dependency and resource changes without changing locks, configuration, or installed resources.\n" +
+			"Use --include-diff to include normalized review diffs of changed resources. Explicit diff output can disclose sensitive values authored in resources; it is not a secret scanner or a security finding.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			selected, explicitOrg, err := parseLockSelection(scope, false)
 			if err != nil {
@@ -36,11 +39,13 @@ func newUpdateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runUpdate(cmd.Context(), cmd.OutOrStdout(), bump, verbose, selected, targets)
+			return runUpdate(cmd.Context(), cmd.OutOrStdout(), bump, verbose, dryRun, includeDiff, selected, targets)
 		},
 	}
 	cmd.Flags().BoolVar(&bump, "bump", false, "Bump repo registry refs to newer matching tags")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "List organization-managed Marketplace pins")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview proposed updates without changing locks, configuration, or installed resources")
+	cmd.Flags().BoolVar(&includeDiff, "include-diff", false, "Include normalized resource content diffs in the report")
 	cmd.Flags().StringVar(&scope, "scope", "all", "Update scope: user, repo, local, or all")
 	cmd.Flags().StringVar(&registry, "registry", "", "Target a configured Git registry URL")
 	cmd.Flags().StringVar(&ref, "ref", "", "Narrow --registry to a configured Git ref")
@@ -50,34 +55,77 @@ func newUpdateCmd() *cobra.Command {
 }
 
 // runUpdate refreshes dependency locks and Marketplace pins, syncs enabled
-// resources, and writes the update report. selected controls Git upgrade and ref
-// bump scopes; nil upgrades all writable scopes but bumps only repository refs.
-// targets narrows Git updates and may have its ref advanced when bump rewrites a
-// matching ref. verbose lists individual organization-managed pins in the report.
+// resources, and writes the update report. selected controls Git upgrade and
+// ref bump scopes; nil upgrades all writable scopes but bumps only repository
+// refs. targets narrows Git updates and may have its ref advanced when bump
+// rewrites a matching ref. verbose lists individual organization-managed pins
+// in the report. dryRun previews the prepared candidates without publishing
+// configuration, locks, or materialized resources; includeDiff adds the
+// normalized resource content diffs of the prepared candidates to the report.
 //
-// It recovers pending dependency transactions and creates missing Marketplace
-// locks before updating. Recovery, lock preparation, update, and output errors
-// are propagated; an output error can occur after changes have been applied.
-func runUpdate(ctx context.Context, out io.Writer, bump, verbose bool, selected map[lockfile.Scope]bool, targets *upgradeTargetSpec) error {
+// An applying update recovers pending dependency transactions and creates
+// missing Marketplace locks before updating; a preview instead refuses a
+// pending journal without replay and prepares missing acquisition evidence in
+// memory. Recovery, lock preparation, update, and output errors are
+// propagated; an output error can occur after changes have been applied.
+func runUpdate(ctx context.Context, out io.Writer, bump, verbose, dryRun, includeDiff bool, selected map[lockfile.Scope]bool, targets *upgradeTargetSpec) error {
 	repoRoot := config.FindRepoRoot()
 	localDir := config.FindLocalConfigDir()
 	ws, err := pipeline.WorkspaceForRoots(repoRoot, localDir)
 	if err != nil {
 		return err
 	}
-	if err := prepareDependencyTransactions(ctx, false); err != nil {
-		return err
-	}
-	if _, err := bootstrapMissingMarketplaceLocks(ctx, ws.RepoRoot(), ws.LocalConfigDir(), selected, nil); err != nil {
-		return err
+	var preseed []pipeline.StagedLockEdit
+	if dryRun {
+		// A preview checks for pending dependency work without replay and
+		// prepares the missing Marketplace evidence an update would bootstrap
+		// as in-memory staged documents instead of committing it.
+		if err := prepareDependencyTransactions(ctx, true); err != nil {
+			return err
+		}
+		preseed, err = prepareMissingMarketplaceLockEdits(ctx, ws.RepoRoot(), ws.LocalConfigDir(), selected, nil)
+		if err != nil {
+			return err
+		}
+	} else {
+		if err := prepareDependencyTransactions(ctx, false); err != nil {
+			return err
+		}
+		if _, err := bootstrapMissingMarketplaceLocks(ctx, ws.RepoRoot(), ws.LocalConfigDir(), selected, nil); err != nil {
+			return err
+		}
 	}
 	targetResult := &upgradeTargetResult{}
 	var warnings []error
+	var preview *updatePreview
+	var previewErr error
+	previewHook := func(ctx context.Context, view preparedUpdateView) error {
+		preview, previewErr = buildUpdatePreview(ctx, view, includeDiff)
+		return previewErr
+	}
+	reconcileMode := lockMode{upgrade: true, selects: selected, upgradeTargets: targets, upgradeResult: targetResult, reconcileUnselected: true, stagedConfigEdits: nil, stagedLockEdits: nil, warningSink: &warnings, selectionGuard: true}
+	if dryRun || includeDiff {
+		reconcileMode.updatePreview = previewHook
+	}
+	if dryRun {
+		reconcileMode.previewNoCommit = true
+	}
 	opts := pipeline.UpdateOptions{
 		RepoRoot: repoRoot, Bump: bump, BumpScopes: selected, BumpTarget: updateBumpTarget(targets),
+		DryRun:           dryRun,
+		PreseedLockEdits: preseed,
 		DependencyReconcile: func(ctx context.Context, repoRoot, localDir string, bumps []pipeline.RefBump, edits []pipeline.StagedConfigEdit, lockEdits []pipeline.StagedLockEdit) (pipeline.DependencyLockView, error) {
 			advanceUpgradeTargetRefs(targets, bumps)
-			option, _, lease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, lockMode{upgrade: true, selects: selected, upgradeTargets: targets, upgradeResult: targetResult, reconcileUnselected: true, stagedConfigEdits: edits, stagedLockEdits: lockEdits, warningSink: &warnings, selectionGuard: true})
+			mode := reconcileMode
+			if mode.updatePreview != nil {
+				mode.updatePreview = func(ctx context.Context, view preparedUpdateView) error {
+					view.refBumps = bumps
+					return previewHook(ctx, view)
+				}
+			}
+			mode.stagedConfigEdits = edits
+			mode.stagedLockEdits = lockEdits
+			option, _, lease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, mode)
 			return pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, Warnings: warnings}, err
 		},
 	}
@@ -86,6 +134,24 @@ func runUpdate(ctx context.Context, out io.Writer, bump, verbose bool, selected 
 	}
 	result, updateErr := pipeline.Update(ctx, opts)
 	if updateErr != nil && result == nil {
+		var committed *pipeline.DependencyCommittedSyncError
+		if errors.As(updateErr, &committed) {
+			// Publication succeeded but harness synchronization did not
+			// complete: report the phase boundary without claiming full
+			// application or a rollback.
+			if err := writeGroupedWarnings(out, warnings, false); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprintln(out, "Dependency updates were published, but harness synchronization did not complete; installed resources may be out of sync. Run `agent-marketplace sync` or repeat `agent-marketplace update` to complete materialization."); err != nil {
+				return err
+			}
+			if includeDiff && preview != nil {
+				if err := writeUpdatePreviewOutput(out, preview, nil, bump, verbose, true, true); err != nil {
+					return err
+				}
+			}
+			return updateErr
+		}
 		if refused, ok := errors.AsType[*updateSelectionRefusedError](updateErr); ok {
 			return refused
 		}
@@ -102,7 +168,11 @@ func runUpdate(ctx context.Context, out io.Writer, bump, verbose bool, selected 
 			return err
 		}
 	}
-	if err := writeUpdateOutput(out, result, bump, verbose); err != nil {
+	if dryRun || includeDiff {
+		if err := writeUpdatePreviewOutput(out, preview, result, bump, verbose, !dryRun, includeDiff); err != nil {
+			return err
+		}
+	} else if err := writeUpdateOutput(out, result, bump, verbose); err != nil {
 		return err
 	}
 	return updateErr
@@ -156,26 +226,8 @@ func writeUpdateOutput(out io.Writer, result *pipeline.UpdateResult, bump, verbo
 	if _, err := fmt.Fprintf(out, "Marketplace pins updated: %d\n", result.UpdatedMarketplacePins); err != nil {
 		return err
 	}
-	organizationPins := 0
-	for _, pin := range result.MarketplacePins {
-		if pin.Source == config.Organization && pin.Skipped {
-			organizationPins++
-		}
-	}
-	if otherSkipped := result.SkippedMarketplacePins - organizationPins; otherSkipped > 0 {
-		if _, err := fmt.Fprintf(out, "Other Marketplace pins skipped: %d\n", otherSkipped); err != nil {
-			return err
-		}
-	}
-	if organizationPins > 0 {
-		if _, err := fmt.Fprintf(out, "Organization-managed Marketplace pins: %d (not checked for newer revisions; pins unchanged)\n", organizationPins); err != nil {
-			return err
-		}
-		if !verbose {
-			if _, err := fmt.Fprintln(out, "Use `agent-marketplace update --verbose` to list organization-managed pins."); err != nil {
-				return err
-			}
-		}
+	if err := writeMarketplaceSkipSummary(out, result, verbose); err != nil {
+		return err
 	}
 	for _, pin := range result.MarketplacePins {
 		if pin.Source == config.Organization && !pin.Updated && !verbose {
@@ -213,6 +265,31 @@ func writeUpdateOutput(out io.Writer, result *pipeline.UpdateResult, bump, verbo
 		}
 		if _, err := fmt.Fprintf(out, "Marketplace %s %s: skipped (%s)\n", marketplace.QuoteTerminal(pin.Entry.URL), identity, marketplace.QuoteTerminal(pin.Reason)); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func writeMarketplaceSkipSummary(out io.Writer, result *pipeline.UpdateResult, verbose bool) error {
+	organizationPins := 0
+	for _, pin := range result.MarketplacePins {
+		if pin.Source == config.Organization && pin.Skipped {
+			organizationPins++
+		}
+	}
+	if otherSkipped := result.SkippedMarketplacePins - organizationPins; otherSkipped > 0 {
+		if _, err := fmt.Fprintf(out, "Other Marketplace pins skipped: %d\n", otherSkipped); err != nil {
+			return err
+		}
+	}
+	if organizationPins > 0 {
+		if _, err := fmt.Fprintf(out, "Organization-managed Marketplace pins: %d (not checked for newer revisions; pins unchanged)\n", organizationPins); err != nil {
+			return err
+		}
+		if !verbose {
+			if _, err := fmt.Fprintln(out, "Use `agent-marketplace update --verbose` to list organization-managed pins."); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
