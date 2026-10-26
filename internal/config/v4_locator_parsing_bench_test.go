@@ -1,0 +1,80 @@
+package config
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
+
+func BenchmarkV4LocatorParsingCPU(b *testing.B) {
+	for _, tc := range []struct {
+		label, value string
+		wantError    bool
+	}{
+		{"unqualified", "skill/review", false},
+		{"qualified", "tools/skill/review", false},
+		{"long-name", "tools/skill/" + strings.Repeat("x", 512), false},
+		{"extra-slash", "tools/skill/review/extra", true},
+		{"invalid-name", "tools/skill/a*b", true},
+		{"dirty", " tools/skill/review", true},
+	} {
+		b.Run(tc.label, func(b *testing.B) {
+			var kind, registry, name string
+			var err error
+			b.ReportAllocs()
+			for b.Loop() {
+				kind, registry, name, err = parseV4Locator(tc.value, "g")
+			}
+			wantKind, wantRegistry, wantName, wantErr := legacyParseV4Locator(tc.value, "g")
+			if (err != nil) != tc.wantError || kind != wantKind || registry != wantRegistry ||
+				name != wantName || (err == nil) != (wantErr == nil) ||
+				err != nil && err.Error() != wantErr.Error() {
+				b.Fatalf("locator parsing result changed: %q/%q/%q (%v)", kind, registry, name, err)
+			}
+		})
+	}
+}
+
+func v4LocatorParsingDocument(tb testing.TB, source V4SourceKind, count int) []byte {
+	tb.Helper()
+	data := string(v4FilterSortDocument(tb, count, count))
+	switch source {
+	case V4SourceGit:
+	case V4SourceDirectory:
+		data = strings.Replace(data, "git: https://example.test/tools.git, ref: main", "directory: ./fixtures", 1)
+	case V4SourceMarketplace:
+		data = strings.Replace(data, "git: https://example.test/tools.git, ref: main", "marketplace: https://market.example", 1)
+		data = strings.ReplaceAll(data, "skill/", "tools/skill/")
+		data = strings.ReplaceAll(data, "command/kept", "tools/command/kept")
+	default:
+		tb.Fatal("unsupported fixture source")
+	}
+	return []byte(data)
+}
+
+// Public parsing includes YAML/validation and relative-directory path metadata
+// checks, but no configuration/resource reads or network acquisition.
+func BenchmarkParseV4LocatorShapesCPU(b *testing.B) {
+	for _, source := range []V4SourceKind{V4SourceGit, V4SourceDirectory, V4SourceMarketplace} {
+		for _, count := range []int{1, 256, 1024} {
+			b.Run(fmt.Sprintf("%s/requests=%d", source, count), func(b *testing.B) {
+				data := v4LocatorParsingDocument(b, source, count)
+				var cfg *V4Config
+				var err error
+				b.ReportAllocs()
+				for b.Loop() {
+					cfg, err = ParseV4(data)
+				}
+				if err != nil || cfg == nil || cfg.Sources["g"].Kind != source || len(cfg.Requests) != 1 ||
+					len(cfg.Decisions) != 2*count+1 || len(cfg.Groups["g"].Include) != count+1 {
+					b.Fatalf("source-bound include/exclusion parsing changed: %v", err)
+				}
+				kept := cfg.Requests[0]
+				if kept.Kind != "command" || kept.Name != "kept" || kept.SourceName != "g" ||
+					(source == V4SourceMarketplace) != (kept.Registry == "tools") {
+					b.Fatalf("retained command or registry binding changed: %#v", kept)
+				}
+			})
+		}
+	}
+}

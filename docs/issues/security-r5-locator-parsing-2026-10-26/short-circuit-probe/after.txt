@@ -1,0 +1,110 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4LocatorParsingCPU/unqualified-16         	 7926856	       151.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/qualified-16           	 5289583	       226.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/long-name-16           	  225986	      5293 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/extra-slash-16         	35567366	        33.14 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/invalid-name-16        	13824021	        86.86 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/dirty-16               	134418274	         9.130 ns/op	      16 B/op	       1 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4LocatorParsingCPU/unqualified-16         	 7848357	       152.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/qualified-16           	 5309620	       226.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/long-name-16           	  229983	      5304 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/extra-slash-16         	35650314	        33.18 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/invalid-name-16        	13685395	        87.86 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/dirty-16               	136883983	         8.770 ns/op	      16 B/op	       1 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4LocatorParsingCPU/unqualified-16         	 7896680	       152.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/qualified-16           	 5276427	       226.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/long-name-16           	  232827	      5290 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/extra-slash-16         	35361590	        33.13 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/invalid-name-16        	13762158	        87.78 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/dirty-16               	134847526	         8.910 ns/op	      16 B/op	       1 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4LocatorParsingCPU/unqualified-16         	 7846647	       151.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/qualified-16           	 5283698	       230.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/long-name-16           	  228819	      5330 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/extra-slash-16         	35755610	        33.25 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/invalid-name-16        	13697124	        87.95 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/dirty-16               	133685557	         8.980 ns/op	      16 B/op	       1 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4LocatorParsingCPU/unqualified-16         	 7876456	       151.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/qualified-16           	 5284263	       226.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/long-name-16           	  221426	      5305 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/extra-slash-16         	35665987	        33.35 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/invalid-name-16        	13632961	        87.14 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/dirty-16               	132767406	         9.060 ns/op	      16 B/op	       1 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4LocatorParsingCPU/unqualified-16         	 7793714	       152.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/qualified-16           	 5230311	       227.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/long-name-16           	  231808	      5293 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/extra-slash-16         	35978052	        33.19 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/invalid-name-16        	13721970	        87.44 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/dirty-16               	134835456	         8.881 ns/op	      16 B/op	       1 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4LocatorParsingCPU/unqualified-16         	 7893271	       152.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/qualified-16           	 5308273	       226.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/long-name-16           	  228830	      5312 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/extra-slash-16         	35527440	        33.32 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/invalid-name-16        	13592676	        88.00 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/dirty-16               	133991996	         8.920 ns/op	      16 B/op	       1 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4LocatorParsingCPU/unqualified-16         	 7765968	       153.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/qualified-16           	 5257774	       227.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/long-name-16           	  223682	      5330 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/extra-slash-16         	35641490	        33.39 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/invalid-name-16        	13630884	        87.64 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/dirty-16               	134536908	         8.911 ns/op	      16 B/op	       1 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4LocatorParsingCPU/unqualified-16         	 7853535	       152.2 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/qualified-16           	 5223055	       228.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/long-name-16           	  226653	      5312 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/extra-slash-16         	35854609	        33.32 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/invalid-name-16        	13824220	        87.67 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/dirty-16               	135969350	         8.831 ns/op	      16 B/op	       1 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4LocatorParsingCPU/unqualified-16         	 7855456	       152.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/qualified-16           	 5250601	       229.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/long-name-16           	  228241	      5319 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4LocatorParsingCPU/extra-slash-16         	33795240	        33.50 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/invalid-name-16        	13805949	        87.91 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/dirty-16               	135342224	         8.867 ns/op	      16 B/op	       1 allocs/op
+PASS
