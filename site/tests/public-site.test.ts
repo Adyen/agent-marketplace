@@ -5,11 +5,19 @@ import { join, relative, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import test from 'node:test'
 
+import { stripFrontMatter } from '../.vitepress/llms.ts'
+import { docsSidebar } from '../.vitepress/sidebar.ts'
 import { nextTabIndex } from '../src/pages/landing/composables/tabNavigation.ts'
 
 const dist = new URL('../.vitepress/dist/', import.meta.url)
 const base = process.env.SITE_BASE ?? '/'
 const docsPath = `${base.replace(/\/?$/, '/')}docs/`
+
+type SidebarItem = ReturnType<typeof docsSidebar>[number]
+
+function sidebarLinks(items: SidebarItem[]): string[] {
+  return items.flatMap(item => [...(item.link ? [item.link] : []), ...sidebarLinks(item.items ?? [])])
+}
 
 async function generatedFilePaths(directory: URL): Promise<string[]> {
   const entries = await readdir(directory, { recursive: true, withFileTypes: true })
@@ -122,9 +130,20 @@ test('llms.txt lists every documentation page as a Markdown link under the base'
     assert.ok(url.startsWith(docsPath) && url.endsWith('.md'), url)
     await access(new URL(url.slice(base.length), dist))
   }
-  assert.deepEqual(links.slice(0, 4), ['index.md', 'quick-start.md', 'install.md', 'glossary.md'].map(rel => `${docsPath}${rel}`))
+  const expectedOrdered = sidebarLinks(docsSidebar(docsPath)).map(link => {
+    const rest = link.slice(docsPath.length)
+    const rel = rest === '' || rest.endsWith('/') ? `${rest}index` : rest
+    return `${docsPath}${rel}.md`
+  })
+  assert.deepEqual(links, expectedOrdered)
   const expected = (await sourceMarkdown(sourceDocs)).map(rel => `${docsPath}${rel}`).sort()
   assert.deepEqual([...links].sort(), expected)
+})
+
+test('front matter is stripped from LF and CRLF sources', () => {
+  assert.equal(stripFrontMatter('---\ntitle: x\n---\n# Body\n'), '# Body\n')
+  assert.equal(stripFrontMatter('---\r\ntitle: x\r\n---\r\n# Body\r\n'), '# Body\r\n')
+  assert.equal(stripFrontMatter('# Body\n'), '# Body\n')
 })
 
 // spec: site-deployment-profiles/markdown-copies-mirror-documentation-sources
@@ -134,11 +153,11 @@ test('Markdown copies mirror their sources without front matter', async () => {
       readFile(new URL(rel, sourceDocs), 'utf8'),
       readFile(new URL(`docs/${rel}`, dist), 'utf8'),
     ])
-    assert.equal(copy, source.replace(/^---\n[\s\S]*?\n---\n/, ''), rel)
+    assert.equal(copy, stripFrontMatter(source), rel)
   }
 
   const metadata = await readFile(new URL('docs/reference/resource-metadata.md', dist), 'utf8')
-  assert.doesNotMatch(metadata, /^---\n/)
+  assert.doesNotMatch(metadata, /^---\r?\n/)
 
   const tutorialUrl = new URL('docs/tutorials/add-your-first-marketplace-registry.md', dist)
   const tutorial = await readFile(tutorialUrl, 'utf8')

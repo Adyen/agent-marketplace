@@ -50,6 +50,10 @@ async function markdownFiles(dir: string): Promise<string[]> {
   return files.flat()
 }
 
+export function stripFrontMatter(markdown: string): string {
+  return markdown.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '')
+}
+
 // Writes llms.txt and a Markdown copy of each sidebar page beside its HTML route.
 export async function writeLlmsFiles({ base, description, docsPath, outDir, sidebar, srcDir, title }: LlmsOptions): Promise<void> {
   const sections = collectSections(sidebar, docsPath)
@@ -73,7 +77,7 @@ export async function writeLlmsFiles({ base, description, docsPath, outDir, side
     const markdown = await readFile(join(sourceRoot, `${rel}.md`), 'utf8')
     const target = join(outputRoot, `${rel}.md`)
     await mkdir(dirname(target), { recursive: true })
-    await writeFile(target, markdown.replace(/^---\n[\s\S]*?\n---\n/, ''))
+    await writeFile(target, stripFrontMatter(markdown))
   }
   await cp(join(sourceRoot, 'images'), join(outputRoot, 'images'), { recursive: true })
 
