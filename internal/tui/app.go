@@ -102,6 +102,7 @@ func NewModel(repoRoot, homeDir string, options ...Option) Model {
 		help:                       newHelpModel(theme),
 		isDark:                     isDark,
 		theme:                      theme,
+		pendingInventory:           newPendingInventory(),
 	}
 	for _, option := range options {
 		option(&m)
@@ -364,9 +365,7 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	m.clampListOffset()
 	m.rebuildOpenBundle(previousDetail, hadPreviousDetail)
 	if msg.stage == snapshotStageFinal {
-		if msg.inventoryResult != nil {
-			pipeline.RecordResolvedInventory(m.ctx, *msg.inventoryResult)
-		}
+		m.pendingInventory.set(msg.inventoryResult)
 		recordConfigSnapshotSpans(m.ctx, msg)
 	}
 }
@@ -2225,6 +2224,14 @@ func (m Model) listVisibleHeight() int {
 }
 
 func Run(ctx context.Context, repoRoot, homeDir string, options ...Option) error {
+	return runSession(ctx, repoRoot, homeDir, func(model tea.Model) error {
+		return runTUIModel(model, defaultTUIProgramOptions()...)
+	}, options...)
+}
+
+// runSession owns the session span and final inventory flush. Defers run in
+// reverse order, so the flush records before the session span ends.
+func runSession(ctx context.Context, repoRoot, homeDir string, runModel func(tea.Model) error, options ...Option) error {
 	initRenderer()
 
 	model := NewModel(repoRoot, homeDir, options...)
@@ -2234,12 +2241,15 @@ func Run(ctx context.Context, repoRoot, homeDir string, options ...Option) error
 		model.ctx, model.sessionSpan = tel.StartSpan(model.ctx, "agent_marketplace.tui.session", nil)
 	}
 	defer model.sessionSpan.End()
+	recordCtx := model.ctx
+	model.ctx = pipeline.WithoutInventory(model.ctx)
+	defer model.pendingInventory.flush(recordCtx)
 
 	seedTerminalSize(&model, os.Stdout)
 	restoreLogs := logging.BeginTerminalSession()
 	defer restoreLogs()
 
-	return runTUIModel(model, defaultTUIProgramOptions()...)
+	return runModel(model)
 }
 
 func defaultTUIProgramOptions() []tea.ProgramOption {

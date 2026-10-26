@@ -128,6 +128,13 @@ func BuildInventorySnapshot(result ResolveResult) (telemetry.InventorySnapshot, 
 	return snapshot, "", true
 }
 
+type inventorySuppressedKey struct{}
+
+// WithoutInventory marks ctx so Resolve and RecordResolvedInventory record no inventory; the caller owns recording.
+func WithoutInventory(ctx context.Context) context.Context {
+	return context.WithValue(ctx, inventorySuppressedKey{}, true)
+}
+
 // RecordResolvedInventory records one already-computed successful resolution.
 // It is intended for command boundaries that suppress Resolve's automatic
 // inventory while deciding whether a configuration mutation will follow.
@@ -136,7 +143,7 @@ func RecordResolvedInventory(ctx context.Context, result ResolveResult) {
 }
 
 func recordResolvedInventory(ctx context.Context, result ResolveResult) {
-	if !telemetry.InventoryEnabled(ctx) {
+	if suppressed, _ := ctx.Value(inventorySuppressedKey{}).(bool); suppressed || !telemetry.InventoryEnabled(ctx) {
 		return
 	}
 	defer warnInventoryPanic()

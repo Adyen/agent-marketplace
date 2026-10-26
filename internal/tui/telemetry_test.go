@@ -23,6 +23,7 @@ import (
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 
+	tea "charm.land/bubbletea/v2"
 	metricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
@@ -33,7 +34,7 @@ import (
 type testSpanExporter struct {
 	mu                 sync.Mutex
 	spans              []*tracev1pb.Span
-	inventorySnapshots int
+	inventoryHarnesses []string
 	server             *httptest.Server
 }
 
@@ -55,7 +56,9 @@ func newTestSpanExporter(t *testing.T) *testSpanExporter {
 						for _, scope := range resource.ScopeMetrics {
 							for _, metric := range scope.Metrics {
 								if metric.Name == string(tmcfg.InventorySnapshotName) {
-									e.inventorySnapshots += len(metric.GetGauge().DataPoints)
+									for _, point := range metric.GetGauge().GetDataPoints() {
+										e.inventoryHarnesses = append(e.inventoryHarnesses, attrValue(point.Attributes, "harnesses"))
+									}
 								}
 							}
 						}
@@ -118,10 +121,12 @@ func (e *testSpanExporter) spansNamed(name string) []*tracev1pb.Span {
 	return spans
 }
 
-func (e *testSpanExporter) inventorySnapshotCount() int {
+// inventorySnapshotHarnesses returns the harnesses attribute of each exported
+// inventory snapshot, in export order.
+func (e *testSpanExporter) inventorySnapshotHarnesses() []string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.inventorySnapshots
+	return append([]string(nil), e.inventoryHarnesses...)
 }
 
 func (e *testSpanExporter) waitForSpan(name string, timeout time.Duration) *tracev1pb.Span {
@@ -214,28 +219,123 @@ func TestRecordActionSpanNoTelemetry(t *testing.T) {
 	recordActionSpan(ctx, "tui.action.test", nil)
 }
 
-func TestModelRecordsInventoryOnlyForAcceptedSnapshots(t *testing.T) {
+func snapshotForHarness(target hcc.Target) *pipeline.ResolveResult {
+	return &pipeline.ResolveResult{
+		MergedCfg:           &amconfig.Config{},
+		TargetHarnesses:     []hcc.Target{target},
+		TargetHarnessSource: amconfig.UserPersonal,
+	}
+}
+
+func applyFinalSnapshot(m Model, generation requestGeneration, result *pipeline.ResolveResult) Model {
+	updated, _ := m.Update(snapshotLoadedMsg{generation: generation, mergedCfg: result.MergedCfg, inventoryResult: result})
+	return updated.(Model)
+}
+
+// deliverFinalSnapshots sends each accepted target as its own current
+// generation, then a stale final snapshot that must never become pending.
+func deliverFinalSnapshots(m Model, stale hcc.Target, accepted ...hcc.Target) Model {
+	staleGeneration := m.beginRequest(requestSnapshot)
+	for _, target := range accepted {
+		m = applyFinalSnapshot(m, m.beginRequest(requestSnapshot), snapshotForHarness(target))
+	}
+	return applyFinalSnapshot(m, staleGeneration, snapshotForHarness(stale))
+}
+
+// spec: telemetry/interactive-edits-record-only-the-final-configuration
+func TestModelRecordsNoInventoryBeforeSessionFlush(t *testing.T) {
 	e := newTestSpanExporter(t)
 	ctx, tel := setupTuiTelemetry(t, e)
 	m := NewModel(t.TempDir(), t.TempDir())
 	m.ctx = ctx
-	staleGeneration := m.beginRequest(requestSnapshot)
-	acceptedGeneration := m.beginRequest(requestSnapshot)
-	result := pipeline.ResolveResult{
-		MergedCfg:           &amconfig.Config{},
-		TargetHarnesses:     []hcc.Target{hcc.TargetFactory},
-		TargetHarnessSource: amconfig.UserPersonal,
-	}
-
-	updated, _ := m.Update(snapshotLoadedMsg{generation: staleGeneration, mergedCfg: result.MergedCfg, inventoryResult: &result})
-	m = updated.(Model)
-	updated, _ = m.Update(snapshotLoadedMsg{generation: acceptedGeneration, mergedCfg: result.MergedCfg, inventoryResult: &result})
-	_ = updated.(Model)
+	m = deliverFinalSnapshots(m, hcc.TargetClaude, hcc.TargetFactory, hcc.TargetDevin, hcc.TargetCursor)
 	if err := tel.Shutdown(context.Background()); err != nil {
 		t.Fatalf("shutdown: %v", err)
 	}
-	if got := e.inventorySnapshotCount(); got != 1 {
-		t.Fatalf("inventory snapshots = %d, want only the accepted generation", got)
+	if got := e.inventorySnapshotHarnesses(); len(got) != 0 {
+		t.Fatalf("inventory recorded before the session flushed: %v", got)
+	}
+}
+
+// spec: telemetry/interactive-edits-record-only-the-final-configuration
+func TestModelFlushRecordsOnlyLastAcceptedInventory(t *testing.T) {
+	e := newTestSpanExporter(t)
+	ctx, tel := setupTuiTelemetry(t, e)
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.ctx = ctx
+	m = deliverFinalSnapshots(m, hcc.TargetClaude, hcc.TargetFactory, hcc.TargetDevin, hcc.TargetCursor)
+	m.pendingInventory.flush(ctx)
+	if err := tel.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	if got := e.inventorySnapshotHarnesses(); len(got) != 1 || got[0] != "cursor" {
+		t.Fatalf("inventory harnesses = %v, want one snapshot for the last accepted configuration [cursor]", got)
+	}
+}
+
+// spec: telemetry/failed-final-snapshot-records-nothing
+func TestModelFlushRecordsNothingAfterFailedFinalSnapshot(t *testing.T) {
+	e := newTestSpanExporter(t)
+	ctx, tel := setupTuiTelemetry(t, e)
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.ctx = ctx
+	m = applyFinalSnapshot(m, m.beginRequest(requestSnapshot), snapshotForHarness(hcc.TargetFactory))
+	failed := snapshotForHarness(hcc.TargetCursor)
+	failed.Errors = []error{errors.New("resolution failed")}
+	m = applyFinalSnapshot(m, m.beginRequest(requestSnapshot), failed)
+	m.pendingInventory.flush(ctx)
+	if err := tel.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	if got := e.inventorySnapshotHarnesses(); len(got) != 0 {
+		t.Fatalf("failed final snapshot recorded inventory: %v", got)
+	}
+}
+
+// inventoryExitProbe stands in for the startup load: Init delivers scripted
+// accepted final snapshots, checks that session work records nothing, then quits.
+type inventoryExitProbe struct {
+	Model
+	snapshots []*pipeline.ResolveResult
+}
+
+type scriptedSnapshotMsg struct{ result *pipeline.ResolveResult }
+
+func (p inventoryExitProbe) Init() tea.Cmd {
+	var cmds []tea.Cmd
+	for _, result := range p.snapshots {
+		cmds = append(cmds, func() tea.Msg { return scriptedSnapshotMsg{result: result} })
+	}
+	pipeline.RecordResolvedInventory(p.ctx, *snapshotForHarness(hcc.TargetClaude))
+	return tea.Sequence(append(cmds, tea.Quit)...)
+}
+
+func (p inventoryExitProbe) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if scripted, ok := msg.(scriptedSnapshotMsg); ok {
+		msg = snapshotLoadedMsg{generation: p.beginRequest(requestSnapshot), mergedCfg: scripted.result.MergedCfg, inventoryResult: scripted.result}
+	}
+	next, cmd := p.Model.Update(msg)
+	p.Model = next.(Model)
+	return p, cmd
+}
+
+// spec: telemetry/interactive-edits-record-only-the-final-configuration
+// spec: telemetry/session-operations-do-not-record-inventory
+func TestRunRecordsFinalInventoryOnExit(t *testing.T) {
+	e := newTestSpanExporter(t)
+	ctx, tel := setupTuiTelemetry(t, e)
+	snapshots := []*pipeline.ResolveResult{snapshotForHarness(hcc.TargetFactory), snapshotForHarness(hcc.TargetCursor)}
+	err := runSession(ctx, t.TempDir(), t.TempDir(), func(model tea.Model) error {
+		return runTUIModel(inventoryExitProbe{Model: model.(Model), snapshots: snapshots}, tea.WithInput(nil), tea.WithOutput(io.Discard))
+	})
+	if err != nil {
+		t.Fatalf("run session: %v", err)
+	}
+	if err := tel.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	if got := e.inventorySnapshotHarnesses(); len(got) != 1 || got[0] != "cursor" {
+		t.Fatalf("inventory harnesses = %v, want one snapshot for the last accepted configuration [cursor]", got)
 	}
 }
 
