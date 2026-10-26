@@ -138,7 +138,7 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | 'signal' | null 
       </ul>
     </section>
 
-    <section class="gui-sidebar__section" aria-label="Sources list">
+    <section class="gui-sidebar__section gui-sidebar__section--scroll" aria-label="Sources list">
       <div class="gui-sidebar__heading">
         <h2 class="gui-caps">Sources</h2>
         <button
@@ -149,7 +149,7 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | 'signal' | null 
           @click="emit('openSources')"
         ><GuiIcon name="plus" /></button>
       </div>
-      <ul class="gui-sidebar__list">
+      <ul class="gui-sidebar__list gui-sidebar__list--scroll">
         <li v-for="entry in sources" :key="entry.source.id">
           <button
             type="button"

@@ -255,8 +255,17 @@ textarea:focus-visible,
   margin-top: 4px;
 }
 
+.gui-sidebar__nav,
 .gui-sidebar__section {
+  flex: 0 0 auto;
   min-width: 0;
+}
+
+.gui-sidebar__section--scroll {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .gui-sidebar__heading {
@@ -270,6 +279,18 @@ textarea:focus-visible,
   list-style: none;
   margin: 0;
   padding: 0;
+}
+
+.gui-sidebar__list--scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--gui-ink-3) transparent;
+  scrollbar-width: thin;
+}
+
+.gui-sidebar__list--scroll .gui-nav-row:focus-visible {
+  outline-offset: -2px;
 }
 
 .gui-nav-row {

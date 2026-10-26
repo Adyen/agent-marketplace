@@ -298,8 +298,26 @@ const syncWarningsScenario = (): PreviewScenario => ({
   notifications: [{ severity: 'warning', message: 'sync complete with 2 warning(s)' }],
 })
 
+const manySourcesScenario = (): PreviewScenario => {
+  const base = defaultScenario()
+  const extra = Array.from({ length: 24 }, (_, index) => ({
+    id: `src-extra-${index}`,
+    kind: 'directory' as const,
+    location: `/home/dev/workspaces/team-${index + 1}/resources`,
+    path: '',
+    ref: '',
+    sourceHarness: '',
+    rowSourceId: '',
+  }))
+  return {
+    ...base,
+    configuration: { ...base.configuration, userSources: [...base.configuration.userSources, ...extra] },
+  }
+}
+
 export const scenarios: Record<string, () => PreviewScenario> = {
   default: defaultScenario,
+  'many-sources': manySourcesScenario,
   empty: emptyScenario,
   syncing: syncingScenario,
   toasts: toastsScenario,
