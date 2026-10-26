@@ -65,6 +65,13 @@ initial scope comment, retain measured test-source snapshots for untimed
 lint-only fixture changes, and never relabel samples or compound #953's
 saving with this parser's saving.
 
+Measure Gemini's proposed `qualified` short-circuit separately against
+the published Cut parser, not against the original Split parser. Retain
+that hypothesis probe even if rejected; do not exchange a tiny
+unqualified-input gain for slower qualified/refusal fixtures without
+acknowledging the trade-off or imply public latency improvements from
+direct-helper measurements.
+
 Before publication and handoff, use host adversarial
 `open-code-review-delegate` on every changed file, including excluded
 tests, both raw datasets, provenance, and private harnesses. Run committed

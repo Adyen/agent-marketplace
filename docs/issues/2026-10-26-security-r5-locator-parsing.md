@@ -33,7 +33,9 @@ changed. Private nonempty source strings are not newly normalized.
 ## Measurement Scope
 
 The same 27 cases run in six alternating before/after pairs, one second
-per case: 324 rows per stage, 648 total rows across two separate stages.
+per case: 324 rows per stage, 648 rows across two separate stages.
+An additional, separately retained Gemini proposal probe contains 120
+direct-parser rows; all three datasets total 768 rows, never pooled.
 Go 1.27.3, Darwin/arm64, Apple M4 Max, native `CGO_ENABLED=0` test binaries,
 default benchmark CPU suffix `-16`. Each stage changes only the production
 `internal/config/v4.go` input between its frozen binaries.
@@ -106,6 +108,45 @@ is 21.55 to 22.78 us, p=0.065, and the single directory case is 26.58 to
 Do not headline a geomean, extrapolate to whole CLI or acquisition latency,
 or infer admission budgets from these bounded fixtures.
 
+## Gemini Short-Circuit Proposal
+
+Gemini proposed guarding the remaining-slash check with `qualified`.
+Measure that hypothesis privately rather than treating an extra branch
+as a guaranteed optimization. The published parser remains unchanged.
+
+`short-circuit-probe/` contains ten alternating one-second pairs for six
+direct cases, 120 rows. Before is the published Cut parser, not the old
+Split parser. After adds only `qualified &&` to the remaining-slash check.
+Base `b41fb8060d12f02e7cf9bd41aa0231af2bcc5872` incorporates main
+`ff2ee37ead14abdfff0f09d42cdb9459fb7ba8d7`, including the sync-check
+load-refusal fix and terminal-mode QA. Config package and dependency
+sources did not change upstream.
+
+| Direct case | Published Cut | Proposed guard | Comparison |
+| --- | ---: | ---: | --- |
+| Unqualified | 154.2 ns | 152.3 ns | -1.20%, p<0.001 |
+| Qualified | 226.5 ns | 227.1 ns | not significant, p=0.093 |
+| Long name | 5.280 us | 5.309 us | +0.55%, p=0.002 |
+| Extra slash | 32.78 ns | 33.29 ns | +1.54%, p<0.001 |
+| Invalid name | 87.40 ns | 87.72 ns | not significant, p=0.101 |
+| Dirty input | 8.914 ns | 8.910 ns | not significant, p=0.971 |
+
+Bytes and allocations are unchanged in every case. Proposal preservation
+tests pass. Reject this refinement: about 1.9 ns saved for short
+unqualified names is not a uniform improvement, with slower qualified
+long-name and extra-slash fixtures and no allocation benefit. These
+observations do not establish public latency effects, universal
+regressions, or a release-policy decision. Preserve both favorable and
+unfavorable measurements without adding their deltas to the earlier
+Split-versus-Cut results.
+
+For exact probe-source reconstruction, its before file is the published
+`v4.go`; produce the after file by changing only
+`if !hasSlash || strings.Contains(last, "/") {` to
+`if !hasSlash || (qualified && strings.Contains(last, "/")) {`.
+The probe uses the final, isolated unit-test source, not the older
+measured-test snapshot used by the original two matrices.
+
 ## Initial Results And Reproduction
 
 Initial base: `3ad0341dacdb1d31894baf357150a220aa40a323`, before #953.
@@ -167,7 +208,7 @@ file, and revalidate the final test form on both production variants.
 
 ## Consumer Validation And Review
 
-All consumer gates pass on the integrated base:
+The first integrated-base consumer gates pass:
 
 - Fresh selected config/pipeline/resolver/TUI tests pass. The initial
   validation stops on the new test's `QF1003`; after the fixture-only
@@ -187,11 +228,34 @@ All consumer gates pass on the integrated base:
   requirements, no gaps, all three required refusal witnesses executed
   and passed, plus shellcheck.
 
-Host adversarial `open-code-review-delegate` covers all 15 own files,
+After incorporating main `ff2ee37e`, fresh selected config/pipeline/
+resolver/TUI validation, vet, zero-issue lint, and build pass. Strict
+specs pass with 67 items, 1,218 scenarios, 2,006 annotations, and two
+active changes. All 73 terminal journeys plus four utilities pass with
+zero skips. Fresh combined E2E passes in 731.795 seconds: 3,491
+invocations, all 113 requirements, no gaps, all three required refusal
+witnesses executed and passed, plus shellcheck. This includes the newly
+active unloadable-hook-source refusal/control matrix and terminal-mode
+QA; no measured config or dependency source changed upstream.
+
+After main `d5092025` incorporates the already-decided update-preview
+feature, fresh selected config/pipeline/resolver/resourcediff/TUI
+validation, vet, zero-issue lint, and build pass again. Strict specs pass
+with 68 items, 1,249 scenarios, 2,053 annotations, and two active changes.
+All 73 terminal journeys plus four utilities pass with zero skips.
+Fresh combined E2E passes in 765.839 seconds: 3,501 invocations, all
+115 command/flag requirements, no gaps, all three required refusal
+witnesses executed and passed, plus shellcheck. The config package does
+not depend on pipeline or resourcediff, and its measured source and
+dependency inputs remain unchanged. Preserve every earlier measurement
+base and gate result rather than relabeling them as this later run.
+
+Host adversarial `open-code-review-delegate` covers all 19 own files,
 including excluded tests/docs, both raw datasets, both measured-source
-snapshots, and the private harnesses. Verify the full 648-row provenance,
-stage boundaries, source/binary identities, and reported qualifications
-before publication. CI owns the wider full root suite; selected local
+snapshots, the rejected-proposal dataset, and the private harnesses.
+Verify all 768 rows, distinct baselines, source/binary identities, and
+reported qualifications before publication.
+CI owns the wider full root suite; selected local
 validation must not be called full-suite proof.
 
 R53 and R5 remain partial. No new policy or user decision is introduced.
