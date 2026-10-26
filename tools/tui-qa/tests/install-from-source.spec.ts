@@ -5,7 +5,7 @@ import path from "node:path";
 import { after, before } from "node:test";
 
 import type { Fixture } from "./fixture.js";
-import { defineFixture, locate, step, waitForExit, type TestTerminal } from "./helpers.js";
+import { defineFixture, locate, modalText, step, waitForExit, type TestTerminal } from "./helpers.js";
 import { runAM } from "./process-helpers.js";
 
 // spec: tui-interactions/previewing-a-source-writes-nothing
@@ -493,7 +493,7 @@ lockPinned.test("a lock-pinned source returns to Review with update remediation"
     await locate(terminal, `resources at ${advanced.slice(0, 8)}`).unique().expect({ timeout: 30_000 });
   });
   await step("open the filter", () => terminal.write("/"), async () => {
-    await locate(terminal, /\/ /).expect();
+    await locate(terminal, /│ \/ +│/).unique().expect();
   });
   await step("paste into the filter", () => terminal.write("\x1b[200~ad-hoc-second\x1b[201~"), async () => {
     await locate(terminal, /\/ ad-hoc-second/).unique().expect();
@@ -523,13 +523,12 @@ lockPinned.test("a lock-pinned source returns to Review with update remediation"
   assertRepoUnchanged();
   await step("confirm the project install", () => terminal.write("\r"), async () => {
     await locate(terminal, "lock pins").unique().expect({ timeout: 30_000 });
-    await locate(terminal, `${locked.slice(0, 8)}`).expect();
-    await locate(terminal, `${advanced.slice(0, 8)}`).expect();
-    await locate(terminal, "update --registry").expect();
-    await locate(terminal, "--scope repo").expect();
+    const remediation =
+      `Projectlockpinsmainat${locked.slice(0, 8)};previewshowed${advanced.slice(0, 8)}.` +
+      `Runagent-marketplaceupdate--registry${adHocURL(fixture)}--refmain--scoperepo,orchooseanotherscope.`;
+    assert.ok((await modalText(terminal)).includes(remediation), `the remediation is incomplete:\n${await terminal.text()}`);
     await locate(terminal, "Selected resources:").unique().expect();
     await locate(terminal, "preview again").expect({ not: true });
-    await locate(terminal, "another scope").expect();
   });
   assertRepoUnchanged();
   await step("choose another scope", () => terminal.write("l"), async () => {
