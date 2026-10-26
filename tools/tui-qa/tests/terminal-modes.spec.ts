@@ -4,7 +4,7 @@ import path from "node:path";
 import process from "node:process";
 import { after, before } from "node:test";
 
-import { defineFixture, locate, step, type TestTerminal, waitForExit } from "./helpers.js";
+import { defineFixture, locate, step, terminalOutput, type TestTerminal, waitForExit } from "./helpers.js";
 import { readRegularFile, targetPID } from "./process-helpers.js";
 
 // spec: tui-mouse-navigation/wheel-reporting-is-enabled
@@ -25,6 +25,16 @@ const modes = async (terminal: TestTerminal) => {
 const active = { mouse: "drag", alternateScreen: true, cursorVisible: false, bracketedPaste: true };
 const restored = { mouse: "none", alternateScreen: false, cursorVisible: true, bracketedPaste: false };
 
+const assertSGRRestored = async (terminal: TestTerminal): Promise<void> => {
+  // mouse_mode omits SGR encoding. Read the full output, not a synthesized screen.
+  const output = await terminalOutput(terminal);
+  const changes = [...output.matchAll(/\x1b\[\?([\d;]+)([hl])/g)]
+    .filter((match) => match[1].split(";").includes("1006"))
+    .map((match) => match[2]);
+  assert.ok(changes.includes("h"), "the TUI never enabled SGR mouse encoding");
+  assert.equal(changes.at(-1), "l", "SGR mouse encoding remains enabled after exit");
+};
+
 for (const exit of ["q", "Ctrl+C", "SIGINT", "SIGTERM"] as const) {
   journey.test(`${exit} restores terminal modes before the PTY session closes`, async (terminal) => {
     await step("settled TUI owns the terminal with cell-motion, not all-motion, reporting", () => {}, async () => {
@@ -44,6 +54,7 @@ for (const exit of ["q", "Ctrl+C", "SIGINT", "SIGTERM"] as const) {
       // Read before runJourney's cleanup; terminal.close() must not repair the result.
       assert.deepEqual(await modes(terminal), restored);
     });
+    await assertSGRRestored(terminal);
   });
 }
 
@@ -69,9 +80,15 @@ journey.test("a failed sync-and-quit returns its error with terminal modes resto
   });
   const configAfterToggle = readRegularFile(config);
   assert.match(configAfterToggle.toString("utf8"), /\n      - skill\/alpha-skill\n/);
-  const mode = fs.statSync(skills).mode & 0o7777;
-  fs.chmodSync(skills, 0o555);
+  const savedSkills = path.join(fixture.root, "installed-skills");
+  const blocker = path.join(fixture.root, "blocked-skills");
+  const obstruction = Buffer.from("not a harness directory\n");
+  fs.writeFileSync(blocker, obstruction, { flag: "wx", mode: 0o600 });
+  fs.renameSync(skills, savedSkills);
+  let blocked = false;
   try {
+    fs.renameSync(blocker, skills);
+    blocked = true;
     await step("quit asks to sync the pending change", () => terminal.write("q"), async () => {
       await locate(terminal, "Sync+quit?").unique().expect();
     });
@@ -80,12 +97,15 @@ journey.test("a failed sync-and-quit returns its error with terminal modes resto
       assert.equal(result.exitCode, 1, "the sync failure must reach the CLI exit status");
       assert.equal(result.signal, null);
       assert.deepEqual(await modes(terminal), restored);
-      await locate(terminal, "materialize.write.error").expect();
+      await locate(terminal, "materialize.destination.error").expect();
     });
-    assert.equal(fs.lstatSync(alpha, { throwIfNoEntry: false }), undefined, "the failed sync installed alpha-skill");
-    assert.deepEqual(readRegularFile(beta), betaBefore, "the failed sync changed installed beta-skill");
-    assert.deepEqual(readRegularFile(config), configAfterToggle, "sync-and-quit changed the authored selection");
+    assert.deepEqual(readRegularFile(skills), obstruction, "the failed sync changed the blocking file");
   } finally {
-    fs.chmodSync(skills, mode);
+    if (blocked) fs.renameSync(skills, blocker);
+    fs.renameSync(savedSkills, skills);
   }
+  assert.equal(fs.lstatSync(alpha, { throwIfNoEntry: false }), undefined, "the failed sync installed alpha-skill");
+  assert.deepEqual(readRegularFile(beta), betaBefore, "the failed sync changed installed beta-skill");
+  assert.deepEqual(readRegularFile(config), configAfterToggle, "sync-and-quit changed the authored selection");
+  await assertSGRRestored(terminal);
 });
