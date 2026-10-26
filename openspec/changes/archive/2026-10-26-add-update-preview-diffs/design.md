@@ -183,7 +183,7 @@ new flags would remove the feature without requiring on-disk conversion.
 
 ## Implementation evidence
 
-The implementation is local on `spec/update-preview-diffs`, based on
+The initial implementation on `spec/update-preview-diffs` was based on
 `93e7778f`. No persisted formats or historical content identities change.
 Command tests and v4 E2E witnesses cover the new flags. Additional command
 regressions exercise cold/warm organization Marketplace collections and a real
@@ -195,9 +195,10 @@ former unresolved-collection error; restoring it passes.
 Adversarial review found and fixed the missing previous-source label for collision
 winners, a weakened missing-selection check for never-locked sources, and
 organization selections entering update comparisons. Each has a command-level
-regression. `make validate`, `make spec-check`, and `make validate-e2e` passed
-after the production fixes. The combined E2E gate covered 115/115 command
-requirements with zero listed gaps and all three required witnesses passing.
+regression. Before integration, `make validate`, `make spec-check`, and
+`make validate-e2e` passed after the production fixes. The combined E2E gate covered
+115/115 command requirements with zero listed gaps and all three required witnesses
+passing.
 TUI behavior is unchanged, so no TUI journey changes were needed.
 
 ### Performance evidence
@@ -237,3 +238,10 @@ organization pin rows appearing without `--verbose`. They now pass with the fixe
 Previous-source labels include Git ref/path and Marketplace instance/coordinate.
 Preservation tests now inspect the real cache and hash protected file contents;
 successful previews may still add disposable acquisition entries.
+
+Integration with `main` at `867731e5` retained completed-hook reviews and
+materialization warnings. An existing regression caught the new partial-report
+return path bypassing the post-publication failure message; the command now
+reports that phase boundary whether synchronization returns a partial report or
+none. Focused tests also verify that preview summaries disclose no hook payloads
+and neither preview mode reports completed hook mutations.

@@ -133,35 +133,35 @@ func runUpdate(ctx context.Context, out io.Writer, bump, verbose, dryRun, includ
 		opts.LocalConfigDir = localDir
 	}
 	result, updateErr := pipeline.Update(ctx, opts)
-	if updateErr != nil && result == nil {
-		var committed *pipeline.DependencyCommittedSyncError
-		if errors.As(updateErr, &committed) {
-			// Publication succeeded but harness synchronization did not
-			// complete: report the phase boundary without claiming full
-			// application or a rollback.
-			if err := writeGroupedWarnings(out, warnings, false); err != nil {
-				return err
-			}
-			if _, err := fmt.Fprintln(out, "Dependency updates were published, but harness synchronization did not complete; installed resources may be out of sync. Run `agent-marketplace sync` or repeat `agent-marketplace update` to complete materialization."); err != nil {
-				return err
-			}
-			if includeDiff && preview != nil {
-				if err := writeUpdatePreviewOutput(out, preview, nil, bump, verbose, true, true); err != nil {
-					return err
-				}
-			}
-			return updateErr
-		}
+	var committed *pipeline.DependencyCommittedSyncError
+	publishedSyncFailure := errors.As(updateErr, &committed)
+	if updateErr != nil && result == nil && !publishedSyncFailure {
 		if refused, ok := errors.AsType[*updateSelectionRefusedError](updateErr); ok {
 			return refused
 		}
 		return updateErr
 	}
-	if err := writeHookChanges(out, result.Report, false); err != nil {
+	if result != nil {
+		if err := writeHookChanges(out, result.Report, false); err != nil {
+			return errors.Join(updateErr, err)
+		}
+		warnings = append(warnings, result.Warnings...)
+	}
+	if err := writeGroupedWarnings(out, dedupIssues(warnings), false); err != nil {
 		return errors.Join(updateErr, err)
 	}
-	if err := writeGroupedWarnings(out, dedupIssues(append(warnings, result.Warnings...)), false); err != nil {
-		return errors.Join(updateErr, err)
+	if publishedSyncFailure {
+		// A partial materialization report still means publication succeeded,
+		// not that every installed resource reached the candidate state.
+		if _, err := fmt.Fprintln(out, "Dependency updates were published, but harness synchronization did not complete; installed resources may be out of sync. Run `agent-marketplace sync` or repeat `agent-marketplace update` to complete materialization."); err != nil {
+			return errors.Join(updateErr, err)
+		}
+		if includeDiff && preview != nil {
+			if err := writeUpdatePreviewOutput(out, preview, nil, bump, verbose, true, true); err != nil {
+				return errors.Join(updateErr, err)
+			}
+		}
+		return updateErr
 	}
 	for _, notice := range targetResult.notices {
 		if _, err := fmt.Fprintln(out, notice); err != nil {

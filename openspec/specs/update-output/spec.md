@@ -273,7 +273,10 @@ or a rollback.
 
 ### Requirement: Explicit content disclosure is isolated and terminal-safe
 
-Only explicitly requested diff output SHALL expose reviewed resource content.
+New review-content output introduced by this feature SHALL expose reviewed
+resource content only in explicitly requested diff output. Existing completed-hook
+reviews remain governed by `hook-sync-diagnostics`; a dry-run SHALL NOT report
+completed hook mutations.
 It SHALL show authored instruction and configuration values without resolving
 local environment variables, reading local credentials to populate them, or
 inserting acquisition authentication. Source locators and acquisition errors

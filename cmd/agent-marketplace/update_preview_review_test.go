@@ -102,9 +102,24 @@ resources:
 	advanceAllKindsRegistry(t, working)
 	commitAndPushAll(t, working, "advance all kinds")
 
+	summary, err := updateDryRun(t)
+	if err != nil {
+		t.Fatalf("all-kinds summary failed: %v\n%s", err, summary)
+	}
+	if !strings.Contains(summary, `hook "PreToolUse-command"`) {
+		t.Fatalf("summary did not reach the changed hook:\n%s", summary)
+	}
+	for _, forbidden := range []string{"Hook changes:", "echo deploy-v2-distinctive", "./run-v2.sh", "v2-distinctive-mcp", "hook-support-v2-distinctive"} {
+		if strings.Contains(summary, forbidden) {
+			t.Fatalf("preview summary disclosed executable content or a completed hook review %q:\n%s", forbidden, summary)
+		}
+	}
 	output, err := updateDryRun(t, "--include-diff")
 	if err != nil {
 		t.Fatalf("all-kinds dry-run failed: %v\n%s", err, output)
+	}
+	if strings.Contains(output, "Hook changes:") {
+		t.Fatalf("preview reported a completed hook mutation:\n%s", output)
 	}
 	for _, want := range []string{
 		// Every resource kind is identified with scope, kind, and name.
