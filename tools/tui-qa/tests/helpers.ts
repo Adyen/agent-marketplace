@@ -157,10 +157,10 @@ export const sgr = (code: number, x: number, y: number, final: "M" | "m"): strin
 export const sgrDrag = (x0: number, y0: number, x1: number, y1: number): string =>
   sgr(0, x0, y0, "M") + sgr(32, x1, y1, "M") + sgr(0, x1, y1, "m");
 
-// clipboardWrites ends the session and returns every OSC 52 payload the
-// program wrote, decoded, from the trace's session cast. tui-test writes the
-// trace only on close, so call it last, once the journey has quit the TUI.
-export const clipboardWrites = async (terminal: TestTerminal): Promise<string[]> => {
+// terminalOutput ends the session and returns the program's raw output from
+// the trace's session cast. Call it last, after the program has exited and
+// any live terminal assertions have completed.
+export const terminalOutput = async (terminal: TestTerminal): Promise<string> => {
   await finish(terminal, false, true);
   const directory = journeyDirectories.get(terminal);
   assert.ok(directory, "terminal was not started by a journey");
@@ -168,7 +168,7 @@ export const clipboardWrites = async (terminal: TestTerminal): Promise<string[]>
     .readdirSync(directory, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && fs.existsSync(path.join(directory, entry.name, "session.cast")));
   assert.equal(casts.length, 1, `expected one trace with a session cast in ${directory}`);
-  const output = fs
+  return fs
     .readFileSync(path.join(directory, casts[0].name, "session.cast"), "utf8")
     .split("\n")
     .slice(1)
@@ -177,6 +177,10 @@ export const clipboardWrites = async (terminal: TestTerminal): Promise<string[]>
     .filter(([, kind]) => kind === "o")
     .map(([, , data]) => data)
     .join("");
+};
+
+export const clipboardWrites = async (terminal: TestTerminal): Promise<string[]> => {
+  const output = await terminalOutput(terminal);
   return [...output.matchAll(/\x1b\]52;[^;\x07\x1b]*;([^\x07\x1b]*)[\x07\x1b]/g)].map((match) =>
     Buffer.from(match[1], "base64").toString()
   );
