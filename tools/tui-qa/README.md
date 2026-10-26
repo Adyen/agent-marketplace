@@ -82,6 +82,12 @@ Each interaction contract has its own file. The `*.spec.ts` files are PTY journe
 
 `tests/target-pid.test.ts` is a helper test. It checks that the PID lookup used by the SIGTERM journey waits for the launcher to publish the PID.
 
+`tests/hook-review.spec.ts` selects a hook from a directory source, confirms sync-and-quit, and reviews the actual addition before leaving the TUI. It closes and reopens diagnostics, updates the hook and reviews both commands, proves an unchanged update clears the review, then deselects and syncs to review removal. The journey checks the native hook file after each publication.
+
+`tests/hook-review-json.spec.ts` installs an HTTP hook, reviews C1 and bidi controls as visible JSON escapes, and verifies that the native header value is preserved.
+
+`tests/materialization-warning.spec.ts` selects a Factory skill for Claude, confirms sync-and-quit, and reviews `skill.allowed-tools-omitted` before exiting. It checks that the skill installed with the intended body and omitted tool grant, and that quitting still succeeds.
+
 All normal PTY journeys start on exact-v4 consumer roots. No startup conversion prompt is offered. The unsupported-config journey checks the visible format refusal and blocked operations while preserving existing configuration, lock and harness bytes.
 
 Lifecycle hooks give every PTY journey a fresh temporary HOME, XDG roots, workspace, and temporary directory. Git-backed journeys also get a local bare Git registry with a project-selected, pre-synced `beta-skill` and an available `alpha-skill`. The v4 directory journeys read the same two skills from a plain directory, and the fixture's initial sync selects neither of them. The first-run fixture writes no user config, creates `~/.claude` so Claude Code is detected as installed, and skips the initial sync. The Marketplace discovery fixtures register the stub as the user's `market` endpoint without selecting anything; the stub then answers a search for `org-review` with its exact revision, optionally assessed with a warning finding whose assessment digest follows the Go canonical identity. Test discovery does not create fixtures. The test binary uses the existing `e2e` build tag only to redirect the fixed organization-config path into the fixture.

@@ -25,6 +25,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
+	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
@@ -125,6 +126,8 @@ type UpdateDependencyReconciler func(context.Context, string, string, []RefBump,
 
 // UpdateResult holds the outcome of an update operation.
 type UpdateResult struct {
+	Report                 *materialize.Report
+	Warnings               []error
 	UpdatedRegistries      int
 	Bumps                  []RefBump
 	SkippedBumps           []RefBump
@@ -259,14 +262,19 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 		}
 		return opts.DependencyReconcile(ctx, repoRoot, localDir, bumps, edits, ordered)
 	})}
-	if _, err := silentSyncCollect(ctx, ws, syncOpts...); err != nil {
+	synced, syncErr := silentSyncCollect(ctx, ws, syncOpts...)
+	result = updateResult(updatedRegistries, bumps, plans)
+	result.Report, result.Warnings = synced.Report, synced.Warnings
+	result.SkippedBumps = skippedBumps
+	if err := syncErr; err != nil {
 		if hasUnsupportedMarketplacePlan(plans) && isUnsupportedMarketplaceSyncError(err) {
 			err = fmt.Errorf("sync was required, but unsupported Marketplace pins prevented synchronization; index-only and collection updates are not implemented — remove or disable those pins before retrying: %w", err)
 		}
-		return nil, err
+		if result.Report == nil {
+			return nil, err
+		}
+		return result, err
 	}
-	result = updateResult(updatedRegistries, bumps, plans)
-	result.SkippedBumps = skippedBumps
 	slog.Info("update end", "updated_registries", updatedRegistries, "bumps", len(bumps), "marketplace_updated", result.UpdatedMarketplacePins, "marketplace_skipped", result.SkippedMarketplacePins)
 	return result, missing
 }

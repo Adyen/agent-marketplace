@@ -37,11 +37,12 @@ const (
 type operationKind string
 
 const (
-	operationMutation operationKind = "mutation"
-	operationTargets  operationKind = "targets"
-	operationSync     operationKind = "sync"
-	operationUpdate   operationKind = "update"
-	operationEditor   operationKind = "editor"
+	operationMutation   operationKind = "mutation"
+	operationTargets    operationKind = "targets"
+	operationSync       operationKind = "sync"
+	operationUpdate     operationKind = "update"
+	operationEditor     operationKind = "editor"
+	operationHookReview operationKind = "hook-review"
 )
 
 type tuiDiagnostic struct {
@@ -325,6 +326,19 @@ func (m *Model) recordOperationSuccess(operation operationKind) {
 
 func (m *Model) recordOperationWarnings(operation operationKind, category diagnosticCategory, errs ...error) {
 	m.seedLegacyDiagnostics()
-	m.diagnostics.recordOperationWarnings(operation, category, errs...)
+	var ordinary, review []error
+	for _, err := range errs {
+		if isHookReviewWarning(err) {
+			review = append(review, err)
+		} else {
+			ordinary = append(ordinary, err)
+		}
+	}
+	if len(ordinary) > 0 {
+		m.diagnostics.recordOperationWarnings(operation, category, ordinary...)
+	}
+	if len(review) > 0 {
+		m.diagnostics.recordOperationWarnings(operationHookReview, diagnosticMaterialization, review...)
+	}
 	m.syncDiagnosticViews()
 }
