@@ -36,3 +36,69 @@ journey.test("help closes back to the selected alpha-skill", async (terminal) =>
     assert.equal((await waitForExit(terminal)).exitCode, 0);
   });
 });
+
+const narrow = defineFixture("narrow-help", ["tui"], 50, 12);
+before(narrow.setup);
+after(narrow.cleanup);
+
+// spec: tui-navigation/narrow-help
+narrow.test("every help binding is reachable at 50x12 and reopening retains the final scroll position", async (terminal) => {
+  await step("settled minimum-size list", () => {}, async () => {
+    await locate(terminal, "~ in sync").unique().expect();
+  });
+  await step("select alpha-skill at minimum size", () => terminal.write("G"), async () => {
+    await locate(terminal, /Name:\s+alpha-skill/).unique().expect();
+  });
+  await step("open narrow help", () => terminal.write("?"), async () => {
+    await locate(terminal, "Keyboard Shortcuts").unique().expect();
+    await locate(terminal, "Navigation").unique().expect();
+  });
+  const seen: string[] = [];
+  let bottom = "";
+  for (let line = 0; line < 120; line += 1) {
+    const screen = await terminal.text();
+    seen.push(screen);
+    await locate(terminal, "esc/? close").unique().expect();
+    await locate(terminal, "Ctrl+C quit").unique().expect();
+    if (screen.includes("Press esc or ? to close")) {
+      bottom = screen;
+      break;
+    }
+    const oldScreen = locate(terminal, new RegExp(screen.trim().split(/\s+/)
+      .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+")));
+    await oldScreen.expect();
+    await step(`scroll narrow help line ${line + 1}`, () => terminal.write("j"), async () => {
+      await oldScreen.expect({ not: true });
+    });
+  }
+  assert.notEqual(bottom, "", "the final help group must be reachable by scrolling");
+  const visible = seen.map((screen) => screen.replace(/\s+/g, " ")).join("\n");
+  for (const section of ["Navigation", "Actions", "Toggle Modal", "Harness Modal", "Edit Config Modal", "Other"]) {
+    assert.ok(seen.some((screen) => screen.split("\n").includes(section)), `unreachable help group: ${section}`);
+  }
+  for (const binding of [
+    "\u2191/k move up", "\u2193/j move down", "ctrl+d half-page down", "ctrl+u half-page up",
+    "f/ctrl+f/pgdn page down", "b/ctrl+b/pgup page up", "g/home jump to top", "G/end jump to bottom",
+    "/ fuzzy search", "esc clear search / close", "enter view details / toggle fold",
+    "space toggle resource / all in section", "h/\u2190 collapse section", "l/\u2192 expand section",
+    "za toggle current fold", "zM collapse all", "zR expand all", "v view settings",
+    "H harness defaults", "E edit config", "s sync pending", "u update caches", "ctrl+k/: command palette",
+    "g toggle global", "p toggle project", "l toggle local", "e toggle local exclude", "esc cancel",
+    "g edit global", "p edit project", "space toggle resource / all in section", "enter save", "esc cancel",
+    "g edit global", "p edit project", "l edit local", "esc cancel",
+    "r reload from disk", "e view errors", "? this help", "q quit"
+  ]) {
+    assert.ok(visible.includes(binding), `unreachable help binding: ${binding}`);
+  }
+  await step("close narrow help", () => terminal.write("\x1b"), async () => {
+    await locate(terminal, "Press esc or ? to close").expect({ not: true });
+    await locate(terminal, /Name:\s+alpha-skill/).unique().expect();
+  });
+  await step("reopen at the same final offset", () => terminal.write("?"), async () => {
+    await locate(terminal, "Press esc or ? to close").unique().expect();
+    assert.equal(await terminal.text(), bottom);
+  });
+  await step("hard quit remains reachable from narrow help", () => terminal.write("\x03"), async () => {
+    assert.equal((await waitForExit(terminal)).exitCode, 0);
+  });
+});
