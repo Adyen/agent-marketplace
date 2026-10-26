@@ -91,7 +91,7 @@ func TestV4LocatorParsingPublicKinds(t *testing.T) {
 				binding := "git: https://example.test/tools.git, ref: main"
 				switch source {
 				case V4SourceDirectory:
-					binding = "directory: ./fixtures"
+					binding = fmt.Sprintf("directory: %q", filepath.ToSlash(t.TempDir()))
 				case V4SourceMarketplace:
 					binding, locator, wantRegistry = "marketplace: https://market.example", "tools/"+locator, "tools"
 				}

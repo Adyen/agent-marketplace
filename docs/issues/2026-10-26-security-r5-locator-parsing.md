@@ -130,10 +130,12 @@ belong only to the integrated package snapshot.
 
 After measurement, CI lint required a tagged switch instead of the
 equivalent if/else chain selecting the public test fixture's source kind
-(`QF1003`). Only that untimed test setup changes; production, the oracle,
-and benchmark functions are unchanged. Preserve the measured test source
-instead of silently replacing its fingerprint with the linted file, and
-revalidate the final test form on both production variants.
+(`QF1003`). CodeRabbit then identified that the directory unit fixture
+inspected a checkout-relative path; use a quoted, test-owned temporary
+directory for that unit case. Only untimed test setup changes; production,
+the oracle, and benchmark functions are unchanged. Preserve the measured
+test source instead of silently replacing its fingerprint with the final
+file, and revalidate the final test form on both production variants.
 
 ## Correctness And Negative Controls
 
@@ -173,6 +175,11 @@ All consumer gates pass on the integrated base:
   package, vet, zero-issue lint, and build. Unchanged consumer-package
   results from the first run remain separate, not falsely called reruns.
 - The final test form passes against the before production overlay too.
+- CodeRabbit's directory-unit isolation follow-up passes the before
+  overlay in 0.469 seconds and a fresh affected-config validation in
+  7.846 seconds, plus vet, zero-issue lint, and build. Production and
+  timed benchmark definitions remain unchanged; both stages' full
+  source/binary/trial provenance still verifies.
 - Strict specs: 67 items, 1,216 scenarios, 2,002 annotations, two active
   changes.
 - All 68 real-terminal journeys plus four utilities, zero skips.
