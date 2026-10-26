@@ -345,7 +345,7 @@ func TestHarnessDialogsRestoreAllOptionsAfterCompactResize(t *testing.T) {
 		cursor   func(Model) int
 		hovered  func(Model) string
 	}
-	selectedIDs := []string{"factory", "mystery-00", "mystery-01", "mystery-02", "mystery-03", "mystery-04", "mystery-05", "mystery-06", "mystery-07"}
+	selectedIDs := []string{"factory", "claude", "opencode"}
 	selected := make(map[string]bool, len(selectedIDs))
 	for _, id := range selectedIDs {
 		selected[id] = true
@@ -404,7 +404,7 @@ func TestHarnessDialogsRestoreAllOptionsAfterCompactResize(t *testing.T) {
 			}
 			lastSelected := selectedIDs[len(selectedIDs)-1]
 			if got := dialog.cursor(m); got != len(ids)-1 || dialog.hovered(m) != lastSelected {
-				t.Fatalf("initial cursor=%d hovered=%q, want selected unknown option %q at %d", got, dialog.hovered(m), lastSelected, len(ids)-1)
+				t.Fatalf("initial cursor=%d hovered=%q, want selected supported option %q at %d", got, dialog.hovered(m), lastSelected, len(ids)-1)
 			}
 			if !reflect.DeepEqual(dialog.selected(m), selected) {
 				t.Fatalf("initial selected IDs = %#v, want %#v", dialog.selected(m), selected)

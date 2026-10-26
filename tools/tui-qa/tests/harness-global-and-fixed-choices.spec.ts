@@ -5,7 +5,8 @@ import { after, before } from "node:test";
 
 import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 
-// Unknown-ID save/resize bindings await #935; this fixture uses known IDs only.
+// spec: tui-interactions/save-selected-harnesses
+// spec: tui-interactions/harness-options-return-after-compact-resize
 // spec: tui-interactions/slash-leaves-fixed-choice-dialogs-unchanged
 const journey = defineFixture("harness-global-and-fixed-choices", ["tui"]);
 before(journey.setup);
@@ -19,9 +20,10 @@ journey.test("global harnesses are saved after a compact scroll, and fixed-choic
   const userConfig = path.join(fixture.home, ".agents", "config.yaml");
   const claudeBeta = path.join(fixture.repo, ".claude", "skills", "beta-skill");
   const repoBefore = fs.readFileSync(repoConfig);
-  const allChoicesVisible = async (): Promise<void> => {
+  const allChoicesVisible = async (selected = ["Factory Droid"]): Promise<void> => {
     for (const label of harnesses) {
-      await locate(terminal, new RegExp(`\\[[ •]\\] ${label}\\b`)).unique().expect();
+      const mark = selected.includes(label) ? "•" : " ";
+      await locate(terminal, new RegExp(`\\[${mark}\\] ${label}\\b`)).unique().expect();
     }
   };
 
@@ -54,7 +56,7 @@ journey.test("global harnesses are saved after a compact scroll, and fixed-choic
   });
   await step("full size shows every choice again with the same cursor and selection", () => terminal.resize(80, 24), async () => {
     await locate(terminal, /Editing:\s+global/).unique().expect();
-    await allChoicesVisible();
+    await allChoicesVisible(["Factory Droid", "Claude Code"]);
     await locate(terminal, "[•] Factory Droid").unique().expect();
     await locate(terminal, "[•] Claude Code").unique().expect();
     await locate(terminal, "> [ ] OpenCode").unique().expect();
@@ -64,7 +66,11 @@ journey.test("global harnesses are saved after a compact scroll, and fixed-choic
     await locate(terminal, /Pending sync\s+\(1\)/).unique().expect({ timeout: 30_000 });
     await locate(terminal, /~ \d+ out of sync/).unique().expect({ timeout: 30_000 });
   });
-  assert.match(fs.readFileSync(userConfig, "utf8"), /^harnesses:\n {2}- factory\n {2}- claude\n/m);
+  assert.equal(
+    fs.readFileSync(userConfig, "utf8").match(/^harnesses:\n((?: {2}- [^\n]+\n)+)/m)?.[1],
+    "  - factory\n  - claude\n",
+    "the harness save must not select extra targets"
+  );
   assert.deepEqual(fs.readFileSync(repoConfig), repoBefore, "a global harness save changed the repository config");
   await step("sync installs the project skill into Claude Code too", () => terminal.write("s"), async () => {
     await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
