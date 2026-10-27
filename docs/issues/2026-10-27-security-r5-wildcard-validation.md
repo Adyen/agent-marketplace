@@ -150,7 +150,7 @@ production code, or performance observations change.
 
 ## Consumer Gates And Review
 
-Fresh selected config/pipeline/resolver/TUI validation, vet, zero-issue
+The first-base selected config/pipeline/resolver/TUI validation, vet, zero-issue
 lint, and build pass. Strict specs pass: 68 items, 1,277 scenarios,
 2,088 annotations, two active changes. All 81 terminal journeys plus
 four utilities pass with zero skips.
@@ -159,6 +159,21 @@ Combined E2E passes in 724.925 seconds: 3,501 invocations, all 115
 requirements, zero gaps, all three required refusal witnesses executed
 and passed, plus shellcheck. CI owns the wider full root suite; scoped
 local validation is not full-suite proof.
+
+After main `aa21ea03` incorporates the already-decided diagnostic-consent
+change, fresh selected config/pipeline/resolver/telemetry/TUI validation,
+vet, zero-issue lint, and build pass again. Strict specs pass with 68
+items, 1,279 scenarios, 2,090 annotations, and two active changes.
+All 81 terminal journeys plus four utilities pass with zero skips.
+Fresh combined E2E passes in 858.730 seconds: 3,502 invocations, all
+114 requirements, no gaps, all three required refusal witnesses executed
+and passed, plus shellcheck. The removed flag explains the changed
+requirement count, not a waived witness.
+
+Config test dependencies do not include the modified telemetry package;
+all measured config/module inputs and definitions remain unchanged.
+Retain the original benchmark base and earlier gate results rather than
+relabeling them as this later integration run.
 
 Host adversarial `open-code-review-delegate` covers all nine own files,
 including default-excluded tests/docs/raw data and private harnesses.
