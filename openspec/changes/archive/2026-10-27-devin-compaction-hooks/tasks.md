@@ -14,4 +14,4 @@
 - [x] 3.1 Cover canonical compaction compilation, same-harness `PostCompaction`, Devin compaction ingest, and catalog validation with `// spec:` annotated tests.
 - [x] 3.2 Run `go test ./pkg/harness-compilation/...`, `go test ./internal/devinprobe ./internal/sourcerevision`, and `make spec-check`.
 - [x] 3.3 Run `make validate` once before handoff.
-- [ ] 3.4 Archive with `openspec archive devin-compaction-hooks --yes` as the final commit of the pull request (lead).
+- [x] 3.4 Archive with `openspec archive devin-compaction-hooks --yes` as the final commit of the pull request (lead).
