@@ -24,4 +24,4 @@
 - [x] 3.1 Add the released-client witness (design D5) as a required gate
   scenario
 - [x] 3.2 Update `docs/harness-validation/claude.md` for the probe
-- [ ] 3.3 Run `make validate`, `make spec-check`, and `make validate-e2e`
+- [x] 3.3 Run `make validate`, `make spec-check`, and `make validate-e2e`
