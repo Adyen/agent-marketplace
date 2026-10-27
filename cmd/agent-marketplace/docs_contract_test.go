@@ -267,7 +267,6 @@ func TestPublicCommandPathsHaveBehaviorTests(t *testing.T) {
 		"remove --scope":                          TestInstallThenRemove_UserScope,
 		"root --debug":                            TestDebugFlagEnablesStructuredDebugLogs,
 		"root --diagnostic":                       TestDiagnosticFlagExportsPayload,
-		"root --diagnostic-accept-sensitive-data": TestDiagnosticFlagExportsPayload,
 		"root --version":                          TestVersionFlagPrintsVersion,
 		"search --kind":                           TestSearchCommandWithoutKindReturnsEveryResourceKind,
 		"search --limit":                          TestSearchCommandLimitOffsetBounds,

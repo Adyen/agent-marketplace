@@ -27,7 +27,6 @@ Every command accepts these flags.
 |---|---|:---:|---|---|
 | `--debug` | boolean | no | `false` | Enables debug logging and mirrors logs to standard error. |
 | `--diagnostic` | boolean | no | `false` | Captures a diagnostic telemetry payload for this invocation so you can review it before it is sent. Capture needs the effective telemetry level `detailed`; at other levels it is turned off. See the [telemetry reference](telemetry.md#diagnostic-payloads). |
-| `--diagnostic-accept-sensitive-data` | boolean | no | `false` | Acknowledges that a diagnostic payload may contain sensitive data. Without a terminal, diagnostic export and `telemetry preview --level diagnostic` require it. |
 | `-h`, `--help` | boolean | no | `false` | Prints help for the selected command. |
 | `--version` | boolean | no | `false` | Prints the CLI version. This flag belongs to the root command only. |
 
@@ -642,7 +641,7 @@ agent-marketplace telemetry preview --level <level>
 |---|---|:---:|---|---|
 | `--level` | string | yes | none | Preview level: `basic`, `detailed`, or `diagnostic`. |
 
-A diagnostic preview asks for confirmation on a terminal. Without a terminal, it requires the global `--diagnostic-accept-sensitive-data` flag. The output prints `Preview payload written to <path>` with the level, endpoint host, retention policy, and header references.
+A diagnostic preview asks for confirmation on a terminal. Without a terminal, it is refused and writes no payload. The output prints `Preview payload written to <path>` with the level, endpoint host, retention policy, and header references.
 
 ### `telemetry purge`
 
