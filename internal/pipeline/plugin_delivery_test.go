@@ -40,6 +40,12 @@ func TestResolvePluginDeliveryPerTarget(t *testing.T) {
 			want:   "decompose",
 		},
 		{
+			name:    "auto keeps agent-plugin packages decomposed",
+			request: "auto", format: "agent-plugin", target: target.TargetClaude,
+			policy: pluginpolicy.NativeDeliveryPolicy{Status: pluginpolicy.DeliveryVerified, Format: "claude-plugin"},
+			want:   "decompose",
+		},
+		{
 			name:    "explicit native on unverified target is refused",
 			request: "native", format: "claude-plugin", target: target.TargetCursor,
 			policy:   pluginpolicy.NativeDeliveryPolicy{Status: pluginpolicy.DeliveryUnverified},

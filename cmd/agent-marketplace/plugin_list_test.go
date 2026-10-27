@@ -115,6 +115,7 @@ func TestSyncNativePluginUnverifiedFailsWithoutDecomposing(t *testing.T) {
 		return
 	}
 	repo, run := pluginCommandFixture(t, "    - {kind: plugin, name: review-kit, delivery: native}\n")
+	writeConfig(t, filepath.Join(filepath.Dir(repo), "home", ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 
 	output, err := run("sync", "--no-backup")
 	if err == nil {
@@ -123,10 +124,10 @@ func TestSyncNativePluginUnverifiedFailsWithoutDecomposing(t *testing.T) {
 	if !strings.Contains(output, "plugin.delivery.native-unverified") || !strings.Contains(output, "review-kit") {
 		t.Fatalf("native delivery must fail as unverified for review-kit:\n%s", output)
 	}
-	if _, statErr := os.Lstat(filepath.Join(repo, ".claude", "skills", "review")); !os.IsNotExist(statErr) {
+	if _, statErr := os.Lstat(filepath.Join(repo, ".factory", "skills", "review")); !os.IsNotExist(statErr) {
 		t.Fatalf("native delivery must not decompose plugin members: %v", statErr)
 	}
-	if _, statErr := os.Lstat(filepath.Join(repo, ".claude", "settings.json")); !os.IsNotExist(statErr) {
+	if _, statErr := os.Lstat(filepath.Join(repo, ".factory", "settings.json")); !os.IsNotExist(statErr) {
 		t.Fatalf("native registration remains out of scope: %v", statErr)
 	}
 }
@@ -136,7 +137,7 @@ func TestSyncDecomposesPluginMemberForEveryHarness(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	repo, run := pluginCommandFixture(t, "    - plugin/review-kit\n")
+	repo, run := pluginCommandFixture(t, "    - {kind: plugin, name: review-kit, delivery: decompose}\n")
 	writeConfig(t, filepath.Join(filepath.Dir(repo), "home", ".agents", "config.yaml"),
 		"apiVersion: agent-marketplace/v4\nharnesses: [claude, cursor, codex, factory, gemini, windsurf, devin]\n")
 
@@ -181,7 +182,7 @@ func TestSyncRefusesPluginNamespaceCollisionWithoutChangingOtherResource(t *test
 		t.Fatalf("initial independent resource missing: %v / %v", readErr, statErr)
 	}
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"),
-		"apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {directory: "+filepath.ToSlash(filepath.Join(root, "marketplace"))+", format: claude-marketplace}\n  loose: {directory: "+filepath.ToSlash(leafDir)+"}\nresources:\n  team:\n    - plugin/review-kit\n  loose:\n    - skill/review-kit-review\n")
+		"apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {directory: "+filepath.ToSlash(filepath.Join(root, "marketplace"))+", format: claude-marketplace}\n  loose: {directory: "+filepath.ToSlash(leafDir)+"}\nresources:\n  team:\n    - {kind: plugin, name: review-kit, delivery: decompose}\n  loose:\n    - skill/review-kit-review\n")
 
 	output, err := run("sync", "--no-backup")
 	if err == nil || !strings.Contains(output, "plugin.namespace-collision") {
@@ -206,7 +207,7 @@ func TestSyncRefusesInvalidPluginNamespace(t *testing.T) {
 		`{"name":"team","plugins":[{"name":"`+pluginName+`","source":"./plugins/`+pluginName+`"}]}`)
 	writePluginSourceFixture(t, filepath.Join(catalogDir, "plugins", pluginName), ".claude-plugin", pluginName, "review")
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"),
-		"apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {directory: "+filepath.ToSlash(catalogDir)+", format: claude-marketplace}\nresources:\n  team:\n    - plugin/"+pluginName+"\n")
+		"apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {directory: "+filepath.ToSlash(catalogDir)+", format: claude-marketplace}\nresources:\n  team:\n    - {kind: plugin, name: "+pluginName+", delivery: decompose}\n")
 	withWorkingDir(t, repo)
 
 	output, err := executeCommand("sync", "--no-backup")

@@ -122,7 +122,7 @@ func TestClaudeNativeLayoutIsAvailable(t *testing.T) {
 					User:    NativeAggregateFile{Path: ".mcp.json", Member: "mcpServers"},
 				},
 			},
-			Registrations: []NativeRegistration{{Path: "settings.json", Shape: NativeRegistrationClaudeSettings}},
+			Registrations: []NativeRegistration{{Project: "settings.local.json", User: "settings.json", Shape: NativeRegistrationClaudeSettings}},
 		},
 	}}
 
@@ -139,8 +139,11 @@ func TestClaudeNativeLayoutIsAvailable(t *testing.T) {
 	if got, ok := NativeAggregatePath(TargetClaude, ir.KindSubagent); ok || got != "" {
 		t.Errorf("NativeAggregatePath(claude, subagent) = %q, %v; want no aggregate", got, ok)
 	}
-	if got, ok := NativePluginRegistration(TargetClaude); !ok || got != (NativeRegistration{Path: "settings.json", Shape: NativeRegistrationClaudeSettings}) {
-		t.Errorf("NativePluginRegistration(claude) = %#v, %v; want settings.json registration", got, ok)
+	if got, ok := NativePluginRegistration(TargetClaude, false); !ok || got != (NativeRegistrationFile{Path: "settings.local.json", Shape: NativeRegistrationClaudeSettings}) {
+		t.Errorf("NativePluginRegistration(claude, project) = %#v, %v; want settings.local.json registration", got, ok)
+	}
+	if got, ok := NativePluginRegistration(TargetClaude, true); !ok || got != (NativeRegistrationFile{Path: "settings.json", Shape: NativeRegistrationClaudeSettings}) {
+		t.Errorf("NativePluginRegistration(claude, user) = %#v, %v; want settings.json registration", got, ok)
 	}
 }
 
