@@ -113,6 +113,8 @@ interface ServedArchive {
 }
 
 export interface MarketplaceStubOptions {
+  // A journey can hold acquisition until its pending-state checks finish.
+  acquisitionGate?: () => Promise<void>;
   // Serve placeholder-form bytes that do not hash to the requested digest.
   mismatchedPlaceholderArchive?: boolean;
   // Answer a query matching the installable skill with its exact revision.
@@ -248,6 +250,10 @@ export const createMarketplaceStub = async (options: MarketplaceStubOptions = {}
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (/^\/api\/v1\/(?:registries|resources|archives|artifacts|manifests)\//.test(url.pathname)) {
       acquisitionDataRequests.push(url.pathname);
+      if (options.acquisitionGate) {
+        await options.acquisitionGate();
+        if (response.destroyed) return;
+      }
       if (nextAcquisitionDelayMs > 0) {
         const delay = nextAcquisitionDelayMs;
         nextAcquisitionDelayMs = 0;

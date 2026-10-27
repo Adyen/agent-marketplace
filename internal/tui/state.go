@@ -47,6 +47,7 @@ const (
 	paneMarketplaceConsent
 	paneViewSettings
 	paneBulkToggle
+	paneInstallSource
 )
 
 type marketplaceSelection struct {
@@ -313,6 +314,7 @@ type Model struct {
 	diagnostics         diagnosticStore
 	errs                []error
 	warnings            []error
+	hookChanges         []materialize.HookChange
 	syncing             bool
 	refreshing          bool
 	requests            requestState
@@ -374,9 +376,13 @@ type Model struct {
 	// user is acting on mid-interaction.
 	modalSkill                  row
 	marketplaceInstallOptions   pipeline.InstallOptions
+	mutationPendingWarnings     []error
+	mutationPendingReport       *materialize.Report
 	marketplacePreparedInstall  *pipeline.PreparedMarketplaceInstall
 	marketplaceInstallOperation operationID
+	marketplaceInstallIsSource  bool
 	marketplaceInstallReload    requestGeneration
+	installSource               installSourceModal
 	marketplaceInstallPreview   string
 	harnessModal                harnessModalState
 	initModal                   initModalState
@@ -389,12 +395,14 @@ type Model struct {
 	updateReload          requestGeneration
 	updatePendingErr      error
 	updatePendingWarnings []error
+	updatePendingReport   *materialize.Report
 	// syncReload is the snapshot generation scheduled by syncDoneMsg that
 	// must be accepted (or fail) before the sync operation ends;
 	// syncPendingErr retains the pipeline's own error for the verdict.
 	syncReload          requestGeneration
 	syncPendingErr      error
 	syncPendingWarnings []error
+	syncPendingReport   *materialize.Report
 
 	// pendingExcludeAction holds a toggleAction that needs to emit
 	// excludeCompetingRegistriesCmd after the primary toggle succeeds.

@@ -1,0 +1,192 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4MarketplaceLockHydration-16     	   55965	     20918 ns/op	   95352 B/op	     340 allocs/op
+BenchmarkV4LocatorParsingCPU/unqualified-16         	 7522262	       160.0 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/qualified-16           	 4937362	       242.4 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/long-name-16           	  224842	      5303 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/extra-slash-16         	21511366	        57.01 ns/op	      80 B/op	       2 allocs/op
+BenchmarkV4LocatorParsingCPU/invalid-name-16        	11372313	       104.3 ns/op	      64 B/op	       2 allocs/op
+BenchmarkV4LocatorParsingCPU/dirty-16               	139280884	         8.567 ns/op	      16 B/op	       1 allocs/op
+BenchmarkParseV4LocatorShapesCPU/git/requests=1-16  	   97143	     12306 ns/op	   17936 B/op	     176 allocs/op
+BenchmarkParseV4LocatorShapesCPU/git/requests=256-16         	    2408	    501223 ns/op	  677112 B/op	    5353 allocs/op
+BenchmarkParseV4LocatorShapesCPU/git/requests=1024-16        	     612	   2001807 ns/op	 2832623 B/op	   21521 allocs/op
+BenchmarkParseV4LocatorShapesCPU/directory/requests=1-16     	   54076	     23578 ns/op	   21044 B/op	     211 allocs/op
+BenchmarkParseV4LocatorShapesCPU/directory/requests=256-16   	    2307	    529014 ns/op	  680229 B/op	    5388 allocs/op
+BenchmarkParseV4LocatorShapesCPU/directory/requests=1024-16  	     579	   2071297 ns/op	 2835712 B/op	   21556 allocs/op
+BenchmarkParseV4LocatorShapesCPU/marketplace/requests=1-16   	   87116	     12648 ns/op	   17599 B/op	     168 allocs/op
+BenchmarkParseV4LocatorShapesCPU/marketplace/requests=256-16 	    1948	    621089 ns/op	  693104 B/op	    5345 allocs/op
+BenchmarkParseV4LocatorShapesCPU/marketplace/requests=1024-16         	     496	   2405814 ns/op	 2897843 B/op	   21514 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=0-16           	 1679241	       711.7 ns/op	    2312 B/op	      13 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=1-16           	 1471946	       820.2 ns/op	    2488 B/op	      16 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=0-16         	   21590	     56098 ns/op	  188528 B/op	     545 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=128-16       	   17901	     68111 ns/op	  209288 B/op	     584 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=256-16       	   16155	     74746 ns/op	  224720 B/op	     580 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=0-16        	    5119	    248454 ns/op	  761826 B/op	    2091 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=512-16      	    4166	    276379 ns/op	  836729 B/op	    2141 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16     	    4258	    286952 ns/op	  933026 B/op	    2143 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1-16                           	 1485031	       806.8 ns/op	    2216 B/op	      13 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=256-16                         	   23652	     51272 ns/op	  148936 B/op	     550 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1024-16                        	    5314	    214469 ns/op	  598057 B/op	    2100 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4MarketplaceLockHydration-16     	   55316	     21307 ns/op	   95352 B/op	     340 allocs/op
+BenchmarkV4LocatorParsingCPU/unqualified-16         	 7362297	       163.8 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/qualified-16           	 4902362	       243.9 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/long-name-16           	  221671	      5358 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/extra-slash-16         	21509712	        56.01 ns/op	      80 B/op	       2 allocs/op
+BenchmarkV4LocatorParsingCPU/invalid-name-16        	11360000	       104.8 ns/op	      64 B/op	       2 allocs/op
+BenchmarkV4LocatorParsingCPU/dirty-16               	138875895	         8.623 ns/op	      16 B/op	       1 allocs/op
+BenchmarkParseV4LocatorShapesCPU/git/requests=1-16  	   94854	     12563 ns/op	   17936 B/op	     176 allocs/op
+BenchmarkParseV4LocatorShapesCPU/git/requests=256-16         	    2408	    511189 ns/op	  677110 B/op	    5353 allocs/op
+BenchmarkParseV4LocatorShapesCPU/git/requests=1024-16        	     594	   2010399 ns/op	 2832603 B/op	   21521 allocs/op
+BenchmarkParseV4LocatorShapesCPU/directory/requests=1-16     	   46257	     26228 ns/op	   21044 B/op	     211 allocs/op
+BenchmarkParseV4LocatorShapesCPU/directory/requests=256-16   	    2241	    529978 ns/op	  680229 B/op	    5388 allocs/op
+BenchmarkParseV4LocatorShapesCPU/directory/requests=1024-16  	     585	   2059938 ns/op	 2835721 B/op	   21556 allocs/op
+BenchmarkParseV4LocatorShapesCPU/marketplace/requests=1-16   	   95536	     12387 ns/op	   17600 B/op	     168 allocs/op
+BenchmarkParseV4LocatorShapesCPU/marketplace/requests=256-16 	    1986	    608360 ns/op	  693109 B/op	    5345 allocs/op
+BenchmarkParseV4LocatorShapesCPU/marketplace/requests=1024-16         	     500	   2404606 ns/op	 2897824 B/op	   21513 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=0-16           	 1688940	       702.9 ns/op	    2312 B/op	      13 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=1-16           	 1483311	       811.7 ns/op	    2488 B/op	      16 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=0-16         	   21157	     56801 ns/op	  188528 B/op	     545 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=128-16       	   17151	     68926 ns/op	  209288 B/op	     584 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=256-16       	   16671	     72078 ns/op	  224720 B/op	     580 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=0-16        	    5245	    230713 ns/op	  761826 B/op	    2091 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=512-16      	    4536	    263014 ns/op	  836729 B/op	    2141 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16     	    4172	    282564 ns/op	  933026 B/op	    2143 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1-16                           	 1565366	       769.2 ns/op	    2216 B/op	      13 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=256-16                         	   24312	     49947 ns/op	  148936 B/op	     550 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1024-16                        	    6111	    194119 ns/op	  598057 B/op	    2100 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4MarketplaceLockHydration-16     	   51764	     22333 ns/op	   95352 B/op	     340 allocs/op
+BenchmarkV4LocatorParsingCPU/unqualified-16         	 7389763	       163.1 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/qualified-16           	 4932522	       243.4 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/long-name-16           	  225086	      5234 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/extra-slash-16         	22048132	        55.14 ns/op	      80 B/op	       2 allocs/op
+BenchmarkV4LocatorParsingCPU/invalid-name-16        	11576338	       104.2 ns/op	      64 B/op	       2 allocs/op
+BenchmarkV4LocatorParsingCPU/dirty-16               	137438709	         8.669 ns/op	      16 B/op	       1 allocs/op
+BenchmarkParseV4LocatorShapesCPU/git/requests=1-16  	   96852	     12483 ns/op	   17936 B/op	     176 allocs/op
+BenchmarkParseV4LocatorShapesCPU/git/requests=256-16         	    2366	    508113 ns/op	  677120 B/op	    5353 allocs/op
+BenchmarkParseV4LocatorShapesCPU/git/requests=1024-16        	     595	   2026066 ns/op	 2832649 B/op	   21522 allocs/op
+BenchmarkParseV4LocatorShapesCPU/directory/requests=1-16     	   47456	     25278 ns/op	   21044 B/op	     211 allocs/op
+BenchmarkParseV4LocatorShapesCPU/directory/requests=256-16   	    2314	    522951 ns/op	  680225 B/op	    5388 allocs/op
+BenchmarkParseV4LocatorShapesCPU/directory/requests=1024-16  	     592	   2030236 ns/op	 2835738 B/op	   21556 allocs/op
+BenchmarkParseV4LocatorShapesCPU/marketplace/requests=1-16   	   99114	     12201 ns/op	   17600 B/op	     168 allocs/op
+BenchmarkParseV4LocatorShapesCPU/marketplace/requests=256-16 	    1976	    602106 ns/op	  693107 B/op	    5345 allocs/op
+BenchmarkParseV4LocatorShapesCPU/marketplace/requests=1024-16         	     494	   2418406 ns/op	 2897829 B/op	   21514 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=0-16           	 1680334	       710.1 ns/op	    2312 B/op	      13 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=1-16           	 1487290	       809.5 ns/op	    2488 B/op	      16 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=0-16         	   22010	     54318 ns/op	  188528 B/op	     545 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=128-16       	   18348	     65151 ns/op	  209288 B/op	     584 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=256-16       	   17163	     70040 ns/op	  224720 B/op	     580 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=0-16        	    5217	    226304 ns/op	  761825 B/op	    2091 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=512-16      	    4587	    261918 ns/op	  836729 B/op	    2141 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16     	    4106	    285471 ns/op	  933027 B/op	    2143 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1-16                           	 1545453	       775.2 ns/op	    2216 B/op	      13 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=256-16                         	   24756	     48580 ns/op	  148936 B/op	     550 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1024-16                        	    6242	    188140 ns/op	  598057 B/op	    2100 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4MarketplaceLockHydration-16     	   55886	     21755 ns/op	   95352 B/op	     340 allocs/op
+BenchmarkV4LocatorParsingCPU/unqualified-16         	 7346382	       163.9 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/qualified-16           	 4898712	       250.7 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/long-name-16           	  224078	      5281 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/extra-slash-16         	21635931	        55.96 ns/op	      80 B/op	       2 allocs/op
+BenchmarkV4LocatorParsingCPU/invalid-name-16        	11564346	       104.7 ns/op	      64 B/op	       2 allocs/op
+BenchmarkV4LocatorParsingCPU/dirty-16               	137200905	         8.821 ns/op	      16 B/op	       1 allocs/op
+BenchmarkParseV4LocatorShapesCPU/git/requests=1-16  	   94588	     12585 ns/op	   17936 B/op	     176 allocs/op
+BenchmarkParseV4LocatorShapesCPU/git/requests=256-16         	    2329	    516533 ns/op	  677120 B/op	    5353 allocs/op
+BenchmarkParseV4LocatorShapesCPU/git/requests=1024-16        	     591	   2027223 ns/op	 2832624 B/op	   21521 allocs/op
+BenchmarkParseV4LocatorShapesCPU/directory/requests=1-16     	   41959	     28491 ns/op	   21044 B/op	     211 allocs/op
+BenchmarkParseV4LocatorShapesCPU/directory/requests=256-16   	    2239	    532637 ns/op	  680232 B/op	    5388 allocs/op
+BenchmarkParseV4LocatorShapesCPU/directory/requests=1024-16  	     589	   2050515 ns/op	 2835749 B/op	   21557 allocs/op
+BenchmarkParseV4LocatorShapesCPU/marketplace/requests=1-16   	   94311	     12464 ns/op	   17600 B/op	     168 allocs/op
+BenchmarkParseV4LocatorShapesCPU/marketplace/requests=256-16 	    1952	    612173 ns/op	  693110 B/op	    5345 allocs/op
+BenchmarkParseV4LocatorShapesCPU/marketplace/requests=1024-16         	     495	   2415437 ns/op	 2897827 B/op	   21514 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=0-16           	 1695009	       704.5 ns/op	    2312 B/op	      13 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=1-16           	 1492917	       804.9 ns/op	    2488 B/op	      16 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=0-16         	   21806	     54963 ns/op	  188528 B/op	     545 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=128-16       	   18474	     64818 ns/op	  209288 B/op	     584 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=256-16       	   17236	     69779 ns/op	  224720 B/op	     580 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=0-16        	    5360	    222866 ns/op	  761825 B/op	    2091 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=512-16      	    4629	    257836 ns/op	  836729 B/op	    2141 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16     	    4196	    292605 ns/op	  933026 B/op	    2143 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1-16                           	 1510882	       792.1 ns/op	    2216 B/op	      13 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=256-16                         	   21378	     53237 ns/op	  148936 B/op	     550 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1024-16                        	    5998	    192351 ns/op	  598057 B/op	    2100 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4MarketplaceLockHydration-16     	   55254	     21336 ns/op	   95352 B/op	     340 allocs/op
+BenchmarkV4LocatorParsingCPU/unqualified-16         	 7338244	       162.7 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/qualified-16           	 4916962	       244.8 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/long-name-16           	  227760	      5322 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/extra-slash-16         	21333048	        56.01 ns/op	      80 B/op	       2 allocs/op
+BenchmarkV4LocatorParsingCPU/invalid-name-16        	11459580	       105.0 ns/op	      64 B/op	       2 allocs/op
+BenchmarkV4LocatorParsingCPU/dirty-16               	139062837	         8.591 ns/op	      16 B/op	       1 allocs/op
+BenchmarkParseV4LocatorShapesCPU/git/requests=1-16  	   99055	     12225 ns/op	   17936 B/op	     176 allocs/op
+BenchmarkParseV4LocatorShapesCPU/git/requests=256-16         	    2474	    500878 ns/op	  677111 B/op	    5353 allocs/op
+BenchmarkParseV4LocatorShapesCPU/git/requests=1024-16        	     591	   2010240 ns/op	 2832627 B/op	   21521 allocs/op
+BenchmarkParseV4LocatorShapesCPU/directory/requests=1-16     	   41073	     28962 ns/op	   21043 B/op	     211 allocs/op
+BenchmarkParseV4LocatorShapesCPU/directory/requests=256-16   	    2251	    539933 ns/op	  680232 B/op	    5388 allocs/op
+BenchmarkParseV4LocatorShapesCPU/directory/requests=1024-16  	     583	   2125526 ns/op	 2835738 B/op	   21557 allocs/op
+BenchmarkParseV4LocatorShapesCPU/marketplace/requests=1-16   	   75438	     16588 ns/op	   17598 B/op	     168 allocs/op
+BenchmarkParseV4LocatorShapesCPU/marketplace/requests=256-16 	    1939	    611454 ns/op	  693107 B/op	    5345 allocs/op
+BenchmarkParseV4LocatorShapesCPU/marketplace/requests=1024-16         	     474	   2484705 ns/op	 2897820 B/op	   21514 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=0-16           	 1662938	       721.4 ns/op	    2312 B/op	      13 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=1-16           	 1402216	       867.6 ns/op	    2488 B/op	      16 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=0-16         	   19118	     60866 ns/op	  188528 B/op	     545 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=128-16       	   17438	     68402 ns/op	  209288 B/op	     584 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=256-16       	   16861	     71159 ns/op	  224720 B/op	     580 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=0-16        	    5268	    224891 ns/op	  761825 B/op	    2091 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=512-16      	    4678	    252988 ns/op	  836729 B/op	    2141 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16     	    4434	    278422 ns/op	  933026 B/op	    2143 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1-16                           	 1529050	       788.2 ns/op	    2216 B/op	      13 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=256-16                         	   24436	     50765 ns/op	  148936 B/op	     550 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1024-16                        	    6213	    192326 ns/op	  598057 B/op	    2100 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4MarketplaceLockHydration-16     	   55071	     22264 ns/op	   95352 B/op	     340 allocs/op
+BenchmarkV4LocatorParsingCPU/unqualified-16         	 7311622	       163.8 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/qualified-16           	 4913814	       245.2 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/long-name-16           	  235552	      5238 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4LocatorParsingCPU/extra-slash-16         	20645056	        56.61 ns/op	      80 B/op	       2 allocs/op
+BenchmarkV4LocatorParsingCPU/invalid-name-16        	11206682	       105.3 ns/op	      64 B/op	       2 allocs/op
+BenchmarkV4LocatorParsingCPU/dirty-16               	136247979	         8.797 ns/op	      16 B/op	       1 allocs/op
+BenchmarkParseV4LocatorShapesCPU/git/requests=1-16  	   94804	     12659 ns/op	   17936 B/op	     176 allocs/op
+BenchmarkParseV4LocatorShapesCPU/git/requests=256-16         	    2128	    618495 ns/op	  677116 B/op	    5353 allocs/op
+BenchmarkParseV4LocatorShapesCPU/git/requests=1024-16        	     459	   2202124 ns/op	 2832594 B/op	   21521 allocs/op
+BenchmarkParseV4LocatorShapesCPU/directory/requests=1-16     	   45440	     26941 ns/op	   21044 B/op	     211 allocs/op
+BenchmarkParseV4LocatorShapesCPU/directory/requests=256-16   	    2286	    532788 ns/op	  680234 B/op	    5388 allocs/op
+BenchmarkParseV4LocatorShapesCPU/directory/requests=1024-16  	     577	   2137841 ns/op	 2835754 B/op	   21556 allocs/op
+BenchmarkParseV4LocatorShapesCPU/marketplace/requests=1-16   	   95815	     12488 ns/op	   17600 B/op	     168 allocs/op
+BenchmarkParseV4LocatorShapesCPU/marketplace/requests=256-16 	    2016	    606735 ns/op	  693109 B/op	    5345 allocs/op
+BenchmarkParseV4LocatorShapesCPU/marketplace/requests=1024-16         	     507	   2349638 ns/op	 2897777 B/op	   21513 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=0-16           	 1699878	       708.7 ns/op	    2312 B/op	      13 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=1-16           	 1000000	      1100 ns/op	    2488 B/op	      16 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=0-16         	   21564	     55800 ns/op	  188528 B/op	     545 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=128-16       	   17542	     68270 ns/op	  209288 B/op	     584 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=256-16       	   16732	     75526 ns/op	  224720 B/op	     580 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=0-16        	    5020	    235335 ns/op	  761826 B/op	    2091 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=512-16      	    4471	    274996 ns/op	  836730 B/op	    2141 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16     	    3799	    330970 ns/op	  933027 B/op	    2143 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1-16                           	 1336911	       886.6 ns/op	    2216 B/op	      13 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=256-16                         	   21943	     60059 ns/op	  148936 B/op	     550 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1024-16                        	    6219	    234899 ns/op	  598057 B/op	    2100 allocs/op
+PASS

@@ -161,21 +161,28 @@ func runInstall(ctx context.Context, out io.Writer, in io.Reader, interactive, v
 	})
 	if err != nil {
 		var consentErr *pipeline.MarketplaceConsentError
-		if !errors.As(err, &consentErr) {
-			return err
-		}
-		if interactive && consentErr.Acceptable {
+		if errors.As(err, &consentErr) && interactive && consentErr.Acceptable {
 			result, err = confirmMarketplaceInstall(ctx, out, in, consentErr, verbose)
-			if err != nil || result == nil {
-				return err
-			}
 			detailsShown = true
-		} else {
+		} else if consentErr != nil {
 			if writeErr := writeMarketplaceConsentRequired(out, consentErr, verbose); writeErr != nil {
 				return writeErr
 			}
 			return err
 		}
+	}
+	if result == nil {
+		return err
+	}
+	installErr := err
+	if err := writeHookChanges(out, result.Report, false); err != nil {
+		return errors.Join(installErr, err)
+	}
+	if err := writeGroupedWarnings(out, result.RequirementWarnings, false); err != nil {
+		return errors.Join(installErr, err)
+	}
+	if installErr != nil {
+		return installErr
 	}
 
 	if result.MarketplaceEndpoint != "" {
@@ -191,9 +198,6 @@ func runInstall(ctx context.Context, out io.Writer, in io.Reader, interactive, v
 		if _, err := fmt.Fprintf(out, "warning: %s\n", terminalSafeText(result.TransportNotice)); err != nil {
 			return err
 		}
-	}
-	if err := writeGroupedWarnings(out, result.RequirementWarnings, false); err != nil {
-		return err
 	}
 
 	return writeInstallResult(out, result, scope, verbose, detailsShown)

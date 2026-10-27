@@ -15,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/collection"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
@@ -27,7 +28,14 @@ type PreparedInstallDependencies struct {
 	View            DependencyLockView
 	Reconcile       DependencyReconciler
 	BindRegistry    func(config.Source, config.RegistryEntry) error
+	ResolvedCommit  func(config.RegistryEntry) (PreparedSourceCommit, error)
 	Release         func()
+}
+
+// PreparedSourceCommit is the exact commit a prepared install will lock for a source.
+type PreparedSourceCommit struct {
+	Commit string
+	Locked bool // kept from the target layer's existing acquisition lock
 }
 
 type InstallDependencyPreparer func(context.Context, string, string, []StagedConfigEdit) (PreparedInstallDependencies, error)
@@ -46,6 +54,8 @@ type InstallOptions struct {
 	FromURL                 string // --from flag: ad-hoc registry URL
 	FromRef                 string // --ref flag: git ref for --from
 	FromPath                string // --path flag: subdirectory for --from
+	Locators                []config.ResourceLocator
+	ExpectedCommit          string
 	InstalledName           string // --as for Marketplace installs
 	AcceptRisk              bool   // --accept-risk/--yes for Marketplace installs
 	Marketplace             string // --marketplace alias or endpoint selector
@@ -85,6 +95,7 @@ func silentSyncOptsForInstall(opts InstallOptions) []silentSyncOpt {
 
 // InstallResult holds the outcome of an install operation.
 type InstallResult struct {
+	Report    *materialize.Report
 	Installed []string
 	// NotSelected names resources the install asked for that the effective
 	// configuration still does not select, for example because an exclusion
@@ -511,8 +522,8 @@ func planNamedInstalls(args []string, catalogs map[string]catalog.LoadedCatalog,
 			continue
 		}
 		seen[name] = true
-		// Detect collection install.
-		if col := collection.Find(collections, name); col != nil {
+		// Detect collection install unless the caller has fixed another kind.
+		if col := collection.Find(collections, name); col != nil && (!hasKind || kind == ir.KindCollection) {
 			members, err := collectionInstallResources(col.Name, expansion, cfg.Registries, scope)
 			if err != nil {
 				return nil, nil, err
@@ -546,7 +557,7 @@ func planNamedInstalls(args []string, catalogs map[string]catalog.LoadedCatalog,
 			warnings = append(warnings, members...)
 			continue
 		}
-		if malformedErr := malformedSkillInstallError(catalogs, name); malformedErr != nil {
+		if malformedErr := malformedSkillInstallError(catalogs, name, malformedKindFilter(kind, hasKind)); malformedErr != nil {
 			return nil, nil, malformedErr
 		}
 		match, err := findCatalogResource(catalogs, name, kind, hasKind)
@@ -648,15 +659,16 @@ func namedInstallNames(plan []namedInstallSelection) []string {
 
 func syncNamedInstallResult(ctx context.Context, opts InstallOptions, plan []namedInstallSelection, warnings []resourceIdentity, syncOpts ...silentSyncOpt) (*InstallResult, error) {
 	if len(plan) == 1 && plan[0].collection {
-		requirementWarnings, err := syncAfterInstall(ctx, opts, plan[0].members, syncOpts...)
-		if err != nil {
+		synced, err := syncAfterInstall(ctx, opts, plan[0].members, syncOpts...)
+		if err != nil && synced.Report == nil {
 			return nil, err
 		}
 		return &InstallResult{
 			IsCollection:        true,
 			CollectionLabel:     plan[0].label,
-			RequirementWarnings: requirementWarnings,
-		}, nil
+			RequirementWarnings: synced.Warnings,
+			Report:              synced.Report,
+		}, err
 	}
 	return syncInstalledResources(ctx, opts, namedInstallNames(plan), warnings, syncOpts...)
 }
@@ -702,12 +714,12 @@ func expandInstalledCollectionResources(installed []resourceIdentity, available 
 // resources the final resolution selected separately from those it did not.
 func syncInstalledResources(ctx context.Context, iopts InstallOptions, names []string, resources []resourceIdentity, opts ...silentSyncOpt) (*InstallResult, error) {
 	var resolved []resolver.ResolvedArtifact
-	requirementWarnings, err := syncAfterInstall(ctx, iopts, resources, append(slices.Clip(opts), withResolvedCapture(&resolved))...)
-	if err != nil {
+	synced, err := syncAfterInstall(ctx, iopts, resources, append(slices.Clip(opts), withResolvedCapture(&resolved))...)
+	if err != nil && synced.Report == nil {
 		return nil, err
 	}
 	installed, notSelected := partitionInstalledNames(names, resources, resolved)
-	return &InstallResult{Installed: installed, NotSelected: notSelected, RequirementWarnings: requirementWarnings}, nil
+	return &InstallResult{Installed: installed, NotSelected: notSelected, RequirementWarnings: synced.Warnings, Report: synced.Report}, err
 }
 
 // partitionInstalledNames keeps a name as installed when the resolution
@@ -737,20 +749,18 @@ func partitionInstalledNames(names []string, resources []resourceIdentity, resol
 	return installed, notSelected
 }
 
-func syncAfterInstall(ctx context.Context, iopts InstallOptions, installed []resourceIdentity, opts ...silentSyncOpt) ([]error, error) {
+func syncAfterInstall(ctx context.Context, iopts InstallOptions, installed []resourceIdentity, opts ...silentSyncOpt) (SyncResult, error) {
 	ws := iopts.workspace
 	if ws == nil {
 		resolved, err := workspaceForRoots(iopts.RepoRoot, iopts.LocalConfigDir)
 		if err != nil {
-			return nil, err
+			return SyncResult{}, err
 		}
 		ws = &resolved
 	}
-	warnings, err := silentSyncCollect(ctx, *ws, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return filterInstallWarnings(warnings, installed), nil
+	synced, err := silentSyncCollect(ctx, *ws, opts...)
+	synced.Warnings = filterInstallWarnings(synced.Warnings, installed)
+	return synced, err
 }
 
 func filterInstallWarnings(warnings []error, installed []resourceIdentity) []error {
@@ -765,6 +775,10 @@ func filterInstallWarnings(warnings []error, installed []resourceIdentity) []err
 
 	installWarnings := make([]error, 0)
 	for _, warning := range warnings {
+		if IsPromotedDiagnostic(warning) {
+			installWarnings = append(installWarnings, warning)
+			continue
+		}
 		var requirement *resolver.UnmetRequirementWarning
 		var resource resourceIdentity
 		if errors.As(warning, &requirement) && requirement != nil {
@@ -1191,19 +1205,28 @@ func matchingResourceNamesByTag(catalogs map[string]catalog.LoadedCatalog, tag s
 // paths on one matcher is deliberate: they diagnose the same condition, and when
 // install and sync disagree about whether a selection is malformed or missing,
 // the user is told to delete a selection that install just refused to re-add.
-func malformedSkillInstallError(catalogs map[string]catalog.LoadedCatalog, wanted string) error {
+func malformedSkillInstallError(catalogs map[string]catalog.LoadedCatalog, wanted, kind string) error {
 	wanted = strings.TrimSpace(wanted)
 	if wanted == "" {
 		return nil
 	}
 
 	for _, catalogForEntry := range catalogs {
-		if match, found := skill.MatchMalformed(catalogForEntry.Malformed, wanted); found {
+		if match, found := skill.MatchMalformedForKind(catalogForEntry.Malformed, kind, wanted); found {
 			return fmt.Errorf("skill %q cannot be installed: %s: %w", wanted, skill.ParseFailure(match), match.Error)
 		}
 	}
 
 	return nil
+}
+
+// malformedKindFilter returns the kind label malformed-resource correlation
+// should match, or "" when the request names no kind.
+func malformedKindFilter(kind ir.ResourceKind, hasKind bool) string {
+	if !hasKind {
+		return ""
+	}
+	return kind.String()
 }
 
 func validateRegistryWriteScope(scope Scope, entries ...config.RegistryEntry) error {
@@ -1270,12 +1293,26 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	// Validate the --from URL against the effective allowlist before
 	// writing to config or fetching anything.
 	syntheticEntry := config.RegistryEntry{URL: fromURL, Ref: fromRef, Path: fromPath}
+	if opts.ExpectedCommit != "" && syntheticEntry.IsLocal() {
+		return nil, errors.New("expected commit cannot be used with a directory source")
+	}
 	if err := config.ValidateRegistryURLs([]config.RegistryEntry{syntheticEntry}, ec.Allowed); err != nil {
 		return nil, err
 	}
 	if err := config.ValidateRegistryPath(syntheticEntry.Path); err != nil {
 		slog.Warn("install rejected invalid registry path", "error", err)
 		return nil, err
+	}
+	if opts.ExpectedCommit != "" && opts.PrepareDependencies == nil {
+		return nil, errors.New("expected commit requires an exact prepared source commit")
+	}
+	for _, locator := range opts.Locators {
+		if strings.TrimSpace(locator.Name) == "" {
+			return nil, errors.New("kind-qualified resource locator requires a kind and name")
+		}
+		if _, ok := syntheticEntry.SelectorForKindOk(locator.Kind); !ok {
+			return nil, fmt.Errorf("resource locator has invalid kind %q", locator.Kind)
+		}
 	}
 	// A web URL becomes an SSH URL. Reuse the form a configuration already
 	// records for it, so install does not add a second source for the same
@@ -1386,6 +1423,21 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 			return nil, err
 		}
 		defer prepared.Release()
+		if opts.ExpectedCommit != "" {
+			if prepared.ResolvedCommit == nil {
+				return nil, errors.New("expected commit cannot be checked because exact source commit was not prepared")
+			}
+			actual, err := prepared.ResolvedCommit(syntheticEntry)
+			if err != nil {
+				return nil, fmt.Errorf("resolve prepared source commit: %w", err)
+			}
+			if actual.Commit != opts.ExpectedCommit {
+				if actual.Locked {
+					return nil, &SourceLockedError{URL: binding.Entry.URL, Ref: fromRef, Scope: opts.Scope, Locked: actual.Commit, Expected: opts.ExpectedCommit}
+				}
+				return nil, &SourceMovedError{Ref: fromRef, Expected: opts.ExpectedCommit, Actual: actual.Commit}
+			}
+		}
 		ctx = prepared.Context
 		discoveryCfg = prepared.DiscoveryConfig
 		discoveryOptions = append(discoveryOptions, prepared.View.CatalogOption)
@@ -1401,7 +1453,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	catalogKeys := map[string]bool{}
 	for i := range discoveryCfg.Registries {
 		entry := &discoveryCfg.Registries[i]
-		if !adHocEntryMatchesBinding(*entry, binding.Entry) {
+		if entry.Source != layer.Source || !adHocEntryMatchesBinding(*entry, binding.Entry) {
 			continue
 		}
 		catalogKeys[entry.CatalogKey] = true
@@ -1427,9 +1479,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 		})
 	}
 
-	// If name args are given, install just those resources from this source.
-	if len(opts.Args) > 0 {
-		// Check collections.
+	if len(opts.Args) > 0 || len(opts.Locators) > 0 {
 		selectedCollections := make([]collection.Collection, 0)
 		for _, col := range discoveredCollections {
 			if col.SourceCatalogKey == catalogKey {
@@ -1437,9 +1487,22 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 			}
 		}
 		source := &namedInstallSource{apply: syntheticEntry, excludes: binding.Entry, fromURL: fromURL}
-		plan, warnIdentities, err := planNamedInstalls(opts.Args, selectedCatalogs, selectedCollections, discoveredCollections, discoveryCfg, kind, hasKind, opts.Scope, source)
-		if err != nil {
-			return nil, err
+		var plan []namedInstallSelection
+		var warnIdentities []resourceIdentity
+		if len(opts.Locators) > 0 {
+			for _, locator := range opts.Locators {
+				locatorPlan, locatorWarnings, err := planNamedInstalls([]string{locator.Name}, selectedCatalogs, selectedCollections, discoveredCollections, discoveryCfg, locator.Kind, true, opts.Scope, source)
+				if err != nil {
+					return nil, err
+				}
+				plan = append(plan, locatorPlan...)
+				warnIdentities = append(warnIdentities, locatorWarnings...)
+			}
+		} else {
+			plan, warnIdentities, err = planNamedInstalls(opts.Args, selectedCatalogs, selectedCollections, discoveredCollections, discoveryCfg, kind, hasKind, opts.Scope, source)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if err := applyNamedInstalls(func(mutate func(*LayerMutation) error) error {
 			return EditLayerAtPath(layer, mutate)
@@ -1465,7 +1528,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	if inferredName != "" {
 		// Try to find the inferred name in the catalog.
 		if _, ok := selectedCatalogs[catalogKey]; ok {
-			if malformedErr := malformedSkillInstallError(selectedCatalogs, inferredName); malformedErr != nil {
+			if malformedErr := malformedSkillInstallError(selectedCatalogs, inferredName, malformedKindFilter(kind, hasKind)); malformedErr != nil {
 				return nil, malformedErr
 			}
 			match, err := findCatalogResource(selectedCatalogs, inferredName, kind, hasKind)
@@ -1528,6 +1591,39 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 		return nil, err
 	}
 	return syncInstalledResources(ctx, opts, allInstalled, installedResources, silentSyncOptsForInstall(opts)...)
+}
+
+// SourceMovedError reports that an explicit source no longer matches its previewed commit.
+type SourceMovedError struct {
+	Ref      string
+	Expected string
+	Actual   string
+}
+
+func (e *SourceMovedError) Error() string {
+	return fmt.Sprintf("source ref %q moved since preview: expected commit %s, actual commit %s", e.Ref, e.Expected, e.Actual)
+}
+
+// SourceLockedError reports that the target layer's lock keeps an explicit source at a commit other than the previewed one.
+type SourceLockedError struct {
+	URL      string
+	Ref      string
+	Scope    Scope
+	Locked   string
+	Expected string
+}
+
+// UpdateCommand returns the update command that advances the locked source in its scope.
+func (e *SourceLockedError) UpdateCommand() string {
+	command := "agent-marketplace update --registry " + e.URL
+	if e.Ref != "" {
+		command += " --ref " + e.Ref
+	}
+	return command + " --scope " + string(e.Scope)
+}
+
+func (e *SourceLockedError) Error() string {
+	return fmt.Sprintf("%s lock pins source ref %q at commit %s, not the expected commit %s; run %q to advance it", e.Scope, e.Ref, e.Locked, e.Expected, e.UpdateCommand())
 }
 
 func adHocEntryMatchesBinding(candidate, bound config.RegistryEntry) bool {

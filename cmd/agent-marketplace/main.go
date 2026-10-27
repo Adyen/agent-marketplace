@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -151,7 +152,15 @@ func prepareCommandDependencies(cmd *cobra.Command, rootTUI bool) error {
 		return prepareDependencyTransactions(cmd.Context(), false)
 	}
 	switch cmd.Name() {
-	case "tui", "gc", "install", "remove", "update", "init":
+	case "tui", "gc", "install", "remove", "init":
+		return prepareDependencyTransactions(cmd.Context(), false)
+	case "update":
+		// A dry run previews without replay: it must refuse pending
+		// dependency work, not recover it the way an applying update does.
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		if dryRun {
+			return prepareDependencyTransactions(cmd.Context(), true)
+		}
 		return prepareDependencyTransactions(cmd.Context(), false)
 	case "list", "status":
 		return prepareDependencyTransactions(cmd.Context(), true)
@@ -435,11 +444,18 @@ func runRemove(ctx context.Context, out io.Writer, skillName string, scope pipel
 		DependencyReconcile: reconcileCommandDependencies,
 		CleanupDependencies: reconcileCleanupDependencies,
 	})
-	if err != nil {
+	if err != nil && result == nil {
 		return err
 	}
+	removeErr := err
+	if err := writeHookChanges(out, result.Report, false); err != nil {
+		return errors.Join(removeErr, err)
+	}
 	if err := writeGroupedWarnings(out, result.Warnings, false); err != nil {
-		return err
+		return errors.Join(removeErr, err)
+	}
+	if removeErr != nil {
+		return removeErr
 	}
 
 	if result.IsCollection {

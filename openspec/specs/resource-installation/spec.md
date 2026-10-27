@@ -88,6 +88,115 @@ Bulk installation MUST retain existing selection semantics: unqualified tags rem
 - **THEN** the command MUST refuse with the existing scope-boundary error
 - **AND** existing configuration, acquisition locks, and materialized resources MUST remain unchanged and an absent target root MUST remain absent
 
+### Requirement: Explicit-source installs can be bound to a previewed commit
+
+An install from an explicit Git source MAY carry the commit a preview
+resolved. When the source's ref no longer resolves to that commit at install
+time, the install MUST fail before publishing configuration or acquisition
+lock changes or materializing anything, and MUST report both commits. When it
+matches, the acquisition lock MUST record that commit while configuration
+keeps the requested ref. An expected commit for a directory source MUST be
+refused before any write. An explicit-source install MAY select resources by
+kind and name; resources of different kinds that share a name MUST then be
+selected unambiguously, and collections MUST be selectable this way.
+
+#### Scenario: Moved source refuses an expected-commit install
+
+- **WHEN** an explicit-source install carries an expected commit and the
+  source's ref has advanced to a different commit
+- **THEN** the install MUST fail naming both commits and MUST leave
+  configuration, acquisition locks, and materialized resources unchanged
+
+#### Scenario: Matching expected commit installs at the requested ref
+
+- **WHEN** an explicit-source install carries the commit the source's ref
+  currently resolves to
+- **THEN** configuration MUST record the requested ref and the acquisition
+  lock MUST record that commit
+
+#### Scenario: Expected commit for a directory source is refused
+
+- **WHEN** an explicit-source install from a directory carries an expected
+  commit
+- **THEN** the install MUST fail before any write
+
+#### Scenario: Kind-qualified picks select resources that share a name
+
+- **WHEN** an explicit-source install selects a skill and a command that share
+  a name, and a collection, by kind and name
+- **THEN** exactly those resources MUST be selected from that source and
+  materialized, without an ambiguity error
+
+### Requirement: Source previews reuse a current cache
+
+A preview of an unconfigured Git source without a ref MUST look up the
+remote's default branch and the commit it advertises in one remote request.
+When the cached checkout of that branch is already at the advertised commit
+and contains the requested path, the preview MUST NOT fetch and MUST report
+the advertised commit; otherwise it MUST refresh the cache as before. A
+preview whose ref is a full commit SHA MUST NOT access the network when the
+cached checkout of that ref is already at that commit and contains the
+requested path. Reusing the cache MUST NOT change the preview's resources,
+warnings, or reported commit compared with a refreshed preview of the same
+commit.
+
+#### Scenario: Default-branch preview skips the fetch when the cache is current
+
+- **WHEN** a source is previewed without a ref and the cached checkout of its
+  default branch is at the commit the remote advertises
+- **THEN** the preview MUST NOT fetch and MUST report that commit
+
+#### Scenario: Default-branch preview refreshes a stale cache
+
+- **WHEN** a source is previewed without a ref after its default branch
+  advanced past the cached commit
+- **THEN** the preview MUST fetch and MUST report the advanced commit and its
+  resources
+
+#### Scenario: Commit-pinned preview works from the cache offline
+
+- **WHEN** a source is previewed with a full commit SHA as the ref, the cached
+  checkout is at that commit, and the remote is unreachable
+- **THEN** the preview MUST succeed with that commit and its resources
+
+### Requirement: Lock-pinned sources are not reported as moved
+
+When an explicit-source install carries an expected commit, and the target
+layer's existing acquisition lock already pins the source's URL and ref at a
+different commit that the install keeps, the install MUST fail before
+publishing configuration or acquisition lock changes or materializing
+anything. The refusal MUST be distinguishable from a moved source, MUST NOT
+report that the source moved, and MUST name the target scope, the locked
+commit, the expected commit, and an `update` command that advances the
+source in that scope.
+
+#### Scenario: Lock-pinned source refuses an expected-commit install with update remediation
+
+- **WHEN** an explicit-source install into a layer whose acquisition lock
+  pins the source's ref at an older commit carries the commit the ref
+  currently resolves to as its expected commit
+- **THEN** the install MUST fail naming the scope, both commits, and the
+  `update` command, MUST NOT report that the source moved, and MUST leave
+  configuration, acquisition locks, and materialized resources unchanged
+
+### Requirement: Explicit-source installs bind to the target scope's source
+
+An explicit-source install MUST resolve the source's resources from the
+target scope's declaration of that source and that scope's acquisition lock,
+even when another scope already declares the same URL, ref, and path and its
+lock pins a different commit. The install MUST NOT change the other scope's
+configuration or acquisition lock.
+
+#### Scenario: Source locked in another scope installs into the target scope
+
+- **WHEN** the project acquisition lock pins a Git source's ref at an older
+  commit and an explicit-source install selects a resource from that source
+  into local scope
+- **THEN** the install MUST succeed, local configuration MUST record the
+  source and the resource, the local acquisition lock MUST record the commit
+  the ref currently resolves to, project configuration and acquisition lock
+  bytes MUST be unchanged, and `sync --check` MUST pass after a sync
+
 ### Requirement: Install defaults to user scope
 
 Without `--scope`, the install command SHALL write resource selections to the user configuration layer and materialize them at the machine destination for named, collection, `--tag`, `--all`, `--from`, and Marketplace locator installs. Marketplace endpoint registration MUST continue to default to user scope. Explicit `--scope repo` and `--scope local` MUST retain their existing behavior. The default MUST NOT relax the user-scope boundary, and `remove` MUST retain its existing scope inference.

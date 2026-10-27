@@ -156,34 +156,34 @@ func scopedToggleConfigPath(repoRoot string, s scope) (string, error) {
 	return marketplaceToggleConfigPath(repoRoot, s)
 }
 
-func runMarketplaceScopedToggle(ctx context.Context, repoRoot, localConfigDir string, act toggleAction, mapper pipeline.ConfigPathMapper) error {
+func runMarketplaceScopedToggle(ctx context.Context, repoRoot, localConfigDir string, act toggleAction, mapper pipeline.ConfigPathMapper) (pipeline.SyncResult, error) {
 	if act.scope == scopeUserExclude {
 		if !act.allowMarketplaceExclude || !act.hasMarketplaceSelection || act.marketplaceSelection.Pin.RegistrySlug == "" {
-			return fmt.Errorf("marketplace resource has no overridable organization pin")
+			return pipeline.SyncResult{}, fmt.Errorf("marketplace resource has no overridable organization pin")
 		}
 		path, err := config.GlobalConfigPath()
 		if err != nil {
-			return err
+			return pipeline.SyncResult{}, err
 		}
 		if mapper != nil {
 			path, err = mapper(path)
 			if err != nil {
-				return err
+				return pipeline.SyncResult{}, err
 			}
 		}
 		selection := act.marketplaceSelection
-		return config.SetUserMarketplaceExclusion(path, selection.Entry.URL, selection.Pin.RegistrySlug, act.kind, selection.Pin.Name, act.enable)
+		return pipeline.SyncResult{}, config.SetUserMarketplaceExclusion(path, selection.Entry.URL, selection.Pin.RegistrySlug, act.kind, selection.Pin.Name, act.enable)
 	}
 	if !act.hasMarketplaceSelection {
-		return fmt.Errorf("marketplace %s %q has no direct installation pin", skill.KindLabel(act.kind), act.skillName)
+		return pipeline.SyncResult{}, fmt.Errorf("marketplace %s %q has no direct installation pin", skill.KindLabel(act.kind), act.skillName)
 	}
 	configPath, err := marketplaceToggleConfigPath(repoRoot, act.scope)
 	if err != nil {
-		return err
+		return pipeline.SyncResult{}, err
 	}
 	selection := act.marketplaceSelection
 	if !act.enable && !selection.Pin.Direct && len(selection.Pin.SelectedBy.List()) > 0 {
-		return fmt.Errorf("marketplace %s %q is selected only through a collection", skill.KindLabel(act.kind), act.skillName)
+		return pipeline.SyncResult{}, fmt.Errorf("marketplace %s %q is selected only through a collection", skill.KindLabel(act.kind), act.skillName)
 	}
 	var source config.Source
 	switch act.scope {
@@ -194,7 +194,7 @@ func runMarketplaceScopedToggle(ctx context.Context, repoRoot, localConfigDir st
 	case scopeLocal:
 		source = config.RepoPersonal
 	default:
-		return fmt.Errorf("unsupported Marketplace toggle scope")
+		return pipeline.SyncResult{}, fmt.Errorf("unsupported Marketplace toggle scope")
 	}
 	if act.scope == scopeLocal {
 		rel, err := filepath.Rel(repoRoot, localConfigDir)
@@ -223,13 +223,13 @@ func runScopedToggleAt(repoRoot string, act toggleAction, mapper pipeline.Config
 			if rel, err := filepath.Rel(repoRoot, candidate); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 				localConfigDir = candidate
 			}
-			err := runMarketplaceScopedToggle(context.Background(), repoRoot, localConfigDir, act, mapper)
+			synced, err := runMarketplaceScopedToggle(context.Background(), repoRoot, localConfigDir, act, mapper)
 			if err != nil {
 				slog.Error("TUI Marketplace toggle failed", "kind", act.kind.String(), "name", act.skillName, "scope", scopeName(act.scope), "enable", act.enable, "error", err)
 			} else {
 				slog.Info("TUI Marketplace toggle completed", "kind", act.kind.String(), "name", act.skillName, "scope", scopeName(act.scope), "enable", act.enable)
 			}
-			return configWrittenMsg{skillName: act.skillName, enabled: act.enable, err: err}
+			return configWrittenMsg{skillName: act.skillName, enabled: act.enable, err: err, report: synced.Report, warnings: synced.Warnings}
 		}
 		originalPath, pathErr := scopedToggleConfigPath(repoRoot, act.scope)
 		if pathErr != nil {
@@ -386,9 +386,9 @@ func runDependencyScopedToggle(ctx context.Context, workspace pipeline.Workspace
 			return msg
 		}
 		if act.isMarketplace && act.scope != scopeUserExclude {
-			err = runMarketplaceScopedToggle(ctx, ws.RepoRoot(), ws.LocalConfigDir(), act, nil)
+			synced, err := runMarketplaceScopedToggle(ctx, ws.RepoRoot(), ws.LocalConfigDir(), act, nil)
 			ignoreLocalConfigAfterWrite(ws, local, err)
-			return configWrittenMsg{skillName: act.skillName, enabled: act.enable, selectNext: act.disablesResource(), err: err}
+			return configWrittenMsg{skillName: act.skillName, enabled: act.enable, selectNext: act.disablesResource(), err: err, report: synced.Report, warnings: synced.Warnings}
 		}
 		err = mutate(ctx, ws, func(mapper pipeline.ConfigPathMapper) error {
 			msg, ok := runScopedToggleAt(writeRoot, act, mapper)().(configWrittenMsg)

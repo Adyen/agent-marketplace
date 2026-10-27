@@ -49,6 +49,11 @@ RUN root_guard=; \
         root /usr/share/nginx/html;\n\
         try_files $uri $uri.html $uri/ =404;\n\
     }\n\
+    location ~* [.]md$ {\n\
+        root /usr/share/nginx/html;\n\
+        default_type "text/markdown; charset=utf-8";\n\
+        try_files $uri =404;\n\
+    }\n\
     error_page 404 %s404.html;\n\
 }\n' "${root_guard}" "${SITE_BASE}" > /etc/nginx/conf.d/default.conf
 

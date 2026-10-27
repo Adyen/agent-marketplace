@@ -1296,13 +1296,14 @@ func parseV4Locator(value, source string) (kind, registry, name string, err erro
 	if strings.TrimSpace(value) != value || strings.ContainsAny(value, "\\\x00\r\n") {
 		return "", "", "", errors.New("must be a clean locator")
 	}
-	parts := strings.Split(value, "/")
-	if len(parts) == 2 {
-		kind, name = parts[0], parts[1]
-	} else if len(parts) == 3 {
-		registry, kind, name = parts[0], parts[1], parts[2]
-	} else {
+	first, rest, hasSlash := strings.Cut(value, "/")
+	second, last, qualified := strings.Cut(rest, "/")
+	if !hasSlash || strings.Contains(last, "/") {
 		return "", "", "", errors.New("must be kind/name or registry/kind/name")
+	}
+	kind, name = first, rest
+	if qualified {
+		registry, kind, name = first, second, last
 	}
 	if _, ok := v4Kinds[kind]; !ok || !v4NameRE.MatchString(name) || name == "." || name == ".." || strings.ContainsAny(name, "*?") {
 		return "", "", "", errors.New("has invalid kind or resource name")
@@ -1310,7 +1311,7 @@ func parseV4Locator(value, source string) (kind, registry, name string, err erro
 	if err := validateMarketplaceSegment("name", name); err != nil {
 		return "", "", "", err
 	}
-	if len(parts) == 3 && !v4SlugRE.MatchString(registry) {
+	if qualified && !v4SlugRE.MatchString(registry) {
 		return "", "", "", errors.New("has invalid registry slug")
 	}
 	if source == "" {
@@ -1937,7 +1938,7 @@ func (c *V4Config) rebuildRequests() {
 	sort.Strings(groupNames)
 	for _, name := range groupNames {
 		g := c.Groups[name]
-		byLocator := map[string]V4ResourceRequest{}
+		byLocator := map[string]*V4ResourceRequest{}
 		excluded := map[string]bool{}
 		for _, d := range g.Decisions {
 			c.Decisions = append(c.Decisions, d)
@@ -1956,14 +1957,15 @@ func (c *V4Config) rebuildRequests() {
 				continue
 			}
 			if d.Request != nil {
-				byLocator[d.Locator] = *d.Request
+				byLocator[d.Locator] = d.Request
 				// Missing markers are already false; keep include-only streams sparse.
 				if len(excluded) > 0 {
 					excluded[d.Locator] = false
 				}
 			}
 		}
-		for _, r := range g.Include {
+		for i := range g.Include {
+			r := &g.Include[i]
 			if _, ok := byLocator[r.Locator]; !ok {
 				byLocator[r.Locator] = r
 			}
@@ -1979,7 +1981,7 @@ func (c *V4Config) rebuildRequests() {
 		}
 		sort.Strings(locators)
 		for _, locator := range locators {
-			c.Requests = append(c.Requests, byLocator[locator])
+			c.Requests = append(c.Requests, *byLocator[locator])
 		}
 	}
 }
@@ -2162,7 +2164,10 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document, mo
 				if kind != userLayer && !c.AcquiresMarketplace(name) {
 					return nil, v4err("v4.layer-field", "resources."+name+".exclude", src.Line, "Marketplace overrides are only supported in the user configuration")
 				}
-				if parts := strings.Split(exclusion, "/"); len(parts) != 3 || parts[1] == "collection" || parts[2] == "*" {
+				_, rest, hasRegistry := strings.Cut(exclusion, "/")
+				resourceKind, resourceName, hasName := strings.Cut(rest, "/")
+				if !hasRegistry || !hasName || strings.Contains(resourceName, "/") ||
+					resourceKind == "collection" || resourceName == "*" {
 					return nil, v4err("v4.marketplace-runtime-unsupported", "resources."+name+".exclude", src.Line, "Marketplace exclusions require an exact non-collection registry/kind/name locator")
 				}
 				out.MarketplaceExclusions = append(out.MarketplaceExclusions, MarketplaceExclusion{URL: src.CanonicalURL, Locator: exclusion, Source: sourceForLayer(kind)})
@@ -2418,7 +2423,7 @@ func cloneV4Decisions(values []V4SelectionDecision) []V4SelectionDecision {
 // effectiveV4Requests applies the ordered decision stream to explicit
 // locators, preserving a later include after an earlier exclusion.
 func effectiveV4Requests(group V4ResourceGroup) []V4ResourceRequest {
-	requests := map[string]V4ResourceRequest{}
+	requests := map[string]*V4ResourceRequest{}
 	excluded := map[string]bool{}
 	for _, decision := range group.Decisions {
 		if decision.Action == V4SelectionExclude {
@@ -2436,23 +2441,22 @@ func effectiveV4Requests(group V4ResourceGroup) []V4ResourceRequest {
 			continue
 		}
 		if decision.Request != nil {
-			requests[decision.Locator] = *decision.Request
+			requests[decision.Locator] = decision.Request
 			if len(excluded) > 0 {
 				excluded[decision.Locator] = false
 			}
 		}
 	}
 	locators := make([]string, 0, len(requests))
-	for locator, request := range requests {
+	for locator := range requests {
 		if !excluded[locator] {
-			_ = request
 			locators = append(locators, locator)
 		}
 	}
 	sort.Strings(locators)
 	out := make([]V4ResourceRequest, 0, len(locators))
 	for _, locator := range locators {
-		out = append(out, requests[locator])
+		out = append(out, *requests[locator])
 	}
 	return out
 }
@@ -2510,12 +2514,12 @@ func v4KindToIR(kind string) ir.ResourceKind {
 }
 
 func v4ExclusionKindName(value string) (string, string) {
-	parts := strings.Split(strings.TrimSuffix(value, "/*"), "/")
-	if len(parts) == 1 {
-		return parts[0], "*"
+	kind, name, hasSlash := strings.Cut(strings.TrimSuffix(value, "/*"), "/")
+	if !hasSlash {
+		return kind, "*"
 	}
-	if len(parts) == 2 {
-		return parts[0], parts[1]
+	if strings.Contains(name, "/") {
+		return "", ""
 	}
-	return "", ""
+	return kind, name
 }

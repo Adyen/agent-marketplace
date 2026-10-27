@@ -3,12 +3,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { after, before } from "node:test";
 
-import { defineFixture, locate, lockedGitCommit, step, waitForExit } from "./helpers.js";
+import { defineFixture, locate, lockedGitCommit, sgr, step, waitForExit } from "./helpers.js";
 import { installFinding } from "./marketplace-stub.js";
 import { runAM } from "./process-helpers.js";
 
 // spec: tui-interactions/marketplace-findings-require-consent-before-install
 // spec: tui-interactions/marketplace-install-keeps-locked-sources-at-their-locked-revision
+// spec: tui-mouse-navigation/scrollable-overlays-move-by-one-line
 const journey = defineFixture("marketplace-install-consent", ["tui"], 80, 24, { marketplaceDiscovery: "findings" });
 before(journey.setup);
 after(journey.cleanup);
@@ -52,6 +53,39 @@ journey.test("a Marketplace skill with findings installs only after consent", as
   };
 
   await requestInstall("first request");
+  await step("resize consent to an overflowing 50x12 viewport", () => terminal.resize(50, 12), async () => {
+    await locate(terminal, "Verified Marketplace install").unique().expect();
+    await locate(terminal, "n/esc cancel").unique().expect();
+    assert.equal((await terminal.getSize()).rows, 12);
+  });
+  const consentTop = await terminal.text();
+  let consentDown = "";
+  for (const code of [65, 64, 69, 68]) {
+    const before = await terminal.text();
+    const old = locate(terminal, new RegExp(before.trim().split(/\s+/)
+      .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s*")));
+    await old.expect();
+    await step(`wheel ${code} scrolls consent by exactly one line`, () => terminal.write(sgr(code, 25, 5, "M")), async () => {
+      await old.expect({ not: true });
+      const screen = await terminal.text();
+      const current = screen.split("\n");
+      const previous = before.split("\n");
+      assert.deepEqual(current.slice(0, 2), previous.slice(0, 2), "consent title and question must remain fixed");
+      assert.equal(current.at(-1), previous.at(-1), "consent controls must remain fixed");
+      const down = code === 65 || code === 69;
+      assert.deepEqual(
+        down ? current.slice(2, -2) : current.slice(3, -1),
+        down ? previous.slice(3, -1) : previous.slice(2, -2),
+        "only the consent body may scroll, one line per event"
+      );
+      if (code === 65) consentDown = screen;
+      else assert.equal(screen, down ? consentDown : consentTop, "reversal and Shift must preserve vertical wheel behavior");
+    });
+  }
+  await step("restore the consent terminal size", () => terminal.resize(80, 24), async () => {
+    await locate(terminal, installFinding.message).unique().expect();
+    await locate(terminal, "y install · n/esc cancel").expect();
+  });
   await step("decline the install", () => terminal.write("n"), async () => {
     await locate(terminal, "Verified Marketplace install").expect({ not: true });
     await locate(terminal, /Status:\s+available via Marketplace/).unique().expect();

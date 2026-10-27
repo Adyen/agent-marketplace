@@ -58,6 +58,12 @@ When `install` or `remove` gets a name that more than one resource kind uses, `-
 
 Installing a resource defaults to `user`, and registering a Marketplace endpoint also defaults to `user`. When you remove a named resource without `--scope`, the command picks the scope from the selection it finds. `remove --from` defaults to `repo`, and `deinit` defaults to `user`.
 
+## Hook review
+
+When `install`, `remove`, `update`, or `sync` changes owned hook entries, it prints a **Hook changes** listing with the target, scope, file, event, matcher, and exact before and after command or prompt. Review this listing before using the hooks. Unchanged runs print no hook review.
+
+These commands also show materialization warnings, including lossy translation warnings. Warnings keep their diagnostic codes and do not make a successful operation fail. If an operation publishes a hook but another resource fails, its completed hook changes remain visible alongside the failure.
+
 ## `init`
 
 Creates a minimal v4 user config (`~/.agents/config.yaml`) with an explicit harness list. It adds no sources or resources. If a valid user file already exists, `init` leaves it unchanged and prints `User personal config already initialized.` Existing unsupported roots or fragments produce the path-specific format refusal instead of being treated as initialized or overwritten. CLI and TUI edits use the v4 source/resource model.
@@ -312,6 +318,8 @@ If `~/.agents/config.yaml` does not exist, a plain `sync` creates it the way `ag
 
 With `--check`, an in-sync result prints no verdict and returns exit status 0. Drift prints a summary such as `sync: 2 out of sync (1 missing, 1 orphaned)`, lists the planned changes, and returns exit status 1. Materialization and configuration errors also return exit status 1, including a dry-run materialization failure, which is printed as an `error:` line alongside the run's warnings. Warning-severity materialization diagnostics are printed as `warning:` lines and do not affect the exit status. `--check` writes nothing: not config, locks, transaction state, or harness output. It does not recover pending transactions or fetch a cold exact snapshot, and it reports `lock.snapshot-unavailable` when snapshot files it needs are missing.
 
+A hard configuration, registry-load, or resolution error stops `--check` before it predicts output changes. It reports the refusal without treating an unloadable registry's installed hooks as deselected or counting them as drift. Warning-only checks still report genuine pending changes.
+
 If an earlier write was interrupted and left a dependency transaction pending, `sync --locked`, `sync --offline`, `sync --check`, `lock --check`, `list`, and `status` fail with `dependency.recovery-required` before reading configuration or registries. They leave config, locks, recovery records, and permissions unchanged. A plain `sync` or `lock` (without those flags) attempts recovery before continuing. The failed command can be retried after recovery succeeds; blocked recovery leaves it incomplete. A missing transaction-state directory needs no recovery, and these commands do not create it.
 
 ## `update`
@@ -325,6 +333,8 @@ agent-marketplace update [resource ...] [flags]
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
 | `--bump` | boolean | no | `false` | Rewrites eligible refs in v4 `sources:` to newer matching tags before updating locks. A ref that an included config file declares is reported and left unchanged. A full commit ID is never rewritten. |
+| `--dry-run` | boolean | no | `false` | Previews the update without applying it: publishes no configuration, lock, or harness change, creates no missing writable root or lock, and preserves installed bytes, modes, and modification times. Uses the same candidate selection, scope, targeting, ref-bump eligibility, and policy checks as an applying update. Exits 0 with or without changes available; exits nonzero on invalid input or preparation failures. A pending dependency transaction is refused with `dependency.recovery-required`, not replayed. |
+| `--include-diff` | boolean | no | `false` | Adds normalized resource content diffs to the report. With `--dry-run` the diffs are proposed; without it, the update applies its prepared candidates without prompting and reports their diffs as applied. Explicit diff output can disclose sensitive values authored in resources (instruction bodies, hook commands, resource configuration) and is not a secret scanner or a security finding; authored environment-variable references are shown as written and never resolved against your local environment. |
 | `--scope` | string | no | `all` | Update scope: `user`, `repo`, `local`, or `all`. `organization` is refused. |
 | `--registry` | string | no | none | Targets one configured Git registry. |
 | `--ref` | string | no | none | Narrows `--registry` to a declared ref. |
@@ -343,6 +353,20 @@ Organization-managed Marketplace pins: 15 (not checked for newer revisions; pins
 Use `agent-marketplace update --verbose` to list organization-managed pins.
 Marketplace "https://marketplace.example.com" "source"/"skill"/"review": updated "sha256:..." -> "sha256:..."
 ```
+
+`--dry-run` summarizes the same decisions as a preview: proposed acquisition-lock changes, the additions, modifications, removals, and source changes in the effective selected-resource set (including collections and their affected members) with scope, source, kind, name, and old/candidate revision identities, and live local or intentionally unlocked organization sources that have no historical locked comparison. It states that no updates were applied and that the preview does not enumerate every subsequent materialization change. With `--include-diff`, definitions are rendered as normalized review content — readable but not the original authored files and not an applicable patch — and supporting files are compared as exact text, binary metadata, or mode-only changes. A recorded baseline that cannot be loaded refuses the comparison instead of being substituted with empty or installed content; a Marketplace pin whose latest revision is missing is reported with the remove-and-reinstall remediation while other pins still preview, and the preview exits 1 without changing state. If dependency publication succeeds but harness synchronization fails, the report names that phase boundary instead of claiming full application or a rollback.
+
+A preview still performs the same online acquisition work as an applying update, so it may populate the disposable registry cache (`~/.cache/agent-marketplace`) and use private temporary staging. It preserves configuration, locks, installed resources, ownership state, backups, and inventory; ordinary operational logging remains enabled. Each invocation is independent: a preview does not reserve candidates or commit any prepared state, and a later applying update prepares and validates its own candidates against the then-current upstream and configuration state.
+
+```text
+Dry run: no updates were applied.
+Proposed acquisition-lock changes:
+  repo "https://git.example.com/team.git" (ref "main"): "sha1:<old>" -> "sha1:<new>"
+Proposed selected-resource changes:
+  repo skill "vm-lifecycle" from "https://git.example.com/team.git" (ref "main"): modified; definition changed; "sha1:<old>" -> "sha1:<new>"
+This preview does not enumerate every subsequent materialization change.
+```
+
 
 ## `status`
 
