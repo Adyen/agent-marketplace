@@ -44,6 +44,7 @@ An invalid value makes telemetry resolution fail; `telemetry` subcommands then e
 | `HOME` | Base for `~/.agents` (user config and lock), `~/.cache/agent-marketplace` (cache), `~/.agent-marketplace` (logs, backups, and materialization manifest), and every harness machine root. |
 | `XDG_STATE_HOME` | Base for durable state under `$XDG_STATE_HOME/agent-marketplace/`: ownership records and safety backups, dependency-transaction records (`dependencies/`), and telemetry state (`telemetry/`, which holds the installation ID, queue, and diagnostic payloads). Defaults to `~/.local/state/agent-marketplace/`. The value must be an absolute path. Ownership and telemetry state ignore a relative value and use the default, but dependency transactions refuse it with the error `XDG_STATE_HOME must be absolute`. |
 | `CODEX_HOME` | Moves only the Codex `.codex` machine folder (subagents, hooks, and MCP servers). Must be absolute; a relative value is an error. Codex skills stay under `~/.agents`. |
+| `CLAUDE_CONFIG_DIR` | Moves all Claude Code machine resources to this directory and machine MCP servers to its `.claude.json`. Must be absolute; unset or empty keeps `~/.claude` and `~/.claude.json`. Repository paths do not change. |
 
 The cache is always `~/.cache/agent-marketplace/`; `XDG_CACHE_HOME` is not used. The user config is always `~/.agents/config.yaml` and the organization config is always `/etc/agent-marketplace/config.yaml`; no variable moves them. See the [filesystem layout reference](./filesystem-layout.md).
 

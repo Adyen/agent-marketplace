@@ -73,6 +73,10 @@ E2E_PARALLEL=8 make e2e  # control concurrency (default 4, set to 1 for serial)
 
 #### Architecture
 
+Test sandboxes also neutralize `CLAUDE_CONFIG_DIR`. Use an empty value for
+default-layout fixtures: setting it to `~/.claude` would move `.claude.json`
+inside that directory. Relocation fixtures opt into an explicit absolute path.
+
 - **Process-based sandbox**: each test gets its own temp root with `home/`, `workspace/`, `repos/`, `etc/` directories. Subprocesses strip inherited `AGENT_MARKETPLACE_*` settings and override `HOME`, the XDG state/config/cache roots, `CODEX_HOME`, the organization-config test path, and a sanitized `PATH`, so application-controlled paths and policy cannot escape the sandbox or vary with the host. Fixture-specific environment overrides are applied explicitly after this baseline.
 - **Path mapping**: test table uses container-style paths (`/root/...`, `/workspace/...`) which are automatically resolved to the temp sandbox by `Env.resolvePath()`.
 - **Declarative test cases**: defined as `TestCase` structs in `e2e/table_test.go` with `Registries`, config layers (`GlobalCfg`/`RepoCfg`/`LocalCfg`/`OrgCfg`), and `Steps` (actions + assertions). `{{REG:name}}` placeholders are resolved to `file://` URLs of seeded bare git repos.

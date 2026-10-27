@@ -90,6 +90,17 @@ file. This keeps the unset layout unchanged and is what makes the relocated
 `.claude.json` safe; the "pruning preserves the configuration file" scenario is
 the byte-equality proof.
 
+When the relocated root contains HOME, the same recursive walk could reach
+inactive default-account output. Protect `~/.claude/` unless it is itself the
+effective resource root, and protect `~/.claude.json` from the root walk.
+Resolve root aliases before computing these relative fences. An explicitly
+selected MCP destination still reconciles its own entries independently.
+
+Native aggregate reads and writes use the admitted destination boundary when
+available, matching aggregate inventory; only unbound callers use the stricter
+standalone portable-directory validation. This keeps admitted machine-root
+aliases usable without weakening descriptor-anchored file checks.
+
 ### Backup keeps `.claude.json` as an explicitly mapped archive entry in both layouts
 
 Today the Claude machine archive carries `.claude.json` under
@@ -103,6 +114,10 @@ scope-root aggregate itself, and managed-path collection excludes mapped files
 from the ordinary relative paths so the file is archived once. Restore resolves
 the mapping at restore time, so archives made under either layout publish into
 the current effective location.
+
+Explicit restore retains the existing raw-file overlay semantics: it restores
+the archived configuration, not just its owned MCP entries. Routine sync,
+deselection and root pruning preserve the current unrelated account state.
 
 ### Overlap is refused, mirroring the OpenCode rule
 
@@ -131,8 +146,9 @@ shared destination resolver, so no TUI file changes. The pre-selected harness
 list is nevertheless user-visible TUI behavior, so a real-terminal journey sets
 `CLAUDE_CONFIG_DIR` to a sibling of `~/.claude`, creates only that directory,
 and asserts Claude Code is pre-selected. The TUI QA isolated environment also
-pins the variable to `~/.claude` by default, as it pins `CODEX_HOME`, so a
-developer's shell cannot change journey outcomes.
+pins the variable to an empty string by default, so a developer's shell cannot
+change journey outcomes. A nonempty `~/.claude` value would relocate the MCP
+file inside that directory and would not preserve the default-layout fixtures.
 
 ### Test sandboxes isolate the variable everywhere HOME is isolated
 
@@ -164,11 +180,11 @@ Fixtures that need a relocated root set it per test with `t.Setenv`.
   relocation explicitly rather than editing those tables, which an in-flight
   change already rewrites.
 
-## Open Questions
+## Accepted Clarifications
 
 - Should a configuration directory inside the repository but outside
-  `<repo>/.claude` be refused as well, for predictability? Proposed: no,
+  `<repo>/.claude` be refused as well, for predictability? No,
   because its managed paths are disjoint and Claude Code itself accepts it.
 - Should an invalid (relative) value be surfaced by `backup` target listing,
-  which today only enumerates targets? Proposed: no; `backup` for Claude Code
+  which today only enumerates targets? No; `backup` for Claude Code
   resolves the root through the same path and reports the error there.

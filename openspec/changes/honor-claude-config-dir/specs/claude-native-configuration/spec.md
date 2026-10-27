@@ -2,11 +2,15 @@
 
 ### Requirement: Claude Code machine destinations follow CLAUDE_CONFIG_DIR
 
-When `CLAUDE_CONFIG_DIR` is set to an absolute path, Agent Marketplace SHALL use that directory as the Claude Code machine root in place of `~/.claude`. Machine-scope skills, commands, subagents, hook support, `.claude-plugin/plugin.json`, the native `settings.json` hook file and its legacy `hooks/hooks.json` SHALL live under that directory, and machine-scope MCP servers SHALL be reconciled in the `mcpServers` member of `$CLAUDE_CONFIG_DIR/.claude.json` in place of `~/.claude.json`. A missing directory SHALL be created on the first machine-scope write, in both materialization modes. While the variable is set, `sync`, `sync --check`, `install`, `remove`, `update`, `status`, `doctor`, `backup`, `backup restore`, and harness detection SHALL resolve the same relocated root, and Agent Marketplace SHALL NOT read, create, modify, or prune `~/.claude` or `~/.claude.json`; previously generated output there SHALL be left in place rather than moved or pruned. A relative value SHALL refuse machine-scope Claude Code work and the `status` and `doctor` root summaries with an error naming `CLAUDE_CONFIG_DIR` as required to be absolute, before any Claude Code write; repository-only Claude Code output and other harness targets SHALL be unaffected by that refusal. An unset or empty variable SHALL keep `~/.claude` and `~/.claude.json`. Repository-scope destinations, `<repo>/.claude` and `<repo>/.mcp.json`, SHALL NOT change.
+When `CLAUDE_CONFIG_DIR` is set to an absolute path, Agent Marketplace SHALL use that directory as the Claude Code machine root in place of `~/.claude`. Machine-scope skills, commands, subagents, hook support, `.claude-plugin/plugin.json`, the native `settings.json` hook file and its legacy `hooks/hooks.json` SHALL live under that directory, and machine-scope MCP servers SHALL be reconciled in the `mcpServers` member of `$CLAUDE_CONFIG_DIR/.claude.json` in place of `~/.claude.json`. A missing directory SHALL be created on the first machine-scope write, in both materialization modes.
+
+While the variable is set, `sync`, `sync --check`, `install`, `remove`, `update`, `status`, `doctor`, `backup`, `backup restore`, and harness detection SHALL resolve the same relocated root. Agent Marketplace SHALL NOT fall back to `~/.claude` or `~/.claude.json` as machine destinations. Previously generated output at default locations not themselves selected as effective destinations SHALL be left in place rather than read, moved, or pruned, even when the relocated root contains those locations.
+
+A relative value SHALL refuse machine-scope Claude Code work and the `status` and `doctor` root summaries with an error naming `CLAUDE_CONFIG_DIR` as required to be absolute, before any machine-scope Claude Code write; repository-only Claude Code output and other harness targets SHALL be unaffected by that refusal. An unset or empty variable SHALL keep `~/.claude` and `~/.claude.json`. Repository-scope destinations, `<repo>/.claude` and `<repo>/.mcp.json`, SHALL NOT change.
 
 #### Scenario: Machine selections install under the configuration directory
 
-- **WHEN** `CLAUDE_CONFIG_DIR` is an absolute path, `~/.claude.json` and `$CLAUDE_CONFIG_DIR/.claude.json` both exist with unrelated members, and machine-scope selections include a skill, a command, a subagent, a hook, and an MCP server for Claude Code
+- **WHEN** `CLAUDE_CONFIG_DIR` is an absolute path distinct from the default destinations, `~/.claude.json` exists with unrelated members, the relocated configuration is missing or also contains unrelated members, and machine-scope selections include a skill, a command, a subagent, a hook, and an MCP server for Claude Code
 - **THEN** `sync` MUST install the skill, command, subagent, hook support, `.claude-plugin/plugin.json`, and `settings.json` hook entries under `$CLAUDE_CONFIG_DIR`, in both materialization modes, creating the directory when it is missing
 - **AND** the MCP server MUST appear under `mcpServers` in `$CLAUDE_CONFIG_DIR/.claude.json` with that file's unrelated members, handwritten entries, formatting, and permissions preserved
 - **AND** `~/.claude` MUST NOT be created and the bytes of `~/.claude.json` MUST be unchanged
@@ -38,7 +42,7 @@ When `CLAUDE_CONFIG_DIR` is set to an absolute path, Agent Marketplace SHALL use
 
 #### Scenario: Default-location output is left in place
 
-- **WHEN** `~/.claude` and `~/.claude.json` hold output generated before `CLAUDE_CONFIG_DIR` was set, and `sync` then runs with the variable set
+- **WHEN** `~/.claude` and `~/.claude.json` hold output generated before `CLAUDE_CONFIG_DIR` was set, and `sync` then runs with the variable selecting different resource and MCP destinations
 - **THEN** `sync` MUST NOT modify, prune, or move any file under `~/.claude` or any entry of `~/.claude.json`
 - **AND** `sync --check` MUST NOT report that output as drift
 
@@ -56,7 +60,7 @@ When `CLAUDE_CONFIG_DIR` is set to an absolute path, Agent Marketplace SHALL use
 
 ### Requirement: The Claude configuration file inside the machine root is reconciled, never pruned
 
-When `.claude.json` lives inside the Claude Code machine root because `CLAUDE_CONFIG_DIR` is set, Agent Marketplace SHALL treat it exactly as it treats `~/.claude.json`: only owned `mcpServers` entries are added, updated, or removed; unrelated members, handwritten entries, comments, key order, and permissions are preserved; an unmanaged entry with a selected installed name fails closed; and a malformed file refuses only the MCP aggregate. Cleanup of the machine root — pruning of stale output, removal of the last selected MCP server, `remove`, and `backup restore` — SHALL NOT delete, rename, truncate, or rewrite `.claude.json` beyond reconciling its owned entries.
+When `.claude.json` lives inside the Claude Code machine root because `CLAUDE_CONFIG_DIR` is set, Agent Marketplace SHALL treat it exactly as it treats `~/.claude.json`: only owned `mcpServers` entries are added, updated, or removed; unrelated members, handwritten entries, comments, key order, and permissions are preserved; an unmanaged entry with a selected installed name fails closed; and a malformed file refuses only the MCP aggregate. Cleanup of the machine root, pruning of stale output, and removal of the last selected MCP server SHALL NOT delete or strip unrelated members from `.claude.json`. Explicit `backup restore` SHALL retain its existing raw-file overlay behavior, using the effective relocated destination rather than the default account.
 
 #### Scenario: Pruning the relocated root preserves the configuration file
 

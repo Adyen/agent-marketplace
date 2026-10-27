@@ -906,6 +906,11 @@ func addExistingOutputKeys(repoRoot string, allOutputs map[outputKey]bool) {
 		}
 		repoDir := repoOutputDir(target, roots, repoRoot)
 		machineDir := roots.For(true, repoRoot)
+		if target == hcc.TargetClaude {
+			if custom := os.Getenv("CLAUDE_CONFIG_DIR"); custom != "" && !filepath.IsAbs(custom) {
+				machineDir = ""
+			}
+		}
 		// When repoRoot is the home directory the repo-scope path is the same
 		// filesystem location as the machine-scope path (e.g. ~/.factory ==
 		// ~/.factory). Adding both keys would cause the repo-scope pass (which
@@ -1742,6 +1747,9 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		PerTarget:        make(map[hcc.Target]TargetReport),
 		Diags:            compileResult.allDiags,
 		BlockedResources: compileResult.blockedResources,
+	}
+	if d := preflightClaudeDestinations(&compileResult, repoRoot); d != nil {
+		report.Diags = append(report.Diags, *d)
 	}
 	geminiCoalescence, err := coalesceGeminiNativeAggregates(&compileResult, repoRoot, report)
 	if err != nil {
@@ -2882,6 +2890,22 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, destinatio
 		pruneReportPrefix = windsurfDir
 	}
 	protected := nativeAggregatePruneFence(key.target, key.machineScope)
+	for _, destination := range destinations {
+		if len(destination.AggregateRoutes) > 0 && sameOutputDir(destination.Root, pruneOutDir) {
+			if protected == nil {
+				protected = make(map[string]bool)
+			}
+			protected[destination.AggregateFile] = true
+		}
+	}
+	if key.target == hcc.TargetClaude && key.machineScope && os.Getenv("CLAUDE_CONFIG_DIR") != "" {
+		var err error
+		protected, err = protectInactiveClaudeDefaults(pruneOutDir, protected)
+		if err != nil {
+			report.Diags = append(report.Diags, diag.Diagnostic{Code: "materialize.destination.error", Severity: diag.SeverityError, Target: "claude", Message: fmt.Sprintf("protect inactive Claude account: %v", err)})
+			return report
+		}
+	}
 	protected = extendNativeHookProjectionPruneFence(key.target, key.machineScope, pruneOutDir, destinations, protected)
 
 	plans := materializePlans(key.target, outDir, artifacts, linkedComponents(skillLinks[key]), key.machineScope)

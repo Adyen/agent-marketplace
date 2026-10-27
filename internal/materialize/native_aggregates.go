@@ -108,8 +108,10 @@ func syncNativeAggregate(key outputKey, destination harness.Destination, rel str
 	if err := harness.ValidateRelPath(rel); err != nil {
 		return tr, err
 	}
-	if _, err := validatePortableOutputDir(destination.Root, filepath.Dir(rel)); err != nil {
-		return tr, err
+	if boundary == nil {
+		if _, err := validatePortableOutputDir(destination.Root, filepath.Dir(rel)); err != nil {
+			return tr, err
+		}
 	}
 	file := filepath.Join(destination.Root, rel)
 	mode := os.FileMode(0o600)
@@ -443,6 +445,11 @@ func addExistingNativeAggregateKeys(repoRoot string, outputs map[outputKey]bool)
 			}
 			destinations, err := harness.ResolveDestinations(target, machine, repoRoot)
 			if err != nil {
+				if target == hcc.TargetClaude && machine {
+					if custom := os.Getenv("CLAUDE_CONFIG_DIR"); custom != "" && !filepath.IsAbs(custom) {
+						continue
+					}
+				}
 				outputs[key] = true
 				continue
 			}

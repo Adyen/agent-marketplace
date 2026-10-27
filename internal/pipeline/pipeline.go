@@ -1040,7 +1040,16 @@ func CollectManagedPaths(resolved []resolver.ResolvedArtifact) map[hcc.Target]ba
 			machineAggregates = nil
 			for _, destination := range destinations {
 				if destination.Root == root {
-					machineAggregates = append(machineAggregates, destination.Info.AggregateFilesForScope(true)...)
+					for _, rel := range destination.Info.AggregateFilesForScope(true) {
+						path := filepath.Join(root, rel)
+						mapped := false
+						for _, file := range mappedFiles {
+							mapped = mapped || file == path
+						}
+						if !mapped {
+							machineAggregates = append(machineAggregates, rel)
+						}
+					}
 				}
 			}
 		}
