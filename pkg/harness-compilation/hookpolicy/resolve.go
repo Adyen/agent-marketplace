@@ -280,7 +280,7 @@ func selectEvent(dstCat catalog, canonical string, h *ir.Hook, srcCat catalog, s
 	var splits []candidate
 	for _, name := range slices.Sorted(maps.Keys(dstCat.Events)) {
 		ev := dstCat.Events[name]
-		if ev.Canonical != canonical {
+		if ev.Canonical != canonical || ev.IngestOnly {
 			continue
 		}
 		if len(ev.Tools) == 0 && !ev.MCP {

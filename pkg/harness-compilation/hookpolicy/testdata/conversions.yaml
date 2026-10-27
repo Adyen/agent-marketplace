@@ -30,6 +30,13 @@ events:
   - {name: Stop to Gemini, source: claude, target: gemini, event: Stop, want_event: AfterAgent}
   - {name: Devin PostCompaction to Claude, source: devin, target: claude, event: PostCompaction, want_event: PostCompact}
   - {name: Devin PostCompaction to Factory, source: devin, target: factory, event: PostCompaction, want_error: hook.event-unmappable}
+  - {name: Claude PreCompact auto to Devin, source: claude, target: devin, event: PreCompact, matcher: auto, want_event: PreCompact, want_matcher: auto}
+  - {name: Claude PreCompact to Devin, source: claude, target: devin, event: PreCompact, want_event: PreCompact}
+  - {name: Claude PostCompact to Devin, source: claude, target: devin, event: PostCompact, want_event: PostCompact}
+  - {name: Devin PreCompact to Claude, source: devin, target: claude, event: PreCompact, want_event: PreCompact}
+  - {name: Devin PostCompact to Claude, source: devin, target: claude, event: PostCompact, want_event: PostCompact}
+  - {name: Devin PreCompact to Factory, source: devin, target: factory, event: PreCompact, want_event: PreCompact}
+  - {name: Devin PostCompact to Factory, source: devin, target: factory, event: PostCompact, want_error: hook.event-unmappable}
   - {name: Codex Interrupt is native only, source: codex, target: claude, event: Interrupt, want_error: hook.event-unmappable}
   - {name: Claude-only event to Cursor, source: claude, target: cursor, event: PostToolBatch, want_error: hook.event-unmappable}
   - {name: Unknown native event to Claude, source: claude, target: claude, event: UnknownNativeEventForProbe, want_error: hook.event-unmappable}

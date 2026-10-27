@@ -324,8 +324,10 @@ Timeout unit: `seconds`. Matcher syntax: `regex` (output anchored). Repository b
 | Event | Canonical | Matcher | Types | Timeout bounds |
 | --- | --- | --- | --- | --- |
 | `PermissionRequest` | PermissionRequest | tool | command, prompt | - |
+| `PostCompact` | PostCompact | lifecycle | command | - |
 | `PostCompaction` | PostCompact | none | command, prompt | - |
 | `PostToolUse` | PostToolUse | tool | command, prompt | - |
+| `PreCompact` | PreCompact | lifecycle | command | - |
 | `PreToolUse` | PreToolUse | tool | command, prompt | - |
 | `SessionEnd` | SessionEnd | none | command, prompt | - |
 | `SessionStart` | SessionStart | none | command, prompt | - |

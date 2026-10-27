@@ -87,6 +87,9 @@ func assertHookDiags(t *testing.T, diagnostics []diag.Diagnostic, want []wantDia
 // The bytes are asserted verbatim rather than re-decoded, because the emitted
 // fragment IS the behavior identity (see hookBehaviorIdentity): a field silently
 // added, renamed, or dropped changes what Devin runs.
+// spec: hook-resources/canonical-precompact-compiles-to-devin-precompact
+// spec: hook-resources/canonical-postcompact-compiles-to-devin-postcompact
+// spec: hook-resources/devin-postcompaction-keeps-its-spelling-within-devin
 func TestHookFieldMatrix(t *testing.T) {
 	timeoutZero := 0
 	timeoutSixty := 60
@@ -158,10 +161,29 @@ func TestHookFieldMatrix(t *testing.T) {
 			wantBytes: `{"PermissionRequest":[{"hooks":[{"command":"ask.sh","type":"command"}]}]}`,
 		},
 		{
-			name:      "PostCompaction is a Devin event and is never fed by PreCompact",
+			name:      "same-harness PostCompaction keeps its native spelling",
 			hook:      ir.NewHookWithOptions("compaction", "PostCompaction", "note.sh", "command", nil, hookSource, ir.WithHookSource("devin")),
 			wantPath:  "hooks.v1.json",
 			wantBytes: `{"PostCompaction":[{"hooks":[{"command":"note.sh","type":"command"}]}]}`,
+		},
+		{
+			name: "same-harness PostCompaction keeps a prompt payload",
+			hook: ir.NewHookWithOptions("compaction", "PostCompaction", "", "prompt", nil, hookSource,
+				ir.WithHookSource("devin"), ir.WithHookPrompt("Summarize the compaction")),
+			wantPath:  "hooks.v1.json",
+			wantBytes: `{"PostCompaction":[{"hooks":[{"prompt":"Summarize the compaction","type":"prompt"}]}]}`,
+		},
+		{
+			name:      "canonical PreCompact compiles to Devin PreCompact with the auto matcher",
+			hook:      ir.NewHookWithMatcher("compact", "PreCompact", "auto", "check.sh", "command", nil, hookSource),
+			wantPath:  "hooks.v1.json",
+			wantBytes: `{"PreCompact":[{"hooks":[{"command":"check.sh","type":"command"}],"matcher":"auto"}]}`,
+		},
+		{
+			name:      "canonical PostCompact compiles to Devin PostCompact",
+			hook:      ir.NewHook("compacted", "PostCompact", "note.sh", "command", nil, hookSource),
+			wantPath:  "hooks.v1.json",
+			wantBytes: `{"PostCompact":[{"hooks":[{"command":"note.sh","type":"command"}]}]}`,
 		},
 		{
 			name:      "SessionEnd maps through",
@@ -280,11 +302,10 @@ func TestHookUnsupportedCombinationsSkipTheEntry(t *testing.T) {
 			wantDiag: wantDiag{diag.CodeHookDevinEventUnmappable, diag.SeverityError},
 		},
 		{
-			name: "PreCompact must never be mapped onto PostCompaction",
-			// PreCompact runs BEFORE compaction and PostCompaction runs after;
-			// mapping them together would run the hook at the wrong time.
-			hook:     ir.NewHook("compact", "PreCompact", "check.sh", "command", nil, hookSource),
-			wantDiag: wantDiag{diag.CodeHookDevinEventUnmappable, diag.SeverityError},
+			name: "compaction events accept only command hooks",
+			// Devin documents PreCompact and PostCompact as command hooks only.
+			hook:     ir.NewHookWithOptions("compact", "PreCompact", "", "prompt", nil, hookSource, ir.WithHookPrompt("Summarize")),
+			wantDiag: wantDiag{diag.CodeHookPromptUnsupported, diag.SeverityError},
 		},
 		{
 			name:     "unknown event name",
@@ -539,6 +560,8 @@ func TestHookMatcherEventSetMatchesEvidence(t *testing.T) {
 		"Stop":              hookpolicy.MatcherKindNone,
 		"SessionStart":      hookpolicy.MatcherKindNone,
 		"SessionEnd":        hookpolicy.MatcherKindNone,
+		"PreCompact":        hookpolicy.MatcherKindLifecycle,
+		"PostCompact":       hookpolicy.MatcherKindLifecycle,
 		"PostCompaction":    hookpolicy.MatcherKindNone,
 	}
 	for event, kind := range want {
