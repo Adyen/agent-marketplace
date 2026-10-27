@@ -35,7 +35,7 @@ for (const scope of ["user", "project"] as const) {
       good = readRegularFile(config);
       const bad = field === "harnesses"
         ? good.toString("utf8").replace("harnesses:\n  - factory\n", "") + "harnesses: [factory, future-tool]\n"
-        : good.toString("utf8") + "materialization: {targets: {future-tool: file}}\n";
+        : good.toString("utf8") + "materialization: {targets: {factory: file, future-tool: file}}\n";
       fs.writeFileSync(config, bad);
       const skills = path.join(fixture.repo, ".factory", "skills");
       controlled = [

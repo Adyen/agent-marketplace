@@ -143,6 +143,15 @@ export const locate = (terminal: TestTerminal, pattern: string | RegExp): Locato
   return terminal.getByText(pattern.source, { regex: true });
 };
 
+// modalText returns the text inside the bordered modal with whitespace removed,
+// so assertions survive wrapping that depends on temporary path lengths.
+export const modalText = async (terminal: TestTerminal): Promise<string> =>
+  (await terminal.text())
+    .split("\n")
+    .map((line) => line.match(/│(.*)│/)?.[1] ?? "")
+    .join("")
+    .replace(/\s+/g, "");
+
 export const sgr = (code: number, x: number, y: number, final: "M" | "m"): string =>
   `\x1b[<${code};${x + 1};${y + 1}${final}`;
 export const sgrDrag = (x0: number, y0: number, x1: number, y1: number): string =>

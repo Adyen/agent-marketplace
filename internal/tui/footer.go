@@ -88,7 +88,7 @@ func (m Model) footerFloor() []footerItem {
 // footerActionHints lists the optional list-pane hints in priority order;
 // they drop individually from the end when the footer runs out of room.
 func (m Model) footerActionHints() []footerItem {
-	actions := [][2]string{{"/", "search"}, {"space", "toggle"}, {"s", "sync"}, {"H", "harnesses"}, {"E", "config"}, {"v", "view"}}
+	actions := [][2]string{{"/", "search"}, {"space", "toggle"}, {"s", "sync"}, {"H", "harnesses"}, {"E", "config"}, {"v", "view"}, {"i", "install from source"}}
 	if r, ok := m.selectedRow(); ok && rowToggleDenial(r) != toggleEligible {
 		actions = slices.DeleteFunc(actions, func(a [2]string) bool { return a[0] == "space" })
 	}
