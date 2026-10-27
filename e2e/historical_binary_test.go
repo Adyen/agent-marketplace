@@ -81,6 +81,10 @@ func (w *historicalWorld) buildCandidate(arch string, tags ...string) string {
 
 // run executes executable in workdir with HOME set to home.
 func (w *historicalWorld) run(home, workdir, executable string, args ...string) (string, error) {
+	return w.runWithEnv(nil, home, workdir, executable, args...)
+}
+
+func (w *historicalWorld) runWithEnv(extraEnv []string, home, workdir, executable string, args ...string) (string, error) {
 	w.t.Helper()
 	ctx, cancel := context.WithTimeout(w.t.Context(), 2*time.Minute)
 	defer cancel()
@@ -95,14 +99,22 @@ func (w *historicalWorld) run(home, workdir, executable string, args ...string) 
 		"--mount", "type=bind,src="+executable+",dst=/bin/agent-marketplace,readonly",
 		"--env", "HOME="+home, "--env", "TMPDIR="+w.path("tmp"),
 		"--env", "AGENT_MARKETPLACE_LOG_ENABLED=false", "--env", "AGENT_MARKETPLACE_NO_TUI=1", "--env", "GIT_TERMINAL_PROMPT=0",
-		"--workdir", workdir, "--entrypoint", "/bin/agent-marketplace", w.image)
+	)
+	for _, value := range extraEnv {
+		dockerArgs = append(dockerArgs, "--env", value)
+	}
+	dockerArgs = append(dockerArgs, "--workdir", workdir, "--entrypoint", "/bin/agent-marketplace", w.image)
 	output, err := exec.CommandContext(ctx, "docker", append(dockerArgs, args...)...).CombinedOutput()
 	return string(output), err
 }
 
 func (w *historicalWorld) must(home, workdir, executable string, args ...string) string {
+	return w.mustWithEnv(nil, home, workdir, executable, args...)
+}
+
+func (w *historicalWorld) mustWithEnv(extraEnv []string, home, workdir, executable string, args ...string) string {
 	w.t.Helper()
-	output, err := w.run(home, workdir, executable, args...)
+	output, err := w.runWithEnv(extraEnv, home, workdir, executable, args...)
 	if err != nil {
 		w.t.Fatalf("%s %v: %v\n%s", filepath.Base(executable), args, err, output)
 	}

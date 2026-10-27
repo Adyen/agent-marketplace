@@ -62,6 +62,30 @@ func nativePluginCatalogFor(target hcc.Target, scope string, entries []nativePlu
 }
 
 func (catalog nativePluginCatalog) manifest() ([]byte, error) {
+	if catalog.target == target.TargetClaude {
+		type entry struct {
+			Name   string `json:"name"`
+			Source string `json:"source"`
+		}
+		document := struct {
+			Name  string `json:"name"`
+			Owner struct {
+				Name string `json:"name"`
+			} `json:"owner"`
+			Plugins []entry `json:"plugins"`
+		}{Name: catalog.name}
+		document.Owner.Name = "Agent Marketplace"
+		for _, item := range catalog.entries {
+			document.Plugins = append(document.Plugins, entry{
+				Name: item.name, Source: "./plugins/" + item.name,
+			})
+		}
+		data, err := json.MarshalIndent(document, "", "  ")
+		if err != nil {
+			return nil, err
+		}
+		return append(data, '\n'), nil
+	}
 	type source struct {
 		Source string `json:"source"`
 		Path   string `json:"path"`
@@ -116,7 +140,7 @@ func nativePluginCatalogParticipants(catalog nativePluginCatalog) ([]dependencyt
 }
 
 func nativeRegistrationEntries(key outputKey, repoRoot string, ref ownership.PluginGenerationRef, catalog nativePluginCatalog, destinations []harness.Destination) ([]ownedJSONEntry, error) {
-	registration, ok := target.NativePluginRegistration(target.Target(key.target))
+	registration, ok := target.NativePluginRegistration(target.Target(key.target), key.machineScope)
 	if !ok {
 		return nil, nil
 	}

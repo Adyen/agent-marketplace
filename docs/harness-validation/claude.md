@@ -12,6 +12,11 @@ installation is distinct from compiling a plugin bundle. Validation does not
 register an alternate plugin or inject replacement definitions to make
 discovery succeed.
 
+Native plugin bundles use a Claude Code marketplace catalog with relative
+`./plugins/<name>` sources linked to immutable package generations. Repository
+registrations are kept in `.claude/settings.local.json`; user registrations
+remain in `~/.claude/settings.json`.
+
 ## Skills, commands, and subagents: CLI initialization
 
 The driver starts the installed `claude` executable with:

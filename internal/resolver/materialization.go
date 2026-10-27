@@ -35,7 +35,7 @@ func MaterializationWinners(resolved []ResolvedArtifact) []ResolvedArtifact {
 	}
 	winners := make(map[key]int, len(resolved))
 	for i, a := range resolved {
-		if a.Unresolved {
+		if a.Unresolved || nativePluginMember(a) {
 			continue
 		}
 		for _, target := range targetsOf(a) {
@@ -60,7 +60,7 @@ func MaterializationWinners(resolved []ResolvedArtifact) []ResolvedArtifact {
 		count := 0
 		for _, target := range targets {
 			k := keyOf(a, target)
-			if HasAdditiveSources(k.kind) || winners[k] == i {
+			if nativePluginMember(a) || HasAdditiveSources(k.kind) || winners[k] == i {
 				count++
 			}
 		}
@@ -81,4 +81,9 @@ func MaterializationWinners(resolved []ResolvedArtifact) []ResolvedArtifact {
 		out = append(out, a)
 	}
 	return out
+}
+
+func nativePluginMember(a ResolvedArtifact) bool {
+	return a.PluginPackage != nil && a.PluginPackage.Delivery == "native" &&
+		a.Resource != nil && a.Resource.Kind() != ir.KindPlugin
 }
