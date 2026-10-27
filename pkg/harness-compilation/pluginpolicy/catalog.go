@@ -41,6 +41,8 @@ const (
 
 const NativeRefreshRestartRequired = "restart-required"
 
+const ClaudeNativePluginProbeID = "claude-native-plugin"
+
 // Invalid-value outcomes for manifest fields.
 const (
 	InvalidRefusePackage     = "refuse-package"
