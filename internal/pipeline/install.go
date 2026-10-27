@@ -1318,7 +1318,7 @@ func installFromAdHoc(ctx context.Context, opts InstallOptions, fromURL string, 
 	// records for it, so install does not add a second source for the same
 	// repository; otherwise fall back to HTTPS when SSH cannot reach the
 	// registry, e.g. a public repository without SSH keys.
-	choice := SelectAdHocTransport(ec.Merged, scopeToConfigSource(opts.Scope), rawFromURL, fromURL, fromPath, fromRef, RegistryURLPolicy(syntheticEntry, ec.Allowed))
+	choice := SelectAdHocTransport(ctx, ec.Merged, scopeToConfigSource(opts.Scope), rawFromURL, fromURL, fromPath, fromRef, RegistryURLPolicy(syntheticEntry, ec.Allowed))
 	fromURL, probedBranch := choice.URL, choice.DefaultBranch
 	if notice := choice.Notice("recorded"); notice != "" {
 		defer func() {

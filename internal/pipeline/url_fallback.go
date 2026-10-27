@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"log/slog"
 	"net/url"
 	"strings"
@@ -9,9 +10,9 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
-// remoteProbe returns the branch a remote advertises as HEAD, failing when
-// git cannot list the remote without prompting or a credential helper. Tests
-// replace it to avoid network access.
+// remoteProbe returns the branch and commit a remote advertises as HEAD,
+// failing when git cannot list the remote without prompting or a credential
+// helper. Tests replace it to avoid network access.
 var remoteProbe = cache.ProbeDefaultBranch
 
 // WebURLHTTPSFallback returns the HTTPS clone URL for a GitHub or GitLab web
@@ -45,6 +46,9 @@ type TransportChoice struct {
 	// it, so callers need not list the remote again; "" when nothing was
 	// probed or the probe did not reach URL.
 	DefaultBranch string
+	// Commit is the commit that DefaultBranch points to, under the same
+	// rules as DefaultBranch.
+	Commit string
 	// FellBackFrom is the unreachable SSH URL when URL is the HTTPS fallback,
 	// and "" otherwise.
 	FellBackFrom string
@@ -65,7 +69,7 @@ func (c TransportChoice) Notice(verb string) string {
 // SSH keys. SSH stays preferred whenever it works. allowed vets the HTTPS URL
 // against registry policy before any probe; a refused URL keeps gitURL
 // without probing.
-func PreferReachableTransport(rawURL, gitURL string, allowed func(fallback string) error) TransportChoice {
+func PreferReachableTransport(ctx context.Context, rawURL, gitURL string, allowed func(fallback string) error) TransportChoice {
 	fallback := WebURLHTTPSFallback(rawURL)
 	if fallback == "" || gitURL != ParseGitWebURL(rawURL).GitURL {
 		return TransportChoice{URL: gitURL}
@@ -74,17 +78,17 @@ func PreferReachableTransport(rawURL, gitURL string, allowed func(fallback strin
 		slog.Debug("HTTPS fallback refused by registry policy", "https_url", fallback, "error", err)
 		return TransportChoice{URL: gitURL}
 	}
-	branch, sshErr := remoteProbe(gitURL)
+	branch, commit, sshErr := remoteProbe(ctx, gitURL)
 	if sshErr == nil {
-		return TransportChoice{URL: gitURL, DefaultBranch: branch}
+		return TransportChoice{URL: gitURL, DefaultBranch: branch, Commit: commit}
 	}
-	branch, err := remoteProbe(fallback)
+	branch, commit, err := remoteProbe(ctx, fallback)
 	if err != nil {
 		slog.Debug("HTTPS fallback could not reach registry either", "https_url", fallback, "error", err)
 		return TransportChoice{URL: gitURL}
 	}
 	slog.Info("SSH could not reach registry; using HTTPS", "ssh_url", gitURL, "https_url", fallback, "ssh_error", sshErr)
-	return TransportChoice{URL: fallback, DefaultBranch: branch, FellBackFrom: gitURL}
+	return TransportChoice{URL: fallback, DefaultBranch: branch, Commit: commit, FellBackFrom: gitURL}
 }
 
 // SelectAdHocTransport chooses the Git URL install --from records for rawURL.
@@ -92,11 +96,29 @@ func PreferReachableTransport(rawURL, gitURL string, allowed func(fallback strin
 // (and that allowed accepts) wins without probing, so install never adds a
 // second source for the same repository; otherwise PreferReachableTransport
 // decides.
-func SelectAdHocTransport(merged *config.Config, scope config.Source, rawURL, gitURL, registryPath, ref string, allowed func(string) error) TransportChoice {
+func SelectAdHocTransport(ctx context.Context, merged *config.Config, scope config.Source, rawURL, gitURL, registryPath, ref string, allowed func(string) error) TransportChoice {
 	if configured, ok := configuredWebURLMatch(nil, merged, scope, rawURL, gitURL, registryPath, ref); ok && allowed(configured) == nil {
 		return TransportChoice{URL: configured}
 	}
-	return PreferReachableTransport(rawURL, gitURL, allowed)
+	return PreferReachableTransport(ctx, rawURL, gitURL, allowed)
+}
+
+// intentRegistries returns the git sources declared by every present layer of
+// intent, so transport selection sees the same configured forms that install
+// reads from the merged configuration.
+func intentRegistries(intent config.Intent) *config.Config {
+	cfg := &config.Config{}
+	for _, layer := range intent.Layers {
+		if !layer.Present() {
+			continue
+		}
+		for _, decl := range layer.Sources() {
+			if decl.Kind == config.V4SourceGit {
+				cfg.Registries = append(cfg.Registries, config.RegistryEntry{URL: decl.URL, Ref: decl.Ref, Path: decl.Path, Source: layer.Source})
+			}
+		}
+	}
+	return cfg
 }
 
 // RegistryURLPolicy returns a PreferReachableTransport policy check that

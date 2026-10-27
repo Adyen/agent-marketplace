@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"context"
 	"testing"
 )
 
@@ -26,7 +27,7 @@ func TestProbeDefaultBranchIgnoresLocalCredentialHelper(t *testing.T) {
 	}
 
 	accepted := f.accepted.Load()
-	if branch, err := ProbeDefaultBranch(f.url); err == nil {
+	if branch, _, err := ProbeDefaultBranch(context.Background(), f.url); err == nil {
 		t.Fatalf("ProbeDefaultBranch reached an authenticated remote (branch %q)", branch)
 	}
 	if got := f.accepted.Load(); got != accepted {
@@ -34,5 +35,15 @@ func TestProbeDefaultBranchIgnoresLocalCredentialHelper(t *testing.T) {
 	}
 	if f.challenged.Load() == 0 {
 		t.Fatal("ProbeDefaultBranch never reached the server")
+	}
+
+	challenged := f.challenged.Load()
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := ProbeDefaultBranch(cancelled, f.url); err == nil {
+		t.Fatal("ProbeDefaultBranch ignored a cancelled context")
+	}
+	if got := f.challenged.Load(); got != challenged {
+		t.Fatalf("ProbeDefaultBranch with a cancelled context reached the server %d time(s)", got-challenged)
 	}
 }

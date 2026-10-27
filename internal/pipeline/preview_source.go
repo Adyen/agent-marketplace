@@ -66,8 +66,9 @@ func PreviewSource(ctx context.Context, ws Workspace, rawURL, ref, path string) 
 	if err := config.ValidateRegistryPath(entry.Path); err != nil {
 		return preview, &SourceRejectedError{Err: err}
 	}
-	// Like install --from: use anonymous HTTPS when SSH cannot reach a web URL.
-	choice := PreferReachableTransport(webURL, rawURL, RegistryURLPolicy(entry, intent.AllowedRegistries()))
+	// Like install --from: reuse a configured form of a web URL, otherwise use
+	// anonymous HTTPS when SSH cannot reach it.
+	choice := SelectAdHocTransport(ctx, intentRegistries(intent), config.SourceUnset, webURL, rawURL, path, ref, RegistryURLPolicy(entry, intent.AllowedRegistries()))
 	if notice := choice.Notice("using"); notice != "" {
 		preview.Warnings = append(preview.Warnings, errors.New(notice))
 	}
@@ -76,9 +77,12 @@ func PreviewSource(ctx context.Context, ws Workspace, rawURL, ref, path string) 
 
 	advertised := ""
 	if !entry.IsLocal() && ref == "" {
-		defaultBranch, commit, err := cache.RemoteDefaultBranch(rawURL)
-		if err != nil {
-			return preview, err
+		defaultBranch, commit := choice.DefaultBranch, choice.Commit
+		if defaultBranch == "" || commit == "" {
+			var err error
+			if defaultBranch, commit, err = cache.RemoteDefaultBranch(rawURL); err != nil {
+				return preview, err
+			}
 		}
 		ref, advertised = defaultBranch, commit
 		entry.Ref = ref

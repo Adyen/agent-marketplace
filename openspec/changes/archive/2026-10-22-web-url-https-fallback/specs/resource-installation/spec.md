@@ -2,7 +2,7 @@
 
 ### Requirement: Web URL sources fall back to HTTPS
 
-`install --from` and `list --from` SHALL keep the SSH form of a GitHub or GitLab web URL as the preferred transport. When `git ls-remote` cannot reach that SSH form and can reach the HTTPS form `https://<host>/<project>.git`, the command SHALL use the HTTPS form for acquisition, SHALL report the switch in a warning that names both URLs, and, for install, SHALL record the HTTPS form as the source URL. The probe uses no Git credential helper, so a repository that requires authentication falls back only when HTTPS can authenticate otherwise, for example through `GIT_ASKPASS` or `~/.netrc`. When the merged configuration already records the SSH or HTTPS form for the same path and ref, install SHALL reuse that form without probing, preferring the target scope's entries, so it never adds a second source for the same repository. The HTTPS form MUST satisfy `allowed_registries` before it is probed or used; a refused HTTPS form MUST leave the SSH form in use without probing either form. When neither form can be reached, the command MUST keep the SSH form and its existing diagnostic. Git URLs, URLs ending in `.git`, and directory sources MUST NOT be probed.
+`install --from` and `list --from` SHALL keep the SSH form of a GitHub or GitLab web URL as the preferred transport. When `git ls-remote` cannot reach that SSH form and can reach the HTTPS form `https://<host>/<project>.git`, the command SHALL use the HTTPS form for acquisition, SHALL report the switch in a warning that names both URLs, and, for install, SHALL record the HTTPS form as the source URL. The probe uses no Git credential helper, so a repository that requires authentication falls back only when HTTPS can authenticate otherwise, for example through `GIT_ASKPASS` or `~/.netrc`. When the merged configuration already records the SSH or HTTPS form for the same path and ref, `install --from` and `list --from` SHALL reuse that form without probing, install preferring the target scope's entries, so install never adds a second source for the same repository. The HTTPS form MUST satisfy `allowed_registries` before it is probed or used; a refused HTTPS form MUST leave the SSH form in use without probing either form. When neither form can be reached, the command MUST keep the SSH form and its existing diagnostic. Git URLs, URLs ending in `.git`, and directory sources MUST NOT be probed.
 
 #### Scenario: Unreachable SSH web URL uses HTTPS
 
@@ -10,11 +10,11 @@
 - **THEN** the command MUST acquire the registry from the HTTPS form and print a warning naming both URLs
 - **AND** a source written by install MUST record the HTTPS form
 
-#### Scenario: Install reuses a configured form of a web URL
+#### Scenario: Configured form of a web URL is reused
 
-- **WHEN** `install --from` receives a web URL whose SSH or HTTPS form the merged configuration already records for the same path and ref
-- **THEN** install MUST reuse the recorded form without probing either form
-- **AND** it MUST NOT add a second source for the repository
+- **WHEN** `install --from` or `list --from` receives a web URL whose SSH or HTTPS form the merged configuration already records for the same path and ref
+- **THEN** the command MUST reuse the recorded form without probing either form
+- **AND** install MUST NOT add a second source for the repository
 
 #### Scenario: Reachable SSH web URL keeps SSH
 

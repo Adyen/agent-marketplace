@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -29,18 +30,20 @@ func TestWebURLHTTPSFallback(t *testing.T) {
 	}
 }
 
-// stubRemoteProbe makes every URL in reachable answer with the branch
-// "<url>#HEAD" and every other URL fail; it returns the probed URLs.
+const probedCommit = "0123456789abcdef0123456789abcdef01234567"
+
+// stubRemoteProbe makes every URL in reachable advertise the branch "main" at
+// probedCommit and every other URL fail; it returns the probed URLs.
 func stubRemoteProbe(t *testing.T, reachable map[string]bool) *[]string {
 	t.Helper()
 	var probed []string
 	orig := remoteProbe
-	remoteProbe = func(gitURL string) (string, error) {
+	remoteProbe = func(_ context.Context, gitURL string) (string, string, error) {
 		probed = append(probed, gitURL)
 		if reachable[gitURL] {
-			return gitURL + "#HEAD", nil
+			return "main", probedCommit, nil
 		}
-		return "", errors.New("unreachable")
+		return "", "", errors.New("unreachable")
 	}
 	t.Cleanup(func() { remoteProbe = orig })
 	return &probed
@@ -68,10 +71,10 @@ func TestPreferReachableTransport(t *testing.T) {
 	const ssh = "git@github.com:org/repo"
 	const https = "https://github.com/org/repo.git"
 
-	t.Run("ssh reachable stays ssh and reuses its branch", func(t *testing.T) {
+	t.Run("ssh reachable stays ssh and reuses its branch and commit", func(t *testing.T) {
 		probed := stubRemoteProbe(t, map[string]bool{ssh: true, https: true})
-		want := TransportChoice{URL: ssh, DefaultBranch: ssh + "#HEAD"}
-		if got := PreferReachableTransport(raw, ssh, allowAll); got != want {
+		want := TransportChoice{URL: ssh, DefaultBranch: "main", Commit: probedCommit}
+		if got := PreferReachableTransport(context.Background(), raw, ssh, allowAll); got != want {
 			t.Fatalf("got %+v, want %+v", got, want)
 		}
 		if len(*probed) != 1 {
@@ -80,8 +83,8 @@ func TestPreferReachableTransport(t *testing.T) {
 	})
 	t.Run("ssh unreachable falls back to https with a notice", func(t *testing.T) {
 		stubRemoteProbe(t, map[string]bool{https: true})
-		got := PreferReachableTransport(raw, ssh, allowAll)
-		want := TransportChoice{URL: https, DefaultBranch: https + "#HEAD", FellBackFrom: ssh}
+		got := PreferReachableTransport(context.Background(), raw, ssh, allowAll)
+		want := TransportChoice{URL: https, DefaultBranch: "main", Commit: probedCommit, FellBackFrom: ssh}
 		if got != want {
 			t.Fatalf("got %+v, want %+v", got, want)
 		}
@@ -91,7 +94,7 @@ func TestPreferReachableTransport(t *testing.T) {
 	})
 	t.Run("both unreachable keeps ssh for its diagnostics", func(t *testing.T) {
 		stubRemoteProbe(t, nil)
-		got := PreferReachableTransport(raw, ssh, allowAll)
+		got := PreferReachableTransport(context.Background(), raw, ssh, allowAll)
 		if got != (TransportChoice{URL: ssh}) || got.Notice("recorded") != "" {
 			t.Fatalf("got %+v, want SSH without branch or notice", got)
 		}
@@ -99,7 +102,7 @@ func TestPreferReachableTransport(t *testing.T) {
 	t.Run("fallback refused by policy is never probed", func(t *testing.T) {
 		probed := stubRemoteProbe(t, map[string]bool{https: true})
 		refuse := func(string) error { return errors.New("blocked") }
-		if got := PreferReachableTransport(raw, ssh, refuse); got != (TransportChoice{URL: ssh}) {
+		if got := PreferReachableTransport(context.Background(), raw, ssh, refuse); got != (TransportChoice{URL: ssh}) {
 			t.Fatalf("got %+v, want %q", got, ssh)
 		}
 		if len(*probed) != 0 {
@@ -109,7 +112,7 @@ func TestPreferReachableTransport(t *testing.T) {
 	t.Run("non-web URL is never probed", func(t *testing.T) {
 		probed := stubRemoteProbe(t, nil)
 		for _, u := range []string{ssh, https, "./local"} {
-			if got := PreferReachableTransport(u, u, allowAll); got != (TransportChoice{URL: u}) {
+			if got := PreferReachableTransport(context.Background(), u, u, allowAll); got != (TransportChoice{URL: u}) {
 				t.Fatalf("got %+v, want %q", got, u)
 			}
 		}
@@ -119,7 +122,7 @@ func TestPreferReachableTransport(t *testing.T) {
 	})
 }
 
-// spec: resource-installation/install-reuses-a-configured-form-of-a-web-url
+// spec: resource-installation/configured-form-of-a-web-url-is-reused
 func TestSelectAdHocTransport(t *testing.T) {
 	const raw = "https://github.com/org/repo"
 	const ssh = "git@github.com:org/repo"
@@ -130,7 +133,7 @@ func TestSelectAdHocTransport(t *testing.T) {
 
 	t.Run("configured https is reused even when ssh works", func(t *testing.T) {
 		probed := stubRemoteProbe(t, map[string]bool{ssh: true, https: true})
-		got := SelectAdHocTransport(merged(https), config.RepoCommitted, raw, ssh, "skills", "", allowAll)
+		got := SelectAdHocTransport(context.Background(), merged(https), config.RepoCommitted, raw, ssh, "skills", "", allowAll)
 		if got != (TransportChoice{URL: https}) {
 			t.Fatalf("got %+v, want the configured HTTPS URL", got)
 		}
@@ -140,14 +143,14 @@ func TestSelectAdHocTransport(t *testing.T) {
 	})
 	t.Run("configured ssh is reused even when ssh fails", func(t *testing.T) {
 		probed := stubRemoteProbe(t, map[string]bool{https: true})
-		got := SelectAdHocTransport(merged(ssh), config.RepoCommitted, raw, ssh, "skills", "", allowAll)
+		got := SelectAdHocTransport(context.Background(), merged(ssh), config.RepoCommitted, raw, ssh, "skills", "", allowAll)
 		if got != (TransportChoice{URL: ssh}) || len(*probed) != 0 {
 			t.Fatalf("got %+v after probing %v, want the configured SSH URL without probes", got, *probed)
 		}
 	})
 	t.Run("a different path is not a configured form", func(t *testing.T) {
 		stubRemoteProbe(t, map[string]bool{https: true})
-		got := SelectAdHocTransport(merged(ssh), config.RepoCommitted, raw, ssh, "other", "", allowAll)
+		got := SelectAdHocTransport(context.Background(), merged(ssh), config.RepoCommitted, raw, ssh, "other", "", allowAll)
 		if got.URL != https || got.FellBackFrom != ssh {
 			t.Fatalf("got %+v, want the probed HTTPS fallback", got)
 		}
@@ -161,7 +164,7 @@ func TestSelectAdHocTransport(t *testing.T) {
 			}
 			return nil
 		}
-		got := SelectAdHocTransport(merged(https), config.RepoCommitted, raw, ssh, "skills", "", refuseHTTPS)
+		got := SelectAdHocTransport(context.Background(), merged(https), config.RepoCommitted, raw, ssh, "skills", "", refuseHTTPS)
 		if got != (TransportChoice{URL: ssh}) || len(*probed) != 0 {
 			t.Fatalf("got %+v after probing %v, want SSH without probes", got, *probed)
 		}
