@@ -25,11 +25,11 @@ func staticRegistryIndex(registries map[store.RegistryID]store.Registry) func(co
 	return func(context.Context) (map[store.RegistryID]store.Registry, error) { return registries, nil }
 }
 
-func blockedHandler(release <-chan struct{}, respond func(http.ResponseWriter)) func(http.ResponseWriter, *http.Request) {
+func blockedHandler(release <-chan struct{}, respond func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-release:
-			respond(w)
+			respond(w, r)
 		case <-r.Context().Done():
 		}
 	}
@@ -101,7 +101,7 @@ func TestInstallationLookupServesPublishedSnapshot(t *testing.T) {
 }
 
 // spec: marketplace-api/fresh-last-good-counts-survive-a-failed-proactive-refresh
-func TestInstallationFailedRefreshRetainsLastGoodUntilExpiry(t *testing.T) {
+func TestInstallationFailedRefreshRetainsLastGoodUntilMaxStale(t *testing.T) {
 	fixture := newMetricsFixture(t, func() string { return prometheusVector(adoptionSamples(), adoptionFixedNow) })
 	reader := newTestReader(t, fixture)
 	now := adoptionFixedNow
@@ -118,13 +118,66 @@ func TestInstallationFailedRefreshRetainsLastGoodUntilExpiry(t *testing.T) {
 	if _, err := reader.refresh(context.Background(), registries); err == nil {
 		t.Fatal("refresh() against failing endpoint = nil, want unavailable")
 	}
-	counts, ok := reader.lookup(registries)
-	if !ok || counts.Counts[adoptionKey("rA", "skill", "res-a")] != 1 {
-		t.Fatalf("fresh last-good not retained after failed refresh: %+v, %v", counts, ok)
+	counts, fresh := reader.lookup(registries)
+	if counts == nil || !fresh || counts.Counts[adoptionKey("rA", "skill", "res-a")] != 1 {
+		t.Fatalf("fresh last-good not retained after failed refresh: %+v, %v", counts, fresh)
 	}
-	now = now.Add(2 * time.Minute)
-	if _, ok := reader.lookup(registries); ok {
-		t.Fatal("expired last-good still served after original expiry")
+	now = adoptionFixedNow.Add(reader.timing.MaxAge)
+	if counts, fresh := reader.lookup(registries); counts == nil || fresh {
+		t.Fatalf("expired last-good not served as stale within max_stale: %+v, %v", counts, fresh)
+	}
+	now = adoptionFixedNow.Add(reader.timing.MaxStale - time.Nanosecond)
+	if counts, _ := reader.lookup(registries); counts == nil {
+		t.Fatal("last-good dropped before max_stale")
+	}
+	now = adoptionFixedNow.Add(reader.timing.MaxStale)
+	if counts, _ := reader.lookup(registries); counts != nil {
+		t.Fatal("stale last-good still served at max_stale")
+	}
+}
+
+// spec: marketplace-api/registry-identity-and-inventory-expiry-prevent-unsafe-counts
+func TestInstallationStaleSnapshotNeverServesChangedIdentity(t *testing.T) {
+	fixture := newMetricsFixture(t, func() string { return prometheusVector(adoptionSamples(), adoptionFixedNow) })
+	reader := newTestReader(t, fixture)
+	now := adoptionFixedNow
+	reader.now = func() time.Time { return now }
+	registries := adoptionTestRegistries()
+	if _, err := reader.refresh(context.Background(), registries); err != nil {
+		t.Fatalf("refresh() error = %v", err)
+	}
+	now = adoptionFixedNow.Add(reader.timing.MaxAge + time.Minute)
+	changed := adoptionTestRegistries()
+	rA := changed["rA"]
+	rA.Origins = []string{"https://example.test/team/moved-alpha.git"}
+	changed["rA"] = rA
+	if counts, _ := reader.lookup(changed); counts != nil {
+		t.Fatal("stale snapshot served counts under a changed registry identity")
+	}
+	if counts, fresh := reader.lookup(registries); counts == nil || fresh {
+		t.Fatalf("stale snapshot not served under its own identity: %+v, %v", counts, fresh)
+	}
+}
+
+// spec: marketplace-api/fresh-last-good-counts-survive-a-failed-proactive-refresh
+func TestInstallationSuccessfulRefreshReplacesStaleSnapshot(t *testing.T) {
+	fixture := newMetricsFixture(t, func() string { return prometheusVector(adoptionSamples(), adoptionFixedNow) })
+	reader := newTestReader(t, fixture)
+	now := adoptionFixedNow
+	reader.now = func() time.Time { return now }
+	registries := adoptionTestRegistries()
+	if _, err := reader.refresh(context.Background(), registries); err != nil {
+		t.Fatalf("refresh() error = %v", err)
+	}
+	now = adoptionFixedNow.Add(reader.timing.MaxAge + time.Minute)
+	if _, fresh := reader.lookup(registries); fresh {
+		t.Fatal("snapshot still fresh past max_age")
+	}
+	if _, err := reader.refresh(context.Background(), registries); err != nil {
+		t.Fatalf("refresh() after expiry error = %v", err)
+	}
+	if counts, fresh := reader.lookup(registries); counts == nil || !fresh {
+		t.Fatalf("successful refresh did not replace the stale snapshot: %+v, %v", counts, fresh)
 	}
 }
 
@@ -162,7 +215,7 @@ func TestInstallationHintSkipsFreshCompatibleSnapshot(t *testing.T) {
 	if delay := reader.attempt(context.Background(), index, true); delay <= 0 {
 		t.Fatalf("hint on fresh compatible snapshot delay = %v, want a positive reschedule", delay)
 	}
-	if hits := fixture.hits.Load(); hits != 1 {
+	if hits := fixture.hits.Load(); hits != adoptionRefreshRequests {
 		t.Fatalf("hint repeated work for a still-fresh compatible snapshot: hits = %d, want 1", hits)
 	}
 
@@ -173,7 +226,7 @@ func TestInstallationHintSkipsFreshCompatibleSnapshot(t *testing.T) {
 	if !reader.nextWake.Equal(adoptionFixedNow.Add(90 * time.Second)) {
 		t.Fatalf("redundant hint rewrote nextWake to %v", reader.nextWake)
 	}
-	if hits := fixture.hits.Load(); hits != 1 {
+	if hits := fixture.hits.Load(); hits != adoptionRefreshRequests {
 		t.Fatalf("redundant hint repeated fresh work: hits = %d, want 1", hits)
 	}
 
@@ -183,7 +236,7 @@ func TestInstallationHintSkipsFreshCompatibleSnapshot(t *testing.T) {
 		return registries, nil
 	}
 	reader.attempt(context.Background(), index, true)
-	if hits := fixture.hits.Load(); hits != 2 {
+	if hits := fixture.hits.Load(); hits != 2*adoptionRefreshRequests {
 		t.Fatalf("hint skipped a snapshot that expired during metadata load: hits = %d, want 2", hits)
 	}
 }
@@ -202,9 +255,9 @@ func TestInstallationRunSerialAttemptsAndCoalescedHints(t *testing.T) {
 				break
 			}
 		}
-		blockedHandler(release, func(w http.ResponseWriter) {
+		blockedHandler(release, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(prometheusVector(adoptionSamples(), time.Now())))
+			_, _ = w.Write([]byte(operandVector(prometheusVector(adoptionSamples(), time.Now()), r.Form.Get("query"))))
 		})(w, r)
 	})
 	reader := newTestReader(t, fixture)
@@ -229,7 +282,7 @@ func TestInstallationRunSerialAttemptsAndCoalescedHints(t *testing.T) {
 		}
 	})
 
-	waitFor(t, "first refresh attempt", func() bool { return fixture.hits.Load() == 1 })
+	waitFor(t, "first refresh attempt", func() bool { return fixture.hits.Load() == adoptionRefreshRequests })
 	for i := 0; i < 5; i++ {
 		reader.hint()
 	}
@@ -238,11 +291,11 @@ func TestInstallationRunSerialAttemptsAndCoalescedHints(t *testing.T) {
 		_, ok := reader.lookup(adoptionTestRegistries())
 		return ok
 	})
-	if got := maxInFlight.Load(); got != 1 {
-		t.Fatalf("concurrent refresh attempts = %d, want at most 1", got)
+	if got := maxInFlight.Load(); got != adoptionRefreshRequests {
+		t.Fatalf("concurrent in-flight requests = %d, want one attempt of %d operands", got, adoptionRefreshRequests)
 	}
 	time.Sleep(150 * time.Millisecond)
-	if hits := fixture.hits.Load(); hits != 1 {
+	if hits := fixture.hits.Load(); hits != adoptionRefreshRequests {
 		t.Fatalf("coalesced hints repeated fresh work: hits = %d, want 1", hits)
 	}
 }
@@ -309,7 +362,7 @@ func TestInstallationRunEarlierInventoryHorizon(t *testing.T) {
 	waitFor(t, "refresh at the inventory horizon", func() bool { return fixture.hits.Load() >= 2 })
 	before := fixture.hits.Load()
 	time.Sleep(400 * time.Millisecond)
-	if hits := fixture.hits.Load(); hits-before > 10 {
+	if hits := fixture.hits.Load(); hits-before > 10*adoptionRefreshRequests {
 		t.Fatalf("expired inventory caused a busy retry loop: %d extra hits in 400ms", hits-before)
 	}
 }
@@ -320,9 +373,9 @@ func TestInstallationIdentityChangeDuringFetch(t *testing.T) {
 	var releaseOnce sync.Once
 	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
 	fixture := newMetricsFixture(t, func() string { return prometheusVector(adoptionSamples(), time.Now()) })
-	fixture.handler.Store(blockedHandler(release, func(w http.ResponseWriter) {
+	fixture.handler.Store(blockedHandler(release, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(prometheusVector(adoptionSamples(), time.Now())))
+		_, _ = w.Write([]byte(operandVector(prometheusVector(adoptionSamples(), time.Now()), r.Form.Get("query"))))
 	}))
 	reader := newTestReader(t, fixture)
 	reader.timing.Interval = time.Hour
@@ -338,7 +391,7 @@ func TestInstallationIdentityChangeDuringFetch(t *testing.T) {
 	attemptDone := make(chan time.Duration, 1)
 	go func() { attemptDone <- reader.attempt(context.Background(), index, false) }()
 
-	waitFor(t, "fetch in flight", func() bool { return fixture.hits.Load() == 1 })
+	waitFor(t, "fetch in flight", func() bool { return fixture.hits.Load() == adoptionRefreshRequests })
 	changed := adoptionTestRegistries()
 	rA := changed["rA"]
 	rA.Origins = []string{"https://example.test/team/moved-alpha.git"}
@@ -361,8 +414,8 @@ func TestInstallationIdentityChangeDuringFetch(t *testing.T) {
 	if _, ok := reader.lookup(changed); !ok {
 		t.Fatal("refresh did not recover against current registry metadata")
 	}
-	if hits := fixture.hits.Load(); hits != 2 {
-		t.Fatalf("hits = %d, want 2", hits)
+	if hits := fixture.hits.Load(); hits != 2*adoptionRefreshRequests {
+		t.Fatalf("hits = %d, want %d", hits, 2*adoptionRefreshRequests)
 	}
 }
 
@@ -446,9 +499,9 @@ func TestInstallationRefreshMetricsAndAttemptLogging(t *testing.T) {
 func TestInstallationAttemptSchedulesFromEvaluationTime(t *testing.T) {
 	metrics := newServerMetrics(nil)
 	fixture := newMetricsFixture(t, func() string { return prometheusVector(adoptionSamples(), adoptionFixedNow) })
-	fixture.handler.Store(func(w http.ResponseWriter, _ *http.Request) {
+	fixture.handler.Store(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(prometheusVector(adoptionSamples(), adoptionFixedNow)))
+		_, _ = w.Write([]byte(operandVector(prometheusVector(adoptionSamples(), adoptionFixedNow), r.Form.Get("query"))))
 	})
 	reader := newTestReader(t, fixture)
 	reader.metrics = metrics
@@ -463,10 +516,10 @@ func TestInstallationAttemptSchedulesFromEvaluationTime(t *testing.T) {
 		now.Store(base.Add(time.Second).UnixNano())
 		return registries, nil
 	}
-	fixture.handler.Store(func(w http.ResponseWriter, _ *http.Request) {
+	fixture.handler.Store(func(w http.ResponseWriter, r *http.Request) {
 		now.Store(base.Add(2 * time.Second).UnixNano())
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(prometheusVector(adoptionSamples(), adoptionFixedNow)))
+		_, _ = w.Write([]byte(operandVector(prometheusVector(adoptionSamples(), adoptionFixedNow), r.Form.Get("query"))))
 	})
 
 	delay := reader.attempt(context.Background(), index, false)
@@ -496,7 +549,7 @@ func TestInstallationTimeoutOverrideBoundsBackendRequest(t *testing.T) {
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
 	fixture := newMetricsFixture(t, func() string { return prometheusVector(adoptionSamples(), adoptionFixedNow) })
-	fixture.handler.Store(blockedHandler(release, func(w http.ResponseWriter) {
+	fixture.handler.Store(blockedHandler(release, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
 	}))
 	timeout := config.Duration(100 * time.Millisecond)
@@ -513,8 +566,8 @@ func TestInstallationTimeoutOverrideBoundsBackendRequest(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Fatalf("refresh() exceeded the configured timeout: %v", elapsed)
 	}
-	if hits := fixture.hits.Load(); hits != 1 {
-		t.Fatalf("metrics endpoint hits = %d, want 1", hits)
+	if hits := fixture.hits.Load(); hits != adoptionRefreshRequests {
+		t.Fatalf("metrics endpoint hits = %d, want %d", hits, adoptionRefreshRequests)
 	}
 }
 
@@ -531,7 +584,7 @@ func TestSearchInstallationsServesWhileWorkerTelemetryBlocked(t *testing.T) {
 	}{
 		{name: "cold", wantOrder: fallbackOrder},
 		{name: "warm", seed: true, wantOrder: rankedOrder},
-		{name: "expired", seed: true, expire: true, wantOrder: fallbackOrder},
+		{name: "expired", seed: true, expire: true, wantOrder: rankedOrder},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -551,7 +604,7 @@ func TestSearchInstallationsServesWhileWorkerTelemetryBlocked(t *testing.T) {
 				}
 			}
 			if test.expire {
-				now.Add(int64(10 * time.Minute))
+				now.Store(adoptionFixedNow.Add(server.installations.timing.MaxAge + time.Minute).UnixNano())
 			}
 
 			backendDone, release, backendEntered := make(chan struct{}), make(chan struct{}), make(chan struct{})
@@ -565,7 +618,7 @@ func TestSearchInstallationsServesWhileWorkerTelemetryBlocked(t *testing.T) {
 					return
 				}
 				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(prometheusVector(adoptionSearchSamples(), adoptionFixedNow)))
+				_, _ = w.Write([]byte(operandVector(prometheusVector(adoptionSearchSamples(), adoptionFixedNow), r.Form.Get("query"))))
 			})
 			releaseFunc := func() { releaseOnce.Do(func() { close(release) }) }
 			t.Cleanup(releaseFunc)
@@ -635,7 +688,7 @@ func TestSearchInstallationsServesWhileWorkerTelemetryBlocked(t *testing.T) {
 					if !slices.Equal(searchNames(got.result), test.wantOrder) {
 						t.Fatalf("search order under blocked refresh = %v, want %v", searchNames(got.result), test.wantOrder)
 					}
-					wantCounted := test.seed && !test.expire
+					wantCounted := test.seed
 					for _, item := range got.result.Items {
 						want, known := wantCounts[item.Name]
 						got := int64(-1)

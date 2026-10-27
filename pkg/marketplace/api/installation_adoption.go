@@ -98,7 +98,7 @@ func newInstallationQueryPlan(registries map[store.RegistryID]store.Registry, ma
 	return plan
 }
 
-func installationMetricsQuery(labels map[string]string, plan installationQueryPlan) string {
+func installationMetricsQueries(labels map[string]string, plan installationQueryPlan) []string {
 	selectors := make([]string, 0, len(labels))
 	for key := range labels {
 		selectors = append(selectors, key)
@@ -216,7 +216,7 @@ func installationMetricsQuery(labels map[string]string, plan installationQueryPl
 	suspicious := `label_replace(max by (source_kind, marketplace_id, registry_id, resource_kind, resource_name) (` +
 		suspiciousLatest + `), "inventory_type", "suspicious", "", "")`
 	output = append(output, suspicious)
-	return strings.Join(output, ` or `)
+	return output
 }
 
 func aggregateInstallationMetrics(samples []inventoryMetricSample, plan installationQueryPlan, now time.Time) (installationCounts, error) {
