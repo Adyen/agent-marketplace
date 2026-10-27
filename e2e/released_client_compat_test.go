@@ -462,6 +462,8 @@ func TestReleasedClientReadsCandidateIsolatedCommittedState(t *testing.T) {
 // spec: regression-gates/released-client-remains-usable-after-candidate-mutations
 func TestPersonalLocalClaudePluginSyncLeavesCommittedWorkspaceUnchanged(t *testing.T) {
 	env := newEnv(t)
+	catalogPath := "/root/test-catalogs/claude.yaml"
+	env.WriteFile(catalogPath, nativePluginCatalog("claude"))
 	env.InitGitRepo()
 	env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [claude]\n")
 	registry := env.CreateBareRepo("shared", map[string]string{
@@ -493,7 +495,7 @@ resources:
   personal:
     - {kind: plugin, name: native-kit, delivery: native}
 `)
-	sync := env.RunAM("sync")
+	sync := env.RunAMWithEnv(nativeCatalogEnv(env.mustResolvePath(catalogPath)), "sync")
 	if sync.ExitCode != 0 {
 		t.Fatalf("personal-local Claude sync failed (exit %d):\n%s", sync.ExitCode, sync.Combined)
 	}
@@ -519,7 +521,15 @@ func TestReleasedClientNativeClaudePersonalLocalRegistration(t *testing.T) {
 	}
 	released, arch := verifiedExecutable(t, "AM_E2E_RELEASED_BINARY", releasedClientArch)
 	world := newHistoricalWorld(t, image)
-	candidate := world.buildCandidate(arch)
+	candidate := world.buildCandidate(arch, "e2e")
+	candidateCatalogPath := world.path("test-catalogs", "claude.yaml")
+	if err := os.MkdirAll(filepath.Dir(candidateCatalogPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(candidateCatalogPath, []byte(nativePluginCatalog("claude")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	candidateCatalogEnv := []string{"AGENT_MARKETPLACE_E2E_PLUGIN_CATALOG=" + candidateCatalogPath}
 	candidateWorkspace := world.path("workspace-candidate")
 	releasedWorkspace := world.path("workspace-released")
 	candidateHome := world.path("home-candidate")
@@ -545,6 +555,9 @@ func TestReleasedClientNativeClaudePersonalLocalRegistration(t *testing.T) {
 	homes := map[string]string{candidate: candidateHome, released: releasedHome}
 	must := func(executable, workspace string, args ...string) string {
 		t.Helper()
+		if executable == candidate {
+			return world.mustWithEnv(candidateCatalogEnv, homes[executable], workspace, executable, args...)
+		}
 		return world.must(homes[executable], workspace, executable, args...)
 	}
 	must(candidate, candidateWorkspace, "init", "--harnesses", "claude")

@@ -32,6 +32,23 @@ type Env struct {
 	path      string // PATH for subprocess (host PATH with `devin` shadowed out)
 }
 
+func nativePluginCatalog(target string) string {
+	return fmt.Sprintf(`schema: 1
+harness: %s
+evidence:
+  checked: "2026-10-21"
+  refs: [synthetic-e2e-fixture]
+accepts: [claude-plugin]
+delivery:
+  decompose: {status: verified}
+  native: {status: verified, format: claude-plugin, probe: e2e-test-probe, refresh: restart-required}
+`, target)
+}
+
+func nativeCatalogEnv(path string) map[string]string {
+	return map[string]string{"AGENT_MARKETPLACE_E2E_PLUGIN_CATALOG": path}
+}
+
 // newEnv creates an isolated sandbox for a test and registers cleanup.
 func newEnv(t *testing.T) *Env {
 	t.Helper()
