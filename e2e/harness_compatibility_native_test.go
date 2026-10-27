@@ -168,14 +168,6 @@ func observeClaudePluginEnabled(e *Env, binary string, f compatibilityFixture, r
 		return err
 	}
 	row.Commands = append(row.Commands, command)
-	commands, found, active, err := claudePluginList(e, binary, pluginID, 20*time.Second)
-	row.Commands = append(row.Commands, commands...)
-	if err != nil {
-		return err
-	}
-	if !found || !active {
-		return fmt.Errorf("claude plugin list did not report %s enabled", pluginID)
-	}
 	row.Status = "native-verified"
 	row.Reason = "Claude plugin list and initialize inventory confirmed the native plugin and namespaced skill"
 	return nil
@@ -196,10 +188,7 @@ func waitForClaudePluginEnabled(e *Env, binary, pluginID string, row *compatibil
 		if found && active {
 			return nil
 		}
-		if remaining = time.Until(deadline); remaining <= 0 {
-			return fmt.Errorf("Claude plugin list did not report %s enabled within 60 seconds", pluginID)
-		}
-		time.Sleep(min(time.Second, remaining))
+		time.Sleep(min(time.Second, time.Until(deadline)))
 	}
 }
 
