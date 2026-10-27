@@ -19,4 +19,8 @@
 
 ## Impact
 
-`internal/pipeline` (`url_fallback.go`, `install.go`, `remove.go`) and `cmd/agent-marketplace/list.go`. A web URL `--from` runs one extra `git ls-remote` before acquisition. A configurable transport preference is a possible follow-up.
+`internal/pipeline` (`url_fallback.go`, `install.go`, `remove.go`, `preview_source.go`), which also serves `list --from` and the TUI's install-from-source flow. A web URL `--from` runs one extra `git ls-remote` before acquisition. A configurable transport preference is a possible follow-up.
+
+## Release note
+
+`install --from` and `list --from` now fetch a GitHub or GitLab web URL over HTTPS when SSH cannot reach it, so public repositories work on machines without an SSH key. A warning names both URLs, and `install` records the HTTPS URL.
