@@ -150,8 +150,8 @@ func TestClaudeNativeDeliveryCatalogRequiresItsDefinedProbe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if policy.Status != DeliveryVerified || policy.Format != "claude-plugin" || policy.Probe != "claude-native-plugin" {
-		t.Fatalf("Claude native delivery policy = %+v, want verified claude-plugin with claude-native-plugin", policy)
+	if policy.Status != DeliveryVerified || policy.Format != "claude-plugin" || policy.Probe != "claude-native-plugin" || policy.Refresh != "restart-required" {
+		t.Fatalf("Claude native delivery policy = %+v, want verified claude-plugin with claude-native-plugin and restart-required refresh", policy)
 	}
 	if err := ValidateCatalogs(nil); err == nil || !strings.Contains(err.Error(), ClaudeNativePluginProbeID) {
 		t.Fatalf("catalog validation without native probe = %v, want undefined-probe failure", err)

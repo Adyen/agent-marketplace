@@ -85,7 +85,7 @@ func (p compatibilityNativeProbe) observe(command *compatibilityCommand, e *Env,
 }
 
 func observeClaudePluginAbsent(e *Env, binary string, f compatibilityFixture, row *compatibilityResult, scope, plugin, skill string) error {
-	commands, found, _, err := claudePluginList(e, binary, plugin+"@")
+	commands, found, _, err := claudePluginList(e, binary, plugin+"@", 20*time.Second)
 	row.Commands = append(row.Commands, commands...)
 	if err != nil {
 		return err
@@ -99,6 +99,31 @@ func observeClaudePluginAbsent(e *Env, binary string, f compatibilityFixture, ro
 		return err
 	}
 	row.Commands = append(row.Commands, command)
+	return nil
+}
+
+func assertClaudePluginStateAbsentAfterSync(e *Env) error {
+	paths := []string{
+		filepath.Join(e.home, ".claude", "plugins", "installed_plugins.json"),
+		filepath.Join(e.home, ".claude", "plugins", "known_marketplaces.json"),
+		filepath.Join(e.home, ".claude", "plugins", "cache"),
+	}
+	for _, path := range paths {
+		if _, err := os.Lstat(path); err == nil {
+			return fmt.Errorf("Agent Marketplace sync created Claude plugin state %q before priming", path)
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("inspect Claude plugin state %q after sync: %w", path, err)
+		}
+	}
+	return nil
+}
+
+func primeClaudePluginSession(e *Env, binary string, row *compatibilityResult) error {
+	command := runCompatibilityProtocol(e, binary, "claude-initialize", 30*time.Second)
+	row.Commands = append(row.Commands, command)
+	if err := compatibilityInspectionError(command); err != nil {
+		return fmt.Errorf("Claude plugin priming session failed: %w", err)
+	}
 	return nil
 }
 
@@ -134,13 +159,8 @@ func observeClaudePluginEnabled(e *Env, binary string, f compatibilityFixture, r
 	if pluginID == "" {
 		return fmt.Errorf("Claude plugin registration is not enabled for %s", plugin)
 	}
-	commands, found, active, err := claudePluginList(e, binary, pluginID)
-	row.Commands = append(row.Commands, commands...)
-	if err != nil {
+	if err := waitForClaudePluginEnabled(e, binary, pluginID, row); err != nil {
 		return err
-	}
-	if !found || !active {
-		return fmt.Errorf("claude plugin list did not report %s enabled", pluginID)
 	}
 	command := runCompatibilityProtocol(e, binary, "claude-initialize", 30*time.Second)
 	probe := compatibilityNativeProbe{kind: "skill", protocol: "claude-initialize", names: []string{plugin + ":" + skill}}
@@ -148,24 +168,63 @@ func observeClaudePluginEnabled(e *Env, binary string, f compatibilityFixture, r
 		return err
 	}
 	row.Commands = append(row.Commands, command)
+	commands, found, active, err := claudePluginList(e, binary, pluginID, 20*time.Second)
+	row.Commands = append(row.Commands, commands...)
+	if err != nil {
+		return err
+	}
+	if !found || !active {
+		return fmt.Errorf("claude plugin list did not report %s enabled", pluginID)
+	}
 	row.Status = "native-verified"
 	row.Reason = "Claude plugin list and initialize inventory confirmed the native plugin and namespaced skill"
 	return nil
 }
 
-func claudePluginList(e *Env, binary, match string) ([]compatibilityCommand, bool, bool, error) {
-	jsonCommand := runCompatibilityCommand(e, binary, []string{"plugin", "list", "--json"}, 20*time.Second)
+func waitForClaudePluginEnabled(e *Env, binary, pluginID string, row *compatibilityResult) error {
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return fmt.Errorf("Claude plugin list did not report %s enabled within 60 seconds", pluginID)
+		}
+		commands, found, active, err := claudePluginList(e, binary, pluginID, min(20*time.Second, remaining))
+		row.Commands = append(row.Commands, commands...)
+		if err != nil {
+			return err
+		}
+		if found && active {
+			return nil
+		}
+		if remaining = time.Until(deadline); remaining <= 0 {
+			return fmt.Errorf("Claude plugin list did not report %s enabled within 60 seconds", pluginID)
+		}
+		time.Sleep(min(time.Second, remaining))
+	}
+}
+
+func claudePluginList(e *Env, binary, match string, timeout time.Duration) ([]compatibilityCommand, bool, bool, error) {
+	deadline := time.Now().Add(timeout)
+	jsonTimeout := min(20*time.Second, time.Until(deadline))
+	if jsonTimeout <= 0 {
+		return nil, false, false, fmt.Errorf("Claude plugin list timed out")
+	}
+	jsonCommand := runCompatibilityCommandWithSeparateOutput(e, binary, []string{"plugin", "list", "--json"}, jsonTimeout)
 	if jsonCommand.Error == "" {
-		if present, enabled, valid := claudePluginJSONState(jsonCommand.output, match); valid {
+		if present, enabled, valid := claudePluginJSONState(jsonCommand.Stdout, match); valid {
 			return []compatibilityCommand{jsonCommand}, present, enabled, nil
 		}
 	}
-	textCommand := runCompatibilityCommand(e, binary, []string{"plugin", "list"}, 20*time.Second)
+	textTimeout := min(20*time.Second, time.Until(deadline))
+	if textTimeout <= 0 {
+		return []compatibilityCommand{jsonCommand}, false, false, fmt.Errorf("Claude plugin list timed out")
+	}
+	textCommand := runCompatibilityCommandWithSeparateOutput(e, binary, []string{"plugin", "list"}, textTimeout)
 	if textCommand.Error != "" {
 		return []compatibilityCommand{jsonCommand, textCommand}, false, false, fmt.Errorf("Claude plugin list failed: %s", textCommand.Error)
 	}
 	present, enabled := false, false
-	for _, line := range strings.Split(textCommand.output, "\n") {
+	for _, line := range strings.Split(textCommand.Stdout, "\n") {
 		if !strings.Contains(line, match) {
 			continue
 		}

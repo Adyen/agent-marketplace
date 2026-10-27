@@ -184,6 +184,20 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 	if sync.Error != "" {
 		t.Fatalf("Marketplace sync failed: %s\n%s", sync.Error, sync.output)
 	}
+	if pluginProbeRow != nil {
+		if err := assertClaudePluginStateAbsentAfterSync(e); err != nil {
+			pluginProbeRow.Status, pluginProbeRow.Reason = "failed", err.Error()
+			t.Fatal(err)
+		}
+		if err := primeClaudePluginSession(e, native.binary, pluginProbeRow); err != nil {
+			pluginProbeRow.Status, pluginProbeRow.Reason = "failed", err.Error()
+			t.Fatal(err)
+		}
+		if err := observeClaudePluginEnabled(e, native.binary, f, pluginProbeRow, first.Scope, nativePluginName, nativePluginSkill); err != nil {
+			pluginProbeRow.Status, pluginProbeRow.Reason = "failed", err.Error()
+			t.Fatal(err)
+		}
+	}
 	for _, kind := range compatibilityResources[:6] {
 		row := rows[kind]
 		row.Commands = append(row.Commands, sync)
@@ -229,12 +243,6 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 	}
 	if native != nil {
 		native.verify(t, e, f, rows, paths)
-		if pluginProbeRow != nil {
-			if err := observeClaudePluginEnabled(e, native.binary, f, pluginProbeRow, first.Scope, nativePluginName, nativePluginSkill); err != nil {
-				pluginProbeRow.Status, pluginProbeRow.Reason = "failed", err.Error()
-				t.Fatal(err)
-			}
-		}
 		check := runCompatibilityCommand(e, e.binary, []string{"sync", "--check"}, 30*time.Second)
 		rows["collection"].Commands = append(rows["collection"].Commands, check)
 		if check.Error != "" {

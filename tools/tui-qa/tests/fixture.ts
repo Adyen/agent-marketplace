@@ -137,7 +137,7 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
         `{"mcpServers":{"idx":{"command":"echo"}}}`);
       registryURL = pluginCatalog;
       expectedRepoConfig =
-        `apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team:\n    directory: ${pluginCatalog}\n    format: claude-marketplace\nresources:\n  team:\n    include:\n      - plugin/kit\n`;
+        `apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team:\n    directory: ${pluginCatalog}\n    format: claude-marketplace\nresources:\n  team:\n    include:\n      - kind: plugin\n        name: kit\n        delivery: decompose\n`;
       write(path.join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [claude]\n");
       write(path.join(repo, ".agents", "config.yaml"), expectedRepoConfig);
     } else if (options.directorySource) {
