@@ -119,7 +119,27 @@ func assertClaudePluginStateAbsentAfterSync(e *Env) error {
 }
 
 func primeClaudePluginSession(e *Env, binary string, row *compatibilityResult) error {
-	command := runCompatibilityProtocol(e, binary, "claude-initialize", 30*time.Second)
+	var appeared, catalog bool
+	command := runCompatibilityProtocol(e, binary, "claude-initialize", 90*time.Second, func(command *compatibilityCommand) error {
+		started := time.Now()
+		deadline := started.Add(45 * time.Second)
+		path := filepath.Join(e.home, ".claude", "plugins", "known_marketplaces.json")
+		for remaining := time.Until(deadline); remaining > 0; remaining = time.Until(deadline) {
+			data, err := os.ReadFile(path)
+			if err == nil {
+				appeared = true
+				catalog = strings.Contains(string(data), `"am-`)
+			} else if !os.IsNotExist(err) {
+				return fmt.Errorf("read Claude marketplace state: %w", err)
+			}
+			if catalog {
+				break
+			}
+			time.Sleep(min(2*time.Second, remaining))
+		}
+		command.Observed = append(command.Observed, fmt.Sprintf("known_marketplaces.json appeared=%t am-catalog=%t after %s", appeared, catalog, time.Since(started).Round(time.Second)))
+		return nil
+	})
 	row.Commands = append(row.Commands, command)
 	if err := compatibilityInspectionError(command); err != nil {
 		return fmt.Errorf("Claude plugin priming session failed: %w", err)
