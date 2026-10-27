@@ -48,6 +48,9 @@ type lifecycleHooks struct {
 func (app *App) appOptions(hooks lifecycleHooks) *options.App {
 	var windowCtx context.Context
 	app.quit = func() {
+		if windowCtx == nil {
+			return
+		}
 		wailsruntime.Quit(windowCtx)
 	}
 	return &options.App{
@@ -77,6 +80,9 @@ func (app *App) appOptions(hooks lifecycleHooks) *options.App {
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: singleInstanceID,
 			OnSecondInstanceLaunch: func(second options.SecondInstanceData) {
+				if windowCtx == nil {
+					return
+				}
 				app.secondLaunch(nativeWindow{ctx: windowCtx}, second.Args)
 			},
 		},
