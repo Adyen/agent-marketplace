@@ -15,11 +15,17 @@ discovery succeed.
 Native plugin bundles use a Claude Code marketplace catalog with relative
 `./plugins/<name>` sources linked to immutable package generations. Repository
 registrations are kept in `.claude/settings.local.json`; user registrations
-remain in `~/.claude/settings.json`. The `claude-native-plugin` CI probe checks
-that `claude plugin list` reports the registered fixture as enabled and that
-CLI initialization discovers its namespaced plugin skill. It checks a
-pre-install negative control as well and does not request a prompt or execute a
-hook. Config-only compatibility results do not certify native plugin loading.
+remain in `~/.claude/settings.json`. After sync, the
+`claude-native-plugin` CI probe verifies that Agent Marketplace has not
+written Claude's installed-plugin records, known-marketplace records, or
+plugin cache. It starts a priming Claude session, waits for Claude to register
+the declared marketplace, then requires a separate session's
+`claude plugin list` to report the fixture enabled and CLI initialization to
+discover its namespaced plugin skill. The probe checks a pre-sync negative
+control and records plugin-list stdout and stderr in its report; it does not
+request a prompt or execute a hook. Native plugin generations require a
+restart to reach an already-running Claude session. Config-only compatibility
+results do not certify native plugin loading.
 
 ## Skills, commands, and subagents: CLI initialization
 
