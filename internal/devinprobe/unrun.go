@@ -56,7 +56,7 @@ type UnrunProbe struct {
 var UnrunProbes = []UnrunProbe{
 	{
 		ID:       "hook-loading-per-event",
-		Verifies: "that command and prompt hooks load from .devin/hooks.v1.json for every documented event (PreToolUse, PostToolUse, PermissionRequest, UserPromptSubmit, Stop, SessionStart, SessionEnd, PreCompact, PostCompact, PostCompaction), and that matcher/timeout are honoured as documented",
+		Verifies: "that command hooks load from .devin/hooks.v1.json for every documented event (PreToolUse, PostToolUse, PermissionRequest, UserPromptSubmit, Stop, SessionStart, SessionEnd, PreCompact, PostCompact, PostCompaction), that prompt hooks load for every documented event except the command-only PreCompact and PostCompact, and that matcher/timeout are honoured as documented",
 		Blocker:  "Devin 3000.3.27 exposes no `devin hooks` command, and a deliberately malformed .devin/hooks.v1.json produces no error from any read-only command, so the file's acceptance cannot be observed non-interactively.",
 		Manual:   "In an isolated HOME with a logged-in account, install a PostToolUse command hook with matcher \"\" that appends its stdin payload to a file in the sandbox, run one prompt that uses a tool, and inspect the captured payload; repeat per event.",
 	},

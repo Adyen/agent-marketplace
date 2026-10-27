@@ -25,4 +25,4 @@ Affects the Devin hook catalog, the hook catalog loader and event selection in `
 
 ## Release note
 
-Devin CLI: `PreCompact` and `PostCompact` hooks now install for Devin CLI v3000.11.92 and later instead of failing sync. Hooks on `PostCompact` are now written to Devin's `PostCompact` event instead of `PostCompaction`; Devin CLI releases before v3000.11.92 do not run them.
+Breaking: Devin CLI `PostCompact` hooks are now written to Devin's `PostCompact` event instead of `PostCompaction`, and `PreCompact` hooks now install for Devin instead of failing sync. Devin CLI releases before v3000.11.92 run neither event, so upgrade Devin CLI to v3000.11.92 or later to keep compaction hooks running.
