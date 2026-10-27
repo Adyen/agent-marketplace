@@ -434,8 +434,9 @@ func reconcilePluginInstance(ctx context.Context, repoRoot string, item pluginIn
 			}
 			batch.addManifestCommit(nativeHookManifestCommit{state: portable, participant: manifest})
 		}
+		claudeNativeLinks := plan.catalog.target == targetmeta.TargetClaude && hasNativeRegistration
 		commit := func() error {
-			if plan.catalog.target == targetmeta.TargetClaude && hasNativeRegistration {
+			if claudeNativeLinks {
 				if err := publishClaudePluginCatalogLinks(plan.catalog); err != nil {
 					return err
 				}
@@ -443,18 +444,14 @@ func reconcilePluginInstance(ctx context.Context, repoRoot string, item pluginIn
 			if _, err := batch.commit(ctx); err != nil {
 				return err
 			}
-			if plan.catalog.target == targetmeta.TargetClaude && hasNativeRegistration {
+			if claudeNativeLinks {
 				return removeStaleClaudePluginCatalogLinks(plan.catalog)
 			}
 			return nil
 		}
 		var commitErr error
-		if plan.catalog.target == targetmeta.TargetClaude && hasNativeRegistration {
-			if packagesLocked {
-				commitErr = commit()
-			} else {
-				commitErr = packagegen.WithPackagesLock(ctx, commit)
-			}
+		if claudeNativeLinks && !packagesLocked {
+			commitErr = packagegen.WithPackagesLock(ctx, commit)
 		} else {
 			commitErr = commit()
 		}

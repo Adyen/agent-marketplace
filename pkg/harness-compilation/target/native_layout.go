@@ -452,26 +452,21 @@ func NativePluginRegistration(target Target, machineScope bool) (NativeRegistrat
 	if !ok {
 		return NativeRegistrationFile{}, false
 	}
-	var selected NativeRegistrationFile
-	found := false
 	for _, partition := range layout.Partitions {
-		for _, registration := range partition.Registrations {
-			registeredPath := registration.Project
-			if machineScope {
-				registeredPath = registration.User
-			}
-			selected = NativeRegistrationFile{
-				Path:  path.Join(partition.Prefix, registeredPath),
-				Shape: registration.Shape,
-			}
-			found = true
-			break
+		if len(partition.Registrations) == 0 {
+			continue
 		}
-		if found {
-			break
+		registration := partition.Registrations[0]
+		registeredPath := registration.Project
+		if machineScope {
+			registeredPath = registration.User
 		}
+		return NativeRegistrationFile{
+			Path:  path.Join(partition.Prefix, registeredPath),
+			Shape: registration.Shape,
+		}, true
 	}
-	return selected, found
+	return NativeRegistrationFile{}, false
 }
 
 // NativeResourcePattern returns the scope-neutral path pattern the target
