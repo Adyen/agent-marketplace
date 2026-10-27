@@ -62,11 +62,20 @@ where they are and are reported as collisions.
 `tools/harness-compat` defines `claude-native-plugin`. The Claude harness
 compatibility driver installs a `claude-plugin` fixture with
 `delivery: native` at user scope and at repository scope (the repository
-workspace trusted by the driver's existing disposable trust fixture), and
-requires `claude plugin list` to report `<plugin>@<am-catalog>` enabled and
-the initialize inventory to list the plugin's namespaced component, with the
-same checks absent before sync. `claude plugin validate` on the catalog is
-recorded as supplementary evidence when it runs offline; it is not a gate.
+workspace trusted by the driver's existing disposable trust fixture). Before
+sync, `claude plugin list` and the initialize inventory must not show the
+plugin. Claude loads plugins at session start only from its own installed
+records and cache and fetches settings-declared marketplaces in the
+background after a session starts, so after sync the driver starts one
+priming session and waits for it to exit, then requires a second session's
+`claude plugin list` to report `<plugin>@<am-catalog>` enabled and its
+initialize inventory to list the plugin's namespaced component. The probe
+records `claude plugin list` output in its report. Agent Marketplace writes
+none of the records or cache Claude creates while priming. Because a new
+generation reaches a running session only after a restart, the Claude
+catalog declares `refresh: restart-required`. `claude plugin validate` on the
+catalog is recorded as supplementary evidence when it runs offline; it is not
+a gate.
 
 ### D5: Released-reader witness
 
