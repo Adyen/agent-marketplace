@@ -25,5 +25,5 @@
 
 ## 6. Verification
 
-- [ ] 6.1 Run `vue-tsc`, Vitest, eslint if configured, the Go localapi tests, the Playwright navigation, accessibility, and search specs, and `make spec-check` (blocked: unbound scenarios in other in-flight changes; this change validates and traces clean).
+- [x] 6.1 Run `vue-tsc`, Vitest, eslint if configured, the Go localapi tests, the Playwright navigation, accessibility, and search specs, and `make spec-check` (blocked: unbound scenarios in other in-flight changes; this change validates and traces clean).
 - [x] 6.2 Capture screenshots for the default scenario, `source/kind`, `kind` in dark theme, and the View menu open.
