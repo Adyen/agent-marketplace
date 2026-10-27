@@ -307,6 +307,31 @@ func TestCompatibilityEvidenceRequiresNegativeControl(t *testing.T) {
 	}
 }
 
+func TestClaudePluginListCapturesSeparateOutputInReport(t *testing.T) {
+	e := newEnv(t)
+	binary := filepath.Join(e.repos, "claude-plugin-list")
+	e.WriteFile(binary, "#!/bin/sh\nprintf '%s\\n' '{\"plugins\":[{\"name\":\"native-kit@am-test\",\"enabled\":true}]}'\nprintf '%s\\n' 'plugin-list-stderr' >&2\n")
+	if err := os.Chmod(binary, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	commands, found, enabled, err := claudePluginList(e, binary, "native-kit@", time.Second)
+	if err != nil || !found || !enabled || len(commands) != 1 {
+		t.Fatalf("Claude plugin list result = commands %d found %t enabled %t err %v", len(commands), found, enabled, err)
+	}
+	if !strings.Contains(commands[0].Stdout, "native-kit@am-test") || commands[0].Stderr != "plugin-list-stderr\n" {
+		t.Fatalf("Claude plugin-list report lost its separate streams: stdout=%q stderr=%q", commands[0].Stdout, commands[0].Stderr)
+	}
+	data, err := json.Marshal(commands[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, output := range []string{`"stdout":`, `"stderr":`, "native-kit@am-test", "plugin-list-stderr"} {
+		if !strings.Contains(string(data), output) {
+			t.Errorf("Claude plugin-list report omitted %q: %s", output, data)
+		}
+	}
+}
+
 func TestCompatibilityReportKeepsEvidenceBoundaries(t *testing.T) {
 	report := compatibilityReport{Target: "internal-fake", Results: []compatibilityResult{
 		{Harness: "devin", Resource: "skill", Scope: "repo", Mode: "file", Status: "native-verified", Version: "internal-fake-1", Reason: "name and path only", Commands: []compatibilityCommand{{Args: []string{"internal-fake", "skills", "list"}, Observed: []string{"amcompat-skill"}, output: "raw-output-not-for-report"}}},

@@ -460,6 +460,58 @@ func TestReleasedClientReadsCandidateIsolatedCommittedState(t *testing.T) {
 }
 
 // spec: regression-gates/released-client-remains-usable-after-candidate-mutations
+func TestPersonalLocalClaudePluginSyncLeavesCommittedWorkspaceUnchanged(t *testing.T) {
+	env := newEnv(t)
+	env.InitGitRepo()
+	env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [claude]\n")
+	registry := env.CreateBareRepo("shared", map[string]string{
+		"skills/review/SKILL.md": "---\nname: review\ndescription: Committed skill\n---\nCommitted body.\n",
+		"hooks/hooks.json":       `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo committed-claude-hook"}]}]}}`,
+	})
+	env.WriteRepoConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+harnesses: [claude]
+sources:
+  shared: {git: %q, ref: main}
+resources:
+  shared: {include: [skill/review, hook/PreToolUse-command]}
+`, registry))
+	initial := env.RunAM("sync")
+	if initial.ExitCode != 0 {
+		t.Fatalf("initial committed Claude sync failed (exit %d):\n%s", initial.ExitCode, initial.Combined)
+	}
+	env.MustRun(`git add -A && git -c user.name=E2E -c user.email=e2e@example.com commit -q -m "committed Claude baseline"`)
+	if tracked := env.Run("git ls-files --error-unmatch .claude/skills/review"); tracked.ExitCode != 0 {
+		t.Fatalf("committed Claude skill was not tracked before personal-local sync:\n%s", tracked.Combined)
+	}
+
+	env.WriteFile("/workspace/vendor/native-kit/.claude-plugin/plugin.json", `{"name":"native-kit"}`)
+	env.WriteFile("/workspace/vendor/native-kit/skills/review/SKILL.md", "---\nname: review\ndescription: Plugin member\n---\nPlugin member body.\n")
+	env.WriteFile("/workspace/.agents/config.local.yaml", `apiVersion: agent-marketplace/v4
+sources:
+  personal: {directory: ./vendor/native-kit, format: claude-plugin}
+resources:
+  personal:
+    - {kind: plugin, name: native-kit, delivery: native}
+`)
+	sync := env.RunAM("sync")
+	if sync.ExitCode != 0 {
+		t.Fatalf("personal-local Claude sync failed (exit %d):\n%s", sync.ExitCode, sync.Combined)
+	}
+	settings, err := os.ReadFile(env.mustResolvePath("/workspace/.claude/settings.local.json"))
+	if err != nil || !bytes.Contains(settings, []byte("native-kit@")) {
+		t.Fatalf("personal-local sync did not register the native Claude plugin: %v\n%s", err, settings)
+	}
+	diff := env.Run("git diff --name-only HEAD")
+	if diff.ExitCode != 0 {
+		t.Fatalf("read committed workspace diff failed (exit %d):\n%s", diff.ExitCode, diff.Combined)
+	}
+	if changed := strings.TrimSpace(diff.Stdout); changed != "" {
+		details := env.Run("git diff HEAD --")
+		t.Fatalf("personal-local Claude sync changed tracked workspace files:\n%s\n%s", changed, details.Combined)
+	}
+}
+
+// spec: regression-gates/released-client-remains-usable-after-candidate-mutations
 func TestReleasedClientNativeClaudePersonalLocalRegistration(t *testing.T) {
 	image := os.Getenv("AM_E2E_RELEASED_IMAGE")
 	if os.Getenv("AM_E2E_RELEASED_BINARY") == "" || image == "" {

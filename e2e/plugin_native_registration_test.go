@@ -643,21 +643,21 @@ func TestCodexNativeRegistrationDoesNotWriteTrust(t *testing.T) {
 
 // spec: plugin-delivery/reload-requirement-is-reported
 func TestNativePluginGenerationReloadRequirementIsReported(t *testing.T) {
-	env, catalogPath := newNativePluginEnv(t, "claude", "native")
-	first := runNativeAM(env, catalogPath, "sync", "--no-backup")
+	env, _ := newNativePluginEnv(t, "claude", "native")
+	first := runNativeAM(env, "", "sync", "--no-backup")
 	if first.ExitCode != 0 {
 		t.Fatalf("initial native sync failed (exit %d):\n%s", first.ExitCode, first.Combined)
 	}
 	env.WriteFile("/workspace/vendor/native-kit/skills/review/SKILL.md", strings.ReplaceAll(nativePluginSource, "Review plugin changes.", "Review updated plugin changes."))
-	sync := runNativeAM(env, catalogPath, "sync", "--no-backup")
+	sync := runNativeAM(env, "", "sync", "--no-backup")
 	if sync.ExitCode != 0 || !strings.Contains(sync.Combined, "reload-required") {
 		t.Fatalf("sync did not report the changed native generation requires reload (exit %d):\n%s", sync.ExitCode, sync.Combined)
 	}
-	status := runNativeAM(env, catalogPath, "status")
+	status := runNativeAM(env, "", "status")
 	if status.ExitCode != 0 || !strings.Contains(status.Combined, "reload-required") {
 		t.Fatalf("status did not report the native reload requirement (exit %d):\n%s", status.ExitCode, status.Combined)
 	}
-	nextSync := runNativeAM(env, catalogPath, "sync", "--no-backup")
+	nextSync := runNativeAM(env, "", "sync", "--no-backup")
 	if nextSync.ExitCode != 0 || strings.Contains(nextSync.Combined, "reload-required") {
 		t.Fatalf("unchanged native generation retained reload-required (exit %d):\n%s", nextSync.ExitCode, nextSync.Combined)
 	}
