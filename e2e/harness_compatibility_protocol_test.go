@@ -13,14 +13,11 @@ import (
 	"time"
 )
 
-func runCompatibilityProtocol(e *Env, binary, protocol string, timeout time.Duration, keepAlive ...func(*compatibilityCommand) error) compatibilityCommand {
+func runCompatibilityProtocol(e *Env, binary, protocol string, timeout time.Duration) compatibilityCommand {
 	r := compatibilityCommand{Args: []string{binary, "app-server"}, ExitCode: -1}
 	method := map[string]string{"codex-skills": "skills/list", "codex-hooks": "hooks/list", "claude-initialize": "initialize", "factory-skills": "droid.list_skills", "factory-commands": "droid.list_commands", "factory-droids": "droid.get_context_breakdown"}[protocol]
 	if protocol == "claude-initialize" {
 		r.Args = append([]string{binary}, "--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--setting-sources", "user,project,local")
-		if len(keepAlive) > 0 {
-			r.Args = append(r.Args, "--debug")
-		}
 	}
 	if strings.HasPrefix(protocol, "factory-") {
 		r.Args = append([]string{binary}, "exec", "--input-format", "stream-jsonrpc", "--output-format", "stream-jsonrpc")
@@ -58,14 +55,10 @@ func runCompatibilityProtocol(e *Env, binary, protocol string, timeout time.Dura
 	if strings.HasPrefix(protocol, "factory-") {
 		limit = 10 << 20
 	}
-	reader := io.TeeReader(output, &stdout)
-	if len(keepAlive) == 0 {
-		reader = io.LimitReader(reader, int64(limit)+1)
-	}
+	reader := io.LimitReader(io.TeeReader(output, &stdout), int64(limit)+1)
 	encoder, decoder := json.NewEncoder(input), json.NewDecoder(reader)
 	var result json.RawMessage
 	var exchangeErr error
-	var drained chan struct{}
 	switch {
 	case protocol == "claude-initialize":
 		result, exchangeErr = inspectClaudeMetadata(encoder, decoder)
@@ -74,29 +67,14 @@ func runCompatibilityProtocol(e *Env, binary, protocol string, timeout time.Dura
 	default:
 		result, exchangeErr = inspectCodexMetadata(encoder, decoder, e.workspace, method)
 	}
-	if exchangeErr == nil && len(keepAlive) > 0 {
-		drained = make(chan struct{})
-		go func() {
-			defer close(drained)
-			_, _ = io.Copy(io.Discard, reader)
-		}()
-		exchangeErr = keepAlive[0](&r)
-	}
 	_ = input.Close()
 	if exchangeErr != nil {
 		cancel()
-	} else if drained == nil {
+	} else {
 		_, _ = io.Copy(io.Discard, reader)
-	}
-	if drained != nil {
-		time.AfterFunc(10*time.Second, cancel)
-		<-drained
 	}
 	err = cmd.Wait()
 	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	if len(keepAlive) > 0 {
-		r.Stderr = string(stderr.data)
-	}
 	r.ExitCode = cmd.ProcessState.ExitCode()
 	r.output = string(result)
 	r.Diagnostics = compatibilityDiagnostics(string(stderr.data))
@@ -113,7 +91,7 @@ func runCompatibilityProtocol(e *Env, binary, protocol string, timeout time.Dura
 	case err != nil:
 		r.Error = "native protocol process did not exit successfully"
 	default:
-		r.Observed = append(r.Observed, "protocol response: "+method)
+		r.Observed = []string{"protocol response: " + method}
 	}
 	return r
 }

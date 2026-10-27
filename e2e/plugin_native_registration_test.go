@@ -5,7 +5,6 @@ package e2e_test
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,19 +20,6 @@ description: Review plugin changes
 ---
 Review plugin changes.
 `
-
-func nativePluginCatalog(target string) string {
-	return fmt.Sprintf(`schema: 1
-harness: %s
-evidence:
-  checked: "2026-10-21"
-  refs: [synthetic-e2e-fixture]
-accepts: [claude-plugin]
-delivery:
-  decompose: {status: verified}
-  native: {status: verified, format: claude-plugin, probe: e2e-test-probe, refresh: restart-required}
-`, target)
-}
 
 func newNativePluginEnv(t *testing.T, target, delivery string) (*Env, string) {
 	t.Helper()
@@ -63,10 +49,6 @@ func nativePluginDeselectedConfig() string {
 	return "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n" +
 		"  vendor: {directory: ./vendor/native-kit, format: claude-plugin}\nresources:\n" +
 		"  vendor: []\n"
-}
-
-func nativeCatalogEnv(path string) map[string]string {
-	return map[string]string{"AGENT_MARKETPLACE_E2E_PLUGIN_CATALOG": path}
 }
 
 func runNativeAM(env *Env, catalogPath string, args ...string) ExecResult {
@@ -321,23 +303,6 @@ func TestPluginNativeUnverifiedDeliveryFailsWithoutDecomposing(t *testing.T) {
 	generations, err := filepath.Glob(filepath.Join(env.home, ".local", "state", "agent-marketplace", "packages", "*"))
 	if err != nil || len(generations) != 0 {
 		t.Fatalf("unverified native request published package generations: %v / %v", generations, err)
-	}
-}
-
-// spec: plugin-policy-catalogs/shipped-claude-catalog-delivers-claude-plugin-packages-natively
-func TestShippedClaudeCatalogUsesNativeDeliveryForAuto(t *testing.T) {
-	env, _ := newNativePluginEnv(t, "claude", "auto")
-	result := env.RunAM("sync", "--no-backup")
-	if result.ExitCode != 0 {
-		t.Fatalf("sync with shipped Claude catalog failed (exit %d):\n%s", result.ExitCode, result.Combined)
-	}
-	if !strings.Contains(result.Combined, "claude: native") {
-		t.Fatalf("shipped Claude catalog did not select native delivery:\n%s", result.Combined)
-	}
-	assertClaudeNativeRegistration(t, env)
-	assertNativePluginCatalog(t, env, "native-kit", "claude")
-	if _, err := os.Stat(env.mustResolvePath("/workspace/.claude/skills/native-kit-review/SKILL.md")); !os.IsNotExist(err) {
-		t.Fatalf("shipped Claude native delivery also wrote decomposed members: %v", err)
 	}
 }
 
@@ -643,21 +608,21 @@ func TestCodexNativeRegistrationDoesNotWriteTrust(t *testing.T) {
 
 // spec: plugin-delivery/reload-requirement-is-reported
 func TestNativePluginGenerationReloadRequirementIsReported(t *testing.T) {
-	env, _ := newNativePluginEnv(t, "claude", "native")
-	first := runNativeAM(env, "", "sync", "--no-backup")
+	env, catalogPath := newNativePluginEnv(t, "claude", "native")
+	first := runNativeAM(env, catalogPath, "sync", "--no-backup")
 	if first.ExitCode != 0 {
 		t.Fatalf("initial native sync failed (exit %d):\n%s", first.ExitCode, first.Combined)
 	}
 	env.WriteFile("/workspace/vendor/native-kit/skills/review/SKILL.md", strings.ReplaceAll(nativePluginSource, "Review plugin changes.", "Review updated plugin changes."))
-	sync := runNativeAM(env, "", "sync", "--no-backup")
+	sync := runNativeAM(env, catalogPath, "sync", "--no-backup")
 	if sync.ExitCode != 0 || !strings.Contains(sync.Combined, "reload-required") {
 		t.Fatalf("sync did not report the changed native generation requires reload (exit %d):\n%s", sync.ExitCode, sync.Combined)
 	}
-	status := runNativeAM(env, "", "status")
+	status := runNativeAM(env, catalogPath, "status")
 	if status.ExitCode != 0 || !strings.Contains(status.Combined, "reload-required") {
 		t.Fatalf("status did not report the native reload requirement (exit %d):\n%s", status.ExitCode, status.Combined)
 	}
-	nextSync := runNativeAM(env, "", "sync", "--no-backup")
+	nextSync := runNativeAM(env, catalogPath, "sync", "--no-backup")
 	if nextSync.ExitCode != 0 || strings.Contains(nextSync.Combined, "reload-required") {
 		t.Fatalf("unchanged native generation retained reload-required (exit %d):\n%s", nextSync.ExitCode, nextSync.Combined)
 	}

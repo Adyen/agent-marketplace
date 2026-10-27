@@ -8,7 +8,7 @@ Decomposed delivery installs a plugin's members as ordinary resources. Native de
 
 | Harness | Accepted formats | Decomposed delivery | Native delivery | Evidence checked |
 | --- | --- | --- | --- | --- |
-| `claude` | claude-plugin, agent-plugin | `verified` | `verified` | 2026-10-27 |
+| `claude` | claude-plugin, agent-plugin | `verified` | `unverified` | 2026-10-15 |
 | `codex` | codex-plugin, agent-plugin | `verified` | `unverified` | 2026-10-15 |
 | `cursor` | agent-plugin | `verified` | `unverified` | 2026-10-15 |
 | `devin` | claude-plugin, agent-plugin | `verified` | `unverified` | 2026-10-15 |

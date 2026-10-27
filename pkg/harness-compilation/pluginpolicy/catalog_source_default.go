@@ -5,5 +5,5 @@ package pluginpolicy
 import "io/fs"
 
 func runtimeCatalogSource() (fs.FS, []string, error) {
-	return catalogFiles, []string{ClaudeNativePluginProbeID}, nil
+	return catalogFiles, nil, nil
 }
