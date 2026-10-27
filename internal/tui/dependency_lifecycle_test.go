@@ -176,8 +176,11 @@ func TestInitDoesNotInvokeDependencyLifecycle(t *testing.T) {
 		calls.Add(1)
 		return pipeline.SyncResult{}, nil
 	}
-	model := NewModel(t.TempDir(), t.TempDir(), WithDependencyLifecycle(DependencyLifecycle{Sync: callback, Update: callback}))
-	for _, cmd := range batchCmds(model.Init()) {
+	repoRoot, homeDir := progressiveFixture(t)
+	model := NewModel(repoRoot, homeDir, WithDependencyLifecycle(DependencyLifecycle{Sync: callback, Update: callback}))
+	initCmd := model.Init()
+	joinStartupSnapshot(t, initCmd)
+	for _, cmd := range batchCmds(initCmd) {
 		cmd()
 	}
 	if calls.Load() != 0 {
