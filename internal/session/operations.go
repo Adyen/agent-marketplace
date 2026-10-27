@@ -17,7 +17,7 @@ import (
 
 // DependencyLifecycleFunc runs a dependency lifecycle step against a
 // validated workspace and returns its warnings alongside the outcome.
-type DependencyLifecycleFunc func(context.Context, pipeline.Workspace) ([]error, error)
+type DependencyLifecycleFunc func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error)
 
 // DependencyMutationFunc applies a guarded mutation through the provided
 // config path mapper.
@@ -29,6 +29,10 @@ type DependencyLifecycle struct {
 	Sync   DependencyLifecycleFunc
 	Update DependencyLifecycleFunc
 	Mutate DependencyMutationFunc
+	// InstallReconcile prepares acquisition locks for the sync that follows a
+	// Marketplace install, so other sources stay at their locked revisions.
+	InstallReconcile pipeline.DependencyReconciler
+	InstallPrepare   pipeline.InstallDependencyPreparer
 }
 
 // Update stage labels shared by the sync/update verdicts.
@@ -46,6 +50,7 @@ type UpdateResult struct {
 	Stage      string
 	Err        error
 	Warnings   []error
+	Report     *materialize.Report
 }
 
 // RunSync runs the authoritative sync pipeline.
@@ -59,10 +64,10 @@ func RunSync(ctx context.Context, workspace pipeline.Workspace) (pipeline.SyncRe
 
 // RunDependencySync runs the injected lifecycle sync against a validated
 // workspace.
-func RunDependencySync(ctx context.Context, workspace pipeline.Workspace, sync DependencyLifecycleFunc) ([]error, error) {
+func RunDependencySync(ctx context.Context, workspace pipeline.Workspace, sync DependencyLifecycleFunc) (pipeline.SyncResult, error) {
 	ws, err := ValidatedWorkspace(workspace)
 	if err != nil {
-		return nil, err
+		return pipeline.SyncResult{}, err
 	}
 	return sync(ctx, ws)
 }
@@ -77,17 +82,20 @@ func RunDependencyUpdateWithLoader(ctx context.Context, workspace pipeline.Works
 	if err != nil {
 		return UpdateResult{Generation: generation, Stage: UpdateStageRefresh, Err: err}
 	}
-	warnings, lifecycleErr := update(ctx, ws)
+	synced, lifecycleErr := update(ctx, ws)
+	warnings := synced.Warnings
 	pipeline.ObservePhase(ctx, pipeline.PhaseReload)
 	current := load(ctx, ws, homeDir, CatalogLoadCached)
 	current.Generation = generation
 	for _, warning := range warnings {
-		current.Diagnostics = appendSnapshotDiagnostics(current.Diagnostics, DiagnosticWarning, DiagnosticUpdate, warning)
+		if !pipeline.IsPromotedDiagnostic(warning) {
+			current.Diagnostics = appendSnapshotDiagnostics(current.Diagnostics, DiagnosticWarning, DiagnosticUpdate, warning)
+		}
 	}
 	current.Diagnostics = deduplicateDiagnostics(current.Diagnostics)
 	current.Errs = DiagnosticValues(current.Diagnostics, DiagnosticError)
 	current.Warnings = DiagnosticValues(current.Diagnostics, DiagnosticWarning)
-	result := UpdateResult{Generation: generation, Snapshot: current, Stage: UpdateStageRefresh, Warnings: warnings}
+	result := UpdateResult{Generation: generation, Snapshot: current, Stage: UpdateStageRefresh, Warnings: warnings, Report: synced.Report}
 	if lifecycleErr != nil {
 		result.Err = fmt.Errorf("update %s failed: %w", result.Stage, lifecycleErr)
 	} else if reloadErr := errors.Join(DiagnosticErrors(current.Diagnostics)...); reloadErr != nil {
@@ -108,7 +116,9 @@ func RunUpdateWithLoader(ctx context.Context, workspace pipeline.Workspace, home
 	current := load(ctx, ws, homeDir, CatalogLoadCached)
 	current.Generation = generation
 	for _, warning := range syncResult.Warnings {
-		current.Diagnostics = appendSnapshotDiagnostics(current.Diagnostics, DiagnosticWarning, DiagnosticUpdate, warning)
+		if !pipeline.IsPromotedDiagnostic(warning) {
+			current.Diagnostics = appendSnapshotDiagnostics(current.Diagnostics, DiagnosticWarning, DiagnosticUpdate, warning)
+		}
 	}
 	current.Diagnostics = deduplicateDiagnostics(current.Diagnostics)
 	current.Errs = DiagnosticValues(current.Diagnostics, DiagnosticError)
@@ -118,6 +128,8 @@ func RunUpdateWithLoader(ctx context.Context, workspace pipeline.Workspace, home
 		Generation: generation,
 		Snapshot:   current,
 		Stage:      UpdateStageMaterialization,
+		Warnings:   syncResult.Warnings,
+		Report:     syncResult.Report,
 	}
 	switch {
 	case len(syncResult.CatalogTrustErrors) > 0:

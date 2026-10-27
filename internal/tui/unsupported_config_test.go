@@ -15,6 +15,7 @@ import (
 )
 
 // spec: consumer-config-format/consumers-do-not-offer-in-process-conversion
+// spec: consumer-config-format/writable-layer-version-refusals-name-the-older-migrator
 // spec: tui-interactions/guarded-submission
 // spec: session-startup/invalid-configuration-delivers-one-fail-closed-final-stage
 func TestUnsupportedConsumerConfigRefusesWithoutConversion(t *testing.T) {
@@ -85,8 +86,16 @@ func TestUnsupportedConsumerConfigRefusesWithoutConversion(t *testing.T) {
 			updated, _ = m.Update(keyPress('e'))
 			m = updated.(Model)
 			view := ansi.Strip(m.viewContent())
-			if !strings.Contains(view, tc.code) || !strings.Contains(view, "apiVersion") {
+			searchableView := strings.ReplaceAll(strings.Join(strings.Fields(view), " "), "- ", "-")
+			if !strings.Contains(searchableView, tc.code) || !strings.Contains(searchableView, "apiVersion") {
 				t.Fatalf("error view lacks format diagnostic:\n%s", view)
+			}
+			if !strings.Contains(searchableView, "agent-marketplace v4.1.4") ||
+				!strings.Contains(searchableView, "agent-marketplace migrate --to v4 --scope user --dry-run") ||
+				!strings.Contains(searchableView, "https://github.com/Adyen/agent-marketplace/blob/main/site/docs/how-to/migrate-configuration.md") ||
+				!strings.Contains(searchableView, "include trees or unrepresentable input") ||
+				strings.Contains(searchableView, "Fix the file and field named above") {
+				t.Fatalf("error view lacks remediation or retains generic recovery copy:\n%s", view)
 			}
 			for _, unwanted := range []string{"Configuration migration required", "migrate to v4", "leave unchanged", "remain readable"} {
 				if strings.Contains(view, unwanted) {

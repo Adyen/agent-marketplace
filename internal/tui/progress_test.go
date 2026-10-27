@@ -162,10 +162,10 @@ func TestInjectedLifecyclePhaseVisibleBeforeCompletion(t *testing.T) {
 	gate := make(chan struct{})
 	m := progressTestModel(t)
 	m.dependencyLifecycle = DependencyLifecycle{
-		Sync: func(ctx context.Context, workspace pipeline.Workspace) ([]error, error) {
+		Sync: func(ctx context.Context, workspace pipeline.Workspace) (pipeline.SyncResult, error) {
 			pipeline.Resolve(ctx, pipeline.ResolveOptions{Workspace: workspace, Loaders: phaseObservingLoaders()})
 			<-gate
-			return nil, nil
+			return pipeline.SyncResult{}, nil
 		},
 	}
 	m.beginOperationProgress("sync", 0)

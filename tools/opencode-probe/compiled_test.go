@@ -145,7 +145,7 @@ func TestNativeInstalledHookSupport(t *testing.T) {
 					// The blocking handler lives beside its source definition
 					// and is reached only through the installed support copy.
 					source := filepath.Join(root, "registry")
-					writeFixture(t, filepath.Join(source, "hooks", "hooks.json"), `{"PreToolUse":[{"matcher":"Execute","hooks":[{"type":"command","command":"/bin/sh \"${DROID_PLUGIN_ROOT}/guard.sh\""}]}]}`)
+					writeFixture(t, filepath.Join(source, "hooks", "hooks.json"), `{"PreToolUse":[{"matcher":"Execute","hooks":[{"type":"command","command":"/bin/sh \"${DROID_PLUGIN_ROOT}/hooks/guard.sh\""}]}]}`)
 					writeFixture(t, filepath.Join(source, "hooks", "guard.sh"), `cat > "$AGENT_MARKETPLACE_PROJECT_DIR/hook-input.json"; printf '%s' '{"decision":"block"}'`+"\n")
 					loaded, err := catalog.Load(source, "factory")
 					if err != nil || len(loaded.Entries) != 1 {

@@ -375,9 +375,9 @@ func TestLocalAPIUserHarness(t *testing.T) {
 		bootstrap["syncStarted"] = started
 		bootstrap["syncRelease"] = release
 		inner := lifecycle.Sync
-		lifecycle.Sync = func(ctx context.Context, ws pipeline.Workspace) ([]error, error) {
+		lifecycle.Sync = func(ctx context.Context, ws pipeline.Workspace) (pipeline.SyncResult, error) {
 			if err := os.WriteFile(started, []byte("1"), 0o644); err != nil {
-				return nil, err
+				return pipeline.SyncResult{}, err
 			}
 			deadline := time.Now().Add(90 * time.Second)
 			for {
@@ -385,10 +385,10 @@ func TestLocalAPIUserHarness(t *testing.T) {
 					break
 				}
 				if ctx.Err() != nil {
-					return nil, ctx.Err()
+					return pipeline.SyncResult{}, ctx.Err()
 				}
 				if time.Now().After(deadline) {
-					return nil, fmt.Errorf("held-sync release file never appeared")
+					return pipeline.SyncResult{}, fmt.Errorf("held-sync release file never appeared")
 				}
 				time.Sleep(20 * time.Millisecond)
 			}

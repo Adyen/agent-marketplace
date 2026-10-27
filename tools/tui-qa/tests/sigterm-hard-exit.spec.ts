@@ -1,23 +1,21 @@
 import assert from "node:assert/strict";
 import process from "node:process";
+import { after, before } from "node:test";
 
-import { expect, test } from "@microsoft/tui-test";
-
-import { defineFixture, step, waitForExit } from "./helpers.js";
+import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 import { targetPID } from "./process-helpers.js";
 
 const journey = defineFixture("sigterm-hard-exit", ["tui"]);
-test.use(journey.options);
-test.beforeAll(journey.setup);
-test.afterAll(journey.cleanup);
+before(journey.setup);
+after(journey.cleanup);
 
-test("SIGTERM stops the published target process", async ({ terminal }) => {
+journey.test("SIGTERM stops the published target process", async (terminal) => {
   const fixture = journey.current();
 
   await step("settled fixture baseline", () => {}, async () => {
-    await expect(terminal.getByText("beta-skill", { strict: false })).toBeVisible();
-    await expect(terminal.getByText("alpha-skill", { strict: false })).toBeVisible();
-    await expect(terminal.getByText("~ in sync")).toBeVisible();
+    await locate(terminal, "beta-skill").expect();
+    await locate(terminal, "alpha-skill").expect();
+    await locate(terminal, "~ in sync").unique().expect();
   });
 
   const pid = await targetPID(fixture);

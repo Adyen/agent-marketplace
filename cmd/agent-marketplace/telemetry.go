@@ -270,21 +270,19 @@ func runTelemetryPreview(ctx context.Context, out io.Writer, in io.Reader, level
 		return fmt.Errorf("preview level must be one of %s, %s, %s", tmcfg.LevelBasic, tmcfg.LevelDetailed, tmcfg.LevelDiagnostic)
 	}
 
-	if level == tmcfg.LevelDiagnostic && !diagnosticAcceptSensitive {
-		fdReader, hasFD := in.(interface{ Fd() uintptr })
-		if hasFD && isTerminal(fdReader.Fd()) {
-			reader := bufio.NewReader(in)
-			_, _ = fmt.Fprint(out, "Diagnostic payloads may contain sensitive data. Continue? [y/N]: ")
-			reply, err := reader.ReadString('\n')
-			if err != nil {
-				return fmt.Errorf("read confirmation: %w", err)
-			}
-			reply = strings.TrimSpace(strings.ToLower(reply))
-			if !strings.HasPrefix(reply, "y") {
-				return fmt.Errorf("diagnostic preview cancelled")
-			}
-		} else {
-			return fmt.Errorf("diagnostic preview requires --diagnostic-accept-sensitive-data in non-interactive mode")
+	if level == tmcfg.LevelDiagnostic {
+		if !isTerminalReader(in) {
+			return fmt.Errorf("diagnostic preview requires interactive acknowledgement at a terminal")
+		}
+		reader := bufio.NewReader(in)
+		_, _ = fmt.Fprint(out, "Diagnostic payloads may contain sensitive data. Continue? [y/N]: ")
+		reply, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("read confirmation: %w", err)
+		}
+		reply = strings.TrimSpace(strings.ToLower(reply))
+		if !strings.HasPrefix(reply, "y") {
+			return fmt.Errorf("diagnostic preview cancelled")
 		}
 	}
 

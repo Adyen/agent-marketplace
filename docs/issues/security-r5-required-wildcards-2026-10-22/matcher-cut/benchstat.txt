@@ -1,0 +1,53 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+                                                             │  before.txt   │              after.txt               │
+                                                             │    sec/op     │    sec/op      vs base               │
+V4RebuildRequiredWildcardsCPU/required=true/requests=1-2        660.8n ±  5%   624.7n ±   6%   -5.46% (p=0.015 n=6)
+V4RebuildRequiredWildcardsCPU/required=true/requests=256-2     1921.1µ ±  3%   456.1µ ±   6%  -76.26% (p=0.002 n=6)
+V4RebuildRequiredWildcardsCPU/required=true/requests=1024-2    32.122m ±  2%   6.289m ±   2%  -80.42% (p=0.002 n=6)
+V4RebuildRequiredWildcardsCPU/required=false/requests=1-2       592.2n ±  5%   589.9n ±  11%        ~ (p=1.000 n=6)
+V4RebuildRequiredWildcardsCPU/required=false/requests=256-2     1.908m ±  3%   1.850m ±  11%        ~ (p=0.180 n=6)
+V4RebuildRequiredWildcardsCPU/required=false/requests=1024-2    31.84m ±  2%   30.77m ±  41%        ~ (p=0.065 n=6)
+ParseV4RequiredWildcardsCPU/required=true/requests=1-2          13.57µ ±  6%   13.64µ ± 111%        ~ (p=0.818 n=6)
+ParseV4RequiredWildcardsCPU/required=true/requests=256-2       2443.3µ ± 39%   965.0µ ±  92%  -60.50% (p=0.002 n=6)
+ParseV4RequiredWildcardsCPU/required=true/requests=1024-2      34.340m ±  2%   8.213m ±  19%  -76.08% (p=0.002 n=6)
+ParseV4RequiredWildcardsCPU/required=false/requests=1-2         13.54µ ±  6%   13.60µ ±  12%        ~ (p=1.000 n=6)
+ParseV4RequiredWildcardsCPU/required=false/requests=256-2       2.412m ±  2%   2.368m ±   4%   -1.84% (p=0.026 n=6)
+ParseV4RequiredWildcardsCPU/required=false/requests=1024-2      34.12m ±  2%   32.28m ±   3%   -5.37% (p=0.002 n=6)
+geomean                                                         592.2µ         370.8µ         -37.38%
+
+                                                             │  before.txt  │              after.txt               │
+                                                             │     B/op     │     B/op      vs base                │
+V4RebuildRequiredWildcardsCPU/required=true/requests=1-2       1.734Ki ± 0%   1.734Ki ± 0%       ~ (p=1.000 n=6) ¹
+V4RebuildRequiredWildcardsCPU/required=true/requests=256-2     348.1Ki ± 0%   348.1Ki ± 0%       ~ (p=1.000 n=6) ¹
+V4RebuildRequiredWildcardsCPU/required=true/requests=1024-2    1.677Mi ± 0%   1.677Mi ± 0%       ~ (p=1.000 n=6)
+V4RebuildRequiredWildcardsCPU/required=false/requests=1-2      1.328Ki ± 0%   1.328Ki ± 0%       ~ (p=1.000 n=6) ¹
+V4RebuildRequiredWildcardsCPU/required=false/requests=256-2    237.0Ki ± 0%   237.0Ki ± 0%       ~ (p=1.000 n=6) ¹
+V4RebuildRequiredWildcardsCPU/required=false/requests=1024-2   1.014Mi ± 0%   1.014Mi ± 0%       ~ (p=1.000 n=6)
+ParseV4RequiredWildcardsCPU/required=true/requests=1-2         18.61Ki ± 0%   18.61Ki ± 0%       ~ (p=1.000 n=6) ¹
+ParseV4RequiredWildcardsCPU/required=true/requests=256-2       828.3Ki ± 0%   828.3Ki ± 0%       ~ (p=0.515 n=6)
+ParseV4RequiredWildcardsCPU/required=true/requests=1024-2      3.582Mi ± 0%   3.582Mi ± 0%       ~ (p=0.937 n=6)
+ParseV4RequiredWildcardsCPU/required=false/requests=1-2        18.21Ki ± 0%   18.21Ki ± 0%       ~ (p=1.000 n=6) ¹
+ParseV4RequiredWildcardsCPU/required=false/requests=256-2      717.1Ki ± 0%   717.1Ki ± 0%       ~ (p=0.331 n=6)
+ParseV4RequiredWildcardsCPU/required=false/requests=1024-2     2.918Mi ± 0%   2.918Mi ± 0%       ~ (p=0.069 n=6)
+geomean                                                        173.6Ki        173.6Ki       -0.00%
+¹ all samples are equal
+
+                                                             │ before.txt  │              after.txt              │
+                                                             │  allocs/op  │  allocs/op   vs base                │
+V4RebuildRequiredWildcardsCPU/required=true/requests=1-2        7.000 ± 0%    7.000 ± 0%       ~ (p=1.000 n=6) ¹
+V4RebuildRequiredWildcardsCPU/required=true/requests=256-2      303.0 ± 0%    303.0 ± 0%       ~ (p=1.000 n=6) ¹
+V4RebuildRequiredWildcardsCPU/required=true/requests=1024-2    1.091k ± 0%   1.091k ± 0%       ~ (p=1.000 n=6) ¹
+V4RebuildRequiredWildcardsCPU/required=false/requests=1-2       6.000 ± 0%    6.000 ± 0%       ~ (p=1.000 n=6) ¹
+V4RebuildRequiredWildcardsCPU/required=false/requests=256-2     295.0 ± 0%    295.0 ± 0%       ~ (p=1.000 n=6) ¹
+V4RebuildRequiredWildcardsCPU/required=false/requests=1024-2   1.080k ± 0%   1.080k ± 0%       ~ (p=1.000 n=6) ¹
+ParseV4RequiredWildcardsCPU/required=true/requests=1-2          183.0 ± 0%    183.0 ± 0%       ~ (p=1.000 n=6) ¹
+ParseV4RequiredWildcardsCPU/required=true/requests=256-2       5.622k ± 0%   5.622k ± 0%       ~ (p=1.000 n=6) ¹
+ParseV4RequiredWildcardsCPU/required=true/requests=1024-2      22.56k ± 0%   22.56k ± 0%       ~ (p=1.000 n=6)
+ParseV4RequiredWildcardsCPU/required=false/requests=1-2         182.0 ± 0%    182.0 ± 0%       ~ (p=1.000 n=6) ¹
+ParseV4RequiredWildcardsCPU/required=false/requests=256-2      5.614k ± 0%   5.614k ± 0%       ~ (p=1.000 n=6) ¹
+ParseV4RequiredWildcardsCPU/required=false/requests=1024-2     22.55k ± 0%   22.55k ± 0%       ~ (p=0.182 n=6)
+geomean                                                         604.2         604.2       -0.00%
+¹ all samples are equal

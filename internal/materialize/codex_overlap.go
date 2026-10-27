@@ -2,8 +2,11 @@ package materialize
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -14,6 +17,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
+	"golang.org/x/text/unicode/norm"
 )
 
 type codexDestinationBinding struct {
@@ -25,6 +29,7 @@ type codexManagedPath struct {
 	partition string
 	id        string
 	path      string
+	location  string
 }
 
 // preflightCodexDestinations resolves active Codex scopes and coalesces desired
@@ -143,20 +148,29 @@ func codexDestinationDiagnostic(message, hint string) diag.Diagnostic {
 
 func validateCodexManagedPathIntersections(bindings []codexDestinationBinding) *diag.Diagnostic {
 	managed := make([]codexManagedPath, 0, len(bindings)*3)
+	physicalRoots, err := codexPhysicalRoots(bindings)
+	if err != nil {
+		return &diag.Diagnostic{
+			Code:     "materialize.destination.error",
+			Severity: diag.SeverityError,
+			Target:   string(targetmeta.TargetCodex),
+			Message:  fmt.Sprintf("inspect Codex destination locations before materialization: %v", err),
+			Hint:     "fix the repository, HOME, or CODEX_HOME path and retry; no destination was changed",
+		}
+	}
 	for _, binding := range bindings {
 		partition := codexPartitionKey(binding.destination.Root, binding.destination.Prefix)
-		for _, component := range binding.destination.Info.Components {
-			managed = append(managed, codexManagedPath{
-				partition: partition,
-				id:        binding.destination.ID,
-				path:      filepath.Join(binding.destination.Root, filepath.FromSlash(component)),
-			})
-		}
-		for _, rel := range binding.destination.Info.AggregateFilesForScope(binding.key.machineScope) {
+		physicalRoot := physicalRoots[filepath.Clean(binding.destination.Root)]
+		components := binding.destination.Info.Components
+		aggregates := binding.destination.Info.AggregateFilesForScope(binding.key.machineScope)
+		rels := make([]string, 0, len(components)+len(aggregates))
+		rels = append(append(rels, components...), aggregates...)
+		for _, rel := range rels {
 			managed = append(managed, codexManagedPath{
 				partition: partition,
 				id:        binding.destination.ID,
 				path:      filepath.Join(binding.destination.Root, filepath.FromSlash(rel)),
+				location:  strings.ToLower(norm.NFC.String(filepath.Join(physicalRoot, filepath.FromSlash(rel)))),
 			})
 		}
 	}
@@ -181,9 +195,56 @@ func validateCodexManagedPathIntersections(bindings []codexDestinationBinding) *
 				)
 				return &d
 			}
+			if a.location == b.location || pathIsAncestor(a.location, b.location) || pathIsAncestor(b.location, a.location) {
+				d := codexDestinationDiagnostic(
+					fmt.Sprintf("Codex managed paths %q (%s) and %q (%s) are spelled differently but name the same location on case- or normalization-insensitive filesystems", a.path, a.id, b.path, b.id),
+					"spell CODEX_HOME with the same letter case as the repository's .codex directory, or move CODEX_HOME or the repository so the managed paths are disjoint",
+				)
+				return &d
+			}
 		}
 	}
 	return nil
+}
+
+func codexPhysicalRoots(bindings []codexDestinationBinding) (map[string]string, error) {
+	type seenRoot struct {
+		path string
+		info os.FileInfo
+	}
+	physical := make(map[string]string, len(bindings))
+	var seen []seenRoot
+	for _, binding := range bindings {
+		root := filepath.Clean(binding.destination.Root)
+		if _, done := physical[root]; done {
+			continue
+		}
+		physical[root] = root
+		existing, suffix := root, ""
+		info, err := os.Stat(existing)
+		for errors.Is(err, fs.ErrNotExist) && filepath.Dir(existing) != existing {
+			suffix = filepath.Join(filepath.Base(existing), suffix)
+			existing = filepath.Dir(existing)
+			info, err = os.Stat(existing)
+		}
+		if err != nil {
+			return nil, err
+		}
+		representative := existing
+		matched := false
+		for _, prior := range seen {
+			if os.SameFile(prior.info, info) {
+				representative = prior.path
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			seen = append(seen, seenRoot{path: existing, info: info})
+		}
+		physical[root] = filepath.Join(representative, suffix)
+	}
+	return physical, nil
 }
 
 func pathIsAncestor(parent, child string) bool {

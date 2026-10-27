@@ -367,13 +367,13 @@ func TestNewUserRejectsNonHome(t *testing.T) {
 
 func countingLifecycle(syncCalls, updateCalls *atomic.Int32) session.DependencyLifecycle {
 	return session.DependencyLifecycle{
-		Sync: func(context.Context, pipeline.Workspace) ([]error, error) {
+		Sync: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
 			syncCalls.Add(1)
-			return nil, nil
+			return pipeline.SyncResult{}, nil
 		},
-		Update: func(context.Context, pipeline.Workspace) ([]error, error) {
+		Update: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
 			updateCalls.Add(1)
-			return nil, nil
+			return pipeline.SyncResult{}, nil
 		},
 	}
 }

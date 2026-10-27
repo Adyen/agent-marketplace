@@ -68,7 +68,7 @@ resources:
   hosted: [skill/gamma]
 `)
 
-	output, err := executeCommand("install", "beta", "alpha", "beta")
+	output, err := executeCommand("install", "--scope", "repo", "beta", "alpha", "beta")
 	if err != nil {
 		t.Fatalf("install beta alpha beta: %v\n%s", err, output)
 	}
@@ -206,7 +206,7 @@ sources:
   hosted: {git: file://`+origin+`, ref: main}
 `)
 
-	output, err := executeCommand("install", "solo", "dup", "--kind", "skill")
+	output, err := executeCommand("install", "--scope", "repo", "solo", "dup", "--kind", "skill")
 	if err != nil {
 		t.Fatalf("install solo dup --kind skill: %v\n%s", err, output)
 	}
@@ -265,7 +265,7 @@ sources:
   hosted: {git: file://`+origin+`, ref: main}
 `)
 
-	output, err := executeCommand("install", "bundle", "extra")
+	output, err := executeCommand("install", "--scope", "repo", "bundle", "extra")
 	if err != nil {
 		t.Fatalf("install bundle extra: %v\n%s", err, output)
 	}
@@ -418,7 +418,7 @@ func TestInstallMultipleInvalidLaterNamePublishesNothing(t *testing.T) {
 					}
 					commits := stubDependencyCommit(t, nil)
 
-					output, err := executeCommand(append([]string{"install"}, batchArgs...)...)
+					output, err := executeCommand(append([]string{"install", "--scope", "repo"}, batchArgs...)...)
 					if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 						t.Fatalf("install good %q error = %v, output %q; want %q failure", tc.bad, err, output, tc.wantErr)
 					}
@@ -432,7 +432,7 @@ func TestInstallMultipleInvalidLaterNamePublishesNothing(t *testing.T) {
 					if mode == "from" {
 						control = append(control, "--from", fixture.source, "--ref", "main")
 					}
-					if output, err := executeCommand(append([]string{"install"}, control...)...); err != nil {
+					if output, err := executeCommand(append([]string{"install", "--scope", "repo"}, control...)...); err != nil {
 						t.Fatalf("valid control install failed: %v\n%s", err, output)
 					}
 					fixture.requireInstalled(t)
@@ -508,7 +508,7 @@ func TestInstallMultipleInvalidNameLeavesMissingRootAbsent(t *testing.T) {
 	userLockBefore := string(readTestFile(t, userLock))
 	commits := stubDependencyCommit(t, nil)
 
-	output, err := executeCommand("install", "good", "absent-skill")
+	output, err := executeCommand("install", "--scope", "repo", "good", "absent-skill")
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("install good absent-skill error = %v, output %q; want not found", err, output)
 	}
@@ -531,7 +531,7 @@ func TestInstallMultipleInvalidNameLeavesMissingRootAbsent(t *testing.T) {
 	}
 	requireNoInstallStaging(t)
 
-	if output, err := executeCommand("install", "good"); err != nil {
+	if output, err := executeCommand("install", "--scope", "repo", "good"); err != nil {
 		t.Fatalf("valid control install failed: %v\n%s", err, output)
 	}
 	assertFactorySkillExists(t, repo, "good")
@@ -575,7 +575,7 @@ func TestInstallMultipleStagesOnePublication(t *testing.T) {
 		t.Fatalf("staged repo config missing from desired transaction: %#v", desired)
 	})
 
-	output, err := executeCommand("install", "alpha", "beta")
+	output, err := executeCommand("install", "--scope", "repo", "alpha", "beta")
 	if err != nil {
 		t.Fatalf("install alpha beta: %v\n%s", err, output)
 	}

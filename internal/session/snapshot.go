@@ -255,7 +255,7 @@ func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir stri
 			// The verified inventory is published before detail capture and the
 			// materialization dry run: rows are navigable and config-only toggles are
 			// eligible while drift stays explicitly pending.
-			inventoryRows = BuildRows(resolved.LoadedCfg, resolved.CatalogLoad.Catalogs, resolved.Resolved, resolved.LocalCfg, materialize.DriftReport{}, harnessDefaultsBySource(resolved.GlobalCfg, resolved.RepoCfg))
+			inventoryRows = BuildRows(resolved.LoadedCfg, resolved.CatalogLoad.Catalogs, resolved.DisplayArtifacts(), resolved.LocalCfg, materialize.DriftReport{}, harnessDefaultsBySource(resolved.GlobalCfg, resolved.RepoCfg))
 			inventoryRows = AppendUnavailableSelectionRows(inventoryRows, recoveryCfg, resolved.LocalCfg, resolved.ResolveErrors, resolved.CatalogLoad.Catalogs)
 			unavailable = RowsHaveUnavailable(inventoryRows)
 			inventory := makeBase(result)
@@ -333,21 +333,26 @@ func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir stri
 	emit(base)
 }
 
+// DriftItemsByResource keys drift items by resource. A resource can have
+// several, for example missing from a new target harness and orphaned in the
+// one it left, so the most actionable wins: broken, then missing, then an
+// orphaned copy.
+func DriftItemsByResource(driftReport materialize.DriftReport) map[string]materialize.DriftItem {
+	byName := make(map[string]materialize.DriftItem, len(driftReport.Missing)+len(driftReport.Broken)+len(driftReport.Orphaned))
+	for _, items := range [][]materialize.DriftItem{driftReport.Orphaned, driftReport.Missing, driftReport.Broken} {
+		for _, item := range items {
+			byName[item.Name] = item
+		}
+	}
+	return byName
+}
+
 func ApplyDriftItems(rows []Row, driftReport materialize.DriftReport) []Row {
 	out := slices.Clone(rows)
 	if len(driftReport.Missing)+len(driftReport.Broken)+len(driftReport.Orphaned) == 0 {
 		return out
 	}
-	driftByName := make(map[string]materialize.DriftItem, len(driftReport.Missing)+len(driftReport.Broken)+len(driftReport.Orphaned))
-	for _, item := range driftReport.Missing {
-		driftByName[item.Name] = item
-	}
-	for _, item := range driftReport.Broken {
-		driftByName[item.Name] = item
-	}
-	for _, item := range driftReport.Orphaned {
-		driftByName[item.Name] = item
-	}
+	driftByName := DriftItemsByResource(driftReport)
 	for i := range out {
 		if out[i].IsAvailable || out[i].DriftItem != nil {
 			continue

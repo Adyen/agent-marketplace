@@ -236,6 +236,77 @@ resources:
 	}
 }
 
+// spec: resource-listing/malformed-resources-show-their-kind
+func TestListCommandLabelsMalformedResourcesByKind(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "awesome-ai.git")
+	writeSkill(t, working, "valid-skill", "Valid skill", []string{"tested"})
+	writeFile(t, filepath.Join(working, "commands", "broken-command.md"), "---\ndescription: [unterminated\n---\n\nBroken command\n")
+	commitAndPushAll(t, working, "Add a valid skill and a malformed command")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
+sources:
+  origin: {git: file://`+origin+`, ref: main}
+resources:
+  origin: [skill/valid-skill]
+`)
+
+	withWorkingDir(t, repoRoot)
+	requireExactLocks(t)
+
+	malformedRow := func(rows []string) string {
+		for _, row := range rows {
+			if strings.Contains(row, "|broken-command.md|") {
+				return row
+			}
+		}
+		return ""
+	}
+	output, err := executeCommand("list")
+	if err != nil {
+		t.Fatalf("expected list command to succeed: %v\n%s", err, output)
+	}
+	_, rows := parseTable(t, output)
+	if got := malformedRow(rows); !strings.HasPrefix(got, "awesome-ai|command|broken-command.md|malformed: ingest.claude.load-command-failed:") {
+		t.Fatalf("malformed command row = %q, want it listed as a command\n%s", got, output)
+	}
+
+	output, err = executeCommand("list", "--kind", "command")
+	if err != nil {
+		t.Fatalf("expected list --kind command to succeed: %v\n%s", err, output)
+	}
+	_, rows = parseTable(t, output)
+	if malformedRow(rows) == "" {
+		t.Fatalf("list --kind command omitted the malformed command:\n%s", output)
+	}
+	output, err = executeCommand("list", "--kind", "skill")
+	if err != nil {
+		t.Fatalf("expected list --kind skill to succeed: %v\n%s", err, output)
+	}
+	_, rows = parseTable(t, output)
+	if got := malformedRow(rows); got != "" {
+		t.Fatalf("list --kind skill included the malformed command: %q", got)
+	}
+
+	// An unclassified malformed entry, such as a registry-level audit
+	// diagnostic, stays visible under every kind filter.
+	filtered := filterListRowsByKind([]listRow{
+		{Kind: "skill", Name: "demo"},
+		{Kind: "command", Name: "deploy.md"},
+		{Kind: "unknown", Name: "ingest.factory.unconsumed-config"},
+	}, "skill")
+	if len(filtered) != 2 || filtered[0].Name != "demo" || filtered[1].Name != "ingest.factory.unconsumed-config" {
+		t.Fatalf("list --kind skill kept %+v, want the skill and the unclassified entry", filtered)
+	}
+}
+
 func TestListCommandShowsDriftFooterWhenOutOfSync(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

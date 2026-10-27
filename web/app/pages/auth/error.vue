@@ -53,7 +53,7 @@ useHead(computed(() => ({
   max-width: 34rem;
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius);
-  background: var(--ui-bg-elevated);
+  background: var(--ui-bg);
   overflow: hidden;
 }
 
@@ -77,10 +77,7 @@ useHead(computed(() => ({
 
 .auth-error-title {
   margin: 0 0 1rem;
-  font-family: Georgia, 'Times New Roman', serif;
-  font-size: clamp(1.5rem, 4vw, 1.875rem);
-  font-weight: 600;
-  line-height: 1.25;
+  font: var(--am-marketplace-font-title);
   color: var(--ui-text-highlighted);
 }
 

@@ -224,7 +224,7 @@ func TestV4SourceFlagsRemainUsable(t *testing.T) {
 		t.Fatalf("list source flag control: %v\n%s", err, output)
 	}
 	for _, name := range []string{"review", "keep"} {
-		if output, err := executeCommand("install", name, "--from", url, "--ref", "main", "--path", "component"); err != nil {
+		if output, err := executeCommand("install", "--scope", "repo", name, "--from", url, "--ref", "main", "--path", "component"); err != nil {
 			t.Fatalf("install %s source flags: %v\n%s", name, err, output)
 		}
 	}

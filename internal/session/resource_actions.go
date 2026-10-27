@@ -35,6 +35,12 @@ func RowToggleEligibility(r Row, busy, configInvalid bool) RowToggleDenial {
 	if configInvalid {
 		return RowToggleConfigInvalid
 	}
+	return RowToggleDenialFor(r)
+}
+
+// RowToggleDenialFor evaluates the guards that belong to the row itself, so
+// hints can follow what the row supports regardless of transient states.
+func RowToggleDenialFor(r Row) RowToggleDenial {
 	switch {
 	case r.IsMalformed:
 		return RowToggleMalformed

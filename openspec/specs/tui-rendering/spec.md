@@ -48,11 +48,16 @@ Every modal SHALL render in one frame whose width is bounded by the terminal, wi
 - **THEN** every modal line fits the terminal, the border is complete, and the file names of shortened paths remain visible
 
 ### Requirement: Editor handoff screen
-While an external config editor runs, the TUI SHALL show a screen on the alternate screen that names the file being edited, rather than the terminal contents from before the TUI started. After the editor exits the TUI SHALL leave that screen and resume.
+While an external config editor runs, the TUI SHALL show a screen on the alternate screen that names the file being edited, rather than the terminal contents from before the TUI started. After the editor exits the TUI SHALL leave that screen and resume. When the editor exits successfully the TUI SHALL reload the configuration without further input. When it exits with a failure the TUI SHALL report the failure with editor recovery guidance and SHALL NOT write the file itself; changes the editor saved before failing appear after the user reloads with `r`. Either way, later configuration writes in the same session SHALL be accepted.
 
 #### Scenario: Editor running
 - **WHEN** a user opens a config layer in an external editor
 - **THEN** the terminal shows the waiting screen naming the file until the editor exits, and the pre-launch screen is not shown
+
+#### Scenario: Editor exit reloads and frees writes
+- **WHEN** the external editor saves a configuration change and exits, or exits with a failure
+- **THEN** a successful exit MUST show the edited configuration without the user pressing reload, and a failed exit MUST be reported as an error with editor recovery guidance without the TUI writing the file
+- **AND** a configuration write the user makes afterwards MUST be applied rather than refused
 
 ### Requirement: Scope-prefixed registry-qualified resource labels
 
@@ -82,3 +87,31 @@ Source and Kind sections and their nesting SHALL render within supported dimensi
 
 - **WHEN** each grouping and either new modal renders at minimum and common terminal sizes with long Unicode or hostile source labels, paths, and filters
 - **THEN** rendered output SHALL fit physical bounds, hostile controls SHALL be escaped, nested sections and resource scope columns SHALL remain readable, and required modal actions SHALL remain reachable
+
+### Requirement: Malformed rows keep their registry
+
+A malformed resource row SHALL carry the registry metadata of the configured
+source whose catalog reported it, so its label uses that registry's display
+name like any other row, its detail names the registry, and same-named
+malformed resources from different sources remain distinct rows with distinct
+identities. Only a malformed resource whose catalog matches no configured
+source SHALL fall back to the `(local)` prefix.
+
+#### Scenario: Malformed rows name their registry
+
+- **WHEN** a configured Git source reports a malformed resource, and another
+  source reports a malformed resource with the same name
+- **THEN** each row MUST be labelled with its own registry's display name
+  rather than `(local)`, and the two rows MUST have distinct identities
+- **AND** a malformed resource from a catalog with no configured source MUST
+  still be labelled `(local)`
+
+### Requirement: Malformed rows show their kind
+
+A malformed TUI row SHALL show the kind its failed load was for in its label and detail, and SHALL show `unknown` when the failure was not classified by kind.
+
+#### Scenario: Malformed rows show their kind
+
+- **WHEN** a registry reports a malformed command and an unclassified malformed entry
+- **THEN** the command's row MUST be labelled `command <registry>/<name>`, and its detail MUST show `Kind: command`
+- **AND** the unclassified entry MUST be labelled with kind `unknown`

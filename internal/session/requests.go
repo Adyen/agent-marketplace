@@ -9,24 +9,26 @@ type RequestKind string
 type RequestGeneration uint64
 
 const (
-	RequestDetail    RequestKind = "detail"
-	RequestSnapshot  RequestKind = "snapshot"
-	RequestDiscovery RequestKind = "marketplace-discovery"
+	RequestDetail         RequestKind = "detail"
+	RequestSnapshot       RequestKind = "snapshot"
+	RequestDiscovery      RequestKind = "marketplace-discovery"
+	RequestInstallPreview RequestKind = "install-source-preview"
 )
 
 // RequestState tracks the newest issued generation per request kind. The
 // fields are exported so host adapters and their fixtures can construct a
 // specific state directly.
 type RequestState struct {
-	Next      RequestGeneration
-	Detail    RequestGeneration
-	Snapshot  RequestGeneration
-	Discovery RequestGeneration
+	Next           RequestGeneration
+	Detail         RequestGeneration
+	Snapshot       RequestGeneration
+	Discovery      RequestGeneration
+	InstallPreview RequestGeneration
 }
 
 func (r *RequestState) Begin(kind RequestKind) RequestGeneration {
 	switch kind {
-	case RequestDetail, RequestSnapshot, RequestDiscovery:
+	case RequestDetail, RequestSnapshot, RequestDiscovery, RequestInstallPreview:
 	default:
 		return 0
 	}
@@ -39,6 +41,8 @@ func (r *RequestState) Begin(kind RequestKind) RequestGeneration {
 		r.Snapshot = r.Next
 	case RequestDiscovery:
 		r.Discovery = r.Next
+	case RequestInstallPreview:
+		r.InstallPreview = r.Next
 	}
 	return r.Next
 }
@@ -51,6 +55,8 @@ func (r RequestState) Active(kind RequestKind) RequestGeneration {
 		return r.Snapshot
 	case RequestDiscovery:
 		return r.Discovery
+	case RequestInstallPreview:
+		return r.InstallPreview
 	default:
 		return 0
 	}
@@ -65,6 +71,8 @@ func (r *RequestState) Cancel(kind RequestKind) RequestGeneration {
 		r.Snapshot = 0
 	case RequestDiscovery:
 		r.Discovery = 0
+	case RequestInstallPreview:
+		r.InstallPreview = 0
 	}
 	return generation
 }

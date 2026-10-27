@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -26,6 +27,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
+// spec: command-error-output/a-marketplace-endpoint-missing-from-the-lock-names-the-command-that-records-it
 func TestWritingCommandsCreateMissingV4MarketplaceLock(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -51,12 +53,39 @@ sources:
   hosted: {marketplace: `+server.URL+`}
 resources:
   hosted: {include: [tools/skill/review]}
-`)
+				`)
 				before, err := os.ReadFile(configPath)
 				if err != nil {
 					t.Fatal(err)
 				}
 				withWorkingDir(t, repo)
+				if command == "sync" && scope == lockfile.ScopeRepo {
+					output, err := executeCommand("doctor")
+					if err != nil {
+						t.Fatalf("doctor: %v\n%s", err, output)
+					}
+					if !strings.Contains(output, "v4.marketplace-lock-required") {
+						t.Fatalf("doctor did not report the missing Marketplace lock:\n%s", output)
+					}
+					start := strings.Index(output, "hint: ")
+					if start < 0 {
+						t.Fatalf("doctor did not print a lock-bootstrap hint:\n%s", output)
+					}
+					end := strings.IndexByte(output[start:], '\n')
+					hint := output[start:]
+					if end >= 0 {
+						hint = hint[:end]
+					}
+					for _, want := range []string{
+						"Run `agent-marketplace sync` while online",
+						"(not with `--check`, `--locked`, or `--offline`)",
+						"to add selected Marketplace resources to .agents/lock.yaml, then commit .agents/lock.yaml.",
+					} {
+						if !strings.Contains(hint, want) {
+							t.Fatalf("missing-lock hint lacks %q: %s", want, hint)
+						}
+					}
+				}
 
 				output, err := executeCommand(command)
 				if err != nil {
@@ -86,6 +115,619 @@ resources:
 			})
 		}
 	}
+}
+
+// spec: deployed-acquisition-locks/writing-sync-adds-a-missing-selected-resource-and-keeps-existing-pins
+// spec: command-error-output/a-resource-missing-from-the-lock-names-its-file-and-the-command-that-records-it
+func TestSyncAddsMissingSelectedMarketplaceResourceAndPreservesExistingPins(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	fixture := newMissingMarketplaceResourceFixture(t)
+	document := readLockDocument(t, fixture.lockPath)
+	oldPin := marketplaceLockResourceByName(t, document, "review")
+
+	output, err := executeCommand("doctor")
+	if err != nil {
+		t.Fatalf("doctor: %v\n%s", err, output)
+	}
+	for _, want := range []string{
+		"v4.marketplace-lock-mismatch",
+		fixture.configPath + ":6:",
+		"agent-marketplace sync",
+		"while online",
+		"commit .agents/lock.yaml",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("doctor output missing %q:\n%s", want, output)
+		}
+	}
+
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("following the hint failed: %v\n%s", err, output)
+	}
+	output, err = executeCommand("doctor")
+	if err != nil || strings.Contains(output, "v4.marketplace-lock-mismatch") {
+		t.Fatalf("doctor still reports the lock mismatch after sync: %v\n%s", err, output)
+	}
+	repaired := readLockDocument(t, fixture.lockPath)
+	gotOld := marketplaceLockResourceByName(t, repaired, "review")
+	if !reflect.DeepEqual(gotOld, oldPin) {
+		t.Fatalf("sync changed the existing pin:\ngot:  %#v\nwant: %#v", gotOld, oldPin)
+	}
+	if _, ok := marketplaceLockResource(repaired, "second"); !ok {
+		t.Fatalf("sync did not add the missing selected resource: %#v", repaired.Marketplaces)
+	}
+}
+
+// spec: deployed-acquisition-locks/writing-sync-adds-a-missing-selected-resource-and-keeps-existing-pins
+func TestSyncRecordsMissingResourceAfterUnrecordedResourceFreeMarketplace(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+
+	resourceFree := newV4MarketplaceLockServer(t)
+	defer resourceFree.Close()
+	selected := newV4MarketplaceServerWithResources(t, "selected", []string{"review", "second"}, false, nil, nil)
+	defer selected.Close()
+
+	repo := t.TempDir()
+	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  b: {marketplace: "+selected.URL+"}\nresources:\n  b: {include: [tools/skill/review]}\n")
+	withWorkingDir(t, repo)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync: %v\n%s", err, output)
+	}
+
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  a: {marketplace: "+resourceFree.URL+"}\n  b: {marketplace: "+selected.URL+"}\nresources:\n  b: {include: [tools/skill/review, tools/skill/second]}\n")
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("sync after adding an unrecorded registration: %v\n%s", err, output)
+	}
+	document := readLockDocument(t, lockPath)
+	marketplaceLockResourceByURL(t, document, selected.URL, "second")
+}
+
+// spec: deployed-acquisition-locks/writing-sync-adds-a-missing-selected-resource-and-keeps-existing-pins
+func TestSyncRepinsCollectionAndRefreshesExistingMemberEdges(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	server, revisionA, revisionB := newRevisionedV4MarketplaceServer(t, "mp", "bundle", "review", "direct")
+	defer server.Close()
+
+	repo := t.TempDir()
+	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {marketplace: "+server.URL+"}\nresources:\n  hosted:\n    include:\n      - tools/collection/bundle:\n          revision: "+revisionA+"\n")
+	withWorkingDir(t, repo)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync: %v\n%s", err, output)
+	}
+	before := readLockDocument(t, lockPath)
+	oldMember := marketplaceLockResourceByURL(t, before, server.URL, "review")
+	if len(oldMember.SelectedBy) != 1 || oldMember.SelectedBy[0].Revision.String() != revisionA {
+		t.Fatalf("initial member selection = %#v, want bundle@%s", oldMember.SelectedBy, revisionA)
+	}
+
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {marketplace: "+server.URL+"}\nresources:\n  hosted:\n    include:\n      - tools/collection/bundle:\n          revision: "+revisionB+"\n      - tools/skill/direct\n")
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("sync with an explicit collection re-pin and missing direct resource: %v\n%s", err, output)
+	}
+	after := readLockDocument(t, lockPath)
+	if err := lockfile.Validate(after); err != nil {
+		t.Fatalf("updated acquisition lock is invalid: %v", err)
+	}
+	collection := marketplaceLockResourceByURL(t, after, server.URL, "bundle")
+	if collection.Revision != revisionB {
+		t.Fatalf("collection revision = %q, want explicit revision %q", collection.Revision, revisionB)
+	}
+	member := marketplaceLockResourceByURL(t, after, server.URL, "review")
+	if member.Revision != oldMember.Revision || member.ContentDigest != oldMember.ContentDigest || member.ArchiveDigest != oldMember.ArchiveDigest {
+		t.Fatalf("existing member pin changed:\ngot:  %#v\nwant: %#v", member, oldMember)
+	}
+	if len(member.SelectedBy) != 1 || member.SelectedBy[0].RegistryID != "src" ||
+		member.SelectedBy[0].Name != "bundle" || member.SelectedBy[0].Revision.String() != revisionB {
+		t.Fatalf("member selection = %#v, want bundle@%s", member.SelectedBy, revisionB)
+	}
+	marketplaceLockResourceByURL(t, after, server.URL, "direct")
+}
+
+// spec: command-error-output/a-resource-missing-from-the-lock-names-its-file-and-the-command-that-records-it
+func TestMarketplaceLockMismatchHintRepairsEmptyResourceLockWithSync(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	server := newV4MarketplaceLockServer(t)
+	defer server.Close()
+
+	repo := t.TempDir()
+	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	writeConfig(t, configPath, `apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  hosted: {marketplace: `+server.URL+`}
+resources:
+  hosted: {include: [tools/skill/review]}
+`)
+	withWorkingDir(t, repo)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync: %v\n%s", err, output)
+	}
+
+	document := readLockDocument(t, lockPath)
+	document.Marketplaces[0].Resources = nil
+	encoded, err := lockfile.Encode(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lockPath, encoded, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output, err := executeCommand("doctor")
+	if err != nil {
+		t.Fatalf("doctor: %v\n%s", err, output)
+	}
+	for _, want := range []string{
+		"v4.marketplace-lock-mismatch",
+		configPath + ":6:",
+		"agent-marketplace sync",
+		"while online",
+		"commit .agents/lock.yaml",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("doctor output missing %q:\n%s", want, output)
+		}
+	}
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("following the hint failed: %v\n%s", err, output)
+	}
+	output, err = executeCommand("doctor")
+	if err != nil || strings.Contains(output, "v4.marketplace-lock-mismatch") {
+		t.Fatalf("doctor still reports the lock mismatch after sync: %v\n%s", err, output)
+	}
+	repaired := readLockDocument(t, lockPath)
+	if len(repaired.Marketplaces) != 1 || len(repaired.Marketplaces[0].Resources) != 1 ||
+		repaired.Marketplaces[0].Resources[0].Name != "review" {
+		t.Fatalf("sync did not restore the selected resource to the lock: %#v", repaired.Marketplaces)
+	}
+}
+
+func TestLockAddsMissingSelectedMarketplaceResourceAndPreservesExistingPins(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	fixture := newMissingMarketplaceResourceFixture(t)
+	current := readLockDocument(t, fixture.lockPath)
+	oldPin := marketplaceLockResourceByName(t, current, "review")
+
+	if output, err := executeCommand("lock"); err != nil {
+		t.Fatalf("lock: %v\n%s", err, output)
+	}
+	updated := readLockDocument(t, fixture.lockPath)
+	gotOld := marketplaceLockResourceByName(t, updated, "review")
+	if !reflect.DeepEqual(gotOld, oldPin) {
+		t.Fatalf("lock changed the existing pin:\ngot:  %#v\nwant: %#v", gotOld, oldPin)
+	}
+	if _, ok := marketplaceLockResource(updated, "second"); !ok {
+		t.Fatalf("lock did not add the missing selected resource: %#v", updated.Marketplaces)
+	}
+	output, err := executeCommand("doctor")
+	if err != nil || strings.Contains(output, "v4.marketplace-lock-mismatch") {
+		t.Fatalf("doctor still reports the lock mismatch after lock: %v\n%s", err, output)
+	}
+}
+
+// spec: deployed-acquisition-locks/writing-sync-adds-a-missing-selected-resource-and-keeps-existing-pins
+func TestBootstrapAddsMissingSelectedMarketplaceResourceAndPreservesExistingPins(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	fixture := newMissingMarketplaceResourceFixture(t)
+	before := readLockDocument(t, fixture.lockPath)
+	oldPin := marketplaceLockResourceByName(t, before, "review")
+	changed, err := lifecycle.BootstrapMissingMarketplaceLocks(
+		context.Background(),
+		fixture.repoRoot,
+		fixture.repoRoot,
+		map[lockfile.Scope]bool{lockfile.ScopeRepo: true},
+		nil,
+	)
+	if err != nil || changed != 1 {
+		t.Fatalf("bootstrap changes = %d, %v; want one lock write", changed, err)
+	}
+	after := readLockDocument(t, fixture.lockPath)
+	if got := marketplaceLockResourceByName(t, after, "review"); !reflect.DeepEqual(got, oldPin) {
+		t.Fatalf("bootstrap changed the existing pin:\ngot:  %#v\nwant: %#v", got, oldPin)
+	}
+	if _, ok := marketplaceLockResource(after, "second"); !ok {
+		t.Fatalf("bootstrap did not add the selected resource: %#v", after.Marketplaces)
+	}
+}
+
+// spec: deployed-acquisition-locks/writing-sync-adds-a-missing-selected-resource-and-keeps-existing-pins
+func TestMarketplaceLockBootstrapKeepsOtherRecordsExact(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	revisionDigest := lockfile.Digest("sha256:" + strings.Repeat("a", 64))
+	archiveDigest := lockfile.Digest("sha256:" + strings.Repeat("b", 64))
+	existingResource := lockfile.MarketplaceResourceLock{
+		RegistryName: "tools", RegistryID: "src", Kind: "skill", Name: "keep",
+		Revision: "revision-old", ContentDigest: revisionDigest, ArchiveDigest: archiveDigest,
+		Acquisition: lockfile.MarketplaceAcquisitionMirror,
+	}
+	otherResource := existingResource
+	otherResource.RegistryName = "other-tools"
+	otherResource.RegistryID = "other-src"
+	otherResource.Name = "other"
+	current := lockfile.Document{
+		APIVersion: lockfile.APIVersionV2,
+		Scope:      lockfile.ScopeRepo,
+		Registries: []lockfile.GitRegistry{reviewBindingRegistry(t)},
+		Marketplaces: []lockfile.MarketplaceLock{
+			{
+				URL: "https://market.example", InstanceID: "market-id",
+				RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: "tools", RegistryID: "src"}},
+				Resources:        []lockfile.MarketplaceResourceLock{existingResource},
+			},
+			{
+				URL: "https://other.example", InstanceID: "other-id",
+				RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: "other-tools", RegistryID: "other-src"}},
+				Resources:        []lockfile.MarketplaceResourceLock{otherResource},
+			},
+		},
+	}
+	freshExisting := existingResource
+	freshExisting.Revision = "revision-new"
+	freshExisting.ContentDigest = lockfile.Digest("sha256:" + strings.Repeat("c", 64))
+	freshExisting.ArchiveDigest = lockfile.Digest("sha256:" + strings.Repeat("d", 64))
+	missingResource := lockfile.MarketplaceResourceLock{
+		RegistryName: "tools", RegistryID: "src", Kind: "skill", Name: "new",
+		Revision: "revision-new", ContentDigest: lockfile.Digest("sha256:" + strings.Repeat("e", 64)),
+		ArchiveDigest: lockfile.Digest("sha256:" + strings.Repeat("f", 64)),
+		Acquisition:   lockfile.MarketplaceAcquisitionMirror,
+	}
+	resolved := lockfile.Document{
+		APIVersion: lockfile.APIVersionV2,
+		Scope:      lockfile.ScopeRepo,
+		Marketplaces: []lockfile.MarketplaceLock{{
+			URL: "https://market.example", InstanceID: "market-id",
+			RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: "tools", RegistryID: "src"}},
+			Resources:        []lockfile.MarketplaceResourceLock{freshExisting, missingResource},
+		}},
+	}
+	normalizedCurrent, err := lockfile.Normalize(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current = normalizedCurrent
+
+	merged, err := lifecycle.MergeMissingMarketplaceRecords(config.LayerIntent{}, current, resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(merged.Registries, current.Registries) {
+		t.Fatalf("Git lock records changed: %#v", merged.Registries)
+	}
+	if got := marketplaceLockResourceByURL(t, merged, "https://market.example", "keep"); !reflect.DeepEqual(got, existingResource) {
+		t.Fatalf("existing Marketplace pin changed: %#v, want %#v", got, existingResource)
+	}
+	if got := marketplaceLockResourceByURL(t, merged, "https://other.example", "other"); !reflect.DeepEqual(got, otherResource) {
+		t.Fatalf("other Marketplace record changed: %#v, want %#v", got, otherResource)
+	}
+	if _, ok := marketplaceLockResource(merged, "new"); !ok {
+		t.Fatalf("missing Marketplace resource was not added: %#v", merged.Marketplaces)
+	}
+
+	repo := t.TempDir()
+	explicitRevision := "sha256:" + strings.Repeat("9", 64)
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources:
+  hosted: {marketplace: https://market.example}
+resources:
+  hosted:
+    include:
+      - tools/skill/keep:
+          revision: `+explicitRevision+`
+`)
+	intent := config.ReadIntent(context.Background(), config.LoadEffectiveOptions{RepoRoot: repo, LocalConfigDir: repo})
+	explicitPin := existingResource
+	explicitPin.Revision = explicitRevision
+	explicitPin.ContentDigest = lockfile.Digest(explicitRevision)
+	explicitPin.ArchiveDigest = lockfile.Digest("sha256:" + strings.Repeat("8", 64))
+	resolvedExplicit := lockfile.Document{
+		APIVersion: lockfile.APIVersionV2,
+		Scope:      lockfile.ScopeRepo,
+		Marketplaces: []lockfile.MarketplaceLock{{
+			URL: "https://market.example", InstanceID: "market-id",
+			RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: "tools", RegistryID: "src"}},
+			Resources:        []lockfile.MarketplaceResourceLock{explicitPin},
+		}},
+	}
+	explicitMerged, err := lifecycle.MergeMissingMarketplaceRecords(intent.Layers[config.RepoCommitted], current, resolvedExplicit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := marketplaceLockResourceByURL(t, explicitMerged, "https://market.example", "keep"); got.Revision != explicitRevision {
+		t.Fatalf("explicit revision request kept old pin %q, want %q", got.Revision, explicitRevision)
+	}
+	if got := marketplaceLockResourceByURL(t, explicitMerged, "https://other.example", "other"); !reflect.DeepEqual(got, otherResource) {
+		t.Fatalf("explicit revision changed another Marketplace record: %#v", got)
+	}
+
+	t.Run("new member edges match the kept collection revision", func(t *testing.T) {
+		oldCollectionDigest := lockfile.Digest("sha256:" + strings.Repeat("1", 64))
+		resolvedCollectionDigest := lockfile.Digest("sha256:" + strings.Repeat("2", 64))
+		oldCollection := lockfile.MarketplaceResourceLock{
+			RegistryName: "tools", RegistryID: "src", Kind: "collection", Name: "bundle",
+			Revision: string(oldCollectionDigest), ContentDigest: oldCollectionDigest,
+			CollectionManifestDigest: oldCollectionDigest, Acquisition: lockfile.MarketplaceAcquisitionMirror,
+		}
+		resolvedCollection := oldCollection
+		resolvedCollection.Revision = string(resolvedCollectionDigest)
+		resolvedCollection.ContentDigest = resolvedCollectionDigest
+		resolvedCollection.CollectionManifestDigest = resolvedCollectionDigest
+		member := lockfile.MarketplaceResourceLock{
+			RegistryName: "tools", RegistryID: "src", Kind: "skill", Name: "member",
+			Revision: "member-revision", ContentDigest: lockfile.Digest("sha256:" + strings.Repeat("3", 64)),
+			ArchiveDigest: lockfile.Digest("sha256:" + strings.Repeat("4", 64)),
+			Acquisition:   lockfile.MarketplaceAcquisitionMirror,
+			SelectedBy:    []lockfile.MarketplaceSelectionLock{{RegistryID: "src", Name: "bundle", Revision: resolvedCollectionDigest}},
+		}
+		indirectMember := member
+		indirectMember.Name = "only-in-new-bundle"
+		indirectMember.ContentDigest = lockfile.Digest("sha256:" + strings.Repeat("5", 64))
+		indirectMember.ArchiveDigest = lockfile.Digest("sha256:" + strings.Repeat("6", 64))
+		currentCollection := lockfile.Document{
+			APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeRepo,
+			Marketplaces: []lockfile.MarketplaceLock{{
+				URL: "https://market.example", InstanceID: "market-id",
+				RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: "tools", RegistryID: "src"}},
+				Resources:        []lockfile.MarketplaceResourceLock{oldCollection},
+			}},
+		}
+		resolvedCollectionDoc := lockfile.Document{
+			APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeRepo,
+			Marketplaces: []lockfile.MarketplaceLock{{
+				URL: "https://market.example", InstanceID: "market-id",
+				RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: "tools", RegistryID: "src"}},
+				Resources:        []lockfile.MarketplaceResourceLock{resolvedCollection, member, indirectMember},
+			}},
+		}
+		repo := t.TempDir()
+		writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources:
+  hosted: {marketplace: https://market.example}
+resources:
+  hosted:
+    include: [tools/collection/bundle, tools/skill/member]
+`)
+		intent := config.ReadIntent(context.Background(), config.LoadEffectiveOptions{RepoRoot: repo, LocalConfigDir: repo})
+		currentCollection, err := lockfile.Normalize(currentCollection)
+		if err != nil {
+			t.Fatal(err)
+		}
+		merged, err := lifecycle.MergeMissingMarketplaceRecords(intent.Layers[config.RepoCommitted], currentCollection, resolvedCollectionDoc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := lockfile.Validate(merged); err != nil {
+			t.Fatalf("merged lock is invalid: %v", err)
+		}
+		gotCollection := marketplaceLockResourceByURL(t, merged, "https://market.example", "bundle")
+		if !reflect.DeepEqual(gotCollection, oldCollection) {
+			t.Fatalf("existing collection pin changed: %#v, want %#v", gotCollection, oldCollection)
+		}
+		gotMember := marketplaceLockResourceByURL(t, merged, "https://market.example", "member")
+		if len(gotMember.SelectedBy) != 0 {
+			t.Fatalf("new member kept an edge to the unresolved collection revision: %#v", gotMember.SelectedBy)
+		}
+		if _, ok := marketplaceLockResource(merged, "only-in-new-bundle"); ok {
+			t.Fatalf("unselected member from the changed collection revision was added to the lock: %#v", merged.Marketplaces)
+		}
+	})
+}
+
+// spec: command-error-output/a-resource-missing-from-the-lock-names-its-file-and-the-command-that-records-it
+func TestMarketplaceLockMismatchDiagnosticOutput(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	repo := t.TempDir()
+	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	writeConfig(t, configPath, `apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  hosted: {marketplace: https://marketplace.example}
+resources:
+  hosted: {include: [awesome-ai/collection/coderabbit-skills]}
+`)
+	lockBytes, err := lockfile.Encode(lockfile.Document{
+		APIVersion: lockfile.APIVersionV2,
+		Scope:      lockfile.ScopeRepo,
+		Marketplaces: []lockfile.MarketplaceLock{{
+			URL: "https://marketplace.example", InstanceID: "market-id",
+			RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: "awesome-ai", RegistryID: "awesome-ai"}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lockPath, lockBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withWorkingDir(t, repo)
+
+	doctorOutput, doctorErr := executeCommand("doctor")
+	if doctorErr != nil {
+		t.Fatalf("doctor: %v\n%s", doctorErr, doctorOutput)
+	}
+	wantErrorLine := "v4.marketplace-lock-mismatch: " + configPath +
+		`:6: resource "awesome-ai/collection/coderabbit-skills" is missing from the lock file .agents/lock.yaml`
+	wantDoctorErrorLine := "error: " + wantErrorLine
+	wantHintLine := `hint: Run ` + "`agent-marketplace sync`" +
+		` while online (not with ` + "`--check`" + `, ` + "`--locked`" + `, or ` + "`--offline`" +
+		`) to add "awesome-ai/collection/coderabbit-skills" to .agents/lock.yaml, then commit .agents/lock.yaml.`
+	hasExactLine := func(output, want string) bool {
+		for _, line := range strings.Split(output, "\n") {
+			if line == want {
+				return true
+			}
+		}
+		return false
+	}
+	for _, want := range []string{
+		wantDoctorErrorLine,
+		wantHintLine,
+	} {
+		if !hasExactLine(doctorOutput, want) {
+			t.Fatalf("doctor output missing %q:\n%s", want, doctorOutput)
+		}
+	}
+
+	checkOutput, checkErr := executeCommand("sync", "--check")
+	if checkErr == nil || !strings.Contains(checkOutput, "v4.marketplace-lock-mismatch") {
+		t.Fatalf("sync --check did not keep reporting the missing lock resource: %v\n%s", checkErr, checkOutput)
+	}
+	if !hasExactLine(checkOutput, "Error: lock.change-required: "+wantErrorLine) ||
+		!hasExactLine(checkOutput, wantHintLine) {
+		t.Fatalf("sync --check output lacks the expected error and hint lines:\n%s", checkOutput)
+	}
+	if strings.Contains(checkOutput, `lock ""`) {
+		t.Fatalf("sync --check output contains an empty lock context:\n%s", checkOutput)
+	}
+	var lockViewErr *pipeline.LockViewError
+	var validationErr *config.V4ValidationError
+	if !errors.As(checkErr, &lockViewErr) || lockViewErr.Code != "lock.change-required" ||
+		!errors.As(checkErr, &validationErr) || validationErr.Code != "v4.marketplace-lock-mismatch" ||
+		!errors.Is(checkErr, validationErr) {
+		t.Fatalf("sync --check error identity changed: %#v", checkErr)
+	}
+}
+
+// spec: deployed-acquisition-locks/read-only-modes-leave-a-missing-resource-record-unwritten
+func TestReadOnlyModesLeaveMissingMarketplaceResourceUnwritten(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, args := range [][]string{
+		{"sync", "--check"},
+		{"sync", "--locked"},
+		{"sync", "--offline"},
+		{"doctor"},
+	} {
+		t.Run(strings.Join(args, "/"), func(t *testing.T) {
+			fixture := newMissingMarketplaceResourceFixture(t)
+			before, err := os.ReadFile(fixture.lockPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			requests := fixture.requests.Load()
+
+			output, err := executeCommand(args...)
+			if !strings.Contains(output, "v4.marketplace-lock-mismatch") {
+				t.Fatalf("%v did not report v4.marketplace-lock-mismatch: %v\n%s", args, err, output)
+			}
+			after, readErr := os.ReadFile(fixture.lockPath)
+			if readErr != nil || !bytes.Equal(after, before) {
+				t.Fatalf("%v changed the lock: %v\nbefore:\n%s\nafter:\n%s", args, readErr, before, after)
+			}
+			if got := fixture.requests.Load(); got != requests {
+				t.Fatalf("%v fetched the Marketplace endpoint: requests %d -> %d", args, requests, got)
+			}
+		})
+	}
+}
+
+type missingMarketplaceResourceFixture struct {
+	repoRoot   string
+	configPath string
+	lockPath   string
+	requests   *atomic.Int32
+}
+
+func newMissingMarketplaceResourceFixture(t *testing.T) missingMarketplaceResourceFixture {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	requests := &atomic.Int32{}
+	server := newV4MarketplaceServerWithResources(t, "mp", []string{"review", "second"}, false, func() {
+		requests.Add(1)
+	}, nil)
+	t.Cleanup(server.Close)
+
+	repo := t.TempDir()
+	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	writeMissingMarketplaceResourcesConfig(t, configPath, server.URL, []string{"tools/skill/review"})
+	withWorkingDir(t, repo)
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync: %v\n%s", err, output)
+	}
+	writeMissingMarketplaceResourcesConfig(t, configPath, server.URL, []string{"tools/skill/review", "tools/skill/second"})
+	return missingMarketplaceResourceFixture{repoRoot: repo, configPath: configPath, lockPath: lockPath, requests: requests}
+}
+
+func writeMissingMarketplaceResourcesConfig(t *testing.T, configPath, endpoint string, resources []string) {
+	t.Helper()
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {marketplace: "+endpoint+"}\nresources:\n  hosted: {include: ["+strings.Join(resources, ", ")+"]}\n")
+}
+
+func marketplaceLockResourceByName(t testing.TB, document lockfile.Document, name string) lockfile.MarketplaceResourceLock {
+	t.Helper()
+	resource, ok := marketplaceLockResource(document, name)
+	if !ok {
+		t.Fatalf("resource %q is missing from lock document: %#v", name, document.Marketplaces)
+	}
+	return resource
+}
+
+func marketplaceLockResource(document lockfile.Document, name string) (lockfile.MarketplaceResourceLock, bool) {
+	for _, marketplace := range document.Marketplaces {
+		for _, resource := range marketplace.Resources {
+			if resource.Name == name {
+				return resource, true
+			}
+		}
+	}
+	return lockfile.MarketplaceResourceLock{}, false
+}
+
+func marketplaceLockResourceByURL(t *testing.T, document lockfile.Document, endpoint, name string) lockfile.MarketplaceResourceLock {
+	t.Helper()
+	for _, marketplace := range document.Marketplaces {
+		if marketplace.URL != endpoint {
+			continue
+		}
+		for _, resource := range marketplace.Resources {
+			if resource.Name == name {
+				return resource
+			}
+		}
+	}
+	t.Fatalf("resource %q at %q is missing from lock %#v", name, endpoint, document.Marketplaces)
+	return lockfile.MarketplaceResourceLock{}
 }
 
 func TestSyncBootstrapsWritableMarketplaceLockWithTransientOrganizationMarketplace(t *testing.T) {
@@ -177,7 +819,7 @@ sources:
 `)
 	withWorkingDir(t, repo)
 
-	output, err := executeCommand("install", "git-review")
+	output, err := executeCommand("install", "--scope", "repo", "git-review")
 	if err != nil {
 		t.Fatalf("install: %v\n%s", err, output)
 	}
@@ -226,7 +868,7 @@ sources:
 	repo := t.TempDir()
 	withWorkingDir(t, repo)
 
-	output, err := executeCommand("install", "tools/skill/target-review", "--marketplace", "target", "--yes")
+	output, err := executeCommand("install", "--scope", "repo", "tools/skill/target-review", "--marketplace", "target", "--yes")
 	if err != nil {
 		t.Fatalf("Marketplace install: %v\n%s", err, output)
 	}
@@ -1284,6 +1926,118 @@ func TestLockCreatesMissingEndpointOnlyV4MarketplaceLock(t *testing.T) {
 	}
 }
 
+func newRevisionedV4MarketplaceServer(t testing.TB, instanceID, collectionName, memberName, directName string) (*httptest.Server, string, string) {
+	t.Helper()
+	type servedResource struct {
+		raw      []byte
+		revision store.AssessedResourceRevision
+	}
+	resources := make(map[string]servedResource, 2)
+	for _, name := range []string{memberName, directName} {
+		canonical, err := hccartifact.FromIR(ir.NewSkill(name, "Review", "Review carefully.", nil, nil, ir.SourceRef{}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		canonical.Manifest.RegistryID = "src"
+		canonical.Manifest.RegistrySlug = "tools"
+		raw, archiveDigest, err := hccartifact.Encode(canonical)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resources[name] = servedResource{
+			raw: raw,
+			revision: testAssessedMarketplaceRevision(t, store.ResourceRevision{
+				Coordinate:    store.ResourceCoordinate{Marketplace: store.MarketplaceID(instanceID), Registry: "src", Kind: "skill", Name: name},
+				ContentDigest: store.RevisionDigest(canonical.Manifest.ContentDigest),
+				ArchiveDigest: store.ArchiveDigest(archiveDigest),
+			}),
+		}
+	}
+	memberDigest := string(resources[memberName].revision.ContentDigest)
+	manifests := make(map[string][]byte, 2)
+	collectionRevisions := make(map[string]store.AssessedResourceRevision, 2)
+	var revisionA, revisionB string
+	for i, version := range []string{"first", "second"} {
+		payload, digest, err := hccartifact.EncodeCollectionManifest(hccartifact.CollectionManifest{
+			SchemaVersion: hccartifact.CollectionSchemaV1,
+			Name:          collectionName,
+			Version:       version,
+			Members: []hccartifact.CollectionMemberEntry{{
+				Kind: "skill", Name: memberName, RegistryID: "src", Revision: memberDigest,
+			}},
+			SupportedSchemas: []string{hccartifact.CollectionSchemaV1},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		manifests[digest] = payload
+		collectionRevisions[digest] = testAssessedMarketplaceRevision(t, store.ResourceRevision{
+			Coordinate:    store.ResourceCoordinate{Marketplace: store.MarketplaceID(instanceID), Registry: "src", Kind: "collection", Name: collectionName},
+			ContentDigest: store.RevisionDigest(digest),
+		})
+		if i == 0 {
+			revisionA = digest
+		} else {
+			revisionB = digest
+		}
+	}
+	registry := mpapi.PublicRegistry{
+		ID: "src", Slug: "tools", Origins: []string{"https://example.com/tools.git"}, Ref: "main",
+		Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true,
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/.well-known/agent-marketplace.json":
+			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, "https://example.com"))
+		case r.URL.Path == "/api/v1/registries/tools" || r.URL.Path == "/api/v1/registries/src":
+			_ = json.NewEncoder(w).Encode(registry)
+		case strings.HasPrefix(r.URL.Path, "/api/v1/resources/tools/collection/"+collectionName+"/revisions/") ||
+			strings.HasPrefix(r.URL.Path, "/api/v1/resources/src/collection/"+collectionName+"/revisions/"):
+			digest := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+			if revision, ok := collectionRevisions[digest]; ok {
+				_ = json.NewEncoder(w).Encode(revision)
+				return
+			}
+			http.NotFound(w, r)
+		case r.URL.Path == "/api/v1/resources/tools/collection/"+collectionName ||
+			r.URL.Path == "/api/v1/resources/src/collection/"+collectionName:
+			_ = json.NewEncoder(w).Encode(collectionRevisions[revisionB])
+		case strings.HasPrefix(r.URL.Path, "/api/v1/resources/tools/skill/") ||
+			strings.HasPrefix(r.URL.Path, "/api/v1/resources/src/skill/"):
+			for name, resource := range resources {
+				prefix := "/api/v1/resources/tools/skill/" + name
+				if strings.HasPrefix(r.URL.Path, "/api/v1/resources/src/skill/") {
+					prefix = "/api/v1/resources/src/skill/" + name
+				}
+				if r.URL.Path == prefix || strings.HasPrefix(r.URL.Path, prefix+"/revisions/") {
+					_ = json.NewEncoder(w).Encode(resource.revision)
+					return
+				}
+			}
+			http.NotFound(w, r)
+		case strings.HasPrefix(r.URL.Path, "/api/v1/manifests/"):
+			if payload, ok := manifests[strings.TrimPrefix(r.URL.Path, "/api/v1/manifests/")]; ok {
+				_, _ = w.Write(payload)
+				return
+			}
+			http.NotFound(w, r)
+		case strings.HasPrefix(r.URL.Path, "/api/v1/archives/sha256/"):
+			digest := "sha256:" + strings.TrimPrefix(r.URL.Path, "/api/v1/archives/sha256/")
+			for _, resource := range resources {
+				if string(resource.revision.ArchiveDigest) == digest {
+					w.Header().Set("Content-Type", "application/vnd.agent-marketplace.artifact.v1.tar+gzip")
+					_, _ = w.Write(resource.raw)
+					return
+				}
+			}
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	return server, revisionA, revisionB
+}
+
 func newV4MarketplaceLockServer(t testing.TB) *httptest.Server {
 	return newV4MarketplaceLockServerWithHook(t, nil)
 }
@@ -1308,24 +2062,36 @@ func newV4MarketplaceLockServerWithOptions(t testing.TB, instanceID, resourceNam
 // well-known document advertise the test server's own address, which endpoint
 // installs require; the lock fixtures instead pin a fixed canonical URL.
 func newV4MarketplaceServer(t testing.TB, instanceID, resourceName string, selfCanonical bool, hook func(), mutate func(*store.AssessedResourceRevision)) *httptest.Server {
+	return newV4MarketplaceServerWithResources(t, instanceID, []string{resourceName}, selfCanonical, hook, mutate)
+}
+
+func newV4MarketplaceServerWithResources(t testing.TB, instanceID string, resourceNames []string, selfCanonical bool, hook func(), mutate func(*store.AssessedResourceRevision)) *httptest.Server {
 	t.Helper()
-	canonical, err := hccartifact.FromIR(ir.NewSkill(resourceName, "Review", "Review carefully.", nil, nil, ir.SourceRef{}))
-	if err != nil {
-		t.Fatal(err)
+	type servedResource struct {
+		raw      []byte
+		revision store.AssessedResourceRevision
 	}
-	canonical.Manifest.RegistryID = "src"
-	canonical.Manifest.RegistrySlug = "tools"
-	raw, archiveDigest, err := hccartifact.Encode(canonical)
-	if err != nil {
-		t.Fatal(err)
-	}
-	revision := testAssessedMarketplaceRevision(t, store.ResourceRevision{
-		Coordinate:    store.ResourceCoordinate{Marketplace: store.MarketplaceID(instanceID), Registry: "src", Kind: "skill", Name: resourceName},
-		ContentDigest: store.RevisionDigest(canonical.Manifest.ContentDigest),
-		ArchiveDigest: store.ArchiveDigest(archiveDigest),
-	})
-	if mutate != nil {
-		mutate(&revision)
+	resources := make(map[string]servedResource, len(resourceNames))
+	for _, resourceName := range resourceNames {
+		canonical, err := hccartifact.FromIR(ir.NewSkill(resourceName, "Review", "Review carefully.", nil, nil, ir.SourceRef{}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		canonical.Manifest.RegistryID = "src"
+		canonical.Manifest.RegistrySlug = "tools"
+		raw, archiveDigest, err := hccartifact.Encode(canonical)
+		if err != nil {
+			t.Fatal(err)
+		}
+		revision := testAssessedMarketplaceRevision(t, store.ResourceRevision{
+			Coordinate:    store.ResourceCoordinate{Marketplace: store.MarketplaceID(instanceID), Registry: "src", Kind: "skill", Name: resourceName},
+			ContentDigest: store.RevisionDigest(canonical.Manifest.ContentDigest),
+			ArchiveDigest: store.ArchiveDigest(archiveDigest),
+		})
+		if mutate != nil {
+			mutate(&revision)
+		}
+		resources[resourceName] = servedResource{raw: raw, revision: revision}
 	}
 	registry := mpapi.PublicRegistry{ID: "src", Slug: "tools", Origins: []string{"https://example.com/tools.git"}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true}
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1341,20 +2107,38 @@ func newV4MarketplaceServer(t testing.TB, instanceID, resourceName string, selfC
 			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, canonical))
 		case r.URL.Path == "/api/v1/registries/tools" || r.URL.Path == "/api/v1/registries/src":
 			_ = json.NewEncoder(w).Encode(registry)
-		case strings.HasPrefix(r.URL.Path, "/api/v1/resources/tools/skill/"+resourceName) || strings.HasPrefix(r.URL.Path, "/api/v1/resources/src/skill/"+resourceName):
-			_ = json.NewEncoder(w).Encode(revision)
+		case strings.HasPrefix(r.URL.Path, "/api/v1/resources/tools/skill/") || strings.HasPrefix(r.URL.Path, "/api/v1/resources/src/skill/"):
+			for name, resource := range resources {
+				if strings.HasSuffix(r.URL.Path, "/"+name) || strings.Contains(r.URL.Path, "/"+name+"/") {
+					_ = json.NewEncoder(w).Encode(resource.revision)
+					return
+				}
+			}
+			http.NotFound(w, r)
 		case strings.HasPrefix(r.URL.Path, "/api/v1/archives/sha256/"):
 			digest := "sha256:" + strings.TrimPrefix(r.URL.Path, "/api/v1/archives/sha256/")
-			placeholder, err := hccartifact.DerivePlaceholderArchive(raw, digest)
-			if digest != string(revision.ArchiveDigest) || err != nil {
-				http.NotFound(w, r)
-				return
+			for _, resource := range resources {
+				if digest != string(resource.revision.ArchiveDigest) {
+					continue
+				}
+				placeholder, err := hccartifact.DerivePlaceholderArchive(resource.raw, digest)
+				if err == nil {
+					w.Header().Set("Content-Type", "application/vnd.agent-marketplace.artifact.v1.tar+gzip")
+					_, _ = w.Write(placeholder)
+					return
+				}
 			}
-			w.Header().Set("Content-Type", "application/vnd.agent-marketplace.artifact.v1.tar+gzip")
-			_, _ = w.Write(placeholder)
+			http.NotFound(w, r)
 		case strings.HasPrefix(r.URL.Path, "/api/v1/artifacts/"):
-			w.Header().Set("Content-Type", "application/vnd.agent-marketplace.artifact.v1.tar+gzip")
-			_, _ = w.Write(raw)
+			for _, resource := range resources {
+				archivePath := strings.Replace(string(resource.revision.ArchiveDigest), ":", "/", 1)
+				if strings.HasSuffix(r.URL.Path, archivePath) {
+					w.Header().Set("Content-Type", "application/vnd.agent-marketplace.artifact.v1.tar+gzip")
+					_, _ = w.Write(resource.raw)
+					return
+				}
+			}
+			http.NotFound(w, r)
 		default:
 			http.NotFound(w, r)
 		}

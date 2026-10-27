@@ -23,13 +23,13 @@ import (
 func TestDependencyLifecycleCallbacksAreInvoked(t *testing.T) {
 	var syncCalls, updateCalls atomic.Int64
 	model := NewModel("/repo", "/home", WithDependencyLifecycle(DependencyLifecycle{
-		Sync: func(context.Context, pipeline.Workspace) ([]error, error) {
+		Sync: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
 			syncCalls.Add(1)
-			return nil, nil
+			return pipeline.SyncResult{}, nil
 		},
-		Update: func(context.Context, pipeline.Workspace) ([]error, error) {
+		Update: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
 			updateCalls.Add(1)
-			return nil, nil
+			return pipeline.SyncResult{}, nil
 		},
 	}))
 
@@ -61,9 +61,9 @@ func TestDependencyLifecycleReceivesModelWorkspace(t *testing.T) {
 	}
 	var gotRepo, gotLocal string
 	model := NewModel(repo, t.TempDir(), WithWorkspace(workspace), WithDependencyLifecycle(DependencyLifecycle{
-		Sync: func(_ context.Context, ws pipeline.Workspace) ([]error, error) {
+		Sync: func(_ context.Context, ws pipeline.Workspace) (pipeline.SyncResult, error) {
 			gotRepo, gotLocal = ws.RepoRoot(), ws.LocalConfigDir()
-			return nil, nil
+			return pipeline.SyncResult{}, nil
 		},
 	}))
 
@@ -78,9 +78,9 @@ func TestDependencyLifecycleReceivesModelWorkspace(t *testing.T) {
 func TestConfigMutationInvalidatesCleanDriftBeforeReload(t *testing.T) {
 	var syncCalls atomic.Int64
 	model := NewModel("/repo", "/home", WithDependencyLifecycle(DependencyLifecycle{
-		Sync: func(context.Context, pipeline.Workspace) ([]error, error) {
+		Sync: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
 			syncCalls.Add(1)
-			return nil, nil
+			return pipeline.SyncResult{}, nil
 		},
 	}))
 	model.loading = false
@@ -135,8 +135,12 @@ func TestDependencyLifecycleFailuresAreShownWithoutFallback(t *testing.T) {
 	t.Cleanup(func() { session.RunPipelineSync = previousSync })
 
 	model := NewModel("/repo", "/home", WithDependencyLifecycle(DependencyLifecycle{
-		Sync:   func(context.Context, pipeline.Workspace) ([]error, error) { return nil, failure },
-		Update: func(context.Context, pipeline.Workspace) ([]error, error) { return nil, failure },
+		Sync: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
+			return pipeline.SyncResult{}, failure
+		},
+		Update: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
+			return pipeline.SyncResult{}, failure
+		},
 	}))
 	model.syncing = true
 	updated, _ := model.Update(model.dependencySyncCmd()())
@@ -169,9 +173,9 @@ func TestDependencyLifecycleFailuresAreShownWithoutFallback(t *testing.T) {
 
 func TestInitDoesNotInvokeDependencyLifecycle(t *testing.T) {
 	var calls atomic.Int64
-	callback := func(context.Context, pipeline.Workspace) ([]error, error) {
+	callback := func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
 		calls.Add(1)
-		return nil, nil
+		return pipeline.SyncResult{}, nil
 	}
 	model := NewModel(t.TempDir(), t.TempDir(), WithDependencyLifecycle(DependencyLifecycle{Sync: callback, Update: callback}))
 	for _, cmd := range batchCmds(model.Init()) {
@@ -186,18 +190,18 @@ func TestInitDoesNotInvokeDependencyLifecycle(t *testing.T) {
 func TestDependencyLifecycleWarningsSurfaceWithoutFailure(t *testing.T) {
 	warning := errors.New("marketplace.archive-evidence-refreshed: src/skill/review locked archive digest sha256:aaaa refreshed to sha256:bbbb for the unchanged content digest")
 	second := errors.New("marketplace.archive-evidence-refreshed: src/skill/audit locked archive digest sha256:cccc refreshed to sha256:dddd for the unchanged content digest")
-	failureWarning := errors.New("marketplace.archive-evidence-refreshed: failed update retained the old archive digest")
+	failureWarning := errors.New("dependency warning from partial materialization")
 	failure := errors.New("materialization failed")
 	failed := false
 	model := NewModel("/repo", "/home", WithDependencyLifecycle(DependencyLifecycle{
-		Sync: func(context.Context, pipeline.Workspace) ([]error, error) {
+		Sync: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
 			if failed {
-				return []error{failureWarning}, failure
+				return pipeline.SyncResult{ResolveResult: pipeline.ResolveResult{Warnings: []error{failureWarning}}}, failure
 			}
-			return []error{warning, second}, nil
+			return pipeline.SyncResult{ResolveResult: pipeline.ResolveResult{Warnings: []error{warning, second}}}, nil
 		},
-		Update: func(context.Context, pipeline.Workspace) ([]error, error) {
-			return []error{warning}, nil
+		Update: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
+			return pipeline.SyncResult{ResolveResult: pipeline.ResolveResult{Warnings: []error{warning}}}, nil
 		},
 	}))
 	model.loading = false
@@ -283,8 +287,8 @@ func TestDependencyLifecycleWarningsSurfaceWithoutFailure(t *testing.T) {
 	if !slices.ContainsFunc(model.errs, func(err error) bool { return errors.Is(err, failure) }) || !strings.Contains(model.toast, "sync error") {
 		t.Fatalf("hard error masked by accompanying warning: errs %v, toast %q", model.errs, model.toast)
 	}
-	if len(model.warnings) != 0 {
-		t.Fatalf("warnings from failed sync were recorded: %v", model.warnings)
+	if !slices.Contains(model.warnings, failureWarning) {
+		t.Fatalf("failed sync discarded its accompanying warning: %v", model.warnings)
 	}
 }
 

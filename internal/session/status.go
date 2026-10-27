@@ -83,9 +83,9 @@ func (r Row) StatusGroup() StatusGroup {
 	}
 	if r.DriftItem != nil {
 		switch r.DriftItem.Reason {
-		case materialize.DriftMissing:
+		case materialize.DriftMissing, materialize.DriftOrphaned:
 			return GroupPending
-		case materialize.DriftOrphaned, materialize.DriftBroken:
+		case materialize.DriftBroken:
 			return GroupBroken
 		}
 	}

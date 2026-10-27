@@ -18,7 +18,6 @@ import (
 	"charm.land/lipgloss/v2/compat"
 	ltable "charm.land/lipgloss/v2/table"
 	"github.com/Adyen/agent-marketplace/internal/session"
-	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
@@ -197,7 +196,7 @@ func renderDetail(m Model) string {
 	}
 
 	fields := [][2]string{
-		{"Kind:", skill.KindLabel(r.Artifact.Kind)},
+		{"Kind:", r.KindLabel()},
 		{"Name:", safe(r.Artifact.Name)},
 	}
 	if !r.IsMalformed {
@@ -252,7 +251,7 @@ func renderDetail(m Model) string {
 	// Hint line
 	b.WriteString("\n")
 	hint := "enter = full view"
-	if !r.IsAvailable && !r.IsMalformed {
+	if rowToggleDenial(r) == toggleEligible {
 		hint = "space = toggle · enter = full view"
 	}
 	b.WriteString(styleDim.Render(hint))
@@ -550,7 +549,7 @@ func renderMarketplaceDetailContent(t theme, r row) string {
 	value := textStyle(t).Render
 	var b strings.Builder
 	fields := [][2]string{
-		{"Kind:", skill.KindLabel(r.Artifact.Kind)},
+		{"Kind:", r.KindLabel()},
 		{"Name:", safe(r.Artifact.Name)},
 		{"Status:", safe(r.StatusText())},
 	}

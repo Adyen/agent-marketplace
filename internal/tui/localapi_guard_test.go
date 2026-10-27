@@ -124,12 +124,14 @@ func TestLocalAPISharesOperationGateWithTUI(t *testing.T) {
 	entered := make(chan struct{})
 	var enteredOnce sync.Once
 	lifecycle := session.DependencyLifecycle{
-		Sync: func(context.Context, pipeline.Workspace) ([]error, error) {
+		Sync: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
 			enteredOnce.Do(func() { close(entered) })
 			<-release
-			return nil, nil
+			return pipeline.SyncResult{}, nil
 		},
-		Update: func(context.Context, pipeline.Workspace) ([]error, error) { return nil, nil },
+		Update: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
+			return pipeline.SyncResult{}, nil
+		},
 	}
 	fixture := newLocalAPIGateFixture(t, lifecycle)
 	model := fixture.model
@@ -227,9 +229,9 @@ func TestTUIDependencyRoutesRejectWhenSharedGateBusy(t *testing.T) {
 			configPath := ""
 			var syncCalls, updateCalls atomic.Int32
 			writeConfig := func(calls *atomic.Int32) session.DependencyLifecycleFunc {
-				return func(context.Context, pipeline.Workspace) ([]error, error) {
+				return func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
 					calls.Add(1)
-					return nil, os.WriteFile(configPath, []byte("unexpected lifecycle write"), 0o644)
+					return pipeline.SyncResult{}, os.WriteFile(configPath, []byte("unexpected lifecycle write"), 0o644)
 				}
 			}
 			fixture := newLocalAPIGateFixture(t, session.DependencyLifecycle{
@@ -318,13 +320,15 @@ func TestTUISyncGateHeldThroughAuthoritativeReload(t *testing.T) {
 			var enteredOnce sync.Once
 			var syncCalls atomic.Int32
 			lifecycle := session.DependencyLifecycle{
-				Sync: func(context.Context, pipeline.Workspace) ([]error, error) {
+				Sync: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
 					syncCalls.Add(1)
 					enteredOnce.Do(func() { close(entered) })
 					<-release
-					return nil, nil
+					return pipeline.SyncResult{}, nil
 				},
-				Update: func(context.Context, pipeline.Workspace) ([]error, error) { return nil, nil },
+				Update: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
+					return pipeline.SyncResult{}, nil
+				},
 			}
 			fixture := newLocalAPIGateFixture(t, lifecycle)
 			fixture.seedSnapshot(t)
@@ -396,12 +400,14 @@ func TestTUIUpdateDirectFailureReleasesSharedGateForHealthyRetry(t *testing.T) {
 	var calls atomic.Int32
 	failure := errors.New("one-time update failure")
 	lifecycle := session.DependencyLifecycle{
-		Sync: func(context.Context, pipeline.Workspace) ([]error, error) { return nil, nil },
-		Update: func(context.Context, pipeline.Workspace) ([]error, error) {
+		Sync: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
+			return pipeline.SyncResult{}, nil
+		},
+		Update: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
 			if calls.Add(1) == 1 {
-				return nil, failure
+				return pipeline.SyncResult{}, failure
 			}
-			return nil, nil
+			return pipeline.SyncResult{}, nil
 		},
 	}
 	fixture := newLocalAPIGateFixture(t, lifecycle)
@@ -454,10 +460,12 @@ func TestTUIStaleUpdateKeepsSharedGateUntilSupersedingReloadSettles(t *testing.T
 			useReadyUpdateSnapshot(t)
 			var updateCalls atomic.Int32
 			fixture := newLocalAPIGateFixture(t, session.DependencyLifecycle{
-				Sync: func(context.Context, pipeline.Workspace) ([]error, error) { return nil, nil },
-				Update: func(context.Context, pipeline.Workspace) ([]error, error) {
+				Sync: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
+					return pipeline.SyncResult{}, nil
+				},
+				Update: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
 					updateCalls.Add(1)
-					return nil, nil
+					return pipeline.SyncResult{}, nil
 				},
 			})
 			fixture.seedSnapshot(t)
@@ -533,11 +541,13 @@ func TestConfirmedSyncQuitReleasesSharedGateOnCompletion(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			var calls atomic.Int32
 			fixture := newLocalAPIGateFixture(t, session.DependencyLifecycle{
-				Sync: func(context.Context, pipeline.Workspace) ([]error, error) {
+				Sync: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
 					calls.Add(1)
-					return nil, syncErr
+					return pipeline.SyncResult{}, syncErr
 				},
-				Update: func(context.Context, pipeline.Workspace) ([]error, error) { return nil, nil },
+				Update: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
+					return pipeline.SyncResult{}, nil
+				},
 			})
 			fixture.seedSnapshot(t)
 			model := fixture.model

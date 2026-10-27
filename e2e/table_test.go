@@ -97,6 +97,8 @@ type Step struct {
 	PathsUnchanged  []string // files or trees whose bytes and metadata must be unchanged by this step
 	Symlinks        []string
 	RegularFiles    []string          // paths that must exist and not be symbolic links
+	GlobsExist      []string          // container path glob patterns that must each match at least one path
+	GlobsAbsent     []string          // container path glob patterns that must match nothing
 	FileContains    map[string]string // path -> substring
 	FileNotContains map[string]string // path -> substring that must NOT appear
 }
@@ -266,7 +268,7 @@ var testTable = []TestCase{
 		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {team: {git: '{{REG:migrated-bulk}}', ref: main}}\nresources: {team: {include: [skill/review]}}\n",
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}},
-			{Args: []string{"install", "--all"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/skills/review/SKILL.md": "Review fixture", "/workspace/.factory/skills/deploy/SKILL.md": "Deploy fixture"}},
+			{Args: []string{ "install", "--scope", "repo",  "--all"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/skills/review/SKILL.md": "Review fixture", "/workspace/.factory/skills/deploy/SKILL.md": "Deploy fixture"}},
 			{Args: []string{"remove", "deploy"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
 			{Args: []string{"sync"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
 			{Args: []string{"sync", "--check"}, MustPass: true},
@@ -285,7 +287,7 @@ var testTable = []TestCase{
 		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {team: {git: '{{REG:migrated-tag}}', ref: main}}\nresources: {team: {include: [skill/review]}}\n",
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}, FilesAbsent: []string{"/workspace/.factory/skills/deploy", "/workspace/.factory/skills/unselected"}},
-			{Args: []string{"install", "--tag", "ops"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/skills/review/SKILL.md": "Review fixture", "/workspace/.factory/skills/deploy/SKILL.md": "Deploy fixture"}, FilesAbsent: []string{"/workspace/.factory/skills/unselected"}},
+			{Args: []string{ "install", "--scope", "repo",  "--tag", "ops"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/skills/review/SKILL.md": "Review fixture", "/workspace/.factory/skills/deploy/SKILL.md": "Deploy fixture"}, FilesAbsent: []string{"/workspace/.factory/skills/unselected"}},
 			{Args: []string{"remove", "deploy"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
 			{Args: []string{"sync"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/deploy", "/workspace/.factory/skills/unselected"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
 			{Args: []string{"sync", "--check"}, MustPass: true},
@@ -369,8 +371,8 @@ var testTable = []TestCase{
 		Desc:    "Given a repository source name carrying terminal controls, When status fails and doctor reports configuration errors, Then both print visible escapes without changing the configuration",
 		RepoCfg: "apiVersion: agent-marketplace/v4\nsources:\n  \"\\e]0;TITLE\\a\\e[2J\\u202EEVIL\\N\":\n    directory: ./missing\n",
 		Steps: []Step{
-			{Args: []string{"status"}, AssertExitCode: intPtr(1), OutContains: []string{`Error: validate config "`, `/workspace/.agents/config.yaml": v4.source-name: sources.\x1B]0;TITLE\x07\x1B[2J\u202EEVIL\x85 (line 3)`}, OutNotContains: []string{"\x1b", "\a", "\u202e", "\u0085"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml"}},
-			{Args: []string{"doctor"}, MustPass: true, OutContains: []string{`error: validate config "`, `/workspace/.agents/config.yaml": v4.source-name: sources.\x1B]0;TITLE\x07\x1B[2J\u202EEVIL\x85 (line 3)`}, OutNotContains: []string{"\x1b", "\a", "\u202e", "\u0085"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml"}},
+			{Args: []string{"status"}, AssertExitCode: intPtr(1), OutContains: []string{`Error: validate config "`, `/workspace/.agents/config.yaml": v4.source-name:`, `/workspace/.agents/config.yaml:3: sources.\x1B]0;TITLE\x07\x1B[2J\u202EEVIL\x85: source name "\x1b]0;TITLE\a\x1b[2J\u202eEVIL\u0085" must contain only letters, numbers, dots, underscores, or hyphens`, "hint: In ", "rename the source"}, OutNotContains: []string{"\x1b", "\a", "\u202e", "\u0085"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml"}},
+			{Args: []string{"doctor"}, MustPass: true, OutContains: []string{`error: validate config "`, `/workspace/.agents/config.yaml": v4.source-name:`, `/workspace/.agents/config.yaml:3: sources.\x1B]0;TITLE\x07\x1B[2J\u202EEVIL\x85: source name "\x1b]0;TITLE\a\x1b[2J\u202eEVIL\u0085" must contain only letters, numbers, dots, underscores, or hyphens`, "hint: In ", "rename the source"}, OutNotContains: []string{"\x1b", "\a", "\u202e", "\u0085"}, PathsUnchanged: []string{"/workspace/.agents/config.yaml"}},
 		},
 	},
 	{
@@ -640,7 +642,7 @@ sources:
   second: {git: '{{REG:second}}', ref: main, source_harness: factory}
 `,
 		Steps: []Step{
-			{Args: []string{"install", "--all", "--kind", "hook"}, MustPass: true, OutContains: []string{"PreToolUse-command"}, OutNotContains: []string{"multiple registries"}, RegularFiles: []string{"/workspace/.factory/hooks.json"}, FileContains: map[string]string{"/workspace/.factory/hooks.json": "echo first"}},
+			{Args: []string{ "install", "--scope", "repo",  "--all", "--kind", "hook"}, MustPass: true, OutContains: []string{"PreToolUse-command"}, OutNotContains: []string{"multiple registries"}, RegularFiles: []string{"/workspace/.factory/hooks.json"}, FileContains: map[string]string{"/workspace/.factory/hooks.json": "echo first"}},
 			{Args: []string{"list", "--kind", "hook"}, MustPass: true, OutContains: []string{"PreToolUse-command"}, FileContains: map[string]string{"/workspace/.factory/hooks.json": "echo second"}},
 			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/workspace/.factory/hooks.json", "/workspace/.agents/lock.yaml"}},
 			{Args: []string{"sync"}, MustPass: true, PathsUnchanged: []string{"/workspace/.factory/hooks.json"}},
@@ -811,6 +813,47 @@ resources: {team: {include: [hook/SessionStart-command, hook/SessionStart-comman
 				FilesAbsent:  []string{"/workspace/.factory/skills/shared"},
 				FileContains: map[string]string{"/root/.factory/skills/shared/SKILL.md": "Mandatory collection member"}},
 			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/root/.factory/skills/shared"}},
+		},
+	},
+	// spec: harness-compilation/required-resource-keeps-a-case-only-collision
+	{
+		Name: "collision/required_command_keeps_case_only_path",
+		Desc: "Given an organization-required command deploy and a user-selected OpenCode command Deploy, When syncing for Claude Code, Then the required command is installed with a shared-path warning, the user command is not, and the output stays in sync",
+		Registries: []RegistryDef{
+			{Name: "org-command", Commands: []Command{{Name: "deploy", Description: "Mandatory organization command", Command: "echo org"}}},
+			{Name: "user-opencode", Files: map[string]string{".opencode/commands/Deploy.md": "---\ndescription: User selected command\n---\nRun the user command.\n"}},
+		},
+		OrgCfg:    "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources: {org: {git: '{{REG:org-command}}', ref: main}}\nresources: {org: {all: true, required: true}}\n",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources: {user: {git: '{{REG:user-opencode}}', ref: main, source_harness: opencode}}\nresources: {user: {include: [command/Deploy]}}\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {}\n",
+		Steps: []Step{
+			// Content checks rather than an absent Deploy.md keep the case
+			// portable: on a case-insensitive host both names are one file.
+			{Args: []string{"sync"}, MustPass: true, OutContains: []string{"materialize.collision.shared-path", `command "Deploy"`},
+				OutNotContains:  []string{"bundle.conflict.duplicate-artifact-path"},
+				FileContains:    map[string]string{"/root/.claude/commands/deploy.md": "Mandatory organization command"},
+				FileNotContains: map[string]string{"/root/.claude/commands/deploy.md": "Run the user command."}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/root/.claude/commands"}},
+		},
+	},
+	{
+		Name: "collision/required_skill_keeps_shared_native_path",
+		Desc: "Given an organization-required skill and a user-selected command with the same name, When syncing for Devin CLI and Claude Code, Then Devin's shared skills path keeps the required skill with a shared-path warning, and Claude Code installs both",
+		Registries: []RegistryDef{
+			{Name: "org-skill", Skills: []Skill{{Name: "audit", Description: "Mandatory organization skill"}}},
+			{Name: "user-command", Commands: []Command{{Name: "audit", Description: "User selected command", Command: "echo user"}}},
+		},
+		OrgCfg:    "apiVersion: agent-marketplace/v4\nharnesses: [devin, claude]\nsources: {org: {git: '{{REG:org-skill}}', ref: main}}\nresources: {org: {all: true, required: true}}\n",
+		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [devin, claude]\nsources: {user: {git: '{{REG:user-command}}', ref: main}}\nresources: {user: {include: [command/audit]}}\n",
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {}\n",
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, OutContains: []string{"materialize.collision.shared-path"},
+				FileContains: map[string]string{
+					"/root/.config/devin/skills/audit/SKILL.md": "Mandatory organization skill",
+					"/root/.claude/skills/audit/SKILL.md":       "Mandatory organization skill",
+					"/root/.claude/commands/audit.md":           "User selected command",
+				}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/root/.config/devin/skills/audit"}},
 		},
 	},
 	{
@@ -1588,7 +1631,7 @@ resources: {team: {include: [skill/keep]}}
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true,
 				FilesExist: []string{"/workspace/.factory/skills/keep/SKILL.md"}},
-			{Args: []string{"install", "first", "second", "--from", "{{REG:multi-src}}", "--ref", "main", "--path", "bundles"}, MustPass: true,
+			{Args: []string{ "install", "--scope", "repo",  "first", "second", "--from", "{{REG:multi-src}}", "--ref", "main", "--path", "bundles"}, MustPass: true,
 				OutContains: []string{"first", "second"},
 				FilesExist: []string{
 					"/workspace/.factory/skills/first/SKILL.md",
@@ -1645,7 +1688,7 @@ sources: {}
 `,
 		Steps: []Step{
 			{Action: ActionWriteFile, Path: "/workspace/local-registry/README.md", Body: "local registry\n"},
-			{Args: []string{"install", "some-skill", "--from", "./local-registry", "--path", "missing"}, AssertExitCode: intPtr(1),
+			{Args: []string{"install", "--scope", "repo", "some-skill", "--from", "./local-registry", "--path", "missing"}, AssertExitCode: intPtr(1),
 				OutContains: []string{"local registry path does not exist"},
 				FileNotContains: map[string]string{
 					"/workspace/.agents/config.yaml": "local-registry",
@@ -2160,6 +2203,54 @@ resources: {team: {include: [subagent/unk-tool-agent, subagent/known-tool-agent]
 				FilesExist:   []string{"/root/.factory/droids/known-tool-agent.md"},
 				FileContains: map[string]string{"/root/.factory/droids/known-tool-agent.md": "- Read"},
 			},
+		},
+	},
+	// spec: harness-compilation/comma-separated-subagent-tool-strings-become-separate-tools
+	{
+		Name: "subagent/comma_separated_tools_sync_as_separate_tools",
+		Desc: "Given a Claude-layout subagent whose tools are the string \"Read, Grep\", When sync runs for Claude, Factory and Gemini, Then each native file lists the tools as separate entries and check reports no drift",
+		Registries: []RegistryDef{
+			{Name: "sub-tool-string", Files: map[string]string{
+				".claude/agents/reader.md": "---\nname: reader\ndescription: Reader\ntools: Read, Grep\n---\nRead only.\n",
+			}},
+		},
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+harnesses: [claude, factory, gemini]
+sources: {team: {git: '{{REG:sub-tool-string}}', ref: main}}
+resources: {team: {include: [subagent/reader]}}
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true,
+				FileContains: map[string]string{
+					"/root/.claude/agents/reader.md":  "tools:\n  - Read\n  - Grep\n",
+					"/root/.factory/droids/reader.md": "tools:\n  - Read\n  - Grep\n",
+					"/root/.gemini/agents/reader.md":  "tools:\n  - read_file\n  - read_many_files\n  - grep_search\n",
+				}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+		},
+	},
+	// spec: harness-compilation/a-subagent-tool-string-that-is-not-well-formed-is-kept-as-a-single-entry
+	{
+		Name: "subagent/malformed_tools_string_stays_one_entry",
+		Desc: "Given a Claude-layout subagent whose tools string has an unmatched parenthesis next to a valid sibling, When sync runs for Claude, Then both are installed, the malformed string stays one entry exactly as written, as in earlier versions, and check reports no drift",
+		Registries: []RegistryDef{
+			{Name: "sub-tool-malformed", Files: map[string]string{
+				".claude/agents/malformed.md": "---\nname: malformed\ndescription: Malformed\ntools: Read, Bash(git diff\n---\nMalformed.\n",
+				".claude/agents/valid.md":     "---\nname: valid\ndescription: Valid\ntools: [Read, Grep]\n---\nValid.\n",
+			}},
+		},
+		GlobalCfg: `apiVersion: agent-marketplace/v4
+harnesses: [claude]
+sources: {team: {git: '{{REG:sub-tool-malformed}}', ref: main}}
+resources: {team: {include: [subagent/malformed, subagent/valid]}}
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true,
+				FileContains: map[string]string{
+					"/root/.claude/agents/malformed.md": "tools:\n  - Read, Bash(git diff\n",
+					"/root/.claude/agents/valid.md":     "tools:\n  - Read\n  - Grep\n",
+				}},
+			{Args: []string{"sync", "--check"}, MustPass: true},
 		},
 	},
 	{
@@ -3295,7 +3386,7 @@ resources: {team: {include: [command/prunable-cmd]}}
 sources: {}
 `,
 		Steps: []Step{
-			{Args: []string{"install", "adhoc-cmd", "--from", "{{REG:cmd-adhoc}}", "--ref", "main", "--kind", "command"}, MustPass: true,
+			{Args: []string{ "install", "--scope", "repo",  "adhoc-cmd", "--from", "{{REG:cmd-adhoc}}", "--ref", "main", "--kind", "command"}, MustPass: true,
 				OutContains: []string{"adhoc-cmd"}},
 			{Args: []string{"sync"}, MustPass: true,
 				FilesExist: []string{"/workspace/.factory/commands/adhoc-cmd.md"}},
@@ -4812,9 +4903,9 @@ harnesses:
 		RepoCfg:    "apiVersion: agent-marketplace/v4\nsources:\n  tools: {git: '{{REG:v4-selectors}}', ref: main}\n",
 		Steps: []Step{
 			{Args: []string{"list", "--from", "{{REG:v4-selectors}}", "--ref", "main", "--path", "skills", "--kind", "skill"}, MustPass: true, OutContains: []string{"review", "deploy"}, OutNotContains: []string{"cmd-one"}},
-			{Args: []string{"install", "--tag", "k8s"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}, FileContains: map[string]string{"/workspace/.agents/config.yaml": "k8s"}},
-			{Args: []string{"install", "--all", "--kind", "command", "--registry", "{{REG:v4-selectors}}"}, MustPass: true, FilesExist: []string{"/workspace/.factory/commands/cmd-one.md"}},
-			{Args: []string{"install", "deploy", "--kind", "skill", "--verbose"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/deploy/SKILL.md"}},
+			{Args: []string{"install", "--tag", "k8s", "--scope", "repo"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}, FilesAbsent: []string{"/workspace/.factory/skills/deploy"}, FileContains: map[string]string{"/workspace/.agents/config.yaml": "k8s"}},
+			{Args: []string{"install", "--all", "--kind", "command", "--registry", "{{REG:v4-selectors}}", "--scope", "repo"}, MustPass: true, FilesExist: []string{"/workspace/.factory/commands/cmd-one.md"}},
+			{Args: []string{"install", "deploy", "--kind", "skill", "--verbose", "--scope", "repo"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/deploy/SKILL.md"}},
 			{Args: []string{"list", "--kind", "command"}, MustPass: true, OutContains: []string{"cmd-one"}, OutNotContains: []string{"deploy"}},
 			{Args: []string{"sync", "--verbose", "--no-backup"}, MustPass: true},
 			{Args: []string{"sync", "--check"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v4"}, FileNotContains: map[string]string{"/workspace/.agents/config.yaml": "registries:"}},
@@ -4832,9 +4923,9 @@ harnesses:
 		GlobalCfg: "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {}\n",
 		RepoCfg:   "apiVersion: agent-marketplace/v4\nsources: {team: {git: '{{REG:v4-flags}}', ref: main}}\n",
 		Steps: []Step{
-			{Args: []string{"install", "--all", "--registry", "{{REG:v4-flags}}"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md", "/workspace/.factory/skills/deploy/SKILL.md"}},
+			{Args: []string{"install", "--all", "--registry", "{{REG:v4-flags}}", "--scope", "repo"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md", "/workspace/.factory/skills/deploy/SKILL.md"}},
 			{Args: []string{"list", "--from", "{{REG:v4-adhoc}}", "--ref", "main", "--path", "skills"}, MustPass: true, OutContains: []string{"adhoc-skill"}},
-			{Args: []string{"install", "adhoc-skill", "--from", "{{REG:v4-adhoc}}", "--ref", "main", "--path", "skills"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/adhoc-skill/SKILL.md"}, FileContains: map[string]string{"/workspace/.agents/config.yaml": "path: skills"}},
+			{Args: []string{"install", "adhoc-skill", "--from", "{{REG:v4-adhoc}}", "--ref", "main", "--path", "skills", "--scope", "repo"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/adhoc-skill/SKILL.md"}, FileContains: map[string]string{"/workspace/.agents/config.yaml": "path: skills"}},
 			{Args: []string{"remove", "adhoc-skill", "--from", "{{REG:v4-adhoc}}", "--ref", "main", "--path", "skills"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/adhoc-skill"}},
 			{Args: []string{"sync", "--verbose"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/adhoc-skill"}, FilesExist: []string{"/workspace/.factory/skills/review/SKILL.md"}},
 			{Args: []string{"sync", "--check"}, MustPass: true, FileContains: map[string]string{"/workspace/.agents/config.yaml": "apiVersion: agent-marketplace/v4"}},
@@ -5261,6 +5352,29 @@ func TestE2E(t *testing.T) {
 						errMsg := fmt.Sprintf("step %d: file %q unexpectedly exists", i, p)
 						if err != nil {
 							errMsg = fmt.Sprintf("step %d: cannot inspect %q: %v", i, p, err)
+						}
+						if firstErr == "" {
+							firstErr = errMsg
+						}
+						t.Errorf("%s", errMsg)
+					}
+				}
+				for _, globs := range []struct {
+					patterns []string
+					absent   bool
+				}{{step.GlobsExist, false}, {step.GlobsAbsent, true}} {
+					for _, pattern := range globs.patterns {
+						matches, err := filepath.Glob(env.mustResolvePath(pattern))
+						var errMsg string
+						switch {
+						case err != nil:
+							errMsg = fmt.Sprintf("step %d: glob %q: %v", i, pattern, err)
+						case globs.absent && len(matches) > 0:
+							errMsg = fmt.Sprintf("step %d: glob %q matched %v", i, pattern, matches)
+						case !globs.absent && len(matches) == 0:
+							errMsg = fmt.Sprintf("step %d: glob %q matched no path", i, pattern)
+						default:
+							continue
 						}
 						if firstErr == "" {
 							firstErr = errMsg

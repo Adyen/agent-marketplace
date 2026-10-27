@@ -12,6 +12,7 @@ import (
 var categories = []string{
 	"go_build",
 	"go_test",
+	"installation_query",
 	"benchmark",
 	"harness_compatibility",
 	"marketplace_e2e",
@@ -200,6 +201,10 @@ func classifyPath(p string) (map[string]bool, error) {
 		c["go_test"] = true
 	}
 
+	if strings.HasPrefix(p, "pkg/marketplace/api/installation_") {
+		c["installation_query"] = true
+	}
+
 	if isBackendDir(p) && !proseOnly(p) {
 		enableBackend(p, c)
 	}
@@ -232,6 +237,9 @@ func classifyPath(p string) (map[string]bool, error) {
 	}
 	if strings.HasPrefix(p, "site/") {
 		c["container_site"] = true
+	}
+	if p == "site/public/install.sh" {
+		c["go_test"] = true
 	}
 	if strings.HasPrefix(p, "design/") {
 		c["container_config"] = true

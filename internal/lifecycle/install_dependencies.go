@@ -17,6 +17,9 @@ type PreparedInstallLocks struct {
 	Documents       map[string]lockfile.Document
 	LockPaths       map[config.Source]string
 	Bindings        map[string][]lockfile.GitRegistry
+	commits         map[string]string
+	locked          map[string]bool
+	targetLockPaths map[string]bool
 	discoveryConfig *config.Config
 	reads           []dependencytxn.ReadAssertion
 	ctx             context.Context
@@ -24,7 +27,18 @@ type PreparedInstallLocks struct {
 }
 
 func PrepareInstallDependencies(ctx context.Context, root, local string, edits []pipeline.StagedConfigEdit) (pipeline.PreparedInstallDependencies, error) {
-	state := &PreparedInstallLocks{Documents: make(map[string]lockfile.Document), LockPaths: make(map[config.Source]string), Bindings: make(map[string][]lockfile.GitRegistry)}
+	state := &PreparedInstallLocks{
+		Documents: make(map[string]lockfile.Document), LockPaths: make(map[config.Source]string),
+		Bindings: make(map[string][]lockfile.GitRegistry), commits: make(map[string]string),
+		locked: make(map[string]bool), targetLockPaths: make(map[string]bool),
+	}
+	for _, edit := range edits {
+		LockPath, err := lockfile.PathForConfig(edit.Path)
+		if err != nil {
+			return pipeline.PreparedInstallDependencies{}, err
+		}
+		state.targetLockPaths[LockPath] = true
+	}
 	var warnings []error
 	option, _, lease, err := PrepareRuntimeLocks(ctx, root, local, LockMode{StagedConfigEdits: edits, PrepareInstall: state, WarningSink: &warnings})
 	if err != nil {
@@ -64,7 +78,36 @@ func PrepareInstallDependencies(ctx context.Context, root, local string, edits [
 		}
 		return state.BindRegistry(target, entry)
 	}
-	return pipeline.PreparedInstallDependencies{Context: state.ctx, DiscoveryConfig: state.discoveryConfig, View: pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, Warnings: warnings}, Reconcile: reconcile, BindRegistry: bind, Release: release}, nil
+	resolvedCommit := func(entry config.RegistryEntry) (pipeline.PreparedSourceCommit, error) {
+		canonical, err := CanonicalRegistryURL(entry.URL)
+		if err != nil {
+			return pipeline.PreparedSourceCommit{}, err
+		}
+		identity := gitLockIdentity(canonical, entry.Ref)
+		commit, ok := state.commits[identity]
+		if !ok || commit == "" {
+			return pipeline.PreparedSourceCommit{}, fmt.Errorf("prepared install has no exact commit for %s@%s", canonical, entry.Ref)
+		}
+		return pipeline.PreparedSourceCommit{Commit: commit, Locked: state.locked[identity]}, nil
+	}
+	return pipeline.PreparedInstallDependencies{
+		Context: state.ctx, DiscoveryConfig: state.discoveryConfig,
+		View:      pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, Warnings: warnings},
+		Reconcile: reconcile, BindRegistry: bind, ResolvedCommit: resolvedCommit, Release: release,
+	}, nil
+}
+
+// lockedCommitIs reports whether the existing lock already pins identity at commit.
+func lockedCommitIs(current *lockfile.Document, identity, commit string) bool {
+	if current == nil {
+		return false
+	}
+	for _, registry := range current.Registries {
+		if gitLockIdentity(registry.URL, registry.Ref) == identity {
+			return registry.Commit.Hex() == commit
+		}
+	}
+	return false
 }
 
 func installPreparationReads(ec config.EffectiveConfig, staged map[string]pipeline.StagedConfigEdit, plan *PreparedInstallLocks) ([]dependencytxn.ReadAssertion, error) {
@@ -93,16 +136,16 @@ func installPreparationReads(ec config.EffectiveConfig, staged map[string]pipeli
 		if err != nil {
 			return nil, err
 		}
-		lockPath, err := lockfile.PathForConfig(path)
+		LockPath, err := lockfile.PathForConfig(path)
 		if err != nil {
-			lockPath = scoped.source.LockPath(path)
+			LockPath = scoped.source.LockPath(path)
 		}
-		generation, err := dependencytxn.ReadGeneration(lockPath)
+		generation, err := dependencytxn.ReadGeneration(LockPath)
 		if err != nil {
 			return nil, err
 		}
-		plan.LockPaths[scoped.source] = lockPath
-		reads = append(reads, dependencytxn.ReadAssertion{Path: lockPath, RequestedPath: lockPath, Expected: generation})
+		plan.LockPaths[scoped.source] = LockPath
+		reads = append(reads, dependencytxn.ReadAssertion{Path: LockPath, RequestedPath: LockPath, Expected: generation})
 		if len(layer.Reads) == 0 && !represented[path] {
 			reads = append(reads, dependencytxn.ReadAssertion{Path: path, RequestedPath: layer.Path})
 			represented[path] = true

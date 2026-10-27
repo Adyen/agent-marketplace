@@ -12,24 +12,27 @@ TEST_LOCAL_BASE ?= origin/main
 VALIDATE_JOBS ?= 2
 OPENSPEC_VERSION ?= 1.12.0
 
-.PHONY: test-fast test-witnessed validate validate-fast validate-full validate-e2e spec-check
+.PHONY: test-fast test-witnessed validate validate-fast validate-full validate-e2e spec-check release-notes
 
 # Public container defaults. Override these generic variables in the environment
-# when builds must use a registry mirror.
-GO_BUILD_IMAGE ?= golang:1.26.9-bookworm
+# when builds must use a registry mirror. Pin all production overrides by digest.
+GO_BUILD_IMAGE ?= golang:1.27.3-bookworm
 RUNTIME_IMAGE ?= gcr.io/distroless/static-debian12:nonroot
-NODE_IMAGE ?= node:24-alpine
+NODE_IMAGE ?= node:24-trixie-slim
+NODE_RUNTIME_IMAGE ?= gcr.io/distroless/nodejs24-debian13:nonroot
 POSTGRES_IMAGE ?= postgres:17.5-alpine
 NGINX_IMAGE ?= nginx:1.27-alpine
 SITE_NGINX_IMAGE ?= nginxinc/nginx-unprivileged:1.29-alpine
+PROMETHEUS_IMAGE ?= prom/prometheus:v3.5.0
 MARKETPLACE_CONTAINER_IMAGE ?= agent-marketplace:$(VERSION)
 WEB_CONTAINER_IMAGE ?= agent-marketplace-web:$(VERSION)
 SITE_CONTAINER_IMAGE ?= agent-marketplace-site:$(VERSION)
 DOCS_CONTAINER_IMAGE ?= agent-marketplace-docs:$(VERSION)
-export GO_BUILD_IMAGE RUNTIME_IMAGE NODE_IMAGE POSTGRES_IMAGE NGINX_IMAGE SITE_NGINX_IMAGE
+export GO_BUILD_IMAGE RUNTIME_IMAGE NODE_IMAGE NODE_RUNTIME_IMAGE POSTGRES_IMAGE NGINX_IMAGE SITE_NGINX_IMAGE
 
 # Platform targets
 PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64 linux-arm64
+RELEASE_ASSETS := $(addprefix $(RELEASE_BINARY)-,$(PLATFORMS))
 DIST_DIR := dist
 
 .PHONY: build test test-full lint ci-lint lint-full lint-common tidy version release clean e2e marketplace-gate marketplace-proxy-check released-client-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build site-docs-build gui-build secrets-check container container-marketplace container-web container-site container-docs container-check compose-config $(PLATFORMS)
@@ -95,7 +98,10 @@ validate-e2e:
 lint: LINT_MODE=fix
 lint: lint-common
 
-.PHONY: model-catalog-check model-catalog-audit
+.PHONY: model-catalog-check model-catalog-audit installation-query-check
+installation-query-check:
+	AM_PROMTOOL_IMAGE="$(PROMETHEUS_IMAGE)" CGO_ENABLED=0 $(GO) test -json -count=1 -timeout 2m -run '^TestInstallationMetricsQueryPromtool$$' ./pkg/marketplace/api | CGO_ENABLED=0 $(GO) run ./tools/witness-check -require TestInstallationMetricsQueryPromtool
+
 model-catalog-audit:
 	CGO_ENABLED=0 $(GO) run ./tools/model-catalog-audit check
 
@@ -152,6 +158,12 @@ spec-check:
 	CGO_ENABLED=0 $(GO) run ./tools/specaudit trace
 	CGO_ENABLED=0 $(GO) run ./tools/specaudit archived
 
+# Curated release notes the release job would publish: stable tag to HEAD.
+release-notes:
+	@prev=$$(git tag --merged HEAD^ --list 'v*' --sort=-v:refname | grep -m1 -E '^v[0-9]+\.[0-9]+\.[0-9]+$$'); \
+	if [ -z "$$prev" ]; then echo "release-notes: no stable tag reachable from HEAD" >&2; exit 1; fi; \
+	CGO_ENABLED=0 $(GO) run ./tools/specaudit release-notes -base "$$prev" -head HEAD
+
 container: container-marketplace container-web container-site container-docs
 
 container-marketplace:
@@ -165,6 +177,7 @@ container-web:
 	docker build \
 		--build-context design=design \
 		--build-arg NODE_IMAGE="$(NODE_IMAGE)" \
+		--build-arg NODE_RUNTIME_IMAGE="$(NODE_RUNTIME_IMAGE)" \
 		--build-arg NPM_CONFIG_REGISTRY="$(NPM_CONFIG_REGISTRY)" \
 		-t "$(WEB_CONTAINER_IMAGE)" web
 
@@ -202,12 +215,13 @@ container-check: secrets-check
 	@test -s site/Dockerfile
 	@for path in site/.vitepress/cache site/.vitepress/cache-docs site/.vitepress/dist site/.vitepress/dist-docs site/node_modules; do grep -Fxq "$$path" .dockerignore || exit 1; done
 	@for path in .vitepress/cache .vitepress/cache-docs .vitepress/dist .vitepress/dist-docs node_modules; do grep -Fxq "$$path" site/.dockerignore || exit 1; done
-	@awk '/^ARG GO_BUILD_IMAGE=golang:1.26.9-bookworm$$/{goarg=1} /^ARG RUNTIME_IMAGE=gcr.io\/distroless\/static-debian12:nonroot$$/{runtimearg=1} /FROM .*\$$\{GO_BUILD_IMAGE\} AS build/{build=1} /FROM .*\$$\{GO_BUILD_IMAGE\} AS git-runtime/{gitstage=1} /-trimpath -buildvcs=false/{flags=1} /FROM \$$\{RUNTIME_IMAGE\} AS api/{api=1} /FROM \$$\{RUNTIME_IMAGE\} AS worker/{worker=1} /command -v git/{git=1} /command -v ssh/{ssh=1} /\/etc\/ssl\/certs\/ca-certificates\.crt/{debianca=1} /\/etc\/pki\/tls\/certs\/ca-bundle\.crt/{rpmca=1} /cp .*ca_bundle.*\/out\/runtime\/etc\/ssl\/certs\/ca-certificates\.crt/{normalized=1} /no supported CA bundle found/{caerror=1} /COPY --from=build --chown=1000:1000 \/out\/marketplace-healthcheck \/app\/marketplace-healthcheck/{healthchecks++} /BUILD_CA_CERT_PATH/{legacy=1} /USER 1000:1000/{users++} /(apk|apt-get|dnf|yum) (add|install)/{packageadds++} END {if (!goarg || !runtimearg || !build || !gitstage || !flags || !api || !worker || !git || !ssh || !debianca || !rpmca || !normalized || !caerror || healthchecks != 2 || legacy || packageadds != 0 || users < 2) exit 1}' Dockerfile.marketplace
-	@awk '/^ARG NODE_IMAGE=node:24-alpine$$/{arg=1} /^ARG NPM_CONFIG_REGISTRY$$/{registryarg=1} /FROM \$$\{NODE_IMAGE\} AS build/{build=1} /FROM \$$\{NODE_IMAGE\} AS runtime/{runtime=1} /COPY .*package.json pnpm-lock.yaml pnpm-workspace.yaml/{workspace=1} /npm install --global/{pnpm=1} /export PNPM_CONFIG_REGISTRY="\$$\{NPM_CONFIG_REGISTRY\}"/{registrymap=1} /pnpm install --frozen-lockfile --ignore-scripts/{install=1} /USER 1000:1000/{user=1} /HEALTHCHECK/{health=1} END {if (!arg || !registryarg || !build || !runtime || !workspace || !pnpm || !registrymap || !install || !user || !health) exit 1}' web/Dockerfile
-	@awk '/^ARG NODE_IMAGE=node:24-alpine$$/{nodearg=1} /^ARG NGINX_IMAGE=nginxinc\/nginx-unprivileged:1.29-alpine$$/{nginxarg=1} /FROM .*\$$\{NODE_IMAGE\} AS build/{build=1} /FROM .*\$$\{NGINX_IMAGE\} AS runtime/{runtime=1} /COPY .*package.json pnpm-lock.yaml/{workspace=1} /COPY --from=design .*semantic-colors.css/{colors=1} /USER 1000/{user=1} /ARG SITE_BASE=\//{sitebase++} /ARG SITE_PROFILE=public/{profile=1} /ARG MARKETPLACE_BASE=\//{marketplacebase=1} /docs profile requires SITE_BASE=\/docs\//{docsguard=1} /^[[:space:]]*pnpm run build:docs && output=\.vitepress\/dist-docs [|][|] exit 1;/{docs=1} /^[[:space:]]*pnpm run build && output=\.vitepress\/dist [|][|] exit 1;/{public=1} /COPY --from=build \/site\/\.site-dist\//{output=1} /ENV SITE_BASE=\$$\{SITE_BASE\}/{runtimebase=1} /location = \/ \{ return 404; \}/{rootguard=1} /HEALTHCHECK/{health=1} /http:\/\/127\.0\.0\.1:8080\$$\{SITE_BASE\}/{healthbase=1} /command -v wget/{wget=1} /command -v curl/{curl=1} END {if (!nodearg || !nginxarg || !build || !runtime || !workspace || !colors || !user || sitebase != 2 || !profile || !marketplacebase || !docsguard || !docs || !public || !output || !runtimebase || !rootguard || !health || !healthbase || !wget || !curl) exit 1}' site/Dockerfile
+	@awk '/^ARG GO_BUILD_IMAGE=golang:1.27.3-bookworm$$/{goarg=1} /^ARG RUNTIME_IMAGE=gcr.io\/distroless\/static-debian12:nonroot$$/{runtimearg=1} /FROM .*\$$\{GO_BUILD_IMAGE\} AS build/{build=1} /FROM .*\$$\{GO_BUILD_IMAGE\} AS git-runtime/{gitstage=1} /-trimpath -buildvcs=false/{flags=1} /FROM \$$\{RUNTIME_IMAGE\} AS api/{api=1} /FROM \$$\{RUNTIME_IMAGE\} AS worker/{worker=1} /command -v git/{git=1} /command -v ssh/{ssh=1} /\/etc\/ssl\/certs\/ca-certificates\.crt/{debianca=1} /\/etc\/pki\/tls\/certs\/ca-bundle\.crt/{rpmca=1} /cp .*ca_bundle.*\/out\/runtime\/etc\/ssl\/certs\/ca-certificates\.crt/{normalized=1} /no supported CA bundle found/{caerror=1} /COPY --from=build --chown=1000:1000 \/out\/marketplace-healthcheck \/app\/marketplace-healthcheck/{healthchecks++} /BUILD_CA_CERT_PATH/{legacy=1} /USER 1000:1000/{users++} /(apk|apt-get|dnf|yum) (add|install)/{packageadds++} END {if (!goarg || !runtimearg || !build || !gitstage || !flags || !api || !worker || !git || !ssh || !debianca || !rpmca || !normalized || !caerror || healthchecks != 2 || legacy || packageadds != 0 || users < 2) exit 1}' Dockerfile.marketplace
+	@awk '/^ARG NODE_IMAGE=node:24-trixie-slim$$/{arg=1} /^ARG NODE_RUNTIME_IMAGE=gcr.io\/distroless\/nodejs24-debian13:nonroot$$/{runtimearg=1} /^ARG NPM_CONFIG_REGISTRY$$/{registryarg=1} /FROM \$$\{NODE_IMAGE\} AS build/{build=1} /FROM \$$\{NODE_RUNTIME_IMAGE\} AS runtime/{runtime=1} /COPY .*package.json pnpm-lock.yaml pnpm-workspace.yaml/{workspace=1} /npm install --global/{pnpm=1} /export PNPM_CONFIG_REGISTRY="\$$\{NPM_CONFIG_REGISTRY\}"/{registrymap=1} /pnpm install --frozen-lockfile --ignore-scripts/{install=1} /USER 1000:1000/{user=1} /HEALTHCHECK/{health=1} END {if (!arg || !runtimearg || !registryarg || !build || !runtime || !workspace || !pnpm || !registrymap || !install || !user || !health) exit 1}' web/Dockerfile
+	@awk '/^ARG NODE_IMAGE=node:24-trixie-slim$$/{nodearg=1} /^ARG NGINX_IMAGE=nginxinc\/nginx-unprivileged:1.29-alpine$$/{nginxarg=1} /FROM .*\$$\{NODE_IMAGE\} AS build/{build=1} /FROM .*\$$\{NGINX_IMAGE\} AS runtime/{runtime=1} /COPY .*package.json pnpm-lock.yaml/{workspace=1} /COPY --from=design .*semantic-colors.css/{colors=1} /USER 1000/{user=1} /ARG SITE_BASE=\//{sitebase++} /ARG SITE_PROFILE=public/{profile=1} /ARG MARKETPLACE_BASE=\//{marketplacebase=1} /docs profile requires SITE_BASE=\/docs\//{docsguard=1} /^[[:space:]]*pnpm run build:docs && output=\.vitepress\/dist-docs [|][|] exit 1;/{docs=1} /^[[:space:]]*pnpm run build && output=\.vitepress\/dist [|][|] exit 1;/{public=1} /COPY --from=build \/site\/\.site-dist\//{output=1} /ENV SITE_BASE=\$$\{SITE_BASE\}/{runtimebase=1} /location = \/ \{ return 404; \}/{rootguard=1} /HEALTHCHECK/{health=1} /http:\/\/127\.0\.0\.1:8080\$$\{SITE_BASE\}/{healthbase=1} /command -v wget/{wget=1} /command -v curl/{curl=1} END {if (!nodearg || !nginxarg || !build || !runtime || !workspace || !colors || !user || sitebase != 2 || !profile || !marketplacebase || !docsguard || !docs || !public || !output || !runtimebase || !rootguard || !health || !healthbase || !wget || !curl) exit 1}' site/Dockerfile
 	@test "$$(grep -Fh -- 'GO_BUILD_IMAGE:' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
-	@test "$$(grep -Fh -- 'RUNTIME_IMAGE:' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
+	@test "$$(grep -Eh -- '^[[:space:]]+RUNTIME_IMAGE:' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
 	@test "$$(grep -Fh -- 'NODE_IMAGE:' deploy/compose/postgres-s3/compose.yaml deploy/compose/postgres-s3/compose.docs.yaml compose.yaml compose.docs.yaml | wc -l | tr -d ' ')" -eq 4
+	@test "$$(grep -Fh -- 'NODE_RUNTIME_IMAGE:' deploy/compose/postgres-s3/compose.yaml compose.yaml | wc -l | tr -d ' ')" -eq 2
 	@test "$$(grep -Fh -- 'NGINX_IMAGE' deploy/compose/postgres-s3/compose.yaml deploy/compose/postgres-s3/compose.docs.yaml compose.yaml compose.docs.yaml | wc -l | tr -d ' ')" -eq 4
 	@test "$$(grep -Fh -- '$${SITE_NGINX_IMAGE:-' deploy/compose/postgres-s3/compose.yaml deploy/compose/postgres-s3/compose.docs.yaml compose.yaml compose.docs.yaml | wc -l | tr -d ' ')" -eq 2
 	@test "$$(grep -Fc -- 'POSTGRES_IMAGE' deploy/compose/postgres-s3/compose.yaml)" -eq 1
@@ -215,9 +229,10 @@ container-check: secrets-check
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg RUNTIME_IMAGE=' Makefile)" -eq 1
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-context design=design' Makefile)" -eq 3
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg NODE_IMAGE=' Makefile)" -eq 3
+	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg NODE_RUNTIME_IMAGE=' Makefile)" -eq 1
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg NPM_CONFIG_REGISTRY=' Makefile)" -eq 1
 	@test "$$(grep -Ec -- '^[[:space:]]*--build-arg NGINX_IMAGE=' Makefile)" -eq 2
-	@awk '/^GO_BUILD_IMAGE \?= golang:1.26.9-bookworm$$/{go=1} /^RUNTIME_IMAGE \?= gcr.io\/distroless\/static-debian12:nonroot$$/{runtime=1} /^NODE_IMAGE \?= node:24-alpine$$/{node=1} /^POSTGRES_IMAGE \?= postgres:17.5-alpine$$/{postgres=1} /^NGINX_IMAGE \?= nginx:1.27-alpine$$/{nginx=1} /^SITE_NGINX_IMAGE \?= nginxinc\/nginx-unprivileged:1.29-alpine$$/{site_nginx=1} END {if (!go || !runtime || !node || !postgres || !nginx || !site_nginx) exit 1}' Makefile
+	@awk '/^GO_BUILD_IMAGE \?= golang:1.27.3-bookworm$$/{go=1} /^RUNTIME_IMAGE \?= gcr.io\/distroless\/static-debian12:nonroot$$/{runtime=1} /^NODE_IMAGE \?= node:24-trixie-slim$$/{node=1} /^NODE_RUNTIME_IMAGE \?= gcr.io\/distroless\/nodejs24-debian13:nonroot$$/{node_runtime=1} /^POSTGRES_IMAGE \?= postgres:17.5-alpine$$/{postgres=1} /^NGINX_IMAGE \?= nginx:1.27-alpine$$/{nginx=1} /^SITE_NGINX_IMAGE \?= nginxinc\/nginx-unprivileged:1.29-alpine$$/{site_nginx=1} END {if (!go || !runtime || !node || !node_runtime || !postgres || !nginx || !site_nginx) exit 1}' Makefile
 	@if git grep -nE 'is\.adyen\.(com|cloud)' -- Dockerfile.marketplace web/Dockerfile deploy/compose ':!deploy/compose/postgres-s3/README.md'; then \
 		echo "ERROR: tracked public container defaults contain an internal Adyen hostname; use an environment override instead"; exit 1; \
 	fi
@@ -244,10 +259,10 @@ compose-config:
 		printf '%s\n' 'secrets:' '  marketplace_postgres_password:' '    file: '"$$password_file" '  marketplace_postgres_dsn:' '    file: '"$$secret_file" > "$$secret_override"; \
 		docker compose -f compose.yaml config --quiet && \
 		docker compose -f deploy/compose/postgres-s3/compose.yaml -f "$$secret_override" config --quiet && \
-		GO_BUILD_IMAGE=override/go:test RUNTIME_IMAGE=override/runtime:test NODE_IMAGE=override/node:test NGINX_IMAGE=override/nginx:test SITE_NGINX_IMAGE=override/site-nginx:test docker compose -f compose.yaml -f compose.docs.yaml config > "$$sqlite_config" && \
-		grep -Fq 'override/go:test' "$$sqlite_config" && grep -Fq 'override/runtime:test' "$$sqlite_config" && grep -Fq 'override/node:test' "$$sqlite_config" && grep -Fq 'override/nginx:test' "$$sqlite_config" && grep -Fq 'override/site-nginx:test' "$$sqlite_config" && \
-		GO_BUILD_IMAGE=override/go:test RUNTIME_IMAGE=override/runtime:test NODE_IMAGE=override/node:test POSTGRES_IMAGE=override/postgres:test NGINX_IMAGE=override/nginx:test SITE_NGINX_IMAGE=override/site-nginx:test docker compose -f deploy/compose/postgres-s3/compose.yaml -f deploy/compose/postgres-s3/compose.docs.yaml -f "$$secret_override" config > "$$postgres_config" && \
-		grep -Fq 'override/go:test' "$$postgres_config" && grep -Fq 'override/runtime:test' "$$postgres_config" && grep -Fq 'override/node:test' "$$postgres_config" && grep -Fq 'override/postgres:test' "$$postgres_config" && grep -Fq 'override/nginx:test' "$$postgres_config" && grep -Fq 'override/site-nginx:test' "$$postgres_config" && \
+		GO_BUILD_IMAGE=override/go:test RUNTIME_IMAGE=override/runtime:test NODE_IMAGE=override/node:test NODE_RUNTIME_IMAGE=override/node-runtime:test NGINX_IMAGE=override/nginx:test SITE_NGINX_IMAGE=override/site-nginx:test docker compose -f compose.yaml -f compose.docs.yaml config > "$$sqlite_config" && \
+		grep -Fq 'override/go:test' "$$sqlite_config" && grep -Fq 'override/runtime:test' "$$sqlite_config" && grep -Fq 'override/node:test' "$$sqlite_config" && grep -Fq 'override/node-runtime:test' "$$sqlite_config" && grep -Fq 'override/nginx:test' "$$sqlite_config" && grep -Fq 'override/site-nginx:test' "$$sqlite_config" && \
+		GO_BUILD_IMAGE=override/go:test RUNTIME_IMAGE=override/runtime:test NODE_IMAGE=override/node:test NODE_RUNTIME_IMAGE=override/node-runtime:test POSTGRES_IMAGE=override/postgres:test NGINX_IMAGE=override/nginx:test SITE_NGINX_IMAGE=override/site-nginx:test docker compose -f deploy/compose/postgres-s3/compose.yaml -f deploy/compose/postgres-s3/compose.docs.yaml -f "$$secret_override" config > "$$postgres_config" && \
+		grep -Fq 'override/go:test' "$$postgres_config" && grep -Fq 'override/runtime:test' "$$postgres_config" && grep -Fq 'override/node:test' "$$postgres_config" && grep -Fq 'override/node-runtime:test' "$$postgres_config" && grep -Fq 'override/postgres:test' "$$postgres_config" && grep -Fq 'override/nginx:test' "$$postgres_config" && grep -Fq 'override/site-nginx:test' "$$postgres_config" && \
 		test "$$(grep -Ec -- '^[[:space:]]+target: marketplace-postgres-password$$' "$$postgres_config")" -eq 1 && \
 		test "$$(grep -Ec -- '^[[:space:]]+target: marketplace-postgres-dsn$$' "$$postgres_config")" -eq 2 && \
 		test "$$(grep -Ec -- '^[[:space:]]+target: marketplace_postgres_(password|dsn)$$' "$$postgres_config")" -eq 0 && \
@@ -291,6 +306,15 @@ linux-arm64:
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags "$(RELEASE_LDFLAGS)" -o $(DIST_DIR)/$(RELEASE_BINARY)-linux-arm64 $(CMD)
 
 release: $(PLATFORMS)
+	@cd $(DIST_DIR) && { \
+		if command -v sha256sum >/dev/null 2>&1; then \
+			sha256sum $(RELEASE_ASSETS); \
+		elif command -v shasum >/dev/null 2>&1; then \
+			shasum -a 256 $(RELEASE_ASSETS); \
+		else \
+			echo "sha256sum or shasum is required to create release checksums" >&2; exit 1; \
+		fi; \
+	} > SHA256SUMS
 
 # Release build that injects the community telemetry endpoint and retention
 # policy URL at link time. Set AGENT_MARKETPLACE_RELEASE_TELEMETRY_ENDPOINT

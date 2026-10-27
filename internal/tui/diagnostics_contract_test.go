@@ -379,6 +379,38 @@ func TestReadSnapshotRetainsPartialRowsAfterCatalogFailure(t *testing.T) {
 	}
 }
 
+// A malformed resource carries its registry's coordinates, and its zero-value
+// kind reads as a skill, so it must not stand in for a same-named selection
+// that is missing from that registry: the selection keeps its broken row.
+func TestAppendUnavailableSelectionRowsIgnoresSameNamedMalformedRow(t *testing.T) {
+	cfg := &config.Config{Registries: []config.RegistryEntry{{
+		URL:        "/reg",
+		Ref:        "main",
+		Source:     config.RepoCommitted,
+		CatalogKey: "k1",
+		Skills:     config.KindSelector{Include: []string{"foo"}},
+	}}}
+	catalogs := map[string]catalogInfo{"k1": {Malformed: []skill.MalformedSkill{{DirName: "foo", Path: "commands/foo", Error: errors.New("yaml parse error")}}}}
+	rows := buildRows(cfg, catalogs, nil, nil, materialize.DriftReport{})
+	missing := &resolver.SelectedNotFoundError{Kind: ir.KindSkill, Name: "foo", URL: "/reg", Ref: "main"}
+	rows = appendUnavailableSelectionRows(rows, cfg, nil, []error{missing}, catalogs)
+	var malformed, unavailable []row
+	for _, r := range rows {
+		switch {
+		case r.IsMalformed:
+			malformed = append(malformed, r)
+		case r.UnavailableReason != "":
+			unavailable = append(unavailable, r)
+		}
+	}
+	if len(malformed) != 1 || len(unavailable) != 1 {
+		t.Fatalf("rows = %d malformed and %d unavailable, want one of each", len(malformed), len(unavailable))
+	}
+	if rowKey(malformed[0]) == rowKey(unavailable[0]) {
+		t.Fatal("the malformed and unavailable rows share a row key")
+	}
+}
+
 func TestAppendUnavailableSelectionRows(t *testing.T) {
 	loadedCatalogs := map[string]session.CatalogInfo{"k1": {}}
 	cfg := &config.Config{Registries: []config.RegistryEntry{{

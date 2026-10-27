@@ -107,6 +107,12 @@ func TestFuzzySearchHighlightsOnlyMatchedNameRunes(t *testing.T) {
 	if !strings.Contains(plain, label) {
 		t.Fatalf("sanitized name should survive styling, got %q", plain)
 	}
+	// Bold text on the default foreground follows the terminal's own bold
+	// color, which some themes render nearly invisible; matches must carry
+	// an explicit palette foreground.
+	if fg := styleSearchMatch.GetForeground(); fg != paletteAccent {
+		t.Fatalf("search match foreground = %v, want accent %v", fg, paletteAccent)
+	}
 }
 
 // spec: session-navigation/metadata-only-match

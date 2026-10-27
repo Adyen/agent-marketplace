@@ -2,27 +2,17 @@ package main
 
 import (
 	"bytes"
-	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
-	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
-
-	metricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
-	tracespb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
-	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/proto"
 )
 
 func hookReviewRegistry(t *testing.T, dir, command string) string {
@@ -383,83 +373,15 @@ func TestSyncHookReviewCommandsNeverReachLogs(t *testing.T) {
 	t.Setenv("AGENT_MARKETPLACE_LOG_LEVEL", "debug")
 	t.Setenv("AGENT_MARKETPLACE_TELEMETRY_COMMUNITY_REPORTING", "false")
 
-	var mu sync.Mutex
-	var metricsReqs []*metricspb.ExportMetricsServiceRequest
-	var traceReqs []*tracespb.ExportTraceServiceRequest
-	var rawBodies [][]byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(io.LimitReader(r.Body, 4<<20))
-		if err != nil {
-			t.Errorf("read telemetry body: %v", err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		if r.Header.Get("Content-Encoding") == "gzip" {
-			reader, err := gzip.NewReader(bytes.NewReader(body))
-			if err != nil {
-				t.Errorf("telemetry body claims gzip but does not decode: %v", err)
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			plain, err := io.ReadAll(io.LimitReader(reader, 8<<20))
-			_ = reader.Close()
-			if err != nil {
-				t.Errorf("gunzip telemetry body: %v", err)
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			body = plain
-		}
-		if len(body) == 0 {
-			t.Errorf("empty telemetry export to %s", r.URL.Path)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		mu.Lock()
-		rawBodies = append(rawBodies, body)
-		mu.Unlock()
-		w.Header().Set("Content-Type", "application/x-protobuf")
-		switch r.URL.Path {
-		case "/v1/metrics":
-			var req metricspb.ExportMetricsServiceRequest
-			if err := proto.Unmarshal(body, &req); err != nil {
-				t.Errorf("malformed metrics export: %v", err)
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			mu.Lock()
-			metricsReqs = append(metricsReqs, &req)
-			mu.Unlock()
-			resp, _ := proto.Marshal(&metricspb.ExportMetricsServiceResponse{})
-			_, _ = w.Write(resp)
-		case "/v1/traces":
-			var req tracespb.ExportTraceServiceRequest
-			if err := proto.Unmarshal(body, &req); err != nil {
-				t.Errorf("malformed trace export: %v", err)
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			mu.Lock()
-			traceReqs = append(traceReqs, &req)
-			mu.Unlock()
-			resp, _ := proto.Marshal(&tracespb.ExportTraceServiceResponse{})
-			_, _ = w.Write(resp)
-		default:
-			t.Errorf("unexpected telemetry path %s", r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer srv.Close()
+	capture := startOTLPCapture(t)
 
 	if out, err := executeCommand("init", "--harnesses", "claude"); err != nil {
 		t.Fatalf("init: %v\n%s", err, out)
 	}
-	if out, err := executeCommand("telemetry", "enable", "--level", "detailed", "--endpoint", srv.URL); err != nil {
+	if out, err := executeCommand("telemetry", "enable", "--level", "detailed", "--endpoint", capture.URL); err != nil {
 		t.Fatalf("telemetry enable: %v\n%s", err, out)
 	}
-	mu.Lock()
-	metricsReqs, traceReqs, rawBodies = nil, nil, nil
-	mu.Unlock()
+	capture.reset()
 
 	registryCmd := t.TempDir()
 	writeFile(t, filepath.Join(registryCmd, ".factory", "hooks", "hooks.json"),
@@ -507,104 +429,8 @@ resources:
 		t.Fatalf("legacy hooks file = %q, err %v, want the marked entry removed and the handwritten handler kept", legacyData, err)
 	}
 
-	logBytes, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("read log file: %v", err)
-	}
-	if len(logBytes) == 0 || !bytes.Contains(logBytes, []byte("pipeline sync end")) {
-		t.Fatalf("log file = %d bytes; expected an actual sync record", len(logBytes))
-	}
-	for _, payload := range payloads {
-		if bytes.Contains(logBytes, []byte(payload)) {
-			t.Fatalf("log file contains the reviewed payload %q", payload)
-		}
-	}
-
-	mu.Lock()
-	metricsCopy := append([]*metricspb.ExportMetricsServiceRequest{}, metricsReqs...)
-	tracesCopy := append([]*tracespb.ExportTraceServiceRequest{}, traceReqs...)
-	bodiesCopy := append([][]byte{}, rawBodies...)
-	mu.Unlock()
-
-	if len(metricsCopy) == 0 {
-		t.Fatal("expected at least one metrics export from the sync")
-	}
-	var sawSyncInvocation bool
-	for _, req := range metricsCopy {
-		for _, rm := range req.ResourceMetrics {
-			for _, sm := range rm.ScopeMetrics {
-				for _, m := range sm.Metrics {
-					for _, dp := range m.GetSum().GetDataPoints() {
-						if keyValueMap(dp.GetAttributes())[string(tmcfg.ResourceAttrCommandName)] == "agent-marketplace sync" && dp.GetAsInt() > 0 {
-							sawSyncInvocation = true
-						}
-					}
-				}
-			}
-		}
-	}
-	if !sawSyncInvocation {
-		t.Fatal("no metrics data point carried command.name=agent-marketplace sync with a positive value")
-	}
-	if len(tracesCopy) == 0 {
-		t.Fatal("expected at least one trace export from the detailed sync")
-	}
-	spanNames := map[string]int{}
-	for _, req := range tracesCopy {
-		for _, rs := range req.ResourceSpans {
-			for _, ss := range rs.ScopeSpans {
-				for _, sp := range ss.Spans {
-					spanNames[sp.Name]++
-				}
-			}
-		}
-	}
-	if spanNames["agent_marketplace.command"] == 0 {
-		t.Fatalf("no agent_marketplace.command span exported; spans = %v", spanNames)
-	}
-	var detailedSpan bool
-	for name := range spanNames {
-		if strings.HasPrefix(name, "agent_marketplace.pipeline.") {
-			detailedSpan = true
-		}
-	}
-	if !detailedSpan {
-		t.Fatalf("no detailed pipeline span exported; spans = %v", spanNames)
-	}
-
-	for i, body := range bodiesCopy {
-		var req metricspb.ExportMetricsServiceRequest
-		decoded := body
-		if err := proto.Unmarshal(body, &req); err == nil {
-			if rendered, err := protojson.Marshal(&req); err == nil {
-				decoded = rendered
-			}
-		}
-		for _, payload := range payloads {
-			if bytes.Contains(decoded, []byte(payload)) || bytes.Contains(body, []byte(payload)) {
-				t.Fatalf("telemetry request %d contains the reviewed payload %q", i, payload)
-			}
-		}
-	}
-	telemetryRoot := filepath.Join(homeDir, "state", "agent-marketplace", "telemetry")
-	err = filepath.WalkDir(telemetryRoot, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		for _, payload := range payloads {
-			if bytes.Contains(data, []byte(payload)) {
-				t.Fatalf("pending telemetry file %s contains the reviewed payload %q", path, payload)
-			}
-		}
-		return nil
-	})
-	if err != nil && !os.IsNotExist(err) {
-		t.Fatalf("walk telemetry queue: %v", err)
-	}
+	assertLogRecordsWithout(t, logPath, "pipeline sync end", payloads)
+	capture.assertExportedWithout(t, "agent-marketplace sync", filepath.Join(homeDir, "state", "agent-marketplace", "telemetry"), payloads)
 }
 
 // spec: hook-resources/changed-hook-commands-are-listed-with-exact-values
@@ -695,3 +521,156 @@ func TestWriteHookChangesRendering(t *testing.T) {
 type failWriter struct{ err error }
 
 func (w *failWriter) Write([]byte) (int, error) { return 0, w.err }
+
+// spec: hook-resources/changed-hook-commands-are-listed-with-exact-values
+// spec: hook-resources/check-reports-pending-hook-changes-without-writing
+func TestSyncHookReviewListsMachineRowsAfterRepositoryRows(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, ".cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, ".local", "state"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(homeDir, ".config"))
+	t.Setenv("CODEX_HOME", filepath.Join(homeDir, ".codex"))
+	config.SetTestV3OrganizationConfigPath(t, filepath.Join(homeDir, "nonexistent-org.yaml"))
+
+	machineRegistry, repoRegistry := t.TempDir(), t.TempDir()
+	writeFile(t, filepath.Join(machineRegistry, ".factory", "hooks", "hooks.json"), `{"PreToolUse":[{"matcher":"Execute","hooks":[{"type":"command","command":"echo machine-review-4a1f"}]}]}`+"\n")
+	writeFile(t, filepath.Join(repoRegistry, ".factory", "hooks", "hooks.json"), `{"PreToolUse":[{"matcher":"Execute","hooks":[{"type":"command","command":"echo repo-review-9c3e"}]}]}`+"\n")
+	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
+harnesses: [factory, opencode]
+sources:
+  machine:
+    directory: `+machineRegistry+`
+    source_harness: factory
+resources:
+  machine: {include: [hook/PreToolUse-command]}
+`)
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
+harnesses: [factory, opencode]
+sources:
+  repo:
+    directory: `+repoRegistry+`
+    source_harness: factory
+resources:
+  repo: {include: [hook/PreToolUse-command]}
+`)
+	withWorkingDir(t, repoRoot)
+	repoReal, err := filepath.EvalSymlinks(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoRow := func(target, action, rel, matcher string) string {
+		return fmt.Sprintf("  %s (repository) %s %s: PreToolUse matcher %q", target, action, filepath.Join(repoReal, rel), matcher)
+	}
+	machineRow := func(target, action, rel, matcher string) string {
+		return fmt.Sprintf("  %s (machine) %s ~/%s: PreToolUse matcher %q", target, action, rel, matcher)
+	}
+	const (
+		factoryFile  = ".factory/hooks.json"
+		opencodeRepo = ".opencode/hooks/agent-marketplace/PreToolUse-command.json"
+		opencodeHome = ".config/opencode/hooks/agent-marketplace/PreToolUse-command.json"
+	)
+
+	output, err := executeCommand("sync")
+	if err != nil {
+		t.Fatalf("initial sync: %v\n%s", err, output)
+	}
+	assertHookReviewListing(t, "initial sync", output, "Hook changes:", []string{
+		repoRow("factory", "add", factoryFile, "Execute"),
+		`    + command: "echo repo-review-9c3e"`,
+		machineRow("factory", "add", factoryFile, "Execute"),
+		`    + command: "echo machine-review-4a1f"`,
+		repoRow("opencode", "add", opencodeRepo, "Bash"),
+		`    + command: "echo repo-review-9c3e"`,
+		machineRow("opencode", "add", opencodeHome, "Bash"),
+		`    + command: "echo machine-review-4a1f"`,
+	})
+	for _, file := range []struct{ path, want, other string }{
+		{filepath.Join(homeDir, factoryFile), "echo machine-review-4a1f", "echo repo-review-9c3e"},
+		{filepath.Join(homeDir, opencodeHome), "echo machine-review-4a1f", "echo repo-review-9c3e"},
+		{filepath.Join(repoRoot, factoryFile), "echo repo-review-9c3e", "echo machine-review-4a1f"},
+		{filepath.Join(repoRoot, opencodeRepo), "echo repo-review-9c3e", "echo machine-review-4a1f"},
+	} {
+		data, err := os.ReadFile(file.path)
+		if err != nil || !strings.Contains(string(data), file.want) || strings.Contains(string(data), file.other) {
+			t.Fatalf("%s = %q, err %v; want only %q", file.path, data, err, file.want)
+		}
+	}
+
+	writeFile(t, filepath.Join(machineRegistry, ".factory", "hooks", "hooks.json"), `{"PreToolUse":[{"matcher":"Execute","hooks":[{"type":"command","command":"echo machine-review-v2-5d0b"}]}]}`+"\n")
+	outputRoots := []string{
+		filepath.Join(homeDir, ".factory"), filepath.Join(homeDir, ".config", "opencode"),
+		filepath.Join(repoRoot, ".factory"), filepath.Join(repoRoot, ".opencode"),
+		filepath.Join(homeDir, ".local", "state"),
+	}
+	snapshots := make([]map[string]cliFilesystemEntry, len(outputRoots))
+	for i, root := range outputRoots {
+		snapshots[i] = cliFilesystemSnapshot(t, root)
+	}
+	machineReplacement := []string{
+		machineRow("factory", "replace", factoryFile, "Execute"),
+		`    - command: "echo machine-review-4a1f"`,
+		`    + command: "echo machine-review-v2-5d0b"`,
+		machineRow("opencode", "replace", opencodeHome, "Bash"),
+		`    - command: "echo machine-review-4a1f"`,
+		`    + command: "echo machine-review-v2-5d0b"`,
+	}
+	output, checkErr := executeCommand("sync", "--check")
+	if checkErr == nil {
+		t.Fatalf("sync --check succeeded with pending machine hook replacements:\n%s", output)
+	}
+	assertHookReviewListing(t, "sync --check", output, "Hook changes (pending, not written):", machineReplacement)
+	for i, root := range outputRoots {
+		assertCliFilesystemSnapshot(t, "sync --check", root, snapshots[i])
+	}
+
+	output, err = executeCommand("sync")
+	if err != nil {
+		t.Fatalf("machine replacement sync: %v\n%s", err, output)
+	}
+	assertHookReviewListing(t, "machine replacement sync", output, "Hook changes:", machineReplacement)
+	for i, root := range outputRoots[2:4] {
+		assertCliFilesystemSnapshot(t, "machine replacement sync", root, snapshots[i+2])
+	}
+	for _, path := range []string{filepath.Join(homeDir, factoryFile), filepath.Join(homeDir, opencodeHome)} {
+		data, err := os.ReadFile(path)
+		if err != nil || !strings.Contains(string(data), "echo machine-review-v2-5d0b") || strings.Contains(string(data), "echo machine-review-4a1f") {
+			t.Fatalf("%s = %q, err %v; want only the replacement command", path, data, err)
+		}
+	}
+}
+
+// assertHookReviewListing requires the output to contain exactly one hook
+// review whose header and indented rows equal want, in order.
+func assertHookReviewListing(t *testing.T, phase, output, header string, want []string) {
+	t.Helper()
+	lines := strings.Split(output, "\n")
+	start := -1
+	for i, line := range lines {
+		if strings.HasPrefix(line, "Hook changes") {
+			if start >= 0 {
+				t.Fatalf("%s printed more than one hook review:\n%s", phase, output)
+			}
+			start = i
+		}
+	}
+	if start < 0 || lines[start] != header {
+		t.Fatalf("%s hook review header missing or not %q:\n%s", phase, header, output)
+	}
+	var rows []string
+	for _, line := range lines[start+1:] {
+		if !strings.HasPrefix(line, "  ") {
+			break
+		}
+		rows = append(rows, line)
+	}
+	if !slices.Equal(rows, want) {
+		t.Fatalf("%s hook review rows:\n%s\nwant:\n%s", phase, strings.Join(rows, "\n"), strings.Join(want, "\n"))
+	}
+}

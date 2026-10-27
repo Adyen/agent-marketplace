@@ -3,7 +3,8 @@ harness: cursor
 evidence:
   checked: "2026-09-21"
   refs:
-    - https://cursor.com/docs/subagents
+    - https://cursor.com/docs/subagents.md
+    - https://cursor.com/docs/models-and-pricing.md
 surfaces:
   subagent:
     model_field: model

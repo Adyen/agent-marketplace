@@ -236,7 +236,7 @@ The canonical encoder MUST NOT write the IR's zeroed `Extra` field, nor an exten
 
 ### Requirement: Artifact paths that differ only in letter case collide
 
-Bundle compilation MUST treat two non-fragment artifact paths that differ only in letter case, compared by Unicode simple case folding, as the same output path, because they name one file on case-insensitive filesystems. Both producing resources MUST be suppressed with the error `bundle.conflict.duplicate-artifact-path` (or `bundle.conflict.cross-kind-artifact-path` for different kinds), naming both paths, and every other resource in the bundle MUST still be emitted. Installation MUST apply the same rule to selected skills, commands, subagents or rules of one kind, for the same target and scope, whose installed names differ only in letter case: each of them MUST be refused with `bundle.conflict.duplicate-artifact-path` before any write, and the rest of the target MUST still install. The rule MUST hold on every host filesystem, so output stays portable between case-sensitive and case-insensitive systems.
+Bundle compilation MUST treat two non-fragment artifact paths that differ only in letter case, compared by Unicode simple case folding, as the same output path, because they name one file on case-insensitive filesystems. Both producing resources MUST be suppressed with the error `bundle.conflict.duplicate-artifact-path` (or `bundle.conflict.cross-kind-artifact-path` for different kinds), naming both paths, and every other resource in the bundle MUST still be emitted. Installation MUST apply the same rule to selected skills, commands, subagents or rules of one kind, for the same target and scope, whose installed names differ only in letter case: each of them MUST be refused with `bundle.conflict.duplicate-artifact-path` before any write, and the rest of the target MUST still install. The exception is a member selected by a required entry that outranks every other member, either because the others are not required or because it comes from a higher-precedence layer or file than each other required member. That member MUST be installed, and each other member MUST be omitted on that target with the warning `materialize.collision.shared-path`, which names both paths. The rule MUST hold on every host filesystem, so output stays portable between case-sensitive and case-insensitive systems.
 
 #### Scenario: Case-only name collisions are refused portably
 
@@ -252,3 +252,43 @@ Bundle compilation MUST treat two non-fragment artifact paths that differ only i
 
 - **WHEN** two resources produce artifact paths that differ only by the Greek sigma `σ` and final sigma `ς`
 - **THEN** neither artifact MUST be emitted, and compilation MUST report `bundle.conflict.duplicate-artifact-path` naming both paths
+
+#### Scenario: Required resource keeps a case-only collision
+
+- **WHEN** an organization source requires command `deploy`, and the user's OpenCode-layout source selects command `Deploy`, both for Claude Code
+- **THEN** `sync` MUST succeed and install the required command as `commands/deploy.md` with its content
+- **AND** `sync` MUST NOT install `Deploy` and MUST report `materialize.collision.shared-path` naming it, without `bundle.conflict.duplicate-artifact-path`
+- **AND** `sync --check` MUST succeed afterwards
+
+### Requirement: Subagent tool strings are read as lists
+
+Claude documents a subagent's `tools` and `disallowedTools` as either a YAML list or a comma-separated string such as `Read, Grep, Bash`. Claude and Cursor source layout ingestion MUST read such a string as the list of its comma-separated entries: entries MUST keep their order, MUST be trimmed of surrounding whitespace, and blank entries MUST be dropped. A comma inside parentheses, as in `Agent(worker, researcher)`, MUST belong to its entry and MUST NOT split it, and a backslash MUST make the character after it literal. A string that names no tool, whose parentheses do not balance, or that ends in a backslash with nothing after it is not a well-formed list and MUST be kept as a single entry exactly as written, unchanged from earlier versions, so that every subagent that loaded before still loads and a source revision that lists it still verifies. A YAML list MUST keep each entry as written.
+
+#### Scenario: Comma-separated subagent tool strings become separate tools
+
+- **WHEN** a Claude source layout subagent declares `tools: Read, Grep` and is converted to Claude, Factory and Gemini, directly and through `sync`
+- **THEN** Claude MUST emit `Read` and `Grep` as separate tools, and Factory and Gemini MUST emit the subagent with the tools the YAML list `Read`, `Grep` gives, without `subagent.factory.tool-unknown` or `subagent.gemini.tool-unknown`
+- **AND** a subagent declaring `disallowedTools: Bash, Write` MUST be emitted on Claude with `Bash` and `Write` as separate disallowed tools
+
+#### Scenario: Cursor source subagent tool strings become separate tools
+
+- **WHEN** a Cursor source layout subagent declares `tools: Read, Grep` and is converted to Claude
+- **THEN** Claude MUST emit `Read` and `Grep` as separate tools and MUST NOT report `subagent.claude.tool-unknown`
+
+#### Scenario: Parentheses keep a scoped subagent tool in one piece
+
+- **WHEN** a Claude source layout subagent declares `tools: Agent(worker, researcher), Read` as a string, and another declares the same two entries as a YAML list, and both are converted to Claude
+- **THEN** each MUST be emitted with exactly two tools, `Agent(worker, researcher)` and `Read`
+
+#### Scenario: A backslash makes the next character literal
+
+- **WHEN** a Claude source layout subagent declares `tools: Bash(echo \)), Read`, another declares `tools: Read, Bash(a\), b)`, and another declares `tools: Read\, Grep`, and all are converted to Claude
+- **THEN** the first MUST be emitted with two tools, `Bash(echo \))` and `Read`, the second with two tools, `Read` and `Bash(a\), b)`, and the third with the single tool `Read\, Grep`
+
+#### Scenario: A subagent tool string that is not well formed is kept as a single entry
+
+- **WHEN** a Claude source layout subagent declares `tools: ""`, `tools: " , "`, `tools: Read, Bash(git diff`, `tools: Read), Grep`, `tools: Read, Grep\` or `disallowedTools: Bash(rm`, next to a valid subagent, and the source is converted to Claude
+- **THEN** conversion MUST emit the subagent with one entry equal to the string as written, MUST report no ingestion error, and MUST emit the valid subagent
+- **AND** conversion of the `tools` cases to Factory and Gemini MUST keep reporting `subagent.factory.tool-unknown` and `subagent.gemini.tool-unknown`, as earlier versions did
+- **AND** a Devin source layout subagent with `allowed-tools: [read]` and `tools: Read, Bash(git diff` MUST still be ingested, and `tools: ""` converted from Claude to Cursor MUST still report `subagent.cursor.tool-unknown`
+- **AND** `sync` MUST install such a subagent next to a valid one, and `sync --check` MUST succeed afterwards

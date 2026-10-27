@@ -121,9 +121,6 @@ func correlateOperation(cmd tea.Cmd, id operationID, followUp bool) tea.Cmd {
 		case harnessWrittenMsg:
 			msg.operation = id
 			return msg
-		case editConfigPathMsg:
-			msg.operation = id
-			return msg
 		default:
 			return msg
 		}

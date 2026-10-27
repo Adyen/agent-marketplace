@@ -376,7 +376,7 @@ func readDeployedLock(path string, scope lockfile.Scope, overlays map[string][]b
 	if err != nil {
 		var coded *lockfile.Error
 		if decode && errors.As(err, &coded) && coded.Code == lockfile.CodeScopeMismatch {
-			return nil, nil, v4err(v4MarketplaceLockMismatchCode, "", 0, "%s", coded.Err)
+			return nil, nil, v4errVariant(v4MarketplaceLockMismatchCode, "", 0, "lock-restore", "%s", coded.Err)
 		}
 		op := "read"
 		if decode {

@@ -4,10 +4,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/creack/pty"
 )
 
 // capturedRequest records a single OTLP/HTTP request seen by the test server.
@@ -152,9 +156,9 @@ func TestTelemetryDetailedExport(t *testing.T) {
 	}
 }
 
-// TestTelemetryDiagnosticExport verifies that --diagnostic captures and exports a
-// reviewed payload, including both metrics and traces, and prints a trace ID.
-func TestTelemetryDiagnosticExport(t *testing.T) {
+// TestTelemetryDiagnosticNoninteractiveRetainsPayload verifies that a
+// diagnostic run without a terminal keeps its payload local and exports nothing.
+func TestTelemetryDiagnosticNoninteractiveRetainsPayload(t *testing.T) {
 	t.Parallel()
 	srv := newTelemetryServer(t)
 	env := telemetryEnv(t, srv)
@@ -162,22 +166,85 @@ func TestTelemetryDiagnosticExport(t *testing.T) {
 	r := env.RunAMWithEnv(map[string]string{
 		"AGENT_MARKETPLACE_TELEMETRY_LEVEL":    "detailed",
 		"AGENT_MARKETPLACE_TELEMETRY_ENDPOINT": srv.URL,
-	}, "--diagnostic", "--diagnostic-accept-sensitive-data", "list")
+	}, "--diagnostic", "list")
 	if r.ExitCode != 0 {
 		t.Fatalf("diagnostic list should exit 0, got %d:\n%s", r.ExitCode, r.Combined)
 	}
 
-	if !strings.Contains(r.Combined, "Diagnostic export succeeded.") {
-		t.Fatalf("expected diagnostic export success message, got:\n%s", r.Combined)
+	if !strings.Contains(r.Combined, "requires interactive acknowledgement at a terminal") {
+		t.Fatalf("expected interactive acknowledgement message, got:\n%s", r.Combined)
 	}
-	if !strings.Contains(r.Combined, "trace id:") {
-		t.Fatalf("expected trace id in output, got:\n%s", r.Combined)
+	if !strings.Contains(r.Combined, "The payload has been retained at") {
+		t.Fatalf("expected retained payload message, got:\n%s", r.Combined)
+	}
+	if strings.Contains(r.Combined, "Diagnostic export succeeded.") {
+		t.Fatalf("noninteractive diagnostic must not export, got:\n%s", r.Combined)
+	}
+	srv.mu.Lock()
+	n := len(srv.requests)
+	srv.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("noninteractive diagnostic must send no requests, got %d:\n%s", n, r.Combined)
+	}
+}
+
+// TestTelemetryDiagnosticExportAtTerminal verifies that a diagnostic export
+// accepted at an interactive prompt delivers metrics and traces and prints a trace ID.
+func TestTelemetryDiagnosticExportAtTerminal(t *testing.T) {
+	t.Parallel()
+	srv := newTelemetryServer(t)
+	env := telemetryEnv(t, srv)
+
+	cmd := exec.Command(env.binary, "--diagnostic", "list")
+	cmd.Dir = env.workspace
+	cmd.Env = subprocessEnvWithOverrides(env.subprocessEnv(), map[string]string{
+		"AGENT_MARKETPLACE_TELEMETRY_LEVEL":    "detailed",
+		"AGENT_MARKETPLACE_TELEMETRY_ENDPOINT": srv.URL,
+	})
+	terminal, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 40, Cols: 160})
+	if err != nil {
+		t.Fatalf("start diagnostic list: %v", err)
+	}
+	defer terminal.Close()
+	var output synchronizedBuffer
+	go func() { _, _ = io.Copy(&output, terminal) }()
+
+	deadline := time.Now().Add(20 * time.Second)
+	for !strings.Contains(output.String(), "[y/N]") {
+		if time.Now().After(deadline) {
+			_ = cmd.Process.Kill()
+			t.Fatalf("diagnostic confirmation prompt never appeared:\n%s", output.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if _, err := terminal.Write([]byte("y\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	wait := make(chan error, 1)
+	go func() { wait <- cmd.Wait() }()
+	select {
+	case err := <-wait:
+		if err != nil {
+			t.Fatalf("diagnostic list exited with %v:\n%s", err, output.String())
+		}
+	case <-time.After(30 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatalf("diagnostic list did not finish:\n%s", output.String())
+	}
+
+	combined := output.String()
+	if !strings.Contains(combined, "Diagnostic export succeeded.") {
+		t.Fatalf("expected diagnostic export success message, got:\n%s", combined)
+	}
+	if !strings.Contains(combined, "trace id:") {
+		t.Fatalf("expected trace id in output, got:\n%s", combined)
 	}
 	if len(srv.requestsByPath("/v1/metrics")) == 0 {
-		t.Fatalf("expected /v1/metrics request, got none\n%s", r.Combined)
+		t.Fatalf("expected /v1/metrics request, got none\n%s", combined)
 	}
 	if len(srv.requestsByPath("/v1/traces")) == 0 {
-		t.Fatalf("expected /v1/traces request, got none\n%s", r.Combined)
+		t.Fatalf("expected /v1/traces request, got none\n%s", combined)
 	}
 }
 

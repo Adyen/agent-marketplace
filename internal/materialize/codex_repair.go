@@ -73,6 +73,8 @@ func CodexRepairPreview(ctx context.Context, repoRoot string, resolved []resolve
 }
 
 func previewCodexRoot(preview *RepairPreview, key outputKey, root string, hooks *ownedJSONAggregateWork, mcps []codexMCPEntry) {
+	duplicates, duplicateDiags := codexMCPDuplicateIdentities(key, mcps)
+	preview.Diags = append(preview.Diags, duplicateDiags...)
 	var store *ownership.Store
 	for _, rel := range []string{codexHooksFile, codexMCPFile} {
 		var desiredHooks []ownedJSONEntry
@@ -122,7 +124,7 @@ func previewCodexRoot(preview *RepairPreview, key outputKey, root string, hooks 
 			hookFile := ownedJSONFileSpec{rel: codexHooksFile, container: codexHooksContainer, rawValueDigest: true}
 			file, fileDiags = previewOwnedJSONAggregateFile(store, key, root, hookFile, codexHookJSONOptions(), true, desiredHooks)
 		case codexMCPFile:
-			file, fileDiags = previewCodexMCPFile(store, key, root, mcps)
+			file, fileDiags = previewCodexMCPFile(store, key, root, mcps, duplicates)
 		}
 		preview.Diags = append(preview.Diags, redactCodexRepairDiags(root, fileDiags)...)
 		if file != nil {
@@ -131,7 +133,24 @@ func previewCodexRoot(preview *RepairPreview, key outputKey, root string, hooks 
 	}
 }
 
-func previewCodexMCPFile(store *ownership.Store, key outputKey, root string, desired []codexMCPEntry) (*RepairFile, []diag.Diagnostic) {
+func codexMCPDuplicateIdentities(key outputKey, desired []codexMCPEntry) (map[string]bool, []diag.Diagnostic) {
+	first := make(map[string]string, len(desired))
+	duplicates := make(map[string]bool)
+	var diagnostics []diag.Diagnostic
+	for _, entry := range desired {
+		resource, seen := first[entry.name]
+		if !seen {
+			first[entry.name] = entry.resource
+			continue
+		}
+		duplicates[entry.name] = true
+		slog.Error("Codex repair refused duplicate desired identity", "target", key.target, "machine_scope", key.machineScope, "server", entry.name, "first_resource", resource, "second_resource", entry.resource, "code", diag.CodeMaterializeCodexDuplicateIdentity)
+		diagnostics = append(diagnostics, diag.Diagnostic{Code: diag.CodeMaterializeCodexDuplicateIdentity, Severity: diag.SeverityError, Target: string(key.target), Resource: entry.resource, Message: fmt.Sprintf("Codex MCP server %q is produced by both %q and %q; repair offers no adoption or replacement for it", entry.name, resource, entry.resource)})
+	}
+	return duplicates, diagnostics
+}
+
+func previewCodexMCPFile(store *ownership.Store, key outputKey, root string, desired []codexMCPEntry, duplicates map[string]bool) (*RepairFile, []diag.Diagnostic) {
 	rel := codexMCPFile
 	adapter := codexMCPRepairAdapter{}
 	nativeState, diagnostics := readCodexMCPRepairState(store, key, root)
@@ -157,6 +176,9 @@ func previewCodexMCPFile(store *ownership.Store, key outputKey, root string, des
 		desired:         desiredEntries,
 	}
 	for _, candidate := range ownership.ExactAdoptionCandidates(state.proof, state.existing, desiredValues) {
+		if duplicates[candidate.EntryID().Key] {
+			continue
+		}
 		file.Adoptions = append(file.Adoptions, AdoptionCandidate{Candidate: candidate, Resource: resourceByID[ownedAggregateIDKey(candidate.EntryID())]})
 	}
 	orphans, orphanErr := store.OrphanCandidates(state.proof, rel, state.existing, desiredValues)
@@ -172,7 +194,7 @@ func previewCodexMCPFile(store *ownership.Store, key outputKey, root string, des
 	}
 	for _, candidate := range ownership.ValueConflictCandidates(state.proof, state.existing, desiredValues) {
 		section, ok := nativeState.sections[candidate.EntryID().Key]
-		if !ok || section.alternate {
+		if !ok || section.alternate || duplicates[candidate.EntryID().Key] {
 			continue
 		}
 		file.Conflicts = append(file.Conflicts, ConflictCandidate{
@@ -243,10 +265,7 @@ func (s *codexMCPRepairState) remove(id ownership.EntryID, valueDigest string) (
 	if section.alternate {
 		return nil, fmt.Errorf("codex MCP server %q uses an alternate TOML form that cannot be removed safely", id.Key)
 	}
-	next := make([]byte, 0, len(s.raw)-(section.end-section.start))
-	next = append(next, s.raw[:section.start]...)
-	next = append(next, s.raw[section.end:]...)
-	return next, nil
+	return applyCodexMCPEdits(s.raw, section.edits(nil)), nil
 }
 
 func (s *codexMCPRepairState) replace(id ownership.EntryID, replacement []byte) ([]byte, error) {
@@ -257,11 +276,7 @@ func (s *codexMCPRepairState) replace(id ownership.EntryID, replacement []byte) 
 	if section.alternate {
 		return nil, fmt.Errorf("codex MCP server %q uses an alternate TOML form that cannot be replaced safely", id.Key)
 	}
-	next := make([]byte, 0, len(s.raw)-(section.end-section.start)+len(replacement))
-	next = append(next, s.raw[:section.start]...)
-	next = append(next, replacement...)
-	next = append(next, s.raw[section.end:]...)
-	return next, nil
+	return applyCodexMCPEdits(s.raw, section.edits(replacement)), nil
 }
 
 func readCodexMCPRepairState(store *ownership.Store, key outputKey, root string) (*codexMCPRepairState, []diag.Diagnostic) {

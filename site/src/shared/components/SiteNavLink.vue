@@ -19,25 +19,25 @@ defineProps<{
 .SiteNavLink {
   display: flex;
   align-items: center;
-  padding: 0 12px;
-  line-height: var(--vp-nav-height);
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--vp-c-text-1);
-  transition: color 0.25s;
+  height: var(--lp-h-compact);
+  padding: 0 var(--lp-space-related);
+  color: var(--lp-text-2);
+  font: var(--lp-font-nav);
+  transition: color var(--lp-motion-feedback) var(--lp-ease);
 }
 
 .SiteNavLink:hover {
-  color: var(--vp-c-brand-1);
+  color: var(--lp-text);
 }
 
 .SiteNavLink.screen-menu {
   display: block;
-  border-bottom: 1px solid var(--vp-c-divider);
-  padding: 12px 0 11px;
-  line-height: 24px;
+  height: auto;
+  border-bottom: 1px solid var(--lp-divider);
+  padding: var(--lp-space-related) 0;
+  line-height: 1.34;
   transition:
-    border-color 0.25s,
-    color 0.25s;
+    border-color var(--lp-motion-feedback) var(--lp-ease),
+    color var(--lp-motion-feedback) var(--lp-ease);
 }
 </style>

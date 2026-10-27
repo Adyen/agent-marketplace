@@ -1,20 +1,99 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { test } from "node:test";
 
-import { test } from "@microsoft/tui-test";
+import { TuiTest, uniqueSession, type Locator } from "@microsoft/tui-test";
 
 import { createFixture, type Fixture, type FixtureOptions } from "./fixture.js";
+import { artifactRoot } from "./process-helpers.js";
 
-type TestBody = Parameters<typeof test>[1];
-type TestOptions = Parameters<typeof test.use>[0];
 type StepPart = () => void | Promise<void>;
-export type TestTerminal = Parameters<TestBody>[0]["terminal"];
+export type TestTerminal = TuiTest;
+type JourneyBody = (terminal: TestTerminal) => Promise<void>;
 
 interface FixtureLifecycle {
-  options: TestOptions;
-  setup(): void | Promise<void>;
+  setup(): Promise<void>;
   cleanup(): void;
   current(): Fixture;
+  test(title: string, body: JourneyBody): void;
 }
+
+const journeyDirectories = new WeakMap<TestTerminal, string>();
+const closed = new WeakSet<TestTerminal>();
+const cleanupErrors = new WeakMap<TestTerminal, unknown>();
+
+const amend = (error: unknown, message: (original: string) => string): void => {
+  if (!(error instanceof Error) || !error.message) return;
+  const original = error.message;
+  // V8 formats a stack on first read; read it before the message changes.
+  const stack = error.stack;
+  error.message = message(original);
+  if (stack?.includes(original)) error.stack = stack.replace(original, () => error.message);
+};
+
+// finish renders the GIF only when it may be kept: stopRecording encodes the
+// whole capture, while closing an unstopped recording discards it. A failure
+// to render or to close a failed session is recorded so the journey failure can
+// report its missing artifacts; closing a passing session must succeed.
+const finish = async (terminal: TestTerminal, failed: boolean, render = failed): Promise<void> => {
+  if (closed.has(terminal)) return;
+  closed.add(terminal);
+  const record = (error: unknown): void => {
+    if (!cleanupErrors.has(terminal)) cleanupErrors.set(terminal, error);
+  };
+  if (render) await terminal.stopRecording().catch(record);
+  await terminal.close({ failed }).catch((error: unknown) => {
+    if (!failed) throw error;
+    record(error);
+  });
+};
+
+// Each journey runs in its own tui-test session, records a GIF, and writes a
+// trace on close. A failing journey keeps the GIF, the trace (trace.html,
+// trace.md and session.cast) under <artifactRoot>/<journey>/; a passing
+// journey removes them without rendering the GIF.
+const runJourney = async (
+  journey: string,
+  fixture: Fixture,
+  args: string[],
+  cols: number,
+  rows: number,
+  body: JourneyBody
+): Promise<void> => {
+  const directory = path.join(artifactRoot, journey);
+  fs.rmSync(directory, { recursive: true, force: true });
+  fs.mkdirSync(directory, { recursive: true });
+  const terminal = new TuiTest(uniqueSession(journey), {
+    recording: { directory: path.join(directory, "casts") },
+    trace: { mode: "on", directory }
+  });
+  journeyDirectories.set(terminal, directory);
+  let failed = true;
+  let failure: unknown;
+  try {
+    // tui-test adds its own environment to the child's; env -i keeps the
+    // program to exactly the fixture's sandboxed environment.
+    const environment = Object.entries(fixture.env).map(([key, value]) => `${key}=${value}`);
+    await terminal.run("/usr/bin/env", ["-i", ...environment, fixture.launcher, ...args], { cols, rows });
+    await terminal.startRecording(path.join(directory, `${journey}.gif`));
+    await body(terminal);
+    failed = false;
+  } catch (error) {
+    failure = error;
+    const screen = closed.has(terminal) ? "(session closed)" : await terminal.text().catch(() => "(unavailable)");
+    amend(error, (message) => `${message}\n\nTerminal screen:\n${screen}\n\nRecording and trace: ${directory}`);
+    throw error;
+  } finally {
+    await finish(terminal, failed);
+    if (failed && cleanupErrors.has(terminal)) {
+      const cleanup = cleanupErrors.get(terminal);
+      const detail = cleanup instanceof Error ? cleanup.message : String(cleanup);
+      amend(failure, (message) => `${message}\n\nFailure artifacts are incomplete: ${detail}`);
+    }
+    if (!failed) fs.rmSync(directory, { recursive: true, force: true });
+  }
+};
 
 export const defineFixture = (
   name: string,
@@ -23,24 +102,25 @@ export const defineFixture = (
   rows: 12 | 24 = 24,
   options: FixtureOptions = {}
 ): FixtureLifecycle => {
-  const env: Record<string, string> = {};
-  const program = { file: "true", args: [] as string[] };
   let fixture: Fixture | undefined;
+  let journeys = 0;
+  const current = (): Fixture => {
+    if (!fixture) throw new Error(`fixture ${name} is not set up`);
+    return fixture;
+  };
   return {
-    options: { columns, rows, env, program },
     setup: async () => {
       fixture = await createFixture(name, options);
-      Object.assign(env, fixture.env);
-      program.file = fixture.launcher;
-      program.args = [...args];
     },
     cleanup: () => {
       fixture?.cleanup();
       fixture = undefined;
     },
-    current: () => {
-      if (!fixture) throw new Error(`fixture ${name} is not set up`);
-      return fixture;
+    current,
+    test: (title, body) => {
+      journeys += 1;
+      const journey = journeys === 1 ? name : `${name}-${journeys}`;
+      test(title, () => runJourney(journey, current(), args, columns, rows, body));
     }
   };
 };
@@ -50,125 +130,107 @@ export const step = async (name: string, action: StepPart, assertion: StepPart):
   try {
     await assertion();
   } catch (error) {
-    if (error instanceof Error) {
-      error.message = `${name}: ${error.message}`;
-      if (error.stack) {
-        const stack = error.stack.split("\n");
-        stack[0] = `${error.name}: ${error.message}`;
-        error.stack = stack.join("\n");
-      }
-    }
+    amend(error, (message) => `${name}: ${message}`);
     throw error;
   }
 };
+
+// locate matches literal text, or a flagless RegExp's source in tui-test's
+// regex syntax, on the visible screen.
+export const locate = (terminal: TestTerminal, pattern: string | RegExp): Locator => {
+  if (typeof pattern === "string") return terminal.getByText(pattern);
+  assert.equal(pattern.flags, "", `locator ${pattern} must not carry flags`);
+  return terminal.getByText(pattern.source, { regex: true });
+};
+
+// modalText returns the text inside the bordered modal with whitespace removed,
+// so assertions survive wrapping that depends on temporary path lengths.
+export const modalText = async (terminal: TestTerminal): Promise<string> =>
+  (await terminal.text())
+    .split("\n")
+    .map((line) => line.match(/│(.*)│/)?.[1] ?? "")
+    .join("")
+    .replace(/\s+/g, "");
 
 export const sgr = (code: number, x: number, y: number, final: "M" | "m"): string =>
   `\x1b[<${code};${x + 1};${y + 1}${final}`;
 export const sgrDrag = (x0: number, y0: number, x1: number, y1: number): string =>
   sgr(0, x0, y0, "M") + sgr(32, x1, y1, "M") + sgr(0, x1, y1, "m");
 
-export const osc52Capture = (terminal: TestTerminal): { payloads(): string[] } => {
-  const pty = (terminal as unknown as { _pty?: { onData(cb: (data: string) => void): void } })._pty;
-  assert.ok(pty, "test terminal does not expose a PTY output stream");
-  const chunks: string[] = [];
-  pty.onData((data) => chunks.push(data));
-  return {
-    payloads(): string[] {
-      return [...chunks.join("").matchAll(/\x1b\]52;[^;\x07\x1b]*;([^\x07\x1b]*)[\x07\x1b]/g)].map(
-        (match) => match[1]
-      );
-    }
-  };
+// terminalOutput ends the session and returns the program's raw output from
+// the trace's session cast. Call it last, after the program has exited and
+// any live terminal assertions have completed.
+export const terminalOutput = async (terminal: TestTerminal): Promise<string> => {
+  await finish(terminal, false, true);
+  const directory = journeyDirectories.get(terminal);
+  assert.ok(directory, "terminal was not started by a journey");
+  const casts = fs
+    .readdirSync(directory, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && fs.existsSync(path.join(directory, entry.name, "session.cast")));
+  assert.equal(casts.length, 1, `expected one trace with a session cast in ${directory}`);
+  return fs
+    .readFileSync(path.join(directory, casts[0].name, "session.cast"), "utf8")
+    .split("\n")
+    .slice(1)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as [number, string, string])
+    .filter(([, kind]) => kind === "o")
+    .map(([, , data]) => data)
+    .join("");
 };
 
-interface HeadlessCell {
-  isInverse(): number;
-  getChars(): string;
-  getWidth(): number;
-}
-interface HeadlessLine {
-  translateToString(trimRight?: boolean): string;
-  getCell(x: number): HeadlessCell | undefined;
-  readonly length: number;
-}
-interface HeadlessBuffer {
-  baseY: number;
-  length: number;
-  getLine(y: number): HeadlessLine | undefined;
-}
-
-const xterm = (terminal: TestTerminal): { buffer: { active: HeadlessBuffer } } =>
-  (terminal as unknown as { _term: { buffer: { active: HeadlessBuffer } } })._term;
+export const clipboardWrites = async (terminal: TestTerminal): Promise<string[]> => {
+  const output = await terminalOutput(terminal);
+  return [...output.matchAll(/\x1b\]52;[^;\x07\x1b]*;([^\x07\x1b]*)[\x07\x1b]/g)].map((match) =>
+    Buffer.from(match[1], "base64").toString()
+  );
+};
 
 export interface TextRun {
   x: number;
   y: number;
+  width: number;
   text: string;
-  cells: HeadlessCell[];
 }
 
-export const findTextRun = (terminal: TestTerminal, text: RegExp): TextRun | undefined => {
-  const buffer = xterm(terminal).buffer.active;
-  for (let y = buffer.baseY; y < buffer.length; y++) {
-    const line = buffer.getLine(y);
-    if (!line) continue;
-    let composed = "";
-    const cellStart: number[] = [];
-    for (let x = 0; x < line.length; x++) {
-      cellStart.push(composed.length);
-      const cell = line.getCell(x);
-      if (cell && cell.getWidth() === 0) continue;
-      composed += cell?.getChars() || " ";
-    }
-    const match = text.exec(composed);
-    if (!match) continue;
-    const firstCell = cellStart.findIndex((offset) => offset > match.index) - 1;
-    const x0 = firstCell < 0 ? cellStart.length - 1 : firstCell;
-    const endOffset = match.index + match[0].length - 1;
-    let x1 = cellStart.findIndex((offset) => offset > endOffset) - 1;
-    if (x1 < x0) x1 = x0;
-    for (let x = x1 + 1; x < line.length; x++) {
-      const next = line.getCell(x);
-      if (!next || next.getWidth() !== 0) break;
-      x1 = x;
-    }
-    const cells: HeadlessCell[] = [];
-    for (let x = x0; x <= x1; x++) {
-      const cell = line.getCell(x);
-      if (cell) cells.push(cell);
-    }
-    return { x: x0, y: y - buffer.baseY, text: match[0], cells };
-  }
-  return undefined;
+export const findTextRun = async (terminal: TestTerminal, text: RegExp): Promise<TextRun> => {
+  const locator = locate(terminal, text).first();
+  await locator.expect();
+  const match = await locator.location();
+  assert.equal(match.start.row, match.end.row, `expected ${text} on one row`);
+  return { x: match.start.column, y: match.start.row, width: match.end.column - match.start.column, text: match.text };
 };
 
-export const waitForInverse = async (
+export const waitForInverse = (terminal: TestTerminal, text: RegExp, want: number): Promise<void> =>
+  locate(terminal, text).getByStyle({ inverse: want !== 0 }).expect();
+
+// assertPlaceholderArchivesFetched checks that the client fetched each archive
+// from the placeholder route and never fell back to the legacy final-artifact
+// route, which it verifies by re-encoding with its own Go compressor. That the
+// client hashes the placeholder bytes it receives is proven separately by
+// marketplace-archive-integrity, which serves bytes that do not hash.
+export const assertPlaceholderArchivesFetched = (fixture: Fixture, ...digests: (string | undefined)[]): void => {
+  const fetches = fixture.marketplaceArchiveFetches?.();
+  assert.ok(fetches, "fixture has no Marketplace stub");
+  assert.deepEqual(fetches.final, [], "the client fetched the legacy final-artifact route");
+  for (const digest of digests) {
+    assert.ok(digest && fetches.placeholder.includes(digest), `the client never fetched the placeholder archive ${digest}: ${JSON.stringify(fetches)}`);
+  }
+};
+
+// lockedGitCommit returns the commit an acquisition lock pins for its only Git
+// registry.
+export const lockedGitCommit = (lock: string): string => {
+  const match = /^\s+commit: (\S+)$/m.exec(lock);
+  assert.ok(match, `acquisition lock has no Git commit:\n${lock}`);
+  return match[1];
+};
+
+export const waitForExit = async (
   terminal: TestTerminal,
-  text: RegExp,
-  want: number
-): Promise<void> => {
-  const deadline = Date.now() + 5_000;
-  const wanted = want !== 0;
-  let run: TextRun | undefined;
-  while (Date.now() < deadline) {
-    run = findTextRun(terminal, text);
-    if (run && run.cells.length > 0 && run.cells.every((cell) => (cell.isInverse() !== 0) === wanted)) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  assert.ok(run, `expected visible text matching ${text}`);
-  assert.ok(
-    run.cells.every((cell) => (cell.isInverse() !== 0) === wanted),
-    `expected ${JSON.stringify(run.text)} at (${run.x},${run.y}) to be inverse=${want}`
-  );
-};
-
-export const waitForExit = (terminal: TestTerminal, timeoutMs = 5_000): Promise<{ exitCode: number; signal?: number }> => {
-  if (terminal.exitResult) return Promise.resolve(terminal.exitResult);
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("TUI process did not exit within the bounded wait")), timeoutMs);
-    terminal.onExit((result) => {
-      clearTimeout(timeout);
-      resolve(result);
-    });
-  });
+  timeoutMs = 5_000
+): Promise<{ exitCode: number | null; signal: string | null }> => {
+  await terminal.waitExit({ timeout: timeoutMs });
+  const state = await terminal.state();
+  return { exitCode: state.exited, signal: state.exit_signal };
 };

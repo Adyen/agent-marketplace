@@ -16,6 +16,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/redact"
+	"github.com/Adyen/agent-marketplace/internal/remedy"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 )
 
@@ -117,6 +118,7 @@ type resolveOptions struct {
 	marketplaceResolver         MarketplaceResolver
 	marketplaceMode             MarketplaceResolveMode
 	marketplaceRevocationPolicy MarketplaceRevocationPolicy
+	selectedCollections         *[]ResolvedArtifact
 }
 
 // ResolveOption configures optional behavior for Resolve.
@@ -201,6 +203,16 @@ func WithMarketplaceRevocationPolicy(policy MarketplaceRevocationPolicy) Resolve
 	}
 }
 
+// WithSelectedCollections reports the collection roots that Resolve selected
+// before they expand into members. The sink is replaced on every selection
+// pass, so it holds the final selection. Display-only: collection roots never
+// materialize.
+func WithSelectedCollections(sink *[]ResolvedArtifact) ResolveOption {
+	return func(opts *resolveOptions) {
+		opts.selectedCollections = sink
+	}
+}
+
 // WithResources provides IR resources keyed by catalog key and
 // resource-keyed name. When a catalog entry has a nil Resource (legacy
 // discovery path), this map is used to attach the resource so
@@ -249,9 +261,7 @@ func WithMachineTargetHarnesses(targets []hcc.Target) ResolveOption {
 }
 
 // Remediable is an error that provides a user-facing remediation hint.
-type Remediable interface {
-	Remediation() string
-}
+type Remediable = remedy.Remediable
 
 type skillOccurrence struct {
 	resolved ResolvedArtifact
@@ -936,6 +946,9 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 		// collection artifacts themselves. This replaces the pre-resolver
 		// collection.Expand call, giving collections the same collision
 		// detection and disambiguation as skills/commands/etc.
+		if ro.selectedCollections != nil {
+			*ro.selectedCollections = collectionRoots(resolved)
+		}
 		return expandCollections(resolved, errs, cfg, catalogs, ro.resources, malformedIdx, localExcludes, cfg.Collections.ExcludeAll, excludeAllKinds, targets)
 	}
 
@@ -1242,6 +1255,29 @@ func propagateTopLevelCollections(cfg *config.Config) {
 	}
 }
 
+// collectionRoots returns the resolved collection artifacts that
+// expandCollections will expand, so display callers can show them as selected.
+func collectionRoots(resolved []ResolvedArtifact) []ResolvedArtifact {
+	var roots []ResolvedArtifact
+	for _, artifact := range resolved {
+		if _, ok := resolvedCollection(artifact); ok {
+			roots = append(roots, artifact)
+		}
+	}
+	return roots
+}
+
+// resolvedCollection returns the collection definition of a resolved
+// collection artifact. It reports false for other kinds and for collections
+// without a usable definition.
+func resolvedCollection(artifact ResolvedArtifact) (*ir.Collection, bool) {
+	if artifact.Kind != ir.KindCollection {
+		return nil, false
+	}
+	irCol, ok := artifact.Resource.(*ir.Collection)
+	return irCol, ok && irCol != nil
+}
+
 // expandCollections replaces each KindCollection artifact with its expanded
 // member resources. Collections are virtual — they don't materialize. When
 // a collection is resolved, we look up its ir.Collection resource, walk its
@@ -1338,8 +1374,8 @@ func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Co
 		}
 
 		// This is a resolved collection. Extract the ir.Collection resource.
-		irCol, ok := artifact.Resource.(*ir.Collection)
-		if !ok || irCol == nil {
+		irCol, ok := resolvedCollection(artifact)
+		if !ok {
 			// No IR resource — skip silently (malformed collection).
 			continue
 		}

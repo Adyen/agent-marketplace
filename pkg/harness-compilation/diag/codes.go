@@ -91,8 +91,9 @@ const (
 	CodeRuleFactoryMetadataDropped          = "rule.factory.metadata-dropped"           // Factory rules are plain markdown; globs/alwaysApply dropped
 	CodeCanonicalFieldOverridesExtra        = "compile.canonical-field-overrides-extra" // Canonical field wins over conflicting preserved extra
 	CodeHookTimeoutRounded                  = "hook.timeout-rounded"                    // Timeout conversion to seconds rounded up to the next whole second
-	CodeHookTimeoutCapped                   = "hook.timeout-capped"                     // Timeout above a documented per-event limit; lowered to the limit
+	CodeHookTimeoutCapped                   = "hook.timeout-capped"                     // Timeout outside a documented per-event limit; moved to the limit
 	CodeHookDuplicateExecutionRisk          = "hook.duplicate-execution-risk"           // Two selected targets load the same hook files by default
+	CodeHookSupportReferenceLegacy          = "hook.support-reference-legacy"           // Plugin-root reference resolved only under the deprecated folder meaning; rewritten to the bundle-root path
 	CodeMaterializeHookReview               = "materialize.hook.review"                 // Repository hook output changed on a target that may require trust review
 	CodeMaterializeHookReviewPending        = "materialize.hook.review-pending"         // A check found a pending hook change without mutating files
 	CodeMaterializeHookSatisfiedByUnmanaged = "materialize.hook.satisfied-by-unmanaged" // A semantically identical handwritten hook already exists; no entry was added
@@ -294,6 +295,7 @@ const (
 	CodeMaterializeCodexAggregateMalformed       = "materialize.codex.aggregate-malformed"         // A Codex aggregate could not be parsed or safely reconciled
 	CodeMaterializeCodexAggregateUnpatchable     = "materialize.codex.aggregate-unpatchable"       // A Codex aggregate entry uses a native form that cannot be safely patched
 	CodeMaterializeDestinationOverlap            = "materialize.destination.overlap"               // Resolved Codex destinations overlap in a way that cannot be safely coalesced
+	CodeMaterializeSharedPathCollision           = "materialize.collision.shared-path"             // Resources share a native path (another kind with the same name, or a name differing only in case); only the winner was installed there
 	CodeMaterializeCodexTrustReview              = "materialize.codex.trust-review"                // Repository Codex hooks or MCP configuration changed and may require trust review
 	// CodeHookNativeToleranceRefused is the read-only native-hook inspection
 	// refusal: a documented native hook file was malformed, ambiguous, or
@@ -333,9 +335,10 @@ const (
 	CodeHookWindsurfEventUnmappable              = "hook.windsurf.event-unmappable"               // Claude hook event has no Windsurf equivalent
 	CodeHookMatcherUntranslatable                = "hook.matcher-untranslatable"                  // No exact tool-matcher coverage for the target; hook suppressed
 	CodeHookEnvUnrepresentable                   = "hook.env-unrepresentable"                     // Referenced variable has no target equivalent; hook suppressed
-	CodeHookTimeoutUnsupported                   = "hook.timeout-unsupported"                     // Target cannot represent a hook timeout; hook suppressed
+	CodeHookTimeoutUnsupported                   = "hook.timeout-unsupported"                     // Target cannot represent the hook timeout; hook suppressed
 	CodeHookTypeUnsupported                      = "hook.type-unsupported"                        // Target catalog does not declare this hook type for the event; hook suppressed
 	CodeHookSupportPathUnrepresentable           = "hook.support-path-unrepresentable"            // Plugin-root token has no repository base on this target; hook suppressed
+	CodeHookSupportReferenceMissing              = "hook.support-reference-missing"               // Plugin-root reference names no installed support file under either meaning; hook suppressed
 	CodeHookPromptUnsupported                    = "hook.prompt.unsupported"                      // Target cannot represent prompt hooks
 	CodeHookFactoryNonCommandTypeDropped         = "hook.factory.non-command-type-dropped"        // Factory dropped non-command hook type
 	CodeHookCursorUnsupportedType                = "hook.cursor.unsupported-type"                 // Cursor dropped non-command hook type
@@ -656,7 +659,7 @@ var codeCatalog = []CodeDoc{
 	{CodeHookWindsurfEventUnmappable, SeverityError, "Claude hook event has no Windsurf equivalent; hook suppressed", "Consider using a mappable event (PreToolUse with a known tool matcher, UserPromptSubmit, or Stop)"},
 	{CodeHookMatcherUntranslatable, SeverityError, "No exact tool-matcher coverage exists for the target; hook suppressed", "Rewrite the matcher with tools the target's catalog covers, or remove it"},
 	{CodeHookEnvUnrepresentable, SeverityError, "The hook command references a variable with no target equivalent; hook suppressed", "Rewrite the command with variables the target documents, or use an absolute path"},
-	{CodeHookTimeoutUnsupported, SeverityError, "Target cannot represent an explicit hook timeout; hook suppressed", "Remove the timeout explicitly or use a target that supports it"},
+	{CodeHookTimeoutUnsupported, SeverityError, "Target cannot represent the explicit hook timeout (unsupported, negative, or beyond the exact integer range); hook suppressed", "Remove or reduce the timeout, or use a target that supports it"},
 	{CodeHookTypeUnsupported, SeverityError, "The target's catalog does not declare this hook type for the event; hook suppressed", "Use a hook type the target documents for this event"},
 	{CodeHookSupportPathUnrepresentable, SeverityError, "The hook command references the plugin root but the target declares no repository base; hook suppressed", "Use an absolute command path or a target with a repository base"},
 	{CodeHookPromptUnsupported, SeverityError, "Target cannot represent prompt hooks; hook suppressed", "Use a command hook on this target"},
@@ -739,6 +742,7 @@ var codeCatalog = []CodeDoc{
 	{CodeMaterializeCodexAggregateMalformed, SeverityError, "A Codex aggregate could not be parsed or safely reconciled, so that file was left exactly as found", "Fix the reported hooks.json or config.toml error by hand; the malformed file is preserved"},
 	{CodeMaterializeCodexAggregateUnpatchable, SeverityError, "An existing Codex MCP server uses an alternate TOML form that cannot be safely patched, so that entry was preserved", "Rewrite the server as a standard [mcp_servers.<name>] table or edit it by hand before syncing"},
 	{CodeMaterializeDestinationOverlap, SeverityError, "Resolved Codex destinations overlap in a way that cannot be safely coalesced, so materialization was refused", "Use compatible repository and machine modes, resolve conflicting resources, or separate the repository and CODEX_HOME roots"},
+	{CodeMaterializeSharedPathCollision, SeverityWarning, "Resources share one native path on this target, either as different kinds with the same installed name or as names that differ only in letter case, so only the winner by selection precedence was installed there", "Rename one of the resources or exclude the one you do not want on this target; targets with separate paths keep both"},
 	{CodeMaterializeCodexTrustReview, SeverityWarning, "Repository Codex hooks or MCP configuration changed and may require project trust review", "Review or re-approve the repository in Codex before using the changed configuration"},
 	{CodeMaterializeCodexTrustReviewPending, SeverityWarning, "A check found a pending repository Codex change without mutating files or trust state", "A later sync may require reviewing or re-approving the repository in Codex"},
 	{CodeMaterializeDevinSymlinkRequired, SeverityError, "Devin skills and subagents must be symlinks, so file-copy materialization was refused for this target", "Devin has no real-file fallback; set the materialization mode back to symlink for the Devin harness"},

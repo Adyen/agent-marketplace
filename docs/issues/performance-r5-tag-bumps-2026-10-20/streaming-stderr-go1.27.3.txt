@@ -1,0 +1,26 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/pipeline
+cpu: Apple M4 Max
+BenchmarkDiscoverTagBump/0-16  	     190	  12596004 ns/op	   65482 B/op	      73 allocs/op
+BenchmarkDiscoverTagBump/0-16  	     199	  12185032 ns/op	   65767 B/op	      73 allocs/op
+BenchmarkDiscoverTagBump/0-16  	     200	  12164211 ns/op	   63890 B/op	      73 allocs/op
+BenchmarkDiscoverTagBump/0-16  	     190	  12698718 ns/op	   64345 B/op	      73 allocs/op
+BenchmarkDiscoverTagBump/0-16  	     187	  12673207 ns/op	   63584 B/op	      73 allocs/op
+BenchmarkDiscoverTagBump/32-16 	     189	  12762869 ns/op	   64847 B/op	      74 allocs/op
+BenchmarkDiscoverTagBump/32-16 	     184	  12680062 ns/op	   64731 B/op	      74 allocs/op
+BenchmarkDiscoverTagBump/32-16 	     192	  12450512 ns/op	   64241 B/op	      74 allocs/op
+BenchmarkDiscoverTagBump/32-16 	     186	  12365650 ns/op	   64335 B/op	      74 allocs/op
+BenchmarkDiscoverTagBump/32-16 	     199	  12414173 ns/op	   64378 B/op	      74 allocs/op
+BenchmarkDiscoverTagBump/2048-16         	     162	  14813360 ns/op	   64857 B/op	      74 allocs/op
+BenchmarkDiscoverTagBump/2048-16         	     164	  14283528 ns/op	   65246 B/op	      74 allocs/op
+BenchmarkDiscoverTagBump/2048-16         	     165	  14907050 ns/op	   65229 B/op	      74 allocs/op
+BenchmarkDiscoverTagBump/2048-16         	     176	  13969378 ns/op	   64826 B/op	      74 allocs/op
+BenchmarkDiscoverTagBump/2048-16         	     165	  14220361 ns/op	   65661 B/op	      74 allocs/op
+BenchmarkDiscoverTagBump/16384-16        	      94	  25225233 ns/op	   64057 B/op	      74 allocs/op
+BenchmarkDiscoverTagBump/16384-16        	     100	  24043512 ns/op	   67003 B/op	      74 allocs/op
+BenchmarkDiscoverTagBump/16384-16        	     100	  25009065 ns/op	   64752 B/op	      74 allocs/op
+BenchmarkDiscoverTagBump/16384-16        	      93	  25904134 ns/op	   66507 B/op	      74 allocs/op
+BenchmarkDiscoverTagBump/16384-16        	      94	  24218621 ns/op	   65360 B/op	      74 allocs/op
+PASS
+ok  	github.com/Adyen/agent-marketplace/internal/pipeline	48.765s

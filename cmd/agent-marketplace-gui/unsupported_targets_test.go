@@ -115,6 +115,7 @@ func requireUnsupportedTargetError(t *testing.T, status int, body []byte) {
 }
 
 // spec: session-interactions/newly-introduced-unsupported-harness-target-is-refused
+// spec: session-interactions/unknown-harness-target-ids-refuse-configuration
 func TestGuiHostRefusesNewUnsupportedTarget(t *testing.T) {
 	paths := startupHostFixture(t, hostDirectoryConfig)
 	home, err := os.UserHomeDir()

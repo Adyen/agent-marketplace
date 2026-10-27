@@ -453,10 +453,12 @@ func TestConfigStageStartsDiscoveryBeforeLocalVerification(t *testing.T) {
 	}
 }
 
-// spec: session-startup/selection-follows-its-resource-when-rows-are-inserted
 // spec: tui-startup/verified-rows-inserted-above-a-selection-keep-it-on-the-same-screen-line
+// spec: session-startup/selection-follows-its-resource-when-rows-are-inserted
 func TestVerifiedRowsInsertedAboveSelectionKeepItOnTheSameScreenLine(t *testing.T) {
 	m := newProvisionalStageModel()
+	// The anchored line is kept only while the list overflows the viewport.
+	m.height = 24
 	generation := m.requests.Active(requestSnapshot)
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
@@ -487,8 +489,8 @@ func TestVerifiedRowsInsertedAboveSelectionKeepItOnTheSameScreenLine(t *testing.
 	}
 }
 
-// spec: session-startup/untouched-selection-remains-at-the-top-as-rows-arrive
 // spec: tui-startup/an-untouched-cursor-stays-on-top-when-installed-rows-arrive
+// spec: session-startup/untouched-selection-remains-at-the-top-as-rows-arrive
 func TestUntouchedCursorStaysOnTopWhenInstalledRowsArrive(t *testing.T) {
 	m := newTestModel()
 	m.rows = nil
@@ -529,8 +531,8 @@ func TestUntouchedCursorStaysOnTopWhenInstalledRowsArrive(t *testing.T) {
 	}
 }
 
-// spec: session-startup/verified-inventory-is-navigable-while-drift-is-pending
 // spec: tui-startup/verified-inventory-is-navigable-and-toggle-ready-while-drift-is-pending
+// spec: session-startup/verified-inventory-is-navigable-while-drift-is-pending
 func TestInventoryStageIsNavigableAndToggleReadyWithDriftPending(t *testing.T) {
 	m := newTestModel()
 	m.rows = nil
@@ -590,6 +592,74 @@ func TestApplyDriftItemsMarksOnlySelectedRows(t *testing.T) {
 	}
 	if out[2].DriftItem == nil || out[2].DriftItem.Reason != materialize.DriftBroken {
 		t.Fatalf("unavailable recovery row lost its drift: %#v", out[2].DriftItem)
+	}
+}
+
+// A target harness change leaves the selected resource missing from its new
+// target and orphaned in the old one; the row reports the work for its
+// selection, not the cleanup of the former target.
+// spec: tui-interactions/retargeted-resource-is-pending-sync
+func TestSelectedRowDriftPrefersItsCurrentTargetOverAnOrphanedCopy(t *testing.T) {
+	key := skill.ResourceKey(ir.KindSkill, "beta-skill")
+	selected := row{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "beta-skill", Path: "skills/beta-skill"}, CatalogKey: "cat"}}
+	missing := materialize.DriftItem{Name: key, Reason: materialize.DriftMissing}
+	broken := materialize.DriftItem{Name: key, Reason: materialize.DriftBroken}
+	orphaned := materialize.DriftItem{Name: key, Reason: materialize.DriftOrphaned}
+	for _, tc := range []struct {
+		name   string
+		report materialize.DriftReport
+		want   materialize.DriftReason
+	}{
+		{name: "missing in the new target beats an orphaned copy", report: materialize.DriftReport{Missing: []materialize.DriftItem{missing}, Orphaned: []materialize.DriftItem{orphaned}}, want: materialize.DriftMissing},
+		{name: "broken beats missing and orphaned", report: materialize.DriftReport{Missing: []materialize.DriftItem{missing}, Broken: []materialize.DriftItem{broken}, Orphaned: []materialize.DriftItem{orphaned}}, want: materialize.DriftBroken},
+		{name: "an orphaned copy alone is still reported", report: materialize.DriftReport{Orphaned: []materialize.DriftItem{orphaned}}, want: materialize.DriftOrphaned},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := session.ApplyDriftItems([]row{selected}, tc.report)
+			if out[0].DriftItem == nil || out[0].DriftItem.Reason != tc.want {
+				t.Fatalf("selected row drift = %#v, want %v", out[0].DriftItem, tc.want)
+			}
+			if got := session.DriftItemsByResource(tc.report)[key].Reason; got != tc.want {
+				t.Fatalf("row build drift = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// Removing a harness leaves a selected resource in sync in its remaining
+// target with only a stale copy in the removed one: still pending sync.
+// spec: tui-interactions/removed-target-harness-is-pending-cleanup
+func TestSelectedRowWithOnlyAnOrphanedCopyIsPendingSync(t *testing.T) {
+	r := mkRow("beta-skill", withProject)
+	r.DriftItem = &materialize.DriftItem{Name: skill.ResourceKey(ir.KindSkill, "beta-skill"), Reason: materialize.DriftOrphaned}
+	if got := r.StatusText(); got != "enabled (pending sync)" {
+		t.Fatalf("status = %q, want enabled (pending sync)", got)
+	}
+	if got := classifyStatus(r); got != statusPending {
+		t.Fatalf("status bucket = %v, want pending", got)
+	}
+}
+
+// A selected row keeps its identity when the sync clears its stale copy.
+// spec: tui-interactions/removed-target-harness-is-pending-cleanup
+func TestSelectionStaysOnARowWhoseOrphanedCopyIsCleared(t *testing.T) {
+	stale := mkRow("beta", withProject)
+	stale.DriftItem = &materialize.DriftItem{Name: skill.ResourceKey(ir.KindSkill, "beta"), Reason: materialize.DriftOrphaned}
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.loading = false
+	m.width, m.height = 80, 24
+	m.rows = []row{mkRow("gamma", withProject), stale}
+	m.authoritativeRows = m.rows
+	m.filteredRows = m.rows
+	m.rebuildFlatItems()
+	for i, item := range m.flatItems {
+		if item.Kind == flatArtifact && item.Row.Artifact.Name == "beta" {
+			m.cursor = i
+		}
+	}
+	m.applySnapshotData(snapshotLoadedMsg{rows: []row{mkRow("gamma", withProject), mkRow("beta", withProject)}})
+	if selected, ok := m.selectedRow(); !ok || selected.Artifact.Name != "beta" {
+		t.Fatalf("selection after the stale copy was cleared = %q (ok=%v), want beta", selected.Artifact.Name, ok)
 	}
 }
 
@@ -669,8 +739,8 @@ func TestInventoryStageDoesNotCompletePendingToggleReload(t *testing.T) {
 	}
 }
 
-// spec: session-startup/provisional-rows-show-configured-selection-state
 // spec: tui-startup/provisional-config-stage-publishes-verification-pending-rows
+// spec: session-startup/provisional-config-publishes-configured-pins-before-acquisition
 func TestProvisionalConfigStagePublishesPendingRows(t *testing.T) {
 	m := newTestModel()
 	m.rows = nil
@@ -731,7 +801,6 @@ func TestProvisionalConfigStagePublishesPendingRows(t *testing.T) {
 	}
 }
 
-// spec: session-startup/excluded-configured-selections-render-unchecked-in-their-verified-position
 // spec: tui-startup/excluded-configured-selections-render-unchecked-in-their-verified-position
 // spec: session-startup/provisional-rows-retain-single-view-position-and-guarded-actions
 func TestProvisionalStageDoesNotCheckExcludedMarketplacePin(t *testing.T) {
@@ -792,6 +861,9 @@ func TestProvisionalLayoutMatchesVerifiedInventory(t *testing.T) {
 		Entry: catalog.Entry{Kind: ir.KindSkill, Name: "audit"}, RegistryURL: market.URL, Source: config.Organization,
 		CatalogKey: marketplaceCatalogKey(market, audit), IsMarketplace: true, MarketplaceURL: market.URL,
 		MarketplaceInstanceID: market.InstanceID, MarketplaceRegistryID: "tools", MarketplaceResourceName: "audit",
+	}, {
+		Entry: catalog.Entry{Kind: ir.KindCollection, Name: "bundle"}, RegistryURL: "./plugins/local", Source: config.RepoCommitted,
+		CatalogKey: "local-key",
 	}}
 
 	verified := statusLayout(buildRows(cfg, catalogs, resolved, nil, materialize.DriftReport{}))
@@ -802,7 +874,7 @@ func TestProvisionalLayoutMatchesVerifiedInventory(t *testing.T) {
 	for _, want := range []string{
 		"  [x] G   skill market.example/audit",
 		"  [ ]     skill market.example/review",
-		"  [ ]     collection local/bundle",
+		"  [x] P   collection local/bundle",
 	} {
 		if !slices.Contains(verified, want) {
 			t.Fatalf("verified layout lacks rendered row %q: %q", want, verified)
@@ -812,7 +884,6 @@ func TestProvisionalLayoutMatchesVerifiedInventory(t *testing.T) {
 
 // spec: session-startup/organization-marketplace-collection-expands-from-the-verified-cached-manifest
 // spec: session-startup/cached-collection-leaves-prefer-the-exact-then-newest-verified-revision
-// spec: session-startup/tampered-cached-manifests-are-rejected
 func TestProvisionalStageExpandsOrganizationCollectionFromVerifiedCache(t *testing.T) {
 	cache := marketplace.NewCache(t.TempDir())
 	const url = "https://market.example"
@@ -848,10 +919,10 @@ func TestProvisionalStageExpandsOrganizationCollectionFromVerifiedCache(t *testi
 	leaf := func(kind, name string) config.MarketplaceResourcePin {
 		return config.MarketplaceResourcePin{RegistryID: "tools", RegistrySlug: "tools", Kind: kind, Name: name, Revision: leafRevision, Digest: leafRevision, SelectedBy: selectedBy}
 	}
-	acquired := config.MarketplaceEntry{URL: url, InstanceID: "mp", Source: config.Organization, Resources: []config.MarketplaceResourcePin{leaf("skill", "audit"), leaf("mcpserver", "hub"), leaf("skill", "review")}}
+	acquired := config.MarketplaceEntry{URL: url, InstanceID: "mp", Source: config.Organization, Resources: []config.MarketplaceResourcePin{collection, leaf("skill", "audit"), leaf("mcpserver", "hub"), leaf("skill", "review")}}
 	verifiedCfg := &config.Config{MarketplaceExclusions: exclusions, Marketplaces: []config.MarketplaceEntry{acquired}}
 	var resolved []resolver.ResolvedArtifact
-	for _, pin := range acquired.Resources[:2] {
+	for _, pin := range acquired.Resources[1:3] {
 		kind, _ := mpapi.ToIR(pin.Kind)
 		resolved = append(resolved, resolver.ResolvedArtifact{
 			Entry: catalog.Entry{Kind: kind, Name: pin.Name}, RegistryURL: url, Source: config.Organization,
@@ -859,6 +930,8 @@ func TestProvisionalStageExpandsOrganizationCollectionFromVerifiedCache(t *testi
 			MarketplaceInstanceID: acquired.InstanceID, MarketplaceRegistryID: "tools", MarketplaceResourceName: pin.Name,
 		})
 	}
+	root, _ := marketplace.PinArtifact(acquired, collection)
+	resolved = append(resolved, root)
 
 	rows := session.BuildProvisionalRows(session.WithCachedCollectionLeaves(preAcquisition, cache), nil, nil)
 	verified := statusLayout(buildRows(verifiedCfg, nil, resolved, nil, materialize.DriftReport{}))
@@ -874,90 +947,6 @@ func TestProvisionalStageExpandsOrganizationCollectionFromVerifiedCache(t *testi
 	}
 	if len(preAcquisition.Marketplaces[0].Resources) != 1 {
 		t.Fatal("cache expansion mutated the validated configuration")
-	}
-
-	// The placeholder revision above resolved through the newest verified
-	// manifest; an exact verified revision resolves to its own manifest.
-	leaves, ok := cache.CachedCollectionLeaves(url, "tools", "bundle", digest)
-	exactNames := map[string]bool{}
-	for _, leaf := range leaves {
-		exactNames[leaf.Name] = true
-	}
-	if !ok || len(leaves) != 3 || !exactNames["audit"] || !exactNames["hub"] || !exactNames["review"] {
-		t.Fatalf("exact cached manifest leaves = %v ok=%t, want the 3 seeded members", leaves, ok)
-	}
-
-	// A newer verified manifest wins for uncached revisions, and a manifest
-	// whose bytes no longer match its recorded digest is skipped.
-	newerPayload, newerDigest, err := hccartifact.EncodeCollectionManifest(hccartifact.CollectionManifest{
-		SchemaVersion: hccartifact.CollectionSchemaV1, Name: "bundle", SupportedSchemas: []string{hccartifact.CollectionSchemaV1},
-		Members: []hccartifact.CollectionMemberEntry{
-			{Kind: "skill", Name: "delta", RegistryID: "tools", Revision: leafRevision},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	newerRevision := tuiAssessedResourceRevision(t, store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Registry: "tools", Kind: "collection", Name: "bundle"}, ContentDigest: store.RevisionDigest(newerDigest)})
-	newerPath, err := cache.WriteResourceRevision(url, "tools", "collection", "bundle", newerDigest, newerRevision)
-	if err != nil {
-		t.Fatal(err)
-	}
-	later := time.Now().Add(time.Hour)
-	if err := os.Chtimes(newerPath, later, later); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := cache.WriteCollectionManifest(newerDigest, newerPayload); err != nil {
-		t.Fatal(err)
-	}
-	if err := cache.MarkCollectionVerified(newerDigest); err != nil {
-		t.Fatal(err)
-	}
-	leaves, ok = cache.CachedCollectionLeaves(url, "tools", "bundle", placeholder)
-	if !ok || len(leaves) != 1 || leaves[0].Name != "delta" {
-		t.Fatalf("uncached revision leaves = %v ok=%t, want newest verified [delta]", leaves, ok)
-	}
-	raw, err := os.ReadFile(cache.CollectionManifestPath(newerDigest))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(cache.CollectionManifestPath(newerDigest), []byte(strings.Replace(string(raw), "delta", "omega", 1)), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	leaves, ok = cache.CachedCollectionLeaves(url, "tools", "bundle", newerDigest)
-	if !ok || len(leaves) != 3 {
-		t.Fatalf("tampered newest manifest was not skipped: leaves=%v ok=%t", leaves, ok)
-	}
-
-	// A collection whose only manifest is tampered reports no leaves at all.
-	soloPayload, soloDigest, err := hccartifact.EncodeCollectionManifest(hccartifact.CollectionManifest{
-		SchemaVersion: hccartifact.CollectionSchemaV1, Name: "solo", SupportedSchemas: []string{hccartifact.CollectionSchemaV1},
-		Members: []hccartifact.CollectionMemberEntry{
-			{Kind: "skill", Name: "lone", RegistryID: "tools", Revision: leafRevision},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	soloRevision := tuiAssessedResourceRevision(t, store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Registry: "tools", Kind: "collection", Name: "solo"}, ContentDigest: store.RevisionDigest(soloDigest)})
-	if _, err := cache.WriteResourceRevision(url, "tools", "collection", "solo", soloDigest, soloRevision); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := cache.WriteCollectionManifest(soloDigest, soloPayload); err != nil {
-		t.Fatal(err)
-	}
-	if err := cache.MarkCollectionVerified(soloDigest); err != nil {
-		t.Fatal(err)
-	}
-	raw, err = os.ReadFile(cache.CollectionManifestPath(soloDigest))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(cache.CollectionManifestPath(soloDigest), []byte(strings.Replace(string(raw), "lone", "omega", 1)), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if leaves, ok := cache.CachedCollectionLeaves(url, "tools", "solo", soloDigest); ok {
-		t.Fatalf("tampered manifest produced leaves %v", leaves)
 	}
 }
 
@@ -995,6 +984,42 @@ func TestProvisionalRowsCarryRegistryOverrideHarnessBadge(t *testing.T) {
 }
 
 // spec: session-startup/a-stale-provisional-stage-cannot-publish-rows
+// spec: session-startup/tampered-cached-manifests-are-rejected
+func TestTamperedCachedCollectionManifestPublishesNoLeaves(t *testing.T) {
+	cache := marketplace.NewCache(t.TempDir())
+	const url = "https://market.example"
+	leafRevision := "sha256:" + strings.Repeat("a", 64)
+	payload, digest, err := hccartifact.EncodeCollectionManifest(hccartifact.CollectionManifest{
+		SchemaVersion: hccartifact.CollectionSchemaV1, Name: "bundle", SupportedSchemas: []string{hccartifact.CollectionSchemaV1},
+		Members: []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "audit", RegistryID: "tools", Revision: leafRevision}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := tuiAssessedResourceRevision(t, store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Registry: "tools", Kind: "collection", Name: "bundle"}, ContentDigest: store.RevisionDigest(digest)})
+	if _, err := cache.WriteResourceRevision(url, "tools", "collection", "bundle", digest, revision); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cache.WriteCollectionManifest(digest, payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.MarkCollectionVerified(digest); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cache.CollectionManifestPath(digest), []byte(strings.Replace(string(payload), "audit", "tampered", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	placeholder := "sha256:" + strings.Repeat("0", 64)
+	collection := config.MarketplaceResourcePin{RegistryID: "tools", RegistrySlug: "tools", Kind: "collection", Name: "bundle", Revision: placeholder, Digest: placeholder, Direct: true}
+	preAcquisition := &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: url, InstanceID: "bootstrap", Source: config.Organization, Resources: []config.MarketplaceResourcePin{collection}}}}
+	for _, r := range session.BuildProvisionalRows(session.WithCachedCollectionLeaves(preAcquisition, cache), nil, nil) {
+		if r.Artifact.IsMarketplace && r.Artifact.Kind != ir.KindCollection {
+			t.Fatalf("tampered cached manifest published leaf %q", r.Artifact.Name)
+		}
+	}
+}
+
 func TestStaleProvisionalStageCannotPublishRows(t *testing.T) {
 	m := newTestModel()
 	stale := m.requests.Active(requestSnapshot)
@@ -1013,8 +1038,8 @@ func TestStaleProvisionalStageCannotPublishRows(t *testing.T) {
 	}
 }
 
-// spec: session-startup/provisional-config-publishes-configured-pins-before-acquisition
 // spec: session-startup/provisional-rows-render-while-transient-acquisition-is-blocked
+// spec: session-startup/provisional-rows-show-configured-selection-state
 func TestProvisionalConfiguredRowsRenderBeforeBlockedAcquisition(t *testing.T) {
 	repoRoot, homeDir := progressiveFixture(t)
 	unblock, acquisitionHeld := blockedOrganizationMarketplace(t)
@@ -1355,8 +1380,8 @@ func TestProvisionalLocalAllTrueRowsRenderBeforeBlockedAcquisition(t *testing.T)
 	}
 }
 
-// spec: session-startup/user-scope-local-all-true-selections-expand-into-pending-rows
 // spec: tui-startup/local-all-true-selections-expand-into-pending-rows-on-the-normal-config-path
+// spec: session-startup/user-scope-local-all-true-selections-expand-into-pending-rows
 func TestProvisionalLocalAllTrueRowsRenderOnNormalConfigPath(t *testing.T) {
 	repoRoot, homeDir, _, _ := provisionalLocalAllTrueFixture(t)
 	t.Cleanup(swapLoadOrgConfig(func() (*config.Config, error) { return nil, nil }))
@@ -1421,6 +1446,7 @@ func TestProvisionalLocalAllTrueRowsRenderOnNormalConfigPath(t *testing.T) {
 	}
 }
 
+// spec: session-startup/excluded-only-configuration-publishes-no-provisional-rows
 func TestExcludedOnlyProvisionalStagePublishesNoRows(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
@@ -1646,8 +1672,8 @@ func TestFinalStageMergesDiscoveryPublishedDuringConfigStage(t *testing.T) {
 	}
 }
 
-// spec: session-startup/mutation-actions-remain-gated-until-verified-inventory
 // spec: tui-startup/mutations-stay-gated-until-verified-inventory
+// spec: session-startup/mutation-actions-remain-gated-until-verified-inventory
 func TestSyncKeyBlockedBeforeVerifiedInventory(t *testing.T) {
 	m := newTestModel()
 	m.rows = nil
@@ -1681,7 +1707,6 @@ func TestSyncKeyBlockedBeforeVerifiedInventory(t *testing.T) {
 	}
 }
 
-// spec: session-startup/mutation-actions-remain-gated-until-verified-inventory
 // spec: tui-startup/mutations-stay-gated-until-verified-inventory
 func TestDiscoveryRowCannotInstallBeforeVerifiedInventory(t *testing.T) {
 	m := newTestModel()

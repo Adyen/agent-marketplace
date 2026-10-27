@@ -335,7 +335,7 @@ resources:
           revision: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
-Installing and resolving Marketplace resources requires a verified lock record in the owning layer's lock that matches the requested endpoint, registry, resource, and revision. A missing or unusable lock fails with `v4.marketplace-lock-required`. A lock with no record for the endpoint, or with a record that does not match, fails with `v4.marketplace-lock-mismatch`. Either way nothing is installed. One layer can have only one source that fetches from a given endpoint.
+Installing and resolving Marketplace resources requires a verified lock record in the owning layer's lock that matches the requested endpoint, registry, resource, and revision. A missing or unusable lock fails with `v4.marketplace-lock-required`. A lock with no record for the endpoint, or with a record that does not match, fails with `v4.marketplace-lock-mismatch`. A writing `agent-marketplace sync` or `lock` for a user, repository, or personal-local layer records entries for selected Marketplace resources that an existing lock is missing, keeping existing pins unless the configuration requests an explicit revision; read-only modes (`sync --check`, `sync --locked`, `sync --offline`, and `doctor`) report the error and never write. Organization locks are only written by `lock --scope organization`. Either way nothing is installed until the lock records the resource. One layer can have only one source that fetches from a given endpoint.
 
 Marketplace exclusions are exact `registry-slug/kind/name` entries under `resources.<source>.exclude`, and they win over inclusions: a group that includes a collection and excludes one of its members installs only the remaining members. The excluded resource is never fetched, so it cannot fail a sync.
 
@@ -414,6 +414,8 @@ When sources with different origins or refs select resources with the same kind 
 
 Hooks are the exception: hooks from independent sources are all installed, even when their names match. Repeated references to the same source are installed once.
 
-Different kinds never collide. A skill and a command may share a name.
+Resources of one kind whose names differ only in letter case, such as commands `deploy` and `Deploy`, name one file on case-insensitive filesystems. Sync refuses all of them with `bundle.conflict.duplicate-artifact-path`, on every host. The exception is a resource from a `required: true` group that outranks the others: it is installed, and each of the others is reported with a `materialize.collision.shared-path` warning. Between two required resources, the higher-precedence layer or file wins, and a tie is still refused.
+
+Different kinds collide only on a harness target that installs them at the same path. Devin CLI and Codex install commands as skills, so a skill and a command with the same installed name compete there under the same rules, and sync prints a `materialize.collision.shared-path` warning naming both. Names that differ only in letter case, such as `audit` and `Audit`, count as the same name here on every host, because they are one path on case-insensitive filesystems. `status` lists the losing resource only for the targets where it is still installed. On targets with separate skill and command paths, such as Claude Code, both are installed.
 
 The [scopes, selection, and precedence explanation](../explanation/scopes-selection-and-precedence.md) covers collisions, exclusions across layers, and removal in more detail.

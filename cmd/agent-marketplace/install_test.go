@@ -830,7 +830,7 @@ sources:
 
 	withWorkingDir(t, repoRoot)
 
-	output, err := executeCommand("install", "vm-lifecycle")
+	output, err := executeCommand("install", "--scope", "repo", "vm-lifecycle")
 	if err != nil {
 		t.Fatalf("expected install command to succeed: %v\n%s", err, output)
 	}
@@ -876,7 +876,7 @@ resources:
 
 	withWorkingDir(t, repoRoot)
 
-	output, err := executeCommand("install", "k8s-onboarding")
+	output, err := executeCommand("install", "--scope", "repo", "k8s-onboarding")
 	if err != nil {
 		t.Fatalf("expected install command to succeed: %v\n%s", err, output)
 	}
@@ -916,7 +916,7 @@ sources:
 
 	withWorkingDir(t, repoRoot)
 
-	output, err := executeCommand("install", "--tag", "k8s")
+	output, err := executeCommand("install", "--scope", "repo", "--tag", "k8s")
 	if err != nil {
 		t.Fatalf("expected tag install command to succeed: %v\n%s", err, output)
 	}
@@ -963,7 +963,7 @@ sources:
 
 	withWorkingDir(t, repoRoot)
 
-	output, err := executeCommand("install", "--all")
+	output, err := executeCommand("install", "--scope", "repo", "--all")
 	if err != nil {
 		t.Fatalf("expected install --all command to succeed: %v\n%s", err, output)
 	}
@@ -1014,7 +1014,7 @@ sources:
 
 	withWorkingDir(t, repoRoot)
 
-	output, err := executeCommand("install", "--all", "--registry", securityOrigin)
+	output, err := executeCommand("install", "--scope", "repo", "--all", "--registry", securityOrigin)
 	if err != nil {
 		t.Fatalf("expected install --all --registry command to succeed: %v\n%s", err, output)
 	}
@@ -1273,12 +1273,12 @@ sources:
 
 	withWorkingDir(t, repoRoot)
 
-	output, err := executeCommand("install", "--kind", "subagent", "worker-generic")
+	output, err := executeCommand("install", "--scope", "repo", "--kind", "subagent", "worker-generic")
 	if err != nil {
 		t.Fatalf("expected subagent install to succeed for windsurf target: %v\n%s", err, output)
 	}
 
-	if output != "Installed worker-generic in this repo\n" {
+	if !strings.Contains(output, "Installed worker-generic in this repo\n") || !strings.Contains(output, "subagent.windsurf.no-primitive") {
 		t.Fatalf("expected install output, got %q", output)
 	}
 
@@ -1309,7 +1309,7 @@ sources: {}
 
 	withWorkingDir(t, repoRoot)
 
-	output, err := executeCommand("install", "vm-lifecycle", "--from", origin)
+	output, err := executeCommand("install", "--scope", "repo", "vm-lifecycle", "--from", origin)
 	if err != nil {
 		t.Fatalf("expected install --from without --ref to succeed: %v\n%s", err, output)
 	}
@@ -1349,7 +1349,7 @@ sources: {}
 
 	withWorkingDir(t, repoRoot)
 
-	output, err := executeCommand("install", "vm-lifecycle", "--from", origin, "--ref", "main")
+	output, err := executeCommand("install", "--scope", "repo", "vm-lifecycle", "--from", origin, "--ref", "main")
 	if err != nil {
 		t.Fatalf("expected install --from to succeed: %v\n%s", err, output)
 	}
@@ -1396,7 +1396,7 @@ sources: {}
 
 	withWorkingDir(t, repoRoot)
 
-	output, err := executeCommand("install", "--from", origin, "--ref", "main")
+	output, err := executeCommand("install", "--scope", "repo", "--from", origin, "--ref", "main")
 	if err != nil {
 		t.Fatalf("expected install --from (bundle mode) to succeed: %v\n%s", err, output)
 	}
@@ -1434,7 +1434,7 @@ sources: {}
 
 	withWorkingDir(t, repoRoot)
 
-	output, err := executeCommand("install", "--from", origin, "--ref", "main", "--kind", "subagent")
+	output, err := executeCommand("install", "--scope", "repo", "--from", origin, "--ref", "main", "--kind", "subagent")
 	if err != nil {
 		t.Fatalf("expected install --from --kind subagent to succeed: %v\n%s", err, output)
 	}
@@ -1476,7 +1476,7 @@ sources: {}
 
 	// Install without a name arg — the skill name should be inferred from the URL path.
 	// We simulate a web URL by using --from with --path pointing to a specific bundle dir.
-	output, err := executeCommand("install", "--from", origin, "--ref", "main", "--path", "vm-lifecycle")
+	output, err := executeCommand("install", "--scope", "repo", "--from", origin, "--ref", "main", "--path", "vm-lifecycle")
 	if err != nil {
 		t.Fatalf("expected install --from --path (name inference) to succeed: %v\n%s", err, output)
 	}
@@ -1636,7 +1636,7 @@ sources:
 
 	withWorkingDir(t, repoRoot)
 
-	output, err := executeCommand("install", "--all")
+	output, err := executeCommand("install", "--scope", "repo", "--all")
 	if err != nil {
 		t.Fatalf("expected install --all with mixed kinds to succeed: %v\n%s", err, output)
 	}
@@ -1692,7 +1692,7 @@ resources:
 
 	withWorkingDir(t, repoRoot)
 
-	output, err := executeCommand("install", "--all")
+	output, err := executeCommand("install", "--scope", "repo", "--all")
 	if err != nil {
 		t.Fatalf("expected install --all to succeed: %v\n%s", err, output)
 	}
@@ -1758,7 +1758,7 @@ sources:
 
 	withWorkingDir(t, repoRoot)
 
-	output, err := executeCommand("install", "--all", "--kind", "subagent")
+	output, err := executeCommand("install", "--scope", "repo", "--all", "--kind", "subagent")
 	if err != nil {
 		t.Fatalf("expected install --all --kind subagent to succeed: %v\n%s", err, output)
 	}
@@ -1798,7 +1798,7 @@ sources: {}
 
 	withWorkingDir(t, repoRoot)
 
-	output, err := executeCommand("install", "--from", origin, "--ref", "main")
+	output, err := executeCommand("install", "--scope", "repo", "--from", origin, "--ref", "main")
 	if err != nil {
 		t.Fatalf("expected install --from (bundle mode, multi-kind) to succeed: %v\n%s", err, output)
 	}
@@ -1839,7 +1839,7 @@ sources: {}
 
 	withWorkingDir(t, repoRoot)
 
-	output, err := executeCommand("install", "--from", origin, "--ref", "main", "--kind", "subagent")
+	output, err := executeCommand("install", "--scope", "repo", "--from", origin, "--ref", "main", "--kind", "subagent")
 	if err != nil {
 		t.Fatalf("expected install --from --kind subagent to succeed: %v\n%s", err, output)
 	}
@@ -1928,7 +1928,7 @@ sources: {}
 	withWorkingDir(t, repoRoot)
 
 	// Install from the meta-directory (no specific resource name).
-	output, err := executeCommand("install", "--from", origin, "--ref", "main", "--path", "plugins")
+	output, err := executeCommand("install", "--scope", "repo", "--from", origin, "--ref", "main", "--path", "plugins")
 	if err != nil {
 		t.Fatalf("expected install --from meta-directory to succeed: %v\n%s", err, output)
 	}
@@ -1991,7 +1991,7 @@ sources: {}
 	withWorkingDir(t, repoRoot)
 
 	// Install a specific resource from the meta-directory.
-	output, err := executeCommand("install", "chargeback-analyst", "--from", origin, "--ref", "main", "--path", "plugins")
+	output, err := executeCommand("install", "--scope", "repo", "chargeback-analyst", "--from", origin, "--ref", "main", "--path", "plugins")
 	if err != nil {
 		t.Fatalf("expected install <name> --from meta-directory to succeed: %v\n%s", err, output)
 	}
@@ -2140,7 +2140,7 @@ sources: {}
 
 	withWorkingDir(t, repoRoot)
 
-	output, err := executeCommand("install", "--from", "./missing-registry", "some-skill")
+	output, err := executeCommand("install", "--scope", "repo", "--from", "./missing-registry", "some-skill")
 	if err == nil {
 		t.Fatalf("expected install --from missing registry to fail, got output:\n%s", output)
 	}
@@ -2204,7 +2204,7 @@ sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 
-	output, err := executeCommand("install", "--from", "./local-registry", "--path", "missing", "some-skill")
+	output, err := executeCommand("install", "--scope", "repo", "--from", "./local-registry", "--path", "missing", "some-skill")
 	if err == nil {
 		t.Fatalf("expected install --from with missing path to fail, got output:\n%s", output)
 	}

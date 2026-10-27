@@ -4,10 +4,245 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
+
+// spec: consumer-config-format/writable-layer-version-refusals-name-the-older-migrator
+// spec: consumer-config-format/organization-version-refusals-direct-users-to-their-administrator
+// spec: consumer-config-format/other-diagnostics-keep-their-existing-guidance
+func TestV4VersionRefusalRemediationUsesOwningLayer(t *testing.T) {
+	for _, tc := range []struct {
+		name, scope string
+		source      Source
+		admin       bool
+	}{
+		{name: "user", scope: "user", source: UserPersonal},
+		{name: "repo", scope: "repo", source: RepoCommitted},
+		{name: "local", scope: "local", source: RepoPersonal},
+		{name: "organization", source: Organization, admin: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			root := filepath.Join(dir, "config.yaml")
+			writeIncludeConfig(t, root, "sources: {}\n")
+			_, err := LoadV4ConfigIfPresent(root, tc.source)
+			assertV4Remediation(t, err, tc.scope, tc.admin, "v4.api-version-required")
+
+			fragment := filepath.Join(dir, "fragment.yaml")
+			writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v4\ninclude: [fragment.yaml]\n")
+			writeIncludeConfig(t, fragment, "apiVersion: agent-marketplace/v2\n")
+			_, err = LoadV4ConfigIfPresent(root, tc.source)
+			assertV4Remediation(t, err, tc.scope, tc.admin, "v4.api-version")
+		})
+	}
+}
+
+func TestV4OtherDiagnosticsHaveNoVersionRefusalRemediation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data []byte
+		code string
+	}{
+		{name: "legacy key", data: []byte("apiVersion: agent-marketplace/v4\nregistries: []\n"), code: "v4.legacy-key"},
+		{name: "parse", data: []byte("sources: [\n"), code: "v4.parse"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseV4Config(tc.data, "config.yaml", true)
+			var validation *V4ValidationError
+			if !errors.As(err, &validation) || validation.Code != tc.code {
+				t.Fatalf("error = %v, want %s", err, tc.code)
+			}
+			remediation, ok := any(validation).(interface{ Remediation() string })
+			if !ok || remediation.Remediation() != "" {
+				t.Fatalf("%s remediation = %v, want empty", tc.code, validation)
+			}
+		})
+	}
+}
+
+// spec: command-error-output/validation-errors-name-the-authored-file
+func TestV4ValidationErrorNamesAuthoredFileAndLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+	_, err := ParseV4Config([]byte("apiVersion: agent-marketplace/v4\nsources:\n  bad name: {directory: ./registry}\n"), path, true)
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != "v4.source-name" {
+		t.Fatalf("error = %v, want v4.source-name validation error", err)
+	}
+	want := "v4.source-name: " + path + ":3:"
+	if !strings.HasPrefix(validation.Error(), want) {
+		t.Fatalf("validation message = %q, want prefix %q", validation, want)
+	}
+}
+
+func TestV4ValidationErrorIncludesPathUnlessMessageContainsIt(t *testing.T) {
+	t.Run("parse error names authored file once", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+		_, err := ParseV4Config([]byte("apiVersion: agent-marketplace/v4\nharnesses: [factory\nsources: {}\n"), file, true)
+		var validation *V4ValidationError
+		if !errors.As(err, &validation) || validation.Code != "v4.parse" {
+			t.Fatalf("error = %v, want v4.parse validation error", err)
+		}
+		if got := strings.Count(validation.Error(), file); got != 1 {
+			t.Fatalf("authored file appears %d times in %q, want once", got, validation)
+		}
+	})
+
+	t.Run("unknown field", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+		_, err := ParseV4Config([]byte("apiVersion: agent-marketplace/v4\nunknown_field: true\n"), file, true)
+		var validation *V4ValidationError
+		if !errors.As(err, &validation) || validation.Code != "v4.unknown-field" {
+			t.Fatalf("error = %v, want v4.unknown-field validation error", err)
+		}
+		want := "v4.unknown-field: " + file + ":2: unknown_field: unknown top-level field"
+		if got := validation.Error(); got != want {
+			t.Fatalf("validation error = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("marketplace lock mismatch does not duplicate locator", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+		locator := "awesome-ai/collection/coderabbit-skills"
+		validation := &V4ValidationError{
+			Code: v4MarketplaceLockMismatchCode, File: file, Line: 6,
+			Path: locator, LockFile: ".agents/lock.yaml", Variant: "resource-missing",
+		}
+		want := "v4.marketplace-lock-mismatch: " + file + ":6: resource \"" + locator +
+			"\" is missing from the lock file .agents/lock.yaml"
+		if got := validation.Error(); got != want {
+			t.Fatalf("validation error = %q, want %q", got, want)
+		}
+		if got := strings.Count(validation.Error(), locator); got != 1 {
+			t.Fatalf("locator appears %d times in %q, want exactly once", got, validation.Error())
+		}
+	})
+}
+
+func TestV4MarketplaceLockMismatchNamesLockFile(t *testing.T) {
+	lockPath := ".agents/lock.yaml"
+	for _, tc := range []struct {
+		name, variant, message, want string
+	}{
+		{
+			name: "missing resource", variant: "resource-missing",
+			message: `resource "awesome-ai/collection/coderabbit-skills" is missing from the acquisition lock`,
+			want:    `resource "awesome-ai/collection/coderabbit-skills" is missing from the lock file .agents/lock.yaml`,
+		},
+		{
+			name: "unrecorded endpoint", variant: "",
+			message: `Marketplace source "hosted" has no lock record for endpoint "https://marketplace.example"`,
+			want:    `Marketplace source "hosted" has no lock record for endpoint "https://marketplace.example" (lock file .agents/lock.yaml)`,
+		},
+		{
+			name: "configuration mismatch", variant: "configuration",
+			message: `duplicate Marketplace source declaration for endpoint "https://marketplace.example"`,
+			want:    `duplicate Marketplace source declaration for endpoint "https://marketplace.example" (lock file .agents/lock.yaml)`,
+		},
+		{
+			name: "duplicate request", variant: "duplicate-request",
+			message: `requests "tools/skill/review" and "tools/skill/review-copy" refer to the same locked resource`,
+			want:    `requests "tools/skill/review" and "tools/skill/review-copy" refer to the same locked resource (lock file .agents/lock.yaml)`,
+		},
+		{
+			name: "lock restore", variant: "lock-restore",
+			message: `lock scope "user" does not match "repo"`,
+			want:    `lock scope "user" does not match "repo" (lock file .agents/lock.yaml)`,
+		},
+		{
+			name: "lock read", variant: "lock-read",
+			message: `the acquisition lock could not be read: invalid document`,
+			want:    `the acquisition lock could not be read: invalid document (lock file .agents/lock.yaml)`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := (&V4ValidationError{
+				Code: v4MarketplaceLockMismatchCode, File: "/workspace/.agents/config.yaml", Path: "awesome-ai/collection/coderabbit-skills",
+				Line: 6, LockFile: lockPath, Variant: tc.variant, Msg: tc.message,
+			}).Error()
+			if !strings.HasSuffix(err, tc.want) {
+				t.Fatalf("mismatch error = %q, want suffix %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// spec: command-error-output/validation-errors-name-the-authored-file
+func TestV4IncludedMarketplaceConflictUsesRootDiagnosticProvenance(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, ".agents", "config.yaml")
+	fragment := filepath.Join(dir, ".agents", "fragment.yaml")
+	writeIncludeConfig(t, fragment, "sources:\n  first: {marketplace: https://market.example}\n")
+	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v4\ninclude: [fragment.yaml]\nsources:\n  second: {marketplace: https://market.example}\n")
+
+	v4, err := LoadV4ConfigIfPresent(root, RepoCommitted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = v4.toLegacyConfig(repoLayer, nil)
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != v4MarketplaceLockMismatchCode {
+		t.Fatalf("error = %v, want Marketplace lock mismatch", err)
+	}
+	wantRoot := canonicalPath(t, root)
+	if validation.File != wantRoot || validation.Line != 4 || validation.LockFile != ".agents/lock.yaml" {
+		t.Fatalf("diagnostic provenance = file %q line %d, lock %q; want root %q:4 and its acquisition lock", validation.File, validation.Line, validation.LockFile, wantRoot)
+	}
+}
+
+// spec: command-error-output/coded-errors-print-code-specific-guidance
+func TestV4StaleMarketplaceEndpointUsesStaleEndpointVariant(t *testing.T) {
+	v4, err := ParseV4Config([]byte("apiVersion: agent-marketplace/v4\nsources:\n  hosted: {marketplace: https://market.example}\n"), "config.yaml", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = v4.toLegacyConfig(repoLayer, &lockfile.Document{
+		APIVersion: lockfile.APIVersionV2,
+		Scope:      lockfile.ScopeRepo,
+		Marketplaces: []lockfile.MarketplaceLock{{
+			URL: "https://stale.example", InstanceID: "stale-instance",
+		}},
+	})
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != v4MarketplaceLockMismatchCode || validation.Variant != "stale-endpoint" {
+		t.Fatalf("error = %#v, want a stale-endpoint Marketplace lock mismatch", validation)
+	}
+}
+
+func assertV4Remediation(t *testing.T, err error, scope string, admin bool, code string) {
+	t.Helper()
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != code {
+		t.Fatalf("error = %v, want %s", err, code)
+	}
+	remediation, ok := any(validation).(interface{ Remediation() string })
+	if !ok {
+		t.Fatalf("%s does not expose Remediation()", code)
+	}
+	hint := remediation.Remediation()
+	required := []string{"https://github.com/Adyen/agent-marketplace/blob/main/site/docs/how-to/migrate-configuration.md"}
+	if admin {
+		required = append(required, "Ask your administrator", "convert and deploy")
+	} else {
+		required = append(required, "agent-marketplace v4.1.4", "older released migrator", "with that older binary",
+			"agent-marketplace migrate --to v4 --scope "+scope+" --dry-run", "include trees or unrepresentable input")
+	}
+	for _, want := range required {
+		if !strings.Contains(hint, want) {
+			t.Fatalf("%s remediation lacks %q: %s", code, want, hint)
+		}
+	}
+	lower := strings.ToLower(hint)
+	if strings.Contains(lower, "add apiversion") || strings.Contains(lower, "change apiversion") {
+		t.Fatalf("%s remediation advises merely editing apiVersion: %s", code, hint)
+	}
+	if strings.Contains(hint, "agent-marketplace migrate") == admin {
+		t.Fatalf("remediation has the wrong migration-command guidance: %s", hint)
+	}
+}
 
 func TestV4OrderedChildExcludeThenRootIncludeSurvivesRuntimeAdapter(t *testing.T) {
 	dir := t.TempDir()

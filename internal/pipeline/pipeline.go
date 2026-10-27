@@ -27,6 +27,7 @@ import (
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
 
 // syncPhaseHookContextKey is an internal deterministic concurrency-test seam.
@@ -90,7 +91,7 @@ type ResolveOptions struct {
 	// materializable artifacts from verified local cache evidence during
 	// inspect-mode resolution — exactly the semantics offline sync uses. No
 	// artifacts are downloaded and no config or lock file is written; the
-	// inspect-mode pin table is computed unchanged. Only status and doctor set
+	// inspect-mode pin table is computed unchanged. Status, doctor, and list set
 	// it; every other caller keeps metadata-only inspect behavior.
 	MarketplaceArtifactsFromCache bool
 }
@@ -127,6 +128,16 @@ type ResolveResult struct {
 	MachineTargetHarnessSource config.Source
 	Managed                    bool
 	Diagnostics                config.ManagedInstallationDiagnostics
+	// SelectedCollections are display-only collection roots that were
+	// selected but expanded into members in Resolved. Never materialize them.
+	SelectedCollections []resolver.ResolvedArtifact
+}
+
+// DisplayArtifacts returns the materializable artifacts followed by the
+// display-only collection roots. Use it only for presentation; materialization
+// and drift must keep reading Resolved.
+func (r ResolveResult) DisplayArtifacts() []resolver.ResolvedArtifact {
+	return slices.Concat(r.Resolved, r.SelectedCollections)
 }
 
 // TargetHarnessSetMissingError is returned by Resolve/Sync when no effective
@@ -656,6 +667,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		}
 		marketplaceCfg = &filtered
 	}
+	var selectedCollections []resolver.ResolvedArtifact
 	resolved, resolveErrs := resolver.Resolve(
 		marketplaceCfg,
 		catalog.EntriesByKey(loadResult.Catalogs),
@@ -668,9 +680,11 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		resolver.WithMarketplaceResolver(mpResolver),
 		resolver.WithMarketplaceResolveMode(mpMode),
 		resolver.WithMarketplaceRevocationPolicy(opts.MarketplaceRevocationPolicy),
+		resolver.WithSelectedCollections(&selectedCollections),
 	)
 	result.LoadedCfg = loadedCfg
 	result.Resolved = resolved
+	result.SelectedCollections = append(selectedCollections, marketplaceSelectedCollections(marketplaceCfg)...)
 	result.ResolveErrors = append(resolveErrs, readOnlyView.errors...)
 	slog.Debug("resources resolved", "resolved", len(resolved), "errors", len(result.ResolveErrors))
 	for _, resolveErr := range result.ResolveErrors {
@@ -1181,4 +1195,25 @@ func appendLocalConfigIgnoreEntries(f *os.File) error {
 		return fmt.Errorf("append gitignore: %w", err)
 	}
 	return nil
+}
+
+// marketplaceSelectedCollections returns the direct, non-excluded Marketplace
+// collection pins as display-only roots. Their members come from the resolver
+// through the Marketplace resolver, so these never reach materialization.
+func marketplaceSelectedCollections(cfg *config.Config) []resolver.ResolvedArtifact {
+	if cfg == nil {
+		return nil
+	}
+	var roots []resolver.ResolvedArtifact
+	for _, entry := range cfg.Marketplaces {
+		for _, pin := range entry.Resources {
+			if pin.Kind != mpapi.KindCollection || !pin.Direct || cfg.MarketplacePinExcluded(entry, pin) {
+				continue
+			}
+			if artifact, ok := marketplace.PinArtifact(entry, pin); ok {
+				roots = append(roots, artifact)
+			}
+		}
+	}
+	return roots
 }

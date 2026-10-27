@@ -387,7 +387,7 @@ func (a *API) handleResourceAction(w http.ResponseWriter, r *http.Request) {
 				failed = fmt.Errorf("user Marketplace direct pin disappeared from the prepared row")
 				break
 			}
-			failed = pipeline.ToggleMarketplacePin(ctx, a.homeDir, a.homeDir, a.userConfigPath(), config.UserPersonal, selection.Entry, selection.Pin, false)
+			_, failed = pipeline.ToggleMarketplacePin(ctx, a.homeDir, a.homeDir, a.userConfigPath(), config.UserPersonal, selection.Entry, selection.Pin, false)
 		case session.UserMarketplaceActionExclude, session.UserMarketplaceActionRestore:
 			selection, found := acceptedPlan.row.MarketplaceSelections[config.Organization]
 			if !found || !acceptedPlan.row.CanOverrideMarketplace() || selection.Pin.RegistrySlug == "" || acceptedPlan.row.Artifact.Kind == ir.KindCollection {

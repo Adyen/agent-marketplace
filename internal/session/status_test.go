@@ -78,9 +78,9 @@ func TestRowStatusGroupPreservesTUIClassification(t *testing.T) {
 			want: GroupPending,
 		},
 		{
-			name: "orphaned drift is broken",
+			name: "orphaned drift is pending",
 			row:  Row{DriftItem: &materialize.DriftItem{Reason: materialize.DriftOrphaned}},
-			want: GroupBroken,
+			want: GroupPending,
 		},
 		{
 			name: "broken drift is broken",

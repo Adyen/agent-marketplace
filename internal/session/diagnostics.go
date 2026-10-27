@@ -127,8 +127,52 @@ func deduplicateDiagnostics(diagnostics []Diagnostic) []Diagnostic {
 	return deduplicated
 }
 
+func warningKeys(diagnostics []Diagnostic) map[string]struct{} {
+	keys := make(map[string]struct{}, len(diagnostics))
+	for _, d := range diagnostics {
+		if d.Severity == DiagnosticWarning && d.Err != nil {
+			keys[d.StableKey] = struct{}{}
+		}
+	}
+	return keys
+}
+
+// retireOperationCopies drops operation warnings that repeated a warning of
+// the previous snapshot which the accepted snapshot no longer reports.
+func (s *DiagnosticStore) retireOperationCopies(previous, current map[string]struct{}) {
+	kept := s.Operations[:0]
+	for _, d := range s.Operations {
+		if d.Severity == DiagnosticWarning {
+			_, reported := previous[d.StableKey]
+			_, still := current[d.StableKey]
+			if reported && !still {
+				continue
+			}
+		}
+		kept = append(kept, d)
+	}
+	clear(s.Operations[len(kept):])
+	s.Operations = kept
+}
+
+// Visible returns the snapshot diagnostics plus the operation diagnostics that
+// do not repeat a current snapshot warning.
+func (s DiagnosticStore) Visible() []Diagnostic {
+	snapshotWarnings := warningKeys(s.Snapshot)
+	visible := make([]Diagnostic, 0, len(s.Snapshot)+len(s.Operations))
+	visible = append(visible, s.Snapshot...)
+	for _, d := range s.Operations {
+		if _, repeated := snapshotWarnings[d.StableKey]; repeated && d.Severity == DiagnosticWarning {
+			continue
+		}
+		visible = append(visible, d)
+	}
+	return visible
+}
+
 func (s *DiagnosticStore) ReplaceSnapshot(diagnostics []Diagnostic) {
 	diagnostics = append([]Diagnostic(nil), diagnostics...)
+	previousWarnings := warningKeys(s.Snapshot)
 	clear(s.Snapshot)
 	for i := range diagnostics {
 		diagnostics[i].Provenance = DiagnosticProvenanceSnapshot
@@ -139,6 +183,7 @@ func (s *DiagnosticStore) ReplaceSnapshot(diagnostics []Diagnostic) {
 		}
 	}
 	s.Snapshot = deduplicateDiagnostics(diagnostics)
+	s.retireOperationCopies(previousWarnings, warningKeys(s.Snapshot))
 	slog.Debug("session snapshot diagnostics replaced", "count", len(s.Snapshot))
 }
 

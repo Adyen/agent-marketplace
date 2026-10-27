@@ -152,7 +152,7 @@ Accepted stage rebuilds SHALL preserve the user's selection and an open detail's
 
 #### Scenario: Selection follows its resource when rows are inserted
 
-- **WHEN** a pending row is selected and verified inventory inserts rows above it
+- **WHEN** a pending row is selected in a list that overflows the viewport and verified inventory inserts rows above it
 - **THEN** the selection MUST follow the same resource
 - **AND** its position in the list viewport MUST remain stable
 

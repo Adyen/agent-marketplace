@@ -30,11 +30,16 @@ type PlaceholderBackfillReport struct {
 }
 
 // StartPlaceholderBackfill runs BackfillPlaceholders in the background so that
-// the backfill never delays readiness.
-func StartPlaceholderBackfill(ctx context.Context, deps Deps) {
+// the backfill never delays readiness. The returned channel closes once the
+// backfill has stopped, so callers can wait for it before closing the stores
+// it reads.
+func StartPlaceholderBackfill(ctx context.Context, deps Deps) <-chan struct{} {
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		_ = BackfillPlaceholders(ctx, deps)
 	}()
+	return done
 }
 
 // BackfillPlaceholders stores the placeholder-form archive of every stored archive

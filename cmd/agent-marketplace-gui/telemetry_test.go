@@ -370,16 +370,18 @@ func TestAppTelemetryDetailedActionsAndSingleClose(t *testing.T) {
 	var releaseOnce sync.Once
 	releaseSync := func() { releaseOnce.Do(func() { close(syncRelease) }) }
 	lifecycle := session.DependencyLifecycle{
-		Sync: func(ctx context.Context, _ pipeline.Workspace) ([]error, error) {
+		Sync: func(ctx context.Context, _ pipeline.Workspace) (pipeline.SyncResult, error) {
 			syncStarted <- struct{}{}
 			select {
 			case <-syncRelease:
-				return nil, nil
+				return pipeline.SyncResult{}, nil
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return pipeline.SyncResult{}, ctx.Err()
 			}
 		},
-		Update: func(context.Context, pipeline.Workspace) ([]error, error) { return nil, nil },
+		Update: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
+			return pipeline.SyncResult{}, nil
+		},
 	}
 	app, err := NewApp(context.Background(), lifecycle)
 	if err != nil {

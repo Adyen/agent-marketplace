@@ -13,7 +13,9 @@ import (
 
 const testCatalog = `schema: 1
 harness: factory
-evidence: {checked: "2026-09-21"}
+evidence:
+  checked: "2026-09-21"
+  refs: [https://docs.factory.ai/models.md, https://docs.factory.ai/harness/subagents.md, unavailable, malformed, valid]
 surfaces: {subagent: {model_field: model}}
 models:
   anthropic/old:
@@ -30,7 +32,7 @@ families:
 func TestAuditReportsInventoryDriftWithoutWriting(t *testing.T) {
 	files := fstest.MapFS{catalogPath("factory"): &fstest.MapFile{Data: []byte(testCatalog)}}
 	before := string(files[catalogPath("factory")].Data)
-	s := source{Name: "factory-models", Harness: "factory", URL: "https://docs.factory.ai/docs/models.md", Kind: "factory"}
+	s := source{Name: "factory-models", Harness: "factory", URL: "https://docs.factory.ai/models.md", Kind: "factory"}
 	body := "| Model | Model ID | Multiplier | Reasoning |\n| --- | --- | --- | --- |\n| Current | `current` | 1 | `high` |\n| New | `new` | 1 | `low` |"
 	result := audit(context.Background(), files, []source{s}, nil, func(context.Context, string) (fetched, error) {
 		return fetched{Body: []byte(body), URL: s.URL}, nil
@@ -84,7 +86,7 @@ func TestAuditContinuesAfterUnavailableAndMalformedSources(t *testing.T) {
 
 func TestDocumentWatchNeedsBaselineAndDetectsChanges(t *testing.T) {
 	files := fstest.MapFS{catalogPath("factory"): &fstest.MapFile{Data: []byte(testCatalog)}}
-	s := source{Name: "contract", Harness: "factory", Kind: "watch", Fields: []string{"model"}}
+	s := source{Name: "contract", Harness: "factory", URL: "https://docs.factory.ai/harness/subagents.md", Kind: "watch", Fields: []string{"model"}}
 	body := "| `model` | inherit or model ID |"
 	for _, tt := range []struct {
 		name     string
@@ -116,5 +118,32 @@ func TestAuditCatalogFailureCannotPass(t *testing.T) {
 		if !result.Failed || result.Sources[0].Findings[0].Code != "catalog.invalid" {
 			t.Fatalf("invalid catalog passed: %#v", result)
 		}
+	}
+}
+
+func TestAuditRefusesModelSourceTheCatalogDoesNotCite(t *testing.T) {
+	files := fstest.MapFS{catalogPath("factory"): &fstest.MapFile{Data: []byte(testCatalog)}}
+	body := "| Model | Model ID | Multiplier | Reasoning |\n| --- | --- | --- | --- |\n| Current | `current` | 1 | `high` |\n| Old | `old` | 1 | `low` |"
+	for _, tt := range []struct {
+		name, url, want string
+		fetches         int
+	}{
+		{"cited", "https://docs.factory.ai/models.md", "no-drift", 1},
+		{"uncited", "https://docs.factory.ai/docs/models.md", "unknown", 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fetches := 0
+			s := source{Name: "factory-models", Harness: "factory", URL: tt.url, Kind: "factory"}
+			result := audit(context.Background(), files, []source{s}, nil, func(context.Context, string) (fetched, error) {
+				fetches++
+				return fetched{Body: []byte(body), URL: tt.url}, nil
+			}, time.Now())
+			if got := result.Sources[0]; got.Status != tt.want || fetches != tt.fetches {
+				t.Fatalf("source %s: status %s after %d fetches, want %s after %d: %#v", tt.url, got.Status, fetches, tt.want, tt.fetches, got)
+			}
+			if tt.want == "unknown" && result.Sources[0].Findings[0].Code != "catalog.invalid" {
+				t.Fatalf("uncited source findings = %#v, want catalog.invalid", result.Sources[0].Findings)
+			}
+		})
 	}
 }

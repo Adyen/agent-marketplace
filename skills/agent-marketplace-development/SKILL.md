@@ -7,7 +7,8 @@ description: >
   must preserve. Use when adding features, fixing bugs, or reviewing
   changes to the agent-marketplace Go binary, running local TUI QA,
   working on or screenshotting the desktop GUI, or maintaining harness
-  compatibility validation.
+  compatibility validation. Every TUI change must ship a real-terminal
+  TUI QA journey that proves the changed flow.
 metadata:
   tags:
     - development
@@ -80,9 +81,10 @@ To smoke-test the TUI against the current checkout:
 make build && ./agent-marketplace
 ```
 
-A smoke launch or Go test run does not exercise the real-terminal journeys;
-for user-interaction changes, follow
-[Local TUI QA](#local-tui-qa-real-terminal) below.
+A smoke launch or Go test run does not exercise the real-terminal journeys.
+Every TUI change must add or extend one; see
+[Every TUI change ships a TUI QA journey](#every-tui-change-ships-a-tui-qa-journey)
+and [Local TUI QA](#local-tui-qa-real-terminal) below.
 
 Pre-commit (`.pre-commit-config.yaml`) runs `make test`, `make lint`, and
 `make build`. `make lint` rewrites files (`go mod tidy`, `go fmt`); re-stage
@@ -386,6 +388,39 @@ live in the `internal/session` core.
 `tui-*` (terminal surface) and `session-*` (surface-neutral core)
 capabilities under `openspec/specs/` are normative.
 
+### Every TUI change ships a TUI QA journey
+
+Go tests in `internal/tui` construct a `Model` and feed it messages. They
+cannot show that a user pressing keys in a real terminal reaches the changed
+behavior, and TUI changes merged with only those tests have broken user
+flows. So a change to non-test files under `internal/tui/` or
+`cmd/agent-marketplace/tui*.go` also changes a journey directly under
+`tools/tui-qa/tests/` (the suite does not run subdirectories):
+
+1. **Pick the journey.** Extend the existing `*.spec.ts` that already reaches
+   the flow (the list in `tools/tui-qa/README.md` says what each covers), or
+   add `tools/tui-qa/tests/<flow>.spec.ts` for a new interaction. Reuse
+   the fixtures in `fixture.ts` and helpers in `helpers.ts`; changing only
+   those does not count.
+2. **Drive the real flow.** Wait for the settled drift state, then send the
+   keys, mouse input, or resizes a user would. After every state-changing
+   input, assert the visible result before sending the next one. When the
+   flow writes configuration or harness output, assert those files too.
+3. **Prove it.** For a bug fix, run the journey without the fix and confirm
+   it fails. For a feature, assert the new visible behavior and the nearby
+   behavior it could regress (footer hints, selection, scroll position).
+4. **Register and run.** Add or update the entry in the README journey list,
+   then run `make tui-qa`. It passes only when every journey ran and none
+   were skipped.
+
+`specaudit gate` (the `Specs` CI job) fails a pull request that changes
+TUI-bearing files without adding or modifying a journey. Deleting a journey
+does not count. Only a change with no user-observable TUI effect (comments,
+renames, dead code) may carry `TUI-QA-Impact: none — <reason>` instead. It is
+separate from `Spec-Impact`, and "covered by Go tests" is not a reason. Check
+committed work before pushing with
+`go run ./tools/specaudit gate -base origin/main -head HEAD`.
+
 ### Message flow for a config-writing toggle
 
 1. User presses `space` on a skill row → `paneToggleModal` opens with
@@ -444,8 +479,11 @@ them independently. When designing new flows:
 3. Write a test in `internal/tui/*_test.go` using `NewModel` and
    `Update(tea.KeyMsg{...})`. Mock file I/O with the `swap*` helpers in
    `toggle_flow_test.go` if the keybinding writes configs.
-4. Update `site/docs/reference/tui.md`, and add or extend a journey under
-   `tools/tui-qa` when the key changes a user-visible flow.
+4. Update `site/docs/reference/tui.md`.
+5. Add or extend a journey directly under `tools/tui-qa/tests/` that presses
+   the key and asserts its visible effect, then run `make tui-qa`. This step
+   is required, not optional (see
+   [Every TUI change ships a TUI QA journey](#every-tui-change-ships-a-tui-qa-journey)).
 
 ## CLI Conventions (Cobra)
 
@@ -581,7 +619,8 @@ and organization-specific infrastructure are not required.
 
    Continue when installation succeeds with the tracked lockfile unchanged.
 
-2. **Preflight.** Typecheck the tests and check that the PTY runner loads:
+2. **Preflight.** Typecheck the tests and check that the native `tui-test`
+   engine loads:
 
    ```sh
    make tui-qa-check
@@ -601,10 +640,11 @@ and organization-specific infrastructure are not required.
    Fixtures supply temporary HOME/XDG roots, workspaces, and local Git
    registries, keeping test mutations separate from personal configuration.
 
-4. **Report.** QA passes when `make tui-qa` exits zero with both runners
-   passing and every listed journey exercised, none skipped. On failure, retain the failing
-   test name and console output/current terminal screen; the suite produces
-   no snapshot or trace files. Report setup failures as blocked, not passed.
+4. **Report.** QA passes when `make tui-qa` exits zero with the process tests
+   and the journeys passing and every listed journey exercised, none skipped. On failure, retain the failing
+   test name and console output/current terminal screen, plus the GIF and
+   `tui-test` trace kept under `tools/tui-qa/test-results/<journey>/`. Report
+   setup failures as blocked, not passed.
 
 For journey coverage or an already-built test binary, read the
 [TUI QA package reference](../../tools/tui-qa/README.md).
@@ -618,7 +658,8 @@ For journey coverage or an already-built test binary, read the
   inheritance, local overrides.
 - `internal/tui/*_test.go` — construct `Model` directly, feed
   `tea.KeyMsg` or `snapshotLoadedMsg`, assert on `m.rows`, rendered
-  output via `renderList`, or glyph/badge helpers.
+  output via `renderList`, or glyph/badge helpers. These add to the
+  required TUI QA journey; they never replace it.
 
 ### End-to-end TUI tests (real file I/O)
 
@@ -720,3 +761,5 @@ there still matches discovery for your new registry type.
 - Don't silently succeed when a config write targets the wrong list.
   Cover each scope with a test that verifies the intended list received
   the write (see `TestReadSnapshotProjectToggleWithPerEntrySkills`).
+- Don't ship a TUI change proven only by `internal/tui` Go tests, and
+  don't use `TUI-QA-Impact` to skip the journey for a change users can see.

@@ -1,9 +1,13 @@
 schema: 1
 harness: codex
 evidence:
-  checked: "2026-09-21"
+  checked: "2026-10-19"
   refs:
     - https://developers.openai.com/codex/subagents.md
+    - https://developers.openai.com/codex/models.md
+    - https://developers.openai.com/api/docs/models/gpt-6-astra.md
+    - https://developers.openai.com/api/docs/models/gpt-6.1-sol.md
+    - https://developers.openai.com/api/docs/models/gpt-6-luna.md
 surfaces:
   subagent:
     model_field: model
@@ -30,3 +34,27 @@ models:
       low: {effort: low}
       medium: {effort: medium}
       high: {effort: high}
+  openai/gpt-6-astra:
+    model: gpt-6-astra
+    reasoning:
+      low: {effort: low}
+      medium: {effort: medium}
+      high: {effort: high}
+      xhigh: {effort: xhigh}
+      max: {effort: max}
+  openai/gpt-6-luna:
+    model: gpt-6-luna
+    reasoning:
+      low: {effort: low}
+      medium: {effort: medium}
+      high: {effort: high}
+      xhigh: {effort: xhigh}
+      max: {effort: max}
+  openai/gpt-6.1-sol:
+    model: gpt-6.1-sol
+    reasoning:
+      low: {effort: low}
+      medium: {effort: medium}
+      high: {effort: high}
+      xhigh: {effort: xhigh}
+      max: {effort: max}

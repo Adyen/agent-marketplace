@@ -48,15 +48,17 @@ const (
 	driftReady   = session.DriftReady
 	driftFailed  = session.DriftFailed
 
-	requestDetail    = session.RequestDetail
-	requestSnapshot  = session.RequestSnapshot
-	requestDiscovery = session.RequestDiscovery
+	requestDetail         = session.RequestDetail
+	requestSnapshot       = session.RequestSnapshot
+	requestDiscovery      = session.RequestDiscovery
+	requestInstallPreview = session.RequestInstallPreview
 
-	operationMutation = session.OperationMutation
-	operationTargets  = session.OperationTargets
-	operationSync     = session.OperationSync
-	operationUpdate   = session.OperationUpdate
-	operationEditor   = session.OperationEditor
+	operationMutation                 = session.OperationMutation
+	operationTargets                  = session.OperationTargets
+	operationSync                     = session.OperationSync
+	operationUpdate                   = session.OperationUpdate
+	operationEditor                   = session.OperationEditor
+	operationHookReview operationKind = "hook-review"
 
 	diagnosticError   = session.DiagnosticError
 	diagnosticWarning = session.DiagnosticWarning
@@ -291,3 +293,7 @@ func snapshotCoreFromMsg(m snapshotLoadedMsg) session.Snapshot {
 func sessionSnapshotLoader(ctx context.Context, ws pipeline.Workspace, homeDir string, mode session.CatalogLoadMode) session.Snapshot {
 	return snapshotCoreFromMsg(readSnapshotForUpdate(ctx, ws, homeDir, mode))
 }
+
+func rowToggleDenial(r row) toggleDenial { return session.RowToggleDenialFor(r) }
+
+type catalogInfo = session.CatalogInfo

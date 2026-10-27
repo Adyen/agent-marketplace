@@ -8,14 +8,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
+	"regexp"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
-	"gopkg.in/yaml.v3"
 )
 
 type metricsRequest struct {
@@ -37,12 +37,12 @@ func newMetricsFixture(t *testing.T, payload func() string) *metricsFixture {
 	t.Helper()
 	fixture := &metricsFixture{
 		hits:     &atomic.Int32{},
-		requests: make(chan metricsRequest, 64),
+		requests: make(chan metricsRequest, 1024),
 		handler:  &atomic.Value{},
 	}
 	fixture.handler.Store(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, payload())
+		_, _ = fmt.Fprint(w, operandVector(payload(), r.Form.Get("query")))
 	})
 	fixture.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fixture.hits.Add(1)
@@ -52,6 +52,43 @@ func newMetricsFixture(t *testing.T, payload func() string) *metricsFixture {
 	}))
 	t.Cleanup(fixture.server.Close)
 	return fixture
+}
+
+var operandInventoryType = regexp.MustCompile(`"inventory_type", "([a-z_]+)"`)
+
+// operandVector answers one operand request the way the backend would: only the rows of the
+// requested inventory_type. Bodies that are not a vector of inventory rows pass through unchanged.
+func operandVector(body, query string) string {
+	type row struct {
+		Metric map[string]string `json:"metric"`
+		Value  []any             `json:"value"`
+	}
+	var decoded struct {
+		Status string `json:"status"`
+		Data   struct {
+			ResultType string `json:"resultType"`
+			Result     []row  `json:"result"`
+		} `json:"data"`
+	}
+	if json.Unmarshal([]byte(body), &decoded) != nil || decoded.Status != "success" || decoded.Data.ResultType != "vector" || len(decoded.Data.Result) == 0 {
+		return body
+	}
+	match := operandInventoryType.FindStringSubmatch(query)
+	rows := make([]row, 0, len(decoded.Data.Result))
+	for _, entry := range decoded.Data.Result {
+		inventoryType, ok := entry.Metric["inventory_type"]
+		if !ok || match == nil {
+			return body
+		}
+		if inventoryType == match[1] {
+			rows = append(rows, entry)
+		}
+	}
+	encoded, _ := json.Marshal(map[string]any{
+		"status": "success",
+		"data":   map[string]any{"resultType": "vector", "result": rows},
+	})
+	return string(encoded)
 }
 
 func prometheusVector(samples []inventoryMetricSample, observedAt time.Time) string {
@@ -71,10 +108,10 @@ func prometheusVector(samples []inventoryMetricSample, observedAt time.Time) str
 }
 
 func adoptionSamples() []inventoryMetricSample {
-	fresh := adoptionFixedNow.Add(-time.Hour)
 	return []inventoryMetricSample{
-		inventorySnapshotSample("install-1", "gen-1", fresh),
-		inventoryResourceSample("install-1", "gen-1", telemetryAlpha, "skill", "res-a"),
+		aggregateResponseSample("count", 1, map[string]string{"am_registry": "rA", "resource_kind": "skill", "resource_name": "res-a"}),
+		aggregateResponseSample("fresh", 1, nil),
+		aggregateResponseSample("valid_until", float64(adoptionFixedNow.Add(-time.Hour).UnixMicro()), nil),
 	}
 }
 
@@ -84,83 +121,6 @@ func newTestReader(t *testing.T, fixture *metricsFixture) *installationMetricsRe
 		URL:    fixture.server.URL,
 		Labels: map[string]string{"namespace": "ops"},
 	}, "mp")
-}
-
-// spec: marketplace-api/superseded-inventory-history-does-not-exhaust-the-response-budget
-func TestInstallationMetricsQueryLatestInventoryProjection(t *testing.T) {
-	const wantNamespace = `label_replace((max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{namespace="ops"}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{namespace="ops"}[30d])))), "inventory_type", "snapshot", "", "") or label_replace((max by (installation_id, config_fingerprint, source_kind, marketplace_id, registry_id, resource_kind, resource_name) (last_over_time(agent_marketplace_config_resource{namespace="ops",resource_kind!="rule"}[30d])) and on (installation_id, config_fingerprint) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{namespace="ops"}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{namespace="ops"}[30d]))))), "inventory_type", "resource", "", "")`
-	const wantEmpty = `label_replace((max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d])))), "inventory_type", "snapshot", "", "") or label_replace((max by (installation_id, config_fingerprint, source_kind, marketplace_id, registry_id, resource_kind, resource_name) (last_over_time(agent_marketplace_config_resource{resource_kind!="rule"}[30d])) and on (installation_id, config_fingerprint) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d])) == on (installation_id) group_left max by (installation_id) (max by (installation_id, config_fingerprint) (last_over_time(agent_marketplace_config_snapshot{}[30d]))))), "inventory_type", "resource", "", "")`
-	const escapedLabels = `alpha="first",zeta="quote\n\"line\""`
-
-	tests := []struct {
-		name   string
-		labels map[string]string
-		want   string
-	}{
-		{name: "namespace", labels: map[string]string{"namespace": "ops"}, want: wantNamespace},
-		{name: "empty labels", labels: map[string]string{}, want: wantEmpty},
-		{
-			name:   "sorted and escaped labels",
-			labels: map[string]string{"zeta": "quote\n\"line\"", "alpha": "first"},
-			want:   strings.ReplaceAll(wantNamespace, `namespace="ops"`, escapedLabels),
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := installationMetricsQuery(test.labels); got != test.want {
-				t.Errorf("installationMetricsQuery() = %q, want %q", got, test.want)
-			}
-		})
-	}
-
-	data, err := os.ReadFile("installation_query_test.yaml")
-	if err != nil {
-		t.Fatalf("read query evaluator fixture: %v", err)
-	}
-	var fixture struct {
-		Tests []struct {
-			PromQLExprTest []struct {
-				Expr string `yaml:"expr"`
-			} `yaml:"promql_expr_test"`
-		} `yaml:"tests"`
-	}
-	if err := yaml.Unmarshal(data, &fixture); err != nil {
-		t.Fatalf("unmarshal query evaluator fixture: %v", err)
-	}
-	if len(fixture.Tests) == 0 || len(fixture.Tests[0].PromQLExprTest) == 0 {
-		t.Fatal("query evaluator fixture has no PromQL expression test")
-	}
-	if got := fixture.Tests[0].PromQLExprTest[0].Expr; got != wantNamespace {
-		t.Errorf("query evaluator expression = %q, want %q", got, wantNamespace)
-	}
-	if got := installationMetricsQuery(map[string]string{"namespace": "ops"}); got != wantNamespace {
-		t.Errorf("installationMetricsQuery(namespace=ops) = %q, want %q", got, wantNamespace)
-	}
-}
-
-// spec: marketplace-api/superseded-inventory-history-does-not-exhaust-the-response-budget
-func TestInstallationMetricsProjectedInventoryReaderCounts(t *testing.T) {
-	body, err := os.ReadFile("installation_query_result_test.json")
-	if err != nil {
-		t.Fatalf("read frozen evaluator result: %v", err)
-	}
-	fixture := newMetricsFixture(t, func() string { return string(body) })
-	reader := newTestReader(t, fixture)
-	reader.now = func() time.Time { return time.Unix(3456000, 0) }
-
-	if _, err := reader.refresh(context.Background(), adoptionTestRegistries()); err != nil {
-		t.Fatalf("reader refresh() error = %v", err)
-	}
-	snapshot, ok := reader.lookup(adoptionTestRegistries())
-	if !ok {
-		t.Fatal("lookup() after refresh returned no snapshot")
-	}
-	assertAdoptionCounts(t, *snapshot, map[installationResourceKey]int64{
-		adoptionKey("rA", "skill", "alpha"): 1,
-	}, nil)
-	if hits := fixture.hits.Load(); hits != 1 {
-		t.Fatalf("metrics reader hits = %d, want 1", hits)
-	}
 }
 
 // spec: marketplace-api/metrics-configuration-and-requests-preserve-the-server-boundary
@@ -225,19 +185,19 @@ func TestInstallationMetricsReaderCachesAggregatesFiveMinutes(t *testing.T) {
 			t.Fatalf("lookup() call %d missed the published snapshot", i)
 		}
 	}
-	if hits := fixture.hits.Load(); hits != 1 {
-		t.Fatalf("metrics endpoint hits = %d, want 1", hits)
+	if hits := fixture.hits.Load(); hits != adoptionRefreshRequests {
+		t.Fatalf("metrics endpoint hits = %d, want %d", hits, adoptionRefreshRequests)
 	}
 	now = adoptionFixedNow.Add(5*time.Minute - time.Nanosecond)
-	if _, ok := reader.lookup(registries); !ok {
+	if _, fresh := reader.lookup(registries); !fresh {
 		t.Fatal("lookup() dropped a snapshot inside its freshness window")
 	}
-	if hits := fixture.hits.Load(); hits != 1 {
-		t.Fatalf("metrics endpoint hits inside cache window = %d, want 1", hits)
+	if hits := fixture.hits.Load(); hits != adoptionRefreshRequests {
+		t.Fatalf("metrics endpoint hits inside cache window = %d, want %d", hits, adoptionRefreshRequests)
 	}
 	now = adoptionFixedNow.Add(5 * time.Minute)
-	if _, ok := reader.lookup(registries); ok {
-		t.Fatal("lookup() served a snapshot at its exact max_age expiry boundary")
+	if _, fresh := reader.lookup(registries); fresh {
+		t.Fatal("lookup() reported a snapshot as fresh at its exact max_age expiry boundary")
 	}
 }
 
@@ -265,17 +225,17 @@ func TestInstallationMetricsReaderExpiryFailureAndBackoff(t *testing.T) {
 	if want := failedAt.Add(3*time.Second + reader.timing.RetryInterval); !reader.backoffUntil.Equal(want) {
 		t.Fatalf("backoffUntil = %v, want attempt completion + retry interval = %v", reader.backoffUntil, want)
 	}
-	if _, ok := reader.lookup(registries); ok {
-		t.Fatal("lookup() after expiry with failing metrics still served counts")
+	if counts, fresh := reader.lookup(registries); counts == nil || fresh {
+		t.Fatal("lookup() after expiry with failing metrics did not serve stale last-good counts")
 	}
-	if hits := fixture.hits.Load(); hits != 2 {
-		t.Fatalf("metrics endpoint hits = %d, want 2", hits)
+	if hits := fixture.hits.Load(); hits != 2*adoptionRefreshRequests {
+		t.Fatalf("metrics endpoint hits = %d, want %d", hits, 2*adoptionRefreshRequests)
 	}
 	if delay := reader.attempt(context.Background(), staticRegistryIndex(registries), true); delay != reader.timing.RetryInterval {
 		t.Fatalf("hint inside failure backoff delay = %v, want remaining backoff %v", delay, reader.timing.RetryInterval)
 	}
-	if hits := fixture.hits.Load(); hits != 2 {
-		t.Fatalf("failure backoff did not hold for 30s: hits = %d, want 2", hits)
+	if hits := fixture.hits.Load(); hits != 2*adoptionRefreshRequests {
+		t.Fatalf("failure backoff did not hold for 30s: hits = %d, want %d", hits, 2*adoptionRefreshRequests)
 	}
 }
 
@@ -283,8 +243,9 @@ func TestInstallationMetricsReaderExpiryFailureAndBackoff(t *testing.T) {
 func TestInstallationMetricsReaderObservationHorizonExpiresEarlier(t *testing.T) {
 	almostStale := adoptionFixedNow.Add(-30*24*time.Hour + 2*time.Minute)
 	samples := []inventoryMetricSample{
-		inventorySnapshotSample("install-1", "gen-1", almostStale),
-		inventoryResourceSample("install-1", "gen-1", telemetryAlpha, "skill", "res-a"),
+		aggregateResponseSample("count", 1, map[string]string{"am_registry": "rA", "resource_kind": "skill", "resource_name": "res-a"}),
+		aggregateResponseSample("fresh", 1, nil),
+		aggregateResponseSample("valid_until", float64(almostStale.UnixMicro()), nil),
 	}
 	fixture := newMetricsFixture(t, func() string { return prometheusVector(samples, adoptionFixedNow) })
 	reader := newTestReader(t, fixture)
@@ -295,20 +256,20 @@ func TestInstallationMetricsReaderObservationHorizonExpiresEarlier(t *testing.T)
 	if _, err := reader.refresh(context.Background(), registries); err != nil {
 		t.Fatalf("refresh() error = %v", err)
 	}
-	counts, ok := reader.lookup(registries)
-	if !ok {
-		t.Fatal("lookup() after refresh returned no snapshot")
+	counts, fresh := reader.lookup(registries)
+	if counts == nil || !fresh {
+		t.Fatal("lookup() after refresh returned no fresh snapshot")
 	}
 	if counts.ValidUntil.After(now.Add(5 * time.Minute)) {
 		t.Fatalf("ValidUntil %v beyond five-minute freshness", counts.ValidUntil)
 	}
 	now = now.Add(3 * time.Minute)
-	if _, ok := reader.lookup(registries); ok {
-		t.Fatal("lookup() reused an aggregate past its inventory validity horizon")
+	if _, fresh := reader.lookup(registries); fresh {
+		t.Fatal("lookup() reported an aggregate fresh past its inventory validity horizon")
 	}
 	reader.attempt(context.Background(), staticRegistryIndex(registries), false)
-	if hits := fixture.hits.Load(); hits != 2 {
-		t.Fatalf("metrics endpoint hits = %d, want 2 after validity horizon", hits)
+	if hits := fixture.hits.Load(); hits != 2*adoptionRefreshRequests {
+		t.Fatalf("metrics endpoint hits = %d, want %d after validity horizon", hits, 2*adoptionRefreshRequests)
 	}
 }
 
@@ -329,21 +290,38 @@ func TestInstallationMetricsReaderOriginChangeInvalidatesCache(t *testing.T) {
 	if _, ok := reader.lookup(changed); ok {
 		t.Fatal("lookup() served a stale signature after origin change")
 	}
-	if hits := fixture.hits.Load(); hits != 1 {
-		t.Fatalf("identity-mismatched lookup issued telemetry: hits = %d, want 1", hits)
+	if hits := fixture.hits.Load(); hits != adoptionRefreshRequests {
+		t.Fatalf("identity-mismatched lookup issued telemetry: hits = %d, want %d", hits, adoptionRefreshRequests)
 	}
+	fixture.handler.Store(func(w http.ResponseWriter, r *http.Request) {
+		samples := []inventoryMetricSample{
+			aggregateResponseSample("fresh", 1, nil),
+			aggregateResponseSample("valid_until", float64(adoptionFixedNow.UnixMicro()), nil),
+		}
+		_, _ = fmt.Fprint(w, operandVector(prometheusVector(samples, adoptionFixedNow), r.Form.Get("query")))
+	})
 	if _, err := reader.refresh(context.Background(), changed); err != nil {
 		t.Fatalf("refresh() after origin change error = %v", err)
 	}
-	counts, ok := reader.lookup(changed)
-	if !ok {
+	if _, fresh := reader.lookup(changed); !fresh {
 		t.Fatal("lookup() after origin change refresh returned no snapshot")
 	}
-	if hits := fixture.hits.Load(); hits != 2 {
-		t.Fatalf("origin change did not invalidate aggregate cache: hits = %d, want 2", hits)
+	if hits := fixture.hits.Load(); hits != 2*adoptionRefreshRequests {
+		t.Fatalf("origin change did not invalidate aggregate cache: hits = %d, want %d", hits, 2*adoptionRefreshRequests)
 	}
-	if got := counts.Counts[installationResourceKey{Registry: "rA", Kind: "skill", Name: "res-a"}]; got != 0 {
-		t.Fatalf("moved origin still contributed a count to rA: %d", got)
+	for range adoptionRefreshRequests {
+		<-fixture.requests
+	}
+	movedSeen := false
+	for range adoptionRefreshRequests {
+		query := (<-fixture.requests).Form.Get("query")
+		movedSeen = movedSeen || strings.Contains(query, "team/moved-alpha")
+		if strings.Contains(query, "team/alpha") {
+			t.Fatalf("query after origin change retained old identity example.test/team/alpha: %q", query)
+		}
+	}
+	if !movedSeen {
+		t.Fatal("queries after origin change omitted moved identity")
 	}
 }
 
@@ -507,7 +485,7 @@ func TestInstallationMetricsReaderUnsetTokenAndTimeout(t *testing.T) {
 	if _, err := validReader.refresh(context.Background(), adoptionTestRegistries()); err != nil {
 		t.Fatalf("refresh() with a valid token error = %v", err)
 	}
-	if hits := validFixture.hits.Load(); hits != 1 {
+	if hits := validFixture.hits.Load(); hits != adoptionRefreshRequests {
 		t.Fatalf("valid token did not reach the metrics endpoint once: hits = %d", hits)
 	}
 
@@ -524,5 +502,151 @@ func TestInstallationMetricsReaderUnsetTokenAndTimeout(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Fatalf("metrics request exceeded bound: %v", elapsed)
+	}
+}
+
+// spec: marketplace-api/aggregate-is-evaluated-with-concurrent-backend-requests
+func TestInstallationMetricsFetchEvaluatesOperandsConcurrently(t *testing.T) {
+	var arrived atomic.Int32
+	allArrived := make(chan struct{})
+	fixture := newMetricsFixture(t, func() string { return prometheusVector(adoptionSamples(), adoptionFixedNow) })
+	fixture.handler.Store(func(w http.ResponseWriter, r *http.Request) {
+		if arrived.Add(1) == adoptionRefreshRequests {
+			close(allArrived)
+		}
+		select {
+		case <-allArrived:
+		case <-time.After(5 * time.Second):
+			http.Error(w, "operands arrived sequentially", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, operandVector(prometheusVector(adoptionSamples(), adoptionFixedNow), r.Form.Get("query")))
+	})
+	reader := newTestReader(t, fixture)
+	registries := adoptionTestRegistries()
+	evalTime := adoptionFixedNow.Add(500 * time.Millisecond)
+
+	if _, err := reader.fetch(context.Background(), registries, evalTime); err != nil {
+		t.Fatalf("fetch() error = %v, want operands evaluated concurrently", err)
+	}
+	expected := installationMetricsQueries(reader.labels, newInstallationQueryPlan(registries, reader.marketplaceID))
+	seen := make(map[string]bool)
+	for i := 0; i < len(expected); i++ {
+		request := <-fixture.requests
+		if request.Form.Get("time") != fmt.Sprintf("%d", evalTime.Unix()) {
+			t.Fatalf("operand time = %q, want shared evaluation time %d", request.Form.Get("time"), evalTime.Unix())
+		}
+		query := request.Form.Get("query")
+		if !slices.Contains(expected, query) {
+			t.Fatalf("request carried a query that is not one operand: %q", query)
+		}
+		seen[query] = true
+	}
+	if len(seen) != len(expected) {
+		t.Fatalf("distinct operands requested = %d, want %d", len(seen), len(expected))
+	}
+}
+
+// spec: marketplace-api/aggregate-is-evaluated-with-concurrent-backend-requests
+func TestInstallationMetricsFetchBudgetAppliesToCombinedResponses(t *testing.T) {
+	perOperand := installationMetricsMaxBody/int(adoptionRefreshRequests) + 1
+	tests := []struct {
+		name    string
+		padding int
+		wantErr bool
+	}{
+		{name: "combined responses within budget", padding: installationMetricsMaxBody / (2 * int(adoptionRefreshRequests))},
+		{name: "combined responses over budget", padding: perOperand, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newMetricsFixture(t, func() string { return prometheusVector(adoptionSamples(), adoptionFixedNow) })
+			fixture.handler.Store(func(w http.ResponseWriter, r *http.Request) {
+				body := operandVector(prometheusVector(adoptionSamples(), adoptionFixedNow), r.Form.Get("query"))
+				_, _ = fmt.Fprint(w, strings.Replace(body, "{", "{"+strings.Repeat(" ", test.padding), 1))
+			})
+			reader := newTestReader(t, fixture)
+			_, err := reader.fetch(context.Background(), adoptionTestRegistries(), adoptionFixedNow)
+			if test.wantErr {
+				if !errors.Is(err, errInstallationMetricsUnavailable) {
+					t.Fatalf("fetch() error = %v, want errInstallationMetricsUnavailable for combined bodies over budget", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("fetch() error = %v, want combined bodies within budget to be accepted", err)
+			}
+		})
+	}
+}
+
+// spec: marketplace-api/aggregate-is-evaluated-with-concurrent-backend-requests
+func TestInstallationMetricsFetchOperandErrorPrecedence(t *testing.T) {
+	good := prometheusVector(adoptionSamples(), adoptionFixedNow)
+	tests := []struct {
+		name    string
+		respond func(w http.ResponseWriter, query string)
+		want    error
+	}{
+		{name: "malformed beats unavailable", want: errInvalidInstallationMetrics, respond: func(w http.ResponseWriter, query string) {
+			switch operandInventoryType.FindStringSubmatch(query)[1] {
+			case "fresh":
+				w.WriteHeader(http.StatusInternalServerError)
+			case "invalid":
+				_, _ = fmt.Fprint(w, `{`)
+			default:
+				_, _ = fmt.Fprint(w, operandVector(good, query))
+			}
+		}},
+		{name: "one unavailable operand fails the refresh", want: errInstallationMetricsUnavailable, respond: func(w http.ResponseWriter, query string) {
+			if operandInventoryType.FindStringSubmatch(query)[1] == "fresh" {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			_, _ = fmt.Fprint(w, operandVector(good, query))
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newMetricsFixture(t, func() string { return good })
+			fixture.handler.Store(func(w http.ResponseWriter, r *http.Request) {
+				test.respond(w, r.Form.Get("query"))
+			})
+			reader := newTestReader(t, fixture)
+			reader.now = func() time.Time { return adoptionFixedNow }
+			for i := 0; i < 5; i++ {
+				if _, err := reader.fetch(context.Background(), adoptionTestRegistries(), adoptionFixedNow); !errors.Is(err, test.want) {
+					t.Fatalf("fetch() error = %v, want %v", err, test.want)
+				}
+			}
+		})
+	}
+}
+
+// spec: marketplace-api/aggregate-is-evaluated-with-concurrent-backend-requests
+func TestInstallationMetricsFailedOperandKeepsPublishedSnapshot(t *testing.T) {
+	fixture := newMetricsFixture(t, func() string { return prometheusVector(adoptionSamples(), adoptionFixedNow) })
+	reader := newTestReader(t, fixture)
+	now := adoptionFixedNow
+	reader.now = func() time.Time { return now }
+	registries := adoptionTestRegistries()
+	if _, err := reader.refresh(context.Background(), registries); err != nil {
+		t.Fatalf("refresh() error = %v", err)
+	}
+	before := reader.snapshot.Load()
+	fixture.handler.Store(func(w http.ResponseWriter, r *http.Request) {
+		if operandInventoryType.FindStringSubmatch(r.Form.Get("query"))[1] == "fresh" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = fmt.Fprint(w, operandVector(prometheusVector(adoptionSamples(), adoptionFixedNow), r.Form.Get("query")))
+	})
+	now = adoptionFixedNow.Add(reader.timing.MaxAge + time.Minute)
+	if _, err := reader.refresh(context.Background(), registries); !errors.Is(err, errInstallationMetricsUnavailable) {
+		t.Fatalf("refresh() error = %v, want errInstallationMetricsUnavailable", err)
+	}
+	if reader.snapshot.Load() != before {
+		t.Fatal("failed operand replaced the published snapshot")
 	}
 }

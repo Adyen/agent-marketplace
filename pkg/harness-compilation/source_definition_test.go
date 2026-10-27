@@ -11,6 +11,7 @@ import (
 	"testing/fstest"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -107,9 +108,9 @@ func TestIngestSourceDefinitionUnstableReads(t *testing.T) {
 		path:   path,
 		bodies: [][]byte{bodyA, bodyB},
 	}
-	b, err := IngestBundle(unstable, HarnessFactory)
+	b, err := IngestBundleWithLoader(unstable, readTwiceThenLoadFactory(path))
 	if err != nil {
-		t.Fatalf("IngestBundle: %v", err)
+		t.Fatalf("IngestBundleWithLoader: %v", err)
 	}
 	if unstable.reads < 2 {
 		t.Fatalf("factory ingest read %s %d times; the instability proof needs >= 2", path, unstable.reads)
@@ -135,12 +136,36 @@ func TestIngestSourceDefinitionUnstableReads(t *testing.T) {
 		path:   path,
 		bodies: [][]byte{bodyA},
 	}
-	stableHook := ingestedOneHook(t, stable, HarnessFactory)
+	stableBundle, err := IngestBundleWithLoader(stable, readTwiceThenLoadFactory(path))
+	if err != nil {
+		t.Fatalf("IngestBundleWithLoader: %v", err)
+	}
 	if stable.reads < 2 {
 		t.Fatalf("factory ingest read %s %d times; want >= 2", path, stable.reads)
 	}
-	if got := stableHook.SourceDefinitionDigest(); got != sourceDefinitionDigest(bodyA) {
-		t.Fatalf("stable digest = %q, want %q", got, sourceDefinitionDigest(bodyA))
+	var stableHooks []*ir.Hook
+	for _, r := range stableBundle.Resources {
+		if h, ok := r.(*ir.Hook); ok {
+			stableHooks = append(stableHooks, h)
+		}
+	}
+	if len(stableHooks) != 1 || stableHooks[0].SourceDefinitionDigest() != sourceDefinitionDigest(bodyA) {
+		t.Fatalf("stable hooks = %#v, want one hook with digest %q", stableHooks, sourceDefinitionDigest(bodyA))
+	}
+}
+
+// readTwiceThenLoadFactory reads path once before the factory loader reads it
+// again, standing in for any second reader of the same definition file.
+func readTwiceThenLoadFactory(path string) func(fs.FS) (*ingest.Bundle, error) {
+	return func(src fs.FS) (*ingest.Bundle, error) {
+		if _, err := fs.ReadFile(src, path); err != nil {
+			return nil, err
+		}
+		factory, ok := ingest.For(ingest.HarnessFactory)
+		if !ok {
+			return nil, errors.New("factory ingester is not registered")
+		}
+		return factory.LoadBundle(src)
 	}
 }
 
@@ -153,7 +178,7 @@ func TestIngestSourceDefinitionReadError(t *testing.T) {
 		FS:      fstest.MapFS{path: {Data: bodyA}},
 		path:    path,
 		bodies:  [][]byte{bodyA},
-		readErr: map[int]error{1: errRead},
+		readErr: map[int]error{0: errRead},
 	}
 	bundle, err := IngestBundle(failing, HarnessFactory)
 	if err == nil {

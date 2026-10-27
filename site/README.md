@@ -76,9 +76,8 @@ site/
 ├── index.md                         # Route shell for /
 ├── docs/                            # Public documentation, rendered at /docs/
 │   ├── index.md                     # Documentation overview
-│   ├── terminal-basics.md           # Terminal basics for new users
-│   ├── install.md
 │   ├── quick-start.md
+│   ├── install.md                   # More install options
 │   ├── glossary.md                  # One heading per term
 │   ├── tutorials/
 │   ├── how-to/                      # Consumer guides, plus author/ and operator/
@@ -110,8 +109,8 @@ Move code to `src/shared` only after more than one route uses it.
 
 Public documentation lives in `docs/` and follows the
 [Diátaxis](https://diataxis.fr/) split into tutorials, how-to guides,
-reference, and explanation. A few entry pages (overview, terminal basics,
-install, quick start, and glossary) sit directly in `docs/`. Pages render
+reference, and explanation. A few entry pages (overview, quick start,
+more install options, and glossary) sit directly in `docs/`. Pages render
 through the VitePress default theme, so they inherit the shared design tokens
 without extra styling. Internal design notes stay in the repository's top-level
 `docs/` directory and are not published.
@@ -127,7 +126,9 @@ When adding a page:
    Consumers → Troubleshoot and repair). The sidebar is ordered by hand and
    does not pick up new pages automatically. Subgroups only affect the
    sidebar, so keep the file in its quadrant directory. If you add a subgroup,
-   use the same heading in the matching list in `docs/index.md`.
+   use the same heading in the matching list in `docs/index.md`. The sidebar
+   also drives `llms.txt` and the Markdown copies, and the build fails if a
+   page has no sidebar entry.
 3. Link other site pages with relative `.md` paths. Link repository files
    outside `site/` by their full GitHub URL, because relative links outside
    `site/` do not resolve on the website and the build fails on dead links.

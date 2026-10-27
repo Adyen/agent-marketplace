@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/session"
 )
@@ -124,6 +125,8 @@ func invalidConfigToastCmd() tea.Cmd {
 }
 
 type configWrittenMsg struct {
+	report     *materialize.Report
+	warnings   []error
 	operation  operationID
 	followUp   bool
 	skillName  string
@@ -135,6 +138,7 @@ type configWrittenMsg struct {
 type syncDoneMsg struct {
 	err      error
 	warnings []error
+	report   *materialize.Report
 }
 
 type updateDoneMsg struct {
@@ -143,6 +147,7 @@ type updateDoneMsg struct {
 	stage      string
 	err        error
 	warnings   []error
+	report     *materialize.Report
 }
 
 // detailContentMsg carries the glamour-rendered resource content for the
@@ -197,6 +202,7 @@ func updateDoneFromCore(result session.UpdateResult) updateDoneMsg {
 		stage:      result.Stage,
 		err:        result.Err,
 		warnings:   result.Warnings,
+		report:     result.Report,
 	}
 }
 
@@ -209,14 +215,14 @@ var runSyncCmd = func(ctx context.Context, workspace pipeline.Workspace) tea.Cmd
 		if err != nil {
 			return syncDoneMsg{err: err}
 		}
-		return syncDoneMsg{err: errors.Join(result.Errors...)}
+		return syncDoneMsg{err: errors.Join(result.Errors...), warnings: result.Warnings, report: result.Report}
 	}
 }
 
 func runDependencySyncCmd(ctx context.Context, workspace pipeline.Workspace, sync DependencyLifecycleFunc) tea.Cmd {
 	return func() tea.Msg {
-		warnings, syncErr := session.RunDependencySync(ctx, workspace, sync)
-		return syncDoneMsg{err: syncErr, warnings: warnings}
+		synced, syncErr := session.RunDependencySync(ctx, workspace, sync)
+		return syncDoneMsg{err: syncErr, warnings: synced.Warnings, report: synced.Report}
 	}
 }
 

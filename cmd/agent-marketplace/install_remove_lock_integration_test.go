@@ -131,7 +131,7 @@ func TestInstallAndRemoveReconcileOwningGitLock(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "\nharnesses: [claude]\n")
 	withWorkingDir(t, repo)
-	if output, err := executeCommand("install", "review", "--from", origin, "--ref", "main"); err != nil {
+	if output, err := executeCommand("install", "--scope", "repo", "review", "--from", origin, "--ref", "main"); err != nil {
 		t.Fatalf("install: %v\n%s", err, output)
 	}
 
@@ -236,7 +236,7 @@ func TestAdHocInstallUsesLockedInventoryWhenMutableRefMoves(t *testing.T) {
 	}
 	writeSkill(t, working, "new", "New B", nil)
 	commitAndPushAll(t, working, "inventory B")
-	output, err := executeCommand("install", "new", "--from", origin, "--ref", "main")
+	output, err := executeCommand("install", "--scope", "repo", "new", "--from", origin, "--ref", "main")
 	if err == nil {
 		t.Fatalf("ad-hoc install reported success for mutable-only resource:\n%s", output)
 	}
@@ -355,7 +355,7 @@ func TestInstallMaterializationFailureKeepsCommittedConfigAndLock(t *testing.T) 
 	configPath := filepath.Join(repo, ".agents", "config.yaml")
 	writeConfig(t, configPath, "\nharnesses: [devin]\n")
 	withWorkingDir(t, repo)
-	_, err := executeCommand("install", "review", "--kind", "mcp", "--from", origin, "--ref", "main")
+	_, err := executeCommand("install", "--scope", "repo", "review", "--kind", "mcp", "--from", origin, "--ref", "main")
 	var committed *pipeline.DependencyCommittedSyncError
 	if !errors.As(err, &committed) {
 		t.Fatalf("install error = %v, want DependencyCommittedSyncError", err)
@@ -863,7 +863,7 @@ func TestConfiguredInstallV4AllWritesLocatorsUnderEachProvider(t *testing.T) {
 	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  alpha-src: {git: file://"+skillsOrigin+", ref: main}\n  beta-src: {git: file://"+toolsOrigin+", ref: main}\n")
 	withWorkingDir(t, repoRoot)
 
-	output, err := executeCommand("install", "--all")
+	output, err := executeCommand("install", "--scope", "repo", "--all")
 	if err != nil {
 		t.Fatalf("install --all failed: %v\n%s", err, output)
 	}
@@ -935,7 +935,7 @@ skills:
 			}
 			withWorkingDir(t, repoRoot)
 
-			args := []string{"install"}
+			args := []string{"install", "--scope", "repo"}
 			for _, arg := range tc.args {
 				if arg == "%s" {
 					arg = origin

@@ -87,6 +87,7 @@ type statusView struct {
 	requirements        []requirementRow
 	errorRows           []errorRow
 	dryRunReport        *materialize.Report
+	cacheUnknown        bool
 	targetHarnesses     []string
 	targetSource        config.Source
 	machineTargets      []string
@@ -280,6 +281,7 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 		requirements:        requirementRows,
 		errorRows:           errorRows,
 		dryRunReport:        dryRunReport,
+		cacheUnknown:        pipeline.HasUnresolvedMarketplaceCacheEvidence(result.ResolveErrors),
 		targetHarnesses:     targetHarnesses,
 		targetSource:        result.TargetHarnessSource,
 		machineTargets:      machineTargets,
@@ -404,6 +406,16 @@ func buildStatusRows(repoRoot string, resolved []resolver.ResolvedArtifact, cach
 		}
 	}
 
+	// A resource that lost a shared native path to one of another kind is not
+	// installed on that target, so the row must not list the target.
+	var displacedTargets map[int][]hcc.Target
+	for _, d := range resolver.SharedPathDisplacements(resolved) {
+		if displacedTargets == nil {
+			displacedTargets = make(map[int][]hcc.Target)
+		}
+		displacedTargets[d.DisplacedIndex] = append(displacedTargets[d.DisplacedIndex], d.Target)
+	}
+
 	rows := make([]statusRow, 0, len(resolved))
 
 	for i, resolvedArtifact := range resolved {
@@ -422,11 +434,20 @@ func buildStatusRows(repoRoot string, resolved []resolver.ResolvedArtifact, cach
 		}) {
 			target = "error: not materialized"
 		}
+		harnesses := resolvedArtifact.Harnesses
+		if lost := displacedTargets[i]; len(lost) > 0 {
+			harnesses = slices.DeleteFunc(slices.Clone(statusHarnesses(resolvedArtifact)), func(target hcc.Target) bool {
+				return slices.Contains(lost, target)
+			})
+			if len(harnesses) == 0 && target == resolvedArtifact.Path {
+				target = "not materialized: shared path"
+			}
+		}
 
 		rows = append(rows, statusRow{
 			Kind:     skill.KindLabel(resolvedArtifact.Kind),
 			Name:     resolvedArtifact.Name,
-			Harness:  harnessLabel(resolvedArtifact.Harnesses),
+			Harness:  harnessLabel(harnesses),
 			Target:   target,
 			Registry: resolvedArtifact.RegistryURL,
 			Ref:      resolvedArtifact.Ref,
@@ -906,7 +927,11 @@ func writeStatusSections(out io.Writer, view statusView) error {
 		return err
 	}
 	if dryRunReport == nil {
-		if _, err := fmt.Fprintln(out, "Unknown (exact registry view incomplete)"); err != nil {
+		unknown := "Unknown (exact registry view incomplete)"
+		if view.cacheUnknown {
+			unknown = "Unknown (Marketplace cache evidence missing; run 'agent-marketplace sync')"
+		}
+		if _, err := fmt.Fprintln(out, unknown); err != nil {
 			return err
 		}
 		if _, err := fmt.Fprintln(out); err != nil {

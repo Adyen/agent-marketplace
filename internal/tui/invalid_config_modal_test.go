@@ -80,7 +80,7 @@ func TestInvalidConfigSnapshotDismissesStaleMutationPanes(t *testing.T) {
 				seedMarketplaceConsent(t, &m)
 			}
 			if tc.confirm {
-				m.confirmMsg = "2 pending changes not synced. Sync+quit? y/n/esc"
+				m.confirmMsg = "2 pending changes not synced. Sync+quit?"
 				m.quitAfterSync = true
 			}
 
@@ -132,7 +132,7 @@ func TestInvalidConfigKeyDismissesStaleMutationPanes(t *testing.T) {
 				seedMarketplaceConsent(t, &m)
 			}
 			if tc.confirm {
-				m.confirmMsg = "2 pending changes not synced. Sync+quit? y/n/esc"
+				m.confirmMsg = "2 pending changes not synced. Sync+quit?"
 				m.quitAfterSync = true
 			}
 

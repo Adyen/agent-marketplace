@@ -1,6 +1,6 @@
 # Terminal UI reference
 
-Keys, dialogs, and states of the [TUI](../glossary.md#tui), and what it saves when. For a guided first run, see the [quick start](../quick-start.md).
+Keys, dialogs, and states of the [TUI](../glossary.md#tui), and what it saves when. To get started, see the [quick start](../quick-start.md).
 
 ## Launch
 
@@ -35,11 +35,13 @@ The list groups resources by status (**Required**, **Enabled**, **Pending sync**
 
 A new Marketplace resource has its exact revision verified before it is installed. If the revision has security findings, the TUI shows the verified preview and asks for confirmation; without findings it installs with no prompt. Capability metadata alone never triggers a prompt. Blocked and revoked rows can be inspected but not installed.
 
+A new Git, GitHub/GitLab web, or directory source can be previewed and installed with `i`. Previewing does not write configuration or locks; blocked sources and invalid paths are refused before network access. Pick resources by kind (including collections), review the user, project, or local configuration file, and confirm. Git installs are bound to the previewed commit: if the ref moves before confirmation, the install is refused, the modal returns to Pick, and surviving picks are retained after re-preview. If the chosen scope's lock keeps the source at an older commit than the preview, the modal stays on Review with the picks and scope kept and shows the `agent-marketplace update` command that advances it, or lets you choose another scope, without previewing again. On the Source step, `tab` and `shift+tab` (or `↓` and `↑`) move between URL, Ref, and Path; the arrows stop at the first and last field. `→` moves from Pick to Review and never installs from Review; `←` returns one step. On Review, `↑`/`↓` (or `k`/`j`) choose the scope in the same order as `g`/`p`/`l`. Confirming the Source step with the URL, ref, and path of the shown preview returns to Pick without previewing again, and a changed field previews again. `esc` cancels from any step without writing.
+
 A selection change is saved to config as soon as you accept it, and stays saved if you quit without syncing. "Pending" means the harness folders still need a sync to match the config.
 
 ## Sync state
 
-`s` syncs pending changes into the harness folders. The **Pending sync** group and the diagnostics view (`e`) show that run's materialization errors and warnings.
+`s` syncs pending changes into the harness folders. The **Pending sync** group and the diagnostics view (`e`) show that run's materialization errors and warnings. Each error shows the same next-step guidance the CLI prints on its `hint:` line when the error's code has any, falling back to the view's own recovery copy otherwise.
 
 ## Hosted Marketplace discovery
 
@@ -65,6 +67,8 @@ The status bar shows sync drift, Marketplace endpoint health, the running operat
 
 ## Keys
 
+When sync, update, or a Marketplace install changes owned hooks, diagnostics opens with the completed **Hook changes** listing and review warning. Press `esc` to close it and `e` to reopen it. Reloading preserves the review; the next completed materialization replaces it, clearing it if no hooks changed. A refusal before materialization keeps the previous review available.
+
 | Action | Key |
 |---|---|
 | Move up or down | `k` / `j` or arrow keys |
@@ -73,6 +77,7 @@ The status bar shows sync drift, Marketplace endpoint health, the running operat
 | Jump to top / bottom | `g` or `home` / `G` or `end` |
 | Fuzzy search | `/` |
 | Apply / clear search | `enter` / `esc` |
+| Install from an unconfigured source | `i` |
 | Open the resource's scope dialog, or the section bulk-toggle dialog on a section header | `space` |
 | Open View settings (grouping) | `v` |
 | View resource details or cached files | `enter` |
@@ -84,7 +89,7 @@ The status bar shows sync drift, Marketplace endpoint health, the running operat
 | Upgrade Git locks and sync | `u` |
 | Change target harnesses | `H` |
 | Choose a config to open in `$EDITOR` | `E` |
-| View errors and warnings | `e` |
+| View hook reviews, errors, and warnings | `e` |
 | Show every binding | `?` |
 | Quit | `q` |
 
@@ -95,6 +100,7 @@ The command palette (`ctrl+k` or `:`) is a fuzzy-filtered list of resource-list 
 ## Dialogs
 
 - **Scope** (`space` on a resource): `g` user (global), `p` project, `l` local, `e` local exclusion, `esc` cancel. A local exclusion cannot hide a machine-wide or required resource. For an optional organization Marketplace resource, `e` edits an exact exclusion in the v4 user config instead; required resources stay protected.
+- **Install from source** (`i`): enter a Git, web, or directory source, preview it without writes, pick resources, then choose a writable scope and confirm. Malformed rows cannot be selected, bundle paths are previewed individually, and a moved Git ref returns to Pick with the old and current commits. On the Source step, `tab`/`shift+tab` move between URL, Ref, and Path (wrapping), and `↑`/`↓` do too without wrapping. `←` or `backspace` returns to the previous step; `esc` cancels.
 - **Section bulk toggle** (`space` on a section header): counts matching, eligible, and skipped rows (including folded and filter-matched descendants) and says why each was skipped. `g`, `p`, `l`, or `e` pick a scope, `+` or `-` a direction, `enter` confirms, and `esc` cancels at any stage. All eligible rows change in one transaction, and a failure leaves the layer untouched. Rows are checked again on confirm; a section whose members span several config layers asks you to pick a narrower one.
 - **Harnesses** (`H`): `g` edits the user (global) list, `p` the project list, `space` toggles a harness, `enter` saves, `esc` cancels. The project list overrides the user list. Local scope has no harness list.
 - **Config picker** (`E`): `g` user (global), `p` project, `l` local, `esc` cancel. The file opens in `$EDITOR` (or `vi`), and the TUI reloads when the editor exits. Meanwhile the terminal shows which file is open.
@@ -119,7 +125,7 @@ While the TUI is on screen, logs go to the log file and are never printed to the
 
 ## Exit
 
-- `q` asks what to do when changes still need a sync: `y` syncs and quits, `n` quits without syncing, `esc` stays. None of these undoes config edits already saved.
+- `q` asks what to do when changes still need a sync: `y` syncs and quits, `n` quits without syncing, `esc` stays. If sync produces a new hook review or materialization warning, it opens diagnostics before leaving; review it, press `esc`, then `q` to quit. None of these undoes config edits already saved.
 - `ctrl+c`, `SIGINT`, and `SIGTERM` exit immediately. Finished filesystem work is not rolled back; the next launch shows the result.
 
 ## Related documentation

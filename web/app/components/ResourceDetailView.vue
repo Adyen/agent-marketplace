@@ -232,19 +232,19 @@ function formatValue(value: unknown): string {
 </script>
 
 <template>
-  <article data-testid="resource-detail" class="mx-auto max-w-6xl">
-    <header class="pb-6">
+  <article data-testid="resource-detail" class="marketplace-record">
+    <header class="marketplace-record__hero">
       <div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 sm:gap-x-4">
         <!-- The same mark the index row carries, at reading size. -->
         <ResourceFingerprint :digest="resource.content_digest" :size="40" class="hidden shrink-0 sm:block" />
-        <h1 class="min-w-0 max-w-full wrap-break-word text-2xl font-semibold tracking-tight text-highlighted sm:text-3xl"><span v-if="titleHasBrandSlash" class="am-brand-slash" data-testid="resource-title-slash" aria-hidden="true">/ </span>{{ name }}</h1>
-        <span data-testid="resource-kind-badge" class="inline-flex shrink-0 rounded border border-default bg-(--am-color-bg-subtle) px-2 py-0.5 text-xs font-medium text-muted">{{ kindLabel(kind) }}</span>
+        <h1 class="marketplace-record__title min-w-0 max-w-full wrap-break-word text-highlighted"><span v-if="titleHasBrandSlash" class="am-brand-slash am-brand-slash--title" data-testid="resource-title-slash" aria-hidden="true">/</span>{{ name }}</h1>
+        <span data-testid="resource-kind-badge" class="marketplace-record__kind inline-flex shrink-0 border border-default px-2 py-1 text-muted">{{ kindLabel(kind) }}</span>
       </div>
       <div v-if="resource.description" class="mt-2">
         <p id="resource-description" data-testid="resource-description" class="whitespace-pre-wrap wrap-break-word text-sm leading-6 text-toned sm:text-base">{{ visibleDescription }}</p>
         <button v-if="descriptionOverflows" type="button" class="mt-1 text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" aria-controls="resource-description" :aria-expanded="descriptionExpanded" @click="descriptionExpanded = !descriptionExpanded">{{ descriptionExpanded ? 'Show less' : 'Read more' }}</button>
       </div>
-      <div data-testid="revision-row" class="mt-4 flex flex-col items-start gap-3 text-sm sm:flex-row sm:gap-9">
+      <div data-testid="revision-row" class="marketplace-record__metadata mt-5 flex flex-col items-start gap-3 text-sm sm:flex-row sm:gap-9">
         <div v-if="sourceLink" data-testid="source-group" class="min-w-0 max-w-full">
           <div class="flex items-center gap-2">
             <span data-testid="source-label" class="text-xs font-medium text-highlighted">Source</span>
@@ -272,7 +272,7 @@ function formatValue(value: unknown): string {
     </header>
     <p class="sr-only" aria-live="polite">Install status for {{ name }}: {{ availabilityCopy.label }}.</p>
 
-    <section data-testid="installation-panel" aria-labelledby="installation-heading">
+    <section data-testid="installation-panel" class="marketplace-installation" aria-labelledby="installation-heading">
       <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h2 id="installation-heading" class="text-sm font-semibold text-highlighted">Install</h2>
         <a v-if="commandAvailable" :href="docsURL" target="_blank" rel="noopener noreferrer" aria-label="Set up CLI (opens in a new tab)" class="inline-flex items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Set up CLI<UIcon name="i-lucide-external-link" class="size-3.5" data-testid="setup-external-icon" aria-hidden="true" /></a>
@@ -289,7 +289,7 @@ function formatValue(value: unknown): string {
       <p class="sr-only" aria-live="polite">{{ copied === 'url' ? 'Detail URL copied.' : '' }}</p>
     </section>
 
-    <div class="mt-7 border-b border-default">
+    <div class="marketplace-record-tabs">
       <div role="tablist" aria-label="Resource details" class="flex gap-1 overflow-x-auto">
         <button v-for="tab in ([['content', 'Content'], ['security', 'Security'], ['revisions', 'Revisions'], ['registry', 'Registry'], ['technical', 'Technical details']] as const)" :id="`${tab[0]}-tab`" :key="tab[0]" type="button" role="tab" :aria-selected="activeTab === tab[0]" :aria-controls="`${tab[0]}-panel`" class="shrink-0 border-b-2 px-3 py-3 text-sm font-medium focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary" :class="activeTab === tab[0] ? 'border-primary text-highlighted' : 'border-transparent text-muted hover:text-highlighted'" @click="selectTab(tab[0])">{{ tab[1] }}</button>
       </div>

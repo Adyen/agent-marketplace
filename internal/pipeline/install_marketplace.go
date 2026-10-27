@@ -54,7 +54,7 @@ type MarketplaceInstallSummary struct {
 	Capabilities []string
 }
 
-var ErrMarketplaceInstallCollision = errors.New("marketplace.install-collision")
+var ErrMarketplaceInstallCollision error = consumerDiagnosticError("marketplace.install-collision")
 
 type PreparedMarketplaceInstall struct {
 	options             InstallOptions
@@ -396,13 +396,16 @@ func CommitPreparedMarketplaceInstall(ctx context.Context, prepared *PreparedMar
 		return nil, err
 	}
 	identities := marketplaceInstallIdentities(prepared.plan)
-	requirementWarnings, err := MutateMarketplaceLayer(ctx, prepared.options.RepoRoot, prepared.options.LocalConfigDir, prepared.configPath, installScopeSource(prepared.options.Scope), func(m *MarketplaceLayerMutation) error {
+	var synced SyncResult
+	_, err = MutateMarketplaceLayer(ctx, prepared.options.RepoRoot, prepared.options.LocalConfigDir, prepared.configPath, installScopeSource(prepared.options.Scope), func(m *MarketplaceLayerMutation) error {
 		return m.IncludePins(commitEntry, pins)
 	}, func() ([]error, error) {
 		syncOpts := append(silentSyncOptsForInstall(prepared.options), withMarketplaceInstall(prepared.plan, installScopeSource(prepared.options.Scope)), withMarketplaceMode(marketplaceInstallResolveMode(prepared.plan, ec.Merged)))
-		return syncAfterInstall(ctx, prepared.options, identities, syncOpts...)
+		var syncErr error
+		synced, syncErr = syncAfterInstall(ctx, prepared.options, identities, syncOpts...)
+		return synced.Warnings, syncErr
 	})
-	if err != nil {
+	if err != nil && synced.Report == nil {
 		return nil, err
 	}
 	installed := make([]string, 0, len(identities))
@@ -410,10 +413,11 @@ func CommitPreparedMarketplaceInstall(ctx context.Context, prepared *PreparedMar
 		installed = append(installed, identity.name)
 	}
 	return &InstallResult{
+		Report:    synced.Report,
 		Installed: installed, IsCollection: len(prepared.plan.CollectionMembers) > 0,
 		CollectionLabel: prepared.plan.Pin.Name, MarketplacePreview: prepared.preview,
-		MarketplaceSummary: marketplaceInstallSummary(prepared.plan), RequirementWarnings: requirementWarnings,
-	}, nil
+		MarketplaceSummary: marketplaceInstallSummary(prepared.plan), RequirementWarnings: synced.Warnings,
+	}, err
 }
 
 func marketplaceInstallResolveMode(plan *marketplace.PreparedInstall, cfg *config.Config) resolver.MarketplaceResolveMode {

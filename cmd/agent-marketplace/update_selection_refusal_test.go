@@ -618,7 +618,7 @@ func TestUpdateFollowsRenameRemediation(t *testing.T) {
 	if got, want := readLockDocument(t, lockPath).Registries[0].Commit.String(), gitHeadCommit(t, origin); got != want {
 		t.Fatalf("lock commit = %s, want upstream HEAD %s", got, want)
 	}
-	if output, err := executeCommand("install", "alpha-renamed"); err != nil {
+	if output, err := executeCommand("install", "--scope", "repo", "alpha-renamed"); err != nil {
 		t.Fatalf("install renamed skill: %v\n%s", err, output)
 	}
 	raw, err := os.ReadFile(filepath.Join(repoRoot, ".agents", "config.yaml"))

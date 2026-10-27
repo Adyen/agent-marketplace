@@ -892,7 +892,9 @@ func (a *API) handleAction(w http.ResponseWriter, r *http.Request) {
 	go a.runOperation(operation, kind, func(ctx context.Context, generation session.RequestGeneration) (warnings []error, final session.Snapshot, failed error) {
 		switch kind {
 		case session.OperationSync:
-			warnings, failed = session.RunDependencySync(ctx, a.workspace, a.lifecycle.Sync)
+			var synced pipeline.SyncResult
+			synced, failed = session.RunDependencySync(ctx, a.workspace, a.lifecycle.Sync)
+			warnings = synced.Warnings
 			pipeline.ObservePhase(ctx, pipeline.PhaseReload)
 			final = a.readSnapshot(ctx, session.CatalogLoadCached)
 		case session.OperationUpdate:

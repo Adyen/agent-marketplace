@@ -9,10 +9,8 @@ You will use a public GitHub repository as the [registry](../glossary.md#registr
 You need:
 
 - Claude Code.
-- Git. Run `git --version` to check. [Terminal basics](../terminal-basics.md#install-git) explains how to install it.
+- Git. Run `git --version` to check.
 - `agent-marketplace` on your `PATH`. [Install](../install.md) explains how.
-
-If you rarely use a terminal, read [Terminal basics](../terminal-basics.md) first.
 
 Check that the program is available:
 

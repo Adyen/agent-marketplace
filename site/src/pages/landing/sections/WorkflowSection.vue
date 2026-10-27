@@ -8,7 +8,6 @@ import SectionShell from '../components/SectionShell.vue'
     id="flow"
     eyebrow="How it works"
     title="Select what you need. Sync it where you work"
-    soft
   >
     <template #sub>
       Bring resources from marketplaces, Git registries, and local folders into one config.

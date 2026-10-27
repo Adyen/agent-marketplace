@@ -29,6 +29,7 @@ jobs:
     outputs:
       go_build: ${{ steps.changes.outputs.go_build }}
       go_test: ${{ steps.changes.outputs.go_test }}
+      installation_query: ${{ steps.changes.outputs.installation_query }}
       benchmark: ${{ steps.changes.outputs.benchmark }}
       marketplace_e2e: ${{ steps.changes.outputs.marketplace_e2e }}
       tui_qa: ${{ steps.changes.outputs.tui_qa }}
@@ -146,6 +147,15 @@ jobs:
         with:
           version: v3.18.4
 
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify explicit Helm image selection
+        run: AM_HELM_CHECK=1 go test ./tools/ci-plan -run '^TestHelmImageSelection$' -count=1
+
       - name: Validate and package Helm chart
         shell: bash
         env:
@@ -158,6 +168,8 @@ jobs:
 
           cat > "$values_file" <<'EOF'
           mode: split
+          image:
+            tag: ci
           fullnameOverride: agent-marketplace
           persistence:
             enabled: false
@@ -201,11 +213,15 @@ jobs:
                 readOnly: true
           web:
             enabled: true
+            image:
+              tag: ci
             podSecurityContext:
               runAsUser: 1000
               runAsGroup: 1000
           docs:
             enabled: true
+            image:
+              tag: ci
           ingress:
             enabled: true
             className: example-ingress
@@ -253,9 +269,9 @@ jobs:
             ingressNamespaces: null
           EOF
 
-          helm lint --strict "$CHART_DIR"
+          helm lint --strict "$CHART_DIR" --set image.tag=ci
           helm lint --strict "$CHART_DIR" --values "$values_file"
-          helm template marketplace "$CHART_DIR" --namespace marketplace > "$package_dir/default-rendered.yaml"
+          helm template marketplace "$CHART_DIR" --namespace marketplace --set image.tag=ci > "$package_dir/default-rendered.yaml"
           helm template marketplace "$CHART_DIR" --namespace marketplace --values "$values_file" > "$package_dir/configured-rendered.yaml"
           if [[ "$(grep -c '^kind: Deployment$' "$package_dir/default-rendered.yaml")" -ne 1 ]]; then
             echo "default chart should render exactly one Deployment" >&2
@@ -346,7 +362,7 @@ jobs:
             echo "assertion failed: docs.enabled must enable local web documentation links" >&2
             exit 1
           fi
-          helm template marketplace "$CHART_DIR" --set fullnameOverride=agent-marketplace --set web.enabled=true > "$package_dir/public-docs-rendered.yaml"
+          helm template marketplace "$CHART_DIR" --set fullnameOverride=agent-marketplace --set image.tag=ci --set web.enabled=true --set web.image.tag=ci > "$package_dir/public-docs-rendered.yaml"
           public_web_doc="$(extract_doc Deployment agent-marketplace-web "$package_dir/public-docs-rendered.yaml")"
           if [[ "$(env_value NUXT_PUBLIC_DOCS_ENABLED "$public_web_doc")" != "false" ]]; then
             echo "assertion failed: local web documentation must default to false" >&2
@@ -442,8 +458,8 @@ jobs:
             exit 1
           fi
 
-          helm template marketplace "$CHART_DIR" --namespace marketplace --values "$null_env_values_file" > "$package_dir/null-env-rendered.yaml"
-          if helm template marketplace "$CHART_DIR" --namespace marketplace --values "$null_network_values_file" > /dev/null 2>"$package_dir/null-network-error.txt"; then
+          helm template marketplace "$CHART_DIR" --namespace marketplace --values "$null_env_values_file" --set image.tag=ci > "$package_dir/null-env-rendered.yaml"
+          if helm template marketplace "$CHART_DIR" --namespace marketplace --values "$null_network_values_file" --set image.tag=ci > /dev/null 2>"$package_dir/null-network-error.txt"; then
             echo "null ingressNamespaces should fail network policy validation" >&2
             exit 1
           fi
@@ -499,6 +515,33 @@ jobs:
         if: needs.changes.outputs.container_web == 'true'
         run: make WEB_CONTAINER_IMAGE=agent-marketplace-web:ci container-web
 
+      - name: Verify shell-free web runtime and healthcheck
+        if: needs.changes.outputs.container_web == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for base in / /marketplace/; do
+            container=$(docker run --detach --read-only --cap-drop ALL \
+              --security-opt no-new-privileges --tmpfs /tmp \
+              --health-interval=1s --health-start-period=0s --health-retries=20 \
+              --env NUXT_APP_BASE_URL="$base" agent-marketplace-web:ci)
+            trap 'docker logs "$container"; docker rm --force "$container" >/dev/null' EXIT
+            docker exec "$container" /nodejs/bin/node -e \
+              "const fs = require('node:fs'); if (process.getuid() !== 1000 || ['/bin/sh', '/bin/bash', '/usr/bin/apt', '/usr/local/bin/npm', '/usr/bin/npm'].some(p => fs.existsSync(p))) process.exit(1)"
+            for ((attempt = 0; attempt < 30; attempt++)); do
+              status=$(docker inspect --format '{{.State.Health.Status}}' "$container")
+              if [[ "$status" == healthy ]]; then break; fi
+              if [[ "$status" == unhealthy ]]; then break; fi
+              sleep 1
+            done
+            if [[ "$status" != healthy ]]; then
+              echo "web runtime did not become healthy at $base" >&2
+              exit 1
+            fi
+            docker rm --force "$container" >/dev/null
+            trap - EXIT
+          done
+
       - name: Build site images
         if: needs.changes.outputs.container_site == 'true'
         run: |
@@ -531,6 +574,29 @@ jobs:
       - name: Run tests and verify CLI behavior witnesses
         run: make test-witnessed
 
+  installation-query:
+    name: Installation query
+    needs: changes
+    if: needs.changes.outputs.installation_query == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Evaluate installation query in Prometheus
+        run: make installation-query-check
+
   tui-qa:
     name: TUI QA (${{ matrix.os }})
     needs: changes
@@ -545,6 +611,10 @@ jobs:
           - macos-latest
     permissions:
       contents: read
+    # Each platform sets only its own output, so both legs' lists reach later jobs.
+    outputs:
+      recordings_linux: ${{ steps.recordings.outputs.recordings_linux }}
+      recordings_macos: ${{ steps.recordings.outputs.recordings_macos }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -574,10 +644,148 @@ jobs:
 
       - name: Run direct TUI usage tests
         env:
+          AM_TUI_QA_ARTIFACTS: ${{ runner.temp }}/tui-qa-failures
           AM_TUI_QA_REPO_ROOT: ${{ github.workspace }}
           AM_TUI_QA_BINARY: ${{ runner.temp }}/agent-marketplace-tui-qa
         run: pnpm qa
         working-directory: tools/tui-qa
+
+      - name: List failed journey recordings
+        id: recordings
+        if: failure()
+        env:
+          AM_TUI_QA_ARTIFACTS: ${{ runner.temp }}/tui-qa-failures
+        run: |
+          set -euo pipefail
+          recordings=
+          if [[ -d "$AM_TUI_QA_ARTIFACTS" ]]; then
+            recordings=$(find "$AM_TUI_QA_ARTIFACTS" -mindepth 2 -maxdepth 2 -type f -name '*.gif' -exec basename {} .gif \; |
+              LC_ALL=C sort |
+              jq -Rnr --arg os "$RUNNER_OS" '[inputs | select(test("^[a-z0-9-]+$")) | {os: $os, journey: .} | tojson] | join(",")')
+          fi
+          echo "recordings_$(printf '%s' "$RUNNER_OS" | tr '[:upper:]' '[:lower:]')=${recordings}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload failed journey evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tui-qa-failures-${{ runner.os }}
+          path: ${{ runner.temp }}/tui-qa-failures/
+          if-no-files-found: ignore
+          overwrite: true
+          retention-days: 14
+
+  # Unzipped artifacts hold one file each, so every failed journey's GIF gets
+  # its own upload; a pull request link to it opens the GIF in the browser.
+  tui-qa-recordings:
+    name: TUI QA recording (${{ matrix.os }}, ${{ matrix.journey }})
+    needs: tui-qa
+    if: ${{ !cancelled() && needs.tui-qa.result == 'failure' && (needs.tui-qa.outputs.recordings_linux != '' || needs.tui-qa.outputs.recordings_macos != '') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(format('[{0}{1}{2}]', needs.tui-qa.outputs.recordings_linux, needs.tui-qa.outputs.recordings_linux != '' && needs.tui-qa.outputs.recordings_macos != '' && ',' || '', needs.tui-qa.outputs.recordings_macos)) }}
+    steps:
+      - name: Download failed journey evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: tui-qa-failures-${{ matrix.os }}
+          path: ${{ runner.temp }}/evidence
+
+      - name: Name the recording after its platform
+        env:
+          EVIDENCE: ${{ runner.temp }}/evidence
+          JOURNEY: ${{ matrix.journey }}
+          RECORDING: ${{ runner.temp }}/tui-qa-${{ matrix.os }}-${{ matrix.journey }}.gif
+        run: cp -- "$EVIDENCE/$JOURNEY/$JOURNEY.gif" "$RECORDING"
+
+      - name: Upload the recording unzipped
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          path: ${{ runner.temp }}/tui-qa-${{ matrix.os }}-${{ matrix.journey }}.gif
+          archive: false
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
+
+  tui-qa-report:
+    name: TUI QA recordings comment
+    needs: [changes, tui-qa, tui-qa-recordings]
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.tui_qa == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      pull-requests: write
+    steps:
+      - name: Update pull request comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RECORDINGS_LINUX: ${{ needs.tui-qa.outputs.recordings_linux }}
+          RECORDINGS_MACOS: ${{ needs.tui-qa.outputs.recordings_macos }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          TUI_QA_RESULT: ${{ needs.tui-qa.result }}
+        run: |
+          set -euo pipefail
+          marker='<!-- agent-marketplace-tui-qa-recordings -->'
+          comment="$RUNNER_TEMP/tui-qa-comment.md"
+          run_url="$GITHUB_SERVER_URL/$REPOSITORY/actions/runs/$RUN_ID"
+          case "$TUI_QA_RESULT" in
+            failure)
+              artifacts=$(gh api --paginate "repos/$REPOSITORY/actions/runs/$RUN_ID/artifacts?per_page=100" --jq '.artifacts[] | {name, id}' | jq -cs 'map({(.name): .id}) | add // {}')
+              rows=$(jq -rn --arg linux "$RECORDINGS_LINUX" --arg macos "$RECORDINGS_MACOS" --argjson artifacts "$artifacts" --arg base "$run_url/artifacts" '
+                def link($label; $name): if $artifacts[$name] then "[\($label)](\($base)/\($artifacts[$name]))" else "not uploaded" end;
+                [$linux, $macos | select(. != "") | "[\(.)]" | fromjson[]]
+                | .[] | select((.os == "Linux" or .os == "macOS") and (.journey | test("^[a-z0-9-]+$")))
+                | "| \(.os) | `\(.journey)` | \(link("GIF"; "tui-qa-\(.os)-\(.journey).gif")) | \(link("evidence"; "tui-qa-failures-\(.os)")) |"')
+              {
+                echo "$marker"
+                echo '## TUI QA failure recordings'
+                echo
+                echo "TUI QA failed on \`${HEAD_SHA:0:12}\` in [this run]($run_url)."
+                echo
+                if [[ -n "$rows" ]]; then
+                  echo '| Platform | Journey | Recording | Trace and session cast |'
+                  echo '| --- | --- | --- | --- |'
+                  echo "$rows"
+                  echo
+                  # shellcheck disable=SC2016 # Markdown code spans, not shell expansion.
+                  echo '_Each GIF opens in the browser for signed-in users. The evidence bundle holds every failed journey of that platform with its `trace.html`, `trace.md` and `session.cast`. Artifacts expire after 14 days._'
+                else
+                  echo 'No journey recording was kept; see the run log for the failure.'
+                fi
+              } > "$comment"
+              cat "$comment" >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            success)
+              {
+                echo "$marker"
+                echo '## TUI QA failure recordings'
+                echo
+                echo "TUI QA passed on \`${HEAD_SHA:0:12}\`; earlier failure recordings no longer apply."
+              } > "$comment"
+              ;;
+            *)
+              exit 0
+              ;;
+          esac
+          if [[ "$HEAD_REPOSITORY" != "$REPOSITORY" ]]; then
+            exit 0
+          fi
+          ids=$(gh api --paginate "repos/$REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | contains(\"$marker\"))) | .id")
+          comment_id=${ids%%$'\n'*}
+          if [[ -n "$comment_id" ]]; then
+            jq -n --rawfile body "$comment" '{body: $body}' | gh api --method PATCH "repos/$REPOSITORY/issues/comments/$comment_id" --input - > /dev/null
+          elif [[ "$TUI_QA_RESULT" == failure ]]; then
+            jq -n --rawfile body "$comment" '{body: $body}' | gh api --method POST "repos/$REPOSITORY/issues/$PR_NUMBER/comments" --input - > /dev/null
+          fi
 
   tui-qa-required:
     name: TUI QA Driver
@@ -876,7 +1084,7 @@ jobs:
       - name: Install golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: v2.9.0
+          version: v2.14.0
           install-only: true
 
       - name: Run linters
@@ -993,10 +1201,24 @@ jobs:
       - name: Build release artifacts
         run: make release
 
+      - name: Render curated release notes
+        id: notes
+        run: |
+          previous=$(git tag --merged "$VERSION^" --list 'v*' --sort=-v:refname | grep -m1 -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true)
+          if [ -z "$previous" ]; then
+            echo "No previous stable tag; the release uses GitHub's generated notes only."
+            exit 0
+          fi
+          go run ./tools/specaudit release-notes -base "$previous" -head "$VERSION" -o release-notes.md
+          echo "previous_tag=$previous" >> "$GITHUB_OUTPUT"
+          echo "body_path=release-notes.md" >> "$GITHUB_OUTPUT"
+
       - name: Upload release binaries
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           files: dist/*
+          body_path: ${{ steps.notes.outputs.body_path }}
+          previous_tag: ${{ steps.notes.outputs.previous_tag }}
           generate_release_notes: true
 
   homebrew:

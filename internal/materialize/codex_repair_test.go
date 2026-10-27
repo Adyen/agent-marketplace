@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
@@ -438,5 +440,107 @@ func TestCodexRepairReReadsAndRefusesStaleConflictInsideWriteSession(t *testing.
 	acquired, reentered, released, maxDepth := counts.snapshot()
 	if acquired != 1 || reentered != 0 || released != 1 || maxDepth != 1 {
 		t.Fatalf("stale repair lock counts = (%d,%d,%d,%d), want (1,0,1,1)", acquired, reentered, released, maxDepth)
+	}
+}
+
+func codexRepairDuplicateDiag(t *testing.T, preview *RepairPreview, key string, resources ...string) {
+	t.Helper()
+	for _, d := range preview.Diags {
+		if d.Code != diag.CodeMaterializeCodexDuplicateIdentity || !strings.Contains(d.Message, strconv.Quote(key)) {
+			continue
+		}
+		if d.Severity != diag.SeverityError {
+			t.Fatalf("duplicate identity %q is not an error: %+v", key, d)
+		}
+		for _, resource := range resources {
+			if !strings.Contains(d.Message, strconv.Quote(resource)) {
+				t.Fatalf("duplicate identity %q does not name %q: %+v", key, resource, d)
+			}
+		}
+		return
+	}
+	t.Fatalf("duplicate desired identity %q not refused like sync: %+v", key, preview.Diags)
+}
+
+// spec: owned-entry-reconciliation/duplicate-desired-codex-mcp-identity-is-refused-by-repair
+func TestCodexRepairPreviewRefusesDuplicateDesiredMCPIdentity(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	root := filepath.Join(repoRoot, ".codex")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, codexMCPFile)
+	original := "[mcp_servers.exact]\ncommand = 'beta-binary'\n\n[mcp_servers.differs]\ncommand = 'handwritten'\n\n[mcp_servers.adoptable]\ncommand = 'adopt-binary'\n\n[mcp_servers.other]\ncommand = 'user-binary'\n"
+	if err := os.WriteFile(configPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	selection := []resolver.ResolvedArtifact{
+		codexRepairResolved("alpha", ir.NewMcpServer("exact", "alpha-binary", nil, nil, nil, ir.SourceRef{}), config.RepoCommitted),
+		codexRepairResolved("beta", ir.NewMcpServer("exact", "beta-binary", nil, nil, nil, ir.SourceRef{}), config.RepoCommitted),
+		codexRepairResolved("gamma", ir.NewMcpServer("differs", "gamma-binary", nil, nil, nil, ir.SourceRef{}), config.RepoCommitted),
+		codexRepairResolved("delta", ir.NewMcpServer("differs", "delta-binary", nil, nil, nil, ir.SourceRef{}), config.RepoCommitted),
+		codexRepairResolved("adoptable", ir.NewMcpServer("adoptable", "adopt-binary", nil, nil, nil, ir.SourceRef{}), config.RepoCommitted),
+		codexRepairResolved("other", ir.NewMcpServer("other", "other-binary", nil, nil, nil, ir.SourceRef{}), config.RepoCommitted),
+	}
+	canonicalRoot, err := ownership.CanonicalRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := CodexRepairPreview(context.Background(), repoRoot, selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	codexRepairDuplicateDiag(t, preview, "exact", "alpha", "beta")
+	codexRepairDuplicateDiag(t, preview, "differs", "gamma", "delta")
+	file := codexRepairFileFor(t, preview, canonicalRoot, codexMCPFile)
+	if len(file.Adoptions) != 1 || file.Adoptions[0].Identity() != "adoptable" || file.Adoptions[0].Resource != "adoptable" {
+		t.Fatalf("adoptions = %#v, want only the unambiguous adoptable entry", file.Adoptions)
+	}
+	if len(file.Conflicts) != 1 || file.Conflicts[0].Identity() != "other" || file.Conflicts[0].Resource != "other" {
+		t.Fatalf("conflicts = %#v, want only the unambiguous other entry", file.Conflicts)
+	}
+	if len(file.Orphans) != 0 {
+		t.Fatalf("duplicate identity offered for removal: %#v", file.Orphans)
+	}
+	if got, err := os.ReadFile(configPath); err != nil || string(got) != original {
+		t.Fatalf("preview changed config.toml: %s (err=%v)", got, err)
+	}
+}
+
+// spec: owned-entry-reconciliation/duplicate-desired-codex-mcp-identity-is-refused-by-repair
+func TestCodexRepairPreviewRefusesDuplicateDesiredMCPIdentityWithoutConfig(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	selection := []resolver.ResolvedArtifact{
+		codexRepairResolved("alpha", ir.NewMcpServer("shared", "alpha-binary", nil, nil, nil, ir.SourceRef{}), config.RepoCommitted),
+		codexRepairResolved("beta", ir.NewMcpServer("shared", "beta-binary", nil, nil, nil, ir.SourceRef{}), config.RepoCommitted),
+	}
+	preview, err := CodexRepairPreview(context.Background(), repoRoot, selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	codexRepairDuplicateDiag(t, preview, "shared", "alpha", "beta")
+	if _, err := os.Lstat(filepath.Join(repoRoot, ".codex", codexMCPFile)); !os.IsNotExist(err) {
+		t.Fatalf("preview created config.toml: %v", err)
+	}
+}
+
+func TestRepairReplacementWritesTheDesiredEntryItsConflictDescribes(t *testing.T) {
+	id := ownership.EntryID{Kind: ownership.KindMcpServer, Container: "mcpServers", Key: "shared", IdentityDigest: ownership.McpIdentityDigest("shared")}
+	desired := func(value string) repairDesiredEntry {
+		return repairDesiredEntry{value: ownership.EntryValue{ID: id, ValueDigest: ownership.Digest([]byte(value))}, raw: []byte(value), resource: value}
+	}
+	file := &RepairFile{desired: []repairDesiredEntry{desired("first"), desired("last")}}
+	existing := []ownership.EntryValue{{ID: id, ValueDigest: ownership.Digest([]byte("handwritten"))}}
+	conflicts := ownership.ValueConflictCandidates(ownership.Proof{}, existing, file.repairDesiredValues())
+	raw, resource, ok := file.repairDesiredEntry(id)
+	if len(conflicts) != 1 || !ok {
+		t.Fatalf("conflicts = %#v, desired entry found = %t", conflicts, ok)
+	}
+	if conflicts[0].DesiredValueDigest() != "sha256:3547cb112ac4489af2310c0626cdba6f3097a2ad5a3b42ddd3b59c76c7a079a3" || string(raw) != "last" || resource != "last" {
+		t.Fatalf("conflict describes digest %s but replacement writes %q from %q", conflicts[0].DesiredValueDigest(), raw, resource)
 	}
 }

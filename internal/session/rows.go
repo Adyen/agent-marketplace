@@ -51,6 +51,7 @@ type Row struct {
 	IsExcluded        bool                  // legacy: skill is in localCfg.Exclude (mirrors ExcludedLocally)
 	IsMalformed       bool
 	MalformedMsg      string
+	MalformedKind     string
 	UnavailableReason string
 	UnavailableSoft   bool                   // absent from a loaded registry; a warning that does not block drift
 	DriftItem         *materialize.DriftItem // nil if in sync or available-only
@@ -189,6 +190,15 @@ func (r *Row) HasWordWithPrefix(term string) bool {
 	return i < len(r.SearchWords) && strings.HasPrefix(r.SearchWords[i], term)
 }
 
+// KindLabel is the row's kind label; a malformed row reports the kind its
+// failed load was for.
+func (r Row) KindLabel() string {
+	if r.IsMalformed && r.MalformedKind != "" {
+		return r.MalformedKind
+	}
+	return skill.KindLabel(r.Artifact.Kind)
+}
+
 func (r Row) CanOverrideMarketplace() bool {
 	return r.Artifact.IsMarketplace && r.Artifact.Source == config.Organization && !r.Artifact.Required
 }
@@ -245,10 +255,8 @@ func (r Row) Status() rowStatus {
 	}
 	if r.DriftItem != nil {
 		switch r.DriftItem.Reason {
-		case materialize.DriftMissing:
+		case materialize.DriftMissing, materialize.DriftOrphaned:
 			return rowStatus{"[*]", "◐", "enabled (pending sync)"}
-		case materialize.DriftOrphaned:
-			return rowStatus{"[-]", "◌", "orphaned"}
 		case materialize.DriftBroken:
 			return rowStatus{"[!]", "✗", "broken"}
 		}

@@ -12,10 +12,8 @@ const quickStartPath = withBase(`${DOCS_PATH}quick-start`)
   <SectionShell
     id="install"
     class="closing"
-    density="compact"
     eyebrow="Get started"
     title="Ready to try agent-marketplace?"
-    soft
   >
     <template #title>
       Ready to try <span class="product-name">agent-marketplace</span>?
@@ -26,38 +24,44 @@ const quickStartPath = withBase(`${DOCS_PATH}quick-start`)
 
     <CommandBar :command="INSTALL_COMMAND" class="bar" />
 
-    <ActionLink class="quick-start" :href="quickStartPath">
-      Quick start
-      <span aria-hidden="true">→</span>
-    </ActionLink>
+    <ActionLink
+      class="quick-start"
+      :href="quickStartPath"
+      label="Quick start"
+      icon="arrow"
+    />
   </SectionShell>
 </template>
 
 <style scoped>
-.closing {
-  border-color: var(--am-accent-border);
+.closing :deep(h2) {
+  font: var(--lp-font-cta);
+  text-wrap: balance;
 }
 
 .product-name {
-  color: var(--vp-c-brand-1);
+  color: var(--lp-text-muted);
+  white-space: nowrap;
 }
 
 .bar {
-  --am-technical-font-size: var(--am-text-body-sm);
-  --am-technical-padding: 18px;
-  width: 100%;
-  max-width: 960px;
-  padding-block: 15px;
-  box-shadow: 0 12px 26px -20px var(--am-code-shadow);
+  max-width: calc(50% - var(--lp-space-related));
 }
 
 .quick-start {
-  margin-top: 20px;
+  display: flex;
+  margin-top: var(--lp-space-default);
 }
 
-@media (max-width: 680px) {
-  .quick-start {
-    width: 100%;
+@media (max-width: 639px) {
+  .product-name {
+    white-space: normal;
+  }
+}
+
+@media (max-width: 959px) {
+  .bar {
+    max-width: none;
   }
 }
 </style>

@@ -1,0 +1,122 @@
+{
+  "base": "4dfa9daee7b35ecee03eb3ee41e3ae8ea8a26fb2",
+  "source_sha256": {
+    "before": {
+      "internal/config/v4.go": "f3b62a169463a4cd0e8f050fbb45a012fdc829e035099d908c644bed97655349",
+      "internal/config/v4_exclusion_processing_test.go": "9bc5c741f0ea09dc1f0138a6a9fbad39ddbed0f5a129b796ed8e69369c6d9575",
+      "internal/config/v4_request_reuse_test.go": "58fd07384720909e15276814951d3e8c159718ff841eab25590eb79a959cea0e",
+      "internal/config/v4_request_reuse_bench_test.go": "05c526c277452cfcbc1b347b844c7da3ce990891aa5d9388d3f82ffc9cb1d99c",
+      "internal/config/v4_sparse_exclusion_bench_test.go": "f47ef925a6c7ef5dc2cf14e51af9344376cd11409b986842d20f1f765bab0645",
+      "internal/config/v4_filter_sort_bench_test.go": "91f655dbc904615c309d9fbed63f2f3ddde079854681fb00f212495d84f1abf0",
+      "internal/config/v4_wildcard_match_bench_test.go": "b94ac7d5468d06962e7b9d31fd23510deedb307f3d80941f8b3202ac1ced606c",
+      "internal/config/v4_processing_bench_test.go": "15d1cc14d639d19140c84ffe70e41d03cce90ebecc66c9abd2d0df64bd90fffc",
+      "internal/config/v4_bench_test.go": "604075e85155d56383e7946a53131fbfdff57e4128680e23849b8f60a187942b",
+      "go.mod": "7acf048264b55ddb16f4a7e5e23a57811df317841d31be8835664aa8e446130e",
+      "go.sum": "cbc73d426b4d8c90050ed6868594e64f3d93a105df8de2e547a3030aa3e33806",
+      "go.work": "3325da4e2fb15a145d8a6d34061fc9990b65c4b2620cf855f576dfc0ce5d3f6d"
+    },
+    "after": {
+      "internal/config/v4.go": "2fff199d6391ee57a96c84cc84c4e6b0ea3fbbee865e2f029858ea7457404eae",
+      "internal/config/v4_exclusion_processing_test.go": "1ab7bdc7cdc42ea4a83931fa69902d500d1a3015da978892f91f4b6c669cb0e9",
+      "internal/config/v4_request_reuse_test.go": "58fd07384720909e15276814951d3e8c159718ff841eab25590eb79a959cea0e",
+      "internal/config/v4_request_reuse_bench_test.go": "05c526c277452cfcbc1b347b844c7da3ce990891aa5d9388d3f82ffc9cb1d99c",
+      "internal/config/v4_sparse_exclusion_bench_test.go": "f47ef925a6c7ef5dc2cf14e51af9344376cd11409b986842d20f1f765bab0645",
+      "internal/config/v4_filter_sort_bench_test.go": "91f655dbc904615c309d9fbed63f2f3ddde079854681fb00f212495d84f1abf0",
+      "internal/config/v4_wildcard_match_bench_test.go": "b94ac7d5468d06962e7b9d31fd23510deedb307f3d80941f8b3202ac1ced606c",
+      "internal/config/v4_processing_bench_test.go": "15d1cc14d639d19140c84ffe70e41d03cce90ebecc66c9abd2d0df64bd90fffc",
+      "internal/config/v4_bench_test.go": "604075e85155d56383e7946a53131fbfdff57e4128680e23849b8f60a187942b",
+      "go.mod": "7acf048264b55ddb16f4a7e5e23a57811df317841d31be8835664aa8e446130e",
+      "go.sum": "cbc73d426b4d8c90050ed6868594e64f3d93a105df8de2e547a3030aa3e33806",
+      "go.work": "3325da4e2fb15a145d8a6d34061fc9990b65c4b2620cf855f576dfc0ce5d3f6d"
+    }
+  },
+  "binary_sha256": {
+    "before": "db4fde14944876464266832e4cd655123dede0845480112c648c3fc0d3337ad0",
+    "after": "edffe0dfc3ba103b39980c0c16ee0a44c204daac8726b0fcb158472999331b31"
+  },
+  "go_version": "go version go1.27.3 darwin/arm64",
+  "settings": {
+    "GOMAXPROCS": "16",
+    "GOGC": "100",
+    "GOMEMLIMIT": "off",
+    "GOTOOLCHAIN": "local",
+    "GOPROXY": "off",
+    "CGO_ENABLED": "0"
+  },
+  "pattern": "^(BenchmarkV4SparseExclusionAdapterCPU|BenchmarkV4DirectoryRequestReuseCPU|BenchmarkV4ActiveExclusionAdaptation|BenchmarkV4WildcardAdapterCPU|BenchmarkV4MarketplaceLockHydration|BenchmarkV4RequestReuseChurnCPU)$",
+  "benchtime": "1s",
+  "trials": [
+    {
+      "trial": 1,
+      "variant": "before",
+      "start": 1792768024.50452,
+      "seconds": 30.15273118019104
+    },
+    {
+      "trial": 1,
+      "variant": "after",
+      "start": 1792768054.674432,
+      "seconds": 29.875012159347534
+    },
+    {
+      "trial": 2,
+      "variant": "after",
+      "start": 1792768084.568754,
+      "seconds": 30.05099892616272
+    },
+    {
+      "trial": 2,
+      "variant": "before",
+      "start": 1792768114.6389399,
+      "seconds": 30.137625217437744
+    },
+    {
+      "trial": 3,
+      "variant": "before",
+      "start": 1792768144.792898,
+      "seconds": 30.12683391571045
+    },
+    {
+      "trial": 3,
+      "variant": "after",
+      "start": 1792768174.9364128,
+      "seconds": 30.080875158309937
+    },
+    {
+      "trial": 4,
+      "variant": "after",
+      "start": 1792768205.035351,
+      "seconds": 30.079741954803467
+    },
+    {
+      "trial": 4,
+      "variant": "before",
+      "start": 1792768235.1343439,
+      "seconds": 30.480420112609863
+    },
+    {
+      "trial": 5,
+      "variant": "before",
+      "start": 1792768265.633873,
+      "seconds": 29.76901388168335
+    },
+    {
+      "trial": 5,
+      "variant": "after",
+      "start": 1792768295.423475,
+      "seconds": 30.254263877868652
+    },
+    {
+      "trial": 6,
+      "variant": "after",
+      "start": 1792768325.6962292,
+      "seconds": 30.116342782974243
+    },
+    {
+      "trial": 6,
+      "variant": "before",
+      "start": 1792768355.8335118,
+      "seconds": 32.80456614494324
+    }
+  ]
+}

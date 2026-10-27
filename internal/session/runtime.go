@@ -27,26 +27,26 @@ var (
 // prepare exact locks (upgrading when requested), sync read-only against the
 // lease, persist refreshed Marketplace lock evidence, and surface lock
 // warnings ahead of sync warnings.
-func RuntimeDependencyLifecycle(ctx context.Context, workspace pipeline.Workspace, upgrade bool) ([]error, error) {
+func RuntimeDependencyLifecycle(ctx context.Context, workspace pipeline.Workspace, upgrade bool) (pipeline.SyncResult, error) {
 	ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(ctx)
 	ctx = cache.WithFreshExactGitVerificationScope(ctx)
 	ws, err := pipeline.NewWorkspace(workspace.RepoRoot(), workspace.LocalConfigDir())
 	if err != nil {
-		return nil, err
+		return pipeline.SyncResult{}, err
 	}
 	var lockWarnings []error
 	mode := lifecycle.LockMode{Upgrade: upgrade, WarningSink: &lockWarnings}
 	if upgrade {
 		selected, _, err := lifecycle.ParseLockSelection("all", false)
 		if err != nil {
-			return nil, err
+			return pipeline.SyncResult{}, err
 		}
 		mode.Selects = selected
 		mode.SelectionGuard = true
 	}
 	exactLease, err := PrepareTUILocks(ctx, ws.RepoRoot(), ws.LocalConfigDir(), mode)
 	if err != nil {
-		return nil, err
+		return pipeline.SyncResult{}, err
 	}
 	options := pipeline.ResolveOptions{Workspace: ws, ReadOnlyExactLocks: true, ExactLockLease: exactLease, MarketplaceReportArchiveEvidenceDrift: true}
 	result := RunTUIExactSync(ctx, options)
@@ -60,7 +60,8 @@ func RuntimeDependencyLifecycle(ctx context.Context, workspace pipeline.Workspac
 		}
 	}
 	result.Warnings = lifecycle.StripUnpersistedRefreshWarnings(result.Warnings, persistedRefreshes)
-	return append(lockWarnings, result.Warnings...), errors.Join(errs...)
+	result.Warnings = append(lockWarnings, result.Warnings...)
+	return result, errors.Join(errs...)
 }
 
 // RuntimeConfigMutation runs a guarded config mutation through runtime lock
@@ -76,12 +77,14 @@ func RuntimeConfigMutation(ctx context.Context, workspace pipeline.Workspace, mu
 // RuntimeLifecycle exposes the production interactive dependency lifecycle.
 func RuntimeLifecycle() DependencyLifecycle {
 	return DependencyLifecycle{
-		Sync: func(ctx context.Context, workspace pipeline.Workspace) ([]error, error) {
+		Sync: func(ctx context.Context, workspace pipeline.Workspace) (pipeline.SyncResult, error) {
 			return RuntimeDependencyLifecycle(ctx, workspace, false)
 		},
-		Update: func(ctx context.Context, workspace pipeline.Workspace) ([]error, error) {
+		Update: func(ctx context.Context, workspace pipeline.Workspace) (pipeline.SyncResult, error) {
 			return RuntimeDependencyLifecycle(ctx, workspace, true)
 		},
-		Mutate: RuntimeConfigMutation,
+		Mutate:           RuntimeConfigMutation,
+		InstallReconcile: lifecycle.ReconcileCommandDependencies,
+		InstallPrepare:   lifecycle.PrepareInstallDependencies,
 	}
 }

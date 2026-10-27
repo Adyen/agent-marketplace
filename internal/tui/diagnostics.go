@@ -5,8 +5,9 @@ package tui
 // views.
 
 func (m *Model) syncDiagnosticViews() {
-	m.errs = diagnosticValues(m.diagnostics.All(), diagnosticError)
-	m.warnings = diagnosticValues(m.diagnostics.All(), diagnosticWarning)
+	visible := m.diagnostics.Visible()
+	m.errs = diagnosticValues(visible, diagnosticError)
+	m.warnings = diagnosticValues(visible, diagnosticWarning)
 }
 
 func (m *Model) replaceSnapshotDiagnostics(diagnostics []tuiDiagnostic, errs, warnings []error) {
@@ -37,6 +38,19 @@ func (m *Model) recordOperationSuccess(operation operationKind) {
 
 func (m *Model) recordOperationWarnings(operation operationKind, category diagnosticCategory, errs ...error) {
 	m.seedLegacyDiagnostics()
-	m.diagnostics.RecordOperationWarnings(operation, category, errs...)
+	var ordinary, review []error
+	for _, err := range errs {
+		if isHookReviewWarning(err) {
+			review = append(review, err)
+		} else {
+			ordinary = append(ordinary, err)
+		}
+	}
+	if len(ordinary) > 0 {
+		m.diagnostics.RecordOperationWarnings(operation, category, ordinary...)
+	}
+	if len(review) > 0 {
+		m.diagnostics.RecordOperationWarnings(operationHookReview, diagnosticMaterialization, review...)
+	}
 	m.syncDiagnosticViews()
 }

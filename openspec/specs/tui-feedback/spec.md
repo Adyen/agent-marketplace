@@ -21,11 +21,16 @@ The palette SHALL open only from an eligible resource list with supported size a
 - **THEN** the filter clears as it does with Esc, and the action is absent when no filter is applied
 
 ### Requirement: Discoverable footer actions
-The resource list footer SHALL show the command palette, help and quit hints at every supported width, alongside status segments and active operations; the palette hint MAY use a shorter label to fit. While errors are present, the error count and the errors, reload and quit hints SHALL take precedence, followed by the palette and help hints as space allows. Other segments SHALL be dropped whole, lowest priority first, when space runs out. While search input is focused, the footer SHALL show how to apply and cancel the query and how to quit at every supported width.
+The resource list footer SHALL show the command palette, help and quit hints at every supported width, alongside status segments and active operations; the palette hint MAY use a shorter label to fit. While errors are present, the error count and the errors, reload and quit hints SHALL take precedence, followed by the palette and help hints as space allows. The errors hint SHALL be offered while the errors view has an error, warning or discovery error to show, and only then, matching the palette's errors action; pending drift alone SHALL NOT offer it. Other segments SHALL be dropped whole, lowest priority first, when space runs out. While search input is focused, the footer SHALL show how to apply and cancel the query and how to quit at every supported width.
 
 #### Scenario: Narrow footer with status
 - **WHEN** the list renders at 50, 80 or 120 columns with warnings, Marketplace health segments or an active operation
 - **THEN** the palette, help and quit hints remain visible and no hint is cut mid-word
+
+#### Scenario: Errors hint only with diagnostics
+- **WHEN** the list has pending drift but no error, warning or discovery error
+- **THEN** the footer MUST NOT offer the errors hint, and the palette MUST NOT offer the errors action
+- **AND** once a warning is present, both MUST offer it
 
 ### Requirement: Tab-free browse telemetry
 
@@ -92,3 +97,13 @@ When the TUI displays a recoverable missing-exact-snapshot warning without unrel
 - **WHEN** the TUI displays a missing-exact-snapshot warning without unrelated errors at 50, 80, or 120 columns
 - **THEN** the resource-list footer SHALL show the sync shortcut alongside command palette, help, and quit hints without duplicated sync hints
 - **AND** invoking sync SHALL acquire the locked content and replace the warning with the verified post-sync state
+
+### Requirement: Toggle hints follow row eligibility
+
+The detail pane's `space = toggle` hint and the list footer's `space toggle` hint SHALL be offered for a selected resource row exactly when that row's own guards allow a toggle, including an available row and an installable Marketplace discovery row, whose space opens the toggle modal from the list. A row refused for itself, such as a required, malformed, pending-verification, uninstallable Marketplace or collection-only Marketplace row, SHALL offer only its full-view hint in the detail pane, and the footer SHALL drop the toggle hint while it is selected. Transient states, such as an operation in progress or an invalid configuration, SHALL NOT remove the hints. A selected section header SHALL keep the footer toggle hint, because space toggles the section.
+
+#### Scenario: Toggle hints follow row eligibility
+
+- **WHEN** the selected resource row is required, collection-only, pending verification or an uninstallable Marketplace discovery row
+- **THEN** the detail pane MUST NOT offer `space = toggle` and MUST still offer `enter = full view`, and the footer MUST NOT offer `space toggle`
+- **AND** an eligible enabled row, an available row, an installable Marketplace discovery row and a selected section header MUST keep the toggle hints

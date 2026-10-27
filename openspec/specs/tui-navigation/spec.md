@@ -155,3 +155,37 @@ The TUI SHALL browse local disk resources from their ingested source bundle, whe
 
 - **WHEN** a user inspects verified Marketplace content or an exact Git snapshot whose display path differs from its authoritative source path
 - **THEN** inspection MUST continue to use that verified or exact content rather than consumer files or a logical display-cache path
+
+### Requirement: Reload selection follows the resource
+
+When an accepted reload changes the catalog that loads a selected resource,
+such as a write that creates the missing acquisition lock or an update that
+moves the locked commit, the TUI SHALL restore the list selection and an open
+detail view to that resource by its kind, name, and source URL, ref, and path.
+When that identity matches more than one row, the TUI SHALL NOT guess between
+them and SHALL keep the existing position-based selection.
+
+#### Scenario: Selection survives a reload that locks its source
+
+- **WHEN** a user enables a resource from a Git source that has no acquisition
+  lock yet, and the write creates the lock so the reload loads that source from
+  its locked snapshot
+- **THEN** after the authoritative reload the enabled resource MUST remain
+  selected in the list, and an open detail view MUST stay on it
+- **AND** when another row shares that resource identity, the reload MUST NOT
+  move the selection to either of them on that basis
+
+### Requirement: A list that fits shows every row
+
+When every row of the resource list fits within the list viewport, the TUI
+SHALL show the list from its first row. Keeping a selection on its previous
+screen line across a reload SHALL apply only while the list overflows the
+viewport, so rows are never hidden above the viewport while the list has room
+for them.
+
+#### Scenario: Reload with room for every row shows the whole list
+
+- **WHEN** a section header lower in the list is selected and a reload inserts
+  rows above it, and every row still fits within the viewport
+- **THEN** the list MUST start at its first row, showing every section, and the
+  same header MUST remain selected

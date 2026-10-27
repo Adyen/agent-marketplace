@@ -133,8 +133,14 @@ func TestRequestsWithoutCredentialRejected(t *testing.T) {
 	var calls atomic.Int32
 	var reads atomic.Int32
 	lifecycle := session.DependencyLifecycle{
-		Sync:   func(context.Context, pipeline.Workspace) ([]error, error) { calls.Add(1); return nil, nil },
-		Update: func(context.Context, pipeline.Workspace) ([]error, error) { calls.Add(1); return nil, nil },
+		Sync: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
+			calls.Add(1)
+			return pipeline.SyncResult{}, nil
+		},
+		Update: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
+			calls.Add(1)
+			return pipeline.SyncResult{}, nil
+		},
 	}
 	ws, home := newFixture(t)
 	api, err := New(context.Background(), ws, home, lifecycle, nil)
@@ -292,7 +298,10 @@ func TestSocketRejectsForeignHostAndOrigin(t *testing.T) {
 	var calls atomic.Int32
 	var reads atomic.Int32
 	lifecycle := session.DependencyLifecycle{
-		Sync: func(context.Context, pipeline.Workspace) ([]error, error) { calls.Add(1); return nil, nil },
+		Sync: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
+			calls.Add(1)
+			return pipeline.SyncResult{}, nil
+		},
 	}
 	ws, home := newFixture(t)
 	api, err := New(context.Background(), ws, home, lifecycle, nil)
@@ -403,12 +412,12 @@ func (l *blockingLifecycle) unblock() { l.once.Do(func() { close(l.release) }) }
 
 func (l *blockingLifecycle) lifecycle() session.DependencyLifecycle {
 	return session.DependencyLifecycle{
-		Sync: func(ctx context.Context, _ pipeline.Workspace) ([]error, error) {
+		Sync: func(ctx context.Context, _ pipeline.Workspace) (pipeline.SyncResult, error) {
 			close(l.entered)
 			pipeline.ObservePhase(ctx, pipeline.PhaseResolve)
 			pipeline.ObservePhase(ctx, pipeline.PhaseMaterialize)
 			<-l.release
-			return nil, nil
+			return pipeline.SyncResult{}, nil
 		},
 	}
 }
@@ -911,7 +920,10 @@ func TestActionValidationBeforeGuard(t *testing.T) {
 	var calls atomic.Int32
 	ws, home := newFixture(t)
 	api, err := New(context.Background(), ws, home, session.DependencyLifecycle{
-		Sync: func(context.Context, pipeline.Workspace) ([]error, error) { calls.Add(1); return nil, nil },
+		Sync: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
+			calls.Add(1)
+			return pipeline.SyncResult{}, nil
+		},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -1104,8 +1116,8 @@ func TestSyncActionMaterializesLocalSkill(t *testing.T) {
 // spec: gui-local-api/event-identity-preserves-order-and-generation
 func TestFailedOperationPublishesFailureNotification(t *testing.T) {
 	lifecycle := session.DependencyLifecycle{
-		Sync: func(context.Context, pipeline.Workspace) ([]error, error) {
-			return nil, errors.New("injected sync failure")
+		Sync: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
+			return pipeline.SyncResult{}, errors.New("injected sync failure")
 		},
 	}
 	api := newAPI(t, lifecycle, nil)
@@ -1160,7 +1172,9 @@ func TestFailedOperationPublishesFailureNotification(t *testing.T) {
 
 func TestMutationRejectsUnreadySnapshot(t *testing.T) {
 	api := newAPI(t, session.DependencyLifecycle{
-		Sync: func(context.Context, pipeline.Workspace) ([]error, error) { return nil, nil },
+		Sync: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
+			return pipeline.SyncResult{}, nil
+		},
 	}, nil)
 	recorder := httptest.NewRecorder()
 	api.Handler().ServeHTTP(recorder, authedRequest(t, api, "/api/actions", `{"action":"sync"}`))
@@ -1389,7 +1403,7 @@ func TestSnapshotStatusGroupPresentation(t *testing.T) {
 		{"required", "required"},
 		{"enabled", "enabled"},
 		{"pending", "pending"},
-		{"orphaned", "broken"},
+		{"orphaned", "pending"},
 		{"broken", "broken"},
 		{"available", "available"},
 		{"malformed", "malformed"},
@@ -1585,8 +1599,8 @@ func TestSnapshotSearchMetadataPresentation(t *testing.T) {
 // spec: gui-local-api/event-identity-preserves-order-and-generation
 func TestSyncWarningsRetainedAcrossRefresh(t *testing.T) {
 	lifecycle := session.DependencyLifecycle{
-		Sync: func(context.Context, pipeline.Workspace) ([]error, error) {
-			return []error{errors.New("partial mirror degraded")}, nil
+		Sync: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
+			return pipeline.SyncResult{Warnings: []error{errors.New("partial mirror degraded")}}, nil
 		},
 	}
 	api := newAPI(t, lifecycle, nil)
@@ -1678,11 +1692,11 @@ func TestReloadFailureMarksSyncFailedAndRetainsDiagnostics(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.WriteFile(configPath, original, 0o644) })
 	lifecycle := session.DependencyLifecycle{
-		Sync: func(context.Context, pipeline.Workspace) ([]error, error) {
+		Sync: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
 			if err := os.WriteFile(configPath, []byte("apiVersion: [\n"), 0o644); err != nil {
-				return nil, err
+				return pipeline.SyncResult{}, err
 			}
-			return nil, nil
+			return pipeline.SyncResult{}, nil
 		},
 	}
 	api, err := New(context.Background(), ws, home, lifecycle, nil)
@@ -1768,11 +1782,11 @@ func TestFailedOperationDoesNotBlockHealthyRetry(t *testing.T) {
 	for _, action := range []string{"sync", "update"} {
 		t.Run(action, func(t *testing.T) {
 			var calls atomic.Int32
-			flaky := func(context.Context, pipeline.Workspace) ([]error, error) {
+			flaky := func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
 				if calls.Add(1) == 1 {
-					return nil, errors.New("transient " + action + " failure")
+					return pipeline.SyncResult{}, errors.New("transient " + action + " failure")
 				}
-				return nil, nil
+				return pipeline.SyncResult{}, nil
 			}
 			lifecycle := session.DependencyLifecycle{}
 			if action == "sync" {
@@ -1869,7 +1883,9 @@ func TestMutationStillRejectsBrokenSnapshotConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	api, err := New(context.Background(), ws, home, session.DependencyLifecycle{
-		Sync: func(context.Context, pipeline.Workspace) ([]error, error) { return nil, nil },
+		Sync: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
+			return pipeline.SyncResult{}, nil
+		},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)

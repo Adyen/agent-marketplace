@@ -463,7 +463,14 @@ func BuildRows(cfg *config.Config, catalogs map[string]CatalogInfo, resolved []r
 
 	// Add malformed skills. Deduplicate by (catalogKey, DirName) so
 	// same-name malformed entries from different catalogs each appear.
+	registriesByCatalog := map[string]config.RegistryEntry{}
+	if cfg != nil {
+		for _, entry := range cfg.Registries {
+			registriesByCatalog[entry.CatalogKey] = entry
+		}
+	}
 	for catalogKey, cat := range catalogs {
+		registry := registriesByCatalog[catalogKey]
 		for _, m := range cat.Malformed {
 			name := m.DirName
 			seenKey := name + "\x01" + catalogKey
@@ -472,12 +479,19 @@ func BuildRows(cfg *config.Config, catalogs map[string]CatalogInfo, resolved []r
 			}
 			seen[seenKey] = struct{}{}
 
+			kind, _ := skill.MalformedKind(m)
 			rows = append(rows, Row{
-				IsMalformed:  true,
-				MalformedMsg: m.Error.Error(),
+				IsMalformed:   true,
+				MalformedMsg:  m.Error.Error(),
+				MalformedKind: skill.MalformedKindLabel(m),
 				Artifact: resolver.ResolvedArtifact{
-					Entry: catalog.Entry{Name: name, Path: m.Path},
+					Entry:      catalog.Entry{Name: name, Kind: kind, Path: m.Path},
+					CatalogKey: catalogKey,
 				},
+				RegistryURL:  registry.URL,
+				RegistryName: RegistryDisplayName(registry.URL),
+				RegistryRef:  registry.Ref,
+				RegistryPath: registry.Path,
 			})
 		}
 	}
@@ -677,9 +691,6 @@ func BuildProvisionalRows(cfg *config.Config, localCfg *config.LocalConfig, loca
 					Required:     entry.Required,
 					CatalogKey:   entry.CatalogKey,
 				},
-				// Verified inventory expands collections into members and
-				// lists the collection itself as available.
-				IsAvailable:         selected.Kind == ir.KindCollection,
 				PendingVerification: true,
 				RegistryURL:         entry.URL,
 				RegistryName:        RegistryDisplayName(entry.URL),
@@ -696,28 +707,12 @@ func BuildProvisionalRows(cfg *config.Config, localCfg *config.LocalConfig, loca
 			if cfg.MarketplacePinExcluded(*entry, pin) {
 				continue
 			}
-			kind, ok := mpapi.ToIR(pin.Kind)
-			if !ok || kind == ir.KindCollection {
+			artifact, ok := marketplace.PinArtifact(*entry, pin)
+			if !ok || (artifact.Kind == ir.KindCollection && !pin.Direct) {
 				continue
 			}
-			name := marketplaceInstalledName(pin)
-			catalogKey := MarketplaceCatalogKey(*entry, pin)
-			add(MarketplaceSelectionKey(catalogKey, pin.Kind, name), Row{
-				Artifact: resolver.ResolvedArtifact{
-					Entry:                   catalog.Entry{Kind: kind, Name: name},
-					RegistryURL:             entry.URL,
-					RegistryPath:            pin.RegistryID,
-					Ref:                     pin.Revision,
-					Source:                  entry.Source,
-					Required:                entry.Required,
-					CatalogKey:              catalogKey,
-					IsMarketplace:           true,
-					MarketplaceURL:          entry.URL,
-					MarketplaceInstanceID:   entry.InstanceID,
-					MarketplaceAlias:        entry.Alias,
-					MarketplaceRegistryID:   pin.RegistryID,
-					MarketplaceResourceName: pin.Name,
-				},
+			add(MarketplaceSelectionKey(artifact.CatalogKey, pin.Kind, artifact.Name), Row{
+				Artifact:                  artifact,
 				PendingVerification:       true,
 				MarketplaceCollectionOnly: !pin.Direct && pin.SelectedBy != "",
 				RegistryURL:               entry.URL,
@@ -754,6 +749,11 @@ func AppendUnavailableSelectionRows(rows []Row, cfg *config.Config, localCfg *co
 	seen := make(map[string]struct{}, len(rows)+len(resolveErrs))
 	available := make(map[string]struct{}, len(rows))
 	for i := range rows {
+		// A malformed row's kind is unknown, so it cannot stand in for a
+		// missing selection that happens to share its name.
+		if rows[i].IsMalformed {
+			continue
+		}
 		key := skill.ResourceKey(rows[i].Artifact.Kind, rows[i].Artifact.Name)
 		seen[key+"\x01"+RegistryIdentityKey(rows[i].RegistryURL, rows[i].RegistryRef, rows[i].RegistryPath)] = struct{}{}
 		if rows[i].IsAvailable {
@@ -914,7 +914,7 @@ func RegistryDisplayName(url string) string {
 	if url == "" {
 		return ""
 	}
-	url = strings.TrimSuffix(url, ".git")
+	url = strings.TrimSuffix(strings.TrimRight(url, "/"), ".git")
 	if idx := strings.LastIndexAny(url, "/:"); idx >= 0 {
 		url = url[idx+1:]
 	}

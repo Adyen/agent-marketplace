@@ -93,10 +93,10 @@ sources:
 	writeSkill(t, lockedWorking, "unreviewed", "Added after the user lock", nil)
 	commitAndPushAll(t, lockedWorking, "advance locked layer")
 
-	if output, err := executeCommand("install", "unreviewed"); err == nil || !strings.Contains(err.Error(), "not found in configured registries") {
+	if output, err := executeCommand("install", "--scope", "repo", "unreviewed"); err == nil || !strings.Contains(err.Error(), "not found in configured registries") {
 		t.Fatalf("advanced resource from valid locked layer became installable: err=%v\n%s", err, output)
 	}
-	if output, err := executeCommand("install", "bootstrap"); err != nil {
+	if output, err := executeCommand("install", "--scope", "repo", "bootstrap"); err != nil {
 		t.Fatalf("missing-lock layer did not retain mutable bootstrap: %v\n%s", err, output)
 	}
 	assertFactorySkillExists(t, repoRoot, "bootstrap")

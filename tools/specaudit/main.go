@@ -16,12 +16,17 @@ const usage = `usage: specaudit <command> [flags]
 commands:
   trace     every known scenario has a // spec: test annotation and vice versa
   archived  no active change has every task checked
-  gate      a behavior change carries a spec delta or a Spec-Impact trailer
+  gate      a behavior change carries a spec delta or a Spec-Impact trailer, and
+            a TUI change carries a TUI QA journey or a TUI-QA-Impact trailer,
+            and an added change proposal carries a release note
+  release-notes
+            Markdown release notes for archived proposals added in base..head
 
 flags:
   -root dir     repository root (default ".")
-  -base sha     gate only: pull request base commit
-  -head sha     gate only: pull request head commit
+  -base sha     gate and release-notes: base commit
+  -head sha     gate and release-notes: head commit
+  -o file       release-notes only: write the notes to file instead of stdout
 `
 
 // finding is one violation, reported as "<kind>: <detail>". Kinds are stable
@@ -32,13 +37,17 @@ type finding struct {
 }
 
 const (
-	kindDuplicateSlug      = "duplicate-slug"
-	kindUnboundScenario    = "unbound-scenario"
-	kindDanglingAnnotation = "dangling-annotation"
-	kindMissingSurface     = "missing-surface-witness"
-	kindUnarchivedChange   = "unarchived-change"
-	kindMissingSpecDelta   = "missing-spec-delta"
-	kindSpecImpactNoReason = "spec-impact-reason-required"
+	kindDuplicateSlug       = "duplicate-slug"
+	kindUnboundScenario     = "unbound-scenario"
+	kindDanglingAnnotation  = "dangling-annotation"
+	kindMissingSurface      = "missing-surface-witness"
+	kindUnarchivedChange    = "unarchived-change"
+	kindMissingSpecDelta    = "missing-spec-delta"
+	kindSpecImpactNoReason  = "spec-impact-reason-required"
+	kindMissingTUIQAJourney = "missing-tui-qa-journey"
+	kindTUIQAImpactNoReason = "tui-qa-impact-reason-required"
+	kindMissingReleaseNote  = "missing-release-note"
+	kindReleaseNoteNoReason = "release-note-reason-required"
 )
 
 // errFindings signals that findings were already printed.
@@ -68,6 +77,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	root := fs.String("root", ".", "repository root")
 	base := fs.String("base", "", "pull request base commit")
 	head := fs.String("head", "", "pull request head commit")
+	out := fs.String("o", "", "release-notes output file (default stdout)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -90,6 +100,19 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return errors.New("gate requires -base and -head")
 		}
 		findings, summary, err = gate(*root, *base, *head)
+	case "release-notes":
+		if *base == "" || *head == "" {
+			return errors.New("release-notes requires -base and -head")
+		}
+		notes, err := releaseNotes(*root, *base, *head, releaseRepoURL(*root))
+		if err != nil {
+			return fmt.Errorf("%s: %w", cmd, err)
+		}
+		if *out == "" {
+			_, err = io.WriteString(stdout, notes)
+			return err
+		}
+		return os.WriteFile(*out, []byte(notes), 0o644)
 	default:
 		_, _ = fmt.Fprint(stderr, usage)
 		return fmt.Errorf("unknown command %q", cmd)
