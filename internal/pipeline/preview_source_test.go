@@ -555,6 +555,95 @@ func TestPreviewSourceServesCachedCommitPinWhenRemoteIsUnreachable(t *testing.T)
 	}
 }
 
+// spec: resource-installation/unreachable-ssh-web-url-uses-https
+// spec: resource-installation/configured-form-of-a-web-url-is-reused
+func TestPreviewSourceWebURLTransport(t *testing.T) {
+	const webURL = "https://git.example.invalid/group/proj"
+	const ssh = "git@git.example.invalid:group/proj"
+	const https = "https://git.example.invalid/group/proj.git"
+	sentinel := errors.New("stop after load")
+
+	// captureLoads stops each preview at the catalog load and records the
+	// registry configuration it would have loaded.
+	captureLoads := func(t *testing.T) *[]*config.Config {
+		t.Helper()
+		var loaded []*config.Config
+		previous := previewLoadRegistries
+		previewLoadRegistries = func(_ context.Context, cfg *config.Config, _ string, _ catalog.LoadMode, _ ...catalog.LoadOption) catalog.LoadResult {
+			loaded = append(loaded, cfg)
+			return catalog.LoadResult{Errors: []error{sentinel}}
+		}
+		t.Cleanup(func() { previewLoadRegistries = previous })
+		return &loaded
+	}
+	warningText := func(preview SourcePreview) string {
+		var parts []string
+		for _, warning := range preview.Warnings {
+			parts = append(parts, warning.Error())
+		}
+		return strings.Join(parts, "\n")
+	}
+	workspaceWithConfig := func(t *testing.T, content string) Workspace {
+		t.Helper()
+		repo := t.TempDir()
+		if content != "" {
+			writeSourceFile(t, repo, ".agents/config.yaml", content)
+		}
+		ws, err := NewWorkspace(repo, repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ws
+	}
+
+	t.Run("unreachable ssh falls back to https with a warning", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		probed := stubRemoteProbe(t, map[string]bool{https: true})
+		loaded := captureLoads(t)
+
+		preview, err := PreviewSource(context.Background(), workspaceWithConfig(t, ""), webURL, "", "")
+		if !errors.Is(err, sentinel) {
+			t.Fatalf("PreviewSource error = %v, want the load sentinel", err)
+		}
+		if !slices.Equal(*probed, []string{ssh, https}) {
+			t.Fatalf("probed %v, want [SSH HTTPS]", *probed)
+		}
+		if len(*loaded) != 1 || (*loaded)[0].Registries[0].URL != https || (*loaded)[0].Registries[0].Ref != "main" {
+			t.Fatalf("loaded registries = %#v, want the HTTPS form at main", *loaded)
+		}
+		if preview.URL != https || preview.Ref != "main" {
+			t.Fatalf("preview URL/ref = %q/%q, want %q/main", preview.URL, preview.Ref, https)
+		}
+		if warnings := warningText(preview); !strings.Contains(warnings, ssh) || !strings.Contains(warnings, https) {
+			t.Fatalf("warnings = %q, want the SSH and HTTPS URLs", warnings)
+		}
+	})
+
+	t.Run("configured https form is reused without probing", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		probed := stubRemoteProbe(t, map[string]bool{ssh: true, https: true})
+		loaded := captureLoads(t)
+		ws := workspaceWithConfig(t, "apiVersion: agent-marketplace/v4\nsources: {proj: {git: "+https+", ref: main}}\n")
+
+		preview, err := PreviewSource(context.Background(), ws, webURL, "main", "")
+		if !errors.Is(err, sentinel) {
+			t.Fatalf("PreviewSource error = %v, want the load sentinel", err)
+		}
+		if len(*probed) != 0 {
+			t.Fatalf("probed %v, want none", *probed)
+		}
+		if len(*loaded) != 1 || (*loaded)[0].Registries[0].URL != https {
+			t.Fatalf("loaded registries = %#v, want the configured HTTPS form", *loaded)
+		}
+		if preview.URL != https {
+			t.Fatalf("preview URL = %q, want the configured HTTPS form", preview.URL)
+		}
+		if warnings := warningText(preview); strings.Contains(warnings, "SSH could not reach") {
+			t.Fatalf("warnings = %q, want no transport notice", warnings)
+		}
+	})
+}
+
 func newPreviewSourceRepo(t *testing.T) (bare, work string) {
 	t.Helper()
 	bare = filepath.Join(t.TempDir(), "source.git")
