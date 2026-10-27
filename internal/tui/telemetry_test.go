@@ -292,6 +292,37 @@ func TestModelFlushRecordsNothingAfterFailedFinalSnapshot(t *testing.T) {
 	}
 }
 
+// spec: telemetry/failed-final-snapshot-records-nothing
+func TestModelFlushRecordsNothingAfterConfigLoadFailure(t *testing.T) {
+	cases := []struct {
+		name string
+		wrap func(snapshotLoadedMsg) tea.Msg
+	}{
+		{"snapshot", func(s snapshotLoadedMsg) tea.Msg { return s }},
+		{"refresh", func(s snapshotLoadedMsg) tea.Msg { return refreshLoadedMsg{s} }},
+		{"reload", func(s snapshotLoadedMsg) tea.Msg { return reloadMsg(s) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newTestSpanExporter(t)
+			ctx, tel := setupTuiTelemetry(t, e)
+			m := NewModel(t.TempDir(), t.TempDir())
+			m.ctx = ctx
+			m = applyFinalSnapshot(m, m.beginRequest(requestSnapshot), snapshotForHarness(hcc.TargetFactory))
+			failed := snapshotLoadedMsg{generation: m.beginRequest(requestSnapshot), errs: []error{errors.New("config load failed")}}
+			updated, _ := m.Update(tc.wrap(failed))
+			m = updated.(Model)
+			m.pendingInventory.flush(ctx)
+			if err := tel.Shutdown(context.Background()); err != nil {
+				t.Fatalf("shutdown: %v", err)
+			}
+			if got := e.inventorySnapshotHarnesses(); len(got) != 0 {
+				t.Fatalf("config load failure recorded inventory: %v", got)
+			}
+		})
+	}
+}
+
 // inventoryExitProbe stands in for the startup load: Init delivers scripted
 // accepted final snapshots, checks that session work records nothing, then quits.
 type inventoryExitProbe struct {

@@ -517,6 +517,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updateCmd := m.finishUpdateReload(msg.generation, snapshotAcceptanceError(msg))
 		syncCmd := m.finishSyncReload(msg.generation, snapshotAcceptanceError(msg))
 		if msg.mergedCfg == nil && len(m.errs) > 0 {
+			m.pendingInventory.set(nil)
 			m.provisionalRows = nil
 			m.refreshing = false
 			m.clearMarketplaceDiscovery(true)
@@ -543,6 +544,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updateCmd := m.finishUpdateReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg))
 		syncCmd := m.finishSyncReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg))
 		if msg.mergedCfg == nil && len(m.errs) > 0 {
+			m.pendingInventory.set(nil)
 			m.provisionalRows = nil
 			m.clearMarketplaceDiscovery(true)
 			return m, tea.Batch(m.finishMarketplaceInstallReload(msg.generation, errors.Join(m.errs...)), updateCmd, syncCmd)
@@ -572,6 +574,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updateCmd := m.finishUpdateReload(snapshot.generation, snapshotAcceptanceError(snapshot))
 		syncCmd := m.finishSyncReload(snapshot.generation, snapshotAcceptanceError(snapshot))
 		if snapshot.mergedCfg == nil && len(m.errs) > 0 {
+			m.pendingInventory.set(nil)
 			m.provisionalRows = nil
 			m.clearMarketplaceDiscovery(true)
 			return m, tea.Batch(m.finishMarketplaceInstallReload(snapshot.generation, errors.Join(m.errs...)), updateCmd, syncCmd)
