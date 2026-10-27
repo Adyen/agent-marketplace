@@ -17,6 +17,7 @@ const observe = (files: string[]) => files.map((file) => {
 });
 
 // spec: tui-interactions/unknown-harness-target-ids-refuse-configuration
+// spec: consumer-config-format/unknown-harness-targets-gate-configuration-dependent-actions
 for (const scope of ["user", "project"] as const) {
   for (const field of ["harnesses", "materialization"] as const) {
     const code = field === "harnesses" ? "v4.harness" : "v4.auxiliary";
@@ -55,6 +56,14 @@ for (const scope of ["user", "project"] as const) {
         await locate(terminal, /! 1 errors:/).unique().expect({ timeout: 30_000 });
         await locate(terminal, "~ in sync").expect({ not: true });
       });
+      await step("harness editing cannot rewrite the invalid configuration", () => terminal.write("H"), async () => {
+        await locate(terminal, "configuration is invalid; press E to edit config").expect();
+        await locate(terminal, "Target harnesses").expect({ not: true });
+      });
+      unchanged();
+      await step("clear the harness refusal toast before testing sync", () => {}, async () => {
+        await locate(terminal, "configuration is invalid; press E to edit config").expect({ not: true, timeout: 5_000 });
+      });
       await step("sync is guarded rather than using Factory alone", () => terminal.write("s"), async () => {
         await locate(terminal, "configuration is invalid; press E to edit config").expect();
       });
@@ -81,6 +90,14 @@ for (const scope of ["user", "project"] as const) {
       await step("explicit repair and reload expose the pending supported resource", () => terminal.write("r"), async () => {
         await locate(terminal, "~ 1 out of sync").unique().expect({ timeout: 30_000 });
         await locate(terminal, /! \d+ errors/).expect({ not: true });
+      });
+      unchanged();
+      await step("supported configuration permits harness editing again", () => terminal.write("H"), async () => {
+        await locate(terminal, "Target harnesses").unique().expect();
+        await locate(terminal, "[•] Factory Droid").unique().expect();
+      });
+      await step("cancel harness editing without writing", () => terminal.write("\x1b"), async () => {
+        await locate(terminal, "Target harnesses").expect({ not: true });
       });
       unchanged();
       const beta = path.join(fixture.repo, ".factory", "skills", "beta-skill");

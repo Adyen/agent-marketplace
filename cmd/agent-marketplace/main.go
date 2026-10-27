@@ -28,7 +28,6 @@ const defaultVersion = "dev"
 
 var version = defaultVersion
 var diagnosticCapture bool
-var diagnosticAcceptSensitive bool
 var rootLogState struct {
 	startedAt time.Time
 	close     func() error
@@ -122,7 +121,6 @@ func newRootCmd() *cobra.Command {
 	_ = rootCmd.Flags().MarkHidden("no-tui")
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Enable debug logging and mirror logs to stderr")
 	rootCmd.PersistentFlags().BoolVar(&diagnosticCapture, "diagnostic", false, "Capture a reviewed diagnostic telemetry payload for this invocation")
-	rootCmd.PersistentFlags().BoolVar(&diagnosticAcceptSensitive, "diagnostic-accept-sensitive-data", false, "Acknowledge a diagnostic payload may contain sensitive data")
 
 	rootCmd.AddCommand(
 		newInitCmd(),
@@ -325,7 +323,7 @@ func finishTelemetry(cmd *cobra.Command, execErr error) {
 	t.CommandDuration().Record(ctx, time.Since(start).Milliseconds(), attrs)
 
 	if t.DiagnosticActive() {
-		if err := t.FinishDiagnostic(ctx, cmd.OutOrStdout(), cmd.InOrStdin(), isTerminalReader(cmd.InOrStdin()), diagnosticAcceptSensitive); err != nil {
+		if err := t.FinishDiagnostic(ctx, cmd.OutOrStdout(), cmd.InOrStdin(), isTerminalReader(cmd.InOrStdin())); err != nil {
 			slog.Warn("diagnostic export failed or declined", "error", err)
 		}
 	}
@@ -346,7 +344,7 @@ func isTerminalReader(r io.Reader) bool {
 	if !ok {
 		return false
 	}
-	return term.IsTerminal(fr.Fd())
+	return isTerminal(fr.Fd())
 }
 
 func shouldSkipTelemetryInit(path string) bool {

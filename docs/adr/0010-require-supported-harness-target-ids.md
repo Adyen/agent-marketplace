@@ -20,8 +20,9 @@ they must not silently remove, rename, or rewrite the unknown entry.
 
 This selects option 1 from issue #935. It preserves existing runtime behavior,
 corrects the unreachable TUI preservation promises, and aligns tests with the
-real configuration-loading path. The normative contract is the
-[TUI interactions specification](../../openspec/specs/tui-interactions/spec.md).
+real configuration-loading path. The normative contracts are the
+[consumer configuration format specification](../../openspec/specs/consumer-config-format/spec.md)
+and [TUI interactions specification](../../openspec/specs/tui-interactions/spec.md).
 This ADR records the rationale; it does not supersede specifications.
 
 ## Examples
