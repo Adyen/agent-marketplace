@@ -16,12 +16,11 @@ ever see a repository's committed state.
 
 ## Goals / Non-Goals
 
-**Goals:** a Claude registration the real CLI loads, proven by an isolated
-probe; repository registration kept out of shared committed settings; a
-one-sync move from the earlier file; the shipped Claude catalog flipped to
-verified; the released-reader witness.
+**Goals:** a Claude registration shape that matches Claude's marketplace
+reference; repository registration kept out of shared committed settings; a
+one-sync move from the earlier file; the released-reader witness.
 
-**Non-Goals:** Factory Droid and Codex native delivery, git-sourced native
+**Non-Goals:** verifying Claude native delivery (see D4), Factory Droid and Codex native delivery, git-sourced native
 catalog entries, user documentation, Claude trust, policy, or plugin caches,
 and the delivery-resolution rules.
 
@@ -36,10 +35,7 @@ Marketplace"}`, and one entry per plugin `{name, source: "./plugins/<name>"}`.
 directory, replaced atomically (temporary link, then rename) under the
 packages lock before the manifest commit, like generation publishing; links
 no entry names are removed after the commit. A crash leaves at most an
-unreferenced link, removed by the next sync. If the probe shows Claude does
-not load a linked plugin directory, the fallback is copying the generation
-into `plugins/<name>`; that is an execution-plan change, not a contract
-change.
+unreferenced link, removed by the next sync.
 
 ### D2: Registration file per scope
 
@@ -57,25 +53,17 @@ sync writes it to the new file and retires the recorded entry from the old
 file, in one dependency transaction. Entries without ownership state stay
 where they are and are reported as collisions.
 
-### D4: Probe
+### D4: Native delivery stays unverified
 
-`tools/harness-compat` defines `claude-native-plugin`. The Claude harness
-compatibility driver installs a `claude-plugin` fixture with
-`delivery: native` at user scope and at repository scope (the repository
-workspace trusted by the driver's existing disposable trust fixture). Before
-sync, `claude plugin list` and the initialize inventory must not show the
-plugin. Claude loads plugins at session start only from its own installed
-records and cache and fetches settings-declared marketplaces in the
-background after a session starts, so after sync the driver starts one
-priming session and waits for it to exit, then requires a second session's
-`claude plugin list` to report `<plugin>@<am-catalog>` enabled and its
-initialize inventory to list the plugin's namespaced component. The probe
-records `claude plugin list` output in its report. Agent Marketplace writes
-none of the records or cache Claude creates while priming. Because a new
-generation reaches a running session only after a restart, the Claude
-catalog declares `refresh: restart-required`. `claude plugin validate` on the
-catalog is recorded as supplementary evidence when it runs offline; it is not
-a gate.
+The Claude catalog keeps `native: {status: unverified}`. Three CI attempts
+with Claude Code 2.1.311, offline with an isolated home, at user and
+repository scope, showed that a plugin registered only through
+`extraKnownMarketplaces` and `enabledPlugins` never loads: `claude plugin
+list` stayed empty after sync, after a print-mode session, and during a
+45-second live session, and Claude wrote no `known_marketplaces.json` or
+`installed_plugins.json`. Claude loads plugins only from those records and
+its cache, which Agent Marketplace does not write. A probe and the flip to
+verified wait for a registration path Claude loads without them.
 
 ### D5: Released-reader witness
 
@@ -88,7 +76,7 @@ identical, and A's registration and catalog stay unchanged.
 
 ## Risks / Trade-offs
 
-- The probe runs only in CI images; local runs cannot certify it. A probe
-  that cannot pass stops the change and escalates the release decision.
+- The registration shape is exercised only through an explicitly verified
+  test catalog until Claude native delivery is verified.
 - `.claude/settings.local.json` is machine-local; Agent Marketplace does not
   edit `.gitignore`.
