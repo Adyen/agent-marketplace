@@ -12,7 +12,7 @@
 
 ## 2. Catalog
 
-- [ ] 2.1 Keep Claude native delivery unverified after the probe failed in CI
+- [x] 2.1 Keep Claude native delivery unverified after the probe failed in CI
   (design D4); remove the probe and restore decompose-by-default behavior
 
 ## 3. Released reader and gates
@@ -21,4 +21,4 @@
   scenario
 - [x] 3.4 Fix the released-client witness failure from CI run one without
   weakening it
-- [ ] 3.3 Run `make validate`, `make spec-check`, and `make validate-e2e`
+- [x] 3.3 Run `make validate`, `make spec-check`, and `make validate-e2e`

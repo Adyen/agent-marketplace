@@ -16,7 +16,6 @@ import (
 var compatibilityTargets = []string{"claude", "factory", "cursor", "windsurf", "gemini", "devin", "codex"}
 var compatibilityResources = []string{"skill", "command", "subagent", "hook", "mcp", "collection", "rule", "native-cli"}
 
-// spec: plugin-policy-catalogs/claude-native-plugin-probe-loads-the-registered-plugin
 func TestHarnessCompatibility(t *testing.T) {
 	target := os.Getenv("HARNESS_COMPAT_TARGET")
 	if target == "" {
@@ -134,30 +133,11 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 	}
 	config := fmt.Sprintf("harnesses: [%s]\nmaterialization:\n  mode: %s\n", first.Harness, first.Mode)
 	e.WriteGlobalConfig(config)
-	config += fmt.Sprintf("sources:\n  fixture: {directory: %q, source_harness: claude}\n", f.registry)
-	var nativePluginName, nativePluginSkill string
-	if first.Harness == "claude" {
-		nativePluginName, nativePluginSkill = f.name("native-plugin"), f.name("native-plugin-skill")
-		pluginRoot := filepath.Join(e.repos, "native-claude-plugin")
-		e.WriteFile(filepath.Join(pluginRoot, ".claude-plugin", "plugin.json"),
-			fmt.Sprintf(`{"name":%q}`, nativePluginName))
-		e.WriteFile(filepath.Join(pluginRoot, "skills", nativePluginSkill, "SKILL.md"),
-			fmt.Sprintf("---\nname: %s\ndescription: %s\n---\n\n# %s\n", nativePluginSkill, f.description("skill"), nativePluginSkill))
-		config += fmt.Sprintf("  native-plugin: {directory: %q, format: claude-plugin}\n", pluginRoot)
-		config += fmt.Sprintf("resources:\n  native-plugin:\n    - {kind: plugin, name: %s, delivery: native}\n", nativePluginName)
-	}
+	config += fmt.Sprintf("sources: {fixture: {directory: %q, source_harness: claude}}\n", f.registry)
 	if first.Scope == "user" {
 		e.WriteGlobalConfig(config)
 	} else {
 		e.WriteRepoConfig(config)
-	}
-	var pluginProbeRow *compatibilityResult
-	if native != nil && first.Harness == "claude" {
-		pluginProbeRow = rows["skill"]
-		if err := observeClaudePluginAbsent(e, native.binary, f, pluginProbeRow, first.Scope, nativePluginName, nativePluginSkill); err != nil {
-			pluginProbeRow.Status, pluginProbeRow.Reason = "failed", err.Error()
-			t.Fatal(err)
-		}
 	}
 	catalog := map[string][]string{
 		"skill": {f.name("skill")}, "command": {f.name("command")}, "subagent": {f.name("subagent")},
@@ -183,20 +163,6 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 	sync := runCompatibilityCommand(e, e.binary, []string{"sync"}, 30*time.Second)
 	if sync.Error != "" {
 		t.Fatalf("Marketplace sync failed: %s\n%s", sync.Error, sync.output)
-	}
-	if pluginProbeRow != nil {
-		if err := assertClaudePluginStateAbsentAfterSync(e); err != nil {
-			pluginProbeRow.Status, pluginProbeRow.Reason = "failed", err.Error()
-			t.Fatal(err)
-		}
-		if err := primeClaudePluginSession(e, native.binary, pluginProbeRow); err != nil {
-			pluginProbeRow.Status, pluginProbeRow.Reason = "failed", err.Error()
-			t.Fatal(err)
-		}
-		if err := observeClaudePluginEnabled(e, native.binary, f, pluginProbeRow, first.Scope, nativePluginName, nativePluginSkill); err != nil {
-			pluginProbeRow.Status, pluginProbeRow.Reason = "failed", err.Error()
-			t.Fatal(err)
-		}
 	}
 	for _, kind := range compatibilityResources[:6] {
 		row := rows[kind]

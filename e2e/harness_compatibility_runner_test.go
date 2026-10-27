@@ -19,8 +19,6 @@ type compatibilityCommand struct {
 	TimedOut        bool     `json:"timed_out,omitempty"`
 	Observed        []string `json:"asserted_observations,omitempty"`
 	Diagnostics     []string `json:"safe_diagnostics,omitempty"`
-	Stdout          string   `json:"stdout,omitempty"`
-	Stderr          string   `json:"stderr,omitempty"`
 	OutputBytes     int      `json:"output_bytes"`
 	OutputTruncated bool     `json:"output_truncated,omitempty"`
 	output          string
@@ -31,16 +29,11 @@ const compatibilityOutputLimit = 256 << 10
 type compatibilityOutput struct {
 	data  []byte
 	total int
-	limit int
 }
 
 func (o *compatibilityOutput) Write(data []byte) (int, error) {
 	o.total += len(data)
-	limit := o.limit
-	if limit == 0 {
-		limit = compatibilityOutputLimit
-	}
-	o.data = append(o.data, data[:min(len(data), limit-len(o.data))]...)
+	o.data = append(o.data, data[:min(len(data), compatibilityOutputLimit-len(o.data))]...)
 	return len(data), nil
 }
 
@@ -116,14 +109,6 @@ func compatibilityProcess(ctx context.Context, e *Env, binary string, args []str
 }
 
 func runCompatibilityCommand(e *Env, binary string, args []string, timeout time.Duration) compatibilityCommand {
-	return runCompatibilityCommandWithStreams(e, binary, args, timeout, false)
-}
-
-func runCompatibilityCommandWithSeparateOutput(e *Env, binary string, args []string, timeout time.Duration) compatibilityCommand {
-	return runCompatibilityCommandWithStreams(e, binary, args, timeout, true)
-}
-
-func runCompatibilityCommandWithStreams(e *Env, binary string, args []string, timeout time.Duration, separate bool) compatibilityCommand {
 	r := compatibilityCommand{Args: append([]string{binary}, args...), ExitCode: -1}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -133,27 +118,14 @@ func runCompatibilityCommandWithStreams(e *Env, binary string, args []string, ti
 		return r
 	}
 	var output compatibilityOutput
-	var stdout, stderr compatibilityOutput
-	if separate {
-		stdout.limit, stderr.limit = compatibilityOutputLimit/2, compatibilityOutputLimit/2
-		cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	} else {
-		cmd.Stdout, cmd.Stderr = &output, &output
-	}
+	cmd.Stdout, cmd.Stderr = &output, &output
 	err = cmd.Run()
 	if cmd.Process != nil {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
-	if separate {
-		r.Stdout, r.Stderr = string(stdout.data), string(stderr.data)
-		r.output = r.Stdout + r.Stderr
-		r.OutputBytes = stdout.total + stderr.total
-		r.OutputTruncated = stdout.total > stdout.limit || stderr.total > stderr.limit
-	} else {
-		r.output = string(output.data)
-		r.OutputBytes = output.total
-		r.OutputTruncated = output.total > compatibilityOutputLimit
-	}
+	r.output = string(output.data)
+	r.OutputBytes = output.total
+	r.OutputTruncated = output.total > compatibilityOutputLimit
 	r.Diagnostics = compatibilityDiagnostics(r.output)
 	if cmd.ProcessState != nil {
 		r.ExitCode = cmd.ProcessState.ExitCode()
