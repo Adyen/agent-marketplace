@@ -1334,15 +1334,15 @@ func validateV4Exclusion(value, source string) error {
 		if base == "" {
 			return nil
 		}
-		parts := strings.Split(base, "/")
-		if len(parts) == 1 {
-			if _, ok := v4Kinds[parts[0]]; !ok && !v4SlugRE.MatchString(parts[0]) {
+		first, last, hasSlash := strings.Cut(base, "/")
+		if !hasSlash {
+			if _, ok := v4Kinds[first]; !ok && !v4SlugRE.MatchString(first) {
 				return v4err("v4.exclusion", value, 0, "invalid kind or registry wildcard")
 			}
 			return nil
 		}
-		if len(parts) == 2 && v4SlugRE.MatchString(parts[0]) {
-			if _, ok := v4Kinds[parts[1]]; !ok {
+		if !strings.Contains(last, "/") && v4SlugRE.MatchString(first) {
+			if _, ok := v4Kinds[last]; !ok {
 				return v4err("v4.exclusion", value, 0, "invalid kind wildcard")
 			}
 			return nil
@@ -1360,27 +1360,27 @@ func validateV4ExclusionForSource(value string, kind V4SourceKind) error {
 		return nil
 	}
 	if strings.HasSuffix(value, "/*") {
-		parts := strings.Split(strings.TrimSuffix(value, "/*"), "/")
-		if kind != V4SourceMarketplace && (len(parts) != 1 || func() bool { _, ok := v4Kinds[parts[0]]; return !ok }()) {
+		first, last, hasSlash := strings.Cut(strings.TrimSuffix(value, "/*"), "/")
+		if kind != V4SourceMarketplace && (hasSlash || func() bool { _, ok := v4Kinds[first]; return !ok }()) {
 			return v4err("v4.exclusion", value, 0, "git and directory wildcard exclusions require a resource kind")
 		}
-		if kind != V4SourceMarketplace && len(parts) != 1 {
+		if kind != V4SourceMarketplace && hasSlash {
 			return v4err("v4.exclusion", value, 0, "git and directory wildcard exclusions are kind/* or *")
 		}
 		if kind == V4SourceMarketplace {
-			if len(parts) == 1 {
-				if _, isKind := v4Kinds[parts[0]]; isKind {
+			if !hasSlash {
+				if _, isKind := v4Kinds[first]; isKind {
 					return v4err("v4.exclusion", value, 0, "Marketplace wildcard exclusion must be registry/kind/*, registry/*, or *")
 				}
-				if !v4SlugRE.MatchString(parts[0]) {
+				if !v4SlugRE.MatchString(first) {
 					return v4err("v4.exclusion", value, 0, "invalid Marketplace registry wildcard")
 				}
 				return nil
 			}
-			if len(parts) != 2 || !v4SlugRE.MatchString(parts[0]) {
+			if strings.Contains(last, "/") || !v4SlugRE.MatchString(first) {
 				return v4err("v4.exclusion", value, 0, "Marketplace wildcard exclusion must be registry/kind/*, registry/*, or *")
 			}
-			if _, isKind := v4Kinds[parts[1]]; !isKind {
+			if _, isKind := v4Kinds[last]; !isKind {
 				return v4err("v4.exclusion", value, 0, "invalid Marketplace kind wildcard")
 			}
 		}
