@@ -32,7 +32,7 @@ still a faithful picture of the fleet.
 
 ## Release note
 
-Breaking: the new `installation_metrics.max_stale` setting (default 24 hours) must not be shorter than `installation_metrics.max_age`, so operators running with `max_age` above 24 hours must set `max_stale` to at least `max_age` before upgrading. Installation counts now keep appearing in search during a metrics outage, serving the last good counts for up to `max_stale` while refresh is retried.
+Installation counts now keep appearing in search during a metrics outage: the last good counts are served for up to `installation_metrics.max_stale` while refresh is retried. `max_stale` defaults to 24 hours, or to `installation_metrics.max_age` when that is longer.
 
 ## Impact
 

@@ -46,8 +46,10 @@ from the sum of operand costs to roughly the slowest operand.
 
 ### B. Last-good counts up to max_stale
 
-- New optional `installation_metrics.max_stale`. The default is twenty-four
-  hours. It must be positive and not shorter than `installation_metrics.max_age`.
+- New optional `installation_metrics.max_stale`. When omitted it defaults to
+  twenty-four hours, or to `installation_metrics.max_age` when that is longer,
+  so existing configurations with a longer `max_age` keep loading. An explicit
+  value must be positive and not shorter than `installation_metrics.max_age`.
 - A snapshot records `staleUntil = evaluatedAt + MaxStale`. It is not capped
   by ValidUntil. `expiresAt` keeps its meaning (freshness). It still drives
   scheduling, the hint short-circuit in `attempt`, and the post-fetch

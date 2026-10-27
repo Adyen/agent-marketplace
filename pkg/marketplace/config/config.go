@@ -192,6 +192,8 @@ func ResolveInstallationMetricsTiming(m InstallationMetrics) InstallationMetrics
 	}
 	if m.MaxStale != nil {
 		timing.MaxStale = m.MaxStale.Duration()
+	} else if timing.MaxAge > timing.MaxStale {
+		timing.MaxStale = timing.MaxAge
 	}
 	if m.Timeout != nil {
 		timing.Timeout = m.Timeout.Duration()

@@ -63,6 +63,18 @@ func TestInstallationMetricsTimingOverrides(t *testing.T) {
 	}
 }
 
+// spec: marketplace-api/omitted-max-stale-follows-a-longer-max-age
+func TestInstallationMetricsTimingOmittedMaxStaleFollowsMaxAge(t *testing.T) {
+	cfg, err := LoadConfig(writeConfig(t, validConfigYAML()+"installation_metrics:\n  url: https://metrics.internal\n  max_age: 25h\n"))
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	timing := ResolveInstallationMetricsTiming(cfg.InstallationMetrics)
+	if timing.MaxStale != 25*time.Hour {
+		t.Fatalf("MaxStale = %v, want max_age 25h", timing.MaxStale)
+	}
+}
+
 // spec: marketplace-api/invalid-timing-configuration-is-rejected
 func TestInstallationMetricsTimingRejectsInvalidValues(t *testing.T) {
 	block := func(inner string) string {

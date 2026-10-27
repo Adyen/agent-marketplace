@@ -476,7 +476,7 @@ Marketplace operator configuration SHALL optionally select a Prometheus-compatib
 
 ### Requirement: Installation metrics timing is independently configurable
 
-Marketplace operator configuration SHALL accept optional `installation_metrics.refresh.interval`, `installation_metrics.refresh.retry_interval`, `installation_metrics.refresh.jitter`, `installation_metrics.max_age`, `installation_metrics.max_stale`, and `installation_metrics.timeout` with defaults of four minutes, thirty seconds, fifteen seconds, five minutes, twenty-four hours, and three seconds respectively. `installation_metrics.max_stale` SHALL be positive and SHALL NOT be shorter than `installation_metrics.max_age`. Successful refresh scheduling SHALL use the evaluation time plus interval and additional jitter between zero and its configured bound, or just after an earlier inventory validity horizon. A refresh loop SHALL have at most one active attempt. Unavailable-count or identity-change search hints SHALL be non-blocking and coalesced, SHALL NOT repeat work for a still-fresh compatible aggregate, and SHALL NOT bypass the minimum failure retry delay measured from attempt completion. Construction and handler access SHALL NOT start refresh work; API shutdown SHALL cancel outstanding refresh work and await its termination. Metrics without a configured URL SHALL remain disabled and SHALL NOT affect readiness. Registry reindex timing SHALL remain independent.
+Marketplace operator configuration SHALL accept optional `installation_metrics.refresh.interval`, `installation_metrics.refresh.retry_interval`, `installation_metrics.refresh.jitter`, `installation_metrics.max_age`, `installation_metrics.max_stale`, and `installation_metrics.timeout` with defaults of four minutes, thirty seconds, fifteen seconds, five minutes, twenty-four hours or the configured `installation_metrics.max_age` when that is longer, and three seconds respectively. An explicitly configured `installation_metrics.max_stale` SHALL be positive and SHALL NOT be shorter than `installation_metrics.max_age`. Successful refresh scheduling SHALL use the evaluation time plus interval and additional jitter between zero and its configured bound, or just after an earlier inventory validity horizon. A refresh loop SHALL have at most one active attempt. Unavailable-count or identity-change search hints SHALL be non-blocking and coalesced, SHALL NOT repeat work for a still-fresh compatible aggregate, and SHALL NOT bypass the minimum failure retry delay measured from attempt completion. Construction and handler access SHALL NOT start refresh work; API shutdown SHALL cancel outstanding refresh work and await its termination. Metrics without a configured URL SHALL remain disabled and SHALL NOT affect readiness. Registry reindex timing SHALL remain independent.
 
 #### Scenario: Existing configuration uses defaults independently of reindexing
 
@@ -489,6 +489,11 @@ Marketplace operator configuration SHALL accept optional `installation_metrics.r
 - **WHEN** an operator supplies valid installation metrics duration overrides, including maximum staleness and explicit zero jitter
 - **THEN** refresh scheduling, failure retry, snapshot expiry, maximum staleness, and backend timeout SHALL use those overrides
 - **AND** explicit zero jitter SHALL disable additional scheduling delay
+
+#### Scenario: Omitted max_stale follows a longer max_age
+
+- **WHEN** an operator sets `installation_metrics.max_age` above twenty-four hours and omits `installation_metrics.max_stale`
+- **THEN** configuration SHALL be accepted and maximum staleness SHALL equal the configured maximum age
 
 #### Scenario: Invalid timing configuration is rejected
 
