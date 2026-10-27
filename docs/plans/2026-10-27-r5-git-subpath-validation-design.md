@@ -63,3 +63,12 @@ before every push and handoff. Follow actionable CodeRabbit and Gemini
 feedback. Ignore major-release commentary, not compatibility defects.
 Leave the clean PR open, unqueued, with auto-merge disabled. R53, R5,
 and #765 remain partial.
+
+## Integrated Verification
+
+Integrate main's approved HTTPS fallback at `98498eff` without rewriting
+history. Its changed packages are outside the actual config test
+dependency graph, and config/module/benchmark inputs remain unchanged.
+Retain all 228 observations on their original `47be33f6` base.
+Refresh config/cache/pipeline/resolver/TUI validation, specs, terminal QA,
+and combined E2E after integration; retain earlier results separately.

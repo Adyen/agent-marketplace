@@ -154,14 +154,22 @@ requirements, zero gaps, all three required refusal witnesses
 executed and passed, plus shellcheck. CI owns the full root suite;
 these scoped package results are not a full-suite claim.
 
-Main subsequently adds approved HTTPS-fallback work at `98498eff`.
-Its changed production packages are absent from the config test
-dependency graph, and no measured config/module/definition inputs
-change. Keep the measurements tied to `47be33f6`; refresh affected
-consumer gates after integration rather than relabeling old gates.
+Main subsequently adds approved HTTPS-fallback work at `98498eff`,
+integrated by a normal merge. Its changed production packages are
+absent from the actual `go list -deps -test ./internal/config` graph,
+and no measured config/module/definition inputs change. Keep the
+measurements tied to `47be33f6`; do not relabel old gates.
+
+Fresh integrated config/cache/pipeline/resolver/TUI validation passes
+with whole-root vet, zero-issue lint, and build. Strict specs pass
+with 68 items, 1,294 scenarios, 2,118 annotations, and two active
+changes. All 85 terminal journeys plus four utilities pass with zero
+skips. Integrated E2E passes in 957.487 seconds: 3,508 invocations,
+all 114 requirements, zero gaps, all three required refusal witnesses
+executed and passed, plus shellcheck.
 
 Host adversarial `open-code-review-delegate` covers all nine own
 files, including default-excluded tests/docs/raw data and private
-measurement/control/verification harnesses. The initial review accounts
+measurement/control/verification harnesses. Review accounts
 for all 228 observations with zero skipped files and no actionable
 findings. Repeat review before push and handoff.
