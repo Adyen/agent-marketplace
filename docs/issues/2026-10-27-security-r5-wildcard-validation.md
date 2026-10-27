@@ -2,10 +2,12 @@
 
 ## Disposition
 
-Partial R53/F136 work under #765, based on main
+Partial R53/F136 work under #765, initially based on main
 `bdb3bac4b95c0a7b0b49957253b7438555940bef`. That base already includes
 #958's independent exact-locator parsing optimization. No new admission
-policy, syntax, limits, dependencies, or user decision.
+policy, syntax, limits, dependencies, or user decision. The later
+`27c8d6fa` integration has a separate paired matrix because it changes
+Marketplace service packages in the config runtime dependency graph.
 
 Replace temporary `strings.Split` slices in the bounded-wildcard branches
 of `validateV4Exclusion` and `validateV4ExclusionForSource` with `Cut` and
@@ -48,7 +50,7 @@ and a retained command. These cases time YAML parsing and normalization,
 not acquisition, config reads, or directory path-metadata operations.
 Direct checks have no filesystem or network work.
 
-### Public Results
+### Original-Base Public Results
 
 | Shape, 1,024 exclusions | Before allocations | After allocations | Bytes saved |
 | --- | ---: | ---: | ---: |
@@ -68,7 +70,7 @@ point estimates. The qualified required 256 case is nominally 4.56%
 faster (p=0.041), a weak isolated signal across the matrix, not a headline.
 Other public timing differences are not significant.
 
-### Direct Checks And Controls
+### Original-Base Direct Checks And Controls
 
 Valid kind/registry checks drop from 16 bytes/one allocation to zero.
 Qualified and long-registry checks drop from 32 bytes/one allocation to
@@ -86,10 +88,77 @@ allocations are unchanged.
 Do not headline a geomean, infer full CLI/acquisition latency, pool
 unrelated datasets, claim a universal speed-up, or close R53/R5.
 
+### Integrated Runtime-Dependency Base
+
+Main `27c8d6fafada0376b6d466b55dd231c4dfe40e5f` changes Marketplace
+installation metrics. Both `pkg/marketplace/api` and
+`pkg/marketplace/config` are actual config runtime dependencies, not
+merely test dependencies. Refresh the entire 33-case paired matrix
+instead of treating the old binary inputs as unchanged.
+
+`integrated/` retains another six alternating one-second pairs: 396
+observations on that base, independently compiled and fingerprinted.
+Both compiled variants pass all preservation/public/editor tests.
+Before production matches `git show 27c8d6fa:internal/config/v4.go`;
+after remains the same delivered Cut implementation. Test and benchmark
+definitions remain identical to the original matrix.
+
+The allocation result persists: at 1,024 exclusions, both qualified and
+registry public parsing save 2,048 allocations, from 20,492 to 18,444
+(-9.99%), about 64 KiB and 32 KiB respectively. Optional cases save
+the same allocations. At 256 exclusions the saving remains 512; at one
+exclusion it remains two.
+
+All twelve public timing comparisons are nonsignificant. The 1,024
+qualified required case is 7.688 to 7.601 ms (p=0.394), qualified
+optional is 30.88 to 30.56 ms (p=0.310), registry required is 7.663 to
+7.669 ms (p=1.000), and registry optional is 30.50 to 30.58 ms
+(p=0.818). No public-path latency claim.
+
+Adapter controls show no significant timing change and unchanged
+allocation counts. Whole-wildcard controls are nonsignificant. The
+unchanged general exact-locator control is nominally 1.19% faster
+(p=0.026), a weak isolated signal, not an exact-parser optimization
+claim; the source-specific exact control is nonsignificant. Preserve
+all observations, including noisy refusal measurements.
+
+### Rejected Gemini Eager-Lookup Proposal
+
+Gemini proposes hoisting `_, isKind := v4Kinds[first]` before the
+source-kind branch and reusing its result instead of the anonymous
+lookup and the Marketplace single-component lookup. Those existing
+branches are mutually exclusive: neither path repeats that first-kind
+lookup. Hoisting it adds a lookup to qualified wildcard validation.
+
+Measure the exact proposal on published head
+`038c62fb83441931bc21560c36498afeb0b40071`, before the service
+integration. `lookup-probe/` retains ten alternating one-second pairs
+over six source-validator shapes: 120 observations. Both variants pass
+preservation tests, and no production/test/benchmark source changes
+are adopted.
+
+| Source-validator shape | Delivered | Eager proposal | Comparison |
+| --- | ---: | ---: | --- |
+| Qualified wildcard | 79.38 ns | 87.02 ns | +9.63%, p<0.001 |
+| Extra slash | 91.72 ns | 97.56 ns | +6.37%, p=0.003 |
+| Invalid kind | 145.6 ns | 151.1 ns | +3.78%, p=0.001 |
+
+Kind, registry, and long-registry timing comparisons are nonsignificant.
+All six cases have unchanged byte and allocation counts. Reject the
+proposal based on these measured costs, not a universal slowdown or
+public-latency claim.
+
+Reconstruct its before source from the published head. For after, add
+`_, isKind := v4Kinds[first]` immediately after the source-specific
+`Cut`; replace the sole anonymous `!ok` lookup with `!isKind`; replace
+the Marketplace `if _, isKind := v4Kinds[first]; isKind` with
+`if isKind`. All other source inputs remain identical.
+
 ## Reproduction And Provenance
 
 Raw `before.txt`, `after.txt`, `benchstat.txt`, and `manifest.json` are in
-`security-r5-wildcard-validation-2026-10-27/`. The manifest records base,
+`security-r5-wildcard-validation-2026-10-27/` and its `integrated/` and
+`lookup-probe/` subdirectories. Each manifest records its own base,
 Go version, every config-package Go input and module-file SHA-256,
 frozen binary SHA-256, benchmark arguments/names, ordered trials, and
 each trial's complete stdout hash.
@@ -116,7 +185,15 @@ outside `b.Loop`. Baseline allocation profiling uses the required
 1,024 registry-wildcard subbenchmark with `-test.memprofile` and
 `go tool pprof -alloc_objects -list=validateV4Exclusion`.
 Profile timings and the one-iteration fixture smoke are not evidence
-rows in the paired dataset.
+rows in the paired dataset. For the rejected proposal, restrict the
+benchmark to source variants of kind, registry, qualified, long-registry,
+extra-slash, and invalid-kind shapes; use ten pairs rather than six.
+
+All 912 observations are accounted for as three distinct datasets:
+396 original-base, 396 integrated-base, and 120 rejected-proposal.
+Never pool them, relabel their bases, or add their allocation deltas.
+The Git base pins other runtime dependency source; config-package and
+module-file hashes do not claim to enumerate every transitive source.
 
 ## Preservation And Negative Controls
 
@@ -175,9 +252,18 @@ all measured config/module inputs and definitions remain unchanged.
 Retain the original benchmark base and earlier gate results rather than
 relabeling them as this later integration run.
 
-Host adversarial `open-code-review-delegate` covers all nine own files,
+After integrating `27c8d6fa` and refreshing the paired measurements,
+fresh selected config/pipeline/resolver/telemetry/TUI and Marketplace
+API/config validation passes, with vet, zero-issue lint, and build.
+Strict specs pass with 68 items, 1,281 scenarios, 2,098 annotations,
+and two active changes. All 81 terminal journeys plus four utilities
+pass with zero skips. Fresh combined E2E passes in 728.205 seconds:
+3,502 invocations, all 114 requirements, zero gaps, all three required
+refusal witnesses executed and passed, plus shellcheck.
+
+Host adversarial `open-code-review-delegate` covers all seventeen own files,
 including default-excluded tests/docs/raw data and private harnesses.
-Verify all 396 observations, source reconstruction, unit/flag/sample
+Verify all 912 observations, source reconstruction, unit/flag/sample
 counts, and source/binary/trial/benchstat identities before every push
 and handoff.
 

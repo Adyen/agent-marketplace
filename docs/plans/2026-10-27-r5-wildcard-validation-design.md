@@ -55,6 +55,27 @@ unfavorable controls rather than selectively dropping observations.
 Do not claim limits, global scaling closure, or compounded savings with
 earlier R5 slices.
 
+### Follow-Up Bases And Counterfactual
+
+Integrate main's already-decided changes without rewriting history.
+The diagnostic-consent change on `aa21ea03` does not alter measured
+dependencies. The subsequent installation-metrics change on `27c8d6fa`
+does: Marketplace API/config packages are config runtime dependencies.
+Repeat the full 33-case, six-pair matrix on that base; retain its 396
+rows separately rather than relabeling the original 396.
+
+Measure Gemini's proposed eager first-kind lookup privately on published
+head `038c62fb`, using ten pairs over six source-validator shapes.
+Retain all 120 proposal observations. Both branches of the current
+lookup are mutually exclusive; reject the eager alternative when the
+measurements show added qualified/refusal costs with no allocation win.
+Do not mix those timings with the delivered-change matrices.
+
+The three datasets total 912 observations across seventeen own files.
+Verify their distinct Git bases, frozen definitions, complete raw rows,
+source/binary/trial hashes, and byte-exact benchstat output. Refresh
+consumer gates after integrating the changed runtime dependencies.
+
 ## Preservation
 
 Freeze both former split-based validators as independent parsing oracles.
