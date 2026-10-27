@@ -44,6 +44,6 @@
 ## 7. Verification and delivery
 
 - [x] 7.1 `go run ./tools/specaudit trace` and `make spec-check` pass with every new scenario bound.
-- [ ] 7.2 `make validate`, `make validate-e2e`, and `make tui-qa` pass; `go run ./tools/specaudit gate -base origin/main -head HEAD` passes.
+- [x] 7.2 `make validate` and the final fresh `make validate-full` pass, including witnessed root tests, E2E/configuration compatibility, lint/build, shellcheck and all 86 terminal journeys; committed `specaudit gate` passes.
 - [x] 7.3 Run the `open-code-review-delegate` review and address findings.
-- [ ] 7.4 `openspec archive honor-claude-config-dir --yes` as the final commit of the pull request.
+- [x] 7.4 Archive `honor-claude-config-dir` and publish its canonical specifications in the final commit of the pull request.
