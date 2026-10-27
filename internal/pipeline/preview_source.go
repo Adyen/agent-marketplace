@@ -47,6 +47,7 @@ func PreviewSource(ctx context.Context, ws Workspace, rawURL, ref, path string) 
 		return preview, err
 	}
 
+	webURL := rawURL
 	rawURL, ref, path, _ = ResolveFromURL(rawURL, ref, path)
 	preview.URL, preview.Ref, preview.Path = rawURL, ref, path
 	entry := config.RegistryEntry{URL: rawURL, Ref: ref, Path: path}
@@ -65,12 +66,23 @@ func PreviewSource(ctx context.Context, ws Workspace, rawURL, ref, path string) 
 	if err := config.ValidateRegistryPath(entry.Path); err != nil {
 		return preview, &SourceRejectedError{Err: err}
 	}
+	// Like install --from: reuse a configured form of a web URL, otherwise use
+	// anonymous HTTPS when SSH cannot reach it.
+	choice := SelectAdHocTransport(ctx, intentRegistries(intent), config.SourceUnset, webURL, rawURL, path, ref, RegistryURLPolicy(entry, intent.AllowedRegistries()))
+	if notice := choice.Notice("using"); notice != "" {
+		preview.Warnings = append(preview.Warnings, errors.New(notice))
+	}
+	rawURL = choice.URL
+	entry.URL, preview.URL = rawURL, rawURL
 
 	advertised := ""
 	if !entry.IsLocal() && ref == "" {
-		defaultBranch, commit, err := cache.RemoteDefaultBranch(rawURL)
-		if err != nil {
-			return preview, err
+		defaultBranch, commit := choice.DefaultBranch, choice.Commit
+		if defaultBranch == "" || commit == "" {
+			var err error
+			if defaultBranch, commit, err = cache.RemoteDefaultBranch(rawURL); err != nil {
+				return preview, err
+			}
 		}
 		ref, advertised = defaultBranch, commit
 		entry.Ref = ref

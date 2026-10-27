@@ -119,12 +119,34 @@ func RemoteDefaultBranch(url string) (branch, commit string, err error) {
 	if url == "" {
 		return "", "", errors.New("registry url is required")
 	}
-
 	output, err := runGitOutput("", "ls-remote", "--symref", url, "HEAD")
 	if err != nil {
 		return "", "", fmt.Errorf("determine default branch for registry %q: %w", redactSecrets(url), err)
 	}
+	return advertisedDefaultBranch(output)
+}
 
+// ProbeDefaultBranch is DefaultBranch with every Git credential helper
+// disabled, including helpers from the current directory's repository
+// configuration. A transport reachability probe uses it so that a helper
+// cannot make a repository look anonymously reachable.
+func ProbeDefaultBranch(ctx context.Context, url string) (branch, commit string, err error) {
+	url = strings.TrimSpace(url)
+	if url == "" {
+		return "", "", errors.New("registry url is required")
+	}
+	if err := validateGitURL(url); err != nil {
+		return "", "", err
+	}
+	output, err := runGitRawOutputContext(ctx, "", []string{"-c", "credential.helper=", "ls-remote", "--symref", "--", url, "HEAD"}, time.Now())
+	if err != nil {
+		return "", "", fmt.Errorf("probe default branch for registry %q: %w", redactSecrets(url), err)
+	}
+	return advertisedDefaultBranch(output)
+}
+
+// advertisedDefaultBranch parses `git ls-remote --symref <url> HEAD` output.
+func advertisedDefaultBranch(output string) (branch, commit string, err error) {
 	for _, line := range strings.Split(output, "\n") {
 		fields := strings.Fields(line)
 		switch {
@@ -322,10 +344,14 @@ func prepareGitArgs(repoDir string, args []string) ([]string, error) {
 }
 
 func runGitRawOutput(repoDir string, safeArgs []string, start time.Time) (string, error) {
+	return runGitRawOutputContext(context.Background(), repoDir, safeArgs, start)
+}
+
+func runGitRawOutputContext(ctx context.Context, repoDir string, safeArgs []string, start time.Time) (string, error) {
 	redactedSafe := redactArgs(safeArgs)
 	slog.Debug("git command start", "dir", repoDir, "args", redactedSafe)
 
-	output, err := execGit(repoDir, safeArgs)
+	output, err := execGitContext(ctx, repoDir, safeArgs)
 
 	if err == nil {
 		slog.Debug("git command end", "dir", repoDir, "args", redactedSafe, "duration_ms", time.Since(start).Milliseconds(), "success", true)

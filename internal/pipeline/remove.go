@@ -1361,6 +1361,7 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	}
 
 	// Resolve web URLs into git URL + ref + path. Explicit flags win.
+	rawFromURL := fromURL
 	resolvedURL, resolvedRef, resolvedPath, _ := ResolveFromURL(fromURL, opts.FromRef, opts.FromPath)
 	fromURL = resolvedURL
 	fromRef := resolvedRef
@@ -1416,6 +1417,8 @@ func removeFromAdHoc(ctx context.Context, opts RemoveOptions, fromURL string) (*
 	if err != nil {
 		return nil, err
 	}
+	// install --from may have stored the HTTPS fallback of a web URL.
+	fromURL = configuredWebURLForm(cfg, mergedCfg, scopeToConfigSource(opts.Scope), rawFromURL, fromURL, fromPath, fromRef)
 	localDir := adHocLocalDirectory(syntheticEntry, repoRoot)
 	mergedEntry, entryInMerged, err := selectAdHocRegistryEntry(mergedCfg, fromURL, fromPath, fromRef, localDir)
 	if err != nil {
