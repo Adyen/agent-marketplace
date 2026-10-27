@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
 )
 
 type compatibilityNative struct {
@@ -80,6 +82,143 @@ func (p compatibilityNativeProbe) observe(command *compatibilityCommand, e *Env,
 		return requireCompatibilityProtocolInventory(command, e, f, p, scope, paths, absent)
 	}
 	return requireCompatibilityObservation(command, absent, p.names...)
+}
+
+func observeClaudePluginAbsent(e *Env, binary string, f compatibilityFixture, row *compatibilityResult, scope, plugin, skill string) error {
+	commands, found, _, err := claudePluginList(e, binary, plugin+"@")
+	row.Commands = append(row.Commands, commands...)
+	if err != nil {
+		return err
+	}
+	if found {
+		return fmt.Errorf("Claude plugin negative control already listed %s", plugin)
+	}
+	command := runCompatibilityProtocol(e, binary, "claude-initialize", 30*time.Second)
+	probe := compatibilityNativeProbe{kind: "skill", protocol: "claude-initialize", names: []string{plugin + ":" + skill}}
+	if err := requireCompatibilityProtocolInventory(&command, e, f, probe, scope, nil, true); err != nil {
+		return err
+	}
+	row.Commands = append(row.Commands, command)
+	return nil
+}
+
+func observeClaudePluginEnabled(e *Env, binary string, f compatibilityFixture, row *compatibilityResult, scope, plugin, skill string) error {
+	relative := "/workspace/.claude/settings.local.json"
+	if scope == "user" {
+		relative = "/root/.claude/settings.json"
+	}
+	settingsPath, err := e.resolvePath(relative)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return fmt.Errorf("read Claude native plugin registration: %w", err)
+	}
+	document, err := jsonc.Parse(settingsPath, data)
+	if err != nil {
+		return err
+	}
+	enabled, ok := document.Root().Member("enabledPlugins")
+	if !ok {
+		return fmt.Errorf("Claude plugin registration has no enabledPlugins")
+	}
+	pluginID := ""
+	for _, key := range enabled.Keys() {
+		value, _ := enabled.Member(key)
+		if strings.HasPrefix(key, plugin+"@") && string(value.Raw()) == "true" {
+			pluginID = key
+			break
+		}
+	}
+	if pluginID == "" {
+		return fmt.Errorf("Claude plugin registration is not enabled for %s", plugin)
+	}
+	commands, found, active, err := claudePluginList(e, binary, pluginID)
+	row.Commands = append(row.Commands, commands...)
+	if err != nil {
+		return err
+	}
+	if !found || !active {
+		return fmt.Errorf("claude plugin list did not report %s enabled", pluginID)
+	}
+	command := runCompatibilityProtocol(e, binary, "claude-initialize", 30*time.Second)
+	probe := compatibilityNativeProbe{kind: "skill", protocol: "claude-initialize", names: []string{plugin + ":" + skill}}
+	if err := requireCompatibilityProtocolInventory(&command, e, f, probe, scope, nil, false); err != nil {
+		return err
+	}
+	row.Commands = append(row.Commands, command)
+	row.Status = "native-verified"
+	row.Reason = "Claude plugin list and initialize inventory confirmed the native plugin and namespaced skill"
+	return nil
+}
+
+func claudePluginList(e *Env, binary, match string) ([]compatibilityCommand, bool, bool, error) {
+	jsonCommand := runCompatibilityCommand(e, binary, []string{"plugin", "list", "--json"}, 20*time.Second)
+	if jsonCommand.Error == "" {
+		if present, enabled, valid := claudePluginJSONState(jsonCommand.output, match); valid {
+			return []compatibilityCommand{jsonCommand}, present, enabled, nil
+		}
+	}
+	textCommand := runCompatibilityCommand(e, binary, []string{"plugin", "list"}, 20*time.Second)
+	if textCommand.Error != "" {
+		return []compatibilityCommand{jsonCommand, textCommand}, false, false, fmt.Errorf("Claude plugin list failed: %s", textCommand.Error)
+	}
+	present, enabled := false, false
+	for _, line := range strings.Split(textCommand.output, "\n") {
+		if !strings.Contains(line, match) {
+			continue
+		}
+		present = true
+		lower := strings.ToLower(line)
+		enabled = enabled || strings.Contains(lower, "enabled") && !strings.Contains(lower, "disabled")
+	}
+	return []compatibilityCommand{jsonCommand, textCommand}, present, enabled, nil
+}
+
+func claudePluginJSONState(raw, match string) (bool, bool, bool) {
+	var value any
+	if json.Unmarshal([]byte(raw), &value) != nil {
+		return false, false, false
+	}
+	present, enabled := false, false
+	var visit func(any)
+	visit = func(current any) {
+		switch item := current.(type) {
+		case map[string]any:
+			identity := ""
+			for _, key := range []string{"name", "id", "plugin"} {
+				if candidate, ok := item[key].(string); ok && candidate != "" {
+					identity = candidate
+					break
+				}
+			}
+			if identity != "" && (identity == match || strings.HasPrefix(identity, match)) {
+				present = true
+				if state, ok := item["enabled"].(bool); ok {
+					enabled = enabled || state
+				}
+				if state, ok := item["status"].(string); ok && strings.EqualFold(state, "enabled") {
+					enabled = true
+				}
+			}
+			for key, child := range item {
+				if key == match || strings.HasPrefix(key, match) {
+					present = true
+					if state, ok := child.(bool); ok {
+						enabled = enabled || state
+					}
+				}
+				visit(child)
+			}
+		case []any:
+			for _, child := range item {
+				visit(child)
+			}
+		}
+	}
+	visit(value)
+	return present, enabled, value != nil
 }
 
 func prepareCompatibilityNative(e *Env, f compatibilityFixture, row *compatibilityResult, mode, reason, expectedVersion string) *compatibilityNative {

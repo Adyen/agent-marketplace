@@ -196,9 +196,11 @@ func nativeHookJSONLayout(key outputKey, repoRoot string) (harness.Destination, 
 		return harness.Destination{}, ownedJSONFileSpec{}, fmt.Errorf("target %s has no unique native hook destination", key.target)
 	}
 	var registrationContainers []string
-	if registration, ok := targetmeta.NativePluginRegistration(targetmeta.Target(key.target)); ok &&
-		registration.Shape == targetmeta.NativeRegistrationClaudeSettings && registration.Path == artifactPath {
-		registrationContainers = []string{"enabledPlugins", "extraKnownMarketplaces"}
+	if registration, ok := targetmeta.NativePluginRegistration(targetmeta.Target(key.target), key.machineScope); ok &&
+		registration.Shape == targetmeta.NativeRegistrationClaudeSettings {
+		if registration.Path == artifactPath || !key.machineScope && artifactPath == "settings.json" {
+			registrationContainers = []string{"enabledPlugins", "extraKnownMarketplaces"}
+		}
 	}
 	return destination, ownedJSONFileSpec{
 		rel:                       rel,
@@ -271,7 +273,14 @@ func reconcileNativeHookJSON(ctx context.Context, report *Report, key outputKey,
 		}
 	}
 	file.rawValueDigest = options.rawValueDigest
-	return reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, []ownedJSONFileSpec{file}, work, options, dryRun)
+	files := []ownedJSONFileSpec{file}
+	if registration, ok := targetmeta.NativePluginRegistration(targetmeta.Target(key.target), key.machineScope); ok &&
+		registration.Shape == targetmeta.NativeRegistrationClaudeSettings && registration.Path != file.rel {
+		files = append(files, ownedJSONFileSpec{
+			rel: registration.Path, additionalKeyedContainers: []string{"enabledPlugins", "extraKnownMarketplaces"},
+		})
+	}
+	return reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, files, work, options, dryRun)
 }
 
 func nativeHookSharesAggregateRoute(key outputKey, repoRoot string) ([]harness.AggregateRoute, bool) {

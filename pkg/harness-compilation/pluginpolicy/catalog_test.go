@@ -78,14 +78,14 @@ func loadAllFormats(t *testing.T, formats map[string]string, harness string, pro
 
 // spec: plugin-policy-catalogs/every-harness-target-and-package-format-ships-a-plugin-catalog
 func TestShippedCatalogsValidate(t *testing.T) {
-	if err := ValidateCatalogs(nil); err != nil {
+	if err := ValidateCatalogs([]string{ClaudeNativePluginProbeID}); err != nil {
 		t.Fatal(err)
 	}
 }
 
 // spec: plugin-policy-catalogs/every-harness-target-and-package-format-ships-a-plugin-catalog
 func TestEveryTargetShipsACatalog(t *testing.T) {
-	r, err := loadCatalogs(catalogFiles, "formats/*.yaml", "catalogs/*.yaml", nil)
+	r, err := loadCatalogs(catalogFiles, "formats/*.yaml", "catalogs/*.yaml", []string{ClaudeNativePluginProbeID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestEveryTargetShipsACatalog(t *testing.T) {
 
 // spec: plugin-policy-catalogs/every-harness-target-and-package-format-ships-a-plugin-catalog
 func TestDecomposeDeliveryVerifiedEverywhere(t *testing.T) {
-	r, err := loadCatalogs(catalogFiles, "formats/*.yaml", "catalogs/*.yaml", nil)
+	r, err := loadCatalogs(catalogFiles, "formats/*.yaml", "catalogs/*.yaml", []string{ClaudeNativePluginProbeID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,9 +129,32 @@ func TestDecomposeDeliveryVerifiedEverywhere(t *testing.T) {
 		if c.Delivery.Decompose.Status != DeliveryVerified {
 			t.Fatalf("%s decompose status = %q, want verified", tg, c.Delivery.Decompose.Status)
 		}
+		if tg == target.TargetClaude {
+			if c.Delivery.Native.Status != DeliveryVerified || c.Delivery.Native.Format != "claude-plugin" || c.Delivery.Native.Probe != "claude-native-plugin" {
+				t.Fatalf("Claude native delivery = %+v, want verified claude-plugin with claude-native-plugin", c.Delivery.Native)
+			}
+			continue
+		}
 		if c.Delivery.Native.Status != DeliveryUnverified {
 			t.Fatalf("%s native status = %q, want unverified", tg, c.Delivery.Native.Status)
 		}
+	}
+}
+
+// spec: plugin-policy-catalogs/shipped-claude-catalog-delivers-claude-plugin-packages-natively
+func TestClaudeNativeDeliveryCatalogRequiresItsDefinedProbe(t *testing.T) {
+	if err := ValidateCatalogs([]string{ClaudeNativePluginProbeID}); err != nil {
+		t.Fatalf("Claude catalog rejected its defined probe: %v", err)
+	}
+	policy, err := LookupNativeDelivery(target.TargetClaude)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.Status != DeliveryVerified || policy.Format != "claude-plugin" || policy.Probe != "claude-native-plugin" {
+		t.Fatalf("Claude native delivery policy = %+v, want verified claude-plugin with claude-native-plugin", policy)
+	}
+	if err := ValidateCatalogs(nil); err == nil || !strings.Contains(err.Error(), ClaudeNativePluginProbeID) {
+		t.Fatalf("catalog validation without native probe = %v, want undefined-probe failure", err)
 	}
 }
 

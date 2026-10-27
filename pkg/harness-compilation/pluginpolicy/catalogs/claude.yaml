@@ -2,10 +2,10 @@
 schema: 1
 harness: claude
 evidence:
-  checked: "2026-10-15"
+  checked: "2026-10-26"
   refs:
-    - https://code.claude.com/docs/en/plugins/manifest-reference
     - https://code.claude.com/docs/en/plugin-marketplaces
+    - https://code.claude.com/docs/en/settings
 accepts: [claude-plugin, agent-plugin]
 surfaces:
   plugin:
@@ -13,5 +13,5 @@ surfaces:
       permissionMode: {block-member: true, code: plugin.member.restriction-unsupported}
 delivery:
   decompose: {status: verified}
-  native: {status: unverified}
+  native: {status: verified, format: claude-plugin, probe: claude-native-plugin}
 root_token: plugin_root

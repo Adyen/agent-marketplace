@@ -173,6 +173,12 @@ const (
 )
 
 type NativeRegistration struct {
+	Project string
+	User    string
+	Shape   NativeRegistrationShape
+}
+
+type NativeRegistrationFile struct {
 	Path  string
 	Shape NativeRegistrationShape
 }
@@ -206,7 +212,7 @@ var nativeLayouts = map[Target]NativeLayout{
 					User:    NativeAggregateFile{Path: ".mcp.json", Member: "mcpServers"},
 				},
 			},
-			Registrations: []NativeRegistration{{Path: "settings.json", Shape: NativeRegistrationClaudeSettings}},
+			Registrations: []NativeRegistration{{Project: "settings.local.json", User: "settings.json", Shape: NativeRegistrationClaudeSettings}},
 		},
 	}},
 	TargetFactory: {Partitions: []NativePartition{
@@ -396,7 +402,7 @@ var nativeLayouts = map[Target]NativeLayout{
 					User:    NativeAggregateFile{Path: "config.toml", Member: "mcp_servers"},
 				},
 			},
-			Registrations: []NativeRegistration{{Path: "config.toml", Shape: NativeRegistrationCodexConfig}},
+			Registrations: []NativeRegistration{{Project: "config.toml", User: "config.toml", Shape: NativeRegistrationCodexConfig}},
 		},
 	}},
 }
@@ -441,18 +447,31 @@ func LookupNativeLayout(target Target) (NativeLayout, bool) {
 	return cloned, true
 }
 
-func NativePluginRegistration(target Target) (NativeRegistration, bool) {
+func NativePluginRegistration(target Target, machineScope bool) (NativeRegistrationFile, bool) {
 	layout, ok := nativeLayouts[target]
 	if !ok {
-		return NativeRegistration{}, false
+		return NativeRegistrationFile{}, false
 	}
+	var selected NativeRegistrationFile
+	found := false
 	for _, partition := range layout.Partitions {
 		for _, registration := range partition.Registrations {
-			registration.Path = path.Join(partition.Prefix, registration.Path)
-			return registration, true
+			registeredPath := registration.Project
+			if machineScope {
+				registeredPath = registration.User
+			}
+			selected = NativeRegistrationFile{
+				Path:  path.Join(partition.Prefix, registeredPath),
+				Shape: registration.Shape,
+			}
+			found = true
+			break
+		}
+		if found {
+			break
 		}
 	}
-	return NativeRegistration{}, false
+	return selected, found
 }
 
 // NativeResourcePattern returns the scope-neutral path pattern the target
@@ -647,22 +666,27 @@ func ValidateNativeLayout(t Target, layout NativeLayout) error {
 		}
 		errs = append(errs, validatePartitionContent(t, partition, resourceKinds, aggregateKinds)...)
 		for _, registration := range partition.Registrations {
-			fullPath := path.Join(partition.Prefix, registration.Path)
 			validShape := registration.Shape == NativeRegistrationClaudeSettings && t == TargetClaude ||
 				registration.Shape == NativeRegistrationCodexConfig && t == TargetCodex
-			if !fs.ValidPath(registration.Path) || registration.Path == "." || !validShape {
-				errs = append(errs, fmt.Errorf("target %q partition %q declares an invalid plugin registration %q", t, partition.ID, registration.Path))
-				continue
-			}
-			for _, component := range partition.Components {
-				if fullPath == path.Join(partition.Prefix, component) || isPathPrefix(fullPath, path.Join(partition.Prefix, component)) {
-					errs = append(errs, fmt.Errorf("target %q plugin registration path %q collides with component %q", t, fullPath, component))
+			for _, scopedPath := range []struct{ scope, path string }{
+				{scope: "project", path: registration.Project},
+				{scope: "user", path: registration.User},
+			} {
+				if !fs.ValidPath(scopedPath.path) || scopedPath.path == "." || !validShape {
+					errs = append(errs, fmt.Errorf("target %q partition %q declares an invalid %s plugin registration %q", t, partition.ID, scopedPath.scope, scopedPath.path))
+					continue
 				}
-			}
-			for kind, pattern := range partition.ResourcePaths {
-				resourcePath := path.Join(partition.Prefix, strings.Replace(pattern, "%s", "name", 1))
-				if fullPath == resourcePath {
-					errs = append(errs, fmt.Errorf("target %q plugin registration path %q collides with %s resources", t, fullPath, kind))
+				fullPath := path.Join(partition.Prefix, scopedPath.path)
+				for _, component := range partition.Components {
+					if fullPath == path.Join(partition.Prefix, component) || isPathPrefix(fullPath, path.Join(partition.Prefix, component)) {
+						errs = append(errs, fmt.Errorf("target %q plugin registration path %q collides with component %q", t, fullPath, component))
+					}
+				}
+				for kind, pattern := range partition.ResourcePaths {
+					resourcePath := path.Join(partition.Prefix, strings.Replace(pattern, "%s", "name", 1))
+					if fullPath == resourcePath {
+						errs = append(errs, fmt.Errorf("target %q plugin registration path %q collides with %s resources", t, fullPath, kind))
+					}
 				}
 			}
 		}

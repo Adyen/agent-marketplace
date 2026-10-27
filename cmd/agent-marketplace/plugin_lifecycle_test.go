@@ -128,8 +128,8 @@ func TestInspectPluginShowsUnverifiedNativeDeliveryBlocked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("inspect native plugin: %v\n%s", err, output)
 	}
-	if !strings.Contains(output, "claude: blocked (plugin.delivery.native-unverified)") {
-		t.Fatalf("inspect must report the native delivery refusal for Claude:\n%s", output)
+	if !strings.Contains(output, "claude: native") || !strings.Contains(output, "factory: blocked (plugin.delivery.native-unverified)") {
+		t.Fatalf("inspect must report Claude native delivery and the unverified Factory refusal:\n%s", output)
 	}
 }
 
@@ -152,6 +152,7 @@ func TestInstallPluginWritesRequestAndSyncsIt(t *testing.T) {
 		return
 	}
 	repo, run := pluginCommandFixture(t, "    include: []\n")
+	writeConfig(t, filepath.Join(filepath.Dir(repo), "home", ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [cursor]\n")
 
 	output, err := run("install", "plugin/review-kit")
 	if err != nil {
@@ -164,7 +165,7 @@ func TestInstallPluginWritesRequestAndSyncsIt(t *testing.T) {
 	if !strings.Contains(string(configBytes), "plugin/review-kit") {
 		t.Fatalf("install did not write a plugin request:\n%s", configBytes)
 	}
-	member := filepath.Join(repo, ".claude", "skills", "review-kit-review", "SKILL.md")
+	member := filepath.Join(repo, ".cursor", "skills", "review-kit-review", "SKILL.md")
 	if _, err := os.Stat(member); err != nil {
 		t.Fatalf("install did not sync the plugin member: %v\n%s", err, output)
 	}
@@ -201,6 +202,7 @@ func TestRemovePluginKeepsCollectionSelectedPluginUntilCollectionRemoval(t *test
 	}
 	root := pluginLockFixture(t)
 	repo := filepath.Join(root, "repo")
+	writeConfig(t, filepath.Join(root, "home", ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [cursor]\n")
 	catalogOrigin, catalogWorking := createBareRepoWithWorkingClone(t, "plugin-catalog.git")
 	writeCatalogRepo(t, catalogWorking, "")
 	commitAndPushAll(t, catalogWorking, "seed plugin")
@@ -217,7 +219,7 @@ func TestRemovePluginKeepsCollectionSelectedPluginUntilCollectionRemoval(t *test
 	if output, err := executeCommand("sync", "--no-backup"); err != nil {
 		t.Fatalf("initial plugin sync failed: %v\n%s", err, output)
 	}
-	member := filepath.Join(repo, ".claude", "skills", "local-kit-local-skill", "SKILL.md")
+	member := filepath.Join(repo, ".cursor", "skills", "local-kit-local-skill", "SKILL.md")
 	if _, err := os.Stat(member); err != nil {
 		t.Fatalf("initial plugin member missing: %v", err)
 	}
@@ -248,7 +250,7 @@ func TestUpdateAndSyncCheckAcceptPluginSelections(t *testing.T) {
 	commitAndPushAll(t, catalogWorking, "seed plugin")
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"),
 		"apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {git: file://"+
-			filepath.ToSlash(catalogOrigin)+", ref: main, format: claude-marketplace}\nresources:\n  team:\n    - plugin/local-kit\n")
+			filepath.ToSlash(catalogOrigin)+", ref: main, format: claude-marketplace}\nresources:\n  team:\n    - {kind: plugin, name: local-kit, delivery: decompose}\n")
 	withWorkingDir(t, repo)
 	if output, err := executeCommand("sync", "--no-backup"); err != nil {
 		t.Fatalf("plugin sync failed: %v\n%s", err, output)
@@ -349,7 +351,7 @@ func TestPluginWithDependenciesIsInspectableButNotInstalled(t *testing.T) {
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"),
 		"apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {directory: "+
 			filepath.ToSlash(catalogDir)+", format: claude-marketplace}\n  loose: {directory: "+
-			filepath.ToSlash(looseDir)+"}\nresources:\n  team:\n    - plugin/review-kit\n    - plugin/good-kit\n  loose:\n    - skill/tooling\n")
+			filepath.ToSlash(looseDir)+"}\nresources:\n  team:\n    - {kind: plugin, name: review-kit, delivery: decompose}\n    - {kind: plugin, name: good-kit, delivery: decompose}\n  loose:\n    - skill/tooling\n")
 	withWorkingDir(t, repo)
 
 	inspection, err := run("inspect", "plugin/review-kit")

@@ -16,7 +16,7 @@ const e2ePluginCatalogEnv = "AGENT_MARKETPLACE_E2E_PLUGIN_CATALOG"
 func runtimeCatalogSource() (fs.FS, []string, error) {
 	overridePath := os.Getenv(e2ePluginCatalogEnv)
 	if overridePath == "" {
-		return catalogFiles, nil, nil
+		return catalogFiles, []string{ClaudeNativePluginProbeID}, nil
 	}
 	override, err := os.ReadFile(overridePath)
 	if err != nil {
@@ -41,5 +41,5 @@ func runtimeCatalogSource() (fs.FS, []string, error) {
 		return nil, nil, err
 	}
 	files[filepath.ToSlash(filepath.Join("catalogs", target+".yaml"))] = &fstest.MapFile{Data: override}
-	return files, []string{"e2e-test-probe"}, nil
+	return files, []string{ClaudeNativePluginProbeID, "e2e-test-probe"}, nil
 }
