@@ -162,15 +162,37 @@ entries in the harness target's native settings. Handwritten entries, keys,
 order, and comments SHALL be preserved. Entries sharing a file with hooks or
 MCP servers SHALL be written in one combined mutation. Agent Marketplace
 SHALL NOT write trust state, vendor-managed policy, or private runtime
-plugin caches.
+plugin caches. Claude Code registration SHALL be written to
+`.claude/settings.local.json` at repository scope and to
+`~/.claude/settings.json` at user scope, and the Claude catalog SHALL be a
+marketplace file Claude Code accepts, naming an owner and listing each
+plugin with a source relative to the catalog root.
 
 #### Scenario: Claude registration preserves handwritten settings
 
-- **WHEN** a plugin is delivered natively to Claude Code at repository scope
-  and `.claude/settings.json` has handwritten `enabledPlugins` entries and
-  owned hooks
-- **THEN** the file MUST gain the owned registration entries, keep every
-  handwritten entry and comment, and keep the owned hooks
+- **WHEN** a plugin is delivered natively to Claude Code at repository scope,
+  `.claude/settings.local.json` has handwritten `enabledPlugins` entries, and
+  `.claude/settings.json` has owned hooks
+- **THEN** `.claude/settings.local.json` MUST gain the owned registration
+  entries and keep every handwritten entry and comment, and
+  `.claude/settings.json` MUST keep the owned hooks and gain no registration
+  entry
+
+#### Scenario: Claude catalog is a marketplace Claude Code accepts
+
+- **WHEN** a plugin is delivered natively to Claude Code
+- **THEN** the owned catalog's `.claude-plugin/marketplace.json` MUST name the
+  catalog and an owner and list the plugin with a source relative to the
+  catalog root that resolves to the plugin's package generation
+
+#### Scenario: Claude registration moves out of shared project settings
+
+- **WHEN** an owned Claude registration from an earlier sync is recorded in
+  `.claude/settings.json` and sync runs
+- **THEN** after that one sync the owned entries MUST be in
+  `.claude/settings.local.json` and gone from `.claude/settings.json`, the
+  plugin MUST be registered exactly once, and entries without ownership state
+  MUST be left unchanged
 
 #### Scenario: Registration without ownership state is not pruned
 
