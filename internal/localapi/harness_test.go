@@ -252,7 +252,7 @@ func TestLocalAPIUserHarness(t *testing.T) {
 		source := filepath.Join(home, "fixture-source")
 		writeFile(t, filepath.Join(source, "solo", "SKILL.md"), fixtureSkillBody)
 		writeFile(t, userConfig,
-			"apiVersion: agent-marketplace/v4\nharnesses: [devin, e2e-future-harness]\nsources:\n  local: {directory: "+source+"}\nresources:\n  local: {all: true}\n")
+			"apiVersion: agent-marketplace/v4\nharnesses: [devin, codex]\nsources:\n  local: {directory: "+source+"}\nresources:\n  local: {all: true}\n")
 		orgPath := filepath.Join(t.TempDir(), "org.yaml")
 		orgSource := filepath.Join(t.TempDir(), "org-regs")
 		writeFile(t, filepath.Join(orgSource, "orgskill", "SKILL.md"), fixtureSkillBody)

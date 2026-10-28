@@ -410,7 +410,7 @@ func TestFirstRunInitializeRejectsInvalidRequests(t *testing.T) {
 	}
 }
 
-// spec: gui-configuration/save-user-harness-targets-without-losing-unknown-identifiers
+// spec: gui-configuration/save-user-harness-targets
 func TestFirstRunInitializeRequiresUserMode(t *testing.T) {
 	ws, home := newFixture(t)
 	api, err := New(context.Background(), ws, home, session.DependencyLifecycle{}, nil)

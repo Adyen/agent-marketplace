@@ -376,7 +376,6 @@ func readLayerIntent(path, canonical string, data []byte, kind layerKind, overla
 	li.v4 = v4
 	li.Reads = append([]ConfigRead(nil), v4.reads...)
 	li.warnLowerLayerGUI(v4.GUI)
-	li.warnUnsupportedHarnesses(v4.Harnesses)
 	return li, nil
 }
 

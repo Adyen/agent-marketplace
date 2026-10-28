@@ -26,58 +26,6 @@ func validateHarnessTargets(field string, harnesses []string) []error {
 	return validateTargets(field, harnesses, targetmeta.IsCompilerTarget, targetmeta.CompilerNames, "compiler")
 }
 
-func validateReadableHarnessTargets(field string, harnesses []string) []error {
-	var errs []error
-	for i, harness := range harnesses {
-		if strings.TrimSpace(harness) == "" {
-			errs = append(errs, fmt.Errorf("%s[%d] must not be empty", field, i))
-		}
-	}
-	return errs
-}
-
-func KnownHarnessTargets(ids []string) []string {
-	var out []string
-	for _, id := range normalizedUniqueValues(ids) {
-		if IsSupportedHarness(id) {
-			out = append(out, id)
-		}
-	}
-	return out
-}
-
-const UnsupportedHarnessWarningCode = "config.harness.unsupported"
-
-type UnsupportedHarnessWarning struct {
-	Code   string
-	Source Source
-	Path   string
-	Count  int
-}
-
-func (w *UnsupportedHarnessWarning) Error() string {
-	return fmt.Sprintf("%s: %s: %s configuration declares %d harness target identifier(s) this client does not support", w.Code, w.Path, w.Source.String(), w.Count)
-}
-
-func (l *LayerIntent) warnUnsupportedHarnesses(harnesses []string) {
-	count := 0
-	for _, h := range harnesses {
-		if h = strings.TrimSpace(h); h != "" && !IsSupportedHarness(h) {
-			count++
-		}
-	}
-	if count == 0 {
-		return
-	}
-	l.warnings = append(l.warnings, &UnsupportedHarnessWarning{Code: UnsupportedHarnessWarningCode, Source: l.Source, Path: l.Path, Count: count})
-	slog.Warn("harness target identifiers unsupported by this client retained",
-		"code", UnsupportedHarnessWarningCode,
-		"source", l.Source.String(),
-		"path", l.Path,
-		"count", count,
-	)
-}
-
 func validateSourceHarness(field, harness string) []error {
 	if targetmeta.IsIngesterTarget(harness) {
 		return nil
@@ -100,7 +48,7 @@ func validateTargets(field string, values []string, valid func(string) bool, sup
 
 func validateConfigHarnessTargets(c Config) []error {
 	var errs []error
-	errs = append(errs, validateReadableHarnessTargets("harnesses", c.Harnesses)...)
+	errs = append(errs, validateHarnessTargets("harnesses", c.Harnesses)...)
 	errs = append(errs, validateRegistryHarnessTargets(c.Registries)...)
 	return errs
 }

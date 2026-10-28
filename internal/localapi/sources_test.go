@@ -365,7 +365,7 @@ func TestUserSourceAddAndRemoveThroughSharedEditor(t *testing.T) {
 	writeFile(t, filepath.Join(addDir, "added", "SKILL.md"), "---\nname: added\ndescription: Added\n---\n# Added\n")
 	userConfig := filepath.Join(home, ".agents", "config.yaml")
 	fragment := filepath.Join(home, ".agents", "fragment.yaml")
-	rootBytes := []byte("apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin, future-harness]\nlogging: {level: debug}\nsources:\n  keep: {directory: " + keepDir + "}\nresources:\n  keep: {all: true, harnesses: [devin]}\n")
+	rootBytes := []byte("apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin, codex]\nlogging: {level: debug}\nsources:\n  keep: {directory: " + keepDir + "}\nresources:\n  keep: {all: true, harnesses: [devin]}\n")
 	fragBytes := []byte("sources:\n  frag: {directory: " + fragDir + "}\nresources:\n  frag: {all: true}\n")
 	writeFile(t, userConfig, string(rootBytes))
 	writeFile(t, fragment, string(fragBytes))
@@ -431,7 +431,7 @@ func TestUserSourceAddAndRemoveThroughSharedEditor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantDirRoot := "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin, future-harness]\nlogging: {level: debug}\nsources:\n  keep: {directory: " + keepDir + "}\n  " + dirName + ":\n    directory: " + addDir + "\nresources:\n  keep: {all: true, harnesses: [devin]}\n"
+	wantDirRoot := "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin, codex]\nlogging: {level: debug}\nsources:\n  keep: {directory: " + keepDir + "}\n  " + dirName + ":\n    directory: " + addDir + "\nresources:\n  keep: {all: true, harnesses: [devin]}\n"
 	if string(current) != wantDirRoot {
 		t.Fatalf("root after directory add =\n%s\nwant\n%s", current, wantDirRoot)
 	}
@@ -482,7 +482,7 @@ func TestUserSourceAddAndRemoveThroughSharedEditor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantGitRoot := "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin, future-harness]\nlogging: {level: debug}\nsources:\n  keep: {directory: " + keepDir + "}\n  " + dirName + ":\n    directory: " + addDir + "\n  " + gitName + ":\n    git: " + gitLocation + "\n    ref: main\nresources:\n  keep: {all: true, harnesses: [devin]}\n"
+	wantGitRoot := "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin, codex]\nlogging: {level: debug}\nsources:\n  keep: {directory: " + keepDir + "}\n  " + dirName + ":\n    directory: " + addDir + "\n  " + gitName + ":\n    git: " + gitLocation + "\n    ref: main\nresources:\n  keep: {all: true, harnesses: [devin]}\n"
 	if string(current) != wantGitRoot {
 		t.Fatalf("root after git add =\n%s\nwant\n%s", current, wantGitRoot)
 	}
@@ -514,7 +514,7 @@ func TestUserSourceAddAndRemoveThroughSharedEditor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantRemoved := "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin, future-harness]\nlogging: {level: debug}\nsources:\n  keep: {directory: " + keepDir + "}\n  " + gitName + ":\n    git: " + gitLocation + "\n    ref: main\nresources:\n  keep: {all: true, harnesses: [devin]}\n"
+	wantRemoved := "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin, codex]\nlogging: {level: debug}\nsources:\n  keep: {directory: " + keepDir + "}\n  " + gitName + ":\n    git: " + gitLocation + "\n    ref: main\nresources:\n  keep: {all: true, harnesses: [devin]}\n"
 	if string(current) != wantRemoved {
 		t.Fatalf("root after remove =\n%s\nwant\n%s", current, wantRemoved)
 	}

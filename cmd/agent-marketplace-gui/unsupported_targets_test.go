@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -194,4 +195,85 @@ func TestGuiHostRefusesUnsupportedInitialization(t *testing.T) {
 	server.Close()
 	app.close()
 	assertProtectedHostPathsUnchanged(t, paths, before)
+}
+
+// spec: gui-configuration/unknown-harness-target-ids-refuse-gui-configuration
+// spec: session-interactions/unknown-harness-target-ids-refuse-configuration
+func TestGuiHostRefusesUnknownHarnessTargetsUntilRepaired(t *testing.T) {
+	paths := startupHostFixture(t, func(source string) string {
+		return strings.Replace(hostDirectoryConfig(source), "harnesses: [devin]", "harnesses: [devin, future-harness]", 1)
+	})
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal("read fixture home")
+	}
+	userConfig := filepath.Join(home, ".agents", "config.yaml")
+	invalid, err := os.ReadFile(userConfig)
+	if err != nil {
+		t.Fatal("read invalid user configuration")
+	}
+	before := captureProtectedHostPaths(t, paths)
+	app, err := NewApp(context.Background(), session.DependencyLifecycle{})
+	if err != nil {
+		t.Fatal("create host GUI over unknown-target configuration")
+	}
+	t.Cleanup(app.close)
+	server := newHostAPIServer(t, app)
+
+	status, body := postHostAPI(t, server, app, "/api/snapshot", nil)
+	if status != http.StatusOK || !bytes.Contains(body, []byte(filepath.Base(userConfig))) || !bytes.Contains(body, []byte("future-harness")) {
+		t.Fatalf("snapshot did not report the unknown-target configuration error: status %d body %s", status, body)
+	}
+	status, body = postHostAPI(t, server, app, "/api/configuration", nil)
+	if metadata := decodeHostConfiguration(t, status, body); metadata.Editable {
+		t.Fatal("configuration with an unknown target is editable")
+	}
+	status, body = postHostAPI(t, server, app, "/api/configuration/actions", []byte(`{"action":"save-targets","targets":["devin"]}`))
+	if status != http.StatusBadRequest {
+		t.Fatalf("save-targets over unknown-target configuration status = %d body %s, want 400", status, body)
+	}
+	status, body = postHostAPI(t, server, app, "/api/actions", []byte(`{"action":"sync"}`))
+	if status != http.StatusBadRequest {
+		t.Fatalf("sync over unknown-target configuration status = %d body %s, want 400", status, body)
+	}
+	if data, _ := os.ReadFile(userConfig); !bytes.Equal(data, invalid) {
+		t.Fatalf("refused operations changed the configuration: %s", data)
+	}
+	server.Close()
+	app.close()
+	assertProtectedHostPathsUnchanged(t, paths, before)
+
+	if err := os.WriteFile(userConfig, []byte(strings.Replace(string(invalid), "future-harness", "devin", 1)), 0o644); err != nil {
+		t.Fatal("repair user configuration outside the GUI")
+	}
+	repaired, err := NewApp(context.Background(), session.DependencyLifecycle{})
+	if err != nil {
+		t.Fatal("reload host GUI after repair")
+	}
+	t.Cleanup(repaired.close)
+	repairedStages := readHostStartupStages(t, repaired)
+	assertHostStartupStageOrder(t, repairedStages)
+	repairedServer := newHostAPIServer(t, repaired)
+	status, body = postHostAPI(t, repairedServer, repaired, "/api/configuration", nil)
+	if metadata := decodeHostConfiguration(t, status, body); !metadata.Editable {
+		t.Fatal("repaired configuration is not editable")
+	}
+	status, body = postHostAPI(t, repairedServer, repaired, "/api/configuration/actions", []byte(`{"action":"save-targets","targets":["devin"]}`))
+	if status != http.StatusAccepted {
+		t.Fatalf("repaired save-targets status = %d body %s, want 202", status, body)
+	}
+	var saved work52Operation
+	if err := json.Unmarshal(body, &saved); err != nil {
+		t.Fatal("decode repaired save operation")
+	}
+	work52WaitSettled(t, repaired, saved.Operation.ID)
+	status, body = postHostAPI(t, repairedServer, repaired, "/api/actions", []byte(`{"action":"sync"}`))
+	if status != http.StatusAccepted {
+		t.Fatalf("repaired sync status = %d body %s, want 202", status, body)
+	}
+	var synced work52Operation
+	if err := json.Unmarshal(body, &synced); err != nil {
+		t.Fatal("decode repaired sync operation")
+	}
+	work52WaitSettled(t, repaired, synced.Operation.ID)
 }

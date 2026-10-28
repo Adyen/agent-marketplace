@@ -751,11 +751,8 @@ func decodeV4AuxiliaryFields(root *yaml.Node, doc *v4Document) error {
 			return err
 		}
 		for i, harness := range doc.harnesses {
-			if strings.TrimSpace(harness) == "" {
-				return v4err("v4.harness", fmt.Sprintf("harnesses[%d]", i), n.Line, "harness target must not be empty")
-			}
-			if strings.TrimSpace(harness) != harness {
-				return v4err("v4.harness", fmt.Sprintf("harnesses[%d]", i), n.Line, "harness target %q must not have surrounding whitespace", harness)
+			if !target.IsValid(harness) {
+				return v4err("v4.harness", fmt.Sprintf("harnesses[%d]", i), n.Line, "unknown target %q", harness)
 			}
 		}
 	}

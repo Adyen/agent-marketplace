@@ -272,7 +272,7 @@ describe('createClient', () => {
   it('reads configuration metadata with no body', async () => {
     const calls: { url: string; body: string | null }[] = []
     const metadata = {
-      userTargets: ['devin', 'future-harness'],
+      userTargets: ['devin', 'codex'],
       organizationTargets: ['claude'],
       supportedTargets: ['claude', 'devin'],
       rootPresent: true,
@@ -285,7 +285,7 @@ describe('createClient', () => {
     }
     const client = createClient('http://127.0.0.1:9999', 'secret-token', fetcher)
     const result = await client.configuration()
-    expect(result.userTargets).toEqual(['devin', 'future-harness'])
+    expect(result.userTargets).toEqual(['devin', 'codex'])
     expect(result.supportedTargets).toEqual(['claude', 'devin'])
     expect(calls).toEqual([{ url: 'http://127.0.0.1:9999/api/configuration', body: null }])
   })
@@ -297,12 +297,12 @@ describe('createClient', () => {
       return new Response(JSON.stringify({ operation: { id: 4, kind: 'targets' } }), { status: 202 })
     }
     const client = createClient('http://127.0.0.1:9999', 'secret-token', fetcher)
-    const operation = await client.configure({ action: 'save-targets', targets: ['devin', 'future-harness'] })
+    const operation = await client.configure({ action: 'save-targets', targets: ['devin', 'codex'] })
     expect(operation).toEqual({ id: 4, kind: 'targets' })
     expect(calls).toEqual([
       {
         url: 'http://127.0.0.1:9999/api/configuration/actions',
-        body: '{"action":"save-targets","targets":["devin","future-harness"]}',
+        body: '{"action":"save-targets","targets":["devin","codex"]}',
       },
     ])
   })

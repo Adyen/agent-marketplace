@@ -19,9 +19,9 @@ import {
 
 const settingsConfiguration = (overrides: Partial<Configuration> = {}): Configuration =>
   configuration({
-    userTargets: ['devin', 'future-harness'],
+    userTargets: ['devin', 'codex'],
     organizationTargets: ['claude'],
-    supportedTargets: ['claude', 'devin', 'windsurf'],
+    supportedTargets: ['claude', 'codex', 'devin', 'windsurf'],
     managedOutsideGUI: ['included files', 'per-source configuration', 'other settings'],
     ...overrides,
   })
@@ -54,9 +54,9 @@ function isChecked(element: HTMLElement): boolean {
   )
 }
 
-// spec: gui-configuration/save-user-harness-targets-without-losing-unknown-identifiers
 describe('Harness settings dialog', () => {
-  it('lists supported and root-unknown targets with a read-only organization section', async () => {
+  // spec: gui-configuration/organization-harness-targets-are-read-only
+  it('lists supported targets with a read-only organization section', async () => {
     const { client, push } = settingsClient()
     const { wrapper } = mountWorkspace(client)
     push(event({ sequence: 1 }))
@@ -69,11 +69,10 @@ describe('Harness settings dialog', () => {
     expect(dialog).not.toBeNull()
     const devin = checkboxByLabel('devin')
     const claude = checkboxByLabel('claude')
-    const future = checkboxByLabel('future-harness')
+    const codex = checkboxByLabel('codex')
     expect(isChecked(devin)).toBe(true)
     expect(isChecked(claude)).toBe(false)
-    expect(isChecked(future)).toBe(true)
-    expect(dialog!.textContent).toContain('Unsupported by this version')
+    expect(isChecked(codex)).toBe(true)
     expect(dialog!.textContent).toContain('claude')
     expect(dialog!.textContent).toContain('managed outside the GUI')
     const orgList = dialog!.querySelector('[aria-label="Organization targets"]')
@@ -180,7 +179,7 @@ describe('Harness settings dialog', () => {
     expect(client.configure).toHaveBeenCalledTimes(1)
     expect(client.configure).toHaveBeenCalledWith({
       action: 'save-targets',
-      targets: ['claude', 'devin', 'future-harness'],
+      targets: ['claude', 'codex', 'devin'],
     })
     expect(controller.state.operation).toEqual({ id: 8, kind: 'targets' })
 
@@ -215,7 +214,7 @@ describe('Harness settings dialog', () => {
       ) as HTMLButtonElement
     expect(save().disabled).toBe(false)
     checkboxByLabel('devin').click()
-    checkboxByLabel('future-harness').click()
+    checkboxByLabel('codex').click()
     await tick()
     expect(save().disabled).toBe(true)
   })
@@ -392,7 +391,7 @@ describe('Harness settings dialog', () => {
     resolvers[2](settingsConfiguration())
     await tick()
     expect(isChecked(checkboxByLabel('devin'))).toBe(true)
-    expect(isChecked(checkboxByLabel('future-harness'))).toBe(true)
+    expect(isChecked(checkboxByLabel('codex'))).toBe(true)
   })
 
   it('disables the target fieldset when the root is not editable', async () => {
@@ -407,7 +406,7 @@ describe('Harness settings dialog', () => {
     expect(fieldset!.disabled).toBe(true)
   })
 
-  it('offers no checkbox for unknown identifiers absent from the root', async () => {
+  it('offers checkboxes only for supported targets', async () => {
     const { client, push } = settingsClient()
     const { wrapper } = mountWorkspace(client)
     push(event({ sequence: 1 }))
@@ -417,10 +416,7 @@ describe('Harness settings dialog', () => {
     const offered = Array.from(
       document.body.querySelectorAll('[role="dialog"] [role="checkbox"], [role="dialog"] input[type="checkbox"]'),
     ).map((el) => el.getAttribute('aria-label'))
-    expect(offered).not.toContain('Target brand-new-unknown')
-    expect(offered).toEqual(
-      expect.arrayContaining(['Target claude', 'Target devin', 'Target windsurf', 'Target future-harness']),
-    )
+    expect(offered.filter((label) => label?.startsWith('Target '))).toEqual(['Target claude', 'Target codex', 'Target devin', 'Target windsurf'])
   })
 
   it('shows Unsaved changes while the draft differs and toggles once from the row name', async () => {
@@ -570,7 +566,7 @@ describe('accepted target save', () => {
     expect(isChecked(checkboxByLabel('devin'))).toBe(true)
 
     ;(client.configuration as ReturnType<typeof vi.fn>).mockResolvedValue(
-      settingsConfiguration({ userTargets: ['devin', 'future-harness', 'claude'] }),
+      settingsConfiguration({ userTargets: ['devin', 'codex', 'claude'] }),
     )
     push(event({ sequence: 3, generation: 2, operation: null, payload: snapshot([row('solo')], { settledOperation: operation }) }))
     await tick()

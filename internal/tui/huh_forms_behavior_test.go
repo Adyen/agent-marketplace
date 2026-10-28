@@ -79,69 +79,16 @@ func TestHarnessFormSpaceSelectsWithoutWriting(t *testing.T) {
 }
 
 // spec: session-interactions/save-selected-harnesses
-func TestHarnessFormPreservesUnknownIDs(t *testing.T) {
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
-	configPath := filepath.Join(tmpHome, ".agents", "config.yaml")
-	original := []byte("apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\n  - mystery-harness\nsources:\n  agents:\n    git: https://example.test/agents.git\n    ref: main\nresources:\n  agents:\n    include:\n      - skill/review\n")
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(configPath, original, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	m := NewModel("/repo", tmpHome)
-	m.globalHarnesses = []string{"factory", "mystery-harness"}
+func TestHarnessFormPreservesOtherSupportedSelections(t *testing.T) {
+	m := NewModel("/repo", "/home")
+	m.globalHarnesses = []string{"factory", "claude"}
 	m.openHarnessModal()
-	if m.harnessModal.form == nil {
-		t.Fatal("harness modal must own a Huh form")
-	}
-
-	// Toggle factory off through the form; the unknown ID must survive.
-	mi, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	// Toggling Factory must leave the independently selected Claude entry alone.
+	mi, _ := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = mi.(Model)
-	if cmd != nil {
-		t.Fatal("space deselect must not emit a write command")
-	}
-	mi, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = mi.(Model)
-	if cmd == nil {
-		t.Fatal("enter on a non-empty selection must emit the save command")
-	}
-	msg := cmd()
-	hw, ok := msg.(harnessWrittenMsg)
-	if !ok {
-		t.Fatalf("expected harnessWrittenMsg, got %T", msg)
-	}
-	if hw.err != nil {
-		t.Fatalf("harness save rejected an already-present identifier: %v", hw.err)
-	}
-
-	parityPath := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(parityPath, original, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := config.SetHarnessesInConfig(parityPath, []string{"mystery-harness"}); err != nil {
-		t.Fatalf("shared writer rejected the same selection: %v", err)
-	}
-	want, err := os.ReadFile(parityPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != string(want) {
-		t.Fatalf("TUI save diverged from the shared writer:\nTUI:\n%s\nshared:\n%s", got, want)
-	}
-	cfg, err := config.LoadConfigFromPath(configPath)
-	if err != nil {
-		t.Fatalf("reload after save: %v", err)
-	}
-	if !slices.Equal(cfg.Harnesses, []string{"mystery-harness"}) {
-		t.Fatalf("harnesses after save = %v, want [mystery-harness]", cfg.Harnesses)
+	saved := selectedHarnessIDs(m.harnessModal.selected)
+	if len(saved) != 1 || saved[0] != "claude" {
+		t.Fatalf("remaining supported selections = %#v, want [claude]", saved)
 	}
 }
 
@@ -165,7 +112,7 @@ func TestHarnessFormSaveMatchesGUI(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	userRoot := "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [factory, future-harness]\n" +
+	userRoot := "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [factory, codex]\n" +
 		"logging: {level: debug}\nsources:\n  keep: {directory: " + keepDir + "}\n" +
 		"resources:\n  keep: {include: [skill/solo, skill/extra], exclude: [skill/retired], harnesses: [factory]}\n"
 	fragment := "sources:\n  frag: {directory: " + fragDir + "}\nresources:\n  frag: {all: true, harnesses: [claude]}\n"
@@ -225,8 +172,8 @@ func TestHarnessFormSaveMatchesGUI(t *testing.T) {
 	if m.loading {
 		t.Fatal("startup snapshot did not finish loading")
 	}
-	if !slices.Equal(m.globalHarnesses, []string{"factory", "future-harness"}) {
-		t.Fatalf("startup globalHarnesses = %v, want [factory future-harness]", m.globalHarnesses)
+	if !slices.Equal(m.globalHarnesses, []string{"factory", "codex"}) {
+		t.Fatalf("startup globalHarnesses = %v, want [factory codex]", m.globalHarnesses)
 	}
 
 	mi, cmd = m.Update(tea.KeyPressMsg{Code: 'H', Text: "H"})
@@ -324,8 +271,8 @@ func TestHarnessFormSaveMatchesGUI(t *testing.T) {
 	if !reloaded {
 		t.Fatal("emitted batch contained no loadSnapshot command")
 	}
-	if !slices.Equal(m.globalHarnesses, []string{"claude", "future-harness"}) {
-		t.Fatalf("reloaded globalHarnesses = %v, want [claude future-harness]", m.globalHarnesses)
+	if !slices.Equal(m.globalHarnesses, []string{"claude", "codex"}) {
+		t.Fatalf("reloaded globalHarnesses = %v, want [claude codex]", m.globalHarnesses)
 	}
 	if m.driftAssessment == driftFailed {
 		t.Fatalf("authoritative reload reported failed drift: %+v", m.errs)
@@ -341,8 +288,8 @@ func TestHarnessFormSaveMatchesGUI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload after save: %v", err)
 	}
-	if !slices.Equal(cfg.Harnesses, []string{"claude", "future-harness"}) {
-		t.Fatalf("harnesses after save = %v, want [claude future-harness]", cfg.Harnesses)
+	if !slices.Equal(cfg.Harnesses, []string{"claude", "codex"}) {
+		t.Fatalf("harnesses after save = %v, want [claude codex]", cfg.Harnesses)
 	}
 
 	guiHome := t.TempDir()
@@ -399,7 +346,7 @@ func TestHarnessFormSaveMatchesGUI(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	status, accepted := post("/api/configuration/actions", `{"action":"save-targets","targets":["claude","future-harness"]}`)
+	status, accepted := post("/api/configuration/actions", `{"action":"save-targets","targets":["claude","codex"]}`)
 	if status != http.StatusAccepted {
 		t.Fatalf("GUI save-targets status = %d, body = %v", status, accepted)
 	}
@@ -432,7 +379,7 @@ func TestHarnessFormSaveMatchesGUI(t *testing.T) {
 		t.Fatalf("GUI and TUI user roots differ:\nGUI:\n%s\nTUI:\n%s", guiBytes, tuiBytes)
 	}
 	for _, literal := range []string{
-		"harnesses: [claude, future-harness]",
+		"harnesses: [claude, codex]",
 		"include: fragment.yaml",
 		"logging: {level: debug}",
 		"keep: {include: [skill/solo, skill/extra], exclude: [skill/retired], harnesses: [factory]}",

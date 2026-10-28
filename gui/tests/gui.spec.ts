@@ -108,7 +108,7 @@ test('built GUI drives the real user-scope core', async ({ page }) => {
   }
 })
 
-// spec: gui-configuration/save-user-harness-targets-without-losing-unknown-identifiers
+// spec: gui-configuration/save-user-harness-targets
 // spec: gui-configuration/organization-harness-targets-are-read-only
 // spec: gui-configuration/organization-sources-are-read-only
 // spec: gui-configuration/harness-target-edit-matches-the-cli-mutation
@@ -139,7 +139,7 @@ test('built GUI saves Harness targets through the real user-scope core', async (
     await expect(page.getByRole('option').filter({ hasText: 'solo' }).first()).toBeVisible({ timeout: 60_000 })
 
     const before = await readFile(userConfigPath, 'utf8')
-    expect(before).toBe(fixtureConfig('[devin, e2e-future-harness]'))
+    expect(before).toBe(fixtureConfig('[devin, codex]'))
 
     const settingsButton = page.getByRole('button', { name: 'Settings' })
     await settingsButton.focus()
@@ -149,9 +149,8 @@ test('built GUI saves Harness targets through the real user-scope core', async (
     await dialog.getByRole('tab', { name: 'Harness targets' }).click()
 
     const devin = page.getByRole('checkbox', { name: 'Target devin' })
-    const future = page.getByRole('checkbox', { name: 'Target e2e-future-harness' })
-    await expect(future).toBeChecked()
-    await expect(dialog.getByText('Unsupported by this version')).toBeVisible()
+    const codex = page.getByRole('checkbox', { name: 'Target codex' })
+    await expect(codex).toBeChecked()
     await expect(dialog.getByLabel('Organization targets')).toContainText('claude')
     await expect(dialog.getByLabel('Organization targets').getByRole('checkbox')).toHaveCount(0)
     await expect(dialog.getByRole('tab', { name: 'Sources' })).toBeVisible()
@@ -170,7 +169,7 @@ test('built GUI saves Harness targets through the real user-scope core', async (
     await expect(devin).toBeChecked()
     await devin.press('Space')
     await expect(devin).not.toBeChecked()
-    await expect(future).toBeChecked()
+    await expect(codex).toBeChecked()
 
     await page.getByRole('button', { name: 'Save targets' }).press('Enter')
     await expect(page.getByText('targets complete')).toBeVisible({ timeout: 60_000 })
@@ -180,11 +179,7 @@ test('built GUI saves Harness targets through the real user-scope core', async (
     await expect(settingsButton).toBeFocused()
 
     const saved = await readFile(userConfigPath, 'utf8')
-    expect(saved).toBe(fixtureConfig('[e2e-future-harness]'))
-
-    await expect(page.getByRole('button', { name: 'Sync', exact: true })).toBeDisabled()
-    expect(await readFile(userConfigPath, 'utf8')).toBe(saved)
-    expect(existsSync(join(home, '.e2e-future-harness'))).toBe(false)
+    expect(saved).toBe(fixtureConfig('[codex]'))
   } finally {
     await harness.stop()
   }

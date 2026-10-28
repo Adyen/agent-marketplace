@@ -66,12 +66,12 @@ func configurationField(t *testing.T, decoded map[string]any, key string) []stri
 	return values
 }
 
-// spec: gui-configuration/save-user-harness-targets-without-losing-unknown-identifiers
+// spec: gui-configuration/save-user-harness-targets
 func TestUserConfigurationProjection(t *testing.T) {
 	home, _ := newUserAPIFixture(t, false)
 	source := t.TempDir()
 	writeFile(t, filepath.Join(home, ".agents", "config.yaml"),
-		"apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin, future-harness]\nsources:\n  local: {directory: "+source+"}\nresources:\n  local: {all: true, harnesses: [devin]}\n")
+		"apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin, codex]\nsources:\n  local: {directory: "+source+"}\nresources:\n  local: {all: true, harnesses: [devin]}\n")
 	writeFile(t, filepath.Join(home, ".agents", "fragment.yaml"), "harnesses: [devin]\n")
 	orgPath := filepath.Join(t.TempDir(), "org.yaml")
 	writeFile(t, orgPath, "apiVersion: agent-marketplace/v4\nharnesses: [claude]\n")
@@ -87,7 +87,7 @@ func TestUserConfigurationProjection(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("configuration status = %d, body = %v", status, decoded)
 	}
-	if got := configurationField(t, decoded, "userTargets"); strings.Join(got, ",") != "devin,future-harness" {
+	if got := configurationField(t, decoded, "userTargets"); strings.Join(got, ",") != "devin,codex" {
 		t.Fatalf("userTargets = %v", got)
 	}
 	if got := configurationField(t, decoded, "organizationTargets"); strings.Join(got, ",") != "claude" {
@@ -97,13 +97,12 @@ func TestUserConfigurationProjection(t *testing.T) {
 	if len(supported) == 0 {
 		t.Fatal("supportedTargets is empty")
 	}
-	foundDevin, foundFuture := false, false
+	foundDevin := false
 	for _, id := range supported {
 		foundDevin = foundDevin || id == "devin"
-		foundFuture = foundFuture || id == "future-harness"
 	}
-	if !foundDevin || foundFuture {
-		t.Fatalf("supportedTargets = %v, want canonical IDs without unknown entries", supported)
+	if !foundDevin {
+		t.Fatalf("supportedTargets = %v, want canonical IDs", supported)
 	}
 	if decoded["rootPresent"] != true || decoded["editable"] != true {
 		t.Fatalf("rootPresent/editable = %v/%v", decoded["rootPresent"], decoded["editable"])
@@ -438,7 +437,7 @@ func TestConfigurationProjectionRootStates(t *testing.T) {
 	}
 }
 
-// spec: gui-configuration/save-user-harness-targets-without-losing-unknown-identifiers
+// spec: gui-configuration/save-user-harness-targets
 func TestConfigurationRejectsNonRegularRoots(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -546,7 +545,7 @@ func TestConfigurationSaveTargetsMatchesSharedWriter(t *testing.T) {
 	fragmentBytes := []byte("sources:\n  local: {directory: " + source + "}\nresources:\n  local: {all: true, harnesses: [devin]}\n")
 	fragmentPath := filepath.Join(home, ".agents", "fragment.yaml")
 	writeFile(t, fragmentPath, string(fragmentBytes))
-	root := "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin, future-harness]\n"
+	root := "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin, codex]\n"
 	writeFile(t, userConfig, root)
 	repoConfig := filepath.Join(repo, ".agents", "config.yaml")
 	repoLocal := filepath.Join(repo, ".agents", "config.local.yaml")
@@ -567,7 +566,7 @@ func TestConfigurationSaveTargetsMatchesSharedWriter(t *testing.T) {
 	for nextEvent(t, events).snapshotStage() != "final" {
 	}
 
-	status, decoded := saveTargets(t, api, `["claude","future-harness"]`)
+	status, decoded := saveTargets(t, api, `["claude","codex"]`)
 	if status != http.StatusAccepted {
 		t.Fatalf("save-targets status = %d, body = %v", status, decoded)
 	}
@@ -596,7 +595,7 @@ func TestConfigurationSaveTargetsMatchesSharedWriter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(guiBytes, []byte("future-harness")) {
+	if !bytes.Contains(guiBytes, []byte("codex")) {
 		t.Fatalf("unknown identifier lost: %s", guiBytes)
 	}
 
@@ -604,7 +603,7 @@ func TestConfigurationSaveTargetsMatchesSharedWriter(t *testing.T) {
 	oraclePath := filepath.Join(oracleHome, ".agents", "config.yaml")
 	writeFile(t, oraclePath, root)
 	writeFile(t, filepath.Join(oracleHome, ".agents", "fragment.yaml"), string(fragmentBytes))
-	if err := config.SetHarnessesInConfig(oraclePath, []string{"claude", "future-harness"}); err != nil {
+	if err := config.SetHarnessesInConfig(oraclePath, []string{"claude", "codex"}); err != nil {
 		t.Fatalf("shared writer oracle failed: %v", err)
 	}
 	oracleBytes, err := os.ReadFile(oraclePath)
@@ -627,7 +626,7 @@ func TestConfigurationSaveTargetsMatchesSharedWriter(t *testing.T) {
 	if after, err := os.ReadFile(fragmentPath); err != nil || !bytes.Equal(after, fragmentBytes) {
 		t.Fatal("included fragment changed")
 	}
-	if _, err := os.Stat(filepath.Join(home, ".future-harness")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(home, ".codex")); !os.IsNotExist(err) {
 		t.Fatal("unsupported target materialized output")
 	}
 }
@@ -637,7 +636,7 @@ func TestConfigurationActionRejectsInvalidRequests(t *testing.T) {
 	var syncCalls, updateCalls atomic.Int32
 	home, _ := newUserAPIFixture(t, false)
 	userConfig := filepath.Join(home, ".agents", "config.yaml")
-	writeFile(t, userConfig, "apiVersion: agent-marketplace/v4\nharnesses: [devin, future-harness]\n")
+	writeFile(t, userConfig, "apiVersion: agent-marketplace/v4\nharnesses: [devin, codex]\n")
 	before, _ := os.ReadFile(userConfig)
 	api, err := NewUser(context.Background(), home, countingLifecycle(&syncCalls, &updateCalls), nil)
 	if err != nil {
@@ -684,7 +683,7 @@ func TestConfigurationActionRejectsInvalidRequests(t *testing.T) {
 func TestConfigurationSaveTrimsTargetsAndUsesSessionHome(t *testing.T) {
 	home, _ := newUserAPIFixture(t, false)
 	userConfig := filepath.Join(home, ".agents", "config.yaml")
-	writeFile(t, userConfig, "apiVersion: agent-marketplace/v4\nharnesses: [devin, future-harness]\n")
+	writeFile(t, userConfig, "apiVersion: agent-marketplace/v4\nharnesses: [devin, codex]\n")
 
 	api, err := NewUser(context.Background(), home, session.DependencyLifecycle{}, nil)
 	if err != nil {
@@ -701,7 +700,7 @@ func TestConfigurationSaveTrimsTargetsAndUsesSessionHome(t *testing.T) {
 	writeFile(t, decoyConfig, "apiVersion: agent-marketplace/v4\nharnesses: [windsurf]\n")
 	t.Setenv("HOME", decoy)
 
-	status, decoded := saveTargets(t, api, `[ " claude ", "future-harness"]`)
+	status, decoded := saveTargets(t, api, `[ " claude ", "codex"]`)
 	if status != http.StatusAccepted {
 		t.Fatalf("save-targets with padded targets status = %d, body = %v", status, decoded)
 	}
@@ -714,7 +713,7 @@ func TestConfigurationSaveTrimsTargetsAndUsesSessionHome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(data, []byte("claude")) || !bytes.Contains(data, []byte("future-harness")) {
+	if !bytes.Contains(data, []byte("claude")) || !bytes.Contains(data, []byte("codex")) {
 		t.Fatalf("session-home root not written: %s", data)
 	}
 	if after, _ := os.ReadFile(decoyConfig); string(after) != "apiVersion: agent-marketplace/v4\nharnesses: [windsurf]\n" {
@@ -756,11 +755,12 @@ func TestConfigurationActionRejectsBusyAndInvalidRoot(t *testing.T) {
 	}
 }
 
-// spec: config-layering/unsupported-only-target-set-grants-no-materialization-authority
+// spec: session-interactions/unknown-harness-target-ids-refuse-configuration
 func TestConfigurationSaveUnknownOnlyRoot(t *testing.T) {
 	home, _ := newUserAPIFixture(t, false)
 	userConfig := filepath.Join(home, ".agents", "config.yaml")
-	writeFile(t, userConfig, "apiVersion: agent-marketplace/v4\nharnesses: [future-harness]\n")
+	root := "apiVersion: agent-marketplace/v4\nharnesses: [future-harness]\n"
+	writeFile(t, userConfig, root)
 	api, err := NewUser(context.Background(), home, session.DependencyLifecycle{}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -772,24 +772,20 @@ func TestConfigurationSaveUnknownOnlyRoot(t *testing.T) {
 	}
 
 	status, decoded := postRaw(t, api, "/api/configuration", "")
-	if status != http.StatusOK || decoded["editable"] != true {
-		t.Fatalf("unknown-only root not editable: %d %v", status, decoded)
+	if status != http.StatusOK || decoded["editable"] != false {
+		t.Fatalf("unknown-only root configuration = %d %v, want not editable", status, decoded)
 	}
-	status, decoded = saveTargets(t, api, `["future-harness"]`)
-	if status != http.StatusAccepted {
-		t.Fatalf("unknown-only save status = %d, body = %v", status, decoded)
+	status, decoded = saveTargets(t, api, `["devin"]`)
+	if status != http.StatusBadRequest {
+		t.Fatalf("unknown-only save status = %d, body = %v, want 400", status, decoded)
 	}
-	event := awaitNotification(t, events)
-	if got := notificationSeverity(t, event); got != "info" {
-		t.Fatalf("notification severity = %q", got)
+	if data, _ := os.ReadFile(userConfig); string(data) != root {
+		t.Fatalf("refused save changed the configuration: %s", data)
 	}
-	if data, _ := os.ReadFile(userConfig); !bytes.Contains(data, []byte("future-harness")) {
-		t.Fatalf("unknown identifier lost: %s", data)
-	}
-	if _, err := os.Stat(filepath.Join(home, ".future-harness")); !os.IsNotExist(err) {
-		t.Fatal("unsupported target materialized output")
+	if _, err := os.Stat(filepath.Join(home, ".devin")); !os.IsNotExist(err) {
+		t.Fatal("refused save materialized output")
 	}
 	if status := postAction(t, api, "sync"); status != http.StatusBadRequest {
-		t.Fatalf("sync after unknown-only save status = %d, want 400", status)
+		t.Fatalf("sync after unknown-only root status = %d, want 400", status)
 	}
 }

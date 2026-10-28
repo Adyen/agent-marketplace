@@ -688,12 +688,8 @@ func (a *API) handleSaveTargets(w http.ResponseWriter, r *http.Request, targets 
 		writeError(w, http.StatusBadRequest, codeNotReady)
 		return
 	}
-	existing := make(map[string]bool, len(metadata.UserTargets))
-	for _, target := range metadata.UserTargets {
-		existing[target] = true
-	}
 	for _, target := range targets {
-		if !config.IsSupportedHarness(target) && !existing[target] {
+		if !config.IsSupportedHarness(target) {
 			a.gate.Finish(operation)
 			writeError(w, http.StatusBadRequest, codeInvalidRequest)
 			return

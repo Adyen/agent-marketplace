@@ -71,9 +71,8 @@ export interface paths {
          * @description Configuration mutations hold the same guarded operation serializer
          *     as every other session operation. save-targets writes the
          *     user-personal Harness target set with the shared configuration
-         *     writer; unknown identifiers already present in the root may be
-         *     retained, newly introduced unsupported identifiers are rejected
-         *     before any write. initialize creates an absent user-personal root
+         *     writer; unsupported identifiers are rejected before any write, and a
+         *     root that already names one is reported as invalid configuration. initialize creates an absent user-personal root
          *     through the same initializer as `agent-marketplace init` and records
          *     the telemetry consent answer exactly as interactive init does; the
          *     consent field is required when the projection reports
@@ -966,7 +965,7 @@ export interface operations {
                     "application/json": components["schemas"]["ActionAccepted"];
                 };
             };
-            /** @description Unknown action, malformed request, blocked or invalid Marketplace endpoint, empty selection, unknown/ambiguous/non-user/stale source id, newly introduced unsupported target, unsupported session mode, or uneditable root; code localapi.invalid_request, localapi.not_ready, or localapi.not_supported */
+            /** @description Unknown action, malformed request, blocked or invalid Marketplace endpoint, empty selection, unknown/ambiguous/non-user/stale source id, unsupported target, unsupported session mode, or uneditable root; code localapi.invalid_request, localapi.not_ready, or localapi.not_supported */
             400: {
                 headers: {
                     [name: string]: unknown;

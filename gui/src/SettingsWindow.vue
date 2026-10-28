@@ -37,25 +37,7 @@ const appearanceOptions: { value: AppearancePreference; label: string }[] = [
   { value: 'dark', label: 'Dark' },
 ]
 
-interface TargetOption {
-  id: string
-  supported: boolean
-}
-
-const options = computed<TargetOption[]>(() => {
-  const config = configuration.value
-  if (config == null) {
-    return []
-  }
-  const supported = new Set(config.supportedTargets)
-  const listed: TargetOption[] = config.supportedTargets.map((id) => ({ id, supported: true }))
-  for (const id of config.userTargets) {
-    if (!supported.has(id)) {
-      listed.push({ id, supported: false })
-    }
-  }
-  return listed
-})
+const options = computed<string[]>(() => configuration.value?.supportedTargets ?? [])
 
 const busy = computed(() => props.controller.state.operation != null || props.controller.state.requesting)
 const editable = computed(() => configuration.value?.editable === true)
@@ -154,13 +136,7 @@ function revert() {
 }
 
 async function save() {
-  const order = options.value.map((option) => option.id)
-  const targets = order.filter((id) => draft.value.has(id))
-  for (const id of draft.value) {
-    if (!order.includes(id)) {
-      targets.push(id)
-    }
-  }
+  const targets = options.value.filter((id) => draft.value.has(id))
   if (await props.controller.saveTargets(targets)) {
     actionError.value = null
     draft.value = new Set(targets)
@@ -326,16 +302,15 @@ async function confirmRemove() {
               <legend class="gui-caps">Harness targets</legend>
               <p class="settings__hint">Synced resources are written into each selected harness.</p>
               <div class="settings__list">
-                <label v-for="option in options" :key="option.id" class="settings__option">
+                <label v-for="id in options" :key="id" class="settings__option">
                   <span class="settings__row-main">
-                    <span class="mono settings__target">{{ option.id }}</span>
-                    <span v-if="!option.supported" class="settings__badge settings__badge--warning">Unsupported by this version</span>
-                    <span v-if="organizationIds.has(option.id)" class="settings__row-hint">Also set by organization</span>
+                    <span class="mono settings__target">{{ id }}</span>
+                    <span v-if="organizationIds.has(id)" class="settings__row-hint">Also set by organization</span>
                   </span>
                   <UCheckbox
-                    :model-value="draft.has(option.id)"
-                    :aria-label="`Target ${option.id}`"
-                    @update:model-value="toggle(option.id, $event)"
+                    :model-value="draft.has(id)"
+                    :aria-label="`Target ${id}`"
+                    @update:model-value="toggle(id, $event)"
                   />
                 </label>
               </div>
