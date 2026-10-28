@@ -16,7 +16,7 @@ const observe = (files: string[]) => files.map((file) => {
   return { file, content, mode: stat.mode, ino: stat.ino, nlink: stat.nlink, mtime: stat.mtimeNs, ctime: stat.ctimeNs };
 });
 
-// spec: tui-interactions/unknown-harness-target-ids-refuse-configuration
+// spec: session-interactions/unknown-harness-target-ids-refuse-configuration
 // spec: consumer-config-format/unknown-harness-targets-gate-configuration-dependent-actions
 for (const scope of ["user", "project"] as const) {
   for (const field of ["harnesses", "materialization"] as const) {

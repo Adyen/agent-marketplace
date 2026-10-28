@@ -14,7 +14,7 @@ func (m *Model) setHookReview(report *materialize.Report) {
 	}
 	m.seedLegacyDiagnostics()
 	m.hookChanges = slices.Clone(report.HookChanges)
-	m.diagnostics.recordOperationSuccess(operationHookReview)
+	m.diagnostics.RecordOperationSuccess(operationHookReview)
 	m.syncDiagnosticViews()
 }
 

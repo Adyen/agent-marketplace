@@ -7,7 +7,7 @@ import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 import { runNonTTY } from "./process-helpers.js";
 
 // spec: tui-interactions/scope-and-selection-without-write
-// spec: tui-interactions/empty-selection
+// spec: session-interactions/empty-selection
 // spec: tui-interactions/retargeted-resource-is-pending-sync
 const journey = defineFixture("harness-project-scope", ["tui"]);
 before(journey.setup);

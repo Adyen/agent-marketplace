@@ -12,7 +12,7 @@ import (
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
 
-// spec: tui-navigation/ranked-search-within-sections
+// spec: session-navigation/ranked-search-within-sections
 func TestFuzzySearchRanksWithinLeafInSingleView(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.rows = []row{
@@ -49,7 +49,7 @@ func TestFuzzySearchDoesNotReorderSections(t *testing.T) {
 	}
 }
 
-// spec: tui-navigation/ranked-search-within-sections
+// spec: session-navigation/ranked-search-within-sections
 func TestFuzzySearchMetadataUsesSortedKeyOrder(t *testing.T) {
 	build := func() string {
 		r := mkRow("item", withAvailable)
@@ -62,8 +62,8 @@ func TestFuzzySearchMetadataUsesSortedKeyOrder(t *testing.T) {
 				},
 			},
 		}
-		r.ensureSearchable()
-		return strings.Join(r.searchWords, " ")
+		r.EnsureSearchable()
+		return strings.Join(r.SearchWords, " ")
 	}
 	first, second := build(), build()
 	if first != second {
@@ -115,7 +115,7 @@ func TestFuzzySearchHighlightsOnlyMatchedNameRunes(t *testing.T) {
 	}
 }
 
-// spec: tui-navigation/metadata-only-match
+// spec: session-navigation/metadata-only-match
 func TestFuzzySearchMetadataOnlyMatchDoesNotHighlightName(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	r := mkRow("plain", withAvailable, withRegistry("sec.git", "security"))
@@ -138,7 +138,7 @@ func TestFuzzySearchMetadataOnlyMatchDoesNotHighlightName(t *testing.T) {
 	}
 }
 
-// spec: tui-navigation/clear-and-refresh
+// spec: session-navigation/clear-and-refresh
 func TestFuzzySearchRemoteArrivalKeepsSelectionAnchor(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.rows = []row{

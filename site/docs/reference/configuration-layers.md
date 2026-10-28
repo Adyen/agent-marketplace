@@ -19,7 +19,7 @@ Each lock sits next to its configuration file and records only the sources that 
 
 ## Fields each layer may set
 
-Every layer may declare `sources`, `resources`, and `include`. The other top-level fields are limited by layer. A field in the wrong layer fails the whole layer with `v4.layer-field`, and the same rule applies to fragments that the layer includes.
+Every layer may declare `sources`, `resources`, and `include`. The other top-level fields are limited by layer. A field in the wrong layer normally fails the whole layer with `v4.layer-field`, and the same rule applies to fragments that the layer includes. The compatibility exception is `gui.version_check`: declarations in user-personal, repository-committed, and personal-local configuration and their included fragments are accepted, ignored with a warning, and neither reject the layer nor override the organization setting.
 
 | Field | Organization | User | Repository | Repository personal |
 |---|---|---|---|---|
@@ -29,6 +29,7 @@ Every layer may declare `sources`, `resources`, and `include`. The other top-lev
 | `logging` | accepted, not used | yes | no | no |
 | `update_check` | yes | yes | no | no |
 | `telemetry` | yes | yes | no | no |
+| `gui.version_check` | yes (default `true`) | accepted, ignored with warning | accepted, ignored with warning | accepted, ignored with warning |
 | `materialization` | no | yes | yes | yes |
 | Exclusion-only Marketplace source | no | yes | no | no |
 

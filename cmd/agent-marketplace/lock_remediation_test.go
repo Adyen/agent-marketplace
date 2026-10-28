@@ -10,7 +10,9 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/session"
 )
 
 func TestTUIDependencyLifecyclePropagatesExactLockLeaseIntoSync(t *testing.T) {
@@ -20,20 +22,20 @@ func TestTUIDependencyLifecyclePropagatesExactLockLeaseIntoSync(t *testing.T) {
 	repoRoot := t.TempDir()
 	withWorkingDir(t, repoRoot)
 
-	originalPrepare, originalSync := prepareTUILocks, runTUIExactSync
+	originalPrepare, originalSync := session.PrepareTUILocks, session.RunTUIExactSync
 	t.Cleanup(func() {
-		prepareTUILocks = originalPrepare
-		runTUIExactSync = originalSync
+		session.PrepareTUILocks = originalPrepare
+		session.RunTUIExactSync = originalSync
 	})
 	leaseAcquired := false
 	leaseReleased := false
-	prepareTUILocks = func(context.Context, string, string, lockMode) (exactLockLeaseFunc, error) {
+	session.PrepareTUILocks = func(context.Context, string, string, lifecycle.LockMode) (lifecycle.ExactLockLeaseFunc, error) {
 		return func(context.Context) (func(), error) {
 			leaseAcquired = true
 			return func() { leaseReleased = true }, nil
 		}, nil
 	}
-	runTUIExactSync = func(ctx context.Context, opts pipeline.ResolveOptions) pipeline.SyncResult {
+	session.RunTUIExactSync = func(ctx context.Context, opts pipeline.ResolveOptions) pipeline.SyncResult {
 		if !opts.ReadOnlyExactLocks {
 			t.Error("TUI sync did not request exact read-only locks")
 		}
@@ -48,7 +50,7 @@ func TestTUIDependencyLifecyclePropagatesExactLockLeaseIntoSync(t *testing.T) {
 		return pipeline.SyncResult{}
 	}
 
-	if _, err := runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repoRoot), false); err != nil {
+	if _, err := session.RuntimeDependencyLifecycle(context.Background(), mustWorkspace(t, repoRoot), false); err != nil {
 		t.Fatal(err)
 	}
 	if !leaseAcquired || !leaseReleased {

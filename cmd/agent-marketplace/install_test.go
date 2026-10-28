@@ -283,6 +283,150 @@ func TestInstallMarketplaceEndpointRejectsPolicyBeforeNetwork(t *testing.T) {
 	}
 }
 
+// spec: config-layering/marketplace-url-allowlist
+func TestV4EmptyMarketplaceAllowlistRejectsRegistrationBeforeNetwork(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, tc := range []struct {
+		name        string
+		policy      string
+		wantBlocked bool
+	}{
+		{name: "empty organization policy", policy: "allowed_marketplaces: []\n", wantBlocked: true},
+		{name: "removed policy", wantBlocked: false},
+		{name: "matching nonempty policy", policy: "allowed_marketplaces: ['.*']\n", wantBlocked: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			t.Setenv("HOME", homeDir)
+			t.Setenv("CODEX_HOME", filepath.Join(homeDir, ".codex"))
+			t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, "cache"))
+			t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
+			t.Setenv("TMPDIR", t.TempDir())
+			requests := 0
+			server := newMarketplaceEndpointServer(t, "marketplace-instance", "", &requests)
+			t.Cleanup(server.Close)
+
+			userConfigPath := filepath.Join(homeDir, ".agents", "config.yaml")
+			userRoot := "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin]\n"
+			writeConfig(t, userConfigPath, userRoot)
+			fragmentPath := filepath.Join(homeDir, ".agents", "fragment.yaml")
+			fragmentBefore := []byte("logging: {level: debug}\n")
+			writeFile(t, fragmentPath, string(fragmentBefore))
+			organizationPath := filepath.Join(t.TempDir(), "organization.yaml")
+			organizationRoot := "apiVersion: agent-marketplace/v4\nharnesses: [claude]\n" + tc.policy
+			writeConfig(t, organizationPath, organizationRoot)
+			config.SetTestOrganizationConfigPath(t, organizationPath)
+
+			repoRoot := t.TempDir()
+			repoConfigPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+			repoConfigBefore := []byte("apiVersion: agent-marketplace/v4\nharnesses: [devin]\n")
+			writeConfig(t, repoConfigPath, string(repoConfigBefore))
+			localConfigPath := filepath.Join(repoRoot, ".agents", "config.local.yaml")
+			if _, err := os.Lstat(localConfigPath); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("local config fixture unexpectedly exists: %v", err)
+			}
+			userBefore, err := os.ReadFile(userConfigPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			organizationBefore, err := os.ReadFile(organizationPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			withWorkingDir(t, repoRoot)
+			requests = 0
+			output, err := executeCommand("install", server.URL, "--scope", "user")
+			assertUnchanged := func(path string, before []byte) {
+				t.Helper()
+				after, readErr := os.ReadFile(path)
+				if readErr != nil || !bytes.Equal(after, before) {
+					t.Fatalf("registration changed %s: %q (err=%v)", path, after, readErr)
+				}
+			}
+			assertNoNativeOutput := func() {
+				t.Helper()
+				for _, path := range []string{
+					filepath.Join(homeDir, ".devin"),
+					filepath.Join(homeDir, ".claude"),
+					filepath.Join(homeDir, ".factory"),
+					filepath.Join(homeDir, ".codex"),
+					os.Getenv("CODEX_HOME"),
+					filepath.Join(homeDir, ".agents", "skills"),
+				} {
+					if _, statErr := os.Lstat(path); !errors.Is(statErr, os.ErrNotExist) {
+						t.Fatalf("endpoint registration created native output %s (err=%v)", path, statErr)
+					}
+				}
+			}
+			userLockPath := filepath.Join(homeDir, ".agents", "lock.yaml")
+			repoLockPath := filepath.Join(repoRoot, ".agents", "lock.yaml")
+			localLockPath := filepath.Join(repoRoot, ".agents", "lock.local.yaml")
+			if tc.wantBlocked {
+				var blocked *config.MarketplaceURLBlockedError
+				if err == nil || !errors.As(err, &blocked) {
+					t.Fatalf("empty Marketplace policy error = %v, want MarketplaceURLBlockedError (output %q)", err, output)
+				}
+				if requests != 0 {
+					t.Fatalf("empty Marketplace policy made %d endpoint request(s)", requests)
+				}
+				assertUnchanged(userConfigPath, userBefore)
+				assertUnchanged(fragmentPath, fragmentBefore)
+				assertUnchanged(organizationPath, organizationBefore)
+				assertUnchanged(repoConfigPath, repoConfigBefore)
+				if _, statErr := os.Lstat(localConfigPath); !errors.Is(statErr, os.ErrNotExist) {
+					t.Fatalf("registration changed local config path (err=%v)", statErr)
+				}
+				for _, path := range []string{userLockPath, repoLockPath, localLockPath} {
+					if _, statErr := os.Lstat(path); !errors.Is(statErr, os.ErrNotExist) {
+						t.Fatalf("blocked endpoint registration created lock %s (err=%v)", path, statErr)
+					}
+				}
+				assertNoNativeOutput()
+				return
+			}
+			if err != nil {
+				t.Fatalf("allowed Marketplace registration failed: %v\n%s", err, output)
+			}
+			if output != "Added Marketplace "+server.URL+" to "+userConfigPath+"\n" {
+				t.Fatalf("registration output = %q", output)
+			}
+			if requests == 0 {
+				t.Fatal("allowed Marketplace control did not reach its local endpoint")
+			}
+			userAfter, err := os.ReadFile(userConfigPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			v4, err := config.LoadV4ConfigFromPath(userConfigPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var sourceFound bool
+			for _, source := range v4.Sources {
+				if source.Kind == config.V4SourceMarketplace && source.CanonicalURL == server.URL {
+					sourceFound = true
+				}
+			}
+			if !sourceFound || !strings.Contains(string(userAfter), "marketplace: "+server.URL) || strings.Contains(string(userAfter), "marketplaces:") {
+				t.Fatalf("CLI registration lost its literal v4 endpoint: %s", userAfter)
+			}
+			lock := readLockDocument(t, userLockPath)
+			if string(lock.Scope) != "user" || len(lock.Marketplaces) != 1 || lock.Marketplaces[0].URL != server.URL || lock.Marketplaces[0].InstanceID != "marketplace-instance" || len(lock.Marketplaces[0].Resources) != 0 {
+				t.Fatalf("endpoint-only user lock = %#v", lock)
+			}
+			assertUnchanged(fragmentPath, fragmentBefore)
+			assertUnchanged(organizationPath, organizationBefore)
+			assertUnchanged(repoConfigPath, repoConfigBefore)
+			if _, statErr := os.Lstat(localConfigPath); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("registration changed local config path (err=%v)", statErr)
+			}
+			assertNoNativeOutput()
+		})
+	}
+}
+
 func TestInstallMarketplaceEndpointRejectsCanonicalURLMismatch(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

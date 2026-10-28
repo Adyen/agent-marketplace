@@ -1,9 +1,7 @@
 package tui
 
 import (
-	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -11,17 +9,14 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
-	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
-	"github.com/Adyen/agent-marketplace/internal/resolver"
-	"github.com/Adyen/agent-marketplace/internal/skill"
-	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/charmbracelet/x/ansi"
 )
 
-const marketplaceSearchDebounce = 250 * time.Millisecond
+const marketplaceSearchDebounce = session.DiscoverySearchDebounce
 
 type discoveryLoadedMsg struct {
 	generation requestGeneration
@@ -58,57 +53,17 @@ func pipelineScope(s scope) pipeline.Scope {
 	}
 }
 
-func marketplaceDiscoveryInstallable(r row) bool {
-	d := r.MarketplaceDiscovery
-	return d != nil && (d.Item.Availability == mpapi.AvailabilityAvailable || d.Item.Availability == mpapi.AvailabilityOperatorExposed)
-}
-
-func discoveryInstallOptions(repoRoot string, r row, s scope) (pipeline.InstallOptions, error) {
-	d := r.MarketplaceDiscovery
-	if !marketplaceDiscoveryInstallable(r) {
-		return pipeline.InstallOptions{}, errors.New("marketplace resource is not installable")
-	}
-	if d.Item.Revision == "" || d.Item.ContentDigest == "" {
-		return pipeline.InstallOptions{}, errors.New("marketplace discovery did not provide an exact revision and digest")
-	}
-	registry := d.Item.RegistryID
-	if registry == "" {
-		registry = d.Item.RegistrySlug
-	}
-	locator := d.Endpoint.Alias + ":" + registry + "/" + d.Item.Kind + "/" + d.Item.Name + "@" + d.Item.ContentDigest
-	selector := d.Endpoint.Alias
-	if d.Endpoint.Alias == "" {
-		locator = strings.TrimSuffix(d.Endpoint.URL, "/") + "/r/" + registry + "/" + d.Item.Kind + "/" + d.Item.Name + "/revisions/" + d.Item.ContentDigest
-		selector = d.Endpoint.URL
-	}
-	kind, ok := skill.ParseKind(d.Item.Kind)
-	if !ok {
-		return pipeline.InstallOptions{}, fmt.Errorf("unsupported Marketplace resource kind %q", d.Item.Kind)
-	}
-	exact := &marketplace.MarketplaceLocator{Marketplace: selector, Alias: d.Endpoint.Alias, URL: d.Endpoint.URL, Registry: registry, Kind: d.Item.Kind, Name: d.Item.Name, Revision: d.Item.Revision, Digest: d.Item.ContentDigest}
-	return pipeline.InstallOptions{RepoRoot: repoRoot, Args: []string{locator}, Kind: kind, HasKind: true, Scope: pipelineScope(s), ScopeSpecified: true, Marketplace: selector, ExactMarketplaceLocator: exact}, nil
-}
-
-var (
-	prepareDiscoveryMarketplaceInstall = pipeline.PrepareMarketplaceInstall
-	commitPreparedMarketplaceInstall   = pipeline.CommitPreparedMarketplaceInstall
-)
-
 func prepareDiscoveryInstall(ctx context.Context, operation operationID, options pipeline.InstallOptions) tea.Cmd {
 	return func() tea.Msg {
-		prepared, err := prepareDiscoveryMarketplaceInstall(ctx, options)
-		preview := ""
-		if prepared != nil {
-			preview = prepared.Preview()
-		}
-		return discoveryInstallMsg{operation: operation, options: options, prepared: prepared, preview: preview, err: err}
+		result := session.PrepareDiscoveryInstall(ctx, options)
+		return discoveryInstallMsg{operation: operation, options: result.Options, prepared: result.Prepared, preview: result.Preview, err: result.Err}
 	}
 }
 
 func commitDiscoveryInstall(ctx context.Context, operation operationID, options pipeline.InstallOptions, prepared *pipeline.PreparedMarketplaceInstall) tea.Cmd {
 	return func() tea.Msg {
-		result, err := commitPreparedMarketplaceInstall(ctx, prepared)
-		return discoveryInstallMsg{operation: operation, options: options, result: result, err: err}
+		result := session.CommitDiscoveryInstall(ctx, options, prepared)
+		return discoveryInstallMsg{operation: operation, options: result.Options, result: result.Result, err: result.Err}
 	}
 }
 
@@ -128,7 +83,7 @@ func (m Model) startDiscoveryInstall(r row, s scope) (tea.Model, tea.Cmd) {
 	m.mutationPendingReport = nil
 	m.marketplaceInstallOptions = options
 	m.marketplaceInstallOperation = operation
-	m.beginOperationProgressFor(operation, "install", m.requests.active(requestSnapshot))
+	m.beginOperationProgressFor(operation, "install", m.requests.Active(requestSnapshot))
 	return m, tea.Batch(
 		prepareDiscoveryInstall(m.observedContext(ctxOrBackground(m.ctx)), operation, options),
 		m.operationProgressCmd(),
@@ -220,22 +175,8 @@ func (m Model) handleMarketplaceConsentKey(msg tea.KeyPressMsg) (tea.Model, tea.
 	return m, cmd
 }
 
-func marketplaceEndpointDisplay(endpoint config.MarketplaceEntry) string {
-	if endpoint.Alias != "" {
-		return endpoint.Alias
-	}
-	if normalized, err := marketplace.NormalizeMarketplaceURL(endpoint.URL); err == nil {
-		return normalized
-	}
-	return endpoint.URL
-}
-
 func effectiveMarketplaceConfig(cfg *config.Config) config.EffectiveConfig {
-	ec := config.EffectiveConfig{Merged: cfg}
-	if cfg != nil && cfg.AllowedMarketplaces != nil {
-		ec.AllowedMarketplaces = slices.Clone(*cfg.AllowedMarketplaces)
-	}
-	return ec
+	return session.EffectiveMarketplaceConfig(cfg)
 }
 
 func loadMarketplaceDiscovery(ctx context.Context, cfg *config.Config, query string, generation requestGeneration) tea.Cmd {
@@ -356,10 +297,6 @@ func (m *Model) beginMarketplaceDiscovery(query string, debounce bool) tea.Cmd {
 	return loadMarketplaceDiscovery(ctx, m.mergedCfg, query, generation)
 }
 
-func discoveryCoordinate(instanceID, registryID, kind, name string) string {
-	return instanceID + "\x00" + registryID + "\x00" + kind + "\x00" + name
-}
-
 func (m *Model) setProvisionalRows(rows []row) {
 	if m.authoritativeRows != nil {
 		m.provisionalRows = nil
@@ -369,66 +306,9 @@ func (m *Model) setProvisionalRows(rows []row) {
 	m.mergeDiscoveryRows()
 }
 
-func provisionalCoordinate(r row) string {
-	url := r.Artifact.MarketplaceURL
-	if url == "" {
-		url = r.RegistryURL
-	}
-	if normalized, err := marketplace.NormalizeMarketplaceURL(url); err == nil {
-		url = normalized
-	}
-	return url + "\x00" + r.Artifact.MarketplaceRegistryID + "\x00" + r.Artifact.Kind.String() + "\x00" + r.Artifact.MarketplaceResourceName
-}
-
 func (m *Model) mergeDiscoveryRows() {
 	selection := m.captureRebuildAnchor()
-	rows := make([]row, 0, len(m.authoritativeRows)+len(m.provisionalRows)+len(m.discoveryRows))
-	rows = append(rows, m.authoritativeRows...)
-	pending := make(map[string]struct{}, len(m.provisionalRows))
-	if m.authoritativeRows == nil {
-		for _, r := range m.provisionalRows {
-			if r.Artifact.IsMarketplace {
-				pending[provisionalCoordinate(r)] = struct{}{}
-			}
-		}
-		rows = append(rows, m.provisionalRows...)
-	}
-	enabled := make(map[string]struct{})
-	for _, r := range m.authoritativeRows {
-		if r.IsAvailable || !r.Artifact.IsMarketplace {
-			continue
-		}
-		selectionCoordinates := 0
-		for _, selection := range r.MarketplaceSelections {
-			pin := selection.Pin
-			if selection.Entry.InstanceID == "" || pin.RegistryID == "" || pin.Kind == "" || pin.Name == "" {
-				continue
-			}
-			enabled[discoveryCoordinate(selection.Entry.InstanceID, pin.RegistryID, pin.Kind, pin.Name)] = struct{}{}
-			selectionCoordinates++
-		}
-		if selectionCoordinates == 0 {
-			enabled[discoveryCoordinate(r.Artifact.MarketplaceInstanceID, r.Artifact.MarketplaceRegistryID, r.Artifact.Kind.String(), r.Artifact.Name)] = struct{}{}
-		}
-	}
-	for _, r := range m.discoveryRows {
-		d := r.MarketplaceDiscovery
-		if d == nil {
-			continue
-		}
-		if _, ok := enabled[discoveryCoordinate(d.Endpoint.InstanceID, d.Item.RegistryID, d.Item.Kind, d.Item.Name)]; ok {
-			continue
-		}
-		url := d.Endpoint.URL
-		if normalized, err := marketplace.NormalizeMarketplaceURL(url); err == nil {
-			url = normalized
-		}
-		if _, ok := pending[url+"\x00"+d.Item.RegistryID+"\x00"+d.Item.Kind+"\x00"+d.Item.Name]; ok {
-			continue
-		}
-		rows = append(rows, r)
-	}
-	m.rows = rows
+	m.rows = session.MergeDiscoveryRows(m.authoritativeRows, m.provisionalRows, m.discoveryRows)
 	m.recomputeView()
 	m.restoreSelectionAfterRebuild(selection)
 }
@@ -454,63 +334,9 @@ func (m *Model) applyDiscovery(query string, outcomes []marketplace.DiscoveryOut
 	}
 	m.discoveryOutcomes = outcomes
 	m.rebuildDiscoveryErrors()
-	var rows []row
-	for _, outcome := range outcomes {
-		for _, item := range outcome.Items {
-			kind, ok := skill.ParseKind(item.Kind)
-			if !ok {
-				continue
-			}
-			tags := make([]string, 0)
-			if value := item.Metadata["tags"]; value != "" {
-				tags = append(tags, value)
-			}
-			discovery := &marketplaceDiscovery{Endpoint: outcome.Endpoint, Item: item, CacheState: outcome.CacheState, ObservedAt: outcome.ObservedAt}
-			rows = append(rows, row{
-				Artifact: resolver.ResolvedArtifact{
-					Entry:                   catalog.Entry{Kind: kind, Name: item.Name, Description: item.Description, Tags: tags},
-					CatalogKey:              "marketplace-discovery:" + outcome.Endpoint.InstanceID + ":" + item.RegistryID + ":" + item.Revision + ":" + item.ContentDigest,
-					IsMarketplace:           true,
-					MarketplaceURL:          outcome.Endpoint.URL,
-					MarketplaceInstanceID:   outcome.Endpoint.InstanceID,
-					MarketplaceAlias:        outcome.Endpoint.Alias,
-					MarketplaceRegistryID:   item.RegistryID,
-					MarketplaceResourceName: item.Name,
-				},
-				IsAvailable:          true,
-				RegistryURL:          outcome.Endpoint.URL,
-				RegistryName:         marketplaceEndpointDisplay(outcome.Endpoint) + "/" + item.RegistrySlug,
-				MarketplaceDiscovery: discovery,
-			})
-		}
-	}
-	slices.SortFunc(rows, func(a, b row) int {
-		da, db := a.MarketplaceDiscovery, b.MarketplaceDiscovery
-		if da.Item.Score != db.Item.Score {
-			if da.Item.Score > db.Item.Score {
-				return -1
-			}
-			return 1
-		}
-		for _, c := range []int{
-			cmp.Compare(marketplaceEndpointDisplay(da.Endpoint), marketplaceEndpointDisplay(db.Endpoint)),
-			cmp.Compare(da.Endpoint.URL, db.Endpoint.URL),
-			cmp.Compare(da.Endpoint.InstanceID, db.Endpoint.InstanceID),
-			cmp.Compare(da.Item.RegistrySlug, db.Item.RegistrySlug),
-			cmp.Compare(da.Item.Kind, db.Item.Kind),
-			cmp.Compare(da.Item.Name, db.Item.Name),
-			cmp.Compare(da.Item.Revision, db.Item.Revision),
-			cmp.Compare(da.Item.ContentDigest, db.Item.ContentDigest),
-		} {
-			if c != 0 {
-				return c
-			}
-		}
-		return 0
-	})
-	m.discoveryRows = rows
+	m.discoveryRows = session.DiscoveryRows(outcomes)
 	if query == "" {
-		m.browseDiscoveryRows = slices.Clone(rows)
+		m.browseDiscoveryRows = slices.Clone(m.discoveryRows)
 	}
 	m.mergeDiscoveryRows()
 }

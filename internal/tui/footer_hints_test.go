@@ -9,6 +9,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -112,7 +113,7 @@ func TestMissingSnapshotFooterPrioritizesSync(t *testing.T) {
 		t.Run(fmt.Sprint(width), func(t *testing.T) {
 			m := footerFixture(width)
 			m.driftAssessment = driftFailed
-			m.replaceSnapshotDiagnostics([]tuiDiagnostic{snapshotDiagnostic(diagnosticWarning, diagnosticCatalog, cache.ErrExactGitSnapshotUnavailable)}, nil, nil)
+			m.replaceSnapshotDiagnostics([]tuiDiagnostic{snapshotDiagnostic(diagnosticWarning, session.DiagnosticCatalog, cache.ErrExactGitSnapshotUnavailable)}, nil, nil)
 			footer := renderFooter(m)
 			assertFooterFits(t, footer, width, "s sync", ": commands", "? help", "q quit")
 			if strings.Count(ansi.Strip(footer), "s sync") != 1 {

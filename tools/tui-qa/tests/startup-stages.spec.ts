@@ -64,7 +64,7 @@ after(() => {
 });
 
 // spec: tui-startup/provisional-config-stage-publishes-verification-pending-rows
-// spec: tui-startup/provisional-rows-render-while-transient-acquisition-is-blocked
+// spec: session-startup/provisional-rows-render-while-transient-acquisition-is-blocked
 // spec: tui-startup/local-all-true-selections-expand-into-pending-rows-on-the-normal-config-path
 journey.test("startup shows guarded configured rows while acquisition is blocked, then verifies and syncs them", async (terminal) => {
   const fixture = journey.current();

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -24,28 +23,20 @@ import (
 	"charm.land/lipgloss/v2/compat"
 	"github.com/Adyen/agent-marketplace/internal/logging"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/sahilm/fuzzy"
 )
 
-type DependencyLifecycleFunc func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error)
-type DependencyMutationFunc func(context.Context, pipeline.Workspace, func(pipeline.ConfigPathMapper) error) error
-
-type DependencyLifecycle struct {
-	Sync   DependencyLifecycleFunc
-	Update DependencyLifecycleFunc
-	Mutate DependencyMutationFunc
-	// InstallReconcile prepares acquisition locks for the sync that follows a
-	// Marketplace install, so other sources stay at their locked revisions.
-	InstallReconcile pipeline.DependencyReconciler
-	InstallPrepare   pipeline.InstallDependencyPreparer
-}
-
 type Option func(*Model)
 
 func WithDependencyLifecycle(lifecycle DependencyLifecycle) Option {
 	return func(model *Model) { model.dependencyLifecycle = lifecycle }
+}
+
+func WithOperationGate(gate *session.OperationGate) Option {
+	return func(model *Model) { model.operationGate = gate }
 }
 
 // WithWorkspace supplies the already validated roots shared by every TUI
@@ -137,21 +128,6 @@ func newTUIViewport(width, height int) viewport.Model {
 // code never touches it; see init_test.go's TestMain for the setter.
 var testSkipInitModal bool
 
-// shouldShowInitModal returns true when the home directory exists but the
-// user personal config file does not. We require the home directory itself to
-// be present so test sandboxes with synthetic paths don't accidentally trigger
-// the first-run dialog.
-func shouldShowInitModal(homeDir string) bool {
-	if homeDir == "" {
-		return false
-	}
-	if info, err := os.Stat(homeDir); err != nil || !info.IsDir() {
-		return false
-	}
-	_, err := os.Stat(filepath.Join(homeDir, ".agents", "config.yaml"))
-	return os.IsNotExist(err)
-}
-
 func (m Model) Init() tea.Cmd {
 	var warningCmd tea.Cmd
 	if m.viewPrefsWarning != "" {
@@ -160,7 +136,7 @@ func (m Model) Init() tea.Cmd {
 			return toastMsg{text: text, duration: 5 * time.Second}
 		}
 	}
-	return tea.Batch(loadSnapshotProgressive(ctxOrBackground(m.ctx), m.workspace, m.homeDir, m.requests.active(requestSnapshot)), m.spinner.Tick, warningCmd, m.upgradeNotice)
+	return tea.Batch(loadSnapshotProgressive(ctxOrBackground(m.ctx), m.workspace, m.homeDir, m.requests.Active(requestSnapshot)), m.spinner.Tick, warningCmd, m.upgradeNotice)
 }
 
 func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
@@ -168,7 +144,7 @@ func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
 	if msg.stage != snapshotStageFinal {
 		m.driftAssessment = assessment
 		m.replaceSnapshotDiagnostics(msg.diagnostics, msg.errs, msg.warnings)
-		m.rowsStale = len(diagnosticValues(m.diagnostics.snapshot, diagnosticError)) > 0
+		m.rowsStale = len(diagnosticValues(m.diagnostics.Snapshot, diagnosticError)) > 0
 		return
 	}
 	if assessment == driftUnknown {
@@ -180,10 +156,10 @@ func (m *Model) applySnapshotStatus(msg snapshotLoadedMsg) {
 	}
 	m.driftAssessment = assessment
 	m.replaceSnapshotDiagnostics(msg.diagnostics, msg.errs, msg.warnings)
-	m.rowsStale = assessment == driftFailed || len(diagnosticValues(m.diagnostics.snapshot, diagnosticError)) > 0
+	m.rowsStale = assessment == driftFailed || len(diagnosticValues(m.diagnostics.Snapshot, diagnosticError)) > 0
 	m.configInvalid = false
-	for _, d := range m.diagnostics.snapshot {
-		if d.severity == diagnosticError && d.category == diagnosticConfig {
+	for _, d := range m.diagnostics.Snapshot {
+		if d.Severity == diagnosticError && d.Category == diagnosticConfig {
 			m.configInvalid = true
 			break
 		}
@@ -262,6 +238,7 @@ func (m *Model) finishUpdateReload(generation requestGeneration, reloadErr error
 	m.updatePendingWarnings = nil
 	m.syncing = false
 	m.clearOperationProgress()
+	m.finishDependencyOperation()
 	// Match the direct updateDoneMsg path: an update never satisfies sync+quit.
 	m.quitAfterSync = false
 	switch {
@@ -313,6 +290,7 @@ func (m *Model) finishSyncReload(generation requestGeneration, reloadErr error) 
 	m.syncPendingWarnings = nil
 	m.syncing = false
 	m.clearOperationProgress()
+	m.finishDependencyOperation()
 	// A sync+quit confirmed while the reload was already in flight still
 	// quits once the authoritative reload lands; the verdict is carried to
 	// Run() rather than toasted.
@@ -535,7 +513,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case snapshotLoadedMsg:
 		if msg.stage == snapshotStageConfig {
-			if m.requests.active(requestSnapshot) != msg.generation {
+			if m.requests.Active(requestSnapshot) != msg.generation {
 				return m, nil
 			}
 			if msg.provisionalCfg != nil {
@@ -548,7 +526,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(m.beginMarketplaceDiscovery(m.filter, false), waitSnapshotStages(msg.stages))
 		}
 		if msg.stage == snapshotStageInventory {
-			if m.requests.active(requestSnapshot) != msg.generation {
+			if m.requests.Active(requestSnapshot) != msg.generation {
 				return m, nil
 			}
 			m.loading = false
@@ -630,7 +608,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(toastExpiryCmd(2*time.Second), m.beginMarketplaceDiscovery(m.filter, false), m.finishMarketplaceInstallReload(snapshot.generation, snapshotAcceptanceError(snapshot)), updateCmd, syncCmd)
 
 	case discoveryDebounceMsg:
-		if m.requests.active(requestDiscovery) != msg.generation {
+		if m.requests.Active(requestDiscovery) != msg.generation {
 			return m, nil
 		}
 		ctx, cancel := context.WithCancel(ctxOrBackground(m.ctx))
@@ -656,7 +634,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if m.requests.active(requestDiscovery) != msg.generation || msg.sequence == 0 || msg.sequence <= m.discoverySequence {
+		if m.requests.Active(requestDiscovery) != msg.generation || msg.sequence == 0 || msg.sequence <= m.discoverySequence {
 			return m, nil
 		}
 		m.discoverySequence = msg.sequence
@@ -822,6 +800,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncing = false
 			m.quitAfterSync = false
 			m.clearOperationProgress()
+			m.finishDependencyOperation()
 			slog.Debug("sync complete, quitting as requested", "err", msg.err)
 			m.syncQuitErr = msg.err
 			return m, tea.Quit
@@ -859,6 +838,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setHookReview(msg.report)
 		m.syncing = false
 		m.clearOperationProgress()
+		m.finishDependencyOperation()
 		var installCmd tea.Cmd
 		if msg.snapshot.generation != 0 {
 			m.applySnapshotStatus(msg.snapshot)
@@ -1440,11 +1420,14 @@ func (m Model) dispatchAction(id paletteActionID) (tea.Model, tea.Cmd) {
 				return toastMsg{text: "already in sync", duration: 2 * time.Second}
 			}
 		}
+		if !m.beginDependencyOperation(operationSync) {
+			return m, operationBlockedCmd()
+		}
 		m.refreshing = false
 		// Sync does not allocate a snapshot generation until syncDoneMsg
 		// actually schedules the authoritative post-sync reload.
 		m.syncing = true
-		m.beginOperationProgress("sync", m.requests.active(requestSnapshot))
+		m.beginOperationProgress("sync", m.requests.Active(requestSnapshot))
 		recordActionSpan(m.ctx, "sync", nil)
 		return m, tea.Batch(m.dependencySyncCmd(), m.operationProgressCmd(), m.spinner.Tick)
 
@@ -1454,6 +1437,9 @@ func (m Model) dispatchAction(id paletteActionID) (tea.Model, tea.Cmd) {
 		}
 		if m.loading || m.syncing {
 			return m, nil
+		}
+		if !m.beginDependencyOperation(operationUpdate) {
+			return m, operationBlockedCmd()
 		}
 		m.refreshing = false
 		generation := m.beginRequest(requestSnapshot)
@@ -1595,7 +1581,7 @@ func (m *Model) rebuildOpenBundle(previous row, hadPrevious bool) {
 			m.ensureBundleCursorVisible()
 			return
 		}
-		if marketplaceInspectableSkill(current) && m.requests.active(requestDetail) != 0 {
+		if marketplaceInspectableSkill(current) && m.requests.Active(requestDetail) != 0 {
 			return
 		}
 		m.bundle = nil
@@ -1627,52 +1613,21 @@ func (m *Model) rebuildOpenBundle(previous row, hadPrevious bool) {
 	m.ensureBundleCursorVisible()
 }
 
-// toggleDenial identifies why the guarded row toggle cannot proceed, in the
-// order the keyboard Space dispatch reports it. toggleEligible means the
-// toggle modal may open. This is the single authoritative toggle policy:
-// the keyboard path maps each denial to its toast/no-op outcome and the
-// palette maps any denial to hiding the toggle action.
-type toggleDenial int
+type toggleDenial = session.RowToggleDenial
 
 const (
-	toggleEligible toggleDenial = iota
-	toggleBusy
-	toggleConfigInvalid
-	toggleMalformed
-	togglePendingVerification
-	toggleMarketplaceBlocked
-	toggleRequired
-	toggleCollectionOnly
+	toggleEligible            = session.RowToggleEligible
+	toggleBusy                = session.RowToggleBusy
+	toggleConfigInvalid       = session.RowToggleConfigInvalid
+	toggleMalformed           = session.RowToggleMalformed
+	togglePendingVerification = session.RowTogglePendingVerification
+	toggleMarketplaceBlocked  = session.RowToggleMarketplaceBlocked
+	toggleRequired            = session.RowToggleRequired
+	toggleCollectionOnly      = session.RowToggleCollectionOnly
 )
 
-// rowToggleEligibility evaluates the shared toggle guards against the
-// current model and row without dispatching.
 func (m Model) rowToggleEligibility(r row) toggleDenial {
-	if m.loading || m.syncing {
-		return toggleBusy
-	}
-	if m.configInvalid {
-		return toggleConfigInvalid
-	}
-	return rowToggleDenial(r)
-}
-
-// rowToggleDenial evaluates the guards that belong to the row itself, so
-// hints can follow what the row supports regardless of transient states.
-func rowToggleDenial(r row) toggleDenial {
-	switch {
-	case r.IsMalformed:
-		return toggleMalformed
-	case r.PendingVerification:
-		return togglePendingVerification
-	case r.MarketplaceDiscovery != nil && !marketplaceDiscoveryInstallable(r):
-		return toggleMarketplaceBlocked
-	case r.Artifact.Required:
-		return toggleRequired
-	case r.MarketplaceCollectionOnly && !r.canOverrideMarketplace():
-		return toggleCollectionOnly
-	}
-	return toggleEligible
+	return session.RowToggleEligibility(r, m.loading || m.syncing, m.configInvalid)
 }
 
 func (m Model) applyRowSpaceEligibility(r row) (tea.Model, tea.Cmd) {
@@ -1936,6 +1891,9 @@ func (m Model) confirmSyncQuitYes() (tea.Model, tea.Cmd) {
 		m.quitAfterSync = true
 		return m, nil
 	}
+	if !m.beginDependencyOperation(operationSync) {
+		return m, operationBlockedCmd()
+	}
 	// Sync then quit — start the sync and defer tea.Quit to the
 	// syncDoneMsg handler. Including tea.Quit in the batch here
 	// would race the sync goroutine and quit before materialization
@@ -1943,7 +1901,7 @@ func (m Model) confirmSyncQuitYes() (tea.Model, tea.Cmd) {
 	m.pane = paneList
 	m.syncing = true
 	m.quitAfterSync = true
-	m.beginOperationProgress("sync", m.requests.active(requestSnapshot))
+	m.beginOperationProgress("sync", m.requests.Active(requestSnapshot))
 	slog.Debug("sync+quit confirmed, deferring quit until sync completes")
 	return m, tea.Batch(m.dependencySyncCmd(), m.operationProgressCmd(), m.spinner.Tick)
 }
@@ -2155,9 +2113,9 @@ func filepathBase(path string) string {
 
 func (m *Model) applyFilter() []row {
 	for i := range m.rows {
-		m.rows[i].ensureLabelMemo()
+		rowLabelMemoFor(&m.rows[i])
 		if m.filter != "" {
-			m.rows[i].ensureSearchable()
+			m.rows[i].EnsureSearchable()
 		}
 	}
 	if m.filter == "" {
@@ -2178,16 +2136,16 @@ func (m *Model) applyFilter() []row {
 	next := 0
 	for i := range m.rows {
 		r := m.rows[i]
-		r.searchRanked = true
+		r.SearchRanked = true
 		if next < len(nameMatches) && nameMatches[next].Index == i {
-			r.searchNameMatch = true
-			r.searchScore = nameMatches[next].Score
-			r.searchMatchRunes = runeIndexes(r.searchName, nameMatches[next].MatchedIndexes)
+			r.SearchNameMatch = true
+			r.SearchScore = nameMatches[next].Score
+			r.SearchMatchRunes = runeIndexes(r.SearchName, nameMatches[next].MatchedIndexes)
 			next++
 		} else if rowHasAllWordPrefixes(&r, terms) {
-			r.searchNameMatch = false
-			r.searchScore = 0
-			r.searchMatchRunes = nil
+			r.SearchNameMatch = false
+			r.SearchScore = 0
+			r.SearchMatchRunes = nil
 		} else {
 			continue
 		}
@@ -2199,7 +2157,7 @@ func (m *Model) applyFilter() []row {
 
 func rowHasAllWordPrefixes(r *row, terms []string) bool {
 	for _, term := range terms {
-		if !r.hasWordWithPrefix(term) {
+		if !r.HasWordWithPrefix(term) {
 			return false
 		}
 	}
@@ -2209,15 +2167,15 @@ func rowHasAllWordPrefixes(r *row, terms []string) bool {
 // searchRankLess reports whether a ranks strictly above b: name matches
 // before metadata-only matches, then by descending fuzzy score.
 func searchRankLess(a, b row) bool {
-	if a.searchNameMatch != b.searchNameMatch {
-		return a.searchNameMatch
+	if a.SearchNameMatch != b.SearchNameMatch {
+		return a.SearchNameMatch
 	}
-	return a.searchScore > b.searchScore
+	return a.SearchScore > b.SearchScore
 }
 
 type searchNameSource []row
 
-func (s searchNameSource) String(i int) string { return s[i].searchName }
+func (s searchNameSource) String(i int) string { return s[i].SearchName }
 func (s searchNameSource) Len() int            { return len(s) }
 
 func fuzzyMatch(pattern, text string) (fuzzy.Match, bool) {

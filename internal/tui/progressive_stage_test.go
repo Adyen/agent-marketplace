@@ -22,6 +22,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -85,7 +86,7 @@ func collectSnapshotStages(stages <-chan snapshotLoadedMsg) []snapshotLoadedMsg 
 	return msgs
 }
 
-// spec: tui-startup/startup-snapshot-delivers-config-inventory-then-assessed-stages
+// spec: session-startup/startup-snapshot-delivers-config-inventory-then-assessed-stages
 func TestReadSnapshotStagesDeliversConfigInventoryThenAssessed(t *testing.T) {
 	repoRoot, homeDir := progressiveFixture(t)
 
@@ -186,7 +187,7 @@ func snapshotDriftIdentities(report materialize.DriftReport) []string {
 	return identities
 }
 
-// spec: tui-startup/ordinary-reload-keeps-the-current-view-until-final-assessment
+// spec: session-startup/ordinary-reload-keeps-the-current-view-until-final-assessment
 func TestOrdinaryReloadAvoidsProgressiveSnapshotWork(t *testing.T) {
 	repoRoot, homeDir := progressiveFixture(t)
 	globalPath := filepath.Join(homeDir, ".agents", "config.yaml")
@@ -201,27 +202,27 @@ func TestOrdinaryReloadAvoidsProgressiveSnapshotWork(t *testing.T) {
 	}
 
 	counts := &snapshotReadCounters{}
-	originalGlobal, originalRepo := loadGlobalConfig, loadRepoConfig
-	originalDiscover, originalMaterialize := discoverCatalog, runMaterialize
-	loadGlobalConfig = func() (*config.Config, error) {
+	originalGlobal, originalRepo := session.LoadGlobalConfig, session.LoadRepoConfig
+	originalDiscover, originalMaterialize := session.DiscoverCatalog, session.RunMaterialize
+	session.LoadGlobalConfig = func() (*config.Config, error) {
 		counts.global.Add(1)
 		return originalGlobal()
 	}
-	loadRepoConfig = func() (*config.Config, error) {
+	session.LoadRepoConfig = func() (*config.Config, error) {
 		counts.repo.Add(1)
 		return originalRepo()
 	}
-	discoverCatalog = func(dir, sourceHarness string) (catalog.LoadedCatalog, error) {
+	session.DiscoverCatalog = func(dir, sourceHarness string) (catalog.LoadedCatalog, error) {
 		counts.discoveries.Add(1)
 		return originalDiscover(dir, sourceHarness)
 	}
-	runMaterialize = func(context.Context, string, []resolver.ResolvedArtifact, ...materialize.RunOption) (*materialize.Report, error) {
+	session.RunMaterialize = func(context.Context, string, []resolver.ResolvedArtifact, ...materialize.RunOption) (*materialize.Report, error) {
 		counts.dryRuns.Add(1)
 		return &materialize.Report{}, nil
 	}
 	t.Cleanup(func() {
-		loadGlobalConfig, loadRepoConfig = originalGlobal, originalRepo
-		discoverCatalog, runMaterialize = originalDiscover, originalMaterialize
+		session.LoadGlobalConfig, session.LoadRepoConfig = originalGlobal, originalRepo
+		session.DiscoverCatalog, session.RunMaterialize = originalDiscover, originalMaterialize
 	})
 
 	m := NewModel(repoRoot, homeDir)
@@ -229,7 +230,7 @@ func TestOrdinaryReloadAvoidsProgressiveSnapshotWork(t *testing.T) {
 	m.rows = []row{mkRow("previous", withGlobal, withRegistry("previous.git", "previous"))}
 	m.authoritativeRows = slices.Clone(m.rows)
 	m.recomputeView()
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	beforeView := ansi.Strip(m.viewContent())
 	if !strings.Contains(beforeView, "previous") {
 		t.Fatalf("ordinary reload fixture has no prior visible row:\n%s", beforeView)
@@ -296,7 +297,7 @@ func TestOrdinaryReloadAvoidsProgressiveSnapshotWork(t *testing.T) {
 	}
 }
 
-// spec: tui-startup/invalid-configuration-delivers-one-fail-closed-final-stage
+// spec: session-startup/invalid-configuration-delivers-one-fail-closed-final-stage
 func TestReadSnapshotStagesInvalidConfigStaysFailClosed(t *testing.T) {
 	repoRoot, homeDir := progressiveFixture(t)
 	if err := os.WriteFile(filepath.Join(homeDir, ".agents", "config.yaml"), []byte("not: [valid\n"), 0o644); err != nil {
@@ -339,13 +340,13 @@ func TestReadSnapshotStagesUsesNestedLocalWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	originalLocal := loadLocalConfig
-	t.Cleanup(func() { loadLocalConfig = originalLocal })
-	loadLocalConfig = loadLocalConfigAt
-	original := runMaterialize
-	t.Cleanup(func() { runMaterialize = original })
+	originalLocal := session.LoadLocalConfig
+	t.Cleanup(func() { session.LoadLocalConfig = originalLocal })
+	session.LoadLocalConfig = session.LoadLocalConfigAt
+	original := session.RunMaterialize
+	t.Cleanup(func() { session.RunMaterialize = original })
 	var materializeRoot string
-	runMaterialize = func(_ context.Context, root string, _ []resolver.ResolvedArtifact, _ ...materialize.RunOption) (*materialize.Report, error) {
+	session.RunMaterialize = func(_ context.Context, root string, _ []resolver.ResolvedArtifact, _ ...materialize.RunOption) (*materialize.Report, error) {
 		materializeRoot = root
 		return &materialize.Report{}, nil
 	}
@@ -411,14 +412,14 @@ func TestReadSnapshotStagesProvisionalCatalogsUseWorkspaceLayerRoots(t *testing.
 
 // Once the validated-config stage lands, Marketplace discovery runs while the
 // local catalog, detail capture, and dry run are still in flight.
-// spec: tui-startup/config-stage-starts-cached-first-marketplace-discovery-before-local-verification-finishes
+// spec: session-startup/config-stage-starts-cached-first-marketplace-discovery-before-local-verification-finishes
 func TestConfigStageStartsDiscoveryBeforeLocalVerification(t *testing.T) {
 	m := newTestModel()
 	m.rows = nil
 	m.authoritativeRows = nil
 	m.flatItems = nil
 	m.loading = true
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	endpoint := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market", Alias: "public"}
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
@@ -436,16 +437,16 @@ func TestConfigStageStartsDiscoveryBeforeLocalVerification(t *testing.T) {
 	if m.mergedCfg == nil || len(m.mergedCfg.Marketplaces) != 1 {
 		t.Fatalf("config stage did not publish merged config: %#v", m.mergedCfg)
 	}
-	if !m.discoveryLoading || m.requests.active(requestDiscovery) == 0 {
-		t.Fatalf("config stage did not start Marketplace discovery: loading=%t generation=%d", m.discoveryLoading, m.requests.active(requestDiscovery))
+	if !m.discoveryLoading || m.requests.Active(requestDiscovery) == 0 {
+		t.Fatalf("config stage did not start Marketplace discovery: loading=%t generation=%d", m.discoveryLoading, m.requests.Active(requestDiscovery))
 	}
 
 	item := mpapi.ResourceListItem{RegistryID: "registry-id", RegistrySlug: "tools", Kind: "skill", Name: "remote", Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("b", 64), Availability: mpapi.AvailabilityAvailable}
 	outcome := marketplace.DiscoveryOutcome{Endpoint: endpoint, Items: []mpapi.ResourceListItem{item}, Total: 1, CacheState: marketplace.DiscoveryCacheFresh, ObservedAt: time.Now()}
-	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.active(requestDiscovery), sequence: 1, outcomes: []marketplace.DiscoveryOutcome{outcome}})
+	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.Active(requestDiscovery), sequence: 1, outcomes: []marketplace.DiscoveryOutcome{outcome}})
 	m = updated.(Model)
-	if m.requests.active(requestSnapshot) != generation {
-		t.Fatalf("snapshot generation advanced before assessment: %d", m.requests.active(requestSnapshot))
+	if m.requests.Active(requestSnapshot) != generation {
+		t.Fatalf("snapshot generation advanced before assessment: %d", m.requests.Active(requestSnapshot))
 	}
 	if len(m.rows) != 1 || m.rows[0].Artifact.Name != "remote" {
 		t.Fatalf("cached Marketplace row not visible during local verification: %#v", m.rows)
@@ -453,11 +454,12 @@ func TestConfigStageStartsDiscoveryBeforeLocalVerification(t *testing.T) {
 }
 
 // spec: tui-startup/verified-rows-inserted-above-a-selection-keep-it-on-the-same-screen-line
+// spec: session-startup/selection-follows-its-resource-when-rows-are-inserted
 func TestVerifiedRowsInsertedAboveSelectionKeepItOnTheSameScreenLine(t *testing.T) {
 	m := newProvisionalStageModel()
 	// The anchored line is kept only while the list overflows the viewport.
 	m.height = 24
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
 	var provisional []row
@@ -488,13 +490,14 @@ func TestVerifiedRowsInsertedAboveSelectionKeepItOnTheSameScreenLine(t *testing.
 }
 
 // spec: tui-startup/an-untouched-cursor-stays-on-top-when-installed-rows-arrive
+// spec: session-startup/untouched-selection-remains-at-the-top-as-rows-arrive
 func TestUntouchedCursorStaysOnTopWhenInstalledRowsArrive(t *testing.T) {
 	m := newTestModel()
 	m.rows = nil
 	m.authoritativeRows = nil
 	m.flatItems = nil
 	m.loading = true
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	endpoint := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market", Alias: "public"}
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
@@ -506,7 +509,7 @@ func TestUntouchedCursorStaysOnTopWhenInstalledRowsArrive(t *testing.T) {
 		items = append(items, mpapi.ResourceListItem{RegistryID: "registry-id", RegistrySlug: "tools", Kind: "skill", Name: fmt.Sprintf("remote-%02d", i), Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("b", 64), Availability: mpapi.AvailabilityAvailable})
 	}
 	outcome := marketplace.DiscoveryOutcome{Endpoint: endpoint, Items: items, Total: len(items), CacheState: marketplace.DiscoveryCacheFresh, ObservedAt: time.Now()}
-	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.active(requestDiscovery), sequence: 1, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
+	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.Active(requestDiscovery), sequence: 1, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
 	m = updated.(Model)
 	if m.cursor != 0 {
 		t.Fatalf("cursor = %d before installed rows, want 0", m.cursor)
@@ -529,13 +532,14 @@ func TestUntouchedCursorStaysOnTopWhenInstalledRowsArrive(t *testing.T) {
 }
 
 // spec: tui-startup/verified-inventory-is-navigable-and-toggle-ready-while-drift-is-pending
+// spec: session-startup/verified-inventory-is-navigable-while-drift-is-pending
 func TestInventoryStageIsNavigableAndToggleReadyWithDriftPending(t *testing.T) {
 	m := newTestModel()
 	m.rows = nil
 	m.authoritativeRows = nil
 	m.flatItems = nil
 	m.loading = true
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
 	inventory := []row{mkRow("audit", withGlobal, withRegistry("sec.git", "security"))}
@@ -568,7 +572,7 @@ func TestInventoryStageIsNavigableAndToggleReadyWithDriftPending(t *testing.T) {
 	}
 }
 
-// spec: tui-startup/drift-applies-only-to-rows-of-its-own-catalog-selection
+// spec: session-startup/drift-applies-only-to-rows-of-its-own-catalog-selection
 func TestApplyDriftItemsMarksOnlySelectedRows(t *testing.T) {
 	key := skill.ResourceKey(ir.KindSkill, "shared")
 	selected := row{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared", Path: "skills/shared"}, CatalogKey: "selected-cat"}}
@@ -579,7 +583,7 @@ func TestApplyDriftItemsMarksOnlySelectedRows(t *testing.T) {
 	}
 	report := materialize.DriftReport{Missing: []materialize.DriftItem{{Name: key, Reason: materialize.DriftMissing}}}
 
-	out := applyDriftItems([]row{selected, available, recovery}, report)
+	out := session.ApplyDriftItems([]row{selected, available, recovery}, report)
 	if out[0].DriftItem == nil || out[0].DriftItem.Reason != materialize.DriftMissing {
 		t.Fatalf("selected row missing assessed drift: %#v", out[0].DriftItem)
 	}
@@ -611,11 +615,11 @@ func TestSelectedRowDriftPrefersItsCurrentTargetOverAnOrphanedCopy(t *testing.T)
 		{name: "an orphaned copy alone is still reported", report: materialize.DriftReport{Orphaned: []materialize.DriftItem{orphaned}}, want: materialize.DriftOrphaned},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out := applyDriftItems([]row{selected}, tc.report)
+			out := session.ApplyDriftItems([]row{selected}, tc.report)
 			if out[0].DriftItem == nil || out[0].DriftItem.Reason != tc.want {
 				t.Fatalf("selected row drift = %#v, want %v", out[0].DriftItem, tc.want)
 			}
-			if got := driftItemsByResource(tc.report)[key].Reason; got != tc.want {
+			if got := session.DriftItemsByResource(tc.report)[key].Reason; got != tc.want {
 				t.Fatalf("row build drift = %v, want %v", got, tc.want)
 			}
 		})
@@ -659,11 +663,11 @@ func TestSelectionStaysOnARowWhoseOrphanedCopyIsCleared(t *testing.T) {
 	}
 }
 
-// spec: tui-startup/final-stage-replaces-pending-inventory-with-the-assessment
+// spec: session-startup/final-stage-replaces-pending-inventory-with-the-assessment
 func TestFinalStageReplacesPendingInventoryWithAssessment(t *testing.T) {
 	m := newTestModel()
 	m.loading = true
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
 	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageInventory, generation: generation, mergedCfg: &config.Config{}, rows: []row{mkRow("audit")}, driftAssessment: driftUnknown, stages: stages})
@@ -679,10 +683,10 @@ func TestFinalStageReplacesPendingInventoryWithAssessment(t *testing.T) {
 	}
 }
 
-// spec: tui-startup/superseded-stage-delivery-cannot-overwrite-newer-state
+// spec: session-startup/superseded-stage-delivery-cannot-overwrite-newer-state
 func TestSupersededStageDeliveryCannotOverwriteNewerState(t *testing.T) {
 	m := newTestModel()
-	stale := m.requests.active(requestSnapshot)
+	stale := m.requests.Active(requestSnapshot)
 	current := m.beginRequest(requestSnapshot)
 	kept := m.rows
 	stages := make(chan snapshotLoadedMsg)
@@ -695,8 +699,8 @@ func TestSupersededStageDeliveryCannotOverwriteNewerState(t *testing.T) {
 		stages:     stages,
 	})
 	m = updated.(Model)
-	if m.mergedCfg != nil || m.requests.active(requestDiscovery) != 0 {
-		t.Fatalf("stale config stage changed config or started discovery: cfg=%#v discovery=%d", m.mergedCfg, m.requests.active(requestDiscovery))
+	if m.mergedCfg != nil || m.requests.Active(requestDiscovery) != 0 {
+		t.Fatalf("stale config stage changed config or started discovery: cfg=%#v discovery=%d", m.mergedCfg, m.requests.Active(requestDiscovery))
 	}
 
 	updated, _ = m.Update(snapshotLoadedMsg{stage: snapshotStageInventory, generation: stale, mergedCfg: &config.Config{}, rows: []row{mkRow("stale")}, stages: stages})
@@ -704,12 +708,12 @@ func TestSupersededStageDeliveryCannotOverwriteNewerState(t *testing.T) {
 	if len(m.rows) != len(kept) || m.rows[0].Artifact.Name != "a" {
 		t.Fatalf("stale inventory stage replaced rows: %#v", m.rows)
 	}
-	if m.requests.active(requestSnapshot) != current {
-		t.Fatalf("stale stage consumed the active generation: %d", m.requests.active(requestSnapshot))
+	if m.requests.Active(requestSnapshot) != current {
+		t.Fatalf("stale stage consumed the active generation: %d", m.requests.Active(requestSnapshot))
 	}
 }
 
-// spec: tui-startup/an-intermediate-stage-cannot-complete-a-pending-mutation-reload
+// spec: session-startup/an-intermediate-stage-cannot-complete-a-pending-mutation-reload
 func TestInventoryStageDoesNotCompletePendingToggleReload(t *testing.T) {
 	m := newTestModel()
 	operation, ok := m.beginOperation(operationMutation)
@@ -717,32 +721,33 @@ func TestInventoryStageDoesNotCompletePendingToggleReload(t *testing.T) {
 		t.Fatal("failed to start mutation operation")
 	}
 	m.pendingToggleOperation = operation
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	m.pendingToggleReload = generation
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
 
 	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageInventory, generation: generation, mergedCfg: &config.Config{}, rows: []row{mkRow("audit")}, stages: stages})
 	m = updated.(Model)
-	if m.operations.active == nil || m.pendingToggleOperation != operation {
+	if m.operations.Active == nil || m.pendingToggleOperation != operation {
 		t.Fatal("inventory stage released the pending mutation operation")
 	}
 
 	updated, _ = m.Update(snapshotLoadedMsg{generation: generation, mergedCfg: &config.Config{}, rows: []row{mkRow("audit")}, driftAssessment: driftReady})
 	m = updated.(Model)
-	if m.operations.active != nil || m.pendingToggleOperation != 0 {
-		t.Fatalf("final stage did not finish the pending reload: active=%#v pending=%d", m.operations.active, m.pendingToggleOperation)
+	if m.operations.Active != nil || m.pendingToggleOperation != 0 {
+		t.Fatalf("final stage did not finish the pending reload: active=%#v pending=%d", m.operations.Active, m.pendingToggleOperation)
 	}
 }
 
 // spec: tui-startup/provisional-config-stage-publishes-verification-pending-rows
+// spec: session-startup/provisional-config-publishes-configured-pins-before-acquisition
 func TestProvisionalConfigStagePublishesPendingRows(t *testing.T) {
 	m := newTestModel()
 	m.rows = nil
 	m.authoritativeRows = nil
 	m.flatItems = nil
 	m.loading = true
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
 	provisional := &config.Config{Marketplaces: []config.MarketplaceEntry{{
@@ -754,7 +759,7 @@ func TestProvisionalConfigStagePublishesPendingRows(t *testing.T) {
 		}},
 	}}}
 
-	updated, cmd := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: generation, provisionalCfg: provisional, provisionalRows: buildProvisionalRows(provisional, nil, nil), stages: stages})
+	updated, cmd := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: generation, provisionalCfg: provisional, provisionalRows: session.BuildProvisionalRows(provisional, nil, nil), stages: stages})
 	m = updated.(Model)
 	if cmd == nil {
 		t.Fatal("provisional stage did not schedule the next stage")
@@ -797,7 +802,7 @@ func TestProvisionalConfigStagePublishesPendingRows(t *testing.T) {
 }
 
 // spec: tui-startup/excluded-configured-selections-render-unchecked-in-their-verified-position
-// spec: tui-startup/provisional-rows-retain-single-view-position-and-guarded-actions
+// spec: session-startup/provisional-rows-retain-single-view-position-and-guarded-actions
 func TestProvisionalStageDoesNotCheckExcludedMarketplacePin(t *testing.T) {
 	m := newProvisionalStageModel()
 	cfg := &config.Config{
@@ -810,7 +815,7 @@ func TestProvisionalStageDoesNotCheckExcludedMarketplacePin(t *testing.T) {
 		}},
 		MarketplaceExclusions: []config.MarketplaceExclusion{{URL: "https://market.example", Locator: "tools/skill/review", Source: config.UserPersonal}},
 	}
-	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: m.requests.active(requestSnapshot), provisionalCfg: cfg, provisionalRows: buildProvisionalRows(cfg, nil, nil)})
+	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: m.requests.Active(requestSnapshot), provisionalCfg: cfg, provisionalRows: session.BuildProvisionalRows(cfg, nil, nil)})
 	m = updated.(Model)
 	if len(m.rows) != 2 || m.rows[0].Artifact.Name != "audit" || m.rows[0].Glyph() != "[x]" || originBadge(m.rows[0]) != "G" {
 		t.Fatalf("early enabled state should check only the effective configured pin: %#v", m.rows)
@@ -837,8 +842,8 @@ func statusLayout(rows []row) []string {
 	return layout
 }
 
-// spec: tui-startup/provisional-layout-matches-verified-inventory
-// spec: tui-startup/provisional-rows-retain-single-view-position-and-guarded-actions
+// spec: session-startup/provisional-layout-matches-verified-inventory
+// spec: session-startup/provisional-rows-retain-single-view-position-and-guarded-actions
 func TestProvisionalLayoutMatchesVerifiedInventory(t *testing.T) {
 	audit := config.MarketplaceResourcePin{RegistryID: "tools", RegistrySlug: "tools", Kind: "skill", Name: "audit", Direct: true}
 	review := config.MarketplaceResourcePin{RegistryID: "tools", RegistrySlug: "tools", Kind: "skill", Name: "review", Direct: true}
@@ -862,7 +867,7 @@ func TestProvisionalLayoutMatchesVerifiedInventory(t *testing.T) {
 	}}
 
 	verified := statusLayout(buildRows(cfg, catalogs, resolved, nil, materialize.DriftReport{}))
-	provisional := statusLayout(buildProvisionalRows(cfg, nil, nil))
+	provisional := statusLayout(session.BuildProvisionalRows(cfg, nil, nil))
 	if !slices.Equal(provisional, verified) {
 		t.Fatalf("verified inventory reshuffles the provisional layout:\nprovisional: %q\nverified:    %q", provisional, verified)
 	}
@@ -877,7 +882,8 @@ func TestProvisionalLayoutMatchesVerifiedInventory(t *testing.T) {
 	}
 }
 
-// spec: tui-startup/organization-marketplace-collection-expands-from-the-verified-cached-manifest
+// spec: session-startup/organization-marketplace-collection-expands-from-the-verified-cached-manifest
+// spec: session-startup/cached-collection-leaves-prefer-the-exact-then-newest-verified-revision
 func TestProvisionalStageExpandsOrganizationCollectionFromVerifiedCache(t *testing.T) {
 	cache := marketplace.NewCache(t.TempDir())
 	const url = "https://market.example"
@@ -927,7 +933,7 @@ func TestProvisionalStageExpandsOrganizationCollectionFromVerifiedCache(t *testi
 	root, _ := marketplace.PinArtifact(acquired, collection)
 	resolved = append(resolved, root)
 
-	rows := buildProvisionalRows(withCachedCollectionLeaves(preAcquisition, cache), nil, nil)
+	rows := session.BuildProvisionalRows(session.WithCachedCollectionLeaves(preAcquisition, cache), nil, nil)
 	verified := statusLayout(buildRows(verifiedCfg, nil, resolved, nil, materialize.DriftReport{}))
 	if provisional := statusLayout(rows); !slices.Equal(provisional, verified) {
 		t.Fatalf("cached collection members do not hold their verified positions:\nprovisional: %q\nverified:    %q", provisional, verified)
@@ -944,7 +950,7 @@ func TestProvisionalStageExpandsOrganizationCollectionFromVerifiedCache(t *testi
 	}
 }
 
-// spec: tui-startup/optional-collection-member-yields-to-a-configured-selection-of-the-same-resource
+// spec: session-startup/optional-collection-member-yields-to-a-configured-selection-of-the-same-resource
 func TestProvisionalCollectionMemberYieldsToConfiguredSelectionOfSameName(t *testing.T) {
 	member := config.MarketplaceResourcePin{
 		RegistryID: "tools", RegistrySlug: "tools", Kind: "skill", Name: "audit", Revision: "sha256:" + strings.Repeat("a", 64),
@@ -954,20 +960,20 @@ func TestProvisionalCollectionMemberYieldsToConfiguredSelectionOfSameName(t *tes
 		Registries:   []config.RegistryEntry{{URL: "https://git.example/resources.git", Source: config.UserPersonal, CatalogKey: "resources", Skills: config.KindSelector{Include: []string{"audit"}}}},
 		Marketplaces: []config.MarketplaceEntry{{URL: "https://market.example", Source: config.Organization, Resources: []config.MarketplaceResourcePin{member}}},
 	}
-	rows := buildProvisionalRows(cfg, nil, nil)
+	rows := session.BuildProvisionalRows(cfg, nil, nil)
 	if len(rows) != 1 || rows[0].Artifact.IsMarketplace {
 		t.Fatalf("collection member should yield to the configured selection that verified inventory keeps: %#v", rows)
 	}
 }
 
-// spec: tui-startup/registry-selections-carry-the-harness-override-badge
-// spec: tui-startup/provisional-rows-retain-single-view-position-and-guarded-actions
+// spec: session-startup/registry-selections-carry-the-harness-override-badge
+// spec: session-startup/provisional-rows-retain-single-view-position-and-guarded-actions
 func TestProvisionalRowsCarryRegistryOverrideHarnessBadge(t *testing.T) {
 	cfg := &config.Config{Registries: []config.RegistryEntry{{
 		URL: "https://git.example/skills.git", Source: config.RepoCommitted, CatalogKey: "skills", Harnesses: []string{"codex"},
 		Skills: config.KindSelector{Include: []string{"audit"}},
 	}}}
-	rows := buildProvisionalRows(cfg, nil, nil, map[config.Source][]string{config.RepoCommitted: {"claude"}})
+	rows := session.BuildProvisionalRows(cfg, nil, nil, map[config.Source][]string{config.RepoCommitted: {"claude"}})
 	if len(rows) != 1 || harnessBadge(rows[0]) != "{Codex}" {
 		t.Fatalf("pending row lacks the harness badge verified inventory renders: %#v", rows)
 	}
@@ -977,17 +983,53 @@ func TestProvisionalRowsCarryRegistryOverrideHarnessBadge(t *testing.T) {
 	}
 }
 
-// spec: tui-startup/a-stale-provisional-stage-cannot-publish-rows
+// spec: session-startup/a-stale-provisional-stage-cannot-publish-rows
+// spec: session-startup/tampered-cached-manifests-are-rejected
+func TestTamperedCachedCollectionManifestPublishesNoLeaves(t *testing.T) {
+	cache := marketplace.NewCache(t.TempDir())
+	const url = "https://market.example"
+	leafRevision := "sha256:" + strings.Repeat("a", 64)
+	payload, digest, err := hccartifact.EncodeCollectionManifest(hccartifact.CollectionManifest{
+		SchemaVersion: hccartifact.CollectionSchemaV1, Name: "bundle", SupportedSchemas: []string{hccartifact.CollectionSchemaV1},
+		Members: []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "audit", RegistryID: "tools", Revision: leafRevision}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := tuiAssessedResourceRevision(t, store.ResourceRevision{Coordinate: store.ResourceCoordinate{Marketplace: "mp", Registry: "tools", Kind: "collection", Name: "bundle"}, ContentDigest: store.RevisionDigest(digest)})
+	if _, err := cache.WriteResourceRevision(url, "tools", "collection", "bundle", digest, revision); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cache.WriteCollectionManifest(digest, payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.MarkCollectionVerified(digest); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cache.CollectionManifestPath(digest), []byte(strings.Replace(string(payload), "audit", "tampered", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	placeholder := "sha256:" + strings.Repeat("0", 64)
+	collection := config.MarketplaceResourcePin{RegistryID: "tools", RegistrySlug: "tools", Kind: "collection", Name: "bundle", Revision: placeholder, Digest: placeholder, Direct: true}
+	preAcquisition := &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: url, InstanceID: "bootstrap", Source: config.Organization, Resources: []config.MarketplaceResourcePin{collection}}}}
+	for _, r := range session.BuildProvisionalRows(session.WithCachedCollectionLeaves(preAcquisition, cache), nil, nil) {
+		if r.Artifact.IsMarketplace && r.Artifact.Kind != ir.KindCollection {
+			t.Fatalf("tampered cached manifest published leaf %q", r.Artifact.Name)
+		}
+	}
+}
+
 func TestStaleProvisionalStageCannotPublishRows(t *testing.T) {
 	m := newTestModel()
-	stale := m.requests.active(requestSnapshot)
+	stale := m.requests.Active(requestSnapshot)
 	m.beginRequest(requestSnapshot)
 	provisional := &config.Config{Marketplaces: []config.MarketplaceEntry{{
 		URL:       "https://market.example",
 		Resources: []config.MarketplaceResourcePin{{RegistryID: "tools", Kind: "skill", Name: "remote"}},
 	}}}
 
-	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: stale, provisionalCfg: provisional, provisionalRows: buildProvisionalRows(provisional, nil, nil)})
+	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: stale, provisionalCfg: provisional, provisionalRows: session.BuildProvisionalRows(provisional, nil, nil)})
 	m = updated.(Model)
 	for _, r := range m.rows {
 		if r.PendingVerification {
@@ -996,7 +1038,8 @@ func TestStaleProvisionalStageCannotPublishRows(t *testing.T) {
 	}
 }
 
-// spec: tui-startup/provisional-rows-render-while-transient-acquisition-is-blocked
+// spec: session-startup/provisional-rows-render-while-transient-acquisition-is-blocked
+// spec: session-startup/provisional-rows-show-configured-selection-state
 func TestProvisionalConfiguredRowsRenderBeforeBlockedAcquisition(t *testing.T) {
 	repoRoot, homeDir := progressiveFixture(t)
 	unblock, acquisitionHeld := blockedOrganizationMarketplace(t)
@@ -1280,7 +1323,7 @@ func pendingRowNames(rows []row) map[string]ir.ResourceKind {
 	return got
 }
 
-// spec: tui-startup/provisional-rows-render-while-transient-acquisition-is-blocked
+// spec: session-startup/provisional-rows-render-while-transient-acquisition-is-blocked
 func TestProvisionalLocalAllTrueRowsRenderBeforeBlockedAcquisition(t *testing.T) {
 	repoRoot, homeDir, _, _ := provisionalLocalAllTrueFixture(t)
 	unblock, acquisitionHeld := blockedOrganizationMarketplace(t)
@@ -1338,6 +1381,7 @@ func TestProvisionalLocalAllTrueRowsRenderBeforeBlockedAcquisition(t *testing.T)
 }
 
 // spec: tui-startup/local-all-true-selections-expand-into-pending-rows-on-the-normal-config-path
+// spec: session-startup/user-scope-local-all-true-selections-expand-into-pending-rows
 func TestProvisionalLocalAllTrueRowsRenderOnNormalConfigPath(t *testing.T) {
 	repoRoot, homeDir, _, _ := provisionalLocalAllTrueFixture(t)
 	t.Cleanup(swapLoadOrgConfig(func() (*config.Config, error) { return nil, nil }))
@@ -1402,7 +1446,7 @@ func TestProvisionalLocalAllTrueRowsRenderOnNormalConfigPath(t *testing.T) {
 	}
 }
 
-// spec: tui-startup/excluded-only-configuration-publishes-no-provisional-rows
+// spec: session-startup/excluded-only-configuration-publishes-no-provisional-rows
 func TestExcludedOnlyProvisionalStagePublishesNoRows(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
@@ -1514,14 +1558,14 @@ func TestProvisionalRegistryScopedLocalExcludesApply(t *testing.T) {
 	}
 }
 
-// spec: tui-startup/authoritative-failure-clears-provisional-rows
+// spec: session-startup/authoritative-failure-clears-provisional-rows
 func TestAuthoritativeFailureClearsProvisionalRows(t *testing.T) {
 	m := newTestModel()
 	m.rows = nil
 	m.authoritativeRows = nil
 	m.flatItems = nil
 	m.loading = true
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
 	provisional := &config.Config{Marketplaces: []config.MarketplaceEntry{{
@@ -1532,7 +1576,7 @@ func TestAuthoritativeFailureClearsProvisionalRows(t *testing.T) {
 		}},
 	}}}
 
-	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: generation, provisionalCfg: provisional, provisionalRows: buildProvisionalRows(provisional, nil, nil), stages: stages})
+	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: generation, provisionalCfg: provisional, provisionalRows: session.BuildProvisionalRows(provisional, nil, nil), stages: stages})
 	m = updated.(Model)
 	if len(m.rows) != 1 || !m.rows[0].PendingVerification {
 		t.Fatalf("provisional stage did not publish pending rows: %#v", m.rows)
@@ -1550,13 +1594,13 @@ func TestAuthoritativeFailureClearsProvisionalRows(t *testing.T) {
 	}
 }
 
-// spec: tui-startup/an-open-detail-follows-its-verified-row
+// spec: session-startup/an-open-detail-follows-its-verified-row
 func TestPendingDetailFollowsVerifiedRow(t *testing.T) {
 	m := newTestModel()
 	m.rows = nil
 	m.authoritativeRows = nil
 	m.flatItems = nil
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
 	revision := "sha256:" + strings.Repeat("a", 64)
@@ -1568,7 +1612,7 @@ func TestPendingDetailFollowsVerifiedRow(t *testing.T) {
 		}},
 	}}}
 
-	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: generation, provisionalCfg: provisional, provisionalRows: buildProvisionalRows(provisional, nil, nil), stages: stages})
+	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageConfig, generation: generation, provisionalCfg: provisional, provisionalRows: session.BuildProvisionalRows(provisional, nil, nil), stages: stages})
 	m = updated.(Model)
 	if len(m.rows) != 1 || !m.rows[0].PendingVerification {
 		t.Fatalf("provisional stage did not publish pending rows: %#v", m.rows)
@@ -1594,14 +1638,14 @@ func TestPendingDetailFollowsVerifiedRow(t *testing.T) {
 	}
 }
 
-// spec: tui-startup/final-stage-merges-discovery-published-during-the-config-stage
+// spec: session-startup/final-stage-merges-discovery-published-during-the-config-stage
 func TestFinalStageMergesDiscoveryPublishedDuringConfigStage(t *testing.T) {
 	m := newTestModel()
 	m.rows = nil
 	m.authoritativeRows = nil
 	m.flatItems = nil
 	m.loading = true
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	endpoint := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market", Alias: "public"}
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
@@ -1610,7 +1654,7 @@ func TestFinalStageMergesDiscoveryPublishedDuringConfigStage(t *testing.T) {
 	m = updated.(Model)
 	item := mpapi.ResourceListItem{RegistryID: "registry-id", RegistrySlug: "tools", Kind: "skill", Name: "remote", Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("b", 64), Availability: mpapi.AvailabilityAvailable}
 	outcome := marketplace.DiscoveryOutcome{Endpoint: endpoint, Items: []mpapi.ResourceListItem{item}, Total: 1, CacheState: marketplace.DiscoveryCacheFresh, ObservedAt: time.Now()}
-	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.active(requestDiscovery), sequence: 1, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
+	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.Active(requestDiscovery), sequence: 1, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
 	m = updated.(Model)
 
 	enabled := row{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "audit"}}, EnabledGlobal: true}
@@ -1629,13 +1673,14 @@ func TestFinalStageMergesDiscoveryPublishedDuringConfigStage(t *testing.T) {
 }
 
 // spec: tui-startup/mutations-stay-gated-until-verified-inventory
+// spec: session-startup/mutation-actions-remain-gated-until-verified-inventory
 func TestSyncKeyBlockedBeforeVerifiedInventory(t *testing.T) {
 	m := newTestModel()
 	m.rows = nil
 	m.authoritativeRows = nil
 	m.flatItems = nil
 	m.loading = true
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
 
@@ -1669,7 +1714,7 @@ func TestDiscoveryRowCannotInstallBeforeVerifiedInventory(t *testing.T) {
 	m.authoritativeRows = nil
 	m.flatItems = nil
 	m.loading = true
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	endpoint := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market", Alias: "public"}
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
@@ -1678,7 +1723,7 @@ func TestDiscoveryRowCannotInstallBeforeVerifiedInventory(t *testing.T) {
 	m = updated.(Model)
 	item := mpapi.ResourceListItem{RegistryID: "registry-id", RegistrySlug: "tools", Kind: "skill", Name: "remote", Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("b", 64), Availability: mpapi.AvailabilityAvailable}
 	outcome := marketplace.DiscoveryOutcome{Endpoint: endpoint, Items: []mpapi.ResourceListItem{item}, Total: 1, CacheState: marketplace.DiscoveryCacheFresh, ObservedAt: time.Now()}
-	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.active(requestDiscovery), sequence: 1, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
+	updated, _ = m.Update(discoveryLoadedMsg{generation: m.requests.Active(requestDiscovery), sequence: 1, outcomes: []marketplace.DiscoveryOutcome{outcome}, done: true})
 	m = updated.(Model)
 
 	target := -1

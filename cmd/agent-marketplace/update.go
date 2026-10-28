@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
@@ -28,7 +29,7 @@ func newUpdateCmd() *cobra.Command {
 			"\nUse --dry-run to preview proposed dependency and resource changes without changing locks, configuration, or installed resources.\n" +
 			"Use --include-diff to include normalized review diffs of changed resources. Explicit diff output can disclose sensitive values authored in resources; it is not a secret scanner or a security finding.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			selected, explicitOrg, err := parseLockSelection(scope, false)
+			selected, explicitOrg, err := lifecycle.ParseLockSelection(scope, false)
 			if err != nil {
 				return err
 			}
@@ -68,7 +69,7 @@ func newUpdateCmd() *cobra.Command {
 // pending journal without replay and prepares missing acquisition evidence in
 // memory. Recovery, lock preparation, update, and output errors are
 // propagated; an output error can occur after changes have been applied.
-func runUpdate(ctx context.Context, out io.Writer, bump, verbose, dryRun, includeDiff bool, selected map[lockfile.Scope]bool, targets *upgradeTargetSpec) error {
+func runUpdate(ctx context.Context, out io.Writer, bump, verbose, dryRun, includeDiff bool, selected map[lockfile.Scope]bool, targets *lifecycle.UpgradeTargetSpec) error {
 	repoRoot := config.FindRepoRoot()
 	localDir := config.FindLocalConfigDir()
 	ws, err := pipeline.WorkspaceForRoots(repoRoot, localDir)
@@ -80,22 +81,22 @@ func runUpdate(ctx context.Context, out io.Writer, bump, verbose, dryRun, includ
 		// A preview checks for pending dependency work without replay and
 		// prepares the missing Marketplace evidence an update would bootstrap
 		// as in-memory staged documents instead of committing it.
-		if err := prepareDependencyTransactions(ctx, true); err != nil {
+		if err := lifecycle.PrepareDependencyTransactions(ctx, true); err != nil {
 			return err
 		}
-		preseed, err = prepareMissingMarketplaceLockEdits(ctx, ws.RepoRoot(), ws.LocalConfigDir(), selected, nil)
+		preseed, err = lifecycle.PrepareMissingMarketplaceLockEdits(ctx, ws.RepoRoot(), ws.LocalConfigDir(), selected, nil)
 		if err != nil {
 			return err
 		}
 	} else {
-		if err := prepareDependencyTransactions(ctx, false); err != nil {
+		if err := lifecycle.PrepareDependencyTransactions(ctx, false); err != nil {
 			return err
 		}
-		if _, err := bootstrapMissingMarketplaceLocks(ctx, ws.RepoRoot(), ws.LocalConfigDir(), selected, nil); err != nil {
+		if _, err := lifecycle.BootstrapMissingMarketplaceLocks(ctx, ws.RepoRoot(), ws.LocalConfigDir(), selected, nil); err != nil {
 			return err
 		}
 	}
-	targetResult := &upgradeTargetResult{}
+	targetResult := &lifecycle.UpgradeTargetResult{}
 	var warnings []error
 	var preview *updatePreview
 	var previewErr error
@@ -103,12 +104,12 @@ func runUpdate(ctx context.Context, out io.Writer, bump, verbose, dryRun, includ
 		preview, previewErr = buildUpdatePreview(ctx, view, includeDiff)
 		return previewErr
 	}
-	reconcileMode := lockMode{upgrade: true, selects: selected, upgradeTargets: targets, upgradeResult: targetResult, reconcileUnselected: true, stagedConfigEdits: nil, stagedLockEdits: nil, warningSink: &warnings, selectionGuard: true}
+	reconcileMode := lifecycle.LockMode{Upgrade: true, Selects: selected, UpgradeTargets: targets, UpgradeResult: targetResult, ReconcileUnselected: true, StagedConfigEdits: nil, StagedLockEdits: nil, WarningSink: &warnings, SelectionGuard: true}
 	if dryRun || includeDiff {
-		reconcileMode.updatePreview = previewHook
+		reconcileMode.UpdatePreview = previewHook
 	}
 	if dryRun {
-		reconcileMode.previewNoCommit = true
+		reconcileMode.PreviewNoCommit = true
 	}
 	opts := pipeline.UpdateOptions{
 		RepoRoot: repoRoot, Bump: bump, BumpScopes: selected, BumpTarget: updateBumpTarget(targets),
@@ -117,15 +118,15 @@ func runUpdate(ctx context.Context, out io.Writer, bump, verbose, dryRun, includ
 		DependencyReconcile: func(ctx context.Context, repoRoot, localDir string, bumps []pipeline.RefBump, edits []pipeline.StagedConfigEdit, lockEdits []pipeline.StagedLockEdit) (pipeline.DependencyLockView, error) {
 			advanceUpgradeTargetRefs(targets, bumps)
 			mode := reconcileMode
-			if mode.updatePreview != nil {
-				mode.updatePreview = func(ctx context.Context, view preparedUpdateView) error {
-					view.refBumps = bumps
+			if mode.UpdatePreview != nil {
+				mode.UpdatePreview = func(ctx context.Context, view preparedUpdateView) error {
+					view.RefBumps = bumps
 					return previewHook(ctx, view)
 				}
 			}
-			mode.stagedConfigEdits = edits
-			mode.stagedLockEdits = lockEdits
-			option, _, lease, err := prepareRuntimeLocks(ctx, repoRoot, localDir, mode)
+			mode.StagedConfigEdits = edits
+			mode.StagedLockEdits = lockEdits
+			option, _, lease, err := lifecycle.PrepareRuntimeLocks(ctx, repoRoot, localDir, mode)
 			return pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, Warnings: warnings}, err
 		},
 	}
@@ -136,7 +137,7 @@ func runUpdate(ctx context.Context, out io.Writer, bump, verbose, dryRun, includ
 	var committed *pipeline.DependencyCommittedSyncError
 	publishedSyncFailure := errors.As(updateErr, &committed)
 	if updateErr != nil && result == nil && !publishedSyncFailure {
-		if refused, ok := errors.AsType[*updateSelectionRefusedError](updateErr); ok {
+		if refused, ok := errors.AsType[*lifecycle.UpdateSelectionRefusedError](updateErr); ok {
 			return refused
 		}
 		return updateErr
@@ -163,7 +164,7 @@ func runUpdate(ctx context.Context, out io.Writer, bump, verbose, dryRun, includ
 		}
 		return updateErr
 	}
-	for _, notice := range targetResult.notices {
+	for _, notice := range targetResult.Notices {
 		if _, err := fmt.Fprintln(out, notice); err != nil {
 			return err
 		}
@@ -178,28 +179,28 @@ func runUpdate(ctx context.Context, out io.Writer, bump, verbose, dryRun, includ
 	return updateErr
 }
 
-func updateBumpTarget(targets *upgradeTargetSpec) *pipeline.UpdateTarget {
-	if targets == nil || targets.registry == "" {
+func updateBumpTarget(targets *lifecycle.UpgradeTargetSpec) *pipeline.UpdateTarget {
+	if targets == nil || targets.Registry == "" {
 		return nil
 	}
-	return &pipeline.UpdateTarget{Registry: targets.registry, Ref: targets.ref, Path: targets.path, Kind: targets.kind, Names: append([]string(nil), targets.names...)}
+	return &pipeline.UpdateTarget{Registry: targets.Registry, Ref: targets.Ref, Path: targets.Path, Kind: targets.Kind, Names: append([]string(nil), targets.Names...)}
 }
 
-func advanceUpgradeTargetRefs(targets *upgradeTargetSpec, bumps []pipeline.RefBump) {
-	if targets == nil || targets.registry == "" || targets.ref == "" {
+func advanceUpgradeTargetRefs(targets *lifecycle.UpgradeTargetSpec, bumps []pipeline.RefBump) {
+	if targets == nil || targets.Registry == "" || targets.Ref == "" {
 		return
 	}
-	wanted, err := canonicalRegistryURL(targets.registry)
+	wanted, err := lifecycle.CanonicalRegistryURL(targets.Registry)
 	if err != nil {
 		return
 	}
 	for _, bump := range bumps {
-		if bump.OldRef != targets.ref {
+		if bump.OldRef != targets.Ref {
 			continue
 		}
-		bumpURL, err := canonicalRegistryURL(bump.URL)
+		bumpURL, err := lifecycle.CanonicalRegistryURL(bump.URL)
 		if err == nil && bumpURL == wanted {
-			targets.ref = bump.NewRef
+			targets.Ref = bump.NewRef
 			return
 		}
 	}

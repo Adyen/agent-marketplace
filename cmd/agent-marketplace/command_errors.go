@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Adyen/agent-marketplace/internal/remedy"
-	"github.com/Adyen/agent-marketplace/internal/tui"
+	"github.com/Adyen/agent-marketplace/internal/session"
 )
 
 // terminalSafeError carries a command error to Cobra's error printer with its
@@ -48,7 +48,7 @@ func terminalSafeCommandError(err error, commandPath string) error {
 			continue
 		}
 		hints[hint] = struct{}{}
-		lines = append(lines, "hint: "+tui.TerminalSafeLine(hint))
+		lines = append(lines, "hint: "+session.TerminalSafeLine(hint))
 	}
 	text := terminalSafeLines(strings.Join(lines, "\n"))
 	if text == "" {
@@ -119,14 +119,14 @@ func terminalSafeUsageError(err error, command string) error {
 		return nil
 	}
 	hint := fmt.Sprintf("Run `%s --help` to see this command's usage.", command)
-	text := terminalSafeLines(err.Error()) + "\nhint: " + tui.TerminalSafeLine(hint)
+	text := terminalSafeLines(err.Error()) + "\nhint: " + session.TerminalSafeLine(hint)
 	return terminalSafeError{err: err, text: text}
 }
 
 func terminalSafeLines(text string) string {
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
-		lines[i] = tui.TerminalSafeLine(line)
+		lines[i] = session.TerminalSafeLine(line)
 	}
 	return strings.Join(lines, "\n")
 }

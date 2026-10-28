@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/sha256"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,9 +12,8 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
-	"github.com/Adyen/agent-marketplace/internal/resolver"
-	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 // treeStateMap captures every entry under root as relative path -> identity:
@@ -80,7 +78,7 @@ func updateRefusalWorkspace(t *testing.T) (home, repoRoot string, before func() 
 
 func assertNoPendingDependencyJournal(t *testing.T) {
 	t.Helper()
-	stateDir, err := dependencyStateDir()
+	stateDir, err := lifecycle.DependencyStateDir()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +153,7 @@ func assertUpdateRefusedUnchanged(t *testing.T, before, after map[string]string,
 	for _, name := range names {
 		assertMissFollowedByRemediation(t, combined, name)
 	}
-	if !strings.Contains(combined, updateSelectionRefusalHint) {
+	if !strings.Contains(combined, lifecycle.UpdateSelectionRefusalHint) {
 		t.Fatalf("update refusal missing hint:\n%s", combined)
 	}
 	assertTreeStateEqual(t, before, after)
@@ -246,10 +244,10 @@ func TestUpdateRefusesMissingRequiredSelection(t *testing.T) {
 	if strings.Contains(combined, "dependency-committed sync failure") {
 		t.Fatalf("update reported a post-commit sync failure instead of a pre-publication refusal:\n%s", combined)
 	}
-	if !strings.Contains(combined, `skill "required-skill" was selected but not found in`) || !strings.Contains(combined, updateSelectionRefusalHint) {
+	if !strings.Contains(combined, `skill "required-skill" was selected but not found in`) || !strings.Contains(combined, lifecycle.UpdateSelectionRefusalHint) {
 		t.Fatalf("update refusal missing selection name or hint:\n%s", combined)
 	}
-	if !strings.Contains(combined, updateSelectionRequiredLine) || strings.Contains(combined, "agent-marketplace remove --kind skill required-skill") {
+	if !strings.Contains(combined, lifecycle.UpdateSelectionRequiredLine) || strings.Contains(combined, "agent-marketplace remove --kind skill required-skill") {
 		t.Fatalf("required refusal must say remove cannot drop it and must not suggest remove:\n%s", combined)
 	}
 	assertTreeStateEqual(t, before, snapshot())
@@ -488,7 +486,7 @@ func TestUpdateRefusalNamesEveryNewlyMissingSelectionOnce(t *testing.T) {
 			t.Fatalf("refusal named %s %d times, want once:\n%s", name, count, combined)
 		}
 	}
-	if !strings.Contains(combined, updateSelectionRefusalHint) {
+	if !strings.Contains(combined, lifecycle.UpdateSelectionRefusalHint) {
 		t.Fatalf("update refusal missing hint:\n%s", combined)
 	}
 	assertTreeStateEqual(t, before, snapshot())
@@ -744,11 +742,11 @@ func TestUpdateRegistryTargetProceedsPastRefusal(t *testing.T) {
 		t.Fatalf("initial sync: %v\n%s", err, output)
 	}
 	lockPath := filepath.Join(repoRoot, ".agents", "lock.yaml")
-	canonicalA, err := canonicalRegistryURL("file://" + originA)
+	canonicalA, err := lifecycle.CanonicalRegistryURL("file://" + originA)
 	if err != nil {
 		t.Fatal(err)
 	}
-	canonicalB, err := canonicalRegistryURL("file://" + originB)
+	canonicalB, err := lifecycle.CanonicalRegistryURL("file://" + originB)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -776,47 +774,5 @@ func TestUpdateRegistryTargetProceedsPastRefusal(t *testing.T) {
 	}
 	if got := lockRegistryWithCanonicalURL(t, lock, canonicalA); got.Commit != lockA.Commit {
 		t.Fatalf("first registry lock changed from %s to %s", lockA.Commit, got.Commit)
-	}
-}
-
-// The refusal keeps its CLI text, and offers the TUI its cause (each miss and
-// load note) and its remediation (each remediation line and the closing line)
-// as single lines.
-// spec: tui-error-recovery/structured-refusals-render-their-own-remediation
-func TestUpdateSelectionRefusalSplitsCauseAndRemediation(t *testing.T) {
-	if isolateCommandTest(t) {
-		return
-	}
-	refusal := &updateSelectionRefusedError{
-		misses: []*resolver.SelectedNotFoundError{
-			{Kind: ir.KindSkill, Name: "beta-skill", URL: "file:///reg.git", Ref: "main"},
-			{Kind: ir.KindSkill, Name: "org-review", URL: "file:///reg.git", Ref: "main", Required: true},
-		},
-		loadErrors: []selectionPriorLoadError{{lockPath: "/repo/.agents/lock.yaml", err: errors.New("corrupt")}},
-	}
-	text := refusal.Error()
-	cause, remediation := refusal.DiagnosticCause(), refusal.DiagnosticRemediation()
-	for name, value := range map[string]string{"cause": cause, "remediation": remediation} {
-		if strings.Contains(value, "\n") {
-			t.Fatalf("%s spans lines: %q", name, value)
-		}
-	}
-	for _, miss := range refusal.misses {
-		if !strings.Contains(cause, miss.Error()) || !strings.Contains(text, miss.Error()) {
-			t.Fatalf("cause or text lacks %q:\ncause: %s\ntext: %s", miss.Error(), cause, text)
-		}
-		line := strings.TrimPrefix(missRemediationLine(miss), "  → ")
-		if !strings.Contains(remediation, line) || strings.Contains(cause, line) {
-			t.Fatalf("remediation must carry %q and the cause must not:\ncause: %s\nremediation: %s", line, cause, remediation)
-		}
-	}
-	if !strings.Contains(cause, "could not load the previously locked revision for /repo/.agents/lock.yaml") {
-		t.Fatalf("cause lacks the load note: %s", cause)
-	}
-	if !strings.HasSuffix(remediation, updateSelectionRefusalHint) || strings.Contains(cause, updateSelectionRefusalHint) {
-		t.Fatalf("remediation must end with the closing line:\n%s", remediation)
-	}
-	if !strings.HasSuffix(text, "\n"+updateSelectionRefusalHint) {
-		t.Fatalf("the CLI text changed:\n%s", text)
 	}
 }

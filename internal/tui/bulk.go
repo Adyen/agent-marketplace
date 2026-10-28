@@ -167,13 +167,13 @@ func bulkScopeForKey(msg tea.KeyPressMsg) (scope, bool) {
 // exclusion — the same split the single-row modal applies for 'e'.
 func bulkScopeForRow(r row, s scope) (scope, string) {
 	if s != scopeLocalExclude {
-		if r.canOverrideMarketplace() {
+		if r.CanOverrideMarketplace() {
 			return s, "organization Marketplace items can only be disabled through the user override"
 		}
 		return s, ""
 	}
 	switch {
-	case r.canOverrideMarketplace():
+	case r.CanOverrideMarketplace():
 		return scopeUserExclude, ""
 	case r.Artifact.IsMarketplace:
 		return s, "Marketplace items must be toggled by installation scope"

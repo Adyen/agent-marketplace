@@ -10,7 +10,7 @@ import (
 	"charm.land/huh/v2"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
-	"github.com/Adyen/agent-marketplace/internal/harness"
+	"github.com/Adyen/agent-marketplace/internal/session"
 )
 
 // initModalState holds the first-run harness-selection UI. It mirrors the
@@ -29,7 +29,7 @@ type initModalState struct {
 // newInitModalState detects installed harnesses under homeDir and returns a
 // modal state with those harnesses pre-selected.
 func newInitModalState(homeDir string) (initModalState, error) {
-	detected, err := harness.DetectInstalled(homeDir)
+	detected, err := session.DetectHarnessTargets(homeDir)
 	if err != nil {
 		return initModalState{}, err
 	}
@@ -114,7 +114,7 @@ func (m *Model) delegateInitForm(msg tea.Msg) {
 
 func runInitSaveCmd(harnesses []string) tea.Cmd {
 	return func() tea.Msg {
-		_, err := config.InitializeUserPersonal(harnesses)
+		_, err := session.InitializeUserTargets(harnesses)
 		// The TUI treats an already-initialized file as a no-op with a
 		// success toast so repeated opens are harmless.
 		if errors.Is(err, config.ErrAlreadyInitialized) {

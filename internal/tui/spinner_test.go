@@ -181,7 +181,7 @@ func TestUpdateStopsSpinnerTickWhenIdle(t *testing.T) {
 
 func TestSpinnerContinuesDuringStartupAssessment(t *testing.T) {
 	m := newSpinnerTestModel()
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	updated, _ := m.Update(snapshotLoadedMsg{stage: snapshotStageInventory, generation: generation})
 	m = updated.(Model)
 	if m.loading {

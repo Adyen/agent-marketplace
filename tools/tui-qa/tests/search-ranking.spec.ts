@@ -6,8 +6,8 @@ import { after, before } from "node:test";
 import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 import { write } from "./process-helpers.js";
 
-// spec: tui-navigation/name-match-outranks-metadata-match
-// spec: tui-navigation/metadata-only-match
+// spec: session-navigation/name-match-outranks-metadata-match
+// spec: session-navigation/metadata-only-match
 // spec: tui-navigation/kind-and-source-searches-work-across-groupings
 const journey = defineFixture("search-ranking", ["tui"], 80, 24, { directorySource: true });
 before(async () => {

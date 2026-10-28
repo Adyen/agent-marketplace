@@ -6,8 +6,9 @@ description: >
   and the config/resolver/materialization invariants that every change
   must preserve. Use when adding features, fixing bugs, or reviewing
   changes to the agent-marketplace Go binary, running local TUI QA,
-  or maintaining harness compatibility validation. Every TUI change must
-  ship a real-terminal TUI QA journey that proves the changed flow.
+  working on or screenshotting the desktop GUI, or maintaining harness
+  compatibility validation. Every TUI change must ship a real-terminal
+  TUI QA journey that proves the changed flow.
 metadata:
   tags:
     - development
@@ -36,6 +37,10 @@ Before touching anything, read these in order:
 3. `CODING_STANDARDS.md` — design, security-boundary, testing, and logging
    requirements.
 4. The `agent-marketplace` skill next door — the user-facing contract.
+5. For the desktop GUI (`gui/`, `cmd/agent-marketplace-gui/`,
+   `internal/localapi/`): [gui.md](gui.md), before inspecting or changing
+   it. It names the one-command mocked preview and the cheapest loop for
+   each question.
 
 Then skim:
 
@@ -55,7 +60,17 @@ Then skim:
 - `internal/harness/roots.go`, `registry.go`, `destinations.go` —
   `TargetInfo` metadata, the Devin/Codex installation adapters, and
   single-root vs. Codex-partitioned destinations.
-- `internal/tui/state.go` — `Model` and `row` shape used by the TUI.
+- `internal/session/` — the surface-neutral interactive-session core:
+  staged snapshots, rows (`Row`, `BuildRows`), generation isolation,
+  mutation gating, progress observation, diagnostics, guarded actions,
+  and `init` harness-target/first-configuration detection. No Bubble Tea
+  or other charm.land/charmbracelet imports.
+- `internal/lifecycle/` — runtime lock/lifecycle wiring shared by CLI and
+  TUI: `PrepareRuntimeLocks`, `RefreshDriftedMarketplaceLocks`,
+  `ReconcileCommandDependencies`.
+- `internal/tui/state.go` — `Model` fields used by the TUI; `row` is a
+  `session.Row` alias declared in `internal/tui/session.go`, which adapts
+  the session core into `tea.Cmd`/`tea.Msg`.
 
 ## Build and smoke test
 
@@ -100,8 +115,10 @@ pipeline.LoadEffective -> config.EffectiveConfig    [four layers + includes + lo
   exits. Mutating commands (`install`, `remove`, `update`) go through
   `pipeline.Install`/`Remove`/`Update`, which publish config and the layer
   lock in one dependency transaction (`internal/dependencytxn`).
-- **TUI** (`internal/tui/`) runs it on startup and after every config
-  write, keeping a `Model` in memory and re-rendering.
+- **TUI** (`internal/tui/`) is a Bubble Tea adapter over the
+  `internal/session` core: the core runs the pipeline as staged
+  snapshots on startup and after every config write, and the TUI keeps a
+  `Model` of terminal/view state and re-renders from the core's events.
 
 Everything below this line — resource selection rules, symlink targets,
 name collision behavior — is shared. Fixes at the `internal/*` layer
@@ -275,8 +292,10 @@ historical types have registry-entry names.
 **Consequence for editors**: write source-bound selections into the selected
 owning root's `sources`/`resources`, never old top-level lists or an included
 fragment. The TUI toggle modal (`internal/tui/modal.go` → `runScopedToggle`)
-runs inside the TUI's `MutateConfigWithDependencies` hook
-(`cmd/agent-marketplace/tui.go`) and edits the staged path through
+runs inside the injected `DependencyLifecycle.Mutate` hook —
+`cmd/agent-marketplace/tui.go` wires `session.RuntimeLifecycle()`, which routes
+through `pipeline.MutateConfigWithDependencies` and
+`lifecycle.ReconcileCommandDependencies` — and edits the staged path through
 `pipeline.EditLayerAtPath` with a `pipeline.LayerMutation`. Preserve the original
 declaring path for staged reloads; every kind and scope uses the v4 editor.
 
@@ -341,12 +360,11 @@ The TUI is a standard [Elm-style][elm] Bubble Tea app:
 |---|---|
 | `app.go` | `NewModel`, `Update`, `View`, `handleKey` |
 | `keys.go` | `keyMap`: every binding and its help text |
-| `state.go` | `Model` fields, `row`, `pane`, glyph/status logic |
-| `actions.go` | Snapshot loading (`loadSnapshot`/`readSnapshot`), `buildRows`, tea.Cmd factories |
+| `state.go` | `Model` fields, `pane`, glyph/status logic |
+| `session.go` | Adapter to the `internal/session` core: type aliases, snapshot loading (`loadSnapshot`/`readSnapshot*` wrappers), core-event → `tea.Msg` bridging |
+| `actions.go` | tea.Cmd factories for dependency lifecycle calls (sync/update via the injected `DependencyLifecycle`) |
 | `requests.go` | `requestGeneration` bookkeeping for async results |
 | `modal.go` | Per-scope toggle modal (`paneToggleModal`) |
-| `bulk.go` | Section bulk-toggle modal (`space` on a section header): scope → direction → confirmation, one staged layer transaction |
-| `view_settings.go` | `v` View settings modal (primary/secondary grouping with live preview) and the versioned per-user preference file under `$XDG_STATE_HOME` |
 | `harness.go` / `init.go` | `H` harness modal and first-run harness selection |
 | `edit_config.go` / `editor_process.go` | `E` config picker and `$EDITOR` lifecycle |
 | `discovery.go` | Hosted Marketplace discovery rows |
@@ -356,12 +374,19 @@ The TUI is a standard [Elm-style][elm] Bubble Tea app:
 | `list.go` / `detail.go` | Left and right panes |
 | `badges.go` | `G`/`P`/`L`/`R`/`P-` origin badges next to each row |
 | `footer.go` / `help.go` | Footer hint line and `?` overlay, rendered from `keyMap` |
-| `overlay.go` | Centers modals on top of the base screen |
-| `sanitize.go` / `terminal*.go` | Untrusted-text sanitizing, terminal size and restore guard |
-| `theme.go` | lipgloss styles |
+| `composition.go` / `modal_frame.go` | Overlay compositing: modals and toasts on top of the base screen |
+| `terminal*.go` | Terminal size and restore guard |
+| `theme.go` / `palette.go` | lipgloss styles and the command palette |
+
+Untrusted-text sanitizing (`SanitizeTerminalData`,
+`SanitizeMarkdownForTerminal`) lives in `internal/session/sanitize.go`
+and is re-exported through `session.go` aliases; `row`, `BuildRows`, the
+request/diagnostic/operation state types, and staged-snapshot logic all
+live in the `internal/session` core.
 
 `docs/tui-product-contract.md` describes the intended TUI behavior; the
-`tui-*` capabilities under `openspec/specs/` are normative.
+`tui-*` (terminal surface) and `session-*` (surface-neutral core)
+capabilities under `openspec/specs/` are normative.
 
 ### Every TUI change ships a TUI QA journey
 
@@ -426,11 +451,7 @@ overwriting a newer user-triggered reload. New async work gets a
 ### UX for selecting skills across scopes and registries
 
 The toggle modal is the only place in the TUI where the user picks
-*where* a single skill is enabled; `space` on a section header opens the
-section bulk-toggle modal (`bulk.go`), which applies the same per-row
-eligibility to every matching row in one staged transaction after an
-explicit scope, direction, and confirmation. The single-row modal displays
-per-scope checks for
+*where* a skill is enabled. The modal displays per-scope checks for
 Global / Project / Local / LocalExclude and lets the user flip any of
 them independently. When designing new flows:
 
@@ -441,7 +462,7 @@ them independently. When designing new flows:
 - The toggle always targets the specific registry entry that contains
   the skill (`row.RegistryURL`). A skill available from multiple
   registry entries is disambiguated by using the first entry in config
-  order that exposes it (`buildRows` in `actions.go`).
+  order that exposes it (`session.BuildRows`, aliased in `session.go`).
 - `required: true` skills refuse toggling via a `toastMsg`. Keep that
   guard — silently no-op'ing is confusing.
 - `Available` rows (skill in a catalog but not resolved) are
@@ -625,11 +646,6 @@ and organization-specific infrastructure are not required.
    `tui-test` trace kept under `tools/tui-qa/test-results/<journey>/`. Report
    setup failures as blocked, not passed.
 
-   When a journey asserts the outcome of a config write, wait for the
-   authoritative post-reload assessment (for example the `~ N out of sync`
-   drift state) before quitting: a `config written` toast acknowledges the
-   write, not the settled drift verdict.
-
 For journey coverage or an already-built test binary, read the
 [TUI QA package reference](../../tools/tui-qa/README.md).
 
@@ -716,7 +732,7 @@ Check the data flow at three levels:
 2. **Resolver output** — is the skill in `resolved` with the right
    `IsGlobal`? Add a `TestXxx` that calls `resolver.Resolve` with the
    edited config directly.
-3. **Row construction** — does `buildRows` produce a row with the
+3. **Row construction** — does `session.BuildRows` produce a row with the
    expected `EnabledGlobal/Project/Local`?
 
 The bug is almost always at layer 1 or 2. The TUI render is a pure

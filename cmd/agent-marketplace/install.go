@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
@@ -156,8 +157,8 @@ func runInstall(ctx context.Context, out io.Writer, in io.Reader, interactive, v
 		InstalledName:       installedName,
 		AcceptRisk:          acceptRisk,
 		Marketplace:         marketplace,
-		DependencyReconcile: reconcileCommandDependencies,
-		PrepareDependencies: prepareInstallDependencies,
+		DependencyReconcile: lifecycle.ReconcileCommandDependencies,
+		PrepareDependencies: lifecycle.PrepareInstallDependencies,
 	})
 	if err != nil {
 		var consentErr *pipeline.MarketplaceConsentError
@@ -403,12 +404,7 @@ func pluralLabel(singular string) string {
 	return singular + "s"
 }
 
-var terminalPrintableSyntax = strings.NewReplacer(`\\`, `\`, `\"`, `"`)
-
-func terminalSafeText(value string) string {
-	escaped := strings.TrimSuffix(strings.TrimPrefix(marketplace.QuoteTerminal(value), `"`), `"`)
-	return terminalPrintableSyntax.Replace(escaped)
-}
+func terminalSafeText(value string) string { return lifecycle.TerminalSafeText(value) }
 
 // looksLikeRegistryURL reports whether the argument looks like a Git hosting
 // web URL (GitLab/GitHub) that should be used with --from instead of as a

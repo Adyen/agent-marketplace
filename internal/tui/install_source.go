@@ -82,7 +82,7 @@ func (m Model) openInstallSource() (tea.Model, tea.Cmd) {
 	if m.configInvalid {
 		return m, invalidConfigToastCmd()
 	}
-	if m.operations.active != nil || m.syncing {
+	if m.operations.Active != nil || m.syncing {
 		return m, operationBlockedCmd()
 	}
 	if m.installSource.pendingRefusal {
@@ -861,7 +861,7 @@ func (m Model) startInstallSourceInstall() (tea.Model, tea.Cmd) {
 	m.marketplaceInstallIsSource = true
 	m.mutationPendingWarnings = nil
 	m.mutationPendingReport = nil
-	m.beginOperationProgressFor(operation, "install", m.requests.active(requestSnapshot))
+	m.beginOperationProgressFor(operation, "install", m.requests.Active(requestSnapshot))
 	return m, tea.Batch(runInstallSource(m.observedContext(ctxOrBackground(m.ctx)), operation, options), m.operationProgressCmd())
 }
 

@@ -7,78 +7,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-type requestKind string
-
-type requestGeneration uint64
-
-const (
-	requestDetail         requestKind = "detail"
-	requestSnapshot       requestKind = "snapshot"
-	requestDiscovery      requestKind = "marketplace-discovery"
-	requestInstallPreview requestKind = "install-source-preview"
-)
-
-type requestState struct {
-	next           requestGeneration
-	detail         requestGeneration
-	snapshot       requestGeneration
-	discovery      requestGeneration
-	installPreview requestGeneration
-}
-
-func (r *requestState) begin(kind requestKind) requestGeneration {
-	switch kind {
-	case requestDetail, requestSnapshot, requestDiscovery, requestInstallPreview:
-	default:
-		return 0
-	}
-
-	r.next++
-	switch kind {
-	case requestDetail:
-		r.detail = r.next
-	case requestSnapshot:
-		r.snapshot = r.next
-	case requestDiscovery:
-		r.discovery = r.next
-	case requestInstallPreview:
-		r.installPreview = r.next
-	}
-	return r.next
-}
-
-func (r requestState) active(kind requestKind) requestGeneration {
-	switch kind {
-	case requestDetail:
-		return r.detail
-	case requestSnapshot:
-		return r.snapshot
-	case requestDiscovery:
-		return r.discovery
-	case requestInstallPreview:
-		return r.installPreview
-	default:
-		return 0
-	}
-}
-
-func (r *requestState) cancel(kind requestKind) requestGeneration {
-	generation := r.active(kind)
-	switch kind {
-	case requestDetail:
-		r.detail = 0
-	case requestSnapshot:
-		r.snapshot = 0
-	case requestDiscovery:
-		r.discovery = 0
-	case requestInstallPreview:
-		r.installPreview = 0
-	}
-	return generation
-}
-
 func (m *Model) beginRequest(kind requestKind) requestGeneration {
-	generation := m.requests.begin(kind)
+	generation := m.requests.Begin(kind)
 	if kind == requestDiscovery {
 		m.discoverySequence = 0
 	}
@@ -87,16 +17,16 @@ func (m *Model) beginRequest(kind requestKind) requestGeneration {
 }
 
 func (m *Model) cancelRequest(kind requestKind) {
-	if generation := m.requests.cancel(kind); generation != 0 {
+	if generation := m.requests.Cancel(kind); generation != 0 {
 		slog.Debug("tui request cancelled", "kind", kind, "generation", generation)
 	}
 }
 
 func (m *Model) acceptsRequest(kind requestKind, generation requestGeneration) bool {
-	active := m.requests.active(kind)
+	active := m.requests.Active(kind)
 	accepted := generation != 0 && generation == active
 	if accepted {
-		m.requests.cancel(kind)
+		m.requests.Cancel(kind)
 		slog.Debug("tui request completion accepted", "kind", kind, "generation", generation)
 	} else {
 		slog.Debug("tui request completion rejected", "kind", kind, "generation", generation, "active_generation", active)
@@ -104,59 +34,34 @@ func (m *Model) acceptsRequest(kind requestKind, generation requestGeneration) b
 	return accepted
 }
 
-type operationID uint64
-
-type activeOperation struct {
-	id   operationID
-	kind operationKind
-}
-
-type operationState struct {
-	next   operationID
-	active *activeOperation
-}
-
-func (s *operationState) begin(kind operationKind) (operationID, bool) {
-	if s.active != nil {
+func (m *Model) beginOperation(kind operationKind) (operationID, bool) {
+	var external operationID
+	if m.operationGate != nil {
+		reserved, ok := m.operationGate.Begin(kind)
+		if !ok {
+			slog.Debug("tui operation blocked by shared gate", "operation", kind)
+			return 0, false
+		}
+		external = reserved
+	}
+	id, ok := m.operations.Begin(kind)
+	if !ok {
+		if m.operationGate != nil {
+			m.operationGate.Finish(external)
+		}
 		return 0, false
 	}
-	s.next++
-	s.active = &activeOperation{id: s.next, kind: kind}
-	return s.next, true
-}
-
-func (s operationState) accepts(id operationID) bool {
-	return id != 0 && s.active != nil && s.active.id == id
-}
-
-func (s *operationState) finish(id operationID) {
-	if s.accepts(id) {
-		s.active = nil
-	}
-}
-
-// issue allocates a fresh operation identity without taking the serializer.
-// Phase observation for non-serialized operations (sync/update) uses these
-// identities so their events can never be mistaken for another operation's.
-func (s *operationState) issue() operationID {
-	s.next++
-	return s.next
-}
-
-func (m *Model) beginOperation(kind operationKind) (operationID, bool) {
-	id, ok := m.operations.begin(kind)
-	if ok {
-		slog.Debug("tui operation started", "operation", kind, "operation_id", id)
-	}
-	return id, ok
+	m.externalOperation = external
+	slog.Debug("tui operation started", "operation", kind, "operation_id", id)
+	return id, true
 }
 
 func (m Model) acceptsOperation(id operationID) bool {
-	accepted := m.operations.accepts(id)
+	accepted := m.operations.Accepts(id)
 	if !accepted {
 		var active operationID
-		if m.operations.active != nil {
-			active = m.operations.active.id
+		if m.operations.Active != nil {
+			active = m.operations.Active.ID
 		}
 		slog.Debug("tui operation completion rejected", "operation_id", id, "active_operation_id", active)
 	}
@@ -164,7 +69,37 @@ func (m Model) acceptsOperation(id operationID) bool {
 }
 
 func (m *Model) finishOperation(id operationID) {
-	m.operations.finish(id)
+	if m.operationGate == nil {
+		m.operations.Finish(id)
+		return
+	}
+	if !m.operations.Accepts(id) {
+		return
+	}
+	m.operations.Finish(id)
+	m.operationGate.Finish(m.externalOperation)
+	m.externalOperation = 0
+}
+
+func (m *Model) beginDependencyOperation(kind operationKind) bool {
+	if m.operationGate == nil {
+		return true
+	}
+	id, ok := m.operationGate.Begin(kind)
+	if !ok {
+		slog.Debug("tui dependency operation blocked by shared gate", "operation", kind)
+		return false
+	}
+	m.dependencyOperation = id
+	return true
+}
+
+func (m *Model) finishDependencyOperation() {
+	if m.operationGate == nil {
+		return
+	}
+	m.operationGate.Finish(m.dependencyOperation)
+	m.dependencyOperation = 0
 }
 
 func operationBlockedCmd() tea.Cmd {

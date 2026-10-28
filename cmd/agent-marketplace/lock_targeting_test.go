@@ -39,7 +39,7 @@ func TestParseUpgradeTargetsAllowsWholeRegistryWithoutKind(t *testing.T) {
 	if err != nil {
 		t.Fatalf("whole-registry target: %v", err)
 	}
-	if target.registry == "" || target.kind != "" || len(target.names) != 0 {
+	if target.Registry == "" || target.Kind != "" || len(target.Names) != 0 {
 		t.Fatalf("unexpected target: %+v", target)
 	}
 }

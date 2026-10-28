@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -237,7 +238,7 @@ func TestUpdateDryRunRefusesPendingJournalWithoutReplay(t *testing.T) {
 	writeSkill(t, working, "vm-lifecycle", "VM lifecycle v2 newer upstream", []string{"openstack"})
 	commitAndPushAll(t, working, "advance v2")
 
-	stateDir, err := dependencyStateDir()
+	stateDir, err := lifecycle.DependencyStateDir()
 	if err != nil {
 		t.Fatal(err)
 	}
