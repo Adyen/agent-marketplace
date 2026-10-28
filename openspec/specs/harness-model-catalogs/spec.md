@@ -233,7 +233,8 @@ offline catalog check; malformed catalog data MUST be rejected.
 
 ### Requirement: Reviewed Codex and Factory model additions
 
-Subagent conversion SHALL resolve `openai/gpt-6.1-terra` to Codex's native
+Canonical and cross-harness subagent conversion SHALL resolve
+`openai/gpt-6.1-terra` to Codex's native
 `gpt-6.1-terra` model with low, medium, high, xhigh, and max reasoning.
 Factory SHALL resolve `deepseek/deepseek-v4.1-flash-1017`,
 `minimax/minimax-m3.1-flash`, `nvidia/nemotron-3.5-super`,
@@ -242,11 +243,12 @@ Factory SHALL resolve `deepseek/deepseek-v4.1-flash-1017`,
 IDs. Factory reasoning support SHALL remain limited to the intersection of
 each model's documented levels and the custom-droid field's low/medium/high
 levels. Unsupported reasoning SHALL retain the selected model and report
-`model.reasoning-omitted`.
+`model.reasoning-omitted` or its established source/target-specific
+compatibility code.
 
 #### Scenario: Reviewed additions emit native model and reasoning fields
 
-- **WHEN** a subagent selects one of the reviewed model additions for its
+- **WHEN** a canonical or cross-harness subagent selects a reviewed addition for its
   supported destination with a supported reasoning level
 - **THEN** conversion SHALL emit that model's native ID and reasoning value
 
@@ -273,5 +275,6 @@ levels. Unsupported reasoning SHALL retain the selected model and report
 - **WHEN** a reviewed model addition is selected with an unsupported reasoning
   level for the destination resource format
 - **THEN** conversion SHALL retain the model and omit the reasoning value
-- **AND** it SHALL report `model.reasoning-omitted` without selecting a
-  different effort level
+- **AND** it SHALL report `model.reasoning-omitted` or its established
+  source/target-specific compatibility code without selecting a different
+  effort level
