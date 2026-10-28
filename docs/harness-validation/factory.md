@@ -55,6 +55,33 @@ them after `sync`. This is evidence that Factory recognizes the
 configuration; the transport stays `not-probed`, and nothing here claims that
 a model invoked either server.
 
+## Native plugin delivery
+
+The `factory-native-plugin` probe runs in the Factory compatibility job with an
+isolated home at both repository and user scope. It uses
+`droid.exec` stream-JSON-RPC metadata sessions (`droid.initialize_session`
+followed by `droid.list_skills`) and sends no user message or model request.
+The probe requires the plugin skill to be absent before sync, present afterward
+with the exact generation content, and absent again after removal. It changes
+the generation without changing the authored version and requires a fresh
+metadata session to see the updated content; one bounded second session is
+recorded if the first still sees generation one. If both sessions still see
+generation one, the probe fails even when sync and status report
+`reload-required`. A declared npm dependency is checked in the copied plugin
+cache to ensure the probe did not install it implicitly. Failures block the
+probe; a file-only inspection is not a substitute.
+
+Factory native delivery remains **unverified** until this probe passes in CI.
+Until then `auto` continues to decompose Factory plugins and explicit native
+delivery remains refused.
+
+When enabled, repository registrations use `.factory/settings.local.json`;
+user registrations use `~/.factory/settings.json`. The owned marketplace
+declares a `local` source and the enabled plugin, while
+`.factory-plugin/marketplace.json` lists relative `./plugins/<name>` sources
+over the immutable package generations. Repository `settings.json` is not a
+registration target.
+
 ## Hooks
 
 `.factory/hooks.json` holds the event map at top level, with matcher groups and

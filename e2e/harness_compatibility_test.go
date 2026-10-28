@@ -234,6 +234,16 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 		rows["hook"].Status = "failed"
 		t.Error("inspection unexpectedly executed a hook")
 	}
+	if first.Harness == "factory" && first.Mode == "symlink" && nativeMode == "probe" && native != nil {
+		row := rows["skill"]
+		t.Run("native-factory-plugin", func(t *testing.T) {
+			if err := runFactoryNativePluginProbe(e, native.binary, f, first.Scope, row); err != nil {
+				row.Status = "failed"
+				row.Reason = err.Error()
+				t.Fatal(err)
+			}
+		})
+	}
 }
 
 func assertCompatibilityResource(t *testing.T, e *Env, f compatibilityFixture, row *compatibilityResult, paths []string, sync compatibilityCommand) {

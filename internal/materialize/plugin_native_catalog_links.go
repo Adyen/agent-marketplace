@@ -14,12 +14,12 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/packagegen"
 )
 
-func publishClaudePluginCatalogLinks(catalog nativePluginCatalog) (retErr error) {
+func publishNativePluginCatalogLinks(catalog nativePluginCatalog) (retErr error) {
 	stateRoot, err := packagegen.StateRoot()
 	if err != nil {
 		return err
 	}
-	plugins, pluginsPath, err := openClaudePluginCatalogLinks(catalog.path, stateRoot, true)
+	plugins, pluginsPath, err := openNativePluginCatalogLinks(catalog.path, stateRoot, true)
 	if err != nil {
 		return err
 	}
@@ -27,24 +27,24 @@ func publishClaudePluginCatalogLinks(catalog nativePluginCatalog) (retErr error)
 	packagesRoot := filepath.Join(stateRoot, "packages")
 	for _, entry := range catalog.entries {
 		if entry.name == "" || filepath.Base(entry.name) != entry.name || strings.ContainsAny(entry.name, `/\`) {
-			return fmt.Errorf("invalid Claude plugin catalog entry name %q", entry.name)
+			return fmt.Errorf("invalid native plugin catalog entry name %q", entry.name)
 		}
 		target, err := filepath.Abs(entry.generationPath)
 		if err != nil || !catalogGenerationPath(target, packagesRoot) {
-			return fmt.Errorf("claude plugin generation is outside the packages root")
+			return fmt.Errorf("native plugin generation is outside the packages root")
 		}
 		info, err := os.Lstat(target)
 		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("claude plugin generation is not a directory")
+			return fmt.Errorf("native plugin generation is not a directory")
 		}
 		current, err := plugins.Lstat(entry.name)
 		if err == nil {
 			if current.Mode()&os.ModeSymlink == 0 {
-				return fmt.Errorf("claude plugin catalog path is not a symbolic link")
+				return fmt.Errorf("native plugin catalog path is not a symbolic link")
 			}
 			link, linkErr := plugins.Readlink(entry.name)
 			if linkErr != nil || !catalogGenerationPath(resolveCatalogLink(pluginsPath, link), packagesRoot) {
-				return fmt.Errorf("claude plugin catalog link is outside the packages root")
+				return fmt.Errorf("native plugin catalog link is outside the packages root")
 			}
 			if filepath.Clean(resolveCatalogLink(pluginsPath, link)) == target {
 				continue
@@ -52,19 +52,19 @@ func publishClaudePluginCatalogLinks(catalog nativePluginCatalog) (retErr error)
 		} else if !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
-		if err := replaceClaudePluginCatalogLink(plugins, entry.name, target); err != nil {
+		if err := replaceNativePluginCatalogLink(plugins, entry.name, target); err != nil {
 			return err
 		}
 	}
-	return syncClaudePluginCatalogLinks(plugins)
+	return syncNativePluginCatalogLinks(plugins)
 }
 
-func removeStaleClaudePluginCatalogLinks(catalog nativePluginCatalog) (retErr error) {
+func removeStaleNativePluginCatalogLinks(catalog nativePluginCatalog) (retErr error) {
 	stateRoot, err := packagegen.StateRoot()
 	if err != nil {
 		return err
 	}
-	plugins, pluginsPath, err := openClaudePluginCatalogLinks(catalog.path, stateRoot, false)
+	plugins, pluginsPath, err := openNativePluginCatalogLinks(catalog.path, stateRoot, false)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
@@ -111,12 +111,12 @@ func removeStaleClaudePluginCatalogLinks(catalog nativePluginCatalog) (retErr er
 		changed = true
 	}
 	if changed {
-		return syncClaudePluginCatalogLinks(plugins)
+		return syncNativePluginCatalogLinks(plugins)
 	}
 	return nil
 }
 
-func openClaudePluginCatalogLinks(catalogPath, stateRoot string, create bool) (native *os.Root, pluginsPath string, retErr error) {
+func openNativePluginCatalogLinks(catalogPath, stateRoot string, create bool) (native *os.Root, pluginsPath string, retErr error) {
 	root, err := fsboundary.OpenDir(stateRoot)
 	if err != nil {
 		return nil, "", err
@@ -124,7 +124,7 @@ func openClaudePluginCatalogLinks(catalogPath, stateRoot string, create bool) (n
 	defer func() { retErr = errors.Join(retErr, root.Close()) }()
 	catalogRel, err := filepath.Rel(root.Path(), catalogPath)
 	if err != nil || catalogRel == "." || catalogRel == ".." || strings.HasPrefix(catalogRel, ".."+string(os.PathSeparator)) || filepath.IsAbs(catalogRel) {
-		return nil, "", fmt.Errorf("%w: Claude plugin catalog escapes the state root", fsboundary.ErrUnsafePath)
+		return nil, "", fmt.Errorf("%w: native plugin catalog escapes the state root", fsboundary.ErrUnsafePath)
 	}
 	rel := filepath.ToSlash(filepath.Join(catalogRel, "plugins"))
 	var plugins *fsboundary.Dir
@@ -144,7 +144,7 @@ func openClaudePluginCatalogLinks(catalogPath, stateRoot string, create bool) (n
 	return native, plugins.Path(), nil
 }
 
-func replaceClaudePluginCatalogLink(root *os.Root, name, target string) error {
+func replaceNativePluginCatalogLink(root *os.Root, name, target string) error {
 	for attempts := 0; attempts < 8; attempts++ {
 		var token [12]byte
 		if _, err := rand.Read(token[:]); err != nil {
@@ -163,7 +163,7 @@ func replaceClaudePluginCatalogLink(root *os.Root, name, target string) error {
 		}
 		return nil
 	}
-	return fmt.Errorf("could not allocate a temporary Claude plugin catalog link")
+	return fmt.Errorf("could not allocate a temporary native plugin catalog link")
 }
 
 func catalogGenerationPath(candidate, packagesRoot string) bool {
@@ -179,7 +179,7 @@ func resolveCatalogLink(pluginsPath, target string) string {
 	return filepath.Clean(filepath.Join(pluginsPath, target))
 }
 
-func syncClaudePluginCatalogLinks(root *os.Root) (retErr error) {
+func syncNativePluginCatalogLinks(root *os.Root) (retErr error) {
 	dir, err := root.Open(".")
 	if err != nil {
 		return err

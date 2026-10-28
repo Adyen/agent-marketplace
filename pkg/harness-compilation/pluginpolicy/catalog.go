@@ -32,6 +32,8 @@ const (
 	RoleCatalog = "catalog"
 )
 
+const FactoryNativePluginProbeID = "factory-native-plugin"
+
 // Delivery statuses for delivery.decompose and delivery.native.
 const (
 	DeliveryVerified    = "verified"

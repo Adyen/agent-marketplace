@@ -168,8 +168,9 @@ type NativeAggregate struct {
 type NativeRegistrationShape string
 
 const (
-	NativeRegistrationClaudeSettings NativeRegistrationShape = "claude-settings"
-	NativeRegistrationCodexConfig    NativeRegistrationShape = "codex-config"
+	NativeRegistrationClaudeSettings  NativeRegistrationShape = "claude-settings"
+	NativeRegistrationFactorySettings NativeRegistrationShape = "factory-settings"
+	NativeRegistrationCodexConfig     NativeRegistrationShape = "codex-config"
 )
 
 type NativeRegistration struct {
@@ -246,6 +247,7 @@ var nativeLayouts = map[Target]NativeLayout{
 					User:    NativeAggregateFile{Path: "mcp.json", Member: "mcpServers"},
 				},
 			},
+			Registrations: []NativeRegistration{{Project: "settings.local.json", User: "settings.json", Shape: NativeRegistrationFactorySettings}},
 		},
 	}},
 	TargetCursor: {Partitions: []NativePartition{
@@ -662,6 +664,7 @@ func ValidateNativeLayout(t Target, layout NativeLayout) error {
 		errs = append(errs, validatePartitionContent(t, partition, resourceKinds, aggregateKinds)...)
 		for _, registration := range partition.Registrations {
 			validShape := registration.Shape == NativeRegistrationClaudeSettings && t == TargetClaude ||
+				registration.Shape == NativeRegistrationFactorySettings && t == TargetFactory ||
 				registration.Shape == NativeRegistrationCodexConfig && t == TargetCodex
 			for _, scopedPath := range []struct{ scope, path string }{
 				{scope: "project", path: registration.Project},
