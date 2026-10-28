@@ -70,6 +70,15 @@ func stepMap(t *testing.T, step any) map[string]any {
 	return m
 }
 
+func TestTUIQAJobBudget(t *testing.T) {
+	job := getMap(t, getMap(t, loadCIWorkflow(t), "jobs"), "tui-qa")
+	// A cold macOS run passed every journey just before ten minutes, then
+	// timed out saving the Go cache. Keep room for setup and cleanup.
+	if got := job["timeout-minutes"]; got != 15 {
+		t.Errorf("TUI QA job budget = %v minutes, want 15 for setup, journeys, and cleanup", got)
+	}
+}
+
 func TestTUIQADriverJob(t *testing.T) {
 	doc := loadCIWorkflow(t)
 
