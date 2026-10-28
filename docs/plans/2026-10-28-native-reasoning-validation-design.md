@@ -11,7 +11,7 @@ OpenSpec change; this document records the implementation plan.
   encodings and omit unsupported reasoning with the existing warning.
 - Preserve unknown destination models and their native preferences, including
   identities known only to another harness target.
-- Consult a family pin's capabilities without rewriting the native selector.
+- Consult a resolved family identity's pin without rewriting its selector.
 - Leave inherited selections and model-encoded reasoning paths unchanged.
 
 ## Implementation

@@ -98,6 +98,7 @@ func (r *registry) resolve(req Request) Result {
 		return result
 	}
 	selected, known := sourceCatalog.native[Encoding{Model: req.Model, Effort: req.Effort}]
+	nativeEncodingKnown := known
 	if !known {
 		selected, known = sourceCatalog.native[Encoding{Model: req.Model}]
 		if known && req.Effort != "" {
@@ -126,6 +127,16 @@ func (r *registry) resolve(req Request) Result {
 		if req.Effort != "" {
 			if surf.EffortField != "" {
 				result.Effort = req.Effort
+				if known && !nativeEncodingKnown {
+					entry, available := c.lookup(selected.Identity)
+					if entry.Pin != "" {
+						entry = c.Models[entry.Pin]
+					}
+					if _, supported := c.native[Encoding{Model: entry.Model, Effort: req.Effort}]; available && !supported {
+						result.Effort = ""
+						result.lose(EffortOmitted, req.Effort)
+					}
+				}
 			} else if known {
 				entry, _ := c.lookup(selected.Identity)
 				if encoding, ok := entry.Reasoning[selected.Effort]; ok && req.Surface == "subagent" {

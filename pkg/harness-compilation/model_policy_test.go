@@ -103,6 +103,8 @@ func TestModelPolicyDiagnosticScenarios(t *testing.T) {
 		{"inheritance/default mismatch", TargetDevin, TargetClaude, "", "", "", "effort", "", diag.CodeModelInheritanceMismatch, diag.SeverityWarning},
 		{"reasoning on inherited selection", "", TargetFactory, "inherit", "high", "inherit", "reasoningEffort", "", diag.CodeModelReasoningOmitted, diag.SeverityWarning},
 		{"factory Nemotron unsupported low", "", TargetFactory, "nvidia/nemotron-3.5-super", "low", "nemotron-3.5-super", "reasoningEffort", "", diag.CodeModelReasoningOmitted, diag.SeverityWarning},
+		{"Claude native unsupported reasoning", TargetClaude, TargetClaude, "claude-opus-5", "ultra", "claude-opus-5", "effort", "", diag.CodeModelReasoningOmitted, diag.SeverityWarning},
+		{"Codex native unsupported reasoning", TargetCodex, TargetCodex, "gpt-6.1-terra", "ultra", "gpt-6.1-terra", "model_reasoning_effort", "", diag.CodeSubagentCodexEffortDropped, diag.SeverityWarning},
 		{"factory fast without reasoning", TargetFactory, TargetDevin, "gpt-6-sol-fast", "", "", "effort", "", diag.CodeSubagentDevinModelUnmappable, diag.SeverityWarning},
 		{"factory fast supported reasoning", TargetFactory, TargetDevin, "gpt-6-sol-fast", "high", "gpt-6-sol-high-priority", "effort", "", "", 0},
 		{"positive control", TargetClaude, TargetCodex, "gpt-5.6-luna", "medium", "gpt-5.6-luna", "model_reasoning_effort", "medium", "", 0},
@@ -185,6 +187,49 @@ func TestModelPolicyDevinNativeRoundTrip(t *testing.T) {
 				if d.Severity != diag.SeverityInfo {
 					t.Fatalf("native selection produced a loss: %+v", d)
 				}
+			}
+		})
+	}
+}
+
+// spec: harness-model-catalogs/same-harness-known-models-omit-unsupported-native-reasoning
+// spec: harness-model-catalogs/same-harness-supported-native-effort-values-remain-unchanged
+// spec: harness-model-catalogs/same-harness-unknown-destination-models-retain-native-reasoning
+func TestModelPolicyFactoryNativeReasoning(t *testing.T) {
+	for _, tc := range []struct {
+		name, model, effort, wantEffort, wantCode string
+	}{
+		{"unsupported qualified model", "nvidia/nemotron-3.5-super", "low", "", diag.CodeModelReasoningOmitted},
+		{"unsupported native model", "nemotron-3.5-super", "low", "", diag.CodeModelReasoningOmitted},
+		{"supported native model", "nemotron-3.5-super", "high", "high", ""},
+		{"supported qualified model", "nvidia/nemotron-3.5-super", "high", "high", ""},
+		{"omitted reasoning", "nemotron-3.5-super", "", "", ""},
+		{"future native model", "future-native-model", "future", "future", ""},
+		{"known only to Codex", "gpt-6.1-terra", "high", "high", ""},
+		{"unknown native selector", "sonnet", "high", "high", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			effortField := ""
+			if tc.effort != "" {
+				effortField = "reasoningEffort: " + tc.effort + "\n"
+			}
+			src := fstest.MapFS{
+				".factory-plugin/plugin.json": {Data: []byte(`{"droids":[{"name":"review","description":"Review"}]}`)},
+				"droids/review.md":            {Data: []byte("---\nname: review\ndescription: Review\nmodel: " + tc.model + "\n" + effortField + "---\nKeep this body.\n")},
+			}
+			result, err := Convert(src, HarnessFactory, TargetFactory)
+			if err != nil || diag.HasErrors(result.Diagnostics) {
+				t.Fatalf("convert: %v %+v", err, result.Diagnostics)
+			}
+			fields := modelPolicyFields(t, result.Artifacts)
+			assertModelPolicyField(t, fields, "model", tc.model)
+			assertModelPolicyField(t, fields, "reasoningEffort", tc.wantEffort)
+			if tc.wantCode == "" {
+				if len(result.Diagnostics) != 0 {
+					t.Fatalf("native control emitted diagnostics: %+v", result.Diagnostics)
+				}
+			} else if len(result.Diagnostics) != 1 || result.Diagnostics[0].Code != tc.wantCode || result.Diagnostics[0].Severity != diag.SeverityWarning {
+				t.Fatalf("diagnostics = %+v, want one %s warning", result.Diagnostics, tc.wantCode)
 			}
 		})
 	}
