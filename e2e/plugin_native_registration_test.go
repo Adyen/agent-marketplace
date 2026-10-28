@@ -76,11 +76,68 @@ func assertClaudeNativeRegistration(t *testing.T, env *Env) []byte {
 	return settings
 }
 
+func assertFactoryMarketplaceEntry(t *testing.T, env *Env, settings []byte) {
+	t.Helper()
+	document, err := jsonc.Parse("settings.json", settings)
+	if err != nil {
+		t.Fatalf("parse Factory settings: %v\n%s", err, settings)
+	}
+	marketplaces, ok := document.Root().Member("extraKnownMarketplaces")
+	if !ok {
+		t.Fatalf("Factory settings have no extraKnownMarketplaces:\n%s", settings)
+	}
+	marketplaceKey := ""
+	for _, key := range marketplaces.Keys() {
+		if strings.HasPrefix(key, "am-") {
+			marketplaceKey = key
+			entry, ok := marketplaces.Member(key)
+			if !ok {
+				t.Fatalf("Factory marketplace %q disappeared", key)
+			}
+			source, ok := entry.Member("source")
+			if !ok {
+				t.Fatalf("Factory marketplace %q has no source:\n%s", key, settings)
+			}
+			var got struct {
+				Source string `json:"source"`
+				Path   string `json:"path"`
+			}
+			if err := json.Unmarshal(source.Raw(), &got); err != nil {
+				t.Fatalf("decode Factory marketplace source: %v", err)
+			}
+			wantRoot := filepath.Join(env.home, ".local", "state", "agent-marketplace", "native-plugins", "factory")
+			wantRoot, err = filepath.EvalSymlinks(wantRoot)
+			if err != nil {
+				t.Fatalf("resolve Factory catalog root: %v", err)
+			}
+			if got.Source != "local" || !strings.HasPrefix(got.Path, wantRoot+string(filepath.Separator)) {
+				t.Fatalf("Factory marketplace source = %#v, want local catalog below %q", got, wantRoot)
+			}
+			break
+		}
+	}
+	if marketplaceKey == "" {
+		t.Fatalf("Factory settings have no owned marketplace key:\n%s", settings)
+	}
+	plugins, ok := document.Root().Member("enabledPlugins")
+	if !ok {
+		t.Fatalf("Factory settings have no enabledPlugins:\n%s", settings)
+	}
+	for _, key := range plugins.Keys() {
+		if key == "native-kit@"+marketplaceKey {
+			return
+		}
+	}
+	t.Fatalf("Factory settings do not enable native-kit at marketplace %q:\n%s", marketplaceKey, settings)
+}
+
 func assertNativePluginCatalog(t *testing.T, env *Env, pluginName, target string) {
 	t.Helper()
 	stateRoot := filepath.Join(env.home, ".local", "state", "agent-marketplace")
 	manifestRel := ".claude-plugin/marketplace.json"
-	if target == "codex" {
+	if target == "factory" {
+		manifestRel = filepath.Join(".factory-plugin", "marketplace.json")
+	} else if target == "codex" {
 		manifestRel = filepath.Join(".agents", "plugins", "marketplace.json")
 	}
 	paths, err := filepath.Glob(filepath.Join(stateRoot, "native-plugins", target, "*", manifestRel))
@@ -111,8 +168,8 @@ func assertNativePluginCatalog(t *testing.T, env *Env, pluginName, target string
 	if err := json.Unmarshal(data, &document); err != nil {
 		t.Fatalf("decode native catalog: %v\n%s", err, data)
 	}
-	if target == "claude" && document.Owner.Name != "Agent Marketplace" {
-		t.Fatalf("Claude catalog owner = %q, want Agent Marketplace", document.Owner.Name)
+	if (target == "claude" || target == "factory") && document.Owner.Name != "Agent Marketplace" {
+		t.Fatalf("%s catalog owner = %q, want Agent Marketplace", target, document.Owner.Name)
 	}
 	instanceDir := filepath.Join(stateRoot, "ownership", "plugin-packages")
 	instanceFiles, err := filepath.Glob(filepath.Join(instanceDir, "*.json"))
@@ -149,19 +206,19 @@ func assertNativePluginCatalog(t *testing.T, env *Env, pluginName, target string
 			continue
 		}
 		var sourcePath string
-		if target == "claude" {
+		if target == "claude" || target == "factory" {
 			if err := json.Unmarshal(plugin.Source, &sourcePath); err != nil {
-				t.Fatalf("decode Claude plugin source: %v", err)
+				t.Fatalf("decode %s plugin source: %v", target, err)
 			}
 			wantSource := "./plugins/" + pluginName
 			if sourcePath != wantSource {
-				t.Fatalf("Claude plugin source = %q, want %q", sourcePath, wantSource)
+				t.Fatalf("%s plugin source = %q, want %q", target, sourcePath, wantSource)
 			}
 			catalogRoot := filepath.Dir(filepath.Dir(paths[0]))
 			sourcePath = filepath.Join(catalogRoot, filepath.FromSlash(sourcePath))
 			info, err := os.Lstat(sourcePath)
 			if err != nil || info.Mode()&os.ModeSymlink == 0 {
-				t.Fatalf("Claude plugin source %q is not a symlink: info=%v err=%v", sourcePath, info, err)
+				t.Fatalf("%s plugin source %q is not a symlink: info=%v err=%v", target, sourcePath, info, err)
 			}
 		} else {
 			var source struct {
@@ -189,7 +246,7 @@ func assertNativePluginCatalog(t *testing.T, env *Env, pluginName, target string
 	t.Fatalf("native catalog omitted plugin %s:\n%s", pluginName, data)
 }
 
-func removeNativePluginState(t *testing.T, env *Env, pluginName string) {
+func removeNativePluginStateForTarget(t *testing.T, env *Env, pluginName, target string) {
 	t.Helper()
 	stateDir := filepath.Join(env.home, ".local", "state", "agent-marketplace", "ownership", "plugin-packages")
 	paths, err := filepath.Glob(filepath.Join(stateDir, "*.json"))
@@ -226,7 +283,8 @@ func removeNativePluginState(t *testing.T, env *Env, pluginName string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	targetRoot, err := filepath.EvalSymlinks(env.mustResolvePath("/workspace/.claude"))
+	targetRootPath := "/workspace/." + target
+	targetRoot, err := filepath.EvalSymlinks(env.mustResolvePath(targetRootPath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,6 +324,80 @@ func assertNoStagingResidue(t *testing.T, root string) {
 	})
 	if err != nil {
 		t.Fatalf("walk %s: %v", root, err)
+	}
+}
+
+// spec: plugin-delivery/factory-registration-preserves-handwritten-settings
+func TestFactoryNativeRegistrationPreservesHandwrittenSettings(t *testing.T) {
+	env, catalogPath := newNativePluginEnv(t, "factory", "native")
+	env.WriteFile("/workspace/.factory/settings.local.json", "{\n"+
+		"  // keep this handwritten comment\n"+
+		"  \"enabledPlugins\": {\"handwritten@manual\": true},\n"+
+		"  \"extraKnownMarketplaces\": {\"handwritten\": {\"source\": {\"source\": \"local\", \"path\": \"/handwritten\"}}},\n"+
+		"  \"customSetting\": \"keep\"\n}\n")
+	sharedSettings := "{\"enabledPlugins\":{\"shared@manual\":true},\"customSetting\":\"shared\"}\n"
+	env.WriteFile("/workspace/.factory/settings.json", sharedSettings)
+
+	result := runNativeAM(env, catalogPath, "sync", "--no-backup")
+	if result.ExitCode != 0 {
+		t.Fatalf("Factory native registration failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	localSettings := readNativeSettings(t, env, "/workspace/.factory/settings.local.json")
+	for _, want := range []string{
+		"keep this handwritten comment",
+		"handwritten@manual",
+		"handwritten",
+		"customSetting",
+		"extraKnownMarketplaces",
+		"enabledPlugins",
+	} {
+		if !strings.Contains(string(localSettings), want) {
+			t.Errorf("Factory settings.local.json lost or omitted %q:\n%s", want, localSettings)
+		}
+	}
+	assertFactoryMarketplaceEntry(t, env, localSettings)
+	if got := string(readNativeSettings(t, env, "/workspace/.factory/settings.json")); got != sharedSettings {
+		t.Fatalf("Factory settings.json changed or gained a registration:\n%s", got)
+	}
+}
+
+// spec: plugin-delivery/factory-catalog-is-a-marketplace-droid-accepts
+func TestFactoryNativeCatalogLinksToPluginGeneration(t *testing.T) {
+	env, catalogPath := newNativePluginEnv(t, "factory", "native")
+	result := runNativeAM(env, catalogPath, "sync", "--no-backup")
+	if result.ExitCode != 0 {
+		t.Fatalf("Factory native catalog publication failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	assertNativePluginCatalog(t, env, "native-kit", "factory")
+}
+
+// spec: plugin-delivery/factory-registration-preserves-handwritten-settings
+func TestFactoryNativeUserRegistrationUsesUserSettings(t *testing.T) {
+	env, catalogPath := newNativePluginEnv(t, "factory", "decompose")
+	env.WriteRepoConfig("apiVersion: agent-marketplace/v4\n")
+	sourceRoot := filepath.ToSlash(env.mustResolvePath("/workspace/vendor/native-kit"))
+	env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n" +
+		"materialization: {mode: file}\nsources:\n" +
+		"  vendor: {directory: " + sourceRoot + ", format: claude-plugin}\n" +
+		"resources:\n  vendor:\n    - {kind: plugin, name: native-kit, delivery: native}\n")
+	userSettings := "{\"enabledPlugins\":{\"handwritten@manual\":true},\"customSetting\":\"keep\"}\n"
+	env.WriteFile("/root/.factory/settings.json", userSettings)
+	localSettings := "{\n  // do not register in user-local settings\n  \"enabledPlugins\": {\"local@manual\": true}\n}\n"
+	env.WriteFile("/root/.factory/settings.local.json", localSettings)
+
+	result := runNativeAM(env, catalogPath, "sync", "--no-backup")
+	if result.ExitCode != 0 {
+		t.Fatalf("Factory native user registration failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	gotUserSettings := readNativeSettings(t, env, "/root/.factory/settings.json")
+	for _, want := range []string{"handwritten@manual", "customSetting", "extraKnownMarketplaces", "enabledPlugins"} {
+		if !strings.Contains(string(gotUserSettings), want) {
+			t.Errorf("Factory user settings.json lost or omitted %q:\n%s", want, gotUserSettings)
+		}
+	}
+	assertFactoryMarketplaceEntry(t, env, gotUserSettings)
+	if got := string(readNativeSettings(t, env, "/root/.factory/settings.local.json")); got != localSettings {
+		t.Fatalf("Factory user sync changed settings.local.json:\n%s", got)
 	}
 }
 
@@ -349,24 +481,33 @@ func TestClaudeNativeRegistrationPreservesHandwrittenSettingsAndHooks(t *testing
 
 // spec: plugin-delivery/registration-without-ownership-state-is-not-pruned
 func TestUnownedNativeRegistrationIsPreservedAndReported(t *testing.T) {
-	env, catalogPath := newNativePluginEnv(t, "claude", "native")
-	first := runNativeAM(env, catalogPath, "sync", "--no-backup")
-	if first.ExitCode != 0 {
-		t.Fatalf("initial native registration failed (exit %d):\n%s", first.ExitCode, first.Combined)
-	}
-	settingsPath := env.mustResolvePath("/workspace/.claude/settings.local.json")
-	before, err := os.ReadFile(settingsPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	removeNativePluginState(t, env, "native-kit")
-	result := runNativeAM(env, catalogPath, "sync", "--no-backup")
-	if !strings.Contains(result.Combined, "plugin.registration.collision") {
-		t.Fatalf("sync did not report an unowned registration collision (exit %d):\n%s", result.ExitCode, result.Combined)
-	}
-	after, err := os.ReadFile(settingsPath)
-	if err != nil || string(after) != string(before) {
-		t.Fatalf("sync changed an unowned registration: read=%v\nbefore=%s\nafter=%s", err, before, after)
+	for _, target := range []string{"claude", "factory"} {
+		t.Run(target, func(t *testing.T) {
+			env, catalogPath := newNativePluginEnv(t, target, "native")
+			if target == "factory" {
+				env.WriteFile("/workspace/.factory/settings.local.json",
+					"{\n  // preserve Factory-owned input\n  \"enabledPlugins\": {\"handwritten@manual\": true},\n"+
+						"  \"extraKnownMarketplaces\": {\"handwritten\": {\"source\": {\"source\": \"local\", \"path\": \"/handwritten\"}}}\n}\n")
+			}
+			first := runNativeAM(env, catalogPath, "sync", "--no-backup")
+			if first.ExitCode != 0 {
+				t.Fatalf("initial native registration failed (exit %d):\n%s", first.ExitCode, first.Combined)
+			}
+			settingsPath := env.mustResolvePath("/workspace/." + target + "/settings.local.json")
+			before, err := os.ReadFile(settingsPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			removeNativePluginStateForTarget(t, env, "native-kit", target)
+			result := runNativeAM(env, catalogPath, "sync", "--no-backup")
+			if !strings.Contains(result.Combined, "plugin.registration.collision") {
+				t.Fatalf("sync did not report an unowned registration collision (exit %d):\n%s", result.ExitCode, result.Combined)
+			}
+			after, err := os.ReadFile(settingsPath)
+			if err != nil || string(after) != string(before) {
+				t.Fatalf("sync changed an unowned registration: read=%v\nbefore=%s\nafter=%s", err, before, after)
+			}
+		})
 	}
 }
 
@@ -673,23 +814,46 @@ func TestClaudeNativeCatalogLinksRetargetAndRetire(t *testing.T) {
 
 // spec: plugin-delivery/switching-to-decompose-removes-the-native-registration
 func TestSwitchingNativePluginToDecomposeRemovesRegistration(t *testing.T) {
-	env, catalogPath := newNativePluginEnv(t, "claude", "native")
-	first := runNativeAM(env, catalogPath, "sync", "--no-backup")
-	if first.ExitCode != 0 {
-		t.Fatalf("initial native sync failed (exit %d):\n%s", first.ExitCode, first.Combined)
-	}
-	assertClaudeNativeRegistration(t, env)
-	env.WriteRepoConfig(nativePluginConfig("decompose"))
-	result := runNativeAM(env, catalogPath, "sync", "--no-backup")
-	if result.ExitCode != 0 {
-		t.Fatalf("switch to decomposed delivery failed (exit %d):\n%s", result.ExitCode, result.Combined)
-	}
-	settings := readNativeSettings(t, env, "/workspace/.claude/settings.local.json")
-	if strings.Contains(string(settings), "native-kit@") {
-		t.Fatalf("native registration remained after switching to decompose:\n%s", settings)
-	}
-	if _, err := os.Stat(env.mustResolvePath("/workspace/.claude/skills/native-kit-review/SKILL.md")); err != nil {
-		t.Fatalf("decomposed member was not installed: %v", err)
+	for _, target := range []string{"claude", "factory"} {
+		t.Run(target, func(t *testing.T) {
+			env, catalogPath := newNativePluginEnv(t, target, "native")
+			if target == "factory" {
+				env.WriteFile("/workspace/.factory/settings.local.json",
+					"{\n  // preserve Factory-owned input\n  \"enabledPlugins\": {\"handwritten@manual\": true},\n"+
+						"  \"extraKnownMarketplaces\": {\"handwritten\": {\"source\": {\"source\": \"local\", \"path\": \"/handwritten\"}}}\n}\n")
+			}
+			first := runNativeAM(env, catalogPath, "sync", "--no-backup")
+			if first.ExitCode != 0 {
+				t.Fatalf("initial native sync failed (exit %d):\n%s", first.ExitCode, first.Combined)
+			}
+			if target == "claude" {
+				assertClaudeNativeRegistration(t, env)
+			} else {
+				assertFactoryMarketplaceEntry(t, env, readNativeSettings(t, env, "/workspace/.factory/settings.local.json"))
+			}
+			env.WriteRepoConfig(nativePluginConfig("decompose"))
+			result := runNativeAM(env, catalogPath, "sync", "--no-backup")
+			if result.ExitCode != 0 {
+				t.Fatalf("switch to decomposed delivery failed (exit %d):\n%s", result.ExitCode, result.Combined)
+			}
+			settingsPath := "/workspace/.claude/settings.local.json"
+			memberPath := "/workspace/.claude/skills/native-kit-review/SKILL.md"
+			if target == "factory" {
+				settingsPath = "/workspace/.factory/settings.local.json"
+				memberPath = "/workspace/.factory/skills/native-kit-review/SKILL.md"
+			}
+			settings := readNativeSettings(t, env, settingsPath)
+			if strings.Contains(string(settings), "native-kit@") || strings.Contains(string(settings), "am-") {
+				t.Fatalf("native registration remained after switching to decompose:\n%s", settings)
+			}
+			if target == "factory" && (!bytes.Contains(settings, []byte("handwritten@manual")) ||
+				!bytes.Contains(settings, []byte("preserve Factory-owned input"))) {
+				t.Fatalf("switch to decompose changed handwritten Factory settings:\n%s", settings)
+			}
+			if _, err := os.Stat(env.mustResolvePath(memberPath)); err != nil {
+				t.Fatalf("decomposed member was not installed: %v", err)
+			}
+		})
 	}
 }
 
