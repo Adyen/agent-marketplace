@@ -55,6 +55,20 @@ them after `sync`. This is evidence that Factory recognizes the
 configuration; the transport stays `not-probed`, and nothing here claims that
 a model invoked either server.
 
+## Native plugin delivery
+
+Factory native plugin delivery is **unverified**. The registration groundwork
+writes `.factory/settings.local.json` at repository scope and
+`~/.factory/settings.json` at user scope with owned `extraKnownMarketplaces`
+(`local` source) and `enabledPlugins` entries; the owned
+`.factory-plugin/marketplace.json` lists relative `./plugins/<name>` sources
+over linked package generations.
+
+In CI runs 40682001059 and 40698987206, Droid 0.251.0 recorded the owned
+marketplace but did not install the enabled plugin in headless metadata
+sessions; verification moves to a follow-up. Until then, `auto` decomposes
+Factory plugins and explicit `delivery: native` is refused.
+
 ## Hooks
 
 `.factory/hooks.json` holds the event map at top level, with matcher groups and
