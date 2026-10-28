@@ -281,7 +281,7 @@ marketplace-proxy-check:
 comma := ,
 # The pinned Go build image ships git; override when Docker Hub is unavailable.
 AM_E2E_RELEASED_IMAGE ?= $(GO_BUILD_IMAGE)
-E2E_REQUIRED_TESTS := TestUnsupportedConsumerRootsRefuseBeforeWork,TestUnsupportedConsumerIncludesRefuseBeforeWork,TestUnsupportedConsumerConfigPreventsMissingDestinations
+E2E_REQUIRED_TESTS := TestUnsupportedConsumerRootsRefuseBeforeWork,TestUnsupportedConsumerIncludesRefuseBeforeWork,TestUnsupportedConsumerConfigPreventsMissingDestinations,TestClaudeConfigurationDirectory
 RELEASED_CLIENT_GATE_TESTS := TestReleasedClientReadsCandidateCommittedState,TestReleasedClientReadsCandidateIsolatedCommittedState,TestReleasedClientLockVerifiesNativeHookSourceLayouts,TestReleasedClientHookOutputUpgrades
 
 released-client-gate:
