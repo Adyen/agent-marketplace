@@ -26,4 +26,4 @@
 - [x] 3.2 Update the Factory harness-validation page and the plugin support
   reference to the probe and Factory's native status
 - [x] 3.3 Run `make validate`, `make spec-check`, and `make validate-e2e`
-- [ ] 3.4 `openspec archive plugin-native-factory --yes`
+- [x] 3.4 `openspec archive plugin-native-factory --yes`
