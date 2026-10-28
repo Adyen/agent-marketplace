@@ -58,3 +58,6 @@ models:
       high: {effort: high}
       xhigh: {effort: xhigh}
       max: {effort: max}
+  # TODO(model-catalog-drift): stub from https://developers.openai.com/codex/models.md; verify native resource support and reasoning before merging.
+  openai/gpt-6.1-terra:
+    model: gpt-6.1-terra
