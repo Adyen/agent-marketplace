@@ -27,8 +27,9 @@ then reads `droid.list_skills`, without credentials or a model request.
 
 **Goals:** a Factory catalog and registration shape that match Factory's
 documented marketplace and settings references; repository registration kept
-out of shared committed settings; an isolated probe that decides Factory's
-native status; the released-reader witness.
+out of shared committed settings; native delivery kept unverified until a
+follow-up proves the registration installs plugins; the released-reader
+witness.
 
 **Non-Goals:** Claude Code and Codex changes, git-sourced native catalog
 entries, user documentation, Droid's cache, installed-plugin records,
@@ -58,21 +59,15 @@ partition's `.factory` root. Its entries are
 instance. Owned-entry reconciliation, collision reporting, and retirement are
 unchanged from the other registration members.
 
-### D3: Native probe decides the status
+### D3: Factory native delivery stays unverified
 
-The probe `factory-native-plugin` runs in the Factory harness-compatibility
-job with an isolated home, at user and repository scope. After `sync` it
-starts a metadata session and requires the plugin's skill in
-`droid.list_skills` with the generation's exact content. It then changes the
-generation without changing the authored version and requires the new content
-after the next sync and session, or the catalog declares that refresh needs a
-restart and status reports `reload-required`. It requires that no dependency
-was installed implicitly, and that removing the plugin and syncing removes the
-skill from the next session's inventory. The probe sends no user message and
-no model request, and a failing or blocked probe is never replaced by a
-file-only check. Only a passing probe flips the Factory catalog to
-`native: {status: verified}` with the probe identifier; otherwise the catalog
-stays `unverified` and the v5.0.0 release decision is escalated.
+Factory Droid 0.251.0 recorded the owned marketplace but did not install the
+enabled plugin in headless metadata sessions in CI runs 40682001059 and
+40698987206. The registration groundwork therefore ships without a Factory
+probe or probe identifier, and native delivery remains
+`native: {status: unverified}`. `auto` continues to decompose Factory plugins,
+explicit `delivery: native` stays refused, and verification moves to a
+follow-up.
 
 ### D4: Released-reader witness
 
@@ -85,12 +80,8 @@ registration and catalog stay unchanged.
 
 ## Risks / Trade-offs
 
-- Droid may skip re-checking a recently checked marketplace for up to six
-  hours, so a changed generation may not refresh in a new session; the probe
-  decides between verified refresh, `reload-required`, and staying
-  unverified.
-- Droid rejects plugin sources that escape the marketplace; whether it
-  follows a linked generation while copying into its cache is settled by the
-  probe.
+- The settings-only registration has not installed the enabled plugin in
+  headless CI metadata sessions; the catalog remains unverified until a
+  follow-up establishes a supported installation path.
 - `.factory/settings.local.json` is machine-local; Agent Marketplace does not
   edit `.gitignore`.
