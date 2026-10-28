@@ -41,5 +41,5 @@ func runtimeCatalogSource() (fs.FS, []string, error) {
 		return nil, nil, err
 	}
 	files[filepath.ToSlash(filepath.Join("catalogs", target+".yaml"))] = &fstest.MapFile{Data: override}
-	return files, []string{"e2e-test-probe"}, nil
+	return files, []string{"e2e-test-probe", FactoryNativePluginProbeID}, nil
 }

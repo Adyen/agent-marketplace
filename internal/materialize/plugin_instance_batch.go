@@ -354,7 +354,10 @@ func reconcilePluginInstance(ctx context.Context, repoRoot string, item pluginIn
 		hasHook = true
 	}
 	registration, hasRegistrationLayout := targetmeta.NativePluginRegistration(targetmeta.Target(key.target), key.machineScope)
-	hasNativeHooksRegistration := hasNativeRegistration && hasRegistrationLayout && registration.Shape == targetmeta.NativeRegistrationClaudeSettings
+	hasJSONSettingsRegistration := hasRegistrationLayout &&
+		(registration.Shape == targetmeta.NativeRegistrationClaudeSettings ||
+			registration.Shape == targetmeta.NativeRegistrationFactorySettings)
+	hasNativeHooksRegistration := hasNativeRegistration && hasJSONSettingsRegistration
 	hasCodexRegistration := hasNativeRegistration && hasRegistrationLayout && registration.Shape == targetmeta.NativeRegistrationCodexConfig
 	if hasNativeHooksRegistration {
 		if plan.hooks == nil {
@@ -434,23 +437,24 @@ func reconcilePluginInstance(ctx context.Context, repoRoot string, item pluginIn
 			}
 			batch.addManifestCommit(nativeHookManifestCommit{state: portable, participant: manifest})
 		}
-		claudeNativeLinks := plan.catalog.target == targetmeta.TargetClaude && hasNativeRegistration
+		nativeCatalogLinks := hasNativeRegistration &&
+			(plan.catalog.target == targetmeta.TargetClaude || plan.catalog.target == targetmeta.TargetFactory)
 		commit := func() error {
-			if claudeNativeLinks {
-				if err := publishClaudePluginCatalogLinks(plan.catalog); err != nil {
+			if nativeCatalogLinks {
+				if err := publishNativePluginCatalogLinks(plan.catalog); err != nil {
 					return err
 				}
 			}
 			if _, err := batch.commit(ctx); err != nil {
 				return err
 			}
-			if claudeNativeLinks {
-				return removeStaleClaudePluginCatalogLinks(plan.catalog)
+			if nativeCatalogLinks {
+				return removeStaleNativePluginCatalogLinks(plan.catalog)
 			}
 			return nil
 		}
 		var commitErr error
-		if claudeNativeLinks && !packagesLocked {
+		if nativeCatalogLinks && !packagesLocked {
 			commitErr = packagegen.WithPackagesLock(ctx, commit)
 		} else {
 			commitErr = commit()

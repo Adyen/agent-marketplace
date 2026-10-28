@@ -515,6 +515,15 @@ resources:
 
 // spec: regression-gates/released-client-remains-usable-after-candidate-mutations
 func TestReleasedClientNativeClaudePersonalLocalRegistration(t *testing.T) {
+	testReleasedClientNativePersonalLocalRegistration(t, "claude")
+}
+
+// spec: regression-gates/released-client-remains-usable-after-candidate-mutations
+func TestReleasedClientNativeFactoryPersonalLocalRegistration(t *testing.T) {
+	testReleasedClientNativePersonalLocalRegistration(t, "factory")
+}
+
+func testReleasedClientNativePersonalLocalRegistration(t *testing.T, target string) {
 	image := os.Getenv("AM_E2E_RELEASED_IMAGE")
 	if os.Getenv("AM_E2E_RELEASED_BINARY") == "" || image == "" {
 		t.Skip("released executable and git-capable image are supplied by the dedicated released-client gate")
@@ -522,11 +531,11 @@ func TestReleasedClientNativeClaudePersonalLocalRegistration(t *testing.T) {
 	released, arch := verifiedExecutable(t, "AM_E2E_RELEASED_BINARY", releasedClientArch)
 	world := newHistoricalWorld(t, image)
 	candidate := world.buildCandidate(arch, "e2e")
-	candidateCatalogPath := world.path("test-catalogs", "claude.yaml")
+	candidateCatalogPath := world.path("test-catalogs", target+".yaml")
 	if err := os.MkdirAll(filepath.Dir(candidateCatalogPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(candidateCatalogPath, []byte(nativePluginCatalog("claude")), 0o600); err != nil {
+	if err := os.WriteFile(candidateCatalogPath, []byte(nativePluginCatalog(target)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	candidateCatalogEnv := []string{"AGENT_MARKETPLACE_E2E_PLUGIN_CATALOG=" + candidateCatalogPath}
@@ -542,14 +551,16 @@ func TestReleasedClientNativeClaudePersonalLocalRegistration(t *testing.T) {
 	gitRun(t, "", "init", "-q", "-b", "main", candidateWorkspace)
 
 	registry := world.gitRegistry(map[string]string{"review": "Review body"})
-	hookSource := filepath.Join(registry.source, "hooks", "hooks.json")
-	if err := os.MkdirAll(filepath.Dir(hookSource), 0o700); err != nil {
-		t.Fatal(err)
+	if target == "claude" {
+		hookSource := filepath.Join(registry.source, "hooks", "hooks.json")
+		if err := os.MkdirAll(filepath.Dir(hookSource), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(hookSource, []byte(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo committed-claude-hook"}]}]}}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		registry.commit("add Claude hook")
 	}
-	if err := os.WriteFile(hookSource, []byte(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo committed-claude-hook"}]}]}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	registry.commit("add Claude hook")
 	gitRun(t, registry.source, "push", "-q", "origin", "main")
 
 	homes := map[string]string{candidate: candidateHome, released: releasedHome}
@@ -560,16 +571,30 @@ func TestReleasedClientNativeClaudePersonalLocalRegistration(t *testing.T) {
 		}
 		return world.must(homes[executable], workspace, executable, args...)
 	}
-	must(candidate, candidateWorkspace, "init", "--harnesses", "claude")
-	repoConfig := fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  shared: {git: %q, ref: main}\nresources:\n  shared: {include: [skill/review, hook/PreToolUse-command]}\n", registry.URL)
+	must(candidate, candidateWorkspace, "init", "--harnesses", target)
+	resources := "[skill/review]"
+	if target == "claude" {
+		resources = "[skill/review, hook/PreToolUse-command]"
+	}
+	repoConfig := fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [%s]\nsources:\n  shared: {git: %q, ref: main}\nresources:\n  shared: {include: %s}\n", target, registry.URL, resources)
 	if err := os.WriteFile(filepath.Join(candidateWorkspace, ".agents", "config.yaml"), []byte(repoConfig), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	must(candidate, candidateWorkspace, "sync")
-	hookSettings := filepath.Join(candidateWorkspace, ".claude", "settings.json")
-	hookBytes, err := os.ReadFile(hookSettings)
-	if err != nil || !bytes.Contains(hookBytes, []byte("committed-claude-hook")) {
-		t.Fatalf("candidate did not materialize the committed Claude hook: %v\n%s", err, hookBytes)
+	if target == "claude" {
+		hookSettings := filepath.Join(candidateWorkspace, ".claude", "settings.json")
+		hookBytes, err := os.ReadFile(hookSettings)
+		if err != nil || !bytes.Contains(hookBytes, []byte("committed-claude-hook")) {
+			t.Fatalf("candidate did not materialize the committed Claude hook: %v\n%s", err, hookBytes)
+		}
+	} else {
+		factorySettings := filepath.Join(candidateWorkspace, ".factory", "settings.json")
+		if err := os.MkdirAll(filepath.Dir(factorySettings), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(factorySettings, []byte("{\"handwritten\":\"keep\"}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	gitRun(t, candidateWorkspace, "add", "-A")
 	gitRun(t, candidateWorkspace, "-c", "user.name=E2E", "-c", "user.email=e2e@example.com", "commit", "-q", "-m", "candidate Claude baseline")
@@ -578,12 +603,13 @@ func TestReleasedClientNativeClaudePersonalLocalRegistration(t *testing.T) {
 	gitRun(t, candidateWorkspace, "remote", "add", "origin", origin)
 	gitRun(t, candidateWorkspace, "push", "-q", "-u", "origin", "main")
 	gitRun(t, "", "clone", "-q", origin, releasedWorkspace)
-	must(released, releasedWorkspace, "init", "--harnesses", "claude")
+	must(released, releasedWorkspace, "init", "--harnesses", target)
 
+	settingsRel := filepath.Join("."+target, "settings.json")
 	committedPaths := []string{
 		filepath.Join(".agents", "config.yaml"),
 		filepath.Join(".agents", "lock.yaml"),
-		filepath.Join(".claude", "settings.json"),
+		settingsRel,
 	}
 	fingerprints := func(workspace string) map[string]string {
 		t.Helper()
@@ -646,7 +672,7 @@ func TestReleasedClientNativeClaudePersonalLocalRegistration(t *testing.T) {
 			}
 		}
 	}
-	releasedReads("committed Claude baseline", false, "", "", "", "")
+	releasedReads("committed "+target+" baseline", false, "", "", "", "")
 
 	pluginRoot := filepath.Join(candidateWorkspace, "vendor", "native-kit")
 	pluginFiles := map[string]string{
@@ -673,14 +699,18 @@ func TestReleasedClientNativeClaudePersonalLocalRegistration(t *testing.T) {
 		t.Fatalf("personal-local configuration is tracked:\n%s", output)
 	}
 	must(candidate, candidateWorkspace, "sync")
-	settingsLocal := filepath.Join(candidateWorkspace, ".claude", "settings.local.json")
+	settingsLocal := filepath.Join(candidateWorkspace, "."+target, "settings.local.json")
 	registration, err := os.ReadFile(settingsLocal)
 	if err != nil || !bytes.Contains(registration, []byte("native-kit@")) || !bytes.Contains(registration, []byte("extraKnownMarketplaces")) {
-		t.Fatalf("candidate did not write the native Claude registration from personal-local config: %v\n%s", err, registration)
+		t.Fatalf("candidate did not write the native %s registration from personal-local config: %v\n%s", target, err, registration)
 	}
-	manifests, err := filepath.Glob(filepath.Join(candidateHome, ".local", "state", "agent-marketplace", "native-plugins", "claude", "*", ".claude-plugin", "marketplace.json"))
+	manifestDir := ".claude-plugin"
+	if target == "factory" {
+		manifestDir = ".factory-plugin"
+	}
+	manifests, err := filepath.Glob(filepath.Join(candidateHome, ".local", "state", "agent-marketplace", "native-plugins", target, "*", manifestDir, "marketplace.json"))
 	if err != nil || len(manifests) != 1 {
-		t.Fatalf("candidate Claude catalogs = %v / %v, want one", manifests, err)
+		t.Fatalf("candidate %s catalogs = %v / %v, want one", target, manifests, err)
 	}
 	catalogBytes, err := os.ReadFile(manifests[0])
 	if err != nil || !bytes.Contains(catalogBytes, []byte("native-kit")) {
@@ -705,7 +735,7 @@ func TestReleasedClientNativeClaudePersonalLocalRegistration(t *testing.T) {
 		t.Fatalf("personal-local sync changed tracked candidate bytes: %v\n%s", err, output)
 	}
 
-	releasedReads("native Claude personal-local sync", true, settingsLocal, catalogRoot, settingsFingerprint, catalogBefore)
+	releasedReads("native "+target+" personal-local sync", true, settingsLocal, catalogRoot, settingsFingerprint, catalogBefore)
 	if got, err := pathFingerprint(catalogRoot); err != nil || got != catalogBefore {
 		t.Fatalf("released-client reads changed candidate native catalog: %v", err)
 	}
