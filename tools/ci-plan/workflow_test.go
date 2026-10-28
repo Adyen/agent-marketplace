@@ -70,12 +70,24 @@ func stepMap(t *testing.T, step any) map[string]any {
 	return m
 }
 
-func TestTUIQAJobBudget(t *testing.T) {
+func TestBrowserGatesPinSupportedRunner(t *testing.T) {
+	for _, tc := range []struct{ file, job string }{
+		{"web.yml", "check"},
+		{"ci.yml", "web"},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			job := getMap(t, getMap(t, loadWorkflow(t, tc.file), "jobs"), tc.job)
+			if got := job["runs-on"]; got != "ubuntu-24.04" {
+				t.Errorf("browser runner = %v, want ubuntu-24.04 supported by Playwright", got)
+			}
+		})
+	}
+}
+
+func TestTUIQAMatrixBudget(t *testing.T) {
 	job := getMap(t, getMap(t, loadCIWorkflow(t), "jobs"), "tui-qa")
-	// A cold macOS run passed every journey just before ten minutes, then
-	// timed out saving the Go cache. Keep room for setup and cleanup.
-	if got := job["timeout-minutes"]; got != 15 {
-		t.Errorf("TUI QA job budget = %v minutes, want 15 for setup, journeys, and cleanup", got)
+	if got := job["timeout-minutes"]; got != 20 {
+		t.Errorf("TUI QA job budget = %v, want 20 minutes for cold build, all journeys and cache cleanup", got)
 	}
 }
 
