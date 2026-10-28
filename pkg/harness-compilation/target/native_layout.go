@@ -173,6 +173,12 @@ const (
 	NativeRegistrationCodexConfig     NativeRegistrationShape = "codex-config"
 )
 
+// JSONSettings reports whether the registration lives in a JSON settings file
+// with owned keyed members.
+func (s NativeRegistrationShape) JSONSettings() bool {
+	return s == NativeRegistrationClaudeSettings || s == NativeRegistrationFactorySettings
+}
+
 type NativeRegistration struct {
 	Project string
 	User    string

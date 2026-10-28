@@ -197,8 +197,7 @@ func nativeHookJSONLayout(key outputKey, repoRoot string) (harness.Destination, 
 	}
 	var registrationContainers []string
 	if registration, ok := targetmeta.NativePluginRegistration(targetmeta.Target(key.target), key.machineScope); ok &&
-		(registration.Shape == targetmeta.NativeRegistrationClaudeSettings ||
-			registration.Shape == targetmeta.NativeRegistrationFactorySettings) {
+		registration.Shape.JSONSettings() {
 		if registration.Path == artifactPath || !key.machineScope && artifactPath == "settings.json" {
 			registrationContainers = []string{"enabledPlugins", "extraKnownMarketplaces"}
 		}
@@ -276,8 +275,7 @@ func reconcileNativeHookJSON(ctx context.Context, report *Report, key outputKey,
 	file.rawValueDigest = options.rawValueDigest
 	files := []ownedJSONFileSpec{file}
 	if registration, ok := targetmeta.NativePluginRegistration(targetmeta.Target(key.target), key.machineScope); ok &&
-		(registration.Shape == targetmeta.NativeRegistrationClaudeSettings ||
-			registration.Shape == targetmeta.NativeRegistrationFactorySettings) && registration.Path != file.rel {
+		registration.Shape.JSONSettings() && registration.Path != file.rel {
 		files = append(files, ownedJSONFileSpec{
 			rel: registration.Path, additionalKeyedContainers: []string{"enabledPlugins", "extraKnownMarketplaces"},
 		})

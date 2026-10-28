@@ -110,7 +110,11 @@ func runFactoryNativePluginProbe(e *Env, binary string, f compatibilityFixture, 
 		return fmt.Errorf("Factory installed the plugin's npm dependency implicitly")
 	}
 	installed.Observed = append(installed.Observed, "exact generation-one content", "declared npm dependency not installed")
-	list := runCompatibilityCommand(e, binary, []string{"plugin", "list", "--scope", factoryPluginScope(scope)}, 20*time.Second)
+	listScope := "project"
+	if scope == "user" {
+		listScope = "user"
+	}
+	list := runCompatibilityCommand(e, binary, []string{"plugin", "list", "--scope", listScope}, 20*time.Second)
 	row.Commands = append(row.Commands, list)
 	if err := compatibilityInspectionError(list); err != nil {
 		return fmt.Errorf("Factory installed-plugin inventory failed: %w", err)
@@ -212,13 +216,6 @@ func requireFactoryPluginSkill(command *compatibilityCommand, e *Env, name strin
 		return compatibilityNativeEntry{}, fmt.Errorf("native Factory plugin skill content differs from the requested generation")
 	}
 	return matches[0], nil
-}
-
-func factoryPluginScope(scope string) string {
-	if scope == "user" {
-		return "user"
-	}
-	return "project"
 }
 
 func runFactoryPluginSync(e *Env, row *compatibilityResult, catalogPath string) compatibilityCommand {

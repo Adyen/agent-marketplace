@@ -354,10 +354,7 @@ func reconcilePluginInstance(ctx context.Context, repoRoot string, item pluginIn
 		hasHook = true
 	}
 	registration, hasRegistrationLayout := targetmeta.NativePluginRegistration(targetmeta.Target(key.target), key.machineScope)
-	hasJSONSettingsRegistration := hasRegistrationLayout &&
-		(registration.Shape == targetmeta.NativeRegistrationClaudeSettings ||
-			registration.Shape == targetmeta.NativeRegistrationFactorySettings)
-	hasNativeHooksRegistration := hasNativeRegistration && hasJSONSettingsRegistration
+	hasNativeHooksRegistration := hasNativeRegistration && hasRegistrationLayout && registration.Shape.JSONSettings()
 	hasCodexRegistration := hasNativeRegistration && hasRegistrationLayout && registration.Shape == targetmeta.NativeRegistrationCodexConfig
 	if hasNativeHooksRegistration {
 		if plan.hooks == nil {
