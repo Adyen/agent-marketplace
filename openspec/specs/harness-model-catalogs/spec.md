@@ -50,6 +50,9 @@ available in the destination catalog SHALL be checked against its native
 reasoning encodings without rewriting the native model string. Unknown
 destination models SHALL retain their native preferences. A resolved family
 identity SHALL use its pinned model's capabilities without changing its spelling.
+Exact family identifiers declared in the destination catalog SHALL be
+recognized locally for that validation, without requiring a concrete entry
+in another harness's catalog.
 
 #### Scenario: Supported reasoning emits native encoding
 
@@ -101,6 +104,15 @@ identity SHALL use its pinned model's capabilities without changing its spelling
 - **THEN** its separate reasoning value MUST be checked against the pinned
   model's native encodings
 - **AND** the authored selector MUST remain unchanged
+
+#### Scenario: Same-harness native catalog family IDs are recognized locally
+
+- **WHEN** a same-harness subagent's model string exactly identifies a family
+  in the destination catalog on a surface with a separate effort field
+- **THEN** its native reasoning MUST be validated against that family's
+  capabilities without requiring a concrete model in another catalog
+- **AND** unsupported reasoning MUST be omitted with the established warning
+  while the authored selector and resource body remain unchanged
 
 ### Requirement: Omission and inheritance semantics
 
