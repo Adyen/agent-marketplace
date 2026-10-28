@@ -10,4 +10,4 @@
 - [x] Run compilation-library validation and strict spec checks.
 - [x] Compare before/after resolver timing and allocations.
 - [x] Run adversarial OCR delegate review and address valid findings.
-- [ ] Archive the change and run the committed spec-impact gate.
+- [x] Archive the change and run the committed spec-impact gate.
