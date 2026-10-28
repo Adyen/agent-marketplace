@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
@@ -4511,9 +4512,14 @@ func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[
 			if covered {
 				continue
 			}
-			if info, err := os.Lstat(file); err == nil {
-				_ = visit(file, fs.FileInfoToDirEntry(info), nil)
+			info, err := os.Lstat(file)
+			if err != nil {
+				if !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
+					diags = append(diags, managedMergePruneDiag(filepath.ToSlash(rel), file, err))
+				}
+				continue
 			}
+			_ = visit(file, fs.FileInfoToDirEntry(info), nil)
 		}
 	} else {
 		_ = filepath.WalkDir(outDir, visit)
