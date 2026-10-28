@@ -5,21 +5,6 @@ Defines the GUI's structured user-personal configuration forms, their parity wit
 
 ## Requirements
 
-### Requirement: User-personal Harness target form
-
-The Harness target form SHALL edit only the user-personal target Harness set using the `session-interactions` selection semantics. Organization Harness targets SHALL be shown read-only.
-
-#### Scenario: Save user Harness targets without losing unknown identifiers
-
-- **WHEN** a user changes and explicitly saves a non-empty Harness target selection that includes an unknown selected identifier already present in configuration
-- **THEN** the user-personal target set SHALL be updated and the unknown identifier SHALL be preserved
-- **AND** the Consumer organization configuration SHALL remain unchanged
-
-#### Scenario: Organization Harness targets are read-only
-
-- **WHEN** a user views Harness targets supplied by Consumer organization configuration
-- **THEN** those targets SHALL be visible without any GUI action to modify them
-
 ### Requirement: User-personal source form
 
 The source form SHALL add and remove Marketplace endpoint registrations and Git or directory registry sources in the user-personal root. It SHALL NOT modify sources from Consumer organization configuration.
@@ -76,3 +61,25 @@ For a GUI Harness target or source edit with an equivalent CLI mutation, applyin
 - **THEN** the effective configuration SHALL differ from its pre-write value only by the removed registration
 - **AND** every included fragment file SHALL remain byte-identical
 - **AND** values outside the GUI's forms SHALL be identified as “managed outside the GUI”
+
+### Requirement: User-personal supported Harness target form
+
+The Harness target form SHALL edit only the user-personal target Harness set using the `session-interactions` selection semantics. Organization Harness targets SHALL be shown read-only.
+
+#### Scenario: Save user Harness targets
+
+- **WHEN** a user changes and explicitly saves a non-empty selection of supported Harness target IDs
+- **THEN** only the user-personal target set SHALL be updated
+- **AND** the Consumer organization configuration SHALL remain unchanged
+
+#### Scenario: Unknown Harness target IDs refuse GUI configuration
+
+- **WHEN** effective consumer configuration names a Harness target ID the running client does not support, including alongside supported IDs or only unsupported IDs
+- **THEN** the GUI SHALL show a configuration error naming the configuration file and SHALL refuse Harness target editing and synchronization
+- **AND** the refusal SHALL leave authored configuration, acquisition locks, and installed resources unchanged
+- **AND** after the user repairs the configuration outside the GUI, reload SHALL restore supported target editing and synchronization
+
+#### Scenario: Organization Harness targets are read-only
+
+- **WHEN** a user views Harness targets supplied by Consumer organization configuration
+- **THEN** those targets SHALL be visible without any GUI action to modify them
