@@ -2,8 +2,9 @@
 
 ## Scope And Boundary
 
-Partial R53/F136 work under #765, measured independently from open
-PR #967 on main `85bc15d7`. Request rebuilding preserves the complete
+Partial R53/F136 work under #765, initially measured on `85bc15d7`
+and finally refreshed on `b5f73185` after #970 and #967 merge.
+Request rebuilding preserves the complete
 ordered decision history as well as interpreting it into selected
 requests. Previously, it appended each decision separately.
 
@@ -33,10 +34,20 @@ No policy bypass, vulnerability suppression, or browser-test skip.
 
 Actual config test dependency graphs include the changed x/sys,
 x/text, and x/sync packages. Refresh the complete paired matrix rather
-than relabeling old inputs. The final comparison uses original v4 code
-from `85bc15d7`, with the same fixed module/workspace inputs on both
-sides from `95320ec46b58f87b361d34f3fd6d015eed848860`.
-The manifest records that dependency snapshot and baseline transform.
+than relabeling old inputs. That security-adjusted comparison uses
+original v4 code from `85bc15d7`, with fixed module/workspace inputs
+from `95320ec46b58f87b361d34f3fd6d015eed848860`. It is now retained
+in `pre-integration/`, not reused as the final-head claim.
+
+Main then merges #970's Claude configuration-directory support and
+#967's subpath optimization. Harness and fixture packages in the actual
+config test dependency graph change. Refresh once after #970, retain
+that complete run in `pre-subpath/`, and refresh again after #967.
+The delivered comparison starts with literal v4 code from `b5f73185`,
+including #967 on both sides, and dependency snapshot `3c601413`.
+All final repository Go/embed dependencies and workspace metadata are
+fingerprinted: 454 distinct inputs per variant. The preceding #970
+matrix records 452. External modules remain bound by their checksums.
 
 ## Delivered Measurements
 
@@ -52,37 +63,39 @@ At 1,024 decisions in one source:
 
 | Public Parse Shape | Before | After | Timing | Median Allocations |
 | --- | ---: | ---: | --- | --- |
-| Git includes | 1.146 ms | 1.119 ms | nonsignificant, p=0.065 | 13,261 to 13,250 |
-| Marketplace exclusions only | 1.116 ms | 1.081 ms | -3.19%, p=0.009 | 5,282 to 5,272 |
+| Git includes | 1.177 ms | 1.153 ms | nonsignificant, p=0.093 | 13,261 to 13,251 |
+| Marketplace exclusions only | 1.141 ms | 1.125 ms | -1.40%, p=0.015 | 5,282 to 5,272 |
 
-Median bytes fall from 2,138,265 to 2,007,682 for Git includes
-(-6.11%, about 127.5 KiB), and 866,406 to 735,938 for Marketplace
+Median bytes fall from 2,138,280 to 2,007,698 for Git includes
+(-6.11%, about 127.5 KiB), and 866,406.5 to 735,941 for Marketplace
 exclusions (-15.06%, about 127.4 KiB). Whole-parser YAML/pool variation
 accounts for small differences from the direct 130,400-byte and
-ten-allocation saving. Say about ten fewer public allocations, not an
-exact ten for every shape: the Git median saves eleven in this run.
+ten-allocation saving. Both final public medians save ten allocations;
+the earlier security-adjusted Git median saved eleven. Do not turn
+that variation into an exact contract for every shape or execution.
 Do not infer an include-only public speed-up or CLI/acquisition latency.
 
-Direct rebuilding at 1,024 includes improves 6.79%, saving ten
+Direct rebuilding at 1,024 includes improves 8.23%, saving ten
 allocations and about 127.3 KiB. Exclusion-only rebuilding improves
-54.58%, with allocations falling from eleven to one. These are narrower
+54.97%, with allocations falling from eleven to one. These are narrower
 helper measurements, not independent end-user speed-up claims.
 
-Sixteen groups of 64 decisions improve 6.33%, with median bytes
-1,058,385 to 927,985 and allocations 184 to 174. The 1,024-singleton-group
-case improves 3.03%, also saving ten allocations and about 127.3 KiB.
+Sixteen groups of 64 decisions improve 7.07%, with median bytes
+1,058,385 to 927,984.5 and allocations 184 to 174. The 1,024-singleton-group
+case improves 3.79%, also saving ten allocations and about 127.3 KiB.
 Its frozen benchmark name ends in `control`: it controlled the rejected
 bulk-only change, but exact preallocation affects it.
 
 ## Controls And Rejected Alternative
 
-The empty helper measures 7.768 to 8.0625 ns (+3.79%, p=0.002),
-an absolute increase of about 0.30 ns from the additional capacity
-check. It still allocates zero bytes and objects. The direct singleton,
-both single-item public cases, and the genuinely unaffected 256/1,024
-effective-request cases have nonsignificant timing changes. Their
-allocation counts are unchanged. Do not hide the empty-helper result
-or describe every shape as faster.
+The empty helper measures 7.796 to 8.119 ns (+4.14%, p=0.002),
+an absolute increase of 0.323 ns from the additional capacity check.
+It still allocates zero bytes and objects. The direct singleton measures
+196.45 to 200.9 ns (+2.27%, p=0.013), adding 4.45 ns without changing
+bytes or allocations. Both single-item public cases and the genuinely
+unaffected 256/1,024 effective-request cases have nonsignificant timing
+changes. Their allocation counts are unchanged. Do not hide the two
+affected helper costs or describe every shape as faster.
 
 The first candidate moved only the append outside the interpretation
 loop. A separate 192-observation matrix shows why it is rejected:
@@ -90,13 +103,20 @@ with sixteen groups, runtime chunk-growth sizing allocates 10.75%
 more bytes and takes 6.18% longer. Exact capacity removes that
 regression without another pass or hidden reusable state.
 
-All three matrices remain distinct: final fixed-dependency files are in
-the evidence root, initial exact-capacity files in `pre-security/`,
-and rejected files in `rejected-bulk/`. The initial exact-capacity run
+All five matrices remain distinct: final post-#967 files are in the
+evidence root, the #970-only refresh in `pre-subpath/`, the
+security-adjusted refresh in `pre-integration/`, initial exact-capacity
+files in `pre-security/`, and rejected files in `rejected-bulk/`.
+The initial exact-capacity run
 has a 3.58% exclusion-only public improvement and 0.27 ns empty-helper
 increase; those are historical results, not the final-head claim.
+The security-adjusted run has a 3.19% exclusion-only improvement and
+0.30 ns empty-helper cost; the #970-only run has a 3.89% improvement
+and a nominal 0.79% slowdown in its unaffected 256-request control.
+That control slowdown does not repeat in the final matrix. All remain
+historical observations, not pooled evidence for the final claim.
 No stage replaces, filters, or pools another. Total retained
-observations: 576. The baseline allocation
+observations: 960. The baseline allocation
 profile of direct exclusion-only rebuilding attributes the dominant
 allocated space to the old per-decision append; cumulative profile
 bytes are not per-call allocation or peak-memory measurements.
@@ -150,19 +170,21 @@ The before-overlay suite and 1,000-case property pass as well.
 
 [`security-r5-decision-history-2026-10-28/`](security-r5-decision-history-2026-10-28/)
 contains raw before/after output, byte-exact benchstat, and manifests for
-all three stages. Definitions stay in the package's decision-history
+all five stages. Definitions stay in the package's decision-history
 benchmark file. Each manifest pins the original base, native toolchain,
 arguments, sixteen names, source/module fingerprints, binary hashes,
 and ordered trial hashes.
 
 Reconstruction verifies the literal Git baseline and both exact
-production transforms, unchanged test/benchmark definitions, all
-576 finite observations and units, six alternating pairs per stage,
+production transforms, unchanged decision-history test/benchmark definitions, all
+960 finite observations and units, six alternating pairs per stage,
 source/binary/trial hashes, aggregate stdout bytes, and recomputed
 byte-exact benchstat. Original module fingerprints remain frozen at
-their recorded base; final fingerprints include both workspace modules
-and `go.work`/`go.work.sum` from the explicit security snapshot.
-All twelve published files match their retained originals byte for
+their recorded base. The final two matrices additionally bind all local
+Go/embed dependencies, including the changed harness and fixture
+packages, to their explicit integration snapshots. Both workspace
+modules and `go.work`/`go.work.sum` stay bound on both sides.
+All twenty published files match their retained originals byte for
 byte. No credit is compounded with earlier R5 slices.
 
 ## Initial Validation
@@ -244,3 +266,28 @@ and settled state. The targeted replay then passes all 85 journeys
 without any per-test deadline or latency-threshold change. Its remaining
 failure is the independently evidenced post-test cache budget, not an
 excuse to weaken a behavioral or performance assertion.
+
+## Final Integrated Validation
+
+After integrating #970 and #967, fresh config, pipeline, resolver, TUI,
+harness, materializer, test-sandbox, workflow-contract, and model-audit
+tests pass, with whole-root vet, zero-issue lint, and build. Targeted
+Claude command regressions pass too. Root and E2E offline module
+verification and zero-diff tidy pass.
+
+Strict specs pass: 69 items, 1,320 scenarios, 2,151 annotations, two
+active changes. Focused races plus the 1,000-case property pass in
+3.056 seconds; the literal post-#967 baseline also passes preservation
+and 1,000 generated cases with the same integrated dependencies.
+
+All 86 terminal journeys plus four utilities pass with zero skips or
+failures. Combined E2E passes in 799.219 seconds: 3,515 invocations,
+all 114 requirements, zero gaps, all four required witnesses executed
+and passed, plus shellcheck. The added Claude-directory witness from
+approved main joins the three existing refusal witnesses; none is
+waived. CI still owns full-root and vendor-native verification.
+
+All 960 observations, frozen historical snapshots, final 454-input
+fingerprints, exact production transforms, history definitions, binary
+and trial hashes, twenty public data files, and byte-exact benchstat
+reconstruction verify unchanged before publication.

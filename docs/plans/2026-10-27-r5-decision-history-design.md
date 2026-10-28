@@ -2,8 +2,8 @@
 
 ## Scope And Choice
 
-Independent partial R53/F136 work from main `85bc15d7`. PR #967 remains
-open and is not included. Request rebuilding copies every unchanged
+Partial R53/F136 work initially from main `85bc15d7`, finally refreshed
+on `b5f73185` including merged #970 and #967. Request rebuilding copies every unchanged
 selection decision separately while interpreting its source group.
 Copy each already-ordered group with one standard-library append before
 the existing interpretation loop. Count decisions during the existing
@@ -50,15 +50,22 @@ one-second pairs over all sixteen cases: 192 observations per candidate,
 Blocking CI then requires the #972 x/net security repair and supported
 Ubuntu 24.04 browser runners. Preserve those initial matrices and repeat
 all sixteen cases with the fixed module/workspace inputs on both sides:
-another 192 observations, 576 total across three separate stages.
+another 192 observations, 576 total across those three separate stages.
 Record original v4 code from `85bc15d7` and dependency snapshot
 `95320ec46b58f87b361d34f3fd6d015eed848860` explicitly; do not pretend
-old module fingerprints describe the new binaries. Keep setup
+old module fingerprints describe the new binaries. Main then merges
+#970, changing actual config-test harness/fixture dependencies, and
+#967. Retain the complete #970-only refresh separately; refresh again
+with #967 present in both variants. Final baseline is literal v4 code
+from `b5f73185`, dependency snapshot `3c601413`, with all 454 local
+Go/embed/workspace inputs fingerprinted. The preceding refresh binds
+452 inputs. Retain 960 observations across five distinct 192-row
+datasets, without reusing earlier savings. Keep setup
 and full result assertions outside `b.Loop`. Profile baseline allocation
 sites; retain source/binary/trial hashes and byte-exact benchstat output.
 Never pool variants/bases, compound earlier allocation savings, or hide
-controls. Report the final empty helper's measured 0.30 ns increase alongside
-its unchanged zero allocations and nonsignificant single-item public
+controls. Report the final empty helper's 0.323 ns increase and direct
+singleton's 4.45 ns increase alongside unchanged allocations and nonsignificant single-item public
 timings; do not infer an include-only public speed-up from noisy timing.
 
 ## Verification And Publication
