@@ -64,8 +64,9 @@ func (r *registry) resolve(req Request) Result {
 	if override, ok := req.Overrides[req.Model]; ok {
 		req.Model, req.Source, req.Overrides = override, req.Target, nil
 		result = r.resolve(req)
-		if override != "" {
-			if _, known := c.native[Encoding{Model: override}]; !known && req.Effort != "" {
+		if override != "" && req.Effort != "" {
+			_, family := c.Families[override]
+			if _, known := c.native[Encoding{Model: override}]; !known && (!family || surf.EffortField == "") {
 				result.Effort = ""
 				result.lose(EffortOmitted, req.Effort)
 			}

@@ -168,6 +168,48 @@ func TestModelPolicyNativeReasoningEncoding(t *testing.T) {
 	}
 }
 
+// spec: harness-model-catalogs/supported-native-reasoning-survives-a-family-override
+// spec: harness-model-catalogs/unsupported-native-reasoning-is-omitted-for-a-family-override
+func TestModelPolicyNativeFamilyOverrides(t *testing.T) {
+	for _, tc := range []struct {
+		name                                           string
+		source, target                                 Target
+		model, effort, effortKey, wantEffort, wantCode string
+	}{
+		{"supported family", TargetFactory, TargetFactory, "anthropic/sonnet", "high", "reasoningEffort", "high", ""},
+		{"unsupported family", TargetFactory, TargetFactory, "anthropic/sonnet", "max", "reasoningEffort", "", diag.CodeModelReasoningOmitted},
+		{"Codex-sourced unsupported family", TargetCodex, TargetFactory, "anthropic/sonnet", "max", "reasoningEffort", "", diag.CodeSubagentCodexEffortDropped},
+		{"omitted family reasoning", TargetFactory, TargetFactory, "anthropic/sonnet", "", "reasoningEffort", "", ""},
+		{"family override is target-native", TargetClaude, TargetFactory, "anthropic/sonnet", "high", "reasoningEffort", "high", ""},
+		{"floating family", TargetClaude, TargetClaude, "anthropic/sonnet", "high", "effort", "high", ""},
+		{"native model", TargetFactory, TargetFactory, "nemotron-3.5-super", "high", "reasoningEffort", "high", ""},
+		{"unsupported native model", TargetFactory, TargetFactory, "nemotron-3.5-super", "low", "reasoningEffort", "", diag.CodeModelReasoningOmitted},
+		{"unknown override", TargetFactory, TargetFactory, "future-native-model", "high", "reasoningEffort", "", diag.CodeModelReasoningOmitted},
+		{"unknown family-like override", TargetFactory, TargetFactory, "sonnet", "high", "reasoningEffort", "", diag.CodeModelReasoningOmitted},
+		{"model-encoded family", TargetCursor, TargetCursor, "anthropic/sonnet", "high", "effort", "", diag.CodeModelReasoningOmitted},
+		{"empty override", TargetFactory, TargetFactory, "", "high", "reasoningEffort", "", diag.CodeModelReasoningOmitted},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := ir.NewSubagent("review", "Review", "Keep this body.\n", "configured-model", nil, tc.effort, nil, "", nil, ir.SourceRef{})
+			r.ModelSource = string(tc.source)
+			result, err := Compile(r, tc.target, WithModelOverride(map[string]string{"configured-model": tc.model}))
+			if err != nil || diag.HasErrors(result.Diagnostics) {
+				t.Fatalf("compile: %v %+v", err, result)
+			}
+			fields := modelPolicyFields(t, result.Artifacts)
+			assertModelPolicyField(t, fields, "model", tc.model)
+			assertModelPolicyField(t, fields, tc.effortKey, tc.wantEffort)
+			if tc.wantCode == "" {
+				if len(result.Diagnostics) != 0 {
+					t.Fatalf("supported override emitted diagnostics: %+v", result.Diagnostics)
+				}
+			} else if len(result.Diagnostics) != 1 || result.Diagnostics[0].Code != tc.wantCode || result.Diagnostics[0].Severity != diag.SeverityWarning {
+				t.Fatalf("diagnostics = %+v, want one %s warning", result.Diagnostics, tc.wantCode)
+			}
+		})
+	}
+}
+
 // spec: harness-model-catalogs/same-harness-native-model-strings-round-trip-unchanged
 func TestModelPolicyDevinNativeRoundTrip(t *testing.T) {
 	for _, model := range []string{"swe", "gpt", "gpt-5-6-luna-medium", ""} {

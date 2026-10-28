@@ -35,3 +35,30 @@ func BenchmarkNativeReasoning(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkFamilyOverride(b *testing.B) {
+	for _, tc := range []struct {
+		name, model, effort string
+		target              target.Target
+	}{
+		{"supported", "anthropic/sonnet", "high", target.TargetFactory},
+		{"unsupported", "anthropic/sonnet", "max", target.TargetFactory},
+		{"omitted", "anthropic/sonnet", "", target.TargetFactory},
+		{"native-model", "nemotron-3.5-super", "high", target.TargetFactory},
+		{"unknown", "future-native-model", "high", target.TargetFactory},
+		{"model-encoded", "anthropic/sonnet", "high", target.TargetCursor},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			if err := ValidateCatalogs(); err != nil {
+				b.Fatal(err)
+			}
+			req := Request{Source: tc.target, Target: tc.target, Model: "configured-model", Effort: tc.effort, Overrides: map[string]string{"configured-model": tc.model}}
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := Resolve(req); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
