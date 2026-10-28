@@ -80,6 +80,29 @@ func TestClaudeConfigurationOverlap(t *testing.T) {
 	}
 }
 
+// spec: claude-native-configuration/prospective-unicode-case-variants-refuse
+func TestClaudeConfigurationUnicodeCasePreflight(t *testing.T) {
+	for _, pair := range [][2]string{{"\u03a3", "\u03c2"}, {"S", "\u017f"}} {
+		t.Run(pair[0], func(t *testing.T) {
+			base := t.TempDir()
+			repo := filepath.Join(base, pair[0])
+			t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(base, pair[1], ".claude"))
+			result := compilePhaseResult{allOutputs: map[outputKey]bool{
+				{target: hcc.TargetClaude}:                     true,
+				{target: hcc.TargetClaude, machineScope: true}: true,
+			}}
+			if d := preflightClaudeDestinations(&result, repo); d == nil || d.Code != diag.CodeMaterializeDestinationOverlap {
+				t.Fatalf("Unicode case alias was admitted: %+v", d)
+			}
+			for _, root := range []string{repo, filepath.Join(base, pair[1])} {
+				if _, err := os.Stat(root); !os.IsNotExist(err) {
+					t.Fatalf("refused Unicode root was created: %s: %v", root, err)
+				}
+			}
+		})
+	}
+}
+
 // spec: claude-native-configuration/relative-value-refuses-machine-scope-work-before-any-write
 // spec: claude-native-configuration/relative-value-does-not-affect-repository-only-output
 // spec: claude-native-configuration/repository-scope-ignores-the-variable

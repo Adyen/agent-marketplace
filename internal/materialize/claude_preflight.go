@@ -5,12 +5,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -58,33 +58,13 @@ func preflightClaudeDestinations(result *compilePhaseResult, repo string) *diag.
 	if err != nil {
 		return refuse("materialize.destination.error", fmt.Sprintf("inspect Claude destination locations: %v", err), true)
 	}
-	a := strings.ToLower(norm.NFC.String(physical[canonicalRepo]))
-	b := strings.ToLower(norm.NFC.String(physical[canonicalMachine]))
+	// Use canonical caseless matching even when neither spelling exists yet.
+	fold := cases.Fold()
+	a := norm.NFC.String(fold.String(norm.NFD.String(physical[canonicalRepo])))
+	b := norm.NFC.String(fold.String(norm.NFD.String(physical[canonicalMachine])))
 	if a == b || pathIsAncestor(a, b) || pathIsAncestor(b, a) {
 		return refuse(diag.CodeMaterializeDestinationOverlap,
 			fmt.Sprintf("Claude repository destination %q and machine destination %q overlap", repoRoot, root), true)
 	}
 	return nil
-}
-
-// A relocated root can contain the inactive default account (for example HOME).
-// Fence it out of the recursive marker walk, including through a root alias.
-func protectInactiveClaudeDefaults(root string, protected map[string]bool) (map[string]bool, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-	physicalRoot, err := ownership.CanonicalRoot(root)
-	if err != nil {
-		return nil, err
-	}
-	physicalHome, err := ownership.CanonicalRoot(home)
-	if err != nil {
-		return nil, err
-	}
-	if !sameOutputDir(physicalRoot, filepath.Join(physicalHome, ".claude")) {
-		protected, _ = addNativeHookPrunePath(protected, physicalRoot, physicalHome, ".claude", true)
-	}
-	protected, _ = addNativeHookPrunePath(protected, physicalRoot, physicalHome, ".claude.json", false)
-	return protected, nil
 }

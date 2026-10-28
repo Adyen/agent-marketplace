@@ -42,6 +42,9 @@ Claude Code MCP servers go to `<repo>/.mcp.json` at repository scope. At machine
 resources, including hooks and hook support; repository paths do not change.
 An unset or empty value keeps the default layout. Existing output in the
 default account is not moved or pruned when a different directory is selected.
+Cleanup only inspects Claude's declared aggregate files, not unrelated JSON
+files or other accounts beneath the relocated root. Admitted directory aliases
+also support native hooks in both materialization modes.
 Keep the relocated machine root separate from `<repo>/.claude`: when both
 scopes produce output and their roots overlap, sync refuses with
 `materialize.destination.overlap`.

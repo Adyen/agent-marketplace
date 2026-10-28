@@ -263,7 +263,7 @@ func TestPruneManagedMergeFilesRefusesDuplicateKeys(t *testing.T) {
 		{
 			name: "pruneUncoveredManagedMergeFiles",
 			run: func(outDir string) []diag.Diagnostic {
-				_, diags := pruneUncoveredManagedMergeFiles(outDir, nil, false, nil)
+				_, diags := pruneUncoveredManagedMergeFiles(outDir, nil, false, nil, nil)
 				return diags
 			},
 		},
