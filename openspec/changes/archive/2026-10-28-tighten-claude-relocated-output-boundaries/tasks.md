@@ -5,4 +5,4 @@
 - [x] Reproduce a post-admission component retarget and retain captured cleanup authority.
 - [x] Refuse prospective Unicode case variants through canonical caseless comparison.
 - [x] Run focused and domain gates, benchmark, and adversarial review.
-- [ ] Archive this clarification as the final commit.
+- [x] Archive this clarification as the final commit.
