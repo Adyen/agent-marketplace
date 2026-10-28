@@ -1931,17 +1931,22 @@ func (c *V4Config) rebuildRequests() {
 	}
 	c.Requests = nil
 	c.Decisions = nil
+	decisionCount := 0
 	groupNames := make([]string, 0, len(c.Groups))
-	for name := range c.Groups {
+	for name, group := range c.Groups {
 		groupNames = append(groupNames, name)
+		decisionCount += len(group.Decisions)
+	}
+	if decisionCount > 0 {
+		c.Decisions = make([]V4SelectionDecision, 0, decisionCount)
 	}
 	sort.Strings(groupNames)
 	for _, name := range groupNames {
 		g := c.Groups[name]
 		byLocator := map[string]*V4ResourceRequest{}
 		excluded := map[string]bool{}
+		c.Decisions = append(c.Decisions, g.Decisions...)
 		for _, d := range g.Decisions {
-			c.Decisions = append(c.Decisions, d)
 			if d.Action == V4SelectionExclude {
 				if d.Exclusion != "*" && !strings.HasSuffix(d.Exclusion, "/*") {
 					if request, ok := byLocator[d.Exclusion]; ok && !request.Required {
