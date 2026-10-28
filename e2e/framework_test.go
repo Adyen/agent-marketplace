@@ -15,8 +15,6 @@ import (
 	"syscall"
 	"testing"
 	"time"
-
-	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/pluginpolicy"
 )
 
 // Env wraps a temp-directory sandbox and provides helpers for E2E tests.
@@ -35,10 +33,6 @@ type Env struct {
 }
 
 func nativePluginCatalog(target string) string {
-	probe := "e2e-test-probe"
-	if target == "factory" {
-		probe = pluginpolicy.FactoryNativePluginProbeID
-	}
 	return fmt.Sprintf(`schema: 1
 harness: %s
 evidence:
@@ -47,8 +41,8 @@ evidence:
 accepts: [claude-plugin]
 delivery:
   decompose: {status: verified}
-  native: {status: verified, format: claude-plugin, probe: %s, refresh: restart-required}
-`, target, probe)
+  native: {status: verified, format: claude-plugin, probe: e2e-test-probe, refresh: restart-required}
+`, target)
 }
 
 func nativeCatalogEnv(path string) map[string]string {
