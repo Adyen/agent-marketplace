@@ -215,7 +215,7 @@ func TestStripManagedEntriesFromFileRefusesDuplicateKeys(t *testing.T) {
 					t.Fatal(err)
 				}
 
-				cleaned, removed, err := stripManagedEntriesFromFile(path, dryRun)
+				cleaned, removed, err := stripManagedEntriesFromFile(path, dryRun, false, nil)
 				assertDuplicateKeyRefusal(t, err, path, tt.wantLine)
 				if cleaned != nil {
 					t.Fatalf("dryRun=%v: cleaned = %q, want nil", dryRun, cleaned)
@@ -390,7 +390,7 @@ func TestStripManagedEntriesFromFilePreservesCommentsAndOrder(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			cleaned, removed, err := stripManagedEntriesFromFile(path, false)
+			cleaned, removed, err := stripManagedEntriesFromFile(path, false, false, nil)
 			if err != nil {
 				t.Fatalf("stripManagedEntriesFromFile: %v", err)
 			}
@@ -418,7 +418,7 @@ func TestStripManagedEntriesFromFilePreservesCommentsAndOrder(t *testing.T) {
 			if err := os.WriteFile(dryPath, []byte(tt.in), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			dryCleaned, _, dryErr := stripManagedEntriesFromFile(dryPath, true)
+			dryCleaned, _, dryErr := stripManagedEntriesFromFile(dryPath, true, false, nil)
 			if dryErr != nil {
 				t.Fatalf("dry run: %v", dryErr)
 			}
@@ -446,7 +446,7 @@ func TestStripManagedEntriesFromFileWriteBackIsIdempotent(t *testing.T) {
 	if err := os.WriteFile(path, []byte(in), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	first, removed, err := stripManagedEntriesFromFile(path, false)
+	first, removed, err := stripManagedEntriesFromFile(path, false, false, nil)
 	if err != nil {
 		t.Fatalf("first prune: %v", err)
 	}
@@ -455,7 +455,7 @@ func TestStripManagedEntriesFromFileWriteBackIsIdempotent(t *testing.T) {
 	}
 	// The marker is gone, so the second pass short-circuits before parsing and
 	// reports nothing. What matters is that the bytes on disk did not move.
-	_, removedAgain, err := stripManagedEntriesFromFile(path, false)
+	_, removedAgain, err := stripManagedEntriesFromFile(path, false, false, nil)
 	if err != nil {
 		t.Fatalf("second prune: %v", err)
 	}

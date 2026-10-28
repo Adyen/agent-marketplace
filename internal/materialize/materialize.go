@@ -4444,14 +4444,11 @@ func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[
 	if err != nil || !info.IsDir() {
 		return report, nil
 	}
-	// Legacy discovery keeps its file eligibility; declarations select captured I/O.
-	var fileBoundaries []*destinationBoundary
-	if declared != nil {
-		fileBoundaries = []*destinationBoundary{nil}
-		if len(boundaries) > 0 {
-			fileBoundaries[0] = boundaries[0]
-		}
+	var boundary *destinationBoundary
+	if len(boundaries) > 0 {
+		boundary = boundaries[0]
 	}
+	captured := declared != nil
 	// WalkDir visits lexically, so the diagnostic order is deterministic.
 	visit := func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -4492,7 +4489,7 @@ func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[
 			return nil
 		}
 		relSlash := filepath.ToSlash(rel)
-		cleaned, removed, pruneErr := stripManagedEntriesFromFile(path, dryRun, fileBoundaries...)
+		cleaned, removed, pruneErr := stripManagedEntriesFromFile(path, dryRun, captured, boundary)
 		if pruneErr != nil {
 			// PER-FILE failure: report this file and keep walking.
 			diags = append(diags, managedMergePruneDiag(relSlash, path, pruneErr))
@@ -4680,15 +4677,11 @@ func pruneManagedMergeFiles(outDir string, dryRun bool, boundaries ...*destinati
 // Malformed JSON keeps the historical behaviour of being left completely alone
 // with no error: we never had a coherent view of that file, and failing a sync
 // over a file the user already has to fix by hand adds nothing.
-func stripManagedEntriesFromFile(path string, dryRun bool, boundaries ...*destinationBoundary) (cleaned []byte, removed []string, err error) {
-	var boundary *destinationBoundary
-	if len(boundaries) > 0 {
-		boundary = boundaries[0]
-	}
+func stripManagedEntriesFromFile(path string, dryRun, captured bool, boundary *destinationBoundary) (cleaned []byte, removed []string, err error) {
 	var observed fs.FileInfo
 	var data []byte
 	var readErr error
-	if len(boundaries) > 0 {
+	if captured {
 		observed, readErr = os.Lstat(path)
 		if readErr == nil {
 			data, readErr = readNativeCommandFile(path, observed, boundary)
@@ -4786,7 +4779,7 @@ func stripManagedEntriesFromFile(path string, dryRun bool, boundaries ...*destin
 	result := doc.Bytes()
 	if !dryRun {
 		var writeErr error
-		if len(boundaries) > 0 {
+		if captured {
 			writeErr = publishPortableBytes(path, result, observed.Mode().Perm(), observed, boundary)
 		} else {
 			writeErr = atomicWriteFile(path, result, 0o644)
