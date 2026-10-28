@@ -1099,7 +1099,7 @@ func validateV4Subpath(value string) error {
 	if clean == ".." || strings.HasPrefix(clean, "../") || clean == "." && p != "." {
 		return errors.New("must not escape the source root")
 	}
-	for _, part := range strings.Split(p, "/") {
+	for part := range strings.SplitSeq(p, "/") {
 		if part == "" || part == "." || part == ".." {
 			return errors.New("must contain only normal path segments")
 		}
