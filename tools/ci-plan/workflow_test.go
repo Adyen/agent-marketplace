@@ -70,6 +70,20 @@ func stepMap(t *testing.T, step any) map[string]any {
 	return m
 }
 
+func TestBrowserGatesPinSupportedRunner(t *testing.T) {
+	for _, tc := range []struct{ file, job string }{
+		{"web.yml", "check"},
+		{"ci.yml", "web"},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			job := getMap(t, getMap(t, loadWorkflow(t, tc.file), "jobs"), tc.job)
+			if got := job["runs-on"]; got != "ubuntu-24.04" {
+				t.Errorf("browser runner = %v, want ubuntu-24.04 supported by Playwright", got)
+			}
+		})
+	}
+}
+
 func TestTUIQADriverJob(t *testing.T) {
 	doc := loadCIWorkflow(t)
 

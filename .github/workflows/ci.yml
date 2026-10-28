@@ -1112,7 +1112,8 @@ jobs:
   web:
     name: Web checks
     if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
+    # Playwright's Chromium build does not support Ubuntu 26.04 yet.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
