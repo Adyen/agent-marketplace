@@ -11,4 +11,4 @@
 - [x] Compare before/after override benchmarks.
 - [x] Run affected validation, strict specs, and the host E2E gate.
 - [x] Run adversarial OCR delegate review and address valid findings.
-- [ ] Archive the change and pass the committed spec-impact gate.
+- [x] Archive the change and pass the committed spec-impact gate.
