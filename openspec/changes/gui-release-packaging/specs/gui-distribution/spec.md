@@ -1,69 +1,76 @@
 ## Purpose
 
-Defines unsigned desktop packages published for supported macOS and Linux architectures and the checks proving organizations can sign those packages downstream without changing the CLI release.
+Defines the desktop GUI packages published with each tagged release, their signing state, the checks proving they can be signed downstream, pull-request package builds, and the guarantee that CLI release artifacts stay unchanged.
 
 ## ADDED Requirements
 
-### Requirement: Unsigned tagged GUI release packages
+### Requirement: Tagged releases publish GUI packages
 
-Tagged releases SHALL publish an unsigned `.dmg` for each supported macOS architecture and an unsigned `.rpm` for each supported Linux architecture. Each `.dmg` SHALL contain an `.app` built for the hardened runtime with the entitlements needed for notarization. Each `.rpm` SHALL declare its WebKitGTK runtime dependency and install a desktop entry for the application. Checksums SHALL be published alongside the artifacts as for existing CLI artifacts.
+Each tagged stable release SHALL publish, alongside the CLI artifacts, `agent-marketplace-gui-<tag>-macos-universal.dmg` and `agent-marketplace-gui-<tag>-macos-universal.zip` containing the same universal (`arm64` and `amd64`) macOS `.app`, and `agent-marketplace-gui-<tag>-linux-<arch>.rpm` and `agent-marketplace-gui-<tag>-linux-<arch>.deb` for `amd64` and `arm64`. The `.app` SHALL carry the bundle identifier `io.agent-marketplace.gui` and a version equal to the tag without its `v` prefix. Each Linux package SHALL install the GUI executable, a desktop entry, and an icon, and SHALL declare its WebKitGTK 4.1 and GTK 3 runtime dependencies. The release's `SHA256SUMS` SHALL list every GUI asset. GUI packages SHALL NOT contain or install the CLI.
 
-#### Scenario: Tagged release publishes platform packages and checksums
+#### Scenario: Tagged release publishes the GUI package matrix
 
-- **WHEN** a tagged release is published
-- **THEN** each supported macOS architecture SHALL have an unsigned `.dmg` containing the hardened-runtime `.app` with its notarization entitlements
-- **AND** each supported Linux architecture SHALL have an unsigned `.rpm` declaring WebKitGTK and installing its desktop entry
-- **AND** checksums SHALL be published alongside the GUI artifacts
+- **WHEN** a tagged stable release is published
+- **THEN** it SHALL include the macOS `.dmg` and `.zip` and the Linux `.rpm` and `.deb` for `amd64` and `arm64`
+- **AND** the `.app` in the `.dmg` and the `.zip` SHALL be identical, contain both macOS architectures, and declare the release version and bundle identifier `io.agent-marketplace.gui`
+- **AND** `SHA256SUMS` SHALL contain a line for each GUI asset
+
+#### Scenario: Linux package installs a launchable desktop application
+
+- **WHEN** a published `.rpm` is installed on a supported Fedora release or a published `.deb` is installed on Ubuntu 22.04, Ubuntu 24.04, or Debian 12 by the system package manager
+- **THEN** the package manager SHALL resolve its WebKitGTK and GTK dependencies
+- **AND** a desktop entry SHALL make the GUI appear in the desktop's application launcher
+- **AND** no `agent-marketplace` CLI executable SHALL be installed by the package
+
+#### Scenario: Missing GUI asset fails the release
+
+- **WHEN** any expected GUI asset is missing from the packaging output of a release build
+- **THEN** the release SHALL NOT be published
+
+### Requirement: macOS app is ad-hoc signed with the hardened runtime
+
+Until project code signing is configured by a separate change, the published `.app` SHALL be ad-hoc signed with the hardened runtime and its declared entitlements, and SHALL be signed with no signing identity, Apple team ID, or signing secret. Release and pull-request workflows SHALL NOT reference a signing identity, Apple team ID, signing-key location, or signing secret.
+
+#### Scenario: Published app launches without a signing identity
+
+- **WHEN** CI inspects and launches a built `.app`
+- **THEN** its signature SHALL be ad-hoc with the hardened runtime flag set
+- **AND** it SHALL launch under the hardened runtime and reach the GUI workspace
+
+#### Scenario: Workflows contain no signing material
+
+- **WHEN** release and pull-request workflows are configured
+- **THEN** they SHALL NOT reference a signing identity, Apple team ID, signing-key location, or signing secret
 
 ### Requirement: Published GUI packages are downstream-signable
 
-A distributor SHALL be able to sign and notarize the published `.app` without rebuilding it, using Developer ID `codesign` with the hardened runtime followed by notarization. A distributor SHALL be able to sign the published `.rpm` using `rpm --addsign`.
+A distributor SHALL be able to re-sign the published `.app` with a Developer ID and the hardened runtime and submit it for notarization without rebuilding it, and SHALL be able to sign a published `.rpm` with `rpm --addsign` without rebuilding it. Every pull-request and release build SHALL prove this on copies of its artifacts: it SHALL re-sign a copy of the `.app` with the hardened runtime and pass `codesign --verify --strict --deep`, and SHALL generate a throwaway GPG key, sign a copy of each `.rpm` with `rpm --addsign`, and pass `rpm -K`. The throwaway key SHALL NOT be retained after the job, and the published artifacts SHALL NOT be modified by these checks.
 
-#### Scenario: Distributor signs the published app without rebuilding
+#### Scenario: CI re-signs copies of the app and RPMs
 
-- **WHEN** a distributor signs a published `.app` using Developer ID `codesign` with the hardened runtime and submits it for notarization
-- **THEN** the `.app` SHALL be signable and notarizable without rebuilding it
+- **WHEN** a pull-request or release build completes package creation
+- **THEN** a re-signed copy of the `.app` SHALL pass `codesign --verify --strict --deep`
+- **AND** a copy of each `.rpm` signed with a throwaway key SHALL pass `rpm -K`
+- **AND** the throwaway key SHALL NOT be retained after the job
+- **AND** the artifacts that are uploaded or published SHALL be byte-identical to those before the checks
 
-#### Scenario: Distributor signs the published RPM
+### Requirement: Pull-request builds produce and smoke-test the GUI packages
 
-- **WHEN** a distributor signs a published `.rpm` using `rpm --addsign`
-- **THEN** the RPM signature SHALL be applied without rebuilding the package
+Pull requests that change the GUI, its packaging, or release wiring SHALL build the same GUI package matrix as a tagged release, upload it as workflow artifacts, launch the macOS `.app`, and install and launch the Linux packages on the supported distributions.
 
-### Requirement: CI verifies downstream signability
+#### Scenario: Pull request builds and launches every package
 
-Every pull-request and tagged-release build SHALL verify downstream signability of its GUI artifacts. CI SHALL ad-hoc sign a copy of the `.app` with the hardened runtime and pass `codesign --verify --strict`. CI SHALL generate a throwaway GPG key, sign a copy of the `.rpm` with `rpm --addsign`, and pass `rpm -K`.
-
-#### Scenario: Every build validates app and RPM signing
-
-- **WHEN** a pull-request or tagged-release build completes package creation
-- **THEN** CI SHALL ad-hoc sign the `.app` with the hardened runtime and verify it using `codesign --verify --strict`
-- **AND** CI SHALL generate a throwaway GPG key, sign the `.rpm` with `rpm --addsign`, and verify it using `rpm -K`
-- **AND** the throwaway key SHALL NOT be retained after the CI job
-
-### Requirement: Repository contains no organization-specific signing data
-
-The repository and its workflows SHALL contain no organization-specific signing identities, Apple team IDs, signing-key locations, or signing secrets.
-
-#### Scenario: No organization signing material is stored in the repository
-
-- **WHEN** release and pull-request workflows are configured
-- **THEN** no organization-specific signing identity, Apple team ID, signing-key location, or signing secret SHALL be stored in the repository or its workflows
-
-### Requirement: Pull-request builds publish the same unsigned packages
-
-Pull-request builds SHALL produce the same unsigned GUI package types and supported-architecture matrix as tagged releases and SHALL run a launch smoke test.
-
-#### Scenario: Pull-request artifacts remain unsigned and launch
-
-- **WHEN** a pull-request build publishes GUI artifacts
-- **THEN** it SHALL produce the same unsigned `.dmg` and `.rpm` package types for supported architectures as a tagged release
-- **AND** it SHALL run a launch smoke test
+- **WHEN** a pull request changes the GUI, its packaging, or release wiring
+- **THEN** CI SHALL produce every GUI asset of the tagged-release matrix and upload them as workflow artifacts
+- **AND** CI SHALL launch the `.app` on macOS and install and launch the `.rpm` on Fedora and the `.deb` on Ubuntu 22.04, Ubuntu 24.04, and Debian 12
 
 ### Requirement: CLI release artifacts remain unchanged
 
-GUI release packaging SHALL leave the CLI release artifacts statically linked and unchanged.
+GUI packaging SHALL leave the CLI release artifacts statically linked, with unchanged names and bytes, and SHALL leave their `SHA256SUMS` lines unchanged. GUI asset names SHALL NOT match the CLI asset pattern `agent-marketplace-<tag>-*`.
 
-#### Scenario: Adding GUI releases does not change CLI artifacts
+#### Scenario: Adding GUI packages does not change CLI artifacts
 
 - **WHEN** a release publishes GUI packages alongside CLI artifacts
-- **THEN** the CLI artifacts SHALL remain statically linked and unchanged by GUI packaging
+- **THEN** the CLI artifacts SHALL be statically linked and byte-identical to the output of the CLI release build
+- **AND** their `SHA256SUMS` lines SHALL equal those produced by the CLI release build
+- **AND** no GUI asset name SHALL match `agent-marketplace-<tag>-*`
