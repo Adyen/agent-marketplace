@@ -214,3 +214,14 @@ metadata and tag browser pin. The resulting integration commit
 validated `95320ec4`: no source or module-byte change is inferred away.
 All 576 observations and source reconstruction still verify unchanged.
 CI remains responsible for the full root suite and Linux browser gate.
+
+On `34660392`, both bots, the full root suite, E2E, vulnerability scan,
+and Web checks pass. The macOS TUI matrix leg instead reaches its
+ten-minute whole-job cap near the final journey, with no failed journey
+assertion. Setup and compilation take 2 minutes 50 seconds, including
+a 2 minute 4 second build; the suite then runs until cancellation.
+Raise the complete matrix budget to a bounded fifteen minutes, with a
+workflow regression that fails on the old ten-minute budget. Preserve
+every journey, individual test timeout, platform, and aggregate witness
+check. This metadata-only repair changes none of the 125 measured
+configuration inputs or the recorded 576 observations.
