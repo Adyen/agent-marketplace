@@ -48,3 +48,12 @@ synthetic concrete-model anchor from the catalog test, and retain supported,
 omitted, opaque-selector, and cross-harness controls. Measure native and
 existing resolver paths before and after the change, then validate, archive,
 adversarially review, and publish the approved follow-up.
+
+## Family Override Follow-up
+
+Keep recursive target-native validation authoritative for declared family
+overrides on separate-effort surfaces. The final override guard must not
+discard supported reasoning merely because family IDs are absent from the
+native-model index. Retain omission for unknown overrides and model-encoded
+surfaces, and prove supported/unsupported family overrides through public
+`Compile`. Benchmark the override paths before and after the guard change.
