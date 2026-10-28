@@ -117,6 +117,7 @@ func TestDocsContract(t *testing.T) {
 			telemetry.EnvCommunityReporting:      true,
 			ownership.LockTimeoutEnvVar:          true,
 			"CODEX_HOME":                         true,
+			"CLAUDE_CONFIG_DIR":                  true,
 			"XDG_STATE_HOME":                     true,
 		}
 		envRe := regexp.MustCompile(`"(AGENT_MARKETPLACE_[A-Z_]+)"`)
