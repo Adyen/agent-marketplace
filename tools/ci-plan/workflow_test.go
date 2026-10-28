@@ -86,8 +86,8 @@ func TestBrowserGatesPinSupportedRunner(t *testing.T) {
 
 func TestTUIQAMatrixBudget(t *testing.T) {
 	job := getMap(t, getMap(t, loadCIWorkflow(t), "jobs"), "tui-qa")
-	if got := job["timeout-minutes"]; got != 15 {
-		t.Errorf("TUI QA job budget = %v, want 15 minutes for cold build and all journeys", got)
+	if got := job["timeout-minutes"]; got != 20 {
+		t.Errorf("TUI QA job budget = %v, want 20 minutes for cold build, all journeys and cache cleanup", got)
 	}
 }
 

@@ -225,3 +225,22 @@ workflow regression that fails on the old ten-minute budget. Preserve
 every journey, individual test timeout, platform, and aggregate witness
 check. This metadata-only repair changes none of the 125 measured
 configuration inputs or the recorded 576 observations.
+
+The fifteen-minute job then finishes all 85 macOS journeys successfully
+(623,977.77 ms; zero failures, cancellations, or skips), including the
+unchanged 3.5-second toggle-acknowledgement assertion. The whole-job cap
+still cancels the subsequent Go cache archive, so calibrate the final
+budget to twenty minutes, including cold setup, compilation, the full
+suite, and post-job cache cleanup. Keep caching enabled and all existing
+assertions and aggregate success requirements intact. The workflow
+contract fails with fifteen minutes and passes with twenty.
+
+An earlier attempt completed 84 of 85 journeys, missing that existing
+acknowledgement ceiling by 106 ms. Before one targeted CI replay, run
+five alternating original/optimized pairs of the isolated, unchanged
+journey: all ten pass every original latency and acquisition assertion.
+Retain the original failure trace; it shows correct persisted selection
+and settled state. The targeted replay then passes all 85 journeys
+without any per-test deadline or latency-threshold change. Its remaining
+failure is the independently evidenced post-test cache budget, not an
+excuse to weaken a behavioral or performance assertion.

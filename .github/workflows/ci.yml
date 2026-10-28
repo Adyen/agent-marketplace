@@ -602,8 +602,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.tui_qa == 'true'
     runs-on: ${{ matrix.os }}
-    # Cold macOS setup/build plus all terminal journeys exceeds ten minutes.
-    timeout-minutes: 15
+    # Allow cold macOS builds, all journeys, and post-job cache archiving.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
