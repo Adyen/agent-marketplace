@@ -46,11 +46,18 @@ decisions without acquisition or config/directory path I/O.
 Compile separate native Go 1.27.3 binaries, execute an actual baseline
 trial before the production edit, then complete six alternating
 one-second pairs over all sixteen cases: 192 observations per candidate,
-384 across separate delivered and rejected datasets. Keep setup
+384 across separate initial exact-capacity and rejected datasets.
+Blocking CI then requires the #972 x/net security repair and supported
+Ubuntu 24.04 browser runners. Preserve those initial matrices and repeat
+all sixteen cases with the fixed module/workspace inputs on both sides:
+another 192 observations, 576 total across three separate stages.
+Record original v4 code from `85bc15d7` and dependency snapshot
+`95320ec46b58f87b361d34f3fd6d015eed848860` explicitly; do not pretend
+old module fingerprints describe the new binaries. Keep setup
 and full result assertions outside `b.Loop`. Profile baseline allocation
 sites; retain source/binary/trial hashes and byte-exact benchstat output.
 Never pool variants/bases, compound earlier allocation savings, or hide
-controls. Report the empty helper's measured 0.27 ns increase alongside
+controls. Report the final empty helper's measured 0.30 ns increase alongside
 its unchanged zero allocations and nonsignificant single-item public
 timings; do not infer an include-only public speed-up from noisy timing.
 

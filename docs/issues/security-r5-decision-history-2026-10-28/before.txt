@@ -2,125 +2,125 @@ goos: darwin
 goarch: arm64
 pkg: github.com/Adyen/agent-marketplace/internal/config
 cpu: Apple M4 Max
-BenchmarkV4DecisionHistory/empty-control-16      	154192956	         7.773 ns/op	       0 B/op	       0 allocs/op
-BenchmarkV4DecisionHistory/single-16             	 6113935	       196.5 ns/op	     320 B/op	       2 allocs/op
-BenchmarkV4DecisionHistory/includes-256-16       	   23002	     51906 ns/op	  210616 B/op	      32 allocs/op
-BenchmarkV4DecisionHistory/includes-1024-16      	    5110	    237039 ns/op	 1059752 B/op	      44 allocs/op
-BenchmarkV4DecisionHistory/excludes-256-16       	  136975	      8952 ns/op	   64864 B/op	       9 allocs/op
-BenchmarkV4DecisionHistory/excludes-1024-16      	   33819	     35435 ns/op	  236896 B/op	      11 allocs/op
-BenchmarkV4DecisionHistory/groups-16-16          	    5762	    217438 ns/op	 1058385 B/op	     184 allocs/op
-BenchmarkV4DecisionHistory/groups-1024-control-16         	    4488	    265206 ns/op	  950993 B/op	      24 allocs/op
-BenchmarkV4DecisionHistoryEffectiveControl/requests=256-16         	   33204	     35780 ns/op	   89064 B/op	      15 allocs/op
-BenchmarkV4DecisionHistoryEffectiveControl/requests=1024-16        	    7527	    154970 ns/op	  331992 B/op	      22 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1-16  	  119985	     10243 ns/op	   14899 B/op	     140 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=256-16         	    3091	    326861 ns/op	  492372 B/op	    3252 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1024-16        	    1038	   1184000 ns/op	 2138280 B/op	   13261 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1-16            	  126277	      9671 ns/op	   13872 B/op	     126 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=256-16          	    4171	    288264 ns/op	  230431 B/op	    1430 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1024-16         	    1065	   1133497 ns/op	  866408 B/op	    5282 allocs/op
+BenchmarkV4DecisionHistory/empty-control-16      	153559336	         7.738 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4DecisionHistory/single-16             	 6208334	       191.5 ns/op	     320 B/op	       2 allocs/op
+BenchmarkV4DecisionHistory/includes-256-16       	   24044	     50301 ns/op	  210616 B/op	      32 allocs/op
+BenchmarkV4DecisionHistory/includes-1024-16      	    5162	    229470 ns/op	 1059752 B/op	      44 allocs/op
+BenchmarkV4DecisionHistory/excludes-256-16       	  139711	      8600 ns/op	   64864 B/op	       9 allocs/op
+BenchmarkV4DecisionHistory/excludes-1024-16      	   41137	     28921 ns/op	  236896 B/op	      11 allocs/op
+BenchmarkV4DecisionHistory/groups-16-16          	    5955	    199677 ns/op	 1058386 B/op	     184 allocs/op
+BenchmarkV4DecisionHistory/groups-1024-control-16         	    4862	    250444 ns/op	  950993 B/op	      24 allocs/op
+BenchmarkV4DecisionHistoryEffectiveControl/requests=256-16         	   35650	     33639 ns/op	   89064 B/op	      15 allocs/op
+BenchmarkV4DecisionHistoryEffectiveControl/requests=1024-16        	    7923	    147921 ns/op	  331992 B/op	      22 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1-16  	  125504	      9606 ns/op	   14899 B/op	     140 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=256-16         	    4154	    289875 ns/op	  492364 B/op	    3252 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1024-16        	    1026	   1145757 ns/op	 2138290 B/op	   13261 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1-16            	  131766	      9010 ns/op	   13873 B/op	     126 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=256-16          	    4228	    286611 ns/op	  230431 B/op	    1430 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1024-16         	    1093	   1104159 ns/op	  866405 B/op	    5282 allocs/op
 PASS
 goos: darwin
 goarch: arm64
 pkg: github.com/Adyen/agent-marketplace/internal/config
 cpu: Apple M4 Max
-BenchmarkV4DecisionHistory/empty-control-16      	158010949	         7.569 ns/op	       0 B/op	       0 allocs/op
-BenchmarkV4DecisionHistory/single-16             	 6332317	       189.3 ns/op	     320 B/op	       2 allocs/op
-BenchmarkV4DecisionHistory/includes-256-16       	   24289	     49730 ns/op	  210616 B/op	      32 allocs/op
-BenchmarkV4DecisionHistory/includes-1024-16      	    5034	    232028 ns/op	 1059754 B/op	      44 allocs/op
-BenchmarkV4DecisionHistory/excludes-256-16       	  144115	      8577 ns/op	   64864 B/op	       9 allocs/op
-BenchmarkV4DecisionHistory/excludes-1024-16      	   37926	     29734 ns/op	  236897 B/op	      11 allocs/op
-BenchmarkV4DecisionHistory/groups-16-16          	    5757	    200294 ns/op	 1058384 B/op	     184 allocs/op
-BenchmarkV4DecisionHistory/groups-1024-control-16         	    4416	    278822 ns/op	  950993 B/op	      24 allocs/op
-BenchmarkV4DecisionHistoryEffectiveControl/requests=256-16         	   33816	     41447 ns/op	   89064 B/op	      15 allocs/op
-BenchmarkV4DecisionHistoryEffectiveControl/requests=1024-16        	    6897	    164333 ns/op	  331992 B/op	      22 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1-16  	  124286	      9670 ns/op	   14899 B/op	     140 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=256-16         	    4179	    291213 ns/op	  492360 B/op	    3252 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1024-16        	    1046	   1149404 ns/op	 2138246 B/op	   13261 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1-16            	  134257	      9265 ns/op	   13872 B/op	     126 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=256-16          	    4172	    286140 ns/op	  230428 B/op	    1430 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1024-16         	    1064	   1124344 ns/op	  866407 B/op	    5282 allocs/op
+BenchmarkV4DecisionHistory/empty-control-16      	154765461	         7.753 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4DecisionHistory/single-16             	 6184891	       194.3 ns/op	     320 B/op	       2 allocs/op
+BenchmarkV4DecisionHistory/includes-256-16       	   23613	     50614 ns/op	  210616 B/op	      32 allocs/op
+BenchmarkV4DecisionHistory/includes-1024-16      	    5277	    227409 ns/op	 1059753 B/op	      44 allocs/op
+BenchmarkV4DecisionHistory/excludes-256-16       	  147568	      8068 ns/op	   64864 B/op	       9 allocs/op
+BenchmarkV4DecisionHistory/excludes-1024-16      	   42705	     28277 ns/op	  236896 B/op	      11 allocs/op
+BenchmarkV4DecisionHistory/groups-16-16          	    6148	    195255 ns/op	 1058385 B/op	     184 allocs/op
+BenchmarkV4DecisionHistory/groups-1024-control-16         	    4732	    253725 ns/op	  950992 B/op	      24 allocs/op
+BenchmarkV4DecisionHistoryEffectiveControl/requests=256-16         	   35030	     34366 ns/op	   89064 B/op	      15 allocs/op
+BenchmarkV4DecisionHistoryEffectiveControl/requests=1024-16        	    7834	    151119 ns/op	  331992 B/op	      22 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1-16  	  123956	      9687 ns/op	   14899 B/op	     140 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=256-16         	    4219	    287816 ns/op	  492363 B/op	    3252 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1024-16        	    1077	   1116804 ns/op	 2138238 B/op	   13261 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1-16            	  135466	      8933 ns/op	   13872 B/op	     126 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=256-16          	    4228	    283399 ns/op	  230429 B/op	    1430 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1024-16         	    1081	   1115226 ns/op	  866407 B/op	    5282 allocs/op
 PASS
 goos: darwin
 goarch: arm64
 pkg: github.com/Adyen/agent-marketplace/internal/config
 cpu: Apple M4 Max
-BenchmarkV4DecisionHistory/empty-control-16      	155307729	         7.716 ns/op	       0 B/op	       0 allocs/op
-BenchmarkV4DecisionHistory/single-16             	 6203716	       193.6 ns/op	     320 B/op	       2 allocs/op
-BenchmarkV4DecisionHistory/includes-256-16       	   23503	     51079 ns/op	  210616 B/op	      32 allocs/op
-BenchmarkV4DecisionHistory/includes-1024-16      	    5271	    231598 ns/op	 1059752 B/op	      44 allocs/op
-BenchmarkV4DecisionHistory/excludes-256-16       	  138980	      8698 ns/op	   64864 B/op	       9 allocs/op
-BenchmarkV4DecisionHistory/excludes-1024-16      	   40388	     30546 ns/op	  236896 B/op	      11 allocs/op
-BenchmarkV4DecisionHistory/groups-16-16          	    5973	    225095 ns/op	 1058385 B/op	     184 allocs/op
-BenchmarkV4DecisionHistory/groups-1024-control-16         	    4825	    293802 ns/op	  950993 B/op	      24 allocs/op
-BenchmarkV4DecisionHistoryEffectiveControl/requests=256-16         	   29572	     36897 ns/op	   89064 B/op	      15 allocs/op
-BenchmarkV4DecisionHistoryEffectiveControl/requests=1024-16        	    7951	    151047 ns/op	  331992 B/op	      22 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1-16  	  118651	      9817 ns/op	   14900 B/op	     140 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=256-16         	    4117	    291734 ns/op	  492367 B/op	    3252 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1024-16        	    1030	   1162496 ns/op	 2138287 B/op	   13261 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1-16            	  128115	      9377 ns/op	   13873 B/op	     126 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=256-16          	    4269	    284615 ns/op	  230430 B/op	    1430 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1024-16         	    1070	   1113690 ns/op	  866405 B/op	    5282 allocs/op
+BenchmarkV4DecisionHistory/empty-control-16      	154347320	         7.783 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4DecisionHistory/single-16             	 6192846	       193.9 ns/op	     320 B/op	       2 allocs/op
+BenchmarkV4DecisionHistory/includes-256-16       	   23841	     50669 ns/op	  210616 B/op	      32 allocs/op
+BenchmarkV4DecisionHistory/includes-1024-16      	    5036	    227903 ns/op	 1059754 B/op	      44 allocs/op
+BenchmarkV4DecisionHistory/excludes-256-16       	  149402	      8266 ns/op	   64864 B/op	       9 allocs/op
+BenchmarkV4DecisionHistory/excludes-1024-16      	   42306	     28321 ns/op	  236896 B/op	      11 allocs/op
+BenchmarkV4DecisionHistory/groups-16-16          	    6109	    195474 ns/op	 1058386 B/op	     184 allocs/op
+BenchmarkV4DecisionHistory/groups-1024-control-16         	    4774	    252474 ns/op	  950992 B/op	      24 allocs/op
+BenchmarkV4DecisionHistoryEffectiveControl/requests=256-16         	   33711	     34914 ns/op	   89064 B/op	      15 allocs/op
+BenchmarkV4DecisionHistoryEffectiveControl/requests=1024-16        	    7798	    151175 ns/op	  331992 B/op	      22 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1-16  	  123837	      9661 ns/op	   14899 B/op	     140 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=256-16         	    4255	    282593 ns/op	  492352 B/op	    3252 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1024-16        	    1070	   1123508 ns/op	 2138249 B/op	   13261 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1-16            	  134695	      8927 ns/op	   13872 B/op	     126 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=256-16          	    4221	    288934 ns/op	  230430 B/op	    1430 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1024-16         	    1072	   1121569 ns/op	  866409 B/op	    5282 allocs/op
 PASS
 goos: darwin
 goarch: arm64
 pkg: github.com/Adyen/agent-marketplace/internal/config
 cpu: Apple M4 Max
-BenchmarkV4DecisionHistory/empty-control-16      	156166561	         7.708 ns/op	       0 B/op	       0 allocs/op
-BenchmarkV4DecisionHistory/single-16             	 6169652	       193.3 ns/op	     320 B/op	       2 allocs/op
-BenchmarkV4DecisionHistory/includes-256-16       	   23102	     51633 ns/op	  210616 B/op	      32 allocs/op
-BenchmarkV4DecisionHistory/includes-1024-16      	    5134	    231044 ns/op	 1059752 B/op	      44 allocs/op
-BenchmarkV4DecisionHistory/excludes-256-16       	  143396	      8276 ns/op	   64864 B/op	       9 allocs/op
-BenchmarkV4DecisionHistory/excludes-1024-16      	   41774	     28518 ns/op	  236896 B/op	      11 allocs/op
-BenchmarkV4DecisionHistory/groups-16-16          	    6026	    198370 ns/op	 1058386 B/op	     184 allocs/op
-BenchmarkV4DecisionHistory/groups-1024-control-16         	    4606	    259910 ns/op	  950993 B/op	      24 allocs/op
-BenchmarkV4DecisionHistoryEffectiveControl/requests=256-16         	   34328	     34910 ns/op	   89064 B/op	      15 allocs/op
-BenchmarkV4DecisionHistoryEffectiveControl/requests=1024-16        	    7932	    152223 ns/op	  331992 B/op	      22 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1-16  	  124110	      9686 ns/op	   14900 B/op	     140 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=256-16         	    4177	    288718 ns/op	  492365 B/op	    3252 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1024-16        	    1056	   1139587 ns/op	 2138250 B/op	   13261 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1-16            	  134836	      8927 ns/op	   13872 B/op	     126 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=256-16          	    4243	    284381 ns/op	  230430 B/op	    1430 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1024-16         	    1064	   1130558 ns/op	  866405 B/op	    5282 allocs/op
+BenchmarkV4DecisionHistory/empty-control-16      	155143064	         7.728 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4DecisionHistory/single-16             	 6250081	       197.1 ns/op	     320 B/op	       2 allocs/op
+BenchmarkV4DecisionHistory/includes-256-16       	   24122	     50109 ns/op	  210616 B/op	      32 allocs/op
+BenchmarkV4DecisionHistory/includes-1024-16      	    5214	    228206 ns/op	 1059753 B/op	      44 allocs/op
+BenchmarkV4DecisionHistory/excludes-256-16       	  144627	      8486 ns/op	   64864 B/op	       9 allocs/op
+BenchmarkV4DecisionHistory/excludes-1024-16      	   42175	     28677 ns/op	  236896 B/op	      11 allocs/op
+BenchmarkV4DecisionHistory/groups-16-16          	    5917	    196874 ns/op	 1058385 B/op	     184 allocs/op
+BenchmarkV4DecisionHistory/groups-1024-control-16         	    4794	    250490 ns/op	  950993 B/op	      24 allocs/op
+BenchmarkV4DecisionHistoryEffectiveControl/requests=256-16         	   35250	     34073 ns/op	   89064 B/op	      15 allocs/op
+BenchmarkV4DecisionHistoryEffectiveControl/requests=1024-16        	    7929	    153234 ns/op	  331992 B/op	      22 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1-16  	  124359	      9600 ns/op	   14899 B/op	     140 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=256-16         	    4114	    288692 ns/op	  492361 B/op	    3252 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1024-16        	    1011	   1162419 ns/op	 2138285 B/op	   13261 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1-16            	  133326	      9081 ns/op	   13872 B/op	     126 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=256-16          	    4243	    283968 ns/op	  230430 B/op	    1430 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1024-16         	    1076	   1117363 ns/op	  866405 B/op	    5282 allocs/op
 PASS
 goos: darwin
 goarch: arm64
 pkg: github.com/Adyen/agent-marketplace/internal/config
 cpu: Apple M4 Max
-BenchmarkV4DecisionHistory/empty-control-16      	154748040	         7.767 ns/op	       0 B/op	       0 allocs/op
-BenchmarkV4DecisionHistory/single-16             	 6143020	       195.6 ns/op	     320 B/op	       2 allocs/op
-BenchmarkV4DecisionHistory/includes-256-16       	   23282	     51353 ns/op	  210616 B/op	      32 allocs/op
-BenchmarkV4DecisionHistory/includes-1024-16      	    5024	    229442 ns/op	 1059753 B/op	      44 allocs/op
-BenchmarkV4DecisionHistory/excludes-256-16       	  144424	      8279 ns/op	   64864 B/op	       9 allocs/op
-BenchmarkV4DecisionHistory/excludes-1024-16      	   42384	     28403 ns/op	  236896 B/op	      11 allocs/op
-BenchmarkV4DecisionHistory/groups-16-16          	    5973	    198467 ns/op	 1058385 B/op	     184 allocs/op
-BenchmarkV4DecisionHistory/groups-1024-control-16         	    4722	    256459 ns/op	  950993 B/op	      24 allocs/op
-BenchmarkV4DecisionHistoryEffectiveControl/requests=256-16         	   34527	     34707 ns/op	   89064 B/op	      15 allocs/op
-BenchmarkV4DecisionHistoryEffectiveControl/requests=1024-16        	    7944	    151775 ns/op	  331992 B/op	      22 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1-16  	  124117	      9642 ns/op	   14899 B/op	     140 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=256-16         	    4248	    284716 ns/op	  492358 B/op	    3252 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1024-16        	    1047	   1148413 ns/op	 2138264 B/op	   13261 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1-16            	  130342	      9046 ns/op	   13872 B/op	     126 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=256-16          	    4161	    286946 ns/op	  230430 B/op	    1430 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1024-16         	    1086	   1120062 ns/op	  866405 B/op	    5282 allocs/op
+BenchmarkV4DecisionHistory/empty-control-16      	152663055	         7.829 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4DecisionHistory/single-16             	 6172062	       192.2 ns/op	     320 B/op	       2 allocs/op
+BenchmarkV4DecisionHistory/includes-256-16       	   22560	     51704 ns/op	  210616 B/op	      32 allocs/op
+BenchmarkV4DecisionHistory/includes-1024-16      	    5304	    228817 ns/op	 1059753 B/op	      44 allocs/op
+BenchmarkV4DecisionHistory/excludes-256-16       	  144408	      8347 ns/op	   64864 B/op	       9 allocs/op
+BenchmarkV4DecisionHistory/excludes-1024-16      	   41391	     28661 ns/op	  236896 B/op	      11 allocs/op
+BenchmarkV4DecisionHistory/groups-16-16          	    5764	    194234 ns/op	 1058385 B/op	     184 allocs/op
+BenchmarkV4DecisionHistory/groups-1024-control-16         	    4741	    252617 ns/op	  950993 B/op	      24 allocs/op
+BenchmarkV4DecisionHistoryEffectiveControl/requests=256-16         	   35304	     33764 ns/op	   89064 B/op	      15 allocs/op
+BenchmarkV4DecisionHistoryEffectiveControl/requests=1024-16        	    8059	    148758 ns/op	  331992 B/op	      22 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1-16  	  124980	      9701 ns/op	   14899 B/op	     140 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=256-16         	    4162	    287729 ns/op	  492363 B/op	    3252 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1024-16        	    1047	   1147075 ns/op	 2138268 B/op	   13261 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1-16            	  134676	      9029 ns/op	   13872 B/op	     126 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=256-16          	    4165	    285604 ns/op	  230428 B/op	    1430 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1024-16         	    1053	   1103553 ns/op	  866402 B/op	    5282 allocs/op
 PASS
 goos: darwin
 goarch: arm64
 pkg: github.com/Adyen/agent-marketplace/internal/config
 cpu: Apple M4 Max
-BenchmarkV4DecisionHistory/empty-control-16      	154539177	         7.747 ns/op	       0 B/op	       0 allocs/op
-BenchmarkV4DecisionHistory/single-16             	 6213560	       198.3 ns/op	     320 B/op	       2 allocs/op
-BenchmarkV4DecisionHistory/includes-256-16       	   23436	     51382 ns/op	  210616 B/op	      32 allocs/op
-BenchmarkV4DecisionHistory/includes-1024-16      	    4922	    231750 ns/op	 1059753 B/op	      44 allocs/op
-BenchmarkV4DecisionHistory/excludes-256-16       	  143091	      8515 ns/op	   64864 B/op	       9 allocs/op
-BenchmarkV4DecisionHistory/excludes-1024-16      	   41640	     28548 ns/op	  236896 B/op	      11 allocs/op
-BenchmarkV4DecisionHistory/groups-16-16          	    5930	    195847 ns/op	 1058385 B/op	     184 allocs/op
-BenchmarkV4DecisionHistory/groups-1024-control-16         	    4675	    249845 ns/op	  950993 B/op	      24 allocs/op
-BenchmarkV4DecisionHistoryEffectiveControl/requests=256-16         	   35516	     33813 ns/op	   89064 B/op	      15 allocs/op
-BenchmarkV4DecisionHistoryEffectiveControl/requests=1024-16        	    7797	    155678 ns/op	  331992 B/op	      22 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1-16  	  121750	      9794 ns/op	   14900 B/op	     140 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=256-16         	    4249	    291116 ns/op	  492371 B/op	    3252 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1024-16        	    1009	   1184220 ns/op	 2138265 B/op	   13261 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1-16            	  130963	      9147 ns/op	   13873 B/op	     126 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=256-16          	    4100	    287626 ns/op	  230430 B/op	    1430 allocs/op
-BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1024-16         	    1066	   1116411 ns/op	  866405 B/op	    5282 allocs/op
+BenchmarkV4DecisionHistory/empty-control-16      	154664886	         7.802 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4DecisionHistory/single-16             	 6167790	       194.1 ns/op	     320 B/op	       2 allocs/op
+BenchmarkV4DecisionHistory/includes-256-16       	   23287	     51684 ns/op	  210616 B/op	      32 allocs/op
+BenchmarkV4DecisionHistory/includes-1024-16      	    5094	    229537 ns/op	 1059754 B/op	      44 allocs/op
+BenchmarkV4DecisionHistory/excludes-256-16       	  144780	      8426 ns/op	   64864 B/op	       9 allocs/op
+BenchmarkV4DecisionHistory/excludes-1024-16      	   43056	     28063 ns/op	  236896 B/op	      11 allocs/op
+BenchmarkV4DecisionHistory/groups-16-16          	    6151	    193162 ns/op	 1058385 B/op	     184 allocs/op
+BenchmarkV4DecisionHistory/groups-1024-control-16         	    4832	    249461 ns/op	  950992 B/op	      24 allocs/op
+BenchmarkV4DecisionHistoryEffectiveControl/requests=256-16         	   34944	     34399 ns/op	   89064 B/op	      15 allocs/op
+BenchmarkV4DecisionHistoryEffectiveControl/requests=1024-16        	    7856	    151272 ns/op	  331992 B/op	      22 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1-16  	  123338	      9722 ns/op	   14900 B/op	     140 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=256-16         	    4123	    287666 ns/op	  492362 B/op	    3252 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1024-16        	    1057	   1146228 ns/op	 2138262 B/op	   13261 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1-16            	  135499	      8800 ns/op	   13872 B/op	     126 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=256-16          	    4209	    283396 ns/op	  230430 B/op	    1430 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1024-16         	    1035	   1126231 ns/op	  866411 B/op	    5282 allocs/op
 PASS
