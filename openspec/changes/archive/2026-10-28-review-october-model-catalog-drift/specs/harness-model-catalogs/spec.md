@@ -23,10 +23,19 @@ levels. Unsupported reasoning SHALL retain the selected model and report
 
 - **WHEN** a Devin GPT-6 priority variant is converted to Factory or a matching
   Factory fast model is converted to Devin
+- **AND** its reasoning level is explicit and supported by both harnesses
 - **THEN** conversion SHALL retain the corresponding fast identity and
   supported reasoning level
 - **AND** a destination without that fast identity SHALL report
   `model.unresolved` rather than substitute the base model
+
+#### Scenario: Factory fast model without reasoning is omitted for Devin
+
+- **WHEN** Factory's `gpt-6-sol-fast` is converted to Devin without a reasoning
+  level
+- **THEN** conversion SHALL omit the model and report
+  `subagent.devin.model-unmappable`
+- **AND** the subagent resource and body SHALL remain intact
 
 #### Scenario: Reviewed additions omit unsupported reasoning without substitution
 

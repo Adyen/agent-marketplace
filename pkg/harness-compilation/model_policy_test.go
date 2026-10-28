@@ -41,6 +41,18 @@ func modelPolicyFields(t *testing.T, artifacts []artifact.Artifact) map[string]a
 	return nil
 }
 
+func assertModelPolicyField(t *testing.T, fields map[string]any, key, want string) {
+	t.Helper()
+	got, present := fields[key]
+	if want == "" {
+		if present {
+			t.Fatalf("fields = %v, want %s omitted", fields, key)
+		}
+	} else if !present || got != want {
+		t.Fatalf("fields = %v, want %s=%q", fields, key, want)
+	}
+}
+
 // spec: harness-model-catalogs/unresolved-model-warns-and-keeps-the-resource
 func TestModelPolicyUnknownModelStillEmits(t *testing.T) {
 	wantCode := map[Target]string{
@@ -58,9 +70,7 @@ func TestModelPolicyUnknownModelStillEmits(t *testing.T) {
 			if err != nil || diag.HasErrors(result.Diagnostics) {
 				t.Fatalf("model loss suppressed resource: %v %+v", err, result)
 			}
-			if fields := modelPolicyFields(t, result.Artifacts); fields["model"] != nil {
-				t.Fatalf("unknown model emitted: %v", fields)
-			}
+			assertModelPolicyField(t, modelPolicyFields(t, result.Artifacts), "model", "")
 			if len(result.Diagnostics) != 1 || result.Diagnostics[0].Code != wantCode[target] || result.Diagnostics[0].Severity != diag.SeverityWarning {
 				t.Fatalf("model omission diagnostics = %+v, want one %s warning", result.Diagnostics, wantCode[target])
 			}
@@ -74,6 +84,9 @@ func TestModelPolicyUnknownModelStillEmits(t *testing.T) {
 // spec: harness-model-catalogs/conflicting-reasoning-preference-warns-and-resolves-once
 // spec: harness-model-catalogs/crossing-inheritance-and-default-boundaries-warns
 // spec: harness-model-catalogs/reasoning-on-inherited-selection-is-omitted-when-unrepresentable
+// spec: harness-model-catalogs/priority-variants-retain-their-distinct-fast-identity
+// spec: harness-model-catalogs/factory-fast-model-without-reasoning-is-omitted-for-devin
+// spec: harness-model-catalogs/reviewed-additions-omit-unsupported-reasoning-without-substitution
 func TestModelPolicyDiagnosticScenarios(t *testing.T) {
 	for _, tc := range []struct {
 		name                                            string
@@ -89,6 +102,9 @@ func TestModelPolicyDiagnosticScenarios(t *testing.T) {
 		{"floating family pin", "", TargetFactory, "sonnet", "", "claude-sonnet-5", "reasoningEffort", "", diag.CodeModelSelectorPinned, diag.SeverityInfo},
 		{"inheritance/default mismatch", TargetDevin, TargetClaude, "", "", "", "effort", "", diag.CodeModelInheritanceMismatch, diag.SeverityWarning},
 		{"reasoning on inherited selection", "", TargetFactory, "inherit", "high", "inherit", "reasoningEffort", "", diag.CodeModelReasoningOmitted, diag.SeverityWarning},
+		{"factory Nemotron unsupported low", "", TargetFactory, "nvidia/nemotron-3.5-super", "low", "nemotron-3.5-super", "reasoningEffort", "", diag.CodeModelReasoningOmitted, diag.SeverityWarning},
+		{"factory fast without reasoning", TargetFactory, TargetDevin, "gpt-6-sol-fast", "", "", "effort", "", diag.CodeSubagentDevinModelUnmappable, diag.SeverityWarning},
+		{"factory fast supported reasoning", TargetFactory, TargetDevin, "gpt-6-sol-fast", "high", "gpt-6-sol-high-priority", "effort", "", "", 0},
 		{"positive control", TargetClaude, TargetCodex, "gpt-5.6-luna", "medium", "gpt-5.6-luna", "model_reasoning_effort", "medium", "", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -99,11 +115,8 @@ func TestModelPolicyDiagnosticScenarios(t *testing.T) {
 				t.Fatalf("compile: %v %+v", err, result)
 			}
 			fields := modelPolicyFields(t, result.Artifacts)
-			model, _ := fields["model"].(string)
-			effort, _ := fields[tc.effortKey].(string)
-			if model != tc.wantModel || effort != tc.wantEffort {
-				t.Fatalf("fields = %v, want model=%q %s=%q", fields, tc.wantModel, tc.effortKey, tc.wantEffort)
-			}
+			assertModelPolicyField(t, fields, "model", tc.wantModel)
+			assertModelPolicyField(t, fields, tc.effortKey, tc.wantEffort)
 			if tc.wantCode == "" {
 				if len(result.Diagnostics) != 0 {
 					t.Fatalf("positive control emitted diagnostics: %+v", result.Diagnostics)
@@ -144,11 +157,8 @@ func TestModelPolicyNativeReasoningEncoding(t *testing.T) {
 				t.Fatalf("compile: %v %+v", err, result)
 			}
 			fields := modelPolicyFields(t, result.Artifacts)
-			model, _ := fields["model"].(string)
-			effort, _ := fields[tc.effortKey].(string)
-			if model != tc.wantModel || effort != tc.wantEffort {
-				t.Fatalf("fields = %v, want model=%q %s=%q", fields, tc.wantModel, tc.effortKey, tc.wantEffort)
-			}
+			assertModelPolicyField(t, fields, "model", tc.wantModel)
+			assertModelPolicyField(t, fields, tc.effortKey, tc.wantEffort)
 		})
 	}
 }
