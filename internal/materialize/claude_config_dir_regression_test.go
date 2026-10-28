@@ -181,3 +181,69 @@ func TestClaudeConfigurationDefaultAliasPrunesAggregate(t *testing.T) {
 		t.Fatalf("cleanup through the default alias: %v, %+v", err, report)
 	}
 }
+
+// spec: claude-native-configuration/git-administrative-roots-refuse
+func TestClaudeConfigurationGitRefusalPreservesOtherTargets(t *testing.T) {
+	home, repo, _ := claudeDirectoryFixture(t)
+	control := t.TempDir()
+	root := filepath.Join(control, "account")
+	t.Setenv("GIT_DIR", control)
+	t.Setenv("GIT_COMMON_DIR", "")
+	t.Setenv("CLAUDE_CONFIG_DIR", root)
+	resources := []resolver.ResolvedArtifact{
+		claudeDirectorySkill("refused", config.UserPersonal, hcc.TargetClaude),
+		claudeDirectorySkill("safe", config.UserPersonal, hcc.TargetFactory),
+	}
+	report, err := Run(context.Background(), repo, resources)
+	if err != nil || !diag.HasErrors(report.Diags) {
+		t.Fatalf("Git administrative root was not refused: %v, %+v", err, report)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("refused Claude root was created: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".factory", "skills", "safe", "SKILL.md")); err != nil {
+		t.Fatalf("independent Factory selection was blocked: %v", err)
+	}
+}
+
+// spec: materialization/unused-non-directory-components-do-not-block-cleanup
+func TestClaudeConfigurationUnusedNondirectoryComponent(t *testing.T) {
+	for _, desired := range []bool{false, true} {
+		t.Run(map[bool]string{false: "cleanup", true: "desired-output"}[desired], func(t *testing.T) {
+			_, repo, root := claudeDirectoryFixture(t)
+			resources := []resolver.ResolvedArtifact{claudeDirectorySkill("stale", config.UserPersonal, hcc.TargetClaude)}
+			if report, err := Run(context.Background(), repo, resources); err != nil || diag.HasErrors(report.Diags) {
+				t.Fatalf("seed output: %v, %+v", err, report)
+			}
+			component := filepath.Join(root, ".claude-plugin")
+			if err := os.RemoveAll(component); err != nil {
+				t.Fatal(err)
+			}
+			claudeDirectoryWrite(t, component, "unrelated user file")
+			before, err := os.Stat(component)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var selections []resolver.ResolvedArtifact
+			if desired {
+				selections = resources
+			}
+			report, err := Run(context.Background(), repo, selections)
+			if err != nil || diag.HasErrors(report.Diags) != desired {
+				t.Fatalf("component admission: %v, %+v", err, report)
+			}
+			after, err := os.Stat(component)
+			if err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() || !before.ModTime().Equal(after.ModTime()) {
+				t.Fatalf("unrelated component metadata changed: %v", err)
+			}
+			if string(claudeDirectoryRead(t, component)) != "unrelated user file" {
+				t.Fatal("unrelated component bytes changed")
+			}
+			if !desired {
+				if _, err := os.Lstat(filepath.Join(root, "skills", "stale")); !os.IsNotExist(err) {
+					t.Fatalf("unused non-directory component blocked stale skill cleanup: %v", err)
+				}
+			}
+		})
+	}
+}

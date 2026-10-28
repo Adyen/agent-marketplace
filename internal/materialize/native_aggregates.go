@@ -446,7 +446,7 @@ func addExistingNativeAggregateKeys(repoRoot string, outputs map[outputKey]bool)
 			destinations, err := harness.ResolveDestinations(target, machine, repoRoot)
 			if err != nil {
 				if target == hcc.TargetClaude && machine {
-					if custom := os.Getenv("CLAUDE_CONFIG_DIR"); custom != "" && !filepath.IsAbs(custom) {
+					if harness.ClaudeConfigDirRelative(os.Getenv("CLAUDE_CONFIG_DIR")) {
 						continue
 					}
 				}

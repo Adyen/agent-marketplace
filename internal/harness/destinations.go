@@ -167,6 +167,11 @@ func resolveDestinations(target hcc.Target, machineScope bool, repoRoot, homeDir
 	if err != nil {
 		return nil, err
 	}
+	if target == hcc.TargetClaude && machineScope && os.Getenv("CLAUDE_CONFIG_DIR") != "" {
+		if err := validateClaudeGitRoot(repoRoot, root); err != nil {
+			return nil, err
+		}
+	}
 	if err := ValidateDestinationRoot(machineScope, repoRoot, homeDir, root); err != nil {
 		return nil, fmt.Errorf("harness destination root: %w", err)
 	}

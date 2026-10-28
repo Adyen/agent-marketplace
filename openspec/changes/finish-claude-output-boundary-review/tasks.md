@@ -1,0 +1,6 @@
+- [x] Reproduce legacy unmarked hard-link failures in sync and check.
+- [x] Restrict captured I/O to declared relocated aggregates.
+- [x] Reproduce and refuse Git administrative roots and aliases.
+- [x] Share the existing relative-value predicate.
+- [ ] Validate regressions, affected packages and domain gates; adversarial review.
+- [ ] Archive this clarification as the final commit.

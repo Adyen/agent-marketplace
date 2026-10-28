@@ -48,6 +48,8 @@ also support native hooks in both materialization modes.
 Keep the relocated machine root separate from `<repo>/.claude`: when both
 scopes produce output and their roots overlap, sync refuses with
 `materialize.destination.overlap`.
+Git administrative paths are not eligible: this includes `.git`, configured
+Git/common directories, linked-worktree metadata, and aliases into them.
 
 ## Output paths by harness
 

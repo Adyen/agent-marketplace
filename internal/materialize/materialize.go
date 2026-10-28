@@ -908,7 +908,7 @@ func addExistingOutputKeys(repoRoot string, allOutputs map[outputKey]bool) {
 		repoDir := repoOutputDir(target, roots, repoRoot)
 		machineDir := roots.For(true, repoRoot)
 		if target == hcc.TargetClaude {
-			if custom := os.Getenv("CLAUDE_CONFIG_DIR"); custom != "" && !filepath.IsAbs(custom) {
+			if harness.ClaudeConfigDirRelative(os.Getenv("CLAUDE_CONFIG_DIR")) {
 				machineDir = ""
 			}
 		}
@@ -3743,7 +3743,7 @@ func subtreeMaterializePlans(outDir string, artifacts []artifact.Artifact, compo
 	for _, component := range orderedComponents(components, scoped) {
 		componentOutDir := filepath.Join(outDir, component)
 		if len(scoped[component]) == 0 {
-			if _, err := os.Stat(componentOutDir); err != nil {
+			if info, err := os.Stat(componentOutDir); err != nil || !info.IsDir() {
 				continue
 			}
 		}
@@ -4444,6 +4444,14 @@ func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[
 	if err != nil || !info.IsDir() {
 		return report, nil
 	}
+	// Legacy discovery keeps its file eligibility; declarations select captured I/O.
+	var fileBoundaries []*destinationBoundary
+	if declared != nil {
+		fileBoundaries = []*destinationBoundary{nil}
+		if len(boundaries) > 0 {
+			fileBoundaries[0] = boundaries[0]
+		}
+	}
 	// WalkDir visits lexically, so the diagnostic order is deterministic.
 	visit := func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -4484,7 +4492,7 @@ func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[
 			return nil
 		}
 		relSlash := filepath.ToSlash(rel)
-		cleaned, removed, pruneErr := stripManagedEntriesFromFile(path, dryRun, boundaries...)
+		cleaned, removed, pruneErr := stripManagedEntriesFromFile(path, dryRun, fileBoundaries...)
 		if pruneErr != nil {
 			// PER-FILE failure: report this file and keep walking.
 			diags = append(diags, managedMergePruneDiag(relSlash, path, pruneErr))
@@ -4677,11 +4685,17 @@ func stripManagedEntriesFromFile(path string, dryRun bool, boundaries ...*destin
 	if len(boundaries) > 0 {
 		boundary = boundaries[0]
 	}
-	observed, err := os.Lstat(path)
-	if err != nil {
-		return nil, nil, err
+	var observed fs.FileInfo
+	var data []byte
+	var readErr error
+	if len(boundaries) > 0 {
+		observed, readErr = os.Lstat(path)
+		if readErr == nil {
+			data, readErr = readNativeCommandFile(path, observed, boundary)
+		}
+	} else {
+		data, readErr = os.ReadFile(path)
 	}
-	data, readErr := readNativeCommandFile(path, observed, boundary)
 	if readErr != nil {
 		return nil, nil, readErr
 	}
@@ -4771,7 +4785,13 @@ func stripManagedEntriesFromFile(path string, dryRun bool, boundaries ...*destin
 	}
 	result := doc.Bytes()
 	if !dryRun {
-		if writeErr := publishPortableBytes(path, result, observed.Mode().Perm(), observed, boundary); writeErr != nil {
+		var writeErr error
+		if len(boundaries) > 0 {
+			writeErr = publishPortableBytes(path, result, observed.Mode().Perm(), observed, boundary)
+		} else {
+			writeErr = atomicWriteFile(path, result, 0o644)
+		}
+		if writeErr != nil {
 			return nil, removed, writeErr
 		}
 	}
