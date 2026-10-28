@@ -602,7 +602,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.tui_qa == 'true'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    # Allow cold macOS builds, all journeys, and post-job cache archiving.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -1112,7 +1113,8 @@ jobs:
   web:
     name: Web checks
     if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
+    # Playwright's Chromium build does not support Ubuntu 26.04 yet.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
