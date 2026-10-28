@@ -10,6 +10,6 @@
 
 - [x] Prove regression fixtures fail against the previous catalog data.
 - [x] Run model catalog checks, affected tests, validation, and spec checks.
-- [ ] Run the combined E2E/configuration-compatibility gate.
+- [x] Run the combined E2E/configuration-compatibility gate.
 - [x] Review all changes with OCR delegate and resolve actionable findings.
-- [ ] Run `openspec archive review-october-model-catalog-drift --yes` as the final commit.
+- [x] Run `openspec archive review-october-model-catalog-drift --yes` as the final commit.
