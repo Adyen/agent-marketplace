@@ -1,14 +1,20 @@
 package e2e_test
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"testing"
 	"time"
 )
 
 const factoryNativePluginDependency = "amcompat-probe-dependency"
+
+var errFactoryPluginSkillAbsent = errors.New("Factory plugin skill absent")
 
 // spec: plugin-delivery/reload-requirement-is-reported
 func runFactoryNativePluginProbe(e *Env, binary string, f compatibilityFixture, scope string, row *compatibilityResult) error {
@@ -53,10 +59,10 @@ func runFactoryNativePluginProbe(e *Env, binary string, f compatibilityFixture, 
 
 	before := runCompatibilityProtocol(e, binary, "factory-skills", 30*time.Second)
 	row.Commands = append(row.Commands, before)
-	if _, err := requireFactoryPluginSkill(&before, e, skillName, true); err != nil {
+	if _, err := requireFactoryPluginSkill(&before, e, pluginName, skillName, true); err != nil {
 		return fmt.Errorf("Factory plugin negative control failed: %w", err)
 	}
-	row.Commands[len(row.Commands)-1].Observed = append(row.Commands[len(row.Commands)-1].Observed, "plugin skill absent before sync")
+	row.Commands[len(row.Commands)-1].Observed = append(row.Commands[len(row.Commands)-1].Observed, fmt.Sprintf("plugin skill absent before sync; checked %q and %q", skillName, pluginName+":"+skillName))
 
 	writeConfig := func(selected bool) {
 		resources := "[]"
@@ -80,11 +86,53 @@ func runFactoryNativePluginProbe(e *Env, binary string, f compatibilityFixture, 
 	if sync.ExitCode != 0 {
 		return fmt.Errorf("Factory native plugin sync failed")
 	}
-	installed := runCompatibilityProtocol(e, binary, "factory-skills", 30*time.Second)
-	row.Commands = append(row.Commands, installed)
-	entry, err := requireFactoryPluginSkill(&installed, e, skillName, false, firstBody, firstBody+"\n", skillDocument(firstBody))
-	if err != nil {
-		return fmt.Errorf("Factory plugin skill content after sync: %w", err)
+	startupDeadline := time.Now().Add(60 * time.Second)
+	skillInstalled := false
+	metadataSessions := 0
+	var entry compatibilityNativeEntry
+	var err error
+	for attempt := 1; attempt <= 4; attempt++ {
+		remaining := time.Until(startupDeadline)
+		if remaining <= 0 {
+			break
+		}
+		sessionTimeout := min(remaining, 30*time.Second)
+		command := runCompatibilityProtocol(e, binary, "factory-skills", sessionTimeout)
+		metadataSessions++
+		entry, err = requireFactoryPluginSkill(&command, e, pluginName, skillName, false, firstBody, firstBody+"\n", skillDocument(firstBody))
+		switch {
+		case errors.Is(err, errFactoryPluginSkillAbsent):
+			command.Observed = append(command.Observed, fmt.Sprintf("plugin skill absent in metadata session %d", attempt))
+			row.Commands = append(row.Commands, command)
+		case err != nil:
+			switch {
+			case entry.Name != "":
+				command.Observed = append(command.Observed, fmt.Sprintf("plugin skill present in metadata session %d; matched name %q", attempt, entry.Name))
+			case strings.Contains(err.Error(), "multiple matches"):
+				command.Observed = append(command.Observed, fmt.Sprintf("multiple plugin skill matches in metadata session %d", attempt))
+			default:
+				command.Observed = append(command.Observed, fmt.Sprintf("plugin skill inspection failed in metadata session %d", attempt))
+			}
+			row.Commands = append(row.Commands, command)
+			return fmt.Errorf("Factory plugin skill content after sync: %w", err)
+		default:
+			command.Observed = append(command.Observed, fmt.Sprintf("plugin skill present in metadata session %d; matched name %q", attempt, entry.Name))
+			row.Commands = append(row.Commands, command)
+			skillInstalled = true
+		}
+		if skillInstalled || attempt == 4 {
+			break
+		}
+		remaining = time.Until(startupDeadline)
+		if remaining <= 0 {
+			break
+		}
+		pause := min(remaining, 5*time.Second)
+		time.Sleep(pause)
+	}
+	recordFactoryPluginDiagnostics(e, scope, &row.Commands[len(row.Commands)-1])
+	if !skillInstalled {
+		return fmt.Errorf("Factory plugin skill absent after %d metadata sessions", metadataSessions)
 	}
 	if !filepath.IsAbs(entry.FilePath) || filepath.Base(entry.FilePath) != "SKILL.md" {
 		return fmt.Errorf("Factory plugin skill inventory omitted its cached file path")
@@ -109,7 +157,7 @@ func runFactoryNativePluginProbe(e *Env, binary string, f compatibilityFixture, 
 	if _, err := os.Lstat(dependencyPath); err == nil || !os.IsNotExist(err) {
 		return fmt.Errorf("Factory installed the plugin's npm dependency implicitly")
 	}
-	installed.Observed = append(installed.Observed, "exact generation-one content", "declared npm dependency not installed")
+	row.Commands[len(row.Commands)-1].Observed = append(row.Commands[len(row.Commands)-1].Observed, "exact generation-one content", "declared npm dependency not installed")
 	listScope := "project"
 	if scope == "user" {
 		listScope = "user"
@@ -144,11 +192,12 @@ func runFactoryNativePluginProbe(e *Env, binary string, f compatibilityFixture, 
 	refreshObserved := false
 	for attempt := 1; attempt <= 2; attempt++ {
 		command := runCompatibilityProtocol(e, binary, "factory-skills", 30*time.Second)
-		row.Commands = append(row.Commands, command)
-		entry, err := requireFactoryPluginSkill(&command, e, skillName, false)
+		entry, err := requireFactoryPluginSkill(&command, e, pluginName, skillName, false)
 		if err != nil {
+			row.Commands = append(row.Commands, command)
 			return fmt.Errorf("Factory plugin skill after generation update: %w", err)
 		}
+		command.Observed = append(command.Observed, fmt.Sprintf("plugin skill matched name %q after generation update", entry.Name))
 		switch entry.Content {
 		case secondBody, secondBody + "\n", skillDocument(secondBody):
 			command.Observed = append(command.Observed, fmt.Sprintf("generation refresh observed in metadata session %d", attempt))
@@ -156,8 +205,10 @@ func runFactoryNativePluginProbe(e *Env, binary string, f compatibilityFixture, 
 		case firstBody, firstBody + "\n", skillDocument(firstBody):
 			command.Observed = append(command.Observed, fmt.Sprintf("generation refresh not observed in metadata session %d", attempt))
 		default:
+			row.Commands = append(row.Commands, command)
 			return fmt.Errorf("Factory skill content matched neither plugin generation")
 		}
+		row.Commands = append(row.Commands, command)
 		if refreshObserved || attempt == 2 {
 			break
 		}
@@ -175,15 +226,15 @@ func runFactoryNativePluginProbe(e *Env, binary string, f compatibilityFixture, 
 	}
 	afterRemoval := runCompatibilityProtocol(e, binary, "factory-skills", 30*time.Second)
 	row.Commands = append(row.Commands, afterRemoval)
-	if _, err := requireFactoryPluginSkill(&afterRemoval, e, skillName, true); err != nil {
+	if _, err := requireFactoryPluginSkill(&afterRemoval, e, pluginName, skillName, true); err != nil {
 		return fmt.Errorf("Factory plugin remained in skill inventory after removal: %w", err)
 	}
-	afterRemoval.Observed = append(afterRemoval.Observed, "plugin skill absent after removal sync")
+	row.Commands[len(row.Commands)-1].Observed = append(row.Commands[len(row.Commands)-1].Observed, fmt.Sprintf("plugin skill absent after removal sync; checked %q and %q", skillName, pluginName+":"+skillName))
 	row.Reason += "; factory-native-plugin completed at " + scope + " scope"
 	return nil
 }
 
-func requireFactoryPluginSkill(command *compatibilityCommand, e *Env, name string, absent bool, expectedContent ...string) (compatibilityNativeEntry, error) {
+func requireFactoryPluginSkill(command *compatibilityCommand, e *Env, pluginName, name string, absent bool, expectedContent ...string) (compatibilityNativeEntry, error) {
 	if err := compatibilityInspectionError(*command); err != nil {
 		return compatibilityNativeEntry{}, err
 	}
@@ -193,19 +244,25 @@ func requireFactoryPluginSkill(command *compatibilityCommand, e *Env, name strin
 	}
 	var matches []compatibilityNativeEntry
 	for _, entry := range entries {
-		if entry.Name == name {
+		if entry.Name == name || entry.Name == pluginName+":"+name {
 			matches = append(matches, entry)
 		}
+	}
+	if len(matches) > 1 {
+		return compatibilityNativeEntry{}, fmt.Errorf("native inventory contains multiple matches for the Factory plugin skill")
+	}
+	if len(matches) == 1 && matches[0].Content == "" {
+		return matches[0], fmt.Errorf("Factory plugin skill present without content")
 	}
 	if absent {
 		if len(matches) != 0 {
 			return compatibilityNativeEntry{}, fmt.Errorf("native inventory already contains the Factory plugin skill")
 		}
-		command.Observed = append(command.Observed, "absent: "+name)
+		command.Observed = append(command.Observed, "absent: "+name+" or "+pluginName+":"+name)
 		return compatibilityNativeEntry{}, nil
 	}
-	if len(matches) != 1 || matches[0].Content == "" {
-		return compatibilityNativeEntry{}, fmt.Errorf("native inventory must return exactly one Factory plugin skill with content")
+	if len(matches) == 0 {
+		return compatibilityNativeEntry{}, errFactoryPluginSkillAbsent
 	}
 	if len(expectedContent) > 0 {
 		for _, want := range expectedContent {
@@ -216,6 +273,68 @@ func requireFactoryPluginSkill(command *compatibilityCommand, e *Env, name strin
 		return compatibilityNativeEntry{}, fmt.Errorf("native Factory plugin skill content differs from the requested generation")
 	}
 	return matches[0], nil
+}
+
+func recordFactoryPluginDiagnostics(e *Env, scope string, command *compatibilityCommand) {
+	pluginStatePath := filepath.Join(e.home, ".factory", "plugins")
+	entries, err := os.ReadDir(pluginStatePath)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		command.Observed = append(command.Observed, "Droid plugin state under ~/.factory/plugins: absent")
+	case err != nil:
+		command.Observed = append(command.Observed, "Droid plugin state under ~/.factory/plugins: unavailable")
+	default:
+		names := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			names = append(names, entry.Name())
+		}
+		sort.Strings(names)
+		command.Observed = append(command.Observed, "Droid plugin state under ~/.factory/plugins: ["+strings.Join(names, ", ")+"]")
+	}
+
+	registrationPath := filepath.Join(e.home, ".factory", "settings.json")
+	if scope != "user" {
+		registrationPath = filepath.Join(e.workspace, ".factory", "settings.local.json")
+	}
+	data, err := os.ReadFile(registrationPath)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		command.Observed = append(command.Observed, "Factory registration keys: extraKnownMarketplaces=false, enabledPlugins=false")
+	case err != nil:
+		command.Observed = append(command.Observed, "Factory registration keys: unavailable")
+	default:
+		var settings map[string]json.RawMessage
+		if err := json.Unmarshal(data, &settings); err != nil || settings == nil {
+			command.Observed = append(command.Observed, "Factory registration keys: unavailable (invalid settings JSON)")
+			return
+		}
+		_, hasMarketplaces := settings["extraKnownMarketplaces"]
+		_, hasEnabledPlugins := settings["enabledPlugins"]
+		command.Observed = append(command.Observed, fmt.Sprintf("Factory registration keys: extraKnownMarketplaces=%t, enabledPlugins=%t", hasMarketplaces, hasEnabledPlugins))
+	}
+}
+
+func TestRequireFactoryPluginSkillMatchesNamespacedName(t *testing.T) {
+	e := &Env{workspace: t.TempDir()}
+	inventory := `{"skills":[{"name":"plugin:skill","content":"fixture"}]}`
+
+	t.Run("presence", func(t *testing.T) {
+		command := compatibilityCommand{output: inventory}
+		entry, err := requireFactoryPluginSkill(&command, e, "plugin", "skill", false, "fixture")
+		if err != nil {
+			t.Fatalf("namespaced Factory skill was not matched: %v", err)
+		}
+		if entry.Name != "plugin:skill" {
+			t.Fatalf("matched Factory skill name = %q, want %q", entry.Name, "plugin:skill")
+		}
+	})
+
+	t.Run("absence", func(t *testing.T) {
+		command := compatibilityCommand{output: inventory}
+		if _, err := requireFactoryPluginSkill(&command, e, "plugin", "skill", true); err == nil {
+			t.Fatal("namespaced Factory skill was accepted as absent")
+		}
+	})
 }
 
 func runFactoryPluginSync(e *Env, row *compatibilityResult, catalogPath string) compatibilityCommand {
