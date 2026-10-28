@@ -35,3 +35,16 @@ Rejecting every unknown native preference would break forward compatibility.
    comparison with `benchstat`.
 5. Archive the OpenSpec change, adversarially review every changed file using
    OCR delegate, and obtain publication approval before pushing.
+
+## Native Family Follow-up
+
+Recognize exact local family IDs for same-harness selections with a separate
+effort field before the portable fallback. Do not expand cross-harness
+inference or reinterpret undeclared native strings such as `sonnet`.
+
+Use the existing pinned-capability guard once the family is known. Prove
+Factory's shipped `anthropic/sonnet` through public `Convert`, remove the
+synthetic concrete-model anchor from the catalog test, and retain supported,
+omitted, opaque-selector, and cross-harness controls. Measure native and
+existing resolver paths before and after the change, then validate, archive,
+adversarially review, and publish the approved follow-up.
