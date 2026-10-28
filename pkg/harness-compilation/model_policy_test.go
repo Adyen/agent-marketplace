@@ -129,6 +129,13 @@ func TestModelPolicyNativeReasoningEncoding(t *testing.T) {
 		{"codex inheritance is omission", TargetCodex, "inherit", "", "", "model_reasoning_effort", ""},
 		{"factory inheritance ignores effort", TargetFactory, "inherit", "high", "inherit", "reasoningEffort", ""},
 		{"codex concrete model and effort", TargetCodex, "gpt-5.6-terra", "high", "gpt-5.6-terra", "model_reasoning_effort", "high"},
+		{"codex Terra 6.1 reasoning", TargetCodex, "openai/gpt-6.1-terra", "high", "gpt-6.1-terra", "model_reasoning_effort", "high"},
+		{"factory DeepSeek 1017", TargetFactory, "deepseek/deepseek-v4.1-flash-1017", "low", "deepseek-v4.1-flash-1017", "reasoningEffort", "low"},
+		{"factory MiniMax Flash", TargetFactory, "minimax/minimax-m3.1-flash", "medium", "minimax-m3.1-flash", "reasoningEffort", "medium"},
+		{"factory Nemotron Super", TargetFactory, "nvidia/nemotron-3.5-super", "high", "nemotron-3.5-super", "reasoningEffort", "high"},
+		{"factory Luna fast", TargetFactory, "openai/gpt-6-luna-fast", "medium", "gpt-6-luna-fast", "reasoningEffort", "medium"},
+		{"factory Sol fast", TargetFactory, "openai/gpt-6-sol-fast", "low", "gpt-6-sol-fast", "reasoningEffort", "low"},
+		{"factory Sol ultrafast", TargetFactory, "openai/gpt-6.1-sol-ultrafast", "high", "gpt-6.1-sol-ultrafast", "reasoningEffort", "high"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := ir.NewSubagent("review", "Review", "Keep this body.\n", tc.model, nil, tc.effort, nil, "", nil, ir.SourceRef{})
