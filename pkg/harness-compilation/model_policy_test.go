@@ -100,10 +100,13 @@ func TestModelPolicyDiagnosticScenarios(t *testing.T) {
 		{"unsupported reasoning", "", TargetGemini, "gemini-3-preview", "high", "gemini-3-preview", "effort", "", diag.CodeModelReasoningOmitted, diag.SeverityWarning},
 		{"conflicting reasoning", TargetCursor, TargetClaude, "claude-opus-5[effort=high]", "low", "claude-opus-5", "effort", "low", diag.CodeModelReasoningConflict, diag.SeverityWarning},
 		{"floating family pin", "", TargetFactory, "sonnet", "", "claude-sonnet-5", "reasoningEffort", "", diag.CodeModelSelectorPinned, diag.SeverityInfo},
+		{"native family does not widen cross-harness lookup", TargetFactory, TargetClaude, "anthropic/sonnet", "high", "", "effort", "high", diag.CodeModelUnresolved, diag.SeverityWarning},
+		{"model-encoded native family stays opaque", TargetCursor, TargetCursor, "anthropic/sonnet", "high", "anthropic/sonnet", "effort", "", diag.CodeModelReasoningOmitted, diag.SeverityWarning},
 		{"inheritance/default mismatch", TargetDevin, TargetClaude, "", "", "", "effort", "", diag.CodeModelInheritanceMismatch, diag.SeverityWarning},
 		{"reasoning on inherited selection", "", TargetFactory, "inherit", "high", "inherit", "reasoningEffort", "", diag.CodeModelReasoningOmitted, diag.SeverityWarning},
 		{"factory Nemotron unsupported low", "", TargetFactory, "nvidia/nemotron-3.5-super", "low", "nemotron-3.5-super", "reasoningEffort", "", diag.CodeModelReasoningOmitted, diag.SeverityWarning},
 		{"Claude native unsupported reasoning", TargetClaude, TargetClaude, "claude-opus-5", "ultra", "claude-opus-5", "effort", "", diag.CodeModelReasoningOmitted, diag.SeverityWarning},
+		{"Claude native family unsupported reasoning", TargetClaude, TargetClaude, "anthropic/sonnet", "max", "anthropic/sonnet", "effort", "", diag.CodeModelReasoningOmitted, diag.SeverityWarning},
 		{"Codex native unsupported reasoning", TargetCodex, TargetCodex, "gpt-6.1-terra", "ultra", "gpt-6.1-terra", "model_reasoning_effort", "", diag.CodeSubagentCodexEffortDropped, diag.SeverityWarning},
 		{"factory fast without reasoning", TargetFactory, TargetDevin, "gpt-6-sol-fast", "", "", "effort", "", diag.CodeSubagentDevinModelUnmappable, diag.SeverityWarning},
 		{"factory fast supported reasoning", TargetFactory, TargetDevin, "gpt-6-sol-fast", "high", "gpt-6-sol-high-priority", "effort", "", "", 0},
@@ -195,6 +198,7 @@ func TestModelPolicyDevinNativeRoundTrip(t *testing.T) {
 // spec: harness-model-catalogs/same-harness-known-models-omit-unsupported-native-reasoning
 // spec: harness-model-catalogs/same-harness-supported-native-effort-values-remain-unchanged
 // spec: harness-model-catalogs/same-harness-unknown-destination-models-retain-native-reasoning
+// spec: harness-model-catalogs/same-harness-native-catalog-family-ids-are-recognized-locally
 func TestModelPolicyFactoryNativeReasoning(t *testing.T) {
 	for _, tc := range []struct {
 		name, model, effort, wantEffort, wantCode string
@@ -203,10 +207,14 @@ func TestModelPolicyFactoryNativeReasoning(t *testing.T) {
 		{"unsupported native model", "nemotron-3.5-super", "low", "", diag.CodeModelReasoningOmitted},
 		{"supported native model", "nemotron-3.5-super", "high", "high", ""},
 		{"supported qualified model", "nvidia/nemotron-3.5-super", "high", "high", ""},
+		{"unsupported catalog family", "anthropic/sonnet", "max", "", diag.CodeModelReasoningOmitted},
+		{"supported catalog family", "anthropic/sonnet", "high", "high", ""},
+		{"omitted catalog family reasoning", "anthropic/sonnet", "", "", ""},
 		{"omitted reasoning", "nemotron-3.5-super", "", "", ""},
 		{"future native model", "future-native-model", "future", "future", ""},
 		{"known only to Codex", "gpt-6.1-terra", "high", "high", ""},
 		{"unknown native selector", "sonnet", "high", "high", ""},
+		{"unknown native selector with max", "sonnet", "max", "max", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			effortField := ""

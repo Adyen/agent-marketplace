@@ -15,7 +15,10 @@ func BenchmarkNativeReasoning(b *testing.B) {
 		{"qualified", "nvidia/nemotron-3.5-super", "high"},
 		{"unknown", "future-native-model", "future"},
 		{"other-catalog", "gpt-6.1-terra", "high"},
-		{"family", "sonnet", "high"},
+		{"opaque-selector", "sonnet", "high"},
+		{"family-supported", "anthropic/sonnet", "high"},
+		{"family-unsupported", "anthropic/sonnet", "max"},
+		{"family-omitted", "anthropic/sonnet", ""},
 		{"omitted", "nemotron-3.5-super", ""},
 	} {
 		b.Run(tc.name, func(b *testing.B) {

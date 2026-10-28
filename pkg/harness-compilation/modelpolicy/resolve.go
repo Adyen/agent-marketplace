@@ -108,6 +108,11 @@ func (r *registry) resolve(req Request) Result {
 			selected.Effort = req.Effort
 		}
 	}
+	if !known && req.Source == req.Target && surf.EffortField != "" {
+		if _, available := sourceCatalog.Families[req.Model]; available {
+			selected, known = selection{Identity: req.Model, Effort: req.Effort}, true
+		}
+	}
 	if !known {
 		id := r.portable[req.Model]
 		if id == "" {

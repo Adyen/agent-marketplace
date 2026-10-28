@@ -192,17 +192,6 @@ models:
 families:
   example/model: {pin: example/pinned}
 `)},
-		"claude.yaml": {Data: []byte(`
-schema: 1
-harness: claude
-evidence: {checked: "2026-10-28", refs: [test]}
-surfaces:
-  subagent: {model_field: model, effort_field: effort, omitted_model: inherit, inherit_model: inherit}
-models:
-  example/model:
-    model: other-native
-    reasoning: {max: {effort: high}}
-`)},
 	}
 	r, err := loadCatalogs(files, "*.yaml")
 	if err != nil {
