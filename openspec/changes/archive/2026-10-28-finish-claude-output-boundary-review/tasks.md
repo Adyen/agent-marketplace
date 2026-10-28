@@ -4,3 +4,11 @@
 - [x] Share the existing relative-value predicate.
 - [x] Validate regressions, affected packages and domain gates; adversarial review.
 - [x] Archive this clarification as the final commit.
+
+## Final Verification
+
+Scoped consumer regressions, CI lint/build, the combined E2E gate (four required
+witnesses and 114 command requirements), and all 86 terminal journeys passed.
+After integrating main's duplicate CI/security fixes, production and module
+files remain identical to that validated candidate. The inherited startup
+cleanup tests and strict spec checks also pass. All 26 new PR scenarios are bound.
