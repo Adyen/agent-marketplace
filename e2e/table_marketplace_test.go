@@ -11,7 +11,7 @@ func init() {
 		GlobalCfg:    v4Cfg("factory"),
 		RepoCfg:      v4Cfg("factory") + "sources: {hub: {marketplace: '{{MKT:hub}}'}}\n",
 		Steps: []Step{
-			{Args: []string{"install", "hub:hub/skill/selected", "--yes"}, MustPass: true},
+			{Args: []string{"install", "--scope", "repo", "hub:hub/skill/selected", "--yes"}, MustPass: true},
 			{Args: []string{"sync"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/selected/SKILL.md"}},
 			{Args: []string{"sync", "--check"}, MustPass: true},
 			{Args: []string{"status"}, MustPass: true, OutContains: []string{"SYNCED RESOURCES", "selected"}, OutNotContains: []string{"orphan", "pending removal"}},
@@ -81,7 +81,7 @@ resources:
 `,
 		Steps: []Step{
 			{Args: []string{"sync"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/skills/git-http/SKILL.md": "# git-http", "/root/.factory/skills/organization/SKILL.md": "# organization"}},
-			{Args: []string{"install", "hub:hub/skill/current", "--yes"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/skills/current/SKILL.md": "# current"}},
+			{Args: []string{"install", "--scope", "repo", "hub:hub/skill/current", "--yes"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/skills/current/SKILL.md": "# current"}},
 			{
 				Action: ActionPushRegistry,
 				Target: "hub",
@@ -118,7 +118,7 @@ func TestE2ETableRevokeMarketplace(t *testing.T) {
 		GlobalCfg:    v4Cfg("factory"),
 		RepoCfg:      v4Cfg("factory") + "sources: {revoke: {marketplace: '{{MKT:revoke}}'}}\n",
 		Steps: []Step{
-			{Args: []string{"install", "revoke:revoke/skill/locked", "--yes"}, MustPass: true},
+			{Args: []string{"install", "--scope", "repo", "revoke:revoke/skill/locked", "--yes"}, MustPass: true},
 			{Args: []string{"sync"}, MustPass: true, FileContains: map[string]string{"/workspace/.factory/skills/locked/SKILL.md": "Revocable skill"}},
 			{Action: ActionRevokeMarketplace, Target: "revoke", Revoke: MarketplaceRevocations{Coordinates: []string{"revoke-marketplace/revoke-id/skill/locked"}}},
 			{
