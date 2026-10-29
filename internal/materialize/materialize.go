@@ -5754,6 +5754,11 @@ func prepareSkillLinkCaches(links []skillLink, dryRun bool) error {
 	return nil
 }
 
+// skillLinkCacheCompareHook runs after an unchanged-cache comparison succeeds
+// and before preparation accepts it. It is nil in production and set only by
+// serial tests in this package.
+var skillLinkCacheCompareHook func(cacheDir string)
+
 // supportStageCopyHook runs after the support stage is admitted and before
 // support is copied into it. It is nil in production and set only by serial
 // tests in this package.
@@ -5884,9 +5889,15 @@ func prepareSkillLinkCache(link skillLink) (err error) {
 	if err := namespace.directory(parentPath, false); err != nil {
 		return err
 	}
-	if skillLinkCacheCurrent(link, cacheDir) && namespace.directory(cacheDir, false) == nil {
-		slog.Debug("skill link cache already current", "path", cacheDir, "phase", "cache-current")
-		return nil
+	cacheName := filepath.Base(cacheDir)
+	if compared, current := skillLinkCacheCurrent(link, parent, native, cacheName); current {
+		if skillLinkCacheCompareHook != nil {
+			skillLinkCacheCompareHook(cacheDir)
+		}
+		if namespace.directory(parentPath, false) == nil && cacheGenerationUnchanged(native, cacheName, compared) {
+			slog.Debug("skill link cache already current", "path", cacheDir, "phase", "cache-current")
+			return nil
+		}
 	}
 	compiled := make(map[string]bool, len(link.artifacts))
 	for _, a := range link.artifacts {
@@ -5956,29 +5967,50 @@ func prepareSkillLinkCache(link skillLink) (err error) {
 	return nil
 }
 
-// skillLinkCacheCurrent reports whether cacheDir already holds exactly the tree
-// prepareSkillLinkCache would publish: the same compiled artifacts, support
-// bytes, modes and directories, and no other entries. Both digests read through
-// captured handles. Any error, including a refused support source, reports
-// false so full preparation runs and reports its own diagnostic.
-func skillLinkCacheCurrent(link skillLink, cacheDir string) bool {
+// skillLinkCacheCurrent reports whether the cache directory name below the
+// admitted parent already holds exactly the tree prepareSkillLinkCache would
+// publish: the same compiled artifacts, support bytes, modes and directories,
+// and no other entries. Both digests read through captured handles, and the
+// identity of the compared directory is returned so the caller can bind its
+// decision to it. Any error, including a refused support source, reports false
+// so full preparation runs and reports its own diagnostic.
+func skillLinkCacheCurrent(link skillLink, parent *fsboundary.Dir, native *os.Root, name string) (fsboundary.Identity, bool) {
 	// A missing cache fails here before any source support is read.
-	actual, err := portablePathDigest(cacheDir)
+	info, err := native.Lstat(name)
+	if err != nil || !info.IsDir() {
+		return fsboundary.Identity{}, false
+	}
+	compared, err := fsboundary.FileInfoIdentity(info)
 	if err != nil {
-		return false
+		return fsboundary.Identity{}, false
+	}
+	h := sha256.New()
+	if err := writePortableDigestEntry(h, parent, name, ""); err != nil {
+		return compared, false
 	}
 	desired, support, err := portableSkillVirtualDigestWithSupport(link)
-	if err != nil || actual != desired {
-		return false
+	if err != nil || "sha256:"+hex.EncodeToString(h.Sum(nil)) != desired {
+		return compared, false
 	}
 	// Full preparation refuses when its stage lacks a declared support file;
 	// require the same files from this walk, not an earlier path check.
 	for _, rel := range link.declaredSupport {
 		if !support[filepath.ToSlash(filepath.Clean(rel))] {
-			return false
+			return compared, false
 		}
 	}
-	return true
+	return compared, true
+}
+
+// cacheGenerationUnchanged reports whether name below the admitted parent is
+// still the compared cache directory in the same state.
+func cacheGenerationUnchanged(native *os.Root, name string, compared fsboundary.Identity) bool {
+	info, err := native.Lstat(name)
+	if err != nil {
+		return false
+	}
+	current, err := fsboundary.FileInfoIdentity(info)
+	return err == nil && current.SameState(compared)
 }
 
 // pruneSkillCacheSupportFiles deletes every previous support-file entry while

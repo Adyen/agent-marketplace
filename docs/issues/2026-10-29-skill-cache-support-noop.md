@@ -14,11 +14,21 @@ applied. Every unchanged sync gave each support file a new inode and mtime.
 ## Change
 
 Before staging, `prepareSkillLinkCache` compares two existing exact-tree
-digests: the cache's actual digest (`portablePathDigest`) and the desired
-digest `sync --check` already uses (`portableSkillVirtualDigest`). Both
-digests cover compiled artifacts, support bytes and modes, directories and
-any other entry. When they match and the cache still opens below the admitted
-cache namespace, preparation returns without staging, pruning or writing.
+digests:
+
+- the cache's actual digest, in the `portablePathDigest` format but read
+  through the admitted cache-namespace descriptor;
+- the desired digest that `sync --check` already uses
+  (`portableSkillVirtualDigest`).
+
+Both digests cover compiled artifacts, support bytes and modes, directories
+and any other entry. Preparation returns without staging, pruning or writing
+only when all of these hold:
+
+- the digests match;
+- the same captured walk copied every declared support file;
+- the namespace path still denotes the admitted parent;
+- the cache entry is still the compared directory in the same state.
 
 Any other outcome runs the unchanged full preparation, with its diagnostics:
 
@@ -77,6 +87,19 @@ The worst case is a sync after every cached skill changed with same-size
 content. It pays for both digests before full preparation: +43% time and +47%
 allocated bytes. Like `sync --check`, the desired digest holds one skill's
 support bytes in memory at a time.
+
+## Review Follow-Ups
+
+Two review fixes harden the fast path after these measurements were taken:
+
+- `907ced8e`: declared support must come from the captured walk.
+- The following commit: the decision is bound to the compared cache
+  directory's identity and state.
+
+Both add only per-skill bookkeeping. Sanity runs of
+`BenchmarkRunUnchangedSkillLinkCaches` afterwards measured 76-77 ms,
+124-128 ms and 291-295 ms, matching or improving on the recorded after-change
+medians. The tables above were not re-measured.
 
 ## Limits
 

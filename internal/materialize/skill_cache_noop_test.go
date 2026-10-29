@@ -254,6 +254,46 @@ func TestPrepareSkillLinkCacheRequiresDeclaredSupportFromCapturedWalk(t *testing
 	}
 }
 
+// spec: materialization/skill-cache-preparation-reconciles-support-drift
+func TestPrepareSkillLinkCacheFallsBackWhenComparedCacheIsReplaced(t *testing.T) {
+	sourceDir := t.TempDir()
+	cacheDir := filepath.Join(t.TempDir(), "cache")
+	if err := os.Mkdir(cacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeSkillCacheSource(t, sourceDir)
+	link := skillLink{sourceDir: sourceDir, cacheDir: cacheDir, artifacts: []artifact.Artifact{{Path: "SKILL.md", Bytes: []byte("compiled skill")}}}
+	stages := countSupportStages(t)
+	if err := prepareSkillLinkCache(link); err != nil {
+		t.Fatalf("initial preparation: %v", err)
+	}
+	compared := cacheDir + ".compared"
+	replaced := false
+	skillLinkCacheCompareHook = func(dir string) {
+		if replaced {
+			return
+		}
+		replaced = true
+		if err := os.Rename(dir, compared); err != nil {
+			t.Fatal(err)
+		}
+		mustWrite(t, filepath.Join(dir, "foreign.md"), "foreign", 0o644)
+	}
+	t.Cleanup(func() { skillLinkCacheCompareHook = nil })
+
+	if err := prepareSkillLinkCache(link); err != nil {
+		t.Fatalf("preparation after replacement: %v", err)
+	}
+	if !replaced {
+		t.Fatal("unchanged comparison never reached the replacement point")
+	}
+	if *stages != 2 {
+		t.Fatalf("replaced cache was accepted without full preparation (%d stages)", *stages)
+	}
+	assertCacheMatchesDesired(t, link, cacheDir)
+	assertCacheMatchesDesired(t, link, compared)
+}
+
 // spec: materialization/unchanged-skill-cache-support-repeats-without-mutation
 func TestRunRepeatSymlinkSkillPreservesCachedSupportIdentity(t *testing.T) {
 	repoRoot := t.TempDir()
