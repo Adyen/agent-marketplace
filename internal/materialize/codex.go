@@ -179,7 +179,7 @@ type codexMCPEntry struct {
 
 type codexPluginRegistration struct {
 	container, key, resource string
-	source, path             string
+	sourceType, source       string
 	valueDigest              string
 	pluginInstanceKey        string
 }
@@ -194,13 +194,13 @@ func codexPluginRegistrations(entries []ownedJSONEntry) ([]codexPluginRegistrati
 		switch entry.container {
 		case "marketplaces":
 			var value struct {
-				Source string `json:"source"`
-				Path   string `json:"path"`
+				SourceType string `json:"source_type"`
+				Source     string `json:"source"`
 			}
-			if err := json.Unmarshal(entry.raw, &value); err != nil || value.Source != "local" || value.Path == "" {
+			if err := json.Unmarshal(entry.raw, &value); err != nil || value.SourceType != "local" || value.Source == "" {
 				return nil, fmt.Errorf("invalid Codex local marketplace registration")
 			}
-			registration.source, registration.path = value.Source, value.Path
+			registration.sourceType, registration.source = value.SourceType, value.Source
 		case "plugins":
 			var value struct {
 				Enabled bool `json:"enabled"`
@@ -243,11 +243,11 @@ func (e codexPluginRegistration) tomlTable() []byte {
 	table.WriteString(strconv.Quote(e.key))
 	table.WriteString("]\n")
 	if e.container == "marketplaces" {
-		table.WriteString("source = { source = ")
+		table.WriteString("source_type = ")
+		table.WriteString(strconv.Quote(e.sourceType))
+		table.WriteString("\nsource = ")
 		table.WriteString(strconv.Quote(e.source))
-		table.WriteString(", path = ")
-		table.WriteString(strconv.Quote(e.path))
-		table.WriteString(" }\n")
+		table.WriteByte('\n')
 	} else {
 		table.WriteString("enabled = true\n")
 	}
