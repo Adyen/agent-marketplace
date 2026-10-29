@@ -132,7 +132,7 @@ resources:
 			},
 			{Args: []string{"sync", "--check"}, MustPass: true},
 			{
-				Args:           []string{"install", "hub:hub/skill/shared", "--yes"},
+				Args:           []string{"install", "--scope", "repo", "hub:hub/skill/shared", "--yes"},
 				MustPass:       true,
 				FileContains:   map[string]string{"/workspace/.agents/config.yaml": "hub/skill/shared", "/workspace/.agents/lock.yaml": "name: shared", "/workspace/.factory/skills/shared/SKILL.md": "Marketplace pin"},
 				PathsUnchanged: []string{"/root/.agents/config.yaml"},
@@ -172,7 +172,7 @@ resources:
 		RepoCfg:   v4Cfg("factory") + "sources: {hub: {marketplace: '{{MKT:hub}}'}}\n",
 		Steps: []Step{
 			{
-				Args:         []string{"install", "hub:hub/collection/team-bundle", "--yes"},
+				Args:         []string{"install", "--scope", "repo", "hub:hub/collection/team-bundle", "--yes"},
 				MustPass:     true,
 				FileContains: map[string]string{"/workspace/.agents/config.yaml": "hub/collection/team-bundle", "/workspace/.factory/skills/member-skill/SKILL.md": "Collection skill body"},
 				FilesExist:   []string{"/workspace/.factory/commands/member-command.md"},
