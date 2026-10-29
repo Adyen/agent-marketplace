@@ -217,6 +217,43 @@ func TestPrepareSkillLinkCacheReconcilesSupportDrift(t *testing.T) {
 	}
 }
 
+// spec: materialization/skill-cache-preparation-reconciles-support-drift
+func TestPrepareSkillLinkCacheRequiresDeclaredSupportFromCapturedWalk(t *testing.T) {
+	sourceDir, cacheDir := t.TempDir(), t.TempDir()
+	writeSkillCacheSource(t, sourceDir)
+	// The support walk never copies VCS internals, so this declared file exists
+	// on disk but can never reach the cache.
+	mustWrite(t, filepath.Join(sourceDir, "scripts", ".git", "config"), "internal", 0o644)
+	link := skillLink{sourceDir: sourceDir, cacheDir: cacheDir, artifacts: []artifact.Artifact{{Path: "SKILL.md", Bytes: []byte("compiled skill")}}}
+	stages := countSupportStages(t)
+	if err := prepareSkillLinkCache(link); err != nil {
+		t.Fatalf("initial preparation: %v", err)
+	}
+	before, err := portablePathDigest(cacheDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	declared := link
+	declared.declaredSupport = []string{"scripts/run.sh", "scripts/.git/config"}
+	if err := prepareSkillLinkCache(declared); err == nil {
+		t.Fatal("declared support that the captured walk never copies must refuse like full preparation")
+	}
+	if after, err := portablePathDigest(cacheDir); err != nil || after != before {
+		t.Fatalf("refused preparation changed the installed cache: %v", err)
+	}
+
+	// Control: declared support the walk does copy keeps the unchanged no-op.
+	declared.declaredSupport = []string{"scripts/run.sh", "references/deep/guide.md"}
+	staged := *stages
+	if err := prepareSkillLinkCache(declared); err != nil {
+		t.Fatalf("unchanged preparation with walked declared support: %v", err)
+	}
+	if *stages != staged {
+		t.Fatalf("unchanged preparation with walked declared support staged again (%d -> %d)", staged, *stages)
+	}
+}
+
 // spec: materialization/unchanged-skill-cache-support-repeats-without-mutation
 func TestRunRepeatSymlinkSkillPreservesCachedSupportIdentity(t *testing.T) {
 	repoRoot := t.TempDir()

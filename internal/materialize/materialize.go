@@ -5016,7 +5016,17 @@ type portableVirtualNode struct {
 // would produce without populating that cache. This lets --check correctly
 // identify a pending copy or a user edit on a first dry run.
 func portableSkillVirtualDigest(link skillLink) (string, error) {
+	digest, _, err := portableSkillVirtualDigestWithSupport(link)
+	return digest, err
+}
+
+// portableSkillVirtualDigestWithSupport also returns the support files the
+// captured walk visited, excluding compiled artifacts, which are the files
+// preparation copies into its support stage.
+func portableSkillVirtualDigestWithSupport(link skillLink) (string, map[string]bool, error) {
 	nodes := map[string]portableVirtualNode{"": {dir: true, mode: 0o755}}
+	compiled := make(map[string]bool, len(link.artifacts))
+	support := make(map[string]bool)
 	ensureParents := func(path string) {
 		for dir := filepath.ToSlash(filepath.Dir(path)); dir != "." && dir != ""; dir = filepath.ToSlash(filepath.Dir(dir)) {
 			if _, ok := nodes[dir]; !ok {
@@ -5028,6 +5038,7 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 		path := filepath.ToSlash(filepath.Clean(a.Path))
 		ensureParents(path)
 		nodes[path] = portableVirtualNode{mode: portableArtifactMode(a.Mode), content: a.Bytes}
+		compiled[path] = true
 	}
 	err := walkPortableSkillSupport(link, func(childRel string) {
 		ensureParents(childRel)
@@ -5043,10 +5054,13 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 		}
 		ensureParents(childRel)
 		nodes[childRel] = portableVirtualNode{mode: identity.Mode.Perm(), content: data}
+		if !compiled[childRel] {
+			support[childRel] = true
+		}
 		return nil
 	})
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	paths := make([]string, 0, len(nodes))
 	for path := range nodes {
@@ -5063,7 +5077,7 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 		_, _ = fmt.Fprintf(h, "file\x00%s\x00%#o\x00%d\x00", path, node.mode.Perm(), len(node.content))
 		_, _ = h.Write(node.content)
 	}
-	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), support, nil
 }
 
 // walkPortableSkillSupport visits the support tree prepareSkillLinkCache would
@@ -5953,8 +5967,18 @@ func skillLinkCacheCurrent(link skillLink, cacheDir string) bool {
 	if err != nil {
 		return false
 	}
-	desired, err := portableSkillVirtualDigest(link)
-	return err == nil && actual == desired
+	desired, support, err := portableSkillVirtualDigestWithSupport(link)
+	if err != nil || actual != desired {
+		return false
+	}
+	// Full preparation refuses when its stage lacks a declared support file;
+	// require the same files from this walk, not an earlier path check.
+	for _, rel := range link.declaredSupport {
+		if !support[filepath.ToSlash(filepath.Clean(rel))] {
+			return false
+		}
+	}
+	return true
 }
 
 // pruneSkillCacheSupportFiles deletes every previous support-file entry while
