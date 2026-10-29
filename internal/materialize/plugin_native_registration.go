@@ -77,7 +77,30 @@ func (catalog nativePluginCatalog) manifest() ([]byte, error) {
 		document.Owner.Name = "Agent Marketplace"
 		for _, item := range catalog.entries {
 			document.Plugins = append(document.Plugins, entry{
-				Name: item.name, Source: "./plugins/" + item.name,
+				Name: item.name, Source: nativePluginCatalogEntryPath(item.name),
+			})
+		}
+		data, err := json.MarshalIndent(document, "", "  ")
+		if err != nil {
+			return nil, err
+		}
+		return append(data, '\n'), nil
+	}
+	if catalog.target == target.TargetCodex {
+		type entry struct {
+			Name     string            `json:"name"`
+			Source   map[string]string `json:"source"`
+			Policy   map[string]string `json:"policy"`
+			Category string            `json:"category"`
+		}
+		document := struct {
+			Name    string  `json:"name"`
+			Plugins []entry `json:"plugins"`
+		}{Name: catalog.name}
+		for _, item := range catalog.entries {
+			document.Plugins = append(document.Plugins, entry{
+				Name: item.name, Source: map[string]string{"source": "local", "path": nativePluginCatalogEntryPath(item.name)},
+				Policy: map[string]string{"installation": "AVAILABLE", "authentication": "ON_INSTALL"}, Category: "Productivity",
 			})
 		}
 		data, err := json.MarshalIndent(document, "", "  ")
@@ -108,6 +131,10 @@ func (catalog nativePluginCatalog) manifest() ([]byte, error) {
 		return nil, err
 	}
 	return append(data, '\n'), nil
+}
+
+func nativePluginCatalogEntryPath(name string) string {
+	return "./plugins/" + name
 }
 
 func nativePluginCatalogParticipants(catalog nativePluginCatalog) ([]dependencytxn.DesiredFile, error) {
@@ -222,8 +249,8 @@ func nativeRegistrationEntries(key outputKey, repoRoot string, ref ownership.Plu
 		}
 	case target.NativeRegistrationCodexConfig:
 		if len(catalog.entries) > 0 {
-			if err := add("marketplaces", catalog.name, map[string]any{
-				"source": "local", "path": catalog.path,
+			if err := add("marketplaces", catalog.name, map[string]string{
+				"source_type": "local", "source": catalog.path,
 			}, catalog.scopeOwner); err != nil {
 				return nil, err
 			}
