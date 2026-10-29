@@ -691,7 +691,7 @@ jobs:
         include: ${{ fromJSON(format('[{0}{1}{2}]', needs.tui-qa.outputs.recordings_linux, needs.tui-qa.outputs.recordings_linux != '' && needs.tui-qa.outputs.recordings_macos != '' && ',' || '', needs.tui-qa.outputs.recordings_macos)) }}
     steps:
       - name: Download failed journey evidence
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: tui-qa-failures-${{ matrix.os }}
           path: ${{ runner.temp }}/evidence
