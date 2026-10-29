@@ -32,14 +32,14 @@ The command under **Install** pins the revision you are viewing. Copy it to inst
 
 Before you run the command, [install the CLI](../install.md), choose your target [harnesses](../glossary.md#harness), and check that the CLI can edit the configuration file it will write to. You do not need to register the Marketplace endpoint first to install from a browser URL. See the [configuration compatibility note](../explanation/user-journeys.md#configuration-compatibility).
 
-Run the copied command inside the repository where you want the resource. By default it installs into the repository scope. To choose another scope, add `--scope`:
+Run the copied command from a terminal. By default it installs into user scope, for all your projects on this machine. To share it through the repository configuration, or keep it personal to one checkout, run it inside that repository and add `--scope`:
 
 ```text
-agent-marketplace install <copied-revision-url> --scope user
+agent-marketplace install <copied-revision-url> --scope repo
 agent-marketplace install <copied-revision-url> --scope local
 ```
 
-Run only one of these. `user` installs the resource for all your projects on this machine, and `local` keeps it personal to this checkout. To share it through the repository configuration, use `--scope repo`. Each command ends with `✓ Installed <name>` on success. [Hosted installation](./install-from-a-marketplace.md#_3-install-the-resource) shows the full output and the risk prompt that can appear first.
+Run only one of these, or run the command without `--scope` for a user install. Each command ends with `✓ Installed <name>` on success. [Hosted installation](./install-from-a-marketplace.md#_3-install-the-resource) shows the full output and the risk prompt that can appear first.
 
 ## 4. Review the verified CLI result
 

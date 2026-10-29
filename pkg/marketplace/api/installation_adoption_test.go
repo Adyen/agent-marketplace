@@ -1,6 +1,7 @@
 package api
 
 import (
+	"strings"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
@@ -28,6 +29,13 @@ func adoptionTestRegistries() map[store.RegistryID]store.Registry {
 		"rD": {ID: "rD", Origins: []string{"https://example.test/team/shared.git"}},
 	}
 }
+
+// installationMetricsQuery is the single-expression union of every operand, used to evaluate the whole aggregate in one engine run.
+func installationMetricsQuery(labels map[string]string, plan installationQueryPlan) string {
+	return strings.Join(installationMetricsQueries(labels, plan), " or ")
+}
+
+var adoptionRefreshRequests = int32(len(installationMetricsQueries(map[string]string{"namespace": "ops"}, newInstallationQueryPlan(adoptionTestRegistries(), "mp"))))
 
 func adoptionKey(registry store.RegistryID, kind, name string) installationResourceKey {
 	return installationResourceKey{Registry: registry, Kind: kind, Name: name}

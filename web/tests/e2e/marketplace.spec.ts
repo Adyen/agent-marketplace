@@ -512,7 +512,7 @@ test.describe('Marketplace browser discovery', () => {
     await expect(tabs.getByRole('tab', { selected: true })).not.toHaveText(selectedText)
   })
 
-  // spec: marketplace-web-ui/scope-comparison-identifies-the-repository-default
+  // spec: marketplace-web-ui/scope-comparison-identifies-the-user-default
   test('keeps Landing scope outcomes comparable without implying selection', async ({ page }) => {
     await page.goto(publicSiteURL)
 
@@ -524,12 +524,12 @@ test.describe('Marketplace browser discovery', () => {
     await expect(scopes).toContainText('--scope user')
     await expect(scopes).toContainText('--scope repo')
     await expect(scopes).toContainText('--scope local')
-    const repositoryScope = scopes
-      .getByRole('heading', { name: 'Repository Default', exact: true })
+    const userScope = scopes
+      .getByRole('heading', { name: 'User Default', exact: true })
       .locator('..')
-    await expect(repositoryScope).toContainText('Default')
+    await expect(userScope).toContainText('Default')
     await expect(page.locator('.scope-command')).toContainText(
-      'agent-marketplace install pdf --scope repo',
+      'agent-marketplace install pdf --scope user',
     )
 
     const harnessTabs = page.getByRole('tablist', { name: 'Harness target' }).getByRole('tab')
@@ -761,6 +761,39 @@ test.describe('Marketplace browser discovery', () => {
       const rowHeights = await page.locator('article').evaluateAll(rows => rows.map(row => row.getBoundingClientRect().height))
       expect(rowHeights[0]).toBeCloseTo(rowHeights[1], 0)
     }
+  })
+
+  // spec: marketplace-web-ui/slash-focuses-catalog-search
+  test('focuses catalog search with the slash shortcut', async ({ page }) => {
+    await page.goto('/')
+    await expect(page.locator('article').first()).toBeVisible()
+    await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe('BODY')
+
+    const search = page.locator('#search-query')
+    await page.keyboard.press('/')
+    await expect(search).toBeFocused()
+    await expect(search).toHaveValue('')
+    await expect(search).toHaveAttribute('aria-keyshortcuts', '/')
+    await expect(page.getByRole('search').locator('kbd', { hasText: '/' })).toBeVisible()
+
+    await page.keyboard.press('/')
+    await expect(search).toHaveValue('/')
+
+    const kindRadio = page.locator('.catalog-sidebar input[type="radio"]').nth(1)
+    await expect(kindRadio).toBeVisible()
+    await kindRadio.focus()
+    await expect(kindRadio).toBeFocused()
+    await page.keyboard.press('/')
+    await expect(search).toBeFocused()
+    await expect(search).toHaveValue('/')
+
+    const registryCheckbox = page.locator('.catalog-sidebar input[type="checkbox"]').first()
+    await expect(registryCheckbox).toBeVisible()
+    await registryCheckbox.focus()
+    await expect(registryCheckbox).toBeFocused()
+    await page.keyboard.press('/')
+    await expect(search).toBeFocused()
+    await expect(search).toHaveValue('/')
   })
 
   test('exposes the shared navigation from a keyboard-operable mobile menu', async ({ page }) => {

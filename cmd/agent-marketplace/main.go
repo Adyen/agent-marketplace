@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -27,7 +28,6 @@ const defaultVersion = "dev"
 
 var version = defaultVersion
 var diagnosticCapture bool
-var diagnosticAcceptSensitive bool
 var rootLogState struct {
 	startedAt time.Time
 	close     func() error
@@ -121,7 +121,6 @@ func newRootCmd() *cobra.Command {
 	_ = rootCmd.Flags().MarkHidden("no-tui")
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Enable debug logging and mirror logs to stderr")
 	rootCmd.PersistentFlags().BoolVar(&diagnosticCapture, "diagnostic", false, "Capture a reviewed diagnostic telemetry payload for this invocation")
-	rootCmd.PersistentFlags().BoolVar(&diagnosticAcceptSensitive, "diagnostic-accept-sensitive-data", false, "Acknowledge a diagnostic payload may contain sensitive data")
 
 	rootCmd.AddCommand(
 		newInitCmd(),
@@ -151,7 +150,15 @@ func prepareCommandDependencies(cmd *cobra.Command, rootTUI bool) error {
 		return prepareDependencyTransactions(cmd.Context(), false)
 	}
 	switch cmd.Name() {
-	case "tui", "gc", "install", "remove", "update", "init":
+	case "tui", "gc", "install", "remove", "init":
+		return prepareDependencyTransactions(cmd.Context(), false)
+	case "update":
+		// A dry run previews without replay: it must refuse pending
+		// dependency work, not recover it the way an applying update does.
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		if dryRun {
+			return prepareDependencyTransactions(cmd.Context(), true)
+		}
 		return prepareDependencyTransactions(cmd.Context(), false)
 	case "list", "status":
 		return prepareDependencyTransactions(cmd.Context(), true)
@@ -316,7 +323,7 @@ func finishTelemetry(cmd *cobra.Command, execErr error) {
 	t.CommandDuration().Record(ctx, time.Since(start).Milliseconds(), attrs)
 
 	if t.DiagnosticActive() {
-		if err := t.FinishDiagnostic(ctx, cmd.OutOrStdout(), cmd.InOrStdin(), isTerminalReader(cmd.InOrStdin()), diagnosticAcceptSensitive); err != nil {
+		if err := t.FinishDiagnostic(ctx, cmd.OutOrStdout(), cmd.InOrStdin(), isTerminalReader(cmd.InOrStdin())); err != nil {
 			slog.Warn("diagnostic export failed or declined", "error", err)
 		}
 	}
@@ -337,7 +344,7 @@ func isTerminalReader(r io.Reader) bool {
 	if !ok {
 		return false
 	}
-	return term.IsTerminal(fr.Fd())
+	return isTerminal(fr.Fd())
 }
 
 func shouldSkipTelemetryInit(path string) bool {
@@ -407,7 +414,7 @@ func newRemoveCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&scopeStr, "scope", "", "Config layer to write to: repo (default), user, or local")
+	cmd.Flags().StringVar(&scopeStr, "scope", "", "Config layer to write to: repo, user, or local (default: inferred from where the resource is selected; --from defaults to repo)")
 	cmd.Flags().StringVar(&kindFilter, "kind", "", "Resource kind for name disambiguation: skill, command, subagent, hook, mcp, or collection")
 	cmd.Flags().StringVar(&fromURL, "from", "", "Remove from an ad-hoc registry (git URL or GitLab/GitHub web URL), or a named resource from a configured Marketplace endpoint URL")
 	cmd.Flags().StringVar(&fromRef, "ref", "", "Git ref for --from registry; requires --from")
@@ -435,11 +442,18 @@ func runRemove(ctx context.Context, out io.Writer, skillName string, scope pipel
 		DependencyReconcile: reconcileCommandDependencies,
 		CleanupDependencies: reconcileCleanupDependencies,
 	})
-	if err != nil {
+	if err != nil && result == nil {
 		return err
 	}
+	removeErr := err
+	if err := writeHookChanges(out, result.Report, false); err != nil {
+		return errors.Join(removeErr, err)
+	}
 	if err := writeGroupedWarnings(out, result.Warnings, false); err != nil {
-		return err
+		return errors.Join(removeErr, err)
+	}
+	if removeErr != nil {
+		return removeErr
 	}
 
 	if result.IsCollection {

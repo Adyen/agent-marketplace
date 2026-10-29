@@ -34,6 +34,7 @@ func BenchmarkSearchHandlerInstallationsCached(b *testing.B) {
 		signature:   registryOriginsSignature(registries),
 		evaluatedAt: time.Now(),
 		expiresAt:   time.Now().Add(time.Hour),
+		staleUntil:  time.Now().Add(time.Hour),
 	})
 	handler := server.PublicHandler()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/search?sort=installations", nil)

@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
@@ -906,6 +907,11 @@ func addExistingOutputKeys(repoRoot string, allOutputs map[outputKey]bool) {
 		}
 		repoDir := repoOutputDir(target, roots, repoRoot)
 		machineDir := roots.For(true, repoRoot)
+		if target == hcc.TargetClaude {
+			if harness.ClaudeConfigDirRelative(os.Getenv("CLAUDE_CONFIG_DIR")) {
+				machineDir = ""
+			}
+		}
 		// When repoRoot is the home directory the repo-scope path is the same
 		// filesystem location as the machine-scope path (e.g. ~/.factory ==
 		// ~/.factory). Adding both keys would cause the repo-scope pass (which
@@ -1742,6 +1748,9 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		PerTarget:        make(map[hcc.Target]TargetReport),
 		Diags:            compileResult.allDiags,
 		BlockedResources: compileResult.blockedResources,
+	}
+	if d := preflightClaudeDestinations(&compileResult, repoRoot); d != nil {
+		report.Diags = append(report.Diags, *d)
 	}
 	geminiCoalescence, err := coalesceGeminiNativeAggregates(&compileResult, repoRoot, report)
 	if err != nil {
@@ -2724,14 +2733,19 @@ func executeNativeHookSupportPlan(ctx context.Context, key outputKey, repoRoot, 
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return publication, pending, fmt.Errorf("hook support output directory is outside its root")
 		}
-		validate := validatePortableOutputDir
-		if effectiveMode == config.MaterializationModeFile && !dryRun && !repositoryCopies {
-			validate = ensurePortableOutputDir
+		if boundary != nil {
+			err = boundary.directory(plan.outDir, !dryRun && !repositoryCopies)
+		} else {
+			validate := validatePortableOutputDir
+			if effectiveMode == config.MaterializationModeFile && !dryRun && !repositoryCopies {
+				validate = ensurePortableOutputDir
+			}
+			_, err = validate(planRoot, filepath.ToSlash(rel))
 		}
-		if _, err := validate(planRoot, filepath.ToSlash(rel)); err != nil {
+		if err != nil {
 			return publication, pending, fmt.Errorf("validate hook support output directory: %w", err)
 		}
-		if effectiveMode != config.MaterializationModeFile && !dryRun {
+		if boundary == nil && effectiveMode != config.MaterializationModeFile && !dryRun {
 			if err := os.MkdirAll(plan.outDir, 0o755); err != nil {
 				return publication, pending, fmt.Errorf("create hook support output directory: %w", err)
 			}
@@ -2796,6 +2810,7 @@ func executeNativeHookSupportPlan(ctx context.Context, key outputKey, repoRoot, 
 					mode:          effectiveMode,
 					capturedBytes: append([]byte(nil), candidate.Bytes...),
 					capturedMode:  portableArtifactMode(candidate.Mode),
+					boundary:      boundary,
 				}
 				if effectiveMode == config.MaterializationModeSymlink {
 					installed.cacheRoot = cacheDir
@@ -2882,6 +2897,23 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, destinatio
 		pruneReportPrefix = windsurfDir
 	}
 	protected := nativeAggregatePruneFence(key.target, key.machineScope)
+	for _, destination := range destinations {
+		if len(destination.AggregateRoutes) > 0 && sameOutputDir(destination.Root, pruneOutDir) {
+			if protected == nil {
+				protected = make(map[string]bool)
+			}
+			protected[destination.AggregateFile] = true
+		}
+	}
+	var declaredMergeFiles map[string]bool
+	if key.target == hcc.TargetClaude && key.machineScope && os.Getenv("CLAUDE_CONFIG_DIR") != "" {
+		declaredMergeFiles = make(map[string]bool)
+		if info, ok := harness.TargetInfoFor(key.target); ok {
+			for _, rel := range info.AggregateFilesForScope(true) {
+				declaredMergeFiles[filepath.ToSlash(rel)] = true
+			}
+		}
+	}
 	protected = extendNativeHookProjectionPruneFence(key.target, key.machineScope, pruneOutDir, destinations, protected)
 
 	plans := materializePlans(key.target, outDir, artifacts, linkedComponents(skillLinks[key]), key.machineScope)
@@ -3027,6 +3059,11 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, destinatio
 			mergeArtifacts = retained
 		}
 		mergePrune := wantPrune
+		// Relocated Claude roots may contain other accounts or repositories.
+		// Defer empty-plan cleanup to the declared-file pass, not a tree walk.
+		if len(mergeArtifacts) == 0 && declaredMergeFiles != nil {
+			mergePrune = false
+		}
 		if len(mergeArtifacts) == 0 && genericMarkerPruneRootProtected(pruneOutDir, plan.outDir, protected) {
 			mergePrune = false
 		}
@@ -3090,7 +3127,7 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, destinatio
 	if key.target == hcc.Target(targetmeta.TargetCodex) {
 		pruneReport = &hcc.WriteReport{OutDir: pruneOutDir}
 	} else if !componentBlocked(blocked, "") {
-		pruneReport, pruneDiags = pruneUncoveredManagedMergeFiles(pruneOutDir, dirsCoveredByMergePlans, dryRun, protected)
+		pruneReport, pruneDiags = pruneUncoveredManagedMergeFiles(pruneOutDir, dirsCoveredByMergePlans, dryRun, protected, declaredMergeFiles, boundary)
 	} else {
 		pruneReport = &hcc.WriteReport{OutDir: pruneOutDir}
 	}
@@ -3706,7 +3743,7 @@ func subtreeMaterializePlans(outDir string, artifacts []artifact.Artifact, compo
 	for _, component := range orderedComponents(components, scoped) {
 		componentOutDir := filepath.Join(outDir, component)
 		if len(scoped[component]) == 0 {
-			if _, err := os.Stat(componentOutDir); err != nil {
+			if info, err := os.Stat(componentOutDir); err != nil || !info.IsDir() {
 				continue
 			}
 		}
@@ -4322,7 +4359,7 @@ func materializeMergeArtifacts(outDir string, artifacts []artifact.Artifact, dry
 		if !pruneStaleEntries {
 			return &hcc.WriteReport{OutDir: outDir}, nil, nil
 		}
-		pruneReport, pruneDiags := pruneManagedMergeFiles(outDir, dryRun)
+		pruneReport, pruneDiags := pruneManagedMergeFiles(outDir, dryRun, boundary...)
 		return pruneReport, pruneDiags, nil
 	}
 	// Replace any existing symlinks at merge artifact paths with regular
@@ -4382,6 +4419,8 @@ func genericMarkerPruneRootProtected(pruneRoot, candidate string, protected map[
 // dirsCoveredByMergePlans). This ensures that root-level merge files (like
 // mcp.json) and files in directories without a merge-artifact plan still get
 // their managed entries pruned during deinit.
+// A non-nil declaration restricts discovery to those exact root-relative files;
+// it must not inspect unrelated descendants of an arbitrarily relocated root.
 //
 // Failure is PER FILE (bead agent-marketplace-5exj.25). A file this walk cannot
 // prune — a duplicate-key refusal from stripManagedEntriesFromFile, or an
@@ -4398,15 +4437,20 @@ func genericMarkerPruneRootProtected(pruneRoot, candidate string, protected map[
 // non-zero: a prune that did not happen is a real failure, exactly as bead .18
 // decided for the refusal itself and bead .20 decided for skipped Devin
 // aggregate entries.
-func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[string]bool, dryRun bool, protected map[string]bool) (*hcc.WriteReport, []diag.Diagnostic) {
+func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[string]bool, dryRun bool, protected, declared map[string]bool, boundaries ...*destinationBoundary) (*hcc.WriteReport, []diag.Diagnostic) {
 	report := &hcc.WriteReport{OutDir: outDir}
 	var diags []diag.Diagnostic
 	info, err := os.Stat(outDir)
 	if err != nil || !info.IsDir() {
 		return report, nil
 	}
+	var boundary *destinationBoundary
+	if len(boundaries) > 0 {
+		boundary = boundaries[0]
+	}
+	captured := declared != nil
 	// WalkDir visits lexically, so the diagnostic order is deterministic.
-	_ = filepath.WalkDir(outDir, func(path string, d fs.DirEntry, walkErr error) error {
+	visit := func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			// Permission denied or other walk errors: skip the entry
 			// rather than aborting the entire walk.
@@ -4445,7 +4489,7 @@ func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[
 			return nil
 		}
 		relSlash := filepath.ToSlash(rel)
-		cleaned, removed, pruneErr := stripManagedEntriesFromFile(path, dryRun)
+		cleaned, removed, pruneErr := stripManagedEntriesFromFile(path, dryRun, captured, boundary)
 		if pruneErr != nil {
 			// PER-FILE failure: report this file and keep walking.
 			diags = append(diags, managedMergePruneDiag(relSlash, path, pruneErr))
@@ -4459,7 +4503,32 @@ func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[
 			}
 		}
 		return nil
-	})
+	}
+	if declared != nil {
+		for _, rel := range sortedKeys(declared) {
+			file := filepath.Join(outDir, filepath.FromSlash(rel))
+			if genericMarkerPruneRootProtected(outDir, filepath.Dir(file), protected) {
+				continue
+			}
+			covered := false
+			for dir := range dirsCoveredByMergePlans {
+				covered = covered || pathIsAncestor(dir, file)
+			}
+			if covered {
+				continue
+			}
+			info, err := os.Lstat(file)
+			if err != nil {
+				if !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
+					diags = append(diags, managedMergePruneDiag(filepath.ToSlash(rel), file, err))
+				}
+				continue
+			}
+			_ = visit(file, fs.FileInfoToDirEntry(info), nil)
+		}
+	} else {
+		_ = filepath.WalkDir(outDir, visit)
+	}
 	return report, diags
 }
 
@@ -4572,8 +4641,8 @@ func aggregateProtectedPathsFor(info harness.TargetInfo, machineScope bool) map[
 // Sharing the body is what keeps the per-file failure handling identical in both
 // walks, which was the whole point of bead agent-marketplace-5exj.25: the two
 // callbacks had drifted into two copies of the same abort-the-walk mistake.
-func pruneManagedMergeFiles(outDir string, dryRun bool) (*hcc.WriteReport, []diag.Diagnostic) {
-	return pruneUncoveredManagedMergeFiles(outDir, nil, dryRun, nil)
+func pruneManagedMergeFiles(outDir string, dryRun bool, boundaries ...*destinationBoundary) (*hcc.WriteReport, []diag.Diagnostic) {
+	return pruneUncoveredManagedMergeFiles(outDir, nil, dryRun, nil, nil, boundaries...)
 }
 
 // stripManagedEntriesFromFile reads a JSON file, removes all top-level
@@ -4608,8 +4677,18 @@ func pruneManagedMergeFiles(outDir string, dryRun bool) (*hcc.WriteReport, []dia
 // Malformed JSON keeps the historical behaviour of being left completely alone
 // with no error: we never had a coherent view of that file, and failing a sync
 // over a file the user already has to fix by hand adds nothing.
-func stripManagedEntriesFromFile(path string, dryRun bool) (cleaned []byte, removed []string, err error) {
-	data, readErr := os.ReadFile(path)
+func stripManagedEntriesFromFile(path string, dryRun, captured bool, boundary *destinationBoundary) (cleaned []byte, removed []string, err error) {
+	var observed fs.FileInfo
+	var data []byte
+	var readErr error
+	if captured {
+		observed, readErr = os.Lstat(path)
+		if readErr == nil {
+			data, readErr = readNativeCommandFile(path, observed, boundary)
+		}
+	} else {
+		data, readErr = os.ReadFile(path)
+	}
 	if readErr != nil {
 		return nil, nil, readErr
 	}
@@ -4699,7 +4778,13 @@ func stripManagedEntriesFromFile(path string, dryRun bool) (cleaned []byte, remo
 	}
 	result := doc.Bytes()
 	if !dryRun {
-		if writeErr := atomicWriteFile(path, result, 0o644); writeErr != nil {
+		var writeErr error
+		if captured {
+			writeErr = publishPortableBytes(path, result, observed.Mode().Perm(), observed, boundary)
+		} else {
+			writeErr = atomicWriteFile(path, result, 0o644)
+		}
+		if writeErr != nil {
 			return nil, removed, writeErr
 		}
 	}

@@ -496,6 +496,7 @@ func (e *Env) subprocessEnv() []string {
 		"XDG_CONFIG_HOME="+filepath.Join(e.home, ".config"),
 		"XDG_CACHE_HOME="+filepath.Join(e.home, ".cache"),
 		"CODEX_HOME="+filepath.Join(e.home, ".codex"),
+		"CLAUDE_CONFIG_DIR=",
 		// Sanitized so host-installed tools the CLI probes for (currently the
 		// Devin CLI) cannot change assertion outcomes.
 		"PATH="+e.path,
@@ -508,7 +509,7 @@ func (e *Env) subprocessEnv() []string {
 
 func isSandboxedAppEnv(key string) bool {
 	switch key {
-	case "HOME", "PATH", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "CODEX_HOME", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR":
+	case "HOME", "PATH", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR":
 		return true
 	default:
 		return strings.HasPrefix(key, "AGENT_MARKETPLACE_")

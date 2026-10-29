@@ -84,6 +84,7 @@ In a consumer project:
 
 ```bash
 agent-marketplace install platform-onboarding \
+  --scope repo \
   --kind collection \
   --from https://github.com/example-org/agent-resources.git \
   --ref v1.4.0

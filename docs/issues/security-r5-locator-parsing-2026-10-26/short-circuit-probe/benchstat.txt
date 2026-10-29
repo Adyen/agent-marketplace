@@ -1,0 +1,37 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+                                    │ before.txt  │             after.txt              │
+                                    │   sec/op    │   sec/op     vs base               │
+V4LocatorParsingCPU/unqualified-16    154.2n ± 1%   152.3n ± 0%  -1.20% (p=0.000 n=10)
+V4LocatorParsingCPU/qualified-16      226.5n ± 1%   227.1n ± 1%       ~ (p=0.093 n=10)
+V4LocatorParsingCPU/long-name-16      5.280µ ± 0%   5.309µ ± 0%  +0.55% (p=0.002 n=10)
+V4LocatorParsingCPU/extra-slash-16    32.78n ± 0%   33.29n ± 0%  +1.54% (p=0.000 n=10)
+V4LocatorParsingCPU/invalid-name-16   87.40n ± 0%   87.72n ± 1%       ~ (p=0.101 n=10)
+V4LocatorParsingCPU/dirty-16          8.914n ± 1%   8.910n ± 2%       ~ (p=0.971 n=10)
+geomean                               129.5n        129.8n       +0.24%
+
+                                    │  before.txt  │              after.txt              │
+                                    │     B/op     │    B/op     vs base                 │
+V4LocatorParsingCPU/unqualified-16    0.000 ± 0%     0.000 ± 0%       ~ (p=1.000 n=10) ¹
+V4LocatorParsingCPU/qualified-16      0.000 ± 0%     0.000 ± 0%       ~ (p=1.000 n=10) ¹
+V4LocatorParsingCPU/long-name-16      0.000 ± 0%     0.000 ± 0%       ~ (p=1.000 n=10) ¹
+V4LocatorParsingCPU/extra-slash-16    16.00 ± 0%     16.00 ± 0%       ~ (p=1.000 n=10) ¹
+V4LocatorParsingCPU/invalid-name-16   16.00 ± 0%     16.00 ± 0%       ~ (p=1.000 n=10) ¹
+V4LocatorParsingCPU/dirty-16          16.00 ± 0%     16.00 ± 0%       ~ (p=1.000 n=10) ¹
+geomean                                          ²               +0.00%                ²
+¹ all samples are equal
+² summaries must be >0 to compute geomean
+
+                                    │  before.txt  │              after.txt              │
+                                    │  allocs/op   │ allocs/op   vs base                 │
+V4LocatorParsingCPU/unqualified-16    0.000 ± 0%     0.000 ± 0%       ~ (p=1.000 n=10) ¹
+V4LocatorParsingCPU/qualified-16      0.000 ± 0%     0.000 ± 0%       ~ (p=1.000 n=10) ¹
+V4LocatorParsingCPU/long-name-16      0.000 ± 0%     0.000 ± 0%       ~ (p=1.000 n=10) ¹
+V4LocatorParsingCPU/extra-slash-16    1.000 ± 0%     1.000 ± 0%       ~ (p=1.000 n=10) ¹
+V4LocatorParsingCPU/invalid-name-16   1.000 ± 0%     1.000 ± 0%       ~ (p=1.000 n=10) ¹
+V4LocatorParsingCPU/dirty-16          1.000 ± 0%     1.000 ± 0%       ~ (p=1.000 n=10) ¹
+geomean                                          ²               +0.00%                ²
+¹ all samples are equal
+² summaries must be >0 to compute geomean

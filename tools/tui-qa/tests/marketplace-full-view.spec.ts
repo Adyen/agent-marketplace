@@ -45,6 +45,10 @@ const treeDigest = (root: string): Map<string, string> => {
   return snapshot;
 };
 
+// spec: tui-navigation/inspect-an-exact-skill-before-installation-without-writes
+// spec: tui-mouse-navigation/bundle-tree-and-preview-receive-their-own-wheel-input
+// spec: tui-mouse-navigation/marketplace-selection-and-scrolling-preserve-clipboard-boundaries
+// spec: tui-mouse-navigation/clicking-a-bundle-tree-entry-selects-and-previews-it
 journey.test("marketplace full view browses inspection content, selects preview text, and keeps wheel routing", async (terminal) => {
   const fixture = journey.current();
   const controlledPaths = [
@@ -88,6 +92,20 @@ journey.test("marketplace full view browses inspection content, selects preview 
   await step("tree wheel switches to the primary file and its preview", () => terminal.write(sgr(65, 2, 3, "M")), async () => {
     await locate(terminal, "Remote inspection primary copy.").expect();
     await locate(terminal, "Support line 40").expect({ not: true });
+  });
+
+  const clickTreeEntry = async (name: RegExp): Promise<void> => {
+    const entry = await findTextRun(terminal, name);
+    assert.ok(entry.x < 32, `${name} was found outside the bundle tree at column ${entry.x}`);
+    await terminal.write(sgr(0, entry.x, entry.y, "M") + sgr(0, entry.x, entry.y, "m"));
+  };
+  await step("clicking notes.md in the tree previews it", () => clickTreeEntry(/notes\.md/), async () => {
+    await locate(terminal, "Support line 01").expect();
+    await locate(terminal, "Remote inspection primary copy.").expect({ not: true });
+  });
+  await step("clicking SKILL.md in the tree previews the primary file again", () => clickTreeEntry(/SKILL\.md/), async () => {
+    await locate(terminal, "Remote inspection primary copy.").expect();
+    await locate(terminal, "Support line 01").expect({ not: true });
   });
 
   await step("drag across the unicode preview text highlights and copies exactly", async () => {

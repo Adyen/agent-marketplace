@@ -187,6 +187,7 @@ func commandProcessEnvironment(root, completionPath, selector string) []string {
 		"XDG_STATE_HOME=" + filepath.Join(root, "state"),
 		"TMPDIR=" + filepath.Join(root, "tmp"),
 		"CODEX_HOME=" + filepath.Join(root, "home", ".codex"),
+		"CLAUDE_CONFIG_DIR=",
 		"PWD=" + filepath.Join(root, "repo"),
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_CONFIG_GLOBAL=/dev/null",

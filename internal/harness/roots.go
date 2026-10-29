@@ -347,6 +347,11 @@ func MakeInstallRoots() map[hcc.Target]Roots {
 			Machine: filepath.Join(home, definition.UserRoot),
 		}
 	}
+	if os.Getenv("CLAUDE_CONFIG_DIR") != "" {
+		if root, err := claudeMachineRoot(home); err == nil {
+			roots[hcc.TargetClaude] = Roots{Repo: ".claude", Machine: root}
+		}
+	}
 	return roots
 }
 

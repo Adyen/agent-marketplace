@@ -1,0 +1,11 @@
+# Previously accepted user values relying on implicit latest tags.
+image:
+  repository: example.invalid/marketplace-worker
+web:
+  enabled: true
+  image:
+    repository: example.invalid/marketplace-web
+docs:
+  enabled: true
+  image:
+    repository: example.invalid/marketplace-docs

@@ -613,12 +613,270 @@ func TestGateReadsTUIQAEvidenceFromGitRange(t *testing.T) {
 	check(journey, trailed, nil, "TUI-QA-Impact: none — comment-only change")
 }
 
+func TestEvaluateReleaseNotes(t *testing.T) {
+	const proposal = "openspec/changes/c1/proposal.md"
+	cases := []struct {
+		name        string
+		content     string
+		wantKinds   []string
+		wantSummary string
+	}{
+		{
+			name:        "normal note",
+			content:     "## Why\n\nx\n\n## Release note\n\nUsers see a faster sync.\n",
+			wantSummary: "1 added change proposals with release notes",
+		},
+		{
+			name:        "breaking note",
+			content:     "## Release note\n\nBreaking: rename the flag; run the migration first.\n\n## Impact\n",
+			wantSummary: "1 added change proposals with release notes",
+		},
+		// spec: spec-governance/proposal-without-release-note-fails
+		{
+			name:      "missing section",
+			content:   "## Why\n\nx\n",
+			wantKinds: []string{kindMissingReleaseNote},
+		},
+		{
+			name:      "heading with empty body",
+			content:   "## Release note\n\n## Why\n",
+			wantKinds: []string{kindMissingReleaseNote},
+		},
+		{
+			name:      "bare breaking prefix",
+			content:   "## Release note\n\nBreaking:\n",
+			wantKinds: []string{kindMissingReleaseNote},
+		},
+		{
+			name:      "breaking prefix with only spaces",
+			content:   "## Release note\n\nBreaking:   \n",
+			wantKinds: []string{kindMissingReleaseNote},
+		},
+		{
+			name:      "section inside a fenced block does not count",
+			content:   "```\n## Release note\n\nx\n```\n",
+			wantKinds: []string{kindMissingReleaseNote},
+		},
+		// spec: spec-governance/release-note-none-without-reason-fails
+		{
+			name:      "none without reason",
+			content:   "## Release note\n\nnone\n",
+			wantKinds: []string{kindReleaseNoteNoReason},
+		},
+		{
+			name:      "none with dash and no reason",
+			content:   "## Release note\n\nnone —\n",
+			wantKinds: []string{kindReleaseNoteNoReason},
+		},
+		// spec: spec-governance/release-note-none-with-reason-passes
+		{
+			name:        "none with em dash reason",
+			content:     "## Release note\n\nnone — refactor only\n",
+			wantSummary: "1 added change proposals with release notes",
+		},
+		{
+			name:        "none with ASCII dash reason",
+			content:     "## Release note\n\nnone - refactor only\n",
+			wantSummary: "1 added change proposals with release notes",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			findings, summary := evaluateReleaseNotes(map[string]string{proposal: tc.content})
+			if got := kinds(findings); !slices.Equal(got, tc.wantKinds) {
+				t.Fatalf("kinds = %v, want %v\n%s", got, tc.wantKinds, details(findings))
+			}
+			if !strings.Contains(summary, tc.wantSummary) {
+				t.Errorf("summary %q does not contain %q", summary, tc.wantSummary)
+			}
+		})
+	}
+	if findings, summary := evaluateReleaseNotes(nil); len(findings) != 0 || summary != "no added change proposals" {
+		t.Errorf("no proposals: findings = %v, summary = %q", findings, summary)
+	}
+}
+
+// spec: spec-governance/pre-existing-proposals-are-not-checked
+func TestGateReadsReleaseNotesFromGitRange(t *testing.T) {
+	root, run, commit := gitRepo(t)
+	base := commit("openspec/changes/old/proposal.md", "## Why\n\nold\n")
+	check := func(from, to string, wantKinds []string) []finding {
+		t.Helper()
+		findings, _, err := gate(root, from, to)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := kinds(findings); !slices.Equal(got, wantKinds) {
+			t.Fatalf("kinds = %v, want %v\n%s", got, wantKinds, details(findings))
+		}
+		return findings
+	}
+
+	edited := commit("openspec/changes/old/proposal.md", "## Why\n\nold, reworded\n")
+	check(base, edited, nil)
+
+	added := commit("openspec/changes/new/proposal.md", "## Why\n\nnew\n")
+	check(edited, added, []string{kindMissingReleaseNote})
+
+	// spec: spec-governance/archived-proposal-without-release-note-fails
+	archived := "openspec/changes/archive/2026-01-01-old/proposal.md"
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(root, archived)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run("mv", "openspec/changes/old/proposal.md", archived)
+	run("commit", "-q", "-m", "archive old")
+	if got := details(check(added, run("rev-parse", "HEAD"), []string{kindMissingReleaseNote})); !strings.Contains(got, archived) {
+		t.Errorf("finding does not name %s:\n%s", archived, got)
+	}
+}
+
+// releaseNotesRepo tags v1.0.0, merges four pull requests that each add one
+// archived proposal, and then commits one proposal directly to the main branch.
+func releaseNotesRepo(t *testing.T) (string, func(rel, msg string) string) {
+	t.Helper()
+	root, runGit, commit := gitRepo(t)
+	commit("README.md", "init")
+	main := runGit("rev-parse", "--abbrev-ref", "HEAD")
+	runGit("tag", "v1.0.0")
+	pullRequest := func(number, branch, rel, content string) {
+		t.Helper()
+		runGit("checkout", "-q", "-b", branch, main)
+		commit(rel, content)
+		runGit("checkout", "-q", main)
+		runGit("merge", "-q", "--no-ff", "-m", "Merge pull request #"+number+" from Adyen/"+branch, branch)
+	}
+	pullRequest("11", "normal", "openspec/changes/archive/2026-01-02-normal/proposal.md",
+		"## Why\n\nFaster.\n\n## Release note\n\nUsers get a faster sync.\n")
+	pullRequest("12", "breaking", "openspec/changes/archive/2026-01-03-breaking/proposal.md",
+		"## Release note\n\nBreaking: Rename `--legacy` to `--compat`; update scripts before upgrading.\n")
+	pullRequest("13", "quiet", "openspec/changes/archive/2026-01-04-quiet/proposal.md",
+		"## Release note\n\nnone — internal refactor only.\n")
+	pullRequest("14", "legacy", "openspec/changes/archive/2026-01-05-legacy/proposal.md", "## Why\n\nOld.\n")
+	pullRequest("7", "structured", "openspec/changes/archive/2026-01-07-structured/proposal.md",
+		"## Release note\n\nBreaking: The `foo` key is removed\nfrom the config.\n\nUpgrade:\n\n1. Remove `foo` from `.agents/config.yaml`.\n2. Run `agent-marketplace sync`.\n")
+	runGit("checkout", "-q", "-b", "unrelated", main)
+	commit("docs/unrelated.md", "unrelated docs")
+	runGit("checkout", "-q", main)
+	commit("openspec/changes/archive/2026-01-06-direct/proposal.md", "## Release note\n\nDirect commits show without a link.\n")
+	runGit("merge", "-q", "--no-ff", "-m", "Merge pull request #15 from Adyen/unrelated", "unrelated")
+	return root, commit
+}
+
+// spec: release-notes/breaking-notes-are-listed-before-changes
+// spec: release-notes/none-and-section-less-proposals-are-omitted
+// spec: release-notes/entries-link-the-merging-pull-request
+// spec: release-notes/multi-line-notes-keep-their-structure
+func TestReleaseNotesRendersMergedProposals(t *testing.T) {
+	t.Setenv("GITHUB_SERVER_URL", "https://github.com")
+	t.Setenv("GITHUB_REPOSITORY", "Adyen/agent-marketplace")
+	root, _ := releaseNotesRepo(t)
+	want := "## Breaking changes\n\n" +
+		"- Rename `--legacy` to `--compat`; update scripts before upgrading. ([#12](https://github.com/Adyen/agent-marketplace/pull/12))\n" +
+		"- The `foo` key is removed\n" +
+		"  from the config. ([#7](https://github.com/Adyen/agent-marketplace/pull/7))\n" +
+		"\n" +
+		"  Upgrade:\n" +
+		"\n" +
+		"  1. Remove `foo` from `.agents/config.yaml`.\n" +
+		"  2. Run `agent-marketplace sync`.\n" +
+		"\n" +
+		"## Changes\n\n" +
+		"- Users get a faster sync. ([#11](https://github.com/Adyen/agent-marketplace/pull/11))\n" +
+		"- Direct commits show without a link.\n"
+
+	got, err := releaseNotes(root, "v1.0.0", "HEAD", releaseRepoURL(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("release notes =\n%s\nwant\n%s", got, want)
+	}
+
+	var out, errOut bytes.Buffer
+	if err := run([]string{"release-notes", "-root", root, "-base", "v1.0.0", "-head", "HEAD"}, &out, &errOut); err != nil || out.String() != want {
+		t.Fatalf("stdout: err=%v out=%q, want %q", err, out.String(), want)
+	}
+	file := filepath.Join(t.TempDir(), "notes.md")
+	if err := run([]string{"release-notes", "-root", root, "-base", "v1.0.0", "-head", "HEAD", "-o", file}, &out, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(file); err != nil || string(data) != want {
+		t.Fatalf("-o file: err=%v contents=%q, want %q", err, data, want)
+	}
+}
+
+// spec: release-notes/entries-link-the-merging-pull-request
+func TestReleaseNotesLinkFallbacks(t *testing.T) {
+	t.Setenv("GITHUB_SERVER_URL", "")
+	t.Setenv("GITHUB_REPOSITORY", "")
+	root, _ := releaseNotesRepo(t)
+	const plain = "- Users get a faster sync. (#11)\n"
+	const linked = "- Users get a faster sync. ([#11](https://github.com/Adyen/agent-marketplace/pull/11))\n"
+
+	got, err := releaseNotes(root, "v1.0.0", "HEAD", releaseRepoURL(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, plain) {
+		t.Fatalf("without origin, want plain reference %q in:\n%s", plain, got)
+	}
+
+	if _, err := git(root, "remote", "add", "origin", "git@github.com:Adyen/agent-marketplace.git"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = releaseNotes(root, "v1.0.0", "HEAD", releaseRepoURL(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, linked) {
+		t.Fatalf("with origin, want link %q in:\n%s", linked, got)
+	}
+}
+
+// spec: release-notes/nothing-qualifies-yields-empty-notes
+func TestReleaseNotesEmptyWhenNothingQualifies(t *testing.T) {
+	t.Setenv("GITHUB_SERVER_URL", "")
+	t.Setenv("GITHUB_REPOSITORY", "")
+	root, commit := releaseNotesRepo(t)
+	quietBase := commit("README.md", "docs")
+	commit("openspec/changes/archive/2026-01-07-quiet/proposal.md", "## Release note\n\nnone — docs only.\n")
+
+	got, err := releaseNotes(root, quietBase, "HEAD", "")
+	if err != nil || got != "" {
+		t.Fatalf("releaseNotes = %q, err = %v; want empty", got, err)
+	}
+	file := filepath.Join(t.TempDir(), "notes.md")
+	var out, errOut bytes.Buffer
+	if err := run([]string{"release-notes", "-root", root, "-base", quietBase, "-head", "HEAD", "-o", file}, &out, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(file); err != nil || len(data) != 0 {
+		t.Fatalf("-o file: err=%v contents=%q, want empty", err, data)
+	}
+}
+
+func TestRemoteWebURL(t *testing.T) {
+	cases := map[string]string{
+		"git@github.com:Adyen/agent-marketplace.git":         "https://github.com/Adyen/agent-marketplace",
+		"https://github.com/Adyen/agent-marketplace.git":     "https://github.com/Adyen/agent-marketplace",
+		"https://x-access-token:t0ken@github.com/Adyen/a-m":  "https://github.com/Adyen/a-m",
+		"ssh://git@github.com:2222/Adyen/agent-marketplace/": "https://github.com/Adyen/agent-marketplace",
+		"/srv/git/repo.git":    "",
+		"file:///srv/git/repo": "",
+	}
+	for remote, want := range cases {
+		if got := remoteWebURL(remote); got != want {
+			t.Errorf("remoteWebURL(%q) = %q, want %q", remote, got, want)
+		}
+	}
+}
+
 func TestRun(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if err := run([]string{"--help"}, &out, &errOut); err != nil || !strings.Contains(out.String(), "usage: specaudit") {
 		t.Fatalf("--help: err=%v out=%q", err, out.String())
 	}
-	for _, args := range [][]string{{}, {"bogus"}, {"gate"}, {"trace", "extra"}} {
+	for _, args := range [][]string{{}, {"bogus"}, {"gate"}, {"release-notes", "-base", "v1"}, {"trace", "extra"}} {
 		if err := run(args, &out, &errOut); err == nil {
 			t.Errorf("run(%v) succeeded, want error", args)
 		}

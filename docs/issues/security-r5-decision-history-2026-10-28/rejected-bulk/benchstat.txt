@@ -1,0 +1,67 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+                                                            │  before.txt  │              after.txt               │
+                                                            │    sec/op    │    sec/op      vs base               │
+V4DecisionHistory/empty-control-16                            7.741n ±  1%   7.761n ±   4%        ~ (p=1.000 n=6)
+V4DecisionHistory/single-16                                   194.7n ±  2%   199.0n ±  19%   +2.21% (p=0.041 n=6)
+V4DecisionHistory/includes-256-16                             51.53µ ±  4%   45.92µ ± 182%        ~ (p=0.180 n=6)
+V4DecisionHistory/includes-1024-16                            234.4µ ±  3%   211.6µ ±  23%        ~ (p=0.394 n=6)
+V4DecisionHistory/excludes-256-16                             8.460µ ± 10%   3.330µ ±  58%  -60.64% (p=0.002 n=6)
+V4DecisionHistory/excludes-1024-16                            28.52µ ± 11%   12.97µ ±  30%  -54.51% (p=0.002 n=6)
+V4DecisionHistory/groups-16-16                                194.5µ ±  7%   206.5µ ±  45%   +6.18% (p=0.026 n=6)
+V4DecisionHistory/groups-1024-control-16                      250.9µ ±  3%   257.0µ ±  79%        ~ (p=0.065 n=6)
+V4DecisionHistoryEffectiveControl/requests=256-16             34.14µ ±  2%   34.30µ ±  50%        ~ (p=0.589 n=6)
+V4DecisionHistoryEffectiveControl/requests=1024-16            150.9µ ±  2%   152.0µ ±  17%        ~ (p=0.394 n=6)
+ParseV4DecisionHistory/exclude-only=false/decisions=1-16      9.721µ ±  4%   9.844µ ±   8%        ~ (p=0.180 n=6)
+ParseV4DecisionHistory/exclude-only=false/decisions=256-16    292.5µ ±  3%   285.8µ ±  26%        ~ (p=0.240 n=6)
+ParseV4DecisionHistory/exclude-only=false/decisions=1024-16   1.148m ±  1%   1.128m ±   4%        ~ (p=0.180 n=6)
+ParseV4DecisionHistory/exclude-only=true/decisions=1-16       9.026µ ±  2%   8.914µ ±   5%        ~ (p=0.589 n=6)
+ParseV4DecisionHistory/exclude-only=true/decisions=256-16     285.8µ ±  3%   280.3µ ±   3%        ~ (p=0.093 n=6)
+ParseV4DecisionHistory/exclude-only=true/decisions=1024-16    1.113m ±  2%   1.093m ±   4%   -1.87% (p=0.026 n=6)
+geomean                                                       36.60µ         32.50µ         -11.18%
+
+                                                            │   before.txt    │               after.txt               │
+                                                            │      B/op       │     B/op      vs base                 │
+V4DecisionHistory/empty-control-16                               0.000 ± 0%       0.000 ± 0%        ~ (p=1.000 n=6) ¹
+V4DecisionHistory/single-16                                      320.0 ± 0%       320.0 ± 0%        ~ (p=1.000 n=6) ¹
+V4DecisionHistory/includes-256-16                              205.7Ki ± 0%     169.0Ki ± 0%  -17.85% (p=0.002 n=6)
+V4DecisionHistory/includes-1024-16                            1034.9Ki ± 0%     907.6Ki ± 0%  -12.30% (p=0.002 n=6)
+V4DecisionHistory/excludes-256-16                              63.34Ki ± 0%     26.62Ki ± 0%  -57.97% (p=0.002 n=6)
+V4DecisionHistory/excludes-1024-16                             231.3Ki ± 0%     104.0Ki ± 0%  -55.05% (p=0.002 n=6)
+V4DecisionHistory/groups-16-16                                 1.009Mi ± 0%     1.118Mi ± 0%  +10.75% (p=0.002 n=6)
+V4DecisionHistory/groups-1024-control-16                       928.7Ki ± 0%     928.7Ki ± 0%        ~ (p=0.636 n=6)
+V4DecisionHistoryEffectiveControl/requests=256-16              86.98Ki ± 0%     86.98Ki ± 0%        ~ (p=1.000 n=6) ¹
+V4DecisionHistoryEffectiveControl/requests=1024-16             324.2Ki ± 0%     324.2Ki ± 0%        ~ (p=1.000 n=6) ¹
+ParseV4DecisionHistory/exclude-only=false/decisions=1-16       14.55Ki ± 0%     14.55Ki ± 0%        ~ (p=0.455 n=6)
+ParseV4DecisionHistory/exclude-only=false/decisions=256-16     480.8Ki ± 0%     444.1Ki ± 0%   -7.64% (p=0.002 n=6)
+ParseV4DecisionHistory/exclude-only=false/decisions=1024-16    2.039Mi ± 0%     1.915Mi ± 0%   -6.11% (p=0.002 n=6)
+ParseV4DecisionHistory/exclude-only=true/decisions=1-16        13.55Ki ± 0%     13.55Ki ± 0%        ~ (p=1.000 n=6)
+ParseV4DecisionHistory/exclude-only=true/decisions=256-16      225.0Ki ± 0%     188.3Ki ± 0%  -16.33% (p=0.002 n=6)
+ParseV4DecisionHistory/exclude-only=true/decisions=1024-16     846.1Ki ± 0%     718.7Ki ± 0%  -15.06% (p=0.002 n=6)
+geomean                                                                     ²                 -13.80%               ²
+¹ all samples are equal
+² summaries must be >0 to compute geomean
+
+                                                            │  before.txt   │              after.txt               │
+                                                            │   allocs/op   │  allocs/op   vs base                 │
+V4DecisionHistory/empty-control-16                             0.000 ± 0%      0.000 ± 0%        ~ (p=1.000 n=6) ¹
+V4DecisionHistory/single-16                                    2.000 ± 0%      2.000 ± 0%        ~ (p=1.000 n=6) ¹
+V4DecisionHistory/includes-256-16                              32.00 ± 0%      24.00 ± 0%  -25.00% (p=0.002 n=6)
+V4DecisionHistory/includes-1024-16                             44.00 ± 0%      34.00 ± 0%  -22.73% (p=0.002 n=6)
+V4DecisionHistory/excludes-256-16                              9.000 ± 0%      1.000 ± 0%  -88.89% (p=0.002 n=6)
+V4DecisionHistory/excludes-1024-16                            11.000 ± 0%      1.000 ± 0%  -90.91% (p=0.002 n=6)
+V4DecisionHistory/groups-16-16                                 184.0 ± 0%      179.0 ± 0%   -2.72% (p=0.002 n=6)
+V4DecisionHistory/groups-1024-control-16                       24.00 ± 0%      24.00 ± 0%        ~ (p=1.000 n=6) ¹
+V4DecisionHistoryEffectiveControl/requests=256-16              15.00 ± 0%      15.00 ± 0%        ~ (p=1.000 n=6) ¹
+V4DecisionHistoryEffectiveControl/requests=1024-16             22.00 ± 0%      22.00 ± 0%        ~ (p=1.000 n=6) ¹
+ParseV4DecisionHistory/exclude-only=false/decisions=1-16       140.0 ± 0%      140.0 ± 0%        ~ (p=1.000 n=6) ¹
+ParseV4DecisionHistory/exclude-only=false/decisions=256-16    3.252k ± 0%     3.244k ± 0%   -0.25% (p=0.002 n=6)
+ParseV4DecisionHistory/exclude-only=false/decisions=1024-16   13.26k ± 0%     13.25k ± 0%   -0.08% (p=0.002 n=6)
+ParseV4DecisionHistory/exclude-only=true/decisions=1-16        126.0 ± 0%      126.0 ± 0%        ~ (p=1.000 n=6) ¹
+ParseV4DecisionHistory/exclude-only=true/decisions=256-16     1.430k ± 0%     1.422k ± 0%   -0.56% (p=0.002 n=6)
+ParseV4DecisionHistory/exclude-only=true/decisions=1024-16    5.282k ± 0%     5.272k ± 0%   -0.19% (p=0.002 n=6)
+geomean                                                                   ²                -27.65%               ²
+¹ all samples are equal
+² summaries must be >0 to compute geomean
