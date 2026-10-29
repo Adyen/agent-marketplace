@@ -26,6 +26,12 @@ func gitRun(t *testing.T, dir string, args ...string) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
+	// Fixture git operations must not read host-global configuration: a
+	// developer machine with mandatory commit signing (for example through a
+	// hardware key) would otherwise make every fixture commit interactive and
+	// intermittently fail the suite. Test-local `-c` and repository config
+	// remain in effect; every `git init` in this suite names its branch.
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
@@ -172,7 +178,7 @@ func TestAdHocInstallHonorsExactDiscovery(t *testing.T) {
 	beforeConfig := fixture.env.ReadFile("/workspace/.agents/config.yaml")
 	beforeLock := fixture.env.ReadFile("/workspace/.agents/lock.yaml")
 	fixture.replaceSkills(t, "move main", Skill{Name: "review", Description: "Changed version B"}, Skill{Name: "new", Description: "Only in B"})
-	result := fixture.env.RunAM("install", "new", "--from", fixture.url, "--ref", "main")
+	result := fixture.env.RunAM("install", "--scope", "repo", "new", "--from", fixture.url, "--ref", "main")
 	if result.ExitCode == 0 || !strings.Contains(result.Combined, "not found") {
 		t.Fatalf("mutable-only resource was not safely refused: %s", result.Combined)
 	}
@@ -182,7 +188,7 @@ func TestAdHocInstallHonorsExactDiscovery(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(fixture.env.workspace, ".factory", "skills", "new")); !os.IsNotExist(err) {
 		t.Fatalf("mutable-only output exists: %v", err)
 	}
-	result = fixture.env.RunAM("install", "review", "--from", fixture.url, "--ref", "main")
+	result = fixture.env.RunAM("install", "--scope", "repo", "review", "--from", fixture.url, "--ref", "main")
 	if result.ExitCode != 0 {
 		t.Fatalf("locked resource install: %s", result.Combined)
 	}
@@ -212,7 +218,7 @@ func TestConfiguredInstallCopiesProviderPinAcrossScopes(t *testing.T) {
 		t.Fatal("user fixture has no exact commit")
 	}
 	fixture.replaceSkills(t, "move main", Skill{Name: "review", Description: "Unselected version B"})
-	if result := fixture.env.RunAM("install", "review"); result.ExitCode != 0 {
+	if result := fixture.env.RunAM("install", "--scope", "repo", "review"); result.ExitCode != 0 {
 		t.Fatalf("configured install: %s", result.Combined)
 	}
 	fixture.env.AssertFileContains("/workspace/.agents/lock.yaml", commitLine)

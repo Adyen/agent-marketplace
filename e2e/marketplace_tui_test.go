@@ -130,7 +130,7 @@ func TestMarketplaceTUIToggleCopiesExactPinToLocalScope(t *testing.T) {
 	consumer := fixture.newConsumer(t, fixture.server.URL)
 	evidence := assertMarketplaceArtifactIntegrity(t, fixture.server.URL, "behavior-marketplace", "behavior-source", "behavior-source-id", "skill", "skill-one")
 	digest := evidence.ContentDigest
-	result := consumer.RunAM("install", "behavior:behavior-source/skill/skill-one", "--yes")
+	result := consumer.RunAM("install", "--scope", "repo", "behavior:behavior-source/skill/skill-one", "--yes")
 	if result.ExitCode != 0 {
 		t.Fatalf("Marketplace install before TUI failed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}

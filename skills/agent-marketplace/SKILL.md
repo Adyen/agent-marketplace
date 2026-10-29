@@ -200,10 +200,10 @@ branch moves: use `update` or `lock --upgrade`. Never hand-edit a lock.
 ```bash
 agent-marketplace list [--kind skill|command|subagent|hook|mcp|collection]
 agent-marketplace list --from <git-or-web-url> [--ref R] [--path P]  # ad hoc, no config write
-agent-marketplace install <name> [--kind K] [--scope repo|user|local]
+agent-marketplace install <name> [--kind K] [--scope user|repo|local]  # default user
 agent-marketplace install <collection>
-agent-marketplace install --tag <tag> [--kind K]       # repo scope only
-agent-marketplace install --all [--kind K] [--registry URL]  # repo scope only
+agent-marketplace install --tag <tag> [--kind K]       # default user
+agent-marketplace install --all [--kind K] [--registry URL]  # default user
 agent-marketplace install --from <url> [<name>] [--ref R] [--path P]
 agent-marketplace install <marketplace-endpoint>       # registers endpoint (user scope)
 agent-marketplace install alias:registry/kind/name[@sha256:...] [--as local-name]

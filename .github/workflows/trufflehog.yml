@@ -26,13 +26,8 @@ jobs:
       - name: TruffleHog OSS
         id: trufflehog
         uses: trufflesecurity/trufflehog@4dd8831c5f12599465d4d45c3c447b4018a34c85 # v3.97.9
-        continue-on-error: true
         with:
           path: ./
           base: ${{ github.event.merge_group.base_sha }}
           head: ${{ github.event.merge_group.head_sha }}
           extra_args: --only-verified
-
-      - name: Scan Results Status
-        if: steps.trufflehog.outcome == 'failure'
-        run: exit 1

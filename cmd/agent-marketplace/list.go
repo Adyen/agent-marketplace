@@ -12,7 +12,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
@@ -194,71 +193,22 @@ func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, 
 	if err != nil {
 		return err
 	}
-
-	// Resolve web URLs into git URL + ref + path. Explicit flags win.
-	fromURL, fromRef, fromPath, _ = pipeline.ResolveFromURL(fromURL, fromRef, fromPath)
-
-	// Validate the ad-hoc URL against the allowlist resolved by ReadIntent
-	// before any network access.
 	ws, err := pipeline.DiscoverWorkspace()
 	if err != nil {
 		return err
 	}
-	intent := config.ReadIntent(ctx, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir()})
-	for _, w := range intent.Warnings {
-		fmt.Fprintf(errOut, "warning: %s\n", terminalSafeText(fmt.Sprint(w))) //nolint:errcheck // best-effort warning on stderr
+	preview, previewErr := pipeline.PreviewSource(ctx, ws, fromURL, fromRef, fromPath)
+	for _, warning := range preview.Warnings {
+		fmt.Fprintf(errOut, "warning: %s\n", terminalSafeText(fmt.Sprint(warning))) //nolint:errcheck // best-effort warning on stderr
 	}
-	if len(intent.Errors) > 0 {
-		return errors.Join(intent.Errors...)
-	}
-	syntheticEntry := config.RegistryEntry{URL: fromURL, Ref: fromRef, Path: fromPath}
-	if err := config.ValidateRegistryURLs([]config.RegistryEntry{syntheticEntry}, intent.AllowedRegistries()); err != nil {
-		return err
+	if previewErr != nil {
+		return previewErr
 	}
 
-	// A Git registry without an explicit ref uses the branch its remote HEAD
-	// advertises, matching install --from. Local directory registries ignore
-	// the ref entirely. Resolving after the allowlist check keeps a blocked URL
-	// offline.
-	if !syntheticEntry.IsLocal() && fromRef == "" {
-		defaultBranch, err := cache.DefaultBranch(fromURL)
-		if err != nil {
-			return err
-		}
-		fromRef = defaultBranch
-		syntheticEntry.Ref = fromRef
-		slog.Info("list --from using registry default branch", "ref", fromRef)
-	}
-
-	// Build a synthetic config with just the --from entry to load catalogs.
-	syntheticCfg := &config.Config{
-		APIVersion: config.APIVersionV4,
-		Registries: []config.RegistryEntry{syntheticEntry},
-	}
-
-	repoRoot := config.FindRepoRoot()
-	result := catalog.LoadRegistriesWithContext(ctx, syntheticCfg, repoRoot, catalog.LoadModeRefresh)
-	// Separate overlap warnings (soft) from hard catalog errors.
-	var hardCatalogErrs []error
-	for _, err := range result.Errors {
-		if catalog.IsOverlapWarning(err) {
-			fmt.Fprintf(errOut, "warning: %s\n", terminalSafeText(err.Error())) //nolint:errcheck // best-effort warning on stderr
-			continue
-		}
-		hardCatalogErrs = append(hardCatalogErrs, err)
-	}
-	if len(hardCatalogErrs) > 0 {
-		return errors.Join(hardCatalogErrs...)
-	}
-
-	for _, warning := range requiresInvalidWarnings(result.Catalogs) {
-		fmt.Fprintf(errOut, "warning: %s\n", terminalSafeText(warning.Error())) //nolint:errcheck
-	}
-
-	displayName := registryDisplayName(fromURL)
+	displayName := registryDisplayName(preview.URL)
 
 	rows := make([]listRow, 0)
-	for _, catalogForEntry := range result.Catalogs {
+	for _, catalogForEntry := range preview.Catalogs {
 		for _, discovered := range catalogForEntry.Entries {
 			if hasKind && discovered.Kind != kind {
 				continue
@@ -274,7 +224,7 @@ func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, 
 		for _, malformed := range catalogForEntry.Malformed {
 			rows = append(rows, listRow{
 				Registry: displayName,
-				Kind:     "skill",
+				Kind:     skill.MalformedKindLabel(malformed),
 				Name:     malformed.DirName,
 				Tags:     "",
 				Status:   fmt.Sprintf("malformed: %v", malformed.Error),
@@ -295,20 +245,6 @@ func runListFrom(ctx context.Context, out io.Writer, errOut io.Writer, fromURL, 
 	}
 
 	return writeListTable(out, rows)
-}
-
-func requiresInvalidWarnings(catalogs map[string]loadedCatalog) []error {
-	var warnings []error
-	for _, loaded := range catalogs {
-		for _, d := range loaded.Diagnostics {
-			if d.Code == catalog.CodeRequiresInvalid {
-				warnings = append(warnings, pipeline.PromoteDiagnostic(d))
-			}
-		}
-	}
-	warnings = pipeline.DedupIssues(warnings)
-	slices.SortFunc(warnings, func(a, b error) int { return strings.Compare(a.Error(), b.Error()) })
-	return warnings
 }
 
 func buildListRows(cfg *config.Config, catalogs map[string]loadedCatalog, resolved []resolver.ResolvedArtifact) []listRow {
@@ -347,7 +283,7 @@ func buildListRows(cfg *config.Config, catalogs map[string]loadedCatalog, resolv
 		for _, malformed := range catalogs[entry.CatalogKey].Malformed {
 			rows = append(rows, listRow{
 				Registry: registryDisplayName(entry.URL),
-				Kind:     "skill",
+				Kind:     skill.MalformedKindLabel(malformed),
 				Name:     malformed.DirName,
 				Tags:     "",
 				Status:   fmt.Sprintf("malformed: %v", malformed.Error),
@@ -401,10 +337,14 @@ func parseOptionalKind(value string) (ir.ResourceKind, bool, error) {
 	return kind, true, nil
 }
 
+// filterListRowsByKind keeps the rows of kind, plus unclassified malformed
+// entries such as registry-level audit diagnostics, which no kind filter can
+// rule out.
 func filterListRowsByKind(rows []listRow, kind string) []listRow {
+	unknown := skill.MalformedKindLabel(skill.MalformedSkill{})
 	filtered := rows[:0]
 	for _, row := range rows {
-		if row.Kind == kind {
+		if row.Kind == kind || row.Kind == unknown {
 			filtered = append(filtered, row)
 		}
 	}

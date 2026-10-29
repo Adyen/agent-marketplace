@@ -190,6 +190,26 @@ func (m *Model) ensureHarnessForm() {
 	m.harnessModal.optionIDs = harnessOptionIDList(m.harnessModal.selected)
 }
 
+// refreshHarnessFormsForSize rebuilds the open harness dialog form at the new
+// terminal size, keeping their selection and cursor. Huh keeps a
+// multiselect's scroll offset when its height grows, so a list scrolled in
+// the compact layout would otherwise keep hiding its first choices.
+func (m *Model) refreshHarnessFormsForSize() {
+	switch {
+	case m.pane == paneHarnessModal && m.harnessModal.form != nil:
+		cursor := m.harnessModal.cursor
+		m.buildHarnessForm()
+		m.harnessModal.cursor = cursor
+		setHarnessMultiSelectHeight(*m, m.harnessModal.multi, m.harnessModal.optionIDs)
+		reconcileMultiCursor(m.harnessModal.form, m.harnessModal.multi, m.harnessModal.optionIDs, cursor)
+	case m.pane == paneInitModal && m.initModal.form != nil:
+		m.initModal.form = nil
+		m.ensureInitForm()
+		setHarnessMultiSelectHeight(*m, m.initModal.multi, m.initModal.optionIDs)
+		reconcileMultiCursor(m.initModal.form, m.initModal.multi, m.initModal.optionIDs, m.initModal.cursor)
+	}
+}
+
 func (m *Model) ensureInitForm() {
 	if m.initModal.form == nil {
 		m.initModal.form, m.initModal.multi, m.initModal.multiValue = newHarnessSelectForm(m.initModal.selected, m.currentTheme(), modalInnerWidth(*m))

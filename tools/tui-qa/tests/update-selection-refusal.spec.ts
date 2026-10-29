@@ -7,6 +7,7 @@ import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 import { runNonTTY } from "./process-helpers.js";
 
 // spec: resource-selection/tui-update-refuses-a-newly-missing-selection
+// spec: tui-error-recovery/structured-refusals-render-their-own-remediation
 const journey = defineFixture("update-selection-refusal", ["tui"]);
 before(journey.setup);
 after(journey.cleanup);
@@ -49,6 +50,11 @@ journey.test("update refuses when a selected skill was renamed upstream and writ
     ]) {
       assert.ok(screen.includes(expected), `the refusal lost ${JSON.stringify(expected)}:\n${await terminal.text()}`);
     }
+    // The refusal reads as its cause and its own remediation, not as one line
+    // of literal line-break escapes followed by the generic recovery copy.
+    assert.ok(!screen.includes("\\x0A"), `the refusal shows literal line-break escapes:\n${await terminal.text()}`);
+    assert.ok(screen.includes("→run'agent-marketplaceremove--kindskillbeta-skill'"), `the refusal's own remediation is not its recovery line:\n${await terminal.text()}`);
+    assert.ok(!screen.includes("Run`agent-marketplacesync--check`"), `the generic recovery copy was added:\n${await terminal.text()}`);
   });
   await step("close the errors screen", () => terminal.write("e"), async () => {
     await locate(terminal, "Errors (1)").expect({ not: true });

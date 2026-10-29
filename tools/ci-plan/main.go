@@ -238,6 +238,9 @@ func classifyPath(p string) (map[string]bool, error) {
 	if strings.HasPrefix(p, "site/") {
 		c["container_site"] = true
 	}
+	if p == "site/public/install.sh" {
+		c["go_test"] = true
+	}
 	if strings.HasPrefix(p, "design/") {
 		c["container_config"] = true
 		c["container_web"] = true

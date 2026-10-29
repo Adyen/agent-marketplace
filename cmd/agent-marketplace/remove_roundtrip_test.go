@@ -61,7 +61,7 @@ sources:
 	withWorkingDir(t, repoRoot)
 
 	// Install — should write to repo config.
-	if out, err := executeCommand("install", "vm-lifecycle"); err != nil {
+	if out, err := executeCommand("install", "--scope", "repo", "vm-lifecycle"); err != nil {
 		t.Fatalf("install failed: %v\n%s", err, out)
 	}
 
@@ -422,7 +422,7 @@ sources: {}
 	withWorkingDir(t, repoRoot)
 
 	// Install via --from.
-	if out, err := executeCommand("install", "--from", origin, "--ref", "main"); err != nil {
+	if out, err := executeCommand("install", "--scope", "repo", "--from", origin, "--ref", "main"); err != nil {
 		t.Fatalf("install --from failed: %v\n%s", err, out)
 	}
 
@@ -455,7 +455,7 @@ sources: {}
 	withWorkingDir(t, repoRoot)
 
 	// Install via --from.
-	if out, err := executeCommand("install", "--from", origin, "--ref", "main"); err != nil {
+	if out, err := executeCommand("install", "--scope", "repo", "--from", origin, "--ref", "main"); err != nil {
 		t.Fatalf("install --from failed: %v\n%s", err, out)
 	}
 
@@ -525,7 +525,7 @@ sources: {}
 	withWorkingDir(t, repoRoot)
 
 	// Install the subagent explicitly via --from --kind subagent.
-	if out, err := executeCommand("install", "worker-generic", "--from", origin, "--ref", "main", "--kind", "subagent"); err != nil {
+	if out, err := executeCommand("install", "--scope", "repo", "worker-generic", "--from", origin, "--ref", "main", "--kind", "subagent"); err != nil {
 		t.Fatalf("install --from --kind subagent failed: %v\n%s", err, out)
 	}
 

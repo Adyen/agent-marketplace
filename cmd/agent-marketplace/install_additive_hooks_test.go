@@ -50,7 +50,7 @@ sources:
 		}
 	}
 
-	output, err := executeCommand("install", "PreToolUse-command", "--kind", "hook", "--from", firstOrigin, "--ref", "main")
+	output, err := executeCommand("install", "--scope", "repo", "PreToolUse-command", "--kind", "hook", "--from", firstOrigin, "--ref", "main")
 	if err != nil {
 		t.Fatalf("named install first hook provider: %v\n%s", err, output)
 	}
@@ -77,7 +77,7 @@ sources:
 		t.Fatalf("named install selected second provider: %s", namedData)
 	}
 
-	output, err = executeCommand("install", "--all", "--kind", "hook")
+	output, err = executeCommand("install", "--scope", "repo", "--all", "--kind", "hook")
 	if err != nil {
 		t.Fatalf("install --all --kind hook: %v\n%s", err, output)
 	}

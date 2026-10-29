@@ -77,7 +77,7 @@ sources:
 	}
 
 	// install the collection.
-	output, err = executeCommand("install", "platform-onboarding")
+	output, err = executeCommand("install", "--scope", "repo", "platform-onboarding")
 	if err != nil {
 		t.Fatalf("install platform-onboarding failed: %v\n%s", err, output)
 	}

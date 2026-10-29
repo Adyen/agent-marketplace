@@ -11,6 +11,7 @@ const scopes = [
     configPath: '~/.agents/config.yaml',
     reach: 'Every repository',
     versionControl: 'Not committed',
+    isDefault: true,
   },
   {
     id: 'repo',
@@ -20,7 +21,6 @@ const scopes = [
     configPath: '.agents/config.yaml',
     reach: 'This repository',
     versionControl: 'Committed',
-    isDefault: true,
   },
   {
     id: 'local',
@@ -84,11 +84,11 @@ const scopes = [
       <div class="scope-command">
         <p class="scope-command__label">
           <span>Example</span>
-          <span>Repository scope</span>
+          <span>User scope</span>
         </p>
         <CommandBar
-          command="agent-marketplace install pdf --scope repo"
-          highlight="--scope repo"
+          command="agent-marketplace install pdf --scope user"
+          highlight="--scope user"
         />
       </div>
 

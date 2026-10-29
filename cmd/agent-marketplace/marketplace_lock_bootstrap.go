@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"slices"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -19,13 +18,57 @@ import (
 )
 
 func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir string, selected map[lockfile.Scope]bool, policy resolver.MarketplaceRevocationPolicy) (int, error) {
-	ws, err := pipeline.WorkspaceForRoots(repoRoot, localDir)
+	intent, desired, err := prepareMissingMarketplaceLockFiles(ctx, repoRoot, localDir, selected, policy)
 	if err != nil {
 		return 0, err
 	}
+	if len(desired) == 0 {
+		return 0, nil
+	}
+	reads, err := pipeline.IntentReadAssertions(intent)
+	if err != nil {
+		return 0, err
+	}
+	stateDir, err := dependencyStateDir()
+	if err != nil {
+		return 0, err
+	}
+	if _, err := commitDependencyTransaction(ctx, stateDir, desired, dependencytxn.WithReadAssertions(reads)); err != nil {
+		return 0, fmt.Errorf("commit missing Marketplace locks: %w", err)
+	}
+	slog.Info("missing Marketplace locks created", "count", len(desired))
+	return len(desired), nil
+}
+
+// prepareMissingMarketplaceLockEdits computes the Marketplace lock records an
+// update would bootstrap for writable layers, without committing them, so a
+// preview can stage the same initial acquisition evidence in memory. Planned
+// pin replacements merge on top of these bytes exactly as they would merge on
+// top of the committed bootstrap during an applying update.
+func prepareMissingMarketplaceLockEdits(ctx context.Context, repoRoot, localDir string, selected map[lockfile.Scope]bool, policy resolver.MarketplaceRevocationPolicy) ([]pipeline.StagedLockEdit, error) {
+	_, desired, err := prepareMissingMarketplaceLockFiles(ctx, repoRoot, localDir, selected, policy)
+	if err != nil {
+		return nil, err
+	}
+	edits := make([]pipeline.StagedLockEdit, 0, len(desired))
+	for _, file := range desired {
+		edits = append(edits, pipeline.StagedLockEdit{Path: file.Path, Expected: file.Expected, ExpectedMode: file.ExpectedMode, Bytes: file.Bytes, Mode: file.Mode})
+	}
+	return edits, nil
+}
+
+// prepareMissingMarketplaceLockFiles computes the desired missing Marketplace
+// lock documents without touching the filesystem: it resolves the records an
+// update's bootstrap would create and returns them as dependency desired
+// files together with the read intent that observed the pre-publication state.
+func prepareMissingMarketplaceLockFiles(ctx context.Context, repoRoot, localDir string, selected map[lockfile.Scope]bool, policy resolver.MarketplaceRevocationPolicy) (config.Intent, []dependencytxn.DesiredFile, error) {
+	ws, err := pipeline.WorkspaceForRoots(repoRoot, localDir)
+	if err != nil {
+		return config.Intent{}, nil, err
+	}
 	intent := config.ReadIntent(ctx, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir()})
 	if err := pipeline.MarketplaceAllowlistError(intent); err != nil {
-		return 0, err
+		return config.Intent{}, nil, err
 	}
 	resolver := marketplace.NewResolver()
 	resolver.AllowedRegistries = intent.AllowedRegistries()
@@ -41,22 +84,22 @@ func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir st
 			continue
 		}
 		if err := layer.Err(); err != nil {
-			return 0, err
+			return config.Intent{}, nil, err
 		}
 		if !layer.NeedsMarketplaceLock() {
 			continue
 		}
 		paths, err := config.ResolveConfigLockPaths(layer.Path)
 		if err != nil {
-			return 0, err
+			return config.Intent{}, nil, err
 		}
 		lockPath, err := rejectGeneratedLockSymlink(paths.CanonicalLock)
 		if err != nil {
-			return 0, err
+			return config.Intent{}, nil, err
 		}
 		current, expected, exists, err := pipeline.ReadLayerLock(lockPath, scope)
 		if err != nil {
-			return 0, err
+			return config.Intent{}, nil, err
 		}
 		// An existing v2 lock keeps its recorded pins and gains only selected
 		// resource and registration records it does not already contain.
@@ -75,7 +118,7 @@ func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir st
 		if exists {
 			registries = current.Registries
 			if _, expectedMode, err = dependencytxn.ReadGenerationAndMode(lockPath); err != nil {
-				return 0, err
+				return config.Intent{}, nil, err
 			}
 		}
 		var doc lockfile.Document
@@ -83,15 +126,15 @@ func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir st
 			if missingResources {
 				resolved, resolveErr := marketplacelock.Resolve(ctx, resolver, layer, targets, policy)
 				if resolveErr != nil {
-					return 0, fmt.Errorf("record selected Marketplace resources in lock %q: %w", lockPath, resolveErr)
+					return config.Intent{}, nil, fmt.Errorf("record selected Marketplace resources in lock %q: %w", lockPath, resolveErr)
 				}
 				doc, err = mergeMissingMarketplaceRecords(layer, *current, resolved)
 				if err != nil {
-					return 0, fmt.Errorf("record selected Marketplace resources in lock %q: %w", lockPath, err)
+					return config.Intent{}, nil, fmt.Errorf("record selected Marketplace resources in lock %q: %w", lockPath, err)
 				}
 			} else {
 				if doc, err = appendRegistrationIdentities(ctx, *current, unrecorded); err != nil {
-					return 0, fmt.Errorf("record Marketplace registrations in lock %q: %w", lockPath, err)
+					return config.Intent{}, nil, fmt.Errorf("record Marketplace registrations in lock %q: %w", lockPath, err)
 				}
 			}
 			if missingResources {
@@ -100,14 +143,11 @@ func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir st
 				slog.Info("marketplace registration identities recorded", "scope", scope, "count", len(unrecorded))
 			}
 		} else if doc, err = marketplacelock.Resolve(ctx, resolver, layer, targets, policy); err != nil {
-			return 0, fmt.Errorf("create Marketplace lock %q: %w", lockPath, err)
+			return config.Intent{}, nil, fmt.Errorf("create Marketplace lock %q: %w", lockPath, err)
 		}
 		data, err := encodeWithGitRegistries(doc, registries)
 		if err != nil {
-			return 0, err
-		}
-		if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
-			return 0, fmt.Errorf("create Marketplace lock directory: %w", err)
+			return config.Intent{}, nil, err
 		}
 		mode := expectedMode
 		if !expected.Exists {
@@ -115,22 +155,7 @@ func bootstrapMissingMarketplaceLocks(ctx context.Context, repoRoot, localDir st
 		}
 		desired = append(desired, dependencytxn.DesiredFile{Path: lockPath, Expected: expected, ExpectedMode: expectedMode, Bytes: data, Mode: mode})
 	}
-	if len(desired) == 0 {
-		return 0, nil
-	}
-	reads, err := pipeline.IntentReadAssertions(intent)
-	if err != nil {
-		return 0, err
-	}
-	stateDir, err := dependencyStateDir()
-	if err != nil {
-		return 0, err
-	}
-	if _, err := commitDependencyTransaction(ctx, stateDir, desired, dependencytxn.WithReadAssertions(reads)); err != nil {
-		return 0, fmt.Errorf("commit missing Marketplace locks: %w", err)
-	}
-	slog.Info("missing Marketplace locks created", "count", len(desired))
-	return len(desired), nil
+	return intent, desired, nil
 }
 
 func selectedMarketplaceResourcesMissing(layer config.LayerIntent, current *lockfile.Document) bool {

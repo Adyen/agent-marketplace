@@ -87,7 +87,7 @@ func TestUnsupportedConsumerConfigRefusesWithoutConversion(t *testing.T) {
 			m = updated.(Model)
 			view := ansi.Strip(m.viewContent())
 			searchableView := strings.ReplaceAll(strings.Join(strings.Fields(view), " "), "- ", "-")
-			if !strings.Contains(view, tc.code) || !strings.Contains(view, "apiVersion") {
+			if !strings.Contains(searchableView, tc.code) || !strings.Contains(searchableView, "apiVersion") {
 				t.Fatalf("error view lacks format diagnostic:\n%s", view)
 			}
 			if !strings.Contains(searchableView, "agent-marketplace v4.1.4") ||

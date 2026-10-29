@@ -120,8 +120,8 @@ func TestStaleUpdateReloadFailureEndsOperation(t *testing.T) {
 	if len(m.errs) == 0 {
 		t.Fatal("failed reload dropped the diagnostic record")
 	}
-	if len(m.warnings) != 0 {
-		t.Fatalf("failed reload recorded pending update warnings: %v", m.warnings)
+	if len(m.warnings) != 1 || !errors.Is(m.warnings[0], pendingWarning) {
+		t.Fatalf("failed reload discarded the completed update warning: %v", m.warnings)
 	}
 	if strings.Contains(m.toast, "Update complete") {
 		t.Fatalf("failed reload claimed success: %q", m.toast)

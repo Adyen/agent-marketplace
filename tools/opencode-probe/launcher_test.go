@@ -1,6 +1,7 @@
 package opencodeprobe
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -12,16 +13,27 @@ import (
 	"time"
 )
 
+// spec: opencode-hooks/probe-cancellation-waits-for-owned-container-creation
 func TestLauncherOfflineAndContainerOwnership(t *testing.T) {
 	launcher, err := os.ReadFile("run.sh")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"created", "collision", "cancel", "cancel creation", "cancel group", "cancel creation group"} {
+	for _, name := range []string{"created", "collision", "cancel", "cancel creation", "cancel group", "cancel creation group", "cancel creation setup", "cancel creation setup group"} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			script := filepath.Join(root, "tools", "opencode-probe", "run.sh")
-			writeFixture(t, script, string(launcher))
+			creationSetup := strings.Contains(name, "setup")
+			content := string(launcher)
+			if creationSetup {
+				// Deliver cancellation after spawning the creator, before publishing its PID.
+				signal := "kill -TERM \"$$\""
+				if strings.HasSuffix(name, "group") {
+					signal = "kill -TERM -- \"-$$\""
+				}
+				content = strings.Replace(content, "creator_pid=$!", signal+"\ncreator_pid=$!", 1)
+			}
+			writeFixture(t, script, content)
 			bin := filepath.Join(root, "bin")
 			writeFixture(t, filepath.Join(bin, "go"), `#!/bin/bash
 if [[ $GOTOOLCHAIN != local || $GOPROXY != off || $GOSUMDB != off ]]; then
@@ -86,6 +98,8 @@ esac
 				"PROBE_START_INVOKED=" + startInvoked,
 			}
 			if strings.HasPrefix(name, "cancel") {
+				var output bytes.Buffer
+				cmd.Stdout, cmd.Stderr = &output, &output
 				cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 				if err := cmd.Start(); err != nil {
 					t.Fatal(err)
@@ -99,7 +113,7 @@ esac
 				}()
 				ticker := time.NewTicker(10 * time.Millisecond)
 				defer ticker.Stop()
-				for !fixtureExists(t, started) {
+				for !creationSetup && !fixtureExists(t, started) {
 					select {
 					case <-ctx.Done():
 						t.Fatal("launcher did not reach the controlled running container")
@@ -108,10 +122,12 @@ esac
 				}
 				began := time.Now()
 				var signalErr error
-				if strings.HasSuffix(name, "group") {
-					signalErr = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-				} else {
-					signalErr = cmd.Process.Signal(syscall.SIGTERM)
+				if !creationSetup {
+					if strings.HasSuffix(name, "group") {
+						signalErr = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+					} else {
+						signalErr = cmd.Process.Signal(syscall.SIGTERM)
+					}
 				}
 				if signalErr != nil {
 					t.Fatal(signalErr)
@@ -124,7 +140,7 @@ esac
 				}
 				data, err := os.ReadFile(removed)
 				if err != nil || string(data) != "owned-container-id\n" {
-					t.Fatal("cancellation did not clean the owned container")
+					t.Fatalf("cancellation did not clean the owned container: %v; removed=%q\n%s", err, data, output.String())
 				}
 				if strings.HasPrefix(name, "cancel creation") && fixtureExists(t, startInvoked) {
 					t.Fatal("container execution started after creation cancellation")

@@ -78,8 +78,11 @@ func TestUpgradeNoticeDoesNotBlockFirstFrame(t *testing.T) {
 	})
 	checker := upgradeNoticeChecker(t, srv.URL, time.Now().Add(-48*time.Hour), false)
 
-	m := NewModel("/repo", "/home", WithUpgradeCheck(checker))
-	if m.Init() == nil {
+	repoRoot, homeDir := progressiveFixture(t)
+	m := NewModel(repoRoot, homeDir, WithUpgradeCheck(checker))
+	initCmd := m.Init()
+	joinStartupSnapshot(t, initCmd)
+	if initCmd == nil {
 		t.Fatal("Init returned no commands, want the notice command among them")
 	}
 	if n := hits.Load(); n != 0 {
