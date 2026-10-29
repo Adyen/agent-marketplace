@@ -1,0 +1,110 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4WildcardValidation/kind/source-16  	100000000	        10.78 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/registry/source-16         	15173602	        77.62 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/qualified/source-16        	14111372	        86.00 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/long-registry/source-16    	  230512	      5161 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/extra-slash/source-16      	12899092	        97.99 ns/op	     208 B/op	       2 allocs/op
+BenchmarkV4WildcardValidation/invalid-kind/source-16     	 7319276	       151.4 ns/op	     176 B/op	       2 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4WildcardValidation/kind/source-16  	100000000	        10.95 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/registry/source-16         	15932128	        76.54 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/qualified/source-16        	14057640	        86.09 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/long-registry/source-16    	  231802	      5109 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/extra-slash/source-16      	12615868	        92.86 ns/op	     208 B/op	       2 allocs/op
+BenchmarkV4WildcardValidation/invalid-kind/source-16     	 8302821	       146.9 ns/op	     176 B/op	       2 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4WildcardValidation/kind/source-16  	100000000	        10.72 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/registry/source-16         	15279429	        76.53 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/qualified/source-16        	13831144	        84.28 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/long-registry/source-16    	  235429	      5066 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/extra-slash/source-16      	12996958	        92.67 ns/op	     208 B/op	       2 allocs/op
+BenchmarkV4WildcardValidation/invalid-kind/source-16     	 8427942	       149.1 ns/op	     176 B/op	       2 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4WildcardValidation/kind/source-16  	100000000	        10.83 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/registry/source-16         	16173795	        76.27 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/qualified/source-16        	14294151	        83.99 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/long-registry/source-16    	  237060	      5083 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/extra-slash/source-16      	12218978	        95.03 ns/op	     208 B/op	       2 allocs/op
+BenchmarkV4WildcardValidation/invalid-kind/source-16     	 8353692	       147.2 ns/op	     176 B/op	       2 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4WildcardValidation/kind/source-16  	97199118	        11.10 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/registry/source-16         	15356985	        79.06 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/qualified/source-16        	13492033	        88.13 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/long-registry/source-16    	  227992	      5227 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/extra-slash/source-16      	12482462	        97.72 ns/op	     208 B/op	       2 allocs/op
+BenchmarkV4WildcardValidation/invalid-kind/source-16     	 7801848	       153.9 ns/op	     176 B/op	       2 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4WildcardValidation/kind/source-16  	100000000	        11.10 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/registry/source-16         	15091000	        79.14 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/qualified/source-16        	13515606	        87.58 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/long-registry/source-16    	  230451	      5169 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/extra-slash/source-16      	12057549	        98.46 ns/op	     208 B/op	       2 allocs/op
+BenchmarkV4WildcardValidation/invalid-kind/source-16     	 7879825	       151.0 ns/op	     176 B/op	       2 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4WildcardValidation/kind/source-16  	100000000	        11.19 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/registry/source-16         	14940944	        78.71 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/qualified/source-16        	13899949	        86.45 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/long-registry/source-16    	  231847	      5245 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/extra-slash/source-16      	12140469	        96.93 ns/op	     208 B/op	       2 allocs/op
+BenchmarkV4WildcardValidation/invalid-kind/source-16     	 8150588	       149.8 ns/op	     176 B/op	       2 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4WildcardValidation/kind/source-16  	100000000	        11.04 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/registry/source-16         	14908699	        79.23 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/qualified/source-16        	13487414	        88.21 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/long-registry/source-16    	  227326	      5243 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/extra-slash/source-16      	12208443	        97.41 ns/op	     208 B/op	       2 allocs/op
+BenchmarkV4WildcardValidation/invalid-kind/source-16     	 8002509	       151.2 ns/op	     176 B/op	       2 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4WildcardValidation/kind/source-16  	100000000	        11.19 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/registry/source-16         	15364350	        78.97 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/qualified/source-16        	13304857	        88.08 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/long-registry/source-16    	  235471	      5397 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/extra-slash/source-16      	12429650	        99.12 ns/op	     208 B/op	       2 allocs/op
+BenchmarkV4WildcardValidation/invalid-kind/source-16     	 7895326	       154.8 ns/op	     176 B/op	       2 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4WildcardValidation/kind/source-16  	100000000	        11.16 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/registry/source-16         	15397083	        79.71 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/qualified/source-16        	13693282	        88.40 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/long-registry/source-16    	  232542	      5200 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/extra-slash/source-16      	11913266	       100.7 ns/op	     208 B/op	       2 allocs/op
+BenchmarkV4WildcardValidation/invalid-kind/source-16     	 7751632	       152.1 ns/op	     176 B/op	       2 allocs/op
+PASS

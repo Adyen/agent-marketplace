@@ -1,0 +1,78 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+                                             │ before.txt  │             after.txt              │
+                                             │   sec/op    │   sec/op     vs base               │
+V4SubpathValidation/empty-16                   1.808n ± 1%   1.808n ± 0%        ~ (p=0.552 n=6)
+V4SubpathValidation/single-16                  31.71n ± 4%   21.96n ± 1%  -30.72% (p=0.002 n=6)
+V4SubpathValidation/nested-16                  61.10n ± 2%   44.40n ± 2%  -27.34% (p=0.002 n=6)
+V4SubpathValidation/deep-16                    1.044µ ± 2%   1.011µ ± 4%        ~ (p=0.069 n=6)
+V4SubpathValidation/backslash-16               93.97n ± 3%   78.45n ± 3%  -16.52% (p=0.002 n=6)
+V4SubpathValidation/absolute-control-16        8.542n ± 7%   8.279n ± 3%   -3.08% (p=0.009 n=6)
+V4SubpathValidation/escape-control-16          33.59n ± 5%   33.72n ± 3%        ~ (p=0.699 n=6)
+V4SubpathValidation/dot-segment-16             76.67n ± 2%   56.08n ± 3%  -26.86% (p=0.002 n=6)
+V4SubpathValidation/repeated-slash-16          75.08n ± 4%   54.48n ± 3%  -27.44% (p=0.002 n=6)
+V4SubpathValidation/trailing-slash-16          59.87n ± 3%   43.27n ± 2%  -27.73% (p=0.002 n=6)
+ParseV4GitSubpaths/empty/sources=1-16          9.716µ ± 2%   9.677µ ± 3%        ~ (p=0.818 n=6)
+ParseV4GitSubpaths/empty/sources=256-16        1.210m ± 2%   1.214m ± 3%        ~ (p=0.699 n=6)
+ParseV4GitSubpaths/empty/sources=1024-16       4.859m ± 1%   4.887m ± 3%        ~ (p=0.485 n=6)
+ParseV4GitSubpaths/nested/sources=1-16         10.00µ ± 2%   10.11µ ± 3%        ~ (p=0.394 n=6)
+ParseV4GitSubpaths/nested/sources=256-16       1.283m ± 2%   1.277m ± 3%        ~ (p=1.000 n=6)
+ParseV4GitSubpaths/nested/sources=1024-16      5.163m ± 1%   5.107m ± 2%        ~ (p=0.240 n=6)
+ParseV4GitSubpaths/backslash/sources=1-16      10.06µ ± 2%   10.03µ ± 6%        ~ (p=0.818 n=6)
+ParseV4GitSubpaths/backslash/sources=256-16    1.315m ± 2%   1.289m ± 1%   -2.01% (p=0.026 n=6)
+ParseV4GitSubpaths/backslash/sources=1024-16   5.238m ± 1%   5.238m ± 2%        ~ (p=0.818 n=6)
+geomean                                        3.340µ        3.021µ        -9.55%
+
+                                             │   before.txt   │                after.txt                 │
+                                             │      B/op      │     B/op      vs base                    │
+V4SubpathValidation/empty-16                     0.000 ± 0%       0.000 ± 0%         ~ (p=1.000 n=6) ¹
+V4SubpathValidation/single-16                    16.00 ± 0%        0.00 ± 0%  -100.00% (p=0.002 n=6)
+V4SubpathValidation/nested-16                    48.00 ± 0%        0.00 ± 0%  -100.00% (p=0.002 n=6)
+V4SubpathValidation/deep-16                    1.125Ki ± 0%     0.000Ki ± 0%  -100.00% (p=0.002 n=6)
+V4SubpathValidation/backslash-16                 72.00 ± 0%       24.00 ± 0%   -66.67% (p=0.002 n=6)
+V4SubpathValidation/absolute-control-16          16.00 ± 0%       16.00 ± 0%         ~ (p=1.000 n=6) ¹
+V4SubpathValidation/escape-control-16            16.00 ± 0%       16.00 ± 0%         ~ (p=1.000 n=6) ¹
+V4SubpathValidation/dot-segment-16              104.00 ± 0%       56.00 ± 0%   -46.15% (p=0.002 n=6)
+V4SubpathValidation/repeated-slash-16           104.00 ± 0%       56.00 ± 0%   -46.15% (p=0.002 n=6)
+V4SubpathValidation/trailing-slash-16            64.00 ± 0%       16.00 ± 0%   -75.00% (p=0.002 n=6)
+ParseV4GitSubpaths/empty/sources=1-16          14.50Ki ± 0%     14.50Ki ± 0%         ~ (p=1.000 n=6)
+ParseV4GitSubpaths/empty/sources=256-16        1.174Mi ± 0%     1.174Mi ± 0%         ~ (p=0.734 n=6)
+ParseV4GitSubpaths/empty/sources=1024-16       4.895Mi ± 0%     4.895Mi ± 0%         ~ (p=0.485 n=6)
+ParseV4GitSubpaths/nested/sources=1-16         14.60Ki ± 0%     14.56Ki ± 0%    -0.32% (p=0.002 n=6)
+ParseV4GitSubpaths/nested/sources=256-16       1.201Mi ± 0%     1.190Mi ± 0%    -0.98% (p=0.002 n=6)
+ParseV4GitSubpaths/nested/sources=1024-16      5.005Mi ± 0%     4.958Mi ± 0%    -0.93% (p=0.002 n=6)
+ParseV4GitSubpaths/backslash/sources=1-16      14.67Ki ± 0%     14.62Ki ± 0%    -0.32% (p=0.002 n=6)
+ParseV4GitSubpaths/backslash/sources=256-16    1.217Mi ± 0%     1.205Mi ± 0%    -0.96% (p=0.002 n=6)
+ParseV4GitSubpaths/backslash/sources=1024-16   5.067Mi ± 0%     5.020Mi ± 0%    -0.93% (p=0.002 n=6)
+geomean                                                     ²                 ?                      ² ³
+¹ all samples are equal
+² summaries must be >0 to compute geomean
+³ ratios must be >0 to compute geomean
+
+                                             │  before.txt   │                after.txt                │
+                                             │   allocs/op   │  allocs/op   vs base                    │
+V4SubpathValidation/empty-16                    0.000 ± 0%      0.000 ± 0%         ~ (p=1.000 n=6) ¹
+V4SubpathValidation/single-16                   1.000 ± 0%      0.000 ± 0%  -100.00% (p=0.002 n=6)
+V4SubpathValidation/nested-16                   1.000 ± 0%      0.000 ± 0%  -100.00% (p=0.002 n=6)
+V4SubpathValidation/deep-16                     1.000 ± 0%      0.000 ± 0%  -100.00% (p=0.002 n=6)
+V4SubpathValidation/backslash-16                2.000 ± 0%      1.000 ± 0%   -50.00% (p=0.002 n=6)
+V4SubpathValidation/absolute-control-16         1.000 ± 0%      1.000 ± 0%         ~ (p=1.000 n=6) ¹
+V4SubpathValidation/escape-control-16           1.000 ± 0%      1.000 ± 0%         ~ (p=1.000 n=6) ¹
+V4SubpathValidation/dot-segment-16              4.000 ± 0%      3.000 ± 0%   -25.00% (p=0.002 n=6)
+V4SubpathValidation/repeated-slash-16           4.000 ± 0%      3.000 ± 0%   -25.00% (p=0.002 n=6)
+V4SubpathValidation/trailing-slash-16           2.000 ± 0%      1.000 ± 0%   -50.00% (p=0.002 n=6)
+ParseV4GitSubpaths/empty/sources=1-16           138.0 ± 0%      138.0 ± 0%         ~ (p=1.000 n=6) ¹
+ParseV4GitSubpaths/empty/sources=256-16        13.73k ± 0%     13.73k ± 0%         ~ (p=1.000 n=6) ¹
+ParseV4GitSubpaths/empty/sources=1024-16       54.47k ± 0%     54.47k ± 0%         ~ (p=1.000 n=6) ¹
+ParseV4GitSubpaths/nested/sources=1-16          141.0 ± 0%      140.0 ± 0%    -0.71% (p=0.002 n=6)
+ParseV4GitSubpaths/nested/sources=256-16       14.50k ± 0%     14.24k ± 0%    -1.77% (p=0.002 n=6)
+ParseV4GitSubpaths/nested/sources=1024-16      57.54k ± 0%     56.52k ± 0%    -1.78% (p=0.002 n=6)
+ParseV4GitSubpaths/backslash/sources=1-16       143.0 ± 0%      142.0 ± 0%    -0.70% (p=0.002 n=6)
+ParseV4GitSubpaths/backslash/sources=256-16    15.01k ± 0%     14.75k ± 0%    -1.71% (p=0.002 n=6)
+ParseV4GitSubpaths/backslash/sources=1024-16   59.59k ± 0%     58.57k ± 0%    -1.72% (p=0.002 n=6)
+geomean                                                    ²                ?                      ² ³
+¹ all samples are equal
+² summaries must be >0 to compute geomean
+³ ratios must be >0 to compute geomean

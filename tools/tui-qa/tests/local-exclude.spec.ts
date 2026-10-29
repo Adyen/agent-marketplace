@@ -6,6 +6,7 @@ import { after, before } from "node:test";
 import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 import { runNonTTY } from "./process-helpers.js";
 
+// spec: tui-interactions/personal-local-writes-are-git-ignored-at-once
 const journey = defineFixture("local-exclude", ["tui"]);
 before(journey.setup);
 after(journey.cleanup);
@@ -23,6 +24,8 @@ journey.test("the toggle modal's local exclude removes a project skill only loca
     await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
   });
   assert.equal(fs.existsSync(localConfig), false, "the fixture starts without a personal-local config");
+  const gitignorePath = path.join(fixture.repo, ".gitignore");
+  assert.equal(fs.existsSync(gitignorePath), false, "the fixture starts without a .gitignore");
   await step("select beta-skill", () => terminal.write("j"), async () => {
     await locate(terminal, /Name:\s+beta-skill/).unique().expect();
   });
@@ -37,6 +40,11 @@ journey.test("the toggle modal's local exclude removes a project skill only loca
   });
   assert.match(localConfigText(), /\n    exclude:\n      - skill\/beta-skill\n/);
   assert.deepEqual(fs.readFileSync(repoConfig), repoConfigBefore, "a local exclude changed the committed repository config");
+  // The write itself keeps the personal-local layer out of Git, before any sync.
+  const gitignore = fs.readFileSync(gitignorePath, "utf8").split(/\r?\n/);
+  for (const entry of [".agents/config.local.yaml", ".agents/lock.local.yaml"]) {
+    assert.ok(gitignore.includes(entry), `the local exclude did not git-ignore ${entry}:\n${gitignore.join("\n")}`);
+  }
 
   await step("the excluded skill reports its state", () => terminal.write("j"), async () => {
     await locate(terminal, /Name:\s+beta-skill/).unique().expect();
@@ -47,9 +55,7 @@ journey.test("the toggle modal's local exclude removes a project skill only loca
     await locate(terminal, /Status:\s+excluded/).unique().expect();
   });
   assert.equal(fs.lstatSync(betaSkill, { throwIfNoEntry: false }), undefined, "sync kept the locally excluded skill");
-  // Sync keeps the personal-local layer out of Git.
-  const gitignore = fs.readFileSync(path.join(fixture.repo, ".gitignore"), "utf8").split(/\r?\n/);
-  assert.ok(gitignore.includes(".agents/config.local.yaml"), `the personal-local config is not git-ignored:\n${gitignore.join("\n")}`);
+  assert.equal(fs.readFileSync(gitignorePath, "utf8").split(/\r?\n/).filter((line) => line === ".agents/config.local.yaml").length, 1, "sync repeated the .gitignore entry");
 
   await step("the toggle modal shows the local exclude", () => terminal.write(" "), async () => {
     await locate(terminal, "Local exclude: yes").unique().expect();

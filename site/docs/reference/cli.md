@@ -27,7 +27,6 @@ Every command accepts these flags.
 |---|---|:---:|---|---|
 | `--debug` | boolean | no | `false` | Enables debug logging and mirrors logs to standard error. |
 | `--diagnostic` | boolean | no | `false` | Captures a diagnostic telemetry payload for this invocation so you can review it before it is sent. Capture needs the effective telemetry level `detailed`; at other levels it is turned off. See the [telemetry reference](telemetry.md#diagnostic-payloads). |
-| `--diagnostic-accept-sensitive-data` | boolean | no | `false` | Acknowledges that a diagnostic payload may contain sensitive data. Without a terminal, diagnostic export and `telemetry preview --level diagnostic` require it. |
 | `-h`, `--help` | boolean | no | `false` | Prints help for the selected command. |
 | `--version` | boolean | no | `false` | Prints the CLI version. This flag belongs to the root command only. |
 
@@ -56,7 +55,13 @@ When `install` or `remove` gets a name that more than one resource kind uses, `-
 | `user` | `~/.agents/config.yaml` | Your machine (home directory) |
 | `local` | `<repo>/.agents/config.local.yaml` | The repository, personal to your checkout |
 
-Installing a resource defaults to `repo`, and registering a Marketplace endpoint defaults to `user`. When you remove a named resource without `--scope`, the command picks the scope from the selection it finds. `remove --from` defaults to `repo`, and `deinit` defaults to `user`.
+Installing a resource defaults to `user`, and registering a Marketplace endpoint also defaults to `user`. When you remove a named resource without `--scope`, the command picks the scope from the selection it finds. `remove --from` defaults to `repo`, and `deinit` defaults to `user`.
+
+## Hook review
+
+When `install`, `remove`, `update`, or `sync` changes owned hook entries, it prints a **Hook changes** listing with the target, scope, file, event, matcher, and exact before and after command or prompt. Review this listing before using the hooks. Unchanged runs print no hook review.
+
+These commands also show materialization warnings, including lossy translation warnings. Warnings keep their diagnostic codes and do not make a successful operation fail. If an operation publishes a hook but another resource fails, its completed hook changes remain visible alongside the failure.
 
 ## `init`
 
@@ -89,7 +94,7 @@ agent-marketplace list [flags]
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
 | `--kind` | string | no | all kinds | Filters by `skill`, `command`, `subagent`, `hook`, `mcp`, or `collection`. |
-| `--from` | string | no | configured registries | Reads an ad hoc Git URL, GitHub web URL, or GitLab web URL without writing it to configuration. |
+| `--from` | string | no | configured registries | Reads an ad hoc Git URL, GitHub web URL, or GitLab web URL without writing it to configuration. Web URLs fall back to HTTPS as for `install --from`. |
 | `--ref` | string | no | inferred or registry default | Selects a branch, tag, or commit for `--from`. Requires `--from`. |
 | `--path` | string | no | inferred or registry root | Selects a subdirectory for `--from`. Requires `--from`. |
 
@@ -160,12 +165,12 @@ https://host/r/registry/kind/name[/revisions/sha256:<64 lowercase hex>]
 
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
-| `--scope` | string | no | endpoint: `user`; resource: `repo` | Configuration layer: `repo`, `user`, or `local`. |
+| `--scope` | string | no | `user` | Configuration layer: `user`, `repo`, or `local`. |
 | `--kind` | string | no | `skill` where a kind is needed | Selects `skill`, `command`, `subagent`, `hook`, or `mcp`, and disambiguates a named registry resource. |
-| `--tag` | string | no | none | Installs registry resources whose metadata contains the tag. Without `--kind`, at least one skill must carry the tag. Supports `repo` (default), `user`, and `local` scope. Cannot be combined with a resource name, `--all`, `--from`, or a Marketplace locator. |
-| `--all` | boolean | no | `false` | Installs every discovered registry resource, or only those of `--kind` when you give it. Supports `repo` (default), `user`, and `local` scope. |
+| `--tag` | string | no | none | Installs registry resources whose metadata contains the tag. Without `--kind`, at least one skill must carry the tag. Supports `user` (default), `repo`, and `local` scope. Cannot be combined with a resource name, `--all`, `--from`, or a Marketplace locator. |
+| `--all` | boolean | no | `false` | Installs every discovered registry resource, or only those of `--kind` when you give it. Supports `user` (default), `repo`, and `local` scope. |
 | `--registry` | string | no | all configured registries | Limits `--all` to one configured registry. Requires `--all`. Matches the URL the way `update` and `lock` do, so a `.git` suffix or a trailing slash makes no difference, and looks in every config layer. The same source declared in several layers counts as one. If the URL names entries with different refs or paths, the command refuses and lists them. |
-| `--from` | string | no | configured registries | Installs directly from an ad hoc Git URL, GitHub web URL, or GitLab web URL. Without a resource name, installs the whole registry. |
+| `--from` | string | no | configured registries | Installs directly from an ad hoc Git URL, GitHub web URL, or GitLab web URL. Without a resource name, installs the whole registry. A web URL is fetched over SSH, or over HTTPS when SSH cannot reach it and HTTPS can, as for a public repository on a machine without an SSH key; a warning names both URLs. If the configuration already records either form of the repository, install reuses it. |
 | `--ref` | string | no | inferred or registry default | Selects a branch, tag, or commit for `--from`. Requires `--from`. |
 | `--path` | string | no | inferred or registry root | Selects a subdirectory for `--from`. Requires `--from`. |
 | `--marketplace` | alias or endpoint URL | no | locator prefix | Resolves a Marketplace resource locator against the selected endpoint. Valid only for one Marketplace resource. |
@@ -200,7 +205,7 @@ A successful Marketplace install prints a short confirmation:
 ✓ Installed coderabbit-skills · 3 skills
 ```
 
-Installs from configured Git or directory registries say where the selection went: `in this repo`, `user-wide`, or `locally`. For example, `Installed frontend-design in this repo` or `Installed collection web-development in this repo`. The line lists only resources that the resulting configuration selects. A tag or bundle install keeps any existing exclusion and names the resources it left out, for example `Not installed: review; the effective configuration does not select it (for example, an exclusion wins). Install by name to select explicitly`. Installing a resource by name clears its exclusion. Missing prerequisites are reported as warnings; `install` does not install them for you.
+Installs from configured Git or directory registries say where the selection went: `user-wide` by default, `in this repo` with `--scope repo`, or `locally` with `--scope local`. For example, `Installed frontend-design user-wide` or `Installed collection web-development user-wide`. The line lists only resources that the resulting configuration selects. A tag or bundle install keeps any existing exclusion and names the resources it left out, for example `Not installed: review; the effective configuration does not select it (for example, an exclusion wins). Install by name to select explicitly`. Installing a resource by name clears its exclusion. Missing prerequisites are reported as warnings; `install` does not install them for you.
 
 For configured Git registries, discovery uses the exact locked inventory of every layer that already has a valid lock. A registry can bootstrap from its branch or tag only when its own configuration layer has no lock. A missing lock in one layer does not make content that appeared after another layer's lock installable.
 
@@ -210,7 +215,7 @@ Removes an explicit selection, or records an exclusion when the resource was sel
 
 `--from` and `--ref` follow the same rule, so an explicit selection in the target config is dropped. If a selected collection also provides the resource, it stays installed through the collection until a second `remove` excludes it from the collection.
 
-For hosted Marketplace pins, removing a direct resource clears its direct selection but keeps it if a collection still includes it. Removing a collection clears that collection and removes the members no longer kept by anything else. You can remove a resource installed with `--as` by either its local name or its canonical Marketplace name. A name that matches more than one direct pin is refused. If a direct pin and another selection share a resource kind and name, `remove` refuses and suggests `--from <endpoint-url>` for the pin. Removing a named resource from a configured Marketplace endpoint honors `--kind` and `--scope` (default `repo`) and refuses `--ref` and `--path`.
+For hosted Marketplace pins, removing a direct resource clears its direct selection but keeps it if a collection still includes it. Removing a collection clears that collection and removes the members no longer kept by anything else. You can remove a resource installed with `--as` by either its local name or its canonical Marketplace name. A name that matches more than one direct pin is refused. If a direct pin and another selection share a resource kind and name, `remove` refuses and suggests `--from <endpoint-url>` for the pin. Removing a named resource from a configured Marketplace endpoint with `--from <endpoint-url>` honors `--kind` and `--scope` (default `repo`, because an omitted scope is not inferred on that path) and refuses `--ref` and `--path`.
 
 For optional organization Marketplace resources, `remove <name>` writes an exact exclusion in the user configuration, including when a collection provides the resource. An omitted scope defaults to `user`; `--scope user` also works with `--from <endpoint-url>`. Repo/local scope cannot exclude machine-wide organization resources. The organization collection stays selected and its other members stay installed. Removing the organization collection itself remains unsupported; exclude its optional members individually instead. Required organization content ignores these exclusions.
 
@@ -312,6 +317,8 @@ If `~/.agents/config.yaml` does not exist, a plain `sync` creates it the way `ag
 
 With `--check`, an in-sync result prints no verdict and returns exit status 0. Drift prints a summary such as `sync: 2 out of sync (1 missing, 1 orphaned)`, lists the planned changes, and returns exit status 1. Materialization and configuration errors also return exit status 1, including a dry-run materialization failure, which is printed as an `error:` line alongside the run's warnings. Warning-severity materialization diagnostics are printed as `warning:` lines and do not affect the exit status. `--check` writes nothing: not config, locks, transaction state, or harness output. It does not recover pending transactions or fetch a cold exact snapshot, and it reports `lock.snapshot-unavailable` when snapshot files it needs are missing.
 
+A hard configuration, registry-load, or resolution error stops `--check` before it predicts output changes. It reports the refusal without treating an unloadable registry's installed hooks as deselected or counting them as drift. Warning-only checks still report genuine pending changes.
+
 If an earlier write was interrupted and left a dependency transaction pending, `sync --locked`, `sync --offline`, `sync --check`, `lock --check`, `list`, and `status` fail with `dependency.recovery-required` before reading configuration or registries. They leave config, locks, recovery records, and permissions unchanged. A plain `sync` or `lock` (without those flags) attempts recovery before continuing. The failed command can be retried after recovery succeeds; blocked recovery leaves it incomplete. A missing transaction-state directory needs no recovery, and these commands do not create it.
 
 ## `update`
@@ -325,6 +332,8 @@ agent-marketplace update [resource ...] [flags]
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
 | `--bump` | boolean | no | `false` | Rewrites eligible refs in v4 `sources:` to newer matching tags before updating locks. A ref that an included config file declares is reported and left unchanged. A full commit ID is never rewritten. |
+| `--dry-run` | boolean | no | `false` | Previews the update without applying it: publishes no configuration, lock, or harness change, creates no missing writable root or lock, and preserves installed bytes, modes, and modification times. Uses the same candidate selection, scope, targeting, ref-bump eligibility, and policy checks as an applying update. Exits 0 with or without changes available; exits nonzero on invalid input or preparation failures. A pending dependency transaction is refused with `dependency.recovery-required`, not replayed. |
+| `--include-diff` | boolean | no | `false` | Adds normalized resource content diffs to the report. With `--dry-run` the diffs are proposed; without it, the update applies its prepared candidates without prompting and reports their diffs as applied. Explicit diff output can disclose sensitive values authored in resources (instruction bodies, hook commands, resource configuration) and is not a secret scanner or a security finding; authored environment-variable references are shown as written and never resolved against your local environment. |
 | `--scope` | string | no | `all` | Update scope: `user`, `repo`, `local`, or `all`. `organization` is refused. |
 | `--registry` | string | no | none | Targets one configured Git registry. |
 | `--ref` | string | no | none | Narrows `--registry` to a declared ref. |
@@ -343,6 +352,20 @@ Organization-managed Marketplace pins: 15 (not checked for newer revisions; pins
 Use `agent-marketplace update --verbose` to list organization-managed pins.
 Marketplace "https://marketplace.example.com" "source"/"skill"/"review": updated "sha256:..." -> "sha256:..."
 ```
+
+`--dry-run` summarizes the same decisions as a preview: proposed acquisition-lock changes, the additions, modifications, removals, and source changes in the effective selected-resource set (including collections and their affected members) with scope, source, kind, name, and old/candidate revision identities, and live local or intentionally unlocked organization sources that have no historical locked comparison. It states that no updates were applied and that the preview does not enumerate every subsequent materialization change. With `--include-diff`, definitions are rendered as normalized review content — readable but not the original authored files and not an applicable patch — and supporting files are compared as exact text, binary metadata, or mode-only changes. A recorded baseline that cannot be loaded refuses the comparison instead of being substituted with empty or installed content; a Marketplace pin whose latest revision is missing is reported with the remove-and-reinstall remediation while other pins still preview, and the preview exits 1 without changing state. If dependency publication succeeds but harness synchronization fails, the report names that phase boundary instead of claiming full application or a rollback.
+
+A preview still performs the same online acquisition work as an applying update, so it may populate the disposable registry cache (`~/.cache/agent-marketplace`) and use private temporary staging. It preserves configuration, locks, installed resources, ownership state, backups, and inventory; ordinary operational logging remains enabled. Each invocation is independent: a preview does not reserve candidates or commit any prepared state, and a later applying update prepares and validates its own candidates against the then-current upstream and configuration state.
+
+```text
+Dry run: no updates were applied.
+Proposed acquisition-lock changes:
+  repo "https://git.example.com/team.git" (ref "main"): "sha1:<old>" -> "sha1:<new>"
+Proposed selected-resource changes:
+  repo skill "vm-lifecycle" from "https://git.example.com/team.git" (ref "main"): modified; definition changed; "sha1:<old>" -> "sha1:<new>"
+This preview does not enumerate every subsequent materialization change.
+```
+
 
 ## `status`
 
@@ -618,7 +641,7 @@ agent-marketplace telemetry preview --level <level>
 |---|---|:---:|---|---|
 | `--level` | string | yes | none | Preview level: `basic`, `detailed`, or `diagnostic`. |
 
-A diagnostic preview asks for confirmation on a terminal. Without a terminal, it requires the global `--diagnostic-accept-sensitive-data` flag. The output prints `Preview payload written to <path>` with the level, endpoint host, retention policy, and header references.
+A diagnostic preview asks for confirmation on a terminal. Without a terminal, it is refused and writes no payload. The output prints `Preview payload written to <path>` with the level, endpoint host, retention policy, and header references.
 
 ### `telemetry purge`
 

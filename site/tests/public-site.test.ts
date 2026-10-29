@@ -1,15 +1,23 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, relative, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import test from 'node:test'
 
+import { stripFrontMatter } from '../.vitepress/llms.ts'
+import { docsSidebar } from '../.vitepress/sidebar.ts'
 import { nextTabIndex } from '../src/pages/landing/composables/tabNavigation.ts'
 
 const dist = new URL('../.vitepress/dist/', import.meta.url)
 const base = process.env.SITE_BASE ?? '/'
 const docsPath = `${base.replace(/\/?$/, '/')}docs/`
+
+type SidebarItem = ReturnType<typeof docsSidebar>[number]
+
+function sidebarLinks(items: SidebarItem[]): string[] {
+  return items.flatMap(item => [...(item.link ? [item.link] : []), ...sidebarLinks(item.items ?? [])])
+}
 
 async function generatedFilePaths(directory: URL): Promise<string[]> {
   const entries = await readdir(directory, { recursive: true, withFileTypes: true })
@@ -17,6 +25,16 @@ async function generatedFilePaths(directory: URL): Promise<string[]> {
     .filter(entry => entry.isFile())
     .map(entry => relative(fileURLToPath(directory), join(entry.parentPath, entry.name)).split(sep).join('/'))
 }
+
+// spec: install-script/site-build-publishes-the-install-script
+test('public site publishes the install script byte-for-byte', async () => {
+  const [source, built] = await Promise.all([
+    readFile(new URL('../public/install.sh', import.meta.url)),
+    readFile(new URL('install.sh', dist)),
+  ])
+
+  assert.deepEqual(built, source)
+})
 
 // spec: marketplace-web-ui/default-harness-leads-the-tab-order
 // spec: site-deployment-profiles/public-project-site-exposes-only-landing-and-documentation
@@ -87,4 +105,65 @@ test('landing tabs use one wrapping keyboard-navigation rule', () => {
   assert.equal(nextTabIndex('End', 0, 3), 2)
   assert.equal(nextTabIndex('Tab', 1, 3), null)
   assert.equal(nextTabIndex('ArrowRight', 0, 0), null)
+})
+
+const sourceDocs = new URL('../docs/', import.meta.url)
+
+async function sourceMarkdown(directory: URL, prefix = ''): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true })
+  const files = await Promise.all(entries.map(entry => {
+    if (entry.isDirectory()) {
+      return entry.name === 'images' ? [] : sourceMarkdown(new URL(`${entry.name}/`, directory), `${prefix}${entry.name}/`)
+    }
+    return entry.name.endsWith('.md') ? [`${prefix}${entry.name}`] : []
+  }))
+  return files.flat()
+}
+
+// spec: site-deployment-profiles/llm-index-lists-every-documentation-page
+test('llms.txt lists every documentation page as a Markdown link under the base', async () => {
+  const llms = await readFile(new URL('llms.txt', dist), 'utf8')
+  assert.match(llms, /^# agent-marketplace\n\n> .+\n/)
+
+  const links = [...llms.matchAll(/\]\(([^)]+)\)/g)].map(([, url]) => url)
+  for (const url of links) {
+    assert.ok(url.startsWith(docsPath) && url.endsWith('.md'), url)
+    await access(new URL(url.slice(base.length), dist))
+  }
+  const expectedOrdered = sidebarLinks(docsSidebar(docsPath)).map(link => {
+    const rest = link.slice(docsPath.length)
+    const rel = rest === '' || rest.endsWith('/') ? `${rest}index` : rest
+    return `${docsPath}${rel}.md`
+  })
+  assert.deepEqual(links, expectedOrdered)
+  const expected = (await sourceMarkdown(sourceDocs)).map(rel => `${docsPath}${rel}`).sort()
+  assert.deepEqual([...links].sort(), expected)
+})
+
+test('front matter is stripped from LF and CRLF sources', () => {
+  assert.equal(stripFrontMatter('---\ntitle: x\n---\n# Body\n'), '# Body\n')
+  assert.equal(stripFrontMatter('---\r\ntitle: x\r\n---\r\n# Body\r\n'), '# Body\r\n')
+  assert.equal(stripFrontMatter('---\n---\n# Body\n'), '# Body\n')
+  assert.equal(stripFrontMatter('---\r\n---\r\n# Body\r\n'), '# Body\r\n')
+  assert.equal(stripFrontMatter('# Body\n'), '# Body\n')
+})
+
+// spec: site-deployment-profiles/markdown-copies-mirror-documentation-sources
+test('Markdown copies mirror their sources without front matter', async () => {
+  for (const rel of await sourceMarkdown(sourceDocs)) {
+    const [source, copy] = await Promise.all([
+      readFile(new URL(rel, sourceDocs), 'utf8'),
+      readFile(new URL(`docs/${rel}`, dist), 'utf8'),
+    ])
+    assert.equal(copy, stripFrontMatter(source), rel)
+  }
+
+  const metadata = await readFile(new URL('docs/reference/resource-metadata.md', dist), 'utf8')
+  assert.doesNotMatch(metadata, /^---\r?\n/)
+
+  const tutorialUrl = new URL('docs/tutorials/add-your-first-marketplace-registry.md', dist)
+  const tutorial = await readFile(tutorialUrl, 'utf8')
+  const images = [...tutorial.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)].map(([, target]) => target)
+  assert.ok(images.length > 0)
+  for (const target of images) await access(new URL(target, tutorialUrl))
 })

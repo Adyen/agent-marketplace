@@ -146,7 +146,7 @@ sources:
 `)
 	withWorkingDir(t, repoRoot)
 
-	if output, err := executeCommand("install", "brainstorming"); err != nil {
+	if output, err := executeCommand("install", "--scope", "repo", "brainstorming"); err != nil {
 		t.Fatalf("expected install to succeed with duplicate URL + path disambiguation: %v\n%s", err, output)
 	}
 
@@ -173,7 +173,7 @@ sources:
 		t.Fatalf("expected brainstorming to be removed from registry path=skills, got %#v", cfg.Registries)
 	}
 
-	if output, err := executeCommand("install", "--all"); err != nil {
+	if output, err := executeCommand("install", "--scope", "repo", "--all"); err != nil {
 		t.Fatalf("expected install --all to succeed with duplicate URL + path disambiguation: %v\n%s", err, output)
 	}
 

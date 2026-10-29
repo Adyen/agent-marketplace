@@ -17,6 +17,8 @@ before(journey.setup);
 after(journey.cleanup);
 
 // spec: tui-mouse-navigation/terminal-gestures-deliver-only-the-selected-text
+// spec: tui-mouse-navigation/gestures-outside-selectable-text-do-not-copy
+// spec: tui-mouse-navigation/scrolling-clears-selection-without-changing-navigation
 journey.test("right-pane drag highlights, copies on release, and leaves wheel and clicks untouched", async (terminal) => {
   await step("settled overflowing catalog", () => {}, async () => {
     await locate(terminal, "beta-skill").expect();

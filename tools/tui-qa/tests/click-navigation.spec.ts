@@ -19,6 +19,8 @@ after(journey.cleanup);
 const click = (x: number, y: number): string => sgr(0, x, y, "M") + sgr(0, x, y, "m");
 
 // spec: tui-mouse-navigation/terminal-clicks-navigate-the-running-tui
+// spec: tui-mouse-navigation/clicking-a-resource-row-selects-it
+// spec: tui-mouse-navigation/clicking-the-selected-resource-opens-its-details
 journey.test("list clicks select and open resources while list drags stay inert", async (terminal) => {
   await step("settled overflowing catalog", () => {}, async () => {
     await locate(terminal, "beta-skill").expect();

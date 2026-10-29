@@ -172,19 +172,6 @@ selected tab but MUST NOT create a second selection model.
 - **THEN** focus and selection move together according to the wrapping tab order
 - **AND** exactly one tab remains selected and keyboard-focusable
 
-### Requirement: Landing scope choices remain comparable
-Landing SHALL present user, repository, and personal-local installation scopes
-as one informational comparison panel with every scope's CLI value,
-configuration path, reach, and version-control outcome visible. The comparison
-MUST NOT expose a selection model. Repository scope SHALL be identified as the
-default, and Landing SHALL show a valid repository-scope example command.
-
-#### Scenario: Scope comparison identifies the repository default
-- **WHEN** a user reaches the Landing scope comparison
-- **THEN** all scope outcomes and corresponding CLI values are visible without a scope selector
-- **AND** repository scope is identified as the default
-- **AND** the example command uses repository scope without performing an installation
-
 ### Requirement: Landing harness order leads with its default
 Landing SHALL keep Claude Code as the initially selected harness depiction and
 place it first in the visible harness tab order. Reordering the depiction MUST
@@ -250,3 +237,27 @@ states SHALL retain their status text and recovery actions.
 - **WHEN** a user views a loaded or non-success resource or registry route
 - **THEN** applicable identity, status, technical context, and recovery actions remain available
 - **AND** copy, tabs, installation, and long-content containment retain their behavior
+
+### Requirement: Landing scope choices identify the user default
+Landing SHALL present user, repository, and personal-local installation scopes
+as one informational comparison panel with every scope's CLI value,
+configuration path, reach, and version-control outcome visible. The comparison
+MUST NOT expose a selection model. User scope SHALL be identified as the
+default, and Landing SHALL show a valid user-scope example command.
+
+#### Scenario: Scope comparison identifies the user default
+- **WHEN** a user reaches the Landing scope comparison
+- **THEN** all scope outcomes and corresponding CLI values are visible without a scope selector
+- **AND** user scope is identified as the default
+- **AND** the example command uses user scope without performing an installation
+
+### Requirement: Catalog search keyboard shortcut
+
+The Marketplace catalog SHALL focus its search input when the user presses `/` while focus is not in a text field, without inserting `/` into the query. The search input SHALL show a visible `/` keyboard hint and SHALL expose the shortcut to assistive technology. Pressing `/` while a text field, including the search input itself, has focus SHALL type the character normally.
+
+#### Scenario: Slash focuses catalog search
+
+- **WHEN** a user presses `/` on the Marketplace catalog while focus is outside any text field
+- **THEN** the search input receives focus and its query remains unchanged
+- **AND** the search input shows a `/` keyboard hint and declares `/` as its keyboard shortcut
+- **AND** pressing `/` while the search input has focus types `/` into the query

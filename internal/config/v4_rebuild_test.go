@@ -25,12 +25,21 @@ func TestV4RebuildRequestsPreservesDecisions(t *testing.T) {
 		{"required", []string{"required:skill/a", "exclude:skill/a"}, []string{"skill/a"}},
 		{"replacement-is-optional", []string{"required:skill/a", "include:skill/a", "exclude:skill/a"}, nil},
 		{"reincluded", []string{"include:skill/a", "exclude:skill/a", "include:skill/a"}, []string{"skill/a"}},
+		{"repeated-reinclude", []string{"include:skill/a", "include:command/a", "exclude:skill/a", "include:skill/a", "exclude:*", "include:command/a", "exclude:skill/*", "include:skill/a"}, []string{"command/a", "skill/a"}},
+		{"reinclude-then-exclude", []string{"include:tools/skill/a", "exclude:tools/*", "include:tools/skill/a", "exclude:tools/skill/*"}, nil},
 		{"future-request", []string{"exclude:skill/a", "include:skill/a"}, []string{"skill/a"}},
 		{"missing", []string{"include:skill/a", "exclude:skill/missing"}, []string{"skill/a"}},
+		{"filtered-order", []string{"include:skill/z", "include:skill/a", "include:skill/c", "include:skill/b", "exclude:skill/a", "exclude:skill/c"}, []string{"skill/b", "skill/z"}},
+		{"filtered-required-reinclude", []string{"include:skill/z", "required:skill/b", "include:skill/a", "include:skill/c", "exclude:skill/b", "exclude:skill/a", "exclude:skill/c", "include:skill/a"}, []string{"skill/a", "skill/b", "skill/z"}},
 		{"global", []string{"include:skill/a", "required:command/a", "exclude:*"}, []string{"command/a"}},
 		{"kind", []string{"include:skill/a", "include:command/a", "exclude:skill/*"}, []string{"command/a"}},
 		{"registry", []string{"include:tools/skill/a", "include:other/skill/a", "exclude:tools/*"}, []string{"other/skill/a"}},
 		{"registry-kind", []string{"include:tools/skill/a", "include:tools/command/a", "exclude:tools/skill/*"}, []string{"tools/command/a"}},
+		{"required-kind", []string{"required:skill/a", "include:command/a", "exclude:skill/*"}, []string{"command/a", "skill/a"}},
+		{"required-registry", []string{"required:tools/skill/a", "include:tools/command/a", "exclude:tools/*"}, []string{"tools/skill/a"}},
+		{"required-registry-kind", []string{"required:tools/skill/a", "include:tools/command/a", "exclude:tools/skill/*"}, []string{"tools/command/a", "tools/skill/a"}},
+		{"required-replaced-before-wildcard", []string{"required:tools/skill/a", "include:tools/skill/a", "exclude:tools/skill/*"}, nil},
+		{"replacement-required-before-wildcard", []string{"include:tools/skill/a", "required:tools/skill/a", "exclude:tools/skill/*"}, []string{"tools/skill/a"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			group := v4ExclusionDecisions(tc.actions...)

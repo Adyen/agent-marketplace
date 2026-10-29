@@ -101,7 +101,7 @@ resources:
       - collection/platform-onboarding
 ```
 
-`agent-marketplace install platform-onboarding --kind collection` writes the same entry. During resolution, the collection expands into its members before any other selection happens. The collection itself produces no files in the harness folders; only its members do. Excludes that the consumer configured for a providing registry still apply to the members that the collection selects there.
+`agent-marketplace install platform-onboarding --kind collection --scope repo` writes the same entry. During resolution, the collection expands into its members before any other selection happens. The collection itself produces no files in the harness folders; only its members do. Excludes that the consumer configured for a providing registry still apply to the members that the collection selects there.
 
 ## Removal
 

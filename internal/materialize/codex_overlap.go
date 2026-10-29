@@ -208,14 +208,22 @@ func validateCodexManagedPathIntersections(bindings []codexDestinationBinding) *
 }
 
 func codexPhysicalRoots(bindings []codexDestinationBinding) (map[string]string, error) {
+	roots := make([]string, 0, len(bindings))
+	for _, binding := range bindings {
+		roots = append(roots, binding.destination.Root)
+	}
+	return destinationPhysicalRoots(roots)
+}
+
+func destinationPhysicalRoots(roots []string) (map[string]string, error) {
 	type seenRoot struct {
 		path string
 		info os.FileInfo
 	}
-	physical := make(map[string]string, len(bindings))
+	physical := make(map[string]string, len(roots))
 	var seen []seenRoot
-	for _, binding := range bindings {
-		root := filepath.Clean(binding.destination.Root)
+	for _, candidate := range roots {
+		root := filepath.Clean(candidate)
 		if _, done := physical[root]; done {
 			continue
 		}

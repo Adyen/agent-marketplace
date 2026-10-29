@@ -86,7 +86,7 @@ func TestRepoInstallStagesMissingConfigSkeletonAndSelection(t *testing.T) {
 	}
 	t.Cleanup(func() { commitDependencyTransaction = originalCommit })
 
-	_, err = executeCommand("install", "review")
+	_, err = executeCommand("install", "--scope", "repo", "review")
 	if !errors.Is(err, stop) {
 		t.Fatalf("install error = %v, want %v", err, stop)
 	}
