@@ -90,7 +90,7 @@ comparison in non-test code.
 | `compile.claude.native-control-omitted` | A Claude-native execution control (subagent `permissionMode`, `mcpServers` or `hooks`; skill or command `hooks`) from a non-Claude source was omitted | Author the control in the Claude layout if the resource needs it on Claude |
 | `compile.codex.field-dropped` | A benign IR field has no documented Codex equivalent and was omitted | Remove the field or choose a target that represents it |
 | `subagent.codex.model-dropped` | A Codex-only subagent model was omitted for a non-Codex target | Compile to Codex to preserve the native-only model, or choose a portable canonical model |
-| `subagent.codex.effort-dropped` | A Codex-only subagent reasoning effort was omitted for a non-Codex target | Compile to Codex to preserve the native-only effort, or use a portable canonical effort |
+| `subagent.codex.effort-dropped` | A Codex-sourced subagent reasoning effort could not be represented by the destination model or surface | Use a reasoning preference supported by the destination model and surface |
 | `hook.codex.plugin-root-unresolved` | The hook command references the plugin root but no plugin root was configured; the token was left unexpanded | Compile with a plugin root so the command resolves, or use an absolute command path |
 | `mcp.codex.plugin-root-unresolved` | An MCP value references the plugin root but no plugin root was configured; the token was left unexpanded | Compile with a plugin root so the value resolves, or use an absolute path |
 | `ingest.codex.prompt-deprecated` | A deprecated Codex prompt was ingested as a command | Move the prompt to a command skill under `.agents/skills` |
