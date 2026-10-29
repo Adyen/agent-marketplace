@@ -5870,6 +5870,10 @@ func prepareSkillLinkCache(link skillLink) (err error) {
 	if err := namespace.directory(parentPath, false); err != nil {
 		return err
 	}
+	if skillLinkCacheCurrent(link, cacheDir) && namespace.directory(cacheDir, false) == nil {
+		slog.Debug("skill link cache already current", "path", cacheDir, "phase", "cache-current")
+		return nil
+	}
 	compiled := make(map[string]bool, len(link.artifacts))
 	for _, a := range link.artifacts {
 		compiled[filepath.ToSlash(filepath.Clean(a.Path))] = true
@@ -5936,6 +5940,21 @@ func prepareSkillLinkCache(link skillLink) (err error) {
 		}
 	}
 	return nil
+}
+
+// skillLinkCacheCurrent reports whether cacheDir already holds exactly the tree
+// prepareSkillLinkCache would publish: the same compiled artifacts, support
+// bytes, modes and directories, and no other entries. Both digests read through
+// captured handles. Any error, including a refused support source, reports
+// false so full preparation runs and reports its own diagnostic.
+func skillLinkCacheCurrent(link skillLink, cacheDir string) bool {
+	// A missing cache fails here before any source support is read.
+	actual, err := portablePathDigest(cacheDir)
+	if err != nil {
+		return false
+	}
+	desired, err := portableSkillVirtualDigest(link)
+	return err == nil && actual == desired
 }
 
 // pruneSkillCacheSupportFiles deletes every previous support-file entry while
