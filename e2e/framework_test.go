@@ -33,16 +33,20 @@ type Env struct {
 }
 
 func nativePluginCatalog(target string) string {
+	format := "claude-plugin"
+	if target == "codex" {
+		format = "codex-plugin"
+	}
 	return fmt.Sprintf(`schema: 1
 harness: %s
 evidence:
   checked: "2026-10-21"
   refs: [synthetic-e2e-fixture]
-accepts: [claude-plugin]
+accepts: [%s]
 delivery:
   decompose: {status: verified}
-  native: {status: verified, format: claude-plugin, probe: e2e-test-probe, refresh: restart-required}
-`, target)
+  native: {status: verified, format: %s, probe: e2e-test-probe, refresh: restart-required}
+`, target, format, format)
 }
 
 func nativeCatalogEnv(path string) map[string]string {

@@ -16,6 +16,7 @@ import (
 var compatibilityTargets = []string{"claude", "factory", "cursor", "windsurf", "gemini", "devin", "codex"}
 var compatibilityResources = []string{"skill", "command", "subagent", "hook", "mcp", "collection", "rule", "native-cli"}
 
+// spec: plugin-delivery/codex-catalog-is-a-marketplace-codex-accepts
 func TestHarnessCompatibility(t *testing.T) {
 	target := os.Getenv("HARNESS_COMPAT_TARGET")
 	if target == "" {
@@ -234,6 +235,54 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 		rows["hook"].Status = "failed"
 		t.Error("inspection unexpectedly executed a hook")
 	}
+	if first.Harness == "codex" && first.Scope == "user" && first.Mode == "symlink" && nativeMode == "probe" && native != nil {
+		row := rows["skill"]
+		t.Run("native-codex-plugin", func(t *testing.T) {
+			if err := runCodexNativePluginProbe(e, f, native.binary, row); err != nil {
+				row.Status, row.Reason = "failed", err.Error()
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func runCodexNativePluginProbe(e *Env, f compatibilityFixture, binary string, row *compatibilityResult) error {
+	name, root := f.name("native-plugin"), filepath.Join(e.workspace, "native-plugin")
+	e.WriteFile(filepath.Join("/workspace/native-plugin", ".codex-plugin", "plugin.json"), fmt.Sprintf(`{"name":%q}`, name))
+	e.WriteFile(filepath.Join("/workspace/native-plugin", "skills", name, "SKILL.md"), fmt.Sprintf("---\nname: %s\ndescription: Codex plugin probe\n---\nprobe\n", name))
+	catalog := filepath.Join(e.workspace, "test-catalogs", "codex.yaml")
+	e.WriteFile(catalog, nativePluginCatalog("codex"))
+	config := fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [codex]\nmaterialization: {mode: symlink}\nsources:\n  native: {directory: %q, format: codex-plugin}\nresources:\n  native: [{kind: plugin, name: %s, delivery: native}]\n", root, name)
+	e.WriteGlobalConfig(config)
+	before := runCompatibilityCommand(e, binary, []string{"plugin", "list"}, 20*time.Second)
+	if err := requireCompatibilityObservation(&before, true, name); err != nil {
+		return fmt.Errorf("Codex plugin negative control: %w", err)
+	}
+	sync := e.RunAMWithEnv(nativeCatalogEnv(catalog), "sync", "--no-backup")
+	if sync.ExitCode != 0 {
+		return fmt.Errorf("Codex native plugin sync failed: %s", sync.Combined)
+	}
+	manifests, err := filepath.Glob(filepath.Join(e.home, ".local", "state", "agent-marketplace", "native-plugins", "codex", "*", ".agents", "plugins", "marketplace.json"))
+	if err != nil || len(manifests) != 1 {
+		return fmt.Errorf("Codex probe catalogs = %v / %v", manifests, err)
+	}
+	catalogName := filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(manifests[0]))))
+	after := runCompatibilityCommand(e, binary, []string{"plugin", "list"}, 20*time.Second)
+	row.Commands = append(row.Commands, before, after)
+	if err := requireCompatibilityObservation(&after, false, name+"@"+catalogName); err != nil {
+		return fmt.Errorf("Codex marketplace plugin listing: %w", err)
+	}
+	if _, err := os.Lstat(filepath.Join(e.home, ".codex", "plugins", "cache")); !os.IsNotExist(err) {
+		return fmt.Errorf("Codex shape probe wrote plugin cache: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(e.home, ".codex", "config.toml"))
+	if err != nil {
+		return fmt.Errorf("read Codex config: %w", err)
+	}
+	if strings.Contains(string(data), "trust_level") || strings.Contains(string(data), "[projects.") {
+		return fmt.Errorf("Codex shape probe wrote trust configuration")
+	}
+	return nil
 }
 
 func assertCompatibilityResource(t *testing.T, e *Env, f compatibilityFixture, row *compatibilityResult, paths []string, sync compatibilityCommand) {
