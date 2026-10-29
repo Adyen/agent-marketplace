@@ -104,12 +104,13 @@ type trustReview struct {
 }
 
 type event struct {
-	Canonical string         `yaml:"canonical"`
-	Matcher   string         `yaml:"matcher"`
-	Types     []string       `yaml:"types"`
-	Timeout   *timeoutBounds `yaml:"timeout"`
-	Tools     []string       `yaml:"tools"`
-	MCP       bool           `yaml:"mcp"`
+	Canonical  string         `yaml:"canonical"`
+	Matcher    string         `yaml:"matcher"`
+	Types      []string       `yaml:"types"`
+	Timeout    *timeoutBounds `yaml:"timeout"`
+	Tools      []string       `yaml:"tools"`
+	MCP        bool           `yaml:"mcp"`
+	IngestOnly bool           `yaml:"ingest_only"`
 }
 
 type catalog struct {
@@ -279,6 +280,7 @@ func (c *catalog) validate() error {
 		}
 	}
 	split := map[string][]event{}
+	plain := map[string]string{}
 	for _, name := range slices.Sorted(maps.Keys(c.Events)) {
 		e := c.Events[name]
 		if !validEventName(name) {
@@ -286,6 +288,9 @@ func (c *catalog) validate() error {
 		}
 		if e.Canonical != "" && !toolpolicy.IsCanonicalEvent(e.Canonical) {
 			return fmt.Errorf("event %q links unknown canonical event %q", name, e.Canonical)
+		}
+		if e.IngestOnly && e.Canonical == "" {
+			return fmt.Errorf("event %q is ingest_only without a canonical event", name)
 		}
 		if e.Matcher != "" && !slices.Contains([]string{MatcherKindTool, MatcherKindLifecycle, MatcherKindCommandText, MatcherKindNone}, e.Matcher) {
 			return fmt.Errorf("event %q has invalid matcher kind %q", name, e.Matcher)
@@ -322,6 +327,11 @@ func (c *catalog) validate() error {
 				return fmt.Errorf("event %q splits tools without a canonical event", name)
 			}
 			split[e.Canonical] = append(split[e.Canonical], e)
+		} else if e.Canonical != "" && !e.IngestOnly {
+			if previous, exists := plain[e.Canonical]; exists {
+				return fmt.Errorf("events %q and %q both compile canonical event %q; mark one ingest_only", previous, name, e.Canonical)
+			}
+			plain[e.Canonical] = name
 		}
 	}
 	for canonical, events := range split {

@@ -540,6 +540,7 @@ func TestSubagentDirectoryFormIsReportedNotIngested(t *testing.T) {
 // --- hooks ---
 
 // spec: hook-resources/undocumented-devin-event-keeps-its-name-with-a-diagnostic
+// spec: hook-resources/devin-compaction-events-ingest-without-a-diagnostic
 func TestHookIngest(t *testing.T) {
 	thirty := 30
 	tests := []struct {
@@ -611,6 +612,15 @@ func TestHookIngest(t *testing.T) {
 				`{"NoSuchEvent":[{"type":"command","command":"echo x"}]}`)},
 			wantHooks: []wantHook{{"NoSuchEvent-command", "NoSuchEvent", "", "command", "echo x", "", nil}},
 			wantCodes: []string{diag.CodeIngestDevinHookEventUnmappable},
+		},
+		{
+			name: "devin compaction events ingest without a diagnostic",
+			src: fstest.MapFS{".devin/hooks.v1.json": file(
+				`{"PreCompact":[{"type":"command","command":"a","matcher":"auto"}],"PostCompact":[{"type":"command","command":"b"}]}`)},
+			wantHooks: []wantHook{
+				{"PostCompact-command", "PostCompact", "", "command", "b", "", nil},
+				{"PreCompact-command", "PreCompact", "auto", "command", "a", "", nil},
+			},
 		},
 	}
 	for _, tt := range tests {
