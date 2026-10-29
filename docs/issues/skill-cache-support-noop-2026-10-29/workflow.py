@@ -17,8 +17,8 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(os.environ["WORKFLOW_ROOT"])
-BIN = Path(os.environ["AM_BIN"])
+ROOT = Path(os.environ["WORKFLOW_ROOT"]).resolve()
+BIN = Path(os.environ["AM_BIN"]).resolve()
 OUT = ROOT / "results"
 MARKER = b"built direct-Git source revision"
 SHAPES = [
