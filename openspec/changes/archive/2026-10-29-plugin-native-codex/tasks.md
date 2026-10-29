@@ -25,4 +25,4 @@
   harness-validation page
 - [x] 3.3 Run `make validate`, `make spec-check`, and the focused Codex e2e
   tests
-- [ ] 3.4 `openspec archive plugin-native-codex --yes`
+- [x] 3.4 `openspec archive plugin-native-codex --yes`
