@@ -5016,7 +5016,17 @@ type portableVirtualNode struct {
 // would produce without populating that cache. This lets --check correctly
 // identify a pending copy or a user edit on a first dry run.
 func portableSkillVirtualDigest(link skillLink) (string, error) {
+	digest, _, err := portableSkillVirtualDigestWithSupport(link)
+	return digest, err
+}
+
+// portableSkillVirtualDigestWithSupport also returns the support files the
+// captured walk visited, excluding compiled artifacts, which are the files
+// preparation copies into its support stage.
+func portableSkillVirtualDigestWithSupport(link skillLink) (string, map[string]bool, error) {
 	nodes := map[string]portableVirtualNode{"": {dir: true, mode: 0o755}}
+	compiled := make(map[string]bool, len(link.artifacts))
+	support := make(map[string]bool)
 	ensureParents := func(path string) {
 		for dir := filepath.ToSlash(filepath.Dir(path)); dir != "." && dir != ""; dir = filepath.ToSlash(filepath.Dir(dir)) {
 			if _, ok := nodes[dir]; !ok {
@@ -5028,6 +5038,7 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 		path := filepath.ToSlash(filepath.Clean(a.Path))
 		ensureParents(path)
 		nodes[path] = portableVirtualNode{mode: portableArtifactMode(a.Mode), content: a.Bytes}
+		compiled[path] = true
 	}
 	err := walkPortableSkillSupport(link, func(childRel string) {
 		ensureParents(childRel)
@@ -5043,10 +5054,13 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 		}
 		ensureParents(childRel)
 		nodes[childRel] = portableVirtualNode{mode: identity.Mode.Perm(), content: data}
+		if !compiled[childRel] {
+			support[childRel] = true
+		}
 		return nil
 	})
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	paths := make([]string, 0, len(nodes))
 	for path := range nodes {
@@ -5063,7 +5077,7 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 		_, _ = fmt.Fprintf(h, "file\x00%s\x00%#o\x00%d\x00", path, node.mode.Perm(), len(node.content))
 		_, _ = h.Write(node.content)
 	}
-	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), support, nil
 }
 
 // walkPortableSkillSupport visits the support tree prepareSkillLinkCache would
@@ -5740,6 +5754,11 @@ func prepareSkillLinkCaches(links []skillLink, dryRun bool) error {
 	return nil
 }
 
+// skillLinkCacheCompareHook runs after an unchanged-cache comparison succeeds
+// and before preparation accepts it. It is nil in production and set only by
+// serial tests in this package.
+var skillLinkCacheCompareHook func(cacheDir string)
+
 // supportStageCopyHook runs after the support stage is admitted and before
 // support is copied into it. It is nil in production and set only by serial
 // tests in this package.
@@ -5870,6 +5889,16 @@ func prepareSkillLinkCache(link skillLink) (err error) {
 	if err := namespace.directory(parentPath, false); err != nil {
 		return err
 	}
+	cacheName := filepath.Base(cacheDir)
+	if compared, current := skillLinkCacheCurrent(link, parent, native, cacheName); current {
+		if skillLinkCacheCompareHook != nil {
+			skillLinkCacheCompareHook(cacheDir)
+		}
+		if namespace.directory(parentPath, false) == nil && cacheGenerationUnchanged(native, cacheName, compared) {
+			slog.Debug("skill link cache already current", "path", cacheDir, "phase", "cache-current")
+			return nil
+		}
+	}
 	compiled := make(map[string]bool, len(link.artifacts))
 	for _, a := range link.artifacts {
 		compiled[filepath.ToSlash(filepath.Clean(a.Path))] = true
@@ -5936,6 +5965,52 @@ func prepareSkillLinkCache(link skillLink) (err error) {
 		}
 	}
 	return nil
+}
+
+// skillLinkCacheCurrent reports whether the cache directory name below the
+// admitted parent already holds exactly the tree prepareSkillLinkCache would
+// publish: the same compiled artifacts, support bytes, modes and directories,
+// and no other entries. Both digests read through captured handles, and the
+// identity of the compared directory is returned so the caller can bind its
+// decision to it. Any error, including a refused support source, reports false
+// so full preparation runs and reports its own diagnostic.
+func skillLinkCacheCurrent(link skillLink, parent *fsboundary.Dir, native *os.Root, name string) (fsboundary.Identity, bool) {
+	// A missing cache fails here before any source support is read.
+	info, err := native.Lstat(name)
+	if err != nil || !info.IsDir() {
+		return fsboundary.Identity{}, false
+	}
+	compared, err := fsboundary.FileInfoIdentity(info)
+	if err != nil {
+		return fsboundary.Identity{}, false
+	}
+	h := sha256.New()
+	if err := writePortableDigestEntry(h, parent, name, ""); err != nil {
+		return compared, false
+	}
+	desired, support, err := portableSkillVirtualDigestWithSupport(link)
+	if err != nil || "sha256:"+hex.EncodeToString(h.Sum(nil)) != desired {
+		return compared, false
+	}
+	// Full preparation refuses when its stage lacks a declared support file;
+	// require the same files from this walk, not an earlier path check.
+	for _, rel := range link.declaredSupport {
+		if !support[filepath.ToSlash(filepath.Clean(rel))] {
+			return compared, false
+		}
+	}
+	return compared, true
+}
+
+// cacheGenerationUnchanged reports whether name below the admitted parent is
+// still the compared cache directory in the same state.
+func cacheGenerationUnchanged(native *os.Root, name string, compared fsboundary.Identity) bool {
+	info, err := native.Lstat(name)
+	if err != nil {
+		return false
+	}
+	current, err := fsboundary.FileInfoIdentity(info)
+	return err == nil && current.SameState(compared)
 }
 
 // pruneSkillCacheSupportFiles deletes every previous support-file entry while

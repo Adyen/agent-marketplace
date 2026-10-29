@@ -1,0 +1,74 @@
+[
+  {
+    "shape": "control_330x0",
+    "skills": 330,
+    "support_files": 0,
+    "support_MiB": 0.0,
+    "sync": {
+      "median_ms": 732.4,
+      "min_ms": 696.3,
+      "max_ms": 1025.5,
+      "source_revision_builds_per_run": [
+        1
+      ],
+      "runs": 7
+    },
+    "sync --check": {
+      "median_ms": 623.0,
+      "min_ms": 598.3,
+      "max_ms": 636.7,
+      "source_revision_builds_per_run": [
+        1
+      ],
+      "runs": 7
+    }
+  },
+  {
+    "shape": "observed_330x2x15KiB",
+    "skills": 330,
+    "support_files": 660,
+    "support_MiB": 9.66796875,
+    "sync": {
+      "median_ms": 1428.9,
+      "min_ms": 1342.8,
+      "max_ms": 1823.6,
+      "source_revision_builds_per_run": [
+        1
+      ],
+      "runs": 7
+    },
+    "sync --check": {
+      "median_ms": 1267.6,
+      "min_ms": 1232.6,
+      "max_ms": 1314.6,
+      "source_revision_builds_per_run": [
+        1
+      ],
+      "runs": 7
+    }
+  },
+  {
+    "shape": "heavy_330x8x16KiB",
+    "skills": 330,
+    "support_files": 2640,
+    "support_MiB": 41.25,
+    "sync": {
+      "median_ms": 2836.9,
+      "min_ms": 2693.7,
+      "max_ms": 3283.4,
+      "source_revision_builds_per_run": [
+        1
+      ],
+      "runs": 7
+    },
+    "sync --check": {
+      "median_ms": 2721.9,
+      "min_ms": 2502.5,
+      "max_ms": 2943.1,
+      "source_revision_builds_per_run": [
+        1
+      ],
+      "runs": 7
+    }
+  }
+]

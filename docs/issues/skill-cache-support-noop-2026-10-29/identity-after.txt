@@ -1,0 +1,5 @@
+after binary: unchanged warm sync; support files 660 replaced 0 ; all cache entries+links 1650 changed 0 ; membership equal True
+positive control: source edit propagates via a new commit is covered by unit/Run tests (sandbox source is a locked Git snapshot)
+positive control after update+sync: installed content = 'positive control: upstream support edit\n'
+unchanged sibling skill support content identical: True
+sync --check after update: 0
