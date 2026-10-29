@@ -668,7 +668,7 @@ jobs:
 
       - name: Upload failed journey evidence
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tui-qa-failures-${{ runner.os }}
           path: ${{ runner.temp }}/tui-qa-failures/
@@ -704,7 +704,7 @@ jobs:
         run: cp -- "$EVIDENCE/$JOURNEY/$JOURNEY.gif" "$RECORDING"
 
       - name: Upload the recording unzipped
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           path: ${{ runner.temp }}/tui-qa-${{ matrix.os }}-${{ matrix.journey }}.gif
           archive: false
@@ -847,7 +847,7 @@ jobs:
 
       - name: Upload Marketplace gate diagnostics
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: marketplace-gate-${{ runner.os }}-${{ github.run_id }}
           path: ${{ runner.temp }}/e2e-artifacts/
@@ -897,7 +897,7 @@ jobs:
 
       - name: Upload released-client diagnostics
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: released-client-gate-${{ runner.os }}-${{ github.run_id }}
           path: ${{ runner.temp }}/released-client-artifacts/
@@ -1038,7 +1038,7 @@ jobs:
 
       - name: Upload benchmark evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: tui-performance-evidence
           path: |
