@@ -479,6 +479,10 @@ type Model struct {
 	// sessionSpan is the TUI session span; it is ended when Run returns.
 	sessionSpan telemetry.Span
 
+	// pendingInventory is the latest accepted final snapshot, recorded once
+	// when the session ends rather than per snapshot.
+	pendingInventory *pendingInventory
+
 	// keys is the centralized keymap; the single source of truth for all
 	// key bindings and their help text. Both the footer hint line and the
 	// ? help overlay are driven from this keymap via the help model.
