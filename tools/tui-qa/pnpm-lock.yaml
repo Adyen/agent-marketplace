@@ -12,8 +12,8 @@ importers:
         specifier: 0.1.0
         version: 0.1.0
       '@types/node':
-        specifier: 24.10.1
-        version: 24.10.1
+        specifier: 26.6.4
+        version: 26.6.4
       typescript:
         specifier: 5.9.3
         version: 5.9.3
@@ -70,16 +70,16 @@ packages:
     resolution: {integrity: sha512-nzIzoV8nFJjzzLVxoqxAdBAK+hhs10bGdgNNgp0rm5brJ1GXfYPwf4xMzL1FHRT2EV6zQmMykfLbxDhSeyQ8jg==}
     engines: {node: '>=20'}
 
-  '@types/node@24.10.1':
-    resolution: {integrity: sha512-GNWcUTRBgIRJD5zj+Tq0fKOJ5XZajIiBroOF0yvj2bSU1WvNdYS/dn9UxwsujGW4JX06dnHyjV2y9rRaybH0iQ==}
+  '@types/node@26.6.4':
+    resolution: {integrity: sha512-ldVPDCzj7fsaGZrLB0NuHuTvJcsNasysBAqMolr/cgxrLd1xbqxIr3XJiPnHHJUCxj5sNF1vnRj9aWnrVh5Jcg==}
 
   typescript@5.9.3:
     resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
     engines: {node: '>=14.17'}
     hasBin: true
 
-  undici-types@7.16.0:
-    resolution: {integrity: sha512-Zz+aZWSj8LE6zoxD+xrjh4VfkIG8Ya6LvYkZqtUQGJPZjYl53ypCaUwWqo7eI0x66KBGeRo+mlBEkMSeSZ38Nw==}
+  undici-types@8.9.0:
+    resolution: {integrity: sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==}
 
 snapshots:
 
@@ -114,10 +114,10 @@ snapshots:
       '@microsoft/tui-test-linux-x64-musl': 0.1.0
       '@microsoft/tui-test-win32-x64-msvc': 0.1.0
 
-  '@types/node@24.10.1':
+  '@types/node@26.6.4':
     dependencies:
-      undici-types: 7.16.0
+      undici-types: 8.9.0
 
   typescript@5.9.3: {}
 
-  undici-types@7.16.0: {}
+  undici-types@8.9.0: {}
