@@ -64,8 +64,9 @@ func (r *registry) resolve(req Request) Result {
 	if override, ok := req.Overrides[req.Model]; ok {
 		req.Model, req.Source, req.Overrides = override, req.Target, nil
 		result = r.resolve(req)
-		if override != "" {
-			if _, known := c.native[Encoding{Model: override}]; !known && req.Effort != "" {
+		if override != "" && req.Effort != "" {
+			_, family := c.Families[override]
+			if _, known := c.native[Encoding{Model: override}]; !known && (!family || surf.EffortField == "") {
 				result.Effort = ""
 				result.lose(EffortOmitted, req.Effort)
 			}
@@ -98,6 +99,7 @@ func (r *registry) resolve(req Request) Result {
 		return result
 	}
 	selected, known := sourceCatalog.native[Encoding{Model: req.Model, Effort: req.Effort}]
+	nativeEncodingKnown := known
 	if !known {
 		selected, known = sourceCatalog.native[Encoding{Model: req.Model}]
 		if known && req.Effort != "" {
@@ -105,6 +107,11 @@ func (r *registry) resolve(req Request) Result {
 				result.lose(EffortConflict, req.Effort)
 			}
 			selected.Effort = req.Effort
+		}
+	}
+	if !known && req.Source == req.Target && surf.EffortField != "" {
+		if _, available := sourceCatalog.Families[req.Model]; available {
+			selected, known = selection{Identity: req.Model, Effort: req.Effort}, true
 		}
 	}
 	if !known {
@@ -126,6 +133,16 @@ func (r *registry) resolve(req Request) Result {
 		if req.Effort != "" {
 			if surf.EffortField != "" {
 				result.Effort = req.Effort
+				if known && !nativeEncodingKnown {
+					entry, available := c.lookup(selected.Identity)
+					if entry.Pin != "" {
+						entry = c.Models[entry.Pin]
+					}
+					if _, supported := c.native[Encoding{Model: entry.Model, Effort: req.Effort}]; available && !supported {
+						result.Effort = ""
+						result.lose(EffortOmitted, req.Effort)
+					}
+				}
 			} else if known {
 				entry, _ := c.lookup(selected.Identity)
 				if encoding, ok := entry.Reasoning[selected.Effort]; ok && req.Surface == "subagent" {
