@@ -109,28 +109,7 @@ func (catalog nativePluginCatalog) manifest() ([]byte, error) {
 		}
 		return append(data, '\n'), nil
 	}
-	type source struct {
-		Source string `json:"source"`
-		Path   string `json:"path"`
-	}
-	type entry struct {
-		Name   string `json:"name"`
-		Source source `json:"source"`
-	}
-	document := struct {
-		Name    string  `json:"name"`
-		Plugins []entry `json:"plugins"`
-	}{Name: catalog.name}
-	for _, item := range catalog.entries {
-		document.Plugins = append(document.Plugins, entry{
-			Name: item.name, Source: source{Source: "directory", Path: item.generationPath},
-		})
-	}
-	data, err := json.MarshalIndent(document, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	return append(data, '\n'), nil
+	return nil, fmt.Errorf("native plugin catalog has no manifest shape for target %s", catalog.target)
 }
 
 func nativePluginCatalogEntryPath(name string) string {
