@@ -11,6 +11,9 @@ const wheelDown = (count: number): string => "\x1b[<65;4;6M".repeat(count);
 const wheelUp = (count: number): string => "\x1b[<64;4;6M".repeat(count);
 
 // spec: tui-mouse-navigation/terminal-wheel-burst-reaches-the-expected-resource
+// spec: tui-mouse-navigation/list-selection-moves-by-one-entry
+// spec: tui-mouse-navigation/rapid-wheel-reversals-preserve-selection
+// spec: tui-mouse-navigation/reversing-at-the-list-boundary-is-immediate
 journey.test("an encoded wheel burst with reversals reaches the expected resource without extra navigation keys", async (terminal) => {
   const assertSelectedSkillDetails = async (name: string): Promise<void> => {
     await locate(terminal, new RegExp(`Name:\\s+${name}`)).unique().expect();

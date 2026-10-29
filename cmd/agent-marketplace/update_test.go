@@ -1008,7 +1008,7 @@ func TestUpdateCommandContinuesPastMissingMarketplacePin(t *testing.T) {
 	repo := t.TempDir()
 	withWorkingDir(t, repo)
 	for _, name := range []string{"stay", "gone"} {
-		if output, err := executeCommand("install", "tools/skill/"+name, "--marketplace", "mp", "--yes"); err != nil {
+		if output, err := executeCommand("install", "--scope", "repo", "tools/skill/"+name, "--marketplace", "mp", "--yes"); err != nil {
 			t.Fatalf("install %s: %v\n%s", name, err, output)
 		}
 	}

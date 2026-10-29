@@ -1,0 +1,144 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4DirectoryRequestReuseCPU/skills=1024/excluded=0-16         	   10000	    221576 ns/op	  761828 B/op	    2091 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4ActiveExclusionAdaptation/active=1-16         	 3635334	       658.6 ns/op	    2136 B/op	      14 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=0-16         	   10000	    222890 ns/op	  761828 B/op	    2091 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4MarketplaceExclusionKindCPU/exclusions=1024-16         	   21158	    112902 ns/op	  309185 B/op	    1076 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4DirectoryRequestReuseCPU/skills=1024/excluded=0-16         	   10000	    220508 ns/op	  761828 B/op	    2091 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4ActiveExclusionAdaptation/active=1-16         	 3582667	       676.3 ns/op	    2136 B/op	      14 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=0-16         	   10000	    223641 ns/op	  761828 B/op	    2091 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4MarketplaceExclusionKindCPU/exclusions=1024-16         	   21090	    112827 ns/op	  309185 B/op	    1076 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4DirectoryRequestReuseCPU/skills=1024/excluded=0-16         	   10000	    217671 ns/op	  761827 B/op	    2091 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4ActiveExclusionAdaptation/active=1-16         	 3535842	       685.7 ns/op	    2136 B/op	      14 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=0-16         	   10000	    223206 ns/op	  761827 B/op	    2091 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4MarketplaceExclusionKindCPU/exclusions=1024-16         	   21346	    110168 ns/op	  309185 B/op	    1076 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4DirectoryRequestReuseCPU/skills=1024/excluded=0-16         	   10000	    225213 ns/op	  761827 B/op	    2091 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4ActiveExclusionAdaptation/active=1-16         	 3457005	       696.9 ns/op	    2136 B/op	      14 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=0-16         	   10000	    224832 ns/op	  761828 B/op	    2091 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4MarketplaceExclusionKindCPU/exclusions=1024-16         	   21304	    111648 ns/op	  309185 B/op	    1076 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4DirectoryRequestReuseCPU/skills=1024/excluded=0-16         	   10000	    222579 ns/op	  761826 B/op	    2091 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4ActiveExclusionAdaptation/active=1-16         	 3475819	       685.9 ns/op	    2136 B/op	      14 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=0-16         	   10000	    220957 ns/op	  761828 B/op	    2091 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4MarketplaceExclusionKindCPU/exclusions=1024-16         	   21662	    111163 ns/op	  309185 B/op	    1076 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4DirectoryRequestReuseCPU/skills=1024/excluded=0-16         	   10000	    225464 ns/op	  761828 B/op	    2091 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4ActiveExclusionAdaptation/active=1-16         	 3418717	       708.6 ns/op	    2136 B/op	      14 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=0-16         	   10000	    222439 ns/op	  761827 B/op	    2091 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4MarketplaceExclusionKindCPU/exclusions=1024-16         	   20938	    116015 ns/op	  309185 B/op	    1076 allocs/op
+PASS

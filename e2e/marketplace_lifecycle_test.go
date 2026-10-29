@@ -245,7 +245,7 @@ func TestMarketplacePinRemainsExactUntilUpdateAndWorksOffline(t *testing.T) {
 	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("version one", false))
 	consumer := fixture.newConsumer(t, fixture.server.URL)
 	oldEvidence := assertMarketplaceArtifactIntegrity(t, fixture.server.URL, "behavior-marketplace", "behavior-source", "behavior-source-id", "skill", "skill-one")
-	result := consumer.RunAM("install", "behavior:behavior-source/skill/skill-one", "--yes")
+	result := consumer.RunAM("install", "--scope", "repo", "behavior:behavior-source/skill/skill-one", "--yes")
 	if result.ExitCode != 0 {
 		t.Fatalf("install revision one failed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
@@ -312,7 +312,7 @@ func TestMarketplaceInstallArtifactFailureIsTransactional(t *testing.T) {
 	consumer := fixture.newConsumer(t, proxy.URL)
 	before := consumer.ReadFile("/workspace/.agents/config.yaml")
 
-	result := consumer.RunAM("install", "behavior:behavior-source/skill/skill-one", "--yes")
+	result := consumer.RunAM("install", "--scope", "repo", "behavior:behavior-source/skill/skill-one", "--yes")
 	if result.ExitCode == 0 || artifactRequests.Load() != 1 {
 		t.Fatalf("failed artifact install = exit %d, requests %d:\n%s", result.ExitCode, artifactRequests.Load(), result.Combined)
 	}
@@ -321,7 +321,7 @@ func TestMarketplaceInstallArtifactFailureIsTransactional(t *testing.T) {
 	}
 	consumer.AssertFileAbsent("/workspace/.factory/skills/skill-one")
 	failArtifact.Store(false)
-	result = consumer.RunAM("install", "behavior:behavior-source/skill/skill-one", "--yes")
+	result = consumer.RunAM("install", "--scope", "repo", "behavior:behavior-source/skill/skill-one", "--yes")
 	if result.ExitCode != 0 {
 		t.Fatalf("install did not recover after artifact became available (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
@@ -340,7 +340,7 @@ func TestMarketplaceIdentityAndAllowlistFailClosed(t *testing.T) {
 		lock := fmt.Sprintf("apiVersion: agent-marketplace-lock/v2\nscope: repo\nmarketplaces:\n  - url: %s\n    instance_id: wrong-id\n", fixture.server.URL)
 		consumer.WriteFile("/workspace/.agents/lock.yaml", lock)
 		before := consumer.ReadFile("/workspace/.agents/config.yaml")
-		result := consumer.RunAM("install", "behavior:behavior-source/skill/skill-one", "--yes")
+		result := consumer.RunAM("install", "--scope", "repo", "behavior:behavior-source/skill/skill-one", "--yes")
 		if result.ExitCode == 0 || !strings.Contains(result.Combined, "ID mismatch") {
 			t.Fatalf("instance mismatch result = exit %d:\n%s", result.ExitCode, result.Combined)
 		}
@@ -349,7 +349,7 @@ func TestMarketplaceIdentityAndAllowlistFailClosed(t *testing.T) {
 		}
 		consumer.AssertFileAbsent("/workspace/.factory/skills/skill-one")
 		consumer.WriteFile("/workspace/.agents/lock.yaml", strings.Replace(lock, "wrong-id", "behavior-marketplace", 1))
-		consumer.MustRunAM("install", "behavior:behavior-source/skill/skill-one", "--yes")
+		consumer.MustRunAM("install", "--scope", "repo", "behavior:behavior-source/skill/skill-one", "--yes")
 		consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "identity")
 	})
 
@@ -406,7 +406,7 @@ func TestMarketplaceRevocationPreservesInstalledOutputAndSupportsExactOverride(t
 	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("revocable", false))
 	consumer := fixture.newConsumer(t, fixture.server.URL)
 	digest := fixture.resourceDigest(t, "skill", "skill-one")
-	result := consumer.RunAM("install", "behavior:behavior-source/skill/skill-one", "--yes")
+	result := consumer.RunAM("install", "--scope", "repo", "behavior:behavior-source/skill/skill-one", "--yes")
 	if result.ExitCode != 0 {
 		t.Fatalf("install before revocation failed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
@@ -440,7 +440,7 @@ func TestMarketplaceRevocationPreservesInstalledOutputAndSupportsExactOverride(t
 func TestMarketplaceCollectionSelectorLifecycle(t *testing.T) {
 	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("collection member", true))
 	consumer := fixture.newConsumer(t, fixture.server.URL)
-	result := consumer.RunAM("install", "behavior:behavior-source/collection/behavior-bundle", "--yes")
+	result := consumer.RunAM("install", "--scope", "repo", "behavior:behavior-source/collection/behavior-bundle", "--yes")
 	if result.ExitCode != 0 {
 		t.Fatalf("collection install failed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
@@ -453,7 +453,7 @@ func TestMarketplaceCollectionSelectorLifecycle(t *testing.T) {
 		t.Fatalf("collection acquisition lock did not persist both member selector edges:\n%s", lock)
 	}
 
-	result = consumer.RunAM("install", "behavior:behavior-source/skill/skill-one", "--yes")
+	result = consumer.RunAM("install", "--scope", "repo", "behavior:behavior-source/skill/skill-one", "--yes")
 	if result.ExitCode != 0 {
 		t.Fatalf("direct member install failed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
@@ -487,7 +487,7 @@ func TestMarketplaceRemoveSuggestedEndpointKeepsLocalSelection(t *testing.T) {
 	consumer := fixture.newConsumer(t, fixture.server.URL)
 	consumer.WriteFile("/workspace/resources/skills/keep/SKILL.md", (Skill{Name: "keep", Description: "Keep selected"}).SkillFile())
 	consumer.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources: {behavior: {marketplace: %q}, local: {directory: ./resources, source_harness: factory}}\nresources: {local: [skill/skill-one, skill/keep]}\n", fixture.server.URL))
-	result := consumer.RunAM("install", "behavior:behavior-source/skill/skill-one", "--yes")
+	result := consumer.RunAM("install", "--scope", "repo", "behavior:behavior-source/skill/skill-one", "--yes")
 	if result.ExitCode != 0 {
 		t.Fatalf("Marketplace install failed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}

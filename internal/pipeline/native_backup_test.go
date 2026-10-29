@@ -1,6 +1,9 @@
 package pipeline
 
 import (
+	"archive/tar"
+	"compress/gzip"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,6 +15,85 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 )
+
+func TestClaudeConfigurationBackupAcrossLayouts(t *testing.T) {
+	for _, fromCustom := range []bool{false, true} {
+		t.Run(map[bool]string{false: "default-to-custom", true: "custom-to-default"}[fromCustom], func(t *testing.T) {
+			home, custom := t.TempDir(), t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("CLAUDE_CONFIG_DIR", "")
+			sourceRoot, sourceFile := filepath.Join(home, ".claude"), filepath.Join(home, ".claude.json")
+			destRoot, destFile := custom, filepath.Join(custom, ".claude.json")
+			if fromCustom {
+				t.Setenv("CLAUDE_CONFIG_DIR", custom)
+				sourceRoot, destRoot = destRoot, sourceRoot
+				sourceFile, destFile = destFile, sourceFile
+			}
+			if err := os.MkdirAll(sourceRoot, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			original := []byte(`{"numStartups":7,"mcpServers":{"manual":{"command":"true"}}}`)
+			if err := os.WriteFile(sourceFile, original, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			resources := []resolver.ResolvedArtifact{{Entry: catalog.Entry{Name: "probe"}, Source: config.UserPersonal, Harnesses: []hcc.Target{hcc.TargetClaude}}}
+			managed := CollectManagedPaths(resources)
+			if err := backup.Create(managed); err != nil {
+				t.Fatal(err)
+			}
+			archives, err := filepath.Glob(filepath.Join(home, ".agent-marketplace/backups/claude/*.tar.gz"))
+			if err != nil || len(archives) != 1 {
+				t.Fatalf("archives: %v, %v", archives, err)
+			}
+			file, err := os.Open(archives[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = file.Close() }()
+			gz, err := gzip.NewReader(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = gz.Close() }()
+			reader := tar.NewReader(gz)
+			count := 0
+			for {
+				header, err := reader.Next()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if header.Name != ".agent-marketplace-native/machine-mcp/.claude.json" {
+					t.Fatalf("unexpected archive member %q", header.Name)
+				}
+				count++
+			}
+			if count != 1 {
+				t.Fatalf("configuration archived %d times", count)
+			}
+			t.Setenv("CLAUDE_CONFIG_DIR", custom)
+			if fromCustom {
+				t.Setenv("CLAUDE_CONFIG_DIR", "")
+			}
+			if err := os.MkdirAll(destRoot, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			mappings, err := harness.NativeAggregateBackupFiles(hcc.TargetClaude)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := backup.Restore(hcc.TargetClaude, destRoot, mappings); err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(destFile)
+			if err != nil || string(got) != string(original) {
+				t.Fatalf("cross-layout restore: %s, %v", got, err)
+			}
+		})
+	}
+}
 
 func expectedMachineRootAggregates(target hcc.Target) []string {
 	switch target {

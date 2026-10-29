@@ -6,6 +6,23 @@ import (
 	"testing"
 )
 
+func TestIsolatedHomeNeutralizesClaudeConfigurationDirectory(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(t.TempDir(), "external-account"))
+	home, cleanup, err := IsolatedHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := cleanup(); err != nil {
+			t.Error(err)
+		}
+	})
+	if os.Getenv("HOME") != home || os.Getenv("CLAUDE_CONFIG_DIR") != "" {
+		t.Fatal("isolated HOME retained an external Claude machine root")
+	}
+}
+
 // Cleanup must never modify files outside the isolated home. A symlink inside
 // the home pointing at an external file must not have its target chmod'ed.
 func TestIsolatedHomeCleanupLeavesSymlinkTargetsUntouched(t *testing.T) {

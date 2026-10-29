@@ -10,7 +10,8 @@ import (
 
 // LoadSubagent reads a subagent .md file from src at the given path.
 // The file must have YAML frontmatter with at least a name field.
-// The "tools" field can be either a string or a list of strings.
+// The "tools" and "disallowedTools" fields can each be a YAML list or a
+// comma-separated string such as "Read, Grep, Bash".
 func LoadSubagent(src fs.FS, path string) (*ir.Subagent, error) {
 	if err := validatePath(path); err != nil {
 		return nil, err
@@ -49,7 +50,7 @@ func LoadSubagent(src fs.FS, path string) (*ir.Subagent, error) {
 
 	var tools []string
 	if t, ok := fm["tools"]; ok {
-		tools, err = toStringSlice(t)
+		tools, err = toToolList(t)
 		if err != nil {
 			return nil, fmt.Errorf("bundle: invalid tools in %s: %w", path, err)
 		}
@@ -57,7 +58,7 @@ func LoadSubagent(src fs.FS, path string) (*ir.Subagent, error) {
 
 	var disallowedTools []string
 	if dt, ok := fm["disallowedTools"]; ok {
-		disallowedTools, err = toStringSlice(dt)
+		disallowedTools, err = toToolList(dt)
 		if err != nil {
 			return nil, fmt.Errorf("bundle: invalid disallowedTools in %s: %w", path, err)
 		}

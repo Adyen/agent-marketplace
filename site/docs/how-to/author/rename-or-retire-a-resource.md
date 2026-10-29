@@ -94,7 +94,7 @@ Release the overlap as a minor version, following [how to version and release a 
 ## 2.4.0
 
 - Rename `code-review` to `review`. `code-review` remains as a deprecated copy until 3.0.0.
-  - If you select it by name: `agent-marketplace install review`, then remove `skill/code-review` from your configuration.
+  - If you select it by name: `agent-marketplace install review --scope repo`, then remove `skill/code-review` from your configuration.
   - If you exclude `skill/code-review`: also exclude `skill/review`.
   - If you pin it from a Marketplace: `agent-marketplace remove code-review`, then install `review` from the same Marketplace.
   - If you select it with `required: true`: change the entry to `skill/review`.

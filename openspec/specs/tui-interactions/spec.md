@@ -6,19 +6,26 @@ Defines modal keyboard interactions and guarded configuration writes so selectio
 ## Requirements
 
 ### Requirement: Multi-harness selection
-Harness editing and initial configuration SHALL support selecting multiple harnesses. Switching global and project scopes SHALL load that scope's selection without writing; Space SHALL toggle the focused selection without writing; only explicit Enter SHALL save after non-empty validation. Saving an existing configuration SHALL preserve unknown selected harness IDs.
+
+Harness editing and initial configuration SHALL support selecting multiple supported harness target IDs. Switching global and project scopes SHALL load that scope's selection without writing; Space SHALL toggle the focused selection without writing; only explicit Enter SHALL save after non-empty validation. The running CLI MUST understand every harness target ID named in consumer configuration, including harness selections and per-target materialization settings. Unknown IDs SHALL remain configuration errors that gate configuration-dependent actions, not warnings or permission to use only the supported subset. Refusal SHALL NOT silently remove or rewrite unknown entries.
 
 #### Scenario: Scope and selection without write
 - **WHEN** a user switches scopes with g or p, toggles a harness with Space, and cancels
 - **THEN** each scope's selections remain available and all configuration bytes stay unchanged
 
 #### Scenario: Save selected harnesses
-- **WHEN** a user explicitly submits a non-empty multi-selection that includes an unknown existing ID
-- **THEN** the guarded write preserves that ID and updates only the intended scope
+- **WHEN** a user explicitly submits a non-empty multi-selection of supported harness target IDs
+- **THEN** the guarded write MUST save that selection and update only the intended scope
 
 #### Scenario: Empty selection
 - **WHEN** a user attempts to save an empty harness selection
 - **THEN** the form refuses the save without modifying configuration bytes
+
+#### Scenario: Unknown harness target IDs refuse configuration
+- **WHEN** otherwise valid consumer configuration names an unknown harness target ID, including alongside supported IDs or in per-target materialization settings
+- **THEN** the TUI MUST show a configuration error and block synchronization instead of treating the unknown entry as a warning or using only supported targets
+- **AND** the refused new operation MUST preserve authored configuration, acquisition locks and existing installed resources without installing pending resources
+- **AND** after the user explicitly repairs the configuration, reload and synchronization MUST work with supported targets
 
 ### Requirement: Explicit modal intent
 
@@ -45,12 +52,12 @@ The toggle and config-editor choice dialogs SHALL keep their fixed options when 
 
 ### Requirement: Harness choices return after resizing
 
-The initial harness-selection and target-harness dialogs SHALL restore the complete option list when the terminal expands after a compact layout. Resizing SHALL preserve the cursor and selected harness IDs, including an unknown selected ID already present in configuration.
+The initial harness-selection and target-harness dialogs SHALL restore the complete supported option list when the terminal expands after a compact layout. Resizing SHALL preserve the cursor and selected supported harness target IDs.
 
 #### Scenario: Harness options return after compact resize
 
-- **WHEN** a user opens either harness dialog at a supported full size, selects an unknown existing harness ID, shrinks the terminal to a compact size, then expands it to the original size
-- **THEN** all harness choices, including the selected unknown ID, SHALL be visible with the same cursor and selected IDs
+- **WHEN** a user opens either harness dialog at a supported full size, selects supported harness target IDs, shrinks the terminal to a compact size, then expands it to the original size
+- **THEN** all supported harness choices SHALL be visible with the same cursor and selected IDs
 
 ### Requirement: Previewable view settings
 
@@ -149,3 +156,184 @@ broken.
   and only a copy in a harness that is no longer targeted is left
 - **THEN** before syncing, that resource MUST show as enabled and pending sync,
   not as orphaned or broken
+
+### Requirement: Install from an unconfigured source
+
+Pressing `i` in the resource list SHALL open an install-from-source modal with
+three steps: Source, Pick, and Review. The Source step SHALL accept a Git URL,
+a GitHub or GitLab web URL, or a directory path, plus an optional ref and
+path; a web URL SHALL fill the ref and path it encodes. Before any network
+access, the TUI SHALL reject a source that the effective allowlist blocks or
+whose registry path is invalid, and SHALL show the rejection on the Source
+step. The Pick step SHALL show the resources the source contains, grouped by
+kind, with the commit the ref resolved to, counts per kind, and a status for
+each resource: already installed, conflicting with an installed resource from
+another source, or malformed. Malformed resources SHALL NOT be selectable. An
+empty source SHALL show a hint and SHALL NOT advance to Review. A source that
+expands into several bundles SHALL list the bundle paths and SHALL preview the
+chosen bundle path. The Review step SHALL offer only the scopes the source may
+be written to, SHALL name the configuration file that will be written, and
+SHALL list the selected resources. Confirming SHALL write the source and the
+selected resources to the chosen scope in one guarded mutation, with the same
+configuration, acquisition lock, and harness results as `install --from` with
+those names. The install SHALL refuse when the source no longer resolves to
+the previewed commit. Previewing, cancelling, and every refusal SHALL leave
+configuration, acquisition lock, and harness bytes unchanged. The modal SHALL
+NOT open when the consumer configuration is unsupported or invalid, or while
+another operation is active.
+
+#### Scenario: Previewing a source writes nothing
+
+- **WHEN** a user presses `i`, enters an unconfigured Git source, and the Pick
+  step shows its resources with the resolved commit and counts per kind
+- **THEN** configuration, acquisition lock, and harness bytes MUST be
+  unchanged
+
+#### Scenario: Picked resources install at the chosen scope
+
+- **WHEN** a user picks a skill and a command from the previewed source,
+  chooses project scope, and confirms
+- **THEN** the repository configuration MUST record the source with both
+  resources selected, the repository acquisition lock MUST record the source
+  at the previewed commit, both resources MUST appear in the resource list,
+  and a sync MUST materialize them in each target harness
+
+#### Scenario: Blocked source is refused before network access
+
+- **WHEN** a user enters a source that the effective allowlist blocks
+- **THEN** the Source step MUST show the refusal, the source MUST NOT be
+  fetched, and configuration, acquisition lock, and harness bytes MUST be
+  unchanged
+
+#### Scenario: Moved ref refuses the stale install
+
+- **WHEN** the previewed source's ref advances to a new commit before the user
+  confirms the install
+- **THEN** the install MUST be refused with the previewed and current commits,
+  the modal MUST return to the Pick step, and configuration, acquisition lock,
+  and harness bytes MUST be unchanged
+
+#### Scenario: Cancelling at any step preserves bytes
+
+- **WHEN** a user cancels the modal from the Source, Pick, or Review step
+- **THEN** the modal MUST close and configuration, acquisition lock, and
+  harness bytes MUST be unchanged
+
+#### Scenario: Malformed and empty sources are not installable
+
+- **WHEN** a previewed source contains a malformed resource, or contains no
+  discoverable resources
+- **THEN** the malformed resource MUST be shown as not selectable, and an
+  empty source MUST show a hint and MUST NOT advance to Review
+
+#### Scenario: Source with several bundles asks for a bundle path
+
+- **WHEN** a previewed source expands into several bundles
+- **THEN** the Pick step MUST list the bundle paths instead of resources, and
+  choosing one MUST preview that bundle path
+
+#### Scenario: Install from source is refused while mutations are unavailable
+
+- **WHEN** a user presses `i` while another operation is active or the
+  consumer configuration is unsupported
+- **THEN** the modal MUST NOT open, the TUI MUST explain the refusal, and
+  configuration, acquisition lock, and harness bytes MUST be unchanged
+
+### Requirement: Install-from-source step navigation
+
+In the install-from-source modal, `→` SHALL act as `enter` on the Pick step
+and `←` SHALL return from Pick to Source and from Review to Pick. `→` on the
+Review step SHALL NOT install. On the Source step `←` and `→` SHALL keep
+moving the text cursor, and while the Pick filter is being edited they SHALL
+edit the filter. On the Source step `↓` SHALL move focus from URL to Ref to
+Path and `↑` SHALL move it back, without wrapping and without completing the
+step; `k` and `j` SHALL remain text input. Confirming the Source step with
+the same URL, ref, and path as the shown preview SHALL return to Pick with
+that preview and the current picks without previewing the source again; any
+changed field SHALL preview again. On the Review step `↑`/`k` and `↓`/`j`
+SHALL move the scope selection through User, Project, and Local in that order
+without wrapping; moving onto a scope the source cannot be written to SHALL
+keep the current scope and show the reason.
+
+#### Scenario: Arrow keys walk the steps without installing
+
+- **WHEN** a user on the Pick step with a picked resource presses `→`, then
+  presses `→` again on Review, then presses `←` twice
+- **THEN** the modal MUST show Review after the first `→`, MUST stay on Review
+  without installing after the second, and MUST show Pick and then Source,
+  and configuration, acquisition lock, and harness bytes MUST be unchanged
+
+#### Scenario: Arrow keys move between Source fields
+
+- **WHEN** a user on the Source step presses `↑` on URL, types, presses `↓`
+  twice and types, presses `↓` again and types, then presses `↑` and types
+- **THEN** the first text MUST go to URL, the second and third to Path, the
+  last to Ref, and the Source step MUST stay open without previewing
+
+#### Scenario: Unchanged source reuses the preview
+
+- **WHEN** a user returns from Pick to Source and confirms without changing
+  the URL, ref, or path, after the source gained a resource
+- **THEN** the Pick step MUST show the previous preview without the new
+  resource and MUST keep the picks
+
+#### Scenario: Changed source previews again
+
+- **WHEN** a user returns from Pick to Source, changes the ref or path, and
+  confirms
+- **THEN** the source MUST be previewed again with the changed values
+
+#### Scenario: Arrow keys choose the Review scope
+
+- **WHEN** a user on the Review step presses `↓` and confirms
+- **THEN** the selection MUST move from Project to Local and the install MUST
+  write the local configuration
+
+#### Scenario: Arrow keys skip an unwritable scope
+
+- **WHEN** a user on the Review step presses `↑` from Project and the source
+  cannot be written to user configuration
+- **THEN** Project MUST stay selected and the reason MUST be shown
+
+### Requirement: Personal-local writes are git-ignored at once
+
+A successful TUI write to the personal-local layer, whether a single toggle, a local exclude, or a section bulk toggle, SHALL apply in the same operation the git-ignore step that sync applies, adding `.agents/config.local.yaml` and `.agents/lock.local.yaml` to `.gitignore`, so the personal-local files do not appear as untracked repository files while a sync is pending. Like sync, the step SHALL leave an unsafe `.gitignore`, such as a symbolic link, untouched and log the refusal instead of failing the write. Writes to other layers SHALL leave `.gitignore` unchanged.
+
+#### Scenario: Personal-local writes are git-ignored at once
+
+- **WHEN** a TUI toggle, local exclude or bulk toggle writes the personal-local layer in a repository without those entries in `.gitignore`
+- **THEN** `.gitignore` MUST list `.agents/config.local.yaml` and `.agents/lock.local.yaml` before any sync runs
+- **AND** a TUI write to the repository layer MUST NOT change `.gitignore`
+
+### Requirement: Install-from-source recovers from a lock-pinned source
+
+When the install-from-source modal's install is refused because the chosen
+scope's acquisition lock pins the source at a commit other than the previewed
+one, the modal SHALL return to the Review step with the picks and the chosen
+scope kept, SHALL show the locked and previewed commits and the `update`
+command that advances the source, and SHALL NOT preview again.
+
+#### Scenario: Lock-pinned source returns to Review with update remediation
+
+- **WHEN** a user picks resources from a source that is already configured
+  and locked behind the remote in project scope, chooses project scope, and
+  confirms
+- **THEN** the modal MUST stay on the Review step showing the locked and
+  previewed commits and the `update` command, MUST NOT start a preview, and
+  configuration, acquisition lock, and harness bytes MUST be unchanged
+
+### Requirement: Lock-pinned refusal offers another scope
+
+The install-from-source modal's lock-pinned remediation SHALL offer choosing
+another scope besides the `update` command. Choosing a scope whose lock does
+not pin the source behind the preview and confirming SHALL install the picks
+into that scope.
+
+#### Scenario: Lock-pinned source installs into another scope
+
+- **WHEN** an install into project scope was refused because the project lock
+  pins the source behind the preview, and the user then chooses Local on the
+  Review step and confirms
+- **THEN** the modal MUST close, local configuration MUST record the picked
+  resources, project configuration and acquisition lock bytes MUST be
+  unchanged, and a sync MUST leave the list in sync

@@ -174,6 +174,52 @@ func TestRejectInvalidCatalog(t *testing.T) {
 	}
 }
 
+// spec: harness-model-catalogs/same-harness-supported-native-effort-values-remain-unchanged
+// spec: harness-model-catalogs/same-harness-family-selectors-use-pinned-reasoning-capabilities
+func TestSameHarnessNativeReasoningEncodings(t *testing.T) {
+	files := fstest.MapFS{
+		"factory.yaml": {Data: []byte(`
+schema: 1
+harness: factory
+evidence: {checked: "2026-10-28", refs: [test]}
+surfaces:
+  subagent: {model_field: model, effort_field: reasoningEffort, omitted_model: inherit, inherit_model: inherit}
+models:
+  example/pinned:
+    model: native-pinned
+    aliases: [native-alias]
+    reasoning: {max: {effort: high}}
+families:
+  example/model: {pin: example/pinned}
+`)},
+	}
+	r, err := loadCatalogs(files, "*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, model, effort, wantEffort string
+		losses                          []LossKind
+	}{
+		{"native encoding value", "native-pinned", "high", "high", nil},
+		{"alias encoding value", "native-alias", "high", "high", nil},
+		{"canonical name is not a native value", "native-alias", "max", "", []LossKind{EffortOmitted}},
+		{"recognized family", "example/model", "high", "high", nil},
+		{"unsupported family effort", "example/model", "max", "", []LossKind{EffortOmitted}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := r.resolve(Request{Source: target.TargetFactory, Target: target.TargetFactory, Model: tc.model, Effort: tc.effort})
+			var losses []LossKind
+			for _, loss := range got.Losses {
+				losses = append(losses, loss.Kind)
+			}
+			if got.Model != tc.model || got.Effort != tc.wantEffort || !slices.Equal(losses, tc.losses) {
+				t.Fatalf("got model=%q effort=%q losses=%v, want model=%q effort=%q losses=%v", got.Model, got.Effort, losses, tc.model, tc.wantEffort, tc.losses)
+			}
+		})
+	}
+}
+
 func BenchmarkResolve(b *testing.B) {
 	for _, req := range []Request{
 		{Target: target.TargetDevin, Model: "sonnet"},

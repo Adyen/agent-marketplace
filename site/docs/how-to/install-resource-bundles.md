@@ -23,10 +23,10 @@ example   collection  platform-onboarding                   available
 
 ## 2. Install a collection
 
-Install the collection in repository scope (the default):
+Install the collection in repository scope with `--scope repo`:
 
 ```bash
-agent-marketplace install platform-onboarding
+agent-marketplace install platform-onboarding --scope repo
 ```
 
 The CLI adds `collection/platform-onboarding` to the source that publishes it in `.agents/config.yaml`, then syncs. It prints:
@@ -51,10 +51,11 @@ To install everything in a registry folder that is not yet configured:
 agent-marketplace install \
   --from https://github.com/example-org/agent-resources.git \
   --ref v1.4.0 \
-  --path resources
+  --path resources \
+  --scope repo
 ```
 
-The CLI adds the registry as a source in `.agents/config.yaml`, selects all of its resources with `all: true`, and syncs. It prints the bare installed names it selected, for example `Installed code-review, release in this repo`. Add `--scope user` or `--scope local` to write to a different configuration file. The scope label in the line changes to `user-wide` or `locally` to match.
+The CLI adds the registry as a source in `.agents/config.yaml`, selects all of its resources with `all: true`, and syncs. It prints the bare installed names it selected, for example `Installed code-review, release in this repo`. Use `--scope user` or `--scope local` instead to write to a different configuration file. The scope label in the line changes to `user-wide` or `locally` to match.
 
 If the last folder name in `--path` matches a resource name, the CLI installs only that resource.
 

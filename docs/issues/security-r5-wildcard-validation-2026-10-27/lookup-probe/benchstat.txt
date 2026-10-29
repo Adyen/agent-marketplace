@@ -1,0 +1,37 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+                                             │ before.txt  │             after.txt              │
+                                             │   sec/op    │   sec/op     vs base               │
+V4WildcardValidation/kind/source-16            11.12n ± 2%   11.07n ± 3%       ~ (p=0.196 n=10)
+V4WildcardValidation/registry/source-16        78.16n ± 1%   78.84n ± 3%       ~ (p=0.529 n=10)
+V4WildcardValidation/qualified/source-16       79.38n ± 1%   87.02n ± 3%  +9.63% (p=0.000 n=10)
+V4WildcardValidation/long-registry/source-16   5.153µ ± 1%   5.184µ ± 2%       ~ (p=0.494 n=10)
+V4WildcardValidation/extra-slash/source-16     91.72n ± 4%   97.56n ± 5%  +6.37% (p=0.003 n=10)
+V4WildcardValidation/invalid-kind/source-16    145.6n ± 5%   151.1n ± 3%  +3.78% (p=0.001 n=10)
+geomean                                        129.6n        134.1n       +3.42%
+
+                                             │  before.txt  │              after.txt              │
+                                             │     B/op     │    B/op     vs base                 │
+V4WildcardValidation/kind/source-16            0.000 ± 0%     0.000 ± 0%       ~ (p=1.000 n=10) ¹
+V4WildcardValidation/registry/source-16        0.000 ± 0%     0.000 ± 0%       ~ (p=1.000 n=10) ¹
+V4WildcardValidation/qualified/source-16       0.000 ± 0%     0.000 ± 0%       ~ (p=1.000 n=10) ¹
+V4WildcardValidation/long-registry/source-16   0.000 ± 0%     0.000 ± 0%       ~ (p=1.000 n=10) ¹
+V4WildcardValidation/extra-slash/source-16     208.0 ± 0%     208.0 ± 0%       ~ (p=1.000 n=10) ¹
+V4WildcardValidation/invalid-kind/source-16    176.0 ± 0%     176.0 ± 0%       ~ (p=1.000 n=10) ¹
+geomean                                                   ²               +0.00%                ²
+¹ all samples are equal
+² summaries must be >0 to compute geomean
+
+                                             │  before.txt  │              after.txt              │
+                                             │  allocs/op   │ allocs/op   vs base                 │
+V4WildcardValidation/kind/source-16            0.000 ± 0%     0.000 ± 0%       ~ (p=1.000 n=10) ¹
+V4WildcardValidation/registry/source-16        0.000 ± 0%     0.000 ± 0%       ~ (p=1.000 n=10) ¹
+V4WildcardValidation/qualified/source-16       0.000 ± 0%     0.000 ± 0%       ~ (p=1.000 n=10) ¹
+V4WildcardValidation/long-registry/source-16   0.000 ± 0%     0.000 ± 0%       ~ (p=1.000 n=10) ¹
+V4WildcardValidation/extra-slash/source-16     2.000 ± 0%     2.000 ± 0%       ~ (p=1.000 n=10) ¹
+V4WildcardValidation/invalid-kind/source-16    2.000 ± 0%     2.000 ± 0%       ~ (p=1.000 n=10) ¹
+geomean                                                   ²               +0.00%                ²
+¹ all samples are equal
+² summaries must be >0 to compute geomean

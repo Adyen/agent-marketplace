@@ -45,6 +45,15 @@ A recognized reasoning preference SHALL be emitted in the destination
 surface's native encoding: a separate effort field when the surface declares
 one, or a model-encoded representation when the catalog defines one.
 
+For same-harness conversion with a separate effort field, a known model
+available in the destination catalog SHALL be checked against its native
+reasoning encodings without rewriting the native model string. Unknown
+destination models SHALL retain their native preferences. A resolved family
+identity SHALL use its pinned model's capabilities without changing its spelling.
+Exact family identifiers declared in the destination catalog SHALL be
+recognized locally for that validation, without requiring a concrete entry
+in another harness's catalog.
+
 #### Scenario: Supported reasoning emits native encoding
 
 - **WHEN** a resolved model and a supported reasoning level are compiled
@@ -64,6 +73,46 @@ one, or a model-encoded representation when the catalog defines one.
   reasoning field disagrees with it
 - **THEN** compilation MUST keep the explicit preference, emit a single
   consistent output, and report a warning diagnostic
+
+#### Scenario: Same-harness known models omit unsupported native reasoning
+
+- **WHEN** a subagent is converted to its source layout's harness target and
+  its destination catalog model cannot represent the separate reasoning value
+- **THEN** conversion MUST preserve the native model spelling and resource body
+- **AND** it MUST omit the reasoning field and report the established
+  source/target-specific reasoning-omission warning
+
+#### Scenario: Same-harness supported native effort values remain unchanged
+
+- **WHEN** a same-harness subagent's separate reasoning value matches a native
+  encoding in the destination catalog, even if its canonical reasoning name
+  differs
+- **THEN** conversion MUST preserve the native model spelling and reasoning
+  value without a model-reasoning loss warning
+
+#### Scenario: Same-harness unknown destination models retain native reasoning
+
+- **WHEN** a same-harness subagent's model identity is absent from the
+  destination catalog, even if another harness target knows that identity
+- **THEN** conversion MUST preserve the native model and reasoning value
+  without a model-reasoning loss warning
+
+#### Scenario: Same-harness family selectors use pinned reasoning capabilities
+
+- **WHEN** a same-harness model selection has a resolved family identity with
+  a destination catalog pin
+- **THEN** its separate reasoning value MUST be checked against the pinned
+  model's native encodings
+- **AND** the authored selector MUST remain unchanged
+
+#### Scenario: Same-harness native catalog family IDs are recognized locally
+
+- **WHEN** a same-harness subagent's model string exactly identifies a family
+  in the destination catalog on a surface with a separate effort field
+- **THEN** its native reasoning MUST be validated against that family's
+  capabilities without requiring a concrete model in another catalog
+- **AND** unsupported reasoning MUST be omitted with the established warning
+  while the authored selector and resource body remain unchanged
 
 ### Requirement: Omission and inheritance semantics
 
@@ -193,3 +242,74 @@ offline catalog check; malformed catalog data MUST be rejected.
 - **WHEN** the offline catalog check runs
 - **THEN** each declared conversion fixture MUST produce its expected model
   and reasoning output
+
+### Requirement: Reviewed Codex and Factory model additions
+
+Canonical and cross-harness subagent conversion SHALL resolve
+`openai/gpt-6.1-terra` to Codex's native
+`gpt-6.1-terra` model with low, medium, high, xhigh, and max reasoning.
+Factory SHALL resolve `deepseek/deepseek-v4.1-flash-1017`,
+`minimax/minimax-m3.1-flash`, `nvidia/nemotron-3.5-super`,
+`openai/gpt-6-luna-fast`, `openai/gpt-6-sol-fast`, and
+`openai/gpt-6.1-sol-ultrafast` to their corresponding unqualified native model
+IDs. Factory reasoning support SHALL remain limited to the intersection of
+each model's documented levels and the custom-droid field's low/medium/high
+levels. Unsupported reasoning SHALL retain the selected model and report
+`model.reasoning-omitted` or its established source/target-specific
+compatibility code.
+
+#### Scenario: Reviewed additions emit native model and reasoning fields
+
+- **WHEN** a canonical or cross-harness subagent selects a reviewed addition for its
+  supported destination with a supported reasoning level
+- **THEN** conversion SHALL emit that model's native ID and reasoning value
+
+#### Scenario: Priority variants retain their distinct fast identity
+
+- **WHEN** a Devin GPT-6 priority variant is converted to Factory or a matching
+  Factory fast model is converted to Devin
+- **AND** its reasoning level is explicit and supported by both harnesses
+- **THEN** conversion SHALL retain the corresponding fast identity and
+  supported reasoning level
+- **AND** a destination without that fast identity SHALL report
+  `model.unresolved` rather than substitute the base model
+
+#### Scenario: Factory fast model without reasoning is omitted for Devin
+
+- **WHEN** Factory's `gpt-6-sol-fast` is converted to Devin without a reasoning
+  level
+- **THEN** conversion SHALL omit the model and report
+  `subagent.devin.model-unmappable`
+- **AND** the subagent resource and body SHALL remain intact
+
+#### Scenario: Reviewed additions omit unsupported reasoning without substitution
+
+- **WHEN** a reviewed model addition is selected with an unsupported reasoning
+  level for the destination resource format
+- **THEN** conversion SHALL retain the model and omit the reasoning value
+- **AND** it SHALL report `model.reasoning-omitted` or its established
+  source/target-specific compatibility code without selecting a different
+  effort level
+
+### Requirement: Native family overrides preserve reasoning capabilities
+
+On a surface with a separate effort field, an explicit model override
+selecting a declared destination catalog family SHALL preserve supported
+native reasoning and the authored override selector. Unsupported native
+reasoning SHALL be omitted with the established warning without suppressing
+the resource.
+
+#### Scenario: Supported native reasoning survives a family override
+
+- **WHEN** an explicit model override selects a declared destination family
+  on a separate-effort surface and the requested native reasoning is supported
+- **THEN** compilation MUST preserve the override selector, reasoning value,
+  and resource body without a model-reasoning loss warning
+
+#### Scenario: Unsupported native reasoning is omitted for a family override
+
+- **WHEN** an explicit model override selects a declared destination family
+  on a separate-effort surface and the requested native reasoning is unsupported
+- **THEN** compilation MUST preserve the override selector and resource body
+- **AND** it MUST omit the reasoning field and emit the established
+  source/target-specific reasoning-omission warning

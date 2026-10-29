@@ -239,6 +239,9 @@ func TestRegistryDisplayNameStripsSuffixAndPath(t *testing.T) {
 		{"https://example.com/org/infra-skills.git", "infra-skills"},
 		{"/local/path/team-skills", "team-skills"},
 		{"team-skills", "team-skills"},
+		{"https://example.com/org/infra-skills/", "infra-skills"},
+		{"https://example.com/org/infra-skills.git/", "infra-skills"},
+		{"/local/path/team-skills/", "team-skills"},
 		{"", ""},
 	}
 	for _, tc := range cases {
