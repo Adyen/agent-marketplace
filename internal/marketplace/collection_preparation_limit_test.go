@@ -128,3 +128,28 @@ func TestPrepareLocatorAppliesLockBootstrapWorkLimit(t *testing.T) {
 		t.Fatalf("PrepareLocator err = %v, want the lock-bootstrap resource limit", err)
 	}
 }
+
+// spec: marketplace-delivery-security/collection-preparation-fetches-each-nested-collection-once
+func TestPrepareLocatorReusesSharedNestedCollectionThroughGraphValidation(t *testing.T) {
+	f := newNestedCollectionFixture()
+	leafDigest := "sha256:" + strings.Repeat("a", 64)
+	leaf := func(paths ...[]string) []hccartifact.CollectionMemberEntry {
+		return []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "review", RegistryID: "leaf", Revision: leafDigest, InclusionPaths: paths}}
+	}
+	inner := f.add(t, hccartifact.CollectionManifest{Name: "inner", Members: []hccartifact.CollectionMemberEntry{{Kind: "skill", Name: "review", RegistryID: "leaf", Revision: leafDigest}}})
+	left := f.add(t, hccartifact.CollectionManifest{Name: "left", Members: []hccartifact.CollectionMemberEntry{nestedMember("inner", inner)}, Leaves: leaf([]string{"left", "inner"})})
+	right := f.add(t, hccartifact.CollectionManifest{Name: "right", Members: []hccartifact.CollectionMemberEntry{nestedMember("inner", inner)}, Leaves: leaf([]string{"right", "inner"})})
+	f.add(t, hccartifact.CollectionManifest{Name: "bundle", Members: []hccartifact.CollectionMemberEntry{nestedMember("left", left), nestedMember("right", right)}, Leaves: leaf([]string{"bundle", "left", "inner"}, []string{"bundle", "right", "inner"})})
+	server := f.server()
+	defer server.Close()
+	resolver := &Resolver{HTTPClient: server.Client(), Cache: NewCache(t.TempDir())}
+	// The fixture serves no leaf registry, so preparation fails only after the
+	// nested traversal and graph validation have accepted the shared graph.
+	_, err := resolver.PrepareLocator(context.Background(), config.MarketplaceEntry{URL: server.URL, InstanceID: "mp"}, MarketplaceLocator{Registry: "src", Kind: "collection", Name: "bundle"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "collection member registry") {
+		t.Fatalf("PrepareLocator err = %v, want failure at leaf preparation after graph validation", err)
+	}
+	if got := f.requests[inner].Load(); got != 2 {
+		t.Fatalf("shared nested collection requests = %d, want 2 (one revision, one manifest)", got)
+	}
+}

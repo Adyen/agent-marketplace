@@ -11,7 +11,7 @@ This applies the maintainer-approved D2 decision for #434:
 
 ## Release note
 
-`install` and `update` now fetch each nested Marketplace collection once per command. They refuse collection graphs whose traversal exceeds 13,981 work units, the same limit lock creation uses.
+`install` and `update` now fetch each nested Marketplace collection once per collection preparation. They refuse collection graphs whose traversal exceeds 13,981 work units, the same limit lock creation uses.
 
 ## Capabilities
 
