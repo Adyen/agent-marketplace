@@ -1393,6 +1393,11 @@ func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Co
 		expandMembersRecursive(irCol, viaLabel, artifact, nil, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, visited, &out, &expandErrs, targets.forSource(artifact.Source), budget)
 	}
 
+	// A later selection pass starts with the budget already exhausted and
+	// expands nothing; keep the refusal so it cannot return a partial result.
+	if budget.err != nil && !slices.ContainsFunc(expandErrs, func(err error) bool { return errors.Is(err, ErrCollectionExpansionLimit) }) {
+		expandErrs = append(expandErrs, budget.err)
+	}
 	if !expanded {
 		return out, append(errs, expandErrs...)
 	}
@@ -1618,6 +1623,8 @@ var ErrCollectionExpansionLimit = errors.New("collection expansion exceeds the w
 type collectionExpansionBudget struct {
 	used      int
 	exhausted bool
+	// err is the refusal reported when the limit was first reached.
+	err error
 }
 
 // consume reserves units of work and reports whether they fit the limit. It
@@ -1661,7 +1668,8 @@ func expandMembersRecursive(
 		return
 	}
 	if !budget.consume(1 + len(col.Members) + len(col.Includes)) {
-		*errs = append(*errs, fmt.Errorf("collection %q: %w of %d units", col.Label(), ErrCollectionExpansionLimit, lockfile.MaxMarketplaceLockResources))
+		budget.err = fmt.Errorf("collection %q: %w of %d units", col.Label(), ErrCollectionExpansionLimit, lockfile.MaxMarketplaceLockResources)
+		*errs = append(*errs, budget.err)
 		return
 	}
 	// Expand direct members.
