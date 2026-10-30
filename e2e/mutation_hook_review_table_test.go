@@ -36,7 +36,6 @@ func init() {
 				})
 				testTable = append(testTable, bundleRootCase(
 					"mutation_review_"+bundleRootSourceName(git)+"_"+harness+"_"+scope,
-					"Given selected hooks, when resource mutations publish them, then each completed change is listed and unchanged updates stay quiet",
 					harness, scope, git, bundleRootFiles(bundleRootHooks("echo mutation-v1", "")), steps...,
 				))
 			}

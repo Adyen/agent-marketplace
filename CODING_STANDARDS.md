@@ -60,7 +60,7 @@ The `e2e/` directory contains E2E tests that validate end-to-end CLI behavior by
 
 There are **two types** of E2E tests:
 
-1. **Declarative (table-driven)** — defined as `TestCase` structs in `e2e/table_test.go`. These are the preferred format for tests that follow a standard setup/run/assert pattern: write config, run a command, check output and filesystem. Use these when the test fits the `Steps` model (actions + assertions on a single workspace).
+1. **Declarative (table-driven)** — defined as `TestCase` structs in the `e2e/table_*_test.go` files (see Declarative table layout below). These are the preferred format for tests that follow a standard setup/run/assert pattern: write config, run a command, check output and filesystem. Use these when the test fits the `Steps` model (actions + assertions on a single workspace).
 2. **Standalone** — individual `func TestXxx(t *testing.T)` functions in separate files (e.g. `e2e/install_test.go`). Use these when the test requires non-standard setup that the declarative model doesn't support, such as skipping git repo initialization.
 
 #### Running
@@ -79,12 +79,12 @@ inside that directory. Relocation fixtures opt into an explicit absolute path.
 
 - **Process-based sandbox**: each test gets its own temp root with `home/`, `workspace/`, `repos/`, `etc/` directories. Subprocesses strip inherited `AGENT_MARKETPLACE_*` settings and override `HOME`, the XDG state/config/cache roots, `CODEX_HOME`, the organization-config test path, and a sanitized `PATH`, so application-controlled paths and policy cannot escape the sandbox or vary with the host. Fixture-specific environment overrides are applied explicitly after this baseline.
 - **Path mapping**: test table uses container-style paths (`/root/...`, `/workspace/...`) which are automatically resolved to the temp sandbox by `Env.resolvePath()`.
-- **Declarative test cases**: defined as `TestCase` structs in `e2e/table_test.go` with `Registries`, `Marketplaces` (in-process Marketplace servers backed by seeded bare repos), config layers (`GlobalCfg`/`RepoCfg`/`LocalCfg`/`OrgCfg`), and `Steps` (actions + assertions). `{{REG:name}}` placeholders are resolved to `file://` URLs of seeded bare git repos, `{{MKT:name}}` to the base URL of a named `Marketplaces` server, and `{{GITHTTP:name}}` to the Git-over-HTTP origin URL of a `Registries` or `Marketplaces` entry. Step actions cover config/file writes plus `ActionPushRegistry`, `ActionReindexMarketplace`, and `ActionRevokeMarketplace`; `Step.Env` sets subprocess environment overrides and `Step.Cwd` selects the subprocess working directory.
+- **Declarative test cases**: defined as `TestCase` structs in the `e2e/table_*_test.go` files with `Registries`, `Marketplaces` (in-process Marketplace servers backed by seeded bare repos), config layers (`GlobalCfg`/`RepoCfg`/`LocalCfg`/`OrgCfg`), and `Steps` (actions + assertions). `{{REG:name}}` placeholders are resolved to `file://` URLs of seeded bare git repos, `{{MKT:name}}` to the base URL of a named `Marketplaces` server, and `{{GITHTTP:name}}` to the Git-over-HTTP origin URL of a `Registries` or `Marketplaces` entry. Step actions cover config/file writes plus `ActionPushRegistry`, `ActionReindexMarketplace`, and `ActionRevokeMarketplace`; `Step.Env` sets subprocess environment overrides and `Step.Cwd` selects the subprocess working directory.
 - **FIFO concurrency handshakes**: use `openFIFOWriter` so writer setup is bounded, reports a subprocess that exits before opening its reader, and keeps the writer descriptor close-on-exec; use `waitForProcess` to bound subprocess completion.
 
 #### When to add a test
 
-Add a new `TestCase` to `testTable` in `e2e/table_test.go` when:
+Add a new `TestCase` to `testTable` in the area file for its Name prefix (see Declarative table layout) when:
 - Adding a new CLI command or flag that should be validated end-to-end
 - Fixing a bug that involves config merging, materialization, precedence, or collision handling
 - Changing resource selection/exclusion semantics (`required`, `default`, `tags`, `exclude`)
@@ -93,7 +93,17 @@ Add a standalone test function in a separate file when:
 - The test needs non-standard setup (e.g. no git repo)
 - The test uses framework features not exposed through the `Steps` model
 
-Use the structured fixture builders in `e2e/harness_test.go` (`Skill`, `Command`, `Subagent`, `MCPServer`) to define registry contents. Keep `Desc` fields as Given/When/Then descriptions.
+Use the structured fixture builders in `e2e/harness_test.go` (`Skill`, `Command`, `Subagent`, `MCPServer`) to define registry contents.
+
+##### Declarative table layout
+
+- `e2e/table_runner_test.go` holds the types, the `Step` builders, placeholder and path resolution, the report writer, and the runner `TestE2E`. It declares `var testTable []TestCase` empty.
+- Each area file `e2e/table_<area>_test.go` appends its cases from `func init()`. Pick the area by the Name prefix (text before the first `/`): `install`, `remove`, `selection`, `marketplace` (also `lock`, `locks`, `update`), `devin` (also `codex`), `lifecycle` (also `cli`, `sync`, `ingest`, and similar), `config` (also `format`, `v4_user`, `v4_repo`), and so on. A prefix never spans two files; a case sits in the file for its prefix.
+- Each case is appended by its own statement (`testTable = append(testTable, TestCase{...})`) with its `// spec:` line directly above it.
+- Steps use builders: `run(args...)`, `ok(args...)` (exit 0), `exits(code, args...)`, `writeFile`, `writeGlobalCfg`/`writeRepoCfg`/`writeLocalCfg`/`writeOrgCfg`, `push`, `reindex`, `revoke`. Chain assertions with `.out`, `.notOut`, `.exists`, `.absent`, `.unchanged`, `.symlinks`, `.regular`, `.has(path, substr)`, `.lacks(path, substr)`, `.env`, `.in`, and for action steps `.then`, `.pass()`, `.exit`.
+- Path fields accept shorthand: a leading `./` means `/workspace/` and a leading `~/` means `/root/`. Only path-typed fields are rewritten (`FilesExist`, `FilesAbsent`, `PathsUnchanged`, `Symlinks`, `RegularFiles`, `FileContains`/`FileNotContains` keys, `Step.Path`, `Step.Cwd`); args, bodies and config values are never rewritten.
+- Write config layers with `v4("line", ...)`, which prepends the `apiVersion: agent-marketplace/v4` header.
+- Spec-tagged cases take no `Desc`; their `// spec:` line is the description. Untagged baseline cases keep a non-empty `Desc` in Given/When/Then form.
 
 #### Command coverage guard
 
