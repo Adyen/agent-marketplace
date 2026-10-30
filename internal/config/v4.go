@@ -1453,6 +1453,10 @@ func assignV4DecisionPrecedence(group *V4ResourceGroup) {
 	}
 }
 
+// maxV4IncludedFiles bounds the config files one root load reads, counting the
+// root and every include occurrence on every branch.
+const maxV4IncludedFiles = 256
+
 func loadV4Tree(file string, root bool, visiting map[string]bool) (*V4Config, error) {
 	return loadV4TreeWithOverlays(file, root, visiting, nil, nil, "")
 }
@@ -1542,6 +1546,12 @@ func loadV4TreeWithResolvedRoot(file, resolvedRoot string, root bool, visiting m
 			}
 			if err := mergeV4Config(result, child); err != nil {
 				return nil, fmt.Errorf("compose v4 include %q from %q: %w", childPath, canonical, err)
+			}
+			// Each branch reloads shared fragments, so a small include DAG
+			// can expand exponentially. Reads accumulate bottom-up, so the
+			// first subtree over the limit stops the whole load.
+			if len(result.reads) >= maxV4IncludedFiles {
+				return nil, v4err("v4.include-limit", canonical, 0, "config include tree loads more than %d files", maxV4IncludedFiles)
 			}
 		}
 	}
