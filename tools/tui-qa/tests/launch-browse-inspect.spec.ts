@@ -3,6 +3,7 @@ import { after, before } from "node:test";
 
 import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 
+// spec: tui-feedback/toggle-hints-follow-row-eligibility
 const journey = defineFixture("launch-browse-inspect", []);
 before(journey.setup);
 after(journey.cleanup);
@@ -23,10 +24,15 @@ journey.test("bare launch browses the single status view and inspects alpha-skil
   });
 
   await step("search narrows the single list", () => terminal.write("/alpha\r"), async () => {
+    // The detail can already name alpha in a stale, unfiltered frame.
+    await locate(terminal, /\/ alpha\s+1 match\b/).unique().expect();
+    await locate(terminal, "beta-skill").expect({ not: true });
     await locate(terminal, /Name:\s+alpha-skill/).unique().expect();
   });
 
   await step("clear the search", () => terminal.write("\u001b"), async () => {
+    await locate(terminal, "/ alpha").expect({ not: true });
+    await locate(terminal, "beta-skill").expect();
     await locate(terminal, /Enabled\s+\(1\)/).unique().expect();
     await locate(terminal, /Available\s+\(1\)/).unique().expect();
   });
@@ -40,6 +46,8 @@ journey.test("bare launch browses the single status view and inspects alpha-skil
   await step("select available alpha-skill", () => terminal.write("G"), async () => {
     await locate(terminal, /Name:\s+alpha-skill/).unique().expect();
     await locate(terminal, /Status:\s+available/).unique().expect();
+    // Space in the list toggles available rows too, so the hint offers it.
+    await locate(terminal, "space = toggle · enter = full view").unique().expect();
   });
 
   await step("open full alpha-skill detail", () => terminal.write("\r"), async () => {

@@ -147,9 +147,9 @@ func init() {
 		),
 		Steps: []Step{
 			ok("list", "--from", "{{REG:v4-selectors}}", "--ref", "main", "--path", "skills", "--kind", "skill").out("review", "deploy").notOut("cmd-one"),
-			ok("install", "--tag", "k8s").exists("./.factory/skills/review/SKILL.md").absent("./.factory/skills/deploy").has("./.agents/config.yaml", "k8s"),
-			ok("install", "--all", "--kind", "command", "--registry", "{{REG:v4-selectors}}").exists("./.factory/commands/cmd-one.md"),
-			ok("install", "deploy", "--kind", "skill", "--verbose").exists("./.factory/skills/deploy/SKILL.md"),
+			ok("install", "--tag", "k8s", "--scope", "repo").exists("./.factory/skills/review/SKILL.md").absent("./.factory/skills/deploy").has("./.agents/config.yaml", "k8s"),
+			ok("install", "--all", "--kind", "command", "--registry", "{{REG:v4-selectors}}", "--scope", "repo").exists("./.factory/commands/cmd-one.md"),
+			ok("install", "deploy", "--kind", "skill", "--verbose", "--scope", "repo").exists("./.factory/skills/deploy/SKILL.md"),
 			ok("list", "--kind", "command").out("cmd-one").notOut("deploy"),
 			ok("sync", "--verbose", "--no-backup"),
 			ok("sync", "--check").has("./.agents/config.yaml", "apiVersion: agent-marketplace/v4").lacks("./.agents/config.yaml", "registries:"),
@@ -171,9 +171,9 @@ func init() {
 		),
 		RepoCfg: v4("sources: {team: {git: '{{REG:v4-flags}}', ref: main}}"),
 		Steps: []Step{
-			ok("install", "--all", "--registry", "{{REG:v4-flags}}").exists("./.factory/skills/review/SKILL.md", "./.factory/skills/deploy/SKILL.md"),
+			ok("install", "--all", "--registry", "{{REG:v4-flags}}", "--scope", "repo").exists("./.factory/skills/review/SKILL.md", "./.factory/skills/deploy/SKILL.md"),
 			ok("list", "--from", "{{REG:v4-adhoc}}", "--ref", "main", "--path", "skills").out("adhoc-skill"),
-			ok("install", "adhoc-skill", "--from", "{{REG:v4-adhoc}}", "--ref", "main", "--path", "skills").
+			ok("install", "adhoc-skill", "--from", "{{REG:v4-adhoc}}", "--ref", "main", "--path", "skills", "--scope", "repo").
 				exists("./.factory/skills/adhoc-skill/SKILL.md").
 				has("./.agents/config.yaml", "path: skills"),
 			ok("remove", "adhoc-skill", "--from", "{{REG:v4-adhoc}}", "--ref", "main", "--path", "skills").absent("./.factory/skills/adhoc-skill"),

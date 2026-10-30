@@ -171,6 +171,8 @@ func invalidConfigToastCmd() tea.Cmd {
 }
 
 type configWrittenMsg struct {
+	report     *materialize.Report
+	warnings   []error
 	operation  operationID
 	followUp   bool
 	skillName  string
@@ -182,6 +184,7 @@ type configWrittenMsg struct {
 type syncDoneMsg struct {
 	err      error
 	warnings []error
+	report   *materialize.Report
 }
 
 const (
@@ -196,6 +199,7 @@ type updateDoneMsg struct {
 	stage      string
 	err        error
 	warnings   []error
+	report     *materialize.Report
 }
 
 // detailContentMsg carries the glamour-rendered resource content for the
@@ -1013,8 +1017,17 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 	}
 
 	// Add malformed skills. Deduplicate by (catalogKey, DirName) so
-	// same-name malformed entries from different catalogs each appear.
+	// same-name malformed entries from different catalogs each appear, each
+	// labelled with the registry whose catalog it came from.
+	registriesByCatalog := map[string]config.RegistryEntry{}
+	if cfg != nil {
+		for _, entry := range cfg.Registries {
+			registriesByCatalog[entry.CatalogKey] = entry
+		}
+	}
 	for catalogKey, cat := range catalogs {
+		registry := registriesByCatalog[catalogKey]
+		registryName := registryDisplayName(registry.URL)
 		for _, m := range cat.Malformed {
 			name := m.DirName
 			seenKey := name + "\x01" + catalogKey
@@ -1023,12 +1036,19 @@ func buildRows(cfg *config.Config, catalogs map[string]catalogInfo, resolved []r
 			}
 			seen[seenKey] = struct{}{}
 
+			kind, _ := skill.MalformedKind(m)
 			rows = append(rows, row{
-				IsMalformed:  true,
-				MalformedMsg: m.Error.Error(),
+				IsMalformed:   true,
+				MalformedMsg:  m.Error.Error(),
+				MalformedKind: skill.MalformedKindLabel(m),
 				Artifact: resolver.ResolvedArtifact{
-					Entry: catalog.Entry{Name: name, Path: m.Path},
+					Entry:      catalog.Entry{Name: name, Kind: kind, Path: m.Path},
+					CatalogKey: catalogKey,
 				},
+				RegistryURL:  registry.URL,
+				RegistryName: registryName,
+				RegistryRef:  registry.Ref,
+				RegistryPath: registry.Path,
 			})
 		}
 	}
@@ -1278,6 +1298,11 @@ func appendUnavailableSelectionRows(rows []row, cfg *config.Config, localCfg *co
 	seen := make(map[string]struct{}, len(rows)+len(resolveErrs))
 	available := make(map[string]struct{}, len(rows))
 	for i := range rows {
+		// A malformed row's kind is unknown, so it cannot stand in for a
+		// missing selection that happens to share its name.
+		if rows[i].IsMalformed {
+			continue
+		}
 		key := skill.ResourceKey(rows[i].Artifact.Kind, rows[i].Artifact.Name)
 		seen[key+"\x01"+registryIdentityKey(rows[i].RegistryURL, rows[i].RegistryRef, rows[i].RegistryPath)] = struct{}{}
 		if rows[i].IsAvailable {
@@ -1438,7 +1463,7 @@ func registryDisplayName(url string) string {
 	if url == "" {
 		return ""
 	}
-	url = strings.TrimSuffix(url, ".git")
+	url = strings.TrimSuffix(strings.TrimRight(url, "/"), ".git")
 	if idx := strings.LastIndexAny(url, "/:"); idx >= 0 {
 		url = url[idx+1:]
 	}
@@ -1585,7 +1610,7 @@ var runSyncCmd = func(ctx context.Context, workspace pipeline.Workspace) tea.Cmd
 			return syncDoneMsg{err: err}
 		}
 		result := runPipelineSync(ctx, tuiPipelineOptionsForWorkspace(ws))
-		return syncDoneMsg{err: errors.Join(result.Errors...)}
+		return syncDoneMsg{err: errors.Join(result.Errors...), warnings: result.Warnings, report: result.Report}
 	}
 }
 
@@ -1595,8 +1620,8 @@ func runDependencySyncCmd(ctx context.Context, workspace pipeline.Workspace, syn
 		if err != nil {
 			return syncDoneMsg{err: err}
 		}
-		warnings, syncErr := sync(ctx, ws)
-		return syncDoneMsg{err: syncErr, warnings: warnings}
+		result, syncErr := sync(ctx, ws)
+		return syncDoneMsg{err: syncErr, warnings: result.Warnings, report: result.Report}
 	}
 }
 
@@ -1606,17 +1631,20 @@ func runDependencyUpdateCmd(ctx context.Context, workspace pipeline.Workspace, h
 		if err != nil {
 			return updateDoneMsg{generation: generation, stage: updateStageRefresh, err: err}
 		}
-		warnings, lifecycleErr := update(ctx, ws)
+		synced, lifecycleErr := update(ctx, ws)
+		warnings := synced.Warnings
 		pipeline.ObservePhase(ctx, pipeline.PhaseReload)
 		current := readSnapshotForUpdate(ctx, ws, homeDir, catalogLoadCached)
 		current.generation = generation
 		for _, warning := range warnings {
-			current.diagnostics = appendSnapshotDiagnostics(current.diagnostics, diagnosticWarning, diagnosticUpdate, warning)
+			if !pipeline.IsPromotedDiagnostic(warning) {
+				current.diagnostics = appendSnapshotDiagnostics(current.diagnostics, diagnosticWarning, diagnosticUpdate, warning)
+			}
 		}
 		current.diagnostics = deduplicateDiagnostics(current.diagnostics)
 		current.errs = diagnosticValues(current.diagnostics, diagnosticError)
 		current.warnings = diagnosticValues(current.diagnostics, diagnosticWarning)
-		result := updateDoneMsg{generation: generation, snapshot: current, stage: updateStageRefresh, warnings: warnings}
+		result := updateDoneMsg{generation: generation, snapshot: current, stage: updateStageRefresh, warnings: warnings, report: synced.Report}
 		if lifecycleErr != nil {
 			result.err = fmt.Errorf("update %s failed: %w", result.stage, lifecycleErr)
 		} else if reloadErr := errors.Join(diagnosticErrors(current.diagnostics)...); reloadErr != nil {
@@ -1654,7 +1682,9 @@ func runUpdateCmdForWorkspace(ctx context.Context, workspace pipeline.Workspace,
 		current := readSnapshotForUpdate(ctx, ws, homeDir, catalogLoadCached)
 		current.generation = generation
 		for _, warning := range syncResult.Warnings {
-			current.diagnostics = appendSnapshotDiagnostics(current.diagnostics, diagnosticWarning, diagnosticUpdate, warning)
+			if !pipeline.IsPromotedDiagnostic(warning) {
+				current.diagnostics = appendSnapshotDiagnostics(current.diagnostics, diagnosticWarning, diagnosticUpdate, warning)
+			}
 		}
 		current.diagnostics = deduplicateDiagnostics(current.diagnostics)
 		current.errs = diagnosticValues(current.diagnostics, diagnosticError)
@@ -1664,6 +1694,8 @@ func runUpdateCmdForWorkspace(ctx context.Context, workspace pipeline.Workspace,
 			generation: generation,
 			snapshot:   current,
 			stage:      updateStageMaterialization,
+			warnings:   syncResult.Warnings,
+			report:     syncResult.Report,
 		}
 		switch {
 		case len(syncResult.CatalogTrustErrors) > 0:

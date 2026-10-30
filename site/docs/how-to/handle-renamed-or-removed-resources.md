@@ -82,7 +82,7 @@ Installed 0  Removed 0  Malformed 0  Errors 0
 If the resource was renamed, install the new name once the lock has moved:
 
 ```bash
-agent-marketplace install bar
+agent-marketplace install bar --scope repo
 ```
 
 Expected output:

@@ -119,7 +119,7 @@ func init() {
 			"sources: {hub: {marketplace: '{{MKT:hub}}'}}",
 		),
 		Steps: []Step{
-			ok("install", "hub:hub/skill/selected", "--yes"),
+			ok("install", "--scope", "repo", "hub:hub/skill/selected", "--yes"),
 			ok("sync").exists("./.factory/skills/selected/SKILL.md"),
 			ok("sync", "--check"),
 			ok("status").out("SYNCED RESOURCES", "selected").notOut("orphan", "pending removal"),
@@ -151,7 +151,7 @@ func init() {
 		),
 		Steps: []Step{
 			ok("sync").has("./.factory/skills/git-http/SKILL.md", "# git-http").has("~/.factory/skills/organization/SKILL.md", "# organization"),
-			ok("install", "hub:hub/skill/current", "--yes").has("./.factory/skills/current/SKILL.md", "# current"),
+			ok("install", "--scope", "repo", "hub:hub/skill/current", "--yes").has("./.factory/skills/current/SKILL.md", "# current"),
 			push("hub", map[string]string{
 				"skills/current/SKILL.md":      "---\nname: current\ndescription: User-managed pin\nlicense: MIT\n---\nRepository update\n",
 				"skills/organization/SKILL.md": "---\nname: organization\ndescription: Organization-managed pin\nlicense: MIT\n---\nOrganization update\n",
@@ -187,7 +187,7 @@ func init() {
 				lacks("./.agents/config.yaml", "hub/skill/shared").
 				lacks("./.agents/lock.yaml", "name: shared"),
 			ok("sync", "--check"),
-			ok("install", "hub:hub/skill/shared", "--yes").
+			ok("install", "--scope", "repo", "hub:hub/skill/shared", "--yes").
 				unchanged("~/.agents/config.yaml").
 				has("./.agents/config.yaml", "hub/skill/shared").
 				has("./.agents/lock.yaml", "name: shared").
@@ -220,7 +220,7 @@ func init() {
 			"sources: {hub: {marketplace: '{{MKT:hub}}'}}",
 		),
 		Steps: []Step{
-			ok("install", "hub:hub/collection/team-bundle", "--yes").
+			ok("install", "--scope", "repo", "hub:hub/collection/team-bundle", "--yes").
 				exists("./.factory/commands/member-command.md").
 				has("./.agents/config.yaml", "hub/collection/team-bundle").
 				has("./.factory/skills/member-skill/SKILL.md", "Collection skill body"),
@@ -384,7 +384,7 @@ func TestE2ETableRevokeMarketplace(t *testing.T) {
 		Marketplaces: []MarketplaceDef{{Name: "revoke", Registry: tableMarketplaceRegistry(Skill{Name: "locked", Description: "Revocable skill"})}},
 		RepoCfg:      v4("harnesses: [factory]", "sources: {revoke: {marketplace: '{{MKT:revoke}}'}}"),
 		Steps: []Step{
-			ok("install", "revoke:revoke/skill/locked", "--yes"),
+			ok("install", "--scope", "repo", "revoke:revoke/skill/locked", "--yes"),
 			ok("sync").has("./.factory/skills/locked/SKILL.md", "Revocable skill"),
 			revoke("revoke", MarketplaceRevocations{Coordinates: []string{"revoke-marketplace/revoke-id/skill/locked"}}),
 			exits(1, "sync").out("revoked").

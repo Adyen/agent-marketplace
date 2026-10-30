@@ -13,6 +13,7 @@ const betaSkillContent = "---\nname: beta-skill\ndescription: Synced beta fixtur
 export type OrganizationFixtureMode = "missing-lock" | "published-lock";
 
 export interface FixtureOptions {
+  marketplaceAcquisitionGate?: () => Promise<void>;
   directorySource?: boolean;
   overflowStatus?: boolean;
   // Installs a v4 organization layer at <root>/etc/agent-marketplace that
@@ -32,9 +33,20 @@ export interface FixtureOptions {
   // anything, and lets a search find its installable skill. "findings"
   // assesses that skill with a warning so installing it requires consent.
   marketplaceDiscovery?: "plain" | "findings";
+  // Adds an unconfigured local Git registry for install-from-source journeys.
+  adHocSource?: boolean;
   // Seeds the Git registry with collection "starter", whose only member is
   // alpha-skill.
   collection?: boolean;
+  // Seeds the Git registry with hostile-skill, whose description and body
+  // carry terminal control bytes, and a skill folder whose name carries an
+  // erase-display sequence, which makes it malformed.
+  hostileMetadata?: boolean;
+  // Writes the Git registry URL with a trailing slash, as users may.
+  trailingSlashRegistry?: boolean;
+  // Adds commands/broken-command.md with unparseable frontmatter next to the
+  // skills/ folder. Only a directorySource root discovers commands there.
+  malformedCommand?: boolean;
 }
 
 export interface Fixture {
@@ -44,6 +56,7 @@ export interface Fixture {
   launcher: string;
   pidFile: string;
   registryURL: string;
+  adHocSourceURL?: string;
   env: Record<string, string>;
   cacheDir: string;
   stateDir: string;
@@ -113,6 +126,7 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
     let marketplaceDelayedAcquisitionCount: (() => number) | undefined;
     if (options.organization || options.userMarketplaceDrift || options.marketplaceDiscovery) {
       stub = await createMarketplaceStub({
+        acquisitionGate: options.marketplaceAcquisitionGate,
         mismatchedPlaceholderArchive: options.mismatchedPlaceholderArchive,
         searchableInstall: Boolean(options.marketplaceDiscovery),
         installFindings: options.marketplaceDiscovery === "findings"
@@ -145,6 +159,17 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
     const source = path.join(registries, "source");
     write(path.join(source, "skills", "alpha-skill", "SKILL.md"), alphaSkillContent);
     write(path.join(source, "skills", "beta-skill", "SKILL.md"), betaSkillContent);
+    if (options.malformedCommand) {
+      if (!options.directorySource) throw new Error("malformedCommand needs directorySource, whose root discovers commands/");
+      write(path.join(source, "commands", "broken-command.md"), "---\ndescription: [unterminated\n---\n\nBroken command\n");
+    }
+    if (options.hostileMetadata) {
+      write(
+        path.join(source, "skills", "hostile-skill", "SKILL.md"),
+        '---\nname: hostile-skill\ndescription: "Hostile \\e]0;PWNED\\a\\e[2J tail"\n---\n\n# Hostile \x1b[31mred\x1b[0m\n'
+      );
+      write(path.join(source, "skills", "evil\x1b[2Jname", "SKILL.md"), "---\nname: evil\x1b[2Jname\ndescription: Evil name\n---\n");
+    }
     if (options.collection) {
       write(path.join(source, "skills", "collections", "starter", "COLLECTION.yaml"), "name: starter\nversion: 1.0.0\nresources:\n  - name: alpha-skill\n    kind: skill\n");
     }
@@ -164,7 +189,7 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       git(source, env, ["-c", "user.name=TUI QA", "-c", "user.email=tui-qa@example.invalid", "commit", "--quiet", "-m", "Seed TUI fixture"]);
       const bareRegistry = path.join(registries, "fixture.git");
       git(registries, env, ["clone", "--quiet", "--bare", source, bareRegistry]);
-      registryURL = pathToFileURL(bareRegistry).href;
+      registryURL = `${pathToFileURL(bareRegistry).href}${options.trailingSlashRegistry ? "/" : ""}`;
       expectedRepoConfig = `apiVersion: agent-marketplace/v4\nsources:\n  fixture:\n    git: ${registryURL}\n    ref: main\n    path: skills\nresources:\n  fixture:\n    include:\n      - skill/beta-skill\n${overflowSkills.map((name) => `      - skill/${name}\n`).join("")}`;
       if (options.userMarketplaceDrift && stub) {
         write(path.join(home, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources:\n  user-market:\n    marketplace: ${stub.url}\nresources:\n  user-market:\n    include:\n      - tools/skill/org-review\n    required: true\n`);
@@ -176,6 +201,33 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
         write(path.join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources: {}\n");
       }
       write(path.join(repo, ".agents", "config.yaml"), expectedRepoConfig);
+    }
+    let adHocSourceURL: string | undefined;
+    let adHocSource = "";
+    let adHocBareRegistry = "";
+    if (options.adHocSource) {
+      adHocSource = path.join(registries, "ad-hoc-source");
+      adHocBareRegistry = path.join(registries, "ad-hoc-source.git");
+      write(path.join(adHocSource, "skills", "ad-hoc-alpha", "SKILL.md"), "---\nname: ad-hoc-alpha\ndescription: An unconfigured source skill\n---\n\n# Ad Hoc Alpha\n");
+      write(path.join(adHocSource, "skills", "ad-hoc-second", "SKILL.md"), "---\nname: ad-hoc-second\ndescription: A second unconfigured skill\n---\n\n# Ad Hoc Second\n");
+      write(path.join(adHocSource, "skills", "ad-hoc-broken", "SKILL.md"), "---\nname: [\n---\nBroken fixture.\n");
+      write(path.join(adHocSource, "commands", "ad-hoc-command.md"), "---\nname: ad-hoc-command\ndescription: An unconfigured source command\n---\n\n# Ad Hoc Command\n");
+      git(adHocSource, env, ["init", "--quiet", "--initial-branch=main"]);
+      git(adHocSource, env, ["add", "."]);
+      git(adHocSource, env, ["-c", "user.name=TUI QA", "-c", "user.email=tui-qa@example.invalid", "commit", "--quiet", "-m", "Seed ad-hoc source"]);
+      git(registries, env, ["clone", "--quiet", "--bare", adHocSource, adHocBareRegistry]);
+      adHocSourceURL = pathToFileURL(adHocBareRegistry).href;
+      const fixtureRegistryPattern = `^${registryURL.replace(/\.git$/, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`;
+      const adHocRegistryPattern = `^${adHocSourceURL.replace(/\.git$/, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`;
+      write(path.join(home, ".agents", "config.yaml"), [
+        "apiVersion: agent-marketplace/v4",
+        "harnesses: [factory]",
+        "allowed_registries:",
+        `  - ${JSON.stringify(fixtureRegistryPattern)}`,
+        `  - ${JSON.stringify(adHocRegistryPattern)}`,
+        "sources: {}",
+        ""
+      ].join("\n"));
     }
     git(repo, env, ["init", "--quiet", "--initial-branch=main"]);
 
@@ -220,6 +272,7 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       launcher,
       pidFile,
       registryURL,
+      adHocSourceURL,
       env,
       cacheDir: path.join(home, ".cache", "agent-marketplace"),
       stateDir: path.join(xdg, "state", "agent-marketplace"),
@@ -243,14 +296,16 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       marketplaceDelayedAcquisitionCount,
       pushRegistryChange: (relativePath, content) => {
         if (options.directorySource) throw new Error("directory sources have no Git registry to advance");
+        const workingRegistry = options.adHocSource ? adHocSource : source;
+        const bareRegistry = options.adHocSource ? adHocBareRegistry : path.join(registries, "fixture.git");
         if (content === null) {
-          git(source, env, ["rm", "-r", "--quiet", "--", relativePath]);
+          git(workingRegistry, env, ["rm", "-r", "--quiet", "--", relativePath]);
         } else {
-          write(path.join(source, relativePath), content);
-          git(source, env, ["add", "--", relativePath]);
+          write(path.join(workingRegistry, relativePath), content);
+          git(workingRegistry, env, ["add", "--", relativePath]);
         }
-        git(source, env, ["-c", "user.name=TUI QA", "-c", "user.email=tui-qa@example.invalid", "commit", "--quiet", "-m", `Change ${relativePath}`]);
-        git(source, env, ["push", "--quiet", path.join(registries, "fixture.git"), "main"]);
+        git(workingRegistry, env, ["-c", "user.name=TUI QA", "-c", "user.email=tui-qa@example.invalid", "commit", "--quiet", "-m", `Change ${relativePath}`]);
+        git(workingRegistry, env, ["push", "--quiet", bareRegistry, "main"]);
       },
       resetPersonalState: () => {
         fs.rmSync(path.join(home, ".agents"), { recursive: true, force: true });

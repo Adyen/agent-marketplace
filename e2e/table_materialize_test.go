@@ -20,7 +20,7 @@ func init() {
 			"  second: {git: '{{REG:second}}', ref: main, source_harness: factory}",
 		),
 		Steps: []Step{
-			ok("install", "--all", "--kind", "hook").
+			ok("install", "--scope", "repo", "--all", "--kind", "hook").
 				out("PreToolUse-command").
 				notOut("multiple registries").
 				regular("./.factory/hooks.json").

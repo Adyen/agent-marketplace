@@ -71,7 +71,7 @@ func init() {
 		),
 		Steps: []Step{
 			ok("sync").exists("./.factory/skills/review/SKILL.md").absent("./.factory/skills/deploy"),
-			ok("install", "--all").has("./.factory/skills/review/SKILL.md", "Review fixture").has("./.factory/skills/deploy/SKILL.md", "Deploy fixture"),
+			ok("install", "--scope", "repo", "--all").has("./.factory/skills/review/SKILL.md", "Review fixture").has("./.factory/skills/deploy/SKILL.md", "Deploy fixture"),
 			ok("remove", "deploy").exists("./.factory/skills/review/SKILL.md").absent("./.factory/skills/deploy"),
 			ok("sync").exists("./.factory/skills/review/SKILL.md").absent("./.factory/skills/deploy"),
 			ok("sync", "--check"),
@@ -92,7 +92,7 @@ func init() {
 		),
 		Steps: []Step{
 			ok("sync").exists("./.factory/skills/review/SKILL.md").absent("./.factory/skills/deploy", "./.factory/skills/unselected"),
-			ok("install", "--tag", "ops").
+			ok("install", "--scope", "repo", "--tag", "ops").
 				absent("./.factory/skills/unselected").
 				has("./.factory/skills/review/SKILL.md", "Review fixture").
 				has("./.factory/skills/deploy/SKILL.md", "Deploy fixture"),

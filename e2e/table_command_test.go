@@ -308,7 +308,7 @@ func init() {
 		},
 		RepoCfg: v4("sources: {}"),
 		Steps: []Step{
-			ok("install", "adhoc-cmd", "--from", "{{REG:cmd-adhoc}}", "--ref", "main", "--kind", "command").out("adhoc-cmd"),
+			ok("install", "--scope", "repo", "adhoc-cmd", "--from", "{{REG:cmd-adhoc}}", "--ref", "main", "--kind", "command").out("adhoc-cmd"),
 			ok("sync").exists("./.factory/commands/adhoc-cmd.md"),
 			ok("list").out("adhoc-cmd"),
 		},

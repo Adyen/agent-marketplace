@@ -213,10 +213,11 @@ func TestSpinnerContinuesDuringStartupAssessment(t *testing.T) {
 }
 
 func TestInitBatchesSpinnerTick(t *testing.T) {
-	m := newSpinnerTestModel()
-	m.loading = true
+	repoRoot, homeDir := progressiveFixture(t)
+	m := NewModel(repoRoot, homeDir)
 
 	cmd := m.Init()
+	joinStartupSnapshot(t, cmd)
 	if cmd == nil {
 		t.Fatalf("Init should return a batched command including spinner tick")
 	}

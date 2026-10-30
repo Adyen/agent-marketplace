@@ -528,7 +528,7 @@ sources: {public: {marketplace: %q}}
 		"public:public-registry/hook/PreToolUse-command",
 		"public:public-registry/mcpserver/server-one",
 	} {
-		result := consumer.RunAM("install", locator, "--yes")
+		result := consumer.RunAM("install", locator, "--scope", "repo", "--yes")
 		if result.ExitCode != 0 {
 			t.Fatalf("Marketplace mirror install %s failed (exit %d):\n%s", locator, result.ExitCode, result.Combined)
 		}

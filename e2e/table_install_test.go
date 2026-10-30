@@ -139,7 +139,7 @@ func init() {
 		),
 		Steps: []Step{
 			ok("sync").exists("./.factory/skills/keep/SKILL.md"),
-			ok("install", "first", "second", "--from", "{{REG:multi-src}}", "--ref", "main", "--path", "bundles").
+			ok("install", "--scope", "repo", "first", "second", "--from", "{{REG:multi-src}}", "--ref", "main", "--path", "bundles").
 				out("first", "second").
 				exists("./.factory/skills/first/SKILL.md", "./.factory/skills/second/SKILL.md", "./.factory/skills/keep/SKILL.md").
 				absent("./.factory/skills/root-only").
@@ -179,7 +179,7 @@ func init() {
 		RepoCfg: v4("sources: {}"),
 		Steps: []Step{
 			writeFile("./local-registry/README.md", "local registry\n"),
-			exits(1, "install", "some-skill", "--from", "./local-registry", "--path", "missing").
+			exits(1, "install", "--scope", "repo", "some-skill", "--from", "./local-registry", "--path", "missing").
 				out("local registry path does not exist").
 				lacks("./.agents/config.yaml", "local-registry"),
 		},

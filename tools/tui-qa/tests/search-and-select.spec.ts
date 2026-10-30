@@ -7,6 +7,7 @@ const journey = defineFixture("search-and-select", ["tui"]);
 before(journey.setup);
 after(journey.cleanup);
 
+// spec: tui-navigation/confirmed-filter
 journey.test("search keeps only alpha-skill selected", async (terminal) => {
   await step("settled fixture baseline", () => {}, async () => {
     await locate(terminal, "beta-skill").expect();

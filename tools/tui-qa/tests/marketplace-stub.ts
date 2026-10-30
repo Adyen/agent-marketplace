@@ -27,9 +27,9 @@ const searchPath = "/api/v1/search";
 const registryID = "tui-qa-registry";
 const registrySlug = "tools";
 const resourceName = "org-review";
-const contentDigest = "sha256:dba586be27c4593b6d6d6a718c01050323490600b2e7084f950e3ee0e5fc3adf";
+const contentDigest = "sha256:9bb07ca2a6db2f0a63c9c80cd2c86520ad2a69545e32b4ea4b0e2eddd24d85ad";
 const materializedSkillContent =
-  "---\nname: org-review\ndescription: Organization review fixture\nExtra: null\n---\nReview organization changes carefully.";
+  "---\nname: org-review\ndescription: Organization review fixture\n---\nReview organization changes carefully.";
 
 const inspectionSkillName = "pack-notes-with-a-much-longer-catalog-row-label";
 const sha256 = (data: string | Buffer): string => `sha256:${createHash("sha256").update(data).digest("hex")}`;
@@ -113,6 +113,8 @@ interface ServedArchive {
 }
 
 export interface MarketplaceStubOptions {
+  // A journey can hold acquisition until its pending-state checks finish.
+  acquisitionGate?: () => Promise<void>;
   // Serve placeholder-form bytes that do not hash to the requested digest.
   mismatchedPlaceholderArchive?: boolean;
   // Answer a query matching the installable skill with its exact revision.
@@ -148,14 +150,15 @@ const servedArchive = (canonical: Buffer): ServedArchive => {
   return { digest, placeholder, final: gzipSync(withDigest(digest), { level: 9 }), mismatched };
 };
 
+// Declared support is staged separately from the canonical skill definition.
 const original = servedArchive(Buffer.from(
-  "H4sIAAAAAAAE/+yVz2/bOgzH86cYPDt98u9Etz68N+ywYcPS2zAEtEw7WhUpk2S3XZD/fZDTDGkD7LJ0w7B8LpIYgqJC88s1atmS81efndGTl4Exxso8H1fG2POVlWV5sAUmLEmqpJxE7GXSeUrvPNoJ++m7QubHj/tD2IITK1rjciDrpNHAYUggBrRetij8c/ut1A1wcLdSKYhB45qAg7Hd1NIg6Q5isNRJ5+3DUgZP38vpF5wejMe/O9V3wMEbo9xoH+RjChCDMNqT9stGduR8uHKFaVHypsZiVtaUViIv5lldNmVTYpXMBEtYwbI0y+esZKxOqWKzvJ0XjDIiRkUrMmxaCG8TKznQaWgxL+azpKmStKnqJsuqLKWkrYt6hmKOWZtjlrNSzCmtqE0FK2hWt0yUbJaJvC4gho01A2nUgoBvoSNNFr2xwAE70n66RntLfqNQUCRQGy0Fqgjt/s+OhgR2Mbh+szHWU7N8WhsH/GOozqfd+T4uS870VtD5Ip4S+qIqinE9bpFweOTpPhndo+I01Pn5y/v/UP9/xo5+mSkQavwj/c+rbPR5ZMKSjBXJRf9/BVu47kgHfYUYrpUyd9TcjILMda9UDNe269ek/Wt58PrXNA/A4cOo95GxHWr5Fb00OhIr1B25SKCltlfq4Qpi+I+csHLj99Pl3bH/fmZErbz3vSWI4f97D3y7GzcWDzm8NQ0p4CHF92TX0oUx4faOR4YFeeAtKkcxLEZVA76FV1KFEQUxvJGagLNdDIu+HvV4H3Ox19vg6A5X3ljZdWS/n08H3RlF+MKFCxd+A98CAAD//5bS3aIADgAA",
+  "H4sIAAAAAAAE/+xVS2/cNhDes3+FML3KDqm3eHPRBj30hTjoJQgWI3KkZc0ltyQlx13sfy+w8rqpgyBB7TUQePkdRhgSo3l+s0arewrx4s/g7OI4hzHGqqJYsPk8lKyqqoNuvue85tUiYcdw5iHGENEv2KP/NfvODoE80tqzYQtBrmiNy4l80M6CgIlDCuij7lHGh/prbRUICNfaGEjB4ppAgPPDuadJ0w2k4GnQIfrbpVYgII76/C88Pyg/vg9mHEBAdM6EvX7Sdy5ACtLZSDYulR4oRBAQVpiVlWi7jtUSM6xUl/UMq1y2smFSZbKpyoyhyrBqy6KkPOsKwqJjlJFSKitUU6LaxyZXeqJPTPOOq6Zuc+ScFXVRSKyLtuA9l01bFllT5WVb8EY2Equ84HnHZFE3dduWhJ3qOKSw8W4ii1YSiC0MZMljdB4E4EA2nq/RX1PcGJSUSLTOaokmQR91jzImE4ddCmHcbJyPpJZBrmiNy4l80M4GEO9g4vB+93Q94im40Ut6EmOfAWOM1WV5PxqzuJfzzM9y/ub750n5OYNPiRc+/4f6v9pP9HG2wJf4v6iqB/XPWZkvkkdz8tfghdd/C5cD2QgCIIVLY9wNqbfOmQDCjsakcOmHcU02/qQPr7536hYEvKFJ003i/IBW/41RO5vIFdqBQiLRUz8ac3sBKfxAQXq9idpZEPDbx+/nnZH0+kMcPUEKP36IILa7FH5xigwIgBR+J7/WIWhnA4jt7j+KK4ogejSBUrjaExmILbzWhuYt8rO2BILtUrgaO/w30qtxs3E+vtaGAoh3YF2kcLFW8D6Ft14PA/n7DHy643Zf01jfBsKciKM6+z/4vyqyE/8/B//f1f/VYQCOkfIv8T+rssW8+vdYMJ7lNT/x/3Pw/3fJm5mDf3WRwtnZH+R1r0kld42h7ZBoG6IfZdTOhouzY3TICSeccMIJz41/BgDzDB/5ABQAAA==",
   "base64"
 ));
 // The same content digest with a different archive: an extra asset stands in
 // for a repaired artifact encoding.
 const drifted = servedArchive(Buffer.from(
-  "H4sIAAAAAAAE/+yVz27bOBDG/SjCnJVkqL+WblnsLvawRYs6t6IIKGoks5FJg6ScpIbfvaBsp04CBCgauymq34UUMSY/cjzfLLiSDVl3/sVqNTkOiIhZkgwjIj4dMc2z/ZpngozlLJsEeBw5j+mt42aCP32WV354ud+ENVgxpwW/XpGxUisoYcUgBG6cbLhwT9dvpKqhBHsjuw5CUHxBUII27ZmhlaRbCMFPdltBCEIrR8pd17Il6/xP5zxKs7KueDrNKopykaRFXGV1Vmc8Z1OBDFOMozgpMEOsIspxmjRFihQTIaWNiHndgNco5nJFz7aOEox5hSzPE6oy3lAtIsQsa6YcmySq86hJsCiqJC/iejqt8iLKsZpSwZMmTYoYQlgavSLFlSAo19CSIsOdNlACb0m5swU3N+SWHRcUCK60koJ3Ad89WrBisAnB9sulNo7q68dvbKH85F/58+bX/0kMWd0bQcdU4usiT9NhPCwR/7Hj8ZwN4UF6TFF7/vD63+f/Yqjo43QBn+OX/D/J4yFmxwRZjCkb/f8UrOGyJeV9GUK47Dp9S/WV1p2FUvVdF8KlafsFKfef3Ef9pet7KOHj4PeBNi1X8it3UqtAzLlqyQaCG2r6rrs/hxD+JiuMXLptd3l/GO9bBd0GjbxzvSEI4Z87B+V6M0wM32t4p2vqoPQSP5BZSOvbi90GHizMyEHZ8M5SCLPB1bx5/ys736IghP+lIihxE8Ksr/j3a8+2Pu0DH659ZWTbknn4ft7o3oB5vwLcWnL2FTZ6AV/XP+j/SYyj/5+Cbf4vaiMbd8bO3Z17/VN9/l/yf8R8iNkxQRalLB79/xQMiQ/YKY4aGRkZGXlDfAsAAP//bfDWawAUAAA=",
+  "H4sIAAAAAAAE/+xXTW/jNhD1Ob9CmF5lh6Ik2uItRbvooV/YLHpZLAyKHMlsaNIlKSWp4f9ewIrTbRaLbDe2gUWkd6AxIsZDvpk3o7WwusEQZ38GZyeneQghhBXFhAzP05Uwxg624X2WzTM2ScgpgnmKLkThJ+TF/zXETg4HeaG3s2ELQa5wLZY9+qCdBQ59BikIH3UjZHxqv9FWAYdwo42BFKxYI3Bwvp167DXeQgoeWx2iv19qBRxip6d/ienB+PH7YLoWOETnTNjbe/0QAqQgnY1o41LpFkMEDmElaMl4VddkLgUVTNW0IYLlspILIhWVC1ZSIhQVrCqLEnNaFyiKmiBFpRQt1KIUan82udI9fuI6q2qKuVC0quYScykrxjJKCS3ofLEoi2YhGyaLnDUVkUWZiTxnNW0WVY1zpVQDKWy869EKKxH4Flq06EV0HjiIFm2croW/wbgxQmIihXVWS2ES4aNuhIxJn8EuhdBtNs5HVMsgV7gWyx590M4G4O+hz+DD7ng54jG4zks8irPPgBBC5mX5WBrD8rgONT+sw+9svz0pP+fwmHjl9X/g/3Jf0afpAs/pf8HYE/5zUuaT5MWa/CV45fxv4apFG4EDpHBljLtF9c45E4DbzpgUrnzbrdHGn/Rh1/dO3QOHt9hrvE2cb4XVf4uonU3kStgWQyKFx6Yz5n4GKfyAQXq9idpZ4PDbx/uHnpE0+i52HiGFH+8i8O0uhV+cQgMcIIXf0a91CNrZAHy7+4/hGiPwRpiAKVzvhQz4Ft5og0MX+VlbBE52KVx3tfj3pNfdZuN8fKMNBuDvwbqIYbZW8CGFd163LfrHG/i0x+2+JLG+DYgQMIbTxvoV+l/kZNT/c+j/wP+l8rqJ02wW7+LxL/05/SdkPhla/x4TktEyG/X/LPq/Jz7Jjk/6iG8CYWiEJ2VrX+H/b/5nBR31/xz6/8D/5WEAOkUiPKv/jB5y4+H7j+bzbJz/zzH/f5e8HWbwX13EcHHxB3rdaFTJQ2Jo2ybahug7GbWzYXZxigwZMWLEiBHnxj8DAD6t0iUAGgAA",
   "base64"
 ));
 const archiveDigest = original.digest;
@@ -178,7 +181,7 @@ const revision = {
       name: resourceName
     },
     content_digest: contentDigest,
-    assessment_digest: "sha256:5cfa82198ccae9f92e6e1b4bde0d13c61e51903ae724105d839c2c179d60e490",
+    assessment_digest: "sha256:617ddc3e26f8d6105a794138aec92096efe0f30a9f7623e26545dc89adbdc549",
     analyzer_version: "agent-marketplace-tui-qa/v1",
     policy_digest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
     decision: "allow",
@@ -247,6 +250,10 @@ export const createMarketplaceStub = async (options: MarketplaceStubOptions = {}
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (/^\/api\/v1\/(?:registries|resources|archives|artifacts|manifests)\//.test(url.pathname)) {
       acquisitionDataRequests.push(url.pathname);
+      if (options.acquisitionGate) {
+        await options.acquisitionGate();
+        if (response.destroyed) return;
+      }
       if (nextAcquisitionDelayMs > 0) {
         const delay = nextAcquisitionDelayMs;
         nextAcquisitionDelayMs = 0;

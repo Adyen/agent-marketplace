@@ -121,6 +121,45 @@ func init() {
 		},
 	})
 
+	// spec: harness-compilation/comma-separated-subagent-tool-strings-become-separate-tools
+	testTable = append(testTable, TestCase{
+		Name: "subagent/comma_separated_tools_sync_as_separate_tools",
+		Registries: []RegistryDef{
+			{Name: "sub-tool-string", Files: map[string]string{
+				".claude/agents/reader.md": "---\nname: reader\ndescription: Reader\ntools: Read, Grep\n---\nRead only.\n",
+			}},
+		},
+		GlobalCfg: v4(
+			"harnesses: [claude, factory, gemini]",
+			"sources: {team: {git: '{{REG:sub-tool-string}}', ref: main}}",
+			"resources: {team: {include: [subagent/reader]}}",
+		),
+		Steps: []Step{
+			ok("sync").has("~/.claude/agents/reader.md", "tools:\n  - Read\n  - Grep\n").has("~/.factory/droids/reader.md", "tools:\n  - Read\n  - Grep\n").has("~/.gemini/agents/reader.md", "tools:\n  - read_file\n  - read_many_files\n  - grep_search\n"),
+			ok("sync", "--check"),
+		},
+	})
+
+	// spec: harness-compilation/a-subagent-tool-string-that-is-not-well-formed-is-kept-as-a-single-entry
+	testTable = append(testTable, TestCase{
+		Name: "subagent/malformed_tools_string_stays_one_entry",
+		Registries: []RegistryDef{
+			{Name: "sub-tool-malformed", Files: map[string]string{
+				".claude/agents/malformed.md": "---\nname: malformed\ndescription: Malformed\ntools: Read, Bash(git diff\n---\nMalformed.\n",
+				".claude/agents/valid.md":     "---\nname: valid\ndescription: Valid\ntools: [Read, Grep]\n---\nValid.\n",
+			}},
+		},
+		GlobalCfg: v4(
+			"harnesses: [claude]",
+			"sources: {team: {git: '{{REG:sub-tool-malformed}}', ref: main}}",
+			"resources: {team: {include: [subagent/malformed, subagent/valid]}}",
+		),
+		Steps: []Step{
+			ok("sync").has("~/.claude/agents/malformed.md", "tools:\n  - Read, Bash(git diff\n").has("~/.claude/agents/valid.md", "tools:\n  - Read\n  - Grep\n"),
+			ok("sync", "--check"),
+		},
+	})
+
 	testTable = append(testTable, TestCase{
 		// disallowedTools and isolation are RESTRICTIONS. Factory has no way to
 		// express either, so emitting the droid with the field merely omitted
