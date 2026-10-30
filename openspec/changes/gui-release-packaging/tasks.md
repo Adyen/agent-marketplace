@@ -1,9 +1,9 @@
 ## 1. Package build
 
-- [ ] 1.1 Add the app icon derived from `site/public/brand/favicon.svg` (`.icns` and hicolor PNG sizes), `Info.plist` (`Agent Marketplace`, `io.agent-marketplace.gui`, tag version, `LSMinimumSystemVersion` 12.0), and an empty hardened-runtime entitlements file; verify `plutil -lint` passes.
-- [ ] 1.2 Add a package-format build variable (`macos-app`, `rpm`, `deb`, empty by default) set through `-ldflags`; verify plain `go build` reports no package format.
-- [ ] 1.3 Add a make target that builds `darwin/arm64` and `darwin/amd64` with cgo, combines them with `lipo`, assembles and ad-hoc signs the `.app` with the hardened runtime, and writes the `.dmg` (with an `Applications` link) and the `ditto` `.zip`; verify `lipo -archs`, `codesign -dv` (ad-hoc, runtime), and that the `.dmg` and `.zip` contain identical apps.
-- [ ] 1.4 Add one nFPM config and a make target that build the GUI with `webkit2_41` and produce the `.rpm` and `.deb` for the host architecture with the executable, desktop entry, icons, and WebKitGTK 4.1 and GTK 3 dependencies; verify package metadata and contents, and that no `agent-marketplace` CLI executable is included.
+- [x] 1.1 Add the app icon derived from `site/public/brand/favicon.svg` (`.icns` and hicolor PNG sizes), `Info.plist` (`Agent Marketplace`, `io.agent-marketplace.gui`, tag version, `LSMinimumSystemVersion` 12.0), and an empty hardened-runtime entitlements file; verify `plutil -lint` passes.
+- [x] 1.2 Add a package-format build variable (`macos-app`, `rpm`, `deb`, empty by default) set through `-ldflags`; verify plain `go build` reports no package format.
+- [x] 1.3 Add a make target that builds `darwin/arm64` and `darwin/amd64` with cgo, combines them with `lipo`, assembles and ad-hoc signs the `.app` with the hardened runtime, and writes the `.dmg` (with an `Applications` link) and the `ditto` `.zip`; verify `lipo -archs`, `codesign -dv` (ad-hoc, runtime), and that the `.dmg` and `.zip` contain identical apps.
+- [x] 1.4 Add one nFPM config and a make target that build the GUI with `webkit2_41` and produce the `.rpm` and `.deb` for the host architecture with the executable, desktop entry, icons, and WebKitGTK 4.1 and GTK 3 dependencies; verify package metadata and contents, and that no `agent-marketplace` CLI executable is included.
 
 ## 2. CI and release
 
