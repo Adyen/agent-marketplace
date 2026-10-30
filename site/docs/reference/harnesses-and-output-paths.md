@@ -1,6 +1,6 @@
 # Harnesses and output paths reference
 
-This page lists the [harnesses](../glossary.md#harness) Agent Marketplace supports and the exact files `sync` writes for each one. Use it to find where an installed skill, command, subagent, hook, or MCP server ended up, or to decide which paths to add to `.gitignore`.
+This page lists the [harnesses](../glossary.md#harness) Agent Marketplace supports and the exact files `sync` writes for each one. Use it to find where an installed skill, command, subagent, hook, or MCP server ended up, or to decide which paths to add to `.gitignore`. Plugin members installed by decomposed delivery land on the same per-kind paths; native delivery instead registers the package through harness-owned settings entries. See [Plugins and package formats](../explanation/plugins-and-package-formats.md).
 
 The roots and per-kind paths come from `pkg/harness-compilation/target` and `internal/harness/roots.go` in the source code.
 
