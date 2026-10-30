@@ -53,6 +53,7 @@ func TestReadFrontmatterCeilingBoundaries(t *testing.T) {
 	}{
 		{"single line at the ceiling", "---\nname: " + single + "\n---\n", false},
 		{"blank lines above the ceiling", "---\n" + strings.Repeat("\n", 64<<10) + "name: big\n---\n", true},
+		{"single line above the scanner budget", "---\nname: " + strings.Repeat("x", 64<<10+8) + "\n---\n", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := readFrontmatter(strings.NewReader(tc.content))

@@ -2,6 +2,7 @@ package skill
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -82,6 +83,9 @@ func readFrontmatter(file io.Reader) ([]byte, error) {
 		builder.WriteString(line)
 	}
 	if err := scanner.Err(); err != nil {
+		if foundStart && errors.Is(err, bufio.ErrTooLong) {
+			return nil, fmt.Errorf("%w: a line exceeds %d bytes", bundle.ErrFrontmatterTooLarge, bundle.MaxFrontmatterBytes)
+		}
 		return nil, fmt.Errorf("read file: %w", err)
 	}
 	if !foundStart {
