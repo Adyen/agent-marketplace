@@ -78,7 +78,7 @@ complete source and selection fields.
 Use `exclude` with exact `kind/name` member locators to leave a member out of
 the selected package. An exclusion that does not name a member fails with
 `plugin.member.unknown-exclusion`. Do not select a member such as
-`skill/review` directly from a format source: member locators are scoped
+`skill/review` directly from a format source. Member locators are scoped
 inside their plugin, and direct selection is refused with
 `plugin.member-direct-selection`.
 
@@ -91,11 +91,11 @@ inside their plugin, and direct selection is refused with
 - `native` requests registration as a plugin in the harness. It does not
   fall back to decomposition when native delivery is unverified.
 
-At present, native delivery is unverified for all seven harnesses, so `auto`
+Native delivery is unverified for all seven harnesses, so `auto`
 chooses decomposed delivery. An explicit `delivery: native` fails with
 `plugin.delivery.native-unverified` and writes no members. The generated
-[support matrix](../reference/plugin-support.md) is the source of truth for
-current catalog evidence. `delivery` and `exclude` are not accepted on
+[support matrix](../reference/plugin-support.md) records the current catalog
+evidence. `delivery` and `exclude` are not accepted on
 non-plugin requests; plugin requests also cannot use `as`.
 
 ## 3. Inspect before installing

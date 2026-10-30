@@ -7,4 +7,4 @@
 
 ## 2. Gates
 
-- [ ] 2.1 Run `make site-docs-build`, `make validate`, `make spec-check`, `make catalog-check`, `make validate-e2e`, `make tui-qa`, and the released-client gate
+- [x] 2.1 Run `make site-docs-build`, `make validate`, `make spec-check`, `make catalog-check`, `make validate-e2e`, `make tui-qa`, and the released-client gate
