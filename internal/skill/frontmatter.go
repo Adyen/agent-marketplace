@@ -64,13 +64,17 @@ func readFrontmatter(file io.Reader) ([]byte, error) {
 			return []byte(builder.String()), nil
 		}
 
+		separator := 0
 		if builder.Len() > 0 {
+			separator = 1
+		}
+		if len(line)+separator > bundle.MaxFrontmatterBytes-builder.Len() {
+			return nil, fmt.Errorf("%w: more than %d bytes", bundle.ErrFrontmatterTooLarge, bundle.MaxFrontmatterBytes)
+		}
+		if separator > 0 {
 			builder.WriteByte('\n')
 		}
 		builder.WriteString(line)
-		if builder.Len() > bundle.MaxFrontmatterBytes {
-			return nil, fmt.Errorf("%w: more than %d bytes", bundle.ErrFrontmatterTooLarge, bundle.MaxFrontmatterBytes)
-		}
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("read file: %w", err)
