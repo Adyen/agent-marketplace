@@ -215,6 +215,8 @@ export interface paths {
          *     its release page URL and, when this build's package asset and
          *     SHA256SUMS are published, their download URLs. An unpackaged build or
          *     one without a matching asset receives only the release page URL.
+         *     A macOS build with a matching update asset also receives the matching
+         *     disk image URL for an ineligible-location fallback.
          *     Suppression, a policy read failure, any check failure, an unsupported
          *     build kind, or a non-newer result silently returns empty fields without
          *     an error; the check never downloads or installs a release.
@@ -340,6 +342,32 @@ export interface paths {
          *
          */
         post: operations["recordTelemetryEvent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start, observe, confirm, or cancel a GUI update
+         * @description Available only in user-scope mode. The closed request selects one
+         *     action and cannot carry URLs; package and checksum URLs come only
+         *     from the server's cached latest-release result. Start returns
+         *     immediately with a phase that status can poll. Confirm is called
+         *     after the existing quit guard accepts, and cancel removes staged
+         *     data. Linux start saves the verified package and opens xdg-open.
+         *
+         */
+        post: operations["updateGui"];
         delete?: never;
         options?: never;
         head?: never;
@@ -645,6 +673,8 @@ export interface components {
             assetURL: string;
             /** @description SHA256SUMS download URL accompanying assetURL; otherwise empty. */
             checksumsURL: string;
+            /** @description Server-resolved macOS disk image URL for the ineligible-location browser fallback; otherwise empty. */
+            dmgURL: string;
             /** @description Newer stable public release version, or empty when no notice applies. */
             latestVersion: string;
             /** @description Newer release's public GitHub release page, or empty when no notice applies. */
@@ -819,6 +849,27 @@ export interface components {
         };
         /** @enum {string} */
         StatusGroupID: "required" | "enabled" | "pending" | "stale" | "broken" | "available" | "malformed";
+        UpdateRequest: {
+            /** @enum {string} */
+            action: "start" | "status" | "confirm" | "cancel";
+        };
+        UpdateStatus: {
+            /** @description Server-resolved macOS disk image URL for browser fallback, or empty. */
+            browserURL: string;
+            /** @description User-visible failure detail, or empty. */
+            error: string;
+            /** @description Whether an ineligible macOS app must be moved to Applications to enable in-app updates. */
+            moveToApplications: boolean;
+            /** @enum {string} */
+            phase: "idle" | "downloading" | "verifying" | "ready" | "swapping" | "handing-off" | "complete" | "fallback" | "failed" | "cancelled";
+            progress: number;
+            /** @description Server-resolved release page URL for Linux handoff fallback, or empty. */
+            releasePageURL: string;
+            /** @description Whether the user should restart after installing the Linux package. */
+            restartRequired: boolean;
+            /** @description Path of the verified Linux package saved for desktop installation, or empty. */
+            savedPath: string;
+        };
     };
     responses: {
         /** @description API lifetime ended; code localapi.closed */
@@ -1340,6 +1391,52 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["OriginRejected"];
             405: components["responses"]["MethodNotAllowed"];
+            503: components["responses"]["Closed"];
+        };
+    };
+    updateGui: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Update progress or result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateStatus"];
+                };
+            };
+            /** @description Malformed request, unsupported mode, or no verified package; code localapi.invalid_request or localapi.not_supported */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["OriginRejected"];
+            405: components["responses"]["MethodNotAllowed"];
+            /** @description No verified macOS update is ready to confirm */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateStatus"];
+                };
+            };
             503: components["responses"]["Closed"];
         };
     };

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/guiupdate"
 	"github.com/Adyen/agent-marketplace/internal/localapi"
 	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
@@ -41,6 +42,7 @@ const guiTelemetryUnavailableWarning = "GUI telemetry unavailable; continuing wi
 
 type App struct {
 	api              *localapi.API
+	updater          *guiupdate.Service
 	version          string
 	telemetry        *telemetry.Telemetry
 	telemetryState   telemetry.TelemetryState
@@ -62,6 +64,7 @@ func NewApp(ctx context.Context, lifecycle session.DependencyLifecycle) (*App, e
 	var runtime *telemetry.Telemetry
 	rootSpan := telemetry.Span{}
 	apiCtx := ctx
+	updater := guiupdate.NewNative(packageFormat)
 	if resolveErr != nil {
 		slog.Warn(guiTelemetryUnavailableWarning)
 	} else if state.EffectiveLevel == tmcfg.LevelBasic || state.EffectiveLevel == tmcfg.LevelDetailed {
@@ -83,14 +86,24 @@ func NewApp(ctx context.Context, lifecycle session.DependencyLifecycle) (*App, e
 	if runtime != nil {
 		telemetryCtx = telemetry.NewContext(apiCtx, runtime, "gui", startedAt, state.HarnessesString(), state.Managed, rootSpan, false)
 	}
-	api, err := localapi.NewUser(telemetryCtx, homeDir, lifecycle, nil, localapi.WithVersion(version), localapi.WithPackageFormat(packageFormat))
+	api, err := localapi.NewUser(
+		telemetryCtx,
+		homeDir,
+		lifecycle,
+		nil,
+		localapi.WithVersion(version),
+		localapi.WithPackageFormat(packageFormat),
+		localapi.WithUpdateService(updater),
+	)
 	if err != nil {
+		updater.Close()
 		rootSpan.End()
 		shutdownTelemetry(runtime)
 		return nil, err
 	}
 	return &App{
 		api:              api,
+		updater:          updater,
 		version:          version,
 		telemetry:        runtime,
 		telemetryState:   state,

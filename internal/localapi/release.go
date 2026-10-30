@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"runtime"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/guiupdate"
 	"github.com/Adyen/agent-marketplace/internal/updatecheck"
 	"golang.org/x/mod/semver"
 )
@@ -26,6 +28,10 @@ func WithVersion(version string) UserOption {
 
 func WithPackageFormat(format string) UserOption {
 	return func(a *API) { a.packageFormat = format }
+}
+
+func WithUpdateService(service *guiupdate.Service) UserOption {
+	return func(a *API) { a.updater = service }
 }
 
 func normalizeReleaseVersion(version string) string {
@@ -46,6 +52,7 @@ type releaseNotice struct {
 	ReleasePageURL string `json:"releasePageURL"`
 	AssetURL       string `json:"assetURL"`
 	ChecksumsURL   string `json:"checksumsURL"`
+	DMGURL         string `json:"dmgURL"`
 }
 
 type releaseAsset struct {
@@ -70,6 +77,12 @@ func guiReleaseAssetName(packageFormat, arch, tag string) string {
 func isGitHubReleaseURL(raw string) bool {
 	parsed, err := url.Parse(raw)
 	return err == nil && parsed.Scheme == "https" && parsed.Host == "github.com" && parsed.User == nil
+}
+
+func isGitHubReleaseAssetURL(raw, tag, name string) bool {
+	parsed, err := url.Parse(raw)
+	return err == nil && isGitHubReleaseURL(raw) && parsed.RawQuery == "" && parsed.Fragment == "" &&
+		parsed.Path == path.Join("/Adyen/agent-marketplace/releases/download", tag, name)
 }
 
 func (a *API) checkLatestRelease(r *http.Request) releaseNotice {
@@ -126,18 +139,30 @@ func (a *API) checkLatestRelease(r *http.Request) releaseNotice {
 	if assetName == "" {
 		return notice
 	}
-	var assetURL, checksumsURL string
+	var assetURL, checksumsURL, dmgURL string
 	for _, asset := range latest.Assets {
 		switch asset.Name {
 		case assetName:
-			assetURL = asset.BrowserDownloadURL
+			if isGitHubReleaseAssetURL(asset.BrowserDownloadURL, latest.TagName, assetName) {
+				assetURL = asset.BrowserDownloadURL
+			}
 		case "SHA256SUMS":
-			checksumsURL = asset.BrowserDownloadURL
+			if isGitHubReleaseAssetURL(asset.BrowserDownloadURL, latest.TagName, "SHA256SUMS") {
+				checksumsURL = asset.BrowserDownloadURL
+			}
+		case "agent-marketplace-gui-" + latest.TagName + "-macos-universal.dmg":
+			name := "agent-marketplace-gui-" + latest.TagName + "-macos-universal.dmg"
+			if isGitHubReleaseAssetURL(asset.BrowserDownloadURL, latest.TagName, name) {
+				dmgURL = asset.BrowserDownloadURL
+			}
 		}
 	}
-	if isGitHubReleaseURL(assetURL) && isGitHubReleaseURL(checksumsURL) {
+	if assetURL != "" && checksumsURL != "" {
 		notice.AssetURL = assetURL
 		notice.ChecksumsURL = checksumsURL
+		if a.packageFormat == "macos-app" && dmgURL != "" {
+			notice.DMGURL = dmgURL
+		}
 	}
 	return notice
 }
@@ -151,23 +176,24 @@ func (a *API) handleRelease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, codeNotSupported)
 		return
 	}
+	writeReleaseNotice(w, a.currentReleaseNotice(r))
+}
+
+func (a *API) currentReleaseNotice(r *http.Request) releaseNotice {
 	if !updatecheck.Enabled(os.Getenv) {
-		writeReleaseNotice(w, releaseNotice{})
-		return
+		return releaseNotice{}
 	}
 	enabled, err := config.UpdateCheckEnabled()
 	if err != nil || !enabled {
-		writeReleaseNotice(w, releaseNotice{})
-		return
+		return releaseNotice{}
 	}
 	if !updatecheck.CanCheck(a.version) {
-		writeReleaseNotice(w, releaseNotice{})
-		return
+		return releaseNotice{}
 	}
 	a.releaseOnce.Do(func() {
 		a.releaseNotice = a.checkLatestRelease(r)
 	})
-	writeReleaseNotice(w, a.releaseNotice)
+	return a.releaseNotice
 }
 
 func writeReleaseNotice(w http.ResponseWriter, notice releaseNotice) {

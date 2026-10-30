@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/guiupdate"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/session"
@@ -169,6 +170,7 @@ type API struct {
 
 	version       string
 	packageFormat string
+	updater       *guiupdate.Service
 	releaseClient *http.Client
 	releaseOnce   sync.Once
 	releaseNotice releaseNotice
@@ -251,6 +253,9 @@ func (a *API) Close() {
 		a.resourceActionPlan = nil
 	}
 	a.mu.Unlock()
+	if a.updater != nil {
+		a.updater.Close()
+	}
 	a.wg.Wait()
 }
 
@@ -399,6 +404,8 @@ func (a *API) dispatch(w http.ResponseWriter, r *http.Request) {
 		a.handleConfigurationAction(w, r)
 	case "/api/release":
 		a.handleRelease(w, r)
+	case "/api/update":
+		a.handleUpdate(w, r)
 	default:
 		writeError(w, http.StatusNotFound, codeInvalidRequest)
 	}

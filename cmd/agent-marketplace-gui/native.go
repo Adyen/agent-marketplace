@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"embed"
+	"log/slog"
 	"sync/atomic"
 
 	"github.com/Adyen/agent-marketplace/internal/session"
@@ -69,6 +70,9 @@ func (app *App) appOptions(hooks lifecycleHooks) *options.App {
 		Bind: []any{app},
 		OnStartup: func(ctx context.Context) {
 			windowCtx = ctx
+			if err := app.updater.CleanupBackup(); err != nil {
+				slog.Warn("could not remove previous GUI update backup", "err", err)
+			}
 			if hooks.onStartup != nil {
 				hooks.onStartup(ctx)
 			}
