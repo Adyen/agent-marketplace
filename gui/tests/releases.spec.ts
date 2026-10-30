@@ -5,7 +5,16 @@ import { join } from 'node:path'
 import { startHarness, type Harness } from './harness'
 import { distIndexExists, serveBuiltApp } from './app'
 
-const releaseBody = JSON.stringify({ tag_name: 'v2.0.0', draft: false, prerelease: false })
+function releaseBody(tag = 'v2.0.0') {
+  return JSON.stringify({
+    tag_name: tag,
+    draft: false,
+    prerelease: false,
+    published_at: '2026-10-30T00:00:00Z',
+    html_url: `https://github.com/Adyen/agent-marketplace/releases/tag/${tag}`,
+    assets: [],
+  })
+}
 
 interface ReleaseFixture {
   harness: Harness
@@ -34,7 +43,12 @@ function waitForReleaseResponse(page: Page) {
 async function expectReleaseResponse(responsePromise: ReturnType<typeof waitForReleaseResponse>, latestVersion: string) {
   const response = await responsePromise
   expect(response.status()).toBe(200)
-  expect(await response.json()).toEqual({ latestVersion })
+  expect(await response.json()).toEqual({
+    latestVersion,
+    releasePageURL: latestVersion ? `https://github.com/Adyen/agent-marketplace/releases/tag/${latestVersion}` : '',
+    assetURL: '',
+    checksumsURL: '',
+  })
 }
 
 async function startReleaseHarness(options: {
@@ -42,18 +56,20 @@ async function startReleaseHarness(options: {
   status?: string
   body?: string
   org?: string
-  userGuiFalse?: boolean
+  userUpdateCheckFalse?: boolean
 }): Promise<ReleaseFixture> {
   const dir = await mkdtemp(join(tmpdir(), 'am-release-'))
   const mark = join(dir, 'release-requests.log')
   const bodyPath = join(dir, 'latest.json')
-  await writeFile(bodyPath, options.body ?? releaseBody)
+  await writeFile(bodyPath, options.body ?? releaseBody())
   const harness = await startHarness('user', {
+    AGENT_MARKETPLACE_NO_UPDATE_CHECK: '',
     AM_LOCALAPI_USER_FIXTURE: 'release',
-    AM_LOCALAPI_RELEASE_VERSION: options.version ?? '1.0.0',
+    AM_LOCALAPI_RELEASE_VERSION: options.version ?? 'v1.0.0',
     AM_LOCALAPI_RELEASE_MARK: mark,
     AM_LOCALAPI_RELEASE_BODY: bodyPath,
     AM_LOCALAPI_RELEASE_STATUS: options.status ?? '200',
+    CI: '',
   })
   const { bootstrap } = harness
   const orgConfig = bootstrap.orgConfig!
@@ -61,9 +77,9 @@ async function startReleaseHarness(options: {
     await writeFile(orgConfig, options.org)
   }
   const userConfig = join(bootstrap.home!, '.agents', 'config.yaml')
-  if (options.userGuiFalse === true) {
+  if (options.userUpdateCheckFalse === true) {
     const current = await readFile(userConfig, 'utf8')
-    await writeFile(userConfig, `${current}gui:\n  version_check: false\n`)
+    await writeFile(userConfig, `${current}update_check:\n  enabled: false\n`)
   }
   return { harness, mark, orgConfig, userConfig }
 }
@@ -91,7 +107,6 @@ function artifactPath(testInfo: TestInfo, name: string): string {
 }
 
 // spec: gui-shell/new-stable-release-is-available
-// spec: config-layering/release-availability-checks-default-to-enabled
 test('built GUI shows a newer stable release notice once per launch', async ({ page }, testInfo) => {
   requireDist()
   const { harness, mark, orgConfig, userConfig } = await startReleaseHarness({})
@@ -121,11 +136,10 @@ test('built GUI shows a newer stable release notice once per launch', async ({ p
 })
 
 // spec: gui-shell/organization-disables-release-checking
-// spec: config-layering/organization-setting-controls-release-availability-checks
-test('organization version_check false sends no release request and shows no notice', async ({ page }, testInfo) => {
+test('organization update_check false sends no release request and shows no notice', async ({ page }, testInfo) => {
   requireDist()
   const { harness, mark } = await startReleaseHarness({
-    org: 'apiVersion: agent-marketplace/v4\ngui:\n  version_check: false\n',
+    org: 'apiVersion: agent-marketplace/v4\nupdate_check:\n  enabled: false\n',
   })
   try {
     const initialRelease = waitForReleaseResponse(page)
@@ -148,19 +162,17 @@ test('organization version_check false sends no release request and shows no not
   }
 })
 
-// spec: config-layering/lower-layer-gui-setting-is-ignored-with-a-warning
-test('user-layer version_check false is ignored with a warning while checks stay enabled', async ({ page }) => {
+// spec: gui-shell/update-checking-is-suppressed
+test('user update_check false sends no release request and shows no notice', async ({ page }) => {
   requireDist()
-  const { harness, mark } = await startReleaseHarness({ userGuiFalse: true })
+  const { harness, mark } = await startReleaseHarness({ userUpdateCheckFalse: true })
   try {
     const initialRelease = waitForReleaseResponse(page)
     await launchBuiltUserApp(page, harness.bootstrap.url, harness.bootstrap.credential)
-    await expectReleaseResponse(initialRelease, 'v2.0.0')
-    await expect(page.getByText('Agent Marketplace v2.0.0 is available.')).toBeVisible({ timeout: 60_000 })
+    await expectReleaseResponse(initialRelease, '')
     await expect(page.getByRole('option').filter({ hasText: 'solo' }).first()).toBeVisible({ timeout: 60_000 })
-    expect(await readMark(mark)).toHaveLength(1)
-    await page.getByRole('button', { name: 'Show diagnostics' }).click()
-    await expect(page.locator('.gui-diagnostics-view')).toContainText('version_check', { timeout: 60_000 })
+    expect(await readMark(mark)).toHaveLength(0)
+    await expect(page.getByText('is available.')).not.toBeVisible()
   } finally {
     await harness.stop()
   }
@@ -169,7 +181,7 @@ test('user-layer version_check false is ignored with a warning while checks stay
 // spec: gui-shell/version-check-fails
 test('built GUI stays silent when the latest release matches or cannot be checked', async ({ page }) => {
   requireDist()
-  const older = JSON.stringify({ tag_name: 'v0.9.0', draft: false, prerelease: false })
+  const older = releaseBody('v0.9.0')
   const first = await startReleaseHarness({ body: older })
   try {
     const release = waitForReleaseResponse(page)

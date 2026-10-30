@@ -451,7 +451,6 @@ func configAsLocal(cfg *Config) *LocalConfig {
 		MCP:             cfg.MCP,
 		Collections:     cfg.Collections,
 		Materialization: cfg.Materialization,
-		GUI:             cfg.GUI,
 	}
 }
 

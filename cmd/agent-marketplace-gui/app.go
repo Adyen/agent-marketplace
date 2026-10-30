@@ -23,10 +23,12 @@ const launchRequestEvent = "desktop:launch-request"
 const closeRequestEvent = "desktop:close-request"
 
 var version = "dev"
+var packageFormat = ""
 
 type Bootstrap struct {
-	Credential string `json:"credential"`
-	Version    string `json:"version"`
+	Credential    string `json:"credential"`
+	PackageFormat string `json:"packageFormat"`
+	Version       string `json:"version"`
 }
 
 type Window interface {
@@ -81,7 +83,7 @@ func NewApp(ctx context.Context, lifecycle session.DependencyLifecycle) (*App, e
 	if runtime != nil {
 		telemetryCtx = telemetry.NewContext(apiCtx, runtime, "gui", startedAt, state.HarnessesString(), state.Managed, rootSpan, false)
 	}
-	api, err := localapi.NewUser(telemetryCtx, homeDir, lifecycle, nil, localapi.WithVersion(version))
+	api, err := localapi.NewUser(telemetryCtx, homeDir, lifecycle, nil, localapi.WithVersion(version), localapi.WithPackageFormat(packageFormat))
 	if err != nil {
 		rootSpan.End()
 		shutdownTelemetry(runtime)
@@ -99,7 +101,7 @@ func NewApp(ctx context.Context, lifecycle session.DependencyLifecycle) (*App, e
 }
 
 func (a *App) Bootstrap() Bootstrap {
-	return Bootstrap{Credential: a.api.Credential(), Version: a.version}
+	return Bootstrap{Credential: a.api.Credential(), PackageFormat: packageFormat, Version: a.version}
 }
 
 func (a *App) handler() http.Handler { return a.api.Handler() }

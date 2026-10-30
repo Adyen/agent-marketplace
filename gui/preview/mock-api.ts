@@ -47,7 +47,7 @@ export function mockLocalApi(): Plugin {
             }
             return
           case '/api/release':
-            sendJSON(res, 200, { latestVersion: '' })
+            sendJSON(res, 200, { latestVersion: '', releasePageURL: '', assetURL: '', checksumsURL: '' })
             return
           case '/api/telemetry':
             res.writeHead(204)

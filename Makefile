@@ -36,6 +36,7 @@ RELEASE_ASSETS := $(addprefix $(RELEASE_BINARY)-,$(PLATFORMS))
 DIST_DIR := dist
 
 .PHONY: build test test-full lint ci-lint lint-full lint-common tidy version release clean e2e marketplace-gate marketplace-proxy-check released-client-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build site-docs-build gui-build secrets-check container container-marketplace container-web container-site container-docs container-check compose-config $(PLATFORMS)
+.PHONY: gui-build-frontend gui-build-binary gui-package-macos gui-package-linux
 LINT_BASE ?= origin/main
 
 define run_golangci_lint
@@ -413,10 +414,92 @@ site-docs-build:
 GUI_DIR := gui
 GUI_BINARY := agent-marketplace-gui
 GUI_CMD := ./cmd/agent-marketplace-gui
-gui-build:
+GUI_DIST_DIR := $(DIST_DIR)/gui
+GUI_TAG_VERSION ?= $(patsubst v%,%,$(VERSION))
+GUI_PACKAGE_FORMAT ?=
+GUI_GOOS ?= $(shell $(GO) env GOOS)
+GUI_GOARCH ?= $(shell $(GO) env GOARCH)
+GUI_OUTPUT ?= $(GUI_BINARY)
+GUI_BUILD_TAGS ?= desktop,production
+GUI_BUILD_LDFLAGS = -X main.version=$(VERSION) -X main.packageFormat=$(GUI_PACKAGE_FORMAT)
+GUI_BUILD_FLAGS = -tags $(GUI_BUILD_TAGS) -ldflags "$(GUI_BUILD_LDFLAGS)"
+GUI_BUILD_COMMAND = CGO_ENABLED=1 GOOS=$(GUI_GOOS) GOARCH=$(GUI_GOARCH) $(GO) build $(GUI_BUILD_FLAGS) -o "$(GUI_OUTPUT)" $(GUI_CMD)
+GUI_MACOS_DIR := $(GUI_DIST_DIR)/macos
+GUI_MACOS_APP := $(GUI_MACOS_DIR)/Agent Marketplace.app
+GUI_MACOS_STAGE := $(GUI_MACOS_DIR)/image
+GUI_MACOS_BUILD_DIR := $(GUI_DIST_DIR)/build
+GUI_MACOS_ARM64 := $(GUI_MACOS_BUILD_DIR)/darwin-arm64/$(GUI_BINARY)
+GUI_MACOS_AMD64 := $(GUI_MACOS_BUILD_DIR)/darwin-amd64/$(GUI_BINARY)
+GUI_MACOS_ZIP := $(GUI_DIST_DIR)/agent-marketplace-gui-$(VERSION)-macos-universal.zip
+GUI_MACOS_DMG := $(GUI_DIST_DIR)/agent-marketplace-gui-$(VERSION)-macos-universal.dmg
+GUI_LINUX_ARCH := $(shell $(GO) env GOARCH)
+GUI_LINUX_BUILD_DIR := $(GUI_DIST_DIR)/build/linux-$(GUI_LINUX_ARCH)
+GUI_LINUX_RPM_BINARY := $(GUI_LINUX_BUILD_DIR)/rpm/$(GUI_BINARY)
+GUI_LINUX_DEB_BINARY := $(GUI_LINUX_BUILD_DIR)/deb/$(GUI_BINARY)
+GUI_LINUX_RPM := $(GUI_DIST_DIR)/agent-marketplace-gui-$(VERSION)-linux-$(GUI_LINUX_ARCH).rpm
+GUI_LINUX_DEB := $(GUI_DIST_DIR)/agent-marketplace-gui-$(VERSION)-linux-$(GUI_LINUX_ARCH).deb
+NFPM_VERSION := v2.48.0
+
+gui-build-frontend:
 	@command -v pnpm >/dev/null || { echo "ERROR: pnpm is required for GUI builds" >&2; exit 1; }
 	cd $(GUI_DIR) && pnpm install --frozen-lockfile --ignore-scripts && pnpm run build
-	CGO_ENABLED=1 $(GO) build -tags desktop,production $(LDFLAGS) -o $(GUI_BINARY) $(GUI_CMD)
+
+gui-build-binary:
+	$(GUI_BUILD_COMMAND)
+
+gui-build: gui-build-frontend
+	$(MAKE) --no-print-directory gui-build-binary
+
+$(GUI_MACOS_ARM64): gui-build-frontend
+	@mkdir -p "$(dir $@)"
+	$(MAKE) --no-print-directory gui-build-binary GUI_GOOS=darwin GUI_GOARCH=arm64 GUI_PACKAGE_FORMAT=macos-app GUI_OUTPUT="$@"
+
+$(GUI_MACOS_AMD64): gui-build-frontend
+	@mkdir -p "$(dir $@)"
+	$(MAKE) --no-print-directory gui-build-binary GUI_GOOS=darwin GUI_GOARCH=amd64 GUI_PACKAGE_FORMAT=macos-app GUI_OUTPUT="$@"
+
+gui-package-macos: $(GUI_MACOS_ARM64) $(GUI_MACOS_AMD64)
+	@set -eu; \
+	app="$(GUI_MACOS_APP)"; \
+	rm -rf "$$app" "$(GUI_MACOS_STAGE)" "$(GUI_MACOS_ZIP)" "$(GUI_MACOS_DMG)"; \
+	mkdir -p "$$app/Contents/MacOS" "$$app/Contents/Resources" "$(GUI_MACOS_STAGE)"; \
+	lipo -create "$(GUI_MACOS_ARM64)" "$(GUI_MACOS_AMD64)" -output "$$app/Contents/MacOS/$(GUI_BINARY)"; \
+	cp -f packaging/gui/macos/AppIcon.icns "$$app/Contents/Resources/AppIcon.icns"; \
+	sed 's/@GUI_VERSION@/$(GUI_TAG_VERSION)/g' packaging/gui/macos/Info.plist > "$$app/Contents/Info.plist"; \
+	plutil -lint packaging/gui/macos/Info.plist packaging/gui/macos/entitlements.plist "$$app/Contents/Info.plist"; \
+	codesign --force --options runtime --entitlements packaging/gui/macos/entitlements.plist -s - "$$app"; \
+	codesign --verify --strict --deep "$$app"; \
+	codesign -dv --verbose=4 "$$app" 2>&1 | tee "$(GUI_MACOS_DIR)/codesign.txt"; \
+	grep -q 'Signature=adhoc' "$(GUI_MACOS_DIR)/codesign.txt"; \
+	grep -q 'flags=.*runtime' "$(GUI_MACOS_DIR)/codesign.txt"; \
+	archs="$$(lipo -archs "$$app/Contents/MacOS/$(GUI_BINARY)")"; \
+	echo "$$archs" | grep -qw arm64; \
+	echo "$$archs" | grep -qw x86_64; \
+	ditto -c -k --keepParent "$$app" "$(GUI_MACOS_ZIP)"; \
+	ditto "$$app" "$(GUI_MACOS_STAGE)/Agent Marketplace.app"; \
+	ln -s /Applications "$(GUI_MACOS_STAGE)/Applications"; \
+	hdiutil create -volname "Agent Marketplace" -srcfolder "$(GUI_MACOS_STAGE)" -ov -format UDZO "$(GUI_MACOS_DMG)"; \
+	check_dir="$$(mktemp -d "$(GUI_MACOS_DIR)/verify.XXXXXX")"; \
+	mount_dir="$$check_dir/mount"; \
+	zip_dir="$$check_dir/zip"; \
+	mkdir -p "$$mount_dir" "$$zip_dir"; \
+	trap 'hdiutil detach "$$mount_dir" >/dev/null 2>&1 || true; rm -rf "$$check_dir"' EXIT; \
+	hdiutil attach "$(GUI_MACOS_DMG)" -readonly -nobrowse -mountpoint "$$mount_dir" >/dev/null; \
+	test -L "$$mount_dir/Applications"; \
+	test "$$(readlink "$$mount_dir/Applications")" = /Applications; \
+	ditto -x -k "$(GUI_MACOS_ZIP)" "$$zip_dir"; \
+	diff -qr "$$mount_dir/Agent Marketplace.app" "$$zip_dir/Agent Marketplace.app"; \
+	plutil -extract CFBundleIdentifier raw -o - "$$app/Contents/Info.plist" | grep -Fx io.agent-marketplace.gui; \
+	plutil -extract CFBundleShortVersionString raw -o - "$$app/Contents/Info.plist" | grep -Fx "$(GUI_TAG_VERSION)"; \
+	echo "Created $(GUI_MACOS_DMG) and $(GUI_MACOS_ZIP)"
+
+gui-package-linux: gui-build-frontend
+	@test "$$($(GO) env GOOS)" = linux || { echo "ERROR: gui-package-linux requires a native Linux host" >&2; exit 1; }
+	@mkdir -p "$(dir $(GUI_LINUX_RPM_BINARY))" "$(dir $(GUI_LINUX_DEB_BINARY))" "$(GUI_DIST_DIR)"
+	$(MAKE) --no-print-directory gui-build-binary GUI_GOOS=linux GUI_GOARCH=$(GUI_LINUX_ARCH) GUI_BUILD_TAGS=desktop,production,webkit2_41 GUI_PACKAGE_FORMAT=rpm GUI_OUTPUT="$(GUI_LINUX_RPM_BINARY)"
+	GUI_ARCH="$(GUI_LINUX_ARCH)" GUI_VERSION="$(GUI_TAG_VERSION)" GUI_BINARY="$(abspath $(GUI_LINUX_RPM_BINARY))" $(GO) run github.com/goreleaser/nfpm/v2/cmd/nfpm@$(NFPM_VERSION) package --config packaging/gui/linux/nfpm.yaml --packager rpm --target "$(GUI_LINUX_RPM)"
+	$(MAKE) --no-print-directory gui-build-binary GUI_GOOS=linux GUI_GOARCH=$(GUI_LINUX_ARCH) GUI_BUILD_TAGS=desktop,production,webkit2_41 GUI_PACKAGE_FORMAT=deb GUI_OUTPUT="$(GUI_LINUX_DEB_BINARY)"
+	GUI_ARCH="$(GUI_LINUX_ARCH)" GUI_VERSION="$(GUI_TAG_VERSION)" GUI_BINARY="$(abspath $(GUI_LINUX_DEB_BINARY))" $(GO) run github.com/goreleaser/nfpm/v2/cmd/nfpm@$(NFPM_VERSION) package --config packaging/gui/linux/nfpm.yaml --packager deb --target "$(GUI_LINUX_DEB)"
 
 # E2E test suite.
 # Runs inside a Docker container for local isolation (doesn't touch host env).

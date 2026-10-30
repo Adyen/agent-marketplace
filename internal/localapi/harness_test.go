@@ -406,7 +406,7 @@ func TestLocalAPIUserHarness(t *testing.T) {
 	if mode := os.Getenv("AM_LOCALAPI_TELEMETRY_MODE"); mode != "" {
 		if work40Fixture == nil {
 			orgPath := filepath.Join(t.TempDir(), "org.yaml")
-			writeFile(t, orgPath, "apiVersion: agent-marketplace/v4\ngui:\n  version_check: false\n")
+			writeFile(t, orgPath, "apiVersion: agent-marketplace/v4\nupdate_check:\n  enabled: false\n")
 			config.SetTestOrganizationConfigPath(t, orgPath)
 			bootstrap["orgConfig"] = orgPath
 		}

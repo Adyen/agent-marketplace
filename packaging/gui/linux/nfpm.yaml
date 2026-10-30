@@ -1,0 +1,58 @@
+name: agent-marketplace-gui
+arch: ${GUI_ARCH}
+platform: linux
+version: ${GUI_VERSION}
+version_schema: semver
+maintainer: Agent Marketplace <support@agent-marketplace.io>
+homepage: https://agent-marketplace.io
+license: Apache-2.0
+description: Desktop application for Agent Marketplace
+contents:
+  - src: ${GUI_BINARY}
+    dst: /usr/bin/agent-marketplace-gui
+    file_info:
+      mode: 0755
+  - src: packaging/gui/linux/agent-marketplace-gui.desktop
+    dst: /usr/share/applications/agent-marketplace-gui.desktop
+    file_info:
+      mode: 0644
+  - src: packaging/gui/linux/icons/hicolor/16x16/apps/agent-marketplace-gui.png
+    dst: /usr/share/icons/hicolor/16x16/apps/agent-marketplace-gui.png
+    file_info:
+      mode: 0644
+  - src: packaging/gui/linux/icons/hicolor/24x24/apps/agent-marketplace-gui.png
+    dst: /usr/share/icons/hicolor/24x24/apps/agent-marketplace-gui.png
+    file_info:
+      mode: 0644
+  - src: packaging/gui/linux/icons/hicolor/32x32/apps/agent-marketplace-gui.png
+    dst: /usr/share/icons/hicolor/32x32/apps/agent-marketplace-gui.png
+    file_info:
+      mode: 0644
+  - src: packaging/gui/linux/icons/hicolor/48x48/apps/agent-marketplace-gui.png
+    dst: /usr/share/icons/hicolor/48x48/apps/agent-marketplace-gui.png
+    file_info:
+      mode: 0644
+  - src: packaging/gui/linux/icons/hicolor/64x64/apps/agent-marketplace-gui.png
+    dst: /usr/share/icons/hicolor/64x64/apps/agent-marketplace-gui.png
+    file_info:
+      mode: 0644
+  - src: packaging/gui/linux/icons/hicolor/128x128/apps/agent-marketplace-gui.png
+    dst: /usr/share/icons/hicolor/128x128/apps/agent-marketplace-gui.png
+    file_info:
+      mode: 0644
+  - src: packaging/gui/linux/icons/hicolor/256x256/apps/agent-marketplace-gui.png
+    dst: /usr/share/icons/hicolor/256x256/apps/agent-marketplace-gui.png
+    file_info:
+      mode: 0644
+  - src: packaging/gui/linux/icons/hicolor/512x512/apps/agent-marketplace-gui.png
+    dst: /usr/share/icons/hicolor/512x512/apps/agent-marketplace-gui.png
+    file_info:
+      mode: 0644
+depends:
+  - libgtk-3-0
+  - libwebkit2gtk-4.1-0
+overrides:
+  rpm:
+    depends:
+      - gtk3
+      - webkit2gtk4.1

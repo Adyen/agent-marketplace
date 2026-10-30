@@ -168,9 +168,10 @@ type API struct {
 	subs                 map[*subscriber]struct{}
 
 	version       string
+	packageFormat string
 	releaseClient *http.Client
 	releaseOnce   sync.Once
-	releaseNotice string
+	releaseNotice releaseNotice
 
 	wg sync.WaitGroup
 }

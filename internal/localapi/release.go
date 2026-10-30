@@ -6,8 +6,13 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
+	"os"
+	"runtime"
+	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/updatecheck"
 	"golang.org/x/mod/semver"
 )
 
@@ -17,6 +22,10 @@ type UserOption func(*API)
 
 func WithVersion(version string) UserOption {
 	return func(a *API) { a.version = version }
+}
+
+func WithPackageFormat(format string) UserOption {
+	return func(a *API) { a.packageFormat = format }
 }
 
 func normalizeReleaseVersion(version string) string {
@@ -32,10 +41,41 @@ func normalizeReleaseVersion(version string) string {
 	return semver.Canonical(version)
 }
 
-func (a *API) checkLatestRelease(r *http.Request) string {
-	running := normalizeReleaseVersion(a.version)
-	if running == "" {
+type releaseNotice struct {
+	LatestVersion  string `json:"latestVersion"`
+	ReleasePageURL string `json:"releasePageURL"`
+	AssetURL       string `json:"assetURL"`
+	ChecksumsURL   string `json:"checksumsURL"`
+}
+
+type releaseAsset struct {
+	Name               string `json:"name"`
+	BrowserDownloadURL string `json:"browser_download_url"`
+}
+
+func guiReleaseAssetName(packageFormat, arch, tag string) string {
+	switch packageFormat {
+	case "macos-app":
+		return "agent-marketplace-gui-" + tag + "-macos-universal.zip"
+	case "rpm", "deb":
+		if arch != "amd64" && arch != "arm64" {
+			return ""
+		}
+		return "agent-marketplace-gui-" + tag + "-linux-" + arch + "." + packageFormat
+	default:
 		return ""
+	}
+}
+
+func isGitHubReleaseURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	return err == nil && parsed.Scheme == "https" && parsed.Host == "github.com" && parsed.User == nil
+}
+
+func (a *API) checkLatestRelease(r *http.Request) releaseNotice {
+	running := a.version
+	if !updatecheck.CanCheck(running) {
+		return releaseNotice{}
 	}
 	ctx, cancel := context.WithCancel(a.ctx)
 	defer cancel()
@@ -44,41 +84,62 @@ func (a *API) checkLatestRelease(r *http.Request) string {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, releaseURL, nil)
 	if err != nil {
-		return ""
+		return releaseNotice{}
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "agent-marketplace-gui/"+a.version)
 	resp, err := a.releaseClient.Do(req)
 	if err != nil {
-		return ""
+		return releaseNotice{}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return ""
+		return releaseNotice{}
 	}
 	var latest struct {
-		TagName    string `json:"tag_name"`
-		Draft      *bool  `json:"draft"`
-		Prerelease *bool  `json:"prerelease"`
+		TagName     string         `json:"tag_name"`
+		Draft       *bool          `json:"draft"`
+		Prerelease  *bool          `json:"prerelease"`
+		PublishedAt time.Time      `json:"published_at"`
+		HTMLURL     string         `json:"html_url"`
+		Assets      []releaseAsset `json:"assets"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(nil, resp.Body, 1<<20))
 	if err := decoder.Decode(&latest); err != nil {
-		return ""
+		return releaseNotice{}
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return ""
+		return releaseNotice{}
 	}
-	if latest.Draft == nil || latest.Prerelease == nil || *latest.Draft || *latest.Prerelease {
-		return ""
+	if latest.Draft == nil || latest.Prerelease == nil || *latest.Draft || *latest.Prerelease || latest.PublishedAt.IsZero() || !isGitHubReleaseURL(latest.HTMLURL) {
+		return releaseNotice{}
 	}
 	tag := normalizeReleaseVersion(latest.TagName)
 	if tag == "" || semver.Prerelease(tag) != "" {
-		return ""
+		return releaseNotice{}
 	}
-	if semver.Compare(tag, running) <= 0 {
-		return ""
+	if _, ok := updatecheck.Notice(running, updatecheck.Release{Tag: tag, PublishedAt: latest.PublishedAt, URL: latest.HTMLURL}); !ok {
+		return releaseNotice{}
 	}
-	return tag
+	notice := releaseNotice{LatestVersion: tag, ReleasePageURL: latest.HTMLURL}
+	assetName := guiReleaseAssetName(a.packageFormat, runtime.GOARCH, latest.TagName)
+	if assetName == "" {
+		return notice
+	}
+	var assetURL, checksumsURL string
+	for _, asset := range latest.Assets {
+		switch asset.Name {
+		case assetName:
+			assetURL = asset.BrowserDownloadURL
+		case "SHA256SUMS":
+			checksumsURL = asset.BrowserDownloadURL
+		}
+	}
+	if isGitHubReleaseURL(assetURL) && isGitHubReleaseURL(checksumsURL) {
+		notice.AssetURL = assetURL
+		notice.ChecksumsURL = checksumsURL
+	}
+	return notice
 }
 
 func (a *API) handleRelease(w http.ResponseWriter, r *http.Request) {
@@ -90,9 +151,17 @@ func (a *API) handleRelease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, codeNotSupported)
 		return
 	}
-	settings, err := config.LoadOrganizationSettings()
-	if err != nil || !config.GUIReleaseCheckEnabled(settings) {
-		writeReleaseNotice(w, "")
+	if !updatecheck.Enabled(os.Getenv) {
+		writeReleaseNotice(w, releaseNotice{})
+		return
+	}
+	enabled, err := config.UpdateCheckEnabled()
+	if err != nil || !enabled {
+		writeReleaseNotice(w, releaseNotice{})
+		return
+	}
+	if !updatecheck.CanCheck(a.version) {
+		writeReleaseNotice(w, releaseNotice{})
 		return
 	}
 	a.releaseOnce.Do(func() {
@@ -101,7 +170,7 @@ func (a *API) handleRelease(w http.ResponseWriter, r *http.Request) {
 	writeReleaseNotice(w, a.releaseNotice)
 }
 
-func writeReleaseNotice(w http.ResponseWriter, latestVersion string) {
+func writeReleaseNotice(w http.ResponseWriter, notice releaseNotice) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"latestVersion": latestVersion})
+	_ = json.NewEncoder(w).Encode(notice)
 }

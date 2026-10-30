@@ -10,12 +10,17 @@ import {
   type InspectionPayload,
   type InstalledSkillFilesPayload,
   type OperationRef,
+  type ReleaseNotice,
   type SessionEvent,
 } from './api/client'
 import { configuration, snapshot } from './fixtures'
 import { WorkspaceController } from './controller'
 
 export { configuration, event, row, snapshot } from './fixtures'
+
+export function releaseNotice(latestVersion: string): ReleaseNotice {
+  return { latestVersion, releasePageURL: '', assetURL: '', checksumsURL: '' }
+}
 
 export function fakeClient(options: { configuration?: Partial<Configuration> } = {}) {
   const queue: SessionEvent[] = []
@@ -45,7 +50,7 @@ export function fakeClient(options: { configuration?: Partial<Configuration> } =
     action: vi.fn(async () => ({ id: 7, kind: 'sync' }) as OperationRef),
     configuration: vi.fn(async () => configuration(options.configuration)),
     configure: vi.fn(async () => ({ id: 8, kind: 'targets' }) as OperationRef),
-    release: vi.fn(async () => ({ latestVersion: '' })),
+    release: vi.fn(async () => releaseNotice('')),
     telemetry: vi.fn(async () => undefined),
     discovery: vi.fn(async () => undefined),
     inspection: vi.fn(async (): Promise<InspectionPayload> => {
