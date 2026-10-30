@@ -49,3 +49,28 @@ func BenchmarkResolveCollectionDiamond(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkResolveCollectionChain resolves a deep linear include chain within
+// the work limit; allocations show the cost of tracking the include ancestry.
+func BenchmarkResolveCollectionChain(b *testing.B) {
+	const depth = 4000
+	entries := []catalog.Entry{{Kind: ir.KindSkill, Name: "leaf-skill"}}
+	for i := 0; i < depth; i++ {
+		name := fmt.Sprintf("c%04d", i)
+		var members []ir.CollectionMember
+		var includes []string
+		if i == depth-1 {
+			members = []ir.CollectionMember{{Name: "leaf-skill", Kind: ir.KindSkill}}
+		} else {
+			includes = []string{fmt.Sprintf("c%04d", i+1)}
+		}
+		entries = append(entries, catalog.Entry{Kind: ir.KindCollection, Name: name, Resource: ir.NewCollection(name, "1.0.0", name, members, includes, nil, ir.SourceRef{})})
+	}
+	cfg := &config.Config{Registries: []config.RegistryEntry{{URL: collectionsHost, Ref: "main", Collections: ks("c0000")}}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{cfg.Registries[0].CatalogKey: entries}
+	b.ReportAllocs()
+	for b.Loop() {
+		_, _ = Resolve(cfg, catalogs, nil)
+	}
+}

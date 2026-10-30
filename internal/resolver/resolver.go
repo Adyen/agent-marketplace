@@ -920,6 +920,8 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 
 	// Phases 2-4 select the resolved artifacts. requiredWinners names required
 	// machine-scope artifacts that phase 2 must know but cannot see.
+	// One collection expansion budget covers every selection pass of this resolve.
+	budget := &collectionExpansionBudget{}
 	selectArtifacts := func(requiredWinners map[resourceSelection]skillOccurrence) ([]ResolvedArtifact, []error) {
 		// Phase 2: Pick winners (deduplicate, detect collisions).
 		winners, errs := pickWinnersReporting(occurrencesByName, true, requiredWinners)
@@ -950,7 +952,7 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 		if ro.selectedCollections != nil {
 			*ro.selectedCollections = collectionRoots(resolved)
 		}
-		return expandCollections(resolved, errs, cfg, catalogs, ro.resources, malformedIdx, localExcludes, cfg.Collections.ExcludeAll, excludeAllKinds, targets)
+		return expandCollections(resolved, errs, cfg, catalogs, ro.resources, malformedIdx, localExcludes, cfg.Collections.ExcludeAll, excludeAllKinds, targets, budget)
 	}
 
 	resolved, selectErrs := selectArtifacts(nil)
@@ -1285,7 +1287,7 @@ func resolvedCollection(artifact ResolvedArtifact) (*ir.Collection, bool) {
 // Members, and produce one ResolvedArtifact per member with a Via annotation.
 // Members that reference a different registry than the collection's source
 // are looked up in the catalog for that registry.
-func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, localExcludes resourceSelections, collectionExcludeAll bool, localExcludeAllKinds map[ir.ResourceKind]bool, targets scopeTargets) ([]ResolvedArtifact, []error) {
+func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, localExcludes resourceSelections, collectionExcludeAll bool, localExcludeAllKinds map[ir.ResourceKind]bool, targets scopeTargets, budget *collectionExpansionBudget) ([]ResolvedArtifact, []error) {
 	var out []ResolvedArtifact
 	var expandErrs []error
 	expanded := false
@@ -1300,7 +1302,6 @@ func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Co
 		required:  make(map[scopedSelection]bool),
 		displaced: make(map[scopedSelection]skillOccurrence),
 	}
-	budget := &collectionExpansionBudget{}
 	for _, artifact := range resolved {
 		if artifact.Kind != ir.KindCollection {
 			key := newScopedSelection(artifact.Kind, artifact.Name, artifact.Source)
@@ -1628,18 +1629,6 @@ func (b *collectionExpansionBudget) consume(units int) bool {
 	}
 	b.used += units
 	return true
-}
-
-// cloneVisitedWith extends a collection's include ancestry for one branch.
-// Keeping a separate map per branch allows a shared DAG node to expand once
-// under each sibling while still detecting cycles along either path.
-func cloneVisitedWith(visited map[string]struct{}, name string) map[string]struct{} {
-	branch := make(map[string]struct{}, len(visited)+1)
-	for seen := range visited {
-		branch[seen] = struct{}{}
-	}
-	branch[name] = struct{}{}
-	return branch
 }
 
 // expandMembersRecursive walks the members of a collection and appends resolved
@@ -1984,7 +1973,6 @@ func expandMembersRecursive(
 			*errs = append(*errs, fmt.Errorf("collection %q: cycle detected including %q", col.Label(), name))
 			continue
 		}
-		branchVisited := cloneVisitedWith(visited, name)
 
 		includedEntry, found := chooseNestedCollectionEligible(allCollectionsByName[name], artifact, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, cfg.Registries)
 		if !found {
@@ -2023,7 +2011,12 @@ func expandMembersRecursive(
 				includedArtifact.Harnesses = ownerHarnesses
 			}
 		}
-		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, includedOwner, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, branchVisited, out, errs, targetSet, budget)
+		// Push this include for its own branch and pop it afterwards, so a
+		// shared DAG node still expands under each sibling while cycle
+		// detection stays path-local, without copying the ancestry.
+		visited[name] = struct{}{}
+		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, includedOwner, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, visited, out, errs, targetSet, budget)
+		delete(visited, name)
 	}
 }
 

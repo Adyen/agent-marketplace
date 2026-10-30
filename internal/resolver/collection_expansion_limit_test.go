@@ -4,6 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/catalog"
+	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 // spec: resource-selection/collection-expansion-stays-within-the-work-limit
@@ -31,4 +35,30 @@ func TestResolveRefusesCollectionExpansionAboveWorkLimit(t *testing.T) {
 			}
 		})
 	}
+}
+
+// spec: resource-selection/collection-expansion-stays-within-the-work-limit
+func TestResolveSharesCollectionExpansionLimitAcrossReselection(t *testing.T) {
+	// A depth-10 diamond fits one selection pass. A repository selection of
+	// the required collection's leaf forces a second pass, and both passes
+	// together exceed the per-resolve limit.
+	diamondCfg, diamondCatalogs := collectionDiamond(10)
+	required := diamondCfg.Registries[0]
+	required.Source, required.Required = config.Organization, true
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		required,
+		{URL: "git@example.com:repository.git", Ref: "main", Source: config.RepoCommitted, Skills: ks("leaf-skill")},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: diamondCatalogs[diamondCfg.Registries[0].CatalogKey],
+		cfg.Registries[1].CatalogKey: {{Kind: ir.KindSkill, Name: "leaf-skill"}},
+	}
+	_, errs := Resolve(cfg, catalogs, nil)
+	for _, err := range errs {
+		if errors.Is(err, ErrCollectionExpansionLimit) {
+			return
+		}
+	}
+	t.Fatalf("errs = %v, want the expansion limit shared across both selection passes", errs)
 }
