@@ -161,7 +161,6 @@ type V4Config struct {
 	UpdateCheck         *UpdateCheckConfig
 	Telemetry           *telemetryconfig.TelemetryConfig
 	Materialization     *MaterializationConfig
-	GUI                 *GUIConfig
 
 	telemetryFields v4TelemetryFields
 }
@@ -358,7 +357,7 @@ var v4LegacyKeys = map[string]struct{}{
 var v4RootKeys = map[string]struct{}{
 	"apiVersion": {}, "include": {}, "sources": {}, "resources": {},
 	"harnesses": {}, "allowed_registries": {}, "allowed_marketplaces": {},
-	"backup": {}, "logging": {}, "update_check": {}, "telemetry": {}, "materialization": {}, "gui": {},
+	"backup": {}, "logging": {}, "update_check": {}, "telemetry": {}, "materialization": {},
 }
 
 var v4SourceKeys = map[string]struct{}{
@@ -376,7 +375,7 @@ func ParseV4Config(data []byte, declaringPath string, root bool) (*V4Config, err
 	if err != nil {
 		return nil, err
 	}
-	out := &V4Config{APIVersion: APIVersionV4, Sources: doc.sources, Groups: doc.groups, Files: []string{declaringPath}, Harnesses: cloneV4StringList(doc.harnesses), HasHarnesses: doc.hasHarnesses, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, UpdateCheck: doc.updateCheck, Telemetry: doc.telemetry, Materialization: doc.materialization, GUI: doc.gui, telemetryFields: doc.telemetryFields}
+	out := &V4Config{APIVersion: APIVersionV4, Sources: doc.sources, Groups: doc.groups, Files: []string{declaringPath}, Harnesses: cloneV4StringList(doc.harnesses), HasHarnesses: doc.hasHarnesses, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, UpdateCheck: doc.updateCheck, Telemetry: doc.telemetry, Materialization: doc.materialization, telemetryFields: doc.telemetryFields}
 	if err := normalizeV4Tree(out); err != nil {
 		attachV4ValidationFile(err, declaringPath)
 		return nil, err
@@ -490,7 +489,6 @@ type v4Document struct {
 	updateCheck         *UpdateCheckConfig
 	telemetry           *telemetryconfig.TelemetryConfig
 	materialization     *MaterializationConfig
-	gui                 *GUIConfig
 	telemetryFields     v4TelemetryFields
 }
 
@@ -685,7 +683,7 @@ func validateV4AuxiliaryFields(root *yaml.Node) error {
 			}
 		}
 	}
-	for _, key := range []string{"backup", "logging", "update_check", "telemetry", "materialization", "gui"} {
+	for _, key := range []string{"backup", "logging", "update_check", "telemetry", "materialization"} {
 		n := mappingValue(root, key)
 		if n == nil || (n.Kind == yaml.ScalarNode && n.Tag == "!!null") {
 			continue
@@ -700,7 +698,6 @@ func validateV4AuxiliaryFields(root *yaml.Node) error {
 		"update_check":    {"enabled": true},
 		"telemetry":       {"level": true, "endpoint": true, "community_reporting": true, "retention_policy": true, "ca_file": true, "allow_insecure": true, "headers": true},
 		"materialization": {"mode": true, "targets": true},
-		"gui":             {"version_check": true},
 	}
 	for key, allowed := range auxiliaryKeys {
 		n := mappingValue(root, key)
@@ -717,12 +714,6 @@ func validateV4AuxiliaryFields(root *yaml.Node) error {
 		mode := mappingValue(n, "mode")
 		if mode != nil && (mode.Kind != yaml.ScalarNode || mode.Tag != "!!str" || (mode.Value != "symlink" && mode.Value != "file")) {
 			return v4err("v4.type", "materialization.mode", mode.Line, "must be symlink or file")
-		}
-	}
-	if n := mappingValue(root, "gui"); n != nil && n.Kind == yaml.MappingNode {
-		versionCheck := mappingValue(n, "version_check")
-		if versionCheck != nil && (versionCheck.Kind != yaml.ScalarNode || (versionCheck.Tag != "!!bool" && versionCheck.Tag != "!!null")) {
-			return v4err("v4.type", "gui.version_check", versionCheck.Line, "must be a boolean")
 		}
 	}
 	return nil
@@ -814,9 +805,6 @@ func decodeV4AuxiliaryFields(root *yaml.Node, doc *v4Document) error {
 		}
 	}
 	if err := decode("materialization", &doc.materialization); err != nil {
-		return err
-	}
-	if err := decode("gui", &doc.gui); err != nil {
 		return err
 	}
 	for _, err := range validateBackup(doc.backup) {
@@ -1637,7 +1625,6 @@ func mergeV4Config(dst, src *V4Config) error {
 	dst.Telemetry = mergeV4Telemetry(dst.Telemetry, src.Telemetry, src.telemetryFields)
 	dst.telemetryFields = mergeV4TelemetryFields(dst.telemetryFields, src.telemetryFields)
 	dst.Materialization = mergeV4Materialization(dst.Materialization, src.Materialization)
-	dst.GUI = mergeGUIConfig(dst.GUI, src.GUI)
 	for name, s := range src.Sources {
 		if old, ok := dst.Sources[name]; ok {
 			if old.Kind != s.Kind || old.CanonicalURL != s.CanonicalURL || old.Ref != s.Ref || old.Path != s.Path || old.SourceHarness != s.SourceHarness {
@@ -1832,7 +1819,7 @@ func cloneV4TelemetryHeaders(headers map[string]telemetryconfig.HeaderSource) ma
 }
 
 func mergeV4Document(dst *V4Config, doc *v4Document) error {
-	src := &V4Config{Sources: doc.sources, Groups: doc.groups, Files: []string{doc.path}, Harnesses: doc.harnesses, HasHarnesses: doc.hasHarnesses, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, UpdateCheck: doc.updateCheck, Telemetry: doc.telemetry, Materialization: doc.materialization, GUI: doc.gui, telemetryFields: doc.telemetryFields}
+	src := &V4Config{Sources: doc.sources, Groups: doc.groups, Files: []string{doc.path}, Harnesses: doc.harnesses, HasHarnesses: doc.hasHarnesses, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, UpdateCheck: doc.updateCheck, Telemetry: doc.telemetry, Materialization: doc.materialization, telemetryFields: doc.telemetryFields}
 	return mergeV4Config(dst, src)
 }
 func mergeV4Group(dst *V4Config, name string, src V4ResourceGroup) {

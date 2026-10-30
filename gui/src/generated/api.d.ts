@@ -207,13 +207,17 @@ export interface paths {
         /**
          * Report the newer stable public release, if any
          * @description Available only in user-scope mode; the request carries no body and
-         *     no query. When Consumer organization configuration enables release
-         *     checking (the default), the session compares the running GUI
-         *     version with the latest stable public GitHub release at most once
-         *     per launch and returns the newer stable version. A disabled
-         *     policy, a policy read failure, any check failure, or a non-newer
-         *     result silently returns an empty latestVersion without an error;
-         *     the check never downloads or installs a release.
+         *     no query. When release checking is enabled by the effective
+         *     update_check.enabled setting (the default) and neither
+         *     AGENT_MARKETPLACE_NO_UPDATE_CHECK nor CI is set, the session compares
+         *     a supported release or Go pseudo-version build with the latest stable
+         *     public GitHub release at most once per launch. A newer result includes
+         *     its release page URL and, when this build's package asset and
+         *     SHA256SUMS are published, their download URLs. An unpackaged build or
+         *     one without a matching asset receives only the release page URL.
+         *     Suppression, a policy read failure, any check failure, an unsupported
+         *     build kind, or a non-newer result silently returns empty fields without
+         *     an error; the check never downloads or installs a release.
          *
          */
         post: operations["readReleaseNotice"];
@@ -637,8 +641,14 @@ export interface components {
             type: "progress";
         };
         ReleaseNotice: {
+            /** @description Matching GUI package download URL when this build's package format and architecture are published with SHA256SUMS; otherwise empty. */
+            assetURL: string;
+            /** @description SHA256SUMS download URL accompanying assetURL; otherwise empty. */
+            checksumsURL: string;
             /** @description Newer stable public release version, or empty when no notice applies. */
             latestVersion: string;
+            /** @description Newer release's public GitHub release page, or empty when no notice applies. */
+            releasePageURL: string;
         };
         RemoveSourceActionRequest: {
             /**
@@ -1149,7 +1159,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Newer stable public release version, or empty */
+            /** @description Newer stable public release version and download links, or empty fields when no notice applies */
             200: {
                 headers: {
                     [name: string]: unknown;

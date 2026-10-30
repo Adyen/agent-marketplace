@@ -83,7 +83,7 @@ func NewApp(ctx context.Context, lifecycle session.DependencyLifecycle) (*App, e
 	if runtime != nil {
 		telemetryCtx = telemetry.NewContext(apiCtx, runtime, "gui", startedAt, state.HarnessesString(), state.Managed, rootSpan, false)
 	}
-	api, err := localapi.NewUser(telemetryCtx, homeDir, lifecycle, nil, localapi.WithVersion(version))
+	api, err := localapi.NewUser(telemetryCtx, homeDir, lifecycle, nil, localapi.WithVersion(version), localapi.WithPackageFormat(packageFormat))
 	if err != nil {
 		rootSpan.End()
 		shutdownTelemetry(runtime)

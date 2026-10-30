@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest'
-import { event, fakeClient, mountWorkspace, row, rowNames, snapshot, tick } from './test-support'
+import { event, fakeClient, mountWorkspace, releaseNotice, row, rowNames, snapshot, tick } from './test-support'
+import type { ReleaseNotice } from './api/client'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -16,7 +17,7 @@ function deferred<T>() {
 describe('release notice', () => {
   it('shows the availability notice only for a newer reported release', async () => {
     const { client } = fakeClient()
-    ;(client.release as ReturnType<typeof vi.fn>).mockResolvedValue({ latestVersion: 'v9.9.9' })
+    ;(client.release as ReturnType<typeof vi.fn>).mockResolvedValue(releaseNotice('v9.9.9'))
     const { controller, wrapper } = mountWorkspace(client)
     await tick()
     expect(wrapper.text()).toContain('Agent Marketplace v9.9.9 is available.')
@@ -26,7 +27,7 @@ describe('release notice', () => {
 
   it('omits the notice for an empty latest version without error', async () => {
     const { client } = fakeClient()
-    ;(client.release as ReturnType<typeof vi.fn>).mockResolvedValue({ latestVersion: '' })
+    ;(client.release as ReturnType<typeof vi.fn>).mockResolvedValue(releaseNotice(''))
     const { controller, wrapper } = mountWorkspace(client)
     await tick()
     expect(wrapper.text()).not.toContain('is available.')
@@ -49,7 +50,7 @@ describe('release notice', () => {
   it('clears a prior notice when a refresh reports no newer release and keeps rows and selection', async () => {
     const { client, push } = fakeClient()
     const releaseMock = client.release as ReturnType<typeof vi.fn>
-    releaseMock.mockResolvedValue({ latestVersion: 'v9.9.9' })
+    releaseMock.mockResolvedValue(releaseNotice('v9.9.9'))
     const { controller, wrapper } = mountWorkspace(client)
     push(event({ sequence: 1, payload: snapshot([row('kept')]) }))
     await tick()
@@ -59,7 +60,7 @@ describe('release notice', () => {
     await option.trigger('click')
     expect(controller.state.error).toBeNull()
 
-    releaseMock.mockResolvedValue({ latestVersion: '' })
+    releaseMock.mockResolvedValue(releaseNotice(''))
     await controller.refresh()
     await tick()
     expect(wrapper.text()).not.toContain('is available.')
@@ -73,17 +74,17 @@ describe('release notice', () => {
   it('a delayed earlier enabled response cannot re-arm a notice cleared by a later check', async () => {
     const { client } = fakeClient()
     const releaseMock = client.release as ReturnType<typeof vi.fn>
-    const first = deferred<{ latestVersion: string }>()
+    const first = deferred<ReleaseNotice>()
     releaseMock.mockReturnValueOnce(first.promise)
     const { controller } = mountWorkspace(client)
     await tick()
 
-    releaseMock.mockResolvedValue({ latestVersion: '' })
+    releaseMock.mockResolvedValue(releaseNotice(''))
     await controller.refresh()
     await tick()
     expect(controller.state.latestVersion).toBe('')
 
-    first.resolve({ latestVersion: 'v9.9.9' })
+    first.resolve(releaseNotice('v9.9.9'))
     await tick()
     expect(controller.state.latestVersion).toBe('')
   })
@@ -91,12 +92,12 @@ describe('release notice', () => {
   it('invalidates a pending release check on dispose', async () => {
     const { client } = fakeClient()
     const releaseMock = client.release as ReturnType<typeof vi.fn>
-    const pending = deferred<{ latestVersion: string }>()
+    const pending = deferred<ReleaseNotice>()
     releaseMock.mockReturnValue(pending.promise)
     const { controller } = mountWorkspace(client)
     await tick()
     controller.dispose()
-    pending.resolve({ latestVersion: 'v9.9.9' })
+    pending.resolve(releaseNotice('v9.9.9'))
     await tick()
     expect(controller.state.latestVersion).toBe('')
   })
