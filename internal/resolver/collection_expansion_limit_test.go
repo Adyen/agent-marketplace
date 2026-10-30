@@ -62,3 +62,32 @@ func TestResolveSharesCollectionExpansionLimitAcrossReselection(t *testing.T) {
 	}
 	t.Fatalf("errs = %v, want the expansion limit shared across both selection passes", errs)
 }
+
+// spec: resource-selection/collection-expansion-stays-within-the-work-limit
+func TestResolveKeepsCollectionExpansionLimitWhenReselecting(t *testing.T) {
+	// The first pass admits early-skill, then exhausts the limit in a depth-11
+	// diamond. The repository selection of early-skill forces a second pass,
+	// which starts with the budget exhausted and must still refuse.
+	diamondCfg, diamondCatalogs := collectionDiamond(11)
+	entries := append([]catalog.Entry(nil), diamondCatalogs[diamondCfg.Registries[0].CatalogKey]...)
+	entries[0].Resource = ir.NewCollection("root", "1.0.0", "root", []ir.CollectionMember{{Name: "early-skill", Kind: ir.KindSkill}}, []string{"a1", "b1"}, nil, ir.SourceRef{})
+	entries = append(entries, catalog.Entry{Kind: ir.KindSkill, Name: "early-skill"})
+	required := diamondCfg.Registries[0]
+	required.Source, required.Required = config.Organization, true
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		required,
+		{URL: "git@example.com:repository.git", Ref: "main", Source: config.RepoCommitted, Skills: ks("early-skill")},
+	}}
+	setCatalogKeys(cfg)
+	catalogs := map[string][]catalog.Entry{
+		cfg.Registries[0].CatalogKey: entries,
+		cfg.Registries[1].CatalogKey: {{Kind: ir.KindSkill, Name: "early-skill"}},
+	}
+	_, errs := Resolve(cfg, catalogs, nil)
+	for _, err := range errs {
+		if errors.Is(err, ErrCollectionExpansionLimit) {
+			return
+		}
+	}
+	t.Fatalf("errs = %v, want the expansion limit kept after reselection", errs)
+}
