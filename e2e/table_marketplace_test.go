@@ -108,6 +108,268 @@ resources:
 			{Args: []string{"sync", "--check"}, MustPass: true},
 		},
 	})
+
+	// spec: resource-removal/remove-a-marketplace-pin-by-its-endpoint
+	testTable = append(testTable, TestCase{
+		Name:         "marketplace/remove_pin_by_endpoint_after_ambiguity",
+		Desc:         "Given a repository Marketplace pin and an undiscoverable same-name directory selection, When removal is ambiguous and the suggested endpoint removal runs, Then only the pin and its lock record are removed",
+		Marketplaces: []MarketplaceDef{{Name: "hub", Registry: tableMarketplaceRegistry(Skill{Name: "shared", Description: "Marketplace pin"})}},
+		GlobalCfg:    v4Cfg("factory"),
+		RepoCfg: v4Cfg("factory") + `sources:
+  hub: {marketplace: '{{MKT:hub}}'}
+  missing: {directory: ./missing, source_harness: factory}
+resources:
+  missing: {include: [skill/shared, skill/keep]}
+`,
+		Steps: []Step{
+			{Action: ActionWriteFile, Path: "/workspace/missing/skills/keep/SKILL.md", Body: "---\nname: keep\ndescription: Healthy sibling\n---\nKeep selected\n"},
+			{
+				Args:            []string{"sync"},
+				MustPass:        true,
+				OutContains:     []string{`skill "shared" was selected but not found`},
+				FileNotContains: map[string]string{"/workspace/.agents/config.yaml": "hub/skill/shared", "/workspace/.agents/lock.yaml": "name: shared"},
+				FilesAbsent:     []string{"/workspace/.factory/skills/shared/SKILL.md"},
+			},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+			{
+				Args:           []string{"install", "--scope", "repo", "hub:hub/skill/shared", "--yes"},
+				MustPass:       true,
+				FileContains:   map[string]string{"/workspace/.agents/config.yaml": "hub/skill/shared", "/workspace/.agents/lock.yaml": "name: shared", "/workspace/.factory/skills/shared/SKILL.md": "Marketplace pin"},
+				PathsUnchanged: []string{"/root/.agents/config.yaml"},
+			},
+			{Args: []string{"sync", "--check"}, MustPass: true, FilesExist: []string{"/workspace/.factory/skills/shared/SKILL.md"}},
+			{
+				Args:           []string{"remove", "shared"},
+				AssertExitCode: intPtr(1),
+				OutContains:    []string{`--scope repo --from "{{MKT:hub}}"   (REPO)`},
+				PathsUnchanged: []string{"/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml", "/workspace/.factory/skills/shared/SKILL.md"},
+			},
+			{
+				Args:         []string{"remove", "shared", "--scope", "repo", "--from", "{{MKT:hub}}"},
+				MustPass:     true,
+				FileContains: map[string]string{"/workspace/.agents/config.yaml": "skill/shared", "/workspace/.agents/lock.yaml": "instance_id: hub-marketplace"},
+				FileNotContains: map[string]string{
+					"/workspace/.agents/config.yaml": "hub/skill/shared",
+					"/workspace/.agents/lock.yaml":   "name: shared",
+				},
+				FilesAbsent:    []string{"/workspace/.factory/skills/shared/SKILL.md", "/etc/agent-marketplace/config.yaml", "/etc/agent-marketplace/lock.yaml"},
+				PathsUnchanged: []string{"/root/.agents/config.yaml"},
+			},
+			{Args: []string{"sync", "--check"}, MustPass: true, FilesAbsent: []string{"/workspace/.factory/skills/shared/SKILL.md"}},
+		},
+	})
+
+	// spec: resource-listing/selected-marketplace-collection-listed-enabled
+	testTable = append(testTable, TestCase{
+		Name: "marketplace/install_list_remove_collection",
+		Desc: "Given a Marketplace collection, When it is installed and listed before removal, Then it is enabled and its members are materialized and later pruned",
+		Marketplaces: []MarketplaceDef{{Name: "hub", Registry: RegistryDef{Files: map[string]string{
+			"skills/member-skill/SKILL.md":            "---\nname: member-skill\ndescription: Collection skill\nlicense: MIT\n---\nCollection skill body\n",
+			"commands/member-command.md":              "---\nname: member-command\ndescription: Collection command\n---\necho collection\n",
+			"collections/team-bundle/COLLECTION.yaml": "name: team-bundle\nversion: \"1.0\"\ndescription: Marketplace collection\nresources:\n  - name: member-skill\n    kind: skill\n  - name: member-command\n    kind: command\n",
+		}}}},
+		GlobalCfg: v4Cfg("factory"),
+		RepoCfg:   v4Cfg("factory") + "sources: {hub: {marketplace: '{{MKT:hub}}'}}\n",
+		Steps: []Step{
+			{
+				Args:         []string{"install", "--scope", "repo", "hub:hub/collection/team-bundle", "--yes"},
+				MustPass:     true,
+				FileContains: map[string]string{"/workspace/.agents/config.yaml": "hub/collection/team-bundle", "/workspace/.factory/skills/member-skill/SKILL.md": "Collection skill body"},
+				FilesExist:   []string{"/workspace/.factory/commands/member-command.md"},
+			},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+			{Args: []string{"list", "--kind", "collection"}, MustPass: true, OutContains: []string{"team-bundle", "enabled"}, OutNotContains: []string{"available"}},
+			{
+				Args:            []string{"remove", "team-bundle", "--kind", "collection"},
+				MustPass:        true,
+				FileNotContains: map[string]string{"/workspace/.agents/config.yaml": "hub/collection/team-bundle"},
+				FilesAbsent:     []string{"/workspace/.factory/skills/member-skill", "/workspace/.factory/commands/member-command.md"},
+			},
+			{Args: []string{"sync", "--check"}, MustPass: true},
+		},
+	})
+
+	// spec: deployed-acquisition-locks/existing-lock-gains-only-the-missing-registration-identity
+	testTable = append(testTable, TestCase{
+		Name: "marketplace/append_resource_free_registration_identity",
+		Desc: "Given a repository Marketplace pin and its exact lock, When a second resource-free Marketplace registration is added and locked, Then only the new identity is added and later reads preserve lock bytes",
+		Marketplaces: []MarketplaceDef{
+			{Name: "first", Registry: tableMarketplaceRegistry(Skill{Name: "pinned", Description: "Original locked Marketplace skill"})},
+			{Name: "second", Registry: tableMarketplaceRegistry(Skill{Name: "unselected", Description: "Unselected Marketplace skill"})},
+		},
+		GlobalCfg: v4Cfg("factory"),
+		RepoCfg: v4Cfg("factory") + `sources:
+  first: {marketplace: '{{MKT:first}}'}
+resources:
+  first: {include: [first/skill/pinned]}
+`,
+		Steps: []Step{
+			{
+				Args:         []string{"sync"},
+				MustPass:     true,
+				FileContains: map[string]string{"/workspace/.agents/lock.yaml": "instance_id: first-marketplace"},
+			},
+			{FileContains: map[string]string{"/workspace/.agents/lock.yaml": "name: pinned"}},
+			{
+				Action: ActionWriteRepoConfig,
+				Body: v4Cfg("factory") + `sources:
+  first: {marketplace: '{{MKT:first}}'}
+  second: {marketplace: '{{MKT:second}}'}
+resources:
+  first: {include: [first/skill/pinned]}
+`,
+				Args:           []string{"lock"},
+				MustPass:       true,
+				FileContains:   map[string]string{"/workspace/.agents/lock.yaml": "instance_id: first-marketplace"},
+				PathsUnchanged: []string{"/workspace/.agents/config.yaml"},
+			},
+			{FileContains: map[string]string{"/workspace/.agents/lock.yaml": "instance_id: second-marketplace"}},
+			{FileContains: map[string]string{"/workspace/.agents/lock.yaml": "name: pinned"}},
+			{FileNotContains: map[string]string{"/workspace/.agents/lock.yaml": "name: unselected"}},
+			{Args: []string{"lock"}, MustPass: true, PathsUnchanged: []string{"/workspace/.agents/lock.yaml", "/workspace/.agents/config.yaml"}},
+			{Args: []string{"sync"}, MustPass: true, PathsUnchanged: []string{"/workspace/.agents/lock.yaml", "/workspace/.agents/config.yaml"}},
+			{Args: []string{"sync", "--locked"}, MustPass: true, PathsUnchanged: []string{"/workspace/.agents/lock.yaml", "/workspace/.agents/config.yaml"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, PathsUnchanged: []string{"/workspace/.agents/lock.yaml", "/workspace/.agents/config.yaml"}},
+		},
+	})
+
+	// spec: update-output/missing-resource-is-kept-while-other-pins-update
+	// spec: update-output/lock-and-outputs-agree-after-a-partial-update
+	testTable = append(testTable, TestCase{
+		Name: "marketplace/update_other_pin_when_coordinate_disappears",
+		Desc: "Given repo and local Marketplace pins, When one upstream pin changes and the other resource is renamed off its pinned coordinate, Then update advances the available pin and preserves the missing pin lock",
+		Marketplaces: []MarketplaceDef{
+			{Name: "changed-hub", Registry: tableMarketplaceRegistry(Skill{Name: "current", Description: "Current pin"})},
+			{Name: "gone-hub", Registry: tableMarketplaceRegistry(Skill{Name: "gone", Description: "Missing pin"}, Skill{Name: "survivor", Description: "Keep registry indexed"})},
+		},
+		GlobalCfg: v4Cfg("factory"),
+		RepoCfg:   v4Cfg("factory") + "sources: {changed: {marketplace: '{{MKT:changed-hub}}'}}\n",
+		LocalCfg:  v4Cfg() + "sources: {gone: {marketplace: '{{MKT:gone-hub}}'}}\n",
+		Steps: []Step{
+			{
+				Args:         []string{"install", "changed:changed-hub/skill/current", "--scope", "repo", "--yes"},
+				MustPass:     true,
+				FileContains: map[string]string{"/workspace/.factory/skills/current/SKILL.md": "# current"},
+			},
+			{
+				Args:         []string{"install", "gone:gone-hub/skill/gone", "--scope", "local", "--yes"},
+				MustPass:     true,
+				FileContains: map[string]string{"/workspace/.factory/skills/gone/SKILL.md": "# gone", "/workspace/.agents/lock.local.yaml": "name: gone"},
+			},
+			{
+				Action: ActionPushRegistry,
+				Target: "changed-hub",
+				Files: map[string]string{
+					"skills/current/SKILL.md": "---\nname: current\ndescription: Changed current pin\nlicense: MIT\n---\nChanged pin content\n",
+				},
+			},
+			{
+				Action: ActionPushRegistry,
+				Target: "gone-hub",
+				Files: map[string]string{
+					"skills/gone/SKILL.md": "---\nname: renamed\ndescription: Renamed resource\nlicense: MIT\n---\nRenamed resource content\n",
+				},
+			},
+			{Action: ActionReindexMarketplace, Target: "changed-hub"},
+			{Action: ActionReindexMarketplace, Target: "gone-hub"},
+			{
+				Args:           []string{"sync"},
+				MustPass:       true,
+				FileContains:   map[string]string{"/workspace/.factory/skills/current/SKILL.md": "# current", "/workspace/.factory/skills/gone/SKILL.md": "# gone"},
+				PathsUnchanged: []string{"/workspace/.agents/lock.local.yaml"},
+			},
+			{
+				Args:           []string{"update"},
+				AssertExitCode: intPtr(1),
+				OutContains: []string{
+					"Marketplace pins updated: 1",
+					"{{MKT:gone-hub}}",
+					"gone-hub-id/skill/gone",
+					"agent-marketplace remove gone",
+					"install the new name",
+				},
+				FileContains: map[string]string{
+					"/workspace/.factory/skills/current/SKILL.md": "Changed pin content",
+					"/workspace/.factory/skills/gone/SKILL.md":    "# gone",
+					"/workspace/.agents/lock.local.yaml":          "name: gone",
+					"/workspace/.agents/lock.yaml":                "name: current",
+				},
+				FileNotContains: map[string]string{
+					"/workspace/.factory/skills/current/SKILL.md": "Current pin",
+				},
+				PathsUnchanged: []string{"/workspace/.agents/lock.local.yaml", "/workspace/.agents/config.local.yaml", "/workspace/.agents/config.yaml"},
+			},
+			{
+				Args:           []string{"sync", "--check"},
+				MustPass:       true,
+				FileContains:   map[string]string{"/workspace/.factory/skills/current/SKILL.md": "Changed pin content", "/workspace/.factory/skills/gone/SKILL.md": "# gone"},
+				PathsUnchanged: []string{"/workspace/.agents/lock.local.yaml"},
+			},
+		},
+	})
+
+	// spec: status-reporting/organization-collection-members-are-not-orphaned-without-an-organization-lock
+	testTable = append(testTable, TestCase{
+		Name: "marketplace/organization_collection_status_without_lock",
+		Desc: "Given an organization Marketplace collection without an organization lock, When its members are synchronized and status runs, Then the members are not orphaned, no organization lock is created, and user and repository configuration are unchanged",
+		Marketplaces: []MarketplaceDef{{Name: "org-hub", Registry: RegistryDef{Files: map[string]string{
+			"skills/org-member/SKILL.md":             "---\nname: org-member\ndescription: Organization collection member\nlicense: MIT\n---\nOrganization member body\n",
+			"collections/org-bundle/COLLECTION.yaml": "name: org-bundle\nversion: \"1.0\"\ndescription: Organization collection\nresources:\n  - name: org-member\n    kind: skill\n",
+		}}}},
+		GlobalCfg: v4Cfg("factory"),
+		RepoCfg:   v4Cfg("factory"),
+		OrgCfg: v4Cfg("factory") + `sources:
+  organization: {marketplace: '{{MKT:org-hub}}'}
+resources:
+  organization: {include: [org-hub/collection/org-bundle]}
+`,
+		Steps: []Step{
+			{Args: []string{"sync"}, MustPass: true, FileContains: map[string]string{"/root/.factory/skills/org-member/SKILL.md": "Organization member body"}, FilesAbsent: []string{"/etc/agent-marketplace/lock.yaml"}},
+			{Args: []string{"sync", "--check"}, MustPass: true, FilesAbsent: []string{"/etc/agent-marketplace/lock.yaml"}},
+			{Args: []string{"status"}, MustPass: true, OutContains: []string{"org-member"}, OutNotContains: []string{"orphan", "pending removal"}, PathsUnchanged: []string{"/root/.agents/config.yaml", "/workspace/.agents/config.yaml", "/etc/agent-marketplace/config.yaml"}, FilesAbsent: []string{"/etc/agent-marketplace/lock.yaml"}},
+		},
+	})
+
+	// spec: deployed-acquisition-locks/git-only-lock-gains-marketplace-evidence
+	testTable = append(testTable, TestCase{
+		Name:         "marketplace/git_lock_gains_marketplace_evidence",
+		Desc:         "Given a repository Git-only lock, When a Marketplace skill is selected in the same layer and sync runs, Then the lock retains Git records and adds Marketplace evidence",
+		Registries:   []RegistryDef{{Name: "git-only", Skills: []Skill{{Name: "git-skill", Description: "Existing Git record"}}}},
+		Marketplaces: []MarketplaceDef{{Name: "hub", Registry: tableMarketplaceRegistry(Skill{Name: "marketplace-skill", Description: "Marketplace evidence"})}},
+		GlobalCfg:    v4Cfg("factory"),
+		RepoCfg: v4Cfg("factory") + `sources:
+  git: {git: '{{GITHTTP:git-only}}', ref: main}
+resources:
+  git: {include: [skill/git-skill]}
+`,
+		Steps: []Step{
+			{
+				Args:         []string{"sync"},
+				MustPass:     true,
+				FileContains: map[string]string{"/workspace/.agents/lock.yaml": "git-only"},
+				FileNotContains: map[string]string{
+					"/workspace/.agents/lock.yaml": "instance_id: hub-marketplace",
+				},
+			},
+			{FileContains: map[string]string{"/workspace/.agents/lock.yaml": "ref: main"}},
+			{
+				Action: ActionWriteRepoConfig,
+				Body: v4Cfg("factory") + `sources:
+  git: {git: '{{GITHTTP:git-only}}', ref: main}
+  hub: {marketplace: '{{MKT:hub}}'}
+resources:
+  git: {include: [skill/git-skill]}
+  hub: {include: [hub/skill/marketplace-skill]}
+`,
+				Args:         []string{"sync"},
+				MustPass:     true,
+				FileContains: map[string]string{"/workspace/.agents/lock.yaml": "instance_id: hub-marketplace"},
+				FilesExist:   []string{"/workspace/.factory/skills/git-skill/SKILL.md", "/workspace/.factory/skills/marketplace-skill/SKILL.md"},
+			},
+			{FileContains: map[string]string{"/workspace/.agents/lock.yaml": "git-only"}},
+			{FileContains: map[string]string{"/workspace/.agents/lock.yaml": "name: marketplace-skill"}},
+		},
+	})
 }
 
 func TestE2ETableRevokeMarketplace(t *testing.T) {
