@@ -15,6 +15,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/redact"
 	"github.com/Adyen/agent-marketplace/internal/remedy"
 	"github.com/Adyen/agent-marketplace/internal/skill"
@@ -1299,6 +1300,7 @@ func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Co
 		required:  make(map[scopedSelection]bool),
 		displaced: make(map[scopedSelection]skillOccurrence),
 	}
+	budget := &collectionExpansionBudget{}
 	for _, artifact := range resolved {
 		if artifact.Kind != ir.KindCollection {
 			key := newScopedSelection(artifact.Kind, artifact.Name, artifact.Source)
@@ -1387,7 +1389,7 @@ func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Co
 		visited := map[string]struct{}{irCol.Label(): {}}
 		// Members, including those of nested collections owned by another
 		// layer, use the target set of the layer that selected this collection.
-		expandMembersRecursive(irCol, viaLabel, artifact, nil, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, visited, &out, &expandErrs, targets.forSource(artifact.Source))
+		expandMembersRecursive(irCol, viaLabel, artifact, nil, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, visited, &out, &expandErrs, targets.forSource(artifact.Source), budget)
 	}
 
 	if !expanded {
@@ -1606,6 +1608,28 @@ func chooseNestedCollectionEligible(candidates []collectionCandidate, parent Res
 	return chooseNestedCollection(eligible, parent)
 }
 
+// ErrCollectionExpansionLimit reports a collection graph whose expansion would
+// exceed the per-resolve work limit.
+var ErrCollectionExpansionLimit = errors.New("collection expansion exceeds the work limit")
+
+// collectionExpansionBudget bounds the collection visits and members one
+// resolve expands. It shares the lock-bootstrap work limit.
+type collectionExpansionBudget struct {
+	used      int
+	exhausted bool
+}
+
+// consume reserves units of work and reports whether they fit the limit. It
+// keeps refusing once the limit has been reached.
+func (b *collectionExpansionBudget) consume(units int) bool {
+	if b.exhausted || units > lockfile.MaxMarketplaceLockResources-b.used {
+		b.exhausted = true
+		return false
+	}
+	b.used += units
+	return true
+}
+
 // cloneVisitedWith extends a collection's include ancestry for one branch.
 // Keeping a separate map per branch allows a shared DAG node to expand once
 // under each sibling while still detecting cycles along either path.
@@ -1640,7 +1664,17 @@ func expandMembersRecursive(
 	out *[]ResolvedArtifact,
 	errs *[]error,
 	targetSet []hcc.Target,
+	budget *collectionExpansionBudget,
 ) {
+	// A shared nested collection expands once per include path, so a small
+	// DAG can expand exponentially; one budget bounds the whole resolve.
+	if budget.exhausted {
+		return
+	}
+	if !budget.consume(1 + len(col.Members) + len(col.Includes)) {
+		*errs = append(*errs, fmt.Errorf("collection %q: %w of %d units", col.Label(), ErrCollectionExpansionLimit, lockfile.MaxMarketplaceLockResources))
+		return
+	}
 	// Expand direct members.
 	for _, member := range col.Members {
 		memberName := strings.TrimSpace(member.Name)
@@ -1989,7 +2023,7 @@ func expandMembersRecursive(
 				includedArtifact.Harnesses = ownerHarnesses
 			}
 		}
-		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, includedOwner, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, branchVisited, out, errs, targetSet)
+		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, includedOwner, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, branchVisited, out, errs, targetSet, budget)
 	}
 }
 
