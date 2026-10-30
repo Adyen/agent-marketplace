@@ -89,6 +89,23 @@ Marketplace never writes trust state. Both scopes finish with `sync --check`.
 The MCP connection status is `not-probed`: list and get certify that Codex
 recognizes the configuration, not a transport handshake or tool call.
 
+## Native plugin marketplace shape
+
+Codex CLI 0.146.1 reads a local marketplace registration from
+`.codex/config.toml` as `[marketplaces.<name>]` with
+`source_type = "local"` and `source` set to the absolute catalog root. The
+catalog at `.agents/plugins/marketplace.json` uses relative local plugin
+sources (`./plugins/<name>`), with installation and authentication policies
+and a category.
+
+The isolated compatibility probe requires `codex plugin list` to omit its
+fixture before sync and list it from the registered marketplace afterwards.
+This verifies that Codex accepts the marketplace shape, not that the plugin is
+installed: the listing remains `not installed`, and only `codex plugin add`
+populates Codex's plugin cache. Agent Marketplace does not invoke that
+command, write trust or cache state, or send a model request, so native Codex
+delivery remains `unverified`.
+
 ## Remaining limits
 
 - Subagents: `codex agents` lists running sessions, not configured custom

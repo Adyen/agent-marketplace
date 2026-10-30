@@ -435,7 +435,7 @@ func reconcilePluginInstance(ctx context.Context, repoRoot string, item pluginIn
 			batch.addManifestCommit(nativeHookManifestCommit{state: portable, participant: manifest})
 		}
 		nativeCatalogLinks := hasNativeRegistration &&
-			(plan.catalog.target == targetmeta.TargetClaude || plan.catalog.target == targetmeta.TargetFactory)
+			(plan.catalog.target == targetmeta.TargetClaude || plan.catalog.target == targetmeta.TargetFactory || plan.catalog.target == targetmeta.TargetCodex)
 		commit := func() error {
 			if nativeCatalogLinks {
 				if err := publishNativePluginCatalogLinks(plan.catalog); err != nil {

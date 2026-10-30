@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 // releasedClientArch maps the checksum of each pinned latest-release Linux
@@ -523,6 +525,11 @@ func TestReleasedClientNativeFactoryPersonalLocalRegistration(t *testing.T) {
 	testReleasedClientNativePersonalLocalRegistration(t, "factory")
 }
 
+// spec: regression-gates/released-client-remains-usable-after-candidate-mutations
+func TestReleasedClientNativeCodexPersonalLocalRegistration(t *testing.T) {
+	testReleasedClientNativePersonalLocalRegistration(t, "codex")
+}
+
 func testReleasedClientNativePersonalLocalRegistration(t *testing.T, target string) {
 	image := os.Getenv("AM_E2E_RELEASED_IMAGE")
 	if os.Getenv("AM_E2E_RELEASED_BINARY") == "" || image == "" {
@@ -605,11 +612,12 @@ func testReleasedClientNativePersonalLocalRegistration(t *testing.T, target stri
 	gitRun(t, "", "clone", "-q", origin, releasedWorkspace)
 	must(released, releasedWorkspace, "init", "--harnesses", target)
 
-	settingsRel := filepath.Join("."+target, "settings.json")
 	committedPaths := []string{
 		filepath.Join(".agents", "config.yaml"),
 		filepath.Join(".agents", "lock.yaml"),
-		settingsRel,
+	}
+	if target != "codex" {
+		committedPaths = append(committedPaths, filepath.Join("."+target, "settings.json"))
 	}
 	fingerprints := func(workspace string) map[string]string {
 		t.Helper()
@@ -675,9 +683,10 @@ func testReleasedClientNativePersonalLocalRegistration(t *testing.T, target stri
 	releasedReads("committed "+target+" baseline", false, "", "", "", "")
 
 	pluginRoot := filepath.Join(candidateWorkspace, "vendor", "native-kit")
+	format, pluginManifestDir := nativePluginFormat(target)
 	pluginFiles := map[string]string{
-		filepath.Join(".claude-plugin", "plugin.json"): `{"name":"native-kit"}`,
-		filepath.Join("skills", "review", "SKILL.md"):  "---\nname: review\ndescription: Review plugin changes\n---\nReview plugin changes.\n",
+		filepath.Join(pluginManifestDir, "plugin.json"): `{"name":"native-kit"}`,
+		filepath.Join("skills", "review", "SKILL.md"):   "---\nname: review\ndescription: Review plugin changes\n---\nReview plugin changes.\n",
 	}
 	for rel, data := range pluginFiles {
 		path := filepath.Join(pluginRoot, rel)
@@ -689,7 +698,7 @@ func testReleasedClientNativePersonalLocalRegistration(t *testing.T, target stri
 		}
 	}
 	localConfig := filepath.Join(candidateWorkspace, ".agents", "config.local.yaml")
-	localDocument := "apiVersion: agent-marketplace/v4\nsources:\n  personal: {directory: ./vendor/native-kit, format: claude-plugin}\nresources:\n  personal:\n    - {kind: plugin, name: native-kit, delivery: native}\n"
+	localDocument := fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  personal: {directory: ./vendor/native-kit, format: %s}\nresources:\n  personal:\n    - {kind: plugin, name: native-kit, delivery: native}\n", format)
 	if err := os.WriteFile(localConfig, []byte(localDocument), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -700,23 +709,44 @@ func testReleasedClientNativePersonalLocalRegistration(t *testing.T, target stri
 	}
 	must(candidate, candidateWorkspace, "sync")
 	settingsLocal := filepath.Join(candidateWorkspace, "."+target, "settings.local.json")
+	if target == "codex" {
+		settingsLocal = filepath.Join(candidateWorkspace, ".codex", "config.toml")
+	}
 	registration, err := os.ReadFile(settingsLocal)
-	if err != nil || !bytes.Contains(registration, []byte("native-kit@")) || !bytes.Contains(registration, []byte("extraKnownMarketplaces")) {
+	if err != nil {
 		t.Fatalf("candidate did not write the native %s registration from personal-local config: %v\n%s", target, err, registration)
 	}
-	manifestDir := ".claude-plugin"
-	if target == "factory" {
-		manifestDir = ".factory-plugin"
+	if target != "codex" && (!bytes.Contains(registration, []byte("native-kit@")) || !bytes.Contains(registration, []byte("extraKnownMarketplaces"))) {
+		t.Fatalf("candidate did not write the native %s registration from personal-local config:\n%s", target, registration)
 	}
-	manifests, err := filepath.Glob(filepath.Join(candidateHome, ".local", "state", "agent-marketplace", "native-plugins", target, "*", manifestDir, "marketplace.json"))
+	catalogDir := "." + target + "-plugin"
+	if target == "factory" {
+		catalogDir = ".factory-plugin"
+	} else if target == "codex" {
+		catalogDir = filepath.Join(".agents", "plugins")
+	}
+	manifests, err := filepath.Glob(filepath.Join(candidateHome, ".local", "state", "agent-marketplace", "native-plugins", target, "*", catalogDir, "marketplace.json"))
 	if err != nil || len(manifests) != 1 {
 		t.Fatalf("candidate %s catalogs = %v / %v, want one", target, manifests, err)
+	}
+	catalogRoot := filepath.Dir(filepath.Dir(manifests[0]))
+	if target == "codex" {
+		catalogRoot = filepath.Dir(catalogRoot)
+		var document map[string]map[string]map[string]any
+		if err := toml.Unmarshal(registration, &document); err != nil {
+			t.Fatalf("decode candidate Codex registration: %v\n%s", err, registration)
+		}
+		catalogName := filepath.Base(catalogRoot)
+		marketplace := document["marketplaces"][catalogName]
+		plugin := document["plugins"]["native-kit@"+catalogName]
+		if marketplace["source_type"] != "local" || marketplace["source"] != catalogRoot || marketplace["path"] != nil || plugin["enabled"] != true {
+			t.Fatalf("candidate Codex registration = %#v / %#v, want local source %q and enabled plugin", marketplace, plugin, catalogRoot)
+		}
 	}
 	catalogBytes, err := os.ReadFile(manifests[0])
 	if err != nil || !bytes.Contains(catalogBytes, []byte("native-kit")) {
 		t.Fatalf("candidate catalog omitted the native plugin: %v\n%s", err, catalogBytes)
 	}
-	catalogRoot := filepath.Dir(filepath.Dir(manifests[0]))
 	settingsFingerprint, err := pathFingerprint(settingsLocal)
 	if err != nil {
 		t.Fatal(err)

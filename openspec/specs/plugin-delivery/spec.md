@@ -172,6 +172,14 @@ repository scope and to `~/.factory/settings.json` at user scope, SHALL
 declare the catalog with a `local` marketplace source, and the Factory
 catalog SHALL be a `.factory-plugin/marketplace.json` marketplace naming an
 owner and listing each plugin with a source relative to the catalog root.
+Codex registration SHALL be written to `.codex/config.toml` at repository
+scope and to `config.toml` in the Codex home at user scope, SHALL declare
+the catalog as a marketplace with `source_type = "local"` and `source` set
+to the absolute catalog root, and SHALL enable each plugin through
+`plugins."<plugin>@<catalog>"` with `enabled = true`. The Codex catalog
+SHALL be a `.agents/plugins/marketplace.json` marketplace naming the catalog
+and listing each plugin with a `local` source relative to the catalog root,
+an installation and authentication policy, and a category.
 
 #### Scenario: Claude registration preserves handwritten settings
 
@@ -216,6 +224,24 @@ owner and listing each plugin with a source relative to the catalog root.
 - **THEN** the owned catalog's `.factory-plugin/marketplace.json` MUST name
   the catalog and an owner and list the plugin with a source relative to the
   catalog root that resolves to the plugin's package generation
+
+#### Scenario: Codex registration preserves handwritten config
+
+- **WHEN** a plugin is delivered natively to Codex at repository scope and
+  `.codex/config.toml` has handwritten `marketplaces` and `plugins` entries
+  and comments
+- **THEN** `.codex/config.toml` MUST gain the owned `marketplaces` entry with
+  `source_type = "local"` and `source` naming the catalog root and the owned
+  `plugins` entry enabling the plugin, and MUST keep every handwritten entry
+  and comment
+
+#### Scenario: Codex catalog is a marketplace Codex accepts
+
+- **WHEN** a plugin is delivered natively to Codex
+- **THEN** the owned catalog's `.agents/plugins/marketplace.json` MUST name
+  the catalog and list the plugin with a `local` source relative to the
+  catalog root that resolves to the plugin's package generation, and Codex
+  MUST list the plugin from the registered marketplace
 
 #### Scenario: Registration without ownership state is not pruned
 

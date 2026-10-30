@@ -5,6 +5,7 @@ package e2e_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
+	"github.com/pelletier/go-toml/v2"
 )
 
 const nativePluginSource = `---
@@ -26,28 +28,33 @@ func newNativePluginEnv(t *testing.T, target, delivery string) (*Env, string) {
 	env := newEnv(t)
 	env.InitGitRepo()
 	env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [" + target + "]\n")
-	writeNativePlugin(env, "/workspace/vendor/native-kit", "native-kit")
-	env.WriteRepoConfig(nativePluginConfig(delivery))
+	format, manifestDir := nativePluginFormat(target)
+	writeNativePlugin(env, "/workspace/vendor/native-kit", "native-kit", manifestDir)
+	env.WriteRepoConfig(nativePluginConfigForFormat(format, delivery))
 	catalog := "/workspace/test-catalogs/" + target + ".yaml"
 	env.WriteFile(catalog, nativePluginCatalog(target))
 	return env, env.mustResolvePath(catalog)
 }
 
-func writeNativePlugin(env *Env, root, name string) {
-	env.WriteFile(root+"/.claude-plugin/plugin.json", `{"name":"`+name+`"}`)
+func writeNativePlugin(env *Env, root, name, manifestDir string) {
+	env.WriteFile(filepath.Join(root, manifestDir, "plugin.json"), `{"name":"`+name+`"}`)
 	env.WriteFile(root+"/skills/review/SKILL.md", nativePluginSource)
 	env.WriteFile(root+"/hooks/hooks.json", `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo `+name+`"}]}]}`)
 }
 
 func nativePluginConfig(delivery string) string {
+	return nativePluginConfigForFormat("claude-plugin", delivery)
+}
+
+func nativePluginConfigForFormat(format, delivery string) string {
 	return "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n" +
-		"  vendor: {directory: ./vendor/native-kit, format: claude-plugin}\nresources:\n" +
+		"  vendor: {directory: ./vendor/native-kit, format: " + format + "}\nresources:\n" +
 		"  vendor:\n    - {kind: plugin, name: native-kit, delivery: " + delivery + "}\n"
 }
 
-func nativePluginDeselectedConfig() string {
+func nativePluginDeselectedConfig(format string) string {
 	return "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n" +
-		"  vendor: {directory: ./vendor/native-kit, format: claude-plugin}\nresources:\n" +
+		"  vendor: {directory: ./vendor/native-kit, format: " + format + "}\nresources:\n" +
 		"  vendor: []\n"
 }
 
@@ -157,12 +164,18 @@ func assertNativePluginCatalog(t *testing.T, env *Env, pluginName, target string
 		t.Fatal(err)
 	}
 	var document struct {
+		Name  string `json:"name"`
 		Owner struct {
 			Name string `json:"name"`
 		} `json:"owner"`
 		Plugins []struct {
 			Name   string          `json:"name"`
 			Source json.RawMessage `json:"source"`
+			Policy struct {
+				Installation   string `json:"installation"`
+				Authentication string `json:"authentication"`
+			} `json:"policy"`
+			Category string `json:"category"`
 		} `json:"plugins"`
 	}
 	if err := json.Unmarshal(data, &document); err != nil {
@@ -228,7 +241,17 @@ func assertNativePluginCatalog(t *testing.T, env *Env, pluginName, target string
 			if err := json.Unmarshal(plugin.Source, &source); err != nil {
 				t.Fatalf("decode %s plugin source: %v", target, err)
 			}
-			sourcePath = source.Path
+			catalogRoot := filepath.Dir(filepath.Dir(filepath.Dir(paths[0])))
+			if document.Name != filepath.Base(catalogRoot) {
+				t.Fatalf("Codex catalog name = %q, want %q", document.Name, filepath.Base(catalogRoot))
+			}
+			if source.Source != "local" || source.Path != "./plugins/"+pluginName {
+				t.Fatalf("Codex plugin source = %+v, want local ./plugins/%s", source, pluginName)
+			}
+			if plugin.Policy.Installation != "AVAILABLE" || plugin.Policy.Authentication != "ON_INSTALL" || plugin.Category != "Productivity" {
+				t.Fatalf("Codex plugin policy/category = %+v / %q, want AVAILABLE, ON_INSTALL, Productivity", plugin.Policy, plugin.Category)
+			}
+			sourcePath = filepath.Join(catalogRoot, filepath.FromSlash(source.Path))
 		}
 		sourcePath, err = filepath.EvalSymlinks(sourcePath)
 		if err != nil {
@@ -238,8 +261,10 @@ func assertNativePluginCatalog(t *testing.T, env *Env, pluginName, target string
 		if err != nil || sourcePath != expectedPath {
 			t.Fatalf("%s catalog source = %q, want target generation %q (resolve: %v)", target, sourcePath, expectedPath, err)
 		}
-		if _, err := os.Stat(filepath.Join(sourcePath, ".claude-plugin", "plugin.json")); err != nil {
-			t.Fatalf("native plugin catalog target is not a package generation: %v", err)
+		if target != "codex" {
+			if _, err := os.Stat(filepath.Join(sourcePath, ".claude-plugin", "plugin.json")); err != nil {
+				t.Fatalf("native plugin catalog target is not a package generation: %v", err)
+			}
 		}
 		return
 	}
@@ -723,25 +748,75 @@ func ensureJSONCObject(t *testing.T, doc *jsonc.Document, name string) *jsonc.No
 	return node
 }
 
+// spec: plugin-delivery/codex-registration-preserves-handwritten-config
 // spec: plugin-delivery/codex-registration-writes-no-trust
 func TestCodexNativeRegistrationDoesNotWriteTrust(t *testing.T) {
 	env, catalogPath := newNativePluginEnv(t, "codex", "native")
-	result := runNativeAM(env, catalogPath, "sync", "--no-backup")
-	if result.ExitCode != 0 {
-		t.Fatalf("Codex native registration failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	handwritten := `# repository Codex configuration
+[marketplaces."am-handwritten"]
+source_type = "git"
+source = "https://example.invalid/handwritten.git"
+
+# Keep the manually enabled plugin.
+[plugins."native-kit@am-handwritten"]
+enabled = false
+`
+	env.WriteFile("/workspace/.codex/config.toml", handwritten)
+	first := runNativeAM(env, catalogPath, "sync", "--no-backup")
+	if first.ExitCode != 0 {
+		t.Fatalf("initial Codex native sync failed (exit %d):\n%s", first.ExitCode, first.Combined)
 	}
-	config, err := os.ReadFile(env.mustResolvePath("/workspace/.codex/config.toml"))
+	configPath := env.mustResolvePath("/workspace/.codex/config.toml")
+	manifests, err := filepath.Glob(filepath.Join(env.home, ".local", "state", "agent-marketplace", "native-plugins", "codex", "*", ".agents", "plugins", "marketplace.json"))
+	if err != nil || len(manifests) != 1 {
+		t.Fatalf("Codex catalogs = %v / %v, want one", manifests, err)
+	}
+	catalogRoot, err := filepath.EvalSymlinks(filepath.Dir(filepath.Dir(filepath.Dir(manifests[0]))))
 	if err != nil {
-		t.Fatalf("read Codex config: %v\n%s", err, result.Combined)
+		t.Fatalf("resolve Codex catalog root: %v", err)
 	}
-	for _, want := range []string{"[marketplaces.", "[plugins.", "native-kit"} {
-		if !strings.Contains(string(config), want) {
-			t.Errorf("Codex config omitted %q:\n%s", want, config)
-		}
+	catalogName := filepath.Base(catalogRoot)
+	pluginKey := "native-kit@" + catalogName
+	config, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read Codex config: %v", err)
+	}
+	legacyShape := fmt.Sprintf("source = { source = \"local\", path = %q }", catalogRoot)
+	legacy := strings.Replace(string(config), fmt.Sprintf("source_type = \"local\"\nsource = %q", catalogRoot), legacyShape, 1)
+	if legacy == string(config) && !strings.Contains(string(config), legacyShape) {
+		t.Fatalf("Codex marketplace omitted both the new shape and the observed earlier shape:\n%s", config)
+	}
+	env.WriteFile("/workspace/.codex/config.toml", legacy)
+	second := runNativeAM(env, catalogPath, "sync", "--no-backup")
+	if second.ExitCode != 0 {
+		t.Fatalf("Codex sync did not reconcile the earlier owned marketplace shape (exit %d):\n%s", second.ExitCode, second.Combined)
+	}
+	config, err = os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read Codex config after reconciliation: %v", err)
+	}
+	var document map[string]map[string]map[string]any
+	if err := toml.Unmarshal(config, &document); err != nil {
+		t.Fatalf("decode reconciled Codex config: %v\n%s", err, config)
+	}
+	marketplace, plugin := document["marketplaces"][catalogName], document["plugins"][pluginKey]
+	if marketplace["source_type"] != "local" || marketplace["source"] != catalogRoot || marketplace["path"] != nil || plugin["enabled"] != true {
+		t.Fatalf("Codex registration = %#v / %#v, want source_type=local, source=%q, enabled=true", marketplace, plugin, catalogRoot)
+	}
+	if got := document["marketplaces"]["am-handwritten"]; got["source_type"] != "git" || got["source"] != "https://example.invalid/handwritten.git" ||
+		document["plugins"]["native-kit@am-handwritten"]["enabled"] != false {
+		t.Fatalf("reconciliation changed handwritten Codex entries: %#v / %#v", got, document["plugins"]["native-kit@am-handwritten"])
+	}
+	if count := strings.Count(string(config), pluginKey); count != 1 {
+		t.Fatalf("Codex plugin %q registered %d times:\n%s", pluginKey, count, config)
+	}
+	if a, b, c, d := strings.Index(string(config), "# repository Codex configuration"), strings.Index(string(config), `[marketplaces."am-handwritten"]`),
+		strings.Index(string(config), "# Keep the manually enabled plugin."), strings.Index(string(config), `[plugins."native-kit@am-handwritten"]`); !(0 <= a && a < b && b < c && c < d) {
+		t.Fatalf("Codex config lost handwritten comments/tables or changed their order:\n%s", config)
 	}
 	for _, forbidden := range []string{"[projects.", "trust_level", "trusted"} {
 		if strings.Contains(string(config), forbidden) {
-			t.Errorf("Codex registration wrote trust configuration %q:\n%s", forbidden, config)
+			t.Fatalf("Codex registration wrote trust configuration %q:\n%s", forbidden, config)
 		}
 	}
 	assertNativePluginCatalog(t, env, "native-kit", "codex")
@@ -944,7 +1019,8 @@ func TestRemovingNativePluginRetiresOnlyOwnedRegistrations(t *testing.T) {
 			}
 			assertNativePluginCatalog(t, env, "native-kit", target)
 
-			env.WriteRepoConfig(nativePluginDeselectedConfig())
+			format, _ := nativePluginFormat(target)
+			env.WriteRepoConfig(nativePluginDeselectedConfig(format))
 			removed := runNativeAM(env, catalogPath, "sync", "--no-backup")
 			if removed.ExitCode != 0 {
 				t.Fatalf("sync after deselection failed (exit %d):\n%s", removed.ExitCode, removed.Combined)
@@ -999,5 +1075,12 @@ func assertNativePluginCatalogEmpty(t *testing.T, env *Env, target string) {
 	}
 	if len(manifest.Plugins) != 0 {
 		t.Fatalf("native catalog still lists removed plugins: %+v", manifest.Plugins)
+	}
+	if target == "codex" {
+		catalogRoot := filepath.Dir(filepath.Dir(filepath.Dir(paths[0])))
+		link := filepath.Join(catalogRoot, "plugins", "native-kit")
+		if _, err := os.Lstat(link); !os.IsNotExist(err) {
+			t.Fatalf("deselected Codex plugin link remains at %s: %v", link, err)
+		}
 	}
 }
