@@ -292,6 +292,9 @@ func failure(file string, err error) diag.Diagnostic {
 	if errors.Is(err, errReadRefused) {
 		code = diag.CodeIngestOpenCodeReadRefused
 	}
+	if coded, ok := diag.AsCodedError(err); ok && coded.Code == diag.CodeIngestFrontmatterTooLarge {
+		code = coded.Code
+	}
 	return diag.Diagnostic{Code: code, Severity: diag.SeverityError, Source: diag.SourceRef{File: file}, Message: "OpenCode resource could not be read or decoded; resource omitted"}
 }
 

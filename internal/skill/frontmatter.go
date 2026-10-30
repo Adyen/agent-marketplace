@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/bundle"
 )
 
 type skillFrontmatter struct {
@@ -66,6 +68,9 @@ func readFrontmatter(file io.Reader) ([]byte, error) {
 			builder.WriteByte('\n')
 		}
 		builder.WriteString(line)
+		if builder.Len() > bundle.MaxFrontmatterBytes {
+			return nil, fmt.Errorf("%w: more than %d bytes", bundle.ErrFrontmatterTooLarge, bundle.MaxFrontmatterBytes)
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("read file: %w", err)
