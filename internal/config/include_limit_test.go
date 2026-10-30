@@ -60,3 +60,19 @@ func TestLoadV4RefusesIncludeTreesAboveLimit(t *testing.T) {
 		})
 	}
 }
+
+// spec: consumer-config-format/include-trees-stay-within-the-include-limit
+func TestLoadV4RefusesLongIncludeChainBeforeReadingPastLimit(t *testing.T) {
+	// A chain of 257 includes ends in a missing file: reading it would report
+	// v4.include, so v4.include-limit proves the load stopped before it.
+	dir := t.TempDir()
+	writeIncludeFixture(t, dir, "root.yaml", "apiVersion: agent-marketplace/v4\ninclude: [c001.yaml]\n")
+	for i := 1; i < 257; i++ {
+		writeIncludeFixture(t, dir, fmt.Sprintf("c%03d.yaml", i), fmt.Sprintf("include: [c%03d.yaml]\n", i+1))
+	}
+	_, err := LoadV4ConfigFromPath(filepath.Join(dir, "root.yaml"))
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != "v4.include-limit" {
+		t.Fatalf("err = %v, want v4.include-limit before reading the missing file", err)
+	}
+}

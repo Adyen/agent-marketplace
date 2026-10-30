@@ -1457,6 +1457,18 @@ func assignV4DecisionPrecedence(group *V4ResourceGroup) {
 // root and every include occurrence on every branch.
 const maxV4IncludedFiles = 256
 
+// v4IncludeLimitError reports an include tree over maxV4IncludedFiles, naming
+// the including file and its layer when known.
+func v4IncludeLimitError(file string, kinds []layerKind) error {
+	err := v4err("v4.include-limit", file, 0, "config include tree loads more than %d files", maxV4IncludedFiles)
+	if len(kinds) > 0 {
+		attachV4ValidationContext(err, file, kinds[0])
+	} else {
+		attachV4ValidationFile(err, file)
+	}
+	return err
+}
+
 func loadV4Tree(file string, root bool, visiting map[string]bool) (*V4Config, error) {
 	return loadV4TreeWithOverlays(file, root, visiting, nil, nil, "")
 }
@@ -1540,6 +1552,11 @@ func loadV4TreeWithResolvedRoot(file, resolvedRoot string, root bool, visiting m
 					childPath = filepath.Join(filepath.Dir(canonical), childPath)
 				}
 			}
+			// visiting holds the current include chain; refuse before reading a
+			// file that would take the chain past the limit.
+			if len(visiting) >= maxV4IncludedFiles {
+				return nil, v4IncludeLimitError(canonical, kinds)
+			}
 			child, e := loadV4TreeWithResolvedRoot(childPath, "", false, visiting, overlays, nil, organizationPath, kinds...)
 			if e != nil {
 				return nil, fmt.Errorf("load v4 include %q from %q: %w", childPath, canonical, e)
@@ -1551,7 +1568,7 @@ func loadV4TreeWithResolvedRoot(file, resolvedRoot string, root bool, visiting m
 			// can expand exponentially. Reads accumulate bottom-up, so the
 			// first subtree over the limit stops the whole load.
 			if len(result.reads) >= maxV4IncludedFiles {
-				return nil, v4err("v4.include-limit", canonical, 0, "config include tree loads more than %d files", maxV4IncludedFiles)
+				return nil, v4IncludeLimitError(canonical, kinds)
 			}
 		}
 	}
