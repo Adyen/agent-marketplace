@@ -17,14 +17,15 @@ import (
 
 // TestCase defines a single E2E test scenario declaratively.
 type TestCase struct {
-	Name       string        // subtest name (e.g. "collision/same_name_different_registries")
-	Desc       string        // Given/When/Then description of the test scenario
-	Registries []RegistryDef // bare repos to seed inside the container
-	GlobalCfg  string        // ~/.agents/config.yaml content ({{REG:name}} placeholders resolved); always written (empty → explicit v4 fixture defaults)
-	RepoCfg    string        // .agents/config.yaml content; omitted if empty
-	LocalCfg   string        // .agents/config.local.yaml content; omitted if empty
-	OrgCfg     string        // /etc/agent-marketplace/config.yaml content; omitted if empty
-	Steps      []Step        // sequence of actions and assertions
+	Name         string           // subtest name (e.g. "collision/same_name_different_registries")
+	Desc         string           // Given/When/Then description of the test scenario
+	Registries   []RegistryDef    // bare repos to seed inside the container
+	Marketplaces []MarketplaceDef // in-process Marketplace servers and their source repositories
+	GlobalCfg    string           // ~/.agents/config.yaml content; placeholders resolved; always written (empty → explicit v4 fixture defaults)
+	RepoCfg      string           // .agents/config.yaml content; omitted if empty
+	LocalCfg     string           // .agents/config.local.yaml content; omitted if empty
+	OrgCfg       string           // /etc/agent-marketplace/config.yaml content; omitted if empty
+	Steps        []Step           // sequence of actions and assertions
 }
 
 // RegistryDef describes a bare git repo to create inside the container.
@@ -51,6 +52,12 @@ func (r RegistryDef) FilesMap() map[string]string {
 	return files
 }
 
+// MarketplaceDef describes an in-process Marketplace backed by a bare source repository.
+type MarketplaceDef struct {
+	Name     string
+	Registry RegistryDef
+}
+
 // StepAction enumerates the side-effect actions a Step can perform before
 // running a command (or without running a command at all).
 type StepAction int
@@ -62,7 +69,15 @@ const (
 	ActionWriteLocalConfig
 	ActionWriteOrgConfig
 	ActionWriteFile
+	ActionPushRegistry
+	ActionReindexMarketplace
+	ActionRevokeMarketplace
 )
+
+type MarketplaceRevocations struct {
+	Coordinates []string
+	Revisions   []string
+}
 
 // Step is a single operation within a test case. A step either runs an
 // agent-marketplace command (Args set) or performs a side-effect action
@@ -75,6 +90,16 @@ type Step struct {
 	Body string
 	// Path is the container path for ActionWriteFile.
 	Path string
+	// Target names a Registry or Marketplace for a Marketplace action.
+	Target string
+	// Files are source repository paths and contents for ActionPushRegistry.
+	Files map[string]string
+	// Revoke declares Marketplace coordinates and/or revisions to revoke.
+	Revoke MarketplaceRevocations
+	// Env overrides subprocess environment values.
+	Env map[string]string
+	// Cwd selects the subprocess working directory.
+	Cwd string
 
 	// Args are the arguments to agent-marketplace. If empty and Action is set,
 	// the step only performs the action without running a command.
@@ -105,13 +130,97 @@ type Step struct {
 
 // ---------- placeholder resolution ----------
 
-// resolvePlaceholders replaces {{REG:name}} tokens in config templates with
-// the actual file:// URLs returned by CreateBareRepo.
-func resolvePlaceholders(tmpl string, urls map[string]string) string {
-	for name, url := range urls {
-		tmpl = strings.ReplaceAll(tmpl, "{{REG:"+name+"}}", url)
+func v4Cfg(harnesses ...string) string {
+	cfg := "apiVersion: agent-marketplace/v4\n"
+	if len(harnesses) > 0 {
+		cfg += "harnesses: [" + strings.Join(harnesses, ", ") + "]\n"
 	}
-	return tmpl
+	return cfg
+}
+
+func resolveTableString(t *testing.T, value string, tokens map[string]string) string {
+	t.Helper()
+	for token, replacement := range tokens {
+		value = strings.ReplaceAll(value, token, replacement)
+	}
+	if token := unresolvedTableToken(value); token != "" {
+		t.Fatalf("unresolved table placeholder %q", token)
+	}
+	return value
+}
+
+func unresolvedTableToken(value string) string {
+	for _, prefix := range []string{"{{MKT:", "{{GITHTTP:"} {
+		if start := strings.Index(value, prefix); start >= 0 {
+			end := strings.Index(value[start:], "}}")
+			if end >= 0 {
+				return value[start : start+end+2]
+			}
+			return value[start:]
+		}
+	}
+	return ""
+}
+
+func resolveTableCase(t *testing.T, tc TestCase, tokens map[string]string) TestCase {
+	t.Helper()
+	resolve := func(value string) string { return resolveTableString(t, value, tokens) }
+	tc.GlobalCfg = resolve(tc.GlobalCfg)
+	tc.RepoCfg = resolve(tc.RepoCfg)
+	tc.LocalCfg = resolve(tc.LocalCfg)
+	tc.OrgCfg = resolve(tc.OrgCfg)
+	tc.Steps = append([]Step(nil), tc.Steps...)
+	for i := range tc.Steps {
+		step := &tc.Steps[i]
+		step.Body = resolve(step.Body)
+		step.Path = resolve(step.Path)
+		step.Cwd = resolve(step.Cwd)
+		step.Args = resolveTableStrings(t, step.Args, tokens)
+		step.OutContains = resolveTableStrings(t, step.OutContains, tokens)
+		step.OutNotContains = resolveTableStrings(t, step.OutNotContains, tokens)
+		step.FilesExist = resolveTableStrings(t, step.FilesExist, tokens)
+		step.FilesAbsent = resolveTableStrings(t, step.FilesAbsent, tokens)
+		step.PathsUnchanged = resolveTableStrings(t, step.PathsUnchanged, tokens)
+		step.Symlinks = resolveTableStrings(t, step.Symlinks, tokens)
+		step.RegularFiles = resolveTableStrings(t, step.RegularFiles, tokens)
+		step.Files = resolveTableMap(t, step.Files, tokens)
+		step.Env = resolveTableMap(t, step.Env, tokens)
+		step.Revoke.Coordinates = resolveTableStrings(t, step.Revoke.Coordinates, tokens)
+		step.Revoke.Revisions = resolveTableStrings(t, step.Revoke.Revisions, tokens)
+		step.FileContains = resolveTableMap(t, step.FileContains, tokens)
+		step.FileNotContains = resolveTableMap(t, step.FileNotContains, tokens)
+	}
+	return tc
+}
+
+func resolveTableStrings(t *testing.T, values []string, tokens map[string]string) []string {
+	t.Helper()
+	resolved := make([]string, len(values))
+	for i, value := range values {
+		resolved[i] = resolveTableString(t, value, tokens)
+	}
+	return resolved
+}
+
+func resolveTableMap(t *testing.T, values map[string]string, tokens map[string]string) map[string]string {
+	t.Helper()
+	if values == nil {
+		return nil
+	}
+	resolved := make(map[string]string, len(values))
+	for key, value := range values {
+		resolved[resolveTableString(t, key, tokens)] = resolveTableString(t, value, tokens)
+	}
+	return resolved
+}
+
+func tableMarketplaceRegistry(skills ...Skill) RegistryDef {
+	files := make(map[string]string, len(skills))
+	for _, skill := range skills {
+		content := strings.Replace(skill.SkillFile(), "---\n", "---\nlicense: MIT\n", 1)
+		files["skills/"+skill.Name+"/SKILL.md"] = content
+	}
+	return RegistryDef{Files: files}
 }
 
 func pathFingerprint(root string) (string, error) {
@@ -175,6 +284,78 @@ func TestPathFingerprintDetectsSameByteRewrite(t *testing.T) {
 	}
 	if before == after {
 		t.Fatal("path fingerprint ignored a same-byte rewrite")
+	}
+}
+
+func TestTableCaseValidationAndUnresolvedPlaceholder(t *testing.T) {
+	tests := []struct {
+		name           string
+		testCase       TestCase
+		value          string
+		wantValidation bool
+		wantUnresolved string
+	}{
+		{
+			name: "valid targets and REG placeholder",
+			testCase: TestCase{
+				Registries:   []RegistryDef{{Name: "registry"}},
+				Marketplaces: []MarketplaceDef{{Name: "marketplace"}},
+				Steps: []Step{
+					{Action: ActionPushRegistry, Target: "registry"},
+					{Action: ActionReindexMarketplace, Target: "marketplace"},
+				},
+			},
+			value: "{{REG:x}}",
+		},
+		{
+			name:           "unknown target",
+			testCase:       TestCase{Steps: []Step{{Action: ActionPushRegistry, Target: "missing"}}},
+			wantValidation: true,
+		},
+		{
+			name:           "unknown Marketplace target",
+			testCase:       TestCase{Steps: []Step{{Action: ActionReindexMarketplace, Target: "missing"}}},
+			wantValidation: true,
+		},
+		{
+			name: "registry and marketplace share a name",
+			testCase: TestCase{
+				Registries:   []RegistryDef{{Name: "shared"}},
+				Marketplaces: []MarketplaceDef{{Name: "shared"}},
+			},
+			wantValidation: true,
+		},
+		{
+			name:           "step sets Env and Cwd",
+			testCase:       TestCase{Steps: []Step{{Env: map[string]string{"KEY": "value"}, Cwd: "/workspace"}}},
+			wantValidation: true,
+		},
+		{
+			name:           "unresolved Marketplace token",
+			value:          "prefix {{MKT:missing}} suffix",
+			wantUnresolved: "{{MKT:missing}}",
+		},
+		{
+			name:           "unresolved Git HTTP token",
+			value:          "{{GITHTTP:missing}}",
+			wantUnresolved: "{{GITHTTP:missing}}",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := validateTableCase(test.testCase); (err != nil) != test.wantValidation {
+				t.Fatalf("validateTableCase() error = %v, wantError %t", err, test.wantValidation)
+			}
+
+			if got := unresolvedTableToken(test.value); got != test.wantUnresolved {
+				t.Fatalf("unresolvedTableToken(%q) = %q, want %q", test.value, got, test.wantUnresolved)
+			}
+			if test.wantUnresolved == "" {
+				if got := resolveTableString(t, test.value, nil); got != test.value {
+					t.Fatalf("resolveTableString(%q) = %q, want unchanged value", test.value, got)
+				}
+			}
+		})
 	}
 }
 
@@ -5182,7 +5363,6 @@ func (rw *reportWriter) write(reportPath string, suiteStart time.Time) {
 // set E2E_PARALLEL=1 for serial execution, or any positive integer for
 // a different concurrency limit.
 func TestE2E(t *testing.T) {
-
 	reportPath := os.Getenv("E2E_REPORT")
 	if reportPath == "" {
 		reportPath = "e2e-report.json"
@@ -5237,206 +5417,238 @@ func TestE2E(t *testing.T) {
 					Error:      firstErr,
 				})
 			}()
-
-			env := newEnv(t)
-			env.InitGitRepo()
-
-			// Seed registries and collect their file:// URLs.
-			urls := make(map[string]string)
-			for _, reg := range tc.Registries {
-				urls[reg.Name] = env.CreateBareRepo(reg.Name, reg.FilesMap())
-			}
-
-			// Write authored config layers after resolving fixture URLs.
-			// Cases that omit the user fixture get an explicit v4 skeleton; no
-			// authored legacy installation text is translated by setup.
-			globalCfg := resolvePlaceholders(tc.GlobalCfg, urls)
-			if globalCfg == "" {
-				globalCfg = "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"
-			}
-			env.WriteGlobalConfig(globalCfg)
-			if tc.RepoCfg != "" {
-				env.WriteRepoConfig(resolvePlaceholders(tc.RepoCfg, urls))
-			}
-			if tc.LocalCfg != "" {
-				env.WriteLocalConfig(resolvePlaceholders(tc.LocalCfg, urls))
-			}
-			if tc.OrgCfg != "" {
-				env.WriteOrgConfig(resolvePlaceholders(tc.OrgCfg, urls))
-			}
-
-			// Execute steps sequentially; collect first error for the report.
-			for i, step := range tc.Steps {
-				// Perform side-effect action first.
-				switch step.Action {
-				case ActionWriteGlobalConfig:
-					env.WriteGlobalConfig(resolvePlaceholders(step.Body, urls))
-				case ActionWriteRepoConfig:
-					env.WriteRepoConfig(resolvePlaceholders(step.Body, urls))
-				case ActionWriteLocalConfig:
-					env.WriteLocalConfig(resolvePlaceholders(step.Body, urls))
-				case ActionWriteOrgConfig:
-					env.WriteOrgConfig(resolvePlaceholders(step.Body, urls))
-				case ActionWriteFile:
-					env.WriteFile(step.Path, step.Body)
-				}
-
-				unchanged := make(map[string]string, len(step.PathsUnchanged))
-				for _, p := range step.PathsUnchanged {
-					fingerprint, err := pathFingerprint(env.mustResolvePath(p))
-					if err != nil {
-						t.Fatalf("step %d: snapshot path %q: %v", i, p, err)
-					}
-					unchanged[p] = fingerprint
-				}
-
-				// Run command if Args is set (resolve {{REG:...}} placeholders).
-				var r ExecResult
-				if len(step.Args) > 0 {
-					args := make([]string, len(step.Args))
-					for j, a := range step.Args {
-						args[j] = resolvePlaceholders(a, urls)
-					}
-					r = env.RunAM(args...)
-					if step.MustPass && r.ExitCode != 0 {
-						errMsg := fmt.Sprintf("step %d: agent-marketplace %s failed (exit %d): %s",
-							i, strings.Join(step.Args, " "), r.ExitCode, r.Combined)
-						if firstErr == "" {
-							firstErr = errMsg
-						}
-						t.Fatalf("%s", errMsg)
-					}
-					if step.AssertExitCode != nil && r.ExitCode != *step.AssertExitCode {
-						errMsg := fmt.Sprintf("step %d: exit code got %d want %d",
-							i, r.ExitCode, *step.AssertExitCode)
-						if firstErr == "" {
-							firstErr = errMsg
-						}
-						t.Errorf("%s\noutput:\n%s", errMsg, r.Combined)
-					}
-
-					// Output assertions.
-					for _, s := range step.OutContains {
-						if !strings.Contains(r.Combined, s) {
-							errMsg := fmt.Sprintf("step %d: output missing %q", i, s)
-							if firstErr == "" {
-								firstErr = errMsg
-							}
-							t.Errorf("%s\nfull output:\n%s", errMsg, r.Combined)
-						}
-					}
-					for _, s := range step.OutNotContains {
-						if strings.Contains(r.Combined, s) {
-							errMsg := fmt.Sprintf("step %d: output unexpectedly contains %q", i, s)
-							if firstErr == "" {
-								firstErr = errMsg
-							}
-							t.Errorf("%s\nfull output:\n%s", errMsg, r.Combined)
-						}
-					}
-				}
-
-				// Filesystem assertions.
-				for _, p := range step.FilesExist {
-					if !env.CheckFileExists(p) {
-						errMsg := fmt.Sprintf("step %d: file %q does not exist", i, p)
-						if firstErr == "" {
-							firstErr = errMsg
-						}
-						t.Errorf("%s", errMsg)
-					}
-				}
-				for _, p := range step.FilesAbsent {
-					absent, err := checkPathAbsent(env.mustResolvePath(p))
-					if !absent || err != nil {
-						errMsg := fmt.Sprintf("step %d: file %q unexpectedly exists", i, p)
-						if err != nil {
-							errMsg = fmt.Sprintf("step %d: cannot inspect %q: %v", i, p, err)
-						}
-						if firstErr == "" {
-							firstErr = errMsg
-						}
-						t.Errorf("%s", errMsg)
-					}
-				}
-				for _, globs := range []struct {
-					patterns []string
-					absent   bool
-				}{{step.GlobsExist, false}, {step.GlobsAbsent, true}} {
-					for _, pattern := range globs.patterns {
-						matches, err := filepath.Glob(env.mustResolvePath(pattern))
-						var errMsg string
-						switch {
-						case err != nil:
-							errMsg = fmt.Sprintf("step %d: glob %q: %v", i, pattern, err)
-						case globs.absent && len(matches) > 0:
-							errMsg = fmt.Sprintf("step %d: glob %q matched %v", i, pattern, matches)
-						case !globs.absent && len(matches) == 0:
-							errMsg = fmt.Sprintf("step %d: glob %q matched no path", i, pattern)
-						default:
-							continue
-						}
-						if firstErr == "" {
-							firstErr = errMsg
-						}
-						t.Errorf("%s", errMsg)
-					}
-				}
-				for p, want := range unchanged {
-					got, err := pathFingerprint(env.mustResolvePath(p))
-					if err != nil {
-						errMsg := fmt.Sprintf("step %d: unchanged path %q is not readable: %v", i, p, err)
-						if firstErr == "" {
-							firstErr = errMsg
-						}
-						t.Errorf("%s", errMsg)
-						continue
-					}
-					if got != want {
-						errMsg := fmt.Sprintf("step %d: path %q changed", i, p)
-						if firstErr == "" {
-							firstErr = errMsg
-						}
-						t.Errorf("%s", errMsg)
-					}
-				}
-				for _, p := range step.Symlinks {
-					if !env.CheckSymlink(p) {
-						errMsg := fmt.Sprintf("step %d: path %q is not a symlink", i, p)
-						if firstErr == "" {
-							firstErr = errMsg
-						}
-						t.Errorf("%s", errMsg)
-					}
-				}
-				for _, p := range step.RegularFiles {
-					if !env.CheckRegularFile(p) {
-						errMsg := fmt.Sprintf("step %d: path %q is not a regular file", i, p)
-						if firstErr == "" {
-							firstErr = errMsg
-						}
-						t.Errorf("%s", errMsg)
-					}
-				}
-				for p, substr := range step.FileContains {
-					if !env.CheckFileContains(p, substr) {
-						errMsg := fmt.Sprintf("step %d: file %q does not contain %q", i, p, substr)
-						if firstErr == "" {
-							firstErr = errMsg
-						}
-						t.Errorf("%s", errMsg)
-					}
-				}
-				for p, substr := range step.FileNotContains {
-					if env.CheckFileContains(p, substr) {
-						errMsg := fmt.Sprintf("step %d: file %q unexpectedly contains %q", i, p, substr)
-						if firstErr == "" {
-							firstErr = errMsg
-						}
-						t.Errorf("%s", errMsg)
-					}
-				}
-			}
+			runTableCase(t, tc, &firstErr)
 		})
+	}
+}
+
+func runTableCase(t *testing.T, tc TestCase, firstErr *string) {
+	t.Helper()
+	if err := validateTableCase(tc); err != nil {
+		t.Fatalf("%s", err)
+	}
+	originalSteps := tc.Steps
+	env := newEnv(t)
+	env.InitGitRepo()
+
+	// Seed registries and collect their fixture URLs.
+	bareURLs := make(map[string]string, len(tc.Registries)+len(tc.Marketplaces))
+	for _, registry := range tc.Registries {
+		bareURLs[registry.Name] = env.CreateBareRepo(registry.Name, registry.FilesMap())
+	}
+	var gitServerURL string
+	if len(bareURLs)+len(tc.Marketplaces) > 0 {
+		gitServer := newGitHTTPServer(t, env.repos)
+		gitServerURL = gitServer.URL
+		t.Cleanup(gitServer.Close)
+	}
+
+	tokens := make(map[string]string, 2*len(bareURLs)+2*len(tc.Marketplaces))
+	for name, url := range bareURLs {
+		tokens["{{REG:"+name+"}}"] = url
+		tokens["{{GITHTTP:"+name+"}}"] = gitServerURL + "/" + name + ".git"
+	}
+	marketplaces := make(map[string]*marketplaceTarget, len(tc.Marketplaces))
+	for _, definition := range tc.Marketplaces {
+		target := newMarketplaceTarget(t, env, definition.Name, definition.Registry, gitServerURL,
+			definition.Name+"-marketplace", definition.Name, t.TempDir())
+		marketplaces[definition.Name] = target
+		bareURLs[definition.Name] = target.bareURL
+		tokens["{{GITHTTP:"+definition.Name+"}}"] = target.origin
+		tokens["{{MKT:"+definition.Name+"}}"] = target.server.URL
+	}
+	tc = resolveTableCase(t, tc, tokens)
+
+	// Write authored config layers after resolving fixture URLs.
+	// Cases that omit the user fixture get an explicit v4 skeleton; no
+	// authored legacy installation text is translated by setup.
+	globalCfg := tc.GlobalCfg
+	if globalCfg == "" {
+		globalCfg = "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"
+	}
+	env.WriteGlobalConfig(globalCfg)
+	if tc.RepoCfg != "" {
+		env.WriteRepoConfig(tc.RepoCfg)
+	}
+	if tc.LocalCfg != "" {
+		env.WriteLocalConfig(tc.LocalCfg)
+	}
+	if tc.OrgCfg != "" {
+		env.WriteOrgConfig(tc.OrgCfg)
+	}
+
+	for i, step := range tc.Steps {
+		// Perform side-effect action first.
+		switch step.Action {
+		case ActionWriteGlobalConfig:
+			env.WriteGlobalConfig(step.Body)
+		case ActionWriteRepoConfig:
+			env.WriteRepoConfig(step.Body)
+		case ActionWriteLocalConfig:
+			env.WriteLocalConfig(step.Body)
+		case ActionWriteOrgConfig:
+			env.WriteOrgConfig(step.Body)
+		case ActionWriteFile:
+			env.WriteFile(step.Path, step.Body)
+		case ActionPushRegistry:
+			pushRegistryFiles(t, bareURLs[step.Target], step.Files)
+		case ActionReindexMarketplace:
+			marketplaces[step.Target].reindex(t, marketplaces[step.Target].cfg)
+		case ActionRevokeMarketplace:
+			marketplaces[step.Target].revoke(t, step.Revoke)
+		}
+
+		unchanged := make(map[string]string, len(step.PathsUnchanged))
+		for _, path := range step.PathsUnchanged {
+			fingerprint, err := pathFingerprint(env.mustResolvePath(path))
+			if err != nil {
+				tableStepError(t, firstErr, fmt.Sprintf("step %d: snapshot path %q: %v", i, path, err), "", true)
+			}
+			unchanged[path] = fingerprint
+		}
+
+		var result ExecResult
+		if len(step.Args) > 0 {
+			switch {
+			case step.Env != nil:
+				result = env.RunAMWithEnv(step.Env, step.Args...)
+			case step.Cwd != "":
+				result = env.RunAMFrom(step.Cwd, step.Args...)
+			default:
+				result = env.RunAM(step.Args...)
+			}
+			if step.MustPass && result.ExitCode != 0 {
+				tableStepError(t, firstErr, fmt.Sprintf("step %d: agent-marketplace %s failed (exit %d): %s",
+					i, strings.Join(originalSteps[i].Args, " "), result.ExitCode, result.Combined), "", true)
+			}
+			if step.AssertExitCode != nil && result.ExitCode != *step.AssertExitCode {
+				tableStepError(t, firstErr, fmt.Sprintf("step %d: exit code got %d want %d", i, result.ExitCode, *step.AssertExitCode), "output:\n"+result.Combined, false)
+			}
+			for _, text := range step.OutContains {
+				if !strings.Contains(result.Combined, text) {
+					tableStepError(t, firstErr, fmt.Sprintf("step %d: output missing %q", i, text), "full output:\n"+result.Combined, false)
+				}
+			}
+			for _, text := range step.OutNotContains {
+				if strings.Contains(result.Combined, text) {
+					tableStepError(t, firstErr, fmt.Sprintf("step %d: output unexpectedly contains %q", i, text), "full output:\n"+result.Combined, false)
+				}
+			}
+		}
+		assertTableStep(t, env, step, unchanged, firstErr, i)
+	}
+}
+
+func validateTableCase(tc TestCase) error {
+	names := make(map[string]string, len(tc.Registries)+len(tc.Marketplaces))
+	for _, registry := range tc.Registries {
+		if prior, ok := names[registry.Name]; ok {
+			return fmt.Errorf("test case %q has duplicate target name %q (%s and registry)", tc.Name, registry.Name, prior)
+		}
+		names[registry.Name] = "registry"
+	}
+	marketplaceNames := make(map[string]bool, len(tc.Marketplaces))
+	for _, marketplace := range tc.Marketplaces {
+		if prior, ok := names[marketplace.Name]; ok {
+			return fmt.Errorf("test case %q shares target name %q between %s and Marketplace", tc.Name, marketplace.Name, prior)
+		}
+		names[marketplace.Name] = "Marketplace"
+		marketplaceNames[marketplace.Name] = true
+	}
+	for i, step := range tc.Steps {
+		if step.Env != nil && step.Cwd != "" {
+			return fmt.Errorf("test case %q step %d sets both Env and Cwd", tc.Name, i)
+		}
+		switch step.Action {
+		case ActionPushRegistry:
+			if names[step.Target] == "" {
+				return fmt.Errorf("test case %q step %d has unknown Target %q", tc.Name, i, step.Target)
+			}
+		case ActionReindexMarketplace, ActionRevokeMarketplace:
+			if !marketplaceNames[step.Target] {
+				return fmt.Errorf("test case %q step %d has unknown Marketplace Target %q", tc.Name, i, step.Target)
+			}
+		}
+	}
+	return nil
+}
+
+func tableStepError(t *testing.T, firstErr *string, message, detail string, fatal bool) {
+	t.Helper()
+	if *firstErr == "" {
+		*firstErr = message
+	}
+	if fatal {
+		t.Fatalf("%s", message)
+	}
+	if detail != "" {
+		t.Errorf("%s\n%s", message, detail)
+		return
+	}
+	t.Errorf("%s", message)
+}
+
+func assertTableStep(t *testing.T, env *Env, step Step, unchanged map[string]string, firstErr *string, index int) {
+	t.Helper()
+	for _, path := range step.FilesExist {
+		if !env.CheckFileExists(path) {
+			tableStepError(t, firstErr, fmt.Sprintf("step %d: file %q does not exist", index, path), "", false)
+		}
+	}
+	for _, path := range step.FilesAbsent {
+		absent, err := checkPathAbsent(env.mustResolvePath(path))
+		if !absent || err != nil {
+			message := fmt.Sprintf("step %d: file %q unexpectedly exists", index, path)
+			if err != nil {
+				message = fmt.Sprintf("step %d: cannot inspect %q: %v", index, path, err)
+			}
+			tableStepError(t, firstErr, message, "", false)
+		}
+	}
+	for _, globs := range []struct {
+		patterns []string
+		absent   bool
+	}{{step.GlobsExist, false}, {step.GlobsAbsent, true}} {
+		for _, pattern := range globs.patterns {
+			matches, err := filepath.Glob(env.mustResolvePath(pattern))
+			switch {
+			case err != nil:
+				tableStepError(t, firstErr, fmt.Sprintf("step %d: glob %q: %v", index, pattern, err), "", false)
+			case globs.absent && len(matches) > 0:
+				tableStepError(t, firstErr, fmt.Sprintf("step %d: glob %q matched %v", index, pattern, matches), "", false)
+			case !globs.absent && len(matches) == 0:
+				tableStepError(t, firstErr, fmt.Sprintf("step %d: glob %q matched no path", index, pattern), "", false)
+			}
+		}
+	}
+	for path, before := range unchanged {
+		after, err := pathFingerprint(env.mustResolvePath(path))
+		if err != nil {
+			tableStepError(t, firstErr, fmt.Sprintf("step %d: unchanged path %q is not readable: %v", index, path, err), "", false)
+			continue
+		}
+		if after != before {
+			tableStepError(t, firstErr, fmt.Sprintf("step %d: path %q changed", index, path), "", false)
+		}
+	}
+	for _, path := range step.Symlinks {
+		if !env.CheckSymlink(path) {
+			tableStepError(t, firstErr, fmt.Sprintf("step %d: path %q is not a symlink", index, path), "", false)
+		}
+	}
+	for _, path := range step.RegularFiles {
+		if !env.CheckRegularFile(path) {
+			tableStepError(t, firstErr, fmt.Sprintf("step %d: path %q is not a regular file", index, path), "", false)
+		}
+	}
+	for path, text := range step.FileContains {
+		if !env.CheckFileContains(path, text) {
+			tableStepError(t, firstErr, fmt.Sprintf("step %d: file %q does not contain %q", index, path, text), "", false)
+		}
+	}
+	for path, text := range step.FileNotContains {
+		if env.CheckFileContains(path, text) {
+			tableStepError(t, firstErr, fmt.Sprintf("step %d: file %q unexpectedly contains %q", index, path, text), "", false)
+		}
 	}
 }
