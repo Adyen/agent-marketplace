@@ -1,0 +1,28 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/yamlfm
+cpu: Apple M4 Max
+                                                │    before.txt     │              after.txt               │
+                                                │      sec/op       │    sec/op     vs base                │
+ParseYAMLFrontmatterKeys/frontmatter=2KiB-16           132.0µ ± ∞ ¹   131.6µ ± ∞ ¹         ~ (p=0.548 n=5)
+ParseYAMLFrontmatterKeys/frontmatter=64KiB-16          41.78m ± ∞ ¹   42.56m ± ∞ ¹         ~ (p=0.056 n=5)
+ParseYAMLFrontmatterKeys/frontmatter=1024KiB-16   13121030.7µ ± ∞ ¹   282.8µ ± ∞ ¹  -100.00% (p=0.008 n=5)
+geomean                                                41.67m         1.166m         -97.20%
+¹ need >= 6 samples for confidence interval at level 0.95
+
+                                                │   before.txt   │              after.txt               │
+                                                │      B/op      │     B/op       vs base               │
+ParseYAMLFrontmatterKeys/frontmatter=2KiB-16       127.5Ki ± ∞ ¹   127.5Ki ± ∞ ¹        ~ (p=1.000 n=5)
+ParseYAMLFrontmatterKeys/frontmatter=64KiB-16      3.850Mi ± ∞ ¹   3.850Mi ± ∞ ¹        ~ (p=0.143 n=5)
+ParseYAMLFrontmatterKeys/frontmatter=1024KiB-16   63.368Mi ± ∞ ¹   4.151Mi ± ∞ ¹  -93.45% (p=0.008 n=5)
+geomean                                            3.120Mi         1.258Mi        -59.69%
+¹ need >= 6 samples for confidence interval at level 0.95
+
+                                                │    before.txt    │               after.txt                │
+                                                │    allocs/op     │  allocs/op    vs base                  │
+ParseYAMLFrontmatterKeys/frontmatter=2KiB-16          2.099k ± ∞ ¹   2.099k ± ∞ ¹         ~ (p=1.000 n=5) ²
+ParseYAMLFrontmatterKeys/frontmatter=64KiB-16         65.64k ± ∞ ¹   65.64k ± ∞ ¹         ~ (p=1.000 n=5) ²
+ParseYAMLFrontmatterKeys/frontmatter=1024KiB-16   1049189.00 ± ∞ ¹    36.00 ± ∞ ¹  -100.00% (p=0.008 n=5)
+geomean                                               52.48k         1.705k         -96.75%
+¹ need >= 6 samples for confidence interval at level 0.95
+² all samples are equal

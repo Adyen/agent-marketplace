@@ -1,0 +1,21 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/yamlfm
+cpu: Apple M4 Max
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=2KiB-16         	    1770	    131757 ns/op	  130576 B/op	    2099 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=2KiB-16         	    1804	    131035 ns/op	  130579 B/op	    2099 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=2KiB-16         	    1809	    131422 ns/op	  130576 B/op	    2099 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=2KiB-16         	    1869	    131591 ns/op	  130576 B/op	    2099 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=2KiB-16         	    1801	    134181 ns/op	  130576 B/op	    2099 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=64KiB-16        	       5	  41664267 ns/op	 4037145 B/op	   65644 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=64KiB-16        	       5	  42622308 ns/op	 4037190 B/op	   65644 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=64KiB-16        	       5	  42432033 ns/op	 4037171 B/op	   65644 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=64KiB-16        	       5	  42559183 ns/op	 4037171 B/op	   65644 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=64KiB-16        	       5	  42598117 ns/op	 4037148 B/op	   65644 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=1024KiB-16      	     933	    277408 ns/op	 4352498 B/op	      36 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=1024KiB-16      	     878	    277385 ns/op	 4352459 B/op	      36 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=1024KiB-16      	     864	    282767 ns/op	 4352474 B/op	      36 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=1024KiB-16      	     841	    287302 ns/op	 4352448 B/op	      36 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=1024KiB-16      	     806	    289540 ns/op	 4352455 B/op	      36 allocs/op
+PASS
+ok  	github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/yamlfm	3.716s

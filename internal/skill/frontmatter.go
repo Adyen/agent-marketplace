@@ -2,12 +2,15 @@ package skill
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/bundle"
 )
 
 type skillFrontmatter struct {
@@ -43,10 +46,13 @@ func parseFrontmatterSource(rootPath, skillMdPath string) (name, description str
 
 func readFrontmatter(file io.Reader) ([]byte, error) {
 	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 1024), 64*1024)
+	// The token budget admits one line as long as the whole frontmatter ceiling.
+	scanner.Buffer(make([]byte, 0, 1024), bundle.MaxFrontmatterBytes+2)
 
 	var builder strings.Builder
 	foundStart := false
+	// size counts every frontmatter line, including blank ones the builder drops.
+	size, lines := 0, 0
 	for scanner.Scan() {
 		line := scanner.Text()
 		trimmed := strings.TrimSpace(strings.TrimLeft(line, "\ufeff"))
@@ -62,12 +68,24 @@ func readFrontmatter(file io.Reader) ([]byte, error) {
 			return []byte(builder.String()), nil
 		}
 
+		separator := 0
+		if lines > 0 {
+			separator = 1
+		}
+		if len(line)+separator > bundle.MaxFrontmatterBytes-size {
+			return nil, fmt.Errorf("%w: more than %d bytes", bundle.ErrFrontmatterTooLarge, bundle.MaxFrontmatterBytes)
+		}
+		size += len(line) + separator
+		lines++
 		if builder.Len() > 0 {
 			builder.WriteByte('\n')
 		}
 		builder.WriteString(line)
 	}
 	if err := scanner.Err(); err != nil {
+		if foundStart && errors.Is(err, bufio.ErrTooLong) {
+			return nil, fmt.Errorf("%w: a line exceeds %d bytes", bundle.ErrFrontmatterTooLarge, bundle.MaxFrontmatterBytes)
+		}
 		return nil, fmt.Errorf("read file: %w", err)
 	}
 	if !foundStart {
