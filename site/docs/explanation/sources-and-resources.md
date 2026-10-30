@@ -34,7 +34,7 @@ A source does not need a group. Without one, a Git source is still resolved and 
 
 ## What a resource is
 
-The word covers two things. A resource is one installable item, such as a skill, command, subagent, hook, or MCP server — or a [plugin](./plugins-and-package-formats.md) package from a source that declares `format`: the registry ships it, and a sync writes it into your harness. A collection is different: a named bundle a group can select that expands into its member resources and never lands on disk itself. A resource group is one entry under the `resources` map, the selection rules for one source. A locator such as `skill/frontend-design` is how a group names one resource; Marketplace locators add a registry slug because one endpoint serves many registries.
+The word covers two things. A resource is one installable item, such as a skill, command, subagent, hook, or MCP server. A [plugin](./plugins-and-package-formats.md) package from a source that declares `format` is a resource too: the registry ships it, and a sync writes it into your harness. A collection is different: a named bundle a group can select that expands into its member resources and never lands on disk itself. A resource group is one entry under the `resources` map, the selection rules for one source. A locator such as `skill/frontend-design` is how a group names one resource; Marketplace locators add a registry slug because one endpoint serves many registries.
 
 ## How a group picks resources
 

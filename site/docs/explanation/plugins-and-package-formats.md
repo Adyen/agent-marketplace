@@ -38,9 +38,9 @@ Native delivery keeps the complete package and registers it through
 Agent-Marketplace-owned entries in the harness's native settings. The
 catalogs declare native delivery verified only when a native probe provides
 evidence for that harness and format. Agent Marketplace does not write
-vendor trust state or private plugin caches. The generated
-[plugin support reference](../reference/plugin-support.md) links to the
-catalog-backed matrix rather than duplicating it here.
+vendor trust state or private plugin caches. See the generated
+[plugin support reference](../reference/plugin-support.md) for the
+catalog-backed matrix.
 
 `auto` selects native only where the catalog marks it verified and uses
 decomposed delivery otherwise. Native delivery is currently unverified for
