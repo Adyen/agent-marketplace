@@ -23,13 +23,6 @@ description: Review plugin changes
 Review plugin changes.
 `
 
-func nativePluginFormat(target string) (string, string) {
-	if target == "codex" {
-		return "codex-plugin", ".codex-plugin"
-	}
-	return "claude-plugin", ".claude-plugin"
-}
-
 func newNativePluginEnv(t *testing.T, target, delivery string) (*Env, string) {
 	t.Helper()
 	env := newEnv(t)

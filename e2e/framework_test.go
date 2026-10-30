@@ -49,6 +49,13 @@ delivery:
 `, target, format, format)
 }
 
+func nativePluginFormat(target string) (string, string) {
+	if target == "codex" {
+		return "codex-plugin", ".codex-plugin"
+	}
+	return "claude-plugin", ".claude-plugin"
+}
+
 func nativeCatalogEnv(path string) map[string]string {
 	return map[string]string{"AGENT_MARKETPLACE_E2E_PLUGIN_CATALOG": path}
 }
