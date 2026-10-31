@@ -33,6 +33,22 @@ type MatcherSpec struct {
 // represented on the target without widening or narrowing the covered set.
 var ErrUntranslatable = errors.New("toolpolicy: untranslatable")
 
+// UnknownToolError reports a plain tool name that the source harness's
+// catalog does not declare. It wraps ErrUntranslatable. KnownIn names the
+// first other harness whose shipped catalog declares the name; it is empty
+// when no catalog does, in which case callers must not quote Name.
+type UnknownToolError struct {
+	Name    string
+	Source  string
+	KnownIn string
+}
+
+func (e *UnknownToolError) Error() string {
+	return fmt.Sprintf("%v: %q is not a known %s tool", ErrUntranslatable, e.Name, e.Source)
+}
+
+func (e *UnknownToolError) Unwrap() error { return ErrUntranslatable }
+
 // ErrNoSurface reports that the target harness has no such tool surface, so a
 // non-empty source list cannot be restricted at all.
 var ErrNoSurface = errors.New("toolpolicy: target has no such tool surface")
@@ -187,13 +203,27 @@ func DecodeMatcher(source target.Target, matcher string, src MatcherSpec) (Decod
 		}
 		concepts, ok := c.conceptsFor(name, legacy)
 		if !ok {
-			return DecodedMatcher{}, fmt.Errorf("%w: %q is not a known %s tool", ErrUntranslatable, name, sourceName(source))
+			return DecodedMatcher{}, &UnknownToolError{Name: name, Source: sourceName(source), KnownIn: knownIn(source, name)}
 		}
 		for _, concept := range concepts {
 			set[concept] = true
 		}
 	}
 	return DecodedMatcher{Concepts: set}, nil
+}
+
+// knownIn returns the first harness other than source whose catalog declares
+// name, or "" when none does.
+func knownIn(source target.Target, name string) string {
+	for _, h := range target.Targets() {
+		if h == source || (source == "" && h == target.TargetClaude) {
+			continue
+		}
+		if _, ok := ToolConcepts(h, name); ok {
+			return string(h)
+		}
+	}
+	return ""
 }
 
 func sourceName(source target.Target) string {

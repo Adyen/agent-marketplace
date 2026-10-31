@@ -74,3 +74,41 @@ func TestResolveMatcherRefusalControlsRetainTranslation(t *testing.T) {
 		t.Fatalf("valid MCP pattern matcher = %q, diagnostics %+v; want %q translated unchanged", valid.Matcher, valid.Diagnostics, validMCPMatcher)
 	}
 }
+
+// spec: hook-sync-diagnostics/matcher-refusal-names-the-unknown-tool
+func TestResolveMatcherRefusalNamesCatalogTool(t *testing.T) {
+	hook := ir.NewHookWithMatcherOptions("post-tool", "PostToolUse", "Edit|Create|MultiEdit", "echo guard", "command", nil, ir.SourceRef{File: "hooks/hooks.json", Line: 4}, ir.WithHookSource(string(target.TargetFactory)))
+	res := hookpolicy.Resolve(hook, target.TargetDevin, hookpolicy.ScopeRepository, "")
+	if !res.Failed() || len(res.Diagnostics) != 1 {
+		t.Fatalf("resolution = failed %v, diagnostics %+v; want one suppressing refusal", res.Failed(), res.Diagnostics)
+	}
+	d := res.Diagnostics[0]
+	if d.Code != diag.CodeHookMatcherUntranslatable {
+		t.Fatalf("code = %s, want %s", d.Code, diag.CodeHookMatcherUntranslatable)
+	}
+	const wantMessage = `Tool "MultiEdit" is a claude tool name, not a factory one; hook suppressed`
+	if d.Message != wantMessage {
+		t.Fatalf("message = %q, want %q", d.Message, wantMessage)
+	}
+	for _, other := range []string{"Create", "echo guard", "Edit|"} {
+		if strings.Contains(d.Message+d.Hint, other) {
+			t.Fatalf("refusal text %q quotes %q beyond the catalog tool name", d.Message+" "+d.Hint, other)
+		}
+	}
+}
+
+// spec: hook-sync-diagnostics/names-outside-every-catalog-are-not-quoted
+func TestResolveMatcherRefusalKeepsGenericMessageForUncatalogedTool(t *testing.T) {
+	hook := ir.NewHookWithMatcherOptions("post-tool", "PostToolUse", "Edit|zqxNoSuchTool", "echo guard", "command", nil, ir.SourceRef{}, ir.WithHookSource(string(target.TargetFactory)))
+	res := hookpolicy.Resolve(hook, target.TargetDevin, hookpolicy.ScopeRepository, "")
+	if !res.Failed() || len(res.Diagnostics) != 1 {
+		t.Fatalf("resolution = failed %v, diagnostics %+v; want one suppressing refusal", res.Failed(), res.Diagnostics)
+	}
+	d := res.Diagnostics[0]
+	if d.Message != decodeRefusalMessage || d.Hint != decodeRefusalHint {
+		t.Fatalf("message/hint = %q/%q, want the generic decode refusal", d.Message, d.Hint)
+	}
+	if strings.Contains(d.Message+d.Hint, "zqxNoSuchTool") {
+		t.Fatalf("refusal text quotes a name no catalog declares: %q", d.Message)
+	}
+}
