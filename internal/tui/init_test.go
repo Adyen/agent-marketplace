@@ -8,12 +8,20 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2/compat"
+
+	"github.com/Adyen/agent-marketplace/internal/testutil"
 )
 
 // TestMain silences the first-run init modal for every test in the tui
 // package by default. Tests that specifically exercise init behavior
 // (below) flip testSkipInitModal off for the duration of their assertion.
 func TestMain(m *testing.M) {
+	// Keep DefaultCache() and other home-relative writes off the developer's
+	// real home directory.
+	_, cleanupHome, err := testutil.IsolatedHome()
+	if err != nil {
+		panic(err)
+	}
 	testSkipInitModal = true
 	compat.HasDarkBackground = true
 	// Keep view-preference reads off the developer's real XDG state tree even
@@ -32,6 +40,9 @@ func TestMain(m *testing.M) {
 	// os.Exit skips deferred cleanup, so remove the task-created state root
 	// explicitly.
 	_ = os.RemoveAll(xdg)
+	if err := cleanupHome(); err != nil && code == 0 {
+		code = 1
+	}
 	os.Exit(code)
 }
 
