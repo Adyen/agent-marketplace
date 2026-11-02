@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -60,7 +61,61 @@ func TestClaudePluginStateAssertionRejectsClaudeOwnedState(t *testing.T) {
 	}
 }
 
-// spec: plugin-delivery/claude-probe-loads-the-registered-plugin-at-both-scopes
+func TestClaudeMarketplaceRegistrationRequiresInstalledPlugin(t *testing.T) {
+	const plugin = "native-kit"
+	for _, tc := range []struct {
+		name            string
+		installedRecord string
+		wantRegistered  bool
+		wantSnapshot    []string
+	}{
+		{name: "marketplace without plugin", wantRegistered: false},
+		{
+			name:            "matching plugin install record",
+			installedRecord: `{"version":2,"plugins":{"native-kit@am-test":[{"scope":"user","installPath":"/home/test/.claude/plugins/cache/am-test/native-kit/1","version":"1.0.0","installedAt":"2026-11-02T00:00:00Z","lastUpdated":"2026-11-02T00:00:00Z"}]}}`,
+			wantRegistered:  true,
+			wantSnapshot:    []string{"known_marketplaces_am_catalog=true", "native-kit@am-test", "scope=user"},
+		},
+		{
+			name:            "different plugin install record",
+			installedRecord: `{"version":2,"plugins":{"other-kit@am-test":[{"scope":"user","installPath":"/home/test/.claude/plugins/cache/am-test/other-kit/1","version":"1.0.0","installedAt":"2026-11-02T00:00:00Z","lastUpdated":"2026-11-02T00:00:00Z"}]}}`,
+			wantRegistered:  false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			pluginsDir := filepath.Join(home, ".claude", "plugins")
+			if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(pluginsDir, "known_marketplaces.json"), []byte(`{"am-test":{}}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if tc.installedRecord != "" {
+				if err := os.WriteFile(filepath.Join(pluginsDir, "installed_plugins.json"), []byte(tc.installedRecord), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			registered, _, err := waitForClaudeMarketplaceRegistration(home, plugin, time.Nanosecond)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if registered != tc.wantRegistered {
+				t.Fatalf("plugin registration = %t, want %t", registered, tc.wantRegistered)
+			}
+			if len(tc.wantSnapshot) > 0 {
+				observed := claudePluginRegistrationSnapshot(home)
+				for _, want := range tc.wantSnapshot {
+					if !strings.Contains(observed, want) {
+						t.Errorf("registration snapshot %q does not contain %q", observed, want)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestClaudeWorkspaceTrustSetupPreservesOtherState(t *testing.T) {
 	home := t.TempDir()
 	workspace := filepath.Join(t.TempDir(), "workspace")
@@ -186,13 +241,13 @@ func establishClaudeWorkspaceTrust(home, workspace string) error {
 	return nil
 }
 
-func primeClaudePluginSession(e *Env, binary string, row *compatibilityResult) error {
+func primeClaudePluginSession(e *Env, binary, pluginName string, row *compatibilityResult) error {
 	var headlessRegistered bool
 	var headlessElapsed time.Duration
 	headlessStarted := time.Now()
 	var headlessPollErr error
 	headless := runCompatibilityProtocol(e, binary, "claude-initialize", 60*time.Second, func(command *compatibilityCommand) error {
-		headlessRegistered, headlessElapsed, headlessPollErr = waitForClaudeMarketplaceRegistration(e.home, 45*time.Second)
+		headlessRegistered, headlessElapsed, headlessPollErr = waitForClaudeMarketplaceRegistration(e.home, pluginName, 45*time.Second)
 		command.Observed = append(command.Observed, fmt.Sprintf("registration mode=headless; registered=%t; elapsed=%s", headlessRegistered, headlessElapsed.Round(time.Millisecond)))
 		return headlessPollErr
 	})
@@ -200,6 +255,7 @@ func primeClaudePluginSession(e *Env, binary string, row *compatibilityResult) e
 		headlessElapsed = time.Since(headlessStarted)
 		headless.Observed = append(headless.Observed, fmt.Sprintf("registration mode=headless; registered=false; elapsed=%s", headlessElapsed.Round(time.Millisecond)))
 	}
+	headless.Observed = append(headless.Observed, claudePluginRegistrationSnapshot(e.home))
 	row.Commands = append(row.Commands, headless)
 	if headlessPollErr != nil {
 		return fmt.Errorf("headless Claude marketplace polling failed: %w", headlessPollErr)
@@ -208,7 +264,8 @@ func primeClaudePluginSession(e *Env, binary string, row *compatibilityResult) e
 		return nil
 	}
 
-	interactive, interactiveRegistered, interactiveElapsed, err := primeClaudeInteractiveSession(e, binary, 60*time.Second)
+	interactive, interactiveRegistered, interactiveElapsed, err := primeClaudeInteractiveSession(e, binary, pluginName, 60*time.Second)
+	interactive.Observed = append(interactive.Observed, claudePluginRegistrationSnapshot(e.home))
 	row.Commands = append(row.Commands, interactive)
 	if err != nil {
 		return fmt.Errorf("interactive Claude marketplace session failed: %w", err)
@@ -225,11 +282,11 @@ func primeClaudePluginSession(e *Env, binary string, row *compatibilityResult) e
 		headlessElapsed.Round(time.Millisecond), interactiveElapsed.Round(time.Millisecond))
 }
 
-func waitForClaudeMarketplaceRegistration(home string, timeout time.Duration) (bool, time.Duration, error) {
+func waitForClaudeMarketplaceRegistration(home, pluginName string, timeout time.Duration) (bool, time.Duration, error) {
 	started := time.Now()
 	deadline := started.Add(timeout)
 	for {
-		registered, err := claudeMarketplaceRegistered(home)
+		registered, err := claudeMarketplaceRegistered(home, pluginName)
 		if err != nil {
 			return false, time.Since(started), err
 		}
@@ -244,7 +301,24 @@ func waitForClaudeMarketplaceRegistration(home string, timeout time.Duration) (b
 	}
 }
 
-func claudeMarketplaceRegistered(home string) (bool, error) {
+func claudeMarketplaceRegistered(home, pluginName string) (bool, error) {
+	marketplaceRegistered, err := claudeMarketplaceHasAMCatalog(home)
+	if err != nil {
+		return false, err
+	}
+	installedPlugins, err := claudeInstalledPluginRecords(home)
+	if err != nil {
+		return false, err
+	}
+	for _, installed := range installedPlugins {
+		if strings.HasPrefix(installed.name, pluginName+"@am-") {
+			return marketplaceRegistered, nil
+		}
+	}
+	return false, nil
+}
+
+func claudeMarketplaceHasAMCatalog(home string) (bool, error) {
 	path := filepath.Join(home, ".claude", "plugins", "known_marketplaces.json")
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -256,7 +330,96 @@ func claudeMarketplaceRegistered(home string) (bool, error) {
 	return strings.Contains(string(data), `"am-`), nil
 }
 
-func primeClaudeInteractiveSession(e *Env, binary string, timeout time.Duration) (compatibilityCommand, bool, time.Duration, error) {
+type claudeInstalledPluginRecord struct {
+	name   string
+	scopes []string
+}
+
+func claudeInstalledPluginRecords(home string) ([]claudeInstalledPluginRecord, error) {
+	path := filepath.Join(home, ".claude", "plugins", "installed_plugins.json")
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read Claude installed-plugin state %q: %w", path, err)
+	}
+	var state struct {
+		Plugins map[string]json.RawMessage `json:"plugins"`
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, fmt.Errorf("parse Claude installed-plugin state %q: %w", path, err)
+	}
+	records := make([]claudeInstalledPluginRecord, 0, len(state.Plugins))
+	for name, entries := range state.Plugins {
+		records = append(records, claudeInstalledPluginRecord{name: name, scopes: claudePluginRecordScopes(entries)})
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].name < records[j].name })
+	return records, nil
+}
+
+func claudePluginRecordScopes(entries json.RawMessage) []string {
+	var value any
+	if json.Unmarshal(entries, &value) != nil {
+		return nil
+	}
+	scopes := map[string]struct{}{}
+	var visit func(any)
+	visit = func(current any) {
+		switch item := current.(type) {
+		case map[string]any:
+			if scope, ok := item["scope"].(string); ok && scope != "" {
+				scopes[scope] = struct{}{}
+			}
+			for _, child := range item {
+				visit(child)
+			}
+		case []any:
+			for _, child := range item {
+				visit(child)
+			}
+		}
+	}
+	visit(value)
+	result := make([]string, 0, len(scopes))
+	for scope := range scopes {
+		result = append(result, scope)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func claudePluginRegistrationSnapshot(home string) string {
+	marketplace, marketplaceErr := claudeMarketplaceHasAMCatalog(home)
+	plugins, pluginsErr := claudeInstalledPluginRecords(home)
+	if marketplaceErr != nil {
+		return fmt.Sprintf("registration snapshot: known_marketplaces_am_catalog=error(%v); installed_plugins_error=%v", marketplaceErr, pluginsErr)
+	}
+	if pluginsErr != nil {
+		return fmt.Sprintf("registration snapshot: known_marketplaces_am_catalog=%t; installed_plugins_error=%v", marketplace, pluginsErr)
+	}
+	entries := make([]string, 0, len(plugins))
+	for _, plugin := range plugins {
+		entry := plugin.name
+		if len(plugin.scopes) > 0 {
+			entry += "(scope=" + strings.Join(plugin.scopes, ",") + ")"
+		}
+		if len(entry) > 120 {
+			entry = entry[:117] + "..."
+		}
+		entries = append(entries, entry)
+		if len(entries) == 8 {
+			break
+		}
+	}
+	if len(plugins) > len(entries) {
+		entries = append(entries, fmt.Sprintf("...+%d", len(plugins)-len(entries)))
+	}
+	return fmt.Sprintf("registration snapshot: known_marketplaces_am_catalog=%t; installed_plugins=[%s]",
+		marketplace, strings.Join(entries, ","))
+}
+
+func primeClaudeInteractiveSession(e *Env, binary, pluginName string, timeout time.Duration) (compatibilityCommand, bool, time.Duration, error) {
 	command := compatibilityCommand{Args: []string{binary}, ExitCode: -1}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -284,7 +447,7 @@ func primeClaudeInteractiveSession(e *Env, binary string, timeout time.Duration)
 	registered, processFinished := false, false
 	var waitErr, pollErr error
 	for !registered && !processFinished && pollErr == nil {
-		registered, pollErr = claudeMarketplaceRegistered(e.home)
+		registered, pollErr = claudeMarketplaceRegistered(e.home, pluginName)
 		if registered || pollErr != nil {
 			break
 		}
@@ -405,7 +568,7 @@ func waitForClaudePluginEnabled(e *Env, binary, pluginID string, row *compatibil
 		if remaining <= 0 {
 			return fmt.Errorf("Claude plugin list did not report %s enabled within 60 seconds", pluginID)
 		}
-		commands, found, active, err := claudePluginList(e, binary, pluginID, min(20*time.Second, remaining))
+		commands, found, active, err := claudePluginList(e, binary, pluginID, min(30*time.Second, remaining))
 		row.Commands = append(row.Commands, commands...)
 		if err != nil {
 			return err
