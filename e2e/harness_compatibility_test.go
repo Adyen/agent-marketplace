@@ -203,7 +203,7 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 			pluginProbeRow.Status, pluginProbeRow.Reason = "failed", err.Error()
 			t.Fatal(err)
 		}
-		if err := primeClaudePluginSession(e, native.binary, pluginProbeRow); err != nil {
+		if err := primeClaudePluginSession(e, native.binary, nativePluginName, pluginProbeRow); err != nil {
 			pluginProbeRow.Status, pluginProbeRow.Reason = "failed", err.Error()
 			t.Fatal(err)
 		}

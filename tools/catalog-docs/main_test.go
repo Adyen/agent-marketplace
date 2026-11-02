@@ -110,7 +110,6 @@ func TestCheckFailsOnStaleDocument(t *testing.T) {
 	}
 }
 
-// spec: plugin-delivery/claude-probe-loads-the-registered-plugin-at-both-scopes
 func TestPluginSupportDocumentsClaudeTrustPrecondition(t *testing.T) {
 	chdirRoot(t)
 	doc, err := generatePluginSupport()

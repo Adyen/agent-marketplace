@@ -26,8 +26,11 @@ The probe keeps a headless stream-JSON initialization session open for up to
 45 seconds while Claude registers the `am-*` marketplace. If that does not
 complete, it tries an interactive Claude session on a pseudo-terminal for up
 to 60 seconds, without sending a prompt or making a model request. The verdict
-requires `claude plugin list --json` to report `<plugin>@<am-catalog>` enabled
-and a later Claude initialization to discover the namespaced plugin skill.
+counts registration only when `known_marketplaces.json` names an `am-*`
+catalog and Claude's own `installed_plugins.json` records
+`<plugin>@<am-catalog>`. It then requires `claude plugin list --json` to report
+that plugin enabled and a later Claude initialization to discover the
+namespaced plugin skill.
 Repository-scope registration takes effect only in a workspace the user has
 trusted in Claude Code; the probe establishes that precondition only in its
 disposable home.
