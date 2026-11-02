@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+const claudeSystemInitPluginsField = "_compatibility_stream_json_system_init_plugins"
+
 func runCompatibilityProtocol(e *Env, binary, protocol string, timeout time.Duration, keepAlive ...func(*compatibilityCommand) error) compatibilityCommand {
 	r := compatibilityCommand{Args: []string{binary, "app-server"}, ExitCode: -1}
 	method := map[string]string{"codex-skills": "skills/list", "codex-hooks": "hooks/list", "claude-initialize": "initialize", "factory-skills": "droid.list_skills", "factory-commands": "droid.list_commands", "factory-droids": "droid.get_context_breakdown"}[protocol]
@@ -151,9 +153,12 @@ func inspectClaudeMetadata(encoder *json.Encoder, decoder *json.Decoder) (json.R
 	if err := encoder.Encode(map[string]any{"type": "control_request", "request_id": id, "request": map[string]string{"subtype": "initialize"}}); err != nil {
 		return nil, fmt.Errorf("write native initialization request")
 	}
+	var streamInitPlugins json.RawMessage
 	for {
 		var message struct {
-			Type     string `json:"type"`
+			Type     string          `json:"type"`
+			Subtype  string          `json:"subtype"`
+			Plugins  json.RawMessage `json:"plugins"`
 			Response struct {
 				Subtype   string          `json:"subtype"`
 				RequestID string          `json:"request_id"`
@@ -165,6 +170,9 @@ func inspectClaudeMetadata(encoder *json.Encoder, decoder *json.Decoder) (json.R
 			return nil, fmt.Errorf("native control protocol ended without initialization metadata")
 		}
 		if message.Type == "system" {
+			if message.Subtype == "init" && len(message.Plugins) > 0 {
+				streamInitPlugins = message.Plugins
+			}
 			continue
 		}
 		if message.Type != "control_response" || message.Response.RequestID != id {
@@ -175,6 +183,17 @@ func inspectClaudeMetadata(encoder *json.Encoder, decoder *json.Decoder) (json.R
 		}
 		if len(message.Response.Response) == 0 || string(message.Response.Response) == "null" {
 			return nil, fmt.Errorf("native control protocol omitted initialization metadata")
+		}
+		if len(streamInitPlugins) > 0 {
+			var fields map[string]json.RawMessage
+			if json.Unmarshal(message.Response.Response, &fields) == nil && fields != nil {
+				fields[claudeSystemInitPluginsField] = streamInitPlugins
+				metadata, err := json.Marshal(fields)
+				if err != nil {
+					return nil, fmt.Errorf("encode native initialization metadata")
+				}
+				return metadata, nil
+			}
 		}
 		return message.Response.Response, nil
 	}

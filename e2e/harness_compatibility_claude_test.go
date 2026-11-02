@@ -116,6 +116,90 @@ func TestClaudeMarketplaceRegistrationRequiresInstalledPlugin(t *testing.T) {
 	}
 }
 
+func TestClaudeInteractiveSessionStartsWithCompatibilityProcess(t *testing.T) {
+	e := newEnv(t)
+	binary := filepath.Join(e.repos, "claude-interactive-session")
+	e.WriteFile(binary, `#!/bin/sh
+mkdir -p "$HOME/.claude/plugins"
+printf '%s\n' '{"am-test":{}}' > "$HOME/.claude/plugins/known_marketplaces.json"
+printf '%s\n' '{"plugins":{"native-kit@am-test":[{"scope":"user"}]}}' > "$HOME/.claude/plugins/installed_plugins.json"
+trap 'exit 0' INT TERM
+while :; do sleep 1; done
+`)
+	if err := os.Chmod(binary, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	command, registered, _, err := primeClaudeInteractiveSession(e, binary, "native-kit", 5*time.Second)
+	if err != nil {
+		t.Fatalf("interactive Claude session did not start through the compatibility process: %v\n%+v", err, command)
+	}
+	if !registered {
+		t.Fatalf("interactive Claude session did not observe its install record: %+v", command)
+	}
+}
+
+func TestClaudePrimingWithoutInstallRecordContinuesToVerdictDiagnostics(t *testing.T) {
+	e := newEnv(t)
+	binary := filepath.Join(e.repos, "claude-diagnostics")
+	e.WriteFile(binary, `#!/bin/sh
+if [ "$1" = "plugin" ]; then
+	printf '%s\n' 'plugin-list-raw-diagnostic'
+	exit 0
+fi
+if [ "$1" = "--print" ]; then
+	IFS= read -r request || exit 70
+	case " $* " in
+		*" --debug "*)
+			printf '%s\n' '{"type":"control_response","response":{"subtype":"success","request_id":"amcompat-initialize","response":{"commands":[],"agents":[]}}}'
+			if IFS= read -r request; then exit 72; fi
+			;;
+		*)
+			printf '%s\n' '{"type":"system","subtype":"init","plugins":[{"name":"stream-plugin","path":"/stream/plugin"}]}'
+			printf '%s\n' '{"type":"control_response","response":{"subtype":"success","request_id":"amcompat-initialize","response":{"commands":[],"agents":[],"plugins":[{"name":"response-plugin","path":"/response/plugin"}]}}}'
+			;;
+	esac
+	exit 0
+fi
+trap 'exit 0' INT TERM
+while :; do sleep 1; done
+`)
+	if err := os.Chmod(binary, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e.WriteFile(filepath.Join(e.home, ".claude", "settings.json"), `{"enabledPlugins":{"native-kit@am-test":true}}`)
+	e.WriteFile(filepath.Join(e.home, ".claude", "plugins", "installed_plugins.json"), "not-json")
+
+	var row compatibilityResult
+	primeClaudePluginSession(e, binary, "native-kit", &row)
+	err := observeClaudePluginEnabled(e, binary, compatibilityFixture{prefix: "fixture"}, &row, "user", "native-kit", "fixture-skill")
+	if err == nil {
+		t.Fatal("Claude verdict passed without the namespaced skill or a valid plugin-list response")
+	}
+	if len(row.Commands) < 4 {
+		t.Fatalf("priming and both verdict diagnostics were not recorded: %+v", row.Commands)
+	}
+	if row.Commands[2].Args[1] != "--print" || row.Commands[3].Args[1] != "plugin" {
+		t.Fatalf("verdict diagnostics ran out of order: init=%v plugin-list=%v", row.Commands[2].Args, row.Commands[3].Args)
+	}
+	var observed []string
+	for _, command := range row.Commands {
+		observed = append(observed, command.Observed...)
+	}
+	got := strings.Join(observed, "\n")
+	for _, want := range []string{
+		"registration mode=none",
+		"Claude namespaced skill native-kit:fixture-skill listed=false",
+		"stream-json system init.plugins: [stream-plugin path=/stream/plugin]",
+		"initialize control response.plugins: [response-plugin path=/response/plugin]",
+		"plugin list --json stdout: plugin-list-raw-diagnostic",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Claude diagnostics %q do not contain %q", got, want)
+		}
+	}
+}
+
 func TestClaudeWorkspaceTrustSetupPreservesOtherState(t *testing.T) {
 	home := t.TempDir()
 	workspace := filepath.Join(t.TempDir(), "workspace")
@@ -241,7 +325,7 @@ func establishClaudeWorkspaceTrust(home, workspace string) error {
 	return nil
 }
 
-func primeClaudePluginSession(e *Env, binary, pluginName string, row *compatibilityResult) error {
+func primeClaudePluginSession(e *Env, binary, pluginName string, row *compatibilityResult) {
 	var headlessRegistered bool
 	var headlessElapsed time.Duration
 	headlessStarted := time.Now()
@@ -255,31 +339,29 @@ func primeClaudePluginSession(e *Env, binary, pluginName string, row *compatibil
 		headlessElapsed = time.Since(headlessStarted)
 		headless.Observed = append(headless.Observed, fmt.Sprintf("registration mode=headless; registered=false; elapsed=%s", headlessElapsed.Round(time.Millisecond)))
 	}
+	if headlessPollErr != nil {
+		headless.Observed = append(headless.Observed, "registration mode=headless poll error: "+headlessPollErr.Error())
+	}
 	headless.Observed = append(headless.Observed, claudePluginRegistrationSnapshot(e.home))
 	row.Commands = append(row.Commands, headless)
-	if headlessPollErr != nil {
-		return fmt.Errorf("headless Claude marketplace polling failed: %w", headlessPollErr)
-	}
 	if headlessRegistered {
-		return nil
+		return
 	}
 
 	interactive, interactiveRegistered, interactiveElapsed, err := primeClaudeInteractiveSession(e, binary, pluginName, 60*time.Second)
 	interactive.Observed = append(interactive.Observed, claudePluginRegistrationSnapshot(e.home))
-	row.Commands = append(row.Commands, interactive)
 	if err != nil {
-		return fmt.Errorf("interactive Claude marketplace session failed: %w", err)
+		interactive.Observed = append(interactive.Observed, "registration mode=interactive error: "+err.Error())
 	}
+	row.Commands = append(row.Commands, interactive)
 	if interactiveRegistered {
-		return nil
+		return
 	}
 	row.Commands[len(row.Commands)-1].Observed = append(
 		row.Commands[len(row.Commands)-1].Observed,
 		fmt.Sprintf("registration mode=none; headless elapsed=%s; interactive elapsed=%s",
 			headlessElapsed.Round(time.Millisecond), interactiveElapsed.Round(time.Millisecond)),
 	)
-	return fmt.Errorf("Claude registered no Agent Marketplace catalog in headless (%s) or interactive (%s) session",
-		headlessElapsed.Round(time.Millisecond), interactiveElapsed.Round(time.Millisecond))
 }
 
 func waitForClaudeMarketplaceRegistration(home, pluginName string, timeout time.Duration) (bool, time.Duration, error) {
@@ -428,6 +510,7 @@ func primeClaudeInteractiveSession(e *Env, binary, pluginName string, timeout ti
 		command.Error = err.Error()
 		return command, false, 0, err
 	}
+	process.SysProcAttr.Setpgid = false
 	terminal, err := pty.Start(process)
 	if err != nil {
 		command.Error = "interactive Claude session could not be started"
@@ -525,40 +608,112 @@ func observeClaudePluginEnabled(e *Env, binary string, f compatibilityFixture, r
 		settingsPath = filepath.Join(e.workspace, ".claude", "settings.local.json")
 	}
 	data, err := os.ReadFile(settingsPath)
-	if err != nil {
-		return fmt.Errorf("read Claude native plugin registration %q: %w", settingsPath, err)
-	}
-	document, err := jsonc.Parse(settingsPath, data)
-	if err != nil {
-		return err
-	}
-	enabled, ok := document.Root().Member("enabledPlugins")
-	if !ok {
-		return fmt.Errorf("Claude plugin registration has no enabledPlugins")
-	}
 	pluginID := ""
-	for _, key := range enabled.Keys() {
-		value, _ := enabled.Member(key)
-		if strings.HasPrefix(key, plugin+"@am-") && string(value.Raw()) == "true" {
-			pluginID = key
-			break
+	var registrationErr error
+	if err != nil {
+		registrationErr = fmt.Errorf("read Claude native plugin registration %q: %w", settingsPath, err)
+	} else if document, parseErr := jsonc.Parse(settingsPath, data); parseErr != nil {
+		registrationErr = parseErr
+	} else if enabled, ok := document.Root().Member("enabledPlugins"); !ok {
+		registrationErr = fmt.Errorf("Claude plugin registration has no enabledPlugins")
+	} else {
+		for _, key := range enabled.Keys() {
+			value, _ := enabled.Member(key)
+			if strings.HasPrefix(key, plugin+"@am-") && string(value.Raw()) == "true" {
+				pluginID = key
+				break
+			}
+		}
+		if pluginID == "" {
+			registrationErr = fmt.Errorf("Claude plugin registration is not enabled for %s@am-*", plugin)
 		}
 	}
 	if pluginID == "" {
-		return fmt.Errorf("Claude plugin registration is not enabled for %s@am-*", plugin)
-	}
-	if err := waitForClaudePluginEnabled(e, binary, pluginID, row); err != nil {
-		return err
+		pluginID = plugin + "@am-"
 	}
 	command := runCompatibilityProtocol(e, binary, "claude-initialize", 30*time.Second)
+	recordClaudePluginInitialization(&command, e, plugin, skill)
+	initErr := requireCompatibilityProtocolInventory(
+		&command,
+		e,
+		f,
+		compatibilityNativeProbe{kind: "skill", protocol: "claude-initialize", names: []string{plugin + ":" + skill}},
+		scope,
+		nil,
+		false,
+	)
 	row.Commands = append(row.Commands, command)
-	probe := compatibilityNativeProbe{kind: "skill", protocol: "claude-initialize", names: []string{plugin + ":" + skill}}
-	if err := requireCompatibilityProtocolInventory(&command, e, f, probe, scope, nil, false); err != nil {
-		return err
+	pluginListErr := waitForClaudePluginEnabled(e, binary, pluginID, row)
+	var verdictErrors []string
+	for _, verdictErr := range []error{registrationErr, initErr, pluginListErr} {
+		if verdictErr != nil {
+			verdictErrors = append(verdictErrors, verdictErr.Error())
+		}
+	}
+	if len(verdictErrors) > 0 {
+		return fmt.Errorf("Claude plugin verdict failed: %s", strings.Join(verdictErrors, "; "))
 	}
 	row.Status = "native-verified"
 	row.Reason = "Claude plugin list and initialization inventory confirmed the native plugin and namespaced skill"
 	return nil
+}
+
+func recordClaudePluginInitialization(command *compatibilityCommand, e *Env, plugin, skill string) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal([]byte(command.output), &fields) != nil || fields == nil {
+		command.Observed = append(command.Observed, "Claude initialization plugins: response metadata unavailable")
+	} else {
+		recordClaudePluginListField(command, "stream-json system init.plugins", fields[claudeSystemInitPluginsField])
+		recordClaudePluginListField(command, "initialize control response.plugins", fields["plugins"])
+	}
+	listed := false
+	entries, err := compatibilityProtocolInventory(command.output, "claude-initialize", "skill", e.workspace)
+	if err == nil {
+		for _, entry := range entries {
+			listed = listed || entry.Name == plugin+":"+skill
+		}
+	}
+	command.Observed = append(command.Observed, fmt.Sprintf("Claude namespaced skill %s:%s listed=%t", plugin, skill, listed))
+}
+
+func recordClaudePluginListField(command *compatibilityCommand, field string, raw json.RawMessage) {
+	if len(raw) == 0 {
+		command.Observed = append(command.Observed, "Claude "+field+": field absent")
+		return
+	}
+	var plugins []struct {
+		Name string `json:"name"`
+		Path string `json:"path"`
+	}
+	if json.Unmarshal(raw, &plugins) != nil {
+		command.Observed = append(command.Observed, "Claude "+field+": present but not a plugin list")
+		return
+	}
+	entries := make([]string, 0, min(len(plugins), 20))
+	for _, plugin := range plugins[:min(len(plugins), 20)] {
+		name := boundedClaudeDiagnosticValue(plugin.Name, 120)
+		path := boundedClaudeDiagnosticValue(plugin.Path, 180)
+		if name == "" {
+			continue
+		}
+		if path != "" {
+			entries = append(entries, name+" path="+path)
+		} else {
+			entries = append(entries, name)
+		}
+	}
+	if len(plugins) > 20 {
+		entries = append(entries, fmt.Sprintf("...+%d", len(plugins)-20))
+	}
+	command.Observed = append(command.Observed, "Claude "+field+": ["+strings.Join(entries, ",")+"]")
+}
+
+func boundedClaudeDiagnosticValue(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= limit {
+		return value
+	}
+	return value[:limit-3] + "..."
 }
 
 func waitForClaudePluginEnabled(e *Env, binary, pluginID string, row *compatibilityResult) error {
@@ -569,6 +724,9 @@ func waitForClaudePluginEnabled(e *Env, binary, pluginID string, row *compatibil
 			return fmt.Errorf("Claude plugin list did not report %s enabled within 60 seconds", pluginID)
 		}
 		commands, found, active, err := claudePluginList(e, binary, pluginID, min(30*time.Second, remaining))
+		for i := range commands {
+			commands[i].Observed = append(commands[i].Observed, "plugin list --json stdout: "+commands[i].Stdout)
+		}
 		row.Commands = append(row.Commands, commands...)
 		if err != nil {
 			return err
