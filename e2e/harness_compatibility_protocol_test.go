@@ -13,11 +13,14 @@ import (
 	"time"
 )
 
-func runCompatibilityProtocol(e *Env, binary, protocol string, timeout time.Duration) compatibilityCommand {
+func runCompatibilityProtocol(e *Env, binary, protocol string, timeout time.Duration, keepAlive ...func(*compatibilityCommand) error) compatibilityCommand {
 	r := compatibilityCommand{Args: []string{binary, "app-server"}, ExitCode: -1}
 	method := map[string]string{"codex-skills": "skills/list", "codex-hooks": "hooks/list", "claude-initialize": "initialize", "factory-skills": "droid.list_skills", "factory-commands": "droid.list_commands", "factory-droids": "droid.get_context_breakdown"}[protocol]
 	if protocol == "claude-initialize" {
 		r.Args = append([]string{binary}, "--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--setting-sources", "user,project,local")
+		if len(keepAlive) > 0 {
+			r.Args = append(r.Args, "--debug")
+		}
 	}
 	if strings.HasPrefix(protocol, "factory-") {
 		r.Args = append([]string{binary}, "exec", "--input-format", "stream-jsonrpc", "--output-format", "stream-jsonrpc")
@@ -55,10 +58,14 @@ func runCompatibilityProtocol(e *Env, binary, protocol string, timeout time.Dura
 	if strings.HasPrefix(protocol, "factory-") {
 		limit = 10 << 20
 	}
-	reader := io.LimitReader(io.TeeReader(output, &stdout), int64(limit)+1)
+	reader := io.TeeReader(output, &stdout)
+	if len(keepAlive) == 0 {
+		reader = io.LimitReader(reader, int64(limit)+1)
+	}
 	encoder, decoder := json.NewEncoder(input), json.NewDecoder(reader)
 	var result json.RawMessage
 	var exchangeErr error
+	var drained chan struct{}
 	switch {
 	case protocol == "claude-initialize":
 		result, exchangeErr = inspectClaudeMetadata(encoder, decoder)
@@ -67,14 +74,33 @@ func runCompatibilityProtocol(e *Env, binary, protocol string, timeout time.Dura
 	default:
 		result, exchangeErr = inspectCodexMetadata(encoder, decoder, e.workspace, method)
 	}
+	if exchangeErr == nil && len(keepAlive) > 0 {
+		drained = make(chan struct{})
+		go func() {
+			defer close(drained)
+			_, _ = io.Copy(io.Discard, reader)
+		}()
+		exchangeErr = keepAlive[0](&r)
+	}
 	_ = input.Close()
 	if exchangeErr != nil {
 		cancel()
-	} else {
+	} else if drained == nil {
 		_, _ = io.Copy(io.Discard, reader)
+	}
+	forcedStop := false
+	if drained != nil {
+		select {
+		case <-drained:
+		case <-time.After(10 * time.Second):
+			forcedStop = true
+			cancel()
+			<-drained
+		}
 	}
 	err = cmd.Wait()
 	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	r.Stdout, r.Stderr = string(stdout.data), string(stderr.data)
 	r.ExitCode = cmd.ProcessState.ExitCode()
 	r.output = string(result)
 	r.Diagnostics = compatibilityDiagnostics(string(stderr.data))
@@ -88,10 +114,10 @@ func runCompatibilityProtocol(e *Env, binary, protocol string, timeout time.Dura
 		r.Error = "native protocol inspection timed out"
 	case exchangeErr != nil:
 		r.Error = exchangeErr.Error()
-	case err != nil:
+	case err != nil && (drained == nil || !forcedStop):
 		r.Error = "native protocol process did not exit successfully"
 	default:
-		r.Observed = []string{"protocol response: " + method}
+		r.Observed = append(r.Observed, "protocol response: "+method)
 	}
 	return r
 }
@@ -308,6 +334,38 @@ if IFS= read -r request; then exit 72; fi
 	result := runCompatibilityProtocol(e, binary, "claude-initialize", 2*time.Second)
 	if err := requireCompatibilityObservation(&result, false, "fixture-skill", "fixture-agent"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCompatibilityClaudeProtocolKeepsSessionOpenDuringRegistrationPoll(t *testing.T) {
+	e := newEnv(t)
+	binary := filepath.Join(e.repos, "internal-fake-claude")
+	e.WriteFile(binary, `#!/bin/sh
+IFS= read -r request || exit 70
+case "$request" in *'"subtype":"initialize"'*) ;; *) exit 71;; esac
+touch "$HOME/session-active"
+printf '%s\n' '{"type":"control_response","response":{"subtype":"success","request_id":"amcompat-initialize","response":{"commands":[],"agents":[]}}}'
+if IFS= read -r request; then exit 72; fi
+touch "$HOME/session-ended"
+`)
+	if err := os.Chmod(binary, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	result := runCompatibilityProtocol(e, binary, "claude-initialize", 2*time.Second, func(command *compatibilityCommand) error {
+		if _, err := os.Stat(filepath.Join(e.home, "session-active")); err != nil {
+			return err
+		}
+		if _, err := os.Stat(filepath.Join(e.home, "session-ended")); !os.IsNotExist(err) {
+			return fmt.Errorf("Claude session ended before registration polling: %v", err)
+		}
+		command.Observed = append(command.Observed, "live session held for registration polling")
+		return nil
+	})
+	if err := compatibilityInspectionError(result); err != nil {
+		t.Fatalf("Claude live session failed: %v", err)
+	}
+	if !strings.Contains(strings.Join(result.Observed, "\n"), "live session held for registration polling") {
+		t.Fatalf("Claude live-session observation not recorded: %+v", result)
 	}
 }
 

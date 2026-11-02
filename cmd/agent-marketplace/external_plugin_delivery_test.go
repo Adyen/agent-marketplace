@@ -78,7 +78,7 @@ func TestSyncExternalGitSubdirectoryHonorsExclusions(t *testing.T) {
 		return
 	}
 	fixture := newExternalDeliveryFixture(t, "packages/ext-kit",
-		"    - {kind: plugin, name: ext-kit, exclude: [skill/b]}\n",
+		"    - {kind: plugin, name: ext-kit, delivery: decompose, exclude: [skill/b]}\n",
 		func(t *testing.T, root string) {
 			writeTwoMemberPluginPackage(t, root, "ext-kit", "a", "b")
 		})
@@ -210,7 +210,7 @@ func TestSyncCheckExternalEntryWritesNothing(t *testing.T) {
 		return
 	}
 	fixture := newExternalDeliveryFixture(t, "",
-		"    - {kind: plugin, name: ext-kit}\n",
+		"    - {kind: plugin, name: ext-kit, delivery: decompose}\n",
 		func(t *testing.T, root string) { writeExternalSkillVersion(t, root, "stable content") })
 
 	output, err := executeCommand("sync", "--no-backup")
@@ -333,7 +333,7 @@ func configureExternalPipelineRepo(t *testing.T, repo, catalogDir, leafDir strin
 		"apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n"+
 			"  team: {directory: "+filepath.ToSlash(catalogDir)+", format: claude-marketplace}\n"+
 			"  leaf: {directory: "+filepath.ToSlash(leafDir)+"}\nresources:\n"+
-			"  team:\n    - plugin/ext-kit\n    - plugin/local-kit\n  leaf:\n    - skill/other\n")
+			"  team:\n    - {kind: plugin, name: ext-kit, delivery: decompose}\n    - {kind: plugin, name: local-kit, delivery: decompose}\n  leaf:\n    - skill/other\n")
 }
 
 func syncExternalPipeline(t *testing.T, repo string, metadata []pipeline.LockMetadata) pipeline.SyncResult {

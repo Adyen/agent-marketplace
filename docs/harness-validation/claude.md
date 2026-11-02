@@ -15,7 +15,22 @@ discovery succeed.
 Native plugin bundles use a Claude Code marketplace catalog with relative
 `./plugins/<name>` sources linked to immutable package generations. Repository
 registrations are kept in `.claude/settings.local.json`; user registrations
-remain in `~/.claude/settings.json`.
+remain in `~/.claude/settings.json`. The CI-only `claude-native-plugin` probe
+checks both scopes. It confirms the plugin is absent before sync and that sync
+did not write Claude's installed-plugin records, known-marketplace records,
+plugin cache, or workspace trust in `~/.claude.json`. The probe then marks its
+isolated workspace trusted in that file and completes onboarding; Agent
+Marketplace never writes Claude trust state.
+
+The probe keeps a headless stream-JSON initialization session open for up to
+45 seconds while Claude registers the `am-*` marketplace. If that does not
+complete, it tries an interactive Claude session on a pseudo-terminal for up
+to 60 seconds, without sending a prompt or making a model request. The verdict
+requires `claude plugin list --json` to report `<plugin>@<am-catalog>` enabled
+and a later Claude initialization to discover the namespaced plugin skill.
+Repository-scope registration takes effect only in a workspace the user has
+trusted in Claude Code; the probe establishes that precondition only in its
+disposable home.
 
 ## Skills, commands, and subagents: CLI initialization
 

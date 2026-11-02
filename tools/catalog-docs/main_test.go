@@ -109,3 +109,16 @@ func TestCheckFailsOnStaleDocument(t *testing.T) {
 		t.Fatalf("check error must name the stale document, got %v", err)
 	}
 }
+
+// spec: plugin-delivery/claude-probe-loads-the-registered-plugin-at-both-scopes
+func TestPluginSupportDocumentsClaudeTrustPrecondition(t *testing.T) {
+	chdirRoot(t)
+	doc, err := generatePluginSupport()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Repository-scope Claude plugin registration takes effect only in a workspace the user has trusted; Agent Marketplace never writes Claude trust state."
+	if !strings.Contains(string(doc), want) {
+		t.Fatalf("plugin support reference omits Claude's trust boundary:\n%s", doc)
+	}
+}
