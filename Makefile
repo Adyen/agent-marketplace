@@ -436,6 +436,8 @@ GUI_LINUX_ARCH = $(shell $(GO) env GOARCH)
 GUI_LINUX_BUILD_DIR = $(GUI_DIST_DIR)/build/linux-$(GUI_LINUX_ARCH)
 GUI_LINUX_RPM_BINARY = $(GUI_LINUX_BUILD_DIR)/rpm/$(GUI_BINARY)
 GUI_LINUX_DEB_BINARY = $(GUI_LINUX_BUILD_DIR)/deb/$(GUI_BINARY)
+GUI_LINUX_RPM_CONFIG = $(GUI_LINUX_BUILD_DIR)/rpm/nfpm.yaml
+GUI_LINUX_DEB_CONFIG = $(GUI_LINUX_BUILD_DIR)/deb/nfpm.yaml
 GUI_LINUX_RPM = $(GUI_DIST_DIR)/agent-marketplace-gui-$(VERSION)-linux-$(GUI_LINUX_ARCH).rpm
 GUI_LINUX_DEB = $(GUI_DIST_DIR)/agent-marketplace-gui-$(VERSION)-linux-$(GUI_LINUX_ARCH).deb
 NFPM_VERSION := v2.48.0
@@ -478,7 +480,14 @@ gui-package-macos: $(GUI_MACOS_ARM64) $(GUI_MACOS_AMD64)
 	ditto -c -k --keepParent "$$app" "$(GUI_MACOS_ZIP)"; \
 	ditto "$$app" "$(GUI_MACOS_STAGE)/Agent Marketplace.app"; \
 	ln -s /Applications "$(GUI_MACOS_STAGE)/Applications"; \
-	hdiutil create -volname "Agent Marketplace" -srcfolder "$(GUI_MACOS_STAGE)" -ov -format UDZO "$(GUI_MACOS_DMG)"; \
+	dmg_size_mb="$$(du -sm "$(GUI_MACOS_STAGE)" | awk '{print $$1 + 64}')"; \
+	attempt=1; \
+	while :; do \
+		if hdiutil create -volname "Agent Marketplace" -srcfolder "$(GUI_MACOS_STAGE)" -ov -format UDZO -fs HFS+ -size "$${dmg_size_mb}m" "$(GUI_MACOS_DMG)"; then break; fi; \
+		if [ "$$attempt" -ge 3 ]; then exit 1; fi; \
+		sleep 2; \
+		attempt=$$((attempt + 1)); \
+	done; \
 	check_dir="$$(mktemp -d "$(GUI_MACOS_DIR)/verify.XXXXXX")"; \
 	mount_dir="$$check_dir/mount"; \
 	zip_dir="$$check_dir/zip"; \
@@ -497,9 +506,11 @@ gui-package-linux: gui-build-frontend
 	@test "$$($(GO) env GOOS)" = linux || { echo "ERROR: gui-package-linux requires a native Linux host" >&2; exit 1; }
 	@mkdir -p "$(dir $(GUI_LINUX_RPM_BINARY))" "$(dir $(GUI_LINUX_DEB_BINARY))" "$(GUI_DIST_DIR)"
 	$(MAKE) --no-print-directory gui-build-binary GUI_GOOS=linux GUI_GOARCH=$(GUI_LINUX_ARCH) GUI_BUILD_TAGS=desktop,production,webkit2_41 GUI_PACKAGE_FORMAT=rpm GUI_OUTPUT="$(GUI_LINUX_RPM_BINARY)"
-	GUI_ARCH="$(GUI_LINUX_ARCH)" GUI_VERSION="$(GUI_TAG_VERSION)" GUI_BINARY="$(abspath $(GUI_LINUX_RPM_BINARY))" $(GO) run github.com/goreleaser/nfpm/v2/cmd/nfpm@$(NFPM_VERSION) package --config packaging/gui/linux/nfpm.yaml --packager rpm --target "$(GUI_LINUX_RPM)"
+	sed 's|@GUI_BINARY@|$(abspath $(GUI_LINUX_RPM_BINARY))|g' packaging/gui/linux/nfpm.yaml > "$(GUI_LINUX_RPM_CONFIG)"
+	GUI_ARCH="$(GUI_LINUX_ARCH)" GUI_VERSION="$(GUI_TAG_VERSION)" $(GO) run github.com/goreleaser/nfpm/v2/cmd/nfpm@$(NFPM_VERSION) package --config "$(GUI_LINUX_RPM_CONFIG)" --packager rpm --target "$(GUI_LINUX_RPM)"
 	$(MAKE) --no-print-directory gui-build-binary GUI_GOOS=linux GUI_GOARCH=$(GUI_LINUX_ARCH) GUI_BUILD_TAGS=desktop,production,webkit2_41 GUI_PACKAGE_FORMAT=deb GUI_OUTPUT="$(GUI_LINUX_DEB_BINARY)"
-	GUI_ARCH="$(GUI_LINUX_ARCH)" GUI_VERSION="$(GUI_TAG_VERSION)" GUI_BINARY="$(abspath $(GUI_LINUX_DEB_BINARY))" $(GO) run github.com/goreleaser/nfpm/v2/cmd/nfpm@$(NFPM_VERSION) package --config packaging/gui/linux/nfpm.yaml --packager deb --target "$(GUI_LINUX_DEB)"
+	sed 's|@GUI_BINARY@|$(abspath $(GUI_LINUX_DEB_BINARY))|g' packaging/gui/linux/nfpm.yaml > "$(GUI_LINUX_DEB_CONFIG)"
+	GUI_ARCH="$(GUI_LINUX_ARCH)" GUI_VERSION="$(GUI_TAG_VERSION)" $(GO) run github.com/goreleaser/nfpm/v2/cmd/nfpm@$(NFPM_VERSION) package --config "$(GUI_LINUX_DEB_CONFIG)" --packager deb --target "$(GUI_LINUX_DEB)"
 
 # E2E test suite.
 # Runs inside a Docker container for local isolation (doesn't touch host env).
