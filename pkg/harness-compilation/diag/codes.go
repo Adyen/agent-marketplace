@@ -425,7 +425,8 @@ const (
 	CodePluginMemberLiteralUnrepresentable  = "plugin.member.literal-unrepresentable"  // A literal placeholder has no escape on the destination; member blocked
 	CodePluginMemberRestrictionUnsupported  = "plugin.member.restriction-unsupported"  // A plugin member field is a restriction the target cannot enforce; member blocked
 	CodePluginCompilePackageRequired        = "plugin.compile.package-required"        // A plugin resource was passed to the per-resource Compile boundary
-	CodePluginDeliveryPending               = "plugin.delivery.pending"                // WARNING: an external Git plugin package or its member selection plan is unavailable
+	CodePluginDeliveryPending               = "plugin.delivery.pending"                // WARNING: a plugin member selection plan is unavailable
+	CodePluginDeliveryExternalUnavailable   = "plugin.delivery.external-unavailable"   // ERROR: the locked external plugin package or snapshot is unavailable
 	CodePluginDeliveryNativeUnverified      = "plugin.delivery.native-unverified"      // Native delivery was requested where the target catalog is unverified
 	CodePluginRegistrationUnsupported       = "plugin.registration.unsupported"        // Native registration is unavailable for this target
 	CodePluginRegistrationCollision         = "plugin.registration.collision"          // An unowned native plugin registration key already exists

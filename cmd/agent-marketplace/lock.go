@@ -1305,12 +1305,20 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 					continue
 				}
 				seen[key] = true
+				rootPaths := make([]string, 0, len(registry.Roots))
+				for _, root := range registry.Roots {
+					rootPaths = append(rootPaths, root.Path)
+				}
+				if len(rootPaths) == 0 {
+					rootPaths = append(rootPaths, ".")
+				}
 				metadata = append(metadata, pipeline.LockMetadata{
 					Source:            job.source,
 					Scope:             lockScopeForSource(job.source),
 					URL:               registry.URL,
 					Ref:               registry.Ref,
 					Commit:            registry.Commit.String(),
+					RootPaths:         rootPaths,
 					SnapshotAvailable: true,
 				})
 			}
