@@ -200,15 +200,11 @@ func writePluginInspection(out io.Writer, inspection pluginInspection, locks []p
 		})
 	}
 	fmt.Fprintln(&report, "TARGET DELIVERY:")
-	sourceKind := ""
-	if entry.Plugin != nil {
-		sourceKind = entry.Plugin.Source.Kind
-	}
 	for _, target := range harnesscompile.TargetNames() {
 		state := "unavailable"
 		if plugin != nil {
 			resolution := pipeline.ResolvePluginDelivery(
-				inspection.deliveryRequest, plugin.Format, sourceKind, harnesscompile.Target(target),
+				inspection.deliveryRequest, plugin.Format, harnesscompile.Target(target),
 			)
 			state = resolution.String()
 		}

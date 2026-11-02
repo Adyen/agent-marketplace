@@ -186,6 +186,42 @@ func exactLockViewGCFixture(t *testing.T) (config.EffectiveConfig, string) {
 	return ec, snapshot
 }
 
+func TestExactLockViewKeepsOneMetadataRowForMultiRootRegistry(t *testing.T) {
+	ec, _ := exactLockViewGCFixture(t)
+	lockPath := filepath.Join(filepath.Dir(ec.Repo.Path), "lock.yaml")
+	doc, err := lockfile.Read(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Registries) != 1 || len(doc.Registries[0].Roots) != 1 {
+		t.Fatalf("fixture lock registries = %#v", doc.Registries)
+	}
+	root := doc.Registries[0].Roots[0]
+	root.Path = "other"
+	doc.Registries[0].Roots = append(doc.Registries[0].Roots, root)
+	lockBytes, err := lockfile.Encode(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lockPath, lockBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	other := ec.Repo.Config.Registries[0]
+	other.Path = "other"
+	ec.Repo.Config.Registries = append(ec.Repo.Config.Registries, other)
+	ec.Merged = ec.Repo.Config
+	_, view := exactLockViewWithContext(context.Background(), ec, false)
+	defer view.release()
+	if len(view.gitMetadata) != 1 {
+		t.Fatalf("multi-root registry metadata rows = %d, want 1", len(view.gitMetadata))
+	}
+	rootPaths := view.gitMetadata[0].RootPaths
+	if len(rootPaths) != 2 || rootPaths[0] != "." || rootPaths[1] != "other" {
+		t.Fatalf("multi-root registry paths = %v, want [., other]", rootPaths)
+	}
+}
+
 func TestExactLockViewLeaseBlocksGCThroughCatalogConsumption(t *testing.T) {
 	ec, snapshot := exactLockViewGCFixture(t)
 	_, view := exactLockViewWithContext(context.Background(), ec, false)

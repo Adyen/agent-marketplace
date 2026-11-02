@@ -15,14 +15,7 @@ type PluginDeliveryResolution struct {
 	Diagnostic *diag.Diagnostic
 }
 
-func ResolvePluginDelivery(request, format, sourceKind string, targetHarness hcc.Target) PluginDeliveryResolution {
-	if sourceKind == "git" {
-		return PluginDeliveryResolution{Diagnostic: &diag.Diagnostic{
-			Code: diag.CodePluginDeliveryPending, Severity: diag.SeverityWarning,
-			Target:  string(targetHarness),
-			Message: "external plugin package acquisition is not available for delivery",
-		}}
-	}
+func ResolvePluginDelivery(request, format string, targetHarness hcc.Target) PluginDeliveryResolution {
 	if request == "decompose" {
 		return PluginDeliveryResolution{Delivery: "decompose"}
 	}
