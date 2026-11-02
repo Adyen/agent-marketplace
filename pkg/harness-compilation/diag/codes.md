@@ -622,6 +622,7 @@ key or a hook event name), the resource name, and content digests are reported.
 | `bundle.conflict.duplicate-artifact-path` | Two resources produce the same artifact output path; neither resource is emitted | Rename one of the conflicting resources or adjust the output path |
 | `bundle.conflict.cross-kind-artifact-path` | Resources of different kinds produce the same artifact output path; neither artifact is emitted | Rename one of the conflicting resources: on targets that compile commands as skills, a skill and a command cannot share a name |
 | `bundle.compile.resource-failed` | A resource compiler failed | Fix the resource compiler error before materializing the bundle |
+| `ingest.frontmatter.too-large` | YAML frontmatter exceeds the 64 KiB parse ceiling; the resource is not loaded | Shorten the frontmatter and move long content into the body or support files |
 | `ingest.claude.load-skill-failed` | Failed to load a skill from the Claude source layout | Check the skill directory structure and SKILL.md frontmatter |
 | `ingest.claude.load-command-failed` | Failed to load a command from the Claude source layout | Check the command .md file structure and frontmatter |
 | `ingest.claude.load-subagent-failed` | Failed to load a subagent from the Claude source layout | Check the agent .md file structure and frontmatter |

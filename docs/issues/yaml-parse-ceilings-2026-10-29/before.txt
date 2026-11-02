@@ -1,0 +1,21 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/yamlfm
+cpu: Apple M4 Max
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=2KiB-16         	    1796	    132216 ns/op	  130582 B/op	    2099 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=2KiB-16         	    1818	    132381 ns/op	  130576 B/op	    2099 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=2KiB-16         	    1783	    131987 ns/op	  130576 B/op	    2099 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=2KiB-16         	    1861	    131726 ns/op	  130576 B/op	    2099 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=2KiB-16         	    1866	    131296 ns/op	  130576 B/op	    2099 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=64KiB-16        	       5	  41781825 ns/op	 4037148 B/op	   65644 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=64KiB-16        	       5	  42024783 ns/op	 4037168 B/op	   65644 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=64KiB-16        	       5	  41534567 ns/op	 4037145 B/op	   65644 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=64KiB-16        	       5	  41819692 ns/op	 4037145 B/op	   65644 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=64KiB-16        	       5	  41616608 ns/op	 4037145 B/op	   65644 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=1024KiB-16      	       1	13121030666 ns/op	66467536 B/op	 1049212 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=1024KiB-16      	       1	13031682958 ns/op	66446240 B/op	 1049188 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=1024KiB-16      	       1	12979000334 ns/op	66451592 B/op	 1049194 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=1024KiB-16      	       1	13491123042 ns/op	66446256 B/op	 1049188 allocs/op
+BenchmarkParseYAMLFrontmatterKeys/frontmatter=1024KiB-16      	       1	13435602917 ns/op	66446384 B/op	 1049189 allocs/op
+PASS
+ok  	github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/yamlfm	69.052s
