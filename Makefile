@@ -415,7 +415,7 @@ GUI_DIR := gui
 GUI_BINARY := agent-marketplace-gui
 GUI_CMD := ./cmd/agent-marketplace-gui
 GUI_DIST_DIR := $(DIST_DIR)/gui
-GUI_TAG_VERSION ?= $(patsubst v%,%,$(VERSION))
+GUI_TAG_VERSION ?= $(shell v='$(patsubst v%,%,$(VERSION))'; case "$$v" in ([0-9]*) echo "$$v" ;; (*) echo "0.0.0~$$v" ;; esac)
 GUI_PACKAGE_FORMAT ?=
 GUI_GOOS ?= $(shell $(GO) env GOOS)
 GUI_GOARCH ?= $(shell $(GO) env GOARCH)
