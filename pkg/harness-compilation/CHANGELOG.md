@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### External catalog plugin entries deliver from their locked commit
+
+A plugin selected from a native catalog entry whose source is an external
+Git repository or Git subdirectory no longer reports
+`plugin.delivery.pending`: the consumer delivers the entry's committed
+post-exclusion members from the package at the exact commit its lock
+records, under the same decomposed and native delivery policy as in-path
+plugins, and never reads the live ref. When the entry has no locked record
+or its locked snapshot cannot be opened, that plugin instance is blocked
+with the new error `plugin.delivery.external-unavailable`, keeps its
+previous projection, and installs nothing on a first install, while other
+plugins and resources still deliver. `plugin.delivery.pending` now means
+only that a plugin has no member selection plan.
+
 ### Comma-separated subagent tool strings become separate tools
 
 Claude documents a subagent's `tools` and `disallowedTools` as a YAML list or a comma-separated string such as `Read, Grep, Bash`, but ingestion kept the string as one tool named `Read, Grep` (#822). Claude re-emitted a single combined entry, Factory and Gemini suppressed the subagent with `subagent.factory.tool-unknown` or `subagent.gemini.tool-unknown`, and a combined `disallowedTools` entry denied nothing. `LoadSubagent`, and with it Claude and Cursor source layout ingestion, now splits such a string on commas outside parentheses, where a backslash makes the next character literal, trims each entry and drops blank ones, so `Agent(worker, researcher), Read` is two tools. A string that names no tool, whose parentheses do not balance, or that ends in a lone backslash is not a well-formed list and keeps the single entry earlier versions produced. #822 also asks for such a value to be refused, but refusing it would drop a subagent that earlier releases ingested from the source-revision inventory and fail locks written by them with `lock.manifest-mismatch`, so it is left as it was; Factory and Gemini still refuse it at compile time. For subagents written in the string form, the Marketplace capability entries (`tool:<name>`) and tool-grant finding texts now list each tool, and the content and archive digests of artifacts built from a re-ingested revision change, while payloads published earlier stay as they were until the revision is published again. YAML lists and skill `allowed-tools` are unchanged, and a single name with surrounding whitespace, such as `" Read "`, is now trimmed, so targets that suppressed it as an unknown tool now emit it.
