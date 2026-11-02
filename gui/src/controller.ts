@@ -10,11 +10,14 @@ import {
   type InspectionPayload,
   type InstalledSkillFilesPayload,
   type OperationRef,
+  type ReleaseNotice,
   type ResourceAction,
   type ResourceActionPlan,
   type SessionEvent,
   type Snapshot,
   type SourceInput,
+  type UpdateAction,
+  type UpdateStatus,
 } from './api/client'
 
 export type Row = Snapshot['rows'][number]
@@ -86,6 +89,8 @@ export interface WorkspaceState {
   error: string | null
   configuration: Configuration | null
   latestVersion: string
+  releaseNotice: ReleaseNotice | null
+  updateStatus: UpdateStatus | null
 }
 
 const FATAL_DIAGNOSTIC_CATEGORIES = new Set(['config', 'catalog', 'resolution', 'materialization'])
@@ -130,11 +135,14 @@ export class WorkspaceController {
     error: null,
     configuration: null,
     latestVersion: '',
+    releaseNotice: null,
+    updateStatus: null,
   })
 
   private readonly cursor = new EventCursor()
   private readonly timers = new Set<ReturnType<typeof setTimeout>>()
   private lastSettled: OperationRef | null = null
+  private quitHandler: (() => void) | null = null
   private pendingQuitId: number | null = null
   private quitEpoch = 0
   private configurationSeq = 0
@@ -162,7 +170,22 @@ export class WorkspaceController {
     private readonly client: Client,
     private readonly notifyTtl: number = NOTIFICATION_TTL_MS,
     private readonly onQuit?: () => void,
+    readonly packageFormat = '',
   ) {}
+
+  setQuitHandler(handler: (() => void) | null): void {
+    this.quitHandler = handler
+  }
+
+  async update(action: UpdateAction): Promise<UpdateStatus> {
+    const status = await this.client.update(action)
+    this.state.updateStatus = status
+    return status
+  }
+
+  private notifyQuit(): void {
+    ;(this.quitHandler ?? this.onQuit)?.()
+  }
 
   get resourceActionSubmitting(): boolean {
     return this.resourceActionPosting
@@ -219,9 +242,11 @@ export class WorkspaceController {
         return
       }
       this.state.latestVersion = notice.latestVersion ?? ''
+      this.state.releaseNotice = notice
     } catch {
       if (seq === this.releaseSeq) {
         this.state.latestVersion = ''
+        this.state.releaseNotice = null
       }
     }
   }
@@ -314,7 +339,7 @@ export class WorkspaceController {
 
   quit(): void {
     this.cancelQuit()
-    this.onQuit?.()
+    this.notifyQuit()
   }
 
   cancelQuit(): void {
@@ -592,7 +617,7 @@ export class WorkspaceController {
       const settled = this.lastSettled
       if (settled != null && settled.id === operation.id && settled.kind === 'sync') {
         this.quitEpoch++
-        this.onQuit?.()
+        this.notifyQuit()
       } else {
         this.pendingQuitId = operation.id
       }
@@ -673,7 +698,7 @@ export class WorkspaceController {
       this.applySnapshotFields(snapshot, generation)
       this.tryCompleteResourceActionSettlement()
       if (quitNow) {
-        this.onQuit?.()
+        this.notifyQuit()
       }
       return
     }

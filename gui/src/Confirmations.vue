@@ -4,6 +4,7 @@ import type { WorkspaceController } from './controller'
 import GuiModal from './GuiModal.vue'
 
 const props = defineProps<{ controller: WorkspaceController }>()
+const emit = defineEmits<{ cancelled: [] }>()
 const quitOpen = defineModel<boolean>('quitOpen', { default: false })
 
 const quitPending = ref(false)
@@ -29,6 +30,7 @@ watch(
       if (syncChoicesOffered.value) {
         props.controller.recordSyncQuitCancellation()
       }
+      emit('cancelled')
     }
   },
   { flush: 'sync', immediate: true },
@@ -75,6 +77,7 @@ function cancelQuit() {
     props.controller.recordSyncQuitCancellation()
   }
   props.controller.cancelQuit()
+  emit('cancelled')
   quitOpen.value = false
 }
 </script>

@@ -15,6 +15,8 @@ export type SourceInput = components['schemas']['SourceInput']
 export type ConfigureRequest = components['schemas']['ConfigurationActionRequest']
 export type ApiError = components['schemas']['Error']
 export type ReleaseNotice = components['schemas']['ReleaseNotice']
+export type UpdateAction = components['schemas']['UpdateRequest']['action']
+export type UpdateStatus = components['schemas']['UpdateStatus']
 export type GUIEvent = components['schemas']['GUIEvent']
 export type InspectionRequest = components['schemas']['InspectionRequest']
 export type InspectionPayload = components['schemas']['InspectionPayload']
@@ -170,6 +172,7 @@ export interface Client {
   configuration(): Promise<Configuration>
   configure(request: ConfigureRequest): Promise<OperationRef>
   release(): Promise<ReleaseNotice>
+  update(action: UpdateAction): Promise<UpdateStatus>
   telemetry(event: GUIEvent): Promise<void>
 }
 
@@ -283,6 +286,12 @@ export function createClient(baseURL: string, credential: string, fetchImpl: typ
     async release() {
       const response = await post('/api/release')
       return (await response.json()) as ReleaseNotice
+    },
+
+    async update(action: UpdateAction) {
+      const request = { action } satisfies NonNullable<paths['/api/update']['post']['requestBody']>['content']['application/json']
+      const response = await post('/api/update', request)
+      return (await response.json()) as UpdateStatus
     },
 
     async telemetry(event: GUIEvent) {

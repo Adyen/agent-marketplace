@@ -79,6 +79,36 @@ const shellColumns = computed(() => {
 })
 
 const configuration = computed(() => state.value?.state.configuration ?? null)
+const releaseNotice = computed(() => state.value?.state.releaseNotice ?? null)
+const updateStatus = computed(() => state.value?.state.updateStatus ?? null)
+const updateActionPending = ref(false)
+const updateAttempt = ref(0)
+const updateReadyAttempt = ref(0)
+let updatePollTimer: number | null = null
+const updateAvailable = computed(() => {
+  const format = state.value?.packageFormat
+  const notice = releaseNotice.value
+  return (
+    (format === 'macos-app' || format === 'rpm' || format === 'deb') &&
+    notice != null &&
+    notice.assetURL !== '' &&
+    notice.checksumsURL !== ''
+  )
+})
+const updateRunning = computed(() => ['downloading', 'verifying', 'swapping', 'handing-off'].includes(updateStatus.value?.phase ?? ''))
+const updateButtonVisible = computed(
+  () =>
+    updateAvailable.value &&
+    updateStatus.value?.phase !== 'fallback' &&
+    updateStatus.value?.phase !== 'complete' &&
+    updateStatus.value?.phase !== 'failed',
+)
+const updateButtonDisabled = computed(
+  () =>
+    updateRunning.value ||
+    updateActionPending.value ||
+    (updateReadyAttempt.value !== 0 && updateReadyAttempt.value === updateAttempt.value),
+)
 
 watch(searchEditing, (isEditing, wasEditing) => {
   if (!isEditing && wasEditing) {
@@ -147,6 +177,103 @@ function requestQuit() {
     return
   }
   controller.quit()
+}
+
+function clearUpdatePoll() {
+  if (updatePollTimer != null) {
+    window.clearTimeout(updatePollTimer)
+    updatePollTimer = null
+  }
+}
+
+function updateProgressLabel(phase: string | undefined): string {
+  if (phase === 'verifying') return 'Checking update'
+  if (phase === 'swapping') return 'Installing update'
+  if (phase === 'handing-off') return 'Opening installer'
+  return 'Downloading update'
+}
+
+function requestUpdateQuit(attempt: number) {
+  const controller = state.value
+  if (controller == null || updateReadyAttempt.value === attempt) {
+    return
+  }
+  updateReadyAttempt.value = attempt
+  controller.setQuitHandler(() => {
+    controller.setQuitHandler(null)
+    if (updateAttempt.value === attempt) {
+      void sendUpdateAction('confirm', attempt)
+    }
+  })
+  requestQuit()
+}
+
+function updateQuitCancelled() {
+  const controller = state.value
+  if (controller?.state.updateStatus?.phase === 'ready') {
+    controller.setQuitHandler(null)
+    updateReadyAttempt.value = 0
+    void sendUpdateAction('cancel', updateAttempt.value)
+  }
+}
+
+function scheduleUpdatePoll(attempt: number) {
+  clearUpdatePoll()
+  updatePollTimer = window.setTimeout(() => {
+    updatePollTimer = null
+    void sendUpdateAction('status', attempt)
+  }, 400)
+}
+
+async function sendUpdateAction(action: 'start' | 'status' | 'confirm' | 'cancel', attempt: number) {
+  const controller = state.value
+  if (controller == null || updateAttempt.value !== attempt) {
+    return
+  }
+  updateActionPending.value = true
+  try {
+    const status = await controller.update(action)
+    if (state.value !== controller || updateAttempt.value !== attempt) {
+      return
+    }
+    if (status.phase === 'ready') {
+      clearUpdatePoll()
+      requestUpdateQuit(attempt)
+    } else if (['downloading', 'verifying', 'swapping', 'handing-off'].includes(status.phase)) {
+      scheduleUpdatePoll(attempt)
+    } else {
+      clearUpdatePoll()
+    }
+  } catch {
+    clearUpdatePoll()
+    controller.state.updateStatus = {
+      phase: 'failed',
+      progress: 0,
+      error: 'update request failed',
+      browserURL: '',
+      releasePageURL: controller.state.releaseNotice?.releasePageURL ?? '',
+      savedPath: '',
+      moveToApplications: false,
+      restartRequired: false,
+    }
+  } finally {
+    updateActionPending.value = false
+  }
+}
+
+function startUpdate() {
+  const controller = state.value
+  if (controller == null || !updateAvailable.value || updateRunning.value || updateActionPending.value) {
+    return
+  }
+  const attempt = ++updateAttempt.value
+  updateReadyAttempt.value = 0
+  clearUpdatePoll()
+  if (controller.state.updateStatus?.phase === 'ready') {
+    requestUpdateQuit(attempt)
+    return
+  }
+  void sendUpdateAction('start', attempt)
 }
 
 function onFocus() {
@@ -357,7 +484,12 @@ onMounted(async () => {
   }
   try {
     const bootstrap = await resolveBootstrap()
-    const c = new WorkspaceController(createClient(bootstrap.url, bootstrap.credential), undefined, nativeQuit())
+    const c = new WorkspaceController(
+      createClient(bootstrap.url, bootstrap.credential),
+      undefined,
+      nativeQuit(),
+      bootstrap.packageFormat,
+    )
     state.value = c
     if (activeQuery.value !== '') {
       c.setDiscoveryQuery(activeQuery.value)
@@ -373,6 +505,8 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  updateAttempt.value++
+  clearUpdatePoll()
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('resize', onResize)
   window.removeEventListener('focus', onFocus)
@@ -935,9 +1069,72 @@ async function run(action: 'sync' | 'update') {
       <p v-else-if="view && (view.stage === 'inventory' || view.stage === 'final') && view.harnesses.length === 0" class="workspace__notice" role="status">
         No supported target harnesses are configured.
       </p>
-      <p v-if="view?.latestVersion" class="workspace__notice" role="status">
-        Agent Marketplace {{ view.latestVersion }} is available.
-      </p>
+      <div v-if="view?.latestVersion" class="workspace__notice workspace__release-notice" role="status">
+        <span>Agent Marketplace {{ view.latestVersion }} is available.</span>
+        <UButton
+          v-if="updateButtonVisible"
+          aria-label="Update now"
+          class="gui-button--secondary"
+          color="neutral"
+          variant="soft"
+          :disabled="updateButtonDisabled"
+          @click="startUpdate"
+        >Update now</UButton>
+        <a
+          v-else-if="
+            updateStatus?.phase === 'fallback' &&
+            updateStatus.browserURL &&
+            updateStatus.browserURL !== updateStatus.releasePageURL
+          "
+          :href="updateStatus.browserURL"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="Download disk image"
+        >Download disk image</a>
+        <a
+          v-else-if="updateStatus?.phase === 'fallback' && updateStatus.browserURL"
+          :href="updateStatus.browserURL"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="View release"
+        >View release</a>
+        <a
+          v-else-if="!updateAvailable && releaseNotice?.releasePageURL"
+          :href="releaseNotice.releasePageURL"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="View release"
+        >View release</a>
+        <a
+          v-else-if="updateStatus?.phase === 'fallback' && updateStatus.releasePageURL"
+          :href="updateStatus.releasePageURL"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="View release"
+        >View release</a>
+        <span v-if="updateStatus?.phase === 'fallback' && updateStatus.moveToApplications">
+          Move the app to Applications to enable updates.
+        </span>
+        <span v-if="updateStatus?.phase === 'fallback' && updateStatus.savedPath">
+          Package saved to {{ updateStatus.savedPath }}
+        </span>
+        <span v-if="updateStatus?.phase === 'complete' && updateStatus.restartRequired">
+          Install the package, then restart Agent Marketplace.
+        </span>
+        <span v-if="updateStatus?.phase === 'complete' && !updateStatus.restartRequired">
+          Update complete. Restarting Agent Marketplace.
+        </span>
+      </div>
+      <div v-if="updateRunning" class="workspace__update-progress" role="status">
+        <span>{{ updateProgressLabel(updateStatus?.phase) }} · {{ updateStatus?.progress ?? 0 }}%</span>
+        <progress aria-label="Update progress" max="100" :value="updateStatus?.progress ?? 0"></progress>
+      </div>
+      <div v-if="updateStatus?.phase === 'failed'" class="workspace__error workspace__update-error" role="alert">
+        <span>The update could not be completed.</span>
+        <UButton aria-label="Try update again" class="gui-button--secondary" color="neutral" variant="soft" @click="startUpdate">
+          Try again
+        </UButton>
+      </div>
 
       <DiagnosticsView
         v-if="mainView === 'diagnostics'"
@@ -1032,7 +1229,7 @@ async function run(action: 'sync' | 'update') {
 
     <SettingsWindow v-if="state" v-model:open="settingsOpen" :tab="settingsTab" :controller="state" />
     <FirstRun v-if="state" v-model:open="setupOpen" :controller="state" @cancel="onSetupCancel" />
-    <Confirmations v-if="state" v-model:quit-open="quitOpen" :controller="state" />
+    <Confirmations v-if="state" v-model:quit-open="quitOpen" :controller="state" @cancelled="updateQuitCancelled" />
     <ResourceActions v-if="state" v-model:open="resourceActionOpen" :controller="state" />
     <ResourceInspection v-if="state" v-model:open="inspectionOpen" :controller="state" />
   </div>

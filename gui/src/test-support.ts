@@ -12,6 +12,7 @@ import {
   type OperationRef,
   type ReleaseNotice,
   type SessionEvent,
+  type UpdateStatus,
 } from './api/client'
 import { configuration, snapshot } from './fixtures'
 import { WorkspaceController } from './controller'
@@ -19,7 +20,7 @@ import { WorkspaceController } from './controller'
 export { configuration, event, row, snapshot } from './fixtures'
 
 export function releaseNotice(latestVersion: string): ReleaseNotice {
-  return { latestVersion, releasePageURL: '', assetURL: '', checksumsURL: '' }
+  return { latestVersion, releasePageURL: '', assetURL: '', checksumsURL: '', dmgURL: '' }
 }
 
 export function fakeClient(options: { configuration?: Partial<Configuration> } = {}) {
@@ -51,6 +52,16 @@ export function fakeClient(options: { configuration?: Partial<Configuration> } =
     configuration: vi.fn(async () => configuration(options.configuration)),
     configure: vi.fn(async () => ({ id: 8, kind: 'targets' }) as OperationRef),
     release: vi.fn(async () => releaseNotice('')),
+    update: vi.fn(async (): Promise<UpdateStatus> => ({
+      phase: 'idle',
+      progress: 0,
+      error: '',
+      browserURL: '',
+      releasePageURL: '',
+      savedPath: '',
+      moveToApplications: false,
+      restartRequired: false,
+    })),
     telemetry: vi.fn(async () => undefined),
     discovery: vi.fn(async () => undefined),
     inspection: vi.fn(async (): Promise<InspectionPayload> => {
@@ -106,8 +117,8 @@ export async function tick() {
   await flushPromises()
 }
 
-export function mountWorkspace(client: Client, notifyTtl = 60_000, onQuit?: () => void) {
-  const controller = new WorkspaceController(client, notifyTtl, onQuit)
+export function mountWorkspace(client: Client, notifyTtl = 60_000, onQuit?: () => void, packageFormat = '') {
+  const controller = new WorkspaceController(client, notifyTtl, onQuit, packageFormat)
   const wrapper = mount(WorkspaceView, {
     attachTo: document.body,
     props: { controller },
