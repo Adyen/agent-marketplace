@@ -48,6 +48,19 @@ func (m LockMetadata) MatchesExternal(source config.Source, url, ref, rootPath s
 	return false
 }
 
+// LockRootPaths lists the root paths a locked Git registry record covers,
+// defaulting to the registry root when the record declares none.
+func LockRootPaths(roots []lockfile.GitRoot) []string {
+	rootPaths := make([]string, 0, len(roots))
+	for _, root := range roots {
+		rootPaths = append(rootPaths, root.Path)
+	}
+	if len(rootPaths) == 0 {
+		rootPaths = append(rootPaths, ".")
+	}
+	return rootPaths
+}
+
 func cleanLockRootPath(rootPath string) string {
 	rootPath = filepath.Clean(filepath.FromSlash(rootPath))
 	if rootPath == "" {
@@ -285,16 +298,9 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig, al
 					}
 				}
 			}
-			rootPaths := make([]string, 0, len(registry.Roots))
-			for _, root := range registry.Roots {
-				rootPaths = append(rootPaths, root.Path)
-			}
-			if len(rootPaths) == 0 {
-				rootPaths = append(rootPaths, ".")
-			}
 			metadata = append(metadata, LockMetadata{
 				Source: layer.Source, Scope: scope, Path: lockPath, URL: registry.URL,
-				Ref: registry.Ref, Commit: registry.Commit.String(), RootPaths: rootPaths,
+				Ref: registry.Ref, Commit: registry.Commit.String(), RootPaths: LockRootPaths(registry.Roots),
 				SnapshotAvailable: openErr == nil,
 			})
 			locked := readOnlyLockedGit{snapshot: snapshot, commit: registry.Commit.String()}
