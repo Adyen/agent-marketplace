@@ -14,4 +14,4 @@
 ## 3. Integration
 
 - [ ] 3.1 Run `make validate`, `make spec-check`, and `make validate-e2e` and verify they pass
-- [ ] 3.2 Run `openspec archive plugin-external-entry-delivery --yes`
+- [x] 3.2 Run `openspec archive plugin-external-entry-delivery --yes`
