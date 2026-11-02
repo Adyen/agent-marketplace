@@ -24,8 +24,8 @@
 
 ## 4. Landing page and documentation
 
-- [ ] 4.1 Add the landing-page GUI download area next to the unchanged CLI install command: look up the latest stable release at page load, build links from its asset names, choose the primary action by visitor OS, label Linux links by format and architecture, fall back to the latest-release page, and show the first-launch note; cover lookup success, failure, missing assets, and each OS in `site/tests`.
-- [ ] 4.2 Add a desktop-app section to `site/docs/install.md` with the downloads, first-launch instructions, update behavior, and supported Linux distributions; replace `gui.version_check` with `update_check.enabled` in configuration reference pages.
+- [x] 4.1 Add the landing-page GUI download area next to the unchanged CLI install command: look up the latest stable release at page load, build links from its asset names, choose the primary action by visitor OS, label Linux links by format and architecture, fall back to the latest-release page, and show the first-launch note; cover lookup success, failure, missing assets, and each OS in `site/tests`.
+- [x] 4.2 Add a desktop-app section to `site/docs/install.md` with the downloads, first-launch instructions, update behavior, and supported Linux distributions; replace `gui.version_check` with `update_check.enabled` in configuration reference pages.
 
 ## 5. Finalization
 

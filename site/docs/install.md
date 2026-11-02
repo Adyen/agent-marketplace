@@ -10,6 +10,19 @@ Pick a method below, then [check that it works](#verify). You also need [Git](./
 `agent-marketplace` refuses to load a root configuration file that doesn't declare `apiVersion: agent-marketplace/v4` (included fragments may omit it): commands exit with an error and the TUI shows it, naming the file. [Convert configuration before upgrading](./how-to/migrate-configuration.md) explains how to fix it.
 :::
 
+## Desktop app
+
+Download the desktop app from the [latest release](https://github.com/Adyen/agent-marketplace/releases/latest).
+
+- **macOS 12 or newer:** choose `agent-marketplace-gui-<tag>-macos-universal.dmg`. It works on Apple silicon and Intel Macs. Open the disk image and drag the app to Applications.
+- **Linux:** choose the `.rpm` or `.deb` for your computer’s `amd64` or `arm64` processor. Supported systems include Fedora, Ubuntu 22.04 or 24.04, Debian 12, and other distributions with WebKitGTK 4.1 and GTK 3. RHEL 9 is not supported.
+
+The macOS app is ad-hoc signed. The first time you open it, right-click the app and choose **Open**. If macOS blocks it again, go to **System Settings → Privacy & Security** and choose **Open Anyway**.
+
+When an update is available, click **Update** in the app. On macOS, the app downloads and verifies the update, replaces itself in place, and opens the new version. On Linux, it downloads and verifies the package, then opens it in your software installer. Restart the app after installing. Updates never download in the background.
+
+The GUI uses the shared `update_check.enabled` setting. Set it to `false`, set `AGENT_MARKETPLACE_NO_UPDATE_CHECK` to a non-empty value, or run with a non-empty `CI` value to turn off release checks.
+
 ## From GitHub Releases
 
 1. Find out which build your computer needs:
