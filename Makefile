@@ -432,12 +432,12 @@ GUI_MACOS_ARM64 := $(GUI_MACOS_BUILD_DIR)/darwin-arm64/$(GUI_BINARY)
 GUI_MACOS_AMD64 := $(GUI_MACOS_BUILD_DIR)/darwin-amd64/$(GUI_BINARY)
 GUI_MACOS_ZIP := $(GUI_DIST_DIR)/agent-marketplace-gui-$(VERSION)-macos-universal.zip
 GUI_MACOS_DMG := $(GUI_DIST_DIR)/agent-marketplace-gui-$(VERSION)-macos-universal.dmg
-GUI_LINUX_ARCH := $(shell $(GO) env GOARCH)
-GUI_LINUX_BUILD_DIR := $(GUI_DIST_DIR)/build/linux-$(GUI_LINUX_ARCH)
-GUI_LINUX_RPM_BINARY := $(GUI_LINUX_BUILD_DIR)/rpm/$(GUI_BINARY)
-GUI_LINUX_DEB_BINARY := $(GUI_LINUX_BUILD_DIR)/deb/$(GUI_BINARY)
-GUI_LINUX_RPM := $(GUI_DIST_DIR)/agent-marketplace-gui-$(VERSION)-linux-$(GUI_LINUX_ARCH).rpm
-GUI_LINUX_DEB := $(GUI_DIST_DIR)/agent-marketplace-gui-$(VERSION)-linux-$(GUI_LINUX_ARCH).deb
+GUI_LINUX_ARCH = $(shell $(GO) env GOARCH)
+GUI_LINUX_BUILD_DIR = $(GUI_DIST_DIR)/build/linux-$(GUI_LINUX_ARCH)
+GUI_LINUX_RPM_BINARY = $(GUI_LINUX_BUILD_DIR)/rpm/$(GUI_BINARY)
+GUI_LINUX_DEB_BINARY = $(GUI_LINUX_BUILD_DIR)/deb/$(GUI_BINARY)
+GUI_LINUX_RPM = $(GUI_DIST_DIR)/agent-marketplace-gui-$(VERSION)-linux-$(GUI_LINUX_ARCH).rpm
+GUI_LINUX_DEB = $(GUI_DIST_DIR)/agent-marketplace-gui-$(VERSION)-linux-$(GUI_LINUX_ARCH).deb
 NFPM_VERSION := v2.48.0
 
 gui-build-frontend:

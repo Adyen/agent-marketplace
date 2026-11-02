@@ -596,6 +596,161 @@ func TestPlannerInvocation(t *testing.T) {
 	}
 }
 
+// spec: gui-distribution/linux-package-installs-a-launchable-desktop-application
+// spec: gui-distribution/published-app-launches-without-a-signing-identity
+// spec: gui-distribution/ci-re-signs-copies-of-the-app-and-rpms
+// spec: gui-distribution/pull-request-builds-and-launches-every-package
+// spec: gui-shell/user-updates-the-app-in-place
+func TestGUIReleaseWorkflowBuildsAndChecksPackages(t *testing.T) {
+	doc := loadCIWorkflow(t)
+	jobs := getMap(t, doc, "jobs")
+	for _, id := range []string{"gui-macos-package", "gui-linux-package", "gui-linux-smoke", "gui-matrix-complete", "gui-signability", "gui-update-e2e"} {
+		if _, ok := jobs[id]; !ok {
+			t.Errorf("GUI release workflow is missing job %q", id)
+		}
+	}
+	for _, id := range []string{"gui-macos-package", "gui-linux-package", "gui-linux-smoke", "gui-matrix-complete", "gui-signability", "gui-update-e2e"} {
+		job := getMap(t, jobs, id)
+		if condition, _ := job["if"].(string); !strings.Contains(condition, "needs.changes.outputs.gui_distribution") && !strings.Contains(condition, "github.ref") {
+			t.Errorf("job %s is not selected for GUI changes or release tags: %q", id, condition)
+		}
+	}
+	macos := getMap(t, jobs, "gui-macos-package")
+	if macos["runs-on"] != "macos-latest" {
+		t.Errorf("macOS runner = %v, want macos-latest", macos["runs-on"])
+	}
+	macosRun := findStepRun(t, doc, "gui-macos-package", "Smoke test packaged app")
+	for _, required := range []string{"codesign --verify", "Agent Marketplace.app", "Contents/MacOS/agent-marketplace-gui"} {
+		if !strings.Contains(macosRun, required) {
+			t.Errorf("macOS smoke test lacks %q:\n%s", required, macosRun)
+		}
+	}
+	makefile, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"codesign --force --options runtime", "-s -", "Signature=adhoc", "flags=.*runtime"} {
+		if !strings.Contains(string(makefile), required) {
+			t.Errorf("macOS package target lacks %q", required)
+		}
+	}
+	linux := getMap(t, jobs, "gui-linux-package")
+	matrix := getMap(t, getMap(t, linux, "strategy"), "matrix")
+	var runners []string
+	for _, raw := range getSlice(t, matrix, "include") {
+		runners = append(runners, stepMap(t, raw)["runner"].(string))
+	}
+	if !slices.Equal(runners, []string{"ubuntu-22.04", "ubuntu-22.04-arm"}) {
+		t.Errorf("Linux runners = %v, want ubuntu-22.04 and ubuntu-22.04-arm", runners)
+	}
+	smoke := getMap(t, jobs, "gui-linux-smoke")
+	if smoke["runs-on"] != "ubuntu-latest" {
+		t.Errorf("Linux smoke container host = %v, want ubuntu-latest", smoke["runs-on"])
+	}
+	smokeMatrix := getMap(t, getMap(t, smoke, "strategy"), "matrix")
+	var images []string
+	for _, raw := range getSlice(t, smokeMatrix, "include") {
+		images = append(images, stepMap(t, raw)["image"].(string))
+	}
+	if !slices.Equal(images, []string{"fedora:latest", "ubuntu:22.04", "ubuntu:24.04", "debian:12-slim"}) {
+		t.Errorf("Linux smoke images = %v", images)
+	}
+	linuxRun := findStepRun(t, doc, "gui-linux-smoke", "Install and launch package")
+	linuxStep := stepMap(t, getSlice(t, smoke, "steps")[2])
+	if env := getMap(t, linuxStep, "env"); env["IMAGE"] != "${{ matrix.image }}" {
+		t.Errorf("Linux smoke container does not use the distribution matrix image: %v", env)
+	}
+	if !strings.Contains(linuxRun, "docker run") || !strings.Contains(linuxRun, "scripts/gui-linux-smoke.sh") {
+		t.Fatalf("Linux smoke job does not invoke its tested script:\n%s", linuxRun)
+	}
+	linuxScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "gui-linux-smoke.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"dnf", "apt-get", "xvfb-run", "agent-marketplace-gui"} {
+		if !strings.Contains(string(linuxScript), required) {
+			t.Errorf("Linux smoke script lacks %q:\n%s", required, linuxScript)
+		}
+	}
+	signability := findStepRun(t, doc, "gui-signability", "Re-sign artifact copies")
+	if !strings.Contains(signability, "scripts/gui-signability.sh") {
+		t.Fatalf("signability job does not invoke its tested script:\n%s", signability)
+	}
+	signabilityScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "gui-signability.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"cp -R", "codesign --verify --strict --deep", "rpm --define", "--addsign", "-K \"$copy\"", "verify-digests"} {
+		if !strings.Contains(string(signabilityScript), required) {
+			t.Errorf("signability script lacks %q:\n%s", required, signabilityScript)
+		}
+	}
+	updateRun := findStepRun(t, doc, "gui-update-e2e", "Update packaged app through local release")
+	if !strings.Contains(updateRun, "scripts/gui-update-e2e.sh") {
+		t.Fatalf("macOS update job does not run its end-to-end script:\n%s", updateRun)
+	}
+	updateScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "gui-update-e2e.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"GUI_BUILD_TAGS=desktop,production,e2e", "AGENT_MARKETPLACE_E2E_RELEASE_ENDPOINT", `api '{"action":"start"}' update`, "/__e2e/bootstrap", "v0.0.2"} {
+		if !strings.Contains(string(updateScript), required) {
+			t.Errorf("macOS update test script lacks %q", required)
+		}
+	}
+}
+
+// spec: gui-distribution/tagged-release-publishes-the-gui-package-matrix
+// spec: gui-distribution/pull-request-builds-and-launches-every-package
+// spec: gui-distribution/adding-gui-packages-does-not-change-cli-artifacts
+func TestGUIReleaseJobWaitsForAndPublishesTheCompleteMatrix(t *testing.T) {
+	doc := loadCIWorkflow(t)
+	jobs := getMap(t, doc, "jobs")
+	release := getMap(t, jobs, "release")
+	needs := toStringSlice(t, getSlice(t, release, "needs"))
+	for _, id := range []string{"gui-macos-package", "gui-linux-package", "gui-linux-smoke", "gui-matrix-complete", "gui-signability", "gui-update-e2e"} {
+		if !slices.Contains(needs, id) {
+			t.Errorf("release job does not depend on %s: %v", id, needs)
+		}
+	}
+	run := findStepRun(t, doc, "release", "Assemble and verify GUI assets")
+	for _, required := range []string{"SHA256SUMS", "check-matrix", "compare-cli"} {
+		if !strings.Contains(run, required) {
+			t.Errorf("release assembly lacks %q:\n%s", required, run)
+		}
+	}
+	foundDownload := false
+	for _, raw := range getSlice(t, release, "steps") {
+		step := stepMap(t, raw)
+		if step["uses"] == "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" {
+			foundDownload = true
+		}
+	}
+	if !foundDownload {
+		t.Error("release job does not download GUI workflow artifacts")
+	}
+}
+
+// spec: gui-distribution/workflows-contain-no-signing-material
+func TestGUIReleaseWorkflowAuditsSigningMaterial(t *testing.T) {
+	doc := loadCIWorkflow(t)
+	run := findStepRun(t, doc, "gui-matrix-complete", "Audit signing configuration")
+	if !strings.Contains(run, "go run ./tools/gui-release-check audit-signing") {
+		t.Fatalf("workflow does not run the signing-material audit:\n%s", run)
+	}
+}
+
+// spec: gui-distribution/pull-request-builds-and-launches-every-package
+func TestGUIReleasePathsSelectPackageJobs(t *testing.T) {
+	job := getMap(t, getMap(t, loadCIWorkflow(t), "jobs"), "gui-macos-package")
+	condition, _ := job["if"].(string)
+	if !strings.Contains(condition, "needs.changes.outputs.gui_distribution == 'true'") ||
+		!strings.Contains(condition, "github.event_name == 'pull_request'") ||
+		!strings.Contains(condition, "startsWith(github.ref, 'refs/tags/')") {
+		t.Fatalf("package job must run for selected PRs and release tags: %q", condition)
+	}
+}
+
 func TestBenchmarkPackagesParity(t *testing.T) {
 	doc := loadWorkflow(t, "ci.yml")
 

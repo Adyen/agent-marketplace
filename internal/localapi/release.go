@@ -18,7 +18,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const releaseURL = "https://api.github.com/repos/Adyen/agent-marketplace/releases/latest"
+const githubReleaseURL = "https://api.github.com/repos/Adyen/agent-marketplace/releases/latest"
 
 type UserOption func(*API)
 
@@ -95,7 +95,7 @@ func (a *API) checkLatestRelease(r *http.Request) releaseNotice {
 	stop := context.AfterFunc(r.Context(), cancel)
 	defer stop()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, releaseURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, releaseEndpoint(), nil)
 	if err != nil {
 		return releaseNotice{}
 	}
@@ -124,7 +124,7 @@ func (a *API) checkLatestRelease(r *http.Request) releaseNotice {
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
 		return releaseNotice{}
 	}
-	if latest.Draft == nil || latest.Prerelease == nil || *latest.Draft || *latest.Prerelease || latest.PublishedAt.IsZero() || !isGitHubReleaseURL(latest.HTMLURL) {
+	if latest.Draft == nil || latest.Prerelease == nil || *latest.Draft || *latest.Prerelease || latest.PublishedAt.IsZero() || !allowedReleasePageURL(latest.HTMLURL) {
 		return releaseNotice{}
 	}
 	tag := normalizeReleaseVersion(latest.TagName)
@@ -143,16 +143,16 @@ func (a *API) checkLatestRelease(r *http.Request) releaseNotice {
 	for _, asset := range latest.Assets {
 		switch asset.Name {
 		case assetName:
-			if isGitHubReleaseAssetURL(asset.BrowserDownloadURL, latest.TagName, assetName) {
+			if allowedReleaseAssetURL(asset.BrowserDownloadURL, latest.TagName, assetName) {
 				assetURL = asset.BrowserDownloadURL
 			}
 		case "SHA256SUMS":
-			if isGitHubReleaseAssetURL(asset.BrowserDownloadURL, latest.TagName, "SHA256SUMS") {
+			if allowedReleaseAssetURL(asset.BrowserDownloadURL, latest.TagName, "SHA256SUMS") {
 				checksumsURL = asset.BrowserDownloadURL
 			}
 		case "agent-marketplace-gui-" + latest.TagName + "-macos-universal.dmg":
 			name := "agent-marketplace-gui-" + latest.TagName + "-macos-universal.dmg"
-			if isGitHubReleaseAssetURL(asset.BrowserDownloadURL, latest.TagName, name) {
+			if allowedReleaseAssetURL(asset.BrowserDownloadURL, latest.TagName, name) {
 				dmgURL = asset.BrowserDownloadURL
 			}
 		}

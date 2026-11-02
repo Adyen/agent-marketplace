@@ -7,11 +7,11 @@
 
 ## 2. CI and release
 
-- [ ] 2.1 Add GUI packaging jobs on macOS, `ubuntu-22.04`, and `ubuntu-22.04-arm` runners for pull requests that change the GUI, packaging, or release wiring and for release tags; upload the assets; add a matrix-completeness check that fails on any missing asset.
-- [ ] 2.2 Add the macOS launch smoke test under the hardened runtime and Linux install-and-launch tests (Xvfb) for the `.rpm` on Fedora and the `.deb` on Ubuntu 22.04, Ubuntu 24.04, and Debian 12.
-- [ ] 2.3 Add the signability checks on copies: re-sign the `.app` and pass `codesign --verify --strict --deep`; sign each `.rpm` with a throwaway GPG key and pass `rpm -K`; delete the key; verify the uploaded artifacts' digests are unchanged by the checks.
-- [ ] 2.4 Make the `release` job depend on the GUI packaging jobs, append the GUI lines to `SHA256SUMS`, and publish the GUI assets; add a check that the CLI asset names, bytes, and `SHA256SUMS` lines equal `make release` output and that no GUI asset name matches `agent-marketplace-<tag>-*`.
-- [ ] 2.5 Audit the workflows and tracked configuration for signing identities, Apple team IDs, signing-key locations, and signing secrets; verify none are present.
+- [x] 2.1 Add GUI packaging jobs on macOS, `ubuntu-22.04`, and `ubuntu-22.04-arm` runners for pull requests that change the GUI, packaging, or release wiring and for release tags; upload the assets; add a matrix-completeness check that fails on any missing asset.
+- [x] 2.2 Add the macOS launch smoke test under the hardened runtime and Linux install-and-launch tests (Xvfb) for the `.rpm` on Fedora and the `.deb` on Ubuntu 22.04, Ubuntu 24.04, and Debian 12.
+- [x] 2.3 Add the signability checks on copies: re-sign the `.app` and pass `codesign --verify --strict --deep`; sign each `.rpm` with a throwaway GPG key and pass `rpm -K`; delete the key; verify the uploaded artifacts' digests are unchanged by the checks.
+- [x] 2.4 Make the `release` job depend on the GUI packaging jobs, append the GUI lines to `SHA256SUMS`, and publish the GUI assets; add a check that the CLI asset names, bytes, and `SHA256SUMS` lines equal `make release` output and that no GUI asset name matches `agent-marketplace-<tag>-*`.
+- [x] 2.5 Audit the workflows and tracked configuration for signing identities, Apple team IDs, signing-key locations, and signing secrets; verify none are present.
 
 ## 3. Updates
 
@@ -20,7 +20,7 @@
 - [x] 3.3 Implement the macOS updater: eligibility (packaged, not translocated, not on a disk image, writable parent), download, digest check, staging on the same volume, bundle identifier, version, and `codesign --verify` checks, quit-rule confirmation, backup-and-swap with restore, relaunch after exit, and backup cleanup on the next start; verify success, every rejection path, cancel, and rename failure with fixtures.
 - [x] 3.4 Implement the Linux handoff: download the package for this format and architecture, verify it, save it in the XDG download directory, open it with `xdg-open`, ask for a restart, delete unverified downloads, and fall back to the saved path and release page when opening fails; verify each path.
 - [x] 3.5 Update the GUI notice: update action, progress, error with retry, browser fallback with the move-to-Applications hint, Linux restart hint, and release-page link for unpackaged builds; cover them in `gui/src` unit tests and `gui/tests` browser tests, moving existing `gui-shell` and `config-layering` scenario annotations to the new scenarios.
-- [ ] 3.6 Prove an end-to-end macOS update in CI: install a packaged build of the pull request at version N from a local release stub, update it to N+1, and verify the relaunched app reports N+1.
+- [x] 3.6 Prove an end-to-end macOS update in CI: install a packaged build of the pull request at version N from a local release stub, update it to N+1, and verify the relaunched app reports N+1.
 
 ## 4. Landing page and documentation
 

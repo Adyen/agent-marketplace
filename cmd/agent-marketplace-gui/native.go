@@ -70,6 +70,13 @@ func (app *App) appOptions(hooks lifecycleHooks) *options.App {
 		Bind: []any{app},
 		OnStartup: func(ctx context.Context) {
 			windowCtx = ctx
+			controlClose, err := startE2EControl(app)
+			if err != nil {
+				slog.Error("GUI E2E control server could not start", "err", err)
+				wailsruntime.Quit(ctx)
+				return
+			}
+			app.e2eControlClose = controlClose
 			if err := app.updater.CleanupBackup(); err != nil {
 				slog.Warn("could not remove previous GUI update backup", "err", err)
 			}

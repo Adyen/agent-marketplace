@@ -614,11 +614,6 @@ func verifyChecksum(assetName string, archive, checksums []byte) error {
 	return nil
 }
 
-func validGitHubURL(raw string) bool {
-	parsed, err := url.Parse(raw)
-	return err == nil && parsed.Scheme == "https" && parsed.Hostname() == "github.com" && parsed.Port() == "" && parsed.User == nil
-}
-
 func validReleaseAssetURL(raw, tag, name string) bool {
 	parsed, err := url.Parse(raw)
 	return err == nil && validGitHubURL(raw) && parsed.RawQuery == "" && parsed.Fragment == "" &&

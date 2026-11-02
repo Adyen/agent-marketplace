@@ -51,6 +51,7 @@ type App struct {
 	rootSpan         telemetry.Span
 	quit             func()
 	closeOnce        sync.Once
+	e2eControlClose  func()
 	nativeState
 }
 
@@ -121,6 +122,9 @@ func (a *App) handler() http.Handler { return a.api.Handler() }
 
 func (a *App) close() {
 	a.closeOnce.Do(func() {
+		if a.e2eControlClose != nil {
+			a.e2eControlClose()
+		}
 		a.api.Close()
 		if a.telemetry == nil {
 			return
