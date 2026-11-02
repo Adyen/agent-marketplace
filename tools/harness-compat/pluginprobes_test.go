@@ -13,3 +13,15 @@ func TestPluginCatalogsValidateAgainstNativeProbes(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestClaudeNativePluginProbeIsRegistered(t *testing.T) {
+	if pluginpolicy.ClaudeNativePluginProbeID != "claude-native-plugin" {
+		t.Fatalf("Claude native plugin probe ID = %q, want claude-native-plugin", pluginpolicy.ClaudeNativePluginProbeID)
+	}
+	for _, probe := range nativePluginProbes {
+		if probe == pluginpolicy.ClaudeNativePluginProbeID {
+			return
+		}
+	}
+	t.Fatalf("native plugin probes %v do not include %q", nativePluginProbes, pluginpolicy.ClaudeNativePluginProbeID)
+}

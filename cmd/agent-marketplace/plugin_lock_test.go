@@ -149,12 +149,12 @@ func TestSyncPersonalPluginSelectionLocksInPersonalLayer(t *testing.T) {
 			commitAndPushAll(t, formatWorking, "seed catalog")
 
 			formatURL := filepath.ToSlash(formatOrigin)
-			writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  cat: {git: file://"+formatURL+", ref: main, format: claude-marketplace}\nresources:\n  cat:\n    - plugin/kit-a\n")
+			writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  cat: {git: file://"+formatURL+", ref: main, format: claude-marketplace}\nresources:\n  cat:\n    - {kind: plugin, name: kit-a, delivery: decompose}\n")
 
 			baselineHome := "apiVersion: agent-marketplace/v4\nharnesses: [claude]\n"
 			personalConfig := baselineHome + "sources:\n  cat: {git: file://" + formatURL + ", ref: main, format: claude-marketplace}\n"
 			if mode == "direct" {
-				personalConfig += "resources:\n  cat:\n    - plugin/kit-b\n"
+				personalConfig += "resources:\n  cat:\n    - {kind: plugin, name: kit-b, delivery: decompose}\n"
 			} else {
 				looseOrigin, looseWorking := createBareRepoWithWorkingClone(t, "loose.git")
 				writeSkill(t, looseWorking, "tooling", "Tooling baseline", nil)
@@ -426,7 +426,7 @@ func TestSyncExternalCatalogEntryLockedToOwnCommit(t *testing.T) {
 	writeCatalogRepo(t, catalogWorking, entryOrigin)
 	commitAndPushAll(t, catalogWorking, "seed catalog")
 
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {git: file://"+filepath.ToSlash(catalogOrigin)+", ref: main, format: claude-marketplace}\nresources:\n  team:\n    - plugin/ext-kit\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {git: file://"+filepath.ToSlash(catalogOrigin)+", ref: main, format: claude-marketplace}\nresources:\n  team:\n    - {kind: plugin, name: ext-kit, delivery: decompose}\n")
 	withWorkingDir(t, repo)
 	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
 	if output, err := executeCommand("sync", "--no-backup"); err != nil {
@@ -827,7 +827,7 @@ func TestSyncDeselectedExternalEntryMakesLockStale(t *testing.T) {
 	configBody := func(selectPlugin bool) string {
 		resources := ""
 		if selectPlugin {
-			resources = "\nresources:\n  team:\n    - plugin/ext-kit\n"
+			resources = "\nresources:\n  team:\n    - {kind: plugin, name: ext-kit, delivery: decompose}\n"
 		}
 		return "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {git: file://" + filepath.ToSlash(catalogOrigin) + ", ref: main, format: claude-marketplace}\n" + resources
 	}
@@ -934,10 +934,10 @@ func TestSyncUsesPerLayerPluginMemberKeysAndUnionsSameLayerExclusions(t *testing
 	secondSource := "team2: {git: file://" + filepath.ToSlash(catalogOrigin) + ", ref: main, format: claude-marketplace}\n"
 	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"),
 		"apiVersion: agent-marketplace/v4\nharnesses: [claude]\nmaterialization: {mode: file}\nsources:\n  "+source+"  "+secondSource+
-			"resources:\n  team:\n    - {kind: plugin, name: local-kit, exclude: [skill/a]}\n  team2:\n    - {kind: plugin, name: local-kit, exclude: [skill/b]}\n")
+			"resources:\n  team:\n    - {kind: plugin, name: local-kit, delivery: decompose, exclude: [skill/a]}\n  team2:\n    - {kind: plugin, name: local-kit, delivery: decompose, exclude: [skill/b]}\n")
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"),
 		"apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  "+source+
-			"resources:\n  team:\n    - {kind: plugin, name: local-kit, exclude: [skill/a]}\n")
+			"resources:\n  team:\n    - {kind: plugin, name: local-kit, delivery: decompose, exclude: [skill/a]}\n")
 	withWorkingDir(t, repo)
 
 	output, err := executeCommand("sync", "--no-backup")
@@ -979,10 +979,10 @@ func TestSyncRepositoryAndPersonalLocalPluginKeysFollowTheWinningLayer(t *testin
 	source := "team: {git: file://" + filepath.ToSlash(catalogOrigin) + ", ref: main, format: claude-marketplace}\n"
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"),
 		"apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  "+source+
-			"resources:\n  team:\n    - plugin/local-kit\n")
+			"resources:\n  team:\n    - {kind: plugin, name: local-kit, delivery: decompose}\n")
 	writeConfig(t, filepath.Join(repo, ".agents", "config.local.yaml"),
 		"apiVersion: agent-marketplace/v4\nsources:\n  "+source+
-			"resources:\n  team:\n    - {kind: plugin, name: local-kit, exclude: [skill/b]}\n")
+			"resources:\n  team:\n    - {kind: plugin, name: local-kit, delivery: decompose, exclude: [skill/b]}\n")
 	withWorkingDir(t, repo)
 
 	output, err := executeCommand("sync", "--no-backup")
@@ -1075,7 +1075,7 @@ func TestSyncDeliversOtherResourcesAndDecomposesPluginMembers(t *testing.T) {
 	skillDir := filepath.Join(root, "skills-src")
 	writeSkill(t, skillDir, "tooling", "Tooling baseline", nil)
 
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {git: file://"+filepath.ToSlash(catalogOrigin)+", ref: main, format: claude-marketplace}\n  skills-src: {directory: "+filepath.ToSlash(skillDir)+"}\nresources:\n  team:\n    - plugin/local-kit\n  skills-src:\n    - skill/tooling\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {git: file://"+filepath.ToSlash(catalogOrigin)+", ref: main, format: claude-marketplace}\n  skills-src: {directory: "+filepath.ToSlash(skillDir)+"}\nresources:\n  team:\n    - {kind: plugin, name: local-kit, delivery: decompose}\n  skills-src:\n    - skill/tooling\n")
 	withWorkingDir(t, repo)
 	output, err := executeCommand("sync", "--no-backup")
 	if err != nil {
@@ -1107,7 +1107,7 @@ func TestSyncCheckConfirmsPluginMemberDeliveryWithoutWriting(t *testing.T) {
 	writeCatalogRepo(t, catalogWorking, "")
 	commitAndPushAll(t, catalogWorking, "seed catalog")
 
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {git: file://"+filepath.ToSlash(catalogOrigin)+", ref: main, format: claude-marketplace}\nresources:\n  team:\n    - plugin/local-kit\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {git: file://"+filepath.ToSlash(catalogOrigin)+", ref: main, format: claude-marketplace}\nresources:\n  team:\n    - {kind: plugin, name: local-kit, delivery: decompose}\n")
 	withWorkingDir(t, repo)
 	if output, err := executeCommand("sync", "--no-backup"); err != nil {
 		t.Fatalf("sync of a plugin selection must succeed: %v\n%s", err, output)

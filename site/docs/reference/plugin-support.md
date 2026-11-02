@@ -6,9 +6,11 @@ The package formats each harness accepts and how Agent Marketplace can deliver p
 
 Decomposed delivery installs a plugin's members as ordinary resources. Native delivery registers the plugin with the harness itself; it is declared verified only with probe evidence from the harness validation suite.
 
+Repository-scope Claude plugin registration takes effect only in a workspace the user has trusted; Agent Marketplace never writes Claude trust state.
+
 | Harness | Accepted formats | Decomposed delivery | Native delivery | Evidence checked |
 | --- | --- | --- | --- | --- |
-| `claude` | claude-plugin, agent-plugin | `verified` | `unverified` | 2026-10-15 |
+| `claude` | claude-plugin, agent-plugin | `verified` | `verified` | 2026-11-02 |
 | `codex` | codex-plugin, agent-plugin | `verified` | `unverified` | 2026-10-15 |
 | `cursor` | agent-plugin | `verified` | `unverified` | 2026-10-15 |
 | `devin` | claude-plugin, agent-plugin | `verified` | `unverified` | 2026-10-15 |

@@ -292,6 +292,8 @@ func generatePluginSupport() ([]byte, error) {
 	buf.WriteString("Decomposed delivery installs a plugin's members as ordinary resources. " +
 		"Native delivery registers the plugin with the harness itself; it is declared " +
 		"verified only with probe evidence from the harness validation suite.\n\n")
+	buf.WriteString("Repository-scope Claude plugin registration takes effect only in a workspace " +
+		"the user has trusted; Agent Marketplace never writes Claude trust state.\n\n")
 
 	entries, err := filepath.Glob(filepath.Join(pluginDir, "catalogs", "*.yaml"))
 	if err != nil {

@@ -78,14 +78,14 @@ func loadAllFormats(t *testing.T, formats map[string]string, harness string, pro
 
 // spec: plugin-policy-catalogs/every-harness-target-and-package-format-ships-a-plugin-catalog
 func TestShippedCatalogsValidate(t *testing.T) {
-	if err := ValidateCatalogs(nil); err != nil {
+	if err := ValidateCatalogs([]string{ClaudeNativePluginProbeID}); err != nil {
 		t.Fatal(err)
 	}
 }
 
 // spec: plugin-policy-catalogs/every-harness-target-and-package-format-ships-a-plugin-catalog
 func TestEveryTargetShipsACatalog(t *testing.T) {
-	r, err := loadCatalogs(catalogFiles, "formats/*.yaml", "catalogs/*.yaml", nil)
+	r, err := loadCatalogs(catalogFiles, "formats/*.yaml", "catalogs/*.yaml", []string{ClaudeNativePluginProbeID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestEveryTargetShipsACatalog(t *testing.T) {
 
 // spec: plugin-policy-catalogs/every-harness-target-and-package-format-ships-a-plugin-catalog
 func TestDecomposeDeliveryVerifiedEverywhere(t *testing.T) {
-	r, err := loadCatalogs(catalogFiles, "formats/*.yaml", "catalogs/*.yaml", nil)
+	r, err := loadCatalogs(catalogFiles, "formats/*.yaml", "catalogs/*.yaml", []string{ClaudeNativePluginProbeID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,14 @@ func TestDecomposeDeliveryVerifiedEverywhere(t *testing.T) {
 		if c.Delivery.Decompose.Status != DeliveryVerified {
 			t.Fatalf("%s decompose status = %q, want verified", tg, c.Delivery.Decompose.Status)
 		}
-		if c.Delivery.Native.Status != DeliveryUnverified {
+		if tg == "claude" {
+			if c.Delivery.Native.Status != DeliveryVerified {
+				t.Fatalf("%s native status = %q, want verified", tg, c.Delivery.Native.Status)
+			}
+			if c.Delivery.Native.Probe != ClaudeNativePluginProbeID {
+				t.Fatalf("%s native probe = %q, want %s", tg, c.Delivery.Native.Probe, ClaudeNativePluginProbeID)
+			}
+		} else if c.Delivery.Native.Status != DeliveryUnverified {
 			t.Fatalf("%s native status = %q, want unverified", tg, c.Delivery.Native.Status)
 		}
 	}
