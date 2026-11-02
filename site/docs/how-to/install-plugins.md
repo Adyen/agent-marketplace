@@ -155,10 +155,10 @@ configuration, locks, or harness output.
 
 ## 6. Remove a plugin
 
-Remove the direct plugin selection:
+Remove the plugin by name:
 
 ```bash
-agent-marketplace remove plugin/review-kit
+agent-marketplace remove review-kit --kind plugin
 ```
 
 If another selected resource, such as a collection, still selects that
