@@ -27,6 +27,7 @@
   it from `prepareLocator`, the update planner, and the TUI. Annotate
   `resource-installation/young-head-resolves-to-the-most-recently-published-eligible-revision`,
   `resource-installation/server-floor-above-the-consumer-floor-is-honored-from-the-revisions-list`,
+  `resource-installation/positive-consumer-floor-with-a-zero-server-period-selects-from-the-revisions-list`,
   `resource-installation/server-fallback-published-before-the-pin-is-held-not-installed`,
   `resource-installation/eligible-head-after-a-revert-is-followed`,
   `resource-installation/zero-period-never-compares-timestamps`,
@@ -41,6 +42,7 @@
   `resource-installation/consumer-only-hold-reports-the-latest-head-as-evidence`,
   `update-output/held-pin-prints-the-hold-line-with-the-head-s-eligible-date-and-exits-0`,
   `update-output/unparseable-hold-body-for-an-existing-pin-reports-an-unknown-head`,
+  `update-output/collection-hold-reports-the-latest-member-eligible-date`,
   `update-output/held-pins-are-excluded-from-content-diffs`,
   `update-preview/dry-run-reports-the-same-marketplace-hold-as-the-applying-run`,
   `deployed-acquisition-locks/held-update-leaves-the-marketplace-lock-record-byte-identical`
@@ -54,8 +56,9 @@
   `cooldown.acknowledgement-required` refusal, the strict and
   server-non-acknowledgeable refusals checked before mirror download,
   index-only clone, and collection expansion, the unknown-head refusal, and
-  the exact fetch-and-pin of the server-identified head, including after a
-  revert. Annotate the six `resource-installation` acknowledgement scenarios
+  the exact fetch-and-pin of the server-identified or retained head,
+  including after a revert and for a consumer-only hold. Annotate the eight
+  `resource-installation` acknowledgement scenarios
 - [ ] 3.2 Writing `sync` refusal for a held initial Marketplace acquisition
   pointing at the install command. Annotate
   `deployed-acquisition-locks/writing-sync-refuses-a-held-initial-marketplace-acquisition-and-points-at-install`

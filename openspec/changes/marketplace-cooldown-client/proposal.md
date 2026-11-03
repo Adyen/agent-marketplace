@@ -28,8 +28,9 @@ by `marketplace-cooldown-server`.
   consumer floor and the registry published it more recently than the
   current pin; otherwise the client walks the revisions list, most recently
   published first, and selects the first revision that is eligible under
-  both the server's evidence (`cooldown.held == false`) and the consumer
-  floor and is newer than the pin, skipping revoked and rejected revisions as
+  both the server's evidence (`cooldown.held == false`, or no `cooldown`
+  object because the server period is zero) and the consumer floor and is
+  newer than the pin, skipping revoked and rejected revisions as
   today. The list never lets a client go below the server floor, and a pin is
   never replaced by content the registry published less recently. When the
   head is held only by the consumer floor, the head returned by `latest` is
@@ -42,9 +43,10 @@ by `marketplace-cooldown-server`.
   layer) with no eligible revision, `install` requires
   `--acknowledge-cooldown`; without it, it refuses with
   `cooldown.acknowledgement-required` naming the eligible date and the flag.
-  With it, the head revision identified by the server (`held_head.revision`
-  or the `409` body) is fetched by exact digest and pinned as an ordinary
-  floating Marketplace installation, so later `update`s behave normally.
+  With it, the head revision identified by the server (`held_head.revision`,
+  the `409` body, or the `latest` head retained for a consumer-only hold) is
+  fetched by exact digest and pinned as an ordinary floating Marketplace
+  installation, so later `update`s behave normally.
   `initial_acquisition: strict`, or a server reporting
   `acknowledgeable: false` (`held: strict`), refuses regardless; a `409` body
   that does not identify the head refuses too, because the client cannot know

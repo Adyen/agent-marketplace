@@ -125,7 +125,11 @@ A held Marketplace pin is reported as
 The head and its first publication come from `held_head`, from the `409`
 body, or from the `latest` head itself for a consumer-only hold; the eligible
 date is the later of `head.first_published_at + P` and the server's
-`cooldown_until`. When a `409` body could not be parsed, the line renders the
+`cooldown_until`. For a collection the eligible date is the maximum of that
+value over the collection revision and every member it selects,
+transitively, each measured by its own first publication, the consumer floor,
+and its server `cooldown_until`, so an old collection with a young member
+reports the member's date. When a `409` body could not be parsed, the line renders the
 head as `unknown`, omits the first-publication date, and reports the eligible
 date as `unknown`, the same convention D4 uses for an unknown head. The pin, its lock record, and installed files are untouched; `update`
 exits 0 when holds are the only outcome; `--include-diff` does not diff held
@@ -136,9 +140,14 @@ info diagnostic.
 ### D4: Initial acquisition and acknowledgement
 
 No pin for the coordinate in the owning layer and no eligible revision. The
-head to acknowledge is `held_head.revision` from a `200` fallback, or
-`revision` from the `409` body; the acknowledgement is refused when neither
-is available, because the client cannot know what it would be pinning.
+head to acknowledge is, in order of what the server provided:
+`held_head.revision` from a `200` fallback, `revision` from the `409` body,
+or the genuine head returned by `latest` and retained in D2 step 1 when only
+the consumer floor held it (server period zero or lower). Its
+`acknowledgeable` flag comes from `held_head`, from the `409` body, or from
+the retained head's own `cooldown` object (absent means acknowledgeable).
+The acknowledgement is refused when no head is known, because the client
+cannot know what it would be pinning.
 
 - `initial_acquisition: acknowledge`, the head is known, the server reports
   `acknowledgeable: true` (or no `cooldown` object), and
@@ -217,6 +226,7 @@ effect is that the TUI detail view can show a held head from cache.
 - Requirement: Marketplace candidates respect the consumer cooldown
   - Scenario: Young head resolves to the most recently published eligible revision
   - Scenario: Server floor above the consumer floor is honored from the revisions list
+  - Scenario: Positive consumer floor with a zero server period selects from the revisions list
   - Scenario: Install reports the held head when it selects an older revision
   - Scenario: Consumer-only hold reports the latest head as evidence
   - Scenario: Server fallback published before the pin is held, not installed
@@ -228,6 +238,8 @@ effect is that the TUI detail view can show a held head from cache.
   - Scenario: Install without acknowledgement refuses with the eligible date
   - Scenario: Acknowledged install pins the server-identified head as a floating installation
   - Scenario: Acknowledged install after a revert pins the head, not the youngest revision
+  - Scenario: Consumer-only hold acknowledges the retained latest head
+  - Scenario: Strict server mode refuses acknowledgement of a 200 fallback head
   - Scenario: Strict initial acquisition refuses acknowledgement
   - Scenario: Server non-acknowledgeable hold refuses acknowledgement in every acquisition mode
   - Scenario: Unparseable hold body refuses acknowledgement and reports an unknown date
@@ -246,6 +258,7 @@ effect is that the TUI detail view can show a held head from cache.
 - Requirement: Marketplace holds are reported
   - Scenario: Held pin prints the hold line with the head's eligible date and exits 0
   - Scenario: Unparseable hold body for an existing pin reports an unknown head
+  - Scenario: Collection hold reports the latest member eligible date
   - Scenario: Held pins are excluded from content diffs
 
 `update-preview`

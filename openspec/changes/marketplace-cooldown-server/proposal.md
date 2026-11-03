@@ -35,7 +35,7 @@ The client halves are `git-cooldown` and `marketplace-cooldown-client`.
   recently published eligible revision that is not revoked, rejected,
   blocked, or artifact-less (ordered by registry occurrence, so a rolled-back
   revision is never restored), together with a `held_head` object describing
-  the head it withheld; otherwise `409 Conflict` with a machine-readable body
+  the head it withheld, its availability, and whether it is acknowledgeable; otherwise `409 Conflict` with a machine-readable body
   naming the head revision and its `cooldown_until`. A collection revision is
   eligible only when every member it selects, transitively, is eligible under
   its own registry's period. Clients that predate this change therefore fail

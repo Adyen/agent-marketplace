@@ -52,7 +52,8 @@
   member check, `held_head`, and the `409` body with
   `marketplace.cooldown.held`. Annotate
   `marketplace-api/eligible-head-resolves-as-latest`,
-  `marketplace-api/held-head-resolves-to-the-most-recently-published-eligible-revision-with-held-head-evidence`,
+  `marketplace-api/held-head-resolves-to-the-most-recent-eligible-occurrence-with-held-head-evidence`,
+  `marketplace-api/strict-mode-marks-held-head-non-acknowledgeable`,
   `marketplace-api/rolled-back-revision-is-not-restored-by-the-fallback`,
   `marketplace-api/revoked-eligible-revision-is-skipped-in-the-fallback`,
   `marketplace-api/collection-with-a-held-member-is-held`,

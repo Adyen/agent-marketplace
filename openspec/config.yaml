@@ -176,7 +176,7 @@ context: |
   _Avoid_: Deleted resource
 
   **Cooldown**:
-  The minimum time that must have elapsed since a resource revision's first publication or a Git commit's effective commit date before candidate selection may advance to it. A cooldown gates only advancing; it never re-evaluates an existing pin or lock. Consumer configuration layers may only raise it; a Marketplace operator owns the server floor and may vary it per registry.
+  The minimum time that must have elapsed since a resource revision's first publication or a Git commit's effective commit date before candidate selection may advance to it. A cooldown gates only advancing; it never re-evaluates an existing pin or lock, and an initial acquisition with no eligible candidate follows the configured initial-acquisition mode instead of waiting. Consumer configuration layers may only raise it; a Marketplace operator owns the server floor and its registry overrides.
   _Avoid_: Minimum release age, minimum revision age, quarantine, embargo
 
   **First publication**:

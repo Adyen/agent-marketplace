@@ -128,9 +128,10 @@ and server time `now`:
    skipped: they are historical revisions, not the head, and skipping them is
    what keeps an older safe revision installable when the newest eligible one
    was revoked. The response carries
-   `held_head: {revision, first_published_at, cooldown_until}` describing the
-   head that was withheld, so clients can report the hold and tell a fallback
-   from a revert.
+   `held_head: {revision, first_published_at, cooldown_until, availability, acknowledgeable}`
+   describing the head that was withheld, so clients can report the hold,
+   tell a fallback from a revert, and apply the operator's `held` mode
+   without a second lookup.
 4. Otherwise respond `409 Conflict` with body
    `{"error": "...", "code": "marketplace.cooldown.held", "revision": "sha256:…", "first_published_at": "...", "cooldown_until": "...", "availability": "...", "acknowledgeable": true|false}`
    where `revision` is the head revision. `409` is already part of the API's
@@ -263,7 +264,8 @@ listed so reviewers can judge the contract now.
   - Scenario: Archive-digest repair keeps first publication
 - Requirement: Latest-revision resolution honors the server cooldown
   - Scenario: Eligible head resolves as latest
-  - Scenario: Held head resolves to the most recently published eligible revision with held_head evidence
+  - Scenario: Held head resolves to the most recent eligible occurrence with held_head evidence
+  - Scenario: Strict mode marks held_head non-acknowledgeable
   - Scenario: Rolled-back revision is not restored by the fallback
   - Scenario: Revoked eligible revision is skipped in the fallback
   - Scenario: Collection with a held member is held
