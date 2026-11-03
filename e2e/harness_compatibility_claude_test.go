@@ -230,6 +230,44 @@ func TestClaudeWorkspaceTrustSetupPreservesOtherState(t *testing.T) {
 	}
 }
 
+func TestClaudeWorkspaceTrustRealPathCoversLiteralAndCanonicalPaths(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(t.TempDir(), "workspace-link")
+	if err := os.Symlink(workspace, alias); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := establishClaudeWorkspaceTrustAtRealPath(home, alias); err != nil {
+		t.Fatalf("establish Claude trust for literal and real paths: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".claude.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatalf("decode Claude trust state: %v", err)
+	}
+	projects, ok := state["projects"].(map[string]any)
+	if !ok {
+		t.Fatalf("Claude project trust entries missing: %s", data)
+	}
+	realPath, err := filepath.EvalSymlinks(alias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{alias, realPath} {
+		project, ok := projects[path].(map[string]any)
+		if !ok || project["hasTrustDialogAccepted"] != true {
+			t.Errorf("Claude project trust for %q = %v, want accepted", path, projects[path])
+		}
+	}
+}
+
 func TestMergeClaudeRepoPluginSettingsCopiesOnlyOwnedEntries(t *testing.T) {
 	project := []byte(`{
   // preserve project settings
@@ -313,6 +351,197 @@ func TestMergeClaudeRepoPluginSettingsCopiesOnlyOwnedEntries(t *testing.T) {
 	}
 }
 
+func TestMergeClaudeRepoPluginSettingsReplacesNonObjectOwnedMembers(t *testing.T) {
+	project := []byte(`{
+  "enabledPlugins": false,
+  "extraKnownMarketplaces": [],
+  "customSetting": "keep"
+}`)
+	local := []byte(`{
+  "enabledPlugins": {"native-kit@am-catalog": true},
+  "extraKnownMarketplaces": {"am-catalog": {"source": {"type": "directory", "path": "../catalog"}}}
+}`)
+
+	merged, err := mergeClaudeRepoPluginSettings(project, local, "native-kit")
+	if err != nil {
+		t.Fatalf("merge Claude repo plugin settings into existing project settings: %v", err)
+	}
+	document, err := jsonc.Parse("settings.json", merged)
+	if err != nil {
+		t.Fatalf("parse merged Claude settings: %v", err)
+	}
+	plugins, ok := document.Root().Member("enabledPlugins")
+	if !ok {
+		t.Fatalf("merged settings omitted enabledPlugins:\n%s", merged)
+	}
+	if value, ok := plugins.Member("native-kit@am-catalog"); !ok || string(value.Raw()) != "true" {
+		t.Errorf("merged plugin registration = %v, want enabled native-kit@am-catalog", value)
+	}
+	marketplaces, ok := document.Root().Member("extraKnownMarketplaces")
+	if !ok {
+		t.Fatalf("merged settings omitted extraKnownMarketplaces:\n%s", merged)
+	}
+	if entry, ok := marketplaces.Member("am-catalog"); !ok ||
+		!strings.Contains(string(entry.Raw()), `"path": "../catalog"`) {
+		t.Errorf("merged marketplace registration = %v, want the owned relative catalog entry", entry)
+	}
+	custom, ok := document.Root().Member("customSetting")
+	if !ok || string(custom.Raw()) != `"keep"` {
+		t.Errorf("custom setting = %v, want preserved value %q", custom, `"keep"`)
+	}
+}
+
+func TestClaudeScopeEvidenceCapturesSettingsMarketplaceAndTrust(t *testing.T) {
+	e := newEnv(t)
+	homeSettings := filepath.Join(e.home, ".claude", "settings.json")
+	localSettings := filepath.Join(e.workspace, ".claude", "settings.local.json")
+	projectSettings := filepath.Join(e.workspace, ".claude", "settings.json")
+	e.WriteFile(homeSettings, `{"enabledPlugins":{"native-kit@am-user":true},"extraKnownMarketplaces":{"am-user":{"source":{"type":"directory","path":"/catalog/user"}}}}`)
+	e.WriteFile(localSettings, `{"enabledPlugins":{"native-kit@am-repo":true},"extraKnownMarketplaces":{"am-repo":{"source":{"type":"directory","path":"../catalog"}}}}`)
+	e.WriteFile(projectSettings, `{"enabledPlugins":{"handwritten@manual":true},"extraKnownMarketplaces":{"manual":{"source":{"type":"github","repo":"owner/repo"}}}}`)
+	e.WriteFile(filepath.Join(e.home, ".claude", "plugins", "known_marketplaces.json"),
+		`{"am-repo":{"source":{"type":"directory","path":"../catalog"},"installLocation":"/home/.claude/plugins/marketplaces/am-repo"}}`)
+	e.WriteFile(filepath.Join(e.home, ".claude.json"),
+		`{"projects":{"`+e.workspace+`":{"hasTrustDialogAccepted":true},"/tmp/claude-realpath":{"hasTrustDialogAccepted":true}}}`)
+
+	var repo compatibilityCommand
+	recordClaudeScopeEvidence(&repo, e, "repo")
+	repoObserved := strings.Join(repo.Observed, "\n")
+	for _, want := range []string{
+		"scope=repo file=settings.local.json",
+		`enabledPlugins.keys=[native-kit@am-repo]`,
+		`am-repo={"source":{"type":"directory","path":"../catalog"}}`,
+		"same_file=true",
+		"scope=repo file=settings.json",
+		`enabledPlugins.keys=[handwritten@manual]`,
+		"same_file=true",
+		`am-repo source={"path":"../catalog","type":"directory"}`,
+		`installLocation="/home/.claude/plugins/marketplaces/am-repo"`,
+		"Claude trust projects.keys=[",
+		`"/tmp/claude-realpath"`,
+		"workspace realpath=",
+		"os.Getwd=",
+	} {
+		if !strings.Contains(repoObserved, want) {
+			t.Errorf("repo evidence %q does not contain %q", repoObserved, want)
+		}
+	}
+
+	var user compatibilityCommand
+	recordClaudeScopeEvidence(&user, e, "user")
+	userObserved := strings.Join(user.Observed, "\n")
+	for _, want := range []string{
+		"scope=user file=settings.json",
+		`enabledPlugins.keys=[native-kit@am-user]`,
+		`am-user={"source":{"type":"directory","path":"/catalog/user"}}`,
+		"same_file=true",
+	} {
+		if !strings.Contains(userObserved, want) {
+			t.Errorf("user evidence %q does not contain %q", userObserved, want)
+		}
+	}
+}
+
+func TestClaudeRepoVariantsRecordA_B_DOutcomesFromProjectRoot(t *testing.T) {
+	e := newEnv(t)
+	const plugin, skill = "native-kit", "review"
+	binary := filepath.Join(e.repos, "internal-fake-claude")
+	e.WriteFile(binary, `#!/bin/sh
+pwd -P >> "$HOME/claude-cwds"
+if [ "$1" = "plugin" ]; then
+	count=0
+	if [ -f "$HOME/plugin-list-count" ]; then count=$(cat "$HOME/plugin-list-count"); fi
+	count=$((count + 1))
+	printf '%s\n' "$count" > "$HOME/plugin-list-count"
+	if [ "$count" -eq 1 ]; then
+		printf '%s\n' 'not-json'
+	else
+		printf '%s\n' '{"plugins":[{"name":"native-kit@am-catalog","enabled":true}]}'
+	fi
+	exit 0
+fi
+IFS= read -r request || exit 70
+case "$request" in *'"subtype":"initialize"'*) ;; *) exit 71;; esac
+printf '{"type":"system","subtype":"init","cwd":"%s","plugins":[]}\n' "$(pwd -P)"
+case " $* " in
+	*" --debug "*)
+		printf '%s\n' '{"type":"control_response","response":{"subtype":"success","request_id":"amcompat-initialize","response":{"commands":[{"name":"native-kit:review","description":"Compatibility fixture native-kit:review-skill"}],"agents":[]}}}'
+		;;
+	*)
+		printf '%s\n' '{"type":"control_response","response":{"subtype":"success","request_id":"amcompat-initialize","response":{"commands":[],"agents":[]}}}'
+		;;
+esac
+if IFS= read -r request; then exit 72; fi
+`)
+	if err := os.Chmod(binary, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	localSettings := []byte(`{"enabledPlugins":{"native-kit@am-catalog":true},"extraKnownMarketplaces":{"am-catalog":{"source":{"type":"directory","path":"../catalog"}}}}`)
+	projectSettings := []byte(`{"enabledPlugins":false,"extraKnownMarketplaces":[],"customSetting":"keep"}`)
+	e.WriteFile(filepath.Join(e.workspace, ".claude", "settings.local.json"), string(localSettings))
+	e.WriteFile(filepath.Join(e.workspace, ".claude", "settings.json"), string(projectSettings))
+	e.WriteFile(filepath.Join(e.home, ".claude", "plugins", "known_marketplaces.json"),
+		`{"am-catalog":{"source":{"type":"directory","path":"../catalog"},"installLocation":"/catalog"}}`)
+	e.WriteFile(filepath.Join(e.home, ".claude", "plugins", "installed_plugins.json"),
+		`{"plugins":{"native-kit@am-catalog":[{"scope":"repo"}]}}`)
+
+	var row compatibilityResult
+	fixture := compatibilityFixture{prefix: plugin + ":" + skill}
+	if err := observeClaudePluginEnabled(e, binary, fixture, &row, "repo", plugin, skill); err == nil {
+		t.Fatal("variant A unexpectedly passed its failure witness")
+	}
+	runClaudeRepoPluginVariants(e, binary, plugin, skill, &row)
+	observed := []string{}
+	for _, command := range row.Commands {
+		observed = append(observed, command.Observed...)
+	}
+	report := strings.Join(observed, "\n")
+	for _, want := range []string{
+		"variant=A-repo-settings-local loaded=false plugin_list=<invalid-json> skill_listed=false",
+		"variant=B-committed-settings loaded=true plugin_list=[native-kit@am-catalog] skill_listed=false",
+		"variant=D-realpath-trust loaded=true plugin_list=[native-kit@am-catalog] skill_listed=false",
+		`Claude settings scope=repo file=settings.json enabledPlugins.keys=[native-kit@am-catalog] extraKnownMarketplaces=[am-catalog={"source":{"type":"directory","path":"../catalog"}}]`,
+		"Claude initialization cwd: ",
+	} {
+		if !strings.Contains(report, want) {
+			t.Errorf("repo variant report %q does not contain %q", report, want)
+		}
+	}
+	restored, err := os.ReadFile(filepath.Join(e.workspace, ".claude", "settings.json"))
+	if err != nil || string(restored) != string(projectSettings) {
+		t.Errorf("committed Claude settings after variant B = %q, want original %q (error %v)",
+			restored, projectSettings, err)
+	}
+	realWorkspace, err := filepath.EvalSymlinks(e.workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var trust struct {
+		Projects map[string]map[string]any `json:"projects"`
+	}
+	trustBytes, err := os.ReadFile(filepath.Join(e.home, ".claude.json"))
+	if err != nil || json.Unmarshal(trustBytes, &trust) != nil {
+		t.Fatalf("read variant D trust state: %v\n%s", err, trustBytes)
+	}
+	for _, path := range []string{e.workspace, realWorkspace} {
+		if trust.Projects[path]["hasTrustDialogAccepted"] != true {
+			t.Errorf("variant D trust state for %q = %v, want accepted", path, trust.Projects[path])
+		}
+	}
+	cwdLog, err := os.ReadFile(filepath.Join(e.home, "claude-cwds"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, cwd := range strings.Fields(string(cwdLog)) {
+		if cwd != realWorkspace {
+			t.Errorf("Claude cwd = %q, want project root %q", cwd, realWorkspace)
+		}
+	}
+	if len(strings.Fields(string(cwdLog))) == 0 {
+		t.Fatal("repo variants did not launch any Claude process")
+	}
+}
+
 func TestClaudePluginJSONIDsListsUniquePluginIDs(t *testing.T) {
 	ids, valid := claudePluginJSONIDs(`{"plugins":[{"name":"other-kit@skills-dir"},{"name":"native-kit@am-catalog"},{"name":"native-kit@am-catalog"}]}`)
 	if !valid {
@@ -353,6 +582,16 @@ func mergeClaudeRepoPluginSettings(project, local []byte, plugin string) ([]byte
 			if !projectDoc.SetMember(projectDoc.Root(), key, []byte("{}")) {
 				return nil, fmt.Errorf("create Claude settings object %q", key)
 			}
+		} else if node.Kind() != jsonc.KindObject {
+			if !projectDoc.SetMember(projectDoc.Root(), key, []byte("{}")) {
+				return nil, fmt.Errorf("replace Claude settings object %q", key)
+			}
+		}
+		if !ok || node.Kind() != jsonc.KindObject {
+			projectDoc, err = jsonc.Parse("settings.json", projectDoc.Bytes())
+			if err != nil {
+				return nil, fmt.Errorf("reparse Claude settings after creating %q: %w", key, err)
+			}
 			node, ok = projectDoc.Root().Member(key)
 		}
 		if !ok || node.Kind() != jsonc.KindObject {
@@ -368,6 +607,8 @@ func mergeClaudeRepoPluginSettings(project, local []byte, plugin string) ([]byte
 	if err != nil {
 		return nil, err
 	}
+	projectEnabled, _ = projectDoc.Root().Member("enabledPlugins")
+	projectMarketplaces, _ = projectDoc.Root().Member("extraKnownMarketplaces")
 
 	pluginPrefix := plugin + "@am-"
 	copied := 0
@@ -395,10 +636,10 @@ func mergeClaudeRepoPluginSettings(project, local []byte, plugin string) ([]byte
 
 func runClaudeRepoPluginVariants(e *Env, binary, plugin, skill string, row *compatibilityResult) {
 	if !runClaudeRepoCommittedSettingsVariant(e, binary, plugin, skill, row) {
-		recordClaudePluginVariantSetupFailure(row, "C-skills-dir", fmt.Errorf("variant B settings could not be restored"))
+		recordClaudePluginVariantSetupFailure(row, "D-realpath-trust", fmt.Errorf("variant B settings could not be restored"))
 		return
 	}
-	runClaudeRepoSkillsDirectoryVariant(e, binary, plugin, skill, row)
+	runClaudeRepoRealpathTrustVariant(e, binary, plugin, skill, row)
 }
 
 func runClaudeRepoCommittedSettingsVariant(e *Env, binary, plugin, skill string, row *compatibilityResult) bool {
@@ -448,10 +689,20 @@ func runClaudeRepoCommittedSettingsVariant(e *Env, binary, plugin, skill string,
 	primeClaudeRepoPluginHeadless(e, binary, plugin, skill, row)
 	runClaudePluginVariantDiagnostics(e, binary, variant, plugin+"@am-", false, plugin, skill, row)
 	if err := restoreClaudeProjectSettings(projectPath, projectSettings, projectExists, projectMode); err != nil {
-		recordClaudePluginVariantSetupFailure(row, variant+"-restore", err)
+		recordClaudePluginVariantSetupFailure(row, variant, err)
 		return false
 	}
 	return true
+}
+
+func runClaudeRepoRealpathTrustVariant(e *Env, binary, plugin, skill string, row *compatibilityResult) {
+	const variant = "D-realpath-trust"
+	if err := establishClaudeWorkspaceTrustAtRealPath(e.home, e.workspace); err != nil {
+		recordClaudePluginVariantSetupFailure(row, variant, err)
+		return
+	}
+	primeClaudeRepoPluginHeadless(e, binary, plugin, skill, row)
+	runClaudePluginVariantDiagnostics(e, binary, variant, plugin+"@am-", false, plugin, skill, row)
 }
 
 func restoreClaudeProjectSettings(path string, original []byte, existed bool, mode os.FileMode) error {
@@ -502,105 +753,6 @@ func primeClaudeRepoPluginHeadless(e *Env, binary, plugin, skill string, row *co
 	row.Commands = append(row.Commands, headless)
 }
 
-func runClaudeRepoSkillsDirectoryVariant(e *Env, binary, plugin, skill string, row *compatibilityResult) {
-	variant := "C-skills-dir-symlink"
-	generation, err := claudePluginGenerationDirectory(e, plugin)
-	if err != nil {
-		recordClaudePluginVariantSetupFailure(row, variant, err)
-		return
-	}
-	destination := filepath.Join(e.workspace, ".claude", "skills", plugin)
-	if _, err := os.Lstat(destination); err == nil {
-		recordClaudePluginVariantSetupFailure(row, variant, fmt.Errorf("skills-directory target already exists: %q", destination))
-		return
-	} else if !os.IsNotExist(err) {
-		recordClaudePluginVariantSetupFailure(row, variant, fmt.Errorf("inspect skills-directory target %q: %w", destination, err))
-		return
-	}
-	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
-		recordClaudePluginVariantSetupFailure(row, variant, fmt.Errorf("create Claude skills directory: %w", err))
-		return
-	}
-	defer os.RemoveAll(destination)
-
-	if err := os.Symlink(generation, destination); err != nil {
-		recordClaudePluginVariantSetupFailure(row, variant, fmt.Errorf("link Claude plugin into skills directory: %w", err))
-	} else if runClaudePluginVariantDiagnostics(e, binary, variant, plugin+"@skills-dir", true, plugin, skill, row) {
-		return
-	} else if err := os.Remove(destination); err != nil {
-		recordClaudePluginVariantSetupFailure(row, "C-skills-dir-copy", fmt.Errorf("remove skills-directory symlink: %w", err))
-		return
-	}
-
-	variant = "C-skills-dir-copy"
-	if err := copyClaudePluginDirectory(generation, destination); err != nil {
-		recordClaudePluginVariantSetupFailure(row, variant, err)
-		return
-	}
-	runClaudePluginVariantDiagnostics(e, binary, variant, plugin+"@skills-dir", true, plugin, skill, row)
-}
-
-func claudePluginGenerationDirectory(e *Env, plugin string) (string, error) {
-	pattern := filepath.Join(e.home, ".local", "state", "agent-marketplace", "native-plugins", "claude", "*", ".claude-plugin", "marketplace.json")
-	manifests, err := filepath.Glob(pattern)
-	if err != nil || len(manifests) != 1 {
-		return "", fmt.Errorf("Claude plugin catalog manifests = %v / %v, want one", manifests, err)
-	}
-	catalogRoot := filepath.Dir(filepath.Dir(manifests[0]))
-	link := filepath.Join(catalogRoot, "plugins", plugin)
-	info, err := os.Lstat(link)
-	if err != nil || info.Mode()&os.ModeSymlink == 0 {
-		return "", fmt.Errorf("Claude catalog plugin path %q is not a symlink: %v", link, err)
-	}
-	generation, err := filepath.EvalSymlinks(link)
-	if err != nil {
-		return "", fmt.Errorf("resolve Claude plugin generation %q: %w", link, err)
-	}
-	return generation, nil
-}
-
-func copyClaudePluginDirectory(source, destination string) error {
-	entries, err := os.ReadDir(source)
-	if err != nil {
-		return fmt.Errorf("read Claude plugin generation %q: %w", source, err)
-	}
-	if err := os.MkdirAll(destination, 0o755); err != nil {
-		return fmt.Errorf("create copied Claude plugin %q: %w", destination, err)
-	}
-	for _, entry := range entries {
-		from, to := filepath.Join(source, entry.Name()), filepath.Join(destination, entry.Name())
-		info, err := entry.Info()
-		if err != nil {
-			return fmt.Errorf("inspect Claude plugin entry %q: %w", from, err)
-		}
-		switch {
-		case entry.IsDir():
-			if err := copyClaudePluginDirectory(from, to); err != nil {
-				return err
-			}
-		case info.Mode()&os.ModeSymlink != 0:
-			target, err := os.Readlink(from)
-			if err != nil {
-				return fmt.Errorf("read Claude plugin symlink %q: %w", from, err)
-			}
-			if err := os.Symlink(target, to); err != nil {
-				return fmt.Errorf("copy Claude plugin symlink %q: %w", to, err)
-			}
-		case info.Mode().IsRegular():
-			data, err := os.ReadFile(from)
-			if err != nil {
-				return fmt.Errorf("read Claude plugin file %q: %w", from, err)
-			}
-			if err := os.WriteFile(to, data, info.Mode().Perm()); err != nil {
-				return fmt.Errorf("write Claude plugin file %q: %w", to, err)
-			}
-		default:
-			return fmt.Errorf("unsupported Claude plugin entry %q", from)
-		}
-	}
-	return nil
-}
-
 func runClaudePluginVariantDiagnostics(e *Env, binary, variant, pluginID string, pluginListPresenceLoads bool, plugin, skill string, row *compatibilityResult) bool {
 	initialization := runCompatibilityProtocol(e, binary, "claude-initialize", 30*time.Second)
 	skillListed := recordClaudePluginInitialization(&initialization, e, plugin, skill)
@@ -617,6 +769,7 @@ func runClaudePluginVariantDiagnostics(e *Env, binary, variant, pluginID string,
 		list.Observed = append(list.Observed, "plugin list error: "+boundedClaudeDiagnosticValue(listErr.Error(), 500))
 	}
 	loaded := skillListed || found && (enabled || pluginListPresenceLoads)
+	recordClaudeScopeEvidence(&list, e, "repo")
 	recordClaudePluginVariantOutcome(&list, variant, loaded, skillListed, list.Stdout)
 	row.Commands = append(row.Commands, list)
 	return loaded
@@ -631,6 +784,200 @@ func recordClaudePluginVariantSetupFailure(row *compatibilityResult, variant str
 	command.Observed = append(command.Observed, "variant setup error: "+command.Error)
 	recordClaudePluginVariantOutcome(&command, variant, false, false, "[]")
 	row.Commands = append(row.Commands, command)
+}
+
+func recordClaudeScopeEvidence(command *compatibilityCommand, e *Env, scope string) {
+	settings := []struct {
+		label string
+		path  string
+	}{}
+	if scope == "repo" {
+		settings = append(settings,
+			struct {
+				label string
+				path  string
+			}{"repo", filepath.Join(e.workspace, ".claude", "settings.local.json")},
+			struct {
+				label string
+				path  string
+			}{"repo", filepath.Join(e.workspace, ".claude", "settings.json")})
+	} else {
+		settings = append(settings, struct {
+			label string
+			path  string
+		}{"user", filepath.Join(e.home, ".claude", "settings.json")})
+	}
+	for _, file := range settings {
+		command.Observed = append(command.Observed, claudeSettingsRegistrationEvidence(file.label, file.path))
+	}
+	command.Observed = append(command.Observed,
+		claudeKnownMarketplaceEvidence(e.home),
+		claudeWorkspaceTrustEvidence(e.home, e.workspace))
+}
+
+func claudeSettingsRegistrationEvidence(scope, path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Sprintf("Claude settings scope=%s file=%s error=%s",
+			scope, filepath.Base(path), boundedClaudeDiagnosticValue(err.Error(), 300))
+	}
+	document, err := jsonc.Parse(path, data)
+	if err != nil || document.Root().Kind() != jsonc.KindObject {
+		if err == nil {
+			err = fmt.Errorf("settings root is not an object")
+		}
+		return fmt.Sprintf("Claude settings scope=%s file=%s error=%s",
+			scope, filepath.Base(path), boundedClaudeDiagnosticValue(err.Error(), 300))
+	}
+
+	enabled, enabledOK := document.Root().Member("enabledPlugins")
+	enabledKeys := []string{}
+	if enabledOK && enabled.Kind() == jsonc.KindObject {
+		enabledKeys = enabled.Keys()
+		sort.Strings(enabledKeys)
+	} else if enabledOK {
+		enabledKeys = []string{"<non-object>"}
+	} else {
+		enabledKeys = []string{"<missing>"}
+	}
+	marketplaces, marketplacesOK := document.Root().Member("extraKnownMarketplaces")
+	marketplaceEntries := []string{}
+	if marketplacesOK && marketplaces.Kind() == jsonc.KindObject {
+		for _, key := range marketplaces.Keys() {
+			if !strings.HasPrefix(key, "am-") {
+				continue
+			}
+			entry, ok := marketplaces.Member(key)
+			if ok {
+				marketplaceEntries = append(marketplaceEntries,
+					key+"="+boundedClaudeDiagnosticValue(strings.Join(strings.Fields(string(entry.Raw())), " "), 500))
+			}
+		}
+		sort.Strings(marketplaceEntries)
+	}
+	if !marketplacesOK {
+		marketplaceEntries = []string{"<missing>"}
+	} else if marketplaces.Kind() != jsonc.KindObject {
+		marketplaceEntries = []string{"<non-object>"}
+	} else if len(marketplaceEntries) == 0 {
+		marketplaceEntries = []string{"<no-am-entry>"}
+	}
+	sameFile := enabledOK && enabled.Kind() == jsonc.KindObject &&
+		marketplacesOK && marketplaces.Kind() == jsonc.KindObject
+	return fmt.Sprintf("Claude settings scope=%s file=%s enabledPlugins.keys=%s extraKnownMarketplaces=%s same_file=%t",
+		scope, filepath.Base(path), boundedClaudeEvidenceList(enabledKeys, 20, 160),
+		boundedClaudeEvidenceList(marketplaceEntries, 10, 520), sameFile)
+}
+
+func claudeKnownMarketplaceEvidence(home string) string {
+	path := filepath.Join(home, ".claude", "plugins", "known_marketplaces.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "Claude known_marketplaces am entries: " + boundedClaudeDiagnosticValue(err.Error(), 300)
+	}
+	var marketplaces map[string]json.RawMessage
+	if err := json.Unmarshal(data, &marketplaces); err != nil {
+		return "Claude known_marketplaces am entries: invalid-json"
+	}
+	keys := make([]string, 0, len(marketplaces))
+	for key := range marketplaces {
+		if strings.HasPrefix(key, "am-") {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	entryLimit := min(len(keys), 9)
+	entries := make([]string, 0, entryLimit+1)
+	for _, key := range keys[:entryLimit] {
+		var entry struct {
+			Source          json.RawMessage `json:"source"`
+			InstallLocation json.RawMessage `json:"installLocation"`
+		}
+		if err := json.Unmarshal(marketplaces[key], &entry); err != nil {
+			entries = append(entries, key+"=<invalid-entry>")
+			continue
+		}
+		entries = append(entries, key+" source="+compactClaudeJSON(entry.Source)+
+			" installLocation="+compactClaudeJSON(entry.InstallLocation))
+	}
+	if len(keys) > entryLimit {
+		entries = append(entries, fmt.Sprintf("...+%d", len(keys)-entryLimit))
+	}
+	if len(entries) == 0 {
+		entries = []string{"<none>"}
+	}
+	return "Claude known_marketplaces am entries: " + boundedClaudeEvidenceList(entries, 10, 900)
+}
+
+func claudeWorkspaceTrustEvidence(home, workspace string) string {
+	path := filepath.Join(home, ".claude.json")
+	data, readErr := os.ReadFile(path)
+	projects := map[string]json.RawMessage{}
+	if readErr == nil {
+		var state struct {
+			Projects map[string]json.RawMessage `json:"projects"`
+		}
+		if err := json.Unmarshal(data, &state); err != nil {
+			readErr = err
+		} else if state.Projects != nil {
+			projects = state.Projects
+		}
+	} else if !os.IsNotExist(readErr) {
+		readErr = fmt.Errorf("read %s: %w", filepath.Base(path), readErr)
+	}
+	keys := make([]string, 0, len(projects))
+	for key := range projects {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	shownKeys := keys[:min(len(keys), 20)]
+	keyJSON, _ := json.Marshal(shownKeys)
+	entries := make([]string, 0, len(shownKeys))
+	for _, key := range shownKeys {
+		entries = append(entries, key+"="+compactClaudeJSON(projects[key]))
+	}
+	entryList := boundedClaudeEvidenceList(entries, 10, 300)
+	cwd, cwdErr := os.Getwd()
+	if cwdErr != nil {
+		cwd = "error(" + boundedClaudeDiagnosticValue(cwdErr.Error(), 200) + ")"
+	}
+	realWorkspace, realErr := filepath.EvalSymlinks(workspace)
+	if realErr != nil {
+		realWorkspace = "error(" + boundedClaudeDiagnosticValue(realErr.Error(), 200) + ")"
+	}
+	readState := ""
+	if readErr != nil {
+		readState = "; state_error=" + boundedClaudeDiagnosticValue(readErr.Error(), 200)
+	}
+	return boundedClaudeDiagnosticValue(fmt.Sprintf(
+		"Claude trust projects.keys=%s projects.entries=%s; os.Getwd=%s; workspace=%s; workspace realpath=%s%s",
+		keyJSON, entryList, cwd, workspace, realWorkspace, readState), 1800)
+}
+
+func compactClaudeJSON(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return "<missing>"
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return boundedClaudeDiagnosticValue(strings.Join(strings.Fields(string(raw)), " "), 500)
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return "<unavailable>"
+	}
+	return boundedClaudeDiagnosticValue(string(data), 500)
+}
+
+func boundedClaudeEvidenceList(values []string, maxItems, maxItemLength int) string {
+	shown := make([]string, 0, min(len(values), maxItems))
+	for _, value := range values[:min(len(values), maxItems)] {
+		shown = append(shown, boundedClaudeDiagnosticValue(value, maxItemLength))
+	}
+	if len(values) > maxItems {
+		shown = append(shown, fmt.Sprintf("...+%d", len(values)-maxItems))
+	}
+	return "[" + strings.Join(shown, ",") + "]"
 }
 
 func recordClaudePluginVariantOutcome(command *compatibilityCommand, variant string, loaded, skillListed bool, raw string) {
@@ -702,6 +1049,18 @@ func assertClaudePluginStateAbsentAfterSync(home, workspace string) error {
 }
 
 func establishClaudeWorkspaceTrust(home, workspace string) error {
+	return updateClaudeWorkspaceTrust(home, workspace)
+}
+
+func establishClaudeWorkspaceTrustAtRealPath(home, workspace string) error {
+	realPath, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		return fmt.Errorf("resolve Claude workspace %q: %w", workspace, err)
+	}
+	return updateClaudeWorkspaceTrust(home, workspace, realPath)
+}
+
+func updateClaudeWorkspaceTrust(home string, workspaces ...string) error {
 	path := filepath.Join(home, ".claude.json")
 	state := map[string]any{}
 	data, err := os.ReadFile(path)
@@ -724,16 +1083,18 @@ func establishClaudeWorkspaceTrust(home, workspace string) error {
 		projectMap = map[string]any{}
 		state["projects"] = projectMap
 	}
-	projectValue, exists := projectMap[workspace]
-	projectState, ok := projectValue.(map[string]any)
-	if exists && !ok {
-		return fmt.Errorf("Claude workspace state in %q is not an object", path)
+	for _, workspace := range workspaces {
+		projectValue, exists := projectMap[workspace]
+		projectState, ok := projectValue.(map[string]any)
+		if exists && !ok {
+			return fmt.Errorf("Claude workspace state in %q is not an object", path)
+		}
+		if !ok {
+			projectState = map[string]any{}
+			projectMap[workspace] = projectState
+		}
+		projectState["hasTrustDialogAccepted"] = true
 	}
-	if !ok {
-		projectState = map[string]any{}
-		projectMap[workspace] = projectState
-	}
-	projectState["hasTrustDialogAccepted"] = true
 	state["hasCompletedOnboarding"] = true
 	data, err = json.MarshalIndent(state, "", "  ")
 	if err != nil {
@@ -1064,16 +1425,17 @@ func observeClaudePluginEnabled(e *Env, binary string, f compatibilityFixture, r
 	)
 	row.Commands = append(row.Commands, command)
 	pluginListErr := waitForClaudePluginEnabled(e, binary, pluginID, row)
-	if scope == "repo" {
-		for i := len(row.Commands) - 1; i >= 0; i-- {
-			list := &row.Commands[i]
-			if len(list.Args) < 4 || list.Args[1] != "plugin" || list.Args[2] != "list" {
-				continue
-			}
+	for i := len(row.Commands) - 1; i >= 0; i-- {
+		list := &row.Commands[i]
+		if len(list.Args) < 4 || list.Args[1] != "plugin" || list.Args[2] != "list" {
+			continue
+		}
+		if scope == "repo" {
 			found, active, valid := claudePluginJSONState(list.Stdout, pluginID)
 			recordClaudePluginVariantOutcome(list, "A-repo-settings-local", valid && found && active || skillListed, skillListed, list.Stdout)
-			break
 		}
+		recordClaudeScopeEvidence(list, e, scope)
+		break
 	}
 	var verdictErrors []string
 	for _, verdictErr := range []error{registrationErr, initErr, pluginListErr} {
@@ -1093,9 +1455,25 @@ func recordClaudePluginInitialization(command *compatibilityCommand, e *Env, plu
 	var fields map[string]json.RawMessage
 	if json.Unmarshal([]byte(command.output), &fields) != nil || fields == nil {
 		command.Observed = append(command.Observed, "Claude initialization plugins: response metadata unavailable")
+		command.Observed = append(command.Observed, "Claude initialization cwd: unavailable")
 	} else {
 		recordClaudePluginListField(command, "stream-json system init.plugins", fields[claudeSystemInitPluginsField])
 		recordClaudePluginListField(command, "initialize control response.plugins", fields["plugins"])
+		cwd := fields[claudeSystemInitCWDField]
+		if len(cwd) == 0 {
+			cwd = fields["cwd"]
+		}
+		if len(cwd) == 0 {
+			command.Observed = append(command.Observed, "Claude initialization cwd: field absent")
+		} else {
+			var value string
+			if err := json.Unmarshal(cwd, &value); err != nil {
+				command.Observed = append(command.Observed, "Claude initialization cwd: field is not a string")
+			} else {
+				command.Observed = append(command.Observed,
+					"Claude initialization cwd: "+boundedClaudeDiagnosticValue(value, 500))
+			}
+		}
 	}
 	listed := false
 	entries, err := compatibilityProtocolInventory(command.output, "claude-initialize", "skill", e.workspace)
