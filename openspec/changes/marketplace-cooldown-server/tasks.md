@@ -57,6 +57,8 @@
   `marketplace-api/revoked-eligible-revision-is-skipped-in-the-fallback`,
   `marketplace-api/collection-with-a-held-member-is-held`,
   `marketplace-api/coordinate-with-no-eligible-revision-answers-409-with-cooldown-evidence`,
+  `marketplace-api/young-revoked-head-is-reported-non-acknowledgeable-with-its-availability`,
+  `marketplace-api/young-artifact-less-head-is-reported-non-acknowledgeable-with-its-availability`,
   `marketplace-api/zero-period-preserves-head-resolution`,
   `marketplace-api/registry-override-lowers-the-period`
 - [ ] 3.3 Prove holds never gate distribution or managed metadata reads:
@@ -73,7 +75,11 @@
   revision list, bounded `max-age` when a held row is present. Annotate
   `marketplace-api/latest-response-revalidates-on-every-use`,
   `marketplace-api/latest-validator-changes-when-the-floor-is-raised`,
-  `marketplace-api/catalog-validator-changes-when-a-row-becomes-eligible`
+  `marketplace-api/catalog-validator-changes-when-a-row-becomes-eligible`,
+  `marketplace-api/search-validator-changes-when-a-row-becomes-eligible`,
+  `marketplace-api/revision-list-validator-changes-when-a-row-becomes-eligible`
+  (each sends `If-None-Match` before and after the boundary and expects a
+  changed validator and a fresh body)
 - [ ] 3.5 Update `api/openapi.yaml`: `first_published_at`, the
   `current_availability.cooldown` object, `held_head`, the `cooling-down`
   availability value, and the `409` response on the latest-revision route.

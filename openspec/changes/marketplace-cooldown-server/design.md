@@ -132,10 +132,18 @@ and server time `now`:
    head that was withheld, so clients can report the hold and tell a fallback
    from a revert.
 4. Otherwise respond `409 Conflict` with body
-   `{"error": "...", "code": "marketplace.cooldown.held", "revision": "sha256:…", "first_published_at": "...", "cooldown_until": "...", "acknowledgeable": true|false}`
+   `{"error": "...", "code": "marketplace.cooldown.held", "revision": "sha256:…", "first_published_at": "...", "cooldown_until": "...", "availability": "...", "acknowledgeable": true|false}`
    where `revision` is the head revision. `409` is already part of the API's
    error vocabulary; `404` is reserved for coordinates that do not exist, and
    clients translate it into "remove the pin".
+
+**A young head with a stronger state.** `held_head` (step 3) and the `409`
+body (step 4) always carry the head's `availability` as the overlay would
+report it, and `acknowledgeable` is `true` only when `held: expose` **and**
+that overlay is `available` or `operator-exposed`. A young head that is
+revoked, policy-blocked, blocked, or missing its artifact is therefore never
+offered for acknowledgement, and a client shows the stronger state instead of
+a cooldown prompt.
 
 **Collections.** A collection revision is eligible only when its own first
 publication is at or before the cutoff **and** every member revision it
@@ -260,6 +268,8 @@ listed so reviewers can judge the contract now.
   - Scenario: Revoked eligible revision is skipped in the fallback
   - Scenario: Collection with a held member is held
   - Scenario: Coordinate with no eligible revision answers 409 with cooldown evidence
+  - Scenario: Young revoked head is reported non-acknowledgeable with its availability
+  - Scenario: Young artifact-less head is reported non-acknowledgeable with its availability
   - Scenario: Zero period preserves head resolution
   - Scenario: Registry override lowers the period
 - Requirement: Held revisions report the cooldown object
@@ -278,6 +288,8 @@ listed so reviewers can judge the contract now.
   - Scenario: Latest response revalidates on every use
   - Scenario: Latest validator changes when the floor is raised
   - Scenario: Catalog validator changes when a row becomes eligible
+  - Scenario: Search validator changes when a row becomes eligible
+  - Scenario: Revision list validator changes when a row becomes eligible
 
 `marketplace-web-ui`
 

@@ -42,10 +42,10 @@ It also carries the consumer configuration schema shared with
 - When a period applies, a consumed branch whose locked commit is not an
   ancestor of its tip is a **history rewrite**. `update` and `lock --upgrade`
   refuse it with `lock.history-rewritten`, listing per source the locked
-  commit, the tip, whether the locked commit is still reachable from any
-  branch, the number of first-parent commits between the merge-base and the
-  tip, and the tip's effective commit date, followed by the remediation
-  commands. `--accept-history-rewrite` accepts every refusal in the run, or
+  commit, the tip, whether any branch of the refreshed remote still contains
+  the locked commit, the number of first-parent commits between the
+  merge-base and the tip, and the tip's effective commit date, followed by
+  the remediation commands. `--accept-history-rewrite` accepts every refusal in the run, or
   only the sources named by the existing `--registry`/`--ref` targeting, on
   `update`, `lock --upgrade`, and `update --dry-run` (which then previews the
   rewritten candidate without writing). The resulting lock is the only record
@@ -70,9 +70,10 @@ It also carries the consumer configuration schema shared with
 - `update`, `update --dry-run`, and `lock --upgrade` print one hold line per
   source whose tip is newer than the selected candidate, including after the
   lock advanced to an older eligible commit; `--include-diff` never diffs a
-  held candidate. A rewrite refusal happens before any write, including the
-  Marketplace lock records an applying `update` bootstraps today, which are
-  staged behind the rewrite checks. `sync --locked`,
+  held candidate. A rewrite refusal happens before any lock, config, or
+  harness write, including the Marketplace lock records an applying `update`
+  bootstraps today, which are staged behind the rewrite checks; cache
+  refreshes are not writes in that sense. `sync --locked`,
   `sync --check`, `sync --offline`, and `doctor` are unchanged: they never
   re-resolve.
 - The TUI shows holds in the update result and surfaces a history rewrite as a

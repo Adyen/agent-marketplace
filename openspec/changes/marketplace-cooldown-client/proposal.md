@@ -73,9 +73,10 @@ by `marketplace-cooldown-server`.
   format as Git holds, with the eligible date computed as
   `first_published_at + period` or the server's `cooldown_until`, whichever is
   later.
-- Collections need no special rule: a collection revision is the candidate,
-  and its manifest's member revisions are at least as old as it. Index-only
-  acquisition pins the exact occurrence of the selected revision as today.
+- Index-only acquisition pins the exact occurrence of the selected revision as
+  today; the transitive member check above is the single rule for
+  collections, because cross-registry members can be newer than the
+  collection and held.
 - The TUI shows "held until <date>" in the Marketplace detail view when the
   head is held, shows Marketplace holds in the update result, and ships
   journeys for the acknowledgement modal and the hold. The TUI QA Marketplace

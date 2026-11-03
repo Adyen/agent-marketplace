@@ -176,15 +176,14 @@ Git reconciliation runs; to honor the no-write contract, the applying path
 stages that evidence the way `update --dry-run` already does
 (`prepareMissingMarketplaceLockEdits` into `PreseedLockEdits`) and publishes
 it in the same dependency transaction as the Git locks, after every rewrite
-check has passed. Evidence per refused source (each row degrades to
-"unknown" when `L` is missing):
+check has passed. Evidence per refused source:
 
 | Field | Source |
 |---|---|
 | `url@ref` | the group |
 | locked commit, tip | `L`, resolved tip |
-| locked commit still reachable | `git for-each-ref --contains L` after refreshing the mirror's remote heads (`fetch --prune <url> +refs/heads/*:refs/heads/*`); "no" on a missing object; labelled "cached" when the refresh fails |
-| commits between merge-base and tip | `rev-list --first-parent --count <merge-base>..tip`, or the full count when there is no merge-base |
+| locked commit still on a branch | after refreshing the mirror's remote heads (`fetch --prune <url> +refs/heads/*:refs/heads/*`), `git for-each-ref --contains L refs/heads/`: "yes" when any branch contains `L`, "no" when none does or `L` is missing after a successful refresh; when the refresh fails, the same query on the cached mirror, labelled "cached" |
+| commits between merge-base and tip | `rev-list --first-parent --count <merge-base>..tip`, the full first-parent count when there is no merge-base, or "unknown" when `L` is missing |
 | tip effective date | D3 step 3 |
 
 The reachability refresh is the only network operation the refusal adds and
@@ -252,8 +251,11 @@ object ID and commit ID alongside the name. Acquisition of the bumped group is
 so D5 never applies to a bump), re-runs D3 against the exact store, and must
 resolve the new ref to the recorded commit; otherwise it refuses with
 `lock.bump-target-moved`, leaves the config edit unpublished, and reports
-both commits. A moved-tag test moves the tag after the eligibility check and
-asserts that acquisition fetches nothing new.
+both commits. Detecting the move may require fetching the moved ref into the
+exact store; the safety property is that the new commit is never selected,
+locked, or published. A moved-tag test moves the tag after the eligibility
+check and asserts exactly that: the lock still names the previous commit and
+the config edit is unpublished.
 
 ### D7: Output
 

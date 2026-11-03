@@ -31,7 +31,7 @@
   parses `rev-list --first-parent --format` output including its header
   lines, returns commit, committer date, and parents, reads the tagger date of
   an annotated `refs/agent-marketplace/resolved`, and provides `IsAncestor`
-  and "still reachable from any ref" helpers that translate missing-object
+  and "still on a branch" (`refs/heads/` only) helpers that translate missing-object
   failures (exit 128) into a not-an-ancestor / unreachable result while
   leaving transport failures intact. Fixture repositories: fresh tip,
   backdated tip, dormant branch with a backdated push, local-commit-pushed-late,
@@ -61,7 +61,7 @@
   scenarios
 - [ ] 3.3 History-rewrite detection with the evidence table (including the
   remote-heads refresh for reachability), refusal `lock.history-rewritten`
-  before any write, staging of the Marketplace lock bootstrap behind the
+  before any lock, config, or harness write, staging of the Marketplace lock bootstrap behind the
   rewrite checks in the applying `update`, `--accept-history-rewrite` on
   `update`, `lock --upgrade`, and `update --dry-run` with the existing
   `--registry`/`--ref` targeting scoping the run, whole-chain selection after
