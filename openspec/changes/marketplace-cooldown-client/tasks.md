@@ -21,20 +21,26 @@
 ## 2. Selection and holds
 
 - [ ] 2.1 Implement the shared candidate-selection helper (design D2) with
-  the zero-period bypass, the head/fallback distinction, occurrence-ordered
+  the zero-period bypass, the head/fallback distinction, the
+  server-eligibility check on every list candidate, occurrence-ordered
   "newer than the pin", and the transitive collection member check, and use
   it from `prepareLocator`, the update planner, and the TUI. Annotate
   `resource-installation/young-head-resolves-to-the-most-recently-published-eligible-revision`,
+  `resource-installation/server-floor-above-the-consumer-floor-is-honored-from-the-revisions-list`,
   `resource-installation/server-fallback-published-before-the-pin-is-held-not-installed`,
   `resource-installation/eligible-head-after-a-revert-is-followed`,
   `resource-installation/zero-period-never-compares-timestamps`,
   `resource-installation/collection-with-a-held-member-is-held-under-the-consumer-floor`,
   `resource-installation/explicit-revision-pins-skip-the-cooldown`
 - [ ] 2.2 Hold reporting in install, update, and `update --dry-run` using
-  `held_head`/`409` evidence and the `first_published_at + P` eligible date;
-  diff exclusion. Annotate
+  `held_head`, the `409` body, or the retained `latest` head as evidence,
+  with the eligible date as the later of `first_published_at + P` and the
+  server's `cooldown_until`, the unknown-head rendering for an unparseable
+  `409`, and diff exclusion. Annotate
   `resource-installation/install-reports-the-held-head-when-it-selects-an-older-revision`,
+  `resource-installation/consumer-only-hold-reports-the-latest-head-as-evidence`,
   `update-output/held-pin-prints-the-hold-line-with-the-head-s-eligible-date-and-exits-0`,
+  `update-output/unparseable-hold-body-for-an-existing-pin-reports-an-unknown-head`,
   `update-output/held-pins-are-excluded-from-content-diffs`,
   `update-preview/dry-run-reports-the-same-marketplace-hold-as-the-applying-run`,
   `deployed-acquisition-locks/held-update-leaves-the-marketplace-lock-record-byte-identical`
@@ -73,9 +79,10 @@
 ## 5. E2E and documentation
 
 - [ ] 5.1 Extend `TestMarketplacePublicGate` with a consumer floor above the
-  server floor, a server fallback older than the pin, a revert, and an
-  acknowledged initial acquisition; add declarative E2E cases with spec tags;
-  run `make validate-e2e`
+  server floor, a server floor above the consumer floor (the revisions list
+  must not yield a server-held revision), a server fallback older than the
+  pin, a revert, and an acknowledged initial acquisition; add declarative
+  E2E cases with spec tags; run `make validate-e2e`
 - [ ] 5.2 Document Marketplace cooldown behavior, the flag, `missing_evidence`,
   and the no-downgrade rule in
   `site/docs/how-to/install-from-a-marketplace.md`,

@@ -27,9 +27,13 @@ by `marketplace-cooldown-server`.
   than the consumer floor, is accepted only when it is eligible under the
   consumer floor and the registry published it more recently than the
   current pin; otherwise the client walks the revisions list, most recently
-  published first, and selects the first eligible revision newer than the
-  pin, skipping revoked and rejected revisions as today. A pin is therefore
-  never replaced by content the registry published less recently.
+  published first, and selects the first revision that is eligible under
+  both the server's evidence (`cooldown.held == false`) and the consumer
+  floor and is newer than the pin, skipping revoked and rejected revisions as
+  today. The list never lets a client go below the server floor, and a pin is
+  never replaced by content the registry published less recently. When the
+  head is held only by the consumer floor, the head returned by `latest` is
+  retained as the hold evidence.
 - A `409 marketplace.cooldown.held` from `latest`, or no eligible revision
   under the consumer floor, is a **held candidate** for an existing pin:
   `update` keeps the pin, reports the eligible date, and exits 0. A `409`

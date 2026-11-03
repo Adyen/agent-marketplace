@@ -72,10 +72,10 @@ restored. Eligibility ("old enough") is always measured by first publication.
      all; this is today's behavior, and it also covers a revision whose
      first publication is later than the captured `now`.
    - `409` with `code: marketplace.cooldown.held` → no revision is eligible
-     under the server floor. Record the body's `revision`,
-     `first_published_at`, `cooldown_until`, and `acknowledgeable`; a body
-     that fails to parse records none of them. Go to step 3 with an empty
-     eligible set.
+     under the server floor, so the revisions list cannot contain one
+     either. Record the body's `revision`, `first_published_at`,
+     `cooldown_until`, and `acknowledgeable`; a body that fails to parse
+     records none of them. Skip step 2 and go to step 4 with no candidate.
    - `200` without `first_published_at` → D5.
    - `200` that is the **head** (no `held_head`) and
      `first_published_at ≤ C` → candidate found. This is how a registry
@@ -85,12 +85,20 @@ restored. Eligibility ("old enough") is always measured by first publication.
    - `200` that is a **fallback** (`held_head` present) or a head younger
      than `C` → the returned revision is a candidate only if
      `first_published_at ≤ C` and, when `pin` exists, it is newer than the
-     pin; otherwise go to step 2. Keep `held_head` for reporting.
+     pin; otherwise go to step 2. Keep the hold evidence for reporting:
+     `held_head` when present, otherwise the returned head itself (this is
+     the consumer-only hold, where the server period is zero or lower than
+     the consumer's).
 2. `GET revisions` (already ordered by most recent occurrence first); walk
-   it in that order and take the first revision with `first_published_at ≤ C`
-   that is newer than `pin` (when `pin` exists) and passes
-   `enforceMarketplaceUse`. Index-only pins use that revision's occurrence
-   commit through `GetRegistryOccurrence` as today.
+   it in that order and take the first revision that is **server-eligible**
+   (`cooldown.held == false`, or no `cooldown` object because the server
+   period is zero), has `first_published_at ≤ C`, is newer than `pin` (when
+   `pin` exists), and passes `enforceMarketplaceUse`. The server exposes held
+   revisions in this list by design, so the consumer cutoff alone would let a
+   24-hour consumer floor select a 30-hour-old revision under a 48-hour
+   server floor; the server-eligibility check is what prevents it.
+   Index-only pins use that revision's occurrence commit through
+   `GetRegistryOccurrence` as today.
 3. For a **collection** candidate, expand its manifest and require every
    member revision, transitively, to have `cooldown.held == false` from the
    server and `first_published_at ≤ C` under the consumer floor; otherwise
@@ -114,10 +122,12 @@ the consumer floor.
 
 A held Marketplace pin is reported as
 `held <endpoint> <registry>/<kind>/<name>: head <short digest> first published <date>, eligible <date> (period <P>)`.
-The head and its first publication come from `held_head` or the `409` body;
-the eligible date is the later of `head.first_published_at + P` and the
-server's `cooldown_until`, or "unknown" when a `409` body could not be
-parsed. The pin, its lock record, and installed files are untouched; `update`
+The head and its first publication come from `held_head`, from the `409`
+body, or from the `latest` head itself for a consumer-only hold; the eligible
+date is the later of `head.first_published_at + P` and the server's
+`cooldown_until`. When a `409` body could not be parsed, the line renders the
+head as `unknown`, omits the first-publication date, and reports the eligible
+date as `unknown`, the same convention D4 uses for an unknown head. The pin, its lock record, and installed files are untouched; `update`
 exits 0 when holds are the only outcome; `--include-diff` does not diff held
 candidates. `install` prints the same line when step 1 or 2 selected an older
 eligible revision while the head is held. The TUI shows the line as an update
@@ -206,7 +216,9 @@ effect is that the TUI detail view can show a held head from cache.
 
 - Requirement: Marketplace candidates respect the consumer cooldown
   - Scenario: Young head resolves to the most recently published eligible revision
+  - Scenario: Server floor above the consumer floor is honored from the revisions list
   - Scenario: Install reports the held head when it selects an older revision
+  - Scenario: Consumer-only hold reports the latest head as evidence
   - Scenario: Server fallback published before the pin is held, not installed
   - Scenario: Eligible head after a revert is followed
   - Scenario: Zero period never compares timestamps
@@ -233,6 +245,7 @@ effect is that the TUI detail view can show a held head from cache.
 
 - Requirement: Marketplace holds are reported
   - Scenario: Held pin prints the hold line with the head's eligible date and exits 0
+  - Scenario: Unparseable hold body for an existing pin reports an unknown head
   - Scenario: Held pins are excluded from content diffs
 
 `update-preview`
