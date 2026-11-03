@@ -34,6 +34,7 @@ type preparedUpdateView struct {
 	ws           pipeline.Workspace
 	offline      bool
 	priorJobs    []snapshotJob
+	desiredJobs  []snapshotJob
 	priorPlanner *pluginPlanSource
 	overlays     map[string][]byte
 	lockDesired  map[string][]byte
@@ -82,7 +83,7 @@ type previewLiveSource struct {
 // summary comparison digests admitted files instead of holding their bytes.
 func buildUpdatePreview(ctx context.Context, view preparedUpdateView, includeDiffs bool) (*updatePreview, error) {
 	started := time.Now()
-	sides, err := resolvePriorAndDesired(ctx, view.ws, view.offline, view.priorJobs, view.priorPlanner, view.overlays, view.lockDesired, view.desiredSet, view.lookup, true)
+	sides, err := resolvePriorAndDesired(ctx, view.ws, view.offline, view.priorJobs, view.desiredJobs, view.priorPlanner, view.overlays, view.lockDesired, view.desiredSet, view.lookup, true)
 	if err != nil {
 		return nil, err
 	}

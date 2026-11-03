@@ -1273,7 +1273,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		if err := ensureSnapshotLease(); err != nil {
 			return nil, changed, nil, err
 		}
-		if err := guardNewlyMissingSelections(ctx, ws, mode.offline, priorSnapshots, priorPlanner, overlays, lockDesired, &set, exactSnapshot); err != nil {
+		if err := guardNewlyMissingSelections(ctx, ws, mode.offline, priorSnapshots, snapshots, priorPlanner, overlays, lockDesired, &set, exactSnapshot); err != nil {
 			return nil, changed, nil, err
 		}
 	}
@@ -1285,6 +1285,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			ws:           ws,
 			offline:      mode.offline,
 			priorJobs:    priorSnapshots,
+			desiredJobs:  snapshots,
 			priorPlanner: priorPlanner,
 			overlays:     overlays,
 			lockDesired:  lockDesired,
@@ -1296,27 +1297,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 	}
 	if mode.lockMetadataSink != nil {
-		seen := make(map[string]bool)
-		var metadata []pipeline.LockMetadata
-		for _, job := range snapshots {
-			for _, registry := range job.doc.Registries {
-				key := job.source.String() + "\x00" + registry.URL + "\x00" + registry.Ref
-				if seen[key] {
-					continue
-				}
-				seen[key] = true
-				metadata = append(metadata, pipeline.LockMetadata{
-					Source:            job.source,
-					Scope:             lockScopeForSource(job.source),
-					URL:               registry.URL,
-					Ref:               registry.Ref,
-					Commit:            registry.Commit.String(),
-					RootPaths:         pipeline.LockRootPaths(registry.Roots),
-					SnapshotAvailable: true,
-				})
-			}
-		}
-		*mode.lockMetadataSink = metadata
+		*mode.lockMetadataSink = snapshotLockMetadata(snapshots)
 	}
 	if !mode.check && !mode.previewNoCommit {
 		for _, layer := range ec.PresentLayers() {
@@ -2213,3 +2194,29 @@ func sourceLockKey(source config.Source, canonical, ref string) string {
 	return fmt.Sprintf("%d\x00%s\x00%s", source, canonical, ref)
 }
 func gitLockIdentity(canonical, ref string) string { return canonical + "\x00" + ref }
+
+// snapshotLockMetadata describes the locked registries of jobs, once per
+// source, URL, and ref, for resolution of external plugin entries.
+func snapshotLockMetadata(jobs []snapshotJob) []pipeline.LockMetadata {
+	seen := make(map[string]bool)
+	var metadata []pipeline.LockMetadata
+	for _, job := range jobs {
+		for _, registry := range job.doc.Registries {
+			key := job.source.String() + "\x00" + registry.URL + "\x00" + registry.Ref
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			metadata = append(metadata, pipeline.LockMetadata{
+				Source:            job.source,
+				Scope:             lockScopeForSource(job.source),
+				URL:               registry.URL,
+				Ref:               registry.Ref,
+				Commit:            registry.Commit.String(),
+				RootPaths:         pipeline.LockRootPaths(registry.Roots),
+				SnapshotAvailable: true,
+			})
+		}
+	}
+	return metadata
+}
