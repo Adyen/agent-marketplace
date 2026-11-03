@@ -175,6 +175,30 @@ context: |
   A resource revision that a Marketplace retains for provenance but refuses to resolve for ordinary installation, update, and online synchronization. Revocation cannot recall bytes already held by clients or intermediary caches.
   _Avoid_: Deleted resource
 
+  **Cooldown**:
+  The minimum time that must have elapsed since a resource revision's first publication or a Git commit's effective commit date before candidate selection may advance to it. A cooldown gates only advancing; it never re-evaluates an existing pin or lock. Layers may only raise it.
+  _Avoid_: Minimum release age, minimum revision age, quarantine, embargo
+
+  **First publication**:
+  The time a Marketplace first recorded a registry occurrence containing a resource revision. It starts that revision's cooldown and is unchanged by reassessment, archive repair, or registry moves.
+  _Avoid_: Commit date, assessment time
+
+  **Effective commit date**:
+  The later of a Git commit's committer date and the effective commit date of its first parent; for an annotated tag, also the later of that and the tagger date. A commit is never considered older than its ancestors.
+  _Avoid_: Author date, commit timestamp
+
+  **Held candidate**:
+  A newer resource revision or Git commit excluded from candidate selection because it is younger than the effective cooldown. A hold reports when the candidate becomes eligible; it is not a refusal, revocation, or policy rejection.
+  _Avoid_: Blocked, revoked, rejected
+
+  **History rewrite**:
+  The state of a consumed Git branch whose locked commit is no longer an ancestor of its tip. Advancing past a history rewrite requires explicit acceptance.
+  _Avoid_: Force push, non-fast-forward
+
+  **Initial acquisition**:
+  Resolution of a Git source identity that has no acquisition-lock entry, or of a Marketplace coordinate that has no pin, in the owning layer.
+  _Avoid_: First install, bootstrap
+
   **Marketplace operator**:
   The party that administers a Marketplace and decides which registries and policies it applies.
   _Avoid_: Registry publisher

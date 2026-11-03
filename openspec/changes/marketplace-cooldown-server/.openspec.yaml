@@ -1,0 +1,6 @@
+schema: spec-driven
+created: 2026-11-02
+# Proposal stage: spec deltas land with their annotated tests (tasks.md 0.1),
+# because spec-governance requires every scenario in an active change to be
+# bound to a test in the same pull request. Remove this marker in that PR.
+skip_specs: true
