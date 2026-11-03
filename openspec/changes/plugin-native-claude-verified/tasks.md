@@ -1,23 +1,28 @@
-## 1. Probe
+## 1. Catalog
 
-- [x] 1.1 Reinstate the `claude-native-plugin` probe identifier in the
-  harness validation suite and the plugin policy package
-- [x] 1.2 Add the Claude native plugin probe at user and repository scope
-  with a pre-sync negative control, the no-Claude-state assertion, the trust
-  precondition, and a live registration session (design D1, D2); annotate
-  `plugin-delivery/claude-probe-loads-the-registered-plugin-at-both-scopes`
-  and `plugin-delivery/claude-probe-fails-when-sync-wrote-claude-owned-plugin-state`
+- [ ] 1.1 Add per-scope native status to the plugin catalog schema and
+  validation (design D3); annotate
+  `plugin-policy-catalogs/a-scope-declared-verified-without-a-probe-fails-the-check`
+- [ ] 1.2 Declare Claude native delivery verified at user scope and unverified
+  at repository scope; regenerate the plugin support reference with
+  per-scope status; annotate
+  `plugin-policy-catalogs/the-reference-shows-differing-scope-statuses`
 
-## 2. Catalog
+## 2. Delivery
 
-- [x] 2.1 Declare Claude native delivery `verified` with the probe (design
-  D3); update tests that assumed Claude decomposes under `auto`; annotate
-  `plugin-delivery/auto-delivers-claude-plugins-natively`
+- [ ] 2.1 Make delivery resolution honor the request's scope; annotate
+  `plugin-delivery/auto-delivers-claude-plugins-natively-at-user-scope-only`
+  and `plugin-delivery/explicit-native-delivery-is-refused-at-repository-scope-for-claude`
 
-## 3. Documentation and gates
+## 3. Probe
 
-- [x] 3.1 Document the probe and the trust precondition in
-  `docs/harness-validation/claude.md` and regenerate
-  `site/docs/reference/plugin-support.md`
-- [x] 3.2 Run `make validate`, `make spec-check`, and `make validate-e2e`
-- [ ] 3.3 `openspec archive plugin-native-claude-verified --yes`
+- [ ] 3.1 Reduce the Claude probe to the user-scope positive witness (design
+  D1, D2) and the repository-scope negative witness (design D4); remove
+  experiment-only code; annotate the three probe scenarios
+
+## 4. Documentation and gates
+
+- [ ] 4.1 Update `docs/harness-validation/claude.md` with user-only
+  verification and the open repository-scope gap
+- [ ] 4.2 Run `make validate`, `make spec-check`, and `make validate-e2e`
+- [ ] 4.3 Archive the change
