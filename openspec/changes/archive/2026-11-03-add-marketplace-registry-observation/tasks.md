@@ -20,4 +20,4 @@
 ## 4. Integration
 
 - [x] 4.1 Run `make spec-check`, `make test TEST_PACKAGES="./pkg/marketplace/..." TEST_FLAGS="-count=1"`, and the witnessed PostgreSQL conformance run with `POSTGRES_DSN` set; verify all pass with no PostgreSQL skip
-- [ ] 4.2 Run `openspec archive add-marketplace-registry-observation --yes` as the final commit and verify `make spec-check` still passes
+- [x] 4.2 Run `openspec archive add-marketplace-registry-observation --yes` as the final commit and verify `make spec-check` still passes
