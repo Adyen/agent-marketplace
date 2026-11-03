@@ -14,6 +14,7 @@ import (
 )
 
 const claudeSystemInitPluginsField = "_compatibility_stream_json_system_init_plugins"
+const claudeSystemInitCWDField = "_compatibility_stream_json_system_init_cwd"
 
 func runCompatibilityProtocol(e *Env, binary, protocol string, timeout time.Duration, keepAlive ...func(*compatibilityCommand) error) compatibilityCommand {
 	r := compatibilityCommand{Args: []string{binary, "app-server"}, ExitCode: -1}
@@ -155,11 +156,13 @@ func inspectClaudeMetadata(encoder *json.Encoder, decoder *json.Decoder) (json.R
 		return nil, fmt.Errorf("write native initialization request")
 	}
 	var streamInitPlugins json.RawMessage
+	var streamInitCWD json.RawMessage
 	for {
 		var message struct {
 			Type     string          `json:"type"`
 			Subtype  string          `json:"subtype"`
 			Plugins  json.RawMessage `json:"plugins"`
+			CWD      json.RawMessage `json:"cwd"`
 			Response struct {
 				Subtype   string          `json:"subtype"`
 				RequestID string          `json:"request_id"`
@@ -171,8 +174,13 @@ func inspectClaudeMetadata(encoder *json.Encoder, decoder *json.Decoder) (json.R
 			return nil, fmt.Errorf("native control protocol ended without initialization metadata")
 		}
 		if message.Type == "system" {
-			if message.Subtype == "init" && len(message.Plugins) > 0 {
-				streamInitPlugins = message.Plugins
+			if message.Subtype == "init" {
+				if len(message.Plugins) > 0 {
+					streamInitPlugins = message.Plugins
+				}
+				if len(message.CWD) > 0 {
+					streamInitCWD = message.CWD
+				}
 			}
 			continue
 		}
@@ -185,10 +193,15 @@ func inspectClaudeMetadata(encoder *json.Encoder, decoder *json.Decoder) (json.R
 		if len(message.Response.Response) == 0 || string(message.Response.Response) == "null" {
 			return nil, fmt.Errorf("native control protocol omitted initialization metadata")
 		}
-		if len(streamInitPlugins) > 0 {
+		if len(streamInitPlugins) > 0 || len(streamInitCWD) > 0 {
 			var fields map[string]json.RawMessage
 			if json.Unmarshal(message.Response.Response, &fields) == nil && fields != nil {
-				fields[claudeSystemInitPluginsField] = streamInitPlugins
+				if len(streamInitPlugins) > 0 {
+					fields[claudeSystemInitPluginsField] = streamInitPlugins
+				}
+				if len(streamInitCWD) > 0 {
+					fields[claudeSystemInitCWDField] = streamInitCWD
+				}
 				metadata, err := json.Marshal(fields)
 				if err != nil {
 					return nil, fmt.Errorf("encode native initialization metadata")
@@ -392,12 +405,13 @@ touch "$HOME/session-ended"
 func TestCompatibilityClaudeKeepAliveReceivesInitialSkillInventory(t *testing.T) {
 	e := newEnv(t)
 	binary := filepath.Join(e.repos, "internal-fake-claude")
-	e.WriteFile(binary, `#!/bin/sh
+	e.WriteFile(binary, fmt.Sprintf(`#!/bin/sh
 IFS= read -r request || exit 70
 case "$request" in *'"subtype":"initialize"'*) ;; *) exit 71;; esac
-printf '%s\n' '{"type":"control_response","response":{"subtype":"success","request_id":"amcompat-initialize","response":{"commands":[{"name":"native-kit:review","description":"Review skill"}],"agents":[]}}}'
+printf '%%s\n' '{"type":"system","subtype":"init","cwd":%q,"plugins":[{"name":"stream-plugin","path":"/stream/plugin"}]}'
+printf '%%s\n' '{"type":"control_response","response":{"subtype":"success","request_id":"amcompat-initialize","response":{"commands":[{"name":"native-kit:review","description":"Review skill"}],"agents":[]}}}'
 if IFS= read -r request; then exit 72; fi
-`)
+`, e.workspace))
 	if err := os.Chmod(binary, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -414,6 +428,10 @@ if IFS= read -r request; then exit 72; fi
 	})
 	if err := compatibilityInspectionError(result); err != nil {
 		t.Fatalf("Claude keep-alive could not inspect initial inventory: %v", err)
+	}
+	recordClaudePluginInitialization(&result, e, "native-kit", "review")
+	if !strings.Contains(strings.Join(result.Observed, "\n"), "Claude initialization cwd: "+e.workspace) {
+		t.Fatalf("Claude initialization cwd was not recorded: %+v", result.Observed)
 	}
 }
 
