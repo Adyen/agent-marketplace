@@ -13,10 +13,13 @@
 
 - [ ] 1.1 Parse `first_published_at`, `current_availability.cooldown`, and
   `held_head` on latest, list, and exact revision responses; parse the `409`
-  `marketplace.cooldown.held` body (including `availability`) into a typed
-  error that tolerates a malformed body; carry the new fields in the revision cache. Table tests
-  against recorded responses, including a response without the field and a
-  `409` with an unparseable body
+  `marketplace.cooldown.held` body into a typed error that requires
+  `revision`, `first_published_at`, `cooldown_until`, `availability`, and
+  `acknowledgeable` to be present and correctly typed and otherwise yields
+  the unknown-head outcome; carry the new fields in the revision cache. Table
+  tests against recorded responses, including a response without
+  `first_published_at`, a `409` with an unparseable body, and a valid JSON
+  `409` body that omits `acknowledgeable`
 
 ## 2. Selection and holds
 
@@ -61,7 +64,7 @@
   the exact fetch-and-pin of the server-identified or retained head,
   including after a revert and for a consumer-only hold, with the local
   availability predicate when the server sends no `cooldown` object.
-  Annotate the nine `resource-installation` acknowledgement scenarios
+  Annotate the ten `resource-installation` acknowledgement scenarios
 - [ ] 3.2 Writing `sync` refusal for a held initial Marketplace acquisition
   pointing at the install command. Annotate
   `deployed-acquisition-locks/writing-sync-refuses-a-held-initial-marketplace-acquisition-and-points-at-install`
