@@ -45,8 +45,11 @@ func pluginNamespaceRefusals(resolved []resolver.ResolvedArtifact) (map[string]b
 	blocked := map[string]bool{}
 	var diagnostics []diag.Diagnostic
 	reported := map[string]bool{}
-	for _, resource := range resolver.MaterializationWinners(resolved) {
-		if resource.Resource == nil || resource.Resource.Kind() == ir.KindPlugin {
+	// Group the selection before materialization projection: the projection
+	// keeps one resource per installed path, which would otherwise hide a
+	// plugin member behind the resource it collides with.
+	for _, resource := range resolved {
+		if resource.Unresolved || resource.Resource == nil || resource.Resource.Kind() == ir.KindPlugin {
 			continue
 		}
 		isMember := resource.PluginPackage != nil
@@ -77,7 +80,15 @@ func pluginNamespaceRefusals(resolved []resolver.ResolvedArtifact) (map[string]b
 		}
 	}
 	for _, occupants := range groups {
-		if len(occupants) < 2 {
+		distinct := map[string]bool{}
+		for _, occupant := range occupants {
+			if occupant.resource.PluginPackage == nil {
+				distinct[""] = true
+			} else {
+				distinct[pluginInstanceIdentity(occupant.resource, occupant.target)] = true
+			}
+		}
+		if len(distinct) < 2 {
 			continue
 		}
 		for _, occupant := range occupants {
