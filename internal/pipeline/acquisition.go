@@ -115,18 +115,20 @@ func readDeployedLocks(ctx context.Context, intent config.Intent, overlays map[s
 			AcquisitionLock: true,
 		})
 	}
-	if orgDoc != nil && !relockOrganization {
+	if orgDoc != nil {
 		layer := intent.Layers[config.Organization]
-		var expected map[string]bool
-		if decls := layer.Sources(); len(FormatSourceEntries(decls)) > 0 {
-			contexts, ctxErr := intentPluginLockContexts(ctx, intent, docs)
-			if ctxErr != nil {
-				return evidence, &LockViewError{Code: "lock.read", Scope: lockfile.ScopeOrganization, Path: orgPaths.CanonicalLock, Err: ctxErr}
+		if !relockOrganization {
+			var expected map[string]bool
+			if decls := layer.Sources(); len(FormatSourceEntries(decls)) > 0 {
+				contexts, ctxErr := intentPluginLockContexts(ctx, intent, docs)
+				if ctxErr != nil {
+					return evidence, &LockViewError{Code: "lock.read", Scope: lockfile.ScopeOrganization, Path: orgPaths.CanonicalLock, Err: ctxErr}
+				}
+				expected = contexts.ExternalIdentities()
 			}
-			expected = contexts.ExternalIdentities()
-		}
-		if !readOnlyGitDocumentMatches(*orgDoc, GitRegistryEntries(layer.Sources()), expected) {
-			return evidence, &LockViewError{Code: "lock.stale", Scope: lockfile.ScopeOrganization, Path: orgPaths.CanonicalLock, Err: errors.New("lock does not match configuration")}
+			if !readOnlyGitDocumentMatches(*orgDoc, GitRegistryEntries(layer.Sources()), expected) {
+				return evidence, &LockViewError{Code: "lock.stale", Scope: lockfile.ScopeOrganization, Path: orgPaths.CanonicalLock, Err: errors.New("lock does not match configuration")}
+			}
 		}
 		evidence.RecordDeployedLock(config.Organization, orgDoc, config.ConfigRead{
 			Path:            orgPaths.CanonicalLock,
