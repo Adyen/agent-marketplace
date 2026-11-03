@@ -25,4 +25,4 @@
 - [x] 4.1 Update `docs/harness-validation/claude.md` with user-only
   verification and the open repository-scope gap
 - [x] 4.2 Run `make validate`, `make spec-check`, and `make validate-e2e`
-- [ ] 4.3 Archive the change
+- [x] 4.3 Archive the change
