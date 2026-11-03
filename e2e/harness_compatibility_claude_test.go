@@ -59,15 +59,17 @@ func TestClaudePluginStateAssertionRejectsClaudeOwnedState(t *testing.T) {
 // spec: plugin-delivery/claude-probe-confirms-repository-scope-stays-decomposed
 func TestClaudeRepositoryPluginAssertionRequiresDecomposedMembersAndNoRegistration(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		settings   string
-		writeSkill bool
-		wantError  bool
+		name         string
+		settings     string
+		homeSettings string
+		writeSkill   bool
+		wantError    bool
 	}{
 		{
-			name:       "unrelated registration and decomposed skill",
-			settings:   `{"enabledPlugins":{"other@marketplace":true},"extraKnownMarketplaces":{"other":{}}}`,
-			writeSkill: true,
+			name:         "unrelated registration and decomposed skill",
+			settings:     `{"enabledPlugins":{"other@marketplace":true},"extraKnownMarketplaces":{"other":{}}}`,
+			homeSettings: `{"enabledPlugins":{"other@manual":true},"extraKnownMarketplaces":{"manual":{}}}`,
+			writeSkill:   true,
 		},
 		{
 			name:       "marketplace registration",
@@ -82,12 +84,25 @@ func TestClaudeRepositoryPluginAssertionRequiresDecomposedMembersAndNoRegistrati
 			wantError:  true,
 		},
 		{
+			name:         "home marketplace registration",
+			homeSettings: `{"extraKnownMarketplaces":{"am-native-kit":{"source":{"type":"directory","path":"../catalog"}}}}`,
+			writeSkill:   true,
+			wantError:    true,
+		},
+		{
+			name:         "home enabled plugin registration",
+			homeSettings: `{"enabledPlugins":{"native-kit@am-catalog":true}}`,
+			writeSkill:   true,
+			wantError:    true,
+		},
+		{
 			name:      "missing decomposed skill",
 			settings:  `{}`,
 			wantError: true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
 			workspace := t.TempDir()
 			settingsPath := filepath.Join(workspace, ".claude", "settings.local.json")
 			if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
@@ -95,6 +110,15 @@ func TestClaudeRepositoryPluginAssertionRequiresDecomposedMembersAndNoRegistrati
 			}
 			if err := os.WriteFile(settingsPath, []byte(tc.settings), 0o600); err != nil {
 				t.Fatal(err)
+			}
+			if tc.homeSettings != "" {
+				homeSettingsPath := filepath.Join(home, ".claude", "settings.json")
+				if err := os.MkdirAll(filepath.Dir(homeSettingsPath), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(homeSettingsPath, []byte(tc.homeSettings), 0o600); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if tc.writeSkill {
 				skillPath := filepath.Join(workspace, ".claude", "skills", "native-kit-review", "SKILL.md")
@@ -105,7 +129,7 @@ func TestClaudeRepositoryPluginAssertionRequiresDecomposedMembersAndNoRegistrati
 					t.Fatal(err)
 				}
 			}
-			err := assertClaudeRepositoryPluginDecomposed(workspace, "native-kit", "review")
+			err := assertClaudeRepositoryPluginDecomposed(home, workspace, "native-kit", "review")
 			if (err != nil) != tc.wantError {
 				t.Fatalf("repository plugin assertion error = %v, want error %t", err, tc.wantError)
 			}
@@ -287,7 +311,7 @@ func assertClaudePluginStateAbsentAfterSync(home, workspace string) error {
 	return nil
 }
 
-func assertClaudeRepositoryPluginDecomposed(workspace, plugin, skill string) error {
+func assertClaudeRepositoryPluginDecomposed(home, workspace, plugin, skill string) error {
 	settingsPath := filepath.Join(workspace, ".claude", "settings.local.json")
 	data, err := os.ReadFile(settingsPath)
 	if err != nil && !os.IsNotExist(err) {
@@ -309,6 +333,33 @@ func assertClaudeRepositoryPluginDecomposed(workspace, plugin, skill string) err
 			for _, key := range entries.Keys() {
 				if strings.Contains(key, "am-") {
 					return fmt.Errorf("repository Claude settings %q contain Agent Marketplace %s entry %q", settingsPath, field, key)
+				}
+			}
+		}
+	}
+	homeSettingsPath := filepath.Join(home, ".claude", "settings.json")
+	homeSettings, err := os.ReadFile(homeSettingsPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read home Claude settings %q: %w", homeSettingsPath, err)
+	}
+	if err == nil {
+		document, parseErr := jsonc.Parse(homeSettingsPath, homeSettings)
+		if parseErr != nil {
+			return parseErr
+		}
+		for _, field := range []string{"extraKnownMarketplaces", "enabledPlugins"} {
+			entries, ok := document.Root().Member(field)
+			if !ok {
+				continue
+			}
+			if entries.Kind() != jsonc.KindObject {
+				return fmt.Errorf("home Claude settings %q field %s is not an object", homeSettingsPath, field)
+			}
+			for _, key := range entries.Keys() {
+				registered := field == "extraKnownMarketplaces" && strings.HasPrefix(key, "am-") ||
+					field == "enabledPlugins" && strings.HasPrefix(key, plugin+"@am-")
+				if registered {
+					return fmt.Errorf("home Claude settings %q contain Agent Marketplace %s entry %q", homeSettingsPath, field, key)
 				}
 			}
 		}

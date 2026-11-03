@@ -20,10 +20,10 @@ func ResolvePluginDelivery(request, format string, targetHarness hcc.Target, sco
 		return PluginDeliveryResolution{Delivery: "decompose"}
 	}
 	policy, err := pluginpolicy.LookupNativeDelivery(target.Target(targetHarness), string(scope))
-	return resolvePluginDeliveryPolicy(request, format, target.Target(targetHarness), policy, err)
+	return resolvePluginDeliveryPolicy(request, format, target.Target(targetHarness), scope, policy, err)
 }
 
-func resolvePluginDeliveryPolicy(request, format string, targetHarness target.Target, policy pluginpolicy.NativeDeliveryPolicy, policyErr error) PluginDeliveryResolution {
+func resolvePluginDeliveryPolicy(request, format string, targetHarness target.Target, scope Scope, policy pluginpolicy.NativeDeliveryPolicy, policyErr error) PluginDeliveryResolution {
 	if request == "" {
 		request = "auto"
 	}
@@ -45,7 +45,7 @@ func resolvePluginDeliveryPolicy(request, format string, targetHarness target.Ta
 		return pluginDeliveryBlocked(diag.CodePluginDeliveryNativeUnverified, targetHarness,
 			"native plugin delivery is not verified for this package format")
 	}
-	if _, ok := target.NativePluginRegistration(targetHarness, false); !ok {
+	if _, ok := target.NativePluginRegistration(targetHarness, scope == ScopeUser); !ok {
 		return pluginDeliveryBlocked(diag.CodePluginRegistrationUnsupported, targetHarness,
 			"the target has no native plugin registration layout")
 	}

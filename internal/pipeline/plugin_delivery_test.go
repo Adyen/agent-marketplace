@@ -90,7 +90,7 @@ func TestResolvePluginDeliveryPerTarget(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := resolvePluginDeliveryPolicy(test.request, test.format, test.target, test.policy, test.policyErr)
+			got := resolvePluginDeliveryPolicy(test.request, test.format, test.target, ScopeUser, test.policy, test.policyErr)
 			if got.Delivery != test.want {
 				t.Fatalf("delivery = %q, want %q", got.Delivery, test.want)
 			}
