@@ -21,7 +21,7 @@ func TestClaudeRepoScopeAutoPluginCollectionInstall(t *testing.T) {
 	if result.ExitCode != 0 {
 		t.Fatalf("repo-scope collection install failed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
-	if err := assertClaudeRepositoryPluginDecomposed(e.workspace, pluginName, pluginSkill); err != nil {
+	if err := assertClaudeRepositoryPluginDecomposed(e.home, e.workspace, pluginName, pluginSkill); err != nil {
 		t.Fatal(err)
 	}
 }
