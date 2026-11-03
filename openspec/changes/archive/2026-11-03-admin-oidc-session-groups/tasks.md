@@ -8,7 +8,7 @@
 ## 2. Specs
 
 - [x] 2.1 Annotate every new or rewritten scenario test with `// spec: marketplace-admin-auth/<scenario-slug>`. Verify: `go run ./tools/specaudit trace` reports no unbound scenarios for this change.
-- [ ] 2.2 Archive the change through the documentation gate and pass `make spec-check`. Verify: `make spec-check` exits 0.
+- [x] 2.2 Archive the change through the documentation gate and pass `make spec-check`. Verify: `make spec-check` exits 0.
 
 ## 3. Reverse-proxy documentation
 
@@ -16,4 +16,4 @@
 
 ## 4. Proxy gate case
 
-- [ ] 4.1 Add a callback case to `tools/marketplace-proxy` with a 256-group token under the default proxy buffer that expects `303`, not `502`. Verify: `make marketplace-proxy-check` passes in Docker (outside the ordinary test target); if Docker is unavailable, record the environment blocker and do not claim the case passed.
+- [x] 4.1 Add a callback case to `tools/marketplace-proxy` with a 256-group token under the default proxy buffer that expects `303`, not `502`. Verify: `make marketplace-proxy-check` passes in Docker (outside the ordinary test target); if Docker is unavailable, record the environment blocker and do not claim the case passed.
