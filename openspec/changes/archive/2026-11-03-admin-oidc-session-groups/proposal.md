@@ -29,3 +29,7 @@ None.
 - `docs/marketplace-reverse-proxy.md` and `site/docs/how-to/operator/configure-a-reverse-proxy.md`: header-buffer requirement.
 - `tools/marketplace-proxy/`: 256-group callback case for the Docker proxy gate.
 - No API, configuration schema, cookie format, or dependency changes. Existing sessions keep working unchanged.
+
+## Release note
+
+Admin OIDC sign-in no longer fails for operators whose identity provider returns many groups: the administration session now stores only the groups listed in `admin_groups`, and a session that still cannot be stored logs `outcome=session_too_large`. Reverse proxies in front of native OIDC administration need the default 4k response header buffer, which session cookies no longer outgrow.
