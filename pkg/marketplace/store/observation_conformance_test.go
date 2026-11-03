@@ -51,6 +51,7 @@ func runObservationConformance(t *testing.T, open observationStoreOpener) {
 		{name: "failed_refresh_request_rolls_back_desired_state", run: testFailedRefreshRequestRollsBackDesiredState},
 		{name: "equivalent_refresh_requests_coalesce_concurrently", run: testEquivalentRefreshRequestsCoalesceConcurrently},
 		{name: "terminal_refresh_failure_allows_a_new_request", run: testTerminalRefreshFailureAllowsNewRequest},
+		{name: "expired_final_attempt_lease_does_not_coalesce", run: testExpiredFinalAttemptLeaseDoesNotCoalesce},
 		{name: "deleting_observation_preserves_immutable_records", run: testDeletingObservationPreservesImmutableRecords},
 	}
 	for _, tc := range cases {
@@ -480,6 +481,31 @@ func testTerminalRefreshFailureAllowsNewRequest(t *testing.T, meta store.Metadat
 	next, err := meta.RequestRefresh(ctx, "refresh-terminal", refreshRequest("replacement-job", "commit", "generation", "manual"))
 	if err != nil || next.Coalesced || next.Job.ID != "replacement-job" {
 		t.Fatalf("replacement RequestRefresh = %+v, %v; want new replacement-job", next, err)
+	}
+}
+
+// spec: marketplace-registry-observation/an-expired-lease-on-the-final-permitted-attempt-does-not-coalesce-a-refresh-request
+func testExpiredFinalAttemptLeaseDoesNotCoalesce(t *testing.T, meta store.MetadataStore) {
+	ctx := context.Background()
+	createObservation(t, meta, store.RegistryObservation{RegistryID: "refresh-dead-lease"})
+	first, err := meta.RequestRefresh(ctx, "refresh-dead-lease", refreshRequest("dead-lease-job", "commit", "generation", "manual"))
+	if err != nil {
+		t.Fatalf("initial RequestRefresh: %v", err)
+	}
+	leased, err := meta.LeaseJobByID(ctx, first.Job.ID, "crashed-worker", time.Minute)
+	if err != nil {
+		t.Fatalf("LeaseJobByID: %v", err)
+	}
+	live, err := meta.RequestRefresh(ctx, "refresh-dead-lease", refreshRequest("unused-live-job", "commit", "generation", "manual"))
+	if err != nil || !live.Coalesced || live.Job.ID != first.Job.ID {
+		t.Fatalf("live-lease RequestRefresh = %+v, %v; want coalesced onto %s", live, err, first.Job.ID)
+	}
+	if err := meta.ExtendLease(ctx, leased.ID, leased.WorkerID, -time.Second); err != nil {
+		t.Fatalf("expire lease: %v", err)
+	}
+	next, err := meta.RequestRefresh(ctx, "refresh-dead-lease", refreshRequest("replacement-dead-lease-job", "commit", "generation", "manual"))
+	if err != nil || next.Coalesced || next.Job.ID != "replacement-dead-lease-job" {
+		t.Fatalf("expired final-attempt RequestRefresh = %+v, %v; want new replacement-dead-lease-job", next, err)
 	}
 }
 

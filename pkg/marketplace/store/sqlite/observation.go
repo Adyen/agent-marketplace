@@ -248,7 +248,7 @@ func (s *Store) RequestRefresh(ctx context.Context, id store.RegistryID, request
 			if err != nil && !errors.Is(err, store.ErrNotFound) {
 				return err
 			}
-			if err == nil && current.DesiredCommit == request.Commit && current.DesiredGeneration == request.Generation && sharedobservation.JobActive(active) {
+			if err == nil && current.DesiredCommit == request.Commit && current.DesiredGeneration == request.Generation && sharedobservation.JobActive(active, time.Now().UTC()) {
 				decision = store.RefreshDecision{Job: active, Coalesced: true}
 				return nil
 			}

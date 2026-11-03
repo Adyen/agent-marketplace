@@ -43,10 +43,12 @@ func Lease(observation store.RegistryObservation) store.RegistryLease {
 	return store.RegistryLease{Owner: observation.WorkLeaseOwner, Epoch: observation.WorkLeaseEpoch, Until: observation.WorkLeaseUntil}
 }
 
-func JobActive(job store.Job) bool {
+func JobActive(job store.Job, now time.Time) bool {
 	switch job.Status {
-	case store.JobStatusPending, store.JobStatusLeased:
+	case store.JobStatusPending:
 		return true
+	case store.JobStatusLeased:
+		return job.Attempt < job.MaxAttempts || job.LeaseUntil.After(now)
 	case store.JobStatusFailed:
 		return job.Attempt < job.MaxAttempts
 	default:

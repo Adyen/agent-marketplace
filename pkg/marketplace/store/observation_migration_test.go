@@ -183,6 +183,10 @@ func withPostgresMigrationDB(ctx context.Context, dsn, schema string, fn func(ob
 func runObservationMigrationCases(t *testing.T, fixture *observationMigrationFixture) {
 	t.Helper()
 	before := seedObservationMigrationState(t, fixture)
+	applied, err := fixture.countVersions()
+	if err != nil {
+		t.Fatal(err)
+	}
 	var observation store.RegistryObservation
 	// spec: marketplace-registry-observation/existing-metadata-database-upgrades-without-data-loss
 	t.Run("upgrade", func(t *testing.T) {
@@ -199,8 +203,8 @@ func runObservationMigrationCases(t *testing.T, fixture *observationMigrationFix
 		if rows, err := fixture.tableRows(); err != nil || rows != 0 {
 			t.Fatalf("registry observations after upgrade = %d, want empty table: %v", rows, err)
 		}
-		if count, err := fixture.countVersions(); err != nil || count != 10 {
-			t.Fatalf("applied migration versions = %d, want 10: %v", count, err)
+		if count, err := fixture.countVersions(); err != nil || count != applied {
+			t.Fatalf("applied migration versions = %d, want %d: %v", count, applied, err)
 		}
 		created, err := fixture.meta.CreateRegistryObservation(context.Background(), store.RegistryObservation{RegistryID: before.registry.ID})
 		if err != nil {
@@ -224,8 +228,8 @@ func runObservationMigrationCases(t *testing.T, fixture *observationMigrationFix
 		if rows, err := fixture.tableRows(); err != nil || rows != 1 {
 			t.Fatalf("registry observations after repeated upgrade = %d, want 1: %v", rows, err)
 		}
-		if count, err := fixture.countVersions(); err != nil || count != 10 {
-			t.Fatalf("applied migration versions after reopening = %d, want 10: %v", count, err)
+		if count, err := fixture.countVersions(); err != nil || count != applied {
+			t.Fatalf("applied migration versions after reopening = %d, want %d: %v", count, applied, err)
 		}
 	})
 }
