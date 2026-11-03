@@ -14,21 +14,24 @@ import (
 )
 
 type compatibilityCommand struct {
-	Args            []string `json:"command"`
-	ExitCode        int      `json:"exit_code"`
-	Error           string   `json:"error,omitempty"`
-	TimedOut        bool     `json:"timed_out,omitempty"`
-	Observed        []string `json:"asserted_observations,omitempty"`
-	Diagnostics     []string `json:"safe_diagnostics,omitempty"`
-	Stdout          string   `json:"stdout,omitempty"`
-	Stderr          string   `json:"stderr,omitempty"`
-	OutputBytes     int      `json:"output_bytes"`
-	OutputTruncated bool     `json:"output_truncated,omitempty"`
-	output          string
-	inventory       []byte
+	Args                   []string `json:"command"`
+	ExitCode               int      `json:"exit_code"`
+	Error                  string   `json:"error,omitempty"`
+	TimedOut               bool     `json:"timed_out,omitempty"`
+	Observed               []string `json:"asserted_observations,omitempty"`
+	Diagnostics            []string `json:"safe_diagnostics,omitempty"`
+	FailureOutput          string   `json:"failure_output,omitempty"`
+	Stdout                 string   `json:"stdout,omitempty"`
+	Stderr                 string   `json:"stderr,omitempty"`
+	OutputBytes            int      `json:"output_bytes"`
+	OutputTruncated        bool     `json:"output_truncated,omitempty"`
+	FailureOutputTruncated bool     `json:"failure_output_truncated,omitempty"`
+	output                 string
+	inventory              []byte
 }
 
 const compatibilityOutputLimit = 256 << 10
+const compatibilityFailureOutputLimit = 2 << 10
 
 type compatibilityOutput struct {
 	data  []byte
@@ -183,6 +186,10 @@ func runCompatibilityCommandWithStreams(e *Env, binary string, args []string, ti
 	}
 	if r.Error != "" && len(r.Diagnostics) > 0 {
 		r.Error += "; " + strings.Join(r.Diagnostics, ", ")
+	}
+	if r.Error != "" && len(args) > 0 && (args[0] == "install" || args[0] == "sync") {
+		r.FailureOutputTruncated = len(r.output) > compatibilityFailureOutputLimit
+		r.FailureOutput = r.output[:min(len(r.output), compatibilityFailureOutputLimit)]
 	}
 	return r
 }
