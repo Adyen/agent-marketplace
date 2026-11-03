@@ -153,7 +153,7 @@ func TestInstallPluginWritesRequestAndSyncsIt(t *testing.T) {
 	}
 	repo, run := pluginCommandFixture(t, "    include: []\n")
 
-	output, err := run("install", "plugin/review-kit")
+	output, err := run("install", "plugin/review-kit", "--scope", "repo")
 	if err != nil {
 		t.Fatalf("install plugin failed: %v\n%s", err, output)
 	}
@@ -181,7 +181,7 @@ func TestInstallUnknownPluginLeavesConfigAndLockUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	output, err := run("install", "plugin/missing")
+	output, err := run("install", "plugin/missing", "--scope", "repo")
 	if err == nil {
 		t.Fatalf("unknown plugin install succeeded:\n%s", output)
 	}
