@@ -81,7 +81,7 @@ describe('GUI update notice', () => {
     ;(client.release as ReturnType<typeof vi.fn>).mockResolvedValue(releaseWithAsset())
     const update = withUpdate(client, async (action) => {
       if (action === 'start') return updateStatus('ready', { progress: 100 })
-      if (action === 'confirm') return updateStatus('swapping', { progress: 100 })
+      if (action === 'confirm') return updateStatus('complete', { progress: 100 })
       return updateStatus('ready', { progress: 100 })
     }).update
     const onQuit = vi.fn()
@@ -98,8 +98,33 @@ describe('GUI update notice', () => {
     document.body.querySelector<HTMLButtonElement>('[role="dialog"] button[aria-label="Quit without syncing"]')!.click()
     await tick()
 
-    expect(update).toHaveBeenCalledWith('confirm')
+    expect(update.mock.calls.map(([action]) => action)).toEqual(['start', 'confirm'])
+    expect(onQuit).toHaveBeenCalledTimes(1)
+  })
+
+  // spec: gui-shell/pending-work-requires-confirmation-before-the-update
+  it('keeps the app open and offers a retry when confirming an update fails', async () => {
+    const { client, push } = fakeClient()
+    publishPendingChanges(push)
+    ;(client.release as ReturnType<typeof vi.fn>).mockResolvedValue(releaseWithAsset())
+    const update = withUpdate(client, async (action) => {
+      if (action === 'start') return updateStatus('ready', { progress: 100 })
+      if (action === 'confirm') return updateStatus('failed', { error: 'The app could not be replaced.' })
+      return updateStatus('ready', { progress: 100 })
+    }).update
+    const onQuit = vi.fn()
+    const { wrapper } = mountWorkspace(client, 60_000, onQuit, 'macos-app')
+
+    await tick()
+    await wrapper.get('button[aria-label="Update now"]').trigger('click')
+    await tick()
+    document.body.querySelector<HTMLButtonElement>('[role="dialog"] button[aria-label="Quit without syncing"]')!.click()
+    await tick()
+
+    expect(update.mock.calls.map(([action]) => action)).toEqual(['start', 'confirm'])
     expect(onQuit).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('The update could not be completed.')
+    expect(wrapper.find('button[aria-label="Try update again"]').exists()).toBe(true)
   })
 
   // spec: gui-shell/pending-work-requires-confirmation-before-the-update

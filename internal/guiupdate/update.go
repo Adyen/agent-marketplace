@@ -264,9 +264,17 @@ func (s *Service) failConfirm(stageDir string, err error) (Status, error) {
 
 func (s *Service) Cancel() Status {
 	s.mu.Lock()
+	if s.status.Phase == PhaseSwapping || s.status.Phase == PhaseComplete {
+		status := s.status
+		s.mu.Unlock()
+		return status
+	}
 	cancel, done := s.cancel, s.done
 	if cancel != nil {
 		cancel()
+	}
+	if s.status.Phase == PhaseReady {
+		s.status.Phase = PhaseCancelled
 	}
 	s.mu.Unlock()
 	if done != nil {
@@ -498,11 +506,10 @@ func (s *Service) updateLinux(ctx context.Context, release Release) {
 		return
 	}
 	finalPath := filepath.Join(dir, assetName)
-	if err := os.Link(tempName, finalPath); err != nil {
+	if err := os.Rename(tempName, finalPath); err != nil {
 		s.finish(ctx, Status{Phase: PhaseFailed, Error: fmt.Errorf("publish verified package: %w", err).Error()})
 		return
 	}
-	_ = os.Remove(tempName)
 	s.setProgress(PhaseHandingOff, 90)
 	if err := s.config.Linux.OpenPackage(ctx, finalPath); err != nil {
 		s.finish(ctx, Status{

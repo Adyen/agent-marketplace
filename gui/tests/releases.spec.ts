@@ -235,6 +235,14 @@ test('built GUI confirms and completes an in-place update when no work is pendin
       : updateStatus('complete', { progress: 100 })
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
   })
+  await page.addInitScript(() => {
+    const testWindow = window as unknown as {
+      __quitCalls: number
+      go: { main: { App: { Quit: () => void } } }
+    }
+    testWindow.__quitCalls = 0
+    testWindow.go = { main: { App: { Quit: () => { testWindow.__quitCalls++ } } } }
+  })
 
   try {
     await launchBuiltUserApp(page, harness.bootstrap.url, harness.bootstrap.credential, 'macos-app', false)
@@ -244,6 +252,7 @@ test('built GUI confirms and completes an in-place update when no work is pendin
     await page.getByRole('button', { name: 'Update now' }).click()
     await expect(page.getByText('Update complete. Restarting Agent Marketplace.')).toBeVisible({ timeout: 60_000 })
     expect(actions).toEqual(['start', 'confirm'])
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __quitCalls: number }).__quitCalls)).toBe(1)
     await expect(page.getByRole('dialog', { name: 'Quit Agent Marketplace' })).toHaveCount(0)
   } finally {
     await harness.stop()

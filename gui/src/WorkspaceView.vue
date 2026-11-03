@@ -202,7 +202,11 @@ function requestUpdateQuit(attempt: number) {
   controller.setQuitHandler(() => {
     controller.setQuitHandler(null)
     if (updateAttempt.value === attempt) {
-      void sendUpdateAction('confirm', attempt)
+      void sendUpdateAction('confirm', attempt).then(() => {
+        if (state.value === controller && updateAttempt.value === attempt && controller.state.updateStatus?.phase === 'complete') {
+          controller.quit()
+        }
+      })
     }
   })
   requestQuit()

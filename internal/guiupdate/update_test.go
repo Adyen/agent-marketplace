@@ -43,6 +43,8 @@ type fakeMacPlatform struct {
 	info          map[string]BundleInfo
 	renameCalls   int
 	failRenameAt  int
+	renameStarted chan struct{}
+	allowRename   chan struct{}
 	relaunchCalls int
 	candidateInfo BundleInfo
 	signatureErr  error
@@ -75,6 +77,14 @@ func (p *fakeMacPlatform) ExtractArchive(_ context.Context, _ string, destinatio
 }
 func (p *fakeMacPlatform) Rename(oldPath, newPath string) error {
 	p.renameCalls++
+	if p.renameCalls == 1 && p.renameStarted != nil {
+		close(p.renameStarted)
+		select {
+		case <-p.allowRename:
+		case <-time.After(3 * time.Second):
+			return errors.New("rename timed out")
+		}
+	}
 	if p.renameCalls == p.failRenameAt {
 		return errors.New("rename rejected")
 	}
@@ -291,6 +301,39 @@ func TestMacUpdateCancellationAndSwapFailurePreserveRunningApp(t *testing.T) {
 	})
 }
 
+// spec: gui-shell/user-updates-the-app-in-place
+func TestCancelDoesNotInterruptConfirmedMacUpdate(t *testing.T) {
+	fixture := newMacFixture(t)
+	fixture.mac.renameStarted = make(chan struct{})
+	fixture.mac.allowRename = make(chan struct{})
+	fixture.service.Start(updateRelease("macos-app", runtime.GOARCH))
+	waitUpdate(t, fixture.service)
+
+	confirmed := make(chan error, 1)
+	go func() {
+		_, err := fixture.service.Confirm()
+		confirmed <- err
+	}()
+	select {
+	case <-fixture.mac.renameStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("confirm did not start app replacement")
+	}
+
+	cancelled := fixture.service.Cancel()
+	close(fixture.mac.allowRename)
+	confirmErr := <-confirmed
+	if cancelled.Phase != PhaseSwapping {
+		t.Fatalf("cancel phase = %q, want swapping", cancelled.Phase)
+	}
+	if status := fixture.service.Status(); confirmErr != nil || status.Phase != PhaseComplete {
+		t.Fatalf("confirm status = %+v, %v; want complete", status, confirmErr)
+	}
+	if got := readAppVersion(t, fixture.app); got != "new" {
+		t.Fatalf("running app version = %q, want new", got)
+	}
+}
+
 // spec: gui-shell/ineligible-location-falls-back-to-a-browser-download
 func TestMacIneligibleLocationFallsBackToResolvedDMG(t *testing.T) {
 	for _, tc := range []struct {
@@ -335,6 +378,9 @@ func TestLinuxVerifiedPackageHandoff(t *testing.T) {
 		t.Run(format, func(t *testing.T) {
 			dir := t.TempDir()
 			asset := fmt.Sprintf("agent-marketplace-gui-v1.3.0-linux-%s.%s", runtime.GOARCH, format)
+			if err := os.WriteFile(filepath.Join(dir, asset), []byte("previous package"), 0o644); err != nil {
+				t.Fatal(err)
+			}
 			downloads := &updateDownloads{
 				archive:   archive,
 				checksums: []byte(fmt.Sprintf("%x  %s\n", digest, asset)),
