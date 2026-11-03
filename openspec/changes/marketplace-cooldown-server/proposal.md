@@ -16,31 +16,42 @@ The client halves are `git-cooldown` and `marketplace-cooldown-client`.
 ## What Changes
 
 - Marketplace operator configuration gains `policy.cooldown` with `period`
-  (default `0`, off) and `held` (`expose`, the default, or `block`), and a
+  (default `0`, off) and `held` (`expose`, the default, or `strict`), and a
   per-registry `policy_overrides.cooldown.period`. The operator owns the floor,
   so a registry override may lower it. Unknown `held` values fail validation.
-- Every resource revision response (`latest`, revision list, exact revision)
-  carries `first_published_at`: the earliest `occurred_at` among the registry
-  occurrences that contain the revision. Existing rows already have this
-  evidence; no backfill is needed.
-- A revision younger than the effective server floor is a held candidate. It
-  carries `availability: cooling-down` and `cooldown_until` in
-  `current_availability`. The latest-revision route never returns a held
-  candidate: it returns the registry-head revision when that revision is
-  eligible, otherwise the eligible revision with the most recent first
-  publication, otherwise `409 Conflict` with a machine-readable body naming
-  the held revision and its `cooldown_until`. Clients that predate this change
-  therefore fail closed on a held coordinate instead of installing it.
-- Under `held: expose`, a held revision remains fetchable by exact digest with
-  its artifact, so a current client can offer initial-acquisition acknowledgement.
-  Under `held: block`, artifact and content distribution for a held revision
-  are denied the same way `policy-blocked` denies them; metadata, history, and
-  inspection remain readable.
-- Search and catalog projection rows continue to anchor on the registry head
-  but expose `first_published_at` and the `cooling-down` availability so
-  consumers can tell a held head from an available one.
-- The latest-revision route stops being cacheable beyond the next eligibility
-  boundary; digest-addressed routes keep their immutable caching.
+- Every resource revision response (`latest`, revision list, exact revision,
+  search, catalog projection) carries `first_published_at`: the earliest
+  `occurred_at` among the registry occurrences that contain the revision.
+  Existing rows already have this evidence; no backfill is needed.
+- `current_availability` gains a `cooldown` object whenever a period applies:
+  `held`, `first_published_at`, `cooldown_until`, and `acknowledgeable`
+  (`false` under `held: strict`). A held revision that is otherwise available
+  reports `availability: cooling-down`; a held revision that is revoked,
+  rejected, or missing its artifact keeps reporting that stronger state, and
+  clients read the hold from the `cooldown` object, not from the availability
+  word.
+- The latest-revision route never returns a held candidate. It returns the
+  registry-head revision when that revision is eligible; otherwise the
+  eligible revision with the most recent first publication that is not
+  revoked, rejected, blocked, or artifact-less, together with a `held_head`
+  object describing the head it withheld; otherwise `409 Conflict` with a
+  machine-readable body naming the head revision and its `cooldown_until`.
+  Clients that predate this change therefore fail closed on a coordinate with
+  no eligible revision instead of installing it.
+- A hold is not a distribution control. Artifact, archive, content, manifest,
+  and inspection routes serve held revisions exactly as before, so a
+  Marketplace installation pinned before a floor was raised still resolves by
+  exact digest on a fresh machine, and index-only acquisition is unaffected.
+  `held: strict` only marks held revisions non-acknowledgeable for conforming
+  clients; hard denial remains revocation's job.
+- Latest-revision responses are not cacheable past the next eligibility
+  boundary, and the catalog and revision-list validators (ETag,
+  `Last-Modified`) change when a revision crosses its eligibility boundary, so
+  conditional requests cannot pin a stale `cooling-down` state.
+  Digest-addressed routes keep their immutable caching.
+- Metadata reads in database-management mode (revision list, exact revision,
+  history, inspection) accept held revisions; the managed access gate treats
+  `cooling-down` as readable.
 - The Nuxt web UI badges held revisions and shows the eligible date on the
   revision list and exact revision pages.
 - In database-management mode the YAML `policy.cooldown` global is carried
@@ -56,11 +67,12 @@ None.
 
 ### Modified Capabilities
 
-- `marketplace-api`: `first_published_at` on revision responses; `cooling-down`
-  availability with `cooldown_until`; latest-revision resolution under the
-  server floor and its `409` outcome; `held: expose|block` distribution
-  semantics; operator configuration validation for `policy.cooldown` and
-  `policy_overrides.cooldown`; caching of the latest-revision route.
+- `marketplace-api`: `first_published_at` on revision responses; the
+  `current_availability.cooldown` object and `cooling-down` availability;
+  latest-revision resolution under the server floor, `held_head`, and the
+  `409` outcome; `held: expose|strict`; operator configuration validation for
+  `policy.cooldown` and `policy_overrides.cooldown`; caching and validators
+  across eligibility boundaries; managed metadata reads of held revisions.
 - `marketplace-web-ui`: held-revision badge and eligible date on revision
   pages.
 
@@ -70,24 +82,28 @@ None.
   decoding and validation; defaults; documentation in
   `site/docs/reference/marketplace-operator-configuration.md`.
 - `pkg/marketplace/store` (SQLite and PostgreSQL): first-publication
-  projection on assessed revisions and a latest-eligible query; no schema
-  migration, because `registry_occurrences.occurred_at` already exists.
-- `pkg/marketplace/api`: availability evaluation gains the cooldown overlay;
-  latest-revision handler; artifact/content gating for `held: block`;
-  `api/openapi.yaml` schema additions.
+  projection on assessed revisions, a latest-eligible query, and an
+  eligibility-boundary aggregate for validators; no schema migration, because
+  `registry_occurrences.occurred_at` already exists.
+- `pkg/marketplace/api`: availability evaluation gains the cooldown object;
+  latest-revision handler; validators; `managedResourceAllowed` accepts
+  `cooling-down`; `api/openapi.yaml` schema additions.
 - `pkg/marketplace/admin`: adoption carries the YAML global into the managed
   snapshot's distribution policy.
 - `web/`: badge and date on revision pages.
 - E2E: the public gate (`TestMarketplacePublicGate`) gains a held-head
-  scenario proving a v4 client fails closed on `latest` and can fetch the exact
-  revision under `expose`.
+  scenario proving a v4 client fails closed on `409`, installs an eligible
+  older revision when one exists, and keeps resolving an existing pin inside
+  a raised floor. The released-client gate runs the pinned stable client
+  against a cooldown-enabled server to witness the same two outcomes.
 - No change to consumer configuration, acquisition locks, or installed
-  resources. Marketplace installations pinned to a revision that is later
-  inside a raised floor keep resolving by exact digest.
+  resources.
 
 ## Release note
 
 Marketplace operators can set `policy.cooldown.period` so newly published
 resource revisions are not resolved as latest until they have been published
 for that long; held revisions report `cooling-down` with the date they become
-eligible. The default is off; a 24-hour period is recommended.
+eligible, and existing pins keep resolving. Clients older than this release see
+an error instead of a hold when every revision of a resource is still young.
+The default is off; a 24-hour period is recommended.

@@ -17,12 +17,13 @@
   `marketplace-api/republished-identical-content-keeps-its-first-publication`,
   `marketplace-api/archive-digest-repair-keeps-first-publication`
 - [ ] 1.2 Add `GetLatestEligibleResourceRevision(ctx, coord, cutoff)` to both
-  drivers returning the eligible revision with the most recent first
-  publication, or not-found. Cover the no-eligible case and a coordinate whose
-  head is older content republished after a newer revision
+  drivers returning eligible revisions in first-publication order, and the
+  eligibility-boundary aggregate used by validators (design D5). Cover the
+  no-eligible case and a coordinate whose head is older content republished
+  after a newer revision
 - [ ] 1.3 Run the `marketplace-catalog-performance` benchmarks before and after
-  1.1 and record the delta in the pull request; keep within the existing
-  budgets
+  1.1 and 1.2 and record the delta in the pull request; keep within the
+  existing budgets
 
 ## 2. Operator configuration
 
@@ -39,50 +40,64 @@
 
 ## 3. API behavior
 
-- [ ] 3.1 Extend `evaluateAvailability` with the cooldown overlay and
-  `cooldown_until` (design D4 precedence). Annotate
-  `marketplace-api/held-revision-reports-cooling-down-and-cooldown-until`,
-  `marketplace-api/revoked-or-rejected-held-revision-reports-the-stronger-state`
+- [ ] 3.1 Extend `evaluateAvailability` with the `cooldown` object and the
+  `cooling-down` word (design D4 precedence), including the
+  `operator-exposed` + held case and `held: strict`. Annotate
+  `marketplace-api/held-available-revision-reports-cooling-down-and-cooldown-until`,
+  `marketplace-api/held-operator-exposed-revision-keeps-its-state-and-reports-held`,
+  `marketplace-api/strict-mode-reports-non-acknowledgeable`
 - [ ] 3.2 Implement latest-revision resolution (design D3) including the
-  `409` body with `marketplace.cooldown.held`. Annotate
+  overlay filter in the fallback, `held_head`, and the `409` body with
+  `marketplace.cooldown.held`. Annotate
   `marketplace-api/eligible-head-resolves-as-latest`,
-  `marketplace-api/held-head-resolves-to-the-newest-eligible-revision`,
+  `marketplace-api/held-head-resolves-to-the-newest-eligible-revision-with-held-head-evidence`,
+  `marketplace-api/revoked-eligible-revision-is-skipped-in-the-fallback`,
   `marketplace-api/coordinate-with-no-eligible-revision-answers-409-with-cooldown-evidence`,
   `marketplace-api/zero-period-preserves-head-resolution`,
   `marketplace-api/registry-override-lowers-the-period`
-- [ ] 3.3 Gate artifact, archive, and content routes under `held: block`;
-  prove `expose` serves by exact digest. Annotate
-  `marketplace-api/expose-serves-a-held-artifact-by-exact-digest`,
-  `marketplace-api/block-refuses-a-held-artifact-and-keeps-metadata-readable`
-- [ ] 3.4 Ensure the latest-revision route and the `409` body carry no
-  immutable or over-long cache headers. Annotate
-  `marketplace-api/latest-response-carries-no-immutable-cache-header`
-- [ ] 3.5 Update `api/openapi.yaml`: `first_published_at`, `cooldown_until`,
-  the `cooling-down` availability value, and the `409` response on the
-  latest-revision route. Run the OpenAPI conformance tests
+- [ ] 3.3 Prove holds never gate distribution or managed metadata reads:
+  artifact, manifest, content, inspection, revision list, and exact reads of
+  a held revision in file and database mode; `managedResourceAllowed` accepts
+  `cooling-down`; an existing v4 pin inside a raised floor resolves with an
+  empty client cache. Annotate
+  `marketplace-api/held-artifact-manifest-and-content-remain-downloadable-by-exact-digest`,
+  `marketplace-api/managed-metadata-reads-accept-held-revisions`,
+  `marketplace-api/existing-pin-inside-a-raised-floor-resolves-on-a-fresh-cache`
+- [ ] 3.4 Cache headers and validators (design D5): no immutable header on the
+  latest route, `no-store` on the `409` body, boundary-aware ETag on catalog,
+  search, and revision list, bounded `max-age` when a held row is present.
+  Annotate `marketplace-api/latest-response-carries-no-immutable-cache-header`,
+  `marketplace-api/catalog-validator-changes-when-a-row-becomes-eligible`
+- [ ] 3.5 Update `api/openapi.yaml`: `first_published_at`, the
+  `current_availability.cooldown` object, `held_head`, the `cooling-down`
+  availability value, and the `409` response on the latest-revision route.
+  Run the OpenAPI conformance tests
 
 ## 4. Web UI
 
 - [ ] 4.1 Render the held badge and eligible date on revision list and exact
-  revision pages from `current_availability`. Annotate
+  revision pages from `current_availability.cooldown`. Annotate
   `marketplace-web-ui/revision-list-shows-the-eligible-date-for-a-held-revision`
   in the Nuxt test suite
 
 ## 5. E2E and documentation
 
 - [ ] 5.1 Extend `TestMarketplacePublicGate` with a held head: a v4 client's
-  `install` of the coordinate fails closed on `409`, the exact revision is
-  fetchable under `expose`, and an eligible older revision installs. Keep the
-  witness required
-- [ ] 5.2 Document `policy.cooldown` and the override in
+  `install` of a coordinate with no eligible revision fails closed on `409`,
+  `install` of a coordinate with an eligible older revision installs that
+  revision, and `sync --locked` of a pin inside the raised floor succeeds on
+  an empty cache. Keep the witnesses required
+- [ ] 5.2 Add a released-client gate scenario running the pinned stable client
+  against a cooldown-enabled server to witness the same three outcomes
+- [ ] 5.3 Document `policy.cooldown` and the override in
   `site/docs/reference/marketplace-operator-configuration.md`; add the
-  newly-approved-registry and fresh-database consequences to
-  `docs/marketplace-operator.md`; mention the recommended 24-hour period in
-  `docs/marketplace-security.md`
+  newly-approved-registry, fresh-database, and older-client consequences to
+  `docs/marketplace-operator.md`; mention the recommended 24-hour period and
+  that `held: strict` is advisory in `docs/marketplace-security.md`
 
 ## 6. Validate and archive
 
-- [ ] 6.1 Run `make validate`, `make spec-check`, and the Marketplace public
-  gate; attach the benchmark delta from 1.3
+- [ ] 6.1 Run `make validate`, `make spec-check`, the Marketplace public gate,
+  and the released-client gate; attach the benchmark delta from 1.3
 - [ ] 6.2 `openspec archive marketplace-cooldown-server --yes` in the same pull
   request

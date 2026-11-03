@@ -184,7 +184,7 @@ context: |
   _Avoid_: Commit date, assessment time
 
   **Effective commit date**:
-  The later of a Git commit's committer date and the effective commit date of its first parent; for an annotated tag, also the later of that and the tagger date. A commit is never considered older than its ancestors.
+  The later of a Git commit's committer date and the effective commit date of its first parent; for an annotated tag, also the later of that and the tagger date. Within the measured first-parent history a commit is never considered older than its ancestors; other parents are not measured.
   _Avoid_: Author date, commit timestamp
 
   **Held candidate**:

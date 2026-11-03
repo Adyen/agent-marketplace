@@ -11,23 +11,27 @@
 
 ## 1. Client parsing (internal/marketplace)
 
-- [ ] 1.1 Parse `first_published_at` and `current_availability.cooldown_until`
-  on latest, list, and exact revision responses; parse the `409`
-  `marketplace.cooldown.held` body into a typed error; carry
-  `first_published_at` in the revision cache. Table tests against recorded
-  responses, including a response without the field
+- [ ] 1.1 Parse `first_published_at`, `current_availability.cooldown`, and
+  `held_head` on latest, list, and exact revision responses; parse the `409`
+  `marketplace.cooldown.held` body into a typed error that tolerates a
+  malformed body; carry the new fields in the revision cache. Table tests
+  against recorded responses, including a response without the field and a
+  `409` with an unparseable body
 
 ## 2. Selection and holds
 
-- [ ] 2.1 Implement the shared candidate-selection helper (design D2) and use
-  it from `prepareLocator`, the update planner, and the TUI. Annotate
-  `resource-installation/young-latest-resolves-to-the-newest-eligible-older-revision`,
-  `resource-installation/server-held-coordinate-with-an-eligible-older-revision-installs-it`,
+- [ ] 2.1 Implement the shared candidate-selection helper (design D2) with
+  the head/fallback distinction and the no-downgrade rule, and use it from
+  `prepareLocator`, the update planner, and the TUI. Annotate
+  `resource-installation/young-head-resolves-to-the-newest-eligible-older-revision`,
+  `resource-installation/server-fallback-older-than-the-pin-is-held-not-installed`,
+  `resource-installation/eligible-head-after-a-revert-is-followed`,
   `resource-installation/explicit-revision-pins-skip-the-cooldown`
-- [ ] 2.2 Hold reporting in install, update, and `update --dry-run`; diff
-  exclusion. Annotate
+- [ ] 2.2 Hold reporting in install, update, and `update --dry-run` using
+  `held_head`/`409` evidence and the `first_published_at + P` eligible date;
+  diff exclusion. Annotate
   `resource-installation/install-reports-the-held-head-when-it-selects-an-older-revision`,
-  `update-output/held-pin-prints-the-hold-line-and-exits-0`,
+  `update-output/held-pin-prints-the-hold-line-with-the-head-s-eligible-date-and-exits-0`,
   `update-output/held-pins-are-excluded-from-content-diffs`,
   `update-preview/dry-run-reports-the-same-marketplace-hold-as-the-applying-run`,
   `deployed-acquisition-locks/held-update-leaves-the-marketplace-lock-record-byte-identical`
@@ -38,9 +42,10 @@
 ## 3. Acknowledgement
 
 - [ ] 3.1 Add `install --acknowledge-cooldown`, the
-  `cooldown.acknowledgement-required` refusal, strict refusal, and the exact
-  fetch-and-pin path under `expose`; prove fail-closed under `block`. Annotate
-  the four `resource-installation` acknowledgement scenarios
+  `cooldown.acknowledgement-required` refusal, the strict and
+  server-non-acknowledgeable refusals, the unknown-head refusal, and the
+  exact fetch-and-pin of the server-identified head, including after a
+  revert. Annotate the six `resource-installation` acknowledgement scenarios
 - [ ] 3.2 Writing `sync` refusal for a held initial Marketplace acquisition
   pointing at the install command. Annotate
   `deployed-acquisition-locks/writing-sync-refuses-a-held-initial-marketplace-acquisition-and-points-at-install`
@@ -49,12 +54,14 @@
 
 ## 4. TUI
 
-- [ ] 4.1 Detail view "Held until" (design D7); update result holds
-- [ ] 4.2 Acknowledgement confirm modal in the Marketplace install flow;
-  strict mode shows the diagnostic without a confirm action
+- [ ] 4.1 Detail view "Held until" from `current_availability.cooldown`
+  (design D7); update result holds
+- [ ] 4.2 Acknowledgement confirm modal in the Marketplace install flow; a
+  hold that is not acknowledgeable on either side shows the diagnostic
+  without a confirm action
 - [ ] 4.3 Extend `tools/tui-qa/tests/marketplace-stub.ts` with
-  `first_published_at` and the `409` outcome; add
-  `marketplace-install-acknowledge-cooldown.spec.ts` and
+  `first_published_at`, the `cooldown` object, `held_head`, and the `409`
+  outcome; add `marketplace-install-acknowledge-cooldown.spec.ts` and
   `marketplace-update-cooldown-hold.spec.ts`; list them in
   `tools/tui-qa/README.md`; confirm each fails without the change. Annotate
   the three `tui-interactions` and one `tui-feedback` scenarios
@@ -62,10 +69,12 @@
 ## 5. E2E and documentation
 
 - [ ] 5.1 Extend `TestMarketplacePublicGate` with a consumer floor above the
-  server floor and an acknowledged initial acquisition; add declarative E2E cases
-  with spec tags; run `make validate-e2e`
-- [ ] 5.2 Document Marketplace cooldown behavior, the flag, and
-  `missing_evidence` in `site/docs/how-to/install-from-a-marketplace.md`,
+  server floor, a server fallback older than the pin, a revert, and an
+  acknowledged initial acquisition; add declarative E2E cases with spec tags;
+  run `make validate-e2e`
+- [ ] 5.2 Document Marketplace cooldown behavior, the flag, `missing_evidence`,
+  and the no-downgrade rule in
+  `site/docs/how-to/install-from-a-marketplace.md`,
   `site/docs/reference/configuration.md`, and `lockfiles.md`
 
 ## 6. Validate and archive
