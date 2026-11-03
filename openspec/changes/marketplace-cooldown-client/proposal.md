@@ -29,9 +29,10 @@ by `marketplace-cooldown-server`.
   current pin; otherwise the client walks the revisions list, most recently
   published first, and selects the first revision that is eligible under
   both the server's evidence (`cooldown.held == false`, or no `cooldown`
-  object because the server period is zero) and the consumer floor and is
-  newer than the pin, skipping revoked and rejected revisions as
-  today. The list never lets a client go below the server floor, and a pin is
+  object because the server period is zero) and the consumer floor, is
+  newer than the pin, and is acquirable in the pin's mode (not revoked,
+  policy-blocked, or blocked, and not artifact-less for a mirror acquisition
+  of a non-collection). The list never lets a client go below the server floor, and a pin is
   never replaced by content the registry published less recently. When the
   head is held only by the consumer floor, the head returned by `latest` is
   retained as the hold evidence.

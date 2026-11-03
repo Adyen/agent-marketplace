@@ -28,6 +28,7 @@
   `resource-installation/young-head-resolves-to-the-most-recently-published-eligible-revision`,
   `resource-installation/server-floor-above-the-consumer-floor-is-honored-from-the-revisions-list`,
   `resource-installation/positive-consumer-floor-with-a-zero-server-period-selects-from-the-revisions-list`,
+  `resource-installation/revoked-policy-blocked-blocked-and-artifact-less-revisions-are-skipped-per-acquisition-mode`,
   `resource-installation/server-fallback-published-before-the-pin-is-held-not-installed`,
   `resource-installation/eligible-head-after-a-revert-is-followed`,
   `resource-installation/zero-period-never-compares-timestamps`,
@@ -58,8 +59,9 @@
   server-non-acknowledgeable refusals checked before mirror download,
   index-only clone, and collection expansion, the unknown-head refusal, and
   the exact fetch-and-pin of the server-identified or retained head,
-  including after a revert and for a consumer-only hold. Annotate the eight
-  `resource-installation` acknowledgement scenarios
+  including after a revert and for a consumer-only hold, with the local
+  availability predicate when the server sends no `cooldown` object.
+  Annotate the nine `resource-installation` acknowledgement scenarios
 - [ ] 3.2 Writing `sync` refusal for a held initial Marketplace acquisition
   pointing at the install command. Annotate
   `deployed-acquisition-locks/writing-sync-refuses-a-held-initial-marketplace-acquisition-and-points-at-install`

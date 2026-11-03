@@ -99,7 +99,12 @@ restored. Eligibility ("old enough") is always measured by first publication.
    it in that order and take the first revision that is **server-eligible**
    (`cooldown.held == false`, or no `cooldown` object because the server
    period is zero), has `first_published_at ≤ C`, is newer than `pin` (when
-   `pin` exists), and passes `enforceMarketplaceUse`. The server exposes held
+   `pin` exists), and is **acquirable**: `enforceMarketplaceUse` passes and
+   its `current_availability.availability` is not `revoked`,
+   `policy-blocked`, or `blocked`, and not `no-artifact` for a mirror
+   acquisition of a non-collection (index-only revisions and collections have
+   no archive by design and are kept). `enforceMarketplaceUse` alone does not
+   reject every one of those states, so the filter is explicit here. The server exposes held
    revisions in this list by design, so the consumer cutoff alone would let a
    24-hour consumer floor select a 30-hour-old revision under a 48-hour
    server floor; the server-eligibility check is what prevents it.
@@ -151,9 +156,13 @@ head to acknowledge is, in order of what the server provided:
 or the genuine head returned by `latest` and retained in D2 step 1 when only
 the consumer floor held it (server period zero or lower). Its
 `acknowledgeable` flag comes from `held_head`, from the `409` body, or from
-the retained head's own `cooldown` object (absent means acknowledgeable).
-The acknowledgement is refused when no head is known, because the client
-cannot know what it would be pinning.
+the retained head's own `cooldown` object. When the retained head carries no
+`cooldown` object (server period zero), the client applies the same predicate
+locally: acknowledgeable only if its `current_availability.availability` is
+`available` or `operator-exposed`; a revoked, policy-blocked, blocked, or
+artifact-less head is reported in that state and never offered for
+acknowledgement. The acknowledgement is refused when no head is known,
+because the client cannot know what it would be pinning.
 
 - `initial_acquisition: acknowledge`, the head is known, the server reports
   `acknowledgeable: true` (or no `cooldown` object), and
@@ -233,6 +242,7 @@ effect is that the TUI detail view can show a held head from cache.
   - Scenario: Young head resolves to the most recently published eligible revision
   - Scenario: Server floor above the consumer floor is honored from the revisions list
   - Scenario: Positive consumer floor with a zero server period selects from the revisions list
+  - Scenario: Revoked, policy-blocked, blocked, and artifact-less revisions are skipped per acquisition mode
   - Scenario: Install reports the held head when it selects an older revision
   - Scenario: Consumer-only hold reports the latest head as evidence
   - Scenario: Server fallback published before the pin is held, not installed
@@ -246,6 +256,7 @@ effect is that the TUI detail view can show a held head from cache.
   - Scenario: Acknowledged install after a revert pins the head, not the youngest revision
   - Scenario: Consumer-only hold acknowledges the retained latest head
   - Scenario: Strict server mode refuses acknowledgement of a 200 fallback head
+  - Scenario: Zero server period with a stronger head state refuses acknowledgement
   - Scenario: Strict initial acquisition refuses acknowledgement
   - Scenario: Server non-acknowledgeable hold refuses acknowledgement in every acquisition mode
   - Scenario: Unparseable hold body refuses acknowledgement and reports an unknown date
