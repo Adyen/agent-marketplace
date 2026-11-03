@@ -74,8 +74,13 @@ restored. Eligibility ("old enough") is always measured by first publication.
    - `409` with `code: marketplace.cooldown.held` → no revision is eligible
      under the server floor, so the revisions list cannot contain one
      either. Record the body's `revision`, `first_published_at`,
-     `cooldown_until`, `availability`, and `acknowledgeable`; a body that
-     fails to parse records none of them. When `availability` is `revoked`,
+     `cooldown_until`, `availability`, and `acknowledgeable`. The body is
+     usable only when every one of those fields is present and correctly
+     typed; a body that fails to parse, or parses but omits or mistypes any
+     of them, records none of them and is treated exactly like an
+     unparseable body (unknown head, no acknowledgement). The
+     absent-means-acknowledgeable rule applies only to a retained head's own
+     `cooldown` object, never to the `409` body. When `availability` is `revoked`,
      `policy-blocked`, `blocked`, or `no-artifact`, the head is not merely
      young: hand the outcome to the existing revocation/assessment handling
      for a head in that state (same report lines and exit status as a `200`
@@ -260,6 +265,7 @@ effect is that the TUI detail view can show a held head from cache.
   - Scenario: Strict initial acquisition refuses acknowledgement
   - Scenario: Server non-acknowledgeable hold refuses acknowledgement in every acquisition mode
   - Scenario: Unparseable hold body refuses acknowledgement and reports an unknown date
+  - Scenario: Hold body missing acknowledgeable or availability refuses acknowledgement
 - Requirement: Missing first publication follows missing_evidence
   - Scenario: Warn proceeds and reports once per endpoint
   - Scenario: Refuse fails selection for the endpoint
