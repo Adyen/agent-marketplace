@@ -22,6 +22,7 @@ This repository builds the **agent-marketplace** CLI, a Go binary that syncs sha
 ## Build, test, and verification
 
 - `make build` builds the binary; `make spec-check` runs pinned strict OpenSpec validation plus `specaudit trace` and `specaudit archived`.
+- `make gui-build` builds the desktop GUI. `make gui-package-macos` assembles the universal `.dmg` and `.zip` on a macOS host; `make gui-package-linux` builds the `.rpm` and `.deb` for the host architecture with nFPM on a native Linux host.
 - During iteration, run the affected package/test first: `make test TEST_PACKAGES=./internal/resolver TEST_FLAGS="-run TestResolve -count=1"`. Select packages and consumer regressions explicitly; a scoped result is not full-suite validation.
 - `make test` selects changed root-module packages since the merge base with `origin/main` and runs short-mode tests. Root Markdown, known `openspec/`, `.github/`, `.gitlab/`, and `deploy/` metadata, and exact root metadata files (such as `.gitignore`) alone select no Go tests; shared or unknown paths still select all root packages. An explicit `TEST_PACKAGES` overrides selection; `make test-full` runs all root tests without short mode. `make test-fast` aliases `make test`.
 - `make validate` and its `validate-fast` alias run selected short-mode tests, non-mutating CI lint, and the build concurrently. `TEST_PACKAGES`, `TEST_FLAGS`, `TEST_SHORT`, and `TEST_LOCAL_BASE` apply to the test target; `make validate-full` runs the full gate. Use `-count=1` when a fresh execution is needed, not reflexively on every unchanged package.

@@ -29,6 +29,6 @@
 
 ## 5. Finalization
 
-- [ ] 5.1 Run the package, release, GUI, and site checks and `make spec-check`; require zero trace findings for this change, with no unbound scenarios or dangling annotations.
-- [ ] 5.2 Verify no Windows, AppImage, Flatpak, hosted repository, URL-scheme, or bundled-CLI artifacts enter the package matrix.
-- [ ] 5.3 Run `openspec archive gui-release-packaging --yes` in this pull request.
+- [x] 5.1 Run the package, release, GUI, and site checks and `make spec-check`; require zero trace findings for this change, with no unbound scenarios or dangling annotations.
+- [x] 5.2 Verify no Windows, AppImage, Flatpak, hosted repository, URL-scheme, or bundled-CLI artifacts enter the package matrix.
+- [x] 5.3 Run `openspec archive gui-release-packaging --yes` in this pull request.
