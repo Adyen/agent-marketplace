@@ -15,7 +15,7 @@ Pick a method below, then [check that it works](#verify). You also need [Git](./
 Download the desktop app from the [latest release](https://github.com/Adyen/agent-marketplace/releases/latest).
 
 - **macOS 12 or newer:** choose `agent-marketplace-gui-<tag>-macos-universal.dmg`. It works on Apple silicon and Intel Macs. Open the disk image and drag the app to Applications.
-- **Linux:** choose the `.rpm` or `.deb` for your computer’s `amd64` or `arm64` processor. Supported systems include Fedora, Ubuntu 22.04 or 24.04, Debian 12, and other distributions with WebKitGTK 4.1 and GTK 3. RHEL 9 is not supported.
+- **Linux:** choose the `.rpm` or `.deb` for your computer's `amd64` or `arm64` processor. Supported systems include Fedora, Ubuntu 22.04 or 24.04, Debian 12, and other distributions with WebKitGTK 4.1 and GTK 3. RHEL 9 is not supported.
 
 The macOS app is ad-hoc signed. The first time you open it, right-click the app and choose **Open**. If macOS blocks it again, go to **System Settings → Privacy & Security** and choose **Open Anyway**.
 

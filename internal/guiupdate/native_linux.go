@@ -41,10 +41,6 @@ func (linuxPlatform) DownloadDir() (string, error) {
 				return home, nil
 			case strings.HasPrefix(value, "$HOME/"):
 				return filepath.Join(home, filepath.FromSlash(strings.TrimPrefix(value, "$HOME/"))), nil
-			case strings.HasPrefix(value, "${HOME}/"):
-				return filepath.Join(home, filepath.FromSlash(strings.TrimPrefix(value, "${HOME}/"))), nil
-			case strings.HasPrefix(value, "~/"):
-				return filepath.Join(home, filepath.FromSlash(strings.TrimPrefix(value, "~/"))), nil
 			case filepath.IsAbs(value):
 				return filepath.Clean(value), nil
 			}

@@ -554,7 +554,7 @@ func validateRelease(release Release, format, arch string) error {
 	if tag == "" || strings.TrimPrefix(tag, "v") != strings.TrimPrefix(release.Version, "v") {
 		return errors.New("release package does not match this version")
 	}
-	expected := expectedAssetName(tag, format, arch)
+	expected := ExpectedAssetName(tag, format, arch)
 	if expected == "" || !validReleaseAssetURL(release.AssetURL, tag, expected) {
 		return errors.New("release package does not match this build")
 	}
@@ -564,7 +564,9 @@ func validateRelease(release Release, format, arch string) error {
 	return nil
 }
 
-func expectedAssetName(version, format, arch string) string {
+// ExpectedAssetName returns the release asset name this build's format and
+// architecture update from, or empty when the build or tag cannot update.
+func ExpectedAssetName(version, format, arch string) string {
 	tag := strings.TrimPrefix(version, "v")
 	if tag == "" || strings.ContainsAny(tag, "/\\") {
 		return ""
@@ -613,6 +615,10 @@ func verifyChecksum(assetName string, archive, checksums []byte) error {
 	}
 	return nil
 }
+
+// ValidReleaseAssetURL reports whether raw is the release download URL for
+// the asset name at tag.
+func ValidReleaseAssetURL(raw, tag, name string) bool { return validReleaseAssetURL(raw, tag, name) }
 
 func validReleaseAssetURL(raw, tag, name string) bool {
 	parsed, err := url.Parse(raw)

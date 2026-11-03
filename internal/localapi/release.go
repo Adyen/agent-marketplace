@@ -6,9 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
-	"path"
 	"runtime"
 	"time"
 
@@ -60,31 +58,6 @@ type releaseAsset struct {
 	BrowserDownloadURL string `json:"browser_download_url"`
 }
 
-func guiReleaseAssetName(packageFormat, arch, tag string) string {
-	switch packageFormat {
-	case "macos-app":
-		return "agent-marketplace-gui-" + tag + "-macos-universal.zip"
-	case "rpm", "deb":
-		if arch != "amd64" && arch != "arm64" {
-			return ""
-		}
-		return "agent-marketplace-gui-" + tag + "-linux-" + arch + "." + packageFormat
-	default:
-		return ""
-	}
-}
-
-func isGitHubReleaseURL(raw string) bool {
-	parsed, err := url.Parse(raw)
-	return err == nil && parsed.Scheme == "https" && parsed.Host == "github.com" && parsed.User == nil
-}
-
-func isGitHubReleaseAssetURL(raw, tag, name string) bool {
-	parsed, err := url.Parse(raw)
-	return err == nil && isGitHubReleaseURL(raw) && parsed.RawQuery == "" && parsed.Fragment == "" &&
-		parsed.Path == path.Join("/Adyen/agent-marketplace/releases/download", tag, name)
-}
-
 func (a *API) checkLatestRelease(r *http.Request) releaseNotice {
 	running := a.version
 	if !updatecheck.CanCheck(running) {
@@ -124,7 +97,7 @@ func (a *API) checkLatestRelease(r *http.Request) releaseNotice {
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
 		return releaseNotice{}
 	}
-	if latest.Draft == nil || latest.Prerelease == nil || *latest.Draft || *latest.Prerelease || latest.PublishedAt.IsZero() || !allowedReleasePageURL(latest.HTMLURL) {
+	if latest.Draft == nil || latest.Prerelease == nil || *latest.Draft || *latest.Prerelease || latest.PublishedAt.IsZero() || !guiupdate.ValidReleasePageURL(latest.HTMLURL) {
 		return releaseNotice{}
 	}
 	tag := normalizeReleaseVersion(latest.TagName)
@@ -135,7 +108,7 @@ func (a *API) checkLatestRelease(r *http.Request) releaseNotice {
 		return releaseNotice{}
 	}
 	notice := releaseNotice{LatestVersion: tag, ReleasePageURL: latest.HTMLURL}
-	assetName := guiReleaseAssetName(a.packageFormat, runtime.GOARCH, latest.TagName)
+	assetName := guiupdate.ExpectedAssetName(latest.TagName, a.packageFormat, runtime.GOARCH)
 	if assetName == "" {
 		return notice
 	}
@@ -143,16 +116,16 @@ func (a *API) checkLatestRelease(r *http.Request) releaseNotice {
 	for _, asset := range latest.Assets {
 		switch asset.Name {
 		case assetName:
-			if allowedReleaseAssetURL(asset.BrowserDownloadURL, latest.TagName, assetName) {
+			if guiupdate.ValidReleaseAssetURL(asset.BrowserDownloadURL, latest.TagName, assetName) {
 				assetURL = asset.BrowserDownloadURL
 			}
 		case "SHA256SUMS":
-			if allowedReleaseAssetURL(asset.BrowserDownloadURL, latest.TagName, "SHA256SUMS") {
+			if guiupdate.ValidReleaseAssetURL(asset.BrowserDownloadURL, latest.TagName, "SHA256SUMS") {
 				checksumsURL = asset.BrowserDownloadURL
 			}
 		case "agent-marketplace-gui-" + latest.TagName + "-macos-universal.dmg":
 			name := "agent-marketplace-gui-" + latest.TagName + "-macos-universal.dmg"
-			if allowedReleaseAssetURL(asset.BrowserDownloadURL, latest.TagName, name) {
+			if guiupdate.ValidReleaseAssetURL(asset.BrowserDownloadURL, latest.TagName, name) {
 				dmgURL = asset.BrowserDownloadURL
 			}
 		}

@@ -34,7 +34,7 @@ onMounted(async () => {
       Ready to try <span class="product-name">agent-marketplace</span>?
     </template>
     <template #sub>
-      Install the desktop app or use one CLI to sync shared agent tooling into each harness’s native layout.
+      Install the desktop app or use one CLI to sync shared agent tooling into each harness's native layout.
     </template>
 
     <div class="install-options">
@@ -77,7 +77,7 @@ onMounted(async () => {
         </div>
         <p class="first-launch">
           First launch on macOS: Right-click the app and choose Open. If it is blocked again, open
-          System Settings → Privacy &amp; Security and choose “Open Anyway”.
+          System Settings → Privacy &amp; Security and choose "Open Anyway".
         </p>
       </div>
     </div>

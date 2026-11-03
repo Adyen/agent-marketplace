@@ -434,12 +434,6 @@ GUI_MACOS_ZIP := $(GUI_DIST_DIR)/agent-marketplace-gui-$(VERSION)-macos-universa
 GUI_MACOS_DMG := $(GUI_DIST_DIR)/agent-marketplace-gui-$(VERSION)-macos-universal.dmg
 GUI_LINUX_ARCH = $(shell $(GO) env GOARCH)
 GUI_LINUX_BUILD_DIR = $(GUI_DIST_DIR)/build/linux-$(GUI_LINUX_ARCH)
-GUI_LINUX_RPM_BINARY = $(GUI_LINUX_BUILD_DIR)/rpm/$(GUI_BINARY)
-GUI_LINUX_DEB_BINARY = $(GUI_LINUX_BUILD_DIR)/deb/$(GUI_BINARY)
-GUI_LINUX_RPM_CONFIG = $(GUI_LINUX_BUILD_DIR)/rpm/nfpm.yaml
-GUI_LINUX_DEB_CONFIG = $(GUI_LINUX_BUILD_DIR)/deb/nfpm.yaml
-GUI_LINUX_RPM = $(GUI_DIST_DIR)/agent-marketplace-gui-$(VERSION)-linux-$(GUI_LINUX_ARCH).rpm
-GUI_LINUX_DEB = $(GUI_DIST_DIR)/agent-marketplace-gui-$(VERSION)-linux-$(GUI_LINUX_ARCH).deb
 NFPM_VERSION := v2.48.0
 
 gui-build-frontend:
@@ -504,13 +498,15 @@ gui-package-macos: $(GUI_MACOS_ARM64) $(GUI_MACOS_AMD64)
 
 gui-package-linux: gui-build-frontend
 	@test "$$($(GO) env GOOS)" = linux || { echo "ERROR: gui-package-linux requires a native Linux host" >&2; exit 1; }
-	@mkdir -p "$(dir $(GUI_LINUX_RPM_BINARY))" "$(dir $(GUI_LINUX_DEB_BINARY))" "$(GUI_DIST_DIR)"
-	$(MAKE) --no-print-directory gui-build-binary GUI_GOOS=linux GUI_GOARCH=$(GUI_LINUX_ARCH) GUI_BUILD_TAGS=desktop,production,webkit2_41 GUI_PACKAGE_FORMAT=rpm GUI_OUTPUT="$(GUI_LINUX_RPM_BINARY)"
-	sed 's|@GUI_BINARY@|$(abspath $(GUI_LINUX_RPM_BINARY))|g' packaging/gui/linux/nfpm.yaml > "$(GUI_LINUX_RPM_CONFIG)"
-	GUI_ARCH="$(GUI_LINUX_ARCH)" GUI_VERSION="$(GUI_TAG_VERSION)" $(GO) run github.com/goreleaser/nfpm/v2/cmd/nfpm@$(NFPM_VERSION) package --config "$(GUI_LINUX_RPM_CONFIG)" --packager rpm --target "$(GUI_LINUX_RPM)"
-	$(MAKE) --no-print-directory gui-build-binary GUI_GOOS=linux GUI_GOARCH=$(GUI_LINUX_ARCH) GUI_BUILD_TAGS=desktop,production,webkit2_41 GUI_PACKAGE_FORMAT=deb GUI_OUTPUT="$(GUI_LINUX_DEB_BINARY)"
-	sed 's|@GUI_BINARY@|$(abspath $(GUI_LINUX_DEB_BINARY))|g' packaging/gui/linux/nfpm.yaml > "$(GUI_LINUX_DEB_CONFIG)"
-	GUI_ARCH="$(GUI_LINUX_ARCH)" GUI_VERSION="$(GUI_TAG_VERSION)" $(GO) run github.com/goreleaser/nfpm/v2/cmd/nfpm@$(NFPM_VERSION) package --config "$(GUI_LINUX_DEB_CONFIG)" --packager deb --target "$(GUI_LINUX_DEB)"
+	@mkdir -p "$(GUI_DIST_DIR)"
+	@set -eu; for format in rpm deb; do \
+		binary="$(GUI_LINUX_BUILD_DIR)/$$format/$(GUI_BINARY)"; \
+		config="$(GUI_LINUX_BUILD_DIR)/$$format/nfpm.yaml"; \
+		mkdir -p "$(GUI_LINUX_BUILD_DIR)/$$format"; \
+		$(MAKE) --no-print-directory gui-build-binary GUI_GOOS=linux GUI_GOARCH=$(GUI_LINUX_ARCH) GUI_BUILD_TAGS=desktop,production,webkit2_41 GUI_PACKAGE_FORMAT=$$format GUI_OUTPUT="$$binary"; \
+		sed "s|@GUI_BINARY@|$$(cd "$$(dirname "$$binary")" && pwd)/$(GUI_BINARY)|g" packaging/gui/linux/nfpm.yaml > "$$config"; \
+		GUI_ARCH="$(GUI_LINUX_ARCH)" GUI_VERSION="$(GUI_TAG_VERSION)" $(GO) run github.com/goreleaser/nfpm/v2/cmd/nfpm@$(NFPM_VERSION) package --config "$$config" --packager $$format --target "$(GUI_DIST_DIR)/agent-marketplace-gui-$(VERSION)-linux-$(GUI_LINUX_ARCH).$$format"; \
+	done
 
 # E2E test suite.
 # Runs inside a Docker container for local isolation (doesn't touch host env).
