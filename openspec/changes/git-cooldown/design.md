@@ -170,16 +170,25 @@ first-parent chain, run `git merge-base --is-ancestor L tip`:
 
 A rewrite is refused with `lock.history-rewritten` before any lock, config,
 or harness write, and the run's other groups continue to be planned so the
-report lists every refusal at once. Evidence per refused source (all
-computed locally; each row degrades to "unknown" when `L` is missing):
+report lists every refusal at once. Today the applying `update` publishes
+missing Marketplace lock records (`bootstrapMissingMarketplaceLocks`) before
+Git reconciliation runs; to honor the no-write contract, the applying path
+stages that evidence the way `update --dry-run` already does
+(`prepareMissingMarketplaceLockEdits` into `PreseedLockEdits`) and publishes
+it in the same dependency transaction as the Git locks, after every rewrite
+check has passed. Evidence per refused source (each row degrades to
+"unknown" when `L` is missing):
 
 | Field | Source |
 |---|---|
 | `url@ref` | the group |
 | locked commit, tip | `L`, resolved tip |
-| locked commit still reachable | `git for-each-ref --contains L`, "no" on a missing object |
+| locked commit still reachable | `git for-each-ref --contains L` after refreshing the mirror's remote heads (`fetch --prune <url> +refs/heads/*:refs/heads/*`); "no" on a missing object; labelled "cached" when the refresh fails |
 | commits between merge-base and tip | `rev-list --first-parent --count <merge-base>..tip`, or the full count when there is no merge-base |
 | tip effective date | D3 step 3 |
+
+The reachability refresh is the only network operation the refusal adds and
+runs only on the refusal path.
 
 Followed by the remediation commands:
 `agent-marketplace update --dry-run --include-diff --accept-history-rewrite`
@@ -190,10 +199,12 @@ Followed by the remediation commands:
 review the diff before accepting."
 
 `--accept-history-rewrite` is accepted by `update`, `lock --upgrade`, and
-`update --dry-run`. With no targeting it accepts every refusal in that run;
-with `--registry`/`--ref` it accepts only matching groups and the others still
-refuse. Acceptance is not persisted: once the new commit is locked, later runs
-are anchored on it. After acceptance the group is selected per D3 step 5
+`update --dry-run`. With no targeting it accepts every refusal in that run.
+With `--registry`/`--ref` the existing upgrade targeting already scopes the
+run to the named groups: other groups keep their locked commits and are not
+re-resolved, so a second rewritten source cannot refuse a targeted
+acceptance; the user handles it in its own run. Acceptance is not persisted:
+once the new commit is locked, later runs are anchored on it. After acceptance the group is selected per D3 step 5
 (whole chain, measured from its root). If nothing in the rewritten history is
 eligible, the **existing lock is kept** and the group is reported as a held
 rewrite with its eligible time; the user repeats the acceptance once a commit
@@ -231,13 +242,29 @@ today. Ineligible higher tags are reported as held candidates. No ancestry
 between old and new tag is required. The mutable cache is a full clone, so
 this is also local.
 
+**Binding the plan to the validated object.** Today the bump plan carries
+only the new tag name, which is written into `sources.<name>.ref`, and the
+tag is resolved again at acquisition. The mutable cache can be stale (it
+falls back to a stale checkout when its fetch fails) and a tag can move
+between planning and acquisition, so the plan now records the validated tag
+object ID and commit ID alongside the name. Acquisition of the bumped group is
+**anchored at the previous lock's commit** (it is not an initial acquisition,
+so D5 never applies to a bump), re-runs D3 against the exact store, and must
+resolve the new ref to the recorded commit; otherwise it refuses with
+`lock.bump-target-moved`, leaves the config edit unpublished, and reports
+both commits. A moved-tag test moves the tag after the eligibility check and
+asserts that acquisition fetches nothing new.
+
 ### D7: Output
 
-- `update` and `lock --upgrade` print, per held source:
+- `update` and `lock --upgrade` print, per source whose tip is newer than the
+  selected candidate (whether the lock stayed or advanced to an older
+  eligible descendant):
   `held <url>@<ref>: tip <short> effective <date>, eligible <date> (period <P>)`
   in the existing update report, before the dependency/materialization
-  sections. A held accepted rewrite prints the same line prefixed with
-  `rewrite accepted;`. Exit 0 when holds are the only outcome.
+  sections, followed by `advanced to <short>` when the lock moved. A held
+  accepted rewrite prints the same line prefixed with `rewrite accepted;`.
+  Exit 0 when holds are the only outcome.
 - `update --dry-run` prints the same lines and the rewrite refusal, with the
   statement that nothing was applied. With `--accept-history-rewrite` it
   previews the rewritten candidate and, with `--include-diff`, its diff
@@ -255,8 +282,10 @@ this is also local.
 - A history rewrite arrives as an update error diagnostic with a recovery
   action "Accept rewritten history…". The action opens a confirm modal built
   on the existing modal/forms toolkit, listing the D4 evidence rows, with
-  "Accept all" and per-row toggles, then re-runs the update with the accepted
-  identities. Cancel leaves everything unchanged. A held accepted rewrite is
+  "Accept all" and per-row toggles, then re-runs the update scoped to the
+  accepted identities (the same targeting the CLI uses), so unaccepted rows
+  keep their locks and cannot refuse the rerun. Cancel leaves everything
+  unchanged. A held accepted rewrite is
   reported like any hold.
 - Journeys: `tools/tui-qa/tests/update-cooldown-hold.spec.ts` (fixture
   repository with a fresh tip; press `u`; assert the hold text and unchanged
@@ -274,6 +303,7 @@ this is also local.
 | `cooldown.held` | info | update/lock/preview reports, TUI |
 | `cooldown.initial-acquisition` | warning (acknowledge) / error (strict) | sync, update, lock, TUI |
 | `lock.history-rewritten` | error | update, lock --upgrade, preview, TUI |
+| `lock.bump-target-moved` | error | update --bump |
 
 ### D10: Time and determinism
 
@@ -318,7 +348,7 @@ and the how-to documents the order: upgrade clients, then add the floor.
 
 - Requirement: Git candidates respect the effective cooldown
   - Scenario: Fresh tip is held and the lock is retained
-  - Scenario: Older eligible descendant is selected instead of the tip
+  - Scenario: Older eligible descendant is selected and the held tip is still reported
   - Scenario: Backdated tip is measured by its parent and held
   - Scenario: Backdated push onto a dormant branch is accepted
   - Scenario: Annotated tag ref uses the later of tagger and commit dates
@@ -330,6 +360,7 @@ and the how-to documents the order: upgrade clients, then add the floor.
   - Scenario: Strict initial acquisition refuses an entirely young history
 - Requirement: History rewrites are refused until accepted
   - Scenario: Rewritten branch refuses with evidence and leaves every lock unchanged
+  - Scenario: Rewrite refusal publishes no Marketplace lock bootstrap
   - Scenario: Unreachable locked commit is reported as a rewrite
   - Scenario: Locked commit reached through a merge is not a rewrite
   - Scenario: Blanket acceptance advances every refused source
@@ -338,11 +369,13 @@ and the how-to documents the order: upgrade clients, then add the floor.
 - Requirement: Tag bumps respect the effective cooldown
   - Scenario: Fresh higher tag is held and the next eligible tag is selected
   - Scenario: Annotated tag bump uses the later of tagger and commit dates
+  - Scenario: Tag moved after planning refuses acquisition
 
 `update-output`
 
 - Requirement: Holds and rewrites are reported
   - Scenario: Hold line names the tip, dates, and period and exits 0
+  - Scenario: Partial advancement reports the held tip
   - Scenario: Rewrite refusal lists evidence and the remediation commands
   - Scenario: Held candidates are excluded from content diffs
 

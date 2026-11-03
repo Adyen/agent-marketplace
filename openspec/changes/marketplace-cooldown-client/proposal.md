@@ -19,17 +19,17 @@ by `marketplace-cooldown-server`.
   `git-cooldown` apply to `marketplace` sources. The effective period for a
   Marketplace installation is the consumer floor; the server floor is applied
   by the Marketplace itself and is never lowered by a client.
-- Candidate selection for a Marketplace coordinate reads `latest`. A `200`
-  response identifies whether it is the registry head or a server-side
-  fallback (`held_head` present). The head is followed when it is eligible
-  under the consumer floor, including after a registry revert to older
-  content. A fallback, or a head younger than the consumer floor, is
-  accepted only when it is eligible under the consumer floor and its first
-  publication is later than the current pin's; otherwise the client reads the
-  revisions list and selects the eligible revision with the most recent first
-  publication later than the pin's, skipping revoked and rejected revisions as
-  today. A pin is therefore never replaced by older content except by
-  following the head.
+- Candidate selection for a Marketplace coordinate reads `latest`; with a
+  zero period nothing else happens. A `200` response identifies whether it
+  is the registry head or a server-side fallback (`held_head` present). The
+  head is followed when it is eligible under the consumer floor, including
+  after a registry revert to older content. A fallback, or a head younger
+  than the consumer floor, is accepted only when it is eligible under the
+  consumer floor and the registry published it more recently than the
+  current pin; otherwise the client walks the revisions list, most recently
+  published first, and selects the first eligible revision newer than the
+  pin, skipping revoked and rejected revisions as today. A pin is therefore
+  never replaced by content the registry published less recently.
 - A `409 marketplace.cooldown.held` from `latest`, or no eligible revision
   under the consumer floor, is a **held candidate** for an existing pin:
   `update` keeps the pin, reports the eligible date, and exits 0. A `409`
@@ -50,7 +50,15 @@ by `marketplace-cooldown-server`.
   held coordinate refuses with the same code and points at
   `agent-marketplace install <locator> --acknowledge-cooldown`; it grows no
   flag of its own, and `sync --locked`, `sync --check`, `sync --offline`, and
-  `doctor` are unchanged.
+  `doctor` are unchanged. This refusal reaches only consumers who declared a
+  `cooldown` period; `git-cooldown`'s documentation states that the same
+  mapping governs Marketplace sources once this change ships, so the scope
+  of the opt-in is known before anyone sets it, and the two client changes
+  should release together where possible.
+- Candidate ordering is by what the registry published most recently, so a
+  revision the registry rolled back from is never restored, and a collection
+  is a candidate only when every member it selects, transitively, is
+  eligible under the server's evidence and the consumer floor.
 - `missing_evidence` gains behavior: when a Marketplace omits
   `first_published_at`, `warn` proceeds as today and reports
   `cooldown.evidence-missing` once per endpoint; `refuse` fails candidate

@@ -59,10 +59,20 @@ It also carries the consumer configuration schema shared with
   the period, `acknowledge` takes the tip and warns with
   `cooldown.initial-acquisition`; `strict` refuses with the same code.
 - `update --bump` considers only tags whose effective commit date is eligible,
-  measured back to the merge-base with the locked commit, and does not require
-  ancestry between the old and new tag.
+  measured back to the merge-base with the locked commit, does not require
+  ancestry between the old and new tag, records the validated tag object and
+  commit in its plan, and refuses with `lock.bump-target-moved` if the tag no
+  longer resolves to that commit at acquisition.
+- The Git clock shortens the exposure window on active branches. On a dormant
+  branch, whose newest real commit is already older than the period, a push
+  backdated to that date is accepted immediately; the documentation states
+  this limit, and an opt-in first-observed clock is a possible follow-up.
 - `update`, `update --dry-run`, and `lock --upgrade` print one hold line per
-  held source; `--include-diff` never diffs a held candidate. `sync --locked`,
+  source whose tip is newer than the selected candidate, including after the
+  lock advanced to an older eligible commit; `--include-diff` never diffs a
+  held candidate. A rewrite refusal happens before any write, including the
+  Marketplace lock records an applying `update` bootstraps today, which are
+  staged behind the rewrite checks. `sync --locked`,
   `sync --check`, `sync --offline`, and `doctor` are unchanged: they never
   re-resolve.
 - The TUI shows holds in the update result and surfaces a history rewrite as a

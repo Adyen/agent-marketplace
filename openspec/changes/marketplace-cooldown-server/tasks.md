@@ -16,11 +16,12 @@
   it. Annotate `marketplace-api/first-publication-is-the-earliest-containing-occurrence`,
   `marketplace-api/republished-identical-content-keeps-its-first-publication`,
   `marketplace-api/archive-digest-repair-keeps-first-publication`
-- [ ] 1.2 Add `GetLatestEligibleResourceRevision(ctx, coord, cutoff)` to both
-  drivers returning eligible revisions in first-publication order, and the
-  eligibility-boundary aggregate used by validators (design D5). Cover the
-  no-eligible case and a coordinate whose head is older content republished
-  after a newer revision
+- [ ] 1.2 Add `ListEligibleOccurrences(ctx, coord, cutoff)` to both drivers
+  returning occurrences most recent first with each revision's first
+  publication, and the eligibility-boundary aggregate used by validators
+  (design D5). Cover the no-eligible case, a coordinate whose head is older
+  content republished after a newer revision, and the `A → B → A → C`
+  rollback history
 - [ ] 1.3 Run the `marketplace-catalog-performance` benchmarks before and after
   1.1 and 1.2 and record the delta in the pull request; keep within the
   existing budgets
@@ -47,11 +48,14 @@
   `marketplace-api/held-operator-exposed-revision-keeps-its-state-and-reports-held`,
   `marketplace-api/strict-mode-reports-non-acknowledgeable`
 - [ ] 3.2 Implement latest-revision resolution (design D3) including the
-  overlay filter in the fallback, `held_head`, and the `409` body with
+  occurrence-ordered fallback, the overlay filter, the transitive collection
+  member check, `held_head`, and the `409` body with
   `marketplace.cooldown.held`. Annotate
   `marketplace-api/eligible-head-resolves-as-latest`,
-  `marketplace-api/held-head-resolves-to-the-newest-eligible-revision-with-held-head-evidence`,
+  `marketplace-api/held-head-resolves-to-the-most-recently-published-eligible-revision-with-held-head-evidence`,
+  `marketplace-api/rolled-back-revision-is-not-restored-by-the-fallback`,
   `marketplace-api/revoked-eligible-revision-is-skipped-in-the-fallback`,
+  `marketplace-api/collection-with-a-held-member-is-held`,
   `marketplace-api/coordinate-with-no-eligible-revision-answers-409-with-cooldown-evidence`,
   `marketplace-api/zero-period-preserves-head-resolution`,
   `marketplace-api/registry-override-lowers-the-period`
@@ -63,10 +67,12 @@
   `marketplace-api/held-artifact-manifest-and-content-remain-downloadable-by-exact-digest`,
   `marketplace-api/managed-metadata-reads-accept-held-revisions`,
   `marketplace-api/existing-pin-inside-a-raised-floor-resolves-on-a-fresh-cache`
-- [ ] 3.4 Cache headers and validators (design D5): no immutable header on the
-  latest route, `no-store` on the `409` body, boundary-aware ETag on catalog,
-  search, and revision list, bounded `max-age` when a held row is present.
-  Annotate `marketplace-api/latest-response-carries-no-immutable-cache-header`,
+- [ ] 3.4 Cache headers and validators (design D5): `no-cache` plus a
+  policy- and eligibility-aware ETag on the latest route, `no-store` on the
+  `409` body, boundary- and policy-aware ETags on catalog, search, and
+  revision list, bounded `max-age` when a held row is present. Annotate
+  `marketplace-api/latest-response-revalidates-on-every-use`,
+  `marketplace-api/latest-validator-changes-when-the-floor-is-raised`,
   `marketplace-api/catalog-validator-changes-when-a-row-becomes-eligible`
 - [ ] 3.5 Update `api/openapi.yaml`: `first_published_at`, the
   `current_availability.cooldown` object, `held_head`, the `cooling-down`

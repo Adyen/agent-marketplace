@@ -21,7 +21,9 @@
   Annotate the six `config-layering/*` scenarios
 - [ ] 1.3 Update `site/docs/reference/configuration.md` and
   `configuration-layers.md` (field table, layer permissions, floor rule,
-  shared identities, diagnostics, `0s` spelling)
+  shared identities, diagnostics, `0s` spelling), stating that the same
+  mapping governs Marketplace sources once `marketplace-cooldown-client`
+  ships
 
 ## 2. History reads (internal/cache)
 
@@ -57,17 +59,22 @@
 - [ ] 3.2 Initial acquisition selection, `acknowledge` fallback warning, and
   `strict` refusal (design D5). Annotate the three initial-acquisition
   scenarios
-- [ ] 3.3 History-rewrite detection with the evidence table, refusal
-  `lock.history-rewritten` before any write, `--accept-history-rewrite` on
-  `update`, `lock --upgrade`, and `update --dry-run` with optional
-  `--registry`/`--ref` targeting, whole-chain selection after acceptance, and
-  the held-rewrite outcome that keeps the existing lock. Annotate the six
-  history-rewrite scenarios
-- [ ] 3.4 `--bump` eligibility filter and held-tag reporting. Annotate the two
+- [ ] 3.3 History-rewrite detection with the evidence table (including the
+  remote-heads refresh for reachability), refusal `lock.history-rewritten`
+  before any write, staging of the Marketplace lock bootstrap behind the
+  rewrite checks in the applying `update`, `--accept-history-rewrite` on
+  `update`, `lock --upgrade`, and `update --dry-run` with the existing
+  `--registry`/`--ref` targeting scoping the run, whole-chain selection after
+  acceptance, and the held-rewrite outcome that keeps the existing lock.
+  Annotate the seven history-rewrite scenarios
+- [ ] 3.4 `--bump` eligibility filter, held-tag reporting, recording of the
+  validated tag object and commit in the plan, anchored re-validation at
+  acquisition, and `lock.bump-target-moved` on a moved tag. Annotate the three
   tag scenarios
-- [ ] 3.5 Hold lines, rewrite report, and diff exclusion in `UpdateResult`
-  and `writeUpdateOutput`; preview parity in `update --dry-run`, including
-  the accepted-rewrite preview with `--include-diff`. Annotate the three
+- [ ] 3.5 Hold lines (including the held tip after a partial advancement),
+  rewrite report, and diff exclusion in `UpdateResult` and
+  `writeUpdateOutput`; preview parity in `update --dry-run`, including the
+  accepted-rewrite preview with `--include-diff`. Annotate the four
   `update-output/*` and three `update-preview/*` scenarios
 - [ ] 3.6 Extend `TestPublicCommandPathsHaveBehaviorTests` witnesses for the
   new flag on `update` and `lock`

@@ -21,11 +21,14 @@
 ## 2. Selection and holds
 
 - [ ] 2.1 Implement the shared candidate-selection helper (design D2) with
-  the head/fallback distinction and the no-downgrade rule, and use it from
-  `prepareLocator`, the update planner, and the TUI. Annotate
-  `resource-installation/young-head-resolves-to-the-newest-eligible-older-revision`,
-  `resource-installation/server-fallback-older-than-the-pin-is-held-not-installed`,
+  the zero-period bypass, the head/fallback distinction, occurrence-ordered
+  "newer than the pin", and the transitive collection member check, and use
+  it from `prepareLocator`, the update planner, and the TUI. Annotate
+  `resource-installation/young-head-resolves-to-the-most-recently-published-eligible-revision`,
+  `resource-installation/server-fallback-published-before-the-pin-is-held-not-installed`,
   `resource-installation/eligible-head-after-a-revert-is-followed`,
+  `resource-installation/zero-period-never-compares-timestamps`,
+  `resource-installation/collection-with-a-held-member-is-held-under-the-consumer-floor`,
   `resource-installation/explicit-revision-pins-skip-the-cooldown`
 - [ ] 2.2 Hold reporting in install, update, and `update --dry-run` using
   `held_head`/`409` evidence and the `first_published_at + P` eligible date;
@@ -43,8 +46,9 @@
 
 - [ ] 3.1 Add `install --acknowledge-cooldown`, the
   `cooldown.acknowledgement-required` refusal, the strict and
-  server-non-acknowledgeable refusals, the unknown-head refusal, and the
-  exact fetch-and-pin of the server-identified head, including after a
+  server-non-acknowledgeable refusals checked before mirror download,
+  index-only clone, and collection expansion, the unknown-head refusal, and
+  the exact fetch-and-pin of the server-identified head, including after a
   revert. Annotate the six `resource-installation` acknowledgement scenarios
 - [ ] 3.2 Writing `sync` refusal for a held initial Marketplace acquisition
   pointing at the install command. Annotate
@@ -54,8 +58,8 @@
 
 ## 4. TUI
 
-- [ ] 4.1 Detail view "Held until" from `current_availability.cooldown`
-  (design D7); update result holds
+- [ ] 4.1 Detail view "Held until" from `current_availability.cooldown` and
+  the consumer floor (design D7); update result holds
 - [ ] 4.2 Acknowledgement confirm modal in the Marketplace install flow; a
   hold that is not acknowledgeable on either side shows the diagnostic
   without a confirm action
@@ -64,7 +68,7 @@
   outcome; add `marketplace-install-acknowledge-cooldown.spec.ts` and
   `marketplace-update-cooldown-hold.spec.ts`; list them in
   `tools/tui-qa/README.md`; confirm each fails without the change. Annotate
-  the three `tui-interactions` and one `tui-feedback` scenarios
+  the four `tui-interactions` and one `tui-feedback` scenarios
 
 ## 5. E2E and documentation
 

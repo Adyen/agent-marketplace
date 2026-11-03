@@ -60,10 +60,17 @@ reflects it. The client never requests anything younger than `latest` offers.
 ### D2: Candidate selection
 
 For a coordinate with consumer period `P`, cutoff `C = now − P` (one `now`
-per invocation), and current pin `pin` (absent for an initial acquisition):
+per invocation), and current pin `pin` (absent for an initial acquisition).
+"Newer than the pin" always means *published more recently by the registry*
+(a later most-recent occurrence), never a later first publication, so a
+rollback the registry made is followed and a rolled-back revision is not
+restored. Eligibility ("old enough") is always measured by first publication.
 
 1. `GET latest`.
    - `404` → missing resource, unchanged handling.
+   - `P == 0` and `200` → candidate found, with no timestamp comparison at
+     all; this is today's behavior, and it also covers a revision whose
+     first publication is later than the captured `now`.
    - `409` with `code: marketplace.cooldown.held` → no revision is eligible
      under the server floor. Record the body's `revision`,
      `first_published_at`, `cooldown_until`, and `acknowledgeable`; a body
@@ -71,21 +78,26 @@ per invocation), and current pin `pin` (absent for an initial acquisition):
      eligible set.
    - `200` without `first_published_at` → D5.
    - `200` that is the **head** (no `held_head`) and
-     `first_published_at ≤ C` → candidate found. This is also the `P == 0`
-     path, unchanged from today, and it is how a registry revert to older
-     content is followed: the head is what the registry publishes, so
-     following it is an ordinary update, not a cooldown decision.
+     `first_published_at ≤ C` → candidate found. This is how a registry
+     revert to older content is followed: the head is what the registry
+     publishes, so following it is an ordinary update, not a cooldown
+     decision.
    - `200` that is a **fallback** (`held_head` present) or a head younger
      than `C` → the returned revision is a candidate only if
-     `first_published_at ≤ C` and, when `pin` exists, its first publication
-     is later than `pin`'s; otherwise go to step 2. Keep `held_head` for
-     reporting.
-2. `GET revisions`; keep revisions with `first_published_at ≤ C` and, when
-   `pin` exists, first publication later than `pin`'s. Order by first
-   publication descending and take the first one that passes
+     `first_published_at ≤ C` and, when `pin` exists, it is newer than the
+     pin; otherwise go to step 2. Keep `held_head` for reporting.
+2. `GET revisions` (already ordered by most recent occurrence first); walk
+   it in that order and take the first revision with `first_published_at ≤ C`
+   that is newer than `pin` (when `pin` exists) and passes
    `enforceMarketplaceUse`. Index-only pins use that revision's occurrence
    commit through `GetRegistryOccurrence` as today.
-3. No candidate:
+3. For a **collection** candidate, expand its manifest and require every
+   member revision, transitively, to have `cooldown.held == false` from the
+   server and `first_published_at ≤ C` under the consumer floor; otherwise
+   the collection is not a candidate, and the hold reports the latest member
+   eligible date. Expanding a collection fetches members by exact digest, so
+   this is the only place a held member can be caught.
+4. No candidate:
    - `pin` exists → **hold** (D3).
    - Initial acquisition → D4.
 
@@ -128,7 +140,11 @@ is available, because the client cannot know what it would be pinning.
   `cooldown.acknowledgement-required` naming the coordinate, the head's first
   publication, the eligible date, and the exact command to run.
 - `strict`, or `acknowledgeable: false` from the server → refuse with the
-  same code and a message naming which side disabled acknowledgement.
+  same code and a message naming which side disabled acknowledgement. The
+  check precedes acquisition in every mode: mirror artifact download,
+  index-only Git clone of the exact occurrence, and collection manifest
+  expansion, because the server cannot distinguish an acknowledgement fetch
+  from a pin resolution and never gates distribution.
 - Head unknown (unparseable `409` body) → refuse with the same code and the
   eligible date reported as unknown.
 
@@ -155,9 +171,11 @@ effect is that the TUI detail view can show a held head from cache.
 
 ### D7: TUI
 
-- Detail view: when the catalog head's `current_availability.cooldown.held`
-  is true, show "Held until <date>" beside the version information, using
-  the words held/eligible only.
+- Detail view: show "Held until <date>" beside the version information when
+  the catalog head is held by the server (`cooldown.held`) **or** by the
+  consumer floor (`first_published_at > now − P`), whichever yields the
+  later date, using the words held/eligible only. A server with a zero
+  period and a consumer with a positive one therefore still shows the hold.
 - Install flow: when preparation reports `cooldown.acknowledgement-required`
   and acknowledgement is possible, open a confirm modal with the coordinate,
   age, eligible date, and the sentence that installing now skips the
@@ -187,17 +205,19 @@ effect is that the TUI detail view can show a held head from cache.
 `resource-installation`
 
 - Requirement: Marketplace candidates respect the consumer cooldown
-  - Scenario: Young head resolves to the newest eligible older revision
+  - Scenario: Young head resolves to the most recently published eligible revision
   - Scenario: Install reports the held head when it selects an older revision
-  - Scenario: Server fallback older than the pin is held, not installed
+  - Scenario: Server fallback published before the pin is held, not installed
   - Scenario: Eligible head after a revert is followed
+  - Scenario: Zero period never compares timestamps
+  - Scenario: Collection with a held member is held under the consumer floor
   - Scenario: Explicit revision pins skip the cooldown
 - Requirement: Initial acquisitions of young resources are acknowledged
   - Scenario: Install without acknowledgement refuses with the eligible date
   - Scenario: Acknowledged install pins the server-identified head as a floating installation
   - Scenario: Acknowledged install after a revert pins the head, not the youngest revision
   - Scenario: Strict initial acquisition refuses acknowledgement
-  - Scenario: Server non-acknowledgeable hold refuses acknowledgement
+  - Scenario: Server non-acknowledgeable hold refuses acknowledgement in every acquisition mode
   - Scenario: Unparseable hold body refuses acknowledgement and reports an unknown date
 - Requirement: Missing first publication follows missing_evidence
   - Scenario: Warn proceeds and reports once per endpoint
@@ -226,7 +246,8 @@ effect is that the TUI detail view can show a held head from cache.
   - Scenario: Confirming the acknowledgement modal installs and records the pin
   - Scenario: Cancelling the acknowledgement modal changes nothing
 - Requirement: Held heads are visible in the detail view
-  - Scenario: Detail view shows the eligible date for a held head
+  - Scenario: Detail view shows the eligible date for a server-held head
+  - Scenario: Detail view shows the eligible date for a consumer-floor hold
 
 `tui-feedback`
 

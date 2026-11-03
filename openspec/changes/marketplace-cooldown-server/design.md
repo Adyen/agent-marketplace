@@ -118,12 +118,16 @@ and server time `now`:
    today, so a client sees the same refusal it sees now for a head in that
    state; the head's meaning as "what the registry currently publishes" is
    preserved.
-3. Otherwise return the revision of that coordinate with the most recent first
-   publication at or before `now − P` whose overlay is `available` or
-   `operator-exposed`. Revisions whose overlay is `revoked`, `policy-blocked`,
-   `blocked`, or `no-artifact` are skipped: they are historical revisions, not
-   the head, and skipping them is what keeps an older safe revision
-   installable when the newest eligible one was revoked. The response carries
+3. Otherwise walk the coordinate's registry occurrences from the most recent
+   backwards and return the first revision whose first publication is at or
+   before `now − P` and whose overlay is `available` or `operator-exposed`.
+   Ordering by **most recent occurrence**, not by first publication, means a
+   history `A → B → A → C` with `C` held resolves to `A` (what the registry
+   rolled back to), never to `B` (what it rolled back from). Revisions whose
+   overlay is `revoked`, `policy-blocked`, `blocked`, or `no-artifact` are
+   skipped: they are historical revisions, not the head, and skipping them is
+   what keeps an older safe revision installable when the newest eligible one
+   was revoked. The response carries
    `held_head: {revision, first_published_at, cooldown_until}` describing the
    head that was withheld, so clients can report the hold and tell a fallback
    from a revert.
@@ -133,11 +137,21 @@ and server time `now`:
    error vocabulary; `404` is reserved for coordinates that do not exist, and
    clients translate it into "remove the pin".
 
-The store gains `GetLatestEligibleResourceRevision(ctx, coord, cutoff)` on
-both drivers returning candidates in first-publication order so the handler
-can apply the overlay filter; step 2 deliberately prefers the head when
-eligible rather than the globally newest eligible revision, so a revert to
-old content resolves to the head.
+**Collections.** A collection revision is eligible only when its own first
+publication is at or before the cutoff **and** every member revision it
+selects, transitively through included collections, is eligible under that
+member's registry period. Members live in other registries with their own
+overrides, and a client expands a collection by fetching members by exact
+digest, so an eligible collection with a held member would otherwise install
+the held member without a hold. A collection whose members are held is
+treated as held; `cooldown_until` is the latest member's, and `held_head`
+names the collection revision.
+
+The store gains `ListEligibleOccurrences(ctx, coord, cutoff)` on both drivers
+returning the coordinate's occurrences most recent first with each revision's
+first publication, so the handler can apply the overlay filter and the
+collection member check; step 2 deliberately prefers the head when eligible
+rather than any fallback, so a revert to old content resolves to the head.
 
 ### D4: Availability overlay, the `cooldown` object, and distribution
 
@@ -174,19 +188,23 @@ the next request after a configuration reload.
 
 ### D5: Caching and validators
 
-- The latest-revision route emits no immutable cache header; any
-  `Cache-Control: max-age` must not exceed the time until that coordinate's
-  next eligibility boundary. The `409` body is `Cache-Control: no-store`.
+- The latest-revision route answers with `Cache-Control: no-cache` and a
+  validator (ETag) derived from the head revision, the returned revision, the
+  policy revision, and the eligibility state, so every use revalidates and an
+  operator raising the floor or changing a registry override invalidates the
+  previous answer immediately rather than at the next eligibility boundary.
+  Revalidation is one metadata read. The `409` body is
+  `Cache-Control: no-store`.
 - Digest-addressed routes keep `public, max-age=31536000, immutable`; nothing
   they serve depends on the hold (D4).
 - The catalog projection, search, and revision-list validators incorporate
-  the most recent eligibility boundary already crossed:
-  `MAX(first_published_at + P)` over rows with `first_published_at + P ≤ now`,
-  computed with one aggregate per request alongside the existing inputs.
-  A conditional request therefore misses once a row becomes eligible instead
-  of being answered `304` with a stale `cooling-down` state. Responses that
-  contain a held row carry `Cache-Control: max-age` bounded by the earliest
-  pending boundary.
+  the policy revision and the most recent eligibility boundary already
+  crossed: `MAX(first_published_at + P)` over rows with
+  `first_published_at + P ≤ now`, computed with one aggregate per request
+  alongside the existing inputs. A conditional request therefore misses once
+  a row becomes eligible or the floor changes, instead of being answered
+  `304` with a stale `cooling-down` state. Responses that contain a held row
+  carry `Cache-Control: max-age` bounded by the earliest pending boundary.
 
 ### D6: Search and catalog projection
 
@@ -237,8 +255,10 @@ listed so reviewers can judge the contract now.
   - Scenario: Archive-digest repair keeps first publication
 - Requirement: Latest-revision resolution honors the server cooldown
   - Scenario: Eligible head resolves as latest
-  - Scenario: Held head resolves to the newest eligible revision with held_head evidence
+  - Scenario: Held head resolves to the most recently published eligible revision with held_head evidence
+  - Scenario: Rolled-back revision is not restored by the fallback
   - Scenario: Revoked eligible revision is skipped in the fallback
+  - Scenario: Collection with a held member is held
   - Scenario: Coordinate with no eligible revision answers 409 with cooldown evidence
   - Scenario: Zero period preserves head resolution
   - Scenario: Registry override lowers the period
@@ -254,8 +274,9 @@ listed so reviewers can judge the contract now.
   - Scenario: Unknown held value fails configuration
   - Scenario: Negative period fails configuration
   - Scenario: Malformed registry override is ignored with a warning
-- Requirement: Caching respects eligibility boundaries
-  - Scenario: Latest response carries no immutable cache header
+- Requirement: Caching respects eligibility boundaries and policy changes
+  - Scenario: Latest response revalidates on every use
+  - Scenario: Latest validator changes when the floor is raised
   - Scenario: Catalog validator changes when a row becomes eligible
 
 `marketplace-web-ui`

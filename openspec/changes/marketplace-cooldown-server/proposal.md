@@ -31,23 +31,25 @@ The client halves are `git-cooldown` and `marketplace-cooldown-client`.
   clients read the hold from the `cooldown` object, not from the availability
   word.
 - The latest-revision route never returns a held candidate. It returns the
-  registry-head revision when that revision is eligible; otherwise the
-  eligible revision with the most recent first publication that is not
-  revoked, rejected, blocked, or artifact-less, together with a `held_head`
-  object describing the head it withheld; otherwise `409 Conflict` with a
-  machine-readable body naming the head revision and its `cooldown_until`.
-  Clients that predate this change therefore fail closed on a coordinate with
-  no eligible revision instead of installing it.
+  registry-head revision when that revision is eligible; otherwise the most
+  recently published eligible revision that is not revoked, rejected,
+  blocked, or artifact-less (ordered by registry occurrence, so a rolled-back
+  revision is never restored), together with a `held_head` object describing
+  the head it withheld; otherwise `409 Conflict` with a machine-readable body
+  naming the head revision and its `cooldown_until`. A collection revision is
+  eligible only when every member it selects, transitively, is eligible under
+  its own registry's period. Clients that predate this change therefore fail
+  closed on a coordinate with no eligible revision instead of installing it.
 - A hold is not a distribution control. Artifact, archive, content, manifest,
   and inspection routes serve held revisions exactly as before, so a
   Marketplace installation pinned before a floor was raised still resolves by
   exact digest on a fresh machine, and index-only acquisition is unaffected.
   `held: strict` only marks held revisions non-acknowledgeable for conforming
   clients; hard denial remains revocation's job.
-- Latest-revision responses are not cacheable past the next eligibility
-  boundary, and the catalog and revision-list validators (ETag,
-  `Last-Modified`) change when a revision crosses its eligibility boundary, so
-  conditional requests cannot pin a stale `cooling-down` state.
+- Latest-revision responses revalidate on every use (`no-cache` with a
+  policy- and eligibility-aware validator), and the catalog and revision-list
+  validators change when a revision crosses its eligibility boundary or the
+  floor changes, so caches cannot pin a stale answer across a policy change.
   Digest-addressed routes keep their immutable caching.
 - Metadata reads in database-management mode (revision list, exact revision,
   history, inspection) accept held revisions; the managed access gate treats
