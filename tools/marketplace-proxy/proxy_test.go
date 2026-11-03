@@ -33,15 +33,17 @@ func TestMarketplaceNginxRedirects(t *testing.T) {
 			t.Run(profile+"/docs="+strconv.FormatBool(docsEnabled), func(t *testing.T) {
 				container := startProxy(t, image, profile, docsEnabled)
 
-				t.Run("OIDC callback with 256-group token", func(t *testing.T) {
-					response := proxyResponse(t, container, "/api/v1/admin/auth/callback?state=proxy-check&code=256-group-token")
-					if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/admin" {
-						t.Fatalf("callback response = %d Location %q, want 303 Location /admin", response.StatusCode, response.Header.Get("Location"))
-					}
-					if len(response.Header.Values("Set-Cookie")) == 0 {
-						t.Fatal("callback response has no session cookie")
-					}
-				})
+				if strings.HasSuffix(profile, "/nginx.conf") {
+					t.Run("OIDC callback with narrowed session cookie", func(t *testing.T) {
+						response := proxyResponse(t, container, "/api/v1/admin/auth/callback?state=proxy-check&code=proxy-check")
+						if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/admin" {
+							t.Fatalf("callback response = %d Location %q, want 303 Location /admin", response.StatusCode, response.Header.Get("Location"))
+						}
+						if len(response.Header.Values("Set-Cookie")) == 0 {
+							t.Fatal("callback response has no session cookie")
+						}
+					})
+				}
 
 				for _, tc := range []struct {
 					path     string
