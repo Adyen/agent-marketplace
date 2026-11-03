@@ -125,16 +125,16 @@ func TestPluginDecodeFailureBlocksTheWholeInstanceUnlessExcluded(t *testing.T) {
 		{name: "excluded-bad-member-allows-instance", excludeBad: true, wantMember: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			repo, run := pluginCommandFixture(t, "    - {kind: plugin, name: review-kit, delivery: decompose}\n")
+			repo, run := pluginCommandFixture(t, "    - plugin/review-kit\n")
 			pluginDir := filepath.Join(filepath.Dir(repo), "marketplace", "plugins", "review-kit")
 			badSkill := filepath.Join(pluginDir, "skills", "bad")
 			if err := os.MkdirAll(badSkill, 0o755); err != nil {
 				t.Fatal(err)
 			}
 			writeFile(t, filepath.Join(badSkill, "SKILL.md"), "---\nname: bad\ninvalid: [\n---\nbody\n")
-			selection := "    - {kind: plugin, name: review-kit, delivery: decompose}\n"
+			selection := "    - plugin/review-kit\n"
 			if tc.excludeBad {
-				selection = "    - {kind: plugin, name: review-kit, delivery: decompose, exclude: [skill/bad]}\n"
+				selection = "    - {kind: plugin, name: review-kit, exclude: [skill/bad]}\n"
 			}
 			configurePluginDeliveryFixture(t, repo, "claude", "resources:\n  team:\n"+selection)
 
@@ -176,7 +176,7 @@ func TestOtherPluginInstancesAndLeavesContinueWhenOneInstanceBlocks(t *testing.T
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"),
 		"apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {directory: "+
 			filepath.ToSlash(catalogDir)+", format: claude-marketplace}\n  loose: {directory: "+
-			filepath.ToSlash(leafDir)+"}\nresources:\n  team:\n    - {kind: plugin, name: review-kit, delivery: decompose}\n    - {kind: plugin, name: good-kit, delivery: decompose}\n  loose:\n    - skill/tooling\n")
+			filepath.ToSlash(leafDir)+"}\nresources:\n  team:\n    - plugin/review-kit\n    - plugin/good-kit\n  loose:\n    - skill/tooling\n")
 	withWorkingDir(t, repo)
 
 	output, err := run("sync", "--no-backup")
@@ -221,7 +221,7 @@ func TestPluginHookUsesCompletePackageGeneration(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	repo, run := pluginCommandFixture(t, "    - {kind: plugin, name: review-kit, delivery: decompose}\n")
+	repo, run := pluginCommandFixture(t, "    - plugin/review-kit\n")
 	root := filepath.Dir(repo)
 	pluginDir := filepath.Join(root, "marketplace", "plugins", "review-kit")
 	scripts := filepath.Join(pluginDir, "scripts")
@@ -398,7 +398,7 @@ func TestRepositoryPluginRemovalLeavesMachineInstance(t *testing.T) {
 	root := filepath.Dir(repo)
 	catalogDir := filepath.Join(root, "marketplace")
 	globalConfig := "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nmaterialization: {mode: file}\nsources:\n  team: {directory: " +
-		filepath.ToSlash(catalogDir) + ", format: claude-marketplace}\nresources:\n  team:\n    - {kind: plugin, name: review-kit, delivery: decompose}\n"
+		filepath.ToSlash(catalogDir) + ", format: claude-marketplace}\nresources:\n  team:\n    - plugin/review-kit\n"
 	writeConfig(t, filepath.Join(root, "home", ".agents", "config.yaml"), globalConfig)
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), globalConfig)
 	withWorkingDir(t, repo)
@@ -407,11 +407,17 @@ func TestRepositoryPluginRemovalLeavesMachineInstance(t *testing.T) {
 		t.Fatalf("machine and repository plugin sync failed: %v\n%s", err, output)
 	}
 	repoMember := filepath.Join(repo, ".claude", "skills", "review-kit-review", "SKILL.md")
+	if _, err := os.Stat(repoMember); err != nil {
+		t.Fatalf("repository-scope decomposed member missing: %v", err)
+	}
+	machineSettings := filepath.Join(root, "home", ".claude", "settings.json")
+	settings, err := os.ReadFile(machineSettings)
+	if err != nil || !strings.Contains(string(settings), "review-kit@am-") {
+		t.Fatalf("user-scope native registration missing: %v\n%s", err, settings)
+	}
 	machineMember := filepath.Join(root, "home", ".claude", "skills", "review-kit-review", "SKILL.md")
-	for _, path := range []string{repoMember, machineMember} {
-		if _, err := os.Stat(path); err != nil {
-			t.Fatalf("plugin member missing at %s: %v", path, err)
-		}
+	if _, err := os.Stat(machineMember); !os.IsNotExist(err) {
+		t.Fatalf("user-scope native plugin was also decomposed: %v", err)
 	}
 
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"),
@@ -423,7 +429,8 @@ func TestRepositoryPluginRemovalLeavesMachineInstance(t *testing.T) {
 	if _, err := os.Stat(repoMember); !os.IsNotExist(err) {
 		t.Fatalf("repository instance remained after deselection: %v", err)
 	}
-	if _, err := os.Stat(machineMember); err != nil {
-		t.Fatalf("machine instance was removed with repository selection: %v", err)
+	settings, err = os.ReadFile(machineSettings)
+	if err != nil || !strings.Contains(string(settings), "review-kit@am-") {
+		t.Fatalf("machine native registration was removed with repository selection: %v\n%s", err, settings)
 	}
 }

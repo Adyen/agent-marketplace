@@ -15,11 +15,11 @@ type PluginDeliveryResolution struct {
 	Diagnostic *diag.Diagnostic
 }
 
-func ResolvePluginDelivery(request, format string, targetHarness hcc.Target) PluginDeliveryResolution {
+func ResolvePluginDelivery(request, format string, targetHarness hcc.Target, scope Scope) PluginDeliveryResolution {
 	if request == "decompose" {
 		return PluginDeliveryResolution{Delivery: "decompose"}
 	}
-	policy, err := pluginpolicy.LookupNativeDelivery(target.Target(targetHarness))
+	policy, err := pluginpolicy.LookupNativeDelivery(target.Target(targetHarness), string(scope))
 	return resolvePluginDeliveryPolicy(request, format, target.Target(targetHarness), policy, err)
 }
 

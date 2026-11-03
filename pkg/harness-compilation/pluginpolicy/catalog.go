@@ -124,11 +124,76 @@ type deliveryStatus struct {
 	Status string `yaml:"status"`
 }
 
-type nativeDelivery struct {
+type nativeDeliveryPolicy struct {
 	Status  string `yaml:"status"`
 	Format  string `yaml:"format"`
 	Probe   string `yaml:"probe"`
 	Refresh string `yaml:"refresh"`
+}
+
+type nativeDelivery struct {
+	Scopes map[string]nativeDeliveryPolicy
+}
+
+func (d *nativeDelivery) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("delivery.native must be a mapping")
+	}
+	hasPolicyFields, hasScopes := false, false
+	for i := 0; i < len(node.Content); i += 2 {
+		key := node.Content[i]
+		switch key.Value {
+		case "status", "format", "probe", "refresh":
+			hasPolicyFields = true
+		case "user", "repo":
+			hasScopes = true
+		default:
+			return fmt.Errorf("delivery.native has unknown scope or policy key %q", key.Value)
+		}
+	}
+	if hasPolicyFields && hasScopes {
+		return fmt.Errorf("delivery.native cannot mix global policy fields with per-scope policies")
+	}
+	if hasPolicyFields {
+		policy, err := decodeNativeDeliveryPolicy(node, "delivery.native")
+		if err != nil {
+			return err
+		}
+		d.Scopes = map[string]nativeDeliveryPolicy{"user": policy, "repo": policy}
+		return nil
+	}
+	d.Scopes = make(map[string]nativeDeliveryPolicy, 2)
+	for i := 0; i < len(node.Content); i += 2 {
+		key, value := node.Content[i], node.Content[i+1]
+		if key.Value != "user" && key.Value != "repo" {
+			return fmt.Errorf("delivery.native has unknown scope key %q", key.Value)
+		}
+		policy, err := decodeNativeDeliveryPolicy(value, "delivery.native."+key.Value)
+		if err != nil {
+			return err
+		}
+		d.Scopes[key.Value] = policy
+	}
+	return nil
+}
+
+func decodeNativeDeliveryPolicy(node *yaml.Node, field string) (nativeDeliveryPolicy, error) {
+	if node.Kind != yaml.MappingNode {
+		return nativeDeliveryPolicy{}, fmt.Errorf("%s must be a mapping", field)
+	}
+	for i := 0; i < len(node.Content); i += 2 {
+		key := node.Content[i]
+		switch key.Value {
+		case "status", "format", "probe", "refresh":
+		default:
+			return nativeDeliveryPolicy{}, fmt.Errorf("%s has unknown field %q", field, key.Value)
+		}
+	}
+	var policy nativeDeliveryPolicy
+	if err := node.Decode(&policy); err != nil {
+		return nativeDeliveryPolicy{}, fmt.Errorf("%s: %w", field, err)
+	}
+	return policy, nil
 }
 
 type delivery struct {
@@ -343,29 +408,43 @@ func (c *harnessCatalog) validate(name string, formats map[string]formatCatalog,
 	if !slices.Contains(statuses, c.Delivery.Decompose.Status) {
 		return fmt.Errorf("%s: delivery.decompose.status %q is invalid", file, c.Delivery.Decompose.Status)
 	}
-	native := c.Delivery.Native
-	if !slices.Contains(statuses, native.Status) {
-		return fmt.Errorf("%s: delivery.native.status %q is invalid", file, native.Status)
-	}
-	if native.Status != DeliveryVerified && (native.Format != "" || native.Probe != "") {
-		return fmt.Errorf("%s: delivery.native.format/probe require verified status", file)
-	}
-	if native.Refresh != "" && native.Refresh != NativeRefreshRestartRequired {
-		return fmt.Errorf("%s: delivery.native.refresh %q is invalid", file, native.Refresh)
-	}
-	if native.Status == DeliveryVerified {
-		if native.Probe == "" {
-			return fmt.Errorf("%s: delivery.native verified requires a probe identifier", file)
-		}
-		if !probes[native.Probe] {
-			return fmt.Errorf("%s: delivery.native names undefined probe %q", file, native.Probe)
-		}
-		format, ok := formats[native.Format]
+	for _, scope := range []string{"user", "repo"} {
+		native, ok := c.Delivery.Native.Scopes[scope]
+		field := "delivery.native." + scope
 		if !ok {
-			return fmt.Errorf("%s: delivery.native names unknown format %q", file, native.Format)
+			return fmt.Errorf("%s: %s.status is required", file, field)
 		}
-		if format.Role != RolePackage || !slices.Contains(c.Accepts, native.Format) {
-			return fmt.Errorf("%s: delivery.native verified for format %q the harness does not accept", file, native.Format)
+		if !slices.Contains(statuses, native.Status) {
+			return fmt.Errorf("%s: %s.status %q is invalid", file, field, native.Status)
+		}
+		if native.Status != DeliveryVerified {
+			if native.Format != "" {
+				return fmt.Errorf("%s: %s.format requires verified status", file, field)
+			}
+			if native.Probe != "" {
+				return fmt.Errorf("%s: %s.probe requires verified status", file, field)
+			}
+		}
+		if native.Refresh != "" && native.Refresh != NativeRefreshRestartRequired {
+			return fmt.Errorf("%s: %s.refresh %q is invalid", file, field, native.Refresh)
+		}
+		if native.Status == DeliveryVerified {
+			if native.Probe == "" {
+				return fmt.Errorf("%s: %s.probe is required for verified status", file, field)
+			}
+			if !probes[native.Probe] {
+				return fmt.Errorf("%s: %s.probe names undefined probe %q", file, field, native.Probe)
+			}
+			if native.Format == "" {
+				return fmt.Errorf("%s: %s.format is required for verified status", file, field)
+			}
+			format, ok := formats[native.Format]
+			if !ok {
+				return fmt.Errorf("%s: %s.format names unknown format %q", file, field, native.Format)
+			}
+			if format.Role != RolePackage || !slices.Contains(c.Accepts, native.Format) {
+				return fmt.Errorf("%s: %s.format verified for format %q the harness does not accept", file, field, native.Format)
+			}
 		}
 	}
 	for _, kind := range slices.Sorted(maps.Keys(c.Surfaces.Plugin)) {

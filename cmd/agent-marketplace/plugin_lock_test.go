@@ -149,12 +149,12 @@ func TestSyncPersonalPluginSelectionLocksInPersonalLayer(t *testing.T) {
 			commitAndPushAll(t, formatWorking, "seed catalog")
 
 			formatURL := filepath.ToSlash(formatOrigin)
-			writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  cat: {git: file://"+formatURL+", ref: main, format: claude-marketplace}\nresources:\n  cat:\n    - {kind: plugin, name: kit-a, delivery: decompose}\n")
+			writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  cat: {git: file://"+formatURL+", ref: main, format: claude-marketplace}\nresources:\n  cat:\n    - plugin/kit-a\n")
 
 			baselineHome := "apiVersion: agent-marketplace/v4\nharnesses: [claude]\n"
 			personalConfig := baselineHome + "sources:\n  cat: {git: file://" + formatURL + ", ref: main, format: claude-marketplace}\n"
 			if mode == "direct" {
-				personalConfig += "resources:\n  cat:\n    - {kind: plugin, name: kit-b, delivery: decompose}\n"
+				personalConfig += "resources:\n  cat:\n    - plugin/kit-b\n"
 			} else {
 				looseOrigin, looseWorking := createBareRepoWithWorkingClone(t, "loose.git")
 				writeSkill(t, looseWorking, "tooling", "Tooling baseline", nil)
@@ -191,6 +191,15 @@ func TestSyncPersonalPluginSelectionLocksInPersonalLayer(t *testing.T) {
 			if lockHasPluginResource(personalDoc, "kit-a") {
 				t.Fatalf("the personal lock must not absorb the repository layer's selection:\n%s", personalData)
 			}
+			if mode == "direct" {
+				settings, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+				if err != nil || !bytes.Contains(settings, []byte("kit-b@am-")) {
+					t.Fatalf("personal-scope Claude plugin must be delivered natively: %v\n%s", err, settings)
+				}
+				if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "kit-b-skill-b", "SKILL.md")); !os.IsNotExist(err) {
+					t.Fatalf("personal-scope Claude plugin must not also be decomposed: %v", err)
+				}
+			}
 			if output, err := executeCommand("sync", "--check"); err != nil {
 				t.Fatalf("sync --check must verify both layers: %v\n%s", err, output)
 			}
@@ -210,6 +219,15 @@ func TestSyncPersonalPluginSelectionLocksInPersonalLayer(t *testing.T) {
 			}
 			if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "kit-b-skill-b", "SKILL.md")); !os.IsNotExist(err) {
 				t.Fatalf("deselected personal plugin member remained installed: %v", err)
+			}
+			if mode == "direct" {
+				settings, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+				if err == nil && bytes.Contains(settings, []byte("kit-b@am-")) {
+					t.Fatalf("deselected personal plugin registration remained installed: %s", settings)
+				}
+				if err != nil && !os.IsNotExist(err) {
+					t.Fatalf("read deselected personal Claude settings: %v", err)
+				}
 			}
 			if _, err := os.Stat(filepath.Join(repo, ".claude", "skills", "kit-a-skill-a", "SKILL.md")); err != nil {
 				t.Fatalf("committed repository plugin member was removed with personal selection: %v", err)
@@ -426,7 +444,7 @@ func TestSyncExternalCatalogEntryLockedToOwnCommit(t *testing.T) {
 	writeCatalogRepo(t, catalogWorking, entryOrigin)
 	commitAndPushAll(t, catalogWorking, "seed catalog")
 
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {git: file://"+filepath.ToSlash(catalogOrigin)+", ref: main, format: claude-marketplace}\nresources:\n  team:\n    - {kind: plugin, name: ext-kit, delivery: decompose}\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {git: file://"+filepath.ToSlash(catalogOrigin)+", ref: main, format: claude-marketplace}\nresources:\n  team:\n    - plugin/ext-kit\n")
 	withWorkingDir(t, repo)
 	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
 	if output, err := executeCommand("sync", "--no-backup"); err != nil {
@@ -827,7 +845,7 @@ func TestSyncDeselectedExternalEntryMakesLockStale(t *testing.T) {
 	configBody := func(selectPlugin bool) string {
 		resources := ""
 		if selectPlugin {
-			resources = "\nresources:\n  team:\n    - {kind: plugin, name: ext-kit, delivery: decompose}\n"
+			resources = "\nresources:\n  team:\n    - plugin/ext-kit\n"
 		}
 		return "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {git: file://" + filepath.ToSlash(catalogOrigin) + ", ref: main, format: claude-marketplace}\n" + resources
 	}
@@ -934,10 +952,10 @@ func TestSyncUsesPerLayerPluginMemberKeysAndUnionsSameLayerExclusions(t *testing
 	secondSource := "team2: {git: file://" + filepath.ToSlash(catalogOrigin) + ", ref: main, format: claude-marketplace}\n"
 	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"),
 		"apiVersion: agent-marketplace/v4\nharnesses: [claude]\nmaterialization: {mode: file}\nsources:\n  "+source+"  "+secondSource+
-			"resources:\n  team:\n    - {kind: plugin, name: local-kit, delivery: decompose, exclude: [skill/a]}\n  team2:\n    - {kind: plugin, name: local-kit, delivery: decompose, exclude: [skill/b]}\n")
+			"resources:\n  team:\n    - {kind: plugin, name: local-kit, exclude: [skill/a]}\n  team2:\n    - {kind: plugin, name: local-kit, exclude: [skill/b]}\n")
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"),
 		"apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  "+source+
-			"resources:\n  team:\n    - {kind: plugin, name: local-kit, delivery: decompose, exclude: [skill/a]}\n")
+			"resources:\n  team:\n    - {kind: plugin, name: local-kit, exclude: [skill/a]}\n")
 	withWorkingDir(t, repo)
 
 	output, err := executeCommand("sync", "--no-backup")
@@ -945,22 +963,26 @@ func TestSyncUsesPerLayerPluginMemberKeysAndUnionsSameLayerExclusions(t *testing
 		t.Fatalf("sync must deliver each layer's committed plugin member keys: %v\n%s", err, output)
 	}
 	for _, tc := range []struct {
-		root string
 		name string
 		want bool
 	}{
-		{repo, "a", false},
-		{repo, "b", true},
-		{repo, "c", true},
-		{home, "a", false},
-		{home, "b", false},
-		{home, "c", true},
+		{"a", false},
+		{"b", true},
+		{"c", true},
 	} {
-		path := filepath.Join(tc.root, ".claude", "skills", "local-kit-"+tc.name, "SKILL.md")
+		path := filepath.Join(repo, ".claude", "skills", "local-kit-"+tc.name, "SKILL.md")
 		_, statErr := os.Stat(path)
 		if got := statErr == nil; got != tc.want {
-			t.Errorf("member %s at %s exists = %t, want %t (stat error: %v)", tc.name, tc.root, got, tc.want, statErr)
+			t.Errorf("member %s at repo scope exists = %t, want %t (stat error: %v)", tc.name, got, tc.want, statErr)
 		}
+		homePath := filepath.Join(home, ".claude", "skills", "local-kit-"+tc.name, "SKILL.md")
+		if _, err := os.Stat(homePath); !os.IsNotExist(err) {
+			t.Errorf("user-scope native plugin also wrote decomposed member %s: %v", tc.name, err)
+		}
+	}
+	settings, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if err != nil || !bytes.Contains(settings, []byte("local-kit@am-")) {
+		t.Fatalf("user-scope Claude plugin must be delivered natively: %v\n%s", err, settings)
 	}
 }
 
@@ -979,10 +1001,10 @@ func TestSyncRepositoryAndPersonalLocalPluginKeysFollowTheWinningLayer(t *testin
 	source := "team: {git: file://" + filepath.ToSlash(catalogOrigin) + ", ref: main, format: claude-marketplace}\n"
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"),
 		"apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  "+source+
-			"resources:\n  team:\n    - {kind: plugin, name: local-kit, delivery: decompose}\n")
+			"resources:\n  team:\n    - plugin/local-kit\n")
 	writeConfig(t, filepath.Join(repo, ".agents", "config.local.yaml"),
 		"apiVersion: agent-marketplace/v4\nsources:\n  "+source+
-			"resources:\n  team:\n    - {kind: plugin, name: local-kit, delivery: decompose, exclude: [skill/b]}\n")
+			"resources:\n  team:\n    - {kind: plugin, name: local-kit, exclude: [skill/b]}\n")
 	withWorkingDir(t, repo)
 
 	output, err := executeCommand("sync", "--no-backup")
@@ -1075,7 +1097,7 @@ func TestSyncDeliversOtherResourcesAndDecomposesPluginMembers(t *testing.T) {
 	skillDir := filepath.Join(root, "skills-src")
 	writeSkill(t, skillDir, "tooling", "Tooling baseline", nil)
 
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {git: file://"+filepath.ToSlash(catalogOrigin)+", ref: main, format: claude-marketplace}\n  skills-src: {directory: "+filepath.ToSlash(skillDir)+"}\nresources:\n  team:\n    - {kind: plugin, name: local-kit, delivery: decompose}\n  skills-src:\n    - skill/tooling\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {git: file://"+filepath.ToSlash(catalogOrigin)+", ref: main, format: claude-marketplace}\n  skills-src: {directory: "+filepath.ToSlash(skillDir)+"}\nresources:\n  team:\n    - plugin/local-kit\n  skills-src:\n    - skill/tooling\n")
 	withWorkingDir(t, repo)
 	output, err := executeCommand("sync", "--no-backup")
 	if err != nil {
@@ -1107,7 +1129,7 @@ func TestSyncCheckConfirmsPluginMemberDeliveryWithoutWriting(t *testing.T) {
 	writeCatalogRepo(t, catalogWorking, "")
 	commitAndPushAll(t, catalogWorking, "seed catalog")
 
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {git: file://"+filepath.ToSlash(catalogOrigin)+", ref: main, format: claude-marketplace}\nresources:\n  team:\n    - {kind: plugin, name: local-kit, delivery: decompose}\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {git: file://"+filepath.ToSlash(catalogOrigin)+", ref: main, format: claude-marketplace}\nresources:\n  team:\n    - plugin/local-kit\n")
 	withWorkingDir(t, repo)
 	if output, err := executeCommand("sync", "--no-backup"); err != nil {
 		t.Fatalf("sync of a plugin selection must succeed: %v\n%s", err, output)

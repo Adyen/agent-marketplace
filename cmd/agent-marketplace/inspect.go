@@ -203,10 +203,16 @@ func writePluginInspection(out io.Writer, inspection pluginInspection, locks []p
 	for _, target := range harnesscompile.TargetNames() {
 		state := "unavailable"
 		if plugin != nil {
-			resolution := pipeline.ResolvePluginDelivery(
-				inspection.deliveryRequest, plugin.Format, harnesscompile.Target(target),
-			)
-			state = resolution.String()
+			userState := pipeline.ResolvePluginDelivery(
+				inspection.deliveryRequest, plugin.Format, harnesscompile.Target(target), pipeline.ScopeUser,
+			).String()
+			repoState := pipeline.ResolvePluginDelivery(
+				inspection.deliveryRequest, plugin.Format, harnesscompile.Target(target), pipeline.ScopeRepo,
+			).String()
+			state = userState
+			if userState != repoState {
+				state = "user: " + userState + ", repo: " + repoState
+			}
 		}
 		for _, blocker := range blockers {
 			if blocker.Target == "" || blocker.Target == target {
