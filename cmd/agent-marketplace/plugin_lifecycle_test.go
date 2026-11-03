@@ -119,6 +119,21 @@ func TestInspectPluginReportsPackageDetailsWithoutWriting(t *testing.T) {
 	}
 }
 
+// spec: plugin-delivery/auto-delivers-claude-plugins-natively-at-user-scope-only
+func TestInspectShowsClaudeDeliveryByScopeWhenStatusesDiffer(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	_, run := pluginCommandFixture(t, "    - plugin/review-kit\n")
+	output, err := run("inspect", "plugin/review-kit")
+	if err != nil {
+		t.Fatalf("inspect Claude plugin: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "claude: user: native, repo: decomposed") {
+		t.Fatalf("inspect did not report Claude's differing scope delivery:\n%s", output)
+	}
+}
+
 func TestInspectPluginShowsUnverifiedNativeDeliveryBlocked(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -166,12 +181,8 @@ func TestInstallPluginWritesRequestAndSyncsIt(t *testing.T) {
 	if !strings.Contains(string(configBytes), "plugin/review-kit") {
 		t.Fatalf("install did not write a plugin request:\n%s", configBytes)
 	}
-	settings, err := os.ReadFile(filepath.Join(repo, ".claude", "settings.local.json"))
-	if err != nil || !strings.Contains(string(settings), "review-kit@am-") {
-		t.Fatalf("install did not register the native plugin: %v\n%s", err, settings)
-	}
-	if _, err := os.Stat(filepath.Join(repo, ".claude", "skills", "review-kit-review", "SKILL.md")); !os.IsNotExist(err) {
-		t.Fatalf("install also decomposed the plugin member: %v", err)
+	if _, err := os.Stat(filepath.Join(repo, ".claude", "skills", "review-kit-review", "SKILL.md")); err != nil {
+		t.Fatalf("repository-scope install did not decompose the plugin member: %v", err)
 	}
 }
 
@@ -222,29 +233,23 @@ func TestRemovePluginKeepsCollectionSelectedPluginUntilCollectionRemoval(t *test
 	if output, err := executeCommand("sync", "--no-backup"); err != nil {
 		t.Fatalf("initial plugin sync failed: %v\n%s", err, output)
 	}
-	settingsPath := filepath.Join(repo, ".claude", "settings.local.json")
-	settings, err := os.ReadFile(settingsPath)
-	if err != nil || !strings.Contains(string(settings), "local-kit@am-") {
-		t.Fatalf("initial auto delivery did not register the native plugin: %v\n%s", err, settings)
-	}
-	if _, err := os.Stat(filepath.Join(repo, ".claude", "skills", "local-kit-local-skill", "SKILL.md")); !os.IsNotExist(err) {
-		t.Fatalf("initial auto delivery also decomposed the plugin: %v", err)
+	memberPath := filepath.Join(repo, ".claude", "skills", "local-kit-local-skill", "SKILL.md")
+	if _, err := os.Stat(memberPath); err != nil {
+		t.Fatalf("initial repository-scope auto delivery did not decompose the plugin: %v", err)
 	}
 
 	if output, err := executeCommand("remove", "local-kit", "--kind", "plugin"); err != nil {
 		t.Fatalf("direct plugin removal failed: %v\n%s", err, output)
 	}
-	settings, err = os.ReadFile(settingsPath)
-	if err != nil || !strings.Contains(string(settings), "local-kit@am-") {
-		t.Fatalf("collection selection should keep the native plugin registered: %v\n%s", err, settings)
+	if _, err := os.Stat(memberPath); err != nil {
+		t.Fatalf("collection selection should keep the decomposed plugin member: %v", err)
 	}
 	if output, err := executeCommand("remove", "review-team", "--kind", "collection"); err != nil {
 		t.Fatalf("collection removal failed: %v\n%s", err, output)
 	}
-	settings, err = os.ReadFile(settingsPath)
-	if err != nil && !os.IsNotExist(err) || strings.Contains(string(settings), "local-kit@am-") {
+	if _, err := os.Stat(memberPath); !os.IsNotExist(err) {
 		configBytes, readErr := os.ReadFile(filepath.Join(repo, ".agents", "config.yaml"))
-		t.Fatalf("last plugin selection was removed but native registration remains: %v; config read=%v\nsettings=%s\n%s", err, readErr, settings, configBytes)
+		t.Fatalf("last plugin selection was removed but its decomposed member remains: %v; config read=%v\n%s", err, readErr, configBytes)
 	}
 }
 
@@ -259,7 +264,7 @@ func TestUpdateAndSyncCheckAcceptPluginSelections(t *testing.T) {
 	commitAndPushAll(t, catalogWorking, "seed plugin")
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"),
 		"apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {git: file://"+
-			filepath.ToSlash(catalogOrigin)+", ref: main, format: claude-marketplace}\nresources:\n  team:\n    - {kind: plugin, name: local-kit, delivery: decompose}\n")
+			filepath.ToSlash(catalogOrigin)+", ref: main, format: claude-marketplace}\nresources:\n  team:\n    - plugin/local-kit\n")
 	withWorkingDir(t, repo)
 	if output, err := executeCommand("sync", "--no-backup"); err != nil {
 		t.Fatalf("plugin sync failed: %v\n%s", err, output)
@@ -360,7 +365,7 @@ func TestPluginWithDependenciesIsInspectableButNotInstalled(t *testing.T) {
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"),
 		"apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {directory: "+
 			filepath.ToSlash(catalogDir)+", format: claude-marketplace}\n  loose: {directory: "+
-			filepath.ToSlash(looseDir)+"}\nresources:\n  team:\n    - {kind: plugin, name: review-kit, delivery: decompose}\n    - {kind: plugin, name: good-kit, delivery: decompose}\n  loose:\n    - skill/tooling\n")
+			filepath.ToSlash(looseDir)+"}\nresources:\n  team:\n    - plugin/review-kit\n    - plugin/good-kit\n  loose:\n    - skill/tooling\n")
 	withWorkingDir(t, repo)
 
 	inspection, err := run("inspect", "plugin/review-kit")

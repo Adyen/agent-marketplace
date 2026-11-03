@@ -110,14 +110,15 @@ func TestCheckFailsOnStaleDocument(t *testing.T) {
 	}
 }
 
-func TestPluginSupportDocumentsClaudeTrustPrecondition(t *testing.T) {
+// spec: plugin-policy-catalogs/the-reference-shows-differing-scope-statuses
+func TestPluginSupportShowsClaudeNativeStatusByScope(t *testing.T) {
 	chdirRoot(t)
 	doc, err := generatePluginSupport()
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "Repository-scope Claude plugin registration takes effect only in a workspace the user has trusted; Agent Marketplace never writes Claude trust state."
+	want := "user: verified, repo: unverified"
 	if !strings.Contains(string(doc), want) {
-		t.Fatalf("plugin support reference omits Claude's trust boundary:\n%s", doc)
+		t.Fatalf("plugin support reference omits Claude's per-scope native status %q:\n%s", want, doc)
 	}
 }

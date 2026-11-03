@@ -14,5 +14,7 @@ surfaces:
       permissionMode: {block-member: true, code: plugin.member.restriction-unsupported}
 delivery:
   decompose: {status: verified}
-  native: {status: verified, format: claude-plugin, probe: claude-native-plugin, refresh: restart-required}
+  native:
+    user: {status: verified, format: claude-plugin, probe: claude-native-plugin, refresh: restart-required}
+    repo: {status: unverified}
 root_token: plugin_root

@@ -129,16 +129,109 @@ func TestDecomposeDeliveryVerifiedEverywhere(t *testing.T) {
 		if c.Delivery.Decompose.Status != DeliveryVerified {
 			t.Fatalf("%s decompose status = %q, want verified", tg, c.Delivery.Decompose.Status)
 		}
-		if tg == "claude" {
-			if c.Delivery.Native.Status != DeliveryVerified {
-				t.Fatalf("%s native status = %q, want verified", tg, c.Delivery.Native.Status)
+		for _, scope := range []string{"user", "repo"} {
+			native, err := LookupNativeDelivery(tg, scope)
+			if err != nil {
+				t.Fatalf("%s native policy at %s: %v", tg, scope, err)
 			}
-			if c.Delivery.Native.Probe != ClaudeNativePluginProbeID {
-				t.Fatalf("%s native probe = %q, want %s", tg, c.Delivery.Native.Probe, ClaudeNativePluginProbeID)
+			want := DeliveryUnverified
+			if tg == target.TargetClaude && scope == "user" {
+				want = DeliveryVerified
+				if native.Probe != ClaudeNativePluginProbeID {
+					t.Fatalf("%s native probe = %q, want %s", tg, native.Probe, ClaudeNativePluginProbeID)
+				}
 			}
-		} else if c.Delivery.Native.Status != DeliveryUnverified {
-			t.Fatalf("%s native status = %q, want unverified", tg, c.Delivery.Native.Status)
+			if native.Status != want {
+				t.Fatalf("%s native status at %s = %q, want %q", tg, scope, native.Status, want)
+			}
 		}
+	}
+}
+
+func TestNativeDeliveryAcceptsPerScopeDeclarations(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		declaration string
+		wantUser    string
+		wantRepo    string
+	}{
+		{
+			name:        "single policy applies to both scopes",
+			declaration: "native: {status: unverified}",
+			wantUser:    DeliveryUnverified,
+			wantRepo:    DeliveryUnverified,
+		},
+		{
+			name: "per-scope policies",
+			declaration: `native:
+    user: {status: verified, format: claude-plugin, probe: claude-native-plugin, refresh: restart-required}
+    repo: {status: unverified}`,
+			wantUser: DeliveryVerified,
+			wantRepo: DeliveryUnverified,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			harness := strings.Replace(validHarness, "native: {status: unverified}", tc.declaration, 1)
+			files := fstest.MapFS{
+				"formats/claude-plugin.yaml": {Data: []byte(validFormat)},
+				"catalogs/devin.yaml":        {Data: []byte(harness)},
+			}
+			r, err := loadCatalogs(files, "formats/*.yaml", "catalogs/*.yaml", []string{ClaudeNativePluginProbeID})
+			if err != nil {
+				t.Fatalf("native delivery declaration was rejected: %v", err)
+			}
+			native := r.catalogs[target.TargetDevin].Delivery.Native
+			if got := native.Scopes["user"].Status; got != tc.wantUser {
+				t.Errorf("user native status = %q, want %q", got, tc.wantUser)
+			}
+			if got := native.Scopes["repo"].Status; got != tc.wantRepo {
+				t.Errorf("repo native status = %q, want %q", got, tc.wantRepo)
+			}
+		})
+	}
+}
+
+func TestNativeDeliveryRejectsMixedAndUnknownScopeForms(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		native  string
+		wantErr string
+	}{
+		{
+			name:    "mixed global and scoped policies",
+			native:  "native: {status: unverified, user: {status: unverified}}",
+			wantErr: "mix",
+		},
+		{
+			name:    "unknown scope",
+			native:  "native: {team: {status: unverified}}",
+			wantErr: "team",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			harness := strings.Replace(validHarness, "native: {status: unverified}", tc.native, 1)
+			err := loadAll(t, validFormat, harness, []string{ClaudeNativePluginProbeID})
+			if err == nil || !strings.Contains(strings.ToLower(err.Error()), tc.wantErr) {
+				t.Fatalf("catalog error = %v, want it to identify %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// spec: plugin-policy-catalogs/a-scope-declared-verified-without-a-probe-fails-the-check
+func TestNativeDeliveryVerifiedScopeRequiresProbe(t *testing.T) {
+	harness := strings.Replace(validHarness, "native: {status: unverified}", `native:
+    user: {status: verified, format: claude-plugin}
+    repo: {status: unverified}`, 1)
+	err := loadAll(t, validFormat, harness, []string{ClaudeNativePluginProbeID})
+	if err == nil || !strings.Contains(err.Error(), "delivery.native.user.probe") {
+		t.Fatalf("catalog error = %v, want delivery.native.user.probe", err)
+	}
+}
+
+func TestLookupNativeDeliveryRejectsUnknownScope(t *testing.T) {
+	if _, err := LookupNativeDelivery(target.TargetClaude, "local"); err == nil {
+		t.Fatal("lookup accepted a scope other than user or repo")
 	}
 }
 

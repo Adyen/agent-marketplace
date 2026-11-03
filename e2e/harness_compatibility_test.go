@@ -16,7 +16,8 @@ import (
 var compatibilityTargets = []string{"claude", "factory", "cursor", "windsurf", "gemini", "devin", "codex", "opencode"}
 var compatibilityResources = []string{"skill", "command", "subagent", "hook", "mcp", "collection", "rule", "native-cli"}
 
-// spec: plugin-delivery/claude-probe-loads-the-registered-plugin-at-both-scopes
+// spec: plugin-delivery/claude-probe-loads-the-registered-plugin-at-user-scope
+// spec: plugin-delivery/claude-probe-confirms-repository-scope-stays-decomposed
 // spec: plugin-delivery/codex-catalog-is-a-marketplace-codex-accepts
 func TestHarnessCompatibility(t *testing.T) {
 	target := os.Getenv("HARNESS_COMPAT_TARGET")
@@ -153,14 +154,18 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 		e.WriteFile(filepath.Join(pluginRoot, "skills", nativePluginSkill, "SKILL.md"),
 			fmt.Sprintf("---\nname: %s\ndescription: %s\n---\n\n# %s\n", nativePluginSkill, f.description("skill"), nativePluginSkill))
 		config += fmt.Sprintf("  native-plugin: {directory: %q, format: claude-plugin}\n", pluginRoot)
-		config += fmt.Sprintf("resources:\n  native-plugin:\n    - {kind: plugin, name: %s, delivery: native}\n", nativePluginName)
+		delivery := "auto"
+		if first.Scope == "user" {
+			delivery = "native"
+		}
+		config += fmt.Sprintf("resources:\n  native-plugin:\n    - {kind: plugin, name: %s, delivery: %s}\n", nativePluginName, delivery)
 	}
 	if first.Scope == "user" {
 		e.WriteGlobalConfig(config)
 	} else {
 		e.WriteRepoConfig(config)
 	}
-	if pluginProbeRow != nil {
+	if pluginProbeRow != nil && first.Scope == "user" {
 		if err := observeClaudePluginAbsent(e, native.binary, f, pluginProbeRow, first.Scope, nativePluginName, nativePluginSkill); err != nil {
 			pluginProbeRow.Status, pluginProbeRow.Reason = "failed", err.Error()
 			t.Fatal(err)
@@ -195,25 +200,30 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 		t.Fatalf("Marketplace sync failed: %s\n%s", sync.Error, sync.output)
 	}
 	if pluginProbeRow != nil {
-		if err := assertClaudePluginStateAbsentAfterSync(e.home, e.workspace); err != nil {
-			pluginProbeRow.Status, pluginProbeRow.Reason = "failed", err.Error()
-			t.Fatal(err)
-		}
-		if err := establishClaudeWorkspaceTrust(e.home, e.workspace); err != nil {
-			pluginProbeRow.Status, pluginProbeRow.Reason = "failed", err.Error()
-			t.Fatal(err)
-		}
-		primeClaudePluginSession(e, native.binary, nativePluginName, pluginProbeRow)
-		variantAErr := observeClaudePluginEnabled(e, native.binary, f, pluginProbeRow, first.Scope, nativePluginName, nativePluginSkill)
-		if first.Scope == "repo" {
-			runClaudeRepoPluginVariants(e, native.binary, nativePluginName, nativePluginSkill, pluginProbeRow)
-		}
-		if variantAErr != nil {
-			pluginProbeRow.Status, pluginProbeRow.Reason = "failed", variantAErr.Error()
-			if first.Scope == "repo" {
-				pluginProbeRow.Reason = "variant A: " + pluginProbeRow.Reason
+		if first.Scope == "user" {
+			if err := assertClaudePluginStateAbsentAfterSync(e.home, e.workspace); err != nil {
+				pluginProbeRow.Status, pluginProbeRow.Reason = "failed", err.Error()
+				t.Fatal(err)
 			}
-			t.Fatal(variantAErr)
+			if err := establishClaudeWorkspaceTrust(e.home, e.workspace); err != nil {
+				pluginProbeRow.Status, pluginProbeRow.Reason = "failed", err.Error()
+				t.Fatal(err)
+			}
+			if err := primeClaudePluginSession(e, native.binary, nativePluginName, pluginProbeRow); err != nil {
+				pluginProbeRow.Status, pluginProbeRow.Reason = "failed", err.Error()
+				t.Fatal(err)
+			}
+			if err := observeClaudePluginEnabled(e, native.binary, f, pluginProbeRow, first.Scope, nativePluginName, nativePluginSkill); err != nil {
+				pluginProbeRow.Status, pluginProbeRow.Reason = "failed", err.Error()
+				t.Fatal(err)
+			}
+		} else {
+			if err := assertClaudeRepositoryPluginDecomposed(e.workspace, nativePluginName, nativePluginSkill); err != nil {
+				pluginProbeRow.Status, pluginProbeRow.Reason = "failed", err.Error()
+				t.Fatal(err)
+			}
+			pluginProbeRow.Status = "config-only-verified"
+			pluginProbeRow.Reason = "repository-scope auto delivery produced the decomposed skill and no Agent Marketplace Claude registration; no Claude session was run"
 		}
 	}
 	for _, kind := range compatibilityResources[:6] {

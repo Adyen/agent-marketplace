@@ -272,10 +272,32 @@ type pluginHarnessCatalog struct {
 		Decompose struct {
 			Status string `yaml:"status"`
 		} `yaml:"decompose"`
-		Native struct {
-			Status string `yaml:"status"`
-		} `yaml:"native"`
+		Native pluginNativeDelivery `yaml:"native"`
 	} `yaml:"delivery"`
+}
+
+type pluginNativePolicy struct {
+	Status string `yaml:"status"`
+}
+
+type pluginNativeDelivery struct {
+	Status string              `yaml:"status"`
+	User   *pluginNativePolicy `yaml:"user"`
+	Repo   *pluginNativePolicy `yaml:"repo"`
+}
+
+func (n pluginNativeDelivery) cell() string {
+	user, repo := n.Status, n.Status
+	if n.User != nil {
+		user = n.User.Status
+	}
+	if n.Repo != nil {
+		repo = n.Repo.Status
+	}
+	if user == repo {
+		return "`" + user + "`"
+	}
+	return "`user: " + user + ", repo: " + repo + "`"
 }
 
 // generatePluginSupport renders the plugin support reference from the
@@ -292,8 +314,6 @@ func generatePluginSupport() ([]byte, error) {
 	buf.WriteString("Decomposed delivery installs a plugin's members as ordinary resources. " +
 		"Native delivery registers the plugin with the harness itself; it is declared " +
 		"verified only with probe evidence from the harness validation suite.\n\n")
-	buf.WriteString("Repository-scope Claude plugin registration takes effect only in a workspace " +
-		"the user has trusted; Agent Marketplace never writes Claude trust state.\n\n")
 
 	entries, err := filepath.Glob(filepath.Join(pluginDir, "catalogs", "*.yaml"))
 	if err != nil {
@@ -309,7 +329,7 @@ func generatePluginSupport() ([]byte, error) {
 			"`" + c.Harness + "`",
 			joinOr(c.Accepts, "none"),
 			"`" + c.Delivery.Decompose.Status + "`",
-			"`" + c.Delivery.Native.Status + "`",
+			c.Delivery.Native.cell(),
 			c.Evidence.Checked,
 		})
 	}
