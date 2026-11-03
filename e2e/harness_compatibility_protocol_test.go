@@ -77,6 +77,7 @@ func runCompatibilityProtocol(e *Env, binary, protocol string, timeout time.Dura
 		result, exchangeErr = inspectCodexMetadata(encoder, decoder, e.workspace, method)
 	}
 	if exchangeErr == nil && len(keepAlive) > 0 {
+		r.output = string(result)
 		drained = make(chan struct{})
 		go func() {
 			defer close(drained)
@@ -385,6 +386,34 @@ touch "$HOME/session-ended"
 	}
 	if !strings.Contains(strings.Join(result.Observed, "\n"), "live session held for registration polling") {
 		t.Fatalf("Claude live-session observation not recorded: %+v", result)
+	}
+}
+
+func TestCompatibilityClaudeKeepAliveReceivesInitialSkillInventory(t *testing.T) {
+	e := newEnv(t)
+	binary := filepath.Join(e.repos, "internal-fake-claude")
+	e.WriteFile(binary, `#!/bin/sh
+IFS= read -r request || exit 70
+case "$request" in *'"subtype":"initialize"'*) ;; *) exit 71;; esac
+printf '%s\n' '{"type":"control_response","response":{"subtype":"success","request_id":"amcompat-initialize","response":{"commands":[{"name":"native-kit:review","description":"Review skill"}],"agents":[]}}}'
+if IFS= read -r request; then exit 72; fi
+`)
+	if err := os.Chmod(binary, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	result := runCompatibilityProtocol(e, binary, "claude-initialize", 2*time.Second, func(command *compatibilityCommand) error {
+		entries, err := compatibilityProtocolInventory(command.output, "claude-initialize", "skill", e.workspace)
+		if err != nil {
+			return err
+		}
+		if len(entries) != 1 || entries[0].Name != "native-kit:review" {
+			return fmt.Errorf("Claude keep-alive did not receive its initialization inventory: %+v", entries)
+		}
+		return nil
+	})
+	if err := compatibilityInspectionError(result); err != nil {
+		t.Fatalf("Claude keep-alive could not inspect initial inventory: %v", err)
 	}
 }
 

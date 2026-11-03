@@ -204,9 +204,16 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 			t.Fatal(err)
 		}
 		primeClaudePluginSession(e, native.binary, nativePluginName, pluginProbeRow)
-		if err := observeClaudePluginEnabled(e, native.binary, f, pluginProbeRow, first.Scope, nativePluginName, nativePluginSkill); err != nil {
-			pluginProbeRow.Status, pluginProbeRow.Reason = "failed", err.Error()
-			t.Fatal(err)
+		variantAErr := observeClaudePluginEnabled(e, native.binary, f, pluginProbeRow, first.Scope, nativePluginName, nativePluginSkill)
+		if first.Scope == "repo" {
+			runClaudeRepoPluginVariants(e, native.binary, nativePluginName, nativePluginSkill, pluginProbeRow)
+		}
+		if variantAErr != nil {
+			pluginProbeRow.Status, pluginProbeRow.Reason = "failed", variantAErr.Error()
+			if first.Scope == "repo" {
+				pluginProbeRow.Reason = "variant A: " + pluginProbeRow.Reason
+			}
+			t.Fatal(variantAErr)
 		}
 	}
 	for _, kind := range compatibilityResources[:6] {
