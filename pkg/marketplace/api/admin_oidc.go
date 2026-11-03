@@ -38,6 +38,8 @@ const (
 
 var adminOIDCScopes = []string{"openid", "profile", "email", "groups"}
 
+var errAdminCookieTooLarge = errors.New("admin cookie payload exceeds bounds")
+
 const maxAdminOIDCResponse = 1 << 20
 
 type adminOIDCUnavailableError struct {
@@ -292,7 +294,7 @@ func (a *adminOIDCAuthenticator) seal(payload any) (string, error) {
 	_, _ = mac.Write(body)
 	sealed := base64.RawURLEncoding.EncodeToString(body) + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	if len(sealed) > maxAdminCookie {
-		return "", errors.New("admin cookie payload exceeds bounds")
+		return "", errAdminCookieTooLarge
 	}
 	return sealed, nil
 }
@@ -550,12 +552,21 @@ func (a *adminOIDCAuthenticator) handleCallback(w http.ResponseWriter, r *http.R
 		fail(http.StatusForbidden, "forbidden", "Marketplace administration permission is required.")
 		return
 	}
+	sessionGroups := make([]string, 0, len(groups))
+	for _, group := range groups {
+		if slices.Contains(a.options.AdminGroups, group) {
+			sessionGroups = append(sessionGroups, group)
+		}
+	}
 	now = time.Now()
 	sealed, err := a.seal(adminSessionPayload{
-		Version: 1, Issuer: idToken.Issuer, Subject: idToken.Subject, Groups: groups,
+		Version: 1, Issuer: idToken.Issuer, Subject: idToken.Subject, Groups: sessionGroups,
 		Display: display, IssuedAt: now.Unix(), Expiry: now.Add(a.options.SessionLifetime()).Unix(),
 	})
 	if err != nil {
+		if errors.Is(err, errAdminCookieTooLarge) {
+			slog.Warn("admin OIDC session cookie could not be sealed", "outcome", "session_too_large")
+		}
 		reject()
 		return
 	}

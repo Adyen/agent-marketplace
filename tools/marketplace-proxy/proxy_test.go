@@ -18,6 +18,7 @@ import (
 // spec: site-deployment-profiles/unsafe-legacy-browser-paths-never-redirect
 // spec: site-deployment-profiles/marketplace-documentation-hosting-is-disabled-by-default
 // spec: site-deployment-profiles/marketplace-documentation-hosting-is-explicitly-enabled
+// spec: marketplace-admin-auth/callback-for-a-large-group-list-stays-within-the-proxy-header-budget
 func TestMarketplaceNginxRedirects(t *testing.T) {
 	image := os.Getenv("AM_MARKETPLACE_PROXY_IMAGE")
 	if image == "" {
@@ -31,6 +32,16 @@ func TestMarketplaceNginxRedirects(t *testing.T) {
 		for _, docsEnabled := range []bool{false, true} {
 			t.Run(profile+"/docs="+strconv.FormatBool(docsEnabled), func(t *testing.T) {
 				container := startProxy(t, image, profile, docsEnabled)
+
+				t.Run("OIDC callback with 256-group token", func(t *testing.T) {
+					response := proxyResponse(t, container, "/api/v1/admin/auth/callback?state=proxy-check&code=256-group-token")
+					if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/admin" {
+						t.Fatalf("callback response = %d Location %q, want 303 Location /admin", response.StatusCode, response.Header.Get("Location"))
+					}
+					if len(response.Header.Values("Set-Cookie")) == 0 {
+						t.Fatal("callback response has no session cookie")
+					}
+				})
 
 				for _, tc := range []struct {
 					path     string
@@ -138,8 +149,16 @@ func startProxy(t testing.TB, image, profile string, docsEnabled bool) string {
 	}
 	stubs := filepath.Join(t.TempDir(), "stubs.conf")
 	if err := os.WriteFile(stubs, []byte(`
-server { listen 127.0.0.2:8080; return 200 "api"; }
-server { listen 127.0.0.3:8080; return 200 "docs"; }
+		server {
+			listen 127.0.0.2:8080;
+			absolute_redirect off;
+			location = /api/v1/admin/auth/callback {
+				add_header Set-Cookie "marketplace_admin_session=admin; Path=/; HttpOnly; Secure; SameSite=Lax" always;
+				return 303 /admin;
+			}
+			location / { return 200 "api"; }
+		}
+		server { listen 127.0.0.3:8080; return 200 "docs"; }
 server { listen 127.0.0.4:3000; return 200 "web"; }
 `), 0o644); err != nil {
 		t.Fatal(err)

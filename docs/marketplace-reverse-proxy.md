@@ -26,6 +26,8 @@ The published port in those examples is only an example binding; replace it with
 
 When `admin.enabled` is true, the API also serves `/api/v1/admin/**` under the same `/api/` route. Unlike the rest of the API, it accepts `POST` for `changes`, `validate`, `previews`, and OIDC `auth/logout`; allow those methods for admin paths at the edge. In trusted-proxy mode, authenticate both `/api/v1/admin/**` and the browser's `/admin/**` at the gateway, strip any identity headers the client sends, and set them only after authentication. In OIDC mode, the gateway routes admin traffic without injecting identity headers. See [Enable and use the admin panel](../site/docs/how-to/operator/enable-and-use-the-admin-panel.md).
 
+For native OIDC, keep the proxy response header buffer at least 4096 bytes (4k; ingress-nginx's default `proxy-buffer-size`). The session cookie stores only groups matching `admin_groups`, so its size no longer scales with the IdP's group count.
+
 ## Header and cache guidance
 
 Do not trust forwarded headers from untrusted clients; overwrite them at the first trusted proxy. The bundled Nginx configuration sets `X-Forwarded-For $remote_addr` (not `$proxy_add_x_forwarded_for`) so that a chain sent by an untrusted client cannot influence the application. Use HTTPS externally, and configure HSTS only when every required hostname serves HTTPS. The API marks immutable artifact responses as cacheable, but caches must not bypass the edge's authentication policy or keep sensitive data longer than the organization's policy allows.

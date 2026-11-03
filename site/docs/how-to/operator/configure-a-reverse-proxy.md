@@ -46,6 +46,8 @@ Preserve `Host`, `X-Real-IP`, `X-Forwarded-For`, and `X-Forwarded-Proto`. At the
 
 With `admin.authentication.mode: oidc`, the application signs administrators in through the configured identity provider. Route `/admin`, `/auth/error`, and `/api/v1/admin/` to their normal UI and API upstreams. Do not inject identity headers.
 
+For native OIDC, keep the proxy response header buffer at least 4096 bytes (4k; ingress-nginx's default `proxy-buffer-size`). The session cookie stores only groups matching `admin_groups`, so its size no longer scales with the IdP's group count.
+
 With `trusted_proxy` mode, protect `/admin` and `/api/v1/admin/` with your single sign-on gateway or identity-aware proxy. The API accepts identity headers only from peer addresses listed in `admin.trusted_proxies` and reads them from the configured `admin.subject_header` and `admin.groups_header`. The proxy must:
 
 1. Remove client-supplied copies of the identity headers.
