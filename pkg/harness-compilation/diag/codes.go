@@ -82,7 +82,7 @@ const (
 	CodeCodexFieldDropped                   = "compile.codex.field-dropped"             // Benign IR field has no documented Codex equivalent
 	CodeCompileClaudeNativeControlOmitted   = "compile.claude.native-control-omitted"   // Claude-native control from a non-Claude source omitted
 	CodeSubagentCodexModelDropped           = "subagent.codex.model-dropped"            // Codex-only model omitted for a non-Codex target
-	CodeSubagentCodexEffortDropped          = "subagent.codex.effort-dropped"           // Codex-only reasoning effort omitted for a non-Codex target
+	CodeSubagentCodexEffortDropped          = "subagent.codex.effort-dropped"           // Codex-sourced reasoning effort omitted by the destination
 	CodeHookCodexPluginRootUnresolved       = "hook.codex.plugin-root-unresolved"       // Command carries ${CLAUDE_PLUGIN_ROOT} but no plugin root was configured
 	CodeMcpCodexPluginRootUnresolved        = "mcp.codex.plugin-root-unresolved"        // Value carries ${CLAUDE_PLUGIN_ROOT} but no plugin root was configured
 	CodeIngestCodexPromptDeprecated         = "ingest.codex.prompt-deprecated"          // Deprecated prompt ingested as command
@@ -369,6 +369,7 @@ const (
 	CodeBundleConflictDuplicateArtifactPath      = "bundle.conflict.duplicate-artifact-path"   // Two resources produce the same artifact path
 	CodeBundleConflictCrossKindArtifactPath      = "bundle.conflict.cross-kind-artifact-path"  // Two resources of different kinds produce the same artifact path
 	CodeBundleCompileResourceFailed              = "bundle.compile.resource-failed"            // A resource compiler returned an error
+	CodeIngestFrontmatterTooLarge                = "ingest.frontmatter.too-large"              // YAML frontmatter exceeds the parse ceiling
 	CodeIngestClaudeLoadSkillFailed              = "ingest.claude.load-skill-failed"           // Failed to load a skill from the source layout
 	CodeIngestClaudeLoadCommandFailed            = "ingest.claude.load-command-failed"         // Failed to load a command from the source layout
 	CodeIngestClaudeLoadSubagentFailed           = "ingest.claude.load-subagent-failed"        // Failed to load a subagent from the source layout
@@ -599,7 +600,7 @@ var codeCatalog = []CodeDoc{
 	{CodeCompileClaudeNativeControlOmitted, SeverityWarning, "A Claude-native execution control from a non-Claude source was omitted; Claude output emits these controls only from Claude-authored resources", "Author the control in the Claude layout if the resource needs it on Claude"},
 	{CodeCodexFieldDropped, SeverityWarning, "A benign IR field has no documented Codex equivalent and was omitted", "Remove the field or choose a target that represents it"},
 	{CodeSubagentCodexModelDropped, SeverityWarning, "A Codex-only subagent model was omitted for a non-Codex target", "Compile to Codex to preserve the native-only model, or choose a portable canonical model"},
-	{CodeSubagentCodexEffortDropped, SeverityWarning, "A Codex-only subagent reasoning effort was omitted for a non-Codex target", "Compile to Codex to preserve the native-only effort, or use a portable canonical effort"},
+	{CodeSubagentCodexEffortDropped, SeverityWarning, "A Codex-sourced subagent reasoning effort could not be represented by the destination model or surface", "Use a reasoning preference supported by the destination model and surface"},
 	{CodeHookCodexPluginRootUnresolved, SeverityWarning, "The hook command references the plugin root but no plugin root was configured; the token was left unexpanded", "Compile with a plugin root so the command resolves, or use an absolute command path"},
 	{CodeMcpCodexPluginRootUnresolved, SeverityWarning, "An MCP value references the plugin root but no plugin root was configured; the token was left unexpanded", "Compile with a plugin root so the value resolves, or use an absolute path"},
 	{CodeIngestCodexPromptDeprecated, SeverityWarning, "A deprecated Codex prompt was ingested as a command", "Move the prompt to a command skill under .agents/skills"},
@@ -691,6 +692,7 @@ var codeCatalog = []CodeDoc{
 	{CodeBundleConflictDuplicateArtifactPath, SeverityError, "Two resources produce the same artifact output path", "Rename one of the conflicting resources or adjust the output path"},
 	{CodeBundleConflictCrossKindArtifactPath, SeverityError, "Resources of different kinds produce the same artifact output path; neither artifact is emitted", "Rename one of the conflicting resources: on targets that compile commands as skills, a skill and a command cannot share a name"},
 	{CodeBundleCompileResourceFailed, SeverityError, "A resource compiler failed", "Fix the resource compiler error before materializing the bundle"},
+	{CodeIngestFrontmatterTooLarge, SeverityError, "YAML frontmatter exceeds the 64 KiB parse ceiling; the resource is not loaded", "Shorten the frontmatter and move long content into the body or support files"},
 	{CodeIngestClaudeLoadSkillFailed, SeverityError, "Failed to load a skill from the Claude source layout", "Check the skill directory structure and SKILL.md frontmatter"},
 	{CodeIngestClaudeLoadCommandFailed, SeverityError, "Failed to load a command from the Claude source layout", "Check the command .md file structure and frontmatter"},
 	{CodeIngestClaudeLoadSubagentFailed, SeverityError, "Failed to load a subagent from the Claude source layout", "Check the agent .md file structure and frontmatter"},

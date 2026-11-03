@@ -81,21 +81,10 @@ func TestUpgradeNoticeDoesNotBlockFirstFrame(t *testing.T) {
 	repoRoot, homeDir := progressiveFixture(t)
 	m := NewModel(repoRoot, homeDir, WithUpgradeCheck(checker))
 	initCmd := m.Init()
+	joinStartupSnapshot(t, initCmd)
 	if initCmd == nil {
 		t.Fatal("Init returned no commands, want the notice command among them")
 	}
-	t.Cleanup(func() {
-		// Init starts the snapshot worker eagerly. Join its stages before restoring
-		// loaders/HOME; do not execute the deliberately blocked upgrade command.
-		snapshot, ok := batchCmds(initCmd)[0]().(snapshotLoadedMsg)
-		if !ok || snapshot.stages == nil {
-			t.Fatal("Init did not return the progressive startup snapshot")
-		}
-		stages := collectSnapshotStages(snapshot.stages)
-		if len(stages) == 0 || stages[len(stages)-1].stage != snapshotStageFinal {
-			t.Fatal("startup snapshot did not finish before fixture cleanup")
-		}
-	})
 	if n := hits.Load(); n != 0 {
 		t.Fatalf("Init made %d requests before any command ran, want 0", n)
 	}

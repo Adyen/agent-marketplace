@@ -439,7 +439,8 @@ func TestViewPreferencesSaveFailurePreservesFile(t *testing.T) {
 
 // spec: tui-startup/missing-invalid-unreadable-and-failed-save-preference-files
 func TestViewPreferencesWarningSurfacesAtStartup(t *testing.T) {
-	home := isolatedPrefsHome(t)
+	isolatedPrefsHome(t)
+	repoRoot, home := progressiveFixture(t)
 	path := prefsFile(t)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
@@ -447,7 +448,7 @@ func TestViewPreferencesWarningSurfacesAtStartup(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{corrupt"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	m := NewModel("/repo", home)
+	m := NewModel(repoRoot, home)
 	if m.viewPrefsWarning == "" {
 		t.Fatalf("corrupt preference file must record a startup warning")
 	}
@@ -457,7 +458,9 @@ func TestViewPreferencesWarningSurfacesAtStartup(t *testing.T) {
 	// renders.
 	var toast toastMsg
 	found := false
-	for _, c := range m.Init()().(tea.BatchMsg) {
+	initCmd := m.Init()
+	joinStartupSnapshot(t, initCmd)
+	for _, c := range initCmd().(tea.BatchMsg) {
 		if c == nil {
 			continue
 		}

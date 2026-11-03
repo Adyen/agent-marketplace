@@ -1,0 +1,18 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/resolver
+cpu: Apple M4 Max
+BenchmarkResolveCollectionDiamond/depth=8-16         	     920	   1281942 ns/op	 2775279 B/op	    8393 allocs/op
+BenchmarkResolveCollectionDiamond/depth=8-16         	     938	   1277470 ns/op	 2775261 B/op	    8393 allocs/op
+BenchmarkResolveCollectionDiamond/depth=8-16         	     933	   1319096 ns/op	 2775257 B/op	    8393 allocs/op
+BenchmarkResolveCollectionDiamond/depth=8-16         	     919	   1291629 ns/op	 2775244 B/op	    8393 allocs/op
+BenchmarkResolveCollectionDiamond/depth=8-16         	     891	   1315597 ns/op	 2775256 B/op	    8393 allocs/op
+BenchmarkResolveCollectionDiamond/depth=8-16         	     908	   1311877 ns/op	 2775259 B/op	    8393 allocs/op
+BenchmarkResolveCollectionDiamond/depth=16-16        	     100	  10473342 ns/op	24816323 B/op	   51399 allocs/op
+BenchmarkResolveCollectionDiamond/depth=16-16        	     100	  10426675 ns/op	24816486 B/op	   51399 allocs/op
+BenchmarkResolveCollectionDiamond/depth=16-16        	     100	  10661323 ns/op	24816476 B/op	   51399 allocs/op
+BenchmarkResolveCollectionDiamond/depth=16-16        	     100	  10477699 ns/op	24816424 B/op	   51399 allocs/op
+BenchmarkResolveCollectionDiamond/depth=16-16        	     100	  10468418 ns/op	24816363 B/op	   51399 allocs/op
+BenchmarkResolveCollectionDiamond/depth=16-16        	     100	  10826797 ns/op	24816428 B/op	   51399 allocs/op
+PASS
+ok  	github.com/Adyen/agent-marketplace/internal/resolver	13.750s

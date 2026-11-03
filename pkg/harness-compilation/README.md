@@ -67,6 +67,8 @@ The proposal job authenticates with `GITHUB_TOKEN`, so its pull request does not
 
 To reproduce the proposal locally from a saved report, run `go run ./tools/model-catalog-audit propose < /tmp/model-catalog-report.json` from the repository root. It edits only catalogs with actionable additions and prints the proposal or evidence-only alert to stdout, leaving baseline bytes and metadata untouched.
 
+The hashes describe different inputs: `catalog_sha256` fingerprints the local catalog file, while `observed_sha256` fingerprints the extracted upstream inventory or documentation. The baseline `sha256` records the last reviewed upstream fingerprint, not the catalog contents. Adding a model therefore changes the catalog hash without refreshing the baseline. Until someone reviews and acknowledges that source change, subsequent audits continue to report the same evidence drift, even if the missing model now has a mapping.
+
 1. Reproduce the online audit from the repository root:
 
    ```sh

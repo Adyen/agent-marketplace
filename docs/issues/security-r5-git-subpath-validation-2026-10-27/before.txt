@@ -1,0 +1,144 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4SubpathValidation/empty-16         	665557558	         1.803 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4SubpathValidation/single-16        	37659562	        30.48 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/nested-16        	19981557	        61.91 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/deep-16          	 1000000	      1044 ns/op	    1152 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/backslash-16     	12760849	        96.77 ns/op	      72 B/op	       2 allocs/op
+BenchmarkV4SubpathValidation/absolute-control-16         	130456630	         9.171 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/escape-control-16           	33923299	        35.18 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/dot-segment-16              	15450684	        76.79 ns/op	     104 B/op	       4 allocs/op
+BenchmarkV4SubpathValidation/repeated-slash-16           	16059679	        74.53 ns/op	     104 B/op	       4 allocs/op
+BenchmarkV4SubpathValidation/trailing-slash-16           	20755410	        58.96 ns/op	      64 B/op	       2 allocs/op
+BenchmarkParseV4GitSubpaths/empty/sources=1-16           	  125595	      9516 ns/op	   14843 B/op	     138 allocs/op
+BenchmarkParseV4GitSubpaths/empty/sources=256-16         	    1012	   1186487 ns/op	 1230963 B/op	   13729 allocs/op
+BenchmarkParseV4GitSubpaths/empty/sources=1024-16        	     246	   4859064 ns/op	 5133115 B/op	   54472 allocs/op
+BenchmarkParseV4GitSubpaths/nested/sources=1-16          	  117712	     10244 ns/op	   14956 B/op	     141 allocs/op
+BenchmarkParseV4GitSubpaths/nested/sources=256-16        	     930	   1281232 ns/op	 1259676 B/op	   14497 allocs/op
+BenchmarkParseV4GitSubpaths/nested/sources=1024-16       	     232	   5134448 ns/op	 5247501 B/op	   57541 allocs/op
+BenchmarkParseV4GitSubpaths/backslash/sources=1-16       	  118156	      9892 ns/op	   15019 B/op	     143 allocs/op
+BenchmarkParseV4GitSubpaths/backslash/sources=256-16     	     942	   1294617 ns/op	 1276078 B/op	   15009 allocs/op
+BenchmarkParseV4GitSubpaths/backslash/sources=1024-16    	     229	   5167737 ns/op	 5313156 B/op	   59590 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4SubpathValidation/empty-16         	660375518	         1.808 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4SubpathValidation/single-16        	36349729	        32.07 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/nested-16        	19291506	        60.91 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/deep-16          	 1000000	      1021 ns/op	    1152 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/backslash-16     	13002421	        93.58 ns/op	      72 B/op	       2 allocs/op
+BenchmarkV4SubpathValidation/absolute-control-16         	138737277	         8.637 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/escape-control-16           	36568270	        33.55 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/dot-segment-16              	15671361	        76.14 ns/op	     104 B/op	       4 allocs/op
+BenchmarkV4SubpathValidation/repeated-slash-16           	15836436	        75.59 ns/op	     104 B/op	       4 allocs/op
+BenchmarkV4SubpathValidation/trailing-slash-16           	19651861	        61.43 ns/op	      64 B/op	       2 allocs/op
+BenchmarkParseV4GitSubpaths/empty/sources=1-16           	  121147	      9763 ns/op	   14843 B/op	     138 allocs/op
+BenchmarkParseV4GitSubpaths/empty/sources=256-16         	     985	   1210026 ns/op	 1230962 B/op	   13729 allocs/op
+BenchmarkParseV4GitSubpaths/empty/sources=1024-16        	     249	   4820304 ns/op	 5133092 B/op	   54472 allocs/op
+BenchmarkParseV4GitSubpaths/nested/sources=1-16          	  121461	      9937 ns/op	   14955 B/op	     141 allocs/op
+BenchmarkParseV4GitSubpaths/nested/sources=256-16        	     949	   1284365 ns/op	 1259694 B/op	   14497 allocs/op
+BenchmarkParseV4GitSubpaths/nested/sources=1024-16       	     232	   5142228 ns/op	 5247556 B/op	   57541 allocs/op
+BenchmarkParseV4GitSubpaths/backslash/sources=1-16       	  117493	     10200 ns/op	   15020 B/op	     143 allocs/op
+BenchmarkParseV4GitSubpaths/backslash/sources=256-16     	     922	   1332303 ns/op	 1276078 B/op	   15009 allocs/op
+BenchmarkParseV4GitSubpaths/backslash/sources=1024-16    	     220	   5306189 ns/op	 5313320 B/op	   59592 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4SubpathValidation/empty-16         	652598190	         1.809 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4SubpathValidation/single-16        	36141085	        32.10 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/nested-16        	19620813	        61.23 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/deep-16          	 1000000	      1046 ns/op	    1152 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/backslash-16     	12607750	        94.35 ns/op	      72 B/op	       2 allocs/op
+BenchmarkV4SubpathValidation/absolute-control-16         	140428262	         8.546 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/escape-control-16           	35097981	        32.86 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/dot-segment-16              	16359898	        75.28 ns/op	     104 B/op	       4 allocs/op
+BenchmarkV4SubpathValidation/repeated-slash-16           	16210410	        76.06 ns/op	     104 B/op	       4 allocs/op
+BenchmarkV4SubpathValidation/trailing-slash-16           	21142176	        59.68 ns/op	      64 B/op	       2 allocs/op
+BenchmarkParseV4GitSubpaths/empty/sources=1-16           	  125715	      9709 ns/op	   14844 B/op	     138 allocs/op
+BenchmarkParseV4GitSubpaths/empty/sources=256-16         	     993	   1210138 ns/op	 1230981 B/op	   13729 allocs/op
+BenchmarkParseV4GitSubpaths/empty/sources=1024-16        	     246	   4858065 ns/op	 5133137 B/op	   54472 allocs/op
+BenchmarkParseV4GitSubpaths/nested/sources=1-16          	  120094	      9947 ns/op	   14956 B/op	     141 allocs/op
+BenchmarkParseV4GitSubpaths/nested/sources=256-16        	     952	   1257369 ns/op	 1259670 B/op	   14497 allocs/op
+BenchmarkParseV4GitSubpaths/nested/sources=1024-16       	     237	   5173094 ns/op	 5247835 B/op	   57544 allocs/op
+BenchmarkParseV4GitSubpaths/backslash/sources=1-16       	  120661	      9959 ns/op	   15019 B/op	     143 allocs/op
+BenchmarkParseV4GitSubpaths/backslash/sources=256-16     	     937	   1334376 ns/op	 1276078 B/op	   15009 allocs/op
+BenchmarkParseV4GitSubpaths/backslash/sources=1024-16    	     228	   5245261 ns/op	 5313285 B/op	   59592 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4SubpathValidation/empty-16         	665387643	         1.809 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4SubpathValidation/single-16        	35700782	        31.79 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/nested-16        	19892139	        60.98 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/deep-16          	 1000000	      1022 ns/op	    1152 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/backslash-16     	12904375	        92.23 ns/op	      72 B/op	       2 allocs/op
+BenchmarkV4SubpathValidation/absolute-control-16         	142752357	         8.430 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/escape-control-16           	36009676	        33.69 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/dot-segment-16              	15789412	        76.55 ns/op	     104 B/op	       4 allocs/op
+BenchmarkV4SubpathValidation/repeated-slash-16           	16010700	        74.57 ns/op	     104 B/op	       4 allocs/op
+BenchmarkV4SubpathValidation/trailing-slash-16           	20012896	        60.06 ns/op	      64 B/op	       2 allocs/op
+BenchmarkParseV4GitSubpaths/empty/sources=1-16           	  123867	      9585 ns/op	   14843 B/op	     138 allocs/op
+BenchmarkParseV4GitSubpaths/empty/sources=256-16         	    1004	   1192847 ns/op	 1230960 B/op	   13729 allocs/op
+BenchmarkParseV4GitSubpaths/empty/sources=1024-16        	     246	   4810984 ns/op	 5133130 B/op	   54472 allocs/op
+BenchmarkParseV4GitSubpaths/nested/sources=1-16          	  120206	      9885 ns/op	   14955 B/op	     141 allocs/op
+BenchmarkParseV4GitSubpaths/nested/sources=256-16        	     931	   1285248 ns/op	 1259676 B/op	   14497 allocs/op
+BenchmarkParseV4GitSubpaths/nested/sources=1024-16       	     232	   5152911 ns/op	 5247719 B/op	   57544 allocs/op
+BenchmarkParseV4GitSubpaths/backslash/sources=1-16       	  117952	     10155 ns/op	   15020 B/op	     143 allocs/op
+BenchmarkParseV4GitSubpaths/backslash/sources=256-16     	     920	   1311313 ns/op	 1276066 B/op	   15009 allocs/op
+BenchmarkParseV4GitSubpaths/backslash/sources=1024-16    	     231	   5168218 ns/op	 5313216 B/op	   59591 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4SubpathValidation/empty-16         	668639151	         1.798 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4SubpathValidation/single-16        	34369182	        31.58 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/nested-16        	19475038	        61.67 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/deep-16          	 1000000	      1052 ns/op	    1152 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/backslash-16     	12741434	        94.89 ns/op	      72 B/op	       2 allocs/op
+BenchmarkV4SubpathValidation/absolute-control-16         	140004352	         8.539 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/escape-control-16           	36380079	        32.56 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/dot-segment-16              	15496334	        77.15 ns/op	     104 B/op	       4 allocs/op
+BenchmarkV4SubpathValidation/repeated-slash-16           	16430487	        72.39 ns/op	     104 B/op	       4 allocs/op
+BenchmarkV4SubpathValidation/trailing-slash-16           	20778740	        58.71 ns/op	      64 B/op	       2 allocs/op
+BenchmarkParseV4GitSubpaths/empty/sources=1-16           	  123422	      9723 ns/op	   14844 B/op	     138 allocs/op
+BenchmarkParseV4GitSubpaths/empty/sources=256-16         	     993	   1217211 ns/op	 1230975 B/op	   13729 allocs/op
+BenchmarkParseV4GitSubpaths/empty/sources=1024-16        	     244	   4884706 ns/op	 5133128 B/op	   54472 allocs/op
+BenchmarkParseV4GitSubpaths/nested/sources=1-16          	  117885	     10059 ns/op	   14956 B/op	     141 allocs/op
+BenchmarkParseV4GitSubpaths/nested/sources=256-16        	     945	   1263228 ns/op	 1259664 B/op	   14497 allocs/op
+BenchmarkParseV4GitSubpaths/nested/sources=1024-16       	     224	   5210405 ns/op	 5247794 B/op	   57544 allocs/op
+BenchmarkParseV4GitSubpaths/backslash/sources=1-16       	  119281	      9967 ns/op	   15020 B/op	     143 allocs/op
+BenchmarkParseV4GitSubpaths/backslash/sources=256-16     	     920	   1305179 ns/op	 1276082 B/op	   15009 allocs/op
+BenchmarkParseV4GitSubpaths/backslash/sources=1024-16    	     228	   5239047 ns/op	 5313236 B/op	   59591 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4SubpathValidation/empty-16         	662224701	         1.813 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4SubpathValidation/single-16        	36529773	        31.62 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/nested-16        	19721960	        59.83 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/deep-16          	 1000000	      1043 ns/op	    1152 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/backslash-16     	13071069	        91.89 ns/op	      72 B/op	       2 allocs/op
+BenchmarkV4SubpathValidation/absolute-control-16         	140716678	         8.512 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/escape-control-16           	36086562	        33.64 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4SubpathValidation/dot-segment-16              	15480141	        78.39 ns/op	     104 B/op	       4 allocs/op
+BenchmarkV4SubpathValidation/repeated-slash-16           	15874318	        77.73 ns/op	     104 B/op	       4 allocs/op
+BenchmarkV4SubpathValidation/trailing-slash-16           	17836506	        61.69 ns/op	      64 B/op	       2 allocs/op
+BenchmarkParseV4GitSubpaths/empty/sources=1-16           	  122598	      9762 ns/op	   14843 B/op	     138 allocs/op
+BenchmarkParseV4GitSubpaths/empty/sources=256-16         	     982	   1217160 ns/op	 1230969 B/op	   13729 allocs/op
+BenchmarkParseV4GitSubpaths/empty/sources=1024-16        	     244	   4872480 ns/op	 5133107 B/op	   54472 allocs/op
+BenchmarkParseV4GitSubpaths/nested/sources=1-16          	  118164	     10066 ns/op	   14955 B/op	     141 allocs/op
+BenchmarkParseV4GitSubpaths/nested/sources=256-16        	     916	   1297300 ns/op	 1259681 B/op	   14497 allocs/op
+BenchmarkParseV4GitSubpaths/nested/sources=1024-16       	     232	   5213230 ns/op	 5247632 B/op	   57542 allocs/op
+BenchmarkParseV4GitSubpaths/backslash/sources=1-16       	  117285	     10251 ns/op	   15020 B/op	     143 allocs/op
+BenchmarkParseV4GitSubpaths/backslash/sources=256-16     	     926	   1319681 ns/op	 1276076 B/op	   15009 allocs/op
+BenchmarkParseV4GitSubpaths/backslash/sources=1024-16    	     226	   5235997 ns/op	 5313193 B/op	   59591 allocs/op
+PASS

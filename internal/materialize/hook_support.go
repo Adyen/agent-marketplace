@@ -56,6 +56,7 @@ type nativeHookInstalledSupport struct {
 	mode                  config.MaterializationMode
 	capturedBytes         []byte
 	capturedMode          fs.FileMode
+	boundary              *destinationBoundary
 }
 
 type hookSupportClaim struct {
@@ -690,6 +691,33 @@ func openHookSupportFileAtWithOpener(dirFD int, relative string, total int64, op
 	return file, mode.Perm(), size, nil
 }
 
+func readNativeHookSupportLink(output nativeHookInstalledSupport) (text string, generation dependencytxn.Generation, err error) {
+	if output.boundary == nil {
+		return dependencytxn.ReadSymlinkSnapshot(output.outputPath)
+	}
+	parent, err := capturePortableParent(output.outputPath, output.boundary, false)
+	if err != nil {
+		return "", generation, err
+	}
+	if parent == nil {
+		return "", generation, fsboundary.ErrGenerationConflict
+	}
+	defer func() { err = errors.Join(err, parent.Close()) }()
+	native, err := parent.NativeRoot()
+	if err != nil {
+		return "", generation, err
+	}
+	defer func() { err = errors.Join(err, native.Close()) }()
+	snapshot, err := observeManagedLink(filepath.Base(output.outputPath), native)
+	if err != nil {
+		return "", generation, err
+	}
+	if snapshot.observed.Mode()&os.ModeSymlink == 0 {
+		return "", generation, fsboundary.ErrUnsafeFile
+	}
+	return snapshot.text, dependencytxn.Generation{Exists: true, Digest: dependencytxn.Digest([]byte(snapshot.text))}, nil
+}
+
 func verifyNativeHookSupportOutput(output nativeHookInstalledSupport) error {
 	readRoot := output.outputRoot
 	var beforeTarget string
@@ -699,7 +727,7 @@ func verifyNativeHookSupportOutput(output nativeHookInstalledSupport) error {
 			return fmt.Errorf("captured hook support symlink target is inconsistent")
 		}
 		var err error
-		beforeTarget, beforeGeneration, err = dependencytxn.ReadSymlinkSnapshot(output.outputPath)
+		beforeTarget, beforeGeneration, err = readNativeHookSupportLink(output)
 		if err != nil {
 			return fmt.Errorf("snapshot installed hook support symlink: %w", err)
 		}
@@ -734,7 +762,7 @@ func verifyNativeHookSupportOutput(output nativeHookInstalledSupport) error {
 		return fmt.Errorf("installed hook support permissions changed: %s", output.outputPath)
 	}
 	if output.mode == config.MaterializationModeSymlink {
-		afterTarget, afterGeneration, err := dependencytxn.ReadSymlinkSnapshot(output.outputPath)
+		afterTarget, afterGeneration, err := readNativeHookSupportLink(output)
 		if err != nil {
 			return fmt.Errorf("recheck installed hook support symlink: %w", err)
 		}
