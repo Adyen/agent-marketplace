@@ -12,4 +12,4 @@
 ## 3. Integration
 
 - [x] 3.1 Run `make spec-check`, `make validate`, and the witnessed PostgreSQL conformance and migration run with `POSTGRES_DSN` set; verify all pass with no PostgreSQL skip
-- [ ] 3.2 Run `openspec archive fix-expired-final-attempt-coalescing --yes` as the final commit and verify `make spec-check` still passes
+- [x] 3.2 Run `openspec archive fix-expired-final-attempt-coalescing --yes` as the final commit and verify `make spec-check` still passes

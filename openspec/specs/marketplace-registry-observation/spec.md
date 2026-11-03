@@ -87,7 +87,7 @@ The metadata store SHALL admit remote operations against a normalized source hos
 
 ### Requirement: Refresh requests coalesce onto one active refresh
 
-Requesting a refresh SHALL update the registry's desired commit and indexing generation and its active refresh in one atomic step: either both change or neither does. When an active refresh already targets the same desired commit and generation, the request SHALL coalesce onto it instead of creating another refresh job. When a refresh job fails terminally, the metadata store SHALL clear it as the registry's active refresh so a later request can create a new one.
+Requesting a refresh SHALL update the registry's desired commit and indexing generation and its active refresh in one atomic step: either both change or neither does. An active refresh is a refresh job that can still run: a pending job, a failed job with attempts remaining, or a leased job that has attempts remaining or whose lease is still valid. When an active refresh already targets the same desired commit and generation, the request SHALL coalesce onto it instead of creating another refresh job. When a refresh job fails terminally, the metadata store SHALL clear it as the registry's active refresh so a later request can create a new one.
 
 #### Scenario: A failed refresh request changes neither desired state nor the active refresh
 
@@ -103,6 +103,11 @@ Requesting a refresh SHALL update the registry's desired commit and indexing gen
 
 - **WHEN** the active refresh job of a registry fails for the last permitted attempt and a refresh is then requested again
 - **THEN** the observation has no active refresh after the failure, and the new request creates a new active refresh job
+
+#### Scenario: An expired lease on the final permitted attempt does not coalesce a refresh request
+
+- **WHEN** a worker leases the active refresh job on its final permitted attempt, its lease expires without the worker recording an outcome, and a refresh is requested for the same desired commit and generation
+- **THEN** the request creates a new active refresh job and does not report the expired job as coalesced
 
 ### Requirement: Removing observation state preserves immutable records
 
