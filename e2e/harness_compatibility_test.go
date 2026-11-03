@@ -147,18 +147,11 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 	var nativePluginName, nativePluginSkill string
 	if native != nil && first.Harness == "claude" {
 		pluginProbeRow = rows["skill"]
-		nativePluginName, nativePluginSkill = f.name("native-plugin"), f.name("native-plugin-skill")
-		pluginRoot := filepath.Join(e.repos, "native-claude-plugin")
-		e.WriteFile(filepath.Join(pluginRoot, ".claude-plugin", "plugin.json"),
-			fmt.Sprintf(`{"name":%q}`, nativePluginName))
-		e.WriteFile(filepath.Join(pluginRoot, "skills", nativePluginSkill, "SKILL.md"),
-			fmt.Sprintf("---\nname: %s\ndescription: %s\n---\n\n# %s\n", nativePluginSkill, f.description("skill"), nativePluginSkill))
-		config += fmt.Sprintf("  native-plugin: {directory: %q, format: claude-plugin}\n", pluginRoot)
 		delivery := "auto"
 		if first.Scope == "user" {
 			delivery = "native"
 		}
-		config += fmt.Sprintf("resources:\n  native-plugin:\n    - {kind: plugin, name: %s, delivery: %s}\n", nativePluginName, delivery)
+		config, nativePluginName, nativePluginSkill = addClaudePluginProbeSource(e, f, config, delivery)
 	}
 	if first.Scope == "user" {
 		e.WriteGlobalConfig(config)
@@ -197,6 +190,7 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 	}
 	sync := runCompatibilityCommand(e, e.binary, []string{"sync"}, 30*time.Second)
 	if sync.Error != "" {
+		rows["collection"].Commands = append(rows["collection"].Commands, sync)
 		t.Fatalf("Marketplace sync failed: %s\n%s", sync.Error, sync.output)
 	}
 	if pluginProbeRow != nil {

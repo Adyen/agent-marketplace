@@ -179,6 +179,41 @@ func TestCompatibilitySafeDiagnostics(t *testing.T) {
 	}
 }
 
+func TestCompatibilityMarketplaceFailureOutputIsBounded(t *testing.T) {
+	for _, operation := range []string{"install", "sync"} {
+		t.Run(operation, func(t *testing.T) {
+			e := newEnv(t)
+			binary := filepath.Join(e.repos, "internal-fake-marketplace")
+			const limit = 2 << 10
+			output := strings.Repeat("x", limit) + "tail"
+			e.WriteFile(filepath.Join(e.home, "failure-output"), output)
+			e.WriteFile(binary, "#!/bin/sh\ncat \"$HOME/failure-output\"\nexit 1\n")
+			if err := os.Chmod(binary, 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			command := runCompatibilityCommand(e, binary, []string{operation, "fixture"}, time.Second)
+			if command.Error == "" || command.ExitCode != 1 {
+				t.Fatalf("failed %s result = %+v", operation, command)
+			}
+			data, err := json.Marshal(command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var report struct {
+				FailureOutput          string `json:"failure_output"`
+				FailureOutputTruncated bool   `json:"failure_output_truncated"`
+			}
+			if err := json.Unmarshal(data, &report); err != nil {
+				t.Fatal(err)
+			}
+			if report.FailureOutput != strings.Repeat("x", limit) || !report.FailureOutputTruncated {
+				t.Fatalf("bounded Marketplace failure output = %d bytes, truncated=%t", len(report.FailureOutput), report.FailureOutputTruncated)
+			}
+		})
+	}
+}
+
 func TestCompatibilityRuntimeUpdatesDisabled(t *testing.T) {
 	e := newEnv(t)
 	t.Setenv("DISABLE_AUTOUPDATER", "0")
