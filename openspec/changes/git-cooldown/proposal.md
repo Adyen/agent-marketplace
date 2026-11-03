@@ -108,10 +108,12 @@ None.
 - `internal/config`: v4 schema, validation, layer permissions, effective-floor
   computation, diagnostics.
 - `internal/cache`: first-parent history listing with committer dates,
-  tag-object dates, ancestry and reachability checks on the existing bare
-  mirror object store (no new network operations; the store is a full
-  `clone --mirror --no-tags`), tagger dates from the mutable ref cache for
-  `--bump`.
+  tag-object dates, and ancestry checks on the existing bare mirror object
+  store, all local reads (the store is a full `clone --mirror --no-tags`);
+  one new network operation, a remote-heads refresh, runs only on the
+  rewrite-refusal path to compute the reachability evidence and falls back to
+  labelled cached evidence when it fails; tagger dates from the mutable ref
+  cache for `--bump`.
 - `cmd/agent-marketplace/lock.go` (`reconcileLayerDocument`,
   `acquireLockedRegistry`): candidate selection replaces "resolve the tip";
   rewrite refusal and acceptance; new flag on `update` and `lock`.

@@ -13,8 +13,8 @@
 
 - [ ] 1.1 Parse `first_published_at`, `current_availability.cooldown`, and
   `held_head` on latest, list, and exact revision responses; parse the `409`
-  `marketplace.cooldown.held` body into a typed error that tolerates a
-  malformed body; carry the new fields in the revision cache. Table tests
+  `marketplace.cooldown.held` body (including `availability`) into a typed
+  error that tolerates a malformed body; carry the new fields in the revision cache. Table tests
   against recorded responses, including a response without the field and a
   `409` with an unparseable body
 
@@ -41,6 +41,7 @@
   `resource-installation/install-reports-the-held-head-when-it-selects-an-older-revision`,
   `resource-installation/consumer-only-hold-reports-the-latest-head-as-evidence`,
   `update-output/held-pin-prints-the-hold-line-with-the-head-s-eligible-date-and-exits-0`,
+  `update-output/young-revoked-head-reports-revocation-not-a-cooldown-hold`,
   `update-output/unparseable-hold-body-for-an-existing-pin-reports-an-unknown-head`,
   `update-output/collection-hold-reports-the-latest-member-eligible-date`,
   `update-output/held-pins-are-excluded-from-content-diffs`,

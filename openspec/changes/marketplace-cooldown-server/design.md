@@ -140,11 +140,10 @@ and server time `now`:
 
 **A young head with a stronger state.** `held_head` (step 3) and the `409`
 body (step 4) always carry the head's `availability` as the overlay would
-report it, and `acknowledgeable` is `true` only when `held: expose` **and**
-that overlay is `available` or `operator-exposed`. A young head that is
-revoked, policy-blocked, blocked, or missing its artifact is therefore never
-offered for acknowledgement, and a client shows the stronger state instead of
-a cooldown prompt.
+report it and its `acknowledgeable` flag computed by the single predicate in
+D4. A young head that is revoked, policy-blocked, blocked, or missing its
+artifact is therefore never offered for acknowledgement, and a client shows
+the stronger state instead of a cooldown prompt.
 
 **Collections.** A collection revision is eligible only when its own first
 publication is at or before the cutoff **and** every member revision it
@@ -167,9 +166,16 @@ rather than any fallback, so a revert to old content resolves to the head.
 `evaluateAvailability` gains a cooldown input (effective period, `held`
 mode, `now`). When `P > 0` every `current_availability` carries
 `cooldown: {held, first_published_at, cooldown_until, acknowledgeable}`;
-`held` is `first_published_at > now − P`, `acknowledgeable` is
-`held == false || mode == expose`. The `availability` word is set to
-`cooling-down` only when the revision is held and no stronger state applies.
+`held` is `first_published_at > now − P`. `acknowledgeable` answers one
+question everywhere it appears (the `cooldown` object, `held_head`, the
+`409` body, and the OpenAPI schema): may a conforming client pin this
+revision for an initial acquisition despite a consumer or server hold? It is
+`(mode == expose || !held) && overlay ∈ {available, operator-exposed}`, so a
+revision the server does not hold but a stricter consumer floor does remains
+acknowledgeable, a server-held revision is acknowledgeable only under
+`expose`, and a revoked, policy-blocked, blocked, or artifact-less revision
+never is. The `availability` word is set to `cooling-down` only when the
+revision is held and no stronger state applies.
 Precedence, highest first: `revoked`, `no-artifact`,
 `policy-blocked`/`operator-exposed`, `blocked`, `cooling-down`, `available`.
 Clients must read the hold from `cooldown.held`, never from the availability
@@ -244,9 +250,16 @@ copy avoids the words blocked, revoked, and rejected.
   revision unaware of the hold, or fails with
   `resolve latest resource revision: 409 …` for a coordinate with no eligible
   revision. Existing pins and `sync --locked` are unaffected because exact
-  reads and distribution are not gated. This is operator opt-in behavior of
-  the same kind as revocation, not a change to a supported client contract;
-  the released-client gate witnesses both outcomes.
+  reads and distribution are not gated. One consequence needs stating: an
+  old client whose pin sits inside a newly raised floor and that runs
+  `update` follows the fallback and can move to an eligible revision the
+  registry published *before* its pin, because the no-downgrade rule lives in
+  the cooldown-aware client. Operator guidance therefore says to upgrade
+  clients before enabling a non-zero floor, or to accept that older clients
+  may step back to the most recent eligible occurrence on `update`. This is
+  operator opt-in behavior of the same kind as revocation, not a change to a
+  supported client contract; the released-client gate witnesses all three
+  outcomes, including the step-back.
 - New client, old server: covered by `marketplace-cooldown-client`
   (`missing_evidence`).
 
@@ -292,6 +305,8 @@ listed so reviewers can judge the contract now.
   - Scenario: Catalog validator changes when a row becomes eligible
   - Scenario: Search validator changes when a row becomes eligible
   - Scenario: Revision list validator changes when a row becomes eligible
+  - Scenario: List validators change when the global period changes
+  - Scenario: List validators change when a registry override changes
 
 `marketplace-web-ui`
 

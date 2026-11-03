@@ -74,8 +74,14 @@ restored. Eligibility ("old enough") is always measured by first publication.
    - `409` with `code: marketplace.cooldown.held` → no revision is eligible
      under the server floor, so the revisions list cannot contain one
      either. Record the body's `revision`, `first_published_at`,
-     `cooldown_until`, and `acknowledgeable`; a body that fails to parse
-     records none of them. Skip step 2 and go to step 4 with no candidate.
+     `cooldown_until`, `availability`, and `acknowledgeable`; a body that
+     fails to parse records none of them. When `availability` is `revoked`,
+     `policy-blocked`, `blocked`, or `no-artifact`, the head is not merely
+     young: hand the outcome to the existing revocation/assessment handling
+     for a head in that state (same report lines and exit status as a `200`
+     head in that state today), print no cooldown line, and offer no
+     acknowledgement. Otherwise skip step 2 and go to step 4 with no
+     candidate.
    - `200` without `first_published_at` → D5.
    - `200` that is the **head** (no `held_head`) and
      `first_published_at ≤ C` → candidate found. This is how a registry
@@ -257,6 +263,7 @@ effect is that the TUI detail view can show a held head from cache.
 
 - Requirement: Marketplace holds are reported
   - Scenario: Held pin prints the hold line with the head's eligible date and exits 0
+  - Scenario: Young revoked head reports revocation, not a cooldown hold
   - Scenario: Unparseable hold body for an existing pin reports an unknown head
   - Scenario: Collection hold reports the latest member eligible date
   - Scenario: Held pins are excluded from content diffs

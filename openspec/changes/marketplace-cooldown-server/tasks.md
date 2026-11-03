@@ -78,9 +78,12 @@
   `marketplace-api/latest-validator-changes-when-the-floor-is-raised`,
   `marketplace-api/catalog-validator-changes-when-a-row-becomes-eligible`,
   `marketplace-api/search-validator-changes-when-a-row-becomes-eligible`,
-  `marketplace-api/revision-list-validator-changes-when-a-row-becomes-eligible`
-  (each sends `If-None-Match` before and after the boundary and expects a
-  changed validator and a fresh body)
+  `marketplace-api/revision-list-validator-changes-when-a-row-becomes-eligible`,
+  `marketplace-api/list-validators-change-when-the-global-period-changes`,
+  `marketplace-api/list-validators-change-when-a-registry-override-changes`
+  (each sends `If-None-Match` before and after the boundary or policy change
+  and expects a changed validator and a fresh body, on catalog, search, and
+  revision list)
 - [ ] 3.5 Update `api/openapi.yaml`: `first_published_at`, the
   `current_availability.cooldown` object, `held_head`, the `cooling-down`
   availability value, and the `409` response on the latest-revision route.
@@ -101,11 +104,14 @@
   revision, and `sync --locked` of a pin inside the raised floor succeeds on
   an empty cache. Keep the witnesses required
 - [ ] 5.2 Add a released-client gate scenario running the pinned stable client
-  against a cooldown-enabled server to witness the same three outcomes
+  against a cooldown-enabled server to witness the same three outcomes, plus
+  the documented step-back: a pin inside a newly raised floor followed by
+  `update` moves to the most recent eligible occurrence
 - [ ] 5.3 Document `policy.cooldown` and the override in
   `site/docs/reference/marketplace-operator-configuration.md`; add the
-  newly-approved-registry, fresh-database, and older-client consequences to
-  `docs/marketplace-operator.md`; mention the recommended 24-hour period and
+  newly-approved-registry, fresh-database, and older-client consequences
+  (upgrade clients before enabling a non-zero floor, or accept the `update`
+  step-back) to `docs/marketplace-operator.md`; mention the recommended 24-hour period and
   that `held: strict` is advisory in `docs/marketplace-security.md`
 
 ## 6. Validate and archive
