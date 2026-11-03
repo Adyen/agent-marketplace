@@ -996,6 +996,27 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			return out
 		},
 	}
+	// The update selection guard and preview re-verify the previously
+	// published locks, whose plugin-v1 roots need a plan resolved against
+	// those prior documents rather than the candidate acquisitions.
+	priorPlanner := &pluginPlanSource{
+		merged:    ec.Merged,
+		localCfg:  ec.Local,
+		repoRoot:  ws.RepoRoot(),
+		localDir:  ws.LocalConfigDir(),
+		offline:   mode.offline,
+		readOnly:  mode.readOnlyDependencies(),
+		snapshots: map[string]acquiredSnap{},
+		fetchURLs: pluginFetchURLs,
+		fetchURL:  pluginFetchURL,
+		docs: func() []lockfile.Document {
+			out := make([]lockfile.Document, 0, len(priorSnapshots))
+			for _, job := range priorSnapshots {
+				out = append(out, job.doc)
+			}
+			return out
+		},
+	}
 	emitLayer := func(dw deferredLayerWrite) error {
 		gitFresh := dw.gitFresh
 		if dw.exists && dw.current != nil && dw.current.APIVersion == lockfile.APIVersionV1 && writableV1RequiresUpgrade(dw.scope, mode) {
@@ -1250,7 +1271,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		if err := ensureSnapshotLease(); err != nil {
 			return nil, changed, nil, err
 		}
-		if err := guardNewlyMissingSelections(ctx, ws, mode.offline, priorSnapshots, overlays, lockDesired, &set, exactSnapshot); err != nil {
+		if err := guardNewlyMissingSelections(ctx, ws, mode.offline, priorSnapshots, priorPlanner, overlays, lockDesired, &set, exactSnapshot); err != nil {
 			return nil, changed, nil, err
 		}
 	}
@@ -1259,14 +1280,15 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	// aborts preparation with nothing committed.
 	if mode.updatePreview != nil {
 		if err := mode.updatePreview(ctx, preparedUpdateView{
-			ws:          ws,
-			offline:     mode.offline,
-			priorJobs:   priorSnapshots,
-			overlays:    overlays,
-			lockDesired: lockDesired,
-			desiredSet:  &set,
-			lookup:      exactSnapshot,
-			ec:          ec,
+			ws:           ws,
+			offline:      mode.offline,
+			priorJobs:    priorSnapshots,
+			priorPlanner: priorPlanner,
+			overlays:     overlays,
+			lockDesired:  lockDesired,
+			desiredSet:   &set,
+			lookup:       exactSnapshot,
+			ec:           ec,
 		}); err != nil {
 			return nil, changed, nil, err
 		}

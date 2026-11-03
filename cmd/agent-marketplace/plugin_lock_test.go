@@ -1502,3 +1502,65 @@ func TestSyncExternalEntryMemberExclusionMakesLockStale(t *testing.T) {
 		t.Fatalf("sync --check must pass after the resync: %v\n%s", err, output)
 	}
 }
+
+// update re-verifies the previously published lock for its selection guard
+// and dry-run preview; plugin-v1 roots and external entry records in that
+// prior lock must verify there exactly as they do for sync.
+func TestUpdateKeepsPluginRecordsThroughPriorLockVerification(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	root := pluginLockFixture(t)
+	repo := filepath.Join(root, "repo")
+
+	entryOrigin, entryWorking := createBareRepoWithWorkingClone(t, "entry.git")
+	writeClaudePluginPackage(t, entryWorking, "ext-kit", "ext-skill")
+	commitAndPushAll(t, entryWorking, "seed entry")
+
+	catalogOrigin, catalogWorking := createBareRepoWithWorkingClone(t, "catalog.git")
+	writeCatalogRepo(t, catalogWorking, entryOrigin)
+	commitAndPushAll(t, catalogWorking, "seed catalog")
+
+	skillsOrigin, skillsWorking := createBareRepoWithWorkingClone(t, "skills.git")
+	writeSkill(t, skillsWorking, "tooling", "Tooling v1", nil)
+	commitAndPushAll(t, skillsWorking, "seed skills")
+
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources:\n  team: {git: file://"+filepath.ToSlash(catalogOrigin)+", ref: main, format: claude-marketplace}\n  reg: {git: file://"+filepath.ToSlash(skillsOrigin)+", ref: main}\nresources:\n  team:\n    - plugin/local-kit\n    - plugin/ext-kit\n  reg:\n    - skill/tooling\n")
+	withWorkingDir(t, repo)
+	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
+	if output, err := executeCommand("sync", "--no-backup"); err != nil {
+		t.Fatalf("sync: %v\n%s", err, output)
+	}
+	before, _ := readLock(t, lockPath)
+	if got := len(pluginResources(before)); got != 2 {
+		t.Fatalf("seed lock must carry both plugin records, got %d", got)
+	}
+
+	writeSkill(t, skillsWorking, "tooling", "Tooling v2", nil)
+	commitAndPushAll(t, skillsWorking, "advance skills")
+
+	if output, err := executeCommand("update", "--dry-run"); err != nil {
+		t.Fatalf("update --dry-run must compare a prior lock carrying plugin records: %v\n%s", err, output)
+	}
+	if output, err := executeCommand("update"); err != nil {
+		t.Fatalf("update must pass the selection guard with plugin records in the prior lock: %v\n%s", err, output)
+	}
+	after, _ := readLock(t, lockPath)
+	if got := len(pluginResources(after)); got != 2 {
+		t.Fatalf("update must retain both plugin records, got %d", got)
+	}
+	advanced := false
+	for _, registry := range after.Registries {
+		for _, prior := range before.Registries {
+			if registry.URL == prior.URL && registry.Ref == prior.Ref && registry.Commit != prior.Commit {
+				advanced = true
+			}
+		}
+	}
+	if !advanced {
+		t.Fatal("update must advance the skill source commit")
+	}
+	if output, err := executeCommand("sync", "--check"); err != nil {
+		t.Fatalf("sync --check after update: %v\n%s", err, output)
+	}
+}

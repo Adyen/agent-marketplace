@@ -159,7 +159,7 @@ type resolvedUpdateSides struct {
 // resources from the verified local cache only, the way read-only commands
 // do, so a superseded hosted revision is still comparable from its installed
 // evidence.
-func resolvePriorAndDesired(ctx context.Context, ws pipeline.Workspace, offline bool, priorJobs []snapshotJob, overlays map[string][]byte, lockDesired map[string][]byte, desiredSet *exactLockSet, lookup func(*exactLockSet, func() error) catalog.ExactSnapshotFunc, priorMarketplaceFromCache bool) (resolvedUpdateSides, error) {
+func resolvePriorAndDesired(ctx context.Context, ws pipeline.Workspace, offline bool, priorJobs []snapshotJob, priorPlanner *pluginPlanSource, overlays map[string][]byte, lockDesired map[string][]byte, desiredSet *exactLockSet, lookup func(*exactLockSet, func() error) catalog.ExactSnapshotFunc, priorMarketplaceFromCache bool) (resolvedUpdateSides, error) {
 	priorSet := &exactLockSet{bySource: map[string]lockedGit{}, byIdentity: map[string][]lockedGit{}}
 	var loadErrors []selectionPriorLoadError
 	// recorded identities name sources a previously published lock pinned, even
@@ -174,7 +174,7 @@ func resolvePriorAndDesired(ctx context.Context, ws pipeline.Workspace, offline 
 	for _, job := range priorJobs {
 		// An unavailable prior snapshot leaves the layer's misses looking new,
 		// which is the conservative direction.
-		if err := addLayerSnapshots(ctx, priorSet, job.source, job.entries, job.decls, job.doc, offline, false, nil, nil); err != nil {
+		if err := addLayerSnapshots(ctx, priorSet, job.source, job.entries, job.decls, job.doc, offline, false, nil, priorPlanner); err != nil {
 			loadErrors = append(loadErrors, selectionPriorLoadError{lockPath: job.lockPath, err: err})
 		}
 	}
@@ -247,8 +247,8 @@ func resolvePriorAndDesired(ctx context.Context, ws pipeline.Workspace, offline 
 	return resolvedUpdateSides{prior: prior, desired: desired, priorSet: priorSet, desiredSet: desiredSet, loadErrors: loadErrors}, nil
 }
 
-func guardNewlyMissingSelections(ctx context.Context, ws pipeline.Workspace, offline bool, priorJobs []snapshotJob, overlays map[string][]byte, lockDesired map[string][]byte, desiredSet *exactLockSet, lookup func(*exactLockSet, func() error) catalog.ExactSnapshotFunc) error {
-	sides, err := resolvePriorAndDesired(ctx, ws, offline, priorJobs, overlays, lockDesired, desiredSet, lookup, false)
+func guardNewlyMissingSelections(ctx context.Context, ws pipeline.Workspace, offline bool, priorJobs []snapshotJob, priorPlanner *pluginPlanSource, overlays map[string][]byte, lockDesired map[string][]byte, desiredSet *exactLockSet, lookup func(*exactLockSet, func() error) catalog.ExactSnapshotFunc) error {
+	sides, err := resolvePriorAndDesired(ctx, ws, offline, priorJobs, priorPlanner, overlays, lockDesired, desiredSet, lookup, false)
 	if err != nil {
 		return err
 	}
