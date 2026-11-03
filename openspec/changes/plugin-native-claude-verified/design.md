@@ -2,28 +2,29 @@
 
 `plugin-native-claude` writes owned `extraKnownMarketplaces` and
 `enabledPlugins` entries to `~/.claude/settings.json` (user scope) and
-`.claude/settings.local.json` (repository scope) over an owned
-marketplace catalog with relative `./plugins/<name>` sources. Its probe ran
-Claude Code 2.1.311 in print and stream-json sessions and never saw the
-plugin load, so the catalog stayed `unverified` (its design D4).
+`.claude/settings.local.json` (repository scope) over an owned marketplace
+catalog. Five CI experiments with Claude Code 2.1.316 (runs 41535700517,
+41541315625, 41546595871, 41600661909, 41607195657) established:
 
-Claude's plugin loading reference says plugins load at session start from
-Claude's own records and cache; after the session starts, Claude clones or
-registers each marketplace that settings declare but its records lack, then
-reloads plugins. Repository-scope `extraKnownMarketplaces` apply only in a
-trusted folder; a non-interactive run honors them only when trust was
-already accepted interactively or `hasTrustDialogAccepted` is set for the
-folder in `~/.claude.json`. The earlier probe never established trust and
-ended sessions before background registration could complete.
+- User scope: in a trusted isolated home, a headless stream-json session sees
+  Claude register the marketplace and write its own installed-plugin record
+  within seconds; `claude plugin list --json` then reports the plugin enabled
+  and initialization lists its namespaced skill.
+- Repository scope: Claude registers the marketplace but writes no install
+  record, lists no plugin, and discovers no skill, with the registration in
+  `.claude/settings.local.json` or `.claude/settings.json`, with trust keyed by
+  the literal and canonical workspace path, in headless and interactive
+  sessions. The registration shape matches the working user-scope one.
 
 ## Goals / Non-Goals
 
-**Goals:** a probe that witnesses the shipped registration loading at both
-scopes the way a user's Claude does; the catalog flip to `verified`.
+**Goals:** verify Claude native delivery at user scope; keep repository scope
+decomposed and honest; per-scope catalog status.
 
-**Non-Goals:** changing the registration entries or catalog shape; writing
-Claude trust, records, cache, or managed policy from Agent Marketplace; seed
-directories; Claude Cowork or Desktop; Factory Droid and Codex delivery.
+**Non-Goals:** changing the registration entries; writing Claude trust,
+records, cache, or managed policy from Agent Marketplace; seed directories;
+delivery through `.claude/skills`; Claude Cowork or Desktop; Factory Droid
+and Codex delivery.
 
 ## Decisions
 
@@ -31,28 +32,34 @@ directories; Claude Cowork or Desktop; Factory Droid and Codex delivery.
 
 The probe asserts that sync wrote no Claude-owned plugin state or trust
 state, then marks the probe workspace trusted in its isolated
-`~/.claude.json`, standing in for the user accepting Claude's workspace trust
-dialog. Agent Marketplace output is unchanged.
+`~/.claude.json`, standing in for the user accepting Claude's trust dialog.
 
-### D2: Claude registers the marketplace in a live session
+### D2: Claude installs the plugin in a live headless session
 
-The probe starts a Claude session and keeps it alive until Claude's own
-known-marketplace records name the Agent Marketplace catalog, bounded by a
-deadline. It does not request a prompt or a model response. A separate
-`claude plugin list --json` and Claude initialization then provide the
-verdict. The session mode (interactive terminal or headless) is chosen by
-what CI shows Claude needs; the probe records the commands and output it ran.
+The probe keeps a headless stream-json session open until Claude's own
+installed-plugin record names the plugin, bounded by a deadline, without a
+prompt or model response. `claude plugin list --json` and a later
+initialization provide the verdict.
 
-### D3: Catalog flip
+### D3: Per-scope native status
 
-`catalogs/claude.yaml` declares `native: {status: verified, probe:
-claude-native-plugin}` with dated evidence references to Claude's
-marketplace, loading, and settings documentation. The probe identifier is
-defined in the harness validation suite.
+A catalog's `delivery.native` keeps its single-status form, which applies to
+both scopes, and may instead declare `user` and `repo` entries, each with its
+own status and, when verified, probe. Validation applies the probe rule to
+each verified scope. Delivery resolution asks for the status at the request's
+scope. `catalogs/claude.yaml` declares user `verified` with
+`claude-native-plugin` and repo `unverified`.
+
+### D4: Repository-scope negative witness
+
+At repository scope the probe syncs a `delivery: auto` plugin and asserts
+decomposed members and no native registration, so a future flip of the
+repository status needs new evidence.
 
 ## Risks / Trade-offs
 
-- Claude's background registration timing varies; the probe uses a bounded
+- The repository-scope gap is unexplained; the remaining hypothesis is that
+  Claude installs project-declared plugins only after an interactive
+  confirmation. It is tracked in a GitHub issue.
+- Claude's background install timing varies; the probe uses a bounded
   deadline and records elapsed time.
-- Users who never trusted a repository see no repository-scope plugin; this
-  is Claude's documented behavior and is stated in the documentation.
