@@ -13,9 +13,9 @@
 
 ## 3. Documentation
 
-- [ ] 3.1 Update the operator configuration reference, the reindex-and-monitor how-to, and the `serve reindex` CLI reference to describe observation-driven refreshes; verify the described defaults match the code
+- [x] 3.1 Update the operator configuration reference, the reindex-and-monitor how-to, and the `serve reindex` CLI reference to describe observation-driven refreshes; verify the described defaults match the code
 
 ## 4. Integration
 
-- [ ] 4.1 Run `make spec-check`, `make test TEST_PACKAGES="./pkg/marketplace/..." TEST_FLAGS="-count=1"`, and `make validate`; verify all pass
-- [ ] 4.2 Run `openspec archive add-marketplace-source-observation --yes` as the final commit and verify `make spec-check` still passes
+- [x] 4.1 Run `make spec-check`, `make test TEST_PACKAGES="./pkg/marketplace/..." TEST_FLAGS="-count=1"`, and `make validate`; verify all pass
+- [x] 4.2 Run `openspec archive add-marketplace-source-observation --yes` as the final commit and verify `make spec-check` still passes
