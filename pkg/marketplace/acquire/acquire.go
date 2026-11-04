@@ -119,10 +119,7 @@ func ResolveRemoteRef(ctx context.Context, origin, ref string, cred Credentials,
 	}
 
 	if exactTag {
-		if peeled := refs[tagRef+"^{}"]; peeled != "" {
-			return peeled, nil
-		}
-		if commit := refs[tagRef]; commit != "" {
+		if commit := peeledTagCommit(refs, tagRef); commit != "" {
 			return commit, nil
 		}
 		return "", fmt.Errorf("resolve ref %q: %w", ref, ErrRefNotFound)
@@ -134,14 +131,20 @@ func ResolveRemoteRef(ctx context.Context, origin, ref string, cred Credentials,
 		return refs[branchRef], nil
 	}
 	if tagRef != "" {
-		if peeled := refs[tagRef+"^{}"]; peeled != "" {
-			return peeled, nil
-		}
-		if commit := refs[tagRef]; commit != "" {
+		if commit := peeledTagCommit(refs, tagRef); commit != "" {
 			return commit, nil
 		}
 	}
 	return "", fmt.Errorf("resolve ref %q: %w", ref, ErrRefNotFound)
+}
+
+// peeledTagCommit returns the commit a tag ref resolves to, preferring the
+// peeled commit of an annotated tag over the tag object itself.
+func peeledTagCommit(refs map[string]string, tagRef string) string {
+	if peeled := refs[tagRef+"^{}"]; peeled != "" {
+		return peeled
+	}
+	return refs[tagRef]
 }
 
 // SourceHost returns the normalized host-budget key for a Git origin. Local

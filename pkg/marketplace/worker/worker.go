@@ -369,16 +369,11 @@ func (o *observer) observeOne(ctx context.Context, due store.RegistryObservation
 	if err != nil {
 		return fmt.Errorf("lease registry %q for observation: %w", id, err)
 	}
-	leaseHeld := true
-	releaseRegistry := func() {
-		if leaseHeld {
-			if err := o.deps.MetadataStore.ReleaseRegistryLease(ctx, id, lease); err != nil && ctx.Err() == nil {
-				slog.Warn("release registry observation lease failed", "registry", id, "err", err)
-			}
-			leaseHeld = false
+	defer func() {
+		if err := o.deps.MetadataStore.ReleaseRegistryLease(ctx, id, lease); err != nil && ctx.Err() == nil {
+			slog.Warn("release registry observation lease failed", "registry", id, "err", err)
 		}
-	}
-	defer releaseRegistry()
+	}()
 
 	current, err := o.deps.MetadataStore.GetRegistryObservation(ctx, id)
 	if err != nil {
@@ -410,7 +405,6 @@ func (o *observer) observeOne(ctx context.Context, due store.RegistryObservation
 				slog.Info("source observation delayed by host budget",
 					"registry", id, "host", redact.URL(host), "overdue", overdue,
 					"origin", redact.URL(origin))
-				releaseRegistry()
 				return nil
 			}
 			if budgetErr != nil {
@@ -546,26 +540,19 @@ func processRefreshJob(ctx context.Context, deps Deps, j job.Job, workerID strin
 		_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
 		return fmt.Errorf("lease registry %q for refresh: %w", registry.ID, err)
 	}
-	registryLeaseHeld := true
-	releaseRegistry := func() {
-		if registryLeaseHeld {
-			if err := deps.MetadataStore.ReleaseRegistryLease(ctx, registry.ID, registryLease); err != nil && ctx.Err() == nil {
-				slog.Warn("release registry refresh lease failed", "registry", registry.ID, "err", err)
-			}
-			registryLeaseHeld = false
+	defer func() {
+		if err := deps.MetadataStore.ReleaseRegistryLease(ctx, registry.ID, registryLease); err != nil && ctx.Err() == nil {
+			slog.Warn("release registry refresh lease failed", "registry", registry.ID, "err", err)
 		}
-	}
-	defer releaseRegistry()
+	}()
 
 	if len(registry.Origins) == 0 {
-		releaseRegistry()
 		_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
 		return fmt.Errorf("registry %q has no origin", registry.ID)
 	}
 	origin := registry.Origins[len(registry.Origins)-1]
 	host, err := acquire.SourceHost(origin)
 	if err != nil {
-		releaseRegistry()
 		_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
 		return fmt.Errorf("resolve source host for registry %q: %w", registry.ID, err)
 	}
@@ -577,11 +564,9 @@ func processRefreshJob(ctx context.Context, deps Deps, j job.Job, workerID strin
 		}
 		slog.Info("refresh delayed by host budget", "registry", registry.ID,
 			"host", redact.URL(host), "overdue", overdue, "job", j.ID)
-		releaseRegistry()
 		return releaseRefreshAndPause(ctx, deps, j.ID, workerID)
 	}
 	if err != nil {
-		releaseRegistry()
 		_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
 		return fmt.Errorf("admit acquisition for registry %q: %w", registry.ID, err)
 	}
@@ -592,32 +577,27 @@ func processRefreshJob(ctx context.Context, deps Deps, j job.Job, workerID strin
 	}()
 
 	if err := Refresh(ctx, deps, registry); err != nil {
-		releaseRegistry()
 		_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
 		return err
 	}
 	head, err := deps.MetadataStore.LatestRegistryOccurrence(ctx, registry.ID)
 	if err != nil {
-		releaseRegistry()
 		_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
 		return fmt.Errorf("load published commit for registry %q: %w", registry.ID, err)
 	}
 	if payload.Generation == "" {
 		src, ok := registryByID(deps.Config, payload.RegistryID)
 		if !ok {
-			releaseRegistry()
 			_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
 			return fmt.Errorf("registry %q is not in startup config", payload.RegistryID)
 		}
 		payload.Generation, err = startupGeneration(src, deps.Config)
 		if err != nil {
-			releaseRegistry()
 			_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
 			return fmt.Errorf("compute successful generation for registry %q: %w", registry.ID, err)
 		}
 	}
 	if err := recordSuccessfulIndex(ctx, deps.MetadataStore, registry.ID, head.Commit, payload.Generation, time.Now().UTC()); err != nil {
-		releaseRegistry()
 		_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
 		return fmt.Errorf("record successful index for registry %q: %w", registry.ID, err)
 	}
