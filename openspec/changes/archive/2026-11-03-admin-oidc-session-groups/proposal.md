@@ -32,4 +32,4 @@ None.
 
 ## Release note
 
-Admin OIDC sign-in no longer fails for operators whose identity provider returns many groups: the administration session now stores only the groups listed in `admin_groups`, and a session that still cannot be stored logs `outcome=session_too_large`. Reverse proxies in front of native OIDC administration need the default 4k response header buffer, which session cookies no longer outgrow.
+Admin OIDC session size no longer scales with unmatched IdP groups. The session stores only groups listed in `admin_groups`; a session that still cannot be sealed logs `outcome=session_too_large`. Superseded by `admin-oidc-session-index`, which replaces stored group names with a bitset over `admin_groups`. Reverse proxies in front of native OIDC administration need a response-header buffer of at least 4096 bytes.

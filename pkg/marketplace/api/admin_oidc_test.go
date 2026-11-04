@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -566,8 +567,8 @@ func TestAdminOIDCCallbackAndSession(t *testing.T) {
 		sessionRaw := cookieValue(t, resp, testSecureSessionCookie)
 		var payload adminSessionPayload
 		decodeAdminCookiePayload(t, sessionRaw, &payload)
-		if len(payload.Groups) != 1 || payload.Groups[0] != "marketplace-admins" {
-			t.Fatalf("stored groups = %v, want [marketplace-admins]", payload.Groups)
+		if names := adminGroupNames([]string{"marketplace-admins"}, payload.Membership); len(names) != 1 || names[0] != "marketplace-admins" {
+			t.Fatalf("stored groups = %v, want [marketplace-admins]", names)
 		}
 		for _, cookie := range resp.Result().Cookies() {
 			if cookie.Name == testSecureSessionCookie {
@@ -594,6 +595,24 @@ func TestAdminOIDCCallbackAndSession(t *testing.T) {
 		}
 	})
 
+	t.Run("duplicate matching groups are stored once", func(t *testing.T) {
+		w, txn := login("")
+		groups := make([]string, maxAdminGroups)
+		for i := range groups {
+			groups[i] = "marketplace-admins"
+		}
+		issuer.claims = map[string]any{"nonce": txn.Nonce, "groups": groups, "name": "Operator One"}
+		resp := callback(txn, txn.State, "code-dup", loginCookieOf(w))
+		if resp.Code != 303 {
+			t.Fatalf("callback: %d %s", resp.Code, resp.Body.String())
+		}
+		var payload adminSessionPayload
+		decodeAdminCookiePayload(t, cookieValue(t, resp, testSecureSessionCookie), &payload)
+		if names := adminGroupNames([]string{"marketplace-admins"}, payload.Membership); len(names) != 1 || names[0] != "marketplace-admins" {
+			t.Fatalf("stored groups = %v, want [marketplace-admins]", names)
+		}
+	})
+
 	t.Run("subject authorized via admin_users", func(t *testing.T) {
 		issuer2 := newTestOIDCIssuer(t)
 		_, handler2 := adminOIDCFixture(t, issuer2, func(a *config.Administration) {
@@ -613,8 +632,8 @@ func TestAdminOIDCCallbackAndSession(t *testing.T) {
 		sessionRaw := cookieValue(t, resp, testSecureSessionCookie)
 		var payload adminSessionPayload
 		decodeAdminCookiePayload(t, sessionRaw, &payload)
-		if len(payload.Groups) != 0 {
-			t.Fatalf("stored groups = %v, want none for admin_users access", payload.Groups)
+		if len(payload.Membership) != 0 {
+			t.Fatalf("stored membership = %v, want none for admin_users access", payload.Membership)
 		}
 		session := httptest.NewRecorder()
 		handler2.ServeHTTP(session, adminRequest(http.MethodGet, "/api/v1/admin/session", testSecureSessionCookie+"="+sessionRaw))
@@ -632,7 +651,7 @@ func TestAdminOIDCCallbackAndSession(t *testing.T) {
 		}
 		now := time.Now()
 		sessionCookie := sealAdminPayload(t, adminSessionPayload{
-			Version: 1, Issuer: issuer.server.URL, Subject: "okta-other", Groups: []string{"catalog-users"},
+			Version: 2, Issuer: issuer.server.URL, Subject: "okta-other", Fingerprint: adminGroupsFingerprint([]string{"marketplace-admins"}),
 			IssuedAt: now.Unix(), Expiry: now.Add(time.Hour).Unix(),
 		})
 		session := httptest.NewRecorder()
@@ -779,8 +798,8 @@ func TestAdminOIDCCallbackAndSession(t *testing.T) {
 	t.Run("expired session rejected", func(t *testing.T) {
 		now := time.Now().Unix()
 		session := sealAdminPayload(t, adminSessionPayload{
-			Version: 1, Issuer: issuer.server.URL, Subject: "okta-subject-1",
-			Groups: []string{"marketplace-admins"}, IssuedAt: now - 7200, Expiry: now - 60,
+			Version: 2, Issuer: issuer.server.URL, Subject: "okta-subject-1", Fingerprint: adminGroupsFingerprint([]string{"marketplace-admins"}),
+			Membership: adminGroupMembership([]string{"marketplace-admins"}, []string{"marketplace-admins"}), IssuedAt: now - 7200, Expiry: now - 60,
 		})
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, adminRequest(http.MethodGet, "/api/v1/admin/session", testSecureSessionCookie+"="+session))
@@ -890,7 +909,7 @@ func TestAdminOIDCCookieBrowserDeliveryBound(t *testing.T) {
 	}
 
 	t.Run("worst-case login transaction stays browser deliverable", func(t *testing.T) {
-		w, txn := login("/marketplace/admin/" + strings.Repeat("a", 2048-len("/marketplace/admin/")))
+		w, txn := login("/marketplace/admin/" + strings.Repeat("a", 1024-len("/marketplace/admin/")))
 		issuer.claims = map[string]any{"nonce": txn.Nonce, "groups": []string{"marketplace-admins"}, "name": "Operator One"}
 		resp := callback(txn, cookieValue(t, w, testSecureLoginCookie))
 		if resp.Code != 303 {
@@ -906,18 +925,18 @@ func TestAdminOIDCCookieBrowserDeliveryBound(t *testing.T) {
 		}
 	})
 
-	t.Run("oversized verified groups rejected without session", func(t *testing.T) {
+	t.Run("membership record too large to seal is rejected without session", func(t *testing.T) {
 		largeIssuer := newTestOIDCIssuer(t)
-		groups := []string{"marketplace-admins"}
-		for i := 0; i < 20; i++ {
-			groups = append(groups, fmt.Sprintf("large-group-%02d-%s", i, strings.Repeat("x", 200)))
+		adminGroups := make([]string, 21000)
+		for i := range adminGroups {
+			adminGroups[i] = fmt.Sprintf("group-%05d", i)
 		}
 		_, largeHandler := adminOIDCFixture(t, largeIssuer, func(a *config.Administration) {
-			a.AdminGroups = groups
+			a.AdminGroups = adminGroups
 		})
 		w, txn := startOIDCLogin(t, largeHandler)
 		const subject = "sensitive-subject-value"
-		largeIssuer.claims = map[string]any{"nonce": txn.Nonce, "groups": groups, "sub": subject}
+		largeIssuer.claims = map[string]any{"nonce": txn.Nonce, "groups": []string{"group-00000"}, "sub": subject}
 		capture := &bytes.Buffer{}
 		previousLogger := slog.Default()
 		slog.SetDefault(slog.New(slog.NewTextHandler(capture, nil)))
@@ -936,12 +955,98 @@ func TestAdminOIDCCookieBrowserDeliveryBound(t *testing.T) {
 		if !strings.Contains(logs, "outcome=session_too_large") {
 			t.Fatalf("size failure log missing outcome: %s", logs)
 		}
-		for _, value := range append(groups, subject) {
+		for _, value := range append(adminGroups, subject) {
 			if strings.Contains(logs, value) {
 				t.Fatalf("size failure log contains identity value %q: %s", value, logs)
 			}
 		}
 	})
+}
+
+// spec: marketplace-admin-auth/maximal-identity-values-stay-within-the-proxy-header-budget
+func TestAdminOIDCSessionHeaderBudget(t *testing.T) {
+	issuer := newTestOIDCIssuer(t)
+	adminGroups := make([]string, maxAdminGroups)
+	groups := make([]string, maxAdminGroups)
+	for i := range adminGroups {
+		adminGroups[i] = fmt.Sprintf("%0512d", i)
+		groups[i] = adminGroups[i]
+	}
+	_, handler := adminOIDCFixture(t, issuer, func(a *config.Administration) { a.AdminGroups = adminGroups })
+	next := "/marketplace/admin/" + strings.Repeat("a", 1024-len("/marketplace/admin/"))
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, adminRequest(http.MethodGet, "/api/v1/admin/auth/login?next="+next, ""))
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("login: %d %s", w.Code, w.Body.String())
+	}
+	txn := decodeLoginTransaction(t, cookieValue(t, w, testSecureLoginCookie))
+	issuer.claims = map[string]any{"nonce": txn.Nonce, "groups": groups, "name": strings.Repeat("n", 512), "sub": strings.Repeat("s", 512)}
+	resp := completeOIDCCallback(t, handler, w, txn)
+	if resp.Code != http.StatusSeeOther {
+		t.Fatalf("callback: %d %s", resp.Code, resp.Body.String())
+	}
+	headerBlock, err := httputil.DumpResponse(resp.Result(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(headerBlock) >= 4096 {
+		t.Fatalf("callback response headers = %d bytes, want under 4096", len(headerBlock))
+	}
+}
+
+// spec: marketplace-admin-auth/oversized-or-non-ascii-sign-in-destination-is-rejected
+func TestAdminOIDCSignInDestinationBounds(t *testing.T) {
+	issuer := newTestOIDCIssuer(t)
+	_, handler := adminOIDCFixture(t, issuer, nil)
+	for _, tc := range []struct{ name, next string }{
+		{"longer than 1024 bytes", "/marketplace/admin/" + strings.Repeat("a", 1024-len("/marketplace/admin/")+1)},
+		{"non-ASCII", "/marketplace/admin/é"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, adminRequest(http.MethodGet, "/api/v1/admin/auth/login?next="+url.QueryEscape(tc.next), ""))
+			if w.Code != http.StatusBadRequest || adminErrorCode(t, w) != "authentication_request_invalid" {
+				t.Fatalf("login: %d %s", w.Code, w.Body.String())
+			}
+			for _, cookie := range w.Result().Cookies() {
+				if cookie.Name == testSecureLoginCookie {
+					t.Fatal("rejected login set a transaction cookie")
+				}
+			}
+		})
+	}
+}
+
+// spec: marketplace-admin-auth/stored-membership-is-rejected-after-admin-groups-changes
+func TestAdminOIDCSessionFollowsAdminGroups(t *testing.T) {
+	issuer := newTestOIDCIssuer(t)
+	_, handler := adminOIDCFixture(t, issuer, nil)
+	w, txn := startOIDCLogin(t, handler)
+	issuer.claims = map[string]any{"nonce": txn.Nonce, "groups": []string{"marketplace-admins"}}
+	resp := completeOIDCCallback(t, handler, w, txn)
+	if resp.Code != http.StatusSeeOther {
+		t.Fatalf("callback: %d %s", resp.Code, resp.Body.String())
+	}
+	session := cookieValue(t, resp, testSecureSessionCookie)
+	_, changed := adminOIDCFixture(t, issuer, func(a *config.Administration) {
+		a.AdminGroups = []string{"marketplace-admins", "platform-admins"}
+	})
+	for _, tc := range []struct {
+		name    string
+		handler http.Handler
+		code    int
+	}{
+		{"unchanged admin_groups", handler, http.StatusOK},
+		{"changed admin_groups", changed, http.StatusUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRecorder()
+			tc.handler.ServeHTTP(r, adminRequest(http.MethodGet, "/api/v1/admin/session", testSecureSessionCookie+"="+session))
+			if r.Code != tc.code {
+				t.Fatalf("session: %d %s", r.Code, r.Body.String())
+			}
+		})
+	}
 }
 
 func TestAdminOIDCAuthorizedParty(t *testing.T) {

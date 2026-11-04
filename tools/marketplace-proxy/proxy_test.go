@@ -18,7 +18,7 @@ import (
 // spec: site-deployment-profiles/unsafe-legacy-browser-paths-never-redirect
 // spec: site-deployment-profiles/marketplace-documentation-hosting-is-disabled-by-default
 // spec: site-deployment-profiles/marketplace-documentation-hosting-is-explicitly-enabled
-// spec: marketplace-admin-auth/callback-for-a-large-group-list-stays-within-the-proxy-header-budget
+// spec: marketplace-admin-auth/maximal-identity-values-stay-within-the-proxy-header-budget
 func TestMarketplaceNginxRedirects(t *testing.T) {
 	image := os.Getenv("AM_MARKETPLACE_PROXY_IMAGE")
 	if image == "" {
@@ -34,7 +34,7 @@ func TestMarketplaceNginxRedirects(t *testing.T) {
 				container := startProxy(t, image, profile, docsEnabled)
 
 				if strings.HasSuffix(profile, "/nginx.conf") {
-					t.Run("OIDC callback with narrowed session cookie", func(t *testing.T) {
+					t.Run("OIDC callback with maximal session cookie", func(t *testing.T) {
 						response := proxyResponse(t, container, "/api/v1/admin/auth/callback?state=proxy-check&code=proxy-check")
 						if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/admin" {
 							t.Fatalf("callback response = %d Location %q, want 303 Location /admin", response.StatusCode, response.Header.Get("Location"))
@@ -150,19 +150,19 @@ func startProxy(t testing.TB, image, profile string, docsEnabled bool) string {
 		profile = filepath.Join(root, profile)
 	}
 	stubs := filepath.Join(t.TempDir(), "stubs.conf")
-	if err := os.WriteFile(stubs, []byte(`
+	if err := os.WriteFile(stubs, []byte(strings.ReplaceAll(`
 		server {
 			listen 127.0.0.2:8080;
 			absolute_redirect off;
 			location = /api/v1/admin/auth/callback {
-				add_header Set-Cookie "marketplace_admin_session=admin; Path=/; HttpOnly; Secure; SameSite=Lax" always;
+				add_header Set-Cookie "marketplace_admin_session=SESSION; Path=/; HttpOnly; Secure; SameSite=Lax" always;
 				return 303 /admin;
 			}
 			location / { return 200 "api"; }
 		}
 		server { listen 127.0.0.3:8080; return 200 "docs"; }
 server { listen 127.0.0.4:3000; return 200 "web"; }
-`), 0o644); err != nil {
+`, "SESSION", strings.Repeat("a", 1642))), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	docsConfig := "docs-disabled.conf"

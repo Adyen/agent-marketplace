@@ -201,6 +201,7 @@ func oidcAdmin() Administration {
 			Issuer: "https://issuer.test/oauth2/default", ClientID: "marketplace-admin", SessionSecretEnv: "MARKETPLACE_ADMIN_SESSION_SECRET"}}}
 }
 
+// spec: marketplace-admin-auth/issuer-longer-than-512-bytes-is-refused-at-configuration
 func TestAdministrationOIDCValidation(t *testing.T) {
 	valid := oidcAdmin()
 	if err := valid.Validate(); err != nil {
@@ -220,6 +221,9 @@ func TestAdministrationOIDCValidation(t *testing.T) {
 		{"no issuer", func(a *Administration) { a.Authentication.OIDC.Issuer = "" }},
 		{"http issuer", func(a *Administration) { a.Authentication.OIDC.Issuer = "http://issuer.test" }},
 		{"issuer trailing slash", func(a *Administration) { a.Authentication.OIDC.Issuer += "/" }},
+		{"issuer over 512 bytes", func(a *Administration) {
+			a.Authentication.OIDC.Issuer = "https://" + strings.Repeat("a", 500) + ".test"
+		}},
 		{"issuer query", func(a *Administration) { a.Authentication.OIDC.Issuer = "https://issuer.test?x=1" }},
 		{"no client id", func(a *Administration) { a.Authentication.OIDC.ClientID = "" }},
 		{"unsafe claim", func(a *Administration) { a.Authentication.OIDC.GroupsClaim = "a b" }},
