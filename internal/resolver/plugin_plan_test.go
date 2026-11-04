@@ -497,7 +497,7 @@ func TestExpandCollectionsRefusesPluginMemberWithoutOwningEntry(t *testing.T) {
 			if tc.selected {
 				resolved = append(resolved, direct)
 			}
-			got, errs := expandCollections(resolved, nil, cfg, catalogs, nil, nil, nil, false, nil, nil, sink)
+			got, errs := expandCollections(resolved, nil, cfg, catalogs, nil, nil, nil, false, nil, scopeTargets{}, &collectionExpansionBudget{}, sink)
 			var refusal *PluginUndeclaredSourceError
 			for _, err := range errs {
 				if match, ok := err.(*PluginUndeclaredSourceError); ok {
