@@ -261,6 +261,7 @@ func TestInstallationRunSerialAttemptsAndCoalescedHints(t *testing.T) {
 		})(w, r)
 	})
 	reader := newTestReader(t, fixture)
+	reader.now = func() time.Time { return adoptionFixedNow }
 	reader.timing.Interval = time.Hour
 	reader.timing.RetryInterval = 50 * time.Millisecond
 	reader.timing.Jitter = 0
@@ -378,6 +379,7 @@ func TestInstallationIdentityChangeDuringFetch(t *testing.T) {
 		_, _ = w.Write([]byte(operandVector(prometheusVector(adoptionSamples(), time.Now()), r.Form.Get("query"))))
 	}))
 	reader := newTestReader(t, fixture)
+	reader.now = func() time.Time { return adoptionFixedNow }
 	reader.timing.Interval = time.Hour
 	reader.timing.RetryInterval = time.Hour
 	reader.timing.Jitter = 0
