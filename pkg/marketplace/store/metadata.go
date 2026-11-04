@@ -135,6 +135,18 @@ type MetadataStore interface {
 	// bounded result and a non-nil empty slice when no occurrences exist.
 	RegistryHistory(ctx context.Context, id RegistryID) ([]RegistryOccurrence, error)
 
+	CreateRegistryObservation(ctx context.Context, observation RegistryObservation) (RegistryObservation, error)
+	GetRegistryObservation(ctx context.Context, id RegistryID) (RegistryObservation, error)
+	UpdateRegistryObservation(ctx context.Context, expectedVersion uint64, next RegistryObservation) (RegistryObservation, error)
+	DeleteRegistryObservation(ctx context.Context, id RegistryID) error
+	ListDueRegistryObservations(ctx context.Context, now time.Time, limit int) ([]RegistryObservation, error)
+	AcquireRegistryLease(ctx context.Context, id RegistryID, owner string, ttl time.Duration) (RegistryLease, error)
+	RenewRegistryLease(ctx context.Context, id RegistryID, lease RegistryLease, ttl time.Duration) (RegistryLease, error)
+	ReleaseRegistryLease(ctx context.Context, id RegistryID, lease RegistryLease) error
+	RequestRefresh(ctx context.Context, id RegistryID, request RefreshRequest) (RefreshDecision, error)
+	AcquireHostBudget(ctx context.Context, host, owner string, acquisition bool, limit HostBudgetLimit, ttl time.Duration) (HostBudgetLease, error)
+	ReleaseHostBudget(ctx context.Context, lease HostBudgetLease) error
+
 	// Resource revisions.
 	GetResourceRevision(ctx context.Context, coord ResourceCoordinate, digest RevisionDigest) (AssessedResourceRevision, error)
 	PutResourceRevision(ctx context.Context, rev ResourceRevision) error
