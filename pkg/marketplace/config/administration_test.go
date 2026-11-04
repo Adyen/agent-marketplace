@@ -207,6 +207,11 @@ func TestAdministrationOIDCValidation(t *testing.T) {
 	if err := valid.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	atLimit := oidcAdmin()
+	atLimit.Authentication.OIDC.Issuer = "https://issuer.test/" + strings.Repeat("a", maxAdminIssuer-len("https://issuer.test/"))
+	if err := atLimit.Validate(); err != nil {
+		t.Fatalf("512-byte issuer refused: %v", err)
+	}
 	if valid.AuthMode() != AdminAuthOIDC || valid.SessionLifetime() != 12*time.Hour || valid.ResolvedOIDC().GroupsClaim != "groups" {
 		t.Fatalf("resolved OIDC: %+v", valid.ResolvedOIDC())
 	}

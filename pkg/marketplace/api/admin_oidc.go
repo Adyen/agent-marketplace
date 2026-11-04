@@ -145,9 +145,12 @@ func adminGroupsFingerprint(configured []string) string {
 
 // adminGroupMembership sets one bit per configured admin group among the verified groups.
 func adminGroupMembership(configured, verified []string) []byte {
-	membership := make([]byte, (len(configured)+7)/8)
+	var membership []byte
 	for i, group := range configured {
 		if slices.Contains(verified, group) {
+			if membership == nil {
+				membership = make([]byte, (len(configured)+7)/8)
+			}
 			membership[i/8] |= 1 << (i % 8)
 		}
 	}

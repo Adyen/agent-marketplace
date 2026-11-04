@@ -27,4 +27,4 @@ None.
 
 ## Release note
 
-Administration OIDC issuer URLs longer than 512 bytes are now refused at configuration load. Issuers of ordinary length are unaffected.
+Breaking: administration OIDC issuer URLs longer than 512 bytes are refused at configuration load, so configurations with a longer issuer must shorten it before upgrading. Issuers of ordinary length are unaffected, and no other configuration change is required.
