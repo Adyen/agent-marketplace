@@ -8,6 +8,10 @@ package or projects it to a harness target through those catalogs. This
 change adds that library layer, with no consumer wiring, so later slices
 build on one decoder and one projection.
 
+## Release note
+
+none — internal plugin package model and decoders with no user-visible surface; plugins become selectable in plugin-sources.
+
 ## What Changes
 
 - `ir.KindPlugin` is appended after `ir.KindRule` without renumbering. A
