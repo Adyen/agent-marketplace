@@ -9,6 +9,10 @@ an enabled plugin are not installed headlessly; only Codex's own
 `codex plugin add` installs them. Codex native delivery therefore stays
 `unverified`, and verification moves to a follow-up.
 
+## Release note
+
+none — native Codex plugin delivery stays unverified, so Codex plugins are still installed as decomposed members; this change only corrects the catalog and registration shape.
+
 ## What Changes
 
 - Codex registration declares the Agent Marketplace catalog as a
