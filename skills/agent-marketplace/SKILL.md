@@ -262,8 +262,8 @@ while keeping existing pins, and read-only modes (`--check`, `--locked`,
 `--offline`, `doctor`) never write. When an organization intentionally deploys
 no acquisition lock, `--locked`, `--offline`, and `lock --check` refuse
 `v4.marketplace-lock-required` with a hint naming an online `agent-marketplace
-sync` or `sync --check` — which verifies the organization's Marketplace
-requests transiently — not the administrator.
+sync` or `sync --check`, which verifies the organization's Marketplace
+requests transiently, instead of the administrator.
 
 ## Resource prerequisites
 
