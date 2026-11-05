@@ -146,7 +146,6 @@ const deploymentGuidePath = withBase(`${DOCS_PATH}how-to/operator/deploy-a-produ
     grid-template-columns: 1fr;
     row-gap: var(--lp-space-group);
   }
-
 }
 
 @media (min-width: 960px) and (max-height: 800px) {

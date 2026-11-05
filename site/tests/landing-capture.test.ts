@@ -37,7 +37,6 @@ test('capture command reproduces the fixture manifest and image hashes', async (
   const second = await captureSnapshot()
   assert.deepEqual(second.manifestBytes, first.manifestBytes)
   assert.deepEqual(second.imageHashes, first.imageHashes)
-  assert.equal(first.imageHashes.length, 8)
   assert.deepEqual(
     first.imageHashes.map(([file]) => file).sort(),
     [

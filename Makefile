@@ -411,8 +411,8 @@ site-docs-build:
 	@command -v pnpm >/dev/null || { echo "ERROR: pnpm is required for documentation builds" >&2; exit 1; }
 	cd $(SITE_DIR) && pnpm install --frozen-lockfile && pnpm run build:docs
 
-CWEBP_BIN ?= $(shell command -v cwebp 2>/dev/null || { test -x /usr/local/adyen/bin/cwebp && printf /usr/local/adyen/bin/cwebp; })
-FFMPEG_BIN ?= $(shell command -v ffmpeg 2>/dev/null || { test -x /opt/homebrew/bin/ffmpeg && printf /opt/homebrew/bin/ffmpeg; })
+CWEBP_BIN ?= $(shell command -v cwebp 2>/dev/null)
+FFMPEG_BIN ?= $(shell command -v ffmpeg 2>/dev/null)
 
 site-screenshots:
 	@test -n "$(CWEBP_BIN)" && test -x "$(CWEBP_BIN)" || { echo "ERROR: cwebp is required to generate landing screenshots; install cwebp or set CWEBP_BIN." >&2; exit 1; }
