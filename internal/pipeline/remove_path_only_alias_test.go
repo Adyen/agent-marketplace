@@ -14,7 +14,7 @@ func TestRemovePathOnlyLocalCollectionAliasPreservesUnrelatedSelection(t *testin
 	repoRoot := t.TempDir()
 	t.Chdir(repoRoot)
 	t.Setenv("HOME", t.TempDir())
-	config.SetTestV3OrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
+	config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
 	localA, localB := t.TempDir(), t.TempDir()
 
 	writeSkill(t, localA, "selected-skill", "selected skill", nil)
@@ -23,7 +23,23 @@ func TestRemovePathOnlyLocalCollectionAliasPreservesUnrelatedSelection(t *testin
 	writeFile(t, filepath.Join(localB, "collections", "unrelated-bundle", "COLLECTION.yaml"), "name: unrelated-bundle\nskills:\n  - name: unrelated-skill\n")
 
 	rootPath := config.ProjectConfigPath(repoRoot)
-	writeFile(t, rootPath, fmt.Sprintf("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - path: %q\n    collections: [selected-bundle]\n  - path: %q\n    collections: [unrelated-bundle]\n", localA, localB))
+	writeFile(t, rootPath, fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  selected: {directory: %q}\n  unrelated: {directory: %q}\nresources:\n  selected: [collection/selected-bundle]\n  unrelated: [collection/unrelated-bundle]\n", localA, localB))
+
+	before := Resolve(context.Background(), ResolveOptions{Workspace: mustWorkspace(t, repoRoot), SkipInventory: true})
+	if len(before.Errors) != 0 || len(before.Resolved) != 2 {
+		t.Fatalf("initial directory selections = %#v, errors = %v; want both collection members", before.Resolved, before.Errors)
+	}
+	for _, want := range []struct{ name, directory string }{{"selected-skill", localA}, {"unrelated-skill", localB}} {
+		found := false
+		for _, artifact := range before.Resolved {
+			if artifact.Name == want.name && artifact.RegistryURL == want.directory && artifact.RegistryPath == "" && artifact.Ref == "" && artifact.Source == config.RepoCommitted {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("initial selection %q did not retain its exact directory identity: %#v", want.name, before.Resolved)
+		}
+	}
 
 	result, err := Remove(context.Background(), RemoveOptions{
 		RepoRoot: repoRoot, ResourceName: "selected-bundle", FromURL: localA,
@@ -42,6 +58,12 @@ func TestRemovePathOnlyLocalCollectionAliasPreservesUnrelatedSelection(t *testin
 	}
 	if len(cfg.Registries) != 2 {
 		t.Fatalf("registries = %#v, want both path-only aliases preserved", cfg.Registries)
+	}
+	for i, directory := range []string{localA, localB} {
+		entry := cfg.Registries[i]
+		if entry.URL != directory || entry.Path != "" || entry.Ref != "" || entry.V4Kind != config.V4SourceDirectory {
+			t.Fatalf("directory alias %d = %#v, want exact %q with no Git ref/path", i, entry, directory)
+		}
 	}
 	if slices.Contains(cfg.Registries[0].Collections.Include, "selected-bundle") || !slices.Contains(cfg.Registries[0].Collections.Exclude, "selected-bundle") {
 		t.Fatalf("selected alias = %#v, want selected collection excluded", cfg.Registries[0])

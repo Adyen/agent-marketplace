@@ -1,15 +1,13 @@
 package tui
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/lipgloss/v2"
+	"github.com/Adyen/agent-marketplace/internal/hookreview"
 	"github.com/charmbracelet/x/cellbuf"
-
-	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
 // helpSection groups a titled set of key bindings for the help overlay.
@@ -55,11 +53,17 @@ func renderHelp(m Model) string {
 }
 
 func renderErrors(m Model) string {
-	if len(m.errs) == 0 && len(m.warnings) == 0 && len(m.discoveryErrs) == 0 {
+	if len(m.errs) == 0 && len(m.warnings) == 0 && len(m.discoveryErrs) == 0 && len(m.hookChanges) == 0 {
 		return styleGlyphSynced.Render("No errors")
 	}
 
 	var b strings.Builder
+	if len(m.hookChanges) > 0 {
+		var review strings.Builder
+		_ = hookreview.Write(&review, m.hookChanges, m.homeDir, false) // strings.Builder writes cannot fail.
+		b.WriteString(cellbuf.Wrap(sanitizeTerminalData(review.String(), terminalMarkdownBody), max(1, m.width), ""))
+		b.WriteString("\n")
+	}
 
 	// Diagnostics render inside the bounded scrollable viewport: wrap each
 	// message to the overlay width so complete text stays readable through
@@ -73,15 +77,28 @@ func renderErrors(m Model) string {
 		b.WriteString("\n")
 	}
 
+	writeRecovery := func(style lipgloss.Style, err error, category diagnosticCategory) {
+		if hint := diagnosticRemediation(err, category); hint != "" {
+			writeDiagnostic(style, "  → ", hint)
+		}
+	}
+	categories := m.diagnosticCategories()
+	categoryFor := func(severity diagnosticSeverity, err error) diagnosticCategory {
+		key := diagnosticCategoryKey{severity: severity, stableKey: stableDiagnosticKey(err)}
+		queue := categories[key]
+		if len(queue) == 0 {
+			return ""
+		}
+		categories[key] = queue[1:]
+		return queue[0]
+	}
+
 	if len(m.errs) > 0 {
 		b.WriteString(styleErrorTitle.Render(fmt.Sprintf("Errors (%d)", len(m.errs))))
 		b.WriteString("\n\n")
 		for _, err := range m.errs {
-			writeDiagnostic(textStyle(m.currentTheme()), "• ", err.Error())
-			var r resolver.Remediable
-			if errors.As(err, &r) {
-				writeDiagnostic(textStyle(m.currentTheme()), "  → ", r.Remediation())
-			}
+			writeDiagnostic(textStyle(m.currentTheme()), "• ", diagnosticCause(err))
+			writeRecovery(textStyle(m.currentTheme()), err, categoryFor(diagnosticError, err))
 		}
 	}
 
@@ -93,6 +110,7 @@ func renderErrors(m Model) string {
 		b.WriteString("\n\n")
 		for _, discoveryErr := range m.discoveryErrs {
 			writeDiagnostic(styleWarningMsg, "• ", discoveryErr.Error())
+			writeRecovery(styleWarningMsg, discoveryErr, diagnosticCatalog)
 		}
 	}
 
@@ -103,12 +121,9 @@ func renderErrors(m Model) string {
 		b.WriteString(styleWarningTitle.Render(fmt.Sprintf("Warnings (%d)", len(m.warnings))))
 		b.WriteString("\n\n")
 		for _, w := range m.warnings {
-			writeDiagnostic(styleWarningMsg, "• ", w.Error())
+			writeDiagnostic(styleWarningMsg, "• ", diagnosticCause(w))
 			// Print remediation hint for remediable warnings
-			var r resolver.Remediable
-			if errors.As(w, &r) {
-				writeDiagnostic(styleWarningMsg, "  → ", r.Remediation())
-			}
+			writeRecovery(styleWarningMsg, w, categoryFor(diagnosticWarning, w))
 		}
 	}
 
@@ -119,15 +134,13 @@ func renderErrors(m Model) string {
 }
 
 func renderConfirm(m Model) string {
+	t := m.currentTheme()
 	m.ensureSyncQuitForm()
-	form := ""
+	body := []string{sanitizeTerminalData(m.confirmMsg, terminalSingleLine)}
 	if m.syncQuitForm != nil {
-		form = m.syncQuitForm.View() + "\n\n"
+		body = append(body, "", m.syncQuitForm.View())
 	}
-	return styleHelpOverlay.Render(
-		styleConfirmTitle.Render("Confirm") +
-			"\n\n" + sanitizeTerminalData(m.confirmMsg, terminalSingleLine) +
-			"\n\n" + form +
-			"y = yes · n = no · esc = cancel",
-	)
+	return modalFrame(m, t.warn, warnBoldStyle(t).Render("Confirm"), body, []footerHint{
+		{"y", "sync+quit"}, {"n", "quit"}, {"esc", "cancel"},
+	})
 }

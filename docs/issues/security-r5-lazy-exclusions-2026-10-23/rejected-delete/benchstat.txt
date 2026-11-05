@@ -1,0 +1,125 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+                                                           │  before.txt  │             after.txt              │
+                                                           │    sec/op    │   sec/op     vs base               │
+V4FilterSortRebuildCPU/skills=1/excluded=0-16                474.1n ±  2%   451.9n ± 1%   -4.68% (p=0.002 n=6)
+V4FilterSortRebuildCPU/skills=1/excluded=1-16                478.1n ±  3%   471.6n ± 1%        ~ (p=0.180 n=6)
+V4FilterSortRebuildCPU/skills=256/excluded=0-16              78.58µ ±  1%   65.39µ ± 2%  -16.79% (p=0.002 n=6)
+V4FilterSortRebuildCPU/skills=256/excluded=128-16            74.67µ ±  2%   68.01µ ± 5%   -8.92% (p=0.002 n=6)
+V4FilterSortRebuildCPU/skills=256/excluded=256-16            63.10µ ±  3%   60.61µ ± 2%   -3.94% (p=0.002 n=6)
+V4FilterSortRebuildCPU/skills=1024/excluded=0-16             359.4µ ±  3%   299.3µ ± 3%  -16.73% (p=0.002 n=6)
+V4FilterSortRebuildCPU/skills=1024/excluded=512-16           308.8µ ±  1%   281.1µ ± 2%   -8.96% (p=0.002 n=6)
+V4FilterSortRebuildCPU/skills=1024/excluded=1024-16          261.5µ ±  1%   248.8µ ± 7%        ~ (p=0.065 n=6)
+ParseV4FilterSortCPU/skills=1/excluded=0-16                  11.47µ ±  3%   11.32µ ± 1%        ~ (p=0.240 n=6)
+ParseV4FilterSortCPU/skills=1/excluded=1-16                  13.14µ ±  2%   12.96µ ± 4%        ~ (p=0.240 n=6)
+ParseV4FilterSortCPU/skills=256/excluded=0-16                329.5µ ±  3%   312.9µ ± 1%   -5.03% (p=0.002 n=6)
+ParseV4FilterSortCPU/skills=256/excluded=128-16              444.4µ ±  4%   435.0µ ± 4%        ~ (p=0.093 n=6)
+ParseV4FilterSortCPU/skills=256/excluded=256-16              541.4µ ±  5%   539.2µ ± 2%        ~ (p=0.485 n=6)
+ParseV4FilterSortCPU/skills=1024/excluded=0-16               1.319m ±  3%   1.249m ± 2%   -5.37% (p=0.002 n=6)
+ParseV4FilterSortCPU/skills=1024/excluded=512-16             1.739m ±  5%   1.717m ± 2%   -1.29% (p=0.041 n=6)
+ParseV4FilterSortCPU/skills=1024/excluded=1024-16            2.147m ±  3%   2.149m ± 1%        ~ (p=1.000 n=6)
+V4SparseExclusionEffectiveCPU/skills=1/excluded=0-16         270.1n ±  9%   252.9n ± 2%   -6.39% (p=0.002 n=6)
+V4SparseExclusionEffectiveCPU/skills=1/excluded=1-16         252.7n ±  4%   242.4n ± 4%   -4.04% (p=0.015 n=6)
+V4SparseExclusionEffectiveCPU/skills=256/excluded=0-16       58.73µ ±  4%   46.20µ ± 3%  -21.35% (p=0.002 n=6)
+V4SparseExclusionEffectiveCPU/skills=256/excluded=128-16     50.98µ ±  5%   44.16µ ± 2%  -13.39% (p=0.002 n=6)
+V4SparseExclusionEffectiveCPU/skills=256/excluded=256-16     42.69µ ±  7%   40.68µ ± 2%   -4.71% (p=0.002 n=6)
+V4SparseExclusionEffectiveCPU/skills=1024/excluded=0-16      245.3µ ±  6%   194.7µ ± 4%  -20.62% (p=0.002 n=6)
+V4SparseExclusionEffectiveCPU/skills=1024/excluded=512-16    210.5µ ±  7%   183.1µ ± 6%  -13.01% (p=0.002 n=6)
+V4SparseExclusionEffectiveCPU/skills=1024/excluded=1024-16   176.1µ ± 12%   167.2µ ± 3%   -5.02% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=1/excluded=0-16           831.2n ±  4%   809.2n ± 3%   -2.65% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=1/excluded=1-16           1.241µ ±  2%   1.231µ ± 5%        ~ (p=0.699 n=6)
+V4SparseExclusionAdapterCPU/skills=256/excluded=0-16         80.56µ ±  2%   68.51µ ± 3%  -14.95% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=256/excluded=128-16       142.2µ ±  1%   131.2µ ± 5%   -7.75% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=256/excluded=256-16       138.4µ ±  1%   133.2µ ± 3%   -3.74% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=0-16        322.9µ ±  2%   274.1µ ± 7%  -15.10% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=512-16      573.4µ ±  4%   513.6µ ± 6%  -10.42% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16     563.6µ ±  2%   535.7µ ± 6%   -4.94% (p=0.015 n=6)
+V4SparseExclusionChurnCPU/rebuild/rounds=64-16               7.242µ ±  4%   7.585µ ± 1%   +4.74% (p=0.004 n=6)
+V4SparseExclusionChurnCPU/effective/rounds=64-16             2.901µ ±  0%   3.326µ ± 0%  +14.67% (p=0.002 n=6)
+V4SparseExclusionChurnCPU/rebuild/rounds=1024-16             107.6µ ±  2%   114.7µ ± 4%   +6.63% (p=0.002 n=6)
+V4SparseExclusionChurnCPU/effective/rounds=1024-16           42.20µ ±  1%   48.86µ ± 1%  +15.77% (p=0.002 n=6)
+geomean                                                      53.66µ         50.64µ        -5.63%
+
+                                                           │  before.txt   │               after.txt               │
+                                                           │     B/op      │     B/op      vs base                 │
+V4FilterSortRebuildCPU/skills=1/excluded=0-16                 1.328Ki ± 0%   1.328Ki ± 0%        ~ (p=1.000 n=6) ¹
+V4FilterSortRebuildCPU/skills=1/excluded=1-16                 1.328Ki ± 0%   1.328Ki ± 0%        ~ (p=1.000 n=6) ¹
+V4FilterSortRebuildCPU/skills=256/excluded=0-16               284.1Ki ± 0%   257.9Ki ± 0%   -9.23% (p=0.002 n=6)
+V4FilterSortRebuildCPU/skills=256/excluded=128-16             292.1Ki ± 0%   278.8Ki ± 0%   -4.55% (p=0.002 n=6)
+V4FilterSortRebuildCPU/skills=256/excluded=256-16             237.0Ki ± 0%   237.0Ki ± 0%        ~ (p=1.000 n=6) ¹
+V4FilterSortRebuildCPU/skills=1024/excluded=0-16              1.466Mi ± 0%   1.362Mi ± 0%   -7.07% (p=0.002 n=6)
+V4FilterSortRebuildCPU/skills=1024/excluded=512-16            1.232Mi ± 0%   1.180Mi ± 0%   -4.23% (p=0.002 n=6)
+V4FilterSortRebuildCPU/skills=1024/excluded=1024-16           1.014Mi ± 0%   1.014Mi ± 0%        ~ (p=0.688 n=6)
+ParseV4FilterSortCPU/skills=1/excluded=0-16                   16.67Ki ± 0%   16.67Ki ± 0%        ~ (p=0.455 n=6)
+ParseV4FilterSortCPU/skills=1/excluded=1-16                   17.92Ki ± 0%   17.92Ki ± 0%        ~ (p=0.061 n=6)
+ParseV4FilterSortCPU/skills=256/excluded=0-16                 568.1Ki ± 0%   541.9Ki ± 0%   -4.62% (p=0.002 n=6)
+ParseV4FilterSortCPU/skills=256/excluded=128-16               700.3Ki ± 0%   687.0Ki ± 0%   -1.90% (p=0.002 n=6)
+ParseV4FilterSortCPU/skills=256/excluded=256-16               713.5Ki ± 0%   713.5Ki ± 0%   +0.00% (p=0.024 n=6)
+ParseV4FilterSortCPU/skills=1024/excluded=0-16                2.543Mi ± 0%   2.439Mi ± 0%   -4.09% (p=0.002 n=6)
+ParseV4FilterSortCPU/skills=1024/excluded=512-16              2.781Mi ± 0%   2.729Mi ± 0%   -1.87% (p=0.002 n=6)
+ParseV4FilterSortCPU/skills=1024/excluded=1024-16             2.905Mi ± 0%   2.905Mi ± 0%        ~ (p=0.100 n=6)
+V4SparseExclusionEffectiveCPU/skills=1/excluded=0-16            832.0 ± 0%     832.0 ± 0%        ~ (p=1.000 n=6) ¹
+V4SparseExclusionEffectiveCPU/skills=1/excluded=1-16            624.0 ± 0%     624.0 ± 0%        ~ (p=1.000 n=6) ¹
+V4SparseExclusionEffectiveCPU/skills=256/excluded=0-16        165.4Ki ± 0%   139.2Ki ± 0%  -15.86% (p=0.002 n=6)
+V4SparseExclusionEffectiveCPU/skills=256/excluded=128-16      136.0Ki ± 0%   122.8Ki ± 0%   -9.76% (p=0.002 n=6)
+V4SparseExclusionEffectiveCPU/skills=256/excluded=256-16      109.6Ki ± 0%   109.6Ki ± 0%        ~ (p=1.000 n=6) ¹
+V4SparseExclusionEffectiveCPU/skills=1024/excluded=0-16       646.6Ki ± 0%   540.4Ki ± 0%  -16.43% (p=0.002 n=6)
+V4SparseExclusionEffectiveCPU/skills=1024/excluded=512-16     542.6Ki ± 0%   489.3Ki ± 0%   -9.83% (p=0.002 n=6)
+V4SparseExclusionEffectiveCPU/skills=1024/excluded=1024-16    438.8Ki ± 0%   438.8Ki ± 0%        ~ (p=1.000 n=6)
+V4SparseExclusionAdapterCPU/skills=1/excluded=0-16            2.664Ki ± 0%   2.664Ki ± 0%        ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=1/excluded=1-16            3.508Ki ± 0%   3.508Ki ± 0%        ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=256/excluded=0-16          262.5Ki ± 0%   236.3Ki ± 0%   -9.99% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=256/excluded=128-16        413.9Ki ± 0%   387.3Ki ± 0%   -6.42% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=256/excluded=256-16        397.3Ki ± 0%   397.3Ki ± 0%        ~ (p=0.182 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=0-16        1058.4Ki ± 0%   952.2Ki ± 0%  -10.04% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=512-16       1.615Mi ± 0%   1.510Mi ± 0%   -6.45% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16      1.584Mi ± 0%   1.584Mi ± 0%        ~ (p=0.288 n=6)
+V4SparseExclusionChurnCPU/rebuild/rounds=64-16                32.36Ki ± 0%   32.36Ki ± 0%        ~ (p=1.000 n=6) ¹
+V4SparseExclusionChurnCPU/effective/rounds=64-16                832.0 ± 0%     832.0 ± 0%        ~ (p=1.000 n=6) ¹
+V4SparseExclusionChurnCPU/rebuild/rounds=1024-16              600.4Ki ± 0%   600.4Ki ± 0%        ~ (p=1.000 n=6)
+V4SparseExclusionChurnCPU/effective/rounds=1024-16              832.0 ± 0%     832.0 ± 0%        ~ (p=1.000 n=6) ¹
+geomean                                                       117.7Ki        113.6Ki        -3.52%
+¹ all samples are equal
+
+                                                           │ before.txt  │              after.txt              │
+                                                           │  allocs/op  │  allocs/op   vs base                │
+V4FilterSortRebuildCPU/skills=1/excluded=0-16                 6.000 ± 0%    6.000 ± 0%       ~ (p=1.000 n=6) ¹
+V4FilterSortRebuildCPU/skills=1/excluded=1-16                 6.000 ± 0%    6.000 ± 0%       ~ (p=1.000 n=6) ¹
+V4FilterSortRebuildCPU/skills=256/excluded=0-16               302.0 ± 0%    289.0 ± 0%  -4.30% (p=0.002 n=6)
+V4FilterSortRebuildCPU/skills=256/excluded=128-16             302.0 ± 0%    300.0 ± 0%  -0.66% (p=0.002 n=6)
+V4FilterSortRebuildCPU/skills=256/excluded=256-16             295.0 ± 0%    295.0 ± 0%       ~ (p=1.000 n=6) ¹
+V4FilterSortRebuildCPU/skills=1024/excluded=0-16             1.090k ± 0%   1.070k ± 0%  -1.83% (p=0.002 n=6)
+V4FilterSortRebuildCPU/skills=1024/excluded=512-16           1.089k ± 0%   1.084k ± 0%  -0.46% (p=0.002 n=6)
+V4FilterSortRebuildCPU/skills=1024/excluded=1024-16          1.080k ± 0%   1.080k ± 0%       ~ (p=1.000 n=6) ¹
+ParseV4FilterSortCPU/skills=1/excluded=0-16                   160.0 ± 0%    160.0 ± 0%       ~ (p=1.000 n=6) ¹
+ParseV4FilterSortCPU/skills=1/excluded=1-16                   178.0 ± 0%    178.0 ± 0%       ~ (p=1.000 n=6) ¹
+ParseV4FilterSortCPU/skills=256/excluded=0-16                3.793k ± 0%   3.780k ± 0%  -0.34% (p=0.002 n=6)
+ParseV4FilterSortCPU/skills=256/excluded=128-16              4.718k ± 0%   4.716k ± 0%  -0.04% (p=0.002 n=6)
+ParseV4FilterSortCPU/skills=256/excluded=256-16              5.610k ± 0%   5.610k ± 0%       ~ (p=1.000 n=6) ¹
+ParseV4FilterSortCPU/skills=1024/excluded=0-16               15.35k ± 0%   15.32k ± 0%  -0.14% (p=0.002 n=6)
+ParseV4FilterSortCPU/skills=1024/excluded=512-16             18.96k ± 0%   18.96k ± 0%  -0.03% (p=0.002 n=6)
+ParseV4FilterSortCPU/skills=1024/excluded=1024-16            22.55k ± 0%   22.55k ± 0%       ~ (p=1.000 n=6) ¹
+V4SparseExclusionEffectiveCPU/skills=1/excluded=0-16          3.000 ± 0%    3.000 ± 0%       ~ (p=1.000 n=6) ¹
+V4SparseExclusionEffectiveCPU/skills=1/excluded=1-16          3.000 ± 0%    3.000 ± 0%       ~ (p=1.000 n=6) ¹
+V4SparseExclusionEffectiveCPU/skills=256/excluded=0-16        285.0 ± 0%    272.0 ± 0%  -4.56% (p=0.002 n=6)
+V4SparseExclusionEffectiveCPU/skills=256/excluded=128-16      285.0 ± 0%    283.0 ± 0%  -0.70% (p=0.002 n=6)
+V4SparseExclusionEffectiveCPU/skills=256/excluded=256-16      285.0 ± 0%    285.0 ± 0%       ~ (p=1.000 n=6) ¹
+V4SparseExclusionEffectiveCPU/skills=1024/excluded=0-16      1.067k ± 0%   1.047k ± 0%  -1.87% (p=0.002 n=6)
+V4SparseExclusionEffectiveCPU/skills=1024/excluded=512-16    1.067k ± 0%   1.062k ± 0%  -0.47% (p=0.002 n=6)
+V4SparseExclusionEffectiveCPU/skills=1024/excluded=1024-16   1.067k ± 0%   1.067k ± 0%       ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=1/excluded=0-16            15.00 ± 0%    15.00 ± 0%       ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=1/excluded=1-16            23.00 ± 0%    23.00 ± 0%       ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=256/excluded=0-16          815.0 ± 0%    802.0 ± 0%  -1.60% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=256/excluded=128-16       1.384k ± 0%   1.380k ± 0%  -0.29% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=256/excluded=256-16       1.634k ± 0%   1.634k ± 0%       ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=1024/excluded=0-16        3.136k ± 0%   3.116k ± 0%  -0.64% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=512-16      5.262k ± 0%   5.252k ± 0%  -0.19% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16     6.283k ± 0%   6.283k ± 0%       ~ (p=1.000 n=6) ¹
+V4SparseExclusionChurnCPU/rebuild/rounds=64-16                12.00 ± 0%    12.00 ± 0%       ~ (p=1.000 n=6) ¹
+V4SparseExclusionChurnCPU/effective/rounds=64-16              3.000 ± 0%    3.000 ± 0%       ~ (p=1.000 n=6) ¹
+V4SparseExclusionChurnCPU/rebuild/rounds=1024-16              17.00 ± 0%    17.00 ± 0%       ~ (p=1.000 n=6) ¹
+V4SparseExclusionChurnCPU/effective/rounds=1024-16            3.000 ± 0%    3.000 ± 0%       ~ (p=1.000 n=6) ¹
+geomean                                                       313.3         311.7       -0.51%
+¹ all samples are equal

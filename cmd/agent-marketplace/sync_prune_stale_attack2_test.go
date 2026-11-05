@@ -1,10 +1,14 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 )
 
 // pruneFixture builds the simplest possible prune scenario: one healthy skill
@@ -27,23 +31,25 @@ func pruneFixture(t *testing.T, bareName string, configBody func(origin string) 
 	return repoRoot, configPath
 }
 
-// ATTACK B1: the stale selection lives in the TOP-LEVEL `skills:` list, not in
-// a per-registry include. A prune that only edits per-registry includes, or
-// that falls back to appending an exclude, would print `pruned stale skill
-// "gone" from config` while the selection is still there.
+// ATTACK B1: the stale selection lives in an explicit source-bound include.
+// Pruning must remove the include rather than append an exclude and falsely
+// claim success while leaving the user's stale request in place.
 func TestSyncPruneStaleRemovesTopLevelSelection(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
 	_, configPath := pruneFixture(t, "top-level-sel.git", func(origin string) string {
 		return `
-registries:
-  - url: ` + origin + `
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://` + origin + `
     ref: main
-skills:
-  include:
-    - keeper
-    - gone
+resources:
+  skills:
+    include:
+      - skill/keeper
+      - skill/gone
 `
 	})
 
@@ -58,52 +64,67 @@ skills:
 
 	claimedPruned := strings.Contains(output, `pruned stale skill "gone" from config`)
 	if !claimedPruned {
-		t.Fatalf("expected the stale top-level selection to be pruned; output:\n%s", output)
+		t.Fatalf("expected the stale source-bound selection to be pruned; output:\n%s", output)
 	}
 	stillSelected := false
 	for _, line := range strings.Split(string(configData), "\n") {
-		if strings.TrimSpace(line) == "- gone" {
+		if strings.TrimSpace(line) == "- skill/gone" {
 			stillSelected = true
 		}
 	}
 	if stillSelected {
-		t.Errorf("ATTACK SUCCEEDED (config churn): the stale top-level selection is still present.\nconfig:\n%s\noutput:\n%s", configData, output)
+		t.Errorf("ATTACK SUCCEEDED (config churn): the stale source-bound selection is still present.\nconfig:\n%s\noutput:\n%s", configData, output)
 	}
 	if strings.Contains(string(configData), "exclude") {
 		t.Errorf("ATTACK SUCCEEDED (config churn): the prune wrote an `exclude:` block the user never asked for.\nconfig:\n%s", configData)
 	}
 }
 
-// ATTACK B2: the same name appears in BOTH the top-level list and a
-// per-registry include. A single prune pass must clear both, otherwise the
-// next run finds it stale again.
+// ATTACK B2: two explicit source roots select the same stale name. A single
+// prune pass must clear both authored requests, otherwise the next run finds
+// it stale again. Distinct roots keep each edit unambiguous in v4.
 func TestAttackPruneSelectionInBothScopes(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	_, configPath := pruneFixture(t, "both-scopes.git", func(origin string) string {
+	repoRoot, configPath := pruneFixture(t, "both-scopes.git", func(origin string) string {
 		return `
-registries:
-  - url: ` + origin + `
+apiVersion: agent-marketplace/v4
+sources:
+  first:
+    git: file://` + origin + `
     ref: main
-    skills:
-      - keeper
-      - gone
-skills:
-  include:
-    - gone
+    path: skills
+  second:
+    git: file://` + origin + `
+    ref: main
+resources:
+  first:
+    include: [skill/keeper, skill/gone]
+  second:
+    include: [skill/gone]
 `
 	})
 
-	out1, _ := executeCommand("sync", "--prune-stale")
+	out1, syncErr := executeCommand("sync", "--prune-stale")
+	if syncErr != nil || !strings.Contains(out1, `pruned stale skill "gone"`) {
+		t.Fatalf("first pass did not prune the duplicated source-bound requests: %v\n%s", syncErr, out1)
+	}
+	assertFactorySkillExists(t, repoRoot, "keeper")
 	after1, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
 	t.Logf("out1:\n%s\nconfig1:\n%s", out1, after1)
 	assertValidConfigYAML(t, after1)
+	if strings.Contains(string(after1), "skill/gone") {
+		t.Fatalf("first pass left a stale request in a source binding:\n%s", after1)
+	}
 
-	out2, _ := executeCommand("sync", "--prune-stale")
+	out2, syncErr := executeCommand("sync", "--prune-stale")
+	if syncErr != nil {
+		t.Fatalf("second prune pass failed: %v\n%s", syncErr, out2)
+	}
 	after2, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatalf("read config: %v", err)
@@ -135,14 +156,17 @@ func TestAttackPruneThroughSymlinkedConfig(t *testing.T) {
 	commitAndPushAll(t, working, "Add skill")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	realConfig := filepath.Join(t.TempDir(), "shared", "config.yaml")
-	writeConfig(t, realConfig, `
-registries:
-  - url: `+origin+`
+	realConfig := filepath.Join(repoRoot, ".agents", "shared", "config.yaml")
+	writeConfig(t, realConfig, `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - keeper
-      - gone
+resources:
+  skills:
+    include:
+      - skill/keeper
+      - skill/gone
 `)
 	linkPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(linkPath), 0o755); err != nil {
@@ -153,11 +177,11 @@ registries:
 	}
 	withWorkingDir(t, repoRoot)
 
-	output, _ := executeCommand("sync", "--prune-stale")
+	output, syncErr := executeCommand("sync", "--prune-stale")
 	t.Logf("output:\n%s", output)
 
-	if !strings.Contains(output, "pruned stale") {
-		t.Skip("nothing pruned; attack not applicable")
+	if syncErr != nil || !strings.Contains(output, "pruned stale") {
+		t.Fatalf("expected the stale selection to be pruned through the config symlink: %v\n%s", syncErr, output)
 	}
 	fi, err := os.Lstat(linkPath)
 	if err != nil {
@@ -170,8 +194,46 @@ registries:
 	if err != nil {
 		t.Fatalf("read shared config: %v", err)
 	}
-	if strings.Contains(string(shared), "- gone") {
+	if strings.Contains(string(shared), "skill/gone") {
 		t.Errorf("ATTACK SUCCEEDED (config corruption): the shared config the symlink pointed at was never edited, so the prune's claim is false.\nshared:\n%s", shared)
+	}
+	assertFactorySkillExists(t, repoRoot, "keeper")
+
+	// An external target is a separate, refused boundary, not a reason to
+	// skip the supported in-layer symlink control above.
+	externalConfig := filepath.Join(t.TempDir(), "shared", "config.yaml")
+	writeFile(t, externalConfig, `apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  skills:
+    git: file://`+origin+`
+    ref: main
+resources:
+  skills:
+    include: [skill/keeper, skill/gone]
+`)
+	externalBefore, externalInfo := statSnapshot(t, externalConfig)
+	if err := os.Remove(linkPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(externalConfig, linkPath); err != nil {
+		t.Fatal(err)
+	}
+	linkBefore, err := os.Lstat(linkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, syncErr = executeCommand("sync", "--prune-stale")
+	if !errors.Is(syncErr, dependencytxn.ErrUnsafePath) || strings.Contains(output, "pruned stale") {
+		t.Fatalf("expected external config-link refusal before pruning, got %v\n%s", syncErr, output)
+	}
+	assertStatUnchanged(t, "external config-link refusal", externalConfig, externalBefore, externalInfo)
+	linkAfter, err := os.Lstat(linkPath)
+	if err != nil || !os.SameFile(linkBefore, linkAfter) || linkAfter.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("refusal replaced the external config symlink: %v", err)
+	}
+	if target, err := os.Readlink(linkPath); err != nil || target != externalConfig {
+		t.Fatalf("refusal changed the external symlink target: %q, %v", target, err)
 	}
 }
 
@@ -192,31 +254,36 @@ func TestAttackPruneMultiDocumentConfig(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-	writeFile(t, configPath, `apiVersion: agent-marketplace/v2
+	writeFile(t, configPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - keeper
-      - gone
+resources:
+  skills:
+    include:
+      - skill/keeper
+      - skill/gone
 ---
 # a second document the user keeps notes in
 notes: keep me
 `)
 	withWorkingDir(t, repoRoot)
 
-	output, _ := executeCommand("sync", "--prune-stale")
-	t.Logf("output:\n%s", output)
-	configData, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("read config: %v", err)
+	before, info := statSnapshot(t, configPath)
+	output, syncErr := executeCommand("sync", "--prune-stale")
+	var validation *config.V4ValidationError
+	if !errors.As(syncErr, &validation) || validation.Code != "v4.multiple-documents" || validation.Path != configPath || validation.Line == 0 {
+		t.Fatalf("expected typed, file-specific multi-document refusal, got %v\n%s", syncErr, output)
 	}
-	t.Logf("config after prune:\n%s", configData)
-
-	if strings.Contains(output, "pruned stale") && !strings.Contains(string(configData), "notes: keep me") {
-		t.Errorf("ATTACK SUCCEEDED (config corruption): the prune silently DELETED the second YAML document.\nconfig:\n%s", configData)
+	if strings.Contains(output, "pruned stale") {
+		t.Fatalf("multi-document refusal reported a prune:\n%s", output)
+	}
+	assertStatUnchanged(t, "multi-document refusal", configPath, before, info)
+	if _, err := os.Lstat(filepath.Join(repoRoot, ".agents", "lock.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("multi-document refusal created a lock: %v", err)
 	}
 }
 
@@ -257,13 +324,14 @@ func TestAttackPruneBrokenFrontmatter(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+	writeConfig(t, configPath, `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - keeper
-      - broken
+resources:
+  skills:
+    include: [skill/keeper, skill/broken]
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -289,15 +357,14 @@ func TestAttackStrictReSyncSurfacesNewStale(t *testing.T) {
 	}
 	_, configPath := pruneFixture(t, "strict-new-stale.git", func(origin string) string {
 		return `
-registries:
-  - url: ` + origin + `
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://` + origin + `
     ref: main
-    skills:
-      - keeper
-      - gone-a
-collections:
-  include:
-    - no-such-collection
+resources:
+  skills:
+    include: [skill/keeper, skill/gone-a, collection/no-such-collection]
 `
 	})
 
@@ -337,20 +404,21 @@ func TestAttackPruneSelectionSatisfiedByAnotherRegistry(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-	// `shared` is selected at the top level, so it applies to both entries.
-	writeConfig(t, configPath, `
-registries:
-  - url: `+originA+`
+	// Both sources explicitly select `shared`: it is absent from A but present
+	// in B. Pruning A must not delete B's independent selection.
+	writeConfig(t, configPath, `apiVersion: agent-marketplace/v4
+sources:
+  a:
+    git: file://`+originA+`
     ref: main
-    skills:
-      - keeper
-  - url: `+originB+`
+  b:
+    git: file://`+originB+`
     ref: main
-    skills:
-      - shared
-skills:
-  include:
-    - shared
+resources:
+  a:
+    include: [skill/keeper, skill/shared]
+  b:
+    include: [skill/shared]
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -363,8 +431,15 @@ skills:
 	t.Logf("config after prune:\n%s", configData)
 	assertValidConfigYAML(t, configData)
 
-	if strings.Contains(output, `pruned stale skill "shared"`) {
-		t.Errorf("ATTACK SUCCEEDED (wrongly deleted config): %q was pruned although registry B provides it.\nconfig:\n%s\noutput:\n%s", "shared", configData, output)
+	if !strings.Contains(output, `pruned stale skill "shared"`) {
+		t.Errorf("expected source A's absent selection to be pruned without deleting source B's healthy selection.\nconfig:\n%s\noutput:\n%s", configData, output)
+	}
+	loaded, loadErr := config.LoadV4ConfigFromPath(configPath)
+	if loadErr != nil {
+		t.Fatalf("load pruned v4 config: %v", loadErr)
+	}
+	if len(loaded.Groups["a"].Include) != 1 || loaded.Groups["a"].Include[0].Locator != "skill/keeper" || len(loaded.Groups["b"].Include) != 1 || loaded.Groups["b"].Include[0].Locator != "skill/shared" {
+		t.Errorf("prune did not isolate the absent source A request from source B's healthy request: %+v", loaded.Groups)
 	}
 	if !strings.Contains(string(configData), "shared") {
 		t.Errorf("ATTACK SUCCEEDED (wrongly deleted config): every trace of %q was removed although registry B provides it.\nconfig:\n%s", "shared", configData)

@@ -501,7 +501,7 @@ func TestAdversarialZeroLockTimeoutFailsLoudlyRatherThanProceedingUnserialized(t
 	defer letGo()
 
 	report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{
-		devinResolved("alpha", ir.NewMcpServer("alpha", "alpha-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "alpha", ir.NewMcpServer("alpha", "alpha-binary", nil, nil, nil, ir.SourceRef{}), false),
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -579,8 +579,8 @@ func TestAdversarialBothRootsContendedSkipBothAndReportEachOnce(t *testing.T) {
 	defer letGoUser()
 
 	report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{
-		devinResolved("alpha", ir.NewMcpServer("alpha", "alpha-binary", nil, nil, nil, ir.SourceRef{}), false),
-		devinResolved("machine", ir.NewMcpServer("machine", "machine-binary", nil, nil, nil, ir.SourceRef{}), true),
+		devinResolved(t, "alpha", ir.NewMcpServer("alpha", "alpha-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "machine", ir.NewMcpServer("machine", "machine-binary", nil, nil, nil, ir.SourceRef{}), true),
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -637,8 +637,8 @@ func TestAdversarialAMachineScopeTimeoutDoesNotBlockTheRepoRoot(t *testing.T) {
 	defer letGo()
 
 	report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{
-		devinResolved("alpha", ir.NewMcpServer("alpha", "alpha-binary", nil, nil, nil, ir.SourceRef{}), false),
-		devinResolved("machine", ir.NewMcpServer("machine", "machine-binary", nil, nil, nil, ir.SourceRef{}), true),
+		devinResolved(t, "alpha", ir.NewMcpServer("alpha", "alpha-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "machine", ir.NewMcpServer("machine", "machine-binary", nil, nil, nil, ir.SourceRef{}), true),
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)

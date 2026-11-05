@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"time"
@@ -403,12 +404,17 @@ func (s *Store) loadObservedRecord() (*Record, metadataPin, error) {
 	if !exists {
 		return nil, pin, coded(diag.CodeOwnershipStateMissing, s.StateFile(), s.missingStateError())
 	}
+	rec, decodeErr := s.decodeStateRecord(s.StateFile(), data)
+	return rec, pin, decodeErr
+}
+
+func (s *Store) decodeStateRecord(path string, data []byte) (*Record, error) {
 	var rec Record
 	// The typed jsonc decode rejects literal duplicate keys and case-folded
 	// aliases for modeled fields (including nested source_evidence members)
 	// before any value reaches the record.
-	if err := jsonc.Unmarshal(s.StateFile(), data, &rec); err != nil {
-		return nil, pin, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), fmt.Errorf("%w: malformed state JSON", ErrStateCorrupt))
+	if err := jsonc.Unmarshal(path, data, &rec); err != nil {
+		return nil, coded(diag.CodeOwnershipStateCorrupt, path, fmt.Errorf("%w: malformed state JSON", ErrStateCorrupt))
 	}
 	normalizeHookEntries(&rec)
 	if err := validateRecord(&rec, s.canonicalRoot, s.rootKey); err != nil {
@@ -416,12 +422,12 @@ func (s *Store) loadObservedRecord() (*Record, metadataPin, error) {
 		if errors.Is(err, ErrStateRootMismatch) {
 			code = diag.CodeOwnershipStateRootMismatch
 		}
-		return nil, pin, coded(code, s.StateFile(), err)
+		return nil, coded(code, path, err)
 	}
 	if rec.Files == nil {
 		rec.Files = map[string]FileState{}
 	}
-	return &rec, pin, nil
+	return &rec, nil
 }
 
 // commitRecord writes the record atomically and durably: temp file in the same
@@ -467,6 +473,10 @@ func (s *Store) commitRecordWithValidation(rec *Record, validate func() error) (
 // nextRecord builds the record that a mutation will commit, from the currently
 // loaded record (or an empty one when state is missing or corrupt).
 func (s *Store) nextRecord(current *Record, rel string, contentDigest string, entries []Entry) (*Record, error) {
+	return s.nextRecordMeta(current, rel, contentDigest, entries, nil)
+}
+
+func (s *Store) nextRecordMeta(current *Record, rel string, contentDigest string, entries []Entry, satisfactions *[]HookSatisfaction) (*Record, error) {
 	next := &Record{
 		Version:       stateVersion,
 		CanonicalRoot: s.canonicalRoot,
@@ -482,15 +492,43 @@ func (s *Store) nextRecord(current *Record, rel string, contentDigest string, en
 	}
 	next.UpdatedAt = s.now().UTC().Format(time.RFC3339Nano)
 
-	sorted := append([]Entry(nil), entries...)
-	seen := make(map[string]struct{}, len(sorted))
-	for _, e := range sorted {
-		if err := validateEntry(e); err != nil {
+	sorted, seen, err := sortedOwnedEntries(entries)
+	if err != nil {
+		return nil, err
+	}
+	fileState := next.Files[rel]
+	fileState.ContentDigest = contentDigest
+	fileState.Entries = sorted
+	if satisfactions != nil {
+		sats, err := sortedHookSatisfactions(*satisfactions)
+		if err != nil {
 			return nil, err
 		}
-		key := e.ID().mapKey()
+		for _, satisfaction := range sats {
+			if _, dup := seen[satisfaction.ID().mapKey()]; dup {
+				return nil, fmt.Errorf("%w: hook satisfaction duplicates an owned entry identity", ErrUnsafeStateValue)
+			}
+		}
+		fileState.HookSatisfactions = sats
+	}
+	if len(sorted) == 0 && len(fileState.HookSatisfactions) == 0 {
+		delete(next.Files, rel)
+	} else {
+		next.Files[rel] = fileState
+	}
+	return next, nil
+}
+
+func sortedOwnedEntries(entries []Entry) ([]Entry, map[string]struct{}, error) {
+	sorted := append([]Entry(nil), entries...)
+	seen := make(map[string]struct{}, len(sorted))
+	for _, entry := range sorted {
+		if err := validateEntry(entry); err != nil {
+			return nil, nil, err
+		}
+		key := entry.ID().mapKey()
 		if _, dup := seen[key]; dup {
-			return nil, fmt.Errorf("%w: duplicate entry identity", ErrUnsafeStateValue)
+			return nil, nil, fmt.Errorf("%w: duplicate entry identity", ErrUnsafeStateValue)
 		}
 		seen[key] = struct{}{}
 	}
@@ -504,15 +542,45 @@ func (s *Store) nextRecord(current *Record, rel string, contentDigest string, en
 		}
 		return a.IdentityDigest < b.IdentityDigest
 	})
-	fileState := next.Files[rel]
-	fileState.ContentDigest = contentDigest
-	fileState.Entries = sorted
-	if len(sorted) == 0 && len(fileState.HookSatisfactions) == 0 {
-		delete(next.Files, rel)
-	} else {
-		next.Files[rel] = fileState
+	return sorted, seen, nil
+}
+
+func sortedHookSatisfactions(in []HookSatisfaction) ([]HookSatisfaction, error) {
+	out := make([]HookSatisfaction, len(in))
+	for i, satisfaction := range in {
+		if err := validateHookSatisfaction(satisfaction); err != nil {
+			return nil, err
+		}
+		out[i] = satisfaction
+		out[i].Sources = append([]HookSourceEvidence(nil), satisfaction.Sources...)
 	}
-	return next, nil
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		return a.Container < b.Container || a.Container == b.Container && a.IdentityDigest < b.IdentityDigest
+	})
+	for i := range out {
+		sort.Slice(out[i].Sources, func(a, b int) bool {
+			left, right := out[i].Sources[a], out[i].Sources[b]
+			return left.Resource < right.Resource || left.Resource == right.Resource && left.SourceDigest < right.SourceDigest
+		})
+	}
+	return out, nil
+}
+
+func fileStateSemanticallyEqual(current FileState, currentPresent bool, next FileState, nextPresent bool) bool {
+	if currentPresent != nextPresent {
+		return false
+	}
+	if !currentPresent {
+		return true
+	}
+	if current.ContentDigest != next.ContentDigest || len(current.Entries) != len(next.Entries) ||
+		len(current.HookSatisfactions) != len(next.HookSatisfactions) {
+		return false
+	}
+	entriesEqual := len(current.Entries) == 0 || reflect.DeepEqual(current.Entries, next.Entries)
+	satisfactionsEqual := len(current.HookSatisfactions) == 0 || reflect.DeepEqual(current.HookSatisfactions, next.HookSatisfactions)
+	return entriesEqual && satisfactionsEqual
 }
 
 // Proof returns proof-backed ownership for one canonical output file.
@@ -693,17 +761,6 @@ func (p Proof) OwnedIDs() []EntryID {
 	return ids
 }
 
-// Resource returns the marketplace resource recorded for an owned identity.
-func (p Proof) Resource(id EntryID) (string, bool) {
-	e, ok := p.entries[id.mapKey()]
-	return e.Resource, ok
-}
-
-// Entry returns the complete recorded ownership entry for an owned identity,
-// including every evidence field the state carries (resource, source digest,
-// source evidence). It exists for callers that must retain prior proof
-// verbatim; a rebuild from the ID and a current digest would silently drop
-// evidence or rebaseline drifted bytes as clean. The returned value is a copy.
 func (p Proof) Entry(id EntryID) (Entry, bool) {
 	e, ok := p.entries[id.mapKey()]
 	if !ok {
@@ -711,6 +768,12 @@ func (p Proof) Entry(id EntryID) (Entry, bool) {
 	}
 	e.SourceEvidence = append([]HookSourceEvidence(nil), e.SourceEvidence...)
 	return e, true
+}
+
+// Resource returns the marketplace resource recorded for an owned identity.
+func (p Proof) Resource(id EntryID) (string, bool) {
+	e, ok := p.entries[id.mapKey()]
+	return e.Resource, ok
 }
 
 // SourceDigest returns the version-1 source-hook fingerprint recorded for an

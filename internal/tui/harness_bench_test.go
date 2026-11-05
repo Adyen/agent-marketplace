@@ -13,12 +13,12 @@ func BenchmarkHarnessDialogResizeRender(b *testing.B) {
 			m.loading = false
 			m.width, m.height = 80, 30
 			if target {
-				m.globalHarnesses = []string{"factory", "unknown-existing"}
+				m.globalHarnesses = []string{"factory", "claude"}
 				m.openHarnessModal()
 				m.ensureHarnessForm()
 			} else {
 				m.pane = paneInitModal
-				m.initModal = initModalState{selected: harnessSelection([]string{"factory", "unknown-existing"}), detected: true}
+				m.initModal = initModalState{selected: harnessSelection([]string{"factory", "claude"}), detected: true}
 				m.ensureInitForm()
 			}
 			m.viewContent()

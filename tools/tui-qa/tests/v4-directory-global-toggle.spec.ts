@@ -1,18 +1,16 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { after, before } from "node:test";
 
-import { expect, test } from "@microsoft/tui-test";
-
-import { defineFixture, step, waitForExit } from "./helpers.js";
+import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 import { runNonTTY } from "./process-helpers.js";
 
 const journey = defineFixture("v4-directory-global-toggle", ["tui"], 80, 24, { directorySource: true });
-test.use(journey.options);
-test.beforeAll(journey.setup);
-test.afterAll(journey.cleanup);
+before(journey.setup);
+after(journey.cleanup);
 
-test("toggles a v4 directory source globally and syncs native harnesses", async ({ terminal }) => {
+journey.test("toggles a v4 directory source globally and syncs native harnesses", async (terminal) => {
   const fixture = journey.current();
   const alphaPaths = [
     path.join(fixture.home, ".factory", "skills", "alpha-skill"),
@@ -22,35 +20,36 @@ test("toggles a v4 directory source globally and syncs native harnesses", async 
   const globalConfig = path.join(fixture.home, ".agents", "config.yaml");
 
   await step("initial directory catalog is visible", () => {}, async () => {
-    await expect(terminal.getByText("alpha-skill", { strict: false })).toBeVisible();
-    await expect(terminal.getByText("beta-skill", { strict: false })).toBeVisible();
+    await locate(terminal, "alpha-skill").expect();
+    await locate(terminal, "beta-skill").expect();
+    await locate(terminal, "~ in sync").unique().expect();
   });
   await step("search for available alpha", () => terminal.write("/"), async () => {
-    await expect(terminal.getByText(/\/\s{20,}/g)).toBeVisible();
+    await locate(terminal, /\/\s{20,}/).unique().expect();
   });
   await step("filter for alpha", () => terminal.write("alpha"), async () => {
-    await expect(terminal.getByText("alpha-skill", { strict: false })).toBeVisible();
+    await locate(terminal, "alpha-skill").expect();
   });
   await step("select filtered alpha", () => terminal.write("\r"), async () => {
-    await expect(terminal.getByText(/Name:\s+alpha-skill/g)).toBeVisible();
-    await expect(terminal.getByText(/Status:\s+available/g)).toBeVisible();
+    await locate(terminal, /Name:\s+alpha-skill/).unique().expect();
+    await locate(terminal, /Status:\s+available/).unique().expect();
   });
   await step("open global toggle", () => terminal.write(" "), async () => {
-    await expect(terminal.getByText('"alpha-skill"', { strict: false })).toBeVisible();
-    await expect(terminal.getByText("toggle global")).toBeVisible();
+    await locate(terminal, '"alpha-skill"').expect();
+    await locate(terminal, "toggle global").unique().expect();
   });
   await step("enable global selection", () => terminal.write("g"), async () => {
-    await expect(terminal.getByText(/Pending sync\s+\(1\)/g)).toBeVisible();
-    await expect(terminal.getByText(/Status:\s+enabled \(pending sync\)/g)).toBeVisible();
-    await expect(terminal.getByText(/~ \d+ out of sync/g)).toBeVisible();
+    await locate(terminal, /Pending sync\s+\(1\)/).unique().expect();
+    await locate(terminal, /Status:\s+enabled \(pending sync\)/).unique().expect();
+    await locate(terminal, /~ \d+ out of sync/).unique().expect();
   });
   const pendingConfig = fs.readFileSync(globalConfig, "utf8");
   assert.match(pendingConfig, /resources:\n  local:\n    include:\n      - skill\/alpha-skill/);
   assert.doesNotMatch(pendingConfig, /registries:/);
 
   await step("sync global selection", () => terminal.write("s"), async () => {
-    await expect(terminal.getByText("Sync complete")).toBeVisible({ timeout: 30_000 });
-    await expect(terminal.getByText("~ in sync")).toBeVisible({ timeout: 30_000 });
+    await locate(terminal, "Sync complete").unique().expect({ timeout: 30_000 });
+    await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
   });
   for (const generated of alphaPaths) {
     assert.equal(fs.lstatSync(generated).isSymbolicLink(), true, generated);
@@ -64,21 +63,21 @@ test("toggles a v4 directory source globally and syncs native harnesses", async 
   }
 
   await step("open selected global toggle", () => terminal.write(" "), async () => {
-    await expect(terminal.getByText('"alpha-skill"', { strict: false })).toBeVisible();
+    await locate(terminal, '"alpha-skill"').expect();
   });
   await step("disable global selection", () => terminal.write("g"), async () => {
-    await expect(terminal.getByText("alpha-skill", { strict: false })).toBeVisible();
-    await expect(terminal.getByText(/Status:\s+available/g)).toBeVisible();
-    await expect(terminal.getByText(/Status:\s+enabled \(pending sync\)/g)).not.toBeVisible();
-    await expect(terminal.getByText(/~ \d+ out of sync/g)).toBeVisible();
+    await locate(terminal, "alpha-skill").expect();
+    await locate(terminal, /Status:\s+available/).unique().expect();
+    await locate(terminal, /Status:\s+enabled \(pending sync\)/).expect({ not: true });
+    await locate(terminal, /~ \d+ out of sync/).unique().expect();
   });
   const disabledConfig = fs.readFileSync(globalConfig, "utf8");
   assert.match(disabledConfig, /include:\s*\[\]/);
   assert.match(disabledConfig, /exclude:\n\s+- skill\/alpha-skill/);
   assert.doesNotMatch(disabledConfig, /beta-skill/);
   await step("sync disabled selection", () => terminal.write("s"), async () => {
-    await expect(terminal.getByText("Sync complete")).toBeVisible({ timeout: 30_000 });
-    await expect(terminal.getByText("~ in sync")).toBeVisible({ timeout: 30_000 });
+    await locate(terminal, "Sync complete").unique().expect({ timeout: 30_000 });
+    await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
   });
   for (const generated of alphaPaths) assert.equal(fs.lstatSync(generated, { throwIfNoEntry: false }), undefined, generated);
 

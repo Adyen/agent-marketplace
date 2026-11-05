@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -90,6 +91,40 @@ func staticProbe(probe devincli.Probe) func(context.Context) devincli.Probe {
 // rather than against whatever a cloned registry happens to provide.
 func staticResolve(selection []resolver.ResolvedArtifact) func(context.Context, string) ([]resolver.ResolvedArtifact, error) {
 	return func(context.Context, string) ([]resolver.ResolvedArtifact, error) { return selection, nil }
+}
+
+func sourceBackedDoctorHook(t *testing.T, name, event, matcher, command string, target hcc.Target) resolver.ResolvedArtifact {
+	t.Helper()
+	sourceRoot := t.TempDir()
+	handler := map[string]any{"type": "command", "command": command}
+	group := map[string]any{"hooks": []any{handler}}
+	if matcher != "" {
+		group["matcher"] = matcher
+	}
+	definition := map[string]any{"hooks": map[string]any{event: []any{group}}}
+	data, err := json.Marshal(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(sourceRoot, "hooks", "hooks.json"), string(data))
+	loaded, err := catalog.Load(sourceRoot, "claude")
+	if err != nil || len(loaded.Entries) != 1 || loaded.Entries[0].Kind != ir.KindHook {
+		t.Fatalf("Claude source hook ingest = %+v / %v", loaded.Entries, err)
+	}
+	entry := loaded.Entries[0]
+	hook, ok := entry.Resource.(*ir.Hook)
+	if !ok || hook.SourceDefinitionDigest() == "" {
+		t.Fatalf("source-backed doctor hook has no definition digest: %#v", entry.Resource)
+	}
+	entry.Name = name
+	return resolver.ResolvedArtifact{
+		Entry:       entry,
+		RegistryURL: sourceRoot,
+		CatalogKey:  sourceRoot,
+		V4Kind:      config.V4SourceDirectory,
+		Source:      config.RepoCommitted,
+		Harnesses:   []hcc.Target{target},
+	}
 }
 
 // A Workspace construction failure must reach runDoctor with its wrapped
@@ -192,7 +227,7 @@ func TestDoctorDevinVersionAndRecommendationLines(t *testing.T) {
 		{
 			name:      "already selected is not recommended again",
 			probe:     supported,
-			harnesses: "apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\n  - devin\nregistries: []\n",
+			harnesses: "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\n  - devin\nsources: {}\n",
 			wantLines: []string{"devin harness: selected (global)"},
 			wantNotContain: []string{
 				"doctor.devin.recommended",
@@ -661,11 +696,7 @@ func TestWriteRepairDiagnosticsKeepsTwoResourcesWithOneMessage(t *testing.T) {
 func prepareDevinTwoAggregateRepairFixture(t *testing.T, repoRoot string) (outDir string, selection []resolver.ResolvedArtifact) {
 	t.Helper()
 	selection = []resolver.ResolvedArtifact{
-		{
-			Entry:     catalog.Entry{Name: "my-hook", Resource: ir.NewHook("my-hook", "PostToolUse", "echo hi", "command", nil, ir.SourceRef{})},
-			Source:    config.RepoCommitted,
-			Harnesses: []hcc.Target{hcc.TargetDevin},
-		},
+		sourceBackedDoctorHook(t, "my-hook", "PostToolUse", "", "echo hi", hcc.TargetDevin),
 		{
 			Entry:     catalog.Entry{Name: "managed", Resource: ir.NewMcpServer("managed", "managed-binary", nil, nil, nil, ir.SourceRef{})},
 			Source:    config.RepoCommitted,
@@ -766,10 +797,10 @@ func TestDoctorReportsManagedInstallationDiagnostics(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 
 	orgPath := filepath.Join(t.TempDir(), "org.yaml")
-	writeFile(t, orgPath, `apiVersion: agent-marketplace/v3
+	writeFile(t, orgPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries: []
+sources: {}
 `)
 	if err := os.Chmod(orgPath, 0o664); err != nil {
 		t.Fatalf("chmod: %v", err)
@@ -778,10 +809,10 @@ registries: []
 
 	repoRoot := t.TempDir()
 	writeClaudePluginSkill(t, repoRoot, "doctor-managed-skill")
-	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v3
+	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries: []
+sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -803,4 +834,22 @@ registries: []
 		}
 	}
 
+}
+
+func writeClaudePluginSkill(t *testing.T, root, name string) {
+	t.Helper()
+	writeFile(t, filepath.Join(root, ".claude-plugin", "plugin.json"), `{"name":"test-plugin","version":"1.0.0"}`)
+	writeFile(t, filepath.Join(root, "skills", name, "SKILL.md"), `---
+name: `+name+`
+description: Demo skill
+metadata:
+  tags:
+    - demo
+---
+
+# Demo skill
+`)
+	if _, err := os.Stat(filepath.Join(root, ".claude-plugin", "plugin.json")); err != nil {
+		t.Fatalf("expected Claude plugin marker: %v", err)
+	}
 }

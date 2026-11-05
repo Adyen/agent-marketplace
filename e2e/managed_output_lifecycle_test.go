@@ -8,7 +8,7 @@ import (
 )
 
 // TestSyncPrunesOrgOwnedWhenOrgConfigDisappears verifies that previously
-// organization-owned managed artifacts are removed once the external v3
+// organization-owned managed artifacts are removed once the external v4
 // organization configuration is gone.
 func TestSyncPrunesOrgOwnedWhenOrgConfigDisappears(t *testing.T) {
 	env := newEnv(t)
@@ -19,18 +19,12 @@ func TestSyncPrunesOrgOwnedWhenOrgConfigDisappears(t *testing.T) {
 		Skill{Name: "org-skill", Description: "Organization-owned skill"},
 	))
 
-	env.WriteGlobalConfig(fmt.Sprintf(`registries:
-  - url: %s
-    ref: main
-    skills:
-      - user-skill
+	env.WriteGlobalConfig(fmt.Sprintf(`sources: {team: {git: %q, ref: main}}
+resources: {team: {include: [skill/user-skill]}}
 `, regURL))
 
-	env.WriteOrgConfig(fmt.Sprintf(`registries:
-  - url: %s
-    ref: main
-    skills:
-      - org-skill
+	env.WriteOrgConfig(fmt.Sprintf(`sources: {team: {git: %q, ref: main}}
+resources: {team: {include: [skill/org-skill]}}
 `, regURL))
 
 	r := env.RunAM("sync")
@@ -74,14 +68,10 @@ func TestSyncPrunesOrgOwnedWhenOrgPolicyChanges(t *testing.T) {
 	))
 
 	// Target harness only; selection comes from the org config.
-	env.WriteGlobalConfig("registries: []")
+	env.WriteGlobalConfig("sources: {}")
 
-	env.WriteOrgConfig(fmt.Sprintf(`registries:
-  - url: %s
-    ref: main
-    skills:
-      - org-keep
-      - org-drop
+	env.WriteOrgConfig(fmt.Sprintf(`sources: {team: {git: %q, ref: main}}
+resources: {team: {include: [skill/org-keep, skill/org-drop]}}
 `, regURL))
 
 	r := env.RunAM("sync")
@@ -92,11 +82,8 @@ func TestSyncPrunesOrgOwnedWhenOrgPolicyChanges(t *testing.T) {
 	env.AssertFileExists("/root/.factory/skills/org-drop/SKILL.md")
 
 	// Change organization policy to stop selecting org-drop.
-	env.WriteOrgConfig(fmt.Sprintf(`registries:
-  - url: %s
-    ref: main
-    skills:
-      - org-keep
+	env.WriteOrgConfig(fmt.Sprintf(`sources: {team: {git: %q, ref: main}}
+resources: {team: {include: [skill/org-keep]}}
 `, regURL))
 
 	r = env.RunAM("sync")
@@ -122,19 +109,13 @@ func TestDeinitUserPreservesOrgOwnedOutput(t *testing.T) {
 		Skill{Name: "org-skill", Description: "Organization-owned skill"},
 	))
 
-	env.WriteGlobalConfig(fmt.Sprintf(`registries:
-  - url: %s
-    ref: main
-    skills:
-      - user-skill
+	env.WriteGlobalConfig(fmt.Sprintf(`sources: {team: {git: %q, ref: main}}
+resources: {team: {include: [skill/user-skill]}}
 `, regURL))
 
 	orgPath := env.mustResolvePath("/etc/agent-marketplace/config.yaml")
-	env.WriteOrgConfig(fmt.Sprintf(`registries:
-  - url: %s
-    ref: main
-    skills:
-      - org-skill
+	env.WriteOrgConfig(fmt.Sprintf(`sources: {team: {git: %q, ref: main}}
+resources: {team: {include: [skill/org-skill]}}
 `, regURL))
 
 	r := env.RunAM("sync")
@@ -168,15 +149,12 @@ func TestSyncFailsWithInvalidManagedOrgConfig(t *testing.T) {
 		Skill{Name: "user-skill", Description: "User-owned skill"},
 	))
 
-	env.WriteGlobalConfig(fmt.Sprintf(`registries:
-  - url: %s
-    ref: main
-    skills:
-      - user-skill
+	env.WriteGlobalConfig(fmt.Sprintf(`sources: {team: {git: %q, ref: main}}
+resources: {team: {include: [skill/user-skill]}}
 `, regURL))
 
 	// Write an invalid present organization config directly; WriteOrgConfig
-	// would auto-inject a valid v2 header.
+	// would auto-inject a valid v4 header.
 	env.WriteFile("/etc/agent-marketplace/config.yaml", `apiVersion: agent-marketplace/v1
 harnesses:
   - factory
@@ -187,7 +165,7 @@ registries: []
 	if r.ExitCode == 0 {
 		t.Fatalf("expected sync to fail with invalid org config, got exit 0:\n%s", r.Combined)
 	}
-	if !strings.Contains(r.Combined, "unsupported apiVersion") {
+	if !strings.Contains(r.Combined, "v4.api-version") {
 		t.Fatalf("expected sync error to mention unsupported apiVersion, got:\n%s", r.Combined)
 	}
 }

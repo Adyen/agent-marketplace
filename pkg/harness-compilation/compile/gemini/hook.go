@@ -8,43 +8,40 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/hookpolicy"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 const geminiSettingsPath = ".gemini/settings.json"
 
 // translateHook translates a Hook IR resource into a .gemini/settings.json
-// fragment containing a hooks section keyed by Gemini event names.
+// fragment containing a hooks section keyed by Gemini event names. Event,
+// matcher, timeout, handler type, and command come from the catalog-driven
+// hookpolicy resolver (OpenSpec native-hook-integration, task 3.2).
 func translateHook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
-	// Map the Claude event name to the Gemini event name using the shared table.
-	geminiEvent, ok := mapping.HookEvent(h.Event, h.Matcher, mapping.TargetGemini)
-	if !ok {
-		return nil, []diag.Diagnostic{{Code: diag.CodeHookGeminiEventUnmappable, Severity: diag.SeverityWarning, Target: string(mapping.TargetGemini), Resource: h.Name(), Message: "Gemini has no equivalent hook event; hook artifact suppressed", Hint: "Use a documented Gemini hook event", Source: diag.SourceRef(h.Source)}}, nil
+	scope := hookpolicy.ScopeRepository
+	if opts.Scope() == compile.ScopeUser {
+		scope = hookpolicy.ScopeMachine
 	}
-
-	// Prompt hooks are natively representable; unsupported types are rejected
-	// rather than fabricated as empty commands.
-	if h.Type != "command" && h.Type != "prompt" {
-		return nil, []diag.Diagnostic{{Code: diag.CodeHookGeminiUnsupportedType, Severity: diag.SeverityWarning, Target: string(mapping.TargetGemini), Resource: h.Name(), Message: "Gemini cannot represent this hook type; hook artifact suppressed", Hint: "Use a command or prompt hook on Gemini", Source: diag.SourceRef(h.Source)}}, nil
+	resolved := hookpolicy.Resolve(h, mapping.TargetGemini, scope, opts.PluginRoot())
+	if resolved.Failed() {
+		return nil, resolved.Diagnostics, nil
 	}
-
-	// Replace env tokens in the command string.
-	mappedCommand := replaceEnvTokens(h.Command)
 
 	// Build the hook entry without inventing command for prompt hooks.
-	rule := map[string]any{"type": h.Type}
+	rule := map[string]any{"type": resolved.Type}
 	group := make(map[string]any)
-	if h.Matcher != "" {
-		group["matcher"] = h.Matcher
+	if resolved.Matcher != "" {
+		group["matcher"] = resolved.Matcher
 	}
-	if mappedCommand != "" {
-		rule["command"] = mappedCommand
+	if resolved.Command != "" {
+		rule["command"] = resolved.Command
 	}
 	if h.Prompt != "" {
 		rule["prompt"] = h.Prompt
 	}
-	if h.Timeout != nil {
-		rule["timeout"] = *h.Timeout
+	if resolved.Timeout != nil {
+		rule["timeout"] = *resolved.Timeout
 	}
 	if sidecar := h.Ext.Gemini; sidecar != nil {
 		if sidecar.HookName != "" {
@@ -69,7 +66,7 @@ func translateHook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []dia
 	}
 	group["hooks"] = []any{rule}
 	if sidecar := h.Ext.Gemini; sidecar != nil {
-		keys, groupDiags := compile.HookExtraKeys(sidecar.HookGroupExtra, compile.PresentFields(map[string]bool{"hooks": true, "matcher": h.Matcher != ""}), mapping.TargetGemini, h.Name(), diag.SourceRef(h.Source))
+		keys, groupDiags := compile.HookExtraKeys(sidecar.HookGroupExtra, compile.PresentFields(map[string]bool{"hooks": true, "matcher": resolved.Matcher != ""}), mapping.TargetGemini, h.Name(), diag.SourceRef(h.Source))
 		diags = append(diags, groupDiags...)
 		for _, key := range keys {
 			group[key] = sidecar.HookGroupExtra[key]
@@ -79,7 +76,7 @@ func translateHook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []dia
 	// Wrap in the settings.json envelope.
 	fragment := map[string]any{
 		"hooks": map[string]any{
-			geminiEvent: []any{group},
+			resolved.Event: []any{group},
 		},
 	}
 
@@ -97,5 +94,5 @@ func translateHook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []dia
 	art.ManagedByField, art.ManagedByValue = opts.ManagedBy()
 	art.MergeWithExisting = art.ManagedByField != ""
 
-	return []artifact.Artifact{art}, diags, nil
+	return []artifact.Artifact{art}, append(resolved.Diagnostics, diags...), nil
 }

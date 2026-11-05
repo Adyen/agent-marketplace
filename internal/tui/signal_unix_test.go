@@ -27,7 +27,7 @@ func (m signalContractModel) Init() tea.Cmd {
 			return err
 		}
 		tmp := m.marker + ".tmp"
-		if err := os.WriteFile(tmp, []byte("apiVersion: agent-marketplace/v2\nharnesses: ["), 0o644); err != nil {
+		if err := os.WriteFile(tmp, []byte("apiVersion: agent-marketplace/v4\nharnesses: ["), 0o644); err != nil {
 			return err
 		}
 		if err := os.Rename(tmp, m.marker); err != nil {
@@ -129,7 +129,7 @@ func TestHandledSignalsRestoreTerminalAndExposePartialFilesystemState(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
-			if string(data) != "apiVersion: agent-marketplace/v2\nharnesses: [" {
+			if string(data) != "apiVersion: agent-marketplace/v4\nharnesses: [" {
 				t.Fatalf("hard exit hid or rewrote partial filesystem state: %q", data)
 			}
 			t.Setenv("HOME", home)

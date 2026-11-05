@@ -6,7 +6,8 @@ description: >
   and the config/resolver/materialization invariants that every change
   must preserve. Use when adding features, fixing bugs, or reviewing
   changes to the agent-marketplace Go binary, running local TUI QA,
-  or maintaining harness compatibility validation.
+  or maintaining harness compatibility validation. Every TUI change must
+  ship a real-terminal TUI QA journey that proves the changed flow.
 metadata:
   tags:
     - development
@@ -41,12 +42,13 @@ Then skim:
 - `cmd/agent-marketplace/main.go` — Cobra root, subcommand wiring,
   TUI launch on bare TTY invocation.
 - `internal/config/v4.go` — the strict v4 `sources`/`resources` model
-  (`V4Config`) and `ToLegacyConfig`, which adapts it into the internal
-  `Config`/`RegistryEntry` model the resolver consumes.
+  (`V4Config`) and its runtime adapter into the internal
+  `Config`/`RegistryEntry` model the resolver consumes. The adapter is not
+  legacy consumer-format support.
 - `internal/config/effective_config.go` — `LoadEffective` loads the four
   layers (and their includes and locks).
 - `internal/config/merge.go` — `MergeLayers` and `resolveInheritedList`
-  (the "specific wins over default" rule for legacy per-entry lists).
+  (runtime requirement inheritance; not an on-disk consumer schema).
 - `internal/pipeline/pipeline.go` — `Resolve`, `ResolveWithExactLockLease`,
   and `Sync`: the one pipeline both CLI and TUI call.
 - `internal/resolver/resolver.go` — selects which resources are enabled.
@@ -64,9 +66,10 @@ To smoke-test the TUI against the current checkout:
 make build && ./agent-marketplace
 ```
 
-A smoke launch or Go test run does not exercise the real-terminal journeys;
-for user-interaction changes, follow
-[Local TUI QA](#local-tui-qa-real-terminal) below.
+A smoke launch or Go test run does not exercise the real-terminal journeys.
+Every TUI change must add or extend one; see
+[Every TUI change ships a TUI QA journey](#every-tui-change-ships-a-tui-qa-journey)
+and [Local TUI QA](#local-tui-qa-real-terminal) below.
 
 Pre-commit (`.pre-commit-config.yaml`) runs `make test`, `make lint`, and
 `make build`. `make lint` rewrites files (`go mod tidy`, `go fmt`); re-stage
@@ -78,7 +81,7 @@ Both the CLI subcommands and the TUI drive `internal/pipeline`:
 
 ```
 pipeline.LoadEffective -> config.EffectiveConfig    [four layers + includes + locks;
-        |                                            v4 adapted via ToLegacyConfig]
+        |                                            v4 adapted into runtime requirements]
         v
   config.MergeLayers(layers) -> *config.Config      [merge.go]
         |
@@ -231,44 +234,65 @@ These are load-bearing. Every PR must preserve them.
 4. `/etc/agent-marketplace/config.yaml` (organization-managed machine config;
    root-owned trust rules; `required: true` groups are org-mandatory).
 
-Each layer owns a lock next to it (`lock.yaml`, `lock.local.yaml`). V4 is the
-only schema new files use; v2/v3 are read through the compatibility reader and
-writes to them warn `config.legacy-deprecated`. Which top-level fields each
-layer may set is enforced with `v4.layer-field`.
+Each layer owns a lock next to it (`lock.yaml`, `lock.local.yaml`). Every
+existing consumer root, including organization and personal-local, must declare
+exact `apiVersion: agent-marketplace/v4`. An omitted root version fails with
+`v4.api-version-required`; an explicit unsupported/invalid value fails with
+`v4.api-version`, identifying the authored file and `apiVersion` field. An
+existing empty/versionless file is not an absent layer. Explicitly included
+fragments under a validated v4 root may omit the version or declare exact v4;
+this does not relax include authority, source binding, or layer restrictions
+(`v4.layer-field`).
 
-### Attribute inheritance: specific wins over default
+Validate all required roots/includes before new acquisition, config/lock staging
+or publication, or harness writes/prunes, including direct editors and ad-hoc
+paths. Refusal preserves bytes/metadata and creates no missing writable root or
+lock. Ordinary logs and established safe replay of a pre-existing dependency
+journal are separate: read-only dependency modes refuse with
+`dependency.recovery-required`, while recovery-capable commands may finish
+already-admitted writes before fresh validation. Do not use recovery as a new
+legacy decoder.
 
-In a legacy v2/v3 file, top-level resource lists (`skills`,
-`commands`, `subagents`, `hooks`, `mcp`), `tags`, and `exclude` are
-**defaults**. A `RegistryEntry` that sets its own resource lists,
-`tags`, or `exclude` **replaces** (does NOT merge with) the top-level
-for that entry. V4 resource groups are already per-source, and
-`ToLegacyConfig` emits per-entry lists. This is encoded in
-`resolveInheritedList`:
+There is no shipped `migrate`, startup conversion prompt, TUI migration modal,
+or consumer legacy reader/editor. Users convert writable roots and include
+trees with an older released migrator before upgrading; administrators convert
+organization configuration externally. Conversion can refuse includes,
+unrepresentable input, or missing verified Marketplace evidence; changing only
+the sentinel is insufficient. Keep lock v1 reads/v2 writes, historical
+source-revision verification, operator `agent-marketplace.io/marketplace/v1`,
+API/artifact/native schemas, ownership state, and journal formats independent.
 
-```go
-func resolveInheritedList(defaults, overrides []string) []string {
-    if overrides != nil {
-        return append([]string(nil), overrides...)
-    }
-    // ... otherwise fall back to defaults
-}
-```
+### Source-bound groups and the runtime adapter
 
-**Consequence for editors**: when writing a resource into a config, if
-the matching registry entry has its own list for that kind, write into
-*that* list, not the top-level. The TUI toggle modal
-(`internal/tui/modal.go` → `runScopedToggle`) runs inside the TUI's
-`MutateConfigWithDependencies` hook (`cmd/agent-marketplace/tui.go`) and
-edits the staged path through `pipeline.EditLayerAtPath` with a
-`pipeline.LayerMutation`, so every kind and both schemas share one editor.
+V4 resource groups belong to named sources declared by the same root/include
+tree. Preserve ordered include/exclude decisions, fragment/root precedence,
+relative-directory bases, source bindings, and layer provenance. The v4 adapter
+emits the runtime requirements used by catalog, resolver, and materialization;
+that internal model is not a legacy on-disk format or a serialization target.
+Do not remove shared runtime inheritance/selection logic just because its
+historical types have registry-entry names.
 
-### Required registries and machine scope ignore local excludes
+**Consequence for editors**: write source-bound selections into the selected
+owning root's `sources`/`resources`, never old top-level lists or an included
+fragment. The TUI toggle modal (`internal/tui/modal.go` → `runScopedToggle`)
+runs inside the TUI's `MutateConfigWithDependencies` hook
+(`cmd/agent-marketplace/tui.go`) and edits the staged path through
+`pipeline.EditLayerAtPath` with a `pipeline.LayerMutation`. Preserve the original
+declaring path for staged reloads; every kind and scope uses the v4 editor.
 
-`required: true` global registries sync all their resources to the
-configured machine-scope harness roots regardless of repo/local config.
-Repo and checkout-local excludes apply only to non-required repo-scoped
-resources; machine-scoped resources are immune. The resolver enforces this;
+### Required selections and machine scope ignore local excludes
+
+`required: true` on a v4 resource group protects its selected resources from
+exclusion and removal; it selects nothing by itself. Selections come from
+`include`, `tags`, or `all` where the source kind supports them. For Git and
+directory sources, `all: true` explicitly selects every resource; adding
+`required: true` makes those selections mandatory. Unsupported hosted dynamic
+selectors remain refused.
+
+Organization/user selections install into their configured machine-scope
+harness roots. Repo and checkout-local excludes apply only to non-required
+repo-scoped resources; they cannot hide machine-scoped resources or modify
+another scope's selections or ownership. The resolver enforces these boundaries;
 never add a bypass.
 
 ### Name collisions resolve deterministically
@@ -298,10 +322,10 @@ than re-marshaling structs, so user comments are preserved:
   are the v4-aware layer editors; callers reach them through
   `pipeline.EditLayerAtPath`. They refuse edits owned by an included
   fragment (`config.edit.include-owned`) and change nothing on refusal.
-- `editor_add.go` / `editor_remove.go` are the legacy node editors, built on
-  `editor_helpers.go`: `parseConfigDocument`, `findMappingValue`,
-  `findTopLevelSequence`, `findEntrySequence`, `removeMappingKey`,
-  `ensureMappingSequence`, `writeConfigDocument`.
+- Keep shared YAML node helpers only where v4 edits use them. Do not restore
+  legacy reader/writer branches or serialize the internal runtime model back
+  into consumer files. Ref edits, including `update --bump`, target eligible
+  v4 sources owned by the root; included-fragment refs stay unchanged.
 - Follow the same shape for new editors: read bytes, parse, ensure the
   mapping, locate nodes, mutate, write. Treat `os.ErrNotExist` as a no-op for
   remove operations.
@@ -324,7 +348,6 @@ The TUI is a standard [Elm-style][elm] Bubble Tea app:
 | `bulk.go` | Section bulk-toggle modal (`space` on a section header): scope → direction → confirmation, one staged layer transaction |
 | `view_settings.go` | `v` View settings modal (primary/secondary grouping with live preview) and the versioned per-user preference file under `$XDG_STATE_HOME` |
 | `harness.go` / `init.go` | `H` harness modal and first-run harness selection |
-| `migration.go` | Startup v4 migration prompt |
 | `edit_config.go` / `editor_process.go` | `E` config picker and `$EDITOR` lifecycle |
 | `discovery.go` | Hosted Marketplace discovery rows |
 | `diagnostics.go` | `e` errors/warnings view |
@@ -339,6 +362,39 @@ The TUI is a standard [Elm-style][elm] Bubble Tea app:
 
 `docs/tui-product-contract.md` describes the intended TUI behavior; the
 `tui-*` capabilities under `openspec/specs/` are normative.
+
+### Every TUI change ships a TUI QA journey
+
+Go tests in `internal/tui` construct a `Model` and feed it messages. They
+cannot show that a user pressing keys in a real terminal reaches the changed
+behavior, and TUI changes merged with only those tests have broken user
+flows. So a change to non-test files under `internal/tui/` or
+`cmd/agent-marketplace/tui*.go` also changes a journey directly under
+`tools/tui-qa/tests/` (the suite does not run subdirectories):
+
+1. **Pick the journey.** Extend the existing `*.spec.ts` that already reaches
+   the flow (the list in `tools/tui-qa/README.md` says what each covers), or
+   add `tools/tui-qa/tests/<flow>.spec.ts` for a new interaction. Reuse
+   the fixtures in `fixture.ts` and helpers in `helpers.ts`; changing only
+   those does not count.
+2. **Drive the real flow.** Wait for the settled drift state, then send the
+   keys, mouse input, or resizes a user would. After every state-changing
+   input, assert the visible result before sending the next one. When the
+   flow writes configuration or harness output, assert those files too.
+3. **Prove it.** For a bug fix, run the journey without the fix and confirm
+   it fails. For a feature, assert the new visible behavior and the nearby
+   behavior it could regress (footer hints, selection, scroll position).
+4. **Register and run.** Add or update the entry in the README journey list,
+   then run `make tui-qa`. It passes only when every journey ran and none
+   were skipped.
+
+`specaudit gate` (the `Specs` CI job) fails a pull request that changes
+TUI-bearing files without adding or modifying a journey. Deleting a journey
+does not count. Only a change with no user-observable TUI effect (comments,
+renames, dead code) may carry `TUI-QA-Impact: none — <reason>` instead. It is
+separate from `Spec-Impact`, and "covered by Go tests" is not a reason. Check
+committed work before pushing with
+`go run ./tools/specaudit gate -base origin/main -head HEAD`.
 
 ### Message flow for a config-writing toggle
 
@@ -402,8 +458,11 @@ them independently. When designing new flows:
 3. Write a test in `internal/tui/*_test.go` using `NewModel` and
    `Update(tea.KeyMsg{...})`. Mock file I/O with the `swap*` helpers in
    `toggle_flow_test.go` if the keybinding writes configs.
-4. Update `site/docs/reference/tui.md`, and add or extend a journey under
-   `tools/tui-qa` when the key changes a user-visible flow.
+4. Update `site/docs/reference/tui.md`.
+5. Add or extend a journey directly under `tools/tui-qa/tests/` that presses
+   the key and asserts its visible effect, then run `make tui-qa`. This step
+   is required, not optional (see
+   [Every TUI change ships a TUI QA journey](#every-tui-change-ships-a-tui-qa-journey)).
 
 ## CLI Conventions (Cobra)
 
@@ -423,11 +482,10 @@ tests open with the `isolateCommandTest` guard described in `AGENTS.md`.
 | `remove <name>` | yes, transactionally with its layer lock | yes |
 | `lock [--check\|--upgrade]` | generated locks unless checking | no |
 | `sync` | stale writable locks unless `--locked`/`--check`/`--offline` | yes |
-| `update [--bump]` | locks; config too when bump rewrites a legacy ref | yes (from exact snapshots) |
-| `migrate` | v2/v3 → v4 configs (and lock/v2 for proven Marketplace pins) | no |
+| `update [--bump]` | locks; config too when bump rewrites an eligible v4 source ref | yes (from exact snapshots) |
 | `status` / `doctor` | no (`doctor --repair` adopts ownership state) | no |
 | `gc` | no | no (cleans only entries inactive in validated config and locks) |
-| `backup`, `deinit`, `telemetry`, `convert` | own state only | no |
+| `backup`, `deinit`, `telemetry` | own state only | no |
 | `serve` | Marketplace operator state | no |
 | `tui` (or bare invocation on TTY) | config and its layer lock for mutations | on demand (`s`) |
 
@@ -479,6 +537,55 @@ signals.
 
 ## Testing Playbook
 
+### Declarative E2E table
+
+For any user-observable CLI behavior change, add or extend a case in the
+`e2e/table_<area>_test.go` file for its Name prefix (`table_runner_test.go`
+holds the runner and builders; `table_marketplace_test.go` for Marketplace
+flows). Use a bespoke `e2e/*_test.go` test only when the table cannot express
+the flow, such as crash injection or concurrency.
+
+Put `// spec: <capability>/<scenario-slug>` directly above every new case.
+For OpenSpec changes, cite table case names in `tasks.md` as proof for the
+scenarios. `e2e/testdata/table_untagged_baseline.txt` only shrinks: tag a
+legacy case when you touch it, then remove its baseline line. Check tags with
+`go -C e2e test -run '^TestTableSpecTags' -count=1 .`.
+
+`CODING_STANDARDS.md` defines the table vocabulary: `Registries`,
+`Marketplaces`, `{{REG:name}}`, `{{MKT:name}}`, `{{GITHTTP:name}}`,
+`ActionPushRegistry`, `ActionReindexMarketplace`, `ActionRevokeMarketplace`,
+`Step.Env`, and `Step.Cwd`. Steps are built with `ok`/`run`/`exits` plus
+chainable assertions (`.out`, `.exists`, `.unchanged`, `.has`, ...);
+`PathsUnchanged` asserts files or trees a step must leave byte- and
+metadata-identical. `v4(...)` emits v4 config content for the `*Cfg` layers,
+and `./` and `~/` path shorthands mean `/workspace/` and `/root/`. A spec-tagged
+case takes no `Desc`; its `// spec:` line is the description.
+
+Run one case with `go -C e2e test -run '^TestE2E$/<name>' -count=1 .`;
+run the full table with `make validate-e2e`.
+
+### Consumer launch and interoperability gates
+
+Successful consumer command/flag coverage is v4-only, requiring exact v4 in
+every present root including organization; schema-independent commands retain
+successful configuration-free witnesses. Refusals, relabeled legacy records,
+and help-only runs do not count as operational success. Keep the gaps allowlist
+empty and port functional selection tests rather than deleting their assertions.
+
+The normal Marketplace E2E gate witnesses unsupported/versionless roots in
+every layer and explicit non-v4 fragments, with no-new-work preservation and
+acquisition counters. Pre-existing journal recovery is asserted separately;
+crash tests interrupt supported v4 mutations, not consumer migration. The
+pre-v4 success `upgrade-gate` and CI job are retired; preserve independent lock,
+source-revision, scope, collision, and ownership evidence in v4 fixtures.
+
+Keep `released-client-gate` pinned to checksum-verified stable v4.1.4 and a
+shared v4 repository fixture, with separate actors and healthy lock-byte/native
+hook/owned-entry checks. After successful planning, aggregate `E2E Gates` must
+require both Marketplace/released-client jobs to succeed when selected or both
+to intentionally skip when unselected; missing witnesses, failure, cancellation,
+and unexpected skips fail acceptance. See `AGENTS.md` for commands/isolation.
+
 ### Harness validation and CI (on demand)
 
 Use this section only when adding a harness, changing native resource
@@ -518,7 +625,8 @@ and organization-specific infrastructure are not required.
 
    Continue when installation succeeds with the tracked lockfile unchanged.
 
-2. **Preflight.** Typecheck the tests and check that the PTY runner loads:
+2. **Preflight.** Typecheck the tests and check that the native `tui-test`
+   engine loads:
 
    ```sh
    make tui-qa-check
@@ -538,10 +646,11 @@ and organization-specific infrastructure are not required.
    Fixtures supply temporary HOME/XDG roots, workspaces, and local Git
    registries, keeping test mutations separate from personal configuration.
 
-4. **Report.** QA passes when `make tui-qa` exits zero with both runners
-   passing and every listed journey exercised, none skipped. On failure, retain the failing
-   test name and console output/current terminal screen; the suite produces
-   no snapshot or trace files. Report setup failures as blocked, not passed.
+4. **Report.** QA passes when `make tui-qa` exits zero with the process tests
+   and the journeys passing and every listed journey exercised, none skipped. On failure, retain the failing
+   test name and console output/current terminal screen, plus the GIF and
+   `tui-test` trace kept under `tools/tui-qa/test-results/<journey>/`. Report
+   setup failures as blocked, not passed.
 
    When a journey asserts the outcome of a config write, wait for the
    authoritative post-reload assessment (for example the `~ N out of sync`
@@ -553,13 +662,15 @@ For journey coverage or an already-built test binary, read the
 
 ### Unit tests
 
-- `internal/config/editor_test.go`, `layer_editor_test.go` — round-trip
-  YAML editing (legacy and v4), comment preservation, idempotency.
+- `internal/config/editor_test.go`, `layer_editor_test.go` — v4 YAML
+  editing, comment preservation, include ownership, and idempotency; retain
+  direct-editor unsupported-format refusals and valid controls.
 - `internal/resolver/resolver_test.go` — selection rules, collisions,
   inheritance, local overrides.
 - `internal/tui/*_test.go` — construct `Model` directly, feed
   `tea.KeyMsg` or `snapshotLoadedMsg`, assert on `m.rows`, rendered
-  output via `renderList`, or glyph/badge helpers.
+  output via `renderList`, or glyph/badge helpers. These add to the
+  required TUI QA journey; they never replace it.
 
 ### End-to-end TUI tests (real file I/O)
 
@@ -661,3 +772,5 @@ there still matches discovery for your new registry type.
 - Don't silently succeed when a config write targets the wrong list.
   Cover each scope with a test that verifies the intended list received
   the write (see `TestReadSnapshotProjectToggleWithPerEntrySkills`).
+- Don't ship a TUI change proven only by `internal/tui` Go tests, and
+  don't use `TUI-QA-Impact` to skip the journey for a change users can see.

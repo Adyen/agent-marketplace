@@ -1,0 +1,11 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/marketplace/api
+cpu: Apple M4 Max
+BenchmarkContentDigestRead-16    	   19863	    109916 ns/op	  66.96 MB/s	   28195 B/op	      73 allocs/op
+BenchmarkContentDigestRead-16    	   25916	     91849 ns/op	  80.13 MB/s	   28193 B/op	      73 allocs/op
+BenchmarkContentDigestRead-16    	   18034	    115674 ns/op	  63.63 MB/s	   28194 B/op	      73 allocs/op
+BenchmarkContentDigestRead-16    	   25845	     93772 ns/op	  78.49 MB/s	   28193 B/op	      73 allocs/op
+BenchmarkContentDigestRead-16    	   26188	     94524 ns/op	  77.86 MB/s	   28193 B/op	      73 allocs/op
+PASS
+ok  	github.com/Adyen/agent-marketplace/pkg/marketplace/api	12.146s

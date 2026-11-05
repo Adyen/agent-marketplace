@@ -161,7 +161,7 @@ func TestFilesystemConfigDestinations(t *testing.T) {
 	stateRoot := env.mustResolvePath("/root/.local/state")
 
 	t.Run("user dotfile link honored by install and lock reconciliation", func(t *testing.T) {
-		env.WriteFile("/root/dotfiles/agents-user.yaml", "apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\n# keep this comment\nregistries:\n  - url: "+regURL+"\n    ref: main\n")
+		env.WriteFile("/root/dotfiles/agents-user.yaml", "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n# keep this comment\nsources: {team: {git: '"+regURL+"', ref: main}}\n")
 		if err := os.Chmod(userTarget, 0o640); err != nil {
 			t.Fatal(err)
 		}
@@ -192,28 +192,27 @@ func TestFilesystemConfigDestinations(t *testing.T) {
 		requireNoResidue(t, filepath.Dir(userConfig), filepath.Dir(userTarget), stateRoot)
 	})
 
-	t.Run("v2 structural migration publishes through the dotfile link", func(t *testing.T) {
-		// The user edits their dotfile back to a legacy shape with a
-		// collections list; the migration must rewrite the target through
-		// the link, comments intact.
-		if err := os.WriteFile(userTarget, []byte("apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\n# keep this comment\ncollections:\n  - shared-tools\nregistries: []\n"), 0o640); err != nil {
+	t.Run("v4 selection edit publishes through the dotfile link", func(t *testing.T) {
+		// An ordinary supported edit must replace the approved target, not
+		// its link, while preserving the independently authored comment.
+		if err := os.WriteFile(userTarget, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n# keep this comment\nsources: {team: {git: '"+regURL+"', ref: main}}\nresources: {team: {include: [skill/alpha]}}\n"), 0o640); err != nil {
 			t.Fatal(err)
 		}
 		before := captureDest(t, userConfig)
 
-		env.MustRunAM("migrate", "--to", "v2", "--harnesses", "factory")
+		env.MustRunAM("install", "beta", "--scope", "user")
 
 		after := captureDest(t, userConfig)
 		requireLinkPreserved(t, before, after)
 		requireTargetReplaced(t, before, after)
-		if !strings.Contains(string(after.bytes), "include:") || !strings.Contains(string(after.bytes), "shared-tools") {
-			t.Fatalf("legacy collections were not migrated:\n%s", after.bytes)
+		if !strings.Contains(string(after.bytes), "include:") || !strings.Contains(string(after.bytes), "skill/beta") {
+			t.Fatalf("supported selection edit was not published:\n%s", after.bytes)
 		}
 		if !strings.Contains(string(after.bytes), "# keep this comment") {
-			t.Fatalf("migration dropped the authored comment:\n%s", after.bytes)
+			t.Fatalf("selection edit dropped the authored comment:\n%s", after.bytes)
 		}
-		// Restore a clean v2 user config for the remaining phases.
-		if err := os.WriteFile(userTarget, []byte("apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\nregistries:\n  - url: "+regURL+"\n    ref: main\n"), 0o640); err != nil {
+		// Restore a clean v4 user config for the remaining phases.
+		if err := os.WriteFile(userTarget, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {team: {git: '"+regURL+"', ref: main}}\n"), 0o640); err != nil {
 			t.Fatal(err)
 		}
 		requireNoResidue(t, filepath.Dir(userConfig), filepath.Dir(userTarget), stateRoot)
@@ -221,9 +220,9 @@ func TestFilesystemConfigDestinations(t *testing.T) {
 
 	t.Run("contained repository and local links honored by lock and install", func(t *testing.T) {
 		shared := env.mustResolvePath("/workspace/.agents/shared")
-		env.WriteFile("/workspace/.agents/shared/repo-config.yaml", "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nskills: [alpha]\nregistries:\n  - url: "+regURL+"\n    ref: main\n")
+		env.WriteFile("/workspace/.agents/shared/repo-config.yaml", "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {team: {git: '"+regURL+"', ref: main}}\nresources: {team: {include: [skill/alpha]}}\n")
 		env.WriteFile("/workspace/.agents/shared/repo-lock.yaml", "apiVersion: agent-marketplace-lock/v1\nscope: repo\nregistries: []\n")
-		env.WriteFile("/workspace/.agents/shared/local-config.yaml", "skills: [beta]\nregistries:\n  - url: "+regURL+"\n    ref: main\n")
+		env.WriteFile("/workspace/.agents/shared/local-config.yaml", "apiVersion: agent-marketplace/v4\nsources: {team: {git: '"+regURL+"', ref: main}}\nresources: {team: {include: [skill/beta]}}\n")
 		env.WriteFile("/workspace/.agents/shared/local-lock.yaml", "apiVersion: agent-marketplace-lock/v1\nscope: local\nregistries: []\n")
 		mustRelink(t, filepath.Join("shared", "repo-config.yaml"), repoConfig)
 		mustRelink(t, filepath.Join("shared", "repo-lock.yaml"), repoLock)
@@ -276,19 +275,22 @@ func TestFilesystemConfigDestinations(t *testing.T) {
 		requireNoResidue(t, env.mustResolvePath("/workspace/.agents"), filepath.Dir(userConfig), stateRoot)
 	})
 
-	t.Run("v4 migration publishes through the contained repository link", func(t *testing.T) {
+	t.Run("v4 removal publishes through the contained repository link", func(t *testing.T) {
 		before := captureDest(t, repoConfig)
 		beforeRepoLock := captureDest(t, repoLock)
 
-		env.MustRunAM("migrate", "--to", "v4", "--scope", "repo")
+		env.AssertFileExists("/workspace/.factory/skills/gamma/SKILL.md")
+		env.MustRunAM("remove", "gamma", "--scope", "repo")
+		env.AssertFileAbsent("/workspace/.factory/skills/gamma")
+		env.AssertFileExists("/workspace/.factory/skills/alpha/SKILL.md")
 
 		after := captureDest(t, repoConfig)
 		requireLinkPreserved(t, before, after)
 		requireTargetReplaced(t, before, after)
-		if !strings.Contains(string(after.bytes), "apiVersion: agent-marketplace/v4") || !strings.Contains(string(after.bytes), "sources:") {
-			t.Fatalf("repo config target was not migrated to v4:\n%s", after.bytes)
+		if !strings.Contains(string(after.bytes), "apiVersion: agent-marketplace/v4") || !strings.Contains(string(after.bytes), "sources:") || !strings.Contains(string(after.bytes), "include: [skill/alpha]") {
+			t.Fatalf("repo removal was not published through the approved target:\n%s", after.bytes)
 		}
-		// Git-only conversion leaves locks unchanged.
+		// Selection-only removal leaves exact acquisition locks unchanged.
 		afterRepoLock := captureDest(t, repoLock)
 		requireDestUntouched(t, beforeRepoLock, afterRepoLock)
 		requireNoResidue(t, env.mustResolvePath("/workspace/.agents"), stateRoot)
@@ -297,7 +299,7 @@ func TestFilesystemConfigDestinations(t *testing.T) {
 	t.Run("escapes and multiply linked targets fail before mutation", func(t *testing.T) {
 		// Escaping repository config link: capturing the destination the
 		// reconcile transaction would rewrite refuses before any mutation.
-		env.WriteFile("/root/outside-escape.yaml", "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nskills: [alpha, beta]\nregistries:\n  - url: "+regURL+"\n    ref: main\n")
+		env.WriteFile("/root/outside-escape.yaml", "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {team: {git: '"+regURL+"', ref: main}}\nresources: {team: {include: [skill/alpha, skill/beta]}}\n")
 		outside := env.mustResolvePath("/root/outside-escape.yaml")
 		mustRelink(t, outside, repoConfig)
 		outsideBefore := captureDest(t, outside)
@@ -315,7 +317,7 @@ func TestFilesystemConfigDestinations(t *testing.T) {
 		mustRelink(t, filepath.Join("shared", "repo-config.yaml"), repoConfig)
 		env.CreateBareRepo("boundary-reg-2", SkillsOnly(Skill{Name: "delta", Description: "secondary registry skill"}))
 		regURL2 := "file://" + filepath.Join(env.repos, "boundary-reg-2.git")
-		if err := os.WriteFile(userTarget, []byte("apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\nskills: [alpha]\nregistries:\n  - url: "+regURL+"\n    ref: main\n  - url: "+regURL2+"\n    ref: main\n"), 0o640); err != nil {
+		if err := os.WriteFile(userTarget, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  team: {git: '"+regURL+"', ref: main}\n  other: {git: '"+regURL2+"', ref: main}\nresources: {team: {include: [skill/alpha]}}\n"), 0o640); err != nil {
 			t.Fatal(err)
 		}
 		userLockBefore := captureDest(t, userLock)

@@ -12,7 +12,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
-func BenchmarkWarmConfiguredLegacyInstallDiskIO(b *testing.B) {
+func BenchmarkWarmConfiguredV4InstallDiskIO(b *testing.B) {
 	root := b.TempDir()
 	home := filepath.Join(root, "home")
 	repo := filepath.Join(root, "workspace")
@@ -28,7 +28,7 @@ func BenchmarkWarmConfiguredLegacyInstallDiskIO(b *testing.B) {
 	if err := os.WriteFile(filepath.Join(source, "skills", "review", "SKILL.md"), []byte("---\nname: review\ndescription: Review\n---\n\n# Review\n"), 0o600); err != nil {
 		b.Fatal(err)
 	}
-	data := fmt.Sprintf("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - path: %q\n    skills: {include: [review]}\n", source)
+	data := fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  registry:\n    directory: %q\nresources:\n  registry:\n    include: [skill/review]\n", source)
 	if err := os.WriteFile(filepath.Join(home, ".agents", "config.yaml"), []byte(data), 0o600); err != nil {
 		b.Fatal(err)
 	}

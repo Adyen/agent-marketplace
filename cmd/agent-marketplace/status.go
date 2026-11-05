@@ -86,8 +86,11 @@ type statusView struct {
 	requirements        []requirementRow
 	errorRows           []errorRow
 	dryRunReport        *materialize.Report
+	cacheUnknown        bool
 	targetHarnesses     []string
 	targetSource        config.Source
+	machineTargets      []string
+	machineTargetSource config.Source
 	harnessTargets      []harnessTargetRow
 	lockMetadata        []pipeline.LockMetadata
 	marketplaceStatuses []marketplace.PinStatus
@@ -165,27 +168,16 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 	var secondResolveRealErrs []error
 	localCfg := result.LocalCfg
 	if localCfg != nil {
-		anyExcludes := len(localCfg.Skills.Exclude) > 0 ||
-			len(localCfg.Commands.Exclude) > 0 ||
-			len(localCfg.Subagents.Exclude) > 0 ||
-			len(localCfg.Hooks.Exclude) > 0 ||
-			len(localCfg.MCP.Exclude) > 0 ||
-			len(localCfg.Collections.Exclude) > 0
-		if anyExcludes && result.LoadedCfg != nil {
-			// Re-resolve keeping local Skills but dropping Excludes to compute the diff.
-			localNoExclude := &config.LocalConfig{
-				Skills:      config.KindSelector{Include: localCfg.Skills.Include},
-				Commands:    config.KindSelector{Include: localCfg.Commands.Include},
-				Subagents:   config.KindSelector{Include: localCfg.Subagents.Include},
-				Hooks:       config.KindSelector{Include: localCfg.Hooks.Include},
-				MCP:         config.KindSelector{Include: localCfg.MCP.Include},
-				Collections: config.KindSelector{Include: localCfg.Collections.Include},
-			}
+		if withoutLocalExcludes, changed := statusWithoutLocalExclusions(result.LoadedCfg); changed {
+			// Probe the same admitted catalogs and locks, changing only the
+			// personal-local source exclusions. Keep includes, dynamic selection,
+			// required policy, and every other layer's exclusions intact.
 			secondResolveOpts := []resolver.ResolveOption{
 				resolver.WithContext(ctx),
 				resolver.WithResources(result.CatalogLoad.ResourceCatalogs),
 				resolver.WithMalformed(catalog.MalformedByKey(result.CatalogLoad.Catalogs)),
 				resolver.WithTargetHarnesses(result.TargetHarnesses),
+				resolver.WithMachineTargetHarnesses(result.MachineTargetHarnesses),
 			}
 			// The second resolve keeps the Marketplace view consistent with the
 			// primary one: when the pipeline resolved Marketplace artifacts
@@ -197,7 +189,7 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 			} else if result.MarketplaceInspection != nil {
 				secondResolveOpts = append(secondResolveOpts, resolver.WithMarketplaceResolver(*result.MarketplaceInspection))
 			}
-			resolvedWithoutExcludes, secondResolveErrs := resolver.Resolve(result.LoadedCfg, catalogEntries, localNoExclude, secondResolveOpts...)
+			resolvedWithoutExcludes, secondResolveErrs := resolver.Resolve(withoutLocalExcludes, catalogEntries, localCfg, secondResolveOpts...)
 			for _, e := range secondResolveErrs {
 				if !resolver.IsWarning(e) && !resolver.IsSoftSelectedNotFound(e) && !resolver.IsSoftSelectedMalformed(e) &&
 					!pipeline.IsMarketplaceCacheMetadataMissingWarning(e) {
@@ -263,12 +255,9 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 	}
 	errorRows := buildErrorRows(inspectionErrors, secondResolveRealErrs)
 
-	targetHarnesses := make([]string, len(result.TargetHarnesses))
-	for i, t := range result.TargetHarnesses {
-		targetHarnesses[i] = string(t)
-	}
-	slices.Sort(targetHarnesses)
-	harnessTargets, err := buildHarnessTargetRows(repoRoot, targetHarnesses)
+	targetHarnesses := sortedTargetNames(result.TargetHarnesses)
+	machineTargets := sortedTargetNames(result.MachineTargetHarnesses)
+	harnessTargets, err := buildHarnessTargetRows(repoRoot, append(slices.Clone(targetHarnesses), machineTargets...))
 	if err != nil {
 		return fmt.Errorf("resolve harness target roots: %w", err)
 	}
@@ -291,8 +280,11 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 		requirements:        requirementRows,
 		errorRows:           errorRows,
 		dryRunReport:        dryRunReport,
+		cacheUnknown:        pipeline.HasUnresolvedMarketplaceCacheEvidence(result.ResolveErrors),
 		targetHarnesses:     targetHarnesses,
 		targetSource:        result.TargetHarnessSource,
+		machineTargets:      machineTargets,
+		machineTargetSource: result.MachineTargetHarnessSource,
 		harnessTargets:      harnessTargets,
 		lockMetadata:        result.LockMetadata,
 		marketplaceStatuses: result.MarketplaceStatuses,
@@ -413,6 +405,16 @@ func buildStatusRows(repoRoot string, resolved []resolver.ResolvedArtifact, cach
 		}
 	}
 
+	// A resource that lost a shared native path to one of another kind is not
+	// installed on that target, so the row must not list the target.
+	var displacedTargets map[int][]hcc.Target
+	for _, d := range resolver.SharedPathDisplacements(resolved) {
+		if displacedTargets == nil {
+			displacedTargets = make(map[int][]hcc.Target)
+		}
+		displacedTargets[d.DisplacedIndex] = append(displacedTargets[d.DisplacedIndex], d.Target)
+	}
+
 	rows := make([]statusRow, 0, len(resolved))
 
 	for i, resolvedArtifact := range resolved {
@@ -431,11 +433,20 @@ func buildStatusRows(repoRoot string, resolved []resolver.ResolvedArtifact, cach
 		}) {
 			target = "error: not materialized"
 		}
+		harnesses := resolvedArtifact.Harnesses
+		if lost := displacedTargets[i]; len(lost) > 0 {
+			harnesses = slices.DeleteFunc(slices.Clone(statusHarnesses(resolvedArtifact)), func(target hcc.Target) bool {
+				return slices.Contains(lost, target)
+			})
+			if len(harnesses) == 0 && target == resolvedArtifact.Path {
+				target = "not materialized: shared path"
+			}
+		}
 
 		rows = append(rows, statusRow{
 			Kind:     skill.KindLabel(resolvedArtifact.Kind),
 			Name:     resolvedArtifact.Name,
-			Harness:  harnessLabel(resolvedArtifact.Harnesses),
+			Harness:  harnessLabel(harnesses),
 			Target:   target,
 			Registry: resolvedArtifact.RegistryURL,
 			Ref:      resolvedArtifact.Ref,
@@ -599,15 +610,66 @@ func buildErrorRows(groups ...[]error) []errorRow {
 	return rows
 }
 
+// statusWithoutLocalExclusions copies the already-loaded resolver input rather
+// than loading configuration or acquiring catalogs again. V4 retains exclusions
+// both as per-kind selectors (for cross-entry/collection filtering) and in its
+// ordered stream (for the source's own selections); remove only those decisions.
+func statusWithoutLocalExclusions(cfg *config.Config) (*config.Config, bool) {
+	if cfg == nil {
+		return nil, false
+	}
+	probe := *cfg
+	probe.Registries = slices.Clone(cfg.Registries)
+	changed := false
+	for i := range probe.Registries {
+		entry := &probe.Registries[i]
+		if entry.Source != config.RepoPersonal {
+			continue
+		}
+		changed = changed || entry.ExcludeAll
+		entry.ExcludeAll = false
+		for _, kind := range config.AllKinds {
+			selector := entry.SelectorForKindPtr(kind)
+			changed = changed || len(selector.Exclude) > 0 || selector.ExcludeAll
+			selector.Exclude = nil
+			selector.ExcludeAll = false
+		}
+		entry.V4Decisions = slices.DeleteFunc(slices.Clone(entry.V4Decisions), func(decision config.V4SelectionDecision) bool {
+			if decision.Action == config.V4SelectionExclude {
+				changed = true
+				return true
+			}
+			return false
+		})
+	}
+	return &probe, changed
+}
+
 func buildExcludedRows(withoutExcludes, withExcludes []resolver.ResolvedArtifact) []excludedRow {
-	included := make(map[string]struct{}, len(withExcludes))
+	// A surviving same-named resource in another source or install scope does
+	// not satisfy the excluded selection. Ignore the owning config layer within
+	// one install scope: a higher-precedence include can satisfy the same source.
+	type identity struct {
+		resource, registry, path, ref string
+		machineScope                  bool
+	}
+	key := func(artifact resolver.ResolvedArtifact) identity {
+		return identity{
+			resource:     resolver.ViaMapKey(artifact.Kind, artifact.Name),
+			registry:     config.NormalizeGitURL(strings.TrimSpace(artifact.RegistryURL)),
+			path:         config.NormalizeRegistryPath(artifact.RegistryPath),
+			ref:          artifact.Ref,
+			machineScope: artifact.Source.IsMachineScope(),
+		}
+	}
+	included := make(map[identity]struct{}, len(withExcludes))
 	for _, s := range withExcludes {
-		included[resolver.ViaMapKey(s.Kind, s.Name)] = struct{}{}
+		included[key(s)] = struct{}{}
 	}
 
 	var rows []excludedRow
 	for _, s := range withoutExcludes {
-		if _, ok := included[resolver.ViaMapKey(s.Kind, s.Name)]; !ok {
+		if _, ok := included[key(s)]; !ok {
 			rows = append(rows, excludedRow{
 				Name:     s.Name,
 				Registry: s.RegistryURL,
@@ -639,6 +701,26 @@ type harnessTargetRow struct {
 	Capabilities string
 	RepoRoot     string
 	MachineRoot  string
+}
+
+func sortedTargetNames(targets []hcc.Target) []string {
+	names := make([]string, len(targets))
+	for i, t := range targets {
+		names[i] = string(t)
+	}
+	slices.Sort(names)
+	return names
+}
+
+func displayTargetList(targets []string) string {
+	if len(targets) == 0 {
+		return "none configured"
+	}
+	display := make([]string, len(targets))
+	for i, target := range targets {
+		display[i] = targetDisplayName(target)
+	}
+	return strings.Join(display, ", ")
 }
 
 // buildHarnessTargetRows renders the effective harness list from the
@@ -760,15 +842,16 @@ func writeStatusSections(out io.Writer, view statusView) error {
 		}
 	}
 
-	displayTargets := make([]string, len(targetHarnesses))
-	for i, target := range targetHarnesses {
-		displayTargets[i] = targetDisplayName(target)
+	targetRows := [][]string{{displayTargetList(targetHarnesses), targetSource.String()}}
+	// Output selected by user and organization layers can use a different set
+	// than the repository's; show both only when they differ.
+	if len(view.machineTargets) > 0 && !slices.Equal(view.machineTargets, targetHarnesses) {
+		targetRows = [][]string{
+			{displayTargetList(targetHarnesses), targetSource.String() + " (repository selections)"},
+			{displayTargetList(view.machineTargets), view.machineTargetSource.String() + " (user and organization selections)"},
+		}
 	}
-	targetHarnessStr := strings.Join(displayTargets, ", ")
-	if targetHarnessStr == "" {
-		targetHarnessStr = "none configured"
-	}
-	if err := writeStatusTable(out, "TARGET HARNESS SET", []string{"TARGET HARNESSES", "SOURCE"}, [][]string{{targetHarnessStr, targetSource.String()}}); err != nil {
+	if err := writeStatusTable(out, "TARGET HARNESS SET", []string{"TARGET HARNESSES", "SOURCE"}, targetRows); err != nil {
 		return err
 	}
 	if len(targetHarnesses) == 0 {
@@ -843,7 +926,11 @@ func writeStatusSections(out io.Writer, view statusView) error {
 		return err
 	}
 	if dryRunReport == nil {
-		if _, err := fmt.Fprintln(out, "Unknown (exact registry view incomplete)"); err != nil {
+		unknown := "Unknown (exact registry view incomplete)"
+		if view.cacheUnknown {
+			unknown = "Unknown (Marketplace cache evidence missing; run 'agent-marketplace sync')"
+		}
+		if _, err := fmt.Fprintln(out, unknown); err != nil {
 			return err
 		}
 		if _, err := fmt.Fprintln(out); err != nil {

@@ -1,0 +1,124 @@
+{
+  "base": "027056e3a24dd58355ba1aac5048666bf1a9de09",
+  "source_sha256": {
+    "before": {
+      "internal/config/v4.go": "2fff199d6391ee57a96c84cc84c4e6b0ea3fbbee865e2f029858ea7457404eae",
+      "internal/config/v4_exclusion_processing_test.go": "b81baefee60351f3138abbb696eccaa569eac66efee91db4c6f715a034383fdb",
+      "internal/config/v4_exclusion_kind_test.go": "3c909534a994b99709c74bce0bd6f7f9fd84cd7389bc4c5713b7c4c43154ff8c",
+      "internal/config/v4_exclusion_kind_bench_test.go": "9a842a6f6a5edae06057016bbd1581bdda610526de80bd73d138825623d92282",
+      "internal/config/v4_request_reuse_bench_test.go": "05c526c277452cfcbc1b347b844c7da3ce990891aa5d9388d3f82ffc9cb1d99c",
+      "internal/config/v4_sparse_exclusion_bench_test.go": "f47ef925a6c7ef5dc2cf14e51af9344376cd11409b986842d20f1f765bab0645",
+      "internal/config/v4_filter_sort_bench_test.go": "91f655dbc904615c309d9fbed63f2f3ddde079854681fb00f212495d84f1abf0",
+      "internal/config/v4_wildcard_match_bench_test.go": "b94ac7d5468d06962e7b9d31fd23510deedb307f3d80941f8b3202ac1ced606c",
+      "internal/config/v4_processing_bench_test.go": "15d1cc14d639d19140c84ffe70e41d03cce90ebecc66c9abd2d0df64bd90fffc",
+      "internal/config/v4_bench_test.go": "604075e85155d56383e7946a53131fbfdff57e4128680e23849b8f60a187942b",
+      "go.mod": "7acf048264b55ddb16f4a7e5e23a57811df317841d31be8835664aa8e446130e",
+      "go.sum": "cbc73d426b4d8c90050ed6868594e64f3d93a105df8de2e547a3030aa3e33806",
+      "go.work": "3325da4e2fb15a145d8a6d34061fc9990b65c4b2620cf855f576dfc0ce5d3f6d"
+    },
+    "after": {
+      "internal/config/v4.go": "6c334e0dc528ea9a3e50b49c45d96f09ae0988c8205ab4d33cb0d89e1f1546d1",
+      "internal/config/v4_exclusion_processing_test.go": "b81baefee60351f3138abbb696eccaa569eac66efee91db4c6f715a034383fdb",
+      "internal/config/v4_exclusion_kind_test.go": "3c909534a994b99709c74bce0bd6f7f9fd84cd7389bc4c5713b7c4c43154ff8c",
+      "internal/config/v4_exclusion_kind_bench_test.go": "9a842a6f6a5edae06057016bbd1581bdda610526de80bd73d138825623d92282",
+      "internal/config/v4_request_reuse_bench_test.go": "05c526c277452cfcbc1b347b844c7da3ce990891aa5d9388d3f82ffc9cb1d99c",
+      "internal/config/v4_sparse_exclusion_bench_test.go": "f47ef925a6c7ef5dc2cf14e51af9344376cd11409b986842d20f1f765bab0645",
+      "internal/config/v4_filter_sort_bench_test.go": "91f655dbc904615c309d9fbed63f2f3ddde079854681fb00f212495d84f1abf0",
+      "internal/config/v4_wildcard_match_bench_test.go": "b94ac7d5468d06962e7b9d31fd23510deedb307f3d80941f8b3202ac1ced606c",
+      "internal/config/v4_processing_bench_test.go": "15d1cc14d639d19140c84ffe70e41d03cce90ebecc66c9abd2d0df64bd90fffc",
+      "internal/config/v4_bench_test.go": "604075e85155d56383e7946a53131fbfdff57e4128680e23849b8f60a187942b",
+      "go.mod": "7acf048264b55ddb16f4a7e5e23a57811df317841d31be8835664aa8e446130e",
+      "go.sum": "cbc73d426b4d8c90050ed6868594e64f3d93a105df8de2e547a3030aa3e33806",
+      "go.work": "3325da4e2fb15a145d8a6d34061fc9990b65c4b2620cf855f576dfc0ce5d3f6d"
+    }
+  },
+  "binary_sha256": {
+    "before": "f87ee47211623f2c086e94da6fbd2ac24a2389560b560d384772d69e98000dcb",
+    "after": "bc10ef8dc9a61991fbe8d5cbe191682f1968aa82a2ae4e77f8d007ded3ea184a"
+  },
+  "go_version": "go version go1.27.3 darwin/arm64",
+  "settings": {
+    "GOMAXPROCS": "16",
+    "GOGC": "100",
+    "GOMEMLIMIT": "off",
+    "GOTOOLCHAIN": "local",
+    "GOPROXY": "off",
+    "CGO_ENABLED": "0"
+  },
+  "pattern": "^(BenchmarkV4ExclusionKindNameCPU|BenchmarkV4SparseExclusionAdapterCPU|BenchmarkV4DirectoryRequestReuseCPU|BenchmarkV4ActiveExclusionAdaptation|BenchmarkV4WildcardAdapterCPU|BenchmarkV4MarketplaceLockHydration|BenchmarkV4RequestReuseChurnCPU|BenchmarkV4MarketplaceExclusionKindCPU)$",
+  "benchtime": "1s",
+  "trials": [
+    {
+      "trial": 1,
+      "variant": "before",
+      "start": 1792932328.8716621,
+      "seconds": 41.30152702331543
+    },
+    {
+      "trial": 1,
+      "variant": "after",
+      "start": 1792932370.1900318,
+      "seconds": 40.68730115890503
+    },
+    {
+      "trial": 2,
+      "variant": "after",
+      "start": 1792932410.896249,
+      "seconds": 41.131364822387695
+    },
+    {
+      "trial": 2,
+      "variant": "before",
+      "start": 1792932452.0497012,
+      "seconds": 41.234001874923706
+    },
+    {
+      "trial": 3,
+      "variant": "before",
+      "start": 1792932493.302785,
+      "seconds": 40.37700414657593
+    },
+    {
+      "trial": 3,
+      "variant": "after",
+      "start": 1792932533.6995032,
+      "seconds": 40.654552698135376
+    },
+    {
+      "trial": 4,
+      "variant": "after",
+      "start": 1792932574.372635,
+      "seconds": 46.28254199028015
+    },
+    {
+      "trial": 4,
+      "variant": "before",
+      "start": 1792932620.679852,
+      "seconds": 43.426186084747314
+    },
+    {
+      "trial": 5,
+      "variant": "before",
+      "start": 1792932664.1263309,
+      "seconds": 40.772735357284546
+    },
+    {
+      "trial": 5,
+      "variant": "after",
+      "start": 1792932704.9440908,
+      "seconds": 40.70236897468567
+    },
+    {
+      "trial": 6,
+      "variant": "after",
+      "start": 1792932745.6656399,
+      "seconds": 40.66598129272461
+    },
+    {
+      "trial": 6,
+      "variant": "before",
+      "start": 1792932786.3510349,
+      "seconds": 40.705485105514526
+    }
+  ]
+}

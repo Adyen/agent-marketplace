@@ -107,7 +107,7 @@ func TestPaletteDoesNotOpenWhileSearchInputActive(t *testing.T) {
 }
 
 func TestPaletteDoesNotOpenOverModalOrOverlay(t *testing.T) {
-	for _, p := range []pane{paneHelp, paneErrors, paneToggleModal, paneConfirm, paneHarnessModal, paneEditConfigModal, paneMigrationModal, paneMarketplaceConsent} {
+	for _, p := range []pane{paneHelp, paneErrors, paneToggleModal, paneConfirm, paneHarnessModal, paneEditConfigModal, paneMarketplaceConsent} {
 		m := readyPaletteModel()
 		m.pane = p
 		mi, _ := m.Update(ctrlKKey())

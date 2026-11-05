@@ -114,6 +114,29 @@ func BenchmarkMaterializePruneStale(b *testing.B) {
 	}
 }
 
+func BenchmarkMaterializeMergeUpdateDiskIONoNetwork(b *testing.B) {
+	out := b.TempDir()
+	path := filepath.Join(out, "mcp.json")
+	const existing = "{\n // handwritten benchmark control\n \"mcpServers\": {\"manual\": {\"command\": \"inert manual\"}},\n \"theme\": \"preserve\"\n}\n"
+	result := mergeArtifact("mcp.json", `{"mcpServers":{"managed":{"command":"inert managed"}}}`)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		b.StopTimer()
+		if err := os.WriteFile(path, []byte(existing), 0o640); err != nil {
+			b.Fatal(err)
+		}
+		if err := os.Chmod(path, 0o640); err != nil {
+			b.Fatal(err)
+		}
+		b.StartTimer()
+		report, err := Materialize(result, out, WithWriteMode(WriteModeOverwrite))
+		if err != nil || len(report.Written) != 1 {
+			b.Fatalf("real merge update failed: %+v %v", report, err)
+		}
+	}
+}
+
 func copyDir(src, dst string) error {
 	entries, err := os.ReadDir(src)
 	if err != nil {

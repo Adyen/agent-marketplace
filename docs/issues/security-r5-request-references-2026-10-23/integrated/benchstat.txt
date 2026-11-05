@@ -1,0 +1,39 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4
+                                                         │  before.txt   │              after.txt               │
+                                                         │    sec/op     │    sec/op      vs base               │
+V4SparseExclusionAdapterCPU/skills=1/excluded=0-16         3.736µ ± 197%   3.569µ ± 159%        ~ (p=0.589 n=6)
+V4SparseExclusionAdapterCPU/skills=1/excluded=1-16         4.601µ ± 189%   4.079µ ± 169%        ~ (p=0.394 n=6)
+V4SparseExclusionAdapterCPU/skills=256/excluded=0-16       337.8µ ± 161%   258.9µ ± 159%        ~ (p=0.132 n=6)
+V4SparseExclusionAdapterCPU/skills=256/excluded=128-16     390.6µ ± 159%   342.8µ ± 140%        ~ (p=0.180 n=6)
+V4SparseExclusionAdapterCPU/skills=256/excluded=256-16     495.3µ ± 110%   388.9µ ± 187%        ~ (p=0.310 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=0-16      1.617m ± 127%   1.105m ± 177%        ~ (p=0.132 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=512-16    2.948m ±  53%   1.462m ± 178%        ~ (p=0.240 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16   3.361m ±  54%   1.661m ± 162%        ~ (p=0.180 n=6)
+geomean                                                    255.2µ          184.6µ         -27.67%
+
+                                                         │  before.txt   │              after.txt              │
+                                                         │     B/op      │     B/op      vs base               │
+V4SparseExclusionAdapterCPU/skills=1/excluded=0-16          2.664Ki ± 0%   2.258Ki ± 0%  -15.25% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=1/excluded=1-16          2.898Ki ± 0%   2.492Ki ± 0%  -14.02% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=256/excluded=0-16        236.3Ki ± 0%   184.1Ki ± 0%  -22.09% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=256/excluded=128-16      264.6Ki ± 0%   212.4Ki ± 0%  -19.73% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=256/excluded=256-16      287.7Ki ± 0%   235.5Ki ± 0%  -18.15% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=0-16       952.2Ki ± 0%   744.0Ki ± 0%  -21.87% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=512-16    1057.3Ki ± 0%   849.1Ki ± 0%  -19.69% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16   1183.4Ki ± 0%   975.2Ki ± 0%  -17.59% (p=0.002 n=6)
+geomean                                                     142.0Ki        115.6Ki       -18.59%
+
+                                                         │ before.txt  │             after.txt              │
+                                                         │  allocs/op  │  allocs/op   vs base               │
+V4SparseExclusionAdapterCPU/skills=1/excluded=0-16          15.00 ± 0%    13.00 ± 0%  -13.33% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=1/excluded=1-16          20.00 ± 0%    18.00 ± 0%  -10.00% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=256/excluded=0-16        802.0 ± 0%    545.0 ± 0%  -32.04% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=256/excluded=128-16     1097.0 ± 0%    840.0 ± 0%  -23.43% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=256/excluded=256-16     1.349k ± 0%   1.092k ± 0%  -19.05% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=0-16      3.116k ± 0%   2.091k ± 0%  -32.89% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=512-16    4.190k ± 0%   3.165k ± 0%  -24.46% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16   5.216k ± 0%   4.191k ± 0%  -19.65% (p=0.002 n=6)
+geomean                                                     628.2         488.5       -22.23%

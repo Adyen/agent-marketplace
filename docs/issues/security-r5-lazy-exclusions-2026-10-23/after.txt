@@ -1,0 +1,251 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4FilterSortRebuildCPU/skills=1/excluded=0-16         	 2596482	       454.5 ns/op	    1360 B/op	       6 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1/excluded=1-16         	 2502639	       477.6 ns/op	    1360 B/op	       6 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=0-16       	   17358	     69041 ns/op	  264072 B/op	     289 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=128-16     	   17348	     68410 ns/op	  285521 B/op	     300 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=256-16     	   19916	     60851 ns/op	  242640 B/op	     295 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=0-16      	    3784	    301545 ns/op	 1428603 B/op	    1070 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=512-16    	    4218	    282491 ns/op	 1236993 B/op	    1084 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=1024-16   	    4809	    249877 ns/op	 1063089 B/op	    1080 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1/excluded=0-16           	  102600	     11477 ns/op	   17071 B/op	     160 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1/excluded=1-16           	   89289	     12929 ns/op	   18352 B/op	     178 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=0-16         	    3952	    308705 ns/op	  554877 B/op	    3780 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=128-16       	    2732	    430982 ns/op	  703448 B/op	    4716 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=256-16       	    2302	    529289 ns/op	  730616 B/op	    5610 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=0-16        	     954	   1252353 ns/op	 2557070 B/op	   15325 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=512-16      	     711	   1708086 ns/op	 2861413 B/op	   18960 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=1024-16     	     566	   2131765 ns/op	 3046060 B/op	   22547 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1/excluded=0-16  	 4816507	       250.1 ns/op	     832 B/op	       3 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1/excluded=1-16  	 5005820	       246.2 ns/op	     624 B/op	       3 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=256/excluded=0-16         	   25982	     46199 ns/op	  142520 B/op	     272 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=256/excluded=128-16       	   26977	     44231 ns/op	  125696 B/op	     283 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=256/excluded=256-16       	   30462	     39160 ns/op	  112240 B/op	     285 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1024/excluded=0-16        	    6268	    189441 ns/op	  553384 B/op	    1047 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1024/excluded=512-16      	    6474	    180192 ns/op	  501040 B/op	    1062 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1024/excluded=1024-16     	    7249	    163589 ns/op	  449360 B/op	    1067 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=0-16             	 1491841	       797.0 ns/op	    2728 B/op	      15 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=1-16             	 1000000	      1234 ns/op	    3592 B/op	      23 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=0-16           	   17414	     68817 ns/op	  241984 B/op	     802 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=128-16         	    9138	    130812 ns/op	  396632 B/op	    1380 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=256-16         	    9127	    130973 ns/op	  406800 B/op	    1634 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=0-16          	    4293	    275239 ns/op	  975025 B/op	    3116 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=512-16        	    2365	    510504 ns/op	 1583738 B/op	    5252 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16       	    2190	    543777 ns/op	 1661123 B/op	    6283 allocs/op
+BenchmarkV4SparseExclusionChurnCPU/rebuild/rounds=64-16                 	  157752	      7409 ns/op	   33136 B/op	      12 allocs/op
+BenchmarkV4SparseExclusionChurnCPU/effective/rounds=64-16               	  415264	      2891 ns/op	     832 B/op	       3 allocs/op
+BenchmarkV4SparseExclusionChurnCPU/rebuild/rounds=1024-16               	   10000	    109042 ns/op	  614768 B/op	      17 allocs/op
+BenchmarkV4SparseExclusionChurnCPU/effective/rounds=1024-16             	   28254	     42568 ns/op	     832 B/op	       3 allocs/op
+PASS
+
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4FilterSortRebuildCPU/skills=1/excluded=0-16         	 2520694	       460.0 ns/op	    1360 B/op	       6 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1/excluded=1-16         	 2544699	       487.7 ns/op	    1360 B/op	       6 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=0-16       	   18382	     65818 ns/op	  264073 B/op	     289 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=128-16     	   17655	     68314 ns/op	  285520 B/op	     300 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=256-16     	   20121	     59213 ns/op	  242640 B/op	     295 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=0-16      	    3972	    297784 ns/op	 1428604 B/op	    1070 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=512-16    	    4081	    282731 ns/op	 1236993 B/op	    1084 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=1024-16   	    4749	    249891 ns/op	 1063088 B/op	    1080 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1/excluded=0-16           	  104732	     11364 ns/op	   17071 B/op	     160 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1/excluded=1-16           	   92360	     13051 ns/op	   18353 B/op	     178 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=0-16         	    3810	    313739 ns/op	  554882 B/op	    3780 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=128-16       	    2737	    435841 ns/op	  703452 B/op	    4716 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=256-16       	    2240	    535744 ns/op	  730632 B/op	    5610 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=0-16        	     979	   1245693 ns/op	 2557136 B/op	   15326 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=512-16      	     709	   1778853 ns/op	 2861446 B/op	   18960 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=1024-16     	     553	   2180078 ns/op	 3046071 B/op	   22547 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1/excluded=0-16  	 4631930	       258.3 ns/op	     832 B/op	       3 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1/excluded=1-16  	 4301132	       257.2 ns/op	     624 B/op	       3 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=256/excluded=0-16         	   25580	     46284 ns/op	  142520 B/op	     272 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=256/excluded=128-16       	   26348	     47414 ns/op	  125696 B/op	     283 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=256/excluded=256-16       	   29745	     40617 ns/op	  112240 B/op	     285 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1024/excluded=0-16        	    5988	    196992 ns/op	  553384 B/op	    1047 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1024/excluded=512-16      	    6291	    185130 ns/op	  501040 B/op	    1062 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1024/excluded=1024-16     	    6904	    168355 ns/op	  449360 B/op	    1067 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=0-16             	 1446651	       823.3 ns/op	    2728 B/op	      15 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=1-16             	 1000000	      1212 ns/op	    3592 B/op	      23 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=0-16           	   17601	     68453 ns/op	  241984 B/op	     802 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=128-16         	    9208	    125894 ns/op	  396632 B/op	    1380 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=256-16         	    9097	    132606 ns/op	  406800 B/op	    1634 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=0-16          	    4177	    273427 ns/op	  975026 B/op	    3116 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=512-16        	    2407	    509334 ns/op	 1583739 B/op	    5252 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16       	    2210	    526741 ns/op	 1661123 B/op	    6283 allocs/op
+BenchmarkV4SparseExclusionChurnCPU/rebuild/rounds=64-16                 	  162298	      7573 ns/op	   33136 B/op	      12 allocs/op
+BenchmarkV4SparseExclusionChurnCPU/effective/rounds=64-16               	  416394	      2872 ns/op	     832 B/op	       3 allocs/op
+BenchmarkV4SparseExclusionChurnCPU/rebuild/rounds=1024-16               	   10000	    105489 ns/op	  614768 B/op	      17 allocs/op
+BenchmarkV4SparseExclusionChurnCPU/effective/rounds=1024-16             	   28693	     41531 ns/op	     832 B/op	       3 allocs/op
+PASS
+
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4FilterSortRebuildCPU/skills=1/excluded=0-16         	 2666593	       453.0 ns/op	    1360 B/op	       6 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1/excluded=1-16         	 2548466	       470.8 ns/op	    1360 B/op	       6 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=0-16       	   18535	     64686 ns/op	  264072 B/op	     289 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=128-16     	   17716	     68240 ns/op	  285520 B/op	     300 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=256-16     	   19279	     62525 ns/op	  242640 B/op	     295 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=0-16      	    3824	    305461 ns/op	 1428603 B/op	    1070 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=512-16    	    4062	    288752 ns/op	 1236993 B/op	    1084 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=1024-16   	    4453	    260976 ns/op	 1063089 B/op	    1080 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1/excluded=0-16           	  101577	     11806 ns/op	   17071 B/op	     160 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1/excluded=1-16           	   89395	     13479 ns/op	   18353 B/op	     178 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=0-16         	    3746	    320916 ns/op	  554886 B/op	    3780 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=128-16       	    2782	    439153 ns/op	  703447 B/op	    4716 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=256-16       	    2222	    543099 ns/op	  730639 B/op	    5610 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=0-16        	     946	   1254959 ns/op	 2557118 B/op	   15325 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=512-16      	     715	   1711740 ns/op	 2861450 B/op	   18960 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=1024-16     	     525	   2157445 ns/op	 3046056 B/op	   22547 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1/excluded=0-16  	 4839535	       253.7 ns/op	     832 B/op	       3 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1/excluded=1-16  	 4967559	       239.8 ns/op	     624 B/op	       3 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=256/excluded=0-16         	   26166	     46251 ns/op	  142520 B/op	     272 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=256/excluded=128-16       	   27314	     43722 ns/op	  125696 B/op	     283 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=256/excluded=256-16       	   30298	     39658 ns/op	  112240 B/op	     285 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1024/excluded=0-16        	    6133	    192917 ns/op	  553384 B/op	    1047 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1024/excluded=512-16      	    6646	    180241 ns/op	  501040 B/op	    1062 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1024/excluded=1024-16     	    7106	    167109 ns/op	  449360 B/op	    1067 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=0-16             	 1487239	       804.8 ns/op	    2728 B/op	      15 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=1-16             	  992719	      1225 ns/op	    3592 B/op	      23 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=0-16           	   17406	     68020 ns/op	  241984 B/op	     802 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=128-16         	    9356	    126478 ns/op	  396632 B/op	    1380 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=256-16         	    8678	    134200 ns/op	  406801 B/op	    1634 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=0-16          	    4412	    273534 ns/op	  975025 B/op	    3116 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=512-16        	    2185	    515338 ns/op	 1583741 B/op	    5252 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16       	    2318	    552779 ns/op	 1661122 B/op	    6283 allocs/op
+BenchmarkV4SparseExclusionChurnCPU/rebuild/rounds=64-16                 	  157527	      7323 ns/op	   33136 B/op	      12 allocs/op
+BenchmarkV4SparseExclusionChurnCPU/effective/rounds=64-16               	  422082	      2905 ns/op	     832 B/op	       3 allocs/op
+BenchmarkV4SparseExclusionChurnCPU/rebuild/rounds=1024-16               	   10000	    106792 ns/op	  614769 B/op	      17 allocs/op
+BenchmarkV4SparseExclusionChurnCPU/effective/rounds=1024-16             	   28449	     41965 ns/op	     832 B/op	       3 allocs/op
+PASS
+
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4FilterSortRebuildCPU/skills=1/excluded=0-16         	 2648834	       456.5 ns/op	    1360 B/op	       6 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1/excluded=1-16         	 2504320	       472.9 ns/op	    1360 B/op	       6 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=0-16       	   18228	     66739 ns/op	  264072 B/op	     289 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=128-16     	   17599	     67678 ns/op	  285520 B/op	     300 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=256-16     	   20211	     59292 ns/op	  242640 B/op	     295 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=0-16      	    4070	    296856 ns/op	 1428602 B/op	    1070 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=512-16    	    4272	    278467 ns/op	 1236993 B/op	    1084 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=1024-16   	    4881	    249571 ns/op	 1063089 B/op	    1080 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1/excluded=0-16           	  105897	     12379 ns/op	   17071 B/op	     160 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1/excluded=1-16           	   91062	     13321 ns/op	   18353 B/op	     178 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=0-16         	    3812	    317142 ns/op	  554889 B/op	    3780 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=128-16       	    2787	    440168 ns/op	  703456 B/op	    4716 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=256-16       	    2187	    546496 ns/op	  730632 B/op	    5610 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=0-16        	     956	   1253774 ns/op	 2557132 B/op	   15325 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=512-16      	     674	   1748816 ns/op	 2861450 B/op	   18960 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=1024-16     	     571	   2096644 ns/op	 3046040 B/op	   22547 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1/excluded=0-16  	 4749025	       250.0 ns/op	     832 B/op	       3 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1/excluded=1-16  	 4952102	       238.0 ns/op	     624 B/op	       3 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=256/excluded=0-16         	   26841	     45366 ns/op	  142520 B/op	     272 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=256/excluded=128-16       	   27853	     43071 ns/op	  125696 B/op	     283 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=256/excluded=256-16       	   29316	     40768 ns/op	  112240 B/op	     285 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1024/excluded=0-16        	    6232	    190825 ns/op	  553384 B/op	    1047 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1024/excluded=512-16      	    6526	    182525 ns/op	  501040 B/op	    1062 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1024/excluded=1024-16     	    7030	    167552 ns/op	  449361 B/op	    1067 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=0-16             	 1503598	       803.2 ns/op	    2728 B/op	      15 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=1-16             	  997771	      1211 ns/op	    3592 B/op	      23 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=0-16           	   17955	     67146 ns/op	  241984 B/op	     802 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=128-16         	    9070	    130063 ns/op	  396632 B/op	    1380 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=256-16         	    8890	    130660 ns/op	  406800 B/op	    1634 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=0-16          	    4399	    270426 ns/op	  975026 B/op	    3116 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=512-16        	    2371	    501644 ns/op	 1583738 B/op	    5252 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16       	    2320	    518790 ns/op	 1661122 B/op	    6283 allocs/op
+BenchmarkV4SparseExclusionChurnCPU/rebuild/rounds=64-16                 	  168901	      7035 ns/op	   33136 B/op	      12 allocs/op
+BenchmarkV4SparseExclusionChurnCPU/effective/rounds=64-16               	  427132	      2851 ns/op	     832 B/op	       3 allocs/op
+BenchmarkV4SparseExclusionChurnCPU/rebuild/rounds=1024-16               	   10000	    104838 ns/op	  614768 B/op	      17 allocs/op
+BenchmarkV4SparseExclusionChurnCPU/effective/rounds=1024-16             	   28616	     41873 ns/op	     832 B/op	       3 allocs/op
+PASS
+
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4FilterSortRebuildCPU/skills=1/excluded=0-16         	 2650160	       455.8 ns/op	    1360 B/op	       6 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1/excluded=1-16         	 2421417	       477.1 ns/op	    1360 B/op	       6 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=0-16       	   18531	     64480 ns/op	  264072 B/op	     289 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=128-16     	   17894	     66434 ns/op	  285520 B/op	     300 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=256-16     	   20664	     58454 ns/op	  242640 B/op	     295 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=0-16      	    4044	    292507 ns/op	 1428604 B/op	    1070 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=512-16    	    4402	    274468 ns/op	 1236995 B/op	    1084 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=1024-16   	    5012	    248797 ns/op	 1063089 B/op	    1080 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1/excluded=0-16           	  109572	     11065 ns/op	   17071 B/op	     160 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1/excluded=1-16           	   94699	     12838 ns/op	   18352 B/op	     178 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=0-16         	    3806	    304987 ns/op	  554877 B/op	    3780 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=128-16       	    2772	    430286 ns/op	  703444 B/op	    4716 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=256-16       	    2234	    536453 ns/op	  730626 B/op	    5610 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=0-16        	     979	   1246284 ns/op	 2557143 B/op	   15326 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=512-16      	     697	   1729458 ns/op	 2861456 B/op	   18960 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=1024-16     	     565	   2152095 ns/op	 3046048 B/op	   22547 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1/excluded=0-16  	 4681232	       253.6 ns/op	     832 B/op	       3 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1/excluded=1-16  	 4952353	       242.0 ns/op	     624 B/op	       3 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=256/excluded=0-16         	   26161	     45950 ns/op	  142520 B/op	     272 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=256/excluded=128-16       	   27310	     43672 ns/op	  125696 B/op	     283 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=256/excluded=256-16       	   30421	     39869 ns/op	  112240 B/op	     285 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1024/excluded=0-16        	    6106	    191505 ns/op	  553384 B/op	    1047 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1024/excluded=512-16      	    6661	    181491 ns/op	  501040 B/op	    1062 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1024/excluded=1024-16     	    7124	    162200 ns/op	  449360 B/op	    1067 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=0-16             	 1532874	       781.8 ns/op	    2728 B/op	      15 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=1-16             	 1000000	      1222 ns/op	    3592 B/op	      23 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=0-16           	   17629	     67763 ns/op	  241984 B/op	     802 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=128-16         	    9427	    126731 ns/op	  396632 B/op	    1380 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=256-16         	    8528	    133663 ns/op	  406800 B/op	    1634 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=0-16          	    4218	    270854 ns/op	  975025 B/op	    3116 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=512-16        	    2328	    525809 ns/op	 1583741 B/op	    5252 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16       	    2274	    528899 ns/op	 1661123 B/op	    6283 allocs/op
+BenchmarkV4SparseExclusionChurnCPU/rebuild/rounds=64-16                 	  172009	      7176 ns/op	   33136 B/op	      12 allocs/op
+BenchmarkV4SparseExclusionChurnCPU/effective/rounds=64-16               	  417504	      2857 ns/op	     832 B/op	       3 allocs/op
+BenchmarkV4SparseExclusionChurnCPU/rebuild/rounds=1024-16               	   10000	    107012 ns/op	  614768 B/op	      17 allocs/op
+BenchmarkV4SparseExclusionChurnCPU/effective/rounds=1024-16             	   28929	     41450 ns/op	     832 B/op	       3 allocs/op
+PASS
+
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4FilterSortRebuildCPU/skills=1/excluded=0-16         	 2732132	       440.2 ns/op	    1360 B/op	       6 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1/excluded=1-16         	 2572953	       465.5 ns/op	    1360 B/op	       6 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=0-16       	   17748	     66725 ns/op	  264072 B/op	     289 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=128-16     	   17410	     72875 ns/op	  285520 B/op	     300 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=256-16     	   19968	     59456 ns/op	  242640 B/op	     295 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=0-16      	    4178	    295879 ns/op	 1428602 B/op	    1070 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=512-16    	    4414	    278835 ns/op	 1236992 B/op	    1084 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=1024-16   	    4867	    249617 ns/op	 1063089 B/op	    1080 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1/excluded=0-16           	  106696	     11277 ns/op	   17071 B/op	     160 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1/excluded=1-16           	   92659	     12848 ns/op	   18353 B/op	     178 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=0-16         	    3862	    315451 ns/op	  554882 B/op	    3780 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=128-16       	    2707	    436354 ns/op	  703457 B/op	    4716 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=256-16       	    2260	    530505 ns/op	  730628 B/op	    5610 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=0-16        	     961	   1236275 ns/op	 2557125 B/op	   15325 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=512-16      	     718	   1689469 ns/op	 2861430 B/op	   18960 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=1024-16     	     578	   2094735 ns/op	 3046074 B/op	   22547 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1/excluded=0-16  	 4790816	       249.1 ns/op	     832 B/op	       3 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1/excluded=1-16  	 4878684	       248.2 ns/op	     624 B/op	       3 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=256/excluded=0-16         	   26864	     45721 ns/op	  142520 B/op	     272 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=256/excluded=128-16       	   27492	     44079 ns/op	  125696 B/op	     283 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=256/excluded=256-16       	   30295	     39442 ns/op	  112240 B/op	     285 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1024/excluded=0-16        	    6238	    191040 ns/op	  553384 B/op	    1047 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1024/excluded=512-16      	    6626	    180989 ns/op	  501041 B/op	    1062 allocs/op
+BenchmarkV4SparseExclusionEffectiveCPU/skills=1024/excluded=1024-16     	    6996	    165554 ns/op	  449360 B/op	    1067 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=0-16             	 1495866	       800.0 ns/op	    2728 B/op	      15 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=1-16             	 1000000	      1199 ns/op	    3592 B/op	      23 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=0-16           	   17619	     67577 ns/op	  241984 B/op	     802 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=128-16         	    9499	    127401 ns/op	  396632 B/op	    1380 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=256-16         	    9296	    131866 ns/op	  406800 B/op	    1634 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=0-16          	    4392	    276684 ns/op	  975027 B/op	    3116 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=512-16        	    2358	    503272 ns/op	 1583738 B/op	    5252 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16       	    2253	    522377 ns/op	 1661122 B/op	    6283 allocs/op
+BenchmarkV4SparseExclusionChurnCPU/rebuild/rounds=64-16                 	  171280	      7414 ns/op	   33136 B/op	      12 allocs/op
+BenchmarkV4SparseExclusionChurnCPU/effective/rounds=64-16               	  412413	      2870 ns/op	     832 B/op	       3 allocs/op
+BenchmarkV4SparseExclusionChurnCPU/rebuild/rounds=1024-16               	   10000	    108056 ns/op	  614768 B/op	      17 allocs/op
+BenchmarkV4SparseExclusionChurnCPU/effective/rounds=1024-16             	   29002	     41814 ns/op	     832 B/op	       3 allocs/op
+PASS

@@ -102,7 +102,11 @@ func stageGoldenResult(t *testing.T, result *Result, outDir string) {
 	ordinary := &Result{Diagnostics: result.Diagnostics, Skipped: result.Skipped}
 	var external []Artifact
 	for _, candidate := range result.Artifacts {
-		if candidate.ExternalReconciliationRequired {
+		policy, err := candidate.Policy()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if policy.IsExternal() {
 			external = append(external, candidate)
 			continue
 		}

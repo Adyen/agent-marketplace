@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
@@ -139,23 +138,6 @@ func TestV4RequiresExpandRejectsInvalidValues(t *testing.T) {
 	}
 }
 
-// spec: configuration-settings/legacy-configuration-uses-the-release-default
-func TestLegacyConfigUsesReleaseDefault(t *testing.T) {
-	for _, version := range []string{"v2", "v3"} {
-		cfg, errs := loadV3ConfigWithAPIVersion([]byte("apiVersion: agent-marketplace/"+version+"\nharnesses: [claude]\n"), userLayer, false, true)
-		if len(errs) > 0 {
-			t.Fatalf("%s config failed to load: %v", version, errs)
-		}
-		if cfg.RequiresExpansionEnabled() {
-			t.Fatalf("%s config must keep the release default of expansion disabled", version)
-		}
-		_, errs = loadV3ConfigWithAPIVersion([]byte("apiVersion: agent-marketplace/"+version+"\nharnesses: [claude]\nrequires: {expand: true}\n"), userLayer, false, true)
-		if len(errs) == 0 {
-			t.Fatalf("requires in a %s config must be rejected by strict validation", version)
-		}
-	}
-}
-
 // spec: configuration-settings/expansion-setting-follows-layered-and-include-precedence
 func TestRequiresExpandRealLoadersRespectNestedIncludesAndLayers(t *testing.T) {
 	dir := t.TempDir()
@@ -242,46 +224,5 @@ sources:
 	}
 	if _, err := LoadConfigFromPath(path); err == nil {
 		t.Fatal("full layer load must refuse a Marketplace source whose lock is unreadable")
-	}
-}
-
-// spec: configuration-settings/migration-does-not-add-the-expansion-setting
-func TestMigrationDoesNotSeedRequiresExpand(t *testing.T) {
-	for _, version := range []string{"v2", "v3"} {
-		t.Run(version, func(t *testing.T) {
-			dir := t.TempDir()
-			user := filepath.Join(dir, "user.yaml")
-			if err := os.WriteFile(user, []byte(`apiVersion: agent-marketplace/`+version+`
-harnesses: [claude]
-registries:
-  - url: https://example.com/repo.git
-    ref: main
-    skills: {include: [alpha]}
-`), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			result, err := MigrateConfigFilesToV4(MigratePaths{User: user}, V4MigrationUser, false)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if result == nil || !result.UserMigrated {
-				t.Fatal("expected the user config to migrate")
-				return
-			}
-			data, err := os.ReadFile(user)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if strings.Contains(string(data), "requires") {
-				t.Fatalf("migrated v4 document must not seed requires.expand:\n%s", data)
-			}
-			migrated, err := LoadConfigFromPath(user)
-			if err != nil {
-				t.Fatalf("migrated %s config must still load: %v", version, err)
-			}
-			if migrated.RequiresExpansionEnabled() {
-				t.Fatal("migrated config must report expansion disabled")
-			}
-		})
 	}
 }

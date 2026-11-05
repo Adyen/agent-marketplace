@@ -1,0 +1,65 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+                                                   |  before.txt  |              after.txt              |
+                                                   |    sec/op    |    sec/op     vs base               |
+V4FilterSortRebuildCPU/skills=1/excluded=0-2         501.0n +/-  7%   504.8n +/- 20%        ~ (p=0.485 n=6)
+V4FilterSortRebuildCPU/skills=1/excluded=1-2         531.6n +/- 14%   514.2n +/-  2%   -3.29% (p=0.015 n=6)
+V4FilterSortRebuildCPU/skills=256/excluded=0-2       83.69u +/- 21%   83.36u +/-  2%        ~ (p=0.394 n=6)
+V4FilterSortRebuildCPU/skills=256/excluded=128-2     88.29u +/-  7%   79.55u +/-  2%   -9.90% (p=0.002 n=6)
+V4FilterSortRebuildCPU/skills=256/excluded=256-2     82.87u +/- 22%   67.36u +/-  2%  -18.72% (p=0.002 n=6)
+V4FilterSortRebuildCPU/skills=1024/excluded=0-2      391.2u +/- 13%   390.1u +/-  4%        ~ (p=0.818 n=6)
+V4FilterSortRebuildCPU/skills=1024/excluded=512-2    380.5u +/-  3%   350.0u +/-  3%   -8.03% (p=0.002 n=6)
+V4FilterSortRebuildCPU/skills=1024/excluded=1024-2   369.8u +/-  4%   292.4u +/-  3%  -20.92% (p=0.002 n=6)
+ParseV4FilterSortCPU/skills=1/excluded=0-2           11.56u +/-  7%   11.97u +/- 12%        ~ (p=0.065 n=6)
+ParseV4FilterSortCPU/skills=1/excluded=1-2           13.18u +/-  7%   13.39u +/-  6%        ~ (p=0.065 n=6)
+ParseV4FilterSortCPU/skills=256/excluded=0-2         337.4u +/-  6%   340.8u +/-  6%        ~ (p=1.000 n=6)
+ParseV4FilterSortCPU/skills=256/excluded=128-2       466.6u +/-  6%   457.8u +/-  8%        ~ (p=0.240 n=6)
+ParseV4FilterSortCPU/skills=256/excluded=256-2       568.5u +/-  6%   555.4u +/-  7%        ~ (p=0.240 n=6)
+ParseV4FilterSortCPU/skills=1024/excluded=0-2        1.371m +/- 11%   1.350m +/-  9%        ~ (p=0.394 n=6)
+ParseV4FilterSortCPU/skills=1024/excluded=512-2      1.885m +/- 13%   1.813m +/-  9%        ~ (p=0.093 n=6)
+ParseV4FilterSortCPU/skills=1024/excluded=1024-2     2.304m +/- 11%   2.230m +/-  6%   -3.21% (p=0.041 n=6)
+geomean                                              113.2u         108.2u         -4.47%
+
+                                                   |  before.txt  |              after.txt               |
+                                                   |     B/op     |     B/op      vs base                |
+V4FilterSortRebuildCPU/skills=1/excluded=0-2         1.328Ki +/- 0%   1.328Ki +/- 0%       ~ (p=1.000 n=6) [1]
+V4FilterSortRebuildCPU/skills=1/excluded=1-2         1.328Ki +/- 0%   1.328Ki +/- 0%       ~ (p=1.000 n=6) [1]
+V4FilterSortRebuildCPU/skills=256/excluded=0-2       284.1Ki +/- 0%   284.1Ki +/- 0%       ~ (p=1.000 n=6) [1]
+V4FilterSortRebuildCPU/skills=256/excluded=128-2     292.1Ki +/- 0%   292.1Ki +/- 0%       ~ (p=1.000 n=6) [1]
+V4FilterSortRebuildCPU/skills=256/excluded=256-2     237.0Ki +/- 0%   237.0Ki +/- 0%       ~ (p=1.000 n=6) [1]
+V4FilterSortRebuildCPU/skills=1024/excluded=0-2      1.466Mi +/- 0%   1.466Mi +/- 0%       ~ (p=1.000 n=6) [1]
+V4FilterSortRebuildCPU/skills=1024/excluded=512-2    1.232Mi +/- 0%   1.232Mi +/- 0%       ~ (p=1.000 n=6) [1]
+V4FilterSortRebuildCPU/skills=1024/excluded=1024-2   1.014Mi +/- 0%   1.014Mi +/- 0%       ~ (p=1.000 n=6) [1]
+ParseV4FilterSortCPU/skills=1/excluded=0-2           16.65Ki +/- 0%   16.65Ki +/- 0%       ~ (p=0.182 n=6)
+ParseV4FilterSortCPU/skills=1/excluded=1-2           17.90Ki +/- 0%   17.90Ki +/- 0%       ~ (p=1.000 n=6) [1]
+ParseV4FilterSortCPU/skills=256/excluded=0-2         567.5Ki +/- 0%   567.5Ki +/- 0%       ~ (p=0.210 n=6)
+ParseV4FilterSortCPU/skills=256/excluded=128-2       699.5Ki +/- 0%   699.5Ki +/- 0%       ~ (p=0.781 n=6)
+ParseV4FilterSortCPU/skills=256/excluded=256-2       712.8Ki +/- 0%   712.8Ki +/- 0%  +0.00% (p=0.030 n=6)
+ParseV4FilterSortCPU/skills=1024/excluded=0-2        2.540Mi +/- 0%   2.540Mi +/- 0%       ~ (p=0.515 n=6)
+ParseV4FilterSortCPU/skills=1024/excluded=512-2      2.778Mi +/- 0%   2.778Mi +/- 0%       ~ (p=0.463 n=6)
+ParseV4FilterSortCPU/skills=1024/excluded=1024-2     2.902Mi +/- 0%   2.902Mi +/- 0%       ~ (p=0.463 n=6)
+geomean                                              240.7Ki        240.7Ki       -0.00%
+[1] all samples are equal
+
+                                                   | before.txt  |              after.txt              |
+                                                   |  allocs/op  |  allocs/op   vs base                |
+V4FilterSortRebuildCPU/skills=1/excluded=0-2          6.000 +/- 0%    6.000 +/- 0%       ~ (p=1.000 n=6) [1]
+V4FilterSortRebuildCPU/skills=1/excluded=1-2          6.000 +/- 0%    6.000 +/- 0%       ~ (p=1.000 n=6) [1]
+V4FilterSortRebuildCPU/skills=256/excluded=0-2        302.0 +/- 0%    302.0 +/- 0%       ~ (p=1.000 n=6) [1]
+V4FilterSortRebuildCPU/skills=256/excluded=128-2      302.0 +/- 0%    302.0 +/- 0%       ~ (p=1.000 n=6) [1]
+V4FilterSortRebuildCPU/skills=256/excluded=256-2      295.0 +/- 0%    295.0 +/- 0%       ~ (p=1.000 n=6) [1]
+V4FilterSortRebuildCPU/skills=1024/excluded=0-2      1.090k +/- 0%   1.090k +/- 0%       ~ (p=1.000 n=6) [1]
+V4FilterSortRebuildCPU/skills=1024/excluded=512-2    1.089k +/- 0%   1.089k +/- 0%       ~ (p=1.000 n=6) [1]
+V4FilterSortRebuildCPU/skills=1024/excluded=1024-2   1.080k +/- 0%   1.080k +/- 0%       ~ (p=1.000 n=6) [1]
+ParseV4FilterSortCPU/skills=1/excluded=0-2            160.0 +/- 0%    160.0 +/- 0%       ~ (p=1.000 n=6) [1]
+ParseV4FilterSortCPU/skills=1/excluded=1-2            178.0 +/- 0%    178.0 +/- 0%       ~ (p=1.000 n=6) [1]
+ParseV4FilterSortCPU/skills=256/excluded=0-2         3.793k +/- 0%   3.793k +/- 0%       ~ (p=1.000 n=6)
+ParseV4FilterSortCPU/skills=256/excluded=128-2       4.718k +/- 0%   4.718k +/- 0%       ~ (p=1.000 n=6) [1]
+ParseV4FilterSortCPU/skills=256/excluded=256-2       5.610k +/- 0%   5.610k +/- 0%       ~ (p=0.455 n=6)
+ParseV4FilterSortCPU/skills=1024/excluded=0-2        15.35k +/- 0%   15.35k +/- 0%       ~ (p=1.000 n=6) [1]
+ParseV4FilterSortCPU/skills=1024/excluded=512-2      18.96k +/- 0%   18.96k +/- 0%       ~ (p=1.000 n=6) [1]
+ParseV4FilterSortCPU/skills=1024/excluded=1024-2     22.55k +/- 0%   22.55k +/- 0%       ~ (p=1.000 n=6) [1]
+geomean                                               790.6         790.6       +0.00%
+[1] all samples are equal

@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -30,6 +31,7 @@ type installationSnapshot struct {
 	signature   string
 	evaluatedAt time.Time
 	expiresAt   time.Time
+	staleUntil  time.Time
 }
 
 type installationMetricsReader struct {
@@ -79,10 +81,14 @@ func registryOriginsSignature(registries map[store.RegistryID]store.Registry) st
 
 func (r *installationMetricsReader) lookup(registries map[store.RegistryID]store.Registry) (*installationCounts, bool) {
 	snapshot := r.snapshot.Load()
-	if snapshot == nil || snapshot.signature != registryOriginsSignature(registries) || !r.now().Before(snapshot.expiresAt) {
+	if snapshot == nil || snapshot.signature != registryOriginsSignature(registries) {
 		return nil, false
 	}
-	return &snapshot.counts, true
+	now := r.now()
+	if !now.Before(snapshot.staleUntil) {
+		return nil, false
+	}
+	return &snapshot.counts, now.Before(snapshot.expiresAt)
 }
 
 func (r *installationMetricsReader) hint() {
@@ -107,6 +113,7 @@ func (r *installationMetricsReader) refresh(ctx context.Context, registries map[
 		signature:   registryOriginsSignature(registries),
 		evaluatedAt: evaluatedAt,
 		expiresAt:   expiresAt,
+		staleUntil:  evaluatedAt.Add(r.timing.MaxStale),
 	})
 	return counts, nil
 }
@@ -192,40 +199,81 @@ func minTime(a, b time.Time) time.Time {
 }
 
 func (r *installationMetricsReader) fetch(ctx context.Context, registries map[store.RegistryID]store.Registry, evalTime time.Time) (installationCounts, error) {
+	evalTime = time.Unix(evalTime.Unix(), 0)
+	plan := newInstallationQueryPlan(registries, r.marketplaceID)
+	queries := installationMetricsQueries(r.labels, plan)
+	type operandResult struct {
+		samples []inventoryMetricSample
+		bytes   int
+		err     error
+	}
+	results := make([]operandResult, len(queries))
+	var wg sync.WaitGroup
+	for i, query := range queries {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			samples, bytes, err := r.queryVector(ctx, query, evalTime)
+			results[i] = operandResult{samples: samples, bytes: bytes, err: err}
+		}()
+	}
+	wg.Wait()
+
+	for _, result := range results {
+		if errors.Is(result.err, errInvalidInstallationMetrics) {
+			return installationCounts{}, errInvalidInstallationMetrics
+		}
+	}
+	var samples []inventoryMetricSample
+	var totalBytes int
+	for _, result := range results {
+		if result.err != nil {
+			return installationCounts{}, errInstallationMetricsUnavailable
+		}
+		totalBytes += result.bytes
+		samples = append(samples, result.samples...)
+	}
+	if totalBytes > installationMetricsMaxBody {
+		return installationCounts{}, errInstallationMetricsUnavailable
+	}
+	return aggregateInstallationMetrics(samples, plan, evalTime)
+}
+
+func (r *installationMetricsReader) queryVector(ctx context.Context, query string, evalTime time.Time) ([]inventoryMetricSample, int, error) {
 	form := url.Values{
-		"query": {installationMetricsQuery(r.labels)},
+		"query": {query},
 		"time":  {strconv.FormatInt(evalTime.Unix(), 10)},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.url+"/api/v1/query", strings.NewReader(form.Encode()))
 	if err != nil {
-		return installationCounts{}, errInstallationMetricsUnavailable
+		return nil, 0, errInstallationMetricsUnavailable
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if r.tokenEnv != "" {
 		token, ok := os.LookupEnv(r.tokenEnv)
 		if !ok || token == "" || strings.ContainsAny(token, "\r\n") {
-			return installationCounts{}, errInstallationMetricsUnavailable
+			return nil, 0, errInstallationMetricsUnavailable
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	resp, err := r.client.Do(req)
 	if err != nil {
-		return installationCounts{}, errInstallationMetricsUnavailable
+		return nil, 0, errInstallationMetricsUnavailable
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return installationCounts{}, errInstallationMetricsUnavailable
+		return nil, 0, errInstallationMetricsUnavailable
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, installationMetricsMaxBody+1))
 	if err != nil || len(body) > installationMetricsMaxBody {
-		return installationCounts{}, errInstallationMetricsUnavailable
+		return nil, 0, errInstallationMetricsUnavailable
 	}
 	samples, err := parsePrometheusVector(body)
 	if err != nil {
-		return installationCounts{}, err
+		return nil, 0, err
 	}
-	return aggregateInstallationMetrics(samples, registries, r.marketplaceID, evalTime)
+	return samples, len(body), nil
 }
 
 type prometheusVectorResponse struct {

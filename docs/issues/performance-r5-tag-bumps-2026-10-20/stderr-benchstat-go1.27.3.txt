@@ -1,0 +1,30 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/pipeline
+cpu: Apple M4 Max
+                         │ docs/issues/performance-r5-tag-bumps-2026-10-20/buffered-go1.27.3.txt │ docs/issues/performance-r5-tag-bumps-2026-10-20/streaming-stderr-go1.27.3.txt │
+                         │                                sec/op                                 │                         sec/op                           vs base              │
+DiscoverTagBump/0-16                                                                12.43m ± ∞ ¹                                              12.60m ± ∞ ¹       ~ (p=1.000 n=5)
+DiscoverTagBump/32-16                                                               12.07m ± ∞ ¹                                              12.45m ± ∞ ¹  +3.16% (p=0.008 n=5)
+DiscoverTagBump/2048-16                                                             14.72m ± ∞ ¹                                              14.28m ± ∞ ¹       ~ (p=0.222 n=5)
+DiscoverTagBump/16384-16                                                            24.40m ± ∞ ¹                                              25.01m ± ∞ ¹       ~ (p=0.690 n=5)
+geomean                                                                             15.24m                                                    15.38m        +0.97%
+¹ need >= 6 samples for confidence interval at level 0.95
+
+                         │ docs/issues/performance-r5-tag-bumps-2026-10-20/buffered-go1.27.3.txt │ docs/issues/performance-r5-tag-bumps-2026-10-20/streaming-stderr-go1.27.3.txt │
+                         │                                 B/op                                  │                          B/op                           vs base               │
+DiscoverTagBump/0-16                                                               61.09Ki ± ∞ ¹                                            62.84Ki ± ∞ ¹   +2.85% (p=0.032 n=5)
+DiscoverTagBump/32-16                                                              79.98Ki ± ∞ ¹                                            62.87Ki ± ∞ ¹  -21.39% (p=0.008 n=5)
+DiscoverTagBump/2048-16                                                           855.30Ki ± ∞ ¹                                            63.70Ki ± ∞ ¹  -92.55% (p=0.008 n=5)
+DiscoverTagBump/16384-16                                                         6295.12Ki ± ∞ ¹                                            63.83Ki ± ∞ ¹  -98.99% (p=0.008 n=5)
+geomean                                                                            402.7Ki                                                  63.31Ki        -84.28%
+¹ need >= 6 samples for confidence interval at level 0.95
+
+                         │ docs/issues/performance-r5-tag-bumps-2026-10-20/buffered-go1.27.3.txt │ docs/issues/performance-r5-tag-bumps-2026-10-20/streaming-stderr-go1.27.3.txt │
+                         │                               allocs/op                               │                       allocs/op                         vs base               │
+DiscoverTagBump/0-16                                                                 79.00 ± ∞ ¹                                              73.00 ± ∞ ¹   -7.59% (p=0.008 n=5)
+DiscoverTagBump/32-16                                                                82.00 ± ∞ ¹                                              74.00 ± ∞ ¹   -9.76% (p=0.008 n=5)
+DiscoverTagBump/2048-16                                                              89.00 ± ∞ ¹                                              74.00 ± ∞ ¹  -16.85% (p=0.008 n=5)
+DiscoverTagBump/16384-16                                                             95.00 ± ∞ ¹                                              74.00 ± ∞ ¹  -22.11% (p=0.008 n=5)
+geomean                                                                              86.03                                                    73.75        -14.27%
+¹ need >= 6 samples for confidence interval at level 0.95

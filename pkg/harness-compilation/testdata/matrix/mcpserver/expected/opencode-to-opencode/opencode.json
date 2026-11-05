@@ -1,0 +1,15 @@
+{
+  "mcp": {
+    "demo-server": {
+      "command": [
+        "npx",
+        "-y",
+        "demo-mcp-server"
+      ],
+      "environment": {
+        "DEMO_API_KEY": "{env:DEMO_API_KEY}"
+      },
+      "type": "local"
+    }
+  }
+}

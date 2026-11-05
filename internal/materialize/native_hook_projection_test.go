@@ -198,6 +198,10 @@ func serveMirrorProjectionHook(t *testing.T, canonical artifact.CanonicalArtifac
 func resolveMirrorProjectionHook(t *testing.T, support map[string]artifact.SupportFile) (resolver.ResolvedArtifact, string, string) {
 	t.Helper()
 	hook := ir.NewHookWithMatcher("deploy-hook", "PreToolUse", "Bash", "./run.sh", "command", nil, ir.SourceRef{File: "hooks/hooks.json"})
+	hook.SupportFiles = make(map[string]string, len(support))
+	for name, file := range support {
+		hook.SupportFiles[name] = artifact.SupportFileDigest(file)
+	}
 	canonical, err := artifact.FromIR(hook)
 	if err != nil {
 		t.Fatalf("FromIR: %v", err)
@@ -378,7 +382,7 @@ func TestPrepareIndependentNativeHookProjection(t *testing.T) {
 		t.Fatalf("support = %d, want 1", len(projection.support))
 	}
 	file := projection.support[0]
-	if file.Path != "guard.sh" || string(file.Bytes) != string(supportBytes) || file.Mode.Perm() != 0o755 {
+	if file.Path != "hooks/guard.sh" || string(file.Bytes) != string(supportBytes) || file.Mode.Perm() != 0o755 {
 		t.Fatalf("support artifact = %#v", file)
 	}
 
@@ -497,7 +501,7 @@ func TestPrepareIndependentNativeHookProjectionFactoryCanonicalControl(t *testin
 	if !ok {
 		t.Fatalf("fixture resource = %#v, want hook", fixture.resolved.Resource)
 	}
-	if hook.HookSource != "" || hook.Matcher != "Bash" || hook.Command != "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" {
+	if hook.HookSource != "factory" || hook.Matcher != "Bash" || hook.Command != "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" {
 		t.Fatalf("canonical pseudo-Factory hook = %#v", hook)
 	}
 }
@@ -509,7 +513,8 @@ func TestPrepareIndependentNativeHookProjectionFactoryNativeSourceProjects(t *te
 	if !ok {
 		t.Fatal("fixture resource is not a hook")
 	}
-	if legacy.HookSource != "" || legacy.Matcher != "Execute" || legacy.Command != "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh" {
+	if legacy.HookSource != "factory" || legacy.Matcher != "Execute" || legacy.Command != "${DROID_PLUGIN_ROOT}/scripts/run.sh" ||
+		legacy.Extra["commandRegex"] != "^make.*$" || !legacy.GroupExtraKeys["commandRegex"] {
 		t.Fatalf("unexpected default Factory-loader control: %#v", legacy)
 	}
 	repoRoot := t.TempDir()
@@ -543,15 +548,15 @@ func TestPrepareIndependentNativeHookProjectionFactoryNativeSourceProjects(t *te
 	if !ok || handler["type"] != "command" {
 		t.Fatalf("native Factory handler = %v, want command", handlers[0])
 	}
-	wantCommand := `"$FACTORY_PROJECT_DIR"/` + filepath.ToSlash(filepath.Join(".factory", wantSupportRelBase, "scripts/run.sh"))
+	wantCommand := `"$FACTORY_PROJECT_DIR"/` + filepath.ToSlash(filepath.Join(".factory", wantSupportRelBase, "hooks", "scripts", "run.sh"))
 	if handler["command"] != wantCommand {
 		t.Fatalf("command = %v, want exact native support base %q", handler["command"], wantCommand)
 	}
 	if _, leaked := handler["commandRegex"]; leaked {
 		t.Fatalf("commandRegex leaked into handler: %v", handler)
 	}
-	if len(projection.support) != 1 || projection.support[0].Path != "scripts/run.sh" || projection.support[0].Mode.Perm() != 0o755 {
-		t.Fatalf("support = %#v, want executable scripts/run.sh", projection.support)
+	if len(projection.support) != 1 || projection.support[0].Path != "hooks/scripts/run.sh" || projection.support[0].Mode.Perm() != 0o755 {
+		t.Fatalf("support = %#v, want staged hooks/scripts/run.sh", projection.support)
 	}
 	if entries, err := os.ReadDir(repoRoot); err != nil || len(entries) != 0 {
 		t.Fatalf("repoRoot mutated during pure preparation: %v %v", entries, err)
@@ -805,6 +810,40 @@ func TestPrepareIndependentNativeHookProjectionSourceBoundaries(t *testing.T) {
 		assertHookProjectionRefusal(t, err, repoRoot, "hooks.json")
 		if !bytes.Equal(mustRead(t, outside), outsideBefore) {
 			t.Fatal("external definition changed during refusal")
+		}
+		if entries, err := os.ReadDir(repoRoot); err != nil || len(entries) != 0 {
+			t.Fatalf("repoRoot mutated on refusal: %v %v", entries, err)
+		}
+	})
+
+	t.Run("contained support alias refuses", func(t *testing.T) {
+		fixture := writeProjectionSource(t, "echo witness")
+		repoRoot := t.TempDir()
+		aliasPath := filepath.Join(filepath.Dir(fixture.definition), "alias.sh")
+		if err := os.Symlink(filepath.Base(fixture.support), aliasPath); err != nil {
+			t.Fatal(err)
+		}
+		aliasBefore, err := os.Lstat(aliasPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		aliasTarget, err := os.Readlink(aliasPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		supportBefore := mustRead(t, fixture.support)
+		work := skillTarget{skill: fixture.resolved, target: hcc.TargetFactory}
+		_, err = prepareNativeHookProjection(work, repoRoot)
+		assertHookProjectionRefusal(t, err, repoRoot, "hooks.json")
+		if !bytes.Equal(mustRead(t, fixture.support), supportBefore) {
+			t.Fatal("contained alias target changed during reader refusal")
+		}
+		aliasAfter, err := os.Lstat(aliasPath)
+		if err != nil || !os.SameFile(aliasBefore, aliasAfter) || aliasBefore.Mode() != aliasAfter.Mode() || !aliasBefore.ModTime().Equal(aliasAfter.ModTime()) {
+			t.Fatalf("contained alias changed during reader refusal: %v", err)
+		}
+		if target, err := os.Readlink(aliasPath); err != nil || target != aliasTarget {
+			t.Fatalf("contained alias target changed: %q %v", target, err)
 		}
 		if entries, err := os.ReadDir(repoRoot); err != nil || len(entries) != 0 {
 			t.Fatalf("repoRoot mutated on refusal: %v %v", entries, err)
@@ -1256,12 +1295,12 @@ func TestPrepareIndependentNativeHookProjectionStagedIndexOnly(t *testing.T) {
 	}
 	found := false
 	for _, file := range projection.support {
-		if file.Path == "scripts/run.sh" && bytes.Equal(file.Bytes, []byte{0x00, 0x41, 0xff, 0x0a}) && file.Mode.Perm() == 0o751 {
+		if file.Path == "hooks/scripts/run.sh" && bytes.Equal(file.Bytes, []byte{0x00, 0x41, 0xff, 0x0a}) && file.Mode.Perm() == 0o751 {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("support = %#v, want staged scripts/run.sh", projection.support)
+		t.Fatalf("support = %#v, want staged hooks/scripts/run.sh", projection.support)
 	}
 	if err := os.RemoveAll(staged); err != nil {
 		t.Fatal(err)

@@ -97,7 +97,12 @@ describe('resolveAdminAuthError', () => {
     }
   })
 
-  it('honors a configured browser base for destinations and stays relative', () => {
+  it('honors root and subpath browser bases for destinations and stays relative', () => {
+    const root = resolveAdminAuthError({ code: 'authentication_rejected', next: '/admin/registries/team' }, '/')
+    expect(root.loginHref).toBe('/api/v1/admin/auth/login?next=%2Fadmin%2Fregistries%2Fteam')
+    const rejectedLegacy = resolveAdminAuthError({ code: 'authentication_rejected', next: '/marketplace/admin/x' }, '/')
+    expect(rejectedLegacy.loginHref).toBe('/api/v1/admin/auth/login?next=%2Fadmin')
+
     const kept = resolveAdminAuthError({ code: 'authentication_rejected', next: '/base/admin/x' }, '/base/')
     expect(kept.loginHref).toBe('/api/v1/admin/auth/login?next=%2Fbase%2Fadmin%2Fx')
     const otherBase = resolveAdminAuthError({ code: 'authentication_rejected', next: '/marketplace/admin/x' }, '/base/')

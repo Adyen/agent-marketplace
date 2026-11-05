@@ -28,8 +28,8 @@ import (
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
-func previewSkill(name string, machine bool) resolver.ResolvedArtifact {
-	art := cleanupLinkSkill(name, machine, hcc.TargetDevin)
+func previewSkill(t *testing.T, name string, machine bool) resolver.ResolvedArtifact {
+	art := cleanupLinkSkill(t, name, machine, hcc.TargetDevin)
 	art.RequiredBy = []resolver.ResourceRef{{Kind: ir.KindSkill, Name: "parent"}}
 	return art
 }
@@ -71,7 +71,7 @@ func runPreview(t *testing.T, repo string, resolved, preview []resolver.Resolved
 // spec: materialization/preview-preserves-existing-owned-file-and-link-paths
 func TestImpliedPreviewPreservesExistingSkillLink(t *testing.T) {
 	repo, _ := devinEnv(t)
-	helper := previewSkill("helper", false)
+	helper := previewSkill(t, "helper", false)
 	seedCleanupLinks(t, repo, helper)
 	link := filepath.Join(repo, ".devin", "skills", "helper")
 	targetBefore, err := os.Readlink(link)
@@ -83,7 +83,7 @@ func TestImpliedPreviewPreservesExistingSkillLink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	selected := cleanupLinkSkill("parent", false, hcc.TargetDevin)
+	selected := cleanupLinkSkill(t, "parent", false, hcc.TargetDevin)
 	runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{helper})
 
 	targetAfter, err := os.Readlink(link)
@@ -96,7 +96,7 @@ func TestImpliedPreviewPreservesExistingSkillLink(t *testing.T) {
 	if statAfter, err := os.Lstat(link); err != nil || statAfter.ModTime() != statBefore.ModTime() {
 		t.Fatalf("preview link rewritten: %v", err)
 	}
-	missing := previewSkill("missing", false)
+	missing := previewSkill(t, "missing", false)
 	runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{helper, missing})
 	if _, err := os.Lstat(filepath.Join(repo, ".devin", "skills", "missing")); !os.IsNotExist(err) {
 		t.Fatalf("preview created a missing output: %v", err)
@@ -126,7 +126,7 @@ func TestImpliedPreviewPreservesAggregateIdentityWithoutAdoption(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	selected := cleanupLinkSkill("parent", false, hcc.TargetDevin)
+	selected := cleanupLinkSkill(t, "parent", false, hcc.TargetDevin)
 	report = runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{keep})
 	if report != nil && hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("preview Run diagnostics = %#v", report.Diags)
@@ -152,11 +152,11 @@ func TestImpliedPreviewPreservesAggregateIdentityWithoutAdoption(t *testing.T) {
 // spec: materialization/preview-retention-does-not-suppress-unrelated-pruning
 func TestImpliedPreviewKeepsUnrelatedStalePruning(t *testing.T) {
 	repo, _ := devinEnv(t)
-	keep := previewSkill("keep", false)
-	stale := cleanupLinkSkill("stale", false, hcc.TargetDevin)
+	keep := previewSkill(t, "keep", false)
+	stale := cleanupLinkSkill(t, "stale", false, hcc.TargetDevin)
 	seedCleanupLinks(t, repo, keep, stale)
 
-	selected := cleanupLinkSkill("parent", false, hcc.TargetDevin)
+	selected := cleanupLinkSkill(t, "parent", false, hcc.TargetDevin)
 	runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{keep})
 
 	if _, err := os.Lstat(filepath.Join(repo, ".devin", "skills", "keep")); err != nil {
@@ -170,9 +170,9 @@ func TestImpliedPreviewKeepsUnrelatedStalePruning(t *testing.T) {
 // spec: materialization/removing-the-last-requiring-selection-ends-preview-retention
 func TestImpliedPreviewRetentionEndsWithLastRequirer(t *testing.T) {
 	repo, _ := devinEnv(t)
-	keep := previewSkill("keep", false)
+	keep := previewSkill(t, "keep", false)
 	seedCleanupLinks(t, repo, keep)
-	selected := cleanupLinkSkill("parent", false, hcc.TargetDevin)
+	selected := cleanupLinkSkill(t, "parent", false, hcc.TargetDevin)
 
 	runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{keep})
 	if _, err := os.Lstat(filepath.Join(repo, ".devin", "skills", "keep")); err != nil {
@@ -200,7 +200,7 @@ func TestImpliedPreviewMalformedAggregateFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	selected := cleanupLinkSkill("parent", false, hcc.TargetDevin)
+	selected := cleanupLinkSkill(t, "parent", false, hcc.TargetDevin)
 	report = runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{keep})
 	if report == nil || !hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("malformed aggregate under preview must fail closed, diags = %#v", report.Diags)
@@ -249,7 +249,7 @@ func TestImpliedPreviewOwnershipStateFailClosed(t *testing.T) {
 				}
 			}
 
-			selected := cleanupLinkSkill("parent", false, hcc.TargetDevin)
+			selected := cleanupLinkSkill(t, "parent", false, hcc.TargetDevin)
 			report, err = Run(context.Background(), repo, []resolver.ResolvedArtifact{selected, sibling}, WithImpliedPreview([]resolver.ResolvedArtifact{keep}))
 			if err != nil {
 				t.Fatalf("Run error = %v", err)
@@ -330,7 +330,7 @@ func TestImpliedPreviewRetainsKeyedEntryAcrossSiblingUpdate(t *testing.T) {
 		t.Fatal("seed produced no ownership record for beta")
 	}
 
-	selected := cleanupLinkSkill("parent", false, hcc.TargetDevin)
+	selected := cleanupLinkSkill(t, "parent", false, hcc.TargetDevin)
 	report = runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{keep})
 	requireNoErrorDiags(t, report.Diags)
 	after := readFileString(t, path)
@@ -419,7 +419,7 @@ func TestImpliedPreviewDriftedOwnedEntryKeepsExistingBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	selected := cleanupLinkSkill("parent", false, hcc.TargetDevin)
+	selected := cleanupLinkSkill(t, "parent", false, hcc.TargetDevin)
 	report = runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{keep})
 	requireNoErrorDiags(t, report.Diags)
 	raw := readFileString(t, path)
@@ -453,7 +453,7 @@ func TestImpliedPreviewCodexMCPKeepsOwnedTOMLIdentity(t *testing.T) {
 		}
 	}
 
-	selected := cleanupLinkSkill("parent", false, hcc.TargetCodex)
+	selected := cleanupLinkSkill(t, "parent", false, hcc.TargetCodex)
 	report = runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{keep, machineKeep})
 	requireNoErrorDiags(t, report.Diags)
 	repoRaw := readFileString(t, repoConfig)
@@ -491,7 +491,7 @@ func TestImpliedPreviewGeminiNativeRetainsOwnedMCP(t *testing.T) {
 	if _, err := os.Stat(settings); err != nil {
 		t.Fatalf("seed settings missing: %v", err)
 	}
-	selected := cleanupLinkSkill("parent", true, hcc.TargetGemini)
+	selected := cleanupLinkSkill(t, "parent", true, hcc.TargetGemini)
 	report = runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{keep})
 	requireNoErrorDiags(t, report.Diags)
 	raw := readFileString(t, settings)
@@ -519,7 +519,7 @@ func TestImpliedPreviewMarkerMergeRetainsManagedEntries(t *testing.T) {
 		t.Fatalf("seed mcp.json missing managed entries: %s", managed)
 	}
 
-	selected := cleanupLinkSkill("parent", false, hcc.TargetFactory)
+	selected := cleanupLinkSkill(t, "parent", false, hcc.TargetFactory)
 	report = runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{keep})
 	requireNoErrorDiags(t, report.Diags)
 	raw := readFileString(t, path)
@@ -625,7 +625,7 @@ func TestImpliedPreviewMergeSnapshotRefusesUnsafeAggregate(t *testing.T) {
 				}
 			}
 
-			selected := cleanupLinkSkill("parent", false, hcc.TargetFactory)
+			selected := cleanupLinkSkill(t, "parent", false, hcc.TargetFactory)
 			report, err = Run(context.Background(), repo, []resolver.ResolvedArtifact{selected, sibling}, WithImpliedPreview([]resolver.ResolvedArtifact{keep}))
 			if err != nil {
 				t.Fatalf("Run error = %v", err)
@@ -747,7 +747,7 @@ func TestImpliedPreviewRetainsCommandDirOutputsAcrossTargets(t *testing.T) {
 			t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 			t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 			commandArtifact := func(name string, preview bool) resolver.ResolvedArtifact {
-				art := cleanupLinkSkill(name, tc.machine, tc.target)
+				art := cleanupLinkSkill(t, name, tc.machine, tc.target)
 				art.Kind = ir.KindCommand
 				art.Resource = ir.NewCommand(name, "command", name+" body", nil, ir.SourceRef{})
 				if preview {
@@ -771,7 +771,7 @@ func TestImpliedPreviewRetainsCommandDirOutputsAcrossTargets(t *testing.T) {
 				}
 			}
 
-			selected := cleanupLinkSkill("parent", tc.machine, tc.target)
+			selected := cleanupLinkSkill(t, "parent", tc.machine, tc.target)
 			report = runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{keep})
 			requireNoErrorDiags(t, report.Diags)
 			if _, err := os.Lstat(keepPath); err != nil {
@@ -788,8 +788,8 @@ func TestImpliedPreviewRetainsCommandDirOutputsAcrossTargets(t *testing.T) {
 func TestImpliedPreviewFileModePreservesBytesAndHonestReport(t *testing.T) {
 	repo, _ := devinEnv(t)
 	modes := config.MaterializationModes{Project: config.MaterializationModeFile, Machine: config.MaterializationModeFile}
-	helper := previewSkill("helper", false)
-	stale := cleanupLinkSkill("zzstale", false, hcc.TargetDevin)
+	helper := previewSkill(t, "helper", false)
+	stale := cleanupLinkSkill(t, "zzstale", false, hcc.TargetDevin)
 	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{helper, stale}, WithMaterializationModes(modes))
 	if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("seed=%#v err=%v", report, err)
@@ -809,7 +809,7 @@ func TestImpliedPreviewFileModePreservesBytesAndHonestReport(t *testing.T) {
 		}
 	}
 
-	selected := cleanupLinkSkill("parent", false, hcc.TargetDevin)
+	selected := cleanupLinkSkill(t, "parent", false, hcc.TargetDevin)
 	report = runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{helper}, WithMaterializationModes(modes), WithDryRun())
 	requireNoErrorDiags(t, report.Diags)
 	tr := report.PerTarget[hcc.TargetDevin]
@@ -823,7 +823,7 @@ func TestImpliedPreviewFileModePreservesBytesAndHonestReport(t *testing.T) {
 	}
 
 	for run := 0; run < 2; run++ {
-		report = runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{helper, previewSkill("missing", false)}, WithMaterializationModes(modes))
+		report = runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{helper, previewSkill(t, "missing", false)}, WithMaterializationModes(modes))
 		requireNoErrorDiags(t, report.Diags)
 		if got := readFileString(t, file); got != before {
 			t.Fatalf("mutating preview run %d rewrote the retained output:\nbefore %s\nafter  %s", run, before, got)
@@ -890,7 +890,7 @@ func TestImpliedPreviewCompileRefusalRetainsOwnedCodexMCP(t *testing.T) {
 			unsupported := ir.NewMcpServer("keep", "keep-binary", nil, nil, nil, ir.SourceRef{})
 			unsupported.OAuthClientID = "unsupported"
 			keep.Resource = unsupported
-			selected := cleanupLinkSkill("parent", false, hcc.TargetCodex)
+			selected := cleanupLinkSkill(t, "parent", false, hcc.TargetCodex)
 			opts := []RunOption{WithImpliedPreview([]resolver.ResolvedArtifact{keep})}
 			if variant.dryRun {
 				opts = append(opts, WithDryRun())
@@ -922,13 +922,18 @@ func TestImpliedPreviewCompileRefusalRetainsOwnedCodexHook(t *testing.T) {
 	repo, home := devinEnv(t)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-	hook := resolver.ResolvedArtifact{
-		Entry:     catalog.Entry{Kind: ir.KindHook, Name: "keep", Resource: ir.NewHookWithMatcher("keep", "PreToolUse", "Bash", "./keep", "command", nil, ir.SourceRef{})},
-		Source:    config.RepoCommitted,
-		Harnesses: []hcc.Target{hcc.TargetCodex},
+	codexHook := func(handler string) resolver.ResolvedArtifact {
+		t.Helper()
+		resolved, _ := sourceBackedHookFixtures(t, "claude", config.RepoCommitted, hcc.TargetCodex, "keep",
+			[]byte(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[`+handler+`]}]}}`), nil)
+		if len(resolved) != 1 {
+			t.Fatalf("expected one ingested hook, got %d", len(resolved))
+		}
+		return resolved[0]
 	}
-	sibling := cleanupLinkSkill("sibling", false, hcc.TargetCodex)
-	stale := cleanupLinkSkill("zzstale", false, hcc.TargetCodex)
+	hook := codexHook(`{"type":"command","command":"./keep"}`)
+	sibling := cleanupLinkSkill(t, "sibling", false, hcc.TargetCodex)
+	stale := cleanupLinkSkill(t, "zzstale", false, hcc.TargetCodex)
 	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{hook, sibling, stale})
 	if err != nil || report == nil || hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("seed=%#v err=%v", report, err)
@@ -937,8 +942,7 @@ func TestImpliedPreviewCompileRefusalRetainsOwnedCodexHook(t *testing.T) {
 	hookPath := filepath.Join(repo, ".codex", codexHooksFile)
 	before := readFileString(t, hookPath)
 
-	invalid := ir.NewHookWithMatcher("keep", "PreToolUse", "Bash", "./keep", "prompt", nil, ir.SourceRef{})
-	hook.Resource = invalid
+	hook = codexHook(`{"type":"prompt","prompt":"./keep"}`)
 	report, err = Run(context.Background(), repo, []resolver.ResolvedArtifact{sibling}, WithImpliedPreview([]resolver.ResolvedArtifact{hook}))
 	if err != nil {
 		t.Fatalf("Run error = %v", err)
@@ -947,7 +951,7 @@ func TestImpliedPreviewCompileRefusalRetainsOwnedCodexHook(t *testing.T) {
 		t.Fatalf("preview hook refusal hidden: %#v", report.Diags)
 	}
 	if got := readFileString(t, hookPath); got != before {
-		t.Fatalf("preview hook refusal changed owned hooks\nbefore: %s\nafter: %s", before, got)
+		t.Fatalf("preview hook refusal changed owned hooks\nbefore: %s\nafter: %s\ndiags: %#v", before, got, report.Diags)
 	}
 	if _, statErr := os.Lstat(filepath.Join(repo, ".agents", "skills", "sibling")); statErr != nil {
 		t.Fatalf("selected sibling not materialized beside preview refusal: %v", statErr)
@@ -960,8 +964,8 @@ func TestImpliedPreviewCompileRefusalRetainsOwnedCodexHook(t *testing.T) {
 // spec: materialization/preview-preservation-does-not-weaken-fail-closed-ownership-or-aggregate-handling
 func TestImpliedPreviewNilResourceBlocksWholeKey(t *testing.T) {
 	repo, home := devinEnv(t)
-	keep := previewSkill("keep", false)
-	staleMachine := cleanupLinkSkill("zzmachine", true, hcc.TargetDevin)
+	keep := previewSkill(t, "keep", false)
+	staleMachine := cleanupLinkSkill(t, "zzmachine", true, hcc.TargetDevin)
 	seedCleanupLinks(t, repo, keep, staleMachine)
 	keepPath := filepath.Join(repo, ".devin", "skills", "keep")
 	stalePath := filepath.Join(devinUserRoot(home), "skills", "zzmachine")
@@ -970,10 +974,10 @@ func TestImpliedPreviewNilResourceBlocksWholeKey(t *testing.T) {
 			t.Fatalf("positive seed missing at %s: %v", path, err)
 		}
 	}
-	nilPreview := cleanupLinkSkill("nilres", false, hcc.TargetDevin)
+	nilPreview := cleanupLinkSkill(t, "nilres", false, hcc.TargetDevin)
 	nilPreview.RequiredBy = []resolver.ResourceRef{{Kind: ir.KindSkill, Name: "parent"}}
 	nilPreview.Resource = nil
-	selected := cleanupLinkSkill("parent", false, hcc.TargetDevin)
+	selected := cleanupLinkSkill(t, "parent", false, hcc.TargetDevin)
 	report := runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{keep, nilPreview})
 	if !hasDiagCode(report.Diags, "materialize.resource.nil") {
 		t.Fatalf("nil preview resource diagnostic missing: %#v", report.Diags)
@@ -1067,7 +1071,7 @@ func TestImpliedPreviewNilResourceRetainsOwnedMCP(t *testing.T) {
 			}
 
 			sibling := mcpArtifact("sibling", false, tc.target)
-			nilPreview := cleanupLinkSkill("nilres", false, tc.target)
+			nilPreview := cleanupLinkSkill(t, "nilres", false, tc.target)
 			nilPreview.RequiredBy = []resolver.ResourceRef{{Kind: ir.KindSkill, Name: "parent"}}
 			nilPreview.Resource = nil
 			report = runPreview(t, repo, []resolver.ResolvedArtifact{sibling}, []resolver.ResolvedArtifact{keep, nilPreview})
@@ -1096,16 +1100,16 @@ func TestImpliedPreviewNilResourceRetainsOwnedMCP(t *testing.T) {
 // spec: materialization/preview-preservation-does-not-weaken-fail-closed-ownership-or-aggregate-handling
 func TestImpliedPreviewNilResourceBlocksWholeKeyMachineScope(t *testing.T) {
 	repo, home := devinEnv(t)
-	staleMachine := cleanupLinkSkill("zzmachine", true, hcc.TargetDevin)
+	staleMachine := cleanupLinkSkill(t, "zzmachine", true, hcc.TargetDevin)
 	seedCleanupLinks(t, repo, staleMachine)
 	stalePath := filepath.Join(devinUserRoot(home), "skills", "zzmachine")
 	if _, err := os.Lstat(stalePath); err != nil {
 		t.Fatalf("positive machine seed missing at %s: %v", stalePath, err)
 	}
-	nilPreview := cleanupLinkSkill("nilres", false, hcc.TargetDevin)
+	nilPreview := cleanupLinkSkill(t, "nilres", false, hcc.TargetDevin)
 	nilPreview.RequiredBy = []resolver.ResourceRef{{Kind: ir.KindSkill, Name: "parent"}}
 	nilPreview.Resource = nil
-	selected := cleanupLinkSkill("parent", true, hcc.TargetDevin)
+	selected := cleanupLinkSkill(t, "parent", true, hcc.TargetDevin)
 	report := runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{nilPreview}, WithMachineScopeOnly())
 	if !hasDiagCode(report.Diags, "materialize.resource.nil") {
 		t.Fatalf("nil preview resource diagnostic missing: %#v", report.Diags)
@@ -1130,8 +1134,8 @@ func TestImpliedPreviewMergeErrorSkipsOnlyFailedKey(t *testing.T) {
 	mergePath := filepath.Join(repo, ".factory", "mcp.json")
 	before := readFileString(t, mergePath)
 
-	healthy := cleanupLinkSkill("healthy", false, hcc.TargetDevin)
-	work, allOutputs, blocked, diags := buildWorkItems([]resolver.ResolvedArtifact{healthy}, repo)
+	healthy := cleanupLinkSkill(t, "healthy", false, hcc.TargetDevin)
+	work, allOutputs, blocked, diags, _ := buildWorkItems([]resolver.ResolvedArtifact{healthy}, repo)
 	compiled := compileWorkItems(work, diags, allOutputs, blocked, repo)
 	factoryKey := outputKey{target: hcc.TargetFactory}
 	preview := &compilePhaseResult{
@@ -1158,8 +1162,8 @@ func TestImpliedPreviewMergeErrorSkipsOnlyFailedKey(t *testing.T) {
 func TestImpliedPreviewSharedGeminiCoalesceRefusesWithoutMutation(t *testing.T) {
 	home := configureSharedGeminiHome(t)
 	repo := home
-	healthy := cleanupLinkSkill("healthy", false, hcc.TargetDevin)
-	work, allOutputs, blocked, diags := buildWorkItems([]resolver.ResolvedArtifact{healthy}, repo)
+	healthy := cleanupLinkSkill(t, "healthy", false, hcc.TargetDevin)
+	work, allOutputs, blocked, diags, _ := buildWorkItems([]resolver.ResolvedArtifact{healthy}, repo)
 	compiled := compileWorkItems(work, diags, allOutputs, blocked, repo)
 	geminiKey := outputKey{target: hcc.TargetGemini}
 	preview := &compilePhaseResult{
@@ -1181,11 +1185,12 @@ func TestImpliedPreviewSharedGeminiCoalesceRefusesWithoutMutation(t *testing.T) 
 // spec: materialization/preview-retention-does-not-suppress-unrelated-pruning
 func TestImpliedPreviewFactoryHookComponentRetainsManagedEntries(t *testing.T) {
 	hook := func(name string, preview bool) resolver.ResolvedArtifact {
-		art := resolver.ResolvedArtifact{
-			Entry:     catalog.Entry{Kind: ir.KindHook, Name: name, Resource: ir.NewHook(name, "PreToolUse", "echo "+name, "command", nil, ir.SourceRef{})},
-			Source:    config.RepoCommitted,
-			Harnesses: []hcc.Target{hcc.TargetFactory},
+		resolved, _ := sourceBackedHookFixtures(t, "claude", config.RepoCommitted, hcc.TargetFactory, name,
+			[]byte(`{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"echo `+name+`"}]}]}}`), nil)
+		if len(resolved) != 1 {
+			t.Fatalf("expected one ingested hook, got %d", len(resolved))
 		}
+		art := resolved[0]
 		if preview {
 			art.RequiredBy = []resolver.ResourceRef{{Kind: ir.KindSkill, Name: "parent"}}
 		}
@@ -1198,7 +1203,7 @@ func TestImpliedPreviewFactoryHookComponentRetainsManagedEntries(t *testing.T) {
 	}{
 		{
 			name:     "empty-component",
-			selected: func() resolver.ResolvedArtifact { return cleanupLinkSkill("parent", false, hcc.TargetFactory) },
+			selected: func() resolver.ResolvedArtifact { return cleanupLinkSkill(t, "parent", false, hcc.TargetFactory) },
 			written: func(t *testing.T, repo, _ string) {
 				t.Helper()
 				if _, statErr := os.Lstat(filepath.Join(repo, ".factory", "skills", "parent")); statErr != nil {
@@ -1225,7 +1230,7 @@ func TestImpliedPreviewFactoryHookComponentRetainsManagedEntries(t *testing.T) {
 				t.Fatalf("seed=%#v err=%v", report, err)
 				return
 			}
-			path := filepath.Join(repo, ".factory", "hooks", "hooks.json")
+			path := filepath.Join(repo, ".factory", "hooks.json")
 			seeded := readFileString(t, path)
 			for _, want := range []string{"echo keep", "echo zzstale"} {
 				if !strings.Contains(seeded, want) {
@@ -1332,12 +1337,12 @@ func TestImpliedPreviewDoesNotDuplicateManifestDiscovery(t *testing.T) {
 	if err := os.WriteFile(manifest, []byte("["), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	selected := cleanupLinkSkill("parent", false, hcc.TargetDevin)
+	selected := cleanupLinkSkill(t, "parent", false, hcc.TargetDevin)
 	baseline, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{selected})
 	if err != nil {
 		t.Fatal(err)
 	}
-	withPreview := runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{previewSkill("keep", false)})
+	withPreview := runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{previewSkill(t, "keep", false)})
 	manifestErrors := func(report *Report) int {
 		n := 0
 		for _, d := range report.Diags {

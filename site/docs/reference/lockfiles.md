@@ -19,7 +19,7 @@ Directory sources are read live from disk on every run and never appear in a loc
 
 ### Organization lock
 
-Some managed setups never deploy an organization lock, and the CLI supports that permanently. An absent organization lock leaves that layer unlocked. Normal online runs, including `sync --check`, resolve the organization's explicit Marketplace requests into a verified lock that exists only in memory for that run, and never write `/etc`. Offline runs and `lock --check` need a deployed organization lock only to resolve the organization's Marketplace requests. Organization Git sources work without one. A present organization lock is exact: the CLI uses only what it records and stops with an error when it no longer matches the organization file.
+Some managed setups never deploy an organization lock, and the CLI supports that permanently. An absent organization lock leaves that layer unlocked. Normal online runs, including `sync --check`, resolve the organization's explicit Marketplace requests into a verified lock that exists only in memory for that run, and never write `/etc`. Offline runs and `lock --check` need a deployed organization lock only to resolve the organization's Marketplace requests. Organization Git sources work without one. A present organization lock is exact: the CLI uses only what it records and stops with an error when it no longer matches the organization file. The one exception is `lock --scope organization` itself, which reconciles the mismatch instead of refusing.
 
 Only `lock --scope organization`, run by an administrator who can write `/etc/agent-marketplace`, creates or updates the organization lock. The [configuration layers reference](./configuration-layers.md#organization-trust-rules) lists the ownership and permission rules a deployed organization lock must meet.
 
@@ -139,7 +139,7 @@ Each resource record has these fields:
 | `source_path` | `index-only` | Path of the resource inside the source repository. |
 | `selected_by` | resources selected through a collection | Each collection (`registry_id`, `name`, `revision`) that selected this resource. Every entry must point to a collection locked in the same file. |
 
-The CLI installs a Marketplace resource only when the requested endpoint, registry, resource, and revision match a record in the owning layer's lock.
+The CLI installs a Marketplace resource only when the requested endpoint, registry, resource, and revision match a record in the owning layer's lock. A writing `sync` or `lock` adds records for selected Marketplace resources that an existing lock is missing, resolving them from the endpoint the lock already identifies and keeping existing pins; `sync --check`, `sync --locked`, `sync --offline`, and `doctor` report the gap as `v4.marketplace-lock-mismatch` and never write it.
 
 A Marketplace can repair a `mirror` archive without changing the resource's content: the revision keeps its `content_digest` but starts serving a different `archive_digest`. A writing `sync` or `update` refreshes the locked `archive_digest` to the served digest, re-acquires the artifact, and reports `marketplace.archive-evidence-refreshed`; if the refreshed artifact cannot be acquired, the last-good installation stays in place and no unverified evidence is written. `sync --locked` instead fails with `locked archive digest drifted` and names `agent-marketplace sync` or `agent-marketplace update` as the fix. `sync --check` and `sync --offline`, which never write locks, refuse the same drift. Locks managed by another layer (such as a deployed organization lock) cannot be refreshed by this client and report that scope boundary instead.
 
@@ -150,17 +150,17 @@ A Marketplace can repair a `mirror` archive without changing the resource's cont
 | `lock` | Creates missing locks and updates stale ones as little as possible. Applies to the user, repository, and personal-local layers unless `--scope` narrows it. |
 | `lock --check` | Reports changes `lock` would make, without writing. Also checks the organization lock. |
 | `lock --upgrade` | Resolves the selected Git sources again at their current refs. Narrow it with resource names, `--registry`, `--ref`, `--path`, or `--kind`. |
-| `lock --scope organization` | Creates or updates the organization lock. Requires write access to `/etc/agent-marketplace`. |
+| `lock --scope organization` | Creates or updates the organization lock. Requires write access to `/etc/agent-marketplace`. After the organization file changes a Git source's URL or ref, a plain run re-resolves only the changed entries and keeps every unchanged entry at its locked commit; `--upgrade` moves every entry to its current ref. Neither form requires deleting the lock. |
 | `sync` | Installs from the locked commits and updates writable locks that no longer match the configuration. |
 | `sync --locked` | Requires every lock to be current and never writes configuration or locks, including refreshed Marketplace archive evidence. |
 | `sync --check` | Reports lock and output drift without writing, and exits `1` if anything is out of date. |
-| `update` | Advances Git locks to the current commits of their refs, then syncs. Also refreshes Marketplace archive evidence when the locked content digest is unchanged. `--bump` first moves eligible refs in legacy v2/v3 `registries:` entries to newer matching tags; it does not yet rewrite v4 `sources:`. |
+| `update` | Advances Git locks to the current commits of their refs, then syncs. Also refreshes Marketplace archive evidence when the locked content digest is unchanged. `--bump` first moves eligible refs in v4 `sources:` to newer matching tags. Refs declared by included fragments are reported and left unchanged. |
 
-A current lock does not move when the remote branch or tag moves. Use `lock --upgrade` or `update` to pick up new commits.
+A current lock does not move when the remote branch or tag moves. `lock --upgrade` or `update` picks up new commits.
 
 ## Errors
 
-Invalid lock files fail with a `lock.invalid` error that wraps one of these codes:
+Invalid lockfiles fail with a `lock.invalid` error that wraps one of these codes:
 
 | Code | Meaning |
 |---|---|

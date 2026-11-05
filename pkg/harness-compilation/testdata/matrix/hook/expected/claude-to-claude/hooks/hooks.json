@@ -2,8 +2,8 @@
   "hooks": {
     "PreToolUse": [
       {
-        "command": "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh",
-        "matcher": "Read",
+        "command": "\"$CLAUDE_PROJECT_DIR\"/plugins/demo/scripts/check.sh",
+        "matcher": "Bash",
         "type": "command"
       }
     ]

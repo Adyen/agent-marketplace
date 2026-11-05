@@ -61,7 +61,7 @@ func TestNewModelSkipsInitWhenGlobalConfigExists(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, ".agents"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(home, ".agents", "config.yaml"), []byte("apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\nregistries: []\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(home, ".agents", "config.yaml"), []byte("apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources: {}\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 

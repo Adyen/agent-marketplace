@@ -2,7 +2,8 @@ mode: all
 
 image:
   repository: agent-marketplace
-  tag: latest
+  # Set an explicit tag for development or a verified digest for production.
+  tag: ""
   digest: ""
   pullPolicy: IfNotPresent
 
@@ -49,6 +50,7 @@ config:
       id: example-marketplace
       name: Example Agent Marketplace
       canonical_url: https://marketplace.example.invalid
+      browser_base: https://marketplace.example.invalid
     listen: 0.0.0.0:8080
     operations_listen: 0.0.0.0:9090
     storage:
@@ -186,10 +188,10 @@ web:
   replicas: 1
   image:
     repository: agent-marketplace-web
-    tag: latest
+    tag: ""
     digest: ""
     pullPolicy: IfNotPresent
-  basePath: /marketplace/
+  basePath: /
   publicApiBase: /
   env: []
   envFrom: []
@@ -201,7 +203,9 @@ web:
   probes:
     liveness:
       enabled: true
-      path: /
+      # Empty path derives from web.basePath (without its trailing slash),
+      # because the Nuxt server only serves routes under the base path.
+      path: ""
       port: http
       initialDelaySeconds: 10
       periodSeconds: 30
@@ -209,19 +213,20 @@ web:
       failureThreshold: 3
     readiness:
       enabled: true
-      path: /
+      path: ""
       port: http
       initialDelaySeconds: 10
       periodSeconds: 10
       timeoutSeconds: 5
       failureThreshold: 3
 
-site:
+docs:
+  # Also switches all Marketplace documentation links to origin-root /docs/.
   enabled: false
   replicas: 1
   image:
-    repository: agent-marketplace-site
-    tag: latest
+    repository: agent-marketplace-docs
+    tag: ""
     digest: ""
     pullPolicy: IfNotPresent
   env: []
@@ -234,7 +239,7 @@ site:
   probes:
     liveness:
       enabled: true
-      path: /
+      path: /docs/
       port: http
       initialDelaySeconds: 10
       periodSeconds: 30
@@ -242,7 +247,7 @@ site:
       failureThreshold: 3
     readiness:
       enabled: true
-      path: /
+      path: /docs/
       port: http
       initialDelaySeconds: 10
       periodSeconds: 10
@@ -257,7 +262,7 @@ service:
   web:
     type: ClusterIP
     port: 3000
-  site:
+  docs:
     type: ClusterIP
     port: 8080
 

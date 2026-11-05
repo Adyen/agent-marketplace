@@ -29,7 +29,7 @@ func TestUnreachableRegistryIsAHardCatalogError(t *testing.T) {
 	}
 
 	cfg := &config.Config{
-		APIVersion: config.APIVersionV3,
+		APIVersion: config.APIVersionV4,
 		Registries: entries,
 	}
 

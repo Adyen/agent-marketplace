@@ -1,0 +1,32 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/cmd/agent-marketplace
+cpu: Apple M4 Max
+                                 | caller-before.txt | caller-after.txt |
+                                 |                      sec/op                      |          sec/op           vs base               |
+ProjectLockedRoots/roots=1-16                                          148.3n +/- inf [1]               109.3n +/- inf [1]  -26.30% (p=0.008 n=5)
+ProjectLockedRoots/roots=32-16                                         5.648u +/- inf [1]               4.585u +/- inf [1]  -18.82% (p=0.008 n=5)
+ProjectLockedRoots/roots=256-16                                       103.25u +/- inf [1]               44.04u +/- inf [1]  -57.35% (p=0.008 n=5)
+ProjectLockedRoots/roots=2048-16                                      5203.3u +/- inf [1]               360.6u +/- inf [1]  -93.07% (p=0.008 n=5)
+geomean                                                                25.90u                     9.445u        -63.53%
+[1] need >= 6 samples for confidence interval at level 0.95
+
+                                 | caller-before.txt | caller-after.txt |
+                                 |                       B/op                       |         B/op           vs base                  |
+ProjectLockedRoots/roots=1-16                                           160.0 +/- inf [1]             160.0 +/- inf [1]         ~ (p=1.000 n=5) [2]
+ProjectLockedRoots/roots=32-16                                        5.250Ki +/- inf [1]           5.250Ki +/- inf [1]         ~ (p=1.000 n=5) [2]
+ProjectLockedRoots/roots=256-16                                       42.25Ki +/- inf [1]           81.67Ki +/- inf [1]   +93.31% (p=0.008 n=5)
+ProjectLockedRoots/roots=2048-16                                      306.0Ki +/- inf [1]           658.4Ki +/- inf [1]  +115.17% (p=0.008 n=5)
+geomean                                                               10.15Ki                 14.49Ki         +42.81%
+[1] need >= 6 samples for confidence interval at level 0.95
+[2] all samples are equal
+
+                                 | caller-before.txt | caller-after.txt |
+                                 |                    allocs/op                     |       allocs/op        vs base                  |
+ProjectLockedRoots/roots=1-16                                           2.000 +/- inf [1]             2.000 +/- inf [1]         ~ (p=1.000 n=5) [2]
+ProjectLockedRoots/roots=32-16                                          2.000 +/- inf [1]             2.000 +/- inf [1]         ~ (p=1.000 n=5) [2]
+ProjectLockedRoots/roots=256-16                                         3.000 +/- inf [1]            11.000 +/- inf [1]  +266.67% (p=0.008 n=5)
+ProjectLockedRoots/roots=2048-16                                        3.000 +/- inf [1]            23.000 +/- inf [1]  +666.67% (p=0.008 n=5)
+geomean                                                                 2.449                   5.640        +130.26%
+[1] need >= 6 samples for confidence interval at level 0.95
+[2] all samples are equal

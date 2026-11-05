@@ -10,6 +10,12 @@ import (
 func compatibilityResourceProbes(harness string, f compatibilityFixture) []compatibilityNativeProbe {
 	var probes []compatibilityNativeProbe
 	switch harness {
+	case "opencode":
+		probes = append(probes,
+			compatibilityNativeProbe{kind: "skill", list: []string{"debug", "skill"}, names: []string{f.name("skill")}, jsonInventory: true},
+			compatibilityNativeProbe{kind: "command", list: []string{"debug", "config"}, names: []string{f.name("command")}, jsonInventory: true},
+			compatibilityNativeProbe{kind: "subagent", list: []string{"agent", "list"}, names: []string{f.name("subagent")}},
+		)
 	case "devin":
 		for _, kind := range []string{"skill", "command"} {
 			probes = append(probes, compatibilityNativeProbe{kind: kind, list: []string{"skills", "list"}, names: []string{f.name(kind)}})
@@ -52,19 +58,20 @@ func compatibilityNativeGap(harness, kind string) string {
 	}
 	if kind == "rule" {
 		switch harness {
-		case "claude", "gemini", "devin", "codex":
+		case "claude", "gemini", "devin", "codex", "opencode":
 			return "the compiler explicitly suppresses this target's rule output; omission and diagnostic are tested"
 		default:
 			return "no credential-free CLI inventory of native rule files is exposed; model compliance is not a listing check"
 		}
 	}
 	return map[string]map[string]string{
-		"claude":  {"hook": "CLI initialization lists commands and agents, not installed hooks; SDK hook callbacks are caller-supplied handlers, not discovery"},
-		"codex":   {"subagent": "codex agents lists running sessions, not custom agent definitions; the inspected app-server catalogs do not expose a definition inventory"},
-		"devin":   {"subagent": "custom profiles are selected by run_subagent; no standalone profile inventory CLI is documented", "hook": "/hooks is an in-session command; no standalone credential-free hook inventory is documented"},
-		"factory": {"hook": "/hooks is an interactive manager; the documented resource RPC surface has no hook inventory method"},
-		"gemini":  {"command": "/commands list is session-scoped; headless input authenticates before slash-command dispatch", "subagent": "/agents list is session-scoped; headless input authenticates before slash-command dispatch", "hook": "/hooks list is session-scoped; terminal gemini hooks exposes migration, not listing"},
-		"cursor":  {"skill": "skill discovery is session-scoped; ACP requires authentication before session metadata", "command": "command discovery is session-scoped; ACP requires authentication before session metadata", "subagent": "no standalone custom-agent definition inventory is documented; ACP session metadata requires authentication", "hook": "no standalone hook inventory is documented; editor/session handling is not certified by MCP listing"},
+		"opencode": {"hook": "plugins have no native hook inventory command; the separate pinned opencode-probe gate executes installed command callbacks"},
+		"claude":   {"hook": "CLI initialization lists commands and agents, not installed hooks; SDK hook callbacks are caller-supplied handlers, not discovery"},
+		"codex":    {"subagent": "codex agents lists running sessions, not custom agent definitions; the inspected app-server catalogs do not expose a definition inventory"},
+		"devin":    {"subagent": "custom profiles are selected by run_subagent; no standalone profile inventory CLI is documented", "hook": "/hooks is an in-session command; no standalone credential-free hook inventory is documented"},
+		"factory":  {"hook": "/hooks is an interactive manager; the documented resource RPC surface has no hook inventory method"},
+		"gemini":   {"command": "/commands list is session-scoped; headless input authenticates before slash-command dispatch", "subagent": "/agents list is session-scoped; headless input authenticates before slash-command dispatch", "hook": "/hooks list is session-scoped; terminal gemini hooks exposes migration, not listing"},
+		"cursor":   {"skill": "skill discovery is session-scoped; ACP requires authentication before session metadata", "command": "command discovery is session-scoped; ACP requires authentication before session metadata", "subagent": "no standalone custom-agent definition inventory is documented; ACP session metadata requires authentication", "hook": "no standalone hook inventory is documented; editor/session handling is not certified by MCP listing"},
 	}[harness][kind]
 }
 

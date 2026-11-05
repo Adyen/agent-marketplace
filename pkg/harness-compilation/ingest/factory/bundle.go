@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/bundle"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -29,7 +30,7 @@ func New() *Loader { return &Loader{} }
 func (l *Loader) Source() ingest.Harness { return ingest.HarnessFactory }
 
 func (l *Loader) Detect(src fs.FS) bool {
-	if _, err := fs.ReadFile(src, factoryPluginManifest); err == nil {
+	if ingest.RegularFileExists(src, factoryPluginManifest) {
 		return true
 	}
 	if hasBarePluginForm(src) {
@@ -132,14 +133,23 @@ func (l *Loader) LoadBundle(src fs.FS) (*ingest.Bundle, error) {
 		diags = append(diags, addedDiags...)
 
 		if !hasPlugin {
-			consumed = append(consumed, ".factory/hooks/hooks.json", ".factory/mcp.json")
-			if hooks, hookDiags, err := LoadHooks(src, ".factory/hooks/hooks.json"); err == nil {
-				for _, hook := range hooks {
-					resources = append(resources, hook)
-				}
+			consumed = append(consumed, ".factory/hooks/hooks.json", ".factory/hooks.json", ".factory/mcp.json")
+			var hooks []*ir.Hook
+			if loaded, hookDiags, err := LoadHooks(src, ".factory/hooks/hooks.json"); err == nil {
+				hooks = append(hooks, loaded...)
 				diags = append(diags, hookDiags...)
 			} else if !isNotExist(err) {
 				return nil, fmt.Errorf("ingest/factory: load workspace hooks: %w", err)
+			}
+			if loaded, hookDiags, err := LoadHooks(src, ".factory/hooks.json"); err == nil {
+				hooks = append(hooks, loaded...)
+				diags = append(diags, hookDiags...)
+			} else if !isNotExist(err) {
+				return nil, fmt.Errorf("ingest/factory: load native hooks: %w", err)
+			}
+			bundle.DistinctHookNames(hooks)
+			for _, hook := range hooks {
+				resources = append(resources, hook)
 			}
 
 			resources, diags = appendMcpServers(resources, diags, src, ".factory/mcp.json")
@@ -351,8 +361,7 @@ func loadRulesFromRoot(src fs.FS, root string, seen map[string]bool) ([]ir.Resou
 }
 
 func hasPluginForm(src fs.FS) bool {
-	_, err := fs.ReadFile(src, factoryPluginManifest)
-	return err == nil
+	return ingest.RegularFileExists(src, factoryPluginManifest)
 }
 
 func hasWorkspaceForm(src fs.FS) bool {
@@ -368,8 +377,10 @@ func hasWorkspaceForm(src fs.FS) bool {
 			return true
 		}
 	}
-	_, err := fs.ReadFile(src, ".factory/mcp.json")
-	return err == nil
+	if ingest.RegularFileExists(src, ".factory/hooks.json") {
+		return true
+	}
+	return ingest.RegularFileExists(src, ".factory/mcp.json")
 }
 
 func hasBarePluginForm(src fs.FS) bool {
@@ -385,8 +396,7 @@ func hasBarePluginForm(src fs.FS) bool {
 			return true
 		}
 	}
-	_, err := fs.ReadFile(src, "mcp.json")
-	return err == nil
+	return ingest.RegularFileExists(src, "mcp.json")
 }
 
 func isNotExist(err error) bool {
@@ -394,7 +404,7 @@ func isNotExist(err error) bool {
 }
 
 func listSubdirs(src fs.FS, root string) ([]string, error) {
-	entries, err := fs.ReadDir(src, root)
+	entries, err := ingest.ReadSkillEntries(src, root)
 	if err != nil {
 		return nil, err
 	}

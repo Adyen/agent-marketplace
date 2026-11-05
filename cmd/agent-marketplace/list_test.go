@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -80,21 +81,22 @@ func TestListCommandPrintsCatalogWithStatuses(t *testing.T) {
 	commitAndPushAll(t, securityWorking, "Add security skills")
 
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries:
-  - url: `+securityOrigin+`
-    ref: main
+apiVersion: agent-marketplace/v4
+sources:
+  security: {git: file://`+securityOrigin+`, ref: main}
+resources:
+  security:
+    all: true
     required: true
-    skills:
-      - no-curl-bash
 `)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+infraOrigin+`
-    ref: main
-    skills:
-      - vm-lifecycle
+apiVersion: agent-marketplace/v4
+sources:
+  infra: {git: file://`+infraOrigin+`, ref: main}
+resources:
+  infra: [skill/vm-lifecycle]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -144,19 +146,22 @@ func TestListCommandDeduplicatesRegistriesDifferingOnlyByDotGitSuffix(t *testing
 	// Note: local bare git repos must use the .git suffix convention;
 	// without it, IsLocal() treats the path as a plain directory.
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
+apiVersion: agent-marketplace/v4
+sources:
+  origin: {git: file://`+origin+`, ref: main}
+resources:
+  origin:
+    all: true
     required: true
 `)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - efficient-go
+apiVersion: agent-marketplace/v4
+sources:
+  origin: {git: file://`+origin+`, ref: main}
+resources:
+  origin: [skill/efficient-go]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -203,11 +208,11 @@ metadata:
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - valid-skill
+apiVersion: agent-marketplace/v4
+sources:
+  origin: {git: file://`+origin+`, ref: main}
+resources:
+  origin: [skill/valid-skill]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -231,6 +236,77 @@ registries:
 	}
 }
 
+// spec: resource-listing/malformed-resources-show-their-kind
+func TestListCommandLabelsMalformedResourcesByKind(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "awesome-ai.git")
+	writeSkill(t, working, "valid-skill", "Valid skill", []string{"tested"})
+	writeFile(t, filepath.Join(working, "commands", "broken-command.md"), "---\ndescription: [unterminated\n---\n\nBroken command\n")
+	commitAndPushAll(t, working, "Add a valid skill and a malformed command")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
+sources:
+  origin: {git: file://`+origin+`, ref: main}
+resources:
+  origin: [skill/valid-skill]
+`)
+
+	withWorkingDir(t, repoRoot)
+	requireExactLocks(t)
+
+	malformedRow := func(rows []string) string {
+		for _, row := range rows {
+			if strings.Contains(row, "|broken-command.md|") {
+				return row
+			}
+		}
+		return ""
+	}
+	output, err := executeCommand("list")
+	if err != nil {
+		t.Fatalf("expected list command to succeed: %v\n%s", err, output)
+	}
+	_, rows := parseTable(t, output)
+	if got := malformedRow(rows); !strings.HasPrefix(got, "awesome-ai|command|broken-command.md|malformed: ingest.claude.load-command-failed:") {
+		t.Fatalf("malformed command row = %q, want it listed as a command\n%s", got, output)
+	}
+
+	output, err = executeCommand("list", "--kind", "command")
+	if err != nil {
+		t.Fatalf("expected list --kind command to succeed: %v\n%s", err, output)
+	}
+	_, rows = parseTable(t, output)
+	if malformedRow(rows) == "" {
+		t.Fatalf("list --kind command omitted the malformed command:\n%s", output)
+	}
+	output, err = executeCommand("list", "--kind", "skill")
+	if err != nil {
+		t.Fatalf("expected list --kind skill to succeed: %v\n%s", err, output)
+	}
+	_, rows = parseTable(t, output)
+	if got := malformedRow(rows); got != "" {
+		t.Fatalf("list --kind skill included the malformed command: %q", got)
+	}
+
+	// An unclassified malformed entry, such as a registry-level audit
+	// diagnostic, stays visible under every kind filter.
+	filtered := filterListRowsByKind([]listRow{
+		{Kind: "skill", Name: "demo"},
+		{Kind: "command", Name: "deploy.md"},
+		{Kind: "unknown", Name: "ingest.factory.unconsumed-config"},
+	}, "skill")
+	if len(filtered) != 2 || filtered[0].Name != "demo" || filtered[1].Name != "ingest.factory.unconsumed-config" {
+		t.Fatalf("list --kind skill kept %+v, want the skill and the unclassified entry", filtered)
+	}
+}
+
 func TestListCommandShowsDriftFooterWhenOutOfSync(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -244,11 +320,11 @@ func TestListCommandShowsDriftFooterWhenOutOfSync(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - valid-skill
+apiVersion: agent-marketplace/v4
+sources:
+  origin: {git: file://`+origin+`, ref: main}
+resources:
+  origin: [skill/valid-skill]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -443,7 +519,7 @@ func writeConfig(t *testing.T, path, content string) {
 		if isGlobalConfigPath(path) {
 			// Ensure the machine-wide config carries a target harness set.
 			if !strings.Contains(content, "apiVersion:") {
-				content = "apiVersion: agent-marketplace/v2\n" + content
+				content = "apiVersion: agent-marketplace/v4\n" + content
 			}
 			if !strings.Contains(content, "harnesses:") {
 				harnessesBlock := "harnesses:\n  - factory\n"
@@ -459,11 +535,11 @@ func writeConfig(t *testing.T, path, content string) {
 				ensureGlobalConfig(t)
 			}
 			if !strings.Contains(content, "apiVersion:") {
-				content = "apiVersion: agent-marketplace/v2\n" + content
+				content = "apiVersion: agent-marketplace/v4\n" + content
 			}
 		} else if !strings.Contains(content, "apiVersion:") {
-			// Other config.yaml files (e.g. organization fixtures) get the legacy header.
-			content = "apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\n" + content
+			// Other consumer config.yaml files receive the supported root sentinel.
+			content = "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\n" + content
 		}
 	}
 
@@ -524,7 +600,7 @@ func ensureGlobalConfig(t *testing.T) {
 	if _, err := os.Stat(globalPath); err == nil {
 		return
 	}
-	writeFile(t, globalPath, "apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\nregistries: []\n")
+	writeFile(t, globalPath, "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\n")
 }
 
 func writeFile(t *testing.T, path, content string) {
@@ -683,7 +759,7 @@ func TestListFromFlagListsResourcesAtAdHocRegistry(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+apiVersion: agent-marketplace/v4
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -703,6 +779,54 @@ registries: []
 	}
 }
 
+// spec: ad-hoc-registry-browsing/ad-hoc-git-listing-without-a-ref-uses-the-default-branch
+func TestListFromFlagUsesRegistryDefaultBranchWhenRefIsOmitted(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingCloneOnBranch(t, "list-default-branch.git", "trunk")
+	writeSkill(t, working, "vm-lifecycle", "VM lifecycle", []string{"openstack"})
+	commitAndPushAllToBranch(t, working, "setup", "trunk")
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, configPath, `
+apiVersion: agent-marketplace/v4
+`)
+	withWorkingDir(t, repoRoot)
+
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read repo config before list --from: %v", err)
+	}
+
+	output, err := executeCommand("list", "--from", origin)
+	if err != nil {
+		t.Fatalf("list --from without --ref failed: %v\n%s", err, output)
+	}
+
+	if !strings.Contains(output, "vm-lifecycle") {
+		t.Fatalf("expected vm-lifecycle in list output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "available") {
+		t.Fatalf("expected 'available' status in output, got:\n%s", output)
+	}
+
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read repo config after list --from: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("list --from wrote repo config:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, ".agents", "lock.yaml")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("list --from wrote an acquisition lock, stat err = %v", err)
+	}
+}
+
 func TestListFromFlagWithKindFilter(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -717,7 +841,7 @@ func TestListFromFlagWithKindFilter(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+apiVersion: agent-marketplace/v4
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -743,7 +867,7 @@ func TestListFromFlagRefAndPathRequireFrom(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+apiVersion: agent-marketplace/v4
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -775,7 +899,7 @@ func TestListFromFlagBlockedURLReturnsError(t *testing.T) {
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
 allowed_registries:
   - ^git\.internal\.example\.com/
-registries: []
+apiVersion: agent-marketplace/v4
 `)
 	withWorkingDir(t, repoRoot)
 

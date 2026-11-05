@@ -27,10 +27,11 @@ type queryer interface {
 
 // Store is a SQLite-backed [store.MetadataStore].
 type Store struct {
-	path string
-	db   *sql.DB
-	q    queryer
-	tx   *sql.Tx
+	path  string
+	db    *sql.DB
+	q     queryer
+	tx    *sql.Tx
+	stmts *stmtCache
 }
 
 // New returns a SQLite metadata store for the given file path. The file and
@@ -70,7 +71,8 @@ func (s *Store) Open(ctx context.Context) error {
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	s.db = db
-	s.q = db
+	s.stmts = newStmtCache(db)
+	s.q = cachedDB{DB: db, cache: s.stmts}
 
 	if err := runMigrations(ctx, db); err != nil {
 		_ = db.Close()
@@ -136,7 +138,11 @@ func (s *Store) Close() error {
 	if s.db == nil {
 		return nil
 	}
-	return s.db.Close()
+	var stmtErr error
+	if s.stmts != nil {
+		stmtErr = s.stmts.close()
+	}
+	return errors.Join(stmtErr, s.db.Close())
 }
 
 // WithTx implements [store.MetadataStore.WithTx].
@@ -153,7 +159,7 @@ func (s *Store) withTx(ctx context.Context, fn func(*Store) error) error {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	txStore := &Store{path: s.path, db: s.db, q: tx, tx: tx}
+	txStore := &Store{path: s.path, db: s.db, q: newCachedTx(tx, s.stmts), tx: tx, stmts: s.stmts}
 	if err := fn(txStore); err != nil {
 		return err
 	}

@@ -125,8 +125,8 @@ schema v1 containing:
 - optional `assets/<relative-path>` files
 - optional `licenses/<relative-path>` files
 - optional `support/<url-escaped-relative-path>` files carrying the declared
-  support bytes and executable modes of a mirrored skill; declared paths may
-  be flat or nested and are url-escaped into member names
+  support bytes and executable modes of a mirrored skill or hook; declared paths
+  may be flat or nested and are url-escaped into member names
 
 `support/` members remain within artifact schema v1 but change the archive
 digest. The archive digest is encoding evidence, not revision identity: a
@@ -176,7 +176,8 @@ last-good installation is preserved when re-acquisition fails.
   manifest `archive_digest` does not match its canonical archive
 - **THEN** it MUST fail with an archive digest mismatch
 - **AND** when raw archive bytes that differ from the canonical archive are
-  supplied, it MUST fail even if the manifest digest is correct
+  supplied without a verified placeholder-form archive, it MUST fail even if
+  the manifest digest is correct
 - **AND** an untampered encoded artifact MUST verify
 
 #### Scenario: Same-content revision carries a repaired archive digest
@@ -240,9 +241,136 @@ virtual collection revisions. Collection manifests are not tar archives.
   cleared
 - **AND** a tampered `content_digest` value MUST fail verification
 
+### Requirement: Mirrored hooks carry integrity-bound support files
+
+Mirror acquisition MUST package flat adjacent support files selected by the
+source-layout hook policy, excluding native aggregate definitions, at their
+plugin-relative `hooks/` paths. Their relative paths, bytes, and executable modes
+MUST be bound into the canonical hook content revision. Consumers MUST verify
+declaration membership and integrity before installation and on the captured
+bytes used for materialization. Support changes MUST produce new content
+revisions, without rewriting existing content. Nested source directories and
+other plugin directories remain unsupported and MUST have an achievable remedy.
+
+#### Scenario: Mirrored hook support installation
+
+- **GIVEN** a mirrored hook references an adjacent plugin-root script
+- **WHEN** a consumer resolves and materializes it at repository or machine scope
+- **THEN** its support bytes and executable mode MUST be installed in the target's per-source, per-hook support directory using the configured native installation mode
+- **AND** the command MUST refer to the installed script, and verified cached resolution MUST work offline
+
+#### Scenario: Mirrored hook support integrity
+
+- **GIVEN** a mirrored hook declares support files
+- **WHEN** a declared file is missing, bytes or executable mode differ, an undeclared file is present, or a declaration names a native definition
+- **THEN** resolution MUST refuse before staging or materializing the hook
+
+#### Scenario: Canonical null extra is not a native extension
+
+- **GIVEN** a canonical hook contains the serializer's null `Extra` field
+- **WHEN** it is decoded for target compilation
+- **THEN** that reserved null field MUST NOT cause an otherwise supported hook to be refused
+- **AND** targets already accepting the canonical hook MUST retain their existing native projection bytes
+- **AND** actual unknown fields MUST retain their existing preservation and target-refusal rules
+
+#### Scenario: Mirrored hook support safe publication
+
+- **GIVEN** adjacent hook support files in a registry repository
+- **WHEN** publication reads those files
+- **THEN** reads MUST remain bounded within the acquisition root and refuse symlinks, multiply linked files, special files, and oversized files without altering external bytes
+
+#### Scenario: Mirrored hook support revision changes
+
+- **GIVEN** a published hook with support files
+- **WHEN** support bytes or executable mode change
+- **THEN** publication MUST produce a new content revision without changing the old artifact
+
+#### Scenario: Legacy mirrored script hook refusal
+
+- **GIVEN** a legacy mirrored hook references an adjacent plugin-root script without packaged support
+- **WHEN** a consumer resolves the hook
+- **THEN** resolution MUST fail with `marketplace.hook.support-missing`
+- **AND** support-free hooks without plugin-root asset references MUST remain usable
+
+#### Scenario: Mirrored hook support materialization refusal
+
+- **GIVEN** declared hook support is unavailable, tampered, names a native definition, or comes from index-only acquisition
+- **WHEN** materialization consumes the resolved resource
+- **THEN** it MUST refuse with `materialize.compile.error` and `materialize.hook.support-refused` before emitting the hook or support output, preserving the previous installation
+
+#### Scenario: Mirrored hook support shell safety
+
+- **GIVEN** an installed support path contains spaces or shell metacharacters
+- **WHEN** its plugin-root reference is translated, including before, after, or inside nested command substitutions
+- **THEN** the installed command MUST execute that literal script without executing path text as shell substitution
+
+#### Scenario: Mirrored hook support unowned destination refusal
+
+- **GIVEN** an installed hook support destination lacks both manifest ownership and durable native support proof
+- **WHEN** the mirrored hook is materialized again
+- **THEN** materialization MUST refuse with `materialize.hook.support-conflict` before updating its aggregate, even when support bytes are identical
+
+#### Scenario: Mirrored hook support acquisition containment
+
+- **GIVEN** a resource directory has a symlinked ancestor below the acquisition root
+- **WHEN** publication reads declared support
+- **THEN** it MUST refuse with `marketplace.ingest.hook-support-unsafe` and leave external bytes unchanged
+
+#### Scenario: Mirrored hook support publication diagnostic
+
+- **GIVEN** a hook references assets outside the flat adjacent-file policy
+- **WHEN** the Marketplace publishes its revision
+- **THEN** publication MUST report `marketplace.ingest.hook-support-unavailable`, while support-free hooks remain publishable without that diagnostic
+
+#### Scenario: Mirrored hook support unsupported reference refusal
+
+- **GIVEN** a mirrored command references a nested source directory, another plugin directory, or a dynamic plugin-root expression
+- **WHEN** a consumer resolves the hook
+- **THEN** it MUST refuse with `marketplace.hook.support-unsupported` and recommend retaining the Git source
+
+#### Scenario: Mirrored hook support catalog aliases
+
+- **GIVEN** a command uses any plugin-root spelling declared by the shipped harness catalogs, braced or bare
+- **WHEN** its mirrored support is validated
+- **THEN** missing and unsupported support references MUST receive the same refusal as the canonical spelling
+- **AND** variables not declared by those catalogs MUST NOT be mistaken for plugin roots
+
+#### Scenario: Mirrored hook support stable offline refusal
+
+- **GIVEN** verified cached evidence produced a deterministic missing or unsupported support refusal online
+- **WHEN** the consumer resolves it offline
+- **THEN** it MUST retain the same refusal code without downloading the artifact again
+
+#### Scenario: Mirrored hook support cache independent installation
+
+- **GIVEN** a mirrored hook is installed with support files
+- **WHEN** the Marketplace acquisition cache is deleted
+- **THEN** its command MUST still execute from installed support on every target and scope
+- **AND** deselection MUST remove its owned support files
+
+#### Scenario: Mirrored hook support independent sources
+
+- **GIVEN** two mirrored sources supply same-named hooks with different same-named scripts
+- **WHEN** both hooks are materialized
+- **THEN** each command MUST execute its own installed script without a collision
+
+#### Scenario: Unsafe hook support does not block valid resources
+
+- **GIVEN** a registry contains a valid skill and a hook with an unsafe adjacent file, even one not directly referenced by its command
+- **WHEN** the Marketplace publishes the registry
+- **THEN** it MUST skip the affected hook with `marketplace.ingest.hook-support-unavailable` and publish the valid skill without reading external bytes
+- **AND** collections requiring the skipped hook MUST be withheld without blocking unrelated resources
+
+#### Scenario: Mirrored hook support drift
+
+- **GIVEN** an installed mirrored hook loses its owned support script
+- **WHEN** `sync --check` runs
+- **THEN** it MUST report drift with a nonzero exit without recreating the script
+- **AND** a subsequent sync MUST restore the script and successful execution
+
 ### Requirement: Current reported installation counts
 
-The Marketplace SHALL derive adoption from distinct reporting Installation IDs whose latest complete inventory observation is no older than 30 days. A resource SHALL count at most once per Installation ID and resource coordinate, including observations of the same coordinate through both Git and Marketplace acquisition. Legacy Git observations SHALL contribute only through unambiguous matches between telemetry registry identities and Marketplace registry origins. Explicit hosted observations SHALL contribute only when their Marketplace instance ID matches the serving Marketplace and their registry ID is known to that Marketplace. Counts describe enabled configuration, not verified materialization or unique users. Legitimate rule observations SHALL NOT contribute to adoption or invalidate counts for Marketplace-selectable resources. Superseded inventories SHALL NOT consume the metrics response budget when the latest-inventory projection fits within that budget.
+The Marketplace SHALL derive adoption from distinct reporting Installation IDs whose latest complete inventory observation is no older than 30 days. A resource SHALL count at most once per Installation ID and resource coordinate, including observations of the same coordinate through both Git and Marketplace acquisition. Legacy Git observations SHALL contribute only through unambiguous matches between telemetry registry identities and Marketplace registry origins. Explicit hosted observations SHALL contribute only when their Marketplace instance ID matches the serving Marketplace and their registry ID is known to that Marketplace. Counts describe enabled configuration, not verified materialization or unique users. Legitimate rule observations SHALL NOT contribute to adoption or invalidate counts for Marketplace-selectable resources. Superseded inventories SHALL NOT consume the metrics response budget when the latest-inventory projection fits within that budget. The metrics backend SHALL evaluate these rules and return aggregate counts per counted resource coordinate together with the fresh-installation count and the oldest fresh observation, so the metrics response grows with counted coordinates rather than with reporting installations. Well-formed metrics responses SHALL NOT contain Installation IDs or configuration fingerprints.
 
 #### Scenario: Latest inventory excludes removed and stale resources
 
@@ -276,6 +404,19 @@ The Marketplace SHALL derive adoption from distinct reporting Installation IDs w
 - **AND** different registry IDs SHALL remain distinct even when resource names match
 - **AND** a newer complete generation without the resource SHALL remove its contribution
 
+#### Scenario: Adoption growth does not exhaust the response budget
+
+- **WHEN** many fresh installations report the same resource coordinates, alongside local and unknown registry observations, so that per-installation latest inventories would exceed the metrics response budget
+- **THEN** the metrics response SHALL contain one count per counted resource coordinate, one fresh-installation count and one oldest fresh observation, and installation-ordered search SHALL return those counts
+- **AND** the response SHALL contain no Installation ID, configuration fingerprint, local registry or unknown registry observation
+- **AND** no fresh installation SHALL leave counts unavailable rather than fabricate zero values
+
+#### Scenario: Malformed observations retain the fallback under aggregation
+
+- **WHEN** latest inventories contain an unknown source kind, an incoherent hosted identity pair, an invalid hosted identity, an unknown resource kind, an empty registry or resource name, a non-positive, non-integer or oversized snapshot value, or a value other than one on an observation that would contribute to counts
+- **THEN** installation-ordered search SHALL use the existing unavailable-count fallback
+- **AND** well-formed hosted identities that merely resemble violations SHALL NOT cause the fallback
+
 ### Requirement: Optional popularity search order
 
 The Marketplace search API SHALL accept `sort=installations` to order the complete filtered result by descending reported installation count before pagination. For text searches, existing relevance SHALL precede installation count. Equal ranks SHALL retain deterministic registry identity, resource kind, and name ordering. Requests omitting `sort` SHALL retain existing ordering and SHALL NOT require a metrics backend. Unsupported sort values SHALL return HTTP 400.
@@ -294,13 +435,13 @@ The Marketplace search API SHALL accept `sort=installations` to order the comple
 
 ### Requirement: Optional bounded installation metrics connection
 
-Marketplace operator configuration SHALL optionally select a Prometheus-compatible metrics endpoint, deployment label selectors, and an environment-sourced bearer credential. The endpoint and credentials SHALL remain server-side. Metrics requests SHALL have bounded execution and an eight-MiB response-size limit and SHALL NOT forward credentials through redirects. Each API process SHALL refresh aggregate counts asynchronously at startup and proactively without requiring search traffic. Search SHALL use only a complete, identity-compatible, unexpired aggregate and SHALL NOT fetch telemetry or wait for refresh. Aggregate expiry SHALL be the earlier of its evaluation time plus the configured maximum age and its inventory validity horizon. A failed proactive refresh SHALL retain a still-fresh compatible last-good aggregate only until its original expiry. Disabled, empty, unavailable, malformed, expired or identity-incompatible counts SHALL preserve existing search ordering and omit installation counts. Public responses and logs SHALL NOT disclose Installation IDs or metrics credentials.
+Marketplace operator configuration SHALL optionally select a Prometheus-compatible metrics endpoint, deployment label selectors, and an environment-sourced bearer credential. The endpoint and credentials SHALL remain server-side. Metrics requests SHALL have bounded execution and an eight-MiB response-size limit and SHALL NOT forward credentials through redirects. Each API process SHALL refresh aggregate counts asynchronously at startup and proactively without requiring search traffic. One refresh MAY evaluate the aggregate as several concurrent backend requests that share one evaluation time; all of them SHALL succeed, and the eight-MiB limit SHALL apply to their combined responses. Search SHALL use a complete, identity-compatible aggregate until its evaluation time plus the configured maximum staleness, and SHALL NOT fetch telemetry or wait for refresh. An aggregate past its expiry but within maximum staleness SHALL still supply counts while search issues a non-blocking refresh hint. Aggregate expiry, the earlier of its evaluation time plus the configured maximum age and its inventory validity horizon, SHALL continue to govern refresh scheduling. A failed refresh SHALL NOT discard the last-good aggregate. Disabled, empty, unavailable, malformed, identity-incompatible counts, or counts beyond maximum staleness SHALL preserve existing search ordering and omit installation counts. Public responses and logs SHALL NOT disclose Installation IDs or metrics credentials.
 
 #### Scenario: Metrics unavailable does not break resource discovery
 
-- **WHEN** metrics are disabled, no usable aggregate exists yet, or an empty, failed, malformed or expired metrics result leaves no usable aggregate
+- **WHEN** metrics are disabled, no usable aggregate exists yet, or an empty, failed, malformed, or over-stale metrics result leaves no usable aggregate
 - **THEN** resource search SHALL remain available in its existing order without waiting for telemetry
-- **AND** public resource items SHALL omit installation counts rather than fabricate zero values or reuse expired counts
+- **AND** public resource items SHALL omit installation counts rather than fabricate zero values or reuse counts beyond maximum staleness
 
 #### Scenario: Metrics configuration and requests preserve the server boundary
 
@@ -312,40 +453,51 @@ Marketplace operator configuration SHALL optionally select a Prometheus-compatib
 #### Scenario: Searches remain responsive during refresh
 
 - **WHEN** a telemetry refresh is blocked while concurrent clients request installation-ordered search
-- **THEN** those searches SHALL finish without waiting for the blocked refresh, using a compatible fresh aggregate or existing ordering with counts omitted
+- **THEN** those searches SHALL finish without waiting for the blocked refresh, using a compatible aggregate within maximum staleness or existing ordering with counts omitted
 - **AND** cancelling a search SHALL NOT cancel or suppress the background refresh
 
 #### Scenario: Fresh last-good counts survive a failed proactive refresh
 
-- **WHEN** a proactive refresh fails while a compatible last-good aggregate remains fresh
-- **THEN** searches SHALL continue using that aggregate only until its original expiry
-- **AND** after expiry searches SHALL use existing ordering and omit counts without waiting for a retry
+- **WHEN** refreshes keep failing after a compatible aggregate expires, including past its inventory validity horizon
+- **THEN** searches SHALL keep returning that aggregate's counts and SHALL hint a non-blocking refresh until its evaluation time plus maximum staleness
+- **AND** after maximum staleness searches SHALL use existing ordering and omit counts without waiting for a retry
 
 #### Scenario: Registry identity and inventory expiry prevent unsafe counts
 
 - **WHEN** registry identities or origins change, an inventory reaches its validity horizon, or a candidate expires before publication
-- **THEN** searches SHALL NOT use incompatible or expired counts, including when registry metadata changes during a telemetry fetch
+- **THEN** searches SHALL NOT use identity-incompatible counts, including when registry metadata changes during a telemetry fetch
 - **AND** background refresh SHALL recover using current registry metadata without a busy retry loop
+
+#### Scenario: Aggregate is evaluated with concurrent backend requests
+
+- **WHEN** a refresh evaluates the aggregate
+- **THEN** its backend requests SHALL run concurrently with one shared evaluation time
+- **AND** a failed, malformed, or over-budget operand SHALL fail the whole refresh, with malformed responses taking precedence over unavailable ones
 
 ### Requirement: Installation metrics timing is independently configurable
 
-Marketplace operator configuration SHALL accept optional `installation_metrics.refresh.interval`, `installation_metrics.refresh.retry_interval`, `installation_metrics.refresh.jitter`, `installation_metrics.max_age` and `installation_metrics.timeout` with defaults of four minutes, thirty seconds, fifteen seconds, five minutes and two seconds respectively. Successful refresh scheduling SHALL use the evaluation time plus interval and additional jitter between zero and its configured bound, or just after an earlier inventory validity horizon. A refresh loop SHALL have at most one active attempt. Unavailable-count or identity-change search hints SHALL be non-blocking and coalesced, SHALL NOT repeat work for a still-fresh compatible aggregate, and SHALL NOT bypass the minimum failure retry delay measured from attempt completion. Construction and handler access SHALL NOT start refresh work; API shutdown SHALL cancel outstanding refresh work and await its termination. Metrics without a configured URL SHALL remain disabled and SHALL NOT affect readiness. Registry reindex timing SHALL remain independent.
+Marketplace operator configuration SHALL accept optional `installation_metrics.refresh.interval`, `installation_metrics.refresh.retry_interval`, `installation_metrics.refresh.jitter`, `installation_metrics.max_age`, `installation_metrics.max_stale`, and `installation_metrics.timeout` with defaults of four minutes, thirty seconds, fifteen seconds, five minutes, twenty-four hours or the configured `installation_metrics.max_age` when that is longer, and three seconds respectively. An explicitly configured `installation_metrics.max_stale` SHALL be positive and SHALL NOT be shorter than `installation_metrics.max_age`. Successful refresh scheduling SHALL use the evaluation time plus interval and additional jitter between zero and its configured bound, or just after an earlier inventory validity horizon. A refresh loop SHALL have at most one active attempt. Unavailable-count or identity-change search hints SHALL be non-blocking and coalesced, SHALL NOT repeat work for a still-fresh compatible aggregate, and SHALL NOT bypass the minimum failure retry delay measured from attempt completion. Construction and handler access SHALL NOT start refresh work; API shutdown SHALL cancel outstanding refresh work and await its termination. Metrics without a configured URL SHALL remain disabled and SHALL NOT affect readiness. Registry reindex timing SHALL remain independent.
 
 #### Scenario: Existing configuration uses defaults independently of reindexing
 
 - **WHEN** an operator leaves the new installation metrics timing settings absent or changes only registry reindex timing
-- **THEN** installation refresh SHALL use its own four-minute interval, thirty-second retry, fifteen-second jitter, five-minute maximum age and two-second timeout
+- **THEN** installation refresh SHALL use its own four-minute interval, thirty-second retry, fifteen-second jitter, five-minute maximum age, twenty-four-hour maximum staleness, and three-second timeout
 - **AND** leaving the metrics URL absent SHALL start no telemetry worker
 
 #### Scenario: Timing overrides and explicit zero jitter are honored
 
-- **WHEN** an operator supplies valid installation metrics duration overrides, including explicit zero jitter
-- **THEN** refresh scheduling, failure retry, snapshot expiry and backend timeout SHALL use those overrides
+- **WHEN** an operator supplies valid installation metrics duration overrides, including maximum staleness and explicit zero jitter
+- **THEN** refresh scheduling, failure retry, snapshot expiry, maximum staleness, and backend timeout SHALL use those overrides
 - **AND** explicit zero jitter SHALL disable additional scheduling delay
+
+#### Scenario: Omitted max_stale follows a longer max_age
+
+- **WHEN** an operator sets `installation_metrics.max_age` above twenty-four hours and omits `installation_metrics.max_stale`
+- **THEN** configuration SHALL be accepted and maximum staleness SHALL equal the configured maximum age
 
 #### Scenario: Invalid timing configuration is rejected
 
-- **WHEN** an operator supplies non-positive interval, retry interval, maximum age or timeout, negative jitter, unknown timing keys, or interval plus jitter plus timeout greater than or equal to maximum age
+- **WHEN** an operator supplies non-positive interval, retry interval, maximum age, maximum staleness or timeout, negative jitter, a maximum staleness shorter than maximum age, unknown timing keys, or interval plus jitter plus timeout greater than or equal to maximum age
 - **THEN** configuration loading SHALL reject the settings instead of starting an unsafe refresh schedule
 
 #### Scenario: Background scheduling coalesces hints and respects backoff
@@ -394,3 +546,245 @@ The operations metrics endpoint SHALL expose refresh attempt outcomes with bound
 - **WHEN** background refreshes succeed or fail while searches reuse counts or fall back
 - **THEN** operations metrics SHALL reflect attempt outcomes, duration and the last successful evaluation timestamp without search fallback creating additional attempt observations
 - **AND** failures SHALL produce per-attempt bounded logs without sensitive identifiers or credentials
+
+### Requirement: Filesystem blob containment
+
+A Marketplace filesystem blob store MUST reject addresses that can select a parent directory, an absolute path, or path separators. Blob reads and mutations MUST remain within the configured storage root, including when an address encounters a symlink. Valid content-addressed layouts and immutable publication conflict behavior MUST remain unchanged.
+
+#### Scenario: Blob addresses cannot escape storage
+
+- **WHEN** a downstream consumer reads, writes, checks, or deletes a blob using an unsafe address
+- **THEN** the operation MUST fail before accessing or changing external content
+- **AND** an existing valid blob MUST remain readable and unchanged
+
+### Requirement: Active support content scheme policy
+
+An inspection projection MUST classify support text beginning with javascript, data, or vbscript URL schemes as metadata-only, ignoring surrounding whitespace and scheme case. Publication MUST reject a projection that attempts to expose such support bytes as textual content. Safe support text MUST remain available.
+
+#### Scenario: Active URL schemes are metadata only
+
+- **WHEN** an inspection projection contains support text beginning with an active URL scheme and ordinary safe support text
+- **THEN** active support bytes MUST not be available as preview content
+- **AND** their file identity MUST remain available as metadata
+- **AND** ordinary safe support bytes MUST remain available
+
+### Requirement: Decode rejections omit unsafe entry names
+
+Decoding a resource artifact MUST reject an archive entry whose name is absolute or contains `..` path components without including that entry name in the returned error. The error MUST still state whether the entry was rejected as an absolute path or as path traversal.
+
+#### Scenario: Unsafe entry name is not echoed
+
+- **WHEN** a `tar.gz` whose entry name is absolute or contains `..` path components is decoded
+- **THEN** decoding MUST fail with an error identifying the absolute-path or path-traversal rejection
+- **AND** the error MUST NOT contain the entry name
+
+### Requirement: Resource revision source provenance
+Resource revision responses for the latest resource, revision lists, and exact revisions SHALL include an optional `source` object with the same shape and sanitization as the catalog `CatalogSource`: a safe HTTP(S) `repository_url`, the normalized repository-relative `path` of the resource in that occurrence, and the exact occurrence `commit`. The response SHALL omit `source` when the occurrence has no recorded source path or source origin, or when the origin is not a safe HTTP(S) URL.
+
+#### Scenario: Resource revision exposes sanitized source provenance
+- **WHEN** a client fetches a resource revision whose occurrence recorded a source origin and source path
+- **THEN** the response `source` carries the repository URL with userinfo and credential-like query values removed, the normalized path, and the occurrence commit
+
+#### Scenario: Resource revision omits untrustworthy source provenance
+- **WHEN** a resource revision has no recorded source path or source origin, or its origin is not a safe HTTP(S) URL
+- **THEN** the response omits `source`
+
+### Requirement: Archive digests verify by received bytes
+
+The Marketplace and its clients SHALL verify canonical archive digests by
+hashing bytes they hold, without reproducing a compressor's output. A
+placeholder-form archive is verified by hashing its bytes against the digest.
+A final archive is verified by content equality with the hash-verified
+placeholder form. The re-encoding verifier remains only as a fallback for
+archives that have no placeholder form.
+
+#### Scenario: Placeholder archive verifies regardless of the encoding toolchain
+
+- **GIVEN** placeholder-form archives recorded by Go 1.26 and by Go 1.27 with
+  different digests but identical content
+- **WHEN** each is verified by its digest
+- **THEN** verification MUST succeed under either toolchain
+- **AND** a final archive from the same toolchain MUST verify against its
+  placeholder by content equality
+
+#### Scenario: Final archive with different bytes but identical content verifies
+
+- **GIVEN** a verified placeholder-form archive and a final archive whose
+  bytes differ from the encoder output but decode to the same content
+- **WHEN** the final archive is verified against the placeholder
+- **THEN** verification MUST succeed
+- **AND** a final archive whose payload, asset, license, or support content
+  differs MUST fail verification
+
+#### Scenario: Placeholder archive route serves archive-digest bytes
+
+- **GIVEN** a resource revision owned by the Marketplace with a stored or
+  derivable placeholder-form archive
+- **WHEN** `GET /api/v1/archives/sha256/{hex}` is requested for its archive digest
+- **THEN** the response MUST carry bytes whose SHA-256 equals the requested digest
+- **AND** the response MUST use the artifact media type
+- **AND** an unowned digest MUST return 404, a revoked revision MUST return 410, and a blocked revision MUST return 403
+
+#### Scenario: Missing placeholder archive is derived only when reproducible
+
+- **GIVEN** a stored final archive with no stored placeholder-form archive
+- **WHEN** the placeholder route is requested for its archive digest
+- **THEN** the Marketplace MUST derive the placeholder archive from the final archive and store it when the derived bytes hash to the digest
+- **AND** when the derived bytes do not hash to the digest the response MUST be 404 with a placeholder-archive-unavailable message
+- **AND** when the final archive exceeds the configured artifact size limit the response MUST be 413 and no placeholder archive MUST be derived or stored
+
+#### Scenario: Artifact route serves stored final archives without re-compression
+
+- **GIVEN** a stored final archive recorded by a different Go toolchain whose placeholder-form archive is stored
+- **WHEN** the artifact route is requested for its archive digest
+- **THEN** the response MUST serve the stored final bytes
+- **AND** the response MUST NOT fail with a digest mismatch caused by the server's compressor
+
+#### Scenario: Worker backfills placeholder archives
+
+- **GIVEN** stored resource revisions with archive digests and no placeholder-form archive
+- **WHEN** the worker runs the backfill pass or `serve reindex` completes
+- **THEN** each reproducible placeholder-form archive MUST be stored under its placeholder key
+- **AND** unreproducible archives MUST be counted and reported without failing the pass or readiness
+
+### Requirement: Placeholder archive route is served in the OpenAPI contract
+
+The OpenAPI contract SHALL document `GET /api/v1/archives/sha256/{hex}`
+with the artifact media type and the same availability responses as the artifact route.
+
+#### Scenario: Placeholder archive route is documented
+
+- **WHEN** the OpenAPI contract is loaded
+- **THEN** it MUST define the placeholder-archive route with the artifact media type
+- **AND** it MUST document 403, 404, 410, and 500 responses
+
+### Requirement: Clients verify archives by received bytes
+
+A client SHALL verify a resource archive by hashing the placeholder-form archive
+it receives from `GET /api/v1/archives/sha256/{hex}`, so that locks
+and caches written under any Go toolchain verify under any other. A client SHALL
+fall back to the final artifact route only when the placeholder route answers
+404, and it SHALL treat every other failure from the placeholder route as
+terminal. The single remaining re-encoding check applies only to a final archive
+without a placeholder form, and its failure SHALL be reported as an encoding
+mismatch rather than as tampering, unless the decoded content itself fails
+verification.
+
+#### Scenario: Client verifies placeholder archives by hash
+
+- **WHEN** a client resolves a mirrored resource whose archive was published by a different Go toolchain
+- **THEN** the client MUST fetch the placeholder-form archive and verify it by hashing its bytes against the locked archive digest
+- **AND** the client MUST NOT re-compress the archive to verify it
+
+#### Scenario: Locks written under any toolchain stay valid
+
+- **GIVEN** a lock whose archive digest was recorded by one Go toolchain
+- **WHEN** a client built with another Go toolchain resolves, syncs, or checks that lock
+- **THEN** the lock MUST verify without changing its archive digest
+- **AND** the resource content MUST verify against its content digest
+
+#### Scenario: Fallback to the artifact route only on not found
+
+- **WHEN** the placeholder route answers 404 for an archive digest
+- **THEN** the client MUST request the final artifact route for that digest
+- **AND** when the placeholder route answers 410, 403, a server error, or a network failure, the client MUST fail with that error without requesting the artifact route
+
+#### Scenario: Unreproducible legacy archive reports an encoding mismatch
+
+- **GIVEN** a Marketplace that does not serve the placeholder form for an archive
+- **WHEN** the archive it serves was compressed by an encoder that this build does not reproduce
+- **THEN** the client MUST fail with an encoding-mismatch diagnostic that names the resource, the Marketplace, the expected and re-encoded digests, the agent-marketplace Go version, and the remediation to upgrade the Marketplace and run sync
+- **AND** a served archive whose decoded content fails verification MUST remain an integrity failure rather than an encoding mismatch
+
+#### Scenario: Cached unreproducible archive is refetched online
+
+- **GIVEN** a cached final archive that this build does not reproduce
+- **WHEN** a refresh resolves the resource online
+- **THEN** the client MUST discard the cached copy, fetch the archive once, verify the fetched bytes, and cache them in place of the stale copy
+- **AND** when the resolution is offline the client MUST fail with the cached-copy diagnostic that asks for `agent-marketplace sync` while online
+
+#### Scenario: Index-only resolution verifies the registry revision manifest by hash
+
+- **WHEN** an index-only resource is resolved from an exact registry occurrence
+- **THEN** the client MUST verify that the registry revision manifest payload hashes to the occurrence's manifest digest before using it
+- **AND** the locally rebuilt resources MUST match the manifest's kind, name, content digest, and support-file digests
+- **AND** a manifest whose payload does not hash to the occurrence digest, or whose resource entries differ from the rebuilt resources, MUST fail resolution
+
+#### Scenario: Received archive bytes verify across toolchains
+
+- **GIVEN** placeholder-form and final archives recorded by Go 1.26 and by Go 1.27
+- **WHEN** each placeholder-form archive is verified by hashing its bytes against its digest under either toolchain
+- **THEN** verification MUST succeed
+- **AND** a final archive recorded by the other toolchain and verified without its placeholder form, as after a 404 from the placeholder route, MUST fail with an encoding mismatch, while tampered final content MUST fail as an integrity error
+
+### Requirement: Placeholder-form archives are cached apart from legacy artifacts
+
+A client SHALL cache placeholder-form archives under a location separate from the
+legacy artifact path, so that a client built before this change, which validates
+whatever it finds at the legacy path, never reads placeholder bytes there. Final-form
+archives SHALL be written to the legacy path only when the legacy artifact route was
+used. The garbage collector SHALL treat both locations with the same reachability
+rules, and SHALL preserve entries it does not recognize.
+
+#### Scenario: Placeholder-form archives stay out of the legacy artifact path
+
+- **WHEN** a client fetches a placeholder-form archive for a locked digest
+- **THEN** the client MUST store the placeholder bytes only under the placeholder location
+- **AND** the legacy artifact path MUST NOT receive placeholder bytes, so a client that predates this change finds nothing there to validate or refetches
+
+#### Scenario: Cached placeholder-form archive serves offline resolution
+
+- **GIVEN** a verified placeholder-form archive in the cache
+- **WHEN** a resolution runs in cached or cached-no-fetch mode
+- **THEN** the client MUST resolve the resource from the placeholder location without contacting the Marketplace
+
+#### Scenario: Placeholder-form archive is collected with its archive
+
+- **WHEN** garbage collection runs and a digest is unreferenced
+- **THEN** it MUST remove the placeholder-form and legacy entries for that digest together
+- **AND** it MUST keep both entries for a referenced digest, and MUST preserve malformed or unrecognized placeholder entries and fail closed on symlinked ones
+
+### Requirement: Canonical hook metadata normalization is resource-scoped
+
+Normalization of the canonical hook serializer's null `Extra` scaffolding MUST
+remain hook-specific. Decoding other resource kinds MUST preserve their existing
+unknown metadata and native output.
+
+#### Scenario: Non-hook canonical metadata compatibility
+
+- **GIVEN** a canonical skill, command, subagent or MCP server contains `Extra: null`
+- **WHEN** the resource is decoded for native compilation
+- **THEN** its historical unknown metadata MUST remain preserved
+- **AND** hook-specific metadata normalization MUST NOT change the native output
+
+### Requirement: Stored payload reads enforce existing byte ceilings
+
+Public inspection, content, manifest and archive reads using the built-in filesystem and S3 backends SHALL enforce applicable existing inspection-manifest, configured file, manifest and artifact byte ceilings during reading, before fully materializing an oversized stored object. Archive reads cover the final archive served by the artifact route, the placeholder-form archive served or derived by the archive route, and the placeholder-form archive used to verify a final archive. Checking whether an immutable blob already holds the same bytes SHALL read at most one byte more than the bytes being stored. GET and HEAD SHALL retain availability checks, identity verification and their existing success and refusal behavior. This requirement introduces no new ceiling and does not change the existing meaning of an unlimited configured file ceiling or the compatibility interface for custom blob stores.
+
+#### Scenario: Oversized payloads stop at the existing read ceiling
+
+- **WHEN** a public content, inspection-manifest or registry-manifest request encounters a stored object larger than its applicable existing byte ceiling
+- **THEN** a built-in backend read SHALL stop after at most that ceiling plus one probe byte
+- **AND** GET and HEAD SHALL retain their existing refusal status without immutable success caching
+
+#### Scenario: Healthy payload reads retain response identity
+
+- **WHEN** public content fits its applicable existing byte ceiling
+- **THEN** its content bytes, verified digest, media type and immutable success response SHALL remain unchanged
+
+#### Scenario: Oversized archives stop at the artifact ceiling
+
+- **WHEN** the artifact or placeholder archive route reads a final or placeholder-form archive, with or without a stored placeholder
+- **THEN** every archive blob read SHALL be bounded by the configured artifact limit, and an archive larger than it SHALL be refused with the existing `413` response without immutable success caching
+- **AND** an archive within the limit SHALL still be served with its existing bytes and verification
+
+### Requirement: Verified archive decoding stops at the archive limits
+
+Verifying a resource archive by digest, verifying a final archive against its verified placeholder, and decoding an archive for its content SHALL enforce the archive limits while the archive is decoded, not only after decoding completes. A member whose declared size exceeds its per-member limit, a member that would raise the asset, support or total file count or the total decoded bytes beyond the limits, more archive entries than the limits' files plus the canonical manifest and directories, and a repeated manifest SHALL be refused before that member's body is read and before any later entry is decoded. The manifest and members outside the canonical layout directories SHALL count toward the total decoded bytes. Archives within the limits SHALL verify as before.
+
+#### Scenario: Verified archive decoding stops at the archive limits
+
+- **WHEN** an archive verified by digest or decoded for content exceeds the total decoded bytes, the asset, support or total file count, the per-member size, or the entry count, or repeats its manifest, and is followed by an entry that decoding would otherwise reject
+- **THEN** verification MUST fail with the limit that was exceeded
+- **AND** the later entry MUST NOT be decoded
+- **AND** an encoded archive with the maximum asset count and a member at the per-member limit MUST still verify

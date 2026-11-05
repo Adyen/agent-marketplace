@@ -23,10 +23,11 @@ func TestSyncFromSubdirExcludeShadowedByAncestor(t *testing.T) {
 
 	// Repo root selects both skills and syncs, materializing them at the root.
 	env.WriteRepoConfig(strings.TrimSpace(`
-registries:
-  - url: ` + regURL + `
-    ref: main
-    default: true
+apiVersion: agent-marketplace/v4
+sources:
+  tools: {git: ` + regURL + `, ref: main}
+resources:
+  tools: {all: true}
 `))
 	if r := env.RunAM("sync"); r.ExitCode != 0 {
 		t.Fatalf("root sync should succeed, exited %d\noutput:\n%s", r.ExitCode, r.Combined)
@@ -37,12 +38,11 @@ registries:
 	// Subdir local config excludes target-skill.
 	env.WriteFile("/workspace/subdir/.gitkeep", "")
 	env.WriteFile("/workspace/subdir/.agents/config.local.yaml", strings.TrimSpace(`
-registries:
-  - url: `+regURL+`
-    ref: main
-    skills:
-      exclude:
-        - target-skill
+apiVersion: agent-marketplace/v4
+sources:
+  overlay: {git: `+regURL+`, ref: main}
+resources:
+  overlay: {exclude: [skill/target-skill]}
 `))
 
 	r := env.RunAMFrom("/workspace/subdir", "sync")

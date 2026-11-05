@@ -1,6 +1,6 @@
 # How to add a resource to a registry
 
-Add a new skill or command to a Git [registry](../../glossary.md#registry), check it locally, and publish it. Subagents, hooks, and MCP servers use each harness's own file formats; the [registry layout reference](../../reference/registry-layout.md) lists where they go.
+Add a skill or command to a Git [registry](../../glossary.md#registry), check it locally, and publish it. For subagents, hooks, and MCP servers, the [registry layout reference](../../reference/registry-layout.md) lists each harness's file formats and paths. To ship a hook that runs a script, see [How to publish a hook with support files](./publish-a-hook-with-support-files.md).
 
 ## Prerequisites
 
@@ -10,7 +10,7 @@ Add a new skill or command to a Git [registry](../../glossary.md#registry), chec
 
 ## 1. Choose the directory
 
-`agent-marketplace` reads a registry in the native layout of one [harness](../../glossary.md#harness), called the source harness. A registry with `skills/` or `commands/` at its root is read as the Claude Code layout, which the examples below use:
+`agent-marketplace` reads a registry in the native layout of one [harness](../../glossary.md#harness), its source harness. A registry with `skills/` or `commands/` at its root uses the Claude Code layout, which these examples use:
 
 | Kind | Path in a Claude-layout registry |
 |---|---|
@@ -42,7 +42,7 @@ Review code changes and suggest improvements.
 EOF
 ```
 
-The name may contain only lowercase letters, digits, and hyphens, and must start with a letter. The [resource metadata reference](../../reference/resource-metadata.md) lists every field.
+Both commands succeed silently and leave the file at `skills/code-review/SKILL.md`. Use a name with only lowercase letters, digits, and hyphens, starting with a letter, as the [resource metadata reference](../../reference/resource-metadata.md) requires.
 
 In the Claude Code layout, a command is a Markdown file under `commands/`. Its name comes from the file name:
 
@@ -55,9 +55,11 @@ Run the release checklist.
 EOF
 ```
 
+These commands print nothing and create `commands/release.md`. This guide releases both `skills/code-review` and `commands/release`.
+
 Consumers can set `source_harness: claude` on their source to state the layout explicitly instead of relying on detection.
 
-Devin and Codex have no separate command format, so in those layouts a command is a skill-shaped `SKILL.md` with the top-level marker `x-agent-marketplace-kind: command`. Other layouts do not use the marker.
+Devin and Codex have no separate command format. In those layouts, a command is a skill-shaped `SKILL.md` with the top-level marker `x-agent-marketplace-kind: command`. Other layouts do not use the marker.
 
 ## 3. Check it locally
 
@@ -67,26 +69,26 @@ From the registry root, list what `agent-marketplace` discovers:
 agent-marketplace list --from .
 ```
 
-The new resource appears with the status `available`. Then convert it to another harness to catch translation problems:
+Typical output:
 
-```bash
-agent-marketplace convert \
-  --from claude \
-  --to factory \
-  --out /tmp/code-review-factory \
-  skills/code-review
+```text
+REGISTRY  KIND     NAME         TAGS (metadata)  STATUS
+.         skill    code-review  review,quality   available
+.         command  release                       available
 ```
 
-A clean conversion ends with a line such as `Written 1, Skipped 0, Removed 0, Diagnostics 0`. Fix any reported diagnostic before you commit. To check every harness in CI, see [How to validate a registry in CI](./validate-a-registry-in-ci.md).
+The new resource shows `available`. To check every harness in CI, see [How to validate a registry in CI](./validate-a-registry-in-ci.md).
 
 ## 4. Commit, tag, and push
 
 ```bash
-git add skills/code-review
-git commit -m "Add code-review skill"
+git add skills/code-review commands/release.md
+git commit -m "Add code-review skill and release command"
 git tag v1.5.0
 git push origin main v1.5.0
 ```
+
+`git add` and `git tag` succeed silently. The commit prints a summary such as `[main 1a2b3c4] Add code-review skill and release command` followed by the changed-file count. The push prints the updated remote refs, for example `main -> main` and `v1.5.0 -> v1.5.0`.
 
 ## 5. Tell consumers how to get it
 

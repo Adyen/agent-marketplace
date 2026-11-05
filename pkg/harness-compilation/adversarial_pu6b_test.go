@@ -170,8 +170,11 @@ func TestDevinRoundTripPreservesARepresentableRestriction(t *testing.T) {
 	if !ok {
 		t.Fatalf("resource = %T, want *ir.Skill", bundle.Resources[0])
 	}
-	if got := strings.Join(skill.AllowedTools, ","); got != "Read,Grep" {
-		t.Errorf("AllowedTools = %q, want %q", got, "Read,Grep")
+	if got := strings.Join(skill.AllowedTools, ","); got != "read,grep" {
+		t.Errorf("AllowedTools = %q, want %q", got, "read,grep")
+	}
+	if skill.ToolSource != "devin" {
+		t.Errorf("ToolSource = %q, want devin", skill.ToolSource)
 	}
 }
 

@@ -47,7 +47,7 @@ func (r registryClone) publishSkill(name, body, tag string) {
 // update --bump with every targeting flag moves only the named source to its
 // next release tag, in the repository config of either schema.
 func TestTargetedUpdateBumpMovesOnlyTheNamedSource(t *testing.T) {
-	for _, schema := range []string{"v2", "v4"} {
+	for _, schema := range []string{"v4"} {
 		t.Run(schema, func(t *testing.T) {
 			env := newEnv(t)
 			env.InitGitRepo()
@@ -60,9 +60,6 @@ func TestTargetedUpdateBumpMovesOnlyTheNamedSource(t *testing.T) {
 				r.clone.publishSkill(r.skill, r.skill+" v1.1", "v1.1")
 			}
 			config := fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  target: {git: '%s', ref: v1.0}\n  other: {git: '%s', ref: v1.0}\nresources:\n  target: {include: [skill/target]}\n  other: {include: [skill/other]}\n", target.url, other.url)
-			if schema == "v2" {
-				config = fmt.Sprintf("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: %s\n    ref: v1.0\n    skills: [target]\n  - url: %s\n    ref: v1.0\n    skills: [other]\n", target.url, other.url)
-			}
 			env.WriteGlobalConfig("apiVersion: agent-marketplace/" + schema + "\nharnesses: [factory]\n")
 			env.WriteRepoConfig(config)
 			env.AssertExitCode(env.RunAM("sync"), 0)
@@ -86,7 +83,7 @@ func TestTargetedUpdateBumpMovesOnlyTheNamedSource(t *testing.T) {
 // Config edits never rewrite included fragments, so update --bump leaves a
 // ref declared in one untouched, says so, and still succeeds.
 func TestUpdateBumpReportsRefsDeclaredInIncludedFiles(t *testing.T) {
-	for _, schema := range []string{"v2", "v4"} {
+	for _, schema := range []string{"v4"} {
 		t.Run(schema, func(t *testing.T) {
 			env := newEnv(t)
 			env.InitGitRepo()
@@ -96,10 +93,6 @@ func TestUpdateBumpReportsRefsDeclaredInIncludedFiles(t *testing.T) {
 			env.WriteGlobalConfig("apiVersion: agent-marketplace/" + schema + "\nharnesses: [factory]\n")
 			fragment := fmt.Sprintf("sources:\n  target: {git: '%s', ref: v1.0}\nresources:\n  target: {include: [skill/target]}\n", included.url)
 			root := "apiVersion: agent-marketplace/v4\ninclude: shared.yaml\n"
-			if schema == "v2" {
-				fragment = fmt.Sprintf("registries:\n  - url: %s\n    ref: v1.0\n    skills: [target]\n", included.url)
-				root = "apiVersion: agent-marketplace/v2\ninclude: shared.yaml\nregistries: []\n"
-			}
 			env.WriteFile("/workspace/.agents/shared.yaml", fragment)
 			env.WriteFile("/workspace/.agents/config.yaml", root)
 			env.AssertExitCode(env.RunAM("sync"), 0)
@@ -123,7 +116,7 @@ func TestUpdateBumpReportsRefsDeclaredInIncludedFiles(t *testing.T) {
 // lock --upgrade advances only the source a --registry/--ref/--path or a
 // --kind/name target selects, and never rewrites the authored config.
 func TestTargetedLockUpgradeAdvancesOnlyTheSelectedSource(t *testing.T) {
-	for _, schema := range []string{"v2", "v4"} {
+	for _, schema := range []string{"v4"} {
 		t.Run(schema, func(t *testing.T) {
 			env := newEnv(t)
 			env.InitGitRepo()
@@ -131,9 +124,6 @@ func TestTargetedLockUpgradeAdvancesOnlyTheSelectedSource(t *testing.T) {
 			registry.publishSkill("review", "review r1", "")
 			pinned.publishSkill("stable", "stable r1", "")
 			config := fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  tools: {git: '%s', ref: main, path: skills}\n  pinned: {git: '%s', ref: main}\nresources:\n  tools: {include: [skill/review]}\n  pinned: {include: [skill/stable]}\n", registry.url, pinned.url)
-			if schema == "v2" {
-				config = fmt.Sprintf("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: %s\n    ref: main\n    path: skills\n    skills: {include: [review]}\n  - url: %s\n    ref: main\n    skills: {include: [stable]}\n", registry.url, pinned.url)
-			}
 			env.WriteGlobalConfig("apiVersion: agent-marketplace/" + schema + "\nharnesses: [factory]\n")
 			env.WriteRepoConfig(config)
 			authored := env.ReadFile("/workspace/.agents/config.yaml")
@@ -193,18 +183,22 @@ func lockedCommitFor(t *testing.T, lock, url string) string {
 	return ""
 }
 
-// The legacy structural remediation (migrate --to v2) takes its user
-// harnesses from --harnesses when no user config exists yet.
-func TestLegacyMigrateRemediationUsesExplicitHarnesses(t *testing.T) {
+// Explicit first-run harness selection is supported by init, not a consumer
+// migrator. An existing v4 repository root must remain byte-identical.
+func TestInitUsesExplicitHarnessesWithV4Repository(t *testing.T) {
 	env := newEnv(t)
 	env.InitGitRepo()
-	env.WriteRepoConfig("apiVersion: agent-marketplace/v2\nregistries: []\n")
-	result := env.RunAM("migrate", "--to", "v2", "--harnesses", "factory,cursor")
+	env.WriteRepoConfig("apiVersion: agent-marketplace/v4\nsources: {}\n")
+	before := env.ReadFile("/workspace/.agents/config.yaml")
+	result := env.RunAM("init", "--harnesses", "factory,cursor")
 	if result.ExitCode != 0 {
-		t.Fatalf("migrate --to v2 --harnesses failed (exit %d):\n%s", result.ExitCode, result.Combined)
+		t.Fatalf("init --harnesses failed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
 	user := env.ReadFile("/root/.agents/config.yaml")
-	if !strings.Contains(user, "factory") || !strings.Contains(user, "cursor") {
-		t.Fatalf("remediated user config does not use the explicit harnesses:\n%s", user)
+	if !strings.Contains(user, "apiVersion: agent-marketplace/v4") || !strings.Contains(user, "factory") || !strings.Contains(user, "cursor") {
+		t.Fatalf("initialized user config does not use the explicit harnesses:\n%s", user)
+	}
+	if env.ReadFile("/workspace/.agents/config.yaml") != before {
+		t.Fatal("init rewrote the repository root")
 	}
 }

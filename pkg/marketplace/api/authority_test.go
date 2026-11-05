@@ -65,7 +65,7 @@ func TestPublicAuthorityFailsClosedAfterAdoption(t *testing.T) {
 			if live.Code != http.StatusOK {
 				t.Fatalf("liveness = %d", live.Code)
 			}
-			for _, path := range []string{"/api/v1/capabilities", "/api/v1/search", "/api/v1/catalog", "/api/v1/registries", "/api/v1/registries/reg", "/api/v1/resources/reg/skill/name", "/api/v1/manifests/digest", "/api/v1/assessments/digest", "/api/v1/inspection/digest", "/api/v1/content/digest", "/api/v1/artifacts/digest"} {
+			for _, path := range []string{"/api/v1/capabilities", "/api/v1/search", "/api/v1/catalog", "/api/v1/registries", "/api/v1/registries/reg", "/api/v1/resources/reg/skill/name", "/api/v1/manifests/digest", "/api/v1/assessments/digest", "/api/v1/inspection/digest", "/api/v1/content/digest", "/api/v1/artifacts/digest", "/api/v1/archives/digest"} {
 				response := httptest.NewRecorder()
 				server.PublicHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
 				if response.Code != http.StatusServiceUnavailable {

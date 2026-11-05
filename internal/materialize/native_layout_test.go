@@ -102,6 +102,10 @@ func TestNativeLayoutMatchesCompiledArtifactPaths(t *testing.T) {
 			aggregate, hasAggregate := targetmeta.NativeAggregateFileForScope(tt.target, kind, tt.machineScope)
 			if hasAggregate {
 				predicted[aggregate.Path] = true
+				// Declared legacy locations also predict default compilation output.
+				for _, legacy := range aggregate.Legacy {
+					predicted[legacy] = true
+				}
 				if aggregate.Member != tt.wantMember {
 					t.Errorf("descriptor member for %s aggregate = %q, want %q", kind, aggregate.Member, tt.wantMember)
 				}

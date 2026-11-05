@@ -1,6 +1,7 @@
 package bundle
 
 import (
+	"reflect"
 	"testing"
 	"testing/fstest"
 
@@ -228,5 +229,81 @@ func TestLoadSubagent_SourceRef(t *testing.T) {
 	wantRef := ir.SourceRef{File: "agents/my-agent.md", Line: 1}
 	if sa.Source != wantRef {
 		t.Errorf("source: got %+v, want %+v", sa.Source, wantRef)
+	}
+}
+
+// Claude documents a subagent's tools and disallowedTools as either a YAML list
+// or a comma-separated string such as "Read, Grep, Bash". A value that is not a
+// well-formed list keeps the single entry earlier versions produced, so the
+// subagent that loaded before still loads.
+func TestLoadSubagent_ToolLists(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string // the YAML that follows "<key>:"
+		want  []string
+	}{
+		{"comma-separated string", " Read, Grep, Glob", []string{"Read", "Grep", "Glob"}},
+		{"single name", " Read", []string{"Read"}},
+		{"single name with surrounding spaces", ` "  Read  "`, []string{"Read"}},
+		{"surrounding and missing spaces", ` "  Read ,Grep "`, []string{"Read", "Grep"}},
+		{"blank entries are dropped", " Read,, Grep, ", []string{"Read", "Grep"}},
+		{"comma inside parentheses", " Agent(worker, researcher), Read", []string{"Agent(worker, researcher)", "Read"}},
+		{"nested parentheses", " Bash(f(a, b), c), Read", []string{"Bash(f(a, b), c)", "Read"}},
+		{"escaped parenthesis does not close", ` Bash(echo \)), Read`, []string{`Bash(echo \))`, "Read"}},
+		{"escaped parenthesis does not split", ` Read, Bash(a\), b)`, []string{"Read", `Bash(a\), b)`}},
+		{"escaped comma does not split", ` Read\, Grep`, []string{`Read\, Grep`}},
+		{"escaped backslash at the end is not dangling", ` Read, Grep\\`, []string{"Read", `Grep\\`}},
+		{"escaped backslash does not escape the comma", ` Read\\, Grep`, []string{`Read\\`, "Grep"}},
+		{"flow list", " [Read, Grep]", []string{"Read", "Grep"}},
+		{"block list", "\n  - Read\n  - Grep", []string{"Read", "Grep"}},
+		{"list entry with parentheses stays whole", "\n  - Agent(worker, researcher)\n  - Read", []string{"Agent(worker, researcher)", "Read"}},
+		{"list entries are taken as written", "\n  - \"Read, Grep\"", []string{"Read, Grep"}},
+		{"explicit empty list", " []", []string{}},
+		// Not well-formed lists: the string stays one entry, exactly as written.
+		{"empty string", ` ""`, []string{""}},
+		{"only spaces", ` "   "`, []string{"   "}},
+		{"only commas", ` ","`, []string{","}},
+		{"only separators", ` " , "`, []string{" , "}},
+		{"unclosed parenthesis", " Read, Bash(git diff", []string{"Read, Bash(git diff"}},
+		{"unopened parenthesis", " Read), Grep", []string{"Read), Grep"}},
+		{"extra closing parenthesis", " Read, Bash(git diff))", []string{"Read, Bash(git diff))"}},
+		{"escaped closing parenthesis leaves one open", ` Bash(echo \), Read`, []string{`Bash(echo \), Read`}},
+		{"dangling backslash", ` Read, Grep\`, []string{`Read, Grep\`}},
+		{"dangling backslash on a single name", ` Read\`, []string{`Read\`}},
+	}
+	for _, key := range []string{"tools", "disallowedTools"} {
+		for _, tt := range tests {
+			t.Run(key+"/"+tt.name, func(t *testing.T) {
+				src := fstest.MapFS{"agents/a.md": {Data: []byte("---\nname: a\n" + key + ":" + tt.value + "\n---\nBody\n")}}
+				got, err := LoadSubagent(src, "agents/a.md")
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				list, other := got.Tools, got.DisallowedTools
+				if key == "disallowedTools" {
+					list, other = other, list
+				}
+				// DeepEqual keeps nil (absent) apart from an empty, explicit list.
+				if !reflect.DeepEqual(list, tt.want) {
+					t.Errorf("%s: got %#v, want %#v", key, list, tt.want)
+				}
+				if other != nil {
+					t.Errorf("the other tool list gained %#v", other)
+				}
+			})
+		}
+	}
+}
+
+func TestLoadSubagent_RejectsUnsupportedToolListTypes(t *testing.T) {
+	for _, key := range []string{"tools", "disallowedTools"} {
+		for _, value := range []string{"5", "true", "~"} {
+			t.Run(key+"/"+value, func(t *testing.T) {
+				src := fstest.MapFS{"agents/a.md": {Data: []byte("---\nname: a\n" + key + ": " + value + "\n---\nBody\n")}}
+				if got, err := LoadSubagent(src, "agents/a.md"); err == nil {
+					t.Fatalf("LoadSubagent accepted %s %q: %#v", key, value, got)
+				}
+			})
+		}
 	}
 }

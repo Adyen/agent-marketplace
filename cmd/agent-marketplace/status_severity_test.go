@@ -141,3 +141,35 @@ func TestBuildStatusRowsMatchesInstalledNameAndHarness(t *testing.T) {
 		t.Fatalf("installed name or harness attribution: %+v", rows)
 	}
 }
+
+// spec: resource-selection/required-skill-keeps-a-native-path-a-same-name-command-shares
+func TestBuildStatusRowsOmitTargetsLostToASharedPath(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	all := []hcc.Target{hcc.TargetDevin, hcc.TargetCodex, hcc.TargetClaude}
+	resolved := []resolver.ResolvedArtifact{
+		{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "audit", Path: "/org/audit"}, RegistryURL: "https://example.invalid/org", Source: config.Organization, Required: true, Harnesses: all},
+		{Entry: catalog.Entry{Kind: ir.KindCommand, Name: "audit", Path: "/user/audit"}, RegistryURL: "https://example.invalid/user", Source: config.UserPersonal, Harnesses: all},
+		{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "check", Path: "/org/check"}, RegistryURL: "https://example.invalid/org", Source: config.Organization, Required: true, Harnesses: []hcc.Target{hcc.TargetDevin}},
+		{Entry: catalog.Entry{Kind: ir.KindCommand, Name: "check", Path: "/user/check"}, RegistryURL: "https://example.invalid/user", Source: config.UserPersonal, Harnesses: []hcc.Target{hcc.TargetDevin}},
+	}
+	got := make(map[string][2]string)
+	for _, row := range buildStatusRows(t.TempDir(), resolved, nil, nil) {
+		got[row.Kind+"/"+row.Name] = [2]string{row.Harness, row.Target}
+	}
+	want := map[string][2]string{
+		"skill/audit":   {"Codex,claude,devin", "/org/audit"},
+		"command/audit": {"claude", "/user/audit"},
+		"skill/check":   {"devin", "/org/check"},
+		"command/check": {"-", "not materialized: shared path"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("rows = %v", got)
+	}
+	for key, row := range want {
+		if got[key] != row {
+			t.Errorf("%s = %v, want %v", key, got[key], row)
+		}
+	}
+}

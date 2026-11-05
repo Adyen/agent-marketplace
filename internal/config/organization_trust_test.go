@@ -11,12 +11,12 @@ import (
 	"testing"
 )
 
-const remoteOrganizationFixture = `apiVersion: agent-marketplace/v2
+const remoteOrganizationFixture = `apiVersion: agent-marketplace/v4
 harnesses: [factory]
-registries:
-  - url: https://example.com/org.git
-    ref: main
-    required: true
+sources:
+  org: {git: https://example.com/org.git, ref: main}
+resources:
+  org: {all: true, required: true}
 `
 
 const v4MarketplaceOrganizationFixture = `apiVersion: agent-marketplace/v4
@@ -307,7 +307,7 @@ func TestOrganizationIncludesRequireTrustedLexicalPaths(t *testing.T) {
 				external := filepath.Join(dir, "external")
 				middle := filepath.Join(external, "middle.yaml")
 				leaf := filepath.Join(external, "nested", "leaf.yaml")
-				writeIncludeConfig(t, leaf, "registries:\n  - path: /trusted-live-registry\n    required: true\n    skills: {include: [review]}\n")
+				writeIncludeConfig(t, leaf, "sources: {live: {directory: /trusted-live-registry}}\nresources: {live: {required: true, include: [skill/review]}}\n")
 				include := "nested/leaf.yaml"
 				if test.set != nil {
 					include = test.set(t, external, leaf)
@@ -317,9 +317,9 @@ func TestOrganizationIncludesRequireTrustedLexicalPaths(t *testing.T) {
 				if test.name == "trusted nested absolute" {
 					rootInclude = middle
 				}
-				data := "apiVersion: agent-marketplace/v2\nharnesses: [factory]\ninclude: " + rootInclude + "\n"
+				data := "apiVersion: agent-marketplace/v4\nharnesses: [factory]\ninclude: " + rootInclude + "\n"
 				if withLock {
-					data += "registries:\n  - url: https://example.com/org.git\n    ref: main\n"
+					data += "sources: {remote: {git: https://example.com/org.git, ref: main}}\nresources: {remote: [skill/remote]}\n"
 				}
 				writeIncludeConfig(t, root, data)
 				paths := []string{root, middle, leaf}
@@ -405,8 +405,8 @@ func TestV4OrganizationIncludesRequireTrustedAuthority(t *testing.T) {
 func TestOrganizationIncludeRetainsRootLexicalPath(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "authority", "config.yaml")
-	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: leaf.yaml\n")
-	writeIncludeConfig(t, filepath.Join(dir, "authority", "leaf.yaml"), "registries:\n  - path: /live-registry\n")
+	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v4\ninclude: leaf.yaml\n")
+	writeIncludeConfig(t, filepath.Join(dir, "authority", "leaf.yaml"), "sources: {live: {directory: /live-registry}}\nresources: {live: [skill/review]}\n")
 	target := filepath.Join(dir, "target")
 	if err := os.Mkdir(target, 0o700); err != nil {
 		t.Fatal(err)
@@ -424,14 +424,14 @@ func TestNonOrganizationIncludesKeepSymlinkAndWritableCompatibility(t *testing.T
 		dir := t.TempDir()
 		root := filepath.Join(dir, "config.yaml")
 		leaf := filepath.Join(dir, "nested", "leaf.yaml")
-		writeIncludeConfig(t, leaf, "registries:\n  - path: /live-registry\n")
+		writeIncludeConfig(t, leaf, "sources: {live: {directory: /live-registry}}\nresources: {live: [skill/review]}\n")
 		if err := os.Chmod(leaf, 0o666); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.Symlink(filepath.Dir(leaf), filepath.Join(dir, "alias")); err != nil {
 			t.Fatal(err)
 		}
-		writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v2\ninclude: alias/../nested/leaf.yaml\n")
+		writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v4\ninclude: alias/../nested/leaf.yaml\n")
 		data, err := readConfigFile(root)
 		if err != nil {
 			t.Fatal(err)
@@ -453,7 +453,7 @@ func TestOrganizationIncludeCannotEnableTestTrustFromFragmentPath(t *testing.T) 
 	}
 	dir := t.TempDir()
 	fragment := filepath.Join(dir, "fragment.yaml")
-	writeIncludeConfig(t, fragment, "registries: []\n")
+	writeIncludeConfig(t, fragment, "sources: {}\n")
 	if err := validateOrganizationInclude(fragment, filepath.Join(dir, "config.yaml")); err != nil {
 		t.Fatalf("existing fixture trust override blocked: %v", err)
 	}

@@ -15,6 +15,7 @@ const packageRoot = [
 if (!packageRoot) throw new Error("cannot locate the TUI QA package root");
 const repositoryRoot = path.resolve(process.env.AM_TUI_QA_REPO_ROOT ?? path.join(packageRoot, "..", ".."));
 export const binary = path.resolve(process.env.AM_TUI_QA_BINARY ?? path.join(repositoryRoot, ".local", "agent-marketplace", "bin", "agent-marketplace-tui-qa"));
+export const artifactRoot = path.resolve(process.env.AM_TUI_QA_ARTIFACTS ?? path.join(packageRoot, "test-results"));
 
 export interface ProcessFixture {
   root: string;
@@ -23,6 +24,16 @@ export interface ProcessFixture {
   env: Record<string, string>;
   cleanup(): void;
 }
+
+export const readRegularFile = (file: string): Buffer => {
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  try {
+    if (!fs.fstatSync(fd).isFile()) throw new Error(`not a regular file: ${file}`);
+    return fs.readFileSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+};
 
 export const write = (file: string, content: string, mode = 0o600): void => {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -51,6 +62,7 @@ export const isolatedEnvironment = (
   TMP: tmp,
   TEMP: tmp,
   CODEX_HOME: path.join(home, ".codex"),
+  CLAUDE_CONFIG_DIR: "",
   GIT_CONFIG_NOSYSTEM: "1",
   GIT_CONFIG_SYSTEM: "/dev/null",
   GIT_CONFIG_GLOBAL: "/dev/null",

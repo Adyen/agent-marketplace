@@ -101,7 +101,7 @@ func TestFactoryDocumentedHookEventsRemainSupported(t *testing.T) {
 }
 
 func TestFactoryHookEventsMustBeRepresentable(t *testing.T) {
-	src := fstest.MapFS{".devin/hooks.v1.json": {Data: []byte(`{"PermissionRequest":[{"hooks":[{"type":"command","command":"permission-check"}]}],"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"valid-check"}]}]}`)}}
+	src := fstest.MapFS{".devin/hooks.v1.json": {Data: []byte(`{"PermissionRequest":[{"hooks":[{"type":"command","command":"permission-check"}]}],"PreToolUse":[{"matcher":"exec","hooks":[{"type":"command","command":"valid-check"}]}]}`)}}
 	result, err := Convert(src, HarnessDevin, TargetFactory)
 	if err != nil {
 		t.Fatal(err)

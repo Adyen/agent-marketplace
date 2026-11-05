@@ -204,8 +204,8 @@ func TestTranslateHook_PreservesWindsurfSidecar(t *testing.T) {
 }
 
 func TestTranslateHook_SidecarWorkdirConsumesIdenticalExtra(t *testing.T) {
-	hook := ir.NewHookWithMatcher("native", "PreToolUse", "Read", "scripts/setup.sh", "command", map[string]any{"working_directory": "/tmp/project"}, ir.SourceRef{})
-	hook.Ext.Windsurf = &extpkg.Windsurf{OriginalHookEvent: "PreToolUse", HookWorkingDir: "/tmp/project"}
+	hook := ir.NewHookWithMatcher("native", "pre_read_code", "", "scripts/setup.sh", "command", map[string]any{"working_directory": "/tmp/project"}, ir.SourceRef{})
+	hook.Ext.Windsurf = &extpkg.Windsurf{OriginalHookEvent: "pre_read_code", HookWorkingDir: "/tmp/project"}
 	artifacts, diags, err := (Compiler{}).Translate(hook)
 	if err != nil || len(artifacts) != 1 || len(diags) != 0 {
 		t.Fatalf("Translate(hook) = artifacts %d diags %#v err=%v", len(artifacts), diags, err)
@@ -215,28 +215,25 @@ func TestTranslateHook_SidecarWorkdirConsumesIdenticalExtra(t *testing.T) {
 		t.Fatal(err)
 	}
 	hooksDoc := doc["hooks"].(map[string]any)
-	var body map[string]any
-	for _, raw := range hooksDoc {
-		groups, ok := raw.([]any)
-		if ok && len(groups) > 0 {
-			body = groups[0].(map[string]any)
-			break
-		}
-	}
-	if body == nil {
+	groups, ok := hooksDoc["pre_read_code"].([]any)
+	if !ok || len(groups) != 1 {
 		t.Fatalf("hooks document = %#v", doc)
 	}
+	body := groups[0].(map[string]any)
 	if body["working_directory"] != "/tmp/project" || hook.Extra["working_directory"] != "/tmp/project" {
 		t.Fatalf("workdir output/extra = %#v / %#v", body, hook.Extra)
 	}
 }
 
 func TestTranslateHook_SidecarWorkdirMismatchFails(t *testing.T) {
-	hook := ir.NewHookWithMatcher("native", "PreToolUse", "Read", "scripts/setup.sh", "command", map[string]any{"working_directory": "/tmp/other"}, ir.SourceRef{})
-	hook.Ext.Windsurf = &extpkg.Windsurf{OriginalHookEvent: "PreToolUse", HookWorkingDir: "/tmp/project"}
-	_, diags, err := (Compiler{}).Translate(hook)
-	if err != nil || !diag.HasCode(diags, diag.CodeHookWindsurfNativeFieldsUnsupported) {
-		t.Fatalf("mismatch result err=%v diags=%#v", err, diags)
+	hook := ir.NewHookWithMatcher("native", "pre_read_code", "", "scripts/setup.sh", "command", map[string]any{"working_directory": "/tmp/other"}, ir.SourceRef{})
+	hook.Ext.Windsurf = &extpkg.Windsurf{OriginalHookEvent: "pre_read_code", HookWorkingDir: "/tmp/project"}
+	artifacts, diags, err := (Compiler{}).Translate(hook)
+	if err != nil || len(artifacts) != 0 {
+		t.Fatalf("mismatch result err=%v artifacts=%d", err, len(artifacts))
+	}
+	if len(diags) != 1 || diags[0].Code != diag.CodeHookWindsurfNativeFieldsUnsupported || diags[0].Severity != diag.SeverityError {
+		t.Fatalf("mismatch diags=%#v", diags)
 	}
 }
 
@@ -274,6 +271,8 @@ func TestTranslateHook_WithPluginRoot(t *testing.T) {
 	assertGoldenFile(t, "testdata/hook_with_plugin_root.golden", artifact.Bytes)
 }
 
+// Under the catalog-driven resolver a plugin-root token with no installed
+// support base refuses the hook; no plugin-only variable may be emitted.
 func TestTranslateHook_WithoutPluginRoot(t *testing.T) {
 	translator := Compiler{}
 	hook := ir.NewHookWithMatcher(
@@ -290,26 +289,29 @@ func TestTranslateHook_WithoutPluginRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TranslateWithOptions(hook): %v", err)
 	}
+	if len(artifacts) != 0 {
+		t.Fatalf("plugin-root token without a support base must suppress the hook; artifacts = %d", len(artifacts))
+	}
 	if len(diags) != 1 {
 		t.Fatalf("TranslateWithOptions(hook) diags = %d, want 1", len(diags))
 	}
-	if diags[0].Code != diag.CodeHookWindsurfEnvTokenExpanded {
-		t.Fatalf("diag code = %q, want %q", diags[0].Code, diag.CodeHookWindsurfEnvTokenExpanded)
+	if diags[0].Code != diag.CodeHookSupportPathUnrepresentable {
+		t.Fatalf("diag code = %q, want %q", diags[0].Code, diag.CodeHookSupportPathUnrepresentable)
 	}
-	if diags[0].Severity != diag.SeverityWarning {
-		t.Fatalf("diag severity = %v, want %v", diags[0].Severity, diag.SeverityWarning)
+	if diags[0].Severity != diag.SeverityError {
+		t.Fatalf("diag severity = %v, want %v", diags[0].Severity, diag.SeverityError)
 	}
-
-	artifact := singleArtifact(t, artifacts)
-	assertGoldenFile(t, "testdata/hook_without_plugin_root.golden", artifact.Bytes)
 }
 
 func TestTranslateHook_PreToolUse_Write(t *testing.T) {
 	translator := Compiler{}
+	// The catalog-driven resolver requires the exact tool concept set:
+	// pre_write_code covers file.write and file.edit, so the matcher names
+	// both tools.
 	hook := ir.NewHookWithMatcher(
 		"PreToolUse-Write-command",
 		"PreToolUse",
-		"Write",
+		"Write|Edit",
 		"scripts/check-write.sh",
 		"command",
 		nil,
@@ -331,6 +333,7 @@ func TestTranslateHook_PreToolUse_Write(t *testing.T) {
 	assertGoldenFile(t, "testdata/hook_pre_write_code.golden", artifact.Bytes)
 }
 
+// spec: hook-resources/windsurf-splits-pretooluse-by-translated-tool-matcher
 func TestTranslateHook_PreToolUse_Bash(t *testing.T) {
 	translator := Compiler{}
 	hook := ir.NewHookWithMatcher(
@@ -452,11 +455,12 @@ func TestTranslateHook_SubagentStop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Translate(hook): %v", err)
 	}
-	if len(artifacts) != 0 || len(diags) != 1 || diags[0].Code != diag.CodeHookWindsurfEventUnmappable || diags[0].Severity != diag.SeverityWarning {
-		t.Fatalf("SubagentStop must be suppressed with an unmappable warning: artifacts=%v diagnostics=%v", artifacts, diags)
+	if len(artifacts) != 0 || len(diags) != 1 || diags[0].Code != diag.CodeHookWindsurfEventUnmappable || diags[0].Severity != diag.SeverityError {
+		t.Fatalf("SubagentStop must be suppressed with an unmappable error: artifacts=%v diagnostics=%v", artifacts, diags)
 	}
 }
 
+// spec: hook-resources/unmappable-events-are-errors-on-every-target
 func TestTranslateHook_UnmappableEvent(t *testing.T) {
 	translator := Compiler{}
 	hook := ir.NewHook(
@@ -481,11 +485,12 @@ func TestTranslateHook_UnmappableEvent(t *testing.T) {
 	if diags[0].Code != diag.CodeHookWindsurfEventUnmappable {
 		t.Fatalf("diag code = %q, want %q", diags[0].Code, diag.CodeHookWindsurfEventUnmappable)
 	}
-	if diags[0].Severity != diag.SeverityWarning {
-		t.Fatalf("diag severity = %v, want %v", diags[0].Severity, diag.SeverityWarning)
+	if diags[0].Severity != diag.SeverityError {
+		t.Fatalf("diag severity = %v, want %v", diags[0].Severity, diag.SeverityError)
 	}
 }
 
+// spec: hook-resources/windsurf-splits-pretooluse-by-translated-tool-matcher
 func TestTranslateHook_PreToolUse_EmptyMatcher(t *testing.T) {
 	translator := Compiler{}
 	hook := ir.NewHook(

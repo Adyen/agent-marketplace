@@ -1,5 +1,7 @@
 .vitepress/cache
+.vitepress/cache-docs
 .vitepress/dist
+.vitepress/dist-docs
 node_modules
 .git
 .gitignore

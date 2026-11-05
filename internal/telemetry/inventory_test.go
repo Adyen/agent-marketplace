@@ -21,6 +21,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// spec: telemetry/inventory-is-detailed-primary-only
 func TestInventoryRoutesOnlyToDetailedPrimary(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
@@ -96,6 +97,7 @@ func TestInventoryRoutesOnlyToDetailedPrimary(t *testing.T) {
 	}
 }
 
+// spec: telemetry/oversized-inventory-is-omitted-whole
 func TestInventoryBoundsContract(t *testing.T) {
 	if MaxInventoryRegistries != 1_000 || MaxInventoryResources != 10_000 || MaxInventoryAttributeBytes != 512 {
 		t.Fatalf("inventory bounds = %d/%d/%d", MaxInventoryRegistries, MaxInventoryResources, MaxInventoryAttributeBytes)
@@ -308,6 +310,7 @@ func TestConcurrentRecordInventoryAndRepeatedShutdown(t *testing.T) {
 	}
 }
 
+// spec: telemetry/resolution-and-export-failures-do-not-become-inventory-success
 func TestRecordInventoryDoesNotBlockOnExport(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
@@ -356,6 +359,7 @@ func TestRecordInventoryDoesNotBlockOnExport(t *testing.T) {
 	}
 }
 
+// spec: telemetry/fingerprints-and-observation-order-are-stable
 func TestSequentialInventorySnapshotsExportOnceInOrder(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
@@ -779,6 +783,7 @@ func inventoryMetricsCaptureServer(t *testing.T) (*httptest.Server, func() *metr
 	}
 }
 
+// spec: telemetry/oversized-inventory-is-omitted-whole
 func TestInventoryOmissionCounterHasBoundedReason(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 

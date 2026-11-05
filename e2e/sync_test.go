@@ -23,13 +23,10 @@ func TestSyncCreatesGlobalConfigSkeleton(t *testing.T) {
 	// No user config exists; sync should create a minimal skeleton without a
 	// logging block.
 	env.WriteOrgConfig(fmt.Sprintf(`
-apiVersion: agent-marketplace/v3
-harnesses:
-  - factory
-registries:
-  - url: %s
-    ref: main
-    default: true
+apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources: {team: {git: %q, ref: main}}
+resources: {team: {all: true}}
 `, regURL))
 
 	r := env.RunAM("sync")
@@ -67,9 +64,9 @@ func TestSyncPreservesExternalGitignore(t *testing.T) {
 	t.Run("symlink", func(t *testing.T) {
 		env := newEnv(t)
 		env.InitGitRepo()
-		env.WriteGlobalConfig("harnesses: [factory]\nregistries: []")
-		env.WriteLocalConfig("{}\n")
-		env.WriteRepoConfig("harnesses: [factory]\nregistries: []")
+		env.WriteGlobalConfig("harnesses: [factory]\n")
+		env.WriteLocalConfig("apiVersion: agent-marketplace/v4\n")
+		env.WriteRepoConfig("harnesses: [factory]\n")
 		env.WriteFile("/root/outside-ignore", "sentinel\n")
 		outside := env.mustResolvePath("/root/outside-ignore")
 		gitignore := env.mustResolvePath("/workspace/.gitignore")
@@ -94,9 +91,9 @@ func TestSyncPreservesExternalGitignore(t *testing.T) {
 	t.Run("regular file", func(t *testing.T) {
 		env := newEnv(t)
 		env.InitGitRepo()
-		env.WriteGlobalConfig("harnesses: [factory]\nregistries: []")
-		env.WriteLocalConfig("{}\n")
-		env.WriteRepoConfig("harnesses: [factory]\nregistries: []")
+		env.WriteGlobalConfig("harnesses: [factory]\n")
+		env.WriteLocalConfig("apiVersion: agent-marketplace/v4\n")
+		env.WriteRepoConfig("harnesses: [factory]\n")
 		env.WriteFile("/workspace/.gitignore", "user-rule\n")
 
 		env.MustRunAM("sync")

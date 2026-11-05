@@ -1,0 +1,44 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+                                              │ /tmp/am-r5-r53-exact.UVZsj9/overlay-self-control-before.txt │ /tmp/am-r5-r53-exact.UVZsj9/overlay-self-control-after.txt │
+                                              │                           sec/op                            │                sec/op                 vs base              │
+V4RebuildExactExclusionsCPU/requests=1-2                                                       275.9n ± 10%                           276.2n ±  9%       ~ (p=0.554 n=6)
+V4RebuildExactExclusionsCPU/requests=32-2                                                      9.420µ ± 11%                           9.369µ ± 13%       ~ (p=0.937 n=6)
+V4RebuildExactExclusionsCPU/requests=256-2                                                     78.93µ ±  9%                           78.04µ ± 13%       ~ (p=1.000 n=6)
+V4RebuildExactExclusionsCPU/requests=1024-2                                                    351.4µ ± 11%                           347.1µ ± 10%       ~ (p=0.310 n=6)
+ParseV4ExclusionsCPU/exact/requests=1-2                                                        11.28µ ± 11%                           11.14µ ± 10%       ~ (p=0.485 n=6)
+ParseV4ExclusionsCPU/exact/requests=32-2                                                       76.51µ ± 11%                           76.55µ ±  8%       ~ (p=0.818 n=6)
+ParseV4ExclusionsCPU/exact/requests=256-2                                                      532.2µ ± 14%                           531.9µ ±  9%       ~ (p=0.937 n=6)
+ParseV4ExclusionsCPU/exact/requests=1024-2                                                     2.175m ±  9%                           2.151m ±  5%       ~ (p=0.132 n=6)
+ParseV4ExclusionsCPU/wildcard/requests=1024-2                                                  1.259m ±  9%                           1.232m ±  6%       ~ (p=0.240 n=6)
+geomean                                                                                        76.58µ                                 75.97µ        -0.80%
+
+                                              │ /tmp/am-r5-r53-exact.UVZsj9/overlay-self-control-before.txt │ /tmp/am-r5-r53-exact.UVZsj9/overlay-self-control-after.txt │
+                                              │                            B/op                             │                B/op                 vs base                │
+V4RebuildExactExclusionsCPU/requests=1-2                                                         528.0 ± 0%                           528.0 ± 0%       ~ (p=1.000 n=6) ¹
+V4RebuildExactExclusionsCPU/requests=32-2                                                      28.61Ki ± 0%                         28.61Ki ± 0%       ~ (p=1.000 n=6) ¹
+V4RebuildExactExclusionsCPU/requests=256-2                                                     236.5Ki ± 0%                         236.5Ki ± 0%       ~ (p=1.000 n=6) ¹
+V4RebuildExactExclusionsCPU/requests=1024-2                                                    1.013Mi ± 0%                         1.013Mi ± 0%       ~ (p=1.000 n=6) ¹
+ParseV4ExclusionsCPU/exact/requests=1-2                                                        15.97Ki ± 0%                         15.97Ki ± 0%       ~ (p=1.000 n=6)
+ParseV4ExclusionsCPU/exact/requests=32-2                                                       98.78Ki ± 0%                         98.78Ki ± 0%       ~ (p=1.000 n=6)
+ParseV4ExclusionsCPU/exact/requests=256-2                                                      711.8Ki ± 0%                         711.8Ki ± 0%       ~ (p=0.851 n=6)
+ParseV4ExclusionsCPU/exact/requests=1024-2                                                     2.886Mi ± 0%                         2.886Mi ± 0%       ~ (p=0.418 n=6)
+ParseV4ExclusionsCPU/wildcard/requests=1024-2                                                  2.010Mi ± 0%                         2.010Mi ± 0%       ~ (p=0.699 n=6)
+geomean                                                                                        142.8Ki                              142.8Ki       -0.00%
+¹ all samples are equal
+
+                                              │ /tmp/am-r5-r53-exact.UVZsj9/overlay-self-control-before.txt │ /tmp/am-r5-r53-exact.UVZsj9/overlay-self-control-after.txt │
+                                              │                          allocs/op                          │             allocs/op               vs base                │
+V4RebuildExactExclusionsCPU/requests=1-2                                                         3.000 ± 0%                           3.000 ± 0%       ~ (p=1.000 n=6) ¹
+V4RebuildExactExclusionsCPU/requests=32-2                                                        54.00 ± 0%                           54.00 ± 0%       ~ (p=1.000 n=6) ¹
+V4RebuildExactExclusionsCPU/requests=256-2                                                       293.0 ± 0%                           293.0 ± 0%       ~ (p=1.000 n=6) ¹
+V4RebuildExactExclusionsCPU/requests=1024-2                                                     1.078k ± 0%                          1.078k ± 0%       ~ (p=1.000 n=6) ¹
+ParseV4ExclusionsCPU/exact/requests=1-2                                                          161.0 ± 0%                           161.0 ± 0%       ~ (p=1.000 n=6) ¹
+ParseV4ExclusionsCPU/exact/requests=32-2                                                         856.0 ± 0%                           856.0 ± 0%       ~ (p=1.000 n=6) ¹
+ParseV4ExclusionsCPU/exact/requests=256-2                                                       5.594k ± 0%                          5.594k ± 0%       ~ (p=1.000 n=6)
+ParseV4ExclusionsCPU/exact/requests=1024-2                                                      22.53k ± 0%                          22.53k ± 0%       ~ (p=1.000 n=6) ¹
+ParseV4ExclusionsCPU/wildcard/requests=1024-2                                                   15.33k ± 0%                          15.33k ± 0%       ~ (p=1.000 n=6) ¹
+geomean                                                                                          620.4                                620.4       +0.00%
+¹ all samples are equal

@@ -145,10 +145,8 @@ func classifyStatus(r row) statusBucket {
 	}
 	if r.DriftItem != nil {
 		switch r.DriftItem.Reason {
-		case materialize.DriftMissing:
+		case materialize.DriftMissing, materialize.DriftOrphaned:
 			return statusPending
-		case materialize.DriftOrphaned:
-			return statusBroken
 		case materialize.DriftBroken:
 			return statusBroken
 		}

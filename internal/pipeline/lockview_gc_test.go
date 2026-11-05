@@ -170,7 +170,7 @@ func exactLockViewGCFixture(t *testing.T) (config.EffectiveConfig, string) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: "+canonical+"\n    ref: HEAD\n"), 0o644); err != nil {
+	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  lockview:\n    git: "+canonical+"\n    ref: HEAD\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	lockBytes, err := lockfile.Encode(lockfile.Document{APIVersion: lockfile.APIVersionV1, Scope: lockfile.ScopeRepo, Registries: []lockfile.GitRegistry{{URL: canonical, Ref: "HEAD", Commit: commit, Roots: []lockfile.GitRoot{root}}}})
@@ -181,7 +181,7 @@ func exactLockViewGCFixture(t *testing.T) (config.EffectiveConfig, string) {
 		t.Fatal(err)
 	}
 	entry := config.RegistryEntry{URL: canonical, Ref: "HEAD", Source: config.RepoCommitted}
-	cfg := &config.Config{APIVersion: config.APIVersionV2, Registries: []config.RegistryEntry{entry}}
+	cfg := &config.Config{APIVersion: config.APIVersionV4, Registries: []config.RegistryEntry{entry}}
 	ec := config.EffectiveConfig{Repo: config.LayerResult{Source: config.RepoCommitted, Path: configPath, Config: cfg}, Merged: cfg}
 	return ec, snapshot
 }
@@ -259,7 +259,7 @@ func TestMixedLockViewCacheLeaseOrdering(t *testing.T) {
 			ec, snapshot := exactLockViewGCFixture(t)
 			orgEntry := config.RegistryEntry{URL: "https://example.invalid/unlocked-org.git", Ref: "main", Source: config.Organization}
 			orgPath := filepath.Join(t.TempDir(), "config.yaml")
-			if err := os.WriteFile(orgPath, []byte("apiVersion: agent-marketplace/v2\nregistries:\n  - url: "+orgEntry.URL+"\n    ref: main\n"), 0o600); err != nil {
+			if err := os.WriteFile(orgPath, []byte("apiVersion: agent-marketplace/v4\nsources:\n  organization:\n    git: "+orgEntry.URL+"\n    ref: main\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			ec.Organization = config.LayerResult{Source: config.Organization, Path: orgPath, Config: &config.Config{Registries: []config.RegistryEntry{orgEntry}}}

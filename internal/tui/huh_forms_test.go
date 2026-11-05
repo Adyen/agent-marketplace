@@ -37,16 +37,6 @@ func TestToggleModalCarriesHuhForm(t *testing.T) {
 	}
 }
 
-func TestMigrationModalCarriesHuhForm(t *testing.T) {
-	m := NewModel("/repo", "/home")
-	m.pane = paneMigrationModal
-	m.migrationPrompt = migrationPrompt{configs: []migrationConfig{{label: "Project", path: "/repo/.agents/config.yaml"}}}
-	m.ensureMigrationForm()
-	if m.migrationForm == nil {
-		t.Fatal("migration modal must own a Huh form")
-	}
-}
-
 func TestEditConfigModalCarriesHuhForm(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.pane = paneEditConfigModal
@@ -59,7 +49,7 @@ func TestEditConfigModalCarriesHuhForm(t *testing.T) {
 func TestSyncQuitConfirmCarriesHuhForm(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.pane = paneConfirm
-	m.confirmMsg = "1 pending changes not synced. Sync+quit? y/n/esc"
+	m.confirmMsg = "1 pending changes not synced. Sync+quit?"
 	m.ensureSyncQuitForm()
 	if m.syncQuitForm == nil {
 		t.Fatal("sync+quit confirm must own a Huh form")

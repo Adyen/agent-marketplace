@@ -1,10 +1,9 @@
 ---
 name: demo-agent
 description: Demo agent for golden testing
-model: claude-sonnet-4-5-20250929
+model: claude-opus-5[effort=high]
 tools:
   - Read
   - Write
-effort: high
 ---
 You are a demo agent. Execute tasks with high reasoning effort.

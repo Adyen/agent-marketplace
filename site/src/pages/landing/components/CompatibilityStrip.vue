@@ -3,7 +3,7 @@ import { targets as harnesses } from '../data/harnesses'
 </script>
 
 <template>
-  <section class="compatibility" aria-labelledby="compatibility-title">
+  <section class="compatibility am-rule-block" aria-labelledby="compatibility-title">
     <div class="am-wrap strip">
       <div class="message">
         <span class="signal" aria-hidden="true"></span>
@@ -11,7 +11,7 @@ import { targets as harnesses } from '../data/harnesses'
       </div>
 
       <ul aria-label="Supported harnesses">
-        <li v-for="harness in harnesses" :key="harness.id">
+        <li v-for="harness in harnesses" :key="harness.id" class="am-outline-chip">
           {{ harness.label }}
         </li>
       </ul>
@@ -21,71 +21,40 @@ import { targets as harnesses } from '../data/harnesses'
 
 <style scoped>
 .compatibility {
-  border-block: 1px solid var(--am-border);
-  background: var(--am-surface);
+  padding: var(--lp-space-default) 0;
 }
 
 .strip {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 48px;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  min-height: 108px;
+  justify-content: space-between;
+  gap: var(--lp-space-related) var(--lp-space-default);
 }
 
 .message {
   display: flex;
   align-items: center;
-  gap: 10px;
-  color: var(--vp-c-text-2);
-  font-size: var(--am-text-supporting);
-  font-weight: var(--am-font-semibold);
-  letter-spacing: 0.03em;
-  white-space: nowrap;
+  gap: 0.5625rem;
+  color: var(--lp-text);
+  font: var(--lp-font-label);
+  text-transform: uppercase;
 }
 
 .signal {
-  width: 7px;
-  height: 7px;
+  width: 0.5625rem;
+  height: 0.5625rem;
   flex: none;
-  border-radius: 50%;
-  background: var(--vp-c-brand-1);
-  box-shadow: 0 0 18px color-mix(in srgb, var(--am-color-action-primary) 42%, transparent);
+  background: var(--lp-green);
 }
 
 ul {
   display: flex;
-  justify-content: flex-end;
   flex-wrap: wrap;
-  gap: 10px 24px;
+  gap: var(--lp-space-tight);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-li {
-  color: var(--vp-c-text-2);
-  font-size: var(--am-text-body-sm);
-  font-weight: var(--am-font-semibold);
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-}
-
-@media (max-width: 820px) {
-  .strip {
-    grid-template-columns: 1fr;
-    gap: 18px;
-    padding-block: 24px;
-  }
-
-  ul {
-    justify-content: flex-start;
-  }
-}
-
-@media (max-width: 420px) {
-  .message {
-    white-space: normal;
-  }
-}
 </style>

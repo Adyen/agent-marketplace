@@ -1,0 +1,56 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/gemini
+cpu: Apple M4 Max
+BenchmarkGeminiHookNames/grouped=false/hooks=1-16         	  311415	      7578 ns/op	    7508 B/op	     133 allocs/op
+BenchmarkGeminiHookNames/grouped=false/hooks=1-16         	  315877	      7446 ns/op	    7502 B/op	     133 allocs/op
+BenchmarkGeminiHookNames/grouped=false/hooks=1-16         	  323418	      7736 ns/op	    7502 B/op	     133 allocs/op
+BenchmarkGeminiHookNames/grouped=false/hooks=1-16         	  317709	      7579 ns/op	    7502 B/op	     133 allocs/op
+BenchmarkGeminiHookNames/grouped=false/hooks=1-16         	  317443	      7661 ns/op	    7502 B/op	     133 allocs/op
+BenchmarkGeminiHookNames/grouped=false/hooks=64-16        	    6699	    356165 ns/op	  359591 B/op	    6103 allocs/op
+BenchmarkGeminiHookNames/grouped=false/hooks=64-16        	    6735	    358423 ns/op	  359591 B/op	    6104 allocs/op
+BenchmarkGeminiHookNames/grouped=false/hooks=64-16        	    6826	    364175 ns/op	  359559 B/op	    6103 allocs/op
+BenchmarkGeminiHookNames/grouped=false/hooks=64-16        	    6693	    362965 ns/op	  359524 B/op	    6103 allocs/op
+BenchmarkGeminiHookNames/grouped=false/hooks=64-16        	    6499	    355803 ns/op	  359542 B/op	    6103 allocs/op
+BenchmarkGeminiHookNames/grouped=false/hooks=512-16       	     884	   2765479 ns/op	 2868740 B/op	   48965 allocs/op
+BenchmarkGeminiHookNames/grouped=false/hooks=512-16       	     856	   2796559 ns/op	 2868886 B/op	   48966 allocs/op
+BenchmarkGeminiHookNames/grouped=false/hooks=512-16       	     880	   2761407 ns/op	 2868936 B/op	   48966 allocs/op
+BenchmarkGeminiHookNames/grouped=false/hooks=512-16       	     810	   2777438 ns/op	 2868900 B/op	   48966 allocs/op
+BenchmarkGeminiHookNames/grouped=false/hooks=512-16       	     855	   2792615 ns/op	 2868844 B/op	   48965 allocs/op
+BenchmarkGeminiHookNames/grouped=false/hooks=2048-16      	     213	  11358871 ns/op	11922909 B/op	  196578 allocs/op
+BenchmarkGeminiHookNames/grouped=false/hooks=2048-16      	     216	  11119347 ns/op	11922251 B/op	  196576 allocs/op
+BenchmarkGeminiHookNames/grouped=false/hooks=2048-16      	     212	  11150963 ns/op	11922617 B/op	  196577 allocs/op
+BenchmarkGeminiHookNames/grouped=false/hooks=2048-16      	     213	  11109849 ns/op	11922004 B/op	  196576 allocs/op
+BenchmarkGeminiHookNames/grouped=false/hooks=2048-16      	     216	  11104033 ns/op	11921716 B/op	  196575 allocs/op
+BenchmarkGeminiHookNames/grouped=true/hooks=1-16          	  238470	     10433 ns/op	   10372 B/op	     178 allocs/op
+BenchmarkGeminiHookNames/grouped=true/hooks=1-16          	  218107	     10399 ns/op	   10373 B/op	     178 allocs/op
+BenchmarkGeminiHookNames/grouped=true/hooks=1-16          	  236115	     10541 ns/op	   10374 B/op	     178 allocs/op
+BenchmarkGeminiHookNames/grouped=true/hooks=1-16          	  240248	     10435 ns/op	   10374 B/op	     178 allocs/op
+BenchmarkGeminiHookNames/grouped=true/hooks=1-16          	  233365	     10481 ns/op	   10373 B/op	     178 allocs/op
+BenchmarkGeminiHookNames/grouped=true/hooks=64-16         	    6774	    340995 ns/op	  341962 B/op	    5581 allocs/op
+BenchmarkGeminiHookNames/grouped=true/hooks=64-16         	    7140	    343201 ns/op	  341951 B/op	    5581 allocs/op
+BenchmarkGeminiHookNames/grouped=true/hooks=64-16         	    7150	    341027 ns/op	  341926 B/op	    5580 allocs/op
+BenchmarkGeminiHookNames/grouped=true/hooks=64-16         	    7107	    342415 ns/op	  341950 B/op	    5581 allocs/op
+BenchmarkGeminiHookNames/grouped=true/hooks=64-16         	    7299	    338218 ns/op	  341961 B/op	    5581 allocs/op
+BenchmarkGeminiHookNames/grouped=true/hooks=512-16        	     921	   2629156 ns/op	 2707445 B/op	   44409 allocs/op
+BenchmarkGeminiHookNames/grouped=true/hooks=512-16        	     912	   2636581 ns/op	 2707439 B/op	   44409 allocs/op
+BenchmarkGeminiHookNames/grouped=true/hooks=512-16        	     897	   2643260 ns/op	 2707191 B/op	   44408 allocs/op
+BenchmarkGeminiHookNames/grouped=true/hooks=512-16        	     920	   2631775 ns/op	 2707361 B/op	   44409 allocs/op
+BenchmarkGeminiHookNames/grouped=true/hooks=512-16        	     897	   2643397 ns/op	 2707429 B/op	   44409 allocs/op
+BenchmarkGeminiHookNames/grouped=true/hooks=2048-16       	     232	  10383605 ns/op	11507708 B/op	  178199 allocs/op
+BenchmarkGeminiHookNames/grouped=true/hooks=2048-16       	     228	  10575994 ns/op	11507331 B/op	  178198 allocs/op
+BenchmarkGeminiHookNames/grouped=true/hooks=2048-16       	     231	  10349267 ns/op	11507980 B/op	  178200 allocs/op
+BenchmarkGeminiHookNames/grouped=true/hooks=2048-16       	     228	  10637750 ns/op	11507363 B/op	  178199 allocs/op
+BenchmarkGeminiHookNames/grouped=true/hooks=2048-16       	     231	  10307720 ns/op	11507027 B/op	  178198 allocs/op
+BenchmarkGeminiHookNamesBundle/hooks=1-16                 	  109761	     22533 ns/op	   19819 B/op	     384 allocs/op
+BenchmarkGeminiHookNamesBundle/hooks=1-16                 	  110671	     22076 ns/op	   19818 B/op	     384 allocs/op
+BenchmarkGeminiHookNamesBundle/hooks=1-16                 	  108525	     22131 ns/op	   19819 B/op	     384 allocs/op
+BenchmarkGeminiHookNamesBundle/hooks=1-16                 	  108974	     22076 ns/op	   19818 B/op	     384 allocs/op
+BenchmarkGeminiHookNamesBundle/hooks=1-16                 	  110022	     22479 ns/op	   19818 B/op	     384 allocs/op
+BenchmarkGeminiHookNamesBundle/hooks=512-16               	     673	   3589629 ns/op	 3727702 B/op	   63571 allocs/op
+BenchmarkGeminiHookNamesBundle/hooks=512-16               	     694	   3511681 ns/op	 3727478 B/op	   63570 allocs/op
+BenchmarkGeminiHookNamesBundle/hooks=512-16               	     693	   3506505 ns/op	 3727371 B/op	   63570 allocs/op
+BenchmarkGeminiHookNamesBundle/hooks=512-16               	     690	   3475534 ns/op	 3727075 B/op	   63569 allocs/op
+BenchmarkGeminiHookNamesBundle/hooks=512-16               	     654	   3519893 ns/op	 3727063 B/op	   63569 allocs/op
+PASS
+ok  	github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/gemini	120.570s

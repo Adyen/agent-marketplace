@@ -126,7 +126,7 @@ func TestSetUserTelemetryRejectsNonGlobal(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(nonGlobal), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeTestFile(t, nonGlobal, []byte("apiVersion: agent-marketplace/v3\nharnesses:\n  - factory\n"))
+	writeTestFile(t, nonGlobal, []byte("apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\n"))
 
 	if err := SetUserTelemetryLevel(nonGlobal, "basic"); err == nil {
 		t.Fatal("expected error for non-global config")
@@ -153,7 +153,7 @@ func setupUserConfig(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeTestFile(t, path, []byte("apiVersion: agent-marketplace/v3\nharnesses:\n  - factory\n"))
+	writeTestFile(t, path, []byte("apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\n"))
 	return path
 }
 

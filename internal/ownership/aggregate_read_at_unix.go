@@ -14,10 +14,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// maxAggregateFileBytes bounds one aggregate read, matching the 64 MiB safety
+// MaxAggregateFileBytes bounds one aggregate read, matching the 64 MiB safety
 // ceiling used for canonical source archives. A file that does not fit inside
 // it — including one that grows past the bound mid-read — is unsafe input.
-const maxAggregateFileBytes int64 = 64 << 20
+const MaxAggregateFileBytes int64 = 64 << 20
 
 // ReadAggregateFileAt reads rel beneath root without ever resolving a path
 // more than once: the root is opened as a directory descriptor, each ancestor
@@ -71,9 +71,9 @@ func ReadAggregateFileAt(root, rel string) ([]byte, error) {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("%w: %q must be a regular file without multiple links", ErrUnsafeAggregateFile, label)
 	}
-	if stat.Size > maxAggregateFileBytes {
+	if stat.Size > MaxAggregateFileBytes {
 		_ = unix.Close(fd)
-		return nil, fmt.Errorf("%w: %q exceeds the %d-byte aggregate limit", ErrUnsafeAggregateFile, label, maxAggregateFileBytes)
+		return nil, fmt.Errorf("%w: %q exceeds the %d-byte aggregate limit", ErrUnsafeAggregateFile, label, MaxAggregateFileBytes)
 	}
 	if err := unix.SetNonblock(fd, false); err != nil {
 		_ = unix.Close(fd)
@@ -81,14 +81,14 @@ func ReadAggregateFileAt(root, rel string) ([]byte, error) {
 	}
 	file := os.NewFile(uintptr(fd), label)
 	defer func() { _ = file.Close() }()
-	data, err := io.ReadAll(io.LimitReader(file, maxAggregateFileBytes+1))
+	data, err := io.ReadAll(io.LimitReader(file, MaxAggregateFileBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("ownership: read aggregate %q: %w", label, err)
 	}
-	if int64(len(data)) > maxAggregateFileBytes {
+	if int64(len(data)) > MaxAggregateFileBytes {
 		// The file grew between fstat and the read; refuse rather than trust
 		// bytes observed past the bound.
-		return nil, fmt.Errorf("%w: %q exceeds the %d-byte aggregate limit", ErrUnsafeAggregateFile, label, maxAggregateFileBytes)
+		return nil, fmt.Errorf("%w: %q exceeds the %d-byte aggregate limit", ErrUnsafeAggregateFile, label, MaxAggregateFileBytes)
 	}
 	return data, nil
 }

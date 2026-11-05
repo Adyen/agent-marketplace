@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -21,6 +22,23 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+func writeToleranceHookSource(t testing.TB) (string, string) {
+	t.Helper()
+	src := t.TempDir()
+	hooksDir := filepath.Join(src, "hooks")
+	definitionPath := filepath.Join(hooksDir, "hooks.json")
+	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(definitionPath, []byte(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"./run.sh"}]}]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hooksDir, "run.sh"), []byte("#!/bin/sh\necho deploy\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return src, definitionPath
+}
+
 // toleranceHookFixture creates a source layout carrying one command hook
 // (hooks/hooks.json plus its run.sh support script) and returns the resolved
 // artifact selecting it for the given source layer and target. The source
@@ -28,21 +46,44 @@ import (
 // is local:<path>.
 func toleranceHookFixture(t *testing.T, source config.Source, target hcc.Target) (resolver.ResolvedArtifact, string) {
 	t.Helper()
-	src := t.TempDir()
-	def := `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"./run.sh"}]}]}}`
-	hooksDir := filepath.Join(src, "hooks")
-	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
-		t.Fatal(err)
+	src, definitionPath := writeToleranceHookSource(t)
+	loaded, err := catalog.Load(src, "claude")
+	if err != nil {
+		t.Fatalf("Claude hook catalog: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(hooksDir, "hooks.json"), []byte(def), 0o644); err != nil {
-		t.Fatal(err)
+	var entry catalog.Entry
+	var hooks int
+	for _, candidate := range loaded.Entries {
+		if candidate.Kind == ir.KindHook {
+			entry = candidate
+			hooks++
+		}
 	}
-	if err := os.WriteFile(filepath.Join(hooksDir, "run.sh"), []byte("#!/bin/sh\necho deploy\n"), 0o755); err != nil {
-		t.Fatal(err)
+	if hooks != 1 {
+		t.Fatalf("Claude source hooks = %d, want one: %+v", hooks, loaded.Entries)
 	}
+	hook, ok := entry.Resource.(*ir.Hook)
+	if !ok || hook.SourceDefinitionDigest() == "" || hook.Source.File != "hooks/hooks.json" {
+		t.Fatalf("Claude source hook is not bound to its definition: %#v", entry.Resource)
+	}
+	entry.Name = "deploy"
+	entry.Path = definitionPath
+	return resolver.ResolvedArtifact{
+		Entry:       entry,
+		Source:      source,
+		RegistryURL: src,
+		CatalogKey:  src,
+		V4Kind:      config.V4SourceDirectory,
+		Harnesses:   []hcc.Target{target},
+	}, src
+}
+
+func frozenLegacyRawHookFixture(t *testing.T, source config.Source, target hcc.Target) (resolver.ResolvedArtifact, string) {
+	t.Helper()
+	src, definitionPath := writeToleranceHookSource(t)
 	hook := ir.NewHookWithMatcher("deploy", "PreToolUse", "Bash", "./run.sh", "command", nil, ir.SourceRef{File: "hooks/hooks.json"})
 	return resolver.ResolvedArtifact{
-		Entry:       catalog.Entry{Name: "deploy", Resource: hook, Path: filepath.Join(hooksDir, "hooks.json")},
+		Entry:       catalog.Entry{Name: "deploy", Resource: hook, Path: definitionPath},
 		Source:      source,
 		RegistryURL: src,
 		V4Kind:      config.V4SourceDirectory,
@@ -79,26 +120,93 @@ func marketplaceHookFixture(t *testing.T, target hcc.Target, digest string) (res
 	t.Helper()
 	staged := t.TempDir()
 	def := `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"./run.sh"}]}]}}`
+	bundle, err := hcc.IngestBundle(fstest.MapFS{
+		"hooks/hooks.json": &fstest.MapFile{Data: []byte(def)},
+	}, hcc.HarnessClaude)
+	if err != nil {
+		t.Fatalf("Claude hook ingest: %v", err)
+	}
+	if diag.HasErrors(bundle.Diagnostics) {
+		t.Fatalf("Claude hook ingest diagnostics: %#v", bundle.Diagnostics)
+	}
+	var sourceHook *ir.Hook
+	var hookCount int
+	for _, resource := range bundle.Resources {
+		if hook, ok := resource.(*ir.Hook); ok {
+			sourceHook = hook
+			hookCount++
+		}
+	}
+	if hookCount != 1 || sourceHook == nil {
+		t.Fatalf("Claude hook resources = %d, want one: %#v", hookCount, bundle.Resources)
+	}
+	if sourceHook.Name() != "PreToolUse-command" || sourceHook.Source.File != "hooks/hooks.json" || sourceHook.HookSource != "" || sourceHook.Event != "PreToolUse" || sourceHook.Matcher != "Bash" || sourceHook.Type != "command" || sourceHook.Command != "./run.sh" {
+		t.Fatalf("Claude source hook = %#v", sourceHook)
+	}
+	canonical, err := artifact.FromIR(sourceHook)
+	if err != nil {
+		t.Fatalf("FromIR: %v", err)
+	}
+	archive, _, err := artifact.Encode(canonical)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	decodedArchive, _, err := artifact.Decode(bytes.NewReader(archive))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	resource, err := artifact.DecodeResource(decodedArchive.Manifest.Kind, decodedArchive.Payload)
+	if err != nil {
+		t.Fatalf("DecodeResource: %v", err)
+	}
+	hook, ok := resource.(*ir.Hook)
+	if !ok || hook.SourceDefinitionDigest() != "" || hook.Name() != "PreToolUse-command" || hook.Source.File != "hooks/hooks.json" {
+		t.Fatalf("decoded Marketplace hook = %#v", resource)
+	}
 	if err := os.WriteFile(filepath.Join(staged, "hooks.json"), []byte(def), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(staged, "run.sh"), []byte("#!/bin/sh\necho deploy\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	hook := ir.NewHookWithMatcher("deploy", "PreToolUse", "Bash", "./run.sh", "command", nil, ir.SourceRef{File: "deploy-hook/hooks.json"})
 	return resolver.ResolvedArtifact{
-		Entry:                   catalog.Entry{Name: "deploy", Resource: hook, Path: filepath.Join(staged, "hooks.json")},
+		Entry:                   catalog.Entry{Kind: ir.KindHook, Name: "deploy", Resource: hook, Path: filepath.Join(staged, "hooks.json")},
 		Source:                  config.RepoCommitted,
 		RegistryURL:             "https://marketplace.example",
 		Harnesses:               []hcc.Target{target},
 		IsMarketplace:           true,
 		MarketplaceInstanceID:   "mp",
 		MarketplaceRegistryID:   "src",
-		MarketplaceResourceName: "deploy",
+		MarketplaceResourceName: hook.Name(),
 		MarketplaceDigest:       digest,
 		MarketplaceAcquisition:  config.MarketplaceAcquisitionIndexOnly,
+		InstalledName:           "deploy",
 		StagedSourceDir:         staged,
 	}, staged
+}
+
+// spec: hook-native-location-tolerance/source-and-support-changes-invalidate-the-fingerprint
+func TestRunIndexOnlyHookDefinitionMismatchIsNotSupportAdmissionRefusal(t *testing.T) {
+	home, repo := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	resolved, staged := marketplaceHookFixture(t, hcc.TargetFactory, "sha256:"+strings.Repeat("a", 64))
+	definitionPath := filepath.Join(staged, "hooks.json")
+	changedDefinition := []byte(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"./changed.sh"}]}]}}`)
+	if err := os.WriteFile(definitionPath, changedDefinition, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{resolved})
+	if err != nil || report == nil || !hasDiagCode(report.Diags, "materialize.compile.error") {
+		t.Fatalf("index-only definition mismatch was not refused: %+v / %v", report, err)
+	}
+	if hasDiagCode(report.Diags, diag.CodeMaterializeHookSupportRefused) {
+		t.Fatalf("index-only definition-binding refusal was mislabeled as source admission: %+v", report.Diags)
+	}
+	if _, err := os.Lstat(filepath.Join(repo, ".factory", "hooks.json")); !os.IsNotExist(err) {
+		t.Fatalf("index-only definition-binding refusal published a native hook: %v", err)
+	}
 }
 
 // mirrorHookFixture returns the resolved artifact the Marketplace resolver
@@ -108,22 +216,56 @@ func marketplaceHookFixture(t *testing.T, target hcc.Target, digest string) (res
 // succeed and only the acquisition mode keeps it out of the fingerprint.
 func mirrorHookFixture(t *testing.T, target hcc.Target, digest string) (resolver.ResolvedArtifact, string) {
 	t.Helper()
+	definition := []byte(`{"PreToolUse":[{"matcher":"Execute","hooks":[{"type":"command","command":"./run.sh"}]}]}`)
+	bundle, err := hcc.IngestBundle(fstest.MapFS{
+		"hooks/hooks.json": &fstest.MapFile{Data: definition},
+	}, hcc.HarnessClaude)
+	if err != nil || diag.HasErrors(bundle.Diagnostics) {
+		t.Fatalf("Claude mirror bundle ingest: bundle=%#v err=%v", bundle, err)
+	}
+	if len(bundle.Resources) != 1 {
+		t.Fatalf("Claude mirror bundle resources = %d, want one", len(bundle.Resources))
+	}
+	sourceHook, ok := bundle.Resources[0].(*ir.Hook)
+	if !ok || sourceHook.Source.File != "hooks/hooks.json" || sourceHook.Name() != "PreToolUse-command" {
+		t.Fatalf("Claude mirror source hook = %#v", bundle.Resources[0])
+	}
+	canonical, err := artifact.FromIR(sourceHook)
+	if err != nil {
+		t.Fatalf("FromIR: %v", err)
+	}
+	archiveBytes, _, err := artifact.Encode(canonical)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	decoded, _, err := artifact.Decode(bytes.NewReader(archiveBytes))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	resource, err := artifact.DecodeResource(decoded.Manifest.Kind, decoded.Payload)
+	if err != nil {
+		t.Fatalf("DecodeResource: %v", err)
+	}
+	hook, ok := resource.(*ir.Hook)
+	if !ok || hook.Source.File != "hooks/hooks.json" || hook.Name() != "PreToolUse-command" || hook.SourceDefinitionDigest() != "" {
+		t.Fatalf("decoded Claude mirror hook = %#v", resource)
+	}
 	archive := filepath.Join(t.TempDir(), "artifact.tar.gz")
-	if err := os.WriteFile(archive, []byte("not a source tree"), 0o644); err != nil {
+	if err := os.WriteFile(archive, archiveBytes, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	hook := ir.NewHookWithMatcher("deploy", "PreToolUse", "Bash", "./run.sh", "command", nil, ir.SourceRef{File: "deploy-hook/hooks.json"})
 	return resolver.ResolvedArtifact{
-		Entry:                   catalog.Entry{Name: "deploy", Resource: hook, Path: archive},
+		Entry:                   catalog.Entry{Kind: ir.KindHook, Name: "deploy", Resource: hook, Path: archive, SourceHarness: "claude"},
 		Source:                  config.RepoCommitted,
 		RegistryURL:             "https://marketplace.example",
 		Harnesses:               []hcc.Target{target},
 		IsMarketplace:           true,
 		MarketplaceInstanceID:   "mp",
 		MarketplaceRegistryID:   "src",
-		MarketplaceResourceName: "deploy-hook",
+		MarketplaceResourceName: hook.Name(),
 		MarketplaceDigest:       digest,
 		MarketplaceAcquisition:  config.MarketplaceAcquisitionMirror,
+		InstalledName:           "deploy",
 	}, archive
 }
 
@@ -199,8 +341,12 @@ func TestMarketplaceHookNativeProofSuppressesLegacyOutput(t *testing.T) {
 		nativeBody := seedNativeOwnedHook(t, nativeRoot, layout, seed,
 			marketplaceFingerprint(t, resolved, staged, "factory", HookScopeRepository))
 
-		if _, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
+		report, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
+		if err != nil {
 			t.Fatalf("sync: %v", err)
+		}
+		if diag.HasErrors(report.Diags) {
+			t.Fatalf("exact revision was refused: %#v", report.Diags)
 		}
 		if data, err := os.ReadFile(legacyHookFileFor(hcc.TargetFactory, false, repoRoot, "")); err == nil {
 			t.Fatalf("marketplace hook legacy output recreated: %s", data)
@@ -225,7 +371,7 @@ func TestMarketplaceHookNativeProofSuppressesLegacyOutput(t *testing.T) {
 		seedNativeOwnedHook(t, nativeRoot, layout, seed,
 			marketplaceFingerprint(t, otherRevision, staged, "factory", HookScopeRepository))
 
-		if _, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
+		if _, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
 			t.Fatalf("sync: %v", err)
 		}
 		data, err := os.ReadFile(legacyHookFileFor(hcc.TargetFactory, false, repoRoot, ""))
@@ -238,43 +384,49 @@ func TestMarketplaceHookNativeProofSuppressesLegacyOutput(t *testing.T) {
 	// the verified artifact archive. Its native proof is the domain-separated
 	// hook-source/mirror/v1 fingerprint over verified metadata, and that
 	// proof suppresses the duplicate legacy write.
+	// A hook selected through REAL verified Marketplace mirror resolution carries
+	// no original source tree: Path is the verified artifact archive. Its
+	// domain-separated mirror fingerprint still satisfies an ownership-proven
+	// native entry, so the legacy-writing client does not recreate legacy output;
+	// proof recorded for a different revision does not.
 	// spec: hook-native-location-tolerance/verified-mirror-revision-uses-its-own-fingerprint
+	// Exact revision: clean native proof suppresses the legacy write.
 	t.Run("mirror_exact_revision", func(t *testing.T) {
 		repoRoot := t.TempDir()
 		resolved, _ := mirrorHookFixture(t, hcc.TargetFactory, pinDigest)
-		nativeRoot := filepath.Join(repoRoot, ".factory")
-		layout, _ := nativeHookLayoutFor(hcc.TargetFactory, false)
 		seed := nativeSeedFor(t, hcc.TargetFactory, false)
-		nativeBody := seedNativeOwnedHook(t, nativeRoot, layout, seed,
-			mirrorFingerprint(t, resolved, "factory", HookScopeRepository))
+		nativePath := mirrorHookNativeProof(t, repoRoot, seed.rule, resolved.Name, mirrorFingerprint(t, resolved, "factory", HookScopeRepository))
+		nativeBody, err := os.ReadFile(nativePath)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-		if _, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
+		if _, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
 			t.Fatalf("sync: %v", err)
 		}
 		if data, err := os.ReadFile(legacyHookFileFor(hcc.TargetFactory, false, repoRoot, "")); err == nil {
 			t.Fatalf("mirror hook legacy output recreated: %s", data)
 		}
-		nativeAfter, err := os.ReadFile(filepath.Join(nativeRoot, filepath.FromSlash(layout.rel)))
-		if err != nil || string(nativeAfter) != nativeBody {
+		nativeAfter, err := os.ReadFile(nativePath)
+		if err != nil || string(nativeAfter) != string(nativeBody) {
 			t.Fatalf("native file changed: %v", err)
 		}
 	})
 
 	// A mirror proof recorded under a different verified content digest is
 	// proof of a different resource revision: the legacy write proceeds.
+	// Proof recorded for a different verified content digest is proof of a
+	// different revision: legacy output proceeds untouched.
 	// spec: hook-native-location-tolerance/unverified-or-changed-mirror-revision-never-satisfies
 	t.Run("mirror_changed_digest", func(t *testing.T) {
 		repoRoot := t.TempDir()
 		resolved, _ := mirrorHookFixture(t, hcc.TargetFactory, pinDigest)
 		otherRevision := resolved
 		otherRevision.MarketplaceDigest = "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
-		nativeRoot := filepath.Join(repoRoot, ".factory")
-		layout, _ := nativeHookLayoutFor(hcc.TargetFactory, false)
 		seed := nativeSeedFor(t, hcc.TargetFactory, false)
-		seedNativeOwnedHook(t, nativeRoot, layout, seed,
-			mirrorFingerprint(t, otherRevision, "factory", HookScopeRepository))
+		mirrorHookNativeProof(t, repoRoot, seed.rule, resolved.Name, mirrorFingerprint(t, otherRevision, "factory", HookScopeRepository))
 
-		if _, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
+		if _, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
 			t.Fatalf("sync: %v", err)
 		}
 		data, err := os.ReadFile(legacyHookFileFor(hcc.TargetFactory, false, repoRoot, ""))
@@ -289,23 +441,24 @@ func TestMarketplaceHookNativeProofSuppressesLegacyOutput(t *testing.T) {
 	t.Run("mirror_missing_digest", func(t *testing.T) {
 		repoRoot := t.TempDir()
 		resolved, _ := mirrorHookFixture(t, hcc.TargetFactory, "")
-		nativeRoot := filepath.Join(repoRoot, ".factory")
-		layout, _ := nativeHookLayoutFor(hcc.TargetFactory, false)
 		seed := nativeSeedFor(t, hcc.TargetFactory, false)
 		withDigest := resolved
 		withDigest.MarketplaceDigest = pinDigest
-		nativeBody := seedNativeOwnedHook(t, nativeRoot, layout, seed,
-			mirrorFingerprint(t, withDigest, "factory", HookScopeRepository))
+		nativePath := mirrorHookNativeProof(t, repoRoot, seed.rule, resolved.Name, mirrorFingerprint(t, withDigest, "factory", HookScopeRepository))
+		nativeBody, err := os.ReadFile(nativePath)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-		if _, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
+		if _, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
 			t.Fatalf("sync: %v", err)
 		}
 		data, err := os.ReadFile(legacyHookFileFor(hcc.TargetFactory, false, repoRoot, ""))
 		if err != nil || !strings.Contains(string(data), "run.sh") {
 			t.Fatalf("missing mirror digest suppressed legacy output: %v %q", err, data)
 		}
-		nativeAfter, err := os.ReadFile(filepath.Join(nativeRoot, filepath.FromSlash(layout.rel)))
-		if err != nil || string(nativeAfter) != nativeBody {
+		nativeAfter, err := os.ReadFile(nativePath)
+		if err != nil || string(nativeAfter) != string(nativeBody) {
 			t.Fatalf("native file changed: %v", err)
 		}
 	})
@@ -320,13 +473,10 @@ func TestMarketplaceHookNativeProofSuppressesLegacyOutput(t *testing.T) {
 		resolved, _ := mirrorHookFixture(t, hcc.TargetFactory, pinDigest)
 		stagedRes, staged := marketplaceHookFixture(t, hcc.TargetFactory, pinDigest)
 		stagedRes.MarketplaceResourceName = resolved.MarketplaceResourceName
-		nativeRoot := filepath.Join(repoRoot, ".factory")
-		layout, _ := nativeHookLayoutFor(hcc.TargetFactory, false)
 		seed := nativeSeedFor(t, hcc.TargetFactory, false)
-		seedNativeOwnedHook(t, nativeRoot, layout, seed,
-			marketplaceFingerprint(t, stagedRes, staged, "factory", HookScopeRepository))
+		mirrorHookNativeProof(t, repoRoot, seed.rule, resolved.Name, marketplaceFingerprint(t, stagedRes, staged, "factory", HookScopeRepository))
 
-		if _, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
+		if _, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
 			t.Fatalf("sync: %v", err)
 		}
 		data, err := os.ReadFile(legacyHookFileFor(hcc.TargetFactory, false, repoRoot, ""))
@@ -370,6 +520,70 @@ func TestNativeHookSourceIdentity(t *testing.T) {
 	mpRes.MarketplaceDigest = ""
 	if got, err := nativeHookSourceIdentity(mpRes); err == nil {
 		t.Fatalf("missing digest identity = %q, want error", got)
+	}
+}
+
+func TestLocalRegistryRootDecodesFileURLs(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		url  string
+		want string
+	}{
+		{name: "file URL percent escape", url: "file:///srv/my%20registry", want: "/srv/my registry"},
+		{name: "home-relative", url: "~/registry", want: filepath.Join(home, "registry")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := localRegistryRoot(resolver.ResolvedArtifact{RegistryURL: tc.url, V4Kind: config.V4SourceDirectory})
+			if err != nil || got != tc.want {
+				t.Fatalf("localRegistryRoot(%q) = %q, %v; want %q", tc.url, got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestNativeHookSourceIdentityLocalURLs(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		url     string
+		want    string
+		wantErr bool
+	}{
+		{name: "absolute path control", url: "/srv/registry", want: "local:/srv/registry"},
+		{name: "file URL percent escape", url: "file:///srv/my%20registry", want: "local:/srv/my registry"},
+		{name: "home-relative control", url: "~/registry", want: "local:" + filepath.Join(home, "registry")},
+		{name: "relative inside working directory", url: "./reg", want: "local:" + filepath.Join(cwd, "reg")},
+		{name: "relative escaping working directory refuses", url: "../escape", wantErr: true},
+		{name: "malformed remote file URL refuses", url: "file://remote-host/srv/registry", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := resolver.ResolvedArtifact{
+				Entry:       catalog.Entry{Name: "deploy"},
+				RegistryURL: tc.url,
+				V4Kind:      config.V4SourceDirectory,
+			}
+			got, err := nativeHookSourceIdentity(res)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("identity = %q, want error", got)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("identity = %q, %v; want %q", got, err, tc.want)
+			}
+		})
 	}
 }
 
@@ -425,6 +639,23 @@ func seedNativeOwnedHook(t *testing.T, nativeRoot string, layout nativeHookLayou
 	return seed.doc
 }
 
+// mirrorHookNativeProof writes the Factory native hook file plus the durable
+// ownership record the future native writer leaves for it: the hook/v2
+// identity over the native event and canonical rule bytes, the ownership
+// resource name, and the supplied source-hook fingerprint.
+func mirrorHookNativeProof(t *testing.T, repoRoot, rule, resourceName, sourceDigest string) string {
+	t.Helper()
+	layout, ok := nativeHookLayoutFor(hcc.TargetFactory, false)
+	if !ok {
+		t.Fatal("Factory native hook layout is unavailable")
+	}
+	nativeRoot := filepath.Join(repoRoot, ".factory")
+	body := []byte(`{"PreToolUse":[` + rule + `]}` + "\n")
+	seedNativeProof(t, nativeRoot, layout, body,
+		nativeHookProofEntry(t, "PreToolUse", rule, resourceName, sourceDigest))
+	return filepath.Join(nativeRoot, filepath.FromSlash(layout.rel))
+}
+
 // legacyHookFileFor returns the file legacy output would (re)create for the
 // hook: hooks/hooks.json under the install root for Claude, Cursor, and
 // Factory, and the marker-merged .windsurf/hooks.json for Windsurf's
@@ -477,10 +708,18 @@ func TestNativeOwnedHookSuppressesLegacyRecreation(t *testing.T) {
 				t.Fatalf("%s native root missing", tc.target)
 			}
 			seed := nativeSeedFor(t, tc.target, tc.machine)
-			nativeBody := seedNativeOwnedHook(t, nativeRoot, layout, seed,
-				toleranceFingerprint(t, src, string(tc.target), tc.scopeName))
+			fingerprint := toleranceFingerprint(t, src, string(tc.target), tc.scopeName)
+			nativeBody := seedNativeOwnedHook(t, nativeRoot, layout, seed, fingerprint)
+			resolvedFingerprint, err := nativeHookFingerprint(resolved, tc.target, tc.machine)
+			if err != nil || resolvedFingerprint != fingerprint {
+				t.Fatalf("captured source fingerprint = %q / %v, want seeded %q", resolvedFingerprint, err, fingerprint)
+			}
+			inspection := nativeHookInspectionFor(map[outputKey]*nativeHookInspection{}, outputKey{target: tc.target, machineScope: tc.machine}, repoRoot)
+			if inspection.err != nil || !inspection.hookSatisfied(fingerprint, "deploy") {
+				t.Fatalf("seeded Native Hook proof does not satisfy the captured hook: %v", inspection.err)
+			}
 
-			if _, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
+			if _, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
 				t.Fatalf("sync: %v", err)
 			}
 			legacyFile := legacyHookFileFor(tc.target, tc.machine, repoRoot, home)
@@ -489,14 +728,14 @@ func TestNativeOwnedHookSuppressesLegacyRecreation(t *testing.T) {
 			}
 			// No pending legacy write may be reported either: --check sees the
 			// same desired set, so nothing may be pending.
-			dryReport, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}, WithDryRun())
+			dryReport, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}, WithDryRun())
 			if err != nil {
 				t.Fatalf("sync --check: %v", err)
 			}
 			for _, root := range dryReport.PerRoot {
 				for _, w := range root.Written {
 					if strings.Contains(w, "hooks.json") {
-						t.Fatalf("sync --check reports a pending legacy write for %s", w)
+						t.Fatalf("sync --check reports a pending legacy write for %s: per-root=%+v", w, dryReport.PerRoot)
 					}
 				}
 			}
@@ -507,7 +746,7 @@ func TestNativeOwnedHookSuppressesLegacyRecreation(t *testing.T) {
 			}
 			// A second real sync (the --locked path takes the same seam) stays
 			// quiet: no legacy file, no new drift.
-			if _, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
+			if _, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
 				t.Fatalf("second sync: %v", err)
 			}
 			if data, readErr := os.ReadFile(legacyFile); readErr == nil {
@@ -542,7 +781,7 @@ func TestNativeOwnedHookReorderedKeysStillSatisfies(t *testing.T) {
 	reordered := `{"hooks":{"preToolUse":[{"type":"command","matcher":"Bash|Shell","event":"preToolUse","command":".cursor/am-hooks/deploy/run.sh"}]},"version":1}` + "\n"
 	writeNativeFile(t, nativeRoot, layout, []byte(reordered))
 
-	if _, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
+	if _, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
 	if data, readErr := os.ReadFile(legacyHookFileFor(hcc.TargetCursor, false, repoRoot, home)); readErr == nil {
@@ -592,7 +831,7 @@ func TestPartialNativeProofRetainsLegacyOutput(t *testing.T) {
 			seed := nativeSeedFor(t, hcc.TargetFactory, false)
 			seedFn(t, nativeRoot, layout, seed, toleranceFingerprint(t, src, "factory", HookScopeRepository))
 
-			if _, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
+			if _, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
 				t.Fatalf("sync: %v", err)
 			}
 			data, err := os.ReadFile(filepath.Join(nativeRoot, "hooks", "hooks.json"))
@@ -617,14 +856,12 @@ func TestNativeOwnedHookKeepsUnprovenSiblings(t *testing.T) {
 	repoRoot := t.TempDir()
 	resolved, src := toleranceHookFixture(t, config.RepoCommitted, hcc.TargetFactory)
 	// A second selected hook with NO native entry keeps legacy output.
-	other := ir.NewHookWithMatcher("audit", "PostToolUse", "Read", "./audit.sh", "command", nil, ir.SourceRef{File: "hooks/hooks.json"})
-	sibling := resolver.ResolvedArtifact{
-		Entry:       catalog.Entry{Name: "audit", Resource: other, Path: resolved.Path},
-		Source:      config.RepoCommitted,
-		RegistryURL: src,
-		V4Kind:      config.V4SourceDirectory,
-		Harnesses:   []hcc.Target{hcc.TargetFactory},
+	siblings, _ := sourceBackedHookFixtures(t, "claude", config.RepoCommitted, hcc.TargetFactory, "audit",
+		[]byte(`{"hooks":{"PostToolUse":[{"matcher":"Read","hooks":[{"type":"command","command":"./audit.sh"}]}]}}`), nil)
+	if len(siblings) != 1 {
+		t.Fatalf("Claude sibling hooks = %d, want one", len(siblings))
 	}
+	sibling := siblings[0]
 
 	nativeRoot := filepath.Join(repoRoot, ".factory")
 	layout, _ := nativeHookLayoutFor(hcc.TargetFactory, false)
@@ -636,7 +873,7 @@ func TestNativeOwnedHookKeepsUnprovenSiblings(t *testing.T) {
 		nativeHookProofEntry(t, seed.event, seed.rule, "deploy",
 			toleranceFingerprint(t, src, "factory", HookScopeRepository)))
 
-	if _, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved, sibling}); err != nil {
+	if _, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved, sibling}); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
 	legacyFile := filepath.Join(nativeRoot, "hooks", "hooks.json")
@@ -704,6 +941,7 @@ func TestMalformedNativeHookFilePreservesBothLocations(t *testing.T) {
 
 	// The same refusal must surface under the read-only check without any
 	// writes at all: no native file, no legacy file, no ownership-state file.
+	stateBeforeCheck := nativeSupportSnapshot(t, stateHome)
 	dryReport, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}, WithDryRun())
 	if err != nil {
 		t.Fatalf("sync --check: %v", err)
@@ -717,12 +955,24 @@ func TestMalformedNativeHookFilePreservesBothLocations(t *testing.T) {
 	if data, readErr := os.ReadFile(nativePath); readErr != nil || string(data) != string(malformed) {
 		t.Fatalf("native file changed under --check")
 	}
+	assertNativeSupportSnapshot(t, stateBeforeCheck, nativeSupportSnapshot(t, stateHome))
+	lockDir := filepath.Join(stateHome, "agent-marketplace", "locks")
 	var stateFiles int
-	if walkErr := filepath.Walk(stateHome, func(_ string, info os.FileInfo, err error) error {
-		if err == nil && !info.IsDir() {
+	if walkErr := filepath.Walk(stateHome, func(name string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, relErr := filepath.Rel(lockDir, name)
+		if relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !info.IsDir() {
 			stateFiles++
 		}
-		return err
+		return nil
 	}); walkErr != nil {
 		t.Fatal(walkErr)
 	}
@@ -739,7 +989,7 @@ func TestMalformedNativeHookFileReportsBlockedResource(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 	repoRoot := t.TempDir()
-	resolved, _ := toleranceHookFixture(t, config.RepoCommitted, hcc.TargetFactory)
+	resolved, _ := marketplaceHookFixture(t, hcc.TargetFactory, "sha256:abababababababababababababababababababababababababababababababab")
 	resolved.Kind = ir.KindHook
 	resolved.IsMarketplace = true
 	resolved.InstalledName = "deploy-copy"
@@ -748,13 +998,23 @@ func TestMalformedNativeHookFileReportsBlockedResource(t *testing.T) {
 	if err := os.MkdirAll(nativeRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(nativeRoot, "hooks.json"), []byte(`{"PreToolUse":"not-an-array"}`), 0o644); err != nil {
+	nativeFile := filepath.Join(nativeRoot, "hooks.json")
+	legacyFile := filepath.Join(nativeRoot, "hooks", "hooks.json")
+	if _, err := os.Lstat(legacyFile); !os.IsNotExist(err) {
+		t.Fatalf("legacy aggregate already exists: %v", err)
+	}
+	if err := os.WriteFile(nativeFile, []byte(`{"PreToolUse":"not-an-array"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	nativeBefore, nativeMode, nativeMtime := fileSnapshot(t, nativeFile)
 
-	report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
+	report, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
 	if err != nil {
 		t.Fatalf("sync: %v", err)
+	}
+	assertFileUnchanged(t, nativeFile, nativeBefore, nativeMode, nativeMtime)
+	if _, err := os.Lstat(legacyFile); !os.IsNotExist(err) {
+		t.Fatalf("legacy aggregate was created: %v", err)
 	}
 	if !diag.HasCode(report.Diags, diag.CodeHookNativeToleranceRefused) {
 		t.Fatalf("missing %s diagnostic: %#v", diag.CodeHookNativeToleranceRefused, report.Diags)
@@ -789,7 +1049,7 @@ func TestMalformedNativeHookFileDoesNotBlockOtherTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
+	report, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
 	if err != nil {
 		t.Fatalf("sync: %v", err)
 	}
@@ -829,7 +1089,7 @@ func TestWindsurfMachineSharedFileKeepsSiblings(t *testing.T) {
 		nativeHookProofEntry(t, "pre_run_command", provenRule, "deploy",
 			toleranceFingerprint(t, src, "windsurf", HookScopeMachine)))
 
-	if _, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
+	if _, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
 	sharedPath := filepath.Join(sharedDir, "hooks.json")
@@ -888,7 +1148,7 @@ func TestMismatchedNativeProofRetainsLegacyOutput(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if _, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
+			if _, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
 				t.Fatalf("sync: %v", err)
 			}
 			data, err := os.ReadFile(filepath.Join(nativeRoot, "hooks", "hooks.json"))
@@ -920,6 +1180,13 @@ func TestNativeOwnedHookDoesNotDeleteSurvivingLegacyEntry(t *testing.T) {
 	layout, _ := nativeHookLayoutFor(hcc.TargetFactory, false)
 	seedNativeOwnedHook(t, nativeRoot, layout, nativeSeedFor(t, hcc.TargetFactory, false),
 		toleranceFingerprint(t, src, "factory", HookScopeRepository))
+	nativePath := filepath.Join(nativeRoot, filepath.FromSlash(layout.rel))
+	nativeBefore, nativeMode, nativeMtime := fileSnapshot(t, nativePath)
+	store, err := ownership.Open(nativeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateBefore, stateMode, stateMtime := fileSnapshot(t, store.StateFile())
 
 	legacyDir := filepath.Join(nativeRoot, "hooks")
 	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
@@ -931,13 +1198,15 @@ func TestNativeOwnedHookDoesNotDeleteSurvivingLegacyEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
+	if _, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved}); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
 	data, err := os.ReadFile(legacyPath)
 	if err != nil || string(data) != string(legacyBefore) {
 		t.Fatalf("surviving managed legacy entry changed or was deleted: %v %q", err, data)
 	}
+	assertFileUnchanged(t, nativePath, nativeBefore, nativeMode, nativeMtime)
+	assertFileUnchanged(t, store.StateFile(), stateBefore, stateMode, stateMtime)
 }
 
 // When a valid native proof exists, the surviving-managed-twin check reads
@@ -977,7 +1246,7 @@ func TestNativeProofWithUnsafeLegacyFileFailsClosed(t *testing.T) {
 		return resolved, repoRoot, legacyDir
 	}
 	assertRefused := func(t *testing.T, repoRoot string, resolved resolver.ResolvedArtifact) {
-		report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
+		report, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
 		if err != nil {
 			t.Fatalf("sync: %v", err)
 		}
@@ -1058,7 +1327,7 @@ func TestNativeProofWithUnsafeLegacyFileFailsClosed(t *testing.T) {
 		}
 		done := make(chan result, 1)
 		go func() {
-			report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
+			report, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
 			done <- result{report, err}
 		}()
 		var res result
@@ -1098,11 +1367,23 @@ func TestNativeProofWithUnsafeLegacyFileFailsClosed(t *testing.T) {
 	// twin still keeps its exact bytes with no refusal.
 	t.Run("ordinary_managed_twin", func(t *testing.T) {
 		resolved, repoRoot, legacyDir := setup(t)
+		nativeRoot := filepath.Join(repoRoot, ".factory")
+		layout, ok := nativeHookLayoutFor(hcc.TargetFactory, false)
+		if !ok {
+			t.Fatal("Factory native hook layout is unavailable")
+		}
+		nativePath := filepath.Join(nativeRoot, filepath.FromSlash(layout.rel))
+		nativeBefore, nativeMode, nativeMtime := fileSnapshot(t, nativePath)
+		store, err := ownership.Open(nativeRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stateBefore, stateMode, stateMtime := fileSnapshot(t, store.StateFile())
 		legacyPath := filepath.Join(legacyDir, "hooks.json")
 		if err := os.WriteFile(legacyPath, managedTwin, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
+		report, err := runLegacyToleranceFixture(context.Background(), repoRoot, []resolver.ResolvedArtifact{resolved})
 		if err != nil {
 			t.Fatalf("sync: %v", err)
 		}
@@ -1112,6 +1393,8 @@ func TestNativeProofWithUnsafeLegacyFileFailsClosed(t *testing.T) {
 		if data, err := os.ReadFile(legacyPath); err != nil || string(data) != string(managedTwin) {
 			t.Fatalf("ordinary managed twin changed or deleted: %v %q", err, data)
 		}
+		assertFileUnchanged(t, nativePath, nativeBefore, nativeMode, nativeMtime)
+		assertFileUnchanged(t, store.StateFile(), stateBefore, stateMode, stateMtime)
 	})
 }
 

@@ -176,7 +176,7 @@ func expandRequirements(
 	malformed *malformedIndex,
 	localExcludes resourceSelections,
 	localExcludeAll map[ir.ResourceKind]bool,
-	targetSet []hcc.Target,
+	targets scopeTargets,
 ) (implied []ResolvedArtifact, unmet map[unmetKey]UnmetRequirementReason, errs []error) {
 	hasRequirements := false
 	for i := range resolved {
@@ -246,6 +246,7 @@ func expandRequirements(
 
 			sawExcluded := false
 			admittedCandidate := false
+			targetSet := targets.forSource(requirer.Source)
 			for _, cand := range candidates {
 				art := impliedArtifact(cand, requirer, resources, targetSet)
 				if impliedCandidateExcluded(art, cand, cfg, localExcludes, localExcludeAll) {

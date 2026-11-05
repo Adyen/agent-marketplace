@@ -17,11 +17,11 @@ func TestRemoveBlockedOwnedMCPLastAndInferredKind(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".state"))
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-	origin, working := createBareRepoWithWorkingClone(t, "owned-last-mcp.git")
+	origin, working := createV4GitRegistry(t, "owned-last-mcp.git")
 	writeFile(t, filepath.Join(working, ".mcp.json"), "{\n  \"mcpServers\": {\"remove\": {\"command\": \"remove-binary\"}}\n}\n")
 	commitAndPushAll(t, working, "seed MCP")
 	repo := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "\nharnesses: [devin]\nregistries:\n  - url: "+origin+"\n    ref: main\n    default: true\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "\nharnesses: [devin]\nsources:\n  registry:\n    git: "+origin+"\n    ref: main\nresources:\n  registry:\n    all: true\n")
 	withWorkingDir(t, repo)
 	if out, err := executeCommand("sync"); err != nil {
 		t.Fatalf("seed sync: %v\n%s", err, out)
