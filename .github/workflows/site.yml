@@ -8,6 +8,7 @@ on:
     paths:
       - 'site/**'
       - 'design/**'
+      - 'web/**'
       - 'Makefile'
       - '.github/workflows/site.yml'
   pull_request:
@@ -16,6 +17,7 @@ on:
     paths:
       - 'site/**'
       - 'design/**'
+      - 'web/**'
       - 'Makefile'
       - '.github/workflows/site.yml'
 
@@ -28,8 +30,8 @@ permissions: {}
 jobs:
   build:
     name: Build
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: read
       pages: read
@@ -47,6 +49,19 @@ jobs:
       - name: Enable pnpm
         run: corepack enable
 
+      - name: Install screenshot tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes ffmpeg webp
+
+      - name: Install web dependencies
+        working-directory: web
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Install Chromium
+        working-directory: web
+        run: pnpm run e2e:install
+
       - name: Configure Pages
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         id: pages
@@ -61,6 +76,10 @@ jobs:
           node --test tests/public-site.test.ts
           pnpm run build:docs
           node --test tests/docs-profile.test.ts
+
+      - name: Verify landing screenshot reproducibility
+        working-directory: site
+        run: node --test tests/landing-capture.test.ts
 
       - name: Upload public site
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
