@@ -12,7 +12,7 @@
 - [x] 2.2 Add the Playwright capture script that runs the real Nuxt app against the fixtures and writes light and dark images of the catalog and the resource detail page at desktop and narrow widths, plus a manifest (verify: the script writes every manifest entry on a clean run)
 - [x] 2.3 Add the reproducibility test that runs the capture twice and compares manifest and hashes (verify: the test passes and fails when a fixture changes)
 - [x] 2.4 Add `make site-screenshots` and document the rerun policy in `site/README.md` (verify: the target runs and `site/README.md` names it)
-- [ ] 2.5 Commit the generated images under `site/public/landing/` (WebP or, with the recorded reason, PNG) and record the total added payload in the PR notes (verify: the manifest matches the committed files)
+- [x] 2.5 Commit the generated images under `site/public/landing/` (WebP or, with the recorded reason, PNG) and record the total added payload in the PR notes (verify: the manifest matches the committed files)
 
 ## 3. For organizations browser frame
 
@@ -27,6 +27,6 @@
 ## 5. Spec and integration
 
 - [x] 5.1 Bind every new scenario with a `// spec: marketplace-web-ui/<scenario-slug>` annotation in the test files and run `go run ./tools/specaudit trace` (verify: trace reports no unbound scenarios)
-- [ ] 5.2 Run `openspec validate landing-web-ui-wi6g --strict` and `make spec-check` (verify: both pass)
+- [x] 5.2 Run `openspec validate landing-web-ui-wi6g --strict` and `make spec-check` (verify: both pass)
 - [x] 5.3 Run `make site-screenshots` twice on the unchanged tree and confirm no visible diff (verify: git status clean after the second run)
-- [ ] 5.4 Run the final verification commands from the contract: `make spec-check && make site-screenshots && (cd site && pnpm run test:public && pnpm run test:docs)` (verify: all succeed on the final commit)
+- [x] 5.4 Run the final verification commands from the contract: `make spec-check && make site-screenshots && (cd site && pnpm run test:public && pnpm run test:docs)` (verify: all succeed on the final commit)
