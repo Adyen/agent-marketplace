@@ -8,7 +8,7 @@ The "Audit upstream model catalogs" job (run 41961800213 on main) failed on a re
 - Emit `source.inventory-unparsed` naming a source whose page yields no parseable model list, instead of passing it silently.
 - Emit `catalog.family-pin-stale` when a family pin names a model older than the newest observed member of that family in the same source's inventory.
 - Snapshot `devin models list --format json` and test that every `model_uid` is covered by a Devin catalog entry, listing uncovered UIDs.
-- Add Devin catalog entries for the non-Fusion UIDs the snapshot reports as uncovered, and reconcile the Devin Haiku alias with the CLI.
+- Add Devin catalog entries for the non-Fusion UIDs the snapshot reports as uncovered. Devin Haiku keeps the `anthropic/haiku` family selector, so it resolves to the same identity as Claude haiku; `claude-haiku-5-5` is added as a concrete entry.
 - Add the Gemini API documentation URL to the Gemini catalog evidence references, and add Gemini 4 Argon to the providers whose published inventory lists it.
 - Leave the Cursor model inventory open: it is recorded as a blocked task until the user decides its source.
 
@@ -27,3 +27,7 @@ None.
 - `tools/model-catalog-audit/` (sources, extraction, audit, tests, testdata fixtures, baselines for the new source).
 - `pkg/harness-compilation/modelpolicy/catalogs/devin.yaml`, `gemini.yaml` (evidence ref only), and `devin_catalog_test.go`.
 - No CLI, API, or harness output behavior changes; the audit report schema stays at version 1.
+
+## Release note
+
+none — the audit is a maintainer-facing CI tool and the catalog changes add model entries without changing harness output.
