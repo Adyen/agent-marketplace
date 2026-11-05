@@ -22,3 +22,7 @@ The TUI records effective-configuration inventory after every accepted final sna
 - `internal/pipeline`: a context marker suppresses inventory recording for Resolve and explicit recording calls.
 - `internal/tui`: the session holds its latest accepted final snapshot and records it on exit; the session context carries the suppression marker.
 - Telemetry: fewer `config.snapshot`, `config.registry`, and `config.resource` series for interactive sessions. A session that is killed without its exit path may record nothing.
+
+## Release note
+
+Interactive TUI sessions now record effective-configuration telemetry once when the session exits instead of after every change, which reduces telemetry series churn; CLI commands are unchanged.
