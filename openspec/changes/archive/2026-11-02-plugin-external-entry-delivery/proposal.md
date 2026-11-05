@@ -6,6 +6,10 @@ delivers it: every harness target reports `plugin.delivery.pending`. Such
 plugins need the same delivery as plugins that live inside the catalog
 source.
 
+## Release note
+
+Plugins listed in a native plugin catalog with their own Git source are now installed from the commit recorded in the lock, with authored member exclusions applied, instead of only being reported as pending.
+
 ## What Changes
 
 - Sync acquires each selected external catalog entry at the commit its lock
