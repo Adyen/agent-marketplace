@@ -26,3 +26,7 @@ None.
 - `web/tests/e2e/` gains the capture script, fixtures, and the landing browser spec. No runtime behavior or styles of the Marketplace web app change.
 - `Makefile` gains `site-screenshots`; `site/README.md` documents when to rerun it.
 - `site/tests/` and `web/tests/e2e/` gain `// spec:` bound tests for the new scenarios.
+
+## Release note
+
+none — the landing page now shows the Marketplace web UI; no CLI, Marketplace, or configuration behavior changes.

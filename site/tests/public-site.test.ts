@@ -102,7 +102,7 @@ test('organizations section depicts the real catalog and a pinned clean resource
   const section = landingSection(landing, 'organizations')
 
   assert.match(section, /class="marketplace-browser-frame"/)
-  assert.match(section, /marketplace\.example\.com/)
+  assert.ok(section.includes('marketplace.example.com'))
   assert.match(section, /alt="Marketplace catalog showing skills, commands, and MCP servers with Kind and Registry filters and the Copy install command action\."/)
   assert.match(section, /alt="Marketplace resource detail showing a pinned revision digest and a clean Security result\."/)
 })
@@ -112,9 +112,8 @@ test('organizations browser frame uses a neutral host and no Marketplace route',
   const landing = await readFile(new URL('index.html', dist), 'utf8')
   const section = landingSection(landing, 'organizations')
 
-  assert.match(section, /marketplace\.example\.com/)
-  assert.doesNotMatch(section, /(?:href|src)="[^"]*\/marketplace\/?"/)
-  assert.doesNotMatch(section, /<(?:a|iframe)\b[^>]*\/marketplace\//)
+  assert.ok(section.includes('marketplace.example.com'))
+  assert.ok(!section.includes('/marketplace'))
 })
 
 // spec: marketplace-web-ui/benefit-cards-and-deployment-guide-remain
@@ -125,7 +124,7 @@ test('organizations keeps its three benefits and Deployment guide destination', 
   for (const heading of ['Your registries, together', 'Publication policies', 'Your infrastructure']) {
     assert.ok(section.includes(heading), `missing benefit heading: ${heading}`)
   }
-  assert.match(section, /href="\/docs\/how-to\/operator\/deploy-a-production-marketplace"[^>]*>[\s\S]*?Deployment guide/)
+  assert.match(section, new RegExp(`href="${docsPath}how-to/operator/deploy-a-production-marketplace"[^>]*>[\\s\\S]*?Deployment guide`))
 })
 
 // spec: marketplace-web-ui/depictions-declare-dimensions-alt-text-and-lazy-loading
