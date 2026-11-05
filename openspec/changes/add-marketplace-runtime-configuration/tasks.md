@@ -18,9 +18,9 @@
 
 ## 4. Documentation
 
-- [ ] 4.1 Update the operator configuration reference and the reindex-and-monitor how-to to describe which configuration changes apply without a restart, the restart-required report, and the one-time refresh after upgrade; verify the described behavior matches the code
+- [x] 4.1 Update the operator configuration reference and the reindex-and-monitor how-to to describe which configuration changes apply without a restart, the restart-required report, and the one-time refresh after upgrade; verify the described behavior matches the code
 
 ## 5. Integration
 
-- [ ] 5.1 Run `go run ./tools/specaudit trace`, `make spec-check`, `make test TEST_PACKAGES="./pkg/marketplace/..." TEST_FLAGS="-count=1"`, and `make validate`; verify all pass
+- [x] 5.1 Run `go run ./tools/specaudit trace`, `make spec-check`, `make test TEST_PACKAGES="./pkg/marketplace/..." TEST_FLAGS="-count=1"`, and `make validate`; verify all pass
 - [ ] 5.2 Run `openspec archive add-marketplace-runtime-configuration --yes` as the final commit and verify `make spec-check` still passes

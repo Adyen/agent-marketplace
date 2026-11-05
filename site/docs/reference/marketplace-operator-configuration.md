@@ -11,6 +11,24 @@ This file is separate from the consumer configuration that `install` and `sync` 
 - Schema version: `agent-marketplace.io/marketplace/v1`
 - Unknown fields: rejected at load time
 
+## Runtime changes without a restart
+
+A `serve` process running the worker role (`--role worker` or `--role all`) with `management.mode: file` rereads this file about once per second while it runs and applies worker-safe changes without a restart. It polls the file's bytes, so a file replaced by renaming another file over it is noticed just like an in-place edit; no signal is needed. In `database` management mode, and in `api`-only processes, the file is read once at startup.
+
+Changes that apply while the server runs:
+
+- Adding a registry: it is recorded, observed, and indexed once like any new registry.
+- Changing a registry's indexing inputs — `origin`, `ref`, `roots`, `acquisition`, `license`, `ca_file`, credential references, `policy_overrides`, or the global `policy` and `acquisition_default` it inherits — runs exactly one refresh of that registry under the new settings, even when the tracked commit is unchanged.
+- Changing only a registry's `slug`, `aliases`, or `publisher` updates its metadata without acquisition; prior slugs are kept as aliases.
+- Removing a registry unlists it: it is no longer observed or refreshed, and its indexed revisions, assessments, and blobs are preserved. Adding it back relists it.
+- `refresh.interval` takes effect at each registry's next scheduled observation; by itself it requests no refresh.
+
+Rewrites that do not change worker-relevant meaning — comments, whitespace, mapping order, or an explicit value equal to its default — cause no registry work. An edit that leaves the file missing, unreadable, truncated, malformed, or failing validation is rejected as a whole and logged once per distinct content as `config candidate rejected` with a bounded reason that contains no credential value; the last valid configuration keeps running and no registry is added, unlisted, or refreshed. Secret values are never part of the comparison, so rotating the file or environment value behind an unchanged credential reference causes no reindex.
+
+Changes to `listen`, `operations_listen`, `storage`, `instance`, `revocations`, `management`, `admin`, `catalog_projection`, `installation_metrics`, and `refresh_concurrency` are startup-owned: they are never applied while the server runs. When the file's values for those fields differ from the running startup values, the worker logs `restart-required config drift detected` naming the changed fields in its `fields` attribute while the rest of the candidate applies; when they match the startup values again it logs `restart-required config drift cleared`. Restart the API and worker processes to apply them.
+
+A refresh whose settings were superseded by a newer applied candidate cannot publish: it is logged as `stale generation prevented publication` and the registry is refreshed under the current settings instead. After upgrading to the release that introduced canonical indexing generations, each registry is reindexed once under its new generation; later observations of an unchanged registry perform no acquisition.
+
 ## Complete example
 
 ```yaml
@@ -152,7 +170,7 @@ SQLite needs a writable database file on disk. The server rejects `:memory:`, `f
 |---|---|:---:|---|---|
 | `interval` | Go duration string or integer nanoseconds | no | `30m` | Delay between source observations of one registry. Must be positive. |
 
-The worker observes each registry's configured ref at a stable per-registry point inside this interval, so registries spread their probes across it instead of probing together. A registry pinned to a full commit SHA resolves locally without contacting the origin. An observation that finds the commit and startup configuration unchanged performs no clone or ingestion; a changed commit or configuration requests one refresh, and a due periodic reconciliation forces a full reindex at least once every 24 hours. Each remote probe is bounded by a 30-second timeout. The reconciliation interval and probe timeout are code constants, not YAML fields.
+The worker observes each registry's configured ref at a stable per-registry point inside this interval, so registries spread their probes across it instead of probing together. A registry pinned to a full commit SHA resolves locally without contacting the origin. An observation that finds the commit and indexing configuration unchanged performs no clone or ingestion; a changed commit or configuration requests one refresh, and a due periodic reconciliation forces a full reindex at least once every 24 hours. Each remote probe is bounded by a 30-second timeout. The reconciliation interval and probe timeout are code constants, not YAML fields.
 
 ## `policy`
 
