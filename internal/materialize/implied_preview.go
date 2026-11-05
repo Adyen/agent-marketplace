@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"path/filepath"
 
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -26,6 +28,7 @@ func applyImpliedPreview(compileResult *compilePhaseResult, preview *compilePhas
 		report.Diags = append(report.Diags, tw.diags...)
 	}
 	actualAggregates := compileResult.ownedAggregateState()
+	coalesceOpenCodePreview(compileResult.openCodeAggregateScope, preview)
 	// A preview hook whose selection is unknown makes the native hook
 	// selection authority incomplete, so installed hooks are not pruned.
 	for key, unknown := range preview.unknownHookSelection {
@@ -96,6 +99,24 @@ func applyImpliedPreview(compileResult *compilePhaseResult, preview *compilePhas
 		tw.artifacts = merged
 	}
 	return mergeErrs
+}
+
+// coalesceOpenCodePreview moves preview OpenCode work onto the scope that
+// reconciles a shared OPENCODE_CONFIG aggregate, so retention sees entries
+// implied from either scope.
+func coalesceOpenCodePreview(owningScope *bool, preview *compilePhaseResult) {
+	if owningScope == nil || preview == nil {
+		return
+	}
+	from := outputKey{target: hcc.TargetOpenCode, machineScope: !*owningScope}
+	to := outputKey{target: hcc.TargetOpenCode, machineScope: *owningScope}
+	moved, _ := preview.ownedState[from].(*ownedJSONAggregateWork)
+	if moved == nil {
+		return
+	}
+	existing, _ := preview.ownedState[to].(*ownedJSONAggregateWork)
+	preview.ownedState[to] = mergeOwnedJSONAggregateWork(existing, moved)
+	delete(preview.ownedState, from)
 }
 
 func previewAggregateState(preview *compilePhaseResult) ownedAggregateState {

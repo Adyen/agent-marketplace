@@ -1359,3 +1359,35 @@ func TestImpliedPreviewDoesNotDuplicateManifestDiscovery(t *testing.T) {
 		t.Fatalf("preview duplicated manifest diagnostics: baseline=%d preview=%d", manifestErrors(baseline), manifestErrors(withPreview))
 	}
 }
+
+// spec: materialization/preview-preserves-existing-aggregate-identity-without-adoption
+func TestImpliedPreviewOpenCodeSharedAggregateUsesOwningScope(t *testing.T) {
+	repoKey := outputKey{target: hcc.TargetOpenCode}
+	machineKey := outputKey{target: hcc.TargetOpenCode, machineScope: true}
+	entry := ownedJSONEntry{rel: "opencode.json", kind: ownership.KindMcpServer, container: "mcp", key: "docs", raw: []byte(`{"type":"local"}`), identity: ownership.Digest([]byte("docs")), resource: "docs"}
+	for _, tc := range []struct {
+		name     string
+		owner    *bool
+		wantKey  outputKey
+		emptyKey outputKey
+	}{
+		{name: "shared-file-repo-owner", owner: new(bool), wantKey: repoKey, emptyKey: machineKey},
+		{name: "separate-files", owner: nil, wantKey: machineKey, emptyKey: repoKey},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			work := &ownedJSONAggregateWork{}
+			work.add(entry)
+			preview := &compilePhaseResult{ownedState: map[outputKey]any{machineKey: work}}
+			actual := compilePhaseResult{ownedState: map[outputKey]any{}, openCodeAggregateScope: tc.owner}
+			applyImpliedPreview(&actual, preview, &Report{PerTarget: map[hcc.Target]TargetReport{}})
+			state := previewAggregateState(preview)
+			got, _ := state.get(tc.wantKey).(*ownedJSONAggregateWork)
+			if entries := got.entriesFor("opencode.json"); len(entries) != 1 || entries[0].key != "docs" {
+				t.Fatalf("preview entry not reachable from reconciling scope %+v: %+v", tc.wantKey, entries)
+			}
+			if other, _ := state.get(tc.emptyKey).(*ownedJSONAggregateWork); len(other.entriesFor("opencode.json")) != 0 {
+				t.Fatalf("preview entry duplicated under %+v", tc.emptyKey)
+			}
+		})
+	}
+}
