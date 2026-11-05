@@ -73,6 +73,7 @@ export interface WorkspaceState {
   pendingChanges: number
   discoveryEnabled: boolean
   discoveryHealth: Snapshot['discoveryHealth']
+  diagnosticsDiscoveryHealth: Snapshot['discoveryHealth']
   discoveryQuery: string
   discoveryRequestId: number
   discoverySequence: number
@@ -87,6 +88,7 @@ export interface WorkspaceState {
   notifications: { id: number; severity: string; message: string }[]
   requesting: boolean
   error: string | null
+  sourceError: string | null
   configuration: Configuration | null
   latestVersion: string
   releaseNotice: ReleaseNotice | null
@@ -119,6 +121,7 @@ export class WorkspaceController {
     pendingChanges: 0,
     discoveryEnabled: false,
     discoveryHealth: [],
+    diagnosticsDiscoveryHealth: [],
     discoveryQuery: '',
     discoveryRequestId: 0,
     discoverySequence: 0,
@@ -133,6 +136,7 @@ export class WorkspaceController {
     notifications: [],
     requesting: false,
     error: null,
+    sourceError: null,
     configuration: null,
     latestVersion: '',
     releaseNotice: null,
@@ -569,7 +573,16 @@ export class WorkspaceController {
   }
 
   async addSource(source: SourceInput): Promise<boolean> {
-    return this.requestOperation(() => this.client.configure({ action: 'add-source', source }))
+    this.state.sourceError = null
+    return this.requestOperation(
+      () => this.client.configure({ action: 'add-source', source }),
+      false,
+      (error) => {
+        if (error instanceof RequestError && error.code === 'localapi.directory_unavailable') {
+          this.state.sourceError = 'Directory source path does not exist or is not a directory.'
+        }
+      },
+    )
   }
 
   async removeSource(id: string): Promise<boolean> {
@@ -591,7 +604,11 @@ export class WorkspaceController {
     void this.client.telemetry(event).catch(() => undefined)
   }
 
-  private async requestOperation(start: () => Promise<OperationRef>, quitAfter = false): Promise<boolean> {
+  private async requestOperation(
+    start: () => Promise<OperationRef>,
+    quitAfter = false,
+    onFailure?: (error: unknown) => void,
+  ): Promise<boolean> {
     if (this.state.operation != null || this.state.requesting) {
       return false
     }
@@ -605,7 +622,11 @@ export class WorkspaceController {
       if (error instanceof RequestError && (error.status === 409 || error.code === 'localapi.busy')) {
         return false
       }
-      this.state.error = 'The action could not be started'
+      if (onFailure == null) {
+        this.state.error = 'The action could not be started'
+      } else {
+        onFailure(error)
+      }
       return false
     }
     this.state.requesting = false
@@ -736,6 +757,9 @@ export class WorkspaceController {
     if (currentDiscovery) {
       this.state.discoverySequence = Math.max(this.state.discoverySequence, snapshot.discoverySequence)
       this.state.discoveryHealth = snapshot.discoveryHealth
+      if (snapshot.discoveryQuery === '') {
+        this.state.diagnosticsDiscoveryHealth = snapshot.discoveryHealth
+      }
       this.state.discoveryLoading = snapshot.discoveryLoading
       this.state.discoveryError = null
     } else {
@@ -743,6 +767,8 @@ export class WorkspaceController {
       this.state.discoveryLoading = false
     }
     if (!this.state.discoveryEnabled) {
+      this.state.discoveryHealth = []
+      this.state.diagnosticsDiscoveryHealth = []
       this.cancelDiscoveryRequest()
       this.lastDispatchedDiscoveryRequestId = 0
     }
@@ -777,6 +803,9 @@ export class WorkspaceController {
     this.cancelInspectionIfRowMissing()
     this.cancelResourceActionIfRowChanged()
     this.state.discoveryHealth = payload.health
+    if (payload.query === '') {
+      this.state.diagnosticsDiscoveryHealth = payload.health
+    }
     this.state.discoveryQuery = payload.query
     this.state.discoveryRequestId = payload.requestId
     this.state.discoverySequence = payload.discoverySequence

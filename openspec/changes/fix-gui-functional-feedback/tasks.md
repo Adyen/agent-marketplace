@@ -1,34 +1,32 @@
 # Tasks
 
-## 1. Prompt completion notification
+## 1. Recoverable source addition
 
-- [ ] 1.1 Add a failing test bound to `gui-local-api/completion-notification-renders-without-further-action`
-- [ ] 1.2 Fix the root cause so the completion notification renders without further events or actions
+- [x] 1.1 Add a failing Playwright test bound to `gui-configuration/nonexistent-directory-source-is-refused-in-the-form`
+- [x] 1.2 Refuse the source inside the Add source section without writing configuration and keep the workspace usable
 
-## 2. Recoverable source addition
+## 2. Install preparation failure
 
-- [ ] 2.1 Add a failing Playwright test bound to `gui-configuration/nonexistent-directory-source-is-refused-in-the-form`
-- [ ] 2.2 Refuse the source inside the Add source section without writing configuration and keep the workspace usable
+- [x] 2.1 Probe the "Resource action could not be prepared" install with a Git registry fixture and record the result
+- [x] 2.2 Record the follow-up for the unreproduced failure
 
-## 3. Install preparation failure
+## 3. Consistent resource opening
 
-- [ ] 3.1 Reproduce the "Resource action could not be prepared" install with a fixture and record the root cause
-- [ ] 3.2 Fix it so the install completes or names the cause and next step, or file a follow-up when it cannot be reproduced
+- [x] 3.1 Add a test bound to `gui-shell/enter-and-open-resource-agree-across-source-kinds` covering Marketplace, directory, and Git skill rows
 
-## 4. Consistent resource opening
+## 4. Search-independent discovery health
 
-- [ ] 4.1 Add a failing test bound to `gui-shell/enter-and-open-resource-agree-across-source-kinds` covering Marketplace, directory, and Git skill rows
-- [ ] 4.2 Make Enter and Open resource use the same availability and open the inspector for every inspectable row
+- [x] 4.1 Add a failing test bound to `gui-shell/discovery-health-ignores-the-resource-search`
+- [x] 4.2 Show unfiltered discovery health in Diagnostics
 
-## 5. Search-independent discovery health
+## 5. Post-install state
 
-- [ ] 5.1 Add a failing test bound to `gui-shell/discovery-health-ignores-the-resource-search`
-- [ ] 5.2 Show configuration-wide discovery health in Diagnostics
+- [x] 5.1 Compare the post-install state across directory, Git, and Marketplace sources and record the root cause
+- [x] 5.2 Record the decision follow-up because consistency needs a product choice
 
-## 6. Post-install state
+## 6. Settings tab keyboard focus
 
-- [ ] 6.1 Compare the post-install state across directory, Git, and Marketplace sources and record the root cause
-- [ ] 6.2 Make it consistent, or file a decision follow-up when consistency needs a product choice
+- [x] 6.1 Move focus between Settings tabs with arrow, Home, and End keys without an unhandled error
 
 ## 7. Archive
 

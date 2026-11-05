@@ -535,8 +535,13 @@ func (a *API) handleSourceMutation(w http.ResponseWriter, r *http.Request, req c
 
 	switch req.action {
 	case "add-source":
-		if _, valid := validateAddSource(req.source, sourceAllowlist(intent, req.source.Kind)); !valid {
+		entry, valid := validateAddSource(req.source, sourceAllowlist(intent, req.source.Kind))
+		if !valid {
 			writeError(w, http.StatusBadRequest, codeInvalidRequest)
+			return
+		}
+		if entry.V4Kind == config.V4SourceDirectory && !directorySourceAvailable(entry, a.homeDir) {
+			writeError(w, http.StatusBadRequest, codeDirectoryUnavailable)
 			return
 		}
 	case "remove-source":
@@ -579,6 +584,19 @@ func (a *API) handleSourceMutation(w http.ResponseWriter, r *http.Request, req c
 		final = a.readSnapshot(ctx, session.CatalogLoadCached)
 		return nil, final, failed
 	})
+}
+
+func directorySourceAvailable(entry config.RegistryEntry, homeDir string) bool {
+	if strings.TrimSpace(entry.URL) == "~" {
+		info, err := os.Stat(homeDir)
+		return err == nil && info.IsDir()
+	}
+	path, err := entry.ResolveLocalPath(homeDir)
+	if err != nil {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func sourceAllowlist(intent config.Intent, kind string) []string {

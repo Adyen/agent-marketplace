@@ -361,6 +361,67 @@ describe('inspector remove action', () => {
   })
 })
 
+describe('resource opening actions', () => {
+  // spec: gui-shell/enter-and-open-resource-agree-across-source-kinds
+  it('offers inspection only for the Marketplace row with inspectable content', async () => {
+    const marketplace = row('marketplace-skill', {
+      id: 'marketplace-row',
+      registry: 'Marketplace registry',
+      source: { id: 'marketplace-source', label: 'Marketplace source' },
+      discovery: true,
+      inspectable: true,
+      group: 'available',
+      checked: false,
+      scope: 'available',
+      status: 'available',
+    })
+    const directory = row('directory-skill', {
+      id: 'directory-row',
+      registry: 'Directory registry',
+      source: { id: 'directory-source', label: 'Directory source' },
+    })
+    const git = row('git-skill', {
+      id: 'git-row',
+      registry: 'Git registry',
+      source: { id: 'git-source', label: 'Git source' },
+    })
+    const { client, push } = fakeClient()
+    const { controller, wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([marketplace, directory, git], { discoveryEnabled: true }) }))
+    await tick()
+
+    const marketplaceOption = wrapper.get('[role="option"][id="row-marketplace-row"]')
+    await marketplaceOption.trigger('click')
+    await tick()
+    expect(wrapper.find('button[aria-label="Open resource"]').exists()).toBe(true)
+
+    await marketplaceOption.trigger('keydown', { key: 'Enter' })
+    await tick()
+    expect(controller.state.inspection?.rowId).toBe(marketplace.id)
+    expect(client.inspection).toHaveBeenCalledTimes(1)
+
+    controller.closeInspection()
+    await tick()
+    await wrapper.get('button[aria-label="Open resource"]').trigger('click')
+    await tick()
+    expect(controller.state.inspection?.rowId).toBe(marketplace.id)
+    expect(client.inspection).toHaveBeenCalledTimes(2)
+
+    for (const item of [directory, git]) {
+      const option = wrapper.get(`[role="option"][id="row-${item.id}"]`)
+      await option.trigger('click')
+      await tick()
+      expect(wrapper.find('button[aria-label="Open resource"]').exists()).toBe(false)
+
+      await option.trigger('keydown', { key: 'Enter' })
+      await tick()
+      expect(controller.state.inspection).toBeNull()
+    }
+    expect(client.inspection).toHaveBeenCalledTimes(2)
+    expect(client.installedSkillFiles).not.toHaveBeenCalled()
+  })
+})
+
 describe('notification toasts', () => {
   it('links a warning toast to diagnostics and gives info toasts no action', async () => {
     const { client, push } = fakeClient()

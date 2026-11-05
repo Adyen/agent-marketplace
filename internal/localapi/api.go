@@ -34,6 +34,7 @@ const (
 	codeUnauthorized              = "localapi.unauthorized"
 	codeForbidden                 = "localapi.forbidden"
 	codeInvalidRequest            = "localapi.invalid_request"
+	codeDirectoryUnavailable      = "localapi.directory_unavailable"
 	codeNotReady                  = "localapi.not_ready"
 	codeNotSupported              = "localapi.not_supported"
 	codeBusy                      = "localapi.busy"
@@ -418,6 +419,7 @@ func writeError(w http.ResponseWriter, status int, code string) {
 		codeUnauthorized:              "unauthorized",
 		codeForbidden:                 "origin rejected",
 		codeInvalidRequest:            "invalid request",
+		codeDirectoryUnavailable:      "directory source unavailable",
 		codeNotReady:                  "session is not ready for mutation",
 		codeNotSupported:              "operation not supported by this session mode",
 		codeBusy:                      "another operation is in progress",

@@ -57,6 +57,95 @@ async function sourceListVisibility(page: Page, dialog: Locator, sources: Locato
   }
 }
 
+// spec: gui-configuration/nonexistent-directory-source-is-refused-in-the-form
+test('built GUI refuses a nonexistent directory source without disabling the workspace', async ({ page }) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
+  }
+
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'sources' })
+  const { bootstrap } = harness
+  const sourcePath = join(bootstrap.addSourceDir!, 'does-not-exist')
+  const userConfigPath = join(bootstrap.home!, '.agents', 'config.yaml')
+
+  try {
+    await serveBuiltApp(page, bootstrap.url)
+    await page.addInitScript(
+      ([credential]) => {
+        ;(window as unknown as Record<string, unknown>).__AM_GUI_BOOTSTRAP__ = { credential }
+      },
+      [bootstrap.credential] as const,
+    )
+    await page.goto(bootstrap.url, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
+    const originalConfig = await readFile(userConfigPath, 'utf8')
+    const sourceButton = page.getByRole('button', { name: 'Sources' })
+    await sourceButton.press('Enter')
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
+    await expect(dialog).toBeVisible()
+    const addSection = dialog.getByLabel('Add user source')
+    await addSection.getByLabel('Source location').fill(sourcePath)
+    await addSection.getByRole('button', { name: 'Add source' }).press('Enter')
+
+    await expect(addSection.getByRole('alert')).toContainText(/directory/i)
+    expect(await readFile(userConfigPath, 'utf8')).toBe(originalConfig)
+
+    await dialog.getByRole('button', { name: 'Close dialog' }).click()
+    await expect(dialog).not.toBeVisible()
+    await expect(page.getByRole('option').filter({ hasText: 'solo' }).first()).toBeVisible()
+    await page.getByRole('button', { name: 'Search', exact: true }).click()
+    const search = page.getByRole('searchbox', { name: 'Search resources' })
+    await expect(search).toBeVisible()
+    await search.fill('solo')
+    await search.press('Enter')
+    await expect(page.getByRole('option').filter({ hasText: 'solo' }).first()).toBeVisible()
+    await page.getByRole('button', { name: 'Clear search' }).click()
+    await sourceButton.click()
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByRole('tab', { name: 'Sources' })).toHaveAttribute('aria-selected', 'true')
+  } finally {
+    await harness.stop()
+  }
+})
+
+test('built GUI installs a skill from a Git registry without Marketplace preparation', async ({ page }) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
+  }
+
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'git-resource-actions' })
+  const { bootstrap } = harness
+
+  try {
+    await serveBuiltApp(page, bootstrap.url)
+    await page.addInitScript(
+      ([credential]) => {
+        ;(window as unknown as Record<string, unknown>).__AM_GUI_BOOTSTRAP__ = { credential }
+      },
+      [bootstrap.credential] as const,
+    )
+    await page.goto(bootstrap.url, { waitUntil: 'domcontentloaded' })
+    await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
+
+    const installable = page.getByRole('listbox', { name: 'Resources: Available' }).getByRole('option').filter({ hasText: 'solo' })
+    await expect(installable).toBeVisible({ timeout: 60_000 })
+    await installable.click()
+    const install = page.getByRole('button', { name: 'Install Resource', exact: true })
+    await expect(install).toBeEnabled()
+    const planResponse = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/resource-plan')
+    await install.click()
+    expect((await planResponse).status()).toBe(200)
+    const dialog = page.getByRole('dialog', { name: 'Install Resource' })
+    await expect(dialog.locator('pre')).toContainText('Resource: skill/solo')
+    await dialog.getByRole('button', { name: 'Confirm install' }).click()
+    await expect(page.getByLabel('Notifications').getByText('mutation complete')).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByRole('listbox', { name: 'Resources: Pending sync' }).getByRole('option').filter({ hasText: 'solo' })).toBeVisible()
+    await expect(page.getByText('Resource action could not be prepared; refresh this resource and retry.')).toHaveCount(0)
+  } finally {
+    await harness.stop()
+  }
+})
+
 // spec: gui-configuration/add-and-remove-user-sources
 // spec: gui-configuration/adding-a-git-or-directory-source-alone-changes-only-that-entry
 test('built GUI adds and removes a user directory source against the real user-scope core', async ({
