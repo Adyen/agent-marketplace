@@ -8,6 +8,10 @@ library, but no configuration, selection, or lock reaches them yet. This
 change wires sources, selection, catalogs, and locks, with harness delivery
 left to `plugin-decomposed-delivery`.
 
+## Release note
+
+Git and directory sources accept a `format` naming a plugin package or native plugin catalog format, and plugins are selected with `plugin/<name>`, optionally excluding members, then locked to an exact revision. See the plugin-docs release note for the v5.2.0 minimum client version this requires.
+
 ## What Changes
 
 - Git and directory sources accept an optional `format` naming a package
