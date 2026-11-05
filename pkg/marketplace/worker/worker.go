@@ -42,7 +42,7 @@ type Deps struct {
 // and publishes it atomically. The registry status is updated to reflect the
 // outcome of the refresh.
 func Refresh(ctx context.Context, deps Deps, registry store.Registry) error {
-	deps.Config = currentRuntimeConfig(deps)
+	deps.Config = runtimeSnapshot(deps, deps.Config).Config
 	return refreshConfigured(ctx, deps, registry, "")
 }
 
@@ -332,10 +332,7 @@ func (o *observer) applyRuntimeConfiguration(ctx context.Context, candidate conf
 	changes := make([]store.RegistryConfigurationChange, 0,
 		len(classification.Added)+len(classification.IndexingChanged)+len(classification.MetadataChanged)+len(classification.Removed))
 	for _, id := range classification.Added {
-		src, ok := registryByID(candidate, id)
-		if !ok {
-			return fmt.Errorf("added registry %q is not in runtime candidate", id)
-		}
+		src, _ := registryByID(candidate, id)
 		registry, err := mergedRuntimeRegistry(ctx, o.deps.MetadataStore, candidate, src)
 		if err != nil {
 			return err
@@ -343,10 +340,7 @@ func (o *observer) applyRuntimeConfiguration(ctx context.Context, candidate conf
 		changes = append(changes, store.RegistryConfigurationChange{Registry: registry})
 	}
 	for _, id := range classification.IndexingChanged {
-		src, ok := registryByID(candidate, id)
-		if !ok {
-			return fmt.Errorf("changed registry %q is not in runtime candidate", id)
-		}
+		src, _ := registryByID(candidate, id)
 		registry, err := mergedRuntimeRegistry(ctx, o.deps.MetadataStore, candidate, src)
 		if err != nil {
 			return err
@@ -360,10 +354,7 @@ func (o *observer) applyRuntimeConfiguration(ctx context.Context, candidate conf
 		})
 	}
 	for _, id := range classification.MetadataChanged {
-		src, ok := registryByID(candidate, id)
-		if !ok {
-			return fmt.Errorf("metadata registry %q is not in runtime candidate", id)
-		}
+		src, _ := registryByID(candidate, id)
 		registry, err := mergedRuntimeRegistry(ctx, o.deps.MetadataStore, candidate, src)
 		if err != nil {
 			return err
@@ -402,10 +393,6 @@ func runtimeSnapshot(deps Deps, fallback config.Config) config.Snapshot {
 		return deps.RuntimeSource.Current()
 	}
 	return config.Snapshot{Config: fallback}
-}
-
-func currentRuntimeConfig(deps Deps) config.Config {
-	return runtimeSnapshot(deps, deps.Config).Config
 }
 
 func initializeObservationState(ctx context.Context, deps Deps, cfg config.Config) error {

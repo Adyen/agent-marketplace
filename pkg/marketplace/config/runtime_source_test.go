@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -174,7 +175,7 @@ func TestRuntimeSourceReportsAndClearsRestartRequiredFields(t *testing.T) {
 		t.Fatal("worker-safe candidate was not applied")
 	}
 	want := []string{"listen", "storage", "instance", "revocations"}
-	if !equalStrings(first.classification.RestartRequired, want) ||
+	if !slices.Equal(first.classification.RestartRequired, want) ||
 		first.config.Listen != source.Startup().Listen ||
 		first.config.Storage != source.Startup().Storage ||
 		first.config.Instance != source.Startup().Instance ||
@@ -182,7 +183,7 @@ func TestRuntimeSourceReportsAndClearsRestartRequiredFields(t *testing.T) {
 		first.config.Registries[0].PolicyOverrides["hidden_content"] != "warn" {
 		t.Fatalf("candidate classification or effective config = %+v / %+v", first.classification, first.config)
 	}
-	awaitRuntimeCondition(t, func() bool { return equalStrings(source.RestartRequired(), want) })
+	awaitRuntimeCondition(t, func() bool { return slices.Equal(source.RestartRequired(), want) })
 
 	restored := strings.Replace(validConfigYAML(), "    license: MIT", "    license: MIT\n    policy_overrides:\n      hidden_content: warn", 1)
 	if err := os.WriteFile(path, []byte(restored), 0o600); err != nil {

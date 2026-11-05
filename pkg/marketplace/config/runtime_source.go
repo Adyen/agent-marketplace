@@ -120,11 +120,9 @@ func (s *RuntimeSource) poll(ctx context.Context, apply func(context.Context, Sn
 		s.setLastDigest(digest)
 		return
 	}
-	if apply != nil {
-		if err := apply(ctx, current, effective, classification); err != nil {
-			slog.Error("config candidate apply failed", "reason", boundedRuntimeReason(err))
-			return
-		}
+	if err := apply(ctx, current, effective, classification); err != nil {
+		slog.Error("config candidate apply failed", "reason", boundedRuntimeReason(err))
+		return
 	}
 	next := &Snapshot{Version: current.Version + 1, Config: effective}
 	s.current.Store(next)

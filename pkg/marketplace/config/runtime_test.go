@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -145,7 +146,7 @@ func TestClassifyRuntimeConfigurationChanges(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Classify: %v", err)
 		}
-		if !equalStrings(got.Added, []string{"another-source"}) || len(got.Removed) != 0 {
+		if !slices.Equal(got.Added, []string{"another-source"}) || len(got.Removed) != 0 {
 			t.Fatalf("added/removal classification = %+v", got)
 		}
 	})
@@ -157,7 +158,7 @@ func TestClassifyRuntimeConfigurationChanges(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Classify: %v", err)
 		}
-		if !equalStrings(got.Removed, []string{"src-test"}) || len(got.Added) != 0 {
+		if !slices.Equal(got.Removed, []string{"src-test"}) || len(got.Added) != 0 {
 			t.Fatalf("added/removal classification = %+v", got)
 		}
 	})
@@ -169,7 +170,7 @@ func TestClassifyRuntimeConfigurationChanges(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Classify: %v", err)
 		}
-		if !equalStrings(got.IndexingChanged, []string{"src-test"}) || len(got.MetadataChanged) != 0 {
+		if !slices.Equal(got.IndexingChanged, []string{"src-test"}) || len(got.MetadataChanged) != 0 {
 			t.Fatalf("indexing/metadata classification = %+v", got)
 		}
 	})
@@ -182,7 +183,7 @@ func TestClassifyRuntimeConfigurationChanges(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Classify: %v", err)
 		}
-		if !equalStrings(got.MetadataChanged, []string{"src-test"}) || len(got.IndexingChanged) != 0 {
+		if !slices.Equal(got.MetadataChanged, []string{"src-test"}) || len(got.IndexingChanged) != 0 {
 			t.Fatalf("indexing/metadata classification = %+v", got)
 		}
 	})
@@ -225,7 +226,7 @@ func TestClassifyRuntimeConfigurationChanges(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Classify %s: %v", field.name, err)
 			}
-			if !equalStrings(got.RestartRequired, []string{field.name}) {
+			if !slices.Equal(got.RestartRequired, []string{field.name}) {
 				t.Errorf("%s restart-required fields = %v, want [%s]", field.name, got.RestartRequired, field.name)
 			}
 			field.change(&combined)
@@ -235,14 +236,14 @@ func TestClassifyRuntimeConfigurationChanges(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Classify combined restart-required fields: %v", err)
 		}
-		if !equalStrings(got.RestartRequired, want) {
+		if !slices.Equal(got.RestartRequired, want) {
 			t.Fatalf("restart-required field order = %v, want %v", got.RestartRequired, want)
 		}
 
 		changed := parseRuntimeConfig(t)
 		changed.Listen = "127.0.0.1:8181"
 		first, err := Classify(startup, startup, changed)
-		if err != nil || !equalStrings(first.RestartRequired, []string{"listen"}) {
+		if err != nil || !slices.Equal(first.RestartRequired, []string{"listen"}) {
 			t.Fatalf("Classify changed startup field = %+v, %v", first, err)
 		}
 		restored, err := Classify(startup, changed, startup)
@@ -268,16 +269,4 @@ func generationForTest(t *testing.T, cfg Config) string {
 		t.Fatalf("IndexingGeneration: %v", err)
 	}
 	return generation
-}
-
-func equalStrings(got, want []string) bool {
-	if len(got) != len(want) {
-		return false
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			return false
-		}
-	}
-	return true
 }
