@@ -10,6 +10,10 @@ The resolver selects or previews prerequisites, but existing CLI tables and inst
 - Preserve selection, acquisition, strict exit behavior and the disabled expansion default.
 - Reconcile affected published CLI and prerequisite guidance.
 
+## Release note
+
+`install`, `list`, `status`, and `doctor` now report resource prerequisites: install summaries name prerequisites that were also selected or would be, `list` and `status` show requirement provenance, `status` adds a typed reason for each unmet prerequisite, and `doctor` warns about prerequisite hints that name an unconfigured source. Exit status and selection are unchanged.
+
 ## Capabilities
 
 ### New Capabilities

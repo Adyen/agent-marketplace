@@ -9,6 +9,10 @@ Resources can declare `metadata.requires`, but unmet prerequisites are currently
 - When disabled, compute implied resources as a read-only preview. Keep selection and strict-sync behavior unchanged, report typed unmet reasons, and preserve only matching existing preview outputs and ownership without creating, rewriting, adopting, or broadly suppressing stale-output pruning.
 - When expansion is enabled, allow removal of an optional resource that remains required by writing an explicit exclude and warning dependents, without cascading removal or adding a new flag.
 
+## Release note
+
+Resources can now have their declared prerequisites selected automatically by setting `requires.expand: true`; the setting is off by default, so existing configurations keep selecting exactly what they list. With expansion off, sync previews the prerequisites it would select and keeps any matching outputs already installed. With expansion on, removing an optional resource that another selected resource still requires writes an exclusion and warns about the dependent.
+
 ## Capabilities
 
 ### New Capabilities
