@@ -30,7 +30,7 @@ Agent Marketplace MUST print the malformed-resource list of `sync --verbose` wit
 
 ### Requirement: Printed errors name a next step
 
-Agent Marketplace MUST follow every error printed by a CLI command, and every error listed in `doctor`'s configuration and organization error sections, with at least one line that starts with `hint: ` and names a supported command or a concrete action. When an error carries its own nonempty remediation, that remediation MUST be the hint. Otherwise, when the error carries a stable diagnostic code, the hint MUST be the guidance for that code, naming the affected file, layer scope, or resource when the error identifies them. Otherwise the hint MUST name a diagnostic command suited to the failed command. Every stable diagnostic code that consumer commands can report MUST have code-specific guidance. Guidance for organization-owned configuration, acquisition locks, or trust failures MUST direct the user to their administrator and MUST NOT suggest editing or deleting organization files. Guidance MUST NOT suggest deleting an acquisition lock or running `update` to bypass verification. When several errors are printed together, each error MUST be followed by its own hint, and a hint identical to one already printed for the same command MUST NOT be repeated. Hints MUST use the terminal-safe single-line policy that applies to command errors. Hints MUST NOT appear in machine-readable output and MUST NOT change error identity for `errors.Is` and `errors.As` or exit status. Warning remediation lines MUST keep their existing format.
+Agent Marketplace MUST follow every error printed by a CLI command, and every error listed in `doctor`'s configuration and organization error sections, with at least one line that starts with `hint: ` and names a supported command or a concrete action. When an error carries its own nonempty remediation, that remediation MUST be the hint. Otherwise, when the error carries a stable diagnostic code, the hint MUST be the guidance for that code, naming the affected file, layer scope, or resource when the error identifies them. Otherwise the hint MUST name a diagnostic command suited to the failed command. Every stable diagnostic code that consumer commands can report MUST have code-specific guidance. Guidance for organization-owned configuration, acquisition locks, or trust failures MUST direct the user to their administrator and MUST NOT suggest editing or deleting organization files, except that when a valid organization configuration has no deployed acquisition lock, guidance for a read-only mode's missing-lock refusal MUST name an online `agent-marketplace sync` or `agent-marketplace sync --check` instead of the administrator. Guidance MUST NOT suggest deleting an acquisition lock or running `update` to bypass verification. When several errors are printed together, each error MUST be followed by its own hint, and a hint identical to one already printed for the same command MUST NOT be repeated. Hints MUST use the terminal-safe single-line policy that applies to command errors. Hints MUST NOT appear in machine-readable output and MUST NOT change error identity for `errors.Is` and `errors.As` or exit status. Warning remediation lines MUST keep their existing format.
 
 #### Scenario: Coded errors print code-specific guidance
 
@@ -67,9 +67,17 @@ Agent Marketplace MUST follow every error printed by a CLI command, and every er
 
 #### Scenario: Organization failures direct users to their administrator
 
-- **WHEN** a command or `doctor` reports an error about the organization configuration, organization acquisition lock, or organization trust
+- **WHEN** a command or `doctor` reports an error about the organization configuration, a deployed organization acquisition lock, or organization trust, including an organization lock that is malformed, stale, wrong-scope, untrusted, or present but mismatched
 - **THEN** the hint MUST tell the user to ask their administrator
 - **AND** it MUST NOT suggest editing, deleting, or bypassing organization files
+
+#### Scenario: An intentionally absent organization lock names the online commands that verify it
+
+- **WHEN** a valid organization configuration selects Marketplace resources, no organization acquisition lock is deployed, and `sync --locked`, `sync --offline`, or `lock --check` runs
+- **THEN** the command MUST still refuse with `v4.marketplace-lock-required`
+- **AND** the hint MUST say that the organization deploys no acquisition lock and name an online `agent-marketplace sync` or `agent-marketplace sync --check` as the command that verifies organization resources
+- **AND** the hint MUST NOT tell the user to ask their administrator or suggest editing organization files
+- **AND** the command MUST make no Marketplace requests and MUST NOT write organization files, acquisition locks, or state
 
 #### Scenario: Doctor configuration errors carry hints
 

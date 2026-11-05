@@ -259,7 +259,11 @@ run time with `v4.marketplace-runtime-unsupported`. A missing or mismatched lock
 record fails with `v4.marketplace-lock-required`/`-mismatch`; a writing `sync`
 or `lock` records selected Marketplace resources missing from an existing lock
 while keeping existing pins, and read-only modes (`--check`, `--locked`,
-`--offline`, `doctor`) never write.
+`--offline`, `doctor`) never write. When an organization intentionally deploys
+no acquisition lock, `--locked`, `--offline`, and `lock --check` refuse
+`v4.marketplace-lock-required` with a hint naming an online `agent-marketplace
+sync` or `sync --check` — which verifies the organization's Marketplace
+requests transiently — not the administrator.
 
 ## Resource prerequisites
 
