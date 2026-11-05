@@ -23,4 +23,4 @@
 ## 5. Integration
 
 - [x] 5.1 Run `go run ./tools/specaudit trace`, `make spec-check`, `make test TEST_PACKAGES="./pkg/marketplace/..." TEST_FLAGS="-count=1"`, and `make validate`; verify all pass
-- [ ] 5.2 Run `openspec archive add-marketplace-runtime-configuration --yes` as the final commit and verify `make spec-check` still passes
+- [x] 5.2 Run `openspec archive add-marketplace-runtime-configuration --yes` as the final commit and verify `make spec-check` still passes
