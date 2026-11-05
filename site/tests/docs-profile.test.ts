@@ -3,6 +3,7 @@ import { readdir, readFile } from 'node:fs/promises'
 import { relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
+import { assertCopyPageTrigger, assertCopyPageView } from './copy-page.ts'
 
 const publicDist = new URL('../.vitepress/dist/', import.meta.url)
 const publicDocsDist = new URL('docs/', publicDist)
@@ -41,6 +42,25 @@ test('documentation-only build is contained below /docs/', async () => {
       const resolved = new URL(target, pageURL)
       if (resolved.origin !== docsOrigin.origin || resolved.pathname === marketplaceURL.pathname) continue
       assert.ok(resolved.pathname.startsWith('/docs/'), `${file.pathname} escapes /docs/: ${target}`)
+    }
+  }
+})
+
+test('both documentation profiles render Copy page and link to their Markdown files', async () => {
+  const profiles = [
+    { root: publicDist, docsRoot: publicDocsDist, base: publicBase },
+    { root: docsDist, docsRoot: docsDist, base: '/docs/' },
+  ]
+
+  for (const profile of profiles) {
+    const files = await filesBelow(profile.docsRoot)
+    const pages = htmlInventory(profile.docsRoot, files)
+    assert.ok(pages.length > 0, `${profile.base} build should include documentation pages`)
+    for (const route of pages) {
+      const html = await readFile(new URL(route, profile.docsRoot), 'utf8')
+      const outputRoute = profile.root === publicDist ? `docs/${route}` : route
+      assertCopyPageTrigger(html, `${profile.base}${route}`)
+      await assertCopyPageView(html, outputRoute, profile.base, profile.root, `${profile.base}${route}`)
     }
   }
 })

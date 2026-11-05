@@ -8,6 +8,7 @@ import test from 'node:test'
 import { stripFrontMatter } from '../.vitepress/llms.ts'
 import { docsSidebar } from '../.vitepress/sidebar.ts'
 import { nextTabIndex } from '../src/pages/landing/composables/tabNavigation.ts'
+import { assertCopyPageTrigger, assertCopyPageView, assertNoCopyPageTrigger } from './copy-page.ts'
 
 const dist = new URL('../.vitepress/dist/', import.meta.url)
 const base = process.env.SITE_BASE ?? '/'
@@ -61,6 +62,28 @@ test('public project site exposes landing and documentation without a local Mark
 
   for (const html of [landing, nestedDocs]) {
     assert.doesNotMatch(html, /(?:href|rel="prefetch" href)="\/marketplace\/?"/)
+  }
+})
+
+test('documentation pages show one Copy page trigger and the landing page shows none', async () => {
+  const files = (await generatedFilePaths(dist)).filter(file => file.startsWith('docs/') && file.endsWith('.html') && !file.endsWith('/404.html'))
+  const [landing, readme, ...pages] = await Promise.all([
+    readFile(new URL('index.html', dist), 'utf8'),
+    readFile(new URL('README.html', dist), 'utf8'),
+    ...files.map(file => readFile(new URL(file, dist), 'utf8')),
+  ])
+
+  assertNoCopyPageTrigger(landing, 'landing page')
+  assertNoCopyPageTrigger(readme, 'non-docs README page')
+  assert.ok(pages.length > 0, 'public build should include documentation pages')
+  for (const [index, file] of files.entries()) assertCopyPageTrigger(pages[index], file)
+})
+
+test('View as Markdown links resolve to each public documentation Markdown file', async () => {
+  const files = (await generatedFilePaths(dist)).filter(file => file.startsWith('docs/') && file.endsWith('.html') && !file.endsWith('/404.html'))
+  for (const file of files) {
+    const html = await readFile(new URL(file, dist), 'utf8')
+    await assertCopyPageView(html, file, base, dist, file)
   }
 })
 
