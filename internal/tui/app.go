@@ -103,6 +103,7 @@ func NewModel(repoRoot, homeDir string, options ...Option) Model {
 		help:                       newHelpModel(theme),
 		isDark:                     isDark,
 		theme:                      theme,
+		pendingInventory:           newPendingInventory(),
 	}
 	for _, option := range options {
 		option(&m)
@@ -406,9 +407,7 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	m.clampListOffset()
 	m.rebuildOpenBundle(previousDetail, hadPreviousDetail)
 	if msg.stage == snapshotStageFinal {
-		if msg.inventoryResult != nil {
-			pipeline.RecordResolvedInventory(m.ctx, *msg.inventoryResult)
-		}
+		m.pendingInventory.set(msg.inventoryResult)
 		recordConfigSnapshotSpans(m.ctx, msg)
 	}
 }
@@ -572,6 +571,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updateCmd := m.finishUpdateReload(msg.generation, snapshotAcceptanceError(msg))
 		syncCmd := m.finishSyncReload(msg.generation, snapshotAcceptanceError(msg))
 		if msg.mergedCfg == nil && len(m.errs) > 0 {
+			m.pendingInventory.set(nil)
 			m.provisionalRows = nil
 			m.refreshing = false
 			m.clearMarketplaceDiscovery(true)
@@ -598,6 +598,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updateCmd := m.finishUpdateReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg))
 		syncCmd := m.finishSyncReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg))
 		if msg.mergedCfg == nil && len(m.errs) > 0 {
+			m.pendingInventory.set(nil)
 			m.provisionalRows = nil
 			m.clearMarketplaceDiscovery(true)
 			return m, tea.Batch(m.finishMarketplaceInstallReload(msg.generation, errors.Join(m.errs...)), updateCmd, syncCmd)
@@ -627,6 +628,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updateCmd := m.finishUpdateReload(snapshot.generation, snapshotAcceptanceError(snapshot))
 		syncCmd := m.finishSyncReload(snapshot.generation, snapshotAcceptanceError(snapshot))
 		if snapshot.mergedCfg == nil && len(m.errs) > 0 {
+			m.pendingInventory.set(nil)
 			m.provisionalRows = nil
 			m.clearMarketplaceDiscovery(true)
 			return m, tea.Batch(m.finishMarketplaceInstallReload(snapshot.generation, errors.Join(m.errs...)), updateCmd, syncCmd)
@@ -2323,6 +2325,14 @@ func (m Model) listVisibleHeight() int {
 }
 
 func Run(ctx context.Context, repoRoot, homeDir string, options ...Option) error {
+	return runSession(ctx, repoRoot, homeDir, func(model tea.Model) error {
+		return runTUIModel(model, defaultTUIProgramOptions()...)
+	}, options...)
+}
+
+// runSession owns the session span and final inventory flush. Defers run in
+// reverse order, so the flush records before the session span ends.
+func runSession(ctx context.Context, repoRoot, homeDir string, runModel func(tea.Model) error, options ...Option) error {
 	initRenderer()
 
 	model := NewModel(repoRoot, homeDir, options...)
@@ -2332,12 +2342,15 @@ func Run(ctx context.Context, repoRoot, homeDir string, options ...Option) error
 		model.ctx, model.sessionSpan = tel.StartSpan(model.ctx, "agent_marketplace.tui.session", nil)
 	}
 	defer model.sessionSpan.End()
+	recordCtx := model.ctx
+	model.ctx = pipeline.WithoutInventory(model.ctx)
+	defer model.pendingInventory.flush(recordCtx)
 
 	seedTerminalSize(&model, os.Stdout)
 	restoreLogs := logging.BeginTerminalSession()
 	defer restoreLogs()
 
-	return runTUIModel(model, defaultTUIProgramOptions()...)
+	return runModel(model)
 }
 
 func defaultTUIProgramOptions() []tea.ProgramOption {
