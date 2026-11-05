@@ -11,6 +11,9 @@ import (
 )
 
 // spec: harness-model-catalogs/conversion-fixtures-prove-catalog-mappings
+// spec: harness-model-catalogs/reviewed-additions-emit-native-model-and-reasoning-fields
+// spec: harness-model-catalogs/priority-variants-retain-their-distinct-fast-identity
+// spec: harness-model-catalogs/reviewed-additions-omit-unsupported-reasoning-without-substitution
 func TestCatalogConversions(t *testing.T) {
 	raw, err := os.ReadFile("testdata/conversions.yaml")
 	if err != nil {

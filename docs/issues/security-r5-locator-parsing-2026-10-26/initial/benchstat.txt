@@ -1,0 +1,102 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+                                                         │  before.txt   │              after.txt              │
+                                                         │    sec/op     │    sec/op     vs base               │
+V4MarketplaceLockHydration-16                               21.62µ ± 12%   21.65µ ± 14%        ~ (p=0.699 n=6)
+V4LocatorParsingCPU/unqualified-16                          162.8n ±  3%   153.7n ±  3%   -5.56% (p=0.002 n=6)
+V4LocatorParsingCPU/qualified-16                            242.7n ±  3%   226.3n ±  2%   -6.74% (p=0.002 n=6)
+V4LocatorParsingCPU/long-name-16                            5.278µ ±  3%   5.275µ ± 98%        ~ (p=1.000 n=6)
+V4LocatorParsingCPU/extra-slash-16                          55.06n ±  5%   32.71n ±  3%  -40.59% (p=0.002 n=6)
+V4LocatorParsingCPU/invalid-name-16                        104.95n ±  2%   87.11n ±  3%  -17.00% (p=0.002 n=6)
+V4LocatorParsingCPU/dirty-16                                8.680n ±  6%   8.879n ±  6%        ~ (p=0.180 n=6)
+ParseV4LocatorShapesCPU/git/requests=1-16                   12.58µ ±  7%   12.70µ ±  5%        ~ (p=0.290 n=6)
+ParseV4LocatorShapesCPU/git/requests=256-16                 511.0µ ±  5%   509.5µ ±  3%        ~ (p=0.394 n=6)
+ParseV4LocatorShapesCPU/git/requests=1024-16                2.024m ±  5%   1.999m ±  4%        ~ (p=0.310 n=6)
+ParseV4LocatorShapesCPU/directory/requests=1-16             21.81µ ± 30%   21.88µ ±  5%        ~ (p=1.000 n=6)
+ParseV4LocatorShapesCPU/directory/requests=256-16           525.6µ ±  6%   514.7µ ±  4%   -2.07% (p=0.041 n=6)
+ParseV4LocatorShapesCPU/directory/requests=1024-16          2.032m ±  5%   2.019m ±  4%        ~ (p=0.180 n=6)
+ParseV4LocatorShapesCPU/marketplace/requests=1-16           12.27µ ±  6%   12.28µ ±  6%        ~ (p=0.732 n=6)
+ParseV4LocatorShapesCPU/marketplace/requests=256-16         599.1µ ±  6%   590.8µ ±  5%        ~ (p=0.180 n=6)
+ParseV4LocatorShapesCPU/marketplace/requests=1024-16        2.400m ±  3%   2.334m ±  4%   -2.74% (p=0.026 n=6)
+V4SparseExclusionAdapterCPU/skills=1/excluded=0-16          711.9n ±  8%   709.5n ± 10%        ~ (p=0.937 n=6)
+V4SparseExclusionAdapterCPU/skills=1/excluded=1-16          820.8n ±  8%   815.9n ±  9%        ~ (p=0.589 n=6)
+V4SparseExclusionAdapterCPU/skills=256/excluded=0-16        56.40µ ±  7%   55.15µ ± 11%        ~ (p=0.240 n=6)
+V4SparseExclusionAdapterCPU/skills=256/excluded=128-16      66.87µ ±  8%   65.73µ ± 11%        ~ (p=0.485 n=6)
+V4SparseExclusionAdapterCPU/skills=256/excluded=256-16      71.33µ ±  8%   71.10µ ±  8%        ~ (p=0.818 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=0-16       225.7µ ±  7%   227.5µ ±  8%        ~ (p=0.699 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=512-16     259.6µ ±  7%   261.6µ ± 12%        ~ (p=0.589 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16    285.0µ ±  7%   283.7µ ±  8%        ~ (p=0.818 n=6)
+V4WildcardAdapterCPU/requests=1-16                          778.0n ± 31%   788.8n ± 10%        ~ (p=0.589 n=6)
+V4WildcardAdapterCPU/requests=256-16                        50.05µ ± 10%   48.92µ ± 10%        ~ (p=0.818 n=6)
+V4WildcardAdapterCPU/requests=1024-16                       190.7µ ±  7%   192.0µ ±  8%        ~ (p=0.485 n=6)
+geomean                                                     18.75µ         18.12µ         -3.37%
+
+                                                         │  before.txt  │                after.txt                 │
+                                                         │     B/op     │     B/op      vs base                    │
+V4MarketplaceLockHydration-16                              93.12Ki ± 0%   93.12Ki ± 0%         ~ (p=1.000 n=6)
+V4LocatorParsingCPU/unqualified-16                           32.00 ± 0%      0.00 ± 0%  -100.00% (p=0.002 n=6)
+V4LocatorParsingCPU/qualified-16                             48.00 ± 0%      0.00 ± 0%  -100.00% (p=0.002 n=6)
+V4LocatorParsingCPU/long-name-16                             48.00 ± 0%      0.00 ± 0%  -100.00% (p=0.002 n=6)
+V4LocatorParsingCPU/extra-slash-16                           80.00 ± 0%     16.00 ± 0%   -80.00% (p=0.002 n=6)
+V4LocatorParsingCPU/invalid-name-16                          64.00 ± 0%     16.00 ± 0%   -75.00% (p=0.002 n=6)
+V4LocatorParsingCPU/dirty-16                                 16.00 ± 0%     16.00 ± 0%         ~ (p=1.000 n=6) ¹
+ParseV4LocatorShapesCPU/git/requests=1-16                  17.52Ki ± 0%   17.39Ki ± 0%    -0.71% (p=0.002 n=6)
+ParseV4LocatorShapesCPU/git/requests=256-16                661.2Ki ± 0%   637.2Ki ± 0%    -3.64% (p=0.002 n=6)
+ParseV4LocatorShapesCPU/git/requests=1024-16               2.701Mi ± 0%   2.607Mi ± 0%    -3.49% (p=0.002 n=6)
+ParseV4LocatorShapesCPU/directory/requests=1-16            20.55Ki ± 0%   20.43Ki ± 0%    -0.61% (p=0.002 n=6)
+ParseV4LocatorShapesCPU/directory/requests=256-16          664.3Ki ± 0%   640.2Ki ± 0%    -3.62% (p=0.002 n=6)
+ParseV4LocatorShapesCPU/directory/requests=1024-16         2.704Mi ± 0%   2.610Mi ± 0%    -3.48% (p=0.002 n=6)
+ParseV4LocatorShapesCPU/marketplace/requests=1-16          17.19Ki ± 0%   17.00Ki ± 0%    -1.09% (p=0.002 n=6)
+ParseV4LocatorShapesCPU/marketplace/requests=256-16        676.9Ki ± 0%   640.8Ki ± 0%    -5.33% (p=0.002 n=6)
+ParseV4LocatorShapesCPU/marketplace/requests=1024-16       2.764Mi ± 0%   2.622Mi ± 0%    -5.11% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=1/excluded=0-16         2.258Ki ± 0%   2.258Ki ± 0%         ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=1/excluded=1-16         2.430Ki ± 0%   2.430Ki ± 0%         ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=256/excluded=0-16       184.1Ki ± 0%   184.1Ki ± 0%         ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=256/excluded=128-16     204.4Ki ± 0%   204.4Ki ± 0%         ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=256/excluded=256-16     219.5Ki ± 0%   219.5Ki ± 0%         ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=1024/excluded=0-16      744.0Ki ± 0%   744.0Ki ± 0%         ~ (p=1.000 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=512-16    817.1Ki ± 0%   817.1Ki ± 0%         ~ (p=0.545 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16   911.2Ki ± 0%   911.2Ki ± 0%         ~ (p=0.424 n=6)
+V4WildcardAdapterCPU/requests=1-16                         2.164Ki ± 0%   2.164Ki ± 0%         ~ (p=1.000 n=6) ¹
+V4WildcardAdapterCPU/requests=256-16                       145.4Ki ± 0%   145.4Ki ± 0%         ~ (p=1.000 n=6) ¹
+V4WildcardAdapterCPU/requests=1024-16                      584.0Ki ± 0%   584.0Ki ± 0%         ~ (p=1.000 n=6) ¹
+geomean                                                    25.45Ki                      ?                      ² ³
+¹ all samples are equal
+² summaries must be >0 to compute geomean
+³ ratios must be >0 to compute geomean
+
+                                                         │ before.txt  │                after.txt                │
+                                                         │  allocs/op  │  allocs/op   vs base                    │
+V4MarketplaceLockHydration-16                               340.0 ± 0%    340.0 ± 0%         ~ (p=1.000 n=6) ¹
+V4LocatorParsingCPU/unqualified-16                          1.000 ± 0%    0.000 ± 0%  -100.00% (p=0.002 n=6)
+V4LocatorParsingCPU/qualified-16                            1.000 ± 0%    0.000 ± 0%  -100.00% (p=0.002 n=6)
+V4LocatorParsingCPU/long-name-16                            1.000 ± 0%    0.000 ± 0%  -100.00% (p=0.002 n=6)
+V4LocatorParsingCPU/extra-slash-16                          2.000 ± 0%    1.000 ± 0%   -50.00% (p=0.002 n=6)
+V4LocatorParsingCPU/invalid-name-16                         2.000 ± 0%    1.000 ± 0%   -50.00% (p=0.002 n=6)
+V4LocatorParsingCPU/dirty-16                                1.000 ± 0%    1.000 ± 0%         ~ (p=1.000 n=6) ¹
+ParseV4LocatorShapesCPU/git/requests=1-16                   176.0 ± 0%    172.0 ± 0%    -2.27% (p=0.002 n=6)
+ParseV4LocatorShapesCPU/git/requests=256-16                5.353k ± 0%   4.584k ± 0%   -14.37% (p=0.002 n=6)
+ParseV4LocatorShapesCPU/git/requests=1024-16               21.52k ± 0%   18.45k ± 0%   -14.28% (p=0.002 n=6)
+ParseV4LocatorShapesCPU/directory/requests=1-16             211.0 ± 0%    207.0 ± 0%    -1.90% (p=0.002 n=6)
+ParseV4LocatorShapesCPU/directory/requests=256-16          5.388k ± 0%   4.619k ± 0%   -14.27% (p=0.002 n=6)
+ParseV4LocatorShapesCPU/directory/requests=1024-16         21.56k ± 0%   18.48k ± 0%   -14.26% (p=0.002 n=6)
+ParseV4LocatorShapesCPU/marketplace/requests=1-16           168.0 ± 0%    164.0 ± 0%    -2.38% (p=0.002 n=6)
+ParseV4LocatorShapesCPU/marketplace/requests=256-16        5.345k ± 0%   4.576k ± 0%   -14.39% (p=0.002 n=6)
+ParseV4LocatorShapesCPU/marketplace/requests=1024-16       21.51k ± 0%   18.44k ± 0%   -14.29% (p=0.002 n=6)
+V4SparseExclusionAdapterCPU/skills=1/excluded=0-16          13.00 ± 0%    13.00 ± 0%         ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=1/excluded=1-16          16.00 ± 0%    16.00 ± 0%         ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=256/excluded=0-16        545.0 ± 0%    545.0 ± 0%         ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=256/excluded=128-16      584.0 ± 0%    584.0 ± 0%         ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=256/excluded=256-16      580.0 ± 0%    580.0 ± 0%         ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=1024/excluded=0-16      2.091k ± 0%   2.091k ± 0%         ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=1024/excluded=512-16    2.141k ± 0%   2.141k ± 0%         ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16   2.143k ± 0%   2.143k ± 0%         ~ (p=1.000 n=6) ¹
+V4WildcardAdapterCPU/requests=1-16                          13.00 ± 0%    13.00 ± 0%         ~ (p=1.000 n=6) ¹
+V4WildcardAdapterCPU/requests=256-16                        550.0 ± 0%    550.0 ± 0%         ~ (p=1.000 n=6) ¹
+V4WildcardAdapterCPU/requests=1024-16                      2.100k ± 0%   2.100k ± 0%         ~ (p=1.000 n=6) ¹
+geomean                                                     195.5                     ?                      ² ³
+¹ all samples are equal
+² summaries must be >0 to compute geomean
+³ ratios must be >0 to compute geomean

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -11,6 +13,26 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 )
+
+// executeCommandAtTerminal runs args with stdin reading input from a pipe that
+// reports itself as a terminal, so interactive confirmations are exercised.
+func executeCommandAtTerminal(t *testing.T, input string, args ...string) (string, error) {
+	t.Helper()
+	prev := isTerminal
+	isTerminal = func(uintptr) bool { return true }
+	t.Cleanup(func() { isTerminal = prev })
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+	go func() {
+		_, _ = w.WriteString(input)
+		_ = w.Close()
+	}()
+	return executeCommandWithInput(context.Background(), r, args...)
+}
 
 func TestDiagnosticFlagExportsPayload(t *testing.T) {
 	if isolateCommandTest(t) {
@@ -41,7 +63,7 @@ func TestDiagnosticFlagExportsPayload(t *testing.T) {
 	}
 	writeTelemetryTestFile(t, cfgPath, "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\ntelemetry:\n  level: detailed\n  endpoint: "+srv.URL+"\n")
 
-	output, err := executeCommand("--diagnostic", "--diagnostic-accept-sensitive-data", "--version")
+	output, err := executeCommandAtTerminal(t, "y\n", "--diagnostic", "--version")
 	if err != nil {
 		t.Fatalf("diagnostic version command failed: %v\n%s", err, output)
 	}
@@ -85,8 +107,13 @@ func TestDiagnosticFlagRequiresAcknowledgement(t *testing.T) {
 	}
 	home := setupTelemetryHome(t)
 
+	var mu sync.Mutex
+	var requests int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
+		mu.Lock()
+		requests++
+		mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
@@ -103,7 +130,7 @@ func TestDiagnosticFlagRequiresAcknowledgement(t *testing.T) {
 	}
 	t.Logf("output:\n%s", output)
 
-	if !strings.Contains(output, "requires --diagnostic-accept-sensitive-data") {
+	if !strings.Contains(output, "requires interactive acknowledgement at a terminal") {
 		t.Fatalf("expected non-interactive acknowledgement message, got:\n%s", output)
 	}
 	if strings.Contains(output, "Diagnostic export succeeded") {
@@ -114,6 +141,34 @@ func TestDiagnosticFlagRequiresAcknowledgement(t *testing.T) {
 	matches, _ := filepath.Glob(filepath.Join(stateRoot, "payload-*.json"))
 	if len(matches) == 0 {
 		t.Fatalf("expected retained diagnostic payload file")
+	}
+}
+
+// spec: telemetry/sensitive-data-acknowledgement-flag-is-not-accepted
+func TestDiagnosticSensitiveDataFlagIsRejected(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := setupTelemetryHome(t)
+
+	cfgPath, err := config.GlobalConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTelemetryTestFile(t, cfgPath, "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\ntelemetry:\n  level: detailed\n  endpoint: http://127.0.0.1:1\n")
+
+	output, err := executeCommandAtTerminal(t, "y\n", "--diagnostic", "--diagnostic-accept-sensitive-data", "--version")
+	if err == nil || !strings.Contains(err.Error(), "unknown flag: --diagnostic-accept-sensitive-data") {
+		t.Fatalf("expected unknown flag refusal, got err=%v\n%s", err, output)
+	}
+	if strings.Contains(output, "Diagnostic payload written to") {
+		t.Fatalf("rejected flag must not capture a diagnostic payload, got:\n%s", output)
+	}
+
+	stateRoot := filepath.Join(home, ".local", "state", "agent-marketplace", "telemetry", "diagnostic")
+	matches, _ := filepath.Glob(filepath.Join(stateRoot, "payload-*.json"))
+	if len(matches) > 0 {
+		t.Fatalf("rejected flag must not write a diagnostic payload: %v", matches)
 	}
 }
 
@@ -136,7 +191,7 @@ func TestDiagnosticFlagIgnoredWhenTelemetryBasic(t *testing.T) {
 	}
 	writeTelemetryTestFile(t, cfgPath, "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\ntelemetry:\n  level: basic\n  endpoint: "+srv.URL+"\n")
 
-	output, err := executeCommand("--diagnostic", "--diagnostic-accept-sensitive-data", "--version")
+	output, err := executeCommand("--diagnostic", "--version")
 	if err != nil {
 		t.Fatalf("diagnostic version command failed: %v\n%s", err, output)
 	}

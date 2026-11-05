@@ -38,14 +38,15 @@ func runProductionTUI(ctx context.Context, repoRoot, homeDir string) error {
 		return err
 	}
 	options := []tui.Option{tui.WithWorkspace(workspace), tui.WithDependencyLifecycle(tui.DependencyLifecycle{
-		Sync: func(ctx context.Context, workspace pipeline.Workspace) ([]error, error) {
+		Sync: func(ctx context.Context, workspace pipeline.Workspace) (pipeline.SyncResult, error) {
 			return runTUIDependencyLifecycle(ctx, workspace, false)
 		},
-		Update: func(ctx context.Context, workspace pipeline.Workspace) ([]error, error) {
+		Update: func(ctx context.Context, workspace pipeline.Workspace) (pipeline.SyncResult, error) {
 			return runTUIDependencyLifecycle(ctx, workspace, true)
 		},
 		Mutate:           runTUIConfigMutation,
 		InstallReconcile: reconcileCommandDependencies,
+		InstallPrepare:   prepareInstallDependencies,
 	})}
 	if checker := newUpgradeChecker(); checker != nil {
 		options = append(options, tui.WithUpgradeCheck(checker))
@@ -69,26 +70,26 @@ func runTUIConfigMutation(ctx context.Context, workspace pipeline.Workspace, mut
 	return pipeline.MutateConfigWithDependencies(ctx, ws.RepoRoot(), ws.LocalConfigDir(), mutation, reconcileCommandDependencies)
 }
 
-func runTUIDependencyLifecycle(ctx context.Context, workspace pipeline.Workspace, upgrade bool) ([]error, error) {
+func runTUIDependencyLifecycle(ctx context.Context, workspace pipeline.Workspace, upgrade bool) (pipeline.SyncResult, error) {
 	ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(ctx)
 	ctx = cache.WithFreshExactGitVerificationScope(ctx)
 	ws, err := pipeline.NewWorkspace(workspace.RepoRoot(), workspace.LocalConfigDir())
 	if err != nil {
-		return nil, err
+		return pipeline.SyncResult{}, err
 	}
 	var lockWarnings []error
 	mode := lockMode{upgrade: upgrade, warningSink: &lockWarnings}
 	if upgrade {
 		selected, _, err := parseLockSelection("all", false)
 		if err != nil {
-			return nil, err
+			return pipeline.SyncResult{}, err
 		}
 		mode.selects = selected
 		mode.selectionGuard = true
 	}
 	exactLease, err := prepareTUILocks(ctx, ws.RepoRoot(), ws.LocalConfigDir(), mode)
 	if err != nil {
-		return nil, err
+		return pipeline.SyncResult{}, err
 	}
 	options := pipeline.ResolveOptions{Workspace: ws, ReadOnlyExactLocks: true, ExactLockLease: exactLease, MarketplaceReportArchiveEvidenceDrift: true}
 	result := runTUIExactSync(ctx, options)
@@ -102,5 +103,6 @@ func runTUIDependencyLifecycle(ctx context.Context, workspace pipeline.Workspace
 		}
 	}
 	result.Warnings = stripUnpersistedRefreshWarnings(result.Warnings, persistedRefreshes)
-	return append(lockWarnings, result.Warnings...), errors.Join(errs...)
+	result.Warnings = append(lockWarnings, result.Warnings...)
+	return result, errors.Join(errs...)
 }

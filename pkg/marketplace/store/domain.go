@@ -204,6 +204,75 @@ type Marketplace struct {
 	InstanceMetadata map[string]any `json:"instance_metadata,omitempty"`
 }
 
+// RegistryProbeStatus is the outcome of the latest lightweight source probe.
+type RegistryProbeStatus string
+
+const (
+	RegistryProbeStatusUnknown RegistryProbeStatus = "unknown"
+	RegistryProbeStatusOK      RegistryProbeStatus = "ok"
+	RegistryProbeStatusFailed  RegistryProbeStatus = "failed"
+)
+
+// RegistryObservation is durable scheduler state separate from the public
+// registry record and immutable occurrences.
+type RegistryObservation struct {
+	RegistryID               RegistryID          `json:"registry_id"`
+	Version                  uint64              `json:"version"`
+	ObservedCommit           string              `json:"observed_commit,omitempty"`
+	ObservedAt               time.Time           `json:"observed_at,omitempty"`
+	ProbeStatus              RegistryProbeStatus `json:"probe_status,omitempty"`
+	ProbeError               string              `json:"probe_error,omitempty"`
+	NextProbeAt              time.Time           `json:"next_probe_at,omitempty"`
+	NextReconcileAt          time.Time           `json:"next_reconcile_at,omitempty"`
+	ConsecutiveProbeFailures int                 `json:"consecutive_probe_failures,omitempty"`
+	WorkLeaseOwner           string              `json:"work_lease_owner,omitempty"`
+	WorkLeaseEpoch           uint64              `json:"work_lease_epoch,omitempty"`
+	WorkLeaseUntil           time.Time           `json:"work_lease_until,omitempty"`
+	DesiredCommit            string              `json:"desired_commit,omitempty"`
+	DesiredGeneration        string              `json:"desired_generation,omitempty"`
+	ActiveRefreshJobID       JobID               `json:"active_refresh_job_id,omitempty"`
+	ActiveRefreshTrigger     string              `json:"active_refresh_trigger,omitempty"`
+	SuccessfulCommit         string              `json:"successful_commit,omitempty"`
+	SuccessfulGeneration     string              `json:"successful_generation,omitempty"`
+	LastSuccessfulIndexAt    time.Time           `json:"last_successful_index_at,omitempty"`
+}
+
+// RegistryLease fences one worker's exclusive registry work.
+type RegistryLease struct {
+	Owner string
+	Epoch uint64
+	Until time.Time
+}
+
+// HostBudgetLimit bounds admitted operations for one source host.
+type HostBudgetLimit struct {
+	Operations   int
+	Acquisitions int
+}
+
+// HostBudgetLease identifies one admitted remote operation.
+type HostBudgetLease struct {
+	Host        string
+	Owner       string
+	Acquisition bool
+	Epoch       uint64
+	Until       time.Time
+}
+
+// RefreshRequest describes the desired identity and job for a refresh.
+type RefreshRequest struct {
+	Commit     string
+	Generation string
+	Trigger    string
+	Job        Job
+}
+
+// RefreshDecision reports the refresh job selected for a request.
+type RefreshDecision struct {
+	Job       Job
+	Coalesced bool
+}
+
 // RegistryRefreshStatus describes the health of the most recent registry refresh.
 type RegistryRefreshStatus string
 

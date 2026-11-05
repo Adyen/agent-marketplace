@@ -117,6 +117,7 @@ func TestDocsContract(t *testing.T) {
 			telemetry.EnvCommunityReporting:      true,
 			ownership.LockTimeoutEnvVar:          true,
 			"CODEX_HOME":                         true,
+			"CLAUDE_CONFIG_DIR":                  true,
 			"XDG_STATE_HOME":                     true,
 		}
 		envRe := regexp.MustCompile(`"(AGENT_MARKETPLACE_[A-Z_]+)"`)
@@ -267,7 +268,6 @@ func TestPublicCommandPathsHaveBehaviorTests(t *testing.T) {
 		"remove --scope":                          TestInstallThenRemove_UserScope,
 		"root --debug":                            TestDebugFlagEnablesStructuredDebugLogs,
 		"root --diagnostic":                       TestDiagnosticFlagExportsPayload,
-		"root --diagnostic-accept-sensitive-data": TestDiagnosticFlagExportsPayload,
 		"root --version":                          TestVersionFlagPrintsVersion,
 		"search --kind":                           TestSearchCommandWithoutKindReturnsEveryResourceKind,
 		"search --limit":                          TestSearchCommandLimitOffsetBounds,
@@ -297,6 +297,8 @@ func TestPublicCommandPathsHaveBehaviorTests(t *testing.T) {
 		"telemetry enable --level":                TestTelemetryEnableAndDisable,
 		"telemetry preview --level":               TestTelemetryPreview,
 		"update --bump":                           TestUpdateCommandWithBumpUpdatesRepoConfigRefAndSyncsNewCache,
+		"update --dry-run":                        TestUpdateDryRunSummarizesRealUpdateWithoutApplying,
+		"update --include-diff":                   TestUpdateIncludeDiffAppliesPreparedCandidatesAndReportsDiffs,
 		"update --kind":                           TestUpdateBumpHonorsScopeAndDirectTarget,
 		"update --path":                           TestUpdateBumpHonorsScopeAndDirectTarget,
 		"update --ref":                            TestUpdateBumpHonorsScopeAndDirectTarget,

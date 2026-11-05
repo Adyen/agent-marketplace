@@ -126,8 +126,11 @@ func BenchmarkBuildStatusRowsAndTables(b *testing.B) {
 }
 
 // BenchmarkRunSyncCheckLocalRegistry measures the sync --check path with a
-// local registry.
+// local registry, including disk I/O and excluding network requests.
 func BenchmarkRunSyncCheckLocalRegistry(b *testing.B) {
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	b.Cleanup(func() { slog.SetDefault(previousLogger) })
 	cases := []struct {
 		name      string
 		numSkills int
@@ -139,6 +142,10 @@ func BenchmarkRunSyncCheckLocalRegistry(b *testing.B) {
 	for _, c := range cases {
 		b.Run(c.name, func(b *testing.B) {
 			b.Setenv("HOME", b.TempDir())
+			b.Setenv("XDG_STATE_HOME", filepath.Join(os.Getenv("HOME"), ".local", "state"))
+			b.Setenv("XDG_CACHE_HOME", filepath.Join(os.Getenv("HOME"), ".cache"))
+			b.Setenv("XDG_CONFIG_HOME", filepath.Join(os.Getenv("HOME"), ".config"))
+			b.Setenv("CODEX_HOME", filepath.Join(os.Getenv("HOME"), ".codex"))
 
 			repoRoot := b.TempDir()
 			agentsDir := filepath.Join(repoRoot, ".agents")
@@ -165,12 +172,12 @@ func BenchmarkRunSyncCheckLocalRegistry(b *testing.B) {
 			if err := os.MkdirAll(userAgentsDir, 0o755); err != nil {
 				b.Fatal(err)
 			}
-			userConfigYAML := "apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\nregistries: []\n"
+			userConfigYAML := "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"
 			if err := os.WriteFile(filepath.Join(userAgentsDir, "config.yaml"), []byte(userConfigYAML), 0o644); err != nil {
 				b.Fatal(err)
 			}
 
-			configYAML := fmt.Sprintf("apiVersion: agent-marketplace/v2\nregistries:\n  - path: %s\n    default: true\n", localSkillDir)
+			configYAML := fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  local: {directory: %q}\nresources:\n  local: {all: true}\n", localSkillDir)
 			if err := os.WriteFile(filepath.Join(agentsDir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
 				b.Fatal(err)
 			}

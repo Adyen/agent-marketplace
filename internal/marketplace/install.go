@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
@@ -213,8 +214,9 @@ func validateLocatorRevision(locator MarketplaceLocator, revision store.Assessed
 
 // PrepareLocator resolves a user-facing locator and fully prefetches and
 // verifies its mirror artifact. It deliberately does not edit configuration.
+// Collection traversal shares the lock-bootstrap work limit.
 func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceEntry, locator MarketplaceLocator, targets []hcc.Target) (*PreparedInstall, error) {
-	return r.prepareLocator(ctx, entry, locator, targets, 0, nil)
+	return r.prepareLocator(ctx, entry, locator, targets, lockfile.MaxMarketplaceLockResources, nil)
 }
 
 // PrepareLocatorWithResourceLimit is PrepareLocator with an upper bound on
@@ -233,6 +235,19 @@ func (r *Resolver) PrepareLocatorWithResourceLimit(ctx context.Context, entry co
 type collectionPreparationBudget struct {
 	limit int
 	used  int
+	// verified records the nested collections fully verified by this
+	// preparation, keyed by registry, name and content revision.
+	verified map[string]bool
+}
+
+func (b *collectionPreparationBudget) markVerified(key string) {
+	if b == nil {
+		return
+	}
+	if b.verified == nil {
+		b.verified = make(map[string]bool)
+	}
+	b.verified[key] = true
 }
 
 func (b *collectionPreparationBudget) consume(count int) error {
@@ -432,6 +447,13 @@ func (r *Resolver) verifyNestedCollectionManifests(ctx context.Context, client *
 		if visiting[member.Revision] {
 			return fmt.Errorf("collection cycle detected at %q", member.Name)
 		}
+		// A content-addressed nested collection already verified by this
+		// preparation failed nothing and has no cycle through it, so another
+		// include path reuses it instead of refetching its whole subtree.
+		verifiedKey := member.RegistryID + "\x00" + member.Name + "\x00" + member.Revision
+		if budget != nil && budget.verified[verifiedKey] {
+			continue
+		}
 		nestedRegistry, err := client.GetRegistry(ctx, member.RegistryID)
 		if err != nil {
 			return fmt.Errorf("resolve nested collection registry %q: %w", member.RegistryID, err)
@@ -471,6 +493,7 @@ func (r *Resolver) verifyNestedCollectionManifests(ctx context.Context, client *
 			return err
 		}
 		delete(visiting, member.Revision)
+		budget.markVerified(verifiedKey)
 	}
 	for _, name := range manifest.Includes {
 		found := false

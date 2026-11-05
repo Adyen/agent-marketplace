@@ -68,22 +68,16 @@ func TestHarnessFormSpaceSelectsWithoutWriting(t *testing.T) {
 }
 
 // spec: tui-interactions/save-selected-harnesses
-func TestHarnessFormPreservesUnknownIDs(t *testing.T) {
+func TestHarnessFormPreservesOtherSupportedSelections(t *testing.T) {
 	m := NewModel("/repo", "/home")
-	m.globalHarnesses = []string{"factory", "mystery-harness"}
+	m.globalHarnesses = []string{"factory", "claude"}
 	m.openHarnessModal()
-	// Toggle factory off through the form; the unknown ID must survive.
+	// Toggling Factory must leave the independently selected Claude entry alone.
 	mi, _ := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = mi.(Model)
 	saved := selectedHarnessIDs(m.harnessModal.selected)
-	found := false
-	for _, id := range saved {
-		if id == "mystery-harness" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("unknown harness ID lost through form editing: %#v", saved)
+	if len(saved) != 1 || saved[0] != "claude" {
+		t.Fatalf("remaining supported selections = %#v, want [claude]", saved)
 	}
 }
 

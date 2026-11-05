@@ -16,8 +16,8 @@ import (
 // A normalized v2 Marketplace resource consumes at least 300 encoded bytes:
 // its coordinates, two digest fields, one acquisition-evidence field, and the
 // acquisition mode. Anything beyond this count cannot fit MaxFileSize.
-const minimumMarketplaceResourceLockBytes = 300
-const maxMarketplaceLockResources = int(lockfile.MaxFileSize) / minimumMarketplaceResourceLockBytes
+const minimumMarketplaceResourceLockBytes = lockfile.MinimumMarketplaceResourceLockBytes
+const maxMarketplaceLockResources = lockfile.MaxMarketplaceLockResources
 
 // Resolve acquires and verifies every requested Marketplace resource and
 // returns the exact lock evidence for the layer.

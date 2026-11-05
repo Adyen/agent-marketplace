@@ -14,7 +14,6 @@ const pagesPublishCondition = "github.ref == 'refs/heads/main' && github.event_n
 
 type pagesStep struct {
 	workflowStep `yaml:",inline"`
-	ID           string `yaml:"id"`
 }
 
 type pagesJob struct {

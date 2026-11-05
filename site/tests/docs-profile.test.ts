@@ -4,7 +4,8 @@ import { relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 
-const publicDocsDist = new URL('../.vitepress/dist/docs/', import.meta.url)
+const publicDist = new URL('../.vitepress/dist/', import.meta.url)
+const publicDocsDist = new URL('docs/', publicDist)
 const docsDist = new URL('../.vitepress/dist-docs/', import.meta.url)
 const publicBase = process.env.SITE_BASE ?? '/'
 const marketplaceBase = process.env.MARKETPLACE_BASE ?? '/'
@@ -92,4 +93,38 @@ test('public and documentation-only builds publish the same documentation', asyn
     ])
     assert.equal(articleContent(docsPage), articleContent(publicPage), route)
   }
+})
+
+function markdownInventory(root: URL, files: URL[]): string[] {
+  const rootPath = fileURLToPath(root)
+  return files
+    .filter(file => file.pathname.endsWith('.md'))
+    .map(file => relative(rootPath, fileURLToPath(file)))
+    .sort()
+}
+
+// spec: site-deployment-profiles/both-profiles-publish-the-same-markdown-copies
+test('public and documentation-only builds publish the same Markdown copies and llms index', async () => {
+  const [publicFiles, docsFiles] = await Promise.all([
+    filesBelow(publicDocsDist),
+    filesBelow(docsDist),
+  ])
+  const publicInventory = markdownInventory(publicDocsDist, publicFiles)
+  assert.deepEqual(markdownInventory(docsDist, docsFiles), publicInventory)
+
+  for (const file of publicInventory) {
+    const [publicCopy, docsCopy] = await Promise.all([
+      readFile(new URL(file, publicDocsDist), 'utf8'),
+      readFile(new URL(file, docsDist), 'utf8'),
+    ])
+    assert.equal(docsCopy, publicCopy, file)
+  }
+
+  const [publicIndex, docsIndex] = await Promise.all([
+    readFile(new URL('llms.txt', publicDist), 'utf8'),
+    readFile(new URL('llms.txt', docsDist), 'utf8'),
+  ])
+  const links = [...docsIndex.matchAll(/\]\(([^)]+)\)/g)].map(([, url]) => url)
+  assert.ok(links.length > 0 && links.every(url => url.startsWith('/docs/')))
+  assert.equal(docsIndex, publicIndex.replaceAll(`${publicBase}docs/`, '/docs/'))
 })

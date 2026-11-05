@@ -155,8 +155,8 @@ func TestSearchInstallationsRuleObservationPreservesSkillAdoption(t *testing.T) 
 		aggregateResponseSample("count", 1, map[string]string{"am_registry": "rA", "resource_kind": "skill", "resource_name": "alpha"}),
 	})
 	result, _ := getSearch(t, public.URL, "?sort=installations")
-	if hits := fixture.hits.Load(); hits != 1 {
-		t.Fatalf("metrics backend hits = %d, want one real reader request", hits)
+	if hits := fixture.hits.Load(); hits != adoptionRefreshRequests {
+		t.Fatalf("metrics backend hits = %d, want one real reader refresh", hits)
 	}
 
 	foundSkill := false
@@ -389,7 +389,33 @@ func TestSearchInstallationsFallsBackForInvalidSourceIdentity(t *testing.T) {
 	if strings.Contains(body, "installation_count") {
 		t.Fatalf("invalid metrics still emitted counts: %s", body)
 	}
-	if hits := fixture.hits.Load(); hits != 1 {
-		t.Fatalf("metrics backend hits = %d, want 1", hits)
+	if hits := fixture.hits.Load(); hits != adoptionRefreshRequests {
+		t.Fatalf("metrics backend hits = %d, want %d", hits, adoptionRefreshRequests)
+	}
+}
+
+// spec: marketplace-api/fresh-last-good-counts-survive-a-failed-proactive-refresh
+func TestSearchInstallationsServesStaleCountsUntilMaxStale(t *testing.T) {
+	public, fixture, server, _ := adoptionSearchSetup(t, adoptionSearchSamples(), true)
+	now := adoptionFixedNow
+	server.installations.now = func() time.Time { return now }
+	fixture.handler.Store(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+
+	now = adoptionFixedNow.Add(server.installations.timing.MaxAge + time.Minute)
+	_, body := getSearch(t, public.URL, "?sort=installations")
+	if !strings.Contains(body, "installation_count") {
+		t.Fatalf("search past max_age but within max_stale omitted last-good counts: %s", body)
+	}
+	if len(server.installations.hints) != 1 {
+		t.Fatal("search past max_age did not hint a non-blocking refresh")
+	}
+	<-server.installations.hints
+
+	now = adoptionFixedNow.Add(server.installations.timing.MaxStale)
+	_, body = getSearch(t, public.URL, "?sort=installations")
+	if strings.Contains(body, "installation_count") {
+		t.Fatalf("search at max_stale still emitted counts: %s", body)
 	}
 }

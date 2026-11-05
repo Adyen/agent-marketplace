@@ -193,7 +193,7 @@ func (t *Telemetry) setupDiagnostic(ctx context.Context, res *otelresource.Resou
 // payload to a user-only file, prompts for confirmation, and exports the
 // redacted payload to the primary endpoint on approval. It never queues the
 // diagnostic payload for normal delivery.
-func (t *Telemetry) FinishDiagnostic(ctx context.Context, out io.Writer, in io.Reader, isTerminal, accepted bool) error {
+func (t *Telemetry) FinishDiagnostic(ctx context.Context, out io.Writer, in io.Reader, isTerminal bool) error {
 	if t == nil || !t.diagnostic {
 		return nil
 	}
@@ -257,25 +257,23 @@ func (t *Telemetry) FinishDiagnostic(ctx context.Context, out io.Writer, in io.R
 	writeDiagnosticInfo(out, "  trace id:             %s\n", traceID)
 	writeDiagnosticLine(out, "  warning: Diagnostic payloads may contain sensitive information. Review the file before sharing.")
 
-	if !isTerminal && !accepted {
-		writeDiagnosticLine(out, "\nDiagnostic export requires --diagnostic-accept-sensitive-data in non-interactive mode.")
+	if !isTerminal {
+		writeDiagnosticLine(out, "\nDiagnostic export requires interactive acknowledgement at a terminal.")
 		writeDiagnosticInfo(out, "The payload has been retained at %s\n", path)
 		return nil
 	}
 
-	if isTerminal && !accepted {
-		writeDiagnosticInfo(out, "\nProceed with export? [y/N]: ")
-		reader := bufio.NewReader(in)
-		reply, err := reader.ReadString('\n')
-		if err != nil {
-			writeDiagnosticInfo(out, "\nFailed to read confirmation. The payload has been retained at %s\n", path)
-			return fmt.Errorf("read confirmation: %w", err)
-		}
-		reply = strings.TrimSpace(strings.ToLower(reply))
-		if !strings.HasPrefix(reply, "y") {
-			writeDiagnosticInfo(out, "Diagnostic export cancelled. The payload has been retained at %s\n", path)
-			return nil
-		}
+	writeDiagnosticInfo(out, "\nProceed with export? [y/N]: ")
+	reader := bufio.NewReader(in)
+	reply, err := reader.ReadString('\n')
+	if err != nil {
+		writeDiagnosticInfo(out, "\nFailed to read confirmation. The payload has been retained at %s\n", path)
+		return fmt.Errorf("read confirmation: %w", err)
+	}
+	reply = strings.TrimSpace(strings.ToLower(reply))
+	if !strings.HasPrefix(reply, "y") {
+		writeDiagnosticInfo(out, "Diagnostic export cancelled. The payload has been retained at %s\n", path)
+		return nil
 	}
 
 	slog.Info("exporting diagnostic payload", "trace_id", traceID, "endpoint_hostname", t.state.PrimaryEndpointHostname)

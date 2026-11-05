@@ -453,6 +453,7 @@ var catalog = map[string]hintFunc{
 	"v4.harness":                   configurationHint("Choose a supported harness name in the v4 configuration"),
 	"v4.include":                   configurationHint("Correct the include path and ensure its file is readable"),
 	"v4.include-cycle":             configurationHint("Remove the configuration include that creates the cycle"),
+	"v4.include-limit":             configurationHint("Reduce the configuration include tree so one load reads at most 256 files"),
 	"v4.installed-name":            configurationHint("Choose a safe installed resource name"),
 	"v4.internal":                  configurationHint("Correct the resource selection and rerun `agent-marketplace doctor`"),
 	"v4.key-type":                  configurationHint("Use string keys in the v4 configuration mapping"),

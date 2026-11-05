@@ -112,7 +112,7 @@ func TestDiagnosticPayloadCreatedAndRedacted(t *testing.T) {
 	})
 
 	var out bytes.Buffer
-	err := tel.FinishDiagnostic(context.Background(), &out, strings.NewReader(""), false, true)
+	err := tel.FinishDiagnostic(context.Background(), &out, strings.NewReader("y\n"), true)
 	if err == nil {
 		t.Fatal("expected diagnostic export to fail")
 	}
@@ -176,7 +176,7 @@ func TestDiagnosticExportSuccessDeletesPayload(t *testing.T) {
 	})
 
 	var out bytes.Buffer
-	if err := tel.FinishDiagnostic(context.Background(), &out, strings.NewReader(""), false, true); err != nil {
+	if err := tel.FinishDiagnostic(context.Background(), &out, strings.NewReader("y\n"), true); err != nil {
 		t.Fatalf("finish diagnostic: %v\n%s", err, out.String())
 	}
 
@@ -201,7 +201,14 @@ func TestDiagnosticExportSuccessDeletesPayload(t *testing.T) {
 func TestDiagnosticNonInteractiveRequiresAck(t *testing.T) {
 	_ = setupDiagnosticTest(t)
 
-	tel, state := newDiagnosticTelemetry(t, "http://127.0.0.1:1")
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	tel, state := newDiagnosticTelemetry(t, srv.URL)
 	defer func() { _ = tel.Shutdown(context.Background()) }()
 
 	_, rootSpan := tel.StartSpan(context.Background(), "agent_marketplace.command", map[string]string{
@@ -217,17 +224,20 @@ func TestDiagnosticNonInteractiveRequiresAck(t *testing.T) {
 	})
 
 	var out bytes.Buffer
-	if err := tel.FinishDiagnostic(context.Background(), &out, strings.NewReader(""), false, false); err != nil {
-		t.Fatalf("finish diagnostic should not error when declined: %v", err)
+	if err := tel.FinishDiagnostic(context.Background(), &out, strings.NewReader(""), false); err != nil {
+		t.Fatalf("finish diagnostic should not error without a terminal: %v", err)
 	}
 
 	path := filepath.Join(state.StateRoot(), "diagnostic", "payload-"+rootSpan.TraceID()+".json")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		t.Fatalf("payload file should be retained when acknowledgement is missing: %s", path)
+		t.Fatalf("payload file should be retained without a terminal: %s", path)
+	}
+	if n := requests.Load(); n != 0 {
+		t.Fatalf("noninteractive diagnostics must not export, got %d requests", n)
 	}
 
 	output := out.String()
-	if !strings.Contains(output, "requires --diagnostic-accept-sensitive-data") {
+	if !strings.Contains(output, "requires interactive acknowledgement at a terminal") {
 		t.Fatalf("expected non-interactive acknowledgement message, got:\n%s", output)
 	}
 }
@@ -259,7 +269,7 @@ func TestDiagnosticPayloadNotQueued(t *testing.T) {
 	})
 
 	var out bytes.Buffer
-	if err := tel.FinishDiagnostic(context.Background(), &out, strings.NewReader(""), false, true); err == nil {
+	if err := tel.FinishDiagnostic(context.Background(), &out, strings.NewReader("y\n"), true); err == nil {
 		t.Fatal("expected diagnostic export failure")
 	}
 	if requests.Load() == 0 {
@@ -327,7 +337,7 @@ func TestDiagnosticExportCleanupFailure(t *testing.T) {
 	path := filepath.Join(state.StateRoot(), "diagnostic", "payload-"+span.TraceID()+".json")
 
 	var out bytes.Buffer
-	err := tel.FinishDiagnostic(context.Background(), &out, strings.NewReader(""), false, true)
+	err := tel.FinishDiagnostic(context.Background(), &out, strings.NewReader("y\n"), true)
 	var pathErr *os.PathError
 	if !errors.Is(err, os.ErrPermission) || !errors.As(err, &pathErr) || pathErr.Op != "remove" || pathErr.Path != path {
 		t.Fatalf("cleanup error = %v, want permission refusal removing %s\n%s", err, path, out.String())

@@ -171,6 +171,8 @@ func invalidConfigToastCmd() tea.Cmd {
 }
 
 type configWrittenMsg struct {
+	report     *materialize.Report
+	warnings   []error
 	operation  operationID
 	followUp   bool
 	skillName  string
@@ -182,6 +184,7 @@ type configWrittenMsg struct {
 type syncDoneMsg struct {
 	err      error
 	warnings []error
+	report   *materialize.Report
 }
 
 const (
@@ -196,6 +199,7 @@ type updateDoneMsg struct {
 	stage      string
 	err        error
 	warnings   []error
+	report     *materialize.Report
 }
 
 // detailContentMsg carries the glamour-rendered resource content for the
@@ -1606,7 +1610,7 @@ var runSyncCmd = func(ctx context.Context, workspace pipeline.Workspace) tea.Cmd
 			return syncDoneMsg{err: err}
 		}
 		result := runPipelineSync(ctx, tuiPipelineOptionsForWorkspace(ws))
-		return syncDoneMsg{err: errors.Join(result.Errors...)}
+		return syncDoneMsg{err: errors.Join(result.Errors...), warnings: result.Warnings, report: result.Report}
 	}
 }
 
@@ -1616,8 +1620,8 @@ func runDependencySyncCmd(ctx context.Context, workspace pipeline.Workspace, syn
 		if err != nil {
 			return syncDoneMsg{err: err}
 		}
-		warnings, syncErr := sync(ctx, ws)
-		return syncDoneMsg{err: syncErr, warnings: warnings}
+		result, syncErr := sync(ctx, ws)
+		return syncDoneMsg{err: syncErr, warnings: result.Warnings, report: result.Report}
 	}
 }
 
@@ -1627,17 +1631,20 @@ func runDependencyUpdateCmd(ctx context.Context, workspace pipeline.Workspace, h
 		if err != nil {
 			return updateDoneMsg{generation: generation, stage: updateStageRefresh, err: err}
 		}
-		warnings, lifecycleErr := update(ctx, ws)
+		synced, lifecycleErr := update(ctx, ws)
+		warnings := synced.Warnings
 		pipeline.ObservePhase(ctx, pipeline.PhaseReload)
 		current := readSnapshotForUpdate(ctx, ws, homeDir, catalogLoadCached)
 		current.generation = generation
 		for _, warning := range warnings {
-			current.diagnostics = appendSnapshotDiagnostics(current.diagnostics, diagnosticWarning, diagnosticUpdate, warning)
+			if !pipeline.IsPromotedDiagnostic(warning) {
+				current.diagnostics = appendSnapshotDiagnostics(current.diagnostics, diagnosticWarning, diagnosticUpdate, warning)
+			}
 		}
 		current.diagnostics = deduplicateDiagnostics(current.diagnostics)
 		current.errs = diagnosticValues(current.diagnostics, diagnosticError)
 		current.warnings = diagnosticValues(current.diagnostics, diagnosticWarning)
-		result := updateDoneMsg{generation: generation, snapshot: current, stage: updateStageRefresh, warnings: warnings}
+		result := updateDoneMsg{generation: generation, snapshot: current, stage: updateStageRefresh, warnings: warnings, report: synced.Report}
 		if lifecycleErr != nil {
 			result.err = fmt.Errorf("update %s failed: %w", result.stage, lifecycleErr)
 		} else if reloadErr := errors.Join(diagnosticErrors(current.diagnostics)...); reloadErr != nil {
@@ -1675,7 +1682,9 @@ func runUpdateCmdForWorkspace(ctx context.Context, workspace pipeline.Workspace,
 		current := readSnapshotForUpdate(ctx, ws, homeDir, catalogLoadCached)
 		current.generation = generation
 		for _, warning := range syncResult.Warnings {
-			current.diagnostics = appendSnapshotDiagnostics(current.diagnostics, diagnosticWarning, diagnosticUpdate, warning)
+			if !pipeline.IsPromotedDiagnostic(warning) {
+				current.diagnostics = appendSnapshotDiagnostics(current.diagnostics, diagnosticWarning, diagnosticUpdate, warning)
+			}
 		}
 		current.diagnostics = deduplicateDiagnostics(current.diagnostics)
 		current.errs = diagnosticValues(current.diagnostics, diagnosticError)
@@ -1685,6 +1694,8 @@ func runUpdateCmdForWorkspace(ctx context.Context, workspace pipeline.Workspace,
 			generation: generation,
 			snapshot:   current,
 			stage:      updateStageMaterialization,
+			warnings:   syncResult.Warnings,
+			report:     syncResult.Report,
 		}
 		switch {
 		case len(syncResult.CatalogTrustErrors) > 0:

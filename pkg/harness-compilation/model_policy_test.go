@@ -41,6 +41,18 @@ func modelPolicyFields(t *testing.T, artifacts []artifact.Artifact) map[string]a
 	return nil
 }
 
+func assertModelPolicyField(t *testing.T, fields map[string]any, key, want string) {
+	t.Helper()
+	got, present := fields[key]
+	if want == "" {
+		if present {
+			t.Fatalf("fields = %v, want %s omitted", fields, key)
+		}
+	} else if !present || got != want {
+		t.Fatalf("fields = %v, want %s=%q", fields, key, want)
+	}
+}
+
 // spec: harness-model-catalogs/unresolved-model-warns-and-keeps-the-resource
 func TestModelPolicyUnknownModelStillEmits(t *testing.T) {
 	wantCode := map[Target]string{
@@ -58,9 +70,7 @@ func TestModelPolicyUnknownModelStillEmits(t *testing.T) {
 			if err != nil || diag.HasErrors(result.Diagnostics) {
 				t.Fatalf("model loss suppressed resource: %v %+v", err, result)
 			}
-			if fields := modelPolicyFields(t, result.Artifacts); fields["model"] != nil {
-				t.Fatalf("unknown model emitted: %v", fields)
-			}
+			assertModelPolicyField(t, modelPolicyFields(t, result.Artifacts), "model", "")
 			if len(result.Diagnostics) != 1 || result.Diagnostics[0].Code != wantCode[target] || result.Diagnostics[0].Severity != diag.SeverityWarning {
 				t.Fatalf("model omission diagnostics = %+v, want one %s warning", result.Diagnostics, wantCode[target])
 			}
@@ -74,6 +84,9 @@ func TestModelPolicyUnknownModelStillEmits(t *testing.T) {
 // spec: harness-model-catalogs/conflicting-reasoning-preference-warns-and-resolves-once
 // spec: harness-model-catalogs/crossing-inheritance-and-default-boundaries-warns
 // spec: harness-model-catalogs/reasoning-on-inherited-selection-is-omitted-when-unrepresentable
+// spec: harness-model-catalogs/priority-variants-retain-their-distinct-fast-identity
+// spec: harness-model-catalogs/factory-fast-model-without-reasoning-is-omitted-for-devin
+// spec: harness-model-catalogs/reviewed-additions-omit-unsupported-reasoning-without-substitution
 func TestModelPolicyDiagnosticScenarios(t *testing.T) {
 	for _, tc := range []struct {
 		name                                            string
@@ -87,8 +100,16 @@ func TestModelPolicyDiagnosticScenarios(t *testing.T) {
 		{"unsupported reasoning", "", TargetGemini, "gemini-3-preview", "high", "gemini-3-preview", "effort", "", diag.CodeModelReasoningOmitted, diag.SeverityWarning},
 		{"conflicting reasoning", TargetCursor, TargetClaude, "claude-opus-5[effort=high]", "low", "claude-opus-5", "effort", "low", diag.CodeModelReasoningConflict, diag.SeverityWarning},
 		{"floating family pin", "", TargetFactory, "sonnet", "", "claude-sonnet-5", "reasoningEffort", "", diag.CodeModelSelectorPinned, diag.SeverityInfo},
+		{"native family does not widen cross-harness lookup", TargetFactory, TargetClaude, "anthropic/sonnet", "high", "", "effort", "high", diag.CodeModelUnresolved, diag.SeverityWarning},
+		{"model-encoded native family stays opaque", TargetCursor, TargetCursor, "anthropic/sonnet", "high", "anthropic/sonnet", "effort", "", diag.CodeModelReasoningOmitted, diag.SeverityWarning},
 		{"inheritance/default mismatch", TargetDevin, TargetClaude, "", "", "", "effort", "", diag.CodeModelInheritanceMismatch, diag.SeverityWarning},
 		{"reasoning on inherited selection", "", TargetFactory, "inherit", "high", "inherit", "reasoningEffort", "", diag.CodeModelReasoningOmitted, diag.SeverityWarning},
+		{"factory Nemotron unsupported low", "", TargetFactory, "nvidia/nemotron-3.5-super", "low", "nemotron-3.5-super", "reasoningEffort", "", diag.CodeModelReasoningOmitted, diag.SeverityWarning},
+		{"Claude native unsupported reasoning", TargetClaude, TargetClaude, "claude-opus-5", "ultra", "claude-opus-5", "effort", "", diag.CodeModelReasoningOmitted, diag.SeverityWarning},
+		{"Claude native family unsupported reasoning", TargetClaude, TargetClaude, "anthropic/sonnet", "max", "anthropic/sonnet", "effort", "", diag.CodeModelReasoningOmitted, diag.SeverityWarning},
+		{"Codex native unsupported reasoning", TargetCodex, TargetCodex, "gpt-6.1-terra", "ultra", "gpt-6.1-terra", "model_reasoning_effort", "", diag.CodeSubagentCodexEffortDropped, diag.SeverityWarning},
+		{"factory fast without reasoning", TargetFactory, TargetDevin, "gpt-6-sol-fast", "", "", "effort", "", diag.CodeSubagentDevinModelUnmappable, diag.SeverityWarning},
+		{"factory fast supported reasoning", TargetFactory, TargetDevin, "gpt-6-sol-fast", "high", "gpt-6-sol-high-priority", "effort", "", "", 0},
 		{"positive control", TargetClaude, TargetCodex, "gpt-5.6-luna", "medium", "gpt-5.6-luna", "model_reasoning_effort", "medium", "", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -99,11 +120,8 @@ func TestModelPolicyDiagnosticScenarios(t *testing.T) {
 				t.Fatalf("compile: %v %+v", err, result)
 			}
 			fields := modelPolicyFields(t, result.Artifacts)
-			model, _ := fields["model"].(string)
-			effort, _ := fields[tc.effortKey].(string)
-			if model != tc.wantModel || effort != tc.wantEffort {
-				t.Fatalf("fields = %v, want model=%q %s=%q", fields, tc.wantModel, tc.effortKey, tc.wantEffort)
-			}
+			assertModelPolicyField(t, fields, "model", tc.wantModel)
+			assertModelPolicyField(t, fields, tc.effortKey, tc.wantEffort)
 			if tc.wantCode == "" {
 				if len(result.Diagnostics) != 0 {
 					t.Fatalf("positive control emitted diagnostics: %+v", result.Diagnostics)
@@ -129,6 +147,13 @@ func TestModelPolicyNativeReasoningEncoding(t *testing.T) {
 		{"codex inheritance is omission", TargetCodex, "inherit", "", "", "model_reasoning_effort", ""},
 		{"factory inheritance ignores effort", TargetFactory, "inherit", "high", "inherit", "reasoningEffort", ""},
 		{"codex concrete model and effort", TargetCodex, "gpt-5.6-terra", "high", "gpt-5.6-terra", "model_reasoning_effort", "high"},
+		{"codex Terra 6.1 reasoning", TargetCodex, "openai/gpt-6.1-terra", "high", "gpt-6.1-terra", "model_reasoning_effort", "high"},
+		{"factory DeepSeek 1017", TargetFactory, "deepseek/deepseek-v4.1-flash-1017", "low", "deepseek-v4.1-flash-1017", "reasoningEffort", "low"},
+		{"factory MiniMax Flash", TargetFactory, "minimax/minimax-m3.1-flash", "medium", "minimax-m3.1-flash", "reasoningEffort", "medium"},
+		{"factory Nemotron Super", TargetFactory, "nvidia/nemotron-3.5-super", "high", "nemotron-3.5-super", "reasoningEffort", "high"},
+		{"factory Luna fast", TargetFactory, "openai/gpt-6-luna-fast", "medium", "gpt-6-luna-fast", "reasoningEffort", "medium"},
+		{"factory Sol fast", TargetFactory, "openai/gpt-6-sol-fast", "low", "gpt-6-sol-fast", "reasoningEffort", "low"},
+		{"factory Sol ultrafast", TargetFactory, "openai/gpt-6.1-sol-ultrafast", "high", "gpt-6.1-sol-ultrafast", "reasoningEffort", "high"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := ir.NewSubagent("review", "Review", "Keep this body.\n", tc.model, nil, tc.effort, nil, "", nil, ir.SourceRef{})
@@ -137,10 +162,49 @@ func TestModelPolicyNativeReasoningEncoding(t *testing.T) {
 				t.Fatalf("compile: %v %+v", err, result)
 			}
 			fields := modelPolicyFields(t, result.Artifacts)
-			model, _ := fields["model"].(string)
-			effort, _ := fields[tc.effortKey].(string)
-			if model != tc.wantModel || effort != tc.wantEffort {
-				t.Fatalf("fields = %v, want model=%q %s=%q", fields, tc.wantModel, tc.effortKey, tc.wantEffort)
+			assertModelPolicyField(t, fields, "model", tc.wantModel)
+			assertModelPolicyField(t, fields, tc.effortKey, tc.wantEffort)
+		})
+	}
+}
+
+// spec: harness-model-catalogs/supported-native-reasoning-survives-a-family-override
+// spec: harness-model-catalogs/unsupported-native-reasoning-is-omitted-for-a-family-override
+func TestModelPolicyNativeFamilyOverrides(t *testing.T) {
+	for _, tc := range []struct {
+		name                                           string
+		source, target                                 Target
+		model, effort, effortKey, wantEffort, wantCode string
+	}{
+		{"supported family", TargetFactory, TargetFactory, "anthropic/sonnet", "high", "reasoningEffort", "high", ""},
+		{"unsupported family", TargetFactory, TargetFactory, "anthropic/sonnet", "max", "reasoningEffort", "", diag.CodeModelReasoningOmitted},
+		{"Codex-sourced unsupported family", TargetCodex, TargetFactory, "anthropic/sonnet", "max", "reasoningEffort", "", diag.CodeSubagentCodexEffortDropped},
+		{"omitted family reasoning", TargetFactory, TargetFactory, "anthropic/sonnet", "", "reasoningEffort", "", ""},
+		{"family override is target-native", TargetClaude, TargetFactory, "anthropic/sonnet", "high", "reasoningEffort", "high", ""},
+		{"floating family", TargetClaude, TargetClaude, "anthropic/sonnet", "high", "effort", "high", ""},
+		{"native model", TargetFactory, TargetFactory, "nemotron-3.5-super", "high", "reasoningEffort", "high", ""},
+		{"unsupported native model", TargetFactory, TargetFactory, "nemotron-3.5-super", "low", "reasoningEffort", "", diag.CodeModelReasoningOmitted},
+		{"unknown override", TargetFactory, TargetFactory, "future-native-model", "high", "reasoningEffort", "", diag.CodeModelReasoningOmitted},
+		{"unknown family-like override", TargetFactory, TargetFactory, "sonnet", "high", "reasoningEffort", "", diag.CodeModelReasoningOmitted},
+		{"model-encoded family", TargetCursor, TargetCursor, "anthropic/sonnet", "high", "effort", "", diag.CodeModelReasoningOmitted},
+		{"empty override", TargetFactory, TargetFactory, "", "high", "reasoningEffort", "", diag.CodeModelReasoningOmitted},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := ir.NewSubagent("review", "Review", "Keep this body.\n", "configured-model", nil, tc.effort, nil, "", nil, ir.SourceRef{})
+			r.ModelSource = string(tc.source)
+			result, err := Compile(r, tc.target, WithModelOverride(map[string]string{"configured-model": tc.model}))
+			if err != nil || diag.HasErrors(result.Diagnostics) {
+				t.Fatalf("compile: %v %+v", err, result)
+			}
+			fields := modelPolicyFields(t, result.Artifacts)
+			assertModelPolicyField(t, fields, "model", tc.model)
+			assertModelPolicyField(t, fields, tc.effortKey, tc.wantEffort)
+			if tc.wantCode == "" {
+				if len(result.Diagnostics) != 0 {
+					t.Fatalf("supported override emitted diagnostics: %+v", result.Diagnostics)
+				}
+			} else if len(result.Diagnostics) != 1 || result.Diagnostics[0].Code != tc.wantCode || result.Diagnostics[0].Severity != diag.SeverityWarning {
+				t.Fatalf("diagnostics = %+v, want one %s warning", result.Diagnostics, tc.wantCode)
 			}
 		})
 	}
@@ -168,6 +232,54 @@ func TestModelPolicyDevinNativeRoundTrip(t *testing.T) {
 				if d.Severity != diag.SeverityInfo {
 					t.Fatalf("native selection produced a loss: %+v", d)
 				}
+			}
+		})
+	}
+}
+
+// spec: harness-model-catalogs/same-harness-known-models-omit-unsupported-native-reasoning
+// spec: harness-model-catalogs/same-harness-supported-native-effort-values-remain-unchanged
+// spec: harness-model-catalogs/same-harness-unknown-destination-models-retain-native-reasoning
+// spec: harness-model-catalogs/same-harness-native-catalog-family-ids-are-recognized-locally
+func TestModelPolicyFactoryNativeReasoning(t *testing.T) {
+	for _, tc := range []struct {
+		name, model, effort, wantEffort, wantCode string
+	}{
+		{"unsupported qualified model", "nvidia/nemotron-3.5-super", "low", "", diag.CodeModelReasoningOmitted},
+		{"unsupported native model", "nemotron-3.5-super", "low", "", diag.CodeModelReasoningOmitted},
+		{"supported native model", "nemotron-3.5-super", "high", "high", ""},
+		{"supported qualified model", "nvidia/nemotron-3.5-super", "high", "high", ""},
+		{"unsupported catalog family", "anthropic/sonnet", "max", "", diag.CodeModelReasoningOmitted},
+		{"supported catalog family", "anthropic/sonnet", "high", "high", ""},
+		{"omitted catalog family reasoning", "anthropic/sonnet", "", "", ""},
+		{"omitted reasoning", "nemotron-3.5-super", "", "", ""},
+		{"future native model", "future-native-model", "future", "future", ""},
+		{"known only to Codex", "gpt-6.1-terra", "high", "high", ""},
+		{"unknown native selector", "sonnet", "high", "high", ""},
+		{"unknown native selector with max", "sonnet", "max", "max", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			effortField := ""
+			if tc.effort != "" {
+				effortField = "reasoningEffort: " + tc.effort + "\n"
+			}
+			src := fstest.MapFS{
+				".factory-plugin/plugin.json": {Data: []byte(`{"droids":[{"name":"review","description":"Review"}]}`)},
+				"droids/review.md":            {Data: []byte("---\nname: review\ndescription: Review\nmodel: " + tc.model + "\n" + effortField + "---\nKeep this body.\n")},
+			}
+			result, err := Convert(src, HarnessFactory, TargetFactory)
+			if err != nil || diag.HasErrors(result.Diagnostics) {
+				t.Fatalf("convert: %v %+v", err, result.Diagnostics)
+			}
+			fields := modelPolicyFields(t, result.Artifacts)
+			assertModelPolicyField(t, fields, "model", tc.model)
+			assertModelPolicyField(t, fields, "reasoningEffort", tc.wantEffort)
+			if tc.wantCode == "" {
+				if len(result.Diagnostics) != 0 {
+					t.Fatalf("native control emitted diagnostics: %+v", result.Diagnostics)
+				}
+			} else if len(result.Diagnostics) != 1 || result.Diagnostics[0].Code != tc.wantCode || result.Diagnostics[0].Severity != diag.SeverityWarning {
+				t.Fatalf("diagnostics = %+v, want one %s warning", result.Diagnostics, tc.wantCode)
 			}
 		})
 	}

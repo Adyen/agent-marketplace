@@ -24,6 +24,8 @@ func TestV4EffectiveRequestsPreserveDecisions(t *testing.T) {
 		{"required", []string{"required:skill/a", "exclude:skill/a"}, []string{"skill/a"}},
 		{"replacement", []string{"required:skill/a", "include:skill/a", "exclude:skill/a"}, []string{}},
 		{"reincluded", []string{"include:skill/a", "exclude:skill/a", "include:skill/a"}, []string{"skill/a"}},
+		{"repeated-reinclude", []string{"include:skill/a", "include:command/a", "exclude:skill/a", "include:skill/a", "exclude:*", "include:command/a", "exclude:skill/*", "include:skill/a"}, []string{"command/a", "skill/a"}},
+		{"reinclude-then-exclude", []string{"include:tools/skill/a", "exclude:tools/*", "include:tools/skill/a", "exclude:tools/skill/*"}, []string{}},
 		{"future", []string{"exclude:skill/a", "include:skill/a"}, []string{"skill/a"}},
 		{"missing", []string{"include:skill/a", "exclude:skill/missing"}, []string{"skill/a"}},
 		{"kind-is-distinct", []string{"include:skill/a", "exclude:command/a"}, []string{"skill/a"}},

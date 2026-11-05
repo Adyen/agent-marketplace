@@ -25,6 +25,8 @@ func TestV4RebuildRequestsPreservesDecisions(t *testing.T) {
 		{"required", []string{"required:skill/a", "exclude:skill/a"}, []string{"skill/a"}},
 		{"replacement-is-optional", []string{"required:skill/a", "include:skill/a", "exclude:skill/a"}, nil},
 		{"reincluded", []string{"include:skill/a", "exclude:skill/a", "include:skill/a"}, []string{"skill/a"}},
+		{"repeated-reinclude", []string{"include:skill/a", "include:command/a", "exclude:skill/a", "include:skill/a", "exclude:*", "include:command/a", "exclude:skill/*", "include:skill/a"}, []string{"command/a", "skill/a"}},
+		{"reinclude-then-exclude", []string{"include:tools/skill/a", "exclude:tools/*", "include:tools/skill/a", "exclude:tools/skill/*"}, nil},
 		{"future-request", []string{"exclude:skill/a", "include:skill/a"}, []string{"skill/a"}},
 		{"missing", []string{"include:skill/a", "exclude:skill/missing"}, []string{"skill/a"}},
 		{"filtered-order", []string{"include:skill/z", "include:skill/a", "include:skill/c", "include:skill/b", "exclude:skill/a", "exclude:skill/c"}, []string{"skill/b", "skill/z"}},

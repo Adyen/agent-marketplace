@@ -20,19 +20,20 @@ type keyMap struct {
 	Bottom       key.Binding
 
 	// Actions
-	Search     key.Binding
-	Clear      key.Binding // esc: clear search / close overlay
-	Enter      key.Binding
-	Space      key.Binding
-	Collapse   key.Binding
-	Expand     key.Binding
-	Reload     key.Binding
-	Sync       key.Binding
-	Update     key.Binding
-	Harness    key.Binding
-	EditConfig key.Binding
-	Palette    key.Binding
-	View       key.Binding
+	Search        key.Binding
+	Clear         key.Binding // esc: clear search / close overlay
+	Enter         key.Binding
+	Space         key.Binding
+	Collapse      key.Binding
+	Expand        key.Binding
+	Reload        key.Binding
+	Sync          key.Binding
+	Update        key.Binding
+	Harness       key.Binding
+	EditConfig    key.Binding
+	Palette       key.Binding
+	View          key.Binding
+	InstallSource key.Binding
 
 	// Fold (vim-style z-prefix)
 	FoldPrefix key.Binding
@@ -91,19 +92,20 @@ var defaultKeyMap = keyMap{
 	Bottom:       key.NewBinding(key.WithKeys("G", "end"), key.WithHelp("G/end", "jump to bottom")),
 
 	// Actions
-	Search:     key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "fuzzy search")),
-	Clear:      key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "clear search / close")),
-	Enter:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "view details / toggle fold")),
-	Space:      key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "toggle resource / all in section")),
-	Collapse:   key.NewBinding(key.WithKeys("h", "left"), key.WithHelp("h/←", "collapse section")),
-	Expand:     key.NewBinding(key.WithKeys("l", "right"), key.WithHelp("l/→", "expand section")),
-	Reload:     key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "reload from disk")),
-	Sync:       key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sync pending")),
-	Update:     key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "update caches")),
-	Harness:    key.NewBinding(key.WithKeys("H"), key.WithHelp("H", "harness defaults")),
-	EditConfig: key.NewBinding(key.WithKeys("E"), key.WithHelp("E", "edit config")),
-	Palette:    key.NewBinding(key.WithKeys("ctrl+k", ":"), key.WithHelp("ctrl+k/:", "command palette")),
-	View:       key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "view settings")),
+	Search:        key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "fuzzy search")),
+	Clear:         key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "clear search / close")),
+	Enter:         key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "view details / toggle fold")),
+	Space:         key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "toggle resource / all in section")),
+	Collapse:      key.NewBinding(key.WithKeys("h", "left"), key.WithHelp("h/←", "collapse section")),
+	Expand:        key.NewBinding(key.WithKeys("l", "right"), key.WithHelp("l/→", "expand section")),
+	Reload:        key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "reload from disk")),
+	Sync:          key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sync pending")),
+	Update:        key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "update caches")),
+	Harness:       key.NewBinding(key.WithKeys("H"), key.WithHelp("H", "harness defaults")),
+	EditConfig:    key.NewBinding(key.WithKeys("E"), key.WithHelp("E", "edit config")),
+	Palette:       key.NewBinding(key.WithKeys("ctrl+k", ":"), key.WithHelp("ctrl+k/:", "command palette")),
+	View:          key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "view settings")),
+	InstallSource: key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "install from source")),
 
 	// Fold (vim-style z-prefix)
 	FoldPrefix: key.NewBinding(key.WithKeys("z"), key.WithHelp("z", "fold prefix")),
@@ -152,7 +154,7 @@ var defaultKeyMap = keyMap{
 // ShortHelp returns key bindings to show in the footer hint line.
 func (k keyMap) ShortHelp() []key.Binding {
 	return []key.Binding{
-		k.Help, k.Search, k.Harness, k.EditConfig, k.Sync, k.Quit,
+		k.Help, k.Search, k.InstallSource, k.Harness, k.EditConfig, k.Sync, k.Quit,
 	}
 }
 
@@ -176,7 +178,7 @@ func (k keyMap) navigationBindings() []key.Binding {
 
 // actionBindings returns the action-related key bindings.
 func (k keyMap) actionBindings() []key.Binding {
-	return []key.Binding{k.Search, k.Clear, k.Enter, k.Space, k.Collapse, k.Expand, k.FoldToggle, k.FoldAll, k.ExpandAll, k.View, k.Harness, k.EditConfig, k.Sync, k.Update, k.Palette}
+	return []key.Binding{k.Search, k.Clear, k.Enter, k.Space, k.Collapse, k.Expand, k.FoldToggle, k.FoldAll, k.ExpandAll, k.View, k.InstallSource, k.Harness, k.EditConfig, k.Sync, k.Update, k.Palette}
 }
 
 // toggleModalBindings returns the toggle-modal key bindings.

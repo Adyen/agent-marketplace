@@ -157,9 +157,20 @@ func resolveDestinations(target hcc.Target, machineScope bool, repoRoot, homeDir
 		return nil, fmt.Errorf("target %q has no installation adapter", target)
 	}
 	info.Roots = Roots{Repo: definition.RepoRoot, Machine: filepath.Join(homeDir, definition.UserRoot)}
+	if target == hcc.TargetClaude && machineScope {
+		info.Roots.Machine, err = claudeMachineRoot(homeDir)
+		if err != nil {
+			return nil, err
+		}
+	}
 	root, err := canonicalRoot(info.Roots.For(machineScope, repoRoot))
 	if err != nil {
 		return nil, err
+	}
+	if target == hcc.TargetClaude && machineScope && os.Getenv("CLAUDE_CONFIG_DIR") != "" {
+		if err := validateClaudeGitRoot(repoRoot, root); err != nil {
+			return nil, err
+		}
 	}
 	if err := ValidateDestinationRoot(machineScope, repoRoot, homeDir, root); err != nil {
 		return nil, fmt.Errorf("harness destination root: %w", err)

@@ -99,11 +99,19 @@
   want_model: claude-opus-5-5-fast
   want_effort: medium
 
-- name: Devin priority variant does not collapse to the base model
+- name: Devin priority variant resolves to Factory fast model
   source: devin
   target: factory
   model: gpt-6-sol-low-priority
-  losses: [model.unresolved, model.reasoning-omitted]
+  want_model: gpt-6-sol-fast
+  want_effort: low
+
+- name: Devin priority variant stays unresolved without a matching fast model
+  source: devin
+  target: codex
+  model: gpt-6-sol-low-priority
+  want_effort: low
+  losses: [model.unresolved]
 
 - name: Devin no-thinking level keeps the model but drops the level
   source: devin
@@ -280,3 +288,96 @@
   target: gemini
   model: gemini-3.8-flash
   want_model: gemini-3.8-flash
+
+- name: Canonical GPT-6.1 Terra high to Codex
+  source: claude
+  target: codex
+  model: openai/gpt-6.1-terra
+  effort: high
+  want_model: gpt-6.1-terra
+  want_effort: high
+
+- name: Canonical GPT-6.1 Terra max to Codex
+  source: claude
+  target: codex
+  model: openai/gpt-6.1-terra
+  effort: max
+  want_model: gpt-6.1-terra
+  want_effort: max
+
+- name: Codex Terra unsupported ultra does not approximate max
+  source: claude
+  target: codex
+  model: openai/gpt-6.1-terra
+  effort: ultra
+  want_model: gpt-6.1-terra
+  losses: [model.reasoning-omitted]
+
+- name: Canonical DeepSeek V4.1 Flash 1017 low to Factory
+  source: claude
+  target: factory
+  model: deepseek/deepseek-v4.1-flash-1017
+  effort: low
+  want_model: deepseek-v4.1-flash-1017
+  want_effort: low
+
+- name: Canonical MiniMax M3.1 Flash medium to Factory
+  source: claude
+  target: factory
+  model: minimax/minimax-m3.1-flash
+  effort: medium
+  want_model: minimax-m3.1-flash
+  want_effort: medium
+
+- name: Canonical Nemotron 3.5 Super high to Factory
+  source: claude
+  target: factory
+  model: nvidia/nemotron-3.5-super
+  effort: high
+  want_model: nemotron-3.5-super
+  want_effort: high
+
+- name: Devin Luna priority variant resolves to Factory fast model
+  source: devin
+  target: factory
+  model: gpt-6-luna-medium-priority
+  want_model: gpt-6-luna-fast
+  want_effort: medium
+
+- name: Factory Sol fast high resolves to Devin priority variant
+  source: factory
+  target: devin
+  model: gpt-6-sol-fast
+  effort: high
+  want_model: gpt-6-sol-high-priority
+
+- name: Factory Luna fast low resolves to Devin priority variant
+  source: factory
+  target: devin
+  model: gpt-6-luna-fast
+  effort: low
+  want_model: gpt-6-luna-low-priority
+
+- name: Canonical GPT-6.1 Sol Ultrafast high to Factory
+  source: claude
+  target: factory
+  model: openai/gpt-6.1-sol-ultrafast
+  effort: high
+  want_model: gpt-6.1-sol-ultrafast
+  want_effort: high
+
+- name: Factory Sol fast session-only max is omitted
+  source: claude
+  target: factory
+  model: openai/gpt-6-sol-fast
+  effort: max
+  want_model: gpt-6-sol-fast
+  losses: [model.reasoning-omitted]
+
+- name: Factory Nemotron unsupported low is omitted
+  source: claude
+  target: factory
+  model: nvidia/nemotron-3.5-super
+  effort: low
+  want_model: nemotron-3.5-super
+  losses: [model.reasoning-omitted]

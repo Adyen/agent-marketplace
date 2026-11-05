@@ -1,0 +1,110 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/materialize
+cpu: Apple M4 Max
+BenchmarkRunChangedSkillLinkCaches/changed=1-16         	       5	 133019217 ns/op	14450240 B/op	   82693 allocs/op
+BenchmarkRunChangedSkillLinkCaches/changed=64-16        	       5	 485706617 ns/op	31473723 B/op	  159749 allocs/op
+BenchmarkRunChangedSkillLinkCaches/missing_caches-16    	       5	 297971359 ns/op	22703204 B/op	  134102 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=0x0KiB-16         	       5	  78808017 ns/op	 6248966 B/op	   65649 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=2x15KiB-16        	       5	 144656733 ns/op	14394110 B/op	   81461 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=8x16KiB-16        	       5	 320328200 ns/op	38836388 B/op	  126905 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/materialize
+cpu: Apple M4 Max
+BenchmarkRunChangedSkillLinkCaches/changed=1-16         	       5	 168168083 ns/op	14452310 B/op	   82687 allocs/op
+BenchmarkRunChangedSkillLinkCaches/changed=64-16        	       5	 481596983 ns/op	31478462 B/op	  159750 allocs/op
+BenchmarkRunChangedSkillLinkCaches/missing_caches-16    	       5	 317744983 ns/op	22697112 B/op	  134109 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=0x0KiB-16         	       5	  85610817 ns/op	 6232283 B/op	   65659 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=2x15KiB-16        	       5	 138751583 ns/op	14393619 B/op	   81461 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=8x16KiB-16        	       5	 374601117 ns/op	38831907 B/op	  126882 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/materialize
+cpu: Apple M4 Max
+BenchmarkRunChangedSkillLinkCaches/changed=1-16         	       5	 136920925 ns/op	14449483 B/op	   82685 allocs/op
+BenchmarkRunChangedSkillLinkCaches/changed=64-16        	       5	 473324925 ns/op	31473888 B/op	  159743 allocs/op
+BenchmarkRunChangedSkillLinkCaches/missing_caches-16    	       5	 292413091 ns/op	22694960 B/op	  134089 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=0x0KiB-16         	       5	  78354842 ns/op	 6253027 B/op	   65652 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=2x15KiB-16        	       5	 136595150 ns/op	14393814 B/op	   81456 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=8x16KiB-16        	       5	 317321050 ns/op	38835492 B/op	  126901 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/materialize
+cpu: Apple M4 Max
+BenchmarkRunChangedSkillLinkCaches/changed=1-16         	       5	 139663558 ns/op	14448412 B/op	   82683 allocs/op
+BenchmarkRunChangedSkillLinkCaches/changed=64-16        	       5	 413537167 ns/op	31474190 B/op	  159740 allocs/op
+BenchmarkRunChangedSkillLinkCaches/missing_caches-16    	       5	 323263942 ns/op	22697724 B/op	  134103 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=0x0KiB-16         	       5	  82373900 ns/op	 6243752 B/op	   65658 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=2x15KiB-16        	       5	 136686875 ns/op	14393796 B/op	   81463 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=8x16KiB-16        	       5	 380875467 ns/op	38837436 B/op	  126904 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/materialize
+cpu: Apple M4 Max
+BenchmarkRunChangedSkillLinkCaches/changed=1-16         	       5	 135999942 ns/op	14456606 B/op	   82689 allocs/op
+BenchmarkRunChangedSkillLinkCaches/changed=64-16        	       5	 476666692 ns/op	31472928 B/op	  159737 allocs/op
+BenchmarkRunChangedSkillLinkCaches/missing_caches-16    	       5	 333992042 ns/op	22660075 B/op	  134100 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=0x0KiB-16         	       5	  79563067 ns/op	 6246321 B/op	   65635 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=2x15KiB-16        	       5	 131613183 ns/op	14394556 B/op	   81461 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=8x16KiB-16        	       5	 314401683 ns/op	38834700 B/op	  126891 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/materialize
+cpu: Apple M4 Max
+BenchmarkRunChangedSkillLinkCaches/changed=1-16         	       5	 142400175 ns/op	14453905 B/op	   82694 allocs/op
+BenchmarkRunChangedSkillLinkCaches/changed=64-16        	       5	 457369583 ns/op	31476505 B/op	  159745 allocs/op
+BenchmarkRunChangedSkillLinkCaches/missing_caches-16    	       5	 379645392 ns/op	22695379 B/op	  134083 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=0x0KiB-16         	       5	 104562633 ns/op	 6245611 B/op	   65647 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=2x15KiB-16        	       5	 151322650 ns/op	14394480 B/op	   81465 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=8x16KiB-16        	       5	 381402142 ns/op	38835971 B/op	  126906 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/materialize
+cpu: Apple M4 Max
+BenchmarkRunChangedSkillLinkCaches/changed=1-16         	       5	 136839125 ns/op	14454243 B/op	   82692 allocs/op
+BenchmarkRunChangedSkillLinkCaches/changed=64-16        	       5	 392525767 ns/op	31473156 B/op	  159739 allocs/op
+BenchmarkRunChangedSkillLinkCaches/missing_caches-16    	       5	 306345258 ns/op	22696932 B/op	  134089 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=0x0KiB-16         	       5	 100571408 ns/op	 6251104 B/op	   65650 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=2x15KiB-16        	       5	 155511683 ns/op	14394870 B/op	   81472 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=8x16KiB-16        	       5	 320355517 ns/op	38831472 B/op	  126889 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/materialize
+cpu: Apple M4 Max
+BenchmarkRunChangedSkillLinkCaches/changed=1-16         	       5	 140170258 ns/op	14457163 B/op	   82701 allocs/op
+BenchmarkRunChangedSkillLinkCaches/changed=64-16        	       5	 402721308 ns/op	31473265 B/op	  159755 allocs/op
+BenchmarkRunChangedSkillLinkCaches/missing_caches-16    	       5	 310496783 ns/op	22697499 B/op	  134095 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=0x0KiB-16         	       5	  81517208 ns/op	 6250430 B/op	   65643 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=2x15KiB-16        	       5	 135722017 ns/op	14392982 B/op	   81463 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=8x16KiB-16        	       5	 297879192 ns/op	38837392 B/op	  126906 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/materialize
+cpu: Apple M4 Max
+BenchmarkRunChangedSkillLinkCaches/changed=1-16         	       5	 224917459 ns/op	14455363 B/op	   82683 allocs/op
+BenchmarkRunChangedSkillLinkCaches/changed=64-16        	       5	 415767800 ns/op	31471265 B/op	  159739 allocs/op
+BenchmarkRunChangedSkillLinkCaches/missing_caches-16    	       5	 313324584 ns/op	22694062 B/op	  134088 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=0x0KiB-16         	       5	  93373742 ns/op	 6252174 B/op	   65651 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=2x15KiB-16        	       5	 146269183 ns/op	14393556 B/op	   81463 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=8x16KiB-16        	       5	 298013150 ns/op	38835760 B/op	  126908 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/materialize
+cpu: Apple M4 Max
+BenchmarkRunChangedSkillLinkCaches/changed=1-16         	       5	 142279383 ns/op	14452568 B/op	   82686 allocs/op
+BenchmarkRunChangedSkillLinkCaches/changed=64-16        	       5	 400080100 ns/op	31473160 B/op	  159739 allocs/op
+BenchmarkRunChangedSkillLinkCaches/missing_caches-16    	       5	 342104967 ns/op	22695011 B/op	  134094 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=0x0KiB-16         	       5	  86781300 ns/op	 6245379 B/op	   65647 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=2x15KiB-16        	       5	 141740025 ns/op	14394344 B/op	   81470 allocs/op
+BenchmarkRunUnchangedSkillLinkCaches/skills=64/support=8x16KiB-16        	       5	 381777425 ns/op	38835780 B/op	  126894 allocs/op
+PASS

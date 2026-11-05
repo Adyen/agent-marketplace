@@ -338,7 +338,7 @@ func writeDoctorRequirementWarnings(out io.Writer, ctx context.Context, repoRoot
 		}
 		requirementDiagnostics = append(requirementDiagnostics, warning)
 	}
-	requirementDiagnostics = append(requirementDiagnostics, requiresInvalidWarnings(resolved.CatalogLoad.Catalogs)...)
+	requirementDiagnostics = append(requirementDiagnostics, pipeline.RequiresInvalidWarnings(resolved.CatalogLoad.Catalogs)...)
 	// A Marketplace pin that failed to resolve is a fact doctor's requirement
 	// section must not reinterpret as "nothing provides this prerequisite":
 	// the pin is selected, and its resolution error already names the remedy.

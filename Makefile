@@ -12,7 +12,7 @@ TEST_LOCAL_BASE ?= origin/main
 VALIDATE_JOBS ?= 2
 OPENSPEC_VERSION ?= 1.12.0
 
-.PHONY: test-fast test-witnessed validate validate-fast validate-full validate-e2e spec-check
+.PHONY: test-fast test-witnessed validate validate-fast validate-full validate-e2e spec-check release-notes
 
 # Public container defaults. Override these generic variables in the environment
 # when builds must use a registry mirror. Pin all production overrides by digest.
@@ -158,6 +158,12 @@ spec-check:
 	CGO_ENABLED=0 $(GO) run ./tools/specaudit trace
 	CGO_ENABLED=0 $(GO) run ./tools/specaudit archived
 
+# Curated release notes the release job would publish: stable tag to HEAD.
+release-notes:
+	@prev=$$(git tag --merged HEAD^ --list 'v*' --sort=-v:refname | grep -m1 -E '^v[0-9]+\.[0-9]+\.[0-9]+$$'); \
+	if [ -z "$$prev" ]; then echo "release-notes: no stable tag reachable from HEAD" >&2; exit 1; fi; \
+	CGO_ENABLED=0 $(GO) run ./tools/specaudit release-notes -base "$$prev" -head HEAD
+
 container: container-marketplace container-web container-site container-docs
 
 container-marketplace:
@@ -275,7 +281,7 @@ marketplace-proxy-check:
 comma := ,
 # The pinned Go build image ships git; override when Docker Hub is unavailable.
 AM_E2E_RELEASED_IMAGE ?= $(GO_BUILD_IMAGE)
-E2E_REQUIRED_TESTS := TestUnsupportedConsumerRootsRefuseBeforeWork,TestUnsupportedConsumerIncludesRefuseBeforeWork,TestUnsupportedConsumerConfigPreventsMissingDestinations
+E2E_REQUIRED_TESTS := TestUnsupportedConsumerRootsRefuseBeforeWork,TestUnsupportedConsumerIncludesRefuseBeforeWork,TestUnsupportedConsumerConfigPreventsMissingDestinations,TestClaudeConfigurationDirectory
 RELEASED_CLIENT_GATE_TESTS := TestReleasedClientReadsCandidateCommittedState,TestReleasedClientReadsCandidateIsolatedCommittedState,TestReleasedClientLockVerifiesNativeHookSourceLayouts,TestReleasedClientHookOutputUpgrades
 
 released-client-gate:

@@ -50,8 +50,10 @@ func TestV4EffectiveExclusionsPreserveDecisionSemantics(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			group := v4ExclusionDecisions(tc.actions...)
 			before, _ := json.Marshal(group)
-			if got := effectiveV4Exclusions(group); !reflect.DeepEqual(got, tc.want) {
-				t.Fatalf("exclusions = %#v, want %#v", got, tc.want)
+			for _, requests := range [][]V4ResourceRequest{nil, effectiveV4Requests(group)} {
+				if got := effectiveV4Exclusions(group, requests); !reflect.DeepEqual(got, tc.want) {
+					t.Fatalf("exclusions = %#v, want %#v", got, tc.want)
+				}
 			}
 			if got := replayV4Exclusions(group); !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("baseline exclusions = %#v, want %#v", got, tc.want)
@@ -67,7 +69,7 @@ func TestV4EffectiveExclusionsPreserveDecisionSemantics(t *testing.T) {
 func TestV4EffectiveExclusionsAvoidRepeatedSnapshots(t *testing.T) {
 	group := v4ExactExclusionFixture(t, 64).Groups["g"]
 	var got []string
-	allocations := testing.AllocsPerRun(3, func() { got = effectiveV4Exclusions(group) })
+	allocations := testing.AllocsPerRun(3, func() { got = effectiveV4Exclusions(group, nil) })
 	if len(got) != 64 {
 		t.Fatalf("exclusions = %d, want 64", len(got))
 	}
@@ -116,9 +118,12 @@ func TestV4EffectiveExclusionsMatchReplay(t *testing.T) {
 			}
 		}
 		before, _ := json.Marshal(group)
-		got, want := effectiveV4Exclusions(group), replayV4Exclusions(group)
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("decisions=%#v: got %#v, want %#v", group.Decisions, got, want)
+		want := replayV4Exclusions(group)
+		for _, requests := range [][]V4ResourceRequest{nil, effectiveV4Requests(group)} {
+			got := effectiveV4Exclusions(group, requests)
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("decisions=%#v: got %#v, want %#v", group.Decisions, got, want)
+			}
 		}
 		after, _ := json.Marshal(group)
 		if !bytes.Equal(before, after) {
@@ -136,7 +141,7 @@ func replayV4Exclusions(group V4ResourceGroup) []string {
 			continue
 		}
 		// An exact exclusion superseded by a later include is no longer active.
-		_, resourceName := v4ExclusionKindName(decision.Exclusion)
+		_, resourceName := legacyV4ExclusionKindName(decision.Exclusion)
 		if resourceName != "*" {
 			reincluded := false
 			for _, request := range effectiveV4Requests(group) {

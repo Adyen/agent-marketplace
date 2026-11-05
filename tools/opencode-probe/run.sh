@@ -47,6 +47,10 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go test -c ./tools/opencode-probe -o "$att
 witnesses=TestNativeActivationControls,TestNativeRequiredActivationGate,TestNativeCompiledCommandHooks,TestNativeInstalledCommandHooks,TestNativeInstalledHookSupport,TestNativePermissionsAndPlugins,TestNativeInvocationBudget,TestNativeInstalledResourceDiscovery
 # Creation gets its own group so terminal/group cancellation cannot interrupt
 # CID capture. Cleanup waits for it before starting or removing a container.
+creation_cancelled=0
+# Do not exit between spawning a job and recording the PID cleanup must wait for.
+trap 'creation_cancelled=130' INT
+trap 'creation_cancelled=143' TERM
 set -m
 (
 set +m
@@ -63,6 +67,9 @@ docker create --rm --init --name "$container" --cidfile "$attempt/container.id" 
 creator_pid=$!
 (sleep 30; kill -KILL -- "-$creator_pid" >/dev/null 2>&1 || true) &
 creation_watchdog=$!
+trap 'exit 130' INT
+trap 'exit 143' TERM
+if [[ "$creation_cancelled" != 0 ]]; then exit "$creation_cancelled"; fi
 creation_result=0
 wait "$creator_pid" || creation_result=$?
 creator_pid=

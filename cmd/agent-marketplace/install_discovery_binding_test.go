@@ -127,6 +127,130 @@ func TestConfiguredInstallFreezesDiscoveryBeforePublication(t *testing.T) {
 	}
 }
 
+func readInstallBindingFiles(t *testing.T, paths []string) map[string]string {
+	t.Helper()
+	contents := make(map[string]string, len(paths))
+	for _, path := range paths {
+		raw, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			contents[path] = "absent"
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		contents[path] = string(raw)
+	}
+	return contents
+}
+
+// spec: resource-installation/lock-pinned-source-refuses-an-expected-commit-install-with-update-remediation
+func TestConfiguredInstallRefusesLockPinnedSourceWithUpdateRemediation(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	f := newInstallBindingFixture(t)
+	f.seedLock(t)
+	f.advance(t)
+	ws, err := pipeline.NewWorkspace(f.repo, f.repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := pipeline.PreviewSource(context.Background(), ws, f.origin, "main", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Commit == f.commit {
+		t.Fatalf("preview commit %s did not advance past the locked commit", preview.Commit)
+	}
+	files := []string{config.ProjectConfigPath(f.repo), filepath.Join(f.repo, ".agents", "lock.yaml"), filepath.Join(f.repo, ".factory", "skills", "review", "SKILL.md")}
+	before := readInstallBindingFiles(t, files)
+	opts := f.options()
+	opts.ExpectedCommit = preview.Commit
+	_, err = pipeline.Install(context.Background(), opts)
+	var locked *pipeline.SourceLockedError
+	if !errors.As(err, &locked) || locked.Locked != f.commit || locked.Expected != preview.Commit || locked.Scope != pipeline.ScopeRepo {
+		t.Fatalf("Install error = %v, want SourceLockedError locked=%s expected=%s scope=repo", err, f.commit, preview.Commit)
+	}
+	var moved *pipeline.SourceMovedError
+	if errors.As(err, &moved) || strings.Contains(err.Error(), "moved") {
+		t.Fatalf("lock-pinned refusal reported a move: %v", err)
+	}
+	if after := readInstallBindingFiles(t, files); !reflect.DeepEqual(before, after) {
+		t.Fatalf("refused install changed files:\nbefore=%#v\nafter=%#v", before, after)
+	}
+	if out, err := executeCommand(strings.Fields(locked.UpdateCommand())[1:]...); err != nil {
+		t.Fatalf("%s: %v\n%s", locked.UpdateCommand(), err, out)
+	}
+	opts = f.options()
+	opts.ExpectedCommit = preview.Commit
+	if result, err := pipeline.Install(context.Background(), opts); err != nil || result == nil {
+		t.Fatalf("install after update = %#v, %v", result, err)
+	}
+	doc := readExactManifestLock(t, filepath.Join(f.repo, ".agents", "lock.yaml"))
+	if len(doc.Registries) != 1 || doc.Registries[0].Commit.Hex() != preview.Commit {
+		t.Fatalf("lock after update = %#v, want commit %s", doc.Registries, preview.Commit)
+	}
+}
+
+// spec: resource-installation/source-locked-in-another-scope-installs-into-the-target-scope
+func TestSourceLockedInAnotherScopeInstallsIntoTargetScope(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, expect := range []bool{true, false} {
+		t.Run(map[bool]string{true: "expected commit", false: "plain install"}[expect], func(t *testing.T) {
+			f := newInstallBindingFixture(t)
+			f.seedLock(t)
+			f.advance(t)
+			ws, err := pipeline.NewWorkspace(f.repo, f.repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			preview, err := pipeline.PreviewSource(context.Background(), ws, f.origin, "main", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			files := []string{config.ProjectConfigPath(f.repo), filepath.Join(f.repo, ".agents", "lock.yaml")}
+			before := readInstallBindingFiles(t, files)
+			localConfig, err := pipeline.ScopedConfigPath(f.repo, pipeline.ScopeLocal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if expect {
+				opts := f.options()
+				opts.Scope = pipeline.ScopeLocal
+				opts.ExpectedCommit = preview.Commit
+				if result, err := pipeline.Install(context.Background(), opts); err != nil || result == nil {
+					t.Fatalf("local install = %#v, %v", result, err)
+				}
+			} else if out, err := executeCommand("install", "--from", f.origin, "--ref", "main", "review", "--scope", "local"); err != nil {
+				t.Fatalf("local install: %v\n%s", err, out)
+			}
+			if raw := string(readInstallBindingFiles(t, []string{localConfig})[localConfig]); !strings.Contains(raw, f.origin) || !strings.Contains(raw, "review") {
+				t.Fatalf("local config does not record the source and resource:\n%s", raw)
+			}
+			localLock, err := lockfile.PathForConfig(localConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			localDoc := readExactManifestLock(t, localLock)
+			if len(localDoc.Registries) != 1 || localDoc.Registries[0].Commit.Hex() != preview.Commit {
+				t.Fatalf("local lock = %#v, want commit %s", localDoc.Registries, preview.Commit)
+			}
+			if after := readInstallBindingFiles(t, files); !reflect.DeepEqual(before, after) {
+				t.Fatalf("local install changed the project layer:\nbefore=%#v\nafter=%#v", before, after)
+			}
+			if out, err := executeCommand("sync"); err != nil {
+				t.Fatalf("sync after local install: %v\n%s", err, out)
+			}
+			if out, err := executeCommand("sync", "--check"); err != nil {
+				t.Fatalf("sync --check after local install: %v\n%s", err, out)
+			}
+		})
+	}
+}
+
 func TestConfiguredInstallSelectorsAndScopesKeepPreparedPins(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -342,6 +466,7 @@ func TestConfiguredInstallUnlockedOrganizationOutputSurvivesGC(t *testing.T) {
 	}
 }
 
+// spec: resource-installation/matching-expected-commit-installs-at-the-requested-ref
 func TestAdHocInstallPreparationPinsOriginalMutableRef(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -350,6 +475,7 @@ func TestAdHocInstallPreparationPinsOriginalMutableRef(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			f := newInstallBindingFixture(t)
 			opts := f.options()
+			opts.ExpectedCommit = f.commit
 			if mode == "bundle" || mode == "inferred" {
 				opts.Args = nil
 			}
@@ -364,6 +490,10 @@ func TestAdHocInstallPreparationPinsOriginalMutableRef(t *testing.T) {
 				p, err := prepareInstallDependencies(ctx, root, local, edits)
 				if err != nil {
 					return p, err
+				}
+				resolved, err := p.ResolvedCommit(config.RegistryEntry{URL: f.origin, Ref: "main"})
+				if err != nil || resolved.Commit != f.commit {
+					t.Fatalf("prepared commit=%q err=%v, want exact original commit %s", resolved.Commit, err, f.commit)
 				}
 				original := p.Reconcile
 				p.Reconcile = func(ctx context.Context, root, local string, blocked bool, edits []pipeline.StagedConfigEdit) (pipeline.DependencyLockView, error) {

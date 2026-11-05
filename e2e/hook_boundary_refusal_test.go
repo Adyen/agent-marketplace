@@ -224,21 +224,113 @@ func hookInvariantOutsideReview(output string) string {
 
 // When a registry fails to load, sync refuses without pruning its hooks, so
 // sync --check must not predict that a later sync removes them.
+// spec: hook-sync-diagnostics/unloadable-hook-source-refuses-without-pending-changes
+// spec: hook-sync-diagnostics/loadable-hook-sources-retain-genuine-drift-reports
 func TestHookInvariantCheckPredictsNoRemovalForAnUnloadableRegistry(t *testing.T) {
-	t.Skip("known defect: https://github.com/Adyen/agent-marketplace/issues/814")
-	e := newEnv(t)
-	const installed = "echo am-unloadable-installed"
-	registry := hookInvariantRegistry(e, "unloadable", hookInvariantDocument(hookInvariantGroup("Bash", installed)))
-	e.WriteRepoConfig(hookInvariantV4Config("factory", registry, "hook/PreToolUse-command"))
-	e.InitGitRepo()
-	e.MustRunAM("sync")
-	e.WriteFile("/repos/unloadable/hooks/hooks.json", `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo x","Command":"echo y"}]}]}}`)
-	check := e.RunAM("sync", "--check")
-	if strings.Contains(check.Combined, `- command: "`+installed+`"`) || strings.Contains(check.Combined, "Deselecting hooks removes") {
-		t.Fatalf("check predicts removing a hook that sync keeps while its registry cannot load:\n%s", check.Combined)
-	}
-	e.RunAM("sync")
-	if got := hookInvariantLoadedCount(t, "factory", e.workspace, false, installed); got != 1 {
-		t.Fatalf("control: sync kept %d copies, want the unpruned 1", got)
+	for _, target := range []string{"factory", "codex"} {
+		for _, scope := range []string{"repo", "user"} {
+			t.Run(target+"/"+scope, func(t *testing.T) {
+				t.Parallel()
+				e := newEnv(t)
+				const installed, updated = "echo am-unloadable-installed", "echo am-unloadable-updated"
+				registry := hookInvariantRegistry(e, "unloadable", hookInvariantDocument(hookInvariantGroup("Bash", installed)))
+				base := "apiVersion: agent-marketplace/v4\nharnesses: [" + target + "]\n"
+				machine := scope == "user"
+				root := e.workspace
+				write := e.WriteRepoConfig
+				if machine {
+					root = e.home
+					write = e.WriteGlobalConfig
+					e.WriteRepoConfig(base)
+				} else {
+					e.WriteGlobalConfig(base)
+				}
+				write(hookInvariantV4Config(target, registry, "hook/PreToolUse-command"))
+				e.InitGitRepo()
+				e.MustRunAM("sync")
+				e.MustRunAM("sync", "--check")
+				if got := hookInvariantLoadedCount(t, target, root, machine, installed); got != 1 {
+					t.Fatalf("installed hook loads %d times, want 1", got)
+				}
+
+				paths := []string{
+					filepath.Join(root, filepath.FromSlash(hookInvariantLoadedFile(t, target))),
+					filepath.Join(e.workspace, ".agents"),
+					filepath.Join(e.home, ".agents"),
+				}
+				if target == "codex" {
+					paths = append(paths, filepath.Join(e.home, ".local", "state", "agent-marketplace", "ownership"))
+				}
+				snapshot := func() map[string]string {
+					state := make(map[string]string, len(paths))
+					for _, path := range paths {
+						fingerprint, err := pathFingerprint(path)
+						if err != nil {
+							t.Fatal(err)
+						}
+						state[path] = fingerprint
+					}
+					return state
+				}
+				unchanged := func(before map[string]string) {
+					t.Helper()
+					for path, want := range before {
+						if got, err := pathFingerprint(path); err != nil || got != want {
+							t.Fatalf("command changed bytes or metadata of %s: %v", path, err)
+						}
+					}
+				}
+				before := snapshot()
+				e.WriteFile("/repos/unloadable/hooks/hooks.json", `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo x","Command":"echo y"}]}]}}`)
+				for _, args := range [][]string{{"sync", "--check"}, {"sync"}} {
+					result := e.RunAM(args...)
+					if result.ExitCode != 1 || !hookInvariantErrorMentions(result.Combined, "json.duplicate-key") {
+						t.Fatalf("%v did not report the load refusal (exit %d):\n%s", args, result.ExitCode, result.Combined)
+					}
+					for _, forbidden := range []string{"Hook changes", "Deselecting hooks removes", "out of sync", "materialize.hook.review-pending", installed} {
+						if strings.Contains(result.Combined, forbidden) {
+							t.Errorf("%v predicts changes after a load refusal (%q):\n%s", args, forbidden, result.Combined)
+						}
+					}
+					unchanged(before)
+					if got := hookInvariantLoadedCount(t, target, root, machine, installed); got != 1 {
+						t.Fatalf("%v left %d loaded copies, want 1", args, got)
+					}
+				}
+
+				// A valid source must still produce a real replacement review.
+				e.WriteFile("/repos/unloadable/hooks/hooks.json", hookInvariantDocument(hookInvariantGroup("Bash", updated)))
+				check := e.RunAM("sync", "--check")
+				for _, want := range []string{"Hook changes (pending, not written):", " replace ", updated, "out of sync"} {
+					if check.ExitCode != 1 || !strings.Contains(check.Combined, want) {
+						t.Fatalf("valid replacement lacks %q (exit %d):\n%s", want, check.ExitCode, check.Combined)
+					}
+				}
+				unchanged(before)
+				e.MustRunAM("sync")
+				if got := hookInvariantLoadedCount(t, target, root, machine, updated); got != 1 {
+					t.Fatalf("replacement loads %d updated copies, want 1", got)
+				}
+				if got := hookInvariantLoadedCount(t, target, root, machine, installed); got != 0 {
+					t.Fatalf("replacement left %d old copies, want 0", got)
+				}
+
+				// Deselecting a loadable source must still report and apply removal.
+				write(base)
+				before = snapshot()
+				check = e.RunAM("sync", "--check")
+				for _, want := range []string{"Hook changes (pending, not written):", " remove ", updated, "Deselecting hooks removes", "out of sync"} {
+					if check.ExitCode != 1 || !strings.Contains(check.Combined, want) {
+						t.Fatalf("valid removal lacks %q (exit %d):\n%s", want, check.ExitCode, check.Combined)
+					}
+				}
+				unchanged(before)
+				e.MustRunAM("sync")
+				if got := hookInvariantLoadedCount(t, target, root, machine, updated); got != 0 {
+					t.Fatalf("deselection left %d loaded copies, want 0", got)
+				}
+				e.MustRunAM("sync", "--check")
+			})
+		}
 	}
 }

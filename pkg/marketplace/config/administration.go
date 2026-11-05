@@ -27,6 +27,7 @@ const (
 const (
 	defaultAdminSessionTTL    = 12 * time.Hour
 	maxAdminSessionTTL        = 24 * time.Hour
+	maxAdminIssuer            = 512
 	minAdminSessionSecret     = 32
 	maxAdminSessionSecret     = 4096
 	maxAdminSessionSecretFile = maxAdminSessionSecret + 2
@@ -247,7 +248,7 @@ var (
 func (a Administration) validateOIDC() error {
 	o := a.Authentication.OIDC
 	issuer, err := url.Parse(o.Issuer)
-	if err != nil || issuer.Hostname() == "" || issuer.User != nil || issuer.RawQuery != "" || issuer.ForceQuery || issuer.Fragment != "" || issuer.Opaque != "" || strings.HasSuffix(o.Issuer, "/") {
+	if err != nil || len(o.Issuer) > maxAdminIssuer || issuer.Hostname() == "" || issuer.User != nil || issuer.RawQuery != "" || issuer.ForceQuery || issuer.Fragment != "" || issuer.Opaque != "" || strings.HasSuffix(o.Issuer, "/") {
 		return errAdminInvalid
 	}
 	issuerIP, _ := netip.ParseAddr(issuer.Hostname())

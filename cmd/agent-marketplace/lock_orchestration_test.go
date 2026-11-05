@@ -29,7 +29,7 @@ func dependencyReadOnlyEntrypoints() map[string]func() error {
 		"direct-status": func() error { return runStatus(context.Background(), io.Discard, time.Now()) },
 		"direct-check":  func() error { return runSyncCheck(context.Background(), io.Discard, false) },
 	}
-	for _, args := range [][]string{{"sync", "--locked"}, {"sync", "--offline"}, {"sync", "--locked", "--offline"}, {"sync", "--check"}, {"lock", "--check"}, {"list"}, {"status"}} {
+	for _, args := range [][]string{{"sync", "--locked"}, {"sync", "--offline"}, {"sync", "--locked", "--offline"}, {"sync", "--check"}, {"lock", "--check"}, {"list"}, {"status"}, {"update", "--dry-run"}, {"update", "--dry-run", "--include-diff"}} {
 		entries[strings.Join(args, " ")] = func() error { _, err := executeCommand(args...); return err }
 	}
 	for name, mode := range map[string]lockMode{"locked": {locked: true}, "offline": {offline: true}, "check": {check: true}} {

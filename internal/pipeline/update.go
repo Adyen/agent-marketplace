@@ -25,6 +25,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
+	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
@@ -50,6 +51,15 @@ type UpdateOptions struct {
 	BumpTarget          *UpdateTarget
 	DependencyReconcile UpdateDependencyReconciler
 	MarketplaceResolver *marketplace.Resolver
+	// DryRun prepares candidate locks, pins, and ref edits without publishing
+	// or materializing anything. The dependency reconciler still prepares the
+	// exact candidate state its callback inspects; the prepared publication
+	// is dropped instead of committed.
+	DryRun bool
+	// PreseedLockEdits seeds the staged Marketplace lock edits with prepared
+	// in-memory documents (preview initial acquisition evidence) before
+	// planned pin replacements merge on top of them.
+	PreseedLockEdits []StagedLockEdit
 }
 
 // MarketplacePinUpdate records the decision made for one configured
@@ -125,6 +135,8 @@ type UpdateDependencyReconciler func(context.Context, string, string, []RefBump,
 
 // UpdateResult holds the outcome of an update operation.
 type UpdateResult struct {
+	Report                 *materialize.Report
+	Warnings               []error
 	UpdatedRegistries      int
 	Bumps                  []RefBump
 	SkippedBumps           []RefBump
@@ -152,8 +164,13 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 	if err != nil {
 		return nil, err
 	}
-	if err := RecoverDependencyTransactions(ctx); err != nil {
-		return nil, err
+	// A preview never replays pending work: read-only commands refuse a
+	// pending journal, and the caller performs that check before preparing
+	// anything. Only an applying update recovers admitted writes here.
+	if !opts.DryRun {
+		if err := RecoverDependencyTransactions(ctx); err != nil {
+			return nil, err
+		}
 	}
 	slog.Info("update start", "repo_root", repoRoot, "bump", opts.Bump)
 	ec := LoadEffective(ctx, ConfigLoadOnline, config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir()}, nil)
@@ -190,6 +207,13 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 	defer closeConfigStaging(staging, "update", &retErr)
 	lockEdits := make(map[string]StagedLockEdit)
 	var lockEditOrder []string
+	for _, edit := range opts.PreseedLockEdits {
+		if _, duplicate := lockEdits[edit.Path]; duplicate {
+			return nil, fmt.Errorf("duplicate preseeded Marketplace lock edit %s", edit.Path)
+		}
+		lockEdits[edit.Path] = edit
+		lockEditOrder = append(lockEditOrder, edit.Path)
+	}
 	for i := range plans {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -259,14 +283,35 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 		}
 		return opts.DependencyReconcile(ctx, repoRoot, localDir, bumps, edits, ordered)
 	})}
-	if _, err := silentSyncCollect(ctx, ws, syncOpts...); err != nil {
+	if opts.DryRun {
+		// Preview: reconcile and validate the prepared candidate state without
+		// publishing config or locks and without materializing. The dependency
+		// reconciler's preview callback computes the report from the same
+		// prepared candidates an applying invocation would publish.
+		if err := silentReconcile(ctx, ws, syncOpts...); err != nil {
+			if hasUnsupportedMarketplacePlan(plans) && isUnsupportedMarketplaceSyncError(err) {
+				err = fmt.Errorf("sync would be required, but unsupported Marketplace pins prevent synchronization; index-only and collection updates are not implemented — remove or disable those pins before retrying: %w", err)
+			}
+			return nil, err
+		}
+		result = updateResult(updatedRegistries, bumps, plans)
+		result.SkippedBumps = skippedBumps
+		slog.Info("update preview completed", "updated_registries", updatedRegistries, "bumps", len(bumps), "marketplace_updated", result.UpdatedMarketplacePins, "marketplace_skipped", result.SkippedMarketplacePins)
+		return result, missing
+	}
+	synced, syncErr := silentSyncCollect(ctx, ws, syncOpts...)
+	result = updateResult(updatedRegistries, bumps, plans)
+	result.Report, result.Warnings = synced.Report, synced.Warnings
+	result.SkippedBumps = skippedBumps
+	if err := syncErr; err != nil {
 		if hasUnsupportedMarketplacePlan(plans) && isUnsupportedMarketplaceSyncError(err) {
 			err = fmt.Errorf("sync was required, but unsupported Marketplace pins prevented synchronization; index-only and collection updates are not implemented — remove or disable those pins before retrying: %w", err)
 		}
-		return nil, err
+		if result.Report == nil {
+			return nil, err
+		}
+		return result, err
 	}
-	result = updateResult(updatedRegistries, bumps, plans)
-	result.SkippedBumps = skippedBumps
 	slog.Info("update end", "updated_registries", updatedRegistries, "bumps", len(bumps), "marketplace_updated", result.UpdatedMarketplacePins, "marketplace_skipped", result.SkippedMarketplacePins)
 	return result, missing
 }

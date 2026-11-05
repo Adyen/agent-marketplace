@@ -6,6 +6,7 @@ import { after, before } from "node:test";
 import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 import { runNonTTY } from "./process-helpers.js";
 
+// spec: tui-interactions/harness-options-return-after-compact-resize
 const journey = defineFixture("first-run-setup", ["tui"], 80, 24, { firstRun: true });
 before(journey.setup);
 after(journey.cleanup);
@@ -58,7 +59,10 @@ journey.test("saved harness setup writes the user config and the first sync inst
     await locate(terminal, "OpenCode").expect({ not: true });
   });
   await step("full size restores every choice with the same cursor and selection", () => terminal.resize(80, 24), async () => {
-    await locate(terminal, "[ ] OpenCode").unique().expect();
+    for (const label of ["Factory Droid", "Claude Code", "Cursor", "Windsurf", "Gemini CLI", "Devin CLI", "Codex", "OpenCode"]) {
+      const mark = ["Factory Droid", "Claude Code"].includes(label) ? "•" : " ";
+      await locate(terminal, new RegExp(`\\[${mark}\\] ${label}\\b`)).unique().expect();
+    }
     await locate(terminal, "> [•] Claude Code").unique().expect();
     await locate(terminal, "[•] Factory Droid").unique().expect();
     await locate(terminal, "> [•] Factory Droid").expect({ not: true });

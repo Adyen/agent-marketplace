@@ -18,7 +18,7 @@ func TestSilentSyncCollectPreservesDependencyWarnings(t *testing.T) {
 		t.Fatal(err)
 	}
 	warning := errors.New("dependency warning")
-	warnings, err := silentSyncCollect(context.Background(), mustWorkspace(t, dir),
+	synced, err := silentSyncCollect(context.Background(), mustWorkspace(t, dir),
 		withDependencyReconciler(func(context.Context, string, string, bool, []StagedConfigEdit) (DependencyLockView, error) {
 			return DependencyLockView{Warnings: []error{warning}}, nil
 		}),
@@ -27,11 +27,11 @@ func TestSilentSyncCollectPreservesDependencyWarnings(t *testing.T) {
 		t.Fatalf("silentSyncCollect: %v", err)
 	}
 	found := false
-	for _, got := range warnings {
+	for _, got := range synced.Warnings {
 		found = found || errors.Is(got, warning)
 	}
 	if !found {
-		t.Fatalf("warnings = %v, want dependency warning", warnings)
+		t.Fatalf("warnings = %v, want dependency warning", synced.Warnings)
 	}
 }
 

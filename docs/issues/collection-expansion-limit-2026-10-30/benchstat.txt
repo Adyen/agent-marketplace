@@ -1,0 +1,22 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/resolver
+cpu: Apple M4 Max
+                                     │  before.txt  │             after.txt              │
+                                     │    sec/op    │   sec/op     vs base               │
+ResolveCollectionDiamond/depth=8-16     1.297m ± 2%   1.302m ± 2%        ~ (p=1.000 n=6)
+ResolveCollectionDiamond/depth=16-16   449.57m ± 2%   10.48m ± 3%  -97.67% (p=0.002 n=6)
+geomean                                 24.14m        3.693m       -84.71%
+
+                                     │  before.txt   │              after.txt              │
+                                     │     B/op      │     B/op      vs base               │
+ResolveCollectionDiamond/depth=8-16     2.647Mi ± 0%   2.647Mi ± 0%        ~ (p=0.968 n=6)
+ResolveCollectionDiamond/depth=16-16   996.03Mi ± 0%   23.67Mi ± 0%  -97.62% (p=0.002 n=6)
+geomean                                 51.34Mi        7.914Mi       -84.59%
+
+                                     │  before.txt   │              after.txt               │
+                                     │   allocs/op   │  allocs/op   vs base                 │
+ResolveCollectionDiamond/depth=8-16      8.393k ± 0%   8.393k ± 0%        ~ (p=1.000 n=6) ¹
+ResolveCollectionDiamond/depth=16-16   2162.67k ± 0%   51.40k ± 0%  -97.62% (p=0.002 n=6)
+geomean                                  134.7k        20.77k       -84.58%
+¹ all samples are equal

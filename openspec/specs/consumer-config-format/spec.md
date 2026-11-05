@@ -123,3 +123,23 @@ A `v4.api-version-required` or `v4.api-version` refusal MUST include remediation
 - **WHEN** a command or the TUI reports a diagnostic other than `v4.api-version-required` or `v4.api-version`, such as `v4.legacy-key` or `v4.parse`
 - **THEN** its output MUST NOT include the version-refusal guidance
 - **AND** a version refusal shown by a command that already lists remediation in its output MUST show the guidance once
+
+### Requirement: Consumer configuration requires supported harness target IDs
+
+The running CLI MUST understand every harness target ID named in consumer configuration, including harness selections and per-target materialization settings. Unknown IDs MUST remain configuration errors that gate configuration-dependent actions, not warnings or permission to use only the supported subset. Refusal MUST NOT silently remove or rewrite unknown entries. This validation does not require the corresponding harness application to be installed. Ordinary operational logging and recovery of a pre-existing dependency transaction retain their existing contracts.
+
+#### Scenario: Unknown harness targets gate configuration-dependent actions
+
+- **WHEN** otherwise valid consumer configuration names an unknown harness target ID alongside supported IDs in harness selections or per-target materialization settings
+- **THEN** CLI synchronization MUST refuse with a non-zero outcome and the TUI MUST visibly refuse harness editing and synchronization instead of using only the supported subset
+- **AND** the refused new operation MUST preserve authored configuration, acquisition locks and existing installed resources without installing pending resources
+- **AND** after the user explicitly repairs the configuration and reloads, supported harness editing and synchronization MUST work
+
+### Requirement: Include trees stay within the include limit
+
+Loading one consumer root MUST refuse when it would read more than 256 config files. The count includes the root and every include occurrence on every branch, so a fragment reached through several branches counts once per branch. Refusal MUST report `v4.include-limit` before any acquisition, lock, or harness work. Include precedence, ordering, multiplicity and branch-local cycle detection MUST be unchanged for trees within the limit. The limit has no override.
+
+#### Scenario: Include trees stay within the include limit
+
+- **WHEN** a v4 root's includes form a shared diamond that expands to more than 256 files, or a flat list of 256 includes
+- **THEN** the load MUST fail with `v4.include-limit`, and a root with 255 includes MUST still load

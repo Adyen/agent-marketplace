@@ -121,7 +121,7 @@ Detailed telemetry SHALL add lifecycle traces and effective-configuration invent
 
 ### Requirement: Diagnostic sessions require review and explicit export
 
-A diagnostic session SHALL operate only at effective level `detailed`, buffer evidence locally, redact URL credentials, and write a review payload under the telemetry diagnostic directory. Export SHALL require interactive consent or explicit noninteractive sensitive-data acknowledgement. Successful diagnostic completion SHALL require both endpoint delivery and review-payload deletion; declined or failed delivery SHALL retain the payload. A payload deletion failure after delivery SHALL report its filesystem cause and retained payload path without claiming successful completion. Diagnostic failure SHALL NOT change the investigated command's outcome. Diagnostic payloads SHALL NOT enter the normal pending telemetry queue.
+A diagnostic session SHALL operate only at effective level `detailed`, buffer evidence locally, redact URL credentials, and write a review payload under the telemetry diagnostic directory. Export SHALL require interactive consent at a terminal; the CLI SHALL offer no flag or other noninteractive acknowledgement, so a diagnostic session without a terminal SHALL keep its payload local. A diagnostic-level telemetry preview SHALL likewise require interactive consent and SHALL be refused without a terminal. Successful diagnostic completion SHALL require both endpoint delivery and review-payload deletion; declined or failed delivery SHALL retain the payload. A payload deletion failure after delivery SHALL report its filesystem cause and retained payload path without claiming successful completion. Diagnostic failure SHALL NOT change the investigated command's outcome. Diagnostic payloads SHALL NOT enter the normal pending telemetry queue.
 
 #### Scenario: Diagnostics require detailed telemetry
 
@@ -135,12 +135,22 @@ A diagnostic session SHALL operate only at effective level `detailed`, buffer ev
 
 #### Scenario: Noninteractive diagnostics require acknowledgement
 
-- **WHEN** diagnostic export runs without a terminal or explicit acknowledgement
-- **THEN** the payload MUST remain local and the CLI MUST explain the acknowledgement requirement
+- **WHEN** a diagnostic session completes without a terminal
+- **THEN** the payload MUST remain local without any export request, and the CLI MUST explain that export requires interactive acknowledgement at a terminal
+
+#### Scenario: Sensitive-data acknowledgement flag is not accepted
+
+- **WHEN** an invocation passes `--diagnostic-accept-sensitive-data`
+- **THEN** the CLI MUST reject it as an unknown flag without capturing or exporting a diagnostic payload
+
+#### Scenario: Noninteractive diagnostic preview is refused
+
+- **WHEN** `telemetry preview --level diagnostic` runs without a terminal
+- **THEN** the command MUST fail, explaining that diagnostic preview requires an interactive terminal, and MUST write no preview payload
 
 #### Scenario: Successful diagnostic export removes review evidence
 
-- **WHEN** explicitly accepted diagnostic export succeeds
+- **WHEN** interactively accepted diagnostic export succeeds
 - **THEN** the local review payload MUST be deleted
 
 #### Scenario: Failed diagnostic export is never queued

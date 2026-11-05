@@ -333,24 +333,29 @@ func TestTelemetryPreview(t *testing.T) {
 	}
 }
 
+// spec: telemetry/noninteractive-diagnostic-preview-is-refused
 func TestTelemetryPreviewDiagnosticRequiresAccept(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	setupTelemetryHome(t)
+	home := setupTelemetryHome(t)
 
 	if _, err := executeCommand("init", "--harnesses", "factory"); err != nil {
 		t.Fatalf("init failed: %v", err)
 	}
 
 	_, err := executeCommand("telemetry", "preview", "--level", "diagnostic")
-	if err == nil {
-		t.Fatal("expected diagnostic preview to require acknowledgement")
+	if err == nil || !strings.Contains(err.Error(), "diagnostic preview requires interactive acknowledgement at a terminal") {
+		t.Fatalf("expected diagnostic preview to require a terminal, got: %v", err)
+	}
+	previewMatches, _ := filepath.Glob(filepath.Join(home, ".local", "state", "agent-marketplace", "telemetry", "preview", "payload-*.json"))
+	if len(previewMatches) > 0 {
+		t.Fatalf("refused diagnostic preview must not write a payload: %v", previewMatches)
 	}
 
-	output, err := executeCommand("telemetry", "preview", "--level", "diagnostic", "--diagnostic-accept-sensitive-data")
+	output, err := executeCommandAtTerminal(t, "y\n", "telemetry", "preview", "--level", "diagnostic")
 	if err != nil {
-		t.Fatalf("preview with accept failed: %v\n%s", err, output)
+		t.Fatalf("interactive diagnostic preview failed: %v\n%s", err, output)
 	}
 	if !strings.Contains(output, "Preview payload written to") {
 		t.Fatalf("expected preview path, got:\n%s", output)

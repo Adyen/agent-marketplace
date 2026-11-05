@@ -26,6 +26,27 @@ Two details are easy to miss. First, editing which resources a group selects usu
 
 The [reproducibility and lockfiles](./reproducibility-and-lockfiles.md) page explains the lock format and why the CLI never moves a lock on its own.
 
+## Inspect a proposed update
+
+Choose whether to apply the update and whether to print content:
+
+| Command | Result |
+|---|---|
+| `agent-marketplace update` | Apply with the usual summary. |
+| `agent-marketplace update --dry-run` | Summarize the proposed update without applying it. |
+| `agent-marketplace update --dry-run --include-diff` | Summarize and show proposed content diffs without applying. |
+| `agent-marketplace update --include-diff` | Apply, then report the compared content diffs. No approval prompt. |
+
+For example, use `agent-marketplace update --dry-run --include-diff --scope repo` to review repository updates. The existing scope, targeting, and `--bump` rules still apply.
+
+The comparison runs from the previously locked revision to the exact candidate selected for this invocation. It covers effective selected resources, including collection definitions and membership, not the whole registry. Git and Marketplace definitions use the same readable normalized view: multiline bodies, semantic metadata, and preserved extensions, plus exact admitted supporting-file bytes and executable modes. Installed-file edits and generated harness output do not enter this diff. An absent writable lock is labeled as initial acquisition; an unavailable recorded baseline makes the requested comparison fail before new publication.
+
+A dry run preserves configuration, locks, installed files (including symlink targets), ownership state, backups, and inventory. It can still use the network, update disposable acquisition caches, and prepare private temporary files. Organization-managed pins stay unchecked and unchanged. Live directories and intentionally unlocked organization sources have no historical locked comparison.
+
+This is a versioned-content preview, not a complete materialization preflight. A later harness write or ownership check can still fail. An applying invocation uses the exact candidates it compared even if upstream advances during that invocation, but a separate invocation resolves independently. A dry run does not reserve revisions or approve a later update.
+
+**Treat diff output as source content.** Explicit diffs can show sensitive values authored in resource definitions or support files. Environment references remain literal; the CLI does not expand local secrets or insert acquisition credentials. Review the output before saving or sharing it. See the [CLI reference](../reference/cli.md#update) for output examples.
+
 ## What a change does to your selection
 
 The CLI identifies a resource by its kind and name, for example `skill/code-review`. Registries are plain folders, so nothing in them records that one name replaced another. A rename therefore looks to the CLI like two separate changes: the old name disappears and a new name appears. What that means for you depends on how you selected the resource.
