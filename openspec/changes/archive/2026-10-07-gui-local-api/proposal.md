@@ -19,3 +19,7 @@ A desktop GUI needs a local boundary for reading session state, receiving progre
 ## Impact
 
 The API boundary connects the extracted interactive-session core to the desktop GUI and its test harness. It adds a checked-in OpenAPI document, generated client artifacts, and API security, event-stream, mutation, and drift tests. The production transport choice remains subject to the streaming compatibility spike described in design.md.
+
+## Release note
+
+none — internal boundary between the session core and the desktop app, which is announced with the desktop app.

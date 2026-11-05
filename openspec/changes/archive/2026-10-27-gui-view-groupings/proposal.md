@@ -22,3 +22,7 @@ None.
 ## Impact
 
 GUI frontend (`gui/src`: grouping, workspace list, sidebar, toolbar, View menu, fixtures, tests, preview, and `gui/DESIGN.md`), the local API snapshot row DTO (`internal/localapi`, which gains `source`), and the generated GUI client from `api/gui-local.yaml`.
+
+## Release note
+
+none — refines the desktop app before its first release, which is announced with the desktop app.

@@ -29,3 +29,7 @@ A second interactive client needs the same staged session, navigation, feedback,
 ## Impact
 
 The implementation layer covers the interactive TUI model and lifecycle, command startup wiring, and their tests. Existing TUI tests and TUI QA journeys remain behavior witnesses; annotations for moved scenarios change to the new `session-*` paths. No user-visible behavior changes in this layer.
+
+## Release note
+
+none — moves existing TUI behavior onto a shared session core without changing what TUI users see.
