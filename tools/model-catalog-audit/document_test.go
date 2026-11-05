@@ -202,8 +202,8 @@ func TestEveryCatalogEvidenceRefIsBound(t *testing.T) {
 			modelSources++
 		}
 	}
-	if len(hookToolSources) != 33 || modelSources != 21 {
-		t.Fatalf("hook/tool audit sources = %d, model audit sources = %d, want 33 and 21", len(hookToolSources), modelSources)
+	if len(hookToolSources) != 33 || modelSources != 22 {
+		t.Fatalf("hook/tool audit sources = %d, model audit sources = %d, want 33 and 22", len(hookToolSources), modelSources)
 	}
 	baselineBody, err := os.ReadFile("baselines.json")
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -56,6 +57,8 @@ func TestAuditReportsInventoryDriftWithoutWriting(t *testing.T) {
 	}
 }
 
+// spec: model-catalog-audit/inventory-page-without-a-model-list
+// spec: model-catalog-audit/inventory-page-with-a-model-list
 func TestAuditContinuesAfterUnavailableAndMalformedSources(t *testing.T) {
 	files := fstest.MapFS{catalogPath("factory"): &fstest.MapFile{Data: []byte(testCatalog)}}
 	sources := []source{
@@ -76,8 +79,14 @@ func TestAuditContinuesAfterUnavailableAndMalformedSources(t *testing.T) {
 	if !result.Failed || len(result.Sources) != 3 || result.Sources[0].Status != "unknown" || result.Sources[1].Status != "unknown" || result.Sources[2].Status != "no-drift" {
 		t.Fatalf("partial audit = %#v", result)
 	}
-	if result.Sources[0].Findings[0].Code != "source.fetch-failed" || result.Sources[1].Findings[0].Code != "source.parse-failed" {
+	if result.Sources[0].Findings[0].Code != "source.fetch-failed" || result.Sources[1].Findings[0].Code != "source.inventory-unparsed" {
 		t.Fatal("source failures must be distinguishable from drift")
+	}
+	if len(result.Sources[2].Observed.Models) == 0 {
+		t.Fatal("parseable inventory must retain observed models")
+	}
+	if slices.ContainsFunc(result.Sources[2].Findings, func(f finding) bool { return f.Code == "source.inventory-unparsed" }) {
+		t.Fatal("parseable inventory was reported as unparsed")
 	}
 	if strings.Contains(result.Sources[0].Findings[0].Message, "private") {
 		t.Fatal("transport details leaked")

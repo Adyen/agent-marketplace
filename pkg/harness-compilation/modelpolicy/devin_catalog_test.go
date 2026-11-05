@@ -128,6 +128,39 @@ var devinCapturedUIDs = []struct {
 	{"fusion-claude-opus-5-low-sidekick-swe-2-high", "devin/fusion-claude-opus-5-low-sidekick-swe-2-high", ""},
 	{"fusion-claude-fable-5-1-low-sidekick-swe-2-high", "devin/fusion-claude-fable-5-1-low-sidekick-swe-2-high", ""},
 	{"fusion-gpt-6-astra-low-sidekick-swe-2-high", "devin/fusion-gpt-6-astra-low-sidekick-swe-2-high", ""},
+	{"claude-haiku-5-5-low", "anthropic/claude-haiku-5-5", "low"},
+	{"claude-haiku-5-5-medium", "anthropic/claude-haiku-5-5", "medium"},
+	{"claude-haiku-5-5-high", "anthropic/claude-haiku-5-5", "high"},
+	{"claude-haiku-5-5-xhigh", "anthropic/claude-haiku-5-5", "xhigh"},
+	{"claude-haiku-5-5-max", "anthropic/claude-haiku-5-5", "max"},
+	{"claude-sonnet-5-5-low", "anthropic/claude-sonnet-5-5", "low"},
+	{"claude-sonnet-5-5-medium", "anthropic/claude-sonnet-5-5", "medium"},
+	{"claude-sonnet-5-5-high", "anthropic/claude-sonnet-5-5", "high"},
+	{"claude-sonnet-5-5-xhigh", "anthropic/claude-sonnet-5-5", "xhigh"},
+	{"claude-sonnet-5-5-max", "anthropic/claude-sonnet-5-5", "max"},
+	{"deepseek-v4-1-flash-1017-none", "deepseek/deepseek-v4.1-flash-1017", "none"},
+	{"deepseek-v4-1-flash-1017-low", "deepseek/deepseek-v4.1-flash-1017", "low"},
+	{"deepseek-v4-1-flash-1017-high", "deepseek/deepseek-v4.1-flash-1017", "high"},
+	{"deepseek-v4-1-flash-1017-max", "deepseek/deepseek-v4.1-flash-1017", "max"},
+	{"deepseek-v4-pro-high", "deepseek/deepseek-v4-pro", "high"},
+	{"deepseek-v4-pro-max", "deepseek/deepseek-v4-pro", "max"},
+	{"gemini-4-argon-low", "google/gemini-4-argon", "low"},
+	{"gemini-4-argon-medium", "google/gemini-4-argon", "medium"},
+	{"gemini-4-argon-high", "google/gemini-4-argon", "high"},
+	{"gpt-6-1-sol-low", "openai/gpt-6.1-sol", "low"},
+	{"gpt-6-1-sol-medium", "openai/gpt-6.1-sol", "medium"},
+	{"gpt-6-1-sol-high", "openai/gpt-6.1-sol", "high"},
+	{"gpt-6-1-sol-xhigh", "openai/gpt-6.1-sol", "xhigh"},
+	{"gpt-6-1-sol-max", "openai/gpt-6.1-sol", "max"},
+	{"gpt-6-1-sol-low-priority", "openai/gpt-6.1-sol-fast", "low"},
+	{"gpt-6-1-sol-medium-priority", "openai/gpt-6.1-sol-fast", "medium"},
+	{"gpt-6-1-sol-high-priority", "openai/gpt-6.1-sol-fast", "high"},
+	{"gpt-6-1-sol-xhigh-priority", "openai/gpt-6.1-sol-fast", "xhigh"},
+	{"gpt-6-1-sol-max-priority", "openai/gpt-6.1-sol-fast", "max"},
+	{"grok-4-7-low", "xai/grok-4.7", "low"},
+	{"grok-4-7-medium", "xai/grok-4.7", "medium"},
+	{"grok-4-7-high", "xai/grok-4.7", "high"},
+	{"grok-4-7-xhigh", "xai/grok-4.7", "xhigh"},
 }
 
 var devinCapturedSelectors = []struct {
@@ -168,6 +201,7 @@ var devinCapturedSelectors = []struct {
 	{"fusion", "devin/fusion"},
 }
 
+// spec: model-catalog-audit/every-non-fusion-snapshot-uid-is-covered
 func TestDevinCatalogCapturedInventory(t *testing.T) {
 	r, err := shipped()
 	if err != nil {

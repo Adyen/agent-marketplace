@@ -50,16 +50,16 @@ The audit SHALL report `catalog.family-pin-stale` when a family pin names a mode
 
 ### Requirement: Devin model inventory is covered by the catalog
 
-Every `model_uid` in the committed Devin CLI model snapshot SHALL be covered by a model or reasoning entry in `devin.yaml`. The coverage test SHALL fail for each uncovered UID and SHALL list the uncovered UIDs.
+Every non-Fusion `model_uid` in the committed Devin CLI model snapshot SHALL be covered by a model or reasoning entry in `devin.yaml`. Fusion pairings are excluded from this requirement. The coverage test SHALL fail for each uncovered non-Fusion UID and SHALL list the uncovered UIDs.
 
-#### Scenario: Every snapshot UID is covered
+#### Scenario: Every non-Fusion snapshot UID is covered
 
-- **WHEN** every `model_uid` in the Devin CLI model snapshot matches a `devin.yaml` model or reasoning entry
+- **WHEN** every non-Fusion `model_uid` in the Devin CLI model snapshot matches a `devin.yaml` model or reasoning entry
 - **THEN** the coverage test SHALL pass
 
-#### Scenario: Snapshot UID is not covered
+#### Scenario: Non-Fusion snapshot UID is not covered
 
-- **WHEN** a `model_uid` in the Devin CLI model snapshot matches no `devin.yaml` model or reasoning entry
+- **WHEN** a non-Fusion `model_uid` in the Devin CLI model snapshot matches no `devin.yaml` model or reasoning entry
 - **THEN** the coverage test SHALL fail and SHALL list that UID
 
 ### Requirement: Report schema stays at version one

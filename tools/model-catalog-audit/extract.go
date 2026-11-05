@@ -75,6 +75,20 @@ func extract(s source, body []byte) (observation, error) {
 		if err != nil {
 			return result, err
 		}
+	case "gemini-docs":
+		seen := map[string]bool{}
+		for _, line := range strings.Split(text, "\n") {
+			line = strings.TrimSpace(line)
+			if !strings.HasPrefix(line, "* ") && !strings.HasPrefix(line, "- ") {
+				continue
+			}
+			for _, id := range codeValues(line) {
+				if modelID.MatchString(id) && !seen[id] {
+					seen[id] = true
+					result.Models = append(result.Models, observedModel{ID: id})
+				}
+			}
+		}
 	case "watch":
 		var selected []string
 		for _, field := range s.Fields {

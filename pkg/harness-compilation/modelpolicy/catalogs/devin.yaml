@@ -1,7 +1,7 @@
 schema: 1
 harness: devin
 evidence:
-  checked: "2026-09-26"
+  checked: "2026-11-05"
   refs:
     - https://docs.devin.ai/cli/subagents.md
     - https://docs.devin.ai/cli/models.md
@@ -43,9 +43,20 @@ models:
   anthropic/claude-sonnet-5:
     model: claude-sonnet-5
     reasoning: {low: {model: claude-sonnet-5-low}, medium: {model: claude-sonnet-5-medium}, high: {model: claude-sonnet-5-high}}
+  anthropic/claude-haiku-5-5:
+    model: claude-haiku-5-5
+    reasoning: {low: {model: claude-haiku-5-5-low}, medium: {model: claude-haiku-5-5-medium}, high: {model: claude-haiku-5-5-high}, xhigh: {model: claude-haiku-5-5-xhigh}, max: {model: claude-haiku-5-5-max}}
+  anthropic/claude-sonnet-5-5:
+    model: claude-sonnet-5-5
+    reasoning: {low: {model: claude-sonnet-5-5-low}, medium: {model: claude-sonnet-5-5-medium}, high: {model: claude-sonnet-5-5-high}, xhigh: {model: claude-sonnet-5-5-xhigh}, max: {model: claude-sonnet-5-5-max}}
   openai/gpt-6-astra:
     model: gpt-6-astra
     reasoning: {low: {model: gpt-6-astra-low}, medium: {model: gpt-6-astra-medium}, high: {model: gpt-6-astra-high}, xhigh: {model: gpt-6-astra-xhigh}, max: {model: gpt-6-astra-max}}
+  openai/gpt-6.1-sol:
+    model: gpt-6-1-sol
+    reasoning: {low: {model: gpt-6-1-sol-low}, medium: {model: gpt-6-1-sol-medium}, high: {model: gpt-6-1-sol-high}, xhigh: {model: gpt-6-1-sol-xhigh}, max: {model: gpt-6-1-sol-max}}
+  openai/gpt-6.1-sol-fast:
+    reasoning: {low: {model: gpt-6-1-sol-low-priority}, medium: {model: gpt-6-1-sol-medium-priority}, high: {model: gpt-6-1-sol-high-priority}, xhigh: {model: gpt-6-1-sol-xhigh-priority}, max: {model: gpt-6-1-sol-max-priority}}
   openai/gpt-6-sol:
     model: gpt-6-sol
     reasoning: {none: {model: gpt-6-sol-none}, low: {model: gpt-6-sol-low}, medium: {model: gpt-6-sol-medium}, high: {model: gpt-6-sol-high}, xhigh: {model: gpt-6-sol-xhigh}, max: {model: gpt-6-sol-max}}
@@ -80,6 +91,17 @@ models:
     model: gemini-3-8-flash
     aliases: [gemini-3.8-flash]
     reasoning: {low: {model: gemini-3-8-flash-low}, medium: {model: gemini-3-8-flash-medium}, high: {model: gemini-3-8-flash-high}}
+  google/gemini-4-argon:
+    model: gemini-4-argon
+    reasoning: {low: {model: gemini-4-argon-low}, medium: {model: gemini-4-argon-medium}, high: {model: gemini-4-argon-high}}
+  deepseek/deepseek-v4.1-flash-1017:
+    reasoning: {none: {model: deepseek-v4-1-flash-1017-none}, low: {model: deepseek-v4-1-flash-1017-low}, high: {model: deepseek-v4-1-flash-1017-high}, max: {model: deepseek-v4-1-flash-1017-max}}
+  deepseek/deepseek-v4-pro:
+    model: deepseek-v4-pro
+    reasoning: {high: {model: deepseek-v4-pro-high}, max: {model: deepseek-v4-pro-max}}
+  xai/grok-4.7:
+    model: grok-4-7
+    reasoning: {low: {model: grok-4-7-low}, medium: {model: grok-4-7-medium}, high: {model: grok-4-7-high}, xhigh: {model: grok-4-7-xhigh}}
   devin/fusion-gpt-5-6-sol-high-sidekick-swe-2-medium:
     model: fusion-gpt-5-6-sol-high-sidekick-swe-2-medium
   devin/fusion-claude-fable-5-1-medium-sidekick-gpt-5-6-luna-high:
