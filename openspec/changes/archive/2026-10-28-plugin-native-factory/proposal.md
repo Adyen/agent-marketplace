@@ -7,6 +7,10 @@ In CI runs 40682001059 and 40698987206, Droid 0.251.0 recorded the owned
 marketplace but did not install the enabled plugin in headless metadata
 sessions. Native-delivery verification moves to a follow-up.
 
+## Release note
+
+none — native Factory Droid plugin delivery stays unverified, so Factory plugins are still installed as decomposed members; this change only prepares the catalog and registration files.
+
 ## What Changes
 
 - An Agent Marketplace-owned Factory catalog is published as a marketplace
