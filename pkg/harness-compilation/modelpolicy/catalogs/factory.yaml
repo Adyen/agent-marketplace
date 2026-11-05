@@ -1,7 +1,7 @@
 schema: 1
 harness: factory
 evidence:
-  checked: "2026-10-19"
+  checked: "2026-10-28"
   refs:
     - https://docs.factory.ai/harness/subagents.md
     - https://docs.factory.ai/models.md
@@ -198,6 +198,24 @@ models:
     reasoning: {high: {effort: high}}
   openai/gpt-6.1-sol:
     model: gpt-6.1-sol
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  deepseek/deepseek-v4.1-flash-1017:
+    model: deepseek-v4.1-flash-1017
+    reasoning: {low: {effort: low}, high: {effort: high}}
+  minimax/minimax-m3.1-flash:
+    model: minimax-m3.1-flash
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  nvidia/nemotron-3.5-super:
+    model: nemotron-3.5-super
+    reasoning: {high: {effort: high}}
+  openai/gpt-6-luna-fast:
+    model: gpt-6-luna-fast
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  openai/gpt-6-sol-fast:
+    model: gpt-6-sol-fast
+    reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
+  openai/gpt-6.1-sol-ultrafast:
+    model: gpt-6.1-sol-ultrafast
     reasoning: {low: {effort: low}, medium: {effort: medium}, high: {effort: high}}
 families:
   anthropic/sonnet:

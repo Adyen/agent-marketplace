@@ -21,6 +21,7 @@ var sources = append([]source{
 	{Name: "codex-gpt-6-astra", Harness: "codex", URL: "https://developers.openai.com/api/docs/models/gpt-6-astra.md", Kind: "document", Sections: []string{"`reasoning.effort` supports"}},
 	{Name: "codex-gpt-6.1-sol", Harness: "codex", URL: "https://developers.openai.com/api/docs/models/gpt-6.1-sol.md", Kind: "document", Sections: []string{"`reasoning.effort` supports"}},
 	{Name: "codex-gpt-6-luna", Harness: "codex", URL: "https://developers.openai.com/api/docs/models/gpt-6-luna.md", Kind: "document", Sections: []string{"`reasoning.effort` supports"}},
+	{Name: "codex-gpt-6.1-terra", Harness: "codex", URL: "https://developers.openai.com/api/docs/models/gpt-6.1-terra.md", Kind: "document", Sections: []string{"`reasoning.effort` supports"}},
 	{Name: "cursor-models", Harness: "cursor", URL: "https://cursor.com/docs/models-and-pricing.md", Kind: "cursor"},
 	{Name: "cursor-subagents", Harness: "cursor", URL: "https://cursor.com/docs/subagents.md", Kind: "watch", Fields: []string{"model"}, Sections: []string{"Model configuration"}},
 	{Name: "devin-models", Harness: "devin", URL: "https://docs.devin.ai/cli/models.md", Kind: "watch", Sections: []string{"Available Models"}},

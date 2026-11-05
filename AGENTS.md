@@ -56,6 +56,8 @@ E2E_SKIP_DOCKER=1 make e2e  # for CI runners that cannot spawn Docker
 E2E_PARALLEL=8 make e2e  # control concurrency (default 4, set to 1 for serial)
 ```
 
+Keep declarative table cases spec-tagged; see [Declarative E2E table](skills/agent-marketplace-development/SKILL.md#declarative-e2e-table) and run `go -C e2e test -run '^TestTableSpecTags' -count=1 .`.
+
 ### TUI QA
 
 **Every TUI change ships a journey.** Go tests under `internal/tui` build a `Model` and feed it messages; they cannot show that a user's key presses reach the changed behavior, and TUI changes merged with only those tests have broken user flows. Any change to TUI behavior (keys, modals, footer/help, layout, rendering, mouse input, async loading, diagnostics and recovery copy, launch wiring) adds `tools/tui-qa/tests/<flow>.spec.ts` or extends the existing journey that already reaches that flow. The journey launches the real binary, presses the keys a user would, asserts the visible result after each state-changing input, and checks resulting config and harness files when the flow writes them. For a bug fix, the journey must fail without the fix. List new journeys in `tools/tui-qa/README.md` and run `make tui-qa` before handoff; it passes only when every journey ran and none were skipped. Use `TUI-QA-Impact: none — <reason>` only for changes with no user-observable TUI effect, such as comments, renames, or dead code. "Covered by Go tests" is not a valid reason.
@@ -114,6 +116,8 @@ Read [CODING_STANDARDS.md](./CODING_STANDARDS.md) before modifying code. It defi
 The sections below are historical, non-normative leads pending harvest, not current usage authority. Live consumer-format and gate guidance has been corrected for v4-only launch; other statements may still be stale, and specs win. Each `baseline-<capability>` change deletes the paragraphs it absorbs. Historical design logs under `docs/plans/` do not advertise supported launch behavior.
 
 ### Core Concept
+
+- Claude Code's machine paths below are defaults: a nonempty absolute `CLAUDE_CONFIG_DIR` replaces `~/.claude` and moves `~/.claude.json` to `$CLAUDE_CONFIG_DIR/.claude.json`. Repository paths do not move. Detection, inspection, backup and restore use those same effective destinations; old-account output is not moved or pruned. Test sandboxes neutralize `CLAUDE_CONFIG_DIR` alongside `CODEX_HOME`, using an empty value to retain the default MCP layout.
 
 - **Registry repos** contain agent resources (skill directories with `SKILL.md`, commands, subagents, hooks, MCP server definitions). Content is ingested through `harness-compilation` so resources can be authored in any harness layout and compiled into any target harness.
 - The CLI reads **layered configs**: external organization (`/etc/agent-marketplace/config.yaml`), user-personal (`~/.agents/config.yaml`), repo committed (`.agents/config.yaml`), and personal-local (`.agents/config.local.yaml`, gitignored). Every existing root requires exact v4; every layer supports recursive local-file `include` whose fragments may omit the version or declare exact v4. Fragments merge below their containing file, while CLI edits remain rooted in the selected config file. Unsupported roots/includes refuse new operations, with no legacy fallback or in-process conversion. See the Consumer configuration contract above for refusal, recovery, and pre-upgrade guidance. `init` creates v4 user configs directly.

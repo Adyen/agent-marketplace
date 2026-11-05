@@ -108,10 +108,14 @@ func prometheusVector(samples []inventoryMetricSample, observedAt time.Time) str
 }
 
 func adoptionSamples() []inventoryMetricSample {
+	return adoptionSamplesAt(adoptionFixedNow)
+}
+
+func adoptionSamplesAt(now time.Time) []inventoryMetricSample {
 	return []inventoryMetricSample{
 		aggregateResponseSample("count", 1, map[string]string{"am_registry": "rA", "resource_kind": "skill", "resource_name": "res-a"}),
 		aggregateResponseSample("fresh", 1, nil),
-		aggregateResponseSample("valid_until", float64(adoptionFixedNow.Add(-time.Hour).UnixMicro()), nil),
+		aggregateResponseSample("valid_until", float64(now.Add(-time.Hour).UnixMicro()), nil),
 	}
 }
 

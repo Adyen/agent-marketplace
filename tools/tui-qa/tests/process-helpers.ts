@@ -62,6 +62,7 @@ export const isolatedEnvironment = (
   TMP: tmp,
   TEMP: tmp,
   CODEX_HOME: path.join(home, ".codex"),
+  CLAUDE_CONFIG_DIR: "",
   GIT_CONFIG_NOSYSTEM: "1",
   GIT_CONFIG_SYSTEM: "/dev/null",
   GIT_CONFIG_GLOBAL: "/dev/null",
