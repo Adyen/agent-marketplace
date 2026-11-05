@@ -14,28 +14,38 @@ import (
 )
 
 type compatibilityCommand struct {
-	Args            []string `json:"command"`
-	ExitCode        int      `json:"exit_code"`
-	Error           string   `json:"error,omitempty"`
-	TimedOut        bool     `json:"timed_out,omitempty"`
-	Observed        []string `json:"asserted_observations,omitempty"`
-	Diagnostics     []string `json:"safe_diagnostics,omitempty"`
-	OutputBytes     int      `json:"output_bytes"`
-	OutputTruncated bool     `json:"output_truncated,omitempty"`
-	output          string
-	inventory       []byte
+	Args                   []string `json:"command"`
+	ExitCode               int      `json:"exit_code"`
+	Error                  string   `json:"error,omitempty"`
+	TimedOut               bool     `json:"timed_out,omitempty"`
+	Observed               []string `json:"asserted_observations,omitempty"`
+	Diagnostics            []string `json:"safe_diagnostics,omitempty"`
+	FailureOutput          string   `json:"failure_output,omitempty"`
+	Stdout                 string   `json:"stdout,omitempty"`
+	Stderr                 string   `json:"stderr,omitempty"`
+	OutputBytes            int      `json:"output_bytes"`
+	OutputTruncated        bool     `json:"output_truncated,omitempty"`
+	FailureOutputTruncated bool     `json:"failure_output_truncated,omitempty"`
+	output                 string
+	inventory              []byte
 }
 
 const compatibilityOutputLimit = 256 << 10
+const compatibilityFailureOutputLimit = 2 << 10
 
 type compatibilityOutput struct {
 	data  []byte
 	total int
+	limit int
 }
 
 func (o *compatibilityOutput) Write(data []byte) (int, error) {
 	o.total += len(data)
-	o.data = append(o.data, data[:min(len(data), compatibilityOutputLimit-len(o.data))]...)
+	limit := o.limit
+	if limit == 0 {
+		limit = compatibilityOutputLimit
+	}
+	o.data = append(o.data, data[:min(len(data), limit-len(o.data))]...)
 	return len(data), nil
 }
 
@@ -114,10 +124,18 @@ func compatibilityProcess(ctx context.Context, e *Env, binary string, args []str
 }
 
 func runCompatibilityCommand(e *Env, binary string, args []string, timeout time.Duration) compatibilityCommand {
-	return runCompatibilityInspection(e, binary, args, timeout, false)
+	return runCompatibilityCommandWithStreams(e, binary, args, timeout, false, false)
 }
 
 func runCompatibilityInspection(e *Env, binary string, args []string, timeout time.Duration, jsonInventory bool) compatibilityCommand {
+	return runCompatibilityCommandWithStreams(e, binary, args, timeout, false, jsonInventory)
+}
+
+func runCompatibilityCommandWithSeparateOutput(e *Env, binary string, args []string, timeout time.Duration) compatibilityCommand {
+	return runCompatibilityCommandWithStreams(e, binary, args, timeout, true, false)
+}
+
+func runCompatibilityCommandWithStreams(e *Env, binary string, args []string, timeout time.Duration, separate, jsonInventory bool) compatibilityCommand {
 	r := compatibilityCommand{Args: append([]string{binary}, args...), ExitCode: -1}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -127,6 +145,9 @@ func runCompatibilityInspection(e *Env, binary string, args []string, timeout ti
 		return r
 	}
 	var output, stderr compatibilityOutput
+	if separate {
+		output.limit, stderr.limit = compatibilityOutputLimit/2, compatibilityOutputLimit/2
+	}
 	cmd.Stdout, cmd.Stderr = &output, &stderr
 	err = cmd.Run()
 	if cmd.Process != nil {
@@ -134,6 +155,10 @@ func runCompatibilityInspection(e *Env, binary string, args []string, timeout ti
 	}
 	r.OutputBytes = output.total + stderr.total
 	r.OutputTruncated = r.OutputBytes > compatibilityOutputLimit
+	if separate {
+		r.Stdout, r.Stderr = string(output.data), string(stderr.data)
+		r.OutputTruncated = output.total > output.limit || stderr.total > stderr.limit
+	}
 	diagnosticOutput := string(output.data) + string(stderr.data)
 	if jsonInventory && err == nil && json.Valid(output.data) {
 		diagnosticOutput = string(stderr.data)
@@ -161,6 +186,10 @@ func runCompatibilityInspection(e *Env, binary string, args []string, timeout ti
 	}
 	if r.Error != "" && len(r.Diagnostics) > 0 {
 		r.Error += "; " + strings.Join(r.Diagnostics, ", ")
+	}
+	if r.Error != "" && len(args) > 0 && (args[0] == "install" || args[0] == "sync") {
+		r.FailureOutputTruncated = len(r.output) > compatibilityFailureOutputLimit
+		r.FailureOutput = r.output[:min(len(r.output), compatibilityFailureOutputLimit)]
 	}
 	return r
 }

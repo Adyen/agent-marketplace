@@ -56,6 +56,7 @@ Durable state lives in `$XDG_STATE_HOME/agent-marketplace/` (default `~/.local/s
 | `locks/<root-id>.lock` | Mutex lock files that stop two processes from editing the same harness root at once. |
 | `safety-backups/<root-id>/` | Copies of each shared file taken before sync changes it. Sync keeps the five newest copies per file, and takes them even when `backup.enabled` is `false`. |
 | `dependencies/` | Journal of changes to configuration and lockfiles. If a command is interrupted halfway, read-only commands refuse to run and the next command that changes configuration finishes the interrupted change. |
+| `packages/` | Immutable plugin package generations published atomically for installed plugins. Kept while an installed plugin instance, registration, or recovery journal refers to them. See [Plugins and package formats](../explanation/plugins-and-package-formats.md). |
 | `telemetry/installation-id` | Random identifier for this installation, used by telemetry. |
 | `telemetry/queue/` | Telemetry records waiting to be sent. |
 | `telemetry/diagnostic/` | Payloads captured with `--diagnostic`, kept for review or export. |

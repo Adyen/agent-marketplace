@@ -147,6 +147,79 @@ func TestHookMetadataPreparePublishesSatisfactionOnlyState(t *testing.T) {
 	}
 }
 
+func TestStorePrepareBatchCombinesRootOwnershipMutations(t *testing.T) {
+	f, st, stateDir := prepareTxnFixture(t)
+	firstBytes := []byte(`{"mcpServers":{"alpha":{"command":"alpha"}}}` + "\n")
+	secondRel := "hooks.v1.json"
+	secondPath := filepath.Join(f.targetRoot, secondRel)
+	secondBytes := []byte(`{"PreToolUse":[{"type":"command","command":"echo beta"}]}` + "\n")
+	if err := os.WriteFile(f.absFile, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(secondPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	firstSnapshot, firstGeneration, firstMode, err := dependencytxn.ReadSnapshot(f.absFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondSnapshot, secondGeneration, secondMode, err := dependencytxn.ReadSnapshot(secondPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateSnapshot, err := st.SnapshotState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutations := []Mutation{
+		{
+			Rel: f.rel, AbsFile: f.absFile, NextBytes: firstBytes,
+			Entries: []Entry{mcpEntry("alpha", "plugin-alpha", `{"command":"alpha"}`)},
+			Reason:  ReasonSync, ExpectPriorGeneration: 0, ExpectPriorDigest: Digest(firstSnapshot),
+		},
+		{
+			Rel: secondRel, AbsFile: secondPath, NextBytes: secondBytes,
+			Entries: []Entry{hookEntry("PreToolUse", "plugin-beta", `{"type":"command","command":"echo beta"}`)},
+			Reason:  ReasonSync, ExpectPriorGeneration: 0, ExpectPriorDigest: Digest(secondSnapshot),
+		},
+	}
+	stateFile, err := st.PrepareBatch(stateSnapshot, mutations, nil)
+	if err != nil {
+		t.Fatalf("PrepareBatch: %v", err)
+	}
+	if stateFile.Path != st.StateFile() {
+		t.Fatalf("batch ownership participant path = %q, want %q", stateFile.Path, st.StateFile())
+	}
+	if fileExists(t, st.StateFile()) {
+		t.Fatal("PrepareBatch persisted the ownership record before dependencytxn.Commit")
+	}
+	if err := os.MkdirAll(filepath.Dir(stateFile.Path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	result, err := dependencytxn.Commit(context.Background(), stateDir, []dependencytxn.DesiredFile{
+		{Path: f.absFile, Expected: firstGeneration, ExpectedMode: firstMode, Bytes: firstBytes, Mode: firstMode},
+		{Path: secondPath, Expected: secondGeneration, ExpectedMode: secondMode, Bytes: secondBytes, Mode: secondMode},
+		stateFile,
+	})
+	if err != nil {
+		t.Fatalf("commit aggregate batch: %v", err)
+	}
+	if len(result.Changed) != 3 {
+		t.Fatalf("batch commit participants = %v, want both aggregates and one root state", result.Changed)
+	}
+	firstProof, err := st.Proof(f.rel)
+	if err != nil {
+		t.Fatalf("first proof: %v", err)
+	}
+	secondProof, err := st.Proof(secondRel)
+	if err != nil {
+		t.Fatalf("second proof: %v", err)
+	}
+	if firstProof.OwnedCount() != 1 || secondProof.OwnedCount() != 1 || firstProof.Generation() != secondProof.Generation() {
+		t.Fatalf("batch proofs = %+v / %+v, want both files at one ownership generation", firstProof, secondProof)
+	}
+}
+
 func TestHookMetadataPrepareRepeatIsNoop(t *testing.T) {
 	f, st, stateDir := prepareTxnFixture(t)
 	aggregate := prepareAggregateWith(hookSatisfactionValueA)

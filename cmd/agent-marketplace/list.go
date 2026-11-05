@@ -64,7 +64,7 @@ func newListCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&kindFilter, "kind", "", "Filter resources by kind: skill, command, subagent, hook, mcp, or collection")
+	cmd.Flags().StringVar(&kindFilter, "kind", "", "Filter resources by kind: skill, command, subagent, hook, mcp, collection, or plugin")
 	cmd.Flags().StringVar(&fromURL, "from", "", "List resources from an ad-hoc registry URL (git URL or GitLab/GitHub web URL)")
 	cmd.Flags().StringVar(&fromRef, "ref", "", "Git ref (branch/tag/sha) for --from registry; requires --from")
 	cmd.Flags().StringVar(&fromPath, "path", "", "Subdirectory within the --from registry; requires --from")
@@ -155,7 +155,13 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 	var dryRunReport *materialize.Report
 	var dryRunErr error
 	if !marketplaceCacheUnknown {
-		dryRunReport, dryRunErr = runListMaterialize(ctx, ws.MaterializeRoot(), result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
+		deliverable, deliveryPending := pipeline.DeliverableArtifacts(result.Resolved, result.PluginPlan)
+		for _, w := range deliveryPending {
+			if _, werr := fmt.Fprintf(errOut, "warning: %s\n", terminalSafeText(fmt.Sprint(w))); werr != nil {
+				return werr
+			}
+		}
+		dryRunReport, dryRunErr = runListMaterialize(ctx, ws.MaterializeRoot(), deliverable, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
 	}
 	if dryRunErr != nil {
 		// A failed drift probe must not hide the listing itself, but file mode
@@ -261,6 +267,9 @@ func buildListRows(cfg *config.Config, catalogs map[string]loadedCatalog, resolv
 		} else if artifact.Selected {
 			status = "enabled"
 		}
+		if p := artifact.Plugin; p != nil && p.Refusal != nil {
+			status = p.Refusal.Code
+		}
 		rows = append(rows, listRow{
 			Registry: registryDisplayName(artifact.RegistryURL),
 			Kind:     skill.KindLabel(artifact.Kind),
@@ -332,7 +341,7 @@ func parseOptionalKind(value string) (ir.ResourceKind, bool, error) {
 	}
 	kind, ok := skill.ParseKind(value)
 	if !ok {
-		return 0, false, fmt.Errorf("unknown kind %q: must be one of skill, command, subagent, hook, mcp, collection", value)
+		return 0, false, fmt.Errorf("unknown kind %q: must be one of skill, command, subagent, hook, mcp, collection, plugin", value)
 	}
 	return kind, true, nil
 }

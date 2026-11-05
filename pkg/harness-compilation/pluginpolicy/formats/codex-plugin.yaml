@@ -1,0 +1,26 @@
+# Catalog data for pkg/harness-compilation/pluginpolicy/formats/codex-plugin.yaml.
+schema: 1
+format: codex-plugin
+role: package
+evidence:
+  checked: "2026-10-15"
+  refs:
+    - https://developers.openai.com/plugins/build/plugins
+    - https://developers.openai.com/codex/plugins
+  notes: "The Codex compatibility manifest is .codex-plugin/plugin.json; components stay at the plugin root."
+versions: []
+manifest:
+  fields:
+    name: {required: true, type: string, invalid: refuse-package}
+    version: {required: false, type: string, invalid: ignore-with-warning}
+    description: {required: false, type: string, invalid: ignore-with-warning}
+    author: {required: false, type: object, invalid: ignore-with-warning}
+    homepage: {required: false, type: string, invalid: ignore-with-warning}
+    repository: {required: false, type: string, invalid: ignore-with-warning}
+    license: {required: false, type: string, invalid: ignore-with-warning}
+    keywords: {required: false, type: array, invalid: ignore-with-warning}
+components:
+  skills: immediate-children
+  hooks: file
+  mcpServers: file
+dependencies: refuse-package

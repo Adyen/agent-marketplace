@@ -1,0 +1,12 @@
+# Catalog data for pkg/harness-compilation/pluginpolicy/catalogs/opencode.yaml.
+schema: 1
+harness: opencode
+evidence:
+  checked: "2026-10-18"
+  refs:
+    - https://opencode.ai/docs/plugins.md
+  notes: "OpenCode plugins are JavaScript or TypeScript modules, not a recognized package format, so plugins reach OpenCode only as decomposed members."
+accepts: []
+delivery:
+  decompose: {status: verified}
+  native: {status: unverified}

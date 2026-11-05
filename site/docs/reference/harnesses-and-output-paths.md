@@ -1,6 +1,6 @@
 # Harnesses and output paths reference
 
-This page lists the [harnesses](../glossary.md#harness) Agent Marketplace supports and the exact files `sync` writes for each one. Use it to find where an installed skill, command, subagent, hook, or MCP server ended up, or to decide which paths to add to `.gitignore`.
+This page lists the [harnesses](../glossary.md#harness) Agent Marketplace supports and the exact files `sync` writes for each one. Use it to find where an installed skill, command, subagent, hook, or MCP server ended up, or to decide which paths to add to `.gitignore`. Plugin members installed by decomposed delivery land on the same per-kind paths; native delivery instead registers the package through harness-owned settings entries. See [Plugins and package formats](../explanation/plugins-and-package-formats.md).
 
 The roots and per-kind paths come from `pkg/harness-compilation/target` and `internal/harness/roots.go` in the source code.
 
@@ -65,7 +65,7 @@ In the tables below, a skill path ending in `SKILL.md` means the skill is a fold
 | hook | `.claude/settings.json` under `hooks` | `~/.claude/settings.json` under `hooks` |
 | mcp | `<repo>/.mcp.json` | `~/.claude.json` under `mcpServers` |
 
-Sync also lists installed skills and subagents in `.claude/.claude-plugin/plugin.json` (machine: `~/.claude/.claude-plugin/plugin.json`), under `skills` and `agents`.
+Sync does not write a Claude plugin manifest: `.claude/.claude-plugin/plugin.json` is retired output. If an earlier version wrote one, sync strips its managed `skills` and `agents` entries (keeping anything it does not own) and deletes the file and its `.claude-plugin` directory once nothing but empty members remain.
 
 The machine paths in this table show the default layout. With a nonempty
 `CLAUDE_CONFIG_DIR`, replace `~/.claude` with that directory and

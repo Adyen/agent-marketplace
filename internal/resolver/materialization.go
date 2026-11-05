@@ -130,6 +130,13 @@ func materializationURL(a ResolvedArtifact) string {
 // without harnesses; projected artifacts receive their own copy.
 var defaultMaterializationTargets = []hcc.Target{hcc.TargetClaude}
 
+func HarnessTargets(targets []hcc.Target) []hcc.Target {
+	if targets == nil {
+		return []hcc.Target{hcc.TargetClaude}
+	}
+	return targets
+}
+
 func MaterializationWinners(resolved []ResolvedArtifact) []ResolvedArtifact {
 	winners, _ := materializationProjection(resolved, true)
 	return winners
@@ -217,7 +224,7 @@ func materializationProjection(resolved []ResolvedArtifact, wantWinners bool) ([
 	caseVariants := false
 	for i := range resolved {
 		a := &resolved[i]
-		if !competes(a) {
+		if !competes(a) || nativePluginMember(*a) {
 			continue
 		}
 		upper := hasUpper(a.MaterializedName())
@@ -336,7 +343,7 @@ func materializationProjection(resolved []ResolvedArtifact, wantWinners bool) ([
 		}
 		count := 0
 		for _, target := range targets {
-			if additive || kept(target) {
+			if additive || nativePluginMember(*a) || kept(target) {
 				count++
 				continue
 			}
@@ -370,4 +377,9 @@ func materializationProjection(resolved []ResolvedArtifact, wantWinners bool) ([
 		out = append(out, winner)
 	}
 	return out, displaced
+}
+
+func nativePluginMember(a ResolvedArtifact) bool {
+	return a.PluginPackage != nil && a.PluginPackage.Delivery == "native" &&
+		a.Resource != nil && a.Resource.Kind() != ir.KindPlugin
 }

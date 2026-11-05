@@ -117,13 +117,30 @@ func TestManagedSkillLinkPlanRefusals(t *testing.T) {
 			t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 			target := cleanupLinkSkill(t, "remove", false, hcc.TargetDevin)
 			if scenario == "shared fragment" {
-				target.Harnesses = []hcc.Target{hcc.TargetDevin, hcc.TargetClaude}
+				// A resource that also writes into a shared aggregate cannot
+				// be removed by link cleanup. MCP servers merge into shared
+				// configuration on both Devin and Claude, so they still
+				// carry shared output.
+				target = cleanupLinkSkill(t, "remove", false, hcc.TargetDevin, hcc.TargetClaude)
+				target.Kind = ir.KindMcpServer
+				target.Resource = ir.NewMcpServer("remove", "cmd", nil, nil, nil, ir.SourceRef{})
 			}
 			seedCleanupLinks(t, repo, target)
 			path := filepath.Join(repo, ".devin", "skills", "remove")
-			original, err := os.Readlink(path)
-			if err != nil {
-				t.Fatal(err)
+			originalLink := ""
+			originalFile := ""
+			if scenario == "shared fragment" {
+				path = filepath.Join(repo, ".mcp.json")
+				originalFile = readFileString(t, path)
+				if originalFile == "" {
+					t.Fatal("seeded aggregate is empty")
+				}
+			} else {
+				original, err := os.Readlink(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				originalLink = original
 			}
 			var remaining []resolver.ResolvedArtifact
 			modes := config.DefaultMaterializationModes()
@@ -175,7 +192,11 @@ func TestManagedSkillLinkPlanRefusals(t *testing.T) {
 					return
 				}
 			}
-			if got, err := os.Readlink(path); err != nil || got != original {
+			if scenario == "shared fragment" {
+				if got := readFileString(t, path); got != originalFile {
+					t.Fatalf("refusal changed the shared aggregate: %q", got)
+				}
+			} else if got, err := os.Readlink(path); err != nil || got != originalLink {
 				t.Fatalf("refusal changed link: %q %v", got, err)
 			}
 		})

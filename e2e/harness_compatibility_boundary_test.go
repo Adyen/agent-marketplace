@@ -179,6 +179,41 @@ func TestCompatibilitySafeDiagnostics(t *testing.T) {
 	}
 }
 
+func TestCompatibilityMarketplaceFailureOutputIsBounded(t *testing.T) {
+	for _, operation := range []string{"install", "sync"} {
+		t.Run(operation, func(t *testing.T) {
+			e := newEnv(t)
+			binary := filepath.Join(e.repos, "internal-fake-marketplace")
+			const limit = 2 << 10
+			output := strings.Repeat("x", limit) + "tail"
+			e.WriteFile(filepath.Join(e.home, "failure-output"), output)
+			e.WriteFile(binary, "#!/bin/sh\ncat \"$HOME/failure-output\"\nexit 1\n")
+			if err := os.Chmod(binary, 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			command := runCompatibilityCommand(e, binary, []string{operation, "fixture"}, time.Second)
+			if command.Error == "" || command.ExitCode != 1 {
+				t.Fatalf("failed %s result = %+v", operation, command)
+			}
+			data, err := json.Marshal(command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var report struct {
+				FailureOutput          string `json:"failure_output"`
+				FailureOutputTruncated bool   `json:"failure_output_truncated"`
+			}
+			if err := json.Unmarshal(data, &report); err != nil {
+				t.Fatal(err)
+			}
+			if report.FailureOutput != strings.Repeat("x", limit) || !report.FailureOutputTruncated {
+				t.Fatalf("bounded Marketplace failure output = %d bytes, truncated=%t", len(report.FailureOutput), report.FailureOutputTruncated)
+			}
+		})
+	}
+}
+
 func TestCompatibilityRuntimeUpdatesDisabled(t *testing.T) {
 	e := newEnv(t)
 	t.Setenv("DISABLE_AUTOUPDATER", "0")
@@ -307,11 +342,39 @@ func TestCompatibilityEvidenceRequiresNegativeControl(t *testing.T) {
 	}
 }
 
+func TestClaudePluginListCapturesSeparateOutputInReport(t *testing.T) {
+	e := newEnv(t)
+	binary := filepath.Join(e.repos, "claude-plugin-list")
+	e.WriteFile(binary, "#!/bin/sh\nprintf '%s\\n' '{\"plugins\":[{\"name\":\"native-kit@am-test\",\"enabled\":true}]}'\nprintf '%s\\n' 'plugin-list-stderr' >&2\n")
+	if err := os.Chmod(binary, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	commands, found, enabled, err := claudePluginList(e, binary, "native-kit@", time.Second)
+	if err != nil || !found || !enabled || len(commands) != 1 {
+		t.Fatalf("Claude plugin list result = commands %d found %t enabled %t err %v", len(commands), found, enabled, err)
+	}
+	if !strings.Contains(commands[0].Stdout, "native-kit@am-test") || commands[0].Stderr != "plugin-list-stderr\n" {
+		t.Fatalf("Claude plugin-list report lost its separate streams: stdout=%q stderr=%q", commands[0].Stdout, commands[0].Stderr)
+	}
+	data, err := json.Marshal(commands[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, output := range []string{`"stdout":`, `"stderr":`, "native-kit@am-test", "plugin-list-stderr"} {
+		if !strings.Contains(string(data), output) {
+			t.Errorf("Claude plugin-list report omitted %q: %s", output, data)
+		}
+	}
+}
+
+// spec: plugin-delivery/claude-probe-loads-the-registered-plugin-at-user-scope
+// spec: plugin-delivery/claude-probe-confirms-repository-scope-stays-decomposed
 func TestCompatibilityReportKeepsEvidenceBoundaries(t *testing.T) {
 	report := compatibilityReport{Target: "internal-fake", Results: []compatibilityResult{
 		{Harness: "devin", Resource: "skill", Scope: "repo", Mode: "file", Status: "native-verified", Version: "internal-fake-1", Reason: "name and path only", Commands: []compatibilityCommand{{Args: []string{"internal-fake", "skills", "list"}, Observed: []string{"amcompat-skill"}, output: "raw-output-not-for-report"}}},
 		{Harness: "devin", Resource: "hook", Scope: "repo", Mode: "file", Status: "config-only-verified", Reason: "hooks were not fired"},
 		{Harness: "windsurf", Resource: "native-cli", Scope: "repo", Mode: "file", Status: "blocked", Reason: "installer failed"},
+		{Harness: "claude", Resource: "native-plugin", Scope: "user", Mode: "file", Status: "failed", Version: "2.1.311", Reason: "plugin was not enabled"},
 	}}
 	path := filepath.Join(t.TempDir(), "report.json")
 	if err := writeCompatibilityReport(path, report); err != nil {
@@ -328,8 +391,53 @@ func TestCompatibilityReportKeepsEvidenceBoundaries(t *testing.T) {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if len(decoded.Results) != 3 || decoded.Results[0].Version != "internal-fake-1" || decoded.Results[1].Status != "config-only-verified" || !decoded.failed() {
+	if len(decoded.Results) != 4 {
+		t.Fatalf("report has %d results, want 4", len(decoded.Results))
+	}
+	plugin := decoded.Results[3]
+	if decoded.Results[0].Version != "internal-fake-1" || decoded.Results[1].Status != "config-only-verified" ||
+		plugin.Harness != "claude" || plugin.Resource != "native-plugin" || plugin.Scope != "user" || plugin.Mode != "file" ||
+		plugin.Status != "failed" || plugin.Version != "2.1.311" || !decoded.failed() {
 		t.Fatalf("report erased a gap or failure: %+v", decoded)
+	}
+}
+
+// spec: plugin-delivery/claude-probe-confirms-repository-scope-stays-decomposed
+func TestCompatibilityNativePluginReportRowIsClaudeProbeOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		harness    string
+		nativeMode string
+		want       bool
+	}{
+		{name: "Claude probe", harness: "claude", nativeMode: "probe", want: true},
+		{name: "other target probe", harness: "factory", nativeMode: "probe"},
+		{name: "Claude unavailable", harness: "claude", nativeMode: "unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			found := false
+			for _, resource := range compatibilityResourcesFor(tc.harness, tc.nativeMode) {
+				found = found || resource == "native-plugin"
+			}
+			if found != tc.want {
+				t.Fatalf("native-plugin report row available = %t, want %t", found, tc.want)
+			}
+		})
+	}
+}
+
+// spec: plugin-delivery/claude-probe-confirms-repository-scope-stays-decomposed
+func TestCompatibilityNativePluginRowKeepsIndependentStatus(t *testing.T) {
+	rows := []compatibilityResult{
+		{Harness: "claude", Resource: "native-plugin", Scope: "repo", Mode: "file", Status: "config-only-verified", Reason: "repository-scope auto delivery produced the decomposed skill and no Agent Marketplace Claude registration; no Claude session was run"},
+		{Harness: "claude", Resource: "skill", Scope: "repo", Mode: "file", Status: "config-only-verified"},
+	}
+	finalizeCompatibilityNativeRows(rows, &compatibilityNative{})
+	if rows[0].Status != "config-only-verified" || rows[0].Reason != "repository-scope auto delivery produced the decomposed skill and no Agent Marketplace Claude registration; no Claude session was run" {
+		t.Fatalf("Claude plugin row was changed by generic native coverage: %+v", rows[0])
+	}
+	if rows[1].Status != "failed" {
+		t.Fatalf("missing native resource probe status = %q, want failed", rows[1].Status)
 	}
 }
 

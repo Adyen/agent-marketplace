@@ -12,6 +12,26 @@ installation is distinct from compiling a plugin bundle. Validation does not
 register an alternate plugin or inject replacement definitions to make
 discovery succeed.
 
+Native plugin bundles use a Claude Code marketplace catalog with relative
+`./plugins/<name>` sources linked to immutable package generations. Repository
+registrations are kept in `.claude/settings.local.json`; user registrations
+remain in `~/.claude/settings.json`. Native plugin delivery is verified at
+user scope only. The CI-only `claude-native-plugin` probe first confirms that
+Claude does not list the plugin and that sync wrote none of Claude's
+installed-plugin records, known-marketplace records, plugin cache, or workspace
+trust. It then establishes the trust precondition in its isolated home and
+keeps a headless stream-JSON session open for up to 45 seconds while Claude
+writes its own marketplace and plugin install records. The verdict requires
+`claude plugin list --json` to report the plugin enabled and Claude
+initialization to list its namespaced skill. Agent Marketplace never writes
+Claude trust state or install records.
+
+At repository scope the probe requests `delivery: auto`, confirms that sync
+writes no `am-` entries to `.claude/settings.local.json`, and checks that the
+plugin's namespaced skill member is delivered decomposed. It does not start a
+Claude session at repository scope. Repository-scope plugin loading remains
+an open gap tracked in a GitHub issue.
+
 ## Skills, commands, and subagents: CLI initialization
 
 The driver starts the installed `claude` executable with:

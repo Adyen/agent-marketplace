@@ -78,9 +78,37 @@ The word these docs use for writing resources into your [harness's](#harness) fo
 
 A program that gives your AI agent extra tools or data through the Model Context Protocol (MCP), for example access to an issue tracker or a database. `agent-marketplace` adds the server's entry to your [harness's](#harness) MCP settings, which tells the harness how to start or reach the server. It leaves the entries you added yourself in place.
 
+## Native plugin catalog
+
+A catalog format, such as a marketplace manifest, that lists plugins and where each is acquired from. See [Plugins and package formats](./explanation/plugins-and-package-formats.md).
+
+## Native registration
+
+The harness-owned entries that activate a plugin for native delivery. See [Plugins and package formats](./explanation/plugins-and-package-formats.md).
+
 ## Ownership state
 
 Records that `agent-marketplace` keeps about which entries it wrote into settings files it shares with you, such as Devin's `mcp_config.json` or Codex's `config.toml`. They let it update or remove only its own entries. The records live in `~/.local/state/agent-marketplace/` (or `$XDG_STATE_HOME/agent-marketplace/` when that variable is set). Do not delete them. See [Shared configuration ownership](./explanation/shared-configuration-ownership.md).
+
+## Package format
+
+The recognized manifest and directory contract a plugin is written in, such as `claude-plugin` or `agent-plugin`. See [Plugins and package formats](./explanation/plugins-and-package-formats.md).
+
+## Package generation
+
+An immutable, complete plugin tree published atomically under the state root for a plugin instance. See [Plugins and package formats](./explanation/plugins-and-package-formats.md).
+
+## Plugin
+
+A self-contained package of plugin members distributed and installed as one unit under a package format. See [Plugins and package formats](./explanation/plugins-and-package-formats.md).
+
+## Plugin instance
+
+One installed plugin binding a package generation, a harness target, a delivery mode, and a scope. See [Plugins and package formats](./explanation/plugins-and-package-formats.md).
+
+## Plugin member
+
+A resource contained inside a plugin, addressed within the package by kind and name. See [Plugins and package formats](./explanation/plugins-and-package-formats.md).
 
 ## Prerequisite
 
@@ -100,7 +128,7 @@ A project folder tracked by [Git](#git), together with its history. In these doc
 
 ## Resource
 
-Something `agent-marketplace` installs for your [harness](#harness). There are five kinds: [skill](#skill), [command](#command), [subagent](#subagent), [hook](#hook), and [MCP server](#mcp-server). A [collection](#collection) groups several resources together.
+Something `agent-marketplace` installs for your [harness](#harness). There are five loose kinds: [skill](#skill), [command](#command), [subagent](#subagent), [hook](#hook), and [MCP server](#mcp-server); a source that declares a plugin `format` also offers plugin packages as a `plugin` kind. A [collection](#collection) groups several resources together.
 
 ## Resource group
 

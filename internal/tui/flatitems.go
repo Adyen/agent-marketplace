@@ -1,6 +1,10 @@
 package tui
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+)
 
 // flat-items helpers on Model: the cursor indexes into m.flatItems, which is
 // computed from filteredRows + the status-grouped foldState. These helpers
@@ -121,15 +125,17 @@ func (m Model) selectedSectionPath() (string, bool) {
 	return it.SectionPath, true
 }
 
-// toggleFoldAtCursor flips the fold state of the section under the cursor.
-// No-op if the cursor is not on a section header.
+// toggleFoldAtCursor flips the fold state of the section or plugin row under
+// the cursor.
 func (m *Model) toggleFoldAtCursor() {
-	path, ok := m.selectedSectionPath()
-	if !ok {
+	if m.cursor < 0 || m.cursor >= len(m.flatItems) {
 		return
 	}
 	fs := m.currentFoldState()
-	fs[path] = !fs[path]
+	item := m.flatItems[m.cursor]
+	if item.Kind == flatSection || item.PluginParent {
+		fs[item.SectionPath] = !fs[item.SectionPath]
+	}
 }
 
 // setFoldAtCursor forces the fold state of the section under the cursor
@@ -144,9 +150,20 @@ func (m *Model) setFoldAtCursor(collapsed bool) {
 	case flatSection:
 		fs[it.SectionPath] = collapsed
 	case flatArtifact:
+		if it.PluginParent {
+			fs[it.SectionPath] = collapsed
+			return
+		}
 		// Walk backward to find the nearest enclosing section header.
 		for i := m.cursor - 1; i >= 0; i-- {
 			prev := m.flatItems[i]
+			if prev.PluginParent {
+				if collapsed {
+					fs[prev.SectionPath] = true
+					m.cursor = i
+				}
+				return
+			}
 			if prev.Kind != flatSection {
 				continue
 			}
@@ -169,7 +186,7 @@ func (m *Model) setFoldAtCursor(collapsed bool) {
 func (m *Model) collapseAllSections() {
 	fs := m.currentFoldState()
 	for _, it := range m.flatItems {
-		if it.Kind == flatSection {
+		if it.Kind == flatSection || it.PluginParent {
 			fs[it.SectionPath] = true
 		}
 	}
@@ -191,7 +208,29 @@ func rowKey(r row) string {
 	if r.IsMalformed {
 		malformed = "1"
 	}
-	return r.Artifact.Kind.String() + "\x00" + r.Artifact.Name + "\x00" + r.Artifact.CatalogKey + "\x00" + r.RegistryURL + "\x00" + r.RegistryRef + "\x00" + r.RegistryPath + "\x00" + r.Artifact.Path + "\x00" + malformed
+	pluginName := ""
+	if r.Artifact.PluginPackage != nil {
+		pluginName = r.Artifact.PluginPackage.Name
+	}
+	return r.Artifact.Kind.String() + "\x00" + r.Artifact.Name + "\x00" + pluginName + "\x00" + r.Artifact.CatalogKey + "\x00" + r.RegistryURL + "\x00" + r.RegistryRef + "\x00" + r.RegistryPath + "\x00" + r.Artifact.Path + "\x00" + malformed
+}
+
+func (m Model) rowByKey(key string) (row, bool) {
+	for _, resource := range m.rows {
+		if rowKey(resource) == key {
+			return resource, true
+		}
+		plugin, ok := resource.Artifact.Resource.(*ir.Plugin)
+		if !ok {
+			continue
+		}
+		for _, member := range pluginMemberRows(resource, plugin) {
+			if rowKey(member) == key {
+				return member, true
+			}
+		}
+	}
+	return row{}, false
 }
 
 // rowSelectionIdentity names a resource independently of the catalog that
@@ -206,7 +245,11 @@ func rowSelectionIdentity(r row) string {
 	if r.IsMalformed {
 		malformed = "1"
 	}
-	return r.Artifact.Kind.String() + "\x00" + r.Artifact.Name + "\x00" + registryIdentityKey(r.RegistryURL, r.RegistryRef, r.RegistryPath) + "\x00" + malformed
+	pluginName := ""
+	if r.Artifact.PluginPackage != nil {
+		pluginName = r.Artifact.PluginPackage.Name
+	}
+	return r.Artifact.Kind.String() + "\x00" + r.Artifact.Name + "\x00" + pluginName + "\x00" + registryIdentityKey(r.RegistryURL, r.RegistryRef, r.RegistryPath) + "\x00" + malformed
 }
 
 // uniqueRowByIdentity returns the only row with identity, so a rebuild never

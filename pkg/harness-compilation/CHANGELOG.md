@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### External catalog plugin entries deliver from their locked commit
+
+A plugin selected from a native catalog entry whose source is an external
+Git repository or Git subdirectory no longer reports
+`plugin.delivery.pending`: the consumer delivers the entry's committed
+post-exclusion members from the package at the exact commit its lock
+records, under the same decomposed and native delivery policy as in-path
+plugins, and never reads the live ref. When the entry has no locked record
+or its locked snapshot cannot be opened, that plugin instance is blocked
+with the new error `plugin.delivery.external-unavailable`, keeps its
+previous projection, and installs nothing on a first install, while other
+plugins and resources still deliver. `plugin.delivery.pending` now means
+only that a plugin has no member selection plan.
+
 ### Comma-separated subagent tool strings become separate tools
 
 Claude documents a subagent's `tools` and `disallowedTools` as a YAML list or a comma-separated string such as `Read, Grep, Bash`, but ingestion kept the string as one tool named `Read, Grep` (#822). Claude re-emitted a single combined entry, Factory and Gemini suppressed the subagent with `subagent.factory.tool-unknown` or `subagent.gemini.tool-unknown`, and a combined `disallowedTools` entry denied nothing. `LoadSubagent`, and with it Claude and Cursor source layout ingestion, now splits such a string on commas outside parentheses, where a backslash makes the next character literal, trims each entry and drops blank ones, so `Agent(worker, researcher), Read` is two tools. A string that names no tool, whose parentheses do not balance, or that ends in a lone backslash is not a well-formed list and keeps the single entry earlier versions produced. #822 also asks for such a value to be refused, but refusing it would drop a subagent that earlier releases ingested from the source-revision inventory and fail locks written by them with `lock.manifest-mismatch`, so it is left as it was; Factory and Gemini still refuse it at compile time. For subagents written in the string form, the Marketplace capability entries (`tool:<name>`) and tool-grant finding texts now list each tool, and the content and archive digests of artifacts built from a re-ingested revision change, while payloads published earlier stay as they were until the revision is published again. YAML lists and skill `allowed-tools` are unchanged, and a single name with surrounding whitespace, such as `" Read "`, is now trimmed, so targets that suppressed it as an unknown tool now emit it.
@@ -76,6 +90,15 @@ Gemini ingestion no longer rewrites `${GEMINI_PROJECT_DIR}` and `${CLAUDE_PROJEC
 
 A Marketplace resource artifact carries its target sidecars, and several compilers let a sidecar replace an authority-bearing canonical value unchecked. A Claude or Cursor subagent tool sidecar now only restates or narrows the canonical tool list; an entry that is neither a canonical entry nor a target tool the canonical list covers through the tool catalogs suppresses the subagent with `subagent.security-restriction-unsupported`. `compile.SidecarToolsWithinCanonical` exposes the shared check. A Claude or Cursor hook-type sidecar must equal the canonical type, as native hook projection already required, so it can no longer turn a prompt hook into a command hook (`hook.claude.unsupported-type`, `hook.cursor.unsupported-type`). Codex compilation now applies the canonical Codex MCP match it already applied when a server leaves Codex, suppressing a contradicting sidecar with `mcp.codex.security-unsupported`. Claude, Cursor, Factory and Gemini MCP output reserves every modeled MCP connection field (`command`, `args`, `env`, `url`, `transport`, `headers` and the OAuth fields) and its case variants regardless of typed presence, so extension fields cannot supply an active `command`, `args` or `url`; they are omitted with `compile.canonical-field-overrides-extra`. `disabled` keeps its existing handling. No in-tree ingester produces Claude or Cursor sidecars, and Codex-ingested sidecars match their canonical server, so native round trips are unchanged.
 
+### Plugin manifests with declared dependencies decode instead of failing
+
+`plugindecode` no longer rejects a plugin manifest that declares
+`dependencies`; the declared dependencies are recorded on `ir.Plugin` so the
+package stays inspectable. Installation remains unsupported: the consumer
+fails that plugin's delivery with the new error
+`plugin.format.dependencies-unsupported` and installs none of its members,
+while other selected plugins and resources still deliver.
+
 ### Devin converted command skills keep their restrictions
 
 Devin ingestion no longer recovers a skill marked `x-agent-marketplace-kind: command` as a command when the skill declares `permissions`, an `agent` or `subagent` selector, or triggers that do not include `user`. Those controls used to be dropped with `ingest.devin.command-field-dropped`, so a Devin-to-Devin round trip lost a deny policy and made a model-only resource user-invocable. The resource is now refused with the new error `ingest.devin.command-security-unsupported`, which names the fields but never their values; removing the marker ingests it as a skill with its controls intact. `model`, and extra activation next to `user`, are still dropped with the existing warning: a converted command is user-only, so dropping them only narrows it.
@@ -114,6 +137,39 @@ Model updates use a harness catalog plus an independent YAML conversion fixture;
 `make model-catalog-check` runs the offline maintenance gate. See the update recipe
 in the library README. No runtime catalog configuration or vendor CLI dependency
 is added.
+
+### Conversion assembles complete resource bundles from the source harness
+
+`Convert` (and `CompileBundle`, which delegates to it) now performs
+source-aware support-file assembly. Declared skill `SupportFiles` and
+hook/MCP assets explicitly referenced through the canonical root token are
+resolved against the source `fs.FS` and emitted as additional artifacts under
+the compiled resource root with exact bytes and modes; per-resource `Compile`
+stays filesystem-free and still defers the names with
+`skill.support-files-deferred`. A missing or unsafe (traversal, symlink,
+non-regular) support path fails closed with `bundle.support-file.missing` or
+`bundle.support-file.unsafe` and suppresses the owning resource's complete
+output, fragments included.
+
+Factory and Cursor MCP ingestion normalize their plugin-root tokens
+(`${DROID_PLUGIN_ROOT}`, `${CURSOR_PLUGIN_ROOT}`) to the canonical IR
+spelling across command, args, env, URL, and headers. Hook source provenance
+stays native; source-aware assembly recognizes canonical and source-native
+root tokens without using the author-machine source path as a compile-time
+plugin root.
+
+The assembly is also exported for package-generation consumers:
+`ReadContainedSupportFile` validates and reads a regular file beneath an
+`fs.FS` root (clean bundle-relative path, no symlink traversal, bounded
+size) and returns bytes, mode, and a stable diagnostic code.
+`WithNativeHookGenerationRoot` (on both `compile` and the package-level
+option set) supplies the absolute, immutable package-generation root that
+natively projected hook commands resolve against; it is never a repository
+output directory. New diagnostic codes for the decomposed-delivery boundary:
+`plugin.namespace-collision` and `plugin.namespace-invalid` refuse a plugin
+instance whose member's installed name conflicts with or is invalid for the
+target; `plugin.generation.publish` and `plugin.generation.missing` cover
+publication failures and missing or changed immutable package generations.
 
 ### Validated native-layout descriptors now cover Codex, Devin, and Claude
 

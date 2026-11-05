@@ -1,0 +1,26 @@
+# Catalog data for pkg/harness-compilation/pluginpolicy/formats/agent-plugin.yaml.
+schema: 1
+format: agent-plugin
+role: package
+evidence:
+  checked: "2026-10-15"
+  refs:
+    - https://agent-plugins.org/specification
+    - https://agent-plugins.org/plugin-authors/manifest
+  notes: "The portable manifest is plugin.json at the plugin root and must declare the canonical $schema identifier."
+versions: ["1.0.0"]
+manifest:
+  fields:
+    $schema: {required: true, type: string, invalid: refuse-package}
+    name: {required: true, type: string, invalid: refuse-package}
+    version: {required: false, type: string, invalid: ignore-with-warning}
+    description: {required: false, type: string, invalid: ignore-with-warning}
+    author: {required: false, type: object, invalid: ignore-with-warning}
+    homepage: {required: false, type: string, invalid: ignore-with-warning}
+    repository: {required: false, type: string, invalid: ignore-with-warning}
+    license: {required: false, type: string, invalid: ignore-with-warning}
+    keywords: {required: false, type: array, invalid: ignore-with-warning}
+components:
+  skills: immediate-children
+  mcp: file
+dependencies: refuse-package

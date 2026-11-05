@@ -9,6 +9,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 )
 
 type IssueSeverity uint8
@@ -68,8 +69,10 @@ func Inspect(ctx context.Context, opts InspectOptions) (InspectionResult, func()
 		if dryRun == nil {
 			dryRun = materialize.Run
 		}
-		report, matErr = dryRun(ctx, opts.Resolve.Workspace.MaterializeRoot(), resolved.Resolved,
-			materialize.WithDryRun(), materialize.WithMaterializationModes(resolved.MaterializationModes))
+		deliverable, _ := DeliverableArtifacts(resolved.Resolved, resolved.PluginPlan)
+		report, matErr = dryRun(ctx, opts.Resolve.Workspace.MaterializeRoot(), deliverable,
+			materialize.WithDryRun(), materialize.WithMaterializationModes(resolved.MaterializationModes),
+			materialize.WithPluginStateReconciliation())
 	}
 	return buildInspection(resolved, report, matErr), release
 }
@@ -123,6 +126,17 @@ func buildInspection(resolved ResolveResult, report *materialize.Report, matErr 
 		}
 		mark(err)
 		add(IssueError, IssueCatalog, err)
+	}
+	if _, pending := DeliverableArtifacts(resolved.Resolved, resolved.PluginPlan); len(pending) > 0 {
+		for _, w := range pending {
+			var diagnostic interface{ DiagnosticSeverity() diag.Severity }
+			if errors.As(w, &diagnostic) && diagnostic.DiagnosticSeverity() == diag.SeverityError {
+				mark(w)
+				add(IssueError, IssueMaterialization, w)
+			} else {
+				add(IssueWarning, IssueMaterialization, w)
+			}
+		}
 	}
 	for _, malformed := range resolved.CatalogLoad.Malformed {
 		add(IssueWarning, IssueCatalog, malformedResourceError(malformed))

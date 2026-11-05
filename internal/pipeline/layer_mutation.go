@@ -49,6 +49,13 @@ func (m *LayerMutation) Apply(binding config.SourceBinding, change config.Select
 	return m.editor.Apply(binding, change)
 }
 
+func (m *LayerMutation) SetPluginMemberExcluded(binding config.SourceBinding, pluginName string, member config.ResourceLocator, excluded bool) error {
+	if m == nil || m.editor == nil {
+		return errors.New("layer mutation has no open editor")
+	}
+	return m.editor.SetPluginMemberExcluded(binding, pluginName, member, excluded)
+}
+
 func (m *LayerMutation) LookupRegistry(entry config.RegistryEntry) (config.SourceBinding, bool, error) {
 	return m.editor.LookupRegistry(entry)
 }

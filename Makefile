@@ -114,7 +114,8 @@ catalog-docs:
 	CGO_ENABLED=0 $(GO) run ./tools/catalog-docs
 
 catalog-check: model-catalog-check
-	CGO_ENABLED=0 $(GO) test ./pkg/harness-compilation/toolpolicy ./pkg/harness-compilation/hookpolicy -count=1
+	CGO_ENABLED=0 $(GO) test ./pkg/harness-compilation/toolpolicy ./pkg/harness-compilation/hookpolicy ./pkg/harness-compilation/pluginpolicy -count=1
+	CGO_ENABLED=0 $(GO) test ./tools/harness-compat -run TestPluginCatalogsValidateAgainstNativeProbes -count=1
 	CGO_ENABLED=0 $(GO) test ./tools/catalog-docs -count=1
 	CGO_ENABLED=0 $(GO) test ./pkg/harness-compilation -run 'TestMatrix' -count=1
 	CGO_ENABLED=0 $(GO) run ./tools/catalog-docs -check
@@ -282,7 +283,7 @@ comma := ,
 # The pinned Go build image ships git; override when Docker Hub is unavailable.
 AM_E2E_RELEASED_IMAGE ?= $(GO_BUILD_IMAGE)
 E2E_REQUIRED_TESTS := TestUnsupportedConsumerRootsRefuseBeforeWork,TestUnsupportedConsumerIncludesRefuseBeforeWork,TestUnsupportedConsumerConfigPreventsMissingDestinations,TestClaudeConfigurationDirectory
-RELEASED_CLIENT_GATE_TESTS := TestReleasedClientReadsCandidateCommittedState,TestReleasedClientReadsCandidateIsolatedCommittedState,TestReleasedClientLockVerifiesNativeHookSourceLayouts,TestReleasedClientHookOutputUpgrades
+RELEASED_CLIENT_GATE_TESTS := TestReleasedClientReadsCandidateCommittedState,TestReleasedClientReadsCandidateIsolatedCommittedState,TestReleasedClientNativeClaudePersonalLocalRegistration,TestReleasedClientNativeFactoryPersonalLocalRegistration,TestReleasedClientNativeCodexPersonalLocalRegistration,TestReleasedClientLockVerifiesNativeHookSourceLayouts,TestReleasedClientHookOutputUpgrades,TestReleasedClientRefusesPluginConfiguration
 
 released-client-gate:
 	@test -n "$(AM_E2E_RELEASED_BINARY)" || { echo "ERROR: AM_E2E_RELEASED_BINARY must point to the verified latest Linux release" >&2; exit 1; }

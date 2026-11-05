@@ -74,6 +74,8 @@ func ParseKind(value string) (ir.ResourceKind, bool) {
 		return ir.KindMcpServer, true
 	case "collection", "collections":
 		return ir.KindCollection, true
+	case "plugin", "plugins":
+		return ir.KindPlugin, true
 	default:
 		return 0, false
 	}

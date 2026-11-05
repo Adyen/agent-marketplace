@@ -26,6 +26,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/marketplacelock"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
+	"github.com/Adyen/agent-marketplace/internal/processstart"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
@@ -889,7 +890,7 @@ func discoverTagBump(repoDir, currentRef string) (string, bool, error) {
 	}
 
 	args := []string{"tag", "-l", matches[1] + "*"}
-	cmd := exec.Command("git", args...)
+	cmd := processstart.Command(context.Background(), "git", args...)
 	cmd.Dir = repoDir
 	var stderr tagBumpStderr
 	cmd.Stderr = &stderr

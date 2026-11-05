@@ -51,6 +51,10 @@ type Entry struct {
 	Path              string      // source file path (from ir.SourceRef)
 	SourceHarness     string      `json:"-"`
 	PrimarySourcePath string      `json:"-"`
+	PackageRoot       string      `json:"-"`
+	// Plugin carries package metadata for Kind == ir.KindPlugin entries;
+	// nil for loose resources.
+	Plugin *PluginEntry `json:"-"`
 }
 
 // Requirement identifies another resource that must be selected for a
@@ -243,8 +247,10 @@ func collectionParseKind(s string) (ir.ResourceKind, error) {
 		return ir.KindHook, nil
 	case "mcp", "mcpserver":
 		return ir.KindMcpServer, nil
+	case "plugin":
+		return ir.KindPlugin, nil
 	default:
-		return ir.KindSkill, fmt.Errorf("unsupported collection member kind %q (must be one of skill, command, subagent, hook, mcp)", s)
+		return ir.KindSkill, fmt.Errorf("unsupported collection member kind %q (must be one of skill, command, subagent, hook, mcp, plugin)", s)
 	}
 }
 
@@ -334,6 +340,12 @@ func LoadSourceWithOptions(srcFS *fsboundary.SourceFS, dir, sourceHarness string
 	definition, _ := target.Lookup(cat.SourceHarness)
 	for i := range cat.Entries {
 		primary := filepath.ToSlash(cat.Entries[i].Path)
+		if cat.Entries[i].Kind == ir.KindPlugin && cat.Entries[i].Plugin != nil && cat.Entries[i].Plugin.Source.Kind == "path" {
+			cat.Entries[i].PackageRoot = pluginPackageRoot(root, cat.Entries[i].Path, cat.Entries[i].Plugin.Format)
+		}
+		if cat.Entries[i].Kind == ir.KindPlugin && primary != "" && !filepath.IsAbs(primary) {
+			cat.Entries[i].PrimarySourcePath = filepath.Join(root, filepath.FromSlash(primary))
+		}
 		if !srcFS.WasRead(primary) && definition.RepoRoot != "" {
 			primary = path.Join(definition.RepoRoot, primary)
 		}
@@ -345,6 +357,35 @@ func LoadSourceWithOptions(srcFS *fsboundary.SourceFS, dir, sourceHarness string
 		}
 	}
 	return cat, nil
+}
+
+func pluginPackageRoot(root, manifestPath, format string) string {
+	layout, ok := target.LookupPackageLayout(format)
+	if !ok || manifestPath == "" {
+		return ""
+	}
+	manifest := manifestPath
+	if !filepath.IsAbs(manifest) {
+		manifest = filepath.Join(root, filepath.FromSlash(manifest))
+	}
+	return PackageRootFromManifest(manifest, layout.ManifestPath)
+}
+
+// PackageRootFromManifest walks a manifest path up to the package root its
+// layout declares.
+func PackageRootFromManifest(manifestPath, manifestRel string) string {
+	if !filepath.IsAbs(manifestPath) {
+		absolute, err := filepath.Abs(manifestPath)
+		if err != nil {
+			return ""
+		}
+		manifestPath = absolute
+	}
+	packageRoot := filepath.Clean(manifestPath)
+	for range strings.Split(filepath.FromSlash(manifestRel), string(os.PathSeparator)) {
+		packageRoot = filepath.Dir(packageRoot)
+	}
+	return packageRoot
 }
 
 // LoadFS discovers resources from an fs.FS using HCC IngestBundle.

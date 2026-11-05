@@ -40,7 +40,8 @@ func prepareInstallDependencies(ctx context.Context, root, local string, edits [
 		state.targetLockPaths[lockPath] = true
 	}
 	var warnings []error
-	option, _, lease, err := prepareRuntimeLocks(ctx, root, local, lockMode{stagedConfigEdits: edits, prepareInstall: state, warningSink: &warnings})
+	var lockMetadata []pipeline.LockMetadata
+	option, _, lease, err := prepareRuntimeLocks(ctx, root, local, lockMode{stagedConfigEdits: edits, prepareInstall: state, warningSink: &warnings, lockMetadataSink: &lockMetadata})
 	if err != nil {
 		return pipeline.PreparedInstallDependencies{}, err
 	}
@@ -64,11 +65,12 @@ func prepareInstallDependencies(ctx context.Context, root, local string, edits [
 		}
 		used = true
 		var warnings []error
-		option, _, lease, err := prepareRuntimeLocks(ctx, root, local, lockMode{offline: true, stagedConfigEdits: finalEdits, commitReads: state.reads, reuseInstall: state, warningSink: &warnings})
+		var lockMetadata []pipeline.LockMetadata
+		option, _, lease, err := prepareRuntimeLocks(ctx, root, local, lockMode{offline: true, stagedConfigEdits: finalEdits, commitReads: state.reads, reuseInstall: state, warningSink: &warnings, lockMetadataSink: &lockMetadata})
 		if err != nil {
 			return pipeline.DependencyLockView{}, err
 		}
-		return pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, Warnings: warnings}, nil
+		return pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, LockMetadata: lockMetadata, Warnings: warnings}, nil
 	}
 	bind := func(target config.Source, entry config.RegistryEntry) error {
 		mu.Lock()
@@ -92,7 +94,7 @@ func prepareInstallDependencies(ctx context.Context, root, local string, edits [
 	}
 	return pipeline.PreparedInstallDependencies{
 		Context: state.ctx, DiscoveryConfig: state.discoveryConfig,
-		View:      pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, Warnings: warnings},
+		View:      pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, LockMetadata: lockMetadata, Warnings: warnings},
 		Reconcile: reconcile, BindRegistry: bind, ResolvedCommit: resolvedCommit, Release: release,
 	}, nil
 }
@@ -185,7 +187,7 @@ func (p *preparedInstallLocks) bindRegistry(target config.Source, entry config.R
 	return fmt.Errorf("%w: selected registry has no prepared pin", dependencytxn.ErrGenerationConflict)
 }
 
-func reuseInstallDocument(plan *preparedInstallLocks, path string, scope lockfile.Scope, entries []config.RegistryEntry, current *lockfile.Document) (reconciledDocument, bool) {
+func reuseInstallDocument(ctx context.Context, plan *preparedInstallLocks, path string, scope lockfile.Scope, entries []config.RegistryEntry, decls []config.SourceDecl, current *lockfile.Document, planner *pluginPlanSource, layer config.Source) (reconciledDocument, bool) {
 	doc, ok := plan.documents[path]
 	if bindings := plan.bindings[path]; len(bindings) > 0 {
 		var err error
@@ -195,7 +197,7 @@ func reuseInstallDocument(plan *preparedInstallLocks, path string, scope lockfil
 		}
 		ok = true
 	}
-	if !ok || !documentMatchesEntries(doc, entries) {
+	if !ok || !documentMatchesEntries(doc, entries, expectedExternalIdentities(ctx, planner, decls, doc, layer)) {
 		return reconciledDocument{err: fmt.Errorf("%w: prepared install requirements changed", dependencytxn.ErrGenerationConflict)}, false
 	}
 	if current == nil {

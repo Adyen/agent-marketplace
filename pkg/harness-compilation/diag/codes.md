@@ -77,6 +77,7 @@ comparison in non-test code.
 | `ingest.devin.unconsumed-config` | A recognized MCP or hook configuration file was not read by the selected Devin layout | Follow the file-specific hint to select the matching source layout or merge definitions into the selected layout without overwriting entries. |
 | `ingest.codex.unconsumed-config` | A recognized MCP or hook configuration file was not read by the selected Codex layout | Follow the file-specific hint to select the matching source layout or merge definitions into the selected layout without overwriting entries. |
 | `ingest.factory.resource-shadowed` | Factory resource was shadowed by an earlier resource of the same kind and name | Use distinct resource names or remove the lower-priority definition |
+| `ingest.factory.root-skill-ignored` | A root SKILL.md was found and not ingested; Factory plugins load skills only from skills/<name>/ | Move the skill into skills/<name>/SKILL.md or remove the root file |
 | `subagent.windsurf.no-primitive` | Windsurf has no subagent primitive; resource dropped | Consider expressing the subagent as a Windsurf workflow instead |
 | `hook.claude.unsupported-type` | Unsupported hook type in Claude format; only command-type is universally supported in v0 | Convert the hook to a command type or remove it |
 | `hook.windsurf.env-token-expanded` | Windsurf expanded env token to a literal path | Verify the expanded path is correct for the target environment |
@@ -143,6 +144,13 @@ comparison in non-test code.
 | `doctor.devin.version-unsupported` | The installed Devin CLI is older than the 3000.3 compatibility floor | Sync does not require a Devin binary and is not blocked; upgrade the Devin CLI to 3000.3 or newer before relying on the generated output |
 | `doctor.devin.version-unknown` | A Devin CLI is installed but its version could not be established | The version probe failed, timed out, or printed no recognizable version; nothing is blocked, but 3000.3 compatibility could not be confirmed |
 | `doctor.repair.conflict-replaceable` | An existing unmanaged aggregate entry has the same key as a desired entry but a different value, so it is neither an exact adoption match nor an evidence-backed orphan | Run doctor --repair on a terminal to confirm replacing it with the generated entry; the existing entry is preserved until you confirm, a fresh safety backup is taken first, and --yes never replaces it |
+| `plugin.format.field-ignored` | A manifest field the plugin format does not model was reported and ignored; the package still loads | Remove the field, or move client-specific data under the extensions namespace |
+| `plugin.format.component-invalid` | A fixed plugin component location is not present in its expected form; that component type is skipped while other component types load | Restore the documented component location or remove the stray entry |
+| `plugin.member.invalid` | A plugin member or entry failed validation and was skipped while its siblings loaded | Fix the reported member; the package keeps the members that are valid |
+| `plugin.member.field-omitted` | A plugin member field the harness plugin surface marks omit-field was dropped before lowering; the member still installs | Remove the field, or deliver to a target that can represent it |
+| `plugin.catalog.source-unsupported` | A plugin catalog entry declares a source type its format refuses; the entry is inspectable but not installable | Acquire the plugin through a source type the format accepts, or install it from a different source |
+| `plugin.catalog.duplicate-entry` | Two plugin catalog entries share one name; neither copy is installable | Rename one entry or remove the duplicate |
+| `plugin.catalog.manifest-conflict` | A catalog entry opts out of strict overlay while carrying component fields, so the entry and its plugin.json disagree; the entry is inspectable but not installable | Drop the entry's component fields or remove strict: false |
 
 ### Hook review output
 
@@ -623,6 +631,8 @@ key or a hook event name), the resource name, and content digests are reported.
 | `bundle.conflict.cross-kind-artifact-path` | Resources of different kinds produce the same artifact output path; neither artifact is emitted | Rename one of the conflicting resources: on targets that compile commands as skills, a skill and a command cannot share a name |
 | `bundle.compile.resource-failed` | A resource compiler failed | Fix the resource compiler error before materializing the bundle |
 | `ingest.frontmatter.too-large` | YAML frontmatter exceeds the 64 KiB parse ceiling; the resource is not loaded | Shorten the frontmatter and move long content into the body or support files |
+| `bundle.support-file.missing` | A declared skill support file or an explicitly referenced hook/MCP asset is absent from the source bundle; the owning resource was not emitted | Restore the missing file or remove the reference to it |
+| `bundle.support-file.unsafe` | A support-file path is unsafe (escapes the bundle root, traverses a symlink, or is not a regular file); the owning resource was not emitted | Keep support files inside the resource or bundle root as regular files and remove the unsafe path |
 | `ingest.claude.load-skill-failed` | Failed to load a skill from the Claude source layout | Check the skill directory structure and SKILL.md frontmatter |
 | `ingest.claude.load-command-failed` | Failed to load a command from the Claude source layout | Check the command .md file structure and frontmatter |
 | `ingest.claude.load-subagent-failed` | Failed to load a subagent from the Claude source layout | Check the agent .md file structure and frontmatter |
@@ -673,6 +683,33 @@ key or a hook event name), the resource name, and content digests are reported.
 | `doctor.repair.failed` | An authorized `doctor --repair` action failed; the aggregate was left exactly as found | This is the "partial repair failure" half of the repair contract and exits 1; nothing was partially written, so re-running the repair is safe |
 | `hook.native-tolerance-refused` | A native hook file was malformed, ambiguous, or unsafe to inspect, so the affected target was left exactly as found | Fix the reported native hook file by hand; no native or legacy hook bytes were changed |
 | `hook.remove-unowned` | Removal would leave a native hook active without clean ownership proof; configuration and hook files are unchanged | Review the named native file and deliberately remove the hook, or explicitly repair ownership before retrying |
+| `plugin.format.unsupported` | The source is not a recognized plugin package format, or the destination harness does not accept it | Use a supported package format and a harness whose plugin catalog accepts it |
+| `plugin.format.version-unsupported` | The plugin package declares a format version no decoder supports; the package is not installable | Pin the package to a supported format version |
+| `plugin.format.manifest-invalid` | Required plugin manifest data is missing or invalid; the package was rejected before component discovery | Fix the manifest's required fields |
+| `plugin.format.dependencies-unsupported` | The plugin declares dependencies that sync cannot install; no members were installed | Remove the declared dependencies or wait for plugin dependency support |
+| `plugin.package.path-escape` | A plugin package path resolves outside the package root or a symlink cannot be resolved inside it (escape, dangling, or cyclic link); the package was rejected | Remove the escaping or unresolvable path or symlink; package content must stay inside the plugin root |
+| `plugin.package.symlink-cycle` | A plugin package symlinked directory resolves to the package root or an ancestor directory of the link; the package was rejected | Remove the cyclic symlink; links resolving elsewhere inside the root are allowed |
+| `plugin.package.special-file` | A plugin package entry is a device, socket, or FIFO rather than a regular file or directory; the package was rejected | Remove the special file; a plugin package carries regular files and directories only |
+| `plugin.package.case-collision` | Two plugin package paths differ only by letter case and cannot coexist on case-insensitive filesystems; the package was rejected | Rename one of the colliding paths |
+| `plugin.package.oversized` | A plugin package file exceeds the bounded-read limit; the package was rejected | Reduce the file below the read limit |
+| `plugin.export.loss` | Plugin export would lose non-security package content | Review the listed losses; use `--allow-loss` only when those omissions are acceptable |
+| `plugin.export.restriction` | Plugin export would drop a security restriction and was refused | Retain the restriction or use a package format that represents it |
+| `plugin.export.out-not-empty` | Export output directory contains files; no package was written | Choose an absent or empty output directory |
+| `plugin.member.literal-unrepresentable` | A plugin MCP member carries placeholder-like text the destination harness would reinterpret, and no literal escape exists; the member was blocked | Rewrite the value without placeholder-like text, or deliver to a target that can carry it literally |
+| `plugin.member.restriction-unsupported` | A plugin member field is a restriction the destination plugin surface cannot enforce; the member was blocked rather than installed without it | Remove the restricted field, or deliver to a target that enforces it |
+| `plugin.compile.package-required` | A plugin resource reached the per-resource Compile boundary; plugins compile through the package compile entry point | Call the package compile entry point instead of Compile |
+| `plugin.delivery.pending` (warning) | A plugin has no member selection plan; no members were delivered | Refresh the plugin selection and run sync again |
+| `plugin.delivery.external-unavailable` (error) | A selected external plugin has no usable locked package snapshot; that plugin instance was blocked | Restore the exact locked snapshot or update its lock through a writable sync |
+| `plugin.delivery.native-unverified` | Native plugin delivery was requested for a harness whose catalog does not verify it; no plugin members were written | Use `auto` or `decompose`, or wait until a native-delivery probe verifies the target |
+| `plugin.catalog.shared-origin` | Two selected catalog entries resolve to the same external origin, ref, and subdirectory; their lock records would collapse into one, so the selection is refused | Select only one of the entries, or split the packages into distinct origins or subdirectories |
+| `plugin.selection.undeclared-source` | A collection authored in one config layer selects a plugin from a format source that layer does not declare; the selection would record in no acquisition lock, so it is refused | Declare the format source in the selecting layer, or author the selection in the layer that declares it |
+| `plugin.namespace-collision` | A decomposed plugin member's installed name collides with another selected resource in the same target and scope; the plugin instance was refused | Rename or exclude the conflicting resource; plugin member names are not suffixed |
+| `plugin.namespace-invalid` | A decomposed plugin member's installed name is invalid for the target; the plugin instance was refused | Use a plugin and member name that satisfy the target's resource-name rules |
+| `plugin.generation.publish` | An immutable plugin package generation could not be published; the previous plugin projection was retained | Restore a readable, contained plugin package and re-run sync |
+| `plugin.generation.missing` | A required immutable plugin package generation is missing or changed; plugin drift could not be checked safely | Re-run writable sync to publish the verified package generation |
+| `plugin.registration.unsupported` | The target has no declared native plugin registration layout; no plugin output was written | Use `decompose` or select a target with native plugin registration support |
+| `plugin.registration.collision` | An unmanaged native plugin registration uses a desired key; the existing entry was preserved | Remove the handwritten collision or run sync after establishing ownership through a supported path |
+| `plugin.registration.reload-required` (warning) | A changed native plugin generation requires a harness reload | Restart or reload the harness before using the updated plugin |
 
 ### Devin doctor and repair codes
 

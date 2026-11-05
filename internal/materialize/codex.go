@@ -11,7 +11,10 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
+	"strings"
 
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
@@ -39,9 +42,10 @@ var (
 type codexOwnedAggregateHandler struct{}
 
 type codexOwnedAggregateState struct {
-	hooks   *ownedJSONAggregateWork
-	mcps    []codexMCPEntry
-	blocked bool
+	hooks         *ownedJSONAggregateWork
+	mcps          []codexMCPEntry
+	registrations []codexPluginRegistration
+	blocked       bool
 }
 
 func codexState(state ownedAggregateState, key outputKey) *codexOwnedAggregateState {
@@ -53,10 +57,16 @@ func codexState(state ownedAggregateState, key outputKey) *codexOwnedAggregateSt
 	return current
 }
 
-func (codexOwnedAggregateHandler) extract(state ownedAggregateState, key outputKey, artifacts []artifact.Artifact, resource string) ([]artifact.Artifact, error) {
+func (codexOwnedAggregateHandler) extract(state ownedAggregateState, key outputKey, artifacts []artifact.Artifact, resource, pluginInstanceKey string) ([]artifact.Artifact, error) {
 	rest, hooks, mcps, err := splitCodexOwnedArtifacts(artifacts, resource)
 	if err != nil {
 		return nil, err
+	}
+	for i := range hooks {
+		hooks[i].pluginInstanceKey = pluginInstanceKey
+	}
+	for i := range mcps {
+		mcps[i].pluginInstanceKey = pluginInstanceKey
 	}
 	current := codexState(state, key)
 	current.mcps = append(current.mcps, mcps...)
@@ -109,6 +119,7 @@ func (codexOwnedAggregateHandler) reconcile(ctx context.Context, report *Report,
 	if current == nil {
 		current = &codexOwnedAggregateState{}
 	}
+	batch := state.pluginBatch(key)
 	for _, destination := range destinations {
 		if !destination.Info.OwnershipReconciledAggregates {
 			continue
@@ -118,6 +129,12 @@ func (codexOwnedAggregateHandler) reconcile(ctx context.Context, report *Report,
 			hookOptions := codexHookJSONOptions()
 			hookOptions.rootID = destination.ID
 			hookOptions.onWrite = appendCodexTrustReviewDiagnostic
+			if batch != nil {
+				hookOptions.batch = batch
+				hookOptions.pluginInstanceKey = batch.instanceKey
+				hookOptions.pluginInstanceKeys = batch.ownerInstances
+				hookOptions.activePluginInstances = batch.activeInstances
+			}
 			if hasSession {
 				hookOptions.store = session.store
 				hookOptions.lockReport = session.lockReport
@@ -128,9 +145,9 @@ func (codexOwnedAggregateHandler) reconcile(ctx context.Context, report *Report,
 			report = reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, []ownedJSONFileSpec{hookFile}, current.hooks, hookOptions, dryRun)
 		}
 		if hasSession {
-			return reconcileCodexMCPWithSession(ctx, report, key, destination.ID, destination.Root, current.mcps, current.blocked, dryRun, &session)
+			return reconcileCodexMCPWithSession(ctx, report, key, destination.ID, destination.Root, current.mcps, current.registrations, current.blocked, dryRun, &session, batch)
 		}
-		return reconcileCodexMCP(ctx, report, key, destination.ID, destination.Root, current.mcps, current.blocked, dryRun)
+		return reconcileCodexMCPWithSession(ctx, report, key, destination.ID, destination.Root, current.mcps, current.registrations, current.blocked, dryRun, nil, batch)
 	}
 	return report
 }
@@ -154,9 +171,87 @@ func (codexOwnedAggregateHandler) nativeHookReconcileOptions() ownedJSONReconcil
 }
 
 type codexMCPEntry struct {
-	name, resource string
-	raw            []byte
-	valueDigest    string
+	name, resource    string
+	raw               []byte
+	valueDigest       string
+	pluginInstanceKey string
+}
+
+type codexPluginRegistration struct {
+	container, key, resource string
+	sourceType, source       string
+	valueDigest              string
+	pluginInstanceKey        string
+}
+
+func codexPluginRegistrations(entries []ownedJSONEntry) ([]codexPluginRegistration, error) {
+	out := make([]codexPluginRegistration, 0, len(entries))
+	for _, entry := range entries {
+		registration := codexPluginRegistration{
+			container: entry.container, key: entry.key, resource: entry.resource,
+			valueDigest: entry.valueDigest(), pluginInstanceKey: entry.pluginInstanceKey,
+		}
+		switch entry.container {
+		case "marketplaces":
+			var value struct {
+				SourceType string `json:"source_type"`
+				Source     string `json:"source"`
+			}
+			if err := json.Unmarshal(entry.raw, &value); err != nil || value.SourceType != "local" || value.Source == "" {
+				return nil, fmt.Errorf("invalid Codex local marketplace registration")
+			}
+			registration.sourceType, registration.source = value.SourceType, value.Source
+		case "plugins":
+			var value struct {
+				Enabled bool `json:"enabled"`
+			}
+			if err := json.Unmarshal(entry.raw, &value); err != nil || !value.Enabled {
+				return nil, fmt.Errorf("invalid Codex plugin registration")
+			}
+		default:
+			return nil, fmt.Errorf("unsupported Codex plugin registration container")
+		}
+		out = append(out, registration)
+	}
+	return out, nil
+}
+
+func (e codexPluginRegistration) id() ownership.EntryID {
+	return ownership.EntryID{
+		Kind: ownership.KindPluginRegistration, Container: e.container, Key: e.key,
+		IdentityDigest: ownership.PluginRegistrationIdentityDigest(e.container, e.key),
+	}
+}
+
+func (e codexPluginRegistration) owned() ownership.Entry {
+	id := e.id()
+	return ownership.Entry{
+		Kind: id.Kind, Container: id.Container, Key: id.Key, IdentityDigest: id.IdentityDigest,
+		ValueDigest: e.valueDigest, Resource: e.resource, PluginInstance: e.pluginInstanceKey,
+	}
+}
+
+func (e codexPluginRegistration) entryValue() ownership.EntryValue {
+	return ownership.EntryValue{ID: e.id(), ValueDigest: e.valueDigest}
+}
+
+func (e codexPluginRegistration) tomlTable() []byte {
+	var table strings.Builder
+	table.WriteByte('[')
+	table.WriteString(e.container)
+	table.WriteByte('.')
+	table.WriteString(strconv.Quote(e.key))
+	table.WriteString("]\n")
+	if e.container == "marketplaces" {
+		table.WriteString("source_type = ")
+		table.WriteString(strconv.Quote(e.sourceType))
+		table.WriteString("\nsource = ")
+		table.WriteString(strconv.Quote(e.source))
+		table.WriteByte('\n')
+	} else {
+		table.WriteString("enabled = true\n")
+	}
+	return []byte(table.String())
 }
 
 func (e codexMCPEntry) id() ownership.EntryID {
@@ -165,7 +260,15 @@ func (e codexMCPEntry) id() ownership.EntryID {
 
 func (e codexMCPEntry) owned() ownership.Entry {
 	id := e.id()
-	return ownership.Entry{Kind: id.Kind, Container: id.Container, Key: id.Key, IdentityDigest: id.IdentityDigest, ValueDigest: e.valueDigest, Resource: e.resource}
+	return ownership.Entry{
+		Kind:           id.Kind,
+		Container:      id.Container,
+		Key:            id.Key,
+		IdentityDigest: id.IdentityDigest,
+		ValueDigest:    e.valueDigest,
+		Resource:       e.resource,
+		PluginInstance: e.pluginInstanceKey,
+	}
 }
 
 // splitCodexOwnedArtifacts keeps ownership-reconciled files out of the generic
@@ -345,6 +448,17 @@ func (s codexMCPSection) edits(replacement []byte) []codexMCPEdit {
 	return edits
 }
 
+func extendCodexSpan(spans []codexMCPSpan, start, end int) []codexMCPSpan {
+	if len(spans) == 0 {
+		return []codexMCPSpan{{start: start, end: end}}
+	}
+	if start < spans[0].start {
+		spans[0].start = start
+	}
+	spans[0].end = end
+	return spans
+}
+
 func applyCodexMCPEdits(raw []byte, edits []codexMCPEdit) []byte {
 	slices.Reverse(edits)
 	sort.SliceStable(edits, func(i, j int) bool { return edits[i].start < edits[j].start })
@@ -462,6 +576,96 @@ func codexMCPSections(raw []byte) (map[string]codexMCPSection, []ownership.Entry
 	return sections, existing, nil
 }
 
+func codexPluginRegistrationSections(raw []byte, container string) (map[string]codexMCPSection, []ownership.EntryValue, error) {
+	var document map[string]any
+	if err := toml.Unmarshal(raw, &document); err != nil {
+		return nil, nil, err
+	}
+	value, present := document[container]
+	if !present {
+		return map[string]codexMCPSection{}, nil, nil
+	}
+	tables, ok := value.(map[string]any)
+	if !ok {
+		return nil, nil, fmt.Errorf("%s is not a table", container)
+	}
+	sections := make(map[string]codexMCPSection, len(tables))
+	var parser unstable.Parser
+	parser.Reset(raw)
+	current := ""
+	for parser.NextExpression() {
+		node := parser.Expression()
+		switch node.Kind {
+		case unstable.Table:
+			keys := make([]string, 0, 3)
+			it := node.Key()
+			for it.Next() {
+				keys = append(keys, string(it.Node().Data))
+			}
+			current = ""
+			if len(keys) < 2 || keys[0] != container {
+				continue
+			}
+			current = keys[1]
+			first := int(node.Child().Raw.Offset)
+			start := bytes.LastIndexByte(raw[:first], '\n') + 1
+			section := sections[current]
+			section.spans = extendCodexSpan(section.spans, start, lineEnd(raw, first))
+			section.alternate = section.alternate || len(keys) > 2
+			sections[current] = section
+		case unstable.KeyValue:
+			keys := make([]string, 0, 3)
+			it := node.Key()
+			for it.Next() {
+				keys = append(keys, string(it.Node().Data))
+			}
+			if current != "" {
+				section := sections[current]
+				section.spans[0].end = lineEnd(raw, int(node.Raw.Offset+node.Raw.Length))
+				sections[current] = section
+			} else if len(keys) >= 2 && keys[0] == container {
+				current = keys[1]
+				section := sections[current]
+				start := bytes.LastIndexByte(raw[:node.Raw.Offset], '\n') + 1
+				section.spans = extendCodexSpan(section.spans, start, lineEnd(raw, int(node.Raw.Offset+node.Raw.Length)))
+				section.alternate = true
+				sections[current] = section
+			}
+		}
+	}
+	if err := parser.Error(); err != nil {
+		return nil, nil, err
+	}
+	existing := make([]ownership.EntryValue, 0, len(tables))
+	for key, table := range tables {
+		section, found := sections[key]
+		if !found {
+			return nil, nil, fmt.Errorf("%s registration %q is not represented by a table section", container, key)
+		}
+		encoded, err := json.Marshal(table)
+		if err != nil {
+			return nil, nil, err
+		}
+		id := ownership.EntryID{
+			Kind: ownership.KindPluginRegistration, Container: container, Key: key,
+			IdentityDigest: ownership.PluginRegistrationIdentityDigest(container, key),
+		}
+		section.value = ownership.EntryValue{ID: id, ValueDigest: ownership.Digest(encoded)}
+		sections[key] = section
+		existing = append(existing, section.value)
+	}
+	return sections, existing, nil
+}
+
+func codexPluginRegistrationSection(container, key string, marketplaces, plugins map[string]codexMCPSection) (codexMCPSection, bool) {
+	if container == "marketplaces" {
+		section, ok := marketplaces[key]
+		return section, ok
+	}
+	section, ok := plugins[key]
+	return section, ok
+}
+
 func lineEnd(raw []byte, offset int) int {
 	if offset > len(raw) {
 		offset = len(raw)
@@ -473,10 +677,10 @@ func lineEnd(raw []byte, offset int) int {
 }
 
 func reconcileCodexMCP(ctx context.Context, report *Report, key outputKey, rootID, root string, desired []codexMCPEntry, incomplete, dryRun bool) *Report {
-	return reconcileCodexMCPWithSession(ctx, report, key, rootID, root, desired, incomplete, dryRun, nil)
+	return reconcileCodexMCPWithSession(ctx, report, key, rootID, root, desired, nil, incomplete, dryRun, nil, nil)
 }
 
-func reconcileCodexMCPWithSession(ctx context.Context, report *Report, key outputKey, rootID, root string, desired []codexMCPEntry, incomplete, dryRun bool, sharedSession *ownedAggregateWriteSession) *Report {
+func reconcileCodexMCPWithSession(ctx context.Context, report *Report, key outputKey, rootID, root string, desired []codexMCPEntry, registrations []codexPluginRegistration, incomplete, dryRun bool, sharedSession *ownedAggregateWriteSession, batch *pluginInstanceBatch) *Report {
 	slog.Debug("Codex MCP reconciliation start", "target", key.target, "machine_scope", key.machineScope, "root", root, "desired_entries", len(desired), "incomplete", incomplete, "dry_run", dryRun)
 	seen := make(map[string]string, len(desired))
 	for _, entry := range desired {
@@ -488,7 +692,7 @@ func reconcileCodexMCPWithSession(ctx context.Context, report *Report, key outpu
 		seen[entry.name] = entry.resource
 	}
 	abs := filepath.Join(root, codexMCPFile)
-	if len(desired) == 0 {
+	if len(desired) == 0 && len(registrations) == 0 && batch == nil {
 		if _, err := os.Lstat(abs); os.IsNotExist(err) {
 			return report
 		}
@@ -512,12 +716,23 @@ func reconcileCodexMCPWithSession(ctx context.Context, report *Report, key outpu
 		}
 	}
 	reconcile := func() error {
-		if !dryRun && sharedSession == nil {
+		if !dryRun && sharedSession == nil && batch == nil {
 			if _, err := store.Recover(); err != nil {
 				return err
 			}
 		}
-		raw, readErr := store.ReadAggregate(codexMCPFile)
+		var raw []byte
+		var readErr error
+		var aggregateSnapshot pluginAggregateSnapshot
+		if batch != nil {
+			aggregateSnapshot, err = batch.readAggregate(ctx, store, codexMCPFile, dryRun)
+			if err != nil {
+				return err
+			}
+			raw, readErr = aggregateSnapshot.bytes, aggregateSnapshot.readErr
+		} else {
+			raw, readErr = store.ReadAggregate(codexMCPFile)
+		}
 		if readErr != nil && !os.IsNotExist(readErr) {
 			return readErr
 		}
@@ -535,7 +750,32 @@ func reconcileCodexMCPWithSession(ctx context.Context, report *Report, key outpu
 			}
 			return err
 		}
-		proof, proofErr := store.Proof(codexMCPFile)
+		marketplaceSections, marketplaceExisting, err := codexPluginRegistrationSections(raw, "marketplaces")
+		if err != nil {
+			return err
+		}
+		pluginSections, pluginExisting, err := codexPluginRegistrationSections(raw, "plugins")
+		if err != nil {
+			return err
+		}
+		var proof ownership.Proof
+		var proofErr error
+		if batch != nil {
+			proof, proofErr = batch.proof(ctx, store, codexMCPFile, dryRun)
+		} else {
+			proof, proofErr = store.Proof(codexMCPFile)
+		}
+		var retained []ownership.Entry
+		instanceKey := ""
+		var activeInstances map[string]bool
+		if batch != nil {
+			instanceKey, activeInstances = batch.instanceKey, batch.activeInstances
+		}
+		if batch != nil && len(batch.ownerInstances) > 0 {
+			proof, retained, _ = proof.ForPluginInstances(batch.ownerInstances, activeInstances)
+		} else {
+			proof, retained, _ = proof.ForPluginInstance(instanceKey, activeInstances)
+		}
 		report.Diags = append(report.Diags, ownedAggregateProofDiags(key, root, codexMCPFile, proofErr)...)
 		desiredValues := make([]ownership.EntryValue, 0, len(desired))
 		byName := make(map[string]codexMCPEntry, len(desired))
@@ -544,20 +784,39 @@ func reconcileCodexMCPWithSession(ctx context.Context, report *Report, key outpu
 			byName[entry.name] = entry
 		}
 		drift := ownership.Classify(proof, existing, desiredValues)
+		registrationExisting := append(append([]ownership.EntryValue(nil), marketplaceExisting...), pluginExisting...)
+		registrationValues := make([]ownership.EntryValue, 0, len(registrations))
+		for _, registration := range registrations {
+			value := registration.entryValue()
+			registrationValues = append(registrationValues, value)
+		}
+		registrationDrift := ownership.Classify(proof, registrationExisting, registrationValues)
+		registrationCollisions := make(map[string]bool, len(registrationDrift.Collisions))
+		for _, id := range registrationDrift.Collisions {
+			registrationCollisions[ownedAggregateIDKey(id)] = true
+			report.Diags = append(report.Diags, diag.Diagnostic{
+				Code: diag.CodePluginRegistrationCollision, Severity: diag.SeverityError,
+				Target: string(key.target), Resource: id.Key,
+				Source:  diag.SourceRef{File: codexMCPFile},
+				Message: "an unmanaged native plugin registration uses a desired key; the existing entry was preserved",
+				Hint:    "Remove the handwritten collision or run sync after establishing ownership through a supported path",
+			})
+		}
 		collisions := make(map[string]bool, len(drift.Collisions))
 		for _, id := range drift.Collisions {
 			collisions[id.Key] = true
 			report.Diags = append(report.Diags, diag.Diagnostic{Code: diag.CodeOwnershipUnmanagedKey, Severity: diag.SeverityError, Target: string(key.target), Resource: byName[id.Key].resource, Message: fmt.Sprintf("Codex MCP server %q collides with an unmanaged config.toml entry; existing entry preserved", id.Key)})
 		}
 		var edits []codexMCPEdit
-		owned := make([]ownership.Entry, 0, len(desired)+len(drift.Stale))
+		owned := make([]ownership.Entry, 0, len(desired)+len(registrations)+len(drift.Stale)+len(registrationDrift.Stale))
 		if !incomplete {
 			for _, id := range drift.Stale {
 				if section, ok := sections[id.Key]; ok {
 					if section.alternate {
 						report.Diags = append(report.Diags, diag.Diagnostic{Code: diag.CodeMaterializeCodexAggregateUnpatchable, Severity: diag.SeverityError, Target: string(key.target), Resource: id.Key, Message: fmt.Sprintf("Codex MCP server %q uses an alternate TOML form that cannot be pruned safely; existing entry preserved", id.Key)})
-						resource, _ := proof.Resource(id)
-						owned = append(owned, ownership.Entry{Kind: id.Kind, Container: id.Container, Key: id.Key, IdentityDigest: id.IdentityDigest, ValueDigest: section.value.ValueDigest, Resource: resource})
+						entry, _ := proof.Entry(id)
+						entry.ValueDigest = section.value.ValueDigest
+						owned = append(owned, entry)
 						continue
 					}
 					edits = append(edits, section.edits(nil)...)
@@ -576,8 +835,9 @@ func reconcileCodexMCPWithSession(ctx context.Context, report *Report, key outpu
 			if exists {
 				if section.alternate {
 					report.Diags = append(report.Diags, diag.Diagnostic{Code: diag.CodeMaterializeCodexAggregateUnpatchable, Severity: diag.SeverityError, Target: string(key.target), Resource: entry.resource, Message: fmt.Sprintf("Codex MCP server %q uses an alternate TOML form that cannot be replaced safely; existing entry preserved", entry.name)})
-					if resource, ok := proof.Resource(entry.id()); ok {
-						owned = append(owned, ownership.Entry{Kind: entry.id().Kind, Container: entry.id().Container, Key: entry.id().Key, IdentityDigest: entry.id().IdentityDigest, ValueDigest: section.value.ValueDigest, Resource: resource})
+					if existingEntry, ok := proof.Entry(entry.id()); ok {
+						existingEntry.ValueDigest = section.value.ValueDigest
+						owned = append(owned, existingEntry)
 					}
 					continue
 				}
@@ -595,6 +855,68 @@ func reconcileCodexMCPWithSession(ctx context.Context, report *Report, key outpu
 				edits = append(edits, codexMCPEdit{start: len(raw), end: len(raw), replacement: append(prefix, entry.raw...)})
 			}
 		}
+		for _, id := range registrationDrift.Stale {
+			section, ok := codexPluginRegistrationSection(id.Container, id.Key, marketplaceSections, pluginSections)
+			if !ok {
+				continue
+			}
+			if incomplete {
+				if entry, found := proof.Entry(id); found {
+					owned = append(owned, entry)
+				}
+				continue
+			}
+			if section.alternate {
+				report.Diags = append(report.Diags, diag.Diagnostic{
+					Code: diag.CodeMaterializeCodexAggregateUnpatchable, Severity: diag.SeverityError,
+					Target: string(key.target), Resource: id.Key,
+					Message: "a Codex plugin registration uses an alternate TOML form and was preserved",
+				})
+				if entry, found := proof.Entry(id); found {
+					entry.ValueDigest = section.value.ValueDigest
+					owned = append(owned, entry)
+				}
+				continue
+			}
+			edits = append(edits, section.edits(nil)...)
+		}
+		for _, entry := range registrations {
+			if registrationCollisions[ownedAggregateIDKey(entry.id())] {
+				continue
+			}
+			section, exists := codexPluginRegistrationSection(entry.container, entry.key, marketplaceSections, pluginSections)
+			if exists && proof.Classify(entry.id(), section.value.ValueDigest) == ownership.StatusOwnedClean &&
+				section.value.ValueDigest == entry.valueDigest {
+				owned = append(owned, entry.owned())
+				continue
+			}
+			if exists && section.alternate {
+				report.Diags = append(report.Diags, diag.Diagnostic{
+					Code: diag.CodeMaterializeCodexAggregateUnpatchable, Severity: diag.SeverityError,
+					Target: string(key.target), Resource: entry.resource,
+					Message: "a Codex plugin registration uses an alternate TOML form and was preserved",
+				})
+				if existingEntry, found := proof.Entry(entry.id()); found {
+					existingEntry.ValueDigest = section.value.ValueDigest
+					owned = append(owned, existingEntry)
+				}
+				continue
+			}
+			owned = append(owned, entry.owned())
+			replacement := entry.tomlTable()
+			if exists {
+				edits = append(edits, section.edits(replacement)...)
+			} else {
+				prefix := []byte(nil)
+				if len(raw) > 0 && raw[len(raw)-1] != '\n' {
+					prefix = []byte("\n")
+				}
+				if len(raw) > 0 {
+					prefix = append(prefix, '\n')
+				}
+				edits = append(edits, codexMCPEdit{start: len(raw), end: len(raw), replacement: append(prefix, replacement...)})
+			}
+		}
 		if incomplete {
 			for _, id := range drift.Stale {
 				section, ok := sections[id.Key]
@@ -606,6 +928,39 @@ func reconcileCodexMCPWithSession(ctx context.Context, report *Report, key outpu
 			}
 		}
 		next := applyCodexMCPEdits(raw, edits)
+		owned = append(owned, retained...)
+		if batch != nil {
+			gen, digest := ownedAggregatePriorForApply(raw, readErr, proof)
+			mutation := ownership.Mutation{
+				Rel: codexMCPFile, AbsFile: abs, NextBytes: next, Entries: owned, Reason: ownership.ReasonSync,
+				ExpectPriorGeneration: gen, ExpectPriorDigest: digest,
+			}
+			if !dryRun && !bytes.Equal(raw, next) {
+				if err := batch.backupPreparedMutation(ctx, store, mutation, raw, readErr); err != nil {
+					return err
+				}
+			}
+			if err := batch.addMutation(ctx, store, mutation, nil); err != nil {
+				return err
+			}
+			mode := aggregateSnapshot.mode
+			if !aggregateSnapshot.generation.Exists {
+				mode = 0o600
+			}
+			if err := batch.addParticipant(dependencytxn.DesiredFile{
+				Path: abs, Expected: aggregateSnapshot.generation, ExpectedMode: aggregateSnapshot.mode,
+				Bytes: next, Mode: mode,
+			}); err != nil {
+				return err
+			}
+			if dryRun && !bytes.Equal(raw, next) {
+				recordOwnedAggregateWrite(report, key, rootID, root, codexMCPFile)
+				appendCodexTrustReviewDiagnostic(report, key, codexMCPFile, true)
+			} else if !dryRun && !bytes.Equal(raw, next) {
+				batch.addAggregateReport(key, rootID, root, codexMCPFile, false)
+			}
+			return nil
+		}
 		if bytes.Equal(raw, next) {
 			slog.Debug("Codex MCP configuration already in sync", "target", key.target, "machine_scope", key.machineScope, "file", abs, "owned_entries", len(owned))
 			return nil
