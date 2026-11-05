@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,8 +41,11 @@ func TestMain(m *testing.M) {
 	// os.Exit skips deferred cleanup, so remove the task-created state root
 	// explicitly.
 	_ = os.RemoveAll(xdg)
-	if err := cleanupHome(); err != nil && code == 0 {
-		code = 1
+	if err := cleanupHome(); err != nil {
+		slog.Error("cleanup isolated test home", "err", err)
+		if code == 0 {
+			code = 1
+		}
 	}
 	os.Exit(code)
 }
