@@ -2,9 +2,9 @@
 
 ## 1. Hero preview tabs
 
-- [ ] 1.1 Add failing browser tests in `web/tests/e2e/landing.spec.ts` for the Terminal default, the Web caption switch, hero keyboard wrap, hero/harness independence, and reduced-motion switching (verify: the spec fails on the base commit for the intended reason)
-- [ ] 1.2 Add the hero Terminal/Web tab list reusing `LandingTabList` with its own `idPrefix` and selection, the caption switch, and the Web panel in `HeroSection.vue`; make 1.1 pass (verify: the Playwright landing spec passes)
-- [ ] 1.3 Add static HTML assertions in `site/tests/public-site.test.ts` for the hero tab IDs and tabpanel relationships (verify: `pnpm run test:public` in `site`)
+- [x] 1.1 Add failing browser tests in `web/tests/e2e/landing.spec.ts` for the Terminal default, the Web caption switch, hero keyboard wrap, hero/harness independence, and reduced-motion switching (verify: the spec fails on the base commit for the intended reason)
+- [x] 1.2 Add the hero Terminal/Web tab list reusing `LandingTabList` with its own `idPrefix` and selection, the caption switch, and the Web panel in `HeroSection.vue`; make 1.1 pass (verify: the Playwright landing spec passes)
+- [x] 1.3 Add static HTML assertions in `site/tests/public-site.test.ts` for the hero tab IDs and tabpanel relationships (verify: `pnpm run test:public` in `site`)
 
 ## 2. Capture pipeline and fixtures
 

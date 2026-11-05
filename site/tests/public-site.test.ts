@@ -64,6 +64,32 @@ test('public project site exposes landing and documentation without a local Mark
   }
 })
 
+// spec: marketplace-web-ui/hero-shows-the-terminal-preview-by-default
+// spec: marketplace-web-ui/web-tab-shows-the-catalog-with-a-matching-caption
+test('public landing connects both hero preview tabs to their panels', async () => {
+  const landing = await readFile(new URL('index.html', dist), 'utf8')
+  assert.match(landing, /role="tablist"[^>]*aria-label="Hero preview"/)
+
+  for (const tabName of ['terminal', 'web']) {
+    const tabID = `hero-tab-${tabName}`
+    const panelID = `hero-panel-${tabName}`
+    const tab = landing.match(new RegExp(`<button\\b(?=[^>]*\\bid="${tabID}")[^>]*>`))?.[0]
+    const panel = landing.match(new RegExp(`<[^>]+(?=[^>]*\\bid="${panelID}")[^>]*>`))?.[0]
+
+    assert.ok(tab, `missing ${tabID}`)
+    assert.match(tab, /role="tab"/)
+    assert.match(tab, new RegExp(`aria-controls="${panelID}"`))
+    assert.ok(panel, `missing ${panelID}`)
+    assert.match(panel, /role="tabpanel"/)
+    assert.match(panel, new RegExp(`aria-labelledby="${tabID}"`))
+  }
+
+  const terminalTab = landing.match(/<button\b(?=[^>]*\bid="hero-tab-terminal")[^>]*>/)?.[0]
+  assert.ok(terminalTab)
+  assert.match(terminalTab, /aria-selected="true"/)
+  assert.match(terminalTab, /tabindex="0"/)
+})
+
 // spec: site-deployment-profiles/project-path-pages-site-resolves-navigation-and-assets
 // spec: site-deployment-profiles/custom-domain-pages-site-resolves-navigation-and-assets
 test('public navigation and assets resolve within the deployment base', async () => {

@@ -1,11 +1,24 @@
 <script setup lang="ts">
+import { ref } from 'vue'
+
 import {
   GITHUB_REPOSITORY_URL,
   INSTALL_COMMAND,
 } from '../../../shared/site'
 import ActionLink from '../components/ActionLink.vue'
 import CommandBar from '../components/CommandBar.vue'
+import LandingTabList from '../components/LandingTabList.vue'
 import TuiPreview from '../components/TuiPreview.vue'
+
+const previewTabs = [
+  { id: 'terminal', label: 'Terminal' },
+  { id: 'web', label: 'Web' },
+] as const
+const activePreview = ref<'terminal' | 'web'>('terminal')
+const captions = {
+  terminal: 'Select resources, review their targets, then sync.',
+  web: 'Browse the catalog, review resources, and copy install commands.',
+}
 </script>
 
 <template>
@@ -39,9 +52,35 @@ import TuiPreview from '../components/TuiPreview.vue'
         </div>
 
         <div class="product-stage">
-          <TuiPreview class="preview" />
+          <LandingTabList
+            v-model="activePreview"
+            class="hero-tabs"
+            id-prefix="hero"
+            label="Hero preview"
+            :tabs="previewTabs"
+          />
+          <div
+            id="hero-panel-terminal"
+            v-show="activePreview === 'terminal'"
+            role="tabpanel"
+            aria-labelledby="hero-tab-terminal"
+            tabindex="0"
+          >
+            <TuiPreview class="preview" />
+          </div>
+          <div
+            id="hero-panel-web"
+            v-show="activePreview === 'web'"
+            role="tabpanel"
+            aria-labelledby="hero-tab-web"
+            tabindex="0"
+          >
+            <div class="web-preview-placeholder" role="group" aria-label="Marketplace catalog preview">
+              Marketplace catalog preview
+            </div>
+          </div>
           <p class="preview-caption">
-            Select resources, review their targets, then sync.
+            {{ captions[activePreview] }}
           </p>
         </div>
       </div>
@@ -65,6 +104,20 @@ import TuiPreview from '../components/TuiPreview.vue'
 .copy,
 .product-stage {
   min-width: 0;
+}
+
+.hero-tabs {
+  margin-bottom: var(--lp-space-default);
+}
+
+.web-preview-placeholder {
+  display: grid;
+  min-height: 16rem;
+  place-items: center;
+  border: 1px solid currentColor;
+  border-radius: var(--lp-radius-preview);
+  color: var(--lp-text-2);
+  font: var(--lp-font-label);
 }
 
 h1 {
