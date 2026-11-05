@@ -163,6 +163,37 @@ func TestSilentSyncReportsPostMutationInventory(t *testing.T) {
 	}
 }
 
+// spec: telemetry/session-operations-do-not-record-inventory
+func TestWithoutInventorySuppressesRecording(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeFile(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	registryRoot := t.TempDir()
+	writeSkill(t, registryRoot, "suppressed-inventory", "test", nil)
+	repoRoot := t.TempDir()
+	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  registry: {directory: %q, source_harness: claude}\nresources:\n  registry: [skill/suppressed-inventory]\n", registryRoot))
+
+	for _, suppressed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("suppressed=%v", suppressed), func(t *testing.T) {
+			exporter := newPipelineSpanExporter(t)
+			ctx, tel := setupPipelineTelemetry(t, exporter)
+			if suppressed {
+				ctx = WithoutInventory(ctx)
+			}
+			if result := Resolve(ctx, ResolveOptions{Workspace: mustWorkspace(t, repoRoot)}); len(result.Errors) != 0 {
+				t.Fatalf("resolve errors = %v", result.Errors)
+			}
+			RecordResolvedInventory(ctx, inventoryResolveResult())
+			if err := tel.Shutdown(context.Background()); err != nil {
+				t.Fatalf("shutdown telemetry: %v", err)
+			}
+			if got := exporter.hasMetric(string(tmcfg.InventorySnapshotName)); got == suppressed {
+				t.Fatalf("inventory snapshot recorded = %v with suppressed = %v", got, suppressed)
+			}
+		})
+	}
+}
+
 func TestRecordResolvedInventoryExportsOmission(t *testing.T) {
 	exporter := newPipelineSpanExporter(t)
 	ctx, tel := setupPipelineTelemetry(t, exporter)

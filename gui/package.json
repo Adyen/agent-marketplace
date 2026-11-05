@@ -2,7 +2,7 @@
   "name": "agent-marketplace-gui",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@11.17.0",
+  "packageManager": "pnpm@11.28.5",
   "scripts": {
     "api:generate": "node scripts/generate-api.mjs",
     "api:drift": "node scripts/generate-api.mjs --check",

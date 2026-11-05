@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"unicode/utf8"
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -137,11 +138,15 @@ func baseAnalyzeSamples(ctx context.Context, samples []textSample, files FileSet
 
 	var findings []Finding
 	for _, s := range samples {
-		if s.isFile && !isValidText(s.content) {
-			// Run asset scanners on non-text files but skip text scanners.
-		} else {
-			findings = append(findings, runSharedScanners(s.content, s.path, an)...)
+		if s.isFile && !utf8.ValidString(s.content) {
+			if !isRecognizedBinary([]byte(s.content)) {
+				findings = append(findings, NewFinding(FindingInvalidUTF8,
+					"support file is not valid UTF-8 and has no recognized binary signature",
+					an, &SourceRange{File: s.path}))
+			}
+			continue
 		}
+		findings = append(findings, runSharedScanners(s.content, s.path, an)...)
 	}
 
 	findings = append(findings, ScanAssets(files, an)...)
@@ -179,8 +184,16 @@ func checkLimits(files FileSet, limits Limits) error {
 	return nil
 }
 
-// isValidText reports whether s is valid UTF-8. Binary assets are rejected from
-// text scanners to avoid false positives from arbitrary bytes.
-func isValidText(s string) bool {
-	return utf8.ValidString(s)
+// isRecognizedBinary exempts known binary signatures, never filenames or the
+// generic octet-stream fallback. It does not attest structural validity.
+func isRecognizedBinary(data []byte) bool {
+	switch http.DetectContentType(data) {
+	case "image/x-icon", "image/bmp", "image/gif", "image/webp", "image/png", "image/jpeg",
+		"application/vnd.ms-fontobject", "font/ttf", "font/otf", "font/collection", "font/woff", "font/woff2",
+		"audio/aiff", "audio/mpeg", "application/ogg", "audio/midi", "video/avi", "audio/wave", "video/mp4", "video/webm",
+		"application/pdf", "application/x-gzip", "application/zip", "application/x-rar-compressed":
+		return true
+	default:
+		return false
+	}
 }
