@@ -30,4 +30,4 @@
 
 ## 7. Archive
 
-- [ ] 7.1 `openspec archive fix-gui-functional-feedback --yes`
+- [x] 7.1 `openspec archive fix-gui-functional-feedback --yes`
