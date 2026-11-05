@@ -8,6 +8,10 @@ leftovers before plugins arrive: the Claude `.claude-plugin/plugin.json`
 aggregate that no harness activates, and the Factory plugin form that silently
 drops a root `SKILL.md` (#340).
 
+## Release note
+
+Breaking: Claude Code skills and subagents no longer add entries to `.claude-plugin/plugin.json` under the Claude target root; the next sync removes the entries earlier versions wrote and deletes the file when nothing else remains in it. Nothing to upgrade: Claude Code finds the skills and subagents through their directories.
+
 ## What Changes
 
 - A fourth catalog family, `pluginpolicy`, ships one embedded catalog per
