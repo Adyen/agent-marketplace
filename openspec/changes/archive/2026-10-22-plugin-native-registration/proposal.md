@@ -8,6 +8,10 @@ wrote, a per-request delivery choice that follows the harness catalog, and
 safe transitions between native and decomposed delivery. Each harness turns
 native delivery on later, when its isolated probe passes.
 
+## Release note
+
+A plugin's `delivery` option chooses between native plugin delivery and decomposed members per harness: `auto` uses native delivery only where it is verified, and an explicit `delivery: native` for an unverified harness fails with `plugin.delivery.native-unverified`.
+
 ## What Changes
 
 - A plugin request's `delivery` (`auto`, `native`, `decompose`) is resolved
