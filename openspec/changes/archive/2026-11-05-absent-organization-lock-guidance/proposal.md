@@ -18,6 +18,10 @@ Organizations may deploy `/etc/agent-marketplace/config.yaml` without an acquisi
 
 - `command-error-output`: organization lock guidance carves out the intentionally absent organization lock, which names the online command instead of the administrator.
 
+## Release note
+
+When an organization deploys no acquisition lock, `sync --locked`, `sync --offline`, and `lock --check` still refuse with `v4.marketplace-lock-required`, but the hint now names an online `agent-marketplace sync` or `sync --check` instead of asking an administrator to ship a lock. Malformed, wrong-scope, and untrusted organization locks now show the administrator hint instead of lockfile editing advice.
+
 ## Impact
 
 - `internal/config` (marks the absent-lock refusal), `internal/remedy` (hint selection), command tests, and the diagnostics reference docs.
