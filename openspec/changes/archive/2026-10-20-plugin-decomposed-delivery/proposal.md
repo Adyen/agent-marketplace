@@ -9,6 +9,10 @@ cache. The support-file assembly from the closed PR #273 is folded in here,
 because package generations are its only remaining consumer now that the
 `convert` subcommand is gone.
 
+## Release note
+
+Sync installs selected plugins into every harness by placing each member under the name `<plugin>-<member>`, and installs each plugin per harness and scope as a unit: a failing member blocks that plugin and keeps its previous installation.
+
 ## What Changes
 
 - Sync delivers plugin requests with `delivery: auto` or `decompose` as
