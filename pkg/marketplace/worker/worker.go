@@ -385,7 +385,14 @@ func (o *observer) observeOne(ctx context.Context, due store.RegistryObservation
 	}
 	src, ok := registryByID(o.cfg, string(id))
 	if !ok {
-		return fmt.Errorf("registry %q is not present in startup config", id)
+		nextProbe := nextPhaseSlot(id, now, o.cfg.Refresh.Interval.Duration())
+		if _, err := mutateObservation(ctx, o.deps.MetadataStore, id, func(next *store.RegistryObservation) {
+			next.NextProbeAt = nextProbe
+		}); err != nil {
+			return fmt.Errorf("advance observation for inactive registry %q: %w", id, err)
+		}
+		slog.Debug("source observation skipped: registry not in startup config", "registry", id)
+		return nil
 	}
 	started := time.Now()
 	origin := src.Origin

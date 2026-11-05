@@ -93,6 +93,55 @@ func TestObserverDoesNotAcquireUnchangedOrFailedSources(t *testing.T) {
 	}
 }
 
+func TestObserverAdvancesOrphanedRegistryWithoutProbing(t *testing.T) {
+	f := newObservationFixture(t, 1)
+	id := store.RegistryID("src-removed")
+	now := time.Now().UTC()
+	before, err := f.meta.CreateRegistryObservation(f.ctx, store.RegistryObservation{
+		RegistryID:  id,
+		NextProbeAt: now.Add(-time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("CreateRegistryObservation: %v", err)
+	}
+	wantNextProbe := expectedPhaseSlot(id, now, f.cfg.Refresh.Interval.Duration()).Truncate(time.Microsecond)
+	observer := newObserver(f.deps, f.cfg, func() time.Time { return now })
+	if err := observer.runCycle(f.ctx); err != nil {
+		t.Fatalf("orphaned registry observation: %v", err)
+	}
+	got, err := f.meta.GetRegistryObservation(f.ctx, id)
+	if err != nil {
+		t.Fatalf("GetRegistryObservation: %v", err)
+	}
+	if !got.NextProbeAt.Equal(wantNextProbe) {
+		t.Fatalf("orphaned registry next probe = %s, want %s", got.NextProbeAt, wantNextProbe)
+	}
+	if got.ObservedCommit != before.ObservedCommit || !got.ObservedAt.Equal(before.ObservedAt) ||
+		got.ProbeStatus != before.ProbeStatus || got.ProbeError != before.ProbeError ||
+		got.ConsecutiveProbeFailures != before.ConsecutiveProbeFailures ||
+		!got.NextReconcileAt.Equal(before.NextReconcileAt) {
+		t.Fatalf("orphaned registry observation health changed: before=%+v after=%+v", before, got)
+	}
+	if err := observer.runCycle(f.ctx); err != nil {
+		t.Fatalf("second orphaned registry cycle: %v", err)
+	}
+	afterSecondCycle, err := f.meta.GetRegistryObservation(f.ctx, id)
+	if err != nil {
+		t.Fatalf("GetRegistryObservation after second cycle: %v", err)
+	}
+	if !afterSecondCycle.NextProbeAt.Equal(wantNextProbe) {
+		t.Fatalf("orphaned registry next probe after second cycle = %s, want unchanged %s",
+			afterSecondCycle.NextProbeAt, wantNextProbe)
+	}
+	if f.counts.probes.Load() != 0 || f.counts.clones.Load() != 0 || len(f.requests()) != 0 {
+		t.Fatalf("orphaned registry cycles triggered work: probes=%d clones=%d requests=%d",
+			f.counts.probes.Load(), f.counts.clones.Load(), len(f.requests()))
+	}
+	if afterSecondCycle.ActiveRefreshJobID != "" {
+		t.Fatalf("orphaned registry has active refresh job %q", afterSecondCycle.ActiveRefreshJobID)
+	}
+}
+
 // spec: marketplace-source-observation/a-changed-commit-triggers-exactly-one-refresh
 // spec: marketplace-source-observation/concurrent-triggers-coalesce-onto-one-refresh
 func TestChangedCommitRequestsOneRefreshAndManualReindexCoalesces(t *testing.T) {
