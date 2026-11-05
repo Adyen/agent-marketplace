@@ -365,7 +365,7 @@ func TestObserverLeavesHostBudgetRefusalDueAndLogsOverdueTime(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	registryID := store.RegistryID(f.cfg.Registries[0].ID)
-	due := now.Add(-7 * time.Minute)
+	due := now.Add(-7 * time.Minute).Truncate(time.Microsecond)
 	updateObservation(t, f.meta, registryID, func(o *store.RegistryObservation) { o.NextProbeAt = due })
 	first, err := f.meta.AcquireHostBudget(f.ctx, "local", "occupier-one", false, store.HostBudgetLimit{Operations: 2, Acquisitions: 1}, time.Minute)
 	if err != nil {
