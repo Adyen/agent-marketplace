@@ -328,9 +328,11 @@ fields.test("arrow keys move typing between Source fields without leaving the st
   });
   await step("open source modal", () => terminal.write("i"), async () => {
     await locate(terminal, "Web URLs fill ref and path automatically.").unique().expect();
+    await locate(terminal, "> Git URL, web URL, or directory").getByText("G").getByStyle({ inverse: true }).expect();
   });
   await step("up on URL keeps focus on URL", () => terminal.write(UP), async () => {
     await locate(terminal, "Web URLs fill ref and path automatically.").unique().expect();
+    await locate(terminal, "> Git URL, web URL, or directory").getByText("G").getByStyle({ inverse: true }).expect();
     await locate(terminal, "Previewing source…").expect({ not: true });
   });
   await step("type into URL", () => terminal.write("u"), async () => {
@@ -339,6 +341,7 @@ fields.test("arrow keys move typing between Source fields without leaving the st
   await step("down key moves toward Ref", () => terminal.write(DOWN), async () => {
     await locate(terminal, "> u").unique().expect();
     await locate(terminal, "Web URLs fill ref and path automatically.").unique().expect();
+    await locate(terminal, "> default branch").getByText("d").getByStyle({ inverse: true }).expect();
     // The probe must not match Path's empty-field placeholder.
     await locate(terminal, "> qa-ref").expect({ not: true });
   });
@@ -349,6 +352,7 @@ fields.test("arrow keys move typing between Source fields without leaving the st
   await step("down key moves toward Path", () => terminal.write(DOWN), async () => {
     await locate(terminal, "> qa-ref").unique().expect();
     await locate(terminal, "Web URLs fill ref and path automatically.").unique().expect();
+    await locate(terminal, "> registry root").getByText("r").first().getByStyle({ inverse: true }).expect();
   });
   await step("type into Path", () => terminal.write("p"), async () => {
     await locate(terminal, "> p").unique().expect();
@@ -357,6 +361,7 @@ fields.test("arrow keys move typing between Source fields without leaving the st
   await step("down on Path keeps focus on Path", () => terminal.write(DOWN), async () => {
     await locate(terminal, "> p").unique().expect();
     await locate(terminal, "> qa-ref").unique().expect();
+    await locate(terminal, "> p ").getByText(" ").last().getByStyle({ inverse: true }).expect();
   });
   await step("type on Path again", () => terminal.write("q"), async () => {
     await locate(terminal, "> pq").unique().expect();
@@ -364,6 +369,7 @@ fields.test("arrow keys move typing between Source fields without leaving the st
   await step("up key moves back toward Ref", () => terminal.write(UP), async () => {
     await locate(terminal, "> pq").unique().expect();
     await locate(terminal, "> qa-ref").unique().expect();
+    await locate(terminal, "> qa-ref ").getByText(" ").last().getByStyle({ inverse: true }).expect();
   });
   await step("type into Ref again", () => terminal.write("s"), async () => {
     await locate(terminal, "> qa-refs").unique().expect();
