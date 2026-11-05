@@ -11,6 +11,10 @@ Marketplace resources can declare `metadata.requires`, but the Marketplace neith
 - Release N records no lookup result. It writes no requires edge and creates no prerequisite pin. A found candidate is previewed, and when expansion is enabled it is reported as unmet with the new reason `unrecorded`. A lock rewrite drops requires edges whose parent changed and prunes pins only those edges held. Refreshing implied Marketplace pins on update, and selecting new Marketplace candidates, wait for the release that writes requires edges.
 - Removing a Marketplace prerequisite that a selected resource still requires succeeds: it removes the lock record that requires edges hold, and when expansion is enabled it writes the exact Marketplace exclusion.
 
+## Release note
+
+The Marketplace now indexes each resource revision's declared prerequisites and returns `requires` and `required_by` on the latest resource detail. Clients look up a Marketplace resource's prerequisites in its own configured Marketplace entry and preview what they find; with `requires.expand` enabled, such a prerequisite is reported as unmet with the reason `unrecorded`, because this release does not record Marketplace prerequisites in the acquisition lock.
+
 ## Capabilities
 
 ### New Capabilities

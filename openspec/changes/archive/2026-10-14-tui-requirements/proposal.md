@@ -11,6 +11,10 @@ The resolver selects or previews prerequisites and the CLI reports them, but the
 - Toggling a resource on reports the prerequisites that came along with it, or would with expansion enabled.
 - Add a deterministic TUI QA journey and reconcile published TUI prerequisite guidance.
 
+## Release note
+
+The TUI detail pane now shows Requires and Required by sections, implied resources carry a `req` badge, and rows with an unmet prerequisite carry a warning marker. Toggling a resource reports the prerequisites it brought along, and with `requires.expand` enabled, turning off a still-required resource writes an exclusion and reports the resulting unmet prerequisite.
+
 ## Capabilities
 
 ### New Capabilities
