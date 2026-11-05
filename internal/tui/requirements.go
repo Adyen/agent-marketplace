@@ -121,13 +121,16 @@ func annotatePrerequisiteRows(rows []row, resolved []resolver.ResolvedArtifact, 
 				if implied {
 					entry.state = prerequisiteImplied
 				}
+			} else if _, ok := previewed[key]; ok && unmet[requirer][key] != resolver.UnmetReasonUnrecorded {
+				// Disabled expansion also warns about every previewed
+				// prerequisite; only enabled expansion reports a previewed
+				// live-lookup prerequisite as unrecorded, which stays unmet.
+				entry.state = prerequisitePreview
 			} else if reason, isUnmet := unmet[requirer][key]; isUnmet {
 				entry.state = prerequisiteUnmet
 				if reason == resolver.UnmetReasonExcluded {
 					entry.state = prerequisiteExcluded
 				}
-			} else if _, ok := previewed[key]; ok {
-				entry.state = prerequisitePreview
 			} else {
 				entry.state = prerequisiteUnmet
 			}

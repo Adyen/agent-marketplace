@@ -94,6 +94,13 @@ func TestRequiresSectionMarksEachPrerequisiteState(t *testing.T) {
 	}
 }
 
+// spec: tui-rendering/requires-section-marks-each-prerequisite-state
+func TestAdvisorySnapshotShowsPreviewPrerequisite(t *testing.T) {
+	f := newRequiresFixture(t, false, "{include: [skill/parent]}")
+	parent := findV4ToggleRow(t, f.snap.rows, "parent")
+	requireLine(t, detailText(t, parent), `preview skill "child"`)
+}
+
 // spec: tui-rendering/required-by-section-uses-prerequisite-provenance
 func TestRequiredBySectionUsesPrerequisiteProvenance(t *testing.T) {
 	member := mkRow("member")
@@ -200,6 +207,27 @@ func TestImpliedAndUnmetRowsAreMarked(t *testing.T) {
 	})
 	if out := flatRowText(rows[0]); !strings.Contains(out, "⚠") {
 		t.Fatalf("requiring row must carry a warning marker:\n%s", out)
+	}
+}
+
+// spec: tui-rendering/implied-and-unmet-rows-are-marked
+func TestUnrecordedPrerequisiteInPreviewStaysUnmet(t *testing.T) {
+	requirer := requiringRow("requirer", "skill:lookup-dep")
+	rows := []row{requirer}
+	preview := []resolver.ResolvedArtifact{
+		{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "lookup-dep"}, Implied: true, PreviewOnly: true},
+	}
+	annotatePrerequisiteRows(rows, []resolver.ResolvedArtifact{requirer.Artifact}, preview, []error{
+		&resolver.UnmetRequirementWarning{ResourceKind: ir.KindSkill, ResourceName: "requirer",
+			Requirement: catalog.Requirement{Kind: ir.KindSkill, Name: "lookup-dep"}, Reason: resolver.UnmetReasonUnrecorded},
+	})
+	if out := flatRowText(rows[0]); !strings.Contains(out, "⚠") {
+		t.Fatalf("unrecorded prerequisite must mark its requirer:\n%s", out)
+	}
+	out := detailText(t, rows[0])
+	requireLine(t, out, `unmet skill "lookup-dep"`)
+	if strings.Contains(out, `preview skill "lookup-dep"`) {
+		t.Fatalf("unrecorded prerequisite must not render as preview:\n%s", out)
 	}
 }
 
@@ -447,8 +475,29 @@ func TestToggleOffKeepsPolicyAndScopeAuthorization(t *testing.T) {
 		t.Fatalf("required-selection policy must not be bypassed, denial=%v", denial)
 	}
 	before := mustReadFile(t, f.projectPath)
+	next, cmd := m.applyRowSpaceEligibility(child)
+	if next.(Model).pane == paneToggleModal {
+		t.Fatalf("a required prerequisite must not open the toggle modal")
+	}
+	if cmd != nil {
+		if _, wrote := cmd().(configWrittenMsg); wrote {
+			t.Fatalf("a denied toggle must not dispatch a config write")
+		}
+	}
 	if after := mustReadFile(t, f.projectPath); string(after) != string(before) {
 		t.Fatalf("a denied toggle must not write")
+	}
+
+	// An exclusion written for the project scope leaves the user layer alone.
+	userPath := filepath.Join(f.home, ".agents", "config.yaml")
+	_, statErr := os.Stat(userPath)
+	scoped := newRequiresFixture(t, true, "{include: [skill/parent]}")
+	runToggle(t, scoped, scopedToggleAction(findV4ToggleRow(t, scoped.snap.rows, "child"), scopeProject))
+	if _, err := os.Stat(filepath.Join(scoped.home, ".agents", "config.yaml")); !os.IsNotExist(err) && os.IsNotExist(statErr) {
+		t.Fatalf("a project-scope prerequisite exclusion must not write the user layer")
+	}
+	if _, err := os.Stat(filepath.Join(scoped.repo, ".agents", "config.local.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("a project-scope prerequisite exclusion must not write the local layer")
 	}
 }
 
