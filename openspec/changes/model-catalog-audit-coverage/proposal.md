@@ -10,7 +10,7 @@ The "Audit upstream model catalogs" job (run 41961800213 on main) failed on a re
 - Snapshot `devin models list --format json` and test that every `model_uid` is covered by a Devin catalog entry, listing uncovered UIDs.
 - Add Devin catalog entries for the non-Fusion UIDs the snapshot reports as uncovered. Devin Haiku keeps the `anthropic/haiku` family selector, so it resolves to the same identity as Claude haiku; `claude-haiku-5-5` is added as a concrete entry.
 - Add the Gemini API documentation URL to the Gemini catalog evidence references, and add Gemini 4 Argon to the providers whose published inventory lists it.
-- Leave the Cursor model inventory open: it is recorded as a blocked task until the user decides its source.
+- Capture `agent models` from the Cursor harness CI image in the scheduled audit job and use it as the Cursor model inventory, failing closed as `source.inventory-unparsed` when the output is missing or unauthenticated.
 
 ## Capabilities
 
@@ -26,6 +26,7 @@ None.
 
 - `tools/model-catalog-audit/` (sources, extraction, audit, tests, testdata fixtures, baselines for the new source).
 - `pkg/harness-compilation/modelpolicy/catalogs/devin.yaml`, `gemini.yaml` (evidence ref only), and `devin_catalog_test.go`.
+- `.github/workflows/harness-images.yml`: the scheduled audit job captures `agent models` from the Cursor harness image.
 - No CLI, API, or harness output behavior changes; the audit report schema stays at version 1.
 
 ## Release note

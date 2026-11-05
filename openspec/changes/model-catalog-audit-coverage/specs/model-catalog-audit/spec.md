@@ -34,6 +34,20 @@ The audit SHALL report `source.inventory-unparsed` naming the source when a mode
 - **WHEN** an inventory source returns a page with a parseable model list
 - **THEN** the audit SHALL NOT report `source.inventory-unparsed` for that source
 
+### Requirement: Cursor CLI output supplies the Cursor model inventory
+
+The scheduled audit SHALL capture `agent models` output from the Cursor harness CI image and pass it to `check`. The audit SHALL use the model identifiers parsed from that output as the `cursor-models` inventory. Missing, empty, or unparseable output SHALL report `source.inventory-unparsed` for `cursor-models`.
+
+#### Scenario: Cursor CLI output lists model identifiers
+
+- **WHEN** `check` receives Cursor CLI output with `<id> - <display name>` lines
+- **THEN** the `cursor-models` inventory SHALL contain those identifiers and the audit SHALL compare them with `cursor.yaml`
+
+#### Scenario: Cursor CLI output is missing or unauthenticated
+
+- **WHEN** `check` receives no Cursor CLI output, or output without any `<id> - <display name>` line
+- **THEN** the audit SHALL report `source.inventory-unparsed` for `cursor-models`
+
 ### Requirement: Family pins are flagged when a newer member is observed
 
 The audit SHALL report `catalog.family-pin-stale` when a family pin names a model that is not the newest observed member of that family in the same source's inventory. Versions SHALL be compared numerically component by component, with missing trailing components treated as zero; a family member matches when its identifier contains the family name followed by a version. The audit SHALL NOT edit catalogs.

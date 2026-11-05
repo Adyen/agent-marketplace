@@ -22,8 +22,14 @@
 - [ ] 3.2 Live `go run ./tools/model-catalog-audit check` shows the Gemini, Devin, and family-pin findings (AC8)
 - [x] 3.3 Annotate each scenario with `// spec: model-catalog-audit/<slug>` and pass `go run ./tools/specaudit trace`
 
-## 4. Blocked
+## 4. Gemini redirect and Cursor CLI inventory
 
-- [ ] 4.1 BLOCKED: Cursor model inventory (AC3, Cursor). Source decision pending from the user. Local `cursor-agent` has no model-list command; `ghcr.io/adyen/agent-marketplace/harness-cursor:ci` is restricted on this host (administrator-gated registry).
-- [x] 4.2 RESOLVED: Keep the `anthropic/haiku` family selector and remove the concrete Haiku alias, per the approved user decision.
-- [x] 4.3 RESOLVED: Exclude snapshot UIDs beginning with `fusion-`; do not rely on the `devin/fusion` family entry for coverage.
+- [ ] 4.1 Trust `aistudio.google.com` for the Gemini docs redirect (user decision)
+- [ ] 4.2 Red tests: Cursor CLI output parses `<id> - <display name>` lines into the `cursor-models` inventory; missing or unauthenticated output reports `source.inventory-unparsed` (AC3)
+- [ ] 4.3 Add the `check` flag for the Cursor CLI output file and the parser (AC3)
+- [ ] 4.4 Add the CI step in `.github/workflows/harness-images.yml` that runs `agent models` in `harness-cursor:ci` keyless and saves the output for `check` (AC3, user decision)
+
+## 5. Resolved decisions
+
+- [x] 5.1 RESOLVED: Keep the `anthropic/haiku` family selector and remove the concrete Haiku alias, per the approved user decision.
+- [x] 5.2 RESOLVED: Exclude snapshot UIDs beginning with `fusion-`; do not rely on the `devin/fusion` family entry for coverage.
