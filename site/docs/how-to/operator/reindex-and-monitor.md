@@ -4,9 +4,9 @@ Refresh registry data on demand and watch the health of a hosted Marketplace.
 
 ## Before you reindex
 
-The worker refreshes every configured registry when it starts and again at each `refresh.interval` (30 minutes by default). Use `serve reindex` when you need a refresh now, for example after a configuration change.
+The worker observes each configured registry's remote ref when it starts and then at a stable point in each `refresh.interval` (30 minutes by default). It refreshes a registry only when the observed commit or the configuration changed, and in any case at least once every 24 hours through periodic reconciliation. Use `serve reindex` when you need a refresh now, for example after a configuration change.
 
-`serve reindex` opens the stores, queues one refresh job per registry, and waits for each job to finish. It processes a job in its own process unless a running worker leases it first, so it may clone the registry itself. Run it where the worker runs, with the same configuration file, credentials, network access, and Git. The API image does not contain Git. For example, in the repository's SQLite Compose setup:
+`serve reindex` opens the stores, queues one refresh job per registry, and waits for each job to finish. Each requested refresh runs even when the registry's commit and configuration are unchanged; a request that matches an already-active refresh of the same commit and configuration coalesces onto it instead of queueing another job. It processes a job in its own process unless a running worker leases it first, so it may clone the registry itself. Run it where the worker runs, with the same configuration file, credentials, network access, and Git. The API image does not contain Git. For example, in the repository's SQLite Compose setup:
 
 ```bash
 docker compose exec app /app/agent-marketplace serve reindex --config /app/marketplace.yaml
@@ -79,6 +79,9 @@ Only processes that run the API (`--role api` or `--role all`) serve these endpo
 Read the log file or collect it with your container tooling. Alert or investigate when you see:
 
 - `serve failed` with reason `open stores`: the process could not open storage, which includes a failed database migration.
+- `source observation`: the worker probed a registry's remote ref. Its `outcome` is `changed`, `unchanged`, or `failed`; repeated `failed` outcomes mean the published index is preserved but possibly stale.
+- `refresh requested`: an observation or `serve reindex` queued a refresh. `trigger` is `source-change`, `config-change`, `reconciliation`, or `manual`, and `coalesced` is true when the request joined an already-active refresh instead of queueing another.
+- `source observation delayed by host budget` or `refresh delayed by host budget`: per-host upstream limits deferred the work; `overdue` shows how long it has been waiting.
 - `reindex failed`, `process refresh job failed`, or `managed refresh attempt failed`: a registry refresh failed. The cause is in the `error` or `err` attribute; a managed attempt also carries `failure_code`, a stable classification that appears on the attempt in `/api/v1/admin/attempts`.
 - `license policy rejected resource` and other records whose `code` attribute starts with `marketplace.policy.`: ingestion policy rejected a resource. See [How to manage ingestion policy](./manage-ingestion-policy.md) for the finding codes.
 - `marketplace.ingest.duplicate-resource` in the `code` attribute: two paths in one registry publish the same kind and name; the first wins.
