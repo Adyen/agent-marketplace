@@ -2180,7 +2180,10 @@ func (c *V4Config) toLegacyConfig(kind layerKind, lockDoc *lockfile.Document, mo
 		if !c.AcquiresMarketplace(name) || mode != v4ExactBinding && c.marketplaceRegistrationOnly(name) {
 			continue
 		}
-		if lockDoc == nil || lockDoc.APIVersion != lockfile.APIVersionV2 {
+		if lockDoc == nil {
+			return nil, v4errVariant(v4MarketplaceLockRequiredCode, "sources."+name, src.Line, "lock-absent", "Marketplace resources require an acquisition lock")
+		}
+		if lockDoc.APIVersion != lockfile.APIVersionV2 {
 			return nil, v4err(v4MarketplaceLockRequiredCode, "sources."+name, src.Line, "Marketplace resources require an acquisition lock")
 		}
 		if _, ok := lockByEndpoint[src.CanonicalURL]; !ok {

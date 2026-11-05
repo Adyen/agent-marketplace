@@ -93,7 +93,10 @@ func commandErrorGroups(err error) []commandErrorGroup {
 				groups[0].err = err
 			} else if coded, ok := err.(interface{ DiagnosticCode() string }); ok && coded.DiagnosticCode() != "" {
 				innerCoded, innerOK := groups[0].err.(interface{ DiagnosticCode() string })
-				if !innerOK || innerCoded.DiagnosticCode() == "" {
+				scoped, hasScope := err.(interface{ DiagnosticScope() string })
+				organizationTrust := hasScope && scoped.DiagnosticScope() == "organization" &&
+					strings.HasPrefix(coded.DiagnosticCode(), "organization.trust.")
+				if organizationTrust || !innerOK || innerCoded.DiagnosticCode() == "" {
 					groups[0].err = err
 				}
 			}

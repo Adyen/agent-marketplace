@@ -1723,6 +1723,141 @@ resources:
 	}
 }
 
+// spec: command-error-output/an-intentionally-absent-organization-lock-names-the-online-commands-that-verify-it
+func TestReadOnlyCommandsExplainAbsentOrganizationMarketplaceLock(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests.Add(1)
+	}))
+	defer server.Close()
+
+	authority := t.TempDir()
+	orgPath := filepath.Join(authority, "config.yaml")
+	orgConfig := []byte(`apiVersion: agent-marketplace/v4
+sources:
+  hosted: {marketplace: ` + server.URL + `}
+resources:
+  hosted: {include: [tools/skill/review]}
+`)
+	writeFile(t, orgPath, string(orgConfig))
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	repo := t.TempDir()
+	withWorkingDir(t, repo)
+
+	const wantHint = "This organization deploys no acquisition lock, so `--locked`, `--offline`, and `lock --check` cannot verify its Marketplace resources; run `agent-marketplace sync` or `agent-marketplace sync --check` while online to verify them."
+	organizationLock := filepath.Join(authority, "lock.yaml")
+	lockFiles := []string{
+		organizationLock,
+		filepath.Join(home, ".agents", "lock.yaml"),
+		filepath.Join(repo, ".agents", "lock.yaml"),
+		filepath.Join(repo, ".agents", "lock.local.yaml"),
+	}
+	for _, args := range [][]string{
+		{"sync", "--locked"},
+		{"sync", "--offline"},
+		{"lock", "--check"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			configBefore, err := os.ReadFile(orgPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stateRoot := filepath.Join(home, "state", "agent-marketplace")
+			stateBefore := stateTreeSnapshot(t, stateRoot)
+			requestsBefore := requests.Load()
+
+			output, err := executeCommand(args...)
+			if err == nil || !strings.Contains(output, "v4.marketplace-lock-required") {
+				t.Fatalf("%v error = %v, want v4.marketplace-lock-required:\n%s", args, err, output)
+			}
+			var hint string
+			for _, line := range strings.Split(output, "\n") {
+				if strings.HasPrefix(line, "hint: ") {
+					hint = strings.TrimPrefix(line, "hint: ")
+					break
+				}
+			}
+			if hint != wantHint {
+				t.Fatalf("%v hint = %q, want %q\n%s", args, hint, wantHint, output)
+			}
+			if got := requests.Load(); got != requestsBefore {
+				t.Fatalf("%v made %d Marketplace requests", args, got-requestsBefore)
+			}
+			if configAfter, readErr := os.ReadFile(orgPath); readErr != nil || !bytes.Equal(configAfter, configBefore) {
+				t.Fatalf("%v changed organization config: %v", args, readErr)
+			}
+			for _, lockPath := range lockFiles {
+				if _, statErr := os.Lstat(lockPath); !os.IsNotExist(statErr) {
+					t.Fatalf("%v created a lock at %s: %v", args, lockPath, statErr)
+				}
+			}
+			if stateAfter := stateTreeSnapshot(t, stateRoot); stateAfter != stateBefore {
+				t.Fatalf("%v changed durable state:\nbefore:\n%s\nafter:\n%s", args, stateBefore, stateAfter)
+			}
+		})
+	}
+}
+
+// spec: command-error-output/organization-failures-direct-users-to-their-administrator
+func TestPresentOrganizationMarketplaceLocksKeepAdministratorGuidance(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	const endpoint = "https://marketplace.example"
+	mismatchedLock, err := lockfile.Encode(lockfile.Document{
+		APIVersion: lockfile.APIVersionV2,
+		Scope:      lockfile.ScopeOrganization,
+		Marketplaces: []lockfile.MarketplaceLock{{
+			URL: endpoint, InstanceID: "market-id",
+			RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: "awesome-ai", RegistryID: "awesome-ai"}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, lock, code string
+	}{
+		{name: "version one lock", lock: "apiVersion: agent-marketplace-lock/v1\nscope: organization\n", code: "v4.marketplace-lock-required"},
+		{name: "missing resource record", lock: string(mismatchedLock), code: "v4.marketplace-lock-mismatch"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+			authority := t.TempDir()
+			orgPath := filepath.Join(authority, "config.yaml")
+			writeFile(t, orgPath, `apiVersion: agent-marketplace/v4
+sources:
+  hosted: {marketplace: `+endpoint+`}
+resources:
+  hosted: {include: [awesome-ai/collection/coderabbit-skills]}
+`)
+			writeFile(t, filepath.Join(authority, "lock.yaml"), tc.lock)
+			config.SetTestOrganizationConfigPath(t, orgPath)
+			writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+			withWorkingDir(t, t.TempDir())
+
+			output, err := executeCommand("sync", "--locked")
+			if err == nil || !strings.Contains(output, tc.code) {
+				t.Fatalf("sync --locked error = %v, want %s:\n%s", err, tc.code, output)
+			}
+			if !strings.Contains(strings.ToLower(output), "ask your administrator") {
+				t.Fatalf("present organization lock hint does not direct the user to their administrator:\n%s", output)
+			}
+		})
+	}
+}
+
 func TestSyncTransientOrganizationLockHonorsRevocationOverride(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

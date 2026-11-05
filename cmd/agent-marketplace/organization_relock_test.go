@@ -279,6 +279,7 @@ func TestOrganizationRelockUpgradeMovesEveryEntry(t *testing.T) {
 	}
 }
 
+// spec: command-error-output/organization-failures-direct-users-to-their-administrator
 // spec: deployed-acquisition-locks/other-commands-keep-refusing-a-stale-organization-lock
 func TestOrganizationRelockOtherCommandsRefuseStaleLock(t *testing.T) {
 	if isolateCommandTest(t) {
@@ -298,12 +299,16 @@ func TestOrganizationRelockOtherCommandsRefuseStaleLock(t *testing.T) {
 	} {
 		output, err := executeCommand(args...)
 		requireLockStaleErr(t, args, err, output)
+		if !strings.Contains(strings.ToLower(output), "ask your administrator") {
+			t.Fatalf("%s stale organization lock hint does not direct the user to their administrator:\n%s", strings.Join(args, " "), output)
+		}
 		if got := f.lockBytes(t); string(got) != string(before) {
 			t.Fatalf("%s changed organization lock bytes", strings.Join(args, " "))
 		}
 	}
 }
 
+// spec: command-error-output/organization-failures-direct-users-to-their-administrator
 // spec: deployed-acquisition-locks/explicit-organization-lock-refuses-invalid-lock-evidence
 func TestOrganizationRelockRefusesInvalidLockEvidence(t *testing.T) {
 	if isolateCommandTest(t) {
@@ -336,6 +341,9 @@ func TestOrganizationRelockRefusesInvalidLockEvidence(t *testing.T) {
 			output, err := executeCommand("lock", "--scope", "organization")
 			if err == nil {
 				t.Fatalf("lock --scope organization accepted %s organization lock:\n%s", test.name, output)
+			}
+			if !strings.Contains(strings.ToLower(output), "ask your administrator") {
+				t.Fatalf("%s organization lock hint does not direct the user to their administrator:\n%s", test.name, output)
 			}
 			if got := f.lockBytes(t); string(got) != string(written) {
 				t.Fatalf("lock --scope organization replaced %s organization lock", test.name)
