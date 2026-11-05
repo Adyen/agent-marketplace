@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -214,6 +215,43 @@ func TestRemoveRequiresHeldPinAdvisoryExpansion(t *testing.T) {
 }
 
 var _ resolver.MarketplaceRequirementLookup = transientOrganizationMarketplaceResolver{}
+
+// spec: resource-removal/enabled-removal-of-a-requires-held-marketplace-prerequisite
+// spec: resource-removal/advisory-removal-of-a-requires-held-marketplace-prerequisite
+func TestToggleOffRequiresHeldMarketplacePin(t *testing.T) {
+	for _, expand := range []bool{true, false} {
+		for _, scope := range requiresHeldScopes {
+			t.Run(scope.name+"/expand="+fmt.Sprint(expand), func(t *testing.T) {
+				_, repo, configPath, lockPath, _ := requiresHeldFixture(t, expand, scope)
+				ec := LoadEffective(context.Background(), ConfigLoadStrict, config.LoadEffectiveOptions{RepoRoot: repo, LocalConfigDir: repo}, nil)
+				if len(ec.Errors) > 0 {
+					t.Fatal(ec.Errors)
+				}
+				pin, entry, matches := marketplaceRequiresHeldPinMatches(ec.Merged, "helper", ir.KindSkill, true)
+				if matches != 1 || !pin.RequiresHeld() {
+					t.Fatalf("requires-held prerequisite missing: matches=%d, pin=%#v", matches, pin)
+				}
+				if _, err := ToggleMarketplacePin(context.Background(), repo, repo, configPath, scope.source, entry, pin, false); err != nil {
+					t.Fatalf("toggle off: %v", err)
+				}
+				raw, err := os.ReadFile(configPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(string(raw), "exclude:") != expand {
+					t.Fatalf("exclusion must follow effective expansion policy:\n%s", raw)
+				}
+				doc := layerMarketplaceLockDoc(t, lockPath)
+				if marketplaceLockResource(doc, "skill", "helper") != nil {
+					t.Fatal("requires-held prerequisite survived toggle off")
+				}
+				if marketplaceLockResource(doc, "skill", "parent") == nil || !strings.Contains(string(raw), "source/skill/parent") {
+					t.Fatal("toggle off removed the requiring resource")
+				}
+			})
+		}
+	}
+}
 
 // spec: resource-prerequisites/unhinted-marketplace-prerequisite-uses-the-requiring-registry
 func TestTransientOrganizationResolverForwardsRequirementLookup(t *testing.T) {
