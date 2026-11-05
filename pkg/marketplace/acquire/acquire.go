@@ -196,17 +196,12 @@ func SourceHost(origin string) (string, error) {
 }
 
 func remoteRefPatterns(ref string) ([]string, string, string, bool) {
+	ref = strings.TrimPrefix(strings.TrimPrefix(ref, "refs/remotes/origin/"), "origin/")
 	switch {
 	case strings.HasPrefix(ref, "refs/heads/"):
 		return []string{ref}, ref, "", false
 	case strings.HasPrefix(ref, "refs/tags/"):
 		return []string{ref, ref + "^{}"}, "", ref, true
-	case strings.HasPrefix(ref, "refs/remotes/origin/"):
-		branch := "refs/heads/" + strings.TrimPrefix(ref, "refs/remotes/origin/")
-		return []string{branch}, branch, "", false
-	case strings.HasPrefix(ref, "origin/"):
-		branch := "refs/heads/" + strings.TrimPrefix(ref, "origin/")
-		return []string{branch}, branch, "", false
 	default:
 		branch, tag := "refs/heads/"+ref, "refs/tags/"+ref
 		return []string{branch, tag, tag + "^{}"}, branch, tag, false

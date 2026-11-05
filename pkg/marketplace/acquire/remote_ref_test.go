@@ -88,6 +88,16 @@ func TestRemoteRefPatternsMatchExactNames(t *testing.T) {
 	if got, want := strings.Join(patterns, " "), "refs/tags/v1 refs/tags/v1^{}"; got != want {
 		t.Fatalf("remoteRefPatterns(refs/tags/v1) = %q, want %q", got, want)
 	}
+	for _, ref := range []string{"origin/v1", "refs/remotes/origin/v1"} {
+		patterns, _, _, _ = remoteRefPatterns(ref)
+		if got, want := strings.Join(patterns, " "), "refs/heads/v1 refs/tags/v1 refs/tags/v1^{}"; got != want {
+			t.Fatalf("remoteRefPatterns(%s) = %q, want %q", ref, got, want)
+		}
+	}
+	patterns, _, _, _ = remoteRefPatterns("origin/origin/v1")
+	if got, want := strings.Join(patterns, " "), "refs/heads/origin/v1 refs/tags/origin/v1 refs/tags/origin/v1^{}"; got != want {
+		t.Fatalf("remoteRefPatterns(origin/origin/v1) = %q, want %q (strip each prefix once, like fetchArgs)", got, want)
+	}
 }
 
 // spec: marketplace-source-observation/a-full-commit-resolves-without-contacting-the-origin
@@ -121,20 +131,65 @@ func TestResolveRemoteRefPrefersTagForAmbiguousShortRef(t *testing.T) {
 	bare := bareGitFixture(t, repo)
 	origin := "file://" + bare
 
-	got, err := ResolveRemoteRef(context.Background(), origin, "dup", Credentials{}, time.Minute)
+	for _, ref := range []string{"dup", "origin/dup", "refs/remotes/origin/dup"} {
+		t.Run(ref, func(t *testing.T) {
+			got, err := ResolveRemoteRef(context.Background(), origin, ref, Credentials{}, time.Minute)
+			if err != nil {
+				t.Fatalf("ResolveRemoteRef(%q): %v", ref, err)
+			}
+			if got != tagTarget || got == branchTip {
+				t.Fatalf("resolved commit = %q, want annotated tag peeled commit %q (branch tip %q)", got, tagTarget, branchTip)
+			}
+			assertAcquiredCommit(t, origin, ref, got)
+		})
+	}
+}
+
+func TestResolveRemoteRefResolvesTagOnlyRemoteTrackingRefs(t *testing.T) {
+	isolateGitConfig(t)
+	repo := createGitRepo(t, map[string]string{"README.md": "release"})
+	runGitTestCommand(t, repo, "git", "tag", "-a", "rel", "-m", "release", "HEAD")
+	want := gitTestOutput(t, repo, "rev-parse", "HEAD")
+	origin := "file://" + bareGitFixture(t, repo)
+
+	for _, ref := range []string{"origin/rel", "refs/remotes/origin/rel"} {
+		t.Run(ref, func(t *testing.T) {
+			got, err := ResolveRemoteRef(context.Background(), origin, ref, Credentials{}, time.Minute)
+			if err != nil {
+				t.Fatalf("ResolveRemoteRef(%q): %v", ref, err)
+			}
+			if got != want {
+				t.Fatalf("resolved commit = %q, want annotated tag peeled commit %q", got, want)
+			}
+			assertAcquiredCommit(t, origin, ref, got)
+		})
+	}
+}
+
+func TestResolveRemoteRefResolvesOriginBranchToTip(t *testing.T) {
+	isolateGitConfig(t)
+	repo := createGitRepo(t, map[string]string{"README.md": "tip"})
+	want := gitTestOutput(t, repo, "rev-parse", "HEAD")
+	origin := "file://" + bareGitFixture(t, repo)
+
+	got, err := ResolveRemoteRef(context.Background(), origin, "origin/main", Credentials{}, time.Minute)
 	if err != nil {
 		t.Fatalf("ResolveRemoteRef: %v", err)
 	}
-	if got != tagTarget || got == branchTip {
-		t.Fatalf("resolved commit = %q, want annotated tag peeled commit %q (branch tip %q)", got, tagTarget, branchTip)
+	if got != want {
+		t.Fatalf("resolved commit = %q, want branch tip %q", got, want)
 	}
-	acquired, err := Clone(context.Background(), origin, "dup", Credentials{}, Limits{}, time.Minute)
+}
+
+func assertAcquiredCommit(t *testing.T, origin, ref, resolved string) {
+	t.Helper()
+	acquired, err := Clone(context.Background(), origin, ref, Credentials{}, Limits{}, time.Minute)
 	if err != nil {
-		t.Fatalf("Clone: %v", err)
+		t.Fatalf("Clone(%q): %v", ref, err)
 	}
 	defer func() { _ = acquired.Release() }()
-	if acquired.Commit != got {
-		t.Fatalf("acquisition commit = %q, want resolved commit %q", acquired.Commit, got)
+	if acquired.Commit != resolved {
+		t.Fatalf("acquisition of %q commit = %q, want resolved commit %q", ref, acquired.Commit, resolved)
 	}
 }
 
