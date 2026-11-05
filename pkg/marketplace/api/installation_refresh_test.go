@@ -47,6 +47,11 @@ func waitFor(t *testing.T, what string, ok func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
+func liveAdoptionVector() string {
+	now := time.Now()
+	return prometheusVector(adoptionSamplesAt(now), now)
+}
+
 // spec: marketplace-api/metrics-configuration-and-requests-preserve-the-server-boundary
 func TestInstallationLookupServesPublishedSnapshot(t *testing.T) {
 	fixture := newMetricsFixture(t, func() string { return prometheusVector(adoptionSamples(), adoptionFixedNow) })
@@ -246,7 +251,7 @@ func TestInstallationHintSkipsFreshCompatibleSnapshot(t *testing.T) {
 func TestInstallationRunSerialAttemptsAndCoalescedHints(t *testing.T) {
 	release := make(chan struct{})
 	var inFlight, maxInFlight atomic.Int32
-	fixture := newMetricsFixture(t, func() string { return prometheusVector(adoptionSamples(), time.Now()) })
+	fixture := newMetricsFixture(t, liveAdoptionVector)
 	fixture.handler.Store(func(w http.ResponseWriter, r *http.Request) {
 		current := inFlight.Add(1)
 		defer inFlight.Add(-1)
@@ -257,7 +262,7 @@ func TestInstallationRunSerialAttemptsAndCoalescedHints(t *testing.T) {
 		}
 		blockedHandler(release, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(operandVector(prometheusVector(adoptionSamples(), time.Now()), r.Form.Get("query"))))
+			_, _ = w.Write([]byte(operandVector(liveAdoptionVector(), r.Form.Get("query"))))
 		})(w, r)
 	})
 	reader := newTestReader(t, fixture)
@@ -302,7 +307,7 @@ func TestInstallationRunSerialAttemptsAndCoalescedHints(t *testing.T) {
 
 // spec: marketplace-api/background-scheduling-coalesces-hints-and-respects-backoff
 func TestInstallationRunRetriesAfterFailureWithoutTraffic(t *testing.T) {
-	fixture := newMetricsFixture(t, func() string { return prometheusVector(adoptionSamples(), time.Now()) })
+	fixture := newMetricsFixture(t, liveAdoptionVector)
 	fixture.handler.Store(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
 	})
@@ -372,10 +377,10 @@ func TestInstallationIdentityChangeDuringFetch(t *testing.T) {
 	release := make(chan struct{})
 	var releaseOnce sync.Once
 	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
-	fixture := newMetricsFixture(t, func() string { return prometheusVector(adoptionSamples(), time.Now()) })
+	fixture := newMetricsFixture(t, liveAdoptionVector)
 	fixture.handler.Store(blockedHandler(release, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(operandVector(prometheusVector(adoptionSamples(), time.Now()), r.Form.Get("query"))))
+		_, _ = w.Write([]byte(operandVector(liveAdoptionVector(), r.Form.Get("query"))))
 	}))
 	reader := newTestReader(t, fixture)
 	reader.timing.Interval = time.Hour

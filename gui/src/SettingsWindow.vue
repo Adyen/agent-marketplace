@@ -114,9 +114,9 @@ function onTabKey(event: KeyboardEvent, index: number) {
     return
   }
   event.preventDefault()
+  const list = (event.currentTarget as HTMLElement).parentElement
   selectTab(tabs[next].id)
   void nextTick(() => {
-    const list = (event.currentTarget as HTMLElement).parentElement
     list?.querySelectorAll<HTMLElement>('[role="tab"]')[next]?.focus()
   })
 }
@@ -154,7 +154,7 @@ async function add(source: SourceInput) {
   const accepted = await props.controller.addSource(source)
   if (accepted) {
     actionError.value = null
-  } else {
+  } else if (props.controller.state.sourceError == null) {
     actionError.value = props.controller.state.error ?? 'The action could not be started'
   }
   void nextTick(() => {
@@ -384,6 +384,10 @@ async function confirmRemove() {
 
               <section class="settings__group" aria-label="Add user source">
                 <h3>Add a source</h3>
+                <p v-if="controller.state.sourceError" role="alert" class="settings__notice settings__notice--danger">
+                  <GuiIcon name="error" class="settings__notice-icon" />
+                  <span>{{ controller.state.sourceError }}</span>
+                </p>
                 <SourceForm :key="formEpoch" :disabled="fieldsDisabled" @add="add" />
               </section>
 

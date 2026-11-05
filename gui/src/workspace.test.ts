@@ -1323,6 +1323,42 @@ describe('Event stream reconnect', () => {
     await connect
   })
 
+  // spec: gui-shell/discovery-health-ignores-the-resource-search
+  it('keeps Marketplace discovery health unchanged when the resource search changes', async () => {
+    const { client, push } = fakeClient()
+    const health: Snapshot['discoveryHealth'] = [
+      { id: 'market', label: 'Marketplace', total: 3, truncated: false, cacheState: 'fresh', message: '' },
+    ]
+    const { controller, wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('needle')], { discoveryEnabled: true, discoveryHealth: health }) }))
+    await tick()
+    await openDiagnostics(wrapper)
+    const before = wrapper.get('[aria-label="Marketplace endpoint health"]').text()
+
+    await wrapper.get('button[aria-label="Search"]').trigger('click')
+    await wrapper.get('input[aria-label="Search resources"]').setValue('needle')
+    await tick()
+    push({
+      type: 'discovery',
+      sequence: 2,
+      generation: 1,
+      operation: null,
+      payload: {
+        requestId: 1,
+        query: 'needle',
+        discoverySequence: 1,
+        rows: [],
+        health: [{ ...health[0]!, total: 0, cacheState: 'miss' }],
+        loading: false,
+      },
+    } as SessionEvent)
+    await tick()
+    await openDiagnostics(wrapper)
+
+    expect(controller.state.diagnosticsDiscoveryHealth).toEqual(health)
+    expect(wrapper.get('[aria-label="Marketplace endpoint health"]').text()).toBe(before)
+  })
+
   // spec: session-navigation/remote-marketplace-search-is-debounced
   // spec: session-navigation/clear-and-refresh
   it('rejects stale discovery frames and accepts only the current query without changing operation state', async () => {

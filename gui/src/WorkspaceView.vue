@@ -1146,7 +1146,7 @@ async function run(action: 'sync' | 'update') {
         :discovery-enabled="view?.discoveryEnabled === true"
         :discovery-loading="view?.discoveryLoading === true"
         :discovery-error="view?.discoveryError ?? null"
-        :discovery-health="view?.discoveryHealth ?? []"
+        :discovery-health="view?.diagnosticsDiscoveryHealth ?? []"
         :discovery-failed="discoveryFailed"
         :diagnostics="view?.diagnostics ?? []"
         @retry-discovery="state?.retryDiscovery()"
