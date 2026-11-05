@@ -39,7 +39,17 @@ are "worker" (background indexing), "api" (HTTP API), and "all" (both).`,
 				return fmt.Errorf("role %q is not supported; use --role worker|api|all", role)
 			}
 
-			cfg, err := mpconfig.LoadConfig(cfgPath)
+			var cfg mpconfig.Config
+			var runtimeSource *mpconfig.RuntimeSource
+			var err error
+			if role == "worker" || role == "all" {
+				runtimeSource, err = mpconfig.LoadRuntimeSource(cfgPath)
+				if err == nil {
+					cfg = runtimeSource.Startup()
+				}
+			} else {
+				cfg, err = mpconfig.LoadConfig(cfgPath)
+			}
 			if err != nil {
 				slog.Error("serve failed", "reason", "load operator config", "error", err)
 				return fmt.Errorf("load operator config: %w", err)
@@ -56,6 +66,7 @@ are "worker" (background indexing), "api" (HTTP API), and "all" (both).`,
 
 			deps := worker.Deps{
 				Config:        cfg,
+				RuntimeSource: runtimeSource,
 				MetadataStore: meta,
 				BlobStore:     blobs,
 			}

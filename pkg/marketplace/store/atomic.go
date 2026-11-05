@@ -35,6 +35,7 @@ type RegistryRevisionPublication struct {
 	Occurrence RegistryOccurrence
 
 	ExpectedHeadCommit string
+	ExpectedGeneration string
 
 	// Resources are the resource revisions to publish.
 	Resources []ResourceRevision

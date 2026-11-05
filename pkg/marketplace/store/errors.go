@@ -1,6 +1,9 @@
 package store
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // Sentinel errors for the Marketplace persistence layer.
 var (
@@ -10,6 +13,10 @@ var (
 	// ErrConflict is returned when a write would violate a uniqueness constraint
 	// or an idempotency key has already been used.
 	ErrConflict = errors.New("marketplace/store: conflict")
+
+	// ErrStaleGeneration is returned when a publication's expected generation is
+	// no longer desired for its registry.
+	ErrStaleGeneration = fmt.Errorf("%w: stale generation", ErrConflict)
 
 	// ErrLeaseExpired is returned when a worker attempts to extend, release,
 	// complete, or fail a job that is no longer held by that worker.
