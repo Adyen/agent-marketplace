@@ -55,6 +55,38 @@ func TestResolveRemoteRefResolvesAnnotatedAndLightweightTags(t *testing.T) {
 	}
 }
 
+func TestResolveRemoteRefIgnoresTagsSharingAPrefix(t *testing.T) {
+	repo := createGitRepo(t, map[string]string{"README.md": "release"})
+	want := gitTestOutput(t, repo, "rev-parse", "HEAD")
+	runGitTestCommand(t, repo, "git", "tag", "-a", "v1", "-m", "release", "HEAD")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("later"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	commitAll(t, repo, "later")
+	runGitTestCommand(t, repo, "git", "tag", "v1.0.0", "HEAD")
+	runGitTestCommand(t, repo, "git", "tag", "v10", "HEAD")
+	bare := bareGitFixture(t, repo)
+
+	got, err := ResolveRemoteRef(context.Background(), "file://"+bare, "v1", Credentials{}, time.Minute)
+	if err != nil {
+		t.Fatalf("ResolveRemoteRef: %v", err)
+	}
+	if got != want {
+		t.Fatalf("resolved commit = %q, want annotated v1 peeled commit %q", got, want)
+	}
+}
+
+func TestRemoteRefPatternsMatchExactNames(t *testing.T) {
+	patterns, _, _, _ := remoteRefPatterns("v1")
+	if got, want := strings.Join(patterns, " "), "refs/heads/v1 refs/tags/v1 refs/tags/v1^{}"; got != want {
+		t.Fatalf("remoteRefPatterns(v1) = %q, want %q", got, want)
+	}
+	patterns, _, _, _ = remoteRefPatterns("refs/tags/v1")
+	if got, want := strings.Join(patterns, " "), "refs/tags/v1 refs/tags/v1^{}"; got != want {
+		t.Fatalf("remoteRefPatterns(refs/tags/v1) = %q, want %q", got, want)
+	}
+}
+
 // spec: marketplace-source-observation/a-full-commit-resolves-without-contacting-the-origin
 func TestResolveRemoteRefReturnsFullCommitWithoutGitProcess(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
@@ -139,6 +171,8 @@ func TestSourceHostNormalizesHostAndLocalOrigins(t *testing.T) {
 	}{
 		{origin: "https://User:password@EXAMPLE.COM:8443/group/repo.git", want: "example.com:8443"},
 		{origin: "git@GitHub.COM:group/repo.git", want: "github.com"},
+		{origin: "git@[2001:DB8:0:0:0:0:0:1]:repo.git", want: "2001:db8:0:0:0:0:0:1"},
+		{origin: "[2001:db8:0:0:0:0:0:1]:repo.git", want: "2001:db8:0:0:0:0:0:1"},
 		{origin: "ssh://user:password@Code.Example:22/group/repo.git", want: "code.example:22"},
 		{origin: "file:///tmp/registry.git", want: "local"},
 		{origin: "/tmp/registry.git", want: "local"},

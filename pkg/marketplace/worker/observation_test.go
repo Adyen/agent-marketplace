@@ -93,6 +93,61 @@ func TestObserverDoesNotAcquireUnchangedOrFailedSources(t *testing.T) {
 	}
 }
 
+// spec: marketplace-source-observation/probe-failure-backoff-is-deterministic-and-capped
+func TestObserverFailedFirstProbeIsNotRelistedBeforeItsBackoff(t *testing.T) {
+	f := newObservationFixture(t, 1)
+	f.cfg.Registries[0].Ref = "missing"
+	f.deps.Config = f.cfg
+	if err := initializeObservationState(f.ctx, f.deps, f.cfg); err != nil {
+		t.Fatalf("initializeObservationState: %v", err)
+	}
+	registryID := store.RegistryID(f.cfg.Registries[0].ID)
+	now := time.Now().UTC().Truncate(time.Second)
+	observer := newObserver(f.deps, f.cfg, func() time.Time { return now })
+	if err := observer.runCycle(f.ctx); err != nil {
+		t.Fatalf("failed first probe: %v", err)
+	}
+	if f.counts.probes.Load() != 1 {
+		t.Fatalf("first cycle probes = %d, want one", f.counts.probes.Load())
+	}
+	due, err := f.meta.ListDueRegistryObservations(f.ctx, now, observationBatchSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, observation := range due {
+		if observation.RegistryID == registryID {
+			t.Fatalf("failed probe in backoff is listed as due at the same clock: %+v", observation)
+		}
+	}
+	if err := observer.runCycle(f.ctx); err != nil {
+		t.Fatalf("second cycle: %v", err)
+	}
+	if f.counts.probes.Load() != 1 {
+		t.Fatalf("second cycle probed during backoff: probes = %d, want one", f.counts.probes.Load())
+	}
+}
+
+func TestObserverDoesNotRelistInactiveRegistryAfterAdvancing(t *testing.T) {
+	f := newObservationFixture(t, 1)
+	id := store.RegistryID("src-removed")
+	now := time.Now().UTC()
+	if _, err := f.meta.CreateRegistryObservation(f.ctx, store.RegistryObservation{RegistryID: id, NextProbeAt: now.Add(-time.Minute)}); err != nil {
+		t.Fatalf("CreateRegistryObservation: %v", err)
+	}
+	if err := newObserver(f.deps, f.cfg, func() time.Time { return now }).runCycle(f.ctx); err != nil {
+		t.Fatalf("inactive registry observation: %v", err)
+	}
+	due, err := f.meta.ListDueRegistryObservations(f.ctx, now, observationBatchSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, observation := range due {
+		if observation.RegistryID == id {
+			t.Fatalf("inactive registry is listed as due after advancing: %+v", observation)
+		}
+	}
+}
+
 func TestObserverAdvancesOrphanedRegistryWithoutProbing(t *testing.T) {
 	f := newObservationFixture(t, 1)
 	id := store.RegistryID("src-removed")
@@ -119,7 +174,7 @@ func TestObserverAdvancesOrphanedRegistryWithoutProbing(t *testing.T) {
 	if got.ObservedCommit != before.ObservedCommit || !got.ObservedAt.Equal(before.ObservedAt) ||
 		got.ProbeStatus != before.ProbeStatus || got.ProbeError != before.ProbeError ||
 		got.ConsecutiveProbeFailures != before.ConsecutiveProbeFailures ||
-		!got.NextReconcileAt.Equal(before.NextReconcileAt) {
+		!got.NextReconcileAt.Equal(got.NextProbeAt) {
 		t.Fatalf("orphaned registry observation health changed: before=%+v after=%+v", before, got)
 	}
 	if err := observer.runCycle(f.ctx); err != nil {
@@ -303,7 +358,11 @@ func TestDueReconciliationRefreshesAndAdvancesItsSchedule(t *testing.T) {
 	if !observation.NextReconcileAt.After(now) || observation.NextReconcileAt.Sub(now) > 24*time.Hour {
 		t.Fatalf("next reconciliation = %s, want a future slot within 24h", observation.NextReconcileAt)
 	}
-	if want := expectedPhaseSlot(registryID, now, 24*time.Hour).Truncate(time.Microsecond); !observation.NextReconcileAt.Equal(want) {
+	want := expectedPhaseSlot(registryID, now, 24*time.Hour).Truncate(time.Microsecond)
+	if probeSlot := expectedPhaseSlot(registryID, now, time.Duration(f.cfg.Refresh.Interval)).Truncate(time.Microsecond); probeSlot.After(want) {
+		want = probeSlot
+	}
+	if !observation.NextReconcileAt.Equal(want) {
 		t.Fatalf("next reconciliation = %s, want next 24h phase %s", observation.NextReconcileAt, want)
 	}
 	runRequestedJob(t, f, requested.ID)
@@ -434,7 +493,8 @@ func TestObserverLeavesHostBudgetRefusalDueAndLogsOverdueTime(t *testing.T) {
 	defer slog.SetDefault(previous)
 
 	beforeProbes := f.counts.probes.Load()
-	if err := newObserver(f.deps, f.cfg, func() time.Time { return now }).runCycle(f.ctx); err != nil {
+	observer := newObserver(f.deps, f.cfg, func() time.Time { return now })
+	if err := observer.runCycle(f.ctx); err != nil {
 		t.Fatalf("budget-delayed cycle: %v", err)
 	}
 	got, err := f.meta.GetRegistryObservation(f.ctx, registryID)
@@ -449,13 +509,19 @@ func TestObserverLeavesHostBudgetRefusalDueAndLogsOverdueTime(t *testing.T) {
 			t.Fatalf("budget-delay log %q lacks %q", logs.String(), want)
 		}
 	}
+	if err := observer.runCycle(f.ctx); err != nil {
+		t.Fatalf("repeated budget-delayed cycle: %v", err)
+	}
+	if n := strings.Count(logs.String(), "source observation delayed by host budget"); n != 1 {
+		t.Fatalf("host-budget delay logged %d times for one due time, want once", n)
+	}
 }
 
 // spec: marketplace-source-observation/two-workers-observe-each-due-registry-once
 // spec: marketplace-source-observation/host-operations-stay-within-the-budget-across-workers
 // spec: marketplace-source-observation/observation-telemetry-contains-no-credentials
 func TestObserversShareRegistryAndHostBudgetsAndRedactTelemetry(t *testing.T) {
-	f := newObservationFixture(t, 2)
+	f := newObservationFixture(t, 3)
 	const token = "worker-telemetry-token"
 	t.Setenv("AM_TEST_MARKETPLACE_TOKEN", token)
 	for i := range f.cfg.Registries {
@@ -484,17 +550,19 @@ func TestObserversShareRegistryAndHostBudgetsAndRedactTelemetry(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 	defer slog.SetDefault(previous)
 
-	var workers sync.WaitGroup
-	for i := 0; i < 2; i++ {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
-			if err := newObserver(f.deps, f.cfg, func() time.Time { return now }).runCycle(f.ctx); err != nil {
-				t.Errorf("observer cycle: %v", err)
-			}
-		}()
+	for round := 0; round < 50 && f.counts.probes.Load() < int64(len(f.cfg.Registries)); round++ {
+		var workers sync.WaitGroup
+		for i := 0; i < 2; i++ {
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				if err := newObserver(f.deps, f.cfg, func() time.Time { return now }).runCycle(f.ctx); err != nil {
+					t.Errorf("observer cycle: %v", err)
+				}
+			}()
+		}
+		workers.Wait()
 	}
-	workers.Wait()
 	if got, want := f.counts.probes.Load(), int64(len(f.cfg.Registries)); got != want {
 		t.Fatalf("probe count across two observers = %d, want one per registry (%d)", got, want)
 	}
@@ -540,13 +608,15 @@ func TestObserversShareRegistryAndHostBudgetsAndRedactTelemetry(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("no acquisition entered the clone seam")
 	}
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("host-budget-refused refresh: %v", err)
+	for refused := 1; refused < len(jobIDs); refused++ {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("host-budget-refused refresh: %v", err)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("refused refresh did not release after host-budget refusal")
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("second refresh did not release after host-budget refusal")
 	}
 	select {
 	case <-started:
@@ -572,9 +642,9 @@ func TestObserversShareRegistryAndHostBudgetsAndRedactTelemetry(t *testing.T) {
 			runRequestedJob(t, f, id)
 		}
 	}
-	if f.counts.maxClones.Load() > 1 || f.counts.clones.Load() != clonesBefore+2 {
+	if f.counts.maxClones.Load() > 1 || f.counts.clones.Load() != clonesBefore+int64(len(jobIDs)) {
 		t.Fatalf("host acquisition budget allowed concurrent or duplicate clones: max=%d count=%d want count %d",
-			f.counts.maxClones.Load(), f.counts.clones.Load(), clonesBefore+2)
+			f.counts.maxClones.Load(), f.counts.clones.Load(), clonesBefore+int64(len(jobIDs)))
 	}
 	for _, src := range f.cfg.Registries {
 		setObservationDue(t, f.meta, store.RegistryID(src.ID))
@@ -672,6 +742,10 @@ func (s *refreshRequestRecorder) RequestRefresh(ctx context.Context, id store.Re
 
 func newObservationFixture(t *testing.T, registryCount int) *observationFixture {
 	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	repo, cleanup := createTestRepo(t)
 	t.Cleanup(cleanup)
 	bare := filepath.Join(t.TempDir(), "origin.git")

@@ -172,16 +172,26 @@ func SourceHost(origin string) (string, error) {
 		return net.JoinHostPort(host, port), nil
 	}
 
-	colon := strings.IndexByte(origin, ':')
-	if colon < 0 || strings.Contains(origin[:colon], "/") {
-		return "local", nil
+	rest := origin
+	if at := strings.IndexByte(rest, '@'); at >= 0 && !strings.ContainsAny(rest[:at], "/:[") {
+		rest = rest[at+1:]
 	}
-	host := origin[:colon]
-	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
-		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
-	}
-	if at := strings.LastIndexByte(host, '@'); at >= 0 {
-		host = host[at+1:]
+	var host string
+	if strings.HasPrefix(rest, "[") {
+		end := strings.IndexByte(rest, ']')
+		if end < 0 {
+			return "", errors.New("origin has malformed bracketed host")
+		}
+		if !strings.HasPrefix(rest[end+1:], ":") {
+			return "local", nil
+		}
+		host = rest[1:end]
+	} else {
+		colon := strings.IndexByte(rest, ':')
+		if colon < 0 || strings.Contains(rest[:colon], "/") {
+			return "local", nil
+		}
+		host = rest[:colon]
 	}
 	host = strings.ToLower(host)
 	if host == "" {
@@ -195,7 +205,7 @@ func remoteRefPatterns(ref string) ([]string, string, string, bool) {
 	case strings.HasPrefix(ref, "refs/heads/"):
 		return []string{ref}, ref, "", false
 	case strings.HasPrefix(ref, "refs/tags/"):
-		return []string{ref + "*"}, "", ref, true
+		return []string{ref, ref + "^{}"}, "", ref, true
 	case strings.HasPrefix(ref, "refs/remotes/origin/"):
 		branch := "refs/heads/" + strings.TrimPrefix(ref, "refs/remotes/origin/")
 		return []string{branch}, branch, "", false
@@ -204,7 +214,7 @@ func remoteRefPatterns(ref string) ([]string, string, string, bool) {
 		return []string{branch}, branch, "", false
 	default:
 		branch, tag := "refs/heads/"+ref, "refs/tags/"+ref
-		return []string{branch, tag + "*"}, branch, tag, false
+		return []string{branch, tag, tag + "^{}"}, branch, tag, false
 	}
 }
 

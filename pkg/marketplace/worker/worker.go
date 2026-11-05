@@ -279,13 +279,28 @@ type observer struct {
 	cfg   config.Config
 	now   func() time.Time
 	owner string
+
+	budgetMu      sync.Mutex
+	budgetDelayed map[store.RegistryID]time.Time
 }
 
 func newObserver(deps Deps, cfg config.Config, now func() time.Time) *observer {
 	if now == nil {
 		now = time.Now
 	}
-	return &observer{deps: deps, cfg: cfg, now: now, owner: "observer-" + uuid.NewString()}
+	return &observer{deps: deps, cfg: cfg, now: now, owner: "observer-" + uuid.NewString(), budgetDelayed: make(map[store.RegistryID]time.Time)}
+}
+
+// claimBudgetDelayLog reports whether a host-budget delay for this due time has
+// not been logged yet, and records it as logged.
+func (o *observer) claimBudgetDelayLog(id store.RegistryID, dueAt time.Time) bool {
+	o.budgetMu.Lock()
+	defer o.budgetMu.Unlock()
+	if logged, ok := o.budgetDelayed[id]; ok && logged.Equal(dueAt) {
+		return false
+	}
+	o.budgetDelayed[id] = dueAt
+	return true
 }
 
 func initializeObservationState(ctx context.Context, deps Deps, cfg config.Config) error {
@@ -387,7 +402,7 @@ func (o *observer) observeOne(ctx context.Context, due store.RegistryObservation
 	if !ok {
 		nextProbe := nextPhaseSlot(id, now, o.cfg.Refresh.Interval.Duration())
 		if _, err := mutateObservation(ctx, o.deps.MetadataStore, id, func(next *store.RegistryObservation) {
-			next.NextProbeAt = nextProbe
+			setNextProbe(next, nextProbe)
 		}); err != nil {
 			return fmt.Errorf("advance observation for inactive registry %q: %w", id, err)
 		}
@@ -405,13 +420,15 @@ func (o *observer) observeOne(ctx context.Context, due store.RegistryObservation
 		} else {
 			hostLease, budgetErr := o.deps.MetadataStore.AcquireHostBudget(ctx, host, owner, false, sourceHostBudgetLimit(), registryLeaseDuration)
 			if errors.Is(budgetErr, store.ErrConflict) {
-				overdue := time.Duration(0)
-				if !current.NextProbeAt.IsZero() {
-					overdue = max(now.Sub(current.NextProbeAt), 0)
+				if o.claimBudgetDelayLog(id, current.NextProbeAt) {
+					overdue := time.Duration(0)
+					if !current.NextProbeAt.IsZero() {
+						overdue = max(now.Sub(current.NextProbeAt), 0)
+					}
+					slog.Info("source observation delayed by host budget",
+						"registry", id, "host", redact.URL(host), "overdue", overdue,
+						"origin", redact.URL(origin))
 				}
-				slog.Info("source observation delayed by host budget",
-					"registry", id, "host", redact.URL(host), "overdue", overdue,
-					"origin", redact.URL(origin))
 				return nil
 			}
 			if budgetErr != nil {
@@ -456,10 +473,10 @@ func (o *observer) observeOne(ctx context.Context, due store.RegistryObservation
 		next.ProbeStatus = store.RegistryProbeStatusOK
 		next.ProbeError = ""
 		next.ConsecutiveProbeFailures = 0
-		next.NextProbeAt = nextProbe
 		if next.NextReconcileAt.IsZero() || reconciliationDue {
 			next.NextReconcileAt = nextPhaseSlot(id, now, config.DefaultObservationReconciliationInterval)
 		}
+		setNextProbe(next, nextProbe)
 	})
 	if err != nil {
 		return fmt.Errorf("record source observation for registry %q: %w", id, err)
@@ -492,7 +509,7 @@ func (o *observer) observeOne(ctx context.Context, due store.RegistryObservation
 
 func workerLoop(ctx context.Context, deps Deps, workerIndex int) {
 	workerID := fmt.Sprintf("worker-%d-%s", workerIndex, uuid.NewString())
-	leaseDuration := refreshLeaseDuration(deps.Config)
+	leaseDuration := managedLeaseDuration(deps.Config)
 
 	for {
 		select {
@@ -538,7 +555,7 @@ func processRefreshJob(ctx context.Context, deps Deps, j job.Job, workerID strin
 		return err
 	}
 
-	leaseDuration := refreshLeaseDuration(deps.Config)
+	leaseDuration := managedLeaseDuration(deps.Config)
 	registryLease, err := deps.MetadataStore.AcquireRegistryLease(ctx, registry.ID, workerID, leaseDuration)
 	if errors.Is(err, store.ErrConflict) {
 		return releaseRefreshAndPause(ctx, deps, j.ID, workerID)
@@ -613,14 +630,6 @@ func processRefreshJob(ctx context.Context, deps Deps, j job.Job, workerID strin
 		return fmt.Errorf("complete job: %w", err)
 	}
 	return nil
-}
-
-func refreshLeaseDuration(cfg config.Config) time.Duration {
-	duration := 5 * time.Minute
-	if cloneDuration := cfg.Policy.Limits.CloneDuration.Duration(); cloneDuration > 0 && cloneDuration > duration {
-		duration = cloneDuration + 5*time.Minute
-	}
-	return duration
 }
 
 func releaseRefreshAndPause(ctx context.Context, deps Deps, id store.JobID, workerID string) error {
@@ -698,7 +707,7 @@ func Reindex(ctx context.Context, deps Deps, cfg config.Config, registrySlugOrID
 	jobID := decision.Job.ID
 
 	workerID := fmt.Sprintf("reindex-%s", uuid.NewString())
-	leaseDuration := refreshLeaseDuration(cfg)
+	leaseDuration := managedLeaseDuration(cfg)
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -816,9 +825,19 @@ func recordProbeFailure(ctx context.Context, meta store.MetadataStore, id store.
 		next.ProbeStatus = store.RegistryProbeStatusFailed
 		next.ProbeError = message
 		next.ConsecutiveProbeFailures++
-		next.NextProbeAt = now.Add(probeBackoffDelay(id, next.ConsecutiveProbeFailures, interval))
+		setNextProbe(next, now.Add(probeBackoffDelay(id, next.ConsecutiveProbeFailures, interval)))
 	})
 	return err
+}
+
+// setNextProbe keeps reconciliation no earlier than the next probe. The store
+// lists rows whose reconciliation is due, and a reconciliation that is due
+// before its probe would otherwise be re-listed on every poll until that probe.
+func setNextProbe(next *store.RegistryObservation, probeAt time.Time) {
+	next.NextProbeAt = probeAt
+	if next.NextReconcileAt.Before(probeAt) {
+		next.NextReconcileAt = probeAt
+	}
 }
 
 func recordSuccessfulIndex(ctx context.Context, meta store.MetadataStore, id store.RegistryID, commit, generation string, indexedAt time.Time) error {
