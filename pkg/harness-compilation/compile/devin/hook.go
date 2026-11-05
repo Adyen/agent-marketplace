@@ -9,7 +9,9 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/hookpolicy"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 // Devin hook vocabulary. Evidence: docs/devin-cli-harness-spec-3000.3.md,
@@ -35,24 +37,6 @@ const (
 	// config.json#hooks".
 	hooksKey = "hooks"
 )
-
-// hookMatcherEvents are the Devin events that documented matchers apply to.
-//
-// Evidence: docs/devin-cli-harness-spec-3000.3.md, "Hooks" — "Documented
-// matchers apply to tool-related events". Only PreToolUse and PostToolUse are
-// documented as tool events, so the set is deliberately narrow.
-//
-// The narrow set is the fail-closed choice. A matcher restricts WHEN a hook
-// fires. If Devin ignores a matcher on an event it does not support matchers
-// for, the hook fires for every occurrence of that event instead of the subset
-// the author selected — a strictly broader activation surface than requested.
-// Skipping the entry cannot widen anything; emitting it might. Whether
-// PermissionRequest also accepts a matcher is a 3000.3.27 runtime probe item
-// (D12); until a probe says so it stays out of this set.
-var hookMatcherEvents = map[string]struct{}{
-	"PreToolUse":  {},
-	"PostToolUse": {},
-}
 
 // hookBehaviorIdentity documents the total identity that gives a compiled Devin
 // hook its identity. The identity is realized by the materializer as the Devin
@@ -121,64 +105,33 @@ func translateHook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []dia
 	source := compile.DiagSource(h.Source)
 	name := h.Name()
 
-	event, ok := mapping.HookEvent(h.Event, h.Matcher, mapping.TargetDevin)
-	if !ok {
-		// The canonical event name is a fixed vocabulary term, not user
-		// content, so naming it is safe and makes the diagnostic actionable.
-		slog.Error("devin hook event unmappable", "target", mapping.TargetDevin, "resource", name, "event", h.Event)
-		return nil, []diag.Diagnostic{hookSkipDiagnostic(diag.CodeHookDevinEventUnmappable, name, source,
-			fmt.Sprintf("Devin documents no %q hook event; the hook entry was skipped", h.Event),
-			"Use a Devin-documented hook event: PreToolUse, PostToolUse, PermissionRequest, UserPromptSubmit, Stop, SessionStart, SessionEnd, or PostCompaction",
-		)}, nil
+	// Event, type, matcher, timeout, and command translation come from the
+	// catalog-driven hookpolicy resolver (OpenSpec native-hook-integration,
+	// task 3.4). An unrepresentable combination suppresses this ONE entry
+	// with an error and never widens a restriction: a matcher on an event
+	// the catalog declares without matchers is refused rather than dropped,
+	// because emitting it would fire the hook for every occurrence of the
+	// event — a strictly broader activation surface than the author selected.
+	scope := hookpolicy.ScopeRepository
+	if opts.Scope() == compile.ScopeUser {
+		scope = hookpolicy.ScopeMachine
+	}
+	resolved := hookpolicy.Resolve(h, target.TargetDevin, scope, opts.PluginRoot())
+	if resolved.Failed() {
+		return nil, resolved.Diagnostics, nil
 	}
 
-	if h.Type != hookTypeCommand && h.Type != hookTypePrompt {
-		// An empty type is included here on purpose. Source loaders default an
-		// absent type to "command", so an empty type only reaches this
-		// compiler from hand-built IR, and Devin's documented default for a
-		// typeless hook is not part of the 3000.3 evidence. Guessing "command"
-		// would run a payload the author never declared executable.
-		slog.Error("devin hook type unsupported", "target", mapping.TargetDevin, "resource", name, "type", h.Type)
-		return nil, []diag.Diagnostic{hookSkipDiagnostic(diag.CodeHookDevinUnsupportedType, name, source,
-			fmt.Sprintf("Devin does not support the %q hook type; the hook entry was skipped", h.Type),
-			"Devin documents the command and prompt hook types only",
-		)}, nil
-	}
-
-	if h.Matcher != "" {
-		if _, tool := hookMatcherEvents[event]; !tool {
-			slog.Error("devin hook matcher unsupported for event", "target", mapping.TargetDevin, "resource", name, "event", event)
-			return nil, []diag.Diagnostic{hookSkipDiagnostic(diag.CodeHookDevinMatcherUnsupportedEvent, name, source,
-				fmt.Sprintf("Devin documents hook matchers for tool events only, not for %q; the hook entry was skipped", event),
-				"Remove the matcher, or move the hook to PreToolUse or PostToolUse; emitting the hook without its matcher would widen it to every occurrence of the event",
-			)}, nil
-		}
-	}
-
-	if h.Timeout != nil && *h.Timeout < 0 {
-		// A negative timeout is undefined for Devin. It could plausibly be read
-		// as "no limit", which would let a hook command run unbounded — a
-		// broader execution surface than the source asked for. Fail closed.
-		// An explicit 0 is preserved verbatim: it is the strictest value the
-		// author can express, so passing it through can only narrow.
-		slog.Error("devin hook timeout invalid", "target", mapping.TargetDevin, "resource", name)
-		return nil, []diag.Diagnostic{hookSkipDiagnostic(diag.CodeHookDevinTimeoutInvalid, name, source,
-			"hook timeout is negative, which Devin does not define; the hook entry was skipped",
-			"Use a non-negative timeout, or remove the timeout so Devin applies its own default",
-		)}, nil
-	}
-
-	payloadKey, payload, diags := resolveHookPayload(h, name, source, opts)
+	payloadKey, payload, diags := resolveHookPayload(h, name, source, resolved.Command)
 	if payload == "" {
 		return nil, diags, nil
 	}
 
-	rule := map[string]any{hookKeyType: h.Type, payloadKey: payload}
-	if h.Matcher != "" {
-		rule[hookKeyMatcher] = h.Matcher
+	rule := map[string]any{hookKeyType: resolved.Type, payloadKey: payload}
+	if resolved.Matcher != "" {
+		rule[hookKeyMatcher] = resolved.Matcher
 	}
-	if h.Timeout != nil {
-		rule[hookKeyTimeout] = *h.Timeout
+	if resolved.Timeout != nil {
+		rule[hookKeyTimeout] = *resolved.Timeout
 	}
 
 	// Unknown-field precedence, plan: "Canonical modeled fields win over
@@ -220,13 +173,14 @@ func translateHook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []dia
 	for _, key := range extraKeys {
 		rule[key] = h.Extra[key]
 	}
+	diags = append(resolved.Diagnostics, diags...)
 
-	art, err := hookArtifact(event, rule, opts)
+	art, err := hookArtifact(resolved.Event, rule, opts)
 	if err != nil {
 		return nil, nil, err
 	}
 	slog.Debug("devin hook compiled", "target", mapping.TargetDevin, "resource", name,
-		"event", event, "type", h.Type, "scope", opts.Scope(), "path", art.Path, "identity", hookBehaviorIdentity)
+		"event", resolved.Event, "type", resolved.Type, "scope", opts.Scope(), "path", art.Path, "identity", hookBehaviorIdentity)
 	return []artifact.Artifact{art}, diags, nil
 }
 
@@ -239,14 +193,11 @@ func translateHook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []dia
 //
 // An empty selected payload returns "" and the caller skips the entry: an entry
 // with a type and no payload is not a hook, and inventing one is forbidden.
-func resolveHookPayload(h *ir.Hook, name string, source diag.SourceRef, opts compile.Options) (key, value string, diags []diag.Diagnostic) {
+func resolveHookPayload(h *ir.Hook, name string, source diag.SourceRef, resolvedCommand string) (key, value string, diags []diag.Diagnostic) {
 	var unusedKey, unused string
 	switch h.Type {
 	case hookTypeCommand:
-		key, unusedKey, unused = hookKeyCommand, hookKeyPrompt, h.Prompt
-		var pluginDiags []diag.Diagnostic
-		value, pluginDiags = resolvePluginRoot(h.Command, name, source, opts)
-		diags = append(diags, pluginDiags...)
+		key, unusedKey, value, unused = hookKeyCommand, hookKeyPrompt, resolvedCommand, h.Prompt
 	default:
 		// Prompt hooks carry text the model reads; they are never executed, so
 		// the plugin-root token is not resolved in them. Substituting a
@@ -274,29 +225,6 @@ func resolveHookPayload(h *ir.Hook, name string, source diag.SourceRef, opts com
 		))
 	}
 	return key, value, diags
-}
-
-// resolvePluginRoot expands the canonical plugin-root token in a hook command
-// and reports the hook-scoped loss when no plugin root is configured.
-//
-// The expansion rule itself lives in resolvePluginRootToken (fields.go), shared
-// with the MCP compiler, so the two kinds cannot drift on whether an
-// unconfigured plugin root may be expanded to an empty string. Only the
-// diagnostic code differs, so consumer UIs can attribute the loss to the right
-// resource kind.
-//
-// The command string is never logged or quoted: only whether the token was
-// present and whether a plugin root was configured.
-func resolvePluginRoot(command, name string, source diag.SourceRef, opts compile.Options) (string, []diag.Diagnostic) {
-	resolved, unresolved := resolvePluginRootToken(command, opts)
-	if !unresolved {
-		return resolved, nil
-	}
-	slog.Warn("devin hook plugin root unresolved", "target", mapping.TargetDevin, "resource", name)
-	return resolved, []diag.Diagnostic{hookLossDiagnostic(diag.CodeHookDevinPluginRootUnresolved, name, source,
-		"the hook command references the plugin root, but Devin has no plugin-root token and no plugin root was configured; the token was left unexpanded",
-		"Compile with a plugin root so the command resolves, or use an absolute command path",
-	)}
 }
 
 // hookArtifact wraps one rule in the scope-specific aggregate envelope.

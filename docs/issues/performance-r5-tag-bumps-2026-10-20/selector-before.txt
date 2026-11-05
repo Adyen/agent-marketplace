@@ -1,0 +1,21 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/pipeline
+cpu: Apple M4 Max
+BenchmarkSelectTagBumpNumericSuffix/8-16  	  601792	      3417 ns/op	   32832 B/op	       4 allocs/op
+BenchmarkSelectTagBumpNumericSuffix/8-16  	  692721	      3273 ns/op	   32832 B/op	       4 allocs/op
+BenchmarkSelectTagBumpNumericSuffix/8-16  	 2116503	      1140 ns/op	   32832 B/op	       4 allocs/op
+BenchmarkSelectTagBumpNumericSuffix/8-16  	 2105656	      1138 ns/op	   32832 B/op	       4 allocs/op
+BenchmarkSelectTagBumpNumericSuffix/8-16  	 2099462	      1136 ns/op	   32832 B/op	       4 allocs/op
+BenchmarkSelectTagBumpNumericSuffix/128-16         	 1624539	      1472 ns/op	   33232 B/op	       5 allocs/op
+BenchmarkSelectTagBumpNumericSuffix/128-16         	 1627828	      1485 ns/op	   33232 B/op	       5 allocs/op
+BenchmarkSelectTagBumpNumericSuffix/128-16         	 1624622	      1469 ns/op	   33232 B/op	       5 allocs/op
+BenchmarkSelectTagBumpNumericSuffix/128-16         	 1587250	      1502 ns/op	   33232 B/op	       5 allocs/op
+BenchmarkSelectTagBumpNumericSuffix/128-16         	 1610017	      1491 ns/op	   33232 B/op	       5 allocs/op
+BenchmarkSelectTagBumpNumericSuffix/70000-16       	   12229	    195586 ns/op	  450592 B/op	       7 allocs/op
+BenchmarkSelectTagBumpNumericSuffix/70000-16       	   12408	    193567 ns/op	  450592 B/op	       7 allocs/op
+BenchmarkSelectTagBumpNumericSuffix/70000-16       	   12434	    193303 ns/op	  450592 B/op	       7 allocs/op
+BenchmarkSelectTagBumpNumericSuffix/70000-16       	   12283	    195278 ns/op	  450592 B/op	       7 allocs/op
+BenchmarkSelectTagBumpNumericSuffix/70000-16       	   12408	    194043 ns/op	  450592 B/op	       7 allocs/op
+PASS
+ok  	github.com/Adyen/agent-marketplace/internal/pipeline	36.535s

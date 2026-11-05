@@ -363,10 +363,10 @@ func TestRowGlyphPendingSync(t *testing.T) {
 	}
 }
 
-func TestRowGlyphOrphaned(t *testing.T) {
+func TestRowGlyphOrphanedCopyIsPending(t *testing.T) {
 	r := row{DriftItem: &materialize.DriftItem{Reason: materialize.DriftOrphaned}}
-	if got := r.Glyph(); got != "[-]" {
-		t.Fatalf("expected [-] for orphaned, got %s", got)
+	if got := r.Glyph(); got != "[*]" {
+		t.Fatalf("expected [*] for a stale copy pending sync, got %s", got)
 	}
 }
 
@@ -383,7 +383,7 @@ func TestRowStatusText(t *testing.T) {
 		{"required user", row{Artifact: resolver.ResolvedArtifact{Required: true, Source: config.UserPersonal}}, "required"},
 		{"malformed", row{IsMalformed: true, MalformedMsg: "bad"}, "malformed: bad"},
 		{"pending", row{DriftItem: &materialize.DriftItem{Reason: materialize.DriftMissing}}, "enabled (pending sync)"},
-		{"orphaned", row{DriftItem: &materialize.DriftItem{Reason: materialize.DriftOrphaned}}, "orphaned"},
+		{"orphaned copy", row{DriftItem: &materialize.DriftItem{Reason: materialize.DriftOrphaned}}, "enabled (pending sync)"},
 		{"broken", row{DriftItem: &materialize.DriftItem{Reason: materialize.DriftBroken}}, "broken"},
 	}
 

@@ -9,6 +9,8 @@ func codexBenchBundle() fstest.MapFS {
 	return fstest.MapFS{
 		".agents/skills/bench-skill/SKILL.md":   {Data: []byte("---\nname: bench-skill\ndescription: A benchmark skill\n---\nBenchmark skill body.\n")},
 		".agents/skills/bench-skill/run.sh":     {Data: []byte("#!/bin/sh\necho bench\n")},
+		".agents/skills/.git/HEAD":              {Data: []byte("ref: refs/heads/main\n")},
+		".agents/skills/.git/hooks/pre-commit":  {Data: []byte("#!/bin/sh\n")},
 		".agents/skills/bench-command/SKILL.md": {Data: []byte("---\nname: bench-command\ndescription: A benchmark command\nx-agent-marketplace-kind: command\n---\nBenchmark command body.\n")},
 		".codex/agents/bench-agent.toml": {Data: []byte(`name = "bench-agent"
 description = "A benchmark subagent"
@@ -52,7 +54,7 @@ func BenchmarkLoadBundleByKind(b *testing.B) {
 		paths []string
 		want  int
 	}{
-		{"skill", []string{".agents/skills/bench-skill/SKILL.md", ".agents/skills/bench-skill/run.sh"}, 1},
+		{"skill", []string{".agents/skills/bench-skill/SKILL.md", ".agents/skills/bench-skill/run.sh", ".agents/skills/.git/HEAD", ".agents/skills/.git/hooks/pre-commit"}, 1},
 		{"command", []string{".agents/skills/bench-command/SKILL.md"}, 1},
 		{"subagent", []string{".codex/agents/bench-agent.toml"}, 1},
 		{"hook", []string{".codex/hooks.json"}, 1},

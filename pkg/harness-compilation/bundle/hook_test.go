@@ -208,6 +208,7 @@ func TestLoadHooks_HookExtraFields(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/non-command-handler-type-loads-with-a-warning
 func TestLoadHooks_HookTypeField(t *testing.T) {
 	src := fstest.MapFS{
 		"hooks/hooks.json": {
@@ -229,6 +230,9 @@ func TestLoadHooks_HookTypeField(t *testing.T) {
 	}
 	if len(diags) != 1 {
 		t.Fatalf("expected 1 diagnostic, got %d", len(diags))
+	}
+	if diags[0].Code != diag.CodeHookClaudeUnsupportedType {
+		t.Errorf("diag code: got %q, want %q", diags[0].Code, diag.CodeHookClaudeUnsupportedType)
 	}
 }
 
@@ -420,6 +424,7 @@ func TestLoadHooks_ClaudeWorkspaceFormat(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/repeated-event-and-type-receive-distinct-names
 func TestLoadHooks_AssignsDistinctNamesToRepeatedEventTypes(t *testing.T) {
 	src := fstest.MapFS{
 		"hooks/hooks.json": {
@@ -447,6 +452,7 @@ func TestLoadHooks_AssignsDistinctNamesToRepeatedEventTypes(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/repeated-event-and-type-receive-distinct-names
 func TestLoadHooks_SuffixedNameDoesNotCollideWithTypedBaseName(t *testing.T) {
 	src := fstest.MapFS{
 		"hooks/hooks.json": {
@@ -502,7 +508,7 @@ func TestLoadHooks_CommentStripping(t *testing.T) {
 	}
 }
 
-func TestLoadHooksDefaultDoesNotPromoteFactoryGroupCommandRegex(t *testing.T) {
+func TestLoadHooksDefaultPreservesFactoryGroupCommandRegex(t *testing.T) {
 	src := fstest.MapFS{"hooks.json": {Data: []byte(`{"PreToolUse":[{"matcher":"Execute","commandRegex":"^make.*$","hooks":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/run.sh"}]}]}`)}}
 	hooks, _, err := LoadHooks(src, "hooks.json")
 	if err != nil {
@@ -511,8 +517,8 @@ func TestLoadHooksDefaultDoesNotPromoteFactoryGroupCommandRegex(t *testing.T) {
 	if len(hooks) != 1 || hooks[0].Matcher != "Execute" || hooks[0].Command != "${DROID_PLUGIN_ROOT}/run.sh" || hooks[0].HookSource != "" {
 		t.Fatalf("default hook = %#v", hooks)
 	}
-	if _, ok := hooks[0].Extra["commandRegex"]; ok {
-		t.Fatalf("default bundle loader promoted group commandRegex into handler extra: %#v", hooks[0].Extra)
+	if hooks[0].Extra["commandRegex"] != "^make.*$" || !hooks[0].GroupExtraKeys["commandRegex"] {
+		t.Fatalf("default bundle loader lost Factory group commandRegex provenance: %#v / %#v", hooks[0].Extra, hooks[0].GroupExtraKeys)
 	}
 }
 

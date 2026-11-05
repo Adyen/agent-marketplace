@@ -140,7 +140,7 @@ func TestAdversarialDuplicateMcpKeyIsNeverReplaceable(t *testing.T) {
 	path := writeDevinMcp(t, repoRoot, body)
 	before := readFileString(t, path)
 	selection := []resolver.ResolvedArtifact{
-		devinResolved("dup", ir.NewMcpServer("dup", "generated-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "dup", ir.NewMcpServer("dup", "generated-binary", nil, nil, nil, ir.SourceRef{}), false),
 	}
 
 	preview, file := conflictPreviewFor(t, repoRoot, selection)
@@ -170,7 +170,7 @@ func TestAdversarialNonObjectMcpServersMemberIsNeverReplaceable(t *testing.T) {
 			path := writeDevinMcp(t, repoRoot, "{ \"mcpServers\": "+shape+" }\n")
 			before := readFileString(t, path)
 			selection := []resolver.ResolvedArtifact{
-				devinResolved("x", ir.NewMcpServer("x", "generated-binary", nil, nil, nil, ir.SourceRef{}), false),
+				devinResolved(t, "x", ir.NewMcpServer("x", "generated-binary", nil, nil, nil, ir.SourceRef{}), false),
 			}
 			_, file := conflictPreviewFor(t, repoRoot, selection)
 			if file != nil && len(file.Conflicts) > 0 {
@@ -271,8 +271,8 @@ func TestAdversarialConflictReplaceInBothScopesAtOnce(t *testing.T) {
 	}
 
 	selection := []resolver.ResolvedArtifact{
-		devinResolved("shared", ir.NewMcpServer("shared", "generated-binary", nil, nil, nil, ir.SourceRef{}), false),
-		devinResolved("shared", ir.NewMcpServer("shared", "generated-binary", nil, nil, nil, ir.SourceRef{}), true),
+		devinResolved(t, "shared", ir.NewMcpServer("shared", "generated-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "shared", ir.NewMcpServer("shared", "generated-binary", nil, nil, nil, ir.SourceRef{}), true),
 	}
 	preview, err := DevinRepairPreview(context.Background(), repoRoot, selection)
 	if err != nil {
@@ -423,7 +423,7 @@ func TestAdversarialConflictReplaceDoesNotDiscardAnIncompleteGeneration(t *testi
 	}
 
 	selection := []resolver.ResolvedArtifact{
-		devinResolved("gamma", ir.NewMcpServer("gamma", "generated-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "gamma", ir.NewMcpServer("gamma", "generated-binary", nil, nil, nil, ir.SourceRef{}), false),
 	}
 	_, file := conflictPreviewFor(t, repoRoot, selection)
 	if file == nil || len(file.Conflicts) != 1 {
@@ -523,7 +523,7 @@ func TestAdversarialUnsafeMcpKeyFailsClosedWithoutTouchingTheFile(t *testing.T) 
 			path := writeDevinMcp(t, repoRoot, body)
 			before := readFileString(t, path)
 			selection := []resolver.ResolvedArtifact{
-				devinResolved(key, ir.NewMcpServer(key, "generated-binary", nil, nil, nil, ir.SourceRef{}), false),
+				devinResolved(t, key, ir.NewMcpServer(key, "generated-binary", nil, nil, nil, ir.SourceRef{}), false),
 			}
 			_, file := conflictPreviewFor(t, repoRoot, selection)
 			if file == nil || len(file.Conflicts) == 0 {
@@ -610,8 +610,8 @@ func concurrentConflictReplaceFixture(t *testing.T) (*ownership.Store, *ownedJSO
 	path := writeDevinMcp(t, repoRoot, body)
 	original := readFileString(t, path)
 	selection := []resolver.ResolvedArtifact{
-		devinResolved("aaa", ir.NewMcpServer("aaa", "aaa-binary", nil, nil, nil, ir.SourceRef{}), false),
-		devinResolved("zzz", ir.NewMcpServer("zzz", "zzz-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "aaa", ir.NewMcpServer("aaa", "aaa-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "zzz", ir.NewMcpServer("zzz", "zzz-binary", nil, nil, nil, ir.SourceRef{}), false),
 	}
 	if _, err := Run(context.Background(), repoRoot, selection); err != nil {
 		t.Fatalf("seed sync: %v", err)
@@ -751,7 +751,7 @@ func TestAdversarialMalformedAggregateDiagnosticNeverEchoesAValue(t *testing.T) 
 	repoRoot, _ := devinEnv(t)
 	writeDevinMcp(t, repoRoot, "{ \"mcpServers\": { \"x\": { \"env\": { \"TOKEN\": \""+conflictSecret+"\" } }, } \n")
 	selection := []resolver.ResolvedArtifact{
-		devinResolved("x", ir.NewMcpServer("x", "generated-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "x", ir.NewMcpServer("x", "generated-binary", nil, nil, nil, ir.SourceRef{}), false),
 	}
 	preview, err := DevinRepairPreview(context.Background(), repoRoot, selection)
 	if err != nil {

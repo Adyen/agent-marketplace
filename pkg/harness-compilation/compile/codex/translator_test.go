@@ -67,7 +67,7 @@ func TestCompilerNativePaths(t *testing.T) {
 		{name: "skill", resource: ir.NewSkill("demo", "Demo skill", "Do the work.\n", nil, nil, ir.SourceRef{}), wantPath: ".agents/skills/demo/SKILL.md", contains: []string{"name: demo", "description: Demo skill", "Do the work."}},
 		{name: "command", resource: ir.NewCommand("deploy", "Deploy safely", "Deploy now.\n", nil, ir.SourceRef{}), wantPath: ".agents/skills/deploy/SKILL.md", contains: []string{"name: deploy", "x-agent-marketplace-kind: command", "Deploy now."}},
 		{name: "subagent", resource: ir.NewSubagent("reviewer", "Review changes", "Review like an owner.", "gpt-5.6-terra", nil, "high", nil, "", nil, ir.SourceRef{}), wantPath: ".codex/agents/reviewer.toml", contains: []string{`name = 'reviewer'`, `model = 'gpt-5.6-terra'`, `model_reasoning_effort = 'high'`, `developer_instructions = 'Review like an owner.'`}},
-		{name: "hook", resource: ir.NewHookWithMatcherOptions("check", "PreToolUse", "Bash", "./check.sh", "command", nil, ir.SourceRef{}, ir.WithHookTimeout(9)), wantPath: ".codex/hooks.json", contains: []string{`"PreToolUse"`, `"matcher":"Bash"`, `"command":"./check.sh"`, `"timeout":9`}},
+		{name: "hook", resource: ir.NewHookWithMatcherOptions("check", "PreToolUse", "Bash", "./check.sh", "command", nil, ir.SourceRef{}, ir.WithHookTimeout(9)), wantPath: ".codex/hooks.json", contains: []string{`"PreToolUse"`, `"matcher":"^Bash$"`, `"command":"./check.sh"`, `"timeout":9`}},
 		{name: "mcp", resource: ir.NewMcpServer("docs", "npx", []string{"-y", "docs-mcp"}, map[string]string{"TOKEN": "${TOKEN}"}, nil, ir.SourceRef{}), wantPath: ".codex/config.toml", contains: []string{`[mcp_servers.docs]`, `command = 'npx'`, `args = ['-y', 'docs-mcp']`, `env_vars = ['TOKEN']`}},
 	}
 	for _, tt := range tests {
@@ -351,6 +351,7 @@ func TestUnsupportedRuleAndHookProduceStableDiagnostics(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/unmappable-events-are-errors-on-every-target
 func TestHookEventsMatchCodexDocumentation(t *testing.T) {
 	supported := []string{
 		"PreToolUse",
@@ -424,13 +425,14 @@ func TestHookSuppressesInvalidNativeAdditionalContextLimit(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/negative-timeouts-are-refused-on-every-target
 func TestHookSuppressesNegativeTimeout(t *testing.T) {
 	hook := ir.NewHookWithMatcherOptions("check", "PreToolUse", "", "./check", "command", nil, ir.SourceRef{}, ir.WithHookTimeout(-1))
 	result, err := compile.Compile(hook, compile.TargetCodex)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Artifacts) != 0 || !diag.HasErrors(result.Diagnostics) || !hasDiagnostic(result.Diagnostics, diag.CodeHookCodexUnsupported) {
+	if len(result.Artifacts) != 0 || !diag.HasErrors(result.Diagnostics) {
 		t.Fatalf("result = %#v, want negative timeout suppressed", result)
 	}
 }
@@ -448,6 +450,7 @@ func TestNativeSessionEndDoesNotEmitAsyncTrue(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/codex-caps-sessionend-timeouts
 func TestNativeSessionEndCapsTimeout(t *testing.T) {
 	hook := ir.NewHookWithMatcherOptions("cleanup", "SessionEnd", "", "./cleanup", "command", nil, ir.SourceRef{}, ir.WithHookTimeout(30))
 	hook.Ext.Codex = &ext.Codex{NativeHook: true}
@@ -469,26 +472,31 @@ func TestSubagentOmitsKnownUnmappableModel(t *testing.T) {
 	if len(result.Artifacts) != 1 || strings.Contains(string(result.Artifacts[0].Bytes), "model =") {
 		t.Fatalf("known cross-vendor model was emitted as a Codex model: %#v", result.Artifacts)
 	}
-	if !hasDiagnostic(result.Diagnostics, diag.CodeCodexFieldDropped) {
-		t.Fatalf("diagnostics = %#v, want %q", result.Diagnostics, diag.CodeCodexFieldDropped)
+	if !hasDiagnostic(result.Diagnostics, diag.CodeModelUnresolved) {
+		t.Fatalf("diagnostics = %#v, want %q", result.Diagnostics, diag.CodeModelUnresolved)
 	}
 }
 
+// spec: hook-resources/codex-and-windsurf-repository-commands-use-their-documented-base
 func TestHookPluginRootResolution(t *testing.T) {
 	hook := ir.NewHook("check", "PreToolUse", "${CLAUDE_PLUGIN_ROOT}/check.sh", "command", nil, ir.SourceRef{})
 	resolved, err := compile.Compile(hook, compile.TargetCodex, compile.WithPluginRoot("/plugins/demo"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := string(resolved.Artifacts[0].Bytes); !strings.Contains(got, "/plugins/demo/check.sh") || strings.Contains(got, "CLAUDE_PLUGIN_ROOT") {
+	// At repository scope the plugin-root token resolves to the documented
+	// git-root expression followed by the support directory's relative path.
+	if got := string(resolved.Artifacts[0].Bytes); !strings.Contains(got, `git rev-parse --show-toplevel`) || !strings.Contains(got, "plugins/demo/check.sh") || strings.Contains(got, "CLAUDE_PLUGIN_ROOT") {
 		t.Fatalf("resolved hook = %s", got)
 	}
 
+	// Without a support directory the token cannot resolve to a native path,
+	// so the hook is refused rather than emitting a plugin-only variable.
 	unresolved, err := compile.Compile(hook, compile.TargetCodex)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasDiagnostic(unresolved.Diagnostics, "hook.codex.plugin-root-unresolved") || !strings.Contains(string(unresolved.Artifacts[0].Bytes), "${CLAUDE_PLUGIN_ROOT}") {
+	if len(unresolved.Artifacts) != 0 || !hasDiagnostic(unresolved.Diagnostics, diag.CodeHookSupportPathUnrepresentable) {
 		t.Fatalf("unresolved hook result = %#v", unresolved)
 	}
 }

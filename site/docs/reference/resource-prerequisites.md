@@ -86,8 +86,7 @@ requires:
 
 The highest-precedence layer that sets the value wins, an explicit `false`
 overrides a lower-precedence `true`, and a layer that omits it changes
-nothing. v2 and v3 configurations keep the release default of `false`, and
-`migrate` does not add the key. See the
+nothing. See the
 [configuration reference](configuration.md) and
 [configuration layers reference](configuration-layers.md#requires).
 
@@ -182,13 +181,21 @@ warning: <kind> "<resource>" requires <kind> "<prerequisite>", but it is not sel
 ```
 
 The remediation gains `--from <registry>` and `--path <path>` when the item
-declares those hints. Each argument is a POSIX shell literal: simple values
-print unquoted and values that need quoting are single-quoted. Kinds print as
-`skill`, `command`, `subagent`, `hook`, or `mcp`. URL credentials inside a
-`registry` hint are replaced with `***` before the command is formatted. Each
-unmet warning also carries a typed reason, `not-found`, `excluded`,
-`source-not-configured`, or `unrecorded`, which `status` prints in its `REASON` column and
-`doctor` uses to explain unconfigured source hints.
+declares those hints. Kinds print as `skill`, `command`, `subagent`, `hook`,
+or `mcp`. URL credentials inside the `registry` and `path` hints are
+replaced with `***` before the argument is formatted.
+
+Each remediation argument is a literal POSIX shell argument. A value made
+only of letters, digits, and `._/:@%+,-=` prints bare; any other value,
+including one containing whitespace, shell substitution, or embedded single
+quotes, is wrapped in single quotes with each embedded quote escaped as
+`'\''`. The quoting is display formatting only; the resource name keeps
+whatever characters the source authored, and the characters shown can always
+be pasted literally into a shell. The warning message itself quotes resource
+names with Go `%q` double-quote formatting, which differs from the
+remediation's shell-literal quoting.
+
+Each unmet warning also carries a typed reason: `not-found`, `excluded`, `source-not-configured`, or `unrecorded`. `status` prints it in the `REASON` column, and `doctor` uses it to explain unconfigured source hints.
 
 | Command | Behavior |
 |---|---|
@@ -201,8 +208,8 @@ unmet warning also carries a typed reason, `not-found`, `excluded`,
 ## Exit status
 
 `install`, `sync`, `sync --check`, `status`, and `doctor` exit with status 0
-when unmet prerequisites are the only findings. `sync --strict` — including
-`sync --strict --check` — still prints the advisory warning and remediation,
+when unmet prerequisites are the only findings. `sync --strict`: including
+`sync --strict --check`: still prints the advisory warning and remediation,
 but exits nonzero so CI can enforce declared prerequisites. Strict mode changes
 only the exit status; whether a prerequisite is selected depends solely on
 [requirement expansion](#requirement-expansion).

@@ -96,6 +96,7 @@ function resource(item, contentDigest = item.content_digest, revocation) {
       assessed_at: '2026-01-02T03:04:05Z',
     },
     occurrence: { coordinate, content_digest: contentDigest, commit: '8'.repeat(40), manifest_digest: `sha256:${'5'.repeat(64)}` },
+    ...(item.name === 'secure-review' ? { source: { repository_url: 'https://github.com/Adyen/agent-skills.git', path: 'skills/secure-review/SKILL.md', commit: '8'.repeat(40) } } : {}),
     ...(reason ? { revocation: { kind: 'revision', target_id: contentDigest, reason, applied_at: '2026-01-03T03:04:05Z' } } : {}),
   }
 }

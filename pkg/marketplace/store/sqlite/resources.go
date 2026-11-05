@@ -3,10 +3,10 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
@@ -441,6 +441,28 @@ func (s *Store) ListResourceRevisionsByArchiveDigest(ctx context.Context, market
 	return s.queryAssessedResources(ctx, query, marketplace, digest, digest)
 }
 
+func (s *Store) ListResourceArchiveDigests(ctx context.Context, marketplace store.MarketplaceID, after store.ArchiveDigest, limit int) ([]store.ArchiveDigest, error) {
+	rows, err := s.q.QueryContext(ctx, `SELECT DISTINCT archive_digest FROM resource_revisions
+		WHERE marketplace_id=? AND archive_digest IS NOT NULL AND archive_digest<>'' AND archive_digest>?
+		ORDER BY archive_digest LIMIT ?`, marketplace, after, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list archive digests: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	digests := make([]store.ArchiveDigest, 0, limit)
+	for rows.Next() {
+		var digest string
+		if err := rows.Scan(&digest); err != nil {
+			return nil, fmt.Errorf("scan archive digest: %w", err)
+		}
+		digests = append(digests, store.ArchiveDigest(digest))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate archive digests: %w", err)
+	}
+	return digests, nil
+}
+
 func (s *Store) ListResourceRevisionsByContentDigest(ctx context.Context, marketplace store.MarketplaceID, digest store.RevisionDigest) ([]store.AssessedResourceRevision, error) {
 	query := `SELECT ` + assessedResourceColumns + ` FROM resource_revisions rr ` + assessmentJoins + latestOccurrenceJoins + revocationJoins + `
 		WHERE rr.marketplace_id=? AND rr.content_digest=?
@@ -458,17 +480,21 @@ func (s *Store) GetLatestResourceRevision(ctx context.Context, coord store.Resou
 func (s *Store) SearchResourceRevisions(ctx context.Context, filter store.ResourceSearchFilter) ([]store.AssessedResourceRevision, error) {
 	args := []any{filter.Marketplace}
 	where := "rr.marketplace_id=? AND r.listed=1"
-	registryValues := filter.RegistryValues()
-	registryClauses := make([]string, 0, len(registryValues))
-	for _, registry := range registryValues {
-		if registry == "" {
-			continue
+	registries := make([]string, 0, len(filter.RegistryValues()))
+	for _, registry := range filter.RegistryValues() {
+		if registry != "" {
+			registries = append(registries, registry)
 		}
-		registryClauses = append(registryClauses, "(rr.registry_id=? OR r.slug=?)")
-		args = append(args, registry, registry)
 	}
-	if len(registryClauses) > 0 {
-		where += " AND (" + strings.Join(registryClauses, " OR ") + ")"
+	if len(registries) > 0 {
+		// One JSON argument keeps the query text fixed however many
+		// registries the request names.
+		encoded, err := json.Marshal(registries)
+		if err != nil {
+			return nil, err
+		}
+		where += " AND (rr.registry_id IN (SELECT value FROM json_each(?)) OR r.slug IN (SELECT value FROM json_each(?)))"
+		args = append(args, string(encoded), string(encoded))
 	}
 	if filter.Kind != "" {
 		where += " AND rr.kind=?"

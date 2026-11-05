@@ -369,3 +369,33 @@ CAS-refusal safety cleanup MUST revalidate original attempt child identity and n
 
 - **WHEN** actual Apply with a real late policy refusal replaces its admitted emptied safety attempt directory before final Rmdir
 - **THEN** cleanup MUST preserve original/foreign directory and member generations/native state with the primary refusal intact, and restoring original authority MUST genuinely remove the owned empty directory and allow an actual native generation commit
+
+### Requirement: Owned entry edits preserve interleaved unmanaged content
+
+When the native representation of an owned entry is split by unmanaged content, such as a handwritten table or array table placed between the tables of an owned Codex MCP server, replacing, pruning, repairing or removing the owned entry SHALL change only the owned entry's own tables. The interleaved content SHALL be preserved byte-for-byte, and the resulting file SHALL hold the configured value of the owned entry, or no value when it was pruned or removed.
+
+#### Scenario: Interleaved handwritten tables survive owned entry sync
+
+- **WHEN** a handwritten table or array table sits between the tables of an owned Codex MCP server, and sync updates or retires that server
+- **THEN** sync SHALL apply the update or retirement without an error diagnostic
+- **AND** the handwritten table SHALL remain byte-for-byte and sibling owned servers SHALL be unchanged
+
+#### Scenario: Interleaved handwritten tables survive owned entry removal and replacement
+
+- **WHEN** repair or owned-entry cleanup removes or replaces an owned Codex MCP server whose tables are split by a handwritten table
+- **THEN** only that server's tables SHALL change, and the handwritten table and other servers SHALL remain
+
+### Requirement: Repair refuses duplicate desired identities and names what it writes
+
+When two selected resources produce the same Codex MCP server key, repair SHALL report the error `materialize.codex.duplicate-identity` naming the key and both resources, and SHALL offer neither adoption nor replacement for that key. The key SHALL remain desired, so repair SHALL NOT offer it for orphan removal. Other entries in the file SHALL remain repairable. Every offered adoption or replacement SHALL name the resource whose generated value it records or writes, and the interactive replacement confirmation SHALL name that resource and the generated value digest.
+
+#### Scenario: Duplicate desired Codex MCP identity is refused by repair
+
+- **WHEN** two selected resources produce the same Codex MCP server key, whether `config.toml` is absent or holds an unmanaged entry with that key that matches or differs from either generated value
+- **THEN** the repair preview SHALL report `materialize.codex.duplicate-identity` naming the key and both resources, offer no adoption, replacement or removal for that key, and leave the file unchanged or absent
+- **AND** an unrelated conflicting entry in the same file SHALL still be offered for replacement under its own resource
+
+#### Scenario: Replacement confirmation names the written resource
+
+- **WHEN** `doctor --repair` asks for confirmation to replace a conflicting entry
+- **THEN** the prompt SHALL name the entry, the file, the resource whose generated value would be written, and the generated value digest

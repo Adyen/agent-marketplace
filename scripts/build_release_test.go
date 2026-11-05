@@ -31,7 +31,8 @@ func TestBuildFlags(t *testing.T) {
 	} {
 		t.Run(tc.target, func(t *testing.T) {
 			dir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(dir, "go"), []byte("#!/bin/sh\nprintf '%s\\000' \"$@\"\nprintf '\\n'\nprintf '%s\\n' 'build tool warning' >&2\n"), 0o700); err != nil {
+			fakeGo := "#!/bin/sh\nprintf '%s\\000' \"$@\"\nprintf '\\n'\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"-o\" ]; then\n    shift\n    printf 'binary' > \"$1\"\n    break\n  fi\n  shift\ndone\nprintf '%s\\n' 'build tool warning' >&2\n"
+			if err := os.WriteFile(filepath.Join(dir, "go"), []byte(fakeGo), 0o700); err != nil {
 				t.Fatal(err)
 			}
 			cmd := exec.Command("make", "-s", "-f", filepath.Join(root, "Makefile"), tc.target)
@@ -91,5 +92,65 @@ func TestBuildFlags(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// spec: install-script/release-build-writes-checksums-for-the-four-binaries
+func TestReleaseWritesChecksums(t *testing.T) {
+	root, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	dist := filepath.Join(dir, "dist")
+	if err := os.MkdirAll(dist, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dist, "stale-asset"), []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fakeGo := "#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"-o\" ]; then\n    shift\n    printf 'release binary %s\\n' \"$1\" > \"$1\"\n    exit 0\n  fi\n  shift\ndone\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(dir, "go"), []byte(fakeGo), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("make", "-s", "-f", filepath.Join(root, "Makefile"), "release")
+	cmd.Dir = dir
+	cmd.Env = []string{"PATH=" + dir + ":/usr/bin:/bin", "VERSION=v1.2.3", "DIST_DIR=" + dist}
+	var stdout, stderr strings.Builder
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("make release: %v\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
+	}
+
+	checksums, err := os.ReadFile(filepath.Join(dist, "SHA256SUMS"))
+	if err != nil {
+		t.Fatalf("read SHA256SUMS: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(checksums)), "\n")
+	want := []string{
+		"agent-marketplace-v1.2.3-darwin-arm64",
+		"agent-marketplace-v1.2.3-darwin-amd64",
+		"agent-marketplace-v1.2.3-linux-amd64",
+		"agent-marketplace-v1.2.3-linux-arm64",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("SHA256SUMS has %d entries, want %d: %q", len(lines), len(want), checksums)
+	}
+	for i, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || fields[1] != want[i] {
+			t.Errorf("SHA256SUMS line %d = %q, want bare entry for %s", i+1, line, want[i])
+		}
+	}
+	checker := "sha256sum"
+	args := []string{"--check", filepath.Join(dist, "SHA256SUMS")}
+	if _, err := exec.LookPath(checker); err != nil {
+		checker = "shasum"
+		args = []string{"-a", "256", "-c", filepath.Join(dist, "SHA256SUMS")}
+	}
+	check := exec.Command(checker, args...)
+	check.Dir = dist
+	if output, err := check.CombinedOutput(); err != nil {
+		t.Fatalf("%s checksum verification: %v\n%s", checker, err, output)
 	}
 }

@@ -54,6 +54,22 @@ func ValidateRef(raw string) error {
 	return nil
 }
 
+// IsFullObjectID reports whether ref names a commit exactly: a full SHA-1 (40)
+// or SHA-256 (64) object ID in either letter case. Abbreviated IDs are not
+// exact, because Git prefers a ref with the same name.
+func IsFullObjectID(ref string) bool {
+	if len(ref) != 40 && len(ref) != 64 {
+		return false
+	}
+	for i := 0; i < len(ref); i++ {
+		c := ref[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
+}
+
 // ValidateURL rejects option-like URLs, control characters, traversal patterns,
 // and unsupported or dangerous transport protocols while allowing the
 // protocols used by the project (ssh, https, http, file) and local paths.

@@ -1,0 +1,70 @@
+package cache
+
+// R2 frozen-ledger reproduction; see docs/issues/2026-10-18-security-r2-frozen-ledger.md.
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// F129: a slash-containing ref nests inside another ref's mutable checkout.
+func TestR2LedgerF129NestedRefCacheAlias(t *testing.T) {
+	isolateMutableGit(t)
+	base := t.TempDir()
+	work, origin := filepath.Join(base, "work"), filepath.Join(base, "origin.git")
+	git := func(args ...string) string {
+		t.Helper()
+		out, err := execGit("", args)
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return string(out)
+	}
+	write := func(rel, content string) {
+		t.Helper()
+		p := filepath.Join(work, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commit := []string{"-C", work, "-c", "user.name=T", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm"}
+	git("init", "-q", "--initial-branch=main", work)
+	write("skills/evil/SKILL.md", "from-tag-foo\n")
+	git("-C", work, "add", ".")
+	git(append(commit, "x")...)
+	git("-C", work, "tag", "foo")
+	git("-C", work, "checkout", "-q", "-b", "foo/skills/evil")
+	write("skills/evil/SKILL.md", "from-branch-nested\n")
+	write("ROOT-OF-NESTED.md", "nested root\n")
+	git("-C", work, "add", ".")
+	git(append(commit, "y")...)
+	git("clone", "-q", "--bare", work, origin)
+	url := "file://" + origin
+
+	first, err := CloneOrPull(url, "foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	headBefore := strings.TrimSpace(git("-C", first, "rev-parse", "HEAD"))
+	nested, err := CloneOrPull(url, "foo/skills/evil")
+	t.Logf("foo cache=%s nested cache=%s err=%v", first, nested, err)
+	headAfter := strings.TrimSpace(git("-C", first, "rev-parse", "HEAD"))
+	top := ""
+	if err == nil {
+		top = strings.TrimSpace(git("-C", nested, "rev-parse", "--show-toplevel"))
+		_, rootErr := os.Stat(filepath.Join(nested, "ROOT-OF-NESTED.md"))
+		t.Logf("nested toplevel=%s nested sees its own root file=%v", top, rootErr == nil)
+	}
+	t.Logf("foo cache HEAD before=%s after=%s", headBefore, headAfter)
+	if headAfter != headBefore {
+		t.Errorf("REPRODUCED: resolving the nested ref moved the foo cache checkout")
+	}
+	if err == nil && top != nested {
+		t.Errorf("REPRODUCED: nested ref resolved inside the foo checkout (toplevel %s)", top)
+	}
+}

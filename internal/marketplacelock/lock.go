@@ -16,8 +16,8 @@ import (
 // A normalized v2 Marketplace resource consumes at least 300 encoded bytes:
 // its coordinates, two digest fields, one acquisition-evidence field, and the
 // acquisition mode. Anything beyond this count cannot fit MaxFileSize.
-const minimumMarketplaceResourceLockBytes = 300
-const maxMarketplaceLockResources = int(lockfile.MaxFileSize) / minimumMarketplaceResourceLockBytes
+const minimumMarketplaceResourceLockBytes = lockfile.MinimumMarketplaceResourceLockBytes
+const maxMarketplaceLockResources = lockfile.MaxMarketplaceLockResources
 
 // Resolve acquires and verifies every requested Marketplace resource and
 // returns the exact lock evidence for the layer.
@@ -79,15 +79,11 @@ func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, lay
 			}
 		}
 		if entry.InstanceID == "" {
-			client, err := marketplace.NewClient(entry.URL)
+			instanceID, err := EndpointInstanceID(ctx, entry.URL)
 			if err != nil {
 				return lockfile.Document{}, err
 			}
-			wellKnown, err := client.WellKnown(ctx)
-			if err != nil {
-				return lockfile.Document{}, fmt.Errorf("well-known document: %w", err)
-			}
-			entry.InstanceID = wellKnown.InstanceID
+			entry.InstanceID = instanceID
 		}
 		locked := lockfile.MarketplaceLock{URL: entry.URL, InstanceID: entry.InstanceID}
 		for name, id := range bindings {
@@ -99,6 +95,20 @@ func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, lay
 		doc.Marketplaces = append(doc.Marketplaces, locked)
 	}
 	return lockfile.Normalize(doc)
+}
+
+// EndpointInstanceID returns the instance identity that the Marketplace at url
+// publishes in its validated well-known document.
+func EndpointInstanceID(ctx context.Context, url string) (string, error) {
+	client, err := marketplace.NewClient(url)
+	if err != nil {
+		return "", err
+	}
+	wellKnown, err := client.WellKnown(ctx)
+	if err != nil {
+		return "", fmt.Errorf("well-known document: %w", err)
+	}
+	return wellKnown.InstanceID, nil
 }
 
 func lockTargets(names []string) []hcc.Target {

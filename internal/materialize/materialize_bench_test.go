@@ -114,6 +114,31 @@ func BenchmarkRunSupportFiles(b *testing.B) {
 	}
 }
 
+func BenchmarkRunWindsurfPortablePruneDiskIONoNetwork(b *testing.B) {
+	discardBenchLogs(b)
+	home, repo := b.TempDir(), b.TempDir()
+	b.Setenv("HOME", home)
+	b.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	b.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	b.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	resolved := []resolver.ResolvedArtifact{{Entry: catalog.Entry{Name: "prune-probe", Resource: ir.NewSkill("prune-probe", "benchmark", "inert body", nil, nil, ir.SourceRef{})}, Source: config.RepoCommitted, Harnesses: []hcc.Target{hcc.TargetWindsurf}}}
+	modes := config.MaterializationModes{Project: config.MaterializationModeFile, Machine: config.MaterializationModeSymlink}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		b.StopTimer()
+		installed, err := Run(b.Context(), repo, resolved, WithMaterializationModes(modes))
+		if err != nil || installed.TotalWritten() == 0 {
+			b.Fatalf("native install control failed: %+v %v", installed, err)
+		}
+		b.StartTimer()
+		pruned, err := Run(b.Context(), repo, nil, WithMaterializationModes(modes))
+		if err != nil || pruned.TotalRemoved() != 1 {
+			b.Fatalf("native prune did not remove its owned skill: %+v %v", pruned, err)
+		}
+	}
+}
+
 // BenchmarkRunFileModePortable measures the portable-copy materialization path,
 // including manifest ownership bookkeeping, for a representative skill tree.
 func BenchmarkRunFileModePortable(b *testing.B) {

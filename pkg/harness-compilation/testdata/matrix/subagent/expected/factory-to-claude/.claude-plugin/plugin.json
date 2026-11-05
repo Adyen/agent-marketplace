@@ -2,11 +2,11 @@
   "agents": [
     {
       "description": "Demo agent for golden testing",
-      "effort": "high",
-      "model": "sonnet",
+      "model": "claude-sonnet-4-5-20250929",
       "name": "demo-agent",
       "tools": [
         "Read",
+        "Edit",
         "Write"
       ]
     }

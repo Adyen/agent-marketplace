@@ -134,7 +134,8 @@ func (c *DiscoveryCache) path(ep config.MarketplaceEntry, query, kind string, li
 }
 
 func (c *DiscoveryCache) Load(ep config.MarketplaceEntry, query, kind string, limit int) (DiscoveryOutcome, bool) {
-	if c == nil || c.root == "" {
+	// A cache namespace is exact evidence, never a source of endpoint identity.
+	if c == nil || c.root == "" || strings.TrimSpace(ep.InstanceID) == "" {
 		return DiscoveryOutcome{}, false
 	}
 	path := c.path(ep, query, kind, limit)
@@ -517,7 +518,9 @@ func DiscoverUpdates(ctx context.Context, ec config.EffectiveConfig, query strin
 	if limit <= 0 || limit > DiscoveryPageLimit {
 		limit = DiscoveryPageLimit
 	}
-	endpoints, err := resolveMarketplaceEndpoints(ec, "all")
+	// Only live discovery may bind resource-free authored registrations. The
+	// offline selector above continues to require an already acquired identity.
+	endpoints, err := resolveMarketplaceEndpointsWithAuthoredRegistrations(ec, "all", true)
 	if err != nil {
 		return nil, err
 	}
@@ -669,12 +672,13 @@ func discoverOne(ctx context.Context, ep config.MarketplaceEntry, verify bool, q
 	if err != nil {
 		return DiscoveryOutcome{}, err
 	}
-	wk, err := client.WellKnown(ctx)
-	if err != nil {
+	if verify {
+		ep, err = acquireMarketplaceIdentity(ctx, client, ep)
+		if err != nil {
+			return DiscoveryOutcome{}, err
+		}
+	} else if _, err := client.WellKnown(ctx); err != nil {
 		return DiscoveryOutcome{}, fmt.Errorf("well-known document: %w", err)
-	}
-	if verify && (ep.InstanceID == "" || wk.InstanceID != ep.InstanceID) {
-		return DiscoveryOutcome{}, fmt.Errorf("instance ID mismatch")
 	}
 	resp, err := client.Search(ctx, SearchRequest{Query: query, Kind: opts.Kind, Limit: limit})
 	if err != nil {

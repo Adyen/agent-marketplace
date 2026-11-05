@@ -36,8 +36,8 @@ func TestFactorySubagentExtPrecedence(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Translate() error: %v", err)
 		}
-		if len(diags) != 0 {
-			t.Fatalf("diagnostics = %#v, want none", diags)
+		if len(diags) != 1 || diags[0].Code != diag.CodeModelSelectorPinned {
+			t.Fatalf("diagnostics = %#v, want explicit family pin", diags)
 		}
 
 		body := string(findArtifactByPath(arts, "droids/reviewer.md").Bytes)

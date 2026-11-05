@@ -57,20 +57,29 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- define "agent-marketplace.servicePort" -}}
 {{- if eq .component "api" }}{{ .root.Values.service.api.port }}
 {{- else if eq .component "web" }}{{ .root.Values.service.web.port }}
-{{- else }}{{ .root.Values.service.site.port }}{{ end }}
+{{- else }}{{ .root.Values.service.docs.port }}{{ end }}
 {{- end }}
 
 {{- define "agent-marketplace.image" -}}
 {{- $root := .root -}}
-{{- $image := mergeOverwrite (deepCopy $root.Values.image) (default (dict) .image) -}}
+{{- $image := default (dict) .image -}}
+{{- if .inherit -}}
+{{- $image = mergeOverwrite (deepCopy $root.Values.image) $image -}}
+{{- end -}}
 {{- if $image.digest }}
 {{- printf "%s@%s" $image.repository $image.digest }}
 {{- else }}
-{{- printf "%s:%s" $image.repository $image.tag }}
+{{- printf "%s:%s" $image.repository (required (printf "%s: set an explicit image.tag or image.digest (use a verified digest in production)" $image.repository) $image.tag) }}
 {{- end }}
 {{- end }}
 
 {{- define "agent-marketplace.validate" -}}
+{{- if hasKey .Values "site" }}
+{{- fail "values.site was renamed to values.docs; update the values file before upgrading" }}
+{{- end }}
+{{- if and (hasKey .Values "service") (hasKey .Values.service "site") }}
+{{- fail "values.service.site was renamed to values.service.docs; update the values file before upgrading" }}
+{{- end }}
 {{- if not (has .Values.mode (list "split" "all")) }}
 {{- fail "mode must be either split or all" }}
 {{- end }}
@@ -93,6 +102,13 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- $component := .component -}}
 {{- $role := .role -}}
 {{- $isMarketplace := has $role (list "api" "worker" "all") -}}
+{{- $probePathBase := "/" -}}
+{{- if eq $role "web" -}}
+{{-   $probePathBase = trimSuffix "/" (default "/" $root.Values.web.basePath) -}}
+{{-   if not $probePathBase -}}
+{{-     $probePathBase = "/" -}}
+{{-   end -}}
+{{- end -}}
 {{- $podSecurityContext := mergeOverwrite (deepCopy $root.Values.podSecurityContext) (default (dict) $component.podSecurityContext) -}}
 {{- $podAnnotations := deepCopy (default (dict) $root.Values.podAnnotations) -}}
 {{- if and $isMarketplace $root.Values.config.enabled (not $root.Values.config.existingConfigMap) }}
@@ -158,7 +174,7 @@ spec:
       {{- end }}
       containers:
         - name: {{ $role }}
-          image: {{ include "agent-marketplace.image" (dict "root" $root "image" $component.image) }}
+          image: {{ include "agent-marketplace.image" (dict "root" $root "image" $component.image "inherit" $isMarketplace) }}
           imagePullPolicy: {{ default $root.Values.image.pullPolicy $component.image.pullPolicy }}
           {{- with $component.command }}
           command:
@@ -168,7 +184,7 @@ spec:
           args:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- if or $isMarketplace (eq $role "web") (eq $role "site") }}
+          {{- if or $isMarketplace (eq $role "web") (eq $role "docs") }}
           {{- if or (eq $role "api") (eq $role "all") }}
           ports:
             - name: http
@@ -182,7 +198,7 @@ spec:
             - name: http
               containerPort: 3000
               protocol: TCP
-          {{- else if eq $role "site" }}
+          {{- else if eq $role "docs" }}
           ports:
             - name: http
               containerPort: 8080
@@ -203,6 +219,8 @@ spec:
               value: {{ $root.Values.web.basePath | quote }}
             - name: NUXT_PUBLIC_API_BASE
               value: {{ $root.Values.web.publicApiBase | quote }}
+            - name: NUXT_PUBLIC_DOCS_ENABLED
+              value: {{ $root.Values.docs.enabled | quote }}
             - name: NUXT_API_BASE_INTERNAL
               value: {{ printf "http://%s:%v" (include "agent-marketplace.componentName" (dict "root" $root "component" "api")) $root.Values.service.api.port | quote }}
             {{- end }}
@@ -223,7 +241,7 @@ spec:
           {{- if $component.probes.liveness.enabled }}
           livenessProbe:
             httpGet:
-              path: {{ $component.probes.liveness.path }}
+              path: {{ default $probePathBase $component.probes.liveness.path }}
               port: {{ $component.probes.liveness.port }}
             initialDelaySeconds: {{ $component.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ $component.probes.liveness.periodSeconds }}
@@ -233,7 +251,7 @@ spec:
           {{- if $component.probes.readiness.enabled }}
           readinessProbe:
             httpGet:
-              path: {{ $component.probes.readiness.path }}
+              path: {{ default $probePathBase $component.probes.readiness.path }}
               port: {{ $component.probes.readiness.port }}
             initialDelaySeconds: {{ $component.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ $component.probes.readiness.periodSeconds }}
@@ -243,7 +261,7 @@ spec:
           {{- if and $component.probes.startup $component.probes.startup.enabled }}
           startupProbe:
             httpGet:
-              path: {{ $component.probes.startup.path }}
+              path: {{ default $probePathBase $component.probes.startup.path }}
               port: {{ $component.probes.startup.port }}
             periodSeconds: {{ $component.probes.startup.periodSeconds }}
             timeoutSeconds: {{ $component.probes.startup.timeoutSeconds }}

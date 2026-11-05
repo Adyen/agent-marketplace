@@ -279,9 +279,10 @@ func mcpFormDiagnostics(name string, source diag.SourceRef, stdio, remote bool, 
 // buildMcpEntry renders the members of the documented server form the resource
 // selected, and reports every modeled field that the other form owns.
 //
-// ok is false when a field the form cannot do without (command for stdio, url
-// for remote) did not survive interpolation mapping: an entry with no command
-// or no url is not a server, and emitting a truncated one would be inventing a
+// ok is false when a field the form cannot do without (command or any argument
+// for stdio, url for remote) did not survive interpolation mapping: an entry
+// with no command or no url is not a server, an entry missing an argument runs
+// a different command line, and emitting a truncated one would be inventing a
 // value. That case goes through requiredValue and is an ERROR, because the
 // outcome is a removed entry; every other interpolation loss goes through
 // value, keeps the entry, and stays a warning.
@@ -300,7 +301,11 @@ func buildMcpEntry(m *ir.McpServer, stdio bool, opts compile.Options) (map[strin
 		}
 		entry[mcpKeyCommand] = command
 		if m.Args != nil {
-			entry[mcpKeyArgs] = interp.slice(mcpKeyArgs, m.Args)
+			args, ok := interp.requiredSlice(mcpKeyArgs, m.Args)
+			if !ok {
+				return nil, append(diags, interp.diags...), false
+			}
+			entry[mcpKeyArgs] = args
 		}
 		if m.Env != nil {
 			entry[mcpKeyEnv] = interp.stringMap(mcpKeyEnv, m.Env)
@@ -423,7 +428,7 @@ func (i *mcpInterpolator) mapValue(field, value string) (string, bool) {
 }
 
 // value maps one scalar field value whose omission still leaves a usable entry
-// — an argument, an env or header value, or one of the OAuth members. ok is
+// — an env or header value, or one of the OAuth members. ok is
 // false when the value carries an interpolation style Devin cannot represent;
 // the caller then omits that field rather than writing an empty string, and
 // the loss is a WARNING because the entry is still emitted.
@@ -441,9 +446,9 @@ func (i *mcpInterpolator) value(field, value string) (string, bool) {
 // represented the caller drops the whole entry, so the loss is an ERROR and
 // sync exits non-zero (bead agent-marketplace-5exj.23).
 //
-// It is called at most once per entry — the two fields select mutually
-// exclusive forms and mcpFormDiagnostics has already refused a server that
-// declares both — so unlike the warning path it needs no per-field dedup.
+// The caller returns on the first failure, and command and url select
+// mutually exclusive forms that mcpFormDiagnostics has already checked, so
+// unlike the warning path it needs no per-field dedup.
 func (i *mcpInterpolator) requiredValue(field, value string) (string, bool) {
 	mapped, ok := i.mapValue(field, value)
 	if !ok {
@@ -453,18 +458,21 @@ func (i *mcpInterpolator) requiredValue(field, value string) (string, bool) {
 	return mapped, true
 }
 
-// slice maps every element of an argument list. An element that cannot be
-// represented is DROPPED from the list rather than replaced with an empty
-// string: an empty argument is a real, different argument and would change the
-// command line.
-func (i *mcpInterpolator) slice(field string, values []string) []string {
+// requiredSlice maps every element of an argument list. An element that
+// cannot be represented removes the whole entry: dropping it or replacing it
+// with an empty string would change the command line, for example by removing
+// a sandbox flag.
+func (i *mcpInterpolator) requiredSlice(field string, values []string) ([]string, bool) {
 	mapped := make([]string, 0, len(values))
 	for _, value := range values {
-		if element, ok := i.value(field, value); ok {
-			mapped = append(mapped, element)
+		element, ok := i.mapValue(field, value)
+		if !ok {
+			i.reportUnrepresentableRequiredValue(field)
+			return nil, false
 		}
+		mapped = append(mapped, element)
 	}
-	return mapped
+	return mapped, true
 }
 
 // stringMap maps every value of an env or header map. A key whose value cannot

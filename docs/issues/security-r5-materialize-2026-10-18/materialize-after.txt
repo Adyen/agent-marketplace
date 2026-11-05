@@ -1,0 +1,36 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation
+cpu: Apple M4 Max
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/skipped-1-16         	    5155	    396835 ns/op	   18005 B/op	     190 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/skipped-1-16         	    5268	    393774 ns/op	   18006 B/op	     190 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/skipped-1-16         	    5584	    389269 ns/op	   18006 B/op	     190 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/skipped-1-16         	    6196	    456895 ns/op	   18006 B/op	     190 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/skipped-1-16         	    5853	    399649 ns/op	   18006 B/op	     190 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/skipped-64-16        	     360	   6413109 ns/op	  541294 B/op	    4882 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/skipped-64-16        	     380	   6424737 ns/op	  541328 B/op	    4882 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/skipped-64-16        	     354	   6583218 ns/op	  541297 B/op	    4882 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/skipped-64-16        	     356	   6720343 ns/op	  541321 B/op	    4882 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/skipped-64-16        	     362	   7536614 ns/op	  541334 B/op	    4882 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/skipped-1024-16      	      24	  98440226 ns/op	 8990940 B/op	   75959 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/skipped-1024-16      	      24	  96303127 ns/op	 8991094 B/op	   75960 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/skipped-1024-16      	      24	  99274443 ns/op	 8991074 B/op	   75959 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/skipped-1024-16      	      22	  99213335 ns/op	 8991404 B/op	   75960 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/skipped-1024-16      	      24	  97236276 ns/op	 8991247 B/op	   75961 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/skipped-4096-16      	       6	 457189222 ns/op	36731580 B/op	  303381 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/skipped-4096-16      	       6	 389103660 ns/op	36797948 B/op	  303382 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/skipped-4096-16      	       6	 396203396 ns/op	36797689 B/op	  303378 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/skipped-4096-16      	       6	 388882299 ns/op	36797734 B/op	  303378 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/skipped-4096-16      	       6	 459066076 ns/op	36731824 B/op	  303378 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/mixed-1024-16        	      22	 101252884 ns/op	 8949673 B/op	   76370 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/mixed-1024-16        	      22	 101250515 ns/op	 8949572 B/op	   76370 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/mixed-1024-16        	      22	 102146845 ns/op	 8949717 B/op	   76370 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/mixed-1024-16        	      22	 101264892 ns/op	 8949675 B/op	   76370 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/mixed-1024-16        	      24	 100238658 ns/op	 8949345 B/op	   76370 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/written-16-16        	     292	   7917252 ns/op	  210140 B/op	    2142 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/written-16-16        	     370	   6450566 ns/op	  210140 B/op	    2142 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/written-16-16        	     384	   6261958 ns/op	  210146 B/op	    2142 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/written-16-16        	     391	   6384536 ns/op	  210142 B/op	    2142 allocs/op
+BenchmarkMaterializeBookkeepingDiskIONoNetwork/written-16-16        	     368	   6491122 ns/op	  209594 B/op	    2142 allocs/op
+PASS
+ok  	github.com/Adyen/agent-marketplace/pkg/harness-compilation	85.510s

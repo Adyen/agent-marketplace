@@ -1,0 +1,29 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+                                                      │  before.txt  │              after.txt              │
+                                                      │    sec/op    │    sec/op     vs base               │
+V4DirectoryRequestReuseCPU/skills=1024/excluded=0-16     222.1µ ± 2%   221.5µ ±  9%        ~ (p=0.937 n=6)
+V4ActiveExclusionAdaptation/active=1-16                  685.8n ± 4%   687.0n ± 24%        ~ (p=0.818 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=0-16    223.0µ ± 1%   224.1µ ±  1%        ~ (p=0.394 n=6)
+V4MarketplaceExclusionKindCPU/exclusions=1024-16        112.24µ ± 3%   94.54µ ±  4%  -15.76% (p=0.002 n=6)
+geomean                                                  44.19µ        42.37µ         -4.11%
+
+                                                      │  before.txt  │               after.txt               │
+                                                      │     B/op     │     B/op      vs base                 │
+V4DirectoryRequestReuseCPU/skills=1024/excluded=0-16    744.0Ki ± 0%   744.0Ki ± 0%        ~ (p=0.188 n=6)
+V4ActiveExclusionAdaptation/active=1-16                 2.086Ki ± 0%   2.086Ki ± 0%        ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=1024/excluded=0-16   744.0Ki ± 0%   744.0Ki ± 0%        ~ (p=0.567 n=6)
+V4MarketplaceExclusionKindCPU/exclusions=1024-16        301.9Ki ± 0%   253.9Ki ± 0%  -15.90% (p=0.002 n=6)
+geomean                                                 136.6Ki        130.9Ki        -4.24%
+¹ all samples are equal
+
+                                                      │  before.txt  │              after.txt               │
+                                                      │  allocs/op   │  allocs/op   vs base                 │
+V4DirectoryRequestReuseCPU/skills=1024/excluded=0-16     2.091k ± 0%   2.091k ± 0%        ~ (p=1.000 n=6) ¹
+V4ActiveExclusionAdaptation/active=1-16                   14.00 ± 0%    14.00 ± 0%        ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=1024/excluded=0-16    2.091k ± 0%   2.091k ± 0%        ~ (p=1.000 n=6) ¹
+V4MarketplaceExclusionKindCPU/exclusions=1024-16        1076.00 ± 0%    52.00 ± 0%  -95.17% (p=0.002 n=6)
+geomean                                                   506.6         237.5       -53.11%
+¹ all samples are equal

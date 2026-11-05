@@ -1,6 +1,7 @@
 .landing {
-  background: var(--vp-c-bg);
-  color: var(--vp-c-text-1);
+  background: var(--lp-canvas);
+  color: var(--lp-text);
+  font: var(--lp-font-body);
 }
 
 .landing :is(button, a) {
@@ -9,17 +10,24 @@
 
 /* Keep every landing section on the same content edge. */
 .am-wrap {
-  max-width: var(--am-maxw);
-  margin: 0 auto;
-  padding: 0 24px;
+  width: min(100% - 2 * var(--lp-gutter), var(--lp-content-max));
+  margin-inline: auto;
+  container-type: inline-size;
+}
+
+/* LandingPage declares which section edges touch chrome or the compatibility strip. */
+.landing > [data-section-edge~="top"] {
+  --lp-edge-top: var(--lp-section-boundary);
+}
+
+.landing > [data-section-edge~="bottom"] {
+  --lp-edge-bottom: var(--lp-section-boundary);
 }
 
 .landing p > code {
-  padding: 0.13em 0.38em;
-  border: 1px solid var(--am-border);
-  border-radius: 4px;
-  background: var(--am-surface-soft);
-  color: var(--vp-c-text-1);
-  font-family: var(--vp-font-family-mono);
-  font-size: 0.88em;
+  padding: 0.125rem var(--lp-space-tight);
+  border-radius: var(--lp-radius-mark);
+  background: var(--lp-fill);
+  color: var(--lp-text);
+  font: var(--lp-font-label);
 }

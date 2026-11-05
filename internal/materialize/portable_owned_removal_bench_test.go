@@ -68,7 +68,7 @@ func BenchmarkPortableOwnedPruneDisk(b *testing.B) {
 					b.Fatal(err)
 				}
 				b.StartTimer()
-				if _, _, err := prunePortableEntries(state, outputKey{target: hcc.TargetFactory}, parent, parent, make(map[string]bool), false); err != nil {
+				if _, _, err := prunePortableEntries(state, outputKey{target: hcc.TargetFactory}, parent, parent, make(map[string]bool), false, nil); err != nil {
 					b.Fatal(err)
 				}
 			}

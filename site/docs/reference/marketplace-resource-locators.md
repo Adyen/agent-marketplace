@@ -75,11 +75,11 @@ Marketplace locators and HTTP routes use the protocol's kind names. One of them 
 | `mcp` | `mcpserver` |
 | `collection` | `collection` |
 
-`agent-marketplace install team:shared-agents/mcp/docs-server` fails with `invalid Marketplace resource kind "mcp"`. Use `team:shared-agents/mcpserver/docs-server` instead.
+`agent-marketplace install team:shared-agents/mcp/docs-server` fails with `invalid Marketplace resource kind "mcp"`; `team:shared-agents/mcpserver/docs-server` is the valid form.
 
 ## Registration
 
-To use a compact locator, first register the endpoint by installing its base URL:
+A compact locator requires the endpoint to be registered. Installing the base URL registers it:
 
 ```bash
 agent-marketplace install https://marketplace.example.com

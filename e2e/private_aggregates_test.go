@@ -10,8 +10,8 @@ func TestSyncCreatesPrivateAggregates(t *testing.T) {
 	env := newEnv(t)
 	env.InitGitRepo()
 	env.WriteFile("/workspace/registry/.mcp.json", `{"mcpServers":{"private-server":{"command":"echo","args":["initial"]}}}`)
-	env.WriteGlobalConfig("harnesses: [devin, codex, gemini, claude]\nregistries: []")
-	env.WriteRepoConfig("harnesses: [devin, codex, gemini, claude]\nregistries:\n  - url: ./registry\n    mcp: [private-server]\n")
+	env.WriteGlobalConfig("harnesses: [devin, codex, gemini, claude]\n")
+	env.WriteRepoConfig("harnesses: [devin, codex, gemini, claude]\nsources: {team: {directory: ./registry}}\nresources: {team: {include: [mcp/private-server]}}\n")
 	env.MustRunAM("sync")
 
 	paths := []string{"/workspace/.mcp.json", "/workspace/.gemini/settings.json", "/workspace/.devin/mcp_config.json", "/workspace/.codex/config.toml"}

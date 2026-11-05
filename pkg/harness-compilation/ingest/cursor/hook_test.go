@@ -2,6 +2,7 @@ package cursor
 
 import "testing"
 
+// spec: hook-resources/cursor-plugin-root-token-is-normalized
 func TestLoadHooks_NormalizesCursorPluginRootToken(t *testing.T) {
 	hooks, diags, err := LoadHooks(cursorWorkspaceFS, ".cursor/hooks/hooks.json")
 	if err != nil {

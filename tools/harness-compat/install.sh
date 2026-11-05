@@ -11,6 +11,7 @@ case "$HARNESS_TARGET" in
   factory) package=droid; cli=droid ;;
   gemini) package=@google/gemini-cli; cli=gemini ;;
   codex) package=@openai/codex; cli=codex ;;
+  opencode) package=opencode-ai; cli=opencode ;;
   cursor)
     test "${BUNDLE_URL:?}" = "https://downloads.cursor.com/lab/$CLI_VERSION/linux/x64/agent-cli-package.tar.gz" || exit 2
     mkdir -p /opt/cursor

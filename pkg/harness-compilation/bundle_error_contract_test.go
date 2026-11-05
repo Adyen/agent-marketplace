@@ -107,7 +107,7 @@ func bundleErrorCases() []bundleErrorCase {
 			resources: []ir.Resource{
 				isolatedAgent,
 				devinHook("pre-read", "PreToolUse", "Read", "read-guard.sh"),
-				devinHook("pre-edit", "PreToolUse", "Edit", "edit-guard.sh"),
+				devinHook("pre-bash", "PreToolUse", "Bash", "bash-guard.sh"),
 			},
 			wantArtifacts: map[string]string{
 				"hooks.v1.json": `{
@@ -119,16 +119,16 @@ func bundleErrorCases() []bundleErrorCase {
           "type": "command"
         }
       ],
-      "matcher": "Read"
+      "matcher": "^read$"
     },
     {
       "hooks": [
         {
-          "command": "edit-guard.sh",
+          "command": "bash-guard.sh",
           "type": "command"
         }
       ],
-      "matcher": "Edit"
+      "matcher": "^exec$"
     }
   ]
 }`,

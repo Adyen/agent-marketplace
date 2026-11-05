@@ -265,3 +265,65 @@ cells:
       class: identity
       diagnostics:
         - ingest.codex.bundle-manifest-synthesized
+    - from: claude
+      to: opencode
+      class: cross
+    - from: opencode
+      to: claude
+      class: cross
+    - from: factory
+      to: opencode
+      class: cross
+      diagnostics:
+        - ingest.factory.bundle-manifest-synthesized
+    - from: opencode
+      to: factory
+      class: cross
+    - from: cursor
+      to: opencode
+      class: cross
+      allowedLosses:
+        - description
+    - from: opencode
+      to: cursor
+      class: cross
+    - from: windsurf
+      to: opencode
+      class: cross
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized
+        - ingest.windsurf.workflow-assumed-command
+      allowedLosses:
+        - description
+    - from: opencode
+      to: windsurf
+      class: cross
+    - from: gemini
+      to: opencode
+      class: cross
+      diagnostics:
+        - ingest.gemini.bundle-manifest-synthesized
+      allowedLosses:
+        - description
+    - from: opencode
+      to: gemini
+      class: cross
+    - from: devin
+      to: opencode
+      class: cross
+      diagnostics:
+        - ingest.devin.bundle-manifest-synthesized
+    - from: opencode
+      to: devin
+      class: cross
+    - from: codex
+      to: opencode
+      class: cross
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+    - from: opencode
+      to: codex
+      class: cross
+    - from: opencode
+      to: opencode
+      class: identity

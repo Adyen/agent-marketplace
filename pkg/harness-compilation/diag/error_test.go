@@ -30,6 +30,14 @@ func TestCodedErrorMessageOmitsEmptyFile(t *testing.T) {
 	}
 }
 
+// spec: command-error-output/every-consumer-diagnostic-code-has-guidance
+func TestCodedErrorDiagnosticCode(t *testing.T) {
+	err := NewCodedError(CodeOwnershipStateCorrupt, SourceRef{File: "ownership.json"}, errors.New("corrupt"))
+	if got := err.DiagnosticCode(); got != CodeOwnershipStateCorrupt {
+		t.Fatalf("DiagnosticCode() = %q, want %q", got, CodeOwnershipStateCorrupt)
+	}
+}
+
 func TestCodedErrorDiagnosticUsesCatalog(t *testing.T) {
 	err := NewCodedError(CodeJSONDuplicateKey, SourceRef{File: ".mcp.json", Line: 4}, errors.New("boom"))
 	d := err.Diagnostic("docs")

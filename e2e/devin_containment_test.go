@@ -11,9 +11,9 @@ import (
 func TestDevinRepoRootEscapePreservesExternalTree(t *testing.T) {
 	env := newEnv(t)
 	env.InitGitRepo()
-	env.WriteGlobalConfig("harnesses: [devin]\nregistries: []")
+	env.WriteGlobalConfig("harnesses: [devin]\n")
 	url := env.CreateBareRepo("devin-containment", RegistryFilesEx([]Skill{{Name: "review"}}, nil, nil, []MCPServer{{Name: "fixture-server", Command: "fixture"}}))
-	env.WriteRepoConfig(fmt.Sprintf("harnesses: [devin]\nregistries:\n  - url: %s\n    ref: main\n    default: true\n", url))
+	env.WriteRepoConfig(fmt.Sprintf("harnesses: [devin]\nsources: {team: {git: %q, ref: main}}\nresources: {team: {all: true}}\n", url))
 	env.MustRunAM("lock")
 	outside := filepath.Join(env.home, "foreign-root")
 	if err := os.Mkdir(outside, 0755); err != nil {

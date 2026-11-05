@@ -1,395 +1,281 @@
 package config
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
-// --- v2 schema tests ---
-
-func TestV2ConfigUnmarshalWithApiVersion(t *testing.T) {
-	const input = `
-apiVersion: agent-marketplace/v2
-harnesses:
-  - factory
-  - cursor
-registries:
-  - url: git@gitlab.example.com:example-org/example-infra-skills.git
+// These tests retain runtime selection/target contracts formerly exercised with
+// v2 fixtures. Authored documents now enter through the supported v4 parser.
+func TestV4ConfigParsesSourceAndResourceFields(t *testing.T) {
+	cfg := parseRuntimeV4(t, `
+apiVersion: agent-marketplace/v4
+harnesses: [factory, cursor]
+sources:
+  infra:
+    git: git@gitlab.example.com:example-org/example-infra-skills.git
     ref: main
     source_harness: claude
-    skills:
-      - vm-lifecycle
-    commands:
-      - onboard-vm
-    subagents: []
-    hooks: []
-    mcp: []
-    tags:
-      - k8s
-    harnesses:
-      - factory
-skills:
-  include:
-    - puppet-module-conventions
-  exclude:
-    - deprecated-skill
-tags:
-  - network
-`
-	var cfg Config
-	if err := yaml.Unmarshal([]byte(input), &cfg); err != nil {
-		t.Fatalf("expected v2 config to unmarshal: %v", err)
+resources:
+  infra:
+    include: [skill/vm-lifecycle, command/onboard-vm]
+    tags: [k8s]
+    harnesses: [factory]
+`)
+	if cfg.APIVersion != APIVersionV4 || !equalStrings(cfg.Harnesses, []string{"factory", "cursor"}) || len(cfg.Registries) != 1 {
+		t.Fatalf("unexpected runtime settings: %#v", cfg)
 	}
-
-	if cfg.APIVersion != "agent-marketplace/v2" {
-		t.Fatalf("expected apiVersion %q, got %q", "agent-marketplace/v2", cfg.APIVersion)
-	}
-
-	if !equalStrings(cfg.Harnesses, []string{"factory", "cursor"}) {
-		t.Fatalf("expected harnesses [factory, cursor], got %v", cfg.Harnesses)
-	}
-
-	if len(cfg.Registries) != 1 {
-		t.Fatalf("expected 1 registry, got %d", len(cfg.Registries))
-	}
-
 	e := cfg.Registries[0]
-	if e.SourceHarness != "claude" {
-		t.Fatalf("expected source_harness %q, got %q", "claude", e.SourceHarness)
+	if e.URL != "git@gitlab.example.com:example-org/example-infra-skills.git" || e.Ref != "main" || e.SourceHarness != "claude" || !equalStrings(e.Skills.Include, []string{"vm-lifecycle"}) || !equalStrings(e.Commands.Include, []string{"onboard-vm"}) || !equalStrings(e.Harnesses, []string{"factory"}) || !equalStrings(e.Tags, []string{"k8s"}) {
+		t.Fatalf("source/resource fields were not retained: %#v", e)
 	}
-	if !equalStrings(e.Skills.Include, []string{"vm-lifecycle"}) {
-		t.Fatalf("expected skills [vm-lifecycle], got %v", e.Skills.Include)
-	}
-	if !equalStrings(e.Commands.Include, []string{"onboard-vm"}) {
-		t.Fatalf("expected commands [onboard-vm], got %v", e.Commands.Include)
-	}
-	if !equalStrings(e.Harnesses, []string{"factory"}) {
-		t.Fatalf("expected entry harnesses [factory], got %v", e.Harnesses)
+	if !e.Subagents.IsZero() || !e.Hooks.IsZero() || !e.MCP.IsZero() {
+		t.Fatalf("absent kinds must remain empty: %#v", e)
 	}
 }
 
-func TestV2ConfigValidateRejectsMissingApiVersion(t *testing.T) {
-	cfg := Config{
-		Harnesses: []string{"factory"},
-		Registries: []RegistryEntry{
-			{URL: "git@example.com:infra.git", Ref: "main"},
-		},
-	}
+func TestRuntimeConfigValidateRejectsMissingAPIVersion(t *testing.T) {
+	cfg := Config{Harnesses: []string{"factory"}, Registries: []RegistryEntry{{URL: "git@example.com:infra.git", Ref: "main"}}}
+	var validation *V4ValidationError
 	err := cfg.Validate()
-	if err == nil {
-		t.Fatalf("expected validation error for missing apiVersion")
+	if !errors.As(err, &validation) || validation.Code != "v4.api-version-required" || validation.Path != "apiVersion" {
+		t.Fatalf("missing version error = %v, want v4.api-version-required", err)
 	}
-	if !strings.Contains(err.Error(), "apiVersion") {
-		t.Fatalf("expected error to mention apiVersion, got %q", err.Error())
-	}
-	if !strings.Contains(err.Error(), "agent-marketplace/v2") {
-		t.Fatalf("expected error to suggest v2 apiVersion, got %q", err.Error())
+	cfg.APIVersion = APIVersionV4
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("v4 control failed: %v", err)
 	}
 }
 
-func TestV2ConfigValidateRejectsWrongApiVersion(t *testing.T) {
+func TestRuntimeConfigValidateRejectsWrongAPIVersion(t *testing.T) {
+	cfg := Config{APIVersion: "agent-marketplace/v1", Harnesses: []string{"factory"}, Registries: []RegistryEntry{{URL: "git@example.com:infra.git", Ref: "main"}}}
+	var validation *V4ValidationError
+	err := cfg.Validate()
+	if !errors.As(err, &validation) || validation.Code != "v4.api-version" || validation.Path != "apiVersion" {
+		t.Fatalf("wrong version error = %v, want v4.api-version", err)
+	}
+}
+
+func TestRuntimeConfigValidateRejectsMissingHarnesses(t *testing.T) {
+	cfg := Config{APIVersion: APIVersionV4, Registries: []RegistryEntry{{URL: "git@example.com:infra.git", Ref: "main"}}}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "harnesses") {
+		t.Fatalf("missing harnesses error = %v", err)
+	}
+}
+
+func TestRuntimeConfigValidateRejectsEmptyHarnesses(t *testing.T) {
+	cfg := Config{APIVersion: APIVersionV4, Harnesses: []string{}, Registries: []RegistryEntry{{URL: "git@example.com:infra.git", Ref: "main"}}}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "harnesses") {
+		t.Fatalf("empty harnesses error = %v", err)
+	}
+}
+
+func TestRuntimeConfigValidateAcceptsValidV4(t *testing.T) {
 	cfg := Config{
-		APIVersion: "agent-marketplace/v1",
+		APIVersion: APIVersionV4,
 		Harnesses:  []string{"factory"},
-		Registries: []RegistryEntry{
-			{URL: "git@example.com:infra.git", Ref: "main"},
-		},
-	}
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatalf("expected validation error for wrong apiVersion")
-	}
-	if !strings.Contains(err.Error(), "apiVersion") {
-		t.Fatalf("expected error to mention apiVersion, got %q", err.Error())
-	}
-}
-
-func TestV2ConfigValidateRejectsMissingHarnesses(t *testing.T) {
-	cfg := Config{
-		APIVersion: "agent-marketplace/v2",
-		Registries: []RegistryEntry{
-			{URL: "git@example.com:infra.git", Ref: "main"},
-		},
-	}
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatalf("expected validation error for missing harnesses")
-	}
-	if !strings.Contains(err.Error(), "harnesses") {
-		t.Fatalf("expected error to mention harnesses, got %q", err.Error())
-	}
-}
-
-func TestV2ConfigValidateRejectsEmptyHarnesses(t *testing.T) {
-	cfg := Config{
-		APIVersion: "agent-marketplace/v2",
-		Harnesses:  []string{},
-		Registries: []RegistryEntry{
-			{URL: "git@example.com:infra.git", Ref: "main"},
-		},
-	}
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatalf("expected validation error for empty harnesses")
-	}
-}
-
-func TestV2ConfigValidateAcceptsValidV2(t *testing.T) {
-	cfg := Config{
-		APIVersion: "agent-marketplace/v2",
-		Harnesses:  []string{"factory"},
-		Registries: []RegistryEntry{
-			{URL: "git@example.com:infra.git", Ref: "main", Skills: KindSelector{Include: []string{"vm-lifecycle"}, Exclude: []string{"deprecated-skill"}}},
-		},
-		Tags: []string{"network"},
+		Registries: []RegistryEntry{{URL: "git@example.com:infra.git", Ref: "main", Skills: KindSelector{Include: []string{"vm-lifecycle"}, Exclude: []string{"deprecated-skill"}}}},
+		Tags:       []string{"network"},
 	}
 	if err := cfg.Validate(); err != nil {
-		t.Fatalf("expected valid v2 config to pass validation: %v", err)
+		t.Fatalf("valid runtime config rejected: %v", err)
 	}
 }
 
-func TestV2RegistryEntrySourceHarnessDefaultsEmpty(t *testing.T) {
-	const input = `
-apiVersion: agent-marketplace/v2
-harnesses:
-  - factory
-registries:
-  - url: git@example.com:infra.git
-    ref: main
-`
-	var cfg Config
-	if err := yaml.Unmarshal([]byte(input), &cfg); err != nil {
-		t.Fatalf("expected v2 config to unmarshal: %v", err)
-	}
-	if cfg.Registries[0].SourceHarness != "" {
-		t.Fatalf("expected empty source_harness, got %q", cfg.Registries[0].SourceHarness)
+func TestV4RegistryEntrySourceHarnessDefaultsEmpty(t *testing.T) {
+	cfg := parseRuntimeV4(t, `apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  infra: {git: "git@example.com:infra.git", ref: main}
+`)
+	if len(cfg.Registries) != 1 || cfg.Registries[0].SourceHarness != "" {
+		t.Fatalf("source_harness must default to empty: %#v", cfg.Registries)
 	}
 }
 
-func TestV2RegistryEntryHarnessesOverride(t *testing.T) {
-	const input = `
-apiVersion: agent-marketplace/v2
-harnesses:
-  - factory
-  - cursor
-registries:
-  - url: git@example.com:infra.git
-    ref: main
-    harnesses:
-      - factory
-`
-	var cfg Config
-	if err := yaml.Unmarshal([]byte(input), &cfg); err != nil {
-		t.Fatalf("expected v2 config to unmarshal: %v", err)
-	}
+func TestV4RegistryEntryHarnessesOverride(t *testing.T) {
+	cfg := parseRuntimeV4(t, `apiVersion: agent-marketplace/v4
+harnesses: [factory, cursor]
+sources:
+  infra: {git: "git@example.com:infra.git", ref: main}
+resources:
+  infra: {harnesses: [factory]}
+`)
 	if !equalStrings(cfg.Registries[0].Harnesses, []string{"factory"}) {
-		t.Fatalf("expected per-entry harnesses [factory], got %v", cfg.Registries[0].Harnesses)
+		t.Fatalf("per-source harnesses = %v, want [factory]", cfg.Registries[0].Harnesses)
 	}
 }
 
-func TestV2RegistryEntryReservedKindsAreParsed(t *testing.T) {
-	const input = `
-apiVersion: agent-marketplace/v2
-harnesses:
-  - factory
-registries:
-  - url: git@example.com:infra.git
+func TestV4RegistryEntryAllKindsAreParsed(t *testing.T) {
+	cfg := parseRuntimeV4(t, `apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  infra: {git: "git@example.com:infra.git", ref: main}
+resources:
+  infra: [skill/vm-lifecycle, command/deploy, subagent/reviewer, hook/pre-commit, mcp/k8s-api, collection/team]
+`)
+	e := cfg.Registries[0]
+	for _, tc := range []struct {
+		kind ir.ResourceKind
+		name string
+	}{
+		{ir.KindSkill, "vm-lifecycle"}, {ir.KindCommand, "deploy"}, {ir.KindSubagent, "reviewer"},
+		{ir.KindHook, "pre-commit"}, {ir.KindMcpServer, "k8s-api"}, {ir.KindCollection, "team"},
+	} {
+		if got := e.SelectorForKind(tc.kind).Include; !equalStrings(got, []string{tc.name}) {
+			t.Errorf("%s includes = %v, want [%s]", tc.kind, got, tc.name)
+		}
+	}
+}
+
+func TestV4EditorRoundTripPreservesResourceFields(t *testing.T) {
+	const input = `apiVersion: agent-marketplace/v4
+harnesses: [factory, cursor]
+sources:
+  infra:
+    git: git@gitlab.example.com:example-org/example-infra-skills.git
     ref: main
-    skills:
-      - vm-lifecycle
-    commands:
-      - deploy
-    subagents:
-      - reviewer
-    hooks:
-      - pre-commit
-    mcp:
-      - k8s-api
+    source_harness: claude
+resources:
+  infra:
+    include: [skill/vm-lifecycle, command/onboard-vm, subagent/reviewer, hook/pre-commit, mcp/k8s-api]
+    exclude: [skill/firewall-rule-lifecycle]
+    harnesses: [factory]
+    tags: [k8s]
 `
-	var cfg Config
-	if err := yaml.Unmarshal([]byte(input), &cfg); err != nil {
-		t.Fatalf("expected v2 config with reserved kinds to unmarshal: %v", err)
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(input), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	editor, err := OpenLayerEditor(LayerTarget{Source: RepoCommitted, StagedPath: path, DeclaringPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, found, err := editor.LookupRegistry(RegistryEntry{URL: "git@gitlab.example.com:example-org/example-infra-skills.git", Ref: "main", SourceHarness: "claude"})
+	if err != nil || !found {
+		t.Fatalf("source lookup: found=%v, err=%v", found, err)
+	}
+	if err := editor.Apply(binding, SelectionChange{Operation: SelectionInclude, Locators: []ResourceLocator{{Kind: ir.KindCollection, Name: "team"}}}); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := editor.Render()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !candidate.Changed {
+		t.Fatal("positive edit did not change rendered document")
+	}
+	cfg := parseRuntimeV4(t, string(candidate.Bytes))
+	if cfg.APIVersion != APIVersionV4 || !equalStrings(cfg.Harnesses, []string{"factory", "cursor"}) || len(cfg.Registries) != 1 {
+		t.Fatalf("settings changed: %#v", cfg)
 	}
 	e := cfg.Registries[0]
-	if !equalStrings(e.Skills.Include, []string{"vm-lifecycle"}) {
-		t.Fatalf("expected skills [vm-lifecycle], got %v", e.Skills.Include)
+	if e.URL != "git@gitlab.example.com:example-org/example-infra-skills.git" || e.Ref != "main" || e.SourceHarness != "claude" || !equalStrings(e.Harnesses, []string{"factory"}) || !equalStrings(e.Tags, []string{"k8s"}) || !equalStrings(e.Skills.Exclude, []string{"firewall-rule-lifecycle"}) {
+		t.Fatalf("source/group fields changed: %#v", e)
 	}
-	if !equalStrings(e.Commands.Include, []string{"deploy"}) {
-		t.Fatalf("expected commands [deploy], got %v", e.Commands.Include)
-	}
-	if !equalStrings(e.Subagents.Include, []string{"reviewer"}) {
-		t.Fatalf("expected subagents [reviewer], got %v", e.Subagents.Include)
-	}
-	if !equalStrings(e.Hooks.Include, []string{"pre-commit"}) {
-		t.Fatalf("expected hooks [pre-commit], got %v", e.Hooks.Include)
-	}
-	if !equalStrings(e.MCP.Include, []string{"k8s-api"}) {
-		t.Fatalf("expected mcp [k8s-api], got %v", e.MCP.Include)
-	}
-}
-
-func TestV2RoundTripPreservesNewFields(t *testing.T) {
-	original := Config{
-		APIVersion: "agent-marketplace/v2",
-		Harnesses:  []string{"factory", "cursor"},
-		Registries: []RegistryEntry{
-			{
-				URL:           "git@gitlab.example.com:example-org/example-infra-skills.git",
-				Ref:           "main",
-				SourceHarness: "claude",
-				Skills:        KindSelector{Include: []string{"vm-lifecycle"}, Exclude: []string{"firewall-rule-lifecycle"}},
-				Commands:      KindSelector{Include: []string{"onboard-vm"}},
-				Subagents:     KindSelector{Include: []string{"reviewer"}},
-				Hooks:         KindSelector{Include: []string{"pre-commit"}},
-				MCP:           KindSelector{Include: []string{"k8s-api"}},
-				Harnesses:     []string{"factory"},
-				Tags:          []string{"k8s"},
-			},
-		},
-		Tags: []string{"network"},
-	}
-
-	data, err := yaml.Marshal(original)
-	if err != nil {
-		t.Fatalf("expected v2 config to marshal: %v", err)
-	}
-
-	var roundTripped Config
-	if err := yaml.Unmarshal(data, &roundTripped); err != nil {
-		t.Fatalf("expected marshaled v2 config to unmarshal: %v", err)
-	}
-
-	if roundTripped.APIVersion != original.APIVersion {
-		t.Fatalf("expected apiVersion %q, got %q", original.APIVersion, roundTripped.APIVersion)
-	}
-	if !equalStrings(roundTripped.Harnesses, original.Harnesses) {
-		t.Fatalf("expected harnesses %v, got %v", original.Harnesses, roundTripped.Harnesses)
-	}
-	if roundTripped.Registries[0].SourceHarness != original.Registries[0].SourceHarness {
-		t.Fatalf("expected source_harness %q, got %q", original.Registries[0].SourceHarness, roundTripped.Registries[0].SourceHarness)
-	}
-	if !equalStrings(roundTripped.Registries[0].Commands.Include, original.Registries[0].Commands.Include) {
-		t.Fatalf("expected commands %v, got %v", original.Registries[0].Commands.Include, roundTripped.Registries[0].Commands.Include)
-	}
-	if !equalStrings(roundTripped.Registries[0].Harnesses, original.Registries[0].Harnesses) {
-		t.Fatalf("expected per-entry harnesses %v, got %v", original.Registries[0].Harnesses, roundTripped.Registries[0].Harnesses)
+	for _, tc := range []struct {
+		kind ir.ResourceKind
+		name string
+	}{
+		{ir.KindSkill, "vm-lifecycle"}, {ir.KindCommand, "onboard-vm"}, {ir.KindSubagent, "reviewer"},
+		{ir.KindHook, "pre-commit"}, {ir.KindMcpServer, "k8s-api"}, {ir.KindCollection, "team"},
+	} {
+		if got := e.SelectorForKind(tc.kind).Include; !equalStrings(got, []string{tc.name}) {
+			t.Errorf("%s includes = %v, want [%s]", tc.kind, got, tc.name)
+		}
 	}
 }
 
-// --- Loader v2 gating tests ---
+func TestLoadConfigRejectsVersionlessRoot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	const input = "sources:\n  infra: {git: \"git@example.com:infra.git\", ref: main}\nresources:\n  infra: [skill/vm-lifecycle]\n"
+	if err := os.WriteFile(path, []byte(input), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadConfigFromPath(path)
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != "v4.api-version-required" {
+		t.Fatalf("versionless error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte("apiVersion: agent-marketplace/v4\n"+input), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfigFromPath(path)
+	if err != nil || cfg == nil || len(cfg.Registries) != 1 || !equalStrings(cfg.Registries[0].Skills.Include, []string{"vm-lifecycle"}) {
+		t.Fatalf("v4 control: cfg=%#v, err=%v", cfg, err)
+	}
+}
 
-func TestLoadConfigRejectsV1Config(t *testing.T) {
-	dir := t.TempDir()
-	configPath := dir + "/.agents/config.yaml"
-	mustMkdirAll(t, dir+"/.agents")
-	mustWriteFile(t, configPath, []byte(`
-registries:
-  - url: git@example.com:infra.git
-    ref: main
-skills:
-  - vm-lifecycle
+func TestLoadConfigAcceptsV4Config(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	mustWriteFile(t, path, []byte(`apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  infra: {git: "git@example.com:infra.git", ref: main}
+resources:
+  infra: [skill/vm-lifecycle]
 `))
-
-	_, err := loadConfig(configPath, true)
-	if err == nil {
-		t.Fatalf("expected v1 config to be rejected by loader")
-	}
-	if !strings.Contains(err.Error(), "apiVersion") {
-		t.Fatalf("expected error to mention apiVersion, got %q", err.Error())
-	}
-	if !strings.Contains(err.Error(), "agent-marketplace/v2") {
-		t.Fatalf("expected error to suggest v2 apiVersion, got %q", err.Error())
-	}
-}
-
-func TestLoadConfigAcceptsV2Config(t *testing.T) {
-	dir := t.TempDir()
-	configPath := dir + "/.agents/config.yaml"
-	mustMkdirAll(t, dir+"/.agents")
-	mustWriteFile(t, configPath, []byte(`
-apiVersion: agent-marketplace/v2
-harnesses:
-  - factory
-registries:
-  - url: git@example.com:infra.git
-    ref: main
-skills:
-  - vm-lifecycle
-`))
-
-	cfg, err := loadConfig(configPath, true)
+	cfg, err := loadConfig(path, true)
 	if err != nil {
-		t.Fatalf("expected v2 config to load: %v", err)
+		t.Fatalf("v4 load: %v", err)
 	}
-	if cfg.APIVersion != "agent-marketplace/v2" {
-		t.Fatalf("expected apiVersion %q, got %q", "agent-marketplace/v2", cfg.APIVersion)
+	if cfg.APIVersion != APIVersionV4 || !equalStrings(cfg.Registries[0].Skills.Include, []string{"vm-lifecycle"}) {
+		t.Fatalf("unexpected runtime config: %#v", cfg)
 	}
 }
 
-func TestLoadLocalConfigDoesNotRequireApiVersion(t *testing.T) {
-	dir := t.TempDir()
-	configPath := dir + "/config.local.yaml"
-	mustWriteFile(t, configPath, []byte(`
-skills:
-  include:
-    - local-skill
-  exclude:
-    - unwanted
-`))
-
-	cfg, err := loadLocalConfig(configPath)
+func TestLoadLocalConfigRequiresAPIVersion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.local.yaml")
+	const input = "sources:\n  local: {directory: /local/skills}\nresources:\n  local: {include: [skill/local-skill], exclude: [skill/unwanted]}\n"
+	mustWriteFile(t, path, []byte(input))
+	_, err := LoadLocalConfigFromPath(path)
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != "v4.api-version-required" {
+		t.Fatalf("local missing version error = %v", err)
+	}
+	mustWriteFile(t, path, []byte("apiVersion: agent-marketplace/v4\n"+input))
+	cfg, err := LoadLocalConfigFromPath(path)
 	if err != nil {
-		t.Fatalf("expected local config to load without apiVersion: %v", err)
+		t.Fatalf("local v4 control: %v", err)
 	}
-	if !equalStrings(cfg.Skills.Include, []string{"local-skill"}) {
-		t.Fatalf("expected skills [local-skill], got %v", cfg.Skills.Include)
-	}
-	if !equalStrings(cfg.Skills.Exclude, []string{"unwanted"}) {
-		t.Fatalf("expected skills exclude [unwanted], got %v", cfg.Skills.Exclude)
+	if len(cfg.Registries) != 1 || !equalStrings(cfg.Registries[0].Skills.Include, []string{"local-skill"}) || !equalStrings(cfg.Registries[0].Skills.Exclude, []string{"unwanted"}) {
+		t.Fatalf("local selection not retained: %#v", cfg)
 	}
 }
 
-// --- Merge with new fields ---
-
+// Programmatic runtime requirements deliberately retain inheritance semantics;
+// they are not promises to accept top-level legacy selectors on disk.
 func TestMergeResolvesHarnessesInheritance(t *testing.T) {
 	global := &Config{
-		APIVersion: "agent-marketplace/v2",
+		APIVersion: APIVersionV4,
 		Harnesses:  []string{"factory", "cursor"},
 		Registries: []RegistryEntry{
 			{URL: "git@example.com:global.git", Ref: "main"},
 			{URL: "git@example.com:override.git", Ref: "main", Harnesses: []string{"factory"}},
 		},
 	}
-
-	repo := &Config{
-		APIVersion: "agent-marketplace/v2",
-		Harnesses:  []string{"factory"},
-		Registries: []RegistryEntry{
-			{URL: "git@example.com:repo.git", Ref: "stable"},
-		},
-	}
-
+	repo := &Config{APIVersion: APIVersionV4, Harnesses: []string{"factory"}, Registries: []RegistryEntry{{URL: "git@example.com:repo.git", Ref: "stable"}}}
 	got := Merge(global, repo)
-
-	// Global entry inherits from global's Harnesses.
 	if !equalStrings(got.Registries[0].Harnesses, []string{"factory", "cursor"}) {
-		t.Fatalf("expected global entry to inherit top-level harnesses, got %v", got.Registries[0].Harnesses)
+		t.Fatalf("global inherited harnesses = %v", got.Registries[0].Harnesses)
 	}
-	// Global entry with override uses its own.
 	if !equalStrings(got.Registries[1].Harnesses, []string{"factory"}) {
-		t.Fatalf("expected global entry with override to use per-entry harnesses, got %v", got.Registries[1].Harnesses)
+		t.Fatalf("global override harnesses = %v", got.Registries[1].Harnesses)
 	}
-	// Repo entry inherits from repo's Harnesses.
 	if !equalStrings(got.Registries[2].Harnesses, []string{"factory"}) {
-		t.Fatalf("expected repo entry to inherit repo's top-level harnesses, got %v", got.Registries[2].Harnesses)
+		t.Fatalf("repo inherited harnesses = %v", got.Registries[2].Harnesses)
 	}
 }
 
 func TestMergeResolvesPerKindInheritance(t *testing.T) {
 	global := &Config{
-		APIVersion: "agent-marketplace/v2",
+		APIVersion: APIVersionV4,
 		Harnesses:  []string{"factory"},
 		Skills:     KindSelector{Include: []string{"global-skill"}, Exclude: []string{"legacy-skill"}},
 		Commands:   KindSelector{Include: []string{"global-cmd"}},
@@ -399,33 +285,29 @@ func TestMergeResolvesPerKindInheritance(t *testing.T) {
 			{URL: "git@example.com:explicit-empty.git", Ref: "main", Skills: KindSelector{Include: []string{}}},
 		},
 	}
-
 	got := Merge(global, nil)
-
 	if !equalStrings(got.Registries[0].Skills.Include, []string{"global-skill"}) {
-		t.Fatalf("expected inherited skills, got %v", got.Registries[0].Skills.Include)
+		t.Fatalf("inherited skills = %v", got.Registries[0].Skills.Include)
 	}
 	if !equalStrings(got.Registries[0].Skills.Exclude, []string{"legacy-skill"}) {
-		t.Fatalf("expected inherited excludes, got %v", got.Registries[0].Skills.Exclude)
+		t.Fatalf("inherited excludes = %v", got.Registries[0].Skills.Exclude)
 	}
 	if !equalStrings(got.Registries[0].Commands.Include, []string{"global-cmd"}) {
-		t.Fatalf("expected inherited commands, got %v", got.Registries[0].Commands.Include)
+		t.Fatalf("inherited commands = %v", got.Registries[0].Commands.Include)
 	}
 	if !equalStrings(got.Registries[1].Skills.Include, []string{"entry-skill"}) {
-		t.Fatalf("expected overridden skills, got %v", got.Registries[1].Skills.Include)
+		t.Fatalf("overridden skills = %v", got.Registries[1].Skills.Include)
 	}
 	if !equalStrings(got.Registries[1].Skills.Exclude, []string{"legacy-skill"}) {
-		t.Fatalf("expected override entry to inherit top-level excludes, got %v", got.Registries[1].Skills.Exclude)
+		t.Fatalf("override inherited excludes = %v", got.Registries[1].Skills.Exclude)
 	}
 	if !equalStrings(got.Registries[1].Commands.Include, []string{"entry-cmd"}) {
-		t.Fatalf("expected overridden commands, got %v", got.Registries[1].Commands.Include)
+		t.Fatalf("overridden commands = %v", got.Registries[1].Commands.Include)
 	}
 	if got.Registries[2].Skills.Include == nil || len(got.Registries[2].Skills.Include) != 0 {
-		t.Fatalf("expected explicit empty include to override inherited defaults, got %#v", got.Registries[2].Skills.Include)
+		t.Fatalf("explicit empty include = %#v", got.Registries[2].Skills.Include)
 	}
 }
-
-// --- helper ---
 
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
@@ -439,312 +321,206 @@ func equalStrings(a, b []string) bool {
 	return true
 }
 
-// --- harnesses-optional for project/local configs ---
-
 func TestValidateWithoutHarnessesAcceptsMissingHarnesses(t *testing.T) {
-	cfg := Config{
-		APIVersion: "agent-marketplace/v2",
-		Registries: []RegistryEntry{
-			{URL: "git@example.com:infra.git", Ref: "main"},
-		},
-	}
+	cfg := Config{APIVersion: APIVersionV4, Registries: []RegistryEntry{{URL: "git@example.com:infra.git", Ref: "main"}}}
 	if err := cfg.ValidateWithoutHarnesses(); err != nil {
-		t.Fatalf("expected v2 config without harnesses to pass ValidateWithoutHarnesses: %v", err)
+		t.Fatalf("without harnesses: %v", err)
 	}
 }
 
 func TestValidateWithoutHarnessesAcceptsEmptyHarnesses(t *testing.T) {
-	cfg := Config{
-		APIVersion: "agent-marketplace/v2",
-		Harnesses:  []string{},
-		Registries: []RegistryEntry{
-			{URL: "git@example.com:infra.git", Ref: "main"},
-		},
-	}
+	cfg := Config{APIVersion: APIVersionV4, Harnesses: []string{}, Registries: []RegistryEntry{{URL: "git@example.com:infra.git", Ref: "main"}}}
 	if err := cfg.ValidateWithoutHarnesses(); err != nil {
-		t.Fatalf("expected v2 config with empty harnesses to pass ValidateWithoutHarnesses: %v", err)
+		t.Fatalf("explicit empty harnesses: %v", err)
 	}
 }
 
 func TestValidateWithoutHarnessesStillRequiresApiVersion(t *testing.T) {
-	cfg := Config{
-		Harnesses: []string{"factory"},
-		Registries: []RegistryEntry{
-			{URL: "git@example.com:infra.git", Ref: "main"},
-		},
-	}
+	cfg := Config{Harnesses: []string{"factory"}, Registries: []RegistryEntry{{URL: "git@example.com:infra.git", Ref: "main"}}}
+	var validation *V4ValidationError
 	err := cfg.ValidateWithoutHarnesses()
-	if err == nil {
-		t.Fatalf("expected validation error for missing apiVersion even without harnesses requirement")
-	}
-	if !strings.Contains(err.Error(), "apiVersion") {
-		t.Fatalf("expected error to mention apiVersion, got %q", err.Error())
+	if !errors.As(err, &validation) || validation.Code != "v4.api-version-required" {
+		t.Fatalf("missing version error = %v", err)
 	}
 }
 
 func TestValidateStillRequiresHarnessesForGlobal(t *testing.T) {
-	cfg := Config{
-		APIVersion: "agent-marketplace/v2",
-		Registries: []RegistryEntry{
-			{URL: "git@example.com:infra.git", Ref: "main"},
-		},
-	}
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatalf("expected Validate (global) to reject missing harnesses")
-	}
-	if !strings.Contains(err.Error(), "harnesses") {
-		t.Fatalf("expected error to mention harnesses, got %q", err.Error())
+	cfg := Config{APIVersion: APIVersionV4, Registries: []RegistryEntry{{URL: "git@example.com:infra.git", Ref: "main"}}}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "harnesses") {
+		t.Fatalf("global missing harnesses error = %v", err)
 	}
 }
 
 func TestLoadConfigRepoLayerAcceptsMissingHarnesses(t *testing.T) {
-	dir := t.TempDir()
-	configPath := dir + "/.agents/config.yaml"
-	mustMkdirAll(t, dir+"/.agents")
-	mustWriteFile(t, configPath, []byte(`
-apiVersion: agent-marketplace/v2
-registries:
-  - url: git@example.com:infra.git
-    ref: main
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	mustWriteFile(t, path, []byte(`apiVersion: agent-marketplace/v4
+sources:
+  infra: {git: "git@example.com:infra.git", ref: main}
 `))
-
-	cfg, err := loadConfig(configPath, false)
+	cfg, err := loadConfig(path, false)
 	if err != nil {
-		t.Fatalf("expected repo-level config without harnesses to load: %v", err)
+		t.Fatalf("repo config without harnesses: %v", err)
 	}
-	if cfg.APIVersion != "agent-marketplace/v2" {
-		t.Fatalf("expected apiVersion %q, got %q", "agent-marketplace/v2", cfg.APIVersion)
-	}
-	if len(cfg.Harnesses) != 0 {
-		t.Fatalf("expected empty harnesses, got %v", cfg.Harnesses)
+	if cfg.APIVersion != APIVersionV4 || len(cfg.Harnesses) != 0 || len(cfg.Registries) != 1 {
+		t.Fatalf("unexpected repo config: %#v", cfg)
 	}
 }
 
 func TestLoadConfigGlobalLayerRejectsMissingHarnesses(t *testing.T) {
-	dir := t.TempDir()
-	configPath := dir + "/config.yaml"
-	mustWriteFile(t, configPath, []byte(`
-apiVersion: agent-marketplace/v2
-registries:
-  - url: git@example.com:infra.git
-    ref: main
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	mustWriteFile(t, path, []byte(`apiVersion: agent-marketplace/v4
+sources:
+  infra: {git: "git@example.com:infra.git", ref: main}
 `))
-
-	_, err := loadConfig(configPath, true)
-	if err == nil {
-		t.Fatalf("expected global-level config without harnesses to be rejected")
-	}
-	if !strings.Contains(err.Error(), "harnesses") {
-		t.Fatalf("expected error to mention harnesses, got %q", err.Error())
+	if _, err := loadConfig(path, true); err == nil || !strings.Contains(err.Error(), "harnesses") {
+		t.Fatalf("global missing harnesses error = %v", err)
 	}
 }
 
-// --- LocalConfig Registries YAML parsing ---
-
-func TestLoadLocalConfigWithRegistriesParsesRegistries(t *testing.T) {
-	dir := t.TempDir()
-	configPath := dir + "/config.local.yaml"
-	mustWriteFile(t, configPath, []byte(`
-registries:
-  - url: git@example.com:local-skills.git
-    ref: main
-    tags:
-      - security
-  - url: /local/path
-    skills:
-      include:
-        - local-skill
+func TestLoadLocalConfigWithSourcesParsesRegistries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.local.yaml")
+	mustWriteFile(t, path, []byte(`apiVersion: agent-marketplace/v4
+sources:
+  a-remote: {git: "git@example.com:local-skills.git", ref: main}
+  b-local: {directory: /local/path}
+resources:
+  a-remote: {tags: [security]}
+  b-local: [skill/local-skill]
 `))
-
-	cfg, err := LoadLocalConfigFromPath(configPath)
+	cfg, err := LoadLocalConfigFromPath(path)
 	if err != nil {
-		t.Fatalf("expected local config with registries to load: %v", err)
+		t.Fatal(err)
 	}
-	if cfg == nil {
-		t.Fatal("expected non-nil config")
+	if cfg == nil || len(cfg.Registries) != 2 {
+		t.Fatalf("expected two runtime entries: %#v", cfg)
 	}
-	if len(cfg.Registries) != 2 {
-		t.Fatalf("expected 2 registries, got %d", len(cfg.Registries))
+	remote, local := cfg.Registries[0], cfg.Registries[1]
+	if remote.URL != "git@example.com:local-skills.git" || remote.Ref != "main" || !equalStrings(remote.Tags, []string{"security"}) || remote.IsLocal() {
+		t.Fatalf("remote source not retained: %#v", remote)
 	}
-	if cfg.Registries[0].URL != "git@example.com:local-skills.git" {
-		t.Fatalf("expected registry URL %q, got %q", "git@example.com:local-skills.git", cfg.Registries[0].URL)
-	}
-	if cfg.Registries[0].Ref != "main" {
-		t.Fatalf("expected ref %q, got %q", "main", cfg.Registries[0].Ref)
-	}
-	if !equalStrings(cfg.Registries[0].Tags, []string{"security"}) {
-		t.Fatalf("expected tags [security], got %v", cfg.Registries[0].Tags)
-	}
-	if cfg.Registries[1].URL != "/local/path" {
-		t.Fatalf("expected second registry URL %q, got %q", "/local/path", cfg.Registries[1].URL)
-	}
-	if !equalStrings(cfg.Registries[1].Skills.Include, []string{"local-skill"}) {
-		t.Fatalf("expected skills [local-skill], got %v", cfg.Registries[1].Skills.Include)
+	if local.URL != "/local/path" || !local.IsLocal() || !equalStrings(local.Skills.Include, []string{"local-skill"}) {
+		t.Fatalf("local source not retained: %#v", local)
 	}
 }
 
-func TestLoadLocalConfigWithoutRegistriesStillWorks(t *testing.T) {
-	dir := t.TempDir()
-	configPath := dir + "/config.local.yaml"
-	mustWriteFile(t, configPath, []byte(`
-skills:
-  include:
-    - local-skill
-  exclude:
-    - opt-out
-commands:
-  include:
-    - local-cmd
-`))
-
-	cfg, err := LoadLocalConfigFromPath(configPath)
+func TestLoadLocalConfigWithoutSourcesStillWorks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.local.yaml")
+	mustWriteFile(t, path, []byte("apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\n"))
+	cfg, err := LoadLocalConfigFromPath(path)
 	if err != nil {
-		t.Fatalf("expected local config without registries to load: %v", err)
+		t.Fatal(err)
 	}
-	if cfg == nil {
-		t.Fatal("expected non-nil config")
+	if cfg == nil || len(cfg.Registries) != 0 || cfg.Materialization == nil || cfg.Materialization.Mode != "file" {
+		t.Fatalf("source-free settings not retained: %#v", cfg)
 	}
-	if len(cfg.Registries) != 0 {
-		t.Fatalf("expected 0 registries, got %d", len(cfg.Registries))
+
+	// Resource selections require a source binding in v4, rather than the
+	// retired unbound top-level selectors. Preserve the selection assertions
+	// through the supported bound form as a non-vacuous control.
+	const selections = "resources:\n  local:\n    include: [skill/local-skill, command/local-cmd]\n    exclude: [skill/opt-out]\n"
+	mustWriteFile(t, path, []byte("apiVersion: agent-marketplace/v4\n"+selections))
+	_, err = LoadLocalConfigFromPath(path)
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != "v4.undefined-source" {
+		t.Fatalf("unbound resources error = %v, want v4.undefined-source", err)
 	}
-	if !equalStrings(cfg.Skills.Include, []string{"local-skill"}) {
-		t.Fatalf("expected skills include [local-skill], got %v", cfg.Skills.Include)
+	mustWriteFile(t, path, []byte("apiVersion: agent-marketplace/v4\nsources:\n  local: {directory: /local/skills}\n"+selections))
+	cfg, err = LoadLocalConfigFromPath(path)
+	if err != nil || cfg == nil || len(cfg.Registries) != 1 {
+		t.Fatalf("source-bound control: cfg=%#v, err=%v", cfg, err)
 	}
-	if !equalStrings(cfg.Skills.Exclude, []string{"opt-out"}) {
-		t.Fatalf("expected skills exclude [opt-out], got %v", cfg.Skills.Exclude)
-	}
-	if !equalStrings(cfg.Commands.Include, []string{"local-cmd"}) {
-		t.Fatalf("expected commands include [local-cmd], got %v", cfg.Commands.Include)
+	entry := cfg.Registries[0]
+	if !equalStrings(entry.Skills.Include, []string{"local-skill"}) || !equalStrings(entry.Skills.Exclude, []string{"opt-out"}) || !equalStrings(entry.Commands.Include, []string{"local-cmd"}) {
+		t.Fatalf("bound local selectors not retained: %#v", entry)
 	}
 }
 
 func TestLoadLocalConfigWithPerKindSelectorsInRegistryEntry(t *testing.T) {
-	dir := t.TempDir()
-	configPath := dir + "/config.local.yaml"
-	mustWriteFile(t, configPath, []byte(`
-registries:
-  - url: git@example.com:local-skills.git
-    ref: main
-    skills:
-      exclude:
-        - unwanted-skill
-      include:
-        - needed-skill
-    commands:
-      include:
-        - deploy-cmd
-    subagents:
-      exclude:
-        - restricted-subagent
-    hooks:
-      include:
-        - local-hook
-    mcp:
-      exclude:
-        - blocked-mcp
-    collections:
-      include:
-        - local-collection
+	path := filepath.Join(t.TempDir(), "config.local.yaml")
+	mustWriteFile(t, path, []byte(`apiVersion: agent-marketplace/v4
+sources:
+  local: {git: "git@example.com:local-skills.git", ref: main}
+resources:
+  local:
+    include: [skill/needed-skill, command/deploy-cmd, hook/local-hook, collection/local-collection]
+    exclude: [skill/unwanted-skill, subagent/restricted-subagent, mcp/blocked-mcp]
 `))
-
-	cfg, err := LoadLocalConfigFromPath(configPath)
+	cfg, err := LoadLocalConfigFromPath(path)
 	if err != nil {
-		t.Fatalf("expected local config with per-kind selectors to load: %v", err)
+		t.Fatal(err)
 	}
-	if cfg == nil {
-		t.Fatal("expected non-nil config")
+	if cfg == nil || len(cfg.Registries) != 1 {
+		t.Fatalf("expected one entry: %#v", cfg)
 	}
-	if len(cfg.Registries) != 1 {
-		t.Fatalf("expected 1 registry, got %d", len(cfg.Registries))
-	}
-
 	e := cfg.Registries[0]
-	if !equalStrings(e.Skills.Exclude, []string{"unwanted-skill"}) {
-		t.Fatalf("expected Skills.Exclude [unwanted-skill], got %v", e.Skills.Exclude)
-	}
-	if !equalStrings(e.Skills.Include, []string{"needed-skill"}) {
-		t.Fatalf("expected Skills.Include [needed-skill], got %v", e.Skills.Include)
-	}
-	if !equalStrings(e.Commands.Include, []string{"deploy-cmd"}) {
-		t.Fatalf("expected Commands.Include [deploy-cmd], got %v", e.Commands.Include)
-	}
-	if !equalStrings(e.Subagents.Exclude, []string{"restricted-subagent"}) {
-		t.Fatalf("expected Subagents.Exclude [restricted-subagent], got %v", e.Subagents.Exclude)
-	}
-	if !equalStrings(e.Hooks.Include, []string{"local-hook"}) {
-		t.Fatalf("expected Hooks.Include [local-hook], got %v", e.Hooks.Include)
-	}
-	if !equalStrings(e.MCP.Exclude, []string{"blocked-mcp"}) {
-		t.Fatalf("expected MCP.Exclude [blocked-mcp], got %v", e.MCP.Exclude)
-	}
-	if !equalStrings(e.Collections.Include, []string{"local-collection"}) {
-		t.Fatalf("expected Collections.Include [local-collection], got %v", e.Collections.Include)
+	if !equalStrings(e.Skills.Exclude, []string{"unwanted-skill"}) || !equalStrings(e.Skills.Include, []string{"needed-skill"}) || !equalStrings(e.Commands.Include, []string{"deploy-cmd"}) || !equalStrings(e.Subagents.Exclude, []string{"restricted-subagent"}) || !equalStrings(e.Hooks.Include, []string{"local-hook"}) || !equalStrings(e.MCP.Exclude, []string{"blocked-mcp"}) || !equalStrings(e.Collections.Include, []string{"local-collection"}) {
+		t.Fatalf("per-kind selectors not retained: %#v", e)
 	}
 }
 
 func TestLoadLocalConfigFromPathStrictParsingRejectsUnknownKeys(t *testing.T) {
-	dir := t.TempDir()
-	configPath := dir + "/config.local.yaml"
-	mustWriteFile(t, configPath, []byte(`
-skills:
-  exclude: [opt-out]
-harnesses: [factory]
+	path := filepath.Join(t.TempDir(), "config.local.yaml")
+	const input = `apiVersion: agent-marketplace/v4
+sources:
+  local: {directory: /local/path}
+resources:
+  local: {exclude: [skill/opt-out]}
+`
+	for _, tc := range []struct{ field, code string }{{"harnesses: [factory]\n", "v4.layer-field"}, {"unknown: true\n", "v4.unknown-field"}} {
+		t.Run(tc.code, func(t *testing.T) {
+			mustWriteFile(t, path, []byte(input+tc.field))
+			_, err := LoadLocalConfigFromPath(path)
+			var validation *V4ValidationError
+			if !errors.As(err, &validation) || validation.Code != tc.code {
+				t.Fatalf("field refusal = %v, want %s", err, tc.code)
+			}
+		})
+	}
+	mustWriteFile(t, path, []byte(input))
+	cfg, err := LoadLocalConfigFromPath(path)
+	if err != nil || cfg == nil || len(cfg.Registries) != 1 || !equalStrings(cfg.Registries[0].Skills.Exclude, []string{"opt-out"}) {
+		t.Fatalf("valid control: cfg=%#v, err=%v", cfg, err)
+	}
+}
+
+func TestParseLocalConfigRetainsAllAndTags(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.local.yaml")
+	mustWriteFile(t, path, []byte(`apiVersion: agent-marketplace/v4
+sources:
+  local: {git: "git@example.com:strict.git", ref: main}
+resources:
+  local: {all: true, tags: [k8s]}
 `))
-
-	_, err := LoadLocalConfigFromPath(configPath)
-	if err == nil {
-		t.Fatalf("expected strict parse error for unknown key 'harnesses'")
+	cfg, err := LoadLocalConfigFromPath(path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(err.Error(), "harnesses") {
-		t.Fatalf("expected error to mention unknown key 'harnesses', got %v", err)
+	if cfg == nil || len(cfg.Registries) != 1 {
+		t.Fatalf("expected one entry: %#v", cfg)
 	}
-}
-
-func TestYAMLUnmarshal_LocalConfigWithRegistries(t *testing.T) {
-	input := `
-registries:
-  - url: git@example.com:strict.git
-    ref: main
-    default: true
-    tags:
-      - k8s
-`
-	var cfg LocalConfig
-	if err := yaml.Unmarshal([]byte(input), &cfg); err != nil {
-		t.Fatalf("expected YAML to unmarshal: %v", err)
-	}
-	if len(cfg.Registries) != 1 {
-		t.Fatalf("expected 1 registry, got %d", len(cfg.Registries))
-	}
-	if cfg.Registries[0].URL != "git@example.com:strict.git" {
-		t.Fatalf("expected URL %q, got %q", "git@example.com:strict.git", cfg.Registries[0].URL)
-	}
-	if !cfg.Registries[0].Default {
-		t.Fatalf("expected Default to be true")
-	}
-	if !equalStrings(cfg.Registries[0].Tags, []string{"k8s"}) {
-		t.Fatalf("expected tags [k8s], got %v", cfg.Registries[0].Tags)
+	e := cfg.Registries[0]
+	if e.URL != "git@example.com:strict.git" || !e.Default || !e.V4All || !equalStrings(e.Tags, []string{"k8s"}) {
+		t.Fatalf("all/tags not retained: %#v", e)
 	}
 }
 
-func TestYAMLUnmarshal_LocalConfigWithLegacyListKindSelector(t *testing.T) {
-	input := `
-registries:
-  - url: git@example.com:list-selector.git
-    ref: main
-    skills:
-      - vm-lifecycle
-      - k8s-agent
-`
-	var cfg LocalConfig
-	if err := yaml.Unmarshal([]byte(input), &cfg); err != nil {
-		t.Fatalf("expected legacy list form to unmarshal: %v", err)
+func TestParseLocalConfigResourceListShorthand(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.local.yaml")
+	mustWriteFile(t, path, []byte(`apiVersion: agent-marketplace/v4
+sources:
+  local: {git: "git@example.com:list-selector.git", ref: main}
+resources:
+  local: [skill/vm-lifecycle, skill/k8s-agent]
+`))
+	cfg, err := LoadLocalConfigFromPath(path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(cfg.Registries) != 1 {
-		t.Fatalf("expected 1 registry, got %d", len(cfg.Registries))
+	if cfg == nil || len(cfg.Registries) != 1 || !reflect.DeepEqual(cfg.Registries[0].Skills.Include, []string{"k8s-agent", "vm-lifecycle"}) {
+		t.Fatalf("normalized shorthand includes not retained: %#v", cfg)
 	}
-	if !equalStrings(cfg.Registries[0].Skills.Include, []string{"vm-lifecycle", "k8s-agent"}) {
-		t.Fatalf("expected skills [vm-lifecycle, k8s-agent], got %v", cfg.Registries[0].Skills.Include)
+	decisions := cfg.Registries[0].V4Decisions
+	if len(decisions) != 2 || decisions[0].Locator != "skill/vm-lifecycle" || decisions[1].Locator != "skill/k8s-agent" {
+		t.Fatalf("authored decision order not retained: %#v", decisions)
 	}
 }

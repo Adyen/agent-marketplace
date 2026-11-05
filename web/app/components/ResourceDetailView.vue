@@ -4,8 +4,8 @@ import CopyButton from '~/components/CopyButton.vue'
 import { useCopyText } from '~/composables/useCopyText'
 import { useResourceInspectionPreview } from '~/composables/useResourceInspectionPreview'
 import { isResourceKind } from '~/lib/api'
-import { DOCS_PATH } from '~/lib/site'
-import { installCommand, kindLabel, resourceAvailability, resourceAvailabilityCopy, resourceLatestRoute, resourceRoute, shortDigest } from '~/lib/presentation'
+import { marketplaceDocsUrl } from '~/lib/site'
+import { installCommand, kindLabel, resourceAvailability, resourceAvailabilityCopy, resourceLatestRoute, resourceRoute, shortDigest, sourceBrowseUrl, sourceRepositoryLabel } from '~/lib/presentation'
 import type { InspectionFile, InspectionManifest, Marketplace, Registry, ResourceKind, ResourceListItem, ResourceRevision } from '~/types/marketplace'
 
 type Props = {
@@ -37,6 +37,7 @@ type CollectionMember = { kind: ResourceKind, name: string, description?: string
 const DESCRIPTION_PREVIEW_LENGTH = 320
 
 const props = defineProps<Props>()
+const docsURL = marketplaceDocsUrl(useRuntimeConfig().public.docsEnabled)
 const activeTab = ref<Tab>(props.initialTab || 'content')
 const contentMode = ref<ContentMode>('preview')
 const descriptionExpanded = ref(false)
@@ -56,6 +57,7 @@ const command = computed(() => installCommand(listItem.value, props.canonicalUrl
 const availability = computed(() => resourceAvailability(props.resource, props.acquisition, props.kind))
 const availabilityCopy = computed(() => resourceAvailabilityCopy(props.resource, props.acquisition, props.kind))
 const commandAvailable = computed(() => availabilityCopy.value.installable && Boolean(command.value))
+const titleHasBrandSlash = computed(() => props.kind === 'skill' || props.kind === 'command')
 const unavailableReason = computed(() => {
   switch (availability.value) {
     case 'revoked': return 'This revision has been revoked and can no longer be installed.'
@@ -115,6 +117,8 @@ const assessmentDecision = computed(() => {
   }
 })
 const assessedAt = computed(() => formatDate(props.resource.assessment.assessed_at))
+const sourceLink = computed(() => sourceBrowseUrl(props.resource.source))
+const sourceLabel = computed(() => sourceRepositoryLabel(props.resource.source?.repository_url ?? ''))
 const technicalEntries = computed<TechnicalEntry[]>(() => {
   const occurrence = props.resource.occurrence as Record<string, unknown>
   const coordinate = props.resource.coordinate
@@ -228,19 +232,31 @@ function formatValue(value: unknown): string {
 </script>
 
 <template>
-  <article data-testid="resource-detail" class="mx-auto max-w-6xl">
-    <header class="pb-6">
+  <article data-testid="resource-detail" class="marketplace-record">
+    <header class="marketplace-record__hero">
       <div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 sm:gap-x-4">
         <!-- The same mark the index row carries, at reading size. -->
         <ResourceFingerprint :digest="resource.content_digest" :size="40" class="hidden shrink-0 sm:block" />
-        <h1 class="min-w-0 max-w-full wrap-break-word text-2xl font-semibold tracking-tight text-highlighted sm:text-3xl">{{ name }}</h1>
-        <span data-testid="resource-kind-badge" class="inline-flex shrink-0 rounded border border-default bg-(--am-color-bg-subtle) px-2 py-0.5 text-xs font-medium text-muted">{{ kindLabel(kind) }}</span>
+        <h1 class="marketplace-record__title min-w-0 max-w-full wrap-break-word text-highlighted"><span v-if="titleHasBrandSlash" class="am-brand-slash am-brand-slash--title" data-testid="resource-title-slash" aria-hidden="true">/</span>{{ name }}</h1>
+        <span data-testid="resource-kind-badge" class="marketplace-record__kind inline-flex shrink-0 border border-default px-2 py-1 text-muted">{{ kindLabel(kind) }}</span>
       </div>
       <div v-if="resource.description" class="mt-2">
         <p id="resource-description" data-testid="resource-description" class="whitespace-pre-wrap wrap-break-word text-sm leading-6 text-toned sm:text-base">{{ visibleDescription }}</p>
         <button v-if="descriptionOverflows" type="button" class="mt-1 text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" aria-controls="resource-description" :aria-expanded="descriptionExpanded" @click="descriptionExpanded = !descriptionExpanded">{{ descriptionExpanded ? 'Show less' : 'Read more' }}</button>
       </div>
-      <div data-testid="revision-row" class="mt-4 flex flex-col items-start gap-3 text-sm sm:flex-row sm:gap-9">
+      <div data-testid="revision-row" class="marketplace-record__metadata mt-5 flex flex-col items-start gap-3 text-sm sm:flex-row sm:gap-9">
+        <div v-if="sourceLink" data-testid="source-group" class="min-w-0 max-w-full">
+          <div class="flex items-center gap-2">
+            <span data-testid="source-label" class="text-xs font-medium text-highlighted">Source</span>
+          </div>
+          <div class="mt-1 flex min-h-8 min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+            <a data-testid="source-link" :href="sourceLink" target="_blank" rel="noopener noreferrer" :aria-label="`View source of ${name} in ${sourceLabel} (opens in a new tab)`" class="inline-flex min-w-0 items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+              <span class="break-all">{{ sourceLabel }}</span>
+              <UIcon name="i-lucide-external-link" class="size-3.5 shrink-0" data-testid="source-external-icon" aria-hidden="true" />
+            </a>
+            <span data-testid="source-path" class="min-w-0 break-all font-mono text-xs text-muted" :title="resource.source?.path">{{ resource.source?.path }}</span>
+          </div>
+        </div>
         <div data-testid="revision-group" class="min-w-0">
           <div class="flex items-center gap-2">
             <span data-testid="revision-label" class="text-xs font-medium text-highlighted">Revision<template v-if="selectedIsCurrent"> (latest)</template></span>
@@ -252,18 +268,14 @@ function formatValue(value: unknown): string {
             <span v-if="copied === 'revision'" data-testid="revision-copy-status" role="status" class="text-xs font-medium text-muted">Copied</span>
           </div>
         </div>
-        <div data-testid="scanned-group" class="min-w-0">
-          <span data-testid="scanned-label" class="block text-xs font-medium text-highlighted">Scanned</span>
-          <time data-testid="revision-scanned-at" class="mt-1 flex min-h-8 items-center text-sm text-muted" :datetime="resource.assessment.assessed_at">{{ assessedAt }}</time>
-        </div>
       </div>
     </header>
     <p class="sr-only" aria-live="polite">Install status for {{ name }}: {{ availabilityCopy.label }}.</p>
 
-    <section data-testid="installation-panel" aria-labelledby="installation-heading">
+    <section data-testid="installation-panel" class="marketplace-installation" aria-labelledby="installation-heading">
       <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h2 id="installation-heading" class="text-sm font-semibold text-highlighted">Install</h2>
-        <a v-if="commandAvailable" :href="DOCS_PATH" target="_blank" rel="noopener noreferrer" aria-label="Set up CLI (opens in a new tab)" class="inline-flex items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Set up CLI<UIcon name="i-lucide-external-link" class="size-3.5" data-testid="setup-external-icon" aria-hidden="true" /></a>
+        <a v-if="commandAvailable" :href="docsURL" target="_blank" rel="noopener noreferrer" aria-label="Set up CLI (opens in a new tab)" class="inline-flex items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Set up CLI<UIcon name="i-lucide-external-link" class="size-3.5" data-testid="setup-external-icon" aria-hidden="true" /></a>
       </div>
       <CommandBlock v-if="commandAvailable" :command="command" :label="`pinned CLI install command for ${name}`" />
       <div v-else data-testid="unavailable-notice" role="status" aria-labelledby="unavailable-title" class="flex gap-2.5 rounded border border-default bg-(--am-color-bg-subtle) p-3 text-sm text-toned">
@@ -277,7 +289,7 @@ function formatValue(value: unknown): string {
       <p class="sr-only" aria-live="polite">{{ copied === 'url' ? 'Detail URL copied.' : '' }}</p>
     </section>
 
-    <div class="mt-7 border-b border-default">
+    <div class="marketplace-record-tabs">
       <div role="tablist" aria-label="Resource details" class="flex gap-1 overflow-x-auto">
         <button v-for="tab in ([['content', 'Content'], ['security', 'Security'], ['revisions', 'Revisions'], ['registry', 'Registry'], ['technical', 'Technical details']] as const)" :id="`${tab[0]}-tab`" :key="tab[0]" type="button" role="tab" :aria-selected="activeTab === tab[0]" :aria-controls="`${tab[0]}-panel`" class="shrink-0 border-b-2 px-3 py-3 text-sm font-medium focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary" :class="activeTab === tab[0] ? 'border-primary text-highlighted' : 'border-transparent text-muted hover:text-highlighted'" @click="selectTab(tab[0])">{{ tab[1] }}</button>
       </div>

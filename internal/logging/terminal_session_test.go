@@ -12,6 +12,7 @@ import (
 // any mirrored record would corrupt the frame. BeginTerminalSession must
 // route records to the managed log file only, and restore stderr mirroring
 // after the screen is handed back.
+// spec: logging/active-terminal-session-suppresses-stderr-mirroring
 func TestTerminalSessionRoutesRecordsAwayFromLiveStderr(t *testing.T) {
 	clearLoggingEnv(t)
 	defer resetDefaultLogger()
@@ -69,6 +70,7 @@ func TestTerminalSessionRoutesRecordsAwayFromLiveStderr(t *testing.T) {
 // With logging disabled, debug mode mirrors to stderr only — there is no
 // managed file to fall back to. The session must still keep the live screen
 // clean by discarding records for its duration.
+// spec: logging/terminal-session-without-a-file-discards-records
 func TestTerminalSessionWithoutManagedFileDiscardsStderrMirror(t *testing.T) {
 	clearLoggingEnv(t)
 	defer resetDefaultLogger()

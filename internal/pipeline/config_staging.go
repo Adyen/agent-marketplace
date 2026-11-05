@@ -34,6 +34,12 @@ type StagedLockEdit struct {
 type ConfigPathMapper func(string) (string, error)
 
 func MutateConfigWithDependencies(ctx context.Context, repoRoot, localDir string, mutation func(ConfigPathMapper) error, reconcile DependencyReconciler) (retErr error) {
+	if err := RecoverDependencyTransactions(ctx); err != nil {
+		return err
+	}
+	if err := ValidateConsumerIntent(ctx, repoRoot, localDir); err != nil {
+		return err
+	}
 	staging, err := newConfigStagingManager()
 	if err != nil {
 		return err
@@ -45,6 +51,17 @@ func MutateConfigWithDependencies(ctx context.Context, repoRoot, localDir string
 	edits, err := staging.Edits()
 	if err != nil {
 		return err
+	}
+	overlays, err := staging.Overlays()
+	if err != nil {
+		return err
+	}
+	for _, edit := range edits {
+		overlays[edit.RequestedPath] = edit.Bytes
+	}
+	intent := config.ReadIntent(ctx, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: localDir, FileOverlays: overlays})
+	if len(intent.Errors) != 0 {
+		return errors.Join(intent.Errors...)
 	}
 	_, err = reconcile(ctx, repoRoot, localDir, false, edits)
 	return err

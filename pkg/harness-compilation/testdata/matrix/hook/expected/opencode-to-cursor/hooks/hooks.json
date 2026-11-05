@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "command": "${CURSOR_PLUGIN_ROOT}/scripts/check.sh",
+        "event": "PreToolUse",
+        "matcher": "Read",
+        "type": "command"
+      }
+    ]
+  }
+}

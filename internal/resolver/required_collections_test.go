@@ -31,7 +31,6 @@ func requiredCollectionFixture(provider int) (*config.Config, map[string][]catal
 	return cfg, catalogs
 }
 
-// spec: resource-selection/top-level-collection-keeps-required-auto-selection
 func TestRequiredRegistrySurvivesTopLevelCollectionPropagation(t *testing.T) {
 	for _, provider := range []int{0, 1} {
 		t.Run([]string{"organization", "repository"}[provider], func(t *testing.T) {
@@ -63,7 +62,6 @@ func TestRequiredRegistrySurvivesTopLevelCollectionPropagation(t *testing.T) {
 	}
 }
 
-// spec: resource-selection/top-level-collection-preserves-authored-required-subset
 func TestTopLevelCollectionPreservesExplicitRequiredSelection(t *testing.T) {
 	cfg, catalogs := requiredCollectionFixture(1)
 	cfg.Registries[0].Skills.Include = []string{"mandatory-alpha"}

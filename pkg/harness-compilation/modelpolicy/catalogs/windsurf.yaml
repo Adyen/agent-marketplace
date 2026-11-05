@@ -1,0 +1,8 @@
+schema: 1
+harness: windsurf
+evidence:
+  checked: "2026-09-21"
+  refs:
+    - pkg/harness-compilation/field-matrix.md
+surfaces: {}
+models: {}

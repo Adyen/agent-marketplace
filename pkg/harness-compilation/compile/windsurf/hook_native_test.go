@@ -8,6 +8,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+// spec: hook-resources/windsurf-refuses-explicit-timeouts
 func TestTranslateHookTimeoutSuppressesArtifact(t *testing.T) {
 	withTimeout := ir.NewHookWithMatcherOptions("PreToolUse-Bash-command", "PreToolUse", "Bash", "echo timeout", "command", nil, ir.SourceRef{}, ir.WithHookTimeout(30))
 	result, err := compilepkg.Compile(withTimeout, compilepkg.TargetWindsurf)

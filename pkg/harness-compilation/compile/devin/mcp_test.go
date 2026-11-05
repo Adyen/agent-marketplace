@@ -346,11 +346,10 @@ func TestMcpInterpolationSeverityFollowsTheOutcome(t *testing.T) {
 			wantBytes:    `{"mcpServers":{"demo":{"command":"npx","env":{}}}}`,
 		},
 		{
-			name:         "an unrepresentable argument keeps the entry",
+			name:         "an unrepresentable argument removes the entry",
 			server:       ir.NewMcpServer("demo", "npx", []string{"-y", unmappable}, nil, nil, mcpSource),
-			wantCode:     diag.CodeMcpInterpolationUnsupported,
-			wantSeverity: diag.SeverityWarning,
-			wantBytes:    `{"mcpServers":{"demo":{"args":["-y"],"command":"npx"}}}`,
+			wantCode:     diag.CodeMcpDevinInterpolationUnrepresentable,
+			wantSeverity: diag.SeverityError,
 		},
 		{
 			name: "an unrepresentable header keeps the entry",

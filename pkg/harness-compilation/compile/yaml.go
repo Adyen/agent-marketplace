@@ -29,8 +29,7 @@ func RenderYAMLKey(key string, value any) (string, error) {
 	}
 	data = bytes.TrimSuffix(data, []byte("\n"))
 	lines := strings.Split(string(data), "\n")
-	valueType := reflect.TypeOf(value)
-	needsBlock := len(lines) > 1 || (len(lines) == 1 && lines[0] != "[]" && lines[0] != "{}" && valueType != nil && (valueType.Kind() == reflect.Map || valueType.Kind() == reflect.Slice || valueType.Kind() == reflect.Array))
+	needsBlock := len(lines) > 1 || (len(lines) == 1 && lines[0] != "[]" && lines[0] != "{}" && blockCollection(value))
 	if !needsBlock {
 		return fmt.Sprintf("%s: %s\n", key, lines[0]), nil
 	}
@@ -48,6 +47,22 @@ func RenderYAMLKey(key string, value any) (string, error) {
 		builder.WriteByte('\n')
 	}
 	return builder.String(), nil
+}
+
+// blockCollection reports whether value encodes as a block mapping or
+// sequence, which must start on the line after its key even when it has a
+// single entry. Prebuilt YAML nodes are collections by node kind, not by Go
+// type.
+func blockCollection(value any) bool {
+	node, isNode := value.(*yaml.Node)
+	if plain, ok := value.(yaml.Node); ok {
+		node, isNode = &plain, true
+	}
+	if isNode {
+		return node != nil && (node.Kind == yaml.MappingNode || node.Kind == yaml.SequenceNode) && node.Style&yaml.FlowStyle == 0
+	}
+	valueType := reflect.TypeOf(value)
+	return valueType != nil && (valueType.Kind() == reflect.Map || valueType.Kind() == reflect.Slice || valueType.Kind() == reflect.Array)
 }
 
 // Frontmatter accumulates YAML frontmatter keys in insertion order so target

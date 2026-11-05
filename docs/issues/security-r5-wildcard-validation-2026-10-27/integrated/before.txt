@@ -1,0 +1,228 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkParseV4RequiredWildcardsCPU/required=true/requests=1-16         	   92709	     12520 ns/op	   18569 B/op	     179 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=true/requests=256-16       	    1382	    875704 ns/op	  756274 B/op	    5095 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=true/requests=1024-16      	     153	   7821108 ns/op	 3387385 B/op	   20492 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=false/requests=1-16        	   91326	     13055 ns/op	   18152 B/op	     178 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=false/requests=256-16      	     500	   2308232 ns/op	  669160 B/op	    5100 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=false/requests=1024-16     	      37	  31292319 ns/op	 2800094 B/op	   20500 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1-16                              	 1538048	       800.1 ns/op	    2216 B/op	      13 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=256-16                            	   24309	     48433 ns/op	  148936 B/op	     550 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1024-16                           	    6207	    192334 ns/op	  598057 B/op	    2100 allocs/op
+BenchmarkV4WildcardValidation/all/general-16                             	663919698	         1.825 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/all/source-16                              	649668363	         1.848 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/kind/general-16                            	27367450	        43.76 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/kind/source-16                             	65723864	        19.24 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/registry/general-16                        	10530825	       113.2 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/registry/source-16                         	13156180	        87.11 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/qualified/general-16                       	10926842	       109.3 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/qualified/source-16                        	12981738	        91.61 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/long-registry/general-16                   	  222129	      5356 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/long-registry/source-16                    	  236100	      5202 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/extra-slash/general-16                     	12117132	        98.72 ns/op	     200 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/extra-slash/source-16                      	11087690	       115.3 ns/op	     256 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/invalid-kind/general-16                    	 6904761	       171.2 ns/op	     184 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/invalid-kind/source-16                     	 7478592	       157.5 ns/op	     208 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/empty-base/general-16                      	100000000	        11.36 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/empty-base/source-16                       	14610544	        83.32 ns/op	     192 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/exact-control/general-16                   	 4965830	       245.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/exact-control/source-16                    	 5277200	       228.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=true/requests=1-16   	   89800	     13110 ns/op	   18521 B/op	     179 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=true/requests=256-16 	    1371	    886369 ns/op	  748040 B/op	    5095 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=true/requests=1024-16         	     147	   7982305 ns/op	 3354537 B/op	   20492 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=false/requests=1-16           	   91752	     13385 ns/op	   18104 B/op	     178 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=false/requests=256-16         	     534	   2263335 ns/op	  660958 B/op	    5100 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=false/requests=1024-16        	      38	  31122486 ns/op	 2767140 B/op	   20500 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkParseV4RequiredWildcardsCPU/required=true/requests=1-16         	   94412	     12639 ns/op	   18569 B/op	     179 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=true/requests=256-16       	    1417	    860690 ns/op	  756263 B/op	    5095 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=true/requests=1024-16      	     153	   7736007 ns/op	 3387169 B/op	   20492 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=false/requests=1-16        	   92539	     12783 ns/op	   18152 B/op	     178 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=false/requests=256-16      	     537	   2298916 ns/op	  669172 B/op	    5100 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=false/requests=1024-16     	      37	  31263568 ns/op	 2800006 B/op	   20500 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1-16                              	 1560372	       767.2 ns/op	    2216 B/op	      13 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=256-16                            	   25209	     48836 ns/op	  148936 B/op	     550 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1024-16                           	    5985	    187884 ns/op	  598058 B/op	    2100 allocs/op
+BenchmarkV4WildcardValidation/all/general-16                             	674970836	         1.802 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/all/source-16                              	657430977	         1.805 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/kind/general-16                            	27557829	        43.95 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/kind/source-16                             	63963466	        18.52 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/registry/general-16                        	10622762	       113.9 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/registry/source-16                         	13866219	        85.74 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/qualified/general-16                       	11119995	       105.3 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/qualified/source-16                        	12948306	        91.82 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/long-registry/general-16                   	  224292	      5294 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/long-registry/source-16                    	  230968	      5116 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/extra-slash/general-16                     	12124314	        97.86 ns/op	     200 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/extra-slash/source-16                      	10688478	       110.0 ns/op	     256 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/invalid-kind/general-16                    	 6927400	       177.0 ns/op	     184 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/invalid-kind/source-16                     	 7636026	       156.7 ns/op	     208 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/empty-base/general-16                      	100000000	        10.86 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/empty-base/source-16                       	14328806	        83.47 ns/op	     192 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/exact-control/general-16                   	 5023130	       237.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/exact-control/source-16                    	 5383717	       222.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=true/requests=1-16   	   96506	     12371 ns/op	   18521 B/op	     179 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=true/requests=256-16 	    1428	    832231 ns/op	  748031 B/op	    5095 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=true/requests=1024-16         	     160	   7574493 ns/op	 3354579 B/op	   20492 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=false/requests=1-16           	   92504	     12885 ns/op	   18104 B/op	     178 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=false/requests=256-16         	     560	   2174581 ns/op	  660957 B/op	    5100 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=false/requests=1024-16        	      39	  29926736 ns/op	 2766952 B/op	   20500 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkParseV4RequiredWildcardsCPU/required=true/requests=1-16         	   96486	     12553 ns/op	   18569 B/op	     179 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=true/requests=256-16       	    1402	    875010 ns/op	  756282 B/op	    5095 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=true/requests=1024-16      	     154	   7697483 ns/op	 3387253 B/op	   20492 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=false/requests=1-16        	   97486	     12313 ns/op	   18152 B/op	     178 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=false/requests=256-16      	     547	   2190528 ns/op	  669173 B/op	    5100 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=false/requests=1024-16     	      39	  30759395 ns/op	 2799898 B/op	   20500 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1-16                              	 1552903	       770.9 ns/op	    2216 B/op	      13 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=256-16                            	   24856	     47643 ns/op	  148936 B/op	     550 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1024-16                           	    6351	    186311 ns/op	  598057 B/op	    2100 allocs/op
+BenchmarkV4WildcardValidation/all/general-16                             	667405138	         1.801 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/all/source-16                              	668528331	         1.804 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/kind/general-16                            	27522829	        42.97 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/kind/source-16                             	64582822	        18.53 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/registry/general-16                        	10877414	       111.3 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/registry/source-16                         	13894858	        87.65 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/qualified/general-16                       	11394490	       105.4 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/qualified/source-16                        	13014718	        90.97 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/long-registry/general-16                   	  224686	      5360 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/long-registry/source-16                    	  231678	      5104 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/extra-slash/general-16                     	11951500	        97.12 ns/op	     200 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/extra-slash/source-16                      	11090346	       108.6 ns/op	     256 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/invalid-kind/general-16                    	 7145403	       166.7 ns/op	     184 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/invalid-kind/source-16                     	 6319090	       161.9 ns/op	     208 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/empty-base/general-16                      	100000000	        11.41 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/empty-base/source-16                       	14171588	        81.91 ns/op	     192 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/exact-control/general-16                   	 4963358	       240.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/exact-control/source-16                    	 5256486	       225.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=true/requests=1-16   	   95134	     12717 ns/op	   18520 B/op	     179 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=true/requests=256-16 	    1400	    846309 ns/op	  748047 B/op	    5095 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=true/requests=1024-16         	     153	   7762991 ns/op	 3354537 B/op	   20492 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=false/requests=1-16           	   93268	     13090 ns/op	   18104 B/op	     178 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=false/requests=256-16         	     548	   2198148 ns/op	  660967 B/op	    5100 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=false/requests=1024-16        	      39	  30566609 ns/op	 2767018 B/op	   20500 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkParseV4RequiredWildcardsCPU/required=true/requests=1-16         	   95276	     12434 ns/op	   18569 B/op	     179 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=true/requests=256-16       	    1404	    849590 ns/op	  756255 B/op	    5095 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=true/requests=1024-16      	     156	   7599892 ns/op	 3387372 B/op	   20492 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=false/requests=1-16        	   97452	     12561 ns/op	   18152 B/op	     178 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=false/requests=256-16      	     540	   2175961 ns/op	  669172 B/op	    5100 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=false/requests=1024-16     	      39	  30321861 ns/op	 2799964 B/op	   20500 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1-16                              	 1563027	       785.0 ns/op	    2216 B/op	      13 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=256-16                            	   25170	     47924 ns/op	  148936 B/op	     550 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1024-16                           	    6234	    192880 ns/op	  598058 B/op	    2100 allocs/op
+BenchmarkV4WildcardValidation/all/general-16                             	662070488	         1.791 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/all/source-16                              	672018230	         1.797 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/kind/general-16                            	27363992	        42.51 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/kind/source-16                             	62849024	        18.47 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/registry/general-16                        	10860469	       109.3 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/registry/source-16                         	13882501	        86.03 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/qualified/general-16                       	 9978292	       107.5 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/qualified/source-16                        	13057930	        91.37 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/long-registry/general-16                   	  218960	      5332 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/long-registry/source-16                    	  236157	      5139 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/extra-slash/general-16                     	12126698	        98.88 ns/op	     200 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/extra-slash/source-16                      	11124045	       110.3 ns/op	     256 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/invalid-kind/general-16                    	 6911708	       171.9 ns/op	     184 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/invalid-kind/source-16                     	 7684544	       157.1 ns/op	     208 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/empty-base/general-16                      	100000000	        10.93 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/empty-base/source-16                       	14506089	        82.55 ns/op	     192 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/exact-control/general-16                   	 4985352	       239.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/exact-control/source-16                    	 5375743	       225.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=true/requests=1-16   	   95822	     12839 ns/op	   18521 B/op	     179 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=true/requests=256-16 	    1435	    830010 ns/op	  748032 B/op	    5095 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=true/requests=1024-16         	     156	   7591363 ns/op	 3354592 B/op	   20492 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=false/requests=1-16           	   99153	     12161 ns/op	   18104 B/op	     178 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=false/requests=256-16         	     555	   2186403 ns/op	  660957 B/op	    5100 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=false/requests=1024-16        	      38	  30226020 ns/op	 2767014 B/op	   20500 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkParseV4RequiredWildcardsCPU/required=true/requests=1-16         	   94411	     12618 ns/op	   18569 B/op	     179 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=true/requests=256-16       	    1438	    858003 ns/op	  756284 B/op	    5095 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=true/requests=1024-16      	     158	   7508863 ns/op	 3387251 B/op	   20492 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=false/requests=1-16        	   98736	     12299 ns/op	   18152 B/op	     178 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=false/requests=256-16      	     548	   2196238 ns/op	  669167 B/op	    5100 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=false/requests=1024-16     	      39	  30668982 ns/op	 2799952 B/op	   20500 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1-16                              	 1593897	       749.7 ns/op	    2216 B/op	      13 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=256-16                            	   23628	     49397 ns/op	  148936 B/op	     550 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1024-16                           	    6498	    188785 ns/op	  598057 B/op	    2100 allocs/op
+BenchmarkV4WildcardValidation/all/general-16                             	666056270	         1.800 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/all/source-16                              	660056022	         1.807 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/kind/general-16                            	27239888	        43.66 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/kind/source-16                             	65767690	        18.09 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/registry/general-16                        	10990520	       110.8 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/registry/source-16                         	14261767	        86.79 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/qualified/general-16                       	11176670	       109.6 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/qualified/source-16                        	13267957	        91.05 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/long-registry/general-16                   	  227238	      5310 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/long-registry/source-16                    	  234699	      5100 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/extra-slash/general-16                     	12082057	        97.97 ns/op	     200 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/extra-slash/source-16                      	11196736	       108.9 ns/op	     256 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/invalid-kind/general-16                    	 7023183	       168.4 ns/op	     184 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/invalid-kind/source-16                     	 7587602	       157.0 ns/op	     208 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/empty-base/general-16                      	100000000	        11.19 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/empty-base/source-16                       	14146354	        85.44 ns/op	     192 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/exact-control/general-16                   	 5085858	       239.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/exact-control/source-16                    	 5422926	       220.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=true/requests=1-16   	   92646	     12469 ns/op	   18520 B/op	     179 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=true/requests=256-16 	    1407	    838423 ns/op	  748042 B/op	    5095 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=true/requests=1024-16         	     159	   7521815 ns/op	 3354451 B/op	   20492 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=false/requests=1-16           	   98701	     12292 ns/op	   18104 B/op	     178 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=false/requests=256-16         	     549	   2168700 ns/op	  660952 B/op	    5100 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=false/requests=1024-16        	      40	  30427034 ns/op	 2766861 B/op	   20499 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkParseV4RequiredWildcardsCPU/required=true/requests=1-16         	   92157	     12687 ns/op	   18569 B/op	     179 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=true/requests=256-16       	    1426	    865686 ns/op	  756269 B/op	    5095 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=true/requests=1024-16      	     156	   7678247 ns/op	 3387321 B/op	   20492 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=false/requests=1-16        	   94930	     12590 ns/op	   18152 B/op	     178 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=false/requests=256-16      	     549	   2215755 ns/op	  669170 B/op	    5100 allocs/op
+BenchmarkParseV4RequiredWildcardsCPU/required=false/requests=1024-16     	      38	  31000519 ns/op	 2799924 B/op	   20500 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1-16                              	 1593879	       759.5 ns/op	    2216 B/op	      13 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=256-16                            	   24919	     48017 ns/op	  148936 B/op	     550 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1024-16                           	    6129	    194485 ns/op	  598056 B/op	    2100 allocs/op
+BenchmarkV4WildcardValidation/all/general-16                             	669966717	         1.796 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/all/source-16                              	651870120	         1.821 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/kind/general-16                            	27881958	        42.87 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/kind/source-16                             	64230084	        18.54 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/registry/general-16                        	11070118	       109.7 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/registry/source-16                         	14138466	        86.30 ns/op	      16 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/qualified/general-16                       	11422406	       105.5 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/qualified/source-16                        	13058772	        94.55 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/long-registry/general-16                   	  228710	      5313 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/long-registry/source-16                    	  235124	      5166 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardValidation/extra-slash/general-16                     	11911132	        99.93 ns/op	     200 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/extra-slash/source-16                      	10633041	       112.8 ns/op	     256 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/invalid-kind/general-16                    	 6793495	       172.8 ns/op	     184 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/invalid-kind/source-16                     	 7406145	       164.1 ns/op	     208 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/empty-base/general-16                      	100000000	        11.38 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/empty-base/source-16                       	14517248	        87.36 ns/op	     192 B/op	       3 allocs/op
+BenchmarkV4WildcardValidation/exact-control/general-16                   	 4764897	       245.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardValidation/exact-control/source-16                    	 5324208	       226.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=true/requests=1-16   	   94490	     12922 ns/op	   18521 B/op	     179 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=true/requests=256-16 	    1426	    857146 ns/op	  748030 B/op	    5095 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=true/requests=1024-16         	     154	   7735083 ns/op	 3354567 B/op	   20492 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=false/requests=1-16           	   95245	     12763 ns/op	   18104 B/op	     178 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=false/requests=256-16         	     534	   2247945 ns/op	  660963 B/op	    5100 allocs/op
+BenchmarkParseV4RegistryWildcardValidation/required=false/requests=1024-16        	      37	  31236254 ns/op	 2767082 B/op	   20500 allocs/op
+PASS

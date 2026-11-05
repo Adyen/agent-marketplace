@@ -55,6 +55,13 @@ func (e *CodedError) Unwrap() error {
 	return e.Err
 }
 
+func (e *CodedError) DiagnosticCode() string {
+	if e == nil {
+		return ""
+	}
+	return e.Code
+}
+
 // Diagnostic converts the error into a structured Diagnostic for the named
 // resource. Severity and Hint are taken from the code catalog when the code is
 // documented, so a coded error and a directly emitted diagnostic for the same

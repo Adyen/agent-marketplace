@@ -189,7 +189,7 @@ func TestMarketplaceSkillInspectionLoadsExactRevision(t *testing.T) {
 	f := newInspectionFixture(t, nil)
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
-	configBytes := []byte("apiVersion: v4\n")
+	configBytes := []byte("apiVersion: agent-marketplace/v4\n")
 	lockBytes := []byte("apiVersion: v4\nresources: []\n")
 	controlled := map[string][]byte{
 		filepath.Join(repoRoot, ".agents", "config.yaml"): configBytes,
@@ -207,13 +207,13 @@ func TestMarketplaceSkillInspectionLoadsExactRevision(t *testing.T) {
 	}
 	var mutations []string
 	lifecycle := DependencyLifecycle{
-		Sync: func(context.Context, pipeline.Workspace) ([]error, error) {
+		Sync: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
 			mutations = append(mutations, "sync")
-			return nil, errors.New("sync must not run")
+			return pipeline.SyncResult{}, errors.New("sync must not run")
 		},
-		Update: func(context.Context, pipeline.Workspace) ([]error, error) {
+		Update: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
 			mutations = append(mutations, "update")
-			return nil, errors.New("update must not run")
+			return pipeline.SyncResult{}, errors.New("update must not run")
 		},
 		Mutate: func(context.Context, pipeline.Workspace, func(pipeline.ConfigPathMapper) error) error {
 			mutations = append(mutations, "mutate")

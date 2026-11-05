@@ -169,3 +169,61 @@ The TUI SHALL initially expand matching categories when a nonempty query begins 
 
 - **WHEN** a query has no matches and the user invokes category fold controls, changes the query to one with matches, or clears it
 - **THEN** no invalid selection or resource action SHALL occur, matching categories SHALL appear expanded for the changed query, and clearing SHALL restore the saved browsing folds
+
+### Requirement: Source-anchored local resource inspection
+
+The TUI SHALL browse local disk resources from their ingested source bundle, whether the configured registry path is absolute or relative. Primary previews, supporting-file browsing, and captured preview content MUST remain independent of the consumer working directory and MUST NOT substitute same-named consumer files. Inspection MUST retain existing read bounds and filesystem safety policy, fail visibly for missing or unsafe content, and leave source files, configuration, acquisition locks, and materialized resources unchanged. Marketplace inspection and authoritative exact Git snapshot content MUST retain their existing source identity.
+
+#### Scenario: Local disk resources remain browsable outside their registry
+
+- **WHEN** a user opens a skill or file-backed resource from an absolute or relative local registry path while the consumer working directory is elsewhere
+- **THEN** the TUI MUST show the correct source tree and primary preview, allow supporting-file previews for skills, and capture content from that source
+
+#### Scenario: Consumer files cannot substitute local source content
+
+- **WHEN** the consumer working directory contains different files at the same bundle-relative paths as a local resource
+- **THEN** the TUI MUST browse and capture the registry content rather than the consumer files, without changing either source or consumer state
+
+#### Scenario: Missing or unsafe local content fails read-only
+
+- **WHEN** a local resource's primary content disappears or its preview payload becomes unsafe under the existing filesystem policy after discovery
+- **THEN** inspection MUST fail visibly without displaying substituted or unsafe payload content or changing source files, configuration, acquisition locks, or materialized resources
+
+#### Scenario: Authoritative remote inspection paths remain unchanged
+
+- **WHEN** a user inspects verified Marketplace content or an exact Git snapshot whose display path differs from its authoritative source path
+- **THEN** inspection MUST continue to use that verified or exact content rather than consumer files or a logical display-cache path
+
+### Requirement: Reload selection follows the resource
+
+When an accepted reload changes the catalog that loads a selected resource,
+such as a write that creates the missing acquisition lock or an update that
+moves the locked commit, the TUI SHALL restore the list selection and an open
+detail view to that resource by its kind, name, and source URL, ref, and path.
+When that identity matches more than one row, the TUI SHALL NOT guess between
+them and SHALL keep the existing position-based selection.
+
+#### Scenario: Selection survives a reload that locks its source
+
+- **WHEN** a user enables a resource from a Git source that has no acquisition
+  lock yet, and the write creates the lock so the reload loads that source from
+  its locked snapshot
+- **THEN** after the authoritative reload the enabled resource MUST remain
+  selected in the list, and an open detail view MUST stay on it
+- **AND** when another row shares that resource identity, the reload MUST NOT
+  move the selection to either of them on that basis
+
+### Requirement: A list that fits shows every row
+
+When every row of the resource list fits within the list viewport, the TUI
+SHALL show the list from its first row. Keeping a selection on its previous
+screen line across a reload SHALL apply only while the list overflows the
+viewport, so rows are never hidden above the viewport while the list has room
+for them.
+
+#### Scenario: Reload with room for every row shows the whole list
+
+- **WHEN** a section header lower in the list is selected and a reload inserts
+  rows above it, and every row still fits within the viewport
+- **THEN** the list MUST start at its first row, showing every section, and the
+  same header MUST remain selected

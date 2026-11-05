@@ -11,7 +11,17 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 )
+
+// MaxFrontmatterBytes bounds a YAML frontmatter block before it is parsed.
+// yaml.v3 compares every mapping key with every later key, so parse time grows
+// quadratically with the block; real frontmatter is a few kilobytes.
+const MaxFrontmatterBytes = 64 << 10
+
+// ErrFrontmatterTooLarge reports a frontmatter block above MaxFrontmatterBytes.
+var ErrFrontmatterTooLarge = errors.New("yamlfm: frontmatter exceeds the 64 KiB parse ceiling")
 
 // QuoteScalar returns s formatted as a YAML scalar suitable for inline
 // "key: <scalar>" frontmatter. If s can be safely emitted as a plain
@@ -149,6 +159,10 @@ func ParseYAMLFrontmatter(r io.Reader) (frontmatter map[string]any, body string,
 		bodyStart++
 	}
 	body = content[bodyStart:]
+
+	if len(yamlContent) > MaxFrontmatterBytes {
+		return nil, "", diag.NewCodedError(diag.CodeIngestFrontmatterTooLarge, diag.SourceRef{}, fmt.Errorf("%w: %d bytes", ErrFrontmatterTooLarge, len(yamlContent)))
+	}
 
 	// Parse YAML.
 	var fm map[string]any

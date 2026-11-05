@@ -239,6 +239,9 @@ func TestRegistryDisplayNameStripsSuffixAndPath(t *testing.T) {
 		{"https://example.com/org/infra-skills.git", "infra-skills"},
 		{"/local/path/team-skills", "team-skills"},
 		{"team-skills", "team-skills"},
+		{"https://example.com/org/infra-skills/", "infra-skills"},
+		{"https://example.com/org/infra-skills.git/", "infra-skills"},
+		{"/local/path/team-skills/", "team-skills"},
 		{"", ""},
 	}
 	for _, tc := range cases {
@@ -624,7 +627,7 @@ func TestReadSnapshotResourcesMaterializeThroughTUISync(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".agents"), 0o755); err != nil {
 		t.Fatalf("mkdir repo agents: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoV2Header), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoV4Header), 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
 	}
 
@@ -636,10 +639,10 @@ func TestReadSnapshotResourcesMaterializeThroughTUISync(t *testing.T) {
 		t.Fatalf("write skill: %v", err)
 	}
 
-	globalConfig := v2Header + `registries:
-  - url: ` + registryRoot + `
-    skills:
-      - audit
+	globalConfig := v4Header + `sources:
+  local: {directory: ` + registryRoot + `}
+resources:
+  local: [skill/audit]
 `
 	if err := os.MkdirAll(filepath.Join(homeDir, ".agents"), 0o755); err != nil {
 		t.Fatalf("mkdir home agents: %v", err)
@@ -699,7 +702,7 @@ func TestReadSnapshotRowsIncludeAllFactoryResourceKinds(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".agents"), 0o755); err != nil {
 		t.Fatalf("mkdir repo agents: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoV2Header), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoV4Header), 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
 	}
 
@@ -707,7 +710,8 @@ func TestReadSnapshotRowsIncludeAllFactoryResourceKinds(t *testing.T) {
 		".agents/skills/audit/SKILL.md": "---\nname: audit\ndescription: Audit workflows\n---\n# Audit\n",
 		".agents/commands/continue.md":  "# Continue\n",
 		".agents/droids/worker.md":      "---\nname: worker\ndescription: Do work\n---\nWork\n",
-		".agents/hooks/hooks.json":      `{"hooks":{"PreToolUse":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/check.sh","matcher":"Read"}]}}`,
+		".agents/hooks/hooks.json":      `{"hooks":{"PreToolUse":[{"type":"command","command":"${DROID_PLUGIN_ROOT}/hooks/check.sh","matcher":"Read"}]}}`,
+		".agents/hooks/check.sh":        "#!/bin/sh\necho check\n",
 		".agents/mcp.json":              `{"mcpServers":{"memory":{"command":"memory-server"}}}`,
 	} {
 		fullPath := filepath.Join(registryRoot, path)
@@ -719,20 +723,12 @@ func TestReadSnapshotRowsIncludeAllFactoryResourceKinds(t *testing.T) {
 		}
 	}
 
-	globalConfig := v2Header + `registries:
-  - url: ` + registryRoot + `
-    path: .agents
+	globalConfig := v4Header + `sources:
+  local:
+    directory: ` + filepath.Join(registryRoot, ".agents") + `
     source_harness: factory
-    skills:
-      - audit
-    commands:
-      - continue
-    subagents:
-      - worker
-    hooks:
-      - PreToolUse-command
-    mcp:
-      - memory
+resources:
+  local: [skill/audit, command/continue, subagent/worker, hook/PreToolUse-command, mcp/memory]
 `
 	if err := os.MkdirAll(filepath.Join(homeDir, ".agents"), 0o755); err != nil {
 		t.Fatalf("mkdir home agents: %v", err)
@@ -794,7 +790,7 @@ func TestRunUpdateCmdRefreshesAndMaterializes(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".agents"), 0o755); err != nil {
 		t.Fatalf("mkdir repo agents: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoV2Header), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoV4Header), 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
 	}
 
@@ -806,10 +802,10 @@ func TestRunUpdateCmdRefreshesAndMaterializes(t *testing.T) {
 		t.Fatalf("write skill: %v", err)
 	}
 
-	globalConfig := v2Header + `registries:
-  - url: ` + registryRoot + `
-    skills:
-      - refresh-me
+	globalConfig := v4Header + `sources:
+  local: {directory: ` + registryRoot + `}
+resources:
+  local: [skill/refresh-me]
 `
 	if err := os.MkdirAll(filepath.Join(homeDir, ".agents"), 0o755); err != nil {
 		t.Fatalf("mkdir home agents: %v", err)

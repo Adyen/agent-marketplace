@@ -151,10 +151,11 @@ func ScanTerminalControl(content, file, analyzer string) []Finding {
 	ranges := sourceRangeCursor{content: content}
 	start := -1
 	var kind byte
+	unterminatedOSC := false
 
 	for i := 0; i < len(content); {
 		b := content[i]
-		if b == 0x1B {
+		if b == 0x1B && (!unterminatedOSC || i+1 >= len(content) || content[i+1] != ']') {
 			seqEnd, seqKind := consumeEscapeSequence(content, i)
 			if seqEnd > i {
 				if start == -1 {
@@ -163,6 +164,10 @@ func ScanTerminalControl(content, file, analyzer string) []Finding {
 				}
 				i = seqEnd
 				continue
+			}
+			if i+1 < len(content) && content[i+1] == ']' {
+				// A failed OSC search proves every later suffix has no terminator.
+				unterminatedOSC = true
 			}
 		}
 

@@ -34,5 +34,4 @@ MCP servers and hooks do not get one file each. The harness keeps them as entrie
 ## Related documentation
 
 - [Harnesses and output paths reference](../reference/harnesses-and-output-paths.md)
-- [How to convert a harness layout](../how-to/convert-a-harness-layout.md)
 - [How agent-marketplace works](./how-agent-marketplace-works.md)

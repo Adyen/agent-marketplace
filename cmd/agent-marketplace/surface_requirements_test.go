@@ -121,7 +121,7 @@ func TestSurfaceRequirementsInstallEnabledTransitiveChain(t *testing.T) {
 	repoRoot, _, _ := writeSurfaceRegistry(t)
 	withWorkingDir(t, repoRoot)
 
-	output, err := executeCommand("install", "bundle")
+	output, err := executeCommand("install", "--scope", "repo", "bundle")
 	if err != nil {
 		t.Fatalf("install bundle: %v\n%s", err, output)
 	}
@@ -185,7 +185,7 @@ func TestSurfaceRequirementsInstallDisabledTransitivePreview(t *testing.T) {
 	surfaceRepoConfig(t, repoRoot, origin, "collection/bundle", false)
 	withWorkingDir(t, repoRoot)
 
-	output, err := executeCommand("install", "bundle")
+	output, err := executeCommand("install", "--scope", "repo", "bundle")
 	if err != nil {
 		t.Fatalf("install bundle: %v\n%s", err, output)
 	}
@@ -288,7 +288,7 @@ func TestSurfaceRequirementsInstallOmitsDirectAndUnrelated(t *testing.T) {
 	surfaceRepoConfig(t, repoRoot, origin, "skill/mid, skill/unrelated, command/helper", true)
 	withWorkingDir(t, repoRoot)
 
-	output, err := executeCommand("install", "bundle", "provider")
+	output, err := executeCommand("install", "--scope", "repo", "bundle", "provider")
 	if err != nil {
 		t.Fatalf("install bundle provider: %v\n%s", err, output)
 	}
@@ -329,7 +329,7 @@ func TestSurfaceRequirementsInstallUnavailablePrerequisiteKeepsWarning(t *testin
 	surfaceRepoConfigExcluding(t, repoRoot, origin, "skill/reviewer", true, "skill/leaf")
 	withWorkingDir(t, repoRoot)
 
-	output, err := executeCommand("install", "provider", "reviewer")
+	output, err := executeCommand("install", "--scope", "repo", "provider", "reviewer")
 	if err != nil {
 		t.Fatalf("install provider: %v\n%s", err, output)
 	}
@@ -382,7 +382,7 @@ func TestSurfaceRequirementsListShowsProvenanceAndDeclarations(t *testing.T) {
 	repoRoot, origin, _ := writeSurfaceRegistry(t)
 	surfaceRepoConfig(t, repoRoot, origin, "collection/bundle, skill/broken", true)
 	withWorkingDir(t, repoRoot)
-	if output, err := executeCommand("install", "bundle", "broken"); err != nil {
+	if output, err := executeCommand("install", "--scope", "repo", "bundle", "broken"); err != nil {
 		t.Fatalf("install fixture: %v\n%s", err, output)
 	}
 
@@ -536,7 +536,7 @@ func TestSurfaceRequirementsStatusShowsViaAndReasons(t *testing.T) {
 	}
 	repoRoot, origin, _ := writeSurfaceRegistry(t)
 	withWorkingDir(t, repoRoot)
-	if output, err := executeCommand("install", "bundle", "provider"); err != nil {
+	if output, err := executeCommand("install", "--scope", "repo", "bundle", "provider"); err != nil {
 		t.Fatalf("install fixture: %v\n%s", err, output)
 	}
 	surfaceRepoConfigExcluding(t, repoRoot, origin, "collection/bundle, skill/needy, skill/unrelated, skill/reviewer, skill/hinter", true, "skill/leaf")
@@ -656,7 +656,7 @@ func TestSurfaceRequirementsDoctorReportsUnconfiguredHint(t *testing.T) {
 	repoRoot, origin, _ := writeSurfaceRegistry(t)
 	surfaceRepoConfig(t, repoRoot, origin, "skill/hinter, skill/provider, skill/needy, skill/unrelated, skill/root", true)
 	withWorkingDir(t, repoRoot)
-	if output, err := executeCommand("install", "hinter", "provider", "needy", "root"); err != nil {
+	if output, err := executeCommand("install", "--scope", "repo", "hinter", "provider", "needy", "root"); err != nil {
 		t.Fatalf("install fixture: %v\n%s", err, output)
 	}
 
@@ -742,7 +742,7 @@ func TestSurfaceRequirementsDoctorPendingMarketplaceProvider(t *testing.T) {
 	configPath := surfaceRepoConfig(t, repoRoot, origin, "skill/reviewer", true)
 	withWorkingDir(t, repoRoot)
 
-	if output, err := executeCommand("install", "reviewer"); err != nil {
+	if output, err := executeCommand("install", "--scope", "repo", "reviewer"); err != nil {
 		t.Fatalf("install reviewer fixture: %v\n%s", err, output)
 	}
 	server, downloads := newCountingV4MarketplaceServer(t, "mp", "review")

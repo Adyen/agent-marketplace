@@ -34,9 +34,12 @@ const (
 	adminClockSkew     = 5 * time.Minute
 	maxAdminCookie     = 3900
 	maxAdminGroups     = 256
+	maxAdminNext       = 1024
 )
 
 var adminOIDCScopes = []string{"openid", "profile", "email", "groups"}
+
+var errAdminCookieTooLarge = errors.New("admin cookie payload exceeds bounds")
 
 const maxAdminOIDCResponse = 1 << 20
 
@@ -120,14 +123,49 @@ type adminLoginTransaction struct {
 
 // adminSessionPayload is the signed session cookie payload. It contains only
 // verified identity claims; provider tokens and PKCE material are never stored.
+// Membership holds one bit per configured admin_groups entry, and Fingerprint
+// binds those bits to the admin_groups list they were computed against.
 type adminSessionPayload struct {
-	Version  int      `json:"v"`
-	Issuer   string   `json:"iss"`
-	Subject  string   `json:"sub"`
-	Groups   []string `json:"grp,omitempty"`
-	Display  string   `json:"name,omitempty"`
-	IssuedAt int64    `json:"iat"`
-	Expiry   int64    `json:"exp"`
+	Version     int    `json:"v"`
+	Issuer      string `json:"iss"`
+	Subject     string `json:"sub"`
+	Membership  []byte `json:"grp,omitempty"`
+	Fingerprint string `json:"fp"`
+	Display     string `json:"name,omitempty"`
+	IssuedAt    int64  `json:"iat"`
+	Expiry      int64  `json:"exp"`
+}
+
+// adminGroupsFingerprint identifies the configured admin_groups list.
+func adminGroupsFingerprint(configured []string) string {
+	body, _ := json.Marshal(configured)
+	sum := sha256.Sum256(body)
+	return base64.RawURLEncoding.EncodeToString(sum[:16])
+}
+
+// adminGroupMembership sets one bit per configured admin group among the verified groups.
+func adminGroupMembership(configured, verified []string) []byte {
+	var membership []byte
+	for i, group := range configured {
+		if slices.Contains(verified, group) {
+			if membership == nil {
+				membership = make([]byte, (len(configured)+7)/8)
+			}
+			membership[i/8] |= 1 << (i % 8)
+		}
+	}
+	return membership
+}
+
+// adminGroupNames returns the configured admin groups whose bits are set.
+func adminGroupNames(configured []string, membership []byte) []string {
+	var names []string
+	for i, group := range configured {
+		if i/8 < len(membership) && membership[i/8]&(1<<(i%8)) != 0 {
+			names = append(names, group)
+		}
+	}
+	return names
 }
 
 // lazyOIDCDiscovery resolves the issuer's provider. Production uses lazy
@@ -165,11 +203,16 @@ type adminOIDCAuthenticator struct {
 	redirectURL string
 	discovery   *lazyOIDCDiscovery
 	client      *http.Client
+	browser     adminBrowserRoutes
 	verifierMu  sync.Mutex
 	idVerifier  *oidc.IDTokenVerifier
 }
 
 func newAdminOIDCAuthenticator(options config.Administration) (*adminOIDCAuthenticator, error) {
+	return newAdminOIDCAuthenticatorWithBrowserBase(options, "")
+}
+
+func newAdminOIDCAuthenticatorWithBrowserBase(options config.Administration, browserBase string) (*adminOIDCAuthenticator, error) {
 	options.Enabled = true
 	if options.Validate() != nil || options.AuthMode() != config.AdminAuthOIDC {
 		return nil, errors.New("invalid OIDC administration configuration")
@@ -194,6 +237,7 @@ func newAdminOIDCAuthenticator(options config.Administration) (*adminOIDCAuthent
 		redirectURL: options.Origin + adminAuthBase + "/callback",
 		discovery:   &lazyOIDCDiscovery{issuer: resolved.Issuer, client: client},
 		client:      client,
+		browser:     resolveAdminBrowserRoutes(browserBase),
 	}, nil
 }
 
@@ -286,7 +330,7 @@ func (a *adminOIDCAuthenticator) seal(payload any) (string, error) {
 	_, _ = mac.Write(body)
 	sealed := base64.RawURLEncoding.EncodeToString(body) + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	if len(sealed) > maxAdminCookie {
-		return "", errors.New("admin cookie payload exceeds bounds")
+		return "", errAdminCookieTooLarge
 	}
 	return sealed, nil
 }
@@ -338,9 +382,8 @@ func validAdminIDTokenWindow(issuedAt, expiry, now time.Time) bool {
 		!now.After(expiry.Add(adminClockSkew))
 }
 
-// validAdminNext accepts only /marketplace/admin and descendant paths.
-func validAdminNext(values []string) (string, bool) {
-	const fallback = "/marketplace/admin"
+// validAdminNext accepts only the configured administration root and descendant paths.
+func validAdminNext(values []string, fallback string) (string, bool) {
 	if len(values) == 0 || len(values) == 1 && values[0] == "" {
 		return fallback, true
 	}
@@ -348,8 +391,8 @@ func validAdminNext(values []string) (string, bool) {
 		return "", false
 	}
 	next := values[0]
-	if len(next) > 2048 || next == fallback {
-		return next, len(next) <= 2048
+	if len(next) > maxAdminNext || next == fallback {
+		return next, len(next) <= maxAdminNext
 	}
 	if !strings.HasPrefix(next, fallback+"/") {
 		return "", false
@@ -358,7 +401,7 @@ func validAdminNext(values []string) (string, bool) {
 		return "", false
 	}
 	for _, char := range next {
-		if char < 0x21 || char == 0x7f {
+		if char < 0x21 || char > 0x7e {
 			return "", false
 		}
 	}
@@ -383,18 +426,18 @@ func adminAuthHeaders(w http.ResponseWriter) {
 func (a *adminOIDCAuthenticator) handleLogin(w http.ResponseWriter, r *http.Request) {
 	adminAuthHeaders(w)
 	fail := func(status int, code, message string) {
-		writeAdminOIDCError(w, r, status, code, message, "")
+		writeAdminOIDCError(w, r, a.browser, status, code, message, "")
 	}
 	if !adminRequestProtectionsWithError(w, r, a.options, fail) {
 		return
 	}
-	next, ok := validAdminNext(r.URL.Query()["next"])
+	next, ok := validAdminNext(r.URL.Query()["next"], a.browser.admin)
 	if !ok {
 		fail(http.StatusBadRequest, "authentication_request_invalid", "The sign-in destination is not an administration path.")
 		return
 	}
 	fail = func(status int, code, message string) {
-		writeAdminOIDCError(w, r, status, code, message, next)
+		writeAdminOIDCError(w, r, a.browser, status, code, message, next)
 	}
 	provider, err := a.discovery.provider(a.providerContext(r.Context()))
 	if err != nil {
@@ -430,7 +473,7 @@ func (a *adminOIDCAuthenticator) handleCallback(w http.ResponseWriter, r *http.R
 	adminAuthHeaders(w)
 	next := ""
 	fail := func(status int, code, message string) {
-		writeAdminOIDCError(w, r, status, code, message, next)
+		writeAdminOIDCError(w, r, a.browser, status, code, message, next)
 	}
 	if !adminRequestProtectionsWithError(w, r, a.options, fail) {
 		return
@@ -447,7 +490,7 @@ func (a *adminOIDCAuthenticator) handleCallback(w http.ResponseWriter, r *http.R
 		reject()
 		return
 	}
-	if _, ok := validAdminNext([]string{transaction.Next}); !ok || transaction.Next == "" {
+	if _, ok := validAdminNext([]string{transaction.Next}, a.browser.admin); !ok || transaction.Next == "" {
 		reject()
 		return
 	}
@@ -547,10 +590,14 @@ func (a *adminOIDCAuthenticator) handleCallback(w http.ResponseWriter, r *http.R
 	}
 	now = time.Now()
 	sealed, err := a.seal(adminSessionPayload{
-		Version: 1, Issuer: idToken.Issuer, Subject: idToken.Subject, Groups: groups,
+		Version: 2, Issuer: idToken.Issuer, Subject: idToken.Subject,
+		Membership: adminGroupMembership(a.options.AdminGroups, groups), Fingerprint: adminGroupsFingerprint(a.options.AdminGroups),
 		Display: display, IssuedAt: now.Unix(), Expiry: now.Add(a.options.SessionLifetime()).Unix(),
 	})
 	if err != nil {
+		if errors.Is(err, errAdminCookieTooLarge) {
+			slog.Warn("admin OIDC session cookie could not be sealed", "outcome", "session_too_large")
+		}
 		reject()
 		return
 	}
@@ -619,22 +666,16 @@ func (a *adminOIDCAuthenticator) sessionIdentity(w http.ResponseWriter, r *http.
 	cookie, err := r.Cookie(a.cookieName(adminSessionCookie))
 	var session adminSessionPayload
 	now := time.Now().Unix()
-	if err != nil || a.open(cookie.Value, &session) != nil || session.Version != 1 ||
+	if err != nil || a.open(cookie.Value, &session) != nil || session.Version != 2 ||
 		session.Issuer != a.oidc.Issuer || !validIdentityValue(session.Subject) ||
-		session.Expiry <= now || session.IssuedAt > now+int64(adminClockSkew.Seconds()) ||
-		len(session.Groups) > maxAdminGroups {
+		session.Fingerprint != adminGroupsFingerprint(a.options.AdminGroups) ||
+		session.Expiry <= now || session.IssuedAt > now+int64(adminClockSkew.Seconds()) {
 		writeAdminAuthError(w, "Sign in through the configured identity provider.", config.AdminAuthOIDC)
 		return adminIdentity{}, false
-	}
-	for _, group := range session.Groups {
-		if !validIdentityValue(group) {
-			writeAdminAuthError(w, "The identity claim is invalid.", config.AdminAuthOIDC)
-			return adminIdentity{}, false
-		}
 	}
 	display := session.Display
 	if display != "" && !validIdentityValue(display) {
 		display = ""
 	}
-	return adminIdentity{Issuer: session.Issuer, Subject: session.Subject, Groups: session.Groups, Display: display}, true
+	return adminIdentity{Issuer: session.Issuer, Subject: session.Subject, Groups: adminGroupNames(a.options.AdminGroups, session.Membership), Display: display}, true
 }

@@ -5,6 +5,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	_ "github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/claude"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/gemini"
@@ -177,15 +179,18 @@ func TestLoadHooks(t *testing.T) {
 	if len(hooks) != 1 {
 		t.Fatalf("hooks = %d, want 1", len(hooks))
 	}
-	if hooks[0].Event != "PreToolUse" {
-		t.Fatalf("Event = %q, want %q", hooks[0].Event, "PreToolUse")
+	if hooks[0].Event != "BeforeTool" || hooks[0].HookSource != "gemini" {
+		t.Fatalf("Event = %q HookSource = %q, want native BeforeTool/gemini provenance", hooks[0].Event, hooks[0].HookSource)
 	}
-	if hooks[0].Command != "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh" {
+	if hooks[0].Command != "${extensionPath}/scripts/check.sh" {
 		t.Fatalf("Command = %q", hooks[0].Command)
 	}
 }
 
-func TestLoadHooksMapsBeforeAgentToUserPromptSubmit(t *testing.T) {
+// Native hook ingestion keeps the Gemini event name and records provenance;
+// the catalog resolver translates it at compile time.
+// spec: hook-resources/gemini-beforeagent-maps-to-userpromptsubmit
+func TestLoadHooksKeepsNativeBeforeAgentEvent(t *testing.T) {
 	src := fstest.MapFS{
 		".gemini/settings.json": &fstest.MapFile{
 			Data: []byte(`{
@@ -208,11 +213,44 @@ func TestLoadHooksMapsBeforeAgentToUserPromptSubmit(t *testing.T) {
 	if len(hooks) != 1 {
 		t.Fatalf("hooks = %d, want 1", len(hooks))
 	}
-	if hooks[0].Event != "UserPromptSubmit" {
-		t.Fatalf("Event = %q, want %q", hooks[0].Event, "UserPromptSubmit")
+	if hooks[0].Event != "BeforeAgent" || hooks[0].HookSource != "gemini" {
+		t.Fatalf("Event = %q HookSource = %q, want native BeforeAgent/gemini provenance", hooks[0].Event, hooks[0].HookSource)
 	}
 	if len(diags) != 0 {
-		t.Fatalf("diagnostics = %#v, want none for a mapped BeforeAgent event", diags)
+		t.Fatalf("diagnostics = %#v, want none for a documented BeforeAgent event", diags)
+	}
+
+	result, err := hcc.Compile(hooks[0], hcc.TargetClaude)
+	if err != nil {
+		t.Fatalf("Compile for Claude Code: %v", err)
+	}
+	if diag.HasErrors(result.Diagnostics) {
+		t.Fatalf("compile diagnostics = %#v", result.Diagnostics)
+	}
+	matched := false
+	for _, art := range result.Artifacts {
+		if !art.Fragment {
+			continue
+		}
+		var emitted struct {
+			Hooks map[string][]map[string]any `json:"hooks"`
+		}
+		if err := json.Unmarshal(art.Bytes, &emitted); err != nil {
+			t.Fatalf("decode Claude hooks fragment %s: %v", art.Path, err)
+		}
+		for event, entries := range emitted.Hooks {
+			if event != "UserPromptSubmit" {
+				t.Fatalf("compiled Claude hook event = %q, want UserPromptSubmit", event)
+			}
+			for _, entry := range entries {
+				if entry["type"] == "command" && entry["command"] == "echo hi" {
+					matched = true
+				}
+			}
+		}
+	}
+	if !matched {
+		t.Fatalf("compiled Claude artifacts = %+v, want UserPromptSubmit command hook echo hi", result.Artifacts)
 	}
 }
 
@@ -229,8 +267,8 @@ func TestLoadHooksPartialMapping(t *testing.T) {
 	if len(hooks) != 1 || hooks[0].Event != "TotallyUnknownEvent" {
 		t.Fatalf("hooks = %#v, want the original event preserved", hooks)
 	}
-	if hooks[0].Extra["gemini_event"] != "TotallyUnknownEvent" {
-		t.Fatalf("Extra[gemini_event] = %#v", hooks[0].Extra["gemini_event"])
+	if hooks[0].HookSource != "gemini" {
+		t.Fatalf("HookSource = %q, want gemini provenance", hooks[0].HookSource)
 	}
 	if len(diags) != 1 || diags[0].Code != diag.CodeIngestGeminiHookEventPartialMapping {
 		t.Fatalf("diagnostics = %#v, want one partial-mapping diagnostic", diags)

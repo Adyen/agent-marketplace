@@ -1,0 +1,8 @@
+- [x] Reproduce unrelated-file cleanup and admitted-alias native hook failures.
+- [x] Restrict relocated cleanup to declared aggregate paths and preserve default behavior.
+- [x] Reuse admitted boundaries for native hook support validation and snapshots.
+- [x] Prove both modes, actual stale cleanup, unrelated metadata and a clean alias check.
+- [x] Reproduce a post-admission component retarget and retain captured cleanup authority.
+- [x] Refuse prospective Unicode case variants through canonical caseless comparison.
+- [x] Run focused and domain gates, benchmark, and adversarial review.
+- [x] Archive this clarification as the final commit.

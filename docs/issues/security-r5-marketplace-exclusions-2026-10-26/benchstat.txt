@@ -1,0 +1,113 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+                                                         │  before.txt   │              after.txt              │
+                                                         │    sec/op     │    sec/op     vs base               │
+V4MarketplaceLockHydration-16                               21.76µ ±  6%   21.73µ ±  2%        ~ (p=0.937 n=6)
+V4MarketplaceExclusionKindCPU/exclusions=1-16               1.009µ ±  1%   1.003µ ±  1%        ~ (p=0.071 n=6)
+V4MarketplaceExclusionKindCPU/exclusions=256-16             29.03µ ±  4%   24.51µ ±  2%  -15.56% (p=0.002 n=6)
+V4MarketplaceExclusionKindCPU/exclusions=1024-16           115.25µ ±  3%   95.02µ ±  2%  -17.56% (p=0.002 n=6)
+V4MPExclusionRefusalCPU/*-16                                616.2n ±  1%   611.6n ±  2%        ~ (p=0.310 n=6)
+V4MPExclusionRefusalCPU/tools/*-16                          632.1n ±  3%   611.7n ±  1%   -3.24% (p=0.002 n=6)
+V4MPExclusionRefusalCPU/tools/skill/*-16                    694.1n ±  2%   672.2n ±  2%   -3.16% (p=0.002 n=6)
+V4MPExclusionRefusalCPU/tools/collection/item-16            684.8n ±  1%   666.6n ±  3%   -2.66% (p=0.002 n=6)
+V4ActiveExclusionAdaptation/active=1-16                     680.6n ±  2%   692.4n ±  2%   +1.72% (p=0.011 n=6)
+V4ActiveExclusionAdaptation/active=64-16                    14.74µ ±  4%   14.90µ ±  2%        ~ (p=0.699 n=6)
+V4ActiveExclusionAdaptation/active=1024-16                  239.4µ ±  1%   238.2µ ±  3%        ~ (p=0.818 n=6)
+V4DirectoryRequestReuseCPU/skills=1/excluded=0-16           711.1n ±  2%   701.8n ±  2%        ~ (p=0.143 n=6)
+V4DirectoryRequestReuseCPU/skills=1/excluded=1-16           833.0n ± 21%   805.5n ±  1%   -3.31% (p=0.002 n=6)
+V4DirectoryRequestReuseCPU/skills=256/excluded=0-16         56.44µ ±  2%   55.37µ ±  1%   -1.91% (p=0.002 n=6)
+V4DirectoryRequestReuseCPU/skills=256/excluded=128-16       66.78µ ±  3%   66.14µ ±  2%        ~ (p=0.310 n=6)
+V4DirectoryRequestReuseCPU/skills=256/excluded=256-16       70.80µ ±  1%   71.01µ ±  3%        ~ (p=0.937 n=6)
+V4DirectoryRequestReuseCPU/skills=1024/excluded=0-16        222.9µ ±  2%   232.5µ ±  4%   +4.33% (p=0.015 n=6)
+V4DirectoryRequestReuseCPU/skills=1024/excluded=512-16      258.3µ ±  8%   261.2µ ±  1%        ~ (p=0.180 n=6)
+V4DirectoryRequestReuseCPU/skills=1024/excluded=1024-16     282.5µ ±  1%   282.4µ ±  2%        ~ (p=1.000 n=6)
+V4RequestReuseChurnCPU/rounds=64-16                         8.106µ ±  3%   7.892µ ±  3%   -2.64% (p=0.026 n=6)
+V4RequestReuseChurnCPU/rounds=1024-16                       112.4µ ±  4%   108.7µ ±  7%        ~ (p=0.093 n=6)
+V4SparseExclusionAdapterCPU/skills=1/excluded=0-16          714.7n ±  8%   698.1n ±  2%        ~ (p=0.065 n=6)
+V4SparseExclusionAdapterCPU/skills=1/excluded=1-16          822.9n ±  7%   815.0n ± 10%        ~ (p=0.937 n=6)
+V4SparseExclusionAdapterCPU/skills=256/excluded=0-16        55.38µ ±  5%   55.78µ ±  2%        ~ (p=0.394 n=6)
+V4SparseExclusionAdapterCPU/skills=256/excluded=128-16      65.81µ ±  5%   66.31µ ±  1%        ~ (p=0.485 n=6)
+V4SparseExclusionAdapterCPU/skills=256/excluded=256-16      71.24µ ±  3%   70.62µ ± 12%        ~ (p=0.818 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=0-16       226.2µ ±  2%   226.6µ ±  2%        ~ (p=0.699 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=512-16     262.3µ ±  2%   258.8µ ±  2%   -1.33% (p=0.041 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16    284.5µ ±  1%   281.7µ ±  1%        ~ (p=0.065 n=6)
+V4WildcardAdapterCPU/requests=1-16                          780.8n ±  2%   773.1n ±  3%        ~ (p=0.310 n=6)
+V4WildcardAdapterCPU/requests=256-16                        48.35µ ±  2%   48.99µ ±  2%        ~ (p=0.240 n=6)
+V4WildcardAdapterCPU/requests=1024-16                       189.7µ ±  1%   192.6µ ±  2%        ~ (p=0.065 n=6)
+geomean                                                     16.73µ         16.44µ         -1.72%
+
+                                                         │  before.txt  │               after.txt               │
+                                                         │     B/op     │     B/op      vs base                 │
+V4MarketplaceLockHydration-16                              93.12Ki ± 0%   93.12Ki ± 0%        ~ (p=1.000 n=6) ¹
+V4MarketplaceExclusionKindCPU/exclusions=1-16              1.867Ki ± 0%   1.820Ki ± 0%   -2.51% (p=0.002 n=6)
+V4MarketplaceExclusionKindCPU/exclusions=256-16            72.70Ki ± 0%   60.70Ki ± 0%  -16.51% (p=0.002 n=6)
+V4MarketplaceExclusionKindCPU/exclusions=1024-16           301.9Ki ± 0%   253.9Ki ± 0%  -15.90% (p=0.002 n=6)
+V4MPExclusionRefusalCPU/*-16                                 880.0 ± 0%     864.0 ± 0%   -1.82% (p=0.002 n=6)
+V4MPExclusionRefusalCPU/tools/*-16                           896.0 ± 0%     864.0 ± 0%   -3.57% (p=0.002 n=6)
+V4MPExclusionRefusalCPU/tools/skill/*-16                     960.0 ± 0%     912.0 ± 0%   -5.00% (p=0.002 n=6)
+V4MPExclusionRefusalCPU/tools/collection/item-16             960.0 ± 0%     912.0 ± 0%   -5.00% (p=0.002 n=6)
+V4ActiveExclusionAdaptation/active=1-16                    2.086Ki ± 0%   2.086Ki ± 0%        ~ (p=1.000 n=6) ¹
+V4ActiveExclusionAdaptation/active=64-16                   49.29Ki ± 0%   49.29Ki ± 0%        ~ (p=1.000 n=6) ¹
+V4ActiveExclusionAdaptation/active=1024-16                 789.1Ki ± 0%   789.1Ki ± 0%        ~ (p=1.000 n=6)
+V4DirectoryRequestReuseCPU/skills=1/excluded=0-16          2.258Ki ± 0%   2.258Ki ± 0%        ~ (p=1.000 n=6) ¹
+V4DirectoryRequestReuseCPU/skills=1/excluded=1-16          2.430Ki ± 0%   2.430Ki ± 0%        ~ (p=1.000 n=6) ¹
+V4DirectoryRequestReuseCPU/skills=256/excluded=0-16        184.1Ki ± 0%   184.1Ki ± 0%        ~ (p=1.000 n=6) ¹
+V4DirectoryRequestReuseCPU/skills=256/excluded=128-16      204.4Ki ± 0%   204.4Ki ± 0%        ~ (p=1.000 n=6) ¹
+V4DirectoryRequestReuseCPU/skills=256/excluded=256-16      219.5Ki ± 0%   219.5Ki ± 0%        ~ (p=1.000 n=6) ¹
+V4DirectoryRequestReuseCPU/skills=1024/excluded=0-16       744.0Ki ± 0%   744.0Ki ± 0%        ~ (p=0.364 n=6)
+V4DirectoryRequestReuseCPU/skills=1024/excluded=512-16     817.1Ki ± 0%   817.1Ki ± 0%        ~ (p=1.000 n=6)
+V4DirectoryRequestReuseCPU/skills=1024/excluded=1024-16    911.2Ki ± 0%   911.2Ki ± 0%        ~ (p=1.000 n=6)
+V4RequestReuseChurnCPU/rounds=64-16                        30.55Ki ± 0%   30.55Ki ± 0%        ~ (p=1.000 n=6) ¹
+V4RequestReuseChurnCPU/rounds=1024-16                      458.3Ki ± 0%   458.3Ki ± 0%        ~ (p=0.316 n=6)
+V4SparseExclusionAdapterCPU/skills=1/excluded=0-16         2.258Ki ± 0%   2.258Ki ± 0%        ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=1/excluded=1-16         2.430Ki ± 0%   2.430Ki ± 0%        ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=256/excluded=0-16       184.1Ki ± 0%   184.1Ki ± 0%        ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=256/excluded=128-16     204.4Ki ± 0%   204.4Ki ± 0%        ~ (p=1.000 n=6)
+V4SparseExclusionAdapterCPU/skills=256/excluded=256-16     219.5Ki ± 0%   219.5Ki ± 0%        ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=1024/excluded=0-16      744.0Ki ± 0%   744.0Ki ± 0%        ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=1024/excluded=512-16    817.1Ki ± 0%   817.1Ki ± 0%        ~ (p=1.000 n=6)
+V4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16   911.2Ki ± 0%   911.2Ki ± 0%        ~ (p=0.892 n=6)
+V4WildcardAdapterCPU/requests=1-16                         2.164Ki ± 0%   2.164Ki ± 0%        ~ (p=1.000 n=6) ¹
+V4WildcardAdapterCPU/requests=256-16                       145.4Ki ± 0%   145.4Ki ± 0%        ~ (p=1.000 n=6) ¹
+V4WildcardAdapterCPU/requests=1024-16                      584.0Ki ± 0%   584.0Ki ± 0%        ~ (p=1.000 n=6)
+geomean                                                    47.05Ki        46.26Ki        -1.66%
+¹ all samples are equal
+
+                                                         │  before.txt  │              after.txt               │
+                                                         │  allocs/op   │  allocs/op   vs base                 │
+V4MarketplaceLockHydration-16                                340.0 ± 0%    340.0 ± 0%        ~ (p=1.000 n=6) ¹
+V4MarketplaceExclusionKindCPU/exclusions=1-16                14.00 ± 0%    13.00 ± 0%   -7.14% (p=0.002 n=6)
+V4MarketplaceExclusionKindCPU/exclusions=256-16             296.00 ± 0%    40.00 ± 0%  -86.49% (p=0.002 n=6)
+V4MarketplaceExclusionKindCPU/exclusions=1024-16           1076.00 ± 0%    52.00 ± 0%  -95.17% (p=0.002 n=6)
+V4MPExclusionRefusalCPU/*-16                                 9.000 ± 0%    8.000 ± 0%  -11.11% (p=0.002 n=6)
+V4MPExclusionRefusalCPU/tools/*-16                           9.000 ± 0%    8.000 ± 0%  -11.11% (p=0.002 n=6)
+V4MPExclusionRefusalCPU/tools/skill/*-16                    10.000 ± 0%    9.000 ± 0%  -10.00% (p=0.002 n=6)
+V4MPExclusionRefusalCPU/tools/collection/item-16            10.000 ± 0%    9.000 ± 0%  -10.00% (p=0.002 n=6)
+V4ActiveExclusionAdaptation/active=1-16                      14.00 ± 0%    14.00 ± 0%        ~ (p=1.000 n=6) ¹
+V4ActiveExclusionAdaptation/active=64-16                     158.0 ± 0%    158.0 ± 0%        ~ (p=1.000 n=6) ¹
+V4ActiveExclusionAdaptation/active=1024-16                  2.096k ± 0%   2.096k ± 0%        ~ (p=1.000 n=6) ¹
+V4DirectoryRequestReuseCPU/skills=1/excluded=0-16            13.00 ± 0%    13.00 ± 0%        ~ (p=1.000 n=6) ¹
+V4DirectoryRequestReuseCPU/skills=1/excluded=1-16            16.00 ± 0%    16.00 ± 0%        ~ (p=1.000 n=6) ¹
+V4DirectoryRequestReuseCPU/skills=256/excluded=0-16          545.0 ± 0%    545.0 ± 0%        ~ (p=1.000 n=6) ¹
+V4DirectoryRequestReuseCPU/skills=256/excluded=128-16        584.0 ± 0%    584.0 ± 0%        ~ (p=1.000 n=6) ¹
+V4DirectoryRequestReuseCPU/skills=256/excluded=256-16        580.0 ± 0%    580.0 ± 0%        ~ (p=1.000 n=6) ¹
+V4DirectoryRequestReuseCPU/skills=1024/excluded=0-16        2.091k ± 0%   2.091k ± 0%        ~ (p=1.000 n=6) ¹
+V4DirectoryRequestReuseCPU/skills=1024/excluded=512-16      2.141k ± 0%   2.141k ± 0%        ~ (p=1.000 n=6) ¹
+V4DirectoryRequestReuseCPU/skills=1024/excluded=1024-16     2.143k ± 0%   2.143k ± 0%        ~ (p=1.000 n=6) ¹
+V4RequestReuseChurnCPU/rounds=64-16                          143.0 ± 0%    143.0 ± 0%        ~ (p=1.000 n=6) ¹
+V4RequestReuseChurnCPU/rounds=1024-16                       2.063k ± 0%   2.063k ± 0%        ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=1/excluded=0-16           13.00 ± 0%    13.00 ± 0%        ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=1/excluded=1-16           16.00 ± 0%    16.00 ± 0%        ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=256/excluded=0-16         545.0 ± 0%    545.0 ± 0%        ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=256/excluded=128-16       584.0 ± 0%    584.0 ± 0%        ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=256/excluded=256-16       580.0 ± 0%    580.0 ± 0%        ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=1024/excluded=0-16       2.091k ± 0%   2.091k ± 0%        ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=1024/excluded=512-16     2.141k ± 0%   2.141k ± 0%        ~ (p=1.000 n=6) ¹
+V4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16    2.143k ± 0%   2.143k ± 0%        ~ (p=1.000 n=6) ¹
+V4WildcardAdapterCPU/requests=1-16                           13.00 ± 0%    13.00 ± 0%        ~ (p=1.000 n=6) ¹
+V4WildcardAdapterCPU/requests=256-16                         550.0 ± 0%    550.0 ± 0%        ~ (p=1.000 n=6) ¹
+V4WildcardAdapterCPU/requests=1024-16                       2.100k ± 0%   2.100k ± 0%        ~ (p=1.000 n=6) ¹
+geomean                                                      198.6         167.0       -15.93%
+¹ all samples are equal

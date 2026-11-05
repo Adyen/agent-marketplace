@@ -9,16 +9,22 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 func TestRemoveMarketplaceCollectionRollbackRestoresExactSelectors(t *testing.T) {
+	entry, _ := prepareRollbackMarketplace(t)
+	fake := newLayerMarketplaceServer(t)
+	registry := fake.addRegistry(t, "source")
+	fake.addSkill(t, registry, "review")
+	fake.addCollection(t, registry, "bundle", []hccartifact.CollectionMemberEntry{{RegistryID: string(registry.ID), Kind: "skill", Name: "review", Revision: string(fake.resources["source/skill/review"].revision.ContentDigest)}})
+	entry.URL, entry.InstanceID = fake.URL, fake.instanceID
+	pins := layerPreparePins(t, fake, "collection", "bundle")
+	collection := pins[0]
 	repoRoot := t.TempDir()
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-	digest := "sha256:" + strings.Repeat("a", 64)
-	collection := config.MarketplaceResourcePin{RegistryID: "collections", Kind: "collection", Name: "bundle", Revision: digest, Digest: digest, Acquisition: config.MarketplaceAcquisitionMirror}
-	leaf := config.MarketplaceResourcePin{RegistryID: "source", Kind: "skill", Name: "review", Revision: digest, Digest: digest, Acquisition: config.MarketplaceAcquisitionMirror, SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{RegistryID: collection.RegistryID, Name: collection.Name, Revision: collection.Revision}})}
-	if _, _, err := config.EnsureMarketplacePinsInConfigWithSnapshotAndCommit(configPath, "https://market.example", "mp", "public", []config.MarketplaceResourcePin{collection, leaf}); err != nil {
+	if _, err := mutateRollbackMarketplace(configPath, entry, pins, nil); err != nil {
 		t.Fatal(err)
 	}
 	before, err := os.ReadFile(configPath)
@@ -27,8 +33,8 @@ func TestRemoveMarketplaceCollectionRollbackRestoresExactSelectors(t *testing.T)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = commitMarketplaceConfigRemoval(configPath, func() (*config.FileSnapshot, config.ConfigFileCommit, error) {
-		return config.RemoveMarketplaceCollectionWithSnapshotAndCommit(configPath, "https://market.example", "mp", collection)
+	_, err = MutateMarketplaceLayer(context.Background(), repoRoot, repoRoot, configPath, config.RepoCommitted, func(m *MarketplaceLayerMutation) error {
+		return m.RemoveCollection(entry, collection)
 	}, func() ([]error, error) {
 		return nil, ctx.Err()
 	})
@@ -77,17 +83,23 @@ func TestMarketplaceRemoveFindsDirectPinByInstalledNameWithoutAmbiguity(t *testi
 	if got, _, ok := marketplaceDirectPinByName(cfg, "review-copy", ir.KindSkill, true); ok {
 		t.Fatalf("ambiguous local/canonical name selected %#v", got)
 	}
+	isolateConsumerPipeline(t)
+	fake := newLayerMarketplaceServer(t)
+	registry := fake.addRegistry(t, "source")
+	fake.addSkill(t, registry, "canonical")
+	fake.addSkill(t, registry, "review-copy")
+	pins := layerPreparePins(t, fake, "skill", "canonical")
+	pins[0].InstalledName = "review-copy"
+	pins = append(pins, layerPreparePins(t, fake, "skill", "review-copy")...)
 	repo := t.TempDir()
 	configPath := filepath.Join(repo, ".agents", "config.yaml")
-	if _, _, err := config.EnsureMarketplacePinsInConfigWithSnapshotAndCommit(configPath, "https://market.example", "mp", "public", cfg.Marketplaces[0].Resources); err != nil {
+	if _, err := mutateRollbackMarketplace(configPath, config.MarketplaceEntry{URL: fake.URL, InstanceID: fake.instanceID}, pins, nil); err != nil {
 		t.Fatal(err)
 	}
 	before, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HOME", t.TempDir())
-	config.SetTestOrganizationConfigPath(t, filepath.Join(t.TempDir(), "missing-org.yaml"))
 	if _, err := Remove(context.Background(), RemoveOptions{RepoRoot: repo, ResourceName: "review-copy", Kind: ir.KindSkill, HasKind: true}); err == nil || !strings.Contains(err.Error(), "matches 2 Marketplace pins") {
 		t.Fatalf("ambiguous removal error = %v", err)
 	}
@@ -104,10 +116,10 @@ func TestMarketplaceRemoveRejectsCollectionOnlyLeafAndHonorsKind(t *testing.T) {
 		SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{RegistryID: collection.RegistryID, Name: collection.Name, Revision: collection.Revision}}),
 	}
 	cfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{Resources: []config.MarketplaceResourcePin{collection, leaf}}}}
-	if got, ok := marketplaceCollectionOnlyPinByName(cfg, "shared", ir.KindSkill, true); !ok || got.Kind != "skill" {
+	if got, _, ok := marketplaceCollectionOnlyPinByName(cfg, "shared", ir.KindSkill, true); !ok || got.Kind != "skill" {
 		t.Fatalf("collection-only skill lookup = %#v, %v", got, ok)
 	}
-	if _, ok := marketplaceCollectionOnlyPinByName(cfg, "shared", ir.KindCommand, true); ok {
+	if _, _, ok := marketplaceCollectionOnlyPinByName(cfg, "shared", ir.KindCommand, true); ok {
 		t.Fatal("collection-only skill matched --kind command")
 	}
 }

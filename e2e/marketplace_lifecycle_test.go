@@ -7,105 +7,36 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
+	"reflect"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
-	mpconfig "github.com/Adyen/agent-marketplace/pkg/marketplace/config"
-	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/worker"
+	"gopkg.in/yaml.v3"
 )
 
 type marketplaceBehaviorFixture struct {
-	env       *Env
-	bareURL   string
-	cfg       mpconfig.Config
-	meta      store.MetadataStore
-	blobs     store.BlobStore
-	handlerMu sync.RWMutex
-	handler   http.Handler
-	server    *httptest.Server
+	*marketplaceTarget
 }
 
 func newMarketplaceBehaviorFixture(t *testing.T, files map[string]string) *marketplaceBehaviorFixture {
 	t.Helper()
 	env := newEnv(t)
 	env.InitGitRepo()
-	bareURL := env.CreateBareRepo("marketplace-behavior", files)
 	gitServer := newGitHTTPServer(t, env.repos)
 	t.Cleanup(gitServer.Close)
-	origin := gitServer.URL + "/marketplace-behavior.git"
-	dbPath := filepath.Join(env.workspace, "marketplace.db")
-	blobsPath := filepath.Join(env.workspace, "blobs")
-	env.WriteFile("/workspace/marketplace.yaml", fmt.Sprintf(`apiVersion: agent-marketplace.io/marketplace/v1
-instance:
-  id: behavior-marketplace
-  name: Behavior Marketplace
-  canonical_url: https://example.invalid
-storage:
-  metadata:
-    driver: sqlite
-    dsn: %s
-  blobs:
-    driver: filesystem
-    path: %s
-acquisition_default: mirror
-refresh:
-  interval: 1h
-policy:
-  hidden_content: warn
-  license_allowlist: [MIT]
-  limits:
-    repository_bytes: 104857600
-    file_count: 1024
-    file_bytes: 2097152
-    artifact_bytes: 16777216
-    clone_duration: 300s
-    ingestion_duration: 120s
-registries:
-  - id: behavior-source-id
-    slug: behavior-source
-    origin: %s
-    ref: main
-    acquisition: mirror
-    license: MIT
-    roots:
-      - path: .
-        source_harness: claude
-revocations:
-  registry_ids: []
-  coordinates: []
-  revisions: []
-`, dbPath, blobsPath, origin))
-	result := env.RunAM("serve", "reindex", "--config", "marketplace.yaml")
-	if result.ExitCode != 0 {
-		t.Fatalf("initial Marketplace reindex failed (exit %d):\n%s", result.ExitCode, result.Combined)
-	}
-	cfg, meta, blobs := openPublicGateStores(t, env.mustResolvePath("/workspace/marketplace.yaml"))
-	handler := mpapi.NewServer(cfg, meta, blobs).PublicHandler()
-	fixture := &marketplaceBehaviorFixture{env: env, bareURL: bareURL, cfg: cfg, meta: meta, blobs: blobs, handler: handler}
-	server := httptest.NewServer(http.HandlerFunc(fixture.serveHTTP))
-	fixture.server = server
-	t.Cleanup(func() {
-		server.Close()
-		_ = meta.Close()
-	})
-	return fixture
-}
-
-func (f *marketplaceBehaviorFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
-	f.handlerMu.RLock()
-	defer f.handlerMu.RUnlock()
-	f.handler.ServeHTTP(w, r)
-}
-
-func (f *marketplaceBehaviorFixture) setHandler(handler http.Handler) {
-	f.handlerMu.Lock()
-	defer f.handlerMu.Unlock()
-	f.handler = handler
+	return &marketplaceBehaviorFixture{marketplaceTarget: newMarketplaceTarget(
+		t,
+		env,
+		"marketplace-behavior",
+		RegistryDef{Files: files},
+		gitServer.URL,
+		"behavior-marketplace",
+		"behavior-source",
+		t.TempDir(),
+	)}
 }
 
 func marketplaceBehaviorFiles(body string, collection bool) map[string]string {
@@ -134,8 +65,8 @@ func (f *marketplaceBehaviorFixture) newConsumer(t *testing.T, endpoint string) 
 	t.Helper()
 	consumer := newEnv(t)
 	consumer.InitGitRepo()
-	consumer.WriteGlobalConfig("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []")
-	consumer.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: %s\n    instance_id: behavior-marketplace\n    alias: behavior", endpoint))
+	consumer.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	consumer.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources: {behavior: {marketplace: %q}}\n", endpoint))
 	return consumer
 }
 
@@ -155,29 +86,9 @@ func (f *marketplaceBehaviorFixture) resourceDigest(t *testing.T, kind, name str
 	return revision.ContentDigest
 }
 
-func (f *marketplaceBehaviorFixture) mutateSource(t *testing.T, path, content string) {
+func (m *marketplaceTarget) mutateSource(t *testing.T, path, content string) {
 	t.Helper()
-	work := t.TempDir()
-	gitRun(t, "", "clone", "-b", "main", strings.TrimPrefix(f.bareURL, "file://"), work)
-	fullPath := filepath.Join(work, filepath.FromSlash(path))
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitRun(t, work, "config", "user.email", "e2e@example.com")
-	gitRun(t, work, "config", "user.name", "E2E")
-	gitRun(t, work, "add", ".")
-	gitRun(t, work, "commit", "-m", "update source")
-	gitRun(t, work, "push", "origin", "main")
-}
-
-func (f *marketplaceBehaviorFixture) reindex(t *testing.T, cfg mpconfig.Config) {
-	t.Helper()
-	if err := worker.Reindex(context.Background(), worker.Deps{Config: cfg, MetadataStore: f.meta, BlobStore: f.blobs}, cfg, "behavior-source"); err != nil {
-		t.Fatalf("Marketplace reindex: %v", err)
-	}
+	pushRegistryFiles(t, m.bareURL, map[string]string{path: content})
 }
 
 func TestOrganizationMarketplaceCollectionMemberUserOverride(t *testing.T) {
@@ -220,6 +131,60 @@ resources:
 	consumer.AssertFileContains("/root/.factory/skills/skill-one/SKILL.md", "organization member")
 }
 
+// The direct-install oracle reads the owning lock's wire records rather than
+// using the production lock decoder or deriving expectations from that lock.
+func assertBehaviorMarketplaceDirectLock(t *testing.T, consumer *Env, lockPath, scope, endpoint, kind, name string, evidence publicGateAdvertisedRevision) {
+	t.Helper()
+	var lock marketplaceAcquisitionLockWire
+	raw := consumer.ReadFile(lockPath)
+	if err := yaml.Unmarshal([]byte(raw), &lock); err != nil {
+		t.Fatalf("decode %s: %v\n%s", lockPath, err, raw)
+	}
+	if lock.APIVersion != "agent-marketplace-lock/v2" || lock.Scope != scope || len(lock.Registries) != 0 || len(lock.Marketplaces) != 1 {
+		t.Fatalf("unexpected direct acquisition-lock version/scope/sources in %s: %#v", lockPath, lock)
+	}
+	marketplace := lock.Marketplaces[0]
+	if marketplace.URL != endpoint || marketplace.InstanceID != "behavior-marketplace" || len(marketplace.RegistryBindings) != 1 || len(marketplace.Resources) != 1 {
+		t.Fatalf("unexpected direct acquisition-lock endpoint/identity/records in %s: %#v", lockPath, marketplace)
+	}
+	binding := marketplace.RegistryBindings[0]
+	if binding.Name != "behavior-source" || binding.RegistryID != "behavior-source-id" {
+		t.Fatalf("unexpected direct acquisition-lock binding in %s: %#v", lockPath, binding)
+	}
+	want := publicGateLockedResource{
+		RegistryName: "behavior-source", RegistryID: "behavior-source-id",
+		Kind: kind, Name: name, Revision: evidence.ContentDigest,
+		ContentDigest: evidence.ContentDigest, ArchiveDigest: evidence.ArchiveDigest,
+		Acquisition: "mirror",
+	}
+	if got := marketplace.Resources[0]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("direct acquisition record in %s = %#v, want %#v", lockPath, got, want)
+	}
+}
+
+func assertBehaviorMarketplaceLockHasNoResources(t *testing.T, consumer *Env, lockPath, scope string) {
+	t.Helper()
+	raw, err := os.ReadFile(consumer.mustResolvePath(lockPath))
+	if os.IsNotExist(err) {
+		return // An empty owning lock may be removed after deselection.
+	}
+	if err != nil {
+		t.Fatalf("read deselected lock %s: %v", lockPath, err)
+	}
+	var lock marketplaceAcquisitionLockWire
+	if err := yaml.Unmarshal(raw, &lock); err != nil {
+		t.Fatalf("decode deselected lock %s: %v", lockPath, err)
+	}
+	if lock.APIVersion != "agent-marketplace-lock/v2" || lock.Scope != scope || len(lock.Registries) != 0 {
+		t.Fatalf("unexpected deselected acquisition-lock version/scope/sources in %s: %#v", lockPath, lock)
+	}
+	for _, marketplace := range lock.Marketplaces {
+		if len(marketplace.Resources) != 0 {
+			t.Fatalf("deselection retained acquisition records in %s: %#v", lockPath, marketplace.Resources)
+		}
+	}
+}
+
 func TestMarketplaceInstallFlagsKeepExactInstalledName(t *testing.T) {
 	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("Named install", false))
 	for _, tc := range []struct {
@@ -230,6 +195,7 @@ func TestMarketplaceInstallFlagsKeepExactInstalledName(t *testing.T) {
 	} {
 		t.Run(tc.kind, func(t *testing.T) {
 			consumer := fixture.newConsumer(t, fixture.server.URL)
+			evidence := assertMarketplaceArtifactIntegrity(t, fixture.server.URL, "behavior-marketplace", "behavior-source", "behavior-source-id", tc.kind, tc.name)
 			result := consumer.RunAM("install", "behavior-source/"+tc.kind+"/"+tc.name, "--marketplace", "behavior", "--as", tc.alias, "--verbose", "--scope", "repo")
 			if result.ExitCode != 0 {
 				t.Fatalf("Marketplace flag install failed (exit %d):\n%s", result.ExitCode, result.Combined)
@@ -243,25 +209,31 @@ func TestMarketplaceInstallFlagsKeepExactInstalledName(t *testing.T) {
 			}
 			consumer.AssertFileAbsent(tc.original)
 			config := consumer.ReadFile("/workspace/.agents/config.yaml")
-			if !strings.Contains(config, "installed_name: "+tc.alias) || !strings.Contains(config, "kind: "+tc.kind) {
+			if !strings.Contains(config, "as: "+tc.alias) || !strings.Contains(config, "behavior-source/"+tc.kind+"/"+tc.name) {
 				t.Fatalf("exact Marketplace install lost the local alias: %s", config)
 			}
+			assertBehaviorMarketplaceDirectLock(t, consumer, "/workspace/.agents/lock.yaml", "repo", fixture.server.URL, tc.kind, tc.name, evidence)
+			locked := consumer.ReadFile("/workspace/.agents/lock.yaml")
 			if !strings.Contains(result.Combined, "Marketplace install preview") {
 				t.Fatalf("--verbose omitted the verified Marketplace preview: %s", result.Combined)
 			}
 			consumer.AssertExitCode(consumer.RunAM("sync", "--check"), 0)
 			repeat := consumer.RunAM("install", "behavior-source/"+tc.kind+"/"+tc.name, "--marketplace", "behavior", "--as", tc.alias, "--yes", "--scope", "repo")
-			if repeat.ExitCode != 0 || consumer.ReadFile("/workspace/.agents/config.yaml") != config {
-				t.Fatalf("repeat aliased install changed selection: exit=%d output=%s", repeat.ExitCode, repeat.Combined)
+			if repeat.ExitCode != 0 || consumer.ReadFile("/workspace/.agents/config.yaml") != config || consumer.ReadFile("/workspace/.agents/lock.yaml") != locked {
+				t.Fatalf("repeat aliased install changed selection or exact acquisition: exit=%d output=%s", repeat.ExitCode, repeat.Combined)
 			}
 			consumer.AssertExitCode(consumer.RunAM("sync", "--offline"), 0)
 			consumer.AssertFileContains(tc.output, tc.body)
+			if consumer.ReadFile("/workspace/.agents/config.yaml") != config || consumer.ReadFile("/workspace/.agents/lock.yaml") != locked {
+				t.Fatal("offline aliased sync changed selection or exact acquisition")
+			}
 			removed := consumer.RunAM("remove", tc.alias, "--kind", tc.kind, "--scope", "repo")
 			if removed.ExitCode != 0 {
 				t.Fatalf("remove by installed alias failed (exit %d):\n%s", removed.ExitCode, removed.Combined)
 			}
 			consumer.AssertFileAbsent(tc.output)
-			if config := consumer.ReadFile("/workspace/.agents/config.yaml"); strings.Contains(config, "installed_name: "+tc.alias) {
+			assertBehaviorMarketplaceLockHasNoResources(t, consumer, "/workspace/.agents/lock.yaml", "repo")
+			if config := consumer.ReadFile("/workspace/.agents/config.yaml"); strings.Contains(config, "as: "+tc.alias) {
 				t.Fatalf("remove by installed alias retained the pin: %s", config)
 			}
 			consumer.AssertExitCode(consumer.RunAM("sync", "--check"), 0)
@@ -272,26 +244,31 @@ func TestMarketplaceInstallFlagsKeepExactInstalledName(t *testing.T) {
 func TestMarketplacePinRemainsExactUntilUpdateAndWorksOffline(t *testing.T) {
 	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("version one", false))
 	consumer := fixture.newConsumer(t, fixture.server.URL)
-	oldDigest := fixture.resourceDigest(t, "skill", "skill-one")
-	result := consumer.RunAM("install", "behavior:behavior-source/skill/skill-one", "--yes")
+	oldEvidence := assertMarketplaceArtifactIntegrity(t, fixture.server.URL, "behavior-marketplace", "behavior-source", "behavior-source-id", "skill", "skill-one")
+	result := consumer.RunAM("install", "--scope", "repo", "behavior:behavior-source/skill/skill-one", "--yes")
 	if result.ExitCode != 0 {
 		t.Fatalf("install revision one failed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
 	consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "version one")
+	consumer.AssertFileContains("/workspace/.agents/config.yaml", "behavior-source/skill/skill-one")
+	config := consumer.ReadFile("/workspace/.agents/config.yaml")
+	assertBehaviorMarketplaceDirectLock(t, consumer, "/workspace/.agents/lock.yaml", "repo", fixture.server.URL, "skill", "skill-one", oldEvidence)
+	oldLock := consumer.ReadFile("/workspace/.agents/lock.yaml")
 
 	fixture.mutateSource(t, "skills/skill-one/SKILL.md", "---\nname: skill-one\ndescription: Behavior skill\nlicense: MIT\n---\nversion two\n")
 	fixture.reindex(t, fixture.cfg)
-	newDigest := fixture.resourceDigest(t, "skill", "skill-one")
-	if newDigest == oldDigest {
-		t.Fatal("source update did not publish a new exact revision")
+	newEvidence := assertMarketplaceArtifactIntegrity(t, fixture.server.URL, "behavior-marketplace", "behavior-source", "behavior-source-id", "skill", "skill-one")
+	if newEvidence.ContentDigest == oldEvidence.ContentDigest || newEvidence.ArchiveDigest == oldEvidence.ArchiveDigest {
+		t.Fatal("source update did not publish new verified content and archive revisions")
 	}
 	result = consumer.RunAM("sync")
 	if result.ExitCode != 0 {
 		t.Fatalf("exact-pin sync failed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
 	consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "version one")
-	if config := consumer.ReadFile("/workspace/.agents/config.yaml"); !strings.Contains(config, oldDigest) || strings.Contains(config, newDigest) {
-		t.Fatalf("ordinary sync moved the exact pin:\n%s", config)
+	assertBehaviorMarketplaceDirectLock(t, consumer, "/workspace/.agents/lock.yaml", "repo", fixture.server.URL, "skill", "skill-one", oldEvidence)
+	if consumer.ReadFile("/workspace/.agents/config.yaml") != config || consumer.ReadFile("/workspace/.agents/lock.yaml") != oldLock {
+		t.Fatal("ordinary sync changed selection intent or advanced/rewrote its exact acquisition lock")
 	}
 
 	result = consumer.RunAM("update")
@@ -299,8 +276,10 @@ func TestMarketplacePinRemainsExactUntilUpdateAndWorksOffline(t *testing.T) {
 		t.Fatalf("Marketplace update failed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
 	consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "version two")
-	if config := consumer.ReadFile("/workspace/.agents/config.yaml"); strings.Contains(config, oldDigest) || !strings.Contains(config, newDigest) {
-		t.Fatalf("update did not replace the exact pin:\n%s", config)
+	assertBehaviorMarketplaceDirectLock(t, consumer, "/workspace/.agents/lock.yaml", "repo", fixture.server.URL, "skill", "skill-one", newEvidence)
+	updatedLock := consumer.ReadFile("/workspace/.agents/lock.yaml")
+	if consumer.ReadFile("/workspace/.agents/config.yaml") != config || updatedLock == oldLock {
+		t.Fatal("update did not replace the exact acquisition while preserving unconstrained selection intent")
 	}
 	fixture.server.Close()
 	result = consumer.RunAM("sync", "--offline")
@@ -308,6 +287,10 @@ func TestMarketplacePinRemainsExactUntilUpdateAndWorksOffline(t *testing.T) {
 		t.Fatalf("updated pin failed offline (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
 	consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "version two")
+	assertBehaviorMarketplaceDirectLock(t, consumer, "/workspace/.agents/lock.yaml", "repo", fixture.server.URL, "skill", "skill-one", newEvidence)
+	if consumer.ReadFile("/workspace/.agents/config.yaml") != config || consumer.ReadFile("/workspace/.agents/lock.yaml") != updatedLock {
+		t.Fatal("offline reuse changed selection intent or the updated exact acquisition lock")
+	}
 }
 
 func TestMarketplaceInstallArtifactFailureIsTransactional(t *testing.T) {
@@ -316,7 +299,7 @@ func TestMarketplaceInstallArtifactFailureIsTransactional(t *testing.T) {
 	var failArtifact atomic.Bool
 	failArtifact.Store(true)
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/v1/artifacts/") {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/artifacts/") || strings.HasPrefix(r.URL.Path, "/api/v1/archives/") {
 			artifactRequests.Add(1)
 			if failArtifact.Load() {
 				http.Error(w, "artifact unavailable", http.StatusBadGateway)
@@ -329,7 +312,7 @@ func TestMarketplaceInstallArtifactFailureIsTransactional(t *testing.T) {
 	consumer := fixture.newConsumer(t, proxy.URL)
 	before := consumer.ReadFile("/workspace/.agents/config.yaml")
 
-	result := consumer.RunAM("install", "behavior:behavior-source/skill/skill-one", "--yes")
+	result := consumer.RunAM("install", "--scope", "repo", "behavior:behavior-source/skill/skill-one", "--yes")
 	if result.ExitCode == 0 || artifactRequests.Load() != 1 {
 		t.Fatalf("failed artifact install = exit %d, requests %d:\n%s", result.ExitCode, artifactRequests.Load(), result.Combined)
 	}
@@ -338,7 +321,7 @@ func TestMarketplaceInstallArtifactFailureIsTransactional(t *testing.T) {
 	}
 	consumer.AssertFileAbsent("/workspace/.factory/skills/skill-one")
 	failArtifact.Store(false)
-	result = consumer.RunAM("install", "behavior:behavior-source/skill/skill-one", "--yes")
+	result = consumer.RunAM("install", "--scope", "repo", "behavior:behavior-source/skill/skill-one", "--yes")
 	if result.ExitCode != 0 {
 		t.Fatalf("install did not recover after artifact became available (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
@@ -351,16 +334,23 @@ func TestMarketplaceIdentityAndAllowlistFailClosed(t *testing.T) {
 	t.Run("instance mismatch", func(t *testing.T) {
 		consumer := newEnv(t)
 		consumer.InitGitRepo()
-		consumer.WriteGlobalConfig("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []")
-		consumer.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v2\nmarketplaces:\n  - url: %s\n    instance_id: wrong-id\n    alias: behavior", fixture.server.URL))
+		consumer.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+		consumer.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources: {behavior: {marketplace: %q}}\n", fixture.server.URL))
+		// Endpoint identity is acquisition evidence, not a v4 source field.
+		lock := fmt.Sprintf("apiVersion: agent-marketplace-lock/v2\nscope: repo\nmarketplaces:\n  - url: %s\n    instance_id: wrong-id\n", fixture.server.URL)
+		consumer.WriteFile("/workspace/.agents/lock.yaml", lock)
 		before := consumer.ReadFile("/workspace/.agents/config.yaml")
-		result := consumer.RunAM("install", "behavior:behavior-source/skill/skill-one", "--yes")
+		result := consumer.RunAM("install", "--scope", "repo", "behavior:behavior-source/skill/skill-one", "--yes")
 		if result.ExitCode == 0 || !strings.Contains(result.Combined, "ID mismatch") {
 			t.Fatalf("instance mismatch result = exit %d:\n%s", result.ExitCode, result.Combined)
 		}
-		if consumer.ReadFile("/workspace/.agents/config.yaml") != before {
-			t.Fatal("instance mismatch mutated config")
+		if consumer.ReadFile("/workspace/.agents/config.yaml") != before || consumer.ReadFile("/workspace/.agents/lock.yaml") != lock {
+			t.Fatal("instance mismatch mutated config or lock")
 		}
+		consumer.AssertFileAbsent("/workspace/.factory/skills/skill-one")
+		consumer.WriteFile("/workspace/.agents/lock.yaml", strings.Replace(lock, "wrong-id", "behavior-marketplace", 1))
+		consumer.MustRunAM("install", "--scope", "repo", "behavior:behavior-source/skill/skill-one", "--yes")
+		consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "identity")
 	})
 
 	t.Run("blocked endpoint", func(t *testing.T) {
@@ -372,12 +362,15 @@ func TestMarketplaceIdentityAndAllowlistFailClosed(t *testing.T) {
 		defer proxy.Close()
 		consumer := newEnv(t)
 		consumer.InitGitRepo()
-		consumer.WriteGlobalConfig(fmt.Sprintf("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\nallowed_marketplaces: ['^https://allowed\\.invalid$']\nmarketplaces:\n  - url: %s\n    instance_id: behavior-marketplace\n    alias: behavior", proxy.URL))
+		consumer.WriteGlobalConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nallowed_marketplaces: ['^https://allowed\\.invalid$']\nsources: {behavior: {marketplace: %q}}\n", proxy.URL))
+		consumer.WriteFile("/root/.agents/lock.yaml", fmt.Sprintf("apiVersion: agent-marketplace-lock/v2\nscope: user\nmarketplaces: [{url: %q, instance_id: behavior-marketplace}]\n", proxy.URL))
+		before := snapshotConsumerEvidence(t, consumer)
 		result := consumer.RunAM("search", "--marketplace", "behavior")
 		if result.ExitCode == 0 || !strings.Contains(result.Combined, "blocked") || requests.Load() != 0 {
 			t.Fatalf("blocked endpoint result = exit %d, requests %d:\n%s", result.ExitCode, requests.Load(), result.Combined)
 		}
-		consumer.WriteGlobalConfig(fmt.Sprintf("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\nallowed_marketplaces: ['^http://127\\.0\\.0\\.1:[0-9]+$']\nmarketplaces:\n  - url: %s\n    instance_id: behavior-marketplace\n    alias: behavior", proxy.URL))
+		assertConsumerEvidence(t, consumer, before)
+		consumer.WriteGlobalConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nallowed_marketplaces: ['^http://127\\.0\\.0\\.1:[0-9]+$']\nsources: {behavior: {marketplace: %q}}\n", proxy.URL))
 		result = consumer.RunAM("search", "--marketplace", "behavior")
 		if result.ExitCode != 0 || requests.Load() == 0 {
 			t.Fatalf("allowed endpoint result = exit %d, requests %d:\n%s", result.ExitCode, requests.Load(), result.Combined)
@@ -413,7 +406,7 @@ func TestMarketplaceRevocationPreservesInstalledOutputAndSupportsExactOverride(t
 	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("revocable", false))
 	consumer := fixture.newConsumer(t, fixture.server.URL)
 	digest := fixture.resourceDigest(t, "skill", "skill-one")
-	result := consumer.RunAM("install", "behavior:behavior-source/skill/skill-one", "--yes")
+	result := consumer.RunAM("install", "--scope", "repo", "behavior:behavior-source/skill/skill-one", "--yes")
 	if result.ExitCode != 0 {
 		t.Fatalf("install before revocation failed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
@@ -447,27 +440,36 @@ func TestMarketplaceRevocationPreservesInstalledOutputAndSupportsExactOverride(t
 func TestMarketplaceCollectionSelectorLifecycle(t *testing.T) {
 	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("collection member", true))
 	consumer := fixture.newConsumer(t, fixture.server.URL)
-	result := consumer.RunAM("install", "behavior:behavior-source/collection/behavior-bundle", "--yes")
+	result := consumer.RunAM("install", "--scope", "repo", "behavior:behavior-source/collection/behavior-bundle", "--yes")
 	if result.ExitCode != 0 {
 		t.Fatalf("collection install failed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
 	consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "collection member")
 	consumer.AssertFileExists("/workspace/.factory/commands/command-one.md")
-	if config := consumer.ReadFile("/workspace/.agents/config.yaml"); !strings.Contains(config, "selected_by:") || !strings.Contains(config, "name: behavior-bundle") {
-		t.Fatalf("collection install did not persist selector edges:\n%s", config)
+	if config := consumer.ReadFile("/workspace/.agents/config.yaml"); !strings.Contains(config, "behavior-source/collection/behavior-bundle") || strings.Contains(config, "behavior-source/skill/skill-one") {
+		t.Fatalf("collection install did not persist only the collection intent:\n%s", config)
+	}
+	if lock := consumer.ReadFile("/workspace/.agents/lock.yaml"); strings.Count(lock, "selected_by:") != 2 || !strings.Contains(lock, "name: behavior-bundle") {
+		t.Fatalf("collection acquisition lock did not persist both member selector edges:\n%s", lock)
 	}
 
-	result = consumer.RunAM("install", "behavior:behavior-source/skill/skill-one", "--yes")
+	result = consumer.RunAM("install", "--scope", "repo", "behavior:behavior-source/skill/skill-one", "--yes")
 	if result.ExitCode != 0 {
 		t.Fatalf("direct member install failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	if config := consumer.ReadFile("/workspace/.agents/config.yaml"); !strings.Contains(config, "behavior-source/skill/skill-one") || !strings.Contains(config, "behavior-source/collection/behavior-bundle") {
+		t.Fatalf("direct member install did not add a separate selector alongside the collection:\n%s", config)
 	}
 	result = consumer.RunAM("remove", "skill-one", "--kind", "skill")
 	if result.ExitCode != 0 {
 		t.Fatalf("direct selector removal failed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
 	consumer.AssertRepoFactorySkillExists("skill-one")
-	if config := consumer.ReadFile("/workspace/.agents/config.yaml"); strings.Contains(config, "direct: true") || !strings.Contains(config, "selected_by:") {
+	if config := consumer.ReadFile("/workspace/.agents/config.yaml"); strings.Contains(config, "behavior-source/skill/skill-one") || !strings.Contains(config, "behavior-source/collection/behavior-bundle") {
 		t.Fatalf("direct removal did not preserve only the collection selector:\n%s", config)
+	}
+	if lock := consumer.ReadFile("/workspace/.agents/lock.yaml"); strings.Count(lock, "selected_by:") != 2 {
+		t.Fatalf("direct removal lost collection acquisition edges:\n%s", lock)
 	}
 
 	result = consumer.RunAM("remove", "behavior-bundle", "--kind", "collection")
@@ -476,6 +478,53 @@ func TestMarketplaceCollectionSelectorLifecycle(t *testing.T) {
 	}
 	consumer.AssertRepoFactorySkillAbsent("skill-one")
 	consumer.AssertFileAbsent("/workspace/.factory/commands/command-one.md")
+}
+
+// spec: resource-removal/remove-a-marketplace-pin-by-its-endpoint
+func TestMarketplaceRemoveSuggestedEndpointKeepsLocalSelection(t *testing.T) {
+	const configPath, lockPath = "/workspace/.agents/config.yaml", "/workspace/.agents/lock.yaml"
+	fixture := newMarketplaceBehaviorFixture(t, marketplaceBehaviorFiles("Hosted skill", false))
+	consumer := fixture.newConsumer(t, fixture.server.URL)
+	consumer.WriteFile("/workspace/resources/skills/keep/SKILL.md", (Skill{Name: "keep", Description: "Keep selected"}).SkillFile())
+	consumer.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources: {behavior: {marketplace: %q}, local: {directory: ./resources, source_harness: factory}}\nresources: {local: [skill/skill-one, skill/keep]}\n", fixture.server.URL))
+	result := consumer.RunAM("install", "--scope", "repo", "behavior:behavior-source/skill/skill-one", "--yes")
+	if result.ExitCode != 0 {
+		t.Fatalf("Marketplace install failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	consumer.AssertFileContains("/workspace/.factory/skills/skill-one/SKILL.md", "Hosted skill")
+
+	configBefore, lockBefore := consumer.ReadFile(configPath), consumer.ReadFile(lockPath)
+	if !strings.Contains(lockBefore, "skill-one") {
+		t.Fatalf("acquisition lock does not record the Marketplace pin:\n%s", lockBefore)
+	}
+	result = consumer.RunAM("remove", "skill-one")
+	suggestion := fmt.Sprintf("--scope repo --from %q   (REPO)", fixture.server.URL)
+	if result.ExitCode == 0 || !strings.Contains(result.Combined, "\n  "+suggestion) {
+		t.Fatalf("ambiguous removal did not suggest %q (exit %d):\n%s", suggestion, result.ExitCode, result.Combined)
+	}
+	if consumer.ReadFile(configPath) != configBefore || consumer.ReadFile(lockPath) != lockBefore {
+		t.Fatal("ambiguity refusal changed configuration or acquisition lock")
+	}
+
+	result = consumer.RunAM("remove", "skill-one", "--scope", "repo", "--from", fixture.server.URL)
+	if result.ExitCode != 0 {
+		t.Fatalf("suggested Marketplace removal failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	cfg, lock := consumer.ReadFile(configPath), consumer.ReadFile(lockPath)
+	if strings.Contains(cfg, "behavior-source/skill/skill-one") || !strings.Contains(cfg, "skill/skill-one") || !strings.Contains(cfg, "skill/keep") || strings.Contains(lock, "skill-one") {
+		t.Fatalf("endpoint removal did not remove only the Marketplace pin:\nconfig:\n%s\nlock:\n%s", cfg, lock)
+	}
+	consumer.AssertRepoFactorySkillAbsent("skill-one")
+	consumer.AssertRepoFactorySkillExists("keep")
+
+	result = consumer.RunAM("remove", "skill-one")
+	if result.ExitCode != 0 || strings.Contains(consumer.ReadFile(configPath), "skill/skill-one") {
+		t.Fatalf("stale local selection was not removable after the pin (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	if result = consumer.RunAM("sync", "--check"); result.ExitCode != 0 {
+		t.Fatalf("sync --check after removals failed (exit %d):\n%s", result.ExitCode, result.Combined)
+	}
+	consumer.AssertRepoFactorySkillExists("keep")
 }
 
 // The organization config declares its Marketplace under an alias and

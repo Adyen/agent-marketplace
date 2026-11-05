@@ -297,18 +297,21 @@ func expandCollectionManifestGraph(manifest CollectionManifest, nested map[strin
 
 	byKey := make(map[string]int)
 	leaves := make([]CollectionMemberEntry, 0, len(manifest.Members))
+	leafPaths := make([]map[string]struct{}, 0, len(manifest.Members))
 	addLeaf := func(leaf CollectionMemberEntry, paths [][]string) error {
 		key := collectionLeafKey(leaf)
 		if index, ok := byKey[key]; ok {
 			if leaves[index].Revision != leaf.Revision || leaves[index].Optional != leaf.Optional {
 				return fmt.Errorf("collection %q contains conflicting leaves for %s/%q from registry %q", manifest.Name, leaf.Kind, leaf.Name, leaf.RegistryID)
 			}
-			leaves[index].InclusionPaths = appendUniqueCollectionPaths(leaves[index].InclusionPaths, paths...)
+			leaves[index].InclusionPaths = appendUniqueCollectionPaths(leaves[index].InclusionPaths, leafPaths[index], paths...)
 			return nil
 		}
-		leaf.InclusionPaths = appendUniqueCollectionPaths(nil, paths...)
+		seen := make(map[string]struct{}, len(paths))
+		leaf.InclusionPaths = appendUniqueCollectionPaths(nil, seen, paths...)
 		byKey[key] = len(leaves)
 		leaves = append(leaves, leaf)
+		leafPaths = append(leafPaths, seen)
 		return nil
 	}
 
@@ -420,18 +423,18 @@ func collectionLeafKey(leaf CollectionMemberEntry) string {
 	return leaf.Kind + "\x00" + leaf.Name + "\x00" + leaf.RegistryID
 }
 
-func appendUniqueCollectionPaths(paths [][]string, add ...[]string) [][]string {
+// appendUniqueCollectionPaths appends each candidate not yet in seen, in
+// order. seen holds the joined form of every path already in paths; collection
+// names are route-safe tokens without control characters, so a NUL separator
+// cannot make two distinct paths collide.
+func appendUniqueCollectionPaths(paths [][]string, seen map[string]struct{}, add ...[]string) [][]string {
 	for _, candidate := range add {
-		duplicate := false
-		for _, existing := range paths {
-			if slicesEqual(existing, candidate) {
-				duplicate = true
-				break
-			}
+		key := strings.Join(candidate, "\x00")
+		if _, duplicate := seen[key]; duplicate {
+			continue
 		}
-		if !duplicate {
-			paths = append(paths, append([]string(nil), candidate...))
-		}
+		seen[key] = struct{}{}
+		paths = append(paths, append([]string(nil), candidate...))
 	}
 	return paths
 }

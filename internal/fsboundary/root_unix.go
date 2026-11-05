@@ -34,7 +34,7 @@ func (d *Dir) EnsurePath(rel string) (*Dir, error) {
 
 func (d *Dir) openPath(rel string, create, rootLink, strictScope bool, hops int) (*Dir, error) {
 	if hops > maxLinkHops {
-		return nil, fmt.Errorf("%w: directory link chain exceeds %d hops", ErrUnsafePath, maxLinkHops)
+		return nil, fmt.Errorf("%w: directory link chain exceeds %d hops from %s", ErrUnsafePath, maxLinkHops, d.path)
 	}
 	var parts []string
 	if rel != "." && rel != "" {
@@ -58,11 +58,12 @@ func (d *Dir) openPath(rel string, create, rootLink, strictScope bool, hops int)
 		next, err := openComponent(current, name)
 		if errors.Is(err, fs.ErrNotExist) && create {
 			if mkdirErr := unix.Mkdirat(int(current.Fd()), name, 0o755); mkdirErr != nil && !errors.Is(mkdirErr, unix.EEXIST) {
-				return nil, fmt.Errorf("create output directory %s: %w", name, mkdirErr)
+				return nil, fmt.Errorf("create output directory %s: %w", filepath.Join(path, name), mkdirErr)
 			}
 			next, err = openComponent(current, name)
 		}
 		if err != nil && rootLink && (strictScope || i == len(parts)-1) && errors.Is(err, ErrUnsafePath) {
+			linkPath := filepath.Join(path, name)
 			var stat unix.Stat_t
 			if statErr := unix.Fstatat(int(current.Fd()), name, &stat, unix.AT_SYMLINK_NOFOLLOW); statErr != nil || stat.Mode&unix.S_IFMT != unix.S_IFLNK {
 				return nil, err
@@ -74,7 +75,7 @@ func (d *Dir) openPath(rel string, create, rootLink, strictScope bool, hops int)
 			seen := false
 			for _, component := range strings.Split(text, string(filepath.Separator)) {
 				if component == ".." && seen {
-					return nil, fmt.Errorf("%w: non-leading parent component in directory link", ErrUnsafePath)
+					return nil, fmt.Errorf("%w: non-leading parent component in directory link: %s", ErrUnsafePath, linkPath)
 				}
 				seen = seen || component != "" && component != "." && component != ".."
 			}
@@ -86,20 +87,20 @@ func (d *Dir) openPath(rel string, create, rootLink, strictScope bool, hops int)
 			targetRel, err := filepath.Rel(d.path, candidate)
 			if err != nil || targetRel == ".." || strings.HasPrefix(targetRel, ".."+string(filepath.Separator)) || filepath.IsAbs(targetRel) {
 				if strictScope {
-					return nil, fmt.Errorf("%w: directory link escapes its captured scope", ErrUnsafePath)
+					return nil, fmt.Errorf("%w: directory link %s escapes its captured scope", ErrUnsafePath, linkPath)
 				}
 				canonical, resolveErr := filepath.EvalSymlinks(candidate)
 				if resolveErr != nil {
-					return nil, fmt.Errorf("%w: resolve directory link: %w", ErrUnsafePath, resolveErr)
+					return nil, fmt.Errorf("%w: resolve directory link %s: %w", ErrUnsafePath, linkPath, resolveErr)
 				}
 				targetRel, err = filepath.Rel(d.path, canonical)
 				if err != nil || targetRel == ".." || strings.HasPrefix(targetRel, ".."+string(filepath.Separator)) || filepath.IsAbs(targetRel) {
-					return nil, fmt.Errorf("%w: directory link escapes its captured scope", ErrUnsafePath)
+					return nil, fmt.Errorf("%w: directory link %s escapes its captured scope", ErrUnsafePath, linkPath)
 				}
 			}
 			target, err := d.openPath(targetRel, false, true, strictScope, hops+1)
 			if err != nil {
-				return nil, fmt.Errorf("%w: directory link target: %w", ErrUnsafePath, err)
+				return nil, fmt.Errorf("%w: directory link target %s: %w", ErrUnsafePath, linkPath, err)
 			}
 			if i < len(parts)-1 {
 				resolvedRel, err := filepath.Rel(d.path, target.path)

@@ -198,6 +198,20 @@ func TestMutateMarketplaceLayerV4RemoveCollection(t *testing.T) {
 	if !strings.Contains(string(data), "tools/skill/lint") {
 		t.Fatalf("unrelated request lost:\n%s", data)
 	}
+	parsed, err := config.ParseV4Config(data, configPath, true)
+	if err != nil {
+		t.Fatalf("parse layer after removal: %v", err)
+	}
+	for name, group := range parsed.Groups {
+		if len(group.Exclude) != 0 {
+			t.Fatalf("group %s recorded exclusions %v, want none for a Marketplace collection removal", name, group.Exclude)
+		}
+		for _, request := range group.Include {
+			if request.Kind == "collection" {
+				t.Fatalf("group %s still requests collection %s", name, request.Name)
+			}
+		}
+	}
 	doc = layerMarketplaceLockDoc(t, lockPath)
 	if len(doc.Registries) != 1 {
 		t.Fatalf("git records lost: %#v", doc.Registries)

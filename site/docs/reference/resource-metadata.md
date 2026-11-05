@@ -50,7 +50,7 @@ Commands and subagents written as Markdown with front matter read `metadata.tags
 
 ## `requires` item
 
-Each `metadata.requires` item is a map with `name` and optional `kind`, `registry`, and `path`, or a string shorthand (`mcp:docs-server`, or a bare name for a skill). Prerequisites are advisory by default: an unmet prerequisite produces a warning, never an error. A consumer who opts in with `requires.expand: true` selects declared prerequisites transitively from already-configured sources. The full declaration grammar, satisfaction rule, expansion behavior, warning format, and exit status live in the [resource prerequisites reference](./resource-prerequisites.md).
+Each `metadata.requires` item is a map with `name` and optional `kind`, `registry`, and `path`, or a string shorthand (`mcp:docs-server`, or a bare name for a skill). An unmet prerequisite produces an advisory warning; only `sync --strict` (including `sync --strict --check`) fails on it. A consumer who opts in with `requires.expand: true` selects declared prerequisites transitively from already-configured sources. The full declaration grammar, satisfaction rule, warning format, and exit status live in the [resource prerequisites reference](./resource-prerequisites.md).
 
 ## Command marker
 
@@ -69,6 +69,8 @@ Run the release checklist.
 ```
 
 This marker belongs to Devin and Codex converted-command layouts. Other command formats, such as Claude's `commands/<name>.md`, do not use it.
+
+A marked command cannot also carry controls a command cannot hold. In a Devin layout, `permissions`, `agent`, `subagent`, or `triggers` that do not include `user` make the CLI refuse the resource with `ingest.devin.command-security-unsupported`. Remove the marker to keep such a file as a skill.
 
 ## Non-skill resources
 

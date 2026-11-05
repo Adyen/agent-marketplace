@@ -570,7 +570,7 @@ func TestExactGitAllowsContainedSymlink(t *testing.T) {
 }
 
 func TestExactGitDoesNotPersistFetchCredentialsAndUsesPrivateModes(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	isolatedGitAuth(t)
 	repo := newExactGitRepository(t, "sha1")
 	gitTest(t, repo, "update-server-info")
 	server := httptest.NewServer(http.FileServer(http.Dir(filepath.Dir(repo))))

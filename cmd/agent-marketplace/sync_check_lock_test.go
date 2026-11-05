@@ -46,16 +46,13 @@ func devinLockRepo(t *testing.T) (repoRoot, stateRoot string) {
 
 	repoRoot = filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - devin
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - keeper
-    mcp:
-      - good
+sources:
+  origin: {git: file://`+origin+`, ref: main}
+resources:
+  origin: [skill/keeper, mcp/good]
 `)
 	withWorkingDir(t, repoRoot)
 	return repoRoot, filepath.Join(homeDir, "state", "agent-marketplace")
@@ -132,12 +129,13 @@ func TestSyncCheckFirstEverLocalDirectoryOnlyCreatesNoCacheOrState(t *testing.T)
 	writeSkill(t, registry, "local-only", "Local only", nil)
 	repo := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: `+registry+`
-    skills:
-      include: [local-only]
+sources:
+  local: {directory: `+registry+`}
+resources:
+  local: [skill/local-only]
 `)
 	withWorkingDir(t, repo)
 

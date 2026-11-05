@@ -1,13 +1,45 @@
 # How to deploy a production Marketplace
 
-Run the hosted Marketplace with separate API and worker processes, external storage, and a private operations listener. This page covers the order of steps and the decisions to make. Each of the two supported packagings has its own detailed guide.
+Run the hosted Marketplace with separate API and worker processes, external storage, and a private operations listener. Each supported packaging has its own guide. This page gives the order of steps.
 
 ## Prerequisites
 
 - PostgreSQL and an S3-compatible bucket. SQLite and filesystem storage suit only a single all-in-one replica.
 - A TLS-terminating reverse proxy or ingress that enforces authentication. The application has none.
 - A secret store for the database DSN and any registry credentials.
-- Container images at an immutable tag or digest: the API and worker images built from `Dockerfile.marketplace`, plus the optional Nuxt UI and VitePress site. Only the worker image contains Git, which acquisition needs.
+- Container images pinned by verified digest: the API and worker images built from `Dockerfile.marketplace`, the Nuxt UI image, and the documentation-only VitePress image. Only the worker image contains Git, which acquisition needs. Every release publishes ready-made images to GHCR: `ghcr.io/adyen/agent-marketplace/worker`, `ghcr.io/adyen/agent-marketplace/api`, and `ghcr.io/adyen/agent-marketplace/web`, tagged with the release tag.
+
+The documentation-only VitePress image is not published by the release workflow.
+If `docs.enabled: true`, run `make container-docs` with `DOCS_CONTAINER_IMAGE`
+set to an image reference in your approved registry. Push that image, resolve
+and verify its digest, and configure `docs.image.repository` and
+`docs.image.digest` before deployment.
+
+Resolve each release image to a digest, verify its provenance according to your
+organization's policy, and record `repository@sha256:<verified-digest>` in the
+deployment configuration. A version tag alone can be moved. In Helm, set the
+`digest` field for each enabled image (including role-specific overrides); it
+takes precedence over `tag`. The chart has no implicit `latest` fallback.
+
+When building your own images, pin every base-image override by verified digest
+too: `GO_BUILD_IMAGE`, `RUNTIME_IMAGE`, `NODE_IMAGE`, `NODE_RUNTIME_IMAGE`,
+and `SITE_NGINX_IMAGE`. Pin Compose's `POSTGRES_IMAGE` and `NGINX_IMAGE` as well.
+Apply this to internal mirrors, not only public registries, and promote the
+same verified digests between environments rather than rebuilding from moving
+tags. Repository defaults are development conveniences. Rebuild, scan, and
+deliberately update the pins when shipping security updates.
+
+### Upgrading Existing Helm Values
+
+The chart no longer supplies `latest` for `image.tag`, `web.image.tag`, or
+`docs.image.tag`. For image-version validation, rendering fails only when an
+enabled workload has neither a digest nor a tag after role inheritance. A
+digest takes precedence, so the corresponding tag may be omitted.
+Before upgrading, add verified digests for the backend and
+each enabled frontend, including any role-specific image repositories.
+Render the new chart with the complete values before rollout and retain the
+previous chart, values, and image references for rollback. Reused values can
+retain an explicit `latest`; that is not an immutable production pin.
 
 ## 1. Pick a packaging
 
@@ -26,7 +58,7 @@ instance:
   id: team-marketplace
   name: Team Agent Marketplace
   canonical_url: https://marketplace.example.com
-  browser_base: https://marketplace.example.com/marketplace
+  browser_base: https://marketplace.example.com
 listen: 0.0.0.0:8080
 operations_listen: 0.0.0.0:9090   # private network only; never routed by the proxy
 storage:
@@ -61,15 +93,24 @@ registries:
 
 ## 3. Wire secrets and network
 
+For the Helm chart, enable both browser-facing workloads before configuring routes:
+
+```yaml
+web:
+  enabled: true
+docs:
+  enabled: true
+```
+
 - Mount the DSN file and any registry credential files read-only, readable by the container's non-root user (UID 1000). If a registry sets `ca_file`, mount it in every API and worker container, because every role validates the configuration at startup.
 - Limit worker egress to the registry origins and the object store.
-- Expose only `/.well-known/agent-marketplace.json`, `/api/`, `/healthz`, and the UI paths through the proxy. See [How to configure a reverse proxy](./configure-a-reverse-proxy.md).
+- Route `/.well-known/agent-marketplace.json`, `/api/`, and `/healthz` to the API, and the remaining UI traffic to Nuxt. Local docs default to disabled. If you enable `docs.enabled: true` for an air-gapped deployment, also route `/docs/` to the documentation image; the chart switches UI links to local docs automatically. See [How to configure a reverse proxy](./configure-a-reverse-proxy.md).
 
 ## 4. Roll out
 
 1. Start the API replicas. Each process applies pending database migrations when it opens the stores, so when you upgrade across versions, start one API replica first and scale up after it is ready.
 2. Start the worker. One replica is enough for most deployments. Workers lease refresh jobs through the metadata store, so extra replicas do not process the same job twice, but each one needs its own egress to the registry origins.
-3. Point the proxy at the API and UI.
+3. Point the proxy at the API, UI, and documentation services.
 
 For upgrades, use a rolling update for the API and `Recreate` for the worker. The Helm chart README shows the values.
 
@@ -83,9 +124,17 @@ curl -fsS https://marketplace.example.com/.well-known/agent-marketplace.json
 curl -fsS http://<api-host>:9090/readyz
 ```
 
+Output (the well-known document is truncated):
+
+```text
+{"status":"ok"}
+{"instance_id":"team-marketplace","version":"...","canonical_url":"https://marketplace.example.com","api_base":"/api/v1",...}
+{"status":"ready"}
+```
+
 `/healthz` shows that the process is running. `/readyz` returns `{"status":"ready"}` only when the database's recorded configuration authority matches `management.mode`, the stored revocations match the process's configuration, the metadata store is readable, and the blob store responds. The [health and metrics reference](../../reference/marketplace-health-and-metrics.md#readyz) describes each check.
 
-The worker queues a refresh for every configured registry when it starts. To run the first ingestion yourself and watch it finish, run this from the worker image:
+When it starts, the worker queues a refresh for every registry in the YAML `registries:` list (`file` mode) or for every active admin-managed registry (`database` mode, which ignores the YAML list). To run the first ingestion yourself and watch it finish, run this from the worker image:
 
 ```bash
 agent-marketplace serve reindex --config /app/marketplace.yaml
