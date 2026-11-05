@@ -12,6 +12,10 @@ the marketplace root. Repository-scope registration names a catalog under
 the user's state root, an absolute machine-local path that does not belong in
 the shared, committed `.claude/settings.json`.
 
+## Release note
+
+none — native Claude Code plugin delivery stays unverified, so Claude plugins are still installed as decomposed members; this change only prepares the catalog and registration files.
+
 ## What Changes
 
 - The Agent Marketplace-owned Claude catalog becomes a marketplace file
