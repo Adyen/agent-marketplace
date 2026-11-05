@@ -26,6 +26,12 @@ async function generatedFilePaths(directory: URL): Promise<string[]> {
     .map(entry => relative(fileURLToPath(directory), join(entry.parentPath, entry.name)).split(sep).join('/'))
 }
 
+function landingSection(html: string, id: string): string {
+  const start = html.indexOf(`id="${id}"`)
+  assert.ok(start >= 0, `missing landing section ${id}`)
+  return html.slice(start, html.indexOf('</section>', start))
+}
+
 // spec: install-script/site-build-publishes-the-install-script
 test('public site publishes the install script byte-for-byte', async () => {
   const [source, built] = await Promise.all([
@@ -88,6 +94,54 @@ test('public landing connects both hero preview tabs to their panels', async () 
   assert.ok(terminalTab)
   assert.match(terminalTab, /aria-selected="true"/)
   assert.match(terminalTab, /tabindex="0"/)
+})
+
+// spec: marketplace-web-ui/browser-frame-shows-catalog-and-resource-detail
+test('organizations section depicts the real catalog and a pinned clean resource detail', async () => {
+  const landing = await readFile(new URL('index.html', dist), 'utf8')
+  const section = landingSection(landing, 'organizations')
+
+  assert.match(section, /class="marketplace-browser-frame"/)
+  assert.match(section, /marketplace\.example\.com/)
+  assert.match(section, /alt="Marketplace catalog showing skills, commands, and MCP servers with Kind and Registry filters and the Copy install command action\."/)
+  assert.match(section, /alt="Marketplace resource detail showing a pinned revision digest and a clean Security result\."/)
+})
+
+// spec: marketplace-web-ui/browser-frame-avoids-linking-a-live-marketplace
+test('organizations browser frame uses a neutral host and no Marketplace route', async () => {
+  const landing = await readFile(new URL('index.html', dist), 'utf8')
+  const section = landingSection(landing, 'organizations')
+
+  assert.match(section, /marketplace\.example\.com/)
+  assert.doesNotMatch(section, /(?:href|src)="[^"]*\/marketplace\/?"/)
+  assert.doesNotMatch(section, /<(?:a|iframe)\b[^>]*\/marketplace\//)
+})
+
+// spec: marketplace-web-ui/benefit-cards-and-deployment-guide-remain
+test('organizations keeps its three benefits and Deployment guide destination', async () => {
+  const landing = await readFile(new URL('index.html', dist), 'utf8')
+  const section = landingSection(landing, 'organizations')
+
+  for (const heading of ['Your registries, together', 'Publication policies', 'Your infrastructure']) {
+    assert.ok(section.includes(heading), `missing benefit heading: ${heading}`)
+  }
+  assert.match(section, /href="\/docs\/how-to\/operator\/deploy-a-production-marketplace"[^>]*>[\s\S]*?Deployment guide/)
+})
+
+// spec: marketplace-web-ui/depictions-declare-dimensions-alt-text-and-lazy-loading
+test('below-the-fold web UI images declare dimensions, meaningful alt text, and lazy loading', async () => {
+  const landing = await readFile(new URL('index.html', dist), 'utf8')
+  const images = [...landing.matchAll(/<img\b[^>]*data-web-ui-image[^>]*>/g)].map(([tag]) => tag)
+
+  assert.equal(images.length, 4)
+  for (const image of images) {
+    assert.match(image, /\bwidth="1440"/)
+    assert.match(image, /\bheight="960"/)
+    assert.match(image, /\balt="[^"]{20,}"/)
+    assert.match(image, /\bloading="lazy"/)
+  }
+  assert.equal(images.filter(image => image.includes('data-theme="light"')).length, 2)
+  assert.equal(images.filter(image => image.includes('data-theme="dark"')).length, 2)
 })
 
 // spec: site-deployment-profiles/project-path-pages-site-resolves-navigation-and-assets

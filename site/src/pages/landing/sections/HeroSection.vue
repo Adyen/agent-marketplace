@@ -8,6 +8,7 @@ import {
 import ActionLink from '../components/ActionLink.vue'
 import CommandBar from '../components/CommandBar.vue'
 import LandingTabList from '../components/LandingTabList.vue'
+import MarketplaceBrowserFrame from '../components/MarketplaceBrowserFrame.vue'
 import TuiPreview from '../components/TuiPreview.vue'
 
 const previewTabs = [
@@ -75,9 +76,12 @@ const captions = {
             aria-labelledby="hero-tab-web"
             tabindex="0"
           >
-            <div class="web-preview-placeholder" role="group" aria-label="Marketplace catalog preview">
-              Marketplace catalog preview
-            </div>
+            <MarketplaceBrowserFrame
+              v-if="activePreview === 'web'"
+              class="preview"
+              view="catalog"
+              loading="eager"
+            />
           </div>
           <p class="preview-caption">
             {{ captions[activePreview] }}
@@ -108,16 +112,6 @@ const captions = {
 
 .hero-tabs {
   margin-bottom: var(--lp-space-default);
-}
-
-.web-preview-placeholder {
-  display: grid;
-  min-height: 16rem;
-  place-items: center;
-  border: 1px solid currentColor;
-  border-radius: var(--lp-radius-preview);
-  color: var(--lp-text-2);
-  font: var(--lp-font-label);
 }
 
 h1 {

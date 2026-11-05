@@ -26,7 +26,9 @@ test.describe('Landing hero previews', () => {
     const tabs = page.getByRole('tablist', { name: 'Hero preview' })
     await tabs.getByRole('tab', { name: 'Web', exact: true }).click()
 
-    await expect(page.getByRole('tabpanel', { name: 'Web' })).toContainText('Marketplace catalog preview')
+    await expect(page.getByRole('tabpanel', { name: 'Web' }).getByRole('img', {
+      name: /Marketplace catalog showing skills, commands, and MCP servers/,
+    })).toBeVisible()
     await expect(page.getByText('Browse the catalog, review resources, and copy install commands.', { exact: true })).toBeVisible()
   })
 
@@ -84,8 +86,52 @@ test.describe('Landing hero previews', () => {
     const tabs = page.getByRole('tablist', { name: 'Hero preview' })
     await tabs.getByRole('tab', { name: 'Web', exact: true }).click()
 
-    await expect(page.getByRole('tabpanel', { name: 'Web' })).toContainText('Marketplace catalog preview')
+    await expect(page.getByRole('tabpanel', { name: 'Web' }).getByRole('img', {
+      name: /Marketplace catalog showing skills, commands, and MCP servers/,
+    })).toBeVisible()
     await expect(page.getByText('Browse the catalog, review resources, and copy install commands.', { exact: true })).toBeVisible()
     await expect(tabs.locator('.tab-mark')).toHaveCSS('transition-duration', '0s')
   })
+})
+
+// spec: marketplace-web-ui/visible-depiction-follows-the-dark-class
+test('switches depiction appearance when the VitePress dark class changes without reloading', async ({ page }) => {
+  await page.goto(publicSiteURL)
+  await page.evaluate(() => document.documentElement.classList.remove('dark'))
+  await page.locator('#organizations').scrollIntoViewIfNeeded()
+
+  const lightImages = page.locator('#organizations img[data-theme="light"]')
+  const darkImages = page.locator('#organizations img[data-theme="dark"]')
+  await expect(lightImages).toHaveCount(2)
+  await expect(darkImages).toHaveCount(2)
+  await expect(lightImages.first()).toBeVisible()
+  await expect(darkImages.first()).not.toBeVisible()
+  let mainFrameNavigations = 0
+  page.on('framenavigated', frame => {
+    if (frame === page.mainFrame()) mainFrameNavigations++
+  })
+  const navigationsAfterLoad = mainFrameNavigations
+
+  await page.evaluate(() => document.documentElement.classList.add('dark'))
+
+  await expect(lightImages.first()).not.toBeVisible()
+  await expect(darkImages.first()).toBeVisible()
+  expect(mainFrameNavigations).toBe(navigationsAfterLoad)
+})
+
+// spec: marketplace-web-ui/depictions-declare-dimensions-alt-text-and-lazy-loading
+test('does not request the hero Web image until that tab is selected', async ({ page }) => {
+  const imageRequests: string[] = []
+  page.on('request', request => {
+    if (new URL(request.url()).pathname.startsWith('/landing/')) imageRequests.push(request.url())
+  })
+
+  await page.goto(publicSiteURL)
+  expect(imageRequests).toEqual([])
+
+  await page.getByRole('tablist', { name: 'Hero preview' }).getByRole('tab', { name: 'Web', exact: true }).click()
+  await expect(page.getByRole('tabpanel', { name: 'Web' }).getByRole('img', {
+    name: /Marketplace catalog showing skills, commands, and MCP servers/,
+  })).toBeVisible()
+  await expect.poll(() => imageRequests.some(url => url.includes('/landing/catalog-desktop-light.webp'))).toBe(true)
 })

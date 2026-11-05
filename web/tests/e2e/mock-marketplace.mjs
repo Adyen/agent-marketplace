@@ -1,8 +1,13 @@
 import { createServer } from 'node:http'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 const port = Number(process.env.E2E_MOCK_PORT || 4311)
 const appOrigin = process.env.E2E_APP_ORIGIN || 'http://127.0.0.1:4321'
-const browserBase = `${appOrigin}/marketplace`
+const landingFixtures = process.env.E2E_LANDING_FIXTURE_PATH
+  ? JSON.parse(readFileSync(resolve(process.cwd(), process.env.E2E_LANDING_FIXTURE_PATH), 'utf8'))
+  : undefined
+const browserBase = landingFixtures?.browser_base ?? `${appOrigin}/marketplace`
 const digest = `sha256:${'a'.repeat(64)}`
 const hostileDescription = 'Deploy safely & review <script>alert("xss")</script>'
 const inspectionDigest = `sha256:${'d'.repeat(64)}`
@@ -13,7 +18,7 @@ const primaryContent = '# Safe review\n\n[docs](https://example.com/docs)\n\nRun
 const notesContent = '# Additional notes\n\n<script>alert("support-xss")</script>\n'
 const configContent = '{"html":"<script>escaped</script>"}'
 
-const items = [
+const items = landingFixtures?.items ?? [
   {
     registry_id: 'team-tools',
     registry_slug: 'team-tools',
@@ -37,7 +42,7 @@ const items = [
   },
 ]
 
-const registry = {
+const registry = landingFixtures?.registries?.[0] ?? {
   id: 'team-tools',
   slug: 'team-tools',
   aliases: [],
@@ -49,8 +54,11 @@ const registry = {
   license: 'MIT',
   listed: true,
 }
+const registries = landingFixtures?.registries ?? [registry]
 
-const registrySummaries = [
+const registrySummaries = landingFixtures
+  ? registries.map(({ id, slug }) => ({ id, slug }))
+  : [
   { id: registry.id, slug: registry.slug },
   { id: 'community-tools', slug: 'community-tools' },
   { id: 'registry-with-an-extremely-long-name', slug: 'registry-with-an-extremely-long-name' },
@@ -61,9 +69,9 @@ const registrySummaries = [
 ]
 
 const wellKnown = {
-  instance_id: 'e2e-marketplace',
+  instance_id: landingFixtures?.instance_id ?? 'e2e-marketplace',
   version: 'v4.0.0-e2e',
-  canonical_url: appOrigin,
+  canonical_url: landingFixtures?.canonical_url ?? appOrigin,
   api_base: `http://127.0.0.1:${port}/api/v1`,
   browser_base: browserBase,
   browser_latest_route_template: `${browserBase}/r/{registry}/{kind}/{name}`,
@@ -84,17 +92,19 @@ function resource(item, contentDigest = item.content_digest, revocation) {
     archive_digest: `sha256:${'c'.repeat(64)}`,
     license: 'MIT',
     description: item.description,
-    assessment: {
-      coordinate,
-      content_digest: contentDigest,
-      assessment_digest: `sha256:${'6'.repeat(64)}`,
-      analyzer_version: 'e2e-analyzer-2',
-      policy_digest: `sha256:${'7'.repeat(64)}`,
-      decision: 'allow',
-      findings: item.name === 'secure-review' ? [{ code: 'remote-reference', severity: 'warn', policy: 'network-policy', location: { path: 'SKILL.md', line: 1, column: 1, start_byte: 0, end_byte: 1 }, message: 'External reference requires review.' }] : [],
-      inspection_manifest_digest: inspectionDigest,
-      assessed_at: '2026-01-02T03:04:05Z',
-    },
+    assessment: item.assessment
+      ? { ...item.assessment, coordinate, content_digest: contentDigest }
+      : {
+          coordinate,
+          content_digest: contentDigest,
+          assessment_digest: `sha256:${'6'.repeat(64)}`,
+          analyzer_version: 'e2e-analyzer-2',
+          policy_digest: `sha256:${'7'.repeat(64)}`,
+          decision: 'allow',
+          findings: item.name === 'secure-review' ? [{ code: 'remote-reference', severity: 'warn', policy: 'network-policy', location: { path: 'SKILL.md', line: 1, column: 1, start_byte: 0, end_byte: 1 }, message: 'External reference requires review.' }] : [],
+          inspection_manifest_digest: inspectionDigest,
+          assessed_at: '2026-01-02T03:04:05Z',
+        },
     occurrence: { coordinate, content_digest: contentDigest, commit: '8'.repeat(40), manifest_digest: `sha256:${'5'.repeat(64)}` },
     ...(item.name === 'secure-review' ? { source: { repository_url: 'https://github.com/Adyen/agent-skills.git', path: 'skills/secure-review/SKILL.md', commit: '8'.repeat(40) } } : {}),
     ...(reason ? { revocation: { kind: 'revision', target_id: contentDigest, reason, applied_at: '2026-01-03T03:04:05Z' } } : {}),
@@ -152,13 +162,14 @@ const server = createServer((request, response) => {
   const parts = url.pathname.split('/').filter(Boolean).map(decodeSegment)
   if (url.pathname === '/.well-known/agent-marketplace.json') return sendJson(response, 200, wellKnown)
   if (parts.join('/') === 'api/v1/search') return sendJson(response, 200, search(url))
-  if (parts.join('/') === 'api/v1/instance') return sendJson(response, 200, { id: 'e2e-operator', name: 'E2E Marketplace', canonical_url: appOrigin, version: 'v4.0.0-e2e' })
+  if (parts.join('/') === 'api/v1/instance') return sendJson(response, 200, { id: 'e2e-operator', name: 'E2E Marketplace', canonical_url: landingFixtures?.canonical_url ?? appOrigin, version: 'v4.0.0-e2e' })
   if (parts.join('/') === 'api/v1/registries') return sendJson(response, 200, registrySummaries)
   if (parts.length === 4 && parts[0] === 'api' && parts[1] === 'v1' && parts[2] === 'registries') {
-    return parts[3] === registry.id ? sendJson(response, 200, registry) : sendJson(response, 404, { error: 'registry not found' })
+    const record = registries.find(candidate => candidate.id === parts[3])
+    return record ? sendJson(response, 200, record) : sendJson(response, 404, { error: 'registry not found' })
   }
   if (parts.length === 5 && parts[0] === 'api' && parts[1] === 'v1' && parts[2] === 'registries' && parts[4] === 'history') {
-    return parts[3] === registry.id ? sendJson(response, 200, []) : sendJson(response, 404, { error: 'registry not found' })
+    return registries.some(candidate => candidate.id === parts[3]) ? sendJson(response, 200, []) : sendJson(response, 404, { error: 'registry not found' })
   }
   if (parts.length >= 6 && parts[0] === 'api' && parts[1] === 'v1' && parts[2] === 'resources') {
     const item = items.find(candidate => candidate.registry_id === parts[3] && candidate.kind === parts[4] && candidate.name === parts[5])
