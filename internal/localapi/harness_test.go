@@ -308,7 +308,6 @@ func TestLocalAPIUserHarness(t *testing.T) {
 		gitURL := "file://" + filepath.ToSlash(newBareGitSource(t))
 		writeFile(t, filepath.Join(home, ".agents", "config.yaml"),
 			"apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  infra_skills:\n    git: "+gitURL+"\n    ref: main\n    path: solo\nresources:\n  infra_skills:\n    all: true\n    exclude: [skill/solo]\n")
-		bootstrap["gitSourceURL"] = gitURL
 	}
 	if orgConfigPath != "" {
 		bootstrap["orgConfig"] = orgConfigPath

@@ -580,6 +580,8 @@ export class WorkspaceController {
       (error) => {
         if (error instanceof RequestError && error.code === 'localapi.directory_unavailable') {
           this.state.sourceError = 'Directory source path does not exist or is not a directory.'
+        } else {
+          this.state.error = 'The action could not be started'
         }
       },
     )
