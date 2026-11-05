@@ -11,6 +11,10 @@ sits in `.claude/settings.local.json` or `.claude/settings.json`, in headless
 or interactive sessions. Native delivery can be verified at user scope now;
 repository scope stays decomposed until the gap is explained.
 
+## Release note
+
+Claude Code plugins selected at user scope are now delivered as native Claude Code plugins with `delivery: auto`. At repository scope they are still installed as decomposed members, and an explicit `delivery: native` there fails with `plugin.delivery.native-unverified`.
+
 ## What Changes
 
 - Plugin catalogs can declare native delivery status per scope. The Claude
