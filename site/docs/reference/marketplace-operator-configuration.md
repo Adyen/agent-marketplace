@@ -150,7 +150,9 @@ SQLite needs a writable database file on disk. The server rejects `:memory:`, `f
 
 | Field | Type | Required | Default | Description |
 |---|---|:---:|---|---|
-| `interval` | Go duration string or integer nanoseconds | no | `30m` | Delay between background refresh cycles. Must be positive. |
+| `interval` | Go duration string or integer nanoseconds | no | `30m` | Delay between source observations of one registry. Must be positive. |
+
+The worker observes each registry's configured ref at a stable per-registry point inside this interval, so registries spread their probes across it instead of probing together. A registry pinned to a full commit SHA resolves locally without contacting the origin. An observation that finds the commit and startup configuration unchanged performs no clone or ingestion; a changed commit or configuration requests one refresh, and a due periodic reconciliation forces a full reindex at least once every 24 hours. Each remote probe is bounded by a 30-second timeout. The reconciliation interval and probe timeout are code constants, not YAML fields.
 
 ## `policy`
 

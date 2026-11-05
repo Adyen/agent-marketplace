@@ -529,7 +529,7 @@ agent-marketplace serve reindex [registry-slug-or-id] --config <path>
 |---|---|:---:|---|---|
 | `--config` | path | yes | none | Marketplace operator YAML file. |
 
-With no registry argument, the command reindexes every configured registry. With one slug or ID, it reindexes only that registry. It applies revocations before fetching and checks store readiness after processing.
+With no registry argument, the command reindexes every configured registry. With one slug or ID, it reindexes only that registry. It applies revocations before fetching and checks store readiness after processing. Each refresh runs even when the registry's commit and configuration are unchanged; a reindex that matches an already-active refresh of the same commit and configuration coalesces onto it instead of queueing another job.
 
 ### `serve reset`
 

@@ -28,6 +28,15 @@ func managedFixture(t testing.TB) (Deps, admin.Service) {
 	return Deps{Config: cfg, MetadataStore: meta, BlobStore: blobs}, svc
 }
 
+func TestManagedLeaseDurationCoversCloneAndIngestion(t *testing.T) {
+	cfg := createTestConfig(t, "unused")
+	cfg.Policy.Limits.CloneDuration = config.Duration(5 * time.Minute)
+	cfg.Policy.Limits.IngestionDuration = config.Duration(2 * time.Minute)
+	if got, floor := managedLeaseDuration(cfg), cfg.Policy.Limits.CloneDuration.Duration()+cfg.Policy.Limits.IngestionDuration.Duration(); got < floor {
+		t.Fatalf("lease duration = %s, want at least clone+ingestion %s", got, floor)
+	}
+}
+
 func TestManagedFanoutUsesCurrentActiveGeneration(t *testing.T) {
 	ctx := context.Background()
 	deps, svc := managedFixture(t)
