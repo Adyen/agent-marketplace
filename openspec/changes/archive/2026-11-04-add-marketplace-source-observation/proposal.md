@@ -6,7 +6,7 @@ The Marketplace worker clones, checks out, ingests, and republishes every config
 
 ## What Changes
 
-- Add a bounded remote-ref resolution that reuses the existing acquisition Git path: URL and ref validation, hardened Git arguments, the credential environment, the custom CA, the timeout, output bounds, and redaction. Branches resolve to their tip, annotated tags to the peeled commit, and a full commit needs no remote request. A missing or ambiguous ref is a source failure.
+- Add a bounded remote-ref resolution that reuses the existing acquisition Git path: URL and ref validation, hardened Git arguments, the credential environment, the custom CA, the timeout, output bounds, and redaction. Branches resolve to their tip, annotated tags to the peeled commit, and a full commit needs no remote request. A missing ref is a source failure; a short ref naming both a branch and a tag resolves to the tag, as acquisition does.
 - Replace the worker's unconditional periodic refresh in operator-config management mode with source observation. Each registry is observed at a stable per-registry phase of `refresh.interval`. A refresh is requested only when the observed commit differs from the last successfully indexed commit or the startup configuration of that registry changed, when a periodic reconciliation is due, or when an operator runs `serve reindex`.
 - Every observation and refresh takes the registry work lease and admission from the deployment-wide host budget, so several workers sharing one metadata store neither duplicate probes nor exceed a host's concurrent operations.
 - A failed observation keeps the last successfully published registry head and refresh status, and backs off that registry deterministically, capped at the reconciliation interval.

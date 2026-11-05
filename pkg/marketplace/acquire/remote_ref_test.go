@@ -16,6 +16,7 @@ import (
 
 // spec: marketplace-source-observation/a-branch-resolves-to-its-tip-commit
 func TestResolveRemoteRefReturnsAdvancedBranchTip(t *testing.T) {
+	isolateGitConfig(t)
 	repo := createGitRepo(t, map[string]string{"README.md": "first"})
 	bare := bareGitFixture(t, repo)
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("second"), 0o644); err != nil {
@@ -36,6 +37,7 @@ func TestResolveRemoteRefReturnsAdvancedBranchTip(t *testing.T) {
 
 // spec: marketplace-source-observation/an-annotated-tag-resolves-to-the-peeled-commit
 func TestResolveRemoteRefResolvesAnnotatedAndLightweightTags(t *testing.T) {
+	isolateGitConfig(t)
 	repo := createGitRepo(t, map[string]string{"README.md": "tag target"})
 	want := gitTestOutput(t, repo, "rev-parse", "HEAD")
 	runGitTestCommand(t, repo, "git", "tag", "-a", "annotated", "-m", "annotated release", "HEAD")
@@ -56,6 +58,7 @@ func TestResolveRemoteRefResolvesAnnotatedAndLightweightTags(t *testing.T) {
 }
 
 func TestResolveRemoteRefIgnoresTagsSharingAPrefix(t *testing.T) {
+	isolateGitConfig(t)
 	repo := createGitRepo(t, map[string]string{"README.md": "release"})
 	want := gitTestOutput(t, repo, "rev-parse", "HEAD")
 	runGitTestCommand(t, repo, "git", "tag", "-a", "v1", "-m", "release", "HEAD")
@@ -103,22 +106,40 @@ func TestResolveRemoteRefReturnsFullCommitWithoutGitProcess(t *testing.T) {
 	}
 }
 
-// spec: marketplace-source-observation/a-short-ref-naming-both-a-branch-and-a-tag-fails-as-ambiguous
-func TestResolveRemoteRefRejectsAmbiguousShortRef(t *testing.T) {
-	repo := createGitRepo(t, map[string]string{"README.md": "branch and tag"})
-	runGitTestCommand(t, repo, "git", "tag", "main", "HEAD")
-	bare := bareGitFixture(t, repo)
-
-	got, err := ResolveRemoteRef(context.Background(), "file://"+bare, "main", Credentials{}, time.Minute)
-	if !errors.Is(err, ErrAmbiguousRef) {
-		t.Fatalf("ResolveRemoteRef error = %v, want ErrAmbiguousRef", err)
+// spec: marketplace-source-observation/a-short-ref-naming-both-a-branch-and-a-tag-resolves-to-the-tag
+func TestResolveRemoteRefPrefersTagForAmbiguousShortRef(t *testing.T) {
+	isolateGitConfig(t)
+	repo := createGitRepo(t, map[string]string{"README.md": "tag target"})
+	runGitTestCommand(t, repo, "git", "tag", "-a", "dup", "-m", "tag release", "HEAD")
+	tagTarget := gitTestOutput(t, repo, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("branch tip"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if got != "" {
-		t.Fatalf("resolved commit = %q, want empty on ambiguity", got)
+	commitAll(t, repo, "branch tip")
+	runGitTestCommand(t, repo, "git", "branch", "dup", "HEAD")
+	branchTip := gitTestOutput(t, repo, "rev-parse", "HEAD")
+	bare := bareGitFixture(t, repo)
+	origin := "file://" + bare
+
+	got, err := ResolveRemoteRef(context.Background(), origin, "dup", Credentials{}, time.Minute)
+	if err != nil {
+		t.Fatalf("ResolveRemoteRef: %v", err)
+	}
+	if got != tagTarget || got == branchTip {
+		t.Fatalf("resolved commit = %q, want annotated tag peeled commit %q (branch tip %q)", got, tagTarget, branchTip)
+	}
+	acquired, err := Clone(context.Background(), origin, "dup", Credentials{}, Limits{}, time.Minute)
+	if err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+	defer func() { _ = acquired.Release() }()
+	if acquired.Commit != got {
+		t.Fatalf("acquisition commit = %q, want resolved commit %q", acquired.Commit, got)
 	}
 }
 
 func TestResolveRemoteRefReturnsNotFoundSentinel(t *testing.T) {
+	isolateGitConfig(t)
 	repo := createGitRepo(t, map[string]string{"README.md": "available"})
 	bare := bareGitFixture(t, repo)
 
@@ -187,6 +208,14 @@ func TestSourceHostNormalizesHostAndLocalOrigins(t *testing.T) {
 			}
 		})
 	}
+}
+
+func isolateGitConfig(t *testing.T) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 }
 
 func bareGitFixture(t *testing.T, repo string) string {

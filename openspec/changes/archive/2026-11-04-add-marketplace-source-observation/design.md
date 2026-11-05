@@ -18,7 +18,7 @@ Today `worker.Run` enqueues one refresh per registry at startup and on every `re
 
 `acquire.ResolveRemoteRef(ctx, origin, ref, cred, timeout) (string, error)` validates origin and ref with the same validators as `clone`, builds the environment with `newWorkspace` (credential environment and CA copy), prefixes `hardenedGitArgs()`, and runs `git ls-remote -- <origin> <patterns>` through the same subprocess helper so failures are redacted and truncated identically. Standard output is read through a fixed byte bound; exceeding it is an error. A second Git runner or authentication path was rejected (contract NG4).
 
-Ref semantics: a full lowercase commit returns immediately with no subprocess. `refs/heads/X` and `refs/tags/X` match exactly. `origin/X` and `refs/remotes/origin/X` normalize to `refs/heads/X`, consistent with `fetchArgs`. A short name `X` queries `refs/heads/X` and `refs/tags/X`; both present is an ambiguity error. A tag line with a peeled `^{}` entry resolves to the peeled commit. No match returns an error wrapping a not-found sentinel. Each output line must be `<40 or 64 lowercase hex>\t<ref>`; anything else fails.
+Ref semantics: a full lowercase commit returns immediately with no subprocess. `refs/heads/X` and `refs/tags/X` match exactly. `origin/X` and `refs/remotes/origin/X` normalize to `refs/heads/X`, consistent with `fetchArgs`. A short name `X` queries `refs/heads/X` and `refs/tags/X`; when both are present the tag wins, matching the ref `git fetch` selects during acquisition. A tag line with a peeled `^{}` entry resolves to the peeled commit. No match returns an error wrapping a not-found sentinel. Each output line must be `<40 or 64 lowercase hex>\t<ref>`; anything else fails.
 
 `acquire.SourceHost(origin)` derives the host-budget key from a validated origin: lowercase host and port for URL and scp-like forms, with user information removed; `file://` and local paths map to one `local` key so local origins never consume a remote host's allowance.
 
@@ -62,7 +62,7 @@ Structured `slog` records: `source observation` (registry, outcome changed/uncha
 ## Risks / Trade-offs
 
 - [The startup digest over-triggers a refresh after an irrelevant config edit and restart] → Acceptable: one redundant refresh per restart; slice 3 replaces the digest.
-- [A short ref that names both a branch and a tag now fails observation although acquisition picks one] → Fail closed per the approved design; the failure is visible in logs and probe health and keeps the last index.
+- [A short ref that names both a branch and a tag could resolve differently from acquisition] → Resolution prefers the tag, as `git fetch` does, so observation and acquisition agree on the commit.
 - [Host-budget saturation delays freshness] → Intended: safety wins over freshness and the delay is logged.
 - [A crash after publication before bookkeeping causes one redundant refresh] → Accepted by the approved design.
 

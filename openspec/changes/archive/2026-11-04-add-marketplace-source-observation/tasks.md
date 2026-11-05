@@ -2,7 +2,7 @@
 
 ## 1. Remote ref resolution
 
-- [x] 1.1 Add local bare-repository tests for branch tip, annotated and lightweight tags, full commit without a Git process, ambiguous short ref, missing ref, and credential-free errors and logs, each scenario bound by `// spec: marketplace-source-observation/<scenario-slug>`; verify they fail on the base commit
+- [x] 1.1 Add local bare-repository tests for branch tip, annotated and lightweight tags, full commit without a Git process, short ref naming both a branch and a tag, missing ref, and credential-free errors and logs, each scenario bound by `// spec: marketplace-source-observation/<scenario-slug>`; verify they fail on the base commit
 - [x] 1.2 Implement remote ref resolution and source host identity on the existing acquisition Git path; verify the resolution tests pass
 
 ## 2. Observation scheduler

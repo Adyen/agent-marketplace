@@ -7,7 +7,7 @@ The Marketplace worker observes each configured registry repository cheaply thro
 
 ### Requirement: Remote ref resolution uses the hardened acquisition path
 
-The Marketplace SHALL resolve a registry's configured ref to a commit through the same Git execution path it uses for acquisition: the same origin and ref validation, hardened Git arguments, credential environment, custom CA, timeout, output bounds, and redaction. Resolution MUST NOT create a checkout or download the repository tree. A ref naming a branch SHALL resolve to that branch's tip commit. A ref naming an annotated tag SHALL resolve to the commit the tag points at, not the tag object, and a lightweight tag to its commit. A full lowercase commit SHALL resolve to itself without contacting the origin. A short ref that names both a branch and a tag MUST fail as ambiguous. A ref the origin does not advertise MUST fail. No resolution error or log record MAY contain a credential value.
+The Marketplace SHALL resolve a registry's configured ref to a commit through the same Git execution path it uses for acquisition: the same origin and ref validation, hardened Git arguments, credential environment, custom CA, timeout, output bounds, and redaction. Resolution MUST NOT create a checkout or download the repository tree. A ref naming a branch SHALL resolve to that branch's tip commit. A ref naming an annotated tag SHALL resolve to the commit the tag points at, not the tag object, and a lightweight tag to its commit. A full lowercase commit SHALL resolve to itself without contacting the origin. A short ref that names both a branch and a tag SHALL resolve to the tag's commit, the same ref acquisition fetches. A ref the origin does not advertise MUST fail. No resolution error or log record MAY contain a credential value.
 
 #### Scenario: A branch resolves to its tip commit
 
@@ -24,10 +24,10 @@ The Marketplace SHALL resolve a registry's configured ref to a commit through th
 - **WHEN** a registry tracks a full commit and its origin is unreachable
 - **THEN** resolving the ref returns that commit and runs no Git command
 
-#### Scenario: A short ref naming both a branch and a tag fails as ambiguous
+#### Scenario: A short ref naming both a branch and a tag resolves to the tag
 
 - **WHEN** a registry tracks a short ref name that exists as both a branch and a tag in the origin
-- **THEN** resolution fails with an ambiguity error and returns no commit
+- **THEN** resolution returns the commit the tag points at, which is the commit acquisition fetches for that ref
 
 #### Scenario: Ref resolution errors and logs never contain credentials
 

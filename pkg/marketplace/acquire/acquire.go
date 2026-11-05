@@ -43,8 +43,6 @@ type Credentials struct {
 var (
 	// ErrRefNotFound indicates that the origin does not advertise the requested ref.
 	ErrRefNotFound = errors.New("remote ref not found")
-	// ErrAmbiguousRef indicates that a short ref names both a branch and a tag.
-	ErrAmbiguousRef = errors.New("remote ref is ambiguous")
 )
 
 const maxRemoteRefOutputBytes = 1024 * 1024
@@ -124,16 +122,13 @@ func ResolveRemoteRef(ctx context.Context, origin, ref string, cred Credentials,
 		}
 		return "", fmt.Errorf("resolve ref %q: %w", ref, ErrRefNotFound)
 	}
-	if branchRef != "" && tagRef != "" && refs[branchRef] != "" && refs[tagRef] != "" {
-		return "", fmt.Errorf("resolve ref %q: %w", ref, ErrAmbiguousRef)
-	}
-	if branchRef != "" && refs[branchRef] != "" {
-		return refs[branchRef], nil
-	}
 	if tagRef != "" {
 		if commit := peeledTagCommit(refs, tagRef); commit != "" {
 			return commit, nil
 		}
+	}
+	if branchRef != "" && refs[branchRef] != "" {
+		return refs[branchRef], nil
 	}
 	return "", fmt.Errorf("resolve ref %q: %w", ref, ErrRefNotFound)
 }
