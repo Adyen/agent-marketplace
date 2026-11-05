@@ -8,6 +8,10 @@ does not separate locked and installed plugin revisions, and the TUI has no
 plugin rows. A plugin that declares dependencies is rejected outright, so it
 cannot even be inspected.
 
+## Release note
+
+`list`, `install`, `remove`, `update`, `sync`, and `status` handle plugins, and the new `inspect plugin/<name>` shows a plugin's source, members, and per-harness delivery. The TUI shows plugin members under one parent row, where you can exclude individual members.
+
 ## What Changes
 
 - `list --kind plugin` lists plugins.
