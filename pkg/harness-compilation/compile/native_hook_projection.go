@@ -110,46 +110,53 @@ func projectNativeHook(h *ir.Hook, dst Target, projection *targetmeta.NativeHook
 	if !emit {
 		return nil, diags, nil
 	}
-	entry, err := nativeProjectionEntry(projection.Shape, rule)
+	projected, err := nativeProjectionArtifact(projection, machineScope, resolved.Event, rule)
 	if err != nil {
 		return nil, nil, fmt.Errorf("target %q native hook entry: %w", dst, err)
 	}
+	return []artifact.Artifact{projected}, diags, nil
+}
 
-	eventMap, err := json.Marshal(map[string][]json.RawMessage{resolved.Event: {entry}})
+func nativeProjectionArtifact(projection *targetmeta.NativeHookProjection, machineScope bool, event string, rule any) (artifact.Artifact, error) {
+	entry, err := nativeProjectionEntry(projection.Shape, rule)
 	if err != nil {
-		return nil, nil, fmt.Errorf("encode native hook event: %w", err)
+		return artifact.Artifact{}, err
+	}
+	eventMap, err := json.Marshal(map[string][]json.RawMessage{event: {entry}})
+	if err != nil {
+		return artifact.Artifact{}, fmt.Errorf("encode native hook event: %w", err)
 	}
 	file := projection.File(machineScope)
 	document := make(map[string]json.RawMessage, len(file.Envelope)+1)
 	for key, value := range file.Envelope {
 		raw, err := json.Marshal(value)
 		if err != nil {
-			return nil, nil, fmt.Errorf("encode native hook envelope: %w", err)
+			return artifact.Artifact{}, fmt.Errorf("encode native hook envelope: %w", err)
 		}
 		document[key] = raw
 	}
 	if file.Member != "" {
 		if _, exists := document[file.Member]; exists {
-			return nil, nil, fmt.Errorf("native hook member %q conflicts with its envelope", file.Member)
+			return artifact.Artifact{}, fmt.Errorf("native hook member %q conflicts with its envelope", file.Member)
 		}
 		document[file.Member] = eventMap
 	} else {
 		var events map[string]json.RawMessage
 		if err := json.Unmarshal(eventMap, &events); err != nil {
-			return nil, nil, fmt.Errorf("decode native hook event map: %w", err)
+			return artifact.Artifact{}, fmt.Errorf("decode native hook event map: %w", err)
 		}
 		for key, value := range events {
 			if _, exists := document[key]; exists {
-				return nil, nil, fmt.Errorf("native hook event %q conflicts with its envelope", key)
+				return artifact.Artifact{}, fmt.Errorf("native hook event %q conflicts with its envelope", key)
 			}
 			document[key] = value
 		}
 	}
 	data, err := json.Marshal(document)
 	if err != nil {
-		return nil, nil, fmt.Errorf("encode native hook artifact: %w", err)
+		return artifact.Artifact{}, fmt.Errorf("encode native hook artifact: %w", err)
 	}
-	return []artifact.Artifact{{
+	return artifact.Artifact{
 		Path:                           file.Path,
 		Bytes:                          data,
 		Mode:                           0o600,
@@ -157,7 +164,7 @@ func projectNativeHook(h *ir.Hook, dst Target, projection *targetmeta.NativeHook
 		FragmentKey:                    file.Path,
 		Reconciliation:                 artifact.ReconciliationPolicy{Mode: artifact.ReconciliationExternal},
 		ExternalReconciliationRequired: true,
-	}}, diags, nil
+	}, nil
 }
 
 // nativeHookPrechecks applies the hook-only native-source guards the catalog
@@ -172,9 +179,6 @@ func nativeHookPrechecks(h *ir.Hook, dst Target) ([]diag.Diagnostic, bool) {
 		return []diag.Diagnostic{{Code: diag.CodeHookCodexUnsupported, Severity: diag.SeverityError, Target: string(dst), Resource: h.Name(), Message: "Codex hook has an invalid additional context limit; hook suppressed", Source: source}}, true
 	}
 	if h.HookSource == string(targetmeta.TargetCodex) {
-		// A native Codex hook is valid only where the catalog declares it;
-		// undeclared events and matchers on matcher-less events are refused so
-		// the hook cannot silently widen.
 		if !hookpolicy.IsDeclaredEvent(targetmeta.TargetCodex, h.Event) ||
 			(h.Matcher != "" && hookpolicy.NativeEventMatcherKind(targetmeta.TargetCodex, h.Event) == hookpolicy.MatcherKindNone) {
 			return []diag.Diagnostic{{Code: diag.CodeHookCodexUnsupported, Severity: diag.SeverityError, Target: string(dst), Resource: h.Name(), Message: "Codex does not execute this hook event or handler; hook suppressed", Source: source}}, true
@@ -277,8 +281,6 @@ func nativeHookRule(h *ir.Hook, dst Target, resolved hookpolicy.Resolved) (rule 
 		if resolved.Timeout != nil {
 			rule["timeout"] = *resolved.Timeout
 		}
-		// The event key the rule array hangs off is not a member, but `hooks`
-		// is the member that carries groups in the envelope; both are reserved.
 		canonical["hooks"] = struct{}{}
 	case TargetCodex:
 		return codexNativeHookRule(h, resolved)
@@ -419,10 +421,6 @@ func devinHookPayload(h *ir.Hook, name string, source diag.SourceRef, resolvedCo
 	return key, value, diags
 }
 
-// codexNativeHookRule builds the Codex handler with its documented
-// execution sidecar fields. Fields without a documented command-handler
-// equivalent are dropped with a warning, and SessionEnd async is omitted
-// because that event always runs synchronously.
 func codexNativeHookRule(h *ir.Hook, resolved hookpolicy.Resolved) (map[string]any, []diag.Diagnostic, bool) {
 	name, source := h.Name(), DiagSource(h.Source)
 	var diags []diag.Diagnostic
@@ -461,8 +459,6 @@ func codexNativeHookRule(h *ir.Hook, resolved hookpolicy.Resolved) (map[string]a
 	return rule, diags, true
 }
 
-// geminiNativeHookRule wraps the flat rule in the matcher group Gemini's
-// settings.json hooks member carries, including preserved group extras.
 func geminiNativeHookRule(h *ir.Hook, dst Target, name string, source diag.SourceRef, rule map[string]any, canonical map[string]struct{}, matcher string) (map[string]any, []diag.Diagnostic, bool) {
 	extraKeys, diags := HookExtraKeys(h.Extra, canonical, dst, name, source)
 	for _, k := range extraKeys {
@@ -482,11 +478,6 @@ func geminiNativeHookRule(h *ir.Hook, dst Target, name string, source diag.Sourc
 	return group, diags, true
 }
 
-// nativeProjectionEntry encodes one rule under the file's declared hook
-// shape: matcher-groups lifts the matcher onto a rule group containing the
-// remaining handler fields (or keeps an already grouped rule), while
-// event-handlers keeps the flat handler (its matcher is a handler member).
-// Reserved ownership metadata is refused case-insensitively at any depth.
 func nativeProjectionEntry(shape targetmeta.HookShape, rule any) (json.RawMessage, error) {
 	raw, err := json.Marshal(rule)
 	if err != nil {
@@ -532,8 +523,6 @@ func nativeProjectionEntry(shape targetmeta.HookShape, rule any) (json.RawMessag
 	}
 }
 
-// validateNativeHookFields refuses reserved ownership metadata anywhere in the
-// entry, case-insensitively, so preserved extras can never carry it.
 func validateNativeHookFields(raw json.RawMessage) error {
 	pending := []json.RawMessage{raw}
 	for len(pending) > 0 {

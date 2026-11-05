@@ -7,36 +7,25 @@ Describes the observable progressive startup behavior of the interactive TUI: ho
 
 ### Requirement: Progressive staged snapshot delivery
 
-The TUI SHALL deliver the startup snapshot progressively under one request
-generation: a provisional stage of configured selections, a config stage
-publishing the validated merged configuration, an inventory stage of verified
-rows with drift pending, and a final assessed stage.
+The TUI SHALL validate required consumer roots and include trees under `consumer-config-format` before delivering usable startup configuration or rows. For valid input, it SHALL deliver the startup snapshot progressively under one request generation: a provisional stage of configured selections, a config stage publishing the validated merged configuration, an inventory stage of verified rows with drift pending, and a final assessed stage. Unsupported input MUST produce the path-specific format refusal without legacy operation or in-process conversion.
 
 #### Scenario: Startup snapshot delivers config, inventory, then assessed stages
 
-- **WHEN** a startup snapshot resolves a valid merged configuration
-- **THEN** it MUST deliver, in order under one shared generation, a
-  provisional config stage whose rows are all marked verification-pending, a
-  config stage publishing the validated merged configuration without rows, an
-  inventory stage publishing verified rows with drift still pending, and a
-  final stage publishing assessed drift and diagnostics
+- **WHEN** a startup snapshot resolves a valid v4 merged configuration
+- **THEN** it MUST deliver, in order under one shared generation, a provisional config stage whose rows are all marked verification-pending, a config stage publishing the validated merged configuration without rows, an inventory stage publishing verified rows with drift still pending, and a final stage publishing assessed drift and diagnostics
 
 #### Scenario: Invalid configuration delivers one fail-closed final stage
 
-- **WHEN** the merged configuration cannot be parsed or validated during
-  startup
-- **THEN** the snapshot MUST deliver exactly one final stage carrying
-  diagnostics
+- **WHEN** a required root or include tree cannot be parsed or validated during startup, including an unsupported root or explicit fragment version
+- **THEN** the snapshot MUST deliver exactly one final stage carrying diagnostics
 - **AND** no provisional, config, or inventory stage MUST be delivered
+- **AND** unsupported consumer input MUST retain the path-specific diagnostic from `consumer-config-format`
 
 #### Scenario: Config stage starts cached-first Marketplace discovery before local verification finishes
 
-- **WHEN** the config stage publishes the validated merged configuration and
-  that configuration declares Marketplace endpoints
-- **THEN** cached-first Marketplace discovery MUST start immediately without
-  waiting for local catalog verification
-- **AND** cached discovery rows delivered during local verification MUST
-  render without advancing the snapshot generation
+- **WHEN** the config stage publishes the validated merged configuration and that configuration declares Marketplace endpoints
+- **THEN** cached-first Marketplace discovery MUST start immediately without waiting for local catalog verification
+- **AND** cached discovery rows delivered during local verification MUST render without advancing the snapshot generation
 
 ### Requirement: Verification-pending provisional rows
 
@@ -244,8 +233,8 @@ detail's resource identity as rows are inserted or reordered between stages.
 
 #### Scenario: Verified rows inserted above a selection keep it on the same screen line
 
-- **WHEN** a pending row is selected and verified inventory inserts rows
-  above it
+- **WHEN** a pending row is selected in a list that overflows the viewport and
+  verified inventory inserts rows above it
 - **THEN** the selection MUST follow the same resource
 - **AND** the selected row MUST keep its line within the list viewport rather
   than shifting on screen
@@ -355,3 +344,41 @@ The TUI SHALL read view settings once at startup from `$XDG_STATE_HOME/agent-mar
 
 - **WHEN** the preference file is missing, malformed, unsupported, invalid, or unreadable, the user cancels or accepts unchanged preferences, or an atomic save fails
 - **THEN** startup SHALL continue with defaults and a warning only for a bad existing file, cancellation and unchanged acceptance SHALL write nothing, and failure SHALL leave existing bytes unchanged with visible feedback
+
+### Requirement: Missing optional selections are warnings
+
+When a non-required, non-collection selection names a resource that a successfully loaded registry does not provide, the TUI SHALL show the selection as an unavailable row with its not-found reason and a warning diagnostic, and SHALL still assess drift for the remaining resources. Such a selection SHALL NOT fail the snapshot's authoritative assessment, mark rows stale, or turn a sync, update, install, or toggle reload into a failure. Required or collection selections that are not found, and selections whose registry catalog failed to load, SHALL continue to fail the assessment. An update refusal for a selection that resolved at the previously locked revision and stops resolving at the new one happens before publication, as `resource-selection` requires, and is not a reload failure under this requirement.
+
+#### Scenario: Optional missing selection keeps the assessment
+
+- **WHEN** the final stage resolves a configuration in which a loaded registry lacks a non-required selected skill
+- **THEN** the missing skill MUST render as an unavailable row carrying its not-found reason, with a warning diagnostic
+- **AND** drift MUST be assessed for the other resources and the footer MUST NOT report drift unavailable
+- **AND** a sync reload of that snapshot MUST complete as success with warnings rather than failing verification
+
+#### Scenario: Unverifiable selections still fail the assessment
+
+- **WHEN** a required selection is not found, or a selected resource's registry catalog fails to load
+- **THEN** the final stage MUST NOT report drift as assessed and a reload of that snapshot MUST fail
+
+### Requirement: Installed collections render as installed rows
+
+The provisional and verified startup stages SHALL render a selected collection, whether a Git or local collection or a direct Marketplace collection pin, as an installed row with its scope badges. They SHALL NOT render it as available. Disabling an installed collection SHALL remove its collection selection through the existing config write path.
+
+#### Scenario: verified-selected-collection-row-is-installed
+
+- **WHEN** verified inventory contains a selected collection
+- **THEN** its row MUST be enabled with the scope of the selecting layer
+- **AND** the row MUST NOT appear again as an available row
+
+#### Scenario: provisional-selected-collection-row-is-installed
+
+- **WHEN** the validated configuration selects a collection
+- **THEN** the provisional stage MUST render that collection as a verification-pending installed row
+- **AND** a non-direct nested collection pin MUST NOT render a row
+
+#### Scenario: disabling-installed-collection-removes-selection
+
+- **WHEN** the user disables an installed collection row in its selecting scope
+- **THEN** the collection selection MUST be removed from that scope's configuration
+- **AND** other selections in that configuration MUST be preserved

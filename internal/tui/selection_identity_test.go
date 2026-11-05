@@ -39,7 +39,7 @@ func TestCompetingRegistryCleanupIsScopeBound(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	initial := "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nhooks: {include: [startup]}\nregistries:\n  - url: https://trusted.example/repo.git\n    ref: main\n  - url: https://user-rival.example/repo.git\n    ref: main\n    skills: {include: [review]}\n"
+	initial := "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  trusted: {git: https://trusted.example/repo.git, ref: main}\n  rival: {git: https://user-rival.example/repo.git, ref: main}\nresources:\n  trusted: {include: [hook/startup]}\n  rival: {include: [hook/startup, skill/review]}\n"
 	if err := os.WriteFile(configPath, []byte(initial), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestCompetingRegistryCleanupIsScopeBound(t *testing.T) {
 		t.Fatalf("same-scope cleanup = %#v", msg)
 	}
 	updated, err := os.ReadFile(configPath)
-	if err != nil || !strings.Contains(string(updated), "exclude: [review]") {
+	if err != nil || !strings.Contains(string(updated), "exclude: [skill/review]") {
 		t.Fatalf("existing user rival exclude disappeared: %q err=%v", updated, err)
 	}
 
@@ -82,7 +82,7 @@ func TestCompetingRegistryCleanupIsScopeBound(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(projectConfig), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	projectInitial := "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: https://project-rival.example/repo.git\n    ref: main\n    skills: {include: [review]}\n"
+	projectInitial := "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  rival: {git: https://project-rival.example/repo.git, ref: main}\nresources:\n  rival: {include: [skill/review]}\n"
 	if err := os.WriteFile(projectConfig, []byte(projectInitial), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestCompetingRegistryCleanupIsScopeBound(t *testing.T) {
 		t.Fatalf("project cleanup = %#v", msg)
 	}
 	projectUpdated, err := os.ReadFile(projectConfig)
-	if err != nil || !strings.Contains(string(projectUpdated), "exclude: [review]") {
+	if err != nil || !strings.Contains(string(projectUpdated), "exclude: [skill/review]") {
 		t.Fatalf("project rival exclude missing: %q err=%v", projectUpdated, err)
 	}
 	if strings.Contains(string(projectUpdated), "user-not-added.example") {
@@ -184,27 +184,28 @@ func TestCompetingRegistryCleanupStaleBindingRefuses(t *testing.T) {
 	}
 }
 
-func TestGlobalToggleExistingRelativeRegistryCleanup(t *testing.T) {
+func TestGlobalToggleV4RelativeDirectoryCleanupAndCreationBoundary(t *testing.T) {
 	home, repo := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
 	path := filepath.Join(home, ".agents", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	const initial = "apiVersion: agent-marketplace/v2\nregistries:\n  - url: ./project-registry\n    skills: {include: [review]}\n"
+	const initial = "apiVersion: agent-marketplace/v4\nsources:\n  local: {directory: ./project-registry}\nresources:\n  local: {include: [skill/review]}\n"
 	if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	act := toggleAction{scope: scopeGlobal, kind: ir.KindSkill, skillName: "review", registryURL: "./project-registry"}
+	act := toggleAction{scope: scopeGlobal, kind: ir.KindSkill, skillName: "review", registryURL: filepath.Join(canonicalWorkspacePath(t, home), ".agents", "project-registry"), registryKind: config.V4SourceDirectory}
 	msg, ok := runScopedToggle(repo, act)().(configWrittenMsg)
 	if !ok || msg.err != nil {
 		t.Fatalf("disable existing relative user registry = %#v", msg)
 	}
 	updated, err := os.ReadFile(path)
-	if err != nil || !strings.Contains(string(updated), "exclude: [review]") {
+	if err != nil || !strings.Contains(string(updated), "exclude: [skill/review]") {
 		t.Fatalf("disabled selection missing: %q err=%v", updated, err)
 	}
 	act.enable = true
+	act.registryURL = "./project-registry"
 	msg, ok = runScopedToggle(repo, act)().(configWrittenMsg)
 	var boundary *config.GlobalRelativeRegistryError
 	if !ok || !errors.As(msg.err, &boundary) {
@@ -214,7 +215,7 @@ func TestGlobalToggleExistingRelativeRegistryCleanup(t *testing.T) {
 	if err != nil || string(after) != string(updated) {
 		t.Fatalf("rejected enable changed config: %q err=%v", after, err)
 	}
-	const empty = "apiVersion: agent-marketplace/v2\nregistries: []\n"
+	const empty = "apiVersion: agent-marketplace/v4\nsources: {}\n"
 	if err := os.WriteFile(path, []byte(empty), 0o600); err != nil {
 		t.Fatal(err)
 	}

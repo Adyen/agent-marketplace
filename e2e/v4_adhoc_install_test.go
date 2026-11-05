@@ -68,17 +68,20 @@ func TestV4UserConfigInstallsAndRemovesAdHocGitResource(t *testing.T) {
 	env.AssertExitCode(env.RunAM("sync", "--check"), 0)
 }
 
-// A relative in-repository directory registry installs and removes through
-// `--from` in a legacy repository config; a v4 repository config must behave
-// the same and keep the committed source portable.
-func TestAdHocRelativeDirectoryParityAcrossSchemas(t *testing.T) {
-	for _, apiVersion := range []string{"agent-marketplace/v2", "agent-marketplace/v4"} {
-		t.Run(apiVersion, func(t *testing.T) {
+// A relative in-repository directory installs and removes through --from,
+// whether the v4 root is initially empty or already authors that source. Both
+// workflows must keep the committed source portable and edits idempotent.
+func TestV4AdHocRelativeDirectoryWithEmptyAndConfiguredRoots(t *testing.T) {
+	for _, fixture := range []struct{ name, root string }{
+		{"ad-hoc", "apiVersion: agent-marketplace/v4\n"},
+		{"configured", "apiVersion: agent-marketplace/v4\nsources: {local: {directory: ./vendor/registry}}\nresources: {local: {include: [skill/review]}}\n"},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
 			env := newEnv(t)
 			env.InitGitRepo()
 			env.MustRunAM("init", "--harnesses", "factory")
 			env.WriteFile("/workspace/vendor/registry/skills/review/SKILL.md", "---\nname: review\ndescription: Review\n---\n\nReview body\n")
-			env.WriteRepoConfig("apiVersion: " + apiVersion + "\n")
+			env.WriteRepoConfig(fixture.root)
 
 			install := env.RunAM("install", "review", "--from", "./vendor/registry", "--scope", "repo")
 			if install.ExitCode != 0 {
@@ -86,6 +89,12 @@ func TestAdHocRelativeDirectoryParityAcrossSchemas(t *testing.T) {
 			}
 			env.AssertFileContains("/workspace/.factory/skills/review/SKILL.md", "Review body")
 			config := env.ReadFile("/workspace/.agents/config.yaml")
+			for _, want := range []string{"apiVersion: agent-marketplace/v4", "sources:", "directory: ./vendor/registry", "skill/review"} {
+				if !strings.Contains(config, want) {
+					t.Fatalf("relative install lost v4 source/selection %q:\n%s", want, config)
+				}
+			}
+			env.AssertFileAbsent("/workspace/.agents/lock.yaml")
 			if strings.Contains(config, env.workspace) || strings.Contains(config, "/private/") {
 				t.Fatalf("committed repository config records a machine-specific path:\n%s", config)
 			}

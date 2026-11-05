@@ -1,9 +1,9 @@
 {
   "hooks": {
-    "PreToolUse": [
+    "BeforeTool": [
       {
-        "command": "${CURSOR_PLUGIN_ROOT}/scripts/check.sh",
-        "event": "PreToolUse",
+        "command": "${extensionPath}/scripts/check.sh",
+        "event": "BeforeTool",
         "type": "command"
       }
     ]

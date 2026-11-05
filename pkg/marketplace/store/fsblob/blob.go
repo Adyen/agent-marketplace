@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
@@ -23,12 +24,22 @@ func New(root string) *Store {
 	return &Store{root: root}
 }
 
-func (s *Store) path(digest store.ArchiveDigest) string {
+func (s *Store) open(digest store.ArchiveDigest, create bool) (*os.Root, string, error) {
 	d := string(digest)
-	if len(d) < 2 {
-		return filepath.Join(s.root, d)
+	if !filepath.IsLocal(d) || d == "." || strings.HasPrefix(d, "..") || strings.ContainsAny(d, "/\\\x00") {
+		return nil, "", fmt.Errorf("%w: invalid blob address", store.ErrTopology)
 	}
-	return filepath.Join(s.root, d[:2], d[2:])
+	p := d
+	if len(d) > 2 {
+		p = filepath.Join(d[:2], d[2:])
+	}
+	if create {
+		if err := os.MkdirAll(s.root, 0755); err != nil {
+			return nil, "", fmt.Errorf("create blob root: %w", err)
+		}
+	}
+	root, err := os.OpenRoot(s.root)
+	return root, p, err
 }
 
 // Probe verifies that the blob root is usable. A missing root is valid for a
@@ -50,7 +61,15 @@ func (s *Store) Probe(ctx context.Context) error {
 // Get returns the blob bytes for digest. It returns [store.ErrNotFound] when
 // the blob does not exist.
 func (s *Store) Get(ctx context.Context, digest store.ArchiveDigest) ([]byte, error) {
-	data, err := os.ReadFile(s.path(digest))
+	root, p, err := s.open(digest, false)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	data, err := root.ReadFile(p)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, store.ErrNotFound
 	}
@@ -64,7 +83,15 @@ func (s *Store) GetBounded(ctx context.Context, digest store.ArchiveDigest, limi
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	file, err := os.Open(s.path(digest))
+	root, p, err := s.open(digest, false)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	file, err := root.Open(p)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, store.ErrNotFound
 	}
@@ -78,8 +105,12 @@ func (s *Store) GetBounded(ctx context.Context, digest store.ArchiveDigest, limi
 // Put stores data under the given digest using a temporary file and atomic
 // rename. Existing content at the same digest is replaced.
 func (s *Store) Put(ctx context.Context, digest store.ArchiveDigest, data []byte) error {
-	p := s.path(digest)
-	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+	root, p, err := s.open(digest, true)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	if err := root.MkdirAll(filepath.Dir(p), 0755); err != nil {
 		return fmt.Errorf("create blob directory: %w", err)
 	}
 
@@ -89,12 +120,12 @@ func (s *Store) Put(ctx context.Context, digest store.ArchiveDigest, data []byte
 	}
 	tmp := p + ".tmp." + suffix
 
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
+	f, err := root.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
 	if err != nil {
 		return fmt.Errorf("create temp blob: %w", err)
 	}
 
-	cleanup := func() { _ = os.Remove(tmp) }
+	cleanup := func() { _ = root.Remove(tmp) }
 
 	if _, err := f.Write(data); err != nil {
 		_ = f.Close()
@@ -110,7 +141,7 @@ func (s *Store) Put(ctx context.Context, digest store.ArchiveDigest, data []byte
 		cleanup()
 		return fmt.Errorf("close temp blob: %w", err)
 	}
-	if err := os.Rename(tmp, p); err != nil {
+	if err := root.Rename(tmp, p); err != nil {
 		cleanup()
 		return fmt.Errorf("rename temp blob: %w", err)
 	}
@@ -121,8 +152,12 @@ func (s *Store) Put(ctx context.Context, digest store.ArchiveDigest, data []byte
 // contains the same bytes. Unlike Put, it never replaces a different first
 // writer; this is used for immutable collection manifests.
 func (s *Store) PutImmutable(ctx context.Context, digest store.ArchiveDigest, data []byte) error {
-	p := s.path(digest)
-	if existing, err := os.ReadFile(p); err == nil {
+	root, p, err := s.open(digest, true)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	if existing, err := root.ReadFile(p); err == nil {
 		if string(existing) == string(data) {
 			return nil
 		}
@@ -130,7 +165,7 @@ func (s *Store) PutImmutable(ctx context.Context, digest store.ArchiveDigest, da
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read existing blob %s: %w", digest, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+	if err := root.MkdirAll(filepath.Dir(p), 0755); err != nil {
 		return fmt.Errorf("create blob directory: %w", err)
 	}
 
@@ -139,11 +174,11 @@ func (s *Store) PutImmutable(ctx context.Context, digest store.ArchiveDigest, da
 		return err
 	}
 	tmp := p + ".tmp." + suffix
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
+	f, err := root.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0644)
 	if err != nil {
 		return fmt.Errorf("create temp blob: %w", err)
 	}
-	cleanup := func() { _ = os.Remove(tmp) }
+	cleanup := func() { _ = root.Remove(tmp) }
 	if _, err := f.Write(data); err != nil {
 		_ = f.Close()
 		cleanup()
@@ -160,10 +195,10 @@ func (s *Store) PutImmutable(ctx context.Context, digest store.ArchiveDigest, da
 	}
 	// Linking, rather than renaming, makes the destination creation
 	// non-overwriting even when another publisher wins the race.
-	if err := os.Link(tmp, p); err != nil {
+	if err := root.Link(tmp, p); err != nil {
 		cleanup()
 		if os.IsExist(err) {
-			existing, readErr := os.ReadFile(p)
+			existing, readErr := root.ReadFile(p)
 			if readErr == nil && string(existing) == string(data) {
 				return nil
 			}
@@ -180,7 +215,15 @@ func (s *Store) PutImmutable(ctx context.Context, digest store.ArchiveDigest, da
 
 // Exists reports whether a blob exists for digest.
 func (s *Store) Exists(ctx context.Context, digest store.ArchiveDigest) (bool, error) {
-	_, err := os.Stat(s.path(digest))
+	root, p, err := s.open(digest, false)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = root.Close() }()
+	_, err = root.Stat(p)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
@@ -192,7 +235,15 @@ func (s *Store) Exists(ctx context.Context, digest store.ArchiveDigest) (bool, e
 
 // Delete removes the blob for digest.
 func (s *Store) Delete(ctx context.Context, digest store.ArchiveDigest) error {
-	err := os.Remove(s.path(digest))
+	root, p, err := s.open(digest, false)
+	if errors.Is(err, os.ErrNotExist) {
+		return store.ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	err = root.Remove(p)
 	if errors.Is(err, os.ErrNotExist) {
 		return store.ErrNotFound
 	}

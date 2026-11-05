@@ -52,7 +52,7 @@ func TestReadSnapshotPropagatesMaterializationDryRunError(t *testing.T) {
 	restoreOrg := swapLoadOrgConfig(func() (*config.Config, error) { return nil, nil })
 	t.Cleanup(restoreOrg)
 	restoreGlobal := swapLoadGlobalConfig(func() (*config.Config, error) {
-		return &config.Config{APIVersion: config.APIVersionV2, Harnesses: []string{"factory"}}, nil
+		return &config.Config{APIVersion: config.APIVersionV4, Harnesses: []string{"factory"}}, nil
 	})
 	t.Cleanup(restoreGlobal)
 	restoreRepo := swapLoadRepoConfig(func() (*config.Config, error) { return nil, nil })
@@ -75,7 +75,7 @@ func TestReadSnapshotClassifiesMalformedResourceAsWarning(t *testing.T) {
 	homeDir := t.TempDir()
 	registryRoot := t.TempDir()
 	globalCfg := &config.Config{
-		APIVersion: config.APIVersionV2,
+		APIVersion: config.APIVersionV4,
 		Harnesses:  []string{"factory"},
 		Registries: []config.RegistryEntry{
 			{URL: registryRoot, Skills: config.KindSelector{Include: []string{"healthy"}}},
@@ -259,7 +259,7 @@ func TestReadSnapshotRetainsPartialRowsAfterCatalogFailure(t *testing.T) {
 	restoreOrg := swapLoadOrgConfig(func() (*config.Config, error) { return nil, nil })
 	t.Cleanup(restoreOrg)
 	globalCfg := &config.Config{
-		APIVersion: config.APIVersionV2,
+		APIVersion: config.APIVersionV4,
 		Harnesses:  []string{"factory"},
 		Registries: []config.RegistryEntry{
 			{URL: healthyRoot, Skills: config.KindSelector{Include: []string{"healthy"}}},
@@ -374,6 +374,38 @@ func TestReadSnapshotRetainsPartialRowsAfterCatalogFailure(t *testing.T) {
 	}
 }
 
+// A malformed resource carries its registry's coordinates, and its zero-value
+// kind reads as a skill, so it must not stand in for a same-named selection
+// that is missing from that registry: the selection keeps its broken row.
+func TestAppendUnavailableSelectionRowsIgnoresSameNamedMalformedRow(t *testing.T) {
+	cfg := &config.Config{Registries: []config.RegistryEntry{{
+		URL:        "/reg",
+		Ref:        "main",
+		Source:     config.RepoCommitted,
+		CatalogKey: "k1",
+		Skills:     config.KindSelector{Include: []string{"foo"}},
+	}}}
+	catalogs := map[string]catalogInfo{"k1": {Malformed: []skill.MalformedSkill{{DirName: "foo", Path: "commands/foo", Error: errors.New("yaml parse error")}}}}
+	rows := buildRows(cfg, catalogs, nil, nil, materialize.DriftReport{})
+	missing := &resolver.SelectedNotFoundError{Kind: ir.KindSkill, Name: "foo", URL: "/reg", Ref: "main"}
+	rows = appendUnavailableSelectionRows(rows, cfg, nil, []error{missing}, catalogs)
+	var malformed, unavailable []row
+	for _, r := range rows {
+		switch {
+		case r.IsMalformed:
+			malformed = append(malformed, r)
+		case r.UnavailableReason != "":
+			unavailable = append(unavailable, r)
+		}
+	}
+	if len(malformed) != 1 || len(unavailable) != 1 {
+		t.Fatalf("rows = %d malformed and %d unavailable, want one of each", len(malformed), len(unavailable))
+	}
+	if rowKey(malformed[0]) == rowKey(unavailable[0]) {
+		t.Fatal("the malformed and unavailable rows share a row key")
+	}
+}
+
 func TestAppendUnavailableSelectionRows(t *testing.T) {
 	loadedCatalogs := map[string]catalogInfo{"k1": {}}
 	cfg := &config.Config{Registries: []config.RegistryEntry{{
@@ -471,7 +503,7 @@ func TestAppendUnavailableSelectionRows(t *testing.T) {
 	}
 }
 
-func TestReadSnapshotUnavailableSelectionNeverReportsInSync(t *testing.T) {
+func TestReadSnapshotOptionalUnavailableSelectionKeepsAssessment(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
 	registryRoot := t.TempDir()
@@ -479,7 +511,7 @@ func TestReadSnapshotUnavailableSelectionNeverReportsInSync(t *testing.T) {
 	restoreOrg := swapLoadOrgConfig(func() (*config.Config, error) { return nil, nil })
 	t.Cleanup(restoreOrg)
 	globalCfg := &config.Config{
-		APIVersion: config.APIVersionV2,
+		APIVersion: config.APIVersionV4,
 		Harnesses:  []string{"factory"},
 		Registries: []config.RegistryEntry{
 			{URL: registryRoot, Skills: config.KindSelector{Include: []string{"missing"}}},
@@ -506,8 +538,8 @@ func TestReadSnapshotUnavailableSelectionNeverReportsInSync(t *testing.T) {
 	t.Cleanup(func() { discoverCatalog = previousDiscover })
 
 	snapshot := readSnapshot(context.Background(), repoRoot, homeDir, catalogLoadCached)
-	if snapshot.driftAssessment != driftFailed {
-		t.Fatalf("unavailable selection drift assessment = %v, want failed", snapshot.driftAssessment)
+	if snapshot.driftAssessment != driftReady {
+		t.Fatalf("optional unavailable selection drift assessment = %v, want ready", snapshot.driftAssessment)
 	}
 	var missing *row
 	unavailable := 0
@@ -531,11 +563,8 @@ func TestReadSnapshotUnavailableSelectionNeverReportsInSync(t *testing.T) {
 	updated, _ := m.Update(snapshot)
 	m = updated.(Model)
 	footer := ansi.Strip(renderFooter(m))
-	if strings.Contains(footer, "in sync") {
-		t.Fatalf("unavailable selection rendered in sync: %q", footer)
-	}
-	if !m.failuresOrDrift() {
-		t.Fatal("unavailable selection did not count as drift/failure")
+	if strings.Contains(footer, "drift unavailable") {
+		t.Fatalf("optional unavailable selection blocked the drift footer: %q", footer)
 	}
 	for i := range m.flatItems {
 		if m.flatItems[i].Kind == flatArtifact && m.flatItems[i].Row.UnavailableReason != "" {
@@ -549,7 +578,9 @@ func TestReadSnapshotUnavailableSelectionNeverReportsInSync(t *testing.T) {
 		t.Fatalf("unavailable row did not open the scope modal: pane %v", m.pane)
 	}
 
-	synthetic := modelWithSelectedRow(t, *missing)
+	hard := *missing
+	hard.UnavailableSoft = false
+	synthetic := modelWithSelectedRow(t, hard)
 	synthetic.driftAssessment = driftReady
 	syntheticFooter := ansi.Strip(renderFooter(synthetic))
 	if strings.Contains(syntheticFooter, "in sync") {

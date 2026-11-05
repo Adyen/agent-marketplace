@@ -11,6 +11,7 @@ import (
 	"testing"
 )
 
+// spec: logging/default-json-output-carries-invocation-context
 func TestInitWritesJSONAndGatesDebug(t *testing.T) {
 	clearLoggingEnv(t)
 	defer resetDefaultLogger()
@@ -45,6 +46,7 @@ func TestInitWritesJSONAndGatesDebug(t *testing.T) {
 	}
 }
 
+// spec: logging/debug-records-reach-file-and-standard-error
 func TestInitDebugMirrorsToStderr(t *testing.T) {
 	clearLoggingEnv(t)
 	defer resetDefaultLogger()
@@ -76,6 +78,7 @@ func TestInitDebugMirrorsToStderr(t *testing.T) {
 	}
 }
 
+// spec: logging/environment-selects-the-log-file-and-debug-level
 func TestInitEnvOverridesFileAndDebug(t *testing.T) {
 	clearLoggingEnv(t)
 	defer resetDefaultLogger()
@@ -104,6 +107,7 @@ func TestInitEnvOverridesFileAndDebug(t *testing.T) {
 	}
 }
 
+// spec: logging/unwritable-destination-retains-fallback-output
 func TestInitFallsBackWhenFileCannotBeOpened(t *testing.T) {
 	clearLoggingEnv(t)
 	defer resetDefaultLogger()

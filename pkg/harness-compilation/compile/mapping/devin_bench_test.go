@@ -25,45 +25,6 @@ func BenchmarkModel(b *testing.B) {
 	}
 }
 
-func BenchmarkTool(b *testing.B) {
-	cases := []struct {
-		name string
-		tool string
-	}{
-		{"devin/mapped", "Read"},
-		{"devin/unsupported", "Write"},
-		{"devin/miss", "NoSuchTool"},
-	}
-	for _, c := range cases {
-		b.Run(c.name, func(b *testing.B) {
-			b.ReportAllocs()
-			for b.Loop() {
-				_, _ = Tool(c.tool, TargetDevin)
-			}
-		})
-	}
-}
-
-func BenchmarkHookEvent(b *testing.B) {
-	cases := []struct {
-		name    string
-		event   string
-		matcher string
-	}{
-		{"devin/mapped", "PreToolUse", "Read"},
-		{"devin/unmappable", "PreCompact", ""},
-		{"devin/miss", "NoSuchEvent", ""},
-	}
-	for _, c := range cases {
-		b.Run(c.name, func(b *testing.B) {
-			b.ReportAllocs()
-			for b.Loop() {
-				_, _ = HookEvent(c.event, c.matcher, TargetDevin)
-			}
-		})
-	}
-}
-
 func BenchmarkMcpInterpolation(b *testing.B) {
 	cases := []struct {
 		name   string

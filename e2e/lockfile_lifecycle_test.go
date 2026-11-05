@@ -26,6 +26,12 @@ func gitRun(t *testing.T, dir string, args ...string) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
+	// Fixture git operations must not read host-global configuration: a
+	// developer machine with mandatory commit signing (for example through a
+	// hardware key) would otherwise make every fixture commit interactive and
+	// intermittently fail the suite. Test-local `-c` and repository config
+	// remain in effect; every `git init` in this suite names its branch.
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
@@ -38,7 +44,7 @@ func newLockfileGitFixture(t *testing.T, name string, skills ...Skill) *lockfile
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(env.home, "cache"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(env.home, "state"))
 	env.InitGitRepo()
-	env.WriteGlobalConfig("harnesses: [factory]\nregistries: []")
+	env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 	url := env.CreateBareRepo(name, SkillsOnly(skills...))
 	working := filepath.Join(t.TempDir(), "working")
 	gitRun(t, "", "clone", "-b", "main", strings.TrimPrefix(url, "file://"), working)
@@ -47,8 +53,8 @@ func newLockfileGitFixture(t *testing.T, name string, skills ...Skill) *lockfile
 	return &lockfileGitFixture{env: env, url: url, working: working}
 }
 
-func (f *lockfileGitFixture) writeRepoConfig(entries string) {
-	f.env.WriteRepoConfig("harnesses: [factory]\nregistries:\n" + entries)
+func (f *lockfileGitFixture) writeRepoConfig(document string) {
+	f.env.WriteRepoConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n" + document)
 }
 
 func (f *lockfileGitFixture) replaceSkills(t *testing.T, message string, skills ...Skill) {
@@ -74,7 +80,7 @@ func TestReadOnlyCommandsRejectFIFOLock(t *testing.T) {
 	for _, args := range [][]string{{"status"}, {"gc", "--dry-run"}} {
 		t.Run(args[0], func(t *testing.T) {
 			fixture := newLockfileGitFixture(t, "fifo-lock", Skill{Name: "review"})
-			fixture.writeRepoConfig(fmt.Sprintf("  - url: %s\n    ref: main\n    default: true", fixture.url))
+			fixture.writeRepoConfig(fmt.Sprintf("sources: {tools: {git: %q, ref: main}}\nresources: {tools: {all: true}}\n", fixture.url))
 			fixture.env.MustRunAM("sync")
 			fixture.env.MustRunAM(args...)
 			lockPath := filepath.Join(fixture.env.workspace, ".agents", "lock.yaml")
@@ -128,7 +134,7 @@ func TestLockfileFileURLGitLifecycleRetainsExactCommitUntilUpdate(t *testing.T) 
 	if fixture.url != literalURL {
 		t.Fatalf("fixture URL = %q, want literal absolute file URL %q", fixture.url, literalURL)
 	}
-	fixture.writeRepoConfig(fmt.Sprintf("  - url: %s\n    ref: main\n    default: true", literalURL))
+	fixture.writeRepoConfig(fmt.Sprintf("sources: {tools: {git: %q, ref: main}}\nresources: {tools: {all: true}}\n", literalURL))
 
 	result := fixture.env.RunAM("sync")
 	if result.ExitCode != 0 {
@@ -165,14 +171,14 @@ func TestLockfileFileURLGitLifecycleRetainsExactCommitUntilUpdate(t *testing.T) 
 
 func TestAdHocInstallHonorsExactDiscovery(t *testing.T) {
 	fixture := newLockfileGitFixture(t, "install-exact-discovery", Skill{Name: "review", Description: "Reviewed version A"})
-	fixture.writeRepoConfig(fmt.Sprintf("  - url: %s\n    ref: main", fixture.url))
+	fixture.writeRepoConfig(fmt.Sprintf("sources: {tools: {git: %q, ref: main}}\n", fixture.url))
 	if result := fixture.env.RunAM("sync"); result.ExitCode != 0 {
 		t.Fatalf("seed sync: %s", result.Combined)
 	}
 	beforeConfig := fixture.env.ReadFile("/workspace/.agents/config.yaml")
 	beforeLock := fixture.env.ReadFile("/workspace/.agents/lock.yaml")
 	fixture.replaceSkills(t, "move main", Skill{Name: "review", Description: "Changed version B"}, Skill{Name: "new", Description: "Only in B"})
-	result := fixture.env.RunAM("install", "new", "--from", fixture.url, "--ref", "main")
+	result := fixture.env.RunAM("install", "--scope", "repo", "new", "--from", fixture.url, "--ref", "main")
 	if result.ExitCode == 0 || !strings.Contains(result.Combined, "not found") {
 		t.Fatalf("mutable-only resource was not safely refused: %s", result.Combined)
 	}
@@ -182,7 +188,7 @@ func TestAdHocInstallHonorsExactDiscovery(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(fixture.env.workspace, ".factory", "skills", "new")); !os.IsNotExist(err) {
 		t.Fatalf("mutable-only output exists: %v", err)
 	}
-	result = fixture.env.RunAM("install", "review", "--from", fixture.url, "--ref", "main")
+	result = fixture.env.RunAM("install", "--scope", "repo", "review", "--from", fixture.url, "--ref", "main")
 	if result.ExitCode != 0 {
 		t.Fatalf("locked resource install: %s", result.Combined)
 	}
@@ -194,8 +200,8 @@ func TestAdHocInstallHonorsExactDiscovery(t *testing.T) {
 
 func TestConfiguredInstallCopiesProviderPinAcrossScopes(t *testing.T) {
 	fixture := newLockfileGitFixture(t, "configured-provider-pin", Skill{Name: "review", Description: "Provider version A"})
-	fixture.env.WriteGlobalConfig(fmt.Sprintf("harnesses: [factory]\nregistries:\n  - url: %s\n    ref: main", fixture.url))
-	fixture.env.WriteRepoConfig("harnesses: [factory]\nregistries: []")
+	fixture.env.WriteGlobalConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {provider: {git: %q, ref: main}}\n", fixture.url))
+	fixture.env.WriteRepoConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 	if result := fixture.env.RunAM("lock", "--scope", "user"); result.ExitCode != 0 {
 		t.Fatalf("seed user lock: %s", result.Combined)
 	}
@@ -212,7 +218,7 @@ func TestConfiguredInstallCopiesProviderPinAcrossScopes(t *testing.T) {
 		t.Fatal("user fixture has no exact commit")
 	}
 	fixture.replaceSkills(t, "move main", Skill{Name: "review", Description: "Unselected version B"})
-	if result := fixture.env.RunAM("install", "review"); result.ExitCode != 0 {
+	if result := fixture.env.RunAM("install", "--scope", "repo", "review"); result.ExitCode != 0 {
 		t.Fatalf("configured install: %s", result.Combined)
 	}
 	fixture.env.AssertFileContains("/workspace/.agents/lock.yaml", commitLine)
@@ -227,7 +233,7 @@ func TestOrganizationIncludeTrustBlocksSyncWithoutMutation(t *testing.T) {
 		t.Run(unsafe, func(t *testing.T) {
 			env := newEnv(t)
 			env.InitGitRepo()
-			env.WriteGlobalConfig("harnesses: [factory]\nregistries: []")
+			env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 			registry := filepath.Join(env.workspace, "live-registry")
 			for path, content := range SkillsOnly(Skill{Name: "review", Description: "Trusted organization include"}) {
 				env.WriteFile(filepath.Join(registry, path), content)
@@ -235,7 +241,7 @@ func TestOrganizationIncludeTrustBlocksSyncWithoutMutation(t *testing.T) {
 			external := filepath.Join(env.workspace, "external")
 			fragment := filepath.Join(external, "nested", "fragment.yaml")
 			middle := filepath.Join(external, "middle.yaml")
-			env.WriteFile(fragment, fmt.Sprintf("registries:\n  - path: %s\n    required: true\n", registry))
+			env.WriteFile(fragment, fmt.Sprintf("sources: {trusted: {directory: %q}}\nresources: {trusted: {all: true, required: true}}\n", registry))
 			env.WriteFile(middle, "include: nested/fragment.yaml\n")
 			env.WriteOrgConfig("include: " + middle)
 			if result := env.RunAM("sync"); result.ExitCode != 0 {
@@ -275,7 +281,7 @@ func TestOrganizationIncludeTrustBlocksSyncWithoutMutation(t *testing.T) {
 func TestLockfileLockedFailuresLeaveWorkspaceUnchanged(t *testing.T) {
 	t.Run("missing", func(t *testing.T) {
 		fixture := newLockfileGitFixture(t, "lock-missing", Skill{Name: "review", Description: "Missing lock"})
-		fixture.writeRepoConfig(fmt.Sprintf("  - url: %s\n    ref: main\n    default: true", fixture.url))
+		fixture.writeRepoConfig(fmt.Sprintf("sources: {tools: {git: %q, ref: main}}\nresources: {tools: {all: true}}\n", fixture.url))
 		before := snapshotWorkspace(t, fixture.env.workspace)
 
 		result := fixture.env.RunAM("sync", "--locked")
@@ -289,12 +295,12 @@ func TestLockfileLockedFailuresLeaveWorkspaceUnchanged(t *testing.T) {
 
 	t.Run("stale", func(t *testing.T) {
 		fixture := newLockfileGitFixture(t, "lock-stale-one", Skill{Name: "one", Description: "First registry"})
-		fixture.writeRepoConfig(fmt.Sprintf("  - url: %s\n    ref: main\n    default: true", fixture.url))
+		fixture.writeRepoConfig(fmt.Sprintf("sources: {tools: {git: %q, ref: main}}\nresources: {tools: {all: true}}\n", fixture.url))
 		if result := fixture.env.RunAM("sync"); result.ExitCode != 0 {
 			t.Fatalf("initial sync failed (exit %d):\n%s", result.ExitCode, result.Combined)
 		}
 		secondURL := fixture.env.CreateBareRepo("lock-stale-two", SkillsOnly(Skill{Name: "two", Description: "Second registry"}))
-		fixture.writeRepoConfig(fmt.Sprintf("  - url: %s\n    ref: main\n    default: true\n  - url: %s\n    ref: main\n    default: true", fixture.url, secondURL))
+		fixture.writeRepoConfig(fmt.Sprintf("sources:\n  first: {git: %q, ref: main}\n  second: {git: %q, ref: main}\nresources:\n  first: {all: true}\n  second: {all: true}\n", fixture.url, secondURL))
 		before := snapshotWorkspace(t, fixture.env.workspace)
 
 		result := fixture.env.RunAM("sync", "--locked")
@@ -309,7 +315,7 @@ func TestLockfileLockedFailuresLeaveWorkspaceUnchanged(t *testing.T) {
 
 func TestLockfileOfflineUsesOnlyExactSnapshot(t *testing.T) {
 	fixture := newLockfileGitFixture(t, "lock-offline", Skill{Name: "offline", Description: "Exact offline snapshot"})
-	fixture.writeRepoConfig(fmt.Sprintf("  - url: %s\n    ref: main\n    default: true", fixture.url))
+	fixture.writeRepoConfig(fmt.Sprintf("sources: {tools: {git: %q, ref: main}}\nresources: {tools: {all: true}}\n", fixture.url))
 	if result := fixture.env.RunAM("sync"); result.ExitCode != 0 {
 		t.Fatalf("initial sync failed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
@@ -338,11 +344,11 @@ func TestLockfileOfflineUsesOnlyExactSnapshot(t *testing.T) {
 func TestLockfileLocalRegistryRemainsUnlocked(t *testing.T) {
 	env := newEnv(t)
 	env.InitGitRepo()
-	env.WriteGlobalConfig("harnesses: [factory]\nregistries: []")
+	env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 	for path, content := range SkillsOnly(Skill{Name: "local-only", Description: "Live local registry"}) {
 		env.WriteFile("/workspace/registry/"+path, content)
 	}
-	env.WriteRepoConfig("harnesses: [factory]\nregistries:\n  - url: ./registry\n    default: true")
+	env.WriteRepoConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {live: {directory: ./registry}}\nresources: {live: {all: true}}\n")
 
 	if result := env.RunAM("sync"); result.ExitCode != 0 {
 		t.Fatalf("local registry sync failed (exit %d):\n%s", result.ExitCode, result.Combined)
@@ -354,7 +360,7 @@ func TestLockfileLocalRegistryRemainsUnlocked(t *testing.T) {
 func TestLockfileMonorepoLocalLayerOwnsAdjacentLock(t *testing.T) {
 	fixture := newLockfileGitFixture(t, "monorepo-local-lock", Skill{Name: "package-skill", Description: "Package local lock"})
 	fixture.env.WriteFile("/workspace/packages/app/.gitkeep", "")
-	fixture.env.WriteFile("/workspace/packages/app/.agents/config.local.yaml", fmt.Sprintf("registries:\n  - url: %s\n    ref: main\n    default: true", fixture.url))
+	fixture.env.WriteFile("/workspace/packages/app/.agents/config.local.yaml", fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources: {package: {git: %q, ref: main}}\nresources: {package: {all: true}}\n", fixture.url))
 
 	result := fixture.env.RunAMFrom("/workspace/packages/app", "sync")
 	if result.ExitCode != 0 {
@@ -367,7 +373,7 @@ func TestLockfileMonorepoLocalLayerOwnsAdjacentLock(t *testing.T) {
 
 func TestLockfileConfiguredListIsExactButListFromIsLive(t *testing.T) {
 	fixture := newLockfileGitFixture(t, "lock-list", Skill{Name: "locked-only", Description: "Locked catalog"})
-	fixture.writeRepoConfig(fmt.Sprintf("  - url: %s\n    ref: main\n    default: true", fixture.url))
+	fixture.writeRepoConfig(fmt.Sprintf("sources: {tools: {git: %q, ref: main}}\nresources: {tools: {all: true}}\n", fixture.url))
 	if result := fixture.env.RunAM("sync"); result.ExitCode != 0 {
 		t.Fatalf("initial sync failed (exit %d):\n%s", result.ExitCode, result.Combined)
 	}
@@ -391,8 +397,8 @@ func TestLockfileConfiguredListIsExactButListFromIsLive(t *testing.T) {
 func TestLockfilePendingRecoveryInspectionPreservesSandbox(t *testing.T) {
 	env := newEnv(t)
 	env.InitGitRepo()
-	env.WriteGlobalConfig("harnesses: [factory]\nregistries: []")
-	env.WriteRepoConfig("harnesses: [factory]\nregistries: []")
+	env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	env.WriteRepoConfig("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 	state := filepath.Join(env.home, ".local", "state", "agent-marketplace", "dependencies")
 	if err := os.MkdirAll(state, 0o750); err != nil {
 		t.Fatal(err)

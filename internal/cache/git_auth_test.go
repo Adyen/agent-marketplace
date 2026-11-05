@@ -100,6 +100,7 @@ func TestGitAcquisitionSourceOperands(t *testing.T) {
 	}
 }
 
+// spec: git-authentication/userinfo-urls-with-a-port-use-the-https-diagnostic
 func TestGitTransportFailureMessage(t *testing.T) {
 	for _, tt := range []struct {
 		name, source, message string
@@ -107,6 +108,7 @@ func TestGitTransportFailureMessage(t *testing.T) {
 		{"scp", "git@example.invalid:repo", "git.auth-transport-failed: Git SSH connection failed. Verify your SSH agent and repository access"},
 		{"ssh", "ssh://git@example.invalid/repo", "git.auth-transport-failed: Git SSH connection failed. Verify your SSH agent and repository access"},
 		{"https", "https://example.invalid/repo", "git.auth-transport-failed: transport diagnostics withheld to protect authentication data"},
+		{"https userinfo", "https://fixture-user:synthetic-auth-secret@example.invalid:8443/repo", "git.auth-transport-failed: transport diagnostics withheld to protect authentication data"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			isolatedGitAuth(t)

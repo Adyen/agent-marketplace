@@ -30,6 +30,8 @@ For changes to ingestion, compilation, config loading, or filesystem publication
 - **Bounds at every read boundary.** Root configs, recursive includes, alternate loaders, and overlays must use the same applicable size policy. Require that opened files are regular files where that is the input contract, reject oversized input before parsing, and retain a bounded reader even after checking size to handle growth. Depth or cycle checks do not substitute for byte or total-work bounds; any new aggregate budget needs an explicit policy decision rather than an arbitrary threshold.
 - **Evidence that exercises the boundary.** Require a failing regression test and a valid control through the actual consumer. Cover both alias orders, empty typed values, nested fields, legitimate native groups, external/dangling symlinks, hard links, special files, size boundaries, permissions, and byte/mtime no-ops as applicable. Assert the intended error identity and unchanged external bytes, not just any failure. Isolate umask changes and potentially blocking probes in bounded child processes. A preservation test must prove that the intended content update occurred; an include test must not duplicate its selection in the containing config. Use each target's real loader and native installation path, not differently labeled calls to one helper or plugin output as a substitute for native sync.
 
+Consumer-config boundary review must verify exact-v4 roots in all four layers (including organization and personal-local), accepted versionless/exact-v4 included fragments, and file/field-specific `v4.api-version-required` or `v4.api-version` refusals across readers, direct editors, staged reloads, init, ad-hoc acquisition, and CLI/TUI entry points. Validate all required input before new acquisition or config/lock/harness mutation. Preserve established pending-journal handling and ordinary logging rather than imposing a blanket no-write claim. Do not restore a legacy decoder/editor, migration command, or automatic conversion prompt. Keep the internal v4 runtime adapter and independent lock/hash/operator/API/artifact/native schemas.
+
 Apply the existing benchmark requirements to added validation on hot paths. Report its cost explicitly; do not remove safety checks to obtain a faster result.
 
 ## Tests
@@ -58,8 +60,8 @@ The `e2e/` directory contains E2E tests that validate end-to-end CLI behavior by
 
 There are **two types** of E2E tests:
 
-1. **Declarative (table-driven)** — defined as `TestCase` structs in `e2e/table_test.go`. These are the preferred format for tests that follow a standard setup/run/assert pattern: write config, run a command, check output and filesystem. Use these when the test fits the `Steps` model (actions + assertions on a single workspace).
-2. **Standalone** — individual `func TestXxx(t *testing.T)` functions in separate files (e.g. `e2e/install_test.go`). Use these when the test requires non-standard setup that the declarative model doesn't support, such as running commands from a non-default working directory or skipping git repo initialization.
+1. **Declarative (table-driven)** — defined as `TestCase` structs in the `e2e/table_*_test.go` files (see Declarative table layout below). These are the preferred format for tests that follow a standard setup/run/assert pattern: write config, run a command, check output and filesystem. Use these when the test fits the `Steps` model (actions + assertions on a single workspace).
+2. **Standalone** — individual `func TestXxx(t *testing.T)` functions in separate files (e.g. `e2e/install_test.go`). Use these when the test requires non-standard setup that the declarative model doesn't support, such as skipping git repo initialization.
 
 #### Running
 
@@ -71,31 +73,51 @@ E2E_PARALLEL=8 make e2e  # control concurrency (default 4, set to 1 for serial)
 
 #### Architecture
 
+Test sandboxes also neutralize `CLAUDE_CONFIG_DIR`. Use an empty value for
+default-layout fixtures: setting it to `~/.claude` would move `.claude.json`
+inside that directory. Relocation fixtures opt into an explicit absolute path.
+
 - **Process-based sandbox**: each test gets its own temp root with `home/`, `workspace/`, `repos/`, `etc/` directories. Subprocesses strip inherited `AGENT_MARKETPLACE_*` settings and override `HOME`, the XDG state/config/cache roots, `CODEX_HOME`, the organization-config test path, and a sanitized `PATH`, so application-controlled paths and policy cannot escape the sandbox or vary with the host. Fixture-specific environment overrides are applied explicitly after this baseline.
 - **Path mapping**: test table uses container-style paths (`/root/...`, `/workspace/...`) which are automatically resolved to the temp sandbox by `Env.resolvePath()`.
-- **Declarative test cases**: defined as `TestCase` structs in `e2e/table_test.go` with `Registries`, config layers (`GlobalCfg`/`RepoCfg`/`LocalCfg`/`OrgCfg`), and `Steps` (actions + assertions). `{{REG:name}}` placeholders are resolved to `file://` URLs of seeded bare git repos.
+- **Declarative test cases**: defined as `TestCase` structs in the `e2e/table_*_test.go` files with `Registries`, `Marketplaces` (in-process Marketplace servers backed by seeded bare repos), config layers (`GlobalCfg`/`RepoCfg`/`LocalCfg`/`OrgCfg`), and `Steps` (actions + assertions). `{{REG:name}}` placeholders are resolved to `file://` URLs of seeded bare git repos, `{{MKT:name}}` to the base URL of a named `Marketplaces` server, and `{{GITHTTP:name}}` to the Git-over-HTTP origin URL of a `Registries` or `Marketplaces` entry. Step actions cover config/file writes plus `ActionPushRegistry`, `ActionReindexMarketplace`, and `ActionRevokeMarketplace`; `Step.Env` sets subprocess environment overrides and `Step.Cwd` selects the subprocess working directory.
 - **FIFO concurrency handshakes**: use `openFIFOWriter` so writer setup is bounded, reports a subprocess that exits before opening its reader, and keeps the writer descriptor close-on-exec; use `waitForProcess` to bound subprocess completion.
 
 #### When to add a test
 
-Add a new `TestCase` to `testTable` in `e2e/table_test.go` when:
+Add a new `TestCase` to `testTable` in the area file for its Name prefix (see Declarative table layout) when:
 - Adding a new CLI command or flag that should be validated end-to-end
 - Fixing a bug that involves config merging, materialization, precedence, or collision handling
 - Changing resource selection/exclusion semantics (`required`, `default`, `tags`, `exclude`)
 
 Add a standalone test function in a separate file when:
-- The test needs non-standard setup (e.g. no git repo, custom working directory)
-- The test uses `RunAMFrom` or other framework features not exposed through the `Steps` model
+- The test needs non-standard setup (e.g. no git repo)
+- The test uses framework features not exposed through the `Steps` model
 
-Use the structured fixture builders in `e2e/harness_test.go` (`Skill`, `Command`, `Subagent`, `MCPServer`) to define registry contents. Keep `Desc` fields as Given/When/Then descriptions.
+Use the structured fixture builders in `e2e/harness_test.go` (`Skill`, `Command`, `Subagent`, `MCPServer`) to define registry contents.
+
+##### Declarative table layout
+
+- `e2e/table_runner_test.go` holds the types, the `Step` builders, placeholder and path resolution, the report writer, and the runner `TestE2E`. It declares `var testTable []TestCase` empty.
+- Each area file `e2e/table_<area>_test.go` appends its cases from `func init()`. Pick the area by the Name prefix (text before the first `/`): `install`, `remove`, `selection`, `marketplace` (also `lock`, `locks`, `update`), `devin` (also `codex`), `lifecycle` (also `cli`, `sync`, `ingest`, and similar), `config` (also `format`, `v4_user`, `v4_repo`), and so on. A prefix never spans two files; a case sits in the file for its prefix.
+- Each case is appended by its own statement (`testTable = append(testTable, TestCase{...})`) with its `// spec:` line directly above it.
+- Steps use builders: `run(args...)`, `ok(args...)` (exit 0), `exits(code, args...)`, `writeFile`, `writeGlobalCfg`/`writeRepoCfg`/`writeLocalCfg`/`writeOrgCfg`, `push`, `reindex`, `revoke`. Chain assertions with `.out`, `.notOut`, `.exists`, `.absent`, `.unchanged`, `.symlinks`, `.regular`, `.has(path, substr)`, `.lacks(path, substr)`, `.env`, `.in`, and for action steps `.then`, `.pass()`, `.exit`.
+- Path fields accept shorthand: a leading `./` means `/workspace/` and a leading `~/` means `/root/`. Only path-typed fields are rewritten (`FilesExist`, `FilesAbsent`, `PathsUnchanged`, `Symlinks`, `RegularFiles`, `FileContains`/`FileNotContains` keys, `Step.Path`, `Step.Cwd`); args, bodies and config values are never rewritten.
+- Write config layers with `v4("line", ...)`, which prepends the `apiVersion: agent-marketplace/v4` header.
+- Spec-tagged cases take no `Desc`; their `// spec:` line is the description. Untagged baseline cases keep a non-empty `Desc` in Given/When/Then form.
 
 #### Command coverage guard
 
-Every public command and flag must succeed in at least one E2E invocation against a legacy (v2/v3) configuration and in at least one against a v4 configuration. Commands that never read the layered client configuration (`completion`, `help`, `convert`, `serve`) need one successful invocation. The `e2e`-tagged binary records each invocation's command, flags, starting `apiVersion` for each layer, and outcome. Help requests are not recorded. After a complete, passing `make e2e` run, the suite fails if any requirement has no successful invocation, so a new command or flag needs E2E tests for both schemas. `e2e/testdata/command-coverage-gaps.txt` lists requirements allowed to stay uncovered. It has been empty since #363 closed the last gaps. The guard fails when a listed entry becomes covered, and new commands or flags must not be added to it.
+Every public command and flag that interprets consumer configuration must have an actual successful behavioral E2E invocation in a v4 workflow. Every present consumer root in that invocation, including organization and personal-local, must declare exact `agent-marketplace/v4`; first-run workflows may create absent roots as v4. Commands that never read layered consumer configuration (`completion`, `help`, Marketplace `serve`) retain successful configuration-independent witnesses. The `e2e`-tagged binary records each invocation's command, flags, starting `apiVersion` for each layer, and outcome. Help-only runs, refusals, relabeled legacy records, or success with an unsupported root cannot satisfy consumer operational coverage. After a complete, passing `make e2e` run, the suite fails if any requirement lacks its successful invocation. `e2e/testdata/command-coverage-gaps.txt` remains empty; do not add exceptions for legacy-support removal.
+
+The normal Marketplace E2E launch gate must execute required refusal witnesses for unsupported/versionless roots in every layer and explicit non-v4 included fragments. Seed valid selections, existing locks and owned output, and acquisition counters so no-write/no-acquisition claims are non-vacuous. Pending-journal tests must distinguish safe replay of already-admitted writes from refusal of new work; crash-recovery success tests exercise supported v4 mutations, not consumer migration.
+
+The pre-v4 success `upgrade-gate` and CI job are retired. Preserve their independent lock-byte/source-revision, scope, collision, and ownership assertions using v4 fixtures. Keep `released-client-gate` pinned to checksum-verified stable v4.1.4 with a shared v4 fixture and isolated actors. `E2E Gates` passes only after successful planning and both Marketplace/released-client jobs succeeding when selected, or both intentionally skipping when unselected; failures, cancellation, missing witnesses, and unexpected skips fail acceptance.
 
 ### TUI test ownership
 
-Go tests under `internal/tui` own model state, asynchronous behavior, rendering contracts, and terminal-guard details. Go E2E tests own configuration and filesystem policy matrices. `tools/tui-qa` owns a small set of direct real-terminal user journeys and must not duplicate those matrices or introduce a separate inventory, classifier, result authority, or retry system.
+Go tests under `internal/tui` own model state, asynchronous behavior, rendering contracts, and terminal-guard details. Go E2E tests own configuration and filesystem policy matrices. `tools/tui-qa` owns focused, direct real-terminal user journeys and must not duplicate those matrices or introduce a separate inventory, classifier, result authority, or retry system.
+
+Go tests never replace a journey. Every change to TUI behavior adds or extends a journey directly under `tools/tui-qa/tests/` that drives the changed flow through the real binary and asserts what the user sees (and the files written, when the flow writes them). Extend an existing journey when it already reaches the flow; otherwise add one file per interaction. `specaudit gate` fails pull requests that change non-test `internal/tui/` or `cmd/agent-marketplace/tui*.go` files without a journey change, unless a commit carries `TUI-QA-Impact: none — <reason>` for a change with no user-observable TUI effect.
 
 TUI QA commands must run without direnv or organization-specific infrastructure. Optional local values may come from the environment or ignored `.envrc.local`; tracked commands, reports, and fixtures must not contain organization-specific image, certificate, registry, or infrastructure identifiers.
 
@@ -111,7 +133,7 @@ The CLI configures a process-wide `slog` logger before any subcommand runs (see 
 
 - **Defaults live in code.** The `Default*` constants in `internal/config/config.go` are the single source of truth for the logging runtime (`internal/logging`). Keep them there.
 - **Do not seed a `logging:` block into the generated config skeleton.** The skeleton carries only required global fields (`apiVersion`, `harnesses`); logging is opt-in override only. Users override via `~/.agents/config.yaml` (`logging:`) or `AGENT_MARKETPLACE_*` env vars. Precedence is **env var > config file > code default**.
-- Full strategy and overridable keys: [`docs/logging.md`](./docs/logging.md).
+- Current strategy and overridable keys: [logging reference](./site/docs/reference/logging.md). Historical `docs/` leads are not current consumer-format guidance.
 
 ## Performance and benchmarking
 

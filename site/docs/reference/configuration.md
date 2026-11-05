@@ -10,9 +10,15 @@ Configuration holds your selection policy. Generated lockfiles record the exact 
 
 ## Schema versions
 
-`apiVersion: agent-marketplace/v4` is the current schema, and every page in this reference describes v4. New configuration files created by `install`, `remove`, `init`, and the TUI use v4.
+`apiVersion: agent-marketplace/v4` is the only supported consumer configuration schema. Every existing organization, user-personal, repository, and personal-local root must declare that exact string. New configuration files created by `install`, `remove`, `init`, and the TUI use v4. A missing file retains its normal first-run behavior; an existing empty or versionless file is not a missing layer.
 
-The CLI still reads `agent-marketplace/v2` files and the `agent-marketplace/v3` alias through a compatibility reader. Both are deprecated: each write to such a file prints a `config.legacy-deprecated` warning with the `migrate` command for that scope. A file with no `apiVersion` at all is not read as v4. See [How to migrate configuration](../how-to/migrate-configuration.md).
+A root without `apiVersion` fails with `v4.api-version-required`. Explicit v1, v2, v3, unknown, empty, null, non-string, or non-exact versions fail with `v4.api-version`. The diagnostic identifies the authored file and the `apiVersion` field, with line context when available. The root cannot inherit its version from another layer or an included fragment.
+
+The CLI has no `migrate` command, startup conversion prompt, TUI migration modal, or compatibility reader. [Convert writable roots with an older released migrator before upgrading](../how-to/migrate-configuration.md); have organization configuration converted externally by its administrator. Conversion can refuse includes, unrepresentable input, or missing verified Marketplace evidence. Changing only the version string does not convert legacy fields.
+
+A command checks every config file and include it needs before it downloads anything or writes config, locks, or harness files. If an earlier command was interrupted mid-write, a command that can recover may first finish that write, which changes the files it recorded; read-only commands return `dependency.recovery-required` and do not replay it. Apart from that recovery, a refused command leaves existing config, lock, and harness files and their metadata untouched, creates no missing config file or lock, and may still write logs.
+
+This consumer-format requirement does not change the internal v4 runtime adapter, lock v1 reads/v2 writes, historical source-revision verification, Marketplace operator `agent-marketplace.io/marketplace/v1`, API/artifact versions, or native harness schemas.
 
 ## File location and scope
 
@@ -79,11 +85,11 @@ The parser rejects:
 | Root file without `apiVersion` | `v4.api-version-required` |
 | `apiVersion` other than `agent-marketplace/v4` | `v4.api-version` |
 
-Included fragments may omit `apiVersion` and inherit v4 from the file that includes them. A fragment that declares a different version is rejected.
+Explicitly included fragments under a validated v4 root may omit `apiVersion` or declare exactly `agent-marketplace/v4`. An explicit unsupported or invalid fragment version fails the include tree with `v4.api-version`, naming the fragment and field. This exception does not apply to personal-local roots and does not relax layer field restrictions, source bindings, include precedence, or root-owned edits and locks.
 
 ## Configuration layers
 
-Layers merge from lowest to highest precedence: organization, user, repository, repository personal. Top-level target harnesses are chosen project first: a non-empty repository `harnesses` list wins, then a non-empty user list, then the organization list. A resource group's `harnesses` list narrows that set and cannot add a harness that is not already selected.
+Layers merge from lowest to highest precedence: organization, user, repository, repository personal. Top-level target harnesses are chosen per selecting layer. Resources the repository selects use a non-empty repository `harnesses` list, then the user list, then the organization list. Resources the user or organization selects use the user list, then the organization list, so a repository cannot narrow what they install in your home directory. A resource group's `harnesses` list narrows its scope's set and cannot add a harness that is not already selected.
 
 Each layer allows only some fields. For example, `telemetry`, `backup`, and `logging` belong to machine-level files, and the personal-local file cannot declare `harnesses` or allowlists. The [configuration layers reference](configuration-layers.md) has the full table.
 
@@ -96,7 +102,7 @@ apiVersion: agent-marketplace/v4
 include: profiles/company.yaml
 ```
 
-Use a list when including more than one fragment:
+A list includes more than one fragment:
 
 ```yaml
 include:
@@ -111,7 +117,7 @@ An included fragment has lower precedence than the file that includes it. In a l
 - A source name declared in more than one file must have identical values everywhere. Different values fail with `v4.source-conflict`.
 - Resource groups with the same name are combined. Their `include` and `exclude` lists are concatenated in merge order. `tags`, `all`, `registries`, `required`, and `harnesses` take the value from the last file that sets them.
 - `allowed_registries` and `allowed_marketplaces` take the first declaration in merge order. A fragment that sets an allowlist cannot be relaxed by a later fragment or by the including file.
-- `harnesses` takes the value from the last file that sets it. `backup`, `logging`, `telemetry`, `materialization`, and `requires` merge field by field, with later files winning.
+- `harnesses` takes the value from the last file that sets it. `backup`, `logging`, `update_check`, `telemetry`, `materialization`, and `requires` merge field by field, with later files winning.
 
 The loader rejects the whole layer when an include is missing, unreadable, malformed, not allowed in that layer, or part of a cycle. Fragments must use only the fields their layer allows. Organization fragments have extra ownership and permission requirements; see the [configuration layers reference](configuration-layers.md#include).
 
@@ -123,13 +129,14 @@ Unknown top-level fields are rejected.
 |---|---|---:|---|
 | `include` | path or list of paths | no | Local YAML fragments merged into this layer. Relative paths resolve from the declaring file. |
 | `apiVersion` | string | yes for root files | Must equal `agent-marketplace/v4`. |
-| `harnesses` | list of strings | no | Target harnesses. When omitted or empty in the repository file, targets come from the user file, then the organization file. |
+| `harnesses` | list of strings | no | Target harnesses. A repository list applies only to resources the repository selects. When omitted or empty in the repository file, targets come from the user file, then the organization file. |
 | `sources` | mapping | no | Named Git, directory, or Marketplace source declarations. |
 | `resources` | mapping | no | Resource groups, each keyed by a source name. |
 | `allowed_marketplaces` | list of regular expressions | no | Restricts hosted Marketplace endpoint URLs. |
 | `allowed_registries` | list of regular expressions | no | Restricts remote Git origins. |
 | `backup` | mapping | no | Pre-sync backups of machine-scope harness folders: `enabled` (default `true`), `max_days` (default `14`), `max_per_day` (default `10`). Both limits must be positive. Organization and user files only. |
 | `logging` | mapping | no | Log file settings: `enabled`, `level`, `file`, `max_size_mb`, `max_backups`, `max_age_days`, `compress`. See the [logging reference](logging.md). |
+| `update_check` | mapping | no | Release upgrade notice: `enabled` (default `true`). Organization and user files only; the user value wins. |
 | `telemetry` | mapping | no | Machine telemetry policy: `level`, `endpoint`, `community_reporting`, `retention_policy`, `ca_file`, `allow_insecure`, `headers`. See the [telemetry reference](telemetry.md). Organization and user files only. |
 | `materialization` | mapping | no | Whether generated resources are symlinks or regular files: `mode` and `targets`. See [Materialization](#materialization). |
 | `requires` | mapping | no | Opt-in resource-requirement expansion: `expand` (boolean, default `false`). See [Requirement expansion](resource-prerequisites.md#requirement-expansion). |
@@ -149,10 +156,11 @@ Supported targets are:
 | `gemini` | Gemini CLI |
 | `devin` | Devin CLI |
 | `codex` | Codex |
+| `opencode` | OpenCode |
 
 Target names are lowercase. Unknown targets fail with `v4.harness`.
 
-A non-empty repository `harnesses` list takes precedence over the user and organization lists. If the repository file omits the field or sets an empty list, the user list is used; if that is also missing or empty, the organization list is used. Commands that only read the catalog, such as `list`, work without any target list and print a warning. `sync` needs a target list and exits with an error when none is configured.
+For resources the repository selects, a non-empty repository `harnesses` list takes precedence over the user and organization lists. If the repository file omits the field or sets an empty list, the user list is used; if that is also missing or empty, the organization list is used. Resources the user or organization selects use the user list, then the organization list, and fall back to the repository list only when neither declares one. See [target harnesses](./configuration-layers.md#target-harnesses). Commands that only read the catalog, such as `list`, work without any target list and print a warning. `sync` needs a target list and exits with an error when none is configured.
 
 Output paths for each harness are listed in the [harnesses and output paths reference](harnesses-and-output-paths.md).
 
@@ -188,7 +196,7 @@ Validation rules by kind:
 |---|---|
 | Git source without `ref` | `v4.git-ref-required` |
 | Invalid `ref` | `v4.git-ref` |
-| `git` value that is a local path (`/`, `./`, `../`) instead of a remote URL, an scp-style origin such as `git@host:org/repo.git`, or a hostless absolute `file:///` URL | `v4.git-origin` |
+| `git` value that is a local path (`/`, `./`, `../`), a `git://` URL, or a `file://` URL with a host or a relative path. Remote URLs, scp-style origins such as `git@host:org/repo.git`, and hostless absolute `file:///` URLs are accepted. | `v4.git-origin` |
 | `path` that is absolute, contains `.` or `..` segments, or leaves the repository | `v4.git-path` |
 | `ref` or `path` on a directory source | `v4.source-field` |
 | `ref`, `path`, or `source_harness` on a Marketplace source | `v4.source-field` |
@@ -197,7 +205,7 @@ Validation rules by kind:
 | `source_harness` that is not a supported harness id | `v4.harness` |
 | Empty `git`, `directory`, or `marketplace` value | `v4.source-value` |
 
-Use `directory` for a local folder; point it at the subfolder you want instead of using `path`.
+A `directory` source names the folder to read directly; a subfolder is selected through `directory`, not `path`.
 
 In the repository `.agents/config.yaml` and `.agents/config.local.yaml`, `directory: .` selects the repository root and `directory: ./resources/skills` selects `<repo>/resources/skills`. User and organization files, included fragments, and files outside that layout resolve relative paths from their own directory. Relative paths, including through symlinks, must stay inside that base directory. Absolute paths are used as written. Earlier v4 releases resolved repository-root declarations from `.agents/`; a source stored under `.agents/` needs an explicit `./.agents/` prefix.
 
@@ -311,7 +319,7 @@ resources:
           revision: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
-Installing and resolving Marketplace resources requires a verified lock record in the owning layer's lock that matches the requested endpoint, registry, resource, and revision. A missing or unusable lock fails with `v4.marketplace-lock-required`. A lock with no record for the endpoint, or with a record that does not match, fails with `v4.marketplace-lock-mismatch`. Either way nothing is installed. One layer can have only one source that fetches from a given endpoint.
+Installing and resolving Marketplace resources requires a verified lock record in the owning layer's lock that matches the requested endpoint, registry, resource, and revision. A missing or unusable lock fails with `v4.marketplace-lock-required`. A lock with no record for the endpoint, or with a record that does not match, fails with `v4.marketplace-lock-mismatch`. A writing `agent-marketplace sync` or `lock` for a user, repository, or personal-local layer records entries for selected Marketplace resources that an existing lock is missing, keeping existing pins unless the configuration requests an explicit revision; read-only modes (`sync --check`, `sync --locked`, `sync --offline`, and `doctor`) report the error and never write. Organization locks are only written by `lock --scope organization`. Either way nothing is installed until the lock records the resource. One layer can have only one source that fetches from a given endpoint.
 
 Marketplace exclusions are exact `registry-slug/kind/name` entries under `resources.<source>.exclude`, and they win over inclusions: a group that includes a collection and excludes one of its members installs only the remaining members. The excluded resource is never fetched, so it cannot fail a sync.
 
@@ -362,7 +370,7 @@ materialization:
 | `symlink` | Default. Skills, commands, and subagents are [symlinks](../glossary.md#symlink) into the compiled cache under `~/.cache/agent-marketplace/`. Factory commands are always regular files. |
 | `file` | Writes regular files and folders for every target. The CLI tracks what it wrote in a materialization manifest. |
 
-Use `targets` when one harness needs a different mode:
+`targets` gives one harness a different mode:
 
 ```yaml
 materialization:
@@ -390,6 +398,8 @@ When sources with different origins or refs select resources with the same kind 
 
 Hooks are the exception: hooks from independent sources are all installed, even when their names match. Repeated references to the same source are installed once.
 
-Different kinds never collide. A skill and a command may share a name.
+Resources of one kind whose names differ only in letter case, such as commands `deploy` and `Deploy`, name one file on case-insensitive filesystems. Sync refuses all of them with `bundle.conflict.duplicate-artifact-path`, on every host. The exception is a resource from a `required: true` group that outranks the others: it is installed, and each of the others is reported with a `materialize.collision.shared-path` warning. Between two required resources, the higher-precedence layer or file wins, and a tie is still refused.
+
+Different kinds collide only on a harness target that installs them at the same path. Devin CLI and Codex install commands as skills, so a skill and a command with the same installed name compete there under the same rules, and sync prints a `materialize.collision.shared-path` warning naming both. Names that differ only in letter case, such as `audit` and `Audit`, count as the same name here on every host, because they are one path on case-insensitive filesystems. `status` lists the losing resource only for the targets where it is still installed. On targets with separate skill and command paths, such as Claude Code, both are installed.
 
 The [scopes, selection, and precedence explanation](../explanation/scopes-selection-and-precedence.md) covers collisions, exclusions across layers, and removal in more detail.

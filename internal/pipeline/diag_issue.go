@@ -64,6 +64,11 @@ type diagIssue struct {
 	key string
 }
 
+type consumerDiagnosticError string
+
+func (e consumerDiagnosticError) Error() string          { return string(e) }
+func (e consumerDiagnosticError) DiagnosticCode() string { return string(e) }
+
 // newDiagIssue promotes one diagnostic. It runs once per entry of
 // materialize.Report.Diags on every sync, so the source location is formatted
 // ONCE and threaded into the message rather than formatted again there
@@ -73,17 +78,25 @@ func newDiagIssue(d diag.Diagnostic) *diagIssue {
 	resource := sanitizeDiagText(d.Resource, maxDiagResourceLen)
 	message := sanitizeDiagText(d.Message, maxDiagMessageLen)
 	hint := sanitizeDiagText(d.Hint, maxDiagHintLen)
+	target := ""
+	if d.Severity == diag.SeverityError && d.Target != "" && strings.HasPrefix(d.Code, "hook.") {
+		target = sanitizeDiagText(d.Target, maxDiagResourceLen)
+	}
 	issue := &diagIssue{
 		code:             d.Code,
 		resource:         resource,
 		source:           source,
 		hint:             hint,
-		msg:              renderDiagMessage(d.Code, message, resource, source),
+		msg:              renderDiagMessage(d.Code, message, target, resource, source),
 		message:          message,
-		presentationText: renderDiagMessage(d.Code, message, "", ""),
+		presentationText: renderDiagMessage(d.Code, message, "", "", ""),
 	}
 	issue.key = diagDedupKey(d, issue)
-	if d.Code != "" && resource != "" {
+	if target != "" {
+		issue.key += "\x00" + target
+		issue.message = issue.msg
+	}
+	if d.Code != "" && resource != "" && target == "" {
 		issue.presentationKey = strings.Join([]string{d.Code, strings.ReplaceAll(d.Hint, "\x00", ""), normalizeDiagMessageForKey(d.Message)}, "\x00")
 	}
 	return issue
@@ -249,24 +262,32 @@ func (i *diagIssue) DedupKey() string { return i.key }
 // populates them; a diagnostic with neither degrades to the historical shape.
 // message, resource and source arrive already sanitized and bounded, so this
 // function never has to think about hostile bytes and never formats twice.
-func renderDiagMessage(code, message, resource, source string) string {
+func renderDiagMessage(code, message, target, resource, source string) string {
 	var b strings.Builder
-	b.Grow(len(code) + len(message) + len(resource) + len(source) + 16)
+	b.Grow(len(code) + len(message) + len(target) + len(resource) + len(source) + 16)
 	b.WriteString(code)
 	b.WriteString(": ")
 	b.WriteString(message)
-	if resource == "" && source == "" {
+	if target == "" && resource == "" && source == "" {
 		return b.String()
 	}
 	b.WriteString(" (")
+	sep := ""
+	if target != "" {
+		b.WriteString("target ")
+		b.WriteString(target)
+		sep = ", "
+	}
 	if resource != "" {
+		b.WriteString(sep)
 		b.WriteString("resource ")
 		b.WriteString(strconv.Quote(resource))
-		if source != "" {
-			b.WriteString(", ")
-		}
+		sep = ", "
 	}
-	b.WriteString(source)
+	if source != "" {
+		b.WriteString(sep)
+		b.WriteString(source)
+	}
 	b.WriteString(")")
 	return b.String()
 }

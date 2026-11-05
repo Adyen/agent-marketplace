@@ -1,17 +1,250 @@
 package config
 
 import (
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
-func TestV4OrderedChildExcludeThenRootIncludeSurvivesLegacyAdapter(t *testing.T) {
+// spec: consumer-config-format/writable-layer-version-refusals-name-the-older-migrator
+// spec: consumer-config-format/organization-version-refusals-direct-users-to-their-administrator
+// spec: consumer-config-format/other-diagnostics-keep-their-existing-guidance
+func TestV4VersionRefusalRemediationUsesOwningLayer(t *testing.T) {
+	for _, tc := range []struct {
+		name, scope string
+		source      Source
+		admin       bool
+	}{
+		{name: "user", scope: "user", source: UserPersonal},
+		{name: "repo", scope: "repo", source: RepoCommitted},
+		{name: "local", scope: "local", source: RepoPersonal},
+		{name: "organization", source: Organization, admin: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			root := filepath.Join(dir, "config.yaml")
+			writeIncludeConfig(t, root, "sources: {}\n")
+			_, err := LoadV4ConfigIfPresent(root, tc.source)
+			assertV4Remediation(t, err, tc.scope, tc.admin, "v4.api-version-required")
+
+			fragment := filepath.Join(dir, "fragment.yaml")
+			writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v4\ninclude: [fragment.yaml]\n")
+			writeIncludeConfig(t, fragment, "apiVersion: agent-marketplace/v2\n")
+			_, err = LoadV4ConfigIfPresent(root, tc.source)
+			assertV4Remediation(t, err, tc.scope, tc.admin, "v4.api-version")
+		})
+	}
+}
+
+func TestV4OtherDiagnosticsHaveNoVersionRefusalRemediation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data []byte
+		code string
+	}{
+		{name: "legacy key", data: []byte("apiVersion: agent-marketplace/v4\nregistries: []\n"), code: "v4.legacy-key"},
+		{name: "parse", data: []byte("sources: [\n"), code: "v4.parse"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseV4Config(tc.data, "config.yaml", true)
+			var validation *V4ValidationError
+			if !errors.As(err, &validation) || validation.Code != tc.code {
+				t.Fatalf("error = %v, want %s", err, tc.code)
+			}
+			remediation, ok := any(validation).(interface{ Remediation() string })
+			if !ok || remediation.Remediation() != "" {
+				t.Fatalf("%s remediation = %v, want empty", tc.code, validation)
+			}
+		})
+	}
+}
+
+// spec: command-error-output/validation-errors-name-the-authored-file
+func TestV4ValidationErrorNamesAuthoredFileAndLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+	_, err := ParseV4Config([]byte("apiVersion: agent-marketplace/v4\nsources:\n  bad name: {directory: ./registry}\n"), path, true)
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != "v4.source-name" {
+		t.Fatalf("error = %v, want v4.source-name validation error", err)
+	}
+	want := "v4.source-name: " + path + ":3:"
+	if !strings.HasPrefix(validation.Error(), want) {
+		t.Fatalf("validation message = %q, want prefix %q", validation, want)
+	}
+}
+
+func TestV4ValidationErrorIncludesPathUnlessMessageContainsIt(t *testing.T) {
+	t.Run("parse error names authored file once", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+		_, err := ParseV4Config([]byte("apiVersion: agent-marketplace/v4\nharnesses: [factory\nsources: {}\n"), file, true)
+		var validation *V4ValidationError
+		if !errors.As(err, &validation) || validation.Code != "v4.parse" {
+			t.Fatalf("error = %v, want v4.parse validation error", err)
+		}
+		if got := strings.Count(validation.Error(), file); got != 1 {
+			t.Fatalf("authored file appears %d times in %q, want once", got, validation)
+		}
+	})
+
+	t.Run("unknown field", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+		_, err := ParseV4Config([]byte("apiVersion: agent-marketplace/v4\nunknown_field: true\n"), file, true)
+		var validation *V4ValidationError
+		if !errors.As(err, &validation) || validation.Code != "v4.unknown-field" {
+			t.Fatalf("error = %v, want v4.unknown-field validation error", err)
+		}
+		want := "v4.unknown-field: " + file + ":2: unknown_field: unknown top-level field"
+		if got := validation.Error(); got != want {
+			t.Fatalf("validation error = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("marketplace lock mismatch does not duplicate locator", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), ".agents", "config.yaml")
+		locator := "awesome-ai/collection/coderabbit-skills"
+		validation := &V4ValidationError{
+			Code: v4MarketplaceLockMismatchCode, File: file, Line: 6,
+			Path: locator, LockFile: ".agents/lock.yaml", Variant: "resource-missing",
+		}
+		want := "v4.marketplace-lock-mismatch: " + file + ":6: resource \"" + locator +
+			"\" is missing from the lock file .agents/lock.yaml"
+		if got := validation.Error(); got != want {
+			t.Fatalf("validation error = %q, want %q", got, want)
+		}
+		if got := strings.Count(validation.Error(), locator); got != 1 {
+			t.Fatalf("locator appears %d times in %q, want exactly once", got, validation.Error())
+		}
+	})
+}
+
+func TestV4MarketplaceLockMismatchNamesLockFile(t *testing.T) {
+	lockPath := ".agents/lock.yaml"
+	for _, tc := range []struct {
+		name, variant, message, want string
+	}{
+		{
+			name: "missing resource", variant: "resource-missing",
+			message: `resource "awesome-ai/collection/coderabbit-skills" is missing from the acquisition lock`,
+			want:    `resource "awesome-ai/collection/coderabbit-skills" is missing from the lock file .agents/lock.yaml`,
+		},
+		{
+			name: "unrecorded endpoint", variant: "",
+			message: `Marketplace source "hosted" has no lock record for endpoint "https://marketplace.example"`,
+			want:    `Marketplace source "hosted" has no lock record for endpoint "https://marketplace.example" (lock file .agents/lock.yaml)`,
+		},
+		{
+			name: "configuration mismatch", variant: "configuration",
+			message: `duplicate Marketplace source declaration for endpoint "https://marketplace.example"`,
+			want:    `duplicate Marketplace source declaration for endpoint "https://marketplace.example" (lock file .agents/lock.yaml)`,
+		},
+		{
+			name: "duplicate request", variant: "duplicate-request",
+			message: `requests "tools/skill/review" and "tools/skill/review-copy" refer to the same locked resource`,
+			want:    `requests "tools/skill/review" and "tools/skill/review-copy" refer to the same locked resource (lock file .agents/lock.yaml)`,
+		},
+		{
+			name: "lock restore", variant: "lock-restore",
+			message: `lock scope "user" does not match "repo"`,
+			want:    `lock scope "user" does not match "repo" (lock file .agents/lock.yaml)`,
+		},
+		{
+			name: "lock read", variant: "lock-read",
+			message: `the acquisition lock could not be read: invalid document`,
+			want:    `the acquisition lock could not be read: invalid document (lock file .agents/lock.yaml)`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := (&V4ValidationError{
+				Code: v4MarketplaceLockMismatchCode, File: "/workspace/.agents/config.yaml", Path: "awesome-ai/collection/coderabbit-skills",
+				Line: 6, LockFile: lockPath, Variant: tc.variant, Msg: tc.message,
+			}).Error()
+			if !strings.HasSuffix(err, tc.want) {
+				t.Fatalf("mismatch error = %q, want suffix %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// spec: command-error-output/validation-errors-name-the-authored-file
+func TestV4IncludedMarketplaceConflictUsesRootDiagnosticProvenance(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, ".agents", "config.yaml")
+	fragment := filepath.Join(dir, ".agents", "fragment.yaml")
+	writeIncludeConfig(t, fragment, "sources:\n  first: {marketplace: https://market.example}\n")
+	writeIncludeConfig(t, root, "apiVersion: agent-marketplace/v4\ninclude: [fragment.yaml]\nsources:\n  second: {marketplace: https://market.example}\n")
+
+	v4, err := LoadV4ConfigIfPresent(root, RepoCommitted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = v4.toLegacyConfig(repoLayer, nil)
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != v4MarketplaceLockMismatchCode {
+		t.Fatalf("error = %v, want Marketplace lock mismatch", err)
+	}
+	wantRoot := canonicalPath(t, root)
+	if validation.File != wantRoot || validation.Line != 4 || validation.LockFile != ".agents/lock.yaml" {
+		t.Fatalf("diagnostic provenance = file %q line %d, lock %q; want root %q:4 and its acquisition lock", validation.File, validation.Line, validation.LockFile, wantRoot)
+	}
+}
+
+// spec: command-error-output/coded-errors-print-code-specific-guidance
+func TestV4StaleMarketplaceEndpointUsesStaleEndpointVariant(t *testing.T) {
+	v4, err := ParseV4Config([]byte("apiVersion: agent-marketplace/v4\nsources:\n  hosted: {marketplace: https://market.example}\n"), "config.yaml", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = v4.toLegacyConfig(repoLayer, &lockfile.Document{
+		APIVersion: lockfile.APIVersionV2,
+		Scope:      lockfile.ScopeRepo,
+		Marketplaces: []lockfile.MarketplaceLock{{
+			URL: "https://stale.example", InstanceID: "stale-instance",
+		}},
+	})
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != v4MarketplaceLockMismatchCode || validation.Variant != "stale-endpoint" {
+		t.Fatalf("error = %#v, want a stale-endpoint Marketplace lock mismatch", validation)
+	}
+}
+
+func assertV4Remediation(t *testing.T, err error, scope string, admin bool, code string) {
+	t.Helper()
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != code {
+		t.Fatalf("error = %v, want %s", err, code)
+	}
+	remediation, ok := any(validation).(interface{ Remediation() string })
+	if !ok {
+		t.Fatalf("%s does not expose Remediation()", code)
+	}
+	hint := remediation.Remediation()
+	required := []string{"https://github.com/Adyen/agent-marketplace/blob/main/site/docs/how-to/migrate-configuration.md"}
+	if admin {
+		required = append(required, "Ask your administrator", "convert and deploy")
+	} else {
+		required = append(required, "agent-marketplace v4.1.4", "older released migrator", "with that older binary",
+			"agent-marketplace migrate --to v4 --scope "+scope+" --dry-run", "include trees or unrepresentable input")
+	}
+	for _, want := range required {
+		if !strings.Contains(hint, want) {
+			t.Fatalf("%s remediation lacks %q: %s", code, want, hint)
+		}
+	}
+	lower := strings.ToLower(hint)
+	if strings.Contains(lower, "add apiversion") || strings.Contains(lower, "change apiversion") {
+		t.Fatalf("%s remediation advises merely editing apiVersion: %s", code, hint)
+	}
+	if strings.Contains(hint, "agent-marketplace migrate") == admin {
+		t.Fatalf("remediation has the wrong migration-command guidance: %s", hint)
+	}
+}
+
+func TestV4OrderedChildExcludeThenRootIncludeSurvivesRuntimeAdapter(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "config.yaml")
 	fragment := filepath.Join(dir, "fragment.yaml")
@@ -51,6 +284,7 @@ resources:
 	}
 }
 
+// spec: resource-selection/required-policy-alone-selects-no-resources
 func TestV4RequiredOnlyDoesNotAutoSelectCatalog(t *testing.T) {
 	v4, err := ParseV4([]byte(`apiVersion: agent-marketplace/v4
 sources: {shared: {git: https://example.test/agents.git, ref: main}}
@@ -72,7 +306,7 @@ resources: {shared: {required: true}}
 	}
 }
 
-func TestV4AllSelectionSurvivesLegacyAdapter(t *testing.T) {
+func TestV4AllSelectionSurvivesRuntimeAdapter(t *testing.T) {
 	v4, err := ParseV4([]byte(`apiVersion: agent-marketplace/v4
 sources: {shared: {git: https://example.test/agents.git, ref: main}}
 resources:
@@ -146,6 +380,21 @@ sources: {shared: {git: https://example.test/agents.git, ref: main}}
 	}
 }
 
+// spec: upgrade-notice/repository-configuration-cannot-set-the-release-check
+func TestV4RepositoryLayersRejectUpdateCheck(t *testing.T) {
+	v4, err := ParseV4([]byte("apiVersion: agent-marketplace/v4\nupdate_check: {enabled: false}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []layerKind{repoLayer, localLayer} {
+		_, err = v4.ToLegacyConfig(kind)
+		var validation *V4ValidationError
+		if !errors.As(err, &validation) || validation.Code != "v4.layer-field" || validation.Path != "update_check" {
+			t.Fatalf("layer %v: error = %v, want v4.layer-field for update_check", kind, err)
+		}
+	}
+}
+
 func TestV4OrganizationRejectsMaterializationLayerField(t *testing.T) {
 	v4, err := ParseV4([]byte(`apiVersion: agent-marketplace/v4
 materialization: {mode: file}
@@ -161,90 +410,59 @@ sources: {shared: {git: https://example.test/agents.git, ref: main}}
 	}
 }
 
-func TestV4MigrationPublishesAllFilesInOneTransaction(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
-	dir := t.TempDir()
-	user := filepath.Join(dir, "user.yaml")
-	repo := filepath.Join(dir, "repo.yaml")
-	userBefore := "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n"
-	repoBefore := "apiVersion: agent-marketplace/v2\nregistries: []\n"
-	if err := os.WriteFile(user, []byte(userBefore), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(repo, []byte(repoBefore), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	original := commitV4Migration
-	commitV4Migration = func(context.Context, string, []dependencytxn.DesiredFile, ...dependencytxn.Option) (dependencytxn.Result, error) {
-		return dependencytxn.Result{}, errors.New("injected publication failure")
-	}
-	t.Cleanup(func() { commitV4Migration = original })
-	_, err := MigrateConfigFilesToV4(MigratePaths{User: user, Repo: repo}, V4MigrationAll, false)
-	if err == nil || !strings.Contains(err.Error(), "commit v4 migration transaction") {
-		t.Fatalf("error = %v, want injected publication failure", err)
-	}
-	for path, want := range map[string]string{user: userBefore, repo: repoBefore} {
-		got, readErr := os.ReadFile(path)
-		if readErr != nil || string(got) != want {
-			t.Fatalf("%s after failed transaction = %q, %v", path, got, readErr)
-		}
-		matches, globErr := filepath.Glob(path + ".pre-v4.*.bak")
-		if globErr != nil || len(matches) != 0 {
-			t.Fatalf("%s backups after failed transaction = %v, %v", path, matches, globErr)
-		}
-	}
-}
-
-func TestV4MigrationDoesNotOverwriteConcurrentBackup(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-	before := []byte("apiVersion: agent-marketplace/v2\nregistries: []\n")
-	if err := os.WriteFile(path, before, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	original := commitV4Migration
-	sentinel := []byte("existing backup\n")
-	var backupPath string
-	commitV4Migration = func(ctx context.Context, stateDir string, files []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
-		for _, file := range files {
-			if strings.Contains(file.Path, ".pre-v4.") {
-				backupPath = file.Path
-				if err := os.WriteFile(backupPath, sentinel, 0o600); err != nil {
+// spec: consumer-config-format/mutations-refuse-before-new-writes-or-prunes
+func TestLayerEditorRefusesLegacyRootWithoutChangingFiles(t *testing.T) {
+	for _, source := range []Source{UserPersonal, RepoCommitted, RepoPersonal} {
+		for _, version := range []string{"agent-marketplace/v2", "agent-marketplace/v3"} {
+			t.Run(source.String()+"/"+version, func(t *testing.T) {
+				dir := t.TempDir()
+				declaring := filepath.Join(dir, "config.yaml")
+				staged := filepath.Join(dir, "staged.yaml")
+				before := []byte("apiVersion: " + version + "\nregistries: []\n")
+				for _, path := range []string{declaring, staged} {
+					if err := os.WriteFile(path, before, 0o640); err != nil {
+						t.Fatal(err)
+					}
+				}
+				info, err := os.Stat(staged)
+				if err != nil {
 					t.Fatal(err)
 				}
-				break
-			}
+				backup := filepath.Join(dir, "config.yaml.pre-v4.existing.bak")
+				writeIncludeConfig(t, backup, "foreign backup\n")
+				_, err = OpenLayerEditor(LayerTarget{Source: source, StagedPath: staged, DeclaringPath: declaring})
+				var validation *V4ValidationError
+				if !errors.As(err, &validation) || validation.Code != "v4.api-version" || validation.Path != declaring || validation.Line != 1 {
+					t.Fatalf("editor format refusal = %v", err)
+				}
+				for _, path := range []string{declaring, staged} {
+					if got, err := os.ReadFile(path); err != nil || string(got) != string(before) {
+						t.Fatalf("refusal changed %s: %q %v", path, got, err)
+					}
+				}
+				after, err := os.Stat(staged)
+				if err != nil || !os.SameFile(info, after) || info.Mode() != after.Mode() || !info.ModTime().Equal(after.ModTime()) {
+					t.Fatalf("refusal changed metadata: %v", err)
+				}
+				if got := readConfigString(t, backup); got != "foreign backup\n" {
+					t.Fatalf("foreign backup changed: %q", got)
+				}
+				entries, err := os.ReadDir(dir)
+				if err != nil || len(entries) != 3 {
+					t.Fatalf("refusal left residue: %v %v", entries, err)
+				}
+			})
 		}
-		return original(ctx, stateDir, files, opts...)
-	}
-	t.Cleanup(func() { commitV4Migration = original })
-
-	_, err := MigrateConfigFilesToV4(MigratePaths{Repo: path}, V4MigrationRepo, false)
-	if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
-		t.Fatalf("error = %v, want generation conflict", err)
-	}
-	if backupPath == "" || readConfigString(t, backupPath) != string(sentinel) {
-		t.Fatalf("backup %q was overwritten", backupPath)
-	}
-	if got := readConfigString(t, path); got != string(before) {
-		t.Fatalf("config changed after backup collision: %q", got)
 	}
 }
 
-func TestV4MigrationPreservesExplicitEmptyTagsAndHarnesses(t *testing.T) {
+func TestV4ReaderPreservesExplicitEmptyTagsAndHarnesses(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	writeV2Config(t, path, `apiVersion: agent-marketplace/v2
-registries:
-  - url: https://example.test/agents.git
-    ref: main
-    tags: []
-    harnesses: []
+	writeIncludeConfig(t, path, `apiVersion: agent-marketplace/v4
+sources: {agents: {git: https://example.test/agents.git, ref: main}}
+resources: {agents: {tags: [], harnesses: []}}
 `)
-	if _, err := MigrateConfigFilesToV4(MigratePaths{Repo: path}, V4MigrationRepo, false); err != nil {
-		t.Fatal(err)
-	}
 	v4, err := LoadV4ConfigFromPath(path)
 	if err != nil {
 		t.Fatal(err)
@@ -260,5 +478,48 @@ registries:
 	entry := legacy.Registries[0]
 	if entry.Tags == nil || entry.Harnesses == nil {
 		t.Fatalf("empty overrides became nil: tags=%#v harnesses=%#v", entry.Tags, entry.Harnesses)
+	}
+}
+
+func TestV4EditorRejectsForeignSourceBinding(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	before := "apiVersion: agent-marketplace/v4\nsources: {shared: {git: https://example.test/shared.git, ref: main}}\nresources: {shared: [skill/review]}\n"
+	writeIncludeConfig(t, path, before)
+	first, err := OpenLayerEditor(LayerTarget{Source: RepoCommitted, StagedPath: path, DeclaringPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := OpenLayerEditor(LayerTarget{Source: RepoCommitted, StagedPath: path, DeclaringPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := first.EnsureRegistry(RegistryEntry{URL: "https://example.test/shared.git", Ref: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	change := SelectionChange{Operation: SelectionExclude, Locators: []ResourceLocator{{Kind: ir.KindSkill, Name: "review"}}}
+	err = second.Apply(binding, change)
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != "config.edit.invalid-binding" {
+		t.Fatalf("foreign binding accepted: %v", err)
+	}
+	candidate, err := second.Render()
+	if err != nil || candidate.Changed || string(candidate.Bytes) != before {
+		t.Fatalf("foreign binding mutated candidate: %#v %v", candidate, err)
+	}
+	if err := first.Apply(binding, change); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err = first.Render()
+	if err != nil || !candidate.Changed || string(candidate.Bytes) == before {
+		t.Fatalf("own binding positive control failed: %#v %v", candidate, err)
+	}
+	view, err := ParseV4Config(candidate.Bytes, path, true)
+	if err != nil || len(view.Groups["shared"].Include) != 0 || len(view.Groups["shared"].Exclude) != 1 || view.Groups["shared"].Exclude[0] != "skill/review" {
+		t.Fatalf("own binding did not exclude review: view=%#v err=%v", view, err)
+	}
+	if got := readConfigString(t, path); got != before {
+		t.Fatalf("candidate render wrote root: %q", got)
 	}
 }

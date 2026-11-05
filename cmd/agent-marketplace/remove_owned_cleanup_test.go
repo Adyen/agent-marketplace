@@ -42,7 +42,7 @@ func newOwnedCommandFixture(t *testing.T, target, scope string) ownedCommandFixt
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-	origin, working := createBareRepoWithWorkingClone(t, "owned-mcp.git")
+	origin, working := createV4GitRegistry(t, "owned-mcp.git")
 	writeFile(t, filepath.Join(working, ".mcp.json"), "{\n  \"mcpServers\": {\n    \"remove\": {\"command\": \"remove-binary\"},\n    \"keep\": {\"command\": \"keep-binary\"}\n  }\n}\n")
 	commitAndPushAll(t, working, "seed MCPs")
 	t.Setenv("TMPDIR", filepath.Join(base, "tmp"))
@@ -53,7 +53,7 @@ func newOwnedCommandFixture(t *testing.T, target, scope string) ownedCommandFixt
 	if scope == "user" {
 		configPath = global
 	}
-	writeConfig(t, configPath, "\nharnesses: ["+target+"]\nregistries:\n  - url: "+origin+"\n    ref: main\n    default: true\n")
+	writeConfig(t, configPath, "\nharnesses: ["+target+"]\nsources:\n  registry:\n    git: "+origin+"\n    ref: main\nresources:\n  registry:\n    all: true\n")
 	withWorkingDir(t, repo)
 	if out, err := executeCommand("sync"); err != nil {
 		t.Fatalf("seed sync: %v\n%s", err, out)
@@ -368,7 +368,7 @@ func TestRemoveBlockedOwnedMCPRejectsChangedAuthorization(t *testing.T) {
 			f := newOwnedCommandFixture(t, "devin", "repo")
 			fragment := filepath.Join(f.repo, ".agents", "fragment.yaml")
 			if scenario == "included config" {
-				writeFile(t, fragment, "tags: [original]\n")
+				writeFile(t, fragment, "resources:\n  registry:\n    tags: [original]\n")
 				raw := append(ownedCommandRead(t, f.configPath), []byte("\ninclude: [fragment.yaml]\n")...)
 				if err := os.WriteFile(f.configPath, raw, 0o600); err != nil {
 					t.Fatal(err)
@@ -401,9 +401,9 @@ func TestRemoveBlockedOwnedMCPRejectsChangedAuthorization(t *testing.T) {
 					var data []byte
 					switch scenario {
 					case "included config":
-						path, data = fragment, []byte("tags: [changed]\n")
+						path, data = fragment, []byte("resources:\n  registry:\n    tags: [changed]\n")
 					case "new local config":
-						path, data = filepath.Join(f.repo, ".agents", "config.local.yaml"), []byte("mcp: {include: [remove]}\n")
+						path, data = filepath.Join(f.repo, ".agents", "config.local.yaml"), []byte("apiVersion: agent-marketplace/v4\nsources:\n  registry:\n    git: "+f.origin+"\n    ref: main\nresources:\n  registry:\n    include: [mcp/remove]\n")
 					case "lock generation":
 						path, data = f.lockPath, append(ownedCommandRead(t, f.lockPath), '\n')
 					}
@@ -440,7 +440,7 @@ func TestRemoveBlockedOwnedMCPScopeMismatch(t *testing.T) {
 		return
 	}
 	f := newOwnedCommandFixture(t, "devin", "user")
-	writeConfig(t, filepath.Join(f.repo, ".agents", "config.yaml"), "\nharnesses: [devin]\nregistries:\n  - url: "+f.origin+"\n    ref: main\n    default: false\n")
+	writeConfig(t, filepath.Join(f.repo, ".agents", "config.yaml"), "\nharnesses: [devin]\nsources:\n  registry:\n    git: "+f.origin+"\n    ref: main\nresources:\n  registry:\n    all: false\n")
 	if out, err := executeCommand("sync"); err != nil {
 		t.Fatalf("seed scoped registry: %v\n%s", err, out)
 	}
@@ -459,7 +459,7 @@ func TestRemoveBlockedOwnedMCPKeepsOtherScope(t *testing.T) {
 	}
 	f := newOwnedCommandFixture(t, "devin", "user")
 	repoConfig := filepath.Join(f.repo, ".agents", "config.yaml")
-	writeConfig(t, repoConfig, "\nharnesses: [devin]\nregistries:\n  - url: "+f.origin+"\n    ref: main\n    default: true\n")
+	writeConfig(t, repoConfig, "\nharnesses: [devin]\nsources:\n  registry:\n    git: "+f.origin+"\n    ref: main\nresources:\n  registry:\n    all: true\n")
 	if out, err := executeCommand("sync"); err != nil {
 		t.Fatalf("seed scoped copies: %v\n%s", err, out)
 	}

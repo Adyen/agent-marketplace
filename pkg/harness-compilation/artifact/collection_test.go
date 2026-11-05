@@ -3,6 +3,7 @@ package artifact
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -434,5 +435,106 @@ func TestCollectionManifestOrdersMembersAndIncludes(t *testing.T) {
 	}
 	if want := []string{"a", "m", "z"}; strings.Join(got.Includes, ",") != strings.Join(want, ",") {
 		t.Errorf("includes = %v, want %v", got.Includes, want)
+	}
+}
+
+func TestAppendUniqueCollectionPathsKeepsFirstOccurrenceOrder(t *testing.T) {
+	seen := map[string]struct{}{}
+	candidate := []string{"root", "b"}
+	paths := appendUniqueCollectionPaths(nil, seen, []string{"root", "a"}, candidate, []string{"root", "a"})
+	paths = appendUniqueCollectionPaths(paths, seen, []string{"root", "b"}, []string{"root"}, []string{"root", "a", "x"})
+	candidate[1] = "mutated"
+	want := [][]string{{"root", "a"}, {"root", "b"}, {"root"}, {"root", "a", "x"}}
+	if len(paths) != len(want) {
+		t.Fatalf("paths = %q, want %q", paths, want)
+	}
+	for i := range want {
+		if !slicesEqual(paths[i], want[i]) {
+			t.Fatalf("paths = %q, want %q", paths, want)
+		}
+	}
+}
+
+// diamondCollectionGraph builds a root collection whose depth levels each
+// include two collections that both include the next level, so the single
+// leaf is reached through 2^depth inclusion paths. Every manifest carries its
+// exact flattened leaves.
+func diamondCollectionGraph(depth int) (CollectionManifest, map[string]CollectionManifest, [][]string) {
+	leafRev := "sha256:" + strings.Repeat("a", 64)
+	n := 0
+	digest := func() string { n++; return fmt.Sprintf("sha256:%064x", n) }
+	prefix := func(name string, paths [][]string) [][]string {
+		out := make([][]string, 0, len(paths))
+		for _, p := range paths {
+			out = append(out, append([]string{name}, p...))
+		}
+		return out
+	}
+	manifest := func(name string, members []CollectionMemberEntry, includes []string, paths [][]string) CollectionManifest {
+		m := CollectionManifest{SchemaVersion: CollectionSchemaV1, Name: name, ContentDigest: digest(), Members: members, Includes: includes}
+		if len(includes) > 0 {
+			m.Leaves = []CollectionMemberEntry{{Kind: "skill", Name: "leaf", RegistryID: "reg", Revision: leafRev, InclusionPaths: paths}}
+		}
+		return m
+	}
+	nested := map[string]CollectionManifest{}
+	cur := manifest(fmt.Sprintf("c%d", depth), []CollectionMemberEntry{{Kind: "skill", Name: "leaf", RegistryID: "reg", Revision: leafRev}}, nil, nil)
+	curPaths := [][]string{{cur.Name}}
+	for level := depth - 1; level >= 0; level-- {
+		nested[cur.ContentDigest] = cur
+		var members []CollectionMemberEntry
+		var includes []string
+		var paths [][]string
+		for _, side := range []string{"l", "r"} {
+			name := fmt.Sprintf("%s%d", side, level)
+			sidePaths := prefix(name, curPaths)
+			m := manifest(name, []CollectionMemberEntry{{Kind: "collection", Name: cur.Name, RegistryID: "reg", Revision: cur.ContentDigest}}, []string{cur.Name}, sidePaths)
+			nested[m.ContentDigest] = m
+			members = append(members, CollectionMemberEntry{Kind: "collection", Name: name, RegistryID: "reg", Revision: m.ContentDigest})
+			includes = append(includes, name)
+			paths = append(paths, sidePaths...)
+		}
+		name := fmt.Sprintf("c%d", level)
+		curPaths = prefix(name, paths)
+		cur = manifest(name, members, includes, curPaths)
+	}
+	return cur, nested, curPaths
+}
+
+func TestValidateAndExpandCollectionManifestGraphListsEveryDiamondPathOnce(t *testing.T) {
+	root, nested, _ := diamondCollectionGraph(3)
+	leaves, err := ValidateAndExpandCollectionManifestGraph(root, nested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want [][]string
+	for mask := range 8 {
+		path := []string{"c0"}
+		for level := range 3 {
+			side := "l"
+			if mask&(4>>level) != 0 {
+				side = "r"
+			}
+			path = append(path, fmt.Sprintf("%s%d", side, level), fmt.Sprintf("c%d", level+1))
+		}
+		want = append(want, path)
+	}
+	if len(leaves) != 1 || len(leaves[0].InclusionPaths) != len(want) {
+		t.Fatalf("leaves = %#v, want one leaf with %d paths", leaves, len(want))
+	}
+	for i := range want {
+		if !slicesEqual(leaves[0].InclusionPaths[i], want[i]) {
+			t.Fatalf("inclusion path %d = %q, want %q", i, leaves[0].InclusionPaths[i], want[i])
+		}
+	}
+}
+
+func BenchmarkValidateAndExpandCollectionManifestGraphDiamond(b *testing.B) {
+	root, nested, _ := diamondCollectionGraph(11)
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := ValidateAndExpandCollectionManifestGraph(root, nested); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

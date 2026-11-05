@@ -60,3 +60,20 @@ func TestInstallRegistrySelectionMatchesOnePhysicalSource(t *testing.T) {
 		})
 	}
 }
+
+func TestInstallRegistrySelectionPrefersEachTargetScope(t *testing.T) {
+	const url = "https://example.com/team/tools.git"
+	var entries []config.RegistryEntry
+	for _, source := range []config.Source{config.UserPersonal, config.RepoCommitted, config.RepoPersonal} {
+		entries = append(entries, config.RegistryEntry{URL: url, Ref: "main", Source: source})
+	}
+	for _, scope := range []Scope{ScopeUser, ScopeRepo, ScopeLocal} {
+		t.Run(string(scope), func(t *testing.T) {
+			selected, err := installRegistrySelection(entries, url, scopeToConfigSource(scope))
+			want := map[Scope]config.Source{ScopeUser: config.UserPersonal, ScopeRepo: config.RepoCommitted, ScopeLocal: config.RepoPersonal}[scope]
+			if err != nil || len(selected) != 1 || selected[0].Source != want {
+				t.Fatalf("selection = %+v, %v; want source %v", selected, err, want)
+			}
+		})
+	}
+}

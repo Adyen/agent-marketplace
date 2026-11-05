@@ -23,7 +23,7 @@ func TestRepoInstallStagesMissingConfigSkeletonAndSelection(t *testing.T) {
 	origin, working := createBareRepoWithWorkingClone(t, "lower-layer-install.git")
 	writeSkill(t, working, "review", "Review", nil)
 	commitAndPushAll(t, working, "review")
-	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "\nharnesses: [claude]\nregistries:\n  - url: "+origin+"\n    ref: main\n")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  hosted: {git: file://"+origin+", ref: main}\n")
 
 	repo := filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
@@ -86,7 +86,7 @@ func TestRepoInstallStagesMissingConfigSkeletonAndSelection(t *testing.T) {
 	}
 	t.Cleanup(func() { commitDependencyTransaction = originalCommit })
 
-	_, err = executeCommand("install", "review")
+	_, err = executeCommand("install", "--scope", "repo", "review")
 	if !errors.Is(err, stop) {
 		t.Fatalf("install error = %v, want %v", err, stop)
 	}

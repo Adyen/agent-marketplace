@@ -50,7 +50,7 @@ func TestRowStatusDecision(t *testing.T) {
 		{"required", mkRow("s", withRequired), "[R]", "■", "required"},
 		{"required org", mkRow("s", requiredOrg), "[R]", "■", "required (org)"},
 		{"drift pending", mkRow("s", withDrift(materialize.DriftMissing)), "[*]", "◐", "enabled (pending sync)"},
-		{"orphaned", mkRow("s", withDrift(materialize.DriftOrphaned)), "[-]", "◌", "orphaned"},
+		{"orphaned copy", mkRow("s", withDrift(materialize.DriftOrphaned)), "[*]", "◐", "enabled (pending sync)"},
 		{"broken", mkRow("s", withDrift(materialize.DriftBroken)), "[!]", "✗", "broken"},
 		{"enabled", mkRow("s"), "[x]", "●", "enabled"},
 	}

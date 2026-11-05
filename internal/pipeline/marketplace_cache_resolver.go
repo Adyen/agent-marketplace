@@ -139,6 +139,17 @@ func IsMarketplaceCacheMetadataMissingWarning(err error) bool {
 	return errors.As(err, &warning)
 }
 
+// HasUnresolvedMarketplaceCacheEvidence reports whether resolve errors indicate missing Marketplace cache evidence.
+func HasUnresolvedMarketplaceCacheEvidence(resolveErrors []error) bool {
+	for _, err := range resolveErrors {
+		var cacheErr *marketplaceCacheEvidenceError
+		if IsMarketplaceCacheMetadataMissingWarning(err) || errors.As(err, &cacheErr) {
+			return true
+		}
+	}
+	return false
+}
+
 // MarketplacePendingPins collects the Marketplace pins that resolution
 // attempted but could not turn into artifacts. Their hard resolution errors
 // already name them, so the read-only commands that resolve Marketplace

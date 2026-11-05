@@ -41,6 +41,11 @@ func TestCodexTargetInfoAdaptsNativeLayout(t *testing.T) {
 				wantResourceDirs[kind] = path.Dir(pattern)
 			}
 		}
+		for _, aggregate := range partition.Aggregates {
+			if aggregate.Kind == ir.KindHook && aggregate.SupportDir != "" {
+				wantResourceDirs[ir.KindHook] = aggregate.SupportDir
+			}
+		}
 		if len(wantResourceDirs) == 0 {
 			wantResourceDirs = nil
 		}
@@ -78,6 +83,7 @@ func TestCodexVirtualTargetInfoAdaptsAllNativePartitions(t *testing.T) {
 	}
 	var wantComponents, wantAggregates []string
 	wantSkillPath := ""
+	wantResourceDirs := map[ir.ResourceKind]string{}
 	for _, partition := range layout.Partitions {
 		wantComponents = append(wantComponents, partition.Prefix)
 		for kind, pattern := range partition.ResourcePaths {
@@ -89,11 +95,17 @@ func TestCodexVirtualTargetInfoAdaptsAllNativePartitions(t *testing.T) {
 		}
 		for _, aggregate := range partition.Aggregates {
 			wantAggregates = append(wantAggregates, path.Join(partition.Prefix, aggregate.Project.Path))
+			if aggregate.Kind == ir.KindHook && aggregate.SupportDir != "" {
+				wantResourceDirs[ir.KindHook] = path.Join(partition.Prefix, aggregate.SupportDir)
+			}
 		}
 	}
+	if len(wantResourceDirs) == 0 {
+		wantResourceDirs = nil
+	}
 	slices.Sort(wantAggregates)
-	if !reflect.DeepEqual(got.Components, wantComponents) || got.SkillPathPattern != wantSkillPath || got.ResourceDirs != nil || !reflect.DeepEqual(got.AggregateFilesForScope(false), wantAggregates) {
-		t.Fatalf("virtual Codex target info = %#v; want components=%v skill=%q no resource dirs aggregates=%v", got, wantComponents, wantSkillPath, wantAggregates)
+	if !reflect.DeepEqual(got.Components, wantComponents) || got.SkillPathPattern != wantSkillPath || !reflect.DeepEqual(got.ResourceDirs, wantResourceDirs) || !reflect.DeepEqual(got.AggregateFilesForScope(false), wantAggregates) {
+		t.Fatalf("virtual Codex target info = %#v; want components=%v skill=%q resource dirs=%v aggregates=%v", got, wantComponents, wantSkillPath, wantResourceDirs, wantAggregates)
 	}
 }
 

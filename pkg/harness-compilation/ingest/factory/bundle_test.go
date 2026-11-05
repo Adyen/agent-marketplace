@@ -69,7 +69,9 @@ func TestLoadBundle_PluginFormIdentityCompilesToFactory(t *testing.T) {
 
 	var arts []artifact.Artifact
 	for _, resource := range bundle.Resources {
-		result, err := harnesscompile.Compile(resource, harnesscompile.TargetFactory)
+		// The fixture hook carries a plugin-root token; compiling it for the
+		// native path requires the installed support base.
+		result, err := harnesscompile.Compile(resource, harnesscompile.TargetFactory, harnesscompile.WithPluginRoot("/plugins/demo"))
 		if err != nil {
 			t.Fatalf("Compile(%s, factory): %v", resource.Name(), err)
 		}
@@ -106,6 +108,15 @@ func TestLoadBundle_PluginFormIdentityCompilesToFactory(t *testing.T) {
 			}
 			if !strings.Contains(string(merged[i].Bytes), "name: my-skill") {
 				t.Fatalf("artifact %q missing frontmatter name: %q", path, string(merged[i].Bytes))
+			}
+			continue
+		}
+		if path == "hooks/hooks.json" {
+			// The plugin-root token resolves to the installed support path;
+			// the native file keeps the authored matcher.
+			want := "{\n  \"PreToolUse\": [\n    {\n      \"hooks\": [\n        {\n          \"command\": \"\\\"$FACTORY_PROJECT_DIR\\\"/plugins/demo/check.sh\",\n          \"type\": \"command\"\n        }\n      ],\n      \"matcher\": \"Read\"\n    }\n  ]\n}"
+			if string(merged[i].Bytes) != want {
+				t.Fatalf("artifact %q mismatch:\n got: %q\nwant: %q", path, string(merged[i].Bytes), want)
 			}
 			continue
 		}
@@ -229,7 +240,9 @@ func TestLoadBundle_WorkspaceFormCompilesToClaude(t *testing.T) {
 
 	var arts []artifact.Artifact
 	for _, resource := range bundle.Resources {
-		result, err := harnesscompile.Compile(resource, harnesscompile.TargetClaude)
+		// The fixture hook carries a plugin-root token; compiling it for the
+		// native path requires the installed support base.
+		result, err := harnesscompile.Compile(resource, harnesscompile.TargetClaude, harnesscompile.WithPluginRoot("/plugins/demo"))
 		if err != nil {
 			t.Fatalf("Compile(%s, claude): %v", resource.Name(), err)
 		}

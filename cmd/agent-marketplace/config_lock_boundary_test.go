@@ -32,7 +32,7 @@ func TestLockReconcileHonorsContainedRepositoryLockLink(t *testing.T) {
 	commitAndPushAll(t, originDir, "seed")
 
 	repo := t.TempDir()
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "harnesses: [factory]\nregistries:\n  - url: "+origin+"\n    ref: main\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  origin: {git: file://"+origin+", ref: main}\n")
 	target := filepath.Join(repo, ".agents", "shared", "lock.yaml")
 	writeFile(t, target, "apiVersion: agent-marketplace-lock/v1\nscope: repo\nregistries: []\n")
 	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
@@ -89,7 +89,7 @@ func TestPrepareRuntimeLocksRejectsCrossLayerObjectAlias(t *testing.T) {
 	commitAndPushAll(t, originDir, "add independent install target")
 	repo := t.TempDir()
 	repoConfig := filepath.Join(repo, ".agents", "config.yaml")
-	writeConfig(t, repoConfig, "harnesses: [factory]\nskills: [a]\nregistries:\n  - url: "+origin+"\n    ref: main\n")
+	writeConfig(t, repoConfig, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  origin: {git: file://"+origin+", ref: main}\nresources:\n  origin: [skill/a]\n")
 	repoBefore, err := os.ReadFile(repoConfig)
 	if err != nil {
 		t.Fatal(err)
@@ -140,7 +140,7 @@ func TestDeinitPurgeRemovesApprovedUserDotfileLink(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
 
 	target := filepath.Join(home, "dotfiles", "agents.yaml")
-	writeFile(t, target, "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n")
+	writeFile(t, target, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {}\n")
 	before, err := os.ReadFile(target)
 	if err != nil {
 		t.Fatal(err)

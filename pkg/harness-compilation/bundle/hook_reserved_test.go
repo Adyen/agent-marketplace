@@ -43,6 +43,7 @@ func TestLoadHooksWrappedGroupsFlattenAndCompile(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/workspace-and-wrapped-forms-flatten-identically
 func TestLoadHooksWrappedAndWorkspaceFlatRemainSupported(t *testing.T) {
 	for _, tc := range []struct {
 		name string

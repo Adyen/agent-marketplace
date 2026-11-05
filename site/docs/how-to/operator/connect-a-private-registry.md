@@ -36,7 +36,7 @@ The configuration also accepts an `ssh_key` credential, which cannot be combined
         file: /run/secrets/registry-ssh-key
 ```
 
-The worker passes the key to `ssh` (with `BatchMode=yes`) only when Git uses the SSH transport. Because a `file`-mode origin must use HTTP or HTTPS, a `token` is the credential that works here.
+The worker passes the key to `ssh` (with `BatchMode=yes`) only when Git uses the SSH transport.
 
 ## 2. Trust a private certificate authority (optional)
 
@@ -67,7 +67,7 @@ The worker must be able to reach the registry origin. Limit the worker's outboun
 agent-marketplace serve reindex private-agents --config /app/marketplace.yaml
 ```
 
-The worker also refreshes every configured registry on startup and at each `refresh.interval`, so this step only forces an immediate refresh.
+The command prints nothing on success and exits `0`; the [log file](../../reference/logging.md) records the refresh and ends with `reindex complete`. The worker also refreshes every configured registry on startup and at each `refresh.interval`, so this step only forces an immediate refresh.
 
 ## 6. Verify
 

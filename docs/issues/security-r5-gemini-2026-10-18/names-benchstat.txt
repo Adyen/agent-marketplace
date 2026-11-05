@@ -1,0 +1,49 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest/gemini
+cpu: Apple M4 Max
+                                            | names-before.txt | names-after.txt |
+                                            |                 sec/op                 |     sec/op      vs base               |
+GeminiHookNames/grouped=false/hooks=1-16                                7.430u +/- inf [1]     7.579u +/- inf [1]   +2.01% (p=0.024 n=5)
+GeminiHookNames/grouped=false/hooks=64-16                               470.8u +/- inf [1]     358.4u +/- inf [1]  -23.87% (p=0.008 n=5)
+GeminiHookNames/grouped=false/hooks=512-16                             10.000m +/- inf [1]     2.777m +/- inf [1]  -72.22% (p=0.008 n=5)
+GeminiHookNames/grouped=false/hooks=2048-16                            139.90m +/- inf [1]     11.12m +/- inf [1]  -92.05% (p=0.008 n=5)
+GeminiHookNames/grouped=true/hooks=1-16                                 10.60u +/- inf [1]     10.44u +/- inf [1]        ~ (p=0.095 n=5)
+GeminiHookNames/grouped=true/hooks=64-16                                449.6u +/- inf [1]     341.0u +/- inf [1]  -24.15% (p=0.008 n=5)
+GeminiHookNames/grouped=true/hooks=512-16                              10.047m +/- inf [1]     2.637m +/- inf [1]  -73.76% (p=0.008 n=5)
+GeminiHookNames/grouped=true/hooks=2048-16                             139.75m +/- inf [1]     10.38m +/- inf [1]  -92.57% (p=0.008 n=5)
+GeminiHookNamesBundle/hooks=1-16                                        22.92u +/- inf [1]     22.13u +/- inf [1]   -3.43% (p=0.008 n=5)
+GeminiHookNamesBundle/hooks=512-16                                     10.857m +/- inf [1]     3.512m +/- inf [1]  -67.66% (p=0.008 n=5)
+geomean                                                                 1.233m           479.0u        -61.17%
+[1] need >= 6 samples for confidence interval at level 0.95
+
+                                            | names-before.txt | names-after.txt |
+                                            |                  B/op                  |      B/op       vs base               |
+GeminiHookNames/grouped=false/hooks=1-16                               7.326Ki +/- inf [1]    7.326Ki +/- inf [1]        ~ (p=1.000 n=5)
+GeminiHookNames/grouped=false/hooks=64-16                              427.8Ki +/- inf [1]    351.1Ki +/- inf [1]  -17.93% (p=0.008 n=5)
+GeminiHookNames/grouped=false/hooks=512-16                             7.979Mi +/- inf [1]    2.736Mi +/- inf [1]  -65.71% (p=0.008 n=5)
+GeminiHookNames/grouped=false/hooks=2048-16                           103.57Mi +/- inf [1]    11.37Mi +/- inf [1]  -89.02% (p=0.008 n=5)
+GeminiHookNames/grouped=true/hooks=1-16                                10.13Ki +/- inf [1]    10.13Ki +/- inf [1]   -0.02% (p=0.048 n=5)
+GeminiHookNames/grouped=true/hooks=64-16                               410.6Ki +/- inf [1]    333.9Ki +/- inf [1]  -18.66% (p=0.008 n=5)
+GeminiHookNames/grouped=true/hooks=512-16                              7.825Mi +/- inf [1]    2.582Mi +/- inf [1]  -67.00% (p=0.008 n=5)
+GeminiHookNames/grouped=true/hooks=2048-16                            103.17Mi +/- inf [1]    10.97Mi +/- inf [1]  -89.36% (p=0.008 n=5)
+GeminiHookNamesBundle/hooks=1-16                                       19.36Ki +/- inf [1]    19.35Ki +/- inf [1]        ~ (p=0.175 n=5)
+GeminiHookNamesBundle/hooks=512-16                                     8.795Mi +/- inf [1]    3.555Mi +/- inf [1]  -59.58% (p=0.008 n=5)
+geomean                                                                1.028Mi          475.8Ki        -54.79%
+[1] need >= 6 samples for confidence interval at level 0.95
+
+                                            | names-before.txt | names-after.txt |
+                                            |               allocs/op                |  allocs/op    vs base                 |
+GeminiHookNames/grouped=false/hooks=1-16                                 133.0 +/- inf [1]    133.0 +/- inf [1]        ~ (p=1.000 n=5) [2]
+GeminiHookNames/grouped=false/hooks=64-16                              10.010k +/- inf [1]   6.103k +/- inf [1]  -39.03% (p=0.008 n=5)
+GeminiHookNames/grouped=false/hooks=512-16                             342.51k +/- inf [1]   48.97k +/- inf [1]  -85.70% (p=0.008 n=5)
+GeminiHookNames/grouped=false/hooks=2048-16                            5991.4k +/- inf [1]   196.6k +/- inf [1]  -96.72% (p=0.008 n=5)
+GeminiHookNames/grouped=true/hooks=1-16                                  178.0 +/- inf [1]    178.0 +/- inf [1]        ~ (p=1.000 n=5) [2]
+GeminiHookNames/grouped=true/hooks=64-16                                9.487k +/- inf [1]   5.581k +/- inf [1]  -41.17% (p=0.008 n=5)
+GeminiHookNames/grouped=true/hooks=512-16                              337.95k +/- inf [1]   44.41k +/- inf [1]  -86.86% (p=0.008 n=5)
+GeminiHookNames/grouped=true/hooks=2048-16                             5973.0k +/- inf [1]   178.2k +/- inf [1]  -97.02% (p=0.008 n=5)
+GeminiHookNamesBundle/hooks=1-16                                         384.0 +/- inf [1]    384.0 +/- inf [1]        ~ (p=1.000 n=5) [2]
+GeminiHookNamesBundle/hooks=512-16                                     357.11k +/- inf [1]   63.57k +/- inf [1]  -82.20% (p=0.008 n=5)
+geomean                                                                 32.41k         8.272k        -74.47%
+[1] need >= 6 samples for confidence interval at level 0.95
+[2] all samples are equal

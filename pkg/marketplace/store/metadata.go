@@ -135,6 +135,18 @@ type MetadataStore interface {
 	// bounded result and a non-nil empty slice when no occurrences exist.
 	RegistryHistory(ctx context.Context, id RegistryID) ([]RegistryOccurrence, error)
 
+	CreateRegistryObservation(ctx context.Context, observation RegistryObservation) (RegistryObservation, error)
+	GetRegistryObservation(ctx context.Context, id RegistryID) (RegistryObservation, error)
+	UpdateRegistryObservation(ctx context.Context, expectedVersion uint64, next RegistryObservation) (RegistryObservation, error)
+	DeleteRegistryObservation(ctx context.Context, id RegistryID) error
+	ListDueRegistryObservations(ctx context.Context, now time.Time, limit int) ([]RegistryObservation, error)
+	AcquireRegistryLease(ctx context.Context, id RegistryID, owner string, ttl time.Duration) (RegistryLease, error)
+	RenewRegistryLease(ctx context.Context, id RegistryID, lease RegistryLease, ttl time.Duration) (RegistryLease, error)
+	ReleaseRegistryLease(ctx context.Context, id RegistryID, lease RegistryLease) error
+	RequestRefresh(ctx context.Context, id RegistryID, request RefreshRequest) (RefreshDecision, error)
+	AcquireHostBudget(ctx context.Context, host, owner string, acquisition bool, limit HostBudgetLimit, ttl time.Duration) (HostBudgetLease, error)
+	ReleaseHostBudget(ctx context.Context, lease HostBudgetLease) error
+
 	// Resource revisions.
 	GetResourceRevision(ctx context.Context, coord ResourceCoordinate, digest RevisionDigest) (AssessedResourceRevision, error)
 	PutResourceRevision(ctx context.Context, rev ResourceRevision) error
@@ -151,6 +163,10 @@ type MetadataStore interface {
 	// one content digest. It is used for digest-addressed collection manifests,
 	// whose route has no coordinate.
 	ListResourceRevisionsByContentDigest(ctx context.Context, marketplace MarketplaceID, digest RevisionDigest) ([]AssessedResourceRevision, error)
+	// ListResourceArchiveDigests returns up to limit distinct non-empty archive
+	// digests of the Marketplace's resource revisions that sort after the given
+	// digest, in ascending order. Bounded backfills page with it.
+	ListResourceArchiveDigests(ctx context.Context, marketplace MarketplaceID, after ArchiveDigest, limit int) ([]ArchiveDigest, error)
 
 	// GetLatestResourceRevision returns the most recent revision for a coordinate,
 	// including a revoked revision if no non-revoked revision exists.

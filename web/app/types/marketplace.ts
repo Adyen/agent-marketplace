@@ -29,6 +29,7 @@ export type InspectionFile = Schemas['InspectionFile']
 export type AssessmentFinding = Schemas['AssessmentFinding']
 export type ResourceAssessment = Schemas['ResourceAssessment']
 export type ResourceOccurrence = Schemas['ResourceOccurrence']
+export type ResourceSource = Schemas['CatalogSource']
 export type SearchResult = JsonResponse<'searchResources'>
 
 type GeneratedResourceRevision = JsonResponse<'getResource'>

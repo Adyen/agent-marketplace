@@ -1,0 +1,383 @@
+- name: Factory Luna medium to Codex
+  source: factory
+  target: codex
+  model: gpt-5.6-luna
+  effort: medium
+  want_model: gpt-5.6-luna
+  want_effort: medium
+
+- name: Codex Terra high to Factory
+  source: codex
+  target: factory
+  model: gpt-5.6-terra
+  effort: high
+  want_model: gpt-5.6-terra
+  want_effort: high
+
+- name: Claude Opus high to Cursor parameter
+  source: claude
+  target: cursor
+  model: claude-opus-5
+  effort: high
+  want_model: claude-opus-5[effort=high]
+
+- name: Cursor parameter to Claude effort
+  source: cursor
+  target: claude
+  model: claude-opus-5[effort=high]
+  want_model: claude-opus-5
+  want_effort: high
+
+- name: Sonnet selector pins current Factory sonnet
+  source: claude
+  target: factory
+  model: sonnet
+  want_model: claude-sonnet-5
+  losses: [model.selector-pinned]
+
+- name: Opus selector pins current Factory opus
+  source: claude
+  target: factory
+  model: opus
+  want_model: claude-opus-5-5
+  losses: [model.selector-pinned]
+
+- name: Haiku selector pins current Factory haiku
+  source: claude
+  target: factory
+  model: haiku
+  want_model: claude-haiku-4-5-20251001
+  losses: [model.selector-pinned]
+
+- name: Documented Factory inventory ID resolves cross-harness
+  source: claude
+  target: factory
+  model: grok-4.5
+  want_model: grok-4.5
+
+- name: Restricted reasoning subset keeps supported level
+  source: claude
+  target: factory
+  model: minimax-m3
+  effort: high
+  want_model: minimax-m3
+  want_effort: high
+
+- name: Restricted reasoning subset drops unsupported level
+  source: claude
+  target: factory
+  model: minimax-m3
+  effort: low
+  want_model: minimax-m3
+  losses: [model.reasoning-omitted]
+
+- name: Devin Luna medium resolves to captured variant UID
+  source: claude
+  target: devin
+  model: gpt-5.6-luna
+  effort: medium
+  want_model: gpt-5-6-luna-medium
+
+- name: Devin Terra high variant decodes to Codex effort
+  source: devin
+  target: codex
+  model: gpt-5-6-terra-high
+  want_model: gpt-5.6-terra
+  want_effort: high
+
+- name: Devin Opus high variant decodes to Factory effort
+  source: devin
+  target: factory
+  model: claude-opus-5-high
+  want_model: claude-opus-5
+  want_effort: high
+
+- name: Devin fast variant keeps its distinct identity
+  source: devin
+  target: factory
+  model: claude-opus-5-5-medium-fast
+  want_model: claude-opus-5-5-fast
+  want_effort: medium
+
+- name: Devin priority variant resolves to Factory fast model
+  source: devin
+  target: factory
+  model: gpt-6-sol-low-priority
+  want_model: gpt-6-sol-fast
+  want_effort: low
+
+- name: Devin priority variant stays unresolved without a matching fast model
+  source: devin
+  target: codex
+  model: gpt-6-sol-low-priority
+  want_effort: low
+  losses: [model.unresolved]
+
+- name: Devin no-thinking level keeps the model but drops the level
+  source: devin
+  target: factory
+  model: gpt-6-sol-none
+  want_model: gpt-6-sol
+  losses: [model.reasoning-omitted]
+
+- name: Devin concrete family resolves to its captured base slug
+  source: claude
+  target: devin
+  model: gpt-5.6-luna
+  want_model: gpt-5.6-luna
+
+- name: Devin fast-only identity stays omitted without effort
+  source: claude
+  target: devin
+  model: claude-opus-5-5-fast
+  losses: [model.unresolved]
+
+- name: SWE-1.7 max resolves to its captured UID
+  source: claude
+  target: devin
+  model: swe-1.7
+  effort: max
+  want_model: swe-1-7
+
+- name: SWE-1.7 base slug resolves without effort
+  source: claude
+  target: devin
+  model: swe-1.7
+  want_model: swe-1.7
+
+- name: Adaptive selector resolves on Devin
+  source: claude
+  target: devin
+  model: adaptive
+  want_model: adaptive
+
+- name: SWE-2 high resolves to captured Devin UID
+  source: claude
+  target: devin
+  model: swe-2
+  effort: high
+  want_model: swe-2-high
+
+- name: Haiku selector stays floating on Devin
+  source: claude
+  target: devin
+  model: haiku
+  want_model: haiku
+
+- name: Fable selector never maps to another family
+  source: devin
+  target: claude
+  model: fable
+  losses: [model.unresolved]
+
+- name: Fusion composite round-trips on Devin
+  source: devin
+  target: devin
+  model: fusion-gpt-6-astra-medium-sidekick-gpt-5-6-luna-high
+  want_model: fusion-gpt-6-astra-medium-sidekick-gpt-5-6-luna-high
+
+- name: Fusion composite never maps to an ordinary model
+  source: devin
+  target: claude
+  model: fusion-claude-opus-5-high-sidekick-swe-2-high
+  losses: [model.unresolved]
+
+- name: Devin native variant UID round-trips
+  source: devin
+  target: devin
+  model: gpt-5-6-luna-medium
+  want_model: gpt-5-6-luna-medium
+
+- name: Floating Sonnet to Devin
+  source: claude
+  target: devin
+  model: sonnet
+  want_model: sonnet
+
+- name: Known pinned version never floats on Devin
+  source: factory
+  target: devin
+  model: claude-sonnet-4-5-20250929
+  losses: [model.unresolved]
+
+- name: Unresolved model is omitted
+  source: claude
+  target: codex
+  model: new-model-not-in-catalog
+  losses: [model.unresolved]
+
+- name: Gemini effort is not a native agent field
+  source: claude
+  target: gemini
+  model: gemini-3-preview
+  effort: high
+  want_model: gemini-3-preview
+  losses: [model.reasoning-omitted]
+
+- name: Factory Fable 5.1 high to Claude
+  source: factory
+  target: claude
+  model: claude-fable-5.1
+  effort: high
+  want_model: claude-fable-5-1
+  want_effort: high
+
+- name: Claude Fable 5.1 xhigh to Devin variant
+  source: claude
+  target: devin
+  model: claude-fable-5-1
+  effort: xhigh
+  want_model: claude-fable-5-1-xhigh
+
+- name: Factory Haiku 5.5 high to Claude
+  source: factory
+  target: claude
+  model: claude-haiku-5-5
+  effort: high
+  want_model: claude-haiku-5-5
+  want_effort: high
+
+- name: Factory Sonnet 5.5 medium to Claude
+  source: factory
+  target: claude
+  model: claude-sonnet-5-5
+  effort: medium
+  want_model: claude-sonnet-5-5
+  want_effort: medium
+
+- name: Devin Opus 5.5 max variant to Claude effort
+  source: devin
+  target: claude
+  model: claude-opus-5-5-max
+  want_model: claude-opus-5-5
+  want_effort: max
+
+- name: Factory GPT-6.1 Sol high to Codex
+  source: factory
+  target: codex
+  model: gpt-6.1-sol
+  effort: high
+  want_model: gpt-6.1-sol
+  want_effort: high
+
+- name: Devin Astra xhigh variant to Codex effort
+  source: devin
+  target: codex
+  model: gpt-6-astra-xhigh
+  want_model: gpt-6-astra
+  want_effort: xhigh
+
+- name: Factory Luna low to Codex
+  source: factory
+  target: codex
+  model: gpt-6-luna
+  effort: low
+  want_model: gpt-6-luna
+  want_effort: low
+
+- name: Codex GPT-6.1 Sol medium to Factory
+  source: codex
+  target: factory
+  model: gpt-6.1-sol
+  effort: medium
+  want_model: gpt-6.1-sol
+  want_effort: medium
+
+- name: Factory Gemini 3.8 Flash to Gemini
+  source: factory
+  target: gemini
+  model: gemini-3.8-flash
+  want_model: gemini-3.8-flash
+
+- name: Canonical GPT-6.1 Terra high to Codex
+  source: claude
+  target: codex
+  model: openai/gpt-6.1-terra
+  effort: high
+  want_model: gpt-6.1-terra
+  want_effort: high
+
+- name: Canonical GPT-6.1 Terra max to Codex
+  source: claude
+  target: codex
+  model: openai/gpt-6.1-terra
+  effort: max
+  want_model: gpt-6.1-terra
+  want_effort: max
+
+- name: Codex Terra unsupported ultra does not approximate max
+  source: claude
+  target: codex
+  model: openai/gpt-6.1-terra
+  effort: ultra
+  want_model: gpt-6.1-terra
+  losses: [model.reasoning-omitted]
+
+- name: Canonical DeepSeek V4.1 Flash 1017 low to Factory
+  source: claude
+  target: factory
+  model: deepseek/deepseek-v4.1-flash-1017
+  effort: low
+  want_model: deepseek-v4.1-flash-1017
+  want_effort: low
+
+- name: Canonical MiniMax M3.1 Flash medium to Factory
+  source: claude
+  target: factory
+  model: minimax/minimax-m3.1-flash
+  effort: medium
+  want_model: minimax-m3.1-flash
+  want_effort: medium
+
+- name: Canonical Nemotron 3.5 Super high to Factory
+  source: claude
+  target: factory
+  model: nvidia/nemotron-3.5-super
+  effort: high
+  want_model: nemotron-3.5-super
+  want_effort: high
+
+- name: Devin Luna priority variant resolves to Factory fast model
+  source: devin
+  target: factory
+  model: gpt-6-luna-medium-priority
+  want_model: gpt-6-luna-fast
+  want_effort: medium
+
+- name: Factory Sol fast high resolves to Devin priority variant
+  source: factory
+  target: devin
+  model: gpt-6-sol-fast
+  effort: high
+  want_model: gpt-6-sol-high-priority
+
+- name: Factory Luna fast low resolves to Devin priority variant
+  source: factory
+  target: devin
+  model: gpt-6-luna-fast
+  effort: low
+  want_model: gpt-6-luna-low-priority
+
+- name: Canonical GPT-6.1 Sol Ultrafast high to Factory
+  source: claude
+  target: factory
+  model: openai/gpt-6.1-sol-ultrafast
+  effort: high
+  want_model: gpt-6.1-sol-ultrafast
+  want_effort: high
+
+- name: Factory Sol fast session-only max is omitted
+  source: claude
+  target: factory
+  model: openai/gpt-6-sol-fast
+  effort: max
+  want_model: gpt-6-sol-fast
+  losses: [model.reasoning-omitted]
+
+- name: Factory Nemotron unsupported low is omitted
+  source: claude
+  target: factory
+  model: nvidia/nemotron-3.5-super
+  effort: low
+  want_model: nemotron-3.5-super
+  losses: [model.reasoning-omitted]

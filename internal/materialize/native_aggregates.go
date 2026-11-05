@@ -123,8 +123,10 @@ func syncNativeAggregate(key outputKey, destination harness.Destination, rel str
 	if err := harness.ValidateRelPath(rel); err != nil {
 		return tr, err
 	}
-	if _, err := validatePortableOutputDir(destination.Root, filepath.Dir(rel)); err != nil {
-		return tr, err
+	if boundary == nil {
+		if _, err := validatePortableOutputDir(destination.Root, filepath.Dir(rel)); err != nil {
+			return tr, err
+		}
 	}
 	file := filepath.Join(destination.Root, rel)
 	mode := os.FileMode(0o600)
@@ -570,6 +572,13 @@ func nativeAggregatePruneFence(target hcc.Target, machineScope bool) map[string]
 		rel = trimArtifactRootPrefix(rel, info.ArtifactRootPrefix)
 		protected[strings.TrimSuffix(rel, "/")+"/"] = true
 	}
+	for _, rel := range nativeHookPruneFencePaths(target, machineScope) {
+		if protected == nil {
+			protected = make(map[string]bool)
+		}
+		rel = trimArtifactRootPrefix(rel, info.ArtifactRootPrefix)
+		protected[rel] = true
+	}
 	if info.PlanStrategy == harness.PlanWindsurf && len(protected) > 0 {
 		normalized := make(map[string]bool, len(protected))
 		for rel := range protected {
@@ -592,6 +601,11 @@ func addExistingNativeAggregateKeys(repoRoot string, outputs map[outputKey]bool)
 			}
 			destinations, err := harness.ResolveDestinations(target, machine, repoRoot)
 			if err != nil {
+				if target == hcc.TargetClaude && machine {
+					if harness.ClaudeConfigDirRelative(os.Getenv("CLAUDE_CONFIG_DIR")) {
+						continue
+					}
+				}
 				outputs[key] = true
 				continue
 			}

@@ -199,18 +199,21 @@ func (w *availabilityResponseWriter) Write(data []byte) (int, error) {
 	return w.ResponseWriter.Write(data)
 }
 
-func (s *Server) availabilityResourceDTO(ctx context.Context, rev store.AssessedResourceRevision) any {
+func (s *Server) availabilityResourceDTO(ctx context.Context, rev store.AssessedResourceRevision, resolveSource func(store.AssessedResourceRevision) *CatalogSource) any {
 	effective := s.applyEffectiveRevocation(rev)
+	source := resolveSource(rev)
 	if s.cfg.Management.Mode != "database" {
 		return struct {
 			store.AssessedResourceRevision
 			CurrentAvailability availabilityDecision `json:"current_availability"`
-		}{effective, availabilityDecision{Availability: s.fileResourceAvailability(rev), AssessmentDecision: rev.Assessment.Decision}}
+			Source              *CatalogSource       `json:"source,omitempty"`
+		}{effective, availabilityDecision{Availability: s.fileResourceAvailability(rev), AssessmentDecision: rev.Assessment.Decision}, source}
 	}
 	return struct {
 		store.AssessedResourceRevision
 		CurrentAvailability availabilityDecision `json:"current_availability"`
-	}{effective, s.evaluateAvailability(availabilityFromContext(ctx), rev)}
+		Source              *CatalogSource       `json:"source,omitempty"`
+	}{effective, s.evaluateAvailability(availabilityFromContext(ctx), rev), source}
 }
 
 func (s *Server) fileResourceAvailability(rev store.AssessedResourceRevision) Availability {

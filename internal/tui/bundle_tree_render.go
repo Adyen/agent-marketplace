@@ -56,7 +56,9 @@ func renderBundleTree(m Model, width, height int) string {
 
 	lines := strings.Split(tr.String(), "\n")
 	out := make([]string, 0, height)
-	out = append(out, lines[0])
+	// The root label stays on one row, as clicks map row 0 to it and row i+1
+	// to visible entry i.
+	out = append(out, ansi.Truncate(lines[0], width, "…"))
 	if m.bundle.rootErr != nil {
 		out = append(out, "  Error: "+sanitizeTerminalData(m.bundle.rootErr.Error(), terminalSingleLine))
 	} else if len(m.bundle.entries()) == 0 {

@@ -129,7 +129,6 @@ func garbageCollectUnderLease(ctx context.Context, ws Workspace, dryRun bool) (G
 				reachability.Sources = append(reachability.Sources, decl.URL)
 			}
 		}
-		roots.ExactPins = append(roots.ExactPins, layer.LegacyMarketplaces()...)
 		if layer.NeedsMarketplaceLock() && evidence.Locks[source] == nil {
 			roots.UnlockedEndpoints = append(roots.UnlockedEndpoints, layer.MarketplaceEndpoints()...)
 		}

@@ -19,6 +19,14 @@ application, `CODEX_HOME` relocates the machine Codex partition but never the
 skills partition. It must be an absolute path (a relative value is an error),
 and when it is unset the machine partition is `~/.codex`.
 
+Hook entries merge under the `hooks` member of `hooks.json`. Repository support
+files install under `<repo>/.codex/hook-support/<source>/<hook>/`; user support
+files install under `$CODEX_HOME/hook-support/<source>/<hook>/`, or
+`~/.codex/hook-support/<source>/<hook>/` when `CODEX_HOME` is unset. Codex
+`SessionEnd` is a command-only event in the shipped catalog,
+with a one-to-three-second timeout bound. New hook entries carry no `_managed_by`
+marker; durable ownership state decides which entries sync may change.
+
 ## Native app-server inventories
 
 The driver launches `codex app-server` and exchanges newline-delimited

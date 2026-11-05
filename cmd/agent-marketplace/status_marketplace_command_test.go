@@ -34,18 +34,31 @@ func TestStatusReportsMarketplacePinsWithoutDroppingThem(t *testing.T) {
 
 	repoRoot := t.TempDir()
 	writeConfig(t, repoRoot+"/.agents/config.yaml", `
+apiVersion: agent-marketplace/v4
+sources:
+  team: {marketplace: `+server.URL+`}
+resources:
+  team:
+    include:
+      - source-slug/skill/review: {as: review-installed}
+`)
+	writeFile(t, repoRoot+"/.agents/lock.yaml", `apiVersion: agent-marketplace-lock/v2
+scope: repo
 marketplaces:
   - url: `+server.URL+`
     instance_id: mp
-    alias: team
+    registry_bindings:
+      - name: source-slug
+        registry_id: src
     resources:
-      - registry_id: src
-        registry_slug: source-slug
+      - registry_name: source-slug
+        registry_id: src
         kind: skill
         name: review
         revision: v1
-        digest: `+contentDigest+`
-        installed_name: review-installed
+        content_digest: `+contentDigest+`
+        archive_digest: sha256:`+strings.Repeat("b", 64)+`
+        acquisition: mirror
 `)
 	withWorkingDir(t, repoRoot)
 

@@ -1,0 +1,36 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/cmd/agent-marketplace
+cpu: Apple M4 Max
+                                                                        | requirements-before.txt | requirements-after.txt |
+                                                                        |                    sec/op                     |        sec/op          vs base               |
+AcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-1-16                                             243.0m +/- inf [1]            245.4m +/- inf [1]        ~ (p=0.421 n=5)
+AcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-16-16                                            309.1m +/- inf [1]            241.4m +/- inf [1]  -21.89% (p=0.008 n=5)
+AcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-128-16                                           793.1m +/- inf [1]            243.0m +/- inf [1]  -69.36% (p=0.008 n=5)
+AcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-512-16                                          2466.7m +/- inf [1]            235.4m +/- inf [1]  -90.46% (p=0.008 n=5)
+AcquireRepeatedGitRequirementsLocalDiskNoNetwork/explicit-128-16                                           705.6m +/- inf [1]            243.7m +/- inf [1]  -65.46% (p=0.008 n=5)
+AcquireRepeatedGitRequirementsLocalDiskNoNetwork/distinct-policies-2-16                                    251.1m +/- inf [1]            242.3m +/- inf [1]        ~ (p=0.421 n=5)
+geomean                                                                                                    544.4m                  241.9m        -55.57%
+[1] need >= 6 samples for confidence interval at level 0.95
+
+                                                                        | requirements-before.txt | requirements-after.txt |
+                                                                        |                     B/op                      |         B/op           vs base               |
+AcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-1-16                                            930.2Ki +/- inf [1]           926.8Ki +/- inf [1]        ~ (p=0.310 n=5)
+AcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-16-16                                          4765.2Ki +/- inf [1]           940.8Ki +/- inf [1]  -80.26% (p=0.008 n=5)
+AcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-128-16                                        33289.2Ki +/- inf [1]           952.3Ki +/- inf [1]  -97.14% (p=0.008 n=5)
+AcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-512-16                                       130985.7Ki +/- inf [1]           972.8Ki +/- inf [1]  -99.26% (p=0.008 n=5)
+AcquireRepeatedGitRequirementsLocalDiskNoNetwork/explicit-128-16                                        29546.6Ki +/- inf [1]           948.1Ki +/- inf [1]  -96.79% (p=0.008 n=5)
+AcquireRepeatedGitRequirementsLocalDiskNoNetwork/distinct-policies-2-16                                   1.150Mi +/- inf [1]           1.164Mi +/- inf [1]        ~ (p=0.151 n=5)
+geomean                                                                                                   9.140Mi                 984.9Ki        -89.48%
+[1] need >= 6 samples for confidence interval at level 0.95
+
+                                                                        | requirements-before.txt | requirements-after.txt |
+                                                                        |                   allocs/op                   |       allocs/op        vs base               |
+AcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-1-16                                             3.642k +/- inf [1]            3.640k +/- inf [1]        ~ (p=0.754 n=5)
+AcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-16-16                                           34.587k +/- inf [1]            3.641k +/- inf [1]  -89.47% (p=0.008 n=5)
+AcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-128-16                                         265.606k +/- inf [1]            3.640k +/- inf [1]  -98.63% (p=0.008 n=5)
+AcquireRepeatedGitRequirementsLocalDiskNoNetwork/implicit-512-16                                        1057.656k +/- inf [1]            3.644k +/- inf [1]  -99.66% (p=0.008 n=5)
+AcquireRepeatedGitRequirementsLocalDiskNoNetwork/explicit-128-16                                         226.673k +/- inf [1]            3.338k +/- inf [1]  -98.53% (p=0.008 n=5)
+AcquireRepeatedGitRequirementsLocalDiskNoNetwork/distinct-policies-2-16                                    5.046k +/- inf [1]            5.051k +/- inf [1]        ~ (p=0.413 n=5)
+geomean                                                                                                    58.60k                  3.790k        -93.53%
+[1] need >= 6 samples for confidence interval at level 0.95

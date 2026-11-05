@@ -1,0 +1,128 @@
+{
+  "base": "6e7f0134d8d85bc06d41b9c35c51e30f1646e55d",
+  "source_sha256": {
+    "before": {
+      "internal/config/v4.go": "2b8be2d2dbb97403fc4e7e63ccdf43eea85d5f3ac7b32a6020d2de9373a2e564",
+      "internal/config/v4_exclusion_processing_test.go": "b81baefee60351f3138abbb696eccaa569eac66efee91db4c6f715a034383fdb",
+      "internal/config/v4_exclusion_kind_test.go": "3c909534a994b99709c74bce0bd6f7f9fd84cd7389bc4c5713b7c4c43154ff8c",
+      "internal/config/v4_exclusion_kind_bench_test.go": "9a842a6f6a5edae06057016bbd1581bdda610526de80bd73d138825623d92282",
+      "internal/config/v4_request_reuse_bench_test.go": "05c526c277452cfcbc1b347b844c7da3ce990891aa5d9388d3f82ffc9cb1d99c",
+      "internal/config/v4_sparse_exclusion_bench_test.go": "f47ef925a6c7ef5dc2cf14e51af9344376cd11409b986842d20f1f765bab0645",
+      "internal/config/v4_filter_sort_bench_test.go": "91f655dbc904615c309d9fbed63f2f3ddde079854681fb00f212495d84f1abf0",
+      "internal/config/v4_wildcard_match_bench_test.go": "b94ac7d5468d06962e7b9d31fd23510deedb307f3d80941f8b3202ac1ced606c",
+      "internal/config/v4_processing_bench_test.go": "15d1cc14d639d19140c84ffe70e41d03cce90ebecc66c9abd2d0df64bd90fffc",
+      "internal/config/v4_bench_test.go": "604075e85155d56383e7946a53131fbfdff57e4128680e23849b8f60a187942b",
+      "internal/config/v4_request_replay_test.go": "96d61f96f8986522a34bc07717498f2faaa1685096e2a5b31d75540094072123",
+      "internal/config/v4_request_replay_bench_test.go": "4db5f669fcb470ff1718fa2d171e89902ec12956ab0ce8cc3e02e5a2cbf5a96a",
+      "go.mod": "7acf048264b55ddb16f4a7e5e23a57811df317841d31be8835664aa8e446130e",
+      "go.sum": "cbc73d426b4d8c90050ed6868594e64f3d93a105df8de2e547a3030aa3e33806",
+      "go.work": "3325da4e2fb15a145d8a6d34061fc9990b65c4b2620cf855f576dfc0ce5d3f6d"
+    },
+    "after": {
+      "internal/config/v4.go": "f3cb334981cac9a89e273034771bb81850ed059a8c04cbb745eba219a02a5c16",
+      "internal/config/v4_exclusion_processing_test.go": "b81baefee60351f3138abbb696eccaa569eac66efee91db4c6f715a034383fdb",
+      "internal/config/v4_exclusion_kind_test.go": "3c909534a994b99709c74bce0bd6f7f9fd84cd7389bc4c5713b7c4c43154ff8c",
+      "internal/config/v4_exclusion_kind_bench_test.go": "9a842a6f6a5edae06057016bbd1581bdda610526de80bd73d138825623d92282",
+      "internal/config/v4_request_reuse_bench_test.go": "05c526c277452cfcbc1b347b844c7da3ce990891aa5d9388d3f82ffc9cb1d99c",
+      "internal/config/v4_sparse_exclusion_bench_test.go": "f47ef925a6c7ef5dc2cf14e51af9344376cd11409b986842d20f1f765bab0645",
+      "internal/config/v4_filter_sort_bench_test.go": "91f655dbc904615c309d9fbed63f2f3ddde079854681fb00f212495d84f1abf0",
+      "internal/config/v4_wildcard_match_bench_test.go": "b94ac7d5468d06962e7b9d31fd23510deedb307f3d80941f8b3202ac1ced606c",
+      "internal/config/v4_processing_bench_test.go": "15d1cc14d639d19140c84ffe70e41d03cce90ebecc66c9abd2d0df64bd90fffc",
+      "internal/config/v4_bench_test.go": "604075e85155d56383e7946a53131fbfdff57e4128680e23849b8f60a187942b",
+      "internal/config/v4_request_replay_test.go": "96d61f96f8986522a34bc07717498f2faaa1685096e2a5b31d75540094072123",
+      "internal/config/v4_request_replay_bench_test.go": "4db5f669fcb470ff1718fa2d171e89902ec12956ab0ce8cc3e02e5a2cbf5a96a",
+      "go.mod": "7acf048264b55ddb16f4a7e5e23a57811df317841d31be8835664aa8e446130e",
+      "go.sum": "cbc73d426b4d8c90050ed6868594e64f3d93a105df8de2e547a3030aa3e33806",
+      "go.work": "3325da4e2fb15a145d8a6d34061fc9990b65c4b2620cf855f576dfc0ce5d3f6d"
+    }
+  },
+  "binary_sha256": {
+    "before": "938d9ce32164d668f7e92dfb5a026cb943d4710ced4379c29915f2a9b1cd1d27",
+    "after": "dffd0d19b56a32ce565454eb8de41db8401fb91e210e5fc499a63875ea6bcfe2"
+  },
+  "go_version": "go version go1.27.3 darwin/arm64",
+  "settings": {
+    "GOMAXPROCS": "16",
+    "GOGC": "100",
+    "GOMEMLIMIT": "off",
+    "GOTOOLCHAIN": "local",
+    "GOPROXY": "off",
+    "CGO_ENABLED": "0"
+  },
+  "pattern": "^(BenchmarkV4ExclusionKindNameCPU|BenchmarkV4SparseExclusionAdapterCPU|BenchmarkV4DirectoryRequestReuseCPU|BenchmarkV4ActiveExclusionAdaptation|BenchmarkV4WildcardAdapterCPU|BenchmarkV4MarketplaceLockHydration|BenchmarkV4RequestReuseChurnCPU|BenchmarkV4MarketplaceExclusionKindCPU)$",
+  "benchtime": "1s",
+  "trials": [
+    {
+      "trial": 1,
+      "variant": "before",
+      "start": 1792934555.1139042,
+      "seconds": 42.16184186935425
+    },
+    {
+      "trial": 1,
+      "variant": "after",
+      "start": 1792934597.301367,
+      "seconds": 53.25339198112488
+    },
+    {
+      "trial": 2,
+      "variant": "after",
+      "start": 1792934650.593803,
+      "seconds": 46.319133043289185
+    },
+    {
+      "trial": 2,
+      "variant": "before",
+      "start": 1792934696.9583502,
+      "seconds": 48.39870476722717
+    },
+    {
+      "trial": 3,
+      "variant": "before",
+      "start": 1792934745.398989,
+      "seconds": 57.020484924316406
+    },
+    {
+      "trial": 3,
+      "variant": "after",
+      "start": 1792934802.458721,
+      "seconds": 53.47498917579651
+    },
+    {
+      "trial": 4,
+      "variant": "after",
+      "start": 1792934855.9571369,
+      "seconds": 56.11450695991516
+    },
+    {
+      "trial": 4,
+      "variant": "before",
+      "start": 1792934912.0925481,
+      "seconds": 57.15307974815369
+    },
+    {
+      "trial": 5,
+      "variant": "before",
+      "start": 1792934969.265665,
+      "seconds": 52.14017295837402
+    },
+    {
+      "trial": 5,
+      "variant": "after",
+      "start": 1792935021.438719,
+      "seconds": 53.699304819107056
+    },
+    {
+      "trial": 6,
+      "variant": "after",
+      "start": 1792935075.172582,
+      "seconds": 57.74396729469299
+    },
+    {
+      "trial": 6,
+      "variant": "before",
+      "start": 1792935132.959029,
+      "seconds": 48.84855914115906
+    }
+  ]
+}

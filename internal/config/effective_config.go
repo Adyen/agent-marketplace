@@ -127,6 +127,11 @@ type LoadEffectiveOptions struct {
 	RepoPath         string
 	LocalPath        string
 	FileOverlays     map[string][]byte
+	// RelockOrganization skips only the deployed organization lock's
+	// configuration-match check for the explicit organization lock write;
+	// the lock is still recorded as evidence, and decode, scope, and trust
+	// validation still apply.
+	RelockOrganization bool
 }
 
 func (ec EffectiveConfig) LayerResults() []LayerResult {

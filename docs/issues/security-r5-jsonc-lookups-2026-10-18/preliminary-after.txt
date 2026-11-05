@@ -1,0 +1,56 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact
+cpu: Apple M4 Max
+BenchmarkMergeJSONCObjectLookupsCPU/members-1/changed-false-16         	  297835	      8433 ns/op	    6973 B/op	     135 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-1/changed-false-16         	  198727	     14992 ns/op	    6971 B/op	     135 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-1/changed-false-16         	  257092	      9161 ns/op	    6973 B/op	     135 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-1/changed-false-16         	  191194	     11010 ns/op	    6972 B/op	     135 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-1/changed-false-16         	  273133	      7857 ns/op	    6974 B/op	     135 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-1/changed-true-16          	  276060	      8273 ns/op	    7305 B/op	     151 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-1/changed-true-16          	  260835	      8893 ns/op	    7305 B/op	     151 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-1/changed-true-16          	  253946	      8181 ns/op	    7304 B/op	     151 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-1/changed-true-16          	  289302	      8911 ns/op	    7304 B/op	     151 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-1/changed-true-16          	  316714	      8864 ns/op	    7303 B/op	     151 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-32/changed-false-16        	   16063	    149458 ns/op	  133159 B/op	    2279 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-32/changed-false-16        	   16005	    154907 ns/op	  133154 B/op	    2279 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-32/changed-false-16        	   15016	    156844 ns/op	  133156 B/op	    2279 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-32/changed-false-16        	   16131	    152270 ns/op	  133180 B/op	    2279 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-32/changed-false-16        	   15601	    152367 ns/op	  133178 B/op	    2279 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-32/changed-true-16         	   15627	    154866 ns/op	  138435 B/op	    2539 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-32/changed-true-16         	   14791	    167539 ns/op	  138420 B/op	    2539 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-32/changed-true-16         	   10000	    216814 ns/op	  138435 B/op	    2539 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-32/changed-true-16         	   14932	    171367 ns/op	  138435 B/op	    2539 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-32/changed-true-16         	   10000	    248465 ns/op	  138436 B/op	    2539 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-256/changed-false-16       	    1732	   1838587 ns/op	 1046608 B/op	   17334 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-256/changed-false-16       	    1182	   1999558 ns/op	 1046866 B/op	   17334 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-256/changed-false-16       	    1110	   1829890 ns/op	 1046925 B/op	   17334 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-256/changed-false-16       	    1114	   2754701 ns/op	 1046209 B/op	   17333 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-256/changed-false-16       	    1206	   2110810 ns/op	 1046893 B/op	   17334 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-256/changed-true-16        	    1291	   2147506 ns/op	 1088993 B/op	   19389 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-256/changed-true-16        	    1071	   2016205 ns/op	 1089025 B/op	   19389 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-256/changed-true-16        	    1375	   1456428 ns/op	 1089428 B/op	   19390 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-256/changed-true-16        	    1828	   2141816 ns/op	 1088851 B/op	   19389 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-256/changed-true-16        	    1060	   2170626 ns/op	 1088835 B/op	   19389 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-1024/changed-false-16      	     279	   8750395 ns/op	 4212068 B/op	   68847 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-1024/changed-false-16      	     283	   7986979 ns/op	 4213101 B/op	   68849 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-1024/changed-false-16      	     277	   9078863 ns/op	 4212450 B/op	   68847 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-1024/changed-false-16      	     264	   9262518 ns/op	 4212323 B/op	   68847 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-1024/changed-false-16      	     222	  11462967 ns/op	 4211995 B/op	   68847 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-1024/changed-true-16       	     236	   9389805 ns/op	 4359277 B/op	   77050 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-1024/changed-true-16       	     249	   8288383 ns/op	 4359565 B/op	   77051 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-1024/changed-true-16       	     280	  11050647 ns/op	 4357429 B/op	   77047 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-1024/changed-true-16       	     202	  10059374 ns/op	 4357960 B/op	   77048 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-1024/changed-true-16       	     336	   7154893 ns/op	 4360096 B/op	   77052 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-4096/changed-false-16      	     100	  32300371 ns/op	16815604 B/op	  274894 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-4096/changed-false-16      	      94	  24013108 ns/op	16815537 B/op	  274894 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-4096/changed-false-16      	      91	  39243421 ns/op	16816383 B/op	  274896 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-4096/changed-false-16      	     100	  32625369 ns/op	16815891 B/op	  274895 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-4096/changed-false-16      	     100	  34859986 ns/op	16815005 B/op	  274894 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-4096/changed-true-16       	     100	  46050750 ns/op	17450637 B/op	  307696 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-4096/changed-true-16       	      74	  32191505 ns/op	17450077 B/op	  307695 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-4096/changed-true-16       	      78	  33650746 ns/op	17451422 B/op	  307697 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-4096/changed-true-16       	      61	  35176091 ns/op	17450960 B/op	  307697 allocs/op
+BenchmarkMergeJSONCObjectLookupsCPU/members-4096/changed-true-16       	     100	  25782207 ns/op	17451023 B/op	  307696 allocs/op
+PASS
+ok  	github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact	130.249s

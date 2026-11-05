@@ -16,7 +16,7 @@ import (
 const migrationTable = "marketplace_metadata_v2_migrations"
 const legacyMigrationTable = "marketplace_schema_migrations"
 
-var migrations = []string{migration0, migration1, migration2, store.ManagedConfigurationSchema, store.PublicationSchema, store.BlobOwnershipMigration(false), store.ManagedRuntimeSchema, store.ManagedPreviewSchema, migrationDigestIndexes}
+var migrations = []string{migration0, migration1, migration2, store.ManagedConfigurationSchema, store.PublicationSchema, store.BlobOwnershipMigration(false), store.ManagedRuntimeSchema, store.ManagedPreviewSchema, migrationDigestIndexes, migrationRegistryObservation}
 
 type execer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
@@ -281,4 +281,40 @@ ALTER TABLE collection_revisions ADD COLUMN includes TEXT NOT NULL DEFAULT '[]';
 
 const migrationDigestIndexes = `
 CREATE INDEX idx_current_assessments_content ON current_resource_assessments(marketplace_id, content_digest);
+`
+
+const migrationRegistryObservation = `
+CREATE TABLE registry_observations (
+    registry_id TEXT PRIMARY KEY,
+    version INTEGER NOT NULL DEFAULT 1,
+    observed_commit TEXT NOT NULL DEFAULT '',
+    observed_at INTEGER NOT NULL DEFAULT 0,
+    probe_status TEXT NOT NULL DEFAULT '',
+    probe_error TEXT NOT NULL DEFAULT '',
+    next_probe_at INTEGER NOT NULL DEFAULT 0,
+    next_reconcile_at INTEGER NOT NULL DEFAULT 0,
+    consecutive_probe_failures INTEGER NOT NULL DEFAULT 0,
+    work_lease_owner TEXT NOT NULL DEFAULT '',
+    work_lease_epoch INTEGER NOT NULL DEFAULT 0,
+    work_lease_until INTEGER NOT NULL DEFAULT 0,
+    desired_commit TEXT NOT NULL DEFAULT '',
+    desired_generation TEXT NOT NULL DEFAULT '',
+    active_refresh_job_id TEXT NOT NULL DEFAULT '',
+    active_refresh_trigger TEXT NOT NULL DEFAULT '',
+    successful_commit TEXT NOT NULL DEFAULT '',
+    successful_generation TEXT NOT NULL DEFAULT '',
+    last_successful_index_at INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_registry_observations_due ON registry_observations(next_probe_at, next_reconcile_at, registry_id);
+CREATE INDEX idx_registry_observations_lease ON registry_observations(work_lease_until, registry_id);
+
+CREATE TABLE host_budget_leases (
+    host TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    acquisition INTEGER NOT NULL,
+    epoch INTEGER NOT NULL,
+    lease_until INTEGER NOT NULL,
+    PRIMARY KEY (host, owner)
+);
+CREATE INDEX idx_host_budget_leases_expiry ON host_budget_leases(host, lease_until);
 `

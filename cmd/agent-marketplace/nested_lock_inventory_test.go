@@ -26,7 +26,7 @@ func TestLockedNestedHookAndMCPInventory(t *testing.T) {
 	writeFile(t, filepath.Join(working, "plugins", "audit", ".mcp.json"), `{"mcpServers":{"nested-server":{"command":"fixture-server"}}}`)
 	commitAndPushAll(t, working, "nested inventory")
 	repo := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "harnesses: [factory]\nregistries:\n  - url: "+origin+"\n    ref: main\n    source_harness: claude\n    default: true\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  origin: {git: file://"+origin+", ref: main, source_harness: claude}\nresources:\n  origin: {all: true}\n")
 	withWorkingDir(t, repo)
 	if out, err := executeCommand("lock"); err != nil {
 		t.Fatalf("lock: %v\n%s", err, out)

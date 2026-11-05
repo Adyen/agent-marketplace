@@ -15,6 +15,8 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	extpkg "github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir/ext"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 // claudePluginManifest is the Claude-plugin manifest path.
@@ -40,7 +42,7 @@ func (c *claudeIngester) Source() ingest.Harness {
 //  4. Bare skills directory: immediate subdirectories with SKILL.md, or the directory itself contains SKILL.md
 func (c *claudeIngester) Detect(src fs.FS) bool {
 	// Plugin form: .claude-plugin/plugin.json
-	if _, err := fs.ReadFile(src, claudePluginManifest); err == nil {
+	if ingest.RegularFileExists(src, claudePluginManifest) {
 		return true
 	}
 	// Workspace form: .claude/ with at least one resource subdirectory
@@ -67,7 +69,7 @@ func (c *claudeIngester) Detect(src fs.FS) bool {
 // independent bundle roots.
 func (c *claudeIngester) DetectStrict(src fs.FS) bool {
 	// Plugin form: .claude-plugin/plugin.json
-	if _, err := fs.ReadFile(src, claudePluginManifest); err == nil {
+	if ingest.RegularFileExists(src, claudePluginManifest) {
 		return true
 	}
 	// Workspace form: .claude/ with at least one resource subdirectory
@@ -87,6 +89,9 @@ func hasClaudeWorkspaceForm(src fs.FS) bool {
 		if _, err := fs.Stat(src, ".mcp.json"); err == nil {
 			return true
 		}
+		if _, err := fs.Stat(src, ".claude/settings.json"); err == nil && !hasBarePluginForm(src) {
+			return true
+		}
 	}
 	if _, err := fs.Stat(src, ".claude.json"); err == nil {
 		return true
@@ -98,7 +103,7 @@ func hasClaudeWorkspaceForm(src fs.FS) bool {
 		}
 	}
 	// Also check .claude/.mcp.json
-	if _, err := fs.ReadFile(src, ".claude/.mcp.json"); err == nil {
+	if ingest.RegularFileExists(src, ".claude/.mcp.json") {
 		return true
 	}
 	return false
@@ -108,10 +113,10 @@ func hasClaudeWorkspaceForm(src fs.FS) bool {
 func hasBarePluginForm(src fs.FS) bool {
 	// If another plugin-form harness marker is present, root-level resources are
 	// more likely siblings for that harness than a bare Claude plugin.
-	if _, err := fs.ReadFile(src, ".factory-plugin/plugin.json"); err == nil {
+	if ingest.RegularFileExists(src, ".factory-plugin/plugin.json") {
 		return false
 	}
-	if _, err := fs.ReadFile(src, ".cursor-plugin/plugin.json"); err == nil {
+	if ingest.RegularFileExists(src, ".cursor-plugin/plugin.json") {
 		return false
 	}
 	// droids/ is Factory-specific; defer to the factory ingester rather than
@@ -127,10 +132,7 @@ func hasBarePluginForm(src fs.FS) bool {
 			return true
 		}
 	}
-	if _, err := fs.ReadFile(src, ".mcp.json"); err == nil {
-		return true
-	}
-	return false
+	return ingest.RegularFileExists(src, ".mcp.json")
 }
 
 // hasBareSkillsDirForm reports whether the filesystem represents a bare
@@ -140,7 +142,7 @@ func hasBarePluginForm(src fs.FS) bool {
 // directly rather than a bundle root containing skills/ as a child.
 func hasBareSkillsDirForm(src fs.FS) bool {
 	// Single skill at root: the directory itself is a skill directory.
-	if _, err := fs.ReadFile(src, "SKILL.md"); err == nil {
+	if ingest.RegularFileExists(src, "SKILL.md") {
 		return true
 	}
 	// Directory of skill subdirectories: immediate subdirs containing SKILL.md.
@@ -152,7 +154,7 @@ func hasBareSkillsDirForm(src fs.FS) bool {
 		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
-		if _, err := fs.ReadFile(src, e.Name()+"/SKILL.md"); err == nil {
+		if ingest.RegularFileExists(src, path.Join(e.Name(), "SKILL.md")) {
 			return true
 		}
 	}
@@ -171,10 +173,51 @@ type LoadOptions struct {
 }
 
 func LoadBundleWithOptions(src fs.FS, opts LoadOptions) (*ingest.Bundle, error) {
+	b, err := loadBundleForm(src, opts)
+	if err != nil {
+		return nil, err
+	}
+	recordNativeControls(b.Resources)
+	return b, nil
+}
+
+// recordNativeControls copies Claude execution controls from each resource's
+// extension fields into its Claude sidecar, which is the only place Claude
+// compilation emits them from. The extension copy stays for earlier clients.
+func recordNativeControls(resources []ir.Resource) {
+	for _, resource := range resources {
+		var extra map[string]any
+		var ext *extpkg.Bag
+		switch typed := resource.(type) {
+		case *ir.Subagent:
+			extra, ext = typed.Extra, &typed.Ext
+		case *ir.Skill:
+			extra, ext = typed.Extra, &typed.Ext
+		case *ir.Command:
+			extra, ext = typed.Extra, &typed.Ext
+		default:
+			continue
+		}
+		for key, value := range extra {
+			if !target.IsClaudeControlKey(resource.Kind(), key) {
+				continue
+			}
+			if ext.Claude == nil {
+				ext.Claude = &extpkg.Claude{}
+			}
+			if ext.Claude.NativeControls == nil {
+				ext.Claude.NativeControls = make(map[string]any)
+			}
+			ext.Claude.NativeControls[key] = value
+		}
+	}
+}
+
+func loadBundleForm(src fs.FS, opts LoadOptions) (*ingest.Bundle, error) {
 	// Try plugin form first (.claude-plugin/plugin.json or bare form).
 	// The explicit plugin manifest is Detect's highest-priority marker, so
 	// honor it here too to keep Detect and LoadBundle in agreement.
-	if _, err := fs.ReadFile(src, claudePluginManifest); err == nil {
+	if ingest.RegularFileExists(src, claudePluginManifest) {
 		return loadPluginForm(src, false)
 	}
 	if hasBarePluginForm(src) && !hasClaudeWorkspaceForm(src) {
@@ -387,8 +430,13 @@ func loadWorkspaceForm(src fs.FS) (*ingest.Bundle, error) {
 		resources = append(resources, sub)
 	}
 
-	// 4. Hooks
-	hooks, hookDiags, err := bundle.LoadHooks(src, ".claude/hooks/hooks.json")
+	// 4. Hooks: the legacy .claude/hooks/hooks.json plugin layout keeps canonical
+	// provenance, while the hooks member of the native .claude/settings.json is
+	// recorded with Claude provenance so the resolver sees the native file's
+	// vocabulary. Only the hooks member is read; unrelated settings (for
+	// example permissions) never become resources.
+	var hooks []*ir.Hook
+	legacyHooks, hookDiags, err := bundle.LoadHooks(src, ".claude/hooks/hooks.json")
 	if err != nil && !isNotExist(err) {
 		return nil, fmt.Errorf("ingest/claude: load .claude/hooks: %w", err)
 	}
@@ -396,9 +444,24 @@ func loadWorkspaceForm(src fs.FS) (*ingest.Bundle, error) {
 		for _, d := range hookDiags {
 			diags = append(diags, *d)
 		}
-		for _, h := range hooks {
-			resources = append(resources, h)
+		hooks = append(hooks, legacyHooks...)
+	}
+	settingsHooks, settingsDiags, err := bundle.LoadHooksMember(src, ".claude/settings.json")
+	if err != nil && !isNotExist(err) {
+		return nil, fmt.Errorf("ingest/claude: load .claude/settings.json: %w", err)
+	}
+	if err == nil {
+		for _, d := range settingsDiags {
+			diags = append(diags, *d)
 		}
+		for _, h := range settingsHooks {
+			h.HookSource = string(ingest.HarnessClaude)
+			hooks = append(hooks, h)
+		}
+	}
+	bundle.DistinctHookNames(hooks)
+	for _, h := range hooks {
+		resources = append(resources, h)
 	}
 
 	// 5. MCP servers
@@ -433,7 +496,7 @@ func loadWorkspaceForm(src fs.FS) (*ingest.Bundle, error) {
 		})
 	}
 
-	diags = append(diags, ingest.UnconsumedConfigs(src, diag.CodeIngestClaudeUnconsumedConfig, "claude workspace", ".claude/hooks/hooks.json", mcpPath)...)
+	diags = append(diags, ingest.UnconsumedConfigs(src, diag.CodeIngestClaudeUnconsumedConfig, "claude workspace", ".claude/hooks/hooks.json", ".claude/settings.json", mcpPath)...)
 	return &ingest.Bundle{
 		Manifest:    manifest,
 		Resources:   resources,
@@ -459,7 +522,7 @@ func loadBareSkillsDirForm(src fs.FS) (*ingest.Bundle, error) {
 	// When a root SKILL.md exists, this is a single-skill directory —
 	// return it immediately without scanning for sibling subdirectories
 	// to avoid double-publishing in mixed layouts.
-	if _, err := fs.ReadFile(src, "SKILL.md"); err == nil {
+	if ingest.RegularFileExists(src, "SKILL.md") {
 		skill, err := bundle.LoadRootSkill(src)
 		if err != nil {
 			diags = append(diags, ingest.LoadFailure(diag.CodeIngestClaudeLoadSkillFailed, "root skill", ".", ".", err))
@@ -507,7 +570,7 @@ func listSkillSubdirs(src fs.FS) ([]string, error) {
 		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
-		if _, err := fs.ReadFile(src, path.Join(e.Name(), "SKILL.md")); err == nil {
+		if ingest.RegularFileExists(src, path.Join(e.Name(), "SKILL.md")) {
 			dirs = append(dirs, e.Name())
 		}
 	}
@@ -524,7 +587,7 @@ func isNotExist(err error) bool {
 
 // listSubdirs returns the immediate subdirectories of root within src.
 func listSubdirs(src fs.FS, root string) ([]string, error) {
-	entries, err := fs.ReadDir(src, root)
+	entries, err := ingest.ReadSkillEntries(src, root)
 	if err != nil {
 		return nil, err
 	}

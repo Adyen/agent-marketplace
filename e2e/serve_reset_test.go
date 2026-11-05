@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -199,6 +200,10 @@ func testServeResetRecovery(t *testing.T, mode string) {
 
 func stripLegacySupport(t *testing.T, rev *ingest.Revision) {
 	t.Helper()
+	rev.ExtraBlobs = slices.DeleteFunc(rev.ExtraBlobs, func(blob store.BlobUpload) bool {
+		_, placeholder := store.PlaceholderArchiveDigest(blob.Digest)
+		return placeholder
+	})
 	replacements := make(map[store.ArchiveDigest]store.ArchiveDigest)
 	for i := range rev.ExtraBlobs {
 		blob := &rev.ExtraBlobs[i]

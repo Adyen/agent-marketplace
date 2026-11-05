@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -26,6 +27,7 @@ import (
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
+	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
 
 // syncPhaseHookContextKey is an internal deterministic concurrency-test seam.
@@ -89,7 +91,7 @@ type ResolveOptions struct {
 	// materializable artifacts from verified local cache evidence during
 	// inspect-mode resolution — exactly the semantics offline sync uses. No
 	// artifacts are downloaded and no config or lock file is written; the
-	// inspect-mode pin table is computed unchanged. Only status and doctor set
+	// inspect-mode pin table is computed unchanged. Status, doctor, and list set
 	// it; every other caller keeps metadata-only inspect behavior.
 	MarketplaceArtifactsFromCache bool
 }
@@ -123,8 +125,22 @@ type ResolveResult struct {
 	Warnings                    []error
 	TargetHarnesses             []hcc.Target
 	TargetHarnessSource         config.Source
-	Managed                     bool
-	Diagnostics                 config.ManagedInstallationDiagnostics
+	// MachineTargetHarnesses is the target set for output selected by the user
+	// and organization layers. Repository configuration never narrows it.
+	MachineTargetHarnesses     []hcc.Target
+	MachineTargetHarnessSource config.Source
+	Managed                    bool
+	Diagnostics                config.ManagedInstallationDiagnostics
+	// SelectedCollections are display-only collection roots that were
+	// selected but expanded into members in Resolved. Never materialize them.
+	SelectedCollections []resolver.ResolvedArtifact
+}
+
+// DisplayArtifacts returns the materializable artifacts followed by the
+// display-only collection roots. Use it only for presentation; materialization
+// and drift must keep reading Resolved.
+func (r ResolveResult) DisplayArtifacts() []resolver.ResolvedArtifact {
+	return slices.Concat(r.Resolved, r.SelectedCollections)
 }
 
 // TargetHarnessSetMissingError is returned by Resolve/Sync when no effective
@@ -194,6 +210,17 @@ func targetHarnessSetFromEC(ec config.EffectiveConfig) ([]hcc.Target, config.Sou
 		return hccTargetsFromStrings(ec.Organization.Config.Harnesses), ec.Organization.Source
 	}
 	return nil, config.SourceUnset
+}
+
+// machineTargetHarnessSetFromEC returns the target set for output selected by
+// the user and organization layers: the user list, then the organization list.
+// Only when neither declares targets does it fall back to the repository set,
+// so a repository cannot narrow output that machine layers selected.
+func machineTargetHarnessSetFromEC(ec config.EffectiveConfig, repository []hcc.Target, repositorySource config.Source) ([]hcc.Target, config.Source) {
+	if harnesses, source := config.MachineHarnesses(ec.User.Config, ec.Organization.Config); len(harnesses) > 0 {
+		return hccTargetsFromStrings(harnesses), source
+	}
+	return slices.Clone(repository), repositorySource
 }
 
 // CatalogTrusted reports whether this run's view of the registries is reliable
@@ -453,16 +480,17 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		slog.Error("effective config error", "error", err)
 	}
 
-	if opts.Gitignore {
-		EnsureLocalConfigGitignored(opts.Workspace.LocalConfigDir())
-	}
 	if len(ec.Errors) > 0 {
 		result.ConfigErrors = ec.Errors
 		result.Errors = ec.Errors
 		return result, releaseExactLease
 	}
+	if opts.Gitignore {
+		EnsureLocalConfigGitignored(opts.Workspace.LocalConfigDir())
+	}
 
 	result.TargetHarnesses, result.TargetHarnessSource = targetHarnessSetFromEC(ec)
+	result.MachineTargetHarnesses, result.MachineTargetHarnessSource = machineTargetHarnessSetFromEC(ec, result.TargetHarnesses, result.TargetHarnessSource)
 
 	if opts.RequireTargetSet && len(result.TargetHarnesses) == 0 {
 		result.Errors = []error{&TargetHarnessSetMissingError{}}
@@ -612,7 +640,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		mpResolver = transientOrganizationMarketplaceResolver{delegate: marketplaceResolver}
 	}
 	if opts.CatalogMode == catalog.LoadModeInspect && mpMode == resolver.MarketplaceResolveModeInspect && loadedCfg != nil {
-		inspection := marketplaceResolver.Inspect(ctx, loadedCfg, result.TargetHarnesses, mpMode)
+		inspection := marketplaceResolver.Inspect(ctx, loadedCfg, resolver.UnionTargetHarnesses(result.TargetHarnesses, result.MachineTargetHarnesses), mpMode)
 		result.MarketplaceStatuses = inspection.Pins
 		result.MarketplaceInspection = &inspection
 		mpResolver = inspection
@@ -641,6 +669,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		}
 		marketplaceCfg = &filtered
 	}
+	var selectedCollections []resolver.ResolvedArtifact
 	resolved, resolveErrs := resolver.Resolve(
 		marketplaceCfg,
 		catalog.EntriesByKey(loadResult.Catalogs),
@@ -649,13 +678,16 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		resolver.WithMalformed(catalog.MalformedByKey(loadResult.Catalogs)),
 		resolver.WithContext(ctx),
 		resolver.WithTargetHarnesses(result.TargetHarnesses),
+		resolver.WithMachineTargetHarnesses(result.MachineTargetHarnesses),
 		resolver.WithMarketplaceResolver(mpResolver),
 		resolver.WithMarketplaceResolveMode(mpMode),
 		resolver.WithMarketplaceRevocationPolicy(opts.MarketplaceRevocationPolicy),
 		resolver.WithImpliedPreview(&result.ImpliedPreview),
+		resolver.WithSelectedCollections(&selectedCollections),
 	)
 	result.LoadedCfg = loadedCfg
 	result.Resolved = resolved
+	result.SelectedCollections = append(selectedCollections, marketplaceSelectedCollections(marketplaceCfg)...)
 	result.ResolveErrors = append(resolveErrs, readOnlyView.errors...)
 	slog.Debug("resources resolved", "resolved", len(resolved), "errors", len(result.ResolveErrors))
 	for _, resolveErr := range result.ResolveErrors {
@@ -1003,7 +1035,7 @@ func CollectManagedPaths(resolved []resolver.ResolvedArtifact) map[hcc.Target]ba
 			slog.Error("resolve native aggregate backup files", "target", t, "error", mappingErr)
 			continue
 		}
-		if len(harness.NativeAggregateInstalls(t)) > 0 {
+		if len(harness.NativeAggregateInstalls(t)) > 0 || t == hcc.TargetOpenCode {
 			destinations, err := harness.ResolveDestinations(t, true, ".")
 			if err != nil {
 				slog.Error("resolve native aggregate backup destinations", "target", t, "error", err)
@@ -1012,7 +1044,16 @@ func CollectManagedPaths(resolved []resolver.ResolvedArtifact) map[hcc.Target]ba
 			machineAggregates = nil
 			for _, destination := range destinations {
 				if destination.Root == root {
-					machineAggregates = append(machineAggregates, destination.Info.AggregateFilesForScope(true)...)
+					for _, rel := range destination.Info.AggregateFilesForScope(true) {
+						path := filepath.Join(root, rel)
+						mapped := false
+						for _, file := range mappedFiles {
+							mapped = mapped || file == path
+						}
+						if !mapped {
+							machineAggregates = append(machineAggregates, rel)
+						}
+					}
 				}
 			}
 		}
@@ -1166,4 +1207,25 @@ func appendLocalConfigIgnoreEntries(f *os.File) error {
 		return fmt.Errorf("append gitignore: %w", err)
 	}
 	return nil
+}
+
+// marketplaceSelectedCollections returns the direct, non-excluded Marketplace
+// collection pins as display-only roots. Their members come from the resolver
+// through the Marketplace resolver, so these never reach materialization.
+func marketplaceSelectedCollections(cfg *config.Config) []resolver.ResolvedArtifact {
+	if cfg == nil {
+		return nil
+	}
+	var roots []resolver.ResolvedArtifact
+	for _, entry := range cfg.Marketplaces {
+		for _, pin := range entry.Resources {
+			if pin.Kind != mpapi.KindCollection || !pin.Direct || cfg.MarketplacePinExcluded(entry, pin) {
+				continue
+			}
+			if artifact, ok := marketplace.PinArtifact(entry, pin); ok {
+				roots = append(roots, artifact)
+			}
+		}
+	}
+	return roots
 }

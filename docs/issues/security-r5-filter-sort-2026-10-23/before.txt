@@ -1,0 +1,126 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4FilterSortRebuildCPU/skills=1/excluded=0-2         	 5115152	       458.6 ns/op	    1360 B/op	       6 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1/excluded=1-2         	 4986673	       495.7 ns/op	    1360 B/op	       6 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=0-2       	   30048	     78754 ns/op	  290928 B/op	     302 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=128-2     	   30318	     79945 ns/op	  299120 B/op	     302 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=256-2     	   31138	     78977 ns/op	  242640 B/op	     295 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=0-2      	    6532	    359193 ns/op	 1537360 B/op	    1090 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=512-2    	    6772	    357127 ns/op	 1291600 B/op	    1089 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=1024-2   	    6987	    338777 ns/op	 1063088 B/op	    1080 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1/excluded=0-2           	  226785	     10603 ns/op	   17051 B/op	     160 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1/excluded=1-2           	  200960	     12173 ns/op	   18331 B/op	     178 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=0-2         	    7392	    312011 ns/op	  581153 B/op	    3793 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=128-2       	    5546	    438326 ns/op	  716338 B/op	    4718 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=256-2       	    4459	    544746 ns/op	  729879 B/op	    5610 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=0-2        	    1748	   1350242 ns/op	 2663788 B/op	   15345 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=512-2      	    1332	   1819404 ns/op	 2913408 B/op	   18964 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=1024-2     	    1017	   2280113 ns/op	 3043380 B/op	   22546 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4FilterSortRebuildCPU/skills=1/excluded=0-2         	 4706066	       501.1 ns/op	    1360 B/op	       6 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1/excluded=1-2         	 4581403	       536.6 ns/op	    1360 B/op	       6 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=0-2       	   29058	     81250 ns/op	  290928 B/op	     302 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=128-2     	   27194	     91906 ns/op	  299120 B/op	     302 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=256-2     	   28294	     82545 ns/op	  242640 B/op	     295 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=0-2      	    6247	    401566 ns/op	 1537360 B/op	    1090 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=512-2    	    6398	    374372 ns/op	 1291600 B/op	    1089 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=1024-2   	    6859	    359504 ns/op	 1063088 B/op	    1080 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1/excluded=0-2           	  217656	     11181 ns/op	   17051 B/op	     160 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1/excluded=1-2           	  189248	     12950 ns/op	   18331 B/op	     178 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=0-2         	    6727	    346431 ns/op	  581153 B/op	    3793 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=128-2       	    5072	    471332 ns/op	  716331 B/op	    4718 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=256-2       	    4198	    566349 ns/op	  729884 B/op	    5610 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=0-2        	    1790	   1361252 ns/op	 2663764 B/op	   15345 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=512-2      	    1310	   1848428 ns/op	 2913419 B/op	   18964 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=1024-2     	    1047	   2309602 ns/op	 3043398 B/op	   22546 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4FilterSortRebuildCPU/skills=1/excluded=0-2         	 4697576	       509.1 ns/op	    1360 B/op	       6 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1/excluded=1-2         	 4391430	       526.2 ns/op	    1360 B/op	       6 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=0-2       	   28862	     82781 ns/op	  290928 B/op	     302 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=128-2     	   28086	     85622 ns/op	  299120 B/op	     302 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=256-2     	   29119	     82798 ns/op	  242640 B/op	     295 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=0-2      	    5528	    391595 ns/op	 1537360 B/op	    1090 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=512-2    	    6093	    380643 ns/op	 1291600 B/op	    1089 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=1024-2   	    6811	    356010 ns/op	 1063088 B/op	    1080 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1/excluded=0-2           	  202647	     11340 ns/op	   17051 B/op	     160 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1/excluded=1-2           	  189883	     13081 ns/op	   18331 B/op	     178 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=0-2         	    7186	    333600 ns/op	  581150 B/op	    3793 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=128-2       	    5206	    445239 ns/op	  716332 B/op	    4718 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=256-2       	    4389	    553653 ns/op	  729877 B/op	    5610 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=0-2        	    1856	   1292823 ns/op	 2663783 B/op	   15345 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=512-2      	    1312	   1827890 ns/op	 2913430 B/op	   18964 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=1024-2     	    1035	   2251122 ns/op	 3043389 B/op	   22546 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4FilterSortRebuildCPU/skills=1/excluded=0-2         	 4967775	       491.9 ns/op	    1360 B/op	       6 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1/excluded=1-2         	 4716187	       513.2 ns/op	    1360 B/op	       6 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=0-2       	   29054	     81713 ns/op	  290928 B/op	     302 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=128-2     	   28585	     83433 ns/op	  299120 B/op	     302 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=256-2     	   29962	     80615 ns/op	  242640 B/op	     295 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=0-2      	    6362	    374680 ns/op	 1537360 B/op	    1090 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=512-2    	    6483	    369465 ns/op	 1291600 B/op	    1089 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=1024-2   	    6675	    364675 ns/op	 1063088 B/op	    1080 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1/excluded=0-2           	  212101	     11158 ns/op	   17051 B/op	     160 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1/excluded=1-2           	  188241	     12840 ns/op	   18331 B/op	     178 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=0-2         	    7266	    329314 ns/op	  581148 B/op	    3793 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=128-2       	    5222	    457543 ns/op	  716330 B/op	    4718 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=256-2       	    4272	    555200 ns/op	  729877 B/op	    5610 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=0-2        	    1815	   1327001 ns/op	 2663784 B/op	   15345 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=512-2      	    1299	   1847311 ns/op	 2913422 B/op	   18964 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=1024-2     	    1065	   2261808 ns/op	 3043391 B/op	   22546 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4FilterSortRebuildCPU/skills=1/excluded=0-2         	 4841098	       489.1 ns/op	    1360 B/op	       6 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1/excluded=1-2         	 4741526	       514.3 ns/op	    1360 B/op	       6 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=0-2       	   28850	     82227 ns/op	  290928 B/op	     302 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=128-2     	   27610	     87095 ns/op	  299120 B/op	     302 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=256-2     	   29588	     83282 ns/op	  242640 B/op	     295 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=0-2      	    5641	    388686 ns/op	 1537360 B/op	    1090 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=512-2    	    6433	    371446 ns/op	 1291600 B/op	    1089 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=1024-2   	    6553	    362756 ns/op	 1063088 B/op	    1080 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1/excluded=0-2           	  207974	     11356 ns/op	   17051 B/op	     160 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1/excluded=1-2           	  185384	     12768 ns/op	   18331 B/op	     178 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=0-2         	    7275	    328815 ns/op	  581151 B/op	    3793 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=128-2       	    5341	    456350 ns/op	  716325 B/op	    4718 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=256-2       	    4423	    545321 ns/op	  729878 B/op	    5610 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=0-2        	    1866	   1291038 ns/op	 2663786 B/op	   15345 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=512-2      	    1346	   1777466 ns/op	 2913424 B/op	   18964 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=1024-2     	    1096	   2176096 ns/op	 3043364 B/op	   22546 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4FilterSortRebuildCPU/skills=1/excluded=0-2         	 4950646	       494.3 ns/op	    1360 B/op	       6 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1/excluded=1-2         	 4775134	       505.4 ns/op	    1360 B/op	       6 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=0-2       	   29869	     79985 ns/op	  290928 B/op	     302 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=128-2     	   28701	     85296 ns/op	  299120 B/op	     302 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=256/excluded=256-2     	   30314	     80269 ns/op	  242640 B/op	     295 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=0-2      	    6428	    377799 ns/op	 1537360 B/op	    1090 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=512-2    	    6075	    367682 ns/op	 1291600 B/op	    1089 allocs/op
+BenchmarkV4FilterSortRebuildCPU/skills=1024/excluded=1024-2   	    6832	    354046 ns/op	 1063088 B/op	    1080 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1/excluded=0-2           	  218174	     11091 ns/op	   17051 B/op	     160 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1/excluded=1-2           	  191113	     12707 ns/op	   18331 B/op	     178 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=0-2         	    7371	    326940 ns/op	  581147 B/op	    3792 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=128-2       	    5422	    466847 ns/op	  716332 B/op	    4718 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=256/excluded=256-2       	    4311	    562071 ns/op	  729876 B/op	    5609 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=0-2        	    1760	   1335292 ns/op	 2663782 B/op	   15345 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=512-2      	    1293	   1787392 ns/op	 2913428 B/op	   18964 allocs/op
+BenchmarkParseV4FilterSortCPU/skills=1024/excluded=1024-2     	    1096	   2191274 ns/op	 3043400 B/op	   22546 allocs/op
+PASS

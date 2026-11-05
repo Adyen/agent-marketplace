@@ -37,6 +37,8 @@ type layerMarketplaceResource struct {
 type layerMarketplaceServer struct {
 	*httptest.Server
 	requests   atomic.Int32
+	failLatest atomic.Bool
+	missing    map[string]bool
 	paths      []string
 	pathsMu    sync.Mutex
 	instanceID string
@@ -51,6 +53,7 @@ func newLayerMarketplaceServer(t *testing.T) *layerMarketplaceServer {
 		instanceID: "mp",
 		registries: map[string]store.Registry{},
 		resources:  map[string]layerMarketplaceResource{},
+		missing:    map[string]bool{},
 		manifests:  map[string][]byte{},
 	}
 	mux := http.NewServeMux()
@@ -71,8 +74,16 @@ func newLayerMarketplaceServer(t *testing.T) *layerMarketplaceServer {
 		})
 	})
 	mux.HandleFunc("/api/v1/resources/", func(w http.ResponseWriter, r *http.Request) {
+		if fake.failLatest.Load() {
+			http.Error(w, "server error", http.StatusInternalServerError)
+			return
+		}
 		segments := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/resources/"), "/")
 		if len(segments) != 3 && len(segments) != 5 {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		if len(segments) == 3 && fake.missing[segments[1]+"/"+segments[2]] {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
@@ -386,7 +397,7 @@ func TestToggleMarketplacePinSubdirectorySync(t *testing.T) {
 	}, nil); err != nil {
 		t.Fatalf("seed child pin: %v", err)
 	}
-	if err := ToggleMarketplacePin(context.Background(), repo, child, configPath, config.RepoPersonal, entry, pin, true); err != nil {
+	if _, err := ToggleMarketplacePin(context.Background(), repo, child, configPath, config.RepoPersonal, entry, pin, true); err != nil {
 		t.Fatalf("enable in child: %v", err)
 	}
 	childSkill := filepath.Join(child, ".devin", "skills", "review", "SKILL.md")
@@ -397,11 +408,57 @@ func TestToggleMarketplacePinSubdirectorySync(t *testing.T) {
 	if _, err := os.Lstat(filepath.Dir(parentSkill)); !os.IsNotExist(err) {
 		t.Fatalf("toggle wrote parent skill: %v", err)
 	}
-	if err := ToggleMarketplacePin(context.Background(), repo, child, configPath, config.RepoPersonal, entry, pin, false); err != nil {
+	if _, err := ToggleMarketplacePin(context.Background(), repo, child, configPath, config.RepoPersonal, entry, pin, false); err != nil {
 		t.Fatalf("disable in child: %v", err)
 	}
 	if _, err := os.Lstat(filepath.Dir(childSkill)); !os.IsNotExist(err) {
 		t.Fatalf("child skill still present after disable: %v", err)
+	}
+}
+
+// spec: hook-sync-diagnostics/tui-presents-and-retains-completed-hook-review
+func TestToggleMarketplaceHookReturnsCompletedReview(t *testing.T) {
+	home, repo := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	configPath := filepath.Join(repo, ".agents", "config.yaml")
+	writeFileMode(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [claude]\n", 0o600)
+	fake := newLayerMarketplaceServer(t)
+	registry := fake.addRegistry(t, "source")
+	canonical, err := hccartifact.FromIR(ir.NewHookWithMatcher("review-hook", "PreToolUse", "Bash", "echo marketplace-toggle", "command", nil, ir.SourceRef{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical.Manifest.RegistryID, canonical.Manifest.RegistrySlug = string(registry.ID), registry.Slug
+	raw, digest, err := hccartifact.Encode(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.resources[registry.Slug+"/hook/review-hook"] = layerMarketplaceResource{
+		kind: "hook", name: "review-hook", raw: raw, archiveDigest: digest,
+		revision: layerAssessedRevision(store.ResourceRevision{
+			Coordinate:    store.ResourceCoordinate{Marketplace: store.MarketplaceID(fake.instanceID), Registry: registry.ID, Kind: "hook", Name: "review-hook"},
+			ContentDigest: store.RevisionDigest(canonical.Manifest.ContentDigest), ArchiveDigest: store.ArchiveDigest(digest),
+		}),
+	}
+	entry := config.MarketplaceEntry{URL: fake.URL, InstanceID: fake.instanceID}
+	pin := layerPreparePins(t, fake, "hook", "review-hook")[0]
+	for _, enabled := range []bool{true, false} {
+		synced, err := ToggleMarketplacePin(context.Background(), repo, repo, configPath, config.RepoCommitted, entry, pin, enabled)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if synced.Report == nil || len(synced.Report.HookChanges) != 1 || len(synced.Warnings) == 0 {
+			t.Fatalf("toggle enabled=%t dropped its review or warning: %#v", enabled, synced)
+		}
+		change := synced.Report.HookChanges[0]
+		if (len(change.After) > 0) != enabled || (len(change.Before) > 0) == enabled {
+			t.Fatalf("toggle enabled=%t returned the wrong review action: %#v", enabled, change)
+		}
+		data, err := os.ReadFile(filepath.Join(repo, ".claude", "settings.json"))
+		if err != nil || strings.Contains(string(data), "echo marketplace-toggle") != enabled {
+			t.Fatalf("toggle enabled=%t review does not match publication: %v\n%s", enabled, err, data)
+		}
 	}
 }
 
@@ -661,7 +718,7 @@ func TestMutateMarketplaceLayerV4IncludeRootOnly(t *testing.T) {
 	}
 }
 
-func TestMutateMarketplaceLayerLegacyEnsureEndpoint(t *testing.T) {
+func TestMutateMarketplaceLayerRefusesUnsupportedEndpointRoot(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	repo := t.TempDir()
@@ -669,13 +726,21 @@ func TestMutateMarketplaceLayerLegacyEnsureEndpoint(t *testing.T) {
 	writeFileMode(t, configPath, "apiVersion: agent-marketplace/v2\nharnesses: [devin]\n", 0o600)
 	fake := newLayerMarketplaceServer(t)
 
-	if _, err := MutateMarketplaceLayer(context.Background(), repo, repo, configPath, config.UserPersonal, func(m *MarketplaceLayerMutation) error {
+	before, _ := os.ReadFile(configPath)
+	called := false
+	_, err := MutateMarketplaceLayer(context.Background(), repo, repo, configPath, config.UserPersonal, func(m *MarketplaceLayerMutation) error {
+		called = true
 		return m.EnsureEndpoint(config.MarketplaceEntry{URL: fake.URL, InstanceID: fake.instanceID})
-	}, nil); err != nil {
-		t.Fatalf("MutateMarketplaceLayer: %v", err)
+	}, nil)
+	var validation *config.V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != "v4.api-version" || validation.Path != configPath {
+		t.Fatalf("format refusal: %v", err)
+	}
+	if called || fake.requests.Load() != 0 {
+		t.Fatalf("new work started: callback=%t, requests=%d", called, fake.requests.Load())
 	}
 	configData, _ := os.ReadFile(configPath)
-	if !strings.Contains(string(configData), "marketplaces:") {
-		t.Fatalf("legacy config missing marketplaces key:\n%s", configData)
+	if string(configData) != string(before) {
+		t.Fatal("refusal changed root")
 	}
 }

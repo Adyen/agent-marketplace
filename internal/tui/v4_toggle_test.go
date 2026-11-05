@@ -145,6 +145,76 @@ func TestV4DirectoryGlobalToggleUsesStagedMutationAndRealDiscovery(t *testing.T)
 	}
 }
 
+// spec: directory-source-discovery/git-metadata-beside-valid-and-malformed-skills
+func TestV4DirectorySnapshotIgnoresSkillsGitMetadata(t *testing.T) {
+	home, repo := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".state"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	t.Setenv("TMPDIR", t.TempDir())
+	source := filepath.Join(t.TempDir(), "registry")
+	writeSkill := func(rel, content string) {
+		path := filepath.Join(source, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeSkill("skills/.git/HEAD", "ref: refs/heads/main\n")
+	writeSkill("skills/good-skill/SKILL.md", "---\nname: good-skill\n---\nGood\n")
+	writeSkill("skills/bad-skill/SKILL.md", "---\nname: Bad_Skill\n---\nBad\n")
+	globalPath := filepath.Join(home, ".agents", "config.yaml")
+	global := "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  local:\n    directory: " + source + "\n"
+	if err := os.MkdirAll(filepath.Dir(globalPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(globalPath, []byte(global), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	originalOrg, originalGlobal := loadOrgConfig, loadGlobalConfig
+	originalRepo, originalLocal := loadRepoConfig, loadLocalConfig
+	t.Cleanup(func() {
+		loadOrgConfig, loadGlobalConfig = originalOrg, originalGlobal
+		loadRepoConfig, loadLocalConfig = originalRepo, originalLocal
+	})
+	loadOrgConfig = func() (*config.Config, error) { return nil, nil }
+	loadGlobalConfig = func() (*config.Config, error) { return config.LoadConfigFromPath(globalPath) }
+	loadRepoConfig = func() (*config.Config, error) { return nil, nil }
+	loadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
+
+	snap := readSnapshot(context.Background(), repo, home, catalogLoadRefresh)
+	if len(snap.errs) > 0 {
+		t.Fatalf("snapshot errors: %v", snap.errs)
+	}
+	findV4ToggleRow(t, snap.rows, "good-skill")
+	badSkillMalformed := false
+	for _, r := range snap.rows {
+		if strings.Contains(r.Artifact.Path, ".git") || r.Artifact.Name == ".git" {
+			t.Errorf("skills/.git surfaced as a row: %#v", r.Artifact)
+		}
+		if r.IsMalformed && strings.Contains(r.Artifact.Path, "bad-skill") {
+			badSkillMalformed = true
+		}
+	}
+	if !badSkillMalformed {
+		t.Errorf("expected malformed authored skill bad-skill row, got %#v", snap.rows)
+	}
+	badSkillWarning := false
+	for _, w := range snap.warnings {
+		if strings.Contains(w.Error(), ".git") || strings.Contains(w.Error(), "sub-bundles-ignored") {
+			t.Errorf("unexpected warning: %v", w)
+		}
+		if strings.Contains(w.Error(), "bad-skill") {
+			badSkillWarning = true
+		}
+	}
+	if !badSkillWarning {
+		t.Errorf("expected malformed warning for bad-skill, got %v", snap.warnings)
+	}
+}
+
 func assertNoConfigStaging(t *testing.T) {
 	t.Helper()
 	matches, err := filepath.Glob(filepath.Join(os.Getenv("TMPDIR"), ".agent-marketplace-config-*"))

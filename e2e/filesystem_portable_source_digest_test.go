@@ -9,15 +9,18 @@ import (
 )
 
 func TestFilesystemPortableSourceCheckRefusesForeignSupport(t *testing.T) {
-	for _, version := range []string{"agent-marketplace/v2", "agent-marketplace/v4"} {
-		t.Run(version, func(t *testing.T) {
+	for _, fixture := range []struct{ name, root string }{
+		{"ad-hoc", "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\n"},
+		{"configured", "apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\nsources: {local: {directory: ./vendor/registry}}\nresources: {local: {include: [skill/hash-probe]}}\n"},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
 			env := newEnv(t)
 			env.InitGitRepo()
 			env.MustRunAM("init", "--harnesses", "factory")
 			source := filepath.Join(env.workspace, "vendor", "registry", "skills", "hash-probe")
 			env.WriteFile(filepath.Join(source, "SKILL.md"), "---\nname: hash-probe\ndescription: hash control\n---\n\ninert native body\n")
 			env.WriteFile(filepath.Join(source, "reference.txt"), "contained inert data")
-			env.WriteRepoConfig("apiVersion: " + version + "\nmaterialization:\n  mode: file\n")
+			env.WriteRepoConfig(fixture.root)
 			env.MustRunAM("install", "hash-probe", "--from", "./vendor/registry", "--scope", "repo")
 			env.MustRunAM("sync", "--check")
 			installed := filepath.Join(env.workspace, ".factory", "skills", "hash-probe", "reference.txt")

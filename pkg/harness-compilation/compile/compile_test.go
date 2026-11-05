@@ -17,9 +17,17 @@ type mockCompiler struct {
 
 func (m *mockCompiler) Target() Target { return m.target }
 func (m *mockCompiler) Translate(r ir.Resource) ([]artifact.Artifact, []diag.Diagnostic, error) {
+	var diagnostics []diag.Diagnostic
+	if subagent, ok := r.(*ir.Subagent); ok {
+		var err error
+		_, diagnostics, err = SubagentModel(subagent, m.target, Options{})
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	return []artifact.Artifact{
 		{Path: r.Name() + ".out", Bytes: []byte("mock")},
-	}, nil, nil
+	}, diagnostics, nil
 }
 
 type optionAwareMockCompiler struct {
@@ -129,7 +137,7 @@ func TestLookupPreservesOptionAwareCompiler(t *testing.T) {
 		t.Fatalf("Lookup() compiler type = %T, want OptionAwareCompiler", lookedUp)
 	}
 	resource := ir.NewSubagent("reviewer", "Review", "Review.", "", nil, "", nil, "", nil, ir.SourceRef{})
-	resource.Ext.Codex = &ext.Codex{ReasoningEffort: "xhigh"}
+	resource.Ext.Codex = &ext.Codex{ReasoningEffort: "future-effort"}
 	var opts Options
 	WithPluginRoot("/plugins/demo")(&opts)
 	artifacts, diagnostics, err := configurable.TranslateWithOptions(resource, opts)
@@ -151,7 +159,7 @@ func TestCompileSuppressesNativeCodexAuthorityLoss(t *testing.T) {
 			name: "subagent sandbox",
 			resource: func() ir.Resource {
 				r := ir.NewSubagent("restricted", "Restricted", "Review.", "", nil, "", nil, "", nil, ir.SourceRef{})
-				r.Ext.Codex = &ext.Codex{SandboxMode: "read-only"}
+				r.Ext.Codex = &ext.Codex{SandboxMode: "workspace-write"}
 				return r
 			}(),
 			code: diag.CodeSubagentSecurityRestrictionUnsupported,
@@ -275,7 +283,7 @@ func TestLookupCompilerSuppressesNativeCodexAuthorityLoss(t *testing.T) {
 	defer func() { registry = orig }()
 
 	resource := ir.NewSubagent("restricted", "Restricted", "Review.", "", nil, "", nil, "", nil, ir.SourceRef{})
-	resource.Ext.Codex = &ext.Codex{SandboxMode: "read-only"}
+	resource.Ext.Codex = &ext.Codex{SandboxMode: "workspace-write"}
 	compiler, ok := Lookup(TargetClaude)
 	if !ok {
 		t.Fatal("Lookup(TargetClaude) did not find compiler")
@@ -316,7 +324,7 @@ func TestCompileWarnsWhenDroppingNativeCodexEffort(t *testing.T) {
 			defer func() { registry = orig }()
 
 			resource := ir.NewSubagent("reviewer", "Review", "Review.", "", nil, "", nil, "", nil, ir.SourceRef{})
-			resource.Ext.Codex = &ext.Codex{ReasoningEffort: "xhigh"}
+			resource.Ext.Codex = &ext.Codex{ReasoningEffort: "future-effort"}
 			result, err := Compile(resource, target)
 			if err != nil {
 				t.Fatal(err)
@@ -377,7 +385,7 @@ func TestCompileWarnsWhenDroppingNativeCodexModelAndEffort(t *testing.T) {
 			defer func() { registry = orig }()
 
 			resource := ir.NewSubagent("reviewer", "Review", "Review.", "", nil, "", nil, "", nil, ir.SourceRef{})
-			resource.Ext.Codex = &ext.Codex{Model: "gpt-native", ReasoningEffort: "xhigh"}
+			resource.Ext.Codex = &ext.Codex{Model: "gpt-native", ReasoningEffort: "future-effort"}
 			result, err := Compile(resource, target)
 			if err != nil {
 				t.Fatal(err)

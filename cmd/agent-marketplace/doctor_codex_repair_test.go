@@ -261,11 +261,7 @@ func TestDoctorCodexRepairCorruptStateFailsClosedWithNonzeroResult(t *testing.T)
 			Source:    config.RepoCommitted,
 			Harnesses: []hcc.Target{hcc.TargetCodex},
 		},
-		{
-			Entry:     catalog.Entry{Name: "managed-hook", Resource: ir.NewHookWithMatcher("managed-hook", "PreToolUse", "Bash", "./hook-command", "command", nil, ir.SourceRef{})},
-			Source:    config.RepoCommitted,
-			Harnesses: []hcc.Target{hcc.TargetCodex},
-		},
+		sourceBackedDoctorHook(t, "managed-hook", "PreToolUse", "Bash", "./hook-command", hcc.TargetCodex),
 	}
 	if report, err := materialize.Run(context.Background(), repoRoot, selection); err != nil || diagHasErrors(report) {
 		t.Fatalf("seed Codex aggregates: report=%#v err=%v", report, err)

@@ -360,7 +360,7 @@ func TestCurrentRevisionIncludesHookSupport(t *testing.T) {
 		t.Fatalf("hook support projection = %+v", hook)
 	}
 	if built.Manifest.SchemaVersion != "v4" {
-		t.Fatalf("current revision requires v4, got %q", built.Manifest.SchemaVersion)
+		t.Fatalf("current hook support and model provenance require v4, got %q", built.Manifest.SchemaVersion)
 	}
 	writeFixture(t, filepath.Join(root, "hooks", "check.sh"), "echo changed\n")
 	changed, err := Build(Input{SnapshotRoot: root, SourceHarness: "claude"})

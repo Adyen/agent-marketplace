@@ -2,6 +2,7 @@ package e2e_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -22,6 +23,7 @@ type compatibilityCommand struct {
 	OutputBytes     int      `json:"output_bytes"`
 	OutputTruncated bool     `json:"output_truncated,omitempty"`
 	output          string
+	inventory       []byte
 }
 
 const compatibilityOutputLimit = 256 << 10
@@ -77,6 +79,9 @@ func compatibilityEnv(e *Env) []string {
 		"TEMP=" + filepath.Join(e.home, ".tmp"),
 		"LANG=C", "LC_ALL=C", "TERM=dumb", "NO_COLOR=1", "CLICOLOR=0", "CI=1",
 		"DISABLE_AUTOUPDATER=1", "FACTORY_DROID_AUTO_UPDATE_ENABLED=false",
+		"OPENCODE_DISABLE_AUTOUPDATE=1", "OPENCODE_DISABLE_MODELS_FETCH=1",
+		"OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=1",
+		"OPENCODE_MODELS_PATH=" + filepath.Join(e.home, "opencode-models.json"),
 		"HTTP_PROXY=http://127.0.0.1:9",
 		"HTTPS_PROXY=http://127.0.0.1:9",
 		"ALL_PROXY=http://127.0.0.1:9",
@@ -109,6 +114,10 @@ func compatibilityProcess(ctx context.Context, e *Env, binary string, args []str
 }
 
 func runCompatibilityCommand(e *Env, binary string, args []string, timeout time.Duration) compatibilityCommand {
+	return runCompatibilityInspection(e, binary, args, timeout, false)
+}
+
+func runCompatibilityInspection(e *Env, binary string, args []string, timeout time.Duration, jsonInventory bool) compatibilityCommand {
 	r := compatibilityCommand{Args: append([]string{binary}, args...), ExitCode: -1}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -117,16 +126,22 @@ func runCompatibilityCommand(e *Env, binary string, args []string, timeout time.
 		r.Error = err.Error()
 		return r
 	}
-	var output compatibilityOutput
-	cmd.Stdout, cmd.Stderr = &output, &output
+	var output, stderr compatibilityOutput
+	cmd.Stdout, cmd.Stderr = &output, &stderr
 	err = cmd.Run()
 	if cmd.Process != nil {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
+	r.OutputBytes = output.total + stderr.total
+	r.OutputTruncated = r.OutputBytes > compatibilityOutputLimit
+	diagnosticOutput := string(output.data) + string(stderr.data)
+	if jsonInventory && err == nil && json.Valid(output.data) {
+		diagnosticOutput = string(stderr.data)
+		r.inventory = append([]byte(nil), output.data...)
+	}
+	_, _ = output.Write(stderr.data)
 	r.output = string(output.data)
-	r.OutputBytes = output.total
-	r.OutputTruncated = output.total > compatibilityOutputLimit
-	r.Diagnostics = compatibilityDiagnostics(r.output)
+	r.Diagnostics = compatibilityDiagnostics(diagnosticOutput)
 	if cmd.ProcessState != nil {
 		r.ExitCode = cmd.ProcessState.ExitCode()
 	}

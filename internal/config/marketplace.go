@@ -121,8 +121,22 @@ func validateMarketplaceSelections(selections MarketplaceSelections) error {
 func (s MarketplaceSelections) MarshalYAML() (any, error) { return s.List(), nil }
 
 func (s *MarketplaceSelections) UnmarshalYAML(node *yaml.Node) error {
-	if err := validateMarketplaceSelectedByNode(node, "selected_by"); err != nil {
-		return err
+	if node == nil || node.Kind != yaml.SequenceNode || node.Tag == "!!null" {
+		return fmt.Errorf("selected_by must be a non-null sequence")
+	}
+	for i, selection := range node.Content {
+		if selection.Kind != yaml.MappingNode || len(selection.Content) != 6 {
+			return fmt.Errorf("selected_by[%d] must be an exact mapping with registry_id, name, and revision", i)
+		}
+		if err := validateV4YAMLTree(selection, "selected_by"); err != nil {
+			return err
+		}
+		for _, field := range []string{"registry_id", "name", "revision"} {
+			value := findMappingValue(selection, field)
+			if value == nil || value.Kind != yaml.ScalarNode || value.Tag != "!!str" {
+				return fmt.Errorf("selected_by[%d].%s must be a string value", i, field)
+			}
+		}
 	}
 	var values []MarketplaceSelection
 	if err := node.Decode(&values); err != nil {

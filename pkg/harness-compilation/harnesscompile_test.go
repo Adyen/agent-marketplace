@@ -31,7 +31,9 @@ func TestCompile_WithPluginRoot(t *testing.T) {
 		t.Fatalf("Compile(hook) artifacts = %d, want 1", len(result.Artifacts))
 	}
 	got := string(result.Artifacts[0].Bytes)
-	if want := "/plugins/acme/scripts/check.sh"; !strings.Contains(got, want) {
+	// Windsurf repository commands run from the workspace root, so the
+	// catalog-driven resolver emits the repository-relative support path.
+	if want := "plugins/acme/scripts/check.sh"; !strings.Contains(got, want) {
 		t.Fatalf("artifact does not contain expanded plugin root %q:\n%s", want, got)
 	}
 }

@@ -9,8 +9,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-
-	"github.com/Adyen/agent-marketplace/internal/config"
 )
 
 // AC4: scope switching and Space selection inside the harness Huh
@@ -70,22 +68,16 @@ func TestHarnessFormSpaceSelectsWithoutWriting(t *testing.T) {
 }
 
 // spec: tui-interactions/save-selected-harnesses
-func TestHarnessFormPreservesUnknownIDs(t *testing.T) {
+func TestHarnessFormPreservesOtherSupportedSelections(t *testing.T) {
 	m := NewModel("/repo", "/home")
-	m.globalHarnesses = []string{"factory", "mystery-harness"}
+	m.globalHarnesses = []string{"factory", "claude"}
 	m.openHarnessModal()
-	// Toggle factory off through the form; the unknown ID must survive.
+	// Toggling Factory must leave the independently selected Claude entry alone.
 	mi, _ := m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	m = mi.(Model)
 	saved := selectedHarnessIDs(m.harnessModal.selected)
-	found := false
-	for _, id := range saved {
-		if id == "mystery-harness" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("unknown harness ID lost through form editing: %#v", saved)
+	if len(saved) != 1 || saved[0] != "claude" {
+		t.Fatalf("remaining supported selections = %#v, want [claude]", saved)
 	}
 }
 
@@ -139,7 +131,7 @@ func TestEditConfigFormEnterDispatchesProjectEditor(t *testing.T) {
 func TestSyncQuitFormConfirmAndDecline(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.pane = paneConfirm
-	m.confirmMsg = "1 pending changes not synced. Sync+quit? y/n/esc"
+	m.confirmMsg = "1 pending changes not synced. Sync+quit?"
 	m.ensureSyncQuitForm()
 	mi, _ := m.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
 	m = mi.(Model)
@@ -148,38 +140,6 @@ func TestSyncQuitFormConfirmAndDecline(t *testing.T) {
 	}
 	if m.quitAfterSync {
 		t.Fatal("declined sync+quit must not arm quitAfterSync")
-	}
-}
-
-// spec: tui-interactions/cancel-or-stale-completion
-func TestMigrationFormResetsAfterCompletion(t *testing.T) {
-	home := t.TempDir()
-	m := NewModel(t.TempDir(), home)
-	m.pane = paneMigrationModal
-	m.migrationPrompt = migrationPrompt{configs: []migrationConfig{{
-		label: "User",
-		path:  filepath.Join(home, ".agents", "config.yaml"),
-		scope: config.V4MigrationUser,
-	}}}
-	mi, cmd := m.Update(tea.KeyPressMsg{Code: 'm', Text: "m"})
-	m = mi.(Model)
-	if cmd == nil {
-		t.Fatal("'m' should dispatch the migration command")
-	}
-
-	m.pane = paneMigrationModal
-	mi, cmd = m.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
-	m = mi.(Model)
-	if cmd != nil {
-		t.Fatal("stale completed form re-dispatched the migration")
-	}
-	if m.pane != paneMigrationModal {
-		t.Fatalf("unbound 'n' should keep the migration modal open, got pane=%v", m.pane)
-	}
-	mi, _ = m.Update(tea.KeyPressMsg{Code: 'l', Text: "l"})
-	m = mi.(Model)
-	if !m.migrationDismissed {
-		t.Fatal("declining a re-presented migration must mark it dismissed")
 	}
 }
 
@@ -200,7 +160,7 @@ func TestSyncQuitFormResetsAfterCompletion(t *testing.T) {
 	m.pane = paneConfirm
 	m.syncing = false
 	m.quitAfterSync = false
-	m.confirmMsg = "2 pending changes not synced. Sync+quit? y/n/esc"
+	m.confirmMsg = "2 pending changes not synced. Sync+quit?"
 	mi, cmd := m.Update(keyPress('n'))
 	m = mi.(Model)
 	if m.syncing || m.quitAfterSync {

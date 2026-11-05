@@ -61,6 +61,7 @@ func TestSyncCheckSummaryNamesTheErrorInsteadOfClaimingZeroDrift(t *testing.T) {
 
 // TestSyncCheckSummaryKeepsTheDriftWording preserves the existing, correct
 // message for real drift (files to write / remove).
+// spec: hook-sync-diagnostics/drift-summaries-count-outputs-rather-than-skills
 func TestSyncCheckSummaryKeepsTheDriftWording(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -76,11 +77,11 @@ func TestSyncCheckSummaryKeepsTheDriftWording(t *testing.T) {
 	if !strings.Contains(out, "out of sync") {
 		t.Fatalf("drift summary lost its wording:\n%s", out)
 	}
-	if !strings.Contains(out, "missing") {
-		t.Fatalf("drift summary lost the missing breakdown:\n%s", out)
+	if !strings.Contains(out, "(1 writes)") {
+		t.Fatalf("drift summary lost the writes breakdown:\n%s", out)
 	}
-	if !strings.Contains(err.Error(), "out of sync") {
-		t.Fatalf("returned error = %q, want the drift wording", err)
+	if !strings.Contains(err.Error(), "1 outputs out of sync") {
+		t.Fatalf("returned error = %q, want the outputs drift wording", err)
 	}
 }
 
@@ -101,6 +102,7 @@ func TestSyncCheckSummaryNamesCodexRootsAndArtifacts(t *testing.T) {
 	for _, want := range []string{
 		"machine-agents", "skills/machine-skill",
 		"machine-codex", "agents/machine-agent.toml", "hooks.json", "config.toml",
+		"(4 removals)",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("sync --check output missing %q:\n%s", want, out)

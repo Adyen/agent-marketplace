@@ -1,0 +1,126 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4DecisionHistory/empty-control-16      	148366752	         8.092 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4DecisionHistory/single-16             	 5902317	       202.2 ns/op	     320 B/op	       2 allocs/op
+BenchmarkV4DecisionHistory/includes-256-16       	   25294	     47483 ns/op	  173016 B/op	      24 allocs/op
+BenchmarkV4DecisionHistory/includes-1024-16      	    5502	    223596 ns/op	  929353 B/op	      34 allocs/op
+BenchmarkV4DecisionHistory/excludes-256-16       	  323620	      3646 ns/op	   27264 B/op	       1 allocs/op
+BenchmarkV4DecisionHistory/excludes-1024-16      	   87849	     13370 ns/op	  106496 B/op	       1 allocs/op
+BenchmarkV4DecisionHistory/groups-16-16          	    6099	    188796 ns/op	  927984 B/op	     174 allocs/op
+BenchmarkV4DecisionHistory/groups-1024-control-16         	    4784	    254827 ns/op	  820592 B/op	      14 allocs/op
+BenchmarkV4DecisionHistoryEffectiveControl/requests=256-16         	   34236	     34902 ns/op	   89064 B/op	      15 allocs/op
+BenchmarkV4DecisionHistoryEffectiveControl/requests=1024-16        	    7710	    152657 ns/op	  331992 B/op	      22 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1-16  	  123862	      9748 ns/op	   14899 B/op	     140 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=256-16         	    4137	    295869 ns/op	  454735 B/op	    3244 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1024-16        	     974	   1238522 ns/op	 2007706 B/op	   13251 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1-16            	  130215	      9299 ns/op	   13872 B/op	     126 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=256-16          	    4231	    283454 ns/op	  192808 B/op	    1422 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1024-16         	    1071	   1130438 ns/op	  735941 B/op	    5272 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4DecisionHistory/empty-control-16      	148906012	         8.086 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4DecisionHistory/single-16             	 6003446	       197.6 ns/op	     320 B/op	       2 allocs/op
+BenchmarkV4DecisionHistory/includes-256-16       	   25807	     46565 ns/op	  173016 B/op	      24 allocs/op
+BenchmarkV4DecisionHistory/includes-1024-16      	    5529	    220936 ns/op	  929353 B/op	      34 allocs/op
+BenchmarkV4DecisionHistory/excludes-256-16       	  374760	      3329 ns/op	   27264 B/op	       1 allocs/op
+BenchmarkV4DecisionHistory/excludes-1024-16      	   91546	     13206 ns/op	  106496 B/op	       1 allocs/op
+BenchmarkV4DecisionHistory/groups-16-16          	    6362	    184969 ns/op	  927984 B/op	     174 allocs/op
+BenchmarkV4DecisionHistory/groups-1024-control-16         	    4922	    246018 ns/op	  820593 B/op	      14 allocs/op
+BenchmarkV4DecisionHistoryEffectiveControl/requests=256-16         	   34412	     34604 ns/op	   89064 B/op	      15 allocs/op
+BenchmarkV4DecisionHistoryEffectiveControl/requests=1024-16        	    7892	    151161 ns/op	  331992 B/op	      22 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1-16  	  123512	      9586 ns/op	   14899 B/op	     140 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=256-16         	    4360	    280674 ns/op	  454723 B/op	    3243 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1024-16        	    1042	   1143491 ns/op	 2007689 B/op	   13251 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1-16            	  134211	      9099 ns/op	   13872 B/op	     126 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=256-16          	    4171	    284096 ns/op	  192807 B/op	    1422 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1024-16         	    1082	   1100863 ns/op	  735941 B/op	    5272 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4DecisionHistory/empty-control-16      	150593517	         7.988 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4DecisionHistory/single-16             	 6194252	       194.5 ns/op	     320 B/op	       2 allocs/op
+BenchmarkV4DecisionHistory/includes-256-16       	   25732	     46582 ns/op	  173016 B/op	      24 allocs/op
+BenchmarkV4DecisionHistory/includes-1024-16      	    5509	    214956 ns/op	  929353 B/op	      34 allocs/op
+BenchmarkV4DecisionHistory/excludes-256-16       	  359440	      3320 ns/op	   27264 B/op	       1 allocs/op
+BenchmarkV4DecisionHistory/excludes-1024-16      	   93121	     13150 ns/op	  106496 B/op	       1 allocs/op
+BenchmarkV4DecisionHistory/groups-16-16          	    6613	    180923 ns/op	  927985 B/op	     174 allocs/op
+BenchmarkV4DecisionHistory/groups-1024-control-16         	    5008	    240014 ns/op	  820593 B/op	      14 allocs/op
+BenchmarkV4DecisionHistoryEffectiveControl/requests=256-16         	   35690	     33911 ns/op	   89064 B/op	      15 allocs/op
+BenchmarkV4DecisionHistoryEffectiveControl/requests=1024-16        	    7752	    152991 ns/op	  331992 B/op	      22 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1-16  	  121548	      9804 ns/op	   14900 B/op	     140 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=256-16         	    4207	    284800 ns/op	  454738 B/op	    3244 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1024-16        	    1069	   1116612 ns/op	 2007701 B/op	   13251 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1-16            	  133880	      9072 ns/op	   13872 B/op	     126 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=256-16          	    4329	    277534 ns/op	  192807 B/op	    1422 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1024-16         	    1102	   1086437 ns/op	  735940 B/op	    5272 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4DecisionHistory/empty-control-16      	150046490	         8.010 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4DecisionHistory/single-16             	 5959826	       199.7 ns/op	     320 B/op	       2 allocs/op
+BenchmarkV4DecisionHistory/includes-256-16       	   25707	     46781 ns/op	  173016 B/op	      24 allocs/op
+BenchmarkV4DecisionHistory/includes-1024-16      	    5517	    217722 ns/op	  929352 B/op	      34 allocs/op
+BenchmarkV4DecisionHistory/excludes-256-16       	  359170	      3345 ns/op	   27264 B/op	       1 allocs/op
+BenchmarkV4DecisionHistory/excludes-1024-16      	   93772	     12950 ns/op	  106496 B/op	       1 allocs/op
+BenchmarkV4DecisionHistory/groups-16-16          	    5869	    191801 ns/op	  927985 B/op	     174 allocs/op
+BenchmarkV4DecisionHistory/groups-1024-control-16         	    4833	    247141 ns/op	  820592 B/op	      14 allocs/op
+BenchmarkV4DecisionHistoryEffectiveControl/requests=256-16         	   34192	     34698 ns/op	   89064 B/op	      15 allocs/op
+BenchmarkV4DecisionHistoryEffectiveControl/requests=1024-16        	    7788	    153611 ns/op	  331992 B/op	      22 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1-16  	  122865	      9911 ns/op	   14900 B/op	     140 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=256-16         	    4046	    286573 ns/op	  454738 B/op	    3244 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1024-16        	    1066	   1129398 ns/op	 2007695 B/op	   13251 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1-16            	  130220	      9146 ns/op	   13872 B/op	     126 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=256-16          	    4294	    287514 ns/op	  192807 B/op	    1422 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1024-16         	    1110	   1090181 ns/op	  735933 B/op	    5272 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4DecisionHistory/empty-control-16      	148557360	         8.097 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4DecisionHistory/single-16             	 6076916	       197.1 ns/op	     320 B/op	       2 allocs/op
+BenchmarkV4DecisionHistory/includes-256-16       	   26043	     46203 ns/op	  173016 B/op	      24 allocs/op
+BenchmarkV4DecisionHistory/includes-1024-16      	    5595	    212032 ns/op	  929353 B/op	      34 allocs/op
+BenchmarkV4DecisionHistory/excludes-256-16       	  348871	      3300 ns/op	   27264 B/op	       1 allocs/op
+BenchmarkV4DecisionHistory/excludes-1024-16      	   93736	     13165 ns/op	  106496 B/op	       1 allocs/op
+BenchmarkV4DecisionHistory/groups-16-16          	    6025	    184933 ns/op	  927984 B/op	     174 allocs/op
+BenchmarkV4DecisionHistory/groups-1024-control-16         	    4984	    245995 ns/op	  820592 B/op	      14 allocs/op
+BenchmarkV4DecisionHistoryEffectiveControl/requests=256-16         	   34288	     34535 ns/op	   89064 B/op	      15 allocs/op
+BenchmarkV4DecisionHistoryEffectiveControl/requests=1024-16        	    7731	    150033 ns/op	  331992 B/op	      22 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1-16  	  122697	      9519 ns/op	   14900 B/op	     140 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=256-16         	    4332	    279315 ns/op	  454728 B/op	    3244 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1024-16        	    1089	   1111581 ns/op	 2007660 B/op	   13250 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1-16            	  135300	      8979 ns/op	   13872 B/op	     126 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=256-16          	    4219	    280973 ns/op	  192807 B/op	    1422 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1024-16         	    1101	   1096845 ns/op	  735941 B/op	    5272 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4DecisionHistory/empty-control-16      	149377585	         8.039 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4DecisionHistory/single-16             	 6080647	       194.0 ns/op	     320 B/op	       2 allocs/op
+BenchmarkV4DecisionHistory/includes-256-16       	   26491	     45276 ns/op	  173016 B/op	      24 allocs/op
+BenchmarkV4DecisionHistory/includes-1024-16      	    5790	    209260 ns/op	  929353 B/op	      34 allocs/op
+BenchmarkV4DecisionHistory/excludes-256-16       	  368366	      3182 ns/op	   27264 B/op	       1 allocs/op
+BenchmarkV4DecisionHistory/excludes-1024-16      	   94896	     12836 ns/op	  106496 B/op	       1 allocs/op
+BenchmarkV4DecisionHistory/groups-16-16          	    6459	    185148 ns/op	  927984 B/op	     174 allocs/op
+BenchmarkV4DecisionHistory/groups-1024-control-16         	    4794	    247731 ns/op	  820592 B/op	      14 allocs/op
+BenchmarkV4DecisionHistoryEffectiveControl/requests=256-16         	   35013	     34569 ns/op	   89064 B/op	      15 allocs/op
+BenchmarkV4DecisionHistoryEffectiveControl/requests=1024-16        	    7839	    149173 ns/op	  331992 B/op	      22 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1-16  	  125811	      9587 ns/op	   14899 B/op	     140 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=256-16         	    4360	    281309 ns/op	  454727 B/op	    3244 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=false/decisions=1024-16        	    1075	   1134375 ns/op	 2007689 B/op	   13250 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1-16            	  132098	      9127 ns/op	   13873 B/op	     126 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=256-16          	    4316	    280737 ns/op	  192807 B/op	    1422 allocs/op
+BenchmarkParseV4DecisionHistory/exclude-only=true/decisions=1024-16         	    1102	   1096259 ns/op	  735938 B/op	    5272 allocs/op
+PASS

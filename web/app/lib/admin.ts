@@ -21,9 +21,9 @@ export type AdminPreviewRoot = AdminPreviewResult['roots'][number]
 // field ordering and defaults added by the server never mask a real edit.
 export type AdminPreviewState = { preview: AdminPreview, registry: string }
 
-// The only sign-in destinations the server accepts are /marketplace/admin and
-// descendants. Anything else falls back to the admin root rather than being
-// reflected into the login redirect.
+// Sign-in destinations must be beneath the administration path for the
+// configured Marketplace web base. Anything else falls back to that admin root
+// rather than being reflected into the login redirect.
 export function adminLoginHref(next: string, baseURL = '/marketplace/'): string {
   const root = `${baseURL.replace(/\/+$/, '')}/admin`
   const safeDestination = new TextEncoder().encode(next).byteLength <= 2048 && Array.from(next).every(char => {

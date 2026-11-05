@@ -314,3 +314,113 @@ cells:
         - ingest.codex.bundle-manifest-synthesized
       allowedLosses:
         - triggers
+    - from: claude
+      to: opencode
+      class: cross
+      allowedLosses:
+        - description
+        - triggers
+        - triggers
+    - from: opencode
+      to: claude
+      class: cross
+      allowedLosses:
+        - description
+        - triggers
+        - triggers
+    - from: factory
+      to: opencode
+      class: cross
+      diagnostics:
+        - compile.opencode.field-dropped
+      allowedLosses:
+        - triggers
+    - from: opencode
+      to: factory
+      class: cross
+      allowedLosses:
+        - description
+        - triggers
+        - triggers
+    - from: cursor
+      to: opencode
+      class: cross
+      diagnostics:
+        - compile.opencode.field-dropped
+      allowedLosses:
+        - triggers
+    - from: opencode
+      to: cursor
+      class: cross
+      allowedLosses:
+        - description
+        - triggers
+        - triggers
+    - from: windsurf
+      to: opencode
+      class: cross
+      diagnostics:
+        - ingest.windsurf.bundle-manifest-synthesized
+      allowedLosses:
+        - description
+        - triggers
+        - triggers
+    - from: opencode
+      to: windsurf
+      class: cross
+      allowedLosses:
+        - description
+        - triggers
+        - triggers
+    - from: gemini
+      to: opencode
+      class: cross
+      diagnostics:
+        - ingest.gemini.bundle-manifest-synthesized
+      allowedLosses:
+        - description
+        - triggers
+        - triggers
+    - from: opencode
+      to: gemini
+      class: cross
+      allowedLosses:
+        - description
+        - triggers
+        - triggers
+    - from: devin
+      to: opencode
+      class: cross
+      diagnostics:
+        - ingest.devin.bundle-manifest-synthesized
+        - compile.opencode.field-dropped
+      allowedLosses:
+        - triggers
+        - triggers
+    - from: opencode
+      to: devin
+      class: cross
+      allowedLosses:
+        - description
+        - triggers
+        - triggers
+    - from: codex
+      to: opencode
+      class: cross
+      diagnostics:
+        - ingest.codex.bundle-manifest-synthesized
+      allowedLosses:
+        - triggers
+        - triggers
+    - from: opencode
+      to: codex
+      class: cross
+      allowedLosses:
+        - description
+        - triggers
+        - triggers
+    - from: opencode
+      to: opencode
+      class: identity
+      allowedLosses:
+        - triggers

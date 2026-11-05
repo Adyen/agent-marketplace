@@ -1,2 +1,6 @@
 overrides:
-  "vite": "6.4.3"
+  "source-map-js@<1.2.2": "1.2.2"
+  "vite": "6.4.4"
+minimumReleaseAgeExclude:
+  - source-map-js
+  - vite

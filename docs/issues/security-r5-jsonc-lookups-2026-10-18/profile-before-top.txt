@@ -1,0 +1,23 @@
+File: artifact.test
+Type: cpu
+Time: 2026-10-18 21:34:48 CEST
+Duration: 6.15s, Total samples = 5.98s (97.26%)
+Showing nodes accounting for 5s, 83.61% of 5.98s total
+Dropped 154 nodes (cum <= 0.03s)
+Showing top 15 nodes out of 129
+      flat  flat%   sum%        cum   cum%
+     1.41s 23.58% 23.58%      1.41s 23.58%  runtime.memequal
+     0.98s 16.39% 39.97%      0.98s 16.39%  runtime.kevent
+     0.98s 16.39% 56.35%      0.98s 16.39%  runtime.madvise
+     0.53s  8.86% 65.22%      1.87s 31.27%  github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc.(*Node).Member
+     0.36s  6.02% 71.24%      0.36s  6.02%  runtime.pthread_cond_wait
+     0.26s  4.35% 75.59%      0.26s  4.35%  runtime.pthread_cond_signal
+     0.11s  1.84% 77.42%      0.11s  1.84%  runtime.pthread_kill
+     0.07s  1.17% 78.60%      0.10s  1.67%  runtime.mallocgcSmallScanNoHeaderSC2
+     0.06s  1.00% 79.60%      0.06s  1.00%  encoding/json/internal/jsonwire.ConsumeSimpleString
+     0.05s  0.84% 80.43%      0.28s  4.68%  runtime.mallocgc
+     0.05s  0.84% 81.27%      0.05s  0.84%  runtime.usleep
+     0.04s  0.67% 81.94%      0.06s  1.00%  encoding/json/jsontext.(*decoderState).reset
+     0.04s  0.67% 82.61%      0.10s  1.67%  runtime.scanObjectsSmall
+     0.03s   0.5% 83.11%      0.03s   0.5%  encoding/json/internal/jsonwire.AppendQuote
+     0.03s   0.5% 83.61%      0.03s   0.5%  encoding/json/internal/jsonwire.ConsumeWhitespace

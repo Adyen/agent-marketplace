@@ -17,6 +17,7 @@ const (
 	FindingMcpCapability         = "marketplace.find.mcp-capability"
 	FindingSuspiciousPath        = "marketplace.find.suspicious-path"
 	FindingObfuscatedInstruction = "marketplace.find.obfuscated-instruction"
+	FindingInvalidUTF8           = "marketplace.find.invalid-utf8"
 )
 
 // Stable finding codes emitted by operator policy enforcement during ingest.
@@ -41,12 +42,9 @@ const (
 //
 // Bump this whenever detection behaviour changes. Every revision stores the
 // version that produced its findings, so leaving it fixed would make two
-// different analyzers indistinguishable in the record. 1.2.0 separates
-// structural blockers from heuristic review signals: asset path escapes and
-// opaque executables still reject, readable scripts and raw execution calls
-// warn, content paths are limited to sensitive targets, and Unicode emoji
-// presentation sequences are accepted.
-const AnalyzerVersionV1 = "1.2.0"
+// different analyzers indistinguishable in the record. 1.2.1 rejects non-UTF-8
+// support files without recognized binary signatures.
+const AnalyzerVersionV1 = "1.2.1"
 
 // Policy outcomes.
 const (
@@ -93,6 +91,7 @@ func FindingCodes() []string {
 		FindingMcpCapability,
 		FindingSuspiciousPath,
 		FindingObfuscatedInstruction,
+		FindingInvalidUTF8,
 	}
 }
 

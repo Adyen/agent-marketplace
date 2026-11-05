@@ -165,13 +165,13 @@ func TestCodexCompileFailurePreservesOwnedHook(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	valid := ir.NewHookWithMatcher("managed", "PreToolUse", "Bash", "./managed", "command", nil, ir.SourceRef{})
-	selection := []resolver.ResolvedArtifact{{Entry: catalog.Entry{Name: "managed", Resource: valid}, Source: config.RepoCommitted, Harnesses: []targetmeta.Target{targetmeta.TargetCodex}}}
+	selection := []resolver.ResolvedArtifact{codexHookResolved(t, "managed", valid, config.RepoCommitted)}
 	if report, err := Run(context.Background(), repo, selection); err != nil || hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("seed: report=%#v err=%v", report, err)
 	}
 
-	invalid := ir.NewHookWithMatcher("managed", "PreToolUse", "Bash", "./managed", "prompt", nil, ir.SourceRef{})
-	selection[0].Resource = invalid
+	invalid := ir.NewHookWithMatcherOptions("managed", "PreToolUse", "Bash", "", "prompt", nil, ir.SourceRef{}, ir.WithHookPrompt("unsupported Codex prompt hook"))
+	selection[0] = codexHookResolved(t, "managed", invalid, config.RepoCommitted)
 	report, err := Run(context.Background(), repo, selection)
 	if err != nil {
 		t.Fatal(err)
@@ -220,14 +220,14 @@ func TestCodexIncompleteReconcileRetainsHookOwnershipProof(t *testing.T) {
 	a := ir.NewHookWithMatcher("a", "PreToolUse", "Bash", "./a", "command", nil, ir.SourceRef{})
 	b := ir.NewHookWithMatcher("b", "PostToolUse", "Bash", "./b", "command", nil, ir.SourceRef{})
 	selection := []resolver.ResolvedArtifact{
-		{Entry: catalog.Entry{Name: "a", Resource: a}, Source: config.RepoCommitted, Harnesses: []targetmeta.Target{targetmeta.TargetCodex}},
-		{Entry: catalog.Entry{Name: "b", Resource: b}, Source: config.RepoCommitted, Harnesses: []targetmeta.Target{targetmeta.TargetCodex}},
+		codexHookResolved(t, "a", a, config.RepoCommitted),
+		codexHookResolved(t, "b", b, config.RepoCommitted),
 	}
 	if report, err := Run(context.Background(), repo, selection); err != nil || hasErrorDiagnostics(report.Diags) {
 		t.Fatalf("seed: report=%#v err=%v", report, err)
 	}
-	selection[0].Resource = ir.NewHookWithMatcher("a", "PreToolUse", "Bash", "./a", "prompt", nil, ir.SourceRef{})
-	selection[1].Resource = ir.NewHookWithMatcher("b", "PostToolUse", "Bash", "./changed", "command", nil, ir.SourceRef{})
+	selection[0] = codexHookResolved(t, "a", ir.NewHookWithMatcherOptions("a", "PreToolUse", "Bash", "", "prompt", nil, ir.SourceRef{}, ir.WithHookPrompt("unsupported Codex prompt hook")), config.RepoCommitted)
+	selection[1] = codexHookResolved(t, "b", ir.NewHookWithMatcher("b", "PostToolUse", "Bash", "./changed", "command", nil, ir.SourceRef{}), config.RepoCommitted)
 	if _, err := Run(context.Background(), repo, selection); err != nil {
 		t.Fatal(err)
 	}

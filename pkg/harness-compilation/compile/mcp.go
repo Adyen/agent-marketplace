@@ -1,11 +1,18 @@
 package compile
 
 import (
+	"strings"
+
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
+var mcpConnectionFields = []string{"command", "args", "env", "url", "transport", "headers", "oauthClientId", "oauthClientSecret", "oauthResource"}
+
 // McpServerEntry builds the canonical MCP server entry map and the set of
-// canonical field names used for ExtraKeys. The replace function is applied to
+// reserved field names used for ExtraKeys: every modeled connection field,
+// whether or not it is set, any case variant of one present in Extra, and
+// disabled when it is set. An extension disabled field can only disable the
+// server, so it is not reserved otherwise. The replace function is applied to
 // the string fields that may carry env/path tokens (command, url, and the
 // string values inside args, env, and headers). Transport and the OAuth trio are
 // emitted verbatim, matching the existing translator behavior.
@@ -18,27 +25,21 @@ func McpServerEntry(server *ir.McpServer, replace func(string) string, preserveE
 
 	if server.Command != "" {
 		entry["command"] = replace(server.Command)
-		canonical["command"] = struct{}{}
 	}
 	if args := mcpStringSlice(server.Args, replace, preserveEmptyCollections); args != nil {
 		entry["args"] = args
-		canonical["args"] = struct{}{}
 	}
 	if env := mcpStringMap(server.Env, replace, preserveEmptyCollections); env != nil {
 		entry["env"] = env
-		canonical["env"] = struct{}{}
 	}
 	if server.URL != "" {
 		entry["url"] = replace(server.URL)
-		canonical["url"] = struct{}{}
 	}
 	if server.Transport != "" {
 		entry["transport"] = server.Transport
-		canonical["transport"] = struct{}{}
 	}
 	if headers := mcpStringMap(server.Headers, replace, preserveEmptyCollections); headers != nil {
 		entry["headers"] = headers
-		canonical["headers"] = struct{}{}
 	}
 	if server.DisabledSet || server.Disabled {
 		entry["disabled"] = server.Disabled
@@ -46,15 +47,22 @@ func McpServerEntry(server *ir.McpServer, replace func(string) string, preserveE
 	}
 	if server.OAuthClientID != "" {
 		entry["oauthClientId"] = server.OAuthClientID
-		canonical["oauthClientId"] = struct{}{}
 	}
 	if server.OAuthClientSecret != "" {
 		entry["oauthClientSecret"] = server.OAuthClientSecret
-		canonical["oauthClientSecret"] = struct{}{}
 	}
 	if server.OAuthResource != "" {
 		entry["oauthResource"] = server.OAuthResource
-		canonical["oauthResource"] = struct{}{}
+	}
+	for _, field := range mcpConnectionFields {
+		canonical[field] = struct{}{}
+	}
+	for key := range server.Extra {
+		for _, field := range mcpConnectionFields {
+			if strings.EqualFold(key, field) {
+				canonical[key] = struct{}{}
+			}
+		}
 	}
 
 	return entry, canonical

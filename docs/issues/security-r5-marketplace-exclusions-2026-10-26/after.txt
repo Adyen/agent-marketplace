@@ -1,0 +1,222 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4MarketplaceLockHydration-16       	   55039	     21689 ns/op	   95352 B/op	     340 allocs/op
+BenchmarkV4MarketplaceExclusionKindCPU/exclusions=1-16         	 1213675	       991.7 ns/op	    1864 B/op	      13 allocs/op
+BenchmarkV4MarketplaceExclusionKindCPU/exclusions=256-16       	   48930	     24591 ns/op	   62160 B/op	      40 allocs/op
+BenchmarkV4MarketplaceExclusionKindCPU/exclusions=1024-16      	   12704	     94378 ns/op	  260032 B/op	      52 allocs/op
+BenchmarkV4MPExclusionRefusalCPU/*-16                          	 1987658	       602.7 ns/op	     864 B/op	       8 allocs/op
+BenchmarkV4MPExclusionRefusalCPU/tools/*-16                    	 1975490	       604.8 ns/op	     864 B/op	       8 allocs/op
+BenchmarkV4MPExclusionRefusalCPU/tools/skill/*-16              	 1815769	       660.9 ns/op	     912 B/op	       9 allocs/op
+BenchmarkV4MPExclusionRefusalCPU/tools/collection/item-16      	 1847608	       649.8 ns/op	     912 B/op	       9 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=1-16               	 1756874	       685.8 ns/op	    2136 B/op	      14 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=64-16              	   79779	     14805 ns/op	   50472 B/op	     158 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=1024-16            	    4986	    236713 ns/op	  808067 B/op	    2096 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1/excluded=0-16     	 1700510	       707.9 ns/op	    2312 B/op	      13 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1/excluded=1-16     	 1509157	       796.0 ns/op	    2488 B/op	      16 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=256/excluded=0-16   	   22245	     54946 ns/op	  188528 B/op	     545 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=256/excluded=128-16 	   18171	     65669 ns/op	  209288 B/op	     584 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=256/excluded=256-16 	   17332	     69261 ns/op	  224720 B/op	     580 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1024/excluded=0-16  	    5311	    223236 ns/op	  761826 B/op	    2091 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1024/excluded=512-16         	    4556	    260888 ns/op	  836729 B/op	    2141 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1024/excluded=1024-16        	    4159	    282828 ns/op	  933027 B/op	    2143 allocs/op
+BenchmarkV4RequestReuseChurnCPU/rounds=64-16                            	  150529	      7973 ns/op	   31288 B/op	     143 allocs/op
+BenchmarkV4RequestReuseChurnCPU/rounds=1024-16                          	   10000	    108150 ns/op	  469304 B/op	    2063 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=0-16             	 1698448	       706.9 ns/op	    2312 B/op	      13 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=1-16             	 1476625	       810.1 ns/op	    2488 B/op	      16 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=0-16           	   21174	     56975 ns/op	  188528 B/op	     545 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=128-16         	   17961	     66855 ns/op	  209288 B/op	     584 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=256-16         	   14646	     78740 ns/op	  224720 B/op	     580 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=0-16          	    5313	    229742 ns/op	  761825 B/op	    2091 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=512-16        	    4600	    257132 ns/op	  836729 B/op	    2141 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16       	    4221	    282473 ns/op	  933026 B/op	    2143 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1-16                             	 1565641	       766.0 ns/op	    2216 B/op	      13 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=256-16                           	   24962	     48057 ns/op	  148936 B/op	     550 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1024-16                          	    6037	    192600 ns/op	  598057 B/op	    2100 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4MarketplaceLockHydration-16       	   54751	     22026 ns/op	   95352 B/op	     340 allocs/op
+BenchmarkV4MarketplaceExclusionKindCPU/exclusions=1-16         	 1000000	      1006 ns/op	    1864 B/op	      13 allocs/op
+BenchmarkV4MarketplaceExclusionKindCPU/exclusions=256-16       	   48927	     24419 ns/op	   62160 B/op	      40 allocs/op
+BenchmarkV4MarketplaceExclusionKindCPU/exclusions=1024-16      	   12786	     93764 ns/op	  260032 B/op	      52 allocs/op
+BenchmarkV4MPExclusionRefusalCPU/*-16                          	 1979080	       603.7 ns/op	     864 B/op	       8 allocs/op
+BenchmarkV4MPExclusionRefusalCPU/tools/*-16                    	 1955295	       608.8 ns/op	     864 B/op	       8 allocs/op
+BenchmarkV4MPExclusionRefusalCPU/tools/skill/*-16              	 1784600	       670.5 ns/op	     912 B/op	       9 allocs/op
+BenchmarkV4MPExclusionRefusalCPU/tools/collection/item-16      	 1819413	       660.2 ns/op	     912 B/op	       9 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=1-16               	 1744963	       693.2 ns/op	    2136 B/op	      14 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=64-16              	   80037	     15171 ns/op	   50472 B/op	     158 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=1024-16            	    5076	    231676 ns/op	  808066 B/op	    2096 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1/excluded=0-16     	 1726834	       691.9 ns/op	    2312 B/op	      13 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1/excluded=1-16     	 1493170	       805.6 ns/op	    2488 B/op	      16 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=256/excluded=0-16   	   21482	     55555 ns/op	  188528 B/op	     545 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=256/excluded=128-16 	   17685	     67151 ns/op	  209288 B/op	     584 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=256/excluded=256-16 	   16887	     71064 ns/op	  224720 B/op	     580 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1024/excluded=0-16  	    5306	    230554 ns/op	  761825 B/op	    2091 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1024/excluded=512-16         	    4540	    258498 ns/op	  836729 B/op	    2141 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1024/excluded=1024-16        	    4191	    281999 ns/op	  933026 B/op	    2143 allocs/op
+BenchmarkV4RequestReuseChurnCPU/rounds=64-16                            	  151291	      7800 ns/op	   31288 B/op	     143 allocs/op
+BenchmarkV4RequestReuseChurnCPU/rounds=1024-16                          	   10000	    106835 ns/op	  469304 B/op	    2063 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=0-16             	 1756683	       683.9 ns/op	    2312 B/op	      13 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=1-16             	 1311391	       892.7 ns/op	    2488 B/op	      16 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=0-16           	   21526	     55634 ns/op	  188528 B/op	     545 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=128-16         	   18130	     66318 ns/op	  209288 B/op	     584 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=256-16         	   16936	     70577 ns/op	  224720 B/op	     580 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=0-16          	    5234	    227744 ns/op	  761825 B/op	    2091 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=512-16        	    4486	    259731 ns/op	  836729 B/op	    2141 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16       	    4294	    281907 ns/op	  933025 B/op	    2143 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1-16                             	 1548840	       778.4 ns/op	    2216 B/op	      13 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=256-16                           	   24331	     49282 ns/op	  148936 B/op	     550 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1024-16                          	    6276	    192725 ns/op	  598057 B/op	    2100 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4MarketplaceLockHydration-16       	   56596	     21249 ns/op	   95352 B/op	     340 allocs/op
+BenchmarkV4MarketplaceExclusionKindCPU/exclusions=1-16         	 1000000	      1002 ns/op	    1864 B/op	      13 allocs/op
+BenchmarkV4MarketplaceExclusionKindCPU/exclusions=256-16       	   47746	     24862 ns/op	   62160 B/op	      40 allocs/op
+BenchmarkV4MarketplaceExclusionKindCPU/exclusions=1024-16      	   12364	     96939 ns/op	  260032 B/op	      52 allocs/op
+BenchmarkV4MPExclusionRefusalCPU/*-16                          	 1926466	       612.9 ns/op	     864 B/op	       8 allocs/op
+BenchmarkV4MPExclusionRefusalCPU/tools/*-16                    	 1949612	       613.4 ns/op	     864 B/op	       8 allocs/op
+BenchmarkV4MPExclusionRefusalCPU/tools/skill/*-16              	 1801040	       665.8 ns/op	     912 B/op	       9 allocs/op
+BenchmarkV4MPExclusionRefusalCPU/tools/collection/item-16      	 1818486	       664.3 ns/op	     912 B/op	       9 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=1-16               	 1738371	       691.9 ns/op	    2136 B/op	      14 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=64-16              	   80092	     14994 ns/op	   50472 B/op	     158 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=1024-16            	    4887	    240403 ns/op	  808066 B/op	    2096 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1/excluded=0-16     	 1693297	       712.8 ns/op	    2312 B/op	      13 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1/excluded=1-16     	 1482132	       805.3 ns/op	    2488 B/op	      16 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=256/excluded=0-16   	   21889	     54996 ns/op	  188528 B/op	     545 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=256/excluded=128-16 	   18406	     65942 ns/op	  209288 B/op	     584 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=256/excluded=256-16 	   17264	     69891 ns/op	  224720 B/op	     580 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1024/excluded=0-16  	    5272	    234518 ns/op	  761826 B/op	    2091 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1024/excluded=512-16         	    4467	    262833 ns/op	  836730 B/op	    2141 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1024/excluded=1024-16        	    4273	    283817 ns/op	  933026 B/op	    2143 allocs/op
+BenchmarkV4RequestReuseChurnCPU/rounds=64-16                            	  151546	      7851 ns/op	   31288 B/op	     143 allocs/op
+BenchmarkV4RequestReuseChurnCPU/rounds=1024-16                          	   10000	    106863 ns/op	  469306 B/op	    2063 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=0-16             	 1749554	       690.9 ns/op	    2312 B/op	      13 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=1-16             	 1516778	       795.7 ns/op	    2488 B/op	      16 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=0-16           	   21798	     55322 ns/op	  188528 B/op	     545 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=128-16         	   18092	     66297 ns/op	  209288 B/op	     584 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=256-16         	   17018	     70602 ns/op	  224720 B/op	     580 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=0-16          	    5373	    224590 ns/op	  761825 B/op	    2091 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=512-16        	    4490	    261040 ns/op	  836729 B/op	    2141 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16       	    4220	    282796 ns/op	  933027 B/op	    2143 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1-16                             	 1572237	       763.0 ns/op	    2216 B/op	      13 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=256-16                           	   25185	     48346 ns/op	  148936 B/op	     550 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1024-16                          	    6240	    194894 ns/op	  598057 B/op	    2100 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4MarketplaceLockHydration-16       	   54662	     21768 ns/op	   95352 B/op	     340 allocs/op
+BenchmarkV4MarketplaceExclusionKindCPU/exclusions=1-16         	 1000000	      1004 ns/op	    1864 B/op	      13 allocs/op
+BenchmarkV4MarketplaceExclusionKindCPU/exclusions=256-16       	   49642	     24033 ns/op	   62160 B/op	      40 allocs/op
+BenchmarkV4MarketplaceExclusionKindCPU/exclusions=1024-16      	   12788	     94002 ns/op	  260032 B/op	      52 allocs/op
+BenchmarkV4MPExclusionRefusalCPU/*-16                          	 1972831	       610.4 ns/op	     864 B/op	       8 allocs/op
+BenchmarkV4MPExclusionRefusalCPU/tools/*-16                    	 1962792	       610.1 ns/op	     864 B/op	       8 allocs/op
+BenchmarkV4MPExclusionRefusalCPU/tools/skill/*-16              	 1770865	       678.8 ns/op	     912 B/op	       9 allocs/op
+BenchmarkV4MPExclusionRefusalCPU/tools/collection/item-16      	 1779206	       673.1 ns/op	     912 B/op	       9 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=1-16               	 1728625	       692.8 ns/op	    2136 B/op	      14 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=64-16              	   81033	     14684 ns/op	   50472 B/op	     158 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=1024-16            	    5044	    238923 ns/op	  808066 B/op	    2096 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1/excluded=0-16     	 1723866	       694.3 ns/op	    2312 B/op	      13 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1/excluded=1-16     	 1486755	       804.4 ns/op	    2488 B/op	      16 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=256/excluded=0-16   	   21946	     55181 ns/op	  188528 B/op	     545 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=256/excluded=128-16 	   18283	     65886 ns/op	  209288 B/op	     584 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=256/excluded=256-16 	   16842	     71490 ns/op	  224720 B/op	     580 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1024/excluded=0-16  	    4824	    234528 ns/op	  761826 B/op	    2091 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1024/excluded=512-16         	    4676	    259995 ns/op	  836729 B/op	    2141 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1024/excluded=1024-16        	    4131	    281611 ns/op	  933026 B/op	    2143 allocs/op
+BenchmarkV4RequestReuseChurnCPU/rounds=64-16                            	  154126	      7750 ns/op	   31288 B/op	     143 allocs/op
+BenchmarkV4RequestReuseChurnCPU/rounds=1024-16                          	   10000	    115785 ns/op	  469304 B/op	    2063 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=0-16             	 1687674	       712.7 ns/op	    2312 B/op	      13 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=1-16             	 1448095	       831.4 ns/op	    2488 B/op	      16 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=0-16           	   21418	     55928 ns/op	  188528 B/op	     545 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=128-16         	   18084	     65856 ns/op	  209288 B/op	     584 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=256-16         	   17119	     70628 ns/op	  224720 B/op	     580 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=0-16          	    5270	    231776 ns/op	  761825 B/op	    2091 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=512-16        	    4513	    262908 ns/op	  836729 B/op	    2141 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16       	    4299	    281507 ns/op	  933025 B/op	    2143 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1-16                             	 1541052	       778.3 ns/op	    2216 B/op	      13 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=256-16                           	   24543	     49049 ns/op	  148936 B/op	     550 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1024-16                          	    6060	    192560 ns/op	  598057 B/op	    2100 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4MarketplaceLockHydration-16       	   56545	     21680 ns/op	   95352 B/op	     340 allocs/op
+BenchmarkV4MarketplaceExclusionKindCPU/exclusions=1-16         	 1207328	       994.2 ns/op	    1864 B/op	      13 allocs/op
+BenchmarkV4MarketplaceExclusionKindCPU/exclusions=256-16       	   49411	     24535 ns/op	   62160 B/op	      40 allocs/op
+BenchmarkV4MarketplaceExclusionKindCPU/exclusions=1024-16      	   12492	     96169 ns/op	  260032 B/op	      52 allocs/op
+BenchmarkV4MPExclusionRefusalCPU/*-16                          	 1946622	       621.3 ns/op	     864 B/op	       8 allocs/op
+BenchmarkV4MPExclusionRefusalCPU/tools/*-16                    	 1953572	       615.1 ns/op	     864 B/op	       8 allocs/op
+BenchmarkV4MPExclusionRefusalCPU/tools/skill/*-16              	 1782150	       673.9 ns/op	     912 B/op	       9 allocs/op
+BenchmarkV4MPExclusionRefusalCPU/tools/collection/item-16      	 1800148	       668.9 ns/op	     912 B/op	       9 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=1-16               	 1736326	       691.1 ns/op	    2136 B/op	      14 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=64-16              	   80787	     15068 ns/op	   50472 B/op	     158 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=1024-16            	    4988	    243292 ns/op	  808065 B/op	    2096 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1/excluded=0-16     	 1677241	       712.6 ns/op	    2312 B/op	      13 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1/excluded=1-16     	 1470577	       817.0 ns/op	    2488 B/op	      16 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=256/excluded=0-16   	   21657	     55587 ns/op	  188528 B/op	     545 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=256/excluded=128-16 	   18058	     66341 ns/op	  209288 B/op	     584 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=256/excluded=256-16 	   16887	     70948 ns/op	  224720 B/op	     580 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1024/excluded=0-16  	    5262	    225961 ns/op	  761825 B/op	    2091 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1024/excluded=512-16         	    4566	    261590 ns/op	  836729 B/op	    2141 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1024/excluded=1024-16        	    4200	    288310 ns/op	  933026 B/op	    2143 allocs/op
+BenchmarkV4RequestReuseChurnCPU/rounds=64-16                            	  144681	      8090 ns/op	   31288 B/op	     143 allocs/op
+BenchmarkV4RequestReuseChurnCPU/rounds=1024-16                          	   10000	    110703 ns/op	  469305 B/op	    2063 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=0-16             	 1744731	       688.3 ns/op	    2312 B/op	      13 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=1-16             	 1501360	       809.4 ns/op	    2488 B/op	      16 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=0-16           	   21636	     55111 ns/op	  188528 B/op	     545 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=128-16         	   18115	     66393 ns/op	  209288 B/op	     584 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=256-16         	   16920	     71143 ns/op	  224720 B/op	     580 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=0-16          	    5258	    223093 ns/op	  761825 B/op	    2091 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=512-16        	    4626	    257897 ns/op	  836730 B/op	    2141 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16       	    4370	    279413 ns/op	  933025 B/op	    2143 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1-16                             	 1558803	       768.0 ns/op	    2216 B/op	      13 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=256-16                           	   23602	     49622 ns/op	  148936 B/op	     550 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1024-16                          	    6459	    188735 ns/op	  598057 B/op	    2100 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4MarketplaceLockHydration-16       	   53494	     22112 ns/op	   95352 B/op	     340 allocs/op
+BenchmarkV4MarketplaceExclusionKindCPU/exclusions=1-16         	 1000000	      1003 ns/op	    1864 B/op	      13 allocs/op
+BenchmarkV4MarketplaceExclusionKindCPU/exclusions=256-16       	   48375	     24485 ns/op	   62160 B/op	      40 allocs/op
+BenchmarkV4MarketplaceExclusionKindCPU/exclusions=1024-16      	   12543	     95654 ns/op	  260032 B/op	      52 allocs/op
+BenchmarkV4MPExclusionRefusalCPU/*-16                          	 1946078	       615.6 ns/op	     864 B/op	       8 allocs/op
+BenchmarkV4MPExclusionRefusalCPU/tools/*-16                    	 1968584	       613.2 ns/op	     864 B/op	       8 allocs/op
+BenchmarkV4MPExclusionRefusalCPU/tools/skill/*-16              	 1769744	       678.2 ns/op	     912 B/op	       9 allocs/op
+BenchmarkV4MPExclusionRefusalCPU/tools/collection/item-16      	 1793678	       673.2 ns/op	     912 B/op	       9 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=1-16               	 1682941	       702.8 ns/op	    2136 B/op	      14 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=64-16              	   81840	     14695 ns/op	   50472 B/op	     158 allocs/op
+BenchmarkV4ActiveExclusionAdaptation/active=1024-16            	    4970	    237501 ns/op	  808066 B/op	    2096 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1/excluded=0-16     	 1722685	       695.6 ns/op	    2312 B/op	      13 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1/excluded=1-16     	 1492090	       806.1 ns/op	    2488 B/op	      16 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=256/excluded=0-16   	   21664	     55656 ns/op	  188528 B/op	     545 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=256/excluded=128-16 	   18012	     66728 ns/op	  209288 B/op	     584 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=256/excluded=256-16 	   16302	     72915 ns/op	  224720 B/op	     580 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1024/excluded=0-16  	    5126	    235258 ns/op	  761825 B/op	    2091 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1024/excluded=512-16         	    4444	    264305 ns/op	  836729 B/op	    2141 allocs/op
+BenchmarkV4DirectoryRequestReuseCPU/skills=1024/excluded=1024-16        	    4206	    279018 ns/op	  933025 B/op	    2143 allocs/op
+BenchmarkV4RequestReuseChurnCPU/rounds=64-16                            	  153780	      7933 ns/op	   31288 B/op	     143 allocs/op
+BenchmarkV4RequestReuseChurnCPU/rounds=1024-16                          	   10000	    109159 ns/op	  469305 B/op	    2063 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=0-16             	 1714492	       705.4 ns/op	    2312 B/op	      13 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1/excluded=1-16             	 1462340	       819.9 ns/op	    2488 B/op	      16 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=0-16           	   21426	     55952 ns/op	  188528 B/op	     545 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=128-16         	   18178	     66251 ns/op	  209288 B/op	     584 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=256/excluded=256-16         	   17080	     70170 ns/op	  224720 B/op	     580 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=0-16          	    5409	    225479 ns/op	  761825 B/op	    2091 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=512-16        	    4693	    256553 ns/op	  836729 B/op	    2141 allocs/op
+BenchmarkV4SparseExclusionAdapterCPU/skills=1024/excluded=1024-16       	    4318	    281387 ns/op	  933026 B/op	    2143 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1-16                             	 1503243	       792.6 ns/op	    2216 B/op	      13 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=256-16                           	   24530	     48924 ns/op	  148936 B/op	     550 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1024-16                          	    6194	    189716 ns/op	  598057 B/op	    2100 allocs/op
+PASS
