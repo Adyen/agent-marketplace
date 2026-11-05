@@ -9,6 +9,10 @@ The Marketplace API now returns a resource's declared prerequisites and its depe
 - Show neither section when the response has no prerequisite data, including revision-by-digest pages.
 - Add a conditional install note that names the prerequisite count and the `requires.expand` setting, without changing the copied command.
 
+## Release note
+
+Marketplace resource pages now list a resource's prerequisites with resolved, external, or unresolved badges and the resources that depend on it, and the install panel notes how many prerequisites a resource declares. The copied install command is unchanged.
+
 ## Capabilities
 
 ### New Capabilities
