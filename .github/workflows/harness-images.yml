@@ -89,12 +89,139 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload image diagnostics
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: harness-image-${{ matrix.target }}-${{ github.run_id }}
           path: ${{ runner.temp }}/harness-image-artifacts/
           if-no-files-found: warn
           retention-days: 7
+
+  model-catalog-audit:
+    name: Audit upstream model catalogs
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+      - name: Prepare model audit diagnostics
+        if: always()
+        run: echo "AUDIT_REPORT_DIR=$RUNNER_TEMP/model-catalog-audit" >> "$GITHUB_ENV"
+      - name: Verify offline audit contracts
+        run: go test ./tools/model-catalog-audit -count=1
+      - name: Audit public model evidence without modifying catalogs
+        run: |
+          set -euo pipefail
+          mkdir -p "$AUDIT_REPORT_DIR"
+          go run ./tools/model-catalog-audit check > "$AUDIT_REPORT_DIR/report.json" 2> "$AUDIT_REPORT_DIR/audit.log"
+      - name: Publish model drift summary
+        if: always()
+        run: |
+          set -euo pipefail
+          if [[ -s "$AUDIT_REPORT_DIR/report.json" ]]; then
+            go run ./tools/model-catalog-audit summary < "$AUDIT_REPORT_DIR/report.json" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '## Model catalog audit failed before producing evidence' >> "$GITHUB_STEP_SUMMARY"
+            echo 'No freshness conclusion is available. Inspect the failed step and audit log.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload model audit evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: model-catalog-audit-${{ github.run_id }}
+          path: ${{ runner.temp }}/model-catalog-audit/
+          if-no-files-found: warn
+          retention-days: 14
+
+  model-catalog-drift-pr:
+    name: Propose model catalog drift PR
+    needs: model-catalog-audit
+    if: always() && needs.model-catalog-audit.result == 'failure' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+      - name: Download model audit evidence
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: model-catalog-audit-${{ github.run_id }}
+          path: ${{ runner.temp }}/model-catalog-audit
+      - name: Propose model catalog drift updates
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RUN_ID: ${{ github.run_id }}
+          REPORT_DIR: ${{ runner.temp }}/model-catalog-audit
+        run: |
+          set -euo pipefail
+          report="$REPORT_DIR/report.json"
+          body="$RUNNER_TEMP/pr-body.md"
+          test_log="$RUNNER_TEMP/offline-catalog-tests.log"
+          bot_email='41898282+github-actions[bot]@users.noreply.github.com'
+          branch=automation/model-catalog-drift
+          if [[ ! -s "$report" ]]; then
+            echo '::notice::No model catalog audit report was produced; no drift proposal.'
+            exit 0
+          fi
+          pr_number=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')
+          remote_sha=""
+          if git fetch --quiet origin "$branch" 2>/dev/null; then
+            remote_sha=$(git rev-parse FETCH_HEAD)
+            if [[ "$(git log -1 --format='%ae %ce' FETCH_HEAD)" != "$bot_email $bot_email" ]]; then
+              echo "::notice::A person has pushed to $branch; leaving the branch untouched."
+              exit 0
+            fi
+          fi
+          git switch -C "$branch"
+          go run ./tools/model-catalog-audit propose < "$report" > "$body"
+          if git diff --quiet -- pkg/harness-compilation/modelpolicy/catalogs; then
+            if [[ -s "$body" ]]; then
+              cat "$body" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            echo '::notice::No catalog changes proposed; evidence drift and manual-entry candidates remain in the job summaries and audit artifact. No PR opened.'
+            exit 0
+          fi
+          if go test ./pkg/harness-compilation/modelpolicy ./tools/model-catalog-audit -count=1 > "$test_log" 2>&1; then
+            echo '' >> "$body"
+            echo 'Offline catalog checks: passed' >> "$body"
+          else
+            {
+              echo ''
+              echo 'Offline catalog checks: failed'
+              echo ''
+              echo '<details><summary>Last 40 lines of go test output</summary>'
+              echo ''
+              echo '```text'
+              tail -n 40 "$test_log" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
+              echo '```'
+              echo ''
+              echo '</details>'
+            } >> "$body"
+          fi
+          git add pkg/harness-compilation/modelpolicy/catalogs
+          git -c user.name='github-actions[bot]' -c user.email="$bot_email" commit -m "Propose model catalog drift updates from run $RUN_ID" -m "Spec-Impact: none — automated proposal for human review"
+          if [[ -n "$remote_sha" ]] && git diff --quiet "$remote_sha" HEAD; then
+            echo '::notice::Regenerated changes match the remote branch; refreshing the PR body without pushing.'
+          else
+            git push --force-with-lease="refs/heads/$branch:$remote_sha" origin "HEAD:refs/heads/$branch"
+          fi
+          if [[ -n "$pr_number" ]]; then
+            gh pr edit "$pr_number" --body-file "$body"
+          else
+            gh pr create --base "$DEFAULT_BRANCH" --head "$branch" --title "Review upstream model catalog drift" --body-file "$body"
+          fi
 
   verify:
     name: Check refreshed image compatibility

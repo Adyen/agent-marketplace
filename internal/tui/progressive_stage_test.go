@@ -50,11 +50,10 @@ func progressiveFixture(t *testing.T) (repoRoot, homeDir string) {
 	if err := os.MkdirAll(filepath.Join(homeDir, ".agents"), 0o755); err != nil {
 		t.Fatalf("mkdir home agents: %v", err)
 	}
-	globalConfig := v2Header + `registries:
-  - url: ` + registryRoot + `
-    skills:
-      - audit
-      - review
+	globalConfig := v4Header + `sources:
+  local: {directory: ` + registryRoot + `}
+resources:
+  local: [skill/audit, skill/review]
 `
 	if err := os.WriteFile(filepath.Join(homeDir, ".agents", "config.yaml"), []byte(globalConfig), 0o644); err != nil {
 		t.Fatalf("write global config: %v", err)
@@ -62,7 +61,7 @@ func progressiveFixture(t *testing.T) (repoRoot, homeDir string) {
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".agents"), 0o755); err != nil {
 		t.Fatalf("mkdir repo agents: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoV2Header), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoV4Header), 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
 	}
 	t.Cleanup(swapLoadOrgConfig(func() (*config.Config, error) { return nil, nil }))
@@ -323,13 +322,17 @@ func TestReadSnapshotStagesRejectsInvalidWorkspace(t *testing.T) {
 func TestReadSnapshotStagesUsesNestedLocalWorkspace(t *testing.T) {
 	repoRoot, homeDir := progressiveFixture(t)
 	nested := filepath.Join(repoRoot, "nested")
-	if err := os.MkdirAll(filepath.Join(nested, ".agents"), 0o755); err != nil {
+	for _, dir := range []string{filepath.Join(nested, ".agents"), filepath.Join(nested, "unused"), filepath.Join(repoRoot, "unused")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeProvisionalSkill(t, filepath.Join(nested, "unused"), "unused-control")
+	writeProvisionalSkill(t, filepath.Join(repoRoot, "unused"), "unused-control")
+	if err := os.WriteFile(config.LocalConfigPath(nested), []byte("apiVersion: agent-marketplace/v4\nsources:\n  local: {directory: ./unused}\nresources:\n  local: {exclude: [skill/audit]}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(config.LocalConfigPath(nested), []byte("skills:\n  exclude: [audit]\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(config.LocalConfigPath(repoRoot), []byte("skills:\n  exclude: [review]\n"), 0o600); err != nil {
+	if err := os.WriteFile(config.LocalConfigPath(repoRoot), []byte("apiVersion: agent-marketplace/v4\nsources:\n  local: {directory: ./unused}\nresources:\n  local: {exclude: [skill/review]}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	ws, err := pipeline.NewWorkspace(repoRoot, nested)
@@ -351,8 +354,12 @@ func TestReadSnapshotStagesUsesNestedLocalWorkspace(t *testing.T) {
 		t.Fatalf("nested workspace stages = %+v", msgs)
 	}
 	final := msgs[len(msgs)-1]
-	if materializeRoot != nested || !slices.Equal(final.localExcludes, []string{"audit"}) || final.inventoryResult == nil || len(final.errs) != 0 {
-		t.Fatalf("nested workspace root=%q excludes=%v errors=%v", materializeRoot, final.localExcludes, final.errs)
+	if materializeRoot != nested || final.inventoryResult == nil || len(final.errs) != 0 {
+		t.Fatalf("nested workspace root=%q inventory=%v errors=%v", materializeRoot, final.inventoryResult, final.errs)
+	}
+	local := final.inventoryResult.LocalCfg
+	if local == nil || len(local.Registries) != 1 || !slices.Equal(local.Registries[0].Skills.Exclude, []string{"audit"}) {
+		t.Fatalf("nested workspace excludes=%+v, want only audit", local)
 	}
 }
 
@@ -448,6 +455,8 @@ func TestConfigStageStartsDiscoveryBeforeLocalVerification(t *testing.T) {
 // spec: tui-startup/verified-rows-inserted-above-a-selection-keep-it-on-the-same-screen-line
 func TestVerifiedRowsInsertedAboveSelectionKeepItOnTheSameScreenLine(t *testing.T) {
 	m := newProvisionalStageModel()
+	// The anchored line is kept only while the list overflows the viewport.
+	m.height = 24
 	generation := m.requests.active(requestSnapshot)
 	stages := make(chan snapshotLoadedMsg)
 	close(stages)
@@ -579,6 +588,74 @@ func TestApplyDriftItemsMarksOnlySelectedRows(t *testing.T) {
 	}
 	if out[2].DriftItem == nil || out[2].DriftItem.Reason != materialize.DriftBroken {
 		t.Fatalf("unavailable recovery row lost its drift: %#v", out[2].DriftItem)
+	}
+}
+
+// A target harness change leaves the selected resource missing from its new
+// target and orphaned in the old one; the row reports the work for its
+// selection, not the cleanup of the former target.
+// spec: tui-interactions/retargeted-resource-is-pending-sync
+func TestSelectedRowDriftPrefersItsCurrentTargetOverAnOrphanedCopy(t *testing.T) {
+	key := skill.ResourceKey(ir.KindSkill, "beta-skill")
+	selected := row{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "beta-skill", Path: "skills/beta-skill"}, CatalogKey: "cat"}}
+	missing := materialize.DriftItem{Name: key, Reason: materialize.DriftMissing}
+	broken := materialize.DriftItem{Name: key, Reason: materialize.DriftBroken}
+	orphaned := materialize.DriftItem{Name: key, Reason: materialize.DriftOrphaned}
+	for _, tc := range []struct {
+		name   string
+		report materialize.DriftReport
+		want   materialize.DriftReason
+	}{
+		{name: "missing in the new target beats an orphaned copy", report: materialize.DriftReport{Missing: []materialize.DriftItem{missing}, Orphaned: []materialize.DriftItem{orphaned}}, want: materialize.DriftMissing},
+		{name: "broken beats missing and orphaned", report: materialize.DriftReport{Missing: []materialize.DriftItem{missing}, Broken: []materialize.DriftItem{broken}, Orphaned: []materialize.DriftItem{orphaned}}, want: materialize.DriftBroken},
+		{name: "an orphaned copy alone is still reported", report: materialize.DriftReport{Orphaned: []materialize.DriftItem{orphaned}}, want: materialize.DriftOrphaned},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := applyDriftItems([]row{selected}, tc.report)
+			if out[0].DriftItem == nil || out[0].DriftItem.Reason != tc.want {
+				t.Fatalf("selected row drift = %#v, want %v", out[0].DriftItem, tc.want)
+			}
+			if got := driftItemsByResource(tc.report)[key].Reason; got != tc.want {
+				t.Fatalf("row build drift = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// Removing a harness leaves a selected resource in sync in its remaining
+// target with only a stale copy in the removed one: still pending sync.
+// spec: tui-interactions/removed-target-harness-is-pending-cleanup
+func TestSelectedRowWithOnlyAnOrphanedCopyIsPendingSync(t *testing.T) {
+	r := mkRow("beta-skill", withProject)
+	r.DriftItem = &materialize.DriftItem{Name: skill.ResourceKey(ir.KindSkill, "beta-skill"), Reason: materialize.DriftOrphaned}
+	if got := r.StatusText(); got != "enabled (pending sync)" {
+		t.Fatalf("status = %q, want enabled (pending sync)", got)
+	}
+	if got := classifyStatus(r); got != statusPending {
+		t.Fatalf("status bucket = %v, want pending", got)
+	}
+}
+
+// A selected row keeps its identity when the sync clears its stale copy.
+// spec: tui-interactions/removed-target-harness-is-pending-cleanup
+func TestSelectionStaysOnARowWhoseOrphanedCopyIsCleared(t *testing.T) {
+	stale := mkRow("beta", withProject)
+	stale.DriftItem = &materialize.DriftItem{Name: skill.ResourceKey(ir.KindSkill, "beta"), Reason: materialize.DriftOrphaned}
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.loading = false
+	m.width, m.height = 80, 24
+	m.rows = []row{mkRow("gamma", withProject), stale}
+	m.authoritativeRows = m.rows
+	m.filteredRows = m.rows
+	m.rebuildFlatItems()
+	for i, item := range m.flatItems {
+		if item.Kind == flatArtifact && item.Row.Artifact.Name == "beta" {
+			m.cursor = i
+		}
+	}
+	m.applySnapshotData(snapshotLoadedMsg{rows: []row{mkRow("gamma", withProject), mkRow("beta", withProject)}})
+	if selected, ok := m.selectedRow(); !ok || selected.Artifact.Name != "beta" {
+		t.Fatalf("selection after the stale copy was cleared = %q (ok=%v), want beta", selected.Artifact.Name, ok)
 	}
 }
 
@@ -779,6 +856,9 @@ func TestProvisionalLayoutMatchesVerifiedInventory(t *testing.T) {
 		Entry: catalog.Entry{Kind: ir.KindSkill, Name: "audit"}, RegistryURL: market.URL, Source: config.Organization,
 		CatalogKey: marketplaceCatalogKey(market, audit), IsMarketplace: true, MarketplaceURL: market.URL,
 		MarketplaceInstanceID: market.InstanceID, MarketplaceRegistryID: "tools", MarketplaceResourceName: "audit",
+	}, {
+		Entry: catalog.Entry{Kind: ir.KindCollection, Name: "bundle"}, RegistryURL: "./plugins/local", Source: config.RepoCommitted,
+		CatalogKey: "local-key",
 	}}
 
 	verified := statusLayout(buildRows(cfg, catalogs, resolved, nil, materialize.DriftReport{}))
@@ -789,7 +869,7 @@ func TestProvisionalLayoutMatchesVerifiedInventory(t *testing.T) {
 	for _, want := range []string{
 		"  [x] G   skill market.example/audit",
 		"  [ ]     skill market.example/review",
-		"  [ ]     collection local/bundle",
+		"  [x] P   collection local/bundle",
 	} {
 		if !slices.Contains(verified, want) {
 			t.Fatalf("verified layout lacks rendered row %q: %q", want, verified)
@@ -833,10 +913,10 @@ func TestProvisionalStageExpandsOrganizationCollectionFromVerifiedCache(t *testi
 	leaf := func(kind, name string) config.MarketplaceResourcePin {
 		return config.MarketplaceResourcePin{RegistryID: "tools", RegistrySlug: "tools", Kind: kind, Name: name, Revision: leafRevision, Digest: leafRevision, SelectedBy: selectedBy}
 	}
-	acquired := config.MarketplaceEntry{URL: url, InstanceID: "mp", Source: config.Organization, Resources: []config.MarketplaceResourcePin{leaf("skill", "audit"), leaf("mcpserver", "hub"), leaf("skill", "review")}}
+	acquired := config.MarketplaceEntry{URL: url, InstanceID: "mp", Source: config.Organization, Resources: []config.MarketplaceResourcePin{collection, leaf("skill", "audit"), leaf("mcpserver", "hub"), leaf("skill", "review")}}
 	verifiedCfg := &config.Config{MarketplaceExclusions: exclusions, Marketplaces: []config.MarketplaceEntry{acquired}}
 	var resolved []resolver.ResolvedArtifact
-	for _, pin := range acquired.Resources[:2] {
+	for _, pin := range acquired.Resources[1:3] {
 		kind, _ := mpapi.ToIR(pin.Kind)
 		resolved = append(resolved, resolver.ResolvedArtifact{
 			Entry: catalog.Entry{Kind: kind, Name: pin.Name}, RegistryURL: url, Source: config.Organization,
@@ -844,6 +924,8 @@ func TestProvisionalStageExpandsOrganizationCollectionFromVerifiedCache(t *testi
 			MarketplaceInstanceID: acquired.InstanceID, MarketplaceRegistryID: "tools", MarketplaceResourceName: pin.Name,
 		})
 	}
+	root, _ := marketplace.PinArtifact(acquired, collection)
+	resolved = append(resolved, root)
 
 	rows := buildProvisionalRows(withCachedCollectionLeaves(preAcquisition, cache), nil, nil)
 	verified := statusLayout(buildRows(verifiedCfg, nil, resolved, nil, materialize.DriftReport{}))
@@ -1165,7 +1247,7 @@ func provisionalLocalAllTrueFixture(t *testing.T) (repoRoot, homeDir, regA, regB
 	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoConfig), 0o644); err != nil {
 		t.Fatalf("write repo config: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.local.yaml"), []byte("skills:\n  exclude:\n    - gamma\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.local.yaml"), []byte("apiVersion: agent-marketplace/v4\nsources:\n  regb: {directory: "+regB+"}\nresources:\n  regb: {exclude: [skill/gamma]}\n"), 0o644); err != nil {
 		t.Fatalf("write local config: %v", err)
 	}
 	t.Cleanup(swapLoadGlobalConfig(func() (*config.Config, error) {
@@ -1335,7 +1417,7 @@ func TestExcludedOnlyProvisionalStagePublishesNoRows(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoConfig), 0o644); err != nil {
 		t.Fatalf("write repo config: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.local.yaml"), []byte("skills:\n  exclude:\n    - solo\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.local.yaml"), []byte("apiVersion: agent-marketplace/v4\nsources:\n  reg: {directory: "+reg+"}\nresources:\n  reg: {exclude: [skill/solo]}\n"), 0o644); err != nil {
 		t.Fatalf("write local config: %v", err)
 	}
 	t.Cleanup(swapLoadOrgConfig(func() (*config.Config, error) { return nil, nil }))
@@ -1379,7 +1461,7 @@ func TestProvisionalRegistryScopedLocalExcludesApply(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.yaml"), []byte(repoConfig), 0o644); err != nil {
 		t.Fatalf("write repo config: %v", err)
 	}
-	localConfig := "registries:\n  - url: " + regA + "\n    skills: {exclude: [shared]}\n  - url: " + regB + "\n    skills: {exclude: [shared]}\n"
+	localConfig := "apiVersion: agent-marketplace/v4\nsources:\n  rega: {directory: " + regA + "}\n  regb: {directory: " + regB + "}\nresources:\n  rega: {exclude: [skill/shared]}\n  regb: {exclude: [skill/shared]}\n"
 	if err := os.WriteFile(filepath.Join(repoRoot, ".agents", "config.local.yaml"), []byte(localConfig), 0o644); err != nil {
 		t.Fatalf("write local config: %v", err)
 	}

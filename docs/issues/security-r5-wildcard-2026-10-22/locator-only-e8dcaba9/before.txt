@@ -1,0 +1,96 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4WildcardMatchCPU/kind-match-2         	100000000	        20.73 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardMatchCPU/kind-miss-2          	100000000	        20.55 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardMatchCPU/registry-2           	87556620	        28.35 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4WildcardMatchCPU/registry-kind-2      	66277287	        36.98 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4WildcardMatchCPU/exact-control-2      	999100288	         2.447 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardMatchCPU/global-control-2     	1000000000	         1.785 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1-2       	 2644184	       893.6 ns/op	    2728 B/op	      19 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=256-2     	   36972	     65010 ns/op	  210648 B/op	    1066 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1024-2    	    9267	    265496 ns/op	  844088 B/op	    4152 allocs/op
+BenchmarkParseV4KindWildcardCPU/requests=256-2   	    7582	    323294 ns/op	  533693 B/op	    4058 allocs/op
+BenchmarkParseV4KindWildcardCPU/requests=1024-2  	    1855	   1263512 ns/op	 2157566 B/op	   16375 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4WildcardMatchCPU/kind-match-2         	100000000	        21.14 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardMatchCPU/kind-miss-2          	100000000	        20.99 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardMatchCPU/registry-2           	85067040	        29.18 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4WildcardMatchCPU/registry-kind-2      	63154015	        38.64 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4WildcardMatchCPU/exact-control-2      	968674644	         2.399 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardMatchCPU/global-control-2     	1000000000	         1.809 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1-2       	 2569718	       939.2 ns/op	    2728 B/op	      19 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=256-2     	   35940	     68561 ns/op	  210648 B/op	    1066 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1024-2    	    8893	    272725 ns/op	  844088 B/op	    4152 allocs/op
+BenchmarkParseV4KindWildcardCPU/requests=256-2   	    6985	    329928 ns/op	  533694 B/op	    4058 allocs/op
+BenchmarkParseV4KindWildcardCPU/requests=1024-2  	    1885	   1282391 ns/op	 2157572 B/op	   16375 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4WildcardMatchCPU/kind-match-2         	100000000	        21.39 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardMatchCPU/kind-miss-2          	100000000	        21.30 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardMatchCPU/registry-2           	78320992	        29.49 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4WildcardMatchCPU/registry-kind-2      	62768481	        38.32 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4WildcardMatchCPU/exact-control-2      	944841123	         2.499 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardMatchCPU/global-control-2     	1000000000	         1.831 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1-2       	 2616796	       918.9 ns/op	    2728 B/op	      19 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=256-2     	   37030	     65973 ns/op	  210648 B/op	    1066 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1024-2    	    8623	    266151 ns/op	  844088 B/op	    4152 allocs/op
+BenchmarkParseV4KindWildcardCPU/requests=256-2   	    7297	    329068 ns/op	  533690 B/op	    4058 allocs/op
+BenchmarkParseV4KindWildcardCPU/requests=1024-2  	    1852	   1305913 ns/op	 2157547 B/op	   16375 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4WildcardMatchCPU/kind-match-2         	100000000	        21.08 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardMatchCPU/kind-miss-2          	100000000	        21.56 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardMatchCPU/registry-2           	83213064	        28.71 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4WildcardMatchCPU/registry-kind-2      	63789001	        38.87 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4WildcardMatchCPU/exact-control-2      	1000000000	         2.398 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardMatchCPU/global-control-2     	1000000000	         1.777 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1-2       	 2660552	       898.8 ns/op	    2728 B/op	      19 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=256-2     	   36332	     65151 ns/op	  210648 B/op	    1066 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1024-2    	    8707	    257620 ns/op	  844088 B/op	    4152 allocs/op
+BenchmarkParseV4KindWildcardCPU/requests=256-2   	    7410	    311507 ns/op	  533697 B/op	    4058 allocs/op
+BenchmarkParseV4KindWildcardCPU/requests=1024-2  	    1959	   1241243 ns/op	 2157569 B/op	   16375 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4WildcardMatchCPU/kind-match-2         	100000000	        21.23 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardMatchCPU/kind-miss-2          	100000000	        20.88 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardMatchCPU/registry-2           	85314374	        28.10 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4WildcardMatchCPU/registry-kind-2      	66694147	        38.22 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4WildcardMatchCPU/exact-control-2      	998371750	         2.439 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardMatchCPU/global-control-2     	1000000000	         1.822 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1-2       	 2478588	       956.2 ns/op	    2728 B/op	      19 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=256-2     	   35073	     68208 ns/op	  210648 B/op	    1066 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1024-2    	    9217	    264272 ns/op	  844088 B/op	    4152 allocs/op
+BenchmarkParseV4KindWildcardCPU/requests=256-2   	    7512	    316178 ns/op	  533689 B/op	    4058 allocs/op
+BenchmarkParseV4KindWildcardCPU/requests=1024-2  	    1956	   1279788 ns/op	 2157576 B/op	   16375 allocs/op
+PASS
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+BenchmarkV4WildcardMatchCPU/kind-match-2         	100000000	        20.65 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardMatchCPU/kind-miss-2          	100000000	        21.57 ns/op	      32 B/op	       1 allocs/op
+BenchmarkV4WildcardMatchCPU/registry-2           	87407413	        29.14 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4WildcardMatchCPU/registry-kind-2      	64289802	        39.17 ns/op	      48 B/op	       1 allocs/op
+BenchmarkV4WildcardMatchCPU/exact-control-2      	951413179	         2.474 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardMatchCPU/global-control-2     	1000000000	         1.782 ns/op	       0 B/op	       0 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1-2       	 2677681	       895.4 ns/op	    2728 B/op	      19 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=256-2     	   34722	     70861 ns/op	  210648 B/op	    1066 allocs/op
+BenchmarkV4WildcardAdapterCPU/requests=1024-2    	    7867	    287071 ns/op	  844088 B/op	    4152 allocs/op
+BenchmarkParseV4KindWildcardCPU/requests=256-2   	    6823	    345226 ns/op	  533695 B/op	    4058 allocs/op
+BenchmarkParseV4KindWildcardCPU/requests=1024-2  	    1740	   1367591 ns/op	 2157542 B/op	   16375 allocs/op
+PASS

@@ -8,7 +8,9 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/hookpolicy"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/toolpolicy"
 )
 
 func init() {
@@ -61,6 +63,10 @@ func (c *claudeCompiler) translateRule(r *ir.Rule) ([]artifact.Artifact, []diag.
 }
 
 func (c *claudeCompiler) translateSkill(s *ir.Skill, opts compile.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
+	selection, modelDiags, err := compile.SkillModel(s, mapping.TargetClaude, opts)
+	if err != nil {
+		return nil, nil, err
+	}
 	// Build frontmatter with name, description, triggers, and extra fields.
 	fm := compile.Frontmatter{}
 	fm.Set("name", s.Name())
@@ -71,11 +77,12 @@ func (c *claudeCompiler) translateSkill(s *ir.Skill, opts compile.Options) ([]ar
 	if s.ArgumentHint != "" {
 		fm.Set("argument-hint", s.ArgumentHint)
 	}
-	if s.Model != "" {
-		fm.Set("model", s.Model)
+	if selection.Model != "" {
+		fm.Set("model", selection.Model)
 	}
-	if s.AllowedTools != nil {
-		fm.Set("allowed-tools", s.AllowedTools)
+	allowedTools, toolDiags := compile.PreApprovalSkillTools(s, mapping.TargetClaude)
+	if allowedTools != nil {
+		fm.Set("allowed-tools", allowedTools)
 	}
 	permissions := compile.SkillPermissionsValueWithExtra(s.Permissions.Allow, s.Permissions.Ask, s.Permissions.Deny, s.Permissions.Extra, s.PermissionsSet)
 	if permissions != nil {
@@ -93,10 +100,11 @@ func (c *claudeCompiler) translateSkill(s *ir.Skill, opts compile.Options) ([]ar
 		"allowed-tools": s.AllowedTools != nil, "permissions": permissions != nil,
 		"subagent": s.Subagent != "", "agent": s.Agent != "",
 	})
-	extraKeys, extraDiags := compile.ExtraKeys(s.Extra, canonical, mapping.TargetClaude, s.Name(), diag.SourceRef(s.Source))
-	extraDiags = append(compile.SupportFileDiagnostics(s, mapping.TargetClaude), extraDiags...)
+	extra, controlDiags := compile.ClaudeExtraWithNativeControls(ir.KindSkill, s.Extra, s.Ext.Claude, mapping.TargetClaude, s.Name(), s.Source)
+	extraKeys, extraDiags := compile.SkillModelExtraKeys(extra, canonical, mapping.TargetClaude, s.Name(), diag.SourceRef(s.Source))
+	extraDiags = append(append(append(append(modelDiags, toolDiags...), controlDiags...), compile.SupportFileDiagnostics(s, mapping.TargetClaude)...), extraDiags...)
 	for _, k := range extraKeys {
-		fm.Set(k, s.Extra[k])
+		fm.Set(k, extra[k])
 	}
 
 	frontmatter, err := fm.Render()
@@ -121,7 +129,7 @@ func (c *claudeCompiler) translateSkill(s *ir.Skill, opts compile.Options) ([]ar
 	}
 	// Merge in Extra fields
 	for _, k := range extraKeys {
-		skillEntry[k] = s.Extra[k]
+		skillEntry[k] = extra[k]
 	}
 
 	pluginFragment := map[string]any{
@@ -145,7 +153,10 @@ func (c *claudeCompiler) translateSkill(s *ir.Skill, opts compile.Options) ([]ar
 }
 
 func (c *claudeCompiler) translateCommand(cmd *ir.Command) ([]artifact.Artifact, []diag.Diagnostic, error) {
-	extraKeys, diags := compile.ExtraKeys(cmd.Extra, compile.PresentFields(map[string]bool{"name": true, "description": cmd.Description != ""}), mapping.TargetClaude, cmd.Name(), diag.SourceRef(cmd.Source))
+	extra, toolDiags := compile.PreApprovalCommandExtra(cmd, mapping.TargetClaude)
+	extra, controlDiags := compile.ClaudeExtraWithNativeControls(ir.KindCommand, extra, cmd.Ext.Claude, mapping.TargetClaude, cmd.Name(), cmd.Source)
+	extraKeys, diags := compile.ExtraKeys(extra, compile.PresentFields(map[string]bool{"name": true, "description": cmd.Description != ""}), mapping.TargetClaude, cmd.Name(), diag.SourceRef(cmd.Source))
+	diags = append(append(toolDiags, controlDiags...), diags...)
 	if len(extraKeys) == 0 && cmd.Description == "" {
 		return []artifact.Artifact{{Path: fmt.Sprintf("commands/%s.md", cmd.Name()), Bytes: []byte(cmd.Body)}}, diags, nil
 	}
@@ -155,7 +166,7 @@ func (c *claudeCompiler) translateCommand(cmd *ir.Command) ([]artifact.Artifact,
 		fm.Set("description", cmd.Description)
 	}
 	for _, key := range extraKeys {
-		fm.Set(key, cmd.Extra[key])
+		fm.Set(key, extra[key])
 	}
 	frontmatter, err := fm.Render()
 	if err != nil {
@@ -165,19 +176,55 @@ func (c *claudeCompiler) translateCommand(cmd *ir.Command) ([]artifact.Artifact,
 }
 
 func (c *claudeCompiler) translateSubagent(s *ir.Subagent, opts compile.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
-	model := s.Model
+	selection, modelDiags, err := compile.SubagentModel(s, mapping.TargetClaude, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	model, effort := selection.Model, selection.Effort
 	tools := s.Tools
-	effort := s.Effort
+	var diags []diag.Diagnostic
+	if source := mapping.Target(s.ToolSource); source != "" && source != mapping.TargetClaude {
+		// A foreign-harness tool list is re-emitted with Claude catalog
+		// names; a name no Claude tool covers suppresses the artifact
+		// rather than emitting an unenforced restriction (design D5).
+		emitted, uncovered, toolErr := toolpolicy.TranslateToolList(source, mapping.TargetClaude, toolpolicy.SurfaceSubagentTools, s.Tools, opts.ToolOverride())
+		if toolErr != nil {
+			return nil, nil, fmt.Errorf("claude: translate subagent tools: %w", toolErr)
+		}
+		tools = emitted
+		if s.Tools != nil && tools == nil {
+			tools = []string{}
+		}
+		for range uncovered {
+			diags = append(diags, diag.Diagnostic{
+				Code:     diag.CodeSubagentClaudeToolUnknown,
+				Severity: diag.SeverityError,
+				Target:   string(mapping.TargetClaude),
+				Resource: s.Name(),
+				Message:  "Claude cannot map an explicit subagent tool; artifact suppressed",
+				Hint:     "Use a tool name the Claude tool catalog covers or remove the restriction explicitly",
+				Source:   diag.SourceRef(s.Source),
+			})
+		}
+		if len(uncovered) > 0 {
+			return nil, append(modelDiags, diags...), nil
+		}
+	}
 	isolation := s.Isolation
 	if sidecar := s.Ext.Claude; sidecar != nil {
-		if sidecar.Model != "" {
-			model = sidecar.Model
+		if !compile.SidecarToolsWithinCanonical(mapping.TargetClaude, tools, sidecar.Tools, mapping.TargetClaude, opts.ToolOverride()) {
+			return nil, append(modelDiags, diag.Diagnostic{
+				Code:     diag.CodeSubagentSecurityRestrictionUnsupported,
+				Severity: diag.SeverityError,
+				Target:   string(mapping.TargetClaude),
+				Resource: s.Name(),
+				Message:  "A preserved Claude tool list grants tools the canonical subagent does not; subagent suppressed",
+				Hint:     "Remove the preserved sidecar or align it with the canonical tool list",
+				Source:   compile.DiagSource(s.Source),
+			}), nil
 		}
 		if sidecar.Tools != nil {
 			tools = sidecar.Tools
-		}
-		if sidecar.Effort != "" {
-			effort = sidecar.Effort
 		}
 		if sidecar.Isolation != "" {
 			isolation = sidecar.Isolation
@@ -206,13 +253,18 @@ func (c *claudeCompiler) translateSubagent(s *ir.Subagent, opts compile.Options)
 	if s.MaxNesting != nil {
 		fm.Set("max-nesting", *s.MaxNesting)
 	}
-	extraKeys, extraDiags := compile.ExtraKeys(s.Extra, compile.PresentFields(map[string]bool{
+	extra, controlDiags := compile.ClaudeExtraWithNativeControls(ir.KindSubagent, s.Extra, s.Ext.Claude, mapping.TargetClaude, s.Name(), s.Source)
+	if compile.SubagentReadOnly(s) && !compile.HasReadOnlyClaudeMode(extra) {
+		extra = compile.WithExtraKey(extra, "permissionMode", "plan")
+	}
+	diags = append(diags, controlDiags...)
+	extraKeys, extraDiags := compile.ModelExtraKeys(extra, compile.PresentFields(map[string]bool{
 		"name": true, "description": true, "model": model != "", "tools": tools != nil,
 		"effort": effort != "", "disallowedTools": len(s.DisallowedTools) > 0,
 		"isolation": isolation != "", "max-nesting": s.MaxNesting != nil, "maxNesting": false,
 	}), mapping.TargetClaude, s.Name(), diag.SourceRef(s.Source))
 	for _, k := range extraKeys {
-		fm.Set(k, s.Extra[k])
+		fm.Set(k, extra[k])
 	}
 
 	frontmatter, err := fm.Render()
@@ -241,7 +293,7 @@ func (c *claudeCompiler) translateSubagent(s *ir.Subagent, opts compile.Options)
 		agentEntry["effort"] = effort
 	}
 	for _, k := range extraKeys {
-		agentEntry[k] = s.Extra[k]
+		agentEntry[k] = extra[k]
 	}
 
 	pluginFragment := map[string]any{
@@ -261,37 +313,65 @@ func (c *claudeCompiler) translateSubagent(s *ir.Subagent, opts compile.Options)
 	pluginArt.ManagedByField, pluginArt.ManagedByValue = opts.ManagedBy()
 	pluginArt.MergeWithExisting = pluginArt.ManagedByField != ""
 
-	return []artifact.Artifact{agentArt, pluginArt}, extraDiags, nil
+	return []artifact.Artifact{agentArt, pluginArt}, append(diags, append(modelDiags, extraDiags...)...), nil
 }
 
 func (c *claudeCompiler) translateHook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
-	hookType := h.Type
-	if sidecar := h.Ext.Claude; sidecar != nil && sidecar.HookType != "" {
-		hookType = sidecar.HookType
+	// Event, matcher, timeout, handler type, and command translation come
+	// from the catalog-driven hookpolicy resolver (OpenSpec
+	// native-hook-integration, task 3.5). Canonical input decodes through
+	// the Claude source catalog, so events the catalog does not map and
+	// handler types it does not declare fail closed instead of passing
+	// through unchecked.
+	scope := hookpolicy.ScopeRepository
+	if opts.Scope() == compile.ScopeUser {
+		scope = hookpolicy.ScopeMachine
+	}
+	resolved := hookpolicy.Resolve(h, mapping.TargetClaude, scope, opts.PluginRoot())
+	if resolved.Failed() {
+		return nil, resolved.Diagnostics, nil
+	}
+
+	hookType := resolved.Type
+	if sidecar := h.Ext.Claude; sidecar != nil && sidecar.HookType != "" && sidecar.HookType != resolved.Type {
+		return nil, []diag.Diagnostic{{
+			Code:     diag.CodeHookClaudeUnsupportedType,
+			Severity: diag.SeverityError,
+			Target:   string(mapping.TargetClaude),
+			Resource: h.Name(),
+			Message:  "A preserved Claude hook type contradicts the catalog-resolved type; hook suppressed",
+			Hint:     "Remove the preserved sidecar or align it with the declared hook type",
+			Source:   diag.SourceRef(h.Source),
+		}}, nil
 	}
 
 	// Build hooks.json fragment without inventing command for prompt-only hooks.
 	rule := map[string]any{"type": hookType}
-	if h.Command != "" {
-		rule["command"] = h.Command
+	if resolved.Command != "" {
+		rule["command"] = resolved.Command
 	}
-	if h.Matcher != "" {
-		rule["matcher"] = h.Matcher
+	if resolved.Matcher != "" {
+		rule["matcher"] = resolved.Matcher
 	}
 	if h.Prompt != "" {
 		rule["prompt"] = h.Prompt
 	}
-	if h.Timeout != nil {
-		rule["timeout"] = *h.Timeout
+	if resolved.Timeout != nil {
+		rule["timeout"] = *resolved.Timeout
 	}
-	extraKeys, diags := compile.HookExtraKeys(h.Extra, compile.PresentFields(map[string]bool{"event": true, "matcher": h.Matcher != "", "type": true, "command": h.Command != "", "prompt": h.Prompt != "", "timeout": h.Timeout != nil}), mapping.TargetClaude, h.Name(), diag.SourceRef(h.Source))
+	extraKeys, diags := compile.HookExtraKeys(h.Extra, compile.PresentFields(map[string]bool{"event": true, "matcher": resolved.Matcher != "", "type": true, "command": resolved.Command != "", "prompt": h.Prompt != "", "timeout": resolved.Timeout != nil}), mapping.TargetClaude, h.Name(), diag.SourceRef(h.Source))
 	for _, k := range extraKeys {
 		rule[k] = h.Extra[k]
 	}
+	return c.hookFragmentArtifact(h, opts, resolved.Event, rule, append(resolved.Diagnostics, diags...))
+}
 
+// hookFragmentArtifact marshals one resolved rule into the hooks.json
+// fragment artifact for the given native event.
+func (c *claudeCompiler) hookFragmentArtifact(h *ir.Hook, opts compile.Options, event string, rule map[string]any, diags []diag.Diagnostic) ([]artifact.Artifact, []diag.Diagnostic, error) {
 	fragment := map[string]any{
 		"hooks": map[string]any{
-			h.Event: []any{rule},
+			event: []any{rule},
 		},
 	}
 	fragBytes, err := json.Marshal(fragment)

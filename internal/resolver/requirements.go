@@ -230,7 +230,7 @@ func expandRequirements(
 	malformed *malformedIndex,
 	localExcludes resourceSelections,
 	localExcludeAll map[ir.ResourceKind]bool,
-	targetSet []hcc.Target,
+	targets scopeTargets,
 	ctx context.Context,
 	held map[resourceSelection][]marketplaceHeldCandidate,
 	lookup MarketplaceRequirementLookup,
@@ -332,6 +332,7 @@ func expandRequirements(
 
 			sawExcluded := false
 			admittedCandidate := false
+			targetSet := targets.forSource(requirer.Source)
 			for _, cand := range candidates {
 				art := impliedArtifact(cand, requirer, resources, targetSet)
 				if impliedCandidateExcluded(art, cand, cfg, localExcludes, localExcludeAll) {

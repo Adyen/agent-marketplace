@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/charmbracelet/x/ansi"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
@@ -486,12 +488,24 @@ func TestRunScopedToggleDisablesProjectMarketplacePinWithoutRegistryMutation(t *
 	configPath := config.ProjectConfigPath(repoRoot)
 	digest := "sha256:" + strings.Repeat("a", 64)
 	pin := config.MarketplaceResourcePin{
-		RegistryID: "source-id", Kind: "skill", Name: "review", Revision: "v1", Digest: digest,
+		RegistryID: "source-id", RegistrySlug: "source", Kind: "skill", Name: "review", Revision: "v1", Digest: digest,
 		Acquisition: config.MarketplaceAcquisitionMirror, InstalledName: "team-review", Direct: true,
 	}
 	entry := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market-id", Alias: "public", Source: config.RepoCommitted}
-	if _, _, err := config.EnsureMarketplacePinsInConfigWithSnapshotAndCommit(configPath, entry.URL, entry.InstanceID, entry.Alias, []config.MarketplaceResourcePin{pin}); err != nil {
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
 		t.Fatal(err)
+	}
+	mustWriteFile(t, configPath, []byte("apiVersion: agent-marketplace/v4\nsources:\n  public: {marketplace: https://market.example}\n"))
+	pin.Digest = warmMarketplaceSkillPin(t, entry, pin)
+	pin.Revision = pin.Digest
+	if _, err := pipeline.MutateMarketplaceLayer(context.Background(), repoRoot, repoRoot, configPath, config.RepoCommitted, func(m *pipeline.MarketplaceLayerMutation) error {
+		return m.IncludePins(entry, []config.MarketplaceResourcePin{pin})
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	seeded, err := config.LoadConfigFromPath(configPath)
+	if err != nil || len(seeded.Marketplaces) != 1 || len(seeded.Marketplaces[0].Resources) != 1 {
+		t.Fatalf("v4 seeded Marketplace selection = %#v, %v", seeded, err)
 	}
 	r := row{
 		Artifact:       resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "team-review"}, IsMarketplace: true},
@@ -615,23 +629,24 @@ func TestRunScopedToggleCopiesExactMarketplacePinToLocalScope(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(userPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(userPath, []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\n"), 0o600); err != nil {
+	if err := os.WriteFile(userPath, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".agents"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(config.LocalConfigPath(repoRoot), []byte("apiVersion: agent-marketplace/v2\n"), 0o600); err != nil {
+	if err := os.WriteFile(config.LocalConfigPath(repoRoot), []byte("apiVersion: agent-marketplace/v4\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	digest := "sha256:" + strings.Repeat("b", 64)
 	pin := config.MarketplaceResourcePin{
-		RegistryID: "source-id", Kind: "skill", Name: "review", Revision: "v2", Digest: digest,
+		RegistryID: "source-id", RegistrySlug: "source", Kind: "skill", Name: "review", Revision: "v2", Digest: digest,
 		Acquisition: config.MarketplaceAcquisitionMirror, InstalledName: "team-review", Direct: true,
 		SelectedBy: config.MarketplaceSelectionsFrom([]config.MarketplaceSelection{{RegistryID: "collections", Name: "bundle", Revision: "v1"}}),
 	}
 	entry := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market-id", Alias: "public", Source: config.RepoCommitted}
 	pin.Digest = warmMarketplaceSkillPin(t, entry, pin)
+	pin.Revision = pin.Digest
 	r := row{
 		Artifact:       resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "team-review"}, IsMarketplace: true, Source: config.RepoCommitted},
 		EnabledProject: true,
@@ -671,7 +686,7 @@ func TestRunScopedToggleCopiesExactMarketplacePinToLocalScope(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(childPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(childPath, []byte("apiVersion: agent-marketplace/v2\n"), 0o600); err != nil {
+	if err := os.WriteFile(childPath, []byte("apiVersion: agent-marketplace/v4\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Chdir(child)
@@ -689,17 +704,16 @@ func TestRunScopedToggleCopiesExactMarketplacePinToLocalScope(t *testing.T) {
 	}
 }
 
-func TestRunScopedToggleRejectsMarketplaceAliasConflictWithoutMutation(t *testing.T) {
+func TestRunScopedToggleRejectsDuplicateMarketplaceSourceWithoutMutation(t *testing.T) {
 	repoRoot := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Chdir(repoRoot)
 	localPath := config.LocalConfigPath(repoRoot)
 	digest := "sha256:" + strings.Repeat("f", 64)
-	existingPin := config.MarketplaceResourcePin{
-		RegistryID: "existing-source", Kind: "skill", Name: "existing", Revision: "v1", Digest: digest,
-		Acquisition: config.MarketplaceAcquisitionMirror, Direct: true,
-	}
-	if _, _, err := config.EnsureMarketplacePinsInConfigWithSnapshotAndCommit(localPath, "https://other-market.example", "other-id", "public", []config.MarketplaceResourcePin{existingPin}); err != nil {
+	if err := os.MkdirAll(filepath.Dir(localPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	mustWriteFile(t, localPath, []byte("apiVersion: agent-marketplace/v4\nsources:\n  public: {marketplace: https://other-market.example}\n  public: {marketplace: https://market.example}\nresources:\n  public: [source/skill/existing]\n"))
 	before, err := os.ReadFile(localPath)
 	if err != nil {
 		t.Fatal(err)
@@ -719,8 +733,9 @@ func TestRunScopedToggleRejectsMarketplaceAliasConflictWithoutMutation(t *testin
 	msg := runScopedToggle(repoRoot, scopedToggleAction(r, scopeLocal))()
 
 	written, ok := msg.(configWrittenMsg)
-	if !ok || written.err == nil {
-		t.Fatalf("Marketplace alias conflict toggle = %#v", msg)
+	var validation *config.V4ValidationError
+	if !ok || !errors.As(written.err, &validation) || validation.Code != "v4.duplicate-key" {
+		t.Fatalf("duplicate Marketplace source toggle = %#v", msg)
 	}
 	after, err := os.ReadFile(localPath)
 	if err != nil {
@@ -739,10 +754,9 @@ func TestRunScopedToggleProjectScopeAutoEnsuresRegistry(t *testing.T) {
 	}
 
 	// Project config has NO registry matching the global-only URL.
-	projectConfig := `apiVersion: agent-marketplace/v2
-registries:
-  - url: ./local
-    path: skills
+	projectConfig := `apiVersion: agent-marketplace/v4
+sources:
+  local: {directory: ./local/skills}
 `
 	if err := os.WriteFile(filepath.Join(agentsDir, "config.yaml"), []byte(projectConfig), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -879,21 +893,22 @@ func TestRunScopedToggleLocalExcludeIsRegistryScoped(t *testing.T) {
 	}
 	// Local config already has a registry-scoped include (from a prior [l] enable).
 	localPath := filepath.Join(agentsDir, "config.local.yaml")
-	if err := os.WriteFile(localPath, []byte(`registries:
-  - url: ./plugins/terminals
-    skills:
-      include:
-        - adding-terminal-analytics-events
+	if err := os.WriteFile(localPath, []byte(`apiVersion: agent-marketplace/v4
+sources:
+  local: {directory: ./plugins/terminals}
+resources:
+  local: {include: [skill/adding-terminal-analytics-events]}
 `), 0o644); err != nil {
 		t.Fatalf("write local config: %v", err)
 	}
 
 	act := toggleAction{
-		skillName:   "adding-terminal-analytics-events",
-		kind:        ir.KindSkill,
-		scope:       scopeLocalExclude,
-		enable:      true,
-		registryURL: "./plugins/terminals",
+		skillName:    "adding-terminal-analytics-events",
+		kind:         ir.KindSkill,
+		scope:        scopeLocalExclude,
+		enable:       true,
+		registryURL:  filepath.Join(canonicalWorkspacePath(t, repoRoot), "plugins", "terminals"),
+		registryKind: config.V4SourceDirectory,
 	}
 	msg := runScopedToggle(repoRoot, act)()
 	if cw, ok := msg.(configWrittenMsg); !ok || cw.err != nil {

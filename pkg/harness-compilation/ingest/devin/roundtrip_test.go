@@ -42,6 +42,8 @@ import (
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/toolpolicy"
 )
 
 const roundTripPluginRoot = "/plugins/demo"
@@ -127,7 +129,7 @@ func semanticOf(t *testing.T, resource ir.Resource) semantic {
 		return semantic{
 			Kind: "skill", Name: typed.Name(), Description: typed.Description, Body: typed.Body,
 			ArgumentHint: typed.ArgumentHint, Model: typed.Model, Extra: extras(typed.Extra),
-			Triggers: ptrSlice(typed.Triggers), AllowedTools: ptrSlice(typed.AllowedTools),
+			Triggers: ptrSlice(typed.Triggers), AllowedTools: canonicalTools(t, typed.ToolSource, toolpolicy.SurfaceSkillAllowedTools, typed.AllowedTools),
 			Permissions: permissionSummary(typed), PermissionsSet: typed.PermissionsSet,
 			Subagent: typed.Subagent, Agent: typed.Agent, SupportFiles: typed.SupportFiles,
 		}
@@ -136,7 +138,7 @@ func semanticOf(t *testing.T, resource ir.Resource) semantic {
 	case *ir.Subagent:
 		return semantic{
 			Kind: "subagent", Name: typed.Name(), Description: typed.Description, Body: typed.Body,
-			Model: typed.Model, Extra: extras(typed.Extra), Tools: ptrSlice(typed.Tools), Effort: typed.Effort,
+			Model: typed.Model, Extra: extras(typed.Extra), Tools: canonicalTools(t, typed.ToolSource, toolpolicy.SurfaceSubagentTools, typed.Tools), Effort: typed.Effort,
 			DisallowedTools: ptrSlice(typed.DisallowedTools), Isolation: typed.Isolation, MaxNesting: typed.MaxNesting,
 		}
 	case *ir.Hook:
@@ -155,6 +157,22 @@ func semanticOf(t *testing.T, resource ir.Resource) semantic {
 		t.Fatalf("unsupported resource type %T", resource)
 		return semantic{}
 	}
+}
+
+// canonicalTools projects a tool restriction through the shipped catalogs to
+// canonical Claude names, so a Devin-native spelling that covers exactly the
+// source concepts is not reported as a loss. An untranslatable or partially
+// covered list fails the test: that IS a real loss the matrix must declare.
+func canonicalTools(t *testing.T, source, surface string, tools []string) *[]string {
+	t.Helper()
+	if tools == nil {
+		return nil
+	}
+	emitted, uncovered, err := toolpolicy.TranslateToolList(targetmeta.Target(source), targetmeta.TargetClaude, surface, tools, nil)
+	if err != nil || len(uncovered) > 0 {
+		t.Fatalf("tool list not canonically projectable: emitted=%v uncovered=%v err=%v", emitted, uncovered, err)
+	}
+	return &emitted
 }
 
 // ptrSlice preserves the nil-versus-empty distinction through JSON: a nil slice

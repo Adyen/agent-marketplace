@@ -115,7 +115,7 @@ func setupLocalGitSyncFixture(b testing.TB, count int) string {
 	}
 	repoRoot := filepath.Join(root, "repo")
 	var body strings.Builder
-	body.WriteString("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n")
+	body.WriteString("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n")
 	for i := range count {
 		name := fmt.Sprintf("review-%d", i)
 		source := filepath.Join(root, fmt.Sprintf("source-%d", i))
@@ -126,7 +126,12 @@ func setupLocalGitSyncFixture(b testing.TB, count int) string {
 		runSyncBenchmarkGit(b, source, "add", ".")
 		runSyncBenchmarkGit(b, source, "-c", "commit.gpgsign=false", "-c", "user.name=Benchmark", "-c", "user.email=benchmark@example.com", "commit", "-m", "seed registry")
 		runSyncBenchmarkGit(b, "", "clone", "--bare", source, origin)
-		fmt.Fprintf(&body, "  - url: file://%s\n    ref: main\n    skills:\n      include: [%s]\n", origin, name)
+		fmt.Fprintf(&body, "  %s:\n    git: file://%s\n    ref: main\n", name, origin)
+	}
+	body.WriteString("resources:\n")
+	for i := range count {
+		name := fmt.Sprintf("review-%d", i)
+		fmt.Fprintf(&body, "  %s:\n    include: [skill/%s]\n", name, name)
 	}
 	writeSyncBenchmarkFile(b, filepath.Join(repoRoot, ".agents", "config.yaml"), body.String())
 	b.Chdir(repoRoot)

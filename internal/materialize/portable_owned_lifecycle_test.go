@@ -48,7 +48,7 @@ func TestPortableReadOnlyOwnedLifecycle(t *testing.T) {
 				assertPortableModeSnapshot(t, destination, before)
 				assertNoPortableTreeStage(t, skills)
 			}
-			reports, diags, err := prunePortableEntries(state, outputKey{target: hcc.TargetFactory}, parent, parent, make(map[string]bool), false)
+			reports, diags, err := prunePortableEntries(state, outputKey{target: hcc.TargetFactory}, parent, parent, make(map[string]bool), false, nil)
 			if err != nil || len(diags) != 0 || len(reports) != 1 || len(reports[0].Removed) != 1 || len(state.entries) != 0 {
 				t.Fatalf("final-selection prune: %+v %+v %v", reports, diags, err)
 			}
@@ -73,11 +73,11 @@ func TestPortableReadOnlyOwnedPrune(t *testing.T) {
 			}
 			sourceBefore := portableModeSnapshot(t, source)
 			before := portableModeSnapshot(t, destination)
-			if reports, _, err := prunePortableEntries(state, outputKey{target: hcc.TargetFactory}, parent, parent, make(map[string]bool), true); err != nil || len(reports) != 1 {
+			if reports, _, err := prunePortableEntries(state, outputKey{target: hcc.TargetFactory}, parent, parent, make(map[string]bool), true, nil); err != nil || len(reports) != 1 {
 				t.Fatalf("dry-run prune control: %+v %v", reports, err)
 			}
 			assertPortableModeSnapshot(t, destination, before)
-			if reports, _, err := prunePortableEntries(state, outputKey{target: hcc.TargetFactory}, parent, parent, make(map[string]bool), false); err != nil || len(reports) != 1 || len(state.entries) != 0 {
+			if reports, _, err := prunePortableEntries(state, outputKey{target: hcc.TargetFactory}, parent, parent, make(map[string]bool), false, nil); err != nil || len(reports) != 1 || len(state.entries) != 0 {
 				t.Fatalf("readonly prune, uid %d: %+v %v", os.Geteuid(), reports, err)
 			}
 			if _, err := os.Lstat(destination); !errors.Is(err, fs.ErrNotExist) {

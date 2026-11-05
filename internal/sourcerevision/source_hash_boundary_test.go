@@ -11,6 +11,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -272,6 +273,10 @@ func TestBuildRefusesIngestionBoundaryWithValidSibling(t *testing.T) {
 
 // spec: registry-symlink-containment/source-revision-hashing-refuses-post-ingest-unsafe-payloads
 func TestResourceSourceBytesPreservesLegacyFallbackBoundary(t *testing.T) {
+	contract, err := lockfile.RevisionContract(lockfile.CurrentRevisionSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
 	root := t.TempDir()
 	source, err := fsboundary.OpenSourceFS(root)
 	if err != nil {
@@ -285,7 +290,7 @@ func TestResourceSourceBytesPreservesLegacyFallbackBoundary(t *testing.T) {
 	resource := ir.NewCommand("legacy", "legacy control", "inert command", nil, ir.SourceRef{})
 	for _, name := range []string{"", "absent.md", "missing/primary.md"} {
 		t.Run(name, func(t *testing.T) {
-			data, err := resourceSourceBytes(root, source, catalog.Entry{Kind: ir.KindCommand, Name: "legacy", Resource: resource, Path: name})
+			data, err := resourceSourceBytes(root, source, catalog.Entry{Kind: ir.KindCommand, Name: "legacy", Resource: resource, Path: name}, contract)
 			if name != "" {
 				if !errors.Is(err, os.ErrNotExist) || data != nil {
 					t.Fatalf("missing disk source became canonical fallback: %s, %v", data, err)

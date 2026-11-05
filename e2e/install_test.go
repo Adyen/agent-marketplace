@@ -30,10 +30,8 @@ func TestInstallFromHomeDir(t *testing.T) {
 	env.WriteGlobalConfig(fmt.Sprintf(`
 harnesses:
   - factory
-registries:
-  - url: %s
-    ref: main
-    default: true
+sources: {team: {git: %q, ref: main}}
+resources: {team: {all: true}}
 `, regURL))
 
 	// Read the global config before install — it must contain harnesses.
@@ -42,7 +40,7 @@ registries:
 
 	// Run install --all from the HOME directory (not workspace).
 	// This should fail with the home-directory guard error.
-	r := env.RunAMFrom("/root", "install", "--all")
+	r := env.RunAMFrom("/root", "install", "--scope", "repo", "--all")
 	if r.ExitCode == 0 {
 		t.Fatalf("install --all from home dir should have failed, but exited 0\noutput:\n%s", r.Combined)
 	}

@@ -27,8 +27,8 @@ func TestE2EOwnedAggregatesRejectUnsafeLeaves(t *testing.T) {
 					files := RegistryFilesEx(nil, nil, nil, []MCPServer{{Name: "fixture", Command: "fixture-server"}})
 					files["hooks/hooks.json"] = `{"hooks":{"PostToolUse":[{"type":"command","command":"echo fixture-hook","matcher":"Bash"}]}}`
 					url := env.CreateBareRepo("aggregate-read", files)
-					env.WriteGlobalConfig(fmt.Sprintf("harnesses: [%s]\nregistries: []\n", target.name))
-					env.WriteRepoConfig(fmt.Sprintf("registries:\n  - url: %s\n    ref: main\n    source_harness: claude\n    mcp: [fixture]\n    hooks: [PostToolUse-command]\n", url))
+					env.WriteGlobalConfig(fmt.Sprintf("harnesses: [%s]\n", target.name))
+					env.WriteRepoConfig(fmt.Sprintf("sources: {team: {git: %q, ref: main, source_harness: claude}}\nresources: {team: {include: [mcp/fixture, hook/PostToolUse-command]}}\n", url))
 					env.MustRunAM("sync")
 					env.MustRunAM("sync", "--check")
 					env.AssertFileContains("/workspace/"+target.mcp, "fixture-server")

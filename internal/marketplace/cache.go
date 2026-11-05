@@ -99,26 +99,40 @@ func (c *Cache) garbageCollect(dryRun bool, roots GCRoots) (GCResult, error) {
 		return result, err
 	}
 
-	artifactsRoot, exists, err := validateArtifactCacheDirectories(c.root)
+	for _, dirName := range archiveDirectoryNames {
+		if err := c.collectArchiveDirectory(dirName, dryRun, referenced, &result); err != nil {
+			return result, err
+		}
+	}
+
+	slog.Info("marketplace cache garbage collection completed", "removed", len(result.Removed), "dry_run", dryRun)
+	return result, nil
+}
+
+// archiveDirectoryNames are the cache directories whose entries hold archives keyed
+// by digest. Both follow the same reachability and malformed-entry rules.
+var archiveDirectoryNames = []string{"artifacts", placeholderArchivesDirName}
+
+func (c *Cache) collectArchiveDirectory(dirName string, dryRun bool, referenced map[string]struct{}, result *GCResult) error {
+	archivesRoot, exists, err := validateArtifactCacheDirectories(c.root, dirName)
 	if err != nil {
 		err = fmt.Errorf("validate marketplace artifact cache: %w", err)
 		slog.Error("marketplace cache garbage collection failed", "error", err)
-		return result, err
+		return err
 	}
 	if !exists {
-		slog.Info("marketplace cache garbage collection completed", "removed", 0, "dry_run", dryRun)
-		return result, nil
+		return nil
 	}
 
-	entries, err := os.ReadDir(artifactsRoot)
+	entries, err := os.ReadDir(archivesRoot)
 	if err != nil {
-		err = fmt.Errorf("read marketplace artifact cache %q: %w", artifactsRoot, err)
+		err = fmt.Errorf("read marketplace artifact cache %q: %w", archivesRoot, err)
 		slog.Error("marketplace cache garbage collection failed", "error", err)
-		return result, err
+		return err
 	}
 
 	for _, entry := range entries {
-		artifactDir := filepath.Join(artifactsRoot, entry.Name())
+		artifactDir := filepath.Join(archivesRoot, entry.Name())
 		if !validArchiveDigestKey(entry.Name()) {
 			if entry.IsDir() {
 				slog.Debug("marketplace cache garbage collection preserved unknown artifact entry", "path", artifactDir)
@@ -130,12 +144,12 @@ func (c *Cache) garbageCollect(dryRun bool, roots GCRoots) (GCResult, error) {
 		if err != nil {
 			err = fmt.Errorf("inspect marketplace artifact directory %q: %w", artifactDir, err)
 			slog.Error("marketplace cache garbage collection failed", "error", err)
-			return result, err
+			return err
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
 			err = fmt.Errorf("marketplace artifact directory %q is a symlink", artifactDir)
 			slog.Error("marketplace cache garbage collection failed", "error", err)
-			return result, err
+			return err
 		}
 		if !info.IsDir() {
 			continue
@@ -143,14 +157,14 @@ func (c *Cache) garbageCollect(dryRun bool, roots GCRoots) (GCResult, error) {
 		if err := cache.ValidateDirectoryAncestry(c.root, artifactDir); err != nil {
 			err = fmt.Errorf("validate marketplace artifact directory %q: %w", artifactDir, err)
 			slog.Error("marketplace cache garbage collection failed", "error", err)
-			return result, err
+			return err
 		}
 
 		removable, err := removableArtifactDirectory(artifactDir)
 		if err != nil {
 			err = fmt.Errorf("inspect marketplace artifact directory %q: %w", artifactDir, err)
 			slog.Error("marketplace cache garbage collection failed", "error", err)
-			return result, err
+			return err
 		}
 		if !removable {
 			slog.Debug("marketplace cache garbage collection preserved malformed artifact entry", "path", artifactDir)
@@ -169,13 +183,11 @@ func (c *Cache) garbageCollect(dryRun bool, roots GCRoots) (GCResult, error) {
 		if err := removeArtifactDirectory(c.root, artifactDir); err != nil {
 			err = fmt.Errorf("remove marketplace artifact directory %q: %w", artifactDir, err)
 			slog.Error("marketplace cache garbage collection failed", "error", err)
-			return result, err
+			return err
 		}
 		result.Removed = append(result.Removed, artifactDir)
 	}
-
-	slog.Info("marketplace cache garbage collection completed", "removed", len(result.Removed), "dry_run", dryRun)
-	return result, nil
+	return nil
 }
 
 func (c *Cache) referencedArchiveDigests(roots GCRoots) (map[string]struct{}, error) {
@@ -372,7 +384,7 @@ func removableArtifactDirectory(path string) (bool, error) {
 	return false, nil
 }
 
-func validateArtifactCacheDirectories(root string) (string, bool, error) {
+func validateArtifactCacheDirectories(root, dirName string) (string, bool, error) {
 	rootAbs, err := filepath.Abs(root)
 	if err != nil {
 		return "", false, err
@@ -384,7 +396,7 @@ func validateArtifactCacheDirectories(root string) (string, bool, error) {
 		return "", false, err
 	}
 
-	artifactsRoot := filepath.Join(rootAbs, "artifacts")
+	artifactsRoot := filepath.Join(rootAbs, dirName)
 	info, err := os.Lstat(artifactsRoot)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -445,9 +457,40 @@ func removeArtifactDirectory(root, path string) error {
 	return os.RemoveAll(pathAbs)
 }
 
-// ArtifactPath returns the path for an artifact archive given its digest.
+// archiveForm names the cache location that holds an archive for a digest.
+type archiveForm int
+
+const (
+	// finalForm is the legacy artifacts/ location. Only final-form archives are
+	// written there, so older clients read only bytes they can verify.
+	finalForm archiveForm = iota
+	// placeholderForm holds placeholder-form archives, which hash to the digest.
+	// Older clients never open this directory.
+	placeholderForm
+)
+
+func (f archiveForm) directory() string {
+	if f == placeholderForm {
+		return placeholderArchivesDirName
+	}
+	return "artifacts"
+}
+
+// placeholderArchivesDirName is the sibling of artifacts/ for placeholder-form archives.
+const placeholderArchivesDirName = "placeholder-artifacts"
+
+func (c *Cache) archivePath(form archiveForm, digest string) string {
+	return filepath.Join(c.root, form.directory(), safeDigest(digest), "artifact.tar.gz")
+}
+
+// ArtifactPath returns the legacy final-form artifact path for a digest.
 func (c *Cache) ArtifactPath(digest string) string {
-	return filepath.Join(c.root, "artifacts", safeDigest(digest), "artifact.tar.gz")
+	return c.archivePath(finalForm, digest)
+}
+
+// PlaceholderArchivePath returns the placeholder-form archive path for a digest.
+func (c *Cache) PlaceholderArchivePath(digest string) string {
+	return c.archivePath(placeholderForm, digest)
 }
 
 func (c *Cache) MirrorResourceDir(digest string) string {
@@ -498,28 +541,32 @@ func (c *Cache) InvalidateIndexOnlyArtifactVerified(identity IndexOnlyIdentity, 
 	})
 }
 
-// WriteArtifact writes the artifact archive bytes and returns the path.
+// WriteArtifact writes final-form archive bytes to the legacy artifacts directory.
 func (c *Cache) WriteArtifact(digest string, raw []byte) (string, error) {
+	return c.writeArchive(finalForm, digest, raw)
+}
+
+func (c *Cache) writeArchive(form archiveForm, digest string, raw []byte) (string, error) {
 	return cache.WithCacheMutationLock(func() (string, error) {
-		return c.writeArtifact(digest, raw)
+		p := c.archivePath(form, digest)
+		if err := ensureCacheDirectory(c.root, filepath.Dir(p)); err != nil {
+			return "", fmt.Errorf("prepare artifact cache %q: %w", p, err)
+		}
+		if err := writeAtomic(c.root, p, raw, 0o644, verifiedMarkerPath(filepath.Dir(p))); err != nil {
+			return "", fmt.Errorf("write artifact cache %q: %w", p, err)
+		}
+		return p, nil
 	})
 }
 
-func (c *Cache) writeArtifact(digest string, raw []byte) (string, error) {
-	p := c.ArtifactPath(digest)
-	if err := ensureCacheDirectory(c.root, filepath.Dir(p)); err != nil {
-		return "", fmt.Errorf("prepare artifact cache %q: %w", p, err)
-	}
-	if err := writeAtomic(c.root, p, raw, 0o644, verifiedMarkerPath(filepath.Dir(p))); err != nil {
-		return "", fmt.Errorf("write artifact cache %q: %w", p, err)
-	}
-	return p, nil
-}
-
-// ReadArtifact reads the cached artifact bytes and reports whether the
+// ReadArtifact reads the legacy final-form artifact bytes and reports whether the
 // verified.marker file is present.
 func (c *Cache) ReadArtifact(digest string) ([]byte, bool, error) {
-	p := c.ArtifactPath(digest)
+	return c.readArchive(finalForm, digest)
+}
+
+func (c *Cache) readArchive(form archiveForm, digest string) ([]byte, bool, error) {
+	p := c.archivePath(form, digest)
 	raw, verified, err := readVerifiedCacheFile(c.root, p)
 	if err != nil {
 		return nil, false, fmt.Errorf("read artifact cache %q: %w", p, err)
@@ -527,19 +574,27 @@ func (c *Cache) ReadArtifact(digest string) ([]byte, bool, error) {
 	return raw, verified, nil
 }
 
-// MarkArtifactVerified writes a marker indicating the artifact has been
+// MarkArtifactVerified writes a marker indicating the legacy artifact has been
 // cryptographically verified.
 func (c *Cache) MarkArtifactVerified(digest string) error {
+	return c.markArchiveVerified(finalForm, digest)
+}
+
+func (c *Cache) markArchiveVerified(form archiveForm, digest string) error {
 	return cache.WithCacheMutation(func() error {
-		p := verifiedMarkerPath(filepath.Dir(c.ArtifactPath(digest)))
+		p := verifiedMarkerPath(filepath.Dir(c.archivePath(form, digest)))
 		return writeMarker(c.root, p)
 	})
 }
 
-// InvalidateArtifactVerified removes the verification marker for an artifact.
+// InvalidateArtifactVerified removes the verification marker for a legacy artifact.
 func (c *Cache) InvalidateArtifactVerified(digest string) {
+	c.invalidateArchiveVerified(finalForm, digest)
+}
+
+func (c *Cache) invalidateArchiveVerified(form archiveForm, digest string) {
 	_ = cache.WithCacheMutation(func() error {
-		dir := filepath.Dir(c.ArtifactPath(digest))
+		dir := filepath.Dir(c.archivePath(form, digest))
 		if err := validateCacheDirectory(c.root, dir); err != nil {
 			return err
 		}

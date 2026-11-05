@@ -16,7 +16,7 @@ func TestInstallationAdapterRegistryCoverage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []hcc.Target{hcc.TargetCodex, hcc.TargetDevin}
+	want := []hcc.Target{hcc.TargetCodex, hcc.TargetDevin, hcc.TargetOpenCode}
 	got := registry.Targets()
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("adapter targets = %v, want %v", got, want)
@@ -44,7 +44,7 @@ func TestInstallationAdapterInventoryMatchesDescriptor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, target := range []hcc.Target{hcc.TargetCodex, hcc.TargetDevin} {
+	for _, target := range []hcc.Target{hcc.TargetCodex, hcc.TargetDevin, hcc.TargetOpenCode} {
 		adapter, ok := registry.Lookup(target)
 		if !ok {
 			t.Fatalf("adapter %q is missing", target)

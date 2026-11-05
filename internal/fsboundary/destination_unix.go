@@ -396,6 +396,15 @@ func (d *Destination) verifyLeaf(parent *os.File) error {
 	return nil
 }
 
+func (d *Destination) Verify() (err error) {
+	parent, err := d.verifyTarget()
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, parent.Close()) }()
+	return d.verifyLeaf(parent)
+}
+
 // Publish atomically installs the staged file at the captured destination.
 // The staged file must have been fully written and synced by the caller;
 // Publish revalidates its shape, verifies the destination against its

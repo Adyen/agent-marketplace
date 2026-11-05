@@ -393,6 +393,91 @@ func TestAdminOIDCBrowserErrorHandoff(t *testing.T) {
 }
 
 // spec: marketplace-admin-auth/browser-and-machine-clients-receive-appropriate-failure-responses
+// spec: marketplace-admin-auth/recovery-starts-a-new-login-with-a-safe-destination
+// spec: marketplace-admin-auth/root-mounted-administration-uses-root-browser-routes
+// spec: marketplace-admin-auth/subpath-and-absent-browser-bases-retain-their-route-contracts
+func TestAdminOIDCBrowserRoutesFollowBrowserBase(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		browserBase string
+		errorPath   string
+		adminPath   string
+	}{
+		{name: "legacy fallback", errorPath: "/marketplace/auth/error", adminPath: "/marketplace/admin"},
+		{name: "root", browserBase: "https://marketplace.test", errorPath: "/auth/error", adminPath: "/admin"},
+		{name: "trimmed root", browserBase: " https://marketplace.test ", errorPath: "/auth/error", adminPath: "/admin"},
+		{name: "subpath", browserBase: "https://marketplace.test/tools/", errorPath: "/tools/auth/error", adminPath: "/tools/admin"},
+		{name: "unsafe path falls back", browserBase: "https://marketplace.test//evil", errorPath: "/marketplace/auth/error", adminPath: "/marketplace/admin"},
+		{name: "dot path falls back", browserBase: "https://marketplace.test/tools/../evil", errorPath: "/marketplace/auth/error", adminPath: "/marketplace/admin"},
+		{name: "encoded dot path falls back", browserBase: "https://marketplace.test/tools/%2e%2e/evil", errorPath: "/marketplace/auth/error", adminPath: "/marketplace/admin"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			issuer := newTestOIDCIssuer(t)
+			issuer.discoveryCode = http.StatusServiceUnavailable
+			server, handler := adminOIDCFixtureWithBrowserBase(t, issuer, tc.browserBase, nil)
+			next := tc.adminPath + "/registries/team"
+			target := "/api/v1/admin/auth/login?next=" + url.QueryEscape(next)
+			machine := httptest.NewRecorder()
+			handler.ServeHTTP(machine, browserAdminRequest(http.MethodGet, target, "", map[string]string{"Accept": "application/json"}))
+			assertAdminJSONError(t, machine, http.StatusServiceUnavailable, "authentication_unavailable", "The identity provider is unavailable.")
+
+			for _, requestTarget := range []string{target, "/api/v1/admin/auth/login"} {
+				request := browserAdminRequest(http.MethodGet, requestTarget, "", map[string]string{"Accept": "text/html"})
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(response, request)
+
+				if response.Code != http.StatusSeeOther {
+					t.Fatalf("status = %d, want 303: %s", response.Code, response.Body.String())
+				}
+				location, err := url.Parse(response.Header().Get("Location"))
+				if err != nil || location.IsAbs() || location.Path != tc.errorPath {
+					t.Fatalf("location = %q, want same-origin %q", response.Header().Get("Location"), tc.errorPath)
+				}
+				wantNext := next
+				if requestTarget != target {
+					wantNext = tc.adminPath
+				}
+				if location.Query().Get("code") != "authentication_unavailable" || location.Query().Get("next") != wantNext {
+					t.Fatalf("location query = %q", location.RawQuery)
+				}
+			}
+
+			if tc.adminPath == "/admin" {
+				legacyTarget := "/api/v1/admin/auth/login?next=" + url.QueryEscape("/marketplace/admin/registries/team")
+				machine := httptest.NewRecorder()
+				handler.ServeHTTP(machine, browserAdminRequest(http.MethodGet, legacyTarget, "", map[string]string{"Accept": "application/json"}))
+				assertAdminJSONError(t, machine, http.StatusBadRequest, "authentication_request_invalid", "The sign-in destination is not an administration path.")
+
+				browser := httptest.NewRecorder()
+				handler.ServeHTTP(browser, browserAdminRequest(http.MethodGet, legacyTarget, "", map[string]string{"Accept": "text/html"}))
+				location, err := url.Parse(browser.Header().Get("Location"))
+				if browser.Code != http.StatusSeeOther || err != nil || location.Path != tc.errorPath || location.Query().Get("code") != "authentication_request_invalid" || location.Query().Has("next") {
+					t.Fatalf("legacy destination response = %d %q", browser.Code, browser.Header().Get("Location"))
+				}
+
+				authenticator, err := newAdminOIDCAuthenticatorWithBrowserBase(server.cfg.Admin, tc.browserBase)
+				if err != nil {
+					t.Fatal(err)
+				}
+				now := time.Now()
+				transaction := adminLoginTransaction{Version: 1, State: adminRandom(), Nonce: adminRandom(), Verifier: adminRandom(), Next: "/marketplace/admin/registries/team", IssuedAt: now.Unix(), Expiry: now.Add(adminLoginTTL).Unix()}
+				sealed, err := authenticator.seal(transaction)
+				if err != nil {
+					t.Fatal(err)
+				}
+				callback := httptest.NewRecorder()
+				callbackTarget := "/api/v1/admin/auth/callback?state=" + transaction.State + "&code=test"
+				handler.ServeHTTP(callback, browserAdminRequest(http.MethodGet, callbackTarget, authenticator.cookieName(adminLoginCookie)+"="+sealed, map[string]string{"Accept": "text/html"}))
+				location, err = url.Parse(callback.Header().Get("Location"))
+				if callback.Code != http.StatusSeeOther || err != nil || location.Path != tc.errorPath || location.Query().Get("code") != "authentication_rejected" || location.Query().Has("next") {
+					t.Fatalf("legacy callback response = %d %q", callback.Code, callback.Header().Get("Location"))
+				}
+			}
+		})
+	}
+}
+
+// spec: marketplace-admin-auth/browser-and-machine-clients-receive-appropriate-failure-responses
 func TestAdminOIDCBrowserAcceptNegotiation(t *testing.T) {
 	issuer := newTestOIDCIssuer(t)
 	_, handler := adminOIDCFixture(t, issuer, nil)
@@ -455,7 +540,7 @@ func TestAdminOIDCBrowserAcceptNegotiation(t *testing.T) {
 // spec: marketplace-admin-auth/browser-and-machine-clients-receive-appropriate-failure-responses
 func TestAdminOIDCBrowserUnavailableInitialization(t *testing.T) {
 	issuer := newTestOIDCIssuer(t)
-	_, handler := adminOIDCFixture(t, issuer, func(admin *config.Administration) {
+	_, handler := adminOIDCFixtureWithBrowserBase(t, issuer, "https://marketplace.test", func(admin *config.Administration) {
 		admin.Authentication.OIDC.SessionSecretEnv = "MARKETPLACE_ADMIN_UNSET_SECRET"
 	})
 	for _, tc := range []struct {
@@ -479,7 +564,10 @@ func TestAdminOIDCBrowserUnavailableInitialization(t *testing.T) {
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, r)
 			if tc.wantCode == http.StatusSeeOther {
-				assertAdminBrowserRedirect(t, w, tc.wantErr, "")
+				location, err := url.Parse(w.Header().Get("Location"))
+				if w.Code != http.StatusSeeOther || err != nil || location.Path != "/auth/error" || location.Query().Get("code") != tc.wantErr || location.Query().Has("next") {
+					t.Fatalf("unavailable browser response = %d %q", w.Code, w.Header().Get("Location"))
+				}
 			} else {
 				assertAdminJSONError(t, w, tc.wantCode, tc.wantErr, "Administration trust configuration is unavailable.")
 			}

@@ -6,7 +6,7 @@
 
 A Git registry is any Git repository that holds resources in a supported harness layout. You give the CLI a URL, a [ref](../glossary.md#ref) (a branch, tag, or commit), and optionally a path inside the repository. The CLI resolves the ref to one exact [commit](../glossary.md#commit), records that commit in a [lockfile](../glossary.md#lockfile), and writes the resources from that commit into your harness folders.
 
-A Git registry needs nothing except Git. Access works through the SSH keys or HTTPS credentials you already use. The lockfile records the commit and a digest of every resource, so if someone rewrites the branch, a later `sync` still produces the same files.
+A Git registry needs nothing except Git. Access works through the SSH keys or HTTPS credentials you already use. The lockfile records the commit and a digest of every resource, so if someone rewrites the branch, a later `sync` still produces the same files while the recorded commit remains in the cache or fetchable from the server.
 
 A resource in a Git registry is identified by the registry URL, the ref, the path, its kind, and its name. It installs under its own name. When two registries offer the same kind and name, the CLI picks one winner by fixed rules and prints a warning; see [Scopes, selection, and precedence](./scopes-selection-and-precedence.md).
 
@@ -20,8 +20,6 @@ A Marketplace adds things plain Git cannot give you:
 - Policy: license allowlists, size limits, and hidden-content rules run when the Marketplace reads a registry, before anyone can install from it.
 - Review before install: the CLI shows the verified revision (digest, license, security findings, capabilities, and where it came from) before it installs. Security findings need your consent. Capabilities are shown but do not require consent on their own.
 - Availability: in `mirror` mode you never need access to the registry itself.
-
-The [Marketplace trust model](./marketplace-trust-model.md) explains these checks in more detail.
 
 ### Endpoint identity
 
@@ -43,14 +41,7 @@ The installed name is a fourth, separate thing: the folder or file name the reso
 
 ### Locators
 
-| Form | Shape |
-|---|---|
-| Compact | `<alias>:<registry>/<kind>/<name>` |
-| Compact, exact | `<alias>:<registry>/<kind>/<name>@sha256:<64 hex>` |
-| URL | `https://host/r/<registry>/<kind>/<name>` |
-| URL, exact | `https://host/r/<registry>/<kind>/<name>/revisions/sha256:<64 hex>` |
-
-`<kind>` uses the Marketplace spelling: `mcpserver`, not `mcp`. The [locators reference](../reference/marketplace-resource-locators.md) has the full rules.
+A locator names one Marketplace resource in compact form (`<alias>:<registry>/<kind>/<name>`) or as a URL on the endpoint, each with an exact variant that appends the revision digest. `<kind>` uses the Marketplace spelling: `mcpserver`, not `mcp`. The [locators reference](../reference/marketplace-resource-locators.md) has the full rules.
 
 ### Mirror and index-only acquisition
 
@@ -78,7 +69,7 @@ A Marketplace can repair a mirrored archive without changing the resource: the c
 | What infrastructure is needed? | Git only | An API, a worker, a database, a blob store, and a reverse proxy |
 | Can content be withdrawn later? | No; a locked commit stays installable while the Git server still has it | Yes; revocation blocks installs and makes `sync --check` fail |
 
-In a v4 configuration, both are named entries under `sources:`: a Git registry uses a `git:` URL and a Marketplace uses a `marketplace:` URL. The resources you pick from each go under `resources:`, and each configuration layer's lockfile records the exact commits and revisions. Older v2 and v3 configurations list Git registries under `registries` and store Marketplace pins in the configuration file under `marketplaces`. See [Sources and resources](./sources-and-resources.md) for the v4 format.
+In a v4 configuration, both are named entries under `sources:`: a Git registry uses a `git:` URL and a Marketplace uses a `marketplace:` URL. The resources you pick from each go under `resources:`, and each configuration layer's lockfile records the exact commits and revisions. Older v2/v3 consumer roots are unsupported; [convert them with an older released migrator before upgrading](../how-to/migrate-configuration.md) rather than using legacy `registries` or `marketplaces` installation keys. See [Sources and resources](./sources-and-resources.md) for the v4 format.
 
 ## Related documentation
 

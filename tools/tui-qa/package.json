@@ -10,13 +10,13 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "check": "pnpm typecheck && tui-test --help",
+    "check": "pnpm typecheck && node -e \"import('@microsoft/tui-test').then(async (tuiTest) => console.log('tui-test', tuiTest.VERSION, 'native sessions', (await tuiTest.sessions()).length))\"",
     "qa": "pnpm build && pnpm qa:compiled",
-    "qa:compiled": "node --test dist/tests/*.test.js && tui-test",
+    "qa:compiled": "node --test dist/tests/*.test.js && node --test --test-concurrency=1 --test-timeout=60000 dist/tests/*.spec.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
-    "@microsoft/tui-test": "0.0.4",
+    "@microsoft/tui-test": "0.1.0",
     "@types/node": "24.10.1",
     "typescript": "5.9.3"
   }

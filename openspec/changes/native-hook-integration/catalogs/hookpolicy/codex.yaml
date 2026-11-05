@@ -1,0 +1,40 @@
+# Draft seed for pkg/harness-compilation/hookpolicy/catalogs/codex.yaml.
+schema: 1
+harness: codex
+evidence:
+  checked: "2026-10-07"
+  refs:
+    - https://developers.openai.com/codex/hooks
+  notes: >-
+    Non-plugin hooks get no path variables; commands run in the session cwd,
+    and Codex recommends resolving repo-local scripts from the git root.
+    PLUGIN_ROOT/PLUGIN_DATA (and CLAUDE_PLUGIN_* compatibility aliases) exist
+    only for plugin hooks. Hooks need hash-based trust before they run.
+    Only the five events with a documented cross-harness counterpart are
+    linked; the rest stay native-only pending payload and timing review.
+    SessionEnd timeouts are limited to 1-3 seconds (default 1).
+
+env: {}
+plugin_env:
+  plugin_root: [PLUGIN_ROOT, CLAUDE_PLUGIN_ROOT]
+  plugin_data: [PLUGIN_DATA, CLAUDE_PLUGIN_DATA]
+
+repository_base: {shell: '"$(git rev-parse --show-toplevel)"'}
+timeout: {unit: seconds}
+matcher: {syntax: regex, anchor: true}
+loads_hooks_of: []
+trust_review: {codes: [materialize.codex.trust-review, materialize.codex.trust-review-pending]}
+
+events:
+  PreToolUse: {canonical: PreToolUse, matcher: tool, types: [command, mcp_tool]}
+  PostToolUse: {canonical: PostToolUse, matcher: tool, types: [command, mcp_tool]}
+  UserPromptSubmit: {canonical: UserPromptSubmit, matcher: none, types: [command, mcp_tool]}
+  Stop: {canonical: Stop, matcher: none, types: [command, mcp_tool]}
+  SessionStart: {canonical: SessionStart, matcher: lifecycle, types: [command, mcp_tool]}
+  PermissionRequest: {matcher: tool, types: [command, mcp_tool]}
+  PreCompact: {matcher: lifecycle, types: [command, mcp_tool]}
+  PostCompact: {matcher: lifecycle, types: [command, mcp_tool]}
+  SubagentStart: {matcher: lifecycle, types: [command, mcp_tool]}
+  SubagentStop: {matcher: lifecycle, types: [command, mcp_tool]}
+  Interrupt: {matcher: none, types: [command, mcp_tool], timeout: {min: 1, max: 3}}
+  SessionEnd: {matcher: lifecycle, types: [command], timeout: {min: 1, max: 3}}

@@ -69,7 +69,22 @@ func PresentFields(fields map[string]bool) map[string]struct{} {
 }
 
 func HookExtraKeys(extra map[string]any, canonical map[string]struct{}, target Target, resource string, source diag.SourceRef) ([]string, []diag.Diagnostic) {
-	reserved := CanonicalFields("event", "type", "matcher", "command", "prompt", "timeout", "hooks")
+	return reservedExtraKeys(extra, canonical, target, resource, source, "event", "type", "matcher", "command", "prompt", "timeout", "hooks", "HookSource")
+}
+
+func SkillModelExtraKeys(extra map[string]any, canonical map[string]struct{}, target Target, resource string, source diag.SourceRef) ([]string, []diag.Diagnostic) {
+	return reservedExtraKeys(extra, canonical, target, resource, source, "model", "ModelSource", "ToolSource")
+}
+
+func ModelExtraKeys(extra map[string]any, canonical map[string]struct{}, target Target, resource string, source diag.SourceRef) ([]string, []diag.Diagnostic) {
+	return reservedExtraKeys(extra, canonical, target, resource, source, "model", "effort", "reasoningEffort", "model_reasoning_effort", "ModelSource", "ToolSource")
+}
+
+func reservedExtraKeys(extra map[string]any, canonical map[string]struct{}, target Target, resource string, source diag.SourceRef, names ...string) ([]string, []diag.Diagnostic) {
+	if len(extra) == 0 {
+		return nil, nil
+	}
+	reserved := CanonicalFields(names...)
 	for key := range canonical {
 		reserved[key] = struct{}{}
 	}
@@ -150,6 +165,13 @@ func McpCredentialDiagnosticsForFields(resource string, source diag.SourceRef, t
 	return mcpCredentialDiagnosticsForFields(resource, source, target, env, headers, oauthClientSecret, nil, fieldPrefix, opts...)
 }
 
+// McpCredentialDiagnosticsWithExtra is McpCredentialDiagnosticsForFields for a
+// server whose unmodeled members are preserved verbatim: it also scans
+// credential-bearing env and header maps and an OAuth client secret in extra.
+func McpCredentialDiagnosticsWithExtra(resource string, source diag.SourceRef, target Target, env map[string]string, extra map[string]any, fieldPrefix string, opts ...Option) []diag.Diagnostic {
+	return mcpCredentialDiagnosticsForFields(resource, source, target, env, nil, "", extra, fieldPrefix, opts...)
+}
+
 func mcpCredentialDiagnosticsForFields(resource string, source diag.SourceRef, target Target, env, headers map[string]string, oauthClientSecret string, extra map[string]any, fieldPrefix string, opts ...Option) []diag.Diagnostic {
 	cfg := Options{}
 	for _, opt := range opts {
@@ -214,6 +236,11 @@ func mcpCredentialExtraFields(extra map[string]any, fieldPrefix string, cfg Opti
 	}
 	if value, ok := extra["oauthClientSecret"].(string); ok && value != "" && !cfg.isInterpolation(value) {
 		fields = append(fields, fieldPrefix+"oauthClientSecret")
+	}
+	if oauth, ok := extra["oauth"].(map[string]any); ok {
+		if value, ok := oauth["clientSecret"].(string); ok && value != "" && !cfg.isInterpolation(value) {
+			fields = append(fields, fieldPrefix+"oauth.clientSecret")
+		}
 	}
 	return fields
 }

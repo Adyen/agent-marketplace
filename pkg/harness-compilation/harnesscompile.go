@@ -1,8 +1,8 @@
 // Package harnesscompile converts AI-agent configuration resources from
 // a canonical source format into vendor-specific layouts.
 //
-// It supports seven conversion targets (Claude Code, Factory Droid, Cursor,
-// Windsurf, Gemini CLI, Devin CLI, and Codex), each with a registered compiler
+// It supports eight conversion targets (Claude Code, Factory Droid, Cursor,
+// Windsurf, Gemini CLI, Devin CLI, Codex, and OpenCode), each with a registered compiler
 // and ingester.
 package harnesscompile
 
@@ -24,6 +24,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/opencodehook"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
@@ -40,6 +41,7 @@ const (
 	TargetGemini   = targetmeta.TargetGemini
 	TargetDevin    = targetmeta.TargetDevin
 	TargetCodex    = targetmeta.TargetCodex
+	TargetOpenCode = targetmeta.TargetOpenCode
 )
 
 // Harness is a backward-compatible alias for Target. It allows callers to
@@ -55,6 +57,7 @@ const (
 	HarnessGemini   Harness = TargetGemini
 	HarnessDevin    Harness = TargetDevin
 	HarnessCodex    Harness = TargetCodex
+	HarnessOpenCode Harness = TargetOpenCode
 )
 
 // TargetDefinition is the shared metadata declaration for a target.
@@ -274,7 +277,7 @@ func IngestBundle(srcFS fs.FS, from Harness) (*ingest.Bundle, error) {
 	if !ok {
 		return nil, fmt.Errorf("harnesscompile.IngestBundle: source %q: %w", from, errSourceNotImplemented)
 	}
-	bundle, err := ing.LoadBundle(srcFS)
+	bundle, err := IngestBundleWithLoader(srcFS, ing.LoadBundle)
 	if err != nil {
 		slog.Error("harness ingest failed", "from", from, "error", err)
 		return nil, err
@@ -385,6 +388,7 @@ func resolveArtifactPathConflicts(outputs []resourceOutput, t Target) ([]Artifac
 		index int
 		kind  ir.ResourceKind
 		name  string
+		path  string
 	}
 	owners := make(map[string]producer)
 	suppressed := make(map[int][]string)
@@ -402,20 +406,30 @@ func resolveArtifactPathConflicts(outputs []resourceOutput, t Target) ([]Artifac
 			if a.Fragment {
 				continue
 			}
-			current := producer{index: i, kind: output.kind, name: output.name}
-			previous, exists := owners[a.Path]
+			key := ir.CaseFoldKey(a.Path)
+			current := producer{index: i, kind: output.kind, name: output.name, path: a.Path}
+			previous, exists := owners[key]
 			if !exists {
-				owners[a.Path] = current
+				owners[key] = current
 				continue
 			}
 			code := diag.CodeBundleConflictDuplicateArtifactPath
 			message := fmt.Sprintf("duplicate artifact path %q produced by %s %q and %s %q; neither resource was emitted",
 				a.Path, previous.kind, previous.name, current.kind, current.name)
 			hint := "Rename one of the conflicting resources or adjust the output path"
+			if previous.path != a.Path {
+				message = fmt.Sprintf("artifact paths %q and %q differ only in letter case and name the same file on case-insensitive filesystems; produced by %s %q and %s %q; neither resource was emitted",
+					previous.path, a.Path, previous.kind, previous.name, current.kind, current.name)
+				hint = "Rename one of the conflicting resources so the names differ by more than letter case"
+			}
 			if previous.kind != current.kind {
 				code = diag.CodeBundleConflictCrossKindArtifactPath
 				message = fmt.Sprintf("%s %q and %s %q both compile to %q; neither artifact was emitted",
 					previous.kind, previous.name, current.kind, current.name, a.Path)
+				if previous.path != a.Path {
+					message = fmt.Sprintf("%s %q and %s %q compile to %q and %q, which differ only in letter case and name the same file on case-insensitive filesystems; neither artifact was emitted",
+						previous.kind, previous.name, current.kind, current.name, previous.path, a.Path)
+				}
 				hint = "Rename one of the conflicting resources: on this target a skill and a command cannot share a name"
 			}
 			diagnostics = append(diagnostics, Diagnostic{
@@ -445,6 +459,67 @@ func resolveArtifactPathConflicts(outputs []resourceOutput, t Target) ([]Artifac
 		artifacts = append(artifacts, output.artifacts...)
 	}
 	return artifacts, diagnostics, skipped
+}
+
+// ValidateOpenCodeHookBudget checks accepted compiler artifacts against the
+// fixed adapter's invocation budget. Callers must collect the complete desired
+// installation after per-resource suppression, restore installation-relative
+// paths, and preserve the existing hook generation when this reports an error.
+// It performs no I/O; the runtime retains its independent fail-closed safeguard.
+func ValidateOpenCodeHookBudget(artifacts []Artifact) *Diagnostic {
+	declarations := 0
+	for _, a := range artifacts {
+		if opencodehook.IsDeclarationPath(a.Path) {
+			declarations++
+		}
+	}
+	if declarations <= opencodehook.MaxDeclarationsPerToolEvent {
+		return nil
+	}
+	return &Diagnostic{
+		Code:     diag.CodeHookOpenCodeUnsupported,
+		Severity: SeverityError,
+		Target:   string(TargetOpenCode),
+		Message:  fmt.Sprintf("accepted OpenCode hook declarations (%d) exceed the supported aggregate invocation budget of %d handlers per tool event; no hook generation was emitted", declarations, opencodehook.MaxDeclarationsPerToolEvent),
+		Hint:     "Reduce the selected hooks or split them across separate installations",
+	}
+}
+
+func enforceOpenCodeHookBudget(t Target, outputs []resourceOutput, artifacts []Artifact) ([]Artifact, []SkippedResource, *Diagnostic) {
+	if t != TargetOpenCode {
+		return artifacts, nil, nil
+	}
+	diagnostic := ValidateOpenCodeHookBudget(artifacts)
+	if diagnostic == nil {
+		return artifacts, nil, nil
+	}
+	kept := make([]Artifact, 0, len(artifacts))
+	for _, a := range artifacts {
+		if opencodehook.IsDeclarationPath(a.Path) || a.Path == opencodehook.AdapterPath {
+			continue
+		}
+		kept = append(kept, a)
+	}
+	var skipped []SkippedResource
+	for _, output := range outputs {
+		if output.kind != ir.KindHook {
+			continue
+		}
+		contributed := false
+		for _, a := range output.artifacts {
+			if opencodehook.IsDeclarationPath(a.Path) {
+				contributed = true
+				break
+			}
+		}
+		if !contributed {
+			continue
+		}
+		skipped = append(skipped, SkippedResource{Kind: output.kind, Name: output.name, Codes: []string{diag.CodeHookOpenCodeUnsupported}})
+		logResourceSkip(t, output.kind, output.name, []string{diag.CodeHookOpenCodeUnsupported}, 2, "aggregate invocation budget exceeded")
+	}
+	slog.Error("bundle exceeded the OpenCode hook invocation budget", "target", t, "budget", opencodehook.MaxDeclarationsPerToolEvent, "suppressed_hooks", len(skipped))
+	return kept, skipped, diagnostic
 }
 
 // compileBundleFromIR compiles all resources in an ingest.Bundle to the
@@ -519,6 +594,18 @@ func compileBundleFromIR(b *ingest.Bundle, t Target, opts ...Option) (*Result, e
 	allArtifacts, conflictDiagnostics, conflictSkips := resolveArtifactPathConflicts(outputs, t)
 	allDiagnostics = append(allDiagnostics, conflictDiagnostics...)
 	skipped = append(skipped, conflictSkips...)
+
+	// OpenCode hooks share one aggregate runtime budget per tool event. When
+	// the accepted declarations of a bundle exceed it, the runtime would
+	// refuse the whole generation, so conversion rejects the generation
+	// before publication instead of installing an unusable one. The runtime
+	// safeguard in the fixed adapter stays in place for every other path.
+	budgetArtifacts, budgetSkips, budgetDiag := enforceOpenCodeHookBudget(t, outputs, allArtifacts)
+	if budgetDiag != nil {
+		allDiagnostics = append(allDiagnostics, *budgetDiag)
+		skipped = append(skipped, budgetSkips...)
+		allArtifacts = budgetArtifacts
+	}
 
 	// Merge fragment artifacts. Only fragments from resources that survived the
 	// rules above take part, so an aggregate is complete with respect to the
@@ -664,7 +751,8 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 	}
 
 	report = &WriteReport{OutDir: outDir, Partial: partial, SkippedResources: r.Skipped}
-	regularArtifacts, mergeArtifacts, err := prepareMergeArtifacts(artifacts, outDir, report)
+	originalFiles := make(map[string]*fsboundary.Identity, len(artifacts))
+	regularArtifacts, mergeArtifacts, err := prepareMergeArtifacts(artifacts, outDir, report, originalFiles)
 	if err != nil {
 		return nil, err
 	}
@@ -675,17 +763,20 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 
 	// Determine which artifacts to write vs skip.
 	existingModes := make(map[string]fs.FileMode)
-	originalFiles := make(map[string]*fsboundary.Identity, len(artifacts))
+	writeArtifacts := artifacts[:0]
 	for _, a := range artifacts {
 		destPath := filepath.Join(outDir, filepath.FromSlash(a.Path))
 
 		var original fsboundary.Identity
 		matches, exists, err := fileMatchesBytes(destPath, a.Bytes, &original)
-		if exists {
-			originalFiles[a.Path] = &original
-		}
 		if err != nil {
 			return nil, fmt.Errorf("harnesscompile.Materialize: stat %s: %w", a.Path, err)
+		}
+		if input, merged := originalFiles[a.Path]; merged && (exists != (input != nil) || exists && !original.SameState(*input)) {
+			return nil, fmt.Errorf("%w: merge input changed before comparison: %s", fsboundary.ErrGenerationConflict, a.Path)
+		}
+		if exists {
+			originalFiles[a.Path] = &original
 		}
 		if exists && a.MergeWithExisting {
 			existingModes[a.Path] = original.Mode.Perm()
@@ -701,7 +792,10 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 		}
 
 		report.Written = append(report.Written, a.Path)
+		writeArtifacts = append(writeArtifacts, a)
 	}
+	// Compact only the local work list; artifactPaths still protects skipped files.
+	artifacts = writeArtifacts
 
 	// Compute stale files for prune mode. A partial result never prunes: the
 	// output of a skipped resource is indistinguishable from the output of a
@@ -877,9 +971,6 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 
 	// Write artifacts to staging directory.
 	for _, a := range artifacts {
-		if sliceContains(report.Skipped, a.Path) {
-			continue
-		}
 		parent, dirErr := staged.EnsurePath(filepath.Dir(filepath.FromSlash(a.Path)))
 		if dirErr != nil {
 			return nil, fmt.Errorf("harnesscompile.Materialize: mkdir %s: %w", filepath.Dir(a.Path), dirErr)
@@ -915,9 +1006,6 @@ func Materialize(r *Result, outDir string, opts ...WriteOption) (report *WriteRe
 	slog.Debug("SDK artifacts staged", "out_dir", outDir, "staged", stagingDir, "phase", "sdk-staged")
 	// Move staged files onto outDir.
 	for _, a := range artifacts {
-		if sliceContains(report.Skipped, a.Path) {
-			continue
-		}
 		if rootErr := revalidateMaterializeRoot(outDir, rootSnapshot); rootErr != nil {
 			return nil, errors.Join(fsboundary.ErrGenerationConflict, rootErr)
 		}
@@ -1048,13 +1136,17 @@ func coalesceDuplicateArtifacts(artifacts []Artifact) ([]Artifact, error) {
 	seen := make(map[string]int, len(artifacts))
 	out := make([]Artifact, 0, len(artifacts))
 	for _, a := range artifacts {
-		if idx, ok := seen[a.Path]; ok {
+		key := ir.CaseFoldKey(a.Path)
+		if idx, ok := seen[key]; ok {
+			if out[idx].Path != a.Path {
+				return nil, fmt.Errorf("artifact paths %q and %q differ only in letter case and name the same file on case-insensitive filesystems", out[idx].Path, a.Path)
+			}
 			if !sameArtifact(out[idx], a) {
 				return nil, fmt.Errorf("duplicate artifact path with different contents: %s", a.Path)
 			}
 			continue
 		}
-		seen[a.Path] = len(out)
+		seen[key] = len(out)
 		out = append(out, a)
 	}
 	return out, nil
@@ -1076,7 +1168,7 @@ func sameArtifact(a, b Artifact) bool {
 		a.DedupeFragmentEntries == b.DedupeFragmentEntries
 }
 
-func prepareMergeArtifacts(artifacts []Artifact, outDir string, report *WriteReport) ([]Artifact, []Artifact, error) {
+func prepareMergeArtifacts(artifacts []Artifact, outDir string, report *WriteReport, originalFiles map[string]*fsboundary.Identity) ([]Artifact, []Artifact, error) {
 	var regular []Artifact
 	var merged []Artifact
 	for _, a := range artifacts {
@@ -1089,10 +1181,12 @@ func prepareMergeArtifacts(artifacts []Artifact, outDir string, report *WriteRep
 			continue
 		}
 		destPath := filepath.Join(outDir, filepath.FromSlash(a.Path))
-		existing, err := os.ReadFile(destPath)
-		if err != nil && !os.IsNotExist(err) {
+		existing, input, err := readMaterializeFile(destPath)
+		if err != nil {
 			return nil, nil, fmt.Errorf("harnesscompile.Materialize: read %s: %w", a.Path, err)
 		}
+		originalFiles[a.Path] = input
+		slog.Debug("SDK aggregate merge input captured", "path", destPath, "phase", "sdk-merge-input")
 		result, mergeReport, err := artifact.MergeWithExistingJSON(existing, a.Bytes, policy.MarkerField, policy.MarkerValue)
 		if err != nil {
 			// The merge layer only sees bytes, so the destination path is added
@@ -1212,16 +1306,25 @@ func validateArtifactPath(p, outDir string) error {
 // fileMatchesBytes reports whether path exists and has identical contents to
 // expected.
 func fileMatchesBytes(path string, expected []byte, observed *fsboundary.Identity) (matches, exists bool, err error) {
+	data, identity, err := readMaterializeFile(path)
+	if err != nil || identity == nil {
+		return false, false, err
+	}
+	*observed = *identity
+	return bytes.Equal(data, expected), true, nil
+}
+
+func readMaterializeFile(path string) (data []byte, identity *fsboundary.Identity, err error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
-		return false, false, err
+		return nil, nil, err
 	}
 	root, err := fsboundary.OpenDir(filepath.Dir(absolute))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath) {
-			return false, false, nil
+			return nil, nil, nil
 		}
-		return false, false, err
+		return nil, nil, err
 	}
 	defer func() {
 		if closeErr := root.Close(); closeErr != nil {
@@ -1230,33 +1333,53 @@ func fileMatchesBytes(path string, expected []byte, observed *fsboundary.Identit
 	}()
 	native, err := root.NativeRoot()
 	if err != nil {
-		return false, false, err
+		return nil, nil, err
 	}
 	defer func() {
 		if closeErr := native.Close(); closeErr != nil {
 			err = errors.Join(err, closeErr)
 		}
 	}()
-	info, err := native.Lstat(filepath.Base(absolute))
+	name := filepath.Base(absolute)
+	info, err := native.Lstat(name)
 	if errors.Is(err, fs.ErrNotExist) {
-		return false, false, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return false, false, err
+		return nil, nil, err
 	}
 	original, err := fsboundary.FileInfoIdentity(info)
 	if err != nil {
-		return false, false, err
+		return nil, nil, err
 	}
-	data, identity, err := root.ReadFile(filepath.Base(absolute), info.Size())
+	file, opened, err := root.OpenFile(name)
 	if err != nil {
-		return false, false, err
+		return nil, nil, err
 	}
-	if !identity.SameState(original) {
-		return false, false, fsboundary.ErrGenerationConflict
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	if !opened.SameState(original) {
+		return nil, nil, fsboundary.ErrGenerationConflict
 	}
-	*observed = identity
-	return bytes.Equal(data, expected), true, nil
+	data, read, err := fsboundary.ReadFile(file, opened.Size)
+	if err != nil {
+		return nil, nil, err
+	}
+	after, err := native.Lstat(name)
+	if err != nil {
+		return nil, nil, errors.Join(fsboundary.ErrGenerationConflict, err)
+	}
+	named, err := fsboundary.FileInfoIdentity(after)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !read.SameState(original) || !named.SameState(original) {
+		return nil, nil, fsboundary.ErrGenerationConflict
+	}
+	return data, &read, nil
 }
 
 type materializeRootSnapshot struct {
@@ -1628,7 +1751,7 @@ type MergeFileReport struct {
 // options. Compile and compileBundleFromIR share it so a newly added option can
 // never be wired into one entry point and forgotten in the other.
 func compileOptions(cfg *config) []compile.Option {
-	copts := make([]compile.Option, 0, 5)
+	copts := make([]compile.Option, 0, 6)
 	if cfg.modelOverride != nil {
 		copts = append(copts, compile.WithModelOverride(cfg.modelOverride))
 	}
@@ -1641,6 +1764,9 @@ func compileOptions(cfg *config) []compile.Option {
 	if cfg.managedByField != "" {
 		copts = append(copts, compile.WithManagedBy(cfg.managedByField, cfg.managedByValue))
 	}
+	if cfg.nativeHookOutput {
+		copts = append(copts, compile.WithNativeHookOutput())
+	}
 	if cfg.scope != "" {
 		copts = append(copts, compile.WithScope(cfg.scope))
 	}
@@ -1651,12 +1777,13 @@ func compileOptions(cfg *config) []compile.Option {
 type Option func(*config)
 
 type config struct {
-	modelOverride  map[string]string
-	toolOverride   map[string]string
-	pluginRoot     string
-	managedByField string
-	managedByValue string
-	scope          Scope
+	modelOverride    map[string]string
+	toolOverride     map[string]string
+	pluginRoot       string
+	managedByField   string
+	managedByValue   string
+	nativeHookOutput bool
+	scope            Scope
 }
 
 // Scope is the installation scope a caller compiles for. It is re-exported
@@ -1699,4 +1826,8 @@ func WithManagedBy(field, value string) Option {
 		c.managedByField = field
 		c.managedByValue = value
 	}
+}
+
+func WithNativeHookOutput() Option {
+	return func(c *config) { c.nativeHookOutput = true }
 }

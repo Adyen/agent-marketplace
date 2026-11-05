@@ -75,8 +75,12 @@ are "worker" (background indexing), "api" (HTTP API), and "all" (both).`,
 
 			var wg sync.WaitGroup
 			errCh := make(chan error, 2)
+			backfillCtx, stopBackfill := context.WithCancel(ctx)
+			defer stopBackfill()
+			var backfillDone <-chan struct{}
 
 			if role == "worker" || role == "all" {
+				backfillDone = worker.StartPlaceholderBackfill(backfillCtx, deps)
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
@@ -100,6 +104,11 @@ are "worker" (background indexing), "api" (HTTP API), and "all" (both).`,
 			}
 
 			wg.Wait()
+			// The backfill reads the stores; stop it and wait before they close.
+			stopBackfill()
+			if backfillDone != nil {
+				<-backfillDone
+			}
 			close(errCh)
 			for err := range errCh {
 				if err != nil {
@@ -155,9 +164,9 @@ registry is provided, all configured registries are reindexed.`,
 				return err
 			}
 
-			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			sigCtx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			meta, blobs, err := mpconfig.OpenStores(ctx, cfg)
+			meta, blobs, err := mpconfig.OpenStores(sigCtx, cfg)
 			if err != nil {
 				slog.Error("reindex failed", "reason", "open stores", "error", err)
 				return fmt.Errorf("open stores: %w", err)
@@ -171,12 +180,12 @@ registry is provided, all configured registries are reindexed.`,
 			}
 			// Reindex is a worker-role operation too: do not perform registry
 			// acquisition while the live revocation desired set is stale.
-			if err := worker.EnsureRevocations(ctx, deps); err != nil {
+			if err := worker.EnsureRevocations(sigCtx, deps); err != nil {
 				slog.Error("reindex failed", "reason", "ensure revocations", "error", err)
 				return fmt.Errorf("ensure revocations: %w", err)
 			}
 
-			ctx, cancel := context.WithTimeout(ctx, time.Hour)
+			ctx, cancel := context.WithTimeout(sigCtx, time.Hour)
 			defer cancel()
 
 			targets, err := reindexTargets(ctx, meta, cfg, registryArg)
@@ -196,6 +205,7 @@ registry is provided, all configured registries are reindexed.`,
 				slog.Error("reindex failed", "reason", "integrity check", "error", err)
 				reindexErrs = append(reindexErrs, err)
 			}
+			_ = worker.BackfillPlaceholders(sigCtx, deps)
 			if err := errors.Join(reindexErrs...); err != nil {
 				return err
 			}

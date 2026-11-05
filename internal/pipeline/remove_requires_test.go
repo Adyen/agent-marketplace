@@ -28,7 +28,7 @@ func TestRequiresHeldPinResolvesAsRequiresHeldNotCollectionOnly(t *testing.T) {
 	if matches != 1 || pin.Name != "helper" || entry.InstanceID != "mp" {
 		t.Fatalf("requires-held pin must resolve through the requires-held path, got matches=%d pin=%#v", matches, pin)
 	}
-	if _, ok := marketplaceCollectionOnlyPinByName(cfg, "helper", ir.KindSkill, true); ok {
+	if _, _, ok := marketplaceCollectionOnlyPinByName(cfg, "helper", ir.KindSkill, true); ok {
 		t.Fatal("requires-held pin must not be reported as held only through a collection")
 	}
 }

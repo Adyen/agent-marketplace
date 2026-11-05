@@ -1,0 +1,579 @@
+{
+  "claude/v1": {
+    "schema_version": "v1",
+    "generator": "agent-marketplace source-revision/v1",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "PreToolUse-command",
+        "content_digest": "sha256:6fac0c92dc5cf4f0d3e7639ac9d5221f95de655b5c552cb72060c2a04a34d409",
+        "archive_digest": "sha256:6fac0c92dc5cf4f0d3e7639ac9d5221f95de655b5c552cb72060c2a04a34d409"
+      },
+      {
+        "kind": "subagent",
+        "name": "review",
+        "content_digest": "sha256:e049777bee957e57cbe1733fec429067f84011cea78a37139797da84a31f8cde",
+        "archive_digest": "sha256:e049777bee957e57cbe1733fec429067f84011cea78a37139797da84a31f8cde"
+      }
+    ],
+    "revision_digest": "sha256:c1665bf2ab13d77deade08109e965961700733e41e8c5542c30a777a37c19454"
+  },
+  "claude/v2": {
+    "schema_version": "v2",
+    "generator": "agent-marketplace source-revision/v2",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "PreToolUse-command",
+        "content_digest": "sha256:6fac0c92dc5cf4f0d3e7639ac9d5221f95de655b5c552cb72060c2a04a34d409",
+        "archive_digest": "sha256:7355e210d3df4be2c8f044d5922f4d1ffe931f0bd9097aeec01f879318471934",
+        "support_files": {
+          "check.sh": "sha256:f837d00a2bac29fc731ebaf85ef8c8db0b5cc14d301040b2574fc23c47c73862"
+        }
+      },
+      {
+        "kind": "subagent",
+        "name": "review",
+        "content_digest": "sha256:e049777bee957e57cbe1733fec429067f84011cea78a37139797da84a31f8cde",
+        "archive_digest": "sha256:e049777bee957e57cbe1733fec429067f84011cea78a37139797da84a31f8cde"
+      }
+    ],
+    "revision_digest": "sha256:183292580e532ab8f98881099fca1d794c0727bdf78908ec98ea0970a4060abb"
+  },
+  "claude/v3": {
+    "schema_version": "v3",
+    "generator": "agent-marketplace source-revision/v3",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "PreToolUse-command",
+        "content_digest": "sha256:6fac0c92dc5cf4f0d3e7639ac9d5221f95de655b5c552cb72060c2a04a34d409",
+        "archive_digest": "sha256:7355e210d3df4be2c8f044d5922f4d1ffe931f0bd9097aeec01f879318471934",
+        "support_files": {
+          "check.sh": "sha256:f837d00a2bac29fc731ebaf85ef8c8db0b5cc14d301040b2574fc23c47c73862"
+        }
+      },
+      {
+        "kind": "subagent",
+        "name": "review",
+        "content_digest": "sha256:e049777bee957e57cbe1733fec429067f84011cea78a37139797da84a31f8cde",
+        "archive_digest": "sha256:e049777bee957e57cbe1733fec429067f84011cea78a37139797da84a31f8cde"
+      }
+    ],
+    "revision_digest": "sha256:4656189ee79cad4da969d9f5fb7a68f7514f98e7d468ef79d07e70fcf5731d97"
+  },
+  "claude/v4": {
+    "schema_version": "v4",
+    "generator": "agent-marketplace source-revision/v4",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "PreToolUse-command",
+        "content_digest": "sha256:6fac0c92dc5cf4f0d3e7639ac9d5221f95de655b5c552cb72060c2a04a34d409",
+        "archive_digest": "sha256:7355e210d3df4be2c8f044d5922f4d1ffe931f0bd9097aeec01f879318471934",
+        "support_files": {
+          "check.sh": "sha256:f837d00a2bac29fc731ebaf85ef8c8db0b5cc14d301040b2574fc23c47c73862"
+        }
+      },
+      {
+        "kind": "subagent",
+        "name": "review",
+        "content_digest": "sha256:e049777bee957e57cbe1733fec429067f84011cea78a37139797da84a31f8cde",
+        "archive_digest": "sha256:e049777bee957e57cbe1733fec429067f84011cea78a37139797da84a31f8cde"
+      }
+    ],
+    "revision_digest": "sha256:0374a866439dae5df1c6555d7f462562e9ac9284d8e2759e01edfdfc218d37f7"
+  },
+  "codex/v1": {
+    "schema_version": "v1",
+    "generator": "agent-marketplace source-revision/v1",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "pretooluse-1-1",
+        "content_digest": "sha256:561304e85510cf9de770ee5ee6e4d5449473c10d0a25e7e087e26cf4e3b18123",
+        "archive_digest": "sha256:561304e85510cf9de770ee5ee6e4d5449473c10d0a25e7e087e26cf4e3b18123"
+      },
+      {
+        "kind": "subagent",
+        "name": "review",
+        "content_digest": "sha256:98496385891a95bc4a1627d7eb77d6b4790734e7642cd143566f66f0f1c31f16",
+        "archive_digest": "sha256:98496385891a95bc4a1627d7eb77d6b4790734e7642cd143566f66f0f1c31f16"
+      }
+    ],
+    "revision_digest": "sha256:7e21414bd08901a854927b7a222849708045831b899e2f55b29487388676159d"
+  },
+  "codex/v2": {
+    "schema_version": "v2",
+    "generator": "agent-marketplace source-revision/v2",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "pretooluse-1-1",
+        "content_digest": "sha256:561304e85510cf9de770ee5ee6e4d5449473c10d0a25e7e087e26cf4e3b18123",
+        "archive_digest": "sha256:08b0907902d4cc14b2af99053c7bf80d11dd1f3a245996fba9a8a71ff6c9724d",
+        "support_files": {
+          "check.sh": "sha256:f837d00a2bac29fc731ebaf85ef8c8db0b5cc14d301040b2574fc23c47c73862"
+        }
+      },
+      {
+        "kind": "subagent",
+        "name": "review",
+        "content_digest": "sha256:98496385891a95bc4a1627d7eb77d6b4790734e7642cd143566f66f0f1c31f16",
+        "archive_digest": "sha256:98496385891a95bc4a1627d7eb77d6b4790734e7642cd143566f66f0f1c31f16"
+      }
+    ],
+    "revision_digest": "sha256:07c6d6ad17aeb03e8fc7dd384aaba299bb5169f826ccd231791b4cb5bd4540d5"
+  },
+  "codex/v3": {
+    "schema_version": "v3",
+    "generator": "agent-marketplace source-revision/v3",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "pretooluse-1-1",
+        "content_digest": "sha256:561304e85510cf9de770ee5ee6e4d5449473c10d0a25e7e087e26cf4e3b18123",
+        "archive_digest": "sha256:08b0907902d4cc14b2af99053c7bf80d11dd1f3a245996fba9a8a71ff6c9724d",
+        "support_files": {
+          "check.sh": "sha256:f837d00a2bac29fc731ebaf85ef8c8db0b5cc14d301040b2574fc23c47c73862"
+        }
+      },
+      {
+        "kind": "subagent",
+        "name": "review",
+        "content_digest": "sha256:98496385891a95bc4a1627d7eb77d6b4790734e7642cd143566f66f0f1c31f16",
+        "archive_digest": "sha256:98496385891a95bc4a1627d7eb77d6b4790734e7642cd143566f66f0f1c31f16"
+      }
+    ],
+    "revision_digest": "sha256:26777af8d3b7f223b37b7421d40bf3540ab5e1607d4179d0ebab59c9024eedd6"
+  },
+  "codex/v4": {
+    "schema_version": "v4",
+    "generator": "agent-marketplace source-revision/v4",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "pretooluse-1-1",
+        "content_digest": "sha256:561304e85510cf9de770ee5ee6e4d5449473c10d0a25e7e087e26cf4e3b18123",
+        "archive_digest": "sha256:08b0907902d4cc14b2af99053c7bf80d11dd1f3a245996fba9a8a71ff6c9724d",
+        "support_files": {
+          "check.sh": "sha256:f837d00a2bac29fc731ebaf85ef8c8db0b5cc14d301040b2574fc23c47c73862"
+        }
+      },
+      {
+        "kind": "subagent",
+        "name": "review",
+        "content_digest": "sha256:98496385891a95bc4a1627d7eb77d6b4790734e7642cd143566f66f0f1c31f16",
+        "archive_digest": "sha256:98496385891a95bc4a1627d7eb77d6b4790734e7642cd143566f66f0f1c31f16"
+      }
+    ],
+    "revision_digest": "sha256:5d4c679b0d2ed0e1fe9bedc3f176e183c3f4aca4567ead7c7f1a1a8ca13d0184"
+  },
+  "cursor/v1": {
+    "schema_version": "v1",
+    "generator": "agent-marketplace source-revision/v1",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "PreToolUse-command",
+        "content_digest": "sha256:6c95efd13b61d087c870b636c9b7bcd146084a2d1ec513fa0b80f3274dbcdbd5",
+        "archive_digest": "sha256:6c95efd13b61d087c870b636c9b7bcd146084a2d1ec513fa0b80f3274dbcdbd5"
+      },
+      {
+        "kind": "subagent",
+        "name": "review",
+        "content_digest": "sha256:5b9d3bdfcf10ae0cd8692b394f681f63b31e58f33eab305a29b28d0d909cf5ef",
+        "archive_digest": "sha256:5b9d3bdfcf10ae0cd8692b394f681f63b31e58f33eab305a29b28d0d909cf5ef"
+      }
+    ],
+    "revision_digest": "sha256:e65624f7e68234dfbb890ba2b97f7859e92997a70b8554a7ec804c118eb31c0f"
+  },
+  "cursor/v2": {
+    "schema_version": "v2",
+    "generator": "agent-marketplace source-revision/v2",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "PreToolUse-command",
+        "content_digest": "sha256:6c95efd13b61d087c870b636c9b7bcd146084a2d1ec513fa0b80f3274dbcdbd5",
+        "archive_digest": "sha256:2665b96d69504b8d395ed450f5802bc09dec04812534a270a9044cfb0164c60c",
+        "support_files": {
+          "check.sh": "sha256:f837d00a2bac29fc731ebaf85ef8c8db0b5cc14d301040b2574fc23c47c73862"
+        }
+      },
+      {
+        "kind": "subagent",
+        "name": "review",
+        "content_digest": "sha256:5b9d3bdfcf10ae0cd8692b394f681f63b31e58f33eab305a29b28d0d909cf5ef",
+        "archive_digest": "sha256:5b9d3bdfcf10ae0cd8692b394f681f63b31e58f33eab305a29b28d0d909cf5ef"
+      }
+    ],
+    "revision_digest": "sha256:4ee22010652a278bbbec21bdf8dd8776a19867ce709153b0b325fb6047ad3eb0"
+  },
+  "cursor/v3": {
+    "schema_version": "v3",
+    "generator": "agent-marketplace source-revision/v3",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "PreToolUse-command",
+        "content_digest": "sha256:6c95efd13b61d087c870b636c9b7bcd146084a2d1ec513fa0b80f3274dbcdbd5",
+        "archive_digest": "sha256:2665b96d69504b8d395ed450f5802bc09dec04812534a270a9044cfb0164c60c",
+        "support_files": {
+          "check.sh": "sha256:f837d00a2bac29fc731ebaf85ef8c8db0b5cc14d301040b2574fc23c47c73862"
+        }
+      },
+      {
+        "kind": "subagent",
+        "name": "review",
+        "content_digest": "sha256:5b9d3bdfcf10ae0cd8692b394f681f63b31e58f33eab305a29b28d0d909cf5ef",
+        "archive_digest": "sha256:5b9d3bdfcf10ae0cd8692b394f681f63b31e58f33eab305a29b28d0d909cf5ef"
+      }
+    ],
+    "revision_digest": "sha256:69053f0902ac81c73fca62bb36362422521dc4a0d2a40b5c37740717e2ce3aaa"
+  },
+  "cursor/v4": {
+    "schema_version": "v4",
+    "generator": "agent-marketplace source-revision/v4",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "PreToolUse-command",
+        "content_digest": "sha256:6c95efd13b61d087c870b636c9b7bcd146084a2d1ec513fa0b80f3274dbcdbd5",
+        "archive_digest": "sha256:2665b96d69504b8d395ed450f5802bc09dec04812534a270a9044cfb0164c60c",
+        "support_files": {
+          "check.sh": "sha256:f837d00a2bac29fc731ebaf85ef8c8db0b5cc14d301040b2574fc23c47c73862"
+        }
+      },
+      {
+        "kind": "subagent",
+        "name": "review",
+        "content_digest": "sha256:5b9d3bdfcf10ae0cd8692b394f681f63b31e58f33eab305a29b28d0d909cf5ef",
+        "archive_digest": "sha256:5b9d3bdfcf10ae0cd8692b394f681f63b31e58f33eab305a29b28d0d909cf5ef"
+      }
+    ],
+    "revision_digest": "sha256:c25a7fb02b3c1e11ad1b8ffe1ed232fff2131bdca2e7f041abf875beee658033"
+  },
+  "devin/v1": {
+    "schema_version": "v1",
+    "generator": "agent-marketplace source-revision/v1",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "PostCompaction-command",
+        "content_digest": "sha256:9e4bdabdcf32fbfc8249c9451442f3a8919407f4f9121737aaa09793a9820eaa",
+        "archive_digest": "sha256:9e4bdabdcf32fbfc8249c9451442f3a8919407f4f9121737aaa09793a9820eaa"
+      },
+      {
+        "kind": "subagent",
+        "name": "review",
+        "content_digest": "sha256:c691291be959737d8ffce451949ef89672ae24243e5f120b35a280743969af4e",
+        "archive_digest": "sha256:c691291be959737d8ffce451949ef89672ae24243e5f120b35a280743969af4e"
+      }
+    ],
+    "revision_digest": "sha256:1325c0684298b11e23194becdfe96ecd4bfec8d03097b8e8b7f5cec19e493686"
+  },
+  "devin/v2": {
+    "schema_version": "v2",
+    "generator": "agent-marketplace source-revision/v2",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "PostCompaction-command",
+        "content_digest": "sha256:9e4bdabdcf32fbfc8249c9451442f3a8919407f4f9121737aaa09793a9820eaa",
+        "archive_digest": "sha256:27392a5ecfbe89cfb617f43ebd87997947e6f4a0638de5c9d8e8bbb06bed12ab",
+        "support_files": {
+          "check.sh": "sha256:f837d00a2bac29fc731ebaf85ef8c8db0b5cc14d301040b2574fc23c47c73862",
+          "hooks.v1.json": "sha256:9e4bdabdcf32fbfc8249c9451442f3a8919407f4f9121737aaa09793a9820eaa"
+        }
+      },
+      {
+        "kind": "subagent",
+        "name": "review",
+        "content_digest": "sha256:c691291be959737d8ffce451949ef89672ae24243e5f120b35a280743969af4e",
+        "archive_digest": "sha256:c691291be959737d8ffce451949ef89672ae24243e5f120b35a280743969af4e"
+      }
+    ],
+    "revision_digest": "sha256:9c85d48d97c38c0741091ff0de583f7e0fe486bc4e60fddd714103ca39d922b0"
+  },
+  "devin/v3": {
+    "schema_version": "v3",
+    "generator": "agent-marketplace source-revision/v3",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "PostCompaction-command",
+        "content_digest": "sha256:9e4bdabdcf32fbfc8249c9451442f3a8919407f4f9121737aaa09793a9820eaa",
+        "archive_digest": "sha256:27392a5ecfbe89cfb617f43ebd87997947e6f4a0638de5c9d8e8bbb06bed12ab",
+        "support_files": {
+          "check.sh": "sha256:f837d00a2bac29fc731ebaf85ef8c8db0b5cc14d301040b2574fc23c47c73862",
+          "hooks.v1.json": "sha256:9e4bdabdcf32fbfc8249c9451442f3a8919407f4f9121737aaa09793a9820eaa"
+        }
+      },
+      {
+        "kind": "subagent",
+        "name": "review",
+        "content_digest": "sha256:c691291be959737d8ffce451949ef89672ae24243e5f120b35a280743969af4e",
+        "archive_digest": "sha256:c691291be959737d8ffce451949ef89672ae24243e5f120b35a280743969af4e"
+      }
+    ],
+    "revision_digest": "sha256:7e7e5cccbae8e826673247a00263713e3b2ee5ba45426d49658f227be84d0b53"
+  },
+  "devin/v4": {
+    "schema_version": "v4",
+    "generator": "agent-marketplace source-revision/v4",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "PostCompaction-command",
+        "content_digest": "sha256:9e4bdabdcf32fbfc8249c9451442f3a8919407f4f9121737aaa09793a9820eaa",
+        "archive_digest": "sha256:27392a5ecfbe89cfb617f43ebd87997947e6f4a0638de5c9d8e8bbb06bed12ab",
+        "support_files": {
+          "check.sh": "sha256:f837d00a2bac29fc731ebaf85ef8c8db0b5cc14d301040b2574fc23c47c73862",
+          "hooks.v1.json": "sha256:9e4bdabdcf32fbfc8249c9451442f3a8919407f4f9121737aaa09793a9820eaa"
+        }
+      },
+      {
+        "kind": "subagent",
+        "name": "review",
+        "content_digest": "sha256:c691291be959737d8ffce451949ef89672ae24243e5f120b35a280743969af4e",
+        "archive_digest": "sha256:c691291be959737d8ffce451949ef89672ae24243e5f120b35a280743969af4e"
+      }
+    ],
+    "revision_digest": "sha256:799225ec9c56308ed61d2b512cb8c1acb2ea9de9b8d62b0fa840ca80eb872518"
+  },
+  "factory/v1": {
+    "schema_version": "v1",
+    "generator": "agent-marketplace source-revision/v1",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "PreToolUse-command",
+        "content_digest": "sha256:6aff9aec1c5e6b3d5979edfb8dfb4a67be94c16f8f0e1fa4f3fdcbd17d7c8d6c",
+        "archive_digest": "sha256:6aff9aec1c5e6b3d5979edfb8dfb4a67be94c16f8f0e1fa4f3fdcbd17d7c8d6c"
+      },
+      {
+        "kind": "subagent",
+        "name": "review",
+        "content_digest": "sha256:2b8c4e574b21b3b1a4251c8cf9f87face1568297b73d55a19956694791dad77e",
+        "archive_digest": "sha256:2b8c4e574b21b3b1a4251c8cf9f87face1568297b73d55a19956694791dad77e"
+      }
+    ],
+    "revision_digest": "sha256:dbe6ed34868fb290935d311df5c1a1da6b4ed3547515c12b2251041b1c9dc265"
+  },
+  "factory/v2": {
+    "schema_version": "v2",
+    "generator": "agent-marketplace source-revision/v2",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "PreToolUse-command",
+        "content_digest": "sha256:6aff9aec1c5e6b3d5979edfb8dfb4a67be94c16f8f0e1fa4f3fdcbd17d7c8d6c",
+        "archive_digest": "sha256:f3764fdc7c705bfd9fcfcf73e1105a0f4044ae07ffcffd70396eee7e2276dd05",
+        "support_files": {
+          "check.sh": "sha256:f837d00a2bac29fc731ebaf85ef8c8db0b5cc14d301040b2574fc23c47c73862"
+        }
+      },
+      {
+        "kind": "subagent",
+        "name": "review",
+        "content_digest": "sha256:2b8c4e574b21b3b1a4251c8cf9f87face1568297b73d55a19956694791dad77e",
+        "archive_digest": "sha256:2b8c4e574b21b3b1a4251c8cf9f87face1568297b73d55a19956694791dad77e"
+      }
+    ],
+    "revision_digest": "sha256:b4898d6bd61f821760494fe4df2bccbf1069628be2b9cdb3b6a4d1295bd25c1a"
+  },
+  "factory/v3": {
+    "schema_version": "v3",
+    "generator": "agent-marketplace source-revision/v3",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "PreToolUse-command",
+        "content_digest": "sha256:6aff9aec1c5e6b3d5979edfb8dfb4a67be94c16f8f0e1fa4f3fdcbd17d7c8d6c",
+        "archive_digest": "sha256:f3764fdc7c705bfd9fcfcf73e1105a0f4044ae07ffcffd70396eee7e2276dd05",
+        "support_files": {
+          "check.sh": "sha256:f837d00a2bac29fc731ebaf85ef8c8db0b5cc14d301040b2574fc23c47c73862"
+        }
+      },
+      {
+        "kind": "subagent",
+        "name": "review",
+        "content_digest": "sha256:2b8c4e574b21b3b1a4251c8cf9f87face1568297b73d55a19956694791dad77e",
+        "archive_digest": "sha256:2b8c4e574b21b3b1a4251c8cf9f87face1568297b73d55a19956694791dad77e"
+      }
+    ],
+    "revision_digest": "sha256:71102b8e873652e313ca61b23adf4171f340ddc0dd7ee091c9854dcdc467b65e"
+  },
+  "factory/v4": {
+    "schema_version": "v4",
+    "generator": "agent-marketplace source-revision/v4",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "PreToolUse-command",
+        "content_digest": "sha256:6aff9aec1c5e6b3d5979edfb8dfb4a67be94c16f8f0e1fa4f3fdcbd17d7c8d6c",
+        "archive_digest": "sha256:f3764fdc7c705bfd9fcfcf73e1105a0f4044ae07ffcffd70396eee7e2276dd05",
+        "support_files": {
+          "check.sh": "sha256:f837d00a2bac29fc731ebaf85ef8c8db0b5cc14d301040b2574fc23c47c73862"
+        }
+      },
+      {
+        "kind": "subagent",
+        "name": "review",
+        "content_digest": "sha256:2b8c4e574b21b3b1a4251c8cf9f87face1568297b73d55a19956694791dad77e",
+        "archive_digest": "sha256:2b8c4e574b21b3b1a4251c8cf9f87face1568297b73d55a19956694791dad77e"
+      }
+    ],
+    "revision_digest": "sha256:f51f5d2c733ed5684a7833f9c41f51475deac38e26049a790aefb48fad4c8343"
+  },
+  "gemini/v1": {
+    "schema_version": "v1",
+    "generator": "agent-marketplace source-revision/v1",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "pretooluse-command",
+        "content_digest": "sha256:e940284e696024254786b9688a28f122d72adf13e521360f41797d031aa4e67d",
+        "archive_digest": "sha256:e940284e696024254786b9688a28f122d72adf13e521360f41797d031aa4e67d"
+      },
+      {
+        "kind": "subagent",
+        "name": "review",
+        "content_digest": "sha256:ce6f205175475acda206bd47c76935d7d2887ce02f0f582359379c9e84cac010",
+        "archive_digest": "sha256:ce6f205175475acda206bd47c76935d7d2887ce02f0f582359379c9e84cac010"
+      }
+    ],
+    "revision_digest": "sha256:5cc46f498abd4cbe92469314b2178518de29889a9e5c7b3e75dc2b7dae6ea2ef"
+  },
+  "gemini/v2": {
+    "schema_version": "v2",
+    "generator": "agent-marketplace source-revision/v2",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "pretooluse-command",
+        "content_digest": "sha256:e940284e696024254786b9688a28f122d72adf13e521360f41797d031aa4e67d",
+        "archive_digest": "sha256:3dfcc6ae30cc8043d2d3fe48c00c17aa734f768e28ad925c5dfb72d1afa80747",
+        "support_files": {
+          "check.sh": "sha256:f837d00a2bac29fc731ebaf85ef8c8db0b5cc14d301040b2574fc23c47c73862",
+          "settings.json": "sha256:e940284e696024254786b9688a28f122d72adf13e521360f41797d031aa4e67d"
+        }
+      },
+      {
+        "kind": "subagent",
+        "name": "review",
+        "content_digest": "sha256:ce6f205175475acda206bd47c76935d7d2887ce02f0f582359379c9e84cac010",
+        "archive_digest": "sha256:ce6f205175475acda206bd47c76935d7d2887ce02f0f582359379c9e84cac010"
+      }
+    ],
+    "revision_digest": "sha256:6f527d6ee5a8414a8f13bf95e2387ad9041326485afbad0c364d971fc22eb5dc"
+  },
+  "gemini/v3": {
+    "schema_version": "v3",
+    "generator": "agent-marketplace source-revision/v3",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "pretooluse-command",
+        "content_digest": "sha256:e940284e696024254786b9688a28f122d72adf13e521360f41797d031aa4e67d",
+        "archive_digest": "sha256:3dfcc6ae30cc8043d2d3fe48c00c17aa734f768e28ad925c5dfb72d1afa80747",
+        "support_files": {
+          "check.sh": "sha256:f837d00a2bac29fc731ebaf85ef8c8db0b5cc14d301040b2574fc23c47c73862",
+          "settings.json": "sha256:e940284e696024254786b9688a28f122d72adf13e521360f41797d031aa4e67d"
+        }
+      },
+      {
+        "kind": "subagent",
+        "name": "review",
+        "content_digest": "sha256:ce6f205175475acda206bd47c76935d7d2887ce02f0f582359379c9e84cac010",
+        "archive_digest": "sha256:ce6f205175475acda206bd47c76935d7d2887ce02f0f582359379c9e84cac010"
+      }
+    ],
+    "revision_digest": "sha256:914ba8dcb01c535c7d0a1acc02a3af88923c58545abcdd89a9a694090a616169"
+  },
+  "gemini/v4": {
+    "schema_version": "v4",
+    "generator": "agent-marketplace source-revision/v4",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "pretooluse-command",
+        "content_digest": "sha256:e940284e696024254786b9688a28f122d72adf13e521360f41797d031aa4e67d",
+        "archive_digest": "sha256:3dfcc6ae30cc8043d2d3fe48c00c17aa734f768e28ad925c5dfb72d1afa80747",
+        "support_files": {
+          "check.sh": "sha256:f837d00a2bac29fc731ebaf85ef8c8db0b5cc14d301040b2574fc23c47c73862",
+          "settings.json": "sha256:e940284e696024254786b9688a28f122d72adf13e521360f41797d031aa4e67d"
+        }
+      },
+      {
+        "kind": "subagent",
+        "name": "review",
+        "content_digest": "sha256:ce6f205175475acda206bd47c76935d7d2887ce02f0f582359379c9e84cac010",
+        "archive_digest": "sha256:ce6f205175475acda206bd47c76935d7d2887ce02f0f582359379c9e84cac010"
+      }
+    ],
+    "revision_digest": "sha256:e495b9cd4a633d9937b487eba9d556ce75737ee4fc1a45a309c594022160dcc1"
+  },
+  "windsurf/v1": {
+    "schema_version": "v1",
+    "generator": "agent-marketplace source-revision/v1",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "hooks",
+        "content_digest": "sha256:35f53a67173fe3d2a15969d45b92ab09d46d6e74b96c1f42992e4d4407326fc8",
+        "archive_digest": "sha256:35f53a67173fe3d2a15969d45b92ab09d46d6e74b96c1f42992e4d4407326fc8"
+      }
+    ],
+    "revision_digest": "sha256:147c177fd89c2d25909822e9990cc99ccf3e5442387612e955319f25368a5501"
+  },
+  "windsurf/v2": {
+    "schema_version": "v2",
+    "generator": "agent-marketplace source-revision/v2",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "hooks",
+        "content_digest": "sha256:35f53a67173fe3d2a15969d45b92ab09d46d6e74b96c1f42992e4d4407326fc8",
+        "archive_digest": "sha256:8c3421f96334572557270f2db9722af8abc8ccb11b9a73fbd9ed32af8905aca9",
+        "support_files": {
+          "check.sh": "sha256:f837d00a2bac29fc731ebaf85ef8c8db0b5cc14d301040b2574fc23c47c73862"
+        }
+      }
+    ],
+    "revision_digest": "sha256:3f052cdc77109ed67aea8e51ca8072286a7812dbc013b933c136f008080ae40c"
+  },
+  "windsurf/v3": {
+    "schema_version": "v3",
+    "generator": "agent-marketplace source-revision/v3",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "hooks",
+        "content_digest": "sha256:35f53a67173fe3d2a15969d45b92ab09d46d6e74b96c1f42992e4d4407326fc8",
+        "archive_digest": "sha256:8c3421f96334572557270f2db9722af8abc8ccb11b9a73fbd9ed32af8905aca9",
+        "support_files": {
+          "check.sh": "sha256:f837d00a2bac29fc731ebaf85ef8c8db0b5cc14d301040b2574fc23c47c73862"
+        }
+      }
+    ],
+    "revision_digest": "sha256:cb23ff7d586ca17541014ed3c226dbb5425ce92544f2ce80b4fcee2948e96a08"
+  },
+  "windsurf/v4": {
+    "schema_version": "v4",
+    "generator": "agent-marketplace source-revision/v4",
+    "resources": [
+      {
+        "kind": "hook",
+        "name": "hooks",
+        "content_digest": "sha256:35f53a67173fe3d2a15969d45b92ab09d46d6e74b96c1f42992e4d4407326fc8",
+        "archive_digest": "sha256:8c3421f96334572557270f2db9722af8abc8ccb11b9a73fbd9ed32af8905aca9",
+        "support_files": {
+          "check.sh": "sha256:f837d00a2bac29fc731ebaf85ef8c8db0b5cc14d301040b2574fc23c47c73862"
+        }
+      }
+    ],
+    "revision_digest": "sha256:6b42b754f990d497f46f67b709a9669bca973ff21ddf33175e11cd223463aa88"
+  }
+}

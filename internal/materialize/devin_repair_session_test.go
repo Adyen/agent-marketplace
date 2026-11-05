@@ -342,8 +342,8 @@ func TestDevinRepairCrossProcessChild(t *testing.T) {
 	repairLockHook = witness.observe
 
 	selection := []resolver.ResolvedArtifact{
-		devinResolved("aaa", ir.NewMcpServer("aaa", "aaa-binary", nil, nil, nil, ir.SourceRef{}), false),
-		devinResolved("zzz", ir.NewMcpServer("zzz", "zzz-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "aaa", ir.NewMcpServer("aaa", "aaa-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "zzz", ir.NewMcpServer("zzz", "zzz-binary", nil, nil, nil, ir.SourceRef{}), false),
 	}
 
 	// Everything expensive happens BEFORE the rendezvous — the preview in
@@ -454,8 +454,8 @@ func TestDevinSyncAndRepairSerializeAcrossProcesses(t *testing.T) {
 			"    \"aaa\": { \"command\": \"/hand/aaa\" },\n"+
 			"    \"zzz\": { \"command\": \"/hand/zzz\" }\n  }\n}\n")
 		selection := []resolver.ResolvedArtifact{
-			devinResolved("aaa", ir.NewMcpServer("aaa", "aaa-binary", nil, nil, nil, ir.SourceRef{}), false),
-			devinResolved("zzz", ir.NewMcpServer("zzz", "zzz-binary", nil, nil, nil, ir.SourceRef{}), false),
+			devinResolved(t, "aaa", ir.NewMcpServer("aaa", "aaa-binary", nil, nil, nil, ir.SourceRef{}), false),
+			devinResolved(t, "zzz", ir.NewMcpServer("zzz", "zzz-binary", nil, nil, nil, ir.SourceRef{}), false),
 		}
 		if _, err := Run(context.Background(), repoRoot, selection); err != nil {
 			t.Fatalf("trial %d: seed sync: %v", trial, err)

@@ -37,6 +37,7 @@ type theme struct {
 	text    color.Color // readable body text on the surface
 	surface color.Color // raised chrome background (header, selection, overlays)
 	onSurf  color.Color // readable text on the surface
+	onAcc   color.Color // readable text on an accent fill (focused buttons)
 }
 
 // newTheme builds the semantic ANSI-16 theme for one terminal background.
@@ -56,6 +57,7 @@ func newTheme(isDark bool) theme {
 		text:    ld(lipgloss.ANSIColor(0), lipgloss.ANSIColor(15)),
 		surface: paletteSurface,
 		onSurf:  paletteOnSurface,
+		onAcc:   lipgloss.ANSIColor(0),
 	}
 }
 
@@ -72,12 +74,9 @@ func (m Model) currentTheme() theme {
 // Style factories for the background-dependent roles. Every color decision
 // lives here so renderers share the semantic theme instead of restating
 // inline colors.
-func textStyle(t theme) lipgloss.Style   { return lipgloss.NewStyle().Foreground(t.text) }
-func accentStyle(t theme) lipgloss.Style { return lipgloss.NewStyle().Foreground(t.accent) }
-func titleStyle(t theme) lipgloss.Style  { return lipgloss.NewStyle().Bold(true).Foreground(t.accent) }
-func warnTitleStyle(t theme) lipgloss.Style {
-	return lipgloss.NewStyle().Bold(true).Foreground(t.warn)
-}
+func textStyle(t theme) lipgloss.Style    { return lipgloss.NewStyle().Foreground(t.text) }
+func accentStyle(t theme) lipgloss.Style  { return lipgloss.NewStyle().Foreground(t.accent) }
+func titleStyle(t theme) lipgloss.Style   { return lipgloss.NewStyle().Bold(true).Foreground(t.accent) }
 func markKeyStyle(t theme) lipgloss.Style { return lipgloss.NewStyle().Foreground(t.mark).Bold(true) }
 func okStyle(t theme) lipgloss.Style      { return lipgloss.NewStyle().Foreground(t.ok) }
 func okBoldStyle(t theme) lipgloss.Style  { return lipgloss.NewStyle().Bold(true).Foreground(t.ok) }
@@ -115,7 +114,7 @@ func huhTheme(t theme) *huh.Styles {
 	s.Focused.SelectedPrefix = s.Focused.SelectedPrefix.Foreground(t.ok)
 	s.Focused.UnselectedOption = s.Focused.UnselectedOption.Foreground(t.text)
 	s.Focused.UnselectedPrefix = s.Focused.UnselectedPrefix.Foreground(t.muted)
-	s.Focused.FocusedButton = button.Foreground(t.onSurf).Background(t.accent)
+	s.Focused.FocusedButton = button.Foreground(t.onAcc).Background(t.accent).Bold(true)
 	s.Focused.Next = s.Focused.FocusedButton
 	s.Focused.BlurredButton = button.Foreground(t.text).Background(t.surface)
 	s.Focused.TextInput.Cursor = s.Focused.TextInput.Cursor.Foreground(t.ok)
@@ -153,7 +152,6 @@ var (
 	styleGlyphStale    = lipgloss.NewStyle().Foreground(paletteErr)
 	styleGlyphBroken   = lipgloss.NewStyle().Foreground(paletteErr)
 	styleGlyphRequired = lipgloss.NewStyle().Foreground(paletteAccent)
-	styleGlyphOrphaned = lipgloss.NewStyle().Foreground(paletteMuted)
 	styleGlyphDefault  = lipgloss.NewStyle().Foreground(paletteMuted)
 
 	styleSelected = lipgloss.NewStyle().
@@ -224,7 +222,8 @@ var (
 
 	styleSearchMatch = lipgloss.NewStyle().
 				Bold(true).
-				Underline(true)
+				Underline(true).
+				Foreground(paletteAccent)
 
 	styleBadgeWarn  = lipgloss.NewStyle().Foreground(paletteWarn)
 	styleBadgeMulti = lipgloss.NewStyle().Bold(true).Foreground(paletteAccent)
@@ -240,8 +239,6 @@ func glyphStyle(glyph string) lipgloss.Style {
 		return styleGlyphPending
 	case "[~]":
 		return styleGlyphStale
-	case "[-]", "◌":
-		return styleGlyphOrphaned
 	case "[!]", "✗":
 		return styleGlyphBroken
 	case "[R]", "■":

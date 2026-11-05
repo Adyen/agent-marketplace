@@ -48,7 +48,7 @@ func TestDevinFirstEverSyncReportsNoStateMissingWarning(t *testing.T) {
 	}
 
 	resolved := []resolver.ResolvedArtifact{
-		devinResolved("managed", ir.NewMcpServer("managed", "managed-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "managed", ir.NewMcpServer("managed", "managed-binary", nil, nil, nil, ir.SourceRef{}), false),
 	}
 	report, err := Run(context.Background(), repoRoot, resolved)
 	if err != nil {
@@ -98,7 +98,7 @@ func TestDevinVanishedOwnershipStateStillWarns(t *testing.T) {
 	mcpPath := filepath.Join(root, harness.DevinMcpConfigFile)
 
 	resolved := []resolver.ResolvedArtifact{
-		devinResolved("managed", ir.NewMcpServer("managed", "managed-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "managed", ir.NewMcpServer("managed", "managed-binary", nil, nil, nil, ir.SourceRef{}), false),
 	}
 	if _, err := Run(context.Background(), repoRoot, resolved); err != nil {
 		t.Fatalf("first Run: %v", err)
@@ -147,8 +147,8 @@ func TestDevinAggregateDiagnosticsDistinguishTwoFilesInOneRoot(t *testing.T) {
 	root := devinUserRoot(home)
 
 	resolved := []resolver.ResolvedArtifact{
-		devinResolved("my-hook", ir.NewHook("my-hook", "PostToolUse", "echo hi", "command", nil, ir.SourceRef{}), true),
-		devinResolved("managed", ir.NewMcpServer("managed", "managed-binary", nil, nil, nil, ir.SourceRef{}), true),
+		devinResolved(t, "my-hook", ir.NewHook("my-hook", "PostToolUse", "echo hi", "command", nil, ir.SourceRef{}), true),
+		devinResolved(t, "managed", ir.NewMcpServer("managed", "managed-binary", nil, nil, nil, ir.SourceRef{}), true),
 	}
 	if _, err := Run(context.Background(), repoRoot, resolved); err != nil {
 		t.Fatalf("first Run: %v", err)
@@ -213,8 +213,8 @@ func TestDevinCollisionWarningNamesTheAggregateRoot(t *testing.T) {
 	}
 
 	resolved := []resolver.ResolvedArtifact{
-		devinResolved("collide", ir.NewMcpServer("collide", "generated-binary", nil, nil, nil, ir.SourceRef{}), false),
-		devinResolved("collide", ir.NewMcpServer("collide", "generated-binary", nil, nil, nil, ir.SourceRef{}), true),
+		devinResolved(t, "collide", ir.NewMcpServer("collide", "generated-binary", nil, nil, nil, ir.SourceRef{}), false),
+		devinResolved(t, "collide", ir.NewMcpServer("collide", "generated-binary", nil, nil, nil, ir.SourceRef{}), true),
 	}
 	report, err := Run(context.Background(), repoRoot, resolved)
 	if err != nil {

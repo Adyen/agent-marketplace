@@ -1,0 +1,40 @@
+@font-face {
+  font-family: Adyen;
+  src: url("./fonts/Adyen-Variable.woff2") format("woff2");
+  font-weight: 400 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: AdyenMono;
+  src: url("./fonts/Adyen-Mono-Variable.woff2") format("woff2");
+  font-weight: 400 700;
+  font-display: swap;
+}
+
+:root {
+  --am-font-sans: Adyen, Helvetica, Arial, sans-serif;
+  --am-font-mono: AdyenMono, monospace;
+  --am-type-page-title: 600 2rem / 2.5rem var(--am-font-sans);
+  --am-type-page-introduction: 400 1rem / 1.5rem var(--am-font-sans);
+  --am-type-results-heading: 600 1.375rem / 1.75rem var(--am-font-sans);
+  --am-type-resource-name: 600 1rem / 1.5rem var(--am-font-sans);
+  --am-type-resource-registry: 400 1rem / 1.5rem var(--am-font-sans);
+  --am-type-resource-description: 400 0.875rem / 1.25rem var(--am-font-sans);
+  --am-type-control: 400 0.875rem / 1.25rem var(--am-font-sans);
+  --am-type-button: 500 0.875rem / 1.25rem var(--am-font-sans);
+  --am-type-metadata: 400 0.75rem / 1.125rem var(--am-font-sans);
+  --am-type-filter-heading: 600 0.75rem / 1.125rem var(--am-font-sans);
+  --am-content-max: 90rem;
+  --am-page-gutter: 2rem;
+  --am-nav-height: 3.75rem;
+  --am-hit-target: 2.75rem;
+  --am-icon-size: 1rem;
+  --am-radius-mark: 3px;
+  --am-radius-control: 6px;
+  --am-radius-panel: 12px;
+  --am-focus-width: 2px;
+  --am-focus-offset: 3px;
+  --am-motion-feedback: 250ms;
+  --am-motion-ease: cubic-bezier(0.2, 0, 0, 1);
+}

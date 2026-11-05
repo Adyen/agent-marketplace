@@ -17,7 +17,7 @@ import (
 
 func TestAddResourcesToAllRegistriesIncludesOnlyMatchingProviders(t *testing.T) {
 	_, configPath, _ := mutateLayerFixture(t)
-	writeMutateLayerConfig(t, configPath, "apiVersion: agent-marketplace/v2\nharnesses: [claude]\nregistries:\n  - url: https://a.example/repo.git\n    ref: main\n  - url: https://b.example/repo.git\n    ref: main\n")
+	writeMutateLayerConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  a: {git: https://a.example/repo.git, ref: main}\n  b: {git: https://b.example/repo.git, ref: main}\n")
 	entries := []config.RegistryEntry{
 		{URL: "https://a.example/repo.git", Ref: "main", CatalogKey: "cat-a"},
 		{URL: "https://b.example/repo.git", Ref: "main", CatalogKey: "cat-b"},
@@ -75,6 +75,9 @@ func mutateLayerFixture(t *testing.T) (repoRoot, configPath, stateDir string) {
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(base, "runtime-state"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(base, "cache"))
+	config.SetTestOrganizationConfigPath(t, filepath.Join(base, "missing-org.yaml"))
 	repoRoot = filepath.Join(base, "repo")
 	configPath = filepath.Join(repoRoot, ".agents", "config.yaml")
 	stateDir = filepath.Join(base, "state")
@@ -161,7 +164,7 @@ func TestMutateLayerPublishesConfigAndLockAtomically(t *testing.T) {
 		fixture string
 		v4      bool
 	}{
-		{name: "v2", fixture: "apiVersion: agent-marketplace/v2\nregistries:\n  - url: https://example.test/repo.git\n    ref: main\n"},
+		{name: "v4-runtime-view", fixture: "apiVersion: agent-marketplace/v4\nsources:\n  one:\n    git: https://example.test/repo.git\n    ref: main\n"},
 		{name: "v4", fixture: "apiVersion: agent-marketplace/v4\nsources:\n  one: {git: https://example.test/repo.git, ref: main}\n", v4: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -351,7 +354,7 @@ func TestMutateLayerMissingRepoRootStaleUserSelectionDoesNotPublishSkeleton(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	userBytes := "apiVersion: agent-marketplace/v2\nharnesses: [factory]\ncollections: {include: [stale]}\n"
+	userBytes := "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  personal: {directory: registry}\nresources:\n  personal: [collection/stale]\n"
 	writeMutateLayerConfig(t, userPath, userBytes)
 	lockPath, err := lockfile.LockPathForConfig(configPath)
 	if err != nil {
@@ -368,7 +371,11 @@ func TestMutateLayerMissingRepoRootStaleUserSelectionDoesNotPublishSkeleton(t *t
 	err = MutateLayer(context.Background(), LayerMutationTarget{
 		RepoRoot: repoRoot, ConfigPath: configPath, Source: config.RepoCommitted, Reconcile: reconcile,
 	}, func(m *LayerMutation) error {
-		return m.RemoveUnboundInclude(config.ResourceLocator{Kind: ir.KindCollection, Name: "stale"})
+		binding, found, err := m.LookupRegistry(config.RegistryEntry{Path: "registry", V4Kind: config.V4SourceDirectory})
+		if err != nil || !found {
+			return err
+		}
+		return m.Apply(binding, config.SelectionChange{Operation: config.SelectionRemoveInclude, Locators: []config.ResourceLocator{{Kind: ir.KindCollection, Name: "stale"}}})
 	})
 	if err != nil {
 		t.Fatalf("MutateLayer: %v", err)

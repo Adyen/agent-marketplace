@@ -154,7 +154,15 @@ func BenchmarkTUIStartupStages(b *testing.B) {
 			if err := os.MkdirAll(filepath.Dir(localPath), 0o700); err != nil {
 				b.Fatal(err)
 			}
-			if err := os.WriteFile(localPath, []byte("marketplaces:\n  - url: "+endpoint.URL+"\n    instance_id: "+endpoint.InstanceID+"\n    alias: "+endpoint.Alias+"\n"), 0o600); err != nil {
+			if err := os.WriteFile(localPath, []byte("apiVersion: agent-marketplace/v4\nsources:\n  "+endpoint.Alias+": {marketplace: "+endpoint.URL+"}\n"), 0o600); err != nil {
+				b.Fatal(err)
+			}
+			// A writing sync records the resource-free registration's identity; cached-first discovery needs it.
+			lock, err := lockfile.Encode(lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeLocal, Marketplaces: []lockfile.MarketplaceLock{{URL: endpoint.URL, InstanceID: endpoint.InstanceID}}})
+			if err != nil {
+				b.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(filepath.Dir(localPath), "lock.local.yaml"), lock, 0o600); err != nil {
 				b.Fatal(err)
 			}
 			loadLocalConfig = func(string) (*config.LocalConfig, error) {
@@ -189,6 +197,9 @@ func BenchmarkTUIStartupStages(b *testing.B) {
 					}
 					updated, follow := m.Update(msg)
 					m = updated.(Model)
+					if len(m.discoveryErrs) > 0 {
+						b.Fatalf("cached discovery endpoint errors: %v", m.discoveryErrs)
+					}
 					if len(m.rows) > 0 {
 						break
 					}

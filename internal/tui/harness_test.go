@@ -70,7 +70,7 @@ func TestHarnessModalOffersCodexAfterDevinAsAnOptInChoice(t *testing.T) {
 	for _, opt := range knownHarnessOptions {
 		ids = append(ids, opt.ID)
 	}
-	want := []string{"factory", "claude", "cursor", "windsurf", "gemini", "devin", "codex"}
+	want := []string{"factory", "claude", "cursor", "windsurf", "gemini", "devin", "codex", "opencode"}
 	if !reflect.DeepEqual(ids, want) {
 		t.Fatalf("harness modal options = %#v, want %#v", ids, want)
 	}
@@ -83,11 +83,17 @@ func TestHarnessModalOffersCodexAfterDevinAsAnOptInChoice(t *testing.T) {
 	if m.harnessModal.selected["devin"] {
 		t.Fatal("Devin must not be pre-selected: it is opt-in")
 	}
+	if m.harnessModal.selected["opencode"] {
+		t.Fatal("OpenCode must remain opt-in")
+	}
 	if m.harnessModal.selected["codex"] {
 		t.Fatal("Codex must not be pre-selected: it is opt-in")
 	}
 
 	out := ansi.Strip(renderHarnessModal(m))
+	if !strings.Contains(out, "[ ] OpenCode") {
+		t.Fatalf("OpenCode choice missing: %s", out)
+	}
 	if !strings.Contains(out, "Devin CLI") || !strings.Contains(out, "devin") {
 		t.Fatalf("harness modal does not offer Devin:\n%s", out)
 	}
@@ -109,7 +115,7 @@ func TestHarnessModalTogglesDevinIntoTheSavedList(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\nregistries: []\n"), 0o644); err != nil {
+	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources: {}\nresources: {}\n"), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -151,7 +157,7 @@ func TestHarnessModalSwitchScopeToggleAndSaveProject(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v2\nregistries: []\n"), 0o644); err != nil {
+	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v4\nsources: {}\nresources: {}\n"), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -227,7 +233,7 @@ func TestHarnessModalSwitchScopeToggleAndSaveGlobal(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\nregistries: []\n"), 0o644); err != nil {
+	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources: {}\nresources: {}\n"), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -272,11 +278,8 @@ func TestHarnessModalSwitchScopeToggleAndSaveGlobal(t *testing.T) {
 	}
 }
 
-// TestHarnessModalSavesGlobalHarnessesToV4Config pins the v4.writer-opt-in
-// regression in the TUI harness modal: after init or the startup migration
-// prompt converts ~/.agents/config.yaml to v4, saving from the harness
-// modal must edit the v4 root instead of failing with "legacy config
-// writers do not edit v4 files".
+// TestHarnessModalSavesGlobalHarnessesToV4Config pins that the harness modal
+// edits the v4 root without losing its existing source/resource selections.
 func TestHarnessModalSavesGlobalHarnessesToV4Config(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
@@ -342,7 +345,7 @@ func TestHarnessDialogsRestoreAllOptionsAfterCompactResize(t *testing.T) {
 		cursor   func(Model) int
 		hovered  func(Model) string
 	}
-	selectedIDs := []string{"factory", "mystery-00", "mystery-01", "mystery-02", "mystery-03", "mystery-04", "mystery-05", "mystery-06", "mystery-07"}
+	selectedIDs := []string{"factory", "claude", "opencode"}
 	selected := make(map[string]bool, len(selectedIDs))
 	for _, id := range selectedIDs {
 		selected[id] = true
@@ -401,7 +404,7 @@ func TestHarnessDialogsRestoreAllOptionsAfterCompactResize(t *testing.T) {
 			}
 			lastSelected := selectedIDs[len(selectedIDs)-1]
 			if got := dialog.cursor(m); got != len(ids)-1 || dialog.hovered(m) != lastSelected {
-				t.Fatalf("initial cursor=%d hovered=%q, want selected unknown option %q at %d", got, dialog.hovered(m), lastSelected, len(ids)-1)
+				t.Fatalf("initial cursor=%d hovered=%q, want selected supported option %q at %d", got, dialog.hovered(m), lastSelected, len(ids)-1)
 			}
 			if !reflect.DeepEqual(dialog.selected(m), selected) {
 				t.Fatalf("initial selected IDs = %#v, want %#v", dialog.selected(m), selected)
@@ -428,6 +431,72 @@ func TestHarnessDialogsRestoreAllOptionsAfterCompactResize(t *testing.T) {
 			assertHarnessOptionsVisible(t, fullView, ids)
 			if !reflect.DeepEqual(dialog.selected(m), selected) || dialog.cursor(m) != cursorBefore || dialog.hovered(m) != hoveredBefore {
 				t.Fatalf("resize changed selected IDs=%#v cursor=%d hovered=%q", dialog.selected(m), dialog.cursor(m), dialog.hovered(m))
+			}
+		})
+	}
+}
+
+// A harness dialog scrolled while compact shows every choice again as soon
+// as the terminal is restored, without another key press.
+// spec: tui-interactions/harness-options-return-after-compact-resize
+func TestHarnessDialogsUnscrollWhenRestoredAfterCompactScrolling(t *testing.T) {
+	for _, dialog := range []struct {
+		name    string
+		open    func(*Model)
+		ids     func(Model) []string
+		hovered func(Model) string
+	}{
+		{
+			name: "targets",
+			open: func(m *Model) {
+				m.globalHarnesses = []string{"factory"}
+				m.pane = paneHarnessModal
+				m.openHarnessModal()
+			},
+			ids: func(m Model) []string { return m.harnessModal.optionIDs },
+			hovered: func(m Model) string {
+				id, _ := m.harnessModal.multi.Hovered()
+				return id
+			},
+		},
+		{
+			name: "initialization",
+			open: func(m *Model) {
+				m.pane = paneInitModal
+				m.initModal = initModalState{selected: harnessSelection([]string{"claude"}), detected: true}
+				m.ensureInitForm()
+			},
+			ids: func(m Model) []string { return m.initModal.optionIDs },
+			hovered: func(m Model) string {
+				id, _ := m.initModal.multi.Hovered()
+				return id
+			},
+		},
+	} {
+		t.Run(dialog.name, func(t *testing.T) {
+			m := NewModel(t.TempDir(), t.TempDir())
+			m.loading = false
+			m.width, m.height = 80, 24
+			dialog.open(&m)
+			ids := dialog.ids(m)
+			_ = m.viewContent()
+			updated, _ := m.Update(tea.WindowSizeMsg{Width: 50, Height: 12})
+			m = updated.(Model)
+			_ = m.viewContent()
+			for range len(ids) - 1 {
+				updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+				m = updated.(Model)
+				_ = m.viewContent()
+			}
+			last := ids[len(ids)-1]
+			if got := dialog.hovered(m); got != last {
+				t.Fatalf("compact cursor hovers %q, want the last choice %q", got, last)
+			}
+			updated, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+			m = updated.(Model)
+			assertHarnessOptionsVisible(t, ansi.Strip(m.viewContent()), ids)
+			if got := dialog.hovered(m); got != last {
+				t.Fatalf("restoring the size moved the cursor to %q, want %q", got, last)
 			}
 		})
 	}

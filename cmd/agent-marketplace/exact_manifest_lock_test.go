@@ -29,12 +29,12 @@ func setupExactManifestRegistry(t *testing.T) (repoRoot, origin, working, lockPa
 
 	repoRoot = filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
 harnesses: [factory]
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      include: [alpha]
+sources:
+  origin: {git: file://`+origin+`, ref: main}
+resources:
+  origin: [skill/alpha]
 `)
 	withWorkingDir(t, repoRoot)
 	if output, err := executeCommand("sync"); err != nil {
@@ -217,12 +217,12 @@ func TestSelectorOnlyChangeReusesCompleteLockedInventoryWithoutRefResolution(t *
 		t.Fatal(err)
 	}
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
 harnesses: [factory]
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      include: [beta]
+sources:
+  origin: {git: file://`+origin+`, ref: main}
+resources:
+  origin: [skill/beta]
 `)
 	if err := os.Rename(origin, origin+".unavailable"); err != nil {
 		t.Fatal(err)
@@ -258,10 +258,11 @@ func TestLockedInventoryVerificationPreservesMalformedDiagnostics(t *testing.T) 
 	commitAndPushAll(t, working, "valid and malformed inventory")
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
-    skills: [valid-skill, broken-skill]
+apiVersion: agent-marketplace/v4
+sources:
+  origin: {git: file://`+origin+`, ref: main}
+resources:
+  origin: [skill/valid-skill, skill/broken-skill]
 `)
 	withWorkingDir(t, repoRoot)
 	for run := 1; run <= 2; run++ {

@@ -145,7 +145,7 @@ func TestGeminiSubagentExtPrecedence(t *testing.T) {
 }
 
 func TestGeminiInlineMCPCredentialDiagnostics(t *testing.T) {
-	sub := ir.NewSubagent("reviewer", "Review code", "Body", "sonnet", nil, "", nil, "", nil, ir.SourceRef{})
+	sub := ir.NewSubagent("reviewer", "Review code", "Body", "gemini-3-preview", nil, "", nil, "", nil, ir.SourceRef{})
 	sub.Ext.Gemini = &extpkg.Gemini{InlineMCPServers: map[string]extpkg.GeminiMCPServer{
 		"private": {Command: "server", Env: map[string]string{"API_TOKEN": "$literal"}},
 	}}

@@ -311,14 +311,6 @@ func TestSnapshotPolicyFailureClearsDiscoveryAndRejectsLateCompletions(t *testin
 		wantPane pane
 	}{
 		{
-			name: "migration required",
-			snapshot: snapshotLoadedMsg{
-				mergedCfg:        &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: "https://new.example", InstanceID: "new"}}},
-				pendingMigration: migrationPrompt{configs: []migrationConfig{{label: "Project", path: "/repo/.agents/config.yaml"}}},
-			},
-			wantPane: paneMigrationModal,
-		},
-		{
 			name: "config error",
 			snapshot: snapshotLoadedMsg{
 				driftAssessment: driftFailed,
@@ -350,11 +342,7 @@ func TestSnapshotPolicyFailureClearsDiscoveryAndRejectsLateCompletions(t *testin
 			if len(m.discoveryRows) != 0 || len(m.browseDiscoveryRows) != 0 || len(m.discoveryOutcomes) != 0 || len(m.discoveryErrs) != 0 {
 				t.Fatalf("prior discovery state remained: rows=%#v browse=%#v outcomes=%#v errs=%v", m.discoveryRows, m.browseDiscoveryRows, m.discoveryOutcomes, m.discoveryErrs)
 			}
-			if test.name == "migration required" {
-				if len(m.rows) != 0 {
-					t.Fatalf("migration snapshot rows changed: %#v", m.rows)
-				}
-			} else if len(m.rows) != 1 || m.rows[0].Artifact.Name != "installed" {
+			if len(m.rows) != 1 || m.rows[0].Artifact.Name != "installed" {
 				t.Fatalf("authoritative rows changed: %#v", m.rows)
 			}
 			if m.pane != test.wantPane {
@@ -372,11 +360,7 @@ func TestSnapshotPolicyFailureClearsDiscoveryAndRejectsLateCompletions(t *testin
 			if len(m.discoveryRows) != 0 {
 				t.Fatalf("late discovery changed discovery state: %#v", m.discoveryRows)
 			}
-			if test.name == "migration required" {
-				if len(m.rows) != 0 {
-					t.Fatalf("late discovery changed migration rows: %#v", m.rows)
-				}
-			} else if len(m.rows) != 1 || m.rows[0].Artifact.Name != "installed" {
+			if len(m.rows) != 1 || m.rows[0].Artifact.Name != "installed" {
 				t.Fatalf("late discovery changed authoritative state: %#v", m.rows)
 			}
 		})
@@ -515,6 +499,45 @@ func TestLowRiskMarketplaceDiscoveryCommitsPreparedPlanWithoutConsent(t *testing
 	}
 	if reloadCmd == nil || m.marketplaceInstallReload == 0 {
 		t.Fatal("successful direct commit did not schedule authoritative reload")
+	}
+}
+
+// spec: tui-interactions/marketplace-install-keeps-locked-sources-at-their-locked-revision
+func TestMarketplaceDiscoveryInstallSyncsThroughTheDependencyReconciler(t *testing.T) {
+	oldPrepare := prepareDiscoveryMarketplaceInstall
+	t.Cleanup(func() { prepareDiscoveryMarketplaceInstall = oldPrepare })
+	var prepared []pipeline.InstallOptions
+	prepareDiscoveryMarketplaceInstall = func(_ context.Context, options pipeline.InstallOptions) (*pipeline.PreparedMarketplaceInstall, error) {
+		prepared = append(prepared, options)
+		return &pipeline.PreparedMarketplaceInstall{}, nil
+	}
+	reconciled := 0
+	m := newTestModel()
+	m.repoRoot = t.TempDir()
+	m.dependencyLifecycle.InstallReconcile = func(context.Context, string, string, bool, []pipeline.StagedConfigEdit) (pipeline.DependencyLockView, error) {
+		reconciled++
+		return pipeline.DependencyLockView{}, nil
+	}
+	r := row{MarketplaceDiscovery: &marketplaceDiscovery{
+		Endpoint: config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market", Alias: "public"},
+		Item:     mpapi.ResourceListItem{RegistryID: "registry", Kind: "skill", Name: "review", Revision: "revision", ContentDigest: "sha256:" + strings.Repeat("a", 64), Availability: mpapi.AvailabilityAvailable},
+	}}
+
+	_, cmd := m.startDiscoveryInstall(r, scopeProject)
+	for _, c := range batchCmds(cmd) {
+		if _, ok := c().(discoveryInstallMsg); ok {
+			break
+		}
+	}
+	if len(prepared) != 1 {
+		t.Fatalf("prepare ran %d times, want once", len(prepared))
+	}
+	reconcile := prepared[0].DependencyReconcile
+	if reconcile == nil {
+		t.Fatal("discovery install prepared without a dependency reconciler, so its sync would bypass exact acquisition locks")
+	}
+	if _, err := reconcile(context.Background(), m.repoRoot, "", false, nil); err != nil || reconciled != 1 {
+		t.Fatalf("install reconciler is not the lifecycle reconciler: err=%v calls=%d", err, reconciled)
 	}
 }
 

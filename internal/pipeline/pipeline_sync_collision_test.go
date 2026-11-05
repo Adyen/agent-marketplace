@@ -21,7 +21,7 @@ func TestSync_DemotesResolverNameCollisionToWarning(t *testing.T) {
 	writeSkill(t, registryB, "only-b", "Only in B", []string{"test"})
 
 	repoCfg := &config.Config{
-		APIVersion: "agent-marketplace/v2",
+		APIVersion: "agent-marketplace/v4",
 		Registries: []config.RegistryEntry{
 			{
 				URL:           registryA,

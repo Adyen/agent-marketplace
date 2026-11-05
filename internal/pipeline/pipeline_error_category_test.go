@@ -35,7 +35,7 @@ func devinUnsupportedTransportSyncResult(t *testing.T) SyncResult {
 `)
 
 	repoCfg := &config.Config{
-		APIVersion: "agent-marketplace/v2",
+		APIVersion: "agent-marketplace/v4",
 		Registries: []config.RegistryEntry{{
 			URL:           registry,
 			SourceHarness: "claude",
@@ -86,7 +86,7 @@ func TestSyncCountsCatalogLoadFailureAsUntrusted(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", filepath.Join(homeDir, "state"))
 
 	repoCfg := &config.Config{
-		APIVersion: "agent-marketplace/v2",
+		APIVersion: "agent-marketplace/v4",
 		Registries: []config.RegistryEntry{{
 			URL:    filepath.Join(t.TempDir(), "missing.git"),
 			Ref:    "main",

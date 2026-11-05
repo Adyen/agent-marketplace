@@ -84,17 +84,14 @@ func TestSyncNamesEachFailingResourceOnTheErrorPath(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - devin
-registries:
-  - url: `+registry+`
-    skills:
-      - keeper
-    mcp:
-      - alpha
-      - beta
-      - gamma
+sources:
+  resources: {directory: `+registry+`}
+resources:
+  resources:
+    include: [skill/keeper, mcp/alpha, mcp/beta, mcp/gamma]
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -168,14 +165,16 @@ func TestSyncCollapsesIdenticalWarningDiagnosticsFromOneResource(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-apiVersion: agent-marketplace/v2
+apiVersion: agent-marketplace/v4
 harnesses:
   - devin
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - alpha
+resources:
+  skills:
+    include: [skill/alpha]
 `)
 	withWorkingDir(t, repoRoot)
 

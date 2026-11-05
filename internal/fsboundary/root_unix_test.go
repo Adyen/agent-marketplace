@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -153,6 +154,34 @@ func TestContainedDirectoryRootRefusesUnsafeIntermediateAliases(t *testing.T) {
 			}
 			if text, err := os.Readlink(filepath.Join(path, "hop")); err != nil || text != target {
 				t.Fatalf("refusal changed intermediate alias: %q %v", text, err)
+			}
+		})
+	}
+}
+
+func TestUnsafeComponentRefusalsNameOffendingPath(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		setup  func(t *testing.T, path string)
+		reason string
+	}{
+		{"symlink", func(t *testing.T, path string) {
+			mustSymlink(t, t.TempDir(), filepath.Join(path, "skills"))
+		}, "is a symbolic link"},
+		{"regular-file", func(t *testing.T, path string) {
+			mustWrite(t, filepath.Join(path, "skills"), []byte("file"), 0o600)
+		}, "is not a directory"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, path := tempRoot(t)
+			tc.setup(t, path)
+			opened, err := root.OpenPath("skills/probe")
+			if opened != nil {
+				_ = opened.Close()
+			}
+			want := filepath.Join(path, "skills")
+			if !errors.Is(err, ErrUnsafePath) || !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), tc.reason) {
+				t.Fatalf("refusal = %v, want %s naming %s", err, tc.reason, want)
 			}
 		})
 	}

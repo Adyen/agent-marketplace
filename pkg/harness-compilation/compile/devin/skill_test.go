@@ -431,6 +431,25 @@ func TestCommandFieldMatrix(t *testing.T) {
 				"Body\n",
 			wantDiags: []wantDiag{{diag.CodeCanonicalFieldOverridesExtra, diag.SeverityWarning}},
 		},
+		{
+			name:     "execution selector extensions are reserved and never passed through",
+			command:  ir.NewCommand("demo", "Demo command", "Body\n", map[string]any{allowedToolsKey: []any{"Read"}, "agent": "subagent_general", "subagent": "subagent_general"}, testSource),
+			wantPath: "skills/demo/SKILL.md",
+			wantBytes: "---\n" +
+				"name: demo\n" +
+				"description: Demo command\n" +
+				"x-agent-marketplace-kind: command\n" +
+				"triggers:\n" +
+				"  - user\n" +
+				"allowed-tools:\n" +
+				"  - read\n" +
+				"---\n" +
+				"Body\n",
+			wantDiags: []wantDiag{
+				{diag.CodeCanonicalFieldOverridesExtra, diag.SeverityWarning},
+				{diag.CodeCanonicalFieldOverridesExtra, diag.SeverityWarning},
+			},
+		},
 	}
 
 	for _, tt := range tests {

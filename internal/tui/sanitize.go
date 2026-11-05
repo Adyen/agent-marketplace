@@ -62,6 +62,13 @@ func sanitizeTerminalData(value string, mode terminalDataMode) string {
 	return sanitized.String()
 }
 
+// TerminalSafeLine applies the single-line terminal-data policy to CLI output:
+// printable Unicode is kept, while C0/C1 and bidi controls, Unicode line
+// separators, and invalid UTF-8 become visible escapes.
+func TerminalSafeLine(value string) string {
+	return sanitizeTerminalData(value, terminalSingleLine)
+}
+
 func terminalDataNeedsSanitizing(value string, mode terminalDataMode) bool {
 	for offset := 0; offset < len(value); {
 		b := value[offset]

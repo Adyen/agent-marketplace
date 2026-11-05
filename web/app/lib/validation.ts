@@ -253,6 +253,13 @@ function normalizeResourceRevisionValue(input: unknown, expected: ExpectedResour
     manifest_digest: requiredDigest(occurrenceObject.manifest_digest, 'occurrence.manifest_digest'),
   }
 
+  const sourceObject = object.source === undefined ? undefined : asObject(object.source, 'source')
+  const source = sourceObject === undefined ? undefined : {
+    repository_url: requiredString(sourceObject.repository_url, 'source.repository_url'),
+    path: requiredString(sourceObject.path, 'source.path'),
+    commit: requiredCommit(sourceObject.commit, 'source.commit'),
+  }
+
   const currentAvailabilityObject = object.current_availability === undefined ? undefined : asObject(object.current_availability, 'current_availability')
   const currentAvailability = currentAvailabilityObject === undefined ? undefined : normalizeListAvailability(currentAvailabilityObject.availability, 'current_availability.availability')
   const revocationObject = object.revocation === undefined ? undefined : asObject(object.revocation, 'revocation')
@@ -270,6 +277,7 @@ function normalizeResourceRevisionValue(input: unknown, expected: ExpectedResour
     occurrence,
     ...(requires === undefined ? {} : { requires }),
     ...(requiredBy === undefined ? {} : { required_by: requiredBy }),
+    ...(source === undefined ? {} : { source }),
     ...(currentAvailability === undefined ? {} : { current_availability: { availability: currentAvailability } }),
     ...(revocationObject === undefined ? {} : { revocation: {
       kind: revocationKind as NonNullable<ResourceRevision['revocation']>['kind'],

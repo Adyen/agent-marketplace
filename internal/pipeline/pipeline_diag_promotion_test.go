@@ -43,7 +43,7 @@ func devinScopedToolSyncResult(t *testing.T, names ...string) SyncResult {
 	}
 
 	repoCfg := &config.Config{
-		APIVersion: "agent-marketplace/v2",
+		APIVersion: "agent-marketplace/v4",
 		Registries: []config.RegistryEntry{{
 			URL:           registry,
 			SourceHarness: "claude",
@@ -137,7 +137,7 @@ func TestSyncPromotedMaterializeErrorsCollapsePerResource(t *testing.T) {
 		"---\nname: alpha\ndescription: alpha skill\nallowed-tools:\n  - Bash(git push --force:*)\n  - Bash(git commit:*)\n---\n\n# alpha\n")
 
 	repoCfg := &config.Config{
-		APIVersion: "agent-marketplace/v2",
+		APIVersion: "agent-marketplace/v4",
 		Registries: []config.RegistryEntry{{
 			URL:           registry,
 			SourceHarness: "claude",

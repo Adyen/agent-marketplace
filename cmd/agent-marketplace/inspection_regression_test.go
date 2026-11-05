@@ -22,11 +22,14 @@ func setupInspectionStatusRepo(t *testing.T) string {
 
 	repoRoot := t.TempDir()
 	writeConfig(t, repoRoot+"/.agents/config.yaml", `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - valid-skill
+resources:
+  skills:
+    include: [skill/valid-skill]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -55,11 +58,14 @@ metadata:
 
 	repoRoot := t.TempDir()
 	writeConfig(t, repoRoot+"/.agents/config.yaml", `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - valid-skill
+resources:
+  skills:
+    include: [skill/valid-skill]
 `)
 
 	withWorkingDir(t, repoRoot)

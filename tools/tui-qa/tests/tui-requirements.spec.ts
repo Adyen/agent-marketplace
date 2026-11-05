@@ -2,20 +2,19 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 
-import { expect, test } from "@microsoft/tui-test";
+import { after, before } from "node:test";
 
-import { defineFixture, step, waitForExit } from "./helpers.js";
+import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 
 const journey = defineFixture("tui-requirements", ["tui"], 80, 24, { directorySource: true });
-test.use(journey.options);
-test.beforeAll(journey.setup);
-test.afterAll(journey.cleanup);
+before(journey.setup);
+after(journey.cleanup);
 
 // Seeds a directory source whose parent-skill declares requires: child-skill,
 // plus a v4 repository config that selects only parent-skill with expansion
 // enabled. Runs after the generic fixture setup so the TUI launches with the
 // prerequisite topology already resolved.
-test.beforeAll(async () => {
+before(async () => {
   const fixture = journey.current();
   const source = fixture.registryURL;
   const writeSkill = (name: string, requires: string) =>
@@ -38,56 +37,55 @@ test.beforeAll(async () => {
   fs.writeFileSync(path.join(fixture.home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n", { encoding: "utf8", mode: 0o600 });
 });
 
-test("prerequisite sections, markers, and toggle feedback", async ({ terminal }) => {
+journey.test("prerequisite sections, markers, and toggle feedback", async (terminal) => {
   const fixture = journey.current();
   const repoConfig = path.join(fixture.repo, ".agents", "config.yaml");
 
   await step("expansion-selected child carries the req marker", () => {}, async () => {
-    await expect(terminal.getByText("parent-skill", { strict: false })).toBeVisible();
-    await expect(terminal.getByText(/child-skill\s+req/g, { strict: false })).toBeVisible();
+    await locate(terminal, "parent-skill").expect();
+    await locate(terminal, /child-skill\s+req/).expect();
+    await locate(terminal, /~ \d+ out of sync/).expect();
   });
 
   await step("filter for parent", () => terminal.write("/parent-skill\r"), async () => {
-    await expect(terminal.getByText(/Name:\s+parent-skill/g)).toBeVisible();
+    await locate(terminal, /Name:\s+parent-skill/).expect();
   });
 
   await step("detail shows the implied prerequisite", () => {}, async () => {
-    await expect(terminal.getByText("Requires:", { strict: false })).toBeVisible();
-    await expect(terminal.getByText(/implied\s+skill\s+"child-skill"/g)).toBeVisible();
+    await locate(terminal, "Requires:").expect();
+    await locate(terminal, /implied\s+skill\s+"child-skill"/).expect();
   });
 
   await step("clear filter", () => terminal.write("\x1b"), async () => {
-    await expect(terminal.getByText("beta-skill", { strict: false })).toBeVisible();
+    await locate(terminal, "beta-skill").expect();
   });
 
   await step("open parent project toggle", () => terminal.write("/parent-skill\r "), async () => {
-    await expect(terminal.getByText("toggle project")).toBeVisible();
+    await locate(terminal, "toggle project").expect();
   });
 
   await step("toggle parent off", () => terminal.write("p"), async () => {
-    await expect(terminal.getByText(/Status:\s+(available|excluded)/g)).toBeVisible({ timeout: 15_000 });
+    await locate(terminal, /Status:\s+(available|excluded)/).expect({ timeout: 15_000 });
   });
 
   await step("open parent project toggle again", () => terminal.write(" "), async () => {
-    await expect(terminal.getByText("toggle project")).toBeVisible();
+    await locate(terminal, "toggle project").expect();
   });
 
   await step("toggle parent on reports the also-selected prerequisite", () => terminal.write("p"), async () => {
-    await expect(
-      terminal.getByText(/also selected skill "child-skill" \(required by skill "parent-skill"\)/g)
-    ).toBeVisible({ timeout: 15_000 });
+    await locate(terminal, /also selected skill "child-skill" \(required by skill "parent-skill"\)/).expect({ timeout: 15_000 });
   });
 
   await step("clear filter", () => terminal.write("\x1b"), async () => {
-    await expect(terminal.getByText("esc clear", { strict: false })).not.toBeVisible();
+    await locate(terminal, "esc clear").expect({ not: true });
   });
 
   await step("filter to the implied child", () => terminal.write("/child-skill\r"), async () => {
-    await expect(terminal.getByText(/Name:\s+child-skill/g)).toBeVisible();
+    await locate(terminal, /Name:\s+child-skill/).expect();
   });
 
   await step("open child project toggle", () => terminal.write(" "), async () => {
-    await expect(terminal.getByText("toggle project")).toBeVisible();
+    await locate(terminal, "toggle project").expect();
   });
 
   await step("toggle child off excludes it and warns the dependent is unmet", () => terminal.write("p"), async () => {
@@ -101,16 +99,12 @@ test("prerequisite sections, markers, and toggle feedback", async ({ terminal })
     })();
     // The footer counts the resulting unmet prerequisite; its diagnostics
     // pane shows the warning text durably.
-    await expect(terminal.getByText(/⚠ \d+ warnings/g)).toBeVisible({ timeout: 30_000 });
+    await locate(terminal, /⚠ \d+ warnings/).expect({ timeout: 30_000 });
     await terminal.write("e");
-    await expect(
-      terminal.getByText(/skill "parent-skill" requires skill "child-skill", but it is not selected/g)
-    ).toBeVisible();
+    await locate(terminal, /skill "parent-skill" requires skill "child-skill", but it is not selected/).expect();
     await terminal.write("\x1b");
-    await expect(
-      terminal.getByText(/skill "parent-skill" requires skill "child-skill", but it is not selected/g)
-    ).not.toBeVisible();
-    await expect(terminal.getByText(/child-skill\s+req/g, { strict: false })).not.toBeVisible();
+    await locate(terminal, /skill "parent-skill" requires skill "child-skill", but it is not selected/).expect({ not: true });
+    await locate(terminal, /child-skill\s+req/).expect({ not: true });
   });
 
   await step("refilter to the requiring parent", async () => {
@@ -118,13 +112,21 @@ test("prerequisite sections, markers, and toggle feedback", async ({ terminal })
     await terminal.write("\x15");
     await terminal.write("parent-skill\r");
   }, async () => {
-    await expect(terminal.getByText(/parent-skill\s+⚠/g, { strict: false })).toBeVisible();
-    await expect(terminal.getByText(/excluded\s+skill\s+"child-skill"/g)).toBeVisible();
+    await locate(terminal, /parent-skill\s+⚠/).expect();
+    await locate(terminal, /excluded\s+skill\s+"child-skill"/).expect();
+  });
+
+  await step("advisory reload shows preview rather than unmet", async () => {
+    fs.writeFileSync(repoConfig, `apiVersion: agent-marketplace/v4\nharnesses: [factory]\nrequires: {expand: false}\nsources:\n  reqsrc:\n    directory: ${fixture.registryURL}\nresources:\n  reqsrc:\n    include:\n      - skill/parent-skill\n`, { encoding: "utf8", mode: 0o600 });
+    await terminal.write("r");
+  }, async () => {
+    await locate(terminal, /preview\s+skill\s+"child-skill"/).expect();
+    await locate(terminal, /unmet\s+skill\s+"child-skill"/).expect({ not: true });
   });
 
   await step("quit", async () => {
     await terminal.write("q");
-    await expect(terminal.getByText(/Sync\+quit\?/g)).toBeVisible();
+    await locate(terminal, /Sync\+quit\?/).expect();
     await terminal.write("n");
   }, async () => {
     assert.equal((await waitForExit(terminal)).exitCode, 0);

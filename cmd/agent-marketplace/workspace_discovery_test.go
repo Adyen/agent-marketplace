@@ -51,11 +51,11 @@ func TestSyncFailsBeforeLockPreparationWhenWorkspaceDiscoveryFails(t *testing.T)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - locked-skill
+apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/locked-skill]
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -106,10 +106,11 @@ func TestSyncReusesTheDiscoveredWorkspaceAcrossLocksResolveAndMaterialization(t 
 
 	discoveredRepo := filepath.Join(t.TempDir(), "discovered-repo")
 	writeConfig(t, filepath.Join(discoveredRepo, ".agents", "config.yaml"), `
-registries:
-  - url: `+registry+`
-    skills:
-      - discovered-skill
+apiVersion: agent-marketplace/v4
+sources:
+  local: {directory: `+registry+`}
+resources:
+  local: [skill/discovered-skill]
 `)
 
 	cwdRepo := filepath.Join(t.TempDir(), "cwd-repo")
@@ -151,18 +152,19 @@ func writeNestedLocalFixture(t *testing.T) (repoRoot, nested string) {
 
 	repoRoot = filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+repoRegistry+`
-    skills:
-      - repo-skill
-      - repo-skill2
+apiVersion: agent-marketplace/v4
+sources:
+  local: {directory: `+repoRegistry+`}
+resources:
+  local: [skill/repo-skill, skill/repo-skill2]
 `)
 	nested = filepath.Join(repoRoot, "sub")
 	writeFile(t, filepath.Join(nested, ".agents", "config.local.yaml"), `
-registries:
-  - url: `+localRegistry+`
-    skills:
-      - nested-skill
+apiVersion: agent-marketplace/v4
+sources:
+  local: {directory: `+localRegistry+`}
+resources:
+  local: [skill/nested-skill]
 `)
 	return repoRoot, nested
 }
@@ -295,16 +297,14 @@ func TestBrowsingCommandsReadCommittedAndNestedLocalLayers(t *testing.T) {
 
 	repoRoot, nested := writeNestedLocalFixture(t)
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
-marketplaces:
-  - url: http://127.0.0.1:1/committed-mp
-    instance_id: committed
+apiVersion: agent-marketplace/v4
+sources:
+  committed: {marketplace: http://127.0.0.1:1/committed-mp}
 `)
 	writeFile(t, filepath.Join(nested, ".agents", "config.local.yaml"), `
-registries: []
-marketplaces:
-  - url: http://127.0.0.1:1/nested-mp
-    instance_id: nested
+apiVersion: agent-marketplace/v4
+sources:
+  nested: {marketplace: http://127.0.0.1:1/nested-mp}
 `)
 	withWorkingDir(t, nested)
 
@@ -363,11 +363,11 @@ func TestBrowsingCommandsRejectEscapingLocalRoot(t *testing.T) {
 
 	repoRoot := canonicalTestPath(t, t.TempDir())
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+apiVersion: agent-marketplace/v4
 `)
 	outside := canonicalTestPath(t, t.TempDir())
 	writeFile(t, filepath.Join(outside, ".agents", "config.local.yaml"), `
-registries: []
+apiVersion: agent-marketplace/v4
 `)
 	link := filepath.Join(repoRoot, "linked")
 	if err := os.Symlink(outside, link); err != nil {

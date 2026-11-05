@@ -39,14 +39,10 @@ func writeCodexRepoMCPConfig(env *Env, registryURL, name string, harnesses ...st
 		selected.WriteString(harness)
 		selected.WriteByte('\n')
 	}
-	env.WriteGlobalConfig("apiVersion: agent-marketplace/v3\nharnesses:\n" + selected.String() + "registries: []")
-	env.WriteRepoConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v3
-registries:
-  - url: %s
-    ref: main
-    source_harness: claude
-    mcp:
-      - %s
+	env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses:\n" + selected.String())
+	env.WriteRepoConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+sources: {team: {git: %q, ref: main, source_harness: claude}}
+resources: {team: {include: [mcp/%s]}}
 `, registryURL, name))
 }
 
@@ -103,18 +99,10 @@ func TestE2ECodexCustomHomeAndNativeDetectionDoNotRequireExecutable(t *testing.T
 		".codex/agents/native-reviewer.toml":   "name = 'native-reviewer'\ndescription = 'Review changes'\ndeveloper_instructions = 'Review carefully.'\n",
 		".codex/config.toml":                   "[mcp_servers.native]\ncommand = 'native-server'\n",
 	})
-	env.WriteGlobalConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v3
-harnesses:
-  - codex
-registries:
-  - url: %s
-    ref: main
-    skills:
-      - native-skill
-    subagents:
-      - native-reviewer
-    mcp:
-      - native
+	env.WriteGlobalConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+harnesses: [codex]
+sources: {team: {git: %q, ref: main}}
+resources: {team: {include: [skill/native-skill, subagent/native-reviewer, mcp/native]}}
 `, registryURL))
 
 	withoutCodex := pathWithoutExecutable(t, env.path, "codex")
@@ -147,17 +135,12 @@ func TestE2ECodexConcurrentAggregateSync(t *testing.T) {
 	env := newCodexEnv(t)
 	alphaURL := mcpRegistry(env, "codex-concurrent-alpha", "alpha", "alpha-bin")
 	betaURL := mcpRegistry(env, "codex-concurrent-beta", "beta", "beta-bin")
-	env.WriteGlobalConfig("apiVersion: agent-marketplace/v3\nharnesses:\n  - codex\nregistries: []")
+	env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [codex]\n")
 
-	baseOrg := `apiVersion: agent-marketplace/v3
-harnesses:
-  - codex
-registries:
-  - url: %s
-    ref: main
-    source_harness: claude
-    mcp:
-      - %s
+	baseOrg := `apiVersion: agent-marketplace/v4
+harnesses: [codex]
+sources: {team: {git: %q, ref: main, source_harness: claude}}
+resources: {team: {include: [mcp/%s]}}
 `
 	env.WriteFile("/etc/agent-marketplace/codex-alpha/config.yaml", fmt.Sprintf(baseOrg, alphaURL, "alpha"))
 	env.WriteFile("/etc/agent-marketplace/codex-beta/config.yaml", fmt.Sprintf(baseOrg, betaURL, "beta"))
@@ -264,15 +247,10 @@ func TestE2ECodexMissingAndCorruptOwnershipFailClosed(t *testing.T) {
 				{Name: "managed", Command: "first-bin"},
 				{Name: "stale", Command: "stale-bin"},
 			}))
-			env.WriteGlobalConfig("apiVersion: agent-marketplace/v3\nharnesses:\n  - codex\nregistries: []")
-			env.WriteRepoConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v3
-registries:
-  - url: %s
-    ref: main
-    source_harness: claude
-    mcp:
-      - managed
-      - stale
+			env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [codex]\n")
+			env.WriteRepoConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+sources: {team: {git: %q, ref: main, source_harness: claude}}
+resources: {team: {include: [mcp/managed, mcp/stale]}}
 `, firstURL))
 			if result := env.RunAM("sync"); result.ExitCode != 0 {
 				t.Fatalf("seed sync exited %d:\n%s", result.ExitCode, result.Combined)
@@ -335,18 +313,10 @@ func TestE2ECodexMalformedAggregatesAreIsolated(t *testing.T) {
 			files := RegistryFilesEx([]Skill{{Name: "survivor"}}, nil, nil, []MCPServer{{Name: "generated", Command: "generated-server"}})
 			files["hooks/hooks.json"] = `{"hooks":{"PreToolUse":[{"type":"command","command":"generated-hook","matcher":"Bash"}]}}`
 			registryURL := env.CreateBareRepo("malformed-isolation", files)
-			env.WriteGlobalConfig("apiVersion: agent-marketplace/v3\nharnesses:\n  - codex\nregistries: []")
-			env.WriteRepoConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v3
-registries:
-  - url: %s
-    ref: main
-    source_harness: claude
-    skills:
-      - survivor
-    hooks:
-      - PreToolUse-command
-    mcp:
-      - generated
+			env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [codex]\n")
+			env.WriteRepoConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+sources: {team: {git: %q, ref: main, source_harness: claude}}
+resources: {team: {include: [skill/survivor, hook/PreToolUse-command, mcp/generated]}}
 `, registryURL))
 			malformedPath := filepath.Join(env.workspace, filepath.FromSlash(tc.malformedPath))
 			if err := os.MkdirAll(filepath.Dir(malformedPath), 0o755); err != nil {

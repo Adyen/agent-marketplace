@@ -47,8 +47,8 @@ func newInstallBindingFixture(t *testing.T) installBindingFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "\nharnesses: [factory]\n")
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "\nharnesses: [factory]\n")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 	withWorkingDir(t, repo)
 	return installBindingFixture{base, home, repo, origin, working, strings.TrimSpace(string(commit))}
 }
@@ -66,7 +66,7 @@ func (f installBindingFixture) advance(t *testing.T) {
 
 func (f installBindingFixture) seedLock(t *testing.T) {
 	t.Helper()
-	writeConfig(t, config.ProjectConfigPath(f.repo), "\nharnesses: [factory]\nregistries:\n  - url: "+f.origin+"\n    ref: main\n")
+	writeConfig(t, config.ProjectConfigPath(f.repo), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: file://"+f.origin+", ref: main}\n")
 	if out, err := executeCommand("sync"); err != nil {
 		t.Fatalf("seed: %v\n%s", err, out)
 	}
@@ -91,7 +91,7 @@ func TestConfiguredInstallFreezesDiscoveryBeforePublication(t *testing.T) {
 			if promote {
 				path = filepath.Join(f.home, ".agents", "config.yaml")
 			}
-			writeConfig(t, path, "\nharnesses: [factory]\nregistries:\n  - url: "+f.origin+"\n    ref: main\n")
+			writeConfig(t, path, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: file://"+f.origin+", ref: main}\n")
 			opts := f.options()
 			opts.FromURL, opts.FromRef = "", ""
 			calls := 0
@@ -127,11 +127,135 @@ func TestConfiguredInstallFreezesDiscoveryBeforePublication(t *testing.T) {
 	}
 }
 
+func readInstallBindingFiles(t *testing.T, paths []string) map[string]string {
+	t.Helper()
+	contents := make(map[string]string, len(paths))
+	for _, path := range paths {
+		raw, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			contents[path] = "absent"
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		contents[path] = string(raw)
+	}
+	return contents
+}
+
+// spec: resource-installation/lock-pinned-source-refuses-an-expected-commit-install-with-update-remediation
+func TestConfiguredInstallRefusesLockPinnedSourceWithUpdateRemediation(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	f := newInstallBindingFixture(t)
+	f.seedLock(t)
+	f.advance(t)
+	ws, err := pipeline.NewWorkspace(f.repo, f.repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := pipeline.PreviewSource(context.Background(), ws, f.origin, "main", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Commit == f.commit {
+		t.Fatalf("preview commit %s did not advance past the locked commit", preview.Commit)
+	}
+	files := []string{config.ProjectConfigPath(f.repo), filepath.Join(f.repo, ".agents", "lock.yaml"), filepath.Join(f.repo, ".factory", "skills", "review", "SKILL.md")}
+	before := readInstallBindingFiles(t, files)
+	opts := f.options()
+	opts.ExpectedCommit = preview.Commit
+	_, err = pipeline.Install(context.Background(), opts)
+	var locked *pipeline.SourceLockedError
+	if !errors.As(err, &locked) || locked.Locked != f.commit || locked.Expected != preview.Commit || locked.Scope != pipeline.ScopeRepo {
+		t.Fatalf("Install error = %v, want SourceLockedError locked=%s expected=%s scope=repo", err, f.commit, preview.Commit)
+	}
+	var moved *pipeline.SourceMovedError
+	if errors.As(err, &moved) || strings.Contains(err.Error(), "moved") {
+		t.Fatalf("lock-pinned refusal reported a move: %v", err)
+	}
+	if after := readInstallBindingFiles(t, files); !reflect.DeepEqual(before, after) {
+		t.Fatalf("refused install changed files:\nbefore=%#v\nafter=%#v", before, after)
+	}
+	if out, err := executeCommand(strings.Fields(locked.UpdateCommand())[1:]...); err != nil {
+		t.Fatalf("%s: %v\n%s", locked.UpdateCommand(), err, out)
+	}
+	opts = f.options()
+	opts.ExpectedCommit = preview.Commit
+	if result, err := pipeline.Install(context.Background(), opts); err != nil || result == nil {
+		t.Fatalf("install after update = %#v, %v", result, err)
+	}
+	doc := readExactManifestLock(t, filepath.Join(f.repo, ".agents", "lock.yaml"))
+	if len(doc.Registries) != 1 || doc.Registries[0].Commit.Hex() != preview.Commit {
+		t.Fatalf("lock after update = %#v, want commit %s", doc.Registries, preview.Commit)
+	}
+}
+
+// spec: resource-installation/source-locked-in-another-scope-installs-into-the-target-scope
+func TestSourceLockedInAnotherScopeInstallsIntoTargetScope(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, expect := range []bool{true, false} {
+		t.Run(map[bool]string{true: "expected commit", false: "plain install"}[expect], func(t *testing.T) {
+			f := newInstallBindingFixture(t)
+			f.seedLock(t)
+			f.advance(t)
+			ws, err := pipeline.NewWorkspace(f.repo, f.repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			preview, err := pipeline.PreviewSource(context.Background(), ws, f.origin, "main", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			files := []string{config.ProjectConfigPath(f.repo), filepath.Join(f.repo, ".agents", "lock.yaml")}
+			before := readInstallBindingFiles(t, files)
+			localConfig, err := pipeline.ScopedConfigPath(f.repo, pipeline.ScopeLocal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if expect {
+				opts := f.options()
+				opts.Scope = pipeline.ScopeLocal
+				opts.ExpectedCommit = preview.Commit
+				if result, err := pipeline.Install(context.Background(), opts); err != nil || result == nil {
+					t.Fatalf("local install = %#v, %v", result, err)
+				}
+			} else if out, err := executeCommand("install", "--from", f.origin, "--ref", "main", "review", "--scope", "local"); err != nil {
+				t.Fatalf("local install: %v\n%s", err, out)
+			}
+			if raw := string(readInstallBindingFiles(t, []string{localConfig})[localConfig]); !strings.Contains(raw, f.origin) || !strings.Contains(raw, "review") {
+				t.Fatalf("local config does not record the source and resource:\n%s", raw)
+			}
+			localLock, err := lockfile.PathForConfig(localConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			localDoc := readExactManifestLock(t, localLock)
+			if len(localDoc.Registries) != 1 || localDoc.Registries[0].Commit.Hex() != preview.Commit {
+				t.Fatalf("local lock = %#v, want commit %s", localDoc.Registries, preview.Commit)
+			}
+			if after := readInstallBindingFiles(t, files); !reflect.DeepEqual(before, after) {
+				t.Fatalf("local install changed the project layer:\nbefore=%#v\nafter=%#v", before, after)
+			}
+			if out, err := executeCommand("sync"); err != nil {
+				t.Fatalf("sync after local install: %v\n%s", err, out)
+			}
+			if out, err := executeCommand("sync", "--check"); err != nil {
+				t.Fatalf("sync --check after local install: %v\n%s", err, out)
+			}
+		})
+	}
+}
+
 func TestConfiguredInstallSelectorsAndScopesKeepPreparedPins(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	for _, mode := range []string{"all", "tag", "collection", "repo to user", "user to local", "organization"} {
+	for _, mode := range []string{"all", "tag", "all user", "all local", "tag user", "tag local", "collection", "repo to user", "user to local", "organization"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newInstallBindingFixture(t)
 			opts := f.options()
@@ -139,9 +263,9 @@ func TestConfiguredInstallSelectorsAndScopesKeepPreparedPins(t *testing.T) {
 			sourcePath := config.ProjectConfigPath(f.repo)
 			outputRoot, lockName := f.repo, "lock.yaml"
 			switch mode {
-			case "all":
+			case "all", "all user", "all local":
 				opts.Args, opts.InstallAll = nil, true
-			case "tag":
+			case "tag", "tag user", "tag local":
 				writeSkill(t, f.working, "review", "Content A", []string{"chosen"})
 				commitAndPushAll(t, f.working, "tagged A")
 				opts.Args, opts.Tag = nil, "chosen"
@@ -158,12 +282,18 @@ func TestConfiguredInstallSelectorsAndScopesKeepPreparedPins(t *testing.T) {
 				sourcePath = filepath.Join(f.base, "org", "config.yaml")
 				config.SetTestOrganizationConfigPath(t, sourcePath)
 			}
+			switch mode {
+			case "all user", "tag user":
+				opts.Scope, outputRoot = pipeline.ScopeUser, f.home
+			case "all local", "tag local":
+				opts.Scope, lockName = pipeline.ScopeLocal, "lock.local.yaml"
+			}
 			commit, err := exec.Command("git", "-C", f.working, "rev-parse", "HEAD").Output()
 			if err != nil {
 				t.Fatal(err)
 			}
 			f.commit = strings.TrimSpace(string(commit))
-			writeConfig(t, sourcePath, "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: "+f.origin+"\n    ref: main\n")
+			writeConfig(t, sourcePath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: file://"+f.origin+", ref: main}\n")
 			beforeSource := ownedCommandRead(t, sourcePath)
 			calls := 0
 			opts.PrepareDependencies = func(ctx context.Context, root, local string, edits []pipeline.StagedConfigEdit) (pipeline.PreparedInstallDependencies, error) {
@@ -233,7 +363,7 @@ func TestConfiguredInstallRejectsIncompatibleScopePins(t *testing.T) {
 	}
 	f := newInstallBindingFixture(t)
 	userPath := filepath.Join(f.home, ".agents", "config.yaml")
-	body := "\nharnesses: [factory]\nregistries:\n  - url: " + f.origin + "\n    ref: main\n"
+	body := "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: file://" + f.origin + ", ref: main}\n"
 	writeConfig(t, userPath, body)
 	if out, err := executeCommand("lock", "--scope", "user"); err != nil {
 		t.Fatalf("lock user A: %v\n%s", err, out)
@@ -248,14 +378,14 @@ func TestConfiguredInstallRejectsIncompatibleScopePins(t *testing.T) {
 		t.Fatalf("lock repo B: %v\n%s", err, out)
 	}
 	before := ownedCommandSnapshot(t, f.base)
-	out, err := executeCommand("install", "review")
+	out, err := executeCommand("install", "--scope", "repo", "review")
 	if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
 		t.Fatalf("incompatible scope pins were not refused: %v\n%s", err, out)
 	}
 	if after := ownedCommandSnapshot(t, f.base); !reflect.DeepEqual(before, after) {
 		t.Fatal("incompatible pin refusal changed disk state")
 	}
-	if out, err := executeCommand("install", "new"); err != nil {
+	if out, err := executeCommand("install", "--scope", "repo", "new"); err != nil {
 		t.Fatalf("compatible target-scope control: %v\n%s", err, out)
 	}
 	raw := ownedCommandRead(t, filepath.Join(f.repo, ".factory", "skills", "new", "SKILL.md"))
@@ -276,7 +406,7 @@ func TestConfiguredInstallPinsDiscoveredSubBundle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeConfig(t, filepath.Join(f.home, ".agents", "config.yaml"), "\nharnesses: [factory]\nregistries:\n  - url: "+f.origin+"\n    ref: main\n    path: entries\n")
+	writeConfig(t, filepath.Join(f.home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: file://"+f.origin+", ref: main, path: entries}\n")
 	opts := f.options()
 	opts.FromURL, opts.FromRef, opts.Args = "", "", []string{"nested"}
 	calls := 0
@@ -315,7 +445,7 @@ func TestConfiguredInstallUnlockedOrganizationOutputSurvivesGC(t *testing.T) {
 	writeSkill(t, f.working, "review", "Content A", []string{"chosen"})
 	commitAndPushAll(t, f.working, "tagged organization resource")
 	orgPath := filepath.Join(f.base, "org", "config.yaml")
-	writeConfig(t, orgPath, "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: "+f.origin+"\n    ref: main\n    required: true\n")
+	writeConfig(t, orgPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: file://"+f.origin+", ref: main}\nresources:\n  hosted: {all: true, required: true}\n")
 	config.SetTestOrganizationConfigPath(t, orgPath)
 	if out, err := executeCommand("install", "--tag", "chosen"); err != nil {
 		t.Fatalf("install: %v\n%s", err, out)
@@ -336,6 +466,7 @@ func TestConfiguredInstallUnlockedOrganizationOutputSurvivesGC(t *testing.T) {
 	}
 }
 
+// spec: resource-installation/matching-expected-commit-installs-at-the-requested-ref
 func TestAdHocInstallPreparationPinsOriginalMutableRef(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -344,6 +475,7 @@ func TestAdHocInstallPreparationPinsOriginalMutableRef(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			f := newInstallBindingFixture(t)
 			opts := f.options()
+			opts.ExpectedCommit = f.commit
 			if mode == "bundle" || mode == "inferred" {
 				opts.Args = nil
 			}
@@ -358,6 +490,10 @@ func TestAdHocInstallPreparationPinsOriginalMutableRef(t *testing.T) {
 				p, err := prepareInstallDependencies(ctx, root, local, edits)
 				if err != nil {
 					return p, err
+				}
+				resolved, err := p.ResolvedCommit(config.RegistryEntry{URL: f.origin, Ref: "main"})
+				if err != nil || resolved.Commit != f.commit {
+					t.Fatalf("prepared commit=%q err=%v, want exact original commit %s", resolved.Commit, err, f.commit)
 				}
 				original := p.Reconcile
 				p.Reconcile = func(ctx context.Context, root, local string, blocked bool, edits []pipeline.StagedConfigEdit) (pipeline.DependencyLockView, error) {
@@ -457,7 +593,7 @@ func testInstallPreparedReadsRejectConcurrentChanges(t *testing.T, configured bo
 			f.seedLock(t)
 			fragment := filepath.Join(f.repo, ".agents", "fragment.yaml")
 			if scenario == "include" || scenario == "late include" {
-				writeFile(t, fragment, "tags: [before]\n")
+				writeFile(t, fragment, "resources:\n  hosted: {tags: [before]}\n")
 				path := config.ProjectConfigPath(f.repo)
 				writeFile(t, path, string(ownedCommandRead(t, path))+"\ninclude: [fragment.yaml]\n")
 			}
@@ -487,15 +623,15 @@ func testInstallPreparedReadsRejectConcurrentChanges(t *testing.T, configured bo
 					calls++
 					switch scenario {
 					case "include":
-						writeFile(t, fragment, "tags: [after]\n")
+						writeFile(t, fragment, "resources:\n  hosted: {tags: [after]}\n")
 					case "late include":
 						commitDependencyTransaction = func(ctx context.Context, state string, desired []dependencytxn.DesiredFile, options ...dependencytxn.Option) (dependencytxn.Result, error) {
-							writeFile(t, fragment, "tags: [after]\n")
+							writeFile(t, fragment, "resources:\n  hosted: {tags: [after]}\n")
 							capture()
 							return originalCommit(ctx, state, desired, options...)
 						}
 					case "local":
-						writeFile(t, config.LocalConfigPath(f.repo), "skills: {exclude: [review]}\n")
+						writeFile(t, config.LocalConfigPath(f.repo), "apiVersion: agent-marketplace/v4\nsources:\n  hosted: {git: file://"+f.origin+", ref: main}\nresources:\n  hosted: {exclude: [skill/review]}\n")
 					case "lock":
 						path := filepath.Join(f.repo, ".agents", "lock.yaml")
 						writeFile(t, path, string(ownedCommandRead(t, path))+"\n")
@@ -553,7 +689,7 @@ func testInstallMissingSelectionDoesNotPublishOrLeakLease(t *testing.T, configur
 	opts := f.options()
 	opts.Args = []string{"absent"}
 	if configured {
-		writeConfig(t, config.ProjectConfigPath(f.repo), "\nharnesses: [factory]\nregistries:\n  - url: "+f.origin+"\n    ref: main\n")
+		writeConfig(t, config.ProjectConfigPath(f.repo), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  hosted: {git: file://"+f.origin+", ref: main}\n")
 		opts.FromURL, opts.FromRef = "", ""
 	}
 	before := ownedCommandSnapshot(t, f.repo)

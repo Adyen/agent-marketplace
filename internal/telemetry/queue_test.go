@@ -16,9 +16,13 @@ import (
 	"time"
 )
 
+// spec: telemetry/pending-records-are-bounded-and-retried-in-order
 func TestQueuePushAndDrain(t *testing.T) {
 	dir := t.TempDir()
 	q := NewQueue(dir)
+	if q.maxBytes != 5*1024*1024 || q.maxAge != 7*24*time.Hour {
+		t.Fatalf("default retention = %d bytes, %s", q.maxBytes, q.maxAge)
+	}
 
 	order := []int{1, 2, 3}
 	for _, n := range order {
@@ -123,6 +127,7 @@ func TestQueueUnsupportedSignal(t *testing.T) {
 	}
 }
 
+// spec: telemetry/pending-records-are-bounded-and-retried-in-order
 func TestQueueEvictionBySize(t *testing.T) {
 	dir := t.TempDir()
 	q := NewQueue(dir)
@@ -150,6 +155,7 @@ func TestQueueEvictionBySize(t *testing.T) {
 	}
 }
 
+// spec: telemetry/pending-records-are-bounded-and-retried-in-order
 func TestQueueEvictionByAge(t *testing.T) {
 	dir := t.TempDir()
 	q := NewQueue(dir)

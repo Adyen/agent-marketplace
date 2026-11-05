@@ -91,12 +91,21 @@ func requireCompatibilityProtocolInventory(command *compatibilityCommand, e *Env
 		}
 		entry := matches[0]
 		if probe.kind == "hook" {
-			event, matcher := "preToolUse", "Bash"
+			event, matcher := "preToolUse", "^Bash$"
 			if i == 1 {
 				event, matcher = "userPromptSubmit", ""
 			}
-			if entry.Event != event || entry.Handler != "command" || entry.Matcher != matcher || len(paths) != 1 || filepath.Clean(entry.SourcePath) != filepath.Clean(paths[0]) {
-				return fmt.Errorf("native hook event, handler, matcher, or source differs from the fixture")
+			if entry.Event != event {
+				return fmt.Errorf("native hook event differs from fixture")
+			}
+			if entry.Handler != "command" {
+				return fmt.Errorf("native hook handler differs from fixture")
+			}
+			if entry.Matcher != matcher {
+				return fmt.Errorf("native hook matcher differs from fixture")
+			}
+			if len(paths) != 1 || filepath.Clean(entry.SourcePath) != filepath.Clean(paths[0]) {
+				return fmt.Errorf("native hook source differs from fixture")
 			}
 			command.Observed = append(command.Observed, entry.Command, "event: "+event, "source: "+entry.SourcePath, "hook discovery only; execution not requested")
 			continue
@@ -146,6 +155,76 @@ func compatibilitySameSource(actual, expected string) bool {
 	}
 	resolved, err := filepath.EvalSymlinks(expected)
 	return err == nil && filepath.Clean(actual) == resolved
+}
+
+func TestCompatibilityCodexHookInventoryRequiresExactMatcherAndFields(t *testing.T) {
+	e := newEnv(t)
+	f := compatibilityFixture{prefix: "amcompat-codex", hookScript: filepath.Join(e.repos, "hook.sh")}
+	probe := compatibilityNativeProbe{kind: "hook", protocol: "codex-hooks", names: []string{f.name("hook-a"), f.name("hook-b")}}
+	source := filepath.Join(e.workspace, ".codex", "hooks.json")
+	want := []compatibilityNativeEntry{
+		{Name: "PreToolUse-command", Command: f.hookCommand("hook-a"), Event: "preToolUse", Handler: "command", Matcher: "^Bash$", SourcePath: source},
+		{Name: "UserPromptSubmit-command", Command: f.hookCommand("hook-b"), Event: "userPromptSubmit", Handler: "command", SourcePath: source},
+	}
+	output := func(entries []compatibilityNativeEntry) string {
+		t.Helper()
+		payload := map[string]any{"data": []any{map[string]any{
+			"cwd": e.workspace, "skills": []any{}, "hooks": entries, "errors": []any{},
+		}}}
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+	inspect := func(entries []compatibilityNativeEntry, absent bool) error {
+		command := compatibilityCommand{output: output(entries)}
+		return requireCompatibilityProtocolInventory(&command, e, f, probe, "repo", []string{source}, absent)
+	}
+	if err := inspect(want, false); err != nil {
+		t.Errorf("exact two-hook Codex inventory rejected: %v", err)
+	}
+	for _, tc := range []struct {
+		name      string
+		mutate    func([]compatibilityNativeEntry) []compatibilityNativeEntry
+		wantError string
+	}{
+		{"unanchored Bash matcher", func(entries []compatibilityNativeEntry) []compatibilityNativeEntry {
+			entries[0].Matcher = "Bash"
+			return entries
+		}, "native hook matcher differs from fixture"},
+		{"wrong event", func(entries []compatibilityNativeEntry) []compatibilityNativeEntry {
+			entries[1].Event = "preToolUse"
+			return entries
+		}, "native hook event differs from fixture"},
+		{"wrong handler", func(entries []compatibilityNativeEntry) []compatibilityNativeEntry {
+			entries[1].Handler = "prompt"
+			return entries
+		}, "native hook handler differs from fixture"},
+		{"wrong source", func(entries []compatibilityNativeEntry) []compatibilityNativeEntry {
+			entries[1].SourcePath = filepath.Join(e.workspace, ".codex", "other.json")
+			return entries
+		}, "native hook source differs from fixture"},
+		{"missing hook", func(entries []compatibilityNativeEntry) []compatibilityNativeEntry { return entries[:1] }, "native inventory must discover the fixture resource exactly once"},
+		{"duplicate hook", func(entries []compatibilityNativeEntry) []compatibilityNativeEntry {
+			return append(entries, entries[0])
+		}, "native inventory must discover the fixture resource exactly once"},
+		{"wrong command", func(entries []compatibilityNativeEntry) []compatibilityNativeEntry {
+			entries[0].Command = "inert wrong fixture command"
+			return entries
+		}, "native inventory must discover the fixture resource exactly once"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entries := append([]compatibilityNativeEntry(nil), want...)
+			err := inspect(tc.mutate(entries), false)
+			if err == nil || err.Error() != tc.wantError {
+				t.Fatalf("Codex discriminator error = %v, want %q", err, tc.wantError)
+			}
+		})
+	}
+	if err := inspect([]compatibilityNativeEntry{}, true); err != nil {
+		t.Fatalf("initial absent Codex hook inventory rejected: %v", err)
+	}
 }
 
 func TestCompatibilityClaudeDescriptionRequiresFixtureContent(t *testing.T) {

@@ -5,9 +5,29 @@ import (
 	"errors"
 	"io"
 	"math"
+	"strings"
 )
 
 var ErrBlobTooLarge = errors.New("marketplace/store: blob exceeds bounded read limit")
+
+const placeholderArchiveKeyPrefix = "placeholder-archive-sha256-"
+
+// PlaceholderArchiveKey returns the blob address of the placeholder-form archive
+// whose bytes hash to digest. The stored bytes are verified against digest, not
+// against this address.
+func PlaceholderArchiveKey(digest ArchiveDigest) ArchiveDigest {
+	return ArchiveDigest(placeholderArchiveKeyPrefix + strings.TrimPrefix(string(digest), "sha256:"))
+}
+
+// PlaceholderArchiveDigest returns the archive digest a placeholder blob address
+// belongs to, and false when key is not a placeholder blob address.
+func PlaceholderArchiveDigest(key ArchiveDigest) (ArchiveDigest, bool) {
+	hex, ok := strings.CutPrefix(string(key), placeholderArchiveKeyPrefix)
+	if !ok {
+		return "", false
+	}
+	return ArchiveDigest("sha256:" + hex), true
+}
 
 type BoundedBlobStore interface {
 	GetBounded(context.Context, ArchiveDigest, int64) ([]byte, error)

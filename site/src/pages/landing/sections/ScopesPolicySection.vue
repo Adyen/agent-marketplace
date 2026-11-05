@@ -1,270 +1,253 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
 import CommandBar from '../components/CommandBar.vue'
 import SectionShell from '../components/SectionShell.vue'
 
-type ScopeID = 'user' | 'repo' | 'local'
-
 const scopes = [
   {
-    id: 'user' as ScopeID,
+    id: 'user',
     title: 'User',
+    context: 'Personal',
     summary: 'Available to you in every repository on this machine.',
     configPath: '~/.agents/config.yaml',
     reach: 'Every repository',
     versionControl: 'Not committed',
+    isDefault: true,
   },
   {
-    id: 'repo' as ScopeID,
+    id: 'repo',
     title: 'Repository',
+    context: 'Team shared',
     summary: 'Shared with the team and committed to this repository.',
     configPath: '.agents/config.yaml',
     reach: 'This repository',
     versionControl: 'Committed',
-    isDefault: true,
   },
   {
-    id: 'local' as ScopeID,
+    id: 'local',
     title: 'Local',
+    context: 'Private',
     summary: 'Available only to you in this repository and kept out of Git.',
     configPath: '.agents/config.local.yaml',
     reach: 'This checkout',
     versionControl: 'Gitignored',
   },
 ]
-
-const activeScopeID = ref<ScopeID>('repo')
-const activeScope = computed(
-  () => scopes.find((scope) => scope.id === activeScopeID.value) ?? scopes[1],
-)
-const installCommand = computed(
-  () => `agent-marketplace install pdf --scope ${activeScope.value.id}`,
-)
 </script>
 
 <template>
   <SectionShell
     id="scopes"
+    class="scopes-policy"
     eyebrow="Scopes &amp; policy"
     title="Control where tools apply"
-    soft
   >
     <template #sub>
-      Choose a user, repository, or local scope for each tool.
-      Organization-required tooling stays enforced.
+      Compare who receives a tool and whether its configuration is shared.
     </template>
 
-    <div class="scope-panel">
-      <div class="tabs" role="tablist" aria-label="Resource scope">
-        <button
-          v-for="scope in scopes"
-          :key="scope.id"
-          :id="'tab-' + scope.id"
-          type="button"
-          role="tab"
-          :aria-selected="activeScopeID === scope.id"
-          :aria-controls="'panel-' + scope.id"
-          :class="{ active: activeScopeID === scope.id }"
-          @click="activeScopeID = scope.id"
-        >
-          {{ scope.title }}
-        </button>
+    <div class="scope-explorer">
+      <div class="scope-grid">
+        <article v-for="(scope, index) in scopes" :key="scope.id" class="scope-card">
+          <div class="scope-card__context">
+            <span class="scope-card__index">
+              <span>{{ String(index + 1).padStart(2, '0') }}</span>
+              <span aria-hidden="true">/</span>
+              {{ scope.context }}
+            </span>
+            <code>--scope {{ scope.id }}</code>
+          </div>
+
+          <h3 class="scope-card__title">
+            <span>{{ scope.title }}</span>
+            <span v-if="scope.isDefault" class="default-tag">Default</span>
+          </h3>
+
+          <p class="scope-card__summary">{{ scope.summary }}</p>
+
+          <div class="scope-facts">
+            <div class="scope-fact scope-fact--config">
+              <span class="scope-fact__label">Config file</span>
+              <code>{{ scope.configPath }}</code>
+            </div>
+            <div class="scope-fact">
+              <span class="scope-fact__label">Applies to</span>
+              <span>{{ scope.reach }}</span>
+            </div>
+            <div class="scope-fact">
+              <span class="scope-fact__label">Version control</span>
+              <span>{{ scope.versionControl }}</span>
+            </div>
+          </div>
+        </article>
       </div>
 
-      <div
-        :id="'panel-' + activeScope.id"
-        class="scope-detail"
-        role="tabpanel"
-        :aria-labelledby="'tab-' + activeScope.id"
-      >
-        <h3>
-          {{ activeScope.title }}
-          <span v-if="activeScope.isDefault" class="default-tag">default</span>
-        </h3>
-        <p>{{ activeScope.summary }}</p>
-
-        <dl class="scope-outcome">
-          <div>
-            <dt>Config file</dt>
-            <dd><code>{{ activeScope.configPath }}</code></dd>
-          </div>
-          <div>
-            <dt>Applies to</dt>
-            <dd>{{ activeScope.reach }}</dd>
-          </div>
-          <div>
-            <dt>Version control</dt>
-            <dd>{{ activeScope.versionControl }}</dd>
-          </div>
-        </dl>
-
+      <div class="scope-command">
+        <p class="scope-command__label">
+          <span>Example</span>
+          <span>User scope</span>
+        </p>
         <CommandBar
-          :command="installCommand"
-          :highlight="`--scope ${activeScope.id}`"
-          :copyable="false"
-          class="scope-command"
+          command="agent-marketplace install pdf --scope user"
+          highlight="--scope user"
         />
       </div>
-    </div>
 
-    <aside class="organization-baseline">
-      <div class="policy-copy">
-        <span class="policy-label">
-          <svg aria-hidden="true" viewBox="0 0 24 24">
-            <path d="M8 10V7a4 4 0 0 1 8 0v3" />
-            <rect x="5" y="10" width="14" height="11" rx="2" />
-          </svg>
-          Organization baseline
-        </span>
-        <p>
-          Required tools are defined centrally and cannot be overridden by user,
-          repository, or local configuration.
-        </p>
-      </div>
-    </aside>
+      <aside class="organization-baseline">
+        <div class="policy-copy">
+          <span class="policy-label">
+            <svg class="am-stroke-icon" aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+              <rect x="5" y="10" width="14" height="11" rx="2" />
+            </svg>
+            Organization baseline
+          </span>
+          <p>
+            Required tools are defined centrally and cannot be overridden by user,
+            repository, or local configuration.
+          </p>
+        </div>
+      </aside>
+    </div>
   </SectionShell>
 </template>
 
 <style scoped>
-.scope-panel {
-  padding: 30px;
-  border: 1px solid var(--am-border);
-  border-radius: var(--am-radius-lg);
-  background: var(--am-surface);
-  box-shadow: inset 0 1px color-mix(in srgb, var(--am-color-text-primary) 2.5%, transparent);
+.scopes-policy :deep(.head) {
+  margin-bottom: var(--lp-space-default);
 }
 
-.tabs {
+.scope-grid {
+  display: grid;
+  overflow: hidden;
+  border-radius: var(--lp-radius-preview);
+  background: var(--lp-canvas);
+  box-shadow: var(--lp-outline-shadow);
+  grid-auto-rows: 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.scope-card {
+  position: relative;
   display: flex;
-  gap: 28px;
-  border-bottom: 1px solid var(--am-border);
+  min-height: 19.5rem;
+  min-width: 0;
+  flex-direction: column;
+  padding: var(--lp-space-default);
+  color: var(--lp-text);
 }
 
-.tabs button {
-  padding: 0 0 11px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: var(--vp-c-text-2);
-  font-size: 15px;
-  font-weight: var(--am-font-medium);
-  cursor: pointer;
+.scope-card + .scope-card::before {
+  position: absolute;
+  top: var(--lp-space-default);
+  bottom: var(--lp-space-default);
+  left: 0;
+  width: 1px;
+  background: var(--lp-outline);
+  content: "";
 }
 
-.tabs button:hover,
-.tabs button.active {
-  color: var(--vp-c-text-1);
-}
-
-.tabs button.active {
-  border-bottom-color: var(--vp-c-brand-1);
-}
-
-.tabs button:focus-visible {
-  outline: 2px solid var(--vp-c-brand-1);
-  outline-offset: 3px;
-}
-
-.scope-detail {
-  padding-top: 24px;
-}
-
-h3 {
+.scope-card__context {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 0 0 7px;
-  color: var(--vp-c-text-1);
-  font-size: 20px;
-  font-weight: var(--am-font-semibold);
+  justify-content: space-between;
+  gap: var(--lp-space-related);
+  color: var(--lp-text-2);
+  font: var(--lp-font-label);
+  text-transform: uppercase;
+}
+
+.scope-card__index {
+  display: flex;
+  align-items: center;
+  gap: var(--lp-space-tight);
+}
+
+.scope-card__index > span:first-child {
+  color: var(--lp-text);
+}
+
+.scope-card__context code {
+  color: var(--lp-text);
+  font: inherit;
+  text-transform: none;
+}
+
+.scope-card__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--lp-space-related);
+  margin: var(--lp-space-default) 0 0;
+  font: var(--lp-font-heading);
 }
 
 .default-tag {
-  padding: 2px 5px;
-  border: 1px solid var(--am-border);
-  border-radius: 4px;
-  color: var(--vp-c-text-2);
-  font-family: var(--vp-font-family-mono), monospace;
-  font-size: 10px;
-  font-weight: var(--am-font-semibold);
-  letter-spacing: 0.05em;
-  line-height: 1;
+  display: inline-flex;
+  height: var(--lp-h-depiction);
+  align-items: center;
+  padding: 0 var(--lp-space-related);
+  border-radius: var(--lp-radius-pill);
+  background: var(--lp-fill);
+  color: var(--lp-text-2);
+  font: var(--lp-font-label);
   text-transform: uppercase;
 }
 
-.scope-detail > p {
-  margin: 0;
-  color: var(--vp-c-text-2);
-  font-size: 15px;
-  line-height: 1.55;
+.scope-card__summary {
+  min-height: 2.75rem;
+  margin: var(--lp-space-related) 0 0;
+  color: var(--lp-text-2);
+  font: var(--lp-font-body);
+  text-wrap: pretty;
 }
 
-.scope-outcome {
+.scope-facts {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1px;
-  margin: 24px 0 0;
-  overflow: hidden;
-  border: 1px solid var(--am-code-border);
-  border-radius: var(--am-radius);
-  background: var(--am-code-border);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--lp-space-default) var(--lp-space-related);
+  margin-top: var(--lp-space-default);
 }
 
-.scope-outcome div {
+.scope-fact {
+  display: flex;
   min-width: 0;
-  padding: 13px 15px;
-  background: var(--am-code-bg);
+  flex-direction: column;
+  gap: var(--lp-space-tight);
+  color: var(--lp-text);
+  font: var(--lp-font-depiction);
 }
 
-.scope-outcome dt {
-  margin-bottom: 5px;
-  color: var(--am-code-muted);
-  font-family: var(--vp-font-family-mono), monospace;
-  font-size: 10px;
-  font-weight: var(--am-font-semibold);
-  letter-spacing: 0.07em;
+.scope-fact--config {
+  grid-column: 1 / -1;
+}
+
+.scope-fact__label {
+  color: var(--lp-text-2);
+  font: var(--lp-font-label);
   text-transform: uppercase;
 }
 
-.scope-outcome dd {
-  margin: 0;
+.scope-fact code {
   overflow-wrap: anywhere;
-  color: var(--am-code-text);
-  font-size: var(--am-text-supporting);
-  font-weight: var(--am-font-semibold);
-}
-
-.scope-outcome code {
-  color: var(--vp-c-brand-1);
-  font-family: var(--vp-font-family-mono), monospace;
-  font-size: var(--am-text-supporting);
+  color: var(--lp-text);
+  font: var(--lp-font-label);
 }
 
 .scope-command {
-  --am-technical-font-size: var(--am-text-body-sm);
-  width: 100%;
-  margin-top: 20px;
+  margin-top: var(--lp-space-default);
+}
+
+.scope-command__label {
+  display: flex;
+  justify-content: space-between;
+  margin: 0 0 var(--lp-space-tight);
+  color: var(--lp-text-2);
+  font: var(--lp-font-label);
+  text-transform: uppercase;
 }
 
 .organization-baseline {
-  position: relative;
-  margin-top: 18px;
-  padding: 16px 18px;
-  overflow: hidden;
-  border: 1px solid var(--am-accent-border);
-  border-radius: var(--am-radius-lg);
-  background:
-    linear-gradient(90deg, var(--am-accent-soft), transparent 55%),
-    var(--am-surface);
-  box-shadow: inset 0 1px color-mix(in srgb, var(--am-color-text-primary) 2.5%, transparent);
-}
-
-.organization-baseline::before {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 3px;
-  background: var(--vp-c-brand-1);
-  content: "";
+  margin-top: var(--lp-space-default);
 }
 
 .policy-copy {
@@ -272,46 +255,38 @@ h3 {
 }
 
 .policy-label {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 7px;
-  margin-bottom: 4px;
-  color: var(--vp-c-brand-1);
-  font-family: var(--vp-font-family-mono), monospace;
-  font-size: 10px;
-  font-weight: var(--am-font-semibold);
-  letter-spacing: 0.08em;
+  gap: var(--lp-space-tight);
+  color: var(--lp-text);
+  font: var(--lp-font-label);
   text-transform: uppercase;
 }
 
-.policy-label svg {
-  width: 13px;
-  height: 13px;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.8;
-}
-
 .policy-copy p {
-  margin: 0;
-  color: var(--vp-c-text-2);
-  font-size: var(--am-text-body-sm);
-  line-height: 1.5;
+  max-width: var(--lp-measure);
+  margin: var(--lp-space-related) 0 0;
+  color: var(--lp-text-2);
+  font: var(--lp-font-body);
+  text-wrap: pretty;
 }
 
-@media (max-width: 680px) {
-  .scope-panel {
-    padding: 22px;
-  }
-
-  .scope-outcome {
+@media (max-width: 767px) {
+  .scope-grid {
     grid-template-columns: 1fr;
   }
 
-  .tabs {
-    gap: 18px;
+  .scope-card {
+    min-height: auto;
+  }
+
+  .scope-card + .scope-card::before {
+    top: 0;
+    right: var(--lp-space-default);
+    bottom: auto;
+    left: var(--lp-space-default);
+    width: auto;
+    height: 1px;
   }
 }
 </style>

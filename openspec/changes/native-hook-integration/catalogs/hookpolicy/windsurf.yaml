@@ -1,0 +1,40 @@
+# Draft seed for pkg/harness-compilation/hookpolicy/catalogs/windsurf.yaml.
+schema: 1
+harness: windsurf
+evidence:
+  checked: "2026-10-07"
+  refs:
+    - https://docs.devin.ai/desktop/cascade/hooks
+  notes: >-
+    Cascade (Devin Desktop) has no general hook environment variables and no
+    timeout field. Commands run via `bash -c` from `working_directory`, which
+    defaults to the workspace root (the root of the repo being worked on in
+    multi-repo workspaces), so repository-scope commands use repository-relative
+    paths. ROOT_WORKSPACE_PATH exists only for post_setup_worktree. Reading a
+    directory recursively also fires the read events. Hooks do not run in
+    Restricted Mode.
+
+env:
+  workspace_root: {names: [ROOT_WORKSPACE_PATH], events: [post_setup_worktree]}
+plugin_env: {}
+
+repository_base: {cwd: repository}
+timeout: {unit: none}
+matcher: {syntax: none}
+loads_hooks_of: []
+
+# Tool selection is encoded in the event: `tools` is the exact concept set the
+# event covers, and `mcp: true` means every MCP tool.
+events:
+  pre_read_code: {canonical: PreToolUse, tools: [file.read], types: [command]}
+  post_read_code: {canonical: PostToolUse, tools: [file.read], types: [command]}
+  pre_write_code: {canonical: PreToolUse, tools: [file.write, file.edit], types: [command]}
+  post_write_code: {canonical: PostToolUse, tools: [file.write, file.edit], types: [command]}
+  pre_run_command: {canonical: PreToolUse, tools: [shell], types: [command]}
+  post_run_command: {canonical: PostToolUse, tools: [shell], types: [command]}
+  pre_mcp_tool_use: {canonical: PreToolUse, mcp: true, types: [command]}
+  post_mcp_tool_use: {canonical: PostToolUse, mcp: true, types: [command]}
+  pre_user_prompt: {canonical: UserPromptSubmit, types: [command]}
+  post_cascade_response: {canonical: Stop, types: [command]}
+  post_cascade_response_with_transcript: {types: [command]}
+  post_setup_worktree: {types: [command]}

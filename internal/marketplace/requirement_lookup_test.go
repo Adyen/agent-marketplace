@@ -37,7 +37,7 @@ func lookupOccurrence(commit, manifestDigest string) mpapi.ExactRegistryOccurren
 
 func lookupManifest(t *testing.T, resources ...marketplaceartifact.RevisionResource) ([]byte, string) {
 	t.Helper()
-	payload, digest, err := marketplaceartifact.EncodeRegistryRevisionManifest(marketplaceartifact.RegistryRevisionManifest{
+	payload, digest, err := marketplaceartifact.CanonicalRegistryRevisionPayload(marketplaceartifact.RegistryRevisionManifest{
 		SchemaVersion: marketplaceartifact.RegistryRevisionSchemaV1,
 		Generator:     marketplaceartifact.RegistryRevisionGeneratorV1,
 		Resources:     resources,

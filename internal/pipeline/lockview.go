@@ -34,9 +34,41 @@ type LockViewError struct {
 }
 
 func (e *LockViewError) Error() string {
-	return fmt.Sprintf("%s: %s lock %q: %v", e.Code, e.Scope, e.Path, e.Err)
+	prefix := e.Code
+	details := ""
+	if e.Scope != "" {
+		details = string(e.Scope)
+	}
+	if e.Path != "" {
+		if details != "" {
+			details += " "
+		}
+		details += fmt.Sprintf("lock %q", e.Path)
+	}
+	if details != "" {
+		prefix += ": " + details
+	}
+	return fmt.Sprintf("%s: %v", prefix, e.Err)
 }
 func (e *LockViewError) Unwrap() error { return e.Err }
+func (e *LockViewError) DiagnosticCode() string {
+	if e == nil {
+		return ""
+	}
+	return e.Code
+}
+func (e *LockViewError) DiagnosticScope() string {
+	if e == nil {
+		return ""
+	}
+	return string(e.Scope)
+}
+func (e *LockViewError) DiagnosticPath() string {
+	if e == nil {
+		return ""
+	}
+	return e.Path
+}
 
 type readOnlyLockedGit struct {
 	snapshot string

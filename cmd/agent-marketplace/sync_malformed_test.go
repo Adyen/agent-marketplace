@@ -60,12 +60,15 @@ func TestSyncCommandDiagnosesSelectedButMalformedSkill(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - valid-skill
-      - broken-skill
+resources:
+  skills:
+    include:
+      - skill/valid-skill
+      - skill/broken-skill
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -112,12 +115,15 @@ func TestSyncCommandDiagnosesMalformedSkillSelectedByFrontmatterName(t *testing.
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - valid-skill
-      - bubble-tea
+resources:
+  skills:
+    include:
+      - skill/valid-skill
+      - skill/bubble-tea
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -157,12 +163,15 @@ func TestSyncCommandGenuinelyAbsentSkillKeepsNotFoundRemediation(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - valid-skill
-      - beads
+resources:
+  skills:
+    include:
+      - skill/valid-skill
+      - skill/beads
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -201,13 +210,16 @@ func TestSyncPruneStaleDoesNotPruneMalformedSelection(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - valid-skill
-      - broken-skill
-      - deleted-skill
+resources:
+  skills:
+    include:
+      - skill/valid-skill
+      - skill/broken-skill
+      - skill/deleted-skill
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -252,11 +264,14 @@ func TestSyncCommandDefaultOutputPointsAtMalformedDetail(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - valid-skill
+resources:
+  skills:
+    include:
+      - skill/valid-skill
 `)
 
 	withWorkingDir(t, repoRoot)

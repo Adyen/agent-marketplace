@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -201,6 +202,72 @@ func TestBuildStatusTreeEmptyInputYieldsNoItems(t *testing.T) {
 	items := buildStatusTree(nil, nil)
 	if len(items) != 0 {
 		t.Fatalf("buildStatusTree(nil) should return empty slice, got %d items", len(items))
+	}
+}
+
+// A malformed skill keeps the registry it came from, so its label and
+// detail name that registry instead of falling back to (local), and
+// same-named malformed skills from two registries keep distinct identities.
+// spec: tui-rendering/malformed-rows-name-their-registry
+func TestBuildRowsMalformedRowsCarryTheirRegistry(t *testing.T) {
+	broken := func(dir string) catalog.LoadedCatalog {
+		return catalog.LoadedCatalog{Malformed: []skill.MalformedSkill{{DirName: dir, Path: "skills/" + dir, Error: fmt.Errorf("yaml parse error")}}}
+	}
+	catalogs := map[string]catalog.LoadedCatalog{"fixture-key": broken("broken-skill"), "other-key": broken("broken-skill")}
+	cfg := &config.Config{Registries: []config.RegistryEntry{
+		{URL: "file:///registries/fixture.git", Ref: "main", Path: "skills", CatalogKey: "fixture-key"},
+		{URL: "https://example.invalid/team/other.git", Ref: "main", Path: "skills", CatalogKey: "other-key"},
+	}}
+
+	rows := buildRows(cfg, catalogs, nil, nil, materialize.DriftReport{})
+
+	byRegistry := map[string]row{}
+	for _, r := range rows {
+		if r.IsMalformed {
+			byRegistry[r.RegistryName] = r
+		}
+	}
+	fixture, ok := byRegistry["fixture"]
+	if !ok || len(byRegistry) != 2 {
+		t.Fatalf("malformed rows by registry = %#v, want fixture and other", byRegistry)
+	}
+	if fixture.RegistryURL != "file:///registries/fixture.git" || fixture.RegistryRef != "main" || fixture.RegistryPath != "skills" || fixture.Artifact.CatalogKey != "fixture-key" {
+		t.Fatalf("fixture malformed row = %#v, want its registry metadata and catalog key", fixture)
+	}
+	if got := resourceLabel(fixture); !strings.Contains(got, "fixture/broken-skill") {
+		t.Fatalf("label = %q, want fixture/broken-skill", got)
+	}
+	if rowKey(fixture) == rowKey(byRegistry["other"]) {
+		t.Fatal("same-named malformed skills from two registries share a row key")
+	}
+	// Without registry metadata the label still falls back to (local).
+	for _, r := range buildRows(nil, map[string]catalog.LoadedCatalog{"unknown": broken("orphan-skill")}, nil, nil, materialize.DriftReport{}) {
+		if got := resourceLabel(r); r.IsMalformed && !strings.Contains(got, "(local)/orphan-skill") {
+			t.Fatalf("label without registry metadata = %q, want (local)/orphan-skill", got)
+		}
+	}
+}
+
+// A malformed row reports the kind its failed load was for in its label and
+// detail, and "unknown" when the producer could not classify it.
+// spec: tui-rendering/malformed-rows-show-their-kind
+func TestBuildRowsMalformedRowsShowTheirKind(t *testing.T) {
+	catalogs := map[string]catalog.LoadedCatalog{"k": {Malformed: []skill.MalformedSkill{
+		{DirName: "deploy.md", Path: "commands/deploy.md", Kind: ir.KindCommand.String(), Error: fmt.Errorf("ingest.claude.load-command-failed: yaml")},
+		{DirName: "catalog.discover.sub-bundles-ignored", Path: "skills", Error: fmt.Errorf("catalog.discover.sub-bundles-ignored: ignored")},
+	}}}
+	cfg := &config.Config{Registries: []config.RegistryEntry{{URL: "file:///registries/fixture.git", Ref: "main", CatalogKey: "k"}}}
+	labels := map[string]string{}
+	for _, r := range buildRows(cfg, catalogs, nil, nil, materialize.DriftReport{}) {
+		if r.IsMalformed {
+			labels[r.Artifact.Name] = resourceLabel(r)
+		}
+	}
+	if got := labels["deploy.md"]; got != "command fixture/deploy.md" {
+		t.Fatalf("malformed command label = %q, want command fixture/deploy.md", got)
+	}
+	if got := labels["catalog.discover.sub-bundles-ignored"]; !strings.HasPrefix(got, "unknown ") {
+		t.Fatalf("unclassified malformed label = %q, want an unknown kind", got)
 	}
 }
 

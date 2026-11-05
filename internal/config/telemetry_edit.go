@@ -56,7 +56,7 @@ func updateTelemetryScalar(configPath, key string, value *yaml.Node) error {
 		return fmt.Errorf("user config not found at %q; run 'agent-marketplace init' first", configPath)
 	}
 
-	doc, mode, err := readOrInitConfigWithV4(configPath, true)
+	doc, mode, err := readOrInitConfig(configPath)
 	if err != nil {
 		return err
 	}
@@ -77,16 +77,5 @@ func updateTelemetryScalar(configPath, key string, value *yaml.Node) error {
 		setMappingValue(telemetryMapping, key, value)
 	}
 
-	if err := writeConfigDocument(configPath, mode, doc); err != nil {
-		return err
-	}
-
-	cfg, err := LoadConfigFromPath(configPath)
-	if err != nil {
-		return fmt.Errorf("config written to %q is not valid: %w", configPath, err)
-	}
-	if err := cfg.Validate(); err != nil {
-		return fmt.Errorf("config written to %q is not valid: %w", configPath, err)
-	}
-	return nil
+	return writeConfigDocument(configPath, mode, doc)
 }

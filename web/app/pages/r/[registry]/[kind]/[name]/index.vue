@@ -72,14 +72,14 @@ useHead(() => ({
 </script>
 
 <template>
-  <div class="min-h-screen bg-[var(--am-color-bg-canvas)] text-default">
-    <main id="main-content" class="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8" tabindex="-1">
+  <div class="marketplace-public-page">
+    <main id="main-content" class="marketplace-record-main" tabindex="-1">
       <MarketplaceRecordHeader :breadcrumbs="[{ label: 'Marketplace', to: '/' }, { label: `${registry}/${name}` }]" />
-      <div v-if="pending" role="status" aria-live="polite" aria-busy="true" class="rounded-2xl border border-default bg-[var(--am-color-bg-surface)] p-8">
+      <div v-if="pending" role="status" aria-live="polite" aria-busy="true" class="marketplace-record-state">
         <h1 class="text-2xl font-semibold text-highlighted">Loading resource</h1>
         <p class="mt-3 text-sm text-toned">Fetching the latest verified revision and its metadata.</p>
       </div>
-      <section v-else-if="error" role="alert" class="rounded-2xl border border-error/30 bg-[var(--am-color-bg-surface)] p-8">
+      <section v-else-if="error" role="alert" class="marketplace-record-state border-error/30">
         <h1 class="text-2xl font-semibold text-error">Resource unavailable</h1>
         <p class="mt-3 text-sm leading-6 text-toned">This resource could not be loaded. The Marketplace may be unavailable or the resource may no longer be listed.</p>
         <UButton class="mt-6" color="error" @click="retry">Try again</UButton>

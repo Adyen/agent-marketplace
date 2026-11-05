@@ -231,6 +231,17 @@ describe('Marketplace API URL handling', () => {
     })).toThrow(/assessment\.findings must be a bounded array of at most 1000 entries/)
   })
 
+  it('preserves optional source provenance on detail and revision-list payloads', () => {
+    const digest = 'sha256:' + 'a'.repeat(64)
+    const source = { repository_url: 'https://github.com/Adyen/agent-skills.git', path: 'skills/review/SKILL.md', commit: 'b'.repeat(40) }
+    expect(normalizeResourceRevision(revisionPayload(digest, { source })).source).toEqual(source)
+    expect(normalizeResourceRevisions([revisionPayload(digest, { source })], { kind: 'skill', name: 'code review' })[0]?.source).toEqual(source)
+    expect(normalizeResourceRevision(revisionPayload(digest)).source).toBeUndefined()
+    expect(() => normalizeResourceRevision(revisionPayload(digest, { source: 'github.com/Adyen/agent-skills' }))).toThrow(ApiValidationError)
+    expect(() => normalizeResourceRevision(revisionPayload(digest, { source: { repository_url: source.repository_url, commit: source.commit } }))).toThrow(ApiValidationError)
+    expect(() => normalizeResourceRevision(revisionPayload(digest, { source: { ...source, commit: 'main' } }))).toThrow(ApiValidationError)
+  })
+
   it('selects text and raster response handling for inspection content', async () => {
     expect(isRasterMediaType('image/png')).toBe(true)
     expect(isRasterMediaType('application/json')).toBe(false)

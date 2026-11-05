@@ -1,0 +1,40 @@
+runtime: Node v24.21.0
+runner: Vitest 4.1.11
+platform: darwin/arm64
+scope: sanitized UTF-8 raw highlight CPU, no DOM or I/O
+
+BenchmarkRawHighlightCPU/ascii_256bytes_0findings 57238 34942 ns/op
+BenchmarkRawHighlightCPU/ascii_256bytes_1findings 59338 33705 ns/op
+BenchmarkRawHighlightCPU/ascii_65536bytes_0findings 222 9010646 ns/op
+BenchmarkRawHighlightCPU/ascii_65536bytes_1findings 220 9107589 ns/op
+BenchmarkRawHighlightCPU/ascii_65536bytes_256findings 80 25045630 ns/op
+BenchmarkRawHighlightCPU/ascii_65536bytes_960findings 30 66735986 ns/op
+BenchmarkRawHighlightCPU/unicode_40960bytes_512findings 195 10281902 ns/op
+BenchmarkRawHighlightCPU/ascii_256bytes_0findings 58564 34151 ns/op
+BenchmarkRawHighlightCPU/ascii_256bytes_1findings 59462 33635 ns/op
+BenchmarkRawHighlightCPU/ascii_65536bytes_0findings 221 9050615 ns/op
+BenchmarkRawHighlightCPU/ascii_65536bytes_1findings 215 9330820 ns/op
+BenchmarkRawHighlightCPU/ascii_65536bytes_256findings 79 25637355 ns/op
+BenchmarkRawHighlightCPU/ascii_65536bytes_960findings 30 67561135 ns/op
+BenchmarkRawHighlightCPU/unicode_40960bytes_512findings 194 10360443 ns/op
+BenchmarkRawHighlightCPU/ascii_256bytes_0findings 58431 34228 ns/op
+BenchmarkRawHighlightCPU/ascii_256bytes_1findings 59776 33458 ns/op
+BenchmarkRawHighlightCPU/ascii_65536bytes_0findings 220 9141673 ns/op
+BenchmarkRawHighlightCPU/ascii_65536bytes_1findings 216 9289290 ns/op
+BenchmarkRawHighlightCPU/ascii_65536bytes_256findings 77 26153429 ns/op
+BenchmarkRawHighlightCPU/ascii_65536bytes_960findings 30 68665432 ns/op
+BenchmarkRawHighlightCPU/unicode_40960bytes_512findings 190 10563561 ns/op
+BenchmarkRawHighlightCPU/ascii_256bytes_0findings 58194 34368 ns/op
+BenchmarkRawHighlightCPU/ascii_256bytes_1findings 58698 34073 ns/op
+BenchmarkRawHighlightCPU/ascii_65536bytes_0findings 222 9039238 ns/op
+BenchmarkRawHighlightCPU/ascii_65536bytes_1findings 217 9230745 ns/op
+BenchmarkRawHighlightCPU/ascii_65536bytes_256findings 78 25721731 ns/op
+BenchmarkRawHighlightCPU/ascii_65536bytes_960findings 29 69103819 ns/op
+BenchmarkRawHighlightCPU/unicode_40960bytes_512findings 194 10342432 ns/op
+BenchmarkRawHighlightCPU/ascii_256bytes_0findings 57140 35002 ns/op
+BenchmarkRawHighlightCPU/ascii_256bytes_1findings 58787 34022 ns/op
+BenchmarkRawHighlightCPU/ascii_65536bytes_0findings 218 9205741 ns/op
+BenchmarkRawHighlightCPU/ascii_65536bytes_1findings 221 9078903 ns/op
+BenchmarkRawHighlightCPU/ascii_65536bytes_256findings 78 25887986 ns/op
+BenchmarkRawHighlightCPU/ascii_65536bytes_960findings 29 70794141 ns/op
+BenchmarkRawHighlightCPU/unicode_40960bytes_512findings 194 10316255 ns/op

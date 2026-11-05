@@ -25,6 +25,7 @@ var capabilities = map[string]capability{
 	"gemini":   {cli: "gemini", npm: "@google/gemini-cli"},
 	"devin":    {cli: "devin"},
 	"codex":    {cli: "codex", npm: "@openai/codex"},
+	"opencode": {cli: "opencode", npm: "opencode-ai"},
 	"cursor":   {cli: "agent"},
 	"windsurf": {reason: "No verified credential-free Windsurf CLI inspection surface"},
 }

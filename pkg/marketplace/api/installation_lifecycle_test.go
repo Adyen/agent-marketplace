@@ -67,16 +67,13 @@ func TestStartOwnsWorkerStartupAndShutdown(t *testing.T) {
 	var releaseOnce sync.Once
 	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
 	fetchStarted, backendCancelled := make(chan struct{}), make(chan struct{})
+	var startedOnce, cancelledOnce sync.Once
 	fixture.handler.Store(func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case <-fetchStarted:
-		default:
-			close(fetchStarted)
-		}
+		startedOnce.Do(func() { close(fetchStarted) })
 		select {
 		case <-release:
 		case <-r.Context().Done():
-			close(backendCancelled)
+			cancelledOnce.Do(func() { close(backendCancelled) })
 			return
 		}
 		w.WriteHeader(http.StatusBadGateway)
@@ -131,7 +128,7 @@ func TestStartOwnsWorkerStartupAndShutdown(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("shutdown did not join the worker")
 	}
-	if hits := fixture.hits.Load(); hits != 1 {
-		t.Fatalf("hits = %d, want exactly one blocked attempt", hits)
+	if hits := fixture.hits.Load(); hits < 1 || hits > adoptionRefreshRequests {
+		t.Fatalf("hits = %d, want blocked operands of one attempt (at most %d)", hits, adoptionRefreshRequests)
 	}
 }

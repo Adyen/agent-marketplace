@@ -1,10 +1,10 @@
 # Glossary
 
-Plain-language definitions of the words these docs use. Each entry links to the page with the full details.
+Definitions of the terms these docs use. Each entry links to the full details.
 
 ## Cache
 
-The copies of registries that `agent-marketplace` downloads to your computer, stored under `~/.cache/agent-marketplace/`. Installed skills are [symlinks](#symlink) into the cache, so deleting it breaks them until the next [sync](#sync) downloads everything again, which requires a network connection. To free space safely, run `agent-marketplace gc`. See [Clean the cache safely](./how-to/clean-the-cache-safely.md).
+The copies of registries that `agent-marketplace` downloads to your computer, stored under `~/.cache/agent-marketplace/`. Installed skills are [symlinks](#symlink) into the cache, so deleting it breaks them until the next [sync](#sync) downloads everything again over the network. To free space safely, run `agent-marketplace gc`. See [Clean the cache safely](./how-to/clean-the-cache-safely.md).
 
 ## Collection
 
@@ -48,7 +48,7 @@ A difference between what your configuration and [lockfile](#lockfile) describe 
 
 ## Git
 
-A tool that tracks changes to files and shares them between people. Most [registries](#registry) are Git repositories, and `agent-marketplace` runs the `git` program to download them, so Git must be installed. [Terminal basics](./terminal-basics.md#install-git) shows how to check.
+A tool that tracks changes to files and shares them between people. Most [registries](#registry) are Git repositories, and `agent-marketplace` runs the `git` program to download them, so Git must be installed.
 
 ## Harness
 
@@ -64,7 +64,7 @@ A resource selected only because another selected resource declares it as a [pre
 
 ## Lockfile
 
-A generated file, `lock.yaml`, that records the exact [commit](#commit) and a fingerprint of the content for each Git or Marketplace [source](#source). It makes sure that everyone who runs [sync](#sync) gets identical files, even after a branch moves on. Commit `.agents/lock.yaml` together with `.agents/config.yaml`, and do not edit it by hand. `agent-marketplace update` moves it forward on purpose. See [Reproducibility and lockfiles](./explanation/reproducibility-and-lockfiles.md).
+A generated file, `lock.yaml`, that records the exact [commit](#commit) and a fingerprint of the content for each Git or Marketplace [source](#source). Everyone who runs [sync](#sync) gets identical files, even after a branch moves on. Commit `.agents/lock.yaml` together with `.agents/config.yaml`, and do not edit it by hand. `agent-marketplace update` moves it forward on purpose. See [Reproducibility and lockfiles](./explanation/reproducibility-and-lockfiles.md).
 
 ## Locator
 
@@ -148,7 +148,7 @@ A label that a registry author puts on a resource, such as `k8s` or `security`. 
 
 ## Terminal
 
-An app where you type commands instead of clicking, such as Terminal on macOS. [Terminal basics](./terminal-basics.md) explains how to open and use one.
+An app where you type commands instead of clicking, such as Terminal on macOS.
 
 ## TUI
 
@@ -156,4 +156,4 @@ Short for terminal user interface: a full-screen, keyboard-driven screen inside 
 
 ## YAML
 
-The plain-text format of the configuration files. Indentation with spaces decides which setting belongs to which, and tabs are not allowed. A line starting with `#` is a comment. [Terminal basics](./terminal-basics.md#edit-a-configuration-file) has tips for editing it.
+The plain-text format of the configuration files. Indentation with spaces decides which setting belongs to which, and tabs are not allowed. A line starting with `#` is a comment.

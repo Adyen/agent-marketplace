@@ -2,7 +2,7 @@
 # Checked contract race selection for the issue 215 security stack.
 #
 # .github/workflows/security-race.yml runs this script on Ubuntu at the
-# exact pushed revision with Go 1.26.9 and CGO_ENABLED=1. Each run_race
+# exact pushed revision with Go 1.27.3 and CGO_ENABLED=1. Each run_race
 # line below is one validation-contract selection; it is executed exactly
 # as:
 #
@@ -90,10 +90,6 @@ run_race ./internal/sourcerevision \
 
 run_race ./internal/collection \
     -run '^TestDiscoverCollectionSource.*$' \
-    -count=20
-
-run_race ./cmd/agent-marketplace \
-    -run '^TestConvertSource.*$' \
     -count=20
 
 run_race ./internal/skill ./internal/fsboundary \

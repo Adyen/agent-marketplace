@@ -50,7 +50,7 @@ func updateModalForm(form *huh.Form, msg tea.Msg) *huh.Form {
 
 // modalSelectKeyMap adapts the default Huh keymap to the modal letter
 // accelerators this TUI owns: 'g' switches harness scope or edits the
-// global config, 'l' leaves a migration or edits the local config, so
+// global config, 'l' edits the local config, so
 // those letters never reach the form's own navigation bindings.
 func modalFormKeyMap() *huh.KeyMap {
 	km := huh.NewDefaultKeyMap()
@@ -65,16 +65,6 @@ func modalFormKeyMap() *huh.KeyMap {
 func fixedChoiceFormKeyMap() *huh.KeyMap {
 	km := modalFormKeyMap()
 	km.Select.Filter.Unbind()
-	return km
-}
-
-// migrationFormKeyMap keeps 'm' as the migrate accelerator and 'l' as the
-// leave accelerator by moving the confirm toggle off 'l'.
-func migrationFormKeyMap() *huh.KeyMap {
-	km := modalFormKeyMap()
-	km.Confirm.Toggle = key.NewBinding(key.WithKeys("h", "left", "right"), key.WithHelp("←/→", "toggle"), key.WithDisabled())
-	km.Confirm.Accept = key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "migrate"))
-	km.Confirm.Reject = key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "leave"))
 	return km
 }
 
@@ -200,6 +190,26 @@ func (m *Model) ensureHarnessForm() {
 	m.harnessModal.optionIDs = harnessOptionIDList(m.harnessModal.selected)
 }
 
+// refreshHarnessFormsForSize rebuilds the open harness dialog form at the new
+// terminal size, keeping their selection and cursor. Huh keeps a
+// multiselect's scroll offset when its height grows, so a list scrolled in
+// the compact layout would otherwise keep hiding its first choices.
+func (m *Model) refreshHarnessFormsForSize() {
+	switch {
+	case m.pane == paneHarnessModal && m.harnessModal.form != nil:
+		cursor := m.harnessModal.cursor
+		m.buildHarnessForm()
+		m.harnessModal.cursor = cursor
+		setHarnessMultiSelectHeight(*m, m.harnessModal.multi, m.harnessModal.optionIDs)
+		reconcileMultiCursor(m.harnessModal.form, m.harnessModal.multi, m.harnessModal.optionIDs, cursor)
+	case m.pane == paneInitModal && m.initModal.form != nil:
+		m.initModal.form = nil
+		m.ensureInitForm()
+		setHarnessMultiSelectHeight(*m, m.initModal.multi, m.initModal.optionIDs)
+		reconcileMultiCursor(m.initModal.form, m.initModal.multi, m.initModal.optionIDs, m.initModal.cursor)
+	}
+}
+
 func (m *Model) ensureInitForm() {
 	if m.initModal.form == nil {
 		m.initModal.form, m.initModal.multi, m.initModal.multiValue = newHarnessSelectForm(m.initModal.selected, m.currentTheme(), modalInnerWidth(*m))
@@ -259,23 +269,6 @@ func (m *Model) buildToggleForm() {
 func (m *Model) ensureToggleForm() {
 	if m.toggleForm == nil || m.toggleFormFor != rowKey(m.modalSkill) {
 		m.buildToggleForm()
-	}
-}
-
-func (m *Model) buildMigrationForm() {
-	value := true
-	confirm := huh.NewConfirm().
-		Key("migrate").
-		Value(&value).
-		Affirmative("migrate to v4").
-		Negative("leave unchanged")
-	m.migrationForm = newModalForm(confirm, migrationFormKeyMap(), m.currentTheme(), modalInnerWidth(*m))
-	m.migrationValue = &value
-}
-
-func (m *Model) ensureMigrationForm() {
-	if m.migrationForm == nil {
-		m.buildMigrationForm()
 	}
 }
 

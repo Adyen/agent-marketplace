@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -177,7 +178,7 @@ func TestInitInteractiveUsesDetectedHarnesses(t *testing.T) {
 	}()
 
 	var out bytes.Buffer
-	if err := runInit(&out, r, nil); err != nil {
+	if err := runInit(context.Background(), &out, r, nil); err != nil {
 		t.Fatalf("runInit failed: %v\noutput: %s", err, out.String())
 	}
 
@@ -226,6 +227,7 @@ func TestInitDeduplicatesHarnesses(t *testing.T) {
 	}
 }
 
+// spec: telemetry/initialization-does-not-imply-consent
 func TestInitInteractiveTelemetryConsentNo(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -252,7 +254,7 @@ func TestInitInteractiveTelemetryConsentNo(t *testing.T) {
 	}()
 
 	var out bytes.Buffer
-	if err := runInit(&out, r, nil); err != nil {
+	if err := runInit(context.Background(), &out, r, nil); err != nil {
 		t.Fatalf("runInit failed: %v\noutput: %s", err, out.String())
 	}
 
@@ -327,8 +329,8 @@ func TestInitInteractiveTelemetryManagedSkipsPrompt(t *testing.T) {
 
 	orgDir := t.TempDir()
 	orgPath := filepath.Join(orgDir, "org.yaml")
-	writeFile(t, orgPath, "apiVersion: agent-marketplace/v3\nharnesses:\n  - factory\ntelemetry:\n  level: basic\n  endpoint: https://org.example.com\n  retention_policy: https://org.example.com/retention\n")
-	config.SetTestV3OrganizationConfigPath(t, orgPath)
+	writeFile(t, orgPath, "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\ntelemetry:\n  level: basic\n  endpoint: https://org.example.com\n  retention_policy: https://org.example.com/retention\n")
+	config.SetTestOrganizationConfigPath(t, orgPath)
 
 	if err := os.MkdirAll(filepath.Join(home, ".factory"), 0o755); err != nil {
 		t.Fatalf("mkdir factory root: %v", err)
@@ -349,7 +351,7 @@ func TestInitInteractiveTelemetryManagedSkipsPrompt(t *testing.T) {
 	}()
 
 	var out bytes.Buffer
-	if err := runInit(&out, r, nil); err != nil {
+	if err := runInit(context.Background(), &out, r, nil); err != nil {
 		t.Fatalf("runInit failed: %v\noutput: %s", err, out.String())
 	}
 
@@ -366,6 +368,7 @@ func TestInitInteractiveTelemetryManagedSkipsPrompt(t *testing.T) {
 	}
 }
 
+// spec: telemetry/initialization-does-not-imply-consent
 func TestInitNonInteractiveLeavesTelemetryUnset(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

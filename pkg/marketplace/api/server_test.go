@@ -921,6 +921,82 @@ func TestResourceResponsesBindRequestedCoordinateAndDigest(t *testing.T) {
 	}
 }
 
+type resourceSourceBody struct {
+	Source *CatalogSource `json:"source"`
+}
+
+func sourcedResourceServer(t *testing.T, origin, sourcePath string) *httptest.Server {
+	t.Helper()
+	ctx := context.Background()
+	meta := sqlite.New(":memory:")
+	if err := meta.Open(ctx); err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = meta.Close() })
+	if err := meta.PutRegistry(ctx, store.Registry{ID: "source-id", Slug: "source-slug", Origins: []string{"https://example.com/repo"}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror}); err != nil {
+		t.Fatalf("put source: %v", err)
+	}
+	revision := store.ResourceRevision{
+		Coordinate:    store.ResourceCoordinate{Marketplace: "marketplace", Registry: "source-id", Kind: KindSkill, Name: "review"},
+		ContentDigest: store.RevisionDigest("sha256:" + strings.Repeat("a", 64)),
+	}
+	publishSourcedAssessedTestRevision(ctx, t, meta, revision, store.AssessmentDecisionAllow, store.RevisionDigest("sha256:"+strings.Repeat("f", 64)), strings.Repeat("e", 40), origin, sourcePath)
+	server := httptest.NewServer(NewServer(config.Config{Instance: config.Instance{ID: "marketplace"}}, meta, fsblob.New(t.TempDir())).PublicHandler())
+	t.Cleanup(server.Close)
+	return server
+}
+
+func resourceSourceRevisionPaths() []string {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	return []string{"/api/v1/resources/source-slug/skill/review", "/api/v1/resources/source-slug/skill/review/revisions/" + digest, "/api/v1/resources/source-slug/skill/review/revisions"}
+}
+
+// spec: marketplace-api/resource-revision-exposes-sanitized-source-provenance
+func TestResourceRevisionExposesSanitizedSourceProvenance(t *testing.T) {
+	server := sourcedResourceServer(t, "https://git.example/internal/resources.git?token=redact", "skills/review/SKILL.md")
+	want := &CatalogSource{RepositoryURL: "https://git.example/internal/resources.git", Path: "skills/review/SKILL.md", Commit: strings.Repeat("e", 40)}
+	paths := resourceSourceRevisionPaths()
+	for _, path := range paths[:2] {
+		var got resourceSourceBody
+		resp := mustGet(t, server.URL+path)
+		body := mustRead(t, resp)
+		if resp.StatusCode != http.StatusOK || json.Unmarshal([]byte(body), &got) != nil || got.Source == nil || *got.Source != *want {
+			t.Fatalf("%s source = %s, want %#v", path, body, want)
+		}
+	}
+	var list []resourceSourceBody
+	resp := mustGet(t, server.URL+paths[2])
+	body := mustRead(t, resp)
+	if resp.StatusCode != http.StatusOK || json.Unmarshal([]byte(body), &list) != nil || len(list) != 1 || list[0].Source == nil || *list[0].Source != *want {
+		t.Fatalf("revisions source = %s, want %#v", body, want)
+	}
+}
+
+// spec: marketplace-api/resource-revision-omits-untrustworthy-source-provenance
+func TestResourceRevisionOmitsUntrustworthySourceProvenance(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		origin     string
+		sourcePath string
+	}{
+		{name: "missing source path", origin: "https://git.example/internal/resources.git"},
+		{name: "missing source origin", sourcePath: "skills/review/SKILL.md"},
+		{name: "ssh origin", origin: "ssh://git@git.example/internal/resources.git", sourcePath: "skills/review/SKILL.md"},
+		{name: "scp-like origin", origin: "git@git.example:internal/resources.git", sourcePath: "skills/review/SKILL.md"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := sourcedResourceServer(t, tc.origin, tc.sourcePath)
+			for _, path := range resourceSourceRevisionPaths() {
+				resp := mustGet(t, server.URL+path)
+				body := mustRead(t, resp)
+				if resp.StatusCode != http.StatusOK || strings.Contains(body, `"source"`) {
+					t.Fatalf("%s body = %s, want no source (status %d)", path, body, resp.StatusCode)
+				}
+			}
+		})
+	}
+}
+
 type mismatchedResourceStore struct {
 	store.MetadataStore
 	latest    store.AssessedResourceRevision

@@ -1,0 +1,102 @@
+{
+  "base": "867731e54408d4e0b63a55871ad46efcc498155a",
+  "binary_sha256": {
+    "before": "83c43252da1fb3081516021079448e55d289acb15faa396b4913a76ec420ce05",
+    "after": "6a7fdb4d8692a5dd1eb7ac81d1000925cd7bab4cbd47cb700550d34905609400"
+  },
+  "purpose": "Separate confirmation of two nominally slower non-Marketplace controls, the matching Git control, and the primary Marketplace case. Original 32-case dataset retained unmodified; do not pool results.",
+  "patterns": [
+    "^BenchmarkV4DirectoryRequestReuseCPU$/^skills=1024$/^excluded=0$",
+    "^BenchmarkV4ActiveExclusionAdaptation$/^active=1$",
+    "^BenchmarkV4SparseExclusionAdapterCPU$/^skills=1024$/^excluded=0$",
+    "^BenchmarkV4MarketplaceExclusionKindCPU$/^exclusions=1024$"
+  ],
+  "benchtime": "2s",
+  "rows_total": 48,
+  "trials": [
+    {
+      "index": 1,
+      "variant": "before",
+      "started": "2026-10-26T11:39:54.173295+00:00",
+      "finished": "2026-10-26T11:40:03.664452+00:00",
+      "stdout_sha256": "70bb3ea7b521267a1306d4cc83a85a1a337bed6870e570f633b77c7ee7f02c83"
+    },
+    {
+      "index": 2,
+      "variant": "after",
+      "started": "2026-10-26T11:40:03.680641+00:00",
+      "finished": "2026-10-26T11:40:13.190487+00:00",
+      "stdout_sha256": "7c45a29b20fbe40e1bcc109da544ac2922c8bbc025d5bb4ab5fbd275ff8545ca"
+    },
+    {
+      "index": 3,
+      "variant": "after",
+      "started": "2026-10-26T11:40:13.206673+00:00",
+      "finished": "2026-10-26T11:40:22.688960+00:00",
+      "stdout_sha256": "a6a83eb99ffbdc9e3cc30703bdecebe777c4b1b9f4744840086d6efebe842a28"
+    },
+    {
+      "index": 4,
+      "variant": "before",
+      "started": "2026-10-26T11:40:22.704650+00:00",
+      "finished": "2026-10-26T11:40:32.209589+00:00",
+      "stdout_sha256": "68b707538777adfc637fe72b5d928d781a89d533fca71dd3e28def51e63ae4e0"
+    },
+    {
+      "index": 5,
+      "variant": "before",
+      "started": "2026-10-26T11:40:32.224597+00:00",
+      "finished": "2026-10-26T11:40:41.671868+00:00",
+      "stdout_sha256": "7f979f9adf9cd0af7b0fd14570e1e7fc3a048002605a0ebeeb4ff9a7cc0b8bfa"
+    },
+    {
+      "index": 6,
+      "variant": "after",
+      "started": "2026-10-26T11:40:41.686370+00:00",
+      "finished": "2026-10-26T11:40:51.222600+00:00",
+      "stdout_sha256": "e96ec37e32de0d3ce0b3df780d22d514d88d3a4b2d7a8eb6f224000bf47c6172"
+    },
+    {
+      "index": 7,
+      "variant": "after",
+      "started": "2026-10-26T11:40:51.238151+00:00",
+      "finished": "2026-10-26T11:41:00.787003+00:00",
+      "stdout_sha256": "801965a212b2a4335a9eadb30dd818e8c72ac56339d1a113f1442642b43dca5d"
+    },
+    {
+      "index": 8,
+      "variant": "before",
+      "started": "2026-10-26T11:41:00.802870+00:00",
+      "finished": "2026-10-26T11:41:10.342408+00:00",
+      "stdout_sha256": "14953750d5ae0036724177c8d9b9d48e12cfba877045e19af63581b4ba50f38b"
+    },
+    {
+      "index": 9,
+      "variant": "before",
+      "started": "2026-10-26T11:41:10.358588+00:00",
+      "finished": "2026-10-26T11:41:19.843363+00:00",
+      "stdout_sha256": "e9973cc7d6ca74457c34404e6db31b5983089657387b5d4ac9beb2d485239e70"
+    },
+    {
+      "index": 10,
+      "variant": "after",
+      "started": "2026-10-26T11:41:19.859353+00:00",
+      "finished": "2026-10-26T11:41:29.309900+00:00",
+      "stdout_sha256": "bed457687a085a334d04d99fe0de0975e67c3e7a4c05527667858b0b4507502f"
+    },
+    {
+      "index": 11,
+      "variant": "after",
+      "started": "2026-10-26T11:41:29.325886+00:00",
+      "finished": "2026-10-26T11:41:39.064744+00:00",
+      "stdout_sha256": "dbf6b1e91e7d6dbd808b563df4d15713232afd794daa9b15c1ee296ed9c50884"
+    },
+    {
+      "index": 12,
+      "variant": "before",
+      "started": "2026-10-26T11:41:39.080755+00:00",
+      "finished": "2026-10-26T11:41:48.660826+00:00",
+      "stdout_sha256": "0bb76b4ebd7649953666a829895d75bdd71d243435f8c434003cf33c0ee10c8e"
+    }
+  ]
+}

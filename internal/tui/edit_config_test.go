@@ -84,6 +84,46 @@ func TestRenderEditConfigModalContainsAllScopes(t *testing.T) {
 	}
 }
 
+// The message emitted when the editor process exits comes from Bubble Tea's
+// exec callback, not from the command that started the editor, so it must
+// carry the editor operation itself.
+// spec: tui-rendering/editor-exit-reloads-and-frees-writes
+func TestEditorExitReloadsAndFreesLaterWrites(t *testing.T) {
+	t.Setenv("EDITOR", "true")
+	var exited tea.ExecCallback
+	restore := execEditor
+	execEditor = func(_ tea.ExecCommand, fn tea.ExecCallback) tea.Cmd {
+		exited = fn
+		return func() tea.Msg { return nil }
+	}
+	t.Cleanup(func() { execEditor = restore })
+
+	m := NewModel(t.TempDir(), t.TempDir())
+	m.loading = false
+	m.pane = paneList
+	mi, _ := m.Update(keyPress('E'))
+	m = mi.(Model)
+	mi, cmd := m.Update(keyPress('p'))
+	m = mi.(Model)
+	if cmd == nil {
+		t.Fatal("p in the config picker did not start the editor")
+	}
+	cmd()
+	if exited == nil {
+		t.Fatal("the editor command never reached the exec boundary")
+	}
+	before := m.requests.active(requestSnapshot)
+
+	mi, cmd = m.Update(exited(nil))
+	m = mi.(Model)
+	if cmd == nil || m.requests.active(requestSnapshot) == before {
+		t.Fatal("the editor exit did not reload the edited configuration")
+	}
+	if _, ok := m.beginOperation(operationMutation); !ok {
+		t.Fatal("the editor operation is still active, so later config writes are refused")
+	}
+}
+
 func TestEditConfigMsgReloadsSnapshot(t *testing.T) {
 	repoDir, homeDir := t.TempDir(), t.TempDir()
 	m := NewModel(repoDir, homeDir)
@@ -131,7 +171,7 @@ func TestEditConfigMsgErrorIsRecorded(t *testing.T) {
 func TestOpenEditorCmdUsesEditor(t *testing.T) {
 	t.Setenv("EDITOR", "cat")
 
-	cmd := openEditorCmd("/some/path")
+	cmd := openEditorCmd("/some/path", 1)
 	if cmd == nil {
 		t.Fatal("expected a non-nil cmd")
 	}
@@ -140,7 +180,7 @@ func TestOpenEditorCmdUsesEditor(t *testing.T) {
 func TestOpenEditorCmdFallsBackToVi(t *testing.T) {
 	t.Setenv("EDITOR", "")
 
-	cmd := openEditorCmd("/some/path")
+	cmd := openEditorCmd("/some/path", 1)
 	if cmd == nil {
 		t.Fatal("expected a non-nil cmd")
 	}
@@ -150,7 +190,7 @@ func TestOpenEditorCmdCreatesConfigDirectory(t *testing.T) {
 	t.Setenv("EDITOR", "cat")
 	path := filepath.Join(t.TempDir(), ".agents", "config.yaml")
 
-	msg := openEditorCmd(path)()
+	msg := openEditorCmd(path, 7)()
 
 	if _, ok := msg.(editConfigPathMsg); ok {
 		t.Fatalf("expected editor command, got %T", msg)
@@ -168,14 +208,14 @@ func TestOpenEditorCmdReportsDirectoryCreationError(t *testing.T) {
 	}
 	path := filepath.Join(parent, "config.yaml")
 
-	msg := openEditorCmd(path)()
+	msg := openEditorCmd(path, 7)()
 
 	result, ok := msg.(editConfigPathMsg)
 	if !ok {
 		t.Fatalf("expected editConfigPathMsg, got %T", msg)
 	}
-	if result.path != path || result.err == nil {
-		t.Fatalf("expected directory error for %q, got path=%q err=%v", path, result.path, result.err)
+	if result.path != path || result.err == nil || result.operation != 7 {
+		t.Fatalf("expected directory error for %q from operation 7, got path=%q err=%v operation=%d", path, result.path, result.err, result.operation)
 	}
 }
 

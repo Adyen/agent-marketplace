@@ -1,0 +1,106 @@
+name: Marketplace Images
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions: {}
+
+jobs:
+  publish:
+    name: Publish release images to GHCR
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Authenticate image publisher
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build, verify, and publish release images
+        shell: bash
+        run: |
+          set -euo pipefail
+          namespace="ghcr.io/${GITHUB_REPOSITORY,,}"
+          revision="$(git rev-parse HEAD)"
+          created="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          labels=(
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
+            --label "org.opencontainers.image.revision=${revision}"
+            --label "org.opencontainers.image.created=${created}"
+            --label "org.opencontainers.image.version=${VERSION}"
+          )
+
+          images=()
+          # The worker target includes Git and serves the `all` and `worker`
+          # roles; the api target serves the API-only role in split mode.
+          for role in worker api; do
+            image="${namespace}/${role}:${VERSION}"
+            docker build --platform linux/amd64 --pull --target "$role" \
+              --build-arg "VERSION=${VERSION}" \
+              "${labels[@]}" \
+              --tag "$image" -f Dockerfile.marketplace .
+            version_output="$(docker run --rm --network none --cap-drop ALL \
+              --security-opt no-new-privileges --env HOME=/tmp "$image" --version)"
+            test "$version_output" = "$VERSION"
+            image_cmd="$(docker image inspect --format '{{json .Config.Cmd}}' "$image")"
+            if [[ "$image_cmd" != *'"--role","'"$role"'"]' ]]; then
+              echo "::error::${image} runs ${image_cmd}, not the ${role} role" >&2
+              exit 1
+            fi
+            images+=("$image")
+          done
+
+          web_image="${namespace}/web:${VERSION}"
+          docker build --platform linux/amd64 --pull \
+            --build-context design=design \
+            "${labels[@]}" \
+            --tag "$web_image" web
+          web_container="$(docker run -d --read-only --tmpfs /tmp \
+            -p 127.0.0.1:3199:3000 "$web_image")"
+          trap 'docker rm -f "$web_container" >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3199/ >/dev/null; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:3199/ >/dev/null
+          docker rm -f "$web_container"
+          images+=("$web_image")
+
+          # Push only after every image passed its check, so a failed check
+          # cannot leave a release tag with a partial image set in GHCR.
+          for image in "${images[@]}"; do
+            docker push "$image"
+          done
+      - name: Report published images
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## Release images'
+            echo
+            echo '```'
+            for image in \
+              "ghcr.io/${GITHUB_REPOSITORY,,}/worker:${VERSION}" \
+              "ghcr.io/${GITHUB_REPOSITORY,,}/api:${VERSION}" \
+              "ghcr.io/${GITHUB_REPOSITORY,,}/web:${VERSION}"; do
+              digest="$(docker image inspect "$image" \
+                --format '{{index .RepoDigests 0}}' 2>/dev/null || true)"
+              if [[ -n "$digest" ]]; then
+                echo "$digest"
+              else
+                echo "MISSING: $image"
+              fi
+            done
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

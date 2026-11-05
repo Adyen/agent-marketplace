@@ -6,6 +6,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/toolpolicy"
 )
 
 // TestResolveAllowedToolsMessagesContainDefaultSetClause verifies that every
@@ -46,7 +47,7 @@ func TestResolveAllowedToolsMessagesContainDefaultSetClause(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, _, diags := resolveAllowedTools("demo", source, tc.canonical, tc.canonicalSet, tc.extra, opts, tc.code)
+			_, _, _, diags := resolveAllowedTools("demo", source, tc.canonical, tc.canonicalSet, tc.extra, opts, "", toolpolicy.SurfaceSubagentTools, tc.code)
 			if len(diags) == 0 {
 				t.Fatal("expected a diagnostic")
 			}

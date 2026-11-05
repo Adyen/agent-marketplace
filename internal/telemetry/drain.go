@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+
+	"github.com/Adyen/agent-marketplace/internal/logging/logvalue"
+	"github.com/Adyen/agent-marketplace/internal/redact"
 )
 
 // drain attempts to send queued payloads oldest-first. It respects the
@@ -41,7 +44,7 @@ func (t *Telemetry) send(ctx context.Context, payload []byte) error {
 
 	req, err := http.NewRequest(http.MethodPost, env.URL, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("build replay request: %w", err)
+		return fmt.Errorf("build replay request: %w", redact.Error(err))
 	}
 	req = req.WithContext(ctx)
 
@@ -57,7 +60,8 @@ func (t *Telemetry) send(ctx context.Context, payload []byte) error {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		slog.Error("send queued payload failed", "url", env.URL, "route", env.Route, "error", err)
+		err = redact.Error(err)
+		slog.Error("send queued payload failed", "url", logURL(env.URL), "route", env.Route, "error", logvalue.Safe(err))
 		return fmt.Errorf("send queued payload: %w", err)
 	}
 	defer func() {
@@ -67,10 +71,10 @@ func (t *Telemetry) send(ctx context.Context, payload []byte) error {
 	}()
 
 	if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
-		slog.Debug("queued payload delivered", "url", env.URL, "route", env.Route)
+		slog.Debug("queued payload delivered", "url", logURL(env.URL), "route", env.Route)
 		return nil
 	}
 
-	slog.Error("queued payload delivery rejected", "url", env.URL, "route", env.Route, "status", resp.Status)
-	return fmt.Errorf("queued send to %s failed: %s", env.URL, resp.Status)
+	slog.Error("queued payload delivery rejected", "url", logURL(env.URL), "route", env.Route, "status", resp.Status)
+	return fmt.Errorf("queued send to %s failed: %s", redact.URLValue(env.URL), resp.Status)
 }

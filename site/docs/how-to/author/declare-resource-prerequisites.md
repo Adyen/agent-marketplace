@@ -9,7 +9,7 @@ Tell consumers that a resource needs another one by listing [prerequisites](../.
 
 ## 1. Decide the prerequisite kind and name
 
-A prerequisite is a resource of a specific kind — `skill`, `command`, `subagent`, `hook`, or `mcp` — matched by name. A collection cannot be a prerequisite, and a resource that happens to share the name but has a different kind does not count.
+A prerequisite is a resource of a specific kind (`skill`, `command`, `subagent`, `hook`, or `mcp`) matched by name. A collection cannot be a prerequisite, and a resource that happens to share the name but has a different kind does not count.
 
 ## 2. Add the structured item
 
@@ -50,7 +50,7 @@ metadata:
 In a consumer project that has your registry configured but does not select `docs-server`, run:
 
 ```bash
-agent-marketplace install review-code
+agent-marketplace install review-code --scope repo
 ```
 
 The resource installs anyway. For the sample `registry` and `path` hints above, the output includes:
@@ -63,11 +63,24 @@ Installed review-code in this repo
 
 Remediation arguments are POSIX shell literals: simple values print unquoted, and values that need quoting are single-quoted. When `requires.expand: true` selects the prerequisite transitively, `install` instead ends its summary with `also selected mcp "docs-server" (required by skill "review-code")`; with expansion disabled an eligible prerequisite prints as `would also select` without being installed.
 
-The warning is advisory: `install`, `sync`, `sync --check`, `status`, and `doctor` exit with status 0 when it is the only finding. `sync --strict` (including `sync --strict --check`) is the exception — it prints the same warning but exits nonzero, so CI can enforce declared prerequisites.
+The warning is advisory: `install`, `sync`, `sync --check`, `status`, and `doctor` exit with status 0 when it is the only finding. `sync --strict` (including `sync --strict --check`) is the exception: it prints the same warning but exits nonzero, so CI can enforce declared prerequisites.
 
 ## 5. Verify with `status`
 
-Run `agent-marketplace sync`, then `agent-marketplace status`. Status lists the same prerequisite in an `UNMET REQUIREMENTS` table sorted by `RESOURCE` and then `REQUIRES`:
+```bash
+agent-marketplace sync
+agent-marketplace status
+```
+
+Sync prints a summary and the same warning. After the install above, the output looks like this:
+
+```text
+Installed 0  Removed 0  Malformed 0  Errors 0
+warning: skill "review-code" requires mcp "docs-server", but it is not selected
+  → agent-marketplace install docs-server --kind mcp --from https://github.com/example-org/integrations.git --path mcp
+```
+
+Status lists the same prerequisite in an `UNMET REQUIREMENTS` table sorted by `RESOURCE` and then `REQUIRES`:
 
 ```text
 UNMET REQUIREMENTS
@@ -85,7 +98,7 @@ skill:review-code  mcp:docs-server  source-not-configured   agent-marketplace in
 
 ## Troubleshooting
 
-- **A prerequisite was skipped.** The CLI skips items without a `name`, with an unknown `kind`, `collection`, or `all`, with non-string fields, or items that are neither a string nor a map. It skips the whole value when `metadata.requires` is not a list. Skipped items are reported by `agent-marketplace list --from <registry>` and `agent-marketplace doctor` as a `catalog.requires.invalid` warning naming the resource, its source file, and the item index; the warning never quotes the rejected value. Fix the indicated item and use a supported kind instead of `all`.
+- **A prerequisite was skipped.** Malformed `metadata.requires` entries are dropped and reported by `agent-marketplace list --from <registry>` and `agent-marketplace doctor` as a `catalog.requires.invalid` warning naming the resource, its source file, and the item index. Fix the indicated item; the [resource prerequisites reference](../../reference/resource-prerequisites.md) lists the accepted shapes.
 - **The warning does not go away.** Install the prerequisite in any configuration layer that applies to the project, for example with the exact command the warning suggests.
 
 ## Related documentation

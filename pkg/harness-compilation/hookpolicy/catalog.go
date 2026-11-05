@@ -135,6 +135,20 @@ var shipped = sync.OnceValues(func() (*registry, error) {
 	return loadCatalogs(catalogFiles, "catalogs/*.yaml")
 })
 
+// PluginRootNames returns the shipped spellings of the plugin-root concept.
+func PluginRootNames() ([]string, error) {
+	registry, err := shipped()
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, catalog := range registry.catalogs {
+		names = append(names, catalog.PluginEnv["plugin_root"].Names...)
+	}
+	slices.Sort(names)
+	return slices.Compact(names), nil
+}
+
 // ValidateCatalogs validates every shipped hook catalog against the shared
 // concept vocabulary and the catalog schema rules.
 func ValidateCatalogs() error {

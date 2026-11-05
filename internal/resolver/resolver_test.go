@@ -2024,6 +2024,38 @@ func TestResolveSelectedNotFoundFromRequiredRegistryIsHardError(t *testing.T) {
 	}
 }
 
+func TestResolveRequiredMissSharedLocationIsHardRegardlessOfEntryOrder(t *testing.T) {
+	const url = "git@example.com:infra.git"
+	cfg := &config.Config{
+		Registries: []config.RegistryEntry{
+			{URL: url, Ref: "main", Skills: ks("missing-skill")},
+			{URL: url, Ref: "main", Required: true, Skills: ks("missing-skill")},
+		},
+	}
+	catalogs := map[string][]catalog.Entry{
+		ck(url, "main"): {{Name: "other-skill", Kind: ir.KindSkill, Path: "/cache/infra/skills/other-skill"}},
+	}
+	setCatalogKeys(cfg)
+
+	_, errs := Resolve(cfg, catalogs, nil)
+	var notFound []error
+	for _, err := range errs {
+		if IsSelectedNotFound(err) {
+			notFound = append(notFound, err)
+		}
+	}
+	if len(notFound) != 1 {
+		t.Fatalf("expected exactly one not-found error for the shared missing resource, got %d: %v", len(notFound), errs)
+	}
+	var snf *SelectedNotFoundError
+	if !errors.As(notFound[0], &snf) || !snf.Required {
+		t.Fatalf("expected Required=true on the shared missing resource, got %T: %v", notFound[0], notFound[0])
+	}
+	if IsSoftSelectedNotFound(notFound[0]) {
+		t.Fatal("required miss shared across entries must not be a soft warning")
+	}
+}
+
 // TestResolveCollectionNotFoundSuppressedWhenFoundInAnotherRegistry
 // verifies that when propagateTopLevelCollections adds a collection
 // include to every registry entry, "collection not found" errors from

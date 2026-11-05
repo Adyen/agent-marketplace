@@ -190,7 +190,7 @@ func TestDoctorRepairRefusesConfigChangeDuringConfirmation(t *testing.T) {
 	}
 	repoRoot, _ := devinDoctorEnv(t)
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-	writeConfig(t, configPath, "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nregistries: []\n")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources: {}\n")
 	mcpPath, selection := prepareTwoDevinConflicts(t, repoRoot)
 	before, err := os.ReadFile(mcpPath)
 	if err != nil {
@@ -212,7 +212,7 @@ func TestDoctorRepairRefusesConfigChangeDuringConfirmation(t *testing.T) {
 	case err := <-done:
 		t.Fatalf("doctor finished before confirmation: %v\n%s", err, watcher.String())
 	}
-	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n"), 0o644); err != nil {
+	if err := os.WriteFile(configPath, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := stdinWriter.Write([]byte("y\n")); err != nil {
@@ -296,7 +296,7 @@ type repairPolicyChangeWriter struct {
 func (w *repairPolicyChangeWriter) Write(p []byte) (int, error) {
 	if bytes.Contains(p, []byte("doctor repair decision")) && bytes.Contains(p, []byte("action=replace")) && bytes.Contains(p, []byte("decision=authorized")) {
 		w.once.Do(func() {
-			w.err = os.WriteFile(w.path, []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n"), 0o644)
+			w.err = os.WriteFile(w.path, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {}\n"), 0o644)
 			w.mutated = true
 		})
 	}
@@ -310,7 +310,7 @@ func TestDoctorRepairRefusesPolicyChangeAtMutationBoundary(t *testing.T) {
 	}
 	repoRoot, _ := devinDoctorEnv(t)
 	policyPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-	writeConfig(t, policyPath, "apiVersion: agent-marketplace/v2\nharnesses: [devin]\nregistries: []\n")
+	writeConfig(t, policyPath, "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources: {}\n")
 	aggregate, selection := prepareTwoDevinConflicts(t, repoRoot)
 	before, err := os.ReadFile(aggregate)
 	if err != nil {
@@ -347,7 +347,7 @@ func TestDoctorRepairStopsAtFirstPolicyChangeAcrossTargets(t *testing.T) {
 	}
 	repoRoot, _ := devinDoctorEnv(t)
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-	writeConfig(t, configPath, "apiVersion: agent-marketplace/v2\nharnesses: [devin, codex]\nregistries: []\n")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [devin, codex]\nsources: {}\n")
 	devinPath, selection := prepareTwoDevinConflicts(t, repoRoot)
 	codexPath := filepath.Join(repoRoot, ".codex", "config.toml")
 	writeFile(t, codexPath, "[mcp_servers.codex-conflict]\ncommand = 'handwritten'\n")
@@ -383,7 +383,7 @@ func TestDoctorRepairStopsAtFirstPolicyChangeAcrossTargets(t *testing.T) {
 	case err := <-done:
 		t.Fatalf("doctor finished before confirmation: %v\n%s", err, watcher.String())
 	}
-	writeConfig(t, configPath, "apiVersion: agent-marketplace/v2\nharnesses: [devin, codex, factory]\nregistries: []\n")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [devin, codex, factory]\nsources: {}\n")
 	if _, err := stdinWriter.Write([]byte("y\n")); err != nil {
 		t.Fatal(err)
 	}
