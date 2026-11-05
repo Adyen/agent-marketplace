@@ -9,7 +9,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 )
 
-var migrations = []string{migration0, migration1, migration2, store.ManagedConfigurationSchema, store.PublicationSchema, store.BlobOwnershipMigration(true), store.ManagedRuntimeSchema, store.ManagedPreviewSchema, migrationDigestIndexes, migrationRequires}
+var migrations = []string{migration0, migration1, migration2, store.ManagedConfigurationSchema, store.PublicationSchema, store.BlobOwnershipMigration(true), store.ManagedRuntimeSchema, store.ManagedPreviewSchema, migrationDigestIndexes, migrationRegistryObservation, migrationRequires}
 
 const migrationTable = "marketplace_metadata_v2_schema_migrations"
 
@@ -232,6 +232,42 @@ ALTER TABLE collection_revisions ADD COLUMN includes TEXT NOT NULL DEFAULT '[]';
 const migrationDigestIndexes = `
 CREATE INDEX idx_resource_revisions_content ON resource_revisions(marketplace_id, content_digest);
 CREATE INDEX idx_current_assessments_content ON current_resource_assessments(marketplace_id, content_digest);
+`
+
+const migrationRegistryObservation = `
+CREATE TABLE registry_observations (
+    registry_id TEXT PRIMARY KEY,
+    version BIGINT NOT NULL DEFAULT 1,
+    observed_commit TEXT NOT NULL DEFAULT '',
+    observed_at BIGINT NOT NULL DEFAULT 0,
+    probe_status TEXT NOT NULL DEFAULT '',
+    probe_error TEXT NOT NULL DEFAULT '',
+    next_probe_at BIGINT NOT NULL DEFAULT 0,
+    next_reconcile_at BIGINT NOT NULL DEFAULT 0,
+    consecutive_probe_failures INTEGER NOT NULL DEFAULT 0,
+    work_lease_owner TEXT NOT NULL DEFAULT '',
+    work_lease_epoch BIGINT NOT NULL DEFAULT 0,
+    work_lease_until BIGINT NOT NULL DEFAULT 0,
+    desired_commit TEXT NOT NULL DEFAULT '',
+    desired_generation TEXT NOT NULL DEFAULT '',
+    active_refresh_job_id TEXT NOT NULL DEFAULT '',
+    active_refresh_trigger TEXT NOT NULL DEFAULT '',
+    successful_commit TEXT NOT NULL DEFAULT '',
+    successful_generation TEXT NOT NULL DEFAULT '',
+    last_successful_index_at BIGINT NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_registry_observations_due ON registry_observations(next_probe_at, next_reconcile_at, registry_id);
+CREATE INDEX idx_registry_observations_lease ON registry_observations(work_lease_until, registry_id);
+
+CREATE TABLE host_budget_leases (
+    host TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    acquisition BOOLEAN NOT NULL,
+    epoch BIGINT NOT NULL,
+    lease_until BIGINT NOT NULL,
+    PRIMARY KEY (host, owner)
+);
+CREATE INDEX idx_host_budget_leases_expiry ON host_budget_leases(host, lease_until);
 `
 
 // migrationRequires adds the nullable per-revision prerequisite column. NULL

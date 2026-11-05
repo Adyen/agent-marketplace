@@ -34,24 +34,33 @@ func TestExcludeAllScopedByPathNotJustURL(t *testing.T) {
 	// without the local exclude_all, oncall-runbook WOULD materialize, so its
 	// absence proves the exclude_all fired rather than being a no-op.
 	env.WriteRepoConfig(strings.TrimSpace(`
-registries:
-  - url: ` + regURL + `
-    ref: main
-    path: teams/example-product/plugins/pm-market-research
-    default: true
-  - url: ` + regURL + `
-    ref: main
-    path: teams/example-team/plugins/oncall-engineering
-    default: true
+apiVersion: agent-marketplace/v4
+sources:
+  pm: {git: ` + regURL + `, ref: main, path: teams/example-product/plugins/pm-market-research}
+  oncall: {git: ` + regURL + `, ref: main, path: teams/example-team/plugins/oncall-engineering}
+resources:
+  pm: {all: true}
+  oncall: {all: true}
 `))
+	// Execute the unexcluded selection before applying the overlay. Both paths
+	// must be reachable, and the higher layer must remove an owned oncall copy.
+	env.MustRunAM("sync")
+	env.AssertFileContains("/workspace/.factory/skills/competitor-analysis/SKILL.md", "PM market research skill")
+	env.AssertFileContains("/workspace/.factory/skills/oncall-runbook/SKILL.md", "Dev oncall skill")
+	lockBefore := env.ReadFile("/workspace/.agents/lock.yaml")
+	for _, path := range []string{"teams/example-product/plugins/pm-market-research", "teams/example-team/plugins/oncall-engineering"} {
+		if !strings.Contains(lockBefore, "path: "+path) {
+			t.Fatalf("acquisition lock omitted selected path %s:\n%s", path, lockBefore)
+		}
+	}
 
 	// Local (higher-precedence) config excludes ALL of the oncall path only.
 	env.WriteFile("/workspace/.agents/config.local.yaml", strings.TrimSpace(`
-registries:
-  - url: `+regURL+`
-    ref: main
-    path: teams/example-team/plugins/oncall-engineering
-    exclude_all: true
+apiVersion: agent-marketplace/v4
+sources:
+  blocked: {git: `+regURL+`, ref: main, path: teams/example-team/plugins/oncall-engineering}
+resources:
+  blocked: {exclude: ['*']}
 `))
 
 	r := env.RunAM("sync")
@@ -66,4 +75,7 @@ registries:
 	// The oncall path IS selected at the repo layer, so its absence proves the
 	// higher-precedence exclude_all suppressed it — not that it was never picked.
 	env.AssertRepoFactorySkillAbsent("oncall-runbook")
+	if env.ReadFile("/workspace/.agents/lock.yaml") != lockBefore {
+		t.Fatal("path-local exclusion rewrote the committed exact source lock")
+	}
 }

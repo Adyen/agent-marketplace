@@ -3,11 +3,12 @@
     {
       "description": "Demo agent for golden testing",
       "effort": "high",
-      "model": "sonnet",
+      "model": "claude-opus-5",
       "name": "demo-agent",
       "tools": [
         "Read",
-        "Write"
+        "Write",
+        "Edit"
       ]
     }
   ]

@@ -2,6 +2,7 @@ package skill
 
 import (
 	"errors"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	"os"
 	"path/filepath"
 	"testing"
@@ -143,5 +144,28 @@ func TestDeclaredNameFromFileRecoversNameFromUnparsableFrontmatter(t *testing.T)
 	}
 	if got := DeclaredNameFromFile(noFrontmatter); got != "" {
 		t.Fatalf("expected empty declared name without a frontmatter block, got %q", got)
+	}
+}
+
+// A malformed resource is labelled with the kind its failed load was for, and
+// "unknown" when the producer could not classify it.
+// spec: resource-listing/malformed-resources-show-their-kind
+func TestMalformedKindLabel(t *testing.T) {
+	for _, tc := range []struct {
+		kind, want string
+	}{
+		{ir.KindSkill.String(), "skill"},
+		{ir.KindCommand.String(), "command"},
+		{ir.KindSubagent.String(), "subagent"},
+		{ir.KindHook.String(), "hook"},
+		{ir.KindMcpServer.String(), "mcp"},
+		{ir.KindRule.String(), "rule"},
+		{"", "unknown"},
+		{"all", "unknown"},
+		{"bogus", "unknown"},
+	} {
+		if got := MalformedKindLabel(MalformedSkill{Kind: tc.kind}); got != tc.want {
+			t.Fatalf("MalformedKindLabel(%q) = %q, want %q", tc.kind, got, tc.want)
+		}
 	}
 }

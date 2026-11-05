@@ -44,7 +44,7 @@ The primary consumer is [`agent-marketplace`](https://github.com/Adyen/agent-mar
 #### Non-goals
 
 - Distribution, registries, sync, or drift reconciliation (owned by `agent-marketplace`).
-- Rendering, TUIs, CLIs beyond an optional local-testing `cmd/hcc`.
+- Rendering, TUIs, or CLIs; user-facing commands belong to the consumer.
 - A neutral bundle manifest. (Reverse-direction conversion is no longer a non-goal: every target has an ingester, so any target can be a conversion source. Ingestion is semantic, not byte-exact, and each irreversible case is a declared entry in the loss matrix.)
 - Resources outside the Day-1 scope: LSP servers, monitors, channels, `userConfig` prompt flow, plugin `dependencies`.
 - Interactive management, live reloading, or anything beyond file-format translation.

@@ -49,30 +49,25 @@ Managed MCP entries (synced via agent-marketplace) are tagged with
 
 ## Using the test registries
 
-Add to `.agents/config.yaml`:
+Declare them as `directory` sources in `.agents/config.yaml` (relative paths resolve from the repository root) and select resources per source:
 
 ```yaml
-# MCP servers only
-registries:
-  - url: ./testdata/example-mcp-registry
-    mcp:
-      include:
-        - example-echo
-        - example-search
-
-# Skills only
-registries:
-  - url: ./testdata/example-skills-registry
-
-# Combined (skills + MCP in one registry)
-registries:
-  - url: ./testdata/example-combined-registry
-
-# Collections
-registries:
-  - url: ./testdata/local-registry
-collections:
-  - name: agent-marketplace-tools
+apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  mcp-examples:
+    directory: ./testdata/example-mcp-registry       # MCP servers only
+  skill-examples:
+    directory: ./testdata/example-skills-registry    # skills only
+  combined-examples:
+    directory: ./testdata/example-combined-registry  # skills + MCP servers
+  local-tools:
+    directory: ./testdata/local-registry             # collections
+resources:
+  mcp-examples: [mcp/example-echo, mcp/example-search]
+  skill-examples: {all: true}
+  combined-examples: {all: true}
+  local-tools: [collection/agent-marketplace-tools]
 ```
 
 Then:

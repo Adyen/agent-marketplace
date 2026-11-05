@@ -65,6 +65,7 @@ func TestOpenAPIYAMLIsValidAndContainsRoutes(t *testing.T) {
 		"/api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/inspection/content",
 		"/api/v1/resources/{registry}/{kind}/{name}/revisions/{revision}/inspection/content/{digest}",
 		"/api/v1/artifacts/sha256/{digest}",
+		"/api/v1/archives/sha256/{digest}",
 		"/r/{registry}/{kind}/{name}",
 		"/r/{registry}/{kind}/{name}/revisions/{revision}",
 		"/healthz",
@@ -110,18 +111,25 @@ func TestOpenAPIAdminAuthDocumentsBrowserAndJSONErrors(t *testing.T) {
 		operation := paths[path].(map[string]any)["get"].(map[string]any)
 		responses := operation["responses"].(map[string]any)
 		redirect := responses["303"].(map[string]any)["description"].(string)
-		if !strings.Contains(redirect, "/marketplace/auth/error") {
-			t.Errorf("%s 303 description omits the browser error page: %q", path, redirect)
+		if !strings.Contains(redirect, "instance.browser_base") || strings.Contains(redirect, "fixed same-origin /marketplace/auth/error") {
+			t.Errorf("%s 303 description does not derive the browser error page from instance.browser_base: %q", path, redirect)
 		}
 		var acceptFound bool
+		var nextDescription string
 		for _, parameter := range operation["parameters"].([]any) {
 			p := parameter.(map[string]any)
 			if p["name"] == "Accept" && p["in"] == "header" {
 				acceptFound = true
 			}
+			if p["name"] == "next" && p["in"] == "query" {
+				nextDescription, _ = p["description"].(string)
+			}
 		}
 		if !acceptFound {
 			t.Errorf("%s does not document the Accept negotiation header", path)
+		}
+		if path == "/api/v1/admin/auth/login" && (!strings.Contains(nextDescription, "instance.browser_base") || !strings.Contains(nextDescription, "/admin") || !strings.Contains(nextDescription, "/marketplace/admin")) {
+			t.Errorf("%s does not document configured and legacy administration destinations: %q", path, nextDescription)
 		}
 		for status, codes := range statuses {
 			response, ok := responses[status].(map[string]any)
@@ -579,5 +587,24 @@ func TestOpenAPIPublicURLSchemasDescribeSanitizedValues(t *testing.T) {
 	publisherURL := publisher["properties"].(map[string]any)["url"].(map[string]any)
 	if publisherURL["format"] != "uri" || publisherURL["description"] == nil {
 		t.Errorf("Publisher.url is not documented as a sanitized URI: %#v", publisherURL)
+	}
+}
+
+// spec: marketplace-api/placeholder-archive-route-is-documented
+func TestOpenAPIPlaceholderArchiveRouteIsDocumented(t *testing.T) {
+	doc := readOpenAPIDocument(t)
+	paths := doc["paths"].(map[string]any)
+	path, ok := paths["/api/v1/archives/sha256/{digest}"].(map[string]any)
+	if !ok {
+		t.Fatal("openapi missing placeholder archive path")
+	}
+	responses := path["get"].(map[string]any)["responses"].(map[string]any)
+	if _, ok := responses["200"].(map[string]any)["content"].(map[string]any)["application/vnd.agent-marketplace.artifact.v1.tar+gzip"]; !ok {
+		t.Fatal("placeholder archive 200 response lacks the artifact media type")
+	}
+	for _, code := range []string{"403", "404", "410", "500"} {
+		if _, ok := responses[code]; !ok {
+			t.Fatalf("placeholder archive route missing %s response", code)
+		}
 	}
 }

@@ -1,0 +1,43 @@
+# Catalog data for pkg/harness-compilation/toolpolicy/catalogs/opencode.yaml.
+schema: 1
+harness: opencode
+evidence:
+  checked: "2026-10-14"
+  refs:
+    - https://opencode.ai/docs/tools.md
+    - https://opencode.ai/docs/plugins.md
+    - https://opencode.ai/docs/permissions.md
+  notes: >-
+    Keys are the native OpenCode tool IDs that tool.execute.before reports.
+    The fixed Agent Marketplace hook adapter canonicalizes bash, read, write,
+    edit, glob, grep, webfetch, websearch, todowrite, task, and skill to the
+    listed aliases before comparing a declaration matcher, and compares every
+    other ID as written. apply_patch also modifies files, so a file-edit or
+    file-write matcher that does not cover it is refused rather than
+    installed with a bypass. Adapter matchers are exact names or `|` lists;
+    MCP tool coverage is not advertised, so no MCP naming pattern is declared
+    and the `all` spelling is never a valid declaration matcher. Agent
+    permission keys group edit, write, and apply_patch under `edit`, so agent
+    restrictions are translated by the compiler at permission granularity
+    and no subagent_tools surface is declared here.
+
+mcp:
+  all: "mcp_.*"
+  server_scoped: false
+
+surfaces: [hook_matcher]
+
+tools:
+  bash: {concepts: [shell], aliases: [Bash]}
+  read: {concepts: [file.read], aliases: [Read]}
+  write: {concepts: [file.write], aliases: [Write]}
+  edit: {concepts: [file.edit], aliases: [Edit]}
+  apply_patch: {concepts: [file.write, file.edit]}
+  glob: {concepts: [search.glob], aliases: [Glob]}
+  grep: {concepts: [search.grep], aliases: [Grep]}
+  webfetch: {concepts: [web.fetch], aliases: [WebFetch]}
+  websearch: {concepts: [web.search], aliases: [WebSearch]}
+  task: {concepts: [subagent], aliases: [Task]}
+  todowrite: {concepts: [todo], aliases: [TodoWrite]}
+  skill: {concepts: [skill], aliases: [Skill]}
+  question: {concepts: [ask.user]}

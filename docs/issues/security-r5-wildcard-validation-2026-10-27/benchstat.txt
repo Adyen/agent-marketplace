@@ -1,0 +1,120 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/config
+cpu: Apple M4 Max
+                                                                  │  before.txt   │              after.txt              │
+                                                                  │    sec/op     │    sec/op     vs base               │
+ParseV4RequiredWildcardsCPU/required=true/requests=1-16              12.51µ ±  3%   12.58µ ±  5%        ~ (p=0.937 n=6)
+ParseV4RequiredWildcardsCPU/required=true/requests=256-16            895.1µ ± 11%   854.3µ ±  3%   -4.56% (p=0.041 n=6)
+ParseV4RequiredWildcardsCPU/required=true/requests=1024-16           7.737m ±  8%   7.757m ±  1%        ~ (p=1.000 n=6)
+ParseV4RequiredWildcardsCPU/required=false/requests=1-16             12.87µ ± 15%   12.67µ ±  3%        ~ (p=0.485 n=6)
+ParseV4RequiredWildcardsCPU/required=false/requests=256-16           2.259m ±  3%   2.205m ±  2%        ~ (p=0.132 n=6)
+ParseV4RequiredWildcardsCPU/required=false/requests=1024-16          30.79m ±  2%   30.72m ±  1%        ~ (p=0.485 n=6)
+V4WildcardAdapterCPU/requests=1-16                                   760.1n ± 20%   755.4n ±  9%        ~ (p=0.485 n=6)
+V4WildcardAdapterCPU/requests=256-16                                 48.38µ ± 10%   49.36µ ±  9%        ~ (p=0.937 n=6)
+V4WildcardAdapterCPU/requests=1024-16                                187.6µ ± 14%   189.1µ ± 12%        ~ (p=1.000 n=6)
+V4WildcardValidation/all/general-16                                  1.801n ±  2%   1.787n ±  2%        ~ (p=0.370 n=6)
+V4WildcardValidation/all/source-16                                   1.843n ±  2%   1.815n ±  5%        ~ (p=0.485 n=6)
+V4WildcardValidation/kind/general-16                                 43.24n ±  6%   35.84n ±  2%  -17.11% (p=0.002 n=6)
+V4WildcardValidation/kind/source-16                                  18.55n ±  3%   11.08n ±  3%  -40.30% (p=0.002 n=6)
+V4WildcardValidation/registry/general-16                             111.3n ±  2%   102.8n ±  2%   -7.59% (p=0.002 n=6)
+V4WildcardValidation/registry/source-16                              86.63n ±  2%   78.11n ±  3%   -9.83% (p=0.002 n=6)
+V4WildcardValidation/qualified/general-16                           106.70n ±  3%   92.55n ±  3%  -13.26% (p=0.002 n=6)
+V4WildcardValidation/qualified/source-16                             92.65n ±  2%   79.42n ±  1%  -14.28% (p=0.002 n=6)
+V4WildcardValidation/long-registry/general-16                        5.336µ ±  2%   5.308µ ±  2%        ~ (p=0.589 n=6)
+V4WildcardValidation/long-registry/source-16                         5.163µ ±  2%   5.098µ ±  1%        ~ (p=0.288 n=6)
+V4WildcardValidation/extra-slash/general-16                          98.48n ±  1%   76.07n ±  2%  -22.76% (p=0.002 n=6)
+V4WildcardValidation/extra-slash/source-16                          111.55n ±  2%   90.56n ±  4%  -18.81% (p=0.002 n=6)
+V4WildcardValidation/invalid-kind/general-16                         169.2n ±  3%   154.0n ±  2%   -8.93% (p=0.002 n=6)
+V4WildcardValidation/invalid-kind/source-16                          156.6n ±  3%   142.6n ±  2%   -8.91% (p=0.002 n=6)
+V4WildcardValidation/empty-base/general-16                           11.06n ±  3%   11.08n ±  4%        ~ (p=0.513 n=6)
+V4WildcardValidation/empty-base/source-16                            82.75n ±  3%   75.34n ± 19%        ~ (p=0.065 n=6)
+V4WildcardValidation/exact-control/general-16                        237.4n ±  2%   241.0n ±  4%        ~ (p=0.234 n=6)
+V4WildcardValidation/exact-control/source-16                         222.7n ±  2%   226.4n ±  4%        ~ (p=0.221 n=6)
+ParseV4RegistryWildcardValidation/required=true/requests=1-16        12.35µ ±  4%   12.78µ ± 20%        ~ (p=0.132 n=6)
+ParseV4RegistryWildcardValidation/required=true/requests=256-16      849.0µ ±  4%   861.3µ ±  6%        ~ (p=0.240 n=6)
+ParseV4RegistryWildcardValidation/required=true/requests=1024-16     7.629m ±  3%   7.724m ±  5%        ~ (p=0.310 n=6)
+ParseV4RegistryWildcardValidation/required=false/requests=1-16       12.47µ ±  5%   12.71µ ±  3%        ~ (p=0.485 n=6)
+ParseV4RegistryWildcardValidation/required=false/requests=256-16     2.203m ±  2%   2.200m ±  3%        ~ (p=0.818 n=6)
+ParseV4RegistryWildcardValidation/required=false/requests=1024-16    30.51m ±  1%   30.70m ±  2%        ~ (p=0.589 n=6)
+geomean                                                              3.648µ         3.443µ         -5.63%
+
+                                                                  │   before.txt   │                after.txt                 │
+                                                                  │      B/op      │     B/op      vs base                    │
+ParseV4RequiredWildcardsCPU/required=true/requests=1-16             18.13Ki ± 0%     18.07Ki ± 0%    -0.34% (p=0.002 n=6)
+ParseV4RequiredWildcardsCPU/required=true/requests=256-16           738.5Ki ± 0%     722.5Ki ± 0%    -2.17% (p=0.002 n=6)
+ParseV4RequiredWildcardsCPU/required=true/requests=1024-16          3.230Mi ± 0%     3.168Mi ± 0%    -1.94% (p=0.002 n=6)
+ParseV4RequiredWildcardsCPU/required=false/requests=1-16            17.73Ki ± 0%     17.66Ki ± 0%    -0.35% (p=0.002 n=6)
+ParseV4RequiredWildcardsCPU/required=false/requests=256-16          653.5Ki ± 0%     637.5Ki ± 0%    -2.45% (p=0.002 n=6)
+ParseV4RequiredWildcardsCPU/required=false/requests=1024-16         2.670Mi ± 0%     2.608Mi ± 0%    -2.35% (p=0.002 n=6)
+V4WildcardAdapterCPU/requests=1-16                                  2.164Ki ± 0%     2.164Ki ± 0%         ~ (p=1.000 n=6) ¹
+V4WildcardAdapterCPU/requests=256-16                                145.4Ki ± 0%     145.4Ki ± 0%         ~ (p=1.000 n=6) ¹
+V4WildcardAdapterCPU/requests=1024-16                               584.0Ki ± 0%     584.0Ki ± 0%         ~ (p=0.636 n=6)
+V4WildcardValidation/all/general-16                                   0.000 ± 0%       0.000 ± 0%         ~ (p=1.000 n=6) ¹
+V4WildcardValidation/all/source-16                                    0.000 ± 0%       0.000 ± 0%         ~ (p=1.000 n=6) ¹
+V4WildcardValidation/kind/general-16                                  16.00 ± 0%        0.00 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardValidation/kind/source-16                                   16.00 ± 0%        0.00 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardValidation/registry/general-16                              16.00 ± 0%        0.00 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardValidation/registry/source-16                               16.00 ± 0%        0.00 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardValidation/qualified/general-16                             32.00 ± 0%        0.00 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardValidation/qualified/source-16                              32.00 ± 0%        0.00 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardValidation/long-registry/general-16                         32.00 ± 0%        0.00 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardValidation/long-registry/source-16                          32.00 ± 0%        0.00 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardValidation/extra-slash/general-16                           200.0 ± 0%       152.0 ± 0%   -24.00% (p=0.002 n=6)
+V4WildcardValidation/extra-slash/source-16                            256.0 ± 0%       208.0 ± 0%   -18.75% (p=0.002 n=6)
+V4WildcardValidation/invalid-kind/general-16                          184.0 ± 0%       152.0 ± 0%   -17.39% (p=0.002 n=6)
+V4WildcardValidation/invalid-kind/source-16                           208.0 ± 0%       176.0 ± 0%   -15.38% (p=0.002 n=6)
+V4WildcardValidation/empty-base/general-16                            0.000 ± 0%       0.000 ± 0%         ~ (p=1.000 n=6) ¹
+V4WildcardValidation/empty-base/source-16                             192.0 ± 0%       176.0 ± 0%    -8.33% (p=0.002 n=6)
+V4WildcardValidation/exact-control/general-16                         0.000 ± 0%       0.000 ± 0%         ~ (p=1.000 n=6) ¹
+V4WildcardValidation/exact-control/source-16                          0.000 ± 0%       0.000 ± 0%         ~ (p=1.000 n=6) ¹
+ParseV4RegistryWildcardValidation/required=true/requests=1-16       18.09Ki ± 0%     18.06Ki ± 0%    -0.17% (p=0.002 n=6)
+ParseV4RegistryWildcardValidation/required=true/requests=256-16     730.5Ki ± 0%     722.5Ki ± 0%    -1.10% (p=0.002 n=6)
+ParseV4RegistryWildcardValidation/required=true/requests=1024-16    3.199Mi ± 0%     3.168Mi ± 0%    -0.98% (p=0.002 n=6)
+ParseV4RegistryWildcardValidation/required=false/requests=1-16      17.68Ki ± 0%     17.65Ki ± 0%    -0.18% (p=0.002 n=6)
+ParseV4RegistryWildcardValidation/required=false/requests=256-16    645.5Ki ± 0%     637.5Ki ± 0%    -1.24% (p=0.002 n=6)
+ParseV4RegistryWildcardValidation/required=false/requests=1024-16   2.639Mi ± 0%     2.608Mi ± 0%    -1.19% (p=0.002 n=6)
+geomean                                                                          ²                 ?                      ² ³
+¹ all samples are equal
+² summaries must be >0 to compute geomean
+³ ratios must be >0 to compute geomean
+
+                                                                  │  before.txt   │                after.txt                │
+                                                                  │   allocs/op   │  allocs/op   vs base                    │
+ParseV4RequiredWildcardsCPU/required=true/requests=1-16              179.0 ± 0%      177.0 ± 0%    -1.12% (p=0.002 n=6)
+ParseV4RequiredWildcardsCPU/required=true/requests=256-16           5.095k ± 0%     4.583k ± 0%   -10.05% (p=0.002 n=6)
+ParseV4RequiredWildcardsCPU/required=true/requests=1024-16          20.49k ± 0%     18.44k ± 0%    -9.99% (p=0.002 n=6)
+ParseV4RequiredWildcardsCPU/required=false/requests=1-16             178.0 ± 0%      176.0 ± 0%    -1.12% (p=0.002 n=6)
+ParseV4RequiredWildcardsCPU/required=false/requests=256-16          5.100k ± 0%     4.588k ± 0%   -10.04% (p=0.002 n=6)
+ParseV4RequiredWildcardsCPU/required=false/requests=1024-16         20.50k ± 0%     18.45k ± 0%    -9.99% (p=0.002 n=6)
+V4WildcardAdapterCPU/requests=1-16                                   13.00 ± 0%      13.00 ± 0%         ~ (p=1.000 n=6) ¹
+V4WildcardAdapterCPU/requests=256-16                                 550.0 ± 0%      550.0 ± 0%         ~ (p=1.000 n=6) ¹
+V4WildcardAdapterCPU/requests=1024-16                               2.100k ± 0%     2.100k ± 0%         ~ (p=1.000 n=6) ¹
+V4WildcardValidation/all/general-16                                  0.000 ± 0%      0.000 ± 0%         ~ (p=1.000 n=6) ¹
+V4WildcardValidation/all/source-16                                   0.000 ± 0%      0.000 ± 0%         ~ (p=1.000 n=6) ¹
+V4WildcardValidation/kind/general-16                                 1.000 ± 0%      0.000 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardValidation/kind/source-16                                  1.000 ± 0%      0.000 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardValidation/registry/general-16                             1.000 ± 0%      0.000 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardValidation/registry/source-16                              1.000 ± 0%      0.000 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardValidation/qualified/general-16                            1.000 ± 0%      0.000 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardValidation/qualified/source-16                             1.000 ± 0%      0.000 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardValidation/long-registry/general-16                        1.000 ± 0%      0.000 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardValidation/long-registry/source-16                         1.000 ± 0%      0.000 ± 0%  -100.00% (p=0.002 n=6)
+V4WildcardValidation/extra-slash/general-16                          3.000 ± 0%      2.000 ± 0%   -33.33% (p=0.002 n=6)
+V4WildcardValidation/extra-slash/source-16                           3.000 ± 0%      2.000 ± 0%   -33.33% (p=0.002 n=6)
+V4WildcardValidation/invalid-kind/general-16                         3.000 ± 0%      2.000 ± 0%   -33.33% (p=0.002 n=6)
+V4WildcardValidation/invalid-kind/source-16                          3.000 ± 0%      2.000 ± 0%   -33.33% (p=0.002 n=6)
+V4WildcardValidation/empty-base/general-16                           0.000 ± 0%      0.000 ± 0%         ~ (p=1.000 n=6) ¹
+V4WildcardValidation/empty-base/source-16                            3.000 ± 0%      2.000 ± 0%   -33.33% (p=0.002 n=6)
+V4WildcardValidation/exact-control/general-16                        0.000 ± 0%      0.000 ± 0%         ~ (p=1.000 n=6) ¹
+V4WildcardValidation/exact-control/source-16                         0.000 ± 0%      0.000 ± 0%         ~ (p=1.000 n=6) ¹
+ParseV4RegistryWildcardValidation/required=true/requests=1-16        179.0 ± 0%      177.0 ± 0%    -1.12% (p=0.002 n=6)
+ParseV4RegistryWildcardValidation/required=true/requests=256-16     5.095k ± 0%     4.583k ± 0%   -10.05% (p=0.002 n=6)
+ParseV4RegistryWildcardValidation/required=true/requests=1024-16    20.49k ± 0%     18.44k ± 0%    -9.99% (p=0.002 n=6)
+ParseV4RegistryWildcardValidation/required=false/requests=1-16       178.0 ± 0%      176.0 ± 0%    -1.12% (p=0.002 n=6)
+ParseV4RegistryWildcardValidation/required=false/requests=256-16    5.100k ± 0%     4.588k ± 0%   -10.04% (p=0.002 n=6)
+ParseV4RegistryWildcardValidation/required=false/requests=1024-16   20.50k ± 0%     18.45k ± 0%    -9.99% (p=0.002 n=6)
+geomean                                                                         ²                ?                      ² ³
+¹ all samples are equal
+² summaries must be >0 to compute geomean
+³ ratios must be >0 to compute geomean

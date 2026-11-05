@@ -1,6 +1,47 @@
 package redact
 
-import "testing"
+import (
+	"errors"
+	"fmt"
+	"net/url"
+	"testing"
+)
+
+func TestError(t *testing.T) {
+	if Error(nil) != nil {
+		t.Fatal("nil error changed")
+	}
+	sentinel := errors.New("offline")
+	err := Error(fmt.Errorf("post https://YOUR_USER_HERE:YOUR_TOKEN_HERE@example.com/v1?token=YOUR_QUERY_HERE %w", sentinel))
+	if got, want := err.Error(), "post https://***@example.com/v1?*** offline"; got != want || !errors.Is(err, sentinel) {
+		t.Fatalf("Error() = %q, errors.Is = %v; want %q and the cause retained", got, errors.Is(err, sentinel), want)
+	}
+	parseErr := &url.Error{Op: "parse", URL: "https://YOUR_USER_HERE:YOUR_TOKEN_HERE@example.com/x?token=FIRST SECOND", Err: errors.New("invalid")}
+	var urlErr *url.Error
+	wrapped := Error(fmt.Errorf("endpoint: %w", parseErr))
+	if got, want := wrapped.Error(), `endpoint: parse "https://***@example.com/x?***": invalid`; got != want || !errors.As(wrapped, &urlErr) {
+		t.Fatalf("Error() = %q, want %q with the *url.Error retained", got, want)
+	}
+}
+
+func TestURLValue(t *testing.T) {
+	for _, tt := range []struct{ value, want string }{
+		{"", ""},
+		{"https://example.com/v1/metrics", "https://example.com/v1/metrics"},
+		{"https://YOUR_USER_HERE:YOUR_TOKEN_HERE@example.com:8443/v1?token=FIRST SECOND#FRAGMENT", "https://***@example.com:8443/v1?***"},
+		{"https://example.com/v1#FRAGMENT SECOND", "https://example.com/v1#***"},
+		{"https://YOUR_USER_HERE:YOUR TOKEN@example.com/v1", "[redacted URL]"},
+		{"https://example.com/v1\x7f?token=FIRST SECOND", "[redacted URL]"},
+		{"YOUR_USER_HERE:YOUR_TOKEN_HERE@example.com", "[redacted URL]"},
+	} {
+		if got := URLValue(tt.value); got != tt.want {
+			t.Errorf("URLValue(%q) = %q, want %q", tt.value, got, tt.want)
+		}
+		if got := URLValue(tt.want); tt.want != "[redacted URL]" && got != tt.want {
+			t.Errorf("URLValue is not idempotent for %q: %q", tt.want, got)
+		}
+	}
+}
 
 func TestURL(t *testing.T) {
 	tests := []struct {
@@ -15,6 +56,8 @@ func TestURL(t *testing.T) {
 		{name: "SCP URL", value: "git@example.com:repo.git", want: "git@example.com:repo.git"},
 		{name: "SCP credentials", value: "user:token@example.com:repo.git", want: "***@example.com:repo.git"},
 		{name: "SSH URI credentials", value: "ssh://user:token@example.com/repo.git", want: "ssh://***@example.com/repo.git"},
+		{name: "credentials with port", value: "https://YOUR_USER_HERE:YOUR_TOKEN_HERE@example.com:8443/repo.git?token=YOUR_QUERY_HERE", want: "https://***@example.com:8443/repo.git?***"},
+		{name: "SSH URI credentials with port", value: "ssh://user:token@example.com:22/repo.git", want: "ssh://***@example.com:22/repo.git"},
 		{name: "query at sign", value: "https://example.com?email=user@example.net", want: "https://example.com?***"},
 		{name: "fragment at sign", value: "https://example.com#user@example.net", want: "https://example.com#***"},
 		{name: "all credential fields", value: "https://YOUR_USER_HERE:YOUR_TOKEN_HERE@example.com/repo?key=YOUR_QUERY_HERE#YOUR_FRAGMENT_HERE", want: "https://***@example.com/repo?***"},

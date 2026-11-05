@@ -48,10 +48,10 @@ func TestDeinitPurgeLayerPair(t *testing.T) {
 				}
 				preserved := map[string][]byte{}
 				for layer, path := range configs {
-					writeConfig(t, path, "registries: []\ninclude: [fragment.yaml]\n")
+					writeConfig(t, path, "apiVersion: agent-marketplace/v4\ninclude: [fragment.yaml]\n")
 					fragment := filepath.Join(filepath.Dir(path), "fragment.yaml")
-					writeFile(t, fragment, "registries: []\n")
-					preserved[fragment] = []byte("registries: []\n")
+					writeFile(t, fragment, "apiVersion: agent-marketplace/v4\n")
+					preserved[fragment] = []byte("apiVersion: agent-marketplace/v4\n")
 					writeFile(t, locks[layer], "apiVersion: agent-marketplace-lock/v1\nscope: "+layer+"\nregistries: []\n")
 					for _, name := range []string{path, locks[layer]} {
 						data, err := os.ReadFile(name)
@@ -129,7 +129,7 @@ func TestDeinitPurgePreservesPendingPublication(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
 	configPath := filepath.Join(repo, ".agents", "config.yaml")
 	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
-	writeConfig(t, configPath, "registries: []\n")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\n")
 	writeFile(t, lockPath, "old-lock")
 	before, err := os.ReadFile(configPath)
 	if err != nil {
@@ -277,11 +277,11 @@ func TestDeinitTable(t *testing.T) {
 			t.Setenv("HOME", homeDir)
 
 			repoRoot := filepath.Join(t.TempDir(), "repo")
-			writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `registries: []`)
-			writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `registries: []`)
+			writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4`)
+			writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4`)
 			// Create local config for local scope tests.
 			localCfg := filepath.Join(repoRoot, ".agents", "config.local.yaml")
-			writeFile(t, localCfg, "registries: []\n")
+			writeFile(t, localCfg, "apiVersion: agent-marketplace/v4\n")
 
 			if tt.seedCache {
 				cacheEntry := filepath.Join(cache.CacheDir(), cache.HashURL("ssh://git@example.com/skills.git"), "main")
@@ -359,8 +359,8 @@ func TestDeinitDryRunDoesNotRemoveEmptyAgentsDir(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	globalCfg := filepath.Join(homeDir, ".agents", "config.yaml")
-	writeConfig(t, globalCfg, `registries: []`)
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `registries: []`)
+	writeConfig(t, globalCfg, `apiVersion: agent-marketplace/v4`)
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4`)
 
 	withWorkingDir(t, repoRoot)
 
@@ -389,13 +389,13 @@ func TestDeinitRemovesManagedMcpEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
+	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries: []
+sources: {}
 `)
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
-registries: []
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources: {}
 `)
 
 	// Simulate a .factory/mcp.json with both managed and user entries.
@@ -456,13 +456,13 @@ func TestDeinitKeepsEmptyMcpFileIfAllManaged(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
+	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries: []
+sources: {}
 `)
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
-registries: []
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources: {}
 `)
 
 	// Simulate a .factory/mcp.json with only managed entries.
@@ -527,29 +527,27 @@ func TestDeinitUserPreservesOrgOwnedArtifacts(t *testing.T) {
 	writeSkill(t, working, "org-skill", "Org skill", []string{"org"})
 	commitAndPushAll(t, working, "Add skills")
 
-	orgCfgPath := filepath.Join(t.TempDir(), "org-config.yaml")
-	writeFile(t, orgCfgPath, `apiVersion: agent-marketplace/v3
+	orgCfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, orgCfgPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - org-skill
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/org-skill]
 `)
 	config.SetTestOrganizationConfigPath(t, orgCfgPath)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
+	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - user-skill
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/user-skill]
 `)
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `registries: []`)
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4`)
 
 	withWorkingDir(t, repoRoot)
 	requireOrganizationLock(t, orgCfgPath)
@@ -583,29 +581,27 @@ func TestDeinitUserDryRunReportsUserOwnedChanges(t *testing.T) {
 	writeSkill(t, working, "org-skill", "Org skill", []string{"org"})
 	commitAndPushAll(t, working, "Add skills")
 
-	orgCfgPath := filepath.Join(t.TempDir(), "org-config.yaml")
-	writeFile(t, orgCfgPath, `apiVersion: agent-marketplace/v3
+	orgCfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, orgCfgPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - org-skill
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/org-skill]
 `)
 	config.SetTestOrganizationConfigPath(t, orgCfgPath)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
+	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - user-skill
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/user-skill]
 `)
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `registries: []`)
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4`)
 
 	withWorkingDir(t, repoRoot)
 	requireOrganizationLock(t, orgCfgPath)
@@ -633,21 +629,21 @@ func TestDeinitUserPurgeConfigDoesNotRemoveOrgConfig(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	orgCfgPath := filepath.Join(t.TempDir(), "org-config.yaml")
-	writeFile(t, orgCfgPath, `apiVersion: agent-marketplace/v3
+	orgCfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, orgCfgPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries: []
+sources: {}
 `)
 	config.SetTestOrganizationConfigPath(t, orgCfgPath)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
+	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries: []
+sources: {}
 `)
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `registries: []`)
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4`)
 
 	withWorkingDir(t, repoRoot)
 
@@ -676,29 +672,27 @@ func TestDeinitUserDryRunUsesCachedCatalog(t *testing.T) {
 	writeSkill(t, working, "org-skill", "Org skill", []string{"org"})
 	commitAndPushAll(t, working, "Add skills")
 
-	orgCfgPath := filepath.Join(t.TempDir(), "org-config.yaml")
-	writeFile(t, orgCfgPath, `apiVersion: agent-marketplace/v3
+	orgCfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, orgCfgPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - org-skill
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/org-skill]
 `)
 	config.SetTestOrganizationConfigPath(t, orgCfgPath)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeFile(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
+	writeFile(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - user-skill
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/user-skill]
 `)
-	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nregistries: []\n")
+	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\n")
 
 	withWorkingDir(t, repoRoot)
 	requireOrganizationLock(t, orgCfgPath)
@@ -734,25 +728,24 @@ func TestDeinitUserDryRunFailsClosedWhenOrgCatalogCacheIsCold(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, ".cache"))
 
-	orgCfgPath := filepath.Join(t.TempDir(), "org-config.yaml")
-	writeFile(t, orgCfgPath, `apiVersion: agent-marketplace/v3
+	orgCfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, orgCfgPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: ssh://git@example.com/should-not-be-fetched.git
-    ref: main
-    skills:
-      - org-skill
+sources:
+  hosted: {git: ssh://git@example.com/should-not-be-fetched.git, ref: main}
+resources:
+  hosted: [skill/org-skill]
 `)
 	config.SetTestOrganizationConfigPath(t, orgCfgPath)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeFile(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
+	writeFile(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries: []
+sources: {}
 `)
-	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nregistries: []\n")
+	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\n")
 
 	withWorkingDir(t, repoRoot)
 
@@ -811,25 +804,24 @@ func setupUnavailableOrganization(t *testing.T) (homeDir, repoRoot, cacheEntry s
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(homeDir, ".cache"))
 
-	orgCfgPath := filepath.Join(t.TempDir(), "org-config.yaml")
-	writeFile(t, orgCfgPath, `apiVersion: agent-marketplace/v3
+	orgCfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, orgCfgPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: ssh://git@example.com/should-not-be-fetched.git
-    ref: main
-    skills:
-      - org-skill
+sources:
+  hosted: {git: ssh://git@example.com/should-not-be-fetched.git, ref: main}
+resources:
+  hosted: [skill/org-skill]
 `)
 	config.SetTestOrganizationConfigPath(t, orgCfgPath)
 
 	repoRoot = filepath.Join(t.TempDir(), "repo")
-	writeFile(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
+	writeFile(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries: []
+sources: {}
 `)
-	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nregistries: []\n")
+	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\n")
 
 	cacheEntry = filepath.Join(cache.CacheDir(), cache.HashURL("ssh://git@example.com/should-not-be-fetched.git"), "main")
 	writeFile(t, filepath.Join(cacheEntry, ".gitkeep"), "cached\n")
@@ -858,29 +850,27 @@ func TestDeinitUserWithoutHarnessSetDoesNotCreateOutput(t *testing.T) {
 	writeSkill(t, working, "org-skill", "Org skill", []string{"org"})
 	commitAndPushAll(t, working, "Add skills")
 
-	orgCfgPath := filepath.Join(t.TempDir(), "org-config.yaml")
-	writeFile(t, orgCfgPath, `apiVersion: agent-marketplace/v3
+	orgCfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, orgCfgPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - org-skill
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/org-skill]
 `)
 	config.SetTestOrganizationConfigPath(t, orgCfgPath)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeFile(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
+	writeFile(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - user-skill
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/user-skill]
 `)
-	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nregistries: []\n")
+	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\n")
 
 	withWorkingDir(t, repoRoot)
 	requireOrganizationLock(t, orgCfgPath)
@@ -895,19 +885,17 @@ registries:
 	// Remove the target harness set from both configs. Without a harness set
 	// there is no organization-owned output to preserve, so deinit should
 	// remove existing output without defaulting to an unwanted target.
-	writeFile(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - user-skill
+	writeFile(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/user-skill]
 `)
-	writeFile(t, orgCfgPath, `apiVersion: agent-marketplace/v3
-registries:
-  - url: `+origin+`
-    ref: main
-    skills:
-      - org-skill
+	writeFile(t, orgCfgPath, `apiVersion: agent-marketplace/v4
+sources:
+  hosted: {git: file://`+origin+`, ref: main}
+resources:
+  hosted: [skill/org-skill]
 `)
 
 	output, err := executeCommand("deinit")
@@ -945,6 +933,9 @@ func TestDeinitUserPreservesCachedOrganizationMarketplaceWithoutNetwork(t *testi
 		switch {
 		case r.URL.Path == "/.well-known/agent-marketplace.json":
 			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("deinit-marketplace", "https://example.com"))
+		case r.URL.Path == "/api/v1/registries/org-source" || r.URL.Path == "/api/v1/registries/user-source":
+			id := strings.TrimPrefix(r.URL.Path, "/api/v1/registries/")
+			_ = json.NewEncoder(w).Encode(mpapi.PublicRegistry{ID: store.RegistryID(id), Slug: id, Origins: []string{"https://example.com/" + id + ".git"}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
 		case strings.Contains(r.URL.Path, "/revisions/"+orgPin.Digest):
 			_ = json.NewEncoder(w).Encode(orgRevision)
 		case strings.Contains(r.URL.Path, "/revisions/"+userPin.Digest):
@@ -961,37 +952,31 @@ func TestDeinitUserPreservesCachedOrganizationMarketplaceWithoutNetwork(t *testi
 	}))
 	defer server.Close()
 
-	orgCfgPath := filepath.Join(t.TempDir(), "org-config.yaml")
-	writeFile(t, orgCfgPath, `apiVersion: agent-marketplace/v3
+	orgCfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, orgCfgPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-marketplaces:
-  - url: `+server.URL+`
-    instance_id: deinit-marketplace
-    resources:
-      - registry_id: org-source
-        kind: skill
-        name: org-review
-        revision: v1
-        digest: `+orgPin.Digest+`
+sources:
+  hosted: {marketplace: `+server.URL+`}
+resources:
+  hosted:
+    include:
+      - org-source/skill/org-review: {revision: `+orgPin.Digest+`}
 `)
 	config.SetTestOrganizationConfigPath(t, orgCfgPath)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v2
+	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-marketplaces:
-  - url: `+server.URL+`
-    instance_id: deinit-marketplace
-    resources:
-      - registry_id: user-source
-        kind: skill
-        name: user-review
-        revision: v1
-        digest: `+userPin.Digest+`
+sources:
+  hosted: {marketplace: `+server.URL+`}
+resources:
+  hosted:
+    include:
+      - user-source/skill/user-review: {revision: `+userPin.Digest+`}
 `)
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nregistries: []\n")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\n")
 	withWorkingDir(t, repoRoot)
 
 	if _, err := executeCommand("sync"); err != nil {
@@ -1111,6 +1096,8 @@ func setupDeinitOrganizationMarketplace(t *testing.T) deinitMarketplaceScenario 
 		switch {
 		case r.URL.Path == "/.well-known/agent-marketplace.json":
 			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("deinit-marketplace", "https://example.com"))
+		case r.URL.Path == "/api/v1/registries/org-source":
+			_ = json.NewEncoder(w).Encode(mpapi.PublicRegistry{ID: "org-source", Slug: "org-source", Origins: []string{"https://example.com/org-source.git"}, Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true})
 		case strings.Contains(r.URL.Path, "/revisions/"+pin.Digest):
 			_ = json.NewEncoder(w).Encode(revision)
 		case strings.HasPrefix(r.URL.Path, "/api/v1/artifacts/") && strings.HasSuffix(r.URL.Path, strings.TrimPrefix(string(revision.ArchiveDigest), "sha256:")):
@@ -1122,24 +1109,21 @@ func setupDeinitOrganizationMarketplace(t *testing.T) deinitMarketplaceScenario 
 	}))
 	t.Cleanup(server.Close)
 
-	orgCfgPath := filepath.Join(t.TempDir(), "org-config.yaml")
-	writeFile(t, orgCfgPath, `apiVersion: agent-marketplace/v3
+	orgCfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, orgCfgPath, `apiVersion: agent-marketplace/v4
 harnesses:
   - factory
-marketplaces:
-  - url: `+server.URL+`
-    instance_id: deinit-marketplace
-    resources:
-      - registry_id: org-source
-        kind: skill
-        name: org-review
-        revision: v1
-        digest: `+pin.Digest+`
+sources:
+  hosted: {marketplace: `+server.URL+`}
+resources:
+  hosted:
+    include:
+      - org-source/skill/org-review: {revision: `+pin.Digest+`}
 `)
 	config.SetTestOrganizationConfigPath(t, orgCfgPath)
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\nmarketplaces: []\n")
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v2\nregistries: []\n")
+	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\n")
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\n")
 	withWorkingDir(t, repoRoot)
 	if _, err := executeCommand("sync"); err != nil {
 		t.Fatalf("expected Marketplace sync to seed materialized output: %v", err)
@@ -1158,7 +1142,6 @@ func deinitMarketplaceFixture(t *testing.T, name, sourceID string) (config.Marke
 		t.Fatalf("FromIR: %v", err)
 	}
 	canonical.Manifest.RegistryID = sourceID
-	canonical.Manifest.Revision = "v1"
 	raw, archiveDigest, err := hccartifact.Encode(canonical)
 	if err != nil {
 		t.Fatalf("Encode: %v", err)

@@ -2,7 +2,7 @@
   "hooks": {
     "pre_read_code": [
       {
-        "command": "/plugins/acme/scripts/check.sh"
+        "command": "plugins/acme/scripts/check.sh"
       }
     ]
   }

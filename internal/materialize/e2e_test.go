@@ -67,7 +67,7 @@ This is the body.
 
 	// Construct a minimal config for resolver.
 	rawCfg := &config.Config{
-		APIVersion: "agent-marketplace/v2",
+		APIVersion: "agent-marketplace/v4",
 		Harnesses:  []string{"claude", "factory"},
 		Registries: []config.RegistryEntry{
 			{

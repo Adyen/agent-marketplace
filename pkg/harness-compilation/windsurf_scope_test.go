@@ -17,8 +17,8 @@ func TestWindsurfSubagentScopeIsNotBroadened(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.HasErrors() || !diag.HasCode(result.Diagnostics, diag.CodeHookWindsurfEventUnmappable) {
-		t.Errorf("missing unmappable-event warning: %v", result.Diagnostics)
+	if !result.HasErrors() || !diag.HasCode(result.Diagnostics, diag.CodeHookWindsurfEventUnmappable) {
+		t.Errorf("missing unmappable-event error: %v", result.Diagnostics)
 	}
 	if len(result.Artifacts) != 1 || result.Artifacts[0].Path != ".windsurf/hooks.json" {
 		t.Fatalf("valid Stop hook was lost: %v", result.Artifacts)

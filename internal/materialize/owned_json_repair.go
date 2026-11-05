@@ -130,7 +130,7 @@ func readOwnedJSONRepairState(store *ownership.Store, key outputKey, outDir stri
 		return nil, []diag.Diagnostic{ownedAggregateDiag(options.writeCode, key, rel,
 			fmt.Sprintf("read aggregate %q: %v", ownedAggregateLabel(outDir, rel), err))}
 	}
-	doc, err := jsonc.Parse(rel, raw)
+	doc, err := jsonc.ParseWithOptions(rel, raw, options.parseOptions)
 	if err != nil {
 		return nil, []diag.Diagnostic{ownedAggregateCodedDiag(key, outDir, rel, err, options.malformedCode)}
 	}

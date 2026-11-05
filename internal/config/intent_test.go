@@ -33,7 +33,7 @@ func TestLoadEffectiveCanceledContextDoesNotBind(t *testing.T) {
 func TestReadIntentRejectsMissingRepoRoot(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"org.yaml", "user.yaml", "repo.yaml", "local.yaml"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte("apiVersion: agent-marketplace/v2\n"), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("apiVersion: agent-marketplace/v4\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -104,27 +104,16 @@ resources:
 		t.Fatal("Settings must clone harnesses")
 	}
 
-	legacy := &Config{
-		Registries: []RegistryEntry{
-			{URL: "https://example.com/legacy.git"},
-			{URL: dir + "/local-regs"},
-		},
-		Marketplaces: []MarketplaceEntry{{URL: "https://mp.example"}},
+	for _, version := range []string{"agent-marketplace/v2", "agent-marketplace/v3"} {
+		_, err := readLayerIntent(dir+"/config.yaml", "", []byte("apiVersion: "+version+"\nregistries: []\n"), userLayer, nil)
+		var validation *V4ValidationError
+		if !errors.As(err, &validation) || validation.Code != "v4.api-version" || validation.Path != dir+"/config.yaml" || validation.Line != 1 {
+			t.Fatalf("legacy intent %s = %v, want path-specific v4.api-version", version, err)
+		}
 	}
-	ll := LayerIntent{Source: UserPersonal, legacy: legacy}
-	wantLegacySources := []SourceDecl{
-		{Kind: V4SourceGit, URL: "https://example.com/legacy.git"},
-		{Kind: V4SourceDirectory},
-		{Kind: V4SourceMarketplace, URL: "https://mp.example"},
-	}
-	if got := ll.Sources(); !reflect.DeepEqual(got, wantLegacySources) {
-		t.Fatalf("legacy sources = %#v, want %#v", got, wantLegacySources)
-	}
-	if !ll.NeedsLock() {
-		t.Fatal("legacy layer with a remote git registry must need a lock")
-	}
-	if ll.NeedsMarketplaceLock() {
-		t.Fatal("legacy layer must not need a marketplace lock")
+	absent := LayerIntent{Source: UserPersonal}
+	if absent.Present() || absent.NeedsLock() || absent.NeedsMarketplaceLock() || absent.Sources() != nil {
+		t.Fatal("absent intent exposed acquisition authority")
 	}
 }
 
@@ -149,15 +138,20 @@ resources:
 		t.Fatalf("v4 explicit selections = %#v, want %#v", got, want)
 	}
 
-	legacy := LayerIntent{Source: RepoCommitted, legacy: &Config{Registries: []RegistryEntry{
-		{URL: "https://example.com/a.git", Skills: KindSelector{Include: []string{"one"}}, MCP: KindSelector{Include: []string{"srv"}}},
-	}}}
-	wantLegacy := []ExplicitSelection{
-		{Kind: ir.KindSkill, Name: "one"},
-		{Kind: ir.KindMcpServer, Name: "srv"},
+	gitConfig, err := ParseV4Config([]byte(`apiVersion: agent-marketplace/v4
+sources: {shared: {git: https://example.com/a.git, ref: main}}
+resources: {shared: [skill/one, mcp/srv]}
+`), filepath.Join(t.TempDir(), "config.yaml"), true)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := legacy.ExplicitSelections(); !reflect.DeepEqual(got, wantLegacy) {
-		t.Fatalf("legacy explicit selections = %#v, want %#v", got, wantLegacy)
+	gitIntent := LayerIntent{Source: RepoCommitted, v4: gitConfig}
+	wantGit := []ExplicitSelection{
+		{Kind: ir.KindMcpServer, Name: "srv"},
+		{Kind: ir.KindSkill, Name: "one"},
+	}
+	if got := gitIntent.ExplicitSelections(); !reflect.DeepEqual(got, wantGit) {
+		t.Fatalf("git explicit selections = %#v, want %#v", got, wantGit)
 	}
 
 	if got := (LayerIntent{Source: RepoCommitted}).ExplicitSelections(); got != nil {
@@ -171,7 +165,7 @@ func TestBindPreservesLayerErrorOrder(t *testing.T) {
 
 	intent := Intent{
 		Layers: [5]LayerIntent{
-			Organization:  {Source: Organization, legacy: &Config{}},
+			Organization:  {Source: Organization, v4: &V4Config{}},
 			UserPersonal:  {Source: UserPersonal, errors: []error{userReadErr}},
 			RepoCommitted: {Source: RepoCommitted},
 			RepoPersonal:  {Source: RepoPersonal},
@@ -211,9 +205,9 @@ func TestBindPreservesLayerErrorOrder(t *testing.T) {
 }
 
 func TestIntentViews(t *testing.T) {
-	org := LayerIntent{Source: Organization, legacy: &Config{Harnesses: []string{"cursor"}}}
-	user := LayerIntent{Source: UserPersonal, legacy: &Config{Harnesses: []string{"devin"}}}
-	repo := LayerIntent{Source: RepoCommitted, legacy: &Config{Harnesses: []string{"claude"}}}
+	org := LayerIntent{Source: Organization, v4: &V4Config{Harnesses: []string{"cursor"}}}
+	user := LayerIntent{Source: UserPersonal, v4: &V4Config{Harnesses: []string{"devin"}}}
+	repo := LayerIntent{Source: RepoCommitted, v4: &V4Config{Harnesses: []string{"claude"}}}
 
 	intent := Intent{Layers: [5]LayerIntent{Organization: org, UserPersonal: user, RepoCommitted: repo}}
 	harnesses, source := intent.TargetHarnesses()
@@ -221,7 +215,7 @@ func TestIntentViews(t *testing.T) {
 		t.Fatalf("target harnesses = %v from %v, want [claude] from repo", harnesses, source)
 	}
 	harnesses[0] = "mutated"
-	if repo.legacy.Harnesses[0] != "claude" {
+	if repo.v4.Harnesses[0] != "claude" {
 		t.Fatal("TargetHarnesses must return a clone")
 	}
 

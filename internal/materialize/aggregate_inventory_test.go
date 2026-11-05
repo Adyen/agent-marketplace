@@ -253,7 +253,7 @@ func TestAggregateProtectedPathsCoversOwnershipTargets(t *testing.T) {
 	for _, target := range sortedTargets(t) {
 		for _, machineScope := range []bool{false, true} {
 			protected := aggregateProtectedPaths(target, machineScope)
-			if target == hcc.TargetDevin || target == codex {
+			if target == hcc.TargetDevin || target == codex || target == hcc.TargetOpenCode {
 				declared := targetInfoForTest(t, target).AggregateFilesForScope(machineScope)
 				if len(protected) != len(declared) {
 					t.Errorf("%s (machine_scope=%v): protected %v does not cover declared %v", target, machineScope, protected, declared)

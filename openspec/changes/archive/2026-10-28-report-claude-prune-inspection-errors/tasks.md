@@ -1,0 +1,4 @@
+- [x] Reproduce a silently skipped inspection error with a directory-link cycle.
+- [x] Report non-absence errors and preserve safe sibling cleanup and genuine absence.
+- [x] Run focused and domain validation and adversarial self-review.
+- [x] Archive the clarification as the final commit.

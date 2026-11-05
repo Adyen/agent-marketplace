@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -32,7 +34,7 @@ func TestNativeHookDefinitionsDoNotConflict(t *testing.T) {
 			sourceHarness: "devin",
 			write: func(t *testing.T, root, command string, index int) {
 				dir := filepath.Join(root, ".devin")
-				additiveSafetyWrite(t, filepath.Join(dir, "hooks.v1.json"), fmt.Sprintf(`{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":%q}]}]}`, command))
+				additiveSafetyWrite(t, filepath.Join(dir, "hooks.v1.json"), fmt.Sprintf(`{"PreToolUse":[{"matcher":"exec","hooks":[{"type":"command","command":%q}]}]}`, command))
 				addHookSupportFiles(t, dir, index)
 			},
 			excluded:    []string{"hooks.v1.json", "config.json", "mcp_config.json"},
@@ -43,7 +45,7 @@ func TestNativeHookDefinitionsDoNotConflict(t *testing.T) {
 			sourceHarness: "devin",
 			write: func(t *testing.T, root, command string, index int) {
 				dir := filepath.Join(root, ".devin")
-				additiveSafetyWrite(t, filepath.Join(dir, "config.json"), fmt.Sprintf(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":%q}]}]}}`, command))
+				additiveSafetyWrite(t, filepath.Join(dir, "config.json"), fmt.Sprintf(`{"hooks":{"PreToolUse":[{"matcher":"exec","hooks":[{"type":"command","command":%q}]}]}}`, command))
 				addHookSupportFiles(t, dir, index)
 			},
 			excluded:    []string{"hooks.v1.json", "config.json", "mcp_config.json"},
@@ -66,7 +68,9 @@ func TestNativeHookDefinitionsDoNotConflict(t *testing.T) {
 			sourceHarness: "gemini",
 			write: func(t *testing.T, root, command string, index int) {
 				dir := filepath.Join(root, ".gemini")
-				additiveSafetyWrite(t, filepath.Join(dir, "settings.json"), fmt.Sprintf(`{"hooks":{"BeforeTool":[{"matcher":"Bash","hooks":[{"type":"command","command":%q}]}]}}`, command))
+				// run_shell_command is Gemini's exact shell tool name; the
+				// catalog resolver maps it to Windsurf's pre_run_command.
+				additiveSafetyWrite(t, filepath.Join(dir, "settings.json"), fmt.Sprintf(`{"hooks":{"BeforeTool":[{"matcher":"run_shell_command","hooks":[{"type":"command","command":%q}]}]}}`, command))
 				addHookSupportFiles(t, dir, index)
 			},
 			excluded:    []string{"settings.json"},
@@ -140,26 +144,41 @@ func TestNativeHookDefinitionsDoNotConflict(t *testing.T) {
 					if err != nil || hasErrorDiagnostics(report.Diags) {
 						t.Fatalf("materialize: %v %v", err, report.Diags)
 					}
-					got := additiveSafetyCommands(t, filepath.Join(repo, ".windsurf", "hooks.json"), "hooks", "pre_run_command")
+					got := additiveSafetyCommands(t, filepath.Join(repo, ".devin", "hooks.json"), "hooks", "pre_run_command")
 					if !reflect.DeepEqual(got, []string{"echo first", "echo second"}) {
 						t.Fatalf("commands = %v", got)
 					}
-					supportDir := filepath.Join(repo, ".windsurf", "hook-support")
+					supportDir := filepath.Join(repo, "hook-support")
+					// Support payloads install under per-source namespaces
+					// (<key>/<hook name>/); compare basenames across the tree.
+					payloads := map[string]string{}
+					walkErr := filepath.WalkDir(supportDir, func(p string, d fs.DirEntry, err error) error {
+						if err != nil || d.IsDir() {
+							return err
+						}
+						data, rerr := os.ReadFile(p)
+						if rerr != nil {
+							return rerr
+						}
+						payloads[filepath.Base(p)] = string(data)
+						return nil
+					})
+					if walkErr != nil {
+						t.Fatalf("walk support dir: %v", walkErr)
+					}
 					for _, name := range tt.excluded {
-						if _, err := os.Stat(filepath.Join(supportDir, name)); !os.IsNotExist(err) {
-							t.Fatalf("excluded support file %s exists: %v", name, err)
+						if _, ok := payloads[name]; ok {
+							t.Fatalf("excluded support file %s exists under %s", name, supportDir)
 						}
 					}
 					for i, name := range []string{"first.sh", "second.sh"} {
-						data, err := os.ReadFile(filepath.Join(supportDir, name))
-						if err != nil || string(data) != "echo support "+strconv.Itoa(i) {
-							t.Fatalf("support %s = %q, %v", name, data, err)
+						if data, ok := payloads[name]; !ok || data != "echo support "+strconv.Itoa(i) {
+							t.Fatalf("support %s = %q", name, data)
 						}
 					}
 					if tt.wantPayload {
-						data, err := os.ReadFile(filepath.Join(supportDir, "payload.json"))
-						if err != nil || string(data) != `{"key":"value"}` {
-							t.Fatalf("payload = %q, %v", data, err)
+						if data, ok := payloads["payload.json"]; !ok || data != `{"key":"value"}` {
+							t.Fatalf("payload = %q", data)
 						}
 					}
 				})
@@ -225,7 +244,7 @@ func TestWindsurfNativeHandlerOrder(t *testing.T) {
 			if len(errs) != 0 || len(resolved) != tt.count {
 				t.Fatalf("resolution: %v, %v", resolved, errs)
 			}
-			path := filepath.Join(repo, ".windsurf", "hooks.json")
+			path := filepath.Join(repo, ".devin", "hooks.json")
 			if tt.seeded {
 				additiveSafetyWrite(t, path, fmt.Sprintf(`{"hooks":{"pre_run_command":[// keep handwritten
 {"command":"echo handwritten"},{"command":"echo %d","_managed_by":"agent-marketplace"}]}}`, tt.count-1))
@@ -249,6 +268,21 @@ func TestWindsurfNativeHandlerOrder(t *testing.T) {
 				wantCommands = append([]string{"echo handwritten", "echo " + strconv.Itoa(tt.count-1)}, want[:tt.count-1]...)
 				if !strings.Contains(string(first), "// keep handwritten") {
 					t.Fatal("handwritten hook comment was lost")
+				}
+				store, err := ownership.Open(repo)
+				if err != nil {
+					t.Fatal(err)
+				}
+				proof, err := store.Proof(filepath.Join(".devin", "hooks.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if proof.OwnedCount() != tt.count-1 || len(proof.HookSatisfactions()) != 1 {
+					t.Fatalf("handwritten marker satisfaction became owned: %d owned, %d satisfactions", proof.OwnedCount(), len(proof.HookSatisfactions()))
+				}
+				sources := proof.HookSatisfactions()[0].Sources
+				if len(sources) != 1 || sources[0].Resource != "hooks" || sources[0].SourceDigest == "" {
+					t.Fatalf("handwritten marker satisfaction sources = %+v", sources)
 				}
 			}
 			if !reflect.DeepEqual(got, wantCommands) {

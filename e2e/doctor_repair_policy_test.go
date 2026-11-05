@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-var repairSchemas = []string{"v2", "v4"}
+var repairSchemas = []string{"v4"}
 
 // repairConflict is a repository whose Codex MCP entry collides with a
 // handwritten value, so doctor --repair can resolve it only after an
@@ -28,9 +28,6 @@ func newRepairConflict(t *testing.T, schema string) repairConflict {
 	env := newCodexEnv(t)
 	url := mcpRegistry(env, "repair-policy", "managed", "locked-binary")
 	switch schema {
-	case "v2":
-		env.WriteGlobalConfig("apiVersion: agent-marketplace/v2\nharnesses: [codex]\nregistries: []")
-		env.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v2\nregistries:\n  - url: %s\n    ref: main\n    source_harness: claude\n    mcp:\n      - managed\n", url))
 	case "v4":
 		env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [codex]\n")
 		env.WriteRepoConfig(fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  tools: {git: '%s', ref: main, source_harness: claude}\nresources:\n  tools: {include: [mcp/managed]}\n", url))
@@ -198,10 +195,6 @@ func TestE2EOrganizationMarketplaceAcquisitionFailure(t *testing.T) {
 			registry := env.CreateBareRepo("gc-source", RegistryFilesEx([]Skill{{Name: "review", Description: "Review changes"}}, nil, nil, nil))
 			selected := fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  tools: {git: '%s', ref: main}\nresources:\n  tools: {include: [skill/review]}\n", registry)
 			dropped := "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"
-			if schema == "v2" {
-				selected = fmt.Sprintf("apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries:\n  - url: %s\n    ref: main\n    skills:\n      include: [review]\n", registry)
-				dropped = "apiVersion: agent-marketplace/v2\nharnesses: [factory]\nregistries: []\n"
-			}
 			env.WriteGlobalConfig(selected)
 			env.AssertExitCode(env.RunAM("sync"), 0)
 			env.WriteGlobalConfig(dropped)

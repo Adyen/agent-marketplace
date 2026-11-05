@@ -181,6 +181,9 @@ func devinDesiredAggregates(repoRoot string, resolved []resolver.ResolvedArtifac
 			aggregates[key] = work
 		}
 	}
+	for key, hooks := range compiled.nativeHooks {
+		aggregates[key] = mergeOwnedJSONAggregateWork(aggregates[key], hooks)
+	}
 	return aggregates, keys, compiled.allDiags
 }
 
@@ -191,7 +194,7 @@ func compileRepairTarget(repoRoot string, resolved []resolver.ResolvedArtifact, 
 	// for every target). It is dropped rather than reported: those warnings
 	// belong to sync, and repeating another target's warning in a target-local
 	// repair preview would be noise the user cannot act on here.
-	work, allOutputs, blocked, _ := buildWorkItems(resolved, repoRoot)
+	work, allOutputs, blocked, _, _ := buildWorkItems(resolved, repoRoot)
 
 	targetWork := work[:0:0]
 	for _, item := range work {
@@ -216,6 +219,11 @@ func compileRepairTarget(repoRoot string, resolved []resolver.ResolvedArtifact, 
 		}
 	}
 
+	if target == hcc.TargetOpenCode {
+		if refusal := normalizeOpenCodeScopes(targetWork, targetOutputs, repoRoot); refusal != nil {
+			return compilePhaseResult{allDiags: []diag.Diagnostic{*refusal}}, nil
+		}
+	}
 	compiled := compileWorkItems(targetWork, nil, targetOutputs, targetBlocked, repoRoot)
 
 	keys := make([]outputKey, 0, len(targetOutputs))

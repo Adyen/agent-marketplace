@@ -15,9 +15,18 @@ Devin uses:
 - MCP: `mcp_config.json`
 
 Each native hook event holds matcher groups, and each group has a nested
-`hooks` array. Legacy flat hook input is still ingestible. Sync upgrades only
-entries that durable ownership evidence supports, and preserves handwritten
-groups and settings.
+`hooks` array. Support files install under `.devin/hook-support/<source>/<hook>/`
+at repository scope and `~/.config/devin/hook-support/<source>/<hook>/` at user
+scope. New entries carry no `_managed_by` marker. Sync upgrades only entries
+that durable ownership evidence supports, and preserves handwritten groups and
+settings. Legacy flat hook input remains ingestible. The shipped catalog
+declares command and prompt handlers for Devin events.
+
+Devin CLI also loads Claude hook files. Selecting Devin and Claude in the same
+scope emits `hook.duplicate-execution-risk`; sync leaves both hook outputs in
+place. Devin's declared allow-list vocabulary is `read`, `edit`, `grep`,
+`glob`, and `exec`. An unknown allowed tool keeps the existing warning
+behavior and omits the `allowed-tools` key for the affected resource.
 
 ## Native probe in CI
 

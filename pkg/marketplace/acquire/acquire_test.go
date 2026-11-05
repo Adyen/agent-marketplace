@@ -583,6 +583,7 @@ func TestCloneHTTPSWithTokenUsesPreemptiveAuthorization(t *testing.T) {
 			"GIT_CONFIG_SYSTEM=" + systemConfig,
 			"GIT_CONFIG_NOSYSTEM=1",
 			"GIT_CONFIG_GLOBAL=" + os.DevNull,
+			"HOME=" + t.TempDir(),
 		},
 	}
 

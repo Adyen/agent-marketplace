@@ -27,7 +27,7 @@ the relative repository harness target root.
 
 ### Requirement: Harness target roots remain within their authorized scope
 
-Agent Marketplace SHALL admit every selected harness target root before materialization writes below that root. Repository roots MUST remain within the repository scope. Explicit user-owned machine directory aliases MAY retain their existing relocation behavior. An explicitly configured absolute CODEX_HOME MAY relocate the Codex configuration partition without relocating its skills partition. Repository and HOME scope anchors MAY be filesystem aliases. A contained repository directory-root alias MAY be honored, but an escaping repository root, dangling or cyclic root alias, or non-directory root MUST be refused without changing the root object or any external target bytes, permissions or modification time. Refusal MUST carry `materialize.destination.error`. Independent safe non-Codex targets MAY continue; Codex destination preflight MUST refuse before destination mutation when any active partition root is unsafe.
+Agent Marketplace SHALL admit every selected harness target root before materialization writes below that root. Repository roots MUST remain within the repository scope. Explicit user-owned machine directory aliases MAY retain their existing relocation behavior. An explicitly configured absolute CODEX_HOME MAY relocate the Codex configuration partition without relocating its skills partition. An explicitly configured absolute CLAUDE_CONFIG_DIR MAY relocate the whole Claude Code machine root, including its machine MCP configuration file, inside or outside HOME. Repository and HOME scope anchors MAY be filesystem aliases. A contained repository directory-root alias MAY be honored, but an escaping repository root, dangling or cyclic root alias, or non-directory root MUST be refused without changing the root object or any external target bytes, permissions or modification time. Refusal MUST carry `materialize.destination.error`. Independent safe non-Codex targets MAY continue; Codex destination preflight MUST refuse before destination mutation when any active partition root is unsafe.
 
 #### Scenario: Unsafe harness root preserves external state
 
@@ -39,14 +39,29 @@ Agent Marketplace SHALL admit every selected harness target root before material
 - **WHEN** a repository or HOME is a filesystem alias and a harness root is a real directory or a contained directory alias
 - **THEN** materialization MUST install selected resources at their native paths in both supported materialization modes without replacing the aliases
 
+#### Scenario: Relocated Claude Code machine root is admitted
+
+- **WHEN** CLAUDE_CONFIG_DIR is an absolute path inside or outside HOME, whether the directory is missing or a real directory, and machine-scope selections include Claude Code resources
+- **THEN** materialization MUST admit that root, create it when missing, and install the selected resources under it in both supported materialization modes without an error diagnostic
+
+#### Scenario: Unsafe relocated Claude Code machine root is refused
+
+- **WHEN** CLAUDE_CONFIG_DIR names a dangling link, a cyclic link, or a non-directory object and machine-scope selections include Claude Code resources
+- **THEN** materialization MUST report `materialize.destination.error` and preserve that object, `~/.claude`, and `~/.claude.json` unchanged
+
 ### Requirement: Output-directory ancestors below a harness root are real directories
 
-Agent Marketplace MUST reject unsafe symlinked or non-directory output-directory ancestors below an admitted harness target root before writing that target's planned output. The established Factory `skills -> ../.agents/skills` legacy migration MAY replace that exact link without following or changing its target. Missing output directories MAY be created under the authorized root. Refusal MUST report `materialize.destination.error`, preserve the unsafe ancestor and external state, and MUST NOT leave attempt-owned staging residue. Read-only checking MUST validate these ancestors without creating output directories.
+Agent Marketplace MUST reject unsafe symlinked or non-directory output-directory ancestors below an admitted harness target root before writing that target's planned output. The established Factory `skills -> ../.agents/skills` legacy migration MAY replace that exact link without following or changing its target. Missing output directories MAY be created under the authorized root. Refusal MUST report `materialize.destination.error`, preserve the unsafe ancestor and external state, and MUST NOT leave attempt-owned staging residue. The refusal message MUST name the absolute path of the refused ancestor and state whether it is a symbolic link or a non-directory object. Read-only checking MUST validate these ancestors without creating output directories.
 
 #### Scenario: Unsafe output ancestor refuses before target writes
 
 - **WHEN** a selected resource's output-directory ancestor below its harness root is a link or non-directory object
 - **THEN** materialization MUST report `materialize.destination.error` before target output changes and preserve the unsafe ancestor and external state
+
+#### Scenario: Unsafe output ancestor refusal names the offending path
+
+- **WHEN** materialization refuses an output-directory ancestor that is a symbolic link or a non-directory object
+- **THEN** the `materialize.destination.error` message MUST contain the ancestor's absolute path and identify it as a symbolic link or as not a directory
 
 #### Scenario: Read-only root admission creates no output
 
@@ -55,12 +70,17 @@ Agent Marketplace MUST reject unsafe symlinked or non-directory output-directory
 
 ### Requirement: Diagnostic root summaries remain available on boundary refusal
 
-Doctor and status native destination summaries MUST render a typed filesystem-boundary refusal as an unresolvable root while retaining independent target information. Diagnostic-only doctor MUST NOT read a non-directory root as aggregate payload or change it. Structural configuration failures such as relative CODEX_HOME MUST retain their existing hard-error behavior, and repair MUST still refuse unsafe destination roots before aggregate work.
+Doctor and status native destination summaries MUST render a typed filesystem-boundary refusal as an unresolvable root while retaining independent target information. Diagnostic-only doctor MUST NOT read a non-directory root as aggregate payload or change it. Structural configuration failures such as relative CODEX_HOME or relative CLAUDE_CONFIG_DIR MUST retain their existing hard-error behavior, and repair MUST still refuse unsafe destination roots before aggregate work.
 
 #### Scenario: Doctor continues diagnosing an unsafe native root
 
 - **WHEN** diagnostic-only doctor encounters a non-directory Codex root
 - **THEN** it MUST report an unresolvable root, retain other target information, and preserve the root's bytes and metadata without displaying its payload
+
+#### Scenario: Relative Claude configuration directory is a hard error in summaries
+
+- **WHEN** CLAUDE_CONFIG_DIR is a relative path and Claude Code is a configured harness target
+- **THEN** `status` and `doctor` MUST exit nonzero with an error naming `CLAUDE_CONFIG_DIR` as required to be absolute instead of rendering a Claude Code root summary
 
 ### Requirement: Cache-backed link publication retains destination authority
 
@@ -541,3 +561,176 @@ When resource-requirement expansion is disabled, materialization SHALL tolerate 
 - **THEN** it MUST report no drift solely because those outputs are not actual selected resources
 - **AND** it MUST NOT create or rewrite preview outputs
 - **AND** the healthy acquisition lock MUST remain byte-identical
+
+### Requirement: Repository Windsurf portable nominations stay within native output
+
+Repository-scoped Windsurf portable manifest nominations MUST identify descendants of the native `.windsurf/` output namespace. The namespace root itself and unrelated repository paths MUST NOT authorize payload reads, replacement, or pruning through a matching ownership digest. Refused nominations MUST report `materialize.manifest.error`, preserve nominated bytes, identity, permissions, modification time and manifest evidence, and MUST NOT report the refused entry as removed. Genuine Windsurf portable installation and pruning, machine-scope output, and supported initial root and scope aliases MUST remain usable. This requirement does not authenticate manifest provenance, change ownership semantics within authorized output roots, or change SDK explicit-output pruning.
+
+#### Scenario: Windsurf manifest cannot nominate unrelated repository files
+
+- **WHEN** repository file-mode materialization encounters an independently authored Windsurf portable manifest nomination of the native namespace root or an unrelated repository file outside `.windsurf/`, with a matching ownership digest, in a mutating or read-only run
+- **THEN** it MUST refuse with `materialize.manifest.error`, preserve the unrelated file bytes, identity, permissions, modification time and manifest evidence, report no removal for that entry, and continue to support actual installation and pruning of native Windsurf portable output
+
+### Requirement: Marker merge publication retains its input generation
+
+SDK marker-based aggregate merging MUST read existing payloads through captured regular singly linked nonblocking file authority, with captured-size and opened/named generation validation. The original input state or genuine absence MUST remain the authority for later comparison and publication. A newer destination MUST NOT authorize stale merged bytes, even when replacement bytes are identical; observed changes MUST refuse with the existing generation-conflict identity before staging or publication. Native consumers MUST expose their established coded refusal and preserve concurrent and retained original bytes, identity, permissions and modification time while cleaning only attempt-owned staging. Valid merges, shared permissions, comments, no-ops, private new creation, read-only planning and supported initial native aliases MUST remain usable. This is not an atomic hostile-writer exclusion, new processing ceiling, automatic retry or whole-operation transaction.
+
+#### Scenario: Native marker merge preserves a concurrent input generation
+
+- **WHEN** actual native MCP synchronization replaces the aggregate after its merge input is captured but before artifact comparison
+- **THEN** it MUST refuse with `materialize.write.error`, preserve the concurrent and retained original generations without attempt staging, and a healthy retry MUST actually merge desired entries while preserving concurrent handwritten content
+
+#### Scenario: SDK merge comparison retains original state and absence
+
+- **WHEN** public SDK marker merging observes an input generation or absence and that state changes before comparison in a mutating or read-only operation
+- **THEN** it MUST refuse with generation-conflict identity without consuming or changing the new generation or producing staging, while valid existing and absent input controls MUST still perform the intended merge or nonmutating plan
+
+### Requirement: Portable manifest nominations name one resource inside a native component
+
+Every portable manifest nomination for a harness target, in repository and machine scope, MUST name one resource below a component directory of that harness target's native output: relative to the harness target root, the repository Windsurf `.windsurf/` namespace, or the Codex partition, the path MUST consist of a component directory followed by at least one further element, and MUST NOT be or contain a shared aggregate file that the harness target declares for that scope. A Codex nomination MUST additionally use a component that its partition declares. Nominations of a harness target root, a component directory itself, a root-level file such as a shared harness configuration file, a shared aggregate file inside a component directory such as `hooks/hooks.json`, or Codex partition content outside its declared components, including Agent Marketplace configuration and lockfiles in the `.agents` partition, MUST NOT authorize payload reads, replacement, or pruning through a matching ownership digest or partition root identity. Refused nominations MUST report `materialize.manifest.error`, preserve nominated bytes, identity, permissions, modification time and manifest evidence, and MUST NOT report the refused entry as removed. Genuine portable installation and pruning for every harness target in both scopes MUST remain usable. This requirement does not authenticate manifest provenance, change ownership semantics for other resources inside component directories, or change SDK explicit-output pruning.
+
+#### Scenario: Portable manifest cannot nominate root files or component directories
+
+- **WHEN** file-mode materialization in repository or machine scope encounters an independently authored portable manifest nomination, with a matching ownership digest, of a harness target's root-level file such as a shared harness configuration file, of a shared aggregate file inside a component directory, or of a whole component directory, in a mutating or read-only run
+- **THEN** it MUST refuse with `materialize.manifest.error`, preserve the nominated bytes, identity, permissions, modification time and manifest evidence, report no removal for that entry, and continue to support actual installation and pruning of that harness target's portable output
+
+#### Scenario: Codex manifest cannot nominate shared partition content
+
+- **WHEN** file-mode materialization in repository or machine scope encounters an independently authored Codex portable manifest nomination, with a matching ownership digest and partition root identity, of Agent Marketplace configuration or a lockfile in the `.agents` partition, or of content outside a partition's declared components, in a mutating or read-only run
+- **THEN** it MUST refuse with `materialize.manifest.error`, preserve the nominated bytes, identity, permissions, modification time and manifest evidence, report no removal for that entry, and continue to support actual installation and pruning of Codex skills and subagents
+
+### Requirement: Native marker alias detachment retains captured generation
+
+Native marker aggregate alias detachment MUST retain the admitted parent identity, logical alias and target generation that supplied its payload until replacement or removal. Observed named-parent replacement, alias or target generation changes MUST refuse with the existing generation-conflict identity and native `materialize.write.error` diagnostic, including same-text alias replacement, byte-identical target replacement, retargeted source-directory aliases and empty captured targets. Read-only operations MUST refuse observed drift without mutation. Replacement staging, logical publication and attempt-owned cleanup MUST remain bound to the captured parent; foreign staged replacements MUST NOT be published or deleted. Supported initial aliases, original target preservation, handwritten native merges, existing shared-file permissions, empty-target private creation and repeat no-ops MUST remain compatible. This does not introduce atomic hostile-writer exclusion after the last check, automatic retry, a new ownership policy, processing ceilings or whole-operation rollback.
+
+#### Scenario: Native marker alias detachment preserves concurrent generations
+
+- **WHEN** an admitted native marker aggregate alias or its effective target changes, or its named parent is replaced, after payload capture or replacement staging in a mutating or read-only operation
+- **THEN** synchronization MUST refuse with its existing generation-conflict identity and `materialize.write.error`, preserve concurrent and retained original bytes, identity, permissions and modification time without attempt-owned staging, and restoring valid authority MUST permit actual native merging
+
+#### Scenario: Native marker alias staging preserves foreign replacements
+
+- **WHEN** an admitted native marker aggregate alias has its prepared replacement stage replaced by an independently authored file before publication
+- **THEN** synchronization MUST refuse, preserve the original alias and target and the foreign stage, publish no foreign stage bytes, and valid retry MUST still perform the desired native merge
+
+#### Scenario: Empty native marker aliases retain private creation and no-ops
+
+- **WHEN** an unchanged admitted native marker aggregate alias points to an empty regular target and synchronization installs a selected MCP server
+- **THEN** synchronization MUST create private regular native output containing the selected server without changing the original target, and repeat synchronization MUST preserve output bytes, identity and modification time
+
+### Requirement: Read-only checks compare cache-backed resource content
+
+In symlink materialization mode, Agent Marketplace MUST compare desired
+resource content with the cache content exposed by an installed managed
+symlink before reporting it synchronized. Changed or missing compiled content,
+added, changed or removed support files, and support-file permission changes
+MUST report the affected native resource path as a pending write even when
+the symlink target is unchanged. Read-only checks MUST NOT populate, repair
+or prune resource caches or replace installed links. Unchanged content MUST
+remain synchronized, user-owned collisions MUST retain their existing
+preservation policy, and real synchronization MUST restore a clean check.
+
+#### Scenario: Check detects changed linked resource content
+
+- **WHEN** compiled content of an installed linked resource changes while its desired cache path remains stable
+- **THEN** read-only materialization MUST report the native resource path as a pending write without changing installed cache bytes, permissions, modification time or symlink identity
+- **AND** real synchronization MUST update the exposed content and a subsequent check MUST report it synchronized
+
+#### Scenario: Check detects linked support file drift
+
+- **WHEN** an installed linked resource has added, edited or removed support files, changed support-file permissions, or missing cache content
+- **THEN** checking MUST report the resource as pending without updating existing cache content or recreating missing cache content
+- **AND** real synchronization MUST reconcile the support content and restore a clean check
+
+#### Scenario: CLI check refuses stale linked content without repairing it
+
+- **WHEN** a directory source changes the content of an already synchronized linked resource
+- **THEN** `sync --check` MUST exit 1 and preserve configuration, acquisition locks, installed links and resource caches
+- **AND** ordinary sync MUST expose the new content and a subsequent `sync --check` MUST exit 0 without changes
+
+### Requirement: Locally edited file-mode output is reported as an edited managed copy
+
+When a harness target uses file materialization mode and a selected resource's output is recorded in the materialization manifest with a digest, and the bytes on disk match neither that digest nor the output sync would write now, sync and `sync --check` SHALL preserve those bytes and the manifest entry and SHALL report one `materialize.collision.user-owned` warning. Its message MUST say the output is a locally edited copy of a resource managed by Agent Marketplace, MUST name the output path and the resource, MUST say that deleting or moving the copy and running sync restores the registry version, and MUST NOT describe the output as not managed by Agent Marketplace. The same message SHALL be used when such a copy prevents the harness target from returning to cache-backed symlinks. Output that the materialization manifest does not record MUST keep the existing unmanaged-collision message with its remove and rename hint. Exit codes are unchanged.
+
+#### Scenario: Edited file-mode skill copy is reported as a local edit
+
+- **WHEN** a skill copied in file materialization mode and recorded in the materialization manifest is edited, then sync or `sync --check` runs
+- **THEN** one `materialize.collision.user-owned` warning names the copy's path and resource as a locally edited managed copy with the restore hint and without saying it is not managed, and the edited bytes and manifest entry are unchanged
+
+#### Scenario: Edited file-mode single-file copy is reported as a local edit
+
+- **WHEN** a single-file resource output copied in file materialization mode and recorded in the materialization manifest is edited, then sync runs
+- **THEN** one `materialize.collision.user-owned` warning names the file's path and resource as a locally edited managed copy with the restore hint, and the edited bytes are unchanged
+
+#### Scenario: Edited copy blocking a return to symlinks is reported as a local edit
+
+- **WHEN** a recorded file-mode copy is edited and the harness target's materialization mode changes back to symlinks before sync runs
+- **THEN** sync keeps the edited copy instead of linking it and reports the same locally edited managed copy warning
+
+#### Scenario: Copy matching the current output returns to symlinks
+
+- **WHEN** a recorded file-mode copy no longer matches its recorded digest but matches the output sync would write now, and the harness target's materialization mode changes back to symlinks before sync runs
+- **THEN** sync replaces the copy with the cache-backed symlink and reports no collision warning for it
+
+#### Scenario: Unrecorded existing output keeps the unmanaged collision warning
+
+- **WHEN** a file or directory that the materialization manifest does not record already exists where a selected resource would be written, then sync runs
+- **THEN** sync preserves it and reports the existing `materialize.collision.user-owned` message that it is not managed by agent-marketplace, with the remove and rename hint
+
+#### Scenario: Removing an edited copy restores the registry version
+
+- **WHEN** a locally edited recorded file-mode copy is deleted and sync runs again
+- **THEN** sync writes the registry version to that path, records it in the materialization manifest, and reports no collision for it
+
+### Requirement: Codex partitions that alias one location are refused
+
+Codex destination preflight SHALL treat managed paths of different Codex partitions as overlapping when they are spelled differently but name the same location: paths that differ only in letter case or Unicode normalization, on every host and whether or not they exist yet, or paths below the same existing directory reached through another spelling. Materialization MUST then refuse with `materialize.destination.overlap`, naming both spellings, before any destination mutation and whether or not the selected resources conflict. When a partition root's location cannot be inspected for a reason other than not existing yet, preflight MUST refuse with `materialize.destination.error` before any destination mutation instead of comparing the unresolved spelling. Partitions whose managed paths remain disjoint MUST stay usable even when their roots differ only in letter case, and partitions with identical spellings MUST keep coalescing.
+
+#### Scenario: Codex partitions that differ only in letter case are refused
+
+- **WHEN** CODEX_HOME spells the repository's `.codex` directory with different letter case and both repository and machine scope select Codex output, whether conflicting or disjoint
+- **THEN** materialization MUST refuse with `materialize.destination.overlap` naming both spellings, on case-sensitive and case-insensitive hosts alike
+- **AND** neither spelling MUST receive any write
+
+#### Scenario: Codex partitions that differ only in Unicode normalization are refused
+
+- **WHEN** CODEX_HOME spells the repository's `.codex` path in a different Unicode normalization form, whether or not that directory exists yet, and both repository and machine scope select Codex output
+- **THEN** materialization MUST refuse with `materialize.destination.overlap` naming both spellings, on every host
+- **AND** neither spelling MUST receive any write
+
+#### Scenario: A Codex partition whose location cannot be inspected is refused
+
+- **WHEN** inspecting a Codex partition root or its nearest existing parent fails for a reason other than the path not existing, such as a parent without search permission
+- **THEN** destination preflight MUST refuse with `materialize.destination.error` naming the root, before any destination mutation
+
+#### Scenario: Disjoint Codex partitions that differ only in letter case remain usable
+
+- **WHEN** CODEX_HOME relocates the Codex configuration partition to a spelling of the skills partition root that differs only in letter case
+- **THEN** both the skill and the configuration output MUST install without an error diagnostic
+
+### Requirement: Unused non-directory components do not block cleanup
+
+Materialization SHALL ignore an existing non-directory at a harness component
+location when that component has no desired artifacts. It MUST NOT block cleanup
+of independent output. A non-directory collision with desired component output
+MUST still refuse without replacing the existing file.
+
+#### Scenario: Unused non-directory components do not block cleanup
+
+- **WHEN** an unused harness component is a regular file and another component contains stale managed output
+- **THEN** synchronization MUST preserve the file's bytes and metadata and clean the independent stale output
+- **AND** desired output requiring the non-directory component MUST still refuse without replacing that file
+
+### Requirement: Unchanged skill cache preparation is a no-op
+
+During a real sync, Agent Marketplace MUST leave a cache-backed skill's compiled cache untouched when that cache already holds exactly the tree preparation would publish: the same compiled artifacts, support bytes and modes, and directories, and no other entries. Both trees MUST be read through captured handles. A difference, a missing or unreadable cache, a refused support source or a changed cache namespace MUST fall back to full preparation, keeping its existing staging, pruning, diagnostics and refusal behavior. This requirement does not add a cross-invocation cache, a trust marker or a new limit.
+
+#### Scenario: Unchanged skill cache support repeats without mutation
+
+- **WHEN** a real sync repeats for a cache-backed skill whose source support files and compiled cache are unchanged
+- **THEN** it MUST create no support stage and MUST preserve the identity, mode and modification time of every cached entry and of the installed link
+
+#### Scenario: Skill cache preparation reconciles support drift
+
+- **WHEN** source support bytes, modes or membership change, or the cache gains, loses or alters an entry or has one replaced by a link
+- **THEN** preparation MUST stage support again and leave the cache exactly matching the desired tree

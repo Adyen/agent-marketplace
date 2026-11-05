@@ -1,10 +1,13 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
 // TestSyncPruneStaleKeepsMalformedSelectionWhenAnotherRegistryLacksIt is the
@@ -31,18 +34,19 @@ func TestSyncPruneStaleKeepsMalformedSelectionWhenAnotherRegistryLacksIt(t *test
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-	writeConfig(t, configPath, `
-registries:
-  - url: `+originA+`
+	writeConfig(t, configPath, `apiVersion: agent-marketplace/v4
+sources:
+  a:
+    git: file://`+originA+`
     ref: main
-    skills:
-      - valid-a
-      - shared-skill
-  - url: `+originB+`
+  b:
+    git: file://`+originB+`
     ref: main
-    skills:
-      - valid-b
-      - shared-skill
+resources:
+  a:
+    include: [skill/valid-a, skill/shared-skill]
+  b:
+    include: [skill/valid-b, skill/shared-skill]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -57,9 +61,9 @@ registries:
 		t.Fatalf("read config: %v", readErr)
 	}
 	cfg := string(data)
-	sectionA, sectionB := splitConfigAtRegistry(cfg, originB)
+	sectionA, sectionB := splitConfigAtRegistry(cfg, "  b:\n    include:")
 	if sectionB == "" {
-		t.Fatalf("splitConfigAtRegistry did not find registry URL %q in config:\n%s", originB, cfg)
+		t.Fatalf("splitConfigAtRegistry did not find source b's resource group in config:\n%s", cfg)
 	}
 	// The registry whose copy is merely unparseable keeps its selection.
 	if !strings.Contains(sectionA, "shared-skill") {
@@ -75,10 +79,10 @@ registries:
 	}
 }
 
-// splitConfigAtRegistry splits a rendered config into the text before and after
-// the given registry URL so per-entry selections can be asserted separately.
-func splitConfigAtRegistry(cfg, url string) (before, after string) {
-	idx := strings.Index(cfg, url)
+// splitConfigAtRegistry splits a rendered config at a resource-group marker
+// so source-bound selections can be asserted separately.
+func splitConfigAtRegistry(cfg, marker string) (before, after string) {
+	idx := strings.Index(cfg, marker)
 	if idx < 0 {
 		return cfg, ""
 	}
@@ -103,18 +107,26 @@ func TestSyncStrictPruneStaleDoesNotDeleteMalformedSelection(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+	writeConfig(t, configPath, `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - valid-skill
-      - broken-skill
+resources:
+  skills:
+    include:
+      - skill/valid-skill
+      - skill/broken-skill
 `)
 
 	withWorkingDir(t, repoRoot)
 
-	output, _ := executeCommand("sync", "--strict", "--prune-stale")
+	output, syncErr := executeCommand("sync", "--strict", "--prune-stale")
+	var malformed *resolver.SelectedMalformedError
+	if !errors.As(syncErr, &malformed) || malformed.Name != "broken-skill" {
+		t.Fatalf("strict sync must fail on the selected malformed resource, got %v\n%s", syncErr, output)
+	}
+	assertFactorySkillExists(t, repoRoot, "valid-skill")
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {
@@ -143,14 +155,17 @@ func TestSyncRepeatedRunsNeverPruneMalformedSelection(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+	writeConfig(t, configPath, `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - valid-skill
-      - broken-skill
-      - deleted-skill
+resources:
+  skills:
+    include:
+      - skill/valid-skill
+      - skill/broken-skill
+      - skill/deleted-skill
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -190,14 +205,16 @@ func TestSyncMalformedSkillDoesNotBlockPruningAStaleCommandOfTheSameName(t *test
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
-	writeConfig(t, configPath, `
-registries:
-  - url: `+origin+`
+	writeConfig(t, configPath, `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - valid-skill
-    commands:
-      - shared
+resources:
+  skills:
+    include:
+      - skill/valid-skill
+      - command/shared
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -216,7 +233,7 @@ registries:
 	if readErr != nil {
 		t.Fatalf("read config: %v", readErr)
 	}
-	if strings.Contains(string(data), "- shared") {
+	if strings.Contains(string(data), "command/shared") {
 		t.Fatalf("expected the stale command selection to be gone from config:\n%s", data)
 	}
 }
@@ -239,12 +256,14 @@ func TestSyncDiagnosesMalformedRootLevelSkill(t *testing.T) {
 	commitAndPushAll(t, working, "Add a malformed root-level skill")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - root-skill
+resources:
+  skills:
+    include: [skill/root-skill]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -276,12 +295,15 @@ func TestSyncMalformedSkillDoesNotFailAnUnrelatedUsersSync(t *testing.T) {
 	commitAndPushAll(t, working, "Add valid and malformed skills")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - valid-skill
+resources:
+  skills:
+    include:
+      - skill/valid-skill
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -312,14 +334,15 @@ func TestSyncRequiredRegistryMalformedSelectionFailsTheRun(t *testing.T) {
 	commitAndPushAll(t, working, "Add valid and malformed skills")
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
+resources:
+  skills:
     required: true
-    skills:
-      - valid-skill
-      - broken-skill
+    include: [skill/valid-skill, skill/broken-skill]
 `)
 
 	withWorkingDir(t, repoRoot)
@@ -327,6 +350,10 @@ registries:
 	output, err := executeCommand("sync")
 	if err == nil {
 		t.Fatalf("expected a required registry's malformed selection to fail the run, got:\n%s", output)
+	}
+	var malformed *resolver.SelectedMalformedError
+	if !errors.As(err, &malformed) || malformed.Name != "broken-skill" || !malformed.Required {
+		t.Fatalf("expected required selected-malformed error, got %v\n%s", err, output)
 	}
 	if !strings.Contains(err.Error()+output, "failed to parse") {
 		t.Fatalf("expected the parse failure in the error, got %v\n%s", err, output)

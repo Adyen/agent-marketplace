@@ -5,10 +5,11 @@
 ## Installed resources
 
 The fixture uses the scope's `.factory` directory: skills under `skills/`,
-commands under `commands/`, droids under `droids/`, and MCP entries in
-`mcp.json`. The suite tests both repository and user scopes in both symlink
-and file modes. Native inspection reads this output directly; it does not
-register another plugin or force a different materialization mode.
+commands under `commands/`, droids under `droids/`, the hook event map in
+`hooks.json`, and MCP entries in `mcp.json`. The suite tests both repository
+and user scopes in both symlink and file modes. Native inspection reads this
+output directly; it does not register another plugin or force a different
+materialization mode.
 
 ## Skills, commands, and droids: native resource RPCs
 
@@ -53,6 +54,17 @@ and [inventory validation](../../e2e/harness_compatibility_inventory_test.go).
 them after `sync`. This is evidence that Factory recognizes the
 configuration; the transport stays `not-probed`, and nothing here claims that
 a model invoked either server.
+
+## Hooks
+
+`.factory/hooks.json` holds the event map at top level, with matcher groups and
+nested handler arrays. Support files install under
+`.factory/hook-support/<source>/<hook>/`. A marked entry in legacy
+`.factory/hooks/hooks.json` may migrate into the native file; handwritten
+entries stay in place. The configuration checks do not invoke `/hooks` or a
+tool call. The catalog declares command handlers only. For file changes, a
+Claude `Write` matcher maps to Factory `Create`; a Claude `Edit` matcher maps
+to the native file-edit tools listed in the generated catalog reference.
 
 ## Remaining limits
 

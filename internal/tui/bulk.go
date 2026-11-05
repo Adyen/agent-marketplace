@@ -337,8 +337,9 @@ func runBulkDependencyToggle(ctx context.Context, workspace pipeline.Workspace, 
 		if err != nil {
 			return configWrittenMsg{skillName: label, enabled: enabled, err: err}
 		}
+		local := len(acts) > 0 && (acts[0].scope == scopeLocal || acts[0].scope == scopeLocalExclude)
 		writeRoot := ws.RepoRoot()
-		if len(acts) > 0 && (acts[0].scope == scopeLocal || acts[0].scope == scopeLocalExclude) {
+		if local {
 			writeRoot = ws.LocalConfigDir()
 		}
 		for _, act := range acts {
@@ -390,6 +391,7 @@ func runBulkDependencyToggle(ctx context.Context, workspace pipeline.Workspace, 
 				return nil
 			})
 		})
+		ignoreLocalConfigAfterWrite(ws, local, err)
 		return configWrittenMsg{skillName: label, enabled: enabled, err: err}
 	}
 }

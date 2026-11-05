@@ -510,8 +510,8 @@ func (c *Client) GetRegistryOccurrence(ctx context.Context, registryID, commit s
 	return occurrence, nil
 }
 
-// GetRegistryRevisionManifest downloads and verifies a content-addressed
-// registry revision manifest by its revision digest.
+// GetRegistryRevisionManifest downloads a registry revision manifest and verifies
+// that its payload hashes to manifestDigest before decoding it.
 func (c *Client) GetRegistryRevisionManifest(ctx context.Context, manifestDigest string) (marketplaceartifact.RegistryRevisionManifest, []byte, error) {
 	var manifest marketplaceartifact.RegistryRevisionManifest
 	if err := validateSHA256Digest(manifestDigest); err != nil {
@@ -525,11 +525,8 @@ func (c *Client) GetRegistryRevisionManifest(ctx context.Context, manifestDigest
 	if err != nil {
 		return manifest, nil, fmt.Errorf("decode registry revision manifest: %w", err)
 	}
-	if err := marketplaceartifact.VerifyRegistryRevisionManifest(decoded, payload); err != nil {
-		return manifest, nil, fmt.Errorf("verify registry revision manifest: %w", err)
-	}
-	if decoded.RevisionDigest != manifestDigest {
-		return manifest, nil, fmt.Errorf("registry revision manifest digest mismatch: got %s, want %s", decoded.RevisionDigest, manifestDigest)
+	if got := marketplaceartifact.RevisionDigest(payload); got != manifestDigest {
+		return manifest, nil, fmt.Errorf("registry revision manifest digest mismatch: got %s, want %s", got, manifestDigest)
 	}
 	return decoded, payload, nil
 }
@@ -570,6 +567,17 @@ func (c *Client) GetArtifact(ctx context.Context, archiveDigest string) ([]byte,
 	}
 	hexDigest := strings.TrimPrefix(archiveDigest, "sha256:")
 	path := c.requestURL([]string{"api", "v1", "artifacts", "sha256", hexDigest}, nil)
+	return c.getRaw(ctx, path)
+}
+
+// GetPlaceholderArchive downloads the placeholder-form archive whose bytes hash to
+// archiveDigest. Callers verify it by hash rather than by re-encoding.
+func (c *Client) GetPlaceholderArchive(ctx context.Context, archiveDigest string) ([]byte, error) {
+	if err := validateSHA256Digest(archiveDigest); err != nil {
+		return nil, fmt.Errorf("archive digest %q: %w", archiveDigest, err)
+	}
+	hexDigest := strings.TrimPrefix(archiveDigest, "sha256:")
+	path := c.requestURL([]string{"api", "v1", "archives", "sha256", hexDigest}, nil)
 	return c.getRaw(ctx, path)
 }
 

@@ -29,15 +29,20 @@ type Artifact struct {
 	ManagedByField                 string
 	ManagedByValue                 string
 
-	// DedupeFragmentEntries makes JSON fragment merging collapse semantically
-	// identical entries instead of accumulating them, for the arrays of objects
-	// that fragments contribute to (see MergeFragments).
+	// DedupeFragmentEntries makes fragment merging collapse semantically
+	// identical entries instead of accumulating them: for JSON fragments, the
+	// arrays of objects that fragments contribute to (see MergeFragments);
+	// for text fragments, byte-identical payloads coalesce into a single copy
+	// while differing bytes fail closed as a conflict.
 	//
 	// It is opt-in per fragment group so that no existing target changes
 	// behavior. Devin hooks set it: the Devin plan requires that "Duplicate
 	// desired hook tuples collapse before patching", and a Devin hook's
 	// behavior identity is exactly the emitted rule object under its event key,
-	// so semantic equality of those objects is the collapse rule.
+	// so semantic equality of those objects is the collapse rule. The OpenCode
+	// command-hook adapter sets it for the opposite shape: one fixed reviewed
+	// file contributed identically by every accepted hook, which must publish
+	// as exactly one adapter rather than collide on the shared path.
 	DedupeFragmentEntries bool
 }
 

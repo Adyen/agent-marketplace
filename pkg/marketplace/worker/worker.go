@@ -94,6 +94,9 @@ func Refresh(ctx context.Context, deps Deps, registry store.Registry) error {
 	if err != nil {
 		return recordRefreshFailure(ctx, deps.MetadataStore, merged, err)
 	}
+	if err := ingest.ReuseStoredArchives(ctx, deps.MetadataStore, deps.BlobStore, &rev); err != nil {
+		return recordRefreshFailure(ctx, deps.MetadataStore, merged, err)
+	}
 
 	pub := store.RegistryRevisionPublication{
 		Occurrence:          rev.Occurrence,

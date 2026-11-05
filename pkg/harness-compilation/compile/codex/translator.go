@@ -13,6 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile/mapping"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/hookpolicy"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
@@ -130,30 +131,11 @@ func subagent(s *ir.Subagent, opts compile.Options) ([]artifact.Artifact, []diag
 		return nil, []diag.Diagnostic{diagnostic(diag.CodeSubagentSecurityRestrictionUnsupported, diag.SeverityError, s.Name(), s.Source, "Codex subagent output cannot safely emit an invalid native sandbox mode; artifact suppressed")}, nil
 	}
 	var b strings.Builder
-	model := s.Model
-	effort := s.Effort
-	var diagnostics []diag.Diagnostic
-	if s.Ext.Codex != nil && s.Ext.Codex.Model != "" {
-		model = s.Ext.Codex.Model
-	} else if model != "" {
-		mapped, ok := mapping.ModelWithOverride(model, mapping.TargetCodex, opts.ModelOverride())
-		if ok || mapped != "" {
-			model = mapped
-		} else {
-			model = ""
-			diagnostics = append(diagnostics, diagnostic(diag.CodeCodexFieldDropped, diag.SeverityWarning, s.Name(), s.Source, "Codex subagent output omitted a source model with no documented Codex equivalent"))
-		}
+	selection, diagnostics, err := compile.SubagentModel(s, mapping.TargetCodex, opts)
+	if err != nil {
+		return nil, nil, err
 	}
-	if s.Ext.Codex != nil && s.Ext.Codex.ReasoningEffort != "" {
-		canonical, native, valid := mapping.CodexReasoningEffort(s.Ext.Codex.ReasoningEffort)
-		if !valid {
-			diagnostics = append(diagnostics, diagnostic(diag.CodeCodexFieldDropped, diag.SeverityWarning, s.Name(), s.Source, "Codex subagent output omitted an invalid native reasoning effort"))
-		} else if native != "" {
-			effort = native
-		} else {
-			effort = canonical
-		}
-	}
+	model, effort := selection.Model, selection.Effort
 	writeTOMLString(&b, "name", s.Name())
 	writeTOMLString(&b, "description", s.Description)
 	// Codex model and effort fields were verified 2026-08-19 against
@@ -162,9 +144,14 @@ func subagent(s *ir.Subagent, opts compile.Options) ([]artifact.Artifact, []diag
 	writeTOMLString(&b, "model", model)
 	writeTOMLString(&b, "model_reasoning_effort", effort)
 	writeTOMLString(&b, "developer_instructions", s.Body)
+	sandboxMode := ""
 	if s.Ext.Codex != nil {
-		writeTOMLString(&b, "sandbox_mode", s.Ext.Codex.SandboxMode)
+		sandboxMode = s.Ext.Codex.SandboxMode
 	}
+	if compile.SubagentReadOnly(s) {
+		sandboxMode = "read-only"
+	}
+	writeTOMLString(&b, "sandbox_mode", sandboxMode)
 	if len(s.Extra) > 0 {
 		diagnostics = append(diagnostics, diagnostic(diag.CodeCodexFieldDropped, diag.SeverityWarning, s.Name(), s.Source, "Codex subagent output omitted unmodeled extension fields"))
 	}
@@ -176,40 +163,52 @@ func subagent(s *ir.Subagent, opts compile.Options) ([]artifact.Artifact, []diag
 }
 
 func hook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []diag.Diagnostic, error) {
-	if h.Timeout != nil && *h.Timeout < 0 {
-		slog.Warn("codex hook suppressed", "resource", h.Name(), "reason", "invalid_timeout")
-		return nil, []diag.Diagnostic{diagnostic(diag.CodeHookCodexUnsupported, diag.SeverityError, h.Name(), h.Source, "Codex hook has an invalid timeout; hook suppressed")}, nil
-	}
 	if h.Ext.Codex != nil && h.Ext.Codex.AdditionalContextLimit != nil && *h.Ext.Codex.AdditionalContextLimit < 0 {
 		slog.Warn("codex hook suppressed", "resource", h.Name(), "reason", "invalid_additional_context_limit")
 		return nil, []diag.Diagnostic{diagnostic(diag.CodeHookCodexUnsupported, diag.SeverityError, h.Name(), h.Source, "Codex hook has an invalid additional context limit; hook suppressed")}, nil
 	}
-	event, eventSupported := mapping.HookEvent(h.Event, h.Matcher, mapping.TargetCodex)
-	if h.Ext.Codex != nil && h.Ext.Codex.NativeHook {
-		event = h.Event
-		_, _, eventSupported = mapping.ReverseHookEvent(event, mapping.TargetCodex)
+	// Event, matcher, type, timeout, and command translation always come from
+	// the catalog-driven hookpolicy resolver (OpenSpec native-hook-integration,
+	// task 3.4). Native hooks arrive here with HookSource provenance — the
+	// guard normalizes BASE-era Ext.Codex.NativeHook hooks that lack it — so
+	// the resolver's same-harness path keeps the native event spelling while
+	// still applying the declared-type, SessionEnd timeout-bound, and
+	// plugin-root refusal rules.
+	var diagnostics []diag.Diagnostic
+	if h.HookSource == string(targetmeta.TargetCodex) {
+		// A native Codex hook is valid only where the catalog declares it;
+		// undeclared events and matchers on matcher-less events are refused so
+		// the hook cannot silently widen.
+		if !hookpolicy.IsDeclaredEvent(targetmeta.TargetCodex, h.Event) {
+			slog.Warn("codex hook suppressed", "resource", h.Name(), "event", h.Event, "handler_type", h.Type)
+			return nil, []diag.Diagnostic{diagnostic(diag.CodeHookCodexUnsupported, diag.SeverityError, h.Name(), h.Source, "Codex does not execute this hook event or handler; hook suppressed")}, nil
+		}
+		if h.Matcher != "" && hookpolicy.NativeEventMatcherKind(targetmeta.TargetCodex, h.Event) == hookpolicy.MatcherKindNone {
+			// A matcher on an event without matchers would widen the hook to
+			// every occurrence of the event; fail closed.
+			slog.Warn("codex hook suppressed", "resource", h.Name(), "event", h.Event, "handler_type", h.Type)
+			return nil, []diag.Diagnostic{diagnostic(diag.CodeHookCodexUnsupported, diag.SeverityError, h.Name(), h.Source, "Codex does not execute this hook event or handler; hook suppressed")}, nil
+		}
 	}
-	matcherUnsupported := h.Matcher != "" && (event == "Stop" || event == "UserPromptSubmit")
-	native := h.Ext.Codex != nil && h.Ext.Codex.NativeHook
-	validCommand := h.Type == "command" && h.Command != ""
-	if !validCommand || !eventSupported || matcherUnsupported {
+	scope := hookpolicy.ScopeRepository
+	if opts.Scope() == compile.ScopeUser {
+		scope = hookpolicy.ScopeMachine
+	}
+	resolved := hookpolicy.Resolve(h, targetmeta.TargetCodex, scope, opts.PluginRoot())
+	if resolved.Failed() {
+		slog.Warn("codex hook suppressed", "resource", h.Name(), "event", h.Event, "handler_type", h.Type)
+		return nil, resolved.Diagnostics, nil
+	}
+	event, matcher, command, timeout := resolved.Event, resolved.Matcher, resolved.Command, resolved.Timeout
+	diagnostics = append(diagnostics, resolved.Diagnostics...)
+	sessionEndAsync := event == "SessionEnd" && h.Ext.Codex != nil && h.Ext.Codex.HookAsync != nil && *h.Ext.Codex.HookAsync
+	if command == "" {
 		slog.Warn("codex hook suppressed", "resource", h.Name(), "event", h.Event, "handler_type", h.Type)
 		return nil, []diag.Diagnostic{diagnostic(diag.CodeHookCodexUnsupported, diag.SeverityError, h.Name(), h.Source, "Codex does not execute this hook event or handler; hook suppressed")}, nil
 	}
-	handler := map[string]any{"type": h.Type}
-	unresolvedPluginRoot := false
-	sessionEndAsync := event == "SessionEnd" && h.Ext.Codex != nil && h.Ext.Codex.HookAsync != nil && *h.Ext.Codex.HookAsync
-	command := h.Command
-	if !native {
-		command, unresolvedPluginRoot = resolvePluginRoot(command, opts)
-	}
-	handler["command"] = command
-	if h.Timeout != nil {
-		timeout := *h.Timeout
-		if event == "SessionEnd" && timeout > 3 {
-			timeout = 3
-		}
-		handler["timeout"] = timeout
+	handler := map[string]any{"type": h.Type, "command": command}
+	if timeout != nil {
+		handler["timeout"] = *timeout
 	}
 	if h.Ext.Codex != nil {
 		if h.Ext.Codex.HookAsync != nil && !sessionEndAsync {
@@ -226,22 +225,15 @@ func hook(h *ir.Hook, opts compile.Options) ([]artifact.Artifact, []diag.Diagnos
 		}
 	}
 	entry := map[string]any{"hooks": []any{handler}}
-	if h.Matcher != "" {
-		entry["matcher"] = h.Matcher
+	if matcher != "" {
+		entry["matcher"] = matcher
 	}
 	raw, err := json.Marshal(map[string]any{"hooks": map[string]any{event: []any{entry}}})
 	if err != nil {
 		return nil, nil, err
 	}
-	var diagnostics []diag.Diagnostic
-	if unresolvedPluginRoot {
-		diagnostics = append(diagnostics, diagnostic(diag.CodeHookCodexPluginRootUnresolved, diag.SeverityWarning, h.Name(), h.Source, "Codex hook command references the plugin root but no plugin root was configured; the token was left unexpanded"))
-	}
 	if sessionEndAsync {
 		diagnostics = append(diagnostics, diagnostic(diag.CodeCodexFieldDropped, diag.SeverityWarning, h.Name(), h.Source, "SessionEnd always runs synchronously; async was omitted"))
-	}
-	if event == "SessionEnd" && h.Timeout != nil && *h.Timeout > 3 {
-		diagnostics = append(diagnostics, diagnostic(diag.CodeCodexFieldDropped, diag.SeverityWarning, h.Name(), h.Source, "SessionEnd supports at most a three-second timeout; timeout was capped"))
 	}
 	if h.Prompt != "" || len(h.Extra) > 0 {
 		diagnostics = append(diagnostics, diagnostic(diag.CodeCodexFieldDropped, diag.SeverityWarning, h.Name(), h.Source, "Codex hook output omitted fields without a documented command-handler equivalent"))

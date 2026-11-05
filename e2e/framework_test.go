@@ -496,18 +496,20 @@ func (e *Env) subprocessEnv() []string {
 		"XDG_CONFIG_HOME="+filepath.Join(e.home, ".config"),
 		"XDG_CACHE_HOME="+filepath.Join(e.home, ".cache"),
 		"CODEX_HOME="+filepath.Join(e.home, ".codex"),
+		"CLAUDE_CONFIG_DIR=",
 		// Sanitized so host-installed tools the CLI probes for (currently the
 		// Devin CLI) cannot change assertion outcomes.
 		"PATH="+e.path,
 		"AGENT_MARKETPLACE_V3_ORG_CONFIG="+filepath.Join(e.etc, "config.yaml"),
 		"AGENT_MARKETPLACE_E2E_INVOCATION_DIR="+e2eInvocationDir,
+		"AGENT_MARKETPLACE_NO_UPDATE_CHECK=1",
 	)
 	return filtered
 }
 
 func isSandboxedAppEnv(key string) bool {
 	switch key {
-	case "HOME", "PATH", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "CODEX_HOME":
+	case "HOME", "PATH", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR":
 		return true
 	default:
 		return strings.HasPrefix(key, "AGENT_MARKETPLACE_")
@@ -709,13 +711,13 @@ func (e *Env) ReadFile(path string) string {
 }
 
 // WriteGlobalConfig writes ~/.agents/config.yaml inside the sandbox.
-// Automatically injects apiVersion if missing and harnesses if missing
-// (required on global config per v2 schema).
+// Supplies v4 and a test harness for omitted fixture defaults; it never
+// translates authored installation fields. Refusal tests use WriteFile.
 func (e *Env) WriteGlobalConfig(content string) {
 	e.t.Helper()
 	content = strings.TrimSpace(content)
 	if !strings.Contains(content, "apiVersion:") {
-		content = "apiVersion: agent-marketplace/v2\n" + content
+		content = "apiVersion: agent-marketplace/v4\n" + content
 	}
 	if !strings.Contains(content, "harnesses:") {
 		content = "harnesses:\n  - factory\n" + content
@@ -729,7 +731,7 @@ func (e *Env) WriteRepoConfig(content string) {
 	e.t.Helper()
 	content = strings.TrimSpace(content)
 	if !strings.Contains(content, "apiVersion:") {
-		content = "apiVersion: agent-marketplace/v2\n" + content
+		content = "apiVersion: agent-marketplace/v4\n" + content
 	}
 	e.WriteFile("/workspace/.agents/config.yaml", content)
 }
@@ -737,16 +739,20 @@ func (e *Env) WriteRepoConfig(content string) {
 // WriteLocalConfig writes .agents/config.local.yaml in the workspace.
 func (e *Env) WriteLocalConfig(content string) {
 	e.t.Helper()
-	e.WriteFile("/workspace/.agents/config.local.yaml", strings.TrimSpace(content))
+	content = strings.TrimSpace(content)
+	if !strings.Contains(content, "apiVersion:") {
+		content = "apiVersion: agent-marketplace/v4\n" + content
+	}
+	e.WriteFile("/workspace/.agents/config.local.yaml", content)
 }
 
-// WriteOrgConfig writes the canonical v2 organization config to the managed
+// WriteOrgConfig writes the canonical v4 organization config to the managed
 // location (/etc/agent-marketplace/config.yaml in the sandbox).
 func (e *Env) WriteOrgConfig(content string) {
 	e.t.Helper()
 	content = strings.TrimSpace(content)
 	if !strings.Contains(content, "apiVersion:") {
-		content = "apiVersion: agent-marketplace/v2\n" + content
+		content = "apiVersion: agent-marketplace/v4\n" + content
 	}
 	if !strings.Contains(content, "harnesses:") {
 		content = "harnesses:\n  - factory\n" + content
@@ -820,11 +826,21 @@ func (e *Env) AssertFileExists(path string) {
 	}
 }
 
+func checkPathAbsent(path string) (bool, error) {
+	_, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	return false, err
+}
+
 // AssertFileAbsent checks that a file does NOT exist inside the sandbox.
 func (e *Env) AssertFileAbsent(path string) {
 	e.t.Helper()
 	localPath := e.mustResolvePath(path)
-	if _, err := os.Stat(localPath); err == nil {
+	if absent, err := checkPathAbsent(localPath); err != nil {
+		e.t.Errorf("cannot inspect %q: %v", path, err)
+	} else if !absent {
 		e.t.Errorf("file %q unexpectedly exists in sandbox", path)
 	}
 }

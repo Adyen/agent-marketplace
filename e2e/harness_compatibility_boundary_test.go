@@ -237,7 +237,7 @@ func TestCompatibilityDevinUpdateControlSurvivesMarketplaceHooks(t *testing.T) {
 	if err := configureCompatibilityRuntime(e, "devin"); err != nil {
 		t.Fatal(err)
 	}
-	e.WriteGlobalConfig("harnesses: [devin]\nmaterialization:\n  mode: file\nregistries:\n  - url: " + f.registry + "\n    source_harness: claude\n")
+	e.WriteGlobalConfig("harnesses: [devin]\nmaterialization:\n  mode: file\nsources: {fixture: {directory: '" + f.registry + "', source_harness: claude}}\n")
 	command := runCompatibilityCommand(e, e.binary, []string{"install", f.name("collection"), "--kind", "collection", "--scope", "user"}, 30*time.Second)
 	if command.Error != "" {
 		t.Fatalf("Marketplace fixture install: %s", command.Error)

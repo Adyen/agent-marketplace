@@ -67,7 +67,7 @@ func (e EndpointError) Error() string {
 // returns aggregated results. Per-endpoint failures are returned as
 // EndpointError values so callers can decide whether to treat them as fatal.
 func FederatedSearch(ctx context.Context, ec config.EffectiveConfig, query string, opts SearchOpts) ([]SearchResult, []EndpointError, error) {
-	endpoints, err := resolveMarketplaceEndpoints(ec, opts.Marketplace)
+	endpoints, err := resolveMarketplaceEndpointsWithAuthoredRegistrations(ec, opts.Marketplace, true)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -168,19 +168,14 @@ func searchOne(ctx context.Context, ep config.MarketplaceEntry, verifyInstanceID
 		return nil, err
 	}
 
-	wellKnown, err := c.WellKnown(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("well-known document: %w", err)
-	}
 	if verifyInstanceID {
-		if strings.TrimSpace(ep.InstanceID) == "" {
-			return nil, fmt.Errorf("configured marketplace instance ID is required")
-		}
-		if wellKnown.InstanceID != ep.InstanceID {
-			slog.Warn("marketplace search endpoint instance ID mismatch", "url", ep.URL, "endpoint_instance_id", wellKnown.InstanceID, "configured_instance_id", ep.InstanceID)
-			return nil, fmt.Errorf("instance ID mismatch: endpoint %q, configured %q", wellKnown.InstanceID, ep.InstanceID)
+		ep, err = acquireMarketplaceIdentity(ctx, c, ep)
+		if err != nil {
+			return nil, err
 		}
 		slog.Debug("marketplace search endpoint instance ID verified", "url", ep.URL, "instance_id", ep.InstanceID)
+	} else if _, err := c.WellKnown(ctx); err != nil {
+		return nil, fmt.Errorf("well-known document: %w", err)
 	}
 
 	// Ask each server for enough results to cover the requested offset + limit.
@@ -211,12 +206,62 @@ func searchOne(ctx context.Context, ep config.MarketplaceEntry, verifyInstanceID
 	return results, nil
 }
 
+// validateMarketplaceEndpointRegistrations keeps exact evidence on the config
+// validator, while allowing resource-free authored declarations before discovery.
+// Alias checks still span both shapes so an unresolved declaration cannot hide a
+// conflicting exact endpoint identity.
+func validateMarketplaceEndpointRegistrations(entries []config.MarketplaceEntry) []error {
+	var exact []config.MarketplaceEntry
+	var errs []error
+	aliases := make(map[string]config.MarketplaceEntry)
+	for i, configured := range entries {
+		entry, err := canonicalMarketplaceEntry(configured)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("marketplaces[%d]: %w", i, err))
+			continue
+		}
+		if !unacquiredMarketplaceRegistration(entry) {
+			exact = append(exact, entry)
+		} else if entry.Alias != "" {
+			if err := validateLocatorSegment("alias", entry.Alias); err != nil {
+				errs = append(errs, fmt.Errorf("marketplaces[%d].%w", i, err))
+			}
+			if entry.Alias == "all" {
+				errs = append(errs, fmt.Errorf("marketplaces[%d].alias %q is reserved for federated search", i, entry.Alias))
+			}
+		}
+		if entry.Alias == "" {
+			continue
+		}
+		if previous, ok := aliases[entry.Alias]; ok {
+			if previous.URL != entry.URL || previous.InstanceID != entry.InstanceID || previous.Source == config.SourceUnset || entry.Source == config.SourceUnset {
+				errs = append(errs, fmt.Errorf("marketplaces[%d].alias %q duplicates another Marketplace alias", i, entry.Alias))
+			}
+		} else {
+			aliases[entry.Alias] = entry
+		}
+	}
+	return append(errs, config.ValidateMarketplaceEntries(exact)...)
+}
+
+// Discovery also uses this selector for offline cache reads. Keep its exact
+// identity requirement until live discovery can bind registrations safely.
 func resolveMarketplaceEndpoints(ec config.EffectiveConfig, flag string) ([]searchEndpoint, error) {
+	return resolveMarketplaceEndpointsWithAuthoredRegistrations(ec, flag, false)
+}
+
+func resolveMarketplaceEndpointsWithAuthoredRegistrations(ec config.EffectiveConfig, flag string, allowAuthored bool) ([]searchEndpoint, error) {
 	var entries []config.MarketplaceEntry
 	if ec.Merged != nil {
 		entries = ec.Merged.Marketplaces
 	}
-	if errs := config.ValidateMarketplaceEntries(entries); len(errs) > 0 {
+	var errs []error
+	if allowAuthored {
+		errs = validateMarketplaceEndpointRegistrations(entries)
+	} else {
+		errs = config.ValidateMarketplaceEntries(entries)
+	}
+	if len(errs) > 0 {
 		return nil, fmt.Errorf("invalid configured Marketplace entries: %w", errors.Join(errs...))
 	}
 

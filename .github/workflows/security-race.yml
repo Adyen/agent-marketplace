@@ -3,7 +3,7 @@ name: Security race lane
 # Dedicated branch-triggered race-detector lane for the issue 215 security
 # stack. It executes the checked validation-contract race selections in
 # scripts/security-race.sh on Ubuntu at the exact pushed revision with Go
-# 1.26.9 and CGO_ENABLED=1, using synthetic fixtures and no production
+# 1.26.10 and CGO_ENABLED=1, using synthetic fixtures and no production
 # secrets. Every reviewed feature-branch push must keep durable evidence:
 # the run URL, the exact commands, the pushed SHA, and the exit result. A
 # run for another SHA, a skipped or cancelled job, or a failed command is
@@ -52,7 +52,7 @@ jobs:
         run: |
           set -euo pipefail
           go version | tee "$RUNNER_TEMP/go-version.txt"
-          grep -q '^go version go1\.26\.9 linux/' "$RUNNER_TEMP/go-version.txt"
+          grep -q '^go version go1\.27\.3 linux/' "$RUNNER_TEMP/go-version.txt"
 
       - name: Run contract race selections
         shell: bash

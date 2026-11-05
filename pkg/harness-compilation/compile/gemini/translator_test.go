@@ -204,9 +204,9 @@ func TestCompileSubagentEmitsAgentMD(t *testing.T) {
 		"reviewer",
 		"Review code",
 		"Do review work.",
-		"sonnet",
+		"gemini-3-preview",
 		[]string{"Read", "Write"},
-		"high",
+		"",
 		nil,
 		"",
 		nil,
@@ -251,7 +251,7 @@ func TestCompileSubagentEmitsAgentMD(t *testing.T) {
 	if !strings.Contains(text, "model: ") {
 		t.Fatalf("missing model in frontmatter: %q", text)
 	}
-	if !strings.Contains(text, "tools:\n  - Read\n  - Write") {
+	if !strings.Contains(text, "tools:\n  - read_file\n  - read_many_files\n  - write_file") {
 		t.Fatalf("missing tools in frontmatter: %q", text)
 	}
 
@@ -271,7 +271,7 @@ func TestCompileSubagentWithUnknownToolFailsClosed(t *testing.T) {
 		"custom-agent",
 		"Custom agent",
 		"Custom work.",
-		"sonnet",
+		"gemini-3-preview",
 		[]string{"Read", "UnknownTool"},
 		"",
 		nil,
@@ -327,6 +327,9 @@ func TestCompileSubagentWithNoModel(t *testing.T) {
 	}
 }
 
+// The plugin-root token resolves against the caller-supplied hook support
+// directory under the target's repository base (OpenSpec
+// native-hook-integration).
 func TestCompileHookToSettingsJSON(t *testing.T) {
 	hook := ir.NewHook(
 		"pre-commit",
@@ -337,7 +340,7 @@ func TestCompileHookToSettingsJSON(t *testing.T) {
 		ir.SourceRef{File: "hooks/hooks.json", Line: 3},
 	)
 
-	result, err := compile.Compile(hook, compile.TargetGemini)
+	result, err := compile.Compile(hook, compile.TargetGemini, compile.WithPluginRoot("plugins/demo"))
 	if err != nil {
 		t.Fatalf("Compile(hook) error: %v", err)
 	}
@@ -385,8 +388,8 @@ func TestCompileHookToSettingsJSON(t *testing.T) {
 	if !ok {
 		t.Fatalf("native hook is not an object: %#v", groupHooks[0])
 	}
-	if entry["command"] != "${extensionPath}/scripts/check.sh" {
-		t.Fatalf("command = %q, want %q", entry["command"], "${extensionPath}/scripts/check.sh")
+	if entry["command"] != `"$GEMINI_PROJECT_DIR"/plugins/demo/scripts/check.sh` {
+		t.Fatalf("command = %q, want %q", entry["command"], `"$GEMINI_PROJECT_DIR"/plugins/demo/scripts/check.sh`)
 	}
 	if entry["type"] != "command" {
 		t.Fatalf("type = %q, want %q", entry["type"], "command")
@@ -398,6 +401,7 @@ func TestCompileHookToSettingsJSON(t *testing.T) {
 	}
 }
 
+// spec: hook-resources/unmappable-events-are-errors-on-every-target
 func TestCompileHookEventMapping(t *testing.T) {
 	tests := []struct {
 		claudeEvent string
@@ -408,7 +412,8 @@ func TestCompileHookEventMapping(t *testing.T) {
 		{"PostToolUse", "AfterTool", true},
 		{"PreCompact", "PreCompress", true},
 		{"UserPromptSubmit", "BeforeAgent", true},
-		{"Stop", "", false},
+		{"Stop", "AfterAgent", true},
+		{"PostToolUseFailure", "", false},
 	}
 
 	for _, tt := range tests {

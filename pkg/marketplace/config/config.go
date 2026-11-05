@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -139,6 +140,7 @@ type InstallationMetrics struct {
 	BearerTokenEnv string                     `yaml:"bearer_token_env"`
 	Labels         map[string]string          `yaml:"labels"`
 	MaxAge         *Duration                  `yaml:"max_age"`
+	MaxStale       *Duration                  `yaml:"max_stale"`
 	Timeout        *Duration                  `yaml:"timeout"`
 	Refresh        InstallationMetricsRefresh `yaml:"refresh"`
 }
@@ -154,6 +156,7 @@ type InstallationMetricsTiming struct {
 	RetryInterval time.Duration
 	Jitter        time.Duration
 	MaxAge        time.Duration
+	MaxStale      time.Duration
 	Timeout       time.Duration
 }
 
@@ -162,7 +165,8 @@ const (
 	defaultInstallationMetricsRetry    = 30 * time.Second
 	defaultInstallationMetricsJitter   = 15 * time.Second
 	defaultInstallationMetricsMaxAge   = 5 * time.Minute
-	defaultInstallationMetricsTimeout  = 2 * time.Second
+	defaultInstallationMetricsMaxStale = 24 * time.Hour
+	defaultInstallationMetricsTimeout  = 3 * time.Second
 )
 
 func ResolveInstallationMetricsTiming(m InstallationMetrics) InstallationMetricsTiming {
@@ -171,6 +175,7 @@ func ResolveInstallationMetricsTiming(m InstallationMetrics) InstallationMetrics
 		RetryInterval: defaultInstallationMetricsRetry,
 		Jitter:        defaultInstallationMetricsJitter,
 		MaxAge:        defaultInstallationMetricsMaxAge,
+		MaxStale:      defaultInstallationMetricsMaxStale,
 		Timeout:       defaultInstallationMetricsTimeout,
 	}
 	if m.Refresh.Interval != nil {
@@ -184,6 +189,11 @@ func ResolveInstallationMetricsTiming(m InstallationMetrics) InstallationMetrics
 	}
 	if m.MaxAge != nil {
 		timing.MaxAge = m.MaxAge.Duration()
+	}
+	if m.MaxStale != nil {
+		timing.MaxStale = m.MaxStale.Duration()
+	} else if timing.MaxAge > timing.MaxStale {
+		timing.MaxStale = timing.MaxAge
 	}
 	if m.Timeout != nil {
 		timing.Timeout = m.Timeout.Duration()
@@ -261,6 +271,11 @@ func validateInstallationMetricsTiming(timing InstallationMetricsTiming) []error
 	}
 	if timing.MaxAge <= 0 {
 		errs = append(errs, errors.New("installation_metrics.max_age must be a positive duration"))
+	}
+	if timing.MaxStale <= 0 {
+		errs = append(errs, errors.New("installation_metrics.max_stale must be a positive duration"))
+	} else if timing.MaxAge > 0 && timing.MaxStale < timing.MaxAge {
+		errs = append(errs, errors.New("installation_metrics.max_stale must not be shorter than installation_metrics.max_age"))
 	}
 	if timing.Timeout <= 0 {
 		errs = append(errs, errors.New("installation_metrics.timeout must be a positive duration"))
@@ -628,12 +643,39 @@ func validateInstance(inst Instance) error {
 		return errors.New("instance.canonical_url must not contain path traversal")
 	}
 	if strings.TrimSpace(inst.BrowserBase) != "" {
-		if err := publicurl.ErrorForField("instance.browser_base", inst.BrowserBase); err != nil {
+		if err := validateBrowserBase(inst.BrowserBase); err != nil {
 			return err
 		}
-		if strings.Contains(inst.BrowserBase, "..") {
-			return errors.New("instance.browser_base must not contain path traversal")
+	}
+	return nil
+}
+
+func validateBrowserBase(raw string) error {
+	if err := publicurl.ErrorForField("instance.browser_base", raw); err != nil {
+		return err
+	}
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.RawQuery != "" || parsed.ForceQuery {
+		return errors.New("instance.browser_base must not contain a query")
+	}
+	if strings.Contains(parsed.EscapedPath(), "%") {
+		return errors.New("instance.browser_base must use an unescaped canonical path")
+	}
+	decoded, err := url.PathUnescape(parsed.EscapedPath())
+	if err != nil {
+		return errors.New("instance.browser_base must use a canonical path")
+	}
+	for _, char := range decoded {
+		if unicode.IsControl(char) || char == '\\' {
+			return errors.New("instance.browser_base must use a canonical path")
 		}
+	}
+	if strings.HasPrefix(decoded, "//") {
+		return errors.New("instance.browser_base must use a canonical path")
+	}
+	candidate := strings.TrimSuffix(decoded, "/")
+	if candidate != "" && path.Clean(candidate) != candidate {
+		return errors.New("instance.browser_base must use a canonical path")
 	}
 	return nil
 }

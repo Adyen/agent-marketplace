@@ -33,7 +33,7 @@ reviews:
         Thoroughly review each affected consumer path, failure behavior, and persisted-data compatibility. Require regression tests through the actual consumer, including existing configs/locks and mixed-version clients where relevant. Report missing coverage, migration risks, and any patch/minor release plan that conflicts with a confirmed break. A version bump alone is insufficient evidence of a safe migration.
     - path: "**/*.go"
       instructions: |
-        This repository is a Go CLI. Review for deterministic behavior, explicit errors with context, safe filesystem operations, and idiomatic Go 1.26 code. Prefer simple standard-library solutions. Do not suggest comments unless the code is genuinely unclear or documenting an exported API.
+        This repository is a Go CLI. Review for deterministic behavior, explicit errors with context, safe filesystem operations, and idiomatic Go 1.27 code. Prefer simple standard-library solutions. Do not suggest comments unless the code is genuinely unclear or documenting an exported API.
     - path: "cmd/agent-marketplace/**/*.go"
       instructions: |
         Review CLI behavior from the user's perspective. Validate Cobra argument/flag combinations, scope handling, stdout/stderr behavior, and error messages. Commands that mutate config or symlinks must remain idempotent and should not partially apply changes without returning a useful error.

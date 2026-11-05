@@ -57,7 +57,7 @@ func TestLockUpgradeTargetsExactRefAndPath(t *testing.T) {
 	commitAndPushAll(t, working, "seed")
 	repo := filepath.Join(t.TempDir(), "repo")
 	configPath := filepath.Join(repo, ".agents", "config.yaml")
-	writeConfig(t, configPath, "apiVersion: agent-marketplace/v2\nregistries:\n  - url: "+origin+"\n    ref: main\n    path: skills\n    skills: {include: [review]}\n")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nsources:\n  review:\n    git: file://"+origin+"\n    ref: main\n    path: skills\nresources:\n  review: {include: [skill/review]}\n")
 	withWorkingDir(t, repo)
 	before, err := os.ReadFile(configPath)
 	if err != nil {
@@ -105,11 +105,13 @@ func TestLockUpgradeGitNameExpandsContainingSource(t *testing.T) {
 	commitAndPushAll(t, working, "v1")
 	repo := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+sources:
+  review:
+    git: file://`+origin+`
     ref: main
-    skills:
-      include: [review]
+resources:
+  review:
+    include: [skill/review]
 `)
 	withWorkingDir(t, repo)
 	if output, err := executeCommand("lock", "--scope", "repo"); err != nil {
@@ -145,11 +147,13 @@ func TestLockUpgradeGitTargetCollapsesRootsIntoOneSourceOccurrence(t *testing.T)
 	commitAndPushAll(t, working, "v1")
 	repo := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+sources:
+  one:
+    git: file://`+origin+`
     ref: main
     path: one
-  - url: `+origin+`
+  two:
+    git: file://`+origin+`
     ref: main
     path: two
 `)
@@ -184,11 +188,13 @@ func TestUpdateAcceptsDirectGitTargetAndReportsExpansion(t *testing.T) {
 	commitAndPushAll(t, working, "v1")
 	repo := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+sources:
+  review:
+    git: file://`+origin+`
     ref: main
-    skills:
-      include: [review]
+resources:
+  review:
+    include: [skill/review]
 `)
 	withWorkingDir(t, repo)
 	if output, err := executeCommand("sync"); err != nil {
@@ -224,9 +230,9 @@ func TestLockUpgradeScopeLeavesOtherLayerAtExactCommit(t *testing.T) {
 	writeSkill(t, repoWorking, "repo-skill", "Repo v1", nil)
 	commitAndPushAll(t, userWorking, "user v1")
 	commitAndPushAll(t, repoWorking, "repo v1")
-	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "\nregistries:\n  - url: "+userOrigin+"\n    ref: main\n")
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources:\n  user:\n    git: file://"+userOrigin+"\n    ref: main\n")
 	repo := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "\nregistries:\n  - url: "+repoOrigin+"\n    ref: main\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources:\n  repo:\n    git: file://"+repoOrigin+"\n    ref: main\n")
 	withWorkingDir(t, repo)
 	if output, err := executeCommand("lock"); err != nil {
 		t.Fatalf("initial locks: %v\n%s", err, output)
@@ -271,9 +277,9 @@ func TestLockUpgradeScopeLeavesStaleUnselectedLayerUntouched(t *testing.T) {
 	commitAndPushAll(t, userWorking, "user")
 	commitAndPushAll(t, repoWorking, "repo v1")
 	userConfig := filepath.Join(home, ".agents", "config.yaml")
-	writeConfig(t, userConfig, "\nregistries:\n  - url: "+userOrigin+"\n    ref: main\n")
+	writeConfig(t, userConfig, "apiVersion: agent-marketplace/v4\nsources:\n  user:\n    git: file://"+userOrigin+"\n    ref: main\n")
 	repo := filepath.Join(t.TempDir(), "repo")
-	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "\nregistries:\n  - url: "+repoOrigin+"\n    ref: main\n")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nsources:\n  repo:\n    git: file://"+repoOrigin+"\n    ref: main\n")
 	withWorkingDir(t, repo)
 	if output, err := executeCommand("lock"); err != nil {
 		t.Fatalf("initial lock: %v\n%s", err, output)
@@ -283,7 +289,7 @@ func TestLockUpgradeScopeLeavesStaleUnselectedLayerUntouched(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeConfig(t, userConfig, "\nregistries:\n  - url: "+userOrigin+"\n    ref: main\n    path: missing-root\n")
+	writeConfig(t, userConfig, "apiVersion: agent-marketplace/v4\nsources:\n  user:\n    git: file://"+userOrigin+"\n    ref: main\n    path: missing-root\n")
 	writeSkill(t, repoWorking, "repo-skill", "Repo v2", nil)
 	commitAndPushAll(t, repoWorking, "repo v2")
 	if output, err := executeCommand("lock", "--upgrade", "--scope", "repo"); err != nil {

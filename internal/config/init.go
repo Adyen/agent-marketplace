@@ -75,6 +75,18 @@ func InitializeUserPersonalAtPath(path string, harnesses []string) (string, erro
 		return "", err
 	}
 
+	if _, err := os.Lstat(path); err == nil {
+		data, err := readConfigFile(path)
+		if err != nil {
+			return "", err
+		}
+		if _, err := readLayerIntent(path, "", data, userLayer, nil); err != nil {
+			return "", err
+		}
+		return "", ErrAlreadyInitialized
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
 	slog.Info("initializing user personal config", "path", path, "harnesses", harnesses)
 
 	harnessNodes := make([]*yaml.Node, len(harnesses))
@@ -105,6 +117,13 @@ func InitializeUserPersonalAtPath(path string, harnesses []string) (string, erro
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, defaultConfigMode)
 	if err != nil {
 		if os.IsExist(err) {
+			data, readErr := readConfigFile(path)
+			if readErr != nil {
+				return "", readErr
+			}
+			if _, err := readLayerIntent(path, "", data, userLayer, nil); err != nil {
+				return "", err
+			}
 			slog.Warn("user personal config already initialized", "path", path)
 			return "", ErrAlreadyInitialized
 		}

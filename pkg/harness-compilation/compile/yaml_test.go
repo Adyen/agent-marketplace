@@ -1,6 +1,10 @@
 package compile
 
-import "testing"
+import (
+	"testing"
+
+	"gopkg.in/yaml.v3"
+)
 
 func TestFrontmatterPreservesInsertionOrder(t *testing.T) {
 	var fm Frontmatter
@@ -43,6 +47,9 @@ func TestFrontmatterRendersValueShapes(t *testing.T) {
 		{name: "nil", value: nil, want: "---\nkey: null\n---\n"},
 		{name: "bool", value: true, want: "---\nkey: true\n---\n"},
 		{name: "map", value: map[string]any{"a": 1}, want: "---\nkey:\n  a: 1\n---\n"},
+		{name: "single-entry mapping node", value: &yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{{Kind: yaml.ScalarNode, Value: "edit"}, {Kind: yaml.ScalarNode, Value: "deny"}}}, want: "---\nkey:\n  edit: deny\n---\n"},
+		{name: "flow mapping node", value: &yaml.Node{Kind: yaml.MappingNode, Style: yaml.FlowStyle, Content: []*yaml.Node{{Kind: yaml.ScalarNode, Value: "edit"}, {Kind: yaml.ScalarNode, Value: "deny"}}}, want: "---\nkey: {edit: deny}\n---\n"},
+		{name: "scalar node", value: &yaml.Node{Kind: yaml.ScalarNode, Value: "deny"}, want: "---\nkey: deny\n---\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

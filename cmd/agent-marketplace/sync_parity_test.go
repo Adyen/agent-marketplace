@@ -29,8 +29,8 @@ func TestSyncCLIAndTUIParity(t *testing.T) {
 			origin, working := createBareRepoWithWorkingClone(t, "parity.git")
 			writeSkill(t, working, "review", "Review", nil)
 			commitAndPushAll(t, working, "seed")
-			harnesses := "apiVersion: agent-marketplace/v2\nharnesses: [factory, devin, codex, claude, cursor, gemini, windsurf]\n"
-			registry := "registries:\n  - url: " + origin + "\n    ref: main\n    skills: [review]\n"
+			harnesses := "apiVersion: agent-marketplace/v4\nharnesses: [factory, devin, codex, claude, cursor, gemini, windsurf]\n"
+			registry := "sources:\n  tools:\n    git: file://" + origin + "\n    ref: main\nresources:\n  tools:\n    include: [skill/review]\n"
 			repo := filepath.Join(t.TempDir(), "repo")
 			repoConfig := harnesses
 			if sharedRegistry {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"flag"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -18,6 +19,25 @@ import (
 )
 
 var testMainHome string
+
+// lookPathOutsideGitExecPath resolves name on PATH, skipping GIT_EXEC_PATH. Git
+// hooks prepend that directory to PATH, and its git cannot find its helpers
+// through the sandbox symlink.
+func lookPathOutsideGitExecPath(name string) (string, error) {
+	execPath := os.Getenv("GIT_EXEC_PATH")
+	if execPath == "" {
+		return exec.LookPath(name)
+	}
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if dir == "" || filepath.Clean(dir) == filepath.Clean(execPath) {
+			continue
+		}
+		if path, err := exec.LookPath(filepath.Join(dir, name)); err == nil {
+			return path, nil
+		}
+	}
+	return "", &exec.Error{Name: name, Err: exec.ErrNotFound}
+}
 
 func TestMain(m *testing.M) {
 	flag.Parse()
@@ -34,7 +54,7 @@ func TestMain(m *testing.M) {
 		}
 	}
 	commandProcessTempDir = os.TempDir()
-	if git, err := exec.LookPath("git"); err == nil {
+	if git, err := lookPathOutsideGitExecPath("git"); err == nil {
 		commandProcessGit, _ = filepath.Abs(git)
 	}
 	if root := os.Getenv(processIsolatedRootEnv); os.Getenv(processIsolatedSelectorEnv) != "" {
@@ -92,6 +112,9 @@ func TestMain(m *testing.M) {
 	}
 	if err := os.Setenv("CODEX_HOME", ""); err != nil {
 		fail("failed to isolate CODEX_HOME in cmd tests", err)
+	}
+	if err := os.Setenv("CLAUDE_CONFIG_DIR", ""); err != nil {
+		fail("failed to isolate CLAUDE_CONFIG_DIR in cmd tests", err)
 	}
 
 	code := m.Run()
@@ -280,11 +303,15 @@ func executeCommand(args ...string) (string, error) {
 }
 
 func executeCommandContext(ctx context.Context, args ...string) (string, error) {
+	return executeCommandWithInput(ctx, &bytes.Buffer{}, args...)
+}
+
+func executeCommandWithInput(ctx context.Context, in io.Reader, args ...string) (string, error) {
 	cmd := newRootCmd()
 	var output bytes.Buffer
 	cmd.SetOut(&output)
 	cmd.SetErr(&output)
-	cmd.SetIn(&bytes.Buffer{})
+	cmd.SetIn(in)
 	cmd.SetArgs(args)
 	cmd.SetContext(ctx)
 

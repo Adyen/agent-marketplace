@@ -287,8 +287,9 @@ func markdownBody(content string) string {
 }
 
 type IngestOptions struct {
-	LegacyWindsurfHooks bool
-	LegacyBareMCP       bool
+	LegacyWindsurfHooks       bool
+	LegacyBareMCP             bool
+	LegacyNativeHookInventory bool
 }
 
 func (c *Catalog) SourceRefusal() error { return c.sourceRefusal }
@@ -352,11 +353,16 @@ func LoadFS(srcFS fs.FS, sourceHarness string) (*Catalog, error) {
 }
 
 func LoadFSWithOptions(srcFS fs.FS, sourceHarness string, opts IngestOptions) (*Catalog, error) {
+	if opts.LegacyNativeHookInventory {
+		srcFS = legacyNativeInventoryFS{fsys: srcFS}
+	}
 	from := ingest.Harness(sourceHarness)
 	var autodetectDiag diag.Diagnostic
+	var layoutDiags []diag.Diagnostic
 
 	if from == "" {
-		detected, ok := ingest.Autodetect(srcFS)
+		detected, ok, diagnostics := ingest.AutodetectWithDiagnostics(srcFS)
+		layoutDiags = diagnostics
 		if ok {
 			from = detected
 		} else {
@@ -374,9 +380,13 @@ func LoadFSWithOptions(srcFS fs.FS, sourceHarness string, opts IngestOptions) (*
 	var bundle *ingest.Bundle
 	var err error
 	if opts.LegacyBareMCP && from == ingest.HarnessClaude {
-		bundle, err = claude.LoadBundleWithOptions(srcFS, claude.LoadOptions{LegacyBareMCP: true})
+		bundle, err = hcc.IngestBundleWithLoader(srcFS, func(observed fs.FS) (*ingest.Bundle, error) {
+			return claude.LoadBundleWithOptions(observed, claude.LoadOptions{LegacyBareMCP: true})
+		})
 	} else if opts.LegacyWindsurfHooks && from == ingest.HarnessWindsurf {
-		bundle, err = (windsurf.Ingester{}).LoadBundleWithOptions(srcFS, windsurf.LoadOptions{LegacyHookInventory: true})
+		bundle, err = hcc.IngestBundleWithLoader(srcFS, func(observed fs.FS) (*ingest.Bundle, error) {
+			return (windsurf.Ingester{}).LoadBundleWithOptions(observed, windsurf.LoadOptions{LegacyHookInventory: true})
+		})
 	} else {
 		bundle, err = hcc.IngestBundle(srcFS, hcc.Harness(from))
 	}
@@ -410,6 +420,7 @@ func LoadFSWithOptions(srcFS fs.FS, sourceHarness string, opts IngestOptions) (*
 	allDiags := make([]diag.Diagnostic, 0, len(bundle.Diagnostics)+len(requiresDiags)+1)
 	allDiags = append(allDiags, bundle.Diagnostics...)
 	allDiags = append(allDiags, requiresDiags...)
+	allDiags = append(allDiags, layoutDiags...)
 	if autodetectDiag.Code != "" {
 		allDiags = append(allDiags, autodetectDiag)
 	}
@@ -664,8 +675,11 @@ func preserveResourceSourcePath(r ir.Resource, sourcePath string) {
 // display compatibility, while the IR SourceRef remains pinned to the immutable
 // snapshot that was actually ingested.
 func SourcePath(entry Entry) string {
+	if entry.PrimarySourcePath != "" {
+		return entry.PrimarySourcePath
+	}
 	if entry.Resource != nil {
-		if source, ok := sourceRefFromResource(entry.Resource); ok {
+		if source, ok := sourceRefFromResource(entry.Resource); ok && filepath.IsAbs(source) {
 			return source
 		}
 	}

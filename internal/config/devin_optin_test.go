@@ -1,14 +1,12 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
-	"strings"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
@@ -24,8 +22,8 @@ import (
 func TestDefaultHarnessListsExcludeOptInTargets(t *testing.T) {
 	optIn := []string{string(targetmeta.TargetDevin), string(targetmeta.TargetCodex)}
 
-	// 1. The code-level defaults, which are the single source of truth for
-	//    skeleton configs and for `migrate --harnesses`.
+	// 1. The code-level defaults are the single source of truth for skeleton
+	//    configs; public selectability must not silently change them.
 	got := DefaultHarnesses()
 	want := []string{"factory", "windsurf"}
 	if !reflect.DeepEqual(got, want) {
@@ -47,13 +45,16 @@ func TestDefaultHarnessListsExcludeOptInTargets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read generated skeleton: %v", err)
 	}
-	var shipped Config
-	if err := yaml.Unmarshal(data, &shipped); err != nil {
-		t.Fatalf("parse generated skeleton: %v", err)
+	shipped, err := ParseV4Config(data, globalPath, true)
+	if err != nil {
+		t.Fatalf("parse generated v4 skeleton: %v", err)
+	}
+	if shipped.APIVersion != APIVersionV4 || !reflect.DeepEqual(shipped.Harnesses, []string{"factory", "windsurf"}) {
+		t.Fatalf("generated skeleton version/defaults = %#v", shipped)
 	}
 	lists := [][]string{shipped.Harnesses}
-	for _, r := range shipped.Registries {
-		lists = append(lists, r.Harnesses)
+	for _, group := range shipped.Groups {
+		lists = append(lists, group.Harnesses)
 	}
 	for _, list := range lists {
 		for _, target := range optIn {
@@ -76,42 +77,45 @@ func TestDefaultHarnessListsExcludeOptInTargets(t *testing.T) {
 	}
 }
 
-// TestMigrationNeverAddsOptInTargets pins the "no automatic migration" rule:
-// generated harness lists use defaults and do not add Devin or Codex.
-//
-// The v2-to-v3 migration is that path now; v1 input is rejected outright.
-func TestMigrationNeverAddsOptInTargets(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+func TestUnsupportedConfigIsNotRewrittenWithOptInTargets(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	userPath, err := GlobalConfigPath()
 	if err != nil {
-		t.Fatalf("GlobalConfigPath: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(userPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// A v2 config with no harnesses: the only shape that gets a harness list
-	// written for it automatically, from the explicit --harnesses argument.
-	if err := os.WriteFile(userPath, []byte("apiVersion: agent-marketplace/v2\nskills:\n  include:\n    - legacy-skill\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := MigrateConfigFiles(MigratePaths{User: userPath}, DefaultHarnesses()); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	migrated, err := os.ReadFile(userPath)
+	mustMkdirAll(t, filepath.Dir(userPath))
+	const legacy = "apiVersion: agent-marketplace/v2\nskills:\n  include:\n    - legacy-skill\n"
+	mustWriteFile(t, userPath, []byte(legacy))
+	before, err := os.Stat(userPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, target := range []targetmeta.Target{targetmeta.TargetDevin, targetmeta.TargetCodex} {
-		if strings.Contains(string(migrated), string(target)) {
-			t.Fatalf("migration added %s to a config that never asked for it:\n%s", target, migrated)
-		}
+	_, err = LoadGlobalConfig()
+	var validation *V4ValidationError
+	if !errors.As(err, &validation) || validation.Code != "v4.api-version" {
+		t.Fatalf("unsupported root error = %v, want v4.api-version", err)
 	}
+	err = EnsureGlobalConfig()
+	validation = nil
+	if !errors.As(err, &validation) || validation.Code != "v4.api-version" {
+		t.Fatalf("initialization error = %v, want v4.api-version without conversion", err)
+	}
+	after, err := os.Stat(userPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(userPath)
+	if err != nil || string(data) != legacy || !os.SameFile(before, after) || !before.ModTime().Equal(after.ModTime()) || before.Mode() != after.Mode() {
+		t.Fatalf("refused config was rewritten: bytes=%q, err=%v", data, err)
+	}
+
+	// Explicit requests are still honored; selectable does not mean default.
+	mustWriteFile(t, userPath, []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory, windsurf, devin, codex]\n"))
 	cfg, err := LoadGlobalConfig()
 	if err != nil {
-		t.Fatalf("load migrated config: %v", err)
+		t.Fatalf("explicit opt-in control: %v", err)
 	}
-	if !reflect.DeepEqual(cfg.Harnesses, []string{"factory", "windsurf"}) {
-		t.Fatalf("migrated harnesses = %#v, want the unchanged defaults", cfg.Harnesses)
+	if !reflect.DeepEqual(cfg.Harnesses, []string{"factory", "windsurf", "devin", "codex"}) {
+		t.Fatalf("explicit opt-in harnesses = %#v", cfg.Harnesses)
 	}
 }

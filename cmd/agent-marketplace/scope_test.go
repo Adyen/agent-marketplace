@@ -31,15 +31,19 @@ func TestInstallScopeUserWritesToGlobalConfig(t *testing.T) {
 	// Global config must already know about the registry so that the inherited
 	// skills list resolves correctly after install --scope user writes to it.
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 	withWorkingDir(t, repoRoot)
@@ -75,6 +79,88 @@ registries:
 	)
 }
 
+// spec: resource-installation/install-without-scope-writes-user-configuration
+func TestInstallWithoutScopeWritesUserConfig(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	origin, working := createBareRepoWithWorkingClone(t, "skills.git")
+	writeSkill(t, working, "default-scope-skill", "Default scope", []string{"scope"})
+	commitAndPushAll(t, working, "Add default-scope skill")
+
+	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
+    ref: main
+`)
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "default-scope-skill")
+	if err != nil {
+		t.Fatalf("expected install without --scope to succeed: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "Installed default-scope-skill user-wide") {
+		t.Fatalf("expected user scope label in output, got:\n%s", output)
+	}
+
+	globalCfg, err := config.LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("load global config: %v", err)
+	}
+	if globalCfg == nil || !containsStr(configSkillsInclude(globalCfg), "default-scope-skill") {
+		t.Fatalf("expected default-scope-skill in global config skills, got %v", globalCfg)
+	}
+
+	assertSymlinkTarget(t,
+		filepath.Join(homeDir, ".agents", "skills", "default-scope-skill"),
+		filepath.Join(cache.RegistryCachePath(origin, "main"), "default-scope-skill"),
+	)
+	if _, err := os.Lstat(filepath.Join(repoRoot, ".agents")); !os.IsNotExist(err) {
+		t.Fatalf("expected repository .agents root to stay absent, got err=%v", err)
+	}
+}
+
+// spec: resource-installation/relative-directory-source-without-scope-is-refused
+func TestInstallFromRelativeDirectoryWithoutScopeIsRefused(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	skillDir := filepath.Join(repoRoot, "rel-dir", "skills", "rel-skill")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: rel-skill\n---\n"), 0o644); err != nil {
+		t.Fatalf("write skill: %v", err)
+	}
+	withWorkingDir(t, repoRoot)
+
+	output, err := executeCommand("install", "--from", "./rel-dir", "rel-skill")
+	if err == nil {
+		t.Fatalf("expected install --from relative directory without --scope to fail, got output:\n%s", output)
+	}
+	combined := err.Error() + "\n" + output
+	if !strings.Contains(combined, "repo-relative") || !strings.Contains(combined, "global config") {
+		t.Fatalf("expected repo-relative global config refusal, got err=%v output=%s", err, output)
+	}
+	if _, err := os.Lstat(filepath.Join(homeDir, ".agents")); !os.IsNotExist(err) {
+		t.Fatalf("expected user .agents root to stay absent, got err=%v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // install --scope local
 // ---------------------------------------------------------------------------
@@ -92,8 +178,10 @@ func TestInstallScopeLocalWritesToLocalConfig(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 	withWorkingDir(t, repoRoot)
@@ -138,15 +226,18 @@ func TestInstallScopeLocalUsesGlobalRegistriesWhenRepoConfigHasNone(t *testing.T
 	commitAndPushAll(t, working, "Add skills")
 
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	// Repo config exists but has no registries configured.
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+apiVersion: agent-marketplace/v4
+sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -181,14 +272,17 @@ func TestInstallScopeRepoUsesGlobalRegistriesWhenRepoConfigHasNone(t *testing.T)
 	commitAndPushAll(t, working, "Add skills")
 
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+apiVersion: agent-marketplace/v4
+sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -204,7 +298,7 @@ registries: []
 	if repoCfg == nil || !containsStr(configSkillsInclude(repoCfg), "shared-global-repo-skill") {
 		t.Fatalf("expected shared-global-repo-skill in repo config skills, got %v", repoCfg)
 	}
-	if len(repoCfg.Registries) != 1 || repoCfg.Registries[0].URL != origin {
+	if len(repoCfg.Registries) != 1 || repoCfg.Registries[0].URL != "file://"+origin {
 		t.Fatalf("expected repo config to include providing registry %q, got %#v", origin, repoCfg.Registries)
 	}
 
@@ -239,14 +333,21 @@ func TestInstallScopeRepoOrLocalRemovesLocalExclude(t *testing.T) {
 
 			repoRoot := filepath.Join(t.TempDir(), "repo")
 			writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 			writeConfig(t, filepath.Join(repoRoot, ".agents", "config.local.yaml"), `
-skills:
-  exclude:
-    - resurrect-skill
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
+    ref: main
+resources:
+  skills:
+    exclude: [skill/resurrect-skill]
 `)
 			withWorkingDir(t, repoRoot)
 
@@ -259,8 +360,12 @@ skills:
 			if err != nil {
 				t.Fatalf("load local config: %v", err)
 			}
-			if localCfg != nil && containsStr(ksExclude(localCfg.Skills), "resurrect-skill") {
-				t.Fatalf("expected resurrect-skill to be removed from local exclude, got %v", localCfg.Skills.Exclude)
+			if localCfg != nil {
+				for _, entry := range localCfg.Registries {
+					if containsStr(ksExclude(entry.Skills), "resurrect-skill") {
+						t.Fatalf("expected resurrect-skill to be removed from local source exclude, got %v", entry.Skills.Exclude)
+					}
+				}
 			}
 
 			repoCfg, err := config.LoadRepoConfig()
@@ -355,12 +460,14 @@ func TestInstallScopeRepoRemovesRepoExclude(t *testing.T) {
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      exclude:
-        - repo-excluded-skill
+resources:
+  skills:
+    exclude: [skill/repo-excluded-skill]
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -409,17 +516,22 @@ func TestInstallScopeRepoOrLocalOverridesUserPlacement(t *testing.T) {
 			commitAndPushAll(t, working, "Add shared-skill")
 
 			writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - shared-skill
+resources:
+  skills:
+    include: [skill/shared-skill]
 `)
 
 			repoRoot := filepath.Join(t.TempDir(), "repo")
 			writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 			withWorkingDir(t, repoRoot)
@@ -475,16 +587,20 @@ func TestRemoveRequiredSkillFails(t *testing.T) {
 
 	// Global config marks registry as required.
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
+resources:
+  skills:
     required: true
-    skills:
-      - no-curl-bash
+    all: true
 `)
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+apiVersion: agent-marketplace/v4
+sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -519,15 +635,19 @@ func TestRemoveMachineScopeNonRequiredAtDefaultScopeSucceeds(t *testing.T) {
 
 	// Global config: non-required explicit skill in registry entry.
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - shell-hardening
+resources:
+  skills:
+    include: [skill/shell-hardening]
 `)
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+apiVersion: agent-marketplace/v4
+sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -578,10 +698,14 @@ func TestRemoveDefaultSkillAddsToPersonalExclude(t *testing.T) {
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	// Registry with default:true — all skills auto-selected.
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    default: true
+resources:
+  skills:
+    all: true
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -638,16 +762,21 @@ func TestRemoveScopeUserRemovesFromGlobalConfig(t *testing.T) {
 	commitAndPushAll(t, working, "Add skills")
 
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - shell-hardening
+resources:
+  skills:
+    include: [skill/shell-hardening]
 `)
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 	withWorkingDir(t, repoRoot)
@@ -682,7 +811,7 @@ func TestInstallScopeMatrixWritesExpectedLayer(t *testing.T) {
 		expectLocal   bool
 		expectSymlink string
 	}{
-		{name: "default-repo-scope", scopeArg: "", expectRepo: true, expectSymlink: "repo"},
+		{name: "default-user-scope", scopeArg: "", expectUser: true, expectSymlink: "user"},
 		{name: "explicit-repo-scope", scopeArg: "repo", expectRepo: true, expectSymlink: "repo"},
 		{name: "user-scope", scopeArg: "user", expectUser: true, expectSymlink: "user"},
 		{name: "local-scope", scopeArg: "local", expectLocal: true, expectSymlink: "repo"},
@@ -699,8 +828,10 @@ func TestInstallScopeMatrixWritesExpectedLayer(t *testing.T) {
 
 			repoRoot := filepath.Join(t.TempDir(), "repo")
 			writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 			withWorkingDir(t, repoRoot)
@@ -797,21 +928,26 @@ func TestRemoveScopeMatrixForRepoSelectedSkill(t *testing.T) {
 			// user layer empty (expectUserHasSkill: false).
 			globalSkillYAML := ""
 			if tc.globalHasSkill {
-				globalSkillYAML = "\n    skills:\n      - repo-scope-skill"
+				globalSkillYAML = "\nresources:\n  skills:\n    include: [skill/repo-scope-skill]"
 			}
 			writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main`+globalSkillYAML+`
 `)
 
 			repoRoot := filepath.Join(t.TempDir(), "repo")
 			writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - repo-scope-skill
+resources:
+  skills:
+    include: [skill/repo-scope-skill]
 `)
 			withWorkingDir(t, repoRoot)
 
@@ -905,17 +1041,22 @@ func TestRemoveScopeMatrixForUserSelectedSkill(t *testing.T) {
 			commitAndPushAll(t, working, "Add user-scope-skill")
 
 			writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - user-scope-skill
+resources:
+  skills:
+    include: [skill/user-scope-skill]
 `)
 
 			repoRoot := filepath.Join(t.TempDir(), "repo")
 			writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 			withWorkingDir(t, repoRoot)
@@ -997,7 +1138,8 @@ func TestInstallFromFlagScopeLocalWritesRegistryEntryToLocalConfig(t *testing.T)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+apiVersion: agent-marketplace/v4
+sources: {}
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -1040,7 +1182,7 @@ registries: []
 		t.Fatalf("load repo config: %v", err)
 	}
 	for _, entry := range repoCfg.Registries {
-		if strings.TrimSpace(entry.URL) == origin {
+		if strings.TrimSpace(entry.URL) == "file://"+origin {
 			t.Fatalf("registry should NOT be in repo config, found URL %q", origin)
 		}
 	}
@@ -1069,25 +1211,32 @@ func TestRemoveScopeLocalRemovesRepoPersonalResource(t *testing.T) {
 
 	// Set up: global config with the registry, repo config with the registry.
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 
 	// Pre-populate config.local.yaml with a registry entry that selects
 	// the skill — this makes the resource's source RepoPersonal.
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.local.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
-    skills:
-      - local-remove-skill
+resources:
+  skills:
+    include: [skill/local-remove-skill]
 `)
 	withWorkingDir(t, repoRoot)
 
@@ -1109,8 +1258,10 @@ registries:
 	if localCfg == nil {
 		t.Fatal("expected local config to exist after remove --scope local")
 	}
+	foundSource := false
 	for _, entry := range localCfg.Registries {
-		if strings.TrimSpace(entry.URL) == origin {
+		if strings.TrimSpace(entry.URL) == "file://"+origin {
+			foundSource = true
 			if containsStr(entry.Skills.Include, "local-remove-skill") {
 				t.Fatalf("expected local-remove-skill to be removed from registry entry skills.include, still present")
 			}
@@ -1120,6 +1271,9 @@ registries:
 				t.Fatalf("expected local-remove-skill in registry entry skills.exclude, got %v", entry.Skills.Exclude)
 			}
 		}
+	}
+	if !foundSource {
+		t.Fatalf("removed selection lost its source-bound exclusion: %#v", localCfg.Registries)
 	}
 }
 
@@ -1143,19 +1297,23 @@ func TestInstallScopeLocalWritesToRegistryEntryForRepoPersonalSource(t *testing.
 	// and install --scope local writes to the registry entry (not the
 	// top-level selector).
 	writeConfig(t, filepath.Join(homeDir, ".agents", "config.yaml"), `
-registries: []
+apiVersion: agent-marketplace/v4
+sources: {}
 `)
 
 	repoRoot := filepath.Join(t.TempDir(), "repo")
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"), `
-registries: []
+apiVersion: agent-marketplace/v4
+sources: {}
 `)
 
 	// Pre-populate config.local.yaml with a registries: entry for the registry.
 	// This makes the skill discoverable from the RepoPersonal layer.
 	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.local.yaml"), `
-registries:
-  - url: `+origin+`
+apiVersion: agent-marketplace/v4
+sources:
+  skills:
+    git: file://`+origin+`
     ref: main
 `)
 	withWorkingDir(t, repoRoot)
@@ -1175,12 +1333,17 @@ registries:
 
 	// The skill must be in the registry entry's skills.include, NOT in the
 	// top-level skills: include.
+	foundSource := false
 	for _, entry := range localCfg.Registries {
-		if strings.TrimSpace(entry.URL) == origin {
+		if strings.TrimSpace(entry.URL) == "file://"+origin {
+			foundSource = true
 			if !containsStr(entry.Skills.Include, "local-entry-skill") {
 				t.Fatalf("expected local-entry-skill in registry entry skills.include, got %v", entry.Skills.Include)
 			}
 		}
+	}
+	if !foundSource {
+		t.Fatalf("installed selection lost its source binding: %#v", localCfg.Registries)
 	}
 
 	// Top-level skills: include must NOT contain the skill (it should be

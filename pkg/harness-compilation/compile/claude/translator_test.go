@@ -206,10 +206,16 @@ func TestClaudeSubagent_FrontmatterExtraFieldsAreDeterministic(t *testing.T) {
 	}
 }
 
-// --- Claude Hook test (✓ passthrough) ---
+// --- Claude Hook test ---
+// The baseline annotations `claude-code-hooks-use-the-plugin-hook-file` and
+// `claude-code-emits-unknown-events-unchanged` are retired: native-hook-
+// integration removes both requirements. Unknown events are now refused by
+// hook-resources/claude-code-refuses-unknown-events (see
+// hook_claude_catalog_test.go), and a catalog-declared event keeps the
+// fragment shape asserted here.
 func TestClaudeHook_Passthrough(t *testing.T) {
 	c := &claudeCompiler{}
-	hook := ir.NewHook("pre-commit-command", "pre-commit", "echo test", "command", map[string]any{}, ir.SourceRef{File: "hooks/hooks.json", Line: 0})
+	hook := ir.NewHook("pre-commit-command", "PreToolUse", "echo test", "command", map[string]any{}, ir.SourceRef{File: "hooks/hooks.json", Line: 0})
 
 	arts, diags, err := c.Translate(hook)
 	if err != nil {
@@ -239,9 +245,9 @@ func TestClaudeHook_Passthrough(t *testing.T) {
 	if !ok {
 		t.Fatalf("hooks.json missing 'hooks' key or not a map, got: %v", hookData)
 	}
-	rules, ok := hooksMap["pre-commit"].([]any)
+	rules, ok := hooksMap["PreToolUse"].([]any)
 	if !ok || len(rules) != 1 {
-		t.Fatalf("hooks.json pre-commit rules = %v, want array of 1", hooksMap["pre-commit"])
+		t.Fatalf("hooks.json PreToolUse rules = %v, want array of 1", hooksMap["PreToolUse"])
 	}
 	rule, ok := rules[0].(map[string]any)
 	if !ok {

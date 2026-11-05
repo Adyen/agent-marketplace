@@ -162,7 +162,10 @@ func ResetInstallationID(path string) error {
 	}
 
 	diagRoot := filepath.Join(StateRootFromInstallationIDPath(path), "diagnostic")
-	_ = os.RemoveAll(diagRoot)
+	if err := os.RemoveAll(diagRoot); err != nil {
+		slog.Error("failed to remove diagnostic payloads", "path", diagRoot, "error", err)
+		return fmt.Errorf("remove diagnostic payloads: %w", err)
+	}
 
 	slog.Info("reset installation id complete", "path", path)
 	return nil

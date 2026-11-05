@@ -1,0 +1,33 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/materialize
+cpu: Apple M4 Max
+                                                         │  before.txt   │              after.txt               │
+                                                         │    sec/op     │    sec/op     vs base                │
+RunChangedSkillLinkCaches/changed=1-16                      305.2m ±  7%   139.9m ± 20%  -54.15% (p=0.000 n=10)
+RunChangedSkillLinkCaches/changed=64-16                     305.0m ±  5%   436.6m ± 10%  +43.16% (p=0.000 n=10)
+RunChangedSkillLinkCaches/missing_caches-16                 309.8m ±  7%   315.5m ±  8%        ~ (p=0.579 n=10)
+RunUnchangedSkillLinkCaches/skills=64/support=0x0KiB-16    163.65m ± 13%   83.99m ± 20%  -48.68% (p=0.000 n=10)
+RunUnchangedSkillLinkCaches/skills=64/support=2x15KiB-16    299.9m ± 29%   140.2m ±  8%  -53.23% (p=0.000 n=10)
+RunUnchangedSkillLinkCaches/skills=64/support=8x16KiB-16    721.5m ±  8%   320.3m ± 19%  -55.60% (p=0.000 n=10)
+geomean                                                     317.3m         204.3m        -35.62%
+
+                                                         │  before.txt  │              after.txt               │
+                                                         │     B/op     │     B/op      vs base                │
+RunChangedSkillLinkCaches/changed=1-16                     20.46Mi ± 0%   13.78Mi ± 0%  -32.63% (p=0.000 n=10)
+RunChangedSkillLinkCaches/changed=64-16                    20.46Mi ± 0%   30.02Mi ± 0%  +46.71% (p=0.000 n=10)
+RunChangedSkillLinkCaches/missing_caches-16                21.16Mi ± 0%   21.64Mi ± 0%   +2.30% (p=0.000 n=10)
+RunUnchangedSkillLinkCaches/skills=64/support=0x0KiB-16    9.105Mi ± 0%   5.958Mi ± 0%  -34.56% (p=0.000 n=10)
+RunUnchangedSkillLinkCaches/skills=64/support=2x15KiB-16   20.81Mi ± 0%   13.73Mi ± 0%  -34.05% (p=0.000 n=10)
+RunUnchangedSkillLinkCaches/skills=64/support=8x16KiB-16   55.87Mi ± 0%   37.04Mi ± 0%  -33.70% (p=0.000 n=10)
+geomean                                                    21.31Mi        17.33Mi       -18.67%
+
+                                                         │  before.txt  │              after.txt              │
+                                                         │  allocs/op   │  allocs/op   vs base                │
+RunChangedSkillLinkCaches/changed=1-16                     123.03k ± 0%   82.69k ± 0%  -32.79% (p=0.000 n=10)
+RunChangedSkillLinkCaches/changed=64-16                     123.0k ± 0%   159.7k ± 0%  +29.84% (p=0.000 n=10)
+RunChangedSkillLinkCaches/missing_caches-16                 129.5k ± 0%   134.1k ± 0%   +3.56% (p=0.000 n=10)
+RunUnchangedSkillLinkCaches/skills=64/support=0x0KiB-16     91.97k ± 0%   65.65k ± 0%  -28.61% (p=0.000 n=10)
+RunUnchangedSkillLinkCaches/skills=64/support=2x15KiB-16   123.04k ± 0%   81.46k ± 0%  -33.79% (p=0.000 n=10)
+RunUnchangedSkillLinkCaches/skills=64/support=8x16KiB-16    213.1k ± 0%   126.9k ± 0%  -40.46% (p=0.000 n=10)
+geomean                                                     129.5k        103.1k       -20.40%

@@ -1,0 +1,21 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/Adyen/agent-marketplace/internal/lockfile
+cpu: Apple M4 Max
+BenchmarkProjectGitRootsWithoutRequirements/roots=0-16         	100000000	        23.55 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=0-16         	100000000	        22.86 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=0-16         	100000000	        25.10 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=0-16         	100000000	        25.09 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=0-16         	137718546	        15.99 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=1-16         	37537513	       101.8 ns/op	      96 B/op	       1 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=1-16         	24115118	       132.6 ns/op	      96 B/op	       1 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=1-16         	20684672	       140.3 ns/op	      96 B/op	       1 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=1-16         	13398589	       159.8 ns/op	      96 B/op	       1 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=1-16         	28662847	       118.1 ns/op	      96 B/op	       1 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=2048-16      	  182630	     11821 ns/op	  180224 B/op	       1 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=2048-16      	  361986	      6554 ns/op	  180224 B/op	       1 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=2048-16      	  476850	      6383 ns/op	  180224 B/op	       1 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=2048-16      	  585976	      4356 ns/op	  180224 B/op	       1 allocs/op
+BenchmarkProjectGitRootsWithoutRequirements/roots=2048-16      	  388635	      5237 ns/op	  180224 B/op	       1 allocs/op
+PASS
+ok  	github.com/Adyen/agent-marketplace/internal/lockfile	40.795s

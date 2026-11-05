@@ -1,12 +1,16 @@
 package skill
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/bundle"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 // discoveredEntry represents a skill candidate found during directory walk.
@@ -54,12 +58,13 @@ func DiscoverSkills(registryDir string) ([]Skill, []MalformedSkill, error) {
 		if err != nil {
 			// Standalone .md files without valid frontmatter are silently skipped
 			// (e.g. README.md, CHANGELOG.md). Only SKILL.md directories report as malformed.
-			if entry.isFile {
+			if entry.isFile && !errors.Is(err, bundle.ErrFrontmatterTooLarge) {
 				continue
 			}
 			malformed = append(malformed, MalformedSkill{
 				DirName: entry.name,
 				Path:    entry.skillPath,
+				Kind:    ir.KindSkill.String(),
 				Error:   err,
 			})
 			continue

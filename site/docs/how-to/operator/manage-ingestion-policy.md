@@ -98,6 +98,8 @@ The clone step always enforces the global `repository_bytes`, `file_count`, `fil
 agent-marketplace serve reindex internal-agents --config /app/marketplace.yaml
 ```
 
+The command prints nothing on success and exits `0`; the [log file](../../reference/logging.md) records the refresh and ends with `reindex complete`.
+
 ## License findings
 
 When license enforcement is on, the worker records one of these finding codes and logs the decision with the same code:

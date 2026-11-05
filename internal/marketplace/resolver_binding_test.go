@@ -135,11 +135,13 @@ func TestIndexOnlyStagingNamesSeparateSameKindResources(t *testing.T) {
 	if err := os.WriteFile(legacyFile, []byte("legacy"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	first, err := stageReconstructedResource(cache, identity, checkout, registry, "skill", "first", nil)
+	firstResource := ir.NewSkill("first", "description", "body", []string{"user"}, nil, ir.SourceRef{})
+	first, err := stageReconstructedResource(cache, identity, checkout, registry, firstResource, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := stageReconstructedResource(cache, identity, checkout, registry, "skill", "second", nil)
+	secondResource := ir.NewSkill("second", "description", "body", []string{"user"}, nil, ir.SourceRef{})
+	second, err := stageReconstructedResource(cache, identity, checkout, registry, secondResource, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,5 +156,37 @@ func TestIndexOnlyStagingNamesSeparateSameKindResources(t *testing.T) {
 	legacyData, err := os.ReadFile(legacyFile)
 	if err != nil || string(legacyData) != "legacy" {
 		t.Fatalf("legacy resource changed: %q err=%v", legacyData, err)
+	}
+}
+
+// spec: hook-resources/every-harness-target-receives-hooks-in-its-native-file
+func TestHookDefinitionBasenameRequiresSafeCanonicalSourceFile(t *testing.T) {
+	for _, tc := range []struct {
+		name, sourceFile, want string
+		invalid                bool
+	}{
+		{name: "settings", sourceFile: ".claude/settings.json", want: "settings.json"},
+		{name: "hooks v1", sourceFile: ".devin/hooks.v1.json", want: "hooks.v1.json"},
+		{name: "nested legacy", sourceFile: "hooks/hooks.json", want: "hooks.json"},
+		{name: "empty", invalid: true},
+		{name: "dot", sourceFile: ".", invalid: true},
+		{name: "parent", sourceFile: "..", invalid: true},
+		{name: "parent prefix", sourceFile: "../settings.json", invalid: true},
+		{name: "embedded traversal", sourceFile: "hooks/../settings.json", invalid: true},
+		{name: "absolute", sourceFile: "/etc/hooks.json", invalid: true},
+		{name: "backslash", sourceFile: `hooks\hooks.json`, invalid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := hookDefinitionBasename(tc.sourceFile)
+			if tc.invalid {
+				if !errors.Is(err, ErrArtifactSourcePath) {
+					t.Fatalf("hookDefinitionBasename(%q) error = %v, want ErrArtifactSourcePath", tc.sourceFile, err)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("hookDefinitionBasename(%q) = %q, %v; want %q", tc.sourceFile, got, err, tc.want)
+			}
+		})
 	}
 }

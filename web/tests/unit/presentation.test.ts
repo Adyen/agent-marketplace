@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { assessmentFindings, FINGERPRINT_LEVELS, fingerprintCells, installCommand, listAvailabilityCopy, resourceAvailability, resourceAvailabilityCopy, resourceLatestLocator, resourceLatestRoute, resourceLocator, resourceRoute, safeCanonicalUrl, shortDigest } from '../../app/lib/presentation'
+import { assessmentFindings, FINGERPRINT_LEVELS, fingerprintCells, installCommand, listAvailabilityCopy, resourceAvailability, resourceAvailabilityCopy, resourceLatestLocator, resourceLatestRoute, resourceLocator, resourceRoute, safeCanonicalUrl, shortDigest, sourceBrowseUrl, sourceRepositoryLabel } from '../../app/lib/presentation'
 import type { ResourceAvailability } from '../../app/lib/presentation'
 
 describe('copy-only resource actions', () => {
@@ -198,5 +198,44 @@ describe('fingerprintCells', () => {
     expect(fingerprintCells('refs/heads/main')).toEqual([])
     expect(fingerprintCells('sha256:nothex')).toEqual([])
     expect(fingerprintCells('md5:' + 'a'.repeat(64))).toEqual([])
+  })
+})
+
+describe('resource source links', () => {
+  const commit = 'b'.repeat(40)
+  const source = (repositoryUrl: string, path = 'skills/review/SKILL.md', sourceCommit = commit) => ({ repository_url: repositoryUrl, path, commit: sourceCommit })
+
+  // spec: marketplace-web-ui/forge-hosted-source-links-to-the-pinned-resource-file
+  it.each([
+    ['github.com', 'https://github.com/Adyen/agent-skills.git', `https://github.com/Adyen/agent-skills/blob/${commit}/skills/review/SKILL.md`],
+    ['a GitHub enterprise host', 'https://github.example.com/team/tools', `https://github.example.com/team/tools/blob/${commit}/skills/review/SKILL.md`],
+    ['gitlab.com with a nested group', 'https://gitlab.com/group/sub/tools.git', `https://gitlab.com/group/sub/tools/-/blob/${commit}/skills/review/SKILL.md`],
+    ['a self-managed GitLab host', 'https://gitlab.example.com/team/tools', `https://gitlab.example.com/team/tools/-/blob/${commit}/skills/review/SKILL.md`],
+    ['bitbucket.org', 'https://bitbucket.org/team/tools', `https://bitbucket.org/team/tools/src/${commit}/skills/review/SKILL.md`],
+  ])('links %s to the resource file at the occurrence commit', (_, repositoryUrl, expected) => {
+    expect(sourceBrowseUrl(source(repositoryUrl))).toBe(expected)
+  })
+
+  it('encodes path segments and falls back to the repository for unsafe paths', () => {
+    expect(sourceBrowseUrl(source('https://github.com/a/b', 'skills/my #1/SKILL.md'))).toBe(`https://github.com/a/b/blob/${commit}/skills/my%20%231/SKILL.md`)
+    expect(sourceBrowseUrl(source('https://github.com/a/b', 'skills/../SKILL.md'))).toBe('https://github.com/a/b')
+  })
+
+  // spec: marketplace-web-ui/other-host-source-links-to-the-repository
+  it('links other hosts to the repository without a git suffix, query, or fragment', () => {
+    expect(sourceBrowseUrl(source('https://git.example/internal/resources.git?token=redact#top'))).toBe('https://git.example/internal/resources')
+  })
+
+  it('refuses malformed or unsafe source identity', () => {
+    expect(sourceBrowseUrl(source('https://github.com/a/b', 'skills/review/SKILL.md', 'main'))).toBe('')
+    expect(sourceBrowseUrl(source('ssh://git@github.com/a/b.git'))).toBe('')
+    expect(sourceBrowseUrl(source('https://user@github.com/a/b'))).toBe('')
+    expect(sourceBrowseUrl(undefined)).toBe('')
+  })
+
+  it('labels a source by its repository path with a hostname fallback', () => {
+    expect(sourceRepositoryLabel('https://github.com/Adyen/agent-skills.git')).toBe('Adyen/agent-skills')
+    expect(sourceRepositoryLabel('https://git.example/')).toBe('git.example')
+    expect(sourceRepositoryLabel('git@github.com:Adyen/agent-skills.git')).toBe('')
   })
 })

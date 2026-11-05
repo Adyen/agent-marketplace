@@ -295,3 +295,117 @@ func TestResolveRequiredSuppressionIgnoresSourceOrder(t *testing.T) {
 		}
 	}
 }
+
+// spec: resource-selection/required-collection-member-displaces-an-optional-selection-in-the-same-scope
+func TestResolveRequiredCollectionMemberDisplacesOptionalSameScopeSelection(t *testing.T) {
+	const (
+		mandatory = "git@example.com:mandatory.git"
+		other     = "git@example.com:other.git"
+		repo      = "git@example.com:repo.git"
+	)
+	requiredMember := "machine " + mandatory + " collection:bundle-mandatory"
+	for _, requiredSource := range []config.Source{config.Organization, config.UserPersonal} {
+		for _, requiredFirst := range []bool{true, false} {
+			name := requiredSource.String() + "/optional entry last"
+			if !requiredFirst {
+				name = requiredSource.String() + "/optional entry first"
+			}
+			t.Run(name, func(t *testing.T) {
+				required := sharedSource{url: mandatory, source: requiredSource, required: true, collection: true}
+				optional := sharedSource{url: other, source: config.UserPersonal}
+				sources := []sharedSource{required, optional}
+				if !requiredFirst {
+					sources = []sharedSource{optional, required}
+				}
+				got, errs := resolveSharedSources(t, sources)
+				if described, want := describeShared(got), []string{requiredMember}; !slices.Equal(described, want) {
+					t.Fatalf("resolved %q, want %q", described, want)
+				}
+				if warnings, want := collisionWarnings(t, errs), []string{mandatory + " <- git@example.com:other"}; !slices.Equal(warnings, want) {
+					t.Fatalf("warnings %q, want %q", warnings, want)
+				}
+				assertMachineOutputIndependentOfRepository(t, sources, describeShared(got))
+			})
+		}
+	}
+
+	t.Run("machine and repository selections displaced", func(t *testing.T) {
+		sources := []sharedSource{
+			{url: mandatory, source: config.Organization, required: true, collection: true},
+			{url: other, source: config.UserPersonal},
+			{url: repo, source: config.RepoCommitted},
+		}
+		got, errs := resolveSharedSources(t, sources)
+		if described, want := describeShared(got), []string{requiredMember}; !slices.Equal(described, want) {
+			t.Fatalf("resolved %q, want %q", described, want)
+		}
+		if warnings, want := collisionWarnings(t, errs), []string{mandatory + " <- git@example.com:repo,git@example.com:other"}; !slices.Equal(warnings, want) {
+			t.Fatalf("warnings %q, want %q", warnings, want)
+		}
+	})
+
+	t.Run("two non-required machine selections displaced", func(t *testing.T) {
+		sources := []sharedSource{
+			{url: mandatory, source: config.Organization, required: true, collection: true},
+			{url: other, source: config.UserPersonal},
+			{url: "git@example.com:third.git", source: config.UserPersonal},
+		}
+		got, errs := resolveSharedSources(t, sources)
+		if described, want := describeShared(got), []string{requiredMember}; !slices.Equal(described, want) {
+			t.Fatalf("resolved %q, want %q", described, want)
+		}
+		if warnings, want := collisionWarnings(t, errs), []string{mandatory + " <- git@example.com:other,git@example.com:third"}; !slices.Equal(warnings, want) {
+			t.Fatalf("warnings %q, want %q", warnings, want)
+		}
+		assertMachineOutputIndependentOfRepository(t, sources, describeShared(got))
+	})
+
+	t.Run("carried runner-up from the required location is not reported", func(t *testing.T) {
+		sources := []sharedSource{
+			{url: mandatory, source: config.Organization, required: true, collection: true},
+			{url: "git@example.com:aaa.git", source: config.UserPersonal},
+			{url: mandatory, source: config.UserPersonal},
+		}
+		got, errs := resolveSharedSources(t, sources)
+		if described, want := describeShared(got), []string{requiredMember}; !slices.Equal(described, want) {
+			t.Fatalf("resolved %q, want %q", described, want)
+		}
+		if warnings, want := collisionWarnings(t, errs), []string{mandatory + " <- git@example.com:aaa"}; !slices.Equal(warnings, want) {
+			t.Fatalf("warnings %q, want %q", warnings, want)
+		}
+		assertMachineOutputIndependentOfRepository(t, sources, describeShared(got))
+	})
+
+	t.Run("same-source direct selection yields to the required member", func(t *testing.T) {
+		sources := []sharedSource{
+			{url: mandatory, source: config.Organization, required: true, collection: true},
+			{url: mandatory, source: config.UserPersonal},
+		}
+		got, errs := resolveSharedSources(t, sources)
+		if described, want := describeShared(got), []string{requiredMember}; !slices.Equal(described, want) {
+			t.Fatalf("resolved %q, want %q", described, want)
+		}
+		if warnings := collisionWarnings(t, errs); len(warnings) != 0 {
+			t.Fatalf("same-source selection must not warn: %q", warnings)
+		}
+		for _, a := range got {
+			if a.Name == "shared" && !a.Required {
+				t.Fatalf("resolved shared artifact must be required: %+v", a)
+			}
+		}
+	})
+
+	t.Run("required direct selection keeps precedence over a required member", func(t *testing.T) {
+		sources := []sharedSource{
+			{url: mandatory, source: config.Organization, required: true, collection: true},
+			{url: other, source: config.UserPersonal, required: true},
+		}
+		got, errs := resolveSharedSources(t, sources)
+		if described, want := describeShared(got), []string{"machine " + other + " direct"}; !slices.Equal(described, want) {
+			t.Fatalf("resolved %q, want %q", described, want)
+		}
+		if warnings := collisionWarnings(t, errs); len(warnings) != 0 {
+			t.Fatalf("unexpected warnings: %q", warnings)
+		}
+	})
+}

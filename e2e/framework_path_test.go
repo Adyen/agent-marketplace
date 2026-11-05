@@ -1,9 +1,11 @@
 package e2e_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -86,5 +88,48 @@ func TestResolvePathRejectsTraversal(t *testing.T) {
 		if !strings.Contains(err.Error(), tc.prefix) {
 			t.Errorf("resolvePath(%q) error = %v, want mapping context %q", tc.path, err, tc.prefix)
 		}
+	}
+}
+
+func TestPathAbsenceDistinguishesEntriesAndErrors(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	file := filepath.Join(root, "file")
+	if err := os.WriteFile(file, []byte("present"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "directory"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, target := range map[string]string{"valid-link": "file", "dangling-link": "missing", "loop": "loop"} {
+		if err := os.Symlink(target, filepath.Join(root, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := syscall.Mkfifo(filepath.Join(root, "fifo"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		path   string
+		absent bool
+		err    error
+	}{
+		{path: "file"},
+		{path: "directory"},
+		{path: "valid-link"},
+		{path: "dangling-link"},
+		{path: "loop"},
+		{path: "fifo"},
+		{path: "missing", absent: true},
+		{path: "directory/missing", absent: true},
+		{path: "file/child", err: syscall.ENOTDIR},
+		{path: "loop/child", err: syscall.ELOOP},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			absent, err := checkPathAbsent(filepath.Join(root, tc.path))
+			if absent != tc.absent || !errors.Is(err, tc.err) {
+				t.Fatalf("path %q: absent=%t err=%v; want absent=%t err=%v", tc.path, absent, err, tc.absent, tc.err)
+			}
+		})
 	}
 }

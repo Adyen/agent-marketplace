@@ -535,8 +535,8 @@ func repairLogMessage(target hcc.Target, action string) string {
 
 func (f *RepairFile) repairDesiredEntry(id ownership.EntryID) ([]byte, string, bool) {
 	want := ownedAggregateIDKey(id)
-	for _, entry := range f.desired {
-		if ownedAggregateIDKey(entry.value.ID) == want {
+	for i := len(f.desired) - 1; i >= 0; i-- {
+		if entry := f.desired[i]; ownedAggregateIDKey(entry.value.ID) == want {
 			return entry.raw, entry.resource, true
 		}
 	}

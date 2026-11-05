@@ -21,8 +21,8 @@ type samples struct {
 }
 
 type delta struct {
-	pct, p float64
-	ok     bool
+	pct, p, adjustedP float64
+	ok                bool
 }
 
 type comparison struct {
@@ -178,14 +178,14 @@ func compare(before, after []float64) delta {
 }
 
 func (d delta) notable() bool {
-	return d.ok && d.p < alpha && math.Abs(d.pct) >= threshold
+	return d.ok && d.adjustedP < alpha && math.Abs(d.pct) >= threshold
 }
 
 func (d delta) String() string {
 	switch {
 	case !d.ok:
 		return "—"
-	case d.p >= alpha || math.Abs(d.pct) < 0.05:
+	case d.adjustedP >= alpha || math.Abs(d.pct) < 0.05:
 		return "~"
 	case math.IsInf(d.pct, 1):
 		return "+∞"
@@ -199,8 +199,22 @@ func (c comparison) deltas() []delta { return []delta{c.time, c.bytes, c.allocs}
 
 func (c comparison) notable() bool { return slices.ContainsFunc(c.deltas(), delta.notable) }
 
-func (c comparison) regression() bool {
-	return slices.ContainsFunc(c.deltas(), func(d delta) bool { return d.notable() && d.pct > 0 })
+func adjustPValues(rows []comparison) int {
+	var tests []*delta
+	for i := range rows {
+		for _, d := range []*delta{&rows[i].time, &rows[i].bytes, &rows[i].allocs} {
+			if d.ok {
+				tests = append(tests, d)
+			}
+		}
+	}
+	slices.SortStableFunc(tests, func(a, b *delta) int { return compareFloat(a.p, b.p) })
+	adjusted := 0.0
+	for i, d := range tests {
+		adjusted = math.Min(1, math.Max(adjusted, float64(len(tests)-i)*d.p))
+		d.adjustedP = adjusted
+	}
+	return len(tests)
 }
 
 func duration(values []float64) string {
@@ -223,12 +237,31 @@ func escape(key string) string {
 	return strings.NewReplacer("|", "&#124;", "<", "&lt;", ">", "&gt;").Replace(key)
 }
 
-func writeTable(out *strings.Builder, rows []comparison) {
-	out.WriteString("| Benchmark | Base time | Head time | Time | B/op | allocs/op |\n|---|---:|---:|---:|---:|---:|\n")
-	for _, c := range rows {
-		fmt.Fprintf(out, "| %s | %s | %s | %s | %s | %s |\n", escape(c.key),
-			duration(c.base.time), duration(c.head.time), c.time, c.bytes, c.allocs)
+func writeTable(out *strings.Builder, rows []comparison, detailed bool) {
+	out.WriteString("| Benchmark | Base time | Head time | Time | B/op | allocs/op")
+	if detailed {
+		out.WriteString(" | Samples (base/head) | Adjusted p (time/B/allocs)")
 	}
+	out.WriteString(" |\n|---|---:|---:|---:|---:|---:|")
+	if detailed {
+		out.WriteString("---:|---:|")
+	}
+	out.WriteByte('\n')
+	for _, c := range rows {
+		fmt.Fprintf(out, "| %s | %s | %s | %s | %s | %s |", escape(c.key),
+			duration(c.base.time), duration(c.head.time), c.time, c.bytes, c.allocs)
+		if detailed {
+			fmt.Fprintf(out, " %d/%d | %s / %s / %s |", len(c.base.time), len(c.head.time), adjustedP(c.time), adjustedP(c.bytes), adjustedP(c.allocs))
+		}
+		out.WriteByte('\n')
+	}
+}
+
+func adjustedP(d delta) string {
+	if !d.ok {
+		return "—"
+	}
+	return fmt.Sprintf("%.3g", d.adjustedP)
 }
 
 func plural(n int, word string) string {
@@ -263,7 +296,6 @@ func report(baseReader, headReader io.Reader, out io.Writer) error {
 	var all, notable []comparison
 	var added, removed []string
 	var timeChanges []float64
-	regressions := 0
 	for _, key := range keys {
 		before, after := base[key], head[key]
 		c := comparison{key: key, base: before, head: after,
@@ -277,25 +309,35 @@ func report(baseReader, headReader io.Reader, out io.Writer) error {
 		default:
 			timeChanges = append(timeChanges, c.time.pct)
 		}
+	}
+	comparisons := adjustPValues(all)
+	increases, decreases := 0, 0
+	for _, c := range all {
 		if c.notable() {
 			notable = append(notable, c)
-			if c.regression() {
-				regressions++
+		}
+		for _, d := range c.deltas() {
+			if d.notable() {
+				if d.pct > 0 {
+					increases++
+				} else {
+					decreases++
+				}
 			}
 		}
 	}
 	slices.SortStableFunc(notable, func(x, y comparison) int { return compareFloat(y.time.pct, x.time.pct) })
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "**%s, %s** of %d compared benchmarks (≥%.0f%% change, p<%.2f)",
-		plural(regressions, "regression"), plural(len(notable)-regressions, "improvement"), len(timeChanges), threshold, alpha)
+	fmt.Fprintf(&b, "**%s, %s** across %s",
+		plural(increases, "notable increase"), plural(decreases, "notable decrease"), plural(len(timeChanges), "compared benchmark"))
 	if len(timeChanges) > 0 {
 		fmt.Fprintf(&b, " · median time change %+.1f%%", median(timeChanges))
 	}
-	b.WriteString("\n\n")
+	b.WriteString("\nObserved differences; runner conditions may explain them.\n\n")
 	if len(notable) > 0 {
 		b.WriteString("### Notable changes\n\n")
-		writeTable(&b, notable)
+		writeTable(&b, notable, false)
 		b.WriteString("\n")
 	}
 	if len(added) > 0 {
@@ -305,9 +347,11 @@ func report(baseReader, headReader io.Reader, out io.Writer) error {
 		fmt.Fprintf(&b, "**Removed:** %s\n\n", strings.Join(removed, ", "))
 	}
 	fmt.Fprintf(&b, "<details><summary>All %d benchmarks</summary>\n\n", len(all))
-	writeTable(&b, all)
-	b.WriteString("\n</details>\n\n")
-	fmt.Fprintf(&b, "Times are medians. Changes compare base and head medians; `~` means no significant change (Mann-Whitney U, p≥%.2f, or under 0.05%%). Bold changes are notable. A uniform median time change across all benchmarks usually indicates runner noise rather than a code change.\n", alpha)
+	writeTable(&b, all, true)
+	b.WriteByte('\n')
+	fmt.Fprintf(&b, "Times are medians. Highlights require ≥10%% change and Holm-adjusted p<0.05 across %d comparisons (time, bytes, allocations). `~` means insufficient evidence of a difference or a change below 0.05%%; it does not prove unchanged performance. Small samples can limit detection. Statistical differences do not establish that the PR caused a change.\n", comparisons)
+	b.WriteByte('\n')
+	b.WriteString("</details>\n\n")
 	_, err = io.WriteString(out, b.String())
 	return err
 }

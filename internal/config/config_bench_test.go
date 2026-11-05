@@ -20,7 +20,7 @@ func BenchmarkValidateHarnessTargets(b *testing.B) {
 	}
 
 	cfg := Config{
-		APIVersion: APIVersionV2,
+		APIVersion: APIVersionV4,
 		Harnesses:  append([]string(nil), compilerNames...),
 		Registries: make([]RegistryEntry, 20),
 	}
@@ -62,7 +62,7 @@ func BenchmarkMergeLayersLargeConfig(b *testing.B) {
 			layers := make([]Layer, c.numLayers)
 			for l := 0; l < c.numLayers; l++ {
 				cfg := &Config{
-					APIVersion: APIVersionV2,
+					APIVersion: APIVersionV4,
 					Harnesses:  []string{"factory", "cursor"},
 				}
 				for e := 0; e < c.perLayer; e++ {
@@ -103,16 +103,13 @@ func BenchmarkLoadConfigFromPathLargeYAML(b *testing.B) {
 			configPath := filepath.Join(dir, "config.yaml")
 
 			var yaml string
-			yaml = "apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\n  - cursor\nregistries:\n"
+			yaml = "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\n  - cursor\nsources:\n"
 			for e := 0; e < c.entries; e++ {
-				yaml += fmt.Sprintf(`  - url: "git@example.com:reg-%03d.git"
-    ref: main
-    skills:
-      include:
-        - skill-%03d
-    tags:
-      - tag-%d
-`, e, e, e%5)
+				yaml += fmt.Sprintf("  reg-%03d: {git: \"git@example.com:reg-%03d.git\", ref: main}\n", e, e)
+			}
+			yaml += "resources:\n"
+			for e := 0; e < c.entries; e++ {
+				yaml += fmt.Sprintf("  reg-%03d:\n    include: [skill/skill-%03d]\n    tags: [tag-%d]\n", e, e, e%5)
 			}
 			if err := os.WriteFile(configPath, []byte(yaml), 0o644); err != nil {
 				b.Fatal(err)
@@ -121,7 +118,10 @@ func BenchmarkLoadConfigFromPathLargeYAML(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_, _ = LoadConfigFromPath(configPath)
+				cfg, err := LoadConfigFromPath(configPath)
+				if err != nil || cfg == nil || len(cfg.Registries) != c.entries {
+					b.Fatalf("load %d entries: config=%#v, err=%v", c.entries, cfg, err)
+				}
 			}
 		})
 	}
@@ -199,7 +199,7 @@ func chdirToRepoRootFixture(b *testing.B) {
 	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
 		b.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(agentsDir, "config.yaml"), []byte("apiVersion: agent-marketplace/v2\nharnesses: [factory]\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(agentsDir, "config.yaml"), []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\n"), 0o644); err != nil {
 		b.Fatal(err)
 	}
 	subDir := filepath.Join(dir, "src", "internal", "resolver")
@@ -214,8 +214,10 @@ func chdirToRepoRootFixture(b *testing.B) {
 	})
 }
 
-// BenchmarkEditorAddRemoveLargeYAML measures the cost of config editor
-// operations on large YAML files.
+// BenchmarkEditorAddRemoveLargeYAML measures v4 source-bound exclusion and
+// include removal on large YAML files. Timed work includes the editor's disk
+// reads and candidate validation, but excludes fixture resets and publication;
+// no network requests occur.
 func BenchmarkEditorAddRemoveLargeYAML(b *testing.B) {
 	cases := []struct {
 		name    string
@@ -228,14 +230,13 @@ func BenchmarkEditorAddRemoveLargeYAML(b *testing.B) {
 	for _, c := range cases {
 		b.Run(c.name, func(b *testing.B) {
 			var yaml string
-			yaml = "apiVersion: agent-marketplace/v2\nharnesses:\n  - factory\n  - cursor\nregistries:\n"
+			yaml = "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\n  - cursor\nsources:\n"
 			for e := 0; e < c.entries; e++ {
-				yaml += fmt.Sprintf(`  - url: "git@example.com:reg-%03d.git"
-    ref: main
-    skills:
-      include:
-        - skill-%03d
-`, e, e)
+				yaml += fmt.Sprintf("  reg-%03d: {git: \"git@example.com:reg-%03d.git\", ref: main}\n", e, e)
+			}
+			yaml += "resources:\n"
+			for e := 0; e < c.entries; e++ {
+				yaml += fmt.Sprintf("  reg-%03d: [skill/skill-%03d]\n", e, e)
 			}
 			baseYAML := []byte(yaml)
 			configPath := filepath.Join(b.TempDir(), "config.yaml")
@@ -253,14 +254,18 @@ func BenchmarkEditorAddRemoveLargeYAML(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				if err := editor.SetUnboundExclude(ResourceLocator{Kind: ir.KindSkill, Name: "skill-000"}); err != nil {
-					b.Fatal(err)
+				for index, operation := range []SelectionOperation{SelectionExclude, SelectionRemoveInclude} {
+					binding, found, err := editor.LookupRegistry(RegistryEntry{URL: fmt.Sprintf("git@example.com:reg-%03d.git", index), Ref: "main"})
+					if err != nil || !found {
+						b.Fatalf("lookup existing source %d: found=%v, err=%v", index, found, err)
+					}
+					if err := editor.Apply(binding, SelectionChange{Operation: operation, Locators: []ResourceLocator{{Kind: ir.KindSkill, Name: fmt.Sprintf("skill-%03d", index)}}}); err != nil {
+						b.Fatal(err)
+					}
 				}
-				if err := editor.RemoveUnboundInclude(ResourceLocator{Kind: ir.KindSkill, Name: "skill-001"}); err != nil {
-					b.Fatal(err)
-				}
-				if _, err := editor.Render(); err != nil {
-					b.Fatal(err)
+				candidate, err := editor.Render()
+				if err != nil || !candidate.Changed {
+					b.Fatalf("render edited config: changed=%v, err=%v", candidate.Changed, err)
 				}
 			}
 		})
