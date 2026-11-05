@@ -6,6 +6,10 @@ who want to share a plugin with a harness or catalog that reads Agent Plugins
 1.0.0 have no way to produce one, and nothing tells them what such a package
 would lose.
 
+## Release note
+
+`export plugin/<name> --format agent-plugin --out <dir>` writes a locked plugin as an Agent Plugins package. It refuses when anything would be lost, unless `--allow-loss` is given, which lists what was omitted and never drops a security restriction.
+
 ## What Changes
 
 - A new `export plugin/<name> --format <format> --out <dir>` command writes a
