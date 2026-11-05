@@ -99,7 +99,7 @@ func TestServeWorkerReconcilesRuntimeConfiguration(t *testing.T) {
 	}
 
 	candidate = cloneWorkerRuntimeConfig(t, source.Current().Config)
-	candidate.Refresh.Interval = config.Duration(45 * time.Minute)
+	candidate.Refresh.Interval = config.Duration(30 * 24 * time.Hour)
 	writeWorkerRuntimeConfig(t, path, candidate)
 	awaitWorkerCondition(t, func() bool { return source.Current().Version == 2 })
 	beforeIntervalObservation, err := f.meta.GetRegistryObservation(f.ctx, registryID)
@@ -116,7 +116,7 @@ func TestServeWorkerReconcilesRuntimeConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !afterIntervalObservation.NextProbeAt.After(time.Now()) ||
-		afterIntervalObservation.NextProbeAt.After(time.Now().Add(45*time.Minute)) ||
+		afterIntervalObservation.NextProbeAt.After(time.Now().Add(30*24*time.Hour)) ||
 		f.counts.clones.Load() != initialClones || len(f.requests()) != initialRequests {
 		t.Fatalf("refresh interval change requested work or scheduled outside interval: observation=%+v clones=%d requests=%d",
 			afterIntervalObservation, f.counts.clones.Load(), len(f.requests()))
@@ -192,6 +192,7 @@ func TestServeWorkerReconcilesRuntimeConfiguration(t *testing.T) {
 	}
 	resourcesBeforeRemoval := registryResourceState(t, f)
 	candidate = cloneWorkerRuntimeConfig(t, source.Current().Config)
+	readdedRegistry := candidate.Registries[0]
 	candidate.Registries = candidate.Registries[1:]
 	clonesBeforeRemoval := f.counts.clones.Load()
 	writeWorkerRuntimeConfig(t, path, candidate)
@@ -211,11 +212,28 @@ func TestServeWorkerReconcilesRuntimeConfiguration(t *testing.T) {
 	setRuntimeObservationDue(t, f, registryID)
 	awaitWorkerCondition(t, func() bool {
 		observation, err := f.meta.GetRegistryObservation(f.ctx, registryID)
-		return err == nil && observation.NextProbeAt.After(time.Now())
+		return err == nil && observation.NextProbeAt.After(time.Now().Add(time.Minute))
 	})
 	if f.counts.clones.Load() != clonesBeforeRemoval {
 		t.Fatalf("removed registry was refreshed: clones=%d, want %d", f.counts.clones.Load(), clonesBeforeRemoval)
 	}
+
+	beforeReaddObservation, err := f.meta.GetRegistryObservation(f.ctx, registryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate = cloneWorkerRuntimeConfig(t, source.Current().Config)
+	candidate.Registries = append(candidate.Registries, readdedRegistry)
+	writeWorkerRuntimeConfig(t, path, candidate)
+	awaitWorkerCondition(t, func() bool { return source.Current().Version == 6 })
+	readded, err := f.meta.GetRegistry(f.ctx, registryID)
+	if err != nil || !readded.Listed {
+		t.Fatalf("re-added registry = %+v, %v", readded, err)
+	}
+	awaitWorkerCondition(t, func() bool {
+		observation, err := f.meta.GetRegistryObservation(f.ctx, registryID)
+		return err == nil && observation.ObservedAt.After(beforeReaddObservation.ObservedAt)
+	})
 
 	updateRuntimeObservation(t, f, addedID, func(observation *store.RegistryObservation) {
 		observation.SuccessfulGeneration = "startup-v1:previous"

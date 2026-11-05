@@ -337,7 +337,9 @@ func (o *observer) applyRuntimeConfiguration(ctx context.Context, candidate conf
 		if err != nil {
 			return err
 		}
-		changes = append(changes, store.RegistryConfigurationChange{Registry: registry})
+		changes = append(changes, store.RegistryConfigurationChange{
+			Registry: registry, DueAt: time.Now().UTC(),
+		})
 	}
 	for _, id := range classification.IndexingChanged {
 		src, _ := registryByID(candidate, id)
