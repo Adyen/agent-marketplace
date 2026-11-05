@@ -9,3 +9,7 @@ target harness list appears late because it waits for catalog acquisition.
   requested operation; the confirmation remains for pending or running work.
 - The configuration snapshot stage reports the configured target harnesses as
   soon as the configuration layers validate, before acquisition finishes.
+
+## Release note
+
+none — refines the desktop app before its first release, which is announced with the desktop app.

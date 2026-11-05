@@ -25,3 +25,7 @@ People who do not use a terminal need a local desktop client with the same core 
 ## Impact
 
 The desktop host and frontend, interactive-session core and local API, user configuration and initialization paths, strict CLI configuration readers, admin documentation/release notes, telemetry attributes, and `tools/specaudit` governance checks are affected. This is the application layer after `gui-local-api`; rollout compatibility and CLI-equivalence details are in design.md.
+
+## Release note
+
+Adds the agent-marketplace desktop app for people who prefer not to use a terminal: guided first-run setup, resource browsing and inspection, install, remove, sync, and update, all on the user-personal configuration the CLI already uses. Organization values stay read-only, and administrators can turn off the app's public release check with the organization-only `gui.version_check` setting.
