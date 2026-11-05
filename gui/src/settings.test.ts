@@ -479,6 +479,7 @@ describe('tabbed Settings window', () => {
     expect(document.querySelector('#settings-tab-sources')?.getAttribute('aria-selected')).toBe('true')
   })
 
+  // spec: gui-shell/all-actions-are-keyboard-reachable-and-named
   it('moves between tabs with the arrow and Home/End keys', async () => {
     const { client, push } = settingsClient()
     const { wrapper } = mountWorkspace(client)
@@ -492,15 +493,19 @@ describe('tabbed Settings window', () => {
     tab('general').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
     await tick()
     expect(selected()).toBe('settings-tab-targets')
+    expect(document.activeElement).toBe(tab('targets'))
     tab('targets').dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }))
     await tick()
     expect(selected()).toBe('settings-tab-sources')
+    expect(document.activeElement).toBe(tab('sources'))
     tab('sources').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
     await tick()
     expect(selected()).toBe('settings-tab-general')
+    expect(document.activeElement).toBe(tab('general'))
     tab('general').dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))
     await tick()
     expect(selected()).toBe('settings-tab-general')
+    expect(document.activeElement).toBe(tab('general'))
   })
 
   it('keeps the target draft across tab switches, reverts it, and keeps the window open after Save', async () => {

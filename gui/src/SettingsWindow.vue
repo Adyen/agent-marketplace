@@ -114,9 +114,9 @@ function onTabKey(event: KeyboardEvent, index: number) {
     return
   }
   event.preventDefault()
+  const list = (event.currentTarget as HTMLElement).parentElement
   selectTab(tabs[next].id)
   void nextTick(() => {
-    const list = (event.currentTarget as HTMLElement).parentElement
     list?.querySelectorAll<HTMLElement>('[role="tab"]')[next]?.focus()
   })
 }
