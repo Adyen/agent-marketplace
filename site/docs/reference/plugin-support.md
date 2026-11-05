@@ -14,5 +14,6 @@ Decomposed delivery installs a plugin's members as ordinary resources. Native de
 | `devin` | claude-plugin, agent-plugin | `verified` | `unverified` | 2026-10-15 |
 | `factory` | factory-plugin, claude-plugin | `verified` | `unverified` | 2026-10-15 |
 | `gemini` | none | `verified` | `unverified` | 2026-10-15 |
+| `opencode` | none | `verified` | `unverified` | 2026-10-18 |
 | `windsurf` | claude-plugin, agent-plugin | `verified` | `unverified` | 2026-10-15 |
 
