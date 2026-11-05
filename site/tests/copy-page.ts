@@ -42,6 +42,5 @@ export async function assertCopyPageView(
   const normalizedBase = base.endsWith('/') ? base : `${base}/`
   const markdownRoute = route.replace(/\.html$/, '.md')
   assert.equal(url.pathname, `${normalizedBase}${markdownRoute}`, `${page} View as Markdown href`)
-  assert.ok(url.pathname.startsWith(normalizedBase), `${page} View as Markdown href should stay under ${normalizedBase}`)
   await access(new URL(decodeURIComponent(url.pathname.slice(normalizedBase.length)), outputRoot))
 }

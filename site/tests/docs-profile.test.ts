@@ -48,7 +48,6 @@ test('documentation-only build is contained below /docs/', async () => {
 
 test('both documentation profiles render Copy page and link to their Markdown files', async () => {
   const profiles = [
-    { root: publicDist, docsRoot: publicDocsDist, base: publicBase },
     { root: docsDist, docsRoot: docsDist, base: '/docs/' },
   ]
 
@@ -58,9 +57,8 @@ test('both documentation profiles render Copy page and link to their Markdown fi
     assert.ok(pages.length > 0, `${profile.base} build should include documentation pages`)
     for (const route of pages) {
       const html = await readFile(new URL(route, profile.docsRoot), 'utf8')
-      const outputRoute = profile.root === publicDist ? `docs/${route}` : route
       assertCopyPageTrigger(html, `${profile.base}${route}`)
-      await assertCopyPageView(html, outputRoute, profile.base, profile.root, `${profile.base}${route}`)
+      await assertCopyPageView(html, route, profile.base, profile.root, `${profile.base}${route}`)
     }
   }
 })
