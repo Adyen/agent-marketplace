@@ -70,7 +70,7 @@ func TestRequiresSectionMarksEachPrerequisiteState(t *testing.T) {
 			Requirement: catalog.Requirement{Kind: ir.KindSkill, Name: "unmet-dep"}, Reason: resolver.UnmetReasonNotFound},
 	}
 	rows := []row{parent}
-	annotatePrerequisiteRows(rows, resolved, preview, errs)
+	annotatePrerequisiteRows(rows, resolved, preview, errs, false)
 
 	out := detailText(t, rows[0])
 	requireLine(t, out, "Requires:")
@@ -130,7 +130,7 @@ func TestImpliedRowShowsRequiredBySection(t *testing.T) {
 func TestResourcesWithoutRelationshipsShowNoPrerequisiteSections(t *testing.T) {
 	plain := mkRow("plain")
 	rows := []row{plain}
-	annotatePrerequisiteRows(rows, []resolver.ResolvedArtifact{plain.Artifact}, nil, nil)
+	annotatePrerequisiteRows(rows, []resolver.ResolvedArtifact{plain.Artifact}, nil, nil, false)
 	out := detailText(t, rows[0])
 	if strings.Contains(out, "Requires:") || strings.Contains(out, "Required by:") {
 		t.Fatalf("unrelated resource must not render prerequisite sections:\n%s", out)
@@ -140,7 +140,7 @@ func TestResourcesWithoutRelationshipsShowNoPrerequisiteSections(t *testing.T) {
 	// existing diagnostic elsewhere, and produce no Requires section.
 	bad := requiringRow("bad", 123, map[string]any{"kind": "bogus", "name": "x"})
 	rows = []row{bad}
-	annotatePrerequisiteRows(rows, []resolver.ResolvedArtifact{bad.Artifact}, nil, nil)
+	annotatePrerequisiteRows(rows, []resolver.ResolvedArtifact{bad.Artifact}, nil, nil, false)
 	out = detailText(t, rows[0])
 	if strings.Contains(out, "Requires:") || strings.Contains(out, "Required by:") {
 		t.Fatalf("malformed declarations must not render prerequisite sections:\n%s", out)
@@ -152,7 +152,7 @@ func TestPrerequisiteTextEscapedAndRedacted(t *testing.T) {
 	evil := requiringRow("evil",
 		map[string]any{"kind": "skill", "name": "dep\x1b[31mX\x07", "registry": "https://user:secret@example.com/r.git"})
 	rows := []row{evil}
-	annotatePrerequisiteRows(rows, []resolver.ResolvedArtifact{evil.Artifact}, nil, nil)
+	annotatePrerequisiteRows(rows, []resolver.ResolvedArtifact{evil.Artifact}, nil, nil, false)
 
 	raw := renderDetail(func() Model {
 		m := modelWithSelectedRow(t, rows[0])
@@ -204,7 +204,7 @@ func TestImpliedAndUnmetRowsAreMarked(t *testing.T) {
 	annotatePrerequisiteRows(rows, []resolver.ResolvedArtifact{requirer.Artifact}, nil, []error{
 		&resolver.UnmetRequirementWarning{ResourceKind: ir.KindSkill, ResourceName: "requirer",
 			Requirement: catalog.Requirement{Kind: ir.KindSkill, Name: "missing-dep"}, Reason: resolver.UnmetReasonNotFound},
-	})
+	}, false)
 	if out := flatRowText(rows[0]); !strings.Contains(out, "⚠") {
 		t.Fatalf("requiring row must carry a warning marker:\n%s", out)
 	}
@@ -220,7 +220,7 @@ func TestUnrecordedPrerequisiteInPreviewStaysUnmet(t *testing.T) {
 	annotatePrerequisiteRows(rows, []resolver.ResolvedArtifact{requirer.Artifact}, preview, []error{
 		&resolver.UnmetRequirementWarning{ResourceKind: ir.KindSkill, ResourceName: "requirer",
 			Requirement: catalog.Requirement{Kind: ir.KindSkill, Name: "lookup-dep"}, Reason: resolver.UnmetReasonUnrecorded},
-	})
+	}, true)
 	if out := flatRowText(rows[0]); !strings.Contains(out, "⚠") {
 		t.Fatalf("unrecorded prerequisite must mark its requirer:\n%s", out)
 	}
@@ -229,6 +229,37 @@ func TestUnrecordedPrerequisiteInPreviewStaysUnmet(t *testing.T) {
 	if strings.Contains(out, `preview skill "lookup-dep"`) {
 		t.Fatalf("unrecorded prerequisite must not render as preview:\n%s", out)
 	}
+}
+
+// spec: tui-rendering/requires-section-marks-each-prerequisite-state
+func TestEnabledExpansionPreviewDoesNotMaskAnotherRequirer(t *testing.T) {
+	gitRequirer := requiringRow("git-requirer", "skill:shared-dep")
+	rows := []row{gitRequirer}
+	preview := []resolver.ResolvedArtifact{
+		{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared-dep"}, Implied: true, PreviewOnly: true},
+	}
+	annotatePrerequisiteRows(rows, []resolver.ResolvedArtifact{gitRequirer.Artifact}, preview, []error{
+		&resolver.UnmetRequirementWarning{ResourceKind: ir.KindSkill, ResourceName: "git-requirer",
+			Requirement: catalog.Requirement{Kind: ir.KindSkill, Name: "shared-dep"}, Reason: resolver.UnmetReasonNotFound},
+	}, true)
+	if out := flatRowText(rows[0]); !strings.Contains(out, "⚠") {
+		t.Fatalf("another requirer's preview must not hide this row's unmet warning:\n%s", out)
+	}
+	requireLine(t, detailText(t, rows[0]), `unmet skill "shared-dep"`)
+}
+
+// spec: tui-rendering/requires-section-marks-each-prerequisite-state
+func TestAdvisoryPreviewDoesNotMaskExclusion(t *testing.T) {
+	requirer := requiringRow("requirer", "skill:shared-dep")
+	rows := []row{requirer}
+	preview := []resolver.ResolvedArtifact{
+		{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared-dep"}, Implied: true},
+	}
+	annotatePrerequisiteRows(rows, []resolver.ResolvedArtifact{requirer.Artifact}, preview, []error{
+		&resolver.UnmetRequirementWarning{ResourceKind: ir.KindSkill, ResourceName: "requirer",
+			Requirement: catalog.Requirement{Kind: ir.KindSkill, Name: "shared-dep"}, Reason: resolver.UnmetReasonExcluded},
+	}, false)
+	requireLine(t, detailText(t, rows[0]), `excluded skill "shared-dep"`)
 }
 
 // spec: tui-rendering/preview-only-and-unrelated-rows-are-not-marked
@@ -242,7 +273,7 @@ func TestPreviewOnlyAndUnrelatedRowsAreNotMarked(t *testing.T) {
 
 	plain := mkRow("plain")
 	rows := []row{plain}
-	annotatePrerequisiteRows(rows, []resolver.ResolvedArtifact{plain.Artifact}, nil, nil)
+	annotatePrerequisiteRows(rows, []resolver.ResolvedArtifact{plain.Artifact}, nil, nil, false)
 	got := flatRowText(rows[0])
 	want := flatRowText(plain)
 	if got != want {

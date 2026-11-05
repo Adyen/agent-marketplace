@@ -419,7 +419,7 @@ func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir stri
 			// materialization dry run: rows are navigable and config-only toggles are
 			// eligible while drift stays explicitly pending.
 			inventoryRows = buildRows(resolved.LoadedCfg, resolved.CatalogLoad.Catalogs, resolved.DisplayArtifacts(), resolved.LocalCfg, materialize.DriftReport{}, harnessDefaultsBySource(resolved.GlobalCfg, resolved.RepoCfg))
-			annotatePrerequisiteRows(inventoryRows, resolved.Resolved, resolved.ImpliedPreview, resolved.ResolveErrors)
+			annotatePrerequisiteRows(inventoryRows, resolved.Resolved, resolved.ImpliedPreview, resolved.ResolveErrors, resolved.MergedCfg != nil && resolved.MergedCfg.RequiresExpansionEnabled())
 			inventoryRows = appendUnavailableSelectionRows(inventoryRows, recoveryCfg, resolved.LocalCfg, resolved.ResolveErrors, resolved.CatalogLoad.Catalogs)
 			unavailable = rowsHaveUnavailable(inventoryRows)
 			inventory := makeBase(result)

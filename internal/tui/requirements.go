@@ -73,7 +73,7 @@ func requirementHint(req catalog.Requirement) string {
 // carry no prerequisite state. Satisfaction is by kind and name, matching the
 // resolver's own rule; unmet reasons come from the typed warnings the
 // resolver emitted for this resolution.
-func annotatePrerequisiteRows(rows []row, resolved []resolver.ResolvedArtifact, preview []resolver.ResolvedArtifact, errs []error) {
+func annotatePrerequisiteRows(rows []row, resolved []resolver.ResolvedArtifact, preview []resolver.ResolvedArtifact, errs []error, expansion bool) {
 	selected := make(map[string]bool, len(resolved)) // key → implied
 	for _, a := range resolved {
 		key := prerequisiteKey(a.Kind, a.Name)
@@ -121,10 +121,9 @@ func annotatePrerequisiteRows(rows []row, resolved []resolver.ResolvedArtifact, 
 				if implied {
 					entry.state = prerequisiteImplied
 				}
-			} else if _, ok := previewed[key]; ok && unmet[requirer][key] != resolver.UnmetReasonUnrecorded {
-				// Disabled expansion also warns about every previewed
-				// prerequisite; only enabled expansion reports a previewed
-				// live-lookup prerequisite as unrecorded, which stays unmet.
+			} else if _, ok := previewed[key]; ok && !expansion && unmet[requirer][key] != resolver.UnmetReasonExcluded {
+				// A preview is advisory only. It cannot satisfy a requirement
+				// under enabled expansion or override an explicit exclusion.
 				entry.state = prerequisitePreview
 			} else if reason, isUnmet := unmet[requirer][key]; isUnmet {
 				entry.state = prerequisiteUnmet

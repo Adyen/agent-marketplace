@@ -124,6 +124,15 @@ journey.test("prerequisite sections, markers, and toggle feedback", async (termi
     await locate(terminal, /unmet\s+skill\s+"child-skill"/).expect({ not: true });
   });
 
+  await step("advisory exclusion remains excluded rather than preview", async () => {
+    fs.appendFileSync(repoConfig, "    exclude:\n      - skill/child-skill\n");
+    await terminal.write("r");
+  }, async () => {
+    await locate(terminal, /excluded\s+skill\s+"child-skill"/).expect();
+    await locate(terminal, /preview\s+skill\s+"child-skill"/).expect({ not: true });
+    await locate(terminal, /parent-skill\s+⚠/).expect();
+  });
+
   await step("quit", async () => {
     await terminal.write("q");
     await locate(terminal, /Sync\+quit\?/).expect();
