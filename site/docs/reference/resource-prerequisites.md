@@ -215,8 +215,8 @@ prerequisites or resulting unmet warnings in the footer. See the
 ## Exit status
 
 `install`, `sync`, `sync --check`, `status`, and `doctor` exit with status 0
-when unmet prerequisites are the only findings. `sync --strict`: including
-`sync --strict --check`: still prints the advisory warning and remediation,
+when unmet prerequisites are the only findings. `sync --strict` (including
+`sync --strict --check`) still prints the advisory warning and remediation,
 but exits nonzero so CI can enforce declared prerequisites. Strict mode changes
 only the exit status; whether a prerequisite is selected depends solely on
 [requirement expansion](#requirement-expansion).

@@ -292,3 +292,29 @@ func TestCheckSyncToleratesExistingPreviewOutputs(t *testing.T) {
 	requireIdenticalBytes(t, lockPath, lockBytes, "acquisition lock")
 	requireIdenticalBytes(t, childOutput, childBytes, "preview output")
 }
+
+func TestListToleratesExistingPreviewOutputs(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	t.Setenv("HOME", t.TempDir())
+
+	_, lockPath, childOutput, lockBytes := requiresPreviewFixture(t)
+	childBytes, err := os.ReadFile(childOutput)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := executeCommand("list")
+	if err != nil {
+		t.Fatalf("list failed: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "out of sync") {
+		t.Fatalf("list reported drift solely from preview outputs:\n%s", out)
+	}
+	if !strings.Contains(out, "parent") {
+		t.Fatalf("list omitted the selected resource:\n%s", out)
+	}
+	requireIdenticalBytes(t, lockPath, lockBytes, "acquisition lock")
+	requireIdenticalBytes(t, childOutput, childBytes, "preview output")
+}

@@ -510,6 +510,13 @@ func ToggleMarketplacePin(ctx context.Context, repoRoot, localConfigDir, configP
 			pin.SelectedBy = ""
 			return m.IncludePins(entry, []config.MarketplaceResourcePin{pin})
 		}
+		if pin.RequiresHeld() {
+			ec := LoadEffective(ctx, ConfigLoadCached, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: localConfigDir}, nil)
+			if len(ec.Errors) > 0 {
+				return errors.Join(ec.Errors...)
+			}
+			return m.RemoveRequiresHeldPin(entry, pin, ec.Merged.RequiresExpansionEnabled())
+		}
 		return m.RemoveDirectPin(entry, pin)
 	}, func() ([]error, error) {
 		var syncErr error
