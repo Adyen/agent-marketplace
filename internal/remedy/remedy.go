@@ -56,12 +56,19 @@ func For(err error, command string) string {
 	if err == nil {
 		return ""
 	}
+	code := firstCode(err)
+	ctx := contextFrom(err)
+	if ctx.Scope == "organization" && strings.HasPrefix(code, "organization.trust.") && strings.Contains(code, ".lock.") {
+		if hint := catalog[code]; hint != nil {
+			return hint(ctx)
+		}
+	}
 	if hint := firstRemediation(err); hint != "" {
 		return hint
 	}
-	if code := firstCode(err); code != "" {
+	if code != "" {
 		if hint := catalog[code]; hint != nil {
-			return hint(contextFrom(err))
+			return hint(ctx)
 		}
 	}
 	return fallback(command)
@@ -462,6 +469,9 @@ var catalog = map[string]hintFunc{
 	"v4.locator":                   configurationHint("Use a supported resource locator in the v4 configuration"),
 	"v4.marketplace-lock-mismatch": marketplaceLockMismatchHint,
 	"v4.marketplace-lock-required": func(ctx hintContext) string {
+		if ctx.Scope == "organization" && ctx.Variant == "lock-absent" {
+			return "This organization deploys no acquisition lock, so `--locked`, `--offline`, and `lock --check` cannot verify its Marketplace resources; run `agent-marketplace sync` or `agent-marketplace sync --check` while online to verify them."
+		}
 		return marketplaceBootstrapHint(ctx.Scope, ctx.Locator, ctx.LockFile)
 	},
 	"v4.marketplace-runtime-unsupported": configurationHint("Change the Marketplace selection to use supported explicit resource requests"),
