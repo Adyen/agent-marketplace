@@ -209,6 +209,8 @@ Validation rules by kind:
 
 A `directory` source names the folder to read directly; a subfolder is selected through `directory`, not `path`.
 
+The [plugins and package formats explanation](../explanation/plugins-and-package-formats.md) covers what `format` changes about discovery, selection, and delivery, and [Install a plugin](../how-to/install-plugins.md) walks through the workflow.
+
 In the repository `.agents/config.yaml` and `.agents/config.local.yaml`, `directory: .` selects the repository root and `directory: ./resources/skills` selects `<repo>/resources/skills`. User and organization files, included fragments, and files outside that layout resolve relative paths from their own directory. Relative paths, including through symlinks, must stay inside that base directory. Absolute paths are used as written. Earlier v4 releases resolved repository-root declarations from `.agents/`; a source stored under `.agents/` needs an explicit `./.agents/` prefix.
 
 Two source names may point at the same URL, ref, and path. They stay separate in configuration, and the CLI fetches the content once.
