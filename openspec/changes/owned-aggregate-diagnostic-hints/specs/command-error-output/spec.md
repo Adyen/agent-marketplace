@@ -67,8 +67,8 @@ Agent Marketplace MUST follow every error printed by a CLI command, and every er
 #### Scenario: Owned aggregate diagnostics print their code guidance
 
 - **WHEN** `sync` reports a warning or error while reconciling an owned harness aggregate file, such as `ownership.state-missing` and `materialize.devin.aggregate-shape` for a hand-written Devin hooks file whose entry does not match its declared hook shape
-- **THEN** each reported diagnostic's remediation line MUST be the guidance for its code
-- **AND** the `hint:` line after the failed command's error MUST be the guidance for that error's code, not the generic `sync --check` next step
+- **THEN** each reported warning's remediation line MUST be the guidance for its code
+- **AND** the `hint:` line after the failed command's error MUST be the guidance for that error's code, printed once, not the generic `sync --check` next step
 
 #### Scenario: Issues without remediation print no empty remediation line
 

@@ -6,7 +6,7 @@ Diagnostics that Agent Marketplace reports while reconciling owned aggregate fil
 
 ## What Changes
 
-- Owned-aggregate diagnostics carry the catalogued hint for their stable code, so `sync` prints that guidance as the remediation line and as the `hint:` line.
+- Owned-aggregate diagnostics carry the catalogued hint for their stable code, so `sync` prints that guidance as a warning's remediation line and as a failed command's `hint:` line.
 - Warning and error output never prints an empty remediation line when an issue has no remediation.
 - Every code reported through the owned-aggregate path has code-specific guidance, enforced by a test.
 - No diagnostic code, severity, message text, exit status, or hint layout changes.
