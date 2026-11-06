@@ -172,6 +172,7 @@ export function docsSidebar(docsPath: string): DefaultTheme.SidebarItem[] {
             { text: 'Resource metadata', link: `${docsPath}reference/resource-metadata` },
             { text: 'Resource prerequisites', link: `${docsPath}reference/resource-prerequisites` },
             { text: 'Collections', link: `${docsPath}reference/collections` },
+            { text: 'Plugin support', link: `${docsPath}reference/plugin-support` },
             { text: 'Hook and tool names', link: `${docsPath}reference/hook-and-tool-names` }
           ]
         },

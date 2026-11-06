@@ -35,6 +35,47 @@ func TestGeneratedReferenceIsCurrent(t *testing.T) {
 	}
 }
 
+// spec: plugin-policy-catalogs/stale-plugin-support-reference-fails-the-check
+func TestPluginSupportReferenceIsCurrent(t *testing.T) {
+	chdirRoot(t)
+	doc, err := generatePluginSupport()
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := os.ReadFile(pluginDocPath)
+	if err != nil {
+		t.Fatalf("%s is missing: run make catalog-docs", pluginDocPath)
+	}
+	if string(current) != string(doc) {
+		t.Fatalf("%s is stale: run make catalog-docs", pluginDocPath)
+	}
+}
+
+// spec: plugin-policy-catalogs/stale-plugin-support-reference-fails-the-check
+func TestPluginSupportCheckFailsOnStaleDocument(t *testing.T) {
+	chdirRoot(t)
+	doc, err := generatePluginSupport()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	stalePath := filepath.Join(dir, "plugin-support.md")
+	stale := strings.Replace(string(doc), "# Plugin support", "# Stale plugin support", 1)
+	if stale == string(doc) {
+		t.Fatal("generated document lacks the expected title")
+	}
+	if err := os.WriteFile(stalePath, []byte(stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err = checkFresh(doc, stalePath)
+	if err == nil {
+		t.Fatal("check path accepted a stale plugin support document")
+	}
+	if !strings.Contains(err.Error(), stalePath) {
+		t.Fatalf("check error must name the stale document, got %v", err)
+	}
+}
+
 // TestCheckFailsOnStaleDocument drives the same check path the `-check` gate
 // runs, against a stale document and a fresh copy, so the regression proves
 // the check is non-vacuous in both directions.
