@@ -288,3 +288,16 @@ func TestVerifiedNativeDeliveryForUnacceptedFormatFails(t *testing.T) {
 		})
 	}
 }
+
+func TestNativeRefreshPolicyIsClosedEnum(t *testing.T) {
+	verified := strings.Replace(validHarness,
+		"native: {status: unverified}",
+		"native: {status: verified, format: claude-plugin, probe: probe-x, refresh: restart-required}", 1)
+	if err := loadAll(t, validFormat, verified, []string{"probe-x"}); err != nil {
+		t.Fatalf("valid restart-required refresh policy rejected: %v", err)
+	}
+	invalid := strings.Replace(verified, "refresh: restart-required", "refresh: later", 1)
+	if err := loadAll(t, validFormat, invalid, []string{"probe-x"}); err == nil || !strings.Contains(err.Error(), "refresh") {
+		t.Fatalf("invalid refresh policy accepted or omitted refresh context: %v", err)
+	}
+}

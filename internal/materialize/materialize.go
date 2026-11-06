@@ -724,16 +724,18 @@ type compilePhaseResult struct {
 }
 
 type pluginInstancePlan struct {
-	key          outputKey
-	ref          ownership.PluginGenerationRef
-	artifacts    []artifact.Artifact
-	hooks        *ownedJSONAggregateWork
-	mcpEntries   []ownedJSONEntry
-	aggregate    ownedAggregateState
-	aggregateSet bool
-	handler      ownedAggregateHandler
-	members      []ownership.PluginMemberRef
-	removed      bool
+	key           outputKey
+	ref           ownership.PluginGenerationRef
+	artifacts     []artifact.Artifact
+	hooks         *ownedJSONAggregateWork
+	mcpEntries    []ownedJSONEntry
+	registrations []ownedJSONEntry
+	aggregate     ownedAggregateState
+	aggregateSet  bool
+	handler       ownedAggregateHandler
+	members       []ownership.PluginMemberRef
+	catalog       nativePluginCatalog
+	removed       bool
 }
 
 func (r compilePhaseResult) ownedAggregateState() ownedAggregateState {
@@ -860,7 +862,7 @@ func pluginDependencyRefusals(resolved []resolver.ResolvedArtifact) (map[string]
 	var diagnostics []diag.Diagnostic
 	for _, resource := range resolver.MaterializationWinners(resolved) {
 		pkg := resource.PluginPackage
-		if pkg == nil || pkg.Package == nil || !pkg.Package.HasDependencies() {
+		if pkg == nil || pkg.Package == nil || !pkg.Package.HasDependencies() || pkg.Delivery == "native" {
 			continue
 		}
 		for _, target := range resolver.HarnessTargets(resource.Harnesses) {
@@ -908,7 +910,8 @@ func preparePluginGenerations(resolved []resolver.ResolvedArtifact, repoRoot str
 		pluginPackage.TargetGenerations = make(map[string]resolver.PluginTargetGeneration, len(targets))
 		for _, target := range targets {
 			pluginPackage.InstanceKey = packagegen.InstanceKey(pkg.Name, target, scope)
-			if namespaceBlocked[pluginInstanceIdentity(*resource, target)] || len(pkg.DecodeFailures) > 0 {
+			if namespaceBlocked[pluginInstanceIdentity(*resource, target)] ||
+				pkg.Delivery != "native" && len(pkg.DecodeFailures) > 0 {
 				continue
 			}
 			input := packagegen.Input{
@@ -955,7 +958,8 @@ func preparePluginGenerations(resolved []resolver.ResolvedArtifact, repoRoot str
 				}
 			}
 			targetGeneration := resolver.PluginTargetGeneration{
-				Scope: scope, InstanceKey: pluginPackage.InstanceKey,
+				Scope: scope, Delivery: pluginPackage.Delivery, NativeRefresh: pluginPackage.NativeRefresh,
+				ReloadRequired: pluginPackage.ReloadRequired, InstanceKey: pluginPackage.InstanceKey,
 				GenerationKey: pluginPackage.GenerationKey, GenerationPath: pluginPackage.GenerationPath,
 				DataPath: pluginPackage.DataPath,
 			}
@@ -1044,6 +1048,9 @@ func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string, plugi
 				pkg := *s.PluginPackage
 				if generation, ok := pkg.TargetGenerations[string(t)]; ok {
 					pkg.GenerationScope = generation.Scope
+					pkg.Delivery = generation.Delivery
+					pkg.NativeRefresh = generation.NativeRefresh
+					pkg.ReloadRequired = generation.ReloadRequired
 					pkg.InstanceKey = generation.InstanceKey
 					pkg.GenerationKey = generation.GenerationKey
 					pkg.GenerationPath = generation.GenerationPath
@@ -1304,6 +1311,9 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 					Target:         string(w.target),
 					Scope:          pkg.GenerationScope,
 					GenerationKey:  pkg.GenerationKey,
+					Delivery:       pkg.Delivery,
+					Refresh:        pkg.NativeRefresh,
+					ReloadRequired: pkg.ReloadRequired,
 					SourceRevision: pkg.SourceRevision,
 				},
 			}
@@ -1416,6 +1426,12 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 					blocked.blockKind(key, kind)
 					markKindIncomplete(key, kind, handler)
 				}
+			}
+			continue
+		}
+		if w.skill.PluginPackage != nil && w.skill.PluginPackage.Delivery == "native" {
+			if plan := pluginPlanFor(w); plan != nil {
+				plan.handler = ownedAggregateHandlerFor(w.target)
 			}
 			continue
 		}
