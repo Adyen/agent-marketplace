@@ -11,6 +11,16 @@ import (
 
 const MaxFileSize int64 = 4 << 20
 
+// MinimumMarketplaceResourceLockBytes is the smallest encoded Marketplace
+// resource lock entry: its coordinates, two digest fields, one
+// acquisition-evidence field, and the acquisition mode.
+const MinimumMarketplaceResourceLockBytes = 300
+
+// MaxMarketplaceLockResources is the most Marketplace resources one lock file
+// can represent. Lock bootstrap and collection expansion use it as their work
+// limit.
+const MaxMarketplaceLockResources = int(MaxFileSize) / MinimumMarketplaceResourceLockBytes
+
 var (
 	ErrUnsafeFile   = errors.New("unsafe lock file")
 	ErrFileTooLarge = errors.New("lock file too large")

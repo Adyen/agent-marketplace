@@ -292,3 +292,12 @@ Claude documents a subagent's `tools` and `disallowedTools` as either a YAML lis
 - **AND** conversion of the `tools` cases to Factory and Gemini MUST keep reporting `subagent.factory.tool-unknown` and `subagent.gemini.tool-unknown`, as earlier versions did
 - **AND** a Devin source layout subagent with `allowed-tools: [read]` and `tools: Read, Bash(git diff` MUST still be ingested, and `tools: ""` converted from Claude to Cursor MUST still report `subagent.cursor.tool-unknown`
 - **AND** `sync` MUST install such a subagent next to a valid one, and `sync --check` MUST succeed afterwards
+
+### Requirement: YAML frontmatter stays within the parse ceiling
+
+Resource ingestion MUST refuse a YAML frontmatter block larger than 64 KiB before parsing it, reporting the stable diagnostic `ingest.frontmatter.too-large` for that resource. The block is measured between its delimiters. The refusal applies to skills, commands, subagents and rules, and the rule loader's lenient fallback MUST NOT accept a block the ceiling refused. Other resources in the same source MUST still load. Frontmatter at or below the ceiling MUST parse as before. The ceiling has no override.
+
+#### Scenario: Oversized YAML frontmatter is refused before parsing
+
+- **WHEN** a skill, command, subagent or rule has a YAML frontmatter block one byte above 64 KiB, alongside a valid sibling skill
+- **THEN** that resource MUST fail with `ingest.frontmatter.too-large`, the sibling MUST still load, and a block of exactly 64 KiB MUST still load

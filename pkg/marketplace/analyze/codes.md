@@ -23,6 +23,13 @@ have an entry below; `TestFindingCodes_Documented` and
 | `marketplace.find.mcp-capability` | warn | Declared MCP server capability. |
 | `marketplace.find.suspicious-path` | warn | Reference to a narrowly identified sensitive filesystem target. |
 | `marketplace.find.obfuscated-instruction` | reject | Encoded or confusable hostile instruction. |
+| `marketplace.find.invalid-utf8` | reject | Non-UTF-8 support file without a recognized binary signature; text analysis is unavailable. |
+
+Non-UTF-8 support files are exempt from text analysis only when their bytes
+match a recognized binary image, font, audio/video, PDF, gzip, ZIP, or RAR
+signature. An extension alone or a generic octet-stream classification does
+not grant an exemption. Independent executable and path checks still run.
+This signature check does not validate a binary's structure or safety.
 
 ## Policy decisions
 
