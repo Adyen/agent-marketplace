@@ -798,6 +798,7 @@ func TestSyncRemovedPackageFormatSourceMakesLockStale(t *testing.T) {
 	}
 }
 
+// spec: plugin-delivery/external-catalog-entry-is-decomposed-from-its-locked-commit
 // Deselecting a plugin whose catalog entry is external must report the lock
 // stale; the next plain sync drops the external record.
 func TestSyncDeselectedExternalEntryMakesLockStale(t *testing.T) {
@@ -809,6 +810,13 @@ func TestSyncDeselectedExternalEntryMakesLockStale(t *testing.T) {
 
 	entryOrigin, entryWorking := createBareRepoWithWorkingClone(t, "entry.git")
 	writeClaudePluginPackage(t, entryWorking, "ext-kit", "ext-skill")
+	if err := os.MkdirAll(filepath.Join(entryWorking, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(entryWorking, "scripts", "check.sh"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	addPluginHook(t, entryWorking, "PreToolUse", "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh")
 	commitAndPushAll(t, entryWorking, "seed entry")
 
 	catalogOrigin, catalogWorking := createBareRepoWithWorkingClone(t, "catalog.git")
@@ -830,8 +838,21 @@ func TestSyncDeselectedExternalEntryMakesLockStale(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sync of an external plugin selection must succeed: %v\n%s", err, output)
 	}
-	if !strings.Contains(output, "plugin.delivery.pending") || !strings.Contains(output, "ext-kit") {
-		t.Fatalf("external plugin delivery must remain visibly pending:\n%s", output)
+	if strings.Contains(output, "plugin.delivery.pending") {
+		t.Fatalf("external plugin delivery must not remain pending:\n%s", output)
+	}
+	memberPath := filepath.Join(repo, ".claude", "skills", "ext-kit-ext-skill", "SKILL.md")
+	if _, err := os.Stat(memberPath); err != nil {
+		t.Fatalf("external plugin member must be delivered under its plugin namespace: %v", err)
+	}
+	generationScripts, err := filepath.Glob(filepath.Join(root, "state", "agent-marketplace", "packages", "*", "scripts", "check.sh"))
+	if err != nil || len(generationScripts) != 1 {
+		t.Fatalf("external plugin package generation scripts = %v / %v", generationScripts, err)
+	}
+	generationRoot := filepath.Dir(filepath.Dir(generationScripts[0]))
+	settings, err := os.ReadFile(filepath.Join(repo, ".claude", "settings.json"))
+	if err != nil || !strings.Contains(string(settings), filepath.Join(generationRoot, "scripts", "check.sh")) {
+		t.Fatalf("plugin-root reference must resolve into the delivered generation: %s / %v", settings, err)
 	}
 	_, before := readLock(t, lockPath)
 

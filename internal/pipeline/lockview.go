@@ -23,6 +23,7 @@ type LockMetadata struct {
 	URL               string
 	Ref               string
 	Commit            string
+	RootPaths         []string
 	SnapshotAvailable bool
 }
 
@@ -32,6 +33,40 @@ func (m LockMetadata) Matches(source config.Source, url, ref string) bool {
 	return m.Source == source &&
 		config.NormalizeGitURL(m.URL) == config.NormalizeGitURL(url) &&
 		m.Ref == ref
+}
+
+func (m LockMetadata) MatchesExternal(source config.Source, url, ref, rootPath string) bool {
+	if !m.Matches(source, url, ref) {
+		return false
+	}
+	want := cleanLockRootPath(rootPath)
+	for _, candidate := range m.RootPaths {
+		if cleanLockRootPath(candidate) == want {
+			return true
+		}
+	}
+	return false
+}
+
+// LockRootPaths lists the root paths a locked Git registry record covers,
+// defaulting to the registry root when the record declares none.
+func LockRootPaths(roots []lockfile.GitRoot) []string {
+	rootPaths := make([]string, 0, len(roots))
+	for _, root := range roots {
+		rootPaths = append(rootPaths, root.Path)
+	}
+	if len(rootPaths) == 0 {
+		rootPaths = append(rootPaths, ".")
+	}
+	return rootPaths
+}
+
+func cleanLockRootPath(rootPath string) string {
+	rootPath = filepath.Clean(filepath.FromSlash(rootPath))
+	if rootPath == "" {
+		return "."
+	}
+	return filepath.ToSlash(rootPath)
 }
 
 type LockViewError struct {
@@ -263,7 +298,11 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig, al
 					}
 				}
 			}
-			metadata = append(metadata, LockMetadata{Source: layer.Source, Scope: scope, Path: lockPath, URL: registry.URL, Ref: registry.Ref, Commit: registry.Commit.String(), SnapshotAvailable: openErr == nil})
+			metadata = append(metadata, LockMetadata{
+				Source: layer.Source, Scope: scope, Path: lockPath, URL: registry.URL,
+				Ref: registry.Ref, Commit: registry.Commit.String(), RootPaths: LockRootPaths(registry.Roots),
+				SnapshotAvailable: openErr == nil,
+			})
 			locked := readOnlyLockedGit{snapshot: snapshot, commit: registry.Commit.String()}
 			if openErr != nil {
 				locked.err = &LockViewError{Code: errorCode, Scope: scope, Path: lockPath, Err: openErr}
