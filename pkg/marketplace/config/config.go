@@ -48,6 +48,11 @@ const (
 	DefaultArtifactBytes     = defaultArtifactBytes
 	defaultIngestionDuration = 2 * time.Minute
 	defaultMaxFindings       = 1000
+
+	// DefaultObservationReconciliationInterval bounds full-index refresh age.
+	DefaultObservationReconciliationInterval = 24 * time.Hour
+	// DefaultObservationProbeTimeout bounds each remote-ref lookup.
+	DefaultObservationProbeTimeout = 30 * time.Second
 )
 
 // Accepted values for policy.license_undeclared. They deliberately reuse the

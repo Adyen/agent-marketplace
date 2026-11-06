@@ -6,6 +6,8 @@ package hookpolicy
 // quoting a payload in a diagnostic.
 
 import (
+	"errors"
+	"fmt"
 	"maps"
 	"math"
 	"regexp"
@@ -362,6 +364,10 @@ func resolveMatcher(h *ir.Hook, dst target.Target, srcCat, dstCat catalog, srcEv
 	case MatcherKindTool:
 		decoded, err := decodeSourceMatcher(h, srcCat, srcEvent)
 		if err != nil {
+			var unknown *toolpolicy.UnknownToolError
+			if errors.As(err, &unknown) && unknown.KnownIn != "" {
+				return fail(diag.CodeHookMatcherUntranslatable, fmt.Sprintf("Tool %q is a %s tool name, not a %s one; hook suppressed", unknown.Name, unknown.KnownIn, unknown.Source), "Use a tool name the source harness documents, or author a target-specific hook")
+			}
 			return fail(diag.CodeHookMatcherUntranslatable, "The source matcher cannot be decoded for cross-harness translation; hook suppressed", "Use exact source tool names or a supported MCP pattern, or author a target-specific hook")
 		}
 		rendered, err := toolpolicy.RenderMatcher(dst, decoded, matcherSpec(dstCat))
