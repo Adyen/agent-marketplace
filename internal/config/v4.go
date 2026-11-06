@@ -2344,6 +2344,15 @@ func (c *V4Config) marketplaceEntryForLock(name string, src V4Source, group V4Re
 		r := &mp.Resources[i]
 		resources[r.RegistryID+"\x00"+r.Kind+"\x00"+r.Name] = i
 	}
+	// A kindless edge is a collection selection; a kinded edge is a requirement.
+	lockedEdgeParent := func(edge lockfile.MarketplaceSelectionLock) (int, bool) {
+		kind := edge.Kind
+		if kind == "" {
+			kind = api.KindCollection
+		}
+		parent, ok := resources[edge.RegistryID+"\x00"+kind+"\x00"+edge.Name]
+		return parent, ok
+	}
 	direct := make(map[int]V4ResourceRequest)
 	for _, request := range effectiveV4Requests(group) {
 		if request.HasHarnesses {
@@ -2367,13 +2376,6 @@ func (c *V4Config) marketplaceEntryForLock(name string, src V4Source, group V4Re
 		direct[index] = request
 	}
 
-	collections := make(map[string]int)
-	for i := range mp.Resources {
-		if mp.Resources[i].Kind == api.KindCollection {
-			r := &mp.Resources[i]
-			collections[r.RegistryID+"\x00"+r.Name] = i
-		}
-	}
 	reachable := make([]bool, len(mp.Resources))
 	for i := range direct {
 		reachable[i] = true
@@ -2385,7 +2387,7 @@ func (c *V4Config) marketplaceEntryForLock(name string, src V4Source, group V4Re
 				continue
 			}
 			for _, edge := range mp.Resources[i].SelectedBy {
-				parent, ok := collections[edge.RegistryID+"\x00"+edge.Name]
+				parent, ok := lockedEdgeParent(edge)
 				if ok && mp.Resources[parent].ContentDigest == edge.Revision {
 					children[parent] = append(children[parent], i)
 				}
@@ -2429,16 +2431,22 @@ func (c *V4Config) marketplaceEntryForLock(name string, src V4Source, group V4Re
 			LockSourcePath:               r.SourcePath,
 		}
 		selections := make([]MarketplaceSelection, 0, len(r.SelectedBy))
+		var requiresEdges []MarketplaceRequirementEdge
 		for _, edge := range r.SelectedBy {
 			if projection {
-				parent, exists := collections[edge.RegistryID+"\x00"+edge.Name]
+				parent, exists := lockedEdgeParent(edge)
 				if !exists || !reachable[parent] || mp.Resources[parent].ContentDigest != edge.Revision {
 					continue
 				}
 			}
-			selections = append(selections, MarketplaceSelection{RegistryID: edge.RegistryID, Name: edge.Name, Revision: edge.Revision.String()})
+			if edge.Kind == "" {
+				selections = append(selections, MarketplaceSelection{RegistryID: edge.RegistryID, Name: edge.Name, Revision: edge.Revision.String()})
+			} else {
+				requiresEdges = append(requiresEdges, MarketplaceRequirementEdge{RegistryID: edge.RegistryID, Kind: edge.Kind, Name: edge.Name, Revision: edge.Revision.String()})
+			}
 		}
 		pin.SelectedBy = MarketplaceSelectionsFrom(selections)
+		pin.RequiresEdges = MarketplaceRequirementEdgesFrom(requiresEdges)
 		if request, ok := direct[i]; ok {
 			pin.Direct = true
 			if request.Options.HasAs {

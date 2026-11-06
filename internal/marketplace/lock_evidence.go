@@ -60,6 +60,23 @@ func (c *Cache) VerifiedMarketplaceLockResource(entry config.MarketplaceEntry, p
 			RegistryID: selection.RegistryID, Name: selection.Name, Revision: lockfile.Digest(selection.Revision),
 		})
 	}
+	for _, edge := range pin.RequiresEdges.List() {
+		if err := nameutil.ValidateSegment(edge.RegistryID); err != nil {
+			return lockfile.MarketplaceResourceLock{}, fmt.Errorf("requires edge registry_id %s", err)
+		}
+		if err := nameutil.ValidateSegment(edge.Kind); err != nil {
+			return lockfile.MarketplaceResourceLock{}, fmt.Errorf("requires edge kind %s", err)
+		}
+		if err := nameutil.ValidateSegment(edge.Name); err != nil {
+			return lockfile.MarketplaceResourceLock{}, fmt.Errorf("requires edge name %s", err)
+		}
+		if _, err := lockfile.ParseDigest(edge.Revision); err != nil {
+			return lockfile.MarketplaceResourceLock{}, fmt.Errorf("requires edge revision: %w", err)
+		}
+		record.SelectedBy = append(record.SelectedBy, lockfile.MarketplaceSelectionLock{
+			RegistryID: edge.RegistryID, Kind: edge.Kind, Name: edge.Name, Revision: lockfile.Digest(edge.Revision),
+		})
+	}
 
 	identity := indexOnlyIdentity(entry, pin)
 	var rev store.AssessedResourceRevision

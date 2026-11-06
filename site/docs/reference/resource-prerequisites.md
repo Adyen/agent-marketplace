@@ -125,6 +125,52 @@ selected and reports the prerequisite as unmet. Removal never cascades to
 the requiring resource and needs no new flag. With expansion disabled,
 `remove` behaves as before and records no prerequisite-driven exclusion.
 
+### Marketplace prerequisites
+
+Prerequisites declared by Marketplace resources keep their recorded edges
+in the acquisition lock: an entry in a record's `selected_by` carrying a
+`kind` is a requires edge naming the requiring locked resource. A record
+held only through requires edges is not a user selection and never counts
+as a collection member. When a still-selected parent declares its
+prerequisite, a requires-held resource joins the selection as an implied
+resource (expansion enabled) or the implied preview (disabled); an edge
+with no such parent leaves the record unselected and unreported.
+
+For a prerequisite with no recorded edge, lookup stays inside the
+requiring resource's configured Marketplace entry:
+
+- Without a `registry` hint, the requiring pin's own registry is searched.
+- A `registry` hint must name a registry bound in that entry by slug or
+  registry ID; an unbound hint produces a `source-not-configured` warning
+  and no Marketplace request.
+- When the requiring pin records `registry_commit` and the target is its
+  own registry, only that exact registry occurrence is consulted, through
+  its verified registry revision manifest, with no fallback to the
+  current revision. Otherwise the target registry's current revision is
+  used.
+- A `path` hint matches only when the candidate's source root, the single
+  root of its exact registry occurrence containing its source path,
+  equals the hint; when the root cannot be established the prerequisite
+  is `not-found`.
+- Offline resolution never contacts a Marketplace for lookup.
+
+This release never records a lookup result: a found candidate appears in
+the implied preview only, preserves or prunes no materialized output,
+changes neither configuration nor lock bytes, and, with expansion
+enabled, reports the prerequisite unmet with reason `unrecorded`.
+Every lock rewrite keeps a requires edge only while its requiring
+resource stays locked at the same content digest; updating the parent
+drops the edge and prunes any record it alone held. Refreshing an
+implied pin on update is deferred. No rewrite ever adds a requires
+edge.
+
+Removing a requires-held prerequisite succeeds like any authorized
+removal: its lock record and requires edges are removed, an exact
+`registry/kind/name` Marketplace exclusion is written only when expansion
+is enabled (into the layer being mutated, a layer where Marketplace
+exclusions take effect), and the requiring resource stays selected with
+its prerequisite reported unmet.
+
 ## Warning and remediation
 
 An unmet prerequisite produces:
@@ -149,9 +195,7 @@ be pasted literally into a shell. The warning message itself quotes resource
 names with Go `%q` double-quote formatting, which differs from the
 remediation's shell-literal quoting.
 
-Each unmet warning also carries a typed reason: `not-found`, `excluded`, or
-`source-not-configured`. `status` prints it in the `REASON` column and
-`doctor` uses it to explain unconfigured source hints.
+Each unmet warning also carries a typed reason: `not-found`, `excluded`, `source-not-configured`, or `unrecorded`. `status` prints it in the `REASON` column, and `doctor` uses it to explain unconfigured source hints.
 
 | Command | Behavior |
 |---|---|
@@ -164,8 +208,8 @@ Each unmet warning also carries a typed reason: `not-found`, `excluded`, or
 ## Exit status
 
 `install`, `sync`, `sync --check`, `status`, and `doctor` exit with status 0
-when unmet prerequisites are the only findings. `sync --strict` — including
-`sync --strict --check` — still prints the advisory warning and remediation,
+when unmet prerequisites are the only findings. `sync --strict` (including
+`sync --strict --check`) still prints the advisory warning and remediation,
 but exits nonzero so CI can enforce declared prerequisites. Strict mode changes
 only the exit status; whether a prerequisite is selected depends solely on
 [requirement expansion](#requirement-expansion).

@@ -89,7 +89,7 @@ func marketplacePinV4Request(pin MarketplaceResourcePin) (v4MarketplaceRequest, 
 	if err := ValidateMarketplaceResourcePin(pin); err != nil {
 		return v4MarketplaceRequest{}, false, err
 	}
-	if !pin.Direct && len(pin.SelectedBy.List()) > 0 {
+	if !pin.Direct && (len(pin.SelectedBy.List()) > 0 || len(pin.RequiresEdges.List()) > 0) {
 		return v4MarketplaceRequest{}, true, nil
 	}
 	if pin.RegistrySlug == "" {

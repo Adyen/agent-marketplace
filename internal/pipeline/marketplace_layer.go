@@ -26,6 +26,7 @@ type MarketplaceLayerMutation struct {
 	pins        []config.MarketplaceResourcePin
 	pinsS       bool
 	removesPins bool
+	strip       []config.MarketplaceResourcePin
 }
 
 func (m *MarketplaceLayerMutation) EnsureEndpoint(entry config.MarketplaceEntry) error {
@@ -79,6 +80,36 @@ func (m *MarketplaceLayerMutation) RemoveDirectPin(entry config.MarketplaceEntry
 // can re-select the removed collection.
 func (m *MarketplaceLayerMutation) RemoveCollection(entry config.MarketplaceEntry, collection config.MarketplaceResourcePin) error {
 	return m.removeMarketplacePin(entry, collection)
+}
+
+// RemoveRequiresHeldPin removes a lock-only pin held only through requires
+// edges. The record, and the requires edges it alone carries, is stripped
+// from the merged lock. When exclude is true the exact Marketplace exclusion
+// ("registry/kind/name") is written into the same layer, which acquires the
+// Marketplace whose lock held the pin.
+func (m *MarketplaceLayerMutation) RemoveRequiresHeldPin(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, exclude bool) error {
+	if m == nil {
+		return errors.New("marketplace layer mutation is nil")
+	}
+	if m.editor == nil {
+		return errors.New("marketplace layer mutation has no open editor")
+	}
+	if exclude {
+		binding, found, err := m.editor.LookupMarketplaceSource(entry.URL)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("marketplace endpoint %q has no v4 source in this layer", entry.URL)
+		}
+		if err := m.editor.ExcludeMarketplacePin(binding, pin); err != nil {
+			return err
+		}
+	}
+	m.strip = append(m.strip, pin)
+	m.endpoint = entry
+	m.endpointS = true
+	return nil
 }
 
 func (m *MarketplaceLayerMutation) removeMarketplacePin(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) error {
@@ -196,6 +227,12 @@ func mutateV4MarketplaceLayer(ctx context.Context, repoRoot, localConfigDir, con
 
 	mergeEntry := m.endpoint
 	mergeEntry.Source = source
+	if len(m.strip) > 0 {
+		lockDoc, err = marketplacelock.RemoveRequiresHeldRecords(lockDoc, mergeEntry, m.strip)
+		if err != nil {
+			return nil, err
+		}
+	}
 	exact, err := marketplacelock.MergePinsToV4(candidateV4, lockDoc, mergeEntry, m.pins, marketplace.DefaultCache())
 	if err != nil {
 		return nil, err
@@ -472,6 +509,13 @@ func ToggleMarketplacePin(ctx context.Context, repoRoot, localConfigDir, configP
 			pin.Direct = true
 			pin.SelectedBy = ""
 			return m.IncludePins(entry, []config.MarketplaceResourcePin{pin})
+		}
+		if pin.RequiresHeld() {
+			ec := LoadEffective(ctx, ConfigLoadCached, config.LoadEffectiveOptions{RepoRoot: repoRoot, LocalConfigDir: localConfigDir}, nil)
+			if len(ec.Errors) > 0 {
+				return errors.Join(ec.Errors...)
+			}
+			return m.RemoveRequiresHeldPin(entry, pin, ec.Merged.RequiresExpansionEnabled())
 		}
 		return m.RemoveDirectPin(entry, pin)
 	}, func() ([]error, error) {

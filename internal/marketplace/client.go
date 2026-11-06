@@ -261,13 +261,37 @@ func (c *Client) GetResourceRevisionForRegistry(ctx context.Context, routeRegist
 	return c.getResourceRevision(ctx, routeRegistry, registryID, kind, name, revision)
 }
 
-func (c *Client) getResourceRevision(ctx context.Context, routeRegistry, expectedRegistry, kind, name, revision string) (store.AssessedResourceRevision, error) {
-	var response struct {
-		store.AssessedResourceRevision
-		CurrentAvailability *struct {
-			Availability mpapi.Availability `json:"availability"`
-		} `json:"current_availability,omitempty"`
+// resourceRevisionResponse decodes the fields of a resource detail response
+// that AssessedResourceRevision does not carry on its own.
+type resourceRevisionResponse struct {
+	store.AssessedResourceRevision
+	CurrentAvailability *struct {
+		Availability mpapi.Availability `json:"availability"`
+	} `json:"current_availability,omitempty"`
+	// Requires echoes the revision's indexed prerequisite declarations. The
+	// server's resolved field is a presentation detail and is dropped.
+	Requires *[]store.ResourceRequirement `json:"requires,omitempty"`
+}
+
+// assessed returns the decoded revision with Requires re-encoded as the
+// canonical declaration JSON: absent stays "" (unindexed).
+func (r resourceRevisionResponse) assessed() (store.AssessedResourceRevision, error) {
+	rev := r.AssessedResourceRevision
+	if r.CurrentAvailability != nil {
+		rev.EffectiveAvailability = string(r.CurrentAvailability.Availability)
 	}
+	if r.Requires != nil {
+		data, err := json.Marshal(*r.Requires)
+		if err != nil {
+			return store.AssessedResourceRevision{}, fmt.Errorf("decode resource requires: %w", err)
+		}
+		rev.Requires = string(data)
+	}
+	return rev, nil
+}
+
+func (c *Client) getResourceRevision(ctx context.Context, routeRegistry, expectedRegistry, kind, name, revision string) (store.AssessedResourceRevision, error) {
+	var response resourceRevisionResponse
 	var rev store.AssessedResourceRevision
 	if err := validateSHA256Digest(revision); err != nil {
 		return rev, fmt.Errorf("revision digest %q: %w", revision, err)
@@ -276,9 +300,9 @@ func (c *Client) getResourceRevision(ctx context.Context, routeRegistry, expecte
 	if err := c.getJSON(ctx, c.requestURL(segments, nil), &response); err != nil {
 		return rev, err
 	}
-	rev = response.AssessedResourceRevision
-	if response.CurrentAvailability != nil {
-		rev.EffectiveAvailability = string(response.CurrentAvailability.Availability)
+	rev, err := response.assessed()
+	if err != nil {
+		return rev, err
 	}
 	if err := validateAPIResourceRevisionMatches(rev, c.expectedResourceCoordinate(expectedRegistry, kind, name), store.RevisionDigest(revision)); err != nil {
 		return rev, fmt.Errorf("invalid Marketplace resource revision: %w", err)
@@ -406,20 +430,16 @@ func (c *Client) GetLatestResourceRevisionForRegistry(ctx context.Context, route
 }
 
 func (c *Client) getLatestResourceRevision(ctx context.Context, routeRegistry, expectedRegistry, kind, name string) (store.AssessedResourceRevision, error) {
-	var response struct {
-		store.AssessedResourceRevision
-		CurrentAvailability *struct {
-			Availability mpapi.Availability `json:"availability"`
-		} `json:"current_availability,omitempty"`
-	}
+	var response resourceRevisionResponse
 	var rev store.AssessedResourceRevision
 	segments := []string{"api", "v1", "resources", routeRegistry, kind, name}
 	if err := c.getJSON(ctx, c.requestURL(segments, nil), &response); err != nil {
 		return rev, err
 	}
-	rev = response.AssessedResourceRevision
-	if response.CurrentAvailability != nil {
-		rev.EffectiveAvailability = string(response.CurrentAvailability.Availability)
+	var err error
+	rev, err = response.assessed()
+	if err != nil {
+		return rev, err
 	}
 	if err := validateAPIResourceRevisionMatches(rev, c.expectedResourceCoordinate(expectedRegistry, kind, name), ""); err != nil {
 		return rev, fmt.Errorf("invalid Marketplace resource revision: %w", err)
@@ -490,6 +510,27 @@ func (c *Client) GetRegistryOccurrence(ctx context.Context, registryID, commit s
 	return occurrence, nil
 }
 
+// GetRegistryRevisionManifest downloads a registry revision manifest and verifies
+// that its payload hashes to manifestDigest before decoding it.
+func (c *Client) GetRegistryRevisionManifest(ctx context.Context, manifestDigest string) (marketplaceartifact.RegistryRevisionManifest, []byte, error) {
+	var manifest marketplaceartifact.RegistryRevisionManifest
+	if err := validateSHA256Digest(manifestDigest); err != nil {
+		return manifest, nil, fmt.Errorf("manifest digest %q: %w", manifestDigest, err)
+	}
+	raw, err := c.getRaw(ctx, c.requestURL([]string{"api", "v1", "manifests", manifestDigest}, nil))
+	if err != nil {
+		return manifest, nil, err
+	}
+	decoded, payload, err := marketplaceartifact.DecodeRegistryRevisionManifest(bytes.NewReader(raw))
+	if err != nil {
+		return manifest, nil, fmt.Errorf("decode registry revision manifest: %w", err)
+	}
+	if got := marketplaceartifact.RevisionDigest(payload); got != manifestDigest {
+		return manifest, nil, fmt.Errorf("registry revision manifest digest mismatch: got %s, want %s", got, manifestDigest)
+	}
+	return decoded, payload, nil
+}
+
 // GetCollectionManifest downloads and verifies a standalone canonical
 // collection manifest by its content digest. The manifest is not a tar
 // artifact: collections remain virtual and only their leaf artifacts are
@@ -538,26 +579,6 @@ func (c *Client) GetPlaceholderArchive(ctx context.Context, archiveDigest string
 	hexDigest := strings.TrimPrefix(archiveDigest, "sha256:")
 	path := c.requestURL([]string{"api", "v1", "archives", "sha256", hexDigest}, nil)
 	return c.getRaw(ctx, path)
-}
-
-// GetRegistryRevisionManifest downloads a registry revision manifest and verifies
-// that its payload hashes to manifestDigest before decoding it.
-func (c *Client) GetRegistryRevisionManifest(ctx context.Context, manifestDigest string) (marketplaceartifact.RegistryRevisionManifest, error) {
-	if err := validateSHA256Digest(manifestDigest); err != nil {
-		return marketplaceartifact.RegistryRevisionManifest{}, fmt.Errorf("manifest digest %q: %w", manifestDigest, err)
-	}
-	raw, err := c.getRaw(ctx, c.requestURL([]string{"api", "v1", "manifests", manifestDigest}, nil))
-	if err != nil {
-		return marketplaceartifact.RegistryRevisionManifest{}, err
-	}
-	manifest, payload, err := marketplaceartifact.DecodeRegistryRevisionManifest(bytes.NewReader(raw))
-	if err != nil {
-		return marketplaceartifact.RegistryRevisionManifest{}, fmt.Errorf("decode registry revision manifest: %w", err)
-	}
-	if got := marketplaceartifact.RevisionDigest(payload); got != manifestDigest {
-		return marketplaceartifact.RegistryRevisionManifest{}, fmt.Errorf("registry revision manifest digest mismatch: got %s, want %s", got, manifestDigest)
-	}
-	return manifest, nil
 }
 
 // getRaw performs a GET and returns the response body bytes for non-JSON endpoints.

@@ -199,21 +199,23 @@ func (w *availabilityResponseWriter) Write(data []byte) (int, error) {
 	return w.ResponseWriter.Write(data)
 }
 
+// resourceRevisionDTO is the resource detail wire shape. Requires and
+// RequiredBy stay nil on every endpoint except latest resource detail.
+type resourceRevisionDTO struct {
+	store.AssessedResourceRevision
+	CurrentAvailability availabilityDecision   `json:"current_availability"`
+	Source              *CatalogSource         `json:"source,omitempty"`
+	Requires            *[]ResourceRequirement `json:"requires,omitempty"`
+	RequiredBy          *[]ResourceRelation    `json:"required_by,omitempty"`
+}
+
 func (s *Server) availabilityResourceDTO(ctx context.Context, rev store.AssessedResourceRevision, resolveSource func(store.AssessedResourceRevision) *CatalogSource) any {
 	effective := s.applyEffectiveRevocation(rev)
 	source := resolveSource(rev)
 	if s.cfg.Management.Mode != "database" {
-		return struct {
-			store.AssessedResourceRevision
-			CurrentAvailability availabilityDecision `json:"current_availability"`
-			Source              *CatalogSource       `json:"source,omitempty"`
-		}{effective, availabilityDecision{Availability: s.fileResourceAvailability(rev), AssessmentDecision: rev.Assessment.Decision}, source}
+		return resourceRevisionDTO{AssessedResourceRevision: effective, CurrentAvailability: availabilityDecision{Availability: s.fileResourceAvailability(rev), AssessmentDecision: rev.Assessment.Decision}, Source: source}
 	}
-	return struct {
-		store.AssessedResourceRevision
-		CurrentAvailability availabilityDecision `json:"current_availability"`
-		Source              *CatalogSource       `json:"source,omitempty"`
-	}{effective, s.evaluateAvailability(availabilityFromContext(ctx), rev), source}
+	return resourceRevisionDTO{AssessedResourceRevision: effective, CurrentAvailability: s.evaluateAvailability(availabilityFromContext(ctx), rev), Source: source}
 }
 
 func (s *Server) fileResourceAvailability(rev store.AssessedResourceRevision) Availability {

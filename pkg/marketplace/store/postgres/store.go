@@ -411,7 +411,7 @@ func (s *Store) RegistryHistory(ctx context.Context, id store.RegistryID) ([]sto
 // -- Resource revisions --
 
 const assessedResourceColumns = `rr.marketplace_id, rr.registry_id, rr.kind, rr.name,
-	rr.content_digest, rr.archive_digest, rr.license, rr.description,
+	rr.content_digest, rr.archive_digest, rr.license, rr.description, COALESCE(rr.requires,''),
 	ra.assessment_digest, ra.analyzer_version, ra.policy_digest, ra.decision,
 	ra.findings, ra.inspection_manifest_digest, ra.assessed_at,
 	ro.revision_commit, ro.manifest_digest, ro.source_path,
@@ -488,7 +488,7 @@ func (s *Store) scanAssessedResourceRevision(sc sourceScanner) (store.AssessedRe
 	var registryAt sql.NullInt64
 	err := sc.Scan(
 		&out.Coordinate.Marketplace, &out.Coordinate.Registry, &out.Coordinate.Kind, &out.Coordinate.Name,
-		&out.ContentDigest, &archive, &license, &out.Description,
+		&out.ContentDigest, &archive, &license, &out.Description, &out.Requires,
 		&out.Assessment.AssessmentDigest, &out.Assessment.AnalyzerVersion, &out.Assessment.PolicyDigest,
 		&out.Assessment.Decision, &findings, &out.Assessment.InspectionManifestDigest, &assessedAt,
 		&out.Occurrence.Commit, &out.Occurrence.ManifestDigest, &sourcePath,
@@ -533,11 +533,11 @@ func (s *Store) getIntrinsicResourceRevision(ctx context.Context, coord store.Re
 	var rev store.ResourceRevision
 	var archive, license sql.NullString
 	err := s.q.QueryRowContext(ctx, `SELECT marketplace_id, registry_id, kind, name, content_digest,
-		archive_digest, license, description FROM resource_revisions
+		archive_digest, license, description, COALESCE(requires,'') FROM resource_revisions
 		WHERE marketplace_id=$1 AND registry_id=$2 AND kind=$3 AND name=$4 AND content_digest=$5`,
 		coord.Marketplace, coord.Registry, coord.Kind, coord.Name, digest).Scan(
 		&rev.Coordinate.Marketplace, &rev.Coordinate.Registry, &rev.Coordinate.Kind, &rev.Coordinate.Name,
-		&rev.ContentDigest, &archive, &license, &rev.Description)
+		&rev.ContentDigest, &archive, &license, &rev.Description, &rev.Requires)
 	if errors.Is(err, sql.ErrNoRows) {
 		return store.ResourceRevision{}, store.ErrNotFound
 	}
@@ -556,11 +556,11 @@ func (s *Store) PutResourceRevision(ctx context.Context, rev store.ResourceRevis
 func (s *Store) putResourceRevision(ctx context.Context, rev store.ResourceRevision) error {
 	rev.Description = store.BoundDescription(rev.Description)
 	_, err := s.q.ExecContext(ctx, `INSERT INTO resource_revisions
-		(marketplace_id, registry_id, kind, name, content_digest, archive_digest, license, description)
-		VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, ''), $8)
+		(marketplace_id, registry_id, kind, name, content_digest, archive_digest, license, description, requires)
+		VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, ''), $8, NULLIF($9, ''))
 		ON CONFLICT (marketplace_id, registry_id, kind, name, content_digest) DO NOTHING`,
 		rev.Coordinate.Marketplace, rev.Coordinate.Registry, rev.Coordinate.Kind, rev.Coordinate.Name,
-		rev.ContentDigest, string(rev.ArchiveDigest), rev.License, rev.Description)
+		rev.ContentDigest, string(rev.ArchiveDigest), rev.License, rev.Description, rev.Requires)
 	if err != nil {
 		return err
 	}
@@ -571,6 +571,10 @@ func (s *Store) putResourceRevision(ctx context.Context, rev store.ResourceRevis
 	if existing != rev {
 		repaired := existing
 		repaired.ArchiveDigest = rev.ArchiveDigest
+		fillRequires := existing.Requires == "" && rev.Requires != ""
+		if fillRequires {
+			repaired.Requires = rev.Requires
+		}
 		if repaired != rev {
 			return fmt.Errorf("%w: resource revision %s@%s already has different immutable fields", store.ErrConflict, rev.Coordinate, rev.ContentDigest)
 		}
@@ -579,6 +583,14 @@ func (s *Store) putResourceRevision(ctx context.Context, rev store.ResourceRevis
 			string(rev.ArchiveDigest), rev.Coordinate.Marketplace, rev.Coordinate.Registry, rev.Coordinate.Kind,
 			rev.Coordinate.Name, rev.ContentDigest); err != nil {
 			return err
+		}
+		if fillRequires {
+			if _, err := s.q.ExecContext(ctx, `UPDATE resource_revisions SET requires=$1
+				WHERE marketplace_id=$2 AND registry_id=$3 AND kind=$4 AND name=$5 AND content_digest=$6 AND requires IS NULL`,
+				rev.Requires, rev.Coordinate.Marketplace, rev.Coordinate.Registry, rev.Coordinate.Kind,
+				rev.Coordinate.Name, rev.ContentDigest); err != nil {
+				return err
+			}
 		}
 		for _, digest := range []store.ArchiveDigest{existing.ArchiveDigest, rev.ArchiveDigest} {
 			if digest == "" {
@@ -592,11 +604,19 @@ func (s *Store) putResourceRevision(ctx context.Context, rev store.ResourceRevis
 				return err
 			}
 		}
-		slog.WarnContext(ctx, "resource revision archive digest repaired",
-			"marketplace", rev.Coordinate.Marketplace, "registry", rev.Coordinate.Registry,
-			"kind", rev.Coordinate.Kind, "name", rev.Coordinate.Name,
-			"content_digest", rev.ContentDigest,
-			"old_archive_digest", existing.ArchiveDigest, "new_archive_digest", rev.ArchiveDigest)
+		if existing.ArchiveDigest != rev.ArchiveDigest {
+			slog.WarnContext(ctx, "resource revision archive digest repaired",
+				"marketplace", rev.Coordinate.Marketplace, "registry", rev.Coordinate.Registry,
+				"kind", rev.Coordinate.Kind, "name", rev.Coordinate.Name,
+				"content_digest", rev.ContentDigest,
+				"old_archive_digest", existing.ArchiveDigest, "new_archive_digest", rev.ArchiveDigest)
+		}
+		if fillRequires {
+			slog.DebugContext(ctx, "resource revision requires filled",
+				"marketplace", rev.Coordinate.Marketplace, "registry", rev.Coordinate.Registry,
+				"kind", rev.Coordinate.Kind, "name", rev.Coordinate.Name,
+				"content_digest", rev.ContentDigest)
+		}
 		return s.advanceCatalogVersion(ctx)
 	}
 	// An intrinsic revision is not catalog-visible until both a current
