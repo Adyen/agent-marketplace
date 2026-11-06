@@ -114,7 +114,7 @@ func projectMember(p *ir.Plugin, member ir.PluginMember, t target.Target, d Deli
 	}
 	if !mp.Blocked && p.Format == "agent-plugin" {
 		if server, ok := res.(*ir.McpServer); ok {
-			server = expandPluginRuntime(server, roots)
+			server = ExpandMemberRuntime(server, roots).(*ir.McpServer)
 			res = server
 			if carriesLiteralPlaceholder(server) {
 				mp.Blocked = true
@@ -137,6 +137,14 @@ func projectMember(p *ir.Plugin, member ir.PluginMember, t target.Target, d Deli
 		mp.Blocked = true
 	}
 	return mp, nil
+}
+
+func ExpandMemberRuntime(resource ir.Resource, roots Roots) ir.Resource {
+	server, ok := resource.(*ir.McpServer)
+	if !ok {
+		return resource
+	}
+	return expandPluginRuntime(server, roots)
 }
 
 // applyPluginSurface applies the catalog's surfaces.plugin.<kind>.<field>

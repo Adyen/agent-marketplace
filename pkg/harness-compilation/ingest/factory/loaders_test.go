@@ -27,6 +27,33 @@ func TestLoadSkill(t *testing.T) {
 	}
 }
 
+func TestLoadSkillSupportFilesExcludeMetadata(t *testing.T) {
+	src := fstest.MapFS{
+		"skills/my-skill/SKILL.md":          {Data: []byte("Do the thing\n")},
+		"skills/my-skill/scripts/run.sh":    {Data: []byte("#!/bin/sh\n")},
+		"skills/my-skill/.git/config":       {Data: []byte("[core]")},
+		"skills/my-skill/.svn/entries":      {Data: []byte("12")},
+		"skills/my-skill/.hg/dirstate":      {Data: []byte("hg")},
+		"skills/my-skill/.DS_Store":         {Data: []byte("ds")},
+		"skills/my-skill/scripts/.DS_Store": {Data: []byte("ds")},
+		"skills/my-skill/scripts/.git/HEAD": {Data: []byte("ref")},
+	}
+
+	skill, err := LoadSkill(src, "skills/my-skill")
+	if err != nil {
+		t.Fatalf("LoadSkill: %v", err)
+	}
+	want := []string{"scripts/run.sh"}
+	if len(skill.SupportFiles) != len(want) {
+		t.Fatalf("SupportFiles = %v, want %v", skill.SupportFiles, want)
+	}
+	for i := range want {
+		if skill.SupportFiles[i] != want[i] {
+			t.Fatalf("SupportFiles = %v, want %v", skill.SupportFiles, want)
+		}
+	}
+}
+
 func TestLoadCommand(t *testing.T) {
 	src := fstest.MapFS{
 		"commands/my-cmd.md": {
@@ -179,5 +206,50 @@ func TestLoadMcpServers(t *testing.T) {
 	}
 	if servers[0].Name() != "docs" {
 		t.Fatalf("Name() = %q, want %q", servers[0].Name(), "docs")
+	}
+}
+
+// The Factory-native ${DROID_PLUGIN_ROOT} token must normalize to the
+// canonical IR spelling across command, args, env, URL, and headers, the same
+// root-reference normalization hook ingestion already performs.
+func TestLoadMcpServers_NormalizesDroidRootToken(t *testing.T) {
+	src := fstest.MapFS{
+		"mcp.json": {
+			Data: []byte(`{"mcpServers":{"docs":{` +
+				`"command":"${DROID_PLUGIN_ROOT}/bin/run.sh",` +
+				`"args":["--env","${DROID_PLUGIN_ROOT}/config/.env"],` +
+				`"env":{"CFG":"${DROID_PLUGIN_ROOT}/config/.env"},` +
+				`"url":"https://example.com/${DROID_PLUGIN_ROOT}/sse",` +
+				`"headers":{"X-Root":"${DROID_PLUGIN_ROOT}/tok"}` +
+				`}}}`),
+		},
+	}
+
+	servers, err := LoadMcpServers(src, "mcp.json")
+	if err != nil {
+		t.Fatalf("LoadMcpServers: %v", err)
+	}
+	if len(servers) != 1 {
+		t.Fatalf("len(servers) = %d, want 1", len(servers))
+	}
+	server := servers[0]
+	want := map[string]string{
+		"command":        "${CLAUDE_PLUGIN_ROOT}/bin/run.sh",
+		"arg[1]":         "${CLAUDE_PLUGIN_ROOT}/config/.env",
+		"env.CFG":        "${CLAUDE_PLUGIN_ROOT}/config/.env",
+		"url":            "https://example.com/${CLAUDE_PLUGIN_ROOT}/sse",
+		"headers.X-Root": "${CLAUDE_PLUGIN_ROOT}/tok",
+	}
+	got := map[string]string{
+		"command":        server.Command,
+		"arg[1]":         server.Args[1],
+		"env.CFG":        server.Env["CFG"],
+		"url":            server.URL,
+		"headers.X-Root": server.Headers["X-Root"],
+	}
+	for field, expected := range want {
+		if got[field] != expected {
+			t.Errorf("%s = %q, want %q", field, got[field], expected)
+		}
 	}
 }

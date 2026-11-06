@@ -84,6 +84,30 @@ func LoadMcpServers(src fs.FS, path string) ([]*ir.McpServer, error) {
 	return servers, nil
 }
 
+// CanonicalRootToken is the canonical IR spelling of a source-harness
+// plugin-root reference. Ingesters rewrite their native token to this form at
+// the IR boundary so target translators can render the destination spelling.
+const CanonicalRootToken = "${CLAUDE_PLUGIN_ROOT}"
+
+// NormalizeMcpServerRootToken rewrites a harness-native plugin-root token to
+// the canonical IR spelling across the server's command, args, env values,
+// URL, and header values, the same root-reference normalization that hook
+// ingestion already applies to hook commands.
+func NormalizeMcpServerRootToken(server *ir.McpServer, nativeToken string) {
+	replacer := strings.NewReplacer(nativeToken, CanonicalRootToken)
+	server.Command = replacer.Replace(server.Command)
+	for i, arg := range server.Args {
+		server.Args[i] = replacer.Replace(arg)
+	}
+	for key, value := range server.Env {
+		server.Env[key] = replacer.Replace(value)
+	}
+	server.URL = replacer.Replace(server.URL)
+	for key, value := range server.Headers {
+		server.Headers[key] = replacer.Replace(value)
+	}
+}
+
 // mcpServerEntry captures the known fields of a single MCP server entry
 // and preserves unknown fields in Extra.
 type mcpServerEntry struct {

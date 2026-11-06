@@ -146,7 +146,7 @@ func buildUpdatePreview(ctx context.Context, view preparedUpdateView, includeDif
 // they join the sides from the display selection: their definition and
 // membership changes must stay reviewable alongside their affected members.
 func previewSides(result pipeline.ResolveResult, set *exactLockSet, keepBodies bool) ([]resourcediff.Side, error) {
-	artifacts, _ := pipeline.DeliverableArtifacts(result.Resolved)
+	artifacts, _ := pipeline.DeliverableArtifacts(result.Resolved, result.PluginPlan)
 	if len(result.SelectedCollections) > 0 {
 		combined := make([]resolver.ResolvedArtifact, 0, len(artifacts)+len(result.SelectedCollections))
 		combined = append(combined, artifacts...)

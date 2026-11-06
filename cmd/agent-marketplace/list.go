@@ -155,7 +155,7 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 	var dryRunReport *materialize.Report
 	var dryRunErr error
 	if !marketplaceCacheUnknown {
-		deliverable, deliveryPending := pipeline.DeliverableArtifacts(result.Resolved)
+		deliverable, deliveryPending := pipeline.DeliverableArtifacts(result.Resolved, result.PluginPlan)
 		for _, w := range deliveryPending {
 			if _, werr := fmt.Fprintf(errOut, "warning: %s\n", terminalSafeText(fmt.Sprint(w))); werr != nil {
 				return werr
