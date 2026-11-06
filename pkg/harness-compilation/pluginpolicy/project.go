@@ -63,6 +63,17 @@ const (
 // reinterpreted by the destination, and canonical IR offers no literal escape.
 var canonicalInterpolationToken = regexp.MustCompile(`\$\{(env:[A-Za-z_][A-Za-z0-9_]*|file:[^{}]*|[A-Za-z_][A-Za-z0-9_]*)\}`)
 
+// HasCanonicalInterpolationConflict reports canonical interpolation other than
+// the package-root tokens, whose meaning Agent Plugins preserves.
+func HasCanonicalInterpolationConflict(value string) bool {
+	for _, token := range canonicalInterpolationToken.FindAllString(value, -1) {
+		if token != pluginRootToken && token != pluginDataToken {
+			return true
+		}
+	}
+	return false
+}
+
 // Project lowers a plugin onto a target. It is pure: it performs no I/O and
 // reads every plugin-surface decision from the shipped harness catalog.
 func Project(p *ir.Plugin, t target.Target, d Delivery, scope compile.Scope, roots Roots) (*Projection, error) {
