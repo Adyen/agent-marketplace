@@ -92,6 +92,17 @@ Agent Marketplace MUST follow every error printed by a CLI command, and every er
 - **WHEN** a stable diagnostic code can be reported by a consumer command
 - **THEN** that code MUST have code-specific guidance that names a supported command or a concrete action
 
+#### Scenario: Owned aggregate diagnostics print their code guidance
+
+- **WHEN** `sync` reports a warning or error while reconciling an owned harness aggregate file, such as `ownership.state-missing` and `materialize.devin.aggregate-shape` for a hand-written Devin hooks file whose entry does not match its declared hook shape
+- **THEN** each reported warning's remediation line MUST be the guidance for its code
+- **AND** the `hint:` line after the failed command's error MUST be the guidance for that error's code, printed once, not the generic `sync --check` next step
+
+#### Scenario: Issues without remediation print no empty remediation line
+
+- **WHEN** a command prints a warning or error that carries no remediation
+- **THEN** the output MUST NOT contain a remediation line with no guidance
+
 ### Requirement: Configuration validation errors name their file and line
 
 A consumer configuration validation error MUST name the authored configuration file and, when known, the line, in the form `<file>:<line>`, and MUST describe the problem in plain words that do not require knowledge of internal terms. Its stable diagnostic code MUST stay unchanged at the start of the message.

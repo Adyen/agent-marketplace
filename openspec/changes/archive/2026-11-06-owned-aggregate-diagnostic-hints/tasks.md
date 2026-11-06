@@ -13,4 +13,4 @@
 
 ## 3. Archive
 
-- [ ] 3.1 Run `openspec archive owned-aggregate-diagnostic-hints --yes` and verify `make spec-check` passes
+- [x] 3.1 Run `openspec archive owned-aggregate-diagnostic-hints --yes` and verify `make spec-check` passes
