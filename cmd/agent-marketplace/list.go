@@ -155,7 +155,13 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 	var dryRunReport *materialize.Report
 	var dryRunErr error
 	if !marketplaceCacheUnknown {
-		dryRunReport, dryRunErr = runListMaterialize(ctx, ws.MaterializeRoot(), result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
+		deliverable, deliveryPending := pipeline.DeliverableArtifacts(result.Resolved)
+		for _, w := range deliveryPending {
+			if _, werr := fmt.Fprintf(errOut, "warning: %s\n", terminalSafeText(fmt.Sprint(w))); werr != nil {
+				return werr
+			}
+		}
+		dryRunReport, dryRunErr = runListMaterialize(ctx, ws.MaterializeRoot(), deliverable, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
 	}
 	if dryRunErr != nil {
 		// A failed drift probe must not hide the listing itself, but file mode
@@ -260,6 +266,9 @@ func buildListRows(cfg *config.Config, catalogs map[string]loadedCatalog, resolv
 			status = "required (org)"
 		} else if artifact.Selected {
 			status = "enabled"
+		}
+		if p := artifact.Plugin; p != nil && p.Refusal != nil {
+			status = p.Refusal.Code
 		}
 		rows = append(rows, listRow{
 			Registry: registryDisplayName(artifact.RegistryURL),

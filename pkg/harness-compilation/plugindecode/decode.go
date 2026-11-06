@@ -52,6 +52,13 @@ const agentPluginMcpSchemaID = "https://agent-plugins.org/schemas/1.0.0/mcp.sche
 // Decode reads the package rooted at rootPath as format and returns the
 // plugin IR plus the diagnostics produced along the way.
 func Decode(rootPath, format string) (*ir.Plugin, []*diag.Diagnostic, error) {
+	return decodePackage(rootPath, format, nil)
+}
+
+// decodePackage is Decode with an optional catalog entry overlay: a
+// non-nil overlay applies the catalog's declared entry-overlay policy, in
+// which a missing package manifest means the entry itself is the manifest.
+func decodePackage(rootPath, format string, overlay *EntryOverlay) (*ir.Plugin, []*diag.Diagnostic, error) {
 	info, known, err := pluginpolicy.LookupPackageFormat(format)
 	if err != nil {
 		return nil, nil, err
@@ -67,15 +74,28 @@ func Decode(rootPath, format string) (*ir.Plugin, []*diag.Diagnostic, error) {
 	}
 	defer func() { _ = root.Close() }()
 
-	d := &decoder{root: root, src: rootFS{root: root}, format: format, info: info, layout: layout}
+	d := &decoder{root: root, src: rootFS{root: root}, format: format, info: info, layout: layout, overlay: overlay}
 	files, err := d.containedFiles()
 	if err != nil {
 		return nil, d.diags, err
 	}
-	if err := d.decodeManifest(); err != nil {
-		return nil, d.diags, err
+	_, manifestErr := d.root.Stat(d.layout.ManifestPath)
+	manifestPresent := manifestErr == nil
+	if manifestPresent || overlay == nil {
+		if err := d.decodeManifest(); err != nil {
+			return nil, d.diags, err
+		}
+	} else {
+		if err := d.decodeOverlayManifest(); err != nil {
+			return nil, d.diags, err
+		}
 	}
 	d.discoverComponents()
+	if overlay != nil {
+		if err := d.applyEntryOverlay(manifestPresent); err != nil {
+			return nil, d.diags, err
+		}
+	}
 	plugin := &ir.Plugin{
 		Format:        format,
 		FormatVersion: d.formatVersion,
@@ -113,11 +133,12 @@ func (f rootFS) ReadDir(name string) ([]fs.DirEntry, error) {
 func (f rootFS) Stat(name string) (fs.FileInfo, error) { return f.root.Stat(name) }
 
 type decoder struct {
-	root   *os.Root
-	src    fs.FS
-	format string
-	info   pluginpolicy.PackageFormat
-	layout target.PackageLayout
+	root    *os.Root
+	src     fs.FS
+	format  string
+	info    pluginpolicy.PackageFormat
+	layout  target.PackageLayout
+	overlay *EntryOverlay
 
 	formatVersion string
 	manifest      ir.Manifest
@@ -143,10 +164,10 @@ func (d *decoder) record(path, kind, reason, code string) {
 	d.invalid = append(d.invalid, ir.PluginRecord{Path: path, Kind: kind, Reason: reason, Diagnostic: code})
 }
 
-// readJSON reads path from the package root, bounded, and decodes it into
+// readBoundedJSON reads path from root, bounded, and decodes it into
 // map[string]any through the JSONC parser that rejects duplicate keys.
-func (d *decoder) readJSON(name string) (map[string]any, error) {
-	f, err := d.root.Open(name)
+func readBoundedJSON(root *os.Root, name string) (map[string]any, error) {
+	f, err := root.Open(name)
 	if err != nil {
 		return nil, err
 	}
@@ -166,6 +187,11 @@ func (d *decoder) readJSON(name string) (map[string]any, error) {
 		return nil, codedErr(diag.CodePluginFormatManifestInvalid, name, "top-level value must be a JSON object")
 	}
 	return obj, nil
+}
+
+// readJSON reads path from the package root through readBoundedJSON.
+func (d *decoder) readJSON(name string) (map[string]any, error) {
+	return readBoundedJSON(d.root, name)
 }
 
 // containedFiles walks the package root once, collecting the regular-file

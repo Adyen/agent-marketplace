@@ -18,13 +18,22 @@ type ManifestFieldRule struct {
 
 // PackageFormat is the read view of one shipped format catalog: its role,
 // recognized versions, manifest field rules, component discovery rules, and
-// dependency posture. The catalogs remain the only source of these rules.
+// dependency posture. For catalog (marketplace) formats it also carries the
+// entry source outcomes and the entry overlay policy identifier. The
+// catalogs remain the only source of these rules.
 type PackageFormat struct {
 	Role           string
 	Versions       []string
 	ManifestFields map[string]ManifestFieldRule
 	Components     map[string]string
 	Dependencies   string
+	// CatalogSources maps a catalog entry source type to its outcome
+	// (SourceAcquire or SourceRefuse); empty for package formats.
+	CatalogSources map[string]string
+	// EntryOverlay names the allowlisted overlay policy for entry fields
+	// (for example "entry-overlay.strict"); empty for package formats and
+	// for catalogs without one.
+	EntryOverlay string
 }
 
 var shippedRegistry = sync.OnceValues(func() (*registry, error) {
@@ -50,13 +59,21 @@ func LookupPackageFormat(format string) (PackageFormat, bool, error) {
 	for name, rule := range c.Components {
 		components[name] = rule
 	}
-	return PackageFormat{
+	out := PackageFormat{
 		Role:           c.Role,
 		Versions:       append([]string(nil), c.Versions...),
 		ManifestFields: fields,
 		Components:     components,
 		Dependencies:   c.Dependencies,
-	}, true, nil
+	}
+	if c.Catalog != nil {
+		out.EntryOverlay = c.Catalog.EntryOverlay
+		out.CatalogSources = make(map[string]string, len(c.Catalog.Sources))
+		for source, outcome := range c.Catalog.Sources {
+			out.CatalogSources[source] = outcome
+		}
+	}
+	return out, true, nil
 }
 
 // PluginFieldPolicies returns every plugin-surface field policy the harness
