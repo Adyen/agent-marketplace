@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/guiupdate"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/session"
@@ -33,6 +34,7 @@ const (
 	codeUnauthorized              = "localapi.unauthorized"
 	codeForbidden                 = "localapi.forbidden"
 	codeInvalidRequest            = "localapi.invalid_request"
+	codeDirectoryUnavailable      = "localapi.directory_unavailable"
 	codeNotReady                  = "localapi.not_ready"
 	codeNotSupported              = "localapi.not_supported"
 	codeBusy                      = "localapi.busy"
@@ -168,9 +170,11 @@ type API struct {
 	subs                 map[*subscriber]struct{}
 
 	version       string
+	packageFormat string
+	updater       *guiupdate.Service
 	releaseClient *http.Client
 	releaseOnce   sync.Once
-	releaseNotice string
+	releaseNotice releaseNotice
 
 	wg sync.WaitGroup
 }
@@ -250,6 +254,9 @@ func (a *API) Close() {
 		a.resourceActionPlan = nil
 	}
 	a.mu.Unlock()
+	if a.updater != nil {
+		a.updater.Close()
+	}
 	a.wg.Wait()
 }
 
@@ -398,6 +405,8 @@ func (a *API) dispatch(w http.ResponseWriter, r *http.Request) {
 		a.handleConfigurationAction(w, r)
 	case "/api/release":
 		a.handleRelease(w, r)
+	case "/api/update":
+		a.handleUpdate(w, r)
 	default:
 		writeError(w, http.StatusNotFound, codeInvalidRequest)
 	}
@@ -410,6 +419,7 @@ func writeError(w http.ResponseWriter, status int, code string) {
 		codeUnauthorized:              "unauthorized",
 		codeForbidden:                 "origin rejected",
 		codeInvalidRequest:            "invalid request",
+		codeDirectoryUnavailable:      "directory source unavailable",
 		codeNotReady:                  "session is not ready for mutation",
 		codeNotSupported:              "operation not supported by this session mode",
 		codeBusy:                      "another operation is in progress",

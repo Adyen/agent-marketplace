@@ -7,6 +7,7 @@ import test from 'node:test'
 
 import { stripFrontMatter } from '../.vitepress/llms.ts'
 import { docsSidebar } from '../.vitepress/sidebar.ts'
+import * as site from '../src/shared/site.ts'
 import { nextTabIndex } from '../src/pages/landing/composables/tabNavigation.ts'
 
 const dist = new URL('../.vitepress/dist/', import.meta.url)
@@ -62,6 +63,179 @@ test('public project site exposes landing and documentation without a local Mark
   for (const html of [landing, nestedDocs]) {
     assert.doesNotMatch(html, /(?:href|rel="prefetch" href)="\/marketplace\/?"/)
   }
+})
+
+const guiRelease = {
+  tag_name: 'v5.2.0',
+  assets: [
+    {
+      name: 'agent-marketplace-gui-v5.2.0-macos-universal.dmg',
+      browser_download_url: 'https://github.com/Adyen/agent-marketplace/releases/download/v5.2.0/agent-marketplace-gui-v5.2.0-macos-universal.dmg',
+    },
+    {
+      name: 'agent-marketplace-gui-v5.2.0-macos-universal.zip',
+      browser_download_url: 'https://github.com/Adyen/agent-marketplace/releases/download/v5.2.0/agent-marketplace-gui-v5.2.0-macos-universal.zip',
+    },
+    {
+      name: 'agent-marketplace-gui-v5.2.0-linux-amd64.rpm',
+      browser_download_url: 'https://github.com/Adyen/agent-marketplace/releases/download/v5.2.0/agent-marketplace-gui-v5.2.0-linux-amd64.rpm',
+    },
+    {
+      name: 'agent-marketplace-gui-v5.2.0-linux-amd64.deb',
+      browser_download_url: 'https://github.com/Adyen/agent-marketplace/releases/download/v5.2.0/agent-marketplace-gui-v5.2.0-linux-amd64.deb',
+    },
+    {
+      name: 'agent-marketplace-gui-v5.2.0-linux-arm64.rpm',
+      browser_download_url: 'https://github.com/Adyen/agent-marketplace/releases/download/v5.2.0/agent-marketplace-gui-v5.2.0-linux-arm64.rpm',
+    },
+    {
+      name: 'agent-marketplace-gui-v5.2.0-linux-arm64.deb',
+      browser_download_url: 'https://github.com/Adyen/agent-marketplace/releases/download/v5.2.0/agent-marketplace-gui-v5.2.0-linux-arm64.deb',
+    },
+  ],
+}
+
+async function withGithubRelease(
+  response: () => Promise<Response>,
+  run: () => Promise<void>,
+): Promise<void> {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => response()
+  try {
+    await run()
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+}
+
+// spec: site-deployment-profiles/macos-visitor-sees-the-disk-image-download
+test('macOS visitors get the published universal DMG and first-launch guidance', async () => {
+  await withGithubRelease(
+    async () => new Response(JSON.stringify(guiRelease), { status: 200 }),
+    async () => {
+      assert.deepEqual(await site.loadGuiDownloads?.('macos'), {
+        status: 'available',
+        primary: {
+          label: 'macOS · Universal (.dmg)',
+          url: 'https://github.com/Adyen/agent-marketplace/releases/download/v5.2.0/agent-marketplace-gui-v5.2.0-macos-universal.dmg',
+        },
+        links: [],
+      })
+    },
+  )
+
+  const landing = await readFile(new URL('index.html', dist), 'utf8')
+  assert.ok(landing.includes('go install github.com/Adyen/agent-marketplace/cmd/agent-marketplace@latest'))
+  assert.ok(landing.includes('Right-click'))
+  assert.ok(landing.includes('Open Anyway'))
+})
+
+// spec: site-deployment-profiles/linux-visitor-sees-package-downloads
+test('Linux visitors get RPM and DEB downloads labeled for both architectures', () => {
+  assert.deepEqual(site.selectGuiDownloads?.(guiRelease, 'linux'), {
+    status: 'available',
+    primary: null,
+    links: [
+      {
+        label: 'RPM · amd64',
+        url: 'https://github.com/Adyen/agent-marketplace/releases/download/v5.2.0/agent-marketplace-gui-v5.2.0-linux-amd64.rpm',
+      },
+      {
+        label: 'DEB · amd64',
+        url: 'https://github.com/Adyen/agent-marketplace/releases/download/v5.2.0/agent-marketplace-gui-v5.2.0-linux-amd64.deb',
+      },
+      {
+        label: 'RPM · arm64',
+        url: 'https://github.com/Adyen/agent-marketplace/releases/download/v5.2.0/agent-marketplace-gui-v5.2.0-linux-arm64.rpm',
+      },
+      {
+        label: 'DEB · arm64',
+        url: 'https://github.com/Adyen/agent-marketplace/releases/download/v5.2.0/agent-marketplace-gui-v5.2.0-linux-arm64.deb',
+      },
+    ],
+  })
+})
+
+// spec: site-deployment-profiles/release-lookup-failure-falls-back-to-the-release-page
+test('failed or empty latest-release lookups link only to GitHub releases', async t => {
+  await t.test('lookup failure', async () => {
+    await withGithubRelease(
+      async () => { throw new Error('offline') },
+      async () => {
+        assert.deepEqual(await site.loadGuiDownloads?.('other'), {
+          status: 'fallback',
+          label: 'View latest release on GitHub',
+          url: 'https://github.com/Adyen/agent-marketplace/releases/latest',
+        })
+      },
+    )
+  })
+
+  await t.test('non-success response', async () => {
+    await withGithubRelease(
+      async () => new Response('', { status: 503 }),
+      async () => {
+        assert.deepEqual(await site.loadGuiDownloads?.('other'), {
+          status: 'fallback',
+          label: 'View latest release on GitHub',
+          url: 'https://github.com/Adyen/agent-marketplace/releases/latest',
+        })
+      },
+    )
+  })
+
+  await t.test('release has no GUI assets', async () => {
+    await withGithubRelease(
+      async () => new Response(JSON.stringify({ tag_name: 'v5.2.0', assets: [] }), { status: 200 }),
+      async () => {
+        assert.deepEqual(await site.loadGuiDownloads?.('other'), {
+          status: 'fallback',
+          label: 'View latest release on GitHub',
+          url: 'https://github.com/Adyen/agent-marketplace/releases/latest',
+        })
+      },
+    )
+  })
+})
+
+test('other visitors see every published GUI package', () => {
+  assert.deepEqual(site.selectGuiDownloads?.(guiRelease, 'other'), {
+    status: 'available',
+    primary: null,
+    links: [
+      {
+        label: 'macOS · Universal (.dmg)',
+        url: 'https://github.com/Adyen/agent-marketplace/releases/download/v5.2.0/agent-marketplace-gui-v5.2.0-macos-universal.dmg',
+      },
+      {
+        label: 'macOS update archive (.zip)',
+        url: 'https://github.com/Adyen/agent-marketplace/releases/download/v5.2.0/agent-marketplace-gui-v5.2.0-macos-universal.zip',
+      },
+      {
+        label: 'RPM · amd64',
+        url: 'https://github.com/Adyen/agent-marketplace/releases/download/v5.2.0/agent-marketplace-gui-v5.2.0-linux-amd64.rpm',
+      },
+      {
+        label: 'DEB · amd64',
+        url: 'https://github.com/Adyen/agent-marketplace/releases/download/v5.2.0/agent-marketplace-gui-v5.2.0-linux-amd64.deb',
+      },
+      {
+        label: 'RPM · arm64',
+        url: 'https://github.com/Adyen/agent-marketplace/releases/download/v5.2.0/agent-marketplace-gui-v5.2.0-linux-arm64.rpm',
+      },
+      {
+        label: 'DEB · arm64',
+        url: 'https://github.com/Adyen/agent-marketplace/releases/download/v5.2.0/agent-marketplace-gui-v5.2.0-linux-arm64.deb',
+      },
+    ],
+  })
+})
+
+test('visitor platform detection distinguishes macOS, Linux, and other systems', () => {
+  assert.equal(site.detectGuiVisitorOS?.('MacIntel', 'Macintosh'), 'macos')
+  assert.equal(site.detectGuiVisitorOS?.('Linux x86_64', 'X11; Linux x86_64'), 'linux')
+  assert.equal(site.detectGuiVisitorOS?.('Win32', 'Windows NT'), 'other')
+  assert.equal(site.detectGuiVisitorOS?.('Linux armv8l', 'Android'), 'other')
 })
 
 // spec: site-deployment-profiles/project-path-pages-site-resolves-navigation-and-assets

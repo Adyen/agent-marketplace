@@ -180,6 +180,9 @@ func TestHostOptionWiring(t *testing.T) {
 	if bootstrap.Version != version {
 		t.Fatalf("bootstrap version = %q, want %q", bootstrap.Version, version)
 	}
+	if bootstrap.PackageFormat != "" {
+		t.Fatalf("default package format = %q, want empty", bootstrap.PackageFormat)
+	}
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/snapshot", nil)
 	app.handler().ServeHTTP(recorder, req)

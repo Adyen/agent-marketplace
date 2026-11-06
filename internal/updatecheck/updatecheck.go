@@ -87,6 +87,9 @@ func classify(version string) build {
 	return build{}
 }
 
+// CanCheck reports whether version uses a release or Go pseudo-version build kind.
+func CanCheck(version string) bool { return classify(version).kind != buildUnchecked }
+
 // Notice returns the notice line when current is outdated relative to latest.
 func Notice(current string, latest Release) (string, bool) {
 	if !semver.IsValid(latest.Tag) {
@@ -147,7 +150,7 @@ type Run struct {
 // background when the cached attempt is at least a day old. It never waits on the network.
 func (c *Checker) Start(ctx context.Context) *Run {
 	run := &Run{checker: c, state: loadState(c.StatePath)}
-	if classify(c.Version).kind == buildUnchecked {
+	if !CanCheck(c.Version) {
 		return run
 	}
 	now := c.Now()

@@ -1,11 +1,9 @@
 # GUI desktop release notes
 
-## Organization-controlled release availability notice
+## Desktop downloads and in-app updates
 
-The desktop GUI can compare its running version with the latest stable public GitHub release and show an availability notice. This does not download or install updates. The CLI does not perform release checks based on this GUI setting.
+The desktop GUI ships as a universal macOS disk image and zip, and as `.rpm` and `.deb` packages for Linux on amd64 and arm64. When a newer stable release is published, the GUI shows a notice. On macOS, clicking Update downloads, verifies, and replaces the app in place; on Linux, the GUI downloads and verifies the package and opens it in the software installer. Nothing is downloaded until the user clicks.
 
-`gui.version_check` is an organization-only boolean in the v4 `gui` mapping. It defaults to `true`. Set it to `false` to skip the release request and notice. User-personal, repository-committed, and personal-local values are accepted for compatibility, ignored with a warning, and do not override the organization setting. The desktop GUI reads and writes user-personal configuration; organization configuration is read-only to the GUI.
+Release checks follow the shared `update_check.enabled` setting used by the CLI and TUI. `AGENT_MARKETPLACE_NO_UPDATE_CHECK` and `CI` also turn them off. The earlier `gui.version_check` key was never released and is rejected as an unknown field.
 
-> **Reader-first rollout — do not deploy this key until every managed client runs a release whose CLI reads the `gui` mapping. Older v4 clients reject the unknown top-level `gui` field, and strict legacy readers reject `gui` too. Until the fleet upgrade is verified, leave the key absent.**
-
-See [GUI release checks in the configuration reference](../site/docs/reference/configuration.md#gui-release-checks).
+See [Desktop app](../site/docs/install.md#desktop-app) and the [configuration reference](../site/docs/reference/configuration.md).

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/guiupdate"
 	"github.com/Adyen/agent-marketplace/internal/localapi"
 	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
@@ -23,10 +24,12 @@ const launchRequestEvent = "desktop:launch-request"
 const closeRequestEvent = "desktop:close-request"
 
 var version = "dev"
+var packageFormat = ""
 
 type Bootstrap struct {
-	Credential string `json:"credential"`
-	Version    string `json:"version"`
+	Credential    string `json:"credential"`
+	PackageFormat string `json:"packageFormat"`
+	Version       string `json:"version"`
 }
 
 type Window interface {
@@ -39,6 +42,7 @@ const guiTelemetryUnavailableWarning = "GUI telemetry unavailable; continuing wi
 
 type App struct {
 	api              *localapi.API
+	updater          *guiupdate.Service
 	version          string
 	telemetry        *telemetry.Telemetry
 	telemetryState   telemetry.TelemetryState
@@ -47,6 +51,7 @@ type App struct {
 	rootSpan         telemetry.Span
 	quit             func()
 	closeOnce        sync.Once
+	e2eControlClose  func()
 	nativeState
 }
 
@@ -60,6 +65,7 @@ func NewApp(ctx context.Context, lifecycle session.DependencyLifecycle) (*App, e
 	var runtime *telemetry.Telemetry
 	rootSpan := telemetry.Span{}
 	apiCtx := ctx
+	updater := guiupdate.NewNative(packageFormat)
 	if resolveErr != nil {
 		slog.Warn(guiTelemetryUnavailableWarning)
 	} else if state.EffectiveLevel == tmcfg.LevelBasic || state.EffectiveLevel == tmcfg.LevelDetailed {
@@ -81,14 +87,24 @@ func NewApp(ctx context.Context, lifecycle session.DependencyLifecycle) (*App, e
 	if runtime != nil {
 		telemetryCtx = telemetry.NewContext(apiCtx, runtime, "gui", startedAt, state.HarnessesString(), state.Managed, rootSpan, false)
 	}
-	api, err := localapi.NewUser(telemetryCtx, homeDir, lifecycle, nil, localapi.WithVersion(version))
+	api, err := localapi.NewUser(
+		telemetryCtx,
+		homeDir,
+		lifecycle,
+		nil,
+		localapi.WithVersion(version),
+		localapi.WithPackageFormat(packageFormat),
+		localapi.WithUpdateService(updater),
+	)
 	if err != nil {
+		updater.Close()
 		rootSpan.End()
 		shutdownTelemetry(runtime)
 		return nil, err
 	}
 	return &App{
 		api:              api,
+		updater:          updater,
 		version:          version,
 		telemetry:        runtime,
 		telemetryState:   state,
@@ -99,13 +115,16 @@ func NewApp(ctx context.Context, lifecycle session.DependencyLifecycle) (*App, e
 }
 
 func (a *App) Bootstrap() Bootstrap {
-	return Bootstrap{Credential: a.api.Credential(), Version: a.version}
+	return Bootstrap{Credential: a.api.Credential(), PackageFormat: packageFormat, Version: a.version}
 }
 
 func (a *App) handler() http.Handler { return a.api.Handler() }
 
 func (a *App) close() {
 	a.closeOnce.Do(func() {
+		if a.e2eControlClose != nil {
+			a.e2eControlClose()
+		}
 		a.api.Close()
 		if a.telemetry == nil {
 			return

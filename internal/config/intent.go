@@ -43,7 +43,6 @@ type Settings struct {
 	UpdateCheck         *UpdateCheckConfig
 	Telemetry           *telemetryconfig.TelemetryConfig
 	Materialization     *MaterializationConfig
-	GUI                 *GUIConfig
 }
 
 type SourceKind = V4SourceKind
@@ -117,9 +116,6 @@ func (l LayerIntent) Settings() Settings {
 			Telemetry:       l.v4.Telemetry,
 			Materialization: l.v4.Materialization,
 		}
-		if l.Source == Organization {
-			settings.GUI = l.v4.GUI
-		}
 		if l.v4.AllowedRegistries != nil {
 			values := cloneV4StringList(*l.v4.AllowedRegistries)
 			settings.AllowedRegistries = &values
@@ -143,7 +139,6 @@ func (s Settings) config() *Config {
 		Logging:             s.Logging,
 		Telemetry:           s.Telemetry,
 		Materialization:     s.Materialization,
-		GUI:                 s.GUI,
 	}
 }
 
@@ -375,7 +370,6 @@ func readLayerIntent(path, canonical string, data []byte, kind layerKind, overla
 	}
 	li.v4 = v4
 	li.Reads = append([]ConfigRead(nil), v4.reads...)
-	li.warnLowerLayerGUI(v4.GUI)
 	return li, nil
 }
 
