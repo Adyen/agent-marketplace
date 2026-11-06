@@ -166,7 +166,12 @@ plugin caches. Claude Code registration SHALL be written to
 `.claude/settings.local.json` at repository scope and to
 `~/.claude/settings.json` at user scope, and the Claude catalog SHALL be a
 marketplace file Claude Code accepts, naming an owner and listing each
-plugin with a source relative to the catalog root.
+plugin with a source relative to the catalog root. Factory Droid
+registration SHALL be written to `.factory/settings.local.json` at
+repository scope and to `~/.factory/settings.json` at user scope, SHALL
+declare the catalog with a `local` marketplace source, and the Factory
+catalog SHALL be a `.factory-plugin/marketplace.json` marketplace naming an
+owner and listing each plugin with a source relative to the catalog root.
 
 #### Scenario: Claude registration preserves handwritten settings
 
@@ -193,6 +198,24 @@ plugin with a source relative to the catalog root.
   `.claude/settings.local.json` and gone from `.claude/settings.json`, the
   plugin MUST be registered exactly once, and entries without ownership state
   MUST be left unchanged
+
+#### Scenario: Factory registration preserves handwritten settings
+
+- **WHEN** a plugin is delivered natively to Factory Droid at repository
+  scope and `.factory/settings.local.json` has handwritten `enabledPlugins`
+  and `extraKnownMarketplaces` entries
+- **THEN** `.factory/settings.local.json` MUST gain the owned
+  `extraKnownMarketplaces` entry with a `local` source naming the catalog and
+  the owned `enabledPlugins` entry for the plugin, MUST keep every handwritten
+  entry and comment, and `.factory/settings.json` MUST gain no registration
+  entry
+
+#### Scenario: Factory catalog is a marketplace Droid accepts
+
+- **WHEN** a plugin is delivered natively to Factory Droid
+- **THEN** the owned catalog's `.factory-plugin/marketplace.json` MUST name
+  the catalog and an owner and list the plugin with a source relative to the
+  catalog root that resolves to the plugin's package generation
 
 #### Scenario: Registration without ownership state is not pruned
 

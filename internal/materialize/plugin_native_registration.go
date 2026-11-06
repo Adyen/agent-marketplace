@@ -62,7 +62,7 @@ func nativePluginCatalogFor(target hcc.Target, scope string, entries []nativePlu
 }
 
 func (catalog nativePluginCatalog) manifest() ([]byte, error) {
-	if catalog.target == target.TargetClaude {
+	if catalog.target == target.TargetClaude || catalog.target == target.TargetFactory {
 		type entry struct {
 			Name   string `json:"name"`
 			Source string `json:"source"`
@@ -122,6 +122,8 @@ func nativePluginCatalogParticipants(catalog nativePluginCatalog) ([]dependencyt
 	switch catalog.target {
 	case target.TargetClaude:
 		manifestPath = filepath.Join(catalog.path, ".claude-plugin", "marketplace.json")
+	case target.TargetFactory:
+		manifestPath = filepath.Join(catalog.path, ".factory-plugin", "marketplace.json")
 	case target.TargetCodex:
 		manifestPath = filepath.Join(catalog.path, ".agents", "plugins", "marketplace.json")
 	default:
@@ -196,6 +198,19 @@ func nativeRegistrationEntries(key outputKey, repoRoot string, ref ownership.Plu
 		if len(catalog.entries) > 0 {
 			if err := add("extraKnownMarketplaces", catalog.name, map[string]any{
 				"source": map[string]string{"source": "directory", "path": catalog.path},
+			}, catalog.scopeOwner); err != nil {
+				return nil, err
+			}
+		}
+		if ref.Delivery == "native" {
+			if err := add("enabledPlugins", ref.Name+"@"+catalog.name, true, ref.InstanceKey); err != nil {
+				return nil, err
+			}
+		}
+	case target.NativeRegistrationFactorySettings:
+		if len(catalog.entries) > 0 {
+			if err := add("extraKnownMarketplaces", catalog.name, map[string]any{
+				"source": map[string]string{"source": "local", "path": catalog.path},
 			}, catalog.scopeOwner); err != nil {
 				return nil, err
 			}
