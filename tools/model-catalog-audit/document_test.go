@@ -102,7 +102,7 @@ func TestDocumentSourceReportsStatus(t *testing.T) {
 					return fetched{}, tt.fetchErr
 				}
 				return fetched{Body: []byte(tt.body), URL: tt.source.URL}, nil
-			}, time.Now())
+			}, time.Now(), nil)
 			if len(result.Sources) != 1 {
 				t.Fatalf("sources = %#v", result.Sources)
 			}
@@ -149,7 +149,7 @@ func TestDocumentSourceRejectsMismatchedCatalogs(t *testing.T) {
 			files: fstest.MapFS{"pkg/harness-compilation/toolpolicy/catalogs/factory.yaml": &fstest.MapFile{Data: []byte("schema: 1\nharness: factory\nevidence: {refs: [https://docs.factory.ai/reference/hooks-reference]}\ntools: {Bash: {}}\n")}}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			result := audit(context.Background(), tt.files, []source{tt.source}, nil, fetch, time.Now())
+			result := audit(context.Background(), tt.files, []source{tt.source}, nil, fetch, time.Now(), nil)
 			if len(result.Sources) != 1 || result.Sources[0].Findings[0].Code != "catalog.invalid" || !result.Failed {
 				t.Fatalf("result = %#v, want catalog.invalid", result)
 			}

@@ -117,5 +117,5 @@ func auditDocumentSource(ctx context.Context, files fs.FS, s source, r *sourceRe
 		return
 	}
 	r.CatalogSHA256 = digest(body)
-	auditSource(ctx, s, catalog{}, r, fetch)
+	auditSource(ctx, s, catalog{}, r, fetch, nil, false)
 }

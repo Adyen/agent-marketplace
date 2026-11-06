@@ -125,7 +125,7 @@ func readLimited(reader io.Reader) ([]byte, error) {
 	return body, err
 }
 
-func audit(ctx context.Context, files fs.FS, sources []source, baselines map[string]baseline, fetch fetchFunc, now time.Time) report {
+func audit(ctx context.Context, files fs.FS, sources []source, baselines map[string]baseline, fetch fetchFunc, now time.Time, overrides map[string][]observedModel) report {
 	result := report{Schema: 1, CheckedAt: now.UTC().Format(time.RFC3339), Coverage: coverage, Sources: []sourceReport{}}
 	for _, s := range sources {
 		r := sourceReport{Name: s.Name, Harness: s.Harness, CatalogDomain: s.Domain, URL: s.URL, Status: "no-drift", Baseline: baselines[s.Name], Findings: []finding{}}
@@ -149,7 +149,8 @@ func audit(ctx context.Context, files fs.FS, sources []source, baselines map[str
 					r.FamilyPins[id] = family.Pin
 				}
 			}
-			auditSource(ctx, s, c, &r, fetch)
+			override, hasOverride := overrides[s.Name]
+			auditSource(ctx, s, c, &r, fetch, override, hasOverride)
 		}
 		result.Failed = result.Failed || r.Status != "no-drift"
 		result.Sources = append(result.Sources, r)
@@ -164,7 +165,7 @@ func (r *sourceReport) add(status, code, model, message string) {
 	r.Findings = append(r.Findings, finding{Code: code, Model: model, Message: message})
 }
 
-func auditSource(ctx context.Context, s source, c catalog, r *sourceReport, fetch fetchFunc) {
+func auditSource(ctx context.Context, s source, c catalog, r *sourceReport, fetch fetchFunc, override []observedModel, hasOverride bool) {
 	response, err := fetch(ctx, s.URL)
 	if err != nil {
 		r.add("unknown", "source.fetch-failed", "", "Public source unavailable; no freshness conclusion. Retry or inspect the source URL.")
@@ -180,11 +181,15 @@ func auditSource(ctx context.Context, s source, c catalog, r *sourceReport, fetc
 		r.add("unknown", code, "", "Expected model inventory or documentation content was not found; review the source adapter.")
 		return
 	}
+	evidence := observed
+	if hasOverride {
+		observed.Models = override
+	}
 	r.Observed = observed
-	if observed.Text != "" {
-		r.ObservedSHA256 = digest([]byte(observed.Text))
+	if evidence.Text != "" {
+		r.ObservedSHA256 = digest([]byte(evidence.Text))
 	} else {
-		encoded, _ := json.Marshal(observed.Models)
+		encoded, _ := json.Marshal(evidence.Models)
 		r.ObservedSHA256 = digest(encoded)
 	}
 	if inventoryKind(s.Kind) && len(observed.Models) == 0 {

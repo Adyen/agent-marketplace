@@ -24,10 +24,10 @@
 
 ## 4. Gemini redirect and Cursor CLI inventory
 
-- [ ] 4.1 Trust `aistudio.google.com` for the Gemini docs redirect (user decision)
-- [ ] 4.2 Red tests: Cursor CLI output parses `<id> - <display name>` lines into the `cursor-models` inventory; missing or unauthenticated output reports `source.inventory-unparsed` (AC3)
-- [ ] 4.3 Add the `check` flag for the Cursor CLI output file and the parser (AC3)
-- [ ] 4.4 Add the CI step in `.github/workflows/harness-images.yml` that runs `agent models` in `harness-cursor:ci` keyless and saves the output for `check` (AC3, user decision)
+- [x] 4.1 Trust `aistudio.google.com` for the Gemini docs redirect (user decision)
+- [x] 4.2 Red tests: Cursor CLI output parses `<id> - <display name>` lines into the `cursor-models` inventory; missing or unauthenticated output reports `source.inventory-unparsed` (AC3)
+- [x] 4.3 Add the `check` flag for the Cursor CLI output file and the parser (AC3)
+- [x] 4.4 Add the CI step in `.github/workflows/harness-images.yml` that runs `agent models` in `harness-cursor:ci` keyless and saves the output for `check` (AC3, user decision)
 
 ## 5. Resolved decisions
 

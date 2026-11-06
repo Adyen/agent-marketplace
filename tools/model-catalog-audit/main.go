@@ -27,7 +27,7 @@ func trustedURL(raw string) bool {
 		return false
 	}
 	switch u.Host {
-	case "platform.claude.com", "code.claude.com", "developers.openai.com", "learn.chatgpt.com", "cursor.com", "docs.devin.ai", "docs.factory.ai", "docs.factory.com", "ai.google.dev", "geminicli.com", "opencode.ai", "raw.githubusercontent.com":
+	case "platform.claude.com", "code.claude.com", "developers.openai.com", "learn.chatgpt.com", "cursor.com", "docs.devin.ai", "docs.factory.ai", "docs.factory.com", "ai.google.dev", "aistudio.google.com", "geminicli.com", "opencode.ai", "raw.githubusercontent.com":
 		return true
 	case "github.com":
 		return strings.HasPrefix(u.Path, "/google-gemini/gemini-cli/") && u.Path == path.Clean(u.Path)
@@ -81,6 +81,7 @@ func run(args []string, in io.Reader, out io.Writer, fetch fetchFunc, now time.T
 	switch args[0] {
 	case "check":
 		root := flags.String("root", ".", "Repository root (read-only)")
+		cursorModelsPath := flags.String("cursor-models", "", "Cursor CLI model inventory output file")
 		if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 {
 			return fmt.Errorf("invalid check arguments")
 		}
@@ -99,7 +100,9 @@ func run(args []string, in io.Reader, out io.Writer, fetch fetchFunc, now time.T
 		slog.Info("auditing public model evidence", "sources", len(sources))
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 		defer cancel()
-		result := audit(ctx, files, sources, baselines, fetch, now)
+		result := audit(ctx, files, sources, baselines, fetch, now, map[string][]observedModel{
+			"cursor-models": readCursorCLIModels(*cursorModelsPath),
+		})
 		encoder := json.NewEncoder(out)
 		encoder.SetIndent("", "  ")
 		if err := encoder.Encode(result); err != nil {
@@ -132,6 +135,30 @@ func run(args []string, in io.Reader, out io.Writer, fetch fetchFunc, now time.T
 	default:
 		return fmt.Errorf("unknown command; use check, summary, or propose")
 	}
+}
+
+func readCursorCLIModels(path string) []observedModel {
+	if path == "" {
+		slog.Warn("Cursor CLI model inventory is empty", "reason", "flag not set", "path", path, "error", "-cursor-models was not set")
+		return nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		slog.Warn("Cursor CLI model inventory is empty", "reason", "open error", "path", path, "error", err)
+		return nil
+	}
+	defer func() { _ = file.Close() }()
+	body, err := readLimited(file)
+	if err != nil {
+		slog.Warn("Cursor CLI model inventory is empty", "reason", "read error", "path", path, "error", err)
+		return nil
+	}
+	models, err := extractCursorCLIModels(body)
+	if err != nil {
+		slog.Warn("Cursor CLI model inventory is empty", "reason", "no <id> - <display name> lines", "path", path, "error", err)
+		return nil
+	}
+	return models
 }
 
 func decodeReport(in io.Reader) (report, error) {

@@ -1,0 +1,5 @@
+Available models:
+composer-2 - Composer 2
+
+gpt-5.5 - GPT-5.5 (current)
+claude-4.5-sonnet-thinking - Claude 4.5 Sonnet Thinking

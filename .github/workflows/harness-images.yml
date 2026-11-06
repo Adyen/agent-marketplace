@@ -103,6 +103,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+      packages: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -112,14 +113,25 @@ jobs:
           go-version-file: go.mod
       - name: Prepare model audit diagnostics
         if: always()
-        run: echo "AUDIT_REPORT_DIR=$RUNNER_TEMP/model-catalog-audit" >> "$GITHUB_ENV"
+        run: |
+          mkdir -p "$RUNNER_TEMP/model-catalog-audit"
+          echo "AUDIT_REPORT_DIR=$RUNNER_TEMP/model-catalog-audit" >> "$GITHUB_ENV"
       - name: Verify offline audit contracts
         run: go test ./tools/model-catalog-audit -count=1
+      - name: Log in to GitHub Container Registry
+        continue-on-error: true
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Capture Cursor CLI model inventory
+        continue-on-error: true
+        run: docker run --rm ghcr.io/adyen/agent-marketplace/harness-cursor:ci agent models > "$AUDIT_REPORT_DIR/cursor-cli-models.txt" 2> "$AUDIT_REPORT_DIR/cursor-cli-models.log"
       - name: Audit public model evidence without modifying catalogs
         run: |
           set -euo pipefail
-          mkdir -p "$AUDIT_REPORT_DIR"
-          go run ./tools/model-catalog-audit check > "$AUDIT_REPORT_DIR/report.json" 2> "$AUDIT_REPORT_DIR/audit.log"
+          go run ./tools/model-catalog-audit check -cursor-models "$AUDIT_REPORT_DIR/cursor-cli-models.txt" > "$AUDIT_REPORT_DIR/report.json" 2> "$AUDIT_REPORT_DIR/audit.log"
       - name: Publish model drift summary
         if: always()
         run: |

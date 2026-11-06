@@ -37,7 +37,7 @@ func TestAuditReportsInventoryDriftWithoutWriting(t *testing.T) {
 	body := "| Model | Model ID | Multiplier | Reasoning |\n| --- | --- | --- | --- |\n| Current | `current` | 1 | `high` |\n| New | `new` | 1 | `low` |"
 	result := audit(context.Background(), files, []source{s}, nil, func(context.Context, string) (fetched, error) {
 		return fetched{Body: []byte(body), URL: s.URL}, nil
-	}, time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC))
+	}, time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC), nil)
 	if !result.Failed || len(result.Sources) != 1 || result.Sources[0].Status != "drift" {
 		t.Fatalf("expected drift: %#v", result)
 	}
@@ -75,7 +75,7 @@ func TestAuditContinuesAfterUnavailableAndMalformedSources(t *testing.T) {
 			body = "| Model | Model ID | Multiplier | Reasoning |\n| --- | --- | --- | --- |\n| Current | `current` | 1 | `high` |\n| Old | `old` | 1 | `low` |"
 		}
 		return fetched{Body: []byte(body), URL: url}, nil
-	}, time.Now())
+	}, time.Now(), nil)
 	if !result.Failed || len(result.Sources) != 3 || result.Sources[0].Status != "unknown" || result.Sources[1].Status != "unknown" || result.Sources[2].Status != "no-drift" {
 		t.Fatalf("partial audit = %#v", result)
 	}
@@ -107,7 +107,7 @@ func TestDocumentWatchNeedsBaselineAndDetectsChanges(t *testing.T) {
 		{"changed", map[string]baseline{"contract": {Checked: "2026-09-23", SHA256: digest([]byte("old contract"))}}, "drift"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			result := audit(context.Background(), files, []source{s}, tt.baseline, func(context.Context, string) (fetched, error) { return fetched{Body: []byte(body)}, nil }, time.Now())
+			result := audit(context.Background(), files, []source{s}, tt.baseline, func(context.Context, string) (fetched, error) { return fetched{Body: []byte(body)}, nil }, time.Now(), nil)
 			if result.Sources[0].Status != tt.want || result.Failed != (tt.want != "no-drift") {
 				t.Fatalf("result = %#v", result)
 			}
@@ -123,7 +123,7 @@ func TestAuditCatalogFailureCannotPass(t *testing.T) {
 		result := audit(context.Background(), files, []source{{Name: "models", Harness: "factory", Kind: "factory"}}, nil, func(context.Context, string) (fetched, error) {
 			t.Fatal("should validate catalog before fetching")
 			return fetched{}, nil
-		}, time.Now())
+		}, time.Now(), nil)
 		if !result.Failed || result.Sources[0].Findings[0].Code != "catalog.invalid" {
 			t.Fatalf("invalid catalog passed: %#v", result)
 		}
@@ -146,7 +146,7 @@ func TestAuditRefusesModelSourceTheCatalogDoesNotCite(t *testing.T) {
 			result := audit(context.Background(), files, []source{s}, nil, func(context.Context, string) (fetched, error) {
 				fetches++
 				return fetched{Body: []byte(body), URL: tt.url}, nil
-			}, time.Now())
+			}, time.Now(), nil)
 			if got := result.Sources[0]; got.Status != tt.want || fetches != tt.fetches {
 				t.Fatalf("source %s: status %s after %d fetches, want %s after %d: %#v", tt.url, got.Status, fetches, tt.want, tt.fetches, got)
 			}

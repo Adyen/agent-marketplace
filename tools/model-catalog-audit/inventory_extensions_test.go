@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -50,6 +53,9 @@ func TestGeminiAPIDocsSourceIsRegisteredAndTrusted(t *testing.T) {
 	if !trustedURL(geminiAPIDocsURL) {
 		t.Fatalf("Gemini API model documentation URL is not trusted: %s", geminiAPIDocsURL)
 	}
+	if !trustedURL("https://aistudio.google.com/docs/models") {
+		t.Fatal("Gemini API documentation redirect destination is not trusted")
+	}
 }
 
 // spec: model-catalog-audit/gemini-api-page-inventory-lists-a-model-absent-from-the-catalog
@@ -77,7 +83,7 @@ func TestGeminiAPIAuditReportsCatalogCoverage(t *testing.T) {
 			s := source{Name: "gemini-api-models", Harness: "gemini", URL: geminiAPIDocsURL, Kind: "gemini-docs"}
 			result := audit(context.Background(), files, []source{s}, nil, func(context.Context, string) (fetched, error) {
 				return fetched{Body: body, URL: s.URL}, nil
-			}, time.Now())
+			}, time.Now(), nil)
 			if len(result.Sources) != 1 {
 				t.Fatalf("sources = %#v", result.Sources)
 			}
@@ -101,7 +107,7 @@ func TestGeminiAPIDocsWithoutIdentifiersIsUnknown(t *testing.T) {
 	s := source{Name: "gemini-api-models", Harness: "gemini", URL: geminiAPIDocsURL, Kind: "gemini-docs"}
 	result := audit(context.Background(), files, []source{s}, nil, func(context.Context, string) (fetched, error) {
 		return fetched{Body: []byte("<ul><li>Gemini model name</li></ul>"), URL: s.URL}, nil
-	}, time.Now())
+	}, time.Now(), nil)
 	if len(result.Sources) != 1 || result.Sources[0].Name != s.Name || result.Sources[0].Status != "unknown" {
 		t.Fatalf("empty Gemini model inventory status = %#v", result.Sources)
 	}
@@ -136,7 +142,7 @@ func TestFactoryHaikuFamilyPinStaleness(t *testing.T) {
 			before := bytes.Clone(files[catalogPath("factory")].Data)
 			result := audit(context.Background(), files, []source{s}, nil, func(context.Context, string) (fetched, error) {
 				return fetched{Body: []byte(body), URL: s.URL}, nil
-			}, time.Now())
+			}, time.Now(), nil)
 			stale := slices.ContainsFunc(result.Sources[0].Findings, func(f finding) bool {
 				return f.Code == "catalog.family-pin-stale" && f.Model == "anthropic/haiku"
 			})
@@ -177,7 +183,7 @@ families:
 			files := fstest.MapFS{catalogPath("factory"): &fstest.MapFile{Data: catalogBody}}
 			result := audit(context.Background(), files, []source{s}, nil, func(context.Context, string) (fetched, error) {
 				return fetched{Body: []byte(tt.observed), URL: s.URL}, nil
-			}, time.Now())
+			}, time.Now(), nil)
 			stale := slices.ContainsFunc(result.Sources[0].Findings, func(f finding) bool {
 				return f.Code == "catalog.family-pin-stale" && f.Model == "anthropic/haiku"
 			})
@@ -278,4 +284,151 @@ func TestSchemaOneSummaryAndProposeAcceptNewFindingCodes(t *testing.T) {
 	if err := run([]string{"propose", "--root", root}, bytes.NewReader(body), &proposal, nil, time.Now()); err != nil {
 		t.Fatal(err)
 	}
+}
+
+const cursorDocsFixture = `| Model | Provider | Input | Notes |
+| --- | --- | --- | --- |
+| Composer 2 | Cursor | $0 | Available |`
+
+// spec: model-catalog-audit/cursor-cli-output-lists-model-identifiers
+func TestCursorCLIOutputSuppliesCursorInventory(t *testing.T) {
+	body, err := os.ReadFile("testdata/cursor-cli-models.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = bytes.ReplaceAll(body, []byte("composer-2"), []byte("\x1b[36mcomposer-2\x1b[0m"))
+	body = bytes.ReplaceAll(body, []byte("gpt-5.5"), []byte("\x1b[32mgpt-5.5\x1b[0m"))
+	body = bytes.ReplaceAll(body, []byte("claude-4.5-sonnet-thinking"), []byte("\x1b[33mclaude-4.5-sonnet-thinking\x1b[0m"))
+	path := filepath.Join(t.TempDir(), "cursor-cli-models.txt")
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := runCursorAudit(t, []string{"-cursor-models", path})
+	wantIDs := []string{"composer-2", "gpt-5.5", "claude-4.5-sonnet-thinking"}
+	if ids := modelIDs(got.Observed.Models); !slices.Equal(ids, wantIDs) {
+		t.Fatalf("cursor inventory = %v, want %v", ids, wantIDs)
+	}
+	var missing []string
+	for _, finding := range got.Findings {
+		if finding.Code == "catalog.model-missing" {
+			missing = append(missing, finding.Model)
+		}
+	}
+	if !slices.Equal(missing, wantIDs[1:]) {
+		t.Fatalf("missing Cursor catalog IDs = %v, want %v", missing, wantIDs[1:])
+	}
+	if got.Observed.Text != "Composer 2 | Cursor | Available" {
+		t.Fatalf("Cursor docs evidence changed: %q", got.Observed.Text)
+	}
+	if got.ObservedSHA256 != "e84b46b4791ce5f8a277dc11f971b754ed38baeb66de383270eae5c5071f60e7" {
+		t.Fatalf("Cursor evidence hash = %s, want docs evidence hash", got.ObservedSHA256)
+	}
+}
+
+// spec: model-catalog-audit/cursor-cli-output-is-missing-or-unauthenticated
+func TestCursorCLIOutputMissingOrUnparseableIsUnknown(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		path bool
+	}{
+		{name: "no file supplied"},
+		{name: "empty file", path: true},
+		{name: "unreadable file", path: true},
+		{name: "authentication error", body: "Error: Authentication required. Please run 'agent login' first, or set CURSOR_API_KEY environment variable.", path: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var args []string
+			if tc.path {
+				path := filepath.Join(t.TempDir(), "cursor-cli-models.txt")
+				if tc.name != "unreadable file" {
+					if err := os.WriteFile(path, []byte(tc.body), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				args = []string{"-cursor-models", path}
+			}
+			got := runCursorAudit(t, args)
+			if got.Status != "unknown" || !slices.ContainsFunc(got.Findings, func(f finding) bool {
+				return f.Code == "source.inventory-unparsed"
+			}) {
+				t.Fatalf("Cursor source for %s = %#v, want source.inventory-unparsed", tc.name, got)
+			}
+			if len(got.Observed.Models) != 0 {
+				t.Fatalf("parsed prose from %s as models: %#v", tc.name, got.Observed.Models)
+			}
+		})
+	}
+}
+
+func TestReadCursorCLIModelsLogsEmptyInventoryReasons(t *testing.T) {
+	dir := t.TempDir()
+	noModelsPath := filepath.Join(dir, "no-models.txt")
+	if err := os.WriteFile(noModelsPath, []byte("not a model listing"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name, path, reason string
+	}{
+		{name: "flag not set", reason: "flag not set"},
+		{name: "open error", path: filepath.Join(dir, "missing.txt"), reason: "open error"},
+		{name: "read error", path: dir, reason: "read error"},
+		{name: "no model lines", path: noModelsPath, reason: "no <id> - <display name> lines"},
+	}
+
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&output, nil)))
+	defer slog.SetDefault(previous)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output.Reset()
+			if models := readCursorCLIModels(tt.path); len(models) != 0 {
+				t.Fatalf("models = %#v, want an empty inventory", models)
+			}
+			log := output.String()
+			if !strings.Contains(log, "level=WARN") || !strings.Contains(log, tt.reason) ||
+				!strings.Contains(log, "path=") || !strings.Contains(log, "error=") {
+				t.Fatalf("warning = %q, want reason, path, and error", log)
+			}
+			if tt.path != "" && !strings.Contains(log, tt.path) {
+				t.Fatalf("warning = %q, want path %q", log, tt.path)
+			}
+		})
+	}
+}
+
+func runCursorAudit(t *testing.T, cursorArgs []string) sourceReport {
+	t.Helper()
+	var out bytes.Buffer
+	args := append([]string{"check", "--root", "../.."}, cursorArgs...)
+	err := run(args, strings.NewReader(""), &out, func(_ context.Context, endpoint string) (fetched, error) {
+		if endpoint == "https://cursor.com/docs/models-and-pricing.md" {
+			return fetched{Body: []byte(cursorDocsFixture), URL: endpoint}, nil
+		}
+		return fetched{}, errors.New("offline test")
+	}, time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC))
+	if !errors.Is(err, errAuditFailed) {
+		t.Fatalf("check error = %v, want audit findings", err)
+	}
+	var result report
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("decode check report %q: %v", out.String(), err)
+	}
+	for _, source := range result.Sources {
+		if source.Name == "cursor-models" {
+			return source
+		}
+	}
+	t.Fatalf("check report omitted cursor-models: %s", out.String())
+	return sourceReport{}
+}
+
+func modelIDs(models []observedModel) []string {
+	ids := make([]string, len(models))
+	for i, model := range models {
+		ids[i] = model.ID
+	}
+	return ids
 }
