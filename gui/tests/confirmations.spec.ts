@@ -127,7 +127,7 @@ test('built GUI pending-change quit offers sync-and-quit and quit-without-syncin
   try {
     const actionBodies = observeRequests(page, '/api/actions')
     await launchWithNativeBridge(page, bootstrap)
-    await expect(page.getByText('pending sync')).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByText('~ 1 pending sync')).toBeVisible({ timeout: 60_000 })
 
     const quit = page.getByRole('button', { name: 'Quit', exact: true })
     const quitDialog = page.getByRole('dialog', { name: 'Quit Agent Marketplace' })
