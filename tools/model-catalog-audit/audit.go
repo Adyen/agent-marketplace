@@ -306,6 +306,7 @@ func familyVersion(modelID, familyID string) ([]uint64, bool) {
 	return nil, false
 }
 
+// compareVersionComponents orders versions numerically component by component; missing trailing components count as zero.
 func compareVersionComponents(a, b []uint64) int {
 	for i := 0; i < len(a) || i < len(b); i++ {
 		left, right := uint64(0), uint64(0)
