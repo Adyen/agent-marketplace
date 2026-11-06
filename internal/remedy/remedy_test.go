@@ -276,6 +276,9 @@ func TestConsumerDiagnosticCodesHaveCatalogEntries(t *testing.T) {
 		filepath.Join(root, "cmd", "agent-marketplace"),
 		filepath.Join(root, "pkg", "harness-compilation", "diag"),
 	}
+	materializeRoot := filepath.Join(root, "internal", "materialize")
+	diagRoot := filepath.Join(root, "pkg", "harness-compilation", "diag")
+	var materializeFiles, diagFiles []*ast.File
 	codes := make(map[string]struct{})
 	for _, scanRoot := range roots {
 		err := filepath.WalkDir(scanRoot, func(path string, entry fs.DirEntry, walkErr error) error {
@@ -291,6 +294,12 @@ func TestConsumerDiagnosticCodesHaveCatalogEntries(t *testing.T) {
 			file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
 			if err != nil {
 				return err
+			}
+			if strings.HasPrefix(path, materializeRoot+string(filepath.Separator)) {
+				materializeFiles = append(materializeFiles, file)
+			}
+			if strings.HasPrefix(path, diagRoot+string(filepath.Separator)) {
+				diagFiles = append(diagFiles, file)
 			}
 			ast.Inspect(file, func(node ast.Node) bool {
 				literal, ok := node.(*ast.BasicLit)
@@ -318,6 +327,199 @@ func TestConsumerDiagnosticCodesHaveCatalogEntries(t *testing.T) {
 	if len(missing) > 0 {
 		t.Fatalf("consumer diagnostic codes lack catalog entries: %s", strings.Join(missing, ", "))
 	}
+	constants := constStringValues(diagFiles, "Code")
+	for name, value := range constStringValues(materializeFiles, "") {
+		constants[name] = value
+	}
+	ownedCodes, err := collectOwnedAggregateDiagnosticCodes(materializeFiles, constants)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := requireOwnedAggregateGuidance(ownedCodes, func(code string) bool {
+		doc, documented := diag.DocForCode(code)
+		return documented && strings.TrimSpace(doc.Hint) != "" || catalog[code] != nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOwnedAggregateGuidanceGuardRejectsMissingGuidance(t *testing.T) {
+	if err := requireOwnedAggregateGuidance([]string{"materialize.unlisted"}, func(string) bool { return false }); err == nil || !strings.Contains(err.Error(), "materialize.unlisted") {
+		t.Fatalf("guidance guard error = %v, want an uncovered-code failure", err)
+	}
+}
+
+func constStringValues(files []*ast.File, prefix string) map[string]string {
+	constants := make(map[string]string)
+	for _, file := range files {
+		for _, declaration := range file.Decls {
+			group, ok := declaration.(*ast.GenDecl)
+			if !ok || group.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range group.Specs {
+				values, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, name := range values.Names {
+					if !strings.HasPrefix(name.Name, prefix) || i >= len(values.Values) {
+						continue
+					}
+					if literal, ok := values.Values[i].(*ast.BasicLit); ok && literal.Kind == token.STRING {
+						constants[name.Name], _ = strconv.Unquote(literal.Value)
+					}
+				}
+			}
+		}
+	}
+	return constants
+}
+
+func collectOwnedAggregateDiagnosticCodes(files []*ast.File, constants map[string]string) ([]string, error) {
+	optionFields := make(map[string][]string)
+	var codes []string
+	add := func(expression ast.Expr) error {
+		resolved, err := resolveOwnedAggregateCode(expression, constants, optionFields)
+		if err != nil {
+			return err
+		}
+		codes = append(codes, resolved...)
+		return nil
+	}
+	for _, file := range files {
+		var scanErr error
+		ast.Inspect(file, func(node ast.Node) bool {
+			if scanErr != nil {
+				return false
+			}
+			literal, ok := node.(*ast.CompositeLit)
+			if !ok {
+				return true
+			}
+			typeName := ""
+			switch typ := literal.Type.(type) {
+			case *ast.Ident:
+				typeName = typ.Name
+			case *ast.SelectorExpr:
+				typeName = typ.Sel.Name
+			}
+			if !strings.HasSuffix(typeName, "Options") {
+				return true
+			}
+			for _, element := range literal.Elts {
+				field, ok := element.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				name, ok := field.Key.(*ast.Ident)
+				if ok && strings.HasSuffix(name.Name, "Code") {
+					values, err := resolveOwnedAggregateCode(field.Value, constants, nil)
+					if err != nil {
+						scanErr = err
+						return false
+					}
+					optionFields[name.Name] = append(optionFields[name.Name], values...)
+					codes = append(codes, values...)
+				}
+			}
+			return true
+		})
+		if scanErr != nil {
+			return nil, scanErr
+		}
+	}
+	for _, file := range files {
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Body == nil {
+				continue
+			}
+			var scanErr error
+			ast.Inspect(function.Body, func(node ast.Node) bool {
+				if scanErr != nil {
+					return false
+				}
+				call, ok := node.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				name := ""
+				switch function := call.Fun.(type) {
+				case *ast.Ident:
+					name = function.Name
+				case *ast.SelectorExpr:
+					name = function.Sel.Name
+				}
+				index := -1
+				switch {
+				case name == "ownedAggregateDiag" && function.Name.Name != "ownedJSONShapeDiag" &&
+					function.Name.Name != "ownedAggregateCodedDiag" && function.Name.Name != "codexRepairFileDiag":
+					index = 0
+				case name == "ownedAggregateCodedDiag" && function.Name.Name != "ownedAggregateLockSessionDiag",
+					name == "ownedAggregateLockSessionDiag":
+					index = len(call.Args) - 1
+				case name == "ownedJSONShapeDiag":
+					index = 0
+				case name == "codexRepairFileDiag":
+					index = 3
+				}
+				if index >= 0 && index < len(call.Args) {
+					scanErr = add(call.Args[index])
+				} else if index >= 0 {
+					scanErr = fmt.Errorf("owned-aggregate diagnostic call has no code argument")
+				}
+				return true
+			})
+			if scanErr != nil {
+				return nil, scanErr
+			}
+		}
+	}
+	return codes, nil
+}
+
+func resolveOwnedAggregateCode(expression ast.Expr, constants map[string]string, optionFields map[string][]string) ([]string, error) {
+	switch value := expression.(type) {
+	case *ast.BasicLit:
+		if value.Kind != token.STRING {
+			return nil, fmt.Errorf("owned-aggregate code is not a string literal: %s", value.Value)
+		}
+		code, err := strconv.Unquote(value.Value)
+		if err != nil {
+			return nil, err
+		}
+		return []string{code}, nil
+	case *ast.ParenExpr:
+		return resolveOwnedAggregateCode(value.X, constants, optionFields)
+	case *ast.Ident:
+		if code, ok := constants[value.Name]; ok {
+			return []string{code}, nil
+		}
+	case *ast.SelectorExpr:
+		if base, ok := value.X.(*ast.Ident); ok && base.Name == "diag" {
+			if code, ok := constants[value.Sel.Name]; ok {
+				return []string{code}, nil
+			}
+		}
+		if fields := optionFields[value.Sel.Name]; len(fields) > 0 {
+			return fields, nil
+		}
+	}
+	return nil, fmt.Errorf("cannot resolve owned-aggregate code expression %T", expression)
+}
+
+func requireOwnedAggregateGuidance(codes []string, hasGuidance func(string) bool) error {
+	var missing []string
+	for _, code := range codes {
+		if !hasGuidance(code) {
+			missing = append(missing, code)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("owned-aggregate diagnostic codes lack guidance: %s", strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 var consumerCodePattern = regexp.MustCompile(`^(v4|lock|dependency|ownership|organization\.trust|config\.edit|source|git|marketplace\.(install|remove))\.[a-z0-9][a-z0-9.-]*$`)
