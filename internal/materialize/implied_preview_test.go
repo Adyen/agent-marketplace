@@ -899,9 +899,10 @@ func TestImpliedPreviewCompileRefusalRetainsOwnedCodexMCP(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Run error = %v", err)
 			}
-			if !hasDiagCode(report.Diags, diag.CodeMcpCodexSecurityUnsupported) {
-				t.Fatalf("preview compiler refusal hidden: %#v", report.Diags)
+			if hasDiagCode(report.Diags, diag.CodeMcpCodexSecurityUnsupported) || len(report.BlockedResources) != 0 {
+				t.Fatalf("unselected preview reported as a selected compiler refusal: %#v", report)
 			}
+			requireNoErrorDiags(t, report.Diags)
 			if got := readFileString(t, path); got != before {
 				t.Fatalf("preview compiler refusal changed owned MCP bytes\nbefore: %s\nafter: %s", before, got)
 			}
@@ -947,9 +948,10 @@ func TestImpliedPreviewCompileRefusalRetainsOwnedCodexHook(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run error = %v", err)
 	}
-	if !hasErrorDiagnostics(report.Diags) {
-		t.Fatalf("preview hook refusal hidden: %#v", report.Diags)
+	if hasDiagCode(report.Diags, diag.CodeHookPromptUnsupported) || len(report.BlockedResources) != 0 {
+		t.Fatalf("unselected preview reported as a selected hook refusal: %#v", report)
 	}
+	requireNoErrorDiags(t, report.Diags)
 	if got := readFileString(t, hookPath); got != before {
 		t.Fatalf("preview hook refusal changed owned hooks\nbefore: %s\nafter: %s\ndiags: %#v", before, got, report.Diags)
 	}
@@ -979,9 +981,7 @@ func TestImpliedPreviewNilResourceBlocksWholeKey(t *testing.T) {
 	nilPreview.Resource = nil
 	selected := cleanupLinkSkill(t, "parent", false, hcc.TargetDevin)
 	report := runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{keep, nilPreview})
-	if !hasDiagCode(report.Diags, "materialize.resource.nil") {
-		t.Fatalf("nil preview resource diagnostic missing: %#v", report.Diags)
-	}
+	requireNoErrorDiags(t, report.Diags)
 	if _, statErr := os.Lstat(keepPath); statErr != nil {
 		t.Fatalf("wildcard-blocked key lost retained output: %v", statErr)
 	}
@@ -1075,9 +1075,6 @@ func TestImpliedPreviewNilResourceRetainsOwnedMCP(t *testing.T) {
 			nilPreview.RequiredBy = []resolver.ResourceRef{{Kind: ir.KindSkill, Name: "parent"}}
 			nilPreview.Resource = nil
 			report = runPreview(t, repo, []resolver.ResolvedArtifact{sibling}, []resolver.ResolvedArtifact{keep, nilPreview})
-			if !hasDiagCode(report.Diags, "materialize.resource.nil") {
-				t.Fatalf("nil preview resource diagnostic missing: %#v", report.Diags)
-			}
 			requireNoErrorDiags(t, report.Diags)
 			raw := readFileString(t, repoPath)
 			for _, want := range []string{"keep", "zzstale", "sibling"} {
@@ -1111,9 +1108,7 @@ func TestImpliedPreviewNilResourceBlocksWholeKeyMachineScope(t *testing.T) {
 	nilPreview.Resource = nil
 	selected := cleanupLinkSkill(t, "parent", true, hcc.TargetDevin)
 	report := runPreview(t, repo, []resolver.ResolvedArtifact{selected}, []resolver.ResolvedArtifact{nilPreview}, WithMachineScopeOnly())
-	if !hasDiagCode(report.Diags, "materialize.resource.nil") {
-		t.Fatalf("nil preview resource diagnostic missing: %#v", report.Diags)
-	}
+	requireNoErrorDiags(t, report.Diags)
 	if _, statErr := os.Lstat(filepath.Join(devinUserRoot(home), "skills", "parent")); statErr != nil {
 		t.Fatalf("machine selection not materialized under repo-scoped preview failure: %v", statErr)
 	}
