@@ -31,6 +31,8 @@ export type ResourceAssessment = Schemas['ResourceAssessment']
 export type ResourceOccurrence = Schemas['ResourceOccurrence']
 export type ResourceSource = Schemas['CatalogSource']
 export type SearchResult = JsonResponse<'searchResources'>
+export type ResourceRequirement = Schemas['ResourceRequirement']
+export type ResourceRelation = Schemas['ResourceRelation']
 
 type GeneratedResourceRevision = JsonResponse<'getResource'>
 
