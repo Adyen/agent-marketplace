@@ -240,11 +240,12 @@ func reconcileDevinAggregates(ctx context.Context, report *Report, key outputKey
 		return report
 	}
 	destination := harness.Destination{ID: "default", Root: outDir, Info: adapter.Info(), InstallationEvidence: true}
-	return (devinOwnedAggregateHandler{}).reconcile(ctx, report, ownedAggregateState{values: map[outputKey]any{key: work}}, key, outDir, []harness.Destination{destination}, dryRun)
+	return (devinOwnedAggregateHandler{}).reconcile(ctx, report, ownedAggregateState{values: map[outputKey]any{key: work}}, ownedAggregateState{}, key, outDir, []harness.Destination{destination}, dryRun)
 }
 
-func (devinOwnedAggregateHandler) reconcile(ctx context.Context, report *Report, state ownedAggregateState, key outputKey, outDir string, destinations []harness.Destination, dryRun bool) *Report {
+func (devinOwnedAggregateHandler) reconcile(ctx context.Context, report *Report, state ownedAggregateState, previewState ownedAggregateState, key outputKey, outDir string, destinations []harness.Destination, dryRun bool) *Report {
 	work, _ := state.get(key).(*ownedJSONAggregateWork)
+	previewWork, _ := previewState.get(key).(*ownedJSONAggregateWork)
 	if key.target != hcc.TargetDevin {
 		return report
 	}
@@ -261,6 +262,7 @@ func (devinOwnedAggregateHandler) reconcile(ctx context.Context, report *Report,
 			}
 		}
 		options := devinOwnedJSONOptions()
+		options.preview = previewWork
 		if session, ok := state.writeSession(destination.Root); ok {
 			options.store = session.store
 			options.lockReport = session.lockReport

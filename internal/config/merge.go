@@ -119,6 +119,13 @@ func MergeLayers(layers []Layer) *Config {
 				merged.Logging.Compress = layer.Config.Logging.Compress
 			}
 		}
+		if layer.Config.Requires != nil && layer.Config.Requires.Expand != nil {
+			if merged.Requires == nil {
+				merged.Requires = &RequiresConfig{}
+			}
+			value := *layer.Config.Requires.Expand
+			merged.Requires.Expand = &value
+		}
 	}
 
 	// Backfill Harnesses on entries that don't have their own. Entries of the
@@ -155,7 +162,7 @@ func MergeLayers(layers []Layer) *Config {
 // APIVersionV4 runtime sentinel; the authored v4 parser owns version
 // validation of the personal-local root and its includes.
 func LocalConfigAsLayer(localCfg *LocalConfig) *Layer {
-	if localCfg == nil || (len(localCfg.Registries) == 0 && len(localCfg.Marketplaces) == 0 && localCfg.Materialization == nil) {
+	if localCfg == nil || (len(localCfg.Registries) == 0 && len(localCfg.Marketplaces) == 0 && localCfg.Materialization == nil && localCfg.Requires == nil) {
 		return nil
 	}
 
@@ -164,6 +171,7 @@ func LocalConfigAsLayer(localCfg *LocalConfig) *Layer {
 		Registries:      localCfg.Registries,
 		Marketplaces:    localCfg.Marketplaces,
 		Materialization: localCfg.Materialization,
+		Requires:        localCfg.Requires,
 	}
 
 	return &Layer{Source: RepoPersonal, Config: &cfg}

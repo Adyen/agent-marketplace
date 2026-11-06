@@ -34,6 +34,35 @@ func geminiNativeHasOwnedMCP(destination harness.Destination) bool {
 	return false
 }
 
+func geminiNativeMCPEntries(rel string, raw json.RawMessage) ([]ownedJSONEntry, []ownership.EntryValue, error) {
+	if len(raw) == 0 {
+		return nil, nil, nil
+	}
+	var servers map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &servers); err != nil {
+		return nil, nil, err
+	}
+	entries := make([]ownedJSONEntry, 0, len(servers))
+	values := make([]ownership.EntryValue, 0, len(servers))
+	for _, name := range sortedKeys(servers) {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(servers[name], &fields); err != nil {
+			return nil, nil, err
+		}
+		if _, marked := fields[managedByField]; marked {
+			return nil, nil, fmt.Errorf("gemini MCP definitions cannot contain an in-file ownership marker")
+		}
+		canonical, err := canonicalOwnedJSON(servers[name])
+		if err != nil {
+			return nil, nil, err
+		}
+		entry := ownedJSONEntry{rel: rel, kind: ownership.KindMcpServer, container: "mcpServers", key: name, raw: canonical, identity: ownership.McpIdentityDigest(name), resource: name}
+		entries = append(entries, entry)
+		values = append(values, ownership.EntryValue{ID: entry.id(), ValueDigest: entry.valueDigest()})
+	}
+	return entries, values, nil
+}
+
 func nativeHookSharedMCPEntries(key outputKey, repoRoot string, artifacts []artifact.Artifact) ([]ownedJSONEntry, []artifact.Artifact, error) {
 	routes, shared := nativeHookSharesAggregateRoute(key, repoRoot)
 	if !shared {
@@ -102,7 +131,7 @@ func nativeHookSharedMCPEntries(key outputKey, repoRoot string, artifacts []arti
 	return entries, remaining, nil
 }
 
-func planGeminiMCPContainer(doc *jsonc.Document, key outputKey, outDir string, hookFile ownedJSONFileSpec, desired []ownedJSONEntry, proof ownership.Proof, proofErr error, incomplete bool) (ownedJSONPatch, []diag.Diagnostic, error) {
+func planGeminiMCPContainer(doc *jsonc.Document, key outputKey, outDir string, hookFile ownedJSONFileSpec, desired, preview []ownedJSONEntry, proof ownership.Proof, proofErr error, incomplete bool) (ownedJSONPatch, []diag.Diagnostic, error) {
 	if proofErr != nil && !errors.Is(proofErr, ownership.ErrStateMissing) {
 		return ownedJSONPatch{}, nil, proofErr
 	}
@@ -153,7 +182,7 @@ func planGeminiMCPContainer(doc *jsonc.Document, key outputKey, outDir string, h
 	if len(drift.Collisions) > 0 {
 		return ownedJSONPatch{}, nil, diag.NewCodedError("materialize.collision.user-owned", diag.SourceRef{}, fmt.Errorf("preserved unmanaged Gemini MCP server"))
 	}
-	patch := ownedJSONPatchPlan(outDir, spec, desired, existing, drift, proof, incomplete)
+	patch := ownedJSONPatchPlan(outDir, spec, desired, preview, existing, drift, proof, incomplete)
 	if !incomplete {
 		patch.reconciledKinds = map[ownership.EntryKind]bool{ownership.KindMcpServer: true}
 	}
@@ -167,7 +196,7 @@ func planGeminiMCPContainer(doc *jsonc.Document, key outputKey, outDir string, h
 	return patch, diagnostics, nil
 }
 
-func syncGeminiNativeAggregate(ctx context.Context, key outputKey, destination harness.Destination, desired map[string]json.RawMessage, dryRun, prune bool, boundaries ...*destinationBoundary) (TargetReport, []diag.Diagnostic, error) {
+func syncGeminiNativeAggregate(ctx context.Context, key outputKey, destination harness.Destination, desired, preview map[string]json.RawMessage, dryRun, prune bool, boundaries ...*destinationBoundary) (TargetReport, []diag.Diagnostic, error) {
 	var boundary *destinationBoundary
 	if len(boundaries) > 0 {
 		boundary = boundaries[0]
@@ -221,7 +250,7 @@ func syncGeminiNativeAggregate(ctx context.Context, key outputKey, destination h
 		if os.IsNotExist(readErr) {
 			raw = []byte(ownedJSONEmptyDocument)
 		}
-		hooked, err := mergeNativeAggregate(raw, map[string]json.RawMessage{"hooks": desired["hooks"]}, prune)
+		hooked, err := mergeNativeAggregate(raw, map[string]json.RawMessage{"hooks": desired["hooks"]}, map[string]json.RawMessage{"hooks": preview["hooks"]}, prune)
 		if err != nil {
 			if readErr == nil && !dryRun {
 				if _, backupErr := store.BackupOnly(rel, file, ownership.ReasonSync); backupErr != nil {
@@ -259,27 +288,13 @@ func syncGeminiNativeAggregate(ctx context.Context, key outputKey, destination h
 			return proofErr
 		}
 		diagnostics = append(diagnostics, ownedAggregateProofDiags(key, destination.Root, rel, proofErr)...)
-		var servers map[string]json.RawMessage
-		if err := json.Unmarshal(desired["mcpServers"], &servers); err != nil {
+		entries, desiredValues, err := geminiNativeMCPEntries(rel, desired["mcpServers"])
+		if err != nil {
 			return err
 		}
-		entries := make([]ownedJSONEntry, 0, len(servers))
-		desiredValues := make([]ownership.EntryValue, 0, len(servers))
-		for _, name := range sortedKeys(servers) {
-			var fields map[string]json.RawMessage
-			if err := json.Unmarshal(servers[name], &fields); err != nil {
-				return err
-			}
-			if _, marked := fields[managedByField]; marked {
-				return fmt.Errorf("gemini MCP definitions cannot contain an in-file ownership marker")
-			}
-			canonical, err := canonicalOwnedJSON(servers[name])
-			if err != nil {
-				return err
-			}
-			entry := ownedJSONEntry{rel: rel, kind: ownership.KindMcpServer, container: "mcpServers", key: name, raw: canonical, identity: ownership.McpIdentityDigest(name), resource: name}
-			entries = append(entries, entry)
-			desiredValues = append(desiredValues, ownership.EntryValue{ID: entry.id(), ValueDigest: entry.valueDigest()})
+		previewEntries, _, err := geminiNativeMCPEntries(rel, preview["mcpServers"])
+		if err != nil {
+			return err
 		}
 		existingValues := make([]ownership.EntryValue, 0, len(existing))
 		for _, entry := range existing {
@@ -295,7 +310,7 @@ func syncGeminiNativeAggregate(ctx context.Context, key outputKey, destination h
 		if len(drift.Collisions) > 0 {
 			return diag.NewCodedError("materialize.collision.user-owned", diag.SourceRef{}, fmt.Errorf("preserved unmanaged Gemini MCP server %q", drift.Collisions[0].Key))
 		}
-		plan := ownedJSONPatchPlan(destination.Root, spec, entries, existing, drift, proof, !prune)
+		plan := ownedJSONPatchPlan(destination.Root, spec, entries, previewEntries, existing, drift, proof, !prune)
 		if err := applyOwnedJSONPatch(doc, container, member, spec, plan); err != nil {
 			return err
 		}

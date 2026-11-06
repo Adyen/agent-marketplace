@@ -190,7 +190,7 @@ func TestNativeHookLegacyRemovalSuppressedOnRefusalFaultIncomplete(t *testing.T)
 	}
 
 	var finalizeDiags []diag.Diagnostic
-	finalize := nativeHookActivationFinalizer(key, repo, nil, false, func() {}, &finalizeDiags)
+	finalize := nativeHookActivationFinalizer(key, repo, nil, nil, false, func() {}, &finalizeDiags)
 	optionsFor := func() ownedJSONReconcileOptions {
 		options := nativeHookReconcileOptionsFor(nil)
 		options.nativeHookFinalize = finalize

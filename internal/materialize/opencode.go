@@ -87,8 +87,9 @@ func routeOpenCodeWork(work *ownedJSONAggregateWork, rel string) *ownedJSONAggre
 	return routed
 }
 
-func (openCodeOwnedAggregateHandler) reconcile(ctx context.Context, report *Report, state ownedAggregateState, key outputKey, _ string, destinations []harness.Destination, dryRun bool) *Report {
+func (openCodeOwnedAggregateHandler) reconcile(ctx context.Context, report *Report, state ownedAggregateState, previewState ownedAggregateState, key outputKey, _ string, destinations []harness.Destination, dryRun bool) *Report {
 	work, _ := state.get(key).(*ownedJSONAggregateWork)
+	previewWork, _ := previewState.get(key).(*ownedJSONAggregateWork)
 	for _, destination := range destinations {
 		if destination.AggregateFile == "" {
 			continue
@@ -96,7 +97,11 @@ func (openCodeOwnedAggregateHandler) reconcile(ctx context.Context, report *Repo
 		rel := destination.AggregateFile
 		files := []ownedJSONFileSpec{{rel: rel, container: "mcp", keyed: true}}
 		priorDiagnostics := len(report.Diags)
-		report = reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, files, routeOpenCodeWork(work, rel), openCodeJSONOptions(), dryRun)
+		options := openCodeJSONOptions()
+		if previewWork != nil {
+			options.preview = routeOpenCodeWork(previewWork, rel)
+		}
+		report = reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, files, routeOpenCodeWork(work, rel), options, dryRun)
 		for _, diagnostic := range report.Diags[priorDiagnostics:] {
 			if diagnostic.Target == string(key.target) && diagnostic.Code == diag.CodeOwnershipUnmanagedKey {
 				report.Diags = append(report.Diags, diag.Diagnostic{Code: diag.CodeMaterializeOpenCodeAggregateCollision, Severity: diag.SeverityError, Target: string(key.target), Message: "A handwritten MCP entry conflicts with the selected server; configuration preserved"})

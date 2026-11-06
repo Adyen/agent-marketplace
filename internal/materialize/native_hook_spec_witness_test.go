@@ -237,7 +237,7 @@ func TestNativeWindsurfDoesNotReadDevinCLIFile(t *testing.T) {
 			}
 		}
 		compileResult := compileWorkItems(work, diags, allOutputs, blocked, repo)
-		report := executeMaterializePlans(context.Background(), compileResult, false, repo, config.DefaultMaterializationModes())
+		report := executeMaterializePlans(context.Background(), compileResult, false, repo, config.DefaultMaterializationModes(), nil)
 		if hasErrorDiagnostics(report.Diags) {
 			t.Fatalf("windsurf-scoped execution diagnostics: %+v", report.Diags)
 		}

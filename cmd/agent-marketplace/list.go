@@ -155,7 +155,7 @@ func runList(ctx context.Context, out io.Writer, errOut io.Writer, kindFilter st
 	var dryRunReport *materialize.Report
 	var dryRunErr error
 	if !marketplaceCacheUnknown {
-		dryRunReport, dryRunErr = runListMaterialize(ctx, ws.MaterializeRoot(), result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes))
+		dryRunReport, dryRunErr = runListMaterialize(ctx, ws.MaterializeRoot(), result.Resolved, materialize.WithDryRun(), materialize.WithMaterializationModes(modes), materialize.WithImpliedPreview(result.ImpliedPreview))
 	}
 	if dryRunErr != nil {
 		// A failed drift probe must not hide the listing itself, but file mode

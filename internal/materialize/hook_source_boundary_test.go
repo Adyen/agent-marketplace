@@ -503,7 +503,7 @@ func frozenGeminiNoSupportFixture(t *testing.T, repo string, hook *ir.Hook) *Rep
 	}
 	boundary := &destinationBoundary{repoRoot: repo, homeDir: home, roots: []string{filepath.Dir(settingsPath)}}
 	report := &Report{PerTarget: make(map[hcc.Target]TargetReport)}
-	remaining := materializeNativeAggregates(t.Context(), report, outputKey{target: hcc.TargetGemini}, repo, compiled.Artifacts, nil, false, boundary)
+	remaining := materializeNativeAggregates(t.Context(), report, outputKey{target: hcc.TargetGemini}, repo, compiled.Artifacts, nil, nil, false, boundary)
 	if len(remaining) != 0 {
 		t.Fatalf("frozen Gemini native consumer left artifacts unhandled: %+v", remaining)
 	}

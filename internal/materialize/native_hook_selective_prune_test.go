@@ -106,7 +106,7 @@ func TestNativeHookSelectivePruneOnIncompleteFile(t *testing.T) {
 		root, spec, doc, proof, existing, drift := selectivePruneFixture(t, []ownership.Entry{valid}, []string{validRule})
 		before, _ := proof.Entry(valid.ID())
 
-		patch := ownedJSONPatchPlan(root, spec, nil, existing, drift, proof, true, map[string]bool{"refused": true})
+		patch := ownedJSONPatchPlan(root, spec, nil, nil, existing, drift, proof, true, map[string]bool{"refused": true})
 		if len(patch.prune) != 1 || patch.prune[0] != valid.ID() {
 			t.Fatalf("prune = %#v, want the deselected valid hook", patch.prune)
 		}
@@ -134,7 +134,7 @@ func TestNativeHookSelectivePruneOnIncompleteFile(t *testing.T) {
 		refused := nativeHookProofEntry(t, "PreToolUse", refusedRule, "refused", selectivePruneFingerprint)
 		root, spec, _, proof, existing, drift := selectivePruneFixture(t, []ownership.Entry{valid, refused}, []string{validRule, refusedRule})
 
-		patch := ownedJSONPatchPlan(root, spec, nil, existing, drift, proof, true, map[string]bool{"refused": true})
+		patch := ownedJSONPatchPlan(root, spec, nil, nil, existing, drift, proof, true, map[string]bool{"refused": true})
 		if len(patch.prune) != 1 || patch.prune[0] != valid.ID() {
 			t.Fatalf("prune = %#v, want only the deselected valid hook", patch.prune)
 		}
@@ -154,7 +154,7 @@ func TestNativeHookSelectivePruneOnIncompleteFile(t *testing.T) {
 		shared.SourceEvidence = []ownership.HookSourceEvidence{{Resource: "sibling", SourceDigest: selectivePruneFingerprint}}
 		root, spec, _, proof, existing, drift := selectivePruneFixture(t, []ownership.Entry{shared}, []string{validRule})
 
-		patch := ownedJSONPatchPlan(root, spec, nil, existing, drift, proof, true, map[string]bool{"sibling": true})
+		patch := ownedJSONPatchPlan(root, spec, nil, nil, existing, drift, proof, true, map[string]bool{"sibling": true})
 		if len(patch.prune) != 0 || len(patch.prunePostponed) != 1 || patch.prunePostponed[0] != shared.ID() {
 			t.Fatalf("prune = %#v postponed = %#v, want the shared entry retained", patch.prune, patch.prunePostponed)
 		}
@@ -165,7 +165,7 @@ func TestNativeHookSelectivePruneOnIncompleteFile(t *testing.T) {
 		shared.SourceEvidence = []ownership.HookSourceEvidence{{Resource: "sibling", SourceDigest: selectivePruneFingerprint}}
 		root, spec, _, proof, existing, drift := selectivePruneFixture(t, []ownership.Entry{shared}, []string{validRule})
 
-		patch := ownedJSONPatchPlan(root, spec, nil, existing, drift, proof, true, map[string]bool{"other": true})
+		patch := ownedJSONPatchPlan(root, spec, nil, nil, existing, drift, proof, true, map[string]bool{"other": true})
 		if len(patch.prune) != 1 || patch.prune[0] != shared.ID() {
 			t.Fatalf("prune = %#v, want the shared entry pruned when no contributor is selected", patch.prune)
 		}
@@ -176,7 +176,7 @@ func TestNativeHookSelectivePruneOnIncompleteFile(t *testing.T) {
 		root, spec, _, proof, existing, drift := selectivePruneFixture(t, []ownership.Entry{valid}, []string{validRule})
 
 		for _, selected := range []map[string]bool{nil, {}} {
-			patch := ownedJSONPatchPlan(root, spec, nil, existing, drift, proof, true, selected)
+			patch := ownedJSONPatchPlan(root, spec, nil, nil, existing, drift, proof, true, selected)
 			if len(patch.prune) != 0 || len(patch.prunePostponed) != 1 || !patch.pruneSuppressed {
 				t.Fatalf("selection %#v: prune = %#v postponed = %#v, want blanket suppression", selected, patch.prune, patch.prunePostponed)
 			}

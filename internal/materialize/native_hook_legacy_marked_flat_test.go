@@ -546,7 +546,7 @@ func TestGeminiLegacyMarkedFlatPublishFaultKeepsBytesAndRecovers(t *testing.T) {
 
 	options := nativeHookReconcileOptionsFor(nil)
 	var mcpDiagnostics []diag.Diagnostic
-	finalize := nativeHookActivationFinalizer(key, repo, nil, false, func() {}, &mcpDiagnostics)
+	finalize := nativeHookActivationFinalizer(key, repo, nil, nil, false, func() {}, &mcpDiagnostics)
 	injected := errors.New("interrupted marked flat transition")
 	options.nativeHookFinalize = func(ctx context.Context, store *ownership.Store, output outputKey, outDir string, aggregate ownedJSONFileSpec, abs string, raw []byte, readErr error, doc *jsonc.Document, plan ownedJSONPatch, proof ownership.Proof, proofErr error, incomplete, dryRun bool) (nativeHookTransactionExtras, error) {
 		extras, err := finalize(ctx, store, output, outDir, aggregate, abs, raw, readErr, doc, plan, proof, proofErr, incomplete, dryRun)
@@ -601,7 +601,7 @@ func TestGeminiLegacyMarkedFlatConcurrentChangeRefuses(t *testing.T) {
 
 	options := nativeHookReconcileOptionsFor(nil)
 	var mcpDiagnostics []diag.Diagnostic
-	finalize := nativeHookActivationFinalizer(key, repo, nil, false, func() {}, &mcpDiagnostics)
+	finalize := nativeHookActivationFinalizer(key, repo, nil, nil, false, func() {}, &mcpDiagnostics)
 	options.nativeHookFinalize = func(ctx context.Context, store *ownership.Store, output outputKey, outDir string, aggregate ownedJSONFileSpec, abs string, raw []byte, readErr error, doc *jsonc.Document, plan ownedJSONPatch, proof ownership.Proof, proofErr error, incomplete, dryRun bool) (nativeHookTransactionExtras, error) {
 		extras, err := finalize(ctx, store, output, outDir, aggregate, abs, raw, readErr, doc, plan, proof, proofErr, incomplete, dryRun)
 		extras.commitOptions = append(extras.commitOptions, dependencytxn.WithFaultHook(func(point dependencytxn.FaultPoint) error {
@@ -744,7 +744,7 @@ func TestGeminiLegacyMarkedFlatJointPublishFaultKeepsBoth(t *testing.T) {
 	}
 	options := nativeHookReconcileOptionsFor(nil)
 	var mcpDiagnostics []diag.Diagnostic
-	finalize := nativeHookActivationFinalizer(key, repo, []ownedJSONEntry{mcpEntry}, false, func() {}, &mcpDiagnostics)
+	finalize := nativeHookActivationFinalizer(key, repo, []ownedJSONEntry{mcpEntry}, nil, false, func() {}, &mcpDiagnostics)
 	injected := errors.New("interrupted joint transition")
 	options.nativeHookFinalize = func(ctx context.Context, store *ownership.Store, output outputKey, outDir string, aggregate ownedJSONFileSpec, abs string, raw []byte, readErr error, doc *jsonc.Document, plan ownedJSONPatch, proof ownership.Proof, proofErr error, incomplete, dryRun bool) (nativeHookTransactionExtras, error) {
 		extras, err := finalize(ctx, store, output, outDir, aggregate, abs, raw, readErr, doc, plan, proof, proofErr, incomplete, dryRun)

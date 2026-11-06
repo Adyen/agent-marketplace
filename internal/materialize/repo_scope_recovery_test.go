@@ -77,7 +77,7 @@ func runRepoScopeMerge(t *testing.T, target hcc.Target, outDir string, artifacts
 		if len(mergeArtifacts) == 0 {
 			continue
 		}
-		if _, diags, err := materializeMergeArtifacts(plan.outDir, mergeArtifacts, false, true); err != nil {
+		if _, diags, err := materializeMergeArtifacts(plan.outDir, mergeArtifacts, nil, false, true); err != nil {
 			t.Fatalf("materializeMergeArtifacts(%s): %v", plan.outDir, err)
 		} else if len(diags) > 0 {
 			t.Fatalf("materializeMergeArtifacts(%s) reported %v", plan.outDir, diags)

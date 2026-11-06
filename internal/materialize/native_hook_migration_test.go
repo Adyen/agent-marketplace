@@ -295,7 +295,7 @@ func TestNativeHookLegacySupportManifestAndOwnershipRecoverInOneTransaction(t *t
 	}
 	key := outputKey{target: hcc.TargetFactory}
 	var mcpDiagnostics []diag.Diagnostic
-	finalize := nativeHookActivationFinalizer(key, repo, nil, false, func() {}, &mcpDiagnostics)
+	finalize := nativeHookActivationFinalizer(key, repo, nil, nil, false, func() {}, &mcpDiagnostics)
 	injected := errors.New("interrupted native plus legacy publication")
 	options := nativeHookReconcileOptionsFor(nil)
 	options.nativeHookFinalize = func(ctx context.Context, store *ownership.Store, output outputKey, outDir string, aggregate ownedJSONFileSpec, abs string, raw []byte, readErr error, doc *jsonc.Document, plan ownedJSONPatch, proof ownership.Proof, proofErr error, incomplete, dryRun bool) (nativeHookTransactionExtras, error) {
@@ -464,7 +464,7 @@ func TestNativeHookLegacyCleanupRefusesChangedNativeAggregate(t *testing.T) {
 	key := outputKey{target: hcc.TargetFactory}
 	options := nativeHookReconcileOptionsFor(nil)
 	var mcpDiagnostics []diag.Diagnostic
-	finalize := nativeHookActivationFinalizer(key, repo, nil, false, func() {}, &mcpDiagnostics)
+	finalize := nativeHookActivationFinalizer(key, repo, nil, nil, false, func() {}, &mcpDiagnostics)
 	changedNative := []byte(`{"PostToolUse":[]}` + "\n")
 	options.nativeHookFinalize = func(ctx context.Context, store *ownership.Store, output outputKey, outDir string, aggregate ownedJSONFileSpec, abs string, raw []byte, readErr error, doc *jsonc.Document, plan ownedJSONPatch, proof ownership.Proof, proofErr error, incomplete, dryRun bool) (nativeHookTransactionExtras, error) {
 		extras, err := finalize(ctx, store, output, outDir, aggregate, abs, raw, readErr, doc, plan, proof, proofErr, incomplete, dryRun)

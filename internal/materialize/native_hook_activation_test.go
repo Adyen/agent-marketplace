@@ -567,7 +567,7 @@ func TestGeminiSharedHookAndMCPPlanRecoversTogetherAfterPublishFault(t *testing.
 		identity: ownership.McpIdentityDigest("docs"), resource: "docs", raw: json.RawMessage(`{"command":"docs-server"}`),
 	}
 	var mcpDiagnostics []diag.Diagnostic
-	finalize := nativeHookActivationFinalizer(key, repo, []ownedJSONEntry{mcpEntry}, false, func() {}, &mcpDiagnostics)
+	finalize := nativeHookActivationFinalizer(key, repo, []ownedJSONEntry{mcpEntry}, nil, false, func() {}, &mcpDiagnostics)
 	injected := errors.New("interrupted shared Gemini publication")
 	options := nativeHookReconcileOptionsFor(nil)
 	options.nativeHookFinalize = func(ctx context.Context, store *ownership.Store, output outputKey, outDir string, aggregate ownedJSONFileSpec, abs string, raw []byte, readErr error, doc *jsonc.Document, plan ownedJSONPatch, proof ownership.Proof, proofErr error, incomplete, dryRun bool) (nativeHookTransactionExtras, error) {

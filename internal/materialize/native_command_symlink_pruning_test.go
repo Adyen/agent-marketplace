@@ -73,7 +73,7 @@ func TestNativeCommandSymlinkPruneClassification(t *testing.T) {
 						}
 					}
 				}}
-				report, err := syncCommandFiles(dir, nil, dryRun, true, boundary)
+				report, err := syncCommandFiles(dir, nil, dryRun, true, portableSyncContext{boundary: boundary})
 				if !hit {
 					t.Fatal("command classification hook was not reached")
 				}

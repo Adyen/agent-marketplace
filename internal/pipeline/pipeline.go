@@ -97,15 +97,18 @@ type ResolveOptions struct {
 }
 
 type ResolveResult struct {
-	OrgCfg                *config.Config
-	GlobalCfg             *config.Config
-	RepoCfg               *config.Config
-	LocalCfg              *config.LocalConfig
-	MergedCfg             *config.Config
-	LoadedCfg             *config.Config
-	MaterializationModes  config.MaterializationModes
-	CatalogLoad           catalog.LoadResult
-	Resolved              []resolver.ResolvedArtifact
+	OrgCfg               *config.Config
+	GlobalCfg            *config.Config
+	RepoCfg              *config.Config
+	LocalCfg             *config.LocalConfig
+	MergedCfg            *config.Config
+	LoadedCfg            *config.Config
+	MaterializationModes config.MaterializationModes
+	CatalogLoad          catalog.LoadResult
+	Resolved             []resolver.ResolvedArtifact
+	// ImpliedPreview is the advisory closure computed while requires.expand
+	// is disabled; it is never part of Resolved.
+	ImpliedPreview        []resolver.ResolvedArtifact
 	LockMetadata          []LockMetadata
 	MarketplaceStatuses   []marketplace.PinStatus
 	MarketplaceInspection *marketplace.Inspection
@@ -679,6 +682,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		resolver.WithMarketplaceResolver(mpResolver),
 		resolver.WithMarketplaceResolveMode(mpMode),
 		resolver.WithMarketplaceRevocationPolicy(opts.MarketplaceRevocationPolicy),
+		resolver.WithImpliedPreview(&result.ImpliedPreview),
 		resolver.WithSelectedCollections(&selectedCollections),
 	)
 	result.LoadedCfg = loadedCfg
@@ -941,7 +945,7 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 			"resolved.count": strconv.Itoa(len(resolved.Resolved)),
 		})
 	}
-	report, err := materialize.Run(ctx, matRoot, resolved.Resolved, materialize.WithMaterializationModes(resolved.MaterializationModes))
+	report, err := materialize.Run(ctx, matRoot, resolved.Resolved, materialize.WithMaterializationModes(resolved.MaterializationModes), materialize.WithImpliedPreview(resolved.ImpliedPreview))
 	if materializeSpan != (telemetry.Span{}) {
 		materializeSpan.SetAttributes(materializationResultAttrs(report, err))
 		materializeSpan.End()

@@ -42,6 +42,7 @@ type Settings struct {
 	UpdateCheck         *UpdateCheckConfig
 	Telemetry           *telemetryconfig.TelemetryConfig
 	Materialization     *MaterializationConfig
+	Requires            *RequiresConfig
 }
 
 type SourceKind = V4SourceKind
@@ -105,6 +106,7 @@ func (l LayerIntent) Settings() Settings {
 			UpdateCheck:     l.v4.UpdateCheck,
 			Telemetry:       l.v4.Telemetry,
 			Materialization: l.v4.Materialization,
+			Requires:        l.v4.Requires,
 		}
 		if l.v4.AllowedRegistries != nil {
 			values := cloneV4StringList(*l.v4.AllowedRegistries)
@@ -129,6 +131,7 @@ func (s Settings) config() *Config {
 		Logging:             s.Logging,
 		Telemetry:           s.Telemetry,
 		Materialization:     s.Materialization,
+		Requires:            s.Requires,
 	}
 }
 

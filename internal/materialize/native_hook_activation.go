@@ -266,7 +266,7 @@ func nativeHookSupportSnapshotAssertion(snapshot *nativeHookAggregateSnapshot) d
 	return assertion
 }
 
-func nativeHookActivationFinalizer(key outputKey, repoRoot string, mcpEntries []ownedJSONEntry, mcpIncomplete bool, markMCPIncomplete func(), mcpDiagnostics *[]diag.Diagnostic, supportInstallers ...nativeHookSupportInstaller) nativeHookFinalizer {
+func nativeHookActivationFinalizer(key outputKey, repoRoot string, mcpEntries, previewMCPEntries []ownedJSONEntry, mcpIncomplete bool, markMCPIncomplete func(), mcpDiagnostics *[]diag.Diagnostic, supportInstallers ...nativeHookSupportInstaller) nativeHookFinalizer {
 	return func(ctx context.Context, store *ownership.Store, _ outputKey, outDir string, file ownedJSONFileSpec, nativeAbs string, nativeRaw []byte, nativeReadErr error, doc *jsonc.Document, plan ownedJSONPatch, proof ownership.Proof, proofErr error, incomplete, dryRun bool) (nativeHookTransactionExtras, error) {
 		extras := nativeHookTransactionExtras{}
 		nativeSnapshot, snapshotErr := nativeHookAggregateSnapshotAtPlan(nativeAbs, file.rel, nativeRaw, nativeReadErr)
@@ -287,7 +287,7 @@ func nativeHookActivationFinalizer(key outputKey, repoRoot string, mcpEntries []
 			var mcpDiags []diag.Diagnostic
 			mcpErr := cloneErr
 			if mcpErr == nil {
-				mcpPlan, mcpDiags, mcpErr = planGeminiMCPContainer(mcpDoc, key, outDir, file, mcpEntries, proof, proofErr, mcpIncomplete)
+				mcpPlan, mcpDiags, mcpErr = planGeminiMCPContainer(mcpDoc, key, outDir, file, mcpEntries, previewMCPEntries, proof, proofErr, mcpIncomplete)
 			}
 			if mcpErr != nil {
 				if markMCPIncomplete != nil {

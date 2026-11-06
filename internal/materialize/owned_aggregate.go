@@ -71,6 +71,19 @@ type ownedJSONAggregateWork struct {
 	seen       map[string]int
 }
 
+func (w *ownedJSONAggregateWork) entriesFor(rel string) []ownedJSONEntry {
+	if w == nil {
+		return nil
+	}
+	var out []ownedJSONEntry
+	for _, entry := range w.entries {
+		if entry.rel == rel {
+			out = append(out, entry)
+		}
+	}
+	return out
+}
+
 func (w *ownedJSONAggregateWork) add(entry ownedJSONEntry) {
 	if w.seen == nil {
 		w.seen = make(map[string]int)
@@ -301,7 +314,7 @@ type ownedAggregateHandler interface {
 	markIncomplete(ownedAggregateState, outputKey, ir.ResourceKind)
 	aggregateRels(ir.ResourceKind, bool) []string
 	malformedDiagnostic(outputKey, string, error) diag.Diagnostic
-	reconcile(context.Context, *Report, ownedAggregateState, outputKey, string, []harness.Destination, bool) *Report
+	reconcile(context.Context, *Report, ownedAggregateState, ownedAggregateState, outputKey, string, []harness.Destination, bool) *Report
 }
 
 type materializeAdapter struct {
@@ -386,6 +399,9 @@ type ownedJSONReconcileOptions struct {
 	nativeHookFinalize        nativeHookFinalizer
 	selectedHookResources     map[string]bool
 	legacyHandwrittenFiles    []string
+	// preview holds advisory implied-preview entries; owned entries at these
+	// identities are retained rather than pruned, and none are written.
+	preview *ownedJSONAggregateWork
 }
 
 type nativeHookReconcileOptionsProvider interface {

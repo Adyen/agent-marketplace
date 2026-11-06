@@ -460,7 +460,7 @@ func reconcileOwnedJSONAggregateFile(ctx context.Context, store *ownership.Store
 	}
 	drift := ownership.Classify(proof, existingValues, desiredValues)
 
-	plan := ownedJSONPatchPlan(outDir, file, desired, existing, drift, proof, incomplete, options.selectedHookResources)
+	plan := ownedJSONPatchPlan(outDir, file, desired, options.preview.entriesFor(rel), existing, drift, proof, incomplete, options.selectedHookResources)
 	out.diags = append(out.diags, plan.diags(key, options)...)
 
 	if applyErr := applyOwnedJSONPatch(doc, container, containerMember, file, plan); applyErr != nil {
@@ -1155,13 +1155,29 @@ type ownedJSONPatch struct {
 //     hooks."
 //   - "A partial run does not prune" — when incomplete is set, the prune list is
 //     emptied for this file.
-func ownedJSONPatchPlan(outDir string, file ownedJSONFileSpec, desired []ownedJSONEntry, existing []ownedJSONExistingEntry, drift ownership.DriftReport, proof ownership.Proof, incomplete bool, selected ...map[string]bool) ownedJSONPatch {
+func ownedJSONPatchPlan(outDir string, file ownedJSONFileSpec, desired []ownedJSONEntry, preview []ownedJSONEntry, existing []ownedJSONExistingEntry, drift ownership.DriftReport, proof ownership.Proof, incomplete bool, selected ...map[string]bool) ownedJSONPatch {
 	var selection map[string]bool
 	if len(selected) > 0 {
 		selection = selected[0]
 	}
 	rel := file.rel
 	patch := ownedJSONPatch{outDir: outDir, rel: rel, writeMcp: map[string][]byte{}, hookElements: map[string][][]byte{}}
+
+	keep := make(map[string]bool, len(preview))
+	for _, entry := range preview {
+		keep[ownedAggregateIDKey(entry.id())] = true
+	}
+	kept := make(map[string]bool)
+	prunable := make([]ownership.EntryID, 0, len(drift.Stale))
+	for _, id := range drift.Stale {
+		if keep[ownedAggregateIDKey(id)] {
+			kept[ownedAggregateIDKey(id)] = true
+			continue
+		}
+		prunable = append(prunable, id)
+	}
+	drift.Stale = prunable
+	retainPreviewOwnership(&patch, kept, proof)
 
 	collision := make(map[string]bool, len(drift.Collisions))
 	for _, id := range drift.Collisions {
@@ -1270,6 +1286,10 @@ func ownedJSONPatchPlan(outDir string, file ownedJSONFileSpec, desired []ownedJS
 			id := ownedAggregateIDKey(entry.value.ID)
 			if stale[id] {
 				continue // proven ours and no longer desired: pruned
+			}
+			if drifted[id] && kept[id] {
+				elements = append(elements, entry.raw)
+				continue
 			}
 			if drifted[id] {
 				continue // proven ours and hand-edited: replaced below
@@ -1440,6 +1460,19 @@ func selectivePruneProven(id ownership.EntryID, proof ownership.Proof, selected 
 		}
 	}
 	return true
+}
+
+func retainPreviewOwnership(patch *ownedJSONPatch, kept map[string]bool, proof ownership.Proof) {
+	for _, id := range proof.OwnedIDs() {
+		if !kept[ownedAggregateIDKey(id)] {
+			continue
+		}
+		recorded, ok := proof.Entry(id)
+		if !ok {
+			continue
+		}
+		patch.owned = append(patch.owned, recorded)
+	}
 }
 
 func retainPostponedOwnership(patch *ownedJSONPatch, existing []ownedJSONExistingEntry, stale []ownership.EntryID, proof ownership.Proof, incomplete bool) {
