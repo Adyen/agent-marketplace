@@ -303,7 +303,7 @@ function formatValue(value: unknown): string {
       <section data-testid="requires-section" aria-labelledby="requires-heading">
         <h2 id="requires-heading" class="text-sm font-semibold text-highlighted">Requires</h2>
         <ul v-if="resource.requires?.length" class="mt-3 border-y border-default [&>*:not(:last-child)]:border-b [&>*:not(:last-child)]:border-default">
-          <li v-for="requirement in resource.requires" :key="`${requirement.kind}:${requirement.name}`" class="py-3">
+          <li v-for="(requirement, index) in resource.requires" :key="index" class="py-3">
             <div class="flex min-w-0 items-baseline gap-3">
               <span class="shrink-0 text-xs font-medium text-muted">{{ kindLabel(requirement.kind) }}</span>
               <NuxtLink v-if="resolvedRequirementRoute(requirement)" :to="resolvedRequirementRoute(requirement)" class="min-w-0 truncate font-mono text-sm font-semibold text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">{{ requirement.name }}</NuxtLink>

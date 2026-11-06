@@ -601,6 +601,33 @@ describe('ResourceDetailView', () => {
     })).toEqual(['resolved', 'external', 'unresolved'])
   })
 
+  // spec: marketplace-web-ui/requires-entries-carry-one-badge-each
+  it('preserves repeated prerequisite declarations when the response order changes', async () => {
+    const alpha = { kind: 'skill' as const, name: 'alpha' }
+    const first = { kind: 'skill' as const, name: 'lint', path: 'first' }
+    const second = { kind: 'skill' as const, name: 'lint', path: 'second' }
+    const omega = { kind: 'skill' as const, name: 'omega' }
+    const warnings: string[] = []
+    const wrapper = mount(ResourceDetailView, {
+      props: {
+        resource: { ...resource, requires: [alpha, first, second, omega] },
+        registry: 'team-tools', kind: 'skill', name: 'review', canonicalUrl: 'https://market.example', browserBase: 'https://market.example',
+      },
+      global: { stubs, config: { warnHandler: message => warnings.push(message) } },
+    })
+
+    await wrapper.setProps({ resource: { ...resource, requires: [omega, second, first, first, alpha] } })
+
+    const entries = wrapper.get('[data-testid="requires-section"]').findAll('li')
+    expect(entries).toHaveLength(5)
+    expect(entries.map(entry => entry.text())).toEqual([
+      'Skillomegaunresolved', 'Skilllintunresolvedsecond', 'Skilllintunresolvedfirst',
+      'Skilllintunresolvedfirst', 'Skillalphaunresolved',
+    ])
+    expect(warnings.filter(message => message.includes('Duplicate keys'))).toEqual([])
+    wrapper.unmount()
+  })
+
   it('states that an indexed resource declares no requirements', () => {
     const wrapper = mount(ResourceDetailView, {
       props: {
