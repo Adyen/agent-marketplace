@@ -1208,8 +1208,12 @@ func DeliverableArtifacts(resolved []resolver.ResolvedArtifact, plan catalog.Plu
 		}
 		targets := resolver.HarnessTargets(artifact.Harnesses)
 		deliveries := make(map[hcc.Target]PluginDeliveryResolution, len(targets))
+		scope := ScopeRepo
+		if artifact.Source.IsMachineScope() {
+			scope = ScopeUser
+		}
 		for _, target := range targets {
-			resolution := ResolvePluginDelivery(delivery, plugin.Format, target)
+			resolution := ResolvePluginDelivery(delivery, plugin.Format, target, scope)
 			if resolution.Diagnostic != nil {
 				diagnostic := *resolution.Diagnostic
 				diagnostic.Resource = "plugin/" + artifact.Name

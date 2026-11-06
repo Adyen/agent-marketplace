@@ -191,6 +191,15 @@ func TestSyncPersonalPluginSelectionLocksInPersonalLayer(t *testing.T) {
 			if lockHasPluginResource(personalDoc, "kit-a") {
 				t.Fatalf("the personal lock must not absorb the repository layer's selection:\n%s", personalData)
 			}
+			if mode == "direct" {
+				settings, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+				if err != nil || !bytes.Contains(settings, []byte("kit-b@am-")) {
+					t.Fatalf("personal-scope Claude plugin must be delivered natively: %v\n%s", err, settings)
+				}
+				if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "kit-b-skill-b", "SKILL.md")); !os.IsNotExist(err) {
+					t.Fatalf("personal-scope Claude plugin must not also be decomposed: %v", err)
+				}
+			}
 			if output, err := executeCommand("sync", "--check"); err != nil {
 				t.Fatalf("sync --check must verify both layers: %v\n%s", err, output)
 			}
@@ -210,6 +219,15 @@ func TestSyncPersonalPluginSelectionLocksInPersonalLayer(t *testing.T) {
 			}
 			if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "kit-b-skill-b", "SKILL.md")); !os.IsNotExist(err) {
 				t.Fatalf("deselected personal plugin member remained installed: %v", err)
+			}
+			if mode == "direct" {
+				settings, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+				if err == nil && bytes.Contains(settings, []byte("kit-b@am-")) {
+					t.Fatalf("deselected personal plugin registration remained installed: %s", settings)
+				}
+				if err != nil && !os.IsNotExist(err) {
+					t.Fatalf("read deselected personal Claude settings: %v", err)
+				}
 			}
 			if _, err := os.Stat(filepath.Join(repo, ".claude", "skills", "kit-a-skill-a", "SKILL.md")); err != nil {
 				t.Fatalf("committed repository plugin member was removed with personal selection: %v", err)
@@ -945,22 +963,26 @@ func TestSyncUsesPerLayerPluginMemberKeysAndUnionsSameLayerExclusions(t *testing
 		t.Fatalf("sync must deliver each layer's committed plugin member keys: %v\n%s", err, output)
 	}
 	for _, tc := range []struct {
-		root string
 		name string
 		want bool
 	}{
-		{repo, "a", false},
-		{repo, "b", true},
-		{repo, "c", true},
-		{home, "a", false},
-		{home, "b", false},
-		{home, "c", true},
+		{"a", false},
+		{"b", true},
+		{"c", true},
 	} {
-		path := filepath.Join(tc.root, ".claude", "skills", "local-kit-"+tc.name, "SKILL.md")
+		path := filepath.Join(repo, ".claude", "skills", "local-kit-"+tc.name, "SKILL.md")
 		_, statErr := os.Stat(path)
 		if got := statErr == nil; got != tc.want {
-			t.Errorf("member %s at %s exists = %t, want %t (stat error: %v)", tc.name, tc.root, got, tc.want, statErr)
+			t.Errorf("member %s at repo scope exists = %t, want %t (stat error: %v)", tc.name, got, tc.want, statErr)
 		}
+		homePath := filepath.Join(home, ".claude", "skills", "local-kit-"+tc.name, "SKILL.md")
+		if _, err := os.Stat(homePath); !os.IsNotExist(err) {
+			t.Errorf("user-scope native plugin also wrote decomposed member %s: %v", tc.name, err)
+		}
+	}
+	settings, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if err != nil || !bytes.Contains(settings, []byte("local-kit@am-")) {
+		t.Fatalf("user-scope Claude plugin must be delivered natively: %v\n%s", err, settings)
 	}
 }
 

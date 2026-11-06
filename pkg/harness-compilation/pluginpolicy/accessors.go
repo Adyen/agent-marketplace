@@ -51,7 +51,10 @@ type NativeDeliveryPolicy struct {
 	Refresh string
 }
 
-func LookupNativeDelivery(t target.Target) (NativeDeliveryPolicy, error) {
+func LookupNativeDelivery(t target.Target, scope string) (NativeDeliveryPolicy, error) {
+	if scope != "user" && scope != "repo" {
+		return NativeDeliveryPolicy{}, fmt.Errorf("pluginpolicy: native delivery scope %q must be user or repo", scope)
+	}
 	r, err := shippedRegistry()
 	if err != nil {
 		return NativeDeliveryPolicy{}, err
@@ -60,7 +63,11 @@ func LookupNativeDelivery(t target.Target) (NativeDeliveryPolicy, error) {
 	if !ok {
 		return NativeDeliveryPolicy{}, fmt.Errorf("pluginpolicy: no harness catalog for target %q", t)
 	}
-	return NativeDeliveryPolicy(c.Delivery.Native), nil
+	policy, ok := c.Delivery.Native.Scopes[scope]
+	if !ok {
+		return NativeDeliveryPolicy{}, fmt.Errorf("pluginpolicy: no native delivery policy for target %q at scope %q", t, scope)
+	}
+	return NativeDeliveryPolicy(policy), nil
 }
 
 // LookupPackageFormat returns the shipped catalog data for format. ok is

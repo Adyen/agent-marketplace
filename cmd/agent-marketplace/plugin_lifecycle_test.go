@@ -119,17 +119,34 @@ func TestInspectPluginReportsPackageDetailsWithoutWriting(t *testing.T) {
 	}
 }
 
+// spec: plugin-delivery/auto-delivers-claude-plugins-natively-at-user-scope-only
+func TestInspectShowsClaudeDeliveryByScopeWhenStatusesDiffer(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	_, run := pluginCommandFixture(t, "    - plugin/review-kit\n")
+	output, err := run("inspect", "plugin/review-kit")
+	if err != nil {
+		t.Fatalf("inspect Claude plugin: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "claude: user: native, repo: decomposed") {
+		t.Fatalf("inspect did not report Claude's differing scope delivery:\n%s", output)
+	}
+}
+
 func TestInspectPluginShowsUnverifiedNativeDeliveryBlocked(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	_, run := pluginCommandFixture(t, "    - {kind: plugin, name: review-kit, delivery: native}\n")
+	repo, run := pluginCommandFixture(t, "    - {kind: plugin, name: review-kit, delivery: native}\n")
+	configurePluginDeliveryFixture(t, repo, "cursor",
+		"resources:\n  team:\n    - {kind: plugin, name: review-kit, delivery: native}\n")
 	output, err := run("inspect", "plugin/review-kit")
 	if err != nil {
 		t.Fatalf("inspect native plugin: %v\n%s", err, output)
 	}
-	if !strings.Contains(output, "claude: blocked (plugin.delivery.native-unverified)") {
-		t.Fatalf("inspect must report the native delivery refusal for Claude:\n%s", output)
+	if !strings.Contains(output, "cursor: blocked (plugin.delivery.native-unverified)") {
+		t.Fatalf("inspect must report the native delivery refusal for Cursor:\n%s", output)
 	}
 }
 
@@ -164,9 +181,8 @@ func TestInstallPluginWritesRequestAndSyncsIt(t *testing.T) {
 	if !strings.Contains(string(configBytes), "plugin/review-kit") {
 		t.Fatalf("install did not write a plugin request:\n%s", configBytes)
 	}
-	member := filepath.Join(repo, ".claude", "skills", "review-kit-review", "SKILL.md")
-	if _, err := os.Stat(member); err != nil {
-		t.Fatalf("install did not sync the plugin member: %v\n%s", err, output)
+	if _, err := os.Stat(filepath.Join(repo, ".claude", "skills", "review-kit-review", "SKILL.md")); err != nil {
+		t.Fatalf("repository-scope install did not decompose the plugin member: %v", err)
 	}
 }
 
@@ -217,23 +233,23 @@ func TestRemovePluginKeepsCollectionSelectedPluginUntilCollectionRemoval(t *test
 	if output, err := executeCommand("sync", "--no-backup"); err != nil {
 		t.Fatalf("initial plugin sync failed: %v\n%s", err, output)
 	}
-	member := filepath.Join(repo, ".claude", "skills", "local-kit-local-skill", "SKILL.md")
-	if _, err := os.Stat(member); err != nil {
-		t.Fatalf("initial plugin member missing: %v", err)
+	memberPath := filepath.Join(repo, ".claude", "skills", "local-kit-local-skill", "SKILL.md")
+	if _, err := os.Stat(memberPath); err != nil {
+		t.Fatalf("initial repository-scope auto delivery did not decompose the plugin: %v", err)
 	}
 
 	if output, err := executeCommand("remove", "local-kit", "--kind", "plugin"); err != nil {
 		t.Fatalf("direct plugin removal failed: %v\n%s", err, output)
 	}
-	if _, err := os.Stat(member); err != nil {
-		t.Fatalf("collection selection should keep the plugin installed: %v", err)
+	if _, err := os.Stat(memberPath); err != nil {
+		t.Fatalf("collection selection should keep the decomposed plugin member: %v", err)
 	}
 	if output, err := executeCommand("remove", "review-team", "--kind", "collection"); err != nil {
 		t.Fatalf("collection removal failed: %v\n%s", err, output)
 	}
-	if _, err := os.Lstat(member); !os.IsNotExist(err) {
+	if _, err := os.Stat(memberPath); !os.IsNotExist(err) {
 		configBytes, readErr := os.ReadFile(filepath.Join(repo, ".agents", "config.yaml"))
-		t.Fatalf("last plugin selection was removed but its member remains: %v; config read=%v\n%s", err, readErr, configBytes)
+		t.Fatalf("last plugin selection was removed but its decomposed member remains: %v; config read=%v\n%s", err, readErr, configBytes)
 	}
 }
 

@@ -9,6 +9,25 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
+// spec: plugin-delivery/auto-delivers-claude-plugins-natively-at-user-scope-only
+func TestResolvePluginDeliveryUsesScopeSpecificPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		scope Scope
+		want  string
+	}{
+		{name: "user", scope: ScopeUser, want: "native"},
+		{name: "repo", scope: ScopeRepo, want: "decompose"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ResolvePluginDelivery("auto", "claude-plugin", "claude", tc.scope)
+			if got.Delivery != tc.want || got.Diagnostic != nil {
+				t.Fatalf("Claude delivery at %s = %#v, want %q without a diagnostic", tc.scope, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestResolvePluginDeliveryPerTarget(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -71,7 +90,7 @@ func TestResolvePluginDeliveryPerTarget(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := resolvePluginDeliveryPolicy(test.request, test.format, test.target, test.policy, test.policyErr)
+			got := resolvePluginDeliveryPolicy(test.request, test.format, test.target, ScopeUser, test.policy, test.policyErr)
 			if got.Delivery != test.want {
 				t.Fatalf("delivery = %q, want %q", got.Delivery, test.want)
 			}

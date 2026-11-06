@@ -109,3 +109,16 @@ func TestCheckFailsOnStaleDocument(t *testing.T) {
 		t.Fatalf("check error must name the stale document, got %v", err)
 	}
 }
+
+// spec: plugin-policy-catalogs/the-reference-shows-differing-scope-statuses
+func TestPluginSupportShowsClaudeNativeStatusByScope(t *testing.T) {
+	chdirRoot(t)
+	doc, err := generatePluginSupport()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "user: verified, repo: unverified"
+	if !strings.Contains(string(doc), want) {
+		t.Fatalf("plugin support reference omits Claude's per-scope native status %q:\n%s", want, doc)
+	}
+}

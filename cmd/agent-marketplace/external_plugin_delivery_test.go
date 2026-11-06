@@ -165,7 +165,7 @@ func TestSyncExternalEntryUsesLockedCommitAfterRefMoves(t *testing.T) {
 		return
 	}
 	fixture := newExternalDeliveryFixture(t, "",
-		"    - {kind: plugin, name: ext-kit, delivery: decompose}\n",
+		"    - plugin/ext-kit\n",
 		func(t *testing.T, root string) { writeExternalSkillVersion(t, root, "locked revision") })
 
 	if output, err := executeCommand("sync", "--no-backup"); err != nil {
@@ -210,7 +210,7 @@ func TestSyncCheckExternalEntryWritesNothing(t *testing.T) {
 		return
 	}
 	fixture := newExternalDeliveryFixture(t, "",
-		"    - {kind: plugin, name: ext-kit}\n",
+		"    - plugin/ext-kit\n",
 		func(t *testing.T, root string) { writeExternalSkillVersion(t, root, "stable content") })
 
 	output, err := executeCommand("sync", "--no-backup")

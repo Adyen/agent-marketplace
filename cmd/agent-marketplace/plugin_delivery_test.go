@@ -407,11 +407,17 @@ func TestRepositoryPluginRemovalLeavesMachineInstance(t *testing.T) {
 		t.Fatalf("machine and repository plugin sync failed: %v\n%s", err, output)
 	}
 	repoMember := filepath.Join(repo, ".claude", "skills", "review-kit-review", "SKILL.md")
+	if _, err := os.Stat(repoMember); err != nil {
+		t.Fatalf("repository-scope decomposed member missing: %v", err)
+	}
+	machineSettings := filepath.Join(root, "home", ".claude", "settings.json")
+	settings, err := os.ReadFile(machineSettings)
+	if err != nil || !strings.Contains(string(settings), "review-kit@am-") {
+		t.Fatalf("user-scope native registration missing: %v\n%s", err, settings)
+	}
 	machineMember := filepath.Join(root, "home", ".claude", "skills", "review-kit-review", "SKILL.md")
-	for _, path := range []string{repoMember, machineMember} {
-		if _, err := os.Stat(path); err != nil {
-			t.Fatalf("plugin member missing at %s: %v", path, err)
-		}
+	if _, err := os.Stat(machineMember); !os.IsNotExist(err) {
+		t.Fatalf("user-scope native plugin was also decomposed: %v", err)
 	}
 
 	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"),
@@ -423,7 +429,8 @@ func TestRepositoryPluginRemovalLeavesMachineInstance(t *testing.T) {
 	if _, err := os.Stat(repoMember); !os.IsNotExist(err) {
 		t.Fatalf("repository instance remained after deselection: %v", err)
 	}
-	if _, err := os.Stat(machineMember); err != nil {
-		t.Fatalf("machine instance was removed with repository selection: %v", err)
+	settings, err = os.ReadFile(machineSettings)
+	if err != nil || !strings.Contains(string(settings), "review-kit@am-") {
+		t.Fatalf("machine native registration was removed with repository selection: %v\n%s", err, settings)
 	}
 }

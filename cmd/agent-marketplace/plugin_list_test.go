@@ -115,20 +115,98 @@ func TestSyncNativePluginUnverifiedFailsWithoutDecomposing(t *testing.T) {
 		return
 	}
 	repo, run := pluginCommandFixture(t, "    - {kind: plugin, name: review-kit, delivery: native}\n")
+	configurePluginDeliveryFixture(t, repo, "cursor",
+		"resources:\n  team:\n    - {kind: plugin, name: review-kit, delivery: native}\n")
 
 	output, err := run("sync", "--no-backup")
 	if err == nil {
 		t.Fatalf("sync with unverified native delivery must fail:\n%s", output)
 	}
 	if !strings.Contains(output, "plugin.delivery.native-unverified") || !strings.Contains(output, "review-kit") {
-		t.Fatalf("native delivery must fail as unverified for review-kit:\n%s", output)
+		t.Fatalf("native delivery must fail as unverified for Cursor review-kit:\n%s", output)
 	}
-	if _, statErr := os.Lstat(filepath.Join(repo, ".claude", "skills", "review")); !os.IsNotExist(statErr) {
+	if _, statErr := os.Lstat(filepath.Join(repo, ".cursor", "skills", "review-kit-review")); !os.IsNotExist(statErr) {
 		t.Fatalf("native delivery must not decompose plugin members: %v", statErr)
 	}
-	if _, statErr := os.Lstat(filepath.Join(repo, ".claude", "settings.json")); !os.IsNotExist(statErr) {
+	if _, statErr := os.Lstat(filepath.Join(repo, ".cursor", "settings.json")); !os.IsNotExist(statErr) {
 		t.Fatalf("native registration remains out of scope: %v", statErr)
 	}
+}
+
+// spec: plugin-delivery/auto-delivers-claude-plugins-natively-at-user-scope-only
+// spec: plugin-delivery/explicit-native-delivery-is-refused-at-repository-scope-for-claude
+func TestSyncAutoDeliversClaudePluginsByScope(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	t.Run("auto is native at user scope", func(t *testing.T) {
+		repo, run := pluginCommandFixture(t, "")
+		root := filepath.Dir(repo)
+		catalogDir := filepath.Join(root, "marketplace")
+		writeConfig(t, filepath.Join(root, "home", ".agents", "config.yaml"),
+			"apiVersion: agent-marketplace/v4\nharnesses: [claude]\nmaterialization: {mode: file}\nsources:\n  team: {directory: "+
+				filepath.ToSlash(catalogDir)+", format: claude-marketplace}\nresources:\n  team:\n    - plugin/review-kit\n")
+		writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"),
+			"apiVersion: agent-marketplace/v4\nmaterialization: {mode: file}\n")
+
+		output, err := run("sync", "--no-backup")
+		if err != nil {
+			t.Fatalf("sync user-scope Claude plugin: %v\n%s", err, output)
+		}
+		if !strings.Contains(output, "claude: native") {
+			t.Fatalf("sync did not report native delivery at user scope:\n%s", output)
+		}
+		settings, err := os.ReadFile(filepath.Join(root, "home", ".claude", "settings.json"))
+		if err != nil || !strings.Contains(string(settings), "review-kit@am-") {
+			t.Fatalf("sync did not register the user-scope native plugin: %v\n%s", err, settings)
+		}
+		if _, err := os.Stat(filepath.Join(root, "home", ".claude", "skills", "review-kit-review", "SKILL.md")); !os.IsNotExist(err) {
+			t.Fatalf("sync also decomposed the user-scope plugin skill: %v", err)
+		}
+	})
+
+	t.Run("auto is decomposed at repository scope", func(t *testing.T) {
+		repo, run := pluginCommandFixture(t, "    - plugin/review-kit\n")
+		output, err := run("sync", "--no-backup")
+		if err != nil {
+			t.Fatalf("sync repository-scope Claude plugin: %v\n%s", err, output)
+		}
+		if !strings.Contains(output, "claude: decompose") {
+			t.Fatalf("sync did not report decomposed delivery at repository scope:\n%s", output)
+		}
+		if _, err := os.Stat(filepath.Join(repo, ".claude", "skills", "review-kit-review", "SKILL.md")); err != nil {
+			t.Fatalf("sync did not decompose the repository-scope plugin skill: %v", err)
+		}
+		for _, name := range []string{"settings.json", "settings.local.json"} {
+			settings, err := os.ReadFile(filepath.Join(repo, ".claude", name))
+			if err == nil && strings.Contains(string(settings), "review-kit@am-") {
+				t.Fatalf("sync wrote native registration to repository %s: %s", name, settings)
+			}
+			if err != nil && !os.IsNotExist(err) {
+				t.Fatalf("read repository Claude %s: %v", name, err)
+			}
+		}
+	})
+
+	t.Run("explicit native is refused at repository scope", func(t *testing.T) {
+		repo, run := pluginCommandFixture(t, "    - {kind: plugin, name: review-kit, delivery: native}\n")
+		output, err := run("sync", "--no-backup")
+		if err == nil || !strings.Contains(output, "plugin.delivery.native-unverified") {
+			t.Fatalf("repository-scope native delivery must be refused: err=%v\n%s", err, output)
+		}
+		if _, err := os.Lstat(filepath.Join(repo, ".claude", "skills", "review-kit-review")); !os.IsNotExist(err) {
+			t.Fatalf("refused native delivery wrote decomposed plugin members: %v", err)
+		}
+		for _, name := range []string{"settings.json", "settings.local.json"} {
+			settings, err := os.ReadFile(filepath.Join(repo, ".claude", name))
+			if err == nil && strings.Contains(string(settings), "review-kit@am-") {
+				t.Fatalf("refused native delivery wrote repository registration to %s: %s", name, settings)
+			}
+			if err != nil && !os.IsNotExist(err) {
+				t.Fatalf("read repository Claude %s: %v", name, err)
+			}
+		}
+	})
 }
 
 // spec: plugin-delivery/decomposed-skill-gets-a-namespaced-installed-name
