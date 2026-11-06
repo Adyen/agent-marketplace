@@ -101,16 +101,16 @@ func refreshConfigured(ctx context.Context, deps Deps, registry store.Registry, 
 	}
 	res, err := clone(ctx, origin, merged.Ref, creds, limits, deps.Config.Policy.Limits.CloneDuration.Duration(), roots...)
 	if err != nil {
-		return recordRefreshFailure(ctx, deps.MetadataStore, merged, err)
+		return recordRefreshFailure(ctx, deps.MetadataStore, merged.ID, err)
 	}
 	defer func() { _ = res.Release() }()
 
 	rev, err := ingest.BuildRegistryRevision(ctx, deps.Config, deps.Marketplace.ID, merged, res.Dir, res.Commit)
 	if err != nil {
-		return recordRefreshFailure(ctx, deps.MetadataStore, merged, err)
+		return recordRefreshFailure(ctx, deps.MetadataStore, merged.ID, err)
 	}
 	if err := ingest.ReuseStoredArchives(ctx, deps.MetadataStore, deps.BlobStore, &rev); err != nil {
-		return recordRefreshFailure(ctx, deps.MetadataStore, merged, err)
+		return recordRefreshFailure(ctx, deps.MetadataStore, merged.ID, err)
 	}
 
 	pub := store.RegistryRevisionPublication{
@@ -129,11 +129,11 @@ func refreshConfigured(ctx context.Context, deps Deps, registry store.Registry, 
 		if errors.Is(err, store.ErrStaleGeneration) {
 			return err
 		}
-		return recordRefreshFailure(ctx, deps.MetadataStore, merged, err)
+		return recordRefreshFailure(ctx, deps.MetadataStore, merged.ID, err)
 	}
 
 	slog.Info("refreshed registry", "registry", registry.ID, "commit", res.Commit, "resources", len(rev.Resources))
-	return recordRefreshSuccess(ctx, deps.MetadataStore, merged)
+	return recordRefreshSuccess(ctx, deps.MetadataStore, merged.ID)
 }
 
 // EnsureMarketplace loads or creates the Marketplace instance record.
@@ -1158,23 +1158,32 @@ func resolveToken(t config.TokenCredential) (string, error) {
 	return "", nil
 }
 
-func recordRefreshSuccess(ctx context.Context, s store.MetadataStore, src store.Registry) error {
-	src.RefreshStatus = store.RegistryRefreshStatusOK
-	src.RefreshError = ""
-	src.RefreshedAt = time.Now().UTC()
-	if err := s.PutRegistry(ctx, src); err != nil {
-		slog.Error("failed to record refresh success", "registry", src.ID, "error", err)
+// recordRefreshOutcome writes only the refresh status fields of the current
+// stored registry, so config-owned fields changed during the refresh survive.
+func recordRefreshOutcome(ctx context.Context, s store.MetadataStore, id store.RegistryID, status store.RegistryRefreshStatus, refreshErr string) error {
+	return s.WithTx(ctx, func(txCtx context.Context, tx store.MetadataStore) error {
+		current, err := tx.GetRegistry(txCtx, id)
+		if err != nil {
+			return err
+		}
+		current.RefreshStatus = status
+		current.RefreshError = refreshErr
+		current.RefreshedAt = time.Now().UTC()
+		return tx.PutRegistry(txCtx, current)
+	})
+}
+
+func recordRefreshSuccess(ctx context.Context, s store.MetadataStore, id store.RegistryID) error {
+	if err := recordRefreshOutcome(ctx, s, id, store.RegistryRefreshStatusOK, ""); err != nil {
+		slog.Error("failed to record refresh success", "registry", id, "error", err)
 		return err
 	}
 	return nil
 }
 
-func recordRefreshFailure(ctx context.Context, s store.MetadataStore, src store.Registry, err error) error {
-	src.RefreshStatus = store.RegistryRefreshStatusFailed
-	src.RefreshError = err.Error()
-	src.RefreshedAt = time.Now().UTC()
-	if putErr := s.PutRegistry(ctx, src); putErr != nil {
-		slog.Error("failed to record refresh failure", "registry", src.ID, "error", putErr)
+func recordRefreshFailure(ctx context.Context, s store.MetadataStore, id store.RegistryID, err error) error {
+	if putErr := recordRefreshOutcome(ctx, s, id, store.RegistryRefreshStatusFailed, err.Error()); putErr != nil {
+		slog.Error("failed to record refresh failure", "registry", id, "error", putErr)
 	}
 	return err
 }

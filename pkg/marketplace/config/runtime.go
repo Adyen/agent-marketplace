@@ -120,8 +120,50 @@ type Classification struct {
 	RestartRequired        []string
 }
 
+// normalizeCollections returns cfg with nil collections replaced by empty ones,
+// so omitting a collection and writing it empty compare equal. The caller's
+// registry slice and maps are never modified.
+func normalizeCollections(cfg Config) Config {
+	cfg.Admin.TrustedProxies = nonNilSlice(cfg.Admin.TrustedProxies)
+	cfg.Admin.AdminGroups = nonNilSlice(cfg.Admin.AdminGroups)
+	cfg.Admin.AdminUsers = nonNilSlice(cfg.Admin.AdminUsers)
+	cfg.Management.AllowedOrigins = nonNilSlice(cfg.Management.AllowedOrigins)
+	profiles := make(map[string]CredentialProfile, len(cfg.Management.Profiles))
+	for id, profile := range cfg.Management.Profiles {
+		profile.AllowedOrigins = nonNilSlice(profile.AllowedOrigins)
+		profiles[id] = profile
+	}
+	cfg.Management.Profiles = profiles
+	cfg.Revocations.RegistryIDs = nonNilSlice(cfg.Revocations.RegistryIDs)
+	cfg.Revocations.Coordinates = nonNilSlice(cfg.Revocations.Coordinates)
+	cfg.Revocations.Revisions = nonNilSlice(cfg.Revocations.Revisions)
+	cfg.InstallationMetrics.Labels = nonNilMap(cfg.InstallationMetrics.Labels)
+	registries := make([]Registry, len(cfg.Registries))
+	for i, registry := range cfg.Registries {
+		registry.Aliases = nonNilSlice(registry.Aliases)
+		registries[i] = registry
+	}
+	cfg.Registries = registries
+	return cfg
+}
+
+func nonNilSlice[S ~[]E, E any](values S) S {
+	if values == nil {
+		return S{}
+	}
+	return values
+}
+
+func nonNilMap[M ~map[K]V, K comparable, V any](values M) M {
+	if values == nil {
+		return M{}
+	}
+	return values
+}
+
 // Classify compares a parsed candidate with startup and running configurations.
 func Classify(startup, running, candidate Config) (Classification, error) {
+	startup, running, candidate = normalizeCollections(startup), normalizeCollections(running), normalizeCollections(candidate)
 	classification := Classification{
 		RefreshIntervalChanged: running.Refresh.Interval != candidate.Refresh.Interval,
 	}

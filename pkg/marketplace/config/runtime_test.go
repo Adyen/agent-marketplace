@@ -253,6 +253,30 @@ func TestClassifyRuntimeConfigurationChanges(t *testing.T) {
 	})
 }
 
+// spec: marketplace-runtime-configuration/a-comment-and-formatting-edit-causes-no-registry-work
+func TestClassifySpelledOutEmptyCollectionsChangeNothing(t *testing.T) {
+	omitted := strings.Replace(validConfigYAML(), "    aliases: []\n", "", 1)
+	omitted = strings.Replace(omitted, "revocations:\n  registry_ids: []\n  coordinates: []\n  revisions: []\n", "", 1)
+	base, err := ParseConfig([]byte(omitted))
+	if err != nil {
+		t.Fatalf("ParseConfig omitted collections: %v", err)
+	}
+	spelled, err := ParseConfig([]byte(validConfigYAML() + "installation_metrics:\n  labels: {}\n"))
+	if err != nil {
+		t.Fatalf("ParseConfig spelled-out collections: %v", err)
+	}
+
+	for _, pair := range [][2]Config{{base, spelled}, {spelled, base}} {
+		got, err := Classify(pair[0], pair[0], pair[1])
+		if err != nil {
+			t.Fatalf("Classify: %v", err)
+		}
+		if len(got.MetadataChanged)+len(got.IndexingChanged)+len(got.RestartRequired)+len(got.Added)+len(got.Removed) != 0 || got.RefreshIntervalChanged {
+			t.Fatalf("spelled-out empty collections classification = %+v", got)
+		}
+	}
+}
+
 func parseRuntimeConfig(t *testing.T) Config {
 	t.Helper()
 	cfg, err := ParseConfig([]byte(validConfigYAML()))

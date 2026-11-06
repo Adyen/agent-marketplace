@@ -362,6 +362,64 @@ func TestRuntimeConfigurationChangeDuringRefreshPreventsStalePublication(t *test
 	stop()
 }
 
+// spec: marketplace-runtime-configuration/a-removed-registry-is-unlisted-and-keeps-its-history
+func TestRefreshFailureDoesNotRelistRegistryRemovedDuringRefresh(t *testing.T) {
+	f := newObservationFixture(t, 1)
+	registryID := store.RegistryID(f.cfg.Registries[0].ID)
+	f.deps.Clone = func(ctx context.Context, _ string, _ string, _ acquire.Credentials, _ acquire.Limits, _ time.Duration, _ ...string) (*acquire.Result, error) {
+		current, err := f.meta.GetRegistry(ctx, registryID)
+		if err != nil {
+			return nil, err
+		}
+		current.Listed = false
+		if err := f.meta.PutRegistry(ctx, current); err != nil {
+			return nil, err
+		}
+		return nil, errors.New("clone unavailable")
+	}
+
+	if err := refreshConfigured(f.ctx, f.deps, store.Registry{ID: registryID}, ""); err == nil {
+		t.Fatal("refresh succeeded, want clone failure")
+	}
+	stored, err := f.meta.GetRegistry(f.ctx, registryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Listed || stored.RefreshStatus != store.RegistryRefreshStatusFailed {
+		t.Fatalf("registry removed during refresh = listed:%t status:%q, want unlisted and failed", stored.Listed, stored.RefreshStatus)
+	}
+}
+
+// spec: marketplace-runtime-configuration/a-presentation-only-change-updates-metadata-without-acquisition
+func TestRefreshSuccessKeepsMetadataChangedDuringRefresh(t *testing.T) {
+	f := newObservationFixture(t, 1)
+	registryID := store.RegistryID(f.cfg.Registries[0].ID)
+	f.deps.Clone = func(ctx context.Context, origin, ref string, cred acquire.Credentials, limits acquire.Limits, timeout time.Duration, roots ...string) (*acquire.Result, error) {
+		current, err := f.meta.GetRegistry(ctx, registryID)
+		if err != nil {
+			return nil, err
+		}
+		current.Slug = "renamed-during-refresh"
+		current.Publisher = store.Publisher{Name: "Publisher During Refresh"}
+		if err := f.meta.PutRegistry(ctx, current); err != nil {
+			return nil, err
+		}
+		return acquire.Clone(ctx, origin, ref, cred, limits, timeout, roots...)
+	}
+
+	if err := refreshConfigured(f.ctx, f.deps, store.Registry{ID: registryID}, ""); err != nil {
+		t.Fatalf("refreshConfigured: %v", err)
+	}
+	stored, err := f.meta.GetRegistry(f.ctx, registryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Slug != "renamed-during-refresh" || stored.Publisher.Name != "Publisher During Refresh" ||
+		stored.RefreshStatus != store.RegistryRefreshStatusOK {
+		t.Fatalf("metadata changed during refresh = slug:%q publisher:%q status:%q", stored.Slug, stored.Publisher.Name, stored.RefreshStatus)
+	}
+}
+
 func newWorkerRuntimeSource(t *testing.T, f *observationFixture) (*config.RuntimeSource, string) {
 	t.Helper()
 	cfg := f.cfg
