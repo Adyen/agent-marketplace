@@ -3,6 +3,8 @@
 package acquire
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -10,6 +12,8 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,6 +39,13 @@ type Credentials struct {
 	Token      string
 	CAFile     string
 }
+
+var (
+	// ErrRefNotFound indicates that the origin does not advertise the requested ref.
+	ErrRefNotFound = errors.New("remote ref not found")
+)
+
+const maxRemoteRefOutputBytes = 1024 * 1024
 
 // Result is an acquired source workspace.
 type Result struct {
@@ -67,6 +78,202 @@ func CloneAtCommit(ctx context.Context, origin, ref, commit string, cred Credent
 		return nil, fmt.Errorf("validate commit: %q is not a full lowercase Git commit", commit)
 	}
 	return clone(ctx, origin, ref, commit, roots, cred, limits, timeout)
+}
+
+// ResolveRemoteRef resolves a validated remote ref to its commit without
+// downloading the repository tree or creating a checkout.
+func ResolveRemoteRef(ctx context.Context, origin, ref string, cred Credentials, timeout time.Duration) (string, error) {
+	if err := cache.ValidateGitURL(origin); err != nil {
+		return "", fmt.Errorf("validate origin: %w", err)
+	}
+	if err := cache.ValidateGitRef(ref); err != nil {
+		return "", fmt.Errorf("validate ref: %w", err)
+	}
+	if isFullCommit(ref) {
+		return ref, nil
+	}
+	if timeout <= 0 {
+		return "", errors.New("resolve remote ref: timeout must be positive")
+	}
+
+	patterns, branchRef, tagRef, exactTag := remoteRefPatterns(ref)
+	workspace, err := newWorkspace(cred, origin)
+	if err != nil {
+		return "", fmt.Errorf("prepare Git workspace: %w", err)
+	}
+	defer func() { _ = workspace.cleanup() }()
+
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	args := append(hardenedGitArgs(), "ls-remote", "--", origin)
+	args = append(args, patterns...)
+	output, err := runGitBounded(probeCtx, workspace.env(), "", args, maxRemoteRefOutputBytes)
+	if err != nil {
+		return "", fmt.Errorf("resolve remote ref %q: %w", ref, err)
+	}
+	refs, err := parseRemoteRefs(output)
+	if err != nil {
+		return "", err
+	}
+
+	if exactTag {
+		if commit := peeledTagCommit(refs, tagRef); commit != "" {
+			return commit, nil
+		}
+		return "", fmt.Errorf("resolve ref %q: %w", ref, ErrRefNotFound)
+	}
+	if tagRef != "" {
+		if commit := peeledTagCommit(refs, tagRef); commit != "" {
+			return commit, nil
+		}
+	}
+	if branchRef != "" && refs[branchRef] != "" {
+		return refs[branchRef], nil
+	}
+	return "", fmt.Errorf("resolve ref %q: %w", ref, ErrRefNotFound)
+}
+
+// peeledTagCommit returns the commit a tag ref resolves to, preferring the
+// peeled commit of an annotated tag over the tag object itself.
+func peeledTagCommit(refs map[string]string, tagRef string) string {
+	if peeled := refs[tagRef+"^{}"]; peeled != "" {
+		return peeled
+	}
+	return refs[tagRef]
+}
+
+// SourceHost returns the normalized host-budget key for a Git origin. Local
+// paths and file URLs share the isolated local budget.
+func SourceHost(origin string) (string, error) {
+	if err := cache.ValidateGitURL(origin); err != nil {
+		return "", fmt.Errorf("validate origin: %w", err)
+	}
+	if strings.HasPrefix(strings.ToLower(origin), "file://") {
+		return "local", nil
+	}
+	if strings.Contains(origin, "://") {
+		u, err := url.Parse(origin)
+		if err != nil {
+			return "", fmt.Errorf("parse origin: %w", err)
+		}
+		host := strings.ToLower(u.Hostname())
+		if host == "" {
+			return "", errors.New("origin has no host")
+		}
+		port := u.Port()
+		if port == "" {
+			return host, nil
+		}
+		return net.JoinHostPort(host, port), nil
+	}
+
+	rest := origin
+	if at := strings.IndexByte(rest, '@'); at >= 0 && !strings.ContainsAny(rest[:at], "/:[") {
+		rest = rest[at+1:]
+	}
+	var host string
+	if strings.HasPrefix(rest, "[") {
+		end := strings.IndexByte(rest, ']')
+		if end < 0 {
+			return "", errors.New("origin has malformed bracketed host")
+		}
+		if !strings.HasPrefix(rest[end+1:], ":") {
+			return "local", nil
+		}
+		host = rest[1:end]
+	} else {
+		colon := strings.IndexByte(rest, ':')
+		if colon < 0 || strings.Contains(rest[:colon], "/") {
+			return "local", nil
+		}
+		host = rest[:colon]
+	}
+	host = strings.ToLower(host)
+	if host == "" {
+		return "", errors.New("origin has no host")
+	}
+	return host, nil
+}
+
+func remoteRefPatterns(ref string) ([]string, string, string, bool) {
+	ref = strings.TrimPrefix(strings.TrimPrefix(ref, "refs/remotes/origin/"), "origin/")
+	switch {
+	case strings.HasPrefix(ref, "refs/heads/"):
+		return []string{ref}, ref, "", false
+	case strings.HasPrefix(ref, "refs/tags/"):
+		return []string{ref, ref + "^{}"}, "", ref, true
+	default:
+		branch, tag := "refs/heads/"+ref, "refs/tags/"+ref
+		return []string{branch, tag, tag + "^{}"}, branch, tag, false
+	}
+}
+
+func parseRemoteRefs(output []byte) (map[string]string, error) {
+	refs := make(map[string]string)
+	scanner := bufio.NewScanner(bytes.NewReader(output))
+	for scanner.Scan() {
+		line := scanner.Text()
+		commit, name, found := strings.Cut(line, "\t")
+		if !found || strings.Contains(name, "\t") || !isRemoteCommit(commit) || name == "" {
+			return nil, errors.New("parse git ls-remote output: invalid ref record")
+		}
+		refs[name] = commit
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("parse git ls-remote output: %w", err)
+	}
+	return refs, nil
+}
+
+func isRemoteCommit(value string) bool {
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	for i := range value {
+		if (value[i] < '0' || value[i] > '9') && (value[i] < 'a' || value[i] > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+type boundedBuffer struct {
+	bytes.Buffer
+	limit    int
+	exceeded bool
+}
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	remaining := b.limit - b.Len()
+	if remaining > 0 {
+		if len(p) > remaining {
+			_, _ = b.Buffer.Write(p[:remaining])
+		} else {
+			_, _ = b.Buffer.Write(p)
+		}
+	}
+	if len(p) > remaining {
+		b.exceeded = true
+	}
+	return len(p), nil
+}
+
+func runGitBounded(ctx context.Context, env []string, dir string, args []string, stdoutLimit int) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	cmd.Env = env
+	stdout := &boundedBuffer{limit: stdoutLimit}
+	stderr := &boundedBuffer{limit: 16 * 1024}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	err := cmd.Run()
+	if err != nil {
+		return nil, gitCommandError(ctx, args, append(append([]byte(nil), stdout.Bytes()...), stderr.Bytes()...), err)
+	}
+	if stdout.exceeded {
+		return nil, fmt.Errorf("git ls-remote output exceeds %d byte limit", stdoutLimit)
+	}
+	return stdout.Bytes(), nil
 }
 
 func clone(ctx context.Context, origin, ref, exactCommit string, roots []string, cred Credentials, limits Limits, timeout time.Duration) (*Result, error) {
@@ -264,18 +471,22 @@ func runGitInput(ctx context.Context, env []string, dir string, args []string, i
 	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		redacted := redact.URL(string(out))
-		redactedArgs := redact.Strings(args)
-		if ctx.Err() != nil {
-			return nil, fmt.Errorf("git %s: %w", strings.Join(redactedArgs, " "), ctx.Err())
-		}
-		cmdStr := strings.Join(redactedArgs, " ")
-		if redacted == "" {
-			return nil, fmt.Errorf("git %s: %w", cmdStr, err)
-		}
-		return nil, fmt.Errorf("git %s: %w: %s", cmdStr, err, truncate(redacted))
+		return nil, gitCommandError(ctx, args, out, err)
 	}
 	return out, nil
+}
+
+func gitCommandError(ctx context.Context, args []string, output []byte, err error) error {
+	redacted := redact.URL(string(output))
+	redactedArgs := redact.Strings(args)
+	if ctx.Err() != nil {
+		return fmt.Errorf("git %s: %w", strings.Join(redactedArgs, " "), ctx.Err())
+	}
+	cmdStr := strings.Join(redactedArgs, " ")
+	if redacted == "" {
+		return fmt.Errorf("git %s: %w", cmdStr, err)
+	}
+	return fmt.Errorf("git %s: %w: %s", cmdStr, err, truncate(redacted))
 }
 
 type workspace struct {
@@ -720,15 +931,13 @@ func enforceLimits(ctx context.Context, dir string, limits Limits) error {
 }
 
 func isFullCommit(value string) bool {
-	if len(value) != 40 {
-		return false
-	}
-	for i := range value {
-		if (value[i] < '0' || value[i] > '9') && (value[i] < 'a' || value[i] > 'f') {
-			return false
-		}
-	}
-	return true
+	return isRemoteCommit(value)
+}
+
+// IsFullCommit reports whether value is a full lowercase SHA-1 or SHA-256 Git
+// object ID.
+func IsFullCommit(value string) bool {
+	return isRemoteCommit(value)
 }
 
 func shQuote(s string) string {

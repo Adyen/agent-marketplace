@@ -193,3 +193,28 @@ func TestTranslateToolListOverride(t *testing.T) {
 		t.Fatalf("emitted=%v uncovered=%v", emitted, uncovered)
 	}
 }
+
+func TestDecodeMatcherUnknownToolError(t *testing.T) {
+	spec := MatcherSpec{Syntax: MatcherExactOrRegex, ExactLists: true}
+	for _, tc := range []struct {
+		name, matcher string
+		source        target.Target
+		wantKnownIn   string
+		wantSource    string
+	}{
+		{"catalog name of another harness", "Edit|MultiEdit", target.TargetFactory, string(target.TargetClaude), "factory"},
+		{"name in no catalog", "zqxNoSuchTool", target.TargetFactory, "", "factory"},
+		{"no provenance reads as claude and skips it", "Execute", "", string(target.TargetFactory), "claude"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := DecodeMatcher(tc.source, tc.matcher, spec)
+			var unknown *UnknownToolError
+			if !errors.As(err, &unknown) || !errors.Is(err, ErrUntranslatable) {
+				t.Fatalf("err = %v; want an *UnknownToolError wrapping ErrUntranslatable", err)
+			}
+			if unknown.KnownIn != tc.wantKnownIn || unknown.Source != tc.wantSource {
+				t.Fatalf("KnownIn/Source = %q/%q, want %q/%q", unknown.KnownIn, unknown.Source, tc.wantKnownIn, tc.wantSource)
+			}
+		})
+	}
+}
