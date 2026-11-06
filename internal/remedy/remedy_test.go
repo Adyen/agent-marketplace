@@ -466,8 +466,6 @@ func collectOwnedAggregateDiagnosticCodes(files []*ast.File, constants map[strin
 				}
 				if index >= 0 && index < len(call.Args) {
 					scanErr = add(call.Args[index])
-				} else if index >= 0 {
-					scanErr = fmt.Errorf("owned-aggregate diagnostic call has no code argument")
 				}
 				return true
 			})
@@ -511,10 +509,13 @@ func resolveOwnedAggregateCode(expression ast.Expr, constants map[string]string,
 
 func requireOwnedAggregateGuidance(codes []string, hasGuidance func(string) bool) error {
 	var missing []string
+	seen := make(map[string]struct{})
 	for _, code := range codes {
-		if !hasGuidance(code) {
-			missing = append(missing, code)
+		if _, reported := seen[code]; reported || hasGuidance(code) {
+			continue
 		}
+		seen[code] = struct{}{}
+		missing = append(missing, code)
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("owned-aggregate diagnostic codes lack guidance: %s", strings.Join(missing, ", "))

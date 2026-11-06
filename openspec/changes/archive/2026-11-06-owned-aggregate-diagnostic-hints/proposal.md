@@ -2,11 +2,11 @@
 
 ## Why
 
-Diagnostics that Agent Marketplace reports while reconciling owned aggregate files (Devin, Codex, Claude settings, Gemini, OpenCode and native hook aggregates) reach the CLI without the guidance catalogued for their code. `sync` then prints a blank `  → ` remediation line and falls back to the generic `sync --check` hint, which breaks the existing rule that every printed error names a code-specific next step.
+Diagnostics that Agent Marketplace reports while reconciling owned aggregate files (Devin, Codex, Claude settings, Gemini, OpenCode and native hook aggregates) reach the CLI without the guidance cataloged for their code. `sync` then prints a blank `  → ` remediation line and falls back to the generic `sync --check` hint, which breaks the existing rule that every printed error names a code-specific next step.
 
 ## What Changes
 
-- Owned-aggregate diagnostics carry the catalogued hint for their stable code, so `sync` prints that guidance as a warning's remediation line and as a failed command's `hint:` line.
+- Owned-aggregate diagnostics carry the catalog hint for their stable code, so `sync` prints that guidance as a warning's remediation line and as a failed command's `hint:` line.
 - Warning and error output never prints an empty remediation line when an issue has no remediation.
 - Every code reported through the owned-aggregate path has code-specific guidance, enforced by a test.
 - No diagnostic code, severity, message text, exit status, or hint layout changes.

@@ -135,7 +135,6 @@ resources:
 	if err == nil {
 		t.Fatalf("sync succeeded despite the unpatchable Devin aggregate:\n%s", output)
 	}
-	combined := output
 	ownershipDoc, ok := diag.DocForCode(diag.CodeOwnershipStateMissing)
 	if !ok || ownershipDoc.Hint == "" {
 		t.Fatalf("DocForCode(%q) has no hint", diag.CodeOwnershipStateMissing)
@@ -145,22 +144,22 @@ resources:
 		t.Fatalf("DocForCode(%q) has no hint", diag.CodeMaterializeDevinAggregateShape)
 	}
 	for _, code := range []string{diag.CodeOwnershipStateMissing, diag.CodeMaterializeDevinAggregateShape} {
-		if !strings.Contains(combined, code) {
-			t.Errorf("sync output lacks %s:\n%s", code, combined)
+		if !strings.Contains(output, code) {
+			t.Errorf("sync output lacks %s:\n%s", code, output)
 		}
 	}
-	if !strings.Contains(combined, "\n  → "+ownershipDoc.Hint+"\n") {
-		t.Errorf("sync warning lacks ownership guidance on its remediation line %q:\n%s", ownershipDoc.Hint, combined)
+	if !strings.Contains(output, "\n  → "+ownershipDoc.Hint+"\n") {
+		t.Errorf("sync warning lacks ownership guidance on its remediation line %q:\n%s", ownershipDoc.Hint, output)
 	}
-	if strings.Contains(combined, "\n  → "+aggregateDoc.Hint+"\n") {
-		t.Errorf("sync error duplicated aggregate guidance on a remediation line:\n%s", combined)
+	if strings.Contains(output, "\n  → "+aggregateDoc.Hint+"\n") {
+		t.Errorf("sync error duplicated aggregate guidance on a remediation line:\n%s", output)
 	}
 	aggregateHint := "hint: " + aggregateDoc.Hint
-	if count := strings.Count(combined, aggregateHint); count != 1 {
-		t.Errorf("sync error hint count = %d, want one %q:\n%s", count, aggregateHint, combined)
+	if count := strings.Count(output, aggregateHint); count != 1 {
+		t.Errorf("sync error hint count = %d, want one %q:\n%s", count, aggregateHint, output)
 	}
-	if hasEmptyRemediationLine(combined) || strings.Contains(combined, "Run `agent-marketplace sync --check`") {
-		t.Fatalf("sync used generic guidance or printed an empty remediation line:\n%s", combined)
+	if hasEmptyRemediationLine(output) || strings.Contains(output, "Run `agent-marketplace sync --check`") {
+		t.Fatalf("sync used generic guidance or printed an empty remediation line:\n%s", output)
 	}
 }
 

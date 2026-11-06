@@ -2,7 +2,7 @@
 
 ## 1. Owned-aggregate guidance
 
-- [x] 1.1 Copy the catalogued hint into owned-aggregate diagnostics and verify with a focused `internal/materialize` test that a diagnostic built for `materialize.devin.aggregate-shape` carries that code's hint
+- [x] 1.1 Copy the catalog hint into owned-aggregate diagnostics and verify with a focused `internal/materialize` test that a diagnostic built for `materialize.devin.aggregate-shape` carries that code's hint
 - [x] 1.2 Add the owned-aggregate guidance guard in `internal/remedy`, give every flagged code guidance, and verify the guard passes and fails when a scanned code lacks guidance
 
 ## 2. CLI rendering
