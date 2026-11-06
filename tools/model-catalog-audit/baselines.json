@@ -16,6 +16,7 @@
   "devin-skills": {"checked": "2026-09-23", "sha256": "bbb3daaab1a67ac61567bdb0945bc3756112b7e9e965420a4f781ec742dbe296"},
   "factory-models": {"checked": "2026-10-28", "sha256": "99b7f31059d68cd66d2cbae295e408bf884bcbf9fcc9f74c8875ca8b832eef49"},
   "factory-subagents": {"checked": "2026-09-23", "sha256": "d228d52b4a048f8d2087bb6f7f2b58ebde8fe9c8f8169d77712a6f6d4ae3abe0"},
+  "gemini-api-models": {"checked": "2026-11-05", "sha256": "5054c388ff9245e5855abef65a92a485923eb8525444a104aee41e2c54642463"},
   "gemini-models": {"checked": "2026-09-23", "sha256": "b04bbff424c81aa5ff173df3f92e425931e1c55db9b8cdaea06a97cb70c27d85"},
   "gemini-subagents": {"checked": "2026-09-23", "sha256": "a9c0179604da39e8368bf3d964433a905fe52f3646c824c6b07f593ab5dbfe51"},
   "opencode-agents": {"checked": "2026-10-14", "sha256": "4791946c8e6f8e8a9b33ac46d4a99b64b744eb9898c6d93cd823dbf80db9c787"},

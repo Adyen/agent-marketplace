@@ -12,6 +12,8 @@ var errSourceFormat = errors.New("source format not recognized")
 
 var inlineCode = regexp.MustCompile("`([^`]+)`")
 var modelID = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
+var ansiEscape = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
+var cursorCLIModelLine = regexp.MustCompile(`^\s*([a-z0-9][a-z0-9._-]*)\s+-\s+\S`)
 var modelDetails = regexp.MustCompile(`(?s)<ModelDetails\s[^>]*?\bslug="([^"]+)"`)
 var geminiConstant = regexp.MustCompile(`(?m)^export (?:const|let) ([A-Z0-9_]+)\s*=\s*('([^']+)'|[A-Z0-9_]+);`)
 var geminiSet = regexp.MustCompile(`(?s)export const VALID_GEMINI_MODELS = new Set\(\[([^]]+)\]\);`)
@@ -74,6 +76,20 @@ func extract(s source, body []byte) (observation, error) {
 		result.Models, err = extractGemini(text)
 		if err != nil {
 			return result, err
+		}
+	case "gemini-docs":
+		seen := map[string]bool{}
+		for _, line := range strings.Split(text, "\n") {
+			line = strings.TrimSpace(line)
+			if !strings.HasPrefix(line, "* ") && !strings.HasPrefix(line, "- ") {
+				continue
+			}
+			for _, id := range codeValues(line) {
+				if modelID.MatchString(id) && !seen[id] {
+					seen[id] = true
+					result.Models = append(result.Models, observedModel{ID: id})
+				}
+			}
 		}
 	case "watch":
 		var selected []string
@@ -154,6 +170,20 @@ func extractGemini(text string) ([]observedModel, error) {
 			seen[id] = true
 			models = append(models, observedModel{ID: id})
 		}
+	}
+	return models, nil
+}
+
+func extractCursorCLIModels(body []byte) ([]observedModel, error) {
+	text := ansiEscape.ReplaceAllString(string(body), "")
+	var models []observedModel
+	for _, line := range strings.Split(text, "\n") {
+		if match := cursorCLIModelLine.FindStringSubmatch(line); len(match) == 2 {
+			models = append(models, observedModel{ID: match[1]})
+		}
+	}
+	if len(models) == 0 {
+		return nil, errSourceFormat
 	}
 	return models, nil
 }
