@@ -14,6 +14,9 @@ import (
 var ErrPublicationFence = errors.New("marketplace/store: publication fence rejected")
 
 func FenceRegistryPublication(ctx context.Context, q ManagedSQLQueries, meta MetadataStore, req RegistryRevisionPublication) (bool, error) {
+	if err := assertDesiredGeneration(ctx, q, req); err != nil {
+		return false, err
+	}
 	err := assertRegistryHead(ctx, q, req.Occurrence.RegistryID, req.ExpectedHeadCommit)
 	if err == nil || !errors.Is(err, ErrConflict) {
 		return false, err
@@ -117,6 +120,9 @@ func CommitRegistryPublication(ctx context.Context, q ManagedSQLQueries, tx Meta
 	}
 	occurrence := NormalizeRegistryOccurrence(req.Occurrence)
 	req.Occurrence = occurrence
+	if err := assertDesiredGeneration(ctx, q, req); err != nil {
+		return err
+	}
 	if err := lockPublicationFence(ctx, q, req); err != nil {
 		return err
 	}
@@ -278,6 +284,32 @@ func CommitRegistryPublication(ctx context.Context, q ManagedSQLQueries, tx Meta
 	}
 	_, err = q.ExecContext(ctx, `UPDATE catalog_versions SET version=version+1 WHERE singleton=1`)
 	return err
+}
+
+func assertDesiredGeneration(ctx context.Context, q ManagedSQLQueries, req RegistryRevisionPublication) error {
+	if req.ExpectedGeneration == "" {
+		return nil
+	}
+	result, err := q.ExecContext(ctx, `UPDATE registries SET id=id WHERE id=$1`, req.Occurrence.RegistryID)
+	if err != nil {
+		return fmt.Errorf("lock expected-generation registry: %w", err)
+	}
+	if n, err := result.RowsAffected(); err != nil {
+		return err
+	} else if n != 1 {
+		return ErrNotFound
+	}
+	result, err = q.ExecContext(ctx, `UPDATE registry_observations SET desired_generation=desired_generation
+		WHERE registry_id=$1 AND desired_generation=$2`, req.Occurrence.RegistryID, req.ExpectedGeneration)
+	if err != nil {
+		return fmt.Errorf("check expected registry generation: %w", err)
+	}
+	if n, err := result.RowsAffected(); err != nil {
+		return err
+	} else if n != 1 {
+		return ErrStaleGeneration
+	}
+	return nil
 }
 
 func lockPublicationFence(ctx context.Context, q ManagedSQLQueries, req RegistryRevisionPublication) error {
