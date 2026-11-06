@@ -67,6 +67,13 @@ jobs:
         id: pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
 
+      - name: Verify landing screenshot reproducibility
+        working-directory: site
+        run: |
+          pnpm install --frozen-lockfile
+          node --test tests/landing-capture.test.ts
+          git checkout -- public/landing
+
       - name: Build and verify website
         env:
           SITE_BASE: ${{ steps.pages.outcome == 'success' && format('{0}/', steps.pages.outputs.base_path) || '/agent-marketplace/' }}
@@ -76,10 +83,6 @@ jobs:
           node --test tests/public-site.test.ts
           pnpm run build:docs
           node --test tests/docs-profile.test.ts
-
-      - name: Verify landing screenshot reproducibility
-        working-directory: site
-        run: node --test tests/landing-capture.test.ts
 
       - name: Upload public site
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'

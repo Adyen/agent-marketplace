@@ -31,21 +31,29 @@ function imagePath(width: 'desktop' | 'narrow', appearance: typeof appearances[n
       <span class="marketplace-browser-frame__address">marketplace.example.com</span>
     </div>
     <div class="marketplace-browser-frame__viewport">
-      <img
+      <picture
         v-for="appearance in appearances"
         :key="appearance"
-        data-web-ui-image
-        class="marketplace-browser-frame__image"
-        :class="`marketplace-browser-frame__image--${appearance}`"
-        :data-theme="appearance"
-        :src="imagePath('desktop', appearance)"
-        :srcset="`${imagePath('narrow', appearance)} 390w, ${imagePath('desktop', appearance)} 1440w`"
-        sizes="100vw"
-        width="1440"
-        height="960"
-        :alt="altText[props.view]"
-        :loading="loading"
+        class="marketplace-browser-frame__picture"
       >
+        <source
+          media="(max-width: 639px)"
+          :srcset="imagePath('narrow', appearance)"
+          width="390"
+          height="844"
+        >
+        <img
+          data-web-ui-image
+          class="marketplace-browser-frame__image"
+          :class="`marketplace-browser-frame__image--${appearance}`"
+          :data-theme="appearance"
+          :src="imagePath('desktop', appearance)"
+          width="1440"
+          height="960"
+          :alt="altText[props.view]"
+          :loading="loading"
+        >
+      </picture>
     </div>
   </figure>
 </template>
@@ -91,6 +99,10 @@ function imagePath(width: 'desktop' | 'narrow', appearance: typeof appearances[n
   border: 1px solid var(--lp-outline);
   border-radius: var(--lp-radius-control);
   text-align: center;
+}
+
+.marketplace-browser-frame__picture {
+  display: contents;
 }
 
 .marketplace-browser-frame__image {
