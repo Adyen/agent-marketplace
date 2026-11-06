@@ -200,7 +200,10 @@ func runInstall(ctx context.Context, out io.Writer, in io.Reader, interactive, v
 		}
 	}
 
-	return writeInstallResult(out, result, scope, verbose, detailsShown)
+	if err := writeInstallResult(out, result, scope, verbose, detailsShown); err != nil {
+		return err
+	}
+	return writeInstallRequirementSummaries(out, result)
 }
 
 var (

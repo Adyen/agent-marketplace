@@ -142,6 +142,7 @@ func impliedArtifact(cand requirementCandidate, requirer ResolvedArtifact, resou
 		Source:         requirer.Source,
 		FilePrecedence: cand.entry.FilePrecedence,
 		Required:       false,
+		Implied:        true,
 		CatalogKey:     cand.entry.CatalogKey,
 		Harnesses:      resolveEntryHarnesses(cand.entry, targetSet),
 	}

@@ -359,6 +359,7 @@ func runGit(t *testing.T, dir string, args ...string) {
 // spec: resource-installation/kind-qualified-picks-select-resources-that-share-a-name
 func TestInstallFromAdHocLocatorsSelectKindsAndCollection(t *testing.T) {
 	repo := t.TempDir()
+	t.Chdir(repo)
 	source := filepath.Join(t.TempDir(), "registry")
 	writeSourceFile(t, source, "skills/shared/SKILL.md", "---\nname: shared\ndescription: Shared skill\n---\n\nShared skill.\n")
 	writeSourceFile(t, source, "commands/shared.md", "---\nname: shared\ndescription: Shared command\n---\n\nShared command.\n")

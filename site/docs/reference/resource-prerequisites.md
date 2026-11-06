@@ -149,23 +149,26 @@ be pasted literally into a shell. The warning message itself quotes resource
 names with Go `%q` double-quote formatting, which differs from the
 remediation's shell-literal quoting.
 
-Internally each unmet warning also carries a typed reason: `not-found`, `excluded`, or `source-not-configured`. This does not change the printed text or table columns.
+Each unmet warning also carries a typed reason: `not-found`, `excluded`, or
+`source-not-configured`. `status` prints it in the `REASON` column and
+`doctor` uses it to explain unconfigured source hints.
 
 | Command | Behavior |
 |---|---|
-| `install` | Prints warnings only for the resources the install selected, including members of a collection it installs. |
+| `install` | Prints warnings only for the resources the install selected, including members of a collection it installs. After its summary it also prints `also selected <kind> "<name>" (required by <kind> "<name>")` for each prerequisite it selected transitively when [requirement expansion](#requirement-expansion) is enabled, or `would also select` for the eligible preview when expansion is disabled. |
 | `sync` | Prints grouped warnings. |
 | `sync --check` | Prints grouped warnings. |
-| `status` | Prints an `UNMET REQUIREMENTS` table with `RESOURCE`, `REQUIRES` (`<kind>:<name>`), and `FIX` columns, sorted by `RESOURCE` then `REQUIRES`. |
-| `doctor` | Prints grouped warnings. |
+| `status` | Prints an `UNMET REQUIREMENTS` table with `RESOURCE`, `REQUIRES` (`<kind>:<name>`), `REASON`, and `FIX` columns, sorted by `RESOURCE` then `REQUIRES`. Its main table's `VIA` column shows `requires <kind>:<name>` provenance alongside collection provenance. |
+| `doctor` | Prints grouped warnings, and explicitly reports `unconfigured prerequisite source` for an unmet prerequisite whose `registry` hint matches no configured source. That line is warning-only: `doctor` never configures or fetches the hinted source. |
 
 ## Exit status
 
 `install`, `sync`, `sync --check`, `status`, and `doctor` exit with status 0
-when unmet prerequisites are the only findings. `sync --strict` (including
-`sync --strict --check`) still prints the advisory warning and remediation,
-but exits nonzero so CI can enforce declared prerequisites. Strict mode never
-selects the prerequisite for you.
+when unmet prerequisites are the only findings. `sync --strict` — including
+`sync --strict --check` — still prints the advisory warning and remediation,
+but exits nonzero so CI can enforce declared prerequisites. Strict mode changes
+only the exit status; whether a prerequisite is selected depends solely on
+[requirement expansion](#requirement-expansion).
 
 ## Related documentation
 

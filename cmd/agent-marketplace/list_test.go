@@ -108,7 +108,7 @@ resources:
 	}
 
 	header, rows := parseTable(t, output)
-	if got, want := strings.Join(header, "|"), "REGISTRY|KIND|NAME|TAGS (metadata)|STATUS"; got != want {
+	if got, want := strings.Join(header, "|"), "REGISTRY|KIND|NAME|TAGS (metadata)|STATUS|VIA"; got != want {
 		t.Fatalf("expected header %q, got %q\nfull output:\n%s", want, got, output)
 	}
 

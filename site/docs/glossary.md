@@ -60,7 +60,7 @@ A shell command that your [harness](#harness) runs automatically when something 
 
 ## Implied resource
 
-A resource selected only because another selected resource declares it as a [prerequisite](#prerequisite) while `requires.expand` is enabled. An implied resource is not `required`, stays in the requiring resource's [scope](#scope), and loses to a direct selection or an explicit exclusion. With expansion disabled the same closure is computed as a preview: it changes no selections, but existing managed outputs it covers are preserved rather than pruned.
+A resource selected only because another selected resource declares it as a [prerequisite](#prerequisite) while `requires.expand` is enabled. An implied resource is not `required`, stays in the requiring resource's [scope](#scope), and loses to a direct selection or an explicit exclusion. `install` reports it after its summary as `also selected` when it is reachable from that install's requested resources or collection members, and `list` and `status` show `requires <kind>:<name>` in `VIA`. With expansion disabled the same closure is computed as a preview: it changes no selections, `install` reports it as `would also select`, and existing managed outputs it covers are preserved rather than pruned.
 
 ## Lockfile
 
