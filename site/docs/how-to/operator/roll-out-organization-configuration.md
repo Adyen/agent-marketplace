@@ -15,9 +15,7 @@ The organization lock decides when registry changes reach users:
 - **With a lock**, users install exactly the commits it records. Registry pushes reach nobody until you upgrade and redeploy the lock. You can review and roll back each change.
 - **Without a lock**, every user's next `sync` fetches the current commit of each ref. A registry push, including a renamed or deleted resource, reaches every machine without review. If you choose this, point `ref` at a release tag rather than a branch, and roll out by changing the tag. For Marketplace sources, each `sync` takes the current Marketplace revision of every selected resource, so a published revision reaches each machine on its next sync without review.
 
-While online, `agent-marketplace sync`, `agent-marketplace sync --check`, and `agent-marketplace status` work without a deployed lock. The sync commands acquire the organization's Marketplace evidence for that run only and write nothing to `/etc`. If the organization configuration selects Marketplace resources, `sync --locked`, `sync --offline`, and `lock --check` refuse with `v4.marketplace-lock-required`. Organization Git sources do not trigger this refusal.
-
-This refusal is expected; users who see it do not need an administrator to ship `lock.yaml`.
+While online, `agent-marketplace sync`, `agent-marketplace sync --check`, and `agent-marketplace status` work without a deployed lock. The sync commands acquire the organization's Marketplace evidence for that run only and write nothing to `/etc`. If the organization configuration selects Marketplace resources, `sync --locked`, `sync --offline`, and `lock --check` refuse with `v4.marketplace-lock-required`. Organization Git sources do not trigger this refusal. Users who see this refusal do not need an administrator to ship `lock.yaml`; the deployment is working as intended.
 
 The rest of this guide assumes a lock. The steps without a lock are the same except step 3.
 
