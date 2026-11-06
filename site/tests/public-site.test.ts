@@ -102,7 +102,7 @@ test('organizations section depicts the real catalog and a pinned clean resource
   const section = landingSection(landing, 'organizations')
 
   assert.match(section, /class="marketplace-browser-frame"/)
-  assert.ok(section.includes('marketplace.example.com'))
+  assert.match(section, /marketplace-browser-frame__address"[^>]*>marketplace\.example\.com</)
   assert.match(section, /alt="Marketplace catalog showing skills, commands, and MCP servers with Kind and Registry filters and the Copy install command action\."/)
   assert.match(section, /alt="Marketplace resource detail showing a pinned revision digest and a clean Security result\."/)
 })
@@ -112,8 +112,9 @@ test('organizations browser frame uses a neutral host and no Marketplace route',
   const landing = await readFile(new URL('index.html', dist), 'utf8')
   const section = landingSection(landing, 'organizations')
 
-  assert.ok(section.includes('marketplace.example.com'))
-  assert.ok(!section.includes('/marketplace'))
+  assert.match(section, /marketplace-browser-frame__address"[^>]*>marketplace\.example\.com</)
+  const targets = [...section.matchAll(/\b(?:href|src)="([^"]*)"/g)].map(([, target]) => new URL(target, 'https://example.com'))
+  assert.ok(targets.every(({ pathname }) => !pathname.split('/').includes('marketplace')))
 })
 
 // spec: marketplace-web-ui/benefit-cards-and-deployment-guide-remain
