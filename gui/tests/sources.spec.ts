@@ -14,13 +14,14 @@ async function actionVisibility(page: Page, dialog: Locator, action: Locator, na
     const target = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)
     return target != null && (target === element || element.contains(target))
   })
+  const subpixel = 1
   const insideDialog = dialogBox != null && actionBox != null &&
-    actionBox.x >= dialogBox.x && actionBox.y >= dialogBox.y &&
-    actionBox.x + actionBox.width <= dialogBox.x + dialogBox.width &&
-    actionBox.y + actionBox.height <= dialogBox.y + dialogBox.height
+    actionBox.x >= dialogBox.x - subpixel && actionBox.y >= dialogBox.y - subpixel &&
+    actionBox.x + actionBox.width <= dialogBox.x + dialogBox.width + subpixel &&
+    actionBox.y + actionBox.height <= dialogBox.y + dialogBox.height + subpixel
   const insideViewport = viewport != null && actionBox != null &&
-    actionBox.x >= 0 && actionBox.y >= 0 &&
-    actionBox.x + actionBox.width <= viewport.width && actionBox.y + actionBox.height <= viewport.height
+    actionBox.x >= -subpixel && actionBox.y >= -subpixel &&
+    actionBox.x + actionBox.width <= viewport.width + subpixel && actionBox.y + actionBox.height <= viewport.height + subpixel
   return { name, dialogBox, actionBox, viewport, insideDialog, insideViewport, hittable }
 }
 
@@ -185,7 +186,7 @@ test('built GUI adds and removes a user directory source against the real user-s
     const repoLocalBefore = await readFile(repoLocalPath, 'utf8')
     const addedRoot =
       `apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin]\n` +
-      `sources:\n  keep: {directory: ${join(home, 'keep-source')}}\n` +
+      `sources:\n  keep: {directory: ${join(home, 'keep-source-with-a-deliberately-long-directory-name-that-wraps-onto-two-lines')}}\n` +
       `  added-source:\n    directory: ${sourceDir}\nresources:\n  keep: {all: true}\n`
 
     const sourcesButton = page.getByRole('button', { name: 'Sources' })
@@ -351,7 +352,7 @@ test('built GUI adds and removes a Marketplace endpoint registration in the open
 
     const addSection = dialog.getByLabel('Add user source')
     const userSources = dialog.getByLabel('User sources')
-    const longLocation = join(home, 'keep-source')
+    const longLocation = join(home, 'keep-source-with-a-deliberately-long-directory-name-that-wraps-onto-two-lines')
     await expect(userSources).toContainText(longLocation)
 
     const listMetrics = await sourceListVisibility(page, dialog, userSources, longLocation)
@@ -550,7 +551,7 @@ test('built GUI adds and removes a user Git source with ref and subpath by keybo
     const orgBefore = await readFile(orgConfigPath, 'utf8')
     const repoBefore = await readFile(repoConfigPath, 'utf8')
     const repoLocalBefore = await readFile(repoLocalPath, 'utf8')
-    const keepDir = join(home, 'keep-source')
+    const keepDir = join(home, 'keep-source-with-a-deliberately-long-directory-name-that-wraps-onto-two-lines')
     const addedRoot =
       `apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin]\n` +
       `logging: {level: debug}\nsources:\n  keep: {directory: ${keepDir}}\n` +

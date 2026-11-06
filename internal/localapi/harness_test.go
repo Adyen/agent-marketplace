@@ -315,7 +315,7 @@ func TestLocalAPIUserHarness(t *testing.T) {
 	if fixture == "sources" || fixture == "marketplace" || fixture == "sources-git" {
 		gitSource := fixture == "sources-git"
 		userDir := filepath.Join(home, ".agents")
-		keepDir := filepath.Join(home, "keep-source")
+		keepDir := filepath.Join(home, "keep-source-with-a-deliberately-long-directory-name-that-wraps-onto-two-lines")
 		fragDir := filepath.Join(home, "frag-source")
 		addDir := filepath.Join(home, "added-source")
 		writeFile(t, filepath.Join(keepDir, "solo", "SKILL.md"), fixtureSkillBody)
