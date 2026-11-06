@@ -14,18 +14,14 @@ import (
 )
 
 // applyImpliedPreview folds the advisory implied-preview compile result into
-// the run: its diagnostics are reported, its blocked components suppress
-// pruning in the actual run, and its fragments are merged once. It returns the
+// the run: its blocked components suppress pruning in the actual run, and its
+// fragments are merged once. Preview compilation diagnostics and blocked
+// resources are not selected-resource failures. It returns the
 // output keys whose preview fragments could not be merged; those targets are
 // skipped so nothing a preview still needs is pruned.
 func applyImpliedPreview(compileResult *compilePhaseResult, preview *compilePhaseResult, report *Report) map[outputKey]error {
 	if preview == nil {
 		return nil
-	}
-	report.Diags = append(report.Diags, preview.allDiags...)
-	report.BlockedResources = append(report.BlockedResources, preview.blockedResources...)
-	for _, tw := range preview.byTarget {
-		report.Diags = append(report.Diags, tw.diags...)
 	}
 	actualAggregates := compileResult.ownedAggregateState()
 	coalesceOpenCodePreview(compileResult.openCodeAggregateScope, preview)

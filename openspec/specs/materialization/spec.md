@@ -543,6 +543,7 @@ When resource-requirement expansion is disabled, materialization SHALL tolerate 
 
 - **WHEN** ownership evidence is missing or corrupt, or a shared aggregate is malformed, while a preview would otherwise match
 - **THEN** preview handling MUST follow existing fail-closed safety behavior without inferring ownership or adopting an entry
+- **AND** refusal to compile an unselected advisory preview MUST retain the affected existing outputs without reporting that preview as a selected-resource compilation failure; actual ownership, aggregate mutation, and merge refusals MUST remain reported
 
 #### Scenario: Plain sync preserves healthy acquisition lock bytes
 
