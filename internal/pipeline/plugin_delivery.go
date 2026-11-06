@@ -52,7 +52,7 @@ func resolvePluginDeliveryPolicy(request, format string, targetHarness target.Ta
 		return pluginDeliveryBlocked(diag.CodePluginDeliveryNativeUnverified, targetHarness,
 			"native plugin delivery is not verified for this package format")
 	}
-	if _, ok := target.NativePluginRegistration(targetHarness); !ok {
+	if _, ok := target.NativePluginRegistration(targetHarness, false); !ok {
 		return pluginDeliveryBlocked(diag.CodePluginRegistrationUnsupported, targetHarness,
 			"the target has no native plugin registration layout")
 	}

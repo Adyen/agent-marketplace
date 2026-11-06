@@ -69,7 +69,7 @@ func mergePluginAggregateState(dst *ownedAggregateState, src ownedAggregateState
 	}
 }
 
-func reconcilePluginInstances(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtifact, compiled compilePhaseResult, report *Report, namespaceBlocked map[string]bool, dryRun bool, fault dependencytxn.FaultHook) {
+func reconcilePluginInstances(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtifact, compiled compilePhaseResult, report *Report, namespaceBlocked map[string]bool, dryRun, packagesLocked bool, fault dependencytxn.FaultHook) {
 	canonicalRoot, err := ownership.CanonicalRoot(repoRoot)
 	if err != nil {
 		report.Diags = append(report.Diags, pluginBatchDiagnostic("", err))
@@ -172,12 +172,12 @@ func reconcilePluginInstances(ctx context.Context, repoRoot string, resolved []r
 		return work[i].ref.InstanceKey < work[j].ref.InstanceKey
 	})
 	for _, item := range work {
-		report = reconcilePluginInstance(ctx, repoRoot, item, activeByOutput[item.plan.key], compiled, report, dryRun, fault)
+		report = reconcilePluginInstance(ctx, repoRoot, item, activeByOutput[item.plan.key], compiled, report, dryRun, packagesLocked, fault)
 	}
 	sort.Strings(report.RetainedPluginData)
 }
 
-func reconcilePluginInstance(ctx context.Context, repoRoot string, item pluginInstanceBatchWork, activeInstances map[string]bool, compiled compilePhaseResult, report *Report, dryRun bool, fault dependencytxn.FaultHook) *Report {
+func reconcilePluginInstance(ctx context.Context, repoRoot string, item pluginInstanceBatchWork, activeInstances map[string]bool, compiled compilePhaseResult, report *Report, dryRun, packagesLocked bool, fault dependencytxn.FaultHook) *Report {
 	plan := item.plan
 	key := plan.key
 	if item.removed {
@@ -353,7 +353,7 @@ func reconcilePluginInstance(ctx context.Context, repoRoot string, item pluginIn
 		}
 		hasHook = true
 	}
-	registration, hasRegistrationLayout := targetmeta.NativePluginRegistration(targetmeta.Target(key.target))
+	registration, hasRegistrationLayout := targetmeta.NativePluginRegistration(targetmeta.Target(key.target), key.machineScope)
 	hasNativeHooksRegistration := hasNativeRegistration && hasRegistrationLayout && registration.Shape == targetmeta.NativeRegistrationClaudeSettings
 	hasCodexRegistration := hasNativeRegistration && hasRegistrationLayout && registration.Shape == targetmeta.NativeRegistrationCodexConfig
 	if hasNativeHooksRegistration {
@@ -434,8 +434,29 @@ func reconcilePluginInstance(ctx context.Context, repoRoot string, item pluginIn
 			}
 			batch.addManifestCommit(nativeHookManifestCommit{state: portable, participant: manifest})
 		}
-		if _, err := batch.commit(ctx); err != nil {
-			report.Diags = append(report.Diags, pluginBatchDiagnostic(item.ref.Name, err))
+		claudeNativeLinks := plan.catalog.target == targetmeta.TargetClaude && hasNativeRegistration
+		commit := func() error {
+			if claudeNativeLinks {
+				if err := publishClaudePluginCatalogLinks(plan.catalog); err != nil {
+					return err
+				}
+			}
+			if _, err := batch.commit(ctx); err != nil {
+				return err
+			}
+			if claudeNativeLinks {
+				return removeStaleClaudePluginCatalogLinks(plan.catalog)
+			}
+			return nil
+		}
+		var commitErr error
+		if claudeNativeLinks && !packagesLocked {
+			commitErr = packagegen.WithPackagesLock(ctx, commit)
+		} else {
+			commitErr = commit()
+		}
+		if commitErr != nil {
+			report.Diags = append(report.Diags, pluginBatchDiagnostic(item.ref.Name, commitErr))
 			return report
 		}
 	}
