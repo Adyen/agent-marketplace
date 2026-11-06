@@ -43,6 +43,7 @@ type snapshotLoadedMsg struct {
 	driftAssessment      driftAssessment
 	catalogs             map[string][]catalog.Entry
 	resolved             []resolver.ResolvedArtifact
+	impliedPreview       []resolver.ResolvedArtifact
 	mergedCfg            *config.Config
 	provisionalCfg       *config.Config
 	provisionalRows      []row
@@ -341,6 +342,7 @@ func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir stri
 		base := snapshotLoadedMsg{
 			catalogs:             entriesFromCatalogs(resolvedResult.CatalogLoad.Catalogs),
 			resolved:             resolvedResult.Resolved,
+			impliedPreview:       resolvedResult.ImpliedPreview,
 			mergedCfg:            resolvedResult.LoadedCfg,
 			inventoryResult:      &resolvedResult,
 			materializationModes: resolvedResult.MaterializationModes,
@@ -417,6 +419,7 @@ func readSnapshotStaged(ctx context.Context, ws pipeline.Workspace, homeDir stri
 			// materialization dry run: rows are navigable and config-only toggles are
 			// eligible while drift stays explicitly pending.
 			inventoryRows = buildRows(resolved.LoadedCfg, resolved.CatalogLoad.Catalogs, resolved.DisplayArtifacts(), resolved.LocalCfg, materialize.DriftReport{}, harnessDefaultsBySource(resolved.GlobalCfg, resolved.RepoCfg))
+			annotatePrerequisiteRows(inventoryRows, resolved.Resolved, resolved.ImpliedPreview, resolved.ResolveErrors, resolved.MergedCfg != nil && resolved.MergedCfg.RequiresExpansionEnabled())
 			inventoryRows = appendUnavailableSelectionRows(inventoryRows, recoveryCfg, resolved.LocalCfg, resolved.ResolveErrors, resolved.CatalogLoad.Catalogs)
 			unavailable = rowsHaveUnavailable(inventoryRows)
 			inventory := makeBase(result)
