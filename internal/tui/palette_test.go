@@ -355,8 +355,8 @@ func TestPaletteJKRemainQueryText(t *testing.T) {
 			if got, want := m.palette.input.Value(), "a"+string(character); got != want {
 				t.Fatalf("typed %q palette query = %q, want %q", character, got, want)
 			}
-			if !m.palette.open || m.pane != paneList || m.syncing || m.operations.active != nil {
-				t.Fatalf("typed %q dispatched an action: pane=%v syncing=%t active=%v", character, m.pane, m.syncing, m.operations.active)
+			if !m.palette.open || m.pane != paneList || m.syncing || m.operations.Active != nil {
+				t.Fatalf("typed %q dispatched an action: pane=%v syncing=%t active=%v", character, m.pane, m.syncing, m.operations.Active)
 			}
 		})
 	}

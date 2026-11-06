@@ -18,6 +18,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
@@ -30,17 +31,7 @@ import (
 // preparedUpdateView carries the prepared prior/candidate state to the update
 // preview inside lock preparation. It exists before any new publication so
 // requested comparisons complete before new config or lock bytes are written.
-type preparedUpdateView struct {
-	ws          pipeline.Workspace
-	offline     bool
-	priorJobs   []snapshotJob
-	overlays    map[string][]byte
-	lockDesired map[string][]byte
-	desiredSet  *exactLockSet
-	lookup      func(*exactLockSet, func() error) catalog.ExactSnapshotFunc
-	ec          config.EffectiveConfig
-	refBumps    []pipeline.RefBump
-}
+type preparedUpdateView = lifecycle.PreparedUpdateView
 
 // updatePreview is the prepared report model for a previewed or applied
 // update. It describes proposed dependency changes and the effective
@@ -81,31 +72,31 @@ type previewLiveSource struct {
 // summary comparison digests admitted files instead of holding their bytes.
 func buildUpdatePreview(ctx context.Context, view preparedUpdateView, includeDiffs bool) (*updatePreview, error) {
 	started := time.Now()
-	sides, err := resolvePriorAndDesired(ctx, view.ws, view.offline, view.priorJobs, view.overlays, view.lockDesired, view.desiredSet, view.lookup, true)
+	sides, err := lifecycle.ResolvePriorAndDesired(ctx, view.Ws, view.Offline, view.PriorJobs, view.Overlays, view.LockDesired, view.DesiredSet, view.Lookup, true)
 	if err != nil {
 		return nil, err
 	}
 	// An unavailable recorded baseline refuses before any other comparison
 	// result: name the lock and the load failure rather than the derived
 	// lookup error, without substituting an empty or installed baseline.
-	if len(sides.loadErrors) > 0 {
+	if len(sides.LoadErrors) > 0 {
 		var messages []string
-		for _, loadErr := range sides.loadErrors {
-			messages = append(messages, fmt.Sprintf("load previously locked revision for %s: %v", loadErr.lockPath, loadErr.err))
+		for _, loadErr := range sides.LoadErrors {
+			messages = append(messages, fmt.Sprintf("load previously locked revision for %s: %v", loadErr.LockPath, loadErr.Err))
 		}
 		return nil, errors.New(strings.Join(messages, "; "))
 	}
 	// A prior resolution that cannot produce comparable resources is an
 	// unavailable recorded baseline: name it and refuse rather than
 	// substituting an empty or installed baseline.
-	if len(sides.prior.Errors) > 0 {
-		return nil, fmt.Errorf("prepare previously locked resources for comparison: %w", errors.Join(sides.prior.Errors...))
+	if len(sides.Prior.Errors) > 0 {
+		return nil, fmt.Errorf("prepare previously locked resources for comparison: %w", errors.Join(sides.Prior.Errors...))
 	}
-	if len(sides.desired.Errors) > 0 {
-		return nil, fmt.Errorf("prepare candidate resources for comparison: %w", errors.Join(sides.desired.Errors...))
+	if len(sides.Desired.Errors) > 0 {
+		return nil, fmt.Errorf("prepare candidate resources for comparison: %w", errors.Join(sides.Desired.Errors...))
 	}
 
-	priorSides, err := previewSides(sides.prior, sides.priorSet, includeDiffs)
+	priorSides, err := previewSides(sides.Prior, sides.PriorSet, includeDiffs)
 	if err != nil {
 		return nil, err
 	}
@@ -114,8 +105,8 @@ func buildUpdatePreview(ctx context.Context, view preparedUpdateView, includeDif
 	// recorded revision. Drop it so the candidate appears as an initial
 	// acquisition rather than as a fabricated comparison against current
 	// upstream content.
-	priorSides = dropUnlockedPriorSides(priorSides, sides.priorSet, sides.desiredSet)
-	desiredSides, err := previewSides(sides.desired, sides.desiredSet, includeDiffs)
+	priorSides = dropUnlockedPriorSides(priorSides, sides.PriorSet, sides.DesiredSet)
+	desiredSides, err := previewSides(sides.Desired, sides.DesiredSet, includeDiffs)
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +121,7 @@ func buildUpdatePreview(ctx context.Context, view preparedUpdateView, includeDif
 	preview := &updatePreview{
 		Locks:            locks,
 		ResourceChanges:  changes,
-		LiveSources:      previewLiveSources(sides.desired, sides.desiredSet),
+		LiveSources:      previewLiveSources(sides.Desired, sides.DesiredSet),
 		includeDiffs:     includeDiffs,
 		computedDuration: time.Since(started),
 	}
@@ -144,7 +135,7 @@ func buildUpdatePreview(ctx context.Context, view preparedUpdateView, includeDif
 // output. Selected collections are virtual roots that expand into members, so
 // they join the sides from the display selection: their definition and
 // membership changes must stay reviewable alongside their affected members.
-func previewSides(result pipeline.ResolveResult, set *exactLockSet, keepBodies bool) ([]resourcediff.Side, error) {
+func previewSides(result pipeline.ResolveResult, set *lifecycle.ExactLockSet, keepBodies bool) ([]resourcediff.Side, error) {
 	artifacts := result.Resolved
 	if len(result.SelectedCollections) > 0 {
 		combined := make([]resolver.ResolvedArtifact, 0, len(artifacts)+len(result.SelectedCollections))
@@ -179,7 +170,7 @@ func previewSides(result pipeline.ResolveResult, set *exactLockSet, keepBodies b
 		revision := ""
 		if res.IsMarketplace {
 			revision = res.MarketplaceDigest
-		} else if commit, ok := set.gitRevision(res.Source, res.RegistryURL, res.Ref); ok {
+		} else if commit, ok := set.GitRevision(res.Source, res.RegistryURL, res.Ref); ok {
 			revision = commit
 		}
 		support, err := previewSupportFiles(res, keepBodies)
@@ -201,22 +192,22 @@ func previewSides(result pipeline.ResolveResult, set *exactLockSet, keepBodies b
 // historical comparison exists for that source. Sources recorded under any
 // ref of the same canonical repository keep their prior side, because a ref
 // bump rewrites the configured ref after the lock recorded the old one.
-func dropUnlockedPriorSides(prior []resourcediff.Side, priorSet, desiredSet *exactLockSet) []resourcediff.Side {
-	priorCanonical := make(map[string]bool, len(priorSet.bySource))
-	desiredCanonical := make(map[string]bool, len(desiredSet.bySource))
-	for _, locked := range priorSet.bySource {
-		if !locked.unlocked {
-			priorCanonical[locked.canonical] = true
+func dropUnlockedPriorSides(prior []resourcediff.Side, priorSet, desiredSet *lifecycle.ExactLockSet) []resourcediff.Side {
+	priorCanonical := make(map[string]bool, len(priorSet.BySource))
+	desiredCanonical := make(map[string]bool, len(desiredSet.BySource))
+	for _, locked := range priorSet.BySource {
+		if !locked.Unlocked {
+			priorCanonical[locked.Canonical] = true
 		}
 	}
-	for _, locked := range desiredSet.bySource {
-		if !locked.unlocked {
-			desiredCanonical[locked.canonical] = true
+	for _, locked := range desiredSet.BySource {
+		if !locked.Unlocked {
+			desiredCanonical[locked.Canonical] = true
 		}
 	}
 	kept := prior[:0]
 	for _, side := range prior {
-		canonical, err := canonicalRegistryURL(side.Identity.SourceURL)
+		canonical, err := lifecycle.CanonicalRegistryURL(side.Identity.SourceURL)
 		if err != nil {
 			kept = append(kept, side)
 			continue
@@ -451,20 +442,20 @@ func contentDigest(data []byte) string {
 // previously published lock documents and the prepared desired lock bytes.
 // Lock documents record one exact commit per registry URL and ref.
 func previewGitLockChanges(view preparedUpdateView) ([]previewGitLock, error) {
-	priorDocs := make(map[string]lockfile.Document, len(view.priorJobs))
-	priorScopes := make(map[string]string, len(view.priorJobs))
-	for _, job := range view.priorJobs {
-		priorDocs[job.lockPath] = job.doc
-		priorScopes[job.lockPath] = job.source.LockScope()
+	priorDocs := make(map[string]lockfile.Document, len(view.PriorJobs))
+	priorScopes := make(map[string]string, len(view.PriorJobs))
+	for _, job := range view.PriorJobs {
+		priorDocs[job.LockPath] = job.Doc
+		priorScopes[job.LockPath] = job.Source.LockScope()
 	}
-	desiredPaths := make([]string, 0, len(view.lockDesired))
-	for lockPath := range view.lockDesired {
+	desiredPaths := make([]string, 0, len(view.LockDesired))
+	for lockPath := range view.LockDesired {
 		desiredPaths = append(desiredPaths, lockPath)
 	}
 	sort.Strings(desiredPaths)
 	var changes []previewGitLock
 	for _, lockPath := range desiredPaths {
-		desired, err := lockfile.Decode(view.lockDesired[lockPath])
+		desired, err := lockfile.Decode(view.LockDesired[lockPath])
 		if err != nil {
 			return nil, fmt.Errorf("decode prepared lock %s: %w", lockPath, err)
 		}
@@ -479,7 +470,7 @@ func previewGitLockChanges(view preparedUpdateView) ([]previewGitLock, error) {
 		for _, registry := range desired.Registries {
 			var previous []lockfile.GitRegistry
 			if hasPrior {
-				previous = previewPriorRegistries(prior, registry.URL, registry.Ref, view.refBumps)
+				previous = previewPriorRegistries(prior, registry.URL, registry.Ref, view.RefBumps)
 			}
 			newCommit := registry.Commit.String()
 			if len(previous) == 0 {
@@ -527,7 +518,7 @@ func previewPriorRegistries(doc lockfile.Document, url, ref string, bumps []pipe
 			continue
 		}
 		for _, bump := range bumps {
-			canonical, err := canonicalRegistryURL(bump.URL)
+			canonical, err := lifecycle.CanonicalRegistryURL(bump.URL)
 			if err == nil && canonical == url && bump.NewRef == ref && bump.OldRef == registry.Ref {
 				prior = append(prior, registry)
 				break
@@ -541,14 +532,14 @@ func previewPriorRegistries(doc lockfile.Document, url, ref string, bumps []pipe
 // selected Git sources absent from the exact lock set resolve live, whether
 // they are local-directory registries or intentionally unlocked organization
 // sources.
-func previewLiveSources(result pipeline.ResolveResult, set *exactLockSet) []previewLiveSource {
+func previewLiveSources(result pipeline.ResolveResult, set *lifecycle.ExactLockSet) []previewLiveSource {
 	seen := make(map[string]bool)
 	var live []previewLiveSource
 	for _, res := range result.Resolved {
 		if res.IsMarketplace {
 			continue
 		}
-		if _, ok := set.gitRevision(res.Source, res.RegistryURL, res.Ref); ok {
+		if _, ok := set.GitRevision(res.Source, res.RegistryURL, res.Ref); ok {
 			continue
 		}
 		key := previewScopeLabel(res.Source) + "\x00" + res.RegistryURL

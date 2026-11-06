@@ -37,14 +37,14 @@ type diagnosticCategoryKey struct {
 }
 
 func (m Model) diagnosticCategories() map[diagnosticCategoryKey][]diagnosticCategory {
-	categories := make(map[diagnosticCategoryKey][]diagnosticCategory, len(m.diagnostics.snapshot)+len(m.diagnostics.operations))
-	for _, diagnostics := range [][]tuiDiagnostic{m.diagnostics.snapshot, m.diagnostics.operations} {
+	categories := make(map[diagnosticCategoryKey][]diagnosticCategory, len(m.diagnostics.Snapshot)+len(m.diagnostics.Operations))
+	for _, diagnostics := range [][]tuiDiagnostic{m.diagnostics.Snapshot, m.diagnostics.Operations} {
 		for _, d := range diagnostics {
-			if d.err == nil {
+			if d.Err == nil {
 				continue
 			}
-			key := diagnosticCategoryKey{severity: d.severity, stableKey: stableDiagnosticKey(d.err)}
-			categories[key] = append(categories[key], d.category)
+			key := diagnosticCategoryKey{severity: d.Severity, stableKey: stableDiagnosticKey(d.Err)}
+			categories[key] = append(categories[key], d.Category)
 		}
 	}
 	return categories

@@ -9,7 +9,9 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/session"
 )
 
 func TestProductionTUIRejectsOutsideDiscoveredLocalRootBeforeLifecycle(t *testing.T) {
@@ -28,19 +30,19 @@ func TestProductionTUIRejectsOutsideDiscoveredLocalRootBeforeLifecycle(t *testin
 	t.Chdir(outsideRoot)
 
 	var prepareCalls, syncCalls atomic.Int64
-	previousPrepare := prepareTUILocks
-	previousSync := runTUIExactSync
-	prepareTUILocks = func(context.Context, string, string, lockMode) (exactLockLeaseFunc, error) {
+	previousPrepare := session.PrepareTUILocks
+	previousSync := session.RunTUIExactSync
+	session.PrepareTUILocks = func(context.Context, string, string, lifecycle.LockMode) (lifecycle.ExactLockLeaseFunc, error) {
 		prepareCalls.Add(1)
 		return nil, nil
 	}
-	runTUIExactSync = func(context.Context, pipeline.ResolveOptions) pipeline.SyncResult {
+	session.RunTUIExactSync = func(context.Context, pipeline.ResolveOptions) pipeline.SyncResult {
 		syncCalls.Add(1)
 		return pipeline.SyncResult{}
 	}
 	t.Cleanup(func() {
-		prepareTUILocks = previousPrepare
-		runTUIExactSync = previousSync
+		session.PrepareTUILocks = previousPrepare
+		session.RunTUIExactSync = previousSync
 	})
 
 	err := runProductionTUI(context.Background(), repoRoot, homeDir)
@@ -57,24 +59,24 @@ func TestTUIDependencyLifecycleRejectsInvalidWorkspaceBeforeLocks(t *testing.T) 
 		return
 	}
 	var prepareCalls, syncCalls atomic.Int64
-	previousPrepare := prepareTUILocks
-	previousSync := runTUIExactSync
-	prepareTUILocks = func(context.Context, string, string, lockMode) (exactLockLeaseFunc, error) {
+	previousPrepare := session.PrepareTUILocks
+	previousSync := session.RunTUIExactSync
+	session.PrepareTUILocks = func(context.Context, string, string, lifecycle.LockMode) (lifecycle.ExactLockLeaseFunc, error) {
 		prepareCalls.Add(1)
 		return nil, nil
 	}
-	runTUIExactSync = func(context.Context, pipeline.ResolveOptions) pipeline.SyncResult {
+	session.RunTUIExactSync = func(context.Context, pipeline.ResolveOptions) pipeline.SyncResult {
 		syncCalls.Add(1)
 		return pipeline.SyncResult{}
 	}
 	t.Cleanup(func() {
-		prepareTUILocks = previousPrepare
-		runTUIExactSync = previousSync
+		session.PrepareTUILocks = previousPrepare
+		session.RunTUIExactSync = previousSync
 	})
 
-	_, err := runTUIDependencyLifecycle(context.Background(), pipeline.Workspace{}, false)
+	_, err := session.RuntimeDependencyLifecycle(context.Background(), pipeline.Workspace{}, false)
 	if !errors.Is(err, pipeline.ErrInvalidWorkspace) {
-		t.Fatalf("runTUIDependencyLifecycle error = %v; want ErrInvalidWorkspace", err)
+		t.Fatalf("session.RuntimeDependencyLifecycle error = %v; want ErrInvalidWorkspace", err)
 	}
 	if prepareCalls.Load() != 0 || syncCalls.Load() != 0 {
 		t.Fatalf("invalid workspace reached lifecycle side effects: prepare=%d sync=%d", prepareCalls.Load(), syncCalls.Load())
@@ -86,12 +88,12 @@ func TestTUIConfigMutationRejectsInvalidWorkspaceBeforeStaging(t *testing.T) {
 		return
 	}
 	var mutationCalls atomic.Int64
-	err := runTUIConfigMutation(context.Background(), pipeline.Workspace{}, func(pipeline.ConfigPathMapper) error {
+	err := session.RuntimeConfigMutation(context.Background(), pipeline.Workspace{}, func(pipeline.ConfigPathMapper) error {
 		mutationCalls.Add(1)
 		return nil
 	})
 	if !errors.Is(err, pipeline.ErrInvalidWorkspace) {
-		t.Fatalf("runTUIConfigMutation error = %v; want ErrInvalidWorkspace", err)
+		t.Fatalf("session.RuntimeConfigMutation error = %v; want ErrInvalidWorkspace", err)
 	}
 	if mutationCalls.Load() != 0 {
 		t.Fatalf("invalid workspace reached config mutation %d times", mutationCalls.Load())

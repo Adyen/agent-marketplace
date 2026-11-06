@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 )
 
@@ -145,7 +146,7 @@ func TestMergeInstallBindingsRetainsLockVersionAndMarketplaceEvidence(t *testing
 					t.Fatalf("invalid lock fixture: %v", err)
 				}
 			}
-			merged, err := mergeInstallBindings(tc.base, lockfile.ScopeRepo, []lockfile.GitRegistry{registry})
+			merged, err := lifecycle.MergeInstallBindings(tc.base, lockfile.ScopeRepo, []lockfile.GitRegistry{registry})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -192,7 +193,7 @@ func TestV1LockCheckReportsVersionUpgradeRequiredWithoutWriting(t *testing.T) {
 		t.Fatal(err)
 	}
 	output, err := executeCommand("lock", "--check", "--scope", "repo")
-	var lifecycle *lockLifecycleError
+	var lifecycle *lifecycle.LockLifecycleError
 	if !errors.As(err, &lifecycle) || lifecycle.Code != "lock.version-upgrade-required" || lifecycle.Scope != lockfile.ScopeRepo || lifecycle.Path != lockPath {
 		t.Fatalf("lock --check on writable v1 = %v, want scoped lock.version-upgrade-required at %s\n%s", err, lockPath, output)
 	}

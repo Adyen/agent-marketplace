@@ -16,6 +16,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 )
 
 func assertCommandFormatRefusal(t *testing.T, err error, code, path string) {
@@ -249,7 +250,7 @@ func TestConsumerRecoveryPrecedesFormatRefusal(t *testing.T) {
 			_, _, repo := setupV4ConsumerCommand(t)
 			path := config.ProjectConfigPath(repo)
 			writeFile(t, path, "apiVersion: agent-marketplace/v4\n")
-			state, err := dependencyStateDir()
+			state, err := lifecycle.DependencyStateDir()
 			if err != nil {
 				t.Fatal(err)
 			}

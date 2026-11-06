@@ -13,6 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/session"
 )
 
 // phaseObservingLoaders lets a real pipeline.Resolve emit configure+resolve
@@ -54,19 +55,19 @@ func runCmdsAsync(cmds []tea.Cmd) chan tea.Msg {
 // the real pipeline reaches the model while the sync command is still
 // blocked — progress is visible BEFORE operation completion on the direct
 // TUI sync path.
-// spec: tui-feedback/phase-observed-before-completion
+// spec: session-feedback/phase-observed-before-completion
 func TestSyncPhaseVisibleBeforeCompletion(t *testing.T) {
 	gate := make(chan struct{})
 	workspace := defaultTUIWorkspace(t.TempDir())
-	previousSync := runPipelineSync
-	runPipelineSync = func(ctx context.Context, opts pipeline.ResolveOptions) pipeline.SyncResult {
+	previousSync := session.RunPipelineSync
+	session.RunPipelineSync = func(ctx context.Context, opts pipeline.ResolveOptions) pipeline.SyncResult {
 		// Emit real pipeline phases through the observed context, then block
 		// to simulate a long-running operation still in flight.
 		pipeline.Resolve(ctx, pipeline.ResolveOptions{Workspace: workspace, Loaders: phaseObservingLoaders()})
 		<-gate
 		return pipeline.SyncResult{}
 	}
-	t.Cleanup(func() { runPipelineSync = previousSync })
+	t.Cleanup(func() { session.RunPipelineSync = previousSync })
 
 	m := progressTestModel(t)
 	updated, cmd := m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
@@ -124,7 +125,7 @@ func TestSyncPhaseVisibleBeforeCompletion(t *testing.T) {
 				if m.progress == nil || m.operationPhase != string(pipeline.PhaseReload) {
 					t.Fatal("completion ended observation before the authoritative reload")
 				}
-				reload := m.requests.active(requestSnapshot)
+				reload := m.requests.Active(requestSnapshot)
 				if reload == 0 {
 					t.Fatal("completion did not schedule an authoritative reload")
 				}
@@ -156,7 +157,7 @@ func TestSyncPhaseVisibleBeforeCompletion(t *testing.T) {
 // observation flows through the WithDependencyLifecycle adapter: the injected
 // callback receives an observed context and its real pipeline calls report
 // phases while the callback is still blocked.
-// spec: tui-feedback/phase-observed-before-completion
+// spec: session-feedback/phase-observed-before-completion
 func TestInjectedLifecyclePhaseVisibleBeforeCompletion(t *testing.T) {
 	gate := make(chan struct{})
 	m := progressTestModel(t)
@@ -209,7 +210,7 @@ func TestInjectedLifecyclePhaseVisibleBeforeCompletion(t *testing.T) {
 // TestUnobservedOperationShowsGenericRunning covers lifecycle paths that
 // emit no phase observations: the status bar falls back to a generic running
 // label rather than inventing phases.
-// spec: tui-feedback/no-observer
+// spec: session-feedback/no-observer
 func TestUnobservedOperationShowsGenericRunning(t *testing.T) {
 	m := progressTestModel(t)
 	m.beginOperationProgress("sync", 0)
@@ -227,26 +228,26 @@ func TestUnobservedOperationShowsGenericRunning(t *testing.T) {
 // active operation identity, applicable request generation, and a monotonic
 // sequence: out-of-order, duplicate, foreign and post-finish observations
 // must not alter phase, diagnostics, success, or serialization.
-// spec: tui-feedback/late-progress
+// spec: session-feedback/late-progress
 func TestProgressRejectsStaleDuplicateAndFinishedEvents(t *testing.T) {
 	m := progressTestModel(t)
 	m.beginOperationProgress("sync", 7)
 
-	foreign := operationProgressMsg{operation: m.progress.operation + 99, generation: 7, sequence: 1, phase: "x"}
+	foreign := operationProgressMsg{operation: m.progress.Operation() + 99, generation: 7, sequence: 1, phase: "x"}
 	next, _ := m.Update(foreign)
 	m = next.(Model)
 	if m.operationPhase != "" {
 		t.Fatal("foreign operation observation changed the active phase")
 	}
 
-	wrongGeneration := operationProgressMsg{operation: m.progress.operation, generation: 8, sequence: 1, phase: "x"}
+	wrongGeneration := operationProgressMsg{operation: m.progress.Operation(), generation: 8, sequence: 1, phase: "x"}
 	next, _ = m.Update(wrongGeneration)
 	m = next.(Model)
 	if m.operationPhase != "" {
 		t.Fatal("wrong-generation observation changed the active phase")
 	}
 
-	first := operationProgressMsg{operation: m.progress.operation, generation: 7, sequence: 1, phase: "one"}
+	first := operationProgressMsg{operation: m.progress.Operation(), generation: 7, sequence: 1, phase: "one"}
 	next, _ = m.Update(first)
 	m = next.(Model)
 	if m.operationPhase != "one" {
@@ -254,8 +255,8 @@ func TestProgressRejectsStaleDuplicateAndFinishedEvents(t *testing.T) {
 	}
 
 	for _, replay := range []operationProgressMsg{
-		{operation: m.progress.operation, generation: 7, sequence: 1, phase: "stale"},
-		{operation: m.progress.operation, generation: 7, sequence: 0, phase: "older"},
+		{operation: m.progress.Operation(), generation: 7, sequence: 1, phase: "stale"},
+		{operation: m.progress.Operation(), generation: 7, sequence: 0, phase: "older"},
 	} {
 		next, _ = m.Update(replay)
 		m = next.(Model)
@@ -263,7 +264,7 @@ func TestProgressRejectsStaleDuplicateAndFinishedEvents(t *testing.T) {
 			t.Fatalf("out-of-order observation %v changed the active phase to %q", replay.sequence, m.operationPhase)
 		}
 	}
-	if len(m.errs) > 0 || m.operations.active != nil {
+	if len(m.errs) > 0 || m.operations.Active != nil {
 		t.Fatal("observations mutated diagnostics or operation serialization")
 	}
 
@@ -320,7 +321,7 @@ func TestMarketplaceInstallConsentAndReloadPhases(t *testing.T) {
 		t.Fatalf("authoritative reload phase = %q, want %q", m.operationPhase, pipeline.PhaseReload)
 	}
 	// The reload, not progress, completes the operation.
-	if m.operations.active == nil {
+	if m.operations.Active == nil {
 		t.Fatal("progress prematurely finished the install operation")
 	}
 }
@@ -328,7 +329,7 @@ func TestMarketplaceInstallConsentAndReloadPhases(t *testing.T) {
 // TestToastQueueBoundedAndExpires covers the bounded toast stack: at most
 // three toasts are retained, expiry drops only the elapsed entries, and a
 // replaced timer cannot clear a newer toast.
-// spec: tui-feedback/notification-overflow
+// spec: session-feedback/notification-overflow
 func TestToastQueueBoundedAndExpires(t *testing.T) {
 	m := progressTestModel(t)
 	for i := 0; i < 5; i++ {

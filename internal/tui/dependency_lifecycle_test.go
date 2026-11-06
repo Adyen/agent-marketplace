@@ -16,6 +16,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -113,7 +114,7 @@ func TestSuccessfulSyncClearsPendingDriftAfterReload(t *testing.T) {
 	updated, _ := model.Update(syncDoneMsg{})
 	model = updated.(Model)
 	updated, _ = model.Update(snapshotLoadedMsg{
-		generation:      model.requests.active(requestSnapshot),
+		generation:      model.requests.Active(requestSnapshot),
 		mergedCfg:       &config.Config{},
 		driftAssessment: driftReady,
 	})
@@ -126,12 +127,12 @@ func TestSuccessfulSyncClearsPendingDriftAfterReload(t *testing.T) {
 
 func TestDependencyLifecycleFailuresAreShownWithoutFallback(t *testing.T) {
 	failure := errors.New("lock reconciliation failed")
-	previousSync := runPipelineSync
-	runPipelineSync = func(context.Context, pipeline.ResolveOptions) pipeline.SyncResult {
+	previousSync := session.RunPipelineSync
+	session.RunPipelineSync = func(context.Context, pipeline.ResolveOptions) pipeline.SyncResult {
 		t.Fatal("injected lifecycle failure fell back to the unlocked TUI pipeline")
 		return pipeline.SyncResult{}
 	}
-	t.Cleanup(func() { runPipelineSync = previousSync })
+	t.Cleanup(func() { session.RunPipelineSync = previousSync })
 
 	model := NewModel("/repo", "/home", WithDependencyLifecycle(DependencyLifecycle{
 		Sync: func(context.Context, pipeline.Workspace) (pipeline.SyncResult, error) {
@@ -147,7 +148,7 @@ func TestDependencyLifecycleFailuresAreShownWithoutFallback(t *testing.T) {
 	// The pipeline failure is the verdict; it surfaces once the authoritative
 	// reload the completion scheduled is accepted.
 	updated, _ = model.Update(snapshotLoadedMsg{
-		generation:      model.requests.active(requestSnapshot),
+		generation:      model.requests.Active(requestSnapshot),
 		mergedCfg:       &config.Config{},
 		driftAssessment: driftReady,
 	})
@@ -220,7 +221,7 @@ func TestDependencyLifecycleWarningsSurfaceWithoutFailure(t *testing.T) {
 	if len(model.warnings) != 0 || strings.Contains(model.toast, "Sync complete") {
 		t.Fatalf("sync warnings or success surfaced before reload: warnings %v, toast %q", model.warnings, model.toast)
 	}
-	generation := model.requests.active(requestSnapshot)
+	generation := model.requests.Active(requestSnapshot)
 	if generation == 0 {
 		t.Fatal("sync completion did not schedule an authoritative reload")
 	}
@@ -279,7 +280,7 @@ func TestDependencyLifecycleWarningsSurfaceWithoutFailure(t *testing.T) {
 	if !model.syncing || len(model.errs) != 0 || strings.Contains(model.toast, "sync error") {
 		t.Fatalf("failed sync surfaced before its reload: syncing %t, errors %v, toast %q", model.syncing, model.errs, model.toast)
 	}
-	generation = model.requests.active(requestSnapshot)
+	generation = model.requests.Active(requestSnapshot)
 	updated, _ = model.Update(snapshotLoadedMsg{
 		generation:      generation,
 		mergedCfg:       &config.Config{},
@@ -356,15 +357,15 @@ func TestProjectToggleReloadDoesNotExposeStaleLock(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".agents", "lock.yaml"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	previousOrg, previousGlobal, previousRepo, previousLocal := loadOrgConfig, loadGlobalConfig, loadRepoConfig, loadLocalConfig
-	loadOrgConfig = func() (*config.Config, error) { return nil, nil }
-	loadGlobalConfig = func() (*config.Config, error) {
+	previousOrg, previousGlobal, previousRepo, previousLocal := session.LoadOrgConfig, session.LoadGlobalConfig, session.LoadRepoConfig, session.LoadLocalConfig
+	session.LoadOrgConfig = func() (*config.Config, error) { return nil, nil }
+	session.LoadGlobalConfig = func() (*config.Config, error) {
 		return config.LoadConfigFromPath(filepath.Join(home, ".agents", "config.yaml"))
 	}
-	loadRepoConfig = func() (*config.Config, error) { return config.LoadConfigFromPath(config.ProjectConfigPath(repo)) }
-	loadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
+	session.LoadRepoConfig = func() (*config.Config, error) { return config.LoadConfigFromPath(config.ProjectConfigPath(repo)) }
+	session.LoadLocalConfig = func(string) (*config.LocalConfig, error) { return nil, nil }
 	t.Cleanup(func() {
-		loadOrgConfig, loadGlobalConfig, loadRepoConfig, loadLocalConfig = previousOrg, previousGlobal, previousRepo, previousLocal
+		session.LoadOrgConfig, session.LoadGlobalConfig, session.LoadRepoConfig, session.LoadLocalConfig = previousOrg, previousGlobal, previousRepo, previousLocal
 	})
 
 	updatedDoc := doc

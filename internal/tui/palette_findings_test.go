@@ -325,7 +325,7 @@ func TestPaletteClosesOnPaneTransition(t *testing.T) {
 	m := readySizedPaletteModel(80, 24)
 	m = openPaletteFor(t, m)
 	m.pane = paneHarnessModal
-	mi, _ := m.Update(snapshotLoadedMsg{generation: m.requests.active(requestSnapshot), mergedCfg: &config.Config{}})
+	mi, _ := m.Update(snapshotLoadedMsg{generation: m.requests.Active(requestSnapshot), mergedCfg: &config.Config{}})
 	m = mi.(Model)
 	if m.pane != paneHarnessModal || m.palette.open {
 		t.Fatal("the palette must close when the pane leaves the list")

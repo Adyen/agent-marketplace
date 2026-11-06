@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 )
 
 func TestLockReconcileHonorsContainedRepositoryLockLink(t *testing.T) {
@@ -104,7 +105,7 @@ func TestPrepareRuntimeLocksRejectsCrossLayerObjectAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, _, err = prepareRuntimeLocks(context.Background(), repo, repo, lockMode{})
+	_, _, _, err = lifecycle.PrepareRuntimeLocks(context.Background(), repo, repo, lifecycle.LockMode{})
 	if !errors.Is(err, dependencytxn.ErrUnsafePath) {
 		t.Fatalf("cross-layer alias: %v, want ErrUnsafePath", err)
 	}

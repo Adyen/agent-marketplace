@@ -11,6 +11,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
 
@@ -28,19 +29,19 @@ func TestConfigSnapshotsTrackParsedIncludeBytes(t *testing.T) {
 	load := func(ctx context.Context, opts config.LoadEffectiveOptions) config.EffectiveConfig {
 		return pipeline.LoadEffective(ctx, pipeline.ConfigLoadStrict, opts, nil)
 	}
-	loaded, before, err := loadStableEffectiveWith(context.Background(), opts, load)
+	loaded, before, err := lifecycle.LoadStableEffectiveWith(context.Background(), opts, load)
 	if err != nil {
 		t.Fatal(err)
 	}
 	writeConfig(t, fragment, "harnesses: [codex]\n")
-	if _, err := snapshotEffectiveConfigs(loaded, nil); !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+	if _, err := lifecycle.SnapshotEffectiveConfigs(loaded, nil); !errors.Is(err, dependencytxn.ErrGenerationConflict) {
 		t.Fatalf("stale parsed bytes accepted: %v", err)
 	}
-	_, after, err := loadStableEffectiveWith(context.Background(), opts, load)
+	_, after, err := lifecycle.LoadStableEffectiveWith(context.Background(), opts, load)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sameConfigSnapshots(before, after) {
+	if lifecycle.SameConfigSnapshots(before, after) {
 		t.Fatal("include-only change left snapshots equal")
 	}
 }
@@ -83,8 +84,8 @@ func TestPrepareRuntimeLocksValidatesIncludedReadSet(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = os.Chmod(fragments, 0o755) })
 			var concurrentBytes []byte
-			commit := commitDependencyTransaction
-			commitDependencyTransaction = func(ctx context.Context, state string, desired []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
+			commit := lifecycle.CommitDependencyTransaction
+			lifecycle.CommitDependencyTransaction = func(ctx context.Context, state string, desired []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
 				switch change {
 				case "edit":
 					writeConfig(t, leaf, "sources: {}\n")
@@ -113,8 +114,8 @@ func TestPrepareRuntimeLocksValidatesIncludedReadSet(t *testing.T) {
 				}
 				return commit(ctx, state, desired, opts...)
 			}
-			t.Cleanup(func() { commitDependencyTransaction = commit })
-			_, _, _, err = prepareRuntimeLocks(context.Background(), repo, repo, lockMode{})
+			t.Cleanup(func() { lifecycle.CommitDependencyTransaction = commit })
+			_, _, _, err = lifecycle.PrepareRuntimeLocks(context.Background(), repo, repo, lifecycle.LockMode{})
 			if change == "unchanged" {
 				if err != nil {
 					t.Fatal(err)
@@ -184,7 +185,7 @@ func TestPrepareRuntimeLocksIncludesStagedRootThroughAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 	staged := []byte("apiVersion: agent-marketplace/v4\nharnesses: [claude]\nsources:\n  origin: {git: file://" + origin + ", ref: main}\n")
-	_, _, _, err = prepareRuntimeLocks(context.Background(), repo, repo, lockMode{stagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: configPath, Path: configPath, Expected: expected, Bytes: staged, Mode: 0o644}}})
+	_, _, _, err = lifecycle.PrepareRuntimeLocks(context.Background(), repo, repo, lifecycle.LockMode{StagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: configPath, Path: configPath, Expected: expected, Bytes: staged, Mode: 0o644}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,11 +238,11 @@ func TestPrepareRuntimeLocksRejectsStagingGenerationRaces(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			canonicalPath, err := canonicalizeFuturePath(configPath)
+			canonicalPath, err := lifecycle.CanonicalizeFuturePath(configPath)
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, _, _, err = prepareRuntimeLocks(context.Background(), repo, repo, lockMode{stagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: configPath, Path: canonicalPath, Expected: test.expected, Bytes: staged, Mode: 0o644}}})
+			_, _, _, err = lifecycle.PrepareRuntimeLocks(context.Background(), repo, repo, lifecycle.LockMode{StagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: configPath, Path: canonicalPath, Expected: test.expected, Bytes: staged, Mode: 0o644}}})
 			if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
 				t.Fatalf("error = %v, want generation conflict", err)
 			}
@@ -269,7 +270,7 @@ func TestPrepareRuntimeLocksRevalidatesPublishedLockGeneration(t *testing.T) {
 	repo := filepath.Join(canonicalTempDir(t), "repo")
 	configPath := filepath.Join(repo, ".agents", "config.yaml")
 	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  origin: {git: file://"+origin+", ref: main}\n")
-	_, _, validate, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{})
+	_, _, validate, err := lifecycle.PrepareRuntimeLocks(context.Background(), repo, repo, lifecycle.LockMode{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +310,7 @@ func TestPrepareRuntimeLocksRejectsRetargetedStagedConfigSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	canonicalFirst, err := canonicalizeFuturePath(first)
+	canonicalFirst, err := lifecycle.CanonicalizeFuturePath(first)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +321,7 @@ func TestPrepareRuntimeLocksRejectsRetargetedStagedConfigSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	staged := []byte("apiVersion: agent-marketplace/v4\nharnesses: [codex]\n")
-	_, _, _, err = prepareRuntimeLocks(context.Background(), dir, dir, lockMode{stagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: requested, Path: canonicalFirst, Expected: expected, Bytes: staged, Mode: 0o644}}})
+	_, _, _, err = lifecycle.PrepareRuntimeLocks(context.Background(), dir, dir, lifecycle.LockMode{StagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: requested, Path: canonicalFirst, Expected: expected, Bytes: staged, Mode: 0o644}}})
 	if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
 		t.Fatalf("error = %v, want generation conflict", err)
 	}
@@ -341,7 +342,7 @@ func TestPrepareRuntimeLocksRejectsUnmatchedAndDuplicateStagedEdits(t *testing.T
 	unmatched := filepath.Join(canonicalTempDir(t), "config.yaml")
 	source := t.TempDir()
 	writeConfig(t, unmatched, "apiVersion: agent-marketplace/v4\nsources:\n  local: {directory: "+source+"}\nresources:\n  local: [skill/review]\n")
-	canonical, err := canonicalizeFuturePath(unmatched)
+	canonical, err := lifecycle.CanonicalizeFuturePath(unmatched)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,7 +359,7 @@ func TestPrepareRuntimeLocksRejectsUnmatchedAndDuplicateStagedEdits(t *testing.T
 		{name: "duplicate", edits: []pipeline.StagedConfigEdit{edit, edit}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, _, _, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{stagedConfigEdits: test.edits})
+			_, _, _, err := lifecycle.PrepareRuntimeLocks(context.Background(), repo, repo, lifecycle.LockMode{StagedConfigEdits: test.edits})
 			if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
 				t.Fatalf("error = %v, want generation conflict", err)
 			}
@@ -405,7 +406,7 @@ func TestPrepareRuntimeLocksRejectsRepositoryConfigAncestorSymlink(t *testing.T)
 		t.Fatal(err)
 	}
 
-	_, _, _, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{})
+	_, _, _, err := lifecycle.PrepareRuntimeLocks(context.Background(), repo, repo, lifecycle.LockMode{})
 	if !errors.Is(err, dependencytxn.ErrUnsafePath) {
 		t.Fatalf("error = %v, want ErrUnsafePath", err)
 	}
@@ -449,7 +450,7 @@ func TestPrepareRuntimeLocksRejectsStagedConfigAncestorSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	staged := []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n  origin: {git: file://" + origin + ", ref: main}\n")
-	_, _, _, err = prepareRuntimeLocks(context.Background(), repo, repo, lockMode{stagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: requested, Path: destination, Expected: expected, Bytes: staged, Mode: 0o644}}})
+	_, _, _, err = lifecycle.PrepareRuntimeLocks(context.Background(), repo, repo, lifecycle.LockMode{StagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: requested, Path: destination, Expected: expected, Bytes: staged, Mode: 0o644}}})
 	if !errors.Is(err, dependencytxn.ErrUnsafePath) {
 		t.Fatalf("error = %v, want ErrUnsafePath", err)
 	}
@@ -480,7 +481,7 @@ func TestPrepareRuntimeLocksRejectsGeneratedLockSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, _, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{})
+	_, _, _, err := lifecycle.PrepareRuntimeLocks(context.Background(), repo, repo, lifecycle.LockMode{})
 	if !errors.Is(err, dependencytxn.ErrUnsafePath) {
 		t.Fatalf("error = %v, want ErrUnsafePath", err)
 	}
@@ -511,7 +512,7 @@ func TestPrepareRuntimeLocksRejectsWritableLayerDestinationAlias(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	_, _, _, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{})
+	_, _, _, err := lifecycle.PrepareRuntimeLocks(context.Background(), repo, repo, lifecycle.LockMode{})
 	if !errors.Is(err, dependencytxn.ErrUnsafePath) {
 		t.Fatalf("error = %v, want ErrUnsafePath", err)
 	}
@@ -537,8 +538,8 @@ func TestPrepareRuntimeLocksCommitsStagedConfigAndLockTogether(t *testing.T) {
 	staged := append(append([]byte(nil), original...), []byte("resources:\n  origin: [skill/review]\n")...)
 	lockPath := filepath.Join(repo, ".agents", "lock.yaml")
 
-	originalCommit := commitDependencyTransaction
-	commitDependencyTransaction = func(_ context.Context, _ string, desired []dependencytxn.DesiredFile, _ ...dependencytxn.Option) (dependencytxn.Result, error) {
+	originalCommit := lifecycle.CommitDependencyTransaction
+	lifecycle.CommitDependencyTransaction = func(_ context.Context, _ string, desired []dependencytxn.DesiredFile, _ ...dependencytxn.Option) (dependencytxn.Result, error) {
 		foundConfig, foundLock := false, false
 		for _, file := range desired {
 			switch filepath.Base(file.Path) {
@@ -553,17 +554,17 @@ func TestPrepareRuntimeLocksCommitsStagedConfigAndLockTogether(t *testing.T) {
 		}
 		return dependencytxn.Result{}, dependencytxn.ErrGenerationConflict
 	}
-	t.Cleanup(func() { commitDependencyTransaction = originalCommit })
+	t.Cleanup(func() { lifecycle.CommitDependencyTransaction = originalCommit })
 
 	generation, err := dependencytxn.ReadGeneration(configPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	canonicalPath, err := canonicalizeFuturePath(configPath)
+	canonicalPath, err := lifecycle.CanonicalizeFuturePath(configPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, _, err = prepareRuntimeLocks(context.Background(), repo, repo, lockMode{stagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: configPath, Path: canonicalPath, Expected: generation, Bytes: staged, Mode: 0o644}}})
+	_, _, _, err = lifecycle.PrepareRuntimeLocks(context.Background(), repo, repo, lifecycle.LockMode{StagedConfigEdits: []pipeline.StagedConfigEdit{{RequestedPath: configPath, Path: canonicalPath, Expected: generation, Bytes: staged, Mode: 0o644}}})
 	if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
 		t.Fatalf("error = %v, want generation conflict", err)
 	}

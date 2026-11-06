@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Adyen/agent-marketplace/internal/session"
 )
 
 // spec: resource-selection/tui-update-refuses-a-newly-missing-selection
@@ -101,7 +103,7 @@ skills:
 			tc.mutate(t, working)
 			commitAndPushAll(t, working, "mutate upstream")
 
-			_, err := runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repoRoot), true)
+			_, err := session.RuntimeDependencyLifecycle(context.Background(), mustWorkspace(t, repoRoot), true)
 			assertUpdateRefusedUnchanged(t, before, snapshot(), "", err, tc.missing)
 		})
 	}
@@ -190,7 +192,7 @@ skills:
 			tc.mutate(t, working)
 			commitAndPushAll(t, working, "mutate upstream")
 
-			if _, err := runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repoRoot), true); err != nil {
+			if _, err := session.RuntimeDependencyLifecycle(context.Background(), mustWorkspace(t, repoRoot), true); err != nil {
 				t.Fatalf("TUI update refused: %v", err)
 			}
 			if got := readLockDocument(t, lockPath).Registries[0].Commit; got == beforeCommit {
@@ -222,7 +224,7 @@ func TestTUIDependencyLifecycleSyncDoesNotRefuse(t *testing.T) {
 	writeSkill(t, working, "alpha-renamed", "Alpha v2", nil)
 	commitAndPushAll(t, working, "rename alpha")
 
-	_, err := runTUIDependencyLifecycle(context.Background(), mustWorkspace(t, repoRoot), false)
+	_, err := session.RuntimeDependencyLifecycle(context.Background(), mustWorkspace(t, repoRoot), false)
 	if err != nil {
 		t.Fatalf("TUI sync failed: %v", err)
 	}

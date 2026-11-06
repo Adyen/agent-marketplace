@@ -11,6 +11,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -50,7 +51,7 @@ func TestInspectReportsResolvedInventoryBeforeDryRun(t *testing.T) {
 				Repo:   func() (*config.Config, error) { return &config.Config{}, nil },
 				Local:  func() (*config.LocalConfig, error) { return nil, nil },
 			},
-			ConfigReady: func(*config.Config) { order = append(order, "config") },
+			ConfigReady: func(*config.Config, []hcc.Target) { order = append(order, "config") },
 		},
 		Resolved: func(result InspectionResult) {
 			if result.MergedCfg == nil || len(result.ConfigErrors) != 0 {

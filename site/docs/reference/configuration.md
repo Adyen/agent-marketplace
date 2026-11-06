@@ -139,8 +139,25 @@ Unknown top-level fields are rejected.
 | `update_check` | mapping | no | Release upgrade notice: `enabled` (default `true`). Organization and user files only; the user value wins. |
 | `telemetry` | mapping | no | Machine telemetry policy: `level`, `endpoint`, `community_reporting`, `retention_policy`, `ca_file`, `allow_insecure`, `headers`. See the [telemetry reference](telemetry.md). Organization and user files only. |
 | `materialization` | mapping | no | Whether generated resources are symlinks or regular files: `mode` and `targets`. See [Materialization](#materialization). |
+| `gui` | mapping | no | Desktop GUI policy. `version_check` is effective only in organization configuration; lower-layer declarations are accepted and ignored with a warning. See [GUI release checks](#gui-release-checks). |
 
 `harnesses`, `allowed_registries`, and `allowed_marketplaces` must be lists of strings. Allowlist entries must compile as regular expressions.
+
+## GUI release checks
+
+`gui.version_check` is a boolean in the top-level `gui` mapping and applies only to the desktop GUI. If Consumer organization configuration omits the key, its default is `true`; that default or an explicit `true` lets the GUI compare its running version with the latest stable public GitHub release and display an availability notice. `false` skips the request and notice. The GUI does not download or install an update, and the CLI does not perform release checks based on this field.
+
+The desktop GUI reads and writes the user-personal configuration. It reads organization configuration as read-only. A value in user-personal, repository-committed, or personal-local configuration is accepted for compatibility, ignored with a warning, and cannot override the organization setting.
+
+> **Reader-first rollout:** Deploy `gui.version_check` only after every managed client runs a release whose CLI reads the `gui` mapping. Older v4 clients reject this unknown top-level field, and strict legacy readers reject `gui` too. Until the fleet upgrade is verified, leave the key absent.
+
+Organization configuration example:
+
+```yaml
+apiVersion: agent-marketplace/v4
+gui:
+  version_check: false
+```
 
 ## `harnesses`
 

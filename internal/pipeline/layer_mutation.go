@@ -49,12 +49,20 @@ func (m *LayerMutation) Apply(binding config.SourceBinding, change config.Select
 	return m.editor.Apply(binding, change)
 }
 
+func (m *LayerMutation) ApplyRootOwned(binding config.SourceBinding, change config.SelectionChange) error {
+	return m.editor.ApplyRootOwned(binding, change)
+}
+
 func (m *LayerMutation) LookupRegistry(entry config.RegistryEntry) (config.SourceBinding, bool, error) {
 	return m.editor.LookupRegistry(entry)
 }
 
 func (m *LayerMutation) RemoveSource(binding config.SourceBinding) error {
 	return m.editor.RemoveSource(binding)
+}
+
+func (m *LayerMutation) RemoveMarketplaceRegistration(entry config.MarketplaceEntry) error {
+	return m.editor.RemoveMarketplaceRegistration(entry)
 }
 
 func (m *LayerMutation) ClearInstallExclude(entry config.RegistryEntry, locator config.ResourceLocator) error {

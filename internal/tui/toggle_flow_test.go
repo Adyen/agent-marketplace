@@ -11,6 +11,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/internal/skill"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -170,7 +171,7 @@ resources:
 		t.Fatalf("write global config: %v", err)
 	}
 
-	// Mock cloneOrPull and discoverSkills since we're using a local registry.
+	// Mock session.CloneOrPull and discoverSkills since we're using a local registry.
 	restoreClone := swapCloneOrPull(func(url, ref string) (string, error) {
 		return url, nil
 	})
@@ -270,7 +271,7 @@ resources:
 // TestReadSnapshotReflectsProjectToggle exercises the project-scope toggle:
 // add a skill to the project config's registry entry skills list and verify
 // the rows reflect the project enablement.
-// spec: tui-startup/provisional-rows-retain-single-view-position-and-guarded-actions
+// spec: session-startup/provisional-rows-retain-single-view-position-and-guarded-actions
 func TestReadSnapshotReflectsProjectToggle(t *testing.T) {
 	repoRoot := t.TempDir()
 	homeDir := t.TempDir()
@@ -402,34 +403,34 @@ func newMockGlobalConfig() (*config.Config, error) {
 }
 
 func swapLoadGlobalConfig(fn func() (*config.Config, error)) func() {
-	prev := loadGlobalConfig
-	loadGlobalConfig = fn
+	prev := session.LoadGlobalConfig
+	session.LoadGlobalConfig = fn
 	return func() {
-		loadGlobalConfig = prev
+		session.LoadGlobalConfig = prev
 	}
 }
 
 func swapLoadRepoConfig(fn func() (*config.Config, error)) func() {
-	prev := loadRepoConfig
-	loadRepoConfig = fn
+	prev := session.LoadRepoConfig
+	session.LoadRepoConfig = fn
 	return func() {
-		loadRepoConfig = prev
+		session.LoadRepoConfig = prev
 	}
 }
 
 func swapLoadLocalConfig(fn func() (*config.LocalConfig, error)) func() {
-	prev := loadLocalConfig
-	loadLocalConfig = func(string) (*config.LocalConfig, error) { return fn() }
+	prev := session.LoadLocalConfig
+	session.LoadLocalConfig = func(string) (*config.LocalConfig, error) { return fn() }
 	return func() {
-		loadLocalConfig = prev
+		session.LoadLocalConfig = prev
 	}
 }
 
 func swapLoadOrgConfig(fn func() (*config.Config, error)) func() {
-	prev := loadOrgConfig
-	loadOrgConfig = fn
+	prev := session.LoadOrgConfig
+	session.LoadOrgConfig = fn
 	return func() {
-		loadOrgConfig = prev
+		session.LoadOrgConfig = prev
 	}
 }
 
@@ -655,7 +656,7 @@ func TestDisableSelectsAdjacentResourceAfterSnapshot(t *testing.T) {
 			}
 			updated, _ := m.Update(configWrittenMsg{operation: operation, skillName: tc.disabled, selectNext: true})
 			m = updated.(Model)
-			generation := m.requests.active(requestSnapshot)
+			generation := m.requests.Active(requestSnapshot)
 			after := []row{alpha, bravo, charlie}
 			after[tc.disabledIndex] = mkRow(tc.disabled, withAvailable)
 			updated, _ = m.Update(snapshotLoadedMsg{generation: generation, rows: after})
@@ -715,7 +716,7 @@ func TestEnableKeepsSelectionWhenTheReloadLocksItsSource(t *testing.T) {
 			}
 			updated, _ := m.Update(configWrittenMsg{operation: operation, skillName: "alpha-skill", enabled: true})
 			m = updated.(Model)
-			updated, _ = m.Update(snapshotLoadedMsg{generation: m.requests.active(requestSnapshot), rows: tc.after})
+			updated, _ = m.Update(snapshotLoadedMsg{generation: m.requests.Active(requestSnapshot), rows: tc.after})
 			m = updated.(Model)
 
 			selected, ok := m.selectedRow()
@@ -752,7 +753,7 @@ func TestDisableSelectsAdjacentResourceWhenTheReloadLocksItsSource(t *testing.T)
 	updated, _ := m.Update(configWrittenMsg{operation: operation, skillName: "bravo", selectNext: true})
 	m = updated.(Model)
 	after := []row{gitRow("alpha", locked, withProject), gitRow("bravo", locked, withAvailable), gitRow("charlie", locked, withProject)}
-	updated, _ = m.Update(snapshotLoadedMsg{generation: m.requests.active(requestSnapshot), rows: after})
+	updated, _ = m.Update(snapshotLoadedMsg{generation: m.requests.Active(requestSnapshot), rows: after})
 	m = updated.(Model)
 
 	selected, ok := m.selectedRow()
@@ -783,7 +784,7 @@ func TestOpenDetailFollowsItsResourceWhenTheReloadLocksItsSource(t *testing.T) {
 	updated, _ := m.Update(configWrittenMsg{operation: operation, skillName: "alpha-skill", enabled: true})
 	m = updated.(Model)
 	locked := "file:///registries/fixture@sha1:87aecb6b:skills"
-	updated, _ = m.Update(snapshotLoadedMsg{generation: m.requests.active(requestSnapshot), rows: []row{gitRow("alpha-skill", locked, withLocal), gitRow("beta-skill", locked, withProject)}})
+	updated, _ = m.Update(snapshotLoadedMsg{generation: m.requests.Active(requestSnapshot), rows: []row{gitRow("alpha-skill", locked, withLocal), gitRow("beta-skill", locked, withProject)}})
 	m = updated.(Model)
 
 	if m.pane != paneDetail || m.detailKey == "" {
@@ -891,7 +892,7 @@ func TestDisableInStatusTabKeepsListScrollPosition(t *testing.T) {
 	m = updated.(Model)
 	after := append([]row(nil), enabled...)
 	after[1] = mkRow(disabled, withAvailable)
-	updated, _ = m.Update(snapshotLoadedMsg{generation: m.requests.active(requestSnapshot), rows: after})
+	updated, _ = m.Update(snapshotLoadedMsg{generation: m.requests.Active(requestSnapshot), rows: after})
 	m = updated.(Model)
 
 	selected, ok := m.selectedRow()
@@ -916,7 +917,7 @@ func TestToggleRemainsSerializedUntilAuthoritativeReload(t *testing.T) {
 	}
 	updated, cmd := m.Update(configWrittenMsg{operation: first, skillName: "review", enabled: true})
 	m = updated.(Model)
-	generation := m.requests.active(requestSnapshot)
+	generation := m.requests.Active(requestSnapshot)
 	if cmd == nil || generation == 0 {
 		t.Fatal("config write did not schedule an authoritative reload")
 	}
@@ -930,7 +931,7 @@ func TestToggleRemainsSerializedUntilAuthoritativeReload(t *testing.T) {
 	}
 	updated, _ = m.Update(snapshotLoadedMsg{generation: generation, rows: []row{mkRow("review", withProject)}, mergedCfg: &config.Config{}, driftAssessment: driftReady})
 	m = updated.(Model)
-	if m.operations.active != nil {
+	if m.operations.Active != nil {
 		t.Fatal("accepted reload left the toggle blocked")
 	}
 	if _, ok := m.beginOperation(operationMutation); !ok {
@@ -947,17 +948,17 @@ func TestToggleSupersededReloadReportsAuthoritativeFailure(t *testing.T) {
 	}
 	updated, _ := m.Update(configWrittenMsg{operation: first, skillName: "review", enabled: true})
 	m = updated.(Model)
-	original := m.requests.active(requestSnapshot)
+	original := m.requests.Active(requestSnapshot)
 	superseding := m.beginRequest(requestSnapshot)
 	updated, _ = m.Update(snapshotLoadedMsg{generation: original, rows: []row{mkRow("stale", withProject)}})
 	m = updated.(Model)
-	if m.operations.active == nil || m.pendingToggleReload != original {
+	if m.operations.Active == nil || m.pendingToggleReload != original {
 		t.Fatal("stale snapshot completed a pending toggle")
 	}
 	failure := fmt.Errorf("catalog unavailable")
 	updated, _ = m.Update(snapshotLoadedMsg{generation: superseding, mergedCfg: &config.Config{}, driftAssessment: driftFailed, errs: []error{failure}})
 	m = updated.(Model)
-	if m.operations.active != nil || m.pendingToggleReload != 0 {
+	if m.operations.Active != nil || m.pendingToggleReload != 0 {
 		t.Fatal("accepted failed reload left the toggle operation active")
 	}
 	if !m.rowsStale || !contains(m.toast, "catalog unavailable") {

@@ -11,6 +11,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -24,9 +25,9 @@ func TestMarketplaceSelectionIndexKeepsDistinctPins(t *testing.T) {
 	if errs := config.ValidateMarketplaceEntries([]config.MarketplaceEntry{entry}); len(errs) > 0 {
 		t.Fatalf("pins rejected: %v", errs)
 	}
-	index := indexMarketplaceSelections(&config.Config{Marketplaces: []config.MarketplaceEntry{entry}})
-	firstKey := marketplaceSelectionKey(marketplaceCatalogKey(entry, entry.Resources[0]), ir.KindMcpServer.String(), "probe")
-	secondKey := marketplaceSelectionKey(marketplaceCatalogKey(entry, entry.Resources[1]), ir.KindMcpServer.String(), "probe")
+	index := session.IndexMarketplaceSelections(&config.Config{Marketplaces: []config.MarketplaceEntry{entry}})
+	firstKey := session.MarketplaceSelectionKey(marketplaceCatalogKey(entry, entry.Resources[0]), ir.KindMcpServer.String(), "probe")
+	secondKey := session.MarketplaceSelectionKey(marketplaceCatalogKey(entry, entry.Resources[1]), ir.KindMcpServer.String(), "probe")
 	if firstKey == secondKey || index[firstKey][config.RepoCommitted].Pin.Digest != d2 || index[secondKey][config.RepoCommitted].Pin.Digest != d1 {
 		t.Fatalf("selection index collapsed pins: %#v", index)
 	}

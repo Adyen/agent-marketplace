@@ -15,6 +15,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 )
 
@@ -561,9 +562,9 @@ func TestRemoveBlockedManagedResourceAuthorizationChanges(t *testing.T) {
 				t.Fatal(configErr)
 			}
 			var expected map[string]string
-			original := commitDependencyTransaction
-			t.Cleanup(func() { commitDependencyTransaction = original })
-			commitDependencyTransaction = func(ctx context.Context, state string, desired []dependencytxn.DesiredFile, options ...dependencytxn.Option) (dependencytxn.Result, error) {
+			original := lifecycle.CommitDependencyTransaction
+			t.Cleanup(func() { lifecycle.CommitDependencyTransaction = original })
+			lifecycle.CommitDependencyTransaction = func(ctx context.Context, state string, desired []dependencytxn.DesiredFile, options ...dependencytxn.Option) (dependencytxn.Result, error) {
 				options = append(options, dependencytxn.WithFaultHook(func(point dependencytxn.FaultPoint) error {
 					if point.Stage == dependencytxn.FaultAfterFinalize && scenario == "restored" {
 						if err := os.WriteFile(f.configPath, originalConfig, 0o600); err != nil {
@@ -909,11 +910,11 @@ func TestRemoveBlockedManagedSkillFIFOAuthorization(t *testing.T) {
 		t.Fatalf("include seed: %v\n%s", err, out)
 	}
 	f.block(t)
-	original := commitDependencyTransaction
-	t.Cleanup(func() { commitDependencyTransaction = original })
+	original := lifecycle.CommitDependencyTransaction
+	t.Cleanup(func() { lifecycle.CommitDependencyTransaction = original })
 	var expected map[string]string
 	var fifoInfo os.FileInfo
-	commitDependencyTransaction = func(ctx context.Context, state string, desired []dependencytxn.DesiredFile, options ...dependencytxn.Option) (dependencytxn.Result, error) {
+	lifecycle.CommitDependencyTransaction = func(ctx context.Context, state string, desired []dependencytxn.DesiredFile, options ...dependencytxn.Option) (dependencytxn.Result, error) {
 		if fifoInfo != nil {
 			t.Fatal("unexpected second publication attempt")
 		}

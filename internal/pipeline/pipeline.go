@@ -86,7 +86,7 @@ type ResolveOptions struct {
 	MarketplaceSourceFilter func(config.Source) bool
 	BrowsingConfigReady     func(*config.Config)
 	ProvisionalConfigReady  func(*config.Config, *config.LocalConfig)
-	ConfigReady             func(*config.Config)
+	ConfigReady             func(*config.Config, []hcc.Target)
 	// MarketplaceArtifactsFromCache resolves Marketplace selections into
 	// materializable artifacts from verified local cache evidence during
 	// inspect-mode resolution — exactly the semantics offline sync uses. No
@@ -560,7 +560,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		provisionalReady(mergedCfg, ec.Local)
 	}
 	if opts.ConfigReady != nil && mergedCfg != nil {
-		opts.ConfigReady(mergedCfg)
+		opts.ConfigReady(mergedCfg, result.TargetHarnesses)
 	}
 	registryCount := 0
 	if mergedCfg != nil {

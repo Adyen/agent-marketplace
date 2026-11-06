@@ -427,7 +427,7 @@ func TestStaleRefreshLoadedMsgIsIgnoredAfterReloadStarts(t *testing.T) {
 		rows:         []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "new-state"}}}},
 		filteredRows: []row{{Artifact: resolver.ResolvedArtifact{Entry: catalog.Entry{Name: "new-state"}}}},
 		refreshing:   true,
-		requests:     requestState{next: 1, snapshot: 1},
+		requests:     requestState{Next: 1, Snapshot: 1},
 		width:        80,
 		height:       24,
 		keys:         defaultKeyMap,
@@ -440,7 +440,7 @@ func TestStaleRefreshLoadedMsgIsIgnoredAfterReloadStarts(t *testing.T) {
 	}
 
 	gotModel := updatedModel.(Model)
-	if got := gotModel.requests.active(requestSnapshot); got != 2 {
+	if got := gotModel.requests.Active(requestSnapshot); got != 2 {
 		t.Fatalf("active snapshot generation = %d, want 2", got)
 	}
 

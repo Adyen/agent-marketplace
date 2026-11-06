@@ -251,9 +251,9 @@ func glyphStyle(glyph string) lipgloss.Style {
 // statusSymbol renders the row's authoritative status as a styled symbol on
 // color-capable profiles and its ASCII glyph on monochrome terminals.
 func statusSymbol(r row) string {
-	st := r.status()
+	st := r.Status()
 	if !colorCapable() {
-		return st.glyph
+		return st.Glyph
 	}
-	return st.symbol
+	return st.Symbol
 }

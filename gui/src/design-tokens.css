@@ -1,0 +1,71 @@
+@import "../../design/semantic-colors.css";
+
+/*
+ * GUI adapter. Maps the shared semantic roles and the ink-alpha scale in
+ * gui/DESIGN.md onto the Nuxt UI variables that the components read.
+ */
+
+:root {
+  --ink-rgb: 17 17 17;
+  --gui-canvas: #ffffff;
+  --gui-ink: rgb(var(--ink-rgb) / 1);
+  --gui-ink-2: rgb(var(--ink-rgb) / 0.607);
+  --gui-ink-3: rgb(var(--ink-rgb) / 0.48);
+  --gui-line: rgb(var(--ink-rgb) / 0.178);
+  --gui-s0100: rgb(var(--ink-rgb) / 0.042);
+  --gui-s0200: rgb(var(--ink-rgb) / 0.074);
+  --gui-s0400: rgb(var(--ink-rgb) / 0.145);
+  --gui-layer: rgb(var(--ink-rgb) / 0.042);
+  --gui-signal: #0abf53;
+  --gui-signal-ink: var(--gui-ink);
+  --gui-solid-bg: #111111;
+  --gui-solid-ink: #ffffff;
+  --gui-scrim: rgb(0 0 0 / 0.32);
+  --gui-shadow: 0 24px 64px rgb(0 0 0 / 0.22);
+  --gui-diff-add: color-mix(in srgb, var(--am-color-status-ready) 12%, transparent);
+  --gui-diff-remove: color-mix(in srgb, var(--am-color-status-danger) 12%, transparent);
+
+  --gui-sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+  --gui-mono: ui-monospace, "SF Mono", "Geist Mono", Menlo, Consolas, monospace;
+
+  --gui-radius-tag: 4px;
+  --gui-radius-control: 8px;
+  --gui-radius-card: 12px;
+  --gui-radius-modal: 20px;
+
+  --gui-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --gui-fade: 150ms var(--gui-ease);
+  --gui-slide: 200ms var(--gui-ease);
+
+  --gui-sidebar-width: 260px;
+  --gui-inspector-width: 360px;
+  --gui-toolbar-height: 44px;
+  --gui-statusbar-height: 32px;
+
+  --ui-primary: var(--gui-solid-bg);
+  --ui-bg: var(--gui-canvas);
+  --ui-bg-elevated: var(--gui-canvas);
+  --ui-bg-muted: var(--gui-s0100);
+  --ui-bg-accented: var(--gui-s0200);
+  --ui-bg-inverted: var(--gui-solid-bg);
+  --ui-text: var(--gui-ink);
+  --ui-text-toned: var(--gui-ink-2);
+  --ui-text-muted: var(--gui-ink-2);
+  --ui-text-dimmed: var(--gui-ink-3);
+  --ui-text-highlighted: var(--gui-ink);
+  --ui-text-inverted: var(--gui-solid-ink);
+  --ui-border: var(--gui-line);
+  --ui-border-muted: var(--gui-s0200);
+  --ui-border-accented: var(--gui-s0400);
+  --ui-radius: var(--gui-radius-control);
+}
+
+:root.dark {
+  --ink-rgb: 255 255 255;
+  --gui-canvas: #111111;
+  --gui-signal-ink: var(--gui-signal);
+  --gui-solid-bg: #ffffff;
+  --gui-solid-ink: #111111;
+  --gui-scrim: rgb(0 0 0 / 0.5);
+  --gui-shadow: 0 24px 64px rgb(0 0 0 / 0.6);
+}

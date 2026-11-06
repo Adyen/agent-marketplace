@@ -10,19 +10,20 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2/compat"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/charmbracelet/x/ansi"
 )
 
 func TestDetailSourceAndRenderedOutputAreBounded(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "large.md")
-	if err := os.WriteFile(path, []byte(strings.Repeat("x", maxDetailSourceBytes+1024)), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", session.MaxDetailSourceBytes+1024)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	content, truncated, err := readDetailSource(path)
+	content, truncated, err := session.ReadDetailSourceLimit(path, session.MaxDetailSourceBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !truncated || len(content) != maxDetailSourceBytes {
+	if !truncated || len(content) != session.MaxDetailSourceBytes {
 		t.Fatalf("bounded read = %d bytes, truncated=%v", len(content), truncated)
 	}
 

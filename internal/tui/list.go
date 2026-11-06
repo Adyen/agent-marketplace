@@ -70,7 +70,7 @@ func flatItemHeight(item flatItem, width int, compact bool) int {
 		}
 		return 1
 	}
-	memo := item.Row.labelMemo
+	memo, _ := item.Row.LabelMemo.(*rowLabelMemo)
 	color := colorCapable()
 	if memo != nil && memo.valid && memo.depth == item.Depth &&
 		memo.width == width && memo.compact == compact && memo.color == color {
@@ -209,7 +209,7 @@ func stylizeFlatItem(it flatItem, width int, compact bool) string {
 		r := it.Row
 		g := statusSymbol(r)
 		name := resourceLabel(r)
-		if len(r.searchMatchRunes) > 0 {
+		if len(r.SearchMatchRunes) > 0 {
 			name = highlightNameMatches(r, name)
 		}
 		glyphRendered := glyphStyle(g).Render(g)
@@ -231,7 +231,7 @@ func resourceLabel(r row) string {
 	if registry == "" {
 		registry = "(local)"
 	}
-	return sanitizeTerminalData(r.kindLabel()+" "+registry+"/"+r.Artifact.Name, terminalSingleLine)
+	return sanitizeTerminalData(r.KindLabel()+" "+registry+"/"+r.Artifact.Name, terminalSingleLine)
 }
 
 func scopeBadgeColumn(r row) string {
@@ -253,8 +253,8 @@ func highlightNameMatches(r row, label string) string {
 	if offset < 0 {
 		return label
 	}
-	idx := make([]int, 0, len(r.searchMatchRunes))
-	for _, ri := range r.searchMatchRunes {
+	idx := make([]int, 0, len(r.SearchMatchRunes))
+	for _, ri := range r.SearchMatchRunes {
 		idx = append(idx, ri+offset)
 	}
 	return lipgloss.StyleRunes(label, idx, styleSearchMatch, lipgloss.NewStyle())

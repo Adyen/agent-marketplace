@@ -30,7 +30,7 @@ func TestInstallSourceKeyAndMutationGuard(t *testing.T) {
 		name   string
 		mutate func(*Model)
 	}{
-		{name: "active operation", mutate: func(m *Model) { m.operations.begin(operationMutation) }},
+		{name: "active operation", mutate: func(m *Model) { m.operations.Begin(operationMutation) }},
 		{name: "invalid configuration", mutate: func(m *Model) { m.configInvalid = true }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -67,13 +67,13 @@ func TestInstallSourceModalCancelsAndDropsSupersededPreview(t *testing.T) {
 		preview:    &pipeline.SourcePreview{URL: "stale"},
 	})
 	m = next.(Model)
-	if m.installSource.preview != nil || m.requests.active(requestInstallPreview) != current {
-		t.Fatalf("superseded preview changed modal: preview=%#v active=%d", m.installSource.preview, m.requests.active(requestInstallPreview))
+	if m.installSource.preview != nil || m.requests.Active(requestInstallPreview) != current {
+		t.Fatalf("superseded preview changed modal: preview=%#v active=%d", m.installSource.preview, m.requests.Active(requestInstallPreview))
 	}
 	next, _ = m.Update(keyNamed("esc"))
 	m = next.(Model)
-	if m.pane != paneList || m.requests.active(requestInstallPreview) != 0 {
-		t.Fatalf("Esc did not cancel modal/request: pane=%v active=%d", m.pane, m.requests.active(requestInstallPreview))
+	if m.pane != paneList || m.requests.Active(requestInstallPreview) != 0 {
+		t.Fatalf("Esc did not cancel modal/request: pane=%v active=%d", m.pane, m.requests.Active(requestInstallPreview))
 	}
 }
 
@@ -127,7 +127,7 @@ func TestInstallSourceBackspaceDuringPreviewDropsStalePreview(t *testing.T) {
 	m.installSource.values.url = url
 	next, _ = m.Update(keyNamed("enter"))
 	m = next.(Model)
-	generation := m.requests.active(requestInstallPreview)
+	generation := m.requests.Active(requestInstallPreview)
 	if generation == 0 || !m.installSource.loading {
 		t.Fatalf("preview did not start: generation=%d loading=%t", generation, m.installSource.loading)
 	}
@@ -210,9 +210,9 @@ func TestInstallSourceRefusalWhileAnotherPaneIsOpen(t *testing.T) {
 			if m.pane != paneHelp {
 				t.Fatalf("refusal changed the open pane to %v, want paneHelp", m.pane)
 			}
-			if m.installSource.step != tc.wantStep || m.installSource.loading || m.requests.active(requestInstallPreview) != 0 {
+			if m.installSource.step != tc.wantStep || m.installSource.loading || m.requests.Active(requestInstallPreview) != 0 {
 				t.Fatalf("refusal state = step %v loading=%t preview request=%d, want step %v without a preview",
-					m.installSource.step, m.installSource.loading, m.requests.active(requestInstallPreview), tc.wantStep)
+					m.installSource.step, m.installSource.loading, m.requests.Active(requestInstallPreview), tc.wantStep)
 			}
 			if !strings.Contains(m.toast, tc.wantToast) || cmd == nil {
 				t.Fatalf("refusal toast = %q cmd=%t, want toast containing %q", m.toast, cmd != nil, tc.wantToast)
@@ -225,8 +225,8 @@ func TestInstallSourceRefusalWhileAnotherPaneIsOpen(t *testing.T) {
 				t.Fatalf("next i = pane %v step %v, want resumed refusal state at step %v", m.pane, m.installSource.step, tc.wantStep)
 			}
 			if tc.wantStep == installSourceStepPick {
-				if !m.installSource.loading || m.requests.active(requestInstallPreview) == 0 {
-					t.Fatalf("moved resume did not re-preview: loading=%t request=%d", m.installSource.loading, m.requests.active(requestInstallPreview))
+				if !m.installSource.loading || m.requests.Active(requestInstallPreview) == 0 {
+					t.Fatalf("moved resume did not re-preview: loading=%t request=%d", m.installSource.loading, m.requests.Active(requestInstallPreview))
 				}
 				if m.installSource.notice != "main moved from 01234567 to 89abcdef; preview again" {
 					t.Fatalf("moved resume lost its notice: %q", m.installSource.notice)
