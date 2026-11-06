@@ -19,7 +19,7 @@
 ## 3. Verification
 
 - [x] 3.1 `go test ./tools/model-catalog-audit -count=1`, `go test ./pkg/harness-compilation/modelpolicy -count=1`, `go vet ./tools/model-catalog-audit` (AC8)
-- [ ] 3.2 Live `go run ./tools/model-catalog-audit check` shows the Gemini, Devin, and family-pin findings (AC8)
+- [x] 3.2 Live `go run ./tools/model-catalog-audit check` shows the Gemini, Devin, and family-pin findings (AC8)
 - [x] 3.3 Annotate each scenario with `// spec: model-catalog-audit/<slug>` and pass `go run ./tools/specaudit trace`
 
 ## 4. Gemini redirect and Cursor CLI inventory
