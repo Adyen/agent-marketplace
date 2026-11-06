@@ -305,7 +305,7 @@ var nativeLayouts = map[Target]NativeLayout{
 		{
 			ID:         "default",
 			Prefix:     ".",
-			Components: []string{"skills", "commands", "hook-support"},
+			Components: []string{"skills", "commands", "agents", "hook-support"},
 			ResourcePaths: map[ir.ResourceKind]string{
 				ir.KindSkill:   "skills/%s/SKILL.md",
 				ir.KindCommand: "commands/%s.md",

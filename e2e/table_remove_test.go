@@ -98,4 +98,46 @@ func init() {
 			ok("sync").absent("~/.factory/skills/entry-skill"),
 		},
 	})
+
+	// spec: materialization/deselected-gemini-subagents-are-removed
+	testTable = append(testTable, TestCase{
+		Name: "remove/gemini_last_subagent_removes_repo_output",
+		Registries: []RegistryDef{
+			{Name: "gemini-subagent-remove",
+				Skills:    []Skill{{Name: "keep-skill", Description: "Stays installed"}},
+				Subagents: []Subagent{{Name: "helper", Description: "Removed by the test"}}},
+		},
+		GlobalCfg: v4("harnesses: [gemini]"),
+		RepoCfg: v4(
+			"sources: {team: {git: '{{REG:gemini-subagent-remove}}', ref: main}}",
+			"resources: {team: {include: [skill/keep-skill, subagent/helper]}}",
+		),
+		Steps: []Step{
+			ok("sync").symlinks("./.gemini/agents/helper.md").exists("./.gemini/skills/keep-skill/SKILL.md"),
+			ok("remove", "--scope", "repo", "helper"),
+			ok("sync").absent("./.gemini/agents/helper.md").exists("./.gemini/skills/keep-skill/SKILL.md"),
+			ok("sync", "--check"),
+		},
+	})
+
+	// spec: materialization/deselected-gemini-subagents-are-removed
+	testTable = append(testTable, TestCase{
+		Name: "remove/gemini_last_subagent_removes_user_output",
+		Registries: []RegistryDef{
+			{Name: "gemini-subagent-remove-user",
+				Skills:    []Skill{{Name: "keep-skill", Description: "Stays installed"}},
+				Subagents: []Subagent{{Name: "helper", Description: "Removed by the test"}}},
+		},
+		GlobalCfg: v4(
+			"harnesses: [gemini]",
+			"sources: {team: {git: '{{REG:gemini-subagent-remove-user}}', ref: main}}",
+			"resources: {team: {include: [skill/keep-skill, subagent/helper]}}",
+		),
+		Steps: []Step{
+			ok("sync").symlinks("~/.gemini/agents/helper.md").exists("~/.gemini/skills/keep-skill/SKILL.md"),
+			ok("remove", "--scope", "user", "helper"),
+			ok("sync").absent("~/.gemini/agents/helper.md").exists("~/.gemini/skills/keep-skill/SKILL.md"),
+			ok("sync", "--check"),
+		},
+	})
 }

@@ -304,8 +304,8 @@ var portableNominationPartitions = func() map[hcc.Target][]portableNominationPar
 // A digest proves no authorship because committed bytes are public, so a
 // matching digest must not make such a path prunable. Single-root targets get
 // no component allowlist: their declared components are not exhaustive
-// (Gemini subagents, rules), and refusing a genuine entry would block the
-// scope's materialization.
+// (rules), and refusing a genuine entry would block the scope's
+// materialization.
 func admitPortableNomination(target hcc.Target, machineScope bool, path, clean string) error {
 	definition, ok := targetmeta.Lookup(string(target))
 	if !ok {

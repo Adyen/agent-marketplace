@@ -36,7 +36,7 @@ func TestComponentsForScope(t *testing.T) {
 		{"windsurf repo scope keeps workflows", hcc.TargetWindsurf, false, []string{"skills", "workflows", "hook-support"}},
 		{"windsurf machine scope renames workflows", hcc.TargetWindsurf, true, []string{"skills", "global_workflows", "hook-support"}},
 		{"claude machine scope unchanged", hcc.TargetClaude, true, []string{"skills", "commands", "agents", "hooks", "hook-support", ".claude-plugin"}},
-		{"gemini machine scope unchanged", hcc.TargetGemini, true, []string{"skills", "commands", "hook-support"}},
+		{"gemini machine scope unchanged", hcc.TargetGemini, true, []string{"skills", "commands", "agents", "hook-support"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -54,6 +54,35 @@ func TestComponentsForScope(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestGeminiSubagentDirectoryIsADeclaredComponent pins the Gemini layout
+// against the path its compiler emits for a subagent. Materialization prunes
+// only declared components, so a subagent directory the layout does not name
+// is never cleaned when its last subagent is deselected.
+func TestGeminiSubagentDirectoryIsADeclaredComponent(t *testing.T) {
+	agent := ir.NewSubagent("probe-subagent", "probe", "body", "", nil, "", nil, "", nil, ir.SourceRef{})
+	result, err := hcc.Compile(agent, hcc.TargetGemini)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	var emitted []string
+	for _, a := range result.Artifacts {
+		emitted = append(emitted, a.Path)
+	}
+	if want := []string{".gemini/agents/probe-subagent.md"}; !slices.Equal(emitted, want) {
+		t.Fatalf("Gemini compiler emitted %v, want %v", emitted, want)
+	}
+
+	info, ok := TargetInfoMap[hcc.TargetGemini]
+	if !ok {
+		t.Fatal("no TargetInfo for gemini")
+	}
+	for _, machineScope := range []bool{false, true} {
+		if components := info.ComponentsForScope(machineScope); !slices.Contains(components, "agents") {
+			t.Errorf("ComponentsForScope(%v) = %v, want it to name agents", machineScope, components)
+		}
 	}
 }
 
