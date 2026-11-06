@@ -375,6 +375,83 @@ func (e *LayerEditor) Apply(binding SourceBinding, change SelectionChange) error
 	return e.applyV4(binding, op, locators, change.Tag)
 }
 
+func (e *LayerEditor) SetPluginMemberExcluded(binding SourceBinding, pluginName string, member ResourceLocator, excluded bool) error {
+	if err := e.checkBinding(binding); err != nil {
+		return err
+	}
+	if err := validateV4PluginRequestName(pluginName); err != nil {
+		return v4err("v4.locator", "resources."+binding.Name, 0, "%v", err)
+	}
+	if member.Kind == ir.KindPlugin {
+		return v4err("v4.locator", "resources."+binding.Name, 0, "plugin members cannot be plugins")
+	}
+	memberLocator := v4Locator(member)
+	if _, _, _, err := parseV4Locator(memberLocator, binding.Name); err != nil {
+		return v4err("v4.locator", "resources."+binding.Name, 0, "%v", err)
+	}
+	pluginLocator := "plugin/" + pluginName
+	resources := findMappingValue(e.root, "resources")
+	var group *yaml.Node
+	if resources != nil && resources.Kind == yaml.MappingNode {
+		group = findMappingValue(resources, binding.Name)
+	}
+	include, _ := v4GroupSeqs(group)
+	if include == nil {
+		return v4err("config.edit.unsupported-operation", "resources."+binding.Name, 0, "plugin request %q is not explicitly included", pluginLocator)
+	}
+	for _, item := range include.Content {
+		if !v4EditItemMatches(item, pluginLocator) {
+			continue
+		}
+		if e.v4IncludeOwned(binding.Name, pluginLocator) {
+			return v4err("config.edit.include-owned", "resources."+binding.Name, item.Line, "plugin request %q is included from another file", pluginLocator)
+		}
+		options := item
+		if item.Kind == yaml.ScalarNode {
+			if !excluded {
+				return nil
+			}
+			item.Kind = yaml.MappingNode
+			item.Tag = "!!map"
+			item.Content = []*yaml.Node{
+				{Kind: yaml.ScalarNode, Tag: "!!str", Value: "kind"},
+				{Kind: yaml.ScalarNode, Tag: "!!str", Value: "plugin"},
+				{Kind: yaml.ScalarNode, Tag: "!!str", Value: "name"},
+				{Kind: yaml.ScalarNode, Tag: "!!str", Value: pluginName},
+			}
+		} else if _, structured := v4StructuredPluginName(item); !structured {
+			if len(item.Content) != 2 || item.Content[0].Value != pluginLocator || item.Content[1].Kind != yaml.MappingNode {
+				return v4err("v4.resource-item", "resources."+binding.Name, item.Line, "plugin request %q has an invalid shape", pluginLocator)
+			}
+			options = item.Content[1]
+		}
+		excludeList := findMappingValue(options, "exclude")
+		if excluded {
+			if excludeList != nil && excludeList.Kind != yaml.SequenceNode {
+				return v4err("v4.type", "resources."+binding.Name+".exclude", excludeList.Line, "must be a list")
+			}
+			if excludeList != nil && v4EditSequenceContains(excludeList, memberLocator) {
+				return nil
+			}
+			if excludeList == nil {
+				excludeList = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+				setMappingValue(options, "exclude", excludeList)
+			}
+			v4ScalarAppend(excludeList, memberLocator)
+			e.changed = true
+			return nil
+		}
+		if excludeList != nil && v4EditRemoveLocator(excludeList, memberLocator) {
+			if len(excludeList.Content) == 0 {
+				removeMappingKeyByName(options, "exclude")
+			}
+			e.changed = true
+		}
+		return nil
+	}
+	return v4err("config.edit.unsupported-operation", "resources."+binding.Name, 0, "plugin request %q is not explicitly included", pluginLocator)
+}
+
 func (e *LayerEditor) validateLocators(binding SourceBinding, input []ResourceLocator) ([]ResourceLocator, error) {
 	seen := map[string]bool{}
 	out := make([]ResourceLocator, 0, len(input))
