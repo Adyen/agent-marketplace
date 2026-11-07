@@ -60,7 +60,7 @@ The endpoint serves the Prometheus text format and, when the scraper asks for it
 | `agent_marketplace_config_candidates_total` | counter | `outcome` | Runtime configuration candidates: `applied`, `rejected`, or `apply_failed`. |
 | `agent_marketplace_config_restart_required` | gauge | none | `1` while startup-owned configuration differs from the running process; otherwise `0`. |
 | `agent_marketplace_registry_last_successful_observation_timestamp_seconds` | gauge | `registry` | Unix timestamp of each registry's last successful observation. |
-| `agent_marketplace_registry_last_successful_index_timestamp_seconds` | gauge | `registry` | Unix timestamp of each registry's last successful index. |
+| `agent_marketplace_registry_last_successful_index_timestamp_seconds` | gauge | `registry` | Unix timestamp of each registry's last successful index. The series exists once the worker records an observation of the registry, so a `0` value means the registry has been observed since this process started but has not yet indexed successfully. |
 | `agent_marketplace_registry_consecutive_probe_failures` | gauge | `registry` | Consecutive failed source probes for each registry. |
 
 Label values:
@@ -78,9 +78,9 @@ The endpoint also exposes the standard Go runtime (`go_*`) and process (`process
 
 The three `listener`-labeled series observe requests inside the configuration authority and availability middleware. Public requests that fail the configuration authority check, or the availability check in `database` management mode, receive a `503` before they reach the instrumented router, so they still do not appear in those series. `agent_marketplace_public_request_duration_seconds` wraps those checks, so its `code` label records the early `503` responses and its `route` label carries the registered pattern or `unmatched`.
 
-An increasing `unchanged` observation counter with a stable last-index timestamp is healthy. Rising host-budget delays indicate admission pressure, not source failure. A recent successful observation with an old successful-index timestamp can indicate a failed or delayed refresh. Configuration rejection and restart-required drift are separate conditions. Each terminal refresh logs one `refresh finished` record with its registry, trigger, outcome, and duration; source failures remain observation outcomes and superseded refreshes are not failures.
+An increasing `unchanged` observation counter with a stable nonzero last-index timestamp is healthy. Rising host-budget delays indicate admission pressure, not source failure. A recent successful observation with an old successful-index timestamp can indicate a failed or delayed refresh. Configuration rejection and restart-required drift are separate conditions. Each terminal refresh logs one `refresh finished` record with its registry, trigger, outcome, and duration; source failures remain observation outcomes and superseded refreshes are not failures.
 
-Worker-only processes serve only `/metrics` on their operations listener; `/readyz` and public `/metrics` return `404`, and the public listener is not opened. All-role processes include each worker series once on their existing operations `/metrics`. With multiple workers, aggregate per-registry timestamps using `max by (registry)`.
+Worker-only processes serve only `/metrics` on their operations listener; `/readyz` returns `404`, and the public listener is not opened. All-role processes include each worker series once on their existing operations `/metrics`. With multiple workers, aggregate per-registry timestamps using `max by (registry)`.
 
 ## Keep operations endpoints private
 

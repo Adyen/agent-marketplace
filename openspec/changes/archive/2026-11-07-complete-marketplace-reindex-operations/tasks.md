@@ -26,4 +26,4 @@
 
 ## 6. Archive
 
-- [ ] 6.1 `openspec archive complete-marketplace-reindex-operations --yes`
+- [x] 6.1 `openspec archive complete-marketplace-reindex-operations --yes`
