@@ -3,13 +3,19 @@ package worker
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/acquire"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/job"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/sqlite"
 )
 
 type slowUnrelatedRegistryStore struct {
@@ -83,6 +89,115 @@ func BenchmarkRefresh(b *testing.B) {
 
 		if err := Refresh(ctx, deps, src); err != nil {
 			b.Fatalf("Refresh: %v", err)
+		}
+	}
+}
+
+func BenchmarkObservationCycle200Registries(b *testing.B) {
+	repo, cleanup := createTestRepo(b)
+	defer cleanup()
+	commit, err := testCommit(repo)
+	if err != nil {
+		b.Fatal(err)
+	}
+	cfg := createTestConfig(b, repo)
+	template := cfg.Registries[0]
+	cfg.Registries = make([]config.Registry, 200)
+	for i := range cfg.Registries {
+		src := template
+		src.ID = fmt.Sprintf("registry-%03d", i)
+		src.Slug = src.ID
+		src.Origin = fmt.Sprintf("https://registry-%03d.example.test", i)
+		cfg.Registries[i] = src
+	}
+	meta, blobs := openTestStores(b)
+	defer func() { _ = meta.Close() }()
+	deps := Deps{
+		Config:        cfg,
+		MetadataStore: meta,
+		BlobStore:     blobs,
+		ResolveRef: func(context.Context, string, string, acquire.Credentials, time.Duration) (string, error) {
+			return commit, nil
+		},
+	}
+	if err := EnsureMarketplace(context.Background(), &deps); err != nil {
+		b.Fatal(err)
+	}
+	if err := initializeObservationState(context.Background(), deps, cfg); err != nil {
+		b.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for _, src := range cfg.Registries {
+		generation, err := config.IndexingGeneration(cfg, src)
+		if err != nil {
+			b.Fatal(err)
+		}
+		observation, err := meta.GetRegistryObservation(context.Background(), store.RegistryID(src.ID))
+		if err != nil {
+			b.Fatal(err)
+		}
+		observation.ObservedCommit = commit
+		observation.SuccessfulCommit = commit
+		observation.SuccessfulGeneration = generation
+		observation.ObservedAt = now
+		observation.LastSuccessfulIndexAt = now
+		observation.ProbeStatus = store.RegistryProbeStatusOK
+		observation.NextReconcileAt = now.Add(time.Hour)
+		if _, err := meta.UpdateRegistryObservation(context.Background(), observation.Version, observation); err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	observer := newObserver(deps, cfg, time.Now)
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	b.Cleanup(func() { slog.SetDefault(previousLogger) })
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		for _, src := range cfg.Registries {
+			observation, err := meta.GetRegistryObservation(ctx, store.RegistryID(src.ID))
+			if err != nil {
+				b.Fatal(err)
+			}
+			observation.NextProbeAt = time.Time{}
+			if _, err := meta.UpdateRegistryObservation(ctx, observation.Version, observation); err != nil {
+				b.Fatal(err)
+			}
+		}
+		b.StartTimer()
+		for batch := 0; batch < 2; batch++ {
+			if err := observer.runCycle(ctx); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+}
+
+func BenchmarkDueObservationSelection200Registries(b *testing.B) {
+	meta := sqlite.New(filepath.Join(b.TempDir(), "marketplace.db"))
+	if err := meta.Open(context.Background()); err != nil {
+		b.Fatal(err)
+	}
+	defer func() { _ = meta.Close() }()
+	for i := 0; i < 200; i++ {
+		id := store.RegistryID(fmt.Sprintf("registry-%03d", i))
+		if _, err := meta.CreateRegistryObservation(context.Background(), store.RegistryObservation{RegistryID: id}); err != nil {
+			b.Fatal(err)
+		}
+	}
+	now := time.Now().UTC()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		due, err := meta.ListDueRegistryObservations(context.Background(), now, 256)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(due) != 200 {
+			b.Fatalf("due observations = %d, want 200", len(due))
 		}
 	}
 }

@@ -13,7 +13,7 @@ This file is separate from the consumer configuration that `install` and `sync` 
 
 ## Runtime changes without a restart
 
-A `serve` process running the worker role (`--role worker` or `--role all`) with `management.mode: file` rereads this file about once per second while it runs and applies worker-safe changes without a restart. It polls the file's bytes, so a file replaced by renaming another file over it is noticed just like an in-place edit; no signal is needed. In `database` management mode, and in `api`-only processes, the file is read once at startup.
+A `serve` process running the worker role (`--role worker` or `--role all`) with `management.mode: file` rereads this file about once per second while it runs and applies worker-safe changes without a restart. It polls the file's bytes, so a file replaced by renaming another file over it is noticed just like an in-place edit; no signal is needed. In `database` management mode, and in `api`-only processes, the file is read once at startup. Applied and rejected candidates are counted in worker metrics as well as logged.
 
 Changes that apply while the server runs:
 
@@ -26,6 +26,8 @@ Changes that apply while the server runs:
 Rewrites that do not change worker-relevant meaning cause no registry work. That includes comments, whitespace, mapping order, and an explicit value equal to its default. An edit that leaves the file missing, unreadable, truncated, malformed, or failing validation is rejected as a whole and logged once per distinct content as `config candidate rejected` with a bounded reason that contains no credential value; the last valid configuration keeps running and no registry is added, unlisted, or refreshed. Secret values are never part of the comparison, so rotating the file or environment value behind an unchanged credential reference causes no reindex.
 
 Changes to `listen`, `operations_listen`, `storage`, `instance`, `revocations`, `management`, `admin`, `catalog_projection`, `installation_metrics`, and `refresh_concurrency` are startup-owned: they are never applied while the server runs. When the file's values for those fields differ from the running startup values, the worker logs `restart-required config drift detected` naming the changed fields in its `fields` attribute while the rest of the candidate applies; when they match the startup values again it logs `restart-required config drift cleared`. Restart the API and worker processes to apply them.
+
+The worker reports this state with `agent_marketplace_config_restart_required` (`1` for drift, `0` otherwise). A worker-only process opens `operations_listen` for `/metrics` only; `/readyz` is `404`, and the public `listen` address is not opened. An all-role process publishes the worker series once on its existing operations `/metrics`. A worker and API sharing one network namespace must use different operations addresses.
 
 A refresh whose settings were superseded by a newer applied candidate cannot publish. It is logged as `stale generation prevented publication` and the registry is refreshed under the current settings instead. After upgrading to the release that introduced canonical indexing generations, each registry is reindexed once under its new generation; later observations of an unchanged registry perform no acquisition.
 
@@ -412,10 +414,10 @@ admin:
 | Role | Behavior |
 |---|---|
 | `api` | Runs the public and operations HTTP listeners. |
-| `worker` | Runs background indexing without the HTTP API. |
+| `worker` | Runs background indexing and serves only `/metrics` on the operations listener, without the HTTP API. |
 | `all` | Runs the API and the worker in one process. This is the default. |
 
-The public listener serves the well-known document, capability and instance metadata, search, registry and resource metadata, manifests, assessments, inspection content, artifacts, the optional catalog projection, the admin routes, and `/healthz`. The operations listener serves `/readyz` and `/metrics`. On the public listener, `/readyz` and `/metrics` return `404`. See the [Marketplace HTTP API reference](marketplace-http-api.md) for every route.
+The public listener serves the well-known document, capability and instance metadata, search, registry and resource metadata, manifests, assessments, inspection content, artifacts, the optional catalog projection, the admin routes, and `/healthz`. API/all operations listeners serve `/readyz` and `/metrics`; a worker-only operations listener serves `/metrics` only. On the public listener, `/readyz` and `/metrics` return `404`. See the [Marketplace HTTP API reference](marketplace-http-api.md) for every route.
 
 ### Maintenance adoption
 

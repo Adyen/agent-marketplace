@@ -354,6 +354,7 @@ jobs:
           web_doc="$(extract_doc Deployment agent-marketplace-web "$rendered")"
           docs_doc="$(extract_doc Deployment agent-marketplace-docs "$rendered")"
           api_service_doc="$(extract_doc Service agent-marketplace-api "$rendered")"
+          worker_service_doc="$(extract_doc Service agent-marketplace-worker "$rendered")"
           docs_service_doc="$(extract_doc Service agent-marketplace-docs "$rendered")"
           ingress_doc="$(extract_doc Ingress agent-marketplace "$rendered")"
           monitor_doc="$(extract_doc ServiceMonitor agent-marketplace-api "$rendered")"
@@ -419,7 +420,10 @@ jobs:
 
           require "API Service exposes the operations port" "$api_service_doc" "port: 9090"
           require "API Service targets the operations port" "$api_service_doc" "targetPort: operations"
+          require "worker Deployment exposes the operations port" "$worker_doc" "containerPort: 9090"
+          require "worker Service targets the operations port" "$worker_service_doc" "targetPort: operations"
           require "ServiceMonitor selects the operations port" "$monitor_doc" "port: operations"
+          require "ServiceMonitor selects worker services" "$monitor_doc" "- worker"
           reject "ServiceMonitor must not use targetPort" "$monitor_doc" "targetPort:"
           require "ServiceMonitor declares the scheme" "$monitor_doc" "scheme: http"
 

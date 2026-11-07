@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -64,11 +66,16 @@ are "worker" (background indexing), "api" (HTTP API), and "all" (both).`,
 			}
 			defer func() { _ = meta.Close() }()
 
+			var workerMetrics *worker.Metrics
+			if role == "worker" || role == "all" {
+				workerMetrics = worker.NewMetrics()
+			}
 			deps := worker.Deps{
 				Config:        cfg,
 				RuntimeSource: runtimeSource,
 				MetadataStore: meta,
 				BlobStore:     blobs,
+				Metrics:       workerMetrics,
 			}
 			if err := worker.EnsureMarketplace(ctx, &deps); err != nil {
 				slog.Error("serve failed", "reason", "ensure marketplace", "error", err)
@@ -92,6 +99,16 @@ are "worker" (background indexing), "api" (HTTP API), and "all" (both).`,
 
 			if role == "worker" || role == "all" {
 				backfillDone = worker.StartPlaceholderBackfill(backfillCtx, deps)
+				if role == "worker" {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						if err := runWorkerOperations(ctx, cfg.OperationsListen, workerMetrics); err != nil && !errors.Is(err, context.Canceled) {
+							slog.Error("worker operations server stopped", "error", err)
+							errCh <- fmt.Errorf("worker operations server: %w", err)
+						}
+					}()
+				}
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
@@ -106,7 +123,11 @@ are "worker" (background indexing), "api" (HTTP API), and "all" (both).`,
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					server := mpapi.NewServer(cfg, meta, blobs, mpapi.WithVersion(version))
+					options := []mpapi.ServerOption{mpapi.WithVersion(version)}
+					if workerMetrics != nil {
+						options = append(options, mpapi.WithCollectors(workerMetrics.Collectors()...))
+					}
+					server := mpapi.NewServer(cfg, meta, blobs, options...)
 					if err := server.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
 						slog.Error("api server stopped", "error", err)
 						errCh <- fmt.Errorf("api server: %w", err)
@@ -138,6 +159,45 @@ are "worker" (background indexing), "api" (HTTP API), and "all" (both).`,
 
 	cmd.AddCommand(newServeReindexCmd(), newServeAdoptCmd(), newServeResetCmd())
 	return cmd
+}
+
+func runWorkerOperations(ctx context.Context, address string, metrics *worker.Metrics) error {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", mpapi.NewOperationsMetricsHandler(metrics.Collectors()...))
+	server := &http.Server{
+		Handler:      mux,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return fmt.Errorf("listen worker operations %q: %w", address, err)
+	}
+	serveDone := make(chan error, 1)
+	go func() {
+		slog.Info("worker operations listening", "addr", listener.Addr())
+		serveDone <- server.Serve(listener)
+	}()
+
+	select {
+	case err := <-serveDone:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			_ = server.Close()
+			return fmt.Errorf("shutdown worker operations server: %w", err)
+		}
+		if err := <-serveDone; !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	}
 }
 
 func newServeReindexCmd() *cobra.Command {

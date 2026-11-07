@@ -202,7 +202,7 @@ func startRuntimeSource(t *testing.T, source *RuntimeSource, apply func(context.
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- source.Run(ctx, 5*time.Millisecond, apply) }()
+	go func() { done <- source.Run(ctx, 5*time.Millisecond, apply, nil) }()
 	var once sync.Once
 	stop := func() {
 		once.Do(func() {
