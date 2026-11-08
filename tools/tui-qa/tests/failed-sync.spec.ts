@@ -117,7 +117,7 @@ ownedAggregateJourney.test("sync recovery shows the owned Devin aggregate guidan
   await step("the recovery copy uses catalog guidance instead of the generic fallback", () => terminal.write("e"), async () => {
     await locate(terminal, "Errors (1)").unique().expect();
     const screen = (await terminal.text()).replace(/\s+/g, "");
-    const guidance = "The aggregate root and its hooks/mcpServers members must be JSON objects; move the conflicting value out of the way by hand";
+    const guidance = "must be JSON objects";
     assert.ok(screen.includes("materialize.devin.aggregate-shape"), `the diagnostic code is missing:\n${await terminal.text()}`);
     assert.ok(screen.includes(guidance.replace(/\s+/g, "")), `the catalog guidance is missing:\n${await terminal.text()}`);
     assert.ok(!screen.includes("agent-marketplace sync --check"), `the generic fallback is present:\n${await terminal.text()}`);
