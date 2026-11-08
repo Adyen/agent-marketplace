@@ -178,7 +178,14 @@ func auditSource(ctx context.Context, s source, c catalog, r *sourceReport, fetc
 		if inventoryKind(s.Kind) {
 			code = "source.inventory-unparsed"
 		}
-		r.add("unknown", code, "", "Expected model inventory or documentation content was not found; review the source adapter.")
+		const message = "Expected model inventory or documentation content was not found; review the source adapter."
+		if !hasOverride || len(override) == 0 {
+			r.add("unknown", code, "", message)
+			return
+		}
+		r.add("unknown", "source.parse-failed", "", message)
+		r.Observed = observation{Models: override}
+		compareInventory(c, override, r)
 		return
 	}
 	evidence := observed

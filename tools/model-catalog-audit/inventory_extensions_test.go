@@ -30,11 +30,13 @@ func TestGeminiAPIDocsExtractsListItemIdentifiers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Models) != 44 {
-		t.Fatalf("Gemini API model count = %d, want 44", len(got.Models))
+	if len(got.Models) != 45 {
+		t.Fatalf("Gemini API model count = %d, want 45", len(got.Models))
 	}
-	if !slices.ContainsFunc(got.Models, func(model observedModel) bool { return model.ID == "gemini-4-argon" }) {
-		t.Fatalf("Gemini API inventory does not include gemini-4-argon: %#v", got.Models)
+	for _, id := range []string{"gemini-4-argon", "gemini-3.5-transcribe-live"} {
+		if !slices.ContainsFunc(got.Models, func(model observedModel) bool { return model.ID == id }) {
+			t.Fatalf("Gemini API inventory does not include %s: %#v", id, got.Models)
+		}
 	}
 }
 
@@ -337,6 +339,7 @@ func TestCursorCLIOutputMissingOrUnparseableIsUnknown(t *testing.T) {
 		{name: "empty file", path: true},
 		{name: "unreadable file", path: true},
 		{name: "authentication error", body: "Error: Authentication required. Please run 'agent login' first, or set CURSOR_API_KEY environment variable.", path: true},
+		{name: "diagnostic line without header", body: "error - Authentication required", path: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var args []string
@@ -359,6 +362,42 @@ func TestCursorCLIOutputMissingOrUnparseableIsUnknown(t *testing.T) {
 				t.Fatalf("parsed prose from %s as models: %#v", tc.name, got.Observed.Models)
 			}
 		})
+	}
+}
+
+// spec: model-catalog-audit/cursor-cli-diagnostic-lines-before-the-header-are-ignored
+func TestCursorCLIDiagnosticLinesBeforeHeaderAreIgnored(t *testing.T) {
+	body := []byte("error - Authentication required\n1 - Getting started\n\nAvailable models:\ncomposer-2 - Composer 2\n")
+	models, err := extractCursorCLIModels(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ids := modelIDs(models); !slices.Equal(ids, []string{"composer-2"}) {
+		t.Fatalf("cursor inventory = %v, want only rows after the header", ids)
+	}
+}
+
+// spec: model-catalog-audit/cursor-documentation-is-unparseable-but-cli-output-parses
+func TestCursorDocsParseFailureKeepsCLIInventory(t *testing.T) {
+	catalogBody := "schema: 1\nharness: cursor\nevidence: {refs: [https://cursor.com/docs/models-and-pricing.md]}\nsurfaces: {subagent: {model_field: model}}\nmodels: {composer-2: {model: composer-2}}\n"
+	files := fstest.MapFS{catalogPath("cursor"): &fstest.MapFile{Data: []byte(catalogBody)}}
+	s := source{Name: "cursor-models", Harness: "cursor", URL: "https://cursor.com/docs/models-and-pricing.md", Kind: "cursor"}
+	override := map[string][]observedModel{"cursor-models": {{ID: "composer-2"}, {ID: "gpt-5.5"}}}
+	baselines := map[string]baseline{"cursor-models": {Checked: "2026-10-19", SHA256: digest([]byte("docs evidence"))}}
+	result := audit(context.Background(), files, []source{s}, baselines, func(context.Context, string) (fetched, error) {
+		return fetched{Body: []byte("<html>Sign in</html>"), URL: s.URL}, nil
+	}, time.Now(), override)
+	got := result.Sources[0]
+	if got.Status != "unknown" || !slices.ContainsFunc(got.Findings, func(f finding) bool { return f.Code == "source.parse-failed" }) {
+		t.Fatalf("unparseable Cursor docs = %#v, want unknown with source.parse-failed", got)
+	}
+	if slices.ContainsFunc(got.Findings, func(f finding) bool {
+		return f.Code == "source.inventory-unparsed" || f.Code == "source.evidence-changed"
+	}) {
+		t.Fatalf("valid CLI inventory was reported as unparsed or as changed documentation: %#v", got.Findings)
+	}
+	if !slices.ContainsFunc(got.Findings, func(f finding) bool { return f.Code == "catalog.model-missing" && f.Model == "gpt-5.5" }) {
+		t.Fatalf("CLI identifiers were not compared with the catalog: %#v", got.Findings)
 	}
 }
 

@@ -78,19 +78,7 @@ func extract(s source, body []byte) (observation, error) {
 			return result, err
 		}
 	case "gemini-docs":
-		seen := map[string]bool{}
-		for _, line := range strings.Split(text, "\n") {
-			line = strings.TrimSpace(line)
-			if !strings.HasPrefix(line, "* ") && !strings.HasPrefix(line, "- ") {
-				continue
-			}
-			for _, id := range codeValues(line) {
-				if modelID.MatchString(id) && !seen[id] {
-					seen[id] = true
-					result.Models = append(result.Models, observedModel{ID: id})
-				}
-			}
-		}
+		result.Models = extractGeminiDocs(text)
 	case "watch":
 		var selected []string
 		for _, field := range s.Fields {
@@ -174,11 +162,39 @@ func extractGemini(text string) ([]observedModel, error) {
 	return models, nil
 }
 
+func extractGeminiDocs(text string) []observedModel {
+	seen := map[string]bool{}
+	var models []observedModel
+	inBullet := false
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		isBullet := strings.HasPrefix(line, "* ") || strings.HasPrefix(line, "- ")
+		continuation := inBullet && !isBullet && len(codeValues(line)) > 0 && strings.TrimSpace(inlineCode.ReplaceAllString(line, "")) == ""
+		if !isBullet && !continuation {
+			inBullet = false
+			continue
+		}
+		inBullet = true
+		for _, id := range codeValues(line) {
+			if modelID.MatchString(id) && !seen[id] {
+				seen[id] = true
+				models = append(models, observedModel{ID: id})
+			}
+		}
+	}
+	return models
+}
+
 func extractCursorCLIModels(body []byte) ([]observedModel, error) {
 	text := ansiEscape.ReplaceAllString(string(body), "")
 	var models []observedModel
+	inventory := false
 	for _, line := range strings.Split(text, "\n") {
-		if match := cursorCLIModelLine.FindStringSubmatch(line); len(match) == 2 {
+		if strings.EqualFold(strings.TrimSuffix(strings.TrimSpace(line), ":"), "Available models") {
+			inventory = true
+			continue
+		}
+		if match := cursorCLIModelLine.FindStringSubmatch(line); inventory && len(match) == 2 {
 			models = append(models, observedModel{ID: match[1]})
 		}
 	}
