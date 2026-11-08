@@ -2,6 +2,7 @@ package bundle
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path"
@@ -39,6 +40,9 @@ func LoadRule(src fs.FS, rulePath string) (*ir.Rule, error) {
 	var body string
 	if isFrontmatterRule(rulePath) {
 		fm, body, err = yamlfm.ParseYAMLFrontmatter(bytes.NewReader(data))
+		if errors.Is(err, yamlfm.ErrFrontmatterTooLarge) {
+			return nil, fmt.Errorf("bundle: parse frontmatter %s: %w", rulePath, err)
+		}
 		if err != nil {
 			var ok bool
 			fm, body, ok = parseLenientRuleFrontmatter(data)

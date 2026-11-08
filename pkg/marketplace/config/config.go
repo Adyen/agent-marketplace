@@ -48,6 +48,11 @@ const (
 	DefaultArtifactBytes     = defaultArtifactBytes
 	defaultIngestionDuration = 2 * time.Minute
 	defaultMaxFindings       = 1000
+
+	// DefaultObservationReconciliationInterval bounds full-index refresh age.
+	DefaultObservationReconciliationInterval = 24 * time.Hour
+	// DefaultObservationProbeTimeout bounds each remote-ref lookup.
+	DefaultObservationProbeTimeout = 30 * time.Second
 )
 
 // Accepted values for policy.license_undeclared. They deliberately reuse the
@@ -499,15 +504,24 @@ type Revocations struct {
 
 // LoadConfig reads and validates the operator configuration at path.
 func LoadConfig(path string) (Config, error) {
-	var cfg Config
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return cfg, fmt.Errorf("read config %q: %w", path, err)
+		return Config{}, fmt.Errorf("read config %q: %w", path, err)
 	}
+	cfg, err := ParseConfig(data)
+	if err != nil {
+		return cfg, fmt.Errorf("parse config %q: %w", path, err)
+	}
+	return cfg, nil
+}
+
+// ParseConfig decodes, defaults, and validates operator configuration bytes.
+func ParseConfig(data []byte) (Config, error) {
+	var cfg Config
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&cfg); err != nil {
-		return cfg, fmt.Errorf("parse config %q: %w", path, err)
+		return cfg, err
 	}
 	applyDefaults(&cfg)
 	if err := cfg.validateWithoutAdministration(); err != nil {

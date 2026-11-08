@@ -727,7 +727,16 @@ func (s *Store) failJob(ctx context.Context, id store.JobID, workerID string, ba
 	if n == 0 {
 		return s.leaseError(ctx, id, workerID, store.ErrLeaseExpired)
 	}
-	return nil
+	job, err := s.getJob(ctx, id)
+	if err != nil {
+		return err
+	}
+	if job.Attempt >= job.MaxAttempts {
+		_, err = s.q.ExecContext(ctx, `UPDATE registry_observations SET
+			version=version+1, active_refresh_job_id='', active_refresh_trigger=''
+			WHERE active_refresh_job_id=?`, id)
+	}
+	return err
 }
 
 func (s *Store) leaseError(ctx context.Context, id store.JobID, workerID string, sentinel error) error {

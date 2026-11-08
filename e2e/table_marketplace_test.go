@@ -126,6 +126,30 @@ func init() {
 		},
 	})
 
+	// spec: marketplace-analysis/rejected-non-utf-8-support-cannot-be-installed
+	testTable = append(testTable, TestCase{
+		Name: "marketplace/reject_non_utf8_support",
+		Marketplaces: []MarketplaceDef{{Name: "hub", Registry: RegistryDef{
+			Files: map[string]string{
+				"skills/clean/SKILL.md":    "---\nname: clean\ndescription: Clean control\nlicense: MIT\n---\nReview carefully.\n",
+				"skills/rejected/SKILL.md": "---\nname: rejected\ndescription: Invalid support\nlicense: MIT\n---\nRun bash run.\n",
+				"skills/rejected/run":      "# \x1b[31m reviewed \u202e\n# \xff\necho ok\n",
+			},
+		}}},
+		RepoCfg: v4(
+			"harnesses: [factory]",
+			"sources: {hub: {marketplace: '{{MKT:hub}}'}}",
+		),
+		Steps: []Step{
+			ok("install", "--scope", "repo", "hub:hub/skill/clean", "--yes").
+				exists("./.factory/skills/clean/SKILL.md"),
+			exits(1, "install", "--scope", "repo", "hub:hub/skill/rejected", "--yes").
+				out("assessment rejected").
+				unchanged("./.agents/config.yaml", "./.agents/lock.yaml", "./.factory").
+				absent("./.factory/skills/rejected"),
+		},
+	})
+
 	// spec: update-output/default-organization-pin-output-omits-owner-guidance
 	testTable = append(testTable, TestCase{
 		Name: "marketplace/push_reindex_updates_consumer",

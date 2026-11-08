@@ -97,6 +97,7 @@ func TestOrganizationScopedHintsDirectUsersToTheirAdministrator(t *testing.T) {
 		"organization.trust.include.missing",
 		"v4.api-version-required",
 		"v4.marketplace-lock-mismatch",
+		"v4.marketplace-lock-required",
 		"v4.source-name",
 	} {
 		t.Run(code, func(t *testing.T) {
@@ -106,6 +107,37 @@ func TestOrganizationScopedHintsDirectUsersToTheirAdministrator(t *testing.T) {
 				strings.Contains(lower, "agent-marketplace lock --scope") ||
 				strings.Contains(lower, "agent-marketplace migrate") {
 				t.Fatalf("%s organization hint is not administrator-owned: %q", code, hint)
+			}
+		})
+	}
+}
+
+func TestMarketplaceLockRequiredAbsentOrganizationVariantGuidance(t *testing.T) {
+	const absentHint = "This organization deploys no acquisition lock, so `--locked`, `--offline`, and `lock --check` cannot verify its Marketplace resources; run `agent-marketplace sync` or `agent-marketplace sync --check` while online to verify them."
+	cases := []struct {
+		name, scope, variant, locator, want string
+	}{
+		{
+			name: "absent organization lock", scope: "organization", variant: "lock-absent",
+			want: absentHint,
+		},
+		{
+			name: "present organization lock", scope: "organization",
+			want: "Ask your administrator to record selected Marketplace resources in the organization acquisition lock.",
+		},
+		{
+			name: "non-organization scope", scope: "repo", variant: "lock-absent", locator: "tools/skill/review",
+			want: `Run ` + "`agent-marketplace sync`" + ` while online (not with ` + "`--check`" + `, ` + "`--locked`" + `, or ` + "`--offline`" + `) to add "tools/skill/review" to .agents/lock.yaml, then commit .agents/lock.yaml.`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			hint := For(testCodedError{
+				code: "v4.marketplace-lock-required", scope: tc.scope, variant: tc.variant,
+				locator: tc.locator, text: "Marketplace resources require an acquisition lock",
+			}, "sync")
+			if hint != tc.want {
+				t.Fatalf("hint = %q, want %q", hint, tc.want)
 			}
 		})
 	}

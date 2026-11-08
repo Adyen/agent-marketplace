@@ -15,6 +15,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/redact"
 	"github.com/Adyen/agent-marketplace/internal/remedy"
 	"github.com/Adyen/agent-marketplace/internal/skill"
@@ -919,6 +920,8 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 
 	// Phases 2-4 select the resolved artifacts. requiredWinners names required
 	// machine-scope artifacts that phase 2 must know but cannot see.
+	// One collection expansion budget covers every selection pass of this resolve.
+	budget := &collectionExpansionBudget{}
 	selectArtifacts := func(requiredWinners map[resourceSelection]skillOccurrence) ([]ResolvedArtifact, []error) {
 		// Phase 2: Pick winners (deduplicate, detect collisions).
 		winners, errs := pickWinnersReporting(occurrencesByName, true, requiredWinners)
@@ -949,7 +952,7 @@ func Resolve(cfg *config.Config, catalogs map[string][]catalog.Entry, localCfg *
 		if ro.selectedCollections != nil {
 			*ro.selectedCollections = collectionRoots(resolved)
 		}
-		return expandCollections(resolved, errs, cfg, catalogs, ro.resources, malformedIdx, localExcludes, cfg.Collections.ExcludeAll, excludeAllKinds, targets)
+		return expandCollections(resolved, errs, cfg, catalogs, ro.resources, malformedIdx, localExcludes, cfg.Collections.ExcludeAll, excludeAllKinds, targets, budget)
 	}
 
 	resolved, selectErrs := selectArtifacts(nil)
@@ -1284,7 +1287,7 @@ func resolvedCollection(artifact ResolvedArtifact) (*ir.Collection, bool) {
 // Members, and produce one ResolvedArtifact per member with a Via annotation.
 // Members that reference a different registry than the collection's source
 // are looked up in the catalog for that registry.
-func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, localExcludes resourceSelections, collectionExcludeAll bool, localExcludeAllKinds map[ir.ResourceKind]bool, targets scopeTargets) ([]ResolvedArtifact, []error) {
+func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Config, catalogs map[string][]catalog.Entry, resources map[string]map[string]ir.Resource, malformed *malformedIndex, localExcludes resourceSelections, collectionExcludeAll bool, localExcludeAllKinds map[ir.ResourceKind]bool, targets scopeTargets, budget *collectionExpansionBudget) ([]ResolvedArtifact, []error) {
 	var out []ResolvedArtifact
 	var expandErrs []error
 	expanded := false
@@ -1387,9 +1390,14 @@ func expandCollections(resolved []ResolvedArtifact, errs []error, cfg *config.Co
 		visited := map[string]struct{}{irCol.Label(): {}}
 		// Members, including those of nested collections owned by another
 		// layer, use the target set of the layer that selected this collection.
-		expandMembersRecursive(irCol, viaLabel, artifact, nil, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, visited, &out, &expandErrs, targets.forSource(artifact.Source))
+		expandMembersRecursive(irCol, viaLabel, artifact, nil, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, visited, &out, &expandErrs, targets.forSource(artifact.Source), budget)
 	}
 
+	// A later selection pass starts with the budget already exhausted and
+	// expands nothing; keep the refusal so it cannot return a partial result.
+	if budget.err != nil && !slices.ContainsFunc(expandErrs, func(err error) bool { return errors.Is(err, ErrCollectionExpansionLimit) }) {
+		expandErrs = append(expandErrs, budget.err)
+	}
 	if !expanded {
 		return out, append(errs, expandErrs...)
 	}
@@ -1606,16 +1614,28 @@ func chooseNestedCollectionEligible(candidates []collectionCandidate, parent Res
 	return chooseNestedCollection(eligible, parent)
 }
 
-// cloneVisitedWith extends a collection's include ancestry for one branch.
-// Keeping a separate map per branch allows a shared DAG node to expand once
-// under each sibling while still detecting cycles along either path.
-func cloneVisitedWith(visited map[string]struct{}, name string) map[string]struct{} {
-	branch := make(map[string]struct{}, len(visited)+1)
-	for seen := range visited {
-		branch[seen] = struct{}{}
+// ErrCollectionExpansionLimit reports a collection graph whose expansion would
+// exceed the per-resolve work limit.
+var ErrCollectionExpansionLimit = errors.New("collection expansion exceeds the work limit")
+
+// collectionExpansionBudget bounds the collection visits and members one
+// resolve expands. It shares the lock-bootstrap work limit.
+type collectionExpansionBudget struct {
+	used      int
+	exhausted bool
+	// err is the refusal reported when the limit was first reached.
+	err error
+}
+
+// consume reserves units of work and reports whether they fit the limit. It
+// keeps refusing once the limit has been reached.
+func (b *collectionExpansionBudget) consume(units int) bool {
+	if b.exhausted || units > lockfile.MaxMarketplaceLockResources-b.used {
+		b.exhausted = true
+		return false
 	}
-	branch[name] = struct{}{}
-	return branch
+	b.used += units
+	return true
 }
 
 // expandMembersRecursive walks the members of a collection and appends resolved
@@ -1640,7 +1660,18 @@ func expandMembersRecursive(
 	out *[]ResolvedArtifact,
 	errs *[]error,
 	targetSet []hcc.Target,
+	budget *collectionExpansionBudget,
 ) {
+	// A shared nested collection expands once per include path, so a small
+	// DAG can expand exponentially; one budget bounds the whole resolve.
+	if budget.exhausted {
+		return
+	}
+	if !budget.consume(1 + len(col.Members) + len(col.Includes)) {
+		budget.err = fmt.Errorf("collection %q: %w of %d units", col.Label(), ErrCollectionExpansionLimit, lockfile.MaxMarketplaceLockResources)
+		*errs = append(*errs, budget.err)
+		return
+	}
 	// Expand direct members.
 	for _, member := range col.Members {
 		memberName := strings.TrimSpace(member.Name)
@@ -1950,7 +1981,6 @@ func expandMembersRecursive(
 			*errs = append(*errs, fmt.Errorf("collection %q: cycle detected including %q", col.Label(), name))
 			continue
 		}
-		branchVisited := cloneVisitedWith(visited, name)
 
 		includedEntry, found := chooseNestedCollectionEligible(allCollectionsByName[name], artifact, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, cfg.Registries)
 		if !found {
@@ -1989,7 +2019,12 @@ func expandMembersRecursive(
 				includedArtifact.Harnesses = ownerHarnesses
 			}
 		}
-		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, includedOwner, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, branchVisited, out, errs, targetSet)
+		// Push this include for its own branch and pop it afterwards, so a
+		// shared DAG node still expands under each sibling while cycle
+		// detection stays path-local, without copying the ancestry.
+		visited[name] = struct{}{}
+		expandMembersRecursive(irCol, includedViaLabel, includedArtifact, includedOwner, cfg, catalogIndex, resources, malformed, allCollectionsByName, admissions, excludedResources, localExcludes, collectionExcludeAll, localExcludeAllKinds, visited, out, errs, targetSet, budget)
+		delete(visited, name)
 	}
 }
 

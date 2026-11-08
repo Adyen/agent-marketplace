@@ -16,6 +16,7 @@ var defaultOutcomes = map[string]string{
 	FindingExecutableAsset:       OutcomeReject,
 	FindingAssetPathEscape:       OutcomeReject,
 	FindingObfuscatedInstruction: OutcomeReject,
+	FindingInvalidUTF8:           OutcomeReject,
 
 	FindingHTMLComment:      OutcomeWarn,
 	FindingZeroWidth:        OutcomeWarn,
