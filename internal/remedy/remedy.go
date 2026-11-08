@@ -399,6 +399,8 @@ var catalog = map[string]hintFunc{
 	"marketplace.remove-not-selected":            staticHint("Run `agent-marketplace list` to confirm the selected Marketplace resource name before removing it"),
 	"marketplace.remove-organization-collection": staticHint("Ask your administrator to change the organization-owned collection selection"),
 	"marketplace.remove-unsupported-qualifier":   staticHint("Run `agent-marketplace remove --help` to see supported resource qualifiers"),
+	"materialize.destination.error":              staticHint("Resolve the reported harness destination issue, then run `agent-marketplace sync --check` to verify it"),
+	"materialize.write.error":                    staticHint("Resolve the write failure at the reported path, then run `agent-marketplace sync` again"),
 
 	"organization.trust.ancestor.inspect":       staticHint("Ask your administrator to inspect the organization configuration authority path"),
 	"organization.trust.ancestor.non-directory": staticHint("Ask your administrator to restore the organization configuration authority directory"),

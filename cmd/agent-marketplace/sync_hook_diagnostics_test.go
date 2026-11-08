@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 )
 
 // spec: hook-sync-diagnostics/hook-errors-retain-target-and-source
@@ -101,6 +102,64 @@ resources:
 			assertCliFilesystemSnapshot(t, "sync --check registry", registry, registrySnap)
 			assertCliFilesystemSnapshot(t, "sync --check state", stateRoot, stateSnap)
 		})
+	}
+}
+
+// spec: command-error-output/owned-aggregate-diagnostics-print-their-code-guidance
+func TestSyncOwnedAggregateDiagnosticsPrintCodeGuidance(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	registry := t.TempDir()
+	writeFile(t, filepath.Join(registry, ".devin", "hooks.v1.json"),
+		`{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo source"}]}]}`)
+	repo := t.TempDir()
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
+harnesses: [devin]
+sources:
+  local:
+    directory: `+registry+`
+    source_harness: devin
+resources:
+  local:
+    include: [hook/PreToolUse-command]
+`)
+	writeFile(t, filepath.Join(repo, ".devin", "hooks.v1.json"),
+		`{"PostToolUse":[{"command":"echo mine","type":"command"}]}`)
+	withWorkingDir(t, repo)
+	output, err := executeCommand("sync")
+	if err == nil {
+		t.Fatalf("sync succeeded despite the unpatchable Devin aggregate:\n%s", output)
+	}
+	ownershipDoc, ok := diag.DocForCode(diag.CodeOwnershipStateMissing)
+	if !ok || ownershipDoc.Hint == "" {
+		t.Fatalf("DocForCode(%q) has no hint", diag.CodeOwnershipStateMissing)
+	}
+	aggregateDoc, ok := diag.DocForCode(diag.CodeMaterializeDevinAggregateShape)
+	if !ok || aggregateDoc.Hint == "" {
+		t.Fatalf("DocForCode(%q) has no hint", diag.CodeMaterializeDevinAggregateShape)
+	}
+	for _, code := range []string{diag.CodeOwnershipStateMissing, diag.CodeMaterializeDevinAggregateShape} {
+		if !strings.Contains(output, code) {
+			t.Errorf("sync output lacks %s:\n%s", code, output)
+		}
+	}
+	if !strings.Contains(output, "\n  → "+ownershipDoc.Hint+"\n") {
+		t.Errorf("sync warning lacks ownership guidance on its remediation line %q:\n%s", ownershipDoc.Hint, output)
+	}
+	if strings.Contains(output, "\n  → "+aggregateDoc.Hint+"\n") {
+		t.Errorf("sync error duplicated aggregate guidance on a remediation line:\n%s", output)
+	}
+	aggregateHint := "hint: " + aggregateDoc.Hint
+	if count := strings.Count(output, aggregateHint); count != 1 {
+		t.Errorf("sync error hint count = %d, want one %q:\n%s", count, aggregateHint, output)
+	}
+	if hasEmptyRemediationLine(output) || strings.Contains(output, "Run `agent-marketplace sync --check`") {
+		t.Fatalf("sync used generic guidance or printed an empty remediation line:\n%s", output)
 	}
 }
 
