@@ -13,6 +13,7 @@ import { assertCopyPageTrigger, assertCopyPageView, assertNoCopyPageTrigger } fr
 const dist = new URL('../.vitepress/dist/', import.meta.url)
 const base = process.env.SITE_BASE ?? '/'
 const docsPath = `${base.replace(/\/?$/, '/')}docs/`
+const installCommand = 'curl -fsSL https://agent-marketplace.io/install.sh | bash'
 
 type SidebarItem = ReturnType<typeof docsSidebar>[number]
 
@@ -37,14 +38,61 @@ function frameAddresses(section: string): string[] {
   return [...section.matchAll(/marketplace-browser-frame__address"[^>]*>([^<]*)</g)].map(([, host]) => host)
 }
 
+function markdownSection(markdown: string, heading: string): string {
+  return markdown.split(`${heading}\n`, 2)[1]?.split('\n## ', 1)[0] ?? ''
+}
+
+function firstBashBlockAfterHeading(markdown: string, heading: string): string {
+  return markdownSection(markdown, heading).match(/```bash\n([\s\S]*?)\n```/)?.[1] ?? ''
+}
+
 // spec: install-script/site-build-publishes-the-install-script
 test('public site publishes the install script byte-for-byte', async () => {
-  const [source, built] = await Promise.all([
+  const [source, built, landing] = await Promise.all([
     readFile(new URL('../public/install.sh', import.meta.url)),
     readFile(new URL('install.sh', dist)),
+    readFile(new URL('index.html', dist), 'utf8'),
   ])
 
   assert.deepEqual(built, source)
+  assert.ok(landing.includes(installCommand))
+  assert.doesNotMatch(landing, /go install/)
+})
+
+test('install docs lead with the install script and name the SHA256SUMS cutoff', async () => {
+  const [quickStart, install, readme] = await Promise.all([
+    readFile(new URL('../docs/quick-start.md', import.meta.url), 'utf8'),
+    readFile(new URL('../docs/install.md', import.meta.url), 'utf8'),
+    readFile(new URL('../../README.md', import.meta.url), 'utf8'),
+  ])
+  const quickStartInstall = firstBashBlockAfterHeading(quickStart, '## Install the CLI')
+  const readmeInstall = firstBashBlockAfterHeading(readme, '## Install')
+  const readmeInstallSection = markdownSection(readme, '## Install')
+  const prerequisites = quickStart.split('\n').find(line => line.startsWith('You need')) ?? ''
+  const intro = install.split('\n\n')[1] ?? ''
+
+  assert.ok(
+    quickStartInstall.startsWith(`${installCommand}\n`) && quickStartInstall.includes('agent-marketplace --version'),
+  )
+  assert.doesNotMatch(prerequisites, /\bGo\b/)
+  assert.ok(quickStart.includes('~/.local/bin'))
+  assert.ok(quickStart.includes('v5.0.3 and earlier'))
+  assert.ok(quickStart.includes('go install'))
+  assert.ok(quickStart.includes('Go 1.27.3'))
+  assert.ok(readmeInstall.startsWith(`${installCommand}\n`))
+  assert.ok(
+    readmeInstallSection.includes('AGENT_MARKETPLACE_VERSION') &&
+      readmeInstallSection.includes('AGENT_MARKETPLACE_INSTALL_DIR'),
+  )
+  assert.ok(
+    readmeInstallSection.indexOf('### More install options') >= 0 &&
+      readmeInstallSection.indexOf('### More install options') < readmeInstallSection.indexOf('chmod +x'),
+  )
+  assert.ok(readmeInstallSection.includes('v5.0.3 and earlier'))
+  assert.doesNotMatch(readmeInstallSection, /up to v5\.0\.0/)
+  assert.ok(intro.includes('install script') && !intro.includes('go install'))
+  assert.ok(install.includes('v5.1.0 and later'))
+  assert.doesNotMatch(install, /one step/)
 })
 
 // spec: marketplace-web-ui/default-harness-leads-the-tab-order
