@@ -720,7 +720,7 @@ func rowPresentationForUser(row session.Row, userOnly bool) rowDTO {
 		Group:               row.StatusGroup().ID(),
 		Discovery:           row.MarketplaceDiscovery != nil,
 		Inspectable:         session.MarketplaceInspectableSkill(row),
-		InstalledFiles:      session.MarketplaceInstalledSkillFiles(row) || session.LocalSkillFiles(row),
+		InstalledFiles:      installedSkillFilesEligible(row),
 		ResourceAction:      session.UserMarketplaceActionNone,
 	}
 }

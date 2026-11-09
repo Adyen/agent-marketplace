@@ -1,16 +1,13 @@
 package session
 
 import (
-	"context"
 	"errors"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
-	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
@@ -121,33 +118,6 @@ func TestOpenLocalSkillBundleReadsPrimaryAndContainedSupportLink(t *testing.T) {
 	}
 }
 
-func requireLocalSkillFIFORefusal(t *testing.T, row Row) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestOpenLocalSkillBundleFIFOChild$")
-	cmd.Env = append(os.Environ(), "AM_LOCAL_SKILL_FIFO_ROOT="+row.Artifact.SourceRoot)
-	output, err := cmd.CombinedOutput()
-	if ctx.Err() != nil || err != nil {
-		t.Fatalf("bounded local skill FIFO probe failed: %v (context=%v): %s", err, ctx.Err(), output)
-	}
-}
-
-func TestOpenLocalSkillBundleFIFOChild(t *testing.T) {
-	root := os.Getenv("AM_LOCAL_SKILL_FIFO_ROOT")
-	if root == "" {
-		t.Skip("bounded FIFO child only")
-	}
-	row := localSkillFilesTestRow(root, filepath.Join(root, "review", "SKILL.md"), "notes.md")
-	bundle, err := OpenLocalSkillBundle(row)
-	if bundle != nil {
-		_ = bundle.Close()
-	}
-	if err == nil || !errors.Is(err, fsboundary.ErrUnsafeFile) {
-		t.Fatalf("local skill FIFO error = %v, want ErrUnsafeFile", err)
-	}
-}
-
 // spec: gui-shell/unsafe-or-missing-local-skill-source-fails-actionably
 func TestOpenLocalSkillBundleRefusesUnsafeOrMissingSources(t *testing.T) {
 	outside := t.TempDir()
@@ -155,11 +125,10 @@ func TestOpenLocalSkillBundleRefusesUnsafeOrMissingSources(t *testing.T) {
 	localSkillFilesTestPath(t, outside, "notes.md", []byte(secret))
 
 	for _, tc := range []struct {
-		name      string
-		prepare   func(t *testing.T, root string) string
-		support   []string
-		fifoProbe bool
-		want      error
+		name    string
+		prepare func(t *testing.T, root string) string
+		support []string
+		want    error
 	}{
 		{
 			name: "escaping support symlink",
@@ -182,9 +151,8 @@ func TestOpenLocalSkillBundleRefusesUnsafeOrMissingSources(t *testing.T) {
 				}
 				return filepath.Join(root, "review", "SKILL.md")
 			},
-			support:   []string{"notes.md"},
-			fifoProbe: true,
-			want:      fsboundary.ErrUnsafeFile,
+			support: []string{"notes.md"},
+			want:    fsboundary.ErrUnsafeFile,
 		},
 		{
 			name: "missing primary",
@@ -205,10 +173,6 @@ func TestOpenLocalSkillBundleRefusesUnsafeOrMissingSources(t *testing.T) {
 			root := t.TempDir()
 			primary := tc.prepare(t, root)
 			row := localSkillFilesTestRow(root, primary, tc.support...)
-			if tc.fifoProbe {
-				requireLocalSkillFIFORefusal(t, row)
-				return
-			}
 			bundle, err := OpenLocalSkillBundle(row)
 			if err == nil || bundle != nil {
 				if bundle != nil {
