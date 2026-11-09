@@ -26,6 +26,16 @@ async function generatedFilePaths(directory: URL): Promise<string[]> {
     .map(entry => relative(fileURLToPath(directory), join(entry.parentPath, entry.name)).split(sep).join('/'))
 }
 
+function landingSection(html: string, id: string): string {
+  const start = html.indexOf(`id="${id}"`)
+  assert.ok(start >= 0, `missing landing section ${id}`)
+  return html.slice(start, html.indexOf('</section>', start))
+}
+
+function frameAddresses(section: string): string[] {
+  return [...section.matchAll(/marketplace-browser-frame__address"[^>]*>([^<]*)</g)].map(([, host]) => host)
+}
+
 // spec: install-script/site-build-publishes-the-install-script
 test('public site publishes the install script byte-for-byte', async () => {
   const [source, built] = await Promise.all([
@@ -61,6 +71,93 @@ test('public project site exposes landing and documentation without a local Mark
 
   for (const html of [landing, nestedDocs]) {
     assert.doesNotMatch(html, /(?:href|rel="prefetch" href)="\/marketplace\/?"/)
+  }
+})
+
+// spec: marketplace-web-ui/hero-shows-the-terminal-preview-by-default
+// spec: marketplace-web-ui/web-tab-shows-the-catalog-with-a-matching-caption
+test('public landing connects both hero preview tabs to their panels', async () => {
+  const landing = await readFile(new URL('index.html', dist), 'utf8')
+  assert.match(landing, /role="tablist"[^>]*aria-label="Hero preview"/)
+
+  for (const tabName of ['terminal', 'web']) {
+    const tabID = `hero-tab-${tabName}`
+    const panelID = `hero-panel-${tabName}`
+    const tab = landing.match(new RegExp(`<button\\b(?=[^>]*\\bid="${tabID}")[^>]*>`))?.[0]
+    const panel = landing.match(new RegExp(`<[^>]+(?=[^>]*\\bid="${panelID}")[^>]*>`))?.[0]
+
+    assert.ok(tab, `missing ${tabID}`)
+    assert.match(tab, /role="tab"/)
+    assert.match(tab, new RegExp(`aria-controls="${panelID}"`))
+    assert.ok(panel, `missing ${panelID}`)
+    assert.match(panel, /role="tabpanel"/)
+    assert.match(panel, new RegExp(`aria-labelledby="${tabID}"`))
+  }
+
+  const terminalTab = landing.match(/<button\b(?=[^>]*\bid="hero-tab-terminal")[^>]*>/)?.[0]
+  assert.ok(terminalTab)
+  assert.match(terminalTab, /aria-selected="true"/)
+  assert.match(terminalTab, /tabindex="0"/)
+})
+
+// spec: marketplace-web-ui/browser-frame-shows-catalog-and-resource-detail
+test('organizations section depicts the real catalog and a pinned clean resource detail', async () => {
+  const landing = await readFile(new URL('index.html', dist), 'utf8')
+  const section = landingSection(landing, 'organizations')
+
+  assert.match(section, /class="marketplace-browser-frame"/)
+  assert.deepEqual(frameAddresses(section), ['marketplace.example.com', 'marketplace.example.com'])
+  assert.match(section, /alt="Marketplace catalog showing skills, commands, and MCP servers with Kind and Registry filters and the Copy install command action\."/)
+  assert.match(section, /alt="Marketplace resource detail showing a pinned revision digest and a clean Security result\."/)
+})
+
+// spec: marketplace-web-ui/browser-frame-avoids-linking-a-live-marketplace
+test('organizations browser frame uses a neutral host and no Marketplace route', async () => {
+  const landing = await readFile(new URL('index.html', dist), 'utf8')
+  const section = landingSection(landing, 'organizations')
+
+  assert.deepEqual(frameAddresses(section), ['marketplace.example.com', 'marketplace.example.com'])
+  const srcsetCandidates = [...section.matchAll(/\bsrcset="([^"]*)"/g)].flatMap(([, srcset]) => srcset.split(',').map(candidate => candidate.trim().split(/\s+/)[0]))
+  assert.ok(srcsetCandidates.length > 0)
+  const targets = [...section.matchAll(/\b(?:href|src)="([^"]*)"/g)].map(([, target]) => target).concat(srcsetCandidates)
+    .map(target => new URL(target, 'https://example.com'))
+  assert.ok(targets.every(({ pathname }) => !pathname.split('/').includes('marketplace')))
+})
+
+// spec: marketplace-web-ui/benefit-cards-and-deployment-guide-remain
+test('organizations keeps its three benefits and Deployment guide destination', async () => {
+  const landing = await readFile(new URL('index.html', dist), 'utf8')
+  const section = landingSection(landing, 'organizations')
+
+  for (const heading of ['Your registries, together', 'Publication policies', 'Your infrastructure']) {
+    assert.ok(section.includes(heading), `missing benefit heading: ${heading}`)
+  }
+  const deploymentGuide = [...section.matchAll(/<a\b[^>]*\bhref="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g)].find(([, , text]) => text.includes('Deployment guide'))
+  assert.ok(deploymentGuide, 'missing Deployment guide link')
+  assert.equal(deploymentGuide[1], `${docsPath}how-to/operator/deploy-a-production-marketplace`)
+})
+
+// spec: marketplace-web-ui/depictions-declare-dimensions-alt-text-and-lazy-loading
+test('below-the-fold web UI images declare dimensions, meaningful alt text, and lazy loading', async () => {
+  const landing = await readFile(new URL('index.html', dist), 'utf8')
+  const images = [...landing.matchAll(/<img\b[^>]*data-web-ui-image[^>]*>/g)].map(([tag]) => tag)
+
+  assert.equal(images.length, 4)
+  for (const image of images) {
+    assert.match(image, /\bwidth="1440"/)
+    assert.match(image, /\bheight="960"/)
+    assert.match(image, /\balt="[^"]{20,}"/)
+    assert.match(image, /\bloading="lazy"/)
+  }
+  assert.equal(images.filter(image => image.includes('data-theme="light"')).length, 2)
+  assert.equal(images.filter(image => image.includes('data-theme="dark"')).length, 2)
+
+  const narrowSources = [...landing.matchAll(/<source\b[^>]*>/g)].map(([tag]) => tag).filter(tag => tag.includes('-narrow-'))
+  assert.equal(narrowSources.length, 4)
+  for (const source of narrowSources) {
+    assert.match(source, /\bmedia="\(max-width: 639px\)"/)
+    assert.match(source, /\bwidth="390"/)
+    assert.match(source, /\bheight="844"/)
   }
 })
 
