@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"os"
@@ -12,6 +13,89 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+func TestSecretScanCoversPullRequestRange(t *testing.T) {
+	doc := loadWorkflow(t, "trufflehog.yml")
+	job := getMap(t, getMap(t, doc, "jobs"), "trufflehog")
+	var guardEnv map[string]any
+	for _, step := range getSlice(t, job, "steps") {
+		m := stepMap(t, step)
+		switch m["name"] {
+		case "Checkout":
+			if got := getMap(t, m, "with")["fetch-depth"]; got != 0 {
+				t.Fatalf("checkout fetch-depth = %v, want 0", got)
+			}
+		case "Require a non-empty scan":
+			guardEnv = getMap(t, m, "env")
+		}
+	}
+	if guardEnv["BASE_SHA"] != "${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha }}" ||
+		guardEnv["HEAD_SHA"] != "${{ github.event.merge_group.head_sha || github.event.pull_request.head.sha }}" {
+		t.Fatalf("scan guard range = %v", guardEnv)
+	}
+	capture := findStepRun(t, doc, "trufflehog", "Capture TruffleHog report")
+	guard := findStepRun(t, doc, "trufflehog", "Require a non-empty scan")
+
+	repo := t.TempDir()
+	setupRepo := exec.Command("/bin/bash", "-c", `set -e; git init -q; git config user.name Test; git config user.email test@example.com; printf base > change; git add change; git commit -qm base; git rev-parse HEAD; printf head > change; git commit -qam head; git rev-parse HEAD`)
+	setupRepo.Dir = repo
+	revs, err := setupRepo.Output()
+	if err != nil || len(strings.Fields(string(revs))) != 2 {
+		t.Fatalf("create git range: %v\n%s", err, revs)
+	}
+	base, head := strings.Fields(string(revs))[0], strings.Fields(string(revs))[1]
+
+	for _, tc := range []struct {
+		name, base, head, report string
+		pass                     bool
+	}{
+		{"non-empty zero", base, head, `finished scanning {"chunks": 0, "bytes": 0}`, false},
+		{"non-empty scanned", base, head, `finished scanning {"chunks": 1, "bytes": 12}`, true},
+		{"empty range", head, head, `finished scanning {"chunks": 0, "bytes": 0}`, true},
+		{"non-empty missing report", base, head, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			stub := filepath.Join(dir, "docker")
+			if err := os.WriteFile(stub, []byte("#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"$2\"\n[ -z \"$REPORT\" ] || printf '%s\\n' \"$REPORT\" >&2\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			githubPath := filepath.Join(dir, "github-path")
+			setup := exec.Command("/bin/bash", "-c", capture)
+			setup.Env = []string{"PATH=" + dir + ":/usr/bin:/bin", "RUNNER_TEMP=" + dir, "GITHUB_PATH=" + githubPath}
+			if out, err := setup.CombinedOutput(); err != nil {
+				t.Fatalf("capture step: %v\n%s", err, out)
+			}
+			path, err := os.ReadFile(githubPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			action := exec.Command("/bin/bash", "-c", "docker run x")
+			action.Env = []string{"PATH=" + strings.TrimSpace(string(path)) + ":" + dir + ":/usr/bin:/bin", "REPORT=" + tc.report}
+			var stdout, stderr bytes.Buffer
+			action.Stdout, action.Stderr = &stdout, &stderr
+			if err := action.Run(); err != nil {
+				t.Fatalf("docker wrapper: %v", err)
+			}
+			if stdout.String() != "run x\n" {
+				t.Fatalf("docker stdout = %q", stdout.String())
+			}
+			if tc.report != "" && !strings.Contains(stderr.String(), tc.report) {
+				t.Fatalf("docker stderr = %q, want report %q", stderr.String(), tc.report)
+			}
+			check := exec.Command("/bin/bash", "-c", guard)
+			check.Dir = repo
+			check.Env = append(os.Environ(), "BASE_SHA="+tc.base, "HEAD_SHA="+tc.head, "RUNNER_TEMP="+dir)
+			out, err := check.CombinedOutput()
+			if (err == nil) != tc.pass {
+				t.Fatalf("guard error = %v, want pass %t; output: %s", err, tc.pass, out)
+			}
+			if !tc.pass && !strings.Contains(string(out), "::error::") {
+				t.Fatalf("guard output = %q, want ::error::", out)
+			}
+		})
+	}
+}
 
 // spec: marketplace-delivery-security/secret-scanner-failure-fails-the-job
 func TestSecretScanFailsClosed(t *testing.T) {
