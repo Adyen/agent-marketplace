@@ -6,7 +6,7 @@ var coverage = map[string]string{
 	"cursor":   "Partial: display-name inventory and subagent model/parameter documentation are monitored for changes, not translated into guessed native IDs.",
 	"devin":    "Partial: public model and resource-field documentation is monitored for changes. No public exhaustive concrete-ID inventory; unchanged docs do not certify current concrete models or variants.",
 	"factory":  "Public native model IDs and reasoning metadata plus custom-droid model/effort field documentation. Session reasoning levels do not prove custom-droid acceptance.",
-	"gemini":   "The declared VALID_GEMINI_MODELS set on the upstream main branch plus the subagent model field. Preview/experimental constants are review candidates, not proof of stable release or account availability.",
+	"gemini":   "The Gemini CLI VALID_GEMINI_MODELS set and Gemini API model documentation plus the subagent model field. Preview/experimental constants are review candidates, not proof of stable release or account availability.",
 	"opencode": "Partial: agent model-field and provider-qualified model-ID documentation are monitored for changes. OpenCode model IDs are provider-qualified and depend on configured providers; no exhaustive concrete-ID inventory is claimed.",
 	"windsurf": "Not applicable: the shipped catalog declares no model-bearing resource surface. No model inventory is claimed.",
 }
@@ -29,6 +29,7 @@ var sources = append([]source{
 	{Name: "devin-skills", Harness: "devin", URL: "https://docs.devin.ai/cli/extensibility/skills/creating-skills.md", Kind: "watch", Fields: []string{"model"}},
 	{Name: "factory-models", Harness: "factory", URL: "https://docs.factory.ai/models.md", Kind: "factory"},
 	{Name: "factory-subagents", Harness: "factory", URL: "https://docs.factory.ai/harness/subagents.md", Kind: "watch", Fields: []string{"model", "reasoningEffort"}},
+	{Name: "gemini-api-models", Harness: "gemini", URL: "https://ai.google.dev/gemini-api/docs/models", Kind: "gemini-docs"},
 	{Name: "gemini-models", Harness: "gemini", URL: "https://raw.githubusercontent.com/google-gemini/gemini-cli/main/packages/core/src/config/models.ts", Kind: "gemini"},
 	{Name: "gemini-subagents", Harness: "gemini", URL: "https://raw.githubusercontent.com/google-gemini/gemini-cli/main/docs/core/subagents.md", Kind: "watch", Fields: []string{"model"}},
 	{Name: "opencode-agents", Harness: "opencode", URL: "https://opencode.ai/docs/agents.md", Kind: "watch", Sections: []string{"Model"}},

@@ -83,10 +83,8 @@ func writeGroupedWarnings(out io.Writer, warnings []error, verbose bool) error {
 			}
 		}
 
-		if remediable := warningRemediation(group.warning); remediable != nil {
-			if _, err := fmt.Fprintf(out, "  → %s\n", terminalSafeText(remediable.Remediation())); err != nil {
-				return err
-			}
+		if err := writeSyncIssueRemediation(out, group.warning, ""); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -181,8 +179,7 @@ func writeSyncIssues(out io.Writer, issues []error, verbose bool, prefix string)
 				return err
 			}
 		}
-		if remediable := warningRemediation(group.warning); remediable != nil {
-			_, err := fmt.Fprintf(out, "  → %s\n", terminalSafeText(remediable.Remediation()))
+		if err := writeSyncIssueRemediation(out, group.warning, ""); err != nil {
 			return err
 		}
 		return nil
@@ -237,13 +234,24 @@ func writeSyncIssue(out io.Writer, group *warningGroup, verbose bool, prefix, in
 		}
 	}
 	if remediation {
-		if remediable := warningRemediation(group.warning); remediable != nil {
-			if _, err := fmt.Fprintf(out, "%s  → %s\n", indent, terminalSafeText(remediable.Remediation())); err != nil {
-				return err
-			}
+		if err := writeSyncIssueRemediation(out, group.warning, indent); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func writeSyncIssueRemediation(out io.Writer, issue error, indent string) error {
+	remediable := warningRemediation(issue)
+	if remediable == nil {
+		return nil
+	}
+	hint := remediable.Remediation()
+	if hint == "" {
+		return nil
+	}
+	_, err := fmt.Fprintf(out, "%s  → %s\n", indent, terminalSafeText(hint))
+	return err
 }
 
 func writeSyncIssueRemediations(out io.Writer, group *syncIssueGroup) error {
