@@ -56,6 +56,7 @@ const (
 	// first, in sorted order) and the root duplicate is dropped rather than
 	// published twice; the warning records the loss instead of hiding it.
 	CodeIngestClaudeDuplicateRootSkill      = "ingest.claude.duplicate-root-skill"       // Root SKILL.md duplicated a skills/ entry; the skills/ entry is kept
+	CodeIngestFactoryRootSkillIgnored       = "ingest.factory.root-skill-ignored"        // Factory plugin root SKILL.md is never ingested; skills load only from skills/<name>/
 	CodeSubagentWindsurfNoPrimitive         = "subagent.windsurf.no-primitive"           // Windsurf has no subagent primitive
 	CodeHookClaudeUnsupportedType           = "hook.claude.unsupported-type"             // Claude hook with unsupported type (http/prompt/agent)
 	CodeHookWindsurfEnvTokenExpanded        = "hook.windsurf.env-token-expanded"         // Windsurf expanded env token to literal path
@@ -325,6 +326,19 @@ const (
 	// only the entry kind, the non-secret identity, the resource name, the
 	// aggregate path, and the two value DIGESTS.
 	CodeDoctorRepairConflictReplaceable = "doctor.repair.conflict-replaceable" // An unmanaged entry has a desired key with a different value; replacing it needs interactive confirmation
+
+	// Plugin decode/projection WARNING codes: the package still loads, but
+	// the reported field, component, or member was skipped or ignored.
+	CodePluginFormatFieldIgnored     = "plugin.format.field-ignored"     // An unknown or invalid optional manifest field was reported and ignored
+	CodePluginFormatComponentInvalid = "plugin.format.component-invalid" // A fixed component location is absent in the expected form; that component type is skipped
+	CodePluginMemberInvalid          = "plugin.member.invalid"           // A member or entry failed validation and was skipped while siblings loaded
+	CodePluginMemberFieldOmitted     = "plugin.member.field-omitted"     // A member field the plugin surface marks omit-field was dropped before lowering
+
+	// Plugin CATALOG warning codes: the catalog still loads and sibling
+	// entries stay installable, but the reported entry is not installable.
+	CodePluginCatalogSourceUnsupported = "plugin.catalog.source-unsupported" // A catalog entry's source type is refused by the format catalog; that entry is not installable
+	CodePluginCatalogDuplicateEntry    = "plugin.catalog.duplicate-entry"    // Two catalog entries share a name; no copy is installable
+	CodePluginCatalogManifestConflict  = "plugin.catalog.manifest-conflict"  // A non-strict catalog entry declares component fields while its plugin.json is the manifest; that entry is not installable
 )
 
 // Error codes.
@@ -370,6 +384,8 @@ const (
 	CodeBundleConflictCrossKindArtifactPath      = "bundle.conflict.cross-kind-artifact-path"  // Two resources of different kinds produce the same artifact path
 	CodeBundleCompileResourceFailed              = "bundle.compile.resource-failed"            // A resource compiler returned an error
 	CodeIngestFrontmatterTooLarge                = "ingest.frontmatter.too-large"              // YAML frontmatter exceeds the parse ceiling
+	CodeBundleSupportFileMissing                 = "bundle.support-file.missing"               // A declared or referenced support file is absent from the source
+	CodeBundleSupportFileUnsafe                  = "bundle.support-file.unsafe"                // A support-file path is unsafe (traversal, symlink, or non-regular)
 	CodeIngestClaudeLoadSkillFailed              = "ingest.claude.load-skill-failed"           // Failed to load a skill from the source layout
 	CodeIngestClaudeLoadCommandFailed            = "ingest.claude.load-command-failed"         // Failed to load a command from the source layout
 	CodeIngestClaudeLoadSubagentFailed           = "ingest.claude.load-subagent-failed"        // Failed to load a subagent from the source layout
@@ -392,6 +408,38 @@ const (
 	// closed.
 	CodeSubagentDevinBuiltinNameConflict   = "subagent.devin.builtin-name-conflict"   // Subagent name collides with a Devin built-in subagent
 	CodeSubagentDevinNestedNameUnsupported = "subagent.devin.nested-name-unsupported" // Subagent name expresses nesting the flat Devin layout cannot represent
+
+	// Plugin PACKAGE codes (plugin-package-ir). They name the plugin, the
+	// member or entry, the package format, and the decode or projection
+	// stage — never a command value, an env value, a header value, or a
+	// manifest field value.
+	CodePluginFormatUnsupported             = "plugin.format.unsupported"              // Source is not a recognized package format, or the harness does not accept it
+	CodePluginFormatVersionUnsupported      = "plugin.format.version-unsupported"      // The package declares a format version no decoder supports
+	CodePluginFormatManifestInvalid         = "plugin.format.manifest-invalid"         // Required manifest data is missing or invalid; the package is rejected before discovery
+	CodePluginFormatDependenciesUnsupported = "plugin.format.dependencies-unsupported" // The plugin declares dependencies that sync cannot install
+	CodePluginPackagePathEscape             = "plugin.package.path-escape"             // A package path resolves outside the package root, or a symlink is unresolvable (escape, dangling, or cyclic)
+	CodePluginPackageSymlinkCycle           = "plugin.package.symlink-cycle"           // A package symlinked directory resolves to the root or an ancestor of the link
+	CodePluginPackageSpecialFile            = "plugin.package.special-file"            // A package entry is a device, socket, or FIFO
+	CodePluginPackageCaseCollision          = "plugin.package.case-collision"          // Two package paths differ only by letter case
+	CodePluginPackageOversized              = "plugin.package.oversized"               // A package file exceeds the bounded-read limit
+	CodePluginMemberLiteralUnrepresentable  = "plugin.member.literal-unrepresentable"  // A literal placeholder has no escape on the destination; member blocked
+	CodePluginMemberRestrictionUnsupported  = "plugin.member.restriction-unsupported"  // A plugin member field is a restriction the target cannot enforce; member blocked
+	CodePluginCompilePackageRequired        = "plugin.compile.package-required"        // A plugin resource was passed to the per-resource Compile boundary
+	CodePluginDeliveryPending               = "plugin.delivery.pending"                // WARNING: a plugin member selection plan is unavailable
+	CodePluginDeliveryExternalUnavailable   = "plugin.delivery.external-unavailable"   // ERROR: the locked external plugin package or snapshot is unavailable
+	CodePluginDeliveryNativeUnverified      = "plugin.delivery.native-unverified"      // Native delivery was requested where the target catalog is unverified
+	CodePluginRegistrationUnsupported       = "plugin.registration.unsupported"        // Native registration is unavailable for this target
+	CodePluginRegistrationCollision         = "plugin.registration.collision"          // An unowned native plugin registration key already exists
+	CodePluginRegistrationReloadRequired    = "plugin.registration.reload-required"    // A changed native generation requires a harness reload
+	CodePluginCatalogSharedOrigin           = "plugin.catalog.shared-origin"           // Two selected catalog entries resolve to the same external origin; the selection is refused
+	CodePluginSelectionUndeclaredSource     = "plugin.selection.undeclared-source"     // A layer's collection selects a plugin from a format source that layer does not declare; the selection is refused
+	CodePluginNamespaceCollision            = "plugin.namespace-collision"             // A plugin member's installed name collides with another selected resource
+	CodePluginNamespaceInvalid              = "plugin.namespace-invalid"               // A plugin member's installed name is invalid for the target
+	CodePluginGenerationPublish             = "plugin.generation.publish"              // An immutable package generation could not be published
+	CodePluginGenerationMissing             = "plugin.generation.missing"              // A required immutable package generation is missing or changed
+	CodePluginExportLoss                    = "plugin.export.loss"                     // Export would lose non-security package content
+	CodePluginExportRestriction             = "plugin.export.restriction"              // Export would drop a security restriction
+	CodePluginExportOutNotEmpty             = "plugin.export.out-not-empty"            // Export output directory is not empty
 
 	// Devin hook and MCP ENTRY-SKIP codes.
 	//
@@ -580,6 +628,7 @@ var codeCatalog = []CodeDoc{
 
 	// Warning
 	{CodeIngestFactoryResourceShadowed, SeverityWarning, "Factory resource was shadowed by an earlier resource of the same kind and name", "Use distinct resource names or remove the lower-priority definition"},
+	{CodeIngestFactoryRootSkillIgnored, SeverityWarning, "A root SKILL.md was found and not ingested; Factory plugins load skills only from skills/<name>/", "Move the skill into skills/<name>/SKILL.md or remove the root file"},
 	{CodeSubagentWindsurfNoPrimitive, SeverityWarning, "Windsurf has no subagent primitive; resource dropped", "Consider expressing the subagent as a Windsurf workflow instead"},
 	{CodeHookClaudeUnsupportedType, SeverityWarning, "Unsupported hook type in Claude format; only command-type is universally supported in v0", "Convert the hook to a command type or remove it"},
 	{CodeHookWindsurfEnvTokenExpanded, SeverityWarning, "Windsurf expanded env token to a literal path", "Verify the expanded path is correct for the target environment"},
@@ -651,6 +700,7 @@ var codeCatalog = []CodeDoc{
 	{CodeDoctorDevinVersionUnknown, SeverityWarning, "A Devin CLI is installed but its version could not be established", "The version probe failed, timed out, or printed no recognizable version; nothing is blocked, but 3000.3 compatibility could not be confirmed"},
 	{CodeDoctorRepairConflictReplaceable, SeverityWarning, "An existing unmanaged aggregate entry has the same key as a desired entry but a different value, so it is neither an exact adoption match nor an evidence-backed orphan", "Run doctor --repair on a terminal to confirm replacing it with the generated entry; the existing entry is preserved until you confirm, a fresh safety backup is taken first, and --yes never replaces it"},
 	{CodeIngestClaudeDuplicateRootSkill, SeverityWarning, "A plugin-form bundle's root SKILL.md declared a name already loaded from skills/; the skills/ entry is kept", "Rename the root skill or remove the duplicate; skills/ entries load first and win deterministically"},
+	{CodePluginRegistrationReloadRequired, SeverityWarning, "A changed native plugin generation requires a harness reload", "Restart or reload the harness before using the updated plugin"},
 
 	// Error
 	{CodeSubagentFactoryToolUnknown, SeverityError, "Factory cannot map an explicit subagent tool; subagent artifact suppressed", "Use a supported tool mapping or remove the restriction explicitly"},
@@ -693,6 +743,8 @@ var codeCatalog = []CodeDoc{
 	{CodeBundleConflictCrossKindArtifactPath, SeverityError, "Resources of different kinds produce the same artifact output path; neither artifact is emitted", "Rename one of the conflicting resources: on targets that compile commands as skills, a skill and a command cannot share a name"},
 	{CodeBundleCompileResourceFailed, SeverityError, "A resource compiler failed", "Fix the resource compiler error before materializing the bundle"},
 	{CodeIngestFrontmatterTooLarge, SeverityError, "YAML frontmatter exceeds the 64 KiB parse ceiling; the resource is not loaded", "Shorten the frontmatter and move long content into the body or support files"},
+	{CodeBundleSupportFileMissing, SeverityError, "A declared skill support file or an explicitly referenced hook/MCP asset is absent from the source bundle; the owning resource was not emitted", "Restore the missing file or remove the reference to it"},
+	{CodeBundleSupportFileUnsafe, SeverityError, "A support-file path is unsafe (escapes the bundle root, traverses a symlink, or is not a regular file); the owning resource was not emitted", "Keep support files inside the resource or bundle root as regular files and remove the unsafe path"},
 	{CodeIngestClaudeLoadSkillFailed, SeverityError, "Failed to load a skill from the Claude source layout", "Check the skill directory structure and SKILL.md frontmatter"},
 	{CodeIngestClaudeLoadCommandFailed, SeverityError, "Failed to load a command from the Claude source layout", "Check the command .md file structure and frontmatter"},
 	{CodeIngestClaudeLoadSubagentFailed, SeverityError, "Failed to load a subagent from the Claude source layout", "Check the agent .md file structure and frontmatter"},
@@ -751,6 +803,38 @@ var codeCatalog = []CodeDoc{
 	{CodeHookNativeToleranceRefused, SeverityError, "A native hook file was malformed, ambiguous, or unsafe to inspect, so the affected target was left exactly as found", "Fix the reported native hook file by hand; no native or legacy hook bytes were changed"},
 	{CodeHookRemoveUnowned, SeverityError, "Removal would leave a native hook active without clean ownership proof; configuration and hook files are unchanged", "Review the named native file and deliberately remove the hook, or explicitly repair ownership before retrying"},
 	{CodeDoctorRepairFailed, SeverityError, "An authorized repair action failed; the aggregate was left exactly as found", "This is the partial repair failure outcome and exits 1; re-running the repair is safe"},
+
+	{CodePluginFormatFieldIgnored, SeverityWarning, "A manifest field the format does not model was reported and ignored; the package still loads", "Remove the field, or move client-specific data under the extensions namespace"},
+	{CodePluginFormatComponentInvalid, SeverityWarning, "A fixed component location is not present in its expected form; that component type is skipped while other component types load", "Restore the documented component location or remove the stray entry"},
+	{CodePluginMemberInvalid, SeverityWarning, "A plugin member or entry failed validation and was skipped while its siblings loaded", "Fix the reported member; the package keeps the members that are valid"},
+	{CodePluginMemberFieldOmitted, SeverityWarning, "A member field the plugin surface marks omit-field was dropped before lowering; the member still installs", "Remove the field, or deliver to a target that can represent it"},
+	{CodePluginCatalogSourceUnsupported, SeverityWarning, "A plugin catalog entry declares a source type its format refuses; the entry is inspectable but not installable", "Acquire the plugin through a source type the format accepts, or install it from a different source"},
+	{CodePluginCatalogDuplicateEntry, SeverityWarning, "Two plugin catalog entries share one name; neither copy is installable", "Rename one entry or remove the duplicate"},
+	{CodePluginCatalogManifestConflict, SeverityWarning, "A catalog entry opts out of strict overlay while carrying component fields, so the entry and its plugin.json disagree; the entry is inspectable but not installable", "Drop the entry's component fields or remove strict: false"},
+	{CodePluginNamespaceCollision, SeverityError, "A decomposed plugin member's installed name collides with another selected resource in the same target and scope; the plugin instance was refused", "Rename or exclude the conflicting resource; plugin member names are not suffixed"},
+	{CodePluginNamespaceInvalid, SeverityError, "A decomposed plugin member's installed name is invalid for the target; the plugin instance was refused", "Use a plugin and member name that satisfy the target's resource-name rules"},
+	{CodePluginGenerationPublish, SeverityError, "An immutable plugin package generation could not be published; the previous plugin projection was retained", "Restore a readable, contained plugin package and re-run sync"},
+	{CodePluginGenerationMissing, SeverityError, "A required immutable plugin package generation is missing or changed; plugin drift could not be checked safely", "Re-run writable sync to publish the verified package generation"},
+	{CodePluginExportLoss, SeverityError, "Plugin export would lose non-security package content", "Review the listed losses; use --allow-loss only when those omissions are acceptable"},
+	{CodePluginExportRestriction, SeverityError, "Plugin export would drop a security restriction and was refused", "Retain the restriction or use a package format that represents it"},
+	{CodePluginExportOutNotEmpty, SeverityError, "Export output directory contains files; no package was written", "Choose an absent or empty output directory"},
+
+	{CodePluginFormatUnsupported, SeverityError, "The source is not a recognized plugin package format, or the destination harness does not accept it", "Use a supported package format and a harness whose plugin catalog accepts it"},
+	{CodePluginFormatVersionUnsupported, SeverityError, "The package declares a format version no decoder supports; the package is not installable", "Pin the package to a supported format version"},
+	{CodePluginFormatManifestInvalid, SeverityError, "Required plugin manifest data is missing or invalid; the package was rejected before component discovery", "Fix the manifest's required fields"},
+	{CodePluginFormatDependenciesUnsupported, SeverityError, "The plugin declares dependencies that sync cannot install; no members were installed", "Remove the declared dependencies or wait for plugin dependency support"},
+	{CodePluginPackagePathEscape, SeverityError, "A package path resolves outside the package root or a symlink cannot be resolved inside it (escape, dangling, or cyclic link); the package was rejected", "Remove the escaping or unresolvable path or symlink; package content must stay inside the plugin root"},
+	{CodePluginPackageSymlinkCycle, SeverityError, "A package symlinked directory resolves to the package root or an ancestor directory of the link; the package was rejected", "Remove the cyclic symlink; links resolving elsewhere inside the root are allowed"},
+	{CodePluginPackageSpecialFile, SeverityError, "A package entry is a device, socket, or FIFO rather than a regular file or directory; the package was rejected", "Remove the special file; a plugin package carries regular files and directories only"},
+	{CodePluginPackageCaseCollision, SeverityError, "Two package paths differ only by letter case and cannot coexist on case-insensitive filesystems; the package was rejected", "Rename one of the colliding paths"},
+	{CodePluginPackageOversized, SeverityError, "A package file exceeds the bounded-read limit; the package was rejected", "Reduce the file below the read limit"},
+	{CodePluginMemberLiteralUnrepresentable, SeverityError, "A plugin MCP member carries placeholder-like text the destination harness would reinterpret, and no literal escape exists; the member was blocked", "Rewrite the value without placeholder-like text, or deliver to a target that can carry it literally"},
+	{CodePluginMemberRestrictionUnsupported, SeverityError, "A plugin member field is a restriction the target plugin surface cannot enforce; the member was blocked rather than installed without it", "Remove the restricted field, or deliver to a target that enforces it"},
+	{CodePluginCompilePackageRequired, SeverityError, "A plugin resource reached the per-resource Compile boundary; plugins compile through the package compile entry point", "Call the package compile entry point instead of Compile"},
+	{CodePluginCatalogSharedOrigin, SeverityError, "Two selected catalog entries resolve to the same external origin, ref, and subdirectory; their lock records would collapse into one, so the selection is refused", "Select only one of the entries, or split the packages into distinct origins or subdirectories"},
+	{CodePluginDeliveryNativeUnverified, SeverityError, "Native plugin delivery was requested for a harness whose catalog does not verify it; no plugin members were written", "Use auto or decompose, or wait until a native-delivery probe verifies the target"},
+	{CodePluginRegistrationUnsupported, SeverityError, "The target has no declared native plugin registration layout; no plugin output was written", "Use decompose or select a target with native plugin registration support"},
+	{CodePluginRegistrationCollision, SeverityError, "An unmanaged native plugin registration uses a desired key; the existing entry was preserved", "Remove the handwritten collision or run sync after establishing ownership through a supported path"},
 }
 
 // DocForCode returns the documentation entry for the given diagnostic code.

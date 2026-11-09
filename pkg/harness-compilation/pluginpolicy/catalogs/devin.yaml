@@ -1,0 +1,12 @@
+# Catalog data for pkg/harness-compilation/pluginpolicy/catalogs/devin.yaml.
+schema: 1
+harness: devin
+evidence:
+  checked: "2026-10-15"
+  refs:
+    - https://docs.devin.ai/cli/extensibility/plugins
+  notes: "Devin's own .devin-plugin format is not a recognized package format in this change; Devin also loads Claude and Agent Plugins layouts natively."
+accepts: [claude-plugin, agent-plugin]
+delivery:
+  decompose: {status: verified}
+  native: {status: unverified}

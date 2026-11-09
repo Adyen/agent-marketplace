@@ -30,7 +30,10 @@ func mcpServerFromArtifacts(t *testing.T, result *Result, path, name string) map
 
 // spec: harness-compilation/gemini-project-directory-never-becomes-the-plugin-root
 func TestGeminiProjectDirectoryNeverBecomesPluginRoot(t *testing.T) {
-	src := fstest.MapFS{".gemini/settings.json": {Data: []byte(`{"mcpServers":{"proj":{"command":"node","args":["${GEMINI_PROJECT_DIR}/tools/server.js","${CLAUDE_PROJECT_DIR}/tools/legacy.js","${extensionPath}/bin/helper"]}}}`)}}
+	src := fstest.MapFS{
+		".gemini/settings.json": {Data: []byte(`{"mcpServers":{"proj":{"command":"node","args":["${GEMINI_PROJECT_DIR}/tools/server.js","${CLAUDE_PROJECT_DIR}/tools/legacy.js","${extensionPath}/bin/helper"]}}}`)},
+		"bin/helper":            {Data: []byte("#!/bin/sh\n")},
+	}
 	for _, tc := range []struct {
 		target Target
 		path   string
@@ -80,6 +83,9 @@ func TestFactoryPluginRootRoundTripsThroughMCPServers(t *testing.T) {
 	src := fstest.MapFS{
 		".factory-plugin/plugin.json": {Data: []byte(`{"name":"inert","version":"0.0.1"}`)},
 		"mcp.json":                    {Data: []byte(`{"mcpServers":{"docs":{"command":"${DROID_PLUGIN_ROOT}/bin/server","args":["--config","${DROID_PLUGIN_ROOT}/config.json"],"env":{"DATA":"${DROID_PLUGIN_ROOT}/data"}}}}`)},
+		"bin/server":                  {Data: []byte("#!/bin/sh\n")},
+		"config.json":                 {Data: []byte("{}")},
+		"data":                        {Data: []byte("data")},
 	}
 	for target, tc := range map[Target]struct{ path, token string }{
 		TargetFactory: {"mcp.json", "${DROID_PLUGIN_ROOT}"},
@@ -104,6 +110,9 @@ func TestCanonicalPluginRootCompilesToFactoryToken(t *testing.T) {
 	src := fstest.MapFS{
 		".claude-plugin/plugin.json": {Data: []byte(`{"name":"inert","version":"0.0.1"}`)},
 		".mcp.json":                  {Data: []byte(`{"mcpServers":{"docs":{"command":"${CLAUDE_PLUGIN_ROOT}/bin/server","args":["--config","${CLAUDE_PLUGIN_ROOT}/config.json"],"env":{"DATA":"${CLAUDE_PLUGIN_ROOT}/data"}}}}`)},
+		"bin/server":                 {Data: []byte("#!/bin/sh\n")},
+		"config.json":                {Data: []byte("{}")},
+		"data":                       {Data: []byte("data")},
 	}
 	result, err := Convert(src, HarnessClaude, TargetFactory)
 	if err != nil {

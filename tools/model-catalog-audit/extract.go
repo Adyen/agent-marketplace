@@ -24,6 +24,7 @@ type source struct {
 	Name     string
 	Harness  string
 	Domain   string
+	Format   string
 	URL      string
 	Kind     string
 	Fields   []string

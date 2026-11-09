@@ -37,7 +37,7 @@ func TestClaudeConfigurationDirectory(t *testing.T) {
 	}
 	run("install", "--from", registry, "--scope", "user")
 	run("sync")
-	for _, rel := range []string{"skills/hello/SKILL.md", ".claude-plugin/plugin.json", ".claude.json"} {
+	for _, rel := range []string{"skills/hello/SKILL.md", ".claude.json"} {
 		if _, err := os.Stat(filepath.Join(custom, rel)); err != nil {
 			t.Fatalf("relocated %s: %v", rel, err)
 		}

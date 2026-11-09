@@ -91,6 +91,17 @@ resources:
 	return f
 }
 
+func addClaudePluginProbeSource(e *Env, f compatibilityFixture, config, delivery string) (string, string, string) {
+	pluginName, pluginSkill := f.name("native-plugin"), f.name("plugin-skill")
+	pluginRoot := filepath.Join(e.repos, "native-claude-plugin")
+	e.WriteFile(filepath.Join(pluginRoot, ".claude-plugin", "plugin.json"), fmt.Sprintf(`{"name":%q}`, pluginName))
+	e.WriteFile(filepath.Join(pluginRoot, "skills", pluginSkill, "SKILL.md"),
+		fmt.Sprintf("---\nname: %s\ndescription: %s\n---\n\n# %s\n", pluginSkill, f.description("skill"), pluginSkill))
+	config += fmt.Sprintf("  native-plugin: {directory: %q, format: claude-plugin}\n", pluginRoot)
+	config += fmt.Sprintf("resources:\n  native-plugin:\n    - {kind: plugin, name: %s, delivery: %s}\n", pluginName, delivery)
+	return config, pluginName, pluginSkill
+}
+
 func assertCompatibilityHookSource(t *testing.T, f compatibilityFixture) {
 	t.Helper()
 	for _, path := range []string{".claude-plugin/plugin.json", "hooks/hooks.json"} {

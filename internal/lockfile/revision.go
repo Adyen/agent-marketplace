@@ -21,6 +21,8 @@ func RevisionContract(schema string) (SourceRevisionContract, error) {
 		return SourceRevisionContract{Schema: "v3", Generator: "agent-marketplace source-revision/v3", HookSupport: true, AdditiveWindsurfHooks: true}, nil
 	case "v4":
 		return SourceRevisionContract{Schema: "v4", Generator: "agent-marketplace source-revision/v4", HookSupport: true, AdditiveWindsurfHooks: true, BareBundleMCP: true, ModelProvenance: true}, nil
+	case "plugin-v1":
+		return SourceRevisionContract{Schema: "plugin-v1", Generator: "agent-marketplace source-revision/plugin-v1"}, nil
 	default:
 		return SourceRevisionContract{}, coded(CodeUnsupportedVersion, "unsupported source revision generator %q; use a CLI supporting this revision_schema or explicitly regenerate the lock with a supported generator", schema)
 	}

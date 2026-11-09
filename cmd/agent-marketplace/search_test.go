@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
@@ -90,6 +91,31 @@ sources:
 	}
 }
 
+func TestSearchPluginKindRefusesBeforeEndpointRequest(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	withWorkingDir(t, t.TempDir())
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), fmt.Sprintf(
+		"apiVersion: agent-marketplace/v4\nsources:\n  public: {marketplace: %s}\n", server.URL))
+
+	output, err := executeCommand("search", "--marketplace", "public", "--kind", "plugin", "review")
+	if err == nil || !strings.Contains(output+err.Error(), "search does not support --kind plugin") {
+		t.Fatalf("plugin search should be refused explicitly: err=%v\n%s", err, output)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("refused plugin search contacted the endpoint %d times", got)
+	}
+}
+
 func TestSearchCommandWithoutKindReturnsEveryResourceKind(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -107,11 +133,15 @@ func TestSearchCommandWithoutKindReturnsEveryResourceKind(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("mp-public", "https://example.com"))
 		case "/api/v1/search":
 			receivedKind = r.URL.Query().Get("kind")
+			items := []mpapi.ResourceListItem{
+				{RegistryID: "src", RegistrySlug: "src", Kind: mpapi.KindMcpServer, Name: "genai-architect", Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("a", 64), Score: 1},
+				{RegistryID: "src", RegistrySlug: "src", Kind: mpapi.KindSkill, Name: "architecture", Revision: "sha256:" + strings.Repeat("b", 64), ContentDigest: "sha256:" + strings.Repeat("b", 64), Score: 0.5},
+			}
+			if receivedKind == "skill" {
+				items = items[1:]
+			}
 			_ = json.NewEncoder(w).Encode(marketplaceSearchResponse{
-				Items: []mpapi.ResourceListItem{
-					{RegistryID: "src", RegistrySlug: "src", Kind: mpapi.KindMcpServer, Name: "genai-architect", Revision: "sha256:" + strings.Repeat("a", 64), ContentDigest: "sha256:" + strings.Repeat("a", 64), Score: 1},
-					{RegistryID: "src", RegistrySlug: "src", Kind: mpapi.KindSkill, Name: "architecture", Revision: "sha256:" + strings.Repeat("b", 64), ContentDigest: "sha256:" + strings.Repeat("b", 64), Score: 0.5},
-				},
+				Items: items,
 				Total: 2, Limit: 100,
 			})
 		default:
@@ -138,6 +168,10 @@ sources:
 	}
 	if _, err := executeCommand("search", "--output", "json", "--kind", "mcp", "architect"); err != nil || receivedKind != "mcpserver" {
 		t.Fatalf("MCP kind was not forwarded as mcpserver: kind=%q error=%v", receivedKind, err)
+	}
+	skillOutput, err := executeCommand("search", "--output", "json", "--kind", "skill", "architect")
+	if err != nil || receivedKind != "skill" || !strings.Contains(skillOutput, "architecture") || strings.Contains(skillOutput, "genai-architect") {
+		t.Fatalf("skill kind filter changed: kind=%q error=%v output=%s", receivedKind, err, skillOutput)
 	}
 }
 
