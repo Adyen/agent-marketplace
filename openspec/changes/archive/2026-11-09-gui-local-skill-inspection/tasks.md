@@ -18,4 +18,4 @@
 
 ## 4. Archive
 
-- [ ] 4.1 `openspec archive gui-local-skill-inspection --yes`
+- [x] 4.1 `openspec archive gui-local-skill-inspection --yes`
