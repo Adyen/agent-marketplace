@@ -12,6 +12,8 @@ var errSourceFormat = errors.New("source format not recognized")
 
 var inlineCode = regexp.MustCompile("`([^`]+)`")
 var modelID = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
+var ansiEscape = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
+var cursorCLIModelLine = regexp.MustCompile(`^\s*([a-z0-9][a-z0-9._-]*)\s+-\s+\S`)
 var modelDetails = regexp.MustCompile(`(?s)<ModelDetails\s[^>]*?\bslug="([^"]+)"`)
 var geminiConstant = regexp.MustCompile(`(?m)^export (?:const|let) ([A-Z0-9_]+)\s*=\s*('([^']+)'|[A-Z0-9_]+);`)
 var geminiSet = regexp.MustCompile(`(?s)export const VALID_GEMINI_MODELS = new Set\(\[([^]]+)\]\);`)
@@ -75,6 +77,8 @@ func extract(s source, body []byte) (observation, error) {
 		if err != nil {
 			return result, err
 		}
+	case "gemini-docs":
+		result.Models = extractGeminiDocs(text)
 	case "watch":
 		var selected []string
 		for _, field := range s.Fields {
@@ -154,6 +158,48 @@ func extractGemini(text string) ([]observedModel, error) {
 			seen[id] = true
 			models = append(models, observedModel{ID: id})
 		}
+	}
+	return models, nil
+}
+
+func extractGeminiDocs(text string) []observedModel {
+	seen := map[string]bool{}
+	var models []observedModel
+	inBullet := false
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		isBullet := strings.HasPrefix(line, "* ") || strings.HasPrefix(line, "- ")
+		continuation := inBullet && !isBullet && len(codeValues(line)) > 0 && strings.TrimSpace(inlineCode.ReplaceAllString(line, "")) == ""
+		if !isBullet && !continuation {
+			inBullet = false
+			continue
+		}
+		inBullet = true
+		for _, id := range codeValues(line) {
+			if modelID.MatchString(id) && !seen[id] {
+				seen[id] = true
+				models = append(models, observedModel{ID: id})
+			}
+		}
+	}
+	return models
+}
+
+func extractCursorCLIModels(body []byte) ([]observedModel, error) {
+	text := ansiEscape.ReplaceAllString(string(body), "")
+	var models []observedModel
+	inventory := false
+	for _, line := range strings.Split(text, "\n") {
+		if strings.EqualFold(strings.TrimSuffix(strings.TrimSpace(line), ":"), "Available models") {
+			inventory = true
+			continue
+		}
+		if match := cursorCLIModelLine.FindStringSubmatch(line); inventory && len(match) == 2 {
+			models = append(models, observedModel{ID: match[1]})
+		}
+	}
+	if len(models) == 0 {
+		return nil, errSourceFormat
 	}
 	return models, nil
 }
