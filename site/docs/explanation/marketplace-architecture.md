@@ -49,7 +49,7 @@ Back up metadata and blobs together. If you restore one without the other, the m
 
 ## Operations listener
 
-The server opens a second, private listener for `/readyz` (is the server ready to serve?) and `/metrics` (Prometheus data). Do not publish it through the reverse proxy. The public listener answers `404` for both paths.
+The server opens a second, private listener for `/readyz` (is the server ready to serve?) and `/metrics` (Prometheus data). A worker-only process opens that listener for `/metrics` only. Do not publish it through the reverse proxy. The public listener answers `404` for both paths.
 
 ## Authentication
 

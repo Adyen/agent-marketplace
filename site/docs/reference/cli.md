@@ -511,7 +511,7 @@ agent-marketplace serve --config <path> [--role api|worker|all]
 | Flag | Type | Required | Default | Description |
 |---|---|:---:|---|---|
 | `--config` | path | yes | none | Marketplace operator YAML file. |
-| `--role` | string | no | `all` | `api` runs the public and operations listeners, `worker` runs background indexing, and `all` runs both. |
+| `--role` | string | no | `all` | `api` runs the public and operations listeners, `worker` runs background indexing and serves `/metrics` on the operations listener, and `all` runs both. |
 
 At startup the command opens the configured stores, makes sure the Marketplace instance exists, and applies configured revocations before either role reports ready. It runs until it is cancelled or a role fails.
 
