@@ -22,7 +22,8 @@ agent-marketplace --version
 ```
 
 To pin a release or choose an install directory, set `AGENT_MARKETPLACE_VERSION`
-or `AGENT_MARKETPLACE_INSTALL_DIR`:
+or `AGENT_MARKETPLACE_INSTALL_DIR`. For example, with `vX.Y.Z` replaced by a
+release tag:
 
 ```bash
 curl -fsSL https://agent-marketplace.io/install.sh | AGENT_MARKETPLACE_VERSION=vX.Y.Z AGENT_MARKETPLACE_INSTALL_DIR="$HOME/bin" bash

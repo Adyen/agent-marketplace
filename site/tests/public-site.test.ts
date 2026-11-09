@@ -38,9 +38,12 @@ function frameAddresses(section: string): string[] {
   return [...section.matchAll(/marketplace-browser-frame__address"[^>]*>([^<]*)</g)].map(([, host]) => host)
 }
 
+function markdownSection(markdown: string, heading: string): string {
+  return markdown.split(`${heading}\n`, 2)[1]?.split('\n## ', 1)[0] ?? ''
+}
+
 function firstBashBlockAfterHeading(markdown: string, heading: string): string {
-  const section = markdown.split(`${heading}\n`, 2)[1] ?? ''
-  return section.match(/```bash\n([\s\S]*?)\n```/)?.[1] ?? ''
+  return markdownSection(markdown, heading).match(/```bash\n([\s\S]*?)\n```/)?.[1] ?? ''
 }
 
 // spec: install-script/site-build-publishes-the-install-script
@@ -64,7 +67,7 @@ test('install docs lead with the install script and name the SHA256SUMS cutoff',
   ])
   const quickStartInstall = firstBashBlockAfterHeading(quickStart, '## Install the CLI')
   const readmeInstall = firstBashBlockAfterHeading(readme, '## Install')
-  const readmeInstallSection = readme.split('## Install\n')[1]?.split('\n## ')[0] ?? ''
+  const readmeInstallSection = markdownSection(readme, '## Install')
   const prerequisites = quickStart.split('\n').find(line => line.startsWith('You need')) ?? ''
   const intro = install.split('\n\n')[1] ?? ''
 
