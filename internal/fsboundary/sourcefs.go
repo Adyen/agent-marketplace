@@ -89,6 +89,15 @@ func (s *SourceFS) ReadFile(name string) ([]byte, error) {
 	return data, err
 }
 
+// ReadFileWithIdentity reads a regular source member through the captured root,
+// bounded by limit, and returns the identity observed during the read.
+func (s *SourceFS) ReadFileWithIdentity(name string, limit int64) ([]byte, Identity, error) {
+	if limit < 0 {
+		return nil, Identity{}, fmt.Errorf("%w: invalid source read limit %d", ErrTooLarge, limit)
+	}
+	return s.readWithLimit(name, limit)
+}
+
 func (s *SourceFS) Refusal() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -117,6 +126,10 @@ func (s *SourceFS) recordRefusal(err error) {
 }
 
 func (s *SourceFS) read(name string) (data []byte, identity Identity, err error) {
+	return s.readWithLimit(name, -1)
+}
+
+func (s *SourceFS) readWithLimit(name string, limit int64) (data []byte, identity Identity, err error) {
 	defer func() {
 		if err == nil {
 			s.mu.Lock()
@@ -141,7 +154,11 @@ func (s *SourceFS) read(name string) (data []byte, identity Identity, err error)
 			err = errors.Join(err, closeErr)
 		}
 	}()
-	return source.ReadTarget(source.Identity().Size)
+	identity = source.Identity()
+	if limit >= 0 && identity.Size > limit {
+		return nil, Identity{}, fmt.Errorf("%w: source %s exceeds limit %d", ErrTooLarge, name, limit)
+	}
+	return source.ReadTarget(identity.Size)
 }
 
 func (s *SourceFS) captureSource(name string) (*Destination, error) {

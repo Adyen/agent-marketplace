@@ -191,6 +191,7 @@ each one is driven):
 | `work35-discovery` | Marketplace discovery with acquisition and search barriers (`discovery.spec.ts`) |
 | `work36-inspection` | Verified Marketplace inspection with support, image, and unsafe files (`inspection.spec.ts`) |
 | `work37-installed`, `work37-installed-missing` | An installed skill with support files, optionally with one deleted (`installed-skill-files.spec.ts`) |
+| `local-skill-files` | Directory and local bare Git skills with support files, plus paths for read-only and unsafe-source checks (`local-skill-files.spec.ts`) |
 | `work39-resource-actions` | Marketplace install/remove; `AM_LOCALAPI_USER_INITIAL_MODE` = `available`, `user-installed`, or `org-optional` (`resource-actions.spec.ts`) |
 | `work40-resource-actions` | Directory-registry install/remove; mode `root-owned`, `source-included`, or `selection-included` (`registry-resource-actions.spec.ts`) |
 

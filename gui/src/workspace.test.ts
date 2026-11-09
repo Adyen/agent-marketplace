@@ -12,6 +12,8 @@ import {
 import {
   EVENT_OUTAGE_MESSAGE,
   EVENT_RETRY_DELAY_MS,
+  RESOURCE_FILES_UNAVAILABLE_MESSAGE,
+  SOURCE_FILES_UNAVAILABLE_MESSAGE,
   WorkspaceController,
 } from './controller'
 import { event, fakeClient, mountWorkspace, row, rowNames, snapshot, tick } from './test-support'
@@ -2015,6 +2017,36 @@ describe('Event stream reconnect', () => {
       expect(event).not.toHaveProperty('sourceName')
     }
     expect(quit).not.toHaveBeenCalled()
+  })
+
+  it('shows local-source unavailable copy and preserves Marketplace file copy', async () => {
+    const { client, push } = fakeClient()
+    const requests: Array<{ reject: (reason: unknown) => void }> = []
+    const installedSkillFiles = vi.fn(() =>
+      new Promise<import('./api/client').InstalledSkillFilesPayload>((_resolve, reject) => requests.push({ reject })),
+    )
+    const testClient = Object.assign(client, { installedSkillFiles })
+    const marketplace = row('marketplace', { id: 'row-marketplace', installedFiles: true })
+    const local = row('local', { id: 'row-local', installedFiles: true })
+    const operation: OperationRef = { id: 92, kind: 'sync' }
+    const { controller, wrapper } = mountWorkspace(testClient, 60_000, vi.fn())
+    push(event({ sequence: 1, generation: 4, operation, payload: snapshot([marketplace, local]) }))
+    await tick()
+
+    await wrapper.find('[role="option"][aria-selected="true"]').trigger('keydown', { key: 'Enter' })
+    await tick()
+    requests[0]?.reject(new RequestError(502, 'localapi.resource_files_unavailable'))
+    await tick()
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(RESOURCE_FILES_UNAVAILABLE_MESSAGE)
+
+    push(event({ sequence: 2, generation: 5, operation, payload: snapshot([local]) }))
+    await tick()
+    await wrapper.find('[role="option"][aria-selected="true"]').trigger('keydown', { key: 'Enter' })
+    await tick()
+    requests[1]?.reject(new RequestError(502, 'localapi.source_files_unavailable'))
+    await tick()
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(SOURCE_FILES_UNAVAILABLE_MESSAGE)
+    controller.dispose()
   })
 
   describe('Marketplace resource actions', () => {

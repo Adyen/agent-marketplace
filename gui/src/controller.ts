@@ -56,6 +56,7 @@ export const EVENT_OUTAGE_MESSAGE = 'Session updates are unavailable'
 export const DISCOVERY_REQUEST_ERROR_MESSAGE = 'Marketplace discovery request failed; retry or check the endpoint'
 export const INSPECTION_UNAVAILABLE_MESSAGE = 'Verified inspection is unavailable; check the Marketplace and retry.'
 export const RESOURCE_FILES_UNAVAILABLE_MESSAGE = 'Resource files are unavailable; refresh this resource and retry.'
+export const SOURCE_FILES_UNAVAILABLE_MESSAGE = 'Skill source files are missing or unsafe; fix the source and refresh.'
 export const RESOURCE_ACTION_UNAVAILABLE_MESSAGE = 'Resource action could not be prepared; refresh this resource and retry.'
 export const RESOURCE_ACTION_FAILED_MESSAGE = 'The resource action could not be started; refresh this resource and retry.'
 export const RESOURCE_ACTION_STALE_MESSAGE = 'This resource changed; prepare the action again.'
@@ -892,9 +893,12 @@ export class WorkspaceController {
       this.inspectionAbort = null
       const current = this.state.inspection
       if (current != null) {
-        const message = error instanceof RequestError && error.code === 'localapi.resource_files_unavailable'
+        const code = error instanceof RequestError ? error.code : ''
+        const message = code === 'localapi.resource_files_unavailable'
           ? RESOURCE_FILES_UNAVAILABLE_MESSAGE
-          : INSPECTION_UNAVAILABLE_MESSAGE
+          : code === 'localapi.source_files_unavailable'
+            ? SOURCE_FILES_UNAVAILABLE_MESSAGE
+            : INSPECTION_UNAVAILABLE_MESSAGE
         this.state.inspection = { ...current, loading: false, error: message }
       }
     })

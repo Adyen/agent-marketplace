@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/session"
@@ -309,6 +310,45 @@ func TestLocalAPIUserHarness(t *testing.T) {
 		writeFile(t, filepath.Join(home, ".agents", "config.yaml"),
 			"apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  infra_skills:\n    git: "+gitURL+"\n    ref: main\n    path: solo\nresources:\n  infra_skills:\n    all: true\n    exclude: [skill/solo]\n")
 	}
+	if fixture == "local-skill-files" {
+		directorySource := filepath.Join(home, "directory-source")
+		writeFile(t, filepath.Join(directorySource, "directory-skill", "SKILL.md"), "---\nname: directory-skill\ndescription: Directory skill\n---\n# Directory skill\n")
+		writeFile(t, filepath.Join(directorySource, "directory-skill", "notes.md"), "# Directory support\n")
+
+		bareGit := newBareGitSource(t)
+		gitWork := filepath.Join(t.TempDir(), "git-work")
+		sourceGit(t, "", "clone", bareGit, gitWork)
+		writeFile(t, filepath.Join(gitWork, "solo", "SKILL.md"), "---\nname: git-skill\ndescription: Git skill\n---\n# Git skill\n")
+		writeFile(t, filepath.Join(gitWork, "solo", "notes.md"), "# Git support\n")
+		sourceGit(t, gitWork, "add", ".")
+		sourceGit(t, gitWork, "commit", "-m", "add skill support")
+		sourceGit(t, gitWork, "push", "origin", "main")
+		gitURL := "file://" + filepath.ToSlash(bareGit)
+
+		userConfigPath := filepath.Join(home, ".agents", "config.yaml")
+		writeFile(t, userConfigPath, fmt.Sprintf(
+			"apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  directory: {directory: %q}\n  git:\n    git: %q\n    ref: main\nresources:\n  directory: {all: true}\n  git: {all: true}\n",
+			directorySource,
+			gitURL,
+		))
+		lockPaths, err := config.ResolveConfigLockPathsTolerateMissing(userConfigPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, _, err := lifecycle.PrepareRuntimeLocks(context.Background(), home, home, lifecycle.LockMode{}); err != nil {
+			t.Fatalf("prepare local skill fixture Git lock: %v", err)
+		}
+		materializedPath := filepath.Join(home, ".devin", "skills", "protected", "SKILL.md")
+		writeFile(t, materializedPath, "protected local skill materialization\n")
+		outsidePath := filepath.Join(home, "outside-local-skill.txt")
+		writeFile(t, outsidePath, "outside-local-skill-private-bytes")
+
+		bootstrap["localSkillFilesConfig"] = userConfigPath
+		bootstrap["localSkillFilesLock"] = lockPaths.CanonicalLock
+		bootstrap["localSkillFilesMaterialized"] = materializedPath
+		bootstrap["localSkillFilesDirectory"] = directorySource
+		bootstrap["localSkillFilesOutside"] = outsidePath
+	}
 	if orgConfigPath != "" {
 		bootstrap["orgConfig"] = orgConfigPath
 	}
@@ -438,6 +478,26 @@ func TestLocalAPIUserHarness(t *testing.T) {
 			api.Close()
 			telemetryHarness.finish(t)
 		}()
+	}
+	if fixture == "local-skill-files" {
+		events := streamEvents(t, api)
+		waitForInspectionFinal(t, api, events)
+		api.mu.Lock()
+		var gitRow rowDTO
+		for _, row := range api.current.Rows {
+			if row.Name == "git-skill" {
+				gitRow = row
+				break
+			}
+		}
+		api.mu.Unlock()
+		if gitRow.ID == "" || !gitRow.InstalledFiles {
+			t.Fatalf("Git skill fixture row = %+v, want installedFiles capability", gitRow)
+		}
+		row, _, code := api.visibleResourceRow(gitRow.ID, session.LocalSkillFiles)
+		if code != "" || row.Artifact.SourceRoot == "" {
+			t.Fatalf("Git skill fixture source root = %q, want captured root (code %q)", row.Artifact.SourceRoot, code)
+		}
 	}
 	if work40Fixture != nil {
 		assertWork40ProtectedFilesUnchanged(t, work40Fixture.protected)
