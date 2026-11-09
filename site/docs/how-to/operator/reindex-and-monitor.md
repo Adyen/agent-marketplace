@@ -74,7 +74,7 @@ agent_marketplace_active_requests{listener="operations"} 1
 
 `/readyz` returns `503` when the recorded configuration authority does not match `management.mode`, the stored revocations do not match the process's configuration, the metadata or blob store does not respond, or the instance record is missing from the metadata store. The [health and metrics reference](../../reference/marketplace-health-and-metrics.md) describes each check.
 
-Only processes that run the API (`--role api` or `--role all`) serve these endpoints. A `--role worker` process has no HTTP listener. Do not expose `/readyz` or `/metrics` through the public reverse proxy.
+API and all-role processes serve these endpoints as shown. A worker-only process opens only its operations listener and serves `/metrics` there; `/readyz` is `404`, and its public `listen` address is not opened. Do not expose `/readyz` or `/metrics` through the public reverse proxy.
 
 ## Watch for problems in the logs
 
@@ -87,6 +87,7 @@ Read the log file or collect it with your container tooling. Alert or investigat
 - `source observation`: the worker probed a registry's remote ref. Its `outcome` is `changed`, `unchanged`, or `failed`; repeated `failed` outcomes mean the published index is preserved but possibly stale.
 - `refresh requested`: an observation or `serve reindex` queued a refresh. `trigger` is `source-change`, `config-change`, `reconciliation`, or `manual`, and `coalesced` is true when the request joined an already-active refresh instead of queueing another.
 - `source observation delayed by host budget` or `refresh delayed by host budget`: per-host upstream limits deferred the work; `overdue` shows how long it has been waiting.
+- `refresh finished`: one terminal refresh outcome with `registry`, `trigger`, `outcome` (`succeeded`, `failed`, or `superseded`), and `duration`. Source probe failures remain `source observation` records and are not refresh failures.
 - `reindex failed`, `process refresh job failed`, or `managed refresh attempt failed`: a registry refresh failed. The cause is in the `error` or `err` attribute; a managed attempt also carries `failure_code`, a stable classification that appears on the attempt in `/api/v1/admin/attempts`.
 - `license policy rejected resource` and other records whose `code` attribute starts with `marketplace.policy.`: ingestion policy rejected a resource. See [How to manage ingestion policy](./manage-ingestion-policy.md) for the finding codes.
 - `marketplace.ingest.duplicate-resource` in the `code` attribute: two paths in one registry publish the same kind and name; the first wins.
@@ -98,7 +99,7 @@ Read the log file or collect it with your container tooling. Alert or investigat
 
 ## Alert on metrics
 
-Scrape `/metrics` on the operations listener and alert against your service objectives: the request counter for error rate, the public latency histogram for user-facing latency (it also counts the `503` responses the authority and availability checks produce before routing), and the metadata pool counters for pool contention. The [health and metrics reference](../../reference/marketplace-health-and-metrics.md#metrics) lists every series and label. The server exposes no metrics for the worker, the job queue, or reindex runs, so watch those through the logs and your platform. The Helm chart can create a `ServiceMonitor` that scrapes the `operations` port (`serviceMonitor.enabled`).
+Scrape `/metrics` on every worker and API operations listener. Alert against your service objectives: API request errors and public latency, plus worker source observations, refresh failures, host-budget delays, configuration rejection, and restart-required drift. An increasing `unchanged` observation counter with a stable nonzero last-index timestamp is healthy; a `0` last-index timestamp means the registry has been observed but not yet indexed successfully. Rising host-budget delays indicate admission limits rather than source failure. A recent successful observation with an old last-index timestamp can indicate a failed or delayed refresh. With multiple workers, aggregate per-registry timestamps using `max by (registry)`. The [health and metrics reference](../../reference/marketplace-health-and-metrics.md#metrics) lists every series and label. The Helm chart's ServiceMonitor scrapes API and worker operations Services when `serviceMonitor.enabled` is set.
 
 ## Related documentation
 

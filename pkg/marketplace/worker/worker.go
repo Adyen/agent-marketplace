@@ -32,6 +32,7 @@ type Deps struct {
 	Marketplace   store.Marketplace
 	MetadataStore store.MetadataStore
 	BlobStore     store.BlobStore
+	Metrics       *Metrics
 	ReindexActor  store.ManagedActor
 	ResolveRef    func(context.Context, string, string, acquire.Credentials, time.Duration) (string, error)
 	Clone         func(context.Context, string, string, acquire.Credentials, acquire.Limits, time.Duration, ...string) (*acquire.Result, error)
@@ -266,7 +267,7 @@ func Run(ctx context.Context, deps Deps, cfg config.Config) error {
 				classification config.Classification,
 			) error {
 				return observer.applyRuntimeConfiguration(applyCtx, candidate, classification)
-			})
+			}, deps.Metrics)
 		}()
 	}
 	ticker := time.NewTicker(observationPollDelay)
@@ -378,6 +379,11 @@ func (o *observer) applyRuntimeConfiguration(ctx context.Context, candidate conf
 	}
 	if err := store.ApplyRegistryConfiguration(ctx, o.deps.MetadataStore, changes); err != nil {
 		return fmt.Errorf("apply runtime registry configuration: %w", err)
+	}
+	if o.deps.Metrics != nil {
+		for _, id := range classification.Removed {
+			o.deps.Metrics.RemoveRegistry(id)
+		}
 	}
 	return nil
 }
@@ -517,6 +523,9 @@ func (o *observer) observeOne(ctx context.Context, due store.RegistryObservation
 			hostLease, budgetErr := o.deps.MetadataStore.AcquireHostBudget(ctx, host, owner, false, sourceHostBudgetLimit(), registryLeaseDuration)
 			if errors.Is(budgetErr, store.ErrConflict) {
 				if o.claimBudgetDelayLog(id, current.NextProbeAt) {
+					if o.deps.Metrics != nil {
+						o.deps.Metrics.RecordHostBudgetDelay("observation")
+					}
 					overdue := time.Duration(0)
 					if !current.NextProbeAt.IsZero() {
 						overdue = max(now.Sub(current.NextProbeAt), 0)
@@ -554,6 +563,9 @@ func (o *observer) observeOne(ctx context.Context, due store.RegistryObservation
 		if err := recordProbeFailure(ctx, o.deps.MetadataStore, id, now, runtimeConfig.Refresh.Interval.Duration(), probeErr); err != nil {
 			return fmt.Errorf("record probe failure for registry %q: %w", id, err)
 		}
+		if o.deps.Metrics != nil {
+			o.deps.Metrics.RecordObservation(id, "failed", duration, current.ObservedAt, current.LastSuccessfulIndexAt, current.ConsecutiveProbeFailures+1)
+		}
 		slog.Warn("source observation",
 			"registry", id, "outcome", "failed", "origin", redact.URL(origin),
 			"duration", duration, "error", boundedLogError(probeErr))
@@ -569,7 +581,7 @@ func (o *observer) observeOne(ctx context.Context, due store.RegistryObservation
 	}
 	reconciliationDue := !current.NextReconcileAt.IsZero() && !now.Before(current.NextReconcileAt)
 	nextProbe := nextPhaseSlot(id, now, runtimeConfig.Refresh.Interval.Duration())
-	_, err = mutateObservation(ctx, o.deps.MetadataStore, id, func(next *store.RegistryObservation) {
+	updated, err := mutateObservation(ctx, o.deps.MetadataStore, id, func(next *store.RegistryObservation) {
 		next.ObservedCommit = commit
 		next.ObservedAt = now
 		next.ProbeStatus = store.RegistryProbeStatusOK
@@ -596,6 +608,9 @@ func (o *observer) observeOne(ctx context.Context, due store.RegistryObservation
 	outcome := "unchanged"
 	if commit != current.ObservedCommit {
 		outcome = "changed"
+	}
+	if o.deps.Metrics != nil {
+		o.deps.Metrics.RecordObservation(id, outcome, duration, updated.ObservedAt, updated.LastSuccessfulIndexAt, updated.ConsecutiveProbeFailures)
 	}
 	slog.Info("source observation",
 		"registry", id, "outcome", outcome, "commit", commit,
@@ -638,34 +653,61 @@ func workerLoop(ctx context.Context, deps Deps, workerIndex int) {
 }
 
 func processRefreshJob(ctx context.Context, deps Deps, j job.Job, workerID string) error {
+	started := time.Now()
+	registryID := "unknown"
+	trigger := "unknown"
+	outcome := ""
+	var indexedAt time.Time
+	fail := func() {
+		outcome = "failed"
+		_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
+	}
 	defer func() {
 		if r := recover(); r != nil {
+			fail()
 			slog.Error("panic in refresh job", "job", j.ID, "recover", r)
-			_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
 		}
+		if outcome == "" {
+			return
+		}
+		duration := time.Since(started)
+		if deps.Metrics != nil {
+			deps.Metrics.RecordRefresh(trigger, outcome, duration)
+			if outcome == "succeeded" {
+				deps.Metrics.RecordSuccessfulIndex(store.RegistryID(registryID), indexedAt)
+			}
+		}
+		slog.Info("refresh finished",
+			"registry", registryID, "trigger", knownRefreshTrigger(trigger),
+			"outcome", outcome, "duration", duration)
 	}()
 
 	var payload refreshPayload
 	if err := json.Unmarshal(j.Payload, &payload); err != nil {
-		_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
+		fail()
 		return fmt.Errorf("decode job payload: %w", err)
 	}
+	if payload.RegistryID != "" {
+		registryID = payload.RegistryID
+	}
+	trigger = payload.Trigger
 	deps.Config = runtimeSnapshot(deps, deps.Config).Config
 	if deps.Config.Management.Mode != "database" {
 		observation, err := deps.MetadataStore.GetRegistryObservation(ctx, store.RegistryID(payload.RegistryID))
 		if err != nil {
-			_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
+			fail()
 			return fmt.Errorf("load desired generation for registry %q: %w", payload.RegistryID, err)
 		}
 		src, configured := registryByID(deps.Config, payload.RegistryID)
 		if payload.Generation == "" && configured {
 			payload.Generation, err = config.IndexingGeneration(deps.Config, src)
 			if err != nil {
-				_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
+				fail()
 				return fmt.Errorf("compute generation for registry %q: %w", payload.RegistryID, err)
 			}
 		}
 		if payload.Generation != observation.DesiredGeneration {
+			outcome = "superseded"
 			return completeStaleRefresh(ctx, deps, j, workerID, store.RegistryID(payload.RegistryID),
 				payload.Generation, observation.DesiredGeneration)
 		}
@@ -674,7 +716,7 @@ func processRefreshJob(ctx context.Context, deps Deps, j job.Job, workerID strin
 		}
 		currentGeneration, err := config.IndexingGeneration(deps.Config, src)
 		if err != nil {
-			_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
+			fail()
 			return fmt.Errorf("compute runtime generation for registry %q: %w", payload.RegistryID, err)
 		}
 		if currentGeneration != payload.Generation {
@@ -684,7 +726,7 @@ func processRefreshJob(ctx context.Context, deps Deps, j job.Job, workerID strin
 
 	registry, err := loadRegistryForJob(ctx, deps, payload.RegistryID)
 	if err != nil {
-		_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
+		fail()
 		return err
 	}
 
@@ -694,7 +736,7 @@ func processRefreshJob(ctx context.Context, deps Deps, j job.Job, workerID strin
 		return releaseRefreshAndPause(ctx, deps, j.ID, workerID)
 	}
 	if err != nil {
-		_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
+		fail()
 		return fmt.Errorf("lease registry %q for refresh: %w", registry.ID, err)
 	}
 	defer func() {
@@ -704,17 +746,20 @@ func processRefreshJob(ctx context.Context, deps Deps, j job.Job, workerID strin
 	}()
 
 	if len(registry.Origins) == 0 {
-		_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
+		fail()
 		return fmt.Errorf("registry %q has no origin", registry.ID)
 	}
 	origin := registry.Origins[len(registry.Origins)-1]
 	host, err := acquire.SourceHost(origin)
 	if err != nil {
-		_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
+		fail()
 		return fmt.Errorf("resolve source host for registry %q: %w", registry.ID, err)
 	}
 	hostLease, err := deps.MetadataStore.AcquireHostBudget(ctx, host, workerID, true, sourceHostBudgetLimit(), leaseDuration)
 	if errors.Is(err, store.ErrConflict) {
+		if deps.Metrics != nil {
+			deps.Metrics.RecordHostBudgetDelay("refresh")
+		}
 		overdue := time.Duration(0)
 		if !j.CreatedAt.IsZero() {
 			overdue = max(time.Since(j.CreatedAt), 0)
@@ -724,7 +769,7 @@ func processRefreshJob(ctx context.Context, deps Deps, j job.Job, workerID strin
 		return releaseRefreshAndPause(ctx, deps, j.ID, workerID)
 	}
 	if err != nil {
-		_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
+		fail()
 		return fmt.Errorf("admit acquisition for registry %q: %w", registry.ID, err)
 	}
 	defer func() {
@@ -739,37 +784,40 @@ func processRefreshJob(ctx context.Context, deps Deps, j job.Job, workerID strin
 			if observationErr != nil {
 				return observationErr
 			}
+			outcome = "superseded"
 			return completeStaleRefresh(ctx, deps, j, workerID, registry.ID,
 				payload.Generation, observation.DesiredGeneration)
 		}
-		_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
+		fail()
 		return err
 	}
 	head, err := deps.MetadataStore.LatestRegistryOccurrence(ctx, registry.ID)
 	if err != nil {
-		_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
+		fail()
 		return fmt.Errorf("load published commit for registry %q: %w", registry.ID, err)
 	}
 	if payload.Generation == "" {
 		src, ok := registryByID(deps.Config, payload.RegistryID)
 		if !ok {
-			_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
+			fail()
 			return fmt.Errorf("registry %q is not in runtime config", payload.RegistryID)
 		}
 		payload.Generation, err = config.IndexingGeneration(deps.Config, src)
 		if err != nil {
-			_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
+			fail()
 			return fmt.Errorf("compute successful generation for registry %q: %w", registry.ID, err)
 		}
 	}
-	if err := recordSuccessfulIndex(ctx, deps.MetadataStore, registry.ID, head.Commit, payload.Generation, time.Now().UTC()); err != nil {
-		_ = job.Fail(ctx, deps.MetadataStore, j.ID, workerID)
+	indexedAt = time.Now().UTC()
+	if err := recordSuccessfulIndex(ctx, deps.MetadataStore, registry.ID, head.Commit, payload.Generation, indexedAt); err != nil {
+		fail()
 		return fmt.Errorf("record successful index for registry %q: %w", registry.ID, err)
 	}
 
 	if err := job.Complete(ctx, deps.MetadataStore, j.ID, workerID); err != nil {
 		return fmt.Errorf("complete job: %w", err)
 	}
+	outcome = "succeeded"
 	return nil
 }
 

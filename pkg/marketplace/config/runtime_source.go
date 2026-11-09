@@ -23,6 +23,11 @@ type Snapshot struct {
 	Config  Config
 }
 
+type RuntimeReporter interface {
+	RecordCandidateOutcome(string)
+	SetRestartRequired(bool)
+}
+
 // RuntimeSource polls one operator configuration file and retains its last
 // successfully applied worker-safe configuration.
 type RuntimeSource struct {
@@ -74,7 +79,7 @@ func (s *RuntimeSource) RestartRequired() []string {
 }
 
 // Run polls configuration bytes until ctx is cancelled.
-func (s *RuntimeSource) Run(ctx context.Context, interval time.Duration, apply func(context.Context, Snapshot, Config, Classification) error) error {
+func (s *RuntimeSource) Run(ctx context.Context, interval time.Duration, apply func(context.Context, Snapshot, Config, Classification) error, reporter RuntimeReporter) error {
 	if interval <= 0 {
 		interval = RuntimePollInterval
 	}
@@ -85,15 +90,17 @@ func (s *RuntimeSource) Run(ctx context.Context, interval time.Duration, apply f
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			s.poll(ctx, apply)
+			s.poll(ctx, apply, reporter)
 		}
 	}
 }
 
-func (s *RuntimeSource) poll(ctx context.Context, apply func(context.Context, Snapshot, Config, Classification) error) {
+func (s *RuntimeSource) poll(ctx context.Context, apply func(context.Context, Snapshot, Config, Classification) error, reporter RuntimeReporter) {
 	data, err := os.ReadFile(s.path)
 	if err != nil {
-		s.reject(sha256.Sum256([]byte("missing configuration")), boundedRuntimeReason(err))
+		if s.reject(sha256.Sum256([]byte("missing configuration")), boundedRuntimeReason(err)) && reporter != nil {
+			reporter.RecordCandidateOutcome("rejected")
+		}
 		return
 	}
 	digest := sha256.Sum256(data)
@@ -105,28 +112,40 @@ func (s *RuntimeSource) poll(ctx context.Context, apply func(context.Context, Sn
 	}
 	candidate, err := ParseConfig(data)
 	if err != nil {
-		s.reject(digest, boundedRuntimeReason(err))
+		if s.reject(digest, boundedRuntimeReason(err)) && reporter != nil {
+			reporter.RecordCandidateOutcome("rejected")
+		}
 		return
 	}
 	current := s.Current()
 	classification, err := Classify(s.startup, current.Config, candidate)
 	if err != nil {
-		s.reject(digest, boundedRuntimeReason(err))
+		if s.reject(digest, boundedRuntimeReason(err)) && reporter != nil {
+			reporter.RecordCandidateOutcome("rejected")
+		}
 		return
 	}
-	s.setRestartRequired(classification.RestartRequired)
+	if s.setRestartRequired(classification.RestartRequired) && reporter != nil {
+		reporter.SetRestartRequired(len(classification.RestartRequired) != 0)
+	}
 	effective := retainStartupOwnedFields(s.startup, candidate)
 	if !classification.hasWorkerChanges() {
 		s.setLastDigest(digest)
 		return
 	}
 	if err := apply(ctx, current, effective, classification); err != nil {
+		if reporter != nil {
+			reporter.RecordCandidateOutcome("apply_failed")
+		}
 		slog.Error("config candidate apply failed", "reason", boundedRuntimeReason(err))
 		return
 	}
 	next := &Snapshot{Version: current.Version + 1, Config: effective}
 	s.current.Store(next)
 	s.setLastDigest(digest)
+	if reporter != nil {
+		reporter.RecordCandidateOutcome("applied")
+	}
 	slog.Info("config candidate applied",
 		"version", next.Version,
 		"added", len(classification.Added),
@@ -135,16 +154,17 @@ func (s *RuntimeSource) poll(ctx context.Context, apply func(context.Context, Sn
 		"metadata_changed", len(classification.MetadataChanged))
 }
 
-func (s *RuntimeSource) reject(digest [32]byte, reason string) {
+func (s *RuntimeSource) reject(digest [32]byte, reason string) bool {
 	s.mu.Lock()
 	s.lastDigest = digest
 	if _, exists := s.rejected[digest]; exists {
 		s.mu.Unlock()
-		return
+		return false
 	}
 	s.rejected[digest] = struct{}{}
 	s.mu.Unlock()
 	slog.Warn("config candidate rejected", "reason", reason)
+	return true
 }
 
 func (s *RuntimeSource) setLastDigest(digest [32]byte) {
@@ -153,11 +173,11 @@ func (s *RuntimeSource) setLastDigest(digest [32]byte) {
 	s.mu.Unlock()
 }
 
-func (s *RuntimeSource) setRestartRequired(fields []string) {
+func (s *RuntimeSource) setRestartRequired(fields []string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if slices.Equal(s.restartRequired, fields) {
-		return
+		return false
 	}
 	s.restartRequired = slices.Clone(fields)
 	if len(fields) == 0 {
@@ -165,6 +185,7 @@ func (s *RuntimeSource) setRestartRequired(fields []string) {
 	} else {
 		slog.Warn("restart-required config drift detected", "fields", strings.Join(fields, ","))
 	}
+	return true
 }
 
 func retainStartupOwnedFields(startup, candidate Config) Config {

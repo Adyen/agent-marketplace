@@ -22,6 +22,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/job"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // spec: marketplace-source-observation/repeated-unchanged-observations-perform-no-acquisition
@@ -124,6 +125,46 @@ func TestObserverFailedFirstProbeIsNotRelistedBeforeItsBackoff(t *testing.T) {
 	}
 	if f.counts.probes.Load() != 1 {
 		t.Fatalf("second cycle probed during backoff: probes = %d, want one", f.counts.probes.Load())
+	}
+}
+
+func TestObserverRestoresLastIndexedGaugeFromStoredIndex(t *testing.T) {
+	f := newObservationFixture(t, 1)
+	registryID := store.RegistryID(f.cfg.Registries[0].ID)
+	if err := initializeObservationState(f.ctx, f.deps, f.cfg); err != nil {
+		t.Fatalf("initializeObservationState: %v", err)
+	}
+	commit := strings.TrimSpace(workerGitOutput(t, f.repo, "rev-parse", "HEAD"))
+	generation, err := config.IndexingGeneration(f.cfg, f.cfg.Registries[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexedAt := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+	updateObservation(t, f.meta, registryID, func(o *store.RegistryObservation) {
+		o.ObservedCommit = commit
+		o.SuccessfulCommit = commit
+		o.SuccessfulGeneration = generation
+		o.LastSuccessfulIndexAt = indexedAt
+		o.ProbeStatus = store.RegistryProbeStatusOK
+	})
+	f.deps.Metrics = NewMetrics()
+	indexGauge := f.deps.Metrics.lastSuccessfulIndex.WithLabelValues(string(registryID))
+
+	setObservationDue(t, f.meta, registryID)
+	if err := newObserver(f.deps, f.cfg, time.Now).runCycle(f.ctx); err != nil {
+		t.Fatalf("unchanged observation after restart: %v", err)
+	}
+	if got, want := testutil.ToFloat64(indexGauge), float64(indexedAt.Unix()); got != want {
+		t.Fatalf("last successful index gauge after unchanged observation = %v, want %v", got, want)
+	}
+
+	setBareBranch(t, f, "main", "")
+	setObservationDue(t, f.meta, registryID)
+	if err := newObserver(f.deps, f.cfg, time.Now).runCycle(f.ctx); err != nil {
+		t.Fatalf("failed observation after restart: %v", err)
+	}
+	if got, want := testutil.ToFloat64(indexGauge), float64(indexedAt.Unix()); got != want {
+		t.Fatalf("last successful index gauge after failed observation = %v, want %v", got, want)
 	}
 }
 

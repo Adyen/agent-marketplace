@@ -28,6 +28,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/publicurl"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/revocation"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // MaxRegistryHistoryEntries is the maximum number of occurrences returned by the
@@ -48,6 +49,12 @@ func WithVersion(version string) ServerOption {
 	}
 }
 
+func WithCollectors(collectors ...prometheus.Collector) ServerOption {
+	return func(server *Server) {
+		server.collectors = append(server.collectors, collectors...)
+	}
+}
+
 // Server serves the Marketplace HTTP API and operations endpoints.
 type Server struct {
 	cfg           config.Config
@@ -60,7 +67,8 @@ type Server struct {
 	public        *http.Server
 	ops           *http.Server
 
-	metrics *serverMetrics
+	metrics    *serverMetrics
+	collectors []prometheus.Collector
 
 	installations *installationMetricsReader
 }
@@ -88,7 +96,7 @@ func NewServer(cfg config.Config, meta store.MetadataStore, blobs store.BlobStor
 		option(s)
 	}
 
-	s.metrics = newServerMetrics(meta)
+	s.metrics = newServerMetrics(meta, s.collectors...)
 	if strings.TrimSpace(cfg.InstallationMetrics.URL) != "" {
 		s.installations = newInstallationMetricsReader(cfg.InstallationMetrics, s.mpID)
 		s.installations.metrics = s.metrics
