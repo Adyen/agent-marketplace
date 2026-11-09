@@ -114,12 +114,13 @@ ownedAggregateJourney.test("sync recovery shows the owned Devin aggregate guidan
   await step("settled launch reports the aggregate error", () => {}, async () => {
     await locate(terminal, /! 1 errors: materialize\.dev/).unique().expect({ timeout: 30_000 });
   });
-  await step("the recovery copy uses catalog guidance instead of the generic fallback", () => terminal.write("e"), async () => {
+  await step("the recovery copy uses entry guidance instead of catalog guidance", () => terminal.write("e"), async () => {
     await locate(terminal, "Errors (1)").unique().expect();
     const screen = (await terminal.text()).replace(/\s+/g, "");
-    const guidance = "must be JSON objects";
     assert.ok(screen.includes("materialize.devin.aggregate-shape"), `the diagnostic code is missing:\n${await terminal.text()}`);
-    assert.ok(screen.includes(guidance.replace(/\s+/g, "")), `the catalog guidance is missing:\n${await terminal.text()}`);
+    assert.ok(screen.includes('Rewriteentry0ofevent"PostToolUse"'), `the entry guidance is missing:\n${await terminal.text()}`);
+    assert.ok(screen.includes("orremovethatentryifyounolongerwantit"), `the entry removal guidance is missing:\n${await terminal.text()}`);
+    assert.ok(!screen.includes("mustbeJSONobjects"), `the root/member guidance is present:\n${await terminal.text()}`);
     assert.ok(!screen.includes("agent-marketplace sync --check"), `the generic fallback is present:\n${await terminal.text()}`);
   });
   await step("close the errors screen", () => terminal.write("e"), async () => {
