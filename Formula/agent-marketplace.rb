@@ -1,28 +1,28 @@
 class AgentMarketplace < Formula
   desc "Sync shared AI agent resources from Git-based or local registries"
   homepage "https://github.com/Adyen/agent-marketplace"
-  version "5.1.0"
+  version "5.1.1"
   license "Apache-2.0"
 
   on_macos do
     on_arm do
-      url "https://github.com/Adyen/agent-marketplace/releases/download/v5.1.0/agent-marketplace-v5.1.0-darwin-arm64", using: :nounzip
-      sha256 "3f94cdde2ca81566351a2339d4c627458d1024ea2bfd3f06a9e0c0ae62af450f"
+      url "https://github.com/Adyen/agent-marketplace/releases/download/v5.1.1/agent-marketplace-v5.1.1-darwin-arm64", using: :nounzip
+      sha256 "581ef833ea6e8d21d61918e2a98f0ec3b16ca50cbbcb4e8638733964a438c861"
     end
     on_intel do
-      url "https://github.com/Adyen/agent-marketplace/releases/download/v5.1.0/agent-marketplace-v5.1.0-darwin-amd64", using: :nounzip
-      sha256 "9fa0b4469d9551ee45f6d10a8bfcfe5d0a61d5e6ce3e91cf4addfbbf4979303f"
+      url "https://github.com/Adyen/agent-marketplace/releases/download/v5.1.1/agent-marketplace-v5.1.1-darwin-amd64", using: :nounzip
+      sha256 "dc56ffae970f6124dc48ead4de00da8b9e04aa312729692f183fef2a46a02f40"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/Adyen/agent-marketplace/releases/download/v5.1.0/agent-marketplace-v5.1.0-linux-arm64", using: :nounzip
-      sha256 "3bf15512d9f32d92ad825f5f3d8dacb4a65ac242102d8318efadb9d72c56aa12"
+      url "https://github.com/Adyen/agent-marketplace/releases/download/v5.1.1/agent-marketplace-v5.1.1-linux-arm64", using: :nounzip
+      sha256 "d76368f84df5334b1b0c38242464286ddc27b7201c1b8687cd43d3d7bb498f2b"
     end
     on_intel do
-      url "https://github.com/Adyen/agent-marketplace/releases/download/v5.1.0/agent-marketplace-v5.1.0-linux-amd64", using: :nounzip
-      sha256 "5dccf00308fbed72883f8b1342923b79930c4d4d9a4922b9dd4ec74007dbb664"
+      url "https://github.com/Adyen/agent-marketplace/releases/download/v5.1.1/agent-marketplace-v5.1.1-linux-amd64", using: :nounzip
+      sha256 "9a988efd9a2e4bfad88112b5a33899c194be71ca7af5c0b22ab91c448f74ce1c"
     end
   end
 
@@ -42,10 +42,10 @@ class AgentMarketplace < Formula
     else
       odie "agent-marketplace supports only macOS and Linux"
     end
-    bin.install "agent-marketplace-v5.1.0-#{os}-#{arch}" => "agent-marketplace"
+    bin.install "agent-marketplace-v5.1.1-#{os}-#{arch}" => "agent-marketplace"
   end
 
   test do
-    assert_equal "v5.1.0", shell_output("#{bin}/agent-marketplace --version").strip
+    assert_equal "v5.1.1", shell_output("#{bin}/agent-marketplace --version").strip
   end
 end
