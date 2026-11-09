@@ -2,16 +2,24 @@
 
 `agent-marketplace` installs shared skills, commands, subagents, hooks, and MCP servers from Git into the folders your coding tools read. This page installs the CLI and adds the `agent-marketplace` skill to your project, so your coding agent can help you with the rest.
 
-You need Git, Go 1.27.3 or newer, and a project folder that is a Git repository.
+You need Git and a project folder that is a Git repository.
 
 ## Install the CLI
 
 ```bash
-go install github.com/Adyen/agent-marketplace/cmd/agent-marketplace@latest
+curl -fsSL https://agent-marketplace.io/install.sh | bash
 agent-marketplace --version
 ```
 
-If the terminal answers `command not found`, add Go's install folder to your `PATH`: `$(go env GOBIN)` if set, otherwise `$(go env GOPATH)/bin` (usually `~/go/bin`). For release binaries and other options, see [more install options](./install.md).
+If the terminal answers `command not found`, add `~/.local/bin` to your `PATH` and open a new terminal. On macOS with zsh, add `export PATH="$HOME/.local/bin:$PATH"` to `~/.zshrc`.
+
+The installer refuses releases without `SHA256SUMS`; v5.0.3 and earlier do not publish it. As a fallback, Go 1.27.3 or newer can install the newest code from `main`:
+
+```bash
+go install github.com/Adyen/agent-marketplace/cmd/agent-marketplace@latest
+```
+
+For release binaries and other options, see [more install options](./install.md).
 
 ## Launch
 

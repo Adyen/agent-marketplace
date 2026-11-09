@@ -14,7 +14,25 @@ dependencies.
 
 ## Install
 
-Download the binary for your platform from the
+Install the latest release with the install script:
+
+```bash
+curl -fsSL https://agent-marketplace.io/install.sh | bash
+agent-marketplace --version
+```
+
+To pin a release or choose an install directory, set `AGENT_MARKETPLACE_VERSION`
+or `AGENT_MARKETPLACE_INSTALL_DIR`:
+
+```bash
+curl -fsSL https://agent-marketplace.io/install.sh | AGENT_MARKETPLACE_VERSION=vX.Y.Z AGENT_MARKETPLACE_INSTALL_DIR="$HOME/bin" bash
+```
+
+The installer refuses releases without `SHA256SUMS`, including v5.0.3 and earlier.
+
+### More install options
+
+Download a binary for your platform from the
 [latest release](https://github.com/Adyen/agent-marketplace/releases/latest),
 make it executable, and put it on your `PATH`:
 
@@ -24,9 +42,8 @@ mv agent-marketplace-*-darwin-arm64 /usr/local/bin/agent-marketplace
 agent-marketplace --version
 ```
 
-The [install guide](https://agent-marketplace.io/docs/install) covers the other
-platforms, installing without administrator rights, `go install`, and building
-from source.
+The [install guide](https://agent-marketplace.io/docs/install) covers other
+platforms, installing without administrator rights, Go, and building from source.
 
 ## Quick start
 
