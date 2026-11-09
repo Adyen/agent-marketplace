@@ -89,9 +89,7 @@ func startServeTestProcess(t *testing.T, env *Env, configPath, role string, over
 func (p *serveTestProcess) stop(t *testing.T) string {
 	t.Helper()
 	if !p.stopped {
-		if p.cmd.ProcessState == nil {
-			_ = p.cmd.Process.Signal(syscall.SIGTERM)
-		}
+		_ = p.cmd.Process.Signal(syscall.SIGTERM)
 		select {
 		case p.waitErr = <-p.done:
 		case <-time.After(15 * time.Second):
@@ -105,6 +103,10 @@ func (p *serveTestProcess) stop(t *testing.T) string {
 			t.Errorf("serve process exited with %v", p.waitErr)
 		}
 	}
+	return p.logs()
+}
+
+func (p *serveTestProcess) logs() string {
 	logs := p.output.String()
 	logPath := filepath.Join(p.env.home, ".agent-marketplace", "logs", "agent-marketplace.log")
 	if data, err := os.ReadFile(logPath); err == nil {
@@ -401,6 +403,32 @@ func TestServeWorkerOnlyMetricsOnOperationsListener(t *testing.T) {
 		t.Errorf("worker process unexpectedly opened public listener %s", listen)
 	}
 	_ = process
+}
+
+func TestServeWorkerFailsWhenOperationsListenerIsOccupied(t *testing.T) {
+	env, _, _, _, operations := newServeMetricsEnv(t)
+	occupied, err := net.Listen("tcp", operations)
+	if err != nil {
+		t.Fatalf("occupy operations listener %s: %v", operations, err)
+	}
+	t.Cleanup(func() { _ = occupied.Close() })
+	process := startServeTestProcess(t, env, env.mustResolvePath("/workspace/marketplace.yaml"), "worker", map[string]string{
+		"MARKETPLACE_PRIVATE_TOKEN": "worker-telemetry-secret",
+	})
+	var exitErr error
+	select {
+	case exitErr = <-process.done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("worker with an occupied operations listener did not exit within 10 seconds")
+	}
+	process.waitErr = exitErr
+	process.stopped = true
+	if exitErr == nil {
+		t.Fatal("worker with an occupied operations listener exited successfully")
+	}
+	if logs := process.logs(); !strings.Contains(logs, "listen worker operations") {
+		t.Errorf("worker failure does not name the operations listener:\n%s", logs)
+	}
 }
 
 // spec: marketplace-worker-telemetry/an-all-role-process-exposes-each-worker-series-once

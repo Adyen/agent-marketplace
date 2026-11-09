@@ -564,7 +564,7 @@ func (o *observer) observeOne(ctx context.Context, due store.RegistryObservation
 			return fmt.Errorf("record probe failure for registry %q: %w", id, err)
 		}
 		if o.deps.Metrics != nil {
-			o.deps.Metrics.RecordObservation(id, "failed", duration, current.ObservedAt, current.ConsecutiveProbeFailures+1)
+			o.deps.Metrics.RecordObservation(id, "failed", duration, current.ObservedAt, current.LastSuccessfulIndexAt, current.ConsecutiveProbeFailures+1)
 		}
 		slog.Warn("source observation",
 			"registry", id, "outcome", "failed", "origin", redact.URL(origin),
@@ -610,7 +610,7 @@ func (o *observer) observeOne(ctx context.Context, due store.RegistryObservation
 		outcome = "changed"
 	}
 	if o.deps.Metrics != nil {
-		o.deps.Metrics.RecordObservation(id, outcome, duration, updated.ObservedAt, updated.ConsecutiveProbeFailures)
+		o.deps.Metrics.RecordObservation(id, outcome, duration, updated.ObservedAt, updated.LastSuccessfulIndexAt, updated.ConsecutiveProbeFailures)
 	}
 	slog.Info("source observation",
 		"registry", id, "outcome", outcome, "commit", commit,

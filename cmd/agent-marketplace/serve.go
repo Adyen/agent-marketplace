@@ -98,12 +98,20 @@ are "worker" (background indexing), "api" (HTTP API), and "all" (both).`,
 			var backfillDone <-chan struct{}
 
 			if role == "worker" || role == "all" {
+				var operationsListener net.Listener
+				if role == "worker" {
+					operationsListener, err = net.Listen("tcp", cfg.OperationsListen)
+					if err != nil {
+						slog.Error("serve failed", "reason", "listen worker operations", "error", err)
+						return fmt.Errorf("listen worker operations %q: %w", cfg.OperationsListen, err)
+					}
+				}
 				backfillDone = worker.StartPlaceholderBackfill(backfillCtx, deps)
 				if role == "worker" {
 					wg.Add(1)
 					go func() {
 						defer wg.Done()
-						if err := runWorkerOperations(ctx, cfg.OperationsListen, workerMetrics); err != nil && !errors.Is(err, context.Canceled) {
+						if err := runWorkerOperations(ctx, operationsListener, workerMetrics); err != nil && !errors.Is(err, context.Canceled) {
 							slog.Error("worker operations server stopped", "error", err)
 							errCh <- fmt.Errorf("worker operations server: %w", err)
 						}
@@ -161,7 +169,7 @@ are "worker" (background indexing), "api" (HTTP API), and "all" (both).`,
 	return cmd
 }
 
-func runWorkerOperations(ctx context.Context, address string, metrics *worker.Metrics) error {
+func runWorkerOperations(ctx context.Context, listener net.Listener, metrics *worker.Metrics) error {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", mpapi.NewOperationsMetricsHandler(metrics.Collectors()...))
 	server := &http.Server{
@@ -169,10 +177,6 @@ func runWorkerOperations(ctx context.Context, address string, metrics *worker.Me
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  120 * time.Second,
-	}
-	listener, err := net.Listen("tcp", address)
-	if err != nil {
-		return fmt.Errorf("listen worker operations %q: %w", address, err)
 	}
 	serveDone := make(chan error, 1)
 	go func() {

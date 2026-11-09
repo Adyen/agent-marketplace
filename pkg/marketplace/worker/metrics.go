@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"slices"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -109,17 +110,17 @@ func (m *Metrics) Collectors() []prometheus.Collector {
 	}
 }
 
-func (m *Metrics) RecordObservation(id store.RegistryID, outcome string, duration time.Duration, lastSuccessfulAt time.Time, failures int) {
+func (m *Metrics) RecordObservation(id store.RegistryID, outcome string, duration time.Duration, lastObservedAt, lastIndexedAt time.Time, failures int) {
 	if m == nil {
 		return
 	}
-	if containsValue(observationOutcomes, outcome) {
+	if slices.Contains(observationOutcomes, outcome) {
 		m.sourceObservations.WithLabelValues(outcome).Inc()
 	}
 	m.sourceObservationDuration.Observe(duration.Seconds())
-	m.lastSuccessfulIndex.WithLabelValues(string(id))
-	if outcome != "failed" && !lastSuccessfulAt.IsZero() {
-		m.lastSuccessfulObservation.WithLabelValues(string(id)).Set(float64(lastSuccessfulAt.UnixNano()) / float64(time.Second))
+	m.lastSuccessfulIndex.WithLabelValues(string(id)).Set(unixSeconds(lastIndexedAt))
+	if outcome != "failed" && !lastObservedAt.IsZero() {
+		m.lastSuccessfulObservation.WithLabelValues(string(id)).Set(unixSeconds(lastObservedAt))
 	}
 	m.consecutiveProbeFailures.WithLabelValues(string(id)).Set(float64(failures))
 }
@@ -128,7 +129,7 @@ func (m *Metrics) RecordSuccessfulIndex(id store.RegistryID, indexedAt time.Time
 	if m == nil || indexedAt.IsZero() {
 		return
 	}
-	m.lastSuccessfulIndex.WithLabelValues(string(id)).Set(float64(indexedAt.UnixNano()) / float64(time.Second))
+	m.lastSuccessfulIndex.WithLabelValues(string(id)).Set(unixSeconds(indexedAt))
 }
 
 func (m *Metrics) RecordRefresh(trigger, outcome string, duration time.Duration) {
@@ -136,7 +137,7 @@ func (m *Metrics) RecordRefresh(trigger, outcome string, duration time.Duration)
 		return
 	}
 	trigger = knownRefreshTrigger(trigger)
-	if !containsValue(refreshOutcomes, outcome) {
+	if !slices.Contains(refreshOutcomes, outcome) {
 		return
 	}
 	m.registryRefreshes.WithLabelValues(trigger, outcome).Inc()
@@ -144,14 +145,14 @@ func (m *Metrics) RecordRefresh(trigger, outcome string, duration time.Duration)
 }
 
 func (m *Metrics) RecordHostBudgetDelay(operation string) {
-	if m == nil || !containsValue(budgetOperations, operation) {
+	if m == nil || !slices.Contains(budgetOperations, operation) {
 		return
 	}
 	m.hostBudgetDelays.WithLabelValues(operation).Inc()
 }
 
 func (m *Metrics) RecordCandidateOutcome(outcome string) {
-	if m == nil || !containsValue(candidateOutcomes, outcome) {
+	if m == nil || !slices.Contains(candidateOutcomes, outcome) {
 		return
 	}
 	m.configCandidates.WithLabelValues(outcome).Inc()
@@ -180,17 +181,15 @@ func (m *Metrics) RemoveRegistry(id string) {
 var _ config.RuntimeReporter = (*Metrics)(nil)
 
 func knownRefreshTrigger(trigger string) string {
-	if containsValue(refreshTriggers, trigger) {
+	if slices.Contains(refreshTriggers, trigger) {
 		return trigger
 	}
 	return "unknown"
 }
 
-func containsValue(values []string, value string) bool {
-	for _, candidate := range values {
-		if candidate == value {
-			return true
-		}
+func unixSeconds(t time.Time) float64 {
+	if t.IsZero() {
+		return 0
 	}
-	return false
+	return float64(t.UnixNano()) / float64(time.Second)
 }

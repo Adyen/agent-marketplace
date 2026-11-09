@@ -305,7 +305,7 @@ jobs:
             local description="$1"
             local haystack="$2"
             local needle="$3"
-            if ! grep -Fq "$needle" <<<"$haystack"; then
+            if ! grep -Fq -- "$needle" <<<"$haystack"; then
               echo "assertion failed: $description (missing: $needle)" >&2
               exit 1
             fi
@@ -315,7 +315,7 @@ jobs:
             local description="$1"
             local haystack="$2"
             local needle="$3"
-            if grep -Fq "$needle" <<<"$haystack"; then
+            if grep -Fq -- "$needle" <<<"$haystack"; then
               echo "assertion failed: $description (unexpected: $needle)" >&2
               exit 1
             fi

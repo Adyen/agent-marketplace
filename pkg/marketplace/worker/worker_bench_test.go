@@ -116,6 +116,7 @@ func BenchmarkObservationCycle200Registries(b *testing.B) {
 		Config:        cfg,
 		MetadataStore: meta,
 		BlobStore:     blobs,
+		Metrics:       NewMetrics(),
 		ResolveRef: func(context.Context, string, string, acquire.Credentials, time.Duration) (string, error) {
 			return commit, nil
 		},
