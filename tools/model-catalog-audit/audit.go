@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -124,7 +125,7 @@ func readLimited(reader io.Reader) ([]byte, error) {
 	return body, err
 }
 
-func audit(ctx context.Context, files fs.FS, sources []source, baselines map[string]baseline, fetch fetchFunc, now time.Time) report {
+func audit(ctx context.Context, files fs.FS, sources []source, baselines map[string]baseline, fetch fetchFunc, now time.Time, overrides map[string][]observedModel) report {
 	result := report{Schema: 1, CheckedAt: now.UTC().Format(time.RFC3339), Coverage: coverage, Sources: []sourceReport{}}
 	for _, s := range sources {
 		r := sourceReport{Name: s.Name, Harness: s.Harness, CatalogDomain: s.Domain, URL: s.URL, Status: "no-drift", Baseline: baselines[s.Name], Findings: []finding{}}
@@ -148,7 +149,8 @@ func audit(ctx context.Context, files fs.FS, sources []source, baselines map[str
 					r.FamilyPins[id] = family.Pin
 				}
 			}
-			auditSource(ctx, s, c, &r, fetch)
+			override, hasOverride := overrides[s.Name]
+			auditSource(ctx, s, c, &r, fetch, override, hasOverride)
 		}
 		result.Failed = result.Failed || r.Status != "no-drift"
 		result.Sources = append(result.Sources, r)
@@ -163,7 +165,7 @@ func (r *sourceReport) add(status, code, model, message string) {
 	r.Findings = append(r.Findings, finding{Code: code, Model: model, Message: message})
 }
 
-func auditSource(ctx context.Context, s source, c catalog, r *sourceReport, fetch fetchFunc) {
+func auditSource(ctx context.Context, s source, c catalog, r *sourceReport, fetch fetchFunc, override []observedModel, hasOverride bool) {
 	response, err := fetch(ctx, s.URL)
 	if err != nil {
 		r.add("unknown", "source.fetch-failed", "", "Public source unavailable; no freshness conclusion. Retry or inspect the source URL.")
@@ -172,15 +174,33 @@ func auditSource(ctx context.Context, s source, c catalog, r *sourceReport, fetc
 	r.ResolvedURL, r.BodySHA256 = response.URL, digest(response.Body)
 	observed, err := extract(s, response.Body)
 	if err != nil {
-		r.add("unknown", "source.parse-failed", "", "Expected inventory or documentation content was not found; review the source adapter.")
+		code := "source.parse-failed"
+		if inventoryKind(s.Kind) {
+			code = "source.inventory-unparsed"
+		}
+		const message = "Expected model inventory or documentation content was not found; review the source adapter."
+		if !hasOverride || len(override) == 0 {
+			r.add("unknown", code, "", message)
+			return
+		}
+		r.add("unknown", "source.parse-failed", "", message)
+		r.Observed = observation{Models: override}
+		compareInventory(c, override, r)
 		return
 	}
+	evidence := observed
+	if hasOverride {
+		observed.Models = override
+	}
 	r.Observed = observed
-	if observed.Text != "" {
-		r.ObservedSHA256 = digest([]byte(observed.Text))
+	if evidence.Text != "" {
+		r.ObservedSHA256 = digest([]byte(evidence.Text))
 	} else {
-		encoded, _ := json.Marshal(observed.Models)
+		encoded, _ := json.Marshal(evidence.Models)
 		r.ObservedSHA256 = digest(encoded)
+	}
+	if inventoryKind(s.Kind) && len(observed.Models) == 0 {
+		r.add("unknown", "source.inventory-unparsed", "", "The source did not yield a parseable model inventory; review the source adapter.")
 	}
 	if observed.Text != "" && r.Baseline.SHA256 == "" {
 		r.add("unknown", "source.baseline-missing", "", "Documentation monitoring requires a reviewed baseline.")
@@ -232,13 +252,85 @@ func compareInventory(c catalog, models []observedModel, r *sourceReport) {
 		}
 	}
 	for _, id := range slices.Sorted(maps.Keys(c.Families)) {
-		pin := c.Families[id].Pin
+		family := c.Families[id]
+		pin := family.Pin
 		if pin != "" {
-			if _, present := upstream[c.Models[pin].Model]; !present {
+			pinned := c.Models[pin].Model
+			if _, present := upstream[pinned]; !present {
 				r.add("drift", "catalog.family-pin-review", id, "Pinned model "+pin+" is not observed upstream; review this explicit conversion policy without silently floating exact selections.")
+			}
+			pinnedVersion, hasPinnedVersion := familyVersion(pinned, id)
+			newestModel := ""
+			var newestVersion []uint64
+			for _, model := range models {
+				version, ok := familyVersion(model.ID, id)
+				if ok && (newestModel == "" || compareVersionComponents(version, newestVersion) > 0) {
+					newestModel, newestVersion = model.ID, version
+				}
+			}
+			if hasPinnedVersion && newestModel != "" && compareVersionComponents(newestVersion, pinnedVersion) > 0 {
+				r.add("drift", "catalog.family-pin-stale", id, "Pinned model "+pinned+" is older than observed family member "+newestModel+" in this source's inventory; review the catalog pin.")
 			}
 		}
 	}
+}
+
+func inventoryKind(kind string) bool {
+	switch kind {
+	case "claude", "factory", "cursor", "codex", "gemini", "gemini-docs":
+		return true
+	default:
+		return false
+	}
+}
+
+func familyVersion(modelID, familyID string) ([]uint64, bool) {
+	_, name, ok := strings.Cut(familyID, "/")
+	if !ok || name == "" {
+		return nil, false
+	}
+	modelID, name = strings.ToLower(modelID), strings.ToLower(name)
+	for start := 0; start < len(modelID); start++ {
+		if !strings.HasPrefix(modelID[start:], name) || start > 0 && modelID[start-1] != '-' {
+			continue
+		}
+		end := start + len(name)
+		if end >= len(modelID) || modelID[end] != '-' && modelID[end] != '.' {
+			continue
+		}
+		var components []uint64
+		for _, part := range strings.FieldsFunc(modelID[end+1:], func(r rune) bool { return r == '-' || r == '.' }) {
+			value, err := strconv.ParseUint(part, 10, 64)
+			if err != nil {
+				break
+			}
+			components = append(components, value)
+		}
+		if len(components) > 0 {
+			return components, true
+		}
+	}
+	return nil, false
+}
+
+// compareVersionComponents orders versions numerically component by component; missing trailing components count as zero.
+func compareVersionComponents(a, b []uint64) int {
+	for i := 0; i < len(a) || i < len(b); i++ {
+		left, right := uint64(0), uint64(0)
+		if i < len(a) {
+			left = a[i]
+		}
+		if i < len(b) {
+			right = b[i]
+		}
+		if left < right {
+			return -1
+		}
+		if left > right {
+			return 1
+		}
+	}
+	return 0
 }
 
 func validateBaselines(baselines map[string]baseline, sources []source) error {

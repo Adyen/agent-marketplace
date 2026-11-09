@@ -1210,6 +1210,16 @@ type ownedJSONExistingEntry struct {
 	raw []byte
 }
 
+type ownedJSONHookEntryShapeError struct {
+	rel   string
+	event string
+	index int
+}
+
+func (e *ownedJSONHookEntryShapeError) Error() string {
+	return fmt.Sprintf("aggregate %q event %q entry %d does not match its declared hook shape; it was left unchanged", e.rel, e.event, e.index)
+}
+
 // ownedJSONExistingEntries reads the current entries out of the container node.
 func ownedJSONExistingEntries(file ownedJSONFileSpec, container *jsonc.Node, legacyProofs ...ownership.Proof) ([]ownedJSONExistingEntry, error) {
 	rel := file.rel
@@ -1282,7 +1292,7 @@ func ownedJSONExistingEntries(file ownedJSONFileSpec, container *jsonc.Node, leg
 			if file.hookShape != "" {
 				if err := validateOwnedJSONHookRule(file.hookShape, element); err != nil &&
 					!ownedJSONLegacyFlatHookRuleIsOwned(file, element, value, legacyProof) {
-					return nil, fmt.Errorf("aggregate %q event %q entry %d does not match its declared hook shape; it was left unchanged", rel, event, i)
+					return nil, &ownedJSONHookEntryShapeError{rel: rel, event: event, index: i}
 				}
 			}
 			out = append(out, ownedJSONExistingEntry{

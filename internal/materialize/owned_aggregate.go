@@ -405,7 +405,15 @@ type nativeHookReconcileOptionsProvider interface {
 }
 
 func ownedJSONShapeDiag(code string, key outputKey, outDir, rel string, err error) diag.Diagnostic {
-	return ownedAggregateDiag(code, key, rel, ownedAggregateMessage(outDir, rel, err.Error()))
+	d := ownedAggregateDiag(code, key, rel, ownedAggregateMessage(outDir, rel, err.Error()))
+	var entryErr *ownedJSONHookEntryShapeError
+	if code == diag.CodeMaterializeDevinAggregateShape && errors.As(err, &entryErr) {
+		d.Hint = fmt.Sprintf(
+			"Rewrite entry %d of event %q in %s in the matcher-groups shape {\"matcher\": \"<optional tool pattern>\", \"hooks\": [{\"type\": \"command\", \"command\": \"<command>\"}]}, or remove that entry if you no longer want it, then run `agent-marketplace sync` again",
+			entryErr.index, entryErr.event, ownedAggregateLabel(outDir, rel),
+		)
+	}
+	return d
 }
 
 func recordOwnedAggregateWrite(report *Report, key outputKey, rootID, outDir, rel string) {
@@ -465,10 +473,12 @@ func ownedAggregateProofDiags(key outputKey, outDir, rel string, err error) []di
 
 func ownedAggregateDiag(code string, key outputKey, rel, message string) diag.Diagnostic {
 	severity := diag.SeverityError
+	hint := ""
 	if doc, ok := diag.DocForCode(code); ok {
 		severity = doc.Severity
+		hint = doc.Hint
 	}
-	diagnostic := diag.Diagnostic{Code: code, Severity: severity, Target: string(key.target), Message: message}
+	diagnostic := diag.Diagnostic{Code: code, Severity: severity, Target: string(key.target), Message: message, Hint: hint}
 	if rel != "" {
 		diagnostic.Source = diag.SourceRef{File: rel}
 	}

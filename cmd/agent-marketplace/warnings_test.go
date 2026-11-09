@@ -251,6 +251,36 @@ func TestWriteSyncIssuesGroupsDistinctProblemsByDiagnosticCode(t *testing.T) {
 	}
 }
 
+func hasEmptyRemediationLine(output string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.TrimSpace(line) == "→" {
+			return true
+		}
+	}
+	return false
+}
+
+// spec: command-error-output/issues-without-remediation-print-no-empty-remediation-line
+func TestWriteSyncIssuesSkipsEmptyRemediation(t *testing.T) {
+	issue := testRemediableResourceWarning{
+		testResourceWarning: testResourceWarning{resource: "resource-a", message: "empty remediation"},
+	}
+	group := groupWarnings([]error{issue})[0]
+	for _, write := range []func(*bytes.Buffer) error{
+		func(out *bytes.Buffer) error { return writeGroupedWarnings(out, []error{issue}, false) },
+		func(out *bytes.Buffer) error { return writeSyncIssues(out, []error{issue}, false, "warning:") },
+		func(out *bytes.Buffer) error { return writeSyncIssue(out, group, false, "warning:", "", true) },
+	} {
+		var out bytes.Buffer
+		if err := write(&out); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out.String(), "empty remediation") || hasEmptyRemediationLine(out.String()) {
+			t.Fatalf("single issue was missing or printed an empty remediation line: %q", out.String())
+		}
+	}
+}
+
 // spec: resource-prerequisites/remediation-with-hints
 func TestWriteGroupedWarningsIncludesRequirementRemediation(t *testing.T) {
 	warning := &resolver.UnmetRequirementWarning{

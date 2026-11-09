@@ -1,0 +1,65 @@
+{
+  "instance_id": "Sample Marketplace",
+  "canonical_url": "https://marketplace.example.com",
+  "browser_base": "https://marketplace.example.com/marketplace",
+  "registries": [
+    {
+      "id": "studio", "slug": "studio", "aliases": [],
+      "origins": ["https://code.example/studio.git"], "ref": "main",
+      "roots": [{ "path": "resources" }], "acquisition": "mirror",
+      "publisher": { "name": "Studio Group" }, "license": "MIT", "listed": true
+    },
+    {
+      "id": "field-notes", "slug": "field-notes", "aliases": [],
+      "origins": ["https://code.example/field-notes.git"], "ref": "main",
+      "roots": [{ "path": "resources" }], "acquisition": "mirror",
+      "publisher": { "name": "Field Notes Group" }, "license": "Apache-2.0", "listed": true
+    },
+    {
+      "id": "community-lab", "slug": "community-lab", "aliases": [],
+      "origins": ["https://code.example/community-lab.git"], "ref": "main",
+      "roots": [{ "path": "resources" }], "acquisition": "mirror",
+      "publisher": { "name": "Community Lab" }, "license": "MIT", "listed": true
+    }
+  ],
+  "items": [
+    {
+      "registry_id": "studio", "registry_slug": "studio", "kind": "skill", "name": "quality-check",
+      "revision": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "content_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "description": "Review changes against a clear, repeatable checklist.", "installation_count": 18,
+      "assessment": {
+        "decision": "allow", "findings": [],
+        "assessment_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "analyzer_version": "fixture-analyzer-1",
+        "policy_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "inspection_manifest_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "assessed_at": "2026-01-02T03:04:05Z"
+      }
+    },
+    {
+      "registry_id": "studio", "registry_slug": "studio", "kind": "command", "name": "open-review",
+      "revision": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "content_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "description": "Prepare a focused review of the current change.", "installation_count": 11
+    },
+    {
+      "registry_id": "studio", "registry_slug": "studio", "kind": "mcpserver", "name": "notes-index",
+      "revision": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "content_digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "description": "Search shared project notes.", "installation_count": 9
+    },
+    {
+      "registry_id": "field-notes", "registry_slug": "field-notes", "kind": "skill", "name": "meeting-brief",
+      "revision": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "content_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "description": "Turn discussion notes into a concise team brief.", "installation_count": 6
+    },
+    {
+      "registry_id": "community-lab", "registry_slug": "community-lab", "kind": "collection", "name": "starter-kit",
+      "revision": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "content_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "description": "A small set of resources for a new workspace.", "installation_count": 4
+    }
+  ]
+}

@@ -121,7 +121,7 @@ func auditDocumentSource(ctx context.Context, files fs.FS, s source, r *sourceRe
 		return
 	}
 	r.CatalogSHA256 = digest(body)
-	auditSource(ctx, s, catalog{}, r, fetch)
+	auditSource(ctx, s, catalog{}, r, fetch, nil, false)
 }
 
 // auditPluginDocumentSource verifies a pluginpolicy evidence source against
@@ -151,5 +151,5 @@ func auditPluginDocumentSource(ctx context.Context, files fs.FS, s source, r *so
 		return
 	}
 	r.CatalogSHA256 = digest(body)
-	auditSource(ctx, s, catalog{}, r, fetch)
+	auditSource(ctx, s, catalog{}, r, fetch, nil, false)
 }

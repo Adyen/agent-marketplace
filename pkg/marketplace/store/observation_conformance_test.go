@@ -53,6 +53,8 @@ func runObservationConformance(t *testing.T, open observationStoreOpener) {
 		{name: "terminal_refresh_failure_allows_a_new_request", run: testTerminalRefreshFailureAllowsNewRequest},
 		{name: "expired_final_attempt_lease_does_not_coalesce", run: testExpiredFinalAttemptLeaseDoesNotCoalesce},
 		{name: "deleting_observation_preserves_immutable_records", run: testDeletingObservationPreservesImmutableRecords},
+		{name: "configuration_candidate_changes_apply_atomically", run: testRegistryConfigurationChangesApplyAtomically},
+		{name: "publication_rejects_a_stale_desired_generation", run: testPublicationRejectsStaleDesiredGeneration},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -114,6 +116,166 @@ func testObservationWritesLeavePublishedStateUnchanged(t *testing.T, meta store.
 		t.Fatalf("GetRegistryObservation after delete = %v, want ErrNotFound", err)
 	}
 	assertObservationPublishedState(t, meta, before, coordinate, contentDigest)
+}
+
+// spec: marketplace-registry-observation/a-failed-configuration-change-applies-nothing
+func testRegistryConfigurationChangesApplyAtomically(t *testing.T, meta store.MetadataStore) {
+	ctx := context.Background()
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	registries := []store.Registry{
+		{ID: "indexed", Slug: "indexed", Ref: "main", Acquisition: store.AcquisitionMirror, Listed: true},
+		{ID: "removed", Slug: "removed", Ref: "main", Acquisition: store.AcquisitionMirror, Listed: true},
+	}
+	for _, registry := range registries {
+		if err := meta.PutRegistry(ctx, registry); err != nil {
+			t.Fatalf("PutRegistry(%s): %v", registry.ID, err)
+		}
+	}
+	for i := range registries {
+		stored, err := meta.GetRegistry(ctx, registries[i].ID)
+		if err != nil {
+			t.Fatalf("GetRegistry(%s): %v", registries[i].ID, err)
+		}
+		registries[i] = stored
+	}
+	beforeIndexedObservation := createObservation(t, meta, store.RegistryObservation{
+		RegistryID: "indexed", DesiredCommit: "commit-indexed", DesiredGeneration: "generation-old",
+		NextProbeAt: now.Add(time.Hour), NextReconcileAt: now.Add(24 * time.Hour),
+	})
+	beforeRemovedObservation := createObservation(t, meta, store.RegistryObservation{
+		RegistryID: "removed", DesiredCommit: "commit-removed", DesiredGeneration: "generation-removed",
+		NextProbeAt: now.Add(time.Hour), NextReconcileAt: now.Add(24 * time.Hour),
+	})
+
+	added := store.Registry{ID: "added", Slug: "added", Ref: "main", Acquisition: store.AcquisitionMirror, Listed: true}
+	changed := registries[0]
+	changed.Publisher.Name = "Updated"
+	removed := registries[1]
+	removed.Listed = false
+	changes := []store.RegistryConfigurationChange{
+		{Registry: added},
+		{Registry: changed, DesiredGeneration: "generation-new", DueAt: now},
+		{Registry: removed, DesiredGeneration: "removed", ClearDesiredCommit: true},
+	}
+	fault := &failRegistryConfigurationWrite{MetadataStore: meta, failAfter: len(changes)}
+	if err := store.ApplyRegistryConfiguration(ctx, fault, changes); err == nil {
+		t.Fatal("ApplyRegistryConfiguration succeeded despite a failure on its last registry write")
+	}
+
+	assertRegistryAndObservationUnchanged(t, meta, registries[0], beforeIndexedObservation)
+	assertRegistryAndObservationUnchanged(t, meta, registries[1], beforeRemovedObservation)
+	if _, err := meta.GetRegistry(ctx, added.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("added registry after rollback = %v, want ErrNotFound", err)
+	}
+
+	if err := store.ApplyRegistryConfiguration(ctx, fault, changes); err != nil {
+		t.Fatalf("retry ApplyRegistryConfiguration: %v", err)
+	}
+	gotAdded, err := meta.GetRegistry(ctx, added.ID)
+	if err != nil || !gotAdded.Listed {
+		t.Fatalf("added registry after retry = %+v, %v", gotAdded, err)
+	}
+	gotIndexed, err := meta.GetRegistryObservation(ctx, "indexed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotIndexed.DesiredGeneration != "generation-new" || !gotIndexed.NextProbeAt.Equal(now) ||
+		gotIndexed.Version <= beforeIndexedObservation.Version {
+		t.Fatalf("indexed observation after retry = %+v", gotIndexed)
+	}
+	gotRemoved, err := meta.GetRegistry(ctx, "removed")
+	if err != nil || gotRemoved.Listed {
+		t.Fatalf("removed registry after retry = %+v, %v", gotRemoved, err)
+	}
+	gotRemovedObservation, err := meta.GetRegistryObservation(ctx, "removed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotRemovedObservation.DesiredGeneration != "removed" || gotRemovedObservation.DesiredCommit != "" ||
+		gotRemovedObservation.Version <= beforeRemovedObservation.Version {
+		t.Fatalf("removed observation after retry = %+v", gotRemovedObservation)
+	}
+}
+
+// spec: marketplace-registry-observation/publication-for-a-generation-that-is-no-longer-desired-is-rejected
+func testPublicationRejectsStaleDesiredGeneration(t *testing.T, meta store.MetadataStore) {
+	ctx := context.Background()
+	before, _, _ := seedObservationPublishedState(t, meta)
+	createObservation(t, meta, store.RegistryObservation{RegistryID: before.registry.ID, DesiredGeneration: "semantic-v1:current"})
+	request := store.RegistryRevisionPublication{
+		PublicationID:      "stale-publication",
+		ExpectedGeneration: "semantic-v1:older",
+		Occurrence: store.RegistryOccurrence{
+			RegistryID: before.registry.ID, Ref: "main", Commit: "stale-commit",
+			RegistryRevisionManifestDigest: "stale-manifest", Acquisition: store.AcquisitionIndexOnly,
+		},
+	}
+	if err := store.PublishRegistryRevision(ctx, meta, nil, request); !errors.Is(err, store.ErrStaleGeneration) {
+		t.Fatalf("stale publication error = %v, want ErrStaleGeneration", err)
+	}
+	latest, err := meta.LatestRegistryOccurrence(ctx, before.registry.ID)
+	if err != nil || latest.Commit != before.latest.Commit {
+		t.Fatalf("registry head after stale publication = %+v, %v; want %q", latest, err, before.latest.Commit)
+	}
+	if _, err := meta.GetRegistryOccurrence(ctx, before.registry.ID, "stale-commit"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("stale registry occurrence = %v, want ErrNotFound", err)
+	}
+	publications, ok := meta.(store.PublicationStore)
+	if !ok {
+		t.Fatal("metadata store does not expose registry publications")
+	}
+	if _, err := publications.CurrentRegistryPublication(ctx, before.registry.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("stale current publication = %v, want ErrNotFound", err)
+	}
+}
+
+func assertRegistryAndObservationUnchanged(t *testing.T, meta store.MetadataStore, wantRegistry store.Registry, wantObservation store.RegistryObservation) {
+	t.Helper()
+	registry, err := meta.GetRegistry(context.Background(), wantRegistry.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(registry, wantRegistry) {
+		t.Fatalf("registry %q after failed candidate = %+v, want %+v", wantRegistry.ID, registry, wantRegistry)
+	}
+	observation, err := meta.GetRegistryObservation(context.Background(), wantObservation.RegistryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(observation, wantObservation) {
+		t.Fatalf("observation %q after failed candidate = %+v, want %+v", wantObservation.RegistryID, observation, wantObservation)
+	}
+}
+
+type failRegistryConfigurationWrite struct {
+	store.MetadataStore
+	failAfter int
+	writes    *int
+	failed    *bool
+}
+
+func (s *failRegistryConfigurationWrite) WithTx(ctx context.Context, fn func(context.Context, store.MetadataStore) error) error {
+	if s.writes == nil {
+		s.writes = new(int)
+		s.failed = new(bool)
+	}
+	return s.MetadataStore.WithTx(ctx, func(txCtx context.Context, tx store.MetadataStore) error {
+		return fn(txCtx, &failRegistryConfigurationWrite{
+			MetadataStore: tx, failAfter: s.failAfter, writes: s.writes, failed: s.failed,
+		})
+	})
+}
+
+func (s *failRegistryConfigurationWrite) PutRegistry(ctx context.Context, registry store.Registry) error {
+	if err := s.MetadataStore.PutRegistry(ctx, registry); err != nil {
+		return err
+	}
+	*s.writes++
+	if !*s.failed && *s.writes == s.failAfter {
+		*s.failed = true
+		return fmt.Errorf("injected failure after registry write %d", *s.writes)
+	}
+	return nil
 }
 
 // spec: marketplace-registry-observation/a-second-claimant-is-refused-a-held-lease

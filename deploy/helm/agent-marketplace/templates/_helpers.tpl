@@ -193,6 +193,11 @@ spec:
             - name: operations
               containerPort: 9090
               protocol: TCP
+          {{- else if eq $role "worker" }}
+          ports:
+            - name: operations
+              containerPort: 9090
+              protocol: TCP
           {{- else if eq $role "web" }}
           ports:
             - name: http

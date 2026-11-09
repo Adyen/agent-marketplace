@@ -52,6 +52,7 @@ func TestEveryHarnessHasExplicitAuditCoverage(t *testing.T) {
 	}
 }
 
+// spec: model-catalog-audit/cursor-cli-output-lists-model-identifiers
 func TestNightlyAuditFailsAndPreservesReports(t *testing.T) {
 	body, err := os.ReadFile("../../.github/workflows/harness-images.yml")
 	if err != nil {
@@ -64,11 +65,13 @@ func TestNightlyAuditFailsAndPreservesReports(t *testing.T) {
 			If          string            `yaml:"if"`
 			Permissions map[string]string `yaml:"permissions"`
 			Steps       []struct {
-				Name     string `yaml:"name"`
-				Run      string `yaml:"run"`
-				If       string `yaml:"if"`
-				Uses     string `yaml:"uses"`
-				Continue bool   `yaml:"continue-on-error"`
+				Name     string            `yaml:"name"`
+				Run      string            `yaml:"run"`
+				If       string            `yaml:"if"`
+				Uses     string            `yaml:"uses"`
+				With     map[string]string `yaml:"with"`
+				Env      map[string]string `yaml:"env"`
+				Continue bool              `yaml:"continue-on-error"`
 			} `yaml:"steps"`
 		} `yaml:"jobs"`
 	}
@@ -82,16 +85,48 @@ func TestNightlyAuditFailsAndPreservesReports(t *testing.T) {
 	if _, scheduled := workflow.On["schedule"]; !scheduled || job.Needs != nil || job.If != "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)" {
 		t.Fatal("audit must run on nightly/default-branch dispatch independently of image publication")
 	}
-	if len(job.Permissions) != 1 || job.Permissions["contents"] != "read" {
-		t.Fatal("audit must not have repository write permissions")
+	if len(job.Permissions) != 2 || job.Permissions["contents"] != "read" || job.Permissions["packages"] != "read" {
+		t.Fatalf("audit permissions = %v, want only contents:read and packages:read", job.Permissions)
+	}
+	loginUses := map[string]int{}
+	for _, otherJob := range workflow.Jobs {
+		for _, step := range otherJob.Steps {
+			if strings.HasPrefix(step.Uses, "docker/login-action@") {
+				loginUses[step.Uses]++
+			}
+		}
 	}
 	check, summary, artifacts, offline := false, false, false, false
-	for _, step := range job.Steps {
-		if step.Continue {
+	prepareIndex, loginIndex, captureIndex, checkIndex := -1, -1, -1, -1
+	for i, step := range job.Steps {
+		switch step.Name {
+		case "Prepare model audit diagnostics":
+			prepareIndex = i
+			if !strings.Contains(step.Run, `mkdir -p "$RUNNER_TEMP/model-catalog-audit"`) {
+				t.Fatal("audit report directory must exist before the Cursor capture")
+			}
+		case "Log in to GitHub Container Registry":
+			loginIndex = i
+			if !step.Continue || !strings.HasPrefix(step.Uses, "docker/login-action@") || loginUses[step.Uses] < 2 ||
+				step.With["registry"] != "ghcr.io" || step.With["username"] != "${{ github.actor }}" ||
+				step.With["password"] != "${{ secrets.GITHUB_TOKEN }}" {
+				t.Fatalf("invalid GHCR login step or unshared pin: %#v (login uses: %v)", step, loginUses)
+			}
+		case "Capture Cursor CLI model inventory":
+			captureIndex = i
+			if !step.Continue || !strings.Contains(step.Run, `docker run --rm ghcr.io/adyen/agent-marketplace/harness-cursor:ci agent models`) ||
+				!strings.Contains(step.Run, `> "$AUDIT_REPORT_DIR/cursor-cli-models.txt" 2> "$AUDIT_REPORT_DIR/cursor-cli-models.log"`) ||
+				strings.Contains(step.Run, "CURSOR_API_KEY") || strings.Contains(step.Run, "secrets.") || len(step.Env) != 0 {
+				t.Fatalf("invalid keyless Cursor inventory capture step: %#v", step)
+			}
+		}
+		if step.Continue && step.Name != "Log in to GitHub Container Registry" && step.Name != "Capture Cursor CLI model inventory" {
 			t.Fatal("audit failures must not be ignored")
 		}
 		if strings.Contains(step.Run, "./tools/model-catalog-audit check") {
-			check = strings.Contains(step.Run, ">") && !strings.Contains(step.Run, "||") && !strings.Contains(step.Run, "| tee")
+			checkIndex = i
+			check = strings.Contains(step.Run, `-cursor-models "$AUDIT_REPORT_DIR/cursor-cli-models.txt"`) &&
+				strings.Contains(step.Run, ">") && !strings.Contains(step.Run, "||") && !strings.Contains(step.Run, "| tee")
 		}
 		if strings.Contains(step.Run, "./tools/model-catalog-audit summary") {
 			summary = step.If == "always()" && strings.Contains(step.Run, "GITHUB_STEP_SUMMARY")
@@ -101,8 +136,9 @@ func TestNightlyAuditFailsAndPreservesReports(t *testing.T) {
 		}
 		offline = offline || strings.Contains(step.Run, "go test ./tools/model-catalog-audit")
 	}
-	if !check || !summary || !artifacts || !offline {
-		t.Fatalf("nightly audit coverage: check=%t summary=%t artifacts=%t offline=%t", check, summary, artifacts, offline)
+	if !check || !summary || !artifacts || !offline || prepareIndex < 0 || loginIndex <= prepareIndex || captureIndex <= loginIndex || checkIndex <= captureIndex {
+		t.Fatalf("nightly audit coverage: check=%t summary=%t artifacts=%t offline=%t prepare=%d login=%d capture=%d check=%d",
+			check, summary, artifacts, offline, prepareIndex, loginIndex, captureIndex, checkIndex)
 	}
 }
 
