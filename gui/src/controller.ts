@@ -574,7 +574,7 @@ export class WorkspaceController {
 
   async addSource(source: SourceInput): Promise<boolean> {
     this.state.sourceError = null
-    const accepted = await this.requestOperation(
+    return this.requestOperation(
       () => this.client.configure({ action: 'add-source', source }),
       false,
       (error) => {
@@ -585,10 +585,6 @@ export class WorkspaceController {
         }
       },
     )
-    if (accepted) {
-      this.state.sourceError = null
-    }
-    return accepted
   }
 
   async removeSource(id: string): Promise<boolean> {

@@ -158,11 +158,7 @@ async function add(source: SourceInput) {
   actionError.value = null
   addSourceMutationActive.value = false
   pendingRemove.value = null
-  const accepted = await props.controller.addSource(source)
-  if (accepted) {
-    actionError.value = null
-  }
-  addSourceMutationActive.value = accepted
+  addSourceMutationActive.value = await props.controller.addSource(source)
   void nextTick(() => {
     if (document.activeElement == null || document.activeElement === document.body) {
       document.querySelector<HTMLElement>('#settings-panel-sources')?.focus()
