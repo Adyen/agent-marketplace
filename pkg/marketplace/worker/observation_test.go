@@ -285,6 +285,7 @@ func TestManualReindexRequestsOneBoundedRefresh(t *testing.T) {
 	}
 }
 
+// spec: marketplace-runtime-configuration/a-same-commit-indexing-change-refreshes-once
 func TestStartupConfigurationChangeRequestsRefresh(t *testing.T) {
 	f := newObservationFixture(t, 1)
 	if err := Reindex(f.ctx, f.deps, f.cfg, f.cfg.Registries[0].Slug); err != nil {
@@ -295,7 +296,7 @@ func TestStartupConfigurationChangeRequestsRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.cfg.Registries[0].Publisher.Name = "Updated Publisher"
+	f.cfg.Registries[0].PolicyOverrides = map[string]any{"hidden_content": "warn"}
 	f.deps.Config = f.cfg
 	setObservationDue(t, f.meta, registryID)
 	now := time.Now().UTC().Add(time.Minute)
@@ -320,7 +321,23 @@ func TestStartupConfigurationChangeRequestsRefresh(t *testing.T) {
 	}
 	runRequestedJob(t, f, requested.ID)
 	if f.counts.clones.Load() != 2 {
-		t.Fatalf("startup configuration change acquisitions = %d, want 2 including initial index", f.counts.clones.Load())
+		t.Fatalf("indexing configuration change acquisitions = %d, want 2 including initial index", f.counts.clones.Load())
+	}
+	indexed, err := f.meta.GetRegistryObservation(f.ctx, registryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if indexed.SuccessfulGeneration != payload.Generation {
+		t.Fatalf("successful generation = %q, want %q", indexed.SuccessfulGeneration, payload.Generation)
+	}
+	for range 2 {
+		setObservationDue(t, f.meta, registryID)
+		if err := newObserver(f.deps, f.cfg, func() time.Time { return now }).runCycle(f.ctx); err != nil {
+			t.Fatalf("unchanged post-configuration observation: %v", err)
+		}
+	}
+	if f.counts.clones.Load() != 2 {
+		t.Fatalf("unchanged post-configuration acquisitions = %d, want 2 including initial index", f.counts.clones.Load())
 	}
 }
 

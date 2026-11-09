@@ -21,6 +21,8 @@ Directory sources are read live from disk on every run and never appear in a loc
 
 Some managed setups never deploy an organization lock, and the CLI supports that permanently. An absent organization lock leaves that layer unlocked. Normal online runs, including `sync --check`, resolve the organization's explicit Marketplace requests into a verified lock that exists only in memory for that run, and never write `/etc`. Offline runs and `lock --check` need a deployed organization lock only to resolve the organization's Marketplace requests. Organization Git sources work without one. A present organization lock is exact: the CLI uses only what it records and stops with an error when it no longer matches the organization file. The one exception is `lock --scope organization` itself, which reconciles the mismatch instead of refusing.
 
+When the organization configuration selects Marketplace resources but no lock is deployed, `sync --locked`, `sync --offline`, and `lock --check` refuse with `v4.marketplace-lock-required`. The CLI's hint is: "This organization deploys no acquisition lock, so `--locked`, `--offline`, and `lock --check` cannot verify its Marketplace resources; run `agent-marketplace sync` or `agent-marketplace sync --check` while online to verify them." See [step 1 of the organization roll-out guide](../how-to/operator/roll-out-organization-configuration.md#_1-choose-whether-to-deploy-a-lock).
+
 Only `lock --scope organization`, run by an administrator who can write `/etc/agent-marketplace`, creates or updates the organization lock. The [configuration layers reference](./configuration-layers.md#organization-trust-rules) lists the ownership and permission rules a deployed organization lock must meet.
 
 ## Format versions

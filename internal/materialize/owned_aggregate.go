@@ -453,10 +453,12 @@ func ownedAggregateProofDiags(key outputKey, outDir, rel string, err error) []di
 
 func ownedAggregateDiag(code string, key outputKey, rel, message string) diag.Diagnostic {
 	severity := diag.SeverityError
+	hint := ""
 	if doc, ok := diag.DocForCode(code); ok {
 		severity = doc.Severity
+		hint = doc.Hint
 	}
-	diagnostic := diag.Diagnostic{Code: code, Severity: severity, Target: string(key.target), Message: message}
+	diagnostic := diag.Diagnostic{Code: code, Severity: severity, Target: string(key.target), Message: message, Hint: hint}
 	if rel != "" {
 		diagnostic.Source = diag.SourceRef{File: rel}
 	}
