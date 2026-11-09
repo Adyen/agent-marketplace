@@ -783,6 +783,8 @@ export interface components {
             /** @description Whether the resource is enabled by any configuration scope, derived from row enablement metadata. */
             checked: boolean;
             description: string;
+            /** @description Whether the resource is excluded from its configured selection. */
+            disabled: boolean;
             /** @description Whether this row is a Marketplace discovery result rather than an accepted local row. */
             discovery: boolean;
             /** @description Sanitized single-line resource name for display. */
@@ -832,6 +834,8 @@ export interface components {
             kind: "git" | "directory" | "marketplace";
             /** @description Declared Git URL, directory declaration, or normalized Marketplace URL with embedded credentials and URL query/fragment redacted; directory locations are resolved source locations, not raw configuration paths. */
             location: string;
+            /** @description The configured name from the v4 sources mapping. */
+            name: string;
             /** @description Declared sub-path within a source, or empty. */
             path: string;
             /** @description Declared Git ref, or empty. */

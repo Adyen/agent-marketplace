@@ -660,7 +660,7 @@ components:
         title: { type: string }
     SnapshotRow:
       type: object
-      required: [id, name, displayName, searchName, searchWords, kind, description, registry, source, scope, required, pendingVerification, checked, harnessOverride, harnesses, status, group, discovery, inspectable, installedFiles, resourceAction]
+      required: [id, name, displayName, searchName, searchWords, kind, description, registry, source, scope, required, pendingVerification, checked, disabled, harnessOverride, harnesses, status, group, discovery, inspectable, installedFiles, resourceAction]
       properties:
         id:
           type: string
@@ -699,6 +699,9 @@ components:
         checked:
           type: boolean
           description: Whether the resource is enabled by any configuration scope, derived from row enablement metadata.
+        disabled:
+          type: boolean
+          description: Whether the resource is excluded from its configured selection.
         harnessOverride:
           type: boolean
           description: Whether the row carries a registry-level harness narrowing that differs from its layer default.
@@ -991,11 +994,14 @@ components:
           $ref: '#/components/schemas/OperationRef'
     SourceDescription:
       type: object
-      required: [id, kind, location, ref, path, sourceHarness, rowSourceId]
+      required: [id, name, kind, location, ref, path, sourceHarness, rowSourceId]
       properties:
         id:
           type: string
           description: Opaque stable identity derived from the typed source descriptor tuple under its scope; usable only with remove-source while the descriptor is unchanged.
+        name:
+          type: string
+          description: The configured name from the v4 sources mapping.
         rowSourceId:
           type: string
           description: Identity that snapshot rows from this source carry in row source.id, for matching a configured source to its rows. Empty for marketplace sources, which can map to many registries.

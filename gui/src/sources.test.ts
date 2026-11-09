@@ -6,6 +6,7 @@ import { configuration, event, fakeClient, mountWorkspace, snapshot, tick } from
 
 const dirSource = {
   id: 'user-dir-id',
+  name: '',
   kind: 'directory' as const,
   location: '/var/regs',
   ref: '',
@@ -15,6 +16,7 @@ const dirSource = {
 }
 const gitSource = {
   id: 'user-git-id',
+  name: '',
   kind: 'git' as const,
   location: 'https://example.com/repo.git',
   ref: 'main',
@@ -24,6 +26,7 @@ const gitSource = {
 }
 const marketplaceSource = {
   id: 'user-mp-id',
+  name: '',
   kind: 'marketplace' as const,
   location: 'https://marketplace.example',
   ref: '',
@@ -263,13 +266,14 @@ describe('Source settings', () => {
 
   it.each([
     {
-      source: { id: 'org-dir', kind: 'directory' as const, location: '/opt/org-regs', ref: '', path: '', sourceHarness: '', rowSourceId: '' },
+      source: { id: 'org-dir', name: '', kind: 'directory' as const, location: '/opt/org-regs', ref: '', path: '', sourceHarness: '', rowSourceId: '' },
       texts: ['DIRECTORY', 'ORG', '/opt/org-regs'],
       absent: ['Ref ', 'Subpath '],
     },
     {
       source: {
         id: 'org-git',
+        name: '',
         kind: 'git' as const,
         location: 'https://example.com/org.git',
         ref: 'main',
@@ -281,7 +285,7 @@ describe('Source settings', () => {
       absent: [],
     },
     {
-      source: { id: 'org-mp', kind: 'marketplace' as const, location: 'https://org-mp.example', ref: '', path: '', sourceHarness: '', rowSourceId: '' },
+      source: { id: 'org-mp', name: '', kind: 'marketplace' as const, location: 'https://org-mp.example', ref: '', path: '', sourceHarness: '', rowSourceId: '' },
       texts: ['MARKETPLACE', 'ORG', 'https://org-mp.example'],
       absent: ['Ref ', 'Subpath '],
     },
@@ -324,8 +328,14 @@ describe('Source settings', () => {
     expect(client.configure).not.toHaveBeenCalled()
   })
 
-  it('adds a directory source with a typed body', async () => {
+  // spec: gui-configuration/add-source-request-error-renders-in-the-section
+  // spec: gui-configuration/add-source-error-clears-after-a-successful-add
+  it('keeps a failed add source request beside its form and clears it after a successful add', async () => {
     const { client, push } = sourcesClient({ userSources: [] })
+    const failure = new RequestError(502, 'localapi.source_unavailable')
+    vi.mocked(client.configure)
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValueOnce({ id: 9, kind: 'mutation' } as OperationRef)
     const { wrapper } = mountWorkspace(client)
     push(event({ sequence: 1 }))
     await tick()
@@ -339,6 +349,14 @@ describe('Source settings', () => {
       action: 'add-source',
       source: { kind: 'directory', location: '/opt/new-regs' },
     })
+    const addSection = dialog().querySelector<HTMLElement>('[aria-label="Add user source"]')!
+    expect(addSection.querySelector('[role="alert"]')?.textContent).toContain('The action could not be started')
+    expect(dialog().querySelector('.settings-window__content > [role="alert"]')).toBeNull()
+
+    button('Add source').click()
+    await tick()
+    expect(client.configure).toHaveBeenCalledTimes(2)
+    expect(addSection.querySelector('[role="alert"]')).toBeNull()
   })
 
   it('adds a git source with an explicit ref and optional subpath', async () => {

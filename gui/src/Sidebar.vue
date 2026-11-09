@@ -154,12 +154,12 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | 'signal' | null 
           <button
             type="button"
             class="gui-nav-row gui-nav-row--compact gui-source-row"
-            :title="entry.source.location"
             :aria-label="`Open source ${entry.source.location}`"
             @click="emit('openSources')"
           >
             <GuiIcon :name="sourceIcons[entry.source.kind]" />
             <span class="gui-source-row__location">{{ sourceName(entry.source) }}</span>
+            <span class="gui-source-row__tooltip" aria-hidden="true">{{ entry.source.location }}</span>
             <span v-if="entry.organization" class="gui-tag">ORG</span>
           </button>
         </li>

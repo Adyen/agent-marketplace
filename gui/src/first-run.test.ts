@@ -516,9 +516,9 @@ describe('First-run setup', () => {
   })
 
   const organizationSourceKinds = [
-    { kind: 'directory', source: { id: 'org-dir', kind: 'directory', location: '/org/directory', ref: '', path: '', sourceHarness: '', rowSourceId: '' } },
-    { kind: 'git', source: { id: 'org-git', kind: 'git', location: 'https://org.example/repo.git', ref: 'main', path: '', sourceHarness: '', rowSourceId: '' } },
-    { kind: 'marketplace', source: { id: 'org-marketplace', kind: 'marketplace', location: 'https://org.example/services/catalog', ref: '', path: '', sourceHarness: '', rowSourceId: '' } },
+    { kind: 'directory', source: { id: 'org-dir', name: '', kind: 'directory', location: '/org/directory', ref: '', path: '', sourceHarness: '', rowSourceId: '' } },
+    { kind: 'git', source: { id: 'org-git', name: '', kind: 'git', location: 'https://org.example/repo.git', ref: 'main', path: '', sourceHarness: '', rowSourceId: '' } },
+    { kind: 'marketplace', source: { id: 'org-marketplace', name: '', kind: 'marketplace', location: 'https://org.example/services/catalog', ref: '', path: '', sourceHarness: '', rowSourceId: '' } },
   ] as const
 
   // spec: gui-first-run/organization-sources-skip-the-source-step
@@ -628,7 +628,7 @@ describe('First-run setup', () => {
     const { controller, wrapper } = mountWorkspace(client)
     push(event({ sequence: 1 }))
     await tick()
-    const directory = { id: 'first-directory-id', kind: 'directory' as const, location: '/first-directory', ref: '', path: '', sourceHarness: '', rowSourceId: '' }
+    const directory = { id: 'first-directory-id', name: '', kind: 'directory' as const, location: '/first-directory', ref: '', path: '', sourceHarness: '', rowSourceId: '' }
     const afterInit = firstRunConfiguration({
       firstRun: false,
       canInitialize: false,

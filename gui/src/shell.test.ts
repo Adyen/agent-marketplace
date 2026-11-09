@@ -255,10 +255,10 @@ describe('empty states and sidebar labels', () => {
 
     const dirRow = wrapper.get('button[aria-label="Open source /home/dev/platform/agent-skills"]')
     expect(dirRow.text()).toContain('platform registry')
-    expect(dirRow.attributes('title')).toBe('/home/dev/platform/agent-skills')
+    expect(dirRow.find('.gui-source-row__tooltip').text()).toBe('/home/dev/platform/agent-skills')
     const gitRow = wrapper.get('button[aria-label="Open source https://github.com/org/tools.git"]')
     expect(gitRow.text()).toContain('org/tools')
-    expect(gitRow.attributes('title')).toBe('https://github.com/org/tools.git')
+    expect(gitRow.find('.gui-source-row__tooltip').text()).toBe('https://github.com/org/tools.git')
   })
 })
 

@@ -355,6 +355,38 @@ textarea:focus-visible,
   white-space: nowrap;
 }
 
+.gui-source-row {
+  position: relative;
+}
+
+.gui-source-row__tooltip {
+  background: var(--gui-solid-bg);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.2);
+  box-sizing: border-box;
+  color: var(--gui-solid-ink);
+  font-size: 12px;
+  left: 0;
+  line-height: 1.4;
+  max-width: 220px;
+  opacity: 0;
+  overflow-wrap: anywhere;
+  padding: 8px 10px;
+  pointer-events: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  visibility: hidden;
+  white-space: normal;
+  width: max-content;
+  z-index: 30;
+}
+
+.gui-source-row:hover .gui-source-row__tooltip,
+.gui-source-row:focus-visible .gui-source-row__tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+
 .gui-sidebar__footer {
   display: flex;
   flex: 0 0 auto;
@@ -776,6 +808,11 @@ textarea:focus-visible,
 
 .workspace__check--on {
   background: var(--gui-signal);
+  box-shadow: none;
+}
+
+.workspace__check--disabled {
+  background: var(--am-color-status-warning);
   box-shadow: none;
 }
 
@@ -1685,8 +1722,11 @@ textarea:focus-visible,
 }
 
 .workspace__reason {
-  flex: none;
+  flex: 0 1 auto;
   margin-left: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   text-transform: none;
   white-space: nowrap;
 }

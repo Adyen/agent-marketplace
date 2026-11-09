@@ -28,6 +28,7 @@ const actionError = ref<string | null>(null)
 const draft = ref<Set<string>>(new Set())
 const formEpoch = ref(0)
 const pendingRemove = ref<SourceDescription | null>(null)
+const addSourceMutationActive = ref(false)
 let openEpoch = 0
 
 const { preference, setPreference } = useAppearance()
@@ -54,6 +55,8 @@ const dirty = computed(() => {
 const mutationErrors = computed(() =>
   props.controller.state.diagnostics.filter((d) => d.severity === 'error' && d.category === 'mutation'),
 )
+const topMutationErrors = computed(() => addSourceMutationActive.value ? [] : mutationErrors.value)
+const addSourceMutationErrors = computed(() => addSourceMutationActive.value ? mutationErrors.value : [])
 const managedOutsideText = computed(() => {
   const list = new Intl.ListFormat('en', { style: 'long', type: 'conjunction' }).format(configuration.value?.managedOutsideGUI ?? [])
   return `${list.charAt(0).toUpperCase()}${list.slice(1)} are managed outside the GUI.`
@@ -68,6 +71,7 @@ function resetDrafts() {
 watch(open, () => {
   const epoch = ++openEpoch
   resetDrafts()
+  addSourceMutationActive.value = false
   if (!open.value) {
     return
   }
@@ -136,6 +140,7 @@ function revert() {
 }
 
 async function save() {
+  addSourceMutationActive.value = false
   const targets = options.value.filter((id) => draft.value.has(id))
   if (await props.controller.saveTargets(targets)) {
     actionError.value = null
@@ -150,13 +155,14 @@ function removable(source: SourceDescription) {
 }
 
 async function add(source: SourceInput) {
+  actionError.value = null
+  addSourceMutationActive.value = false
   pendingRemove.value = null
   const accepted = await props.controller.addSource(source)
   if (accepted) {
     actionError.value = null
-  } else if (props.controller.state.sourceError == null) {
-    actionError.value = props.controller.state.error ?? 'The action could not be started'
   }
+  addSourceMutationActive.value = accepted
   void nextTick(() => {
     if (document.activeElement == null || document.activeElement === document.body) {
       document.querySelector<HTMLElement>('#settings-panel-sources')?.focus()
@@ -165,6 +171,7 @@ async function add(source: SourceInput) {
 }
 
 async function confirmRemove() {
+  addSourceMutationActive.value = false
   const source = pendingRemove.value
   pendingRemove.value = null
   if (source == null) {
@@ -213,7 +220,7 @@ async function confirmRemove() {
             <GuiIcon name="error" class="settings__notice-icon" />
             <span>{{ actionError }}</span>
           </p>
-          <p v-for="d in mutationErrors" :key="d.code" role="alert" class="settings__notice settings__notice--danger">
+          <p v-for="d in topMutationErrors" :key="d.code" role="alert" class="settings__notice settings__notice--danger">
             <GuiIcon name="error" class="settings__notice-icon" />
             <span>{{ d.message }}</span>
           </p>
@@ -387,6 +394,10 @@ async function confirmRemove() {
                 <p v-if="controller.state.sourceError" role="alert" class="settings__notice settings__notice--danger">
                   <GuiIcon name="error" class="settings__notice-icon" />
                   <span>{{ controller.state.sourceError }}</span>
+                </p>
+                <p v-for="d in addSourceMutationErrors" :key="d.code" role="alert" class="settings__notice settings__notice--danger">
+                  <GuiIcon name="error" class="settings__notice-icon" />
+                  <span>{{ d.message }}</span>
                 </p>
                 <SourceForm :key="formEpoch" :disabled="fieldsDisabled" @add="add" />
               </section>

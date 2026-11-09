@@ -225,6 +225,62 @@ describe('WorkspaceView', () => {
     expect(wrapper.find('.workspace__badge').text()).toContain('claude')
   })
 
+  // spec: gui-shell/disabled-and-enabled-rows-use-distinct-indicator-roles
+  it('renders excluded rows with a warning check dot and enabled rows with a signal dot', async () => {
+    const { client, push } = fakeClient()
+    const enabled = row('enabled-resource', { checked: true })
+    const disabled = { ...row('disabled-resource', { checked: true, status: 'excluded' }), disabled: true }
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([enabled, disabled]) }))
+    await tick()
+
+    const check = (name: string) =>
+      wrapper.findAll('.workspace__row').find((resource) => resource.get('.workspace__name').text() === name)!.get('.workspace__check')
+    expect(check('enabled-resource').classes()).toContain('workspace__check--on')
+    expect(check('disabled-resource').classes()).toContain('workspace__check--disabled')
+    expect(check('disabled-resource').classes()).not.toContain('workspace__check--on')
+  })
+
+  // spec: gui-shell/clicking-a-row-unfolds-a-folded-inspector
+  it('unfolds the inspector to show a clicked row', async () => {
+    window.localStorage.setItem('am-gui-inspector', 'folded')
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('first'), row('second')]) }))
+    await tick()
+
+    const inspector = wrapper.get('aside[aria-label="Detail"]')
+    expect(inspector.classes()).toContain('gui-inspector--folded')
+    await wrapper.findAll('[role="option"]')[0].trigger('keydown', { key: 'ArrowDown' })
+    await tick()
+    expect(inspector.classes()).toContain('gui-inspector--folded')
+    await wrapper.findAll('[role="option"]')[1].trigger('keydown', { key: ' ' })
+    await tick()
+    expect(inspector.classes()).toContain('gui-inspector--folded')
+    await wrapper.findAll('[role="option"]')[1].trigger('click')
+    await tick()
+
+    expect(inspector.classes()).not.toContain('gui-inspector--folded')
+    expect(inspector.text()).toContain('second description')
+  })
+
+  // spec: gui-shell/clicking-a-row-keeps-an-open-inspector-open
+  it('keeps the inspector open when another row is clicked', async () => {
+    window.localStorage.setItem('am-gui-inspector', 'open')
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('first'), row('second')]) }))
+    await tick()
+
+    const inspector = wrapper.get('aside[aria-label="Detail"]')
+    expect(inspector.classes()).not.toContain('gui-inspector--folded')
+    await wrapper.findAll('[role="option"]')[1].trigger('click')
+    await tick()
+
+    expect(inspector.classes()).not.toContain('gui-inspector--folded')
+    expect(inspector.text()).toContain('second description')
+  })
+
   it('shows the user scope as hidden text and an organization scope as a tag', async () => {
     const { client, push } = fakeClient()
     const { wrapper } = mountWorkspace(client)
@@ -1357,6 +1413,27 @@ describe('Event stream reconnect', () => {
 
     expect(controller.state.diagnosticsDiscoveryHealth).toEqual(health)
     expect(wrapper.get('[aria-label="Marketplace endpoint health"]').text()).toBe(before)
+  })
+
+  // spec: gui-shell/discovery-health-uses-plain-wording
+  it('describes discovery health in plain language without cache jargon', async () => {
+    const { client, push } = fakeClient()
+    const health: Snapshot['discoveryHealth'] = [
+      { id: 'current', label: 'Current', total: 2, truncated: false, cacheState: 'fresh', message: '' },
+      { id: 'saved', label: 'Saved', total: 1, truncated: false, cacheState: 'stale', message: '' },
+      { id: 'unchecked', label: 'Unchecked', total: 0, truncated: true, cacheState: 'miss', message: '' },
+    ]
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([], { discoveryEnabled: true, discoveryHealth: health }) }))
+    await tick()
+    await openDiagnostics(wrapper)
+
+    const section = wrapper.get('[aria-label="Marketplace discovery health"]')
+    expect(section.text()).toContain('Results are current')
+    expect(section.text()).toContain('Showing saved results from an earlier check')
+    expect(section.text()).toContain('Not checked yet')
+    expect(section.text()).toContain('Only part of the catalog is shown; search to find more')
+    expect(section.text()).not.toMatch(/\b(fresh|truncated)\b/i)
   })
 
   // spec: session-navigation/remote-marketplace-search-is-debounced

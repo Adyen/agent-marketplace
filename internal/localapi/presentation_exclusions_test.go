@@ -1,6 +1,7 @@
 package localapi
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -48,5 +49,34 @@ func TestRowPresentationRetainsExclusionCheckState(t *testing.T) {
 				t.Fatalf("status = %q, want %q", got.Status, tc.status)
 			}
 		})
+	}
+}
+
+// spec: gui-shell/disabled-and-enabled-rows-use-distinct-indicator-roles
+func TestUserRowProjectionMarksExcludedUnavailableResourceDisabled(t *testing.T) {
+	row := session.Row{
+		Artifact: resolver.ResolvedArtifact{
+			Entry:  catalog.Entry{Kind: ir.KindSkill, Name: "excluded-resource"},
+			Source: config.UserPersonal,
+		},
+		IsAvailable:     false,
+		IsExcluded:      true,
+		ExcludedLocally: true,
+		EnabledGlobal:   true,
+	}
+	projected := rowPresentationForUser(row, true)
+	if !projected.Checked {
+		t.Fatal("expected the unavailable user-excluded row to reproduce the filled check state")
+	}
+	data, err := json.Marshal(projected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if fields["disabled"] != true {
+		t.Fatalf("disabled projection = %v, want true", fields["disabled"])
 	}
 }
