@@ -7,4 +7,4 @@
 
 ## 2. Archive
 
-- [ ] 2.1 Run `openspec archive devin-hook-entry-shape-guidance --yes` and verify `make spec-check` passes
+- [x] 2.1 Run `openspec archive devin-hook-entry-shape-guidance --yes` and verify `make spec-check` passes
