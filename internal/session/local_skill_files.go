@@ -24,10 +24,10 @@ func LocalSkillFiles(row Row) bool {
 }
 
 func OpenLocalSkillBundle(row Row) (*InstalledSkillBundle, error) {
-	skill, ok := row.Artifact.Resource.(*ir.Skill)
-	if !LocalSkillFiles(row) || !ok || skill == nil {
+	if !LocalSkillFiles(row) {
 		return nil, errors.New("resource is not a local skill with a captured source root")
 	}
+	skill, _ := row.Artifact.Resource.(*ir.Skill)
 	root, err := filepath.Abs(row.Artifact.SourceRoot)
 	if err != nil {
 		return nil, fmt.Errorf("resolve local skill source root: %w", err)

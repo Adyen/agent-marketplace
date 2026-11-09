@@ -107,9 +107,6 @@ func (b *InstalledSkillBundle) ReadFile(path string) ([]byte, error) {
 		return append([]byte(nil), member.data...), nil
 	}
 	if member.sourcePath != "" {
-		if b.source == nil {
-			return nil, errors.New("local skill files are unavailable")
-		}
 		info, err := b.source.Stat(member.sourcePath)
 		if err != nil {
 			return nil, err
