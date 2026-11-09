@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useRoute, useData, withBase } from 'vitepress'
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import { useClipboard } from '../composables/useClipboard'
 
@@ -40,19 +40,24 @@ async function toggleMenu() {
 function handleMenuKeydown(event: KeyboardEvent) {
   const items = [...(menu.value?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])]
   const current = items.indexOf(document.activeElement as HTMLElement)
-  if (event.key === 'Escape') {
-    event.preventDefault()
-    closeMenu(true)
-  } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
     event.preventDefault()
     const direction = event.key === 'ArrowDown' ? 1 : -1
     items[(current + direction + items.length) % items.length]?.focus()
   }
 }
 
-function handleOutsideClick(event: PointerEvent) {
-  if (menuRoot.value && !menuRoot.value.contains(event.target as Node)) closeMenu()
+function closeIfOutside(target: EventTarget | null) {
+  if (target && menuRoot.value && !menuRoot.value.contains(target as Node)) closeMenu()
 }
+
+function handleEscape(event: KeyboardEvent) {
+  if (!isOpen.value) return
+  event.preventDefault()
+  closeMenu(true)
+}
+
+const handleOutsidePointer = (event: PointerEvent) => closeIfOutside(event.target)
 
 function copyPage() {
   return writeText(async () => {
@@ -62,12 +67,20 @@ function copyPage() {
   })
 }
 
-onMounted(() => document.addEventListener('pointerdown', handleOutsideClick))
-onUnmounted(() => document.removeEventListener('pointerdown', handleOutsideClick))
+watch(() => route.path, () => closeMenu())
+
+onMounted(() => document.addEventListener('pointerdown', handleOutsidePointer))
+onUnmounted(() => document.removeEventListener('pointerdown', handleOutsidePointer))
 </script>
 
 <template>
-  <div v-if="isDocumentationPage" ref="menuRoot" class="copy-page-menu">
+  <div
+    v-if="isDocumentationPage"
+    ref="menuRoot"
+    class="copy-page-menu"
+    @keydown.escape="handleEscape"
+    @focusout="closeIfOutside($event.relatedTarget)"
+  >
     <button
       class="copy-page-menu__trigger"
       type="button"
