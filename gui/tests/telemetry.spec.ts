@@ -279,6 +279,11 @@ test('built GUI sends canonical detailed browse, sync, and sync-choice cancellat
     const browseResponse = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/telemetry')
     await resource.press('Enter')
     expect((await browseResponse).status()).toBe(204)
+    const inspection = page.getByRole('dialog', { name: 'Resource inspection' })
+    await expect(inspection).toBeVisible()
+    await expect(inspection.getByRole('treeitem', { name: 'SKILL.md' })).toHaveAttribute('aria-selected', 'true')
+    await page.keyboard.press('Escape')
+    await expect(inspection).toBeHidden()
     await expect(page.getByRole('complementary', { name: 'Detail' }).getByRole('heading').first()).toContainText('skill-001')
 
     const actionResponse = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/actions')
