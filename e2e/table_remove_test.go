@@ -114,7 +114,7 @@ func init() {
 		),
 		Steps: []Step{
 			ok("sync").symlinks("./.gemini/agents/helper.md").exists("./.gemini/skills/keep-skill/SKILL.md"),
-			ok("remove", "--scope", "repo", "helper"),
+			ok("remove", "--scope", "repo", "helper").absent("./.gemini/agents/helper.md"),
 			ok("sync").absent("./.gemini/agents/helper.md").exists("./.gemini/skills/keep-skill/SKILL.md"),
 			ok("sync", "--check"),
 		},
@@ -135,7 +135,7 @@ func init() {
 		),
 		Steps: []Step{
 			ok("sync").symlinks("~/.gemini/agents/helper.md").exists("~/.gemini/skills/keep-skill/SKILL.md"),
-			ok("remove", "--scope", "user", "helper"),
+			ok("remove", "--scope", "user", "helper").absent("~/.gemini/agents/helper.md"),
 			ok("sync").absent("~/.gemini/agents/helper.md").exists("~/.gemini/skills/keep-skill/SKILL.md"),
 			ok("sync", "--check"),
 		},
