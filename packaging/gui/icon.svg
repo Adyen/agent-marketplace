@@ -6,7 +6,6 @@
       <stop offset="1" stop-color="#111111"/>
     </linearGradient>
   </defs>
-  <rect x="100" y="100" width="824" height="824" rx="181" fill="#111111"/>
   <rect x="100" y="100" width="824" height="824" rx="181" fill="url(#tile)"/>
   <g transform="translate(129.83 128) scale(24)">
     <path d="M17.346 5.33331 15.9238 10.5481 11.5048 26.6666H7.64444L13.4857 5.33331H17.346Z" fill="#0abf53"/>

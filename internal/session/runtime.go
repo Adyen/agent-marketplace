@@ -107,14 +107,12 @@ func RuntimeUpdateAvailability(ctx context.Context, workspace pipeline.Workspace
 		return pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, Warnings: warnings}, err
 	}
 	_, err = pipeline.Update(ctx, pipeline.UpdateOptions{
-		RepoRoot:         ws.RepoRoot(),
-		LocalConfigDir:   ws.LocalConfigDir(),
-		BumpScopes:       selected,
-		DryRun:           true,
-		PreseedLockEdits: preseed,
-		DependencyReconcile: func(ctx context.Context, repoRoot, localDir string, bumps []pipeline.RefBump, edits []pipeline.StagedConfigEdit, lockEdits []pipeline.StagedLockEdit) (pipeline.DependencyLockView, error) {
-			return reconcile(ctx, repoRoot, localDir, bumps, edits, lockEdits)
-		},
+		RepoRoot:            ws.RepoRoot(),
+		LocalConfigDir:      ws.LocalConfigDir(),
+		BumpScopes:          selected,
+		DryRun:              true,
+		PreseedLockEdits:    preseed,
+		DependencyReconcile: reconcile,
 	})
 	if err != nil {
 		return 0, err

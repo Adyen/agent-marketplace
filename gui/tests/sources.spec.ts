@@ -149,7 +149,9 @@ test('built GUI installs a skill from a Git registry without Marketplace prepara
 
 // spec: gui-configuration/add-and-remove-user-sources
 // spec: gui-configuration/adding-a-git-or-directory-source-alone-changes-only-that-entry
-test('built GUI adds and removes a user directory source against the real user-scope core', async ({ page }) => {
+test('built GUI adds and removes a user directory source against the real user-scope core', async ({
+  page,
+}) => {
   if (!distIndexExists()) {
     throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
   }

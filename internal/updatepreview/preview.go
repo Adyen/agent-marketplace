@@ -26,11 +26,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// lifecycle.PreparedUpdateView carries the prepared prior/candidate state to the update
-// preview inside lock preparation. It exists before any new publication so
-// requested comparisons complete before new config or lock bytes are written.
-type preparedUpdateView = lifecycle.PreparedUpdateView
-
 // Preview is the prepared report model for a previewed or applied
 // update. It describes proposed dependency changes and the effective
 // selected-resource changes between the previously locked and candidate
@@ -42,8 +37,6 @@ type Preview struct {
 	includeDiffs     bool
 	computedDuration time.Duration
 }
-
-type updatePreview = Preview
 
 // previewGitLock is one proposed exact Git acquisition-lock change.
 type previewGitLock struct {
@@ -118,7 +111,7 @@ func Build(ctx context.Context, view lifecycle.PreparedUpdateView, includeDiffs 
 	if err != nil {
 		return nil, err
 	}
-	preview := &updatePreview{
+	preview := &Preview{
 		Locks:            locks,
 		ResourceChanges:  changes,
 		LiveSources:      previewLiveSources(sides.Desired, sides.DesiredSet),
@@ -445,7 +438,7 @@ func ContentDigest(data []byte) string {
 // previewGitLockChanges derives the proposed exact Git lock changes from the
 // previously published lock documents and the prepared desired lock bytes.
 // Lock documents record one exact commit per registry URL and ref.
-func previewGitLockChanges(view preparedUpdateView) ([]previewGitLock, error) {
+func previewGitLockChanges(view lifecycle.PreparedUpdateView) ([]previewGitLock, error) {
 	priorDocs := make(map[string]lockfile.Document, len(view.PriorJobs))
 	priorScopes := make(map[string]string, len(view.PriorJobs))
 	for _, job := range view.PriorJobs {
