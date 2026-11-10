@@ -41,6 +41,7 @@ const (
 	codeClosed                    = "localapi.closed"
 	codeInspectionUnavailable     = "localapi.inspection_unavailable"
 	codeResourceFilesUnavailable  = "localapi.resource_files_unavailable"
+	codeSourceFilesUnavailable    = "localapi.source_files_unavailable"
 	codeResourceActionUnavailable = "localapi.resource_action_unavailable"
 )
 
@@ -427,6 +428,7 @@ func writeError(w http.ResponseWriter, status int, code string) {
 		codeClosed:                    "api is closed",
 		codeInspectionUnavailable:     "Verified inspection is unavailable; check the Marketplace and retry.",
 		codeResourceFilesUnavailable:  "Resource files are unavailable; refresh this resource and retry.",
+		codeSourceFilesUnavailable:    "Skill source files are missing or unsafe; fix the source and refresh.",
 		codeResourceActionUnavailable: "Resource action could not be prepared; refresh this resource and retry.",
 	}[code]
 	_ = json.NewEncoder(w).Encode(map[string]string{"code": code, "message": message})
@@ -720,7 +722,7 @@ func rowPresentationForUser(row session.Row, userOnly bool) rowDTO {
 		Group:               row.StatusGroup().ID(),
 		Discovery:           row.MarketplaceDiscovery != nil,
 		Inspectable:         session.MarketplaceInspectableSkill(row),
-		InstalledFiles:      session.MarketplaceInstalledSkillFiles(row),
+		InstalledFiles:      installedSkillFilesEligible(row),
 		ResourceAction:      session.UserMarketplaceActionNone,
 	}
 }

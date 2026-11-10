@@ -32,16 +32,18 @@ type InstalledSkillFile struct {
 }
 
 type installedSkillMember struct {
-	file   InstalledSkillFile
-	data   []byte
-	staged bool
-	state  fsboundary.Identity
+	file       InstalledSkillFile
+	data       []byte
+	staged     bool
+	sourcePath string
+	state      fsboundary.Identity
 }
 
 type InstalledSkillBundle struct {
 	files   []InstalledSkillFile
 	members map[string]installedSkillMember
 	dir     *fsboundary.Dir
+	source  *fsboundary.SourceFS
 	closed  bool
 }
 
@@ -104,6 +106,34 @@ func (b *InstalledSkillBundle) ReadFile(path string) ([]byte, error) {
 		}
 		return append([]byte(nil), member.data...), nil
 	}
+	if member.sourcePath != "" {
+		info, err := b.source.Stat(member.sourcePath)
+		if err != nil {
+			return nil, err
+		}
+		current, err := fsboundary.FileInfoIdentity(info)
+		if err != nil {
+			return nil, err
+		}
+		if !current.SameState(member.state) {
+			return nil, fmt.Errorf("%w: local skill file changed since listing", fsboundary.ErrGenerationConflict)
+		}
+		data, readIdentity, err := b.source.ReadFileWithIdentity(member.sourcePath, hccartifact.DefaultArchiveLimits().MaxAssetBytes)
+		if err != nil {
+			return nil, err
+		}
+		readIdentityHash, err := installedStageIdentity(readIdentity)
+		if err != nil {
+			return nil, err
+		}
+		if !readIdentity.SameState(member.state) || readIdentityHash != member.file.Identity {
+			return nil, fmt.Errorf("%w: local skill file changed while reading", fsboundary.ErrGenerationConflict)
+		}
+		if !inspection.IsValidText(data) {
+			return nil, ErrInstalledSkillFileUnsupported
+		}
+		return append([]byte(nil), data...), nil
+	}
 	if b.dir == nil {
 		return nil, errors.New("installed skill files are unavailable")
 	}
@@ -137,13 +167,22 @@ func (b *InstalledSkillBundle) ReadFile(path string) ([]byte, error) {
 }
 
 func (b *InstalledSkillBundle) Close() error {
-	if b == nil || b.dir == nil || b.closed {
+	if b == nil || b.closed || (b.dir == nil && b.source == nil) {
 		return nil
 	}
 	b.closed = true
 	dir := b.dir
+	source := b.source
 	b.dir = nil
-	return dir.Close()
+	b.source = nil
+	var err error
+	if dir != nil {
+		err = errors.Join(err, dir.Close())
+	}
+	if source != nil {
+		err = errors.Join(err, source.Close())
+	}
+	return err
 }
 
 func openInstalledSkillArchive(row Row, path string) (*InstalledSkillBundle, error) {
