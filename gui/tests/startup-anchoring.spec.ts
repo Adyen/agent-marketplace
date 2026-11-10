@@ -65,6 +65,7 @@ function resourceRow(name: string, id: string, options: Partial<SnapshotRow> = {
     installedFiles: false,
     resourceAction: 'none',
     ...options,
+    disabled: options.disabled ?? false,
   }
 }
 

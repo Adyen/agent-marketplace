@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { SourceDescription } from './api/client'
 import { sourceLabel } from './source-label'
 
-function source(kind: SourceDescription['kind'], location: string): SourceDescription {
-  return { id: 'id', kind, location, path: '', ref: '', sourceHarness: '' } as SourceDescription
+function source(kind: SourceDescription['kind'], location: string, name = ''): SourceDescription {
+  return { id: 'id', name, kind, location, path: '', ref: '', sourceHarness: '' } as SourceDescription
 }
 
 describe('sourceLabel', () => {
@@ -18,10 +18,16 @@ describe('sourceLabel', () => {
     expect(sourceLabel(source('directory', '/regs'))).toBe('regs')
   })
 
-  it('shows the first host label of a Marketplace endpoint, then its port and last path segment', () => {
-    expect(sourceLabel(source('marketplace', 'https://agent-marketplace.is.example.com'))).toBe('agent-marketplace')
-    expect(sourceLabel(source('marketplace', 'https://mp.example.com:8443/acme/'))).toBe('mp:8443/acme')
-    expect(sourceLabel(source('marketplace', 'https://marketplace.example/services/catalog'))).toBe('marketplace/catalog')
+  // spec: gui-shell/named-marketplace-source-shows-its-name
+  it('uses a configured Marketplace source name', () => {
+    expect(sourceLabel(source('marketplace', 'https://tools.example.com/acme', 'team-tools'))).toBe('team-tools')
+  })
+
+  // spec: gui-shell/generic-or-missing-name-falls-back-to-the-host
+  it('falls back from missing or generic Marketplace names to the full endpoint host', () => {
+    expect(sourceLabel(source('marketplace', 'https://agent-marketplace.is.example.com'))).toBe('agent-marketplace.is.example.com')
+    expect(sourceLabel(source('marketplace', 'https://mp.example.com:8443/acme/', 'marketplace-2'))).toBe('mp.example.com:8443/acme')
+    expect(sourceLabel(source('marketplace', 'https://marketplace.example/services/catalog', 'marketplace'))).toBe('marketplace.example/catalog')
     expect(sourceLabel(source('marketplace', 'http://localhost:8443/api'))).toBe('localhost:8443/api')
   })
 

@@ -27,6 +27,7 @@ type discoveryHealthDTO struct {
 	Total      int    `json:"total"`
 	Truncated  bool   `json:"truncated"`
 	CacheState string `json:"cacheState"`
+	Checked    bool   `json:"checked"`
 	Message    string `json:"message"`
 }
 
@@ -381,6 +382,7 @@ func discoveryHealthForConfig(cfg *config.Config, outcomes []marketplace.Discove
 			if outcome.CacheState != "" {
 				item.CacheState = string(outcome.CacheState)
 			}
+			item.Checked = outcome.Err == nil
 			if outcome.Err != nil {
 				item.Message = discoveryEndpointFailureMessage
 			}

@@ -574,17 +574,19 @@ export class WorkspaceController {
 
   async addSource(source: SourceInput): Promise<boolean> {
     this.state.sourceError = null
-    return this.requestOperation(
+    const accepted = await this.requestOperation(
       () => this.client.configure({ action: 'add-source', source }),
       false,
       (error) => {
         if (error instanceof RequestError && error.code === 'localapi.directory_unavailable') {
           this.state.sourceError = 'Directory source path does not exist or is not a directory.'
-        } else {
-          this.state.error = 'The action could not be started'
         }
       },
     )
+    if (!accepted && this.state.sourceError == null) {
+      this.state.sourceError = 'The action could not be started'
+    }
+    return accepted
   }
 
   async removeSource(id: string): Promise<boolean> {

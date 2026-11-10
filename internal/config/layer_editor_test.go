@@ -1961,10 +1961,10 @@ func TestLayerEditorRemoveMarketplaceRegistrationV4RootOnly(t *testing.T) {
 	beforeIntent := marketplaceEditorReadIntent(t, home, path)
 	beforeUser := beforeIntent.Layers[UserPersonal]
 	wantBeforeSources := marketplaceEditorSortedSources([]SourceDescription{
-		{Kind: V4SourceMarketplace, Location: targetURL},
-		{Kind: V4SourceMarketplace, Location: otherURL},
-		{Kind: V4SourceDirectory, Location: localDir},
-		{Kind: V4SourceDirectory, Location: fragmentDir},
+		{Name: "target", Kind: V4SourceMarketplace, Location: targetURL},
+		{Name: "other", Kind: V4SourceMarketplace, Location: otherURL},
+		{Name: "local", Kind: V4SourceDirectory, Location: localDir},
+		{Name: "fragment", Kind: V4SourceDirectory, Location: fragmentDir},
 	})
 	if got := marketplaceEditorSortedSources(beforeUser.DescribeSources()); !reflect.DeepEqual(got, wantBeforeSources) {
 		t.Fatalf("effective v4 sources before removal = %#v, want %#v", got, wantBeforeSources)
@@ -1998,9 +1998,9 @@ func TestLayerEditorRemoveMarketplaceRegistrationV4RootOnly(t *testing.T) {
 	afterIntent := marketplaceEditorReadIntent(t, home, path)
 	afterUser := afterIntent.Layers[UserPersonal]
 	wantAfterSources := marketplaceEditorSortedSources([]SourceDescription{
-		{Kind: V4SourceMarketplace, Location: otherURL},
-		{Kind: V4SourceDirectory, Location: localDir},
-		{Kind: V4SourceDirectory, Location: fragmentDir},
+		{Name: "other", Kind: V4SourceMarketplace, Location: otherURL},
+		{Name: "local", Kind: V4SourceDirectory, Location: localDir},
+		{Name: "fragment", Kind: V4SourceDirectory, Location: fragmentDir},
 	})
 	if got := marketplaceEditorSortedSources(afterUser.DescribeSources()); !reflect.DeepEqual(got, wantAfterSources) {
 		t.Fatalf("effective v4 sources after removal = %#v, want %#v", got, wantAfterSources)
