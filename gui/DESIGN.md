@@ -755,5 +755,6 @@ earlier section, this section wins.
   preparation and submission; the risk acknowledgement stays visible.
 - Settings' Add source button uses `.gui-button--secondary` with a leading
   plus icon, matching the empty-state action.
-- The native icon uses a rounded ink tile and one green signal waveform,
-  rasterized from `packaging/gui/icon.svg` without changing package metadata.
+- The native icon uses a rounded ink tile and the slanted green-and-white A
+  mark from `site/public/brand/favicon.svg`, rasterized from
+  `packaging/gui/icon.svg` without changing package metadata.

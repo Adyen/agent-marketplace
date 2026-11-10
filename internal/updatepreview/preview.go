@@ -26,12 +26,12 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// preparedUpdateView carries the prepared prior/candidate state to the update
+// lifecycle.PreparedUpdateView carries the prepared prior/candidate state to the update
 // preview inside lock preparation. It exists before any new publication so
 // requested comparisons complete before new config or lock bytes are written.
 type preparedUpdateView = lifecycle.PreparedUpdateView
 
-// updatePreview is the prepared report model for a previewed or applied
+// Preview is the prepared report model for a previewed or applied
 // update. It describes proposed dependency changes and the effective
 // selected-resource changes between the previously locked and candidate
 // revisions.
@@ -66,7 +66,7 @@ type previewLiveSource struct {
 	URL   string
 }
 
-// buildUpdatePreview resolves the prior and candidate effective selections
+// Build resolves the prior and candidate effective selections
 // from the prepared view and computes the proposed changes. includeDiffs
 // controls whether supporting-file bodies are retained for rendering; a
 // summary comparison digests admitted files instead of holding their bytes.

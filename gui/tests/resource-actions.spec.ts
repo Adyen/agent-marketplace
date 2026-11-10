@@ -223,7 +223,7 @@ async function selectRowByDOMID(page: Page, domID: string, actions: string[]): P
   actions.push('Selected the organization-owned Marketplace row with Space')
 }
 
-async function openActionPlan(page: Page, verb: string, actions: string[], testInfo?: TestInfo): Promise<Locator> {
+async function openActionPlan(page: Page, verb: string, actions: string[]): Promise<Locator> {
   const label = `${verb} Resource`
   const actionButton = page.getByRole('button', { name: label, exact: true })
   await expect(actionButton).toBeEnabled({ timeout: 30_000 })
@@ -237,14 +237,8 @@ async function openActionPlan(page: Page, verb: string, actions: string[], testI
   expect(response.status()).toBe(200)
   const dialog = page.getByRole('dialog', { name: label, exact: true })
   await expect(dialog).toBeVisible()
-  if (testInfo != null) {
-    await dialog.screenshot({ path: testInfo.outputPath('install-dialog-collapsed.png'), animations: 'disabled' })
-  }
   await dialog.getByText('Technical details', { exact: true }).click()
   await expect(dialog.locator('pre')).toBeVisible()
-  if (testInfo != null) {
-    await dialog.screenshot({ path: testInfo.outputPath('install-dialog-expanded.png'), animations: 'disabled' })
-  }
   expect(await dialog.locator('script, img').count()).toBe(0)
   return dialog
 }
@@ -308,7 +302,7 @@ async function cancelAction(page: Page, dialog: Locator, actions: string[]): Pro
 }
 
 // spec: session-interactions/guarded-submission
-test('resource action dialog captures its plan spinner and technical disclosure states', async ({ page }, testInfo) => {
+test('resource action dialog shows a spinner while preparing the plan', async ({ page }, testInfo) => {
   const harness = await startWork39Harness(testInfo, 'available', true)
   let releaseResponse!: () => void
   let responseFetched!: () => void
@@ -333,13 +327,8 @@ test('resource action dialog captures its plan spinner and technical disclosure 
     const dialog = page.getByRole('dialog', { name: 'Install Resource', exact: true })
     await expect(dialog).toBeVisible()
     await expect(dialog.locator('.resource-actions__spinner')).toBeVisible()
-    await dialog.screenshot({ path: testInfo.outputPath('install-dialog-spinner.png'), animations: 'disabled' })
     releaseResponse()
     await expect(dialog.locator('.resource-actions__spinner')).toHaveCount(0)
-    await dialog.screenshot({ path: testInfo.outputPath('install-dialog-collapsed.png'), animations: 'disabled' })
-    await dialog.getByText('Technical details', { exact: true }).click()
-    await expect(dialog.locator('pre')).toBeVisible()
-    await dialog.screenshot({ path: testInfo.outputPath('install-dialog-expanded.png'), animations: 'disabled' })
   } finally {
     releaseResponse()
     await page.close().catch(() => undefined)
@@ -368,7 +357,7 @@ test('built user GUI cancels, installs, and removes a warned Marketplace Resourc
     await launchWorkspace(page, bootstrap, actions)
     await selectReviewRow(page, actions)
 
-    const cancelDialog = await openActionPlan(page, 'Install', actions, testInfo)
+    const cancelDialog = await openActionPlan(page, 'Install', actions)
     const preview = await cancelDialog.locator('pre').textContent()
     assertPreviewContainsNoLocalPaths(preview, [bootstrap.home!, bootstrap.repo!])
     await cancelDialog.screenshot({ path: testInfo.outputPath('available-install-preview.png'), animations: 'disabled' })

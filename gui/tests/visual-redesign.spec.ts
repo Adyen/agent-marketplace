@@ -6,7 +6,7 @@ import { distIndexExists, launchBuiltUserApp } from './app'
 import { startHarness } from './harness'
 
 // spec: gui-shell/update-shows-the-available-update-count
-test('built GUI shows the resource update count after refresh', async ({ page }, testInfo) => {
+test('built GUI shows the resource update count after refresh', async ({ page }) => {
   expect(distIndexExists(), 'run gui-build before the Playwright suite').toBe(true)
   const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'update-availability' })
   const { bootstrap } = harness
@@ -16,8 +16,6 @@ test('built GUI shows the resource update count after refresh', async ({ page },
     await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
     const update = page.getByRole('button', { name: 'Update', exact: true })
     await expect(update.locator('.gui-update-count')).toHaveCount(0)
-    await page.screenshot({ path: testInfo.outputPath('toolbar-without-update-badge.png'), animations: 'disabled' })
-    await page.screenshot({ path: testInfo.outputPath('panes-default-width.png'), animations: 'disabled' })
 
     const skillPath = join(bootstrap.gitSourceWorking, 'solo', 'SKILL.md')
     await writeFile(skillPath, '---\nname: solo\ndescription: Updated skill\n---\n# Updated skill\n')
@@ -27,7 +25,6 @@ test('built GUI shows the resource update count after refresh', async ({ page },
 
     await page.getByRole('button', { name: 'Refresh' }).click()
     await expect(update).toContainText('1', { timeout: 60_000 })
-    await page.screenshot({ path: testInfo.outputPath('toolbar-with-update-badge.png'), animations: 'disabled' })
     const toolbar = page.getByRole('toolbar', { name: 'Session actions' })
     const labels = await toolbar.locator('button').evaluateAll((buttons) =>
       buttons.map((button) => button.getAttribute('aria-label') ?? button.textContent?.trim() ?? ''),
@@ -35,7 +32,6 @@ test('built GUI shows the resource update count after refresh', async ({ page },
     expect(labels.indexOf('Update')).toBeLessThan(labels.indexOf('Sync'))
     await page.getByRole('separator', { name: 'Resize sidebar' }).press('End')
     await page.getByRole('separator', { name: 'Resize inspector' }).press('End')
-    await page.screenshot({ path: testInfo.outputPath('panes-resized-widths.png'), animations: 'disabled' })
   } finally {
     await harness.stop()
   }
