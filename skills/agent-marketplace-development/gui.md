@@ -10,7 +10,7 @@ reverse-engineer it from the client or harness sources.
 
 | Layer | Path | Role |
 |---|---|---|
-| Vue app | `gui/src/` | `WorkspaceView.vue` is the shell. `controller.ts` holds the view state. `api/client.ts` POSTs every call and reads `/api/events` as SSE `data:` frames |
+| Vue app | `gui/src/` | `WorkspaceView.vue` is the shell. `controller.ts` holds the view state. `api/client.ts` POSTs every call and reads session events over the Wails runtime event bridge (`am:session-events*`) when the runtime is present; browser and harness clients read `/api/events` as SSE `data:` frames |
 | Contract | `api/gui-local.yaml` → `gui/src/generated/api.d.ts` | Regenerate with `node scripts/generate-api.mjs` from `gui/`. The drift test fails when the two disagree |
 | Local API | `internal/localapi/` | HTTP over the `internal/session` core. Bearer credential from the bootstrap |
 | Native host | `cmd/agent-marketplace-gui/` | Wails v2 (cgo). Embeds `frontend/dist` (the Vite `outDir`) and hands the credential over through the `App.Bootstrap` binding |
@@ -203,6 +203,18 @@ When you need a state no fixture provides, add a branch to
 CGO_ENABLED=1 go test ./cmd/agent-marketplace-gui -run '^TestNativeAppOptionsWiring$' -count=1
 make gui-build && ./agent-marketplace-gui
 ```
+
+`TestNativeCompletionNotificationPrompt` exercises the real Linux window and
+its session-event delivery, so it only runs natively under Xvfb with the
+WebKitGTK 4.1 tags (gated on `AM_GUI_NATIVE_SMOKE=1`):
+
+```sh
+AM_GUI_NATIVE_SMOKE=1 CGO_ENABLED=1 xvfb-run -a \
+  go test -tags desktop,production,webkit2_41 -count=1 \
+  -run '^TestNativeCompletionNotificationPrompt$' ./cmd/agent-marketplace-gui
+```
+
+CI runs it in the `gui-linux-native-events` job.
 
 `make gui-build` builds the frontend and then the Wails binary. The built
 app runs against **your real HOME and organization config**, and its
