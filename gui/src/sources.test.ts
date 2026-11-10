@@ -359,6 +359,49 @@ describe('Source settings', () => {
     expect(addSection.querySelector('[role="alert"]')).toBeNull()
   })
 
+  it('keeps a pre-existing mutation error at the top when an add source request is accepted', async () => {
+    const { client, push } = sourcesClient({ userSources: [] })
+    const saveFailure = {
+      severity: 'error' as const,
+      category: 'mutation' as const,
+      code: 'targets.failed',
+      message: 'Saving targets failed',
+    }
+    const addFailure = {
+      severity: 'error' as const,
+      category: 'mutation' as const,
+      code: 'source.unavailable',
+      message: 'Source unavailable',
+    }
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([], { diagnostics: [saveFailure] }) }))
+    await tick()
+    ;(client.configure as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 9, kind: 'mutation' } as OperationRef)
+
+    await openSources(wrapper)
+    await setInput('Source location', '/opt/new-regs')
+    button('Add source').click()
+    await tick()
+    push(event({ sequence: 2, generation: 2, operation: { id: 9, kind: 'mutation' } }))
+    push(
+      event({
+        sequence: 3,
+        generation: 2,
+        operation: null,
+        payload: snapshot([], { diagnostics: [saveFailure, addFailure] }),
+      }),
+    )
+    await tick()
+
+    const top = dialog().querySelector<HTMLElement>('.settings-window__content')!
+    const addSection = dialog().querySelector<HTMLElement>('[aria-label="Add user source"]')!
+    expect(Array.from(top.querySelectorAll(':scope > [role="alert"]')).map((el) => el.textContent)).toEqual([
+      'Saving targets failed',
+    ])
+    expect(addSection.textContent).not.toContain('Saving targets failed')
+    expect(addSection.querySelector('[role="alert"]')?.textContent).toContain('Source unavailable')
+  })
+
   it('adds a git source with an explicit ref and optional subpath', async () => {
     const { client, push } = sourcesClient({ userSources: [] })
     const { wrapper } = mountWorkspace(client)
