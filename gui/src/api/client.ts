@@ -38,6 +38,18 @@ export class RequestError extends Error {
   }
 }
 
+export interface EventBridge {
+  on(event: string, callback: (...data: unknown[]) => void): () => void
+  emit(event: string, ...data: unknown[]): void
+}
+
+const sessionEventsOpenEvent = 'am:session-events:open'
+const sessionEventsCloseEvent = 'am:session-events:close'
+const sessionEventsEvent = 'am:session-events'
+const sessionEventsEndEvent = 'am:session-events:end'
+
+let eventStreamSequence = 0
+
 const stageRank: Record<string, number> = {
   provisional: 1,
   config: 2,
@@ -160,6 +172,98 @@ function parseEvents(buffer: string): { events: SessionEvent[]; rest: string } {
   return { events, rest }
 }
 
+async function* parseEventFrames(frames: AsyncIterable<string | Uint8Array>, cursor: EventCursor): AsyncIterable<SessionEvent> {
+  const decoder = new TextDecoder()
+  let buffer = ''
+  for await (const frame of frames) {
+    buffer += typeof frame === 'string' ? frame : decoder.decode(frame, { stream: true })
+    const parsed = parseEvents(buffer)
+    buffer = parsed.rest
+    for (const event of parsed.events) {
+      if (cursor.accept(event)) {
+        yield event
+      }
+    }
+  }
+}
+
+async function* responseFrames(body: ReadableStream<Uint8Array>): AsyncIterable<Uint8Array> {
+  const reader = body.getReader()
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) {
+        return
+      }
+      yield value
+    }
+  } finally {
+    reader.cancel().catch(() => undefined)
+  }
+}
+
+async function* bridgeEvents(bridge: EventBridge, credential: string, cursor: EventCursor, signal?: AbortSignal): AsyncIterable<SessionEvent> {
+  const streamID = `am-session-${++eventStreamSequence}`
+  const source = (async function* (): AsyncIterable<string> {
+    const frames: string[] = []
+    let ended = false
+    let endCode = ''
+    let wake: (() => void) | undefined
+    const notify = () => {
+      wake?.()
+      wake = undefined
+    }
+    const finish = (code = '') => {
+      ended = true
+      endCode = code
+      notify()
+    }
+    const detachFrame = bridge.on(sessionEventsEvent, (...data) => {
+      if (!ended && data[0] === streamID && typeof data[1] === 'string') {
+        frames.push(data[1])
+        notify()
+      }
+    })
+    const detachEnd = bridge.on(sessionEventsEndEvent, (...data) => {
+      if (data[0] === streamID) {
+        finish(typeof data[1] === 'string' ? data[1] : '')
+      }
+    })
+    const abort = () => finish()
+    signal?.addEventListener('abort', abort, { once: true })
+    try {
+      if (signal?.aborted) {
+        return
+      }
+      bridge.emit(sessionEventsOpenEvent, streamID, credential)
+      for (;;) {
+        if (signal?.aborted) {
+          return
+        }
+        if (frames.length > 0) {
+          yield frames.shift()!
+          continue
+        }
+        if (ended) {
+          if (endCode === 'localapi.unauthorized') {
+            throw new RequestError(401, endCode)
+          }
+          return
+        }
+        await new Promise<void>((resolve) => {
+          wake = resolve
+        })
+      }
+    } finally {
+      signal?.removeEventListener('abort', abort)
+      detachFrame()
+      detachEnd()
+      bridge.emit(sessionEventsCloseEvent, streamID)
+    }
+  })()
+  yield* parseEventFrames(source, cursor)
+}
+
 export interface Client {
   snapshot(): Promise<Snapshot>
   events(cursor?: EventCursor, signal?: AbortSignal): AsyncIterable<SessionEvent>
@@ -176,7 +280,7 @@ export interface Client {
   telemetry(event: GUIEvent): Promise<void>
 }
 
-export function createClient(baseURL: string, credential: string, fetchImpl: typeof fetch = fetch): Client {
+export function createClient(baseURL: string, credential: string, fetchImpl: typeof fetch = fetch, bridge?: EventBridge): Client {
   const root = baseURL.replace(/\/+$/, '')
   const headers = { 'X-Agent-Marketplace-Token': credential }
 
@@ -202,38 +306,22 @@ export function createClient(baseURL: string, credential: string, fetchImpl: typ
     return response
   }
 
+  async function* fetchEvents(cursor: EventCursor, signal?: AbortSignal): AsyncIterable<SessionEvent> {
+    const response = await post('/api/events', undefined, signal)
+    if (response.body == null) {
+      throw new RequestError(response.status, 'localapi.no_stream')
+    }
+    yield* parseEventFrames(responseFrames(response.body), cursor)
+  }
+
   return {
     async snapshot() {
       const response = await post('/api/snapshot')
       return (await response.json()) as Snapshot
     },
 
-    async *events(cursor: EventCursor = new EventCursor(), signal?: AbortSignal) {
-      const response = await post('/api/events', undefined, signal)
-      if (response.body == null) {
-        throw new RequestError(response.status, 'localapi.no_stream')
-      }
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      try {
-        for (;;) {
-          const { done, value } = await reader.read()
-          if (done) {
-            break
-          }
-          buffer += decoder.decode(value, { stream: true })
-          const parsed = parseEvents(buffer)
-          buffer = parsed.rest
-          for (const event of parsed.events) {
-            if (cursor.accept(event)) {
-              yield event
-            }
-          }
-        }
-      } finally {
-        reader.cancel().catch(() => undefined)
-      }
+    events(cursor: EventCursor = new EventCursor(), signal?: AbortSignal) {
+      return bridge == null ? fetchEvents(cursor, signal) : bridgeEvents(bridge, credential, cursor, signal)
     },
 
     async discovery(query: string, requestId: number, signal?: AbortSignal) {

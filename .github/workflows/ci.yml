@@ -1258,6 +1258,37 @@ jobs:
           if-no-files-found: error
           retention-days: 5
 
+  gui-linux-native-events:
+    name: GUI Linux native event delivery
+    needs: changes
+    if: (needs.changes.outputs.gui_distribution == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')) || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@11.17.0 --activate
+      - name: Install native GUI dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev xvfb
+      - name: Build GUI frontend
+        run: make gui-build-frontend
+      - name: Test native completion notifications
+        run: AM_GUI_NATIVE_SMOKE=1 CGO_ENABLED=1 xvfb-run -a go test -tags desktop,production,webkit2_41 -count=1 -v -run '^TestNativeCompletionNotificationPrompt$' ./cmd/agent-marketplace-gui
+
   gui-linux-smoke:
     name: GUI Linux install and launch (${{ matrix.name }})
     needs: [changes, gui-linux-package]

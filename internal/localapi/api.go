@@ -723,7 +723,11 @@ func rowPresentationForUser(row session.Row, userOnly bool) rowDTO {
 	}
 }
 
-func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {
+func (a *API) Subscribe(ctx context.Context, deliver func(frame []byte) bool) {
+	a.subscribe(ctx, deliver, nil)
+}
+
+func (a *API) subscribe(ctx context.Context, deliver func(frame []byte) bool, onReady func()) {
 	sub := &subscriber{events: make(chan []byte, 64)}
 	var envelope []byte
 	a.mu.Lock()
@@ -741,6 +745,9 @@ func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 		startInitial = a.beginSnapshotLocked()
 	}
 	a.mu.Unlock()
+	if onReady != nil {
+		onReady()
+	}
 	if startInitial != 0 {
 		a.wg.Add(1)
 		go func() {
@@ -755,15 +762,28 @@ func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 		delete(a.subs, sub)
 		a.mu.Unlock()
 	}()
+	if envelope != nil && !deliver(envelope) {
+		return
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-a.ctx.Done():
+			return
+		case data, ok := <-sub.events:
+			if !ok || !deliver(data) {
+				return
+			}
+		}
+	}
+}
 
+func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 	header := w.Header()
 	header.Set("Content-Type", "text/event-stream")
 	header.Set("Cache-Control", "no-store")
-	w.WriteHeader(http.StatusOK)
 	flusher, _ := w.(http.Flusher)
-	if flusher != nil {
-		flusher.Flush()
-	}
 	write := func(data []byte) bool {
 		if _, err := w.Write(data); err != nil {
 			return false
@@ -773,21 +793,12 @@ func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		return true
 	}
-	if envelope != nil && !write(envelope) {
-		return
-	}
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-a.ctx.Done():
-			return
-		case data, ok := <-sub.events:
-			if !ok || !write(data) {
-				return
-			}
+	a.subscribe(r.Context(), write, func() {
+		w.WriteHeader(http.StatusOK)
+		if flusher != nil {
+			flusher.Flush()
 		}
-	}
+	})
 }
 
 func decodeObject(decoder *json.Decoder, field func(decoder *json.Decoder, key string) bool) bool {

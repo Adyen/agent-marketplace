@@ -1,3 +1,5 @@
+import type { EventBridge } from './api/client'
+
 export interface GuiBootstrap {
   url: string
   credential: string
@@ -15,7 +17,10 @@ declare global {
   interface Window {
     __AM_GUI_BOOTSTRAP__?: { url?: string; credential: string; packageFormat?: string; version?: string }
     go?: { main?: { App?: { Bootstrap?: () => Promise<WailsBootstrap>; Quit?: () => Promise<void> } } }
-    runtime?: { EventsOn?: (event: string, callback: (...data: unknown[]) => void) => (() => void) | void }
+    runtime?: {
+      EventsOn?: (event: string, callback: (...data: unknown[]) => void) => (() => void) | void
+      EventsEmit?: (event: string, ...data: unknown[]) => void
+    }
   }
 }
 
@@ -30,6 +35,23 @@ export function nativeQuit(): (() => void) | undefined {
   }
   return () => {
     void quit()
+  }
+}
+
+export function nativeEventBridge(): EventBridge | undefined {
+  const eventsOn = window.runtime?.EventsOn
+  const eventsEmit = window.runtime?.EventsEmit
+  if (!eventsOn || !eventsEmit) {
+    return undefined
+  }
+  return {
+    on(event, callback) {
+      const detach = eventsOn(event, callback)
+      return typeof detach === 'function' ? detach : () => {}
+    },
+    emit(event, ...data) {
+      eventsEmit(event, ...data)
+    },
   }
 }
 

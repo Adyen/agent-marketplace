@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { createClient } from './api/client'
-import { closeRequestEvent, launchRequestEvent, nativeQuit, resolveBootstrap } from './bootstrap'
+import { closeRequestEvent, launchRequestEvent, nativeEventBridge, nativeQuit, resolveBootstrap } from './bootstrap'
 import { eligible, WorkspaceController, type Row } from './controller'
 import { buildSections, readViewSettings, sectionPathsContaining, writeViewSettings, type Section, type ViewSettings } from './grouping'
 import { notificationPresentation, operationDetail, operationLabel } from './feedback'
@@ -489,7 +489,7 @@ onMounted(async () => {
   try {
     const bootstrap = await resolveBootstrap()
     const c = new WorkspaceController(
-      createClient(bootstrap.url, bootstrap.credential),
+      createClient(bootstrap.url, bootstrap.credential, undefined, nativeEventBridge()),
       undefined,
       nativeQuit(),
       bootstrap.packageFormat,
