@@ -8,6 +8,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/updatepreview"
 )
 
 var (
@@ -62,6 +63,63 @@ func RuntimeDependencyLifecycle(ctx context.Context, workspace pipeline.Workspac
 	result.Warnings = lifecycle.StripUnpersistedRefreshWarnings(result.Warnings, persistedRefreshes)
 	result.Warnings = append(lockWarnings, result.Warnings...)
 	return result, errors.Join(errs...)
+}
+
+func RuntimeUpdateAvailability(ctx context.Context, workspace pipeline.Workspace) (int, error) {
+	ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(ctx)
+	ctx = cache.WithFreshExactGitVerificationScope(ctx)
+	ws, err := pipeline.NewWorkspace(workspace.RepoRoot(), workspace.LocalConfigDir())
+	if err != nil {
+		return 0, err
+	}
+	if err := lifecycle.PrepareDependencyTransactions(ctx, true); err != nil {
+		return 0, err
+	}
+	selected, _, err := lifecycle.ParseLockSelection("user", false)
+	if err != nil {
+		return 0, err
+	}
+	preseed, err := lifecycle.PrepareMissingMarketplaceLockEdits(ctx, ws.RepoRoot(), ws.LocalConfigDir(), selected, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	var preview *updatepreview.Preview
+	var warnings []error
+	reconcile := func(ctx context.Context, repoRoot, localDir string, bumps []pipeline.RefBump, edits []pipeline.StagedConfigEdit, lockEdits []pipeline.StagedLockEdit) (pipeline.DependencyLockView, error) {
+		mode := lifecycle.LockMode{
+			Upgrade:             true,
+			Selects:             selected,
+			ReconcileUnselected: true,
+			StagedConfigEdits:   edits,
+			StagedLockEdits:     lockEdits,
+			WarningSink:         &warnings,
+			SelectionGuard:      true,
+			PreviewNoCommit:     true,
+			UpdatePreview: func(ctx context.Context, view lifecycle.PreparedUpdateView) error {
+				view.RefBumps = bumps
+				var previewErr error
+				preview, previewErr = updatepreview.Build(ctx, view, false)
+				return previewErr
+			},
+		}
+		option, _, lease, err := lifecycle.PrepareRuntimeLocks(ctx, repoRoot, localDir, mode)
+		return pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, Warnings: warnings}, err
+	}
+	_, err = pipeline.Update(ctx, pipeline.UpdateOptions{
+		RepoRoot:         ws.RepoRoot(),
+		LocalConfigDir:   ws.LocalConfigDir(),
+		BumpScopes:       selected,
+		DryRun:           true,
+		PreseedLockEdits: preseed,
+		DependencyReconcile: func(ctx context.Context, repoRoot, localDir string, bumps []pipeline.RefBump, edits []pipeline.StagedConfigEdit, lockEdits []pipeline.StagedLockEdit) (pipeline.DependencyLockView, error) {
+			return reconcile(ctx, repoRoot, localDir, bumps, edits, lockEdits)
+		},
+	})
+	if err != nil {
+		return 0, err
+	}
+	return preview.ResourceChangeCount(), nil
 }
 
 // RuntimeConfigMutation runs a guarded config mutation through runtime lock

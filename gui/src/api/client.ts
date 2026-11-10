@@ -161,7 +161,7 @@ function parseEvents(buffer: string): { events: SessionEvent[]; rest: string } {
 }
 
 export interface Client {
-  snapshot(): Promise<Snapshot>
+  snapshot(checkUpdates?: boolean): Promise<Snapshot>
   events(cursor?: EventCursor, signal?: AbortSignal): AsyncIterable<SessionEvent>
   discovery(query: string, requestId: number, signal?: AbortSignal): Promise<void>
   inspection(rowId: string, fileId?: string, signal?: AbortSignal): Promise<InspectionPayload>
@@ -203,8 +203,8 @@ export function createClient(baseURL: string, credential: string, fetchImpl: typ
   }
 
   return {
-    async snapshot() {
-      const response = await post('/api/snapshot')
+    async snapshot(checkUpdates) {
+      const response = await post('/api/snapshot', checkUpdates === undefined ? undefined : { checkUpdates })
       return (await response.json()) as Snapshot
     },
 

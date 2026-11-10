@@ -151,7 +151,7 @@ test('built GUI installs a skill from a Git registry without Marketplace prepara
 // spec: gui-configuration/adding-a-git-or-directory-source-alone-changes-only-that-entry
 test('built GUI adds and removes a user directory source against the real user-scope core', async ({
   page,
-}) => {
+}, testInfo) => {
   if (!distIndexExists()) {
     throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
   }
@@ -197,6 +197,16 @@ test('built GUI adds and removes a user directory source against the real user-s
 
     const addSection = dialog.getByLabel('Add user source')
     await expect(addSection).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('settings-add-source-light.png'), animations: 'disabled' })
+    await page.evaluate(() => {
+      localStorage.setItem('vitepress-theme-appearance', 'dark')
+      document.documentElement.classList.add('dark')
+    })
+    await page.screenshot({ path: testInfo.outputPath('settings-add-source-dark.png'), animations: 'disabled' })
+    await page.evaluate(() => {
+      localStorage.setItem('vitepress-theme-appearance', 'light')
+      document.documentElement.classList.remove('dark')
+    })
     await expect(addSection.getByRole('group', { name: 'Source kind' }).getByRole('radio', { name: 'Directory registry' })).toBeChecked()
     await expect(addSection.getByLabel('Source location')).toBeEnabled()
     await addSection.getByLabel('Source location').pressSequentially(sourceDir)

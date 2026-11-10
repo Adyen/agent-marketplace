@@ -316,6 +316,23 @@ func TestLocalAPIUserHarness(t *testing.T) {
 		writeFile(t, filepath.Join(home, ".agents", "config.yaml"),
 			"apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  infra_skills:\n    git: "+gitURL+"\n    ref: main\n    path: solo\nresources:\n  infra_skills:\n    all: true\n    exclude: [skill/solo]\n")
 	}
+	if fixture == "update-availability" {
+		bare := newBareGitSource(t)
+		gitURL := "file://" + filepath.ToSlash(bare)
+		writeFile(t, filepath.Join(home, ".agents", "config.yaml"),
+			"apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  updates:\n    git: "+gitURL+"\n    ref: main\nresources:\n  updates: {all: true}\n")
+		working := filepath.Join(t.TempDir(), "updates")
+		sourceGit(t, "", "clone", bare, working)
+		ws, err := pipeline.NewWorkspace(home, home)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := session.RuntimeDependencyLifecycle(context.Background(), ws, false); err != nil {
+			t.Fatalf("seed locked update fixture: %v", err)
+		}
+		bootstrap["gitSourceURL"] = gitURL
+		bootstrap["gitSourceWorking"] = working
+	}
 	if orgConfigPath != "" {
 		bootstrap["orgConfig"] = orgConfigPath
 	}
@@ -380,6 +397,9 @@ func TestLocalAPIUserHarness(t *testing.T) {
 		setupWork35DiscoveryFixture(t, bootstrap, &discoveryCounterWriteFailed)
 	}
 	lifecycle := session.RuntimeLifecycle()
+	if fixture == "update-availability" {
+		lifecycle.UpdateAvailability = session.RuntimeUpdateAvailability
+	}
 	if fixture == "held-sync" {
 		markerDir := t.TempDir()
 		started := filepath.Join(markerDir, "sync-started")

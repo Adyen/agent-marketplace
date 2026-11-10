@@ -32,8 +32,16 @@ paths:
         operation holds the serializer, or when a superseded read is
         overtaken, a read returns the latest accepted snapshot state
         without delivering a new snapshot event.
+        `checkUpdates` is true only for launch and an explicit user refresh;
+        focus-triggered reloads leave it false.
       security:
         - launchToken: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SnapshotRequest'
       responses:
         '200':
           description: Newest snapshot state for the session
@@ -923,9 +931,16 @@ components:
         unsupportedMessage:
           type: string
           description: Empty for text; static safe metadata-only message for unsupported members.
+    SnapshotRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        checkUpdates:
+          type: boolean
+          description: True for launch and explicit Refresh; false for focus reloads.
     Snapshot:
       type: object
-      required: [stage, drift, rows, groups, diagnostics, harnesses, pendingChanges, discoveryEnabled, discoveryHealth, discoveryQuery, discoveryRequestId, discoverySequence, discoveryLoading, operation]
+      required: [stage, drift, rows, groups, diagnostics, harnesses, pendingChanges, availableUpdates, discoveryEnabled, discoveryHealth, discoveryQuery, discoveryRequestId, discoverySequence, discoveryLoading, operation]
       properties:
         stage:
           $ref: '#/components/schemas/SnapshotStage'
@@ -950,6 +965,9 @@ components:
         pendingChanges:
           type: integer
           description: Count of drifted items awaiting materialization, derived from the accepted snapshot's drift assessment.
+        availableUpdates:
+          type: integer
+          description: Number of user-personal resources the latest read-only update preview would add or change; zero before a completed check or after a failed check.
         discoveryEnabled:
           type: boolean
           description: Whether a validated accepted user-scope configuration enables Marketplace discovery.

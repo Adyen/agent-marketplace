@@ -21,6 +21,7 @@ export interface Bootstrap {
   orgConfig?: string
   marketplaceEndpoint?: string
   gitSourceURL?: string
+  gitSourceWorking?: string
   syncStarted?: string
   syncRelease?: string
   discoveryAcquisitionStarted?: string

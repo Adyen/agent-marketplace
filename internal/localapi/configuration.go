@@ -574,6 +574,7 @@ func (a *API) handleSourceMutation(w http.ResponseWriter, r *http.Request, req c
 		writeError(w, http.StatusServiceUnavailable, codeClosed)
 		return
 	}
+	a.invalidateUpdateAvailabilityLocked()
 	a.wg.Add(1)
 	a.mu.Unlock()
 
@@ -715,7 +716,10 @@ func (a *API) handleSaveTargets(w http.ResponseWriter, r *http.Request, targets 
 			return
 		}
 	}
+	a.mu.Lock()
+	a.invalidateUpdateAvailabilityLocked()
 	a.wg.Add(1)
+	a.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
@@ -784,7 +788,10 @@ func (a *API) handleInitialize(w http.ResponseWriter, r *http.Request, req confi
 			}
 		}
 	}
+	a.mu.Lock()
+	a.invalidateUpdateAvailabilityLocked()
 	a.wg.Add(1)
+	a.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)

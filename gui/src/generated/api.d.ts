@@ -314,6 +314,8 @@ export interface paths {
          *     operation holds the serializer, or when a superseded read is
          *     overtaken, a read returns the latest accepted snapshot state
          *     without delivering a new snapshot event.
+         *     `checkUpdates` is true only for launch and an explicit user refresh;
+         *     focus-triggered reloads leave it false.
          *
          */
         post: operations["readSnapshot"];
@@ -739,6 +741,8 @@ export interface components {
          *      */
         SessionEvent: components["schemas"]["SnapshotEvent"] | components["schemas"]["ProgressEvent"] | components["schemas"]["NotificationEvent"] | components["schemas"]["DiscoveryEvent"];
         Snapshot: {
+            /** @description Number of user-personal resources the latest read-only update preview would add or change; zero before a completed check or after a failed check. */
+            availableUpdates: number;
             diagnostics: components["schemas"]["Diagnostic"][];
             /** @description Whether a validated accepted user-scope configuration enables Marketplace discovery. */
             discoveryEnabled: boolean;
@@ -780,6 +784,10 @@ export interface components {
              * @enum {string}
              */
             type: "snapshot";
+        };
+        SnapshotRequest: {
+            /** @description True for launch and explicit Refresh; false for focus reloads. */
+            checkUpdates?: boolean;
         };
         SnapshotRow: {
             /** @description Whether the resource is enabled by any configuration scope, derived from row enablement metadata. */
@@ -1348,7 +1356,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["SnapshotRequest"];
+            };
+        };
         responses: {
             /** @description Newest snapshot state for the session */
             200: {

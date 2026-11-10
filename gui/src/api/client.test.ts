@@ -12,6 +12,7 @@ function snapshotEvent(sequence: number, generation: number, stage = 'final', op
     payload: {
       stage: stage as Snapshot['stage'],
       drift: 'ready',
+      availableUpdates: 0,
       rows: [
         {
           id: `skill/gen-${generation}`,
@@ -190,6 +191,21 @@ describe('createClient', () => {
         token: 'secret-token',
       },
     ])
+  })
+
+  it('sends update-check intent only when a snapshot caller specifies it', async () => {
+    const bodies: (string | undefined)[] = []
+    const fetcher: typeof fetch = async (_input, init) => {
+      bodies.push(typeof init?.body === 'string' ? init.body : undefined)
+      return new Response(JSON.stringify(snapshotEvent(1, 1).payload), { status: 200 })
+    }
+    const client = createClient('http://127.0.0.1:9999', 'secret-token', fetcher)
+
+    await client.snapshot(true)
+    await client.snapshot(false)
+    await client.snapshot()
+
+    expect(bodies).toEqual(['{"checkUpdates":true}', '{"checkUpdates":false}', undefined])
   })
 
   it('parses fragmented SSE bytes into ordered events', async () => {

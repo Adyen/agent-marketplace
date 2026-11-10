@@ -213,6 +213,7 @@ async function openPlan(page: Page, bootstrap: Work40Bootstrap, verb: 'Install' 
   expect(response.status()).toBe(200)
   const dialog = page.getByRole('dialog', { name: label, exact: true })
   await expect(dialog).toBeVisible()
+  await dialog.getByText('Technical details', { exact: true }).click()
   await expect(dialog.locator('pre')).toBeVisible()
   assertNoLocalPaths(await dialog.locator('pre').textContent(), bootstrap)
   expect(await dialog.locator('script, img').count()).toBe(0)

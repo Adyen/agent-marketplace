@@ -738,3 +738,22 @@ earlier section, this section wins.
 - Until inventory resolves, the sidebar shows "Loading targets…" in place of
   "No harnesses", and the no-targets notice stays hidden. The notice appears
   only after inventory or final with no targets.
+
+## Visual feedback refinements
+
+- The toolbar places the secondary Update action before the solid Sync action.
+  Update keeps its accessible name and shows a mono `--gui-signal` count only
+  when the latest update preview reports added or changed user resources.
+- The sidebar and inspector have keyboard-focusable vertical resize handles.
+  The sidebar opens at 260 px (200–400); the inspector opens at 360 px
+  (280–560). Arrow keys move 16 px and Home/End choose the limits. Integer
+  widths persist under `am-gui-sidebar-width` and `am-gui-inspector-width`;
+  missing or malformed values use the defaults.
+- Resource action dialogs omit the header tile, lead with plain-language
+  action and availability copy, and keep the plan in a collapsed
+  "Technical details" disclosure. A 16 px signal spinner accompanies plan
+  preparation and submission; the risk acknowledgement stays visible.
+- Settings' Add source button uses `.gui-button--secondary` with a leading
+  plus icon, matching the empty-state action.
+- The native icon uses a rounded ink tile and one green signal waveform,
+  rasterized from `packaging/gui/icon.svg` without changing package metadata.

@@ -56,9 +56,94 @@ const toolbar = ref<InstanceType<typeof MainToolbar> | null>(null)
 const inspector = ref<InstanceType<typeof Inspector> | null>(null)
 const resourceList = ref<ElementHost>(null)
 
-const storageKeys = { inspector: 'am-gui-inspector' }
+const storageKeys = {
+  inspector: 'am-gui-inspector',
+  sidebarWidth: 'am-gui-sidebar-width',
+  inspectorWidth: 'am-gui-inspector-width',
+}
+const paneBounds = {
+  sidebar: { default: 260, min: 200, max: 400 },
+  inspector: { default: 360, min: 280, max: 560 },
+}
 const inspectorOverlayWidth = 1000
 const viewportWidth = ref(window.innerWidth)
+
+function clampPaneWidth(pane: 'sidebar' | 'inspector', width: number): number {
+  const bounds = paneBounds[pane]
+  return Math.min(bounds.max, Math.max(bounds.min, Math.round(width)))
+}
+
+function readPaneWidth(pane: 'sidebar' | 'inspector', key: string): number {
+  const stored = readStoredValue(key)
+  if (stored == null || stored.trim() === '') return paneBounds[pane].default
+  const width = Number(stored)
+  return Number.isFinite(width) ? clampPaneWidth(pane, width) : paneBounds[pane].default
+}
+
+const sidebarWidth = ref(readPaneWidth('sidebar', storageKeys.sidebarWidth))
+const inspectorWidth = ref(readPaneWidth('inspector', storageKeys.inspectorWidth))
+type ResizablePane = 'sidebar' | 'inspector'
+type PaneDrag = { pane: ResizablePane; x: number; width: number; handle: HTMLElement }
+let paneDrag: PaneDrag | null = null
+
+function paneWidth(pane: ResizablePane): number {
+  return pane === 'sidebar' ? sidebarWidth.value : inspectorWidth.value
+}
+
+function setPaneWidth(pane: ResizablePane, width: number) {
+  const clamped = clampPaneWidth(pane, width)
+  if (pane === 'sidebar') {
+    sidebarWidth.value = clamped
+    writeStoredValue(storageKeys.sidebarWidth, String(clamped))
+  } else {
+    inspectorWidth.value = clamped
+    writeStoredValue(storageKeys.inspectorWidth, String(clamped))
+  }
+}
+
+function startPaneResize(pane: ResizablePane, event: PointerEvent) {
+  if (event.button !== 0) return
+  event.preventDefault()
+  const handle = event.currentTarget as HTMLElement
+  paneDrag = { pane, x: event.clientX, width: paneWidth(pane), handle }
+  if (typeof handle.setPointerCapture === 'function') {
+    handle.setPointerCapture(event.pointerId)
+  }
+}
+
+function movePaneResize(event: PointerEvent) {
+  if (paneDrag == null) return
+  const direction = paneDrag.pane === 'sidebar' ? 1 : -1
+  setPaneWidth(paneDrag.pane, paneDrag.width + (event.clientX - paneDrag.x) * direction)
+}
+
+function stopPaneResize(event: PointerEvent) {
+  if (paneDrag?.handle.hasPointerCapture?.(event.pointerId)) {
+    paneDrag.handle.releasePointerCapture(event.pointerId)
+  }
+  paneDrag = null
+}
+
+function resizePaneFromKeyboard(pane: ResizablePane, event: KeyboardEvent) {
+  const bounds = paneBounds[pane]
+  switch (event.key) {
+    case 'ArrowRight':
+      setPaneWidth(pane, paneWidth(pane) + (pane === 'sidebar' ? 16 : -16))
+      break
+    case 'ArrowLeft':
+      setPaneWidth(pane, paneWidth(pane) + (pane === 'sidebar' ? -16 : 16))
+      break
+    case 'Home':
+      setPaneWidth(pane, bounds.min)
+      break
+    case 'End':
+      setPaneWidth(pane, bounds.max)
+      break
+    default:
+      return
+  }
+  event.preventDefault()
+}
 
 function readPanelChoice(key: string): boolean | null {
   const value = readStoredValue(key)
@@ -74,8 +159,8 @@ const inspectorOverlay = computed(() => viewportWidth.value < inspectorOverlayWi
 const inspectorFolded = computed(() => inspectorChoice.value ?? inspectorOverlay.value)
 const inspectorOverlayOpen = computed(() => inspectorOverlay.value && !inspectorFolded.value)
 const shellColumns = computed(() => {
-  const inspectorColumn = inspectorFolded.value || inspectorOverlay.value ? '0px' : 'var(--gui-inspector-width)'
-  return `var(--gui-sidebar-width) minmax(0, 1fr) ${inspectorColumn}`
+  const inspectorColumn = inspectorFolded.value || inspectorOverlay.value ? '0px 0px' : `6px ${inspectorWidth.value}px`
+  return `${sidebarWidth.value}px 6px minmax(0, 1fr) ${inspectorColumn}`
 })
 
 const configuration = computed(() => state.value?.state.configuration ?? null)
@@ -281,7 +366,7 @@ function startUpdate() {
 }
 
 function onFocus() {
-  void state.value?.refresh()
+  void state.value?.refresh(false)
 }
 
 function onSetupCancel() {
@@ -1023,7 +1108,14 @@ async function run(action: 'sync' | 'update') {
 </script>
 
 <template>
-  <div class="workspace gui-shell" :style="{ gridTemplateColumns: shellColumns }">
+  <div
+    class="workspace gui-shell"
+    :style="{
+      gridTemplateColumns: shellColumns,
+      '--gui-sidebar-width': `${sidebarWidth}px`,
+      '--gui-inspector-width': `${inspectorWidth}px`,
+    }"
+  >
     <Sidebar
       ref="sidebar"
       :groups="navGroups"
@@ -1046,6 +1138,22 @@ async function run(action: 'sync' | 'update') {
       @quit="requestQuit"
     />
 
+    <div
+      class="gui-pane-resize gui-pane-resize--sidebar"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize sidebar"
+      :aria-valuenow="sidebarWidth"
+      :aria-valuemin="paneBounds.sidebar.min"
+      :aria-valuemax="paneBounds.sidebar.max"
+      tabindex="0"
+      @keydown="resizePaneFromKeyboard('sidebar', $event)"
+      @pointerdown="startPaneResize('sidebar', $event)"
+      @pointermove="movePaneResize"
+      @pointerup="stopPaneResize"
+      @pointercancel="stopPaneResize"
+    />
+
     <div class="workspace__main gui-main">
       <MainToolbar
         ref="toolbar"
@@ -1058,6 +1166,7 @@ async function run(action: 'sync' | 'update') {
         :busy="busy"
         :ready="ready"
         :pending-count="pendingCount"
+        :available-updates="view?.availableUpdates ?? 0"
         :show-setup="configuration?.firstRun === true || setupOpen"
         :view-settings="viewSettings"
         :title="mainView === 'diagnostics' ? 'Diagnostics' : 'Resources'"
@@ -1168,7 +1277,9 @@ async function run(action: 'sync' | 'update') {
           color="neutral"
           variant="soft"
           @click="openSettingsWindow('sources')"
-        />
+        >
+          <template #leading><GuiIcon name="plus" /></template>
+        </UButton>
       </section>
       <p v-else-if="mainView === 'resources' && emptyState === 'search'" class="gui-empty gui-empty--muted">No resources match “{{ activeQuery }}”.</p>
 
@@ -1218,6 +1329,23 @@ async function run(action: 'sync' | 'update') {
         </TransitionGroup>
       </div>
     </div>
+
+    <div
+      v-if="!inspectorFolded && !inspectorOverlay"
+      class="gui-pane-resize gui-pane-resize--inspector"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize inspector"
+      :aria-valuenow="inspectorWidth"
+      :aria-valuemin="paneBounds.inspector.min"
+      :aria-valuemax="paneBounds.inspector.max"
+      tabindex="0"
+      @keydown="resizePaneFromKeyboard('inspector', $event)"
+      @pointerdown="startPaneResize('inspector', $event)"
+      @pointermove="movePaneResize"
+      @pointerup="stopPaneResize"
+      @pointercancel="stopPaneResize"
+    />
 
     <Inspector
       ref="inspector"
