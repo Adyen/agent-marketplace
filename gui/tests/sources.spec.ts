@@ -3,7 +3,7 @@ import { existsSync, readdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { startHarness } from './harness'
-import { distIndexExists, serveBuiltApp } from './app'
+import { distIndexExists, launchBuiltUserApp, serveBuiltApp } from './app'
 
 async function actionVisibility(page: Page, dialog: Locator, action: Locator, name: string) {
   await action.focus()
@@ -662,6 +662,34 @@ test('built GUI adds and removes a user Git source with ref and subpath by keybo
       xdgDirs.map((dir) => (existsSync(dir) ? readdirSync(dir).sort().join(',') : '<absent>')).join(','),
     ).not.toContain('devin')
     await page.screenshot({ path: artifactPath('git-source-removed.png'), fullPage: true })
+  } finally {
+    await harness.stop()
+  }
+})
+
+// spec: gui-configuration/add-source-request-error-renders-in-the-section
+test('built GUI keeps a failed Git source mutation in the Add source section', async ({ page }) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
+  }
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'sources-git' })
+  const { bootstrap } = harness
+  try {
+    await page.setViewportSize({ width: 1280, height: 720 })
+    await launchBuiltUserApp(page, bootstrap)
+    await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
+    await page.getByRole('button', { name: 'Sources' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
+    const addSection = dialog.getByLabel('Add user source')
+    await addSection.getByRole('radio', { name: 'Git registry' }).check()
+    await addSection.getByLabel('Source location').fill('https://127.0.0.1:1/unavailable.git')
+    await addSection.getByLabel('Source ref').fill('main')
+    await addSection.getByRole('button', { name: 'Add source' }).click()
+
+    const sourceAlert = addSection.getByRole('alert')
+    await expect(sourceAlert).toBeVisible({ timeout: 60_000 })
+    await expect(sourceAlert).not.toHaveText('')
+    await expect(dialog.locator('.settings-window__content > p[role="alert"]')).toHaveCount(0)
   } finally {
     await harness.stop()
   }

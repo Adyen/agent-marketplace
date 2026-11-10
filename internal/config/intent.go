@@ -56,6 +56,7 @@ type SourceDecl struct {
 }
 
 type SourceDescription struct {
+	Name          string
 	Kind          SourceKind
 	Location      string
 	Ref           string
@@ -152,7 +153,7 @@ func (l LayerIntent) DescribeSources() []SourceDescription {
 		descs := make([]SourceDescription, 0, len(names))
 		for _, name := range names {
 			src := l.v4.Sources[name]
-			desc := SourceDescription{Kind: src.Kind, Location: src.URL, Ref: src.Ref, Path: src.Path, SourceHarness: src.SourceHarness}
+			desc := SourceDescription{Name: name, Kind: src.Kind, Location: src.URL, Ref: src.Ref, Path: src.Path, SourceHarness: src.SourceHarness}
 			if src.Kind == V4SourceMarketplace {
 				desc.Location = src.CanonicalURL
 			}

@@ -1,7 +1,8 @@
 import { afterEach, vi } from 'vitest'
 import { flushPromises, mount, type DOMWrapper } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { h, nextTick } from 'vue'
 import ui from '@nuxt/ui/vue-plugin'
+import UApp from '@nuxt/ui/components/App.vue'
 import WorkspaceView from './WorkspaceView.vue'
 import {
   EventCursor,
@@ -119,9 +120,8 @@ export async function tick() {
 
 export function mountWorkspace(client: Client, notifyTtl = 60_000, onQuit?: () => void, packageFormat = '') {
   const controller = new WorkspaceController(client, notifyTtl, onQuit, packageFormat)
-  const wrapper = mount(WorkspaceView, {
+  const wrapper = mount(() => h(UApp, null, () => h(WorkspaceView, { controller })), {
     attachTo: document.body,
-    props: { controller },
     global: { plugins: [ui] },
   })
   void controller.connect()

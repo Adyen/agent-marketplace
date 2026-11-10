@@ -131,6 +131,7 @@ func TestUserConfigurationProjection(t *testing.T) {
 }
 
 type configurationSourceView struct {
+	Name          string `json:"name"`
 	Kind          string `json:"kind"`
 	Location      string `json:"location"`
 	Ref           string `json:"ref"`
@@ -152,12 +153,13 @@ func configurationSources(t *testing.T, decoded map[string]any, key string) []co
 }
 
 // spec: gui-configuration/organization-sources-are-read-only
+// spec: gui-shell/named-marketplace-source-shows-its-name
 func TestUserConfigurationSourceProjection(t *testing.T) {
 	home, repo := newUserAPIFixture(t, false)
 	userDir := t.TempDir()
 	fragDir := t.TempDir()
 	userConfig := filepath.Join(home, ".agents", "config.yaml")
-	userBytes := []byte("apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin]\nsources:\n  ddir: {directory: " + userDir + ", source_harness: windsurf}\n  zgit: {git: https://example.com/repo.git, ref: main, path: sub/dir, source_harness: claude}\n  mmp: {marketplace: https://market.example}\nresources:\n  ddir: {all: true}\n  zgit: {all: true}\n  mmp: {include: [main/collection/onboarding]}\n")
+	userBytes := []byte("apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nharnesses: [devin]\nsources:\n  ddir: {directory: " + userDir + ", source_harness: windsurf}\n  zgit: {git: https://example.com/repo.git, ref: main, path: sub/dir, source_harness: claude}\n  support: {marketplace: https://market.example}\nresources:\n  ddir: {all: true}\n  zgit: {all: true}\n  support: {include: [main/collection/onboarding]}\n")
 	fragBytes := []byte("sources:\n  ffrag: {directory: " + fragDir + "}\nresources:\n  ffrag: {all: true}\n")
 	writeFile(t, userConfig, string(userBytes))
 	writeFile(t, filepath.Join(home, ".agents", "fragment.yaml"), string(fragBytes))
@@ -182,18 +184,18 @@ func TestUserConfigurationSourceProjection(t *testing.T) {
 		t.Fatalf("configuration status = %d, body = %v", status, decoded)
 	}
 	wantUser := []configurationSourceView{
-		{Kind: "directory", Location: userDir, SourceHarness: "windsurf"},
-		{Kind: "directory", Location: fragDir},
-		{Kind: "marketplace", Location: "https://market.example"},
-		{Kind: "git", Location: "https://example.com/repo.git", Ref: "main", Path: "sub/dir", SourceHarness: "claude"},
+		{Name: "ddir", Kind: "directory", Location: userDir, SourceHarness: "windsurf"},
+		{Name: "ffrag", Kind: "directory", Location: fragDir},
+		{Name: "support", Kind: "marketplace", Location: "https://market.example"},
+		{Name: "zgit", Kind: "git", Location: "https://example.com/repo.git", Ref: "main", Path: "sub/dir", SourceHarness: "claude"},
 	}
 	if got := configurationSources(t, decoded, "userSources"); !reflect.DeepEqual(got, wantUser) {
 		t.Fatalf("userSources = %#v, want %#v", got, wantUser)
 	}
 	wantOrg := []configurationSourceView{
-		{Kind: "directory", Location: orgDir},
-		{Kind: "git", Location: "https://***@example.com/org.git?***", Ref: "main", Path: "nested", SourceHarness: "devin"},
-		{Kind: "marketplace", Location: "https://org-mp.example"},
+		{Name: "orgdir", Kind: "directory", Location: orgDir},
+		{Name: "orggit", Kind: "git", Location: "https://***@example.com/org.git?***", Ref: "main", Path: "nested", SourceHarness: "devin"},
+		{Name: "orgmp", Kind: "marketplace", Location: "https://org-mp.example"},
 	}
 	if got := configurationSources(t, decoded, "organizationSources"); !reflect.DeepEqual(got, wantOrg) {
 		t.Fatalf("organizationSources = %#v, want %#v", got, wantOrg)

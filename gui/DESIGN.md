@@ -384,10 +384,11 @@ here conflicts with an earlier section, this section wins.
   `[x]`, not `[*]`.
 - *Rule*: a row is a grid of fixed columns:
   `check 3ch · kind 9ch · name 1fr · registry minmax(0, 16ch) · scope 6ch · override auto`.
-  - **check**: an 8 px dot, filled `--gui-signal` when on and a 1.5 px
-    `--gui-ink-3` ring when off, in both themes. A column of black `[x]`
-    read as noise, and bracket glyphs still read as code; a column of green
-    dots reads as "these are on".
+  - **check**: an 8 px dot, filled `--gui-signal` when on, filled
+    `--am-color-status-warning` when excluded, and a 1.5 px `--gui-ink-3`
+    ring when off, in both themes. A column of black `[x]` read as noise,
+    and bracket glyphs still read as code; a column of green dots reads as
+    "these are on".
   - **kind**: the kind ID in `--gui-ink-2` (`skill`, `command`, `subagent`,
     `hook`, `mcpserver`). Kind, registry, and scope use `--gui-ink-2`, not
     `--gui-ink-3`: at 11–12 px, ink-3 measures about 3.3:1 on white, below
@@ -412,7 +413,8 @@ here conflicts with an earlier section, this section wins.
   and the part that identifies the source is hidden. The folder icons
   shrink by different amounts as the label grows, so they don't line up.
 - *Rule*: a source row shows a short label: the last two path segments for
-  directories (`resources/skills`), the host for Marketplace sources, and
+  directories (`resources/skills`), the configured name for named Marketplace
+  sources (otherwise the full endpoint host), and
   the host and repository name for Git sources (`github.com/org/repo` →
   `org/repo`). The full location stays in the tooltip and the accessible
   name. The leading icon matches the source kind: folder for directories,
@@ -457,7 +459,10 @@ here conflicts with an earlier section, this section wins.
   shows a status dot: signal for `ready`, warning for `pending`, danger for
   `failed`.
 - *Rule — discovery*: each endpoint is a compact row: the label in 500
-  weight, then `cache state · N results · truncated` in mono `--gui-ink-3`.
+  weight, then plain-language health and result count. Current results say
+  "Results are current", cached results say they are from an earlier check,
+  and a cache miss says "Not checked yet". Partial results say that only part
+  of the catalog is shown and invite the user to search.
 - *Rule — diagnostics*: the caps label carries the count. Each diagnostic is
   a disclosure row: the severity icon and the message clamped to two lines
   in mono 11.5 px, since the messages are tool output with paths. Selecting
@@ -490,7 +495,8 @@ wins.
     an ellipsis.
   - **name cell**: the name, then any exceptions as inline tags after an 8 px
     gap: the scope tag for `organization`, `project`, or `local`, and the
-    harness override badge. The name truncates first; tags never shrink.
+    harness override badge. The name keeps priority; a long status reason
+    shrinks and truncates before it can cover the registry column.
   - **scope**: the default `user` scope shows nothing visible. The
     `workspace__scope` element is kept with its full text but is visually
     hidden (`.gui-visually-hidden`), so the row's text and accessible content
@@ -544,11 +550,12 @@ wins.
 - *Observed*: Marketplace sources show the full host
   (`agent-marketplace.is.adyen…`), which truncates. Two Marketplace sources
   on the same domain therefore render as the same cut-off string.
-- *Rule*: a Marketplace source shows the first label of its host
-  (`agent-marketplace`), then `:port` for a non-default port, then the last
-  path segment when the URL has a path (`agent-marketplace/acme`). The full
-  location stays in the tooltip and the accessible name, and the ORG tag
-  still marks organization sources.
+- *Rule*: a Marketplace source shows its configured source name unless that
+  name is missing or the generic `marketplace` / `marketplace-<n>`; those
+  sources show the full endpoint hostname, then `:port` when present, and the
+  last path segment when the URL has a path. The full location stays in a
+  themed tooltip and the accessible name, and the ORG tag still marks
+  organization sources.
 
 ## Implementation plan
 
@@ -651,7 +658,8 @@ conflicts with an earlier section, this section wins.
 - *Rule*: such a row shows the reason as an inline tag after the name. The
   reason is the part of the status after the first `": "`, or the whole
   status when there is none. Broken uses danger text. Malformed and stale use
-  warning text. The tag never shrinks, and the name truncates first.
+  warning text. The reason tag shrinks and truncates, preserving room for the
+  resource name and source column.
 
 ### Empty states and sidebar
 

@@ -41,6 +41,7 @@ const sourceFieldsDisabled = computed(() => submitting.value || !canInitialize.v
 const pendingDescriptions = computed<SourceDescription[]>(() =>
   pendingSources.value.map((source, index) => ({
     id: `draft-${index}`,
+    name: '',
     kind: source.kind,
     location: source.location,
     ref: source.kind === 'git' ? source.ref : '',

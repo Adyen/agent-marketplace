@@ -27,6 +27,7 @@ function snapshotEvent(sequence: number, generation: number, stage = 'final', op
           required: false,
           pendingVerification: false,
           checked: true,
+          disabled: false,
           harnessOverride: false,
           harnesses: ['devin'],
           status: 'enabled',

@@ -267,6 +267,13 @@ func TestLocalAPIUserHarness(t *testing.T) {
 		writeFile(t, filepath.Join(home, ".agents", "config.yaml"),
 			"apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  local: {directory: "+source+"}\nresources:\n  local: {all: true}\n")
 	}
+	if fixture == "long-warning" {
+		source := filepath.Join(home, "long-warning-source")
+		writeFile(t, filepath.Join(source, "broken", "SKILL.md"),
+			"---\nname: broken\ndescription: [unterminated\nmetadata:\n  tags:\n    - broken\n---\n\n# Broken resource\n")
+		writeFile(t, filepath.Join(home, ".agents", "config.yaml"),
+			"apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  warnings: {directory: "+source+"}\n")
+	}
 	bootstrap := map[string]string{
 		"home":      home,
 		"repo":      repo,

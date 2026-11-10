@@ -69,6 +69,7 @@ type rowDTO struct {
 	Required            bool      `json:"required"`
 	PendingVerification bool      `json:"pendingVerification"`
 	Checked             bool      `json:"checked"`
+	Disabled            bool      `json:"disabled"`
 	HarnessOverride     bool      `json:"harnessOverride"`
 	Harnesses           []string  `json:"harnesses"`
 	Status              string    `json:"status"`
@@ -714,6 +715,7 @@ func rowPresentationForUser(row session.Row, userOnly bool) rowDTO {
 		Required:            row.Artifact.Required,
 		PendingVerification: row.PendingVerification,
 		Checked:             row.Artifact.Required || (!row.IsAvailable && (row.EnabledGlobal || row.EnabledProject || row.EnabledLocal)),
+		Disabled:            row.IsExcluded,
 		HarnessOverride:     row.HarnessSource == "registry override",
 		Harnesses:           harnesses,
 		Status:              status,

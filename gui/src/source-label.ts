@@ -1,21 +1,23 @@
 import type { SourceDescription } from './api/client'
 
 const SCP_LIKE = /^[^@/\s]+@[^:/\s]+:(.+)$/
-const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/
+const GENERIC_MARKETPLACE_NAME = /^marketplace(-\d+)?$/
 
 function lastSegments(path: string, count = 2): string {
   return path.split('/').filter((segment) => segment !== '').slice(-count).join('/')
 }
 
-function marketplaceLabel(location: string): string {
-  const url = new URL(location)
-  if (url.hostname === '') {
-    return location
+function marketplaceLabel(source: SourceDescription): string {
+  if (source.name !== '' && !GENERIC_MARKETPLACE_NAME.test(source.name)) {
+    return source.name
   }
-  const host = IPV4.test(url.hostname) ? url.hostname : url.hostname.split('.')[0]
+  const url = new URL(source.location)
+  if (url.hostname === '') {
+    return source.location
+  }
   const port = url.port === '' ? '' : `:${url.port}`
   const segment = lastSegments(url.pathname, 1)
-  return `${host}${port}${segment === '' ? '' : `/${segment}`}`
+  return `${url.hostname}${port}${segment === '' ? '' : `/${segment}`}`
 }
 
 export function sourceLabel(source: SourceDescription): string {
@@ -27,7 +29,7 @@ export function sourceLabel(source: SourceDescription): string {
         return lastSegments(path) || location
       }
       case 'marketplace':
-        return marketplaceLabel(location)
+        return marketplaceLabel(source)
       case 'git': {
         const scp = SCP_LIKE.exec(location)
         const path = scp ? scp[1] : new URL(location).pathname
