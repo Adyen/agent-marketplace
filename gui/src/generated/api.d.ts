@@ -473,6 +473,8 @@ export interface components {
         DiscoveryHealth: {
             /** @enum {string} */
             cacheState: "miss" | "fresh" | "stale";
+            /** @description Whether the endpoint has a successful result for the current discovery. */
+            checked: boolean;
             /** @description SHA256 digest of the normalized Marketplace endpoint URL and verified instance identity. */
             id: string;
             /** @description Sanitized endpoint alias or normalized URL. */

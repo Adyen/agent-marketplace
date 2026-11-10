@@ -46,15 +46,14 @@ function toggleDiagnostic(key: string) {
   expandedDiagnostics.value = next
 }
 
-function discoveryStatus(cacheState: Snapshot['discoveryHealth'][number]['cacheState']): string {
-  switch (cacheState) {
-    case 'fresh':
-      return 'Results are current'
-    case 'stale':
-      return 'Showing saved results from an earlier check'
-    default:
-      return 'Not checked yet'
+function discoveryStatus(health: Snapshot['discoveryHealth'][number]): string {
+  if (health.cacheState === 'fresh' || (health.cacheState === 'miss' && health.checked)) {
+    return 'Results are current'
   }
+  if (health.cacheState === 'stale') {
+    return 'Showing saved results from an earlier check'
+  }
+  return 'Not checked yet'
 }
 </script>
 
@@ -74,7 +73,7 @@ function discoveryStatus(cacheState: Snapshot['discoveryHealth'][number]['cacheS
       <button v-if="discoveryFailed" type="button" aria-label="Retry Marketplace search" @click="emit('retryDiscovery')">Retry Marketplace search</button>
       <ul v-if="discoveryHealth.length" aria-label="Marketplace endpoint health">
         <li v-for="health in discoveryHealth" :key="health.id">
-          <p><strong>{{ health.label }}</strong><span class="mono gui-diagnostics-view__meta"> · {{ discoveryStatus(health.cacheState) }} · {{ health.total }} {{ health.total === 1 ? 'result' : 'results' }}<span v-if="health.truncated"> · Only part of the catalog is shown; search to find more</span></span></p>
+          <p><strong>{{ health.label }}</strong><span class="mono gui-diagnostics-view__meta"> · {{ discoveryStatus(health) }} · {{ health.total }} {{ health.total === 1 ? 'result' : 'results' }}<span v-if="health.truncated"> · Only part of the catalog is shown; search to find more</span></span></p>
           <p v-if="health.message">{{ health.message }}</p>
         </li>
       </ul>

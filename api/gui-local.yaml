@@ -738,7 +738,7 @@ components:
         message: { type: string }
     DiscoveryHealth:
       type: object
-      required: [id, label, total, truncated, cacheState, message]
+      required: [id, label, total, truncated, cacheState, checked, message]
       properties:
         id:
           type: string
@@ -751,6 +751,9 @@ components:
         cacheState:
           type: string
           enum: [miss, fresh, stale]
+        checked:
+          type: boolean
+          description: Whether the endpoint has a successful result for the current discovery.
         message:
           type: string
           description: Sanitized static endpoint health message without credentials or query values.

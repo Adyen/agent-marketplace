@@ -355,10 +355,6 @@ textarea:focus-visible,
   white-space: nowrap;
 }
 
-.gui-source-row {
-  position: relative;
-}
-
 .gui-source-row__tooltip {
   background: var(--gui-solid-bg);
   border-radius: 6px;
@@ -366,25 +362,12 @@ textarea:focus-visible,
   box-sizing: border-box;
   color: var(--gui-solid-ink);
   font-size: 12px;
-  left: 0;
   line-height: 1.4;
   max-width: 220px;
-  opacity: 0;
   overflow-wrap: anywhere;
   padding: 8px 10px;
-  pointer-events: none;
-  position: absolute;
-  top: calc(100% + 4px);
-  visibility: hidden;
   white-space: normal;
   width: max-content;
-  z-index: 30;
-}
-
-.gui-source-row:hover .gui-source-row__tooltip,
-.gui-source-row:focus-visible .gui-source-row__tooltip {
-  opacity: 1;
-  visibility: visible;
 }
 
 .gui-sidebar__footer {

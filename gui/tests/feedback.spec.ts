@@ -1,6 +1,14 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import { startHarness } from './harness'
 import { distIndexExists, launchBuiltUserApp } from './app'
+
+async function seedLightThemeOnce(page: Page) {
+  await page.addInitScript(() => {
+    if (localStorage.getItem('vitepress-theme-appearance') === null) {
+      localStorage.setItem('vitepress-theme-appearance', 'light')
+    }
+  })
+}
 
 // spec: gui-shell/long-load-failure-warning-stays-inside-its-row
 test('long resource warnings stay inside the row in both themes', async ({ page }) => {
@@ -11,7 +19,7 @@ test('long resource warnings stay inside the row in both themes', async ({ page 
   const { bootstrap } = harness
   try {
     await page.setViewportSize({ width: 1024, height: 720 })
-    await page.addInitScript(() => localStorage.setItem('vitepress-theme-appearance', 'light'))
+    await seedLightThemeOnce(page)
     await launchBuiltUserApp(page, bootstrap)
     const row = page.getByRole('option').filter({ hasText: 'broken' })
     await expect(row).toBeVisible({ timeout: 60_000 })
@@ -23,6 +31,7 @@ test('long resource warnings stay inside the row in both themes', async ({ page 
       if (theme === 'dark') {
         await page.evaluate(() => localStorage.setItem('vitepress-theme-appearance', 'dark'))
         await page.reload()
+        await expect(page.locator('html')).toHaveClass(/(?:^|\s)dark(?:\s|$)/)
         await expect(page.getByRole('option').filter({ hasText: 'broken' })).toBeVisible({ timeout: 60_000 })
       }
       const metrics = await row.evaluate((element) => {
@@ -56,20 +65,26 @@ test('source tooltips show the full location with readable contrast in both them
   const { bootstrap } = harness
   try {
     const location = `${bootstrap.home}/keep-source-with-a-deliberately-long-directory-name-that-wraps-onto-two-lines`
-    await page.addInitScript(() => localStorage.setItem('vitepress-theme-appearance', 'light'))
+    await seedLightThemeOnce(page)
     await launchBuiltUserApp(page, bootstrap)
     const row = page.getByRole('button', { name: `Open source ${location}` })
-    const tooltip = row.locator('.gui-source-row__tooltip')
+    const tooltip = page.locator('.gui-source-row__tooltip')
+    const tooltipText = tooltip.locator('[data-slot="text"]')
 
     for (const theme of ['light', 'dark']) {
       if (theme === 'dark') {
         await page.evaluate(() => localStorage.setItem('vitepress-theme-appearance', 'dark'))
         await page.reload()
+        await expect(page.locator('html')).toHaveClass(/(?:^|\s)dark(?:\s|$)/)
       }
       await expect(row).toBeVisible({ timeout: 60_000 })
       await row.hover()
       await expect(tooltip).toBeVisible()
-      await expect(tooltip).toHaveText(location)
+      await expect(tooltipText).toHaveText(location)
+      await page.mouse.move(0, 0)
+      await row.focus()
+      await expect(tooltip).toBeVisible()
+      await expect(tooltipText).toHaveText(location)
       const ratio = await tooltip.evaluate((element) => {
         const rgb = (value: string) => {
           const channels = value.match(/[\d.]+/g)?.slice(0, 3).map(Number)
@@ -88,6 +103,40 @@ test('source tooltips show the full location with readable contrast in both them
       })
       expect(ratio, `${theme} tooltip contrast`).toBeGreaterThanOrEqual(4.5)
     }
+  } finally {
+    await harness.stop()
+  }
+})
+
+// spec: gui-shell/source-tooltip-is-readable-in-both-themes
+test('source tooltip of the last row in a scrolled source list stays inside the viewport', async ({ page }) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run `make gui-build` first')
+  }
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'sources' })
+  const { bootstrap } = harness
+  try {
+    await page.setViewportSize({ width: 1024, height: 360 })
+    await seedLightThemeOnce(page)
+    await launchBuiltUserApp(page, bootstrap)
+    const list = page.locator('.gui-sidebar__list--scroll')
+    const lastRow = list.locator('button[aria-label^="Open source "]').last()
+    await expect(lastRow).toBeAttached({ timeout: 60_000 })
+    await expect.poll(() => list.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true)
+    await list.evaluate((element) => {
+      element.scrollTop = element.scrollHeight
+    })
+
+    await lastRow.hover()
+    const tooltip = page.locator('.gui-source-row__tooltip')
+    await expect(tooltip).toBeVisible()
+    const box = await tooltip.boundingBox()
+    const viewport = page.viewportSize()!
+    expect(box, 'tooltip has a layout box').not.toBeNull()
+    expect(box!.x).toBeGreaterThanOrEqual(0)
+    expect(box!.y).toBeGreaterThanOrEqual(0)
+    expect(box!.x + box!.width).toBeLessThanOrEqual(viewport.width)
+    expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height)
   } finally {
     await harness.stop()
   }

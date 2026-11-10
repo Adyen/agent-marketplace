@@ -310,7 +310,7 @@ describe('local resource search', () => {
     push(event({ sequence: 1, payload: snapshot([
       row('needle-local', { id: 'local-row', group: 'enabled' }),
       row('needle-cached', { id: 'cached-row', group: 'available', checked: false, scope: 'available', status: 'available', discovery: true }),
-    ], { discoveryEnabled: true, discoveryHealth: [{ id: 'market', label: 'Marketplace', total: 1, truncated: false, cacheState: 'fresh', message: '' }] }) }))
+    ], { discoveryEnabled: true, discoveryHealth: [{ id: 'market', label: 'Marketplace', total: 1, truncated: false, cacheState: 'fresh', checked: true, message: '' }] }) }))
     await tick()
 
     const input = await openSearch(wrapper)

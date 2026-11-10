@@ -38,6 +38,17 @@ func TestDiscoveryHealthPresentationSanitizesEndpointAndFailureText(t *testing.T
 	}
 }
 
+func TestDiscoveryHealthCheckedReflectsSuccessfulOutcome(t *testing.T) {
+	checked := config.MarketplaceEntry{URL: "https://checked.example", InstanceID: "checked-instance", Alias: "checked"}
+	unchecked := config.MarketplaceEntry{URL: "https://unchecked.example", InstanceID: "unchecked-instance", Alias: "unchecked"}
+	health := discoveryHealthForConfig(&config.Config{Marketplaces: []config.MarketplaceEntry{checked, unchecked}}, []marketplace.DiscoveryOutcome{{
+		Endpoint: checked, Total: 1, CacheState: marketplace.DiscoveryCacheMiss,
+	}}, "")
+	if len(health) != 2 || !health[0].Checked || health[1].Checked {
+		t.Fatalf("checked health = %#v, want a successful uncached outcome checked and an endpoint without an outcome unchecked", health)
+	}
+}
+
 func TestUserAPIDiscoveryRequestUsesStrictUserOnlyRoute(t *testing.T) {
 	api, home, _ := newUserAPI(t, session.DependencyLifecycle{})
 	userConfig := filepath.Join(home, ".agents", "config.yaml")
