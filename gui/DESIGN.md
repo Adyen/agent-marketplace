@@ -110,7 +110,7 @@ changes live.
 
 ```
 ┌──────────────┬──────────────────────────────────────┬─────────────────────┐
-│ ◧            │ Resources  user scope [⌕ ⌘K] [⟳] [Sync ~2] [Update] ◨ │
+│ ◧            │ Resources  user scope [⌕ ⌘K] [⟳] [Update] [Sync ~2] ◨ │
 │              │                                      │ Details             │
 │ ▤ Resources  │ ▾ PENDING SYNC                     2 │                     │
 │ ◷ Pending  2 │  [*] skill  auth-preflight   reg  U  │ Kind     skill      │
@@ -128,8 +128,10 @@ changes live.
   left sidebar           main column                       right inspector
 ```
 
-The shell is a three-column CSS grid:
-`[sidebar 260px] [main minmax(0,1fr)] [inspector 360px]`. The sidebar column is
+The shell is a grid of resizable columns:
+`[sidebar] [handle] [main minmax(0,1fr)] [handle] [inspector]`. The sidebar and
+inspector open at 260 px and 360 px and resize from their separator handles
+(see the visual feedback refinements). The sidebar column is
 always docked. A folded inspector's column collapses to `0`, and its contents
 are removed from the tab order with `inert`.
 
@@ -174,9 +176,10 @@ in Codex's selected-thread row.
        sit inside the pill.
     2. A **View** icon button (stacked rows), which opens the View menu.
     3. A Refresh icon button.
-    4. A **Sync** button, styled like Codex's "Commit" button, with a sync
+    4. An **Update** button, a separate visible secondary button next to Sync,
+       with an available-update count badge when updates exist.
+    5. A **Sync** button, styled like Codex's "Commit" button, with a sync
        icon and a pending badge (`~2`) in mono.
-    5. An **Update** button, a separate visible secondary button next to Sync.
     6. A "Set up" button, shown only during first run.
     7. A divider, then a "Toggle inspector" icon button (◨).
 - **Banners** sit under the toolbar for errors, the no-harness notice, and the
@@ -303,7 +306,7 @@ Per modal:
 |---|---|---|
 | **Settings** (`SettingsWindow`) | gear | A wide window with General, Harness targets, and Sources tabs. See the fourth review. |
 | **First run** | sparkle | A three-step flow with a step indicator (`1 Targets · 2 Telemetry · 3 Sources`). Telemetry consent is a choice list with *no* preselected row ("Share basic telemetry" / "Don't share"), and Continue stays disabled until the user picks one. Cancel writes nothing. |
-| **Resource action** (Install/Remove) | plus / minus | Label/value rows for the resource, the plan preview as a code card (12 px radius, mono, diff-colored lines), the risk acknowledgement as a toggle switch row, and the primary button "Install" or "Remove". |
+| **Resource action** (Install/Remove) | none | Label/value rows for the resource, the plan preview as a code card (12 px radius, mono, diff-colored lines), the risk acknowledgement as a toggle switch row, and the primary button "Install" or "Remove". |
 | **Confirmations** (quit, sync-and-quit, migration) | exit / sync | The question, then a choice list with the affirmative, negative, and cancel options from `session-interactions`, then "Continue". Escape maps to cancel. |
 | **Resource inspection** | file | Two columns: a file tree on `--gui-s0100` and a preview pane styled like Codex's diff panel, with a sticky path header (path in mono and a size tag), mono 12 px content, and line numbers in `--gui-ink-3`. |
 

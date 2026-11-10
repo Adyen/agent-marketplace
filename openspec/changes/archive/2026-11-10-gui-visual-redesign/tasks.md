@@ -20,7 +20,7 @@
 ## 4. Presentation
 
 - [x] 4.1 Restyle the Settings "Add source" button with the secondary button style; capture light and dark screenshots
-- [ ] 4.2 Add the icon source and regenerate `AppIcon.icns` and every hicolor PNG size; `make gui-build` succeeds; capture screenshots of the new icon
+- [x] 4.2 Add the icon source and regenerate `AppIcon.icns` and every hicolor PNG size; `make gui-build` succeeds; capture screenshots of the new icon
 - [x] 4.3 Update `gui/DESIGN.md` for the toolbar order and update badge, resizable panes, the resource action dialog, the Add source button, and the icon
 
 ## 5. Verification
