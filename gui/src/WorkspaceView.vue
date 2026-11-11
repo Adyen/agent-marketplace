@@ -805,6 +805,11 @@ function select(row: Row) {
   state.value?.browse(row)
 }
 
+function selectFromClick(row: Row) {
+  select(row)
+  setInspectorFolded(false)
+}
+
 function openInspection(row: Row) {
   const controller = state.value
   if (controller == null || (!row.inspectable && !row.installedFiles)) {
@@ -1176,6 +1181,7 @@ async function run(action: 'sync' | 'update') {
         :view-settings="viewSettings"
         @toggle-group="toggleGroup"
         @select="select"
+        @row-click="selectFromClick"
         @activate="activateRow"
         @move="moveSelection"
       />

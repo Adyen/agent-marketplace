@@ -242,9 +242,10 @@ const defaultScenario = (): PreviewScenario => ({
     managedOutsideGUI: ['included files', 'per-source configuration', 'other settings'],
     supportedTargets: ['devin', 'claude', 'codex'],
     userSources: [
-      { id: 'src-local', kind: 'directory', location: '/home/dev/workspaces/agent-platform/resources/skills', path: '', ref: '', sourceHarness: '', rowSourceId: '' },
+      { id: 'src-local', name: '', kind: 'directory', location: '/home/dev/workspaces/agent-platform/resources/skills', path: '', ref: '', sourceHarness: '', rowSourceId: '' },
       {
         id: 'src-team',
+        name: '',
         kind: 'git',
         location: 'https://git.example.com/platform/team-tools.git',
         path: '',
@@ -252,11 +253,12 @@ const defaultScenario = (): PreviewScenario => ({
         sourceHarness: '',
         rowSourceId: 'https://git.example.com/platform/team-tools.git\x01main\x01',
       },
-      { id: 'src-hub', kind: 'marketplace', location: 'https://marketplace.example.com/api', path: '', ref: '', sourceHarness: '', rowSourceId: '' },
+      { id: 'src-hub', name: 'marketplace', kind: 'marketplace', location: 'https://marketplace.example.com/api', path: '', ref: '', sourceHarness: '', rowSourceId: '' },
     ],
     organizationSources: [
       {
         id: 'src-org',
+        name: '',
         kind: 'git',
         location: 'https://git.example.com/platform/core.git',
         path: '',
@@ -302,6 +304,7 @@ const manySourcesScenario = (): PreviewScenario => {
   const base = defaultScenario()
   const extra = Array.from({ length: 24 }, (_, index) => ({
     id: `src-extra-${index}`,
+    name: '',
     kind: 'directory' as const,
     location: `/home/dev/workspaces/team-${index + 1}/resources`,
     path: '',

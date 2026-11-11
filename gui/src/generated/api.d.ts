@@ -184,8 +184,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Read primary and declared supporting files from an installed Marketplace skill
-         * @description Available only in user-scope mode. rowId is resolved against the current visible session rows; the browser supplies no root, path, source coordinate, revision, or digest. fileId is an opaque identity bound to the row, current generation, member path, and captured source identity. The route reads only the verified canonical skill primary and its archive members or declared staged support files. Raster image members return metadata without file bytes; text, scripts, JavaScript, and SVG are returned only as inert text. Missing or changed content fails with a static unavailable error. The request does not access the Marketplace SDK, mutate session state, write configuration, acquisition locks, caches, or materialized files, or emit operation, snapshot, discovery, telemetry, or progress events.
+         * Read primary and declared supporting files from an installed Marketplace or local directory/Git skill
+         * @description Available only in user-scope mode. rowId is resolved against the current visible session rows; the browser supplies no root, path, source coordinate, revision, or digest. fileId is an opaque identity bound to the row, current generation, member path, and captured source identity. The route reads installed Marketplace skills from their verified archive or staged directory. Directory and Git skills are read from the captured source root, relative to the directory of the cataloged SKILL.md and limited to that skill's declared supporting files; a symlink is followed only when its target remains inside that root. Raster image members return metadata without file bytes; text, scripts, JavaScript, and SVG are returned only as inert text. Missing, unsafe, or changed content fails with a static unavailable error. The request does not access the Marketplace SDK, mutate session state, write configuration, acquisition locks, caches, or materialized files, or emit operation, snapshot, discovery, telemetry, or progress events.
          *
          */
         post: operations["readInstalledMarketplaceSkillFiles"];
@@ -473,6 +473,8 @@ export interface components {
         DiscoveryHealth: {
             /** @enum {string} */
             cacheState: "miss" | "fresh" | "stale";
+            /** @description Whether the endpoint has a successful result for the current discovery. */
+            checked: boolean;
             /** @description SHA256 digest of the normalized Marketplace endpoint URL and verified instance identity. */
             id: string;
             /** @description Sanitized endpoint alias or normalized URL. */
@@ -494,7 +496,7 @@ export interface components {
         DriftAssessment: "pending" | "ready" | "failed";
         Error: {
             /** @enum {string} */
-            code: "localapi.unauthorized" | "localapi.forbidden" | "localapi.invalid_request" | "localapi.not_ready" | "localapi.not_supported" | "localapi.busy" | "localapi.closed" | "localapi.inspection_unavailable" | "localapi.resource_files_unavailable" | "localapi.resource_action_unavailable";
+            code: "localapi.unauthorized" | "localapi.forbidden" | "localapi.invalid_request" | "localapi.not_ready" | "localapi.not_supported" | "localapi.busy" | "localapi.closed" | "localapi.inspection_unavailable" | "localapi.resource_files_unavailable" | "localapi.source_files_unavailable" | "localapi.resource_action_unavailable";
             /** @description Static, non-reflective failure description. */
             message: string;
         };
@@ -783,6 +785,8 @@ export interface components {
             /** @description Whether the resource is enabled by any configuration scope, derived from row enablement metadata. */
             checked: boolean;
             description: string;
+            /** @description Whether the resource is excluded from its configured selection. */
+            disabled: boolean;
             /** @description Whether this row is a Marketplace discovery result rather than an accepted local row. */
             discovery: boolean;
             /** @description Sanitized single-line resource name for display. */
@@ -796,7 +800,7 @@ export interface components {
             id: string;
             /** @description Whether this exact uninstalled Marketplace skill has a current verified revision eligible for read-only inspection. */
             inspectable: boolean;
-            /** @description Whether this installed Marketplace skill has the read-only installed-files capability. The capability remains visible if its local cached content is unavailable. */
+            /** @description Whether this installed Marketplace skill or directory/Git skill with a captured source root has the read-only installed-files capability. Local source availability is checked when opened; Marketplace capability remains visible if its cached content is unavailable. */
             installedFiles: boolean;
             kind: string;
             /** @description Raw resource name retained for identity and deterministic sorting. */
@@ -832,6 +836,8 @@ export interface components {
             kind: "git" | "directory" | "marketplace";
             /** @description Declared Git URL, directory declaration, or normalized Marketplace URL with embedded credentials and URL query/fragment redacted; directory locations are resolved source locations, not raw configuration paths. */
             location: string;
+            /** @description The configured name from the v4 sources mapping. */
+            name: string;
             /** @description Declared sub-path within a source, or empty. */
             path: string;
             /** @description Declared Git ref, or empty. */
@@ -1189,7 +1195,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["OriginRejected"];
             405: components["responses"]["MethodNotAllowed"];
-            /** @description Verified local resource files are missing or unavailable; code localapi.resource_files_unavailable */
+            /** @description Verified Marketplace files are unavailable (code localapi.resource_files_unavailable) or local skill source files are missing or unsafe (code localapi.source_files_unavailable) */
             502: {
                 headers: {
                     [name: string]: unknown;

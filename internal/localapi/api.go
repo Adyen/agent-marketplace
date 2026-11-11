@@ -41,6 +41,7 @@ const (
 	codeClosed                    = "localapi.closed"
 	codeInspectionUnavailable     = "localapi.inspection_unavailable"
 	codeResourceFilesUnavailable  = "localapi.resource_files_unavailable"
+	codeSourceFilesUnavailable    = "localapi.source_files_unavailable"
 	codeResourceActionUnavailable = "localapi.resource_action_unavailable"
 )
 
@@ -68,6 +69,7 @@ type rowDTO struct {
 	Required            bool      `json:"required"`
 	PendingVerification bool      `json:"pendingVerification"`
 	Checked             bool      `json:"checked"`
+	Disabled            bool      `json:"disabled"`
 	HarnessOverride     bool      `json:"harnessOverride"`
 	Harnesses           []string  `json:"harnesses"`
 	Status              string    `json:"status"`
@@ -426,6 +428,7 @@ func writeError(w http.ResponseWriter, status int, code string) {
 		codeClosed:                    "api is closed",
 		codeInspectionUnavailable:     "Verified inspection is unavailable; check the Marketplace and retry.",
 		codeResourceFilesUnavailable:  "Resource files are unavailable; refresh this resource and retry.",
+		codeSourceFilesUnavailable:    "Skill source files are missing or unsafe; fix the source and refresh.",
 		codeResourceActionUnavailable: "Resource action could not be prepared; refresh this resource and retry.",
 	}[code]
 	_ = json.NewEncoder(w).Encode(map[string]string{"code": code, "message": message})
@@ -712,13 +715,14 @@ func rowPresentationForUser(row session.Row, userOnly bool) rowDTO {
 		Required:            row.Artifact.Required,
 		PendingVerification: row.PendingVerification,
 		Checked:             row.Artifact.Required || (!row.IsAvailable && (row.EnabledGlobal || row.EnabledProject || row.EnabledLocal)),
+		Disabled:            row.IsExcluded,
 		HarnessOverride:     row.HarnessSource == "registry override",
 		Harnesses:           harnesses,
 		Status:              status,
 		Group:               row.StatusGroup().ID(),
 		Discovery:           row.MarketplaceDiscovery != nil,
 		Inspectable:         session.MarketplaceInspectableSkill(row),
-		InstalledFiles:      session.MarketplaceInstalledSkillFiles(row),
+		InstalledFiles:      installedSkillFilesEligible(row),
 		ResourceAction:      session.UserMarketplaceActionNone,
 	}
 }

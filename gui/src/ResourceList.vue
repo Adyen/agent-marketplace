@@ -35,6 +35,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   toggleGroup: [path: string]
   select: [row: Row]
+  rowClick: [row: Row]
   activate: [row: Row]
   move: [direction: 1 | -1]
 }>()
@@ -97,13 +98,13 @@ function problemReason(row: Row): { text: string; tone: 'danger' | 'warning' } |
           :class="{ 'workspace__row--selected': selectedKey === rowKey(row.id) }"
           class="workspace__row"
           :style="{ gridTemplateColumns: rowColumns }"
-          @click="emit('select', row)"
+          @click="emit('rowClick', row)"
           @keydown.enter.prevent="emit('activate', row)"
           @keydown.space.prevent="emit('select', row)"
           @keydown.down.prevent="emit('move', 1)"
           @keydown.up.prevent="emit('move', -1)"
         >
-          <span class="workspace__check" :class="{ 'workspace__check--on': row.checked }" aria-hidden="true" />
+          <span class="workspace__check" :class="{ 'workspace__check--on': row.checked && !row.disabled, 'workspace__check--disabled': row.disabled }" aria-hidden="true" />
           <span class="workspace__kind" :class="{ 'gui-visually-hidden': hideKind }">{{ row.kind }}</span>
           <span class="workspace__name-cell">
             <span class="workspace__name"><template v-for="(part, index) in nameParts(row)" :key="index"><mark v-if="part.matched" class="workspace__name-match">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></span>

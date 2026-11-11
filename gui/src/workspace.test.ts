@@ -12,6 +12,8 @@ import {
 import {
   EVENT_OUTAGE_MESSAGE,
   EVENT_RETRY_DELAY_MS,
+  RESOURCE_FILES_UNAVAILABLE_MESSAGE,
+  SOURCE_FILES_UNAVAILABLE_MESSAGE,
   WorkspaceController,
 } from './controller'
 import { event, fakeClient, mountWorkspace, row, rowNames, snapshot, tick } from './test-support'
@@ -223,6 +225,62 @@ describe('WorkspaceView', () => {
     expect(wrapper.findAll('.workspace__kind').map((kind) => kind.text())).toContain('skill')
     expect(wrapper.findAll('.workspace__scope').map((s) => s.text())).toContain('organization')
     expect(wrapper.find('.workspace__badge').text()).toContain('claude')
+  })
+
+  // spec: gui-shell/disabled-and-enabled-rows-use-distinct-indicator-roles
+  it('renders excluded rows with a warning check dot and enabled rows with a signal dot', async () => {
+    const { client, push } = fakeClient()
+    const enabled = row('enabled-resource', { checked: true })
+    const disabled = { ...row('disabled-resource', { checked: true, status: 'excluded' }), disabled: true }
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([enabled, disabled]) }))
+    await tick()
+
+    const check = (name: string) =>
+      wrapper.findAll('.workspace__row').find((resource) => resource.get('.workspace__name').text() === name)!.get('.workspace__check')
+    expect(check('enabled-resource').classes()).toContain('workspace__check--on')
+    expect(check('disabled-resource').classes()).toContain('workspace__check--disabled')
+    expect(check('disabled-resource').classes()).not.toContain('workspace__check--on')
+  })
+
+  // spec: gui-shell/clicking-a-row-unfolds-a-folded-inspector
+  it('unfolds the inspector to show a clicked row', async () => {
+    window.localStorage.setItem('am-gui-inspector', 'folded')
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('first'), row('second')]) }))
+    await tick()
+
+    const inspector = wrapper.get('aside[aria-label="Detail"]')
+    expect(inspector.classes()).toContain('gui-inspector--folded')
+    await wrapper.findAll('[role="option"]')[0].trigger('keydown', { key: 'ArrowDown' })
+    await tick()
+    expect(inspector.classes()).toContain('gui-inspector--folded')
+    await wrapper.findAll('[role="option"]')[1].trigger('keydown', { key: ' ' })
+    await tick()
+    expect(inspector.classes()).toContain('gui-inspector--folded')
+    await wrapper.findAll('[role="option"]')[1].trigger('click')
+    await tick()
+
+    expect(inspector.classes()).not.toContain('gui-inspector--folded')
+    expect(inspector.text()).toContain('second description')
+  })
+
+  // spec: gui-shell/clicking-a-row-keeps-an-open-inspector-open
+  it('keeps the inspector open when another row is clicked', async () => {
+    window.localStorage.setItem('am-gui-inspector', 'open')
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('first'), row('second')]) }))
+    await tick()
+
+    const inspector = wrapper.get('aside[aria-label="Detail"]')
+    expect(inspector.classes()).not.toContain('gui-inspector--folded')
+    await wrapper.findAll('[role="option"]')[1].trigger('click')
+    await tick()
+
+    expect(inspector.classes()).not.toContain('gui-inspector--folded')
+    expect(inspector.text()).toContain('second description')
   })
 
   it('shows the user scope as hidden text and an organization scope as a tag', async () => {
@@ -1327,7 +1385,7 @@ describe('Event stream reconnect', () => {
   it('keeps Marketplace discovery health unchanged when the resource search changes', async () => {
     const { client, push } = fakeClient()
     const health: Snapshot['discoveryHealth'] = [
-      { id: 'market', label: 'Marketplace', total: 3, truncated: false, cacheState: 'fresh', message: '' },
+      { id: 'market', label: 'Marketplace', total: 3, truncated: false, cacheState: 'fresh', checked: true, message: '' },
     ]
     const { controller, wrapper } = mountWorkspace(client)
     push(event({ sequence: 1, payload: snapshot([row('needle')], { discoveryEnabled: true, discoveryHealth: health }) }))
@@ -1357,6 +1415,43 @@ describe('Event stream reconnect', () => {
 
     expect(controller.state.diagnosticsDiscoveryHealth).toEqual(health)
     expect(wrapper.get('[aria-label="Marketplace endpoint health"]').text()).toBe(before)
+  })
+
+  // spec: gui-shell/discovery-health-uses-plain-wording
+  it('describes discovery health in plain language without cache jargon', async () => {
+    const { client, push } = fakeClient()
+    const health: Snapshot['discoveryHealth'] = [
+      { id: 'current', label: 'Current', total: 2, truncated: false, cacheState: 'fresh', checked: true, message: '' },
+      { id: 'saved', label: 'Saved', total: 1, truncated: false, cacheState: 'stale', checked: true, message: '' },
+      { id: 'unchecked', label: 'Unchecked', total: 0, truncated: true, cacheState: 'miss', checked: false, message: '' },
+    ]
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([], { discoveryEnabled: true, discoveryHealth: health }) }))
+    await tick()
+    await openDiagnostics(wrapper)
+
+    const section = wrapper.get('[aria-label="Marketplace discovery health"]')
+    expect(section.text()).toContain('Results are current')
+    expect(section.text()).toContain('Showing saved results from an earlier check')
+    expect(section.text()).toContain('Not checked yet')
+    expect(section.text()).toContain('Only part of the catalog is shown; search to find more')
+    expect(section.text()).not.toMatch(/\b(fresh|truncated)\b/i)
+  })
+
+  // spec: gui-shell/discovery-health-uses-plain-wording
+  it('reports a successful uncached discovery check as current', async () => {
+    const { client, push } = fakeClient()
+    const health: Snapshot['discoveryHealth'] = [
+      { id: 'checked', label: 'Checked', total: 0, truncated: false, cacheState: 'miss', checked: true, message: '' },
+    ]
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([], { discoveryEnabled: true, discoveryHealth: health }) }))
+    await tick()
+    await openDiagnostics(wrapper)
+
+    const section = wrapper.get('[aria-label="Marketplace discovery health"]')
+    expect(section.text()).toContain('Checked · Results are current · 0 results')
+    expect(section.text()).not.toContain('Not checked yet')
   })
 
   // spec: session-navigation/remote-marketplace-search-is-debounced
@@ -1390,7 +1485,7 @@ describe('Event stream reconnect', () => {
           query,
           discoverySequence,
           rows: [local, row(name, { id: name, discovery: true, group: 'available', checked: false, scope: 'available', status: 'available' })],
-          health: [{ id: label, label, total: 1, truncated: false, cacheState: 'fresh', message: '' }],
+          health: [{ id: label, label, total: 1, truncated: false, cacheState: 'fresh', checked: true, message: '' }],
           loading: false,
         },
       } as unknown as SessionEvent)
@@ -1442,7 +1537,7 @@ describe('Event stream reconnect', () => {
         stage: 'config',
         drift: 'pending',
         discoveryEnabled: true,
-        discoveryHealth: [{ id: 'market', label: 'Marketplace', total: 1, truncated: false, cacheState: 'fresh', message: '' }],
+        discoveryHealth: [{ id: 'market', label: 'Marketplace', total: 1, truncated: false, cacheState: 'fresh', checked: true, message: '' }],
         discoveryQuery: restoredQuery,
         discoveryRequestId: 7,
         discoverySequence: 3,
@@ -1481,7 +1576,7 @@ describe('Event stream reconnect', () => {
       sequence: 2,
       generation: 4,
       operation: null,
-      payload: { requestId: 0, query: '', discoverySequence: 1, rows: [local, remote], health: [{ id: 'market', label: 'Marketplace', total: 1, truncated: false, cacheState: 'fresh', message: '' }], loading: false },
+      payload: { requestId: 0, query: '', discoverySequence: 1, rows: [local, remote], health: [{ id: 'market', label: 'Marketplace', total: 1, truncated: false, cacheState: 'fresh', checked: true, message: '' }], loading: false },
     } as SessionEvent)
     await tick()
     expect(controller.state.stage).toBe('config')
@@ -1496,7 +1591,7 @@ describe('Event stream reconnect', () => {
         stage: 'final',
         drift: 'ready',
         discoveryEnabled: true,
-        discoveryHealth: [{ id: 'market', label: 'Marketplace', total: 1, truncated: false, cacheState: 'fresh', message: '' }],
+        discoveryHealth: [{ id: 'market', label: 'Marketplace', total: 1, truncated: false, cacheState: 'fresh', checked: true, message: '' }],
         discoveryQuery: '',
         discoveryRequestId: 0,
         discoverySequence: 1,
@@ -1523,7 +1618,7 @@ describe('Event stream reconnect', () => {
       sequence: 1,
       payload: snapshot([], {
         discoveryEnabled: true,
-        discoveryHealth: [{ id: 'health-id', label, total: 1, truncated: false, cacheState: 'stale', message }],
+        discoveryHealth: [{ id: 'health-id', label, total: 1, truncated: false, cacheState: 'stale', checked: true, message }],
       }),
     }))
     await tick()
@@ -1570,7 +1665,7 @@ describe('Event stream reconnect', () => {
         query,
         discoverySequence: 1,
         rows: [local],
-        health: [{ id: 'market', label: 'Marketplace', total: 1, truncated: false, cacheState: 'stale', message: 'Marketplace search failed; cached results were retained when available.' }],
+        health: [{ id: 'market', label: 'Marketplace', total: 1, truncated: false, cacheState: 'stale', checked: true, message: 'Marketplace search failed; cached results were retained when available.' }],
         loading: false,
       },
     } as SessionEvent)
@@ -1600,7 +1695,7 @@ describe('Event stream reconnect', () => {
         query,
         discoverySequence: 2,
         rows: [local, row('needle-remote', { id: 'remote-row', discovery: true, group: 'available', checked: false, scope: 'available', status: 'available' })],
-        health: [{ id: 'market', label: 'Marketplace', total: 1, truncated: false, cacheState: 'fresh', message: '' }],
+        health: [{ id: 'market', label: 'Marketplace', total: 1, truncated: false, cacheState: 'fresh', checked: true, message: '' }],
         loading: false,
       },
     } as SessionEvent)
@@ -2015,6 +2110,36 @@ describe('Event stream reconnect', () => {
       expect(event).not.toHaveProperty('sourceName')
     }
     expect(quit).not.toHaveBeenCalled()
+  })
+
+  it('shows local-source unavailable copy and preserves Marketplace file copy', async () => {
+    const { client, push } = fakeClient()
+    const requests: Array<{ reject: (reason: unknown) => void }> = []
+    const installedSkillFiles = vi.fn(() =>
+      new Promise<import('./api/client').InstalledSkillFilesPayload>((_resolve, reject) => requests.push({ reject })),
+    )
+    const testClient = Object.assign(client, { installedSkillFiles })
+    const marketplace = row('marketplace', { id: 'row-marketplace', installedFiles: true })
+    const local = row('local', { id: 'row-local', installedFiles: true })
+    const operation: OperationRef = { id: 92, kind: 'sync' }
+    const { controller, wrapper } = mountWorkspace(testClient, 60_000, vi.fn())
+    push(event({ sequence: 1, generation: 4, operation, payload: snapshot([marketplace, local]) }))
+    await tick()
+
+    await wrapper.find('[role="option"][aria-selected="true"]').trigger('keydown', { key: 'Enter' })
+    await tick()
+    requests[0]?.reject(new RequestError(502, 'localapi.resource_files_unavailable'))
+    await tick()
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(RESOURCE_FILES_UNAVAILABLE_MESSAGE)
+
+    push(event({ sequence: 2, generation: 5, operation, payload: snapshot([local]) }))
+    await tick()
+    await wrapper.find('[role="option"][aria-selected="true"]').trigger('keydown', { key: 'Enter' })
+    await tick()
+    requests[1]?.reject(new RequestError(502, 'localapi.source_files_unavailable'))
+    await tick()
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toBe(SOURCE_FILES_UNAVAILABLE_MESSAGE)
+    controller.dispose()
   })
 
   describe('Marketplace resource actions', () => {

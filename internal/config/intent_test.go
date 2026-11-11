@@ -416,10 +416,10 @@ resources:
 	}
 	base := filepath.Dir(canonical)
 	want := []SourceDescription{
-		{Kind: V4SourceDirectory, Location: filepath.Join(base, "regs"), SourceHarness: "windsurf"},
-		{Kind: V4SourceDirectory, Location: filepath.Join(base, "frag-regs")},
-		{Kind: V4SourceMarketplace, Location: "https://market.example"},
-		{Kind: V4SourceGit, Location: "https://example.com/repo.git", Ref: "main", Path: "sub/dir", SourceHarness: "claude"},
+		{Name: "adir", Kind: V4SourceDirectory, Location: filepath.Join(base, "regs"), SourceHarness: "windsurf"},
+		{Name: "frag", Kind: V4SourceDirectory, Location: filepath.Join(base, "frag-regs")},
+		{Name: "mmp", Kind: V4SourceMarketplace, Location: "https://market.example"},
+		{Name: "zgit", Kind: V4SourceGit, Location: "https://example.com/repo.git", Ref: "main", Path: "sub/dir", SourceHarness: "claude"},
 	}
 	if got := li.DescribeSources(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("v4 described sources = %#v, want %#v", got, want)

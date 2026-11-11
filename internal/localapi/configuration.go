@@ -27,6 +27,7 @@ import (
 )
 
 type sourceDescriptionDTO struct {
+	Name          string `json:"name"`
 	ID            string `json:"id"`
 	Kind          string `json:"kind"`
 	Location      string `json:"location"`
@@ -47,6 +48,7 @@ func (a *API) projectSources(scope string, descs []config.SourceDescription) []s
 	out := make([]sourceDescriptionDTO, 0, len(descs))
 	for _, desc := range descs {
 		dto := sourceDescriptionDTO{
+			Name:          desc.Name,
 			ID:            a.sourceID(scope, desc),
 			Kind:          string(desc.Kind),
 			Location:      redact.URL(desc.Location),

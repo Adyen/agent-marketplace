@@ -51,6 +51,7 @@ type Entry struct {
 	Path              string      // source file path (from ir.SourceRef)
 	SourceHarness     string      `json:"-"`
 	PrimarySourcePath string      `json:"-"`
+	SourceRoot        string      `json:"-"`
 }
 
 // Requirement identifies another resource that must be selected for a
@@ -333,6 +334,7 @@ func LoadSourceWithOptions(srcFS *fsboundary.SourceFS, dir, sourceHarness string
 	cat.sourceRefusal = srcFS.Refusal()
 	definition, _ := target.Lookup(cat.SourceHarness)
 	for i := range cat.Entries {
+		cat.Entries[i].SourceRoot = root
 		primary := filepath.ToSlash(cat.Entries[i].Path)
 		if !srcFS.WasRead(primary) && definition.RepoRoot != "" {
 			primary = path.Join(definition.RepoRoot, primary)
