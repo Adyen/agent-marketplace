@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test'
 
 export default defineConfig({
   testDir: './tests',
-  testMatch: ['local-api.spec.ts', 'gui.spec.ts', 'sources.spec.ts', 'feedback.spec.ts', 'refresh.spec.ts', 'confirmations.spec.ts', 'releases.spec.ts', 'telemetry.spec.ts', 'accessibility.spec.ts', 'navigation.spec.ts', 'search.spec.ts', 'discovery.spec.ts', 'inspection.spec.ts', 'installed-skill-files.spec.ts', 'startup-anchoring.spec.ts', 'resource-actions.spec.ts', 'registry-resource-actions.spec.ts', 'visual-redesign.spec.ts'],
+  testMatch: ['local-api.spec.ts', 'gui.spec.ts', 'sources.spec.ts', 'feedback.spec.ts', 'refresh.spec.ts', 'confirmations.spec.ts', 'releases.spec.ts', 'telemetry.spec.ts', 'accessibility.spec.ts', 'navigation.spec.ts', 'search.spec.ts', 'discovery.spec.ts', 'inspection.spec.ts', 'installed-skill-files.spec.ts', 'local-skill-files.spec.ts', 'startup-anchoring.spec.ts', 'resource-actions.spec.ts', 'registry-resource-actions.spec.ts', 'visual-redesign.spec.ts'],
   timeout: 120_000,
   retries: 0,
   workers: 1,

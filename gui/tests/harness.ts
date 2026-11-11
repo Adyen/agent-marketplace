@@ -30,6 +30,11 @@ export interface Bootstrap {
   discoveryFirstSearchStarted?: string
   discoveryFirstSearchCanceled?: string
   discoverySecondSearchStarted?: string
+  localSkillFilesConfig?: string
+  localSkillFilesLock?: string
+  localSkillFilesMaterialized?: string
+  localSkillFilesDirectory?: string
+  localSkillFilesOutside?: string
 }
 
 export interface Harness {
