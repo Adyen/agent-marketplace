@@ -13,10 +13,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
@@ -576,6 +578,12 @@ type exactGitTreeEntry struct {
 	oid  string
 }
 
+type exactGitHashJob struct {
+	path string
+	rel  string
+	want exactGitTreeEntry
+}
+
 func sanitizeExactGitConfigWithContext(ctx context.Context, repo string) error {
 	scope := exactGitVerificationScopeFrom(ctx)
 	if scope != nil && scope.storeVerified(repo) {
@@ -725,7 +733,11 @@ func verifyExactGitTrackedTreeWithContext(ctx context.Context, root, algorithm s
 		expected[filepath.FromSlash(name)] = exactGitTreeEntry{mode: fields[0], oid: fields[2]}
 	}
 	seen := make(map[string]struct{}, len(expected))
+	jobs := make([]exactGitHashJob, 0, len(expected))
 	err = filepath.WalkDir(root, func(candidate string, entry fs.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return walkErr
 		}
@@ -747,21 +759,45 @@ func verifyExactGitTrackedTreeWithContext(ctx context.Context, root, algorithm s
 		if err != nil {
 			return err
 		}
-		var actual string
 		switch want.mode {
 		case "100644", "100755":
 			if !info.Mode().IsRegular() || (want.mode == "100755") != (info.Mode().Perm()&0o111 != 0) {
 				return fmt.Errorf("mode mismatch at %q", rel)
 			}
-			fd, err := unix.Open(candidate, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+		case "120000":
+			if info.Mode()&os.ModeSymlink == 0 {
+				return fmt.Errorf("mode mismatch at %q", rel)
+			}
+		default:
+			return fmt.Errorf("unsupported mode %q at %q", want.mode, rel)
+		}
+		seen[rel] = struct{}{}
+		jobs = append(jobs, exactGitHashJob{path: candidate, rel: rel, want: want})
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if len(seen) != len(expected) {
+		return errors.New("tracked path is missing")
+	}
+	return hashExactGitTrackedEntries(ctx, algorithm, jobs)
+}
+
+func hashExactGitTrackedEntries(ctx context.Context, algorithm string, jobs []exactGitHashJob) error {
+	hashJob := func(job exactGitHashJob) error {
+		var actual string
+		switch job.want.mode {
+		case "100644", "100755":
+			fd, err := unix.Open(job.path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 			if err != nil {
 				return err
 			}
-			file := os.NewFile(uintptr(fd), candidate)
-			info, err = file.Stat()
+			file := os.NewFile(uintptr(fd), job.path)
+			info, err := file.Stat()
 			if err == nil {
-				if !info.Mode().IsRegular() || (want.mode == "100755") != (info.Mode().Perm()&0o111 != 0) {
-					err = fmt.Errorf("mode mismatch at %q", rel)
+				if !info.Mode().IsRegular() || (job.want.mode == "100755") != (info.Mode().Perm()&0o111 != 0) {
+					err = fmt.Errorf("mode mismatch at %q", job.rel)
 				} else {
 					actual, err = gitBlobOID(algorithm, file, info.Size())
 				}
@@ -774,10 +810,7 @@ func verifyExactGitTrackedTreeWithContext(ctx context.Context, root, algorithm s
 				return closeErr
 			}
 		case "120000":
-			if info.Mode()&os.ModeSymlink == 0 {
-				return fmt.Errorf("mode mismatch at %q", rel)
-			}
-			target, err := os.Readlink(candidate)
+			target, err := os.Readlink(job.path)
 			if err != nil {
 				return err
 			}
@@ -785,22 +818,43 @@ func verifyExactGitTrackedTreeWithContext(ctx context.Context, root, algorithm s
 			if err != nil {
 				return err
 			}
-		default:
-			return fmt.Errorf("unsupported mode %q at %q", want.mode, rel)
 		}
-		if actual != want.oid {
-			return fmt.Errorf("content mismatch at %q", rel)
+		if actual != job.want.oid {
+			return fmt.Errorf("content mismatch at %q", job.rel)
 		}
-		seen[rel] = struct{}{}
 		return nil
-	})
-	if err != nil {
+	}
+	workerCount := min(runtime.GOMAXPROCS(0), len(jobs))
+	workerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var firstErr error
+	var once sync.Once
+	var wg sync.WaitGroup
+	var next int64
+	for range workerCount {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				if workerCtx.Err() != nil {
+					return
+				}
+				i := int(atomic.AddInt64(&next, 1) - 1)
+				if i >= len(jobs) {
+					return
+				}
+				if err := hashJob(jobs[i]); err != nil {
+					once.Do(func() { firstErr = err; cancel() })
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if len(seen) != len(expected) {
-		return errors.New("tracked path is missing")
-	}
-	return nil
+	return firstErr
 }
 
 func gitBlobOID(algorithm string, reader io.Reader, size int64) (string, error) {

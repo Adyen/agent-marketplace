@@ -920,6 +920,88 @@ func exactGitBlobFixture(tb testing.TB, algorithm string, size int) string {
 	return root
 }
 
+func TestExactGitTrackedTreeHashCancellation(t *testing.T) {
+	root := exactGitManyFilesFixture(t, 2000)
+	oid := strings.TrimSpace(gitTest(t, root, "rev-parse", "HEAD:file-0000"))
+	want := exactGitTreeEntry{mode: "100644", oid: oid}
+	jobs := make([]exactGitHashJob, 2000)
+	for i := range jobs {
+		rel := fmt.Sprintf("file-%04d", i)
+		jobs[i] = exactGitHashJob{path: filepath.Join(root, rel), rel: rel, want: want}
+	}
+	startingGoroutines := runtime.NumGoroutine()
+	preCancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := hashExactGitTrackedEntries(preCancelled, "sha1", jobs[:1]); !errors.Is(err, context.Canceled) {
+		t.Fatalf("pre-cancelled hash error = %v, want context.Canceled", err)
+	}
+	fifo := filepath.Join(t.TempDir(), "blocked")
+	if err := unix.Mkfifo(fifo, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	jobs[0].path = fifo
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- hashExactGitTrackedEntries(ctx, "sha1", jobs) }()
+	deadline := time.Now().Add(10 * time.Second)
+	for runtime.NumGoroutine() <= startingGoroutines+1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := runtime.NumGoroutine(); got <= startingGoroutines+1 {
+		t.Fatalf("timed out waiting for hashing worker: goroutine count = %d, want more than %d", got, startingGoroutines+1)
+	}
+	cancel()
+	deadline = time.Now().Add(10 * time.Second)
+	var err error
+	opened := false
+	for err == nil && time.Now().Before(deadline) {
+		select {
+		case err = <-done:
+		default:
+		}
+		if !opened {
+			fd, openErr := unix.Open(fifo, unix.O_WRONLY|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+			if openErr == nil {
+				if closeErr := unix.Close(fd); closeErr != nil {
+					t.Fatal(closeErr)
+				}
+				opened = true
+			} else if !errors.Is(openErr, unix.ENXIO) {
+				t.Fatalf("open FIFO writer: %v", openErr)
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err == nil {
+		t.Fatal("timed out waiting for hashing workers to stop")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("in-flight hash error = %v, want context.Canceled", err)
+	}
+	deadline = time.Now().Add(5 * time.Second)
+	for runtime.NumGoroutine() != startingGoroutines && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := runtime.NumGoroutine(); got != startingGoroutines {
+		t.Fatalf("goroutine count = %d, want %d", got, startingGoroutines)
+	}
+}
+
+func TestExactGitTrackedTreeHashReturnsOneMismatch(t *testing.T) {
+	root := exactGitManyFilesFixture(t, 2)
+	for i := range 2 {
+		path := filepath.Join(root, fmt.Sprintf("file-%04d", i))
+		if err := os.WriteFile(path, []byte("tampered\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err := verifyExactGitTrackedTreeWithContext(context.Background(), root, "sha1")
+	if err == nil || strings.Count(err.Error(), "content mismatch") != 1 {
+		t.Fatalf("multiple content mismatches error = %v, want one content mismatch", err)
+	}
+}
+
 func TestExactGitTrackedTreeLargeBlobMemory(t *testing.T) {
 	const size = 8 << 20
 	for _, algorithm := range []string{"sha1", "sha256"} {
