@@ -766,7 +766,7 @@ earlier section, this section wins.
   mark from `site/public/brand/favicon.svg`, rasterized from
   `packaging/gui/icon.svg` without changing package metadata.
 
-## Refinements — sources navigation
+## Refinements: sources navigation
 
 Where a rule here conflicts with an earlier section, this section wins.
 

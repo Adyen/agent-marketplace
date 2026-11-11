@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import type { SourceDescription } from './api/client'
 import GuiIcon, { type IconName } from './GuiIcon.vue'
 import { sourceLabel } from './source-label'
-import { groupSources, type SourceGroupEntry } from './source-groups'
+import { flattenSourceGroups, groupSources } from './source-groups'
 
 export interface SidebarGroup {
   id: string
@@ -63,28 +63,12 @@ const sourceIcons: Record<SourceDescription['kind'], IconName> = {
   marketplace: 'globe',
 }
 
-type SourceRow =
-  | { type: 'group'; key: string; group: Extract<SourceGroupEntry, { type: 'group' }> }
-  | { type: 'source'; key: string; source: SourceDescription; layer: 'user' | 'organization'; groupKey: string | null }
-
-const sourceEntries = computed<SourceRow[]>(() =>
-  groupSources(
-    props.sources.map(({ source, organization }) => ({ source, layer: organization ? 'organization' : 'user' })),
-  ).flatMap<SourceRow>((entry) =>
-    entry.type === 'source'
-      ? [{ type: 'source' as const, key: entry.key, source: entry.source, layer: entry.layer, groupKey: null }]
-      : [
-          { type: 'group' as const, key: entry.key, group: entry },
-          ...(foldedSourceGroups.value.has(entry.key)
-            ? []
-            : entry.sources.map((source) => ({
-                type: 'source' as const,
-                key: source.id,
-                source,
-                layer: entry.layer,
-                groupKey: entry.key,
-              }))),
-        ],
+const sourceEntries = computed(() =>
+  flattenSourceGroups(
+    groupSources(
+      props.sources.map(({ source, organization }) => ({ source, layer: organization ? 'organization' : 'user' })),
+    ),
+    foldedSourceGroups.value,
   ),
 )
 
@@ -187,16 +171,16 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | 'signal' | null 
             v-if="entry.type === 'group'"
             type="button"
             class="gui-nav-row gui-nav-row--compact"
-            :aria-label="`Source group ${sourceLabel(entry.group.sources[0])}`"
+            :aria-label="`Source group ${sourceLabel(entry.entry.sources[0])}`"
             :aria-expanded="!foldedSourceGroups.has(entry.key)"
             @click="toggleSourceGroup(entry.key)"
             @keydown.enter.prevent="toggleSourceGroup(entry.key)"
             @keydown.space.prevent="toggleSourceGroup(entry.key)"
           >
-            <GuiIcon :name="sourceIcons[entry.group.kind]" />
-            <span class="gui-source-row__location">{{ sourceLabel(entry.group.sources[0]) }}</span>
-            <span class="gui-nav-row__count">{{ entry.group.sources.length }}</span>
-            <span v-if="entry.group.layer === 'organization'" class="gui-tag">ORG</span>
+            <GuiIcon :name="sourceIcons[entry.entry.kind]" />
+            <span class="gui-source-row__location">{{ sourceLabel(entry.entry.sources[0]) }}</span>
+            <span class="gui-nav-row__count">{{ entry.entry.sources.length }}</span>
+            <span v-if="entry.entry.layer === 'organization'" class="gui-tag">ORG</span>
           </button>
           <UTooltip v-else :text="entry.source.location" :ui="{ content: 'gui-source-row__tooltip' }">
             <button

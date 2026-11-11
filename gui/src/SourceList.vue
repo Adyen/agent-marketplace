@@ -2,7 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import type { SourceDescription } from './api/client'
 import GuiIcon, { type IconName } from './GuiIcon.vue'
-import type { SourceGroupEntry } from './source-groups'
+import { flattenSourceGroups, type SourceGroupEntry } from './source-groups'
 
 const props = defineProps<{
   title: string
@@ -20,10 +20,6 @@ const kindIcons: Record<SourceDescription['kind'], IconName> = {
   marketplace: 'globe',
 }
 
-type SourceListRow =
-  | { type: 'group'; entry: Extract<SourceGroupEntry, { type: 'group' }> }
-  | { type: 'source'; source: SourceDescription; groupKey: string | null }
-
 const root = ref<HTMLElement | null>(null)
 const foldedGroups = ref(new Set<string>())
 let lastFocusedRevealSequence = 0
@@ -38,18 +34,7 @@ const entries = computed(
     })),
 )
 const hasSources = computed(() => (props.sourceCount ?? entries.value.length) > 0)
-const rows = computed<SourceListRow[]>(() =>
-  entries.value.flatMap<SourceListRow>((entry) =>
-    entry.type === 'source'
-      ? [{ type: 'source' as const, source: entry.source, groupKey: null }]
-      : [
-          { type: 'group' as const, entry },
-          ...(foldedGroups.value.has(entry.key)
-            ? []
-            : entry.sources.map((source) => ({ type: 'source' as const, source, groupKey: entry.key }))),
-        ],
-  ),
-)
+const rows = computed(() => flattenSourceGroups(entries.value, foldedGroups.value))
 
 function meta(source: SourceDescription, grouped: boolean): string {
   const layout = source.sourceHarness === '' ? '' : `layout ${source.sourceHarness}`
@@ -88,8 +73,8 @@ watch(
       return
     }
     lastFocusedRevealSequence = request.sequence
-    card?.scrollIntoView?.({ block: 'center' })
-    card?.focus({ preventScroll: true })
+    card.scrollIntoView?.({ block: 'center' })
+    card.focus({ preventScroll: true })
   },
   { flush: 'post', immediate: true },
 )
@@ -100,7 +85,7 @@ watch(
     <h3>{{ title }}</h3>
     <p v-if="organization">Managed by your organization; read-only.</p>
     <ul class="source-list">
-      <li v-for="row in rows" :key="row.type === 'group' ? row.entry.key : row.source.id">
+      <li v-for="row in rows" :key="row.key">
         <button
           v-if="row.type === 'group'"
           type="button"

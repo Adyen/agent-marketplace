@@ -46,3 +46,26 @@ export function groupSources(sources: readonly LayeredSource[], query = ''): Sou
   }
   return entries
 }
+
+export type SourceGroupRow =
+  | { type: 'group'; key: string; entry: Extract<SourceGroupEntry, { type: 'group' }> }
+  | { type: 'source'; key: string; source: SourceDescription; layer: SourceLayer; groupKey: string | null }
+
+export function flattenSourceGroups(entries: readonly SourceGroupEntry[], folded: ReadonlySet<string>): SourceGroupRow[] {
+  return entries.flatMap<SourceGroupRow>((entry) =>
+    entry.type === 'source'
+      ? [{ type: 'source', key: entry.key, source: entry.source, layer: entry.layer, groupKey: null }]
+      : [
+          { type: 'group' as const, key: entry.key, entry },
+          ...(folded.has(entry.key)
+            ? []
+            : entry.sources.map((source) => ({
+                type: 'source' as const,
+                key: source.id,
+                source,
+                layer: entry.layer,
+                groupKey: entry.key,
+              }))),
+        ],
+  )
+}
