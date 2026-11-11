@@ -104,6 +104,7 @@ afterEach(() => {
   while (cleanups.length > 0) {
     cleanups.pop()!()
   }
+  document.body.innerHTML = ''
   vi.useRealTimers()
 })
 
@@ -128,7 +129,6 @@ export function mountWorkspace(client: Client, notifyTtl = 60_000, onQuit?: () =
   cleanups.push(() => {
     controller.dispose()
     wrapper.unmount()
-    document.body.innerHTML = ''
   })
   return { controller, wrapper }
 }

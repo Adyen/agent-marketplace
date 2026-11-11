@@ -100,6 +100,7 @@ type snapshotDTO struct {
 	Diagnostics        []diagnosticDTO      `json:"diagnostics"`
 	Harnesses          []string             `json:"harnesses"`
 	PendingChanges     int                  `json:"pendingChanges"`
+	AvailableUpdates   int                  `json:"availableUpdates"`
 	DiscoveryEnabled   bool                 `json:"discoveryEnabled"`
 	DiscoveryHealth    []discoveryHealthDTO `json:"discoveryHealth"`
 	DiscoveryQuery     string               `json:"discoveryQuery"`
@@ -150,13 +151,19 @@ type API struct {
 	gate      *session.OperationGate
 	token     string
 
-	mu       sync.Mutex
-	closed   bool
-	userOnly bool
-	requests session.RequestState
-	sequence uint64
-	current  *snapshotDTO
-	currentG session.RequestGeneration
+	mu                  sync.Mutex
+	closed              bool
+	userOnly            bool
+	requests            session.RequestState
+	sequence            uint64
+	current             *snapshotDTO
+	currentG            session.RequestGeneration
+	availableUpdates    int
+	updateCheckRunning  bool
+	updateCheckQueued   bool
+	updateCheckEpoch    uint64
+	updateCheckRunEpoch uint64
+	updateCheckCancel   context.CancelFunc
 
 	snapshotRowsKnown  bool
 	authoritativeRows  []session.Row
@@ -253,6 +260,11 @@ func (a *API) Close() {
 		a.closed = true
 		a.cancel()
 		a.cancelDiscoveryLocked()
+		if a.updateCheckCancel != nil {
+			a.updateCheckCancel()
+			a.updateCheckCancel = nil
+		}
+		a.updateCheckQueued = false
 		a.resourceActionPlan = nil
 	}
 	a.mu.Unlock()
@@ -485,6 +497,10 @@ func (a *API) emitLocked(eventType string, generation session.RequestGeneration,
 }
 
 func (a *API) deliverSnapshot(generation session.RequestGeneration, snapshot session.Snapshot) *snapshotDTO {
+	return a.deliverSnapshotWithUpdateCheck(generation, snapshot, false)
+}
+
+func (a *API) deliverSnapshotWithUpdateCheck(generation session.RequestGeneration, snapshot session.Snapshot, checkUpdates bool) *snapshotDTO {
 	a.mu.Lock()
 	if a.closed || generation == 0 || a.requests.Active(session.RequestSnapshot) != generation || snapshot.Generation != generation {
 		a.mu.Unlock()
@@ -497,10 +513,27 @@ func (a *API) deliverSnapshot(generation session.RequestGeneration, snapshot ses
 	a.emitLocked("snapshot", generation, dto.Operation, &dto)
 	a.mu.Unlock()
 	a.launchDiscovery(launch)
+	if checkUpdates && snapshot.Stage == session.SnapshotStageFinal {
+		a.requestUpdateAvailabilityCheck()
+	}
 	return &dto
 }
 
 func (a *API) handleSnapshot(w http.ResponseWriter, r *http.Request) {
+	var checkUpdates bool
+	if r.Body != nil && r.Body != http.NoBody && r.ContentLength != 0 {
+		seen := false
+		if !decodeStrictObject(r, func(decoder *json.Decoder, key string) bool {
+			if key != "checkUpdates" || seen {
+				return false
+			}
+			seen = true
+			return decoder.Decode(&checkUpdates) == nil
+		}) {
+			writeError(w, http.StatusBadRequest, codeInvalidRequest)
+			return
+		}
+	}
 	a.mu.Lock()
 	if operation := activeOperation(a.gate); operation != nil && a.current != nil {
 		dto := *a.current
@@ -523,14 +556,14 @@ func (a *API) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	var delivered *snapshotDTO
 	if staged {
 		for snapshot := range a.readSnapshotStages(ctx, session.CatalogLoadRefresh, generation) {
-			if dto := a.deliverSnapshot(generation, snapshot); dto != nil {
+			if dto := a.deliverSnapshotWithUpdateCheck(generation, snapshot, checkUpdates); dto != nil {
 				delivered = dto
 			}
 		}
 	} else {
 		snapshot := a.readSnapshot(ctx, session.CatalogLoadRefresh)
 		snapshot.Generation = generation
-		delivered = a.deliverSnapshot(generation, snapshot)
+		delivered = a.deliverSnapshotWithUpdateCheck(generation, snapshot, checkUpdates)
 	}
 	if delivered == nil {
 		a.mu.Lock()
@@ -573,6 +606,7 @@ func (a *API) snapshotPresentationLocked(snapshot session.Snapshot, op *operatio
 		Diagnostics:        []diagnosticDTO{},
 		Harnesses:          []string{},
 		PendingChanges:     snapshot.DriftReport.PendingCount(),
+		AvailableUpdates:   a.availableUpdates,
 		DiscoveryEnabled:   a.discovery.enabled,
 		DiscoveryHealth:    health,
 		DiscoveryQuery:     a.discovery.query,
@@ -628,6 +662,109 @@ func activeOperation(gate *session.OperationGate) *operationRef {
 		return nil
 	}
 	return &operationRef{ID: uint64(id), Kind: string(kind)}
+}
+
+func (a *API) setAvailableUpdatesLocked(count int) {
+	if a.availableUpdates == count {
+		return
+	}
+	a.availableUpdates = count
+	if a.current == nil {
+		return
+	}
+	dto := *a.current
+	dto.AvailableUpdates = count
+	a.emitLocked("snapshot", a.currentG, dto.Operation, &dto)
+}
+
+func (a *API) invalidateUpdateAvailabilityLocked() {
+	if !a.userOnly {
+		return
+	}
+	a.updateCheckEpoch++
+	a.setAvailableUpdatesLocked(0)
+	if a.updateCheckRunning {
+		a.updateCheckQueued = true
+		if a.updateCheckCancel != nil {
+			a.updateCheckCancel()
+		}
+	}
+}
+
+func (a *API) requestUpdateAvailabilityCheck() {
+	a.mu.Lock()
+	if a.closed || !a.userOnly || a.lifecycle.UpdateAvailability == nil {
+		a.mu.Unlock()
+		return
+	}
+	if activeOperation(a.gate) != nil {
+		a.updateCheckQueued = true
+		a.mu.Unlock()
+		return
+	}
+	if a.updateCheckRunning {
+		a.updateCheckQueued = true
+		a.mu.Unlock()
+		return
+	}
+	a.startUpdateAvailabilityCheckLocked()
+	a.mu.Unlock()
+}
+
+func (a *API) startUpdateAvailabilityCheckLocked() {
+	a.updateCheckRunning = true
+	a.updateCheckQueued = false
+	epoch := a.updateCheckEpoch
+	a.updateCheckRunEpoch = epoch
+	check := a.lifecycle.UpdateAvailability
+	ctx, cancel := context.WithCancel(a.ctx)
+	a.updateCheckCancel = cancel
+	a.wg.Add(1)
+
+	go func() {
+		defer a.wg.Done()
+		count, err := check(ctx, a.workspace)
+		if err != nil {
+			slog.Debug("GUI update availability check failed", "err", session.SanitizeReturnedError(err))
+		}
+		a.mu.Lock()
+		a.updateCheckRunning = false
+		a.updateCheckCancel = nil
+		valid := !a.closed && a.updateCheckEpoch == epoch && activeOperation(a.gate) == nil
+		if valid {
+			if err != nil {
+				a.setAvailableUpdatesLocked(0)
+			} else {
+				a.setAvailableUpdatesLocked(count)
+			}
+		}
+		rerun := a.updateCheckQueued && !a.closed && activeOperation(a.gate) == nil
+		if rerun {
+			a.updateCheckQueued = false
+			a.startUpdateAvailabilityCheckLocked()
+		}
+		a.mu.Unlock()
+		cancel()
+	}()
+}
+
+func (a *API) requestUpdateAvailabilityCheckAfterMutation() {
+	a.mu.Lock()
+	checkIsCurrent := a.updateCheckRunning && a.updateCheckRunEpoch == a.updateCheckEpoch
+	a.mu.Unlock()
+	if !checkIsCurrent {
+		a.requestUpdateAvailabilityCheck()
+	}
+}
+
+func (a *API) finishMutationGate(operation session.OperationID) {
+	a.gate.Finish(operation)
+	a.mu.Lock()
+	rerun := a.updateCheckQueued && !a.closed
+	a.mu.Unlock()
+	if rerun {
+		a.requestUpdateAvailabilityCheck()
+	}
 }
 
 func rowPresentation(row session.Row) rowDTO {
@@ -763,7 +900,7 @@ func (a *API) subscribe(ctx context.Context, deliver func(frame []byte) bool, on
 		go func() {
 			defer a.wg.Done()
 			for snapshot := range a.readSnapshotStages(a.ctx, session.CatalogLoadRefresh, startInitial) {
-				a.deliverSnapshot(startInitial, snapshot)
+				a.deliverSnapshotWithUpdateCheck(startInitial, snapshot, true)
 			}
 		}()
 	}
@@ -910,6 +1047,7 @@ func (a *API) handleAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, codeNotReady)
 		return
 	}
+	a.invalidateUpdateAvailabilityLocked()
 	a.wg.Add(1)
 	if kind == session.OperationSync || kind == session.OperationUpdate {
 		telemetry.RecordInteractiveAction(a.ctx, "gui", string(kind), nil)
@@ -1003,6 +1141,7 @@ func (a *API) runOperation(operation session.OperationID, kind session.Operation
 	a.emitLocked("notification", generation, op, notificationPayload{Severity: severity, Message: message})
 	a.mu.Unlock()
 	a.launchDiscovery(launch)
+	a.requestUpdateAvailabilityCheckAfterMutation()
 	if failed != nil {
 		slog.Error("localapi operation failed", "kind", string(kind), "err", session.SanitizeReturnedError(failed))
 	}

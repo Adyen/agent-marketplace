@@ -52,15 +52,22 @@ type work39MarketplaceFixture struct {
 	registryStarted       chan struct{}
 	registryStartedOnce   sync.Once
 	protected             []work39ProtectedFile
+	publicationMu         sync.RWMutex
+	publications          map[string]*work39MarketplacePublication
+	latestPublication     *work39MarketplacePublication
 }
 
-func setupWork39MarketplaceFixture(t *testing.T, home, repo string, bootstrap map[string]string, mode work39InitialMode, required, risk bool) *work39MarketplaceFixture {
-	t.Helper()
-	if mode != work39ModeAvailable && mode != work39ModeUserInstalled && mode != work39ModeOrgOptional {
-		t.Fatalf("unsupported Work39 initial mode %q", mode)
-	}
+type work39MarketplacePublication struct {
+	contentDigest string
+	archiveDigest string
+	rawArtifact   []byte
+	item          mpapi.ResourceListItem
+	revision      store.AssessedResourceRevision
+}
 
-	resource := ir.NewSkill("review", "Review code", "# Review code\n", []string{"user"}, nil, ir.SourceRef{})
+func newWork39MarketplacePublication(t *testing.T, body string, risk bool) *work39MarketplacePublication {
+	t.Helper()
+	resource := ir.NewSkill("review", "Review code", body, []string{"user"}, nil, ir.SourceRef{})
 	canonical, err := hccartifact.FromIR(resource)
 	if err != nil {
 		t.Fatalf("build canonical Work39 resource: %v", err)
@@ -100,35 +107,93 @@ func setupWork39MarketplaceFixture(t *testing.T, home, repo string, bootstrap ma
 	if err != nil {
 		t.Fatalf("finalize Work39 assessment: %v", err)
 	}
-	revision := store.AssessedResourceRevision{
-		ResourceRevision: store.ResourceRevision{
-			Coordinate: coordinate, ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
+	return &work39MarketplacePublication{
+		contentDigest: contentDigest,
+		archiveDigest: archiveDigest,
+		rawArtifact:   rawArtifact,
+		item: mpapi.ResourceListItem{
+			RegistryID: "src", RegistrySlug: "source", Kind: "skill", Name: "review",
+			Revision: contentDigest, ContentDigest: contentDigest, Availability: mpapi.AvailabilityAvailable,
+			Description: "Review code",
 		},
-		Assessment: assessment,
-		Occurrence: store.ResourceOccurrence{
-			Coordinate: coordinate, ContentDigest: store.RevisionDigest(contentDigest), Commit: strings.Repeat("a", 40),
-			ManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("b", 64)),
+		revision: store.AssessedResourceRevision{
+			ResourceRevision: store.ResourceRevision{
+				Coordinate: coordinate, ContentDigest: store.RevisionDigest(contentDigest), ArchiveDigest: store.ArchiveDigest(archiveDigest),
+			},
+			Assessment: assessment,
+			Occurrence: store.ResourceOccurrence{
+				Coordinate: coordinate, ContentDigest: store.RevisionDigest(contentDigest), Commit: strings.Repeat("a", 40),
+				ManifestDigest: store.RevisionDigest("sha256:" + strings.Repeat("b", 64)),
+			},
 		},
 	}
+}
+
+func (fixture *work39MarketplaceFixture) publishUpdatedRevision(t *testing.T, body string) {
+	t.Helper()
+	publication := newWork39MarketplacePublication(t, body, false)
+	fixture.publicationMu.Lock()
+	defer fixture.publicationMu.Unlock()
+	fixture.publications[publication.contentDigest] = publication
+	fixture.latestPublication = publication
+}
+
+func (fixture *work39MarketplaceFixture) marketplacePublication(digest string) *work39MarketplacePublication {
+	fixture.publicationMu.RLock()
+	defer fixture.publicationMu.RUnlock()
+	return fixture.publications[digest]
+}
+
+func setupWork39MarketplaceFixture(t *testing.T, home, repo string, bootstrap map[string]string, mode work39InitialMode, required, risk bool) *work39MarketplaceFixture {
+	t.Helper()
+	if mode != work39ModeAvailable && mode != work39ModeUserInstalled && mode != work39ModeOrgOptional {
+		t.Fatalf("unsupported Work39 initial mode %q", mode)
+	}
+
+	publication := newWork39MarketplacePublication(t, "# Review code\n", risk)
+	contentDigest := publication.contentDigest
+	archiveDigest := publication.archiveDigest
 	fixture := &work39MarketplaceFixture{
 		home: home, repo: repo, contentDigest: contentDigest, archiveDigest: archiveDigest,
 		userConfigPath:        filepath.Join(home, ".agents", "config.yaml"),
 		materializedPath:      filepath.Join(home, ".config", "devin", "skills", "review", "SKILL.md"),
 		unrelatedMaterialized: filepath.Join(home, ".config", "devin", "skills", "work39-protected", "SKILL.md"),
 		registryStarted:       make(chan struct{}),
-	}
-	var server *httptest.Server
-	item := mpapi.ResourceListItem{
-		RegistryID: "src", RegistrySlug: "source", Kind: "skill", Name: "review",
-		Revision: contentDigest, ContentDigest: contentDigest, Availability: mpapi.AvailabilityAvailable,
-		Description: "Review code",
+		publications:          map[string]*work39MarketplacePublication{contentDigest: publication},
+		latestPublication:     publication,
 	}
 	registry := mpapi.PublicRegistry{
 		ID: store.RegistryID("src"), Slug: "source", Origins: []string{"https://git.example/repo.git"}, Ref: "main",
 		Roots: []store.RegistryRoot{{Path: ".agents"}}, Acquisition: store.AcquisitionMirror, Listed: true,
 	}
+	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fixture.requests.Add(1)
+		if strings.HasPrefix(r.URL.Path, "/api/v1/resources/src/skill/review/revisions/") ||
+			strings.HasPrefix(r.URL.Path, "/api/v1/resources/source/skill/review/revisions/") {
+			digest := strings.TrimPrefix(r.URL.Path, "/api/v1/resources/")
+			digest = strings.TrimPrefix(digest, "src/skill/review/revisions/")
+			digest = strings.TrimPrefix(digest, "source/skill/review/revisions/")
+			published := fixture.marketplacePublication(digest)
+			if published == nil {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(published.revision)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/v1/artifacts/sha256/") {
+			digest := "sha256:" + strings.TrimPrefix(r.URL.Path, "/api/v1/artifacts/sha256/")
+			published := fixture.marketplacePublicationForArchive(digest)
+			if published == nil {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/octet-stream")
+			_, _ = w.Write(published.rawArtifact)
+			return
+		}
 		switch r.URL.Path {
 		case "/.well-known/agent-marketplace.json":
 			w.Header().Set("Content-Type", "application/json")
@@ -141,16 +206,14 @@ func setupWork39MarketplaceFixture(t *testing.T, home, repo string, bootstrap ma
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(registry)
-		case "/api/v1/resources/src/skill/review/revisions/" + contentDigest,
-			"/api/v1/resources/source/skill/review/revisions/" + contentDigest:
+		case "/api/v1/resources/src/skill/review", "/api/v1/resources/source/skill/review":
+			publication := fixture.latestMarketplacePublication()
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(revision)
-		case "/api/v1/artifacts/sha256/" + strings.TrimPrefix(archiveDigest, "sha256:"):
-			w.Header().Set("Content-Type", "application/octet-stream")
-			_, _ = w.Write(rawArtifact)
+			_ = json.NewEncoder(w).Encode(publication.revision)
 		case "/api/v1/search":
+			publication := fixture.latestMarketplacePublication()
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(marketplace.SearchResponse{Items: []mpapi.ResourceListItem{item}, Total: 1, Offset: 0, Limit: marketplace.DiscoveryPageLimit})
+			_ = json.NewEncoder(w).Encode(marketplace.SearchResponse{Items: []mpapi.ResourceListItem{publication.item}, Total: 1, Offset: 0, Limit: marketplace.DiscoveryPageLimit})
 		default:
 			http.NotFound(w, r)
 		}
@@ -159,17 +222,17 @@ func setupWork39MarketplaceFixture(t *testing.T, home, repo string, bootstrap ma
 	fixture.endpoint = config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Alias: "mp"}
 
 	cache := marketplace.DefaultCache()
-	if _, err := cache.WriteArtifact(archiveDigest, rawArtifact); err != nil {
+	if _, err := cache.WriteArtifact(archiveDigest, publication.rawArtifact); err != nil {
 		t.Fatalf("seed Work39 verified artifact: %v", err)
 	}
 	if err := cache.MarkArtifactVerified(archiveDigest); err != nil {
 		t.Fatalf("seed Work39 verified marker: %v", err)
 	}
-	if _, err := cache.WriteResourceRevision(server.URL, "src", "skill", "review", contentDigest, revision); err != nil {
+	if _, err := cache.WriteResourceRevision(server.URL, "src", "skill", "review", contentDigest, publication.revision); err != nil {
 		t.Fatalf("seed Work39 assessed resource revision: %v", err)
 	}
 	if err := marketplace.DefaultDiscoveryCache().Store(marketplace.DiscoveryOutcome{
-		Endpoint: fixture.endpoint, Items: []mpapi.ResourceListItem{item}, Total: 1, ObservedAt: time.Now(),
+		Endpoint: fixture.endpoint, Items: []mpapi.ResourceListItem{publication.item}, Total: 1, ObservedAt: time.Now(),
 	}, "", "", marketplace.DiscoveryPageLimit); err != nil {
 		t.Fatalf("seed Work39 empty-query discovery page: %v", err)
 	}
@@ -252,6 +315,23 @@ func setupWork39MarketplaceFixture(t *testing.T, home, repo string, bootstrap ma
 	}
 	fixture.protected = work39ProtectedFiles(t, fixture)
 	return fixture
+}
+
+func (fixture *work39MarketplaceFixture) latestMarketplacePublication() *work39MarketplacePublication {
+	fixture.publicationMu.RLock()
+	defer fixture.publicationMu.RUnlock()
+	return fixture.latestPublication
+}
+
+func (fixture *work39MarketplaceFixture) marketplacePublicationForArchive(digest string) *work39MarketplacePublication {
+	fixture.publicationMu.RLock()
+	defer fixture.publicationMu.RUnlock()
+	for _, publication := range fixture.publications {
+		if publication.archiveDigest == digest {
+			return publication
+		}
+	}
+	return nil
 }
 
 type work39APITestState struct {

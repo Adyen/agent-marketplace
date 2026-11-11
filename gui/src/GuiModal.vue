@@ -5,7 +5,7 @@ import GuiIcon, { type IconName } from './GuiIcon.vue'
 const props = withDefaults(
   defineProps<{
     title: string
-    icon: IconName
+    icon?: IconName
     size?: 'sm' | 'lg' | 'xl' | 'settings'
     dismissible?: boolean
     bare?: boolean
@@ -31,7 +31,7 @@ const contentClass = computed(() => `gui-modal gui-modal--${props.size}`)
       </section>
       <section v-else class="gui-modal__frame" :aria-label="title">
         <header class="gui-modal__header">
-          <span class="gui-modal__tile"><GuiIcon :name="icon" /></span>
+          <span v-if="icon != null" class="gui-modal__tile"><GuiIcon :name="icon" /></span>
           <button
             type="button"
             class="gui-modal__close"

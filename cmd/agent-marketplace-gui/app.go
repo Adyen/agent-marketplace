@@ -80,6 +80,9 @@ func NewApp(ctx context.Context, lifecycle session.DependencyLifecycle) (*App, e
 	if err != nil {
 		return nil, fmt.Errorf("resolve home directory: %w", err)
 	}
+	if lifecycle.UpdateAvailability == nil {
+		lifecycle.UpdateAvailability = session.RuntimeUpdateAvailability
+	}
 	startedAt := time.Now()
 	state, resolveErr := telemetry.LoadAndResolve(ctx)
 	var runtime *telemetry.Telemetry

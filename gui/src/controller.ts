@@ -72,6 +72,7 @@ export interface WorkspaceState {
   harnesses: string[]
   diagnostics: Diagnostic[]
   pendingChanges: number
+  availableUpdates: number
   discoveryEnabled: boolean
   discoveryHealth: Snapshot['discoveryHealth']
   diagnosticsDiscoveryHealth: Snapshot['discoveryHealth']
@@ -120,6 +121,7 @@ export class WorkspaceController {
     harnesses: [],
     diagnostics: [],
     pendingChanges: 0,
+    availableUpdates: 0,
     discoveryEnabled: false,
     discoveryHealth: [],
     diagnosticsDiscoveryHealth: [],
@@ -295,13 +297,13 @@ export class WorkspaceController {
     this.dispatchDiscoveryRequest()
   }
 
-  async refresh(): Promise<void> {
+  async refresh(checkUpdates = true): Promise<void> {
     if (this.state.requesting || this.state.operation != null) {
       return
     }
     this.state.requesting = true
     try {
-      await this.client.snapshot()
+      await this.client.snapshot(checkUpdates)
       await this.loadConfiguration()
       await this.checkRelease()
     } catch {
@@ -749,6 +751,7 @@ export class WorkspaceController {
     this.state.harnesses = snapshot.harnesses
     this.state.diagnostics = snapshot.diagnostics
     this.state.pendingChanges = snapshot.pendingChanges ?? 0
+    this.state.availableUpdates = snapshot.availableUpdates ?? 0
     const wasDiscoveryEnabled = this.state.discoveryEnabled
     const pendingDiscoveryIntent = this.browserDiscoveryRequestId > snapshot.discoveryRequestId
     this.state.discoveryEnabled = snapshot.discoveryEnabled === true

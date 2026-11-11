@@ -86,6 +86,7 @@ function snapshotPayload(stage: Snapshot['stage'], rows: SnapshotRow[], options:
     diagnostics: [],
     harnesses: ['devin'],
     pendingChanges: 0,
+    availableUpdates: 0,
     discoveryEnabled: options.discoveryEnabled ?? false,
     discoveryHealth: [],
     discoveryQuery: '',

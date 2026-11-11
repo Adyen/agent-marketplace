@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { SourceInput } from './api/client'
+import GuiIcon from './GuiIcon.vue'
 
 const props = defineProps<{ disabled: boolean }>()
 const emit = defineEmits<{ add: [source: SourceInput] }>()
@@ -90,6 +91,8 @@ function add() {
       variant="soft"
       :disabled="addDisabled"
       @click="add"
-    />
+    >
+      <template #leading><GuiIcon name="plus" /></template>
+    </UButton>
   </fieldset>
 </template>

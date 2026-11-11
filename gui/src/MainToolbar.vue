@@ -14,6 +14,7 @@ const props = defineProps<{
   busy: boolean
   ready: boolean
   pendingCount: number
+  availableUpdates: number
   showSetup: boolean
   viewSettings: ViewSettings
   title: string
@@ -116,14 +117,15 @@ defineExpose({
       ><GuiIcon name="close" /></button>
       <ViewMenu ref="viewMenu" :settings="viewSettings" @change="emit('changeView', $event)" />
       <button type="button" class="gui-icon-button" aria-label="Refresh" :disabled="busy" @click="emit('refresh')"><GuiIcon name="refresh" /></button>
+      <UButton aria-label="Update" class="gui-button--secondary" color="neutral" variant="soft" :disabled="!ready" @click="emit('update')">
+        <GuiIcon name="update" />
+        Update
+        <span v-if="availableUpdates > 0" class="gui-update-count mono">{{ availableUpdates }}</span>
+      </UButton>
       <UButton aria-label="Sync" :disabled="!ready" @click="emit('sync')">
         <GuiIcon name="sync" />
         Sync
         <span v-if="pendingCount > 0" class="gui-badge mono">~{{ pendingCount }}</span>
-      </UButton>
-      <UButton aria-label="Update" class="gui-button--secondary" color="neutral" variant="soft" :disabled="!ready" @click="emit('update')">
-        <GuiIcon name="update" />
-        Update
       </UButton>
       <UButton
         v-if="showSetup"

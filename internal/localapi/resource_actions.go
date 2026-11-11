@@ -212,7 +212,14 @@ func (a *API) handleResourcePlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, codeBusy)
 		return
 	}
-	defer a.gate.Finish(operation)
+	defer a.finishMutationGate(operation)
+	a.mu.Lock()
+	if a.closed {
+		a.mu.Unlock()
+		writeError(w, http.StatusServiceUnavailable, codeClosed)
+		return
+	}
+	a.mu.Unlock()
 
 	ctx, cancel := context.WithCancel(a.ctx)
 	stop := context.AfterFunc(r.Context(), cancel)
@@ -355,6 +362,7 @@ func (a *API) handleResourceAction(w http.ResponseWriter, r *http.Request) {
 	}
 	acceptedPlan := *plan
 	a.resourceActionPlan = nil
+	a.invalidateUpdateAvailabilityLocked()
 	a.wg.Add(1)
 	a.mu.Unlock()
 
