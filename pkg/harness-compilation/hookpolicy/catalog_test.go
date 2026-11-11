@@ -197,6 +197,20 @@ events:
 				"matcher: none, types: [command], timeout: {min: 5, max: 2}}", 1),
 			want: "timeout",
 		},
+		{
+			name: "two plain events compile the same canonical event",
+			catalog: strings.Replace(validCatalog,
+				"  SessionEnd: {canonical: SessionEnd, matcher: none, types: [command]}\n",
+				"  SessionEnd: {canonical: SessionEnd, matcher: none, types: [command]}\n  SessionStop: {canonical: SessionEnd, matcher: none, types: [command]}\n", 1),
+			want: "both compile canonical event",
+		},
+		{
+			name: "ingest_only event without a canonical event",
+			catalog: strings.Replace(validCatalog,
+				"  SessionEnd: {canonical: SessionEnd, matcher: none, types: [command]}\n",
+				"  SessionEnd: {matcher: none, types: [command], ingest_only: true}\n", 1),
+			want: "ingest_only",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := load(t, tc.catalog)
@@ -207,6 +221,15 @@ events:
 				t.Fatalf("error = %v, want mention of %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestIngestOnlyEventMayShareCanonicalEvent(t *testing.T) {
+	err := load(t, strings.Replace(validCatalog,
+		"  SessionEnd: {canonical: SessionEnd, matcher: none, types: [command]}\n",
+		"  SessionEnd: {canonical: SessionEnd, matcher: none, types: [command]}\n  SessionStop: {canonical: SessionEnd, matcher: none, types: [command], ingest_only: true}\n", 1))
+	if err != nil {
+		t.Fatalf("ingest_only event sharing a canonical event rejected: %v", err)
 	}
 }
 

@@ -13,6 +13,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// spec: hook-resources/devin-postcompaction-keeps-its-spelling-within-devin
+// spec: hook-resources/devin-compaction-events-ingest-without-a-diagnostic
 // TestConversionFixtures runs the independently authored conversion fixtures
 // through the public Compile path. Expected values are
 // hand-authored fixture data, never derived from the shipped catalogs, and
