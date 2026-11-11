@@ -876,6 +876,11 @@ describe('Source settings', () => {
   it('groups shared locations in the sidebar and Settings but leaves a single source unwrapped', async () => {
     const { wrapper } = await mountSources()
     const sidebar = wrapper.find('[aria-label="Sources list"]')
+    expect(sidebar.findAll('button[aria-expanded]')).toHaveLength(1)
+    expect(sidebar.findAll('.gui-sidebar__source-child')).toHaveLength(2)
+    const sidebarSolo = sidebar.find('button[data-source-id="solo-directory"]')
+    expect(sidebarSolo.element.closest('li')?.classList.contains('gui-sidebar__source-child')).toBe(false)
+
     const sidebarGroup = sidebar.find('button[aria-expanded]')
     for (const text of ['repo', 'plugins/alpha', 'plugins/beta', 'next']) expect(sidebar.text()).toContain(text)
     await sidebarGroup.trigger('click')
@@ -886,14 +891,35 @@ describe('Source settings', () => {
     expect(sidebarGroup.attributes('aria-expanded')).toBe('false')
     await openSources(wrapper)
     const sources = dialog().querySelector('#settings-panel-sources')!
+    expect(sources.querySelectorAll('button[aria-expanded]')).toHaveLength(1)
+    expect(sources.querySelectorAll('.source-card--grouped')).toHaveLength(2)
+    const settingsSolo = sources.querySelector<HTMLElement>('[data-source-id="solo-directory"]')
+    expect(settingsSolo?.classList.contains('source-card--grouped')).toBe(false)
+    expect(settingsSolo?.closest('li')?.querySelector('button[aria-expanded]')).toBeNull()
+
     const settingsGroup = sources.querySelector<HTMLElement>('button[aria-expanded]')!
+    settingsGroup.click()
+    await tick()
+    expect(settingsGroup.getAttribute('aria-expanded')).toBe('false')
     settingsGroup.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     await tick()
+    expect(settingsGroup.getAttribute('aria-expanded')).toBe('true')
+    settingsGroup.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+    await tick()
+    expect(settingsGroup.getAttribute('aria-expanded')).toBe('false')
     settingsGroup.click()
     await tick()
     expect(settingsGroup.getAttribute('aria-expanded')).toBe('true')
     for (const text of ['plugins/alpha', 'plugins/beta', 'next']) expect(sources.textContent).toContain(text)
-    expect(sources.querySelector('[data-source-id="solo-directory"]')?.textContent).toContain('/var/solo')
+    expect(settingsSolo?.textContent).toContain('/var/solo')
+
+    await sidebarGroup.trigger('click')
+    expect(sidebarGroup.attributes('aria-expanded')).toBe('true')
+    for (const [id, path] of [['git-alpha', 'plugins/alpha'], ['git-beta', 'plugins/beta']]) {
+      expect(sidebar.find(`button[data-source-id="${id}"]`).attributes('aria-label')).toContain(path)
+    }
+    const groupedChildNames = sidebar.findAll('.gui-sidebar__source-child button').map((row) => row.attributes('aria-label'))
+    expect(new Set(groupedChildNames).size).toBe(2)
   })
 
   // spec: gui-shell/selecting-a-sidebar-source-reveals-it-in-settings

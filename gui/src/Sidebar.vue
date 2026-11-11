@@ -187,7 +187,11 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | 'signal' | null 
               type="button"
               class="gui-nav-row gui-nav-row--compact gui-source-row"
               :data-source-id="entry.source.id"
-              :aria-label="`Open source ${entry.source.location}`"
+              :aria-label="
+                entry.groupKey == null
+                  ? `Open source ${entry.source.location}`
+                  : `Open source ${entry.source.location} ${entry.source.path || '/'}`
+              "
               @click="emit('revealSource', entry.source.id)"
             >
               <GuiIcon :name="sourceIcons[entry.source.kind]" />
