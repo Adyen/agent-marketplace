@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	cachefs "github.com/Adyen/agent-marketplace/internal/cache"
@@ -100,6 +101,9 @@ type Resolver struct {
 	AllowedRegistries          []string
 	LockEvidenceStrict         bool
 	ReportArchiveEvidenceDrift bool
+
+	clientsMu sync.Mutex
+	clients   map[string]*Client
 }
 
 // NewResolver creates a Marketplace resolver with a default cache.
@@ -463,11 +467,24 @@ func (r *Resolver) cache() *Cache {
 }
 
 func (r *Resolver) clientForEntry(entry config.MarketplaceEntry) (*Client, error) {
+	r.clientsMu.Lock()
+	defer r.clientsMu.Unlock()
+	if client := r.clients[entry.URL]; client != nil {
+		return client, nil
+	}
 	opts := []Option{}
 	if r.HTTPClient != nil {
 		opts = append(opts, WithHTTPClient(r.HTTPClient))
 	}
-	return NewClient(entry.URL, opts...)
+	client, err := NewClient(entry.URL, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if r.clients == nil {
+		r.clients = make(map[string]*Client)
+	}
+	r.clients[entry.URL] = client
+	return client, nil
 }
 
 func (r *Resolver) resolvePinWithPolicy(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, targetSet []hcc.Target, mode resolver.MarketplaceResolveMode, policy resolver.MarketplaceRevocationPolicy, allowedRegistries []string) (resolver.ResolvedArtifact, error) {
