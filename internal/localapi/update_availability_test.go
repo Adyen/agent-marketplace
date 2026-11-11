@@ -121,6 +121,78 @@ func TestUserUpdateAvailabilityPreviewWritesNothing(t *testing.T) {
 	}
 }
 
+// spec: gui-shell/update-availability-check-writes-nothing
+func TestUserUpdateAvailabilityCountsMarketplaceRevisionWithoutWrites(t *testing.T) {
+	home, repo := newUserAPIFixture(t, true)
+	fixture := setupWork39MarketplaceFixture(t, home, repo, nil, work39ModeUserInstalled, false, false)
+	configBytes, err := os.ReadFile(fixture.userConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unpinnedConfig := strings.Replace(string(configBytes), ": {revision: "+fixture.contentDigest+"}", "", 1)
+	if unpinnedConfig == string(configBytes) {
+		t.Fatal("Marketplace fixture did not contain the expected explicit revision")
+	}
+	writeFile(t, fixture.userConfigPath, unpinnedConfig)
+	ws, err := pipeline.NewWorkspace(home, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.RuntimeDependencyLifecycle(context.Background(), ws, false); err != nil {
+		t.Fatalf("initial Marketplace install: %v", err)
+	}
+	fixture.publishUpdatedRevision(t, "# Review code, updated\n")
+
+	stateRoot := os.Getenv("XDG_STATE_HOME")
+	if err := os.MkdirAll(stateRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	trees := map[string]string{
+		"authored": filepath.Join(home, ".agents"),
+		"state":    stateRoot,
+		"harness":  filepath.Join(home, ".config", "devin"),
+	}
+	before := make(map[string]map[string]availabilityFileState, len(trees))
+	for name, root := range trees {
+		before[name] = captureAvailabilityTree(t, root)
+	}
+
+	count, err := session.RuntimeUpdateAvailability(context.Background(), ws)
+	if err != nil {
+		t.Fatalf("Marketplace availability preview: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("available Marketplace update count = %d, want one changed resource", count)
+	}
+	for name, root := range trees {
+		if after := captureAvailabilityTree(t, root); !reflect.DeepEqual(before[name], after) {
+			t.Errorf("%s files changed during the Marketplace preview: before=%v after=%v", name, before[name], after)
+		}
+	}
+}
+
+// spec: gui-shell/update-shows-the-available-update-count
+func TestUserAPIResourcePlanKeepsAvailableUpdateCount(t *testing.T) {
+	state := newWork39APITestState(t, work39ModeAvailable, false, false)
+	state.api.lifecycle.UpdateAvailability = func(context.Context, pipeline.Workspace) (int, error) {
+		return 3, nil
+	}
+	handler := state.api.Handler()
+	handler.ServeHTTP(httptest.NewRecorder(), authedRequest(t, state.api, "/api/snapshot", `{"checkUpdates":true}`))
+	waitForAvailableUpdates(t, state.api, 3)
+
+	status, body := postWork39(t, state.api, "/api/resource-plan", work39PlanRequestBody(state.rowID))
+	if status != http.StatusOK {
+		t.Fatalf("resource plan status/code = %d/%s", status, decodeWork39ErrorCode(t, body))
+	}
+	state.api.mu.Lock()
+	count := state.api.current.AvailableUpdates
+	state.api.mu.Unlock()
+	if count != 3 {
+		t.Fatalf("available updates after opening a resource plan = %d, want 3", count)
+	}
+}
+
 // spec: gui-shell/update-availability-result-from-before-a-later-change-is-discarded
 func TestUserAPIUpdateAvailabilityDiscardsResultAfterOperationStarts(t *testing.T) {
 	api, _, _ := newUserAPI(t, session.DependencyLifecycle{})

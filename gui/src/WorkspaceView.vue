@@ -1278,7 +1278,6 @@ async function run(action: 'sync' | 'update') {
           variant="soft"
           @click="openSettingsWindow('sources')"
         >
-          <template #leading><GuiIcon name="plus" /></template>
         </UButton>
       </section>
       <p v-else-if="mainView === 'resources' && emptyState === 'search'" class="gui-empty gui-empty--muted">No resources match “{{ activeQuery }}”.</p>

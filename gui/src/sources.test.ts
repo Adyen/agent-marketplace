@@ -135,6 +135,23 @@ function failAdd(push: (e: ReturnType<typeof event>) => void, operation: Operati
 }
 
 describe('Source settings', () => {
+  it('styles Settings Add source as secondary with the plus icon', async () => {
+    const { client, push } = sourcesClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1 }))
+    await tick()
+
+    await openSources(wrapper)
+    const addButton = button('Add source')
+    expect(addButton.classList.contains('gui-button--secondary')).toBe(true)
+    const icon = addButton.querySelector('svg.gui-icon')
+    expect(icon).not.toBeNull()
+    expect(Array.from(icon!.querySelectorAll('path'), (path) => path.getAttribute('d'))).toEqual([
+      'M8 3v10',
+      'M3 8h10',
+    ])
+  })
+
   it('removes a user source through its opaque id and reloads metadata', async () => {
     const { client, push } = sourcesClient()
     const { controller, wrapper } = mountWorkspace(client)

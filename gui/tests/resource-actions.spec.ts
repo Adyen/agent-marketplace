@@ -301,7 +301,7 @@ async function cancelAction(page: Page, dialog: Locator, actions: string[]): Pro
   actions.push('Cancelled the prepared resource action with Enter')
 }
 
-// spec: session-interactions/guarded-submission
+// spec: gui-shell/spinner-shows-only-while-the-action-is-in-flight
 test('resource action dialog shows a spinner while preparing the plan', async ({ page }, testInfo) => {
   const harness = await startWork39Harness(testInfo, 'available', true)
   let releaseResponse!: () => void
@@ -336,6 +336,7 @@ test('resource action dialog shows a spinner while preparing the plan', async ({
   }
 })
 
+// spec: session-interactions/guarded-submission
 test('built user GUI cancels, installs, and removes a warned Marketplace Resource through authoritative finals', async ({ page }, testInfo) => {
   if (!distIndexExists()) {
     throw new Error('built GUI assets missing: run the GUI build before the resource-action journey')

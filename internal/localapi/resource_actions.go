@@ -219,7 +219,6 @@ func (a *API) handleResourcePlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, codeClosed)
 		return
 	}
-	a.invalidateUpdateAvailabilityLocked()
 	a.mu.Unlock()
 
 	ctx, cancel := context.WithCancel(a.ctx)

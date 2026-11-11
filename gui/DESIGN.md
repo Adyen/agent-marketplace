@@ -757,7 +757,7 @@ earlier section, this section wins.
   "Technical details" disclosure. A 16 px signal spinner accompanies plan
   preparation and submission; the risk acknowledgement stays visible.
 - Settings' Add source button uses `.gui-button--secondary` with a leading
-  plus icon, matching the empty-state action.
+  plus icon.
 - The native icon uses a rounded ink tile and the slanted green-and-white A
   mark from `site/public/brand/favicon.svg`, rasterized from
   `packaging/gui/icon.svg` without changing package metadata.

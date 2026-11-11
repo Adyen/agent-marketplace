@@ -292,7 +292,7 @@ func previewMarketplaceHookSupport(res resolver.ResolvedArtifact, keepBodies boo
 		if keepBodies {
 			entry.Data = append([]byte(nil), file.Bytes...)
 		} else {
-			entry.Digest = contentDigest(file.Bytes)
+			entry.Digest = ContentDigest(file.Bytes)
 		}
 		support[file.Path] = entry
 	}
@@ -421,18 +421,14 @@ func readPreviewSupportFile(root, rel string, keepBodies bool) (file resourcedif
 	if keepBodies {
 		file.Data = data
 	} else {
-		file.Digest = contentDigest(data)
+		file.Digest = ContentDigest(data)
 	}
 	return file, nil
 }
 
-func contentDigest(data []byte) string {
+func ContentDigest(data []byte) string {
 	sum := sha256.Sum256(data)
 	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
-func ContentDigest(data []byte) string {
-	return contentDigest(data)
 }
 
 // previewGitLockChanges derives the proposed exact Git lock changes from the
