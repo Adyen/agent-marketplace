@@ -1112,7 +1112,6 @@ async function run(action: 'sync' | 'update') {
     class="workspace gui-shell"
     :style="{
       gridTemplateColumns: shellColumns,
-      '--gui-sidebar-width': `${sidebarWidth}px`,
       '--gui-inspector-width': `${inspectorWidth}px`,
     }"
   >
@@ -1277,8 +1276,7 @@ async function run(action: 'sync' | 'update') {
           color="neutral"
           variant="soft"
           @click="openSettingsWindow('sources')"
-        >
-        </UButton>
+        />
       </section>
       <p v-else-if="mainView === 'resources' && emptyState === 'search'" class="gui-empty gui-empty--muted">No resources match “{{ activeQuery }}”.</p>
 
