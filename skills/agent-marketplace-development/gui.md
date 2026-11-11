@@ -145,7 +145,9 @@ test('walk: open sources', async ({ page }, testInfo) => {
     await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
     await step('01-loaded')
     await page.getByRole('button', { name: 'Sources' }).click()
-    await expect(page.getByRole('dialog', { name: 'Sources' })).toBeVisible()
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByRole('tab', { name: 'Sources' })).toHaveAttribute('aria-selected', 'true')
     await step('02-sources-open')
     console.log(await readFile(join(bootstrap.home!, '.agents', 'config.yaml'), 'utf8'))
   } finally {
