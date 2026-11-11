@@ -731,6 +731,10 @@ func (a *API) subscribe(ctx context.Context, deliver func(frame []byte) bool, on
 	sub := &subscriber{events: make(chan []byte, 64)}
 	var envelope []byte
 	a.mu.Lock()
+	if a.closed {
+		a.mu.Unlock()
+		return
+	}
 	if a.current != nil {
 		a.sequence++
 		data, err := json.Marshal(sessionEvent{Type: "snapshot", Sequence: a.sequence, Generation: uint64(a.currentG), Operation: a.current.Operation, Payload: a.current})
@@ -743,13 +747,15 @@ func (a *API) subscribe(ctx context.Context, deliver func(frame []byte) bool, on
 	if a.userOnly && !a.started {
 		a.started = true
 		startInitial = a.beginSnapshotLocked()
+		if startInitial != 0 {
+			a.wg.Add(1)
+		}
 	}
 	a.mu.Unlock()
 	if onReady != nil {
 		onReady()
 	}
 	if startInitial != 0 {
-		a.wg.Add(1)
 		go func() {
 			defer a.wg.Done()
 			for snapshot := range a.readSnapshotStages(a.ctx, session.CatalogLoadRefresh, startInitial) {

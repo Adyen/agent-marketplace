@@ -348,6 +348,68 @@ func TestWindowEventStreamDeliversCompletionAndCloses(t *testing.T) {
 	}
 }
 
+func TestWindowEventStreamCloseBeforeOpenLeavesNoSubscription(t *testing.T) {
+	newHostFixture(t)
+	app, err := NewApp(context.Background(), session.DependencyLifecycle{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(app.close)
+	finalRows(t, app)
+	window := &recordedWindow{events: make(chan windowEmission, 64)}
+
+	app.closeEventStream("early-close")
+	app.openEventStream(window, "early-close", app.api.Credential())
+	app.openEventStream(window, "unauthorized-close", "wrong")
+	if end := nextWindowEmission(t, window); end.event != "am:session-events:end" || len(end.args) != 2 || end.args[0] != "unauthorized-close" {
+		t.Fatalf("unauthorized stream end = %+v", end)
+	}
+	app.closeEventStream("unauthorized-close")
+	select {
+	case event := <-window.events:
+		t.Fatalf("stream closed before open emitted %+v", event)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	app.eventStreams.mu.Lock()
+	streams, closed := len(app.eventStreams.streams), len(app.eventStreams.closed)
+	app.eventStreams.mu.Unlock()
+	if streams != 0 || closed != 0 {
+		t.Fatalf("retained %d streams and %d close records, want none", streams, closed)
+	}
+}
+
+func TestWindowEventStreamReplacementDoesNotEndNewStream(t *testing.T) {
+	newHostFixture(t)
+	app, err := NewApp(context.Background(), session.DependencyLifecycle{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(app.close)
+	finalRows(t, app)
+	window := &recordedWindow{events: make(chan windowEmission, 64)}
+	const streamID = "reused-stream"
+
+	for range 2 {
+		app.openEventStream(window, streamID, app.api.Credential())
+		initial := nextWindowEmission(t, window)
+		if initial.event != "am:session-events" || len(initial.args) != 2 || initial.args[0] != streamID {
+			t.Fatalf("initial event = %+v", initial)
+		}
+	}
+	select {
+	case event := <-window.events:
+		t.Fatalf("replaced stream emitted %+v for the replacement id", event)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	app.closeEventStream(streamID)
+	end := nextWindowEmission(t, window)
+	if end.event != "am:session-events:end" || len(end.args) != 2 || end.args[0] != streamID || end.args[1] != "" {
+		t.Fatalf("replacement stream end = %+v", end)
+	}
+}
+
 // spec: session-interactions/confirmation-retains-all-user-choices
 func TestBeforeCloseBlocksUntilApproved(t *testing.T) {
 	newHostFixture(t)

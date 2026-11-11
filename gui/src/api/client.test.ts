@@ -666,4 +666,17 @@ describe('createClient', () => {
     ])
     expect(fake.listenerCount()).toBe(0)
   })
+
+  it('does not close a bridge stream that was aborted before it opened', async () => {
+    const fake = eventBridge()
+    const abort = new AbortController()
+    abort.abort()
+    const client = createBridgedClient(async () => {
+      throw new Error('bridge should not fetch')
+    }, fake.bridge)
+
+    await expect(client.events(undefined, abort.signal)[Symbol.asyncIterator]().next()).resolves.toMatchObject({ done: true })
+    expect(fake.emissions).toEqual([])
+    expect(fake.listenerCount()).toBe(0)
+  })
 })

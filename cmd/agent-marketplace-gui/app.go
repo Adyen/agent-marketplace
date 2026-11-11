@@ -68,6 +68,7 @@ type App struct {
 type appEventStreams struct {
 	mu      sync.Mutex
 	streams map[string]*appEventStream
+	closed  map[string]struct{}
 }
 
 type appEventStream struct {
@@ -132,6 +133,7 @@ func NewApp(ctx context.Context, lifecycle session.DependencyLifecycle) (*App, e
 		rootSpan:         rootSpan,
 		eventStreams: appEventStreams{
 			streams: make(map[string]*appEventStream),
+			closed:  make(map[string]struct{}),
 		},
 	}, nil
 }
@@ -143,18 +145,26 @@ func (a *App) Bootstrap() Bootstrap {
 func (a *App) handler() http.Handler { return a.api.Handler() }
 
 func (a *App) openEventStream(window Window, id, credential string) {
-	if subtle.ConstantTimeCompare([]byte(credential), []byte(a.api.Credential())) != 1 {
-		window.Emit(sessionEventsEndEvent, id, sessionEventsUnauthorizedCode)
-		return
-	}
+	authorized := subtle.ConstantTimeCompare([]byte(credential), []byte(a.api.Credential())) == 1
 	ctx, cancel := context.WithCancel(context.Background())
 	stream := &appEventStream{cancel: cancel}
 	a.eventStreams.mu.Lock()
+	if _, closedEarly := a.eventStreams.closed[id]; closedEarly {
+		delete(a.eventStreams.closed, id)
+		a.eventStreams.mu.Unlock()
+		cancel()
+		return
+	}
 	if previous := a.eventStreams.streams[id]; previous != nil {
 		previous.cancel()
 	}
 	a.eventStreams.streams[id] = stream
 	a.eventStreams.mu.Unlock()
+	if !authorized {
+		cancel()
+		window.Emit(sessionEventsEndEvent, id, sessionEventsUnauthorizedCode)
+		return
+	}
 
 	go func() {
 		a.api.Subscribe(ctx, func(frame []byte) bool {
@@ -165,12 +175,13 @@ func (a *App) openEventStream(window Window, id, credential string) {
 			return true
 		})
 		a.eventStreams.mu.Lock()
-		if a.eventStreams.streams[id] == stream {
-			delete(a.eventStreams.streams, id)
-		}
+		current, registered := a.eventStreams.streams[id]
+		replaced := registered && current != stream
 		a.eventStreams.mu.Unlock()
 		cancel()
-		window.Emit(sessionEventsEndEvent, id, "")
+		if !replaced {
+			window.Emit(sessionEventsEndEvent, id, "")
+		}
 	}()
 }
 
@@ -178,6 +189,9 @@ func (a *App) closeEventStream(id string) {
 	a.eventStreams.mu.Lock()
 	stream := a.eventStreams.streams[id]
 	delete(a.eventStreams.streams, id)
+	if stream == nil {
+		a.eventStreams.closed[id] = struct{}{}
+	}
 	a.eventStreams.mu.Unlock()
 	if stream != nil {
 		stream.cancel()
@@ -190,6 +204,7 @@ func (a *App) closeEventStreams() {
 		stream.cancel()
 		delete(a.eventStreams.streams, id)
 	}
+	clear(a.eventStreams.closed)
 	a.eventStreams.mu.Unlock()
 }
 

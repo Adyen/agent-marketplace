@@ -34,6 +34,7 @@ jobs:
       marketplace_e2e: ${{ steps.changes.outputs.marketplace_e2e }}
       tui_qa: ${{ steps.changes.outputs.tui_qa }}
       gui_distribution: ${{ steps.changes.outputs.gui_distribution }}
+      gui_native_events: ${{ steps.changes.outputs.gui_native_events }}
       container_config: ${{ steps.changes.outputs.container_config }}
       container_marketplace: ${{ steps.changes.outputs.container_marketplace }}
       container_web: ${{ steps.changes.outputs.container_web }}
@@ -1261,7 +1262,7 @@ jobs:
   gui-linux-native-events:
     name: GUI Linux native event delivery
     needs: changes
-    if: (needs.changes.outputs.gui_distribution == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')) || startsWith(github.ref, 'refs/tags/')
+    if: (needs.changes.outputs.gui_native_events == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')) || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-22.04
     timeout-minutes: 40
     permissions:

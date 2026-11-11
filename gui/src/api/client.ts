@@ -230,18 +230,21 @@ async function* bridgeEvents(bridge: EventBridge, credential: string, cursor: Ev
       }
     })
     const abort = () => finish()
+    let opened = false
     signal?.addEventListener('abort', abort, { once: true })
     try {
       if (signal?.aborted) {
         return
       }
       bridge.emit(sessionEventsOpenEvent, streamID, credential)
+      opened = true
       for (;;) {
         if (signal?.aborted) {
           return
         }
-        if (frames.length > 0) {
-          yield frames.shift()!
+        const frame = frames.shift()
+        if (frame !== undefined) {
+          yield frame
           continue
         }
         if (ended) {
@@ -258,7 +261,9 @@ async function* bridgeEvents(bridge: EventBridge, credential: string, cursor: Ev
       signal?.removeEventListener('abort', abort)
       detachFrame()
       detachEnd()
-      bridge.emit(sessionEventsCloseEvent, streamID)
+      if (opened) {
+        bridge.emit(sessionEventsCloseEvent, streamID)
+      }
     }
   })()
   yield* parseEventFrames(source, cursor)
