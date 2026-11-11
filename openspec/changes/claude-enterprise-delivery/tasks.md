@@ -16,61 +16,61 @@
 
 ## 1. Plugins API client (`pkg/marketplace/claudeplugins`)
 
-- [ ] 1.1 Add the typed client: base URL, required headers, credential injection,
+- [x] 1.1 Add the typed client: base URL, required headers, credential injection,
   context deadlines, and a transport that never logs request bodies or the key.
   Write red tests first for header presence and for redaction of the key in every
   error string. Verify `go test ./pkg/marketplace/claudeplugins -count=1`
-- [ ] 1.2 Implement reads: list plugins (paginated by opaque cursor until `next_page`
+- [x] 1.2 Implement reads: list plugins (paginated by opaque cursor until `next_page`
   is null, tolerating short or empty pages), get plugin, list and get versions, list
   marketplaces, get marketplace. Verify a fake server driving a three-page list with
   one empty page yields every row
-- [ ] 1.3 Implement writes: create plugin, create version (multipart with the archive
+- [x] 1.3 Implement writes: create plugin, create version (multipart with the archive
   part and `release_notes`), set and remove an installation setting. Verify the
   multipart body carries the archive under the documented field and that
   installation-setting writes are issued one at a time
-- [ ] 1.4 Implement error typing: status, `error.details.error_code`,
+- [x] 1.4 Implement error typing: status, `error.details.error_code`,
   `details.plugin_id`, `details.plugin_version_id`, `x-should-retry`, and
   `retry-after`. Unknown codes map to their status. Annotate
   `// spec: claude-enterprise-delivery/unrecognized-values-are-opaque`.
   Verify red tests for `plugin_name_taken`, `registration_pending`, `scan_pending`,
   `skill_name_taken`, `429`, and an invented code
-- [ ] 1.5 Implement rate-limit handling: honour `retry-after`, surface the limit
+- [x] 1.5 Implement rate-limit handling: honour `retry-after`, surface the limit
   headers, and return a typed throttled error that the reconciler can resume from.
   Verify a fake server returning `429` then `200` is handled without a duplicate write
 
 ## 2. Configuration (`pkg/marketplace/config`)
 
-- [ ] 2.1 Add the `claude_enterprise` block: `enabled`, `api_key` (file or env
+- [x] 2.1 Add the `claude_enterprise` block: `enabled`, `api_key` (file or env
   reference reusing the registry credential rules), optional `marketplace_id`,
   `plugin_name_prefix` (default `am`), `default_installation_preference` (default
   `available`), and `interval`. Write red tests first for an inline secret, an unknown
   preference, and an invalid prefix. Annotate
   `// spec: claude-enterprise-delivery/inline-api-key-is-refused-at-validation`.
   Verify `go test ./pkg/marketplace/config -count=1`
-- [ ] 2.2 Register the key with `internal/redact` and prove it never appears in
+- [x] 2.2 Register the key with `internal/redact` and prove it never appears in
   configuration dumps, status output, or error strings. Annotate
   `// spec: claude-enterprise-delivery/status-reports-a-failure-by-code-without-content`
-- [ ] 2.3 Classify the block in runtime configuration replacement so an enable,
+- [x] 2.3 Classify the block in runtime configuration replacement so an enable,
   disable, or credential change takes effect without a restart and an invalid
   replacement keeps the last known-good configuration. Verify the existing
   `marketplace-runtime-configuration` tests still pass and add one for the new block
 
 ## 3. Archive assembly and validation (`pkg/marketplace/claudedelivery`)
 
-- [ ] 3.1 Implement name derivation from the resource identity: character folding,
+- [x] 3.1 Implement name derivation from the resource identity: character folding,
   64-character bound, truncation with an identity digest suffix, and the configured
   prefix. Write red tests first for collisions beyond the truncation point. Annotate
   `// spec: claude-enterprise-delivery/a-long-identity-produces-a-bounded-unique-name`
-- [ ] 3.2 Implement assembly from the stored canonical artifact through
+- [x] 3.2 Implement assembly from the stored canonical artifact through
   `artifact.DecodeResource` into the Claude plugin layout for all five kinds, with the
   generated manifest and `release_notes` provenance. Annotate
   `// spec: claude-enterprise-delivery/the-mirrored-resource-keeps-its-own-name`.
   Verify golden archives per kind
-- [ ] 3.3 Make assembly deterministic: sorted entries, fixed timestamps and
+- [x] 3.3 Make assembly deterministic: sorted entries, fixed timestamps and
   permissions, fixed compression method. Annotate
   `// spec: claude-enterprise-delivery/repeated-builds-are-byte-identical`.
   Verify two builds in separate processes produce equal digests
-- [ ] 3.4 Implement local validation of every documented upload requirement, each with
+- [x] 3.4 Implement local validation of every documented upload requirement, each with
   its own stable code. Write red tests first, one per rule. Annotate
   `// spec: claude-enterprise-delivery/an-invalid-archive-never-reaches-the-api`.
   Verify no upload path is reachable from a failed validation
