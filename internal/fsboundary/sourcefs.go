@@ -132,6 +132,21 @@ func (s *SourceFS) read(name string) (data []byte, identity Identity, err error)
 	if !fs.ValidPath(name) {
 		return nil, Identity{}, &fs.PathError{Op: "read", Path: name, Err: fs.ErrInvalid}
 	}
+	file, openedIdentity, err := s.root.openRelative(filepath.FromSlash(name))
+	if err == nil {
+		defer func() { err = errors.Join(err, file.Close()) }()
+		data, identity, readErr := ReadFile(file, openedIdentity.Size)
+		if readErr != nil {
+			return nil, Identity{}, fmt.Errorf("read source %s: %w", name, readErr)
+		}
+		if !identity.SameState(openedIdentity) {
+			return nil, Identity{}, fmt.Errorf("read source %s: %w: source changed since open", name, ErrGenerationConflict)
+		}
+		return data, identity, nil
+	}
+	if !errors.Is(err, ErrUnsafePath) {
+		return nil, Identity{}, fmt.Errorf("read source %s: %w", name, err)
+	}
 	source, err := s.captureSource(name)
 	if err != nil {
 		return nil, Identity{}, fmt.Errorf("read source %s: %w", name, err)

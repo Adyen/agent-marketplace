@@ -847,7 +847,7 @@ func hasMultiSkillSubdirs(src fs.FS) bool {
 		if skippedScanDirs(e.Name()) {
 			continue
 		}
-		if _, err := fs.ReadFile(src, e.Name()+"/SKILL.md"); err == nil {
+		if info, err := fs.Stat(src, e.Name()+"/SKILL.md"); err == nil && !info.IsDir() {
 			return true
 		}
 	}
