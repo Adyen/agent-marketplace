@@ -13,7 +13,7 @@ agent-marketplace --version
 
 If the terminal answers `command not found`, add `~/.local/bin` to your `PATH` and open a new terminal. On macOS with zsh, add `export PATH="$HOME/.local/bin:$PATH"` to `~/.zshrc`. If the installer warns that another `agent-marketplace` shadows the new one, such as an earlier `go install`, run `command -v agent-marketplace` to see which one runs, and put `~/.local/bin` before that directory on your `PATH`.
 
-The installer refuses releases without `SHA256SUMS`; v5.0.3 and earlier do not publish it. As a fallback, Go 1.27.3 or newer can install the newest code from `main`:
+The installer refuses releases without `SHA256SUMS`; v5.0.3 and earlier do not publish it. As a fallback, Go 1.27.4 or newer can install the newest code from `main`:
 
 ```bash
 go install github.com/Adyen/agent-marketplace/cmd/agent-marketplace@latest
