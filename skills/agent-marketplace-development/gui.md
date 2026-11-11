@@ -194,6 +194,7 @@ each one is driven):
 | `local-skill-files` | Directory and local bare Git skills with support files, plus paths for read-only and unsafe-source checks (`local-skill-files.spec.ts`) |
 | `work39-resource-actions` | Marketplace install/remove; `AM_LOCALAPI_USER_INITIAL_MODE` = `available`, `user-installed`, or `org-optional` (`resource-actions.spec.ts`) |
 | `work40-resource-actions` | Directory-registry install/remove; mode `root-owned`, `source-included`, or `selection-included` (`registry-resource-actions.spec.ts`) |
+| `update-availability` | A bare Git source (`gitSourceURL`) with a writable clone (`gitSourceWorking`); pushing a new revision makes `availableUpdates` nonzero (`visual-redesign.spec.ts`) |
 | `long-warning` | Directory source `warnings` whose only resource has malformed frontmatter, so its row carries a long load-failure warning (`feedback.spec.ts`) |
 
 When you need a state no fixture provides, add a branch to
