@@ -204,7 +204,7 @@ func retainStartupOwnedFields(startup, candidate Config) Config {
 
 func (c Classification) hasWorkerChanges() bool {
 	return len(c.Added)+len(c.Removed)+len(c.IndexingChanged)+len(c.MetadataChanged) != 0 ||
-		c.RefreshIntervalChanged
+		c.RefreshIntervalChanged || c.ClaudeEnterpriseChanged
 }
 
 func boundedRuntimeReason(err error) string {

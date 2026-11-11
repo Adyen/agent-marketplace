@@ -133,11 +133,146 @@ type Config struct {
 	AcquisitionDefault  string              `yaml:"acquisition_default"`
 	Refresh             Refresh             `yaml:"refresh"`
 	RefreshConcurrency  int                 `yaml:"refresh_concurrency,omitempty"`
+	ClaudeEnterprise    *ClaudeEnterprise   `yaml:"claude_enterprise,omitempty"`
 	Policy              Policy              `yaml:"policy"`
 	Registries          []Registry          `yaml:"registries"`
 	Revocations         Revocations         `yaml:"revocations"`
 	CatalogProjection   CatalogProjection   `yaml:"catalog_projection"`
 	InstallationMetrics InstallationMetrics `yaml:"installation_metrics"`
+}
+
+type ClaudeEnterprise struct {
+	Enabled                       bool                            `yaml:"enabled"`
+	APIKey                        ClaudeEnterpriseAPIKeyReference `yaml:"api_key"`
+	MarketplaceID                 string                          `yaml:"marketplace_id,omitempty"`
+	PluginNamePrefix              *string                         `yaml:"plugin_name_prefix,omitempty"`
+	DefaultInstallationPreference *string                         `yaml:"default_installation_preference,omitempty"`
+	Interval                      *Duration                       `yaml:"interval,omitempty"`
+}
+
+type ClaudeEnterpriseAPIKeyReference struct {
+	File   string `yaml:"file"`
+	Env    string `yaml:"env"`
+	inline bool
+}
+
+func (r *ClaudeEnterpriseAPIKeyReference) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return errors.New("claude_enterprise.api_key must be a file or environment reference")
+	}
+	var raw struct {
+		File  string `yaml:"file"`
+		Env   string `yaml:"env"`
+		Value string `yaml:"value"`
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		key := node.Content[i].Value
+		switch key {
+		case "file", "env":
+		case "value":
+			r.inline = true
+		default:
+			return fmt.Errorf("claude_enterprise.api_key contains unknown field %q", key)
+		}
+	}
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+	r.File = raw.File
+	r.Env = raw.Env
+	return nil
+}
+
+func (r ClaudeEnterpriseAPIKeyReference) String() string { return "[secret reference]" }
+
+func (r ClaudeEnterpriseAPIKeyReference) GoString() string { return "[secret reference]" }
+
+func (r ClaudeEnterpriseAPIKeyReference) Format(state fmt.State, verb rune) {
+	_, _ = fmt.Fprint(state, "[secret reference]")
+}
+
+func (r ClaudeEnterpriseAPIKeyReference) MarshalYAML() (any, error) {
+	value := make(map[string]string, 2)
+	if r.File != "" {
+		value["file"] = r.File
+	}
+	if r.Env != "" {
+		value["env"] = r.Env
+	}
+	return value, nil
+}
+
+const (
+	claudeEnterpriseAPIKeyInlineCode = "claude_enterprise.api-key-inline"
+	claudeEnterpriseAPIKeyRefCode    = "claude_enterprise.api-key-reference"
+	claudeEnterprisePreferenceCode   = "claude_enterprise.installation-preference"
+	claudeEnterprisePrefixCode       = "claude_enterprise.plugin-name-prefix"
+	claudeEnterpriseIntervalCode     = "claude_enterprise.interval"
+)
+
+var pluginNamePrefixPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
+
+type ClaudeEnterpriseConfigError struct {
+	code  string
+	field string
+}
+
+func (e *ClaudeEnterpriseConfigError) Error() string {
+	return fmt.Sprintf("%s: %s: invalid configuration", e.code, e.field)
+}
+
+func (e *ClaudeEnterpriseConfigError) ErrorCode() string { return e.code }
+
+func (e *ClaudeEnterpriseConfigError) FieldName() string { return e.field }
+
+func (c *ClaudeEnterprise) PluginPrefix() string {
+	if c == nil || c.PluginNamePrefix == nil {
+		return "am"
+	}
+	return *c.PluginNamePrefix
+}
+
+func (c *ClaudeEnterprise) InstallationPreference() string {
+	if c == nil || c.DefaultInstallationPreference == nil {
+		return "available"
+	}
+	return *c.DefaultInstallationPreference
+}
+
+func (c *ClaudeEnterprise) RepairInterval() time.Duration {
+	if c == nil || c.Interval == nil {
+		return DefaultObservationReconciliationInterval
+	}
+	return c.Interval.Duration()
+}
+
+func (c *ClaudeEnterprise) validate() error {
+	if c == nil {
+		return nil
+	}
+	var errs []error
+	hasFile := strings.TrimSpace(c.APIKey.File) != ""
+	hasEnv := strings.TrimSpace(c.APIKey.Env) != ""
+	switch {
+	case c.APIKey.inline:
+		errs = append(errs, &ClaudeEnterpriseConfigError{code: claudeEnterpriseAPIKeyInlineCode, field: "claude_enterprise.api_key"})
+	case hasFile && hasEnv:
+		errs = append(errs, &ClaudeEnterpriseConfigError{code: claudeEnterpriseAPIKeyRefCode, field: "claude_enterprise.api_key"})
+	case c.Enabled && !hasFile && !hasEnv:
+		errs = append(errs, &ClaudeEnterpriseConfigError{code: claudeEnterpriseAPIKeyRefCode, field: "claude_enterprise.api_key"})
+	}
+	prefix := c.PluginPrefix()
+	if len(prefix) < 1 || len(prefix) > 16 || !pluginNamePrefixPattern.MatchString(prefix) {
+		errs = append(errs, &ClaudeEnterpriseConfigError{code: claudeEnterprisePrefixCode, field: "claude_enterprise.plugin_name_prefix"})
+	}
+	preference := c.InstallationPreference()
+	if preference != "required" && preference != "auto_install" && preference != "available" && preference != "not_available" {
+		errs = append(errs, &ClaudeEnterpriseConfigError{code: claudeEnterprisePreferenceCode, field: "claude_enterprise.default_installation_preference"})
+	}
+	if c.Interval != nil && c.Interval.Duration() <= 0 {
+		errs = append(errs, &ClaudeEnterpriseConfigError{code: claudeEnterpriseIntervalCode, field: "claude_enterprise.interval"})
+	}
+	return errors.Join(errs...)
 }
 
 type InstallationMetrics struct {
@@ -543,6 +678,20 @@ func applyDefaults(cfg *Config) {
 	if cfg.Refresh.Interval == 0 {
 		cfg.Refresh.Interval = Duration(defaultRefreshInterval)
 	}
+	if cfg.ClaudeEnterprise != nil {
+		if cfg.ClaudeEnterprise.PluginNamePrefix == nil {
+			prefix := "am"
+			cfg.ClaudeEnterprise.PluginNamePrefix = &prefix
+		}
+		if cfg.ClaudeEnterprise.DefaultInstallationPreference == nil {
+			preference := "available"
+			cfg.ClaudeEnterprise.DefaultInstallationPreference = &preference
+		}
+		if cfg.ClaudeEnterprise.Interval == nil {
+			interval := Duration(DefaultObservationReconciliationInterval)
+			cfg.ClaudeEnterprise.Interval = &interval
+		}
+	}
 	if cfg.AcquisitionDefault == "" {
 		cfg.AcquisitionDefault = defaultAcquisitionDefault
 	}
@@ -595,6 +744,9 @@ func (cfg Config) Validate() error {
 
 func (cfg Config) validateWithoutAdministration() error {
 	var errs []error
+	if err := cfg.ClaudeEnterprise.validate(); err != nil {
+		errs = append(errs, err)
+	}
 	if err := cfg.Management.Validate(); err != nil {
 		errs = append(errs, err)
 	}
