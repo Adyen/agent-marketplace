@@ -186,6 +186,7 @@ A source must contain exactly one of `git`, `directory`, or `marketplace`; zero 
 | `ref` | Git | yes | Branch, tag, or commit to resolve. |
 | `path` | Git | no | Subdirectory of the repository to discover resources in. |
 | `source_harness` | Git, directory | no | Harness layout the source content is written in. Omit it to let the CLI detect the layout. |
+| `format` | Git, directory | no | Plugin package format (`agent-plugin`, `claude-plugin`, `factory-plugin`, `codex-plugin`) or native plugin catalog format (`claude-marketplace`, `factory-marketplace`, `codex-marketplace`) the source content is written in. Sources without `format` keep loose-resource ingestion. |
 | `directory` | Directory | yes | Folder on disk, read live. |
 | `marketplace` | Marketplace | yes | Hosted Marketplace endpoint URL. |
 
@@ -199,12 +200,16 @@ Validation rules by kind:
 | `path` that is absolute, contains `.` or `..` segments, or leaves the repository | `v4.git-path` |
 | `ref` or `path` on a directory source | `v4.source-field` |
 | `ref`, `path`, or `source_harness` on a Marketplace source | `v4.source-field` |
+| `format` on a Marketplace source, or `format` combined with `source_harness` | `v4.option-combination` |
+| `format` value that is not a recognized plugin package or catalog format | `plugin.format.unknown` |
 | `directory` path that leaves its base directory, or reaches outside it through a symlink | `v4.directory-path` |
 | `marketplace` URL that is not `http` or `https`, has no host, carries user info, a query, or a fragment, or contains `.` or `..` path segments | `v4.marketplace-url` |
 | `source_harness` that is not a supported harness id | `v4.harness` |
 | Empty `git`, `directory`, or `marketplace` value | `v4.source-value` |
 
 A `directory` source names the folder to read directly; a subfolder is selected through `directory`, not `path`.
+
+The [plugins and package formats explanation](../explanation/plugins-and-package-formats.md) covers what `format` changes about discovery, selection, and delivery, and [Install a plugin](../how-to/install-plugins.md) walks through the workflow.
 
 In the repository `.agents/config.yaml` and `.agents/config.local.yaml`, `directory: .` selects the repository root and `directory: ./resources/skills` selects `<repo>/resources/skills`. User and organization files, included fragments, and files outside that layout resolve relative paths from their own directory. Relative paths, including through symlinks, must stay inside that base directory. Absolute paths are used as written. Earlier v4 releases resolved repository-root declarations from `.agents/`; a source stored under `.agents/` needs an explicit `./.agents/` prefix.
 
@@ -268,9 +273,9 @@ For a Marketplace group with `all: true` or non-empty `tags`, `registries` must 
 
 ## Resource locators and options
 
-A locator names one resource. Git and directory sources use `<kind>/<name>`. Marketplace sources use `<registry-slug>/<kind>/<name>`, because one endpoint serves many registries. The kinds are `skill`, `command`, `subagent`, `hook`, `mcp`, and `collection`. A locator in the wrong shape for its source fails with `v4.locator`.
+A locator names one resource. Git and directory sources use `<kind>/<name>`. Marketplace sources use `<registry-slug>/<kind>/<name>`, because one endpoint serves many registries. The kinds are `skill`, `command`, `subagent`, `hook`, `mcp`, `collection`, and `plugin`. `plugin/<name>` selects a plugin package from a Git or directory source that declares `format`; the plugin's members are not separately selectable. A locator in the wrong shape for its source fails with `v4.locator`.
 
-Each `include` item is either a locator string or a mapping with one locator key and an options mapping:
+Each `include` item is a locator string, a mapping with one locator key and an options mapping, or a structured plugin entry `{kind: plugin, name: <name>}` for plugin names the locator grammar cannot carry:
 
 ```yaml
 resources:
@@ -284,14 +289,16 @@ resources:
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `as` | string | resource name | Name to install the resource under. It must be a safe file name (`v4.installed-name`). Collections cannot use `as` because they do not install as themselves (`v4.option-combination`). |
+| `as` | string | resource name | Name to install the resource under. It must be a safe file name (`v4.installed-name`). Collections cannot use `as` because they do not install as themselves, and plugin requests cannot use `as` (`v4.option-combination`). |
 | `revision` | string | no exact constraint | Exact Marketplace resource or collection revision, written `sha256:<64 lowercase hex>` (`v4.revision`). |
+| `exclude` | list of `<kind>/<name>` | nothing excluded | Plugin requests only: members to leave out of the plugin (`v4.option-combination` on other kinds; unknown members fail with `plugin.member.unknown-exclusion`). |
+| `delivery` | string | none | Plugin requests only: plugin delivery mode, `auto`, `decompose`, or `native` (`v4.option-combination` on other kinds, `v4.resource-options` on any other value). |
 
 `revision` is invalid for Git and directory resources. Git resources use their source's `ref`; declare a second source to use a different ref. Semantic-version constraints and `latest` are not v4 options.
 
 On Git and directory sources, `as` may be omitted or set to the resource's own name. A different name passes the parser but fails with `v4.runtime-option` when the configuration is resolved.
 
-Listing the same locator twice in one include list fails with `v4.duplicate-request`, even when the options match. An option value that is empty, null, or not a string fails with `v4.resource-options`, and a mapping item with more than one key fails with `v4.resource-item`. Unknown option names fail with `v4.unknown-field`.
+Listing the same locator twice in one include list fails with `v4.duplicate-request`, even when the options match. An option value that is empty, null, or not a string fails with `v4.resource-options`, and a mapping item with more than one key fails with `v4.resource-item`, except the structured `{kind: plugin, name: <name>}` form. Unknown option names fail with `v4.unknown-field`.
 
 ## Selection and exclusions
 
@@ -318,7 +325,7 @@ resources:
           revision: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
-Installing and resolving Marketplace resources requires a verified lock record in the owning layer's lock that matches the requested endpoint, registry, resource, and revision. A missing or unusable lock fails with `v4.marketplace-lock-required`. A lock with no record for the endpoint, or with a record that does not match, fails with `v4.marketplace-lock-mismatch`. A writing `agent-marketplace sync` or `lock` for a user, repository, or personal-local layer records entries for selected Marketplace resources that an existing lock is missing, keeping existing pins unless the configuration requests an explicit revision; read-only modes (`sync --check`, `sync --locked`, `sync --offline`, and `doctor`) report the error and never write. Organization locks are only written by `lock --scope organization`. Either way nothing is installed until the lock records the resource. One layer can have only one source that fetches from a given endpoint.
+Installing and resolving Marketplace resources requires a verified lock record in the owning layer's lock that matches the requested endpoint, registry, resource, and revision. A missing or unusable lock fails with `v4.marketplace-lock-required`. A lock with no record for the endpoint, or with a record that does not match, fails with `v4.marketplace-lock-mismatch`. A writing `agent-marketplace sync` or `lock` for a user, repository, or personal-local layer records entries for selected Marketplace resources that an existing lock is missing, keeping existing pins unless the configuration requests an explicit revision; read-only modes (`sync --check`, `sync --locked`, `sync --offline`, and `doctor`) report the error and never write. Organization locks are only written by `lock --scope organization`. An organization may intentionally deploy no lock: `sync --locked`, `sync --offline`, and `lock --check` then refuse with `v4.marketplace-lock-required` and name an online `agent-marketplace sync` or `agent-marketplace sync --check`, which verifies the organization's Marketplace requests transiently without writing `/etc`. Either way nothing is installed until the lock records the resource. One layer can have only one source that fetches from a given endpoint.
 
 Marketplace exclusions are exact `registry-slug/kind/name` entries under `resources.<source>.exclude`, and they win over inclusions: a group that includes a collection and excludes one of its members installs only the remaining members. The excluded resource is never fetched, so it cannot fail a sync.
 

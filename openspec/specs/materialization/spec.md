@@ -27,7 +27,7 @@ the relative repository harness target root.
 
 ### Requirement: Harness target roots remain within their authorized scope
 
-Agent Marketplace SHALL admit every selected harness target root before materialization writes below that root. Repository roots MUST remain within the repository scope. Explicit user-owned machine directory aliases MAY retain their existing relocation behavior. An explicitly configured absolute CODEX_HOME MAY relocate the Codex configuration partition without relocating its skills partition. Repository and HOME scope anchors MAY be filesystem aliases. A contained repository directory-root alias MAY be honored, but an escaping repository root, dangling or cyclic root alias, or non-directory root MUST be refused without changing the root object or any external target bytes, permissions or modification time. Refusal MUST carry `materialize.destination.error`. Independent safe non-Codex targets MAY continue; Codex destination preflight MUST refuse before destination mutation when any active partition root is unsafe.
+Agent Marketplace SHALL admit every selected harness target root before materialization writes below that root. Repository roots MUST remain within the repository scope. Explicit user-owned machine directory aliases MAY retain their existing relocation behavior. An explicitly configured absolute CODEX_HOME MAY relocate the Codex configuration partition without relocating its skills partition. An explicitly configured absolute CLAUDE_CONFIG_DIR MAY relocate the whole Claude Code machine root, including its machine MCP configuration file, inside or outside HOME. Repository and HOME scope anchors MAY be filesystem aliases. A contained repository directory-root alias MAY be honored, but an escaping repository root, dangling or cyclic root alias, or non-directory root MUST be refused without changing the root object or any external target bytes, permissions or modification time. Refusal MUST carry `materialize.destination.error`. Independent safe non-Codex targets MAY continue; Codex destination preflight MUST refuse before destination mutation when any active partition root is unsafe.
 
 #### Scenario: Unsafe harness root preserves external state
 
@@ -38,6 +38,16 @@ Agent Marketplace SHALL admit every selected harness target root before material
 
 - **WHEN** a repository or HOME is a filesystem alias and a harness root is a real directory or a contained directory alias
 - **THEN** materialization MUST install selected resources at their native paths in both supported materialization modes without replacing the aliases
+
+#### Scenario: Relocated Claude Code machine root is admitted
+
+- **WHEN** CLAUDE_CONFIG_DIR is an absolute path inside or outside HOME, whether the directory is missing or a real directory, and machine-scope selections include Claude Code resources
+- **THEN** materialization MUST admit that root, create it when missing, and install the selected resources under it in both supported materialization modes without an error diagnostic
+
+#### Scenario: Unsafe relocated Claude Code machine root is refused
+
+- **WHEN** CLAUDE_CONFIG_DIR names a dangling link, a cyclic link, or a non-directory object and machine-scope selections include Claude Code resources
+- **THEN** materialization MUST report `materialize.destination.error` and preserve that object, `~/.claude`, and `~/.claude.json` unchanged
 
 ### Requirement: Output-directory ancestors below a harness root are real directories
 
@@ -60,12 +70,17 @@ Agent Marketplace MUST reject unsafe symlinked or non-directory output-directory
 
 ### Requirement: Diagnostic root summaries remain available on boundary refusal
 
-Doctor and status native destination summaries MUST render a typed filesystem-boundary refusal as an unresolvable root while retaining independent target information. Diagnostic-only doctor MUST NOT read a non-directory root as aggregate payload or change it. Structural configuration failures such as relative CODEX_HOME MUST retain their existing hard-error behavior, and repair MUST still refuse unsafe destination roots before aggregate work.
+Doctor and status native destination summaries MUST render a typed filesystem-boundary refusal as an unresolvable root while retaining independent target information. Diagnostic-only doctor MUST NOT read a non-directory root as aggregate payload or change it. Structural configuration failures such as relative CODEX_HOME or relative CLAUDE_CONFIG_DIR MUST retain their existing hard-error behavior, and repair MUST still refuse unsafe destination roots before aggregate work.
 
 #### Scenario: Doctor continues diagnosing an unsafe native root
 
 - **WHEN** diagnostic-only doctor encounters a non-directory Codex root
 - **THEN** it MUST report an unresolvable root, retain other target information, and preserve the root's bytes and metadata without displaying its payload
+
+#### Scenario: Relative Claude configuration directory is a hard error in summaries
+
+- **WHEN** CLAUDE_CONFIG_DIR is a relative path and Claude Code is a configured harness target
+- **THEN** `status` and `doctor` MUST exit nonzero with an error naming `CLAUDE_CONFIG_DIR` as required to be absolute instead of rendering a Claude Code root summary
 
 ### Requirement: Cache-backed link publication retains destination authority
 
@@ -643,3 +658,72 @@ Codex destination preflight SHALL treat managed paths of different Codex partiti
 
 - **WHEN** CODEX_HOME relocates the Codex configuration partition to a spelling of the skills partition root that differs only in letter case
 - **THEN** both the skill and the configuration output MUST install without an error diagnostic
+
+### Requirement: Unused non-directory components do not block cleanup
+
+Materialization SHALL ignore an existing non-directory at a harness component
+location when that component has no desired artifacts. It MUST NOT block cleanup
+of independent output. A non-directory collision with desired component output
+MUST still refuse without replacing the existing file.
+
+#### Scenario: Unused non-directory components do not block cleanup
+
+- **WHEN** an unused harness component is a regular file and another component contains stale managed output
+- **THEN** synchronization MUST preserve the file's bytes and metadata and clean the independent stale output
+- **AND** desired output requiring the non-directory component MUST still refuse without replacing that file
+
+### Requirement: Unchanged skill cache preparation is a no-op
+
+During a real sync, Agent Marketplace MUST leave a cache-backed skill's compiled cache untouched when that cache already holds exactly the tree preparation would publish: the same compiled artifacts, support bytes and modes, and directories, and no other entries. Both trees MUST be read through captured handles. A difference, a missing or unreadable cache, a refused support source or a changed cache namespace MUST fall back to full preparation, keeping its existing staging, pruning, diagnostics and refusal behavior. This requirement does not add a cross-invocation cache, a trust marker or a new limit.
+
+#### Scenario: Unchanged skill cache support repeats without mutation
+
+- **WHEN** a real sync repeats for a cache-backed skill whose source support files and compiled cache are unchanged
+- **THEN** it MUST create no support stage and MUST preserve the identity, mode and modification time of every cached entry and of the installed link
+
+#### Scenario: Skill cache preparation reconciles support drift
+
+- **WHEN** source support bytes, modes or membership change, or the cache gains, loses or alters an entry or has one replaced by a link
+- **THEN** preparation MUST stage support again and leave the cache exactly matching the desired tree
+
+### Requirement: Claude Code resources produce no plugin manifest entries
+
+Installing Claude Code skills and subagents SHALL NOT write a
+`.claude-plugin/plugin.json` file under the Claude Code target root in
+either scope, and compiled Claude Code output SHALL NOT contain a generated
+`.claude-plugin/plugin.json`. Entries that earlier versions wrote there with
+the `_managed_by: agent-marketplace` marker SHALL be retired by `sync`, and
+entries without that marker SHALL be preserved. The Factory Droid target
+SHALL NOT claim a `.factory-plugin` directory under its target root.
+
+#### Scenario: Sync writes no Claude plugin manifest
+
+- **WHEN** `sync` installs a skill or a subagent for Claude Code in the
+  repository scope or the machine scope
+- **THEN** it MUST NOT create or modify `.claude-plugin/plugin.json` under
+  the Claude Code target root
+- **AND** `convert` output for Claude Code from a layout with skills or
+  subagents MUST NOT contain a generated `.claude-plugin/plugin.json`
+
+#### Scenario: Sync retires earlier managed manifest entries
+
+- **WHEN** `.claude/.claude-plugin/plugin.json` or
+  `~/.claude/.claude-plugin/plugin.json` contains entries carrying the
+  `_managed_by: agent-marketplace` marker and `sync` runs for that scope
+- **THEN** `sync` MUST remove those entries
+- **AND** entries without the marker and other members MUST remain unchanged
+- **AND** when only empty `skills` and `agents` members remain, `sync` MUST
+  delete the file and the then-empty `.claude-plugin` directory
+
+#### Scenario: Check reports pending manifest retirement without writing
+
+- **WHEN** managed entries remain in a Claude Code `.claude-plugin/plugin.json`
+  and `sync --check` runs
+- **THEN** it MUST report drift
+- **AND** it MUST NOT modify the file
+
+#### Scenario: Factory plugin directory is left alone
+
+- **WHEN** a Factory Droid target root contains a `.factory-plugin`
+  directory and `sync` runs
+- **THEN** the directory and its contents MUST remain unchanged

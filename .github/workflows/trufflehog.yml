@@ -20,14 +20,44 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: ${{ github.event_name == 'merge_group' && '0' || '1' }}
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Capture TruffleHog report
+        run: |
+          set -euo pipefail
+          shim="$RUNNER_TEMP/trufflehog-shim"
+          mkdir -p "$shim"
+          real_docker="$(command -v docker)"
+          log="$RUNNER_TEMP/trufflehog.log"
+          cat > "$shim/docker" <<EOF
+          #!/usr/bin/env bash
+          set -o pipefail
+          { "$real_docker" "\$@" 2>&1 1>&3 3>&- | tee -a "$log" >&2; } 3>&1
+          EOF
+          chmod +x "$shim/docker"
+          echo "$shim" >> "$GITHUB_PATH"
 
       - name: TruffleHog OSS
         id: trufflehog
-        uses: trufflesecurity/trufflehog@4dd8831c5f12599465d4d45c3c447b4018a34c85 # v3.97.9
+        uses: trufflesecurity/trufflehog@e76dff8a7e57d6df0c60ad8cbf5d5cba505a8fc9 # v3.99.2
         with:
           path: ./
           base: ${{ github.event.merge_group.base_sha }}
           head: ${{ github.event.merge_group.head_sha }}
           extra_args: --only-verified
+
+      - name: Require a non-empty scan
+        env:
+          BASE_SHA: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha || github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet "$BASE_SHA" "$HEAD_SHA"; then
+            exit 0
+          fi
+          bytes="$(grep 'finished scanning' "$RUNNER_TEMP/trufflehog.log" | sed -n 's/.*"bytes":[[:space:]]*\([0-9][0-9]*\).*/\1/p' | tail -n 1 || true)"
+          if [[ ! "$bytes" =~ ^[0-9]+$ ]] || (( 10#$bytes == 0 )); then
+            echo "::error::TruffleHog scanned 0 bytes for range $BASE_SHA..$HEAD_SHA, so no secrets were checked"
+            exit 1
+          fi

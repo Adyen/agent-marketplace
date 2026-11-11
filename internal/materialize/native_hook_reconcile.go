@@ -244,12 +244,20 @@ func nativeHookJSONLayout(key outputKey, repoRoot string) (harness.Destination, 
 	if matches != 1 {
 		return harness.Destination{}, ownedJSONFileSpec{}, fmt.Errorf("target %s has no unique native hook destination", key.target)
 	}
+	var registrationContainers []string
+	if registration, ok := targetmeta.NativePluginRegistration(targetmeta.Target(key.target), key.machineScope); ok &&
+		registration.Shape.JSONSettings() {
+		if registration.Path == artifactPath || !key.machineScope && artifactPath == "settings.json" {
+			registrationContainers = []string{"enabledPlugins", "extraKnownMarketplaces"}
+		}
+	}
 	return destination, ownedJSONFileSpec{
-		rel:                   rel,
-		container:             declaration.file.Member,
-		envelope:              declaration.file.Envelope,
-		hookShape:             declaration.aggregate.Shape,
-		legacyMarkedFlatHooks: declaration.aggregate.LegacyMarkedFlatHooks || declaration.file.LegacyMarkedFlatHooks,
+		rel:                       rel,
+		container:                 declaration.file.Member,
+		additionalKeyedContainers: registrationContainers,
+		envelope:                  declaration.file.Envelope,
+		hookShape:                 declaration.aggregate.Shape,
+		legacyMarkedFlatHooks:     declaration.aggregate.LegacyMarkedFlatHooks || declaration.file.LegacyMarkedFlatHooks,
 	}, nil
 }
 
@@ -314,7 +322,14 @@ func reconcileNativeHookJSON(ctx context.Context, report *Report, key outputKey,
 		}
 	}
 	file.rawValueDigest = options.rawValueDigest
-	return reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, []ownedJSONFileSpec{file}, work, options, dryRun)
+	files := []ownedJSONFileSpec{file}
+	if registration, ok := targetmeta.NativePluginRegistration(targetmeta.Target(key.target), key.machineScope); ok &&
+		registration.Shape.JSONSettings() && registration.Path != file.rel {
+		files = append(files, ownedJSONFileSpec{
+			rel: registration.Path, additionalKeyedContainers: []string{"enabledPlugins", "extraKnownMarketplaces"},
+		})
+	}
+	return reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, files, work, options, dryRun)
 }
 
 func nativeHookSharesAggregateRoute(key outputKey, repoRoot string) ([]harness.AggregateRoute, bool) {

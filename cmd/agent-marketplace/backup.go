@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
@@ -77,6 +78,14 @@ func runBackupCreate(ctx context.Context, out io.Writer, errOut io.Writer) error
 		return nil
 	}
 
+	for _, resource := range resolved.Resolved {
+		if resource.Source.IsMachineScope() && slices.Contains(resource.Harnesses, hcc.TargetClaude) {
+			if _, err := harness.ResolveDestinations(hcc.TargetClaude, true, ws.RepoRoot()); err != nil {
+				return err
+			}
+			break
+		}
+	}
 	managed := pipeline.CollectManagedPaths(resolved.Resolved)
 	codexPartitions, err := pipeline.CollectCodexBackupPartitions(resolved.Resolved)
 	if err != nil {
@@ -166,6 +175,10 @@ func runBackupRestore(out io.Writer, target string) error {
 	if !ok {
 		return fmt.Errorf("unknown target %q; valid targets: %s", target, strings.Join(validBackupTargets(), ", "))
 	}
+	mappedFiles, err := harness.NativeAggregateBackupFiles(t)
+	if err != nil {
+		return err
+	}
 
 	if info, err := os.Lstat(dstDir); err != nil {
 		if !os.IsNotExist(err) {
@@ -183,10 +196,6 @@ func runBackupRestore(out io.Writer, target string) error {
 		}
 	}
 
-	mappedFiles, err := harness.NativeAggregateBackupFiles(t)
-	if err != nil {
-		return err
-	}
 	timestamp, err := backup.Restore(t, dstDir, mappedFiles)
 	if err != nil {
 		return err

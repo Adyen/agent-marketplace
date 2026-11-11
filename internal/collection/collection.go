@@ -18,6 +18,14 @@ import (
 
 const collectionFileName = "COLLECTION.yaml"
 
+// MaxManifestBytes bounds a COLLECTION.yaml before it is parsed. yaml.v3
+// compares every mapping key with every later key, so parse time grows
+// quadratically with a single large mapping.
+const MaxManifestBytes = 256 << 10
+
+// ErrManifestTooLarge reports a collection manifest above MaxManifestBytes.
+var ErrManifestTooLarge = errors.New("collection manifest exceeds the 256 KiB parse ceiling")
+
 // Collection is a named bundle of agent resources discovered from a registry's
 // collections/ subdirectory. The file path encodes the type; apiVersion
 // and kind are not required and are silently ignored if present.
@@ -160,6 +168,9 @@ func parseCollectionFile(source fs.FS, name, path string) (*Collection, error) {
 		return nil, fmt.Errorf("read collection file %q: %w", path, err)
 	}
 
+	if len(data) > MaxManifestBytes {
+		return nil, fmt.Errorf("parse collection file %q: %w", path, ErrManifestTooLarge)
+	}
 	var col Collection
 	if err := yaml.Unmarshal(data, &col); err != nil {
 		return nil, fmt.Errorf("parse collection file %q: %w", path, err)

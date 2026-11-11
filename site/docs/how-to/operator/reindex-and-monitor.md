@@ -4,9 +4,11 @@ Refresh registry data on demand and watch the health of a hosted Marketplace.
 
 ## Before you reindex
 
-The worker refreshes every configured registry when it starts and again at each `refresh.interval` (30 minutes by default). Use `serve reindex` when you need a refresh now, for example after a configuration change.
+The worker observes each configured registry's remote ref when it starts and then at a stable point in each `refresh.interval` (30 minutes by default). It refreshes a registry only when the observed commit or the configuration changed, and in any case at least once every 24 hours through periodic reconciliation. Use `serve reindex` when you need a refresh now, for example after a configuration change.
 
-`serve reindex` opens the stores, queues one refresh job per registry, and waits for each job to finish. It processes a job in its own process unless a running worker leases it first, so it may clone the registry itself. Run it where the worker runs, with the same configuration file, credentials, network access, and Git. The API image does not contain Git. For example, in the repository's SQLite Compose setup:
+Editing the operator configuration file does not require a restart for worker-owned settings. With `management.mode: file`, the worker rereads the file about once per second and applies added, changed, and removed registries and indexing-policy changes. Each runs one refresh under the new settings. A new `refresh.interval` takes effect at each registry's next scheduled observation. An edit that leaves the file invalid is rejected and the last valid configuration keeps running. Changes to the listeners, storage, instance identity, revocations, and other startup-owned fields are never applied while the server runs; the worker logs them as `restart-required config drift detected` and they take effect only after a restart. The [operator configuration reference](../../reference/marketplace-operator-configuration.md#runtime-changes-without-a-restart) lists which fields apply at runtime. After upgrading to the release that introduced canonical indexing generations, every registry reindexes once under its new generation.
+
+`serve reindex` opens the stores, queues one refresh job per registry, and waits for each job to finish. Each requested refresh runs even when the registry's commit and configuration are unchanged; a request that matches an already-active refresh of the same commit and configuration coalesces onto it instead of queueing another job. It processes a job in its own process unless a running worker leases it first, so it may clone the registry itself. Run it where the worker runs, with the same configuration file, credentials, network access, and Git. The API image does not contain Git. For example, in the repository's SQLite Compose setup:
 
 ```bash
 docker compose exec app /app/agent-marketplace serve reindex --config /app/marketplace.yaml
@@ -72,13 +74,20 @@ agent_marketplace_active_requests{listener="operations"} 1
 
 `/readyz` returns `503` when the recorded configuration authority does not match `management.mode`, the stored revocations do not match the process's configuration, the metadata or blob store does not respond, or the instance record is missing from the metadata store. The [health and metrics reference](../../reference/marketplace-health-and-metrics.md) describes each check.
 
-Only processes that run the API (`--role api` or `--role all`) serve these endpoints. A `--role worker` process has no HTTP listener. Do not expose `/readyz` or `/metrics` through the public reverse proxy.
+API and all-role processes serve these endpoints as shown. A worker-only process opens only its operations listener and serves `/metrics` there; `/readyz` is `404`, and its public `listen` address is not opened. Do not expose `/readyz` or `/metrics` through the public reverse proxy.
 
 ## Watch for problems in the logs
 
 Read the log file or collect it with your container tooling. Alert or investigate when you see:
 
 - `serve failed` with reason `open stores`: the process could not open storage, which includes a failed database migration.
+- `config candidate applied` or `config candidate rejected`: an edited operator configuration file was adopted or refused. A rejection keeps the last valid configuration running; `reason` states why and repeats only for distinct content.
+- `restart-required config drift detected` or `restart-required config drift cleared`: the file's startup-owned fields (listeners, storage, `instance`, `revocations`, `management`, `admin`, `catalog_projection`, `installation_metrics`, `refresh_concurrency`) diverged from the running values, or matched them again. The `fields` attribute names what changed; restart every API and worker process to apply them.
+- `stale generation prevented publication`: a refresh started under settings a newer applied candidate superseded published nothing. The registry is refreshed under the current settings; investigate only if it recurs.
+- `source observation`: the worker probed a registry's remote ref. Its `outcome` is `changed`, `unchanged`, or `failed`; repeated `failed` outcomes mean the published index is preserved but possibly stale.
+- `refresh requested`: an observation or `serve reindex` queued a refresh. `trigger` is `source-change`, `config-change`, `reconciliation`, or `manual`, and `coalesced` is true when the request joined an already-active refresh instead of queueing another.
+- `source observation delayed by host budget` or `refresh delayed by host budget`: per-host upstream limits deferred the work; `overdue` shows how long it has been waiting.
+- `refresh finished`: one terminal refresh outcome with `registry`, `trigger`, `outcome` (`succeeded`, `failed`, or `superseded`), and `duration`. Source probe failures remain `source observation` records and are not refresh failures.
 - `reindex failed`, `process refresh job failed`, or `managed refresh attempt failed`: a registry refresh failed. The cause is in the `error` or `err` attribute; a managed attempt also carries `failure_code`, a stable classification that appears on the attempt in `/api/v1/admin/attempts`.
 - `license policy rejected resource` and other records whose `code` attribute starts with `marketplace.policy.`: ingestion policy rejected a resource. See [How to manage ingestion policy](./manage-ingestion-policy.md) for the finding codes.
 - `marketplace.ingest.duplicate-resource` in the `code` attribute: two paths in one registry publish the same kind and name; the first wins.
@@ -90,7 +99,7 @@ Read the log file or collect it with your container tooling. Alert or investigat
 
 ## Alert on metrics
 
-Scrape `/metrics` on the operations listener and alert against your service objectives: the request counter for error rate, the public latency histogram for user-facing latency (it also counts the `503` responses the authority and availability checks produce before routing), and the metadata pool counters for pool contention. The [health and metrics reference](../../reference/marketplace-health-and-metrics.md#metrics) lists every series and label. The server exposes no metrics for the worker, the job queue, or reindex runs, so watch those through the logs and your platform. The Helm chart can create a `ServiceMonitor` that scrapes the `operations` port (`serviceMonitor.enabled`).
+Scrape `/metrics` on every worker and API operations listener. Alert against your service objectives: API request errors and public latency, plus worker source observations, refresh failures, host-budget delays, configuration rejection, and restart-required drift. An increasing `unchanged` observation counter with a stable nonzero last-index timestamp is healthy; a `0` last-index timestamp means the registry has been observed but not yet indexed successfully. Rising host-budget delays indicate admission limits rather than source failure. A recent successful observation with an old last-index timestamp can indicate a failed or delayed refresh. With multiple workers, aggregate per-registry timestamps using `max by (registry)`. The [health and metrics reference](../../reference/marketplace-health-and-metrics.md#metrics) lists every series and label. The Helm chart's ServiceMonitor scrapes API and worker operations Services when `serviceMonitor.enabled` is set.
 
 ## Related documentation
 

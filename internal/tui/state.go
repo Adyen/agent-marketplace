@@ -77,11 +77,15 @@ type row struct {
 
 	// Per-scope enablement: which config file(s) enable this skill.
 	// A skill may be enabled in multiple scopes simultaneously.
-	EnabledGlobal   bool
-	EnabledProject  bool
-	EnabledLocal    bool
-	ExcludedLocally bool
-	ExcludedByUser  bool
+	EnabledGlobal         bool
+	EnabledProject        bool
+	EnabledLocal          bool
+	ExcludedLocally       bool
+	ExcludedByUser        bool
+	PluginSelectedGlobal  bool
+	PluginSelectedProject bool
+	PluginSelectedLocal   bool
+	PluginMemberExcluded  bool
 
 	// Source registry of the skill. For available (non-enabled) skills, set
 	// to the first registry whose catalog contained the skill, in cfg order.
@@ -478,6 +482,10 @@ type Model struct {
 
 	// sessionSpan is the TUI session span; it is ended when Run returns.
 	sessionSpan telemetry.Span
+
+	// pendingInventory is the latest accepted final snapshot, recorded once
+	// when the session ends rather than per snapshot.
+	pendingInventory *pendingInventory
 
 	// keys is the centralized keymap; the single source of truth for all
 	// key bindings and their help text. Both the footer hint line and the

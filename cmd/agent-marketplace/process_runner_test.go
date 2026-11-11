@@ -160,7 +160,7 @@ func TestCommandProcessCancellationAndDescendants(t *testing.T) {
 }
 
 func TestCommandProcessConcurrentIsolation(t *testing.T) {
-	for _, key := range []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_CONFIG_PARAMETERS", "SSH_AUTH_SOCK", "HTTPS_PROXY", "PATH"} {
+	for _, key := range []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_CONFIG_PARAMETERS", "SSH_AUTH_SOCK", "HTTPS_PROXY", "PATH", "CLAUDE_CONFIG_DIR"} {
 		t.Setenv(key, "parent-only-sentinel")
 	}
 	env := os.Environ()
@@ -360,6 +360,9 @@ func commandIsolationFixture(t *testing.T) {
 	state["cwd"] = cwd
 	runGit(t, cwd, "init", "--initial-branch=main")
 	state["cachedRoot"] = config.FindRepoRoot()
+	if os.Getenv("CLAUDE_CONFIG_DIR") != "" {
+		t.Fatal("child inherited CLAUDE_CONFIG_DIR")
+	}
 	if state["cachedRoot"] != cwd {
 		t.Fatalf("wrong initial cached root: %q", state["cachedRoot"])
 	}

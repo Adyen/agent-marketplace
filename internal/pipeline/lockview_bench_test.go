@@ -20,7 +20,7 @@ func BenchmarkReadOnlyGitDocumentMatches(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if !readOnlyGitDocumentMatches(doc, entries) {
+		if !readOnlyGitDocumentMatches(doc, entries, nil) {
 			b.Fatal("matching roots rejected")
 		}
 	}

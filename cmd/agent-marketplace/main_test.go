@@ -113,6 +113,9 @@ func TestMain(m *testing.M) {
 	if err := os.Setenv("CODEX_HOME", ""); err != nil {
 		fail("failed to isolate CODEX_HOME in cmd tests", err)
 	}
+	if err := os.Setenv("CLAUDE_CONFIG_DIR", ""); err != nil {
+		fail("failed to isolate CLAUDE_CONFIG_DIR in cmd tests", err)
+	}
 
 	code := m.Run()
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))

@@ -103,6 +103,7 @@ func NewModel(repoRoot, homeDir string, options ...Option) Model {
 		help:                       newHelpModel(theme),
 		isDark:                     isDark,
 		theme:                      theme,
+		pendingInventory:           newPendingInventory(),
 	}
 	for _, option := range options {
 		option(&m)
@@ -373,12 +374,7 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	var previousDetail row
 	hadPreviousDetail := false
 	if m.pane == paneDetail && m.detailKey != "" {
-		for _, r := range m.rows {
-			if rowKey(r) == m.detailKey {
-				previousDetail, hadPreviousDetail = r, true
-				break
-			}
-		}
+		previousDetail, hadPreviousDetail = m.rowByKey(m.detailKey)
 	}
 	m.authoritativeRows = msg.rows
 	m.provisionalRows = nil
@@ -400,9 +396,7 @@ func (m *Model) applySnapshotData(msg snapshotLoadedMsg) {
 	m.clampListOffset()
 	m.rebuildOpenBundle(previousDetail, hadPreviousDetail)
 	if msg.stage == snapshotStageFinal {
-		if msg.inventoryResult != nil {
-			pipeline.RecordResolvedInventory(m.ctx, *msg.inventoryResult)
-		}
+		m.pendingInventory.set(msg.inventoryResult)
 		recordConfigSnapshotSpans(m.ctx, msg)
 	}
 }
@@ -566,6 +560,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updateCmd := m.finishUpdateReload(msg.generation, snapshotAcceptanceError(msg))
 		syncCmd := m.finishSyncReload(msg.generation, snapshotAcceptanceError(msg))
 		if msg.mergedCfg == nil && len(m.errs) > 0 {
+			m.pendingInventory.set(nil)
 			m.provisionalRows = nil
 			m.refreshing = false
 			m.clearMarketplaceDiscovery(true)
@@ -592,6 +587,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updateCmd := m.finishUpdateReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg))
 		syncCmd := m.finishSyncReload(msg.generation, snapshotAcceptanceError(msg.snapshotLoadedMsg))
 		if msg.mergedCfg == nil && len(m.errs) > 0 {
+			m.pendingInventory.set(nil)
 			m.provisionalRows = nil
 			m.clearMarketplaceDiscovery(true)
 			return m, tea.Batch(m.finishMarketplaceInstallReload(msg.generation, errors.Join(m.errs...)), updateCmd, syncCmd)
@@ -621,6 +617,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updateCmd := m.finishUpdateReload(snapshot.generation, snapshotAcceptanceError(snapshot))
 		syncCmd := m.finishSyncReload(snapshot.generation, snapshotAcceptanceError(snapshot))
 		if snapshot.mergedCfg == nil && len(m.errs) > 0 {
+			m.pendingInventory.set(nil)
 			m.provisionalRows = nil
 			m.clearMarketplaceDiscovery(true)
 			return m, tea.Batch(m.finishMarketplaceInstallReload(snapshot.generation, errors.Join(m.errs...)), updateCmd, syncCmd)
@@ -1543,13 +1540,7 @@ func (m *Model) rebuildOpenBundle(previous row, hadPrevious bool) {
 		return
 	}
 	var current row
-	found := false
-	for _, r := range m.rows {
-		if rowKey(r) == m.detailKey {
-			current, found = r, true
-			break
-		}
-	}
+	current, found := m.rowByKey(m.detailKey)
 	if !found && hadPrevious {
 		identity := registryIdentityKey(previous.RegistryURL, previous.RegistryRef, previous.RegistryPath)
 		matches := 0
@@ -1702,14 +1693,10 @@ func (m Model) applyRowSpaceEligibility(r row) (tea.Model, tea.Cmd) {
 
 func (m Model) handleDetailKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, m.keys.Space) {
-		for _, r := range m.rows {
-			if rowKey(r) != m.detailKey {
-				continue
-			}
+		if r, found := m.rowByKey(m.detailKey); found {
 			if r.UnavailableReason != "" || marketplaceDiscoveryInstallable(r) {
 				return m.applyRowSpaceEligibility(r)
 			}
-			break
 		}
 	}
 	switch {
@@ -1809,12 +1796,10 @@ func (m Model) queueBundlePreview(keepScroll bool) (tea.Model, tea.Cmd) {
 	if m.bundle == nil || m.detailSelectedPath == "" {
 		return m, nil
 	}
-	for _, r := range m.rows {
-		if rowKey(r) == m.detailKey {
-			generation := m.beginRequest(requestDetail)
-			m.detailViewport.SetContent("Loading…")
-			return m, loadBundleDetailContent(ctxOrBackground(m.ctx), m.currentTheme(), m.bundle, m.detailSelectedPath, generation, m.previewWidth(), keepScroll)
-		}
+	if _, found := m.rowByKey(m.detailKey); found {
+		generation := m.beginRequest(requestDetail)
+		m.detailViewport.SetContent("Loading…")
+		return m, loadBundleDetailContent(ctxOrBackground(m.ctx), m.currentTheme(), m.bundle, m.detailSelectedPath, generation, m.previewWidth(), keepScroll)
 	}
 	return m, nil
 }
@@ -1888,20 +1873,15 @@ func (m *Model) rerenderDetailAtWidth(width int) tea.Cmd {
 	if m.detailKey == "" {
 		return nil
 	}
-	for _, r := range m.rows {
-		if rowKey(r) != m.detailKey {
-			continue
-		}
-		if r.Artifact.Path == "" && (m.bundle == nil || m.bundle.inspection == nil) {
-			continue
-		}
-		generation := m.beginRequest(requestDetail)
-		if m.detailLegacyRender || m.bundle == nil || m.detailSelectedPath == "" {
-			return loadDetailContent(m.currentTheme(), r, generation, width, true)
-		}
-		return loadBundleDetailContent(ctxOrBackground(m.ctx), m.currentTheme(), m.bundle, m.detailSelectedPath, generation, previewWidthFor(width), true)
+	r, found := m.rowByKey(m.detailKey)
+	if !found || r.Artifact.Path == "" && (m.bundle == nil || m.bundle.inspection == nil) {
+		return nil
 	}
-	return nil
+	generation := m.beginRequest(requestDetail)
+	if m.detailLegacyRender || m.bundle == nil || m.detailSelectedPath == "" {
+		return loadDetailContent(m.currentTheme(), r, generation, width, true)
+	}
+	return loadBundleDetailContent(ctxOrBackground(m.ctx), m.currentTheme(), m.bundle, m.detailSelectedPath, generation, previewWidthFor(width), true)
 }
 
 func (m Model) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -2315,6 +2295,14 @@ func (m Model) listVisibleHeight() int {
 }
 
 func Run(ctx context.Context, repoRoot, homeDir string, options ...Option) error {
+	return runSession(ctx, repoRoot, homeDir, func(model tea.Model) error {
+		return runTUIModel(model, defaultTUIProgramOptions()...)
+	}, options...)
+}
+
+// runSession owns the session span and final inventory flush. Defers run in
+// reverse order, so the flush records before the session span ends.
+func runSession(ctx context.Context, repoRoot, homeDir string, runModel func(tea.Model) error, options ...Option) error {
 	initRenderer()
 
 	model := NewModel(repoRoot, homeDir, options...)
@@ -2324,12 +2312,15 @@ func Run(ctx context.Context, repoRoot, homeDir string, options ...Option) error
 		model.ctx, model.sessionSpan = tel.StartSpan(model.ctx, "agent_marketplace.tui.session", nil)
 	}
 	defer model.sessionSpan.End()
+	recordCtx := model.ctx
+	model.ctx = pipeline.WithoutInventory(model.ctx)
+	defer model.pendingInventory.flush(recordCtx)
 
 	seedTerminalSize(&model, os.Stdout)
 	restoreLogs := logging.BeginTerminalSession()
 	defer restoreLogs()
 
-	return runTUIModel(model, defaultTUIProgramOptions()...)
+	return runModel(model)
 }
 
 func defaultTUIProgramOptions() []tea.ProgramOption {

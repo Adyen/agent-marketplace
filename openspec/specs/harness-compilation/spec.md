@@ -292,3 +292,37 @@ Claude documents a subagent's `tools` and `disallowedTools` as either a YAML lis
 - **AND** conversion of the `tools` cases to Factory and Gemini MUST keep reporting `subagent.factory.tool-unknown` and `subagent.gemini.tool-unknown`, as earlier versions did
 - **AND** a Devin source layout subagent with `allowed-tools: [read]` and `tools: Read, Bash(git diff` MUST still be ingested, and `tools: ""` converted from Claude to Cursor MUST still report `subagent.cursor.tool-unknown`
 - **AND** `sync` MUST install such a subagent next to a valid one, and `sync --check` MUST succeed afterwards
+
+### Requirement: YAML frontmatter stays within the parse ceiling
+
+Resource ingestion MUST refuse a YAML frontmatter block larger than 64 KiB before parsing it, reporting the stable diagnostic `ingest.frontmatter.too-large` for that resource. The block is measured between its delimiters. The refusal applies to skills, commands, subagents and rules, and the rule loader's lenient fallback MUST NOT accept a block the ceiling refused. Other resources in the same source MUST still load. Frontmatter at or below the ceiling MUST parse as before. The ceiling has no override.
+
+#### Scenario: Oversized YAML frontmatter is refused before parsing
+
+- **WHEN** a skill, command, subagent or rule has a YAML frontmatter block one byte above 64 KiB, alongside a valid sibling skill
+- **THEN** that resource MUST fail with `ingest.frontmatter.too-large`, the sibling MUST still load, and a block of exactly 64 KiB MUST still load
+
+### Requirement: A Factory plugin root skill is not dropped silently
+
+Factory Droid plugins load skills only from `skills/<name>/SKILL.md`. When a
+Factory plugin-form source (one with `.factory-plugin/plugin.json`) has a
+`SKILL.md` at its root, ingestion SHALL load no skill from that file and
+SHALL emit a warning diagnostic with code `ingest.factory.root-skill-ignored`
+that names the file and states that Factory plugins load skills only from
+`skills/<name>/`.
+
+#### Scenario: Root skill without a skills tree warns
+
+- **WHEN** a Factory plugin-form source has a root `SKILL.md` and no
+  `skills/` directory
+- **THEN** ingestion MUST load no skill from the root `SKILL.md`
+- **AND** it MUST emit an `ingest.factory.root-skill-ignored` warning naming
+  the file
+
+#### Scenario: Root skill beside a skills tree warns and keeps the tree
+
+- **WHEN** a Factory plugin-form source has a root `SKILL.md` and skills
+  under `skills/<name>/`
+- **THEN** ingestion MUST load every skill under `skills/`
+- **AND** it MUST emit an `ingest.factory.root-skill-ignored` warning naming
+  the root file and load no skill from it

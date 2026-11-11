@@ -33,7 +33,7 @@ The worker and the API are the same `agent-marketplace serve` program. The `--ro
 ## From registry to your harness
 
 1. The operator lists the approved registries. With `management.mode: file` they are in the operator configuration file; with `database` mode an administrator manages them in the admin panel.
-2. The worker clones each registry at its configured ref, on a schedule (every 30 minutes by default) or when an operator runs `serve reindex`.
+2. The worker resolves each registry's configured ref on a schedule (every 30 minutes by default) and clones it only when the commit or configuration changed, with a full reindex at least every 24 hours or whenever an operator runs `serve reindex`.
 3. The worker reads the resources, runs the analyzers and policy checks, computes a content digest for each resource, and records the result as an assessment. In `mirror` mode it also stores an artifact, a compressed archive of the resource, under its digest.
 4. The API publishes the catalog. Each revision is identified by its content digest, and its content stays unchanged after publication. A repaired archive can update the served archive digest without changing that identity; the previous artifact remains downloadable.
 5. You run `agent-marketplace search` and `install`. The CLI verifies the revision, records its exact digest so later syncs install the same content, and writes the files into your [harness](../glossary.md#harness) folders.
@@ -49,7 +49,7 @@ Back up metadata and blobs together. If you restore one without the other, the m
 
 ## Operations listener
 
-The server opens a second, private listener for `/readyz` (is the server ready to serve?) and `/metrics` (Prometheus data). Do not publish it through the reverse proxy. The public listener answers `404` for both paths.
+The server opens a second, private listener for `/readyz` (is the server ready to serve?) and `/metrics` (Prometheus data). A worker-only process opens that listener for `/metrics` only. Do not publish it through the reverse proxy. The public listener answers `404` for both paths.
 
 ## Authentication
 

@@ -1,0 +1,20 @@
+# Catalog data for pkg/harness-compilation/pluginpolicy/catalogs/claude.yaml.
+schema: 1
+harness: claude
+evidence:
+  checked: "2026-11-02"
+  refs:
+    - https://code.claude.com/docs/en/plugin-marketplaces
+    - https://code.claude.com/docs/en/plugins/loading
+    - https://code.claude.com/docs/en/settings
+accepts: [claude-plugin, agent-plugin]
+surfaces:
+  plugin:
+    subagent:
+      permissionMode: {block-member: true, code: plugin.member.restriction-unsupported}
+delivery:
+  decompose: {status: verified}
+  native:
+    user: {status: verified, format: claude-plugin, probe: claude-native-plugin, refresh: restart-required}
+    repo: {status: unverified}
+root_token: plugin_root

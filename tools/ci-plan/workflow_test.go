@@ -70,6 +70,27 @@ func stepMap(t *testing.T, step any) map[string]any {
 	return m
 }
 
+func TestBrowserGatesPinSupportedRunner(t *testing.T) {
+	for _, tc := range []struct{ file, job string }{
+		{"web.yml", "check"},
+		{"ci.yml", "web"},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			job := getMap(t, getMap(t, loadWorkflow(t, tc.file), "jobs"), tc.job)
+			if got := job["runs-on"]; got != "ubuntu-24.04" {
+				t.Errorf("browser runner = %v, want ubuntu-24.04 supported by Playwright", got)
+			}
+		})
+	}
+}
+
+func TestTUIQAMatrixBudget(t *testing.T) {
+	job := getMap(t, getMap(t, loadCIWorkflow(t), "jobs"), "tui-qa")
+	if got := job["timeout-minutes"]; got != 20 {
+		t.Errorf("TUI QA job budget = %v, want 20 minutes for cold build, all journeys and cache cleanup", got)
+	}
+}
+
 func TestTUIQADriverJob(t *testing.T) {
 	doc := loadCIWorkflow(t)
 
@@ -394,20 +415,22 @@ func TestHarnessImageAuditUsesRunnerStepDirectory(t *testing.T) {
 		t.Fatalf("model audit condition = %v", got)
 	}
 	permissions := getMap(t, job, "permissions")
-	if len(permissions) != 1 || permissions["contents"] != "read" {
-		t.Fatalf("model audit permissions = %v, want only contents: read", permissions)
+	if len(permissions) != 2 || permissions["contents"] != "read" || permissions["packages"] != "read" {
+		t.Fatalf("model audit permissions = %v, want only contents: read and packages: read", permissions)
 	}
 	if _, ok := job["env"]; ok {
 		t.Fatal("model audit job-level env cannot use the runner context")
 	}
 
 	steps := getSlice(t, job, "steps")
-	if len(steps) != 7 {
-		t.Fatalf("model audit steps = %d, want checkout, setup, and five named steps", len(steps))
+	if len(steps) != 9 {
+		t.Fatalf("model audit steps = %d, want checkout, setup, and seven named steps", len(steps))
 	}
 	wantNames := []string{
 		"Prepare model audit diagnostics",
 		"Verify offline audit contracts",
+		"Log in to GitHub Container Registry",
+		"Capture Cursor CLI model inventory",
 		"Audit public model evidence without modifying catalogs",
 		"Publish model drift summary",
 		"Upload model audit evidence",
@@ -443,7 +466,8 @@ func TestHarnessImageAuditUsesRunnerStepDirectory(t *testing.T) {
 	if got := prepare["if"]; got != "always()" {
 		t.Fatalf("prepare model audit diagnostics if = %v, want %q", got, "always()")
 	}
-	if got := prepare["run"]; got != `echo "AUDIT_REPORT_DIR=$RUNNER_TEMP/model-catalog-audit" >> "$GITHUB_ENV"` {
+	if got := strings.TrimSpace(prepare["run"].(string)); got != `mkdir -p "$RUNNER_TEMP/model-catalog-audit"
+echo "AUDIT_REPORT_DIR=$RUNNER_TEMP/model-catalog-audit" >> "$GITHUB_ENV"` {
 		t.Fatalf("prepare model audit diagnostics run = %v", got)
 	}
 	if _, ok := prepare["env"]; ok {
@@ -453,8 +477,7 @@ func TestHarnessImageAuditUsesRunnerStepDirectory(t *testing.T) {
 		t.Fatalf("offline audit contract command = %v", got)
 	}
 	if got := strings.TrimSpace(stepsByName["Audit public model evidence without modifying catalogs"]["run"].(string)); got != `set -euo pipefail
-mkdir -p "$AUDIT_REPORT_DIR"
-go run ./tools/model-catalog-audit check > "$AUDIT_REPORT_DIR/report.json" 2> "$AUDIT_REPORT_DIR/audit.log"` {
+go run ./tools/model-catalog-audit check -cursor-models "$AUDIT_REPORT_DIR/cursor-cli-models.txt" > "$AUDIT_REPORT_DIR/report.json" 2> "$AUDIT_REPORT_DIR/audit.log"` {
 		t.Fatalf("model audit command changed: %s", got)
 	}
 	if got := strings.TrimSpace(stepsByName["Publish model drift summary"]["run"].(string)); got != `set -euo pipefail

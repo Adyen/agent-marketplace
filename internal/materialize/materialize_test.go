@@ -1013,8 +1013,8 @@ func TestRunClaudeRepoScopeSymlinksSkillToCache(t *testing.T) {
 
 	linkPath := filepath.Join(repoRoot, ".claude", "skills", "claude-repo")
 	assertSymlinkTargetUnderCache(t, linkPath, homeDir)
-	if _, err := os.Stat(filepath.Join(repoRoot, ".claude", ".claude-plugin", "plugin.json")); err != nil {
-		t.Fatalf("expected non-skill Claude artifacts to remain materialized: %v", err)
+	if _, err := os.Lstat(filepath.Join(repoRoot, ".claude", ".claude-plugin", "plugin.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected no Claude plugin manifest, found it: %v", err)
 	}
 }
 
@@ -2052,9 +2052,8 @@ func TestRunSubagentMergesIntoExistingFactoryPluginManifest(t *testing.T) {
 		t.Fatalf("expected no diagnostics, got %v", report.Diags)
 	}
 
-	// Factory discovers droids from the filesystem, not plugin.json arrays.
-	// The existing plugin.json is preserved (user entries kept, stale managed
-	// entries pruned), but no new managed entries are added.
+	// The Factory layout no longer claims .factory-plugin: an existing
+	// directory under the target root is left unchanged, marker or not.
 	pluginPath := filepath.Join(pluginDir, "plugin.json")
 	content, err := os.ReadFile(pluginPath)
 	if err != nil {
@@ -2064,16 +2063,11 @@ func TestRunSubagentMergesIntoExistingFactoryPluginManifest(t *testing.T) {
 	if !strings.Contains(got, `"user-droid"`) {
 		t.Fatalf("expected user droid entry to be preserved, got %s", got)
 	}
-	if strings.Contains(got, `"stale"`) {
-		t.Fatalf("expected stale managed entry to be pruned, got %s", got)
+	if !strings.Contains(got, `"stale"`) {
+		t.Fatalf("expected the retired .factory-plugin directory to be left unchanged, got %s", got)
 	}
-	// Factory discovers droids from the filesystem, not plugin.json arrays.
-	// The compiled subagent must NOT be inserted as a new managed entry.
 	if strings.Contains(got, `"worker-generic"`) {
 		t.Fatalf("expected worker-generic to NOT be added to plugin.json, got %s", got)
-	}
-	if strings.Contains(got, `"_managed_by"`) {
-		t.Fatalf("expected no _managed_by records in plugin.json, got %s", got)
 	}
 }
 
@@ -2089,7 +2083,7 @@ func TestStripManagedEntriesFromFile_ArrayContainer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cleaned, removed, err := stripManagedEntriesFromFile(path, false)
+	cleaned, removed, err := stripManagedEntriesFromFile(path, false, false, nil)
 	if err != nil {
 		t.Fatalf("stripManagedEntriesFromFile: %v", err)
 	}
@@ -4047,7 +4041,7 @@ func TestStripManagedEntriesFromFileSkipsFilesWithoutMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cleaned, removed, err := stripManagedEntriesFromFile(path, false)
+	cleaned, removed, err := stripManagedEntriesFromFile(path, false, false, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -4066,7 +4060,7 @@ func TestStripManagedEntriesFromFileInvalidJson(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, removed, err := stripManagedEntriesFromFile(path, false)
+	_, removed, err := stripManagedEntriesFromFile(path, false, false, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}

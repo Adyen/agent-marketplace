@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref } from 'vue'
+import { computed } from 'vue'
+
+import { useClipboard } from '../../../shared/composables/useClipboard'
 
 const props = withDefaults(
   defineProps<{ command: string; copyable?: boolean; highlight?: string }>(),
@@ -17,34 +19,7 @@ const commandParts = computed(() => {
   }
 })
 
-type State = 'idle' | 'copied' | 'failed'
-const COPIED_HOLD_MS = 1500
-
-const state = ref<State>('idle')
-let reset: ReturnType<typeof setTimeout> | undefined
-let unmounted = false
-
-const announcement = computed(
-  () => ({ idle: '', copied: 'Command copied', failed: 'Copy failed' })[state.value],
-)
-
-async function copy(command: string) {
-  let next: State = 'copied'
-  try {
-    await navigator.clipboard.writeText(command)
-  } catch {
-    next = 'failed'
-  }
-  if (unmounted) return
-  clearTimeout(reset)
-  state.value = next
-  reset = setTimeout(() => (state.value = 'idle'), COPIED_HOLD_MS)
-}
-
-onUnmounted(() => {
-  unmounted = true
-  clearTimeout(reset)
-})
+const { announcement, state, writeText } = useClipboard('Command copied')
 </script>
 
 <template>
@@ -63,7 +38,7 @@ onUnmounted(() => {
       :class="{ 'is-done': state === 'copied' }"
       :data-roll-active="state === 'copied'"
       aria-label="Copy command"
-      @click="copy(command)"
+      @click="writeText(command)"
     >
       <span class="am-roll-label copy__label">
         <span class="am-roll-face copy__face">{{ state === 'failed' ? '⌘C' : 'Copy' }}</span>

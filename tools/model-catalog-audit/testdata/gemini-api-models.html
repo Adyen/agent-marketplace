@@ -1,0 +1,660 @@
+<!doctype html><html lang="en-US" dir="ltr"><head><base href="https://aistudio.google.com/"><link rel="preconnect" href="//www.gstatic.com"><meta name="referrer" content="origin"><link rel="canonical" href="https://aistudio.google.com/docs/models"><meta property="og:type" content="website"><meta property="og:title" content="Google AI Studio"><meta property="og:description" content="The fastest path from prompt to production with Gemini"><meta property="og:image" content="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="628"><meta property="og:image:type" content="image/png"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="application-name" content="AI Studio"><meta name="apple-mobile-web-app-title" content="AI Studio"><meta name="apple-mobile-web-app-status-bar-style" content="default"><meta name="theme-color" content="#000"><meta name="msapplication-tap-highlight" content="no"><link rel="preconnect" href="//fonts.googleapis.com"><link rel="preconnect" href="//fonts.gstatic.com"><link rel="preconnect" href="//www.gstatic.com"><link rel="preconnect" href="//alkalimakersuite-pa.clients6.google.com"><link rel="prefetch" href="//apis.google.com/js/api.js"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:opsz,wght@6..144,1..1000&amp;display=swap" nonce="eWOYkn1KGpQ3g4Qb63tqLA"><link rel="stylesheet" href="//fonts.googleapis.com/css2?family=Inter:wght@400;500&amp;family=Inter+Tight:wght@300;500;600&amp;display=swap" nonce="eWOYkn1KGpQ3g4Qb63tqLA"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Google+Sans+Text:ital,wght@0,400;0,500;0,600;1,400;1,500&amp;display=swap" nonce="eWOYkn1KGpQ3g4Qb63tqLA"><link rel="manifest" crossorigin="use-credentials" href="_/MakerSuite/manifest.json"><link rel="home" href="/prompts/new_chat?utm_source=pwa&amp;utm_medium=homescreen&amp;lfhs=2"><link rel="msapplication-starturl" href="/prompts/new_chat?utm_source=pwa&amp;utm_medium=homescreen&amp;lfhs=2"><link rel="icon" href="https://www.gstatic.com/images/branding/productlogos/ai_studio/v1/web-32dp/logo_ai_studio_color_1x_web_32dp.png" sizes="32x32"><link rel="apple-touch-icon-precomposed" href="https://www.gstatic.com/images/branding/productlogos/ai_studio/v1/web-32dp/logo_ai_studio_color_1x_web_32dp.png" sizes="32x32"><link rel="msapplication-square32x32logo" href="https://www.gstatic.com/images/branding/productlogos/ai_studio/v1/web-32dp/logo_ai_studio_color_1x_web_32dp.png" sizes="32x32"><link rel="icon" href="https://www.gstatic.com/images/branding/productlogos/ai_studio/v1/web-64dp/logo_ai_studio_color_1x_web_64dp.png" sizes="64x64"><link rel="apple-touch-icon-precomposed" href="https://www.gstatic.com/images/branding/productlogos/ai_studio/v1/web-64dp/logo_ai_studio_color_1x_web_64dp.png" sizes="64x64"><link rel="msapplication-square64x64logo" href="https://www.gstatic.com/images/branding/productlogos/ai_studio/v1/web-64dp/logo_ai_studio_color_1x_web_64dp.png" sizes="64x64"><link rel="icon" href="https://www.gstatic.com/images/branding/productlogos/ai_studio/v1/web-96dp/logo_ai_studio_color_1x_web_96dp.png" sizes="96x96"><link rel="apple-touch-icon-precomposed" href="https://www.gstatic.com/images/branding/productlogos/ai_studio/v1/web-96dp/logo_ai_studio_color_1x_web_96dp.png" sizes="96x96"><link rel="msapplication-square96x96logo" href="https://www.gstatic.com/images/branding/productlogos/ai_studio/v1/web-96dp/logo_ai_studio_color_1x_web_96dp.png" sizes="96x96"><link rel="icon" href="https://www.gstatic.com/images/branding/productlogos/ai_studio/v1/web-96dp/logo_ai_studio_color_2x_web_96dp.png" sizes="192x192"><link rel="apple-touch-icon-precomposed" href="https://www.gstatic.com/images/branding/productlogos/ai_studio/v1/web-96dp/logo_ai_studio_color_2x_web_96dp.png" sizes="192x192"><link rel="msapplication-square192x192logo" href="https://www.gstatic.com/images/branding/productlogos/ai_studio/v1/web-96dp/logo_ai_studio_color_2x_web_96dp.png" sizes="192x192"><link rel="apple-touch-icon-precomposed" href="https://www.gstatic.com/images/branding/productlogos/ai_studio/v1/web-96dp/logo_ai_studio_color_2x_web_96dp.png" sizes="192x192"><link rel="msapplication-square192x192logo" href="https://www.gstatic.com/images/branding/productlogos/ai_studio/v1/web-96dp/logo_ai_studio_color_2x_web_96dp.png" sizes="192x192"><link rel="icon" href="https://www.gstatic.com/images/branding/productlogos/ai_studio/v1/web-512dp/logo_ai_studio_color_1x_web_512dp.png" sizes="512x512"><link rel="apple-touch-icon-precomposed" href="https://www.gstatic.com/images/branding/productlogos/ai_studio/v1/web-512dp/logo_ai_studio_color_1x_web_512dp.png" sizes="512x512"><link rel="msapplication-square512x512logo" href="https://www.gstatic.com/images/branding/productlogos/ai_studio/v1/web-512dp/logo_ai_studio_color_1x_web_512dp.png" sizes="512x512"><link rel="apple-touch-icon-precomposed" href="https://www.gstatic.com/images/branding/productlogos/ai_studio/v1/web-512dp/logo_ai_studio_color_1x_web_512dp.png" sizes="512x512"><link rel="msapplication-square512x512logo" href="https://www.gstatic.com/images/branding/productlogos/ai_studio/v1/web-512dp/logo_ai_studio_color_1x_web_512dp.png" sizes="512x512"><link rel="preload" href="https://www.gstatic.com/_/mss/boq-makersuite/_/js/k=boq-makersuite.MakerSuite.en_US.0pfjff4lsBQ.2018.O/am=AVEAAAaH/d=1/excm=_b/ed=1/dg=0/wt=2/ujg=1/rs=AMOXD28U3flIxI6KafKh7N7KQVEGmxa-RQ/dti=1/m=_b" as="script" nonce="cyn0rlF_aXfwrEnrgCQZWg"><link rel="preload" href="https://www.gstatic.com/_/mss/boq-makersuite/_/js/k=boq-makersuite.MakerSuite.en_US.0pfjff4lsBQ.2018.O/ck=boq-makersuite.MakerSuite.MegG0FW_7W0.L.X.O/am=AVEAAAaH/d=1/exm=_b/excm=_b/ed=1/wt=2/ujg=1/rs=AMOXD29IEMYB1yBZrciwGwzhOHv8dr6bAA/dti=1/m=smxHue" as="script" nonce="cyn0rlF_aXfwrEnrgCQZWg"><script type="application/json" id="4aa489fd-27a5-4f44-87c3-2b35d77b9999" nonce="cyn0rlF_aXfwrEnrgCQZWg">{"AfY8Hf":false,"CmfRSc":"0","CoJqbf":"https://alkalimakersuite-pa.clients6.google.com","DpimGf":false,"Dvqjfd":"","EBvNTe":"823511539352-ojaretejk1s95sdvkic0te923pt7knpu.apps.googleusercontent.com","EP1ykd":["/.well-known/*","/_/*","/accounts/*","/app","/app/*","/assets/*","/audio/*","/images/*","/music/*","/public/*","/templates/*"],"FdrFJe":"1932151230498763513","HiPsbb":1,"Im6cmf":"/_/MakerSuite","KU8tnd":"https://alkalimakersuiteapplets.pa.clients6.google.com","LoQv7e":true,"MT7f9b":[],"MUE6Ne":"alkali-makersuite","MsAAre":false,"NHyHAe":60000,"O7uJJ":"https://cloudconsole-pa.clients6.google.com","OC2PJe":"https://people-pa.clients6.google.com","Onibif":"https://webchannel-alkalimakersuite-pa.clients6.google.com","PeqOqb":"AIzaSyDHAQL7kdN6lNBcBok1eNB8dG7wwo6E6io","PgS1Kc":"https://content.googleapis.com","PqyQ6d":"","QrtxK":"","S06Grb":"","S6lZl":96797242,"TSDtV":"%.@.[[null,[[45847864,null,true,null,null,null,\"kE3j8b\"],[45750734,null,false,null,null,null,\"zNidwd\"],[45859437,null,null,null,\"\",null,\"iPg3y\"],[45786059,null,true,null,null,null,\"ZRXcme\"],[45800001,null,false,null,null,null,\"fEA85b\"],[45872738,null,false,null,null,null,\"Zemkge\"],[45815137,null,true,null,null,null,\"WRwkue\"],[45766584,null,false,null,null,null,\"uzk17e\"],[45812681,null,true,null,null,null,\"X7uB7c\"],[45870949,null,false,null,null,null,\"rOpvAb\"],[45864047,null,true,null,null,null,\"OHVamb\"],[45784561,null,false,null,null,null,\"LXfb5c\"],[45856904,null,true,null,null,null,\"FG6P7d\"],[45780874,null,false,null,null,null,\"Q1jbEd\"],[45772164,null,false,null,null,null,\"zeKiRd\"],[45764549,null,true,null,null,null,\"ZSgiif\"],[45841148,null,true,null,null,null,\"s6aszc\"],[45737435,null,true,null,null,null,\"QLHTQ\"],[45860610,null,false,null,null,null,\"pYjjGf\"],[45786683,null,true,null,null,null,\"SEwGId\"],[45860469,null,true,null,null,null,\"EuiBmf\"],[45714250,null,true,null,null,null,\"t52vxe\"],[45771578,null,true,null,null,null,\"FWnIxc\"],[45828307,null,false,null,null,null,\"yMyGUd\"],[45773098,null,true,null,null,null,\"tHUpTc\"],[45805229,null,false,null,null,null,\"s3lTDc\"],[45746196,null,true,null,null,null,\"Mkmxtb\"],[45820967,null,false,null,null,null,\"sFOxp\"],[45772817,null,true,null,null,null,\"fMTTic\"],[45824912,131072,null,null,null,null,\"b2C2B\"],[45773200,null,false,null,null,null,\"SNmu3c\"],[45784564,null,false,null,null,null,\"oj32cc\"],[45809279,null,false,null,null,null,\"PDJPhb\"],[45857667,null,false,null,null,null,\"NWij2c\"],[45796413,null,false,null,null,null,\"tO7rUe\"],[45837404,null,false,null,null,null,\"CT0XI\"],[45842046,null,null,null,null,null,\"f87Xt\",[\"[]\"]],[45776026,null,false,null,null,null,\"CEBNKb\"],[45777831,null,false,null,null,null,\"GPgspe\"],[45817873,null,true,null,null,null,\"TQ277c\"],[45845967,null,false,null,null,null,\"Sniiwc\"],[45854059,null,true,null,null,null,\"b40um\"],[45861368,null,false,null,null,null,\"lMSdOe\"],[45812538,null,false,null,null,null,\"eJaIR\"],[45784662,null,false,null,null,null,\"QdT1Z\"],[45764720,null,true,null,null,null,\"B2Bu0b\"],[45861278,null,false,null,null,null,\"V5KHhb\"],[45825903,null,false,null,null,null,\"mNGeee\"],[45862868,null,false,null,null,null,\"bfKXxd\"],[45879438,null,false,null,null,null,\"Aq2Vrc\"],[45773240,null,false,null,null,null,\"n7JOEb\"],[45772231,null,false,null,null,null,\"HsfSqc\"],[45632067,null,true,null,null,null,\"CyDiEf\"],[45820776,null,true,null,null,null,\"bFtnL\"],[45670190,null,false,null,null,null,\"ArIgzf\"],[45806859,null,true,null,null,null,\"RYGIvf\"],[45734881,null,false,null,null,null,\"RLIQje\"],[45834641,null,false,null,null,null,\"WHLyI\"],[45877221,null,true,null,null,null,\"km8lB\"],[45675258,null,false,null,null,null,\"z2PIFf\"],[45787299,null,true,null,null,null,\"h85Kkd\"],[45866857,null,false,null,null,null,\"xpMubf\"],[45875820,null,false,null,null,null,\"WtdpB\"],[45812905,null,true,null,null,null,\"Y9AUte\"],[45799321,null,false,null,null,null,\"Qsarhc\"],[45836227,null,false,null,null,null,\"FAv3Rc\"],[45874376,null,false,null,null,null,\"hAJked\"],[45784559,null,true,null,null,null,\"quitKc\"],[45806340,null,true,null,null,null,\"OEiE2c\"],[45820497,null,false,null,null,null,\"oYprSb\"],[45762876,null,false,null,null,null,\"JRm6id\"],[45737434,null,true,null,null,null,\"LYXRQd\"],[45876363,null,false,null,null,null,\"F175qf\"],[45833843,null,false,null,null,null,\"NYdl8e\"],[45851528,null,false,null,null,null,\"COIM7c\"],[45768537,null,true,null,null,null,\"HzvgYb\"],[45788298,null,false,null,null,null,\"ET3a6d\"],[45763863,null,false,null,null,null,\"srRqFc\"],[45777963,null,false,null,null,null,\"JE0rH\"],[45853662,null,false,null,null,null,\"z4Szhe\"],[45865399,null,false,null,null,null,\"DFzY9e\"],[45834985,null,true,null,null,null,\"sAqbnd\"],[45849298,null,false,null,null,null,\"j578Be\"],[45827384,null,false,null,null,null,\"g3QGVd\"],[45822819,null,true,null,null,null,\"YalIlf\"],[45742893,null,true,null,null,null,\"Irsrgf\"],[45827530,null,true,null,null,null,\"KGZnYc\"],[45713337,null,true,null,null,null,\"yauate\"],[45775967,null,true,null,null,null,\"h9YtGf\"],[45781210,null,true,null,null,null,\"ZAVYX\"],[45784560,null,true,null,null,null,\"aUo2dd\"],[45862407,null,false,null,null,null,\"xzAHle\"],[45786621,null,false,null,null,null,\"u5h94\"],[45871557,null,false,null,null,null,\"lykGT\"],[45856905,null,true,null,null,null,\"YyN5cb\"],[45721377,null,null,null,\"\",null,\"bXSQ7e\"],[45772596,null,true,null,null,null,\"AYGfy\"],[45817527,null,true,null,null,null,\"KAsw\"],[45850100,null,false,null,null,null,\"HIcJUb\"],[45817874,null,true,null,null,null,\"a6JmIf\"],[45733504,null,false,null,null,null,\"JZ5hpd\"],[45786417,null,false,null,null,null,\"jL0KB\"],[45781629,null,false,null,null,null,\"T92pzc\"],[45746822,null,true,null,null,null,\"Evf1d\"],[45848811,null,false,null,null,null,\"UBGA9b\"],[45797765,null,false,null,null,null,\"LMH9V\"],[45784562,null,true,null,null,null,\"B7YKqc\"],[45870781,null,false,null,null,null,\"NryDGf\"],[45869556,null,false,null,null,null,\"tScIGe\"],[45806420,null,true,null,null,null,\"fEQEmb\"],[45767301,null,true,null,null,null,\"XNnQfb\"],[45790102,null,false,null,null,null,\"gWraHd\"],[45775806,null,false,null,null,null,\"f1cyrc\"],[45852907,null,true,null,null,null,\"a8lhaf\"],[45865262,null,false,null,null,null,\"Bh3Ol\"],[45776819,null,true,null,null,null,\"CWdxXd\"],[45823295,null,false,null,null,null,\"Arlbpd\"],[45871674,null,false,null,null,null,\"o8NB9c\"],[45830082,null,false,null,null,null,\"ZUp3se\"],[45836590,null,null,0,null,null,\"vIGve\"],[45801163,null,true,null,null,null,\"VDs51c\"],[45858220,null,false,null,null,null,\"YAQRrc\"],[45796593,null,true,null,null,null,\"piQlge\"],[45751428,null,false,null,null,null,\"w8d1bc\"],[45837256,null,false,null,null,null,\"qckzOe\"],[45857099,null,false,null,null,null,\"cIG1vc\"],[45815733,null,true,null,null,null,\"ht9f6e\"],[45739638,null,true,null,null,null,\"hPR2wd\"],[45866669,null,false,null,null,null,\"xk2TDe\"],[45784349,null,true,null,null,null,\"xNyUwf\"],[45725952,null,false,null,null,null,\"LGSclc\"],[45716130,null,null,null,\"\",null,\"Qy4uld\"],[45773243,null,false,null,null,null,\"MLsv8b\"],[45793959,null,false,null,null,null,\"hOMnHf\"],[45646711,null,false,null,null,null,\"aKSrdd\"],[45773517,null,true,null,null,null,\"C4cpEd\"],[45863024,null,null,null,\"models/gemini-3.8-flash\",null,\"SzcwOb\"],[45808440,null,false,null,null,null,\"OgCwYe\"],[45826997,null,true,null,null,null,\"XjAiEc\"],[45745504,null,false,null,null,null,\"II2tFb\"],[45830858,null,false,null,null,null,\"mJ13bb\"],[45786476,null,true,null,null,null,\"NtxR6e\"],[45832772,null,true,null,null,null,\"NrZPHe\"],[45765786,null,false,null,null,null,\"B1GdRb\"],[45780375,null,true,null,null,null,\"GAbK3d\"],[45785393,null,false,null,null,null,\"JVB6z\"],[45797100,null,false,null,null,null,\"iB2O1e\"],[45791779,null,false,null,null,null,\"DQg7Hb\"],[45767507,null,true,null,null,null,\"Zn5Ej\"],[45775384,null,true,null,null,null,\"DqVejd\"],[45802372,null,true,null,null,null,\"XXFwZe\"],[45716158,null,false,null,null,null,\"j1MtL\"],[45784330,null,true,null,null,null,\"WWo53e\"],[45869663,null,false,null,null,null,\"TDErSd\"],[106136619,null,true,null,null,null,\"iGreoe\"],[45794982,null,false,null,null,null,\"EW5nff\"],[45818348,null,false,null,null,null,\"r6kKsf\"],[45746195,null,true,null,null,null,\"eXVehb\"],[45865704,null,false,null,null,null,\"zgb7I\"],[45877248,null,false,null,null,null,\"ol8MBf\"],[45694412,null,false,null,null,null,\"SbCVZ\"],[45732213,null,false,null,null,null,\"w7xKfd\"],[45785017,null,true,null,null,null,\"ri7Eac\"],[45854438,null,false,null,null,null,\"YxfQyc\"],[45762227,null,true,null,null,null,\"Z4Lh5e\"],[45865613,null,false,null,null,null,\"TYumuf\"],[45828311,null,false,null,null,null,\"HUhtxc\"],[45773733,null,true,null,null,null,\"EGfkj\"],[45772448,null,true,null,null,null,\"i07PMb\"],[45827223,null,true,null,null,null,\"Jtk3bf\"],[45854328,null,true,null,null,null,\"UeVFAf\"],[45772059,null,true,null,null,null,\"R59tgd\"],[45798215,null,false,null,null,null,\"HCx3Oc\"],[45747021,null,true,null,null,null,\"pKd73e\"],[45834001,null,false,null,null,null,\"hfCZid\"],[45823372,null,false,null,null,null,\"oMK3Y\"],[45830753,null,null,0.015,null,null,\"cRQlrb\"],[45741743,null,false,null,null,null,\"FpM8Qe\"],[45800793,null,true,null,null,null,\"ou8vKf\"],[45822392,null,true,null,null,null,\"wJ3FQd\"],[45862259,null,false,null,null,null,\"sZycyd\"],[45816582,null,false,null,null,null,\"dSJ7Bd\"],[45835850,null,false,null,null,null,\"L6pDkb\"],[45772137,null,false,null,null,null,\"ishS2b\"],[45724978,null,false,null,null,null,\"OWw3ld\"],[45773922,null,true,null,null,null,\"RSYlDb\"],[45851577,null,false,null,null,null,\"Imb3Ce\"],[45837097,null,false,null,null,null,\"Ace8lb\"],[45776579,null,true,null,null,null,\"clXDpe\"],[45826123,null,true,null,null,null,\"I4xrBe\"],[45780339,null,true,null,null,null,\"RajHhe\"],[45786812,null,true,null,null,null,\"rG2Adf\"],[45872515,null,false,null,null,null,\"o84zEc\"],[45818351,null,false,null,null,null,\"jif7mb\"],[45872481,null,false,null,null,null,\"ZL3igd\"],[45797782,null,false,null,null,null,\"KGod8d\"],[45865396,null,true,null,null,null,\"F7dvAc\"],[45843340,null,false,null,null,null,\"DRXio\"],[45824509,null,true,null,null,null,\"j3c7ob\"],[45814275,null,true,null,null,null,\"RkNCqf\"],[45857186,null,false,null,null,null,\"yZGRVd\"],[45750201,null,true,null,null,null,\"eOwTyc\"],[45869948,null,true,null,null,null,\"Fr9VSd\"],[45725932,null,false,null,null,null,\"Gb1Jaf\"],[45846308,null,true,null,null,null,\"I5yZof\"],[45818257,null,false,null,null,null,\"IXqyUd\"],[45791794,null,false,null,null,null,\"kc5JKd\"],[45741421,null,null,null,\"models/gemini-3.8-flash\",null,\"PH4l9d\"],[45868031,null,false,null,null,null,\"OcMSwf\"],[45817341,null,false,null,null,null,\"E9pnPd\"],[45881088,null,false,null,null,null,\"v26dNe\"],[45821529,null,true,null,null,null,\"wXqG7\"],[45869851,null,false,null,null,null,\"XtjyHc\"],[45740367,null,true,null,null,null,\"jCr8Db\"],[45765657,null,false,null,null,null,\"TQncq\"],[45788850,null,true,null,null,null,\"Bh3THc\"],[45812131,null,false,null,null,null,\"tUuz0c\"],[45867460,null,false,null,null,null,\"UCMFWd\"],[45817301,null,true,null,null,null,\"QPlsw\"],[45794311,null,false,null,null,null,\"s5sys\"],[45798403,null,false,null,null,null,\"x2wuHf\"],[45880297,null,false,null,null,null,\"dtWFPb\"],[45722603,null,true,null,null,null,\"iWkpJ\"],[45708381,null,false,null,null,null,\"JkACyc\"],[45842058,null,false,null,null,null,\"BeXieb\"],[45831005,null,false,null,null,null,\"DHRiDc\"],[45835180,null,false,null,null,null,\"hBbzle\"],[45755068,null,true,null,null,null,\"EB2qEd\"],[45772802,null,true,null,null,null,\"gENGMb\"],[45787653,null,true,null,null,null,\"N0vGQ\"],[45796979,null,false,null,null,null,\"cElYhd\"],[45723374,null,false,null,null,null,\"FK7eJd\"],[45831247,null,false,null,null,null,\"dTRbcc\"],[45844654,null,false,null,null,null,\"Ll0PNe\"],[45753184,null,false,null,null,null,\"yUHVge\"],[45781083,null,false,null,null,null,\"NNIf1e\"],[45865261,null,true,null,null,null,\"HmKYT\"],[45737499,null,true,null,null,null,\"dIQ2Ic\"],[45861680,null,true,null,null,null,\"gXEGbd\"],[45796324,null,true,null,null,null,\"sFBYxc\"],[45836224,null,false,null,null,null,\"QODXE\"],[45712153,null,false,null,null,null,\"aynkwb\"],[45726760,null,null,null,\"\",null,\"OZtjO\"],[45807399,20000,null,null,null,null,\"Fklxcf\"],[45825002,null,false,null,null,null,\"UYZwfb\"],[45747224,null,true,null,null,null,\"hLDizc\"],[45778977,null,true,null,null,null,\"BQF0Ib\"],[45854839,null,false,null,null,null,\"Q2VwPe\"],[45788754,null,null,null,null,null,\"CAlZbf\",[\"[[[\\\"supercloud\\\",\\\"https://www.gstatic.com/images/branding/productlogos/google_cloud_2026/v1/192px.svg\\\",\\\"https://www.gstatic.com/images/branding/productlogos/google_cloud_2026/v1/192px.svg\\\"],[\\\"gemini\\\",\\\"https://www.gstatic.com/images/branding/productlogos/gemini_2026/v1/192px.svg\\\",\\\"https://www.gstatic.com/images/branding/productlogos/gemini_2026/v1/192px.svg\\\"]]]\"]],[45854420,null,true,null,null,null,\"vYFiN\"],[45773239,null,false,null,null,null,\"FR4WA\"],[45828912,null,null,null,\"\",null,\"M4rIM\"],[45826452,null,true,null,null,null,\"fyn48c\"],[45757828,null,true,null,null,null,\"Q8uuOb\"],[45784563,null,false,null,null,null,\"E8pjWd\"],[45799359,null,true,null,null,null,\"B1kymf\"],[45828251,null,false,null,null,null,\"y14pld\"],[45721546,null,true,null,null,null,\"kNlqGe\"],[45759847,null,true,null,null,null,\"yRDM\"],[45818673,null,false,null,null,null,\"qxbq6e\"],[45825960,null,true,null,null,null,\"v240vc\"],[45778471,null,true,null,null,null,\"GxQ9o\"],[45737255,null,true,null,null,null,\"ra4Rcf\"],[45740401,null,true,null,null,null,\"kAmEsf\"],[45782135,null,true,null,null,null,\"aWuK4b\"],[45870488,null,false,null,null,null,\"P7LWqb\"],[45789764,null,true,null,null,null,\"q7jIFe\"],[45799173,null,null,null,null,null,\"AyrXXd\",[\"[]\"]],[106476711,null,true,null,null,null,\"oGx9Pd\"],[45747468,null,true,null,null,null,\"gjSq0\"],[45825901,null,true,null,null,null,\"dAUG8e\"],[45775030,null,true,null,null,null,\"yT9XMb\"],[45785071,null,true,null,null,null,\"jCAPEe\"],[45792594,null,false,null,null,null,\"pl1NXc\"],[45868792,null,false,null,null,null,\"vvpGyc\"],[497238176,null,true,null,null,null,\"WSAzh\"],[45845522,null,false,null,null,null,\"p7emWb\"]],\"CAMSzwEdywbDmas1D6/ODgqJqQoP/8MFD/aXBQ+AngUP/QIPl5UGD4oJD9g7D5+hBg/SHQ+/HQ+CQxWlKACQJw+kNg+9kAYPsKkGD8RZD79cD8mtBg+xBg+aCw/vnwYP15EED8ZZD8rmBg+79gYPukAP98EGD6cDD/QuD4+NBQ++ag+9Fg/2Sg+KxQUP6GgAg5cFD9pkD803D/kAD47jBg/ccQ/GLg+tBg+v5wIPhzwPyO4GD5lbD9AED/ugBQ+NfwCtuQYP7DcPwQQPn80FD+edBA8\\u003d\"]]]","TwvH1d":false,"UUFaWc":"%.@.null,1000,2]","UsvuEb":true,"Vvafkd":false,"WIu0Nc":"AIzaSyDdP816MREB3SkjZO04QXbjsigfcI0GWOs","Z8v1ze":["clients6.google.com"],"ZGhOkf":false,"ZLEzG":"","ZOkjLb":"","ax6qJc":false,"b5W2zf":"default_MakerSuite","cfb2h":"boq_alkali-makersuite_20261103.10_p0","eptZe":"/_/MakerSuite/","gGcLoe":false,"gTCm1":true,"goX6ee":[1706538,106394987,106240713,106421007,106821707,106848712,106596088,106121066,106070698,106034713,106313916,106090184,106460446,105999774,106778764,106091999,106646851,106194850,106326023,106274811,106168017,106168006,106278925,106527927,106874967,106261858,106124489,106969455,106136612,106620816,106827696,106420453,106790580,106705624,106153117,106577085,106729386,106602757,106115617,106741289,106621491,106647031,106970291,106888705,106099784,106486688,106426380,106737938,106127883,106828955,106823440,106206959,106917705,106875431,106868706,106641528,106108827,106146800,106782647,106854629,106844334,106142671,106824642,106296617,106476709,106474465,106791061,106589860,106385828,106240521,105958172,106071470,105582413,106354910,106218673,106737949,106115994,106818123,106634469,106518858,106748851,106238854,106190114,1714240,99469034,99469322,99469603,99470387,99470673,99471518,99472149,99472920,99473631,99474975,99475396,99476937,99479559,99479840,99481320,99483071,99485059,99487560,99488541,99490000,99498686,99502609,99504443,99506557,99507748,99511363,99513765,99515726,99519343,99521542,99526241,99592556,99592771,99593562,99593852,99594414,99595822,99597460,99598311,99599016,99599999,99601751,99603292,99603792,99605897,99610501,99612553,99615952,99618106,99620675,99624119,99627484,99628901,99631431,99634097,99636529,99643466,99645637,99649838,99663826,99670408,99674191,99684863,99690675,99697486,99698397,99706770,99709711,99722741,99730392,99818964,99819035,99819334,99819943,99822040,99824013,99825645,99831342,99835415,99836186,99843080,99846642,99848136,99851358,99853538,99856063,99858530,99864880,99871493,99874436,99880733,99888727,99892720,99895591,99900703,99922477,99925702,99934491,99939532,99947940,99948571,99955152,99959213,99964534,99966075,99976508,99982045,99986736,99988907,100006202,100011243,100015457,100022598,100024069,100036041,100048865,100056076,100056847,100066643,100072720,100080149,100085340,100091445,100116445,100130506,100133251,102390173,100153249,100161727,100167189,100175030,100190920,100196801,100225434,101401152,101401293,101401504,101404171,101404452,101404523,101412498,101413206,101413328,101415141,101415225,101415385,101415969,101416280,101416387,101421786,101422064,101422868,101425625,101425697,101426074,99654654,99671460,99689204,99823312,99826766,99827747,99837668,99866816,99898112,100098738,100138712,100182203,101413109,99820701,99885796,98419872,98419864,98419856,98419880,106242288,106065558,106895288,106542255,106195246,117434425,115578387,106641106,106626323,106597120,106793981,106778419,117071028,105901316,106914895,105993283,97785984,105739268,119919289,102936969,106172513,106394978,106240704,106420998,106821698,106848703,106596079,106121057,106070689,106034704,106313907,106090175,106460437,105999765,106778755,106091990,106646842,106194841,106326014,106274802,106168008,106167997,106278916,106527918,106874958,106261849,106124480,106969447,106136593,106620807,106827687,106420444,106790571,106705615,106153108,106577076,106729377,106602748,106115608,106741280,106621482,106647022,106970282,106888696,106099775,106486679,106426371,106737929,106127874,106828946,106823431,106206950,106917696,106875422,106868697,106641519,106108819,106146791,106782639,106854621,106844326,106142663,106824633,106296608,106476700,106474456,106791052,106589851,106385819,106240512,105958163,106071461,105582404,106354901,106218664,106737940,106115985,106818115,106634461,106518849,106748842,106238845,106190105,99469021,99469309,99469590,99470374,99470660,99471505,99472136,99472907,99473618,99474962,99475383,99476924,99479546,99479827,99481307,99483058,99485046,99487547,99488528,99489987,99498673,99502596,99504430,99506544,99507735,99511350,99513752,99515713,99519330,99521529,99526228,99592543,99592758,99593549,99593839,99594401,99595809,99597447,99598298,99599003,99599986,99601738,99603279,99603779,99605884,99610488,99612540,99615939,99618093,99620662,99624106,99627471,99628888,99631418,99634084,99636516,99643453,99645624,99649825,99663813,99670395,99674178,99684850,99690662,99697473,99698384,99706757,99709698,99722728,99730379,99818951,99819022,99819321,99819930,99822027,99824000,99825632,99831329,99835402,99836173,99843067,99846629,99848123,99851345,99853525,99856050,99858517,99864867,99871480,99874423,99880720,99888714,99892707,99895578,99900690,99922464,99925689,99934478,99939519,99947927,99948558,99955139,99959200,99964521,99966062,99976495,99982032,99986723,99988894,100006189,100011230,100015444,100022585,100024056,100036028,100048852,100056063,100056834,100066630,100072707,100080136,100085327,100091432,100116432,100130493,100133238,102390160,100153236,100161714,100167176,100175017,100190907,100196788,100225421,101401139,101401280,101401491,101404158,101404439,101404510,101412485,101413193,101413315,101415128,101415212,101415372,101415956,101416267,101416374,101421773,101422051,101422855,101425612,101425684,101426061,99654641,99671447,99689191,99823299,99826753,99827734,99837655,99866803,99898099,100098725,100138699,100182190,101413096,99820688,99885783,98419868,98419860,98419852,98419876,106242279,106065549,106895279,106542247,106195237,117434412,115578385,106641098,106626314,106597111,106778415,117071024,106914886,105993269,97785970,105739254,119919287,102936956,106172504],"hOXil":["FaxEntityService"],"hsFLT":"%.@.null,10,3]","iRz4i":3,"k76Vlc":[],"kFsUdb":"https://docs.google.com/picker","kPYdqb":false,"mXaIFf":false,"nPAWmd":"https://cloudconsole-pa.clients6.google.com","nQyAE":{},"nfd52d":"google-ai-studio","p9hQne":"https://www.gstatic.com/_/boq-makersuite/_/r/","pm20lb":"cloudconsole-pa.clients6.google.com","qc58fc":"","qocwD":false,"qwAQke":"MakerSuite","rU9UAf":86400000,"rtQCxc":-60,"syGxEd":false,"teM9xe":"bacffddc-d686-453a-a83a-880f6918328e","tkHyOe":"MUST_PROVIDE_AN_API_KEY","u4g7r":"%.@.null,1,3]","wpAUPe":false,"xnI9P":false,"xwAfE":true,"y2FhP":"prod","yFnxrf":1957,"yWAmtc":false,"yueqgf":false,"z6uGHf":"6LfMhuItAAAAAPMRs5Icz9eJnvIjRlxrxvJQ6ABh","zBpHOc":"https://accounts.google.com/o/oauth2/auth","zChJod":"%.@.]","zQKvjb":25,"zSAhZc":"https://accounts.google.com/o/oauth2/iframe"}</script><script nonce="cyn0rlF_aXfwrEnrgCQZWg">window["_F_toggles_default_MakerSuite"] = [0x5101, 0x21c18, 0xc000, ];</script><script nonce="cyn0rlF_aXfwrEnrgCQZWg"></script><script nonce="cyn0rlF_aXfwrEnrgCQZWg">var _F_cssRowKey = 'boq-makersuite.MakerSuite.MegG0FW_7W0.L.X.O';var _F_combinedSignature = 'AMOXD29IEMYB1yBZrciwGwzhOHv8dr6bAA';function _DumpException(e) {throw e;}</script><link rel="stylesheet" href="https://www.gstatic.com/_/mss/boq-makersuite/_/ss/k=boq-makersuite.MakerSuite.MegG0FW_7W0.L.X.O/am=AVEAAAaHAAAADA/d=1/ed=1/rs=AMOXD2-559cEN0QbPQSQ0HAsEY5T--vsFg/m=_b" data-id="_cl" nonce="eWOYkn1KGpQ3g4Qb63tqLA"><style data-font-stylesheet nonce="eWOYkn1KGpQ3g4Qb63tqLA">@font-face{font-family:'Product Sans';font-style:normal;font-weight:400;font-display:block;src:url(https://fonts.gstatic.com/s/productsans/v9/pxiDypQkot1TnFhsFMOfGShVF9eL.ttf)format('truetype');}@font-face{font-family:'Google Sans';font-style:normal;font-weight:400;font-display:block;src:url(https://fonts.gstatic.com/s/googlesans/v62/4Ua_rENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RFD48TE63OOYKtrwEIJllpyw.ttf)format('truetype');}@font-face{font-family:'Google Sans';font-style:normal;font-weight:500;font-display:block;src:url(https://fonts.gstatic.com/s/googlesans/v62/4Ua_rENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RFD48TE63OOYKtrw2IJllpyw.ttf)format('truetype');}@font-face{font-family:'Google Sans';font-style:normal;font-weight:700;font-display:block;src:url(https://fonts.gstatic.com/s/googlesans/v62/4Ua_rENHsxJlGDuGo1OIlJfC6l_24rlCK1Yo_Iqcsih3SAyH6cAwhX9RFD48TE63OOYKtrzjJ5llpyw.ttf)format('truetype');}@font-face{font-family:'Google Sans Mono';font-style:normal;font-weight:400;font-display:block;src:url(https://fonts.gstatic.com/s/googlesansmono/v15/P5sUzYWFYtnZ_Cg-t0Uq_rfivrdYH4RE8-pZ5gQ1abT53wVQGrw.ttf)format('truetype');}@font-face{font-family:'Google Sans Mono';font-style:normal;font-weight:500;font-display:block;src:url(https://fonts.gstatic.com/s/googlesansmono/v15/P5sUzYWFYtnZ_Cg-t0Uq_rfivrdYH4RE8-pZ5gQ1abTL3wVQGrw.ttf)format('truetype');}@font-face{font-family:'Google Sans Display';font-style:normal;font-weight:400;font-display:block;src:url(https://fonts.gstatic.com/s/googlesansdisplay/v13/ea8FacM9Wef3EJPWRrHjgE4B6CnlZxHVDv79pA.ttf)format('truetype');}@font-face{font-family:'Google Sans Display';font-style:normal;font-weight:500;font-display:block;src:url(https://fonts.gstatic.com/s/googlesansdisplay/v13/ea8IacM9Wef3EJPWRrHjgE4B6CnlZxHVBg3etBD7SQ.ttf)format('truetype');}@font-face{font-family:'Google Symbols';font-style:normal;font-weight:300;font-display:block;src:url(https://fonts.gstatic.com/l/font?kit=HhzMU5Ak9u-oMExPeInvcuEmPosC9zyteYEFU68cPrjdKM1XLPTxlGmzczpgWvF1d8Yp7AudBnt3CPar1JFWjoLAUv3G2tSNljixIIGUsC62cdTKiAkecSathI2-Ama_9tgxECbWyWdcPvfEJGvEQgr6-vH_5FdMAwAw6VG8UVin4vJWnDEuNkOg_Yu5j43CpNBozuwHmZ8fWrE9Lf4MNKI8Ob1p3vhM5MmL1xPtYWJxn249etAwJutWcK4TGbpR9kT-hxSQZneh0280ej7HGssaEg83Dl7y2HGz0kOBfNx3wEu0X_XuCaG3cN2lRqWIbdLNSNDJRROijuPx8l9LJ9MUc3YVaAy_FvW5Mqt0GUo25_KQiw1hKNLt9IfdpgM_UiJArXTnuQ4wMqj1nHOkISlFWmwyYeyeVLL8TePbOuJPOBAEyriUtqDfjln-DeZk-_RVUTnOtIHOYsI2uZGCRRUDSo5YUUBTBWzgv44maQ7j0ueHXtv9GB0tRSghnr0HpAmpb_EqgHKYsnwcDXv2wUeXYfbCjeYXVQPFjS2MLcCJR_V_PfRo2UW0I74-ck3jAnWGphYS5-20xW6CBedIZAQD22BOVp460Me0HcF2ih4EC-tA&skey=f8ec4d50247dc1c1&v=v469)format('truetype');}.google-symbols{font-family:'Google Symbols';font-weight:normal;font-style:normal;font-size:24px;line-height:1;letter-spacing:normal;text-transform:none;display:inline-block;white-space:nowrap;word-wrap:normal;direction:ltr;}</style><title>Models - Gemini API | Google AI Studio</title><meta name="description" content="Learn about all of Google&#39;s most advanced AI models"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"><script nonce="cyn0rlF_aXfwrEnrgCQZWg">
+      function glueCookieNotificationBarLoaded() {
+        const {instance} = window.glue.CookieNotificationBar;
+        instance.listen('visibilitychange', (event) => {
+          const cookieBanner = document.getElementsByClassName('glue-cookie-notification-bar')[0];
+          if (event.detail.visible) {
+            cookieBanner.classList.add('visible');
+          } else {
+            cookieBanner.classList.remove('visible');
+          }
+        });
+
+        (function (w, d, s, l) {
+          w[l] = w[l] || [];
+          w[l].push({'gtm.start': new Date().getTime(), event: 'gtm.js'});
+          var f = d.getElementsByTagName(s)[0],
+            j = d.createElement(s),
+            dl = l != 'dataLayer' ? '&l=' + l : '',
+            e=d.querySelector('script[nonce]'),n=e&&(e['nonce']||e.getAttribute('nonce'));
+          j.async = true;
+          j.setAttribute('nonce', n);
+          if (self.trustedTypes && self.trustedTypes.createPolicy) {var policy = self.trustedTypes.createPolicy('aistudio', {createScriptURL: function(unused) { return 'https:\/\/www.googletagmanager.com\/gtm.js?id\x3dGTM-TT9C75WP'; }}); j.src = policy.createScriptURL('');} else {j.src = 'https:\/\/www.googletagmanager.com\/gtm.js?id\x3dGTM-TT9C75WP';}
+
+          f.parentNode.insertBefore(j, f);
+
+          window[l].push({'event': 'dataLayer_initialized', 'page_name': 'Google AI Studio'});
+        })(window, document, 'script', 'dataLayer');
+      }
+    </script><!-- Cookie Consent --><script src="https://www.gstatic.com/glue/cookienotificationbar/cookienotificationbar.min.js" data-glue-cookie-notification-bar-category="2A" data-glue-cookie-notification-bar-site-id="Google AI Studio" nonce="cyn0rlF_aXfwrEnrgCQZWg"></script><!-- End Cookie Consent  --><link rel="llms.txt" href="/llms.txt"><link rel="alternate" type="text/markdown" href="/docs/models.md"><script nonce="cyn0rlF_aXfwrEnrgCQZWg">var AF_initDataKeys = window.AF_initDataKeys || {}; var AF_dataServiceRequests = window.AF_dataServiceRequests || {}; var AF_initDataChunkQueue = window.AF_initDataChunkQueue || {}; var AF_initDataCallback = window.AF_initDataCallback || {}; var AF_initDataInitializeCallback = window.AF_initDataInitializeCallback || {}; AF_initDataKeys['4aa489fd-27a5-4f44-87c3-2b35d77b9999'] = []; AF_dataServiceRequests['4aa489fd-27a5-4f44-87c3-2b35d77b9999'] = {}; AF_initDataChunkQueue['4aa489fd-27a5-4f44-87c3-2b35d77b9999'] = AF_initDataChunkQueue['4aa489fd-27a5-4f44-87c3-2b35d77b9999'] || []; if (AF_initDataInitializeCallback['4aa489fd-27a5-4f44-87c3-2b35d77b9999']) {AF_initDataInitializeCallback['4aa489fd-27a5-4f44-87c3-2b35d77b9999'](AF_initDataKeys['4aa489fd-27a5-4f44-87c3-2b35d77b9999'], AF_initDataChunkQueue['4aa489fd-27a5-4f44-87c3-2b35d77b9999'], AF_dataServiceRequests['4aa489fd-27a5-4f44-87c3-2b35d77b9999']);}if (!AF_initDataCallback['4aa489fd-27a5-4f44-87c3-2b35d77b9999']) {AF_initDataCallback['4aa489fd-27a5-4f44-87c3-2b35d77b9999'] = function(chunk) {AF_initDataChunkQueue['4aa489fd-27a5-4f44-87c3-2b35d77b9999'].push(chunk);};}</script></head><app-root></app-root><noscript><pre>&gt; ## AI Agent Context
+&gt; Get the complete documentation index at: https://aistudio.google.com/llms.txt
+&gt; Use this file to discover all available pages.
+&gt; For the full documentation in a single file, fetch: https://aistudio.google.com/llms-full.txt
+
+# Models
+
+## Gemini 4  {% id=&quot;gemini-4&quot; %}
+
+{% card-grid columns=&quot;2&quot; %}
+  {% card description=&quot;Our flagship reasoning model with a shared 1M context window and long decodes up to 1M tokens.&quot; title=&quot;Gemini 4 Argon&quot; variant=&quot;model-card&quot; %}
+  {% section class=&quot;model-specs&quot; %}
+  *   *Model code* **gemini-4-argon**
+  *   *Context* **1M tokens**
+  *   *Max output* **65K / 1M tokens**
+  *   *Modalities* **Text, Image, Audio, Video, PDF**
+
+  {% /section %}
+
+  {% section class=&quot;card-actions&quot; %}
+  {% button href=&quot;https://aistudio.google.com/prompts/new_chat?model=gemini-4-argon&quot; variant=&quot;primary&quot; %}Try in AI Studio{% /button %} {% button href=&quot;/docs/models/gemini-4-argon&quot; icon=&quot;arrow_forward&quot; tooltip=&quot;View models&quot; variant=&quot;icon-primary&quot; /%}
+
+  {% /section %}
+
+  {% /card %}
+
+{% /card-grid %}
+
+## All Gemini 4 models  {% id=&quot;all-gemini-4-models&quot; %}
+
+{% table variant=&quot;model&quot; %}
+  * Model
+  * Endpoint
+
+  ---
+
+  * [Gemini 4 Argon](/docs/models/gemini-4-argon)
+  * `gemini-4-argon`
+{% /table %}
+
+## Gemini 3  {% id=&quot;gemini-3&quot; %}
+
+{% card-grid %}
+  {% card badge=&quot;New&quot; description=&quot;Our most intelligent Flash model, engineered for long-horizon software engineering, autonomous agents, and complex enterprise workflows.&quot; href=&quot;/docs/models/gemini-3.8-flash&quot; icon=&quot;spark&quot; title=&quot;Gemini 3.8 Flash&quot; variant=&quot;model&quot; /%}
+
+  {% card badge=&quot;New&quot; description=&quot;Default Live API model for most low-latency voice agent experiences without reasoning delays.&quot; href=&quot;/docs/models/gemini-3.8-live&quot; icon=&quot;settings_voice&quot; title=&quot;Gemini 3.8 Live&quot; variant=&quot;model&quot; /%}
+
+  {% card badge=&quot;New&quot; description=&quot;High-reasoning Live API model for voice interactions, recommended when higher background reasoning is required.&quot; href=&quot;/docs/models/gemini-3.8-live-extended-thinking&quot; icon=&quot;psychology&quot; title=&quot;Gemini 3.8 Live Extended Thinking&quot; variant=&quot;model&quot; /%}
+
+  {% card badge=&quot;New&quot; description=&quot;Flagship creative text-to-speech model for studio-grade voice fidelity, expressive acting, Voice design, and Voice replication.&quot; href=&quot;/docs/models/gemini-3.8-flash-tts&quot; icon=&quot;graphic_eq&quot; title=&quot;Gemini 3.8 Flash TTS&quot; variant=&quot;model&quot; /%}
+
+  {% card badge=&quot;New&quot; description=&quot;Fast, cost-efficient text-to-speech model for high-volume production, real-time voice agent cascades, and Voice replication.&quot; href=&quot;/docs/models/gemini-3.8-flash-lite-tts&quot; icon=&quot;graphic_eq&quot; title=&quot;Gemini 3.8 Flash-Lite TTS&quot; variant=&quot;model&quot; /%}
+
+  {% card badge=&quot;Stable&quot; description=&quot;Our previous-generation Flash model, balancing speed and multimodal capabilities across general agentic and everyday tasks.&quot; href=&quot;/docs/models/gemini-3.6-flash&quot; icon=&quot;spark&quot; title=&quot;Gemini 3.6 Flash&quot; variant=&quot;model&quot; /%}
+
+  {% card badge=&quot;Stable&quot; description=&quot;Our fastest, most cost-effective 3.5 model for high-throughput execution.&quot; href=&quot;/docs/models/gemini-3.5-flash-lite&quot; icon=&quot;bolt&quot; title=&quot;Gemini 3.5 Flash-Lite&quot; variant=&quot;model&quot; /%}
+
+  {% card badge=&quot;Stable&quot; description=&quot;Frontier-class performance rivaling larger models at a fraction of the cost.&quot; href=&quot;/docs/models/gemini-3.1-flash-lite&quot; icon=&quot;bolt&quot; title=&quot;Gemini 3.1 Flash-Lite&quot; variant=&quot;model&quot; /%}
+
+  {% card badge=&quot;New&quot; description=&quot;High-efficiency image generation and editing model with improved visual quality, typography, and multi-turn consistency.&quot; href=&quot;/docs/models/gemini-nano-banana-2.1&quot; icon=&quot;banana_spark&quot; title=&quot;Nano Banana 2.1&quot; variant=&quot;model&quot; /%}
+
+  {% card badge=&quot;Stable&quot; description=&quot;Powerful, high-efficiency image generation and editing, optimized for speed and high-volume use cases.&quot; href=&quot;/docs/models/gemini-3.1-flash-image&quot; icon=&quot;banana_spark&quot; title=&quot;Nano Banana 2&quot; variant=&quot;model&quot; /%}
+
+  {% card badge=&quot;Stable&quot; description=&quot;Ultra-low latency and cost-effective image generation and editing, designed for high-volume interactive use cases.&quot; href=&quot;/docs/models/gemini-3.1-flash-lite-image&quot; icon=&quot;banana_spark&quot; title=&quot;Nano Banana 2 Lite&quot; variant=&quot;model&quot; /%}
+
+  {% card badge=&quot;Stable&quot; description=&quot;State-of-the-art image generation and editing models for highly contextual native image creation.&quot; href=&quot;/docs/models/gemini-3-pro-image&quot; icon=&quot;banana_spark&quot; title=&quot;Nano Banana Pro&quot; variant=&quot;model&quot; /%}
+
+  {% card badge=&quot;Stable&quot; description=&quot;Low-latency speech-to-text model with utterance-based language detection, speaker diarization, and word timestamps.&quot; href=&quot;/docs/models/gemini-3.5-transcribe&quot; icon=&quot;speech_to_text&quot; title=&quot;Gemini 3.5 Transcribe&quot; variant=&quot;model&quot; /%}
+
+  {% card badge=&quot;Stable&quot; description=&quot;Fast video generation, editing, keyframe interpolation, and extension with native audio.&quot; href=&quot;/docs/models/gemini-omni-flash&quot; icon=&quot;movie_filter&quot; title=&quot;Gemini Omni Flash&quot; variant=&quot;model&quot; /%}
+
+  {% card badge=&quot;Preview&quot; description=&quot;Frontier-class performance rivaling larger models at a fraction of the cost.&quot; href=&quot;/docs/models/gemini-3-flash-preview&quot; icon=&quot;spark&quot; title=&quot;Gemini 3 Flash&quot; variant=&quot;model&quot; /%}
+
+  {% card badge=&quot;Preview&quot; description=&quot;Low-latency, real-time speech to speech translation model that supports 70+ languages.&quot; href=&quot;/docs/models/gemini-3.5-live-translate-preview&quot; icon=&quot;translate&quot; title=&quot;Gemini 3.5 Live Translate&quot; variant=&quot;model&quot; /%}
+
+  {% card badge=&quot;Preview&quot; description=&quot;Legacy Live API preview model. We recommend updating to Gemini 3.8 Live.&quot; href=&quot;/docs/models/gemini-3.1-flash-live-preview&quot; icon=&quot;settings_voice&quot; title=&quot;Gemini 3.1 Flash Live&quot; variant=&quot;model&quot; /%}
+
+  {% card badge=&quot;Preview&quot; description=&quot;Legacy TTS preview model. We recommend updating to Gemini 3.8 Flash TTS or Gemini 3.8 Flash-Lite TTS.&quot; href=&quot;/docs/models/gemini-3.1-flash-tts-preview&quot; icon=&quot;graphic_eq&quot; title=&quot;Gemini 3.1 Flash TTS&quot; variant=&quot;model&quot; /%}
+
+{% /card-grid %}
+
+## All Gemini 3 models  {% id=&quot;all-gemini-3-models&quot; %}
+
+{% table variant=&quot;model&quot; %}
+  * Model
+  * Endpoint
+
+  ---
+
+  * [Gemini 3.8 Flash](/docs/models/gemini-3.8-flash)
+  * `gemini-3.8-flash`
+
+  ---
+
+  * [Gemini 3.8 Live](/docs/models/gemini-3.8-live)
+  * `gemini-3.8-live`
+
+  ---
+
+  * [Gemini 3.8 Live Extended Thinking](/docs/models/gemini-3.8-live-extended-thinking)
+  * `gemini-3.8-live-extended-thinking`
+
+  ---
+
+  * [Gemini 3.8 Flash TTS](/docs/models/gemini-3.8-flash-tts)
+  * `gemini-3.8-flash-tts`
+
+  ---
+
+  * [Gemini 3.8 Flash-Lite TTS](/docs/models/gemini-3.8-flash-lite-tts)
+  * `gemini-3.8-flash-lite-tts`
+
+  ---
+
+  * [Gemini 3.6 Flash](/docs/models/gemini-3.6-flash)
+  * `gemini-3.6-flash`
+
+  ---
+
+  * [Gemini 3.5 Flash-Lite](/docs/models/gemini-3.5-flash-lite)
+  * `gemini-3.5-flash-lite`
+
+  ---
+
+  * [Gemini 3.1 Flash-Lite](/docs/models/gemini-3.1-flash-lite)
+  * `gemini-3.1-flash-lite`
+
+  ---
+
+  * [Nano Banana 2.1](/docs/models/gemini-nano-banana-2.1)
+  * `gemini-nano-banana-2.1`
+
+  ---
+
+  * [Nano Banana 2](/docs/models/gemini-3.1-flash-image)
+  * `gemini-3.1-flash-image`
+
+  ---
+
+  * [Nano Banana 2 Lite](/docs/models/gemini-3.1-flash-lite-image)
+  * `gemini-3.1-flash-lite-image`
+
+  ---
+
+  * [Nano Banana Pro](/docs/models/gemini-3-pro-image)
+  * `gemini-3-pro-image`
+
+  ---
+
+  * [Gemini 3.5 Transcribe](/docs/models/gemini-3.5-transcribe)
+  * `gemini-3.5-transcribe`   
+    `gemini-3.5-transcribe-live`
+
+  ---
+
+  * [Gemini Omni Flash](/docs/models/gemini-omni-flash)
+  * `gemini-omni-1.1-flash`
+
+  ---
+
+  * [Gemini 3.1 Pro](/docs/models/gemini-3.1-pro-preview)
+  * `gemini-3.1-pro-preview`
+
+  ---
+
+  * [Gemini 3 Flash](/docs/models/gemini-3-flash-preview)
+  * `gemini-3-flash-preview`
+
+  ---
+
+  * [Gemini 3.5 Live Translate](/docs/models/gemini-3.5-live-translate-preview)
+  * `gemini-3.5-live-translate-preview`
+
+  ---
+
+  * [Gemini 3.1 Flash Live](/docs/models/gemini-3.1-flash-live-preview)
+  * `gemini-3.1-flash-live-preview`
+
+  ---
+
+  * [Gemini 3.1 Flash TTS](/docs/models/gemini-3.1-flash-tts-preview)
+  * `gemini-3.1-flash-tts-preview`
+{% /table %}
+
+## Gemini 2.5 Flash  {% id=&quot;gemini-25-flash&quot; %}
+
+{% callout type=&quot;caution&quot; %}
+  `gemini-2.5-flash` is [deprecated](/docs/deprecations#gemini-2.5-flash-models)
+  and is no longer available to select in Google AI Studio (API access to the 2.5
+  models is limited to existing users). Effective December 1, 2026, all API
+  requests to `gemini-2.5-flash` will automatically route to
+  [`gemini-3.5-flash-lite`](/docs/models/gemini-3.5-flash-lite). Update your model
+  string to `gemini-3.5-flash-lite` and review the
+  [Gemini 3.5 Flash-Lite migration guide](/docs/whats-new-gemini-3.6#migrate-to-gemini-3-5-flash-lite)
+  before December 1, 2026.
+
+{% /callout %}
+
+{% table variant=&quot;model&quot; %}
+  * Model
+  * Description
+  * Endpoint
+
+  ---
+
+  * [Gemini 2.5 Flash](/docs/models/gemini-2.5-flash)
+  * Our best price-performance model for low-latency, high-volume tasks that
+    require reasoning.
+  * `gemini-2.5-flash`
+
+  ---
+
+  * [Nano Banana](/docs/models/gemini-2.5-flash-image)
+  * State-of-the-art native image generation and editing designed for fast,
+    creative workflows.
+  * `gemini-2.5-flash-image`
+
+  ---
+
+  * [Gemini 2.5 Flash Live](/docs/models/gemini-2.5-flash-native-audio-preview-12-2025)
+  * Optimized for real-time conversational agents with sub-second native audio
+    streaming.
+  * `gemini-2.5-flash-native-audio-preview-12-2025`
+
+  ---
+
+  * [Gemini 2.5 Flash TTS](/docs/models/gemini-2.5-flash-preview-tts)
+  * Controllable text-to-speech audio generation with fine control over style
+    and pacing.
+  * `gemini-2.5-flash-preview-tts`
+{% /table %}
+
+## Gemini 2.5 Flash-Lite  {% id=&quot;gemini-25-flash-lite&quot; %}
+
+{% callout type=&quot;note&quot; %}
+  To ensure reliable performance for everyone, we are limiting access to the 2.5
+  models to users who have actively used them in the past. `gemini-2.5-flash-lite`
+  is not deprecated and will continue to be served until further notice through
+  the API. For any new projects, use our latest models: 3.5 Flash-Lite or 3.8
+  Flash. This helps us maintain sufficient capacity for both ongoing legacy
+  workflows and new applications.
+
+{% /callout %}
+
+{% table variant=&quot;model&quot; %}
+  * Model
+  * Description
+  * Endpoint
+
+  ---
+
+  * [Gemini 2.5 Flash-Lite](/docs/models/gemini-2.5-flash-lite)
+  * The fastest and most budget-friendly multimodal model in the 2.5 family.
+  * `gemini-2.5-flash-lite`
+{% /table %}
+
+## Gemini 2.5 Pro  {% id=&quot;gemini-25-pro&quot; %}
+
+{% callout type=&quot;caution&quot; %}
+  `gemini-2.5-pro` is [deprecated](/docs/deprecations#gemini-2.5-pro-models) and
+  is no longer available to select in Google AI Studio (API access to the 2.5
+  models is limited to existing users). Effective December 1, 2026, all API
+  requests to `gemini-2.5-pro` will automatically route to
+  [`gemini-3.8-flash`](/docs/models/gemini-3.8-flash). Update your model string to
+  `gemini-3.8-flash` and review the
+  [Gemini 3.8 Flash migration guide](/docs/whats-new-gemini-3.8#migrate-to-gemini-3-8-flash)
+  before December 1, 2026.
+
+{% /callout %}
+
+{% table variant=&quot;model&quot; %}
+  * Model
+  * Description
+  * Endpoint
+
+  ---
+
+  * [Gemini 2.5 Pro](/docs/models/gemini-2.5-pro)
+  * Our most advanced model for complex tasks, featuring deep reasoning and
+    coding capabilities in the 2.5 family.
+  * `gemini-2.5-pro`
+
+  ---
+
+  * [Gemini 2.5 Pro TTS](/docs/models/gemini-2.5-pro-preview-tts)
+  * High-fidelity speech synthesis optimized for quality in structured workflows
+    like podcasts and audiobooks.
+  * `gemini-2.5-pro-preview-tts`
+{% /table %}
+
+## Audio models  {% id=&quot;audio-models&quot; %}
+
+*This section contains all audio models, including ones that may already be
+listed in other sections*
+
+{% table variant=&quot;model&quot; %}
+  * Model
+  * Description
+  * Endpoint
+
+  ---
+
+  * [Gemini 3.8 Live](/docs/models/gemini-3.8-live)
+  * The default option for most low-latency voice agent experiences and real-time
+    dialogue without reasoning delays.
+  * `gemini-3.8-live`
+
+  ---
+
+  * [Gemini 3.8 Live Extended Thinking](/docs/models/gemini-3.8-live-extended-thinking)
+  * Our high-reasoning audio-to-audio model, recommended when higher background
+    reasoning is required during live interactions.
+  * `gemini-3.8-live-extended-thinking`
+
+  ---
+
+  * [Gemini 3.8 Flash TTS](/docs/models/gemini-3.8-flash-tts)
+  * Flagship creative text-to-speech model for studio-grade voice fidelity,
+    expressive acting, and regional dialects across 130 languages.
+  * `gemini-3.8-flash-tts`
+
+  ---
+
+  * [Gemini 3.8 Flash-Lite TTS](/docs/models/gemini-3.8-flash-lite-tts)
+  * Fast, cost-efficient text-to-speech model built for high-throughput
+    production workloads across 101 languages.
+  * `gemini-3.8-flash-lite-tts`
+
+  ---
+
+  * [Gemini 3.1 Flash Live](/docs/models/gemini-3.1-flash-live-preview)
+  * Legacy audio-to-audio preview model. We recommend updating to Gemini 3.8 Live.
+  * `gemini-3.1-flash-live-preview`
+
+  ---
+
+  * [Gemini 3.1 Flash TTS](/docs/models/gemini-3.1-flash-tts-preview)
+  * Legacy text-to-speech preview model. We recommend updating to Gemini 3.8
+    Flash TTS or Gemini 3.8 Flash-Lite TTS.
+  * `gemini-3.1-flash-tts-preview`
+
+  ---
+
+  * [Gemini 2.5 Flash Live](/docs/models/gemini-2.5-flash-native-audio-preview-12-2025)
+  * Our flagship Live API model for low-latency, bidirectional voice and video
+    agents with native audio reasoning.
+  * `gemini-2.5-flash-native-audio-preview-12-2025`
+
+  ---
+
+  * [Gemini 2.5 Flash TTS](/docs/models/gemini-2.5-flash-preview-tts)
+  * Fast and controllable text-to-speech for low-latency, cost-efficient
+    applications and real-time assistants.
+  * `gemini-2.5-flash-preview-tts`
+
+  ---
+
+  * [Gemini 2.5 Pro TTS](/docs/models/gemini-2.5-pro-preview-tts)
+  * High-fidelity speech synthesis optimized for quality in structured workflows
+    like podcasts and audiobooks.
+  * `gemini-2.5-pro-preview-tts`
+{% /table %}
+
+## Generative media models  {% id=&quot;generative-media-models&quot; %}
+
+*This section contains all generative media models, including ones that may
+already be listed in other sections*
+
+{% table variant=&quot;model&quot; %}
+  * Model
+  * Description
+  * Endpoint
+
+  ---
+
+  * [Nano Banana 2.1](/docs/models/gemini-nano-banana-2.1)
+  * High-efficiency image generation and editing model with improved visual
+    quality, typography, and multi-turn consistency.
+  * `gemini-nano-banana-2.1`
+
+  ---
+
+  * [Nano Banana 2](/docs/models/gemini-3.1-flash-image)
+  * High-efficiency production-scale visual creation, combining the intelligence
+    of the Gemini 3 series with lightning-fast generation speeds.
+  * `gemini-3.1-flash-image`
+
+  ---
+
+  * [Nano Banana 2 Lite](/docs/models/gemini-3.1-flash-lite-image)
+  * Our fastest and cheapest Gemini image model, engineered for velocity and
+    scale where speed and cost are the primary operational constraints. Not
+    optimized for multiple reference inputs or multi-turn sequential editing.
+  * `gemini-3.1-flash-lite-image`
+
+  ---
+
+  * [Nano Banana Pro](/docs/models/gemini-3-pro-image)
+  * A professional design engine with a reasoning core for studio-quality 4K
+    visuals, complex layouts, and precise text rendering.
+  * `gemini-3-pro-image`
+
+  ---
+
+  * [Gemini Omni Flash](/docs/models/gemini-omni-flash)
+  * Fast video generation, editing, keyframe interpolation, and extension with
+    native audio.
+  * `gemini-omni-1.1-flash`
+
+  ---
+
+  * [Nano Banana](/docs/models/gemini-2.5-flash-image)
+  * State-of-the-art native image generation and editing designed for fast,
+    creative workflows.
+  * `gemini-2.5-flash-image`
+
+  ---
+
+  * Imagen 4 (Shut down)
+  * Text-to-image model featuring fast and ultra-fast generation (shut down).
+  * `imagen-4.0-generate`
+{% /table %}
+
+## Music generation models  {% id=&quot;music-models&quot; %}
+
+*This section contains all music generation models, including ones that may
+already be listed in other sections*
+
+{% table variant=&quot;model&quot; %}
+  * Model
+  * Description
+  * Endpoint
+
+  ---
+
+  * [Lyria 3.5](/docs/models/lyria-3.5)
+  * Our flagship music generation model, optimized for full-length songs with
+    complex structural coherence.
+  * `lyria-3.5`
+
+  ---
+
+  * [Lyria 3 Clip](/docs/models/lyria-3-clip-preview)
+  * Optimized for generating short musical clips, loops, and previews up to 30
+    seconds.
+  * `lyria-3-clip-preview`
+
+  ---
+
+  * [Lyria 3 Pro](/docs/models/lyria-3-pro-preview)
+  * Previous generation music generation model for full-length songs.
+  * `lyria-3-pro-preview`
+
+  ---
+
+  * [Lyria RealTime](/docs/models/lyria-realtime-exp)
+  * High-fidelity music generation model providing granular creative control and
+    real-time streaming capabilities.
+  * `lyria-realtime-exp`
+{% /table %}
+
+## Tool and agent models  {% id=&quot;tool-and-agent-models&quot; %}
+
+{% table variant=&quot;model&quot; %}
+  * Model
+  * Description
+  * Endpoint
+
+  ---
+
+  * [Gemini Deep Research](/docs/models/deep-research-preview-04-2026)
+  * An agentic model that autonomously plans and executes multi-step research
+    across hundreds of sources to produce cited, interactive reports.
+  * `deep-research-preview-04-2026`
+
+  ---
+
+  * [Gemini Deep Research Max](/docs/models/deep-research-max-preview-04-2026)
+  * Maximum comprehensiveness for automated context gathering and synthesis
+    across hundreds of sources.
+  * `deep-research-max-preview-04-2026`
+
+  ---
+
+  * [Antigravity Agent](/docs/models/antigravity-preview-09-2026)
+  * A general-purpose managed agent that autonomously plans, reasons, runs code,
+    manages files, and browses the web inside a secure, isolated Linux sandbox.
+  * `antigravity-preview-09-2026`
+{% /table %}
+
+## Specialized task models  {% id=&quot;specialized-task-models&quot; %}
+
+{% table variant=&quot;model&quot; %}
+  * Model
+  * Description
+  * Endpoint
+
+  ---
+
+  * [Gemini Embedding 2](/docs/models/gemini-embedding-2)
+  * Our first multimodal embedding model, mapping text, images, video, audio,
+    and PDFs into a unified embedding space for advanced semantic search and RAG
+    systems.
+  * `gemini-embedding-2`
+
+  ---
+
+  * [Gemini Embedding](/docs/models/gemini-embedding-001)
+  * High-dimensional vector representations for advanced semantic search, text
+    classification, and RAG systems.
+  * `gemini-embedding-001`
+
+  ---
+
+  * [Gemini Robotics ER 2](/docs/robotics-overview)
+  * Embodied reasoning model delivering advanced video understanding, spatial
+    reasoning, multi-step tool orchestration, and multi-robot collaboration for
+    robotics tasks.
+  * `gemini-robotics-er-2-preview`
+{% /table %}
+
+## Previous models  {% id=&quot;previous-models&quot; %}
+
+{% callout type=&quot;warning&quot; %}
+  These models are [deprecated](/docs/deprecations) and will be shut down soon;
+  migrate to newer models to prevent service interruptions.
+
+{% /callout %}
+
+{% table variant=&quot;model&quot; %}
+  * Model
+  * Description
+  * Endpoint
+
+  ---
+
+  * [Gemini Robotics ER 1.6](/docs/models/gemini-robotics-er-1.6-preview) (Shut down)
+  * Advanced embodied reasoning model that understands physical spaces and plans
+    multi-step tasks for robotic agents with new capabilities like instrument
+    reading, improved spatial and physical reasoning.
+  * `gemini-robotics-er-1.6-preview`
+
+  ---
+
+  * [Computer Use](/docs/models/gemini-2.5-computer-use-preview-10-2025) (Shut down)
+  * A specialized model that can &quot;see&quot; a digital screen and perform UI actions
+    like clicking, typing, and navigating to automate complex browser tasks.
+  * `gemini-2.5-computer-use-preview-10-2025`
+
+  ---
+
+  * [Gemini 2.0 Flash](/docs/models/gemini-2.0-flash) (Shut down)
+  * Our second generation workhorse model, with next-gen features and improved
+    capabilities, including superior speed, native tool use, and a 1M token
+    context window.
+  * `gemini-2.0-flash`
+
+  ---
+
+  * [Gemini 2.0 Flash-Lite](/docs/models/gemini-2.0-flash-lite) (Shut down)
+  * Our fastest second generation model, optimized for cost efficiency and low
+    latency.
+  * `gemini-2.0-flash-lite`
+
+  ---
+
+  * [Gemini 3.1 Flash-Lite Preview](/docs/models/gemini-3.1-flash-lite-preview)
+    (Shut down)
+  * Our most cost-efficient multimodal model, offering the fastest performance
+    for high-frequency, lightweight tasks.
+  * `gemini-3.1-flash-lite-preview`
+
+  ---
+
+  * [Gemini 3 Pro Preview](/docs/models/gemini-3-pro-preview) (Shut down)
+  * Our state-of-the-art reasoning model, with advanced multimodal
+    understanding.
+  * `gemini-3-pro-preview`
+{% /table %}
+
+## Model version name patterns  {% id=&quot;model-versions&quot; %}
+
+Gemini models are available in either *stable*, *preview*, *latest*, or
+*experimental* versions.
+
+{% callout type=&quot;note&quot; %}
+  Note: The following list refers to the model string naming convention as of
+  September, 2025. Models released prior to that may have different naming
+  conventions. Refer to the exact model string if you are using an older model.
+
+{% /callout %}
+
+### Stable  {% class=&quot;hide-from-toc&quot; id=&quot;stable&quot; %}
+
+Points to a specific stable model. Stable models usually don&#39;t change. Most
+production apps should use a specific stable model.
+
+For example: `gemini-3.6-flash`.
+
+### Preview  {% class=&quot;hide-from-toc&quot; id=&quot;preview&quot; %}
+
+Points to a preview model which may be used for production. Preview models will
+typically have billing enabled, might come with more restrictive rate limits and
+will be deprecated with at least 2 weeks notice.
+
+For example: `gemini-2.5-flash-preview-09-2025`.
+
+### Latest  {% class=&quot;hide-from-toc&quot; id=&quot;latest&quot; %}
+
+Points to the latest release for a specific model variation. This can be a
+stable, preview or experimental release. This alias will get hot-swapped with
+every new release of a specific model variation. A **2-week notice** will be
+provided through email before the version behind latest is changed.
+
+For example: `gemini-flash-latest`.
+
+### Experimental  {% class=&quot;hide-from-toc&quot; id=&quot;experimental&quot; %}
+
+Points to an experimental model which will typically not be suitable for
+production use and come with more restrictive rate limits. We release
+experimental models to gather feedback and get our latest updates into the hands
+of developers quickly.
+
+Experimental models are not stable and availability of model endpoints is
+subject to change.
+
+## Model deprecations  {% id=&quot;model-deprecations&quot; %}
+
+For information about model deprecations, visit the [Gemini
+deprecations](/docs/deprecations) page.
+
+</pre></noscript><noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-TT9C75WP" height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript><script src="https://www.gstatic.com/_/mss/boq-makersuite/_/js/k=boq-makersuite.MakerSuite.en_US.0pfjff4lsBQ.2018.O/am=AVEAAAaH/d=1/excm=_b/ed=1/dg=0/wt=2/ujg=1/rs=AMOXD28U3flIxI6KafKh7N7KQVEGmxa-RQ/dti=1/m=_b" id="base-js" data-scope-id="4aa489fd-27a5-4f44-87c3-2b35d77b9999" nonce="cyn0rlF_aXfwrEnrgCQZWg"></script></body></html>

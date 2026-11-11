@@ -48,7 +48,11 @@ journey.test("a sync that cannot write reports the error, keeps the pending chan
     await step("the errors screen keeps the cause and gives next steps", () => terminal.write("e"), async () => {
       await locate(terminal, "Errors (1)").unique().expect();
       const screen = await screenText();
-      for (const expected of ["materialize.write.error", "permissiondenied", "Run`agent-marketplacesync--check`inthisworkspace"]) {
+      for (const expected of [
+        "materialize.write.error",
+        "permissiondenied",
+        "Resolve the write failure at the reported path, then run `agent-marketplace sync` again".replace(/\s+/g, "")
+      ]) {
         assert.ok(screen.includes(expected), `the sync error lost ${JSON.stringify(expected)}:\n${await terminal.text()}`);
       }
     });
@@ -71,4 +75,66 @@ journey.test("a sync that cannot write reports the error, keeps the pending chan
   const check = runNonTTY(fixture, ["sync", "--check"], 30_000);
   if (check.error) throw check.error;
   assert.equal(check.status, 0, `${check.stdout}\n${check.stderr}`);
+});
+
+const ownedAggregateJourney = defineFixture("owned-aggregate-recovery", ["tui"], 80, 24, { directorySource: true });
+before(async () => {
+  await ownedAggregateJourney.setup();
+  const fixture = ownedAggregateJourney.current();
+  const userConfig = path.join(fixture.home, ".agents", "config.yaml");
+  const repoConfig = path.join(fixture.repo, ".agents", "config.yaml");
+  const sourceHooks = path.join(fixture.registryURL, ".devin", "hooks.v1.json");
+  const repoHooks = path.join(fixture.repo, ".devin", "hooks.v1.json");
+  fs.writeFileSync(userConfig, "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources: {}\n");
+  fs.mkdirSync(path.dirname(sourceHooks), { recursive: true });
+  fs.writeFileSync(sourceHooks, `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo source"}]}]}`);
+  fs.mkdirSync(path.dirname(repoConfig), { recursive: true });
+  fs.writeFileSync(repoConfig, `apiVersion: agent-marketplace/v4
+harnesses: [devin]
+sources:
+  local:
+    directory: ${fixture.registryURL}
+    source_harness: devin
+resources:
+  local:
+    include: [hook/PreToolUse-command]
+`);
+  fs.mkdirSync(path.dirname(repoHooks), { recursive: true });
+  fs.writeFileSync(repoHooks, `{"PostToolUse":[{"command":"echo mine","type":"command"}]}`);
+});
+after(ownedAggregateJourney.cleanup);
+
+// spec: command-error-output/owned-aggregate-diagnostics-print-their-code-guidance
+ownedAggregateJourney.test("sync recovery shows the owned Devin aggregate guidance", async (terminal) => {
+  const fixture = ownedAggregateJourney.current();
+  const repoConfig = path.join(fixture.repo, ".agents", "config.yaml");
+  const repoHooks = path.join(fixture.repo, ".devin", "hooks.v1.json");
+  const configBefore = fs.readFileSync(repoConfig);
+  const flatEntry = `{"PostToolUse":[{"command":"echo mine","type":"command"}]}`;
+  await step("settled launch reports the aggregate error", () => {}, async () => {
+    await locate(terminal, /! 1 errors: materialize\.dev/).unique().expect({ timeout: 30_000 });
+  });
+  await step("the recovery copy uses entry guidance instead of catalog guidance", () => terminal.write("e"), async () => {
+    await locate(terminal, "Errors (1)").unique().expect();
+    const screen = (await terminal.text()).replace(/\s+/g, "");
+    assert.ok(screen.includes("materialize.devin.aggregate-shape"), `the diagnostic code is missing:\n${await terminal.text()}`);
+    assert.ok(screen.includes('Rewriteentry0ofevent"PostToolUse"'), `the entry guidance is missing:\n${await terminal.text()}`);
+    assert.ok(screen.includes(`in${fs.realpathSync(repoHooks).replace(/\s+/g, "")}inthematcher-groupsshape`), `the hooks file is missing:\n${await terminal.text()}`);
+    assert.ok(screen.includes('{"matcher":"<optionaltoolpattern>","hooks":[{"type":"command","command":"<command>"}]}'), `the matcher-groups example is missing:\n${await terminal.text()}`);
+    assert.ok(screen.includes("thenrun`agent-marketplacesync`again"), `the rerun instruction is missing:\n${await terminal.text()}`);
+    assert.ok(screen.includes("orremovethatentryifyounolongerwantit"), `the entry removal guidance is missing:\n${await terminal.text()}`);
+    assert.ok(!screen.includes("mustbeJSONobjects"), `the root/member guidance is present:\n${await terminal.text()}`);
+    assert.ok(!screen.includes("agent-marketplace sync --check"), `the generic fallback is present:\n${await terminal.text()}`);
+  });
+  await step("close the errors screen", () => terminal.write("e"), async () => {
+    await locate(terminal, "Errors (1)").expect({ not: true });
+  });
+  await step("retrying sync keeps the aggregate error visible", () => terminal.write("s"), async () => {
+    await locate(terminal, "sync error: materialize.devin.aggregate-shape").unique().expect({ timeout: 30_000 });
+  });
+  assert.deepEqual(fs.readFileSync(repoConfig), configBefore, "the failed sync changed the repository configuration");
+  assert.equal(fs.readFileSync(repoHooks, "utf8"), flatEntry, "the failed sync changed the handwritten aggregate");
+  await step("quit after the failed sync", () => terminal.write("q"), async () => {
+    assert.equal((await waitForExit(terminal)).exitCode, 0);
+  });
 });

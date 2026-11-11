@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
@@ -45,6 +46,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
+	"github.com/Adyen/agent-marketplace/internal/packagegen"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
@@ -139,11 +141,12 @@ type outputKey struct {
 
 // Report holds the aggregate outcome of a materialization run.
 type Report struct {
-	PerTarget        map[hcc.Target]TargetReport
-	PerRoot          []TargetReport
-	Diags            []diag.Diagnostic
-	BlockedResources []BlockedResource
-	HookChanges      []HookChange `json:"-"`
+	PerTarget          map[hcc.Target]TargetReport
+	PerRoot            []TargetReport
+	Diags              []diag.Diagnostic
+	BlockedResources   []BlockedResource
+	HookChanges        []HookChange `json:"-"`
+	RetainedPluginData []string     `json:"retained_plugin_data,omitempty"`
 }
 
 // BlockedResource identifies a resource omitted during compilation for one
@@ -176,10 +179,11 @@ type portableManifest struct {
 }
 
 type portableManifestEntry struct {
-	Target  string `yaml:"target"`
-	Path    string `yaml:"path"`
-	RootID  string `yaml:"root_id,omitempty"`
-	RootKey string `yaml:"root_key,omitempty"`
+	Target         string `yaml:"target"`
+	Path           string `yaml:"path"`
+	RootID         string `yaml:"root_id,omitempty"`
+	RootKey        string `yaml:"root_key,omitempty"`
+	PluginInstance string `yaml:"plugin_instance,omitempty"`
 	// Digest is the SHA-256 digest of the exact file or tree materialized at
 	// Path. Empty values are legacy entries from manifests written before
 	// content ownership was tracked.
@@ -258,6 +262,11 @@ func decodePortableManifestEntries(path string, data []byte, machineScope bool) 
 		clean := filepath.ToSlash(filepath.Clean(entry.Path))
 		if entry.Target == "" || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || filepath.IsAbs(entry.Path) {
 			return nil, fmt.Errorf("invalid materialization manifest entry %q", entry.Path)
+		}
+		if entry.PluginInstance != "" {
+			if _, err := ownership.PluginStatePath(entry.PluginInstance); err != nil {
+				return nil, fmt.Errorf("invalid plugin-owned materialization entry %q", entry.Path)
+			}
 		}
 		if err := admitPortableNomination(hcc.Target(entry.Target), machineScope, entry.Path, clean); err != nil {
 			return nil, err
@@ -441,6 +450,13 @@ func (s *portableState) add(target hcc.Target, path, digest string) {
 	s.entries[portableManifestKey(target, path)] = entry
 }
 
+func (s *portableState) addPlugin(target hcc.Target, path, digest, instanceKey string) {
+	s.add(target, path, digest)
+	entry := s.entries[portableManifestKey(target, filepath.ToSlash(filepath.Clean(path)))]
+	entry.PluginInstance = instanceKey
+	s.entries[portableManifestKey(target, entry.Path)] = entry
+}
+
 func (s *portableState) matchesNativeRoot(entry portableManifestEntry) bool {
 	key := outputKey{target: hcc.Target(entry.Target), machineScope: s.machineScope}
 	id, root, _, err := portableEntryDestination(key, "", s.repoRoot, entry.Path)
@@ -589,6 +605,7 @@ type RunOption func(*runConfig)
 
 type runConfig struct {
 	dryRun                  bool
+	pluginStateReconcile    bool
 	scopeFilter             *bool // nil = all scopes; true = machine only; false = repo only
 	modes                   config.MaterializationModes
 	beforeSupportWrite      func(string, string) error
@@ -609,6 +626,10 @@ func WithMaterializationModes(modes config.MaterializationModes) RunOption {
 // Used by --check mode.
 func WithDryRun() RunOption {
 	return func(c *runConfig) { c.dryRun = true }
+}
+
+func WithPluginStateReconciliation() RunOption {
+	return func(c *runConfig) { c.pluginStateReconcile = true }
 }
 
 // WithMachineScopeOnly restricts materialization to machine-scope (user-level)
@@ -697,7 +718,24 @@ type compilePhaseResult struct {
 	// Owned aggregate state is opaque to generic orchestration. Each target
 	// adapter stores its JSON or TOML work value behind this map and exposes it
 	// only through ownedAggregateHandler.
-	ownedState map[outputKey]any
+	ownedState    map[outputKey]any
+	plugins       map[string]*pluginInstancePlan
+	pluginBlocked map[string]bool
+}
+
+type pluginInstancePlan struct {
+	key           outputKey
+	ref           ownership.PluginGenerationRef
+	artifacts     []artifact.Artifact
+	hooks         *ownedJSONAggregateWork
+	mcpEntries    []ownedJSONEntry
+	registrations []ownedJSONEntry
+	aggregate     ownedAggregateState
+	aggregateSet  bool
+	handler       ownedAggregateHandler
+	members       []ownership.PluginMemberRef
+	catalog       nativePluginCatalog
+	removed       bool
 }
 
 func (r compilePhaseResult) ownedAggregateState() ownedAggregateState {
@@ -716,7 +754,6 @@ func (r compilePhaseResult) ownedAggregateState() ownedAggregateState {
 //
 // Skills with Resource==nil are skipped with a warning diagnostic.
 func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtifact, opts ...RunOption) (*Report, error) {
-	start := time.Now()
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -729,16 +766,46 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 	if rc.supportCommitFault != nil {
 		ctx = context.WithValue(ctx, nativeRepositorySupportCommitFaultKey{}, rc.supportCommitFault)
 	}
+	hasPluginPackage := false
+	for _, resource := range resolved {
+		if resource.PluginPackage != nil && resource.PluginPackage.Package != nil {
+			hasPluginPackage = true
+			break
+		}
+	}
+	if hasPluginPackage && !rc.dryRun {
+		var report *Report
+		err := packagegen.WithPackagesLock(ctx, func() error {
+			var runErr error
+			report, runErr = runMaterialization(ctx, repoRoot, resolved, rc, true)
+			return runErr
+		})
+		return report, err
+	}
+	return runMaterialization(ctx, repoRoot, resolved, rc, false)
+}
+
+func runMaterialization(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtifact, rc runConfig, packagesLocked bool) (*Report, error) {
+	start := time.Now()
 	slog.Debug("materialize start", "repo_root", repoRoot, "resolved", len(resolved), "dry_run", rc.dryRun,
 		"machine_mode", rc.modes.Machine, "project_mode", rc.modes.Project)
 
+	pluginNamespaceBlocked, pluginNamespaceDiags := pluginNamespaceRefusals(resolved)
+	pluginDependencyBlocked, pluginDependencyDiags := pluginDependencyRefusals(resolved)
+	for identity := range pluginDependencyBlocked {
+		pluginNamespaceBlocked[identity] = true
+	}
+	resolved, pluginGenerationDiags := preparePluginGenerations(resolved, repoRoot, rc.dryRun, packagesLocked, pluginNamespaceBlocked)
 	// Phase 1: Group skills by target and track all output keys.
-	work, allOutputs, blocked, allDiags, displaced := buildWorkItems(resolved, repoRoot)
+	work, allOutputs, blocked, allDiags, displaced := buildWorkItems(resolved, repoRoot, pluginNamespaceBlocked)
 	// Report shared-path displacements only for the scopes this run processes.
 	if rc.scopeFilter != nil {
 		displaced = slices.DeleteFunc(displaced, func(d resolver.SharedPathDisplacement) bool { return d.MachineScope != *rc.scopeFilter })
 	}
 	allDiags = append(sharedPathDiagnostics(displaced), allDiags...)
+	allDiags = append(allDiags, pluginGenerationDiags...)
+	allDiags = append(allDiags, pluginNamespaceDiags...)
+	allDiags = append(allDiags, pluginDependencyDiags...)
 	slog.Debug("materialize work built", "work_items", len(work), "outputs", len(allOutputs), "blocked", len(blocked), "diagnostics", len(allDiags))
 	if refusal := normalizeOpenCodeScopes(work, allOutputs, repoRoot); refusal != nil {
 		return &Report{Diags: append(allDiags, *refusal), PerTarget: map[hcc.Target]TargetReport{}}, nil
@@ -778,12 +845,132 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 	compileResult.pruneEnumerationHook = rc.pruneEnumerationHook
 	compileResult.manifestPublicationHook = rc.manifestPublicationHook
 	report := executeMaterializePlans(ctx, compileResult, rc.dryRun, repoRoot, rc.modes, rc.beforeSupportWrite)
+	if rc.pluginStateReconcile {
+		reconcilePluginInstances(ctx, repoRoot, resolved, compileResult, report, pluginNamespaceBlocked, rc.dryRun, packagesLocked, rc.supportCommitFault)
+	}
 	slog.Info("materialize end",
 		"duration_ms", time.Since(start).Milliseconds(),
 		"targets", len(report.PerRoot),
 		"diagnostics", len(report.Diags),
 	)
 	return report, nil
+}
+
+func pluginDependencyRefusals(resolved []resolver.ResolvedArtifact) (map[string]bool, []diag.Diagnostic) {
+	blocked := make(map[string]bool)
+	reported := make(map[string]bool)
+	var diagnostics []diag.Diagnostic
+	for _, resource := range resolver.MaterializationWinners(resolved) {
+		pkg := resource.PluginPackage
+		if pkg == nil || pkg.Package == nil || !pkg.Package.HasDependencies() || pkg.Delivery == "native" {
+			continue
+		}
+		for _, target := range resolver.HarnessTargets(resource.Harnesses) {
+			identity := pluginInstanceIdentity(resource, target)
+			blocked[identity] = true
+			if reported[identity] {
+				continue
+			}
+			diagnostics = append(diagnostics, diag.Diagnostic{
+				Code:     diag.CodePluginFormatDependenciesUnsupported,
+				Severity: diag.SeverityError,
+				Target:   string(target),
+				Resource: "plugin/" + pkg.Name,
+				Message:  "plugin declares dependencies that cannot be installed; no members were installed",
+				Source:   diag.SourceRef{File: pkg.PackageRoot},
+			})
+			reported[identity] = true
+		}
+	}
+	return blocked, diagnostics
+}
+
+func preparePluginGenerations(resolved []resolver.ResolvedArtifact, repoRoot string, dryRun, packagesLocked bool, namespaceBlocked map[string]bool) ([]resolver.ResolvedArtifact, []diag.Diagnostic) {
+	out := append([]resolver.ResolvedArtifact(nil), resolved...)
+	type generationResult struct {
+		generation packagegen.Generation
+		err        error
+	}
+	generations := make(map[string]generationResult)
+	var diagnostics []diag.Diagnostic
+	reported := make(map[string]bool)
+	for i := range out {
+		resource := &out[i]
+		pkg := resource.PluginPackage
+		if pkg == nil || pkg.Package == nil {
+			continue
+		}
+		targets := resolver.HarnessTargets(resource.Harnesses)
+		if len(targets) == 0 {
+			continue
+		}
+		pluginPackage := *pkg
+		scope := pluginGenerationScope(*resource, repoRoot)
+		pluginPackage.GenerationScope = scope
+		pluginPackage.TargetGenerations = make(map[string]resolver.PluginTargetGeneration, len(targets))
+		for _, target := range targets {
+			pluginPackage.InstanceKey = packagegen.InstanceKey(pkg.Name, target, scope)
+			if namespaceBlocked[pluginInstanceIdentity(*resource, target)] ||
+				pkg.Delivery != "native" && len(pkg.DecodeFailures) > 0 {
+				continue
+			}
+			input := packagegen.Input{
+				Plugin:             pkg.Package,
+				PackageRoot:        pkg.PackageRoot,
+				Target:             target,
+				Delivery:           pkg.Delivery,
+				Scope:              scope,
+				Exclusions:         pkg.Exclusions,
+				CatalogFingerprint: pkg.CatalogFingerprint,
+			}
+			identity := packagegen.BuildKey(input)
+			generation, found := generations[identity]
+			if !found {
+				if dryRun {
+					generation.generation, generation.err = packagegen.Check(input)
+				} else if packagesLocked {
+					generation.generation, generation.err = packagegen.PublishUnderPackagesLock(input)
+				} else {
+					generation.generation, generation.err = packagegen.Publish(input)
+				}
+				generations[identity] = generation
+			}
+			pluginPackage.GenerationKey = generation.generation.Key
+			pluginPackage.GenerationPath = generation.generation.Path
+			pluginPackage.DataPath = generation.generation.DataPath
+			if generation.err != nil {
+				pluginPackage.GenerationError = generation.err.Error()
+				slog.Warn("plugin package generation preparation failed", "plugin", pkg.Name, "target", target, "generation_key", generation.generation.Key, "error", generation.err)
+				if !reported[identity] {
+					code := diag.CodePluginGenerationPublish
+					if dryRun {
+						code = diag.CodePluginGenerationMissing
+					}
+					diagnostics = append(diagnostics, diag.Diagnostic{
+						Code:     code,
+						Severity: diag.SeverityError,
+						Target:   string(target),
+						Resource: "plugin/" + pkg.Name,
+						Message:  fmt.Sprintf("plugin package generation could not be prepared safely: %v", generation.err),
+						Source:   diag.SourceRef{File: pkg.PackageRoot},
+					})
+					reported[identity] = true
+				}
+			}
+			targetGeneration := resolver.PluginTargetGeneration{
+				Scope: scope, Delivery: pluginPackage.Delivery, NativeRefresh: pluginPackage.NativeRefresh,
+				ReloadRequired: pluginPackage.ReloadRequired, InstanceKey: pluginPackage.InstanceKey,
+				GenerationKey: pluginPackage.GenerationKey, GenerationPath: pluginPackage.GenerationPath,
+				DataPath: pluginPackage.DataPath,
+			}
+			if generation.err != nil {
+				targetGeneration.GenerationError = generation.err.Error()
+			}
+			pluginPackage.TargetGenerations[string(target)] = targetGeneration
+		}
+		resource.PluginPackage = &pluginPackage
+	}
+	return out, diagnostics
 }
 
 func markNilSharedNativeMCPInputs(resolved []resolver.ResolvedArtifact, repoRoot string, scopeFilter *bool, incomplete map[outputKey]bool) {
@@ -794,10 +981,7 @@ func markNilSharedNativeMCPInputs(resolved []resolver.ResolvedArtifact, repoRoot
 		if resource.Unresolved || resource.Resource != nil || resource.Kind != ir.KindMcpServer {
 			continue
 		}
-		targets := resource.Harnesses
-		if targets == nil {
-			targets = []hcc.Target{hcc.TargetClaude}
-		}
+		targets := resolver.HarnessTargets(resource.Harnesses)
 		if len(targets) == 0 {
 			continue
 		}
@@ -816,7 +1000,7 @@ func markNilSharedNativeMCPInputs(resolved []resolver.ResolvedArtifact, repoRoot
 
 // buildWorkItems groups resolved skills by target and identifies all output
 // keys (including empty targets that need pruning).
-func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]skillTarget, map[outputKey]bool, blockedOutputs, []diag.Diagnostic, []resolver.SharedPathDisplacement) {
+func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string, pluginNamespaceBlocked map[string]bool) ([]skillTarget, map[outputKey]bool, blockedOutputs, []diag.Diagnostic, []resolver.SharedPathDisplacement) {
 	var work []skillTarget
 	var allDiags []diag.Diagnostic
 	allOutputs := make(map[outputKey]bool)
@@ -829,10 +1013,7 @@ func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]sk
 			// claim output keys.
 			continue
 		}
-		targets := s.Harnesses
-		if targets == nil {
-			targets = []hcc.Target{hcc.TargetClaude}
-		}
+		targets := resolver.HarnessTargets(s.Harnesses)
 		if len(targets) == 0 {
 			continue
 		}
@@ -843,6 +1024,10 @@ func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]sk
 		nilResourceWarned := false
 		for _, t := range targets {
 			key := outputKey{target: t, machineScope: machineScope}
+			if s.PluginPackage != nil && pluginNamespaceBlocked[pluginInstanceIdentity(s, t)] {
+				blocked.blockResource(key, skillTarget{skill: s, target: t, machineScope: machineScope})
+				continue
+			}
 			if s.Resource == nil {
 				// No IR resource means no kind, so there is nothing to
 				// attribute the skip to: fail closed on the whole output.
@@ -858,7 +1043,23 @@ func buildWorkItems(resolved []resolver.ResolvedArtifact, repoRoot string) ([]sk
 				}
 				continue
 			}
-			work = append(work, skillTarget{skill: s, target: t, machineScope: machineScope})
+			selected := s
+			if s.PluginPackage != nil {
+				pkg := *s.PluginPackage
+				if generation, ok := pkg.TargetGenerations[string(t)]; ok {
+					pkg.GenerationScope = generation.Scope
+					pkg.Delivery = generation.Delivery
+					pkg.NativeRefresh = generation.NativeRefresh
+					pkg.ReloadRequired = generation.ReloadRequired
+					pkg.InstanceKey = generation.InstanceKey
+					pkg.GenerationKey = generation.GenerationKey
+					pkg.GenerationPath = generation.GenerationPath
+					pkg.DataPath = generation.DataPath
+					pkg.GenerationError = generation.GenerationError
+				}
+				selected.PluginPackage = &pkg
+			}
+			work = append(work, skillTarget{skill: selected, target: t, machineScope: machineScope})
 		}
 	}
 
@@ -906,6 +1107,11 @@ func addExistingOutputKeys(repoRoot string, allOutputs map[outputKey]bool) {
 		}
 		repoDir := repoOutputDir(target, roots, repoRoot)
 		machineDir := roots.For(true, repoRoot)
+		if target == hcc.TargetClaude {
+			if harness.ClaudeConfigDirRelative(os.Getenv("CLAUDE_CONFIG_DIR")) {
+				machineDir = ""
+			}
+		}
 		// When repoRoot is the home directory the repo-scope path is the same
 		// filesystem location as the machine-scope path (e.g. ~/.factory ==
 		// ~/.factory). Adding both keys would cause the repo-scope pass (which
@@ -1001,25 +1207,25 @@ func marketplaceResourceForInstallName(resource ir.Resource, name string) (ir.Re
 	}
 	switch typed := resource.(type) {
 	case *ir.Skill:
-		copy := *typed
-		copy.SetName(name)
-		return &copy, nil
+		cloned := *typed
+		cloned.SetName(name)
+		return &cloned, nil
 	case *ir.Command:
-		copy := *typed
-		copy.SetName(name)
-		return &copy, nil
+		cloned := *typed
+		cloned.SetName(name)
+		return &cloned, nil
 	case *ir.Subagent:
-		copy := *typed
-		copy.SetName(name)
-		return &copy, nil
+		cloned := *typed
+		cloned.SetName(name)
+		return &cloned, nil
 	case *ir.Hook:
-		copy := *typed
-		copy.SetName(name)
-		return &copy, nil
+		cloned := *typed
+		cloned.SetName(name)
+		return &cloned, nil
 	case *ir.McpServer:
-		copy := *typed
-		copy.SetName(name)
-		return &copy, nil
+		cloned := *typed
+		cloned.SetName(name)
+		return &cloned, nil
 	default:
 		return nil, fmt.Errorf("unsupported Marketplace resource kind %s for installed name", resource.Kind())
 	}
@@ -1082,11 +1288,55 @@ func hookDuplicateExecutionDiagnostics(work []skillTarget) []diag.Diagnostic {
 // and groups results by output key.
 func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs map[outputKey]bool, blocked blockedOutputs, repoRoot string) compilePhaseResult {
 	allDiags = append(allDiags, hookDuplicateExecutionDiagnostics(work)...)
+	pluginBlocked, pluginDiags := preflightPluginInstances(work)
+	allDiags = append(allDiags, pluginDiags...)
 	byTarget := make(map[outputKey]*targetWork)
 	skillLinks := make(map[outputKey]map[string]*skillLinkGroup)
 	artifactMeta := make(map[outputKey]map[string]skillLink)
 	ownedState := make(map[outputKey]any)
 	ownedAggregates := ownedAggregateState{values: ownedState}
+	pluginInstances := make(map[string]*pluginInstancePlan)
+	pluginPlanFor := func(w skillTarget) *pluginInstancePlan {
+		pkg := w.skill.PluginPackage
+		if pkg == nil || pkg.InstanceKey == "" || pkg.GenerationKey == "" {
+			return nil
+		}
+		plan := pluginInstances[pkg.InstanceKey]
+		if plan == nil {
+			plan = &pluginInstancePlan{
+				key: outputKey{target: w.target, machineScope: w.machineScope},
+				ref: ownership.PluginGenerationRef{
+					InstanceKey:    pkg.InstanceKey,
+					Name:           pkg.Name,
+					Target:         string(w.target),
+					Scope:          pkg.GenerationScope,
+					GenerationKey:  pkg.GenerationKey,
+					Delivery:       pkg.Delivery,
+					Refresh:        pkg.NativeRefresh,
+					ReloadRequired: pkg.ReloadRequired,
+					SourceRevision: pkg.SourceRevision,
+				},
+			}
+			pluginInstances[pkg.InstanceKey] = plan
+		}
+		kind := w.skill.Resource.Kind().String()
+		name := w.skill.Name
+		if w.skill.InstalledName != "" {
+			name = w.skill.InstalledName
+		}
+		member := ownership.PluginMemberRef{Kind: kind, Name: name}
+		found := false
+		for _, existing := range plan.members {
+			if existing == member {
+				found = true
+				break
+			}
+		}
+		if !found {
+			plan.members = append(plan.members, member)
+		}
+		return plan
+	}
 	nativeHooks := make(map[outputKey]*ownedJSONAggregateWork)
 	nativeMCPEntries := make(map[outputKey][]ownedJSONEntry)
 	nativeMCPConflicts := make(map[outputKey]map[string]bool)
@@ -1126,12 +1376,19 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		blocked.blockResource(key, w)
 		blockedResources = append(blockedResources, blockedResourceFor(key, w))
 	}
-	markResourceIncomplete := func(key outputKey, w skillTarget, handler ownedAggregateHandler) {
-		if w.skill.Resource != nil && w.skill.Resource.Kind() == ir.KindHook {
+	blockPluginInstance := func(w skillTarget) {
+		if w.skill.PluginPackage == nil {
+			return
+		}
+		pluginBlocked[pluginInstanceIdentity(w.skill, w.target)] = true
+		delete(pluginInstances, w.skill.PluginPackage.InstanceKey)
+	}
+	markKindIncomplete := func(key outputKey, kind ir.ResourceKind, handler ownedAggregateHandler) {
+		if kind == ir.KindHook {
 			markNativeHookIncomplete(key)
 			return
 		}
-		if w.skill.Resource != nil && w.skill.Resource.Kind() == ir.KindMcpServer && nativeHookSharesMCPRoute(key, repoRoot) {
+		if kind == ir.KindMcpServer && nativeHookSharesMCPRoute(key, repoRoot) {
 			nativeMCPIncomplete[key] = true
 			markNativeHookIncomplete(key)
 			if info, ok := harness.TargetInfoFor(key.target); ok {
@@ -1139,7 +1396,12 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			}
 			return
 		}
-		markOwnedAggregateIncomplete(handler, ownedAggregates, key, w)
+		markOwnedAggregateKindIncomplete(handler, ownedAggregates, key, kind)
+	}
+	markResourceIncomplete := func(key outputKey, w skillTarget, handler ownedAggregateHandler) {
+		if w.skill.Resource != nil {
+			markKindIncomplete(key, w.skill.Resource.Kind(), handler)
+		}
 	}
 
 	caseCollisions := caseOnlyNameCollisions(work)
@@ -1149,6 +1411,28 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			blockResource(key, w)
 			blocked.mark(key, componentName(resourceFileHookSupportDir(key.target)), "hooks", "plugins")
 			allDiags = append(allDiags, diag.Diagnostic{Code: diag.CodeHookOpenCodeUnsupported, Severity: diag.SeverityError, Target: string(w.target), Resource: w.skill.Name, Message: "OpenCode can disable or skip native plugins; required hook enforcement cannot be guaranteed", Source: compilepkg.SourceOf(w.skill.Resource)})
+			continue
+		}
+		if w.skill.PluginPackage != nil && w.skill.PluginPackage.GenerationError != "" {
+			blockResource(key, w)
+			continue
+		}
+		if w.skill.PluginPackage != nil && pluginBlocked[pluginInstanceIdentity(w.skill, w.target)] {
+			blockResource(key, w)
+			handler := ownedAggregateHandlerFor(key.target)
+			markResourceIncomplete(key, w, handler)
+			if len(w.skill.PluginPackage.DecodeFailures) > 0 {
+				for _, kind := range w.skill.PluginPackage.DecodeKinds {
+					blocked.blockKind(key, kind)
+					markKindIncomplete(key, kind, handler)
+				}
+			}
+			continue
+		}
+		if w.skill.PluginPackage != nil && w.skill.PluginPackage.Delivery == "native" {
+			if plan := pluginPlanFor(w); plan != nil {
+				plan.handler = ownedAggregateHandlerFor(w.target)
+			}
 			continue
 		}
 		binding, hasBinding, bindingErr := materializeAdapterFor(w.target)
@@ -1275,7 +1559,18 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			})
 			continue
 		}
-		if w.skill.IsMarketplace && w.skill.InstalledName != "" {
+		compileOptions := []hcc.Option{}
+		if w.skill.PluginPackage != nil {
+			resource, options, err := pluginMemberCompileInput(w)
+			if err != nil {
+				blockResource(key, w)
+				markResourceIncomplete(key, w, aggregateHandler)
+				allDiags = append(allDiags, diag.Diagnostic{Code: "materialize.marketplace.alias-invalid", Severity: diag.SeverityError, Target: string(w.target), Resource: w.skill.Resource.Name(), Message: "Marketplace installed name cannot be materialized safely"})
+				continue
+			}
+			w.skill.Resource = resource
+			compileOptions = append(compileOptions, options...)
+		} else if w.skill.IsMarketplace && w.skill.InstalledName != "" {
 			renamed, err := marketplaceResourceForInstallName(w.skill.Resource, w.skill.InstalledName)
 			if err != nil {
 				blockResource(key, w)
@@ -1285,7 +1580,6 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			}
 			w.skill.Resource = renamed
 		}
-		compileOptions := []hcc.Option{}
 		if nativeHook {
 			commandBase, err := hookSupportCommandBase(w, repoRoot, plan.relBase)
 			if err != nil {
@@ -1301,11 +1595,13 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 				})
 				continue
 			}
-			compileOptions = append(compileOptions, hcc.WithPluginRoot(commandBase), hcc.WithNativeHookOutput())
+			if w.skill.PluginPackage == nil {
+				compileOptions = append(compileOptions, hcc.WithPluginRoot(commandBase), hcc.WithNativeHookOutput())
+			}
 			if w.machineScope {
 				compileOptions = append(compileOptions, hcc.WithScope(hcc.ScopeUser))
 			}
-		} else if isHook {
+		} else if isHook && w.skill.PluginPackage == nil {
 			// Resource-file hooks reference their installed support directory,
 			// never the registry cache or source tree. Without a captured
 			// source the compiler receives no plugin root and refuses
@@ -1329,8 +1625,10 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 			if w.machineScope || absolute {
 				compileOptions = append(compileOptions, hcc.WithScope(hcc.ScopeUser))
 			}
-		} else if pluginRoot := sourceBundleRoot(w.skill); pluginRoot != "" {
-			compileOptions = append(compileOptions, hcc.WithPluginRoot(pluginRoot))
+		} else if w.skill.PluginPackage == nil {
+			if pluginRoot := sourceBundleRoot(w.skill); pluginRoot != "" {
+				compileOptions = append(compileOptions, hcc.WithPluginRoot(pluginRoot))
+			}
 		}
 		// Resources that emit merge-with-existing JSON fragments must carry the
 		// ownership marker so materialization merges into (rather than clobbers)
@@ -1377,6 +1675,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 
 		if result == nil {
 			blockResource(key, w)
+			blockPluginInstance(w)
 			markResourceIncomplete(key, w, aggregateHandler)
 			continue
 		}
@@ -1384,6 +1683,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		result.Artifacts = append([]artifact.Artifact(nil), result.Artifacts...)
 		if diag.HasErrors(result.Diagnostics) {
 			blockResource(key, w)
+			blockPluginInstance(w)
 			markResourceIncomplete(key, w, aggregateHandler)
 			tw := byTarget[key]
 			if tw == nil {
@@ -1404,17 +1704,23 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		// closed before any legacy mutation.
 		if resourceKind == ir.KindMcpServer && nativeHookSharesMCPRoute(key, repoRoot) {
 			entries, remaining, mcpErr := nativeHookSharedMCPEntries(key, repoRoot, result.Artifacts)
+			attachPluginInstanceOwner(entries, w.skill.PluginPackage)
 			resourceName := w.skill.Name
 			if w.skill.InstalledName != "" {
 				resourceName = w.skill.InstalledName
 			}
 			if mcpErr != nil || len(entries) == 0 {
 				blockResource(key, w)
+				blockPluginInstance(w)
 				markResourceIncomplete(key, w, aggregateHandler)
 				allDiags = append(allDiags, diag.Diagnostic{Code: "materialize.compile.error", Severity: diag.SeverityError, Target: string(w.target), Resource: resourceName, Message: "shared MCP output could not be prepared safely; previous entries were retained", Source: compilepkg.SourceOf(w.skill.Resource)})
 				continue
 			}
 			result.Artifacts = remaining
+			pluginPlan := pluginPlanFor(w)
+			if pluginPlan != nil {
+				pluginPlan.mcpEntries = append(pluginPlan.mcpEntries, entries...)
+			}
 			for _, entry := range entries {
 				if nativeMCPConflicts[key][entry.key] {
 					continue
@@ -1449,11 +1755,13 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 				resourceName = w.skill.InstalledName
 			}
 			entries, hookErr := nativeHookEntriesForArtifacts(key, repoRoot, resourceName, plan.sourceDigest, result.Artifacts)
+			attachPluginInstanceOwner(entries, w.skill.PluginPackage)
 			if hookErr != nil {
 				if plan.sourceDigest == "" {
 					unknownHookSelection[key] = true
 				}
 				blockResource(key, w)
+				blockPluginInstance(w)
 				markResourceIncomplete(key, w, aggregateHandler)
 				allDiags = append(allDiags, diag.Diagnostic{
 					Code:     "materialize.compile.error",
@@ -1466,18 +1774,113 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 				continue
 			}
 			for _, entry := range entries {
-				nativeHookWork(key).add(entry)
+				if pluginPlan := pluginPlanFor(w); pluginPlan != nil {
+					if pluginPlan.hooks == nil {
+						pluginPlan.hooks = &ownedJSONAggregateWork{}
+					}
+					pluginPlan.hooks.add(entry)
+				} else {
+					nativeHookWork(key).add(entry)
+				}
 			}
 			result.Artifacts = nil
 		} else if aggregateHandler != nil {
-			rest, aggregateErr := aggregateHandler.extract(ownedAggregates, key, result.Artifacts, w.skill.Name)
+			aggregateState := ownedAggregates
+			pluginInstanceKey := ""
+			if pluginPlan := pluginPlanFor(w); pluginPlan != nil {
+				pluginInstanceKey = pluginPlan.ref.InstanceKey
+				if pluginPlan.aggregate.values == nil {
+					pluginPlan.aggregate = ownedAggregateState{values: make(map[outputKey]any)}
+				}
+				pluginPlan.aggregateSet = true
+				pluginPlan.handler = aggregateHandler
+				aggregateState = pluginPlan.aggregate
+			}
+			rest, aggregateErr := aggregateHandler.extract(aggregateState, key, result.Artifacts, w.skill.Name, pluginInstanceKey)
 			if aggregateErr != nil {
 				blockResource(key, w)
+				blockPluginInstance(w)
 				markResourceIncomplete(key, w, aggregateHandler)
 				allDiags = append(allDiags, aggregateHandler.malformedDiagnostic(key, w.skill.Name, aggregateErr))
 				continue
 			}
+			if pluginPlan := pluginPlanFor(w); pluginPlan != nil {
+				pluginPlan.aggregate = aggregateState
+			}
 			result.Artifacts = rest
+		}
+
+		if pluginPlan := pluginPlanFor(w); pluginPlan != nil {
+			if usesSkillDir(w.target, resourceKind) {
+				result.Artifacts = ensureSkillFrontmatter(w.skill, w.target, result.Artifacts)
+				installedName := w.skill.InstalledName
+				if installedName == "" {
+					installedName = w.skill.Name
+				}
+				rest, compiledSkillArtifacts, installDirRel := splitSkillArtifacts(w.target, installedName, result.Artifacts)
+				installDirRel = machineSkillInstallDirRel(w.target, w.machineScope, installDirRel)
+				for _, compiled := range compiledSkillArtifacts {
+					compiled.Path = path.Join(installDirRel, installedName, compiled.Path)
+					pluginPlan.artifacts = append(pluginPlan.artifacts, compiled)
+				}
+				result.Artifacts = rest
+				if skill, ok := w.skill.Resource.(*ir.Skill); ok && len(skill.SupportFiles) > 0 {
+					sourceDir := materializationSourcePath(w.skill)
+					if info, err := os.Stat(sourceDir); err == nil && !info.IsDir() {
+						sourceDir = filepath.Dir(sourceDir)
+					}
+					if sourceDir == "" {
+						pluginBlocked[pluginInstanceIdentity(w.skill, w.target)] = true
+						delete(pluginInstances, pluginPlan.ref.InstanceKey)
+						blockResource(key, w)
+						allDiags = append(allDiags, diag.Diagnostic{
+							Code:     "materialize.support-source.missing",
+							Severity: diag.SeverityError,
+							Target:   string(w.target),
+							Resource: installedName,
+							Message:  fmt.Sprintf("plugin member %q declares support files but its generation source is unavailable", installedName),
+							Source:   compilepkg.SourceOf(w.skill.Resource),
+						})
+						continue
+					}
+					link := skillLink{
+						name: installedName, sourceDir: sourceDir, declaredSupport: skill.SupportFiles,
+						artifacts: compiledSkillArtifacts,
+					}
+					supportErr := walkPortableSkillSupport(link, func(string) {}, func(root *fsboundary.Dir, sourceChild, childRel string) error {
+						data, identity, err := readSupportSourceSnapshot(root, sourceChild)
+						if err != nil {
+							return err
+						}
+						pluginPlan.artifacts = append(pluginPlan.artifacts, artifact.Artifact{
+							Path:  path.Join(installDirRel, installedName, childRel),
+							Bytes: data,
+							Mode:  identity.Mode.Perm(),
+						})
+						return nil
+					})
+					if supportErr != nil {
+						pluginBlocked[pluginInstanceIdentity(w.skill, w.target)] = true
+						delete(pluginInstances, pluginPlan.ref.InstanceKey)
+						blockResource(key, w)
+						allDiags = append(allDiags, diag.Diagnostic{
+							Code:     "materialize.support-source.missing",
+							Severity: diag.SeverityError,
+							Target:   string(w.target),
+							Resource: installedName,
+							Message:  fmt.Sprintf("read plugin support files for %q: %v", installedName, supportErr),
+							Source:   compilepkg.SourceOf(w.skill.Resource),
+						})
+						continue
+					}
+				}
+				result.Diagnostics = slices.DeleteFunc(result.Diagnostics, func(d diag.Diagnostic) bool {
+					return d.Code == diag.CodeSkillSupportFilesDeferred
+				})
+			}
+			pluginPlan.artifacts = append(pluginPlan.artifacts, result.Artifacts...)
+			allDiags = append(allDiags, result.Diagnostics...)
+			continue
 		}
 
 		if usesSkillDir(w.target, resourceKind) {
@@ -1492,7 +1895,7 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 					sourceDir = filepath.Dir(sourceDir)
 				}
 				var declaredSupport []string
-				if w.skill.IsMarketplace {
+				if w.skill.IsMarketplace || w.skill.PluginPackage != nil {
 					if s, ok := w.skill.Resource.(*ir.Skill); ok {
 						declaredSupport = s.SupportFiles
 					}
@@ -1618,6 +2021,8 @@ func compileWorkItems(work []skillTarget, allDiags []diag.Diagnostic, allOutputs
 		mcpResources:           mcpResources,
 		artifactMeta:           artifactMeta,
 		ownedState:             ownedState,
+		plugins:                pluginInstances,
+		pluginBlocked:          pluginBlocked,
 	}
 }
 
@@ -1635,6 +2040,16 @@ func sourceBundleRoot(resource resolver.ResolvedArtifact) string {
 		return ""
 	}
 	return root
+}
+
+func leafNativeMCPEntries(entries []ownedJSONEntry) []ownedJSONEntry {
+	leaf := make([]ownedJSONEntry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.pluginInstanceKey == "" {
+			leaf = append(leaf, entry)
+		}
+	}
+	return leaf
 }
 
 // usesSkillDir reports whether a resource kind materializes as a skill DIRECTORY
@@ -1656,7 +2071,13 @@ func markOwnedAggregateIncomplete(handler ownedAggregateHandler, state ownedAggr
 	if handler == nil || w.skill.Resource == nil {
 		return
 	}
-	handler.markIncomplete(state, key, w.skill.Resource.Kind())
+	markOwnedAggregateKindIncomplete(handler, state, key, w.skill.Resource.Kind())
+}
+
+func markOwnedAggregateKindIncomplete(handler ownedAggregateHandler, state ownedAggregateState, key outputKey, kind ir.ResourceKind) {
+	if handler != nil {
+		handler.markIncomplete(state, key, kind)
+	}
 }
 
 func sharedNativeHookAdapterRoot(key outputKey, repoRoot string, destinations []harness.Destination) (string, bool, error) {
@@ -1742,6 +2163,9 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		PerTarget:        make(map[hcc.Target]TargetReport),
 		Diags:            compileResult.allDiags,
 		BlockedResources: compileResult.blockedResources,
+	}
+	if d := preflightClaudeDestinations(&compileResult, repoRoot); d != nil {
+		report.Diags = append(report.Diags, *d)
 	}
 	geminiCoalescence, err := coalesceGeminiNativeAggregates(&compileResult, repoRoot, report)
 	if err != nil {
@@ -2039,7 +2463,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 						},
 					})
 				}
-				nativeOptions.nativeHookFinalize = nativeHookActivationFinalizer(key, repoRoot, compileResult.nativeMCPEntries[key], compileResult.nativeMCPIncomplete[key], func() {
+				nativeOptions.nativeHookFinalize = nativeHookActivationFinalizer(key, repoRoot, leafNativeMCPEntries(compileResult.nativeMCPEntries[key]), compileResult.nativeMCPIncomplete[key], func() {
 					if compileResult.nativeMCPIncomplete == nil {
 						compileResult.nativeMCPIncomplete = make(map[outputKey]bool)
 					}
@@ -2442,6 +2866,9 @@ func syncNativeRepositoryHookSupportCopies(ctx context.Context, outDir string, a
 		}
 		currentDigest := portableArtifactDigest(artifact.Artifact{Bytes: currentBytes, Mode: currentMode})
 		entry, owned := state.entry(target, relative)
+		if entry.PluginInstance != "" {
+			owned = false
+		}
 		if !owned {
 			if currentDigest != digest || !bytes.Equal(currentBytes, a.Bytes) || currentMode != mode {
 				return conflict(a, relative, pathOwners, errors.New("foreign regular hook support file differs from captured bytes"))
@@ -2724,14 +3151,19 @@ func executeNativeHookSupportPlan(ctx context.Context, key outputKey, repoRoot, 
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return publication, pending, fmt.Errorf("hook support output directory is outside its root")
 		}
-		validate := validatePortableOutputDir
-		if effectiveMode == config.MaterializationModeFile && !dryRun && !repositoryCopies {
-			validate = ensurePortableOutputDir
+		if boundary != nil {
+			err = boundary.directory(plan.outDir, !dryRun && !repositoryCopies)
+		} else {
+			validate := validatePortableOutputDir
+			if effectiveMode == config.MaterializationModeFile && !dryRun && !repositoryCopies {
+				validate = ensurePortableOutputDir
+			}
+			_, err = validate(planRoot, filepath.ToSlash(rel))
 		}
-		if _, err := validate(planRoot, filepath.ToSlash(rel)); err != nil {
+		if err != nil {
 			return publication, pending, fmt.Errorf("validate hook support output directory: %w", err)
 		}
-		if effectiveMode != config.MaterializationModeFile && !dryRun {
+		if boundary == nil && effectiveMode != config.MaterializationModeFile && !dryRun {
 			if err := os.MkdirAll(plan.outDir, 0o755); err != nil {
 				return publication, pending, fmt.Errorf("create hook support output directory: %w", err)
 			}
@@ -2796,6 +3228,7 @@ func executeNativeHookSupportPlan(ctx context.Context, key outputKey, repoRoot, 
 					mode:          effectiveMode,
 					capturedBytes: append([]byte(nil), candidate.Bytes...),
 					capturedMode:  portableArtifactMode(candidate.Mode),
+					boundary:      boundary,
 				}
 				if effectiveMode == config.MaterializationModeSymlink {
 					installed.cacheRoot = cacheDir
@@ -2882,7 +3315,25 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, destinatio
 		pruneReportPrefix = windsurfDir
 	}
 	protected := nativeAggregatePruneFence(key.target, key.machineScope)
+	for _, destination := range destinations {
+		if len(destination.AggregateRoutes) > 0 && sameOutputDir(destination.Root, pruneOutDir) {
+			if protected == nil {
+				protected = make(map[string]bool)
+			}
+			protected[destination.AggregateFile] = true
+		}
+	}
+	var declaredMergeFiles map[string]bool
+	if key.target == hcc.TargetClaude && key.machineScope && os.Getenv("CLAUDE_CONFIG_DIR") != "" {
+		declaredMergeFiles = make(map[string]bool)
+		if info, ok := harness.TargetInfoFor(key.target); ok {
+			for _, rel := range info.AggregateFilesForScope(true) {
+				declaredMergeFiles[filepath.ToSlash(rel)] = true
+			}
+		}
+	}
 	protected = extendNativeHookProjectionPruneFence(key.target, key.machineScope, pruneOutDir, destinations, protected)
+	protected, retiredFiles := extendRetiredPruneFence(key.target, protected)
 
 	plans := materializePlans(key.target, outDir, artifacts, linkedComponents(skillLinks[key]), key.machineScope)
 	if info, ok := harness.TargetInfoFor(key.target); ok {
@@ -3027,6 +3478,11 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, destinatio
 			mergeArtifacts = retained
 		}
 		mergePrune := wantPrune
+		// Relocated Claude roots may contain other accounts or repositories.
+		// Defer empty-plan cleanup to the declared-file pass, not a tree walk.
+		if len(mergeArtifacts) == 0 && declaredMergeFiles != nil {
+			mergePrune = false
+		}
 		if len(mergeArtifacts) == 0 && genericMarkerPruneRootProtected(pruneOutDir, plan.outDir, protected) {
 			mergePrune = false
 		}
@@ -3090,7 +3546,11 @@ func executeTargetPlans(report *Report, key outputKey, outDir string, destinatio
 	if key.target == hcc.Target(targetmeta.TargetCodex) {
 		pruneReport = &hcc.WriteReport{OutDir: pruneOutDir}
 	} else if !componentBlocked(blocked, "") {
-		pruneReport, pruneDiags = pruneUncoveredManagedMergeFiles(pruneOutDir, dirsCoveredByMergePlans, dryRun, protected)
+		pruneReport, pruneDiags = pruneUncoveredManagedMergeFiles(pruneOutDir, dirsCoveredByMergePlans, dryRun, protected, declaredMergeFiles, boundary)
+		retiredReport, retiredDiags := reconcileRetiredManagedFiles(pruneOutDir, retiredFiles, dryRun, boundary)
+		pruneReport.Written = append(pruneReport.Written, retiredReport.Written...)
+		pruneReport.Removed = append(pruneReport.Removed, retiredReport.Removed...)
+		pruneDiags = append(pruneDiags, retiredDiags...)
 	} else {
 		pruneReport = &hcc.WriteReport{OutDir: pruneOutDir}
 	}
@@ -3706,7 +4166,7 @@ func subtreeMaterializePlans(outDir string, artifacts []artifact.Artifact, compo
 	for _, component := range orderedComponents(components, scoped) {
 		componentOutDir := filepath.Join(outDir, component)
 		if len(scoped[component]) == 0 {
-			if _, err := os.Stat(componentOutDir); err != nil {
+			if info, err := os.Stat(componentOutDir); err != nil || !info.IsDir() {
 				continue
 			}
 		}
@@ -4188,6 +4648,16 @@ func verifyDeclaredSupportFiles(sourceDir string, declared []string) error {
 }
 
 func materializationSourcePath(resolved resolver.ResolvedArtifact) string {
+	if resolved.PluginPackage != nil {
+		if resolved.PluginPackage.GenerationPath == "" || resolved.PluginPackage.MemberPath == "" {
+			return ""
+		}
+		path := filepath.Join(resolved.PluginPackage.GenerationPath, filepath.FromSlash(resolved.PluginPackage.MemberPath))
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return filepath.Dir(path)
+		}
+		return path
+	}
 	if resolved.IsMarketplace {
 		if resolved.Path == "" {
 			return ""
@@ -4322,7 +4792,7 @@ func materializeMergeArtifacts(outDir string, artifacts []artifact.Artifact, dry
 		if !pruneStaleEntries {
 			return &hcc.WriteReport{OutDir: outDir}, nil, nil
 		}
-		pruneReport, pruneDiags := pruneManagedMergeFiles(outDir, dryRun)
+		pruneReport, pruneDiags := pruneManagedMergeFiles(outDir, dryRun, boundary...)
 		return pruneReport, pruneDiags, nil
 	}
 	// Replace any existing symlinks at merge artifact paths with regular
@@ -4382,6 +4852,8 @@ func genericMarkerPruneRootProtected(pruneRoot, candidate string, protected map[
 // dirsCoveredByMergePlans). This ensures that root-level merge files (like
 // mcp.json) and files in directories without a merge-artifact plan still get
 // their managed entries pruned during deinit.
+// A non-nil declaration restricts discovery to those exact root-relative files;
+// it must not inspect unrelated descendants of an arbitrarily relocated root.
 //
 // Failure is PER FILE (bead agent-marketplace-5exj.25). A file this walk cannot
 // prune — a duplicate-key refusal from stripManagedEntriesFromFile, or an
@@ -4398,15 +4870,20 @@ func genericMarkerPruneRootProtected(pruneRoot, candidate string, protected map[
 // non-zero: a prune that did not happen is a real failure, exactly as bead .18
 // decided for the refusal itself and bead .20 decided for skipped Devin
 // aggregate entries.
-func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[string]bool, dryRun bool, protected map[string]bool) (*hcc.WriteReport, []diag.Diagnostic) {
+func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[string]bool, dryRun bool, protected, declared map[string]bool, boundaries ...*destinationBoundary) (*hcc.WriteReport, []diag.Diagnostic) {
 	report := &hcc.WriteReport{OutDir: outDir}
 	var diags []diag.Diagnostic
 	info, err := os.Stat(outDir)
 	if err != nil || !info.IsDir() {
 		return report, nil
 	}
+	var boundary *destinationBoundary
+	if len(boundaries) > 0 {
+		boundary = boundaries[0]
+	}
+	captured := declared != nil
 	// WalkDir visits lexically, so the diagnostic order is deterministic.
-	_ = filepath.WalkDir(outDir, func(path string, d fs.DirEntry, walkErr error) error {
+	visit := func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			// Permission denied or other walk errors: skip the entry
 			// rather than aborting the entire walk.
@@ -4445,7 +4922,7 @@ func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[
 			return nil
 		}
 		relSlash := filepath.ToSlash(rel)
-		cleaned, removed, pruneErr := stripManagedEntriesFromFile(path, dryRun)
+		cleaned, removed, pruneErr := stripManagedEntriesFromFile(path, dryRun, captured, boundary)
 		if pruneErr != nil {
 			// PER-FILE failure: report this file and keep walking.
 			diags = append(diags, managedMergePruneDiag(relSlash, path, pruneErr))
@@ -4459,8 +4936,143 @@ func pruneUncoveredManagedMergeFiles(outDir string, dirsCoveredByMergePlans map[
 			}
 		}
 		return nil
-	})
+	}
+	if declared != nil {
+		for _, rel := range sortedKeys(declared) {
+			file := filepath.Join(outDir, filepath.FromSlash(rel))
+			if genericMarkerPruneRootProtected(outDir, filepath.Dir(file), protected) {
+				continue
+			}
+			covered := false
+			for dir := range dirsCoveredByMergePlans {
+				covered = covered || pathIsAncestor(dir, file)
+			}
+			if covered {
+				continue
+			}
+			info, err := os.Lstat(file)
+			if err != nil {
+				if !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
+					diags = append(diags, managedMergePruneDiag(filepath.ToSlash(rel), file, err))
+				}
+				continue
+			}
+			_ = visit(file, fs.FileInfoToDirEntry(info), nil)
+		}
+	} else {
+		_ = filepath.WalkDir(outDir, visit)
+	}
 	return report, diags
+}
+
+// extendRetiredPruneFence adds the target's retired locations to the prune
+// walk's fence so the generic marker strip never touches them: retired
+// directories (trailing slash) are left entirely alone and retired files
+// are reconciled by reconcileRetiredManagedFiles. It returns the fence and
+// the retired file list.
+func extendRetiredPruneFence(t hcc.Target, protected map[string]bool) (map[string]bool, []string) {
+	info, ok := harness.TargetInfoFor(t)
+	if !ok || len(info.RetiredLocations) == 0 {
+		return protected, nil
+	}
+	fence := make(map[string]bool, len(protected)+len(info.RetiredLocations))
+	for k := range protected {
+		fence[k] = true
+	}
+	var files []string
+	for _, rel := range info.RetiredLocations {
+		fence[rel] = true
+		if !strings.HasSuffix(rel, "/") {
+			files = append(files, rel)
+		}
+	}
+	return fence, files
+}
+
+// reconcileRetiredManagedFiles strips managed entries from a target's
+// retired shared files and deletes a file — and its then-empty directory —
+// once only empty skills/agents members remain. dryRun reports the same
+// outcome without writing.
+func reconcileRetiredManagedFiles(outDir string, files []string, dryRun bool, boundary *destinationBoundary) (*hcc.WriteReport, []diag.Diagnostic) {
+	report := &hcc.WriteReport{OutDir: outDir}
+	var diags []diag.Diagnostic
+	for _, rel := range files {
+		if !retiredFileTargetSafe(outDir, rel) {
+			continue
+		}
+		path := filepath.Join(outDir, filepath.FromSlash(rel))
+		cleaned, removed, err := stripManagedEntriesFromFile(path, dryRun, true, boundary)
+		if err != nil {
+			diags = append(diags, managedMergePruneDiag(rel, path, err))
+			continue
+		}
+		if len(removed) == 0 {
+			continue
+		}
+		if retiredFileEmptied(cleaned) {
+			if !dryRun {
+				if removeErr := os.Remove(path); removeErr != nil {
+					diags = append(diags, managedMergePruneDiag(rel, path, removeErr))
+					continue
+				}
+				// The directory goes only when the deletion emptied it;
+				// os.Remove fails on a directory that still holds files.
+				_ = os.Remove(filepath.Dir(path))
+			}
+			report.Removed = append(report.Removed, rel)
+			continue
+		}
+		report.Written = append(report.Written, rel)
+	}
+	return report, diags
+}
+
+// retiredFileTargetSafe reports whether every path element between outDir and
+// the retired file is a real directory and the file itself is a regular file.
+// A symlink anywhere in the chain — a symlinked .claude-plugin directory or a
+// symlinked plugin.json — would let the reconcile read, rewrite, or delete
+// files outside the harness root, so the location is left completely alone:
+// no read, no write, no delete, no drift.
+func retiredFileTargetSafe(outDir, rel string) bool {
+	current := outDir
+	parts := strings.Split(filepath.FromSlash(rel), string(filepath.Separator))
+	for i, part := range parts {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			return false
+		}
+		if i == len(parts)-1 {
+			return info.Mode().IsRegular()
+		}
+		if !info.IsDir() {
+			return false
+		}
+	}
+	return false
+}
+
+// retiredFileEmptied reports whether a stripped retired manifest carries
+// nothing but empty skills/agents members, so the file itself can go.
+func retiredFileEmptied(cleaned []byte) bool {
+	doc, err := jsonc.Parse("retired", cleaned)
+	if err != nil {
+		return false
+	}
+	root := doc.Root()
+	if root.Kind() != jsonc.KindObject {
+		return false
+	}
+	for _, key := range root.Keys() {
+		if key != "skills" && key != "agents" {
+			return false
+		}
+		member, ok := root.Member(key)
+		if !ok || member.Kind() != jsonc.KindArray || member.Len() != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // managedMergePruneDiag turns a single file's prune failure into a keyed,
@@ -4572,8 +5184,8 @@ func aggregateProtectedPathsFor(info harness.TargetInfo, machineScope bool) map[
 // Sharing the body is what keeps the per-file failure handling identical in both
 // walks, which was the whole point of bead agent-marketplace-5exj.25: the two
 // callbacks had drifted into two copies of the same abort-the-walk mistake.
-func pruneManagedMergeFiles(outDir string, dryRun bool) (*hcc.WriteReport, []diag.Diagnostic) {
-	return pruneUncoveredManagedMergeFiles(outDir, nil, dryRun, nil)
+func pruneManagedMergeFiles(outDir string, dryRun bool, boundaries ...*destinationBoundary) (*hcc.WriteReport, []diag.Diagnostic) {
+	return pruneUncoveredManagedMergeFiles(outDir, nil, dryRun, nil, nil, boundaries...)
 }
 
 // stripManagedEntriesFromFile reads a JSON file, removes all top-level
@@ -4608,8 +5220,18 @@ func pruneManagedMergeFiles(outDir string, dryRun bool) (*hcc.WriteReport, []dia
 // Malformed JSON keeps the historical behaviour of being left completely alone
 // with no error: we never had a coherent view of that file, and failing a sync
 // over a file the user already has to fix by hand adds nothing.
-func stripManagedEntriesFromFile(path string, dryRun bool) (cleaned []byte, removed []string, err error) {
-	data, readErr := os.ReadFile(path)
+func stripManagedEntriesFromFile(path string, dryRun, captured bool, boundary *destinationBoundary) (cleaned []byte, removed []string, err error) {
+	var observed fs.FileInfo
+	var data []byte
+	var readErr error
+	if captured {
+		observed, readErr = os.Lstat(path)
+		if readErr == nil {
+			data, readErr = readNativeCommandFile(path, observed, boundary)
+		}
+	} else {
+		data, readErr = os.ReadFile(path)
+	}
 	if readErr != nil {
 		return nil, nil, readErr
 	}
@@ -4699,7 +5321,13 @@ func stripManagedEntriesFromFile(path string, dryRun bool) (cleaned []byte, remo
 	}
 	result := doc.Bytes()
 	if !dryRun {
-		if writeErr := atomicWriteFile(path, result, 0o644); writeErr != nil {
+		var writeErr error
+		if captured {
+			writeErr = publishPortableBytes(path, result, observed.Mode().Perm(), observed, boundary)
+		} else {
+			writeErr = atomicWriteFile(path, result, 0o644)
+		}
+		if writeErr != nil {
 			return nil, removed, writeErr
 		}
 	}
@@ -4847,6 +5475,9 @@ func syncPortableArtifactFiles(outDir string, artifacts []artifact.Artifact, cac
 			return report, diags, err
 		}
 		entry, owned := state.entry(target, path)
+		if entry.PluginInstance != "" {
+			owned = false
+		}
 		if err == nil {
 			managedLink := info.Mode()&os.ModeSymlink != 0 && isManagedSymlink(dst)
 			if !owned && !managedLink {
@@ -4931,7 +5562,17 @@ type portableVirtualNode struct {
 // would produce without populating that cache. This lets --check correctly
 // identify a pending copy or a user edit on a first dry run.
 func portableSkillVirtualDigest(link skillLink) (string, error) {
+	digest, _, err := portableSkillVirtualDigestWithSupport(link)
+	return digest, err
+}
+
+// portableSkillVirtualDigestWithSupport also returns the support files the
+// captured walk visited, excluding compiled artifacts, which are the files
+// preparation copies into its support stage.
+func portableSkillVirtualDigestWithSupport(link skillLink) (string, map[string]bool, error) {
 	nodes := map[string]portableVirtualNode{"": {dir: true, mode: 0o755}}
+	compiled := make(map[string]bool, len(link.artifacts))
+	support := make(map[string]bool)
 	ensureParents := func(path string) {
 		for dir := filepath.ToSlash(filepath.Dir(path)); dir != "." && dir != ""; dir = filepath.ToSlash(filepath.Dir(dir)) {
 			if _, ok := nodes[dir]; !ok {
@@ -4943,6 +5584,7 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 		path := filepath.ToSlash(filepath.Clean(a.Path))
 		ensureParents(path)
 		nodes[path] = portableVirtualNode{mode: portableArtifactMode(a.Mode), content: a.Bytes}
+		compiled[path] = true
 	}
 	err := walkPortableSkillSupport(link, func(childRel string) {
 		ensureParents(childRel)
@@ -4958,10 +5600,13 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 		}
 		ensureParents(childRel)
 		nodes[childRel] = portableVirtualNode{mode: identity.Mode.Perm(), content: data}
+		if !compiled[childRel] {
+			support[childRel] = true
+		}
 		return nil
 	})
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	paths := make([]string, 0, len(nodes))
 	for path := range nodes {
@@ -4978,7 +5623,7 @@ func portableSkillVirtualDigest(link skillLink) (string, error) {
 		_, _ = fmt.Fprintf(h, "file\x00%s\x00%#o\x00%d\x00", path, node.mode.Perm(), len(node.content))
 		_, _ = h.Write(node.content)
 	}
-	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), support, nil
 }
 
 // walkPortableSkillSupport visits the support tree prepareSkillLinkCache would
@@ -5083,6 +5728,9 @@ func syncPortableSkillTrees(skillsDir string, links []skillLink, dryRun bool, st
 			return report, err
 		}
 		entry, owned := state.entry(target, path)
+		if entry.PluginInstance != "" {
+			owned = false
+		}
 		if err == nil {
 			managedLink := info.Mode()&os.ModeSymlink != 0 && isManagedSymlink(dst)
 			if !owned && !managedLink {
@@ -5200,6 +5848,9 @@ func prunePortableEntries(state *portableState, key outputKey, outDir, repoRoot 
 	sort.Strings(keys)
 	for _, stateKey := range keys {
 		entry := state.entries[stateKey]
+		if entry.PluginInstance != "" {
+			continue
+		}
 		if entry.Target != string(key.target) || desired[entry.Path] || portablePathIsProtected(protectedPaths, entry.Path) {
 			continue
 		}
@@ -5407,6 +6058,7 @@ func syncArtifactLinks(outDir string, artifacts []artifact.Artifact, cacheDir st
 		entry, manifestOwned := portableManifestEntry{}, false
 		if state != nil {
 			entry, manifestOwned = state.entry(target, manifestPath)
+			manifestOwned = manifestOwned && entry.PluginInstance == ""
 		}
 		migrationAllowed := false
 		if manifestOwned {
@@ -5655,6 +6307,11 @@ func prepareSkillLinkCaches(links []skillLink, dryRun bool) error {
 	return nil
 }
 
+// skillLinkCacheCompareHook runs after an unchanged-cache comparison succeeds
+// and before preparation accepts it. It is nil in production and set only by
+// serial tests in this package.
+var skillLinkCacheCompareHook func(cacheDir string)
+
 // supportStageCopyHook runs after the support stage is admitted and before
 // support is copied into it. It is nil in production and set only by serial
 // tests in this package.
@@ -5785,6 +6442,16 @@ func prepareSkillLinkCache(link skillLink) (err error) {
 	if err := namespace.directory(parentPath, false); err != nil {
 		return err
 	}
+	cacheName := filepath.Base(cacheDir)
+	if compared, current := skillLinkCacheCurrent(link, parent, native, cacheName); current {
+		if skillLinkCacheCompareHook != nil {
+			skillLinkCacheCompareHook(cacheDir)
+		}
+		if namespace.directory(parentPath, false) == nil && cacheGenerationUnchanged(native, cacheName, compared) {
+			slog.Debug("skill link cache already current", "path", cacheDir, "phase", "cache-current")
+			return nil
+		}
+	}
 	compiled := make(map[string]bool, len(link.artifacts))
 	for _, a := range link.artifacts {
 		compiled[filepath.ToSlash(filepath.Clean(a.Path))] = true
@@ -5851,6 +6518,52 @@ func prepareSkillLinkCache(link skillLink) (err error) {
 		}
 	}
 	return nil
+}
+
+// skillLinkCacheCurrent reports whether the cache directory name below the
+// admitted parent already holds exactly the tree prepareSkillLinkCache would
+// publish: the same compiled artifacts, support bytes, modes and directories,
+// and no other entries. Both digests read through captured handles, and the
+// identity of the compared directory is returned so the caller can bind its
+// decision to it. Any error, including a refused support source, reports false
+// so full preparation runs and reports its own diagnostic.
+func skillLinkCacheCurrent(link skillLink, parent *fsboundary.Dir, native *os.Root, name string) (fsboundary.Identity, bool) {
+	// A missing cache fails here before any source support is read.
+	info, err := native.Lstat(name)
+	if err != nil || !info.IsDir() {
+		return fsboundary.Identity{}, false
+	}
+	compared, err := fsboundary.FileInfoIdentity(info)
+	if err != nil {
+		return fsboundary.Identity{}, false
+	}
+	h := sha256.New()
+	if err := writePortableDigestEntry(h, parent, name, ""); err != nil {
+		return compared, false
+	}
+	desired, support, err := portableSkillVirtualDigestWithSupport(link)
+	if err != nil || "sha256:"+hex.EncodeToString(h.Sum(nil)) != desired {
+		return compared, false
+	}
+	// Full preparation refuses when its stage lacks a declared support file;
+	// require the same files from this walk, not an earlier path check.
+	for _, rel := range link.declaredSupport {
+		if !support[filepath.ToSlash(filepath.Clean(rel))] {
+			return compared, false
+		}
+	}
+	return compared, true
+}
+
+// cacheGenerationUnchanged reports whether name below the admitted parent is
+// still the compared cache directory in the same state.
+func cacheGenerationUnchanged(native *os.Root, name string, compared fsboundary.Identity) bool {
+	info, err := native.Lstat(name)
+	if err != nil {
+		return false
+	}
+	current, err := fsboundary.FileInfoIdentity(info)
+	return err == nil && current.SameState(compared)
 }
 
 // pruneSkillCacheSupportFiles deletes every previous support-file entry while
@@ -6166,6 +6879,7 @@ func syncSkillLinks(skillsDir string, links []skillLink, dryRun bool, pruneStale
 		entry, manifestOwned := portableManifestEntry{}, false
 		if state != nil {
 			entry, manifestOwned = state.entry(target, manifestPath)
+			manifestOwned = manifestOwned && entry.PluginInstance == ""
 		}
 		migrationAllowed := false
 		if manifestOwned {

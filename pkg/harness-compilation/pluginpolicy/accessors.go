@@ -1,0 +1,145 @@
+package pluginpolicy
+
+import (
+	"fmt"
+	"sync"
+
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
+)
+
+// ManifestFieldRule is the catalog rule for one manifest field: whether it
+// is required, its declared type, and the outcome when its value is invalid
+// (InvalidRefusePackage or InvalidIgnoreWithWarning).
+type ManifestFieldRule struct {
+	Required bool
+	Type     string
+	Invalid  string
+}
+
+// PackageFormat is the read view of one shipped format catalog: its role,
+// recognized versions, manifest field rules, component discovery rules, and
+// dependency posture. For catalog (marketplace) formats it also carries the
+// entry source outcomes and the entry overlay policy identifier. The
+// catalogs remain the only source of these rules.
+type PackageFormat struct {
+	Role           string
+	Versions       []string
+	ManifestFields map[string]ManifestFieldRule
+	Components     map[string]string
+	Dependencies   string
+	// CatalogSources maps a catalog entry source type to its outcome
+	// (SourceAcquire or SourceRefuse); empty for package formats.
+	CatalogSources map[string]string
+	// EntryOverlay names the allowlisted overlay policy for entry fields
+	// (for example "entry-overlay.strict"); empty for package formats and
+	// for catalogs without one.
+	EntryOverlay string
+}
+
+var shippedRegistry = sync.OnceValues(func() (*registry, error) {
+	files, probes, err := runtimeCatalogSource()
+	if err != nil {
+		return nil, err
+	}
+	return loadCatalogs(files, "formats/*.yaml", "catalogs/*.yaml", probes)
+})
+
+type NativeDeliveryPolicy struct {
+	Status  string
+	Format  string
+	Probe   string
+	Refresh string
+}
+
+func LookupNativeDelivery(t target.Target, scope string) (NativeDeliveryPolicy, error) {
+	if scope != "user" && scope != "repo" {
+		return NativeDeliveryPolicy{}, fmt.Errorf("pluginpolicy: native delivery scope %q must be user or repo", scope)
+	}
+	r, err := shippedRegistry()
+	if err != nil {
+		return NativeDeliveryPolicy{}, err
+	}
+	c, ok := r.catalogs[t]
+	if !ok {
+		return NativeDeliveryPolicy{}, fmt.Errorf("pluginpolicy: no harness catalog for target %q", t)
+	}
+	policy, ok := c.Delivery.Native.Scopes[scope]
+	if !ok {
+		return NativeDeliveryPolicy{}, fmt.Errorf("pluginpolicy: no native delivery policy for target %q at scope %q", t, scope)
+	}
+	return NativeDeliveryPolicy(policy), nil
+}
+
+// LookupPackageFormat returns the shipped catalog data for format. ok is
+// false when no catalog declares the format.
+func LookupPackageFormat(format string) (PackageFormat, bool, error) {
+	r, err := shippedRegistry()
+	if err != nil {
+		return PackageFormat{}, false, err
+	}
+	c, ok := r.formats[format]
+	if !ok {
+		return PackageFormat{}, false, nil
+	}
+	fields := make(map[string]ManifestFieldRule, len(c.Manifest.Fields))
+	for name, f := range c.Manifest.Fields {
+		fields[name] = ManifestFieldRule(f)
+	}
+	components := make(map[string]string, len(c.Components))
+	for name, rule := range c.Components {
+		components[name] = rule
+	}
+	out := PackageFormat{
+		Role:           c.Role,
+		Versions:       append([]string(nil), c.Versions...),
+		ManifestFields: fields,
+		Components:     components,
+		Dependencies:   c.Dependencies,
+	}
+	if c.Catalog != nil {
+		out.EntryOverlay = c.Catalog.EntryOverlay
+		out.CatalogSources = make(map[string]string, len(c.Catalog.Sources))
+		for source, outcome := range c.Catalog.Sources {
+			out.CatalogSources[source] = outcome
+		}
+	}
+	return out, true, nil
+}
+
+// PluginFieldPolicies returns every plugin-surface field policy the harness
+// catalog declares for kind, keyed by field name, so a projection can apply
+// them without knowing the field vocabulary in advance.
+func PluginFieldPolicies(t target.Target, kind string) (map[string]struct{ Outcome, Code string }, error) {
+	r, err := shippedRegistry()
+	if err != nil {
+		return nil, err
+	}
+	c, ok := r.catalogs[t]
+	if !ok {
+		return nil, fmt.Errorf("pluginpolicy: no harness catalog for target %q", t)
+	}
+	out := map[string]struct{ Outcome, Code string }{}
+	for field, o := range c.Surfaces.Plugin[kind] {
+		out[field] = struct{ Outcome, Code string }{Outcome: o.Outcome, Code: o.Code}
+	}
+	return out, nil
+}
+
+// Accepts reports whether the harness catalog for t lists format among the
+// package formats it accepts.
+func Accepts(t target.Target, format string) (bool, error) {
+	r, err := shippedRegistry()
+	if err != nil {
+		return false, err
+	}
+	c, ok := r.catalogs[t]
+	if !ok {
+		return false, fmt.Errorf("pluginpolicy: no harness catalog for target %q", t)
+	}
+	for _, accepted := range c.Accepts {
+		if accepted == format {
+			return true, nil
+		}
+	}
+	return false, nil
+}

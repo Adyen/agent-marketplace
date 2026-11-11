@@ -32,6 +32,34 @@ type Env struct {
 	path      string // PATH for subprocess (host PATH with `devin` shadowed out)
 }
 
+func nativePluginCatalog(target string) string {
+	format := "claude-plugin"
+	if target == "codex" {
+		format = "codex-plugin"
+	}
+	return fmt.Sprintf(`schema: 1
+harness: %s
+evidence:
+  checked: "2026-10-21"
+  refs: [synthetic-e2e-fixture]
+accepts: [%s]
+delivery:
+  decompose: {status: verified}
+  native: {status: verified, format: %s, probe: e2e-test-probe, refresh: restart-required}
+`, target, format, format)
+}
+
+func nativePluginFormat(target string) (string, string) {
+	if target == "codex" {
+		return "codex-plugin", ".codex-plugin"
+	}
+	return "claude-plugin", ".claude-plugin"
+}
+
+func nativeCatalogEnv(path string) map[string]string {
+	return map[string]string{"AGENT_MARKETPLACE_E2E_PLUGIN_CATALOG": path}
+}
+
 // newEnv creates an isolated sandbox for a test and registers cleanup.
 func newEnv(t *testing.T) *Env {
 	t.Helper()
@@ -496,6 +524,7 @@ func (e *Env) subprocessEnv() []string {
 		"XDG_CONFIG_HOME="+filepath.Join(e.home, ".config"),
 		"XDG_CACHE_HOME="+filepath.Join(e.home, ".cache"),
 		"CODEX_HOME="+filepath.Join(e.home, ".codex"),
+		"CLAUDE_CONFIG_DIR=",
 		// Sanitized so host-installed tools the CLI probes for (currently the
 		// Devin CLI) cannot change assertion outcomes.
 		"PATH="+e.path,
@@ -508,7 +537,7 @@ func (e *Env) subprocessEnv() []string {
 
 func isSandboxedAppEnv(key string) bool {
 	switch key {
-	case "HOME", "PATH", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "CODEX_HOME", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR":
+	case "HOME", "PATH", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR":
 		return true
 	default:
 		return strings.HasPrefix(key, "AGENT_MARKETPLACE_")

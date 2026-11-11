@@ -10,6 +10,7 @@ func TestPublicPolicyDefaults(t *testing.T) {
 		FindingAssetPathEscape:       OutcomeReject,
 		FindingExecutableAsset:       OutcomeReject,
 		FindingObfuscatedInstruction: OutcomeReject,
+		FindingInvalidUTF8:           OutcomeReject,
 		FindingHTMLComment:           OutcomeWarn,
 		FindingZeroWidth:             OutcomeWarn,
 		FindingDangerousURL:          OutcomeWarn,

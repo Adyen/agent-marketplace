@@ -35,7 +35,7 @@ PLATFORMS := darwin-arm64 darwin-amd64 linux-amd64 linux-arm64
 RELEASE_ASSETS := $(addprefix $(RELEASE_BINARY)-,$(PLATFORMS))
 DIST_DIR := dist
 
-.PHONY: build test test-full lint ci-lint lint-full lint-common tidy version release clean e2e marketplace-gate marketplace-proxy-check released-client-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build site-docs-build secrets-check container container-marketplace container-web container-site container-docs container-check compose-config $(PLATFORMS)
+.PHONY: build test test-full lint ci-lint lint-full lint-common tidy version release clean e2e marketplace-gate marketplace-proxy-check released-client-gate devin-probe tui-qa-check tui-qa tui-qa-contained site-dev site-build site-docs-build site-screenshots secrets-check container container-marketplace container-web container-site container-docs container-check compose-config $(PLATFORMS)
 LINT_BASE ?= origin/main
 
 define run_golangci_lint
@@ -114,7 +114,8 @@ catalog-docs:
 	CGO_ENABLED=0 $(GO) run ./tools/catalog-docs
 
 catalog-check: model-catalog-check
-	CGO_ENABLED=0 $(GO) test ./pkg/harness-compilation/toolpolicy ./pkg/harness-compilation/hookpolicy -count=1
+	CGO_ENABLED=0 $(GO) test ./pkg/harness-compilation/toolpolicy ./pkg/harness-compilation/hookpolicy ./pkg/harness-compilation/pluginpolicy -count=1
+	CGO_ENABLED=0 $(GO) test ./tools/harness-compat -run TestPluginCatalogsValidateAgainstNativeProbes -count=1
 	CGO_ENABLED=0 $(GO) test ./tools/catalog-docs -count=1
 	CGO_ENABLED=0 $(GO) test ./pkg/harness-compilation -run 'TestMatrix' -count=1
 	CGO_ENABLED=0 $(GO) run ./tools/catalog-docs -check
@@ -281,8 +282,8 @@ marketplace-proxy-check:
 comma := ,
 # The pinned Go build image ships git; override when Docker Hub is unavailable.
 AM_E2E_RELEASED_IMAGE ?= $(GO_BUILD_IMAGE)
-E2E_REQUIRED_TESTS := TestUnsupportedConsumerRootsRefuseBeforeWork,TestUnsupportedConsumerIncludesRefuseBeforeWork,TestUnsupportedConsumerConfigPreventsMissingDestinations
-RELEASED_CLIENT_GATE_TESTS := TestReleasedClientReadsCandidateCommittedState,TestReleasedClientReadsCandidateIsolatedCommittedState,TestReleasedClientLockVerifiesNativeHookSourceLayouts,TestReleasedClientHookOutputUpgrades
+E2E_REQUIRED_TESTS := TestUnsupportedConsumerRootsRefuseBeforeWork,TestUnsupportedConsumerIncludesRefuseBeforeWork,TestUnsupportedConsumerConfigPreventsMissingDestinations,TestClaudeConfigurationDirectory
+RELEASED_CLIENT_GATE_TESTS := TestReleasedClientReadsCandidateCommittedState,TestReleasedClientReadsCandidateIsolatedCommittedState,TestReleasedClientNativeClaudePersonalLocalRegistration,TestReleasedClientNativeFactoryPersonalLocalRegistration,TestReleasedClientNativeCodexPersonalLocalRegistration,TestReleasedClientLockVerifiesNativeHookSourceLayouts,TestReleasedClientHookOutputUpgrades,TestReleasedClientRefusesPluginConfiguration
 
 released-client-gate:
 	@test -n "$(AM_E2E_RELEASED_BINARY)" || { echo "ERROR: AM_E2E_RELEASED_BINARY must point to the verified latest Linux release" >&2; exit 1; }
@@ -410,6 +411,17 @@ site-build:
 site-docs-build:
 	@command -v pnpm >/dev/null || { echo "ERROR: pnpm is required for documentation builds" >&2; exit 1; }
 	cd $(SITE_DIR) && pnpm install --frozen-lockfile && pnpm run build:docs
+
+CWEBP_BIN ?= $(shell command -v cwebp 2>/dev/null)
+FFMPEG_BIN ?= $(shell command -v ffmpeg 2>/dev/null)
+
+site-screenshots:
+	@test -n "$(CWEBP_BIN)" && test -x "$(CWEBP_BIN)" || { echo "ERROR: cwebp is required to generate landing screenshots; install cwebp or set CWEBP_BIN." >&2; exit 1; }
+	@test -n "$(FFMPEG_BIN)" && test -x "$(FFMPEG_BIN)" || { echo "ERROR: ffmpeg is required to normalize landing screenshots for cwebp; install ffmpeg or set FFMPEG_BIN." >&2; exit 1; }
+	cd web && ./node_modules/.bin/nuxt build
+	cd $(SITE_DIR) && SITE_PROFILE=public ./node_modules/.bin/vitepress build
+	cd $(SITE_DIR) && SITE_PROFILE=docs ./node_modules/.bin/vitepress build
+	cd web && CWEBP_BIN="$(CWEBP_BIN)" FFMPEG_BIN="$(FFMPEG_BIN)" E2E_LANDING_FIXTURE_PATH="$(CURDIR)/web/tests/e2e/fixtures/landing.json" ./node_modules/.bin/playwright test --config=tests/e2e/playwright.config.ts tests/e2e/landing-capture.spec.ts --workers=1
 
 # E2E test suite.
 # Runs inside a Docker container for local isolation (doesn't touch host env).

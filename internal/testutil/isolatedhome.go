@@ -53,5 +53,8 @@ func IsolatedHome() (home string, cleanup func() error, err error) {
 		return "", nil, fmt.Errorf("set HOME: %w", err)
 	}
 
+	if err := os.Unsetenv("CLAUDE_CONFIG_DIR"); err != nil {
+		return "", nil, errors.Join(fmt.Errorf("isolate CLAUDE_CONFIG_DIR: %w", err), cleanup())
+	}
 	return home, cleanup, nil
 }

@@ -2,6 +2,7 @@ package harness
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -60,7 +61,7 @@ func NativeAggregateBackupFiles(target hcc.Target) (map[string]string, error) {
 		return nil, err
 	}
 	for _, destination := range destinations {
-		if len(destination.AggregateRoutes) == 0 || destination.Root == destinations[0].Root {
+		if len(destination.AggregateRoutes) == 0 || (destination.Root == destinations[0].Root && target != hcc.TargetClaude) {
 			continue
 		}
 		for _, rel := range destination.Info.AggregateFilesForScope(true) {
@@ -93,6 +94,9 @@ func nativeAggregateDestinations(target hcc.Target, machineScope bool, repoRoot,
 			root = repoRoot
 			if machineScope {
 				root = homeDir
+				if target == hcc.TargetClaude && os.Getenv("CLAUDE_CONFIG_DIR") != "" {
+					root = base.Root
+				}
 			}
 		}
 		var err error

@@ -1,6 +1,6 @@
 # Harnesses and output paths reference
 
-This page lists the [harnesses](../glossary.md#harness) Agent Marketplace supports and the exact files `sync` writes for each one. Use it to find where an installed skill, command, subagent, hook, or MCP server ended up, or to decide which paths to add to `.gitignore`.
+This page lists the [harnesses](../glossary.md#harness) Agent Marketplace supports and the exact files `sync` writes for each one. Use it to find where an installed skill, command, subagent, hook, or MCP server ended up, or to decide which paths to add to `.gitignore`. Plugin members installed by decomposed delivery land on the same per-kind paths; native delivery instead registers the package through harness-owned settings entries. See [Plugins and package formats](../explanation/plugins-and-package-formats.md).
 
 The roots and per-kind paths come from `pkg/harness-compilation/target` and `internal/harness/roots.go` in the source code.
 
@@ -21,11 +21,11 @@ These identifiers appear in `harnesses:` lists and in `source_harness:`. Identif
 
 ## Roots
 
-Each harness has a repository root and a machine root. Resources selected by the repository and personal-local files go under the repository root. Resources selected by the user and organization files go under the machine root in your home directory.
+Each harness has a repository root and a machine root. Resources selected by the repository and personal-local files go under the repository root. Resources selected by the user and organization files go under the machine root, which defaults to a directory in your home directory.
 
 | Harness | Repository root | Machine root |
 |---|---|---|
-| Claude Code | `<repo>/.claude` | `~/.claude` |
+| Claude Code | `<repo>/.claude` | `$CLAUDE_CONFIG_DIR` or `~/.claude` |
 | Factory Droid | `<repo>/.factory` | `~/.factory` |
 | Cursor | `<repo>/.cursor` | `~/.cursor` |
 | Windsurf | `<repo>` | `~/.codeium/windsurf` |
@@ -36,7 +36,20 @@ Each harness has a repository root and a machine root. Resources selected by the
 
 Codex splits its files across two roots. When `CODEX_HOME` is set, it replaces `~/.codex` for machine subagents, hooks, and MCP servers. It never moves skills, which stay in `~/.agents`. `CODEX_HOME` must be an absolute path; a relative value stops the run with an error.
 
-Claude Code MCP servers are the one exception to these roots. They go to `<repo>/.mcp.json` or to the `mcpServers` member of `~/.claude.json`.
+Claude Code MCP servers go to `<repo>/.mcp.json` at repository scope. At machine scope they go to the `mcpServers` member of `$CLAUDE_CONFIG_DIR/.claude.json` when the variable is nonempty, or `~/.claude.json` otherwise.
+
+`CLAUDE_CONFIG_DIR` must be absolute. It relocates all Claude Code machine
+resources, including hooks and hook support; repository paths do not change.
+An unset or empty value keeps the default layout. Existing output in the
+default account is not moved or pruned when a different directory is selected.
+Cleanup only inspects Claude's declared aggregate files, not unrelated JSON
+files or other accounts beneath the relocated root. Admitted directory aliases
+also support native hooks in both materialization modes.
+Keep the relocated machine root separate from `<repo>/.claude`: when both
+scopes produce output and their roots overlap, sync refuses with
+`materialize.destination.overlap`.
+Git administrative paths are not eligible: this includes `.git`, configured
+Git/common directories, linked-worktree metadata, and aliases into them.
 
 ## Output paths by harness
 
@@ -52,7 +65,12 @@ In the tables below, a skill path ending in `SKILL.md` means the skill is a fold
 | hook | `.claude/settings.json` under `hooks` | `~/.claude/settings.json` under `hooks` |
 | mcp | `<repo>/.mcp.json` | `~/.claude.json` under `mcpServers` |
 
-Sync also lists installed skills and subagents in `.claude/.claude-plugin/plugin.json` (machine: `~/.claude/.claude-plugin/plugin.json`), under `skills` and `agents`.
+Sync does not write a Claude plugin manifest: `.claude/.claude-plugin/plugin.json` is retired output. If an earlier version wrote one, sync strips its managed `skills` and `agents` entries (keeping anything it does not own) and deletes the file and its `.claude-plugin` directory once nothing but empty members remain.
+
+The machine paths in this table show the default layout. With a nonempty
+`CLAUDE_CONFIG_DIR`, replace `~/.claude` with that directory and
+`~/.claude.json` with `$CLAUDE_CONFIG_DIR/.claude.json`. Detection, status,
+doctor, backup, and restore use the same effective machine paths.
 
 ### Codex
 
