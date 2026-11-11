@@ -386,6 +386,10 @@ textarea:focus-visible,
   padding-left: 12px;
 }
 
+.gui-sidebar__source-child {
+  margin-left: 12px;
+}
+
 .gui-nav-row .gui-dot {
   margin: 0;
 }
@@ -1692,6 +1696,11 @@ textarea:focus-visible,
   gap: 8px;
 }
 
+.settings__source-search {
+  display: block;
+  margin: 0 0 16px;
+}
+
 .source-card {
   align-items: flex-start;
   background: var(--gui-s0100);
@@ -1700,6 +1709,15 @@ textarea:focus-visible,
   gap: 8px;
   min-width: 0;
   padding: 12px;
+}
+
+.source-card--grouped {
+  margin-left: 20px;
+}
+
+.source-card--highlighted {
+  outline: 2px solid var(--gui-signal);
+  outline-offset: 1px;
 }
 
 .source-card__icon {

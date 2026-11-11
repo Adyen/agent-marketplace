@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import type { SourceDescription } from './api/client'
 import GuiIcon, { type IconName } from './GuiIcon.vue'
 import { sourceLabel } from './source-label'
+import { groupSources, type SourceGroupEntry } from './source-groups'
 
 export interface SidebarGroup {
   id: string
@@ -34,6 +35,7 @@ const emit = defineEmits<{
   showAll: []
   selectGroup: [id: string]
   openSources: []
+  revealSource: [id: string]
   openSettings: []
   showDiagnostics: []
   quit: []
@@ -42,6 +44,7 @@ const emit = defineEmits<{
 const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform)
 const sourcesButton = ref<HTMLButtonElement | null>(null)
 const settingsButton = ref<HTMLButtonElement | null>(null)
+const foldedSourceGroups = ref(new Set<string>())
 
 defineExpose({
   focusSources: () => sourcesButton.value?.focus(),
@@ -60,9 +63,38 @@ const sourceIcons: Record<SourceDescription['kind'], IconName> = {
   marketplace: 'globe',
 }
 
+type SourceRow =
+  | { type: 'group'; key: string; group: Extract<SourceGroupEntry, { type: 'group' }> }
+  | { type: 'source'; key: string; source: SourceDescription; layer: 'user' | 'organization'; groupKey: string | null }
+
+const sourceEntries = computed<SourceRow[]>(() =>
+  groupSources(
+    props.sources.map(({ source, organization }) => ({ source, layer: organization ? 'organization' : 'user' })),
+  ).flatMap<SourceRow>((entry) =>
+    entry.type === 'source'
+      ? [{ type: 'source' as const, key: entry.key, source: entry.source, layer: entry.layer, groupKey: null }]
+      : [
+          { type: 'group' as const, key: entry.key, group: entry },
+          ...(foldedSourceGroups.value.has(entry.key)
+            ? []
+            : entry.sources.map((source) => ({
+                type: 'source' as const,
+                key: source.id,
+                source,
+                layer: entry.layer,
+                groupKey: entry.key,
+              }))),
+        ],
+  ),
+)
+
 function sourceName(source: SourceDescription): string {
   const rowLabel = source.rowSourceId === '' ? undefined : props.rowSourceLabels.get(source.rowSourceId)
   return rowLabel || sourceLabel(source)
+}
+
+function toggleSourceGroup(key: string) {
+  foldedSourceGroups.value.has(key) ? foldedSourceGroups.value.delete(key) : foldedSourceGroups.value.add(key)
 }
 
 function groupTone(group: SidebarGroup): 'warning' | 'danger' | 'signal' | null {
@@ -150,17 +182,36 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | 'signal' | null 
         ><GuiIcon name="plus" /></button>
       </div>
       <ul class="gui-sidebar__list gui-sidebar__list--scroll">
-        <li v-for="entry in sources" :key="entry.source.id">
-          <UTooltip :text="entry.source.location" :ui="{ content: 'gui-source-row__tooltip' }">
+        <li v-for="entry in sourceEntries" :key="entry.key" :class="{ 'gui-sidebar__source-child': entry.type === 'source' && entry.groupKey != null }">
+          <button
+            v-if="entry.type === 'group'"
+            type="button"
+            class="gui-nav-row gui-nav-row--compact"
+            :aria-label="`Source group ${sourceLabel(entry.group.sources[0])}`"
+            :aria-expanded="!foldedSourceGroups.has(entry.key)"
+            @click="toggleSourceGroup(entry.key)"
+            @keydown.enter.prevent="toggleSourceGroup(entry.key)"
+            @keydown.space.prevent="toggleSourceGroup(entry.key)"
+          >
+            <GuiIcon :name="sourceIcons[entry.group.kind]" />
+            <span class="gui-source-row__location">{{ sourceLabel(entry.group.sources[0]) }}</span>
+            <span class="gui-nav-row__count">{{ entry.group.sources.length }}</span>
+            <span v-if="entry.group.layer === 'organization'" class="gui-tag">ORG</span>
+          </button>
+          <UTooltip v-else :text="entry.source.location" :ui="{ content: 'gui-source-row__tooltip' }">
             <button
               type="button"
               class="gui-nav-row gui-nav-row--compact gui-source-row"
+              :data-source-id="entry.source.id"
               :aria-label="`Open source ${entry.source.location}`"
-              @click="emit('openSources')"
+              @click="emit('revealSource', entry.source.id)"
             >
               <GuiIcon :name="sourceIcons[entry.source.kind]" />
-              <span class="gui-source-row__location">{{ sourceName(entry.source) }}</span>
-              <span v-if="entry.organization" class="gui-tag">ORG</span>
+              <span class="gui-source-row__location">
+                {{ entry.groupKey == null ? sourceName(entry.source) : entry.source.path || '/' }}
+                <template v-if="entry.groupKey != null && entry.source.ref"> · {{ entry.source.ref }}</template>
+              </span>
+              <span v-if="entry.layer === 'organization'" class="gui-tag">ORG</span>
             </button>
           </UTooltip>
         </li>
