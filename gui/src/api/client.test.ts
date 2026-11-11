@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createClient, EventCursor, RequestError } from './client'
+import { createClient, EventCursor, RequestError, type EventBridge } from './client'
 import type { ResourceActionPlan, SessionEvent, Snapshot } from './client'
 
 function snapshotEvent(sequence: number, generation: number, stage = 'final', operation: number | null = null): SessionEvent {
@@ -167,6 +167,37 @@ describe('EventCursor', () => {
     expect(cursor.accept(discoveryEvent(8, 5, 7))).toBe(true)
   })
 })
+
+function eventBridge(onOpen?: (streamID: string, emit: (event: string, ...data: unknown[]) => void) => void) {
+  const listeners = new Map<string, Set<(...data: unknown[]) => void>>()
+  const emissions: { event: string; data: unknown[] }[] = []
+  const bridge: EventBridge = {
+    on(event, callback) {
+      const callbacks = listeners.get(event) ?? new Set()
+      callbacks.add(callback)
+      listeners.set(event, callbacks)
+      return () => callbacks.delete(callback)
+    },
+    emit(event, ...data) {
+      emissions.push({ event, data })
+      if (event === 'am:session-events:open') {
+        onOpen?.(String(data[0]), bridge.emit)
+      }
+      for (const callback of listeners.get(event) ?? []) {
+        callback(...data)
+      }
+    },
+  }
+  return {
+    bridge,
+    emissions,
+    listenerCount: () => [...listeners.values()].reduce((count, callbacks) => count + callbacks.size, 0),
+  }
+}
+
+function createBridgedClient(fetchImpl: typeof fetch, bridge: EventBridge): ReturnType<typeof createClient> {
+  return createClient('', 'secret-token', fetchImpl, bridge)
+}
 
 describe('createClient', () => {
   it('sends the credential header on POST and parses snapshot JSON', async () => {
@@ -562,5 +593,107 @@ describe('createClient', () => {
       status: 409,
       code: 'localapi.busy',
     } satisfies Partial<RequestError>)
+  })
+
+  // spec: gui-local-api/completion-notification-renders-without-further-activity
+  it('uses bridge frames for completion without another fetch request', async () => {
+    let fetchCalls = 0
+    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined
+    const announced = snapshotEvent(1, 4, 'inventory', 12)
+    const final = snapshotEvent(2, 4, 'final')
+    const notification = notificationEvent(3, 4, 12)
+    const fake = eventBridge((streamID, emit) => {
+      for (const event of [announced, final, notification]) {
+        emit('am:session-events', streamID, `data: ${JSON.stringify(event)}\n\n`)
+      }
+      emit('am:session-events:end', streamID, '')
+    })
+    const fetcher: typeof fetch = async () => {
+      fetchCalls++
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            streamController = controller
+            controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(announced)}\n\n`))
+          },
+          pull() {
+            return new Promise(() => undefined)
+          },
+        }),
+        { status: 200 },
+      )
+    }
+    const client = createBridgedClient(fetcher, fake.bridge)
+    const iterator = client.events()[Symbol.asyncIterator]()
+    const received: SessionEvent[] = []
+    const completion = (async () => {
+      for (;;) {
+        const next = await iterator.next()
+        if (next.done) break
+        received.push(next.value)
+      }
+    })()
+    const timeout = Symbol('timeout')
+    const outcome = await Promise.race([
+      completion.then(() => null, (error: unknown) => error),
+      new Promise<typeof timeout>((resolve) => setTimeout(() => resolve(timeout), 250)),
+    ])
+    if (outcome === timeout) {
+      streamController?.error(new Error('test cleanup'))
+    }
+    await completion.catch(() => undefined)
+    expect(outcome).toBeNull()
+    expect(received.map((event) => event.sequence)).toEqual([1, 2, 3])
+    expect(received.at(-1)?.type).toBe('notification')
+    expect(fetchCalls).toBe(0)
+  })
+
+  // spec: gui-local-api/window-event-stream-requires-the-credential
+  it('surfaces an unauthorized bridge end as a 401 RequestError', async () => {
+    const fake = eventBridge((streamID, emit) => {
+      emit('am:session-events:end', streamID, 'localapi.unauthorized')
+    })
+    const client = createBridgedClient(async () => {
+      throw new Error('bridge should not fetch')
+    }, fake.bridge)
+
+    await expect(client.events()[Symbol.asyncIterator]().next()).rejects.toMatchObject({
+      name: 'RequestError',
+      status: 401,
+      code: 'localapi.unauthorized',
+    })
+  })
+
+  it('closes an aborted bridge stream and removes its listeners', async () => {
+    const fake = eventBridge()
+    const abort = new AbortController()
+    const client = createBridgedClient(async () => {
+      throw new Error('bridge should not fetch')
+    }, fake.bridge)
+    const iterator = client.events(undefined, abort.signal)[Symbol.asyncIterator]()
+    const pending = iterator.next()
+
+    await Promise.resolve()
+    abort.abort()
+
+    await expect(pending).resolves.toMatchObject({ done: true })
+    expect(fake.emissions.map(({ event }) => event)).toEqual([
+      'am:session-events:open',
+      'am:session-events:close',
+    ])
+    expect(fake.listenerCount()).toBe(0)
+  })
+
+  it('does not close a bridge stream that was aborted before it opened', async () => {
+    const fake = eventBridge()
+    const abort = new AbortController()
+    abort.abort()
+    const client = createBridgedClient(async () => {
+      throw new Error('bridge should not fetch')
+    }, fake.bridge)
+
+    await expect(client.events(undefined, abort.signal)[Symbol.asyncIterator]().next()).resolves.toMatchObject({ done: true })
+    expect(fake.emissions).toEqual([])
+    expect(fake.listenerCount()).toBe(0)
   })
 })

@@ -22,6 +22,7 @@ var expectedCategories = []string{
 	"container_site",
 	"helm",
 	"gui_distribution",
+	"gui_native_events",
 }
 
 var expectedBenchmarkRoots = []string{
@@ -85,10 +86,12 @@ func TestPlanCategories(t *testing.T) {
 		{"Marketplace proxy profile", []string{"deploy/compose/sqlite-filesystem/nginx.conf"}, false, want("container_config")},
 		{"Compose documentation opt-in", []string{"compose.docs.yaml"}, false, want("container_config")},
 		{"TUI QA", []string{"tools/tui-qa/package.json"}, false, want("tui_qa")},
-		{"GUI source", []string{"cmd/agent-marketplace-gui/app.go"}, false, want("go_build", "go_test", "harness_compatibility", "marketplace_e2e", "tui_qa", "container_marketplace", "gui_distribution")},
-		{"GUI frontend", []string{"gui/src/App.vue"}, false, want("gui_distribution")},
-		{"GUI packaging", []string{"packaging/gui/linux/nfpm.yaml"}, false, want("gui_distribution")},
-		{"GUI CI script", []string{"scripts/gui-update-e2e.sh"}, false, want("gui_distribution")},
+		{"GUI source", []string{"cmd/agent-marketplace-gui/app.go"}, false, want("go_build", "go_test", "harness_compatibility", "marketplace_e2e", "tui_qa", "container_marketplace", "gui_distribution", "gui_native_events")},
+		{"GUI frontend", []string{"gui/src/App.vue"}, false, want("gui_distribution", "gui_native_events")},
+		{"GUI packaging", []string{"packaging/gui/linux/nfpm.yaml"}, false, want("gui_distribution", "gui_native_events")},
+		{"GUI CI script", []string{"scripts/gui-update-e2e.sh"}, false, want("gui_distribution", "gui_native_events")},
+		{"local API event producer", []string{"internal/localapi/api.go"}, false, want("go_build", "go_test", "harness_compatibility", "marketplace_e2e", "tui_qa", "container_marketplace", "gui_native_events")},
+		{"local API prose", []string{"internal/localapi/README.md"}, false, want()},
 		{"GUI release wiring", []string{"Makefile"}, false, all},
 		{"marketplace Dockerfile", []string{"Dockerfile.marketplace"}, false, want("container_config", "container_marketplace")},
 		{"root dockerignore", []string{".dockerignore"}, false, want("container_config", "container_marketplace")},

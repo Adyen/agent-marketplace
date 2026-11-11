@@ -772,6 +772,18 @@ func TestGUIReleasePathsSelectPackageJobs(t *testing.T) {
 	}
 }
 
+func TestGUINativeEventsJobSelectedByLocalAPI(t *testing.T) {
+	doc := loadCIWorkflow(t)
+	if got := getMap(t, getMap(t, getMap(t, doc, "jobs"), "changes"), "outputs")["gui_native_events"]; got != "${{ steps.changes.outputs.gui_native_events }}" {
+		t.Fatalf("changes job does not export gui_native_events: %v", got)
+	}
+	condition, _ := getMap(t, getMap(t, doc, "jobs"), "gui-linux-native-events")["if"].(string)
+	if !strings.Contains(condition, "needs.changes.outputs.gui_native_events == 'true'") ||
+		!strings.Contains(condition, "startsWith(github.ref, 'refs/tags/')") {
+		t.Fatalf("native event job must run for local API/GUI changes and release tags: %q", condition)
+	}
+}
+
 func TestBenchmarkPackagesParity(t *testing.T) {
 	doc := loadWorkflow(t, "ci.yml")
 

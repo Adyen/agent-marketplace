@@ -70,6 +70,24 @@ func (app *App) appOptions(hooks lifecycleHooks) *options.App {
 		Bind: []any{app},
 		OnStartup: func(ctx context.Context) {
 			windowCtx = ctx
+			wailsruntime.EventsOn(ctx, sessionEventsOpenEvent, func(data ...any) {
+				if len(data) < 2 {
+					return
+				}
+				id, idOK := data[0].(string)
+				credential, credentialOK := data[1].(string)
+				if idOK && credentialOK {
+					app.openEventStream(nativeWindow{ctx: ctx}, id, credential)
+				}
+			})
+			wailsruntime.EventsOn(ctx, sessionEventsCloseEvent, func(data ...any) {
+				if len(data) == 0 {
+					return
+				}
+				if id, ok := data[0].(string); ok {
+					app.closeEventStream(id)
+				}
+			})
 			controlClose, err := startE2EControl(app)
 			if err != nil {
 				slog.Error("GUI E2E control server could not start", "err", err)

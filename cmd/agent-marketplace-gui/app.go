@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -22,6 +23,14 @@ const singleInstanceID = "ef334250-9d55-4fdc-8c94-a6b48b8a3c27"
 const launchRequestEvent = "desktop:launch-request"
 
 const closeRequestEvent = "desktop:close-request"
+
+const (
+	sessionEventsOpenEvent        = "am:session-events:open"
+	sessionEventsCloseEvent       = "am:session-events:close"
+	sessionEventsEvent            = "am:session-events"
+	sessionEventsEndEvent         = "am:session-events:end"
+	sessionEventsUnauthorizedCode = "localapi.unauthorized"
+)
 
 var version = "dev"
 var packageFormat = ""
@@ -52,7 +61,18 @@ type App struct {
 	quit             func()
 	closeOnce        sync.Once
 	e2eControlClose  func()
+	eventStreams     appEventStreams
 	nativeState
+}
+
+type appEventStreams struct {
+	mu      sync.Mutex
+	streams map[string]*appEventStream
+	closed  map[string]struct{}
+}
+
+type appEventStream struct {
+	cancel context.CancelFunc
 }
 
 func NewApp(ctx context.Context, lifecycle session.DependencyLifecycle) (*App, error) {
@@ -114,6 +134,10 @@ func NewApp(ctx context.Context, lifecycle session.DependencyLifecycle) (*App, e
 		telemetryContext: telemetryCtx,
 		telemetryStarted: startedAt,
 		rootSpan:         rootSpan,
+		eventStreams: appEventStreams{
+			streams: make(map[string]*appEventStream),
+			closed:  make(map[string]struct{}),
+		},
 	}, nil
 }
 
@@ -123,8 +147,73 @@ func (a *App) Bootstrap() Bootstrap {
 
 func (a *App) handler() http.Handler { return a.api.Handler() }
 
+func (a *App) openEventStream(window Window, id, credential string) {
+	authorized := subtle.ConstantTimeCompare([]byte(credential), []byte(a.api.Credential())) == 1
+	ctx, cancel := context.WithCancel(context.Background())
+	stream := &appEventStream{cancel: cancel}
+	a.eventStreams.mu.Lock()
+	if _, closedEarly := a.eventStreams.closed[id]; closedEarly {
+		delete(a.eventStreams.closed, id)
+		a.eventStreams.mu.Unlock()
+		cancel()
+		return
+	}
+	if previous := a.eventStreams.streams[id]; previous != nil {
+		previous.cancel()
+	}
+	a.eventStreams.streams[id] = stream
+	a.eventStreams.mu.Unlock()
+	if !authorized {
+		cancel()
+		window.Emit(sessionEventsEndEvent, id, sessionEventsUnauthorizedCode)
+		return
+	}
+
+	go func() {
+		a.api.Subscribe(ctx, func(frame []byte) bool {
+			if ctx.Err() != nil {
+				return false
+			}
+			window.Emit(sessionEventsEvent, id, string(frame))
+			return true
+		})
+		a.eventStreams.mu.Lock()
+		current, registered := a.eventStreams.streams[id]
+		replaced := registered && current != stream
+		a.eventStreams.mu.Unlock()
+		cancel()
+		if !replaced {
+			window.Emit(sessionEventsEndEvent, id, "")
+		}
+	}()
+}
+
+func (a *App) closeEventStream(id string) {
+	a.eventStreams.mu.Lock()
+	stream := a.eventStreams.streams[id]
+	delete(a.eventStreams.streams, id)
+	if stream == nil {
+		a.eventStreams.closed[id] = struct{}{}
+	}
+	a.eventStreams.mu.Unlock()
+	if stream != nil {
+		stream.cancel()
+	}
+}
+
+func (a *App) closeEventStreams() {
+	a.eventStreams.mu.Lock()
+	for id, stream := range a.eventStreams.streams {
+		stream.cancel()
+		delete(a.eventStreams.streams, id)
+	}
+	clear(a.eventStreams.closed)
+	a.eventStreams.mu.Unlock()
+}
+
 func (a *App) close() {
 	a.closeOnce.Do(func() {
+		a.closeEventStreams()
 		if a.e2eControlClose != nil {
 			a.e2eControlClose()
 		}
