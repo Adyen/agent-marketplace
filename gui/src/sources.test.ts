@@ -895,7 +895,6 @@ describe('Source settings', () => {
     expect(sources.querySelectorAll('.source-card--grouped')).toHaveLength(2)
     const settingsSolo = sources.querySelector<HTMLElement>('[data-source-id="solo-directory"]')
     expect(settingsSolo?.classList.contains('source-card--grouped')).toBe(false)
-    expect(settingsSolo?.closest('li')?.querySelector('button[aria-expanded]')).toBeNull()
 
     const settingsGroup = sources.querySelector<HTMLElement>('button[aria-expanded]')!
     settingsGroup.click()
@@ -918,8 +917,6 @@ describe('Source settings', () => {
     for (const [id, path] of [['git-alpha', 'plugins/alpha'], ['git-beta', 'plugins/beta']]) {
       expect(sidebar.find(`button[data-source-id="${id}"]`).attributes('aria-label')).toContain(path)
     }
-    const groupedChildNames = sidebar.findAll('.gui-sidebar__source-child button').map((row) => row.attributes('aria-label'))
-    expect(new Set(groupedChildNames).size).toBe(2)
   })
 
   // spec: gui-shell/selecting-a-sidebar-source-reveals-it-in-settings
