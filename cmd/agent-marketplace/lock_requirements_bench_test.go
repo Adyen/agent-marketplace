@@ -53,17 +53,17 @@ func BenchmarkAcquireRepeatedGitRequirementsLocalDiskNoNetwork(b *testing.B) {
 			for i := range entries {
 				entries[i] = config.RegistryEntry{URL: seeded.URL, Ref: seeded.Ref, SourceHarness: tc.policies[i%len(tc.policies)]}
 			}
-			first, err := lifecycle.AcquireLockedRegistry(context.Background(), seeded.URL, seeded.URL, seeded.Ref, entries)
-			if err != nil || len(first.Roots) != tc.roots || first.Commit != seeded.Commit {
+			first, err := lifecycle.AcquireLockedRegistry(context.Background(), seeded.URL, seeded.URL, seeded.Ref, entries, nil)
+			if err != nil || len(first.Registry.Roots) != tc.roots || first.Registry.Commit != seeded.Commit {
 				b.Fatalf("preflight acquisition: %v, registry=%+v", err, first)
 			}
-			if tc.roots == 1 && !reflect.DeepEqual(first, seeded) {
+			if tc.roots == 1 && !reflect.DeepEqual(first.Registry, seeded) {
 				b.Fatalf("changed complete seeded inventory: %+v", first)
 			}
 			b.ReportAllocs()
 			for b.Loop() {
-				registry, err := lifecycle.AcquireLockedRegistry(context.Background(), seeded.URL, seeded.URL, seeded.Ref, entries)
-				if err != nil || len(registry.Roots) != tc.roots || registry.Commit != seeded.Commit {
+				registry, err := lifecycle.AcquireLockedRegistry(context.Background(), seeded.URL, seeded.URL, seeded.Ref, entries, nil)
+				if err != nil || len(registry.Registry.Roots) != tc.roots || registry.Registry.Commit != seeded.Commit {
 					b.Fatalf("acquisition: %v, registry=%+v", err, registry)
 				}
 			}

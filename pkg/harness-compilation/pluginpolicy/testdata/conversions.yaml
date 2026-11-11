@@ -1,0 +1,70 @@
+# Catalog data for pkg/harness-compilation/pluginpolicy/testdata/conversions.yaml.
+#
+# Independently authored plugin conversion fixtures. Each fixture decodes a
+# hand-written package through plugindecode and projects it through the public
+# package compile path. Expected member keys, blocked flags, artifact paths,
+# and diagnostic codes are authored by hand, never derived from the shipped
+# catalogs, so a wrong catalog or projection edit fails here.
+cases:
+  - name: claude-native-permissionmode-block
+    format: claude-plugin
+    target: claude
+    delivery: native
+    files:
+      .claude-plugin/plugin.json: |
+        {"name": "perm-plugin"}
+      agents/guard.md: |
+        ---
+        name: guard
+        description: restricted helper
+        permissionMode: plan
+        ---
+        You guard things.
+      skills/ok/SKILL.md: |
+        ---
+        name: ok
+        description: fine skill
+        ---
+        Do the thing.
+    want_blocked: true
+    want_members:
+      - key: subagent/guard
+        blocked: true
+        diagnostic_codes: [plugin.member.restriction-unsupported]
+      - key: skill/ok
+        artifacts: [skills/ok/SKILL.md]
+  - name: agent-plugin-mcp-root-expansion
+    format: agent-plugin
+    target: claude
+    delivery: decompose
+    roots: {package: /gen/demo, data: /data/demo}
+    files:
+      plugin.json: |
+        {"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json", "name": "demo"}
+      mcp.json: |
+        {"$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+         "mcpServers": {"srv": {"type": "stdio", "command": "./bin/run",
+           "args": ["${PLUGIN_ROOT}/cfg.json"], "env": {"K": "${PLUGIN_DATA}/v"},
+           "cwd": "${PLUGIN_ROOT}"}}}
+      bin/run: |
+        #!/bin/sh
+    want_members:
+      - key: mcpserver/srv
+        artifacts: [.mcp.json]
+        artifact_contains: [/gen/demo/cfg.json, /data/demo/v]
+  - name: agent-plugin-decomposed-skill
+    format: agent-plugin
+    target: cursor
+    delivery: decompose
+    files:
+      plugin.json: |
+        {"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json", "name": "demo"}
+      skills/writer/SKILL.md: |
+        ---
+        name: writer
+        description: writes things
+        ---
+        Write it well.
+    want_members:
+      - key: skill/writer
+        artifacts: [skills/writer/SKILL.md]

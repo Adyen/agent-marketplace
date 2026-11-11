@@ -20,7 +20,7 @@ const updateSelectionRemoveLine = "  → run 'agent-marketplace remove --kind %s
 
 // UpdateSelectionRequiredLine is the remediation line for a required miss,
 // which remove cannot drop.
-const UpdateSelectionRequiredLine = "  → required selection: 'agent-marketplace remove' cannot drop it; change the configuration entry that marks it required, or ask that configuration's owner"
+const UpdateSelectionRequiredLine = "  → required Selection: 'agent-marketplace remove' cannot drop it; change the configuration entry that marks it required, or ask that configuration's owner"
 
 // updateSelectionLoadNote reports a prior lock revision that could not be
 // loaded, so its selections were compared as newly missing.
@@ -168,7 +168,7 @@ type ResolvedUpdateSides struct {
 // resources from the verified local cache only, the way read-only commands
 // do, so a superseded hosted revision is still comparable from its installed
 // evidence.
-func ResolvePriorAndDesired(ctx context.Context, ws pipeline.Workspace, offline bool, priorJobs []SnapshotJob, overlays map[string][]byte, lockDesired map[string][]byte, desiredSet *ExactLockSet, lookup func(*ExactLockSet, func() error) catalog.ExactSnapshotFunc, priorMarketplaceFromCache bool) (ResolvedUpdateSides, error) {
+func ResolvePriorAndDesired(ctx context.Context, ws pipeline.Workspace, offline bool, priorJobs, desiredJobs []SnapshotJob, priorPlanner *pluginPlanSource, overlays map[string][]byte, lockDesired map[string][]byte, desiredSet *ExactLockSet, lookup func(*ExactLockSet, func() error) catalog.ExactSnapshotFunc, priorMarketplaceFromCache bool) (ResolvedUpdateSides, error) {
 	priorSet := &ExactLockSet{BySource: map[string]LockedGit{}, byIdentity: map[string][]LockedGit{}}
 	var loadErrors []SelectionPriorLoadError
 	// recorded identities name sources a previously published lock pinned, even
@@ -183,7 +183,7 @@ func ResolvePriorAndDesired(ctx context.Context, ws pipeline.Workspace, offline 
 	for _, job := range priorJobs {
 		// An unavailable prior snapshot leaves the layer's misses looking new,
 		// which is the conservative direction.
-		if err := addLayerSnapshots(ctx, priorSet, job.Source, job.Entries, job.Doc, offline, false, nil); err != nil {
+		if err := addLayerSnapshots(ctx, priorSet, job.Source, job.Entries, job.Decls, job.Doc, offline, false, nil, priorPlanner); err != nil {
 			loadErrors = append(loadErrors, SelectionPriorLoadError{LockPath: job.LockPath, Err: err})
 		}
 	}
@@ -228,6 +228,7 @@ func ResolvePriorAndDesired(ctx context.Context, ws pipeline.Workspace, offline 
 		Workspace:     ws,
 		SkipInventory: true,
 		CatalogOption: []catalog.LoadOption{catalog.WithVerifiedExactSnapshots(priorLookup, priorSet.catalogs)},
+		LockMetadata:  snapshotLockMetadata(priorJobs),
 	}
 	if priorMarketplaceFromCache {
 		// Read the previously pinned Marketplace revisions from the verified
@@ -251,13 +252,14 @@ func ResolvePriorAndDesired(ctx context.Context, ws pipeline.Workspace, offline 
 		Workspace:     ws,
 		SkipInventory: true,
 		CatalogOption: []catalog.LoadOption{catalog.WithVerifiedExactSnapshots(lookup(desiredSet, nil), desiredSet.catalogs)},
+		LockMetadata:  snapshotLockMetadata(desiredJobs),
 		EffectiveOpts: config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(), FileOverlays: desiredOverlays},
 	})
 	return ResolvedUpdateSides{Prior: prior, Desired: desired, PriorSet: priorSet, DesiredSet: desiredSet, LoadErrors: loadErrors}, nil
 }
 
-func guardNewlyMissingSelections(ctx context.Context, ws pipeline.Workspace, offline bool, priorJobs []SnapshotJob, overlays map[string][]byte, lockDesired map[string][]byte, desiredSet *ExactLockSet, lookup func(*ExactLockSet, func() error) catalog.ExactSnapshotFunc) error {
-	sides, err := ResolvePriorAndDesired(ctx, ws, offline, priorJobs, overlays, lockDesired, desiredSet, lookup, false)
+func guardNewlyMissingSelections(ctx context.Context, ws pipeline.Workspace, offline bool, priorJobs, desiredJobs []SnapshotJob, priorPlanner *pluginPlanSource, overlays map[string][]byte, lockDesired map[string][]byte, desiredSet *ExactLockSet, lookup func(*ExactLockSet, func() error) catalog.ExactSnapshotFunc) error {
+	sides, err := ResolvePriorAndDesired(ctx, ws, offline, priorJobs, desiredJobs, priorPlanner, overlays, lockDesired, desiredSet, lookup, false)
 	if err != nil {
 		return err
 	}

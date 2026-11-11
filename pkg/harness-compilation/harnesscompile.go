@@ -26,6 +26,7 @@ import (
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ingest"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/internal/opencodehook"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/pluginpolicy"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
@@ -130,6 +131,11 @@ func ValidateTargetRegistrations() error {
 	if err := targetmeta.ValidateHookProjections(); err != nil {
 		errs = append(errs, err)
 	}
+	// Validate the plugin package layouts at the same boundary for the same
+	// reason.
+	if err := targetmeta.ValidatePackageLayouts(); err != nil {
+		errs = append(errs, err)
+	}
 	// Reverse direction: a registration for an undeclared target, or for a
 	// target that does not declare the capability, is a wiring bug.
 	for _, t := range compile.RegisteredTargets() {
@@ -212,6 +218,14 @@ func Compile(r Resource, t Target, opts ...Option) (*Result, error) {
 	}, nil
 }
 
+// CompilePackage projects a decoded plugin package onto a target through the
+// pluginpolicy catalogs. Delivery selects decomposed or native delivery;
+// roots carries the caller-supplied package generation and plugin data roots
+// that ${PLUGIN_ROOT} and ${PLUGIN_DATA} expand to. It performs no I/O.
+func CompilePackage(p *ir.Plugin, t Target, d pluginpolicy.Delivery, scope Scope, roots pluginpolicy.Roots) (*pluginpolicy.Projection, error) {
+	return pluginpolicy.Project(p, targetmeta.Target(t), d, compile.Scope(scope), roots)
+}
+
 // CompileNativeHookProjection compiles one hook into the target's declared
 // native hook file fragment, resolved through the shipped hook/tool catalogs.
 // It is the shared pure projection the compatibility reader and the native
@@ -228,6 +242,17 @@ func CompileNativeHookProjection(h *ir.Hook, dst Target, scope Scope, supportBas
 // format into target-specific artifacts for another harness. It uses the ingest
 // registry to load the source bundle and then compiles each resource to the
 // target format.
+//
+// Because Convert holds the source fs.FS, it also performs source-aware
+// support-file assembly that pure per-resource Compile cannot: declared skill
+// support files and hook/MCP assets explicitly referenced through the
+// canonical root token are resolved against srcFS and emitted as additional
+// artifacts with their exact bytes and modes. A missing, unsafe (traversal,
+// symlink, non-regular), or unreadable support path fails closed with a
+// bundle.support-file.missing or bundle.support-file.unsafe error diagnostic
+// and suppresses the owning resource's complete output, its own artifacts
+// and its fragments of a shared aggregate, through the same per-resource
+// rule that handles compiler errors.
 //
 // Convert(srcFS, HarnessClaude, target, opts...) is equivalent to
 // CompileBundle(srcFS, target, opts...).
@@ -259,7 +284,7 @@ func Convert(srcFS fs.FS, from, to Harness, opts ...Option) (*Result, error) {
 	}
 	slog.Info("harness ingest end", "from", from, "resources", len(b.Resources), "diagnostics", len(b.Diagnostics))
 
-	result, err := compileBundleFromIR(b, to, opts...)
+	result, err := compileBundleFromIRWithFS(b, to, srcFS, opts...)
 	if err != nil {
 		slog.Error("harness conversion failed", "from", from, "to", to, "error", err)
 		return nil, err
@@ -376,10 +401,9 @@ func errorDiagnosticCodes(diagnostics []Diagnostic) []string {
 // silently wins", so both producers are suppressed as whole resources — every
 // artifact they emitted, fragments included.
 //
-// Suppressing the fragments too is what keeps a shared aggregate honest. A
-// Claude subagent emits both agents/<name>.md and a .claude-plugin/plugin.json
-// fragment; dropping only the colliding .md would leave the manifest
-// advertising an agent whose file was never written.
+// Suppressing the fragments too is what keeps a shared aggregate honest:
+// dropping only the colliding artifact while keeping the resource's fragment
+// would leave an aggregate advertising an entry that was never installed.
 //
 // Ordering is the bundle resource order, so diagnostics, artifacts, and the
 // returned skip list are deterministic.
@@ -523,8 +547,8 @@ func enforceOpenCodeHookBudget(t Target, outputs []resourceOutput, artifacts []A
 }
 
 // compileBundleFromIR compiles all resources in an ingest.Bundle to the
-// target harness. It is the generalized N-to-N compilation path used by
-// Convert for all source harnesses.
+// target harness with no source filesystem. It is a thin filesystem-free
+// wrapper that delegates to compileBundleFromIRWithFS with a nil srcFS.
 //
 // # Bundle error contract
 //
@@ -541,6 +565,18 @@ func enforceOpenCodeHookBudget(t Target, outputs []resourceOutput, artifacts []A
 // Result.Diagnostics retains every diagnostic and Result.HasErrors reports any
 // error, so callers can fail the run while still publishing valid output.
 func compileBundleFromIR(b *ingest.Bundle, t Target, opts ...Option) (*Result, error) {
+	return compileBundleFromIRWithFS(b, t, nil, opts...)
+}
+
+// compileBundleFromIRWithFS is the generalized N-to-N compilation path used
+// by Convert for all source harnesses.
+//
+// When srcFS is non-nil it also performs source-aware assembly: declared skill
+// support files and explicitly referenced hook/MCP assets are read from the
+// source filesystem and attached to the owning resource's artifacts so the
+// published bundle is complete. A nil srcFS keeps pure IR compilation
+// filesystem-free.
+func compileBundleFromIRWithFS(b *ingest.Bundle, t Target, srcFS fs.FS, opts ...Option) (*Result, error) {
 	cfg := &config{}
 	for _, o := range opts {
 		if o != nil {
@@ -577,7 +613,23 @@ func compileBundleFromIR(b *ingest.Bundle, t Target, opts ...Option) (*Result, e
 			logResourceSkip(t, kind, name, []string{diag.CodeBundleCompileResourceFailed}, 0, "resource compiler failed")
 			continue
 		}
+		// Source-aware assembly. Only the Convert boundary holds the source
+		// fs.FS, so declared support files and explicitly referenced assets
+		// are resolved to exact bytes and modes here and attached to the
+		// owning resource. Assembly error diagnostics suppress the resource
+		// through the same per-resource contract as compiler errors.
+		var support []Artifact
+		var supportDiags []Diagnostic
+		if srcFS != nil {
+			support, supportDiags = assembleResourceSupportArtifacts(srcFS, r, res.Artifacts, t)
+			if len(support) > 0 {
+				// The deferred-bytes warning only applies when this layer
+				// could not materialize the declared files.
+				res.Diagnostics = dropDiagnosticCode(res.Diagnostics, diag.CodeSkillSupportFilesDeferred)
+			}
+		}
 		allDiagnostics = append(allDiagnostics, res.Diagnostics...)
+		allDiagnostics = append(allDiagnostics, supportDiags...)
 
 		// Per-resource suppression. The resource that emitted the error is the
 		// only one that loses output; every artifact it produced is dropped,
@@ -588,6 +640,12 @@ func compileBundleFromIR(b *ingest.Bundle, t Target, opts ...Option) (*Result, e
 			logResourceSkip(t, kind, name, codes, len(res.Artifacts), "resource emitted error diagnostics")
 			continue
 		}
+		if codes := errorDiagnosticCodes(supportDiags); len(codes) > 0 {
+			skipped = append(skipped, SkippedResource{Kind: kind, Name: name, Codes: codes})
+			logResourceSkip(t, kind, name, codes, len(res.Artifacts), "support file assembly failed")
+			continue
+		}
+		res.Artifacts = append(res.Artifacts, support...)
 		outputs = append(outputs, resourceOutput{kind: kind, name: name, artifacts: res.Artifacts})
 	}
 
@@ -1761,6 +1819,9 @@ func compileOptions(cfg *config) []compile.Option {
 	if cfg.pluginRoot != "" {
 		copts = append(copts, compile.WithPluginRoot(cfg.pluginRoot))
 	}
+	if cfg.nativeHookGenerationRoot != "" {
+		copts = append(copts, compile.WithNativeHookGenerationRoot(cfg.nativeHookGenerationRoot))
+	}
 	if cfg.managedByField != "" {
 		copts = append(copts, compile.WithManagedBy(cfg.managedByField, cfg.managedByValue))
 	}
@@ -1777,13 +1838,14 @@ func compileOptions(cfg *config) []compile.Option {
 type Option func(*config)
 
 type config struct {
-	modelOverride    map[string]string
-	toolOverride     map[string]string
-	pluginRoot       string
-	managedByField   string
-	managedByValue   string
-	nativeHookOutput bool
-	scope            Scope
+	modelOverride            map[string]string
+	toolOverride             map[string]string
+	pluginRoot               string
+	nativeHookGenerationRoot string
+	managedByField           string
+	managedByValue           string
+	nativeHookOutput         bool
+	scope                    Scope
 }
 
 // Scope is the installation scope a caller compiles for. It is re-exported
@@ -1819,6 +1881,12 @@ func WithToolOverride(m map[string]string) Option {
 // compile-time expansion of ${CLAUDE_PLUGIN_ROOT}.
 func WithPluginRoot(path string) Option {
 	return func(c *config) { c.pluginRoot = path }
+}
+
+// WithNativeHookGenerationRoot supplies the package generation used by native
+// hook commands; it is never a repository output directory.
+func WithNativeHookGenerationRoot(path string) Option {
+	return func(c *config) { c.nativeHookGenerationRoot = path }
 }
 
 func WithManagedBy(field, value string) Option {

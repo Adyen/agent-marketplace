@@ -1,0 +1,397 @@
+# plugin-delivery Specification
+
+## Purpose
+Defines how plugin members are delivered to a harness target under the
+plugin-surface field policies in the `pluginpolicy` catalogs: fields the
+catalog marks as blocking restrictions refuse lossy delivery, while
+preference losses omit only the field with a warning.
+
+## Requirements
+
+### Requirement: Security restrictions are never accepted as loss
+
+A member field that the harness catalog marks as a blocking restriction on
+the plugin surface SHALL block the member with the catalog's diagnostic. No
+option SHALL install that member without the restriction. A preference loss
+(for example an unresolved model) SHALL omit only the field, with a warning.
+
+#### Scenario: Claude plugin subagent with permissionMode is blocked
+
+- **WHEN** a plugin subagent declaring `permissionMode` is delivered natively
+  to Claude Code
+- **THEN** the member MUST be blocked with
+  `plugin.member.restriction-unsupported`, blocking the instance
+
+#### Scenario: Unresolved model on a plugin member warns and installs
+
+- **WHEN** a plugin subagent selects a model the destination model catalog
+  cannot resolve
+- **THEN** the member MUST be delivered without the model field, with a
+  warning
+
+### Requirement: Plugin instances install as a unit
+
+Each plugin instance, one plugin delivered to one harness target in one
+scope, SHALL install as a unit. If any non-excluded member fails to decode
+or compile, or is blocked by a plugin-surface restriction, the update of that
+instance SHALL be blocked. Its previously installed projection SHALL stay
+unchanged, and a first installation SHALL install nothing. Other plugin
+instances and independently selected resources SHALL continue.
+
+#### Scenario: A failing member blocks the whole instance update
+
+- **WHEN** a plugin's new revision has one member that fails to compile for a
+  harness target
+- **THEN** that instance MUST keep every member of the previous revision,
+  report the failing member, and install no member of the new revision
+
+#### Scenario: A failing member on first install installs nothing
+
+- **WHEN** a newly selected plugin has one member that fails to compile for a
+  harness target
+- **THEN** no member of that plugin MUST be installed for that harness target
+
+#### Scenario: Other instances continue past a blocked instance
+
+- **WHEN** one plugin instance is blocked
+- **THEN** other plugins, the same plugin on other harness targets, and leaf
+  resources MUST still be delivered
+
+#### Scenario: Excluding the failing member unblocks the instance
+
+- **WHEN** the failing member is added to `exclude`
+- **THEN** the instance MUST install the new revision without that member
+
+### Requirement: Decomposed members use a deterministic namespace
+
+Decomposed delivery SHALL install each member under the installed name
+`<plugin>-<member>`. A name that collides with another installed name in the
+same harness target and scope, or that breaks the harness target's name
+rules, SHALL be refused with `plugin.namespace-collision` or
+`plugin.namespace-invalid`. No suffix SHALL be added. The sync preview SHALL
+show the installed names.
+
+#### Scenario: Decomposed skill gets a namespaced installed name
+
+- **WHEN** plugin `review-kit` with member `skill/review` is decomposed to
+  Cursor at repository scope
+- **THEN** `.cursor/skills/review-kit-review/SKILL.md` MUST be written
+
+#### Scenario: Namespace collision is refused
+
+- **WHEN** a decomposed member's installed name equals the installed name of
+  another resource in the same harness target and scope
+- **THEN** that plugin instance MUST fail with `plugin.namespace-collision`
+  and the other resource MUST stay unchanged
+
+### Requirement: Package roots resolve to immutable package generations
+
+Both delivery modes SHALL resolve plugin-root references to an immutable,
+complete package generation owned by Agent Marketplace, never to an
+acquisition cache or upstream checkout. A generation SHALL be retained while
+any committed projection, registration, or recovery journal references it.
+Garbage collection SHALL remove only unreferenced generations.
+
+#### Scenario: Plugin hook command reaches its generation
+
+- **WHEN** a plugin hook command references `${CLAUDE_PLUGIN_ROOT}/scripts/check.sh`
+  and is decomposed to a harness target
+- **THEN** the installed command MUST reference `scripts/check.sh` inside the
+  instance's package generation, and that file MUST exist with its source
+  bytes and mode
+
+#### Scenario: Cache deletion keeps installed plugins working
+
+- **WHEN** the acquisition cache is deleted after sync
+- **THEN** `sync --check` MUST report no drift for the plugin, and its
+  package generation MUST be unchanged
+
+#### Scenario: Unreferenced generations are collected
+
+- **WHEN** a plugin is updated and the previous generation is no longer
+  referenced
+- **THEN** `gc` MUST remove that generation and keep the current one
+
+### Requirement: Removal retires only owned plugin output
+
+Removing a plugin's last selection SHALL unregister owned native entries,
+remove owned decomposed members, and release the instance's generation
+reference. Handwritten content, other scopes, and plugin data SHALL be kept,
+and the retained plugin-data path SHALL be reported.
+
+#### Scenario: Remove keeps plugin data and reports it
+
+- **WHEN** a plugin whose instance has plugin data is removed
+- **THEN** its owned outputs MUST be removed, its plugin data directory MUST
+  remain, and the command MUST print the retained path
+
+#### Scenario: Repository removal leaves the machine instance
+
+- **WHEN** the same plugin is installed at machine scope and repository
+  scope, and the repository selection is removed
+- **THEN** the machine-scope instance MUST stay installed and registered
+
+### Requirement: Delivery is chosen per plugin request
+
+A plugin request's `delivery` SHALL be `auto`, `native`, or `decompose`,
+defaulting to `auto`, and SHALL apply to every harness target the request is
+delivered to. `auto` SHALL choose native delivery for a harness target
+exactly when its shipped catalog declares native delivery verified for the
+scope the request is delivered at, and decomposed delivery otherwise. Sync
+SHALL report the delivery chosen per harness target.
+
+#### Scenario: Auto decomposes where native delivery is unverified
+
+- **WHEN** a plugin with `delivery: auto` is synced to Cursor and to a harness
+  target whose catalog declares native delivery verified
+- **THEN** Cursor MUST receive decomposed members, the other harness target
+  MUST receive a native registration, and sync output MUST name both choices
+
+#### Scenario: Native delivery never falls back to decomposed output
+
+- **WHEN** a plugin with `delivery: native` is synced to a harness target
+  whose catalog does not declare native delivery verified for the request's
+  scope
+- **THEN** that instance MUST fail with `plugin.delivery.native-unverified`
+  and no decomposed members MUST be written for it
+
+### Requirement: Native registration uses owned entries only
+
+Native delivery SHALL publish the package generation into a native plugin
+catalog owned by Agent Marketplace and SHALL register it only through owned
+entries in the harness target's native settings. Handwritten entries, keys,
+order, and comments SHALL be preserved. Entries sharing a file with hooks or
+MCP servers SHALL be written in one combined mutation. Agent Marketplace
+SHALL NOT write trust state, vendor-managed policy, or private runtime
+plugin caches. Claude Code registration SHALL be written to
+`.claude/settings.local.json` at repository scope and to
+`~/.claude/settings.json` at user scope, and the Claude catalog SHALL be a
+marketplace file Claude Code accepts, naming an owner and listing each
+plugin with a source relative to the catalog root. Factory Droid
+registration SHALL be written to `.factory/settings.local.json` at
+repository scope and to `~/.factory/settings.json` at user scope, SHALL
+declare the catalog with a `local` marketplace source, and the Factory
+catalog SHALL be a `.factory-plugin/marketplace.json` marketplace naming an
+owner and listing each plugin with a source relative to the catalog root.
+Codex registration SHALL be written to `.codex/config.toml` at repository
+scope and to `config.toml` in the Codex home at user scope, SHALL declare
+the catalog as a marketplace with `source_type = "local"` and `source` set
+to the absolute catalog root, and SHALL enable each plugin through
+`plugins."<plugin>@<catalog>"` with `enabled = true`. The Codex catalog
+SHALL be a `.agents/plugins/marketplace.json` marketplace naming the catalog
+and listing each plugin with a `local` source relative to the catalog root,
+an installation and authentication policy, and a category.
+
+#### Scenario: Claude registration preserves handwritten settings
+
+- **WHEN** a plugin is delivered natively to Claude Code at repository scope,
+  `.claude/settings.local.json` has handwritten `enabledPlugins` entries, and
+  `.claude/settings.json` has owned hooks
+- **THEN** `.claude/settings.local.json` MUST gain the owned registration
+  entries and keep every handwritten entry and comment, and
+  `.claude/settings.json` MUST keep the owned hooks and gain no registration
+  entry
+
+#### Scenario: Claude catalog is a marketplace Claude Code accepts
+
+- **WHEN** a plugin is delivered natively to Claude Code
+- **THEN** the owned catalog's `.claude-plugin/marketplace.json` MUST name the
+  catalog and an owner and list the plugin with a source relative to the
+  catalog root that resolves to the plugin's package generation
+
+#### Scenario: Claude registration moves out of shared project settings
+
+- **WHEN** an owned Claude registration from an earlier sync is recorded in
+  `.claude/settings.json` and sync runs
+- **THEN** after that one sync the owned entries MUST be in
+  `.claude/settings.local.json` and gone from `.claude/settings.json`, the
+  plugin MUST be registered exactly once, and entries without ownership state
+  MUST be left unchanged
+
+#### Scenario: Factory registration preserves handwritten settings
+
+- **WHEN** a plugin is delivered natively to Factory Droid at repository
+  scope and `.factory/settings.local.json` has handwritten `enabledPlugins`
+  and `extraKnownMarketplaces` entries
+- **THEN** `.factory/settings.local.json` MUST gain the owned
+  `extraKnownMarketplaces` entry with a `local` source naming the catalog and
+  the owned `enabledPlugins` entry for the plugin, MUST keep every handwritten
+  entry and comment, and `.factory/settings.json` MUST gain no registration
+  entry
+
+#### Scenario: Factory catalog is a marketplace Droid accepts
+
+- **WHEN** a plugin is delivered natively to Factory Droid
+- **THEN** the owned catalog's `.factory-plugin/marketplace.json` MUST name
+  the catalog and an owner and list the plugin with a source relative to the
+  catalog root that resolves to the plugin's package generation
+
+#### Scenario: Codex registration preserves handwritten config
+
+- **WHEN** a plugin is delivered natively to Codex at repository scope and
+  `.codex/config.toml` has handwritten `marketplaces` and `plugins` entries
+  and comments
+- **THEN** `.codex/config.toml` MUST gain the owned `marketplaces` entry with
+  `source_type = "local"` and `source` naming the catalog root and the owned
+  `plugins` entry enabling the plugin, and MUST keep every handwritten entry
+  and comment
+
+#### Scenario: Codex catalog is a marketplace Codex accepts
+
+- **WHEN** a plugin is delivered natively to Codex
+- **THEN** the owned catalog's `.agents/plugins/marketplace.json` MUST name
+  the catalog and list the plugin with a `local` source relative to the
+  catalog root that resolves to the plugin's package generation, and Codex
+  MUST list the plugin from the registered marketplace
+
+#### Scenario: Registration without ownership state is not pruned
+
+- **WHEN** a registration entry matching Agent Marketplace's naming exists
+  but ownership state does not record it
+- **THEN** sync MUST leave it unchanged and report the collision
+
+#### Scenario: Codex registration writes no trust
+
+- **WHEN** a plugin is delivered natively to Codex
+- **THEN** `config.toml` MUST gain only the owned plugin entries and no
+  project trust entry
+
+#### Scenario: Reload requirement is reported
+
+- **WHEN** a native generation changes for a harness target whose catalog
+  declares that refresh requires a restart
+- **THEN** sync and status MUST report `reload-required` for that instance
+
+### Requirement: Delivery transitions never activate a plugin twice
+
+Changing a plugin instance between native and decomposed delivery SHALL
+stage the new delivery first. It SHALL then retire only proven owned
+outputs and registrations of the old delivery, in one recoverable sequence.
+
+#### Scenario: Switching to decompose removes the native registration
+
+- **WHEN** `delivery` changes from `native` to `decompose` and sync completes
+- **THEN** the decomposed members MUST be installed and the owned native
+  registration entries MUST be gone
+
+#### Scenario: Interrupted delivery switch recovers without duplicates
+
+- **WHEN** sync is interrupted after staging the new delivery and before
+  retiring the old one
+- **THEN** the next recovery-capable command MUST complete the switch, and no
+  state with both deliveries active MUST remain
+
+### Requirement: External catalog entries deliver from their locked commit
+
+A plugin selected from a native plugin catalog entry whose source is an
+external Git repository or Git subdirectory SHALL be delivered from the
+package at the exact commit its acquisition lock records for that entry,
+under the same delivery resolution, namespace, package generation, and
+instance acceptance rules as any other plugin. Its delivered members SHALL
+be the post-exclusion member keys committed in that lock record. Sync SHALL
+NOT read the entry's live ref to deliver it. When the locked commit cannot
+be opened or the entry has no locked record, that plugin instance SHALL be
+blocked with an error naming the plugin, keeping its previous projection,
+while other plugins and resources continue.
+
+#### Scenario: External catalog entry is decomposed from its locked commit
+
+- **WHEN** a `claude-marketplace` source lists an entry whose source is an
+  external Git repository, the plugin is selected with delivery `auto` or
+  `decompose`, and sync runs for a harness target without verified native
+  delivery
+- **THEN** each delivered member MUST be installed under `<plugin>-<member>`
+  from the package at the commit the lock records for that repository, its
+  plugin-root references MUST resolve into the instance's package
+  generation, and no `plugin.delivery.pending` warning MUST be reported for
+  the plugin
+
+#### Scenario: External Git subdirectory entry delivers from that subdirectory
+
+- **WHEN** a selected catalog entry's source is a subdirectory of an
+  external Git repository
+- **THEN** the delivered members MUST come from that subdirectory at the
+  locked commit
+
+#### Scenario: Moved external ref keeps delivering the locked commit
+
+- **WHEN** the external repository's ref advances after the lock was written
+  and `sync --locked` or `sync` runs without updating the lock
+- **THEN** the delivered members MUST still come from the recorded commit
+
+#### Scenario: External entry exclusions are honoured
+
+- **WHEN** a plugin request for an external catalog entry excludes one of
+  its members
+- **THEN** the excluded member MUST NOT be installed, and the installed
+  members MUST be exactly the post-exclusion member keys committed in the
+  entry's lock record
+
+#### Scenario: Delivered external entry reports no drift
+
+- **WHEN** `sync --check` runs after a sync that delivered an external
+  catalog entry
+- **THEN** it MUST report no drift for that plugin and write nothing
+
+#### Scenario: Unavailable locked external commit blocks only that plugin
+
+- **WHEN** a selected external catalog entry has no locked record, or its
+  locked commit cannot be opened in the current mode
+- **THEN** that plugin instance MUST fail with an error naming the plugin,
+  its previously installed members MUST stay unchanged, a first install
+  MUST install none of its members, other plugins and resources MUST still
+  be delivered, and the entry's live ref MUST NOT be acquired in its place
+
+### Requirement: Claude Code native delivery is verified at user scope by a Claude CLI probe
+
+The Claude Code plugin catalog SHALL declare native delivery verified at user
+scope with the `claude-native-plugin` probe and unverified at repository
+scope. The probe SHALL run a real Claude Code CLI offline with an isolated
+home and no model call. At user scope, before sync it SHALL confirm that
+Claude does not list the plugin. After sync it SHALL confirm that Agent
+Marketplace wrote none of Claude's installed-plugin records,
+known-marketplace records, plugin cache, or trust state. It SHALL then
+establish workspace trust as the user would, let Claude register the
+declared marketplace and install the plugin itself, and require Claude's own
+installed-plugin record, `claude plugin list` reporting the plugin enabled,
+and Claude initialization listing the plugin's namespaced skill. At
+repository scope the probe SHALL confirm that a plugin with `delivery: auto`
+receives decomposed members and no native Claude registration. Agent
+Marketplace SHALL NOT write Claude trust state.
+
+#### Scenario: Claude probe loads the registered plugin at user scope
+
+- **WHEN** a plugin is delivered natively to Claude Code at user scope and the
+  probe establishes workspace trust and starts a Claude session
+- **THEN** Claude MUST record the plugin as installed, `claude plugin list`
+  MUST report it enabled, and Claude initialization MUST list its namespaced
+  skill, while the pre-sync negative control MUST have listed neither
+
+#### Scenario: Claude probe fails when sync wrote Claude-owned plugin state
+
+- **WHEN** Claude's installed-plugin records, known-marketplace records,
+  plugin cache, or trust state exist after sync and before the probe starts a
+  Claude session
+- **THEN** the probe MUST fail and name the path that exists
+
+#### Scenario: Claude probe confirms repository scope stays decomposed
+
+- **WHEN** a plugin with `delivery: auto` is synced to Claude Code at
+  repository scope
+- **THEN** the probe MUST find the plugin's decomposed members and no native
+  Claude registration in the repository's Claude settings
+
+#### Scenario: Auto delivers Claude plugins natively at user scope only
+
+- **WHEN** a plugin with `delivery: auto` is synced to Claude Code at user
+  scope and, separately, at repository scope
+- **THEN** the user-scope sync MUST write a native registration and no
+  decomposed members, the repository-scope sync MUST write decomposed members
+  and no native registration, and sync output MUST name each choice
+
+#### Scenario: Explicit native delivery is refused at repository scope for Claude
+
+- **WHEN** a plugin with `delivery: native` is synced to Claude Code at
+  repository scope
+- **THEN** that instance MUST fail with `plugin.delivery.native-unverified`
+  and no decomposed members MUST be written for it

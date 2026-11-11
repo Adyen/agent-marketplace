@@ -1,0 +1,14 @@
+# Catalog data for pkg/harness-compilation/pluginpolicy/catalogs/cursor.yaml.
+schema: 1
+harness: cursor
+evidence:
+  checked: "2026-10-15"
+  refs:
+    - https://cursor.com/docs/plugins
+    - https://cursor.com/docs/reference/plugins
+  notes: "Cursor loads the Agent Plugins open standard (plugin.json at the plugin root) alongside its own .cursor-plugin format, which is not a recognized package format in this change."
+accepts: [agent-plugin]
+delivery:
+  decompose: {status: verified}
+  native: {status: unverified}
+root_token: plugin_root

@@ -382,7 +382,6 @@
       "claude": {
         "status": "native",
         "paths": [
-          ".claude-plugin/plugin.json",
           "skills/example/SKILL.md"
         ]
       },
@@ -433,7 +432,6 @@
       "claude": {
         "status": "native",
         "paths": [
-          ".claude-plugin/plugin.json",
           "agents/example.md"
         ]
       },

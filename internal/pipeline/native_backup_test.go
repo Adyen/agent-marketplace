@@ -98,7 +98,7 @@ func TestClaudeConfigurationBackupAcrossLayouts(t *testing.T) {
 func expectedMachineRootAggregates(target hcc.Target) []string {
 	switch target {
 	case hcc.TargetClaude:
-		return []string{".claude-plugin/plugin.json", "hooks/hooks.json"}
+		return []string{"hooks/hooks.json"}
 	case hcc.TargetGemini:
 		return []string{"settings.json"}
 	default:

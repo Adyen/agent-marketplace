@@ -100,6 +100,36 @@ Agent Marketplace MUST follow every error printed by a CLI command, and every er
 - **WHEN** a stable diagnostic code can be reported by a consumer command
 - **THEN** that code MUST have code-specific guidance that names a supported command or a concrete action
 
+#### Scenario: Owned aggregate diagnostics print their code guidance
+
+- **WHEN** `sync` reports a warning or error while reconciling an owned harness aggregate file, such as `ownership.state-missing` and `materialize.devin.aggregate-shape` for a hand-written Devin hooks file whose entry does not match its declared hook shape
+- **THEN** each reported warning's remediation line MUST be the guidance for its code
+- **AND** the `hint:` line after the failed command's error MUST be that error's own remediation when it carries one, otherwise the guidance for that error's code, printed once, not the generic `sync --check` next step
+
+#### Scenario: Issues without remediation print no empty remediation line
+
+- **WHEN** a command prints a warning or error that carries no remediation
+- **THEN** the output MUST NOT contain a remediation line with no guidance
+
+#### Scenario: A repository Devin hook entry refusal names the entry to rewrite
+
+- **WHEN** `sync` refuses with `materialize.devin.aggregate-shape` because an event entry in the repository's `.devin/hooks.v1.json` does not match Devin's matcher-groups shape `{matcher?, hooks:[{type, command}]}`
+- **THEN** the `hint:` line MUST name that file, the event, and the entry index, and MUST tell the user to rewrite that entry in the matcher-groups shape `{matcher?, hooks:[{type, command}]}` or remove it if it is no longer wanted, then run `agent-marketplace sync` again
+- **AND** the hint MUST NOT use the aggregate root and member guidance
+- **AND** the hooks file MUST stay byte-identical, with its mode and modification time unchanged
+
+#### Scenario: A user Devin hook entry refusal names the entry to rewrite
+
+- **WHEN** `sync` refuses with `materialize.devin.aggregate-shape` because an event entry under `hooks` in the user's `~/.config/devin/config.json` does not match Devin's matcher-groups shape
+- **THEN** the `hint:` line MUST name that file, the event, and the entry index, and MUST tell the user to rewrite that entry in the matcher-groups shape `{matcher?, hooks:[{type, command}]}` or remove it if it is no longer wanted, then run `agent-marketplace sync` again
+- **AND** the configuration file MUST stay byte-identical, with its mode and modification time unchanged
+
+#### Scenario: A Devin aggregate root or member refusal keeps root guidance
+
+- **WHEN** `sync` refuses with `materialize.devin.aggregate-shape` because a Devin aggregate root or its `hooks` member is not a JSON object
+- **THEN** the `hint:` line MUST be the cataloged guidance that the aggregate root and its `hooks` and `mcpServers` members must be JSON objects
+- **AND** the hint MUST NOT contain the entry-level rewrite guidance
+
 ### Requirement: Configuration validation errors name their file and line
 
 A consumer configuration validation error MUST name the authored configuration file and, when known, the line, in the form `<file>:<line>`, and MUST describe the problem in plain words that do not require knowledge of internal terms. Its stable diagnostic code MUST stay unchanged at the start of the message.

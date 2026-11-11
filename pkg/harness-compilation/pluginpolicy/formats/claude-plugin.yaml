@@ -1,0 +1,27 @@
+# Catalog data for pkg/harness-compilation/pluginpolicy/formats/claude-plugin.yaml.
+schema: 1
+format: claude-plugin
+role: package
+evidence:
+  checked: "2026-10-15"
+  refs:
+    - https://code.claude.com/docs/en/plugins/manifest-reference
+  notes: "The manifest is .claude-plugin/plugin.json; every component stays at the plugin root."
+versions: []
+manifest:
+  fields:
+    name: {required: true, type: string, invalid: refuse-package}
+    version: {required: false, type: string, invalid: ignore-with-warning}
+    description: {required: false, type: string, invalid: ignore-with-warning}
+    author: {required: false, type: object, invalid: ignore-with-warning}
+    homepage: {required: false, type: string, invalid: ignore-with-warning}
+    repository: {required: false, type: string, invalid: ignore-with-warning}
+    license: {required: false, type: string, invalid: ignore-with-warning}
+    keywords: {required: false, type: array, invalid: ignore-with-warning}
+components:
+  skills: immediate-children
+  commands: file
+  agents: file
+  hooks: inline-or-file
+  mcpServers: inline-or-file
+dependencies: refuse-package

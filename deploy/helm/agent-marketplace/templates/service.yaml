@@ -22,6 +22,26 @@ spec:
       targetPort: operations
       protocol: TCP
 {{- end }}
+{{- if and (eq .Values.mode "split") .Values.worker.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agent-marketplace.componentName" (dict "root" . "component" "worker") }}
+  labels:
+    {{- include "agent-marketplace.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "agent-marketplace.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+  ports:
+    - name: operations
+      port: {{ .Values.service.api.operationsPort }}
+      targetPort: operations
+      protocol: TCP
+{{- end }}
 {{- if .Values.web.enabled }}
 ---
 apiVersion: v1

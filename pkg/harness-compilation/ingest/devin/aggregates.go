@@ -279,7 +279,7 @@ func hooksFromEvents(events map[string][]hookRule, file string, names *hookNamer
 				Severity: diag.SeverityWarning,
 				Resource: devinEvent,
 				Message:  fmt.Sprintf("%q is not a documented Devin hook event; the original event name was preserved", devinEvent),
-				Hint:     "Use a documented Devin event: PreToolUse, PostToolUse, PermissionRequest, UserPromptSubmit, Stop, SessionStart, SessionEnd, or PostCompaction",
+				Hint:     "Use a documented Devin event: PreToolUse, PostToolUse, PermissionRequest, UserPromptSubmit, Stop, SessionStart, SessionEnd, PreCompact, PostCompact, or PostCompaction",
 				Source:   diag.SourceRef{File: file, Line: 0},
 			})
 		}

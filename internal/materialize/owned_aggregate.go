@@ -29,15 +29,16 @@ const ownedJSONEmptyDocument = "{}\n"
 // ownedJSONEntry is one desired JSON aggregate entry with its ownership
 // identity and canonical value bytes.
 type ownedJSONEntry struct {
-	rel            string
-	kind           ownership.EntryKind
-	container      string
-	key            string
-	raw            []byte
-	identity       string
-	resource       string
-	sourceDigest   string
-	sourceEvidence []ownership.HookSourceEvidence
+	rel               string
+	kind              ownership.EntryKind
+	container         string
+	key               string
+	raw               []byte
+	identity          string
+	resource          string
+	sourceDigest      string
+	sourceEvidence    []ownership.HookSourceEvidence
+	pluginInstanceKey string
 }
 
 func (e ownedJSONEntry) id() ownership.EntryID {
@@ -54,6 +55,7 @@ func (e ownedJSONEntry) ownershipEntry() ownership.Entry {
 		IdentityDigest: e.identity,
 		ValueDigest:    e.valueDigest(),
 		Resource:       e.resource,
+		PluginInstance: e.pluginInstanceKey,
 	}
 	if e.kind == ownership.KindHook {
 		entry.SourceDigest = e.sourceDigest
@@ -169,13 +171,14 @@ func mergeOwnedJSONAggregateWork(dst, src *ownedJSONAggregateWork) *ownedJSONAgg
 // reconciler. Target adapters supply it; the reconciler does not infer target
 // semantics from path strings.
 type ownedJSONFileSpec struct {
-	rel                   string
-	container             string
-	envelope              map[string]any
-	hookShape             targetmeta.HookShape
-	keyed                 bool
-	rawValueDigest        bool
-	legacyMarkedFlatHooks bool
+	rel                       string
+	container                 string
+	additionalKeyedContainers []string
+	envelope                  map[string]any
+	hookShape                 targetmeta.HookShape
+	keyed                     bool
+	rawValueDigest            bool
+	legacyMarkedFlatHooks     bool
 }
 
 func ownedJSONDecode(data []byte, value any) error {
@@ -244,6 +247,7 @@ type ownedAggregateState struct {
 	values        map[outputKey]any
 	nativeHooks   map[outputKey]bool
 	writeSessions map[string]ownedAggregateWriteSession
+	batches       map[outputKey]*pluginInstanceBatch
 }
 
 func (s ownedAggregateState) reconcilesNativeHooks(key outputKey) bool {
@@ -257,6 +261,10 @@ func (s ownedAggregateState) writeSession(root string) (ownedAggregateWriteSessi
 	}
 	session, ok := s.writeSessions[ownership.RootKey(canonical)]
 	return session, ok
+}
+
+func (s ownedAggregateState) pluginBatch(key outputKey) *pluginInstanceBatch {
+	return s.batches[key]
 }
 
 func (s *ownedAggregateState) setWriteSession(session ownedAggregateWriteSession) {
@@ -297,7 +305,7 @@ func (s ownedAggregateState) put(key outputKey, value any) {
 // ownedAggregateHandler lets the materializer orchestrate owned aggregate
 // files without knowing a target's filenames, identities, or patch format.
 type ownedAggregateHandler interface {
-	extract(ownedAggregateState, outputKey, []artifact.Artifact, string) ([]artifact.Artifact, error)
+	extract(ownedAggregateState, outputKey, []artifact.Artifact, string, string) ([]artifact.Artifact, error)
 	markIncomplete(ownedAggregateState, outputKey, ir.ResourceKind)
 	aggregateRels(ir.ResourceKind, bool) []string
 	malformedDiagnostic(outputKey, string, error) diag.Diagnostic
@@ -386,6 +394,10 @@ type ownedJSONReconcileOptions struct {
 	nativeHookFinalize        nativeHookFinalizer
 	selectedHookResources     map[string]bool
 	legacyHandwrittenFiles    []string
+	pluginInstanceKey         string
+	pluginInstanceKeys        map[string]bool
+	activePluginInstances     map[string]bool
+	batch                     *pluginInstanceBatch
 }
 
 type nativeHookReconcileOptionsProvider interface {
@@ -393,7 +405,15 @@ type nativeHookReconcileOptionsProvider interface {
 }
 
 func ownedJSONShapeDiag(code string, key outputKey, outDir, rel string, err error) diag.Diagnostic {
-	return ownedAggregateDiag(code, key, rel, ownedAggregateMessage(outDir, rel, err.Error()))
+	d := ownedAggregateDiag(code, key, rel, ownedAggregateMessage(outDir, rel, err.Error()))
+	var entryErr *ownedJSONHookEntryShapeError
+	if code == diag.CodeMaterializeDevinAggregateShape && errors.As(err, &entryErr) {
+		d.Hint = fmt.Sprintf(
+			"Rewrite entry %d of event %q in %s in the matcher-groups shape {\"matcher\": \"<optional tool pattern>\", \"hooks\": [{\"type\": \"command\", \"command\": \"<command>\"}]}, or remove that entry if you no longer want it, then run `agent-marketplace sync` again",
+			entryErr.index, entryErr.event, ownedAggregateLabel(outDir, rel),
+		)
+	}
+	return d
 }
 
 func recordOwnedAggregateWrite(report *Report, key outputKey, rootID, outDir, rel string) {
@@ -453,10 +473,12 @@ func ownedAggregateProofDiags(key outputKey, outDir, rel string, err error) []di
 
 func ownedAggregateDiag(code string, key outputKey, rel, message string) diag.Diagnostic {
 	severity := diag.SeverityError
+	hint := ""
 	if doc, ok := diag.DocForCode(code); ok {
 		severity = doc.Severity
+		hint = doc.Hint
 	}
-	diagnostic := diag.Diagnostic{Code: code, Severity: severity, Target: string(key.target), Message: message}
+	diagnostic := diag.Diagnostic{Code: code, Severity: severity, Target: string(key.target), Message: message, Hint: hint}
 	if rel != "" {
 		diagnostic.Source = diag.SourceRef{File: rel}
 	}

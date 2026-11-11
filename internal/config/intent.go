@@ -50,10 +50,25 @@ type SourceKind = V4SourceKind
 
 type SourceDecl struct {
 	Kind          SourceKind
+	Name          string
 	URL           string
 	Ref           string
 	Path          string
 	SourceHarness string
+	// Format opts a git or directory source into plugin package
+	// interpretation; empty keeps loose ingestion.
+	Format string
+	// All is the source's select-all policy (all: true).
+	All bool
+	// Required carries the group's normalized required policy: retained only
+	// when the group has an actual selection policy, like the runtime adapter.
+	Required bool
+	// CollectionsInclude names the collections the source's resource group
+	// selects (collection/<name> requests).
+	CollectionsInclude []string
+	// Decisions is the source group's ordered v4 decision stream, used by the
+	// plugin lock manifests to commit the declared selection edges.
+	Decisions []V4SelectionDecision
 }
 
 type SourceDescription struct {
@@ -169,25 +184,47 @@ func (l LayerIntent) DescribeSources() []SourceDescription {
 }
 
 func (l LayerIntent) Sources() []SourceDecl {
-	descs := l.DescribeSources()
-	if descs == nil {
-		return nil
-	}
-	decls := make([]SourceDecl, 0, len(descs))
-	for _, desc := range descs {
-		decl := SourceDecl{Kind: desc.Kind}
-		switch desc.Kind {
-		case V4SourceGit:
-			decl.URL = desc.Location
-			decl.Ref = desc.Ref
-			decl.Path = desc.Path
-			decl.SourceHarness = desc.SourceHarness
-		case V4SourceMarketplace:
-			decl.URL = desc.Location
+	if l.v4 != nil {
+		names := make([]string, 0, len(l.v4.Sources))
+		for name := range l.v4.Sources {
+			names = append(names, name)
 		}
-		decls = append(decls, decl)
+		sort.Strings(names)
+		decls := make([]SourceDecl, 0, len(names))
+		for _, name := range names {
+			src := l.v4.Sources[name]
+			decl := SourceDecl{Kind: src.Kind, Name: name, Format: src.Format}
+			if src.Kind == V4SourceGit {
+				decl.URL = src.URL
+				decl.Ref = src.Ref
+				decl.Path = src.Path
+				decl.SourceHarness = src.SourceHarness
+			}
+			if src.Kind == V4SourceDirectory {
+				decl.URL = src.URL
+			}
+			if src.Kind == V4SourceMarketplace {
+				decl.URL = src.CanonicalURL
+			}
+			if group, ok := l.v4.Groups[name]; ok {
+				decl.Decisions = cloneV4Decisions(group.Decisions)
+				if group.HasAll && group.All != nil && *group.All {
+					decl.All = true
+				}
+				if group.Required != nil {
+					decl.Required = *group.Required && v4GroupHasSelection(group)
+				}
+				for _, request := range group.Include {
+					if request.Kind == "collection" {
+						decl.CollectionsInclude = append(decl.CollectionsInclude, request.Name)
+					}
+				}
+			}
+			decls = append(decls, decl)
+		}
+		return decls
 	}
-	return decls
+	return nil
 }
 
 func (l LayerIntent) acquisitionConfig() *V4Config {

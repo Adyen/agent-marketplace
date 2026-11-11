@@ -138,6 +138,29 @@ func BenchmarkCompileBundlePartialSkips(b *testing.B) {
 	}
 }
 
+func BenchmarkCompileBundleReferencedAssets(b *testing.B) {
+	fsys := make(fstest.MapFS)
+	env := make(map[string]string, 32)
+	for i := range 32 {
+		name := fmt.Sprintf("certs/cert-%02d.pem", i)
+		env[fmt.Sprintf("CERT_%02d", i)] = "${CLAUDE_PLUGIN_ROOT}/" + name
+		fsys[name] = &fstest.MapFile{Data: []byte("bundle PEM")}
+	}
+	config, err := json.Marshal(map[string]any{"mcpServers": map[string]any{"demo": map[string]any{"command": "run", "env": env}}})
+	if err != nil {
+		b.Fatal(err)
+	}
+	fsys[".mcp.json"] = &fstest.MapFile{Data: config}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		result, err := CompileBundle(fsys, TargetClaude)
+		if err != nil || result.HasErrors() || len(result.Artifacts) != 33 {
+			b.Fatalf("CompileBundle: artifacts=%d errors=%v err=%v", len(result.Artifacts), result.Diagnostics, err)
+		}
+	}
+}
+
 func benchmarkBundleFS(b *testing.B, numSkills, numCommands, numSubagents, numHooks, numMCP int) fstest.MapFS {
 	b.Helper()
 

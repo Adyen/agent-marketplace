@@ -1,6 +1,6 @@
 # Registry layout reference
 
-This page lists the files and folders `agent-marketplace` reads in a registry, and how it decides which harness layout a registry uses. Registry authors need it to place resources where the CLI discovers them. Consumers need it when a resource they expect is missing.
+This page lists the files and folders `agent-marketplace` reads in a registry, and how it decides which harness layout a registry uses. Registry authors need it to place resources where the CLI discovers them. Consumers need it when a resource they expect is missing. It describes loose-resource discovery: a source that declares `format` is read as plugin packages or a native plugin catalog instead, covered by [Plugins and package formats](../explanation/plugins-and-package-formats.md).
 
 ## Layout by kind
 

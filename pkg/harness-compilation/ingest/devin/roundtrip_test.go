@@ -581,14 +581,20 @@ var devinLossMatrix = []struct {
 		// compile/mapping/envvars.go), so the compiler resolves the token at
 		// compile time. The resolved absolute path is correct but no longer
 		// portable, and the token cannot be recovered from it.
-		source: fstest.MapFS{"hooks/hooks.json": file(`{"hooks":{"Stop":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/check.sh"}]}}`)},
+		source: fstest.MapFS{
+			"hooks/hooks.json": file(`{"hooks":{"Stop":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/check.sh"}]}}`),
+			"check.sh":         file("#!/bin/sh\nexit 0\n"),
+		},
 		key:    "hook/Stop-command",
 		losses: []string{"command"},
 		why:    "Devin has no plugin-root token, so ${CLAUDE_PLUGIN_ROOT} is resolved to an absolute path at compile time",
 	},
 	{
-		name:   "an MCP env value loses the plugin-root token",
-		source: fstest.MapFS{".mcp.json": file(`{"mcpServers":{"demo":{"command":"npx","env":{"CONFIG":"${CLAUDE_PLUGIN_ROOT}/.env"}}}}`)},
+		name: "an MCP env value loses the plugin-root token",
+		source: fstest.MapFS{
+			".mcp.json": file(`{"mcpServers":{"demo":{"command":"npx","env":{"CONFIG":"${CLAUDE_PLUGIN_ROOT}/.env"}}}}`),
+			".env":      file("CONFIG=1\n"),
+		},
 		key:    "mcpserver/demo",
 		losses: []string{"env"},
 		why:    "same plugin-root resolution as hook commands, applied to env values",
@@ -674,15 +680,12 @@ func TestDevinLossMatrix(t *testing.T) {
 	}
 }
 
-// TestDevinSupportFileBytesAreDeferredNotIngested pins the one allowed loss the
-// identity matrix declares for skills, so the exclusion is never vacuous.
-//
-// The ingester DOES recover support-file names from the source layout; what the
-// compile layer does not do is copy their bytes, which it reports with
-// skill.support-files-deferred. Both halves are asserted here: the name is seen
-// on the way in, the diagnostic is emitted, and the file is absent from the
-// materialized output.
-func TestDevinSupportFileBytesAreDeferredNotIngested(t *testing.T) {
+// TestDevinSupportFilesAssembleAtConvertBoundary pins the complete-bundle
+// contract: the ingester recovers source-relative support-file names, and the
+// Convert boundary resolves them to exact bytes because it is the layer that
+// holds the source fs.FS. Pure per-resource Compile remains filesystem-free
+// and still reports skill.support-files-deferred.
+func TestDevinSupportFilesAssembleAtConvertBoundary(t *testing.T) {
 	src := fstest.MapFS{
 		".devin/skills/demo-skill/SKILL.md":       file("---\nname: demo-skill\ndescription: d\n---\nBody\n"),
 		".devin/skills/demo-skill/scripts/run.sh": file("#!/bin/sh\n"),
@@ -704,28 +707,22 @@ func TestDevinSupportFileBytesAreDeferredNotIngested(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Convert: %v", err)
 	}
-	var deferred bool
 	for _, d := range result.Diagnostics {
 		if d.Code == "skill.support-files-deferred" {
-			deferred = true
-			if d.Severity != hcc.SeverityWarning {
-				t.Errorf("skill.support-files-deferred severity = %v, want warning", d.Severity)
-			}
-			if d.Resource != "demo-skill" {
-				t.Errorf("skill.support-files-deferred resource = %q, want demo-skill", d.Resource)
-			}
+			t.Errorf("support bytes were assembled but %q was still reported", d.Code)
 		}
-	}
-	if !deferred {
-		t.Fatal("no skill.support-files-deferred diagnostic; the allowed loss is undocumented at runtime")
 	}
 
 	outDir := t.TempDir()
 	if _, err := hcc.Materialize(result, outDir, hcc.WithWriteMode(hcc.WriteModeOverwrite)); err != nil {
 		t.Fatalf("Materialize: %v", err)
 	}
-	if _, err := os.Stat(outDir + "/skills/demo-skill/scripts/run.sh"); err == nil {
-		t.Fatal("the compile layer materialized a support file; the allowed loss no longer exists and must be removed from the matrix")
+	data, err := os.ReadFile(outDir + "/skills/demo-skill/scripts/run.sh")
+	if err != nil {
+		t.Fatalf("assembled support file missing from materialized output: %v", err)
+	}
+	if string(data) != "#!/bin/sh\n" {
+		t.Fatalf("assembled support file bytes = %q", data)
 	}
 }
 

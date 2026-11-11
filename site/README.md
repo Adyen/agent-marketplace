@@ -55,6 +55,15 @@ make site-docs-build
 This target writes the generated files to `site/.vitepress/dist-docs/` with
 all owned routes and assets below `/docs/`.
 
+## Landing Marketplace screenshots
+
+Run `make site-screenshots` from the repository root to regenerate the light and
+dark catalog and resource-detail images used by the landing page. Rerun it when
+the Marketplace catalog or detail UI, the committed landing fixtures, or the
+Playwright/Chromium capture toolchain changes. Review the updated manifest and
+image hashes with the screenshots before committing them. The target normalizes
+Playwright PNG output to RGB PPM with ffmpeg before cwebp encoding.
+
 To preview the public-site profile:
 
 ```bash

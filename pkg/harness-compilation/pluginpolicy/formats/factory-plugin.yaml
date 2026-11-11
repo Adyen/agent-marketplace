@@ -1,0 +1,28 @@
+# Catalog data for pkg/harness-compilation/pluginpolicy/formats/factory-plugin.yaml.
+schema: 1
+format: factory-plugin
+role: package
+evidence:
+  checked: "2026-10-15"
+  refs:
+    - https://docs.factory.ai/harness/plugins
+  notes: "The manifest is .factory-plugin/plugin.json; skills load only as immediate children of skills/ (skills/<name>/SKILL.md), so a root SKILL.md is never a plugin skill."
+versions: []
+manifest:
+  fields:
+    name: {required: true, type: string, invalid: refuse-package}
+    version: {required: false, type: string, invalid: ignore-with-warning}
+    description: {required: false, type: string, invalid: ignore-with-warning}
+    author: {required: false, type: object, invalid: ignore-with-warning}
+    homepage: {required: false, type: string, invalid: ignore-with-warning}
+    repository: {required: false, type: string, invalid: ignore-with-warning}
+    license: {required: false, type: string, invalid: ignore-with-warning}
+    keywords: {required: false, type: array, invalid: ignore-with-warning}
+components:
+  skills: immediate-children
+  commands: file
+  droids: file
+  output-styles: file
+  hooks: file
+  mcp: file
+dependencies: refuse-package

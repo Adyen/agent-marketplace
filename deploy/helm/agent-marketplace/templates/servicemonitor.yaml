@@ -15,7 +15,12 @@ spec:
   selector:
     matchLabels:
       {{- include "agent-marketplace.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: api
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values:
+          - api
+          - worker
   endpoints:
     - port: operations
       path: /metrics

@@ -177,10 +177,13 @@ func (devinOwnedAggregateHandler) nativeHookReconcileOptions() ownedJSONReconcil
 
 type devinOwnedAggregateHandler struct{}
 
-func (devinOwnedAggregateHandler) extract(state ownedAggregateState, key outputKey, artifacts []artifact.Artifact, resource string) ([]artifact.Artifact, error) {
+func (devinOwnedAggregateHandler) extract(state ownedAggregateState, key outputKey, artifacts []artifact.Artifact, resource, pluginInstanceKey string) ([]artifact.Artifact, error) {
 	rest, entries, err := splitDevinAggregateArtifacts(artifacts, key.machineScope, resource)
 	if err != nil {
 		return nil, err
+	}
+	for i := range entries {
+		entries[i].pluginInstanceKey = pluginInstanceKey
 	}
 	if len(entries) == 0 {
 		return rest, nil
@@ -245,6 +248,7 @@ func reconcileDevinAggregates(ctx context.Context, report *Report, key outputKey
 
 func (devinOwnedAggregateHandler) reconcile(ctx context.Context, report *Report, state ownedAggregateState, key outputKey, outDir string, destinations []harness.Destination, dryRun bool) *Report {
 	work, _ := state.get(key).(*ownedJSONAggregateWork)
+	batch := state.pluginBatch(key)
 	if key.target != hcc.TargetDevin {
 		return report
 	}
@@ -261,6 +265,12 @@ func (devinOwnedAggregateHandler) reconcile(ctx context.Context, report *Report,
 			}
 		}
 		options := devinOwnedJSONOptions()
+		if batch != nil {
+			options.batch = batch
+			options.pluginInstanceKey = batch.instanceKey
+			options.pluginInstanceKeys = batch.ownerInstances
+			options.activePluginInstances = batch.activeInstances
+		}
 		if session, ok := state.writeSession(destination.Root); ok {
 			options.store = session.store
 			options.lockReport = session.lockReport

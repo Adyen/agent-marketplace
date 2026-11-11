@@ -2,7 +2,7 @@
 schema: 1
 harness: devin
 evidence:
-  checked: "2026-10-07"
+  checked: "2026-10-27"
   refs:
     - https://docs.devin.ai/cli/extensibility/hooks/overview
     - https://docs.devin.ai/cli/extensibility/hooks/lifecycle-hooks
@@ -11,6 +11,11 @@ evidence:
     containing exec), so output is always anchored. Matchers apply only to
     PreToolUse, PostToolUse, and PermissionRequest. Devin also loads Claude
     Code hook files when read_config_from.claude is enabled (the default).
+    Devin CLI v3000.11.92 (https://docs.devin.ai/cli/changelog/stable) added
+    PreCompact and PostCompact command hooks with manual and auto compaction
+    matchers; the hook-reference pages do not list them yet. PostCompaction
+    stays accepted for ingestion and same-harness output, but is never chosen
+    as the target of another harness.
 
 env:
   project_dir: [DEVIN_PROJECT_DIR]
@@ -29,4 +34,6 @@ events:
   Stop: {canonical: Stop, matcher: none, types: [command, prompt]}
   SessionStart: {canonical: SessionStart, matcher: none, types: [command, prompt]}
   SessionEnd: {canonical: SessionEnd, matcher: none, types: [command, prompt]}
-  PostCompaction: {canonical: PostCompact, matcher: none, types: [command, prompt]}
+  PreCompact: {canonical: PreCompact, matcher: lifecycle, types: [command]}
+  PostCompact: {canonical: PostCompact, matcher: lifecycle, types: [command]}
+  PostCompaction: {canonical: PostCompact, matcher: none, types: [command, prompt], ingest_only: true}

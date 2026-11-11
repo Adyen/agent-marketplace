@@ -79,6 +79,11 @@ type Row struct {
 
 	PendingVerification bool
 
+	PluginSelectedGlobal  bool
+	PluginSelectedProject bool
+	PluginSelectedLocal   bool
+	PluginMemberExcluded  bool
+
 	// SearchWords is the cached, sorted and deduplicated set of lowercased
 	// words from the name and metadata that query terms prefix-match.
 	// Populated lazily by EnsureSearchable so filtering does not rebuild
