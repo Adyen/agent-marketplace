@@ -78,7 +78,7 @@ test('install docs lead with the install script and name the SHA256SUMS cutoff',
   assert.ok(quickStart.includes('~/.local/bin'))
   assert.ok(quickStart.includes('v5.0.3 and earlier'))
   assert.ok(quickStart.includes('go install'))
-  assert.ok(quickStart.includes('Go 1.27.3'))
+  assert.ok(quickStart.includes('Go 1.27.4'))
   assert.ok(readmeInstall.startsWith(`${installCommand}\n`))
   assert.ok(
     readmeInstallSection.includes('AGENT_MARKETPLACE_VERSION') &&

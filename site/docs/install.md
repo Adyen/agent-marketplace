@@ -78,7 +78,7 @@ Use `~/.local/bin/agent-marketplace` instead if you chose option B.
 
 ## With Go
 
-With Go 1.27.3 or newer, you can install the newest code from the main branch:
+With Go 1.27.4 or newer, you can install the newest code from the main branch:
 
 ```bash
 go install github.com/Adyen/agent-marketplace/cmd/agent-marketplace@latest
@@ -90,7 +90,7 @@ Go puts the program in `$(go env GOBIN)` if set, otherwise `$(go env GOPATH)/bin
 
 ## From source
 
-Clone the release tag and build it with `make`. This also requires Go 1.27.3 or newer:
+Clone the release tag and build it with `make`. This also requires Go 1.27.4 or newer:
 
 ```bash
 git clone --branch v5.0.0 https://github.com/Adyen/agent-marketplace.git
