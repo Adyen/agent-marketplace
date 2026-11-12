@@ -62,6 +62,11 @@ The endpoint serves the Prometheus text format and, when the scraper asks for it
 | `agent_marketplace_registry_last_successful_observation_timestamp_seconds` | gauge | `registry` | Unix timestamp of each registry's last successful observation. |
 | `agent_marketplace_registry_last_successful_index_timestamp_seconds` | gauge | `registry` | Unix timestamp of each registry's last successful index. The series exists once the worker records an observation of the registry, so a `0` value means the registry has been observed since this process started but has not yet indexed successfully. |
 | `agent_marketplace_registry_consecutive_probe_failures` | gauge | `registry` | Consecutive failed source probes for each registry. |
+| `agent_marketplace_claude_delivery_reconciles_total` | counter | `outcome` | Claude Enterprise delivery reconcile passes: `succeeded` or `failed`. |
+| `agent_marketplace_claude_delivery_plugins` | gauge | `state` | Claude Enterprise delivery plugin count by recorded state: `published`, `retired`, `skipped`, `conflict`, or `failed`. |
+| `agent_marketplace_claude_plugins_api_requests_total` | counter | `endpoint`, `status` | Claude Plugins API requests. `endpoint` is a coarse operation name (`plugin_marketplaces`, `plugins`, `plugin`, `plugin_versions`, `plugin_version`, `installation_settings`, or `other`); `status` is the HTTP status code or `network`. |
+| `agent_marketplace_claude_plugins_api_throttled_total` | counter | none | Claude Plugins API rate-limited responses. |
+| `agent_marketplace_claude_delivery_pass_duration_seconds` | histogram | none | Duration of Claude Enterprise delivery reconcile passes. |
 
 Label values:
 
