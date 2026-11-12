@@ -97,7 +97,7 @@ func TestResolveWithPolicyResolvesLeafPinsWithBoundedConcurrency(t *testing.T) {
 	for i := range names {
 		names[i] = fmt.Sprintf("pin-%02d", i)
 	}
-	latency := 300 * time.Millisecond
+	latency := time.Second
 	server, pins, peak := concurrentPinServer(t, names, nil, func(string) time.Duration { return latency })
 	start := time.Now()
 	resolved, errs := (&Resolver{Cache: NewCache(t.TempDir())}).ResolveWithPolicy(context.Background(), &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: server.URL, InstanceID: "mp", Resources: pins}}}, nil, resolver.MarketplaceResolveModeRefresh, nil)

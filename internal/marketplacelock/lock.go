@@ -35,15 +35,14 @@ func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, lay
 		if len(source.Requests) > 0 && remainingResources < 1 {
 			return lockfile.Document{}, fmt.Errorf("marketplace lock resources exceed representable limit %d", maxMarketplaceLockResources)
 		}
-		sourceEntry := entry
 		type requestResult struct {
 			plan *marketplace.PreparedInstall
 			err  error
 		}
 		results := marketplace.ResolveConcurrently(len(source.Requests), func(i int) requestResult {
 			request := source.Requests[i]
-			plan, err := marketplaceResolver.PrepareLocatorWithResourceLimit(ctx, sourceEntry, marketplace.MarketplaceLocator{
-				URL:      sourceEntry.URL,
+			plan, err := marketplaceResolver.PrepareLocatorWithResourceLimit(ctx, entry, marketplace.MarketplaceLocator{
+				URL:      entry.URL,
 				Registry: request.Registry,
 				Kind:     request.MarketplaceKind(),
 				Name:     request.Name,
