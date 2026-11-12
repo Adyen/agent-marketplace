@@ -141,8 +141,7 @@ func TestAdvisoryReportsMigrationDefaultsExistingAssessments(t *testing.T) {
 	must(err)
 	_, err = db.ExecContext(ctx, `
 ALTER TABLE resource_assessments DROP COLUMN advisory_reports;
-DELETE FROM marketplace_metadata_v2_migrations
-WHERE version = (SELECT MAX(version) FROM marketplace_metadata_v2_migrations);
+DELETE FROM marketplace_metadata_v2_migrations WHERE version = 10;
 `)
 	must(err)
 	must(db.Close())

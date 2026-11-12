@@ -41,7 +41,8 @@
 ## 2. Configuration (`pkg/marketplace/config`)
 
 - [x] 2.1 Add the `claude_enterprise` block: `enabled`, `api_key` (file or env
-  reference reusing the registry credential rules), optional `marketplace_id`,
+  reference reusing the registry credential rules), required `api_key_id` when
+  enabled, optional `marketplace_id`,
   `plugin_name_prefix` (default `am`), `default_installation_preference` (default
   `available`), and `interval`. Write red tests first for an inline secret, an unknown
   preference, and an invalid prefix. Annotate
@@ -77,47 +78,47 @@
 
 ## 4. Delivery state (`pkg/marketplace/store`)
 
-- [ ] 4.1 Add the `claude_delivery_plugins` schema and migrations for SQLite and
+- [x] 4.1 Add the `claude_delivery_plugins` schema and migrations for SQLite and
   PostgreSQL, keyed on registry, kind, and resource name, carrying the fields listed
   in `design.md`. Verify the store conformance suite covers both drivers
-- [ ] 4.2 Add queries: upsert published, mark retired, mark skipped, mark conflict,
+- [x] 4.2 Add queries: upsert published, mark retired, mark skipped, mark conflict,
   record failure, list for status, and the desired-set read over current publications
   excluding rejected and revoked revisions. Annotate
   `// spec: claude-enterprise-delivery/a-rejected-resource-is-never-uploaded` and
   `// spec: claude-enterprise-delivery/a-revocation-withdraws-a-mirrored-resource`
-- [ ] 4.3 Prove the recorded plugin name is never recomputed for an existing row.
+- [x] 4.3 Prove the recorded plugin name is never recomputed for an existing row.
   Annotate
   `// spec: claude-enterprise-delivery/a-renamed-registry-slug-does-not-rename-a-live-plugin`
-- [ ] 4.4 Prove sanitized failures: store a stable code and a bounded message, never a
+- [x] 4.4 Prove sanitized failures: store a stable code and a bounded message, never a
   request body or credential
 
 ## 5. Reconciler (`pkg/marketplace/claudedelivery`)
 
-- [ ] 5.1 Implement the preflight: resolve the credential, resolve and verify the
+- [x] 5.1 Implement the preflight: resolve the credential, resolve and verify the
   marketplace, and refuse the pass on a member-owned or synchronized marketplace.
   Annotate
   `// spec: claude-enterprise-delivery/a-synchronized-marketplace-refuses-the-pass`
-- [ ] 5.2 Implement inventory read and proof-based adoption. Write red tests first for
+- [x] 5.2 Implement inventory read and proof-based adoption. Write red tests first for
   a foreign plugin and for a plugin created by this key. Annotate
   `// spec: claude-enterprise-delivery/a-foreign-plugin-with-the-same-name-is-never-written-to`
   and `// spec: claude-enterprise-delivery/a-plugin-created-by-this-key-is-adopted`
-- [ ] 5.3 Implement digest-based change detection and the create or version decision.
+- [x] 5.3 Implement digest-based change detection and the create or version decision.
   Annotate
   `// spec: claude-enterprise-delivery/a-repeated-pass-over-unchanged-content-writes-nothing`
   and `// spec: claude-enterprise-delivery/a-changed-resource-uploads-exactly-one-version`
-- [ ] 5.4 Implement installation-setting reconciliation on create and on withdrawal,
+- [x] 5.4 Implement installation-setting reconciliation on create and on withdrawal,
   serialized per plugin, never touching the marketplace default. Annotate
   `// spec: claude-enterprise-delivery/a-newly-created-plugin-becomes-available-to-members`
   and `// spec: claude-enterprise-delivery/a-returning-resource-reuses-its-plugin`
-- [ ] 5.5 Implement the retry rules from design D10, each with a red test using a
+- [x] 5.5 Implement the retry rules from design D10, each with a red test using a
   fake server. Annotate
   `// spec: claude-enterprise-delivery/a-pending-registration-is-completed-without-a-duplicate-plugin`
   and
   `// spec: claude-enterprise-delivery/a-lost-version-response-does-not-store-a-duplicate-version`
-- [ ] 5.6 Record scan status and reach per published version, and never send a
+- [x] 5.6 Record scan status and reach per published version, and never send a
   served-version change. Annotate
   `// spec: claude-enterprise-delivery/a-withheld-version-is-visible-to-the-operator`
-- [ ] 5.7 Pace writes under the documented 60-per-minute write limit and resume across
+- [x] 5.7 Pace writes under the documented 60-per-minute write limit and resume across
   passes. Annotate
   `// spec: claude-enterprise-delivery/an-interrupted-pass-resumes-rather-than-restarts`
 
