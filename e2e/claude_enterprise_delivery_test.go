@@ -28,12 +28,24 @@ func TestClaudeEnterpriseDeliveryDisabledMakesNoOutboundRequest(t *testing.T) {
 	if got := fake.requestCount(); got != 0 {
 		t.Fatalf("disabled delivery made %d Plugins API requests", got)
 	}
+	process := startServeTestProcess(t, env, env.mustResolvePath("/workspace/marketplace.yaml"), "worker", map[string]string{
+		claudeDeliveryEndpointEnv: fake.URL(),
+		claudeDeliveryKeyEnv:      claudeDeliveryTestAPIKey,
+	})
 	metadata := openServeMetadata(t, env)
 	defer func() { _ = metadata.Close() }()
+	waitForServeCondition(t, func() bool {
+		desired, err := metadata.ListClaudeDeliveryDesired(t.Context(), metadata, "e2e-serve-mp", []store.RegistryID{"src-serve"})
+		return err == nil && len(desired) == 1
+	}, "registry publication with disabled Claude delivery")
+	if got := fake.requestCount(); got != 0 {
+		t.Fatalf("disabled worker made %d Plugins API requests", got)
+	}
 	rows, err := metadata.ListClaudeDeliveryPlugins(t.Context())
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("disabled delivery created rows: %+v %v", rows, err)
 	}
+	process.stop(t)
 }
 
 // spec: claude-enterprise-delivery/publication-completion-enqueues-delivery

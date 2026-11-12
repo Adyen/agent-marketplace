@@ -129,7 +129,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (ReconcileResult, error) {
 	rows = scopedRows
 	claimedNames := make(map[string]store.ResourceCoordinate, len(rows)+len(desired))
 	for _, row := range rows {
-		if row.PluginName != "" {
+		if row.PluginID != "" && row.PluginName != "" {
 			claimedNames[row.PluginName] = row.Coordinate
 		}
 	}
@@ -160,6 +160,8 @@ func (r *Reconciler) Reconcile(ctx context.Context) (ReconcileResult, error) {
 				result.Failed++
 				continue
 			}
+		}
+		if row.PluginID == "" {
 			if owner, claimed := claimedNames[row.PluginName]; claimed && owner != row.Coordinate {
 				if err := state.MarkClaudeDeliveryConflict(ctx, row.Coordinate, row.PluginName, "plugin.name-collision", r.options.Now()); err != nil {
 					return result, &ReconcileError{code: "state.write"}
@@ -251,22 +253,30 @@ func (r *Reconciler) Reconcile(ctx context.Context) (ReconcileResult, error) {
 		row.TargetMarketplaceID = marketplace.ID
 		row.State = store.ClaudeDeliveryStatePublished
 		if row.PublishedArchiveDigest == store.ArchiveDigest(built.Digest) {
-			if plugin.OrganizationInstallationPreference != r.options.Target.DefaultInstallationPreference ||
-				plugin.OrganizationInstallationInherited {
+			preferenceNeedsWrite := plugin.OrganizationInstallationPreference != r.options.Target.DefaultInstallationPreference ||
+				plugin.OrganizationInstallationInherited
+			if preferenceNeedsWrite || returning ||
+				row.ContentScanStatus != plugin.ContentScan.Status ||
+				row.Reach != plugin.Reach || row.ServedVersionID != plugin.ServedVersionID {
 				row.InstallationPreference = r.options.Target.DefaultInstallationPreference
+				row.ContentScanStatus = plugin.ContentScan.Status
+				row.Reach = plugin.Reach
+				row.ServedVersionID = plugin.ServedVersionID
 				row.UpdatedAt = r.options.Now()
 				if err := state.UpsertClaudeDeliveryPublished(ctx, row); err != nil {
 					return result, &ReconcileError{code: "state.write"}
 				}
-				if err := r.setInstallationPreference(ctx, plugin.ID, row.InstallationPreference); err != nil {
-					if errors.Is(err, errWriteRateLimit) {
-						return result, &ReconcileError{code: "write.rate-limited"}
+				if preferenceNeedsWrite {
+					if err := r.setInstallationPreference(ctx, plugin.ID, row.InstallationPreference); err != nil {
+						if errors.Is(err, errWriteRateLimit) {
+							return result, &ReconcileError{code: "write.rate-limited"}
+						}
+						if saveErr := r.recordFailure(ctx, state, row, marketplace.ID, deliveryErrorCode(err)); saveErr != nil {
+							return result, saveErr
+						}
+						result.Failed++
+						continue
 					}
-					if saveErr := r.recordFailure(ctx, state, row, marketplace.ID, deliveryErrorCode(err)); saveErr != nil {
-						return result, saveErr
-					}
-					result.Failed++
-					continue
 				}
 				result.Published++
 			}
@@ -556,6 +566,10 @@ func (r *Reconciler) uploadVersion(ctx context.Context, state store.ClaudeDelive
 			if readErr == nil {
 				return version, latest, nil
 			}
+		}
+		if readErr == nil && attempt == 0 && !errors.As(err, &apiErr) {
+			plugin = latest
+			continue
 		}
 		return claudeplugins.PluginVersion{}, plugin, err
 	}
