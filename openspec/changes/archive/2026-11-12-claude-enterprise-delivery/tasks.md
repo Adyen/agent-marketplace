@@ -21,17 +21,16 @@
   Write red tests first for header presence and for redaction of the key in every
   error string. Verify `go test ./pkg/marketplace/claudeplugins -count=1`
 - [x] 1.2 Implement reads: list plugins (paginated by opaque cursor until `next_page`
-  is null, tolerating short or empty pages), get plugin, list and get versions, list
+  is null, tolerating short or empty pages), get plugin, get a version, list
   marketplaces, get marketplace. Verify a fake server driving a three-page list with
   one empty page yields every row
 - [x] 1.3 Implement writes: create plugin, create version (multipart with the archive
-  part and `release_notes`), set and remove an installation setting. Verify the
-  multipart body carries the archive under the documented field and that
+  part and `release_notes`), set an installation setting. Verify the multipart body
+  carries the archive under the documented field and that
   installation-setting writes are issued one at a time
 - [x] 1.4 Implement error typing: status, `error.details.error_code`,
   `details.plugin_id`, `details.plugin_version_id`, `x-should-retry`, and
-  `retry-after`. Unknown codes map to their status. Annotate
-  `// spec: claude-enterprise-delivery/unrecognized-values-are-opaque`.
+  `retry-after`. Unknown codes map to their status.
   Verify red tests for `plugin_name_taken`, `registration_pending`, `scan_pending`,
   `skill_name_taken`, `429`, and an invented code
 - [x] 1.5 Implement rate-limit handling: honour `retry-after`, surface the limit

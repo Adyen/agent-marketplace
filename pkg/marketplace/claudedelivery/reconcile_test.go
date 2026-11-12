@@ -154,6 +154,13 @@ func TestReconcileCreatesSetsPreferenceSkipsUnchangedAndVersionsChangedContent(t
 	if err := fixture.meta.PutRegistry(context.Background(), registry); err != nil {
 		t.Fatalf("rename registry: %v", err)
 	}
+	api.mu.Lock()
+	plugin := api.plugins[testPluginID]
+	plugin.ContentScan = claudeplugins.ContentScan{Status: "completed"}
+	plugin.Reach = "workspace"
+	plugin.ServedVersionID = "version_served"
+	api.plugins[testPluginID] = plugin
+	api.mu.Unlock()
 	delivery = fixture.reconciler(api, ReconcileTarget{
 		APIKeyID: testAPIKeyID, PluginNamePrefix: "new-prefix",
 	})
@@ -164,7 +171,9 @@ func TestReconcileCreatesSetsPreferenceSkipsUnchangedAndVersionsChangedContent(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if api.writeCount() != 2 || row.PublishedVersionID != originalVersion {
+	if api.writeCount() != 2 || row.PublishedVersionID != originalVersion ||
+		row.ContentScanStatus != "completed" || row.Reach != "workspace" ||
+		row.ServedVersionID != "version_served" {
 		t.Fatalf("unchanged pass writes=%d state=%+v", api.writeCount(), row)
 	}
 
@@ -254,6 +263,20 @@ func TestReconcileConflictsOnPluginNameCollisionAcrossResources(t *testing.T) {
 	if api.createCount() != 1 || api.versionCount() != 0 || api.settingCount() != 1 {
 		t.Fatalf("colliding resources wrote creates=%d versions=%d settings=%d",
 			api.createCount(), api.versionCount(), api.settingCount())
+	}
+	creates, versions := api.createCount(), api.versionCount()
+	if _, err := delivery.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	collision, err = fixture.state.GetClaudeDeliveryPlugin(context.Background(), fixture.coordinate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if api.createCount() != creates || api.versionCount() != versions ||
+		collision.PluginID != "" || collision.State != store.ClaudeDeliveryStateConflict ||
+		collision.LastErrorCode != "plugin.name-collision" {
+		t.Fatalf("second collision pass wrote creates=%d versions=%d, row=%+v",
+			api.createCount()-creates, api.versionCount()-versions, collision)
 	}
 }
 
@@ -487,6 +510,32 @@ func TestReconcileWithdrawsAndRestoresTheExistingPlugin(t *testing.T) {
 		t.Fatalf("returned state=%+v creates=%d versions=%d preference=%q err=%v",
 			row, api.createCount(), api.versionCount(), api.preference(testPluginID), err)
 	}
+
+	returnedRevision := fixture.resource
+	returnedRevisionID := fmt.Sprintf("%s@%s", returnedRevision.Coordinate, returnedRevision.ContentDigest)
+	if err := fixture.meta.PutRevocation(context.Background(), store.Revocation{
+		Kind: store.RevocationRevision, TargetID: returnedRevisionID, Reason: "revoked again",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second withdrawal Reconcile: %v", err)
+	}
+	if err := fixture.meta.DeleteRevocation(context.Background(), store.RevocationRevision, returnedRevisionID); err != nil {
+		t.Fatal(err)
+	}
+	api.mu.Lock()
+	plugin := api.plugins[testPluginID]
+	plugin.OrganizationInstallationPreference = "available"
+	api.plugins[testPluginID] = plugin
+	api.mu.Unlock()
+	if _, err := delivery.Reconcile(context.Background()); err != nil {
+		t.Fatalf("unchanged return Reconcile: %v", err)
+	}
+	row, err = fixture.state.GetClaudeDeliveryPlugin(context.Background(), fixture.coordinate)
+	if err != nil || row.State != store.ClaudeDeliveryStatePublished {
+		t.Fatalf("unchanged returned state=%+v, %v", row, err)
+	}
 }
 
 // spec: claude-enterprise-delivery/a-pending-registration-is-completed-without-a-duplicate-plugin
@@ -519,6 +568,26 @@ func TestReconcileCompletesPendingCreateAndDoesNotDuplicateLostVersion(t *testin
 		}
 		if api.versionCount() != 1 {
 			t.Fatalf("lost response caused %d version writes, want 1", api.versionCount())
+		}
+	})
+
+	t.Run("lost response before storing version", func(t *testing.T) {
+		fixture := newDeliveryFixture(t, "guide", "first revision")
+		api := newPluginAPIFake(t, []string{"am-registry-skill-guide"})
+		delivery := fixture.reconciler(api, ReconcileTarget{APIKeyID: testAPIKeyID})
+		if _, err := delivery.Reconcile(context.Background()); err != nil {
+			t.Fatalf("initial Reconcile: %v", err)
+		}
+		fixture.publish(t, "second revision", "commit-2", "publication-2")
+		api.dropBeforeRecord = true
+		if _, err := delivery.Reconcile(context.Background()); err != nil {
+			t.Fatalf("retry Reconcile: %v", err)
+		}
+		row, err := fixture.state.GetClaudeDeliveryPlugin(context.Background(), fixture.coordinate)
+		if err != nil || api.versionCount() != 2 ||
+			row.State != store.ClaudeDeliveryStatePublished ||
+			row.PublishedVersionID != "version_2" || api.successfulVersions != 1 {
+			t.Fatalf("retry stored versions=%d row=%+v, %v", api.successfulVersions, row, err)
 		}
 	})
 }
@@ -755,6 +824,7 @@ type pluginAPIFake struct {
 	settings                int
 	pendingCreate           bool
 	loseNextVersionResponse bool
+	dropBeforeRecord        bool
 	hideInventory           bool
 	createNameTaken         bool
 	createSkillNameTaken    bool
@@ -899,6 +969,11 @@ func (api *pluginAPIFake) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			writeAPIErrorWithVersion(w, http.StatusServiceUnavailable, "registration_pending", id, versionID)
 			return
 		}
+		if api.dropBeforeRecord {
+			api.dropBeforeRecord = false
+			api.dropVersionResponse(w)
+			return
+		}
 		api.successfulVersions++
 		versionID := fmt.Sprintf("version_%d", api.successfulVersions+1)
 		plugin.LatestVersionID = versionID
@@ -907,15 +982,7 @@ func (api *pluginAPIFake) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		api.plugins[id] = plugin
 		if api.loseNextVersionResponse {
 			api.loseNextVersionResponse = false
-			hijacker, ok := w.(http.Hijacker)
-			if !ok {
-				api.t.Error("HTTP response writer does not support hijacking")
-				return
-			}
-			conn, _, err := hijacker.Hijack()
-			if err == nil {
-				_ = conn.Close()
-			}
+			api.dropVersionResponse(w)
 			return
 		}
 		writeJSON(w, claudeplugins.PluginVersion{
@@ -932,6 +999,18 @@ func (api *pluginAPIFake) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		api.t.Errorf("unexpected Plugins API request: %s %s", r.Method, r.URL.RequestURI())
 		writeAPIError(w, http.StatusNotFound, "not_found", "")
+	}
+}
+
+func (api *pluginAPIFake) dropVersionResponse(w http.ResponseWriter) {
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		api.t.Error("HTTP response writer does not support hijacking")
+		return
+	}
+	conn, _, err := hijacker.Hijack()
+	if err == nil {
+		_ = conn.Close()
 	}
 }
 
