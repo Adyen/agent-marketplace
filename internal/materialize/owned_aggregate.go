@@ -520,6 +520,14 @@ func newOwnedAggregateLockReporter(key outputKey, outDir string) *ownedAggregate
 // ownedAggregateLockAcquisitionHook lets tests count acquisitions made by one
 // root session. Tests that set it must not run in parallel.
 var ownedAggregateLockAcquisitionHook func(ownership.LockEvent)
+var ownedAggregateRecoverHook func(rootKey string)
+
+func recoverOwnedAggregateRoot(store *ownership.Store) ([]ownership.RecoveryOutcome, error) {
+	if ownedAggregateRecoverHook != nil {
+		ownedAggregateRecoverHook(store.RootKey())
+	}
+	return store.Recover()
+}
 
 func (r *ownedAggregateLockReporter) observe(event ownership.LockEvent) {
 	if ownedAggregateLockAcquisitionHook != nil {

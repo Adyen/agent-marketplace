@@ -86,9 +86,12 @@ type Store struct {
 	// rootMu guards rootIdentity/rootBound: the directory object admitted as
 	// canonicalRoot, bound at Open when it already exists or on the first
 	// captured read otherwise. A later read through a replaced root refuses.
-	rootMu       sync.Mutex
-	rootIdentity fsboundary.Identity
-	rootBound    bool
+	rootMu            sync.Mutex
+	rootIdentity      fsboundary.Identity
+	rootBound         bool
+	stateCacheMu      sync.Mutex
+	stateCache        recordCache
+	stateLoadObserver func()
 
 	crasher Crasher
 	now     func() time.Time
@@ -130,6 +133,12 @@ type Store struct {
 	// removeJournalFile overrides journal deletion for failure-path tests. It is
 	// nil in production, where clearJournal uses captured journal removal.
 	removeJournalFile func(string) error
+}
+
+type recordCache struct {
+	record        *Record
+	exists, valid bool
+	pin           metadataPin
 }
 
 // Option customizes a Store.

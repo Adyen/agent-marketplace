@@ -273,6 +273,11 @@ func WithLockObserver(obs LockObserver) Option {
 	return func(s *Store) { s.lockObserver = obs }
 }
 
+// WithStateLoadObserver counts full state-file reads and decodes for tests.
+func WithStateLoadObserver(fn func()) Option {
+	return func(s *Store) { s.stateLoadObserver = fn }
+}
+
 // lockSession is one held lock: the descriptor whose open file description owns
 // the kernel lock, and the reentrancy depth of this Store.
 type lockSession struct {
@@ -631,6 +636,7 @@ func (s *Store) releaseOne() {
 	if depth == 0 {
 		f = s.session.f
 		s.session = nil
+		s.invalidateStateCache()
 	}
 	s.lockMu.Unlock()
 

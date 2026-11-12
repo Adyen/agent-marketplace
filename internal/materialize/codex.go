@@ -717,7 +717,7 @@ func reconcileCodexMCPWithSession(ctx context.Context, report *Report, key outpu
 	}
 	reconcile := func() error {
 		if !dryRun && sharedSession == nil && batch == nil {
-			if _, err := store.Recover(); err != nil {
+			if _, err := recoverOwnedAggregateRoot(store); err != nil {
 				return err
 			}
 		}

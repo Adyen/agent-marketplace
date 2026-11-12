@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -448,15 +449,92 @@ func (s *Store) Load() (*Record, error) {
 }
 
 func (s *Store) loadObservedRecord() (*Record, metadataPin, error) {
+	if record, pin, exists, ok := s.cachedObservedRecord(); ok {
+		if !exists {
+			return nil, pin, coded(diag.CodeOwnershipStateMissing, s.StateFile(), s.missingStateError())
+		}
+		return record, pin, nil
+	}
 	data, exists, pin, err := s.readObservedMetadata(stateFileName)
 	if err != nil {
 		return nil, pin, coded(diag.CodeOwnershipStateCorrupt, s.StateFile(), fmt.Errorf("%w: %w", ErrStateCorrupt, err))
 	}
 	if !exists {
+		s.cacheObservedRecord(nil, false, pin)
 		return nil, pin, coded(diag.CodeOwnershipStateMissing, s.StateFile(), s.missingStateError())
 	}
 	rec, decodeErr := s.decodeStateRecord(s.StateFile(), data)
+	if s.stateLoadObserver != nil {
+		s.stateLoadObserver()
+	}
+	if decodeErr == nil {
+		s.cacheObservedRecord(rec, true, pin)
+	}
 	return rec, pin, decodeErr
+}
+
+func (s *Store) cachedObservedRecord() (*Record, metadataPin, bool, bool) {
+	if !s.HoldsLock() {
+		return nil, metadataPin{}, false, false
+	}
+	s.stateCacheMu.Lock()
+	cache := s.stateCache
+	s.stateCacheMu.Unlock()
+	if !cache.valid {
+		return nil, metadataPin{}, false, false
+	}
+	current, exists, err := s.currentRecordPin()
+	if err != nil || exists != cache.exists {
+		return nil, metadataPin{}, false, false
+	}
+	if exists && !cache.pin.file.SameState(current.file) {
+		return nil, metadataPin{}, false, false
+	}
+	return cloneRecord(cache.record), cache.pin, cache.exists, true
+}
+
+func (s *Store) currentRecordPin() (pin metadataPin, exists bool, err error) {
+	parent, err := s.captureMetadataParent()
+	if errors.Is(err, fs.ErrNotExist) {
+		return metadataPin{}, false, nil
+	}
+	if err != nil {
+		return metadataPin{}, false, err
+	}
+	defer func() { err = errors.Join(err, parent.Close()) }()
+	file, identity, err := parent.OpenFile(stateFileName)
+	if errors.Is(err, fs.ErrNotExist) {
+		if err = s.verifyMetadataParent(parent); err != nil {
+			return metadataPin{}, false, err
+		}
+		return metadataPin{parent: parent.Identity()}, false, nil
+	}
+	if err != nil {
+		return metadataPin{}, false, err
+	}
+	defer func() { err = errors.Join(err, file.Close()) }()
+	if err = s.verifyMetadataParent(parent); err != nil {
+		return metadataPin{}, false, err
+	}
+	return metadataPin{parent: parent.Identity(), file: identity}, true, nil
+}
+
+func (s *Store) cacheObservedRecord(record *Record, exists bool, pin metadataPin) {
+	s.lockMu.Lock()
+	if s.session == nil {
+		s.lockMu.Unlock()
+		return
+	}
+	s.stateCacheMu.Lock()
+	s.stateCache = recordCache{record: cloneRecord(record), exists: exists, pin: pin, valid: true}
+	s.stateCacheMu.Unlock()
+	s.lockMu.Unlock()
+}
+
+func (s *Store) invalidateStateCache() {
+	s.stateCacheMu.Lock()
+	s.stateCache = recordCache{}
+	s.stateCacheMu.Unlock()
 }
 
 func (s *Store) decodeStateRecord(path string, data []byte) (*Record, error) {
@@ -489,6 +567,11 @@ func (s *Store) commitRecord(rec *Record) error {
 }
 
 func (s *Store) commitRecordWithValidation(rec *Record, validate func() error) (err error) {
+	defer func() {
+		if err != nil {
+			s.invalidateStateCache()
+		}
+	}()
 	if err := validateRecord(rec, s.canonicalRoot, s.rootKey); err != nil {
 		return err
 	}
@@ -498,6 +581,7 @@ func (s *Store) commitRecordWithValidation(rec *Record, validate func() error) (
 	}
 	data = append(data, '\n')
 	if validate == nil {
+		s.invalidateStateCache()
 		return s.writeMetadata(stateFileName, data)
 	}
 	if err := validate(); err != nil {
@@ -512,12 +596,15 @@ func (s *Store) commitRecordWithValidation(rec *Record, validate func() error) (
 			err = errors.Join(err, closeErr)
 		}
 	}()
-	_, _, err = writeObservedMetadataFile(parent, stateFileName, data, func() error {
+	pin, _, err := writeObservedMetadataFile(parent, stateFileName, data, func() error {
 		if err := s.verifyMetadataParent(parent); err != nil {
 			return err
 		}
 		return validate()
 	})
+	if err == nil {
+		s.cacheObservedRecord(rec, true, pin)
+	}
 	return err
 }
 

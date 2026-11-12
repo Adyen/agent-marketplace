@@ -239,7 +239,7 @@ func reconcileOwnedJSONAggregates(ctx context.Context, report *Report, key outpu
 		// "On startup, incomplete generations are replayed or rolled back
 		// according to the recorded phase" — once, before any mutation, and
 		// INSIDE the section so exactly one process ever resolves a journal.
-		outcomes, recoverErr := store.Recover()
+		outcomes, recoverErr := recoverOwnedAggregateRoot(store)
 		for _, outcome := range outcomes {
 			report.Diags = append(report.Diags, ownedAggregateDiag(diag.CodeOwnershipRecovered, key, outcome.File,
 				fmt.Sprintf("recovered an incomplete ownership generation %d for %q (phase %s, action %s)",

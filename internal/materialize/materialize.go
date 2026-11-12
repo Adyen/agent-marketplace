@@ -2384,7 +2384,7 @@ func executeMaterializePlans(ctx context.Context, compileResult compilePhaseResu
 		runTarget := func() error {
 			var supportPublication nativeHookSupportPublication
 			if sharedSession != nil {
-				outcomes, recoverErr := sharedSession.store.Recover()
+				outcomes, recoverErr := recoverOwnedAggregateRoot(sharedSession.store)
 				for _, outcome := range outcomes {
 					report.Diags = append(report.Diags, ownedAggregateDiag(diag.CodeOwnershipRecovered, key, outcome.File,
 						fmt.Sprintf("recovered an incomplete ownership generation %d for %q (phase %s, action %s)",

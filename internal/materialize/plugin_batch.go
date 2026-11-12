@@ -391,7 +391,7 @@ func (b *pluginInstanceBatch) root(ctx context.Context, store *ownership.Store, 
 	load := func() error {
 		var err error
 		if !dryRun {
-			recoveries, err = store.Recover()
+			recoveries, err = recoverOwnedAggregateRoot(store)
 			if err != nil {
 				return err
 			}

@@ -206,7 +206,7 @@ func syncGeminiNativeAggregate(ctx context.Context, key outputKey, destination h
 	var diagnostics []diag.Diagnostic
 	reconcile := func() error {
 		if !dryRun {
-			outcomes, err := store.Recover()
+			outcomes, err := recoverOwnedAggregateRoot(store)
 			if err != nil {
 				return err
 			}
