@@ -369,9 +369,6 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig, al
 			}
 			releases = append(releases, release)
 			ctx = cache.ContextWithExactGitNamespaceLease(ctx)
-			if locked.snapshots == nil {
-				locked.snapshots = make(map[string]string)
-			}
 			locked.snapshots[rootPath] = snapshot
 		}
 		return snapshot, canonical + "@" + locked.commit + ":" + entry.Path, nil

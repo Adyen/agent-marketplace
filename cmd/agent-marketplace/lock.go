@@ -919,7 +919,6 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	// dependency transaction destinations.
 	var releaseSnapshotLease func()
 	var fallbackReleases []func()
-	var fallbackReleaseMu sync.Mutex
 	var exactSnapshotMu sync.Mutex
 	snapshotLeaseAttempted := false
 	ensureSnapshotLease := func() error {
@@ -1285,18 +1284,13 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 						return "", "", err
 					}
 					if release != nil {
-						fallbackReleaseMu.Lock()
 						fallbackReleases = append(fallbackReleases, release)
-						fallbackReleaseMu.Unlock()
 					}
 				} else {
 					snapshot, err = cache.AcquireExactGitWithRootContext(ctx, canonical, locked.fetchURL, locked.commit, rootPath)
 					if err != nil {
 						return "", "", err
 					}
-				}
-				if locked.snapshots == nil {
-					locked.snapshots = make(map[string]string)
 				}
 				locked.snapshots[rootPath] = snapshot
 			}
@@ -1454,10 +1448,10 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			return nil, err
 		}
 		return func() {
-			fallbackReleaseMu.Lock()
+			exactSnapshotMu.Lock()
 			leases := fallbackReleases
 			fallbackReleases = nil
-			fallbackReleaseMu.Unlock()
+			exactSnapshotMu.Unlock()
 			for i := len(leases) - 1; i >= 0; i-- {
 				leases[i]()
 			}
