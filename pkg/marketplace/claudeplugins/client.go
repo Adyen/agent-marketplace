@@ -46,13 +46,15 @@ type Options struct {
 	APIKey         APIKey
 	HTTPClient     *http.Client
 	RequestTimeout time.Duration
+	OnResponse     func(endpoint string, status int)
 }
 
 type Client struct {
-	baseURL string
-	apiKey  APIKey
-	http    *http.Client
-	timeout time.Duration
+	baseURL    string
+	apiKey     APIKey
+	http       *http.Client
+	timeout    time.Duration
+	onResponse func(endpoint string, status int)
 
 	settingLocksMu sync.Mutex
 	settingLocks   map[string]*sync.Mutex
@@ -94,6 +96,7 @@ func NewClient(options Options) (*Client, error) {
 		apiKey:       options.APIKey,
 		http:         client,
 		timeout:      timeout,
+		onResponse:   options.OnResponse,
 		settingLocks: make(map[string]*sync.Mutex),
 	}, nil
 }
@@ -423,6 +426,9 @@ func (c *Client) requestJSON(ctx context.Context, method, endpoint string, body 
 		if err != nil {
 			return transportError{cause: err}
 		}
+		if c.onResponse != nil {
+			c.onResponse(metricEndpoint(endpoint), response.StatusCode)
+		}
 		if response.StatusCode == http.StatusTooManyRequests {
 			apiErr := apiError(response)
 			if attempt == 0 && apiErr.RetryAfter >= 0 && response.Header.Get("retry-after") != "" {
@@ -460,6 +466,23 @@ func (c *Client) requestJSON(ctx context.Context, method, endpoint string, body 
 		return nil
 	}
 	return errors.New("claude plugins API rate-limit retry did not complete")
+}
+
+func metricEndpoint(endpoint string) string {
+	switch {
+	case strings.HasSuffix(endpoint, "/installation_settings/organization"):
+		return "installation_settings"
+	case strings.Contains(endpoint, "/versions/"):
+		return "plugin_version"
+	case strings.HasSuffix(endpoint, "/versions"):
+		return "plugin_versions"
+	case strings.HasPrefix(endpoint, "/v1/organizations/plugins"):
+		return "plugins"
+	case strings.HasPrefix(endpoint, "/v1/organizations/plugin_marketplaces"):
+		return "plugin_marketplaces"
+	default:
+		return "other"
+	}
 }
 
 func apiError(response *http.Response) *APIError {

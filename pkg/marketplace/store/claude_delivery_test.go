@@ -109,7 +109,7 @@ func TestClaudeDeliveryDesiredSetExcludesRejectedResourcesAndCollections(t *test
 	if !ok {
 		t.Fatal("metadata store does not implement Claude delivery state")
 	}
-	desired, err := delivery.ListClaudeDeliveryDesired(ctx, meta.(store.PublicationStore), []store.RegistryID{"registry"})
+	desired, err := delivery.ListClaudeDeliveryDesired(ctx, meta.(store.PublicationStore), "managed-test", []store.RegistryID{"registry"})
 	if err != nil {
 		t.Fatalf("ListClaudeDeliveryDesired: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestClaudeDeliveryDesiredSetExcludesApplicableRevocations(t *testing.T) {
 	if !ok {
 		t.Fatal("metadata store does not implement Claude delivery state")
 	}
-	desired, err := delivery.ListClaudeDeliveryDesired(ctx, meta.(store.PublicationStore), []store.RegistryID{"registry"})
+	desired, err := delivery.ListClaudeDeliveryDesired(ctx, meta.(store.PublicationStore), "managed-test", []store.RegistryID{"registry"})
 	if err != nil {
 		t.Fatalf("ListClaudeDeliveryDesired: %v", err)
 	}

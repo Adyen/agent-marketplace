@@ -22,13 +22,14 @@ type ReconcileTarget struct {
 }
 
 type ReconcileOptions struct {
-	Metadata    store.MetadataStore
-	Blobs       store.BlobStore
-	Client      *claudeplugins.Client
-	RegistryIDs []store.RegistryID
-	Target      ReconcileTarget
-	Limiter     WriteLimiter
-	Now         func() time.Time
+	Metadata            store.MetadataStore
+	Blobs               store.BlobStore
+	Client              *claudeplugins.Client
+	SourceMarketplaceID store.MarketplaceID
+	RegistryIDs         []store.RegistryID
+	Target              ReconcileTarget
+	Limiter             WriteLimiter
+	Now                 func() time.Time
 }
 
 type WriteLimiter interface {
@@ -104,7 +105,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (ReconcileResult, error) {
 			byName[plugin.Name] = plugin
 		}
 	}
-	desired, err := state.ListClaudeDeliveryDesired(ctx, publications, r.options.RegistryIDs)
+	desired, err := state.ListClaudeDeliveryDesired(ctx, publications, r.options.SourceMarketplaceID, r.options.RegistryIDs)
 	if err != nil {
 		return ReconcileResult{}, &ReconcileError{code: "desired-set.read"}
 	}

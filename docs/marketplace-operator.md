@@ -68,6 +68,34 @@ registries:
       - path: .agents
 ```
 
+### Mirror published resources to Claude Enterprise
+
+Claude Enterprise delivery requires a Claude Enterprise organization and an Admin API key with both `read:plugins` and `write:plugins`. The primary owner creates the key under **claude.ai → Organization settings → API**. Put its secret in a secret manager and expose it to the Marketplace worker through a file or environment variable; never put the secret in operator YAML or a command argument.
+
+Configure the key's stable identifier as `api_key_id` as well as the secret reference. Find the `apikey_…` ID in the key's creation or key-details record in the organization's API-key management page. For an existing key, an administrator with API-key management access can use the organization's API-key inventory to look up its ID; the Plugins API cannot reveal an API key's own ID. This non-secret identifier lets the service adopt only plugins whose `created_by.api_key_id` exactly matches the configured key. Do not substitute the `sk-ant-…` secret.
+
+Prefer a dedicated organization-owned `manual` marketplace so administrator-uploaded plugins and organization-level skill names remain separate. The library marketplace is shared with administrator uploads; use it only when that sharing is intended. Set `marketplace_id` to the chosen marketplace ID. When it is omitted, delivery requires exactly one organization-owned manual marketplace and uses it.
+
+```yaml
+claude_enterprise:
+  enabled: true
+  api_key:
+    env: CLAUDE_ENTERPRISE_ADMIN_KEY
+  api_key_id: apikey_0123456789abcdef
+  marketplace_id: marketplace_0123456789abcdef
+  plugin_name_prefix: am
+  default_installation_preference: available
+  interval: 24h
+```
+
+The API key reference may use `file` instead of `env`. Rotate by creating a replacement key with the same scopes, updating the secret reference and `api_key_id` together, confirming a successful delivery pass, then revoking the old key. Worker-safe configuration changes apply without restarting `serve`.
+
+Run `agent-marketplace serve claude-delivery status --config marketplace.yaml` to inspect each resource's plugin name and ID, state, published and served versions, scan status, reach, installation preference, and failure code. The same read-only information is available at `/api/v1/admin/claude-delivery` through the existing authenticated admin API. Run one operator-requested pass with `agent-marketplace serve claude-delivery sync --config marketplace.yaml --once`; omitting `--once` is a usage error.
+
+Plugins are unpinned. A new upload becomes the latest version immediately; when organization content scanning is enabled, members may lose access to that plugin while the version is `processing`, until its scan completes with `pass` or `warn`. Status reports a version awaiting its content scan. There is no served-version rollback; publish a corrected resource revision if an upload is rejected.
+
+Withdrawal only sets the plugin's installation preference to `not_available`. It does not delete the plugin, remove stored version history, or recall copies already installed on member devices. Status states that installed copies and stored version history are unaffected. If the resource returns, the service reuses its existing plugin and restores the configured preference.
+
 When different registry paths publish the same kind and registry-local name, ingestion keeps the first occurrence in configured root order and logs `marketplace.ingest.duplicate-resource` with both paths and a remediation: give the resources distinct registry-local names. Listing the same path twice is an operator configuration error.
 
 The API reads revocation declarations when it starts. After changing `revocations`, restart every API process with the new configuration; a reindex does not apply the change to a running API.

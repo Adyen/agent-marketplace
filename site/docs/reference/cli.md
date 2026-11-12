@@ -538,6 +538,39 @@ agent-marketplace serve --config <path> [--role api|worker|all]
 
 At startup the command opens the configured stores, makes sure the Marketplace instance exists, and applies configured revocations before either role reports ready. It runs until it is cancelled or a role fails.
 
+### `serve claude-delivery`
+
+Inspect Claude Enterprise delivery state or request one reconcile pass. See the [Claude Enterprise delivery operator guide](https://github.com/Adyen/agent-marketplace/blob/main/docs/marketplace-operator.md#mirror-published-resources-to-claude-enterprise) for setup and configuration details.
+
+```text
+agent-marketplace serve claude-delivery <status|sync> --config <path>
+```
+
+### `serve claude-delivery status`
+
+Shows read-only delivery state for each resource and plugin, including published and served versions, scan status, and failure code. Withdrawal does not affect installed copies or stored version history.
+
+```text
+agent-marketplace serve claude-delivery status --config <path>
+```
+
+| Flag | Type | Required | Default | Description |
+|---|---|:---:|---|---|
+| `--config` | path | yes | none | Marketplace operator YAML file. |
+
+### `serve claude-delivery sync`
+
+Runs one reconcile pass. The required `--once` flag makes it exit after that pass; when delivery is disabled or absent, no Claude Plugins API request is sent.
+
+```text
+agent-marketplace serve claude-delivery sync --config <path> --once
+```
+
+| Flag | Type | Required | Default | Description |
+|---|---|:---:|---|---|
+| `--config` | path | yes | none | Marketplace operator YAML file. |
+| `--once` | boolean | yes | `false` | Runs exactly one reconcile pass and exits. |
+
 ### `serve reindex`
 
 Queues and processes refresh work outside the scheduler.

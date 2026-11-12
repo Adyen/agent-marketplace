@@ -37,6 +37,6 @@ func (s *Store) ListClaudeDeliveryPlugins(ctx context.Context) ([]store.ClaudeDe
 	return store.ListClaudeDeliveryPlugins(ctx, s.q)
 }
 
-func (s *Store) ListClaudeDeliveryDesired(ctx context.Context, publications store.PublicationStore, registries []store.RegistryID) ([]store.ClaudeDeliveryDesired, error) {
-	return store.ReadClaudeDeliveryDesired(ctx, s, publications, registries)
+func (s *Store) ListClaudeDeliveryDesired(ctx context.Context, publications store.PublicationStore, marketplace store.MarketplaceID, registries []store.RegistryID) ([]store.ClaudeDeliveryDesired, error) {
+	return store.ReadClaudeDeliveryDesired(ctx, s, publications, marketplace, registries)
 }
