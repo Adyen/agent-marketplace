@@ -34,11 +34,12 @@ type Input string
 const InputSelection Input = "selection"
 
 type Blocker struct {
-	Code   string
+	Key    string
 	Reason string
 }
 
 type Step struct {
+	Key       string
 	Stage     Stage
 	Class     SafetyClass
 	Action    string
@@ -99,10 +100,13 @@ func WritePlan(out io.Writer, steps []Step) error {
 		if step.BlockedBy != nil {
 			blocker := 0
 			for j, candidate := range steps {
-				if candidate.Code == step.BlockedBy.Code {
+				if candidate.Key != "" && candidate.Key == step.BlockedBy.Key {
 					blocker = j + 1
 					break
 				}
+			}
+			if blocker == 0 {
+				return fmt.Errorf("repair plan blocker %q has no listed item", step.BlockedBy.Key)
 			}
 			detail = fmt.Sprintf("blocked by %d (%s)", blocker, step.BlockedBy.Reason)
 		} else if len(step.Inputs) > 0 {

@@ -68,42 +68,51 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 		ownershipActionable = false
 		incompleteCause = nil
 		diagnosis := repairplanner.Diagnosis{InvalidInputs: make(map[repairplanner.Input]repairplanner.Blocker)}
-		addHuman := func(stage repairplanner.Stage, code string, issue error) {
+		addHuman := func(stage repairplanner.Stage, code string, issue error) string {
 			action := tui.TerminalSafeLine(issue.Error())
 			if hint := remedy.For(issue, "doctor"); hint != "" {
 				action += "; " + tui.TerminalSafeLine(hint)
 			}
+			key := fmt.Sprintf("cause-%d", len(diagnosis.Steps)+1)
 			diagnosis.Steps = append(diagnosis.Steps, repairplanner.Step{
-				Stage: stage, Class: repairplanner.HumanOnly, Action: action, Code: code,
+				Key: key, Stage: stage, Class: repairplanner.HumanOnly, Action: action, Code: code,
 			})
+			return key
 		}
-		blockSelection := func(code, reason string) {
-			diagnosis.InvalidInputs[repairplanner.InputSelection] = repairplanner.Blocker{Code: code, Reason: reason}
+		blockSelection := func(key, reason string) {
+			diagnosis.InvalidInputs[repairplanner.InputSelection] = repairplanner.Blocker{Key: key, Reason: reason}
 			diagnosis.Steps = append(diagnosis.Steps,
 				repairplanner.Step{
 					Stage: repairplanner.StageDrift, Class: repairplanner.Safe,
-					Action: "sync harness drift", Code: "sync.drift",
+					Action: "sync harness drift", Code: diag.CodeOwnershipEntryDrift,
 					Files: []string{"selected harness outputs"}, Inputs: []repairplanner.Input{repairplanner.InputSelection},
 				},
 				repairplanner.Step{
 					Stage: repairplanner.StageOwnership, Class: repairplanner.Safe,
-					Action: "reconcile shared-aggregate ownership", Code: "ownership.reconcile",
+					Action: "reconcile shared-aggregate ownership", Code: diag.CodeOwnershipUnmanagedKey,
 					Files: []string{"shared aggregate files"}, Inputs: []repairplanner.Input{repairplanner.InputSelection},
 				},
 			)
 		}
 		if len(current.Errors) > 0 {
 			incompleteCause = errors.Join(current.Errors...)
+			var causeKey string
 			for _, issue := range current.Errors {
-				addHuman(repairplanner.StageConfiguration, "config.invalid", issue)
+				code := repairDiagnosticCode(issue)
+				key := addHuman(repairplanner.StageConfiguration, code, issue)
+				if causeKey == "" {
+					causeKey = key
+				}
 			}
-			blockSelection("config.invalid", "configuration invalid")
+			blockSelection(causeKey, "configuration invalid")
 			return diagnosis, nil
 		}
 		if policyErr != nil {
 			incompleteCause = policyErr
-			addHuman(repairplanner.StageConfiguration, "policy.unavailable", fmt.Errorf("capture policy assertions: %w", policyErr))
-			blockSelection("policy.unavailable", "policy assertions unavailable")
+			issue := fmt.Errorf("capture policy assertions: %w", policyErr)
+			code := repairDiagnosticCode(issue)
+			key := addHuman(repairplanner.StageConfiguration, code, issue)
+			blockSelection(key, "policy assertions unavailable")
 			return diagnosis, nil
 		}
 
@@ -128,8 +137,9 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 		}
 		if resolveErr != nil {
 			incompleteCause = resolveErr
-			addHuman(repairplanner.StageLocks, "selection.unavailable", resolveErr)
-			blockSelection("selection.unavailable", "selection unresolved")
+			code := repairDiagnosticCode(resolveErr)
+			key := addHuman(repairplanner.StageLocks, code, resolveErr)
+			blockSelection(key, "selection unresolved")
 			return diagnosis, nil
 		}
 
@@ -142,7 +152,7 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 			if strings.Contains(checkText, "out of sync") && !sharedCollision {
 				diagnosis.Steps = append(diagnosis.Steps, repairplanner.Step{
 					Stage: repairplanner.StageDrift, Class: repairplanner.Safe,
-					Action: "sync --locked harness drift", Code: "sync.drift",
+					Action: "sync --locked harness drift", Code: diag.CodeOwnershipEntryDrift,
 					Files: syncCheckFiles(checkText), Inputs: []repairplanner.Input{repairplanner.InputSelection},
 					Apply: func(ctx context.Context) (bool, error) {
 						return true, runSyncWithLocks(ctx, out, false, false, false, false, false, lockRunOptions{locked: true})
@@ -150,8 +160,10 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 				})
 			} else if checkErr != nil && !sharedCollision {
 				incompleteCause = checkErr
-				addHuman(repairplanner.StageLocks, "sync.check", fmt.Errorf("sync drift diagnosis: %w", checkErr))
-				blockSelection("sync.check", "sync check could not resolve selection")
+				issue := fmt.Errorf("sync drift diagnosis: %w", checkErr)
+				code := repairDiagnosticCode(issue)
+				key := addHuman(repairplanner.StageLocks, code, issue)
+				blockSelection(key, "sync check could not resolve selection")
 				return diagnosis, nil
 			}
 		}
@@ -161,35 +173,44 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 		if err != nil {
 			incompleteCause = err
 			slog.Error("doctor repair preview failed", "repo_root", repoRoot, "status", "error", "code", diag.CodeDoctorRepairFailed)
-			addHuman(repairplanner.StageOwnership, "ownership.preview", fmt.Errorf("inspect shared-aggregate ownership: %w", err))
+			issue := fmt.Errorf("inspect shared-aggregate ownership: %w", err)
+			addHuman(repairplanner.StageOwnership, repairDiagnosticCode(issue), issue)
 			return diagnosis, nil
 		}
-		adoptions, adoptionFiles := repairCandidateGroup(previews, true)
-		destructive, destructiveFiles := repairCandidateGroup(previews, false)
+		adoptions, adoptionFiles := repairCandidateGroup(previews, true, false, false)
+		conflicts, conflictFiles := repairCandidateGroup(previews, false, true, false)
+		orphans, orphanFiles := repairCandidateGroup(previews, false, false, true)
+		ownershipActionable = len(adoptions)+len(conflicts)+len(orphans) > 0
 		if len(adoptions) > 0 {
-			ownershipActionable = true
 			diagnosis.Steps = append(diagnosis.Steps, repairplanner.Step{
 				Stage: repairplanner.StageOwnership, Class: repairplanner.Safe,
-				Action: "adopt exact shared-aggregate matches", Code: "ownership.adopt",
+				Action: "adopt exact shared-aggregate matches", Code: diag.CodeOwnershipUnmanagedKey,
 				Files: adoptionFiles, Inputs: []repairplanner.Input{repairplanner.InputSelection},
 				Apply: func(ctx context.Context) (bool, error) {
 					stepOpts := opts
-					stepOpts.repairReader = opts.repairReader
 					stepOpts.planAuthorized = true
 					return applyRepairGroup(out, stepOpts, adoptions, revalidate)
 				},
 			})
 		}
-		if len(destructive) > 0 {
-			ownershipActionable = true
+		if len(conflicts) > 0 {
 			diagnosis.Steps = append(diagnosis.Steps, repairplanner.Step{
 				Stage: repairplanner.StageOwnership, Class: repairplanner.Destructive,
-				Action: "replace conflicts or remove orphan entries", Code: "ownership.destructive",
-				Files: destructiveFiles, Inputs: []repairplanner.Input{repairplanner.InputSelection},
+				Action: "replace conflicting shared-aggregate entries", Code: diag.CodeDoctorRepairConflictReplaceable,
+				Files: conflictFiles, Inputs: []repairplanner.Input{repairplanner.InputSelection},
 				Apply: func(ctx context.Context) (bool, error) {
 					stepOpts := opts
-					stepOpts.repairReader = opts.repairReader
-					return applyRepairGroup(out, stepOpts, destructive, revalidate)
+					return applyRepairGroup(out, stepOpts, conflicts, revalidate)
+				},
+			})
+		}
+		if len(orphans) > 0 {
+			diagnosis.Steps = append(diagnosis.Steps, repairplanner.Step{
+				Stage: repairplanner.StageOwnership, Class: repairplanner.Destructive,
+				Action: "remove evidence-backed orphan entries", Code: diag.CodeOwnershipEntryDrift,
+				Files: orphanFiles, Inputs: []repairplanner.Input{repairplanner.InputSelection},
+				Apply: func(ctx context.Context) (bool, error) {
+					return applyRepairGroup(out, opts, orphans, revalidate)
 				},
 			})
 		}
@@ -198,7 +219,7 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 				continue
 			}
 			corrupt = true
-			addHuman(repairplanner.StageOwnership, diag.CodeDoctorRepairFailed,
+			addHuman(repairplanner.StageOwnership, repairDiagnosticCodeFromDiagnostics(target.Preview.Diags),
 				fmt.Errorf("corrupt ownership state or aggregate file: %s", repairDiagnosticSummary(target.Preview.Diags)))
 		}
 		slog.Info("doctor repair preview complete", "repo_root", repoRoot, "targets", len(previews),
@@ -232,7 +253,7 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 		}
 		if opts.yes && !opts.isTTY && !deferredShown {
 			deferredShown = true
-			deferred, _ := repairCandidateGroup(previews, false)
+			deferred, _ := repairCandidateGroup(previews, false, true, true)
 			for _, target := range deferred {
 				noTerminal := opts
 				noTerminal.isTTY = false
@@ -299,24 +320,24 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 	return nil
 }
 
-func repairCandidateGroup(previews []materialize.TargetRepairPreview, adoptions bool) ([]materialize.TargetRepairPreview, []string) {
+func repairCandidateGroup(previews []materialize.TargetRepairPreview, adoptions, conflicts, orphans bool) ([]materialize.TargetRepairPreview, []string) {
 	var targets []materialize.TargetRepairPreview
 	var files []string
 	for _, target := range previews {
 		filtered := &materialize.RepairPreview{Diags: target.Preview.Diags}
 		for _, file := range target.Preview.Files {
 			selected := *file
-			if adoptions {
-				selected.Conflicts = nil
-				selected.Orphans = nil
-				if len(selected.Adoptions) == 0 {
-					continue
-				}
-			} else {
+			if !adoptions {
 				selected.Adoptions = nil
-				if len(selected.Conflicts) == 0 && len(selected.Orphans) == 0 {
-					continue
-				}
+			}
+			if !conflicts {
+				selected.Conflicts = nil
+			}
+			if !orphans {
+				selected.Orphans = nil
+			}
+			if len(selected.Adoptions)+len(selected.Conflicts)+len(selected.Orphans) == 0 {
+				continue
 			}
 			filtered.Files = append(filtered.Files, &selected)
 			files = append(files, fmt.Sprintf("%s:%s", targetDisplayName(string(target.Target)), filepath.Clean(file.AbsFile())))
@@ -391,4 +412,21 @@ func repairDiagnosticSummary(diagnostics []diag.Diagnostic) string {
 		}
 	}
 	return strings.Join(messages, "; ")
+}
+
+func repairDiagnosticCode(err error) string {
+	var coded interface{ DiagnosticCode() string }
+	if errors.As(err, &coded) && coded.DiagnosticCode() != "" {
+		return coded.DiagnosticCode()
+	}
+	return diag.CodeDoctorRepairFailed
+}
+
+func repairDiagnosticCodeFromDiagnostics(diagnostics []diag.Diagnostic) string {
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Severity == diag.SeverityError && diagnostic.Code != "" {
+			return diagnostic.Code
+		}
+	}
+	return diag.CodeDoctorRepairFailed
 }

@@ -42,7 +42,7 @@ func TestDoctorRepairPlanDeclineLeavesCandidatesUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("declining repair plan: %v\n%s", err, out.String())
 	}
-	for _, want := range []string{"plan", "1. [safe]", "adopt", "ownership.adopt", "[y/N]"} {
+	for _, want := range []string{"plan", "1. [safe]", "adopt", "ownership.unmanaged-key", "[y/N]"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("repair plan missing %q:\n%s", want, out.String())
 		}
@@ -196,7 +196,7 @@ func TestDoctorRepairDriftKeepsAcquisitionLockUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("doctor --repair --yes: %v\n%s", err, repairOutput)
 	}
-	if !strings.Contains(repairOutput, "sync.drift") {
+	if !strings.Contains(repairOutput, "ownership.entry-drift") {
 		t.Fatalf("repair plan omitted drift stage:\n%s", repairOutput)
 	}
 	if output, err := executeCommand("sync", "--check"); err != nil {

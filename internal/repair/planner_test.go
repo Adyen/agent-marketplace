@@ -14,7 +14,7 @@ func TestPlanOrdersStepsAndBlocksOnlyInvalidInputs(t *testing.T) {
 	independentRuns := 0
 	diagnosis := Diagnosis{
 		InvalidInputs: map[Input]Blocker{
-			InputSelection: {Code: "resolve.failed", Reason: "selection unresolved"},
+			InputSelection: {Key: "selection-cause", Reason: "selection unresolved"},
 		},
 		Steps: []Step{
 			{Stage: StageOwnership, Class: Safe, Action: "reconcile ownership", Code: "ownership.repair", Inputs: []Input{InputSelection}},
@@ -37,7 +37,7 @@ func TestPlanOrdersStepsAndBlocksOnlyInvalidInputs(t *testing.T) {
 		t.Fatalf("independent step blocked: %#v", plan[0])
 	}
 	for _, step := range plan[1:] {
-		if step.BlockedBy == nil || step.BlockedBy.Code != "resolve.failed" || step.BlockedBy.Reason != "selection unresolved" {
+		if step.BlockedBy == nil || step.BlockedBy.Key != "selection-cause" || step.BlockedBy.Reason != "selection unresolved" {
 			t.Fatalf("%s blocker = %#v", step.Action, step.BlockedBy)
 		}
 	}
@@ -55,6 +55,22 @@ func TestPlanOrdersStepsAndBlocksOnlyInvalidInputs(t *testing.T) {
 	}
 	if independentRuns != 1 {
 		t.Fatalf("valid-input step ran %d times, want once", independentRuns)
+	}
+}
+
+// spec: doctor-repair-planning/repair-plan-lists-every-step-before-confirmation
+func TestWritePlanResolvesBlockerByStableKey(t *testing.T) {
+	steps := []Step{
+		{Key: "other-cause", Stage: StageConfiguration, Class: HumanOnly, Action: "a different cause", Code: "doctor.repair.failed"},
+		{Key: "selection-cause", Stage: StageConfiguration, Class: HumanOnly, Action: "z selection cause", Code: "doctor.repair.failed"},
+		{Stage: StageDrift, Class: Safe, Action: "sync drift", Code: "ownership.entry-drift", BlockedBy: &Blocker{Key: "selection-cause", Reason: "selection unresolved"}},
+	}
+	var out strings.Builder
+	if err := WritePlan(&out, Plan(Diagnosis{Steps: steps})); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "blocked by 2 (selection unresolved)") {
+		t.Fatalf("plan did not point at the cause item by key:\n%s", out.String())
 	}
 }
 
