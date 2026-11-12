@@ -349,10 +349,18 @@ claude_enterprise:
 	awaitRuntimeCondition(t, func() bool { return source.Current().Version == 1 })
 
 	invalid := strings.Replace(valid, "  enabled: true", "  enabled: true\n  plugin_name_prefix: invalid_prefix", 1)
-	if err := os.WriteFile(path, []byte(invalid), 0o600); err != nil {
+	candidatePath := path + ".candidate"
+	if err := os.WriteFile(candidatePath, []byte(invalid), 0o600); err != nil {
 		t.Fatalf("write invalid candidate: %v", err)
 	}
-	awaitRuntimeCondition(t, func() bool { return logs.Count("config candidate rejected") == 1 })
+	if err := os.Rename(candidatePath, path); err != nil {
+		t.Fatalf("replace config with invalid candidate: %v", err)
+	}
+	awaitRuntimeCondition(t, func() bool {
+		logOutput := logs.String()
+		return strings.Contains(logOutput, "config candidate rejected") &&
+			strings.Contains(logOutput, "claude_enterprise.plugin-name-prefix")
+	})
 	if source.Current().Version != 1 {
 		t.Fatalf("invalid candidate replaced last-good runtime configuration: version=%d", source.Current().Version)
 	}
