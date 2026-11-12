@@ -1,12 +1,12 @@
 ## 1. Planner core (B0)
 
-- [ ] 1.1 Add the repair diagnosis, step model, planner, and re-diagnose loop with the recurrence cap; verify with focused `internal/repair` tests
-- [ ] 1.2 Wire `doctor --repair` to print the numbered plan, ask the plan-level confirmation, honor `--yes` and off-terminal preview, and report exit status; verify with command tests annotated for the `doctor-repair-planning` confirmation, non-interactive, and exit-status scenarios
-- [ ] 1.3 Degrade per step on invalid configuration, failed resolution, and organization acquisition failure; verify with tests annotated for the degrade scenarios and the existing organization acquisition E2E test
-- [ ] 1.4 Revalidate policy before every confirmed step and at publication; verify with a test annotated for the policy-change scenario and the existing repair policy tests
-- [ ] 1.5 Add the harness drift stage through sync without acquisition-lock writes; verify with a test annotated for the drift scenario that asserts lock bytes and a clean sync check
-- [ ] 1.6 Run the Devin and Codex shared-aggregate repair as the final stage; verify the existing `doctor_*_test.go` and `e2e/doctor_repair_policy_test.go` pass unmodified and a test annotated for the stage-order scenario passes
-- [ ] 1.7 Update the `doctor` command help for the planner; verify `make spec-check` and the command-path witness test pass
+- [x] 1.1 Add the repair diagnosis, step model, planner, and re-diagnose loop with the recurrence cap; verify with focused `internal/repair` tests
+- [x] 1.2 Wire `doctor --repair` to print the numbered plan, ask the plan-level confirmation, honor `--yes` and off-terminal preview, and report exit status; verify with command tests annotated for the `doctor-repair-planning` confirmation, non-interactive, and exit-status scenarios
+- [x] 1.3 Degrade per step on invalid configuration, failed resolution, and organization acquisition failure; verify with tests annotated for the degrade scenarios and the existing organization acquisition E2E test
+- [x] 1.4 Revalidate policy before every confirmed step and at publication; verify with a test annotated for the policy-change scenario and the existing repair policy tests
+- [x] 1.5 Add the harness drift stage through sync without acquisition-lock writes; verify with a test annotated for the drift scenario that asserts lock bytes and a clean sync check
+- [x] 1.6 Run the Devin and Codex shared-aggregate repair as the final stage; verify the existing `doctor_*_test.go` and `e2e/doctor_repair_policy_test.go` pass unmodified and a test annotated for the stage-order scenario passes
+- [x] 1.7 Update the `doctor` command help for the planner; verify `make spec-check` and the command-path witness test pass
 
 ## 2. Journal recovery fixer (B1)
 
