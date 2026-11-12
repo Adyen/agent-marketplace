@@ -293,7 +293,7 @@ test('macOS visitors get the published universal DMG and first-launch guidance',
   )
 
   const landing = await readFile(new URL('index.html', dist), 'utf8')
-  assert.ok(landing.includes('go install github.com/Adyen/agent-marketplace/cmd/agent-marketplace@latest'))
+  assert.ok(landing.includes(installCommand))
   assert.ok(landing.includes('Right-click'))
   assert.ok(landing.includes('Open Anyway'))
 })
