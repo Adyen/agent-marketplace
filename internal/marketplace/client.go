@@ -55,6 +55,8 @@ type Client struct {
 	identityMu  sync.RWMutex
 	instanceID  store.MarketplaceID
 	registryIDs map[string]store.RegistryID
+	wellKnown   *mpapi.WellKnown
+	registries  map[string]mpapi.PublicRegistry
 }
 
 // Option configures a Client.
@@ -104,6 +106,7 @@ func NewClient(baseURL string, opts ...Option) (*Client, error) {
 		httpClient:  &http.Client{Timeout: defaultTimeout},
 		userAgent:   "agent-marketplace",
 		registryIDs: make(map[string]store.RegistryID),
+		registries:  make(map[string]mpapi.PublicRegistry),
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -153,6 +156,14 @@ func (r *SearchResponse) UnmarshalJSON(data []byte) error {
 // WellKnown fetches the well-known document that maps the Marketplace canonical
 // URL to its API base and capabilities.
 func (c *Client) WellKnown(ctx context.Context) (mpapi.WellKnown, error) {
+	c.identityMu.RLock()
+	if c.wellKnown != nil {
+		wk := *c.wellKnown
+		c.identityMu.RUnlock()
+		return wk, nil
+	}
+	c.identityMu.RUnlock()
+
 	var wk mpapi.WellKnown
 	if err := c.getJSON(ctx, c.requestURL([]string{".well-known", "agent-marketplace.json"}, nil), &wk); err != nil {
 		return wk, err
@@ -161,6 +172,10 @@ func (c *Client) WellKnown(ctx context.Context) (mpapi.WellKnown, error) {
 		return wk, fmt.Errorf("invalid Marketplace well-known document: %w", err)
 	}
 	c.identityMu.Lock()
+	if c.wellKnown == nil {
+		c.wellKnown = &wk
+	}
+	wk = *c.wellKnown
 	c.instanceID = store.MarketplaceID(wk.InstanceID)
 	c.identityMu.Unlock()
 	return wk, nil
@@ -445,15 +460,24 @@ func (c *Client) GetRegistryBySlug(ctx context.Context, slug string) (store.Regi
 }
 
 func (c *Client) getRegistry(ctx context.Context, routeRegistry, expectedRegistryID string) (store.Registry, error) {
-	var public mpapi.PublicRegistry
-	if err := c.getJSONStrict(ctx, c.requestURL([]string{"api", "v1", "registries", routeRegistry}, nil), &public); err != nil {
-		return store.Registry{}, err
-	}
-	if err := validateAPIRegistry(public); err != nil {
-		return store.Registry{}, fmt.Errorf("invalid Marketplace registry: %w", err)
+	c.identityMu.RLock()
+	public, ok := c.registries[routeRegistry]
+	c.identityMu.RUnlock()
+	if !ok {
+		if err := c.getJSONStrict(ctx, c.requestURL([]string{"api", "v1", "registries", routeRegistry}, nil), &public); err != nil {
+			return store.Registry{}, err
+		}
+		if err := validateAPIRegistry(public); err != nil {
+			return store.Registry{}, fmt.Errorf("invalid Marketplace registry: %w", err)
+		}
 	}
 	if expectedRegistryID != "" && public.ID != store.RegistryID(expectedRegistryID) {
 		return store.Registry{}, fmt.Errorf("registry ID %q does not match requested %q", public.ID, expectedRegistryID)
+	}
+	if !ok {
+		c.identityMu.Lock()
+		c.registries[routeRegistry] = public
+		c.identityMu.Unlock()
 	}
 	c.rememberRegistry(routeRegistry, public)
 
