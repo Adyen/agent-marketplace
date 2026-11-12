@@ -1002,6 +1002,64 @@ func TestExactGitTrackedTreeHashReturnsOneMismatch(t *testing.T) {
 	}
 }
 
+func TestExactGitTrackedTreePathErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name, path, want string
+		remove           bool
+	}{
+		{name: "unexpected path", path: "untracked", want: "unexpected path"},
+		{name: "missing path", path: "file-0000", want: "tracked path is missing", remove: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := exactGitManyFilesFixture(t, 2)
+			path := filepath.Join(root, tc.path)
+			if tc.remove {
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(path, []byte("untracked\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			err := verifyExactGitTrackedTreeWithContext(context.Background(), root, "sha1")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("verification error = %v, want it to contain %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestExactGitTrackedTreeHashStopsAfterFirstError(t *testing.T) {
+	previousProcs := runtime.GOMAXPROCS(1)
+	t.Cleanup(func() { runtime.GOMAXPROCS(previousProcs) })
+
+	root := t.TempDir()
+	fifo := filepath.Join(root, "blocked")
+	if err := unix.Mkfifo(fifo, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	jobs := []exactGitHashJob{
+		{path: filepath.Join(root, "missing"), want: exactGitTreeEntry{mode: "100644"}},
+		{path: fifo, want: exactGitTreeEntry{mode: "100644"}},
+	}
+	done := make(chan error, 1)
+	go func() { done <- hashExactGitTrackedEntries(context.Background(), "sha1", jobs) }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("first hash error = %v, want os.ErrNotExist", err)
+		}
+	case <-time.After(10 * time.Second):
+		fd, err := unix.Open(fifo, unix.O_WRONLY|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+		if err != nil {
+			t.Fatalf("unblock FIFO after timeout: %v", err)
+		}
+		if err := unix.Close(fd); err != nil {
+			t.Fatalf("close FIFO after timeout: %v", err)
+		}
+		t.Fatal("hashing did not stop after the first error")
+	}
+}
+
 func TestExactGitTrackedTreeLargeBlobMemory(t *testing.T) {
 	const size = 8 << 20
 	for _, algorithm := range []string{"sha1", "sha256"} {
