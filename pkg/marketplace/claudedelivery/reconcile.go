@@ -117,9 +117,21 @@ func (r *Reconciler) Reconcile(ctx context.Context) (ReconcileResult, error) {
 	if err != nil {
 		return ReconcileResult{}, &ReconcileError{code: "state.read"}
 	}
+	scopedRows := rows[:0]
 	existing := make(map[store.ResourceCoordinate]store.ClaudeDeliveryPlugin, len(rows))
 	for _, row := range rows {
+		if row.Coordinate.Marketplace != r.options.SourceMarketplaceID {
+			continue
+		}
+		scopedRows = append(scopedRows, row)
 		existing[row.Coordinate] = row
+	}
+	rows = scopedRows
+	claimedNames := make(map[string]store.ResourceCoordinate, len(rows)+len(desired))
+	for _, row := range rows {
+		if row.PluginName != "" {
+			claimedNames[row.PluginName] = row.Coordinate
+		}
 	}
 	result := ReconcileResult{}
 	for _, item := range desired {
@@ -148,6 +160,14 @@ func (r *Reconciler) Reconcile(ctx context.Context) (ReconcileResult, error) {
 				result.Failed++
 				continue
 			}
+			if owner, claimed := claimedNames[row.PluginName]; claimed && owner != row.Coordinate {
+				if err := state.MarkClaudeDeliveryConflict(ctx, row.Coordinate, row.PluginName, "plugin.name-collision", r.options.Now()); err != nil {
+					return result, &ReconcileError{code: "state.write"}
+				}
+				result.Conflicts++
+				continue
+			}
+			claimedNames[row.PluginName] = row.Coordinate
 		}
 		archive, built, diagnostic, err := r.build(ctx, item, row.PluginName)
 		if diagnostic != "" {
@@ -430,7 +450,7 @@ func (r *Reconciler) createPlugin(ctx context.Context, state store.ClaudeDeliver
 	}
 	owned := plugin.CreatedBy != nil && plugin.CreatedBy.Type == "api_actor" &&
 		plugin.CreatedBy.APIKeyID == r.options.Target.APIKeyID
-	if !owned {
+	if !owned || (apiErr.Code == "plugin_name_taken" && plugin.MarketplaceID != marketplaceID) {
 		return plugin, false, &ReconcileError{code: "plugin.foreign"}
 	}
 	if apiErr.Code == "plugin_name_taken" {
