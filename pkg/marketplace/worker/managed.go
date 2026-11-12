@@ -422,6 +422,14 @@ func refreshManaged(ctx context.Context, deps Deps, j store.Job, worker string, 
 	}
 	publication := store.RegistryRevisionPublication{PublicationID: store.PublicationID(uuid.NewString()), ManagedFence: &fence, Occurrence: revision.Occurrence, Resources: revision.Resources, ResourceOccurrences: revision.ResourceOccurrences, Assessments: revision.Assessments, Collections: revision.Collections, ManifestPayload: revision.ManifestPayload, ExtraBlobs: revision.ExtraBlobs, InspectionBlobs: revision.InspectionBlobs}
 	metadata := managedPublicationCompletion{MetadataStore: deps.MetadataStore, fence: fence, publication: publication.PublicationID}
+	deliveryConfig := runtimeSnapshot(deps, deps.Config).Config
+	if claudeEnterpriseEnabled(deliveryConfig) {
+		deliveryJob, err := claudeDeliveryJob(deliveryConfig, "publication-"+string(publication.PublicationID))
+		if err != nil {
+			return err
+		}
+		metadata.deliveryJob = &deliveryJob
+	}
 	if err := store.PublishRegistryRevision(workCtx, metadata, deps.BlobStore, publication); err != nil {
 		if workCtx.Err() != nil {
 			return managedWorkFailure(workCtx, ErrManagedRefresh)
@@ -447,6 +455,7 @@ type managedPublicationCompletion struct {
 	store.MetadataStore
 	fence       store.ManagedFence
 	publication store.PublicationID
+	deliveryJob *store.Job
 }
 
 func (s managedPublicationCompletion) WithTx(ctx context.Context, fn func(context.Context, store.MetadataStore) error) error {
@@ -460,6 +469,11 @@ func (s managedPublicationCompletion) WithTx(ctx context.Context, fn func(contex
 		}
 		if err := recorder.RecordManagedRefreshAttempt(ctx, s.fence, "succeeded", s.publication); err != nil {
 			return err
+		}
+		if s.deliveryJob != nil {
+			if err := tx.EnqueueJob(ctx, *s.deliveryJob); err != nil && !errors.Is(err, store.ErrConflict) {
+				return err
+			}
 		}
 		return tx.CompleteJob(ctx, s.fence.JobID, s.fence.WorkerID)
 	})

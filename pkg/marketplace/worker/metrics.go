@@ -2,6 +2,7 @@ package worker
 
 import (
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -11,11 +12,13 @@ import (
 )
 
 var (
-	observationOutcomes = []string{"changed", "unchanged", "failed"}
-	refreshTriggers     = []string{"source-change", "config-change", "reconciliation", "manual", "unknown"}
-	refreshOutcomes     = []string{"succeeded", "failed", "superseded"}
-	budgetOperations    = []string{"observation", "refresh"}
-	candidateOutcomes   = []string{"applied", "rejected", "apply_failed"}
+	observationOutcomes    = []string{"changed", "unchanged", "failed"}
+	refreshTriggers        = []string{"source-change", "config-change", "reconciliation", "manual", "unknown"}
+	refreshOutcomes        = []string{"succeeded", "failed", "superseded"}
+	budgetOperations       = []string{"observation", "refresh"}
+	candidateOutcomes      = []string{"applied", "rejected", "apply_failed"}
+	claudeDeliveryOutcomes = []string{"succeeded", "failed"}
+	claudeDeliveryStates   = []string{"published", "retired", "skipped", "conflict", "failed"}
 )
 
 type Metrics struct {
@@ -29,6 +32,11 @@ type Metrics struct {
 	lastSuccessfulObservation *prometheus.GaugeVec
 	lastSuccessfulIndex       *prometheus.GaugeVec
 	consecutiveProbeFailures  *prometheus.GaugeVec
+	claudeDeliveryReconciles  *prometheus.CounterVec
+	claudeDeliveryPlugins     *prometheus.GaugeVec
+	claudePluginsAPIRequests  *prometheus.CounterVec
+	claudeDeliveryThrottled   prometheus.Counter
+	claudeDeliveryPassTime    prometheus.Histogram
 }
 
 func NewMetrics() *Metrics {
@@ -73,6 +81,26 @@ func NewMetrics() *Metrics {
 			Name: "agent_marketplace_registry_consecutive_probe_failures",
 			Help: "Consecutive source probe failures.",
 		}, []string{"registry"}),
+		claudeDeliveryReconciles: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "agent_marketplace_claude_delivery_reconciles_total",
+			Help: "Claude Enterprise delivery reconcile passes by outcome.",
+		}, []string{"outcome"}),
+		claudeDeliveryPlugins: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "agent_marketplace_claude_delivery_plugins",
+			Help: "Claude Enterprise delivery plugin count by state.",
+		}, []string{"state"}),
+		claudePluginsAPIRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "agent_marketplace_claude_plugins_api_requests_total",
+			Help: "Claude Plugins API requests by endpoint and HTTP status.",
+		}, []string{"endpoint", "status"}),
+		claudeDeliveryThrottled: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "agent_marketplace_claude_plugins_api_throttled_total",
+			Help: "Claude Plugins API rate-limited responses.",
+		}),
+		claudeDeliveryPassTime: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name: "agent_marketplace_claude_delivery_pass_duration_seconds",
+			Help: "Claude Enterprise delivery reconcile pass duration.",
+		}),
 	}
 	for _, outcome := range observationOutcomes {
 		metrics.sourceObservations.WithLabelValues(outcome)
@@ -91,6 +119,12 @@ func NewMetrics() *Metrics {
 	for _, outcome := range candidateOutcomes {
 		metrics.configCandidates.WithLabelValues(outcome)
 	}
+	for _, outcome := range claudeDeliveryOutcomes {
+		metrics.claudeDeliveryReconciles.WithLabelValues(outcome)
+	}
+	for _, state := range claudeDeliveryStates {
+		metrics.claudeDeliveryPlugins.WithLabelValues(state)
+	}
 	metrics.configRestartRequired.Set(0)
 	return metrics
 }
@@ -107,6 +141,11 @@ func (m *Metrics) Collectors() []prometheus.Collector {
 		m.lastSuccessfulObservation,
 		m.lastSuccessfulIndex,
 		m.consecutiveProbeFailures,
+		m.claudeDeliveryReconciles,
+		m.claudeDeliveryPlugins,
+		m.claudePluginsAPIRequests,
+		m.claudeDeliveryThrottled,
+		m.claudeDeliveryPassTime,
 	}
 }
 
@@ -156,6 +195,45 @@ func (m *Metrics) RecordCandidateOutcome(outcome string) {
 		return
 	}
 	m.configCandidates.WithLabelValues(outcome).Inc()
+}
+
+func (m *Metrics) RecordClaudeDeliveryReconcile(outcome string, duration time.Duration) {
+	if m == nil || !slices.Contains(claudeDeliveryOutcomes, outcome) {
+		return
+	}
+	m.claudeDeliveryReconciles.WithLabelValues(outcome).Inc()
+	m.claudeDeliveryPassTime.Observe(duration.Seconds())
+}
+
+func (m *Metrics) SetClaudeDeliveryPluginStates(counts map[string]int) {
+	if m == nil {
+		return
+	}
+	for _, state := range claudeDeliveryStates {
+		m.claudeDeliveryPlugins.WithLabelValues(state).Set(float64(counts[state]))
+	}
+}
+
+func (m *Metrics) RecordClaudeAPIRequest(endpoint string, status int) {
+	if m == nil {
+		return
+	}
+	switch endpoint {
+	case "plugin_marketplaces", "plugins", "plugin", "plugin_versions", "plugin_version", "installation_settings":
+	default:
+		endpoint = "other"
+	}
+	statusCode := "network"
+	if status >= 100 && status <= 599 {
+		statusCode = strconv.Itoa(status)
+	}
+	m.claudePluginsAPIRequests.WithLabelValues(endpoint, statusCode).Inc()
+}
+
+func (m *Metrics) RecordClaudeDeliveryThrottled() {
+	if m != nil {
+		m.claudeDeliveryThrottled.Inc()
+	}
 }
 
 func (m *Metrics) SetRestartRequired(required bool) {

@@ -124,34 +124,34 @@
 
 ## 6. Worker wiring (`pkg/marketplace/worker`)
 
-- [ ] 6.1 Add the `claude-delivery` job kind with leasing, retry, and single-flight
+- [x] 6.1 Add the `claude-delivery` job kind with leasing, retry, and single-flight
   per instance, following the managed-job pattern. Annotate
   `// spec: claude-enterprise-delivery/publication-completion-enqueues-delivery`
-- [ ] 6.2 Enqueue after publication completion, on revocation change, on the repair
+- [x] 6.2 Enqueue after publication completion, on revocation change, on the repair
   interval, and on operator demand. Verify no enqueue happens while delivery is
   disabled. Annotate
   `// spec: claude-enterprise-delivery/disabled-delivery-makes-no-outbound-request`
-- [ ] 6.3 Add metrics: reconcile outcomes, per-state plugin counts, API requests by
+- [x] 6.3 Add metrics: reconcile outcomes, per-state plugin counts, API requests by
   endpoint and status, throttled requests, and pass duration. Verify they carry no
   resource identity beyond coordinates
 
 ## 7. Operator surfaces
 
-- [ ] 7.1 Add `agent-marketplace serve claude-delivery status` and
+- [x] 7.1 Add `agent-marketplace serve claude-delivery status` and
   `agent-marketplace serve claude-delivery sync --once`, with a behavioral test for
   each public command and flag so `TestPublicCommandPathsHaveBehaviorTests` passes
-- [ ] 7.2 Add the read-only admin endpoint listing delivery state, guarded by the
+- [x] 7.2 Add the read-only admin endpoint listing delivery state, guarded by the
   existing admin authentication and rate limiting
-- [ ] 7.3 Make withdrawal reporting state plainly that installed copies and stored
+- [x] 7.3 Make withdrawal reporting state plainly that installed copies and stored
   version history are unaffected. Annotate
   `// spec: claude-enterprise-delivery/status-reports-a-failure-by-code-without-content`
 
 ## 8. Documentation
 
-- [ ] 8.1 Document operator setup: Enterprise plan, key creation and rotation, scopes,
+- [x] 8.1 Document operator setup: Enterprise plan, key creation and rotation, scopes,
   marketplace choice and the recommendation from design D3, and the configuration
   block
-- [ ] 8.2 Document the content-scan gap from design D6 and the withdrawal semantics
+- [x] 8.2 Document the content-scan gap from design D6 and the withdrawal semantics
   from design D8, in the operator documentation and in `status` output
 
 ## 9. Gates
@@ -161,7 +161,7 @@
 - [ ] 9.2 Run `go run ./tools/specaudit gate -base origin/main -head HEAD` and confirm
   the spec delta is detected and no TUI journey is required
   (`TUI-QA-Impact: none — no TUI surface changes`)
-- [ ] 9.3 Run `make validate-e2e`. Add an E2E scenario driving a fake Plugins API
+- [x] 9.3 Run `make validate-e2e`. Add an E2E scenario driving a fake Plugins API
   through a real `serve` process: first mirror, unchanged pass, changed resource, and
   revocation withdrawal
 - [ ] 9.4 Run the pre-push adversarial review over the full diff, covering credential

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/acquire"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/admin"
+	"github.com/Adyen/agent-marketplace/pkg/marketplace/config"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store"
 	"github.com/Adyen/agent-marketplace/pkg/marketplace/store/sqlite"
 )
@@ -33,6 +34,7 @@ func (s *publicationRaceBlobs) Put(ctx context.Context, d store.ArchiveDigest, b
 	return s.BlobStore.Put(ctx, d, b)
 }
 
+// spec: claude-enterprise-delivery/publication-completion-enqueues-delivery
 func TestManagedPublicationFencesRaceAfterPreflight(t *testing.T) {
 	for _, scenario := range []string{"success", "pause", "lease"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -64,6 +66,13 @@ func TestManagedPublicationFencesRaceAfterPreflight(t *testing.T) {
 				}
 				return &acquire.Result{Dir: repo, Commit: commit}, nil
 			}
+			if scenario == "success" {
+				deps.Config.ClaudeEnterprise = &config.ClaudeEnterprise{
+					Enabled:  true,
+					APIKey:   config.ClaudeEnterpriseAPIKeyReference{Env: "CLAUDE_ENTERPRISE_TEST_KEY"},
+					APIKeyID: "apikey_test",
+				}
+			}
 			hookRan := false
 			deps.BlobStore = &publicationRaceBlobs{BlobStore: deps.BlobStore, beforePut: func() {
 				hookRan = true
@@ -87,6 +96,9 @@ func TestManagedPublicationFencesRaceAfterPreflight(t *testing.T) {
 			if scenario == "success" {
 				if err != nil || pubErr != nil || pub.ID == "" || pub.PolicyRevision != 1 || pub.RegistryGeneration != 1 || pub.Occurrence.Commit != commit {
 					t.Fatalf("publication=%+v err=%v/%v", pub, err, pubErr)
+				}
+				if _, err := metadata.LeaseJob(ctx, "claude-delivery", "delivery-worker", time.Minute); err != nil {
+					t.Fatalf("publication did not enqueue Claude delivery: %v", err)
 				}
 				events, err := metadata.ListManagedRefreshAttempts(ctx, store.ManagedRefreshAttemptQuery{Marketplace: "test-mp", JobID: j.ID, Limit: 10})
 				if err != nil || len(events) != 2 || events[0].Outcome != "succeeded" || events[0].PublicationID != pub.ID || events[1].Outcome != "started" {

@@ -55,7 +55,7 @@ type ClaudeDeliveryStateStore interface {
 	RecordClaudeDeliveryFailure(context.Context, ResourceCoordinate, string, string, string, time.Time) error
 	GetClaudeDeliveryPlugin(context.Context, ResourceCoordinate) (ClaudeDeliveryPlugin, error)
 	ListClaudeDeliveryPlugins(context.Context) ([]ClaudeDeliveryPlugin, error)
-	ListClaudeDeliveryDesired(context.Context, PublicationStore, []RegistryID) ([]ClaudeDeliveryDesired, error)
+	ListClaudeDeliveryDesired(context.Context, PublicationStore, MarketplaceID, []RegistryID) ([]ClaudeDeliveryDesired, error)
 }
 
 const ClaudeDeliverySchema = `
@@ -270,7 +270,7 @@ func scanClaudeDeliveryPlugin(scanner claudeDeliveryScanner) (ClaudeDeliveryPlug
 	return row, nil
 }
 
-func ReadClaudeDeliveryDesired(ctx context.Context, metadata MetadataStore, publications PublicationStore, registries []RegistryID) ([]ClaudeDeliveryDesired, error) {
+func ReadClaudeDeliveryDesired(ctx context.Context, metadata MetadataStore, publications PublicationStore, marketplace MarketplaceID, registries []RegistryID) ([]ClaudeDeliveryDesired, error) {
 	unique := make(map[RegistryID]struct{}, len(registries))
 	ordered := make([]RegistryID, 0, len(registries))
 	for _, registry := range registries {
@@ -288,6 +288,20 @@ func ReadClaudeDeliveryDesired(ctx context.Context, metadata MetadataStore, publ
 	for _, registry := range ordered {
 		publication, err := publications.CurrentRegistryPublication(ctx, registry)
 		if errors.Is(err, ErrNotFound) {
+			current, searchErr := metadata.SearchResourceRevisions(ctx, ResourceSearchFilter{
+				Marketplace: marketplace,
+				Registry:    string(registry),
+			})
+			if searchErr != nil {
+				return nil, fmt.Errorf("read current Claude delivery resources: %w", searchErr)
+			}
+			for _, revision := range current {
+				if revision.Coordinate.Kind == "collection" || revision.Revocation != nil ||
+					!assessmentAllowsDelivery(revision.Assessment.Decision) {
+					continue
+				}
+				out = append(out, ClaudeDeliveryDesired{Resource: revision})
+			}
 			continue
 		}
 		if err != nil {
