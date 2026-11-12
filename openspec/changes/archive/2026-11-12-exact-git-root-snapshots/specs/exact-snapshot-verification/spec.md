@@ -39,11 +39,14 @@ contain only the commit's tracked files under that root, and its verification
 SHALL hash every tracked file under that root and no file outside it. A root
 without `path:`, or with `path: .`, SHALL use a snapshot of the whole
 repository. Registry entries for the same source and commit with different
-paths SHALL each resolve from a snapshot that covers their own root. A
-whole-repository exact snapshot published by an earlier release SHALL remain
-usable without user action: read-only commands SHALL accept it after verifying
-the consumed root inside it, and mutating commands SHALL acquire a
-root-scoped snapshot instead. Acquisition locks SHALL be unaffected.
+paths SHALL each resolve from a snapshot that covers their own root. When the
+configured path is not a directory (tree) in the commit, for example because it
+is missing or goes through a symlink, the command SHALL use a whole-repository
+snapshot of that commit. A whole-repository exact snapshot published by an
+earlier release SHALL remain usable without user action: read-only commands
+SHALL accept it after verifying the consumed root inside it, and mutating
+commands SHALL acquire a root-scoped snapshot instead. Acquisition locks
+SHALL be unaffected.
 
 #### Scenario: Snapshot for a configured path contains only that path
 

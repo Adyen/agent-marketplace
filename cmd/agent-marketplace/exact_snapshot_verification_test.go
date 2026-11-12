@@ -311,7 +311,8 @@ func TestSyncCheckFallsBackToExistingWholeRepositorySnapshot(t *testing.T) {
 	if _, err := cache.AcquireExactGit(canonical, origin, oid); err != nil {
 		t.Fatalf("seed whole-repository snapshot: %v", err)
 	}
-	exactRootSnapshot(t, []string{"skills/locked-skill/SKILL.md", "commands/outside.md", "outside/README.md"}, nil)
+	whole := exactRootSnapshot(t, []string{"skills/locked-skill/SKILL.md", "commands/outside.md", "outside/README.md"}, nil)
+	writeFile(t, filepath.Join(whole, "outside", "README.md"), "modified outside the configured root\n")
 
 	if output, err := executeCommand("sync", "--check"); err != nil {
 		t.Fatalf("sync --check from whole-repository fallback: %v\n%s", err, output)
