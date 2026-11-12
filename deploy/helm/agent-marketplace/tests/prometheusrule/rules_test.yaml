@@ -1,0 +1,307 @@
+rule_files:
+  - rules.yaml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: AgentMarketplaceWorkerDown
+        exp_alerts:
+          - &worker_down
+            exp_labels:
+              severity: critical
+              namespace: marketplace-system
+            exp_annotations:
+              summary: Marketplace worker source observations are absent
+              description: No worker source observation series is being scraped.
+  - interval: 1m
+    input_series:
+      - series: 'agent_marketplace_source_observations_total{namespace="marketplace-system",service="agent-marketplace-api",outcome="unchanged"}'
+        values: '0+0x135'
+      - series: 'agent_marketplace_registry_last_successful_index_timestamp_seconds{namespace="marketplace-system",service="agent-marketplace-api",registry="registry-a"}'
+        values: '1+0x135'
+      - series: 'agent_marketplace_registry_consecutive_probe_failures{namespace="marketplace-system",service="agent-marketplace-api",registry="registry-b"}'
+        values: '3+0x135'
+      - series: 'agent_marketplace_registry_last_successful_observation_timestamp_seconds{namespace="marketplace-system",service="agent-marketplace-api",registry="registry-c"}'
+        values: '0+0x135'
+      - series: 'agent_marketplace_registry_last_successful_index_timestamp_seconds{namespace="marketplace-system",service="agent-marketplace-api",registry="registry-d"}'
+        values: '1+0x135'
+      - series: 'agent_marketplace_registry_last_successful_index_timestamp_seconds{namespace="marketplace-system",service="agent-marketplace-api",registry="registry-e"}'
+        values: '0+0x135'
+      - series: 'agent_marketplace_registry_refreshes_total{namespace="marketplace-system",service="agent-marketplace-api",trigger="source-change",outcome="failed"}'
+        values: '0+1x135'
+      - series: 'agent_marketplace_config_candidates_total{namespace="marketplace-system",service="agent-marketplace-api",outcome="rejected"}'
+        values: '0+0x133 1 2'
+      - series: 'agent_marketplace_config_candidates_total{namespace="marketplace-system",service="agent-marketplace-api",outcome="apply_failed"}'
+        values: '0+0x133 1 2'
+      - series: 'agent_marketplace_config_restart_required{namespace="marketplace-system",service="agent-marketplace-api"}'
+        values: '1+0x135'
+      - series: 'agent_marketplace_host_budget_delays_total{namespace="marketplace-system",service="agent-marketplace-worker",operation="observation"}'
+        values: '0+1x135'
+    alert_rule_test:
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceWorkerObservationsStalled
+        exp_alerts:
+          - &observations_stalled
+            exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: Marketplace worker observations have stalled
+              description: Source observations have not increased despite an observed index.
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceRegistryProbeFailing
+        exp_alerts:
+          - &probe_failing
+            exp_labels:
+              severity: warning
+              registry: registry-b
+            exp_annotations:
+              summary: Marketplace registry source probes are repeatedly failing
+              description: Registry registry-b has repeated source probe failures; the last published index remains available but may be stale.
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceRegistryObservationStale
+        exp_alerts:
+          - &observation_stale
+            exp_labels:
+              severity: warning
+              registry: registry-c
+            exp_annotations:
+              summary: Marketplace registry observation is stale
+              description: Registry registry-c has not been successfully observed recently.
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceRegistryNeverIndexed
+        exp_alerts:
+          - &never_indexed
+            exp_labels:
+              severity: warning
+              registry: registry-e
+            exp_annotations:
+              summary: Marketplace registry has never been indexed successfully
+              description: Registry registry-e has been observed but has no successful index timestamp.
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceRefreshFailures
+        exp_alerts:
+          - &refresh_failures
+            exp_labels:
+              severity: warning
+              trigger: source-change
+            exp_annotations:
+              summary: Marketplace registry refreshes are failing
+              description: Failed refreshes with trigger source-change are increasing; superseded refreshes and source probe failures are not refresh failures.
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceConfigCandidateRejected
+        exp_alerts:
+          - &candidate_rejected
+            exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: Marketplace configuration candidates are being rejected
+              description: Rejected or failed configuration candidates leave the last valid configuration running.
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceConfigRestartRequired
+        exp_alerts:
+          - &restart_required
+            exp_labels:
+              severity: info
+            exp_annotations:
+              summary: Marketplace configuration requires restart
+              description: Restart every API and worker process to apply startup-owned configuration changes.
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceHostBudgetDelaysSustained
+        exp_alerts:
+          - &host_budget_delays
+            exp_labels:
+              severity: info
+              operation: observation
+            exp_annotations:
+              summary: Marketplace worker delays are sustained
+              description: Host-budget delays for operation observation are admission pressure, not a source or refresh failure.
+  - interval: 1m
+    input_series:
+      - series: 'agent_marketplace_source_observations_total{namespace="marketplace-system",service="agent-marketplace-api",outcome="unchanged"}'
+        values: '0+1x135'
+      - series: 'agent_marketplace_registry_last_successful_index_timestamp_seconds{namespace="marketplace-system",service="agent-marketplace-api",registry="registry-a"}'
+        values: '100000+0x135'
+      - series: 'agent_marketplace_registry_consecutive_probe_failures{namespace="marketplace-system",service="agent-marketplace-api",registry="registry-b"}'
+        values: '2+0x135'
+      - series: 'agent_marketplace_registry_last_successful_observation_timestamp_seconds{namespace="marketplace-system",service="agent-marketplace-api",registry="registry-c"}'
+        values: '100000+0x135'
+      - series: 'agent_marketplace_registry_last_successful_index_timestamp_seconds{namespace="marketplace-system",service="agent-marketplace-api",registry="registry-d"}'
+        values: '100000+0x135'
+      - series: 'agent_marketplace_registry_last_successful_index_timestamp_seconds{namespace="marketplace-system",service="agent-marketplace-api",registry="registry-e"}'
+        values: '100000+0x135'
+      - series: 'agent_marketplace_registry_refreshes_total{namespace="marketplace-system",service="agent-marketplace-api",trigger="source-change",outcome="superseded"}'
+        values: '0+1x135'
+      - series: 'agent_marketplace_config_candidates_total{namespace="marketplace-system",service="agent-marketplace-api",outcome="applied"}'
+        values: '0+1x135'
+      - series: 'agent_marketplace_config_restart_required{namespace="marketplace-system",service="agent-marketplace-api"}'
+        values: '0+0x135'
+      - series: 'agent_marketplace_host_budget_delays_total{namespace="marketplace-system",service="agent-marketplace-worker",operation="observation"}'
+        values: '0+0x135'
+    alert_rule_test:
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceWorkerDown
+        exp_alerts: []
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceWorkerObservationsStalled
+        exp_alerts: []
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceRegistryProbeFailing
+        exp_alerts: []
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceRegistryObservationStale
+        exp_alerts: []
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceRegistryIndexStale
+        exp_alerts: []
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceRegistryNeverIndexed
+        exp_alerts: []
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceRefreshFailures
+        exp_alerts: []
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceConfigCandidateRejected
+        exp_alerts: []
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceConfigRestartRequired
+        exp_alerts: []
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceHostBudgetDelaysSustained
+        exp_alerts: []
+  - interval: 1m
+    input_series:
+      - series: 'agent_marketplace_registry_refreshes_total{namespace="marketplace-system",service="agent-marketplace-api",pod="worker-1",trigger="manual",outcome="failed"}'
+        values: '4 0 0'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: AgentMarketplaceRefreshFailures
+        exp_alerts: []
+  - interval: 1m
+    input_series:
+      - series: 'agent_marketplace_registry_refreshes_total{namespace="marketplace-system",service="agent-marketplace-api",trigger="manual",outcome="superseded"}'
+        values: '0 1 2'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: AgentMarketplaceRefreshFailures
+        exp_alerts: []
+  - interval: 1m
+    input_series:
+      - series: 'agent_marketplace_config_candidates_total{namespace="marketplace-system",service="agent-marketplace-api",outcome="applied"}'
+        values: '0 1 2'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: AgentMarketplaceConfigCandidateRejected
+        exp_alerts: []
+  - interval: 1m
+    input_series:
+      - series: 'agent_marketplace_config_candidates_total{namespace="marketplace-system",service="agent-marketplace-api",outcome="rejected"}'
+        values: '0 1 2'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: AgentMarketplaceConfigCandidateRejected
+        exp_alerts:
+          - *candidate_rejected
+  - interval: 1m
+    input_series:
+      - series: 'agent_marketplace_config_candidates_total{namespace="marketplace-system",service="agent-marketplace-api",outcome="apply_failed"}'
+        values: '0 1 2'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: AgentMarketplaceConfigCandidateRejected
+        exp_alerts:
+          - *candidate_rejected
+  - interval: 1m
+    input_series:
+      - series: 'agent_marketplace_registry_last_successful_observation_timestamp_seconds{namespace="marketplace-system",service="agent-marketplace-api",registry="registry-a",pod="stale"}'
+        values: '0+0x102'
+      - series: 'agent_marketplace_registry_last_successful_observation_timestamp_seconds{namespace="marketplace-system",service="agent-marketplace-worker",registry="registry-a",pod="fresh"}'
+        values: '100000+0x102'
+    alert_rule_test:
+      - eval_time: 1h42m
+        alertname: AgentMarketplaceRegistryObservationStale
+        exp_alerts: []
+  - interval: 1m
+    input_series:
+      - series: 'agent_marketplace_registry_last_successful_index_timestamp_seconds{namespace="marketplace-system",service="agent-marketplace-api",registry="registry-a"}'
+        values: '0+0x1592'
+    alert_rule_test:
+      - eval_time: 26h32m
+        alertname: AgentMarketplaceRegistryIndexStale
+        exp_alerts: []
+  - interval: 1m
+    input_series:
+      - series: 'agent_marketplace_registry_last_successful_index_timestamp_seconds{namespace="marketplace-system",service="agent-marketplace-api",registry="registry-a"}'
+        values: '1+0x1592'
+    alert_rule_test:
+      - eval_time: 26h32m
+        alertname: AgentMarketplaceRegistryIndexStale
+        exp_alerts:
+          - &index_stale
+            exp_labels:
+              severity: warning
+              registry: registry-a
+            exp_annotations:
+              summary: Marketplace registry index is stale
+              description: Registry registry-a may not have an index reflecting its latest source revision.
+  - interval: 1m
+    input_series:
+      - series: 'agent_marketplace_registry_last_successful_index_timestamp_seconds{namespace="marketplace-system",service="agent-marketplace-api",registry="registry-a",pod="never-indexed"}'
+        values: '0+0x121'
+      - series: 'agent_marketplace_registry_last_successful_index_timestamp_seconds{namespace="marketplace-system",service="agent-marketplace-worker",registry="registry-a",pod="indexed"}'
+        values: '100000+0x121'
+    alert_rule_test:
+      - eval_time: 2h1m
+        alertname: AgentMarketplaceRegistryNeverIndexed
+        exp_alerts: []
+  - interval: 1m
+    input_series:
+      - series: 'agent_marketplace_source_observations_total{namespace="marketplace-system",service="agent-marketplace-api",outcome="unchanged"}'
+        values: '0+1x135'
+      - series: 'agent_marketplace_registry_consecutive_probe_failures{namespace="other-namespace",service="agent-marketplace-api",registry="registry-b"}'
+        values: '3+0x135'
+      - series: 'agent_marketplace_registry_last_successful_observation_timestamp_seconds{namespace="other-namespace",service="agent-marketplace-api",registry="registry-c"}'
+        values: '0+0x135'
+      - series: 'agent_marketplace_registry_last_successful_index_timestamp_seconds{namespace="other-namespace",service="agent-marketplace-api",registry="registry-d"}'
+        values: '1+0x135'
+      - series: 'agent_marketplace_registry_last_successful_index_timestamp_seconds{namespace="other-namespace",service="agent-marketplace-api",registry="registry-e"}'
+        values: '0+0x135'
+      - series: 'agent_marketplace_registry_refreshes_total{namespace="other-namespace",service="agent-marketplace-api",trigger="source-change",outcome="failed"}'
+        values: '0+1x135'
+      - series: 'agent_marketplace_config_candidates_total{namespace="other-namespace",service="agent-marketplace-api",outcome="rejected"}'
+        values: '0+1x135'
+      - series: 'agent_marketplace_config_restart_required{namespace="other-namespace",service="agent-marketplace-api"}'
+        values: '1+0x135'
+      - series: 'agent_marketplace_host_budget_delays_total{namespace="other-namespace",service="agent-marketplace-worker",operation="observation"}'
+        values: '0+1x135'
+    alert_rule_test:
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceWorkerDown
+        exp_alerts: []
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceWorkerObservationsStalled
+        exp_alerts: []
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceRegistryProbeFailing
+        exp_alerts: []
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceRegistryObservationStale
+        exp_alerts: []
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceRegistryIndexStale
+        exp_alerts: []
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceRegistryNeverIndexed
+        exp_alerts: []
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceRefreshFailures
+        exp_alerts: []
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceConfigCandidateRejected
+        exp_alerts: []
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceConfigRestartRequired
+        exp_alerts: []
+      - eval_time: 2h15m
+        alertname: AgentMarketplaceHostBudgetDelaysSustained
+        exp_alerts: []

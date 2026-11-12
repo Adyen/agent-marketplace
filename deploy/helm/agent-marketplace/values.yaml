@@ -285,3 +285,60 @@ serviceMonitor:
   scheme: http
   labels: {}
   additionalLabels: {}
+
+prometheusRule:
+  enabled: false
+  labels: {}
+  additionalLabels: {}
+  ruleLabels: {}
+  runbookBaseUrl: ""
+  alerts:
+    workerDown:
+      enabled: true
+      for: 10m
+      severity: critical
+    workerObservationsStalled:
+      enabled: true
+      for: 15m
+      severity: critical
+      window: 1h
+    registryProbeFailing:
+      enabled: true
+      for: 5m
+      severity: warning
+      threshold: 3
+    registryObservationStale:
+      enabled: true
+      for: 10m
+      severity: warning
+      # Three times the default refresh.interval of 30 minutes.
+      staleAfterSeconds: 5400
+    registryIndexStale:
+      enabled: true
+      for: 30m
+      severity: warning
+      # Twenty-four-hour reconciliation plus two hours of scheduling margin.
+      staleAfterSeconds: 93600
+    registryNeverIndexed:
+      enabled: true
+      for: 2h
+      severity: warning
+    refreshFailures:
+      enabled: true
+      for: 0m
+      severity: warning
+      window: 1h
+    configCandidateRejected:
+      enabled: true
+      for: 0m
+      severity: warning
+      window: 15m
+    configRestartRequired:
+      enabled: true
+      for: 30m
+      severity: info
+    hostBudgetDelaysSustained:
+      enabled: true
+      for: 2h
+      severity: info
+      window: 15m
