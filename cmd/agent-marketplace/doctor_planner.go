@@ -199,8 +199,7 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 				Action: "replace conflicting shared-aggregate entries", Code: diag.CodeDoctorRepairConflictReplaceable,
 				Files: conflictFiles, Inputs: []repairplanner.Input{repairplanner.InputSelection},
 				Apply: func(ctx context.Context) (bool, error) {
-					stepOpts := opts
-					return applyRepairGroup(out, stepOpts, conflicts, revalidate)
+					return applyRepairGroup(out, opts, conflicts, revalidate)
 				},
 			})
 		}
@@ -255,9 +254,7 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 			deferredShown = true
 			deferred, _ := repairCandidateGroup(previews, false, true, true)
 			for _, target := range deferred {
-				noTerminal := opts
-				noTerminal.isTTY = false
-				if failures := applyRepairActions(out, noTerminal, target.Preview, revalidate); len(failures) > 0 {
+				if failures := applyRepairActions(out, opts, target.Preview, revalidate); len(failures) > 0 {
 					return errors.Join(failures...)
 				}
 			}

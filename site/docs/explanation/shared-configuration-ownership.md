@@ -22,7 +22,7 @@ Unreadable state and a journal left by an interrupted write can block later oper
 
 ## Repairing ownership
 
-`agent-marketplace doctor --repair` prints a numbered plan of what it can fix — each step with its safety class — and, when run in a [terminal](../glossary.md#terminal), asks once before running the safe steps. For the Devin and Codex files it recognizes three situations:
+`agent-marketplace doctor --repair` prints a numbered plan of what it can fix, each step with its safety class, and, when run in a [terminal](../glossary.md#terminal), asks once before running the safe steps. For the Devin and Codex files it recognizes three situations:
 
 - An existing entry is exactly what the CLI would write. Recording it as managed changes no bytes in the file, so `--yes` can do this without asking.
 - An entry the CLI wrote earlier is no longer selected, and a saved backup or a recorded change proves the CLI wrote it. The CLI can remove it.

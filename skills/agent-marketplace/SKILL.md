@@ -242,10 +242,10 @@ agent-marketplace deinit               # remove managed artifacts and cache
 
 `doctor` reports repo detection, config diagnostics, harness roots, unmet
 prerequisites, and Devin CLI compatibility (3000.3 floor; it only recommends
-adding `devin`). `--repair` prints a numbered plan — each step with its safety
-class, diagnostic code, files, and inputs or blocker — covering harness drift
+adding `devin`). `--repair` prints a numbered plan covering harness drift
 (repaired through a locked sync that leaves every acquisition lock unchanged)
-and Devin and Codex aggregate ownership: exact adoption matches,
+and Devin and Codex aggregate ownership. Each step shows its safety class,
+diagnostic code, files, and inputs or blocker. For the aggregates: exact adoption matches,
 evidence-backed orphans, and value conflicts. One terminal confirmation runs
 all safe steps; adoption no longer prompts per entry. Orphan removal and
 conflict replacement keep their per-entry prompts and never run under `--yes`
