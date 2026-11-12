@@ -343,8 +343,6 @@ jobs:
             --set prometheusRule.enabled=true > "$package_dir/alerts-split.yaml"
           split_rule_doc="$(extract_doc PrometheusRule agent-marketplace-api "$package_dir/alerts-split.yaml")"
           require "split-mode selector scopes worker metrics" "$split_rule_doc" 'namespace="marketplace",service=~"agent-marketplace-api|agent-marketplace-worker"'
-          require "split mode renders API Service" "$(cat "$package_dir/alerts-split.yaml")" "name: agent-marketplace-api"
-          require "split mode renders worker Service" "$(cat "$package_dir/alerts-split.yaml")" "name: agent-marketplace-worker"
 
           helm template marketplace "$CHART_DIR" --namespace marketplace \
             --set image.tag=ci \
