@@ -15,6 +15,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
@@ -136,7 +137,7 @@ func TestDeinitPurgePreservesPendingPublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	withWorkingDir(t, repo)
-	stateDir, err := dependencyStateDir()
+	stateDir, err := lifecycle.DependencyStateDir()
 	if err != nil {
 		t.Fatal(err)
 	}

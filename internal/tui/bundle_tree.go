@@ -3,7 +3,6 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"maps"
 	"os"
@@ -11,10 +10,9 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"syscall"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
-	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
@@ -75,11 +73,6 @@ type bundleTree struct {
 const (
 	marketplaceArtifactName   = "artifact.tar.gz"
 	marketplaceVerifiedMarker = "verified.marker"
-
-	// maxMarketplaceArtifactBytes bounds the compressed archive read for a
-	// detail preview. It matches the canonical artifact total-size budget so
-	// a corrupt or hostile cache object cannot exhaust TUI memory.
-	maxMarketplaceArtifactBytes = 64 << 20
 )
 
 // isMarketplaceDetailOnly reports whether the row is Marketplace-owned with
@@ -487,44 +480,9 @@ func (t *bundleTree) addMarketplaceVirtualPrimary(r row) error {
 // decoded, size-bounded, and cryptographically re-verified before any member
 // reaches the browser; missing or corrupt content fails closed.
 func newMarketplaceArtifactTree(artifactPath string) (*bundleTree, error) {
-	info, err := os.Lstat(artifactPath)
+	ca, err := session.ReadVerifiedMarketplaceArtifact(artifactPath)
 	if err != nil {
 		return nil, err
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("marketplace artifact is not a regular file")
-	}
-	marker, err := os.Lstat(filepath.Join(filepath.Dir(artifactPath), marketplaceVerifiedMarker))
-	if err != nil {
-		return nil, fmt.Errorf("marketplace artifact is not verified: %w", err)
-	}
-	if marker.Mode()&os.ModeSymlink != 0 || !marker.Mode().IsRegular() {
-		return nil, fmt.Errorf("marketplace artifact verification marker is not a regular file")
-	}
-	f, err := os.OpenFile(artifactPath, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = f.Close() }()
-	opened, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !opened.Mode().IsRegular() {
-		return nil, fmt.Errorf("marketplace artifact is not a regular file")
-	}
-	raw, err := io.ReadAll(io.LimitReader(f, maxMarketplaceArtifactBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(raw) > maxMarketplaceArtifactBytes {
-		return nil, fmt.Errorf("marketplace artifact exceeds %d MiB", maxMarketplaceArtifactBytes>>20)
-	}
-	// This tree only renders a cache file that the verified marker already covers,
-	// so content checks suffice; its archive digest is not re-derived here.
-	ca, err := hccartifact.DecodeContentArchive(raw)
-	if err != nil {
-		return nil, fmt.Errorf("validate marketplace artifact: %w", err)
 	}
 	manifest, err := json.MarshalIndent(ca.Manifest, "", "  ")
 	if err != nil {
@@ -580,16 +538,7 @@ func marketplaceSkillMarkdown(payload []byte) ([]byte, error) {
 }
 
 func compileSkillMarkdown(resource ir.Resource) ([]byte, error) {
-	result, err := hcc.Compile(resource, hcc.TargetFactory)
-	if err != nil {
-		return nil, err
-	}
-	for _, compiled := range result.Artifacts {
-		if filepath.Base(compiled.Path) == "SKILL.md" {
-			return compiled.Bytes, nil
-		}
-	}
-	return nil, fmt.Errorf("skill compilation produced no Markdown artifact")
+	return session.CompileSkillMarkdown(resource)
 }
 
 // insertArchivePath materializes one slash-separated archive member path into

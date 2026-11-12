@@ -5,7 +5,7 @@ import { after, before } from "node:test";
 
 import { defineFixture, locate, step, waitForExit } from "./helpers.js";
 
-// spec: tui-interactions/save-selected-harnesses
+// spec: session-interactions/save-selected-harnesses
 // spec: tui-interactions/harness-options-return-after-compact-resize
 // spec: tui-interactions/slash-leaves-fixed-choice-dialogs-unchanged
 const journey = defineFixture("harness-global-and-fixed-choices", ["tui"]);

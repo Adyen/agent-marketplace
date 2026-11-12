@@ -20,6 +20,7 @@ import (
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 )
 
@@ -95,7 +96,7 @@ func TestRootConfigLoadingModes(t *testing.T) {
 					t.Fatalf("strict resolve reused warm cache: %v", result.Errors)
 				}
 			}
-			_, _, _, err := prepareRuntimeLocks(ctx, repo, repo, lockMode{check: true})
+			_, _, _, err := lifecycle.PrepareRuntimeLocks(ctx, repo, repo, lifecycle.LockMode{Check: true})
 			if !pipeline.NeedsLockBootstrap([]error{err}) {
 				t.Fatalf("lock --check reused warm cache: %v", err)
 			}

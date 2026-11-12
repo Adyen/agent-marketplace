@@ -12,6 +12,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
+	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 )
 
 func gateMarketplaceAcquisition(t *testing.T, fake *layerMarketplaceServer) func() {
@@ -47,7 +48,7 @@ func missingEffectiveOpts(dir, orgPath string) config.LoadEffectiveOptions {
 	}
 }
 
-// spec: tui-startup/browse-safe-config-publishes-the-verified-endpoint-before-acquisition
+// spec: session-startup/browse-safe-config-publishes-the-verified-endpoint-before-acquisition
 func TestBrowsingConfigReadyPublishesVerifiedEndpointBeforeAcquisition(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	repo := t.TempDir()
@@ -74,7 +75,7 @@ func TestBrowsingConfigReadyPublishesVerifiedEndpointBeforeAcquisition(t *testin
 			BrowsingConfigReady: func(merged *config.Config) {
 				browsingSeen <- merged
 			},
-			ConfigReady: func(merged *config.Config) {
+			ConfigReady: func(merged *config.Config, _ []hcc.Target) {
 				authoritativeSeen <- merged
 			},
 		})
@@ -127,7 +128,7 @@ func TestBrowsingConfigReadyPublishesVerifiedEndpointBeforeAcquisition(t *testin
 	}
 }
 
-// spec: tui-startup/provisional-config-publishes-configured-pins-before-acquisition
+// spec: session-startup/provisional-config-publishes-configured-pins-before-acquisition
 func TestProvisionalConfigReadyPublishesPinsBeforeAcquisition(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	repo := t.TempDir()
@@ -196,7 +197,7 @@ func TestProvisionalConfigReadyPublishesPinsBeforeAcquisition(t *testing.T) {
 	}
 }
 
-// spec: tui-startup/browse-safe-config-is-never-published-for-unsafe-configurations
+// spec: session-startup/browse-safe-config-is-never-published-for-unsafe-configurations
 func TestBrowsingConfigReadyNeverPublishesUnsafeConfig(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 

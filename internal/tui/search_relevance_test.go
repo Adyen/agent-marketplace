@@ -22,7 +22,7 @@ func typeQuery(t *testing.T, m Model, query string) Model {
 
 func escKey() tea.KeyPressMsg { return tea.KeyPressMsg{Code: tea.KeyEscape} }
 
-// spec: tui-navigation/scattered-metadata-letters
+// spec: session-navigation/scattered-metadata-letters
 func TestSearchIgnoresScatteredMetadataLetters(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.rows = []row{
@@ -67,7 +67,7 @@ func TestSearchMultiWordQueryFuzzyMatchesName(t *testing.T) {
 	}
 }
 
-// spec: tui-navigation/name-match-outranks-metadata-match
+// spec: session-navigation/name-match-outranks-metadata-match
 func TestSearchNameMatchOutranksMetadataAndIsSelected(t *testing.T) {
 	m := NewModel("/repo", "/home")
 	m.rows = []row{
@@ -114,6 +114,7 @@ func TestSearchHidesSectionsWithoutMatches(t *testing.T) {
 	}
 }
 
+// spec: session-navigation/applied-query-and-count-remain-visible
 // spec: tui-navigation/confirmed-filter
 func TestConfirmedFilterStaysVisibleUntilEscInList(t *testing.T) {
 	m := NewModel("/repo", "/home")
@@ -152,6 +153,7 @@ func TestConfirmedFilterStaysVisibleUntilEscInList(t *testing.T) {
 	}
 }
 
+// spec: session-navigation/search-resumes-the-current-query
 // spec: tui-navigation/refine-a-filter
 func TestStartingSearchResumesAppliedQuery(t *testing.T) {
 	m := NewModel("/repo", "/home")

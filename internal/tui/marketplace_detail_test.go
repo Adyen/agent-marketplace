@@ -283,7 +283,7 @@ func TestMarketplaceArchiveDetailFailsClosed(t *testing.T) {
 	}
 }
 
-// spec: tui-navigation/installed-skill-definition-and-supporting-files-remain-browsable
+// spec: session-navigation/installed-skill-definition-and-supporting-files-remain-browsable
 func TestInstalledMarketplaceStagedSkillShowsVirtualPrimary(t *testing.T) {
 	staged := filepath.Join(t.TempDir(), "sha256_"+strings.Repeat("a", 64))
 	if err := os.MkdirAll(staged, 0o755); err != nil {
@@ -356,7 +356,7 @@ func TestInstalledMarketplaceStagedSkillShowsVirtualPrimary(t *testing.T) {
 	}
 }
 
-// spec: tui-navigation/installed-skill-definition-and-supporting-files-remain-browsable
+// spec: session-navigation/installed-skill-definition-and-supporting-files-remain-browsable
 func TestInstalledMarketplaceStagedSkillFailsVisibly(t *testing.T) {
 	for _, tc := range []struct {
 		name string

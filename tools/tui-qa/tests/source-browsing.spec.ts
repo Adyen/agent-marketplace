@@ -177,7 +177,7 @@ const marketplace = defineFixture("installed-marketplace-browsing", ["tui"], 80,
 before(marketplace.setup);
 after(marketplace.cleanup);
 
-// spec: tui-navigation/installed-skill-definition-and-supporting-files-remain-browsable
+// spec: session-navigation/installed-skill-definition-and-supporting-files-remain-browsable
 marketplace.test("installed Marketplace content previews its definition and staged support, and fails read-only when unavailable", async (terminal) => {
   const fixture = marketplace.current();
   assert.ok(fixture.marketplaceArchiveDigest);

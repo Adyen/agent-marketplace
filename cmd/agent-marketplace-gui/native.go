@@ -1,0 +1,129 @@
+//go:build cgo && (darwin || linux)
+
+package main
+
+import (
+	"context"
+	"embed"
+	"log/slog"
+	"sync/atomic"
+
+	"github.com/Adyen/agent-marketplace/internal/session"
+	"github.com/wailsapp/wails/v2"
+	"github.com/wailsapp/wails/v2/pkg/options"
+	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/mac"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+)
+
+//go:embed all:frontend/dist
+var assets embed.FS
+
+type nativeWindow struct {
+	ctx context.Context
+}
+
+func (w nativeWindow) Unminimise() { wailsruntime.WindowUnminimise(w.ctx) }
+func (w nativeWindow) Show()       { wailsruntime.WindowShow(w.ctx) }
+func (w nativeWindow) Emit(event string, args ...string) {
+	data := make([]any, len(args))
+	for i, arg := range args {
+		data[i] = arg
+	}
+	wailsruntime.EventsEmit(w.ctx, event, data...)
+}
+
+type nativeState struct {
+	closeApproved atomic.Bool
+}
+
+func (s *nativeState) approveClose() {
+	s.closeApproved.Store(true)
+}
+
+type lifecycleHooks struct {
+	onStartup  func(context.Context)
+	onDomReady func(context.Context)
+}
+
+func (app *App) appOptions(hooks lifecycleHooks) *options.App {
+	var windowCtx context.Context
+	app.quit = func() {
+		if windowCtx == nil {
+			return
+		}
+		wailsruntime.Quit(windowCtx)
+	}
+	return &options.App{
+		Title:     "Agent Marketplace",
+		Width:     1280,
+		Height:    832,
+		MinWidth:  760,
+		MinHeight: 520,
+		Mac: &mac.Options{
+			TitleBar: mac.TitleBarHiddenInset(),
+		},
+		AssetServer: &assetserver.Options{
+			Assets:  assets,
+			Handler: app.handler(),
+		},
+		Bind: []any{app},
+		OnStartup: func(ctx context.Context) {
+			windowCtx = ctx
+			wailsruntime.EventsOn(ctx, sessionEventsOpenEvent, func(data ...any) {
+				if len(data) < 2 {
+					return
+				}
+				id, idOK := data[0].(string)
+				credential, credentialOK := data[1].(string)
+				if idOK && credentialOK {
+					app.openEventStream(nativeWindow{ctx: ctx}, id, credential)
+				}
+			})
+			wailsruntime.EventsOn(ctx, sessionEventsCloseEvent, func(data ...any) {
+				if len(data) == 0 {
+					return
+				}
+				if id, ok := data[0].(string); ok {
+					app.closeEventStream(id)
+				}
+			})
+			controlClose, err := startE2EControl(app)
+			if err != nil {
+				slog.Error("GUI E2E control server could not start", "err", err)
+				wailsruntime.Quit(ctx)
+				return
+			}
+			app.e2eControlClose = controlClose
+			if err := app.updater.CleanupBackup(); err != nil {
+				slog.Warn("could not remove previous GUI update backup", "err", err)
+			}
+			if hooks.onStartup != nil {
+				hooks.onStartup(ctx)
+			}
+		},
+		OnDomReady: hooks.onDomReady,
+		OnBeforeClose: func(ctx context.Context) bool {
+			return app.beforeClose(nativeWindow{ctx: ctx}, app.closeApproved.Swap(false))
+		},
+		SingleInstanceLock: &options.SingleInstanceLock{
+			UniqueId: singleInstanceID,
+			OnSecondInstanceLaunch: func(second options.SecondInstanceData) {
+				if windowCtx == nil {
+					return
+				}
+				app.secondLaunch(nativeWindow{ctx: windowCtx}, second.Args)
+			},
+		},
+	}
+}
+
+func run() error {
+	ctx := context.Background()
+	app, err := NewApp(ctx, session.RuntimeLifecycle())
+	if err != nil {
+		return err
+	}
+	defer app.close()
+	return wails.Run(app.appOptions(lifecycleHooks{}))
+}

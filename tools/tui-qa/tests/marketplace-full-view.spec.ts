@@ -45,7 +45,7 @@ const treeDigest = (root: string): Map<string, string> => {
   return snapshot;
 };
 
-// spec: tui-navigation/inspect-an-exact-skill-before-installation-without-writes
+// spec: session-navigation/inspect-an-exact-skill-before-installation-without-writes
 // spec: tui-mouse-navigation/bundle-tree-and-preview-receive-their-own-wheel-input
 // spec: tui-mouse-navigation/marketplace-selection-and-scrolling-preserve-clipboard-boundaries
 // spec: tui-mouse-navigation/clicking-a-bundle-tree-entry-selects-and-previews-it

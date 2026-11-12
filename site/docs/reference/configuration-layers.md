@@ -19,7 +19,7 @@ Each lock sits next to its configuration file and records only the sources that 
 
 ## Fields each layer may set
 
-Every layer may declare `sources`, `resources`, and `include`. The other top-level fields are limited by layer. A field in the wrong layer fails the whole layer with `v4.layer-field`, and the same rule applies to fragments that the layer includes.
+Every layer may declare `sources`, `resources`, and `include`. The other top-level fields are limited by layer. A field in the wrong layer normally fails the whole layer with `v4.layer-field`, and the same rule applies to fragments that the layer includes.
 
 | Field | Organization | User | Repository | Repository personal |
 |---|---|---|---|---|

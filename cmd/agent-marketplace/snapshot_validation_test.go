@@ -13,6 +13,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/session"
 )
 
 // spec: tui-feedback/sync-recovery-preserves-the-acquisition-lock
@@ -110,7 +111,7 @@ func TestUpdatedLockRecoversFromStaleCacheWithoutAdvancing(t *testing.T) {
 			case "sync":
 				mustRun("sync")
 			case "tui-sync":
-				if warnings, err := runTUIDependencyLifecycle(context.Background(), workspace, false); err != nil {
+				if warnings, err := session.RuntimeDependencyLifecycle(context.Background(), workspace, false); err != nil {
 					t.Fatalf("TUI sync: %v; warnings: %v", err, warnings)
 				}
 			}

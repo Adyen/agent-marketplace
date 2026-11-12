@@ -30,6 +30,7 @@ type LayerIntent struct {
 	v4       *V4Config
 	rootTree *V4Config
 	errors   []error
+	warnings []error
 	rootRead bool
 }
 
@@ -67,6 +68,16 @@ type SourceDecl struct {
 	// Decisions is the source group's ordered v4 decision stream, used by the
 	// plugin lock manifests to commit the declared selection edges.
 	Decisions []V4SelectionDecision
+}
+
+type SourceDescription struct {
+	Name          string
+	Kind          SourceKind
+	Location      string
+	Ref           string
+	Path          string
+	SourceHarness string
+	InstanceID    string
 }
 
 type MarketplaceSource struct {
@@ -145,6 +156,27 @@ func (s Settings) config() *Config {
 		Telemetry:           s.Telemetry,
 		Materialization:     s.Materialization,
 	}
+}
+
+func (l LayerIntent) DescribeSources() []SourceDescription {
+	if l.v4 != nil {
+		names := make([]string, 0, len(l.v4.Sources))
+		for name := range l.v4.Sources {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		descs := make([]SourceDescription, 0, len(names))
+		for _, name := range names {
+			src := l.v4.Sources[name]
+			desc := SourceDescription{Name: name, Kind: src.Kind, Location: src.URL, Ref: src.Ref, Path: src.Path, SourceHarness: src.SourceHarness}
+			if src.Kind == V4SourceMarketplace {
+				desc.Location = src.CanonicalURL
+			}
+			descs = append(descs, desc)
+		}
+		return descs
+	}
+	return nil
 }
 
 func (l LayerIntent) Sources() []SourceDecl {
@@ -584,6 +616,7 @@ func ReadIntent(ctx context.Context, opts LoadEffectiveOptions) Intent {
 
 	for _, source := range intentLayerOrder {
 		intent.Errors = append(intent.Errors, intent.Layers[source].errors...)
+		intent.Warnings = append(intent.Warnings, intent.Layers[source].warnings...)
 	}
 	return intent
 }

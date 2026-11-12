@@ -343,6 +343,25 @@ func (e *LayerEditor) RemoveMarketplacePins(binding SourceBinding, pins []Market
 	return nil
 }
 
+const marketplaceSourceInUseCode = "config.edit.source-in-use"
+
+func (e *LayerEditor) RemoveMarketplaceRegistration(entry MarketplaceEntry) error {
+	binding, found, err := e.LookupMarketplaceSource(entry.URL)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return v4err("config.edit.invalid-binding", e.target.DeclaringPath, 0, "Marketplace registration is no longer present")
+	}
+	if !binding.root {
+		return v4err("config.edit.include-owned", e.target.DeclaringPath, 0, "Marketplace source %q is declared in an included fragment", binding.Name)
+	}
+	if _, hasGroup := e.loaded.Groups[binding.Name]; hasGroup {
+		return v4err(marketplaceSourceInUseCode, "resources."+binding.Name, 0, "Marketplace source %q has a resource group", binding.Name)
+	}
+	return e.RemoveSource(binding)
+}
+
 // ExcludeMarketplacePin records a per-resource override without changing the
 // external collection or direct selection that supplies the resource.
 func (e *LayerEditor) ExcludeMarketplacePin(binding SourceBinding, pin MarketplaceResourcePin) error {

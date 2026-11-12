@@ -17,6 +17,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/compat"
 	ltable "charm.land/lipgloss/v2/table"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
@@ -195,7 +196,7 @@ func renderDetail(m Model) string {
 	}
 
 	fields := [][2]string{
-		{"Kind:", r.kindLabel()},
+		{"Kind:", r.KindLabel()},
 		{"Name:", safe(r.Artifact.Name)},
 	}
 	if !r.IsMalformed {
@@ -269,74 +270,19 @@ func renderDetailFull(m Model) string {
 // Bounds for the full detail view, all documented in
 // docs/tui-product-contract.md:
 //   - maxDetailSourceBytes caps the source read; larger sources are cut and
-//     carry a visible truncation marker.
+//     carry a visible truncation marker (capture lives in internal/session).
 //   - maxDetailLineChars hard-splits unbroken lines before rendering:
 //     glamour's word wrap is superlinear in unbroken-token length (a single
 //     100 KB token renders in ~20 s), so a minified/hostile file would
 //     otherwise pin a renderer goroutine for minutes.
 //   - maxDetailRenderedLines caps the rendered expansion with a marker.
 const (
-	maxDetailSourceBytes    = 256 << 10 // per entry
-	maxDetailCaptureBytes   = 2 << 20   // across one snapshot refresh
-	maxDetailCaptureEntries = 64        // across one snapshot refresh
-	maxDetailLineChars      = 1024
-	maxDetailRenderedLines  = 5000
+	maxDetailLineChars     = 1024
+	maxDetailRenderedLines = 5000
 
 	detailRenderLimitMarker    = "[truncated: rendered output exceeds the line limit]"
 	detailCaptureOmittedMarker = "[content omitted: snapshot detail capture budget exhausted]"
 )
-
-var (
-	detailTruncationMarker       = fmt.Sprintf("[truncated: source exceeds %d KiB; showing the first part only]", maxDetailSourceBytes/1024)
-	detailBudgetTruncationMarker = fmt.Sprintf("[truncated: snapshot detail capture exceeds %d KiB or %d entries]", maxDetailCaptureBytes/1024, maxDetailCaptureEntries)
-)
-
-type detailSourceSnapshot struct {
-	content          string
-	truncationMarker string
-	json             bool
-	omitted          bool
-	err              error
-}
-
-type detailCaptureBudget struct {
-	bytes   int
-	entries int
-}
-
-func captureDetailSource(path string, readTargetWith ...previewTargetRead) *detailSourceSnapshot {
-	return captureDetailSourceLimit(path, maxDetailSourceBytes, detailTruncationMarker, readTargetWith...)
-}
-
-func (b *detailCaptureBudget) capture(path string) *detailSourceSnapshot {
-	if b.entries >= maxDetailCaptureEntries || b.bytes >= maxDetailCaptureBytes {
-		return &detailSourceSnapshot{json: isJSONPath(path), omitted: true}
-	}
-	remaining := maxDetailCaptureBytes - b.bytes
-	limit := min(maxDetailSourceBytes, remaining)
-	marker := detailTruncationMarker
-	if limit < maxDetailSourceBytes {
-		marker = detailBudgetTruncationMarker
-	}
-	snapshot := captureDetailSourceLimit(path, limit, marker)
-	b.entries++
-	b.bytes += len(snapshot.content)
-	return snapshot
-}
-
-func captureDetailSourceLimit(path string, limit int, marker string, readTargetWith ...previewTargetRead) *detailSourceSnapshot {
-	content, truncated, err := readDetailSourceLimit(path, limit, readTargetWith...)
-	if !truncated {
-		marker = ""
-	}
-	return &detailSourceSnapshot{content: content, truncationMarker: marker, json: isJSONPath(path), err: err}
-}
-
-func attachDetailSources(rows []row, byPath map[string]*detailSourceSnapshot) {
-	for i := range rows {
-		rows[i].DetailSource = byPath[rows[i].Artifact.Path]
-	}
-}
 
 // renderDetailFullContent renders the bounded source copy captured while the
 // exact snapshot lease was held at the given word-wrap width. Bundle-backed
@@ -378,7 +324,7 @@ func renderDetailFullContent(t theme, r row, width int) string {
 
 		var bundle strings.Builder
 		for i, source := range sources {
-			content, truncated, readErr := readDetailSource(source.path)
+			content, truncated, readErr := session.ReadDetailSourceLimit(source.path, session.MaxDetailSourceBytes)
 			if i > 0 {
 				bundle.WriteString("\n\n---\n\n")
 			}
@@ -406,7 +352,7 @@ func renderDetailFullContent(t theme, r row, width int) string {
 		content := bundle.String()
 		rendered, err := renderMarkdownAtWidth(content, t.dark, width)
 		if err != nil {
-			if len(sources) == 1 && isJSONPath(sources[0].name) {
+			if len(sources) == 1 && session.IsJSONPath(sources[0].name) {
 				// If glamour fails on the code block, return the pretty-printed
 				// JSON directly — it's still more readable than the minified form.
 				return boundRenderedDetail(strings.TrimPrefix(strings.TrimSuffix(content, "```"), "```json\n"))
@@ -419,19 +365,19 @@ func renderDetailFullContent(t theme, r row, width int) string {
 	if r.DetailSource == nil {
 		return "No content available"
 	}
-	content := r.DetailSource.content
-	if r.DetailSource.omitted {
+	content := r.DetailSource.Content
+	if r.DetailSource.Omitted {
 		return detailCaptureOmittedMarker
 	}
-	if r.DetailSource.err != nil {
-		return "Error reading resource: " + sanitizeTerminalData(r.DetailSource.err.Error(), terminalSingleLine)
+	if r.DetailSource.Err != nil {
+		return "Error reading resource: " + sanitizeTerminalData(r.DetailSource.Err.Error(), terminalSingleLine)
 	}
-	if r.DetailSource.truncationMarker != "" {
-		content += "\n\n> " + r.DetailSource.truncationMarker + "\n"
-		slog.Info("tui detail source truncated", "captured_bytes", len(r.DetailSource.content))
+	if r.DetailSource.TruncationMarker != "" {
+		content += "\n\n> " + r.DetailSource.TruncationMarker + "\n"
+		slog.Info("tui detail source truncated", "captured_bytes", len(r.DetailSource.Content))
 	}
 
-	if r.DetailSource.json {
+	if r.DetailSource.JSON {
 		formatted, fmtErr := formatJSONContent(content)
 		if fmtErr == nil {
 			rendered, renderErr := renderMarkdownAtWidth(formatted, t.dark, width)
@@ -516,7 +462,7 @@ func detailFileName(name string) string {
 func prepareDetailSource(name, content string) string {
 	content = sanitizeMarkdownForTerminal(content)
 	content = splitLongDetailLines(content, maxDetailLineChars)
-	if !isJSONPath(name) {
+	if !session.IsJSONPath(name) {
 		return content
 	}
 	formatted, err := formatJSONContent(content)
@@ -528,34 +474,10 @@ func prepareDetailSource(name, content string) string {
 
 func prepareBundleSource(name, content string) string {
 	prepared := prepareDetailSource(name, content)
-	if name == "SKILL.md" || strings.EqualFold(filepath.Ext(name), ".md") || isJSONPath(name) {
+	if name == "SKILL.md" || strings.EqualFold(filepath.Ext(name), ".md") || session.IsJSONPath(name) {
 		return prepared
 	}
 	return "```text\n" + prepared + "\n```"
-}
-
-// readDetailSource reads a resource source file (SKILL.md inside a directory,
-// or the file itself for non-skill kinds) with a hard byte cap. truncated is
-// true when the file exceeds maxDetailSourceBytes; the returned content is
-// cut at the cap so a hostile or corrupted multi-gigabyte source cannot
-// exhaust TUI memory or render time.
-func readDetailSource(path string) (content string, truncated bool, err error) {
-	return readDetailSourceLimit(path, maxDetailSourceBytes)
-}
-
-func readDetailSourceLimit(path string, limit int, readTargetWith ...previewTargetRead) (content string, truncated bool, err error) {
-	target := path
-	if info, statErr := os.Lstat(path); statErr == nil && info.IsDir() {
-		target = filepath.Join(path, "SKILL.md")
-	}
-	data, err := readPreviewSource(filepath.Dir(target), target, limit, readTargetWith...)
-	if err != nil {
-		return "", false, err
-	}
-	if len(data) > limit {
-		return string(data[:limit]), true, nil
-	}
-	return string(data), false, nil
 }
 
 // splitLongDetailLines hard-splits unbroken lines longer than maxLine at
@@ -617,13 +539,6 @@ func boundRenderedDetail(rendered string) string {
 	return strings.Join(lines, "\n")
 }
 
-// isJSONPath returns true when the file extension suggests JSON content
-// (e.g. hooks.json, mcp.json). This covers hooks and MCP server resources
-// whose source files are fully JSON.
-func isJSONPath(path string) bool {
-	return strings.EqualFold(filepath.Ext(path), ".json")
-}
-
 // renderMarketplaceDetailContent renders the bounded metadata view for
 // Marketplace rows that have no browsable local content: discovery-only
 // results and installed pins whose verified content is unavailable. It shows
@@ -634,7 +549,7 @@ func renderMarketplaceDetailContent(t theme, r row) string {
 	value := textStyle(t).Render
 	var b strings.Builder
 	fields := [][2]string{
-		{"Kind:", r.kindLabel()},
+		{"Kind:", r.KindLabel()},
 		{"Name:", safe(r.Artifact.Name)},
 		{"Status:", safe(r.StatusText())},
 	}

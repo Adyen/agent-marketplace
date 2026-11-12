@@ -40,6 +40,7 @@ const (
 	kindDuplicateSlug       = "duplicate-slug"
 	kindUnboundScenario     = "unbound-scenario"
 	kindDanglingAnnotation  = "dangling-annotation"
+	kindMissingSurface      = "missing-surface-witness"
 	kindUnarchivedChange    = "unarchived-change"
 	kindMissingSpecDelta    = "missing-spec-delta"
 	kindSpecImpactNoReason  = "spec-impact-reason-required"

@@ -6,6 +6,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/session"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -28,7 +29,7 @@ func unavailableSelectionErr(name string) error {
 
 func TestAppendUnavailableSelectionRowsEffectiveEntryPolicy(t *testing.T) {
 	explicit := &config.V4ResourceRequest{Kind: "skill", Name: "missing"}
-	loadedCatalogs := map[string]catalogInfo{"k1": {}}
+	loadedCatalogs := map[string]session.CatalogInfo{"k1": {}}
 	cases := []struct {
 		name    string
 		entry   config.RegistryEntry
@@ -87,7 +88,7 @@ func TestAppendUnavailableSelectionRowsEffectiveEntryPolicy(t *testing.T) {
 }
 
 func TestAppendUnavailableSelectionRowsShadowedEntry(t *testing.T) {
-	loadedCatalogs := map[string]catalogInfo{"k1": {}}
+	loadedCatalogs := map[string]session.CatalogInfo{"k1": {}}
 	lower := unavailableEntry(func(e *config.RegistryEntry) { e.FilePrecedence = 1 })
 	higher := config.RegistryEntry{
 		URL:            "/reg",
@@ -109,7 +110,7 @@ func TestAppendUnavailableSelectionRowsFailedCatalogTopLevelLocal(t *testing.T) 
 	})
 	cfg := &config.Config{Registries: []config.RegistryEntry{failedEntry}}
 	localCfg := &config.LocalConfig{Skills: config.KindSelector{Include: []string{"missing"}}}
-	rows := appendUnavailableSelectionRows(nil, cfg, localCfg, nil, map[string]catalogInfo{})
+	rows := appendUnavailableSelectionRows(nil, cfg, localCfg, nil, map[string]session.CatalogInfo{})
 	if len(rows) != 1 {
 		t.Fatalf("top-level local include synthesized %d rows, want 1", len(rows))
 	}
@@ -117,12 +118,12 @@ func TestAppendUnavailableSelectionRowsFailedCatalogTopLevelLocal(t *testing.T) 
 		t.Fatalf("local recovery row scope flags = global:%v project:%v local:%v, want local only",
 			rows[0].EnabledGlobal, rows[0].EnabledProject, rows[0].EnabledLocal)
 	}
-	if rows[0].UnavailableReason != unavailableCatalogReason {
-		t.Fatalf("local recovery row reason = %q, want %q", rows[0].UnavailableReason, unavailableCatalogReason)
+	if rows[0].UnavailableReason != session.UnavailableCatalogReason {
+		t.Fatalf("local recovery row reason = %q, want %q", rows[0].UnavailableReason, session.UnavailableCatalogReason)
 	}
 
 	localCfg.Skills.Exclude = []string{"missing"}
-	rows = appendUnavailableSelectionRows(nil, cfg, localCfg, nil, map[string]catalogInfo{})
+	rows = appendUnavailableSelectionRows(nil, cfg, localCfg, nil, map[string]session.CatalogInfo{})
 	if len(rows) != 0 {
 		t.Fatalf("local include+exclude synthesized %d rows, want 0", len(rows))
 	}
@@ -138,7 +139,7 @@ func TestAppendUnavailableSelectionRowsFailedCatalogV4ReincludeKeepsLocalFlag(t 
 	})
 	cfg := &config.Config{Registries: []config.RegistryEntry{failedEntry}}
 	localCfg := &config.LocalConfig{Skills: config.KindSelector{Include: []string{"missing"}}}
-	rows := appendUnavailableSelectionRows(nil, cfg, localCfg, nil, map[string]catalogInfo{})
+	rows := appendUnavailableSelectionRows(nil, cfg, localCfg, nil, map[string]session.CatalogInfo{})
 	if len(rows) != 1 {
 		t.Fatalf("v4 reinclude with local include synthesized %d rows, want 1", len(rows))
 	}
@@ -152,7 +153,7 @@ func TestAppendUnavailableSelectionRowsFailedCatalogV4ReincludeKeepsLocalFlag(t 
 		{Action: config.V4SelectionExclude, Exclusion: "skill/missing"},
 	}
 	cfg.Registries[0] = failedEntry
-	rows = appendUnavailableSelectionRows(nil, cfg, localCfg, nil, map[string]catalogInfo{})
+	rows = appendUnavailableSelectionRows(nil, cfg, localCfg, nil, map[string]session.CatalogInfo{})
 	if len(rows) != 0 {
 		t.Fatalf("v4 include then exclude synthesized %d rows, want 0", len(rows))
 	}
@@ -171,7 +172,7 @@ func TestAppendUnavailableSelectionRowsFailedCatalogLocalIncludeCoveredByAvailab
 		IsAvailable: true,
 		Artifact:    resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, RegistryURL: "/regB"},
 	}}
-	rows := appendUnavailableSelectionRows(initial, cfg, localCfg, nil, map[string]catalogInfo{"kB": {}})
+	rows := appendUnavailableSelectionRows(initial, cfg, localCfg, nil, map[string]session.CatalogInfo{"kB": {}})
 	if len(rows) != 1 {
 		t.Fatalf("available-covered local include synthesized %d rows, want 0", len(rows)-1)
 	}
@@ -188,7 +189,7 @@ func TestAppendUnavailableSelectionRowsFailedCatalogLocalIncludeEntrySelectionSt
 		IsAvailable: true,
 		Artifact:    resolver.ResolvedArtifact{Entry: catalog.Entry{Kind: ir.KindSkill, Name: "shared"}, RegistryURL: "/regB"},
 	}}
-	rows := appendUnavailableSelectionRows(initial, cfg, nil, nil, map[string]catalogInfo{})
+	rows := appendUnavailableSelectionRows(initial, cfg, nil, nil, map[string]session.CatalogInfo{})
 	if len(rows) != 2 || rows[1].RegistryURL != "/regA" {
 		t.Fatalf("explicit entry selection on failed catalog lost its recovery row: %#v", rows)
 	}
@@ -207,7 +208,7 @@ func TestAppendUnavailableSelectionRowsLocalIncludeMultipleFailedIdentities(t *t
 	})
 	cfg := &config.Config{Registries: []config.RegistryEntry{entryA, entryB}}
 	localCfg := &config.LocalConfig{Skills: config.KindSelector{Include: []string{"missing"}}}
-	rows := appendUnavailableSelectionRows(nil, cfg, localCfg, nil, map[string]catalogInfo{})
+	rows := appendUnavailableSelectionRows(nil, cfg, localCfg, nil, map[string]session.CatalogInfo{})
 	if len(rows) != 0 {
 		t.Fatalf("local include with two failed registry identities synthesized %d rows, want 0", len(rows))
 	}
@@ -224,7 +225,7 @@ func TestAppendUnavailableSelectionRowsLocalIncludeMultipleFailedIdentitiesEntry
 	})
 	cfg := &config.Config{Registries: []config.RegistryEntry{entryA, entryB}}
 	localCfg := &config.LocalConfig{Skills: config.KindSelector{Include: []string{"missing"}}}
-	rows := appendUnavailableSelectionRows(nil, cfg, localCfg, nil, map[string]catalogInfo{})
+	rows := appendUnavailableSelectionRows(nil, cfg, localCfg, nil, map[string]session.CatalogInfo{})
 	if len(rows) != 2 {
 		t.Fatalf("explicit entry selections on two failed catalogs synthesized %d rows, want 2", len(rows))
 	}
@@ -250,7 +251,7 @@ func TestAppendUnavailableSelectionRowsLocalIncludeDuplicateFailedIdentity(t *te
 	})
 	cfg := &config.Config{Registries: []config.RegistryEntry{first, dup}}
 	localCfg := &config.LocalConfig{Skills: config.KindSelector{Include: []string{"missing"}}}
-	rows := appendUnavailableSelectionRows(nil, cfg, localCfg, nil, map[string]catalogInfo{})
+	rows := appendUnavailableSelectionRows(nil, cfg, localCfg, nil, map[string]session.CatalogInfo{})
 	if len(rows) != 1 {
 		t.Fatalf("duplicate failed entries sharing one identity synthesized %d rows, want 1", len(rows))
 	}
@@ -265,7 +266,7 @@ func TestAppendUnavailableSelectionRowsFailedCatalogEffectiveRequests(t *testing
 		e.Skills.Exclude = []string{"dropped"}
 	})
 	cfg := &config.Config{Registries: []config.RegistryEntry{failedEntry}}
-	rows := appendUnavailableSelectionRows(nil, cfg, nil, nil, map[string]catalogInfo{})
+	rows := appendUnavailableSelectionRows(nil, cfg, nil, nil, map[string]session.CatalogInfo{})
 	if len(rows) != 1 || rows[0].Artifact.Name != "kept" {
 		t.Fatalf("failed catalog sweep synthesized %#v, want only the effective selection", rows)
 	}

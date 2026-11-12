@@ -65,7 +65,7 @@ func BenchmarkWheelBurstPath(b *testing.B) {
 				base.rows = buildBenchRows(3000)
 				base.flatItems = make([]flatItem, len(base.rows))
 				for i := range base.rows {
-					base.rows[i].ensureLabelMemo()
+					rowLabelMemoFor(&base.rows[i])
 					base.flatItems[i] = flatItem{Kind: flatArtifact, Row: base.rows[i], Depth: 1}
 				}
 				base.clampListOffset()

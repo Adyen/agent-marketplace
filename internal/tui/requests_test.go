@@ -8,19 +8,19 @@ import (
 
 func TestRequestStateAllocatesOnlyWhenWorkBegins(t *testing.T) {
 	var state requestState
-	first := state.begin(requestDetail)
-	if first != 1 || state.active(requestDetail) != first {
-		t.Fatalf("first detail request = %d, active = %d", first, state.active(requestDetail))
+	first := state.Begin(requestDetail)
+	if first != 1 || state.Active(requestDetail) != first {
+		t.Fatalf("first detail request = %d, active = %d", first, state.Active(requestDetail))
 	}
-	if cancelled := state.cancel(requestDetail); cancelled != first {
+	if cancelled := state.Cancel(requestDetail); cancelled != first {
 		t.Fatalf("cancelled generation = %d, want %d", cancelled, first)
 	}
-	if state.next != first {
-		t.Fatalf("cancel consumed a generation: next = %d, want %d", state.next, first)
+	if state.Next != first {
+		t.Fatalf("cancel consumed a generation: next = %d, want %d", state.Next, first)
 	}
-	second := state.begin(requestSnapshot)
-	if second != 2 || state.active(requestSnapshot) != second {
-		t.Fatalf("snapshot request = %d, active = %d", second, state.active(requestSnapshot))
+	second := state.Begin(requestSnapshot)
+	if second != 2 || state.Active(requestSnapshot) != second {
+		t.Fatalf("snapshot request = %d, active = %d", second, state.Active(requestSnapshot))
 	}
 }
 
@@ -30,7 +30,7 @@ func TestAcceptedRequestCompletionCannotReplay(t *testing.T) {
 	if !m.acceptsRequest(requestSnapshot, generation) {
 		t.Fatal("current completion was rejected")
 	}
-	if active := m.requests.active(requestSnapshot); active != 0 {
+	if active := m.requests.Active(requestSnapshot); active != 0 {
 		t.Fatalf("accepted generation remained active: %d", active)
 	}
 	if m.acceptsRequest(requestSnapshot, generation) {
@@ -58,7 +58,7 @@ func TestMutationOperationsSerializeAndRejectStaleCompletions(t *testing.T) {
 	if cmd != nil || len(m.errs) != 0 {
 		t.Fatalf("stale operation changed state: cmd=%v errors=%v", cmd, m.errs)
 	}
-	if !m.operations.accepts(second) {
+	if !m.operations.Accepts(second) {
 		t.Fatal("stale completion cleared the active operation")
 	}
 }
@@ -114,7 +114,7 @@ func TestSnapshotGenerationRejectsStaleRowsAndPreservesSelection(t *testing.T) {
 			break
 		}
 	}
-	m.requests = requestState{next: 2, snapshot: 2}
+	m.requests = requestState{Next: 2, Snapshot: 2}
 
 	stale, _ := m.Update(snapshotLoadedMsg{
 		generation: 1,
@@ -145,7 +145,7 @@ func TestSnapshotGenerationRejectsStaleRowsAndPreservesSelection(t *testing.T) {
 
 func TestStaleUpdateSchedulesAuthoritativeSnapshot(t *testing.T) {
 	m := NewModel(t.TempDir(), t.TempDir())
-	m.requests = requestState{next: 2, snapshot: 2}
+	m.requests = requestState{Next: 2, Snapshot: 2}
 	m.syncing = true
 	m.errs = []error{errors.New("current error")}
 
@@ -154,7 +154,7 @@ func TestStaleUpdateSchedulesAuthoritativeSnapshot(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("stale update did not schedule an authoritative snapshot")
 	}
-	if got := m.requests.active(requestSnapshot); got != 3 {
+	if got := m.requests.Active(requestSnapshot); got != 3 {
 		t.Fatalf("active snapshot generation = %d, want 3", got)
 	}
 	if len(m.errs) != 1 || m.errs[0].Error() != "current error" {

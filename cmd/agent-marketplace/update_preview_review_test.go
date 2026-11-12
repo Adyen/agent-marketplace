@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -325,12 +326,12 @@ func TestUpdateIncludeDiffRejectsConcurrentConfigEdit(t *testing.T) {
 	// transaction: a concurrent config edit between preparation and commit
 	// retains the existing generation-conflict refusal instead of publishing
 	// the compared candidates over changed input.
-	originalCommit := commitDependencyTransaction
-	commitDependencyTransaction = func(ctx context.Context, stateDir string, desired []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
+	originalCommit := lifecycle.CommitDependencyTransaction
+	lifecycle.CommitDependencyTransaction = func(ctx context.Context, stateDir string, desired []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
 		writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nsources: {}\n")
 		return dependencytxn.Commit(ctx, stateDir, desired, opts...)
 	}
-	t.Cleanup(func() { commitDependencyTransaction = originalCommit })
+	t.Cleanup(func() { lifecycle.CommitDependencyTransaction = originalCommit })
 
 	output, err := executeCommand("update", "--include-diff")
 	if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
@@ -361,10 +362,10 @@ func TestUpdateIncludeDiffAppliesComparedCandidateWhenUpstreamAdvances(t *testin
 
 	// Publication happens after comparison. Advance the real upstream at
 	// that boundary, then let the real transaction publish its prepared set.
-	originalCommit := commitDependencyTransaction
+	originalCommit := lifecycle.CommitDependencyTransaction
 	var upstreamRevision string
 	commitCalls := 0
-	commitDependencyTransaction = func(ctx context.Context, stateDir string, desired []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
+	lifecycle.CommitDependencyTransaction = func(ctx context.Context, stateDir string, desired []dependencytxn.DesiredFile, opts ...dependencytxn.Option) (dependencytxn.Result, error) {
 		commitCalls++
 		if commitCalls == 1 {
 			writeSkill(t, working, "vm-lifecycle", "Later upstream v3", []string{"openstack"})
@@ -373,10 +374,10 @@ func TestUpdateIncludeDiffAppliesComparedCandidateWhenUpstreamAdvances(t *testin
 		}
 		return dependencytxn.Commit(ctx, stateDir, desired, opts...)
 	}
-	t.Cleanup(func() { commitDependencyTransaction = originalCommit })
+	t.Cleanup(func() { lifecycle.CommitDependencyTransaction = originalCommit })
 
 	output, err := executeCommand("update", "--include-diff")
-	commitDependencyTransaction = originalCommit
+	lifecycle.CommitDependencyTransaction = originalCommit
 	if err != nil {
 		t.Fatalf("update with advancing upstream: %v\n%s", err, output)
 	}

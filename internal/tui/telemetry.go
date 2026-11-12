@@ -25,18 +25,7 @@ func telemetryFromContext(ctx context.Context) *telemetry.Telemetry {
 }
 
 func recordActionSpan(ctx context.Context, name string, attrs map[string]string) {
-	tel := telemetryFromContext(ctx)
-	if tel == nil {
-		return
-	}
-
-	base := map[string]string{"action": name}
-	for k, v := range attrs {
-		base[k] = v
-	}
-
-	_, span := tel.StartSpan(ctxOrBackground(ctx), "agent_marketplace.tui.action", base)
-	span.End()
+	telemetry.RecordInteractiveAction(ctxOrBackground(ctx), "tui", name, attrs)
 }
 
 func recordControlledErrorSpan(ctx context.Context, action string, err error) {

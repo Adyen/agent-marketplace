@@ -63,6 +63,7 @@ func anyCmdProducesQuitMsg(cmd tea.Cmd) bool {
 	return ok
 }
 
+// spec: session-interactions/confirmation-retains-all-user-choices
 func TestConfirmYesStartsSyncWithoutImmediateQuit(t *testing.T) {
 	origRunSyncCmd := runSyncCmd
 	runSyncCmd = noopSyncCmd
@@ -153,6 +154,7 @@ func TestSyncDoneMsgWithErrorAndQuitAfterSyncStillQuits(t *testing.T) {
 	}
 }
 
+// spec: session-interactions/confirmation-retains-all-user-choices
 func TestConfirmNoQuitsImmediatelyAndClearsQuitAfterSync(t *testing.T) {
 	m := newTestModel()
 	m.pane = paneConfirm
@@ -169,6 +171,7 @@ func TestConfirmNoQuitsImmediatelyAndClearsQuitAfterSync(t *testing.T) {
 	}
 }
 
+// spec: session-interactions/confirmation-retains-all-user-choices
 func TestConfirmCancelClearsQuitAfterSync(t *testing.T) {
 	m := newTestModel()
 	m.pane = paneConfirm
@@ -188,6 +191,7 @@ func TestConfirmCancelClearsQuitAfterSync(t *testing.T) {
 	}
 }
 
+// spec: session-interactions/guarded-submission
 // spec: tui-interactions/guarded-submission
 func TestConfirmYesWhileSyncingDoesNotStartSecondSync(t *testing.T) {
 	m := newTestModel()
