@@ -1049,14 +1049,79 @@ func TestExactGitTrackedTreeHashStopsAfterFirstError(t *testing.T) {
 			t.Fatalf("first hash error = %v, want os.ErrNotExist", err)
 		}
 	case <-time.After(10 * time.Second):
-		fd, err := unix.Open(fifo, unix.O_WRONLY|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
-		if err != nil {
-			t.Fatalf("unblock FIFO after timeout: %v", err)
-		}
-		if err := unix.Close(fd); err != nil {
-			t.Fatalf("close FIFO after timeout: %v", err)
-		}
+		unblockExactGitHashFIFO(t, fifo)
 		t.Fatal("hashing did not stop after the first error")
+	}
+
+	t.Run("cancellation stops remaining work", func(t *testing.T) {
+		const payload = "payload\n"
+		root := t.TempDir()
+		hashed := filepath.Join(root, "hashed")
+		if err := os.WriteFile(hashed, []byte(payload), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		file, err := os.Open(hashed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		oid, hashErr := gitBlobOID("sha1", file, int64(len(payload)))
+		closeErr := file.Close()
+		if hashErr != nil {
+			t.Fatal(hashErr)
+		}
+		if closeErr != nil {
+			t.Fatal(closeErr)
+		}
+
+		fifo := filepath.Join(root, "remaining")
+		if err := unix.Mkfifo(fifo, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		jobs := []exactGitHashJob{
+			{path: hashed, want: exactGitTreeEntry{mode: "100644", oid: oid}},
+			{path: fifo, want: exactGitTreeEntry{mode: "100644"}},
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- hashExactGitTrackedEntries(ctx, "sha1", jobs) }()
+		cancel()
+
+		deadline := time.NewTimer(10 * time.Second)
+		defer deadline.Stop()
+		poll := time.NewTicker(time.Millisecond)
+		defer poll.Stop()
+		for {
+			select {
+			case err := <-done:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("hashing error = %v, want context.Canceled", err)
+				}
+				return
+			case <-poll.C:
+				fd, err := unix.Open(fifo, unix.O_WRONLY|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+				if err == nil {
+					_ = unix.Close(fd)
+					t.Fatal("worker reached remaining job after cancellation")
+				}
+				if !errors.Is(err, unix.ENXIO) {
+					t.Fatalf("probe remaining FIFO: %v", err)
+				}
+			case <-deadline.C:
+				unblockExactGitHashFIFO(t, fifo)
+				t.Fatal("hashing did not stop after cancellation")
+			}
+		}
+	})
+}
+
+func unblockExactGitHashFIFO(t *testing.T, fifo string) {
+	t.Helper()
+	fd, err := unix.Open(fifo, unix.O_WRONLY|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if err != nil {
+		t.Fatalf("unblock FIFO after timeout: %v", err)
+	}
+	if err := unix.Close(fd); err != nil {
+		t.Fatalf("close FIFO after timeout: %v", err)
 	}
 }
 
@@ -1139,7 +1204,7 @@ func TestExactGitTrackedTreePreservesExecutableAndSymlinkModes(t *testing.T) {
 			if err := os.Chmod(blob, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			if err := verifyExactGitTrackedTreeWithContext(context.Background(), root, algorithm); err == nil {
+			if err := verifyExactGitTrackedTreeWithContext(context.Background(), root, algorithm); err == nil || !strings.Contains(err.Error(), "mode mismatch") {
 				t.Fatal("accepted removed executable bits")
 			}
 			if err := os.Remove(blob); err != nil {
@@ -1148,7 +1213,7 @@ func TestExactGitTrackedTreePreservesExecutableAndSymlinkModes(t *testing.T) {
 			if err := os.Symlink("link", blob); err != nil {
 				t.Fatal(err)
 			}
-			if err := verifyExactGitTrackedTreeWithContext(context.Background(), root, algorithm); err == nil {
+			if err := verifyExactGitTrackedTreeWithContext(context.Background(), root, algorithm); err == nil || !strings.Contains(err.Error(), "mode mismatch") {
 				t.Fatal("accepted a symlink in place of a regular file")
 			}
 		})
