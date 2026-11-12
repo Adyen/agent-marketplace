@@ -67,7 +67,7 @@ tests:
               registry: registry-c
             exp_annotations:
               summary: Marketplace registry observation is stale
-              description: Registry registry-c has not been successfully observed recently.
+              description: Registry registry-c has not been successfully observed recently; the last published index remains available but may be stale.
       - eval_time: 2h15m
         alertname: AgentMarketplaceRegistryNeverIndexed
         exp_alerts:

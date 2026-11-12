@@ -56,7 +56,7 @@ spec:
           labels:
             {{- include "agent-marketplace.prometheusRule.alertLabels" (dict "root" $ "severity" .severity) | nindent 12 }}
           annotations:
-            {{- include "agent-marketplace.prometheusRule.alertAnnotations" (dict "root" $ "alertName" "agentmarketplaceregistryobservationstale" "summary" "Marketplace registry observation is stale" "description" "Registry {{ $labels.registry }} has not been successfully observed recently.") | nindent 12 }}
+            {{- include "agent-marketplace.prometheusRule.alertAnnotations" (dict "root" $ "alertName" "agentmarketplaceregistryobservationstale" "summary" "Marketplace registry observation is stale" "description" "Registry {{ $labels.registry }} has not been successfully observed recently; the last published index remains available but may be stale.") | nindent 12 }}
         {{- end }}
         {{- end }}
         {{- with .Values.prometheusRule.alerts.registryIndexStale }}
