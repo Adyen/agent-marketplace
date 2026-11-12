@@ -62,7 +62,7 @@ The check exits with status 0 when the shared configuration matches your selecti
 - It never removes or overwrites an entry without your confirmation on a terminal.
 - It takes a fresh safety backup of the file before it replaces or removes an entry.
 - It never edits your harness lists.
-- It exits with status 0 only when the setup ends clean or you declined. It exits with status 1 when a confirmed step fails, corrupt ownership state or a corrupt shared file remains, or the plan is left with only blocked or `human-only` items. An invalid configuration or a failed resolution is reported as a plan item and blocks the steps that need it rather than refusing the whole repair.
+- An off-terminal preview or a `--yes` run can exit 0 with destructive entries deferred. Otherwise, status 0 means the setup ended clean or you declined. Status 1 means a confirmed step failed, corrupt ownership state or a corrupt shared file remains, or the plan is left with only blocked or `human-only` items. An invalid configuration or a failed resolution is reported as a plan item and blocks the steps that need it rather than refusing the whole repair.
 - When the ownership state is missing, every existing entry counts as unmanaged. `sync` then keeps all of them, refuses to write over any of them, and removes nothing.
 
 ## Related documentation

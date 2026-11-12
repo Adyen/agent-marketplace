@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -64,8 +65,8 @@ func Plan(diagnosis Diagnosis) []Step {
 		if step.BlockedBy == nil {
 			for _, input := range step.Inputs {
 				if blocker, invalid := diagnosis.InvalidInputs[input]; invalid {
-					copy := blocker
-					steps[i].BlockedBy = &copy
+					blockerCopy := blocker
+					steps[i].BlockedBy = &blockerCopy
 					break
 				}
 			}
@@ -134,6 +135,12 @@ type Loop struct {
 
 var ErrIncomplete = errors.New("repair remains blocked")
 
+func HasBlockedSteps(steps []Step) bool {
+	return slices.ContainsFunc(steps, func(step Step) bool {
+		return step.BlockedBy != nil || step.Class == HumanOnly || step.Class == Guided
+	})
+}
+
 func (loop Loop) Run(ctx context.Context) error {
 	confirmed := make(map[string]bool)
 	deferred := make(map[string]bool)
@@ -169,11 +176,9 @@ func (loop Loop) Run(ctx context.Context) error {
 			}
 		}
 		var next *Step
-		blocked := false
 		for i := range steps {
 			step := &steps[i]
 			if step.BlockedBy != nil || step.Class == HumanOnly || step.Class == Guided {
-				blocked = true
 				continue
 			}
 			key := identity(*step)
@@ -184,7 +189,7 @@ func (loop Loop) Run(ctx context.Context) error {
 			break
 		}
 		if next == nil {
-			if blocked {
+			if HasBlockedSteps(steps) {
 				return ErrIncomplete
 			}
 			return nil

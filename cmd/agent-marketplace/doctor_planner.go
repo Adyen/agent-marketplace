@@ -147,24 +147,41 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 			var checkOutput strings.Builder
 			checkErr := runSyncCheck(ctx, &checkOutput, false)
 			checkText := checkOutput.String()
-			sharedCollision := strings.Contains(checkText, diag.CodeOwnershipUnmanagedKey) ||
-				strings.Contains(checkText, "materialize.collision.user-owned")
-			if strings.Contains(checkText, "out of sync") && !sharedCollision {
+			collisionFiles, otherCheckErrors := syncCheckCollisions(checkText)
+			files := syncCheckFiles(checkText)
+			files = slices.DeleteFunc(files, func(file string) bool {
+				return slices.Contains(collisionFiles, filepath.Base(file))
+			})
+			hasDrift := strings.Contains(checkText, "out of sync")
+			if checkErr != nil && (otherCheckErrors ||
+				len(collisionFiles) == 0 && (!hasDrift || len(files) == 0)) {
+				incompleteCause = checkErr
+				issue := fmt.Errorf("sync drift diagnosis: %w", checkErr)
+				addHuman(repairplanner.StageDrift, repairDiagnosticCode(issue), issue)
+			} else if hasDrift && len(files) > 0 {
 				diagnosis.Steps = append(diagnosis.Steps, repairplanner.Step{
 					Stage: repairplanner.StageDrift, Class: repairplanner.Safe,
 					Action: "sync --locked harness drift", Code: diag.CodeOwnershipEntryDrift,
-					Files: syncCheckFiles(checkText), Inputs: []repairplanner.Input{repairplanner.InputSelection},
+					Files: files, Inputs: []repairplanner.Input{repairplanner.InputSelection},
 					Apply: func(ctx context.Context) (bool, error) {
-						return true, runSyncWithLocks(ctx, out, false, false, false, false, false, lockRunOptions{locked: true})
+						err := runSyncWithLocks(ctx, out, false, false, false, false, false, lockRunOptions{locked: true})
+						if err == nil || len(collisionFiles) == 0 {
+							return true, err
+						}
+						var checkOutput strings.Builder
+						checkErr := runSyncCheck(ctx, &checkOutput, false)
+						checkText := checkOutput.String()
+						remainingCollisions, otherCheckErrors := syncCheckCollisions(checkText)
+						if !strings.Contains(checkText, "out of sync") &&
+							!otherCheckErrors &&
+							slices.ContainsFunc(remainingCollisions, func(file string) bool {
+								return slices.Contains(collisionFiles, file)
+							}) {
+							return true, nil
+						}
+						return true, errors.Join(err, checkErr)
 					},
 				})
-			} else if checkErr != nil && !sharedCollision {
-				incompleteCause = checkErr
-				issue := fmt.Errorf("sync drift diagnosis: %w", checkErr)
-				code := repairDiagnosticCode(issue)
-				key := addHuman(repairplanner.StageLocks, code, issue)
-				blockSelection(key, "sync check could not resolve selection")
-				return diagnosis, nil
 			}
 		}
 
@@ -187,9 +204,7 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 				Action: "adopt exact shared-aggregate matches", Code: diag.CodeOwnershipUnmanagedKey,
 				Files: adoptionFiles, Inputs: []repairplanner.Input{repairplanner.InputSelection},
 				Apply: func(ctx context.Context) (bool, error) {
-					stepOpts := opts
-					stepOpts.planAuthorized = true
-					return applyRepairGroup(out, stepOpts, adoptions, revalidate)
+					return applyRepairGroup(out, opts, adoptions, revalidate)
 				},
 			})
 		}
@@ -276,7 +291,7 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 				return err
 			}
 		}
-		if hasBlockedSteps(steps) {
+		if repairplanner.HasBlockedSteps(steps) {
 			return repairIncomplete(corrupt, incompleteCause)
 		}
 		return nil
@@ -364,19 +379,38 @@ func syncCheckFiles(output string) []string {
 		}
 	}
 	sort.Strings(files)
-	if len(files) == 0 {
-		return []string{"selected harness outputs"}
-	}
 	return slices.Compact(files)
 }
 
-func hasBlockedSteps(steps []repairplanner.Step) bool {
-	for _, step := range steps {
-		if step.BlockedBy != nil || step.Class == repairplanner.HumanOnly || step.Class == repairplanner.Guided {
-			return true
+func syncCheckCollisions(output string) ([]string, bool) {
+	var files []string
+	otherErrors := false
+	for _, line := range strings.Split(output, "\n") {
+		var collisionFile string
+		if strings.Contains(line, diag.CodeOwnershipUnmanagedKey) ||
+			strings.Contains(line, "materialize.collision.user-owned") {
+			for _, file := range []string{"mcp_config.json", "config.toml"} {
+				if strings.Contains(line, file) {
+					collisionFile = file
+					break
+				}
+			}
+			if collisionFile == "" && strings.Contains(line, "hooks.json") &&
+				(strings.Contains(line, ".devin") || strings.Contains(line, ".codex") ||
+					strings.Contains(line, "Devin") || strings.Contains(line, "Codex")) {
+				collisionFile = "hooks.json"
+			}
+		}
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "error:") {
+			if collisionFile == "" {
+				otherErrors = true
+			}
+		}
+		if collisionFile != "" {
+			files = append(files, collisionFile)
 		}
 	}
-	return false
+	return slices.Compact(files), otherErrors
 }
 
 func repairIncomplete(corrupt bool, cause error) error {

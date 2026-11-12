@@ -39,11 +39,10 @@ type doctorOptions struct {
 	out io.Writer
 	in  io.Reader
 	// isTTY enables the safe-step and destructive-entry confirmations.
-	isTTY          bool
-	repair         bool
-	yes            bool
-	repairReader   *bufio.Reader
-	planAuthorized bool
+	isTTY        bool
+	repair       bool
+	yes          bool
+	repairReader *bufio.Reader
 	// ctx carries cancellation and request-scoped values from the command.
 	// Tests that do not set it get context.Background().
 	ctx context.Context
@@ -490,10 +489,6 @@ func applyRepairActions(out io.Writer, opts doctorOptions, preview *materialize.
 	for _, file := range preview.Files {
 		var adopt []int
 		for i, candidate := range file.Adoptions {
-			if !opts.yes && !opts.planAuthorized {
-				failures = append(failures, errors.New("shared-aggregate adoption lacks plan authorization"))
-				break
-			}
 			authorization := "plan confirmation"
 			if opts.yes {
 				authorization = "--yes"

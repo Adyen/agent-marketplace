@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/devincli"
 	"github.com/Adyen/agent-marketplace/internal/harness"
@@ -204,6 +207,139 @@ func TestDoctorRepairDriftKeepsAcquisitionLockUnchanged(t *testing.T) {
 	}
 	if lockAfter, err := os.ReadFile(lockPath); err != nil || !bytes.Equal(lockBefore, lockAfter) {
 		t.Fatalf("drift repair changed acquisition lock: %v\n%s", err, lockAfter)
+	}
+}
+
+// spec: doctor-repair-planning/drift-repair-leaves-acquisition-locks-byte-identical
+// spec: doctor-repair-planning/shared-aggregate-repair-runs-after-drift-repair
+func TestDoctorRepairRunsDriftBesideCodexCollision(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	repoRoot, origin, _, lockPath := setupReadOnlyExactRegistry(t)
+	source := filepath.Join(repoRoot, "extra")
+	writeFile(t, filepath.Join(source, "mcp.json"), `{"mcpServers":{"collision":{"command":"collision-binary"}}}`)
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"),
+		"apiVersion: agent-marketplace/v4\nharnesses: [factory, codex]\nsources:\n"+
+			"  locked: {git: file://"+origin+", ref: main}\n"+
+			"  extra: {directory: "+filepath.ToSlash(source)+"}\nresources:\n"+
+			"  locked: [skill/locked-skill]\n  extra: [mcp/collision]\n")
+	lockBefore, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync: %v\n%s", err, output)
+	}
+	driftPath := filepath.Join(repoRoot, ".factory", "skills", "locked-skill", "SKILL.md")
+	content, err := os.ReadFile(driftPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(driftPath, append(content, []byte("\nlocal drift\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := ownership.Open(filepath.Join(repoRoot, ".codex"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(store.StateFile()); err != nil {
+		t.Fatal(err)
+	}
+	output, err := executeCommand("doctor", "--repair", "--yes")
+	if err != nil {
+		t.Fatalf("doctor --repair --yes: %v\n%s", err, output)
+	}
+	if driftStep := strings.Index(output, "sync --locked harness drift"); driftStep < 0 ||
+		strings.Index(output, `adopt mcp-server "collision"`) < driftStep {
+		t.Fatalf("drift and Codex adoption were not planned in order:\n%s", output)
+	}
+	if !strings.Contains(output, "adopted 1 entr(y/ies) in config.toml") {
+		t.Fatalf("Codex collision was not offered to stage 6:\n%s", output)
+	}
+	if after, err := os.ReadFile(driftPath); err != nil || strings.Contains(string(after), "local drift") {
+		t.Fatalf("drift step did not restore the locked skill: %v\n%s", err, after)
+	}
+	if after, err := os.ReadFile(lockPath); err != nil || !bytes.Equal(lockBefore, after) {
+		t.Fatalf("drift repair changed the acquisition lock: %v\n%s", err, after)
+	}
+}
+
+// spec: doctor-repair-planning/repair-exits-one-when-only-blocked-or-human-only-items-remain
+func TestDoctorRepairKeepsOwnershipAdoptionAvailableAfterSyncCheckError(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	repoRoot, _ := devinDoctorEnv(t)
+	source := t.TempDir()
+	writeFile(t, filepath.Join(source, "mcp.json"), `{"mcpServers":{"adoptable":{"command":"adoptable-binary"}}}`)
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"),
+		"apiVersion: agent-marketplace/v4\nharnesses: [devin, codex]\nsources:\n"+
+			"  local: {directory: "+filepath.ToSlash(source)+"}\nresources:\n  local: {include: [mcp/adoptable]}\n")
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync: %v\n%s", err, output)
+	}
+	codexPath := filepath.Join(repoRoot, ".codex", "config.toml")
+	const corruptAggregate = "mcp_servers = [\n"
+	if err := os.WriteFile(codexPath, []byte(corruptAggregate), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	devinStore, err := ownership.Open(filepath.Join(repoRoot, ".devin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(devinStore.StateFile()); err != nil {
+		t.Fatal(err)
+	}
+	output, err := executeCommand("doctor", "--repair", "--yes")
+	if err == nil {
+		t.Fatalf("corrupt aggregate must remain an error:\n%s", output)
+	}
+	firstPlan, _, _ := strings.Cut(output, "\nrepair:")
+	if strings.Count(firstPlan, "sync drift diagnosis") != 1 ||
+		!strings.Contains(firstPlan, "adopt exact shared-aggregate matches") || strings.Contains(firstPlan, "blocked by") {
+		t.Fatalf("sync-check failure blocked the runnable ownership step:\n%s", firstPlan)
+	}
+	if !strings.Contains(output, "human-only") || !strings.Contains(output, "materialize.codex.aggregate-malformed") ||
+		!strings.Contains(output, `adopt mcp-server "adoptable"`) || !strings.Contains(output, "adopted 1 entr(y/ies) in mcp_config.json") {
+		t.Fatalf("repair output is incomplete:\n%s", output)
+	}
+	if got, err := os.ReadFile(codexPath); err != nil || string(got) != corruptAggregate {
+		t.Fatalf("repair changed corrupt aggregate: %v\n%s", err, got)
+	}
+}
+
+// spec: owned-entry-reconciliation/organization-acquisition-failure-refuses-repair
+func TestDoctorRepairListsOrganizationAcquisitionBlockers(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	repoRoot, home := devinDoctorEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	authority := t.TempDir()
+	orgPath := filepath.Join(authority, "config.yaml")
+	writeFile(t, orgPath, "apiVersion: agent-marketplace/v4\nsources:\n  hosted: {marketplace: "+server.URL+"}\nresources:\n  hosted: {include: [tools/skill/review]}\n")
+	config.SetTestOrganizationConfigPath(t, orgPath)
+	writeConfig(t, filepath.Join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
+	mcpPath, before := filepath.Join(repoRoot, ".devin", harness.DevinMcpConfigFile), []byte(`{"mcpServers":{"preserve":{"command":"manual"}}}`)
+	writeFile(t, mcpPath, string(before))
+	var out bytes.Buffer
+	if err := runDoctor(doctorOptions{out: &out, repair: true}); err == nil ||
+		!strings.Contains(out.String(), "acquire transient organization Marketplace lock") {
+		t.Fatalf("repair did not report organization acquisition failure: %v\n%s", err, out.String())
+	}
+	if strings.Count(out.String(), "blocked by") != 2 || !strings.Contains(out.String(), "sync harness drift") ||
+		!strings.Contains(out.String(), "reconcile shared-aggregate ownership") {
+		t.Fatalf("repair did not list both blocked selection steps:\n%s", out.String())
+	}
+	if after, err := os.ReadFile(mcpPath); err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("failed acquisition changed the aggregate: %v\n%s", err, after)
+	}
+	if _, err := os.Stat(filepath.Join(authority, "lock.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("failed acquisition created an organization lock: %v", err)
 	}
 }
 
