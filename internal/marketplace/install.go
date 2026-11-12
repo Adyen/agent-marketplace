@@ -191,6 +191,7 @@ func (r *Resolver) LatestRevision(ctx context.Context, entry config.MarketplaceE
 			return store.Registry{}, store.AssessedResourceRevision{}, fmt.Errorf("policy rejection: acquisition origin rejected by allowed_registries: %w", err)
 		}
 	}
+	r.Verified.record(canonical, pin, latest)
 	return registry, latest, nil
 }
 

@@ -45,13 +45,14 @@ type RefBump struct {
 
 // UpdateOptions holds the arguments for an update operation.
 type UpdateOptions struct {
-	RepoRoot            string
-	LocalConfigDir      string
-	Bump                bool
-	BumpScopes          map[lockfile.Scope]bool
-	BumpTarget          *UpdateTarget
-	DependencyReconcile UpdateDependencyReconciler
-	MarketplaceResolver *marketplace.Resolver
+	RepoRoot                     string
+	LocalConfigDir               string
+	Bump                         bool
+	BumpScopes                   map[lockfile.Scope]bool
+	BumpTarget                   *UpdateTarget
+	DependencyReconcile          UpdateDependencyReconciler
+	MarketplaceResolver          *marketplace.Resolver
+	verifiedMarketplaceRevisions *marketplace.VerifiedRevisions
 	// DryRun prepares candidate locks, pins, and ref edits without publishing
 	// or materializing anything. The dependency reconciler still prepares the
 	// exact candidate state its callback inspects; the prepared publication
@@ -185,7 +186,16 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 	if updatedRegistries > 0 && len(ec.TargetHarnesses) == 0 {
 		return nil, &TargetHarnessSetMissingError{}
 	}
+	verifiedMarketplaceRevisions := &marketplace.VerifiedRevisions{}
+	opts.verifiedMarketplaceRevisions = verifiedMarketplaceRevisions
+	var previousVerified *marketplace.VerifiedRevisions
+	if opts.MarketplaceResolver != nil {
+		previousVerified = opts.MarketplaceResolver.Verified
+	}
 	plans, err := planMarketplaceUpdates(ctx, opts, &ec)
+	if opts.MarketplaceResolver != nil {
+		opts.MarketplaceResolver.Verified = previousVerified
+	}
 	if err != nil {
 		slog.Error("update aborted while preparing Marketplace pins", "error", err)
 		return nil, err
@@ -300,6 +310,7 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 		slog.Info("update preview completed", "updated_registries", updatedRegistries, "bumps", len(bumps), "marketplace_updated", result.UpdatedMarketplacePins, "marketplace_skipped", result.SkippedMarketplacePins)
 		return result, missing
 	}
+	syncOpts = append(syncOpts, withVerifiedMarketplaceRevisions(verifiedMarketplaceRevisions))
 	synced, syncErr := silentSyncCollect(ctx, ws, syncOpts...)
 	result = updateResult(updatedRegistries, bumps, plans)
 	result.Report, result.Warnings = synced.Report, synced.Warnings
@@ -338,6 +349,9 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 	if resolverMP == nil {
 		resolverMP = marketplace.NewResolver()
 		resolverMP.AllowedRegistries = ec.Allowed
+	}
+	if opts.verifiedMarketplaceRevisions != nil {
+		resolverMP.Verified = opts.verifiedMarketplaceRevisions
 	}
 	targets := hccTargetsFromStrings(ec.TargetHarnesses)
 	plans := make([]marketplaceUpdatePlan, 0, len(ec.Merged.Marketplaces))

@@ -80,6 +80,7 @@ type ResolveOptions struct {
 	MarketplaceMode                       *resolver.MarketplaceResolveMode
 	marketplaceInstall                    *marketplace.PreparedInstall
 	marketplaceInstallSource              config.Source
+	verifiedMarketplaceRevisions          *marketplace.VerifiedRevisions
 	MarketplaceLockEvidenceStrict         bool
 	MarketplaceReportArchiveEvidenceDrift bool
 	// ConfigLoadMode selects organization-lock loading semantics; the default
@@ -641,6 +642,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	marketplaceResolver := marketplace.NewResolver()
 	marketplaceResolver.LockEvidenceStrict = opts.MarketplaceLockEvidenceStrict
 	marketplaceResolver.ReportArchiveEvidenceDrift = opts.MarketplaceReportArchiveEvidenceDrift
+	marketplaceResolver.Verified = opts.verifiedMarketplaceRevisions
 	// Keep the effective registry origin policy on the Marketplace resolver as
 	// well as on the loaded config. PrepareLocator uses the resolver directly,
 	// while normal sync passes the loaded config through the generic resolver.
