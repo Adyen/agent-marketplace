@@ -31,21 +31,38 @@ func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, lay
 		entry := config.MarketplaceEntry{URL: source.URL, Alias: source.Name, Source: layer.Source}
 		resources := make(map[string]lockfile.MarketplaceResourceLock, len(source.Requests))
 		bindings := make(map[string]string, len(source.Requests))
-		for _, request := range source.Requests {
-			remainingResources := min(maxMarketplaceLockResources-resourceCount, maxMarketplaceLockResources-processedPins, maxMarketplaceLockResources-preparationWork)
-			if remainingResources < 1 {
-				return lockfile.Document{}, fmt.Errorf("marketplace lock resources exceed representable limit %d", maxMarketplaceLockResources)
-			}
-			plan, err := marketplaceResolver.PrepareLocatorWithResourceLimit(ctx, entry, marketplace.MarketplaceLocator{
-				URL:      entry.URL,
+		remainingResources := min(maxMarketplaceLockResources-resourceCount, maxMarketplaceLockResources-processedPins, maxMarketplaceLockResources-preparationWork)
+		if len(source.Requests) > 0 && remainingResources < 1 {
+			return lockfile.Document{}, fmt.Errorf("marketplace lock resources exceed representable limit %d", maxMarketplaceLockResources)
+		}
+		sourceEntry := entry
+		type requestResult struct {
+			plan *marketplace.PreparedInstall
+			err  error
+		}
+		results := marketplace.ResolveConcurrently(len(source.Requests), func(i int) requestResult {
+			request := source.Requests[i]
+			plan, err := marketplaceResolver.PrepareLocatorWithResourceLimit(ctx, sourceEntry, marketplace.MarketplaceLocator{
+				URL:      sourceEntry.URL,
 				Registry: request.Registry,
 				Kind:     request.MarketplaceKind(),
 				Name:     request.Name,
 				Revision: request.Options.Revision,
 				Digest:   request.Options.Revision,
 			}, targets, remainingResources, policy)
+			return requestResult{plan: plan, err: err}
+		})
+		for i, request := range source.Requests {
+			remainingResources := min(maxMarketplaceLockResources-resourceCount, maxMarketplaceLockResources-processedPins, maxMarketplaceLockResources-preparationWork)
+			if remainingResources < 1 {
+				return lockfile.Document{}, fmt.Errorf("marketplace lock resources exceed representable limit %d", maxMarketplaceLockResources)
+			}
+			plan, err := results[i].plan, results[i].err
 			if err != nil {
 				return lockfile.Document{}, fmt.Errorf("resolve %s: %w", request.Locator, err)
+			}
+			if i > 0 && plan.Entry.InstanceID != entry.InstanceID {
+				return lockfile.Document{}, fmt.Errorf("marketplace instance ID mismatch for %s: got %q, want %q", request.Locator, plan.Entry.InstanceID, entry.InstanceID)
 			}
 			if plan.PreparationWork < 1 || plan.PreparationWork > remainingResources {
 				return lockfile.Document{}, fmt.Errorf("marketplace lock preparation work exceeds processing limit %d", maxMarketplaceLockResources)

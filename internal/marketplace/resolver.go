@@ -193,6 +193,7 @@ func (r *Resolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, ta
 				blockedCollections[collectionSelectionKey(pin.RegistryID, pin.Name, pin.Revision)] = graphErr
 			}
 		}
+		leafPins := make([]config.MarketplaceResourcePin, 0, len(entry.Resources))
 		for _, pin := range entry.Resources {
 			if pin.Kind == "collection" && hasExpandedCollectionLeaves(entry, pin) {
 				continue
@@ -206,7 +207,18 @@ func (r *Resolver) ResolveWithPolicy(ctx context.Context, cfg *config.Config, ta
 				slog.Warn("marketplace leaf materialization blocked by revoked collection graph", "url", entry.URL, "registry_id", pin.RegistryID, "kind", pin.Kind, "name", pin.Name, "error", blocked)
 				continue
 			}
-			resolved, err := r.resolvePinWithPolicy(ctx, client, cache, entry, pin, targetSet, mode, policy, allowedRegistries)
+			leafPins = append(leafPins, pin)
+		}
+		type leafResult struct {
+			artifact resolver.ResolvedArtifact
+			err      error
+		}
+		leafResults := ResolveConcurrently(len(leafPins), func(i int) leafResult {
+			artifact, err := r.resolvePinWithPolicy(ctx, client, cache, entry, leafPins[i], targetSet, mode, policy, allowedRegistries)
+			return leafResult{artifact: artifact, err: err}
+		})
+		for i, pin := range leafPins {
+			resolved, err := leafResults[i].artifact, leafResults[i].err
 			if err != nil {
 				errs = append(errs, &PinError{Entry: entry, Pin: pin, Err: err})
 				continue
