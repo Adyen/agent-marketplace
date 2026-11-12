@@ -265,8 +265,13 @@ func runScopedToggleAt(repoRoot string, act toggleAction, mapper pipeline.Config
 		entry := config.RegistryEntry{URL: act.registryURL, Ref: act.registryRef, Path: act.registryPath, V4Kind: act.registryKind, SourceHarness: act.sourceHarness}
 		locator := config.ResourceLocator{Kind: act.kind, Name: act.skillName}
 		target := config.LayerTarget{Source: source, StagedPath: mappedPath, DeclaringPath: originalPath}
+		if act.pluginName != "" && act.scope == scopeGlobal && act.enable {
+			if err := config.ValidateGlobalRegistryWrite(entry); err != nil {
+				return configWrittenMsg{skillName: act.skillName, enabled: act.enable, selectNext: act.disablesResource(), err: err}
+			}
+		}
 		var err error
-		if act.scope == scopeLocalExclude {
+		if act.scope == scopeLocalExclude || act.pluginName != "" {
 			err = pipeline.EditLayerAtPath(target, func(m *pipeline.LayerMutation) error {
 				return applyToggleAction(m, act)
 			})
