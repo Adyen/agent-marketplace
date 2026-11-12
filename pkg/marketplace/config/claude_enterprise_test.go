@@ -47,12 +47,32 @@ claude_enterprise:
 			t.Fatalf("configuration rendering disclosed the inline key: %q", rendered)
 		}
 	}
+
+	_, err = ParseConfig([]byte(validConfigYAML() + `
+claude_enterprise:
+  enabled: true
+  api_key: scalar-secret-sentinel
+`))
+	if err == nil {
+		t.Fatal("scalar Claude Admin API key was accepted")
+	}
+	if !errors.As(err, &coded) {
+		t.Fatalf("scalar error = %T %v, want coded Claude Enterprise validation error", err, err)
+	}
+	if coded.ErrorCode() != "claude_enterprise.api-key-inline" ||
+		coded.FieldName() != "claude_enterprise.api_key" {
+		t.Fatalf("scalar coded error = %q for %q", coded.ErrorCode(), coded.FieldName())
+	}
+	if strings.Contains(err.Error(), "scalar-secret-sentinel") {
+		t.Fatalf("validation error disclosed scalar key: %v", err)
+	}
 }
 
 func TestClaudeEnterpriseDefaultsAndReferences(t *testing.T) {
 	cfg, err := ParseConfig([]byte(validConfigYAML() + `
 claude_enterprise:
   enabled: true
+  api_key_id: apikey_AbC123
   api_key:
     env: CLAUDE_ENTERPRISE_ADMIN_KEY
 `))
@@ -74,12 +94,56 @@ claude_enterprise:
 	if got := cfg.ClaudeEnterprise.APIKey.Env; got != "CLAUDE_ENTERPRISE_ADMIN_KEY" {
 		t.Fatalf("API key environment reference = %q", got)
 	}
+	if got := cfg.ClaudeEnterprise.APIKeyID; got != "apikey_AbC123" {
+		t.Fatalf("API key identifier = %q", got)
+	}
+}
+
+func TestClaudeEnterpriseAPIKeyIdentifierValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		field   string
+		wantErr bool
+	}{
+		{name: "missing when enabled", field: ""},
+		{name: "valid identifier", field: "apikey_AbC123"},
+		{name: "invalid identifier", field: "apikey_bad-id", wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			field := ""
+			if test.field != "" {
+				field = "  api_key_id: " + test.field + "\n"
+			}
+			_, err := ParseConfig([]byte(validConfigYAML() + `
+claude_enterprise:
+  enabled: true
+` + field + `  api_key:
+    env: CLAUDE_ENTERPRISE_ADMIN_KEY
+`))
+			if test.wantErr || test.field == "" {
+				var coded interface {
+					ErrorCode() string
+					FieldName() string
+				}
+				if !errors.As(err, &coded) || coded.ErrorCode() != "claude_enterprise.api-key-id" ||
+					coded.FieldName() != "claude_enterprise.api_key_id" {
+					t.Fatalf("identifier validation error = %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseConfig: %v", err)
+			}
+		})
+	}
 }
 
 func TestClaudeEnterpriseAcceptsFileReferencedAPIKey(t *testing.T) {
 	cfg, err := ParseConfig([]byte(validConfigYAML() + `
 claude_enterprise:
   enabled: true
+  api_key_id: apikey_AbC123
   api_key:
     file: /run/secrets/claude-admin-key
 `))
@@ -176,6 +240,7 @@ func TestClaudeEnterpriseRuntimeChangesAreWorkerSafe(t *testing.T) {
 			next: validConfigYAML() + `
 claude_enterprise:
   enabled: true
+  api_key_id: apikey_AbC123
   api_key:
     env: ORIGINAL_ADMIN_KEY
 `,
@@ -185,6 +250,7 @@ claude_enterprise:
 			running: validConfigYAML() + `
 claude_enterprise:
   enabled: true
+  api_key_id: apikey_AbC123
   api_key:
     env: ORIGINAL_ADMIN_KEY
 `,
@@ -200,14 +266,33 @@ claude_enterprise:
 			running: validConfigYAML() + `
 claude_enterprise:
   enabled: true
+  api_key_id: apikey_AbC123
   api_key:
     env: ORIGINAL_ADMIN_KEY
 `,
 			next: validConfigYAML() + `
 claude_enterprise:
   enabled: true
+  api_key_id: apikey_AbC123
   api_key:
     env: ROTATED_ADMIN_KEY
+`,
+		},
+		{
+			name: "API key identifier",
+			running: validConfigYAML() + `
+claude_enterprise:
+  enabled: true
+  api_key_id: apikey_AbC123
+  api_key:
+    env: ORIGINAL_ADMIN_KEY
+`,
+			next: validConfigYAML() + `
+claude_enterprise:
+  enabled: true
+  api_key_id: apikey_XYZ789
+  api_key:
+    env: ORIGINAL_ADMIN_KEY
 `,
 		},
 	}
@@ -246,6 +331,7 @@ func TestClaudeEnterpriseRuntimeReplacementAppliesAndInvalidCandidateKeepsLastGo
 	valid := validConfigYAML() + `
 claude_enterprise:
   enabled: true
+  api_key_id: apikey_AbC123
   api_key:
     env: CLAUDE_ADMIN_KEY
 `

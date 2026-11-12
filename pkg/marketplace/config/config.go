@@ -144,6 +144,7 @@ type Config struct {
 type ClaudeEnterprise struct {
 	Enabled                       bool                            `yaml:"enabled"`
 	APIKey                        ClaudeEnterpriseAPIKeyReference `yaml:"api_key"`
+	APIKeyID                      string                          `yaml:"api_key_id"`
 	MarketplaceID                 string                          `yaml:"marketplace_id,omitempty"`
 	PluginNamePrefix              *string                         `yaml:"plugin_name_prefix,omitempty"`
 	DefaultInstallationPreference *string                         `yaml:"default_installation_preference,omitempty"`
@@ -158,7 +159,7 @@ type ClaudeEnterpriseAPIKeyReference struct {
 
 func (r *ClaudeEnterpriseAPIKeyReference) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind != yaml.MappingNode {
-		return errors.New("claude_enterprise.api_key must be a file or environment reference")
+		return &ClaudeEnterpriseConfigError{code: claudeEnterpriseAPIKeyInlineCode, field: "claude_enterprise.api_key"}
 	}
 	var raw struct {
 		File  string `yaml:"file"`
@@ -205,12 +206,14 @@ func (r ClaudeEnterpriseAPIKeyReference) MarshalYAML() (any, error) {
 const (
 	claudeEnterpriseAPIKeyInlineCode = "claude_enterprise.api-key-inline"
 	claudeEnterpriseAPIKeyRefCode    = "claude_enterprise.api-key-reference"
+	claudeEnterpriseAPIKeyIDCode     = "claude_enterprise.api-key-id"
 	claudeEnterprisePreferenceCode   = "claude_enterprise.installation-preference"
 	claudeEnterprisePrefixCode       = "claude_enterprise.plugin-name-prefix"
 	claudeEnterpriseIntervalCode     = "claude_enterprise.interval"
 )
 
 var pluginNamePrefixPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
+var claudeEnterpriseAPIKeyIDPattern = regexp.MustCompile(`^apikey_[A-Za-z0-9]+$`)
 
 type ClaudeEnterpriseConfigError struct {
 	code  string
@@ -260,6 +263,10 @@ func (c *ClaudeEnterprise) validate() error {
 		errs = append(errs, &ClaudeEnterpriseConfigError{code: claudeEnterpriseAPIKeyRefCode, field: "claude_enterprise.api_key"})
 	case c.Enabled && !hasFile && !hasEnv:
 		errs = append(errs, &ClaudeEnterpriseConfigError{code: claudeEnterpriseAPIKeyRefCode, field: "claude_enterprise.api_key"})
+	}
+	if (c.Enabled && strings.TrimSpace(c.APIKeyID) == "") ||
+		(c.APIKeyID != "" && !claudeEnterpriseAPIKeyIDPattern.MatchString(c.APIKeyID)) {
+		errs = append(errs, &ClaudeEnterpriseConfigError{code: claudeEnterpriseAPIKeyIDCode, field: "claude_enterprise.api_key_id"})
 	}
 	prefix := c.PluginPrefix()
 	if len(prefix) < 1 || len(prefix) > 16 || !pluginNamePrefixPattern.MatchString(prefix) {

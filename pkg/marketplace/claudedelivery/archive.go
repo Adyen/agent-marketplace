@@ -29,6 +29,7 @@ type BuildInput struct {
 	CanonicalArtifact []byte
 	Identity          ResourceIdentity
 	PluginNamePrefix  string
+	PluginName        string
 	PublicationID     string
 	RegistryCommit    string
 	PublisherName     string
@@ -128,9 +129,12 @@ func BuildArchive(input BuildInput) (BuildResult, error) {
 	if _, _, err := ir.ValidateResource(resource); err != nil {
 		return BuildResult{}, errors.New("canonical Claude delivery resource is invalid")
 	}
-	pluginName, err := DerivePluginName(input.PluginNamePrefix, identity)
-	if err != nil {
-		return BuildResult{}, err
+	pluginName := input.PluginName
+	if pluginName == "" {
+		pluginName, err = DerivePluginName(input.PluginNamePrefix, identity)
+		if err != nil {
+			return BuildResult{}, err
+		}
 	}
 	files, err := pluginFiles(resource, canonicalArtifact)
 	if err != nil {
