@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
@@ -216,7 +217,7 @@ func validateLocatorRevision(locator MarketplaceLocator, revision store.Assessed
 // verifies its mirror artifact. It deliberately does not edit configuration.
 // Collection traversal shares the lock-bootstrap work limit.
 func (r *Resolver) PrepareLocator(ctx context.Context, entry config.MarketplaceEntry, locator MarketplaceLocator, targets []hcc.Target) (*PreparedInstall, error) {
-	return r.prepareLocator(ctx, entry, locator, targets, lockfile.MaxMarketplaceLockResources, nil)
+	return r.prepareLocator(ctx, entry, locator, targets, NewPreparationBudget(lockfile.MaxMarketplaceLockResources), nil)
 }
 
 // PrepareLocatorWithResourceLimit is PrepareLocator with an upper bound on
@@ -225,16 +226,47 @@ func (r *Resolver) PrepareLocatorWithResourceLimit(ctx context.Context, entry co
 	if resourceLimit < 1 {
 		return nil, fmt.Errorf("marketplace prepared resource limit must be positive")
 	}
+	return r.PrepareLocatorWithBudget(ctx, entry, locator, targets, NewPreparationBudget(resourceLimit), policies...)
+}
+
+// PrepareLocatorWithBudget is PrepareLocatorWithResourceLimit with a budget that
+// concurrent preparations may share.
+func (r *Resolver) PrepareLocatorWithBudget(ctx context.Context, entry config.MarketplaceEntry, locator MarketplaceLocator, targets []hcc.Target, budget *PreparationBudget, policies ...resolver.MarketplaceRevocationPolicy) (*PreparedInstall, error) {
 	var policy resolver.MarketplaceRevocationPolicy
 	if len(policies) > 0 {
 		policy = policies[0]
 	}
-	return r.prepareLocator(ctx, entry, locator, targets, resourceLimit, policy)
+	return r.prepareLocator(ctx, entry, locator, targets, budget, policy)
+}
+
+// PreparationBudget bounds the preparation work shared by concurrent preparations.
+type PreparationBudget struct {
+	mu    sync.Mutex
+	limit int
+	used  int
+}
+
+func NewPreparationBudget(limit int) *PreparationBudget {
+	return &PreparationBudget{limit: limit}
+}
+
+func (b *PreparationBudget) reserve(count int) error {
+	if b == nil || count == 0 {
+		return nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if count < 0 || b.used > b.limit-count {
+		return fmt.Errorf("marketplace collection preparation work exceeds resource limit %d", b.limit)
+	}
+	b.used += count
+	return nil
 }
 
 type collectionPreparationBudget struct {
-	limit int
-	used  int
+	// shared is reserved on every consume; nil means unlimited.
+	shared *PreparationBudget
+	used   int
 	// verified records the nested collections fully verified by this
 	// preparation, keyed by registry, name and content revision.
 	verified map[string]bool
@@ -254,16 +286,22 @@ func (b *collectionPreparationBudget) consume(count int) error {
 	if b == nil || count == 0 {
 		return nil
 	}
-	if count < 0 || (b.limit > 0 && b.used > b.limit-count) {
-		return fmt.Errorf("marketplace collection preparation work exceeds resource limit %d", b.limit)
+	if err := b.shared.reserve(count); err != nil {
+		return err
 	}
 	b.used += count
 	return nil
 }
 
-func (r *Resolver) prepareLocator(ctx context.Context, entry config.MarketplaceEntry, locator MarketplaceLocator, targets []hcc.Target, resourceLimit int, policy resolver.MarketplaceRevocationPolicy) (*PreparedInstall, error) {
+func (r *Resolver) prepareLocator(ctx context.Context, entry config.MarketplaceEntry, locator MarketplaceLocator, targets []hcc.Target, shared *PreparationBudget, policy resolver.MarketplaceRevocationPolicy) (*PreparedInstall, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	budget := &collectionPreparationBudget{shared: shared}
+	if locator.Kind != "collection" {
+		if err := budget.consume(1); err != nil {
+			return nil, err
+		}
 	}
 	canonical, err := canonicalMarketplaceEntry(entry)
 	if err != nil {
@@ -357,7 +395,6 @@ func (r *Resolver) prepareLocator(ctx context.Context, entry config.MarketplaceE
 
 	cache := r.cache()
 	if locator.Kind == "collection" {
-		budget := &collectionPreparationBudget{limit: resourceLimit}
 		if err := budget.consume(1); err != nil {
 			return nil, err
 		}
