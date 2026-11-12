@@ -151,17 +151,18 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | 'signal' | null 
       </div>
       <ul class="gui-sidebar__list gui-sidebar__list--scroll">
         <li v-for="entry in sources" :key="entry.source.id">
-          <button
-            type="button"
-            class="gui-nav-row gui-nav-row--compact gui-source-row"
-            :title="entry.source.location"
-            :aria-label="`Open source ${entry.source.location}`"
-            @click="emit('openSources')"
-          >
-            <GuiIcon :name="sourceIcons[entry.source.kind]" />
-            <span class="gui-source-row__location">{{ sourceName(entry.source) }}</span>
-            <span v-if="entry.organization" class="gui-tag">ORG</span>
-          </button>
+          <UTooltip :text="entry.source.location" :ui="{ content: 'gui-source-row__tooltip' }">
+            <button
+              type="button"
+              class="gui-nav-row gui-nav-row--compact gui-source-row"
+              :aria-label="`Open source ${entry.source.location}`"
+              @click="emit('openSources')"
+            >
+              <GuiIcon :name="sourceIcons[entry.source.kind]" />
+              <span class="gui-source-row__location">{{ sourceName(entry.source) }}</span>
+              <span v-if="entry.organization" class="gui-tag">ORG</span>
+            </button>
+          </UTooltip>
         </li>
       </ul>
     </section>

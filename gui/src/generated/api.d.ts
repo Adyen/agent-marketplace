@@ -184,8 +184,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Read primary and declared supporting files from an installed Marketplace skill
-         * @description Available only in user-scope mode. rowId is resolved against the current visible session rows; the browser supplies no root, path, source coordinate, revision, or digest. fileId is an opaque identity bound to the row, current generation, member path, and captured source identity. The route reads only the verified canonical skill primary and its archive members or declared staged support files. Raster image members return metadata without file bytes; text, scripts, JavaScript, and SVG are returned only as inert text. Missing or changed content fails with a static unavailable error. The request does not access the Marketplace SDK, mutate session state, write configuration, acquisition locks, caches, or materialized files, or emit operation, snapshot, discovery, telemetry, or progress events.
+         * Read primary and declared supporting files from an installed Marketplace or local directory/Git skill
+         * @description Available only in user-scope mode. rowId is resolved against the current visible session rows; the browser supplies no root, path, source coordinate, revision, or digest. fileId is an opaque identity bound to the row, current generation, member path, and captured source identity. The route reads installed Marketplace skills from their verified archive or staged directory. Directory and Git skills are read from the captured source root, relative to the directory of the cataloged SKILL.md and limited to that skill's declared supporting files; a symlink is followed only when its target remains inside that root. Raster image members return metadata without file bytes; text, scripts, JavaScript, and SVG are returned only as inert text. Missing, unsafe, or changed content fails with a static unavailable error. The request does not access the Marketplace SDK, mutate session state, write configuration, acquisition locks, caches, or materialized files, or emit operation, snapshot, discovery, telemetry, or progress events.
          *
          */
         post: operations["readInstalledMarketplaceSkillFiles"];
@@ -207,13 +207,19 @@ export interface paths {
         /**
          * Report the newer stable public release, if any
          * @description Available only in user-scope mode; the request carries no body and
-         *     no query. When Consumer organization configuration enables release
-         *     checking (the default), the session compares the running GUI
-         *     version with the latest stable public GitHub release at most once
-         *     per launch and returns the newer stable version. A disabled
-         *     policy, a policy read failure, any check failure, or a non-newer
-         *     result silently returns an empty latestVersion without an error;
-         *     the check never downloads or installs a release.
+         *     no query. When release checking is enabled by the effective
+         *     update_check.enabled setting (the default) and neither
+         *     AGENT_MARKETPLACE_NO_UPDATE_CHECK nor CI is set, the session compares
+         *     a supported release or Go pseudo-version build with the latest stable
+         *     public GitHub release at most once per launch. A newer result includes
+         *     its release page URL and, when this build's package asset and
+         *     SHA256SUMS are published, their download URLs. An unpackaged build or
+         *     one without a matching asset receives only the release page URL.
+         *     A macOS build with a matching update asset also receives the matching
+         *     disk image URL for an ineligible-location fallback.
+         *     Suppression, a policy read failure, any check failure, an unsupported
+         *     build kind, or a non-newer result silently returns empty fields without
+         *     an error; the check never downloads or installs a release.
          *
          */
         post: operations["readReleaseNotice"];
@@ -308,6 +314,8 @@ export interface paths {
          *     operation holds the serializer, or when a superseded read is
          *     overtaken, a read returns the latest accepted snapshot state
          *     without delivering a new snapshot event.
+         *     `checkUpdates` is true only for launch and an explicit user refresh;
+         *     focus-triggered reloads leave it false.
          *
          */
         post: operations["readSnapshot"];
@@ -336,6 +344,32 @@ export interface paths {
          *
          */
         post: operations["recordTelemetryEvent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start, observe, confirm, or cancel a GUI update
+         * @description Available only in user-scope mode. The closed request selects one
+         *     action and cannot carry URLs; package and checksum URLs come only
+         *     from the server's cached latest-release result. Start returns
+         *     immediately with a phase that status can poll. Confirm is called
+         *     after the existing quit guard accepts, and cancel removes staged
+         *     data. Linux start saves the verified package and opens xdg-open.
+         *
+         */
+        post: operations["updateGui"];
         delete?: never;
         options?: never;
         head?: never;
@@ -441,6 +475,8 @@ export interface components {
         DiscoveryHealth: {
             /** @enum {string} */
             cacheState: "miss" | "fresh" | "stale";
+            /** @description Whether the endpoint has a successful result for the current discovery. */
+            checked: boolean;
             /** @description SHA256 digest of the normalized Marketplace endpoint URL and verified instance identity. */
             id: string;
             /** @description Sanitized endpoint alias or normalized URL. */
@@ -462,7 +498,7 @@ export interface components {
         DriftAssessment: "pending" | "ready" | "failed";
         Error: {
             /** @enum {string} */
-            code: "localapi.unauthorized" | "localapi.forbidden" | "localapi.invalid_request" | "localapi.not_ready" | "localapi.not_supported" | "localapi.busy" | "localapi.closed" | "localapi.inspection_unavailable" | "localapi.resource_files_unavailable" | "localapi.resource_action_unavailable";
+            code: "localapi.unauthorized" | "localapi.forbidden" | "localapi.invalid_request" | "localapi.not_ready" | "localapi.not_supported" | "localapi.busy" | "localapi.closed" | "localapi.inspection_unavailable" | "localapi.resource_files_unavailable" | "localapi.source_files_unavailable" | "localapi.resource_action_unavailable";
             /** @description Static, non-reflective failure description. */
             message: string;
         };
@@ -637,8 +673,16 @@ export interface components {
             type: "progress";
         };
         ReleaseNotice: {
+            /** @description Matching GUI package download URL when this build's package format and architecture are published with SHA256SUMS; otherwise empty. */
+            assetURL: string;
+            /** @description SHA256SUMS download URL accompanying assetURL; otherwise empty. */
+            checksumsURL: string;
+            /** @description Server-resolved macOS disk image URL for the ineligible-location browser fallback; otherwise empty. */
+            dmgURL: string;
             /** @description Newer stable public release version, or empty when no notice applies. */
             latestVersion: string;
+            /** @description Newer release's public GitHub release page, or empty when no notice applies. */
+            releasePageURL: string;
         };
         RemoveSourceActionRequest: {
             /**
@@ -697,6 +741,8 @@ export interface components {
          *      */
         SessionEvent: components["schemas"]["SnapshotEvent"] | components["schemas"]["ProgressEvent"] | components["schemas"]["NotificationEvent"] | components["schemas"]["DiscoveryEvent"];
         Snapshot: {
+            /** @description Number of user-personal resources the latest read-only update preview would add or change; zero before a completed check or after a failed check. */
+            availableUpdates: number;
             diagnostics: components["schemas"]["Diagnostic"][];
             /** @description Whether a validated accepted user-scope configuration enables Marketplace discovery. */
             discoveryEnabled: boolean;
@@ -739,10 +785,16 @@ export interface components {
              */
             type: "snapshot";
         };
+        SnapshotRequest: {
+            /** @description True for launch and explicit Refresh; false for focus reloads. */
+            checkUpdates?: boolean;
+        };
         SnapshotRow: {
             /** @description Whether the resource is enabled by any configuration scope, derived from row enablement metadata. */
             checked: boolean;
             description: string;
+            /** @description Whether the resource is excluded from its configured selection. */
+            disabled: boolean;
             /** @description Whether this row is a Marketplace discovery result rather than an accepted local row. */
             discovery: boolean;
             /** @description Sanitized single-line resource name for display. */
@@ -756,7 +808,7 @@ export interface components {
             id: string;
             /** @description Whether this exact uninstalled Marketplace skill has a current verified revision eligible for read-only inspection. */
             inspectable: boolean;
-            /** @description Whether this installed Marketplace skill has the read-only installed-files capability. The capability remains visible if its local cached content is unavailable. */
+            /** @description Whether this installed Marketplace skill or directory/Git skill with a captured source root has the read-only installed-files capability. Local source availability is checked when opened; Marketplace capability remains visible if its cached content is unavailable. */
             installedFiles: boolean;
             kind: string;
             /** @description Raw resource name retained for identity and deterministic sorting. */
@@ -792,6 +844,8 @@ export interface components {
             kind: "git" | "directory" | "marketplace";
             /** @description Declared Git URL, directory declaration, or normalized Marketplace URL with embedded credentials and URL query/fragment redacted; directory locations are resolved source locations, not raw configuration paths. */
             location: string;
+            /** @description The configured name from the v4 sources mapping. */
+            name: string;
             /** @description Declared sub-path within a source, or empty. */
             path: string;
             /** @description Declared Git ref, or empty. */
@@ -809,6 +863,27 @@ export interface components {
         };
         /** @enum {string} */
         StatusGroupID: "required" | "enabled" | "pending" | "stale" | "broken" | "available" | "malformed";
+        UpdateRequest: {
+            /** @enum {string} */
+            action: "start" | "status" | "confirm" | "cancel";
+        };
+        UpdateStatus: {
+            /** @description Server-resolved macOS disk image URL for browser fallback, or empty. */
+            browserURL: string;
+            /** @description User-visible failure detail, or empty. */
+            error: string;
+            /** @description Whether an ineligible macOS app must be moved to Applications to enable in-app updates. */
+            moveToApplications: boolean;
+            /** @enum {string} */
+            phase: "idle" | "downloading" | "verifying" | "ready" | "swapping" | "handing-off" | "complete" | "fallback" | "failed" | "cancelled";
+            progress: number;
+            /** @description Server-resolved release page URL for Linux handoff fallback, or empty. */
+            releasePageURL: string;
+            /** @description Whether the user should restart after installing the Linux package. */
+            restartRequired: boolean;
+            /** @description Path of the verified Linux package saved for desktop installation, or empty. */
+            savedPath: string;
+        };
     };
     responses: {
         /** @description API lifetime ended; code localapi.closed */
@@ -1128,7 +1203,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["OriginRejected"];
             405: components["responses"]["MethodNotAllowed"];
-            /** @description Verified local resource files are missing or unavailable; code localapi.resource_files_unavailable */
+            /** @description Verified Marketplace files are unavailable (code localapi.resource_files_unavailable) or local skill source files are missing or unsafe (code localapi.source_files_unavailable) */
             502: {
                 headers: {
                     [name: string]: unknown;
@@ -1149,7 +1224,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Newer stable public release version, or empty */
+            /** @description Newer stable public release version and download links, or empty fields when no notice applies */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1281,7 +1356,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["SnapshotRequest"];
+            };
+        };
         responses: {
             /** @description Newest snapshot state for the session */
             200: {
@@ -1330,6 +1409,52 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["OriginRejected"];
             405: components["responses"]["MethodNotAllowed"];
+            503: components["responses"]["Closed"];
+        };
+    };
+    updateGui: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Update progress or result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateStatus"];
+                };
+            };
+            /** @description Malformed request, unsupported mode, or no verified package; code localapi.invalid_request or localapi.not_supported */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["OriginRejected"];
+            405: components["responses"]["MethodNotAllowed"];
+            /** @description No verified macOS update is ready to confirm */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateStatus"];
+                };
+            };
             503: components["responses"]["Closed"];
         };
     };

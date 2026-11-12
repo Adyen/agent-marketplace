@@ -52,6 +52,7 @@ type Entry struct {
 	SourceHarness     string      `json:"-"`
 	PrimarySourcePath string      `json:"-"`
 	PackageRoot       string      `json:"-"`
+	SourceRoot        string      `json:"-"`
 	// Plugin carries package metadata for Kind == ir.KindPlugin entries;
 	// nil for loose resources.
 	Plugin *PluginEntry `json:"-"`
@@ -339,6 +340,7 @@ func LoadSourceWithOptions(srcFS *fsboundary.SourceFS, dir, sourceHarness string
 	cat.sourceRefusal = srcFS.Refusal()
 	definition, _ := target.Lookup(cat.SourceHarness)
 	for i := range cat.Entries {
+		cat.Entries[i].SourceRoot = root
 		primary := filepath.ToSlash(cat.Entries[i].Path)
 		if cat.Entries[i].Kind == ir.KindPlugin && cat.Entries[i].Plugin != nil && cat.Entries[i].Plugin.Source.Kind == "path" {
 			cat.Entries[i].PackageRoot = pluginPackageRoot(root, cat.Entries[i].Path, cat.Entries[i].Plugin.Format)

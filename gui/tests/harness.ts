@@ -21,6 +21,7 @@ export interface Bootstrap {
   orgConfig?: string
   marketplaceEndpoint?: string
   gitSourceURL?: string
+  gitSourceWorking?: string
   syncStarted?: string
   syncRelease?: string
   discoveryAcquisitionStarted?: string
@@ -29,6 +30,11 @@ export interface Bootstrap {
   discoveryFirstSearchStarted?: string
   discoveryFirstSearchCanceled?: string
   discoverySecondSearchStarted?: string
+  localSkillFilesConfig?: string
+  localSkillFilesLock?: string
+  localSkillFilesMaterialized?: string
+  localSkillFilesDirectory?: string
+  localSkillFilesOutside?: string
 }
 
 export interface Harness {

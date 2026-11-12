@@ -29,6 +29,10 @@ func installedSkillFileID(rowID string, generation uint64, file session.Installe
 	return hex.EncodeToString(sum[:])
 }
 
+func installedSkillFilesEligible(row session.Row) bool {
+	return session.MarketplaceInstalledSkillFiles(row) || session.LocalSkillFiles(row)
+}
+
 func (a *API) handleInstalledSkillFiles(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if !a.userOnly {
@@ -50,7 +54,7 @@ func (a *API) handleInstalledSkillFiles(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	row, generation, code := a.visibleResourceRow(request.rowID, session.MarketplaceInstalledSkillFiles)
+	row, generation, code := a.visibleResourceRow(request.rowID, installedSkillFilesEligible)
 	if code != "" {
 		status := http.StatusBadRequest
 		if code == codeClosed {
@@ -59,9 +63,17 @@ func (a *API) handleInstalledSkillFiles(w http.ResponseWriter, r *http.Request) 
 		writeError(w, status, code)
 		return
 	}
-	bundle, err := session.OpenInstalledSkillBundle(row)
+	failureCode := codeResourceFilesUnavailable
+	var bundle *session.InstalledSkillBundle
+	var err error
+	if session.LocalSkillFiles(row) {
+		failureCode = codeSourceFilesUnavailable
+		bundle, err = session.OpenLocalSkillBundle(row)
+	} else {
+		bundle, err = session.OpenInstalledSkillBundle(row)
+	}
 	if err != nil {
-		a.installedSkillFilesFailure(w, r)
+		a.installedSkillFilesFailure(w, r, failureCode)
 		return
 	}
 	defer func() { _ = bundle.Close() }()
@@ -86,7 +98,7 @@ func (a *API) handleInstalledSkillFiles(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if response.PrimaryFileID == "" {
-		a.installedSkillFilesFailure(w, r)
+		a.installedSkillFilesFailure(w, r, failureCode)
 		return
 	}
 	response.SelectedFileID = response.PrimaryFileID
@@ -114,7 +126,7 @@ func (a *API) handleInstalledSkillFiles(w http.ResponseWriter, r *http.Request) 
 			if r.Context().Err() != nil {
 				return
 			}
-			a.installedSkillFilesFailure(w, r)
+			a.installedSkillFilesFailure(w, r, failureCode)
 			return
 		} else {
 			response.Content, response.Truncated = inspectionPreview(data)
@@ -123,7 +135,7 @@ func (a *API) handleInstalledSkillFiles(w http.ResponseWriter, r *http.Request) 
 	a.deliverInstalledSkillFiles(w, r, request.rowID, generation, response)
 }
 
-func (a *API) installedSkillFilesFailure(w http.ResponseWriter, r *http.Request) {
+func (a *API) installedSkillFilesFailure(w http.ResponseWriter, r *http.Request, code string) {
 	if r.Context().Err() != nil {
 		return
 	}
@@ -134,11 +146,11 @@ func (a *API) installedSkillFilesFailure(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusServiceUnavailable, codeClosed)
 		return
 	}
-	writeError(w, http.StatusBadGateway, codeResourceFilesUnavailable)
+	writeError(w, http.StatusBadGateway, code)
 }
 
 func (a *API) deliverInstalledSkillFiles(w http.ResponseWriter, r *http.Request, rowID string, generation session.RequestGeneration, response installedSkillFilesPayloadDTO) {
-	current, closed := a.visibleResourceRowStillCurrent(rowID, generation, session.MarketplaceInstalledSkillFiles)
+	current, closed := a.visibleResourceRowStillCurrent(rowID, generation, installedSkillFilesEligible)
 	if closed {
 		writeError(w, http.StatusServiceUnavailable, codeClosed)
 		return

@@ -27,6 +27,7 @@ import (
 )
 
 type sourceDescriptionDTO struct {
+	Name          string `json:"name"`
 	ID            string `json:"id"`
 	Kind          string `json:"kind"`
 	Location      string `json:"location"`
@@ -47,6 +48,7 @@ func (a *API) projectSources(scope string, descs []config.SourceDescription) []s
 	out := make([]sourceDescriptionDTO, 0, len(descs))
 	for _, desc := range descs {
 		dto := sourceDescriptionDTO{
+			Name:          desc.Name,
 			ID:            a.sourceID(scope, desc),
 			Kind:          string(desc.Kind),
 			Location:      redact.URL(desc.Location),
@@ -535,8 +537,13 @@ func (a *API) handleSourceMutation(w http.ResponseWriter, r *http.Request, req c
 
 	switch req.action {
 	case "add-source":
-		if _, valid := validateAddSource(req.source, sourceAllowlist(intent, req.source.Kind)); !valid {
+		entry, valid := validateAddSource(req.source, sourceAllowlist(intent, req.source.Kind))
+		if !valid {
 			writeError(w, http.StatusBadRequest, codeInvalidRequest)
+			return
+		}
+		if entry.V4Kind == config.V4SourceDirectory && !directorySourceAvailable(entry, a.homeDir) {
+			writeError(w, http.StatusBadRequest, codeDirectoryUnavailable)
 			return
 		}
 	case "remove-source":
@@ -567,6 +574,7 @@ func (a *API) handleSourceMutation(w http.ResponseWriter, r *http.Request, req c
 		writeError(w, http.StatusServiceUnavailable, codeClosed)
 		return
 	}
+	a.invalidateUpdateAvailabilityLocked()
 	a.wg.Add(1)
 	a.mu.Unlock()
 
@@ -579,6 +587,19 @@ func (a *API) handleSourceMutation(w http.ResponseWriter, r *http.Request, req c
 		final = a.readSnapshot(ctx, session.CatalogLoadCached)
 		return nil, final, failed
 	})
+}
+
+func directorySourceAvailable(entry config.RegistryEntry, homeDir string) bool {
+	if strings.TrimSpace(entry.URL) == "~" {
+		info, err := os.Stat(homeDir)
+		return err == nil && info.IsDir()
+	}
+	path, err := entry.ResolveLocalPath(homeDir)
+	if err != nil {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func sourceAllowlist(intent config.Intent, kind string) []string {
@@ -695,7 +716,10 @@ func (a *API) handleSaveTargets(w http.ResponseWriter, r *http.Request, targets 
 			return
 		}
 	}
+	a.mu.Lock()
+	a.invalidateUpdateAvailabilityLocked()
 	a.wg.Add(1)
+	a.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
@@ -764,7 +788,10 @@ func (a *API) handleInitialize(w http.ResponseWriter, r *http.Request, req confi
 			}
 		}
 	}
+	a.mu.Lock()
+	a.invalidateUpdateAvailabilityLocked()
 	a.wg.Add(1)
+	a.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)

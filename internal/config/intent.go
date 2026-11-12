@@ -43,7 +43,6 @@ type Settings struct {
 	UpdateCheck         *UpdateCheckConfig
 	Telemetry           *telemetryconfig.TelemetryConfig
 	Materialization     *MaterializationConfig
-	GUI                 *GUIConfig
 }
 
 type SourceKind = V4SourceKind
@@ -72,6 +71,7 @@ type SourceDecl struct {
 }
 
 type SourceDescription struct {
+	Name          string
 	Kind          SourceKind
 	Location      string
 	Ref           string
@@ -132,9 +132,6 @@ func (l LayerIntent) Settings() Settings {
 			Telemetry:       l.v4.Telemetry,
 			Materialization: l.v4.Materialization,
 		}
-		if l.Source == Organization {
-			settings.GUI = l.v4.GUI
-		}
 		if l.v4.AllowedRegistries != nil {
 			values := cloneV4StringList(*l.v4.AllowedRegistries)
 			settings.AllowedRegistries = &values
@@ -158,7 +155,6 @@ func (s Settings) config() *Config {
 		Logging:             s.Logging,
 		Telemetry:           s.Telemetry,
 		Materialization:     s.Materialization,
-		GUI:                 s.GUI,
 	}
 }
 
@@ -172,7 +168,7 @@ func (l LayerIntent) DescribeSources() []SourceDescription {
 		descs := make([]SourceDescription, 0, len(names))
 		for _, name := range names {
 			src := l.v4.Sources[name]
-			desc := SourceDescription{Kind: src.Kind, Location: src.URL, Ref: src.Ref, Path: src.Path, SourceHarness: src.SourceHarness}
+			desc := SourceDescription{Name: name, Kind: src.Kind, Location: src.URL, Ref: src.Ref, Path: src.Path, SourceHarness: src.SourceHarness}
 			if src.Kind == V4SourceMarketplace {
 				desc.Location = src.CanonicalURL
 			}
@@ -412,7 +408,6 @@ func readLayerIntent(path, canonical string, data []byte, kind layerKind, overla
 	}
 	li.v4 = v4
 	li.Reads = append([]ConfigRead(nil), v4.reads...)
-	li.warnLowerLayerGUI(v4.GUI)
 	return li, nil
 }
 

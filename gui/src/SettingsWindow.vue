@@ -28,6 +28,8 @@ const actionError = ref<string | null>(null)
 const draft = ref<Set<string>>(new Set())
 const formEpoch = ref(0)
 const pendingRemove = ref<SourceDescription | null>(null)
+const addSourceOwned = ref(new Set<string>())
+const addSourceClaim = ref<Set<string> | null>(null)
 let openEpoch = 0
 
 const { preference, setPreference } = useAppearance()
@@ -54,6 +56,23 @@ const dirty = computed(() => {
 const mutationErrors = computed(() =>
   props.controller.state.diagnostics.filter((d) => d.severity === 'error' && d.category === 'mutation'),
 )
+const addSourceMutationErrors = computed(() => mutationErrors.value.filter((d) => addSourceOwned.value.has(d.code)))
+const topMutationErrors = computed(() => mutationErrors.value.filter((d) => !addSourceOwned.value.has(d.code)))
+watch([mutationErrors, addSourceClaim, () => props.controller.state.operation, () => props.controller.state.requesting], ([errors]) => {
+  const present = errors.map((d) => d.code)
+  const owned = new Set(present.filter((code) => addSourceOwned.value.has(code)))
+  if (addSourceClaim.value != null) {
+    for (const code of present) {
+      if (!addSourceClaim.value.has(code)) {
+        owned.add(code)
+      }
+    }
+  }
+  addSourceOwned.value = owned
+  if (props.controller.state.operation == null && !props.controller.state.requesting) {
+    addSourceClaim.value = null
+  }
+})
 const managedOutsideText = computed(() => {
   const list = new Intl.ListFormat('en', { style: 'long', type: 'conjunction' }).format(configuration.value?.managedOutsideGUI ?? [])
   return `${list.charAt(0).toUpperCase()}${list.slice(1)} are managed outside the GUI.`
@@ -136,6 +155,7 @@ function revert() {
 }
 
 async function save() {
+  addSourceClaim.value = null
   const targets = options.value.filter((id) => draft.value.has(id))
   if (await props.controller.saveTargets(targets)) {
     actionError.value = null
@@ -150,13 +170,11 @@ function removable(source: SourceDescription) {
 }
 
 async function add(source: SourceInput) {
+  actionError.value = null
+  addSourceClaim.value = null
   pendingRemove.value = null
-  const accepted = await props.controller.addSource(source)
-  if (accepted) {
-    actionError.value = null
-  } else {
-    actionError.value = props.controller.state.error ?? 'The action could not be started'
-  }
+  const baseline = new Set(mutationErrors.value.map((d) => d.code).filter((code) => !addSourceOwned.value.has(code)))
+  addSourceClaim.value = (await props.controller.addSource(source)) ? baseline : null
   void nextTick(() => {
     if (document.activeElement == null || document.activeElement === document.body) {
       document.querySelector<HTMLElement>('#settings-panel-sources')?.focus()
@@ -165,6 +183,7 @@ async function add(source: SourceInput) {
 }
 
 async function confirmRemove() {
+  addSourceClaim.value = null
   const source = pendingRemove.value
   pendingRemove.value = null
   if (source == null) {
@@ -213,7 +232,7 @@ async function confirmRemove() {
             <GuiIcon name="error" class="settings__notice-icon" />
             <span>{{ actionError }}</span>
           </p>
-          <p v-for="d in mutationErrors" :key="d.code" role="alert" class="settings__notice settings__notice--danger">
+          <p v-for="d in topMutationErrors" :key="d.code" role="alert" class="settings__notice settings__notice--danger">
             <GuiIcon name="error" class="settings__notice-icon" />
             <span>{{ d.message }}</span>
           </p>
@@ -384,6 +403,14 @@ async function confirmRemove() {
 
               <section class="settings__group" aria-label="Add user source">
                 <h3>Add a source</h3>
+                <p v-if="controller.state.sourceError" role="alert" class="settings__notice settings__notice--danger">
+                  <GuiIcon name="error" class="settings__notice-icon" />
+                  <span>{{ controller.state.sourceError }}</span>
+                </p>
+                <p v-for="d in addSourceMutationErrors" :key="d.code" role="alert" class="settings__notice settings__notice--danger">
+                  <GuiIcon name="error" class="settings__notice-icon" />
+                  <span>{{ d.message }}</span>
+                </p>
                 <SourceForm :key="formEpoch" :disabled="fieldsDisabled" @add="add" />
               </section>
 

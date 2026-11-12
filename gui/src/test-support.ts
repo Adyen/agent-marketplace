@@ -1,7 +1,8 @@
 import { afterEach, vi } from 'vitest'
 import { flushPromises, mount, type DOMWrapper } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { h, nextTick } from 'vue'
 import ui from '@nuxt/ui/vue-plugin'
+import UApp from '@nuxt/ui/components/App.vue'
 import WorkspaceView from './WorkspaceView.vue'
 import {
   EventCursor,
@@ -10,12 +11,18 @@ import {
   type InspectionPayload,
   type InstalledSkillFilesPayload,
   type OperationRef,
+  type ReleaseNotice,
   type SessionEvent,
+  type UpdateStatus,
 } from './api/client'
 import { configuration, snapshot } from './fixtures'
 import { WorkspaceController } from './controller'
 
 export { configuration, event, row, snapshot } from './fixtures'
+
+export function releaseNotice(latestVersion: string): ReleaseNotice {
+  return { latestVersion, releasePageURL: '', assetURL: '', checksumsURL: '', dmgURL: '' }
+}
 
 export function fakeClient(options: { configuration?: Partial<Configuration> } = {}) {
   const queue: SessionEvent[] = []
@@ -45,7 +52,17 @@ export function fakeClient(options: { configuration?: Partial<Configuration> } =
     action: vi.fn(async () => ({ id: 7, kind: 'sync' }) as OperationRef),
     configuration: vi.fn(async () => configuration(options.configuration)),
     configure: vi.fn(async () => ({ id: 8, kind: 'targets' }) as OperationRef),
-    release: vi.fn(async () => ({ latestVersion: '' })),
+    release: vi.fn(async () => releaseNotice('')),
+    update: vi.fn(async (): Promise<UpdateStatus> => ({
+      phase: 'idle',
+      progress: 0,
+      error: '',
+      browserURL: '',
+      releasePageURL: '',
+      savedPath: '',
+      moveToApplications: false,
+      restartRequired: false,
+    })),
     telemetry: vi.fn(async () => undefined),
     discovery: vi.fn(async () => undefined),
     inspection: vi.fn(async (): Promise<InspectionPayload> => {
@@ -87,6 +104,7 @@ afterEach(() => {
   while (cleanups.length > 0) {
     cleanups.pop()!()
   }
+  document.body.innerHTML = ''
   vi.useRealTimers()
 })
 
@@ -101,18 +119,16 @@ export async function tick() {
   await flushPromises()
 }
 
-export function mountWorkspace(client: Client, notifyTtl = 60_000, onQuit?: () => void) {
-  const controller = new WorkspaceController(client, notifyTtl, onQuit)
-  const wrapper = mount(WorkspaceView, {
+export function mountWorkspace(client: Client, notifyTtl = 60_000, onQuit?: () => void, packageFormat = '') {
+  const controller = new WorkspaceController(client, notifyTtl, onQuit, packageFormat)
+  const wrapper = mount(() => h(UApp, null, () => h(WorkspaceView, { controller })), {
     attachTo: document.body,
-    props: { controller },
     global: { plugins: [ui] },
   })
   void controller.connect()
   cleanups.push(() => {
     controller.dispose()
     wrapper.unmount()
-    document.body.innerHTML = ''
   })
   return { controller, wrapper }
 }

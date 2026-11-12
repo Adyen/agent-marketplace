@@ -65,6 +65,7 @@ function resourceRow(name: string, id: string, options: Partial<SnapshotRow> = {
     installedFiles: false,
     resourceAction: 'none',
     ...options,
+    disabled: options.disabled ?? false,
   }
 }
 
@@ -85,6 +86,7 @@ function snapshotPayload(stage: Snapshot['stage'], rows: SnapshotRow[], options:
     diagnostics: [],
     harnesses: ['devin'],
     pendingChanges: 0,
+    availableUpdates: 0,
     discoveryEnabled: options.discoveryEnabled ?? false,
     discoveryHealth: [],
     discoveryQuery: '',
@@ -262,7 +264,7 @@ async function startCannedWorkspace(page: Page) {
         await fulfillJSON(route, fixtureConfiguration)
         return
       case '/api/release':
-        await fulfillJSON(route, { latestVersion: '' } satisfies ReleaseNotice)
+        await fulfillJSON(route, { latestVersion: '', releasePageURL: '', assetURL: '', checksumsURL: '', dmgURL: '' } satisfies ReleaseNotice)
         return
       case '/api/snapshot':
         await fulfillJSON(route, snapshotPayload('config', []))

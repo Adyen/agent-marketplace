@@ -457,3 +457,27 @@ func TestUserAPIAcceptsMutationWithTargets(t *testing.T) {
 		t.Fatal("user root missing after accepted sync")
 	}
 }
+
+func TestUserSubscribeAfterCloseReturnsWithoutStartingSnapshot(t *testing.T) {
+	api, _, _ := newUserAPI(t, session.DependencyLifecycle{})
+	api.Close()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		api.Subscribe(context.Background(), func([]byte) bool {
+			t.Error("closed API delivered a frame")
+			return false
+		})
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Subscribe did not return after Close")
+	}
+	api.mu.Lock()
+	started, subs := api.started, len(api.subs)
+	api.mu.Unlock()
+	if started || subs != 0 {
+		t.Fatalf("closed API started=%v subscribers=%d", started, subs)
+	}
+}

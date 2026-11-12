@@ -85,10 +85,10 @@ describe('Harness settings dialog', () => {
   it('opens Settings on General and keeps sources under the Sources tab', async () => {
     const { client, push } = settingsClient({
       userSources: [
-        { id: 'user-dir', kind: 'directory', location: '/var/regs', ref: '', path: '', sourceHarness: '', rowSourceId: '' },
+        { id: 'user-dir', name: '', kind: 'directory', location: '/var/regs', ref: '', path: '', sourceHarness: '', rowSourceId: '' },
       ],
       organizationSources: [
-        { id: 'org-dir', kind: 'directory', location: '/opt/org-regs', ref: '', path: '', sourceHarness: '', rowSourceId: '' },
+        { id: 'org-dir', name: '', kind: 'directory', location: '/opt/org-regs', ref: '', path: '', sourceHarness: '', rowSourceId: '' },
       ],
     })
     const { wrapper } = mountWorkspace(client)
@@ -115,7 +115,7 @@ describe('Harness settings dialog', () => {
     const hostile = '<img src=x onerror=alert(1)>'
     const { client, push } = settingsClient({
       organizationSources: [
-        { id: 'org-hostile', kind: 'directory', location: hostile, ref: '', path: '', sourceHarness: '<script>alert(1)</script>', rowSourceId: '' },
+        { id: 'org-hostile', name: '', kind: 'directory', location: hostile, ref: '', path: '', sourceHarness: '<script>alert(1)</script>', rowSourceId: '' },
       ],
     })
     const { wrapper } = mountWorkspace(client)

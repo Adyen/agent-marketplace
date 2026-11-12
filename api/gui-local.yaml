@@ -32,8 +32,16 @@ paths:
         operation holds the serializer, or when a superseded read is
         overtaken, a read returns the latest accepted snapshot state
         without delivering a new snapshot event.
+        `checkUpdates` is true only for launch and an explicit user refresh;
+        focus-triggered reloads leave it false.
       security:
         - launchToken: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SnapshotRequest'
       responses:
         '200':
           description: Newest snapshot state for the session
@@ -161,9 +169,9 @@ paths:
   /api/installed-skill-files:
     post:
       operationId: readInstalledMarketplaceSkillFiles
-      summary: Read primary and declared supporting files from an installed Marketplace skill
+      summary: Read primary and declared supporting files from an installed Marketplace or local directory/Git skill
       description: |
-        Available only in user-scope mode. rowId is resolved against the current visible session rows; the browser supplies no root, path, source coordinate, revision, or digest. fileId is an opaque identity bound to the row, current generation, member path, and captured source identity. The route reads only the verified canonical skill primary and its archive members or declared staged support files. Raster image members return metadata without file bytes; text, scripts, JavaScript, and SVG are returned only as inert text. Missing or changed content fails with a static unavailable error. The request does not access the Marketplace SDK, mutate session state, write configuration, acquisition locks, caches, or materialized files, or emit operation, snapshot, discovery, telemetry, or progress events.
+        Available only in user-scope mode. rowId is resolved against the current visible session rows; the browser supplies no root, path, source coordinate, revision, or digest. fileId is an opaque identity bound to the row, current generation, member path, and captured source identity. The route reads installed Marketplace skills from their verified archive or staged directory. Directory and Git skills are read from the captured source root, relative to the directory of the cataloged SKILL.md and limited to that skill's declared supporting files; a symlink is followed only when its target remains inside that root. Raster image members return metadata without file bytes; text, scripts, JavaScript, and SVG are returned only as inert text. Missing, unsafe, or changed content fails with a static unavailable error. The request does not access the Marketplace SDK, mutate session state, write configuration, acquisition locks, caches, or materialized files, or emit operation, snapshot, discovery, telemetry, or progress events.
       security:
         - launchToken: []
       requestBody:
@@ -192,7 +200,7 @@ paths:
         '405':
           $ref: '#/components/responses/MethodNotAllowed'
         '502':
-          description: Verified local resource files are missing or unavailable; code localapi.resource_files_unavailable
+          description: Verified Marketplace files are unavailable (code localapi.resource_files_unavailable) or local skill source files are missing or unsafe (code localapi.source_files_unavailable)
           content:
             application/json:
               schema:
@@ -486,24 +494,76 @@ paths:
           $ref: '#/components/responses/MethodNotAllowed'
         '503':
           $ref: '#/components/responses/Closed'
+  /api/update:
+    post:
+      operationId: updateGui
+      summary: Start, observe, confirm, or cancel a GUI update
+      description: |
+        Available only in user-scope mode. The closed request selects one
+        action and cannot carry URLs; package and checksum URLs come only
+        from the server's cached latest-release result. Start returns
+        immediately with a phase that status can poll. Confirm is called
+        after the existing quit guard accepts, and cancel removes staged
+        data. Linux start saves the verified package and opens xdg-open.
+      security:
+        - launchToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRequest'
+      responses:
+        '200':
+          description: Update progress or result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateStatus'
+        '400':
+          description: Malformed request, unsupported mode, or no verified package; code localapi.invalid_request or localapi.not_supported
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/OriginRejected'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '409':
+          description: No verified macOS update is ready to confirm
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateStatus'
+        '503':
+          $ref: '#/components/responses/Closed'
   /api/release:
     post:
       operationId: readReleaseNotice
       summary: Report the newer stable public release, if any
       description: |
         Available only in user-scope mode; the request carries no body and
-        no query. When Consumer organization configuration enables release
-        checking (the default), the session compares the running GUI
-        version with the latest stable public GitHub release at most once
-        per launch and returns the newer stable version. A disabled
-        policy, a policy read failure, any check failure, or a non-newer
-        result silently returns an empty latestVersion without an error;
-        the check never downloads or installs a release.
+        no query. When release checking is enabled by the effective
+        update_check.enabled setting (the default) and neither
+        AGENT_MARKETPLACE_NO_UPDATE_CHECK nor CI is set, the session compares
+        a supported release or Go pseudo-version build with the latest stable
+        public GitHub release at most once per launch. A newer result includes
+        its release page URL and, when this build's package asset and
+        SHA256SUMS are published, their download URLs. An unpackaged build or
+        one without a matching asset receives only the release page URL.
+        A macOS build with a matching update asset also receives the matching
+        disk image URL for an ineligible-location fallback.
+        Suppression, a policy read failure, any check failure, an unsupported
+        build kind, or a non-newer result silently returns empty fields without
+        an error; the check never downloads or installs a release.
       security:
         - launchToken: []
       responses:
         '200':
-          description: Newer stable public release version, or empty
+          description: Newer stable public release version and download links, or empty fields when no notice applies
           content:
             application/json:
               schema:
@@ -568,7 +628,7 @@ components:
       properties:
         code:
           type: string
-          enum: [localapi.unauthorized, localapi.forbidden, localapi.invalid_request, localapi.not_ready, localapi.not_supported, localapi.busy, localapi.closed, localapi.inspection_unavailable, localapi.resource_files_unavailable, localapi.resource_action_unavailable]
+          enum: [localapi.unauthorized, localapi.forbidden, localapi.invalid_request, localapi.not_ready, localapi.not_supported, localapi.busy, localapi.closed, localapi.inspection_unavailable, localapi.resource_files_unavailable, localapi.source_files_unavailable, localapi.resource_action_unavailable]
         message:
           type: string
           description: Static, non-reflective failure description.
@@ -608,7 +668,7 @@ components:
         title: { type: string }
     SnapshotRow:
       type: object
-      required: [id, name, displayName, searchName, searchWords, kind, description, registry, source, scope, required, pendingVerification, checked, harnessOverride, harnesses, status, group, discovery, inspectable, installedFiles, resourceAction]
+      required: [id, name, displayName, searchName, searchWords, kind, description, registry, source, scope, required, pendingVerification, checked, disabled, harnessOverride, harnesses, status, group, discovery, inspectable, installedFiles, resourceAction]
       properties:
         id:
           type: string
@@ -647,6 +707,9 @@ components:
         checked:
           type: boolean
           description: Whether the resource is enabled by any configuration scope, derived from row enablement metadata.
+        disabled:
+          type: boolean
+          description: Whether the resource is excluded from its configured selection.
         harnessOverride:
           type: boolean
           description: Whether the row carries a registry-level harness narrowing that differs from its layer default.
@@ -665,7 +728,7 @@ components:
           description: Whether this exact uninstalled Marketplace skill has a current verified revision eligible for read-only inspection.
         installedFiles:
           type: boolean
-          description: Whether this installed Marketplace skill has the read-only installed-files capability. The capability remains visible if its local cached content is unavailable.
+          description: Whether this installed Marketplace skill or directory/Git skill with a captured source root has the read-only installed-files capability. Local source availability is checked when opened; Marketplace capability remains visible if its cached content is unavailable.
         resourceAction:
           $ref: '#/components/schemas/ResourceAction'
           description: Server-derived user-only Marketplace action; none in other session modes or for ineligible rows.
@@ -683,7 +746,7 @@ components:
         message: { type: string }
     DiscoveryHealth:
       type: object
-      required: [id, label, total, truncated, cacheState, message]
+      required: [id, label, total, truncated, cacheState, checked, message]
       properties:
         id:
           type: string
@@ -696,6 +759,9 @@ components:
         cacheState:
           type: string
           enum: [miss, fresh, stale]
+        checked:
+          type: boolean
+          description: Whether the endpoint has a successful result for the current discovery.
         message:
           type: string
           description: Sanitized static endpoint health message without credentials or query values.
@@ -865,9 +931,16 @@ components:
         unsupportedMessage:
           type: string
           description: Empty for text; static safe metadata-only message for unsupported members.
+    SnapshotRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        checkUpdates:
+          type: boolean
+          description: True for launch and explicit Refresh; false for focus reloads.
     Snapshot:
       type: object
-      required: [stage, drift, rows, groups, diagnostics, harnesses, pendingChanges, discoveryEnabled, discoveryHealth, discoveryQuery, discoveryRequestId, discoverySequence, discoveryLoading, operation]
+      required: [stage, drift, rows, groups, diagnostics, harnesses, pendingChanges, availableUpdates, discoveryEnabled, discoveryHealth, discoveryQuery, discoveryRequestId, discoverySequence, discoveryLoading, operation]
       properties:
         stage:
           $ref: '#/components/schemas/SnapshotStage'
@@ -892,6 +965,9 @@ components:
         pendingChanges:
           type: integer
           description: Count of drifted items awaiting materialization, derived from the accepted snapshot's drift assessment.
+        availableUpdates:
+          type: integer
+          description: Number of user-personal resources the latest read-only update preview would add or change; zero before a completed check or after a failed check.
         discoveryEnabled:
           type: boolean
           description: Whether a validated accepted user-scope configuration enables Marketplace discovery.
@@ -939,11 +1015,14 @@ components:
           $ref: '#/components/schemas/OperationRef'
     SourceDescription:
       type: object
-      required: [id, kind, location, ref, path, sourceHarness, rowSourceId]
+      required: [id, name, kind, location, ref, path, sourceHarness, rowSourceId]
       properties:
         id:
           type: string
           description: Opaque stable identity derived from the typed source descriptor tuple under its scope; usable only with remove-source while the descriptor is unchanged.
+        name:
+          type: string
+          description: The configured name from the v4 sources mapping.
         rowSourceId:
           type: string
           description: Identity that snapshot rows from this source carry in row source.id, for matching a configured source to its rows. Empty for marketplace sources, which can map to many registries.
@@ -1080,11 +1159,60 @@ components:
           description: Opaque row identity from the current snapshot; the server resolves its Resource kind.
     ReleaseNotice:
       type: object
-      required: [latestVersion]
+      required: [latestVersion, releasePageURL, assetURL, checksumsURL, dmgURL]
       properties:
         latestVersion:
           type: string
           description: Newer stable public release version, or empty when no notice applies.
+        releasePageURL:
+          type: string
+          description: Newer release's public GitHub release page, or empty when no notice applies.
+        assetURL:
+          type: string
+          description: Matching GUI package download URL when this build's package format and architecture are published with SHA256SUMS; otherwise empty.
+        checksumsURL:
+          type: string
+          description: SHA256SUMS download URL accompanying assetURL; otherwise empty.
+        dmgURL:
+          type: string
+          description: Server-resolved macOS disk image URL for the ineligible-location browser fallback; otherwise empty.
+    UpdateRequest:
+      type: object
+      required: [action]
+      additionalProperties: false
+      properties:
+        action:
+          type: string
+          enum: [start, status, confirm, cancel]
+    UpdateStatus:
+      type: object
+      required: [phase, progress, error, browserURL, releasePageURL, savedPath, moveToApplications, restartRequired]
+      properties:
+        phase:
+          type: string
+          enum: [idle, downloading, verifying, ready, swapping, handing-off, complete, fallback, failed, cancelled]
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        error:
+          type: string
+          description: User-visible failure detail, or empty.
+        browserURL:
+          type: string
+          description: Server-resolved macOS disk image URL for browser fallback, or empty.
+        releasePageURL:
+          type: string
+          description: Server-resolved release page URL for Linux handoff fallback, or empty.
+        savedPath:
+          type: string
+          description: Path of the verified Linux package saved for desktop installation, or empty.
+        moveToApplications:
+          type: boolean
+          description: Whether an ineligible macOS app must be moved to Applications to enable in-app updates.
+        restartRequired:
+          type: boolean
+          description: Whether the user should restart after installing the Linux package.
     ConfigurationActionRequest:
       description: Tagged configuration action; the action field selects the strictly closed variant.
       oneOf:

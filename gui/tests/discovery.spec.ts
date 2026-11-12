@@ -83,7 +83,7 @@ test('built GUI consumes cached-first Marketplace discovery across a held truste
     await page.getByRole('button', { name: 'Show diagnostics' }).click()
     await expect(page.locator('.gui-diagnostics-view')).toContainText('Drift: pending', { timeout: 10_000 })
     await page.screenshot({ path: testInfo.outputPath('discovery-held-cache.png'), fullPage: true, animations: 'disabled' })
-    await expect(discoveryHealth).toContainText('fresh', { timeout: 10_000 })
+    await expect(discoveryHealth).toContainText('Results are current', { timeout: 10_000 })
     if (bootstrap.marketplaceEndpoint == null) {
       throw new Error('trusted Marketplace endpoint fixture missing')
     }
@@ -131,7 +131,8 @@ test('built GUI consumes cached-first Marketplace discovery across a held truste
     await expect(remote).toHaveAttribute('aria-selected', 'true')
     await expect(page.locator('.workspace__search-status')).toContainText('0 local matches')
     await page.getByRole('button', { name: 'Show diagnostics' }).click()
-    await expect(discoveryHealth).toContainText('miss')
+    await expect(discoveryHealth).toContainText('Results are current')
+    await expect(discoveryHealth).not.toContainText('miss')
     await page.getByRole('button', { name: 'Show all groups' }).click()
     expect(discoveryRequests).toBeGreaterThan(1)
     expect(telemetryRequests).toBe(telemetryBefore)

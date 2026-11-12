@@ -37,7 +37,6 @@
   --gui-fade: 150ms var(--gui-ease);
   --gui-slide: 200ms var(--gui-ease);
 
-  --gui-sidebar-width: 260px;
   --gui-inspector-width: 360px;
   --gui-toolbar-height: 44px;
   --gui-statusbar-height: 32px;

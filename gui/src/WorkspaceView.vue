@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { createClient } from './api/client'
-import { closeRequestEvent, launchRequestEvent, nativeQuit, resolveBootstrap } from './bootstrap'
+import { closeRequestEvent, launchRequestEvent, nativeEventBridge, nativeQuit, resolveBootstrap } from './bootstrap'
 import { eligible, WorkspaceController, type Row } from './controller'
 import { buildSections, readViewSettings, sectionPathsContaining, writeViewSettings, type Section, type ViewSettings } from './grouping'
 import { notificationPresentation, operationDetail, operationLabel } from './feedback'
@@ -56,9 +56,94 @@ const toolbar = ref<InstanceType<typeof MainToolbar> | null>(null)
 const inspector = ref<InstanceType<typeof Inspector> | null>(null)
 const resourceList = ref<ElementHost>(null)
 
-const storageKeys = { inspector: 'am-gui-inspector' }
+const storageKeys = {
+  inspector: 'am-gui-inspector',
+  sidebarWidth: 'am-gui-sidebar-width',
+  inspectorWidth: 'am-gui-inspector-width',
+}
+const paneBounds = {
+  sidebar: { default: 260, min: 200, max: 400 },
+  inspector: { default: 360, min: 280, max: 560 },
+}
 const inspectorOverlayWidth = 1000
 const viewportWidth = ref(window.innerWidth)
+
+function clampPaneWidth(pane: 'sidebar' | 'inspector', width: number): number {
+  const bounds = paneBounds[pane]
+  return Math.min(bounds.max, Math.max(bounds.min, Math.round(width)))
+}
+
+function readPaneWidth(pane: 'sidebar' | 'inspector', key: string): number {
+  const stored = readStoredValue(key)
+  if (stored == null || stored.trim() === '') return paneBounds[pane].default
+  const width = Number(stored)
+  return Number.isFinite(width) ? clampPaneWidth(pane, width) : paneBounds[pane].default
+}
+
+const sidebarWidth = ref(readPaneWidth('sidebar', storageKeys.sidebarWidth))
+const inspectorWidth = ref(readPaneWidth('inspector', storageKeys.inspectorWidth))
+type ResizablePane = 'sidebar' | 'inspector'
+type PaneDrag = { pane: ResizablePane; x: number; width: number; handle: HTMLElement }
+let paneDrag: PaneDrag | null = null
+
+function paneWidth(pane: ResizablePane): number {
+  return pane === 'sidebar' ? sidebarWidth.value : inspectorWidth.value
+}
+
+function setPaneWidth(pane: ResizablePane, width: number) {
+  const clamped = clampPaneWidth(pane, width)
+  if (pane === 'sidebar') {
+    sidebarWidth.value = clamped
+    writeStoredValue(storageKeys.sidebarWidth, String(clamped))
+  } else {
+    inspectorWidth.value = clamped
+    writeStoredValue(storageKeys.inspectorWidth, String(clamped))
+  }
+}
+
+function startPaneResize(pane: ResizablePane, event: PointerEvent) {
+  if (event.button !== 0) return
+  event.preventDefault()
+  const handle = event.currentTarget as HTMLElement
+  paneDrag = { pane, x: event.clientX, width: paneWidth(pane), handle }
+  if (typeof handle.setPointerCapture === 'function') {
+    handle.setPointerCapture(event.pointerId)
+  }
+}
+
+function movePaneResize(event: PointerEvent) {
+  if (paneDrag == null) return
+  const direction = paneDrag.pane === 'sidebar' ? 1 : -1
+  setPaneWidth(paneDrag.pane, paneDrag.width + (event.clientX - paneDrag.x) * direction)
+}
+
+function stopPaneResize(event: PointerEvent) {
+  if (paneDrag?.handle.hasPointerCapture?.(event.pointerId)) {
+    paneDrag.handle.releasePointerCapture(event.pointerId)
+  }
+  paneDrag = null
+}
+
+function resizePaneFromKeyboard(pane: ResizablePane, event: KeyboardEvent) {
+  const bounds = paneBounds[pane]
+  switch (event.key) {
+    case 'ArrowRight':
+      setPaneWidth(pane, paneWidth(pane) + (pane === 'sidebar' ? 16 : -16))
+      break
+    case 'ArrowLeft':
+      setPaneWidth(pane, paneWidth(pane) + (pane === 'sidebar' ? -16 : 16))
+      break
+    case 'Home':
+      setPaneWidth(pane, bounds.min)
+      break
+    case 'End':
+      setPaneWidth(pane, bounds.max)
+      break
+    default:
+      return
+  }
+  event.preventDefault()
+}
 
 function readPanelChoice(key: string): boolean | null {
   const value = readStoredValue(key)
@@ -74,11 +159,41 @@ const inspectorOverlay = computed(() => viewportWidth.value < inspectorOverlayWi
 const inspectorFolded = computed(() => inspectorChoice.value ?? inspectorOverlay.value)
 const inspectorOverlayOpen = computed(() => inspectorOverlay.value && !inspectorFolded.value)
 const shellColumns = computed(() => {
-  const inspectorColumn = inspectorFolded.value || inspectorOverlay.value ? '0px' : 'var(--gui-inspector-width)'
-  return `var(--gui-sidebar-width) minmax(0, 1fr) ${inspectorColumn}`
+  const inspectorColumn = inspectorFolded.value || inspectorOverlay.value ? '0px 0px' : `6px ${inspectorWidth.value}px`
+  return `${sidebarWidth.value}px 6px minmax(0, 1fr) ${inspectorColumn}`
 })
 
 const configuration = computed(() => state.value?.state.configuration ?? null)
+const releaseNotice = computed(() => state.value?.state.releaseNotice ?? null)
+const updateStatus = computed(() => state.value?.state.updateStatus ?? null)
+const updateActionPending = ref(false)
+const updateAttempt = ref(0)
+const updateReadyAttempt = ref(0)
+let updatePollTimer: number | null = null
+const updateAvailable = computed(() => {
+  const format = state.value?.packageFormat
+  const notice = releaseNotice.value
+  return (
+    (format === 'macos-app' || format === 'rpm' || format === 'deb') &&
+    notice != null &&
+    notice.assetURL !== '' &&
+    notice.checksumsURL !== ''
+  )
+})
+const updateRunning = computed(() => ['downloading', 'verifying', 'swapping', 'handing-off'].includes(updateStatus.value?.phase ?? ''))
+const updateButtonVisible = computed(
+  () =>
+    updateAvailable.value &&
+    updateStatus.value?.phase !== 'fallback' &&
+    updateStatus.value?.phase !== 'complete' &&
+    updateStatus.value?.phase !== 'failed',
+)
+const updateButtonDisabled = computed(
+  () =>
+    updateRunning.value ||
+    updateActionPending.value ||
+    (updateReadyAttempt.value !== 0 && updateReadyAttempt.value === updateAttempt.value),
+)
 
 watch(searchEditing, (isEditing, wasEditing) => {
   if (!isEditing && wasEditing) {
@@ -149,8 +264,109 @@ function requestQuit() {
   controller.quit()
 }
 
+function clearUpdatePoll() {
+  if (updatePollTimer != null) {
+    window.clearTimeout(updatePollTimer)
+    updatePollTimer = null
+  }
+}
+
+function updateProgressLabel(phase: string | undefined): string {
+  if (phase === 'verifying') return 'Checking update'
+  if (phase === 'swapping') return 'Installing update'
+  if (phase === 'handing-off') return 'Opening installer'
+  return 'Downloading update'
+}
+
+function requestUpdateQuit(attempt: number) {
+  const controller = state.value
+  if (controller == null || updateReadyAttempt.value === attempt) {
+    return
+  }
+  updateReadyAttempt.value = attempt
+  controller.setQuitHandler(() => {
+    controller.setQuitHandler(null)
+    if (updateAttempt.value === attempt) {
+      void sendUpdateAction('confirm', attempt).then(() => {
+        if (state.value === controller && updateAttempt.value === attempt && controller.state.updateStatus?.phase === 'complete') {
+          controller.quit()
+        }
+      })
+    }
+  })
+  requestQuit()
+}
+
+function updateQuitCancelled() {
+  const controller = state.value
+  if (controller?.state.updateStatus?.phase === 'ready') {
+    controller.setQuitHandler(null)
+    updateReadyAttempt.value = 0
+    void sendUpdateAction('cancel', updateAttempt.value)
+  }
+}
+
+function scheduleUpdatePoll(attempt: number) {
+  clearUpdatePoll()
+  updatePollTimer = window.setTimeout(() => {
+    updatePollTimer = null
+    void sendUpdateAction('status', attempt)
+  }, 400)
+}
+
+async function sendUpdateAction(action: 'start' | 'status' | 'confirm' | 'cancel', attempt: number) {
+  const controller = state.value
+  if (controller == null || updateAttempt.value !== attempt) {
+    return
+  }
+  updateActionPending.value = true
+  try {
+    const status = await controller.update(action)
+    if (state.value !== controller || updateAttempt.value !== attempt) {
+      return
+    }
+    if (status.phase === 'ready') {
+      clearUpdatePoll()
+      requestUpdateQuit(attempt)
+    } else if (['downloading', 'verifying', 'swapping', 'handing-off'].includes(status.phase)) {
+      scheduleUpdatePoll(attempt)
+    } else {
+      clearUpdatePoll()
+    }
+  } catch {
+    clearUpdatePoll()
+    controller.state.updateStatus = {
+      phase: 'failed',
+      progress: 0,
+      error: 'update request failed',
+      browserURL: '',
+      releasePageURL: controller.state.releaseNotice?.releasePageURL ?? '',
+      savedPath: '',
+      moveToApplications: false,
+      restartRequired: false,
+    }
+  } finally {
+    updateActionPending.value = false
+  }
+}
+
+function startUpdate() {
+  const controller = state.value
+  if (controller == null || !updateAvailable.value || updateRunning.value || updateActionPending.value) {
+    return
+  }
+  const attempt = ++updateAttempt.value
+  updateReadyAttempt.value = 0
+  clearUpdatePoll()
+  if (controller.state.updateStatus?.phase === 'ready') {
+    requestUpdateQuit(attempt)
+    return
+  }
+  void sendUpdateAction('start', attempt)
+}
+
 function onFocus() {
-  void state.value?.refresh()
+  void state.value?.refresh(false)
 }
 
 function onSetupCancel() {
@@ -357,7 +573,12 @@ onMounted(async () => {
   }
   try {
     const bootstrap = await resolveBootstrap()
-    const c = new WorkspaceController(createClient(bootstrap.url, bootstrap.credential), undefined, nativeQuit())
+    const c = new WorkspaceController(
+      createClient(bootstrap.url, bootstrap.credential, undefined, nativeEventBridge()),
+      undefined,
+      nativeQuit(),
+      bootstrap.packageFormat,
+    )
     state.value = c
     if (activeQuery.value !== '') {
       c.setDiscoveryQuery(activeQuery.value)
@@ -373,6 +594,8 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  updateAttempt.value++
+  clearUpdatePoll()
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('resize', onResize)
   window.removeEventListener('focus', onFocus)
@@ -667,6 +890,11 @@ function select(row: Row) {
   state.value?.browse(row)
 }
 
+function selectFromClick(row: Row) {
+  select(row)
+  setInspectorFolded(false)
+}
+
 function openInspection(row: Row) {
   const controller = state.value
   if (controller == null || (!row.inspectable && !row.installedFiles)) {
@@ -880,7 +1108,13 @@ async function run(action: 'sync' | 'update') {
 </script>
 
 <template>
-  <div class="workspace gui-shell" :style="{ gridTemplateColumns: shellColumns }">
+  <div
+    class="workspace gui-shell"
+    :style="{
+      gridTemplateColumns: shellColumns,
+      '--gui-inspector-width': `${inspectorWidth}px`,
+    }"
+  >
     <Sidebar
       ref="sidebar"
       :groups="navGroups"
@@ -903,6 +1137,22 @@ async function run(action: 'sync' | 'update') {
       @quit="requestQuit"
     />
 
+    <div
+      class="gui-pane-resize gui-pane-resize--sidebar"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize sidebar"
+      :aria-valuenow="sidebarWidth"
+      :aria-valuemin="paneBounds.sidebar.min"
+      :aria-valuemax="paneBounds.sidebar.max"
+      tabindex="0"
+      @keydown="resizePaneFromKeyboard('sidebar', $event)"
+      @pointerdown="startPaneResize('sidebar', $event)"
+      @pointermove="movePaneResize"
+      @pointerup="stopPaneResize"
+      @pointercancel="stopPaneResize"
+    />
+
     <div class="workspace__main gui-main">
       <MainToolbar
         ref="toolbar"
@@ -915,6 +1165,7 @@ async function run(action: 'sync' | 'update') {
         :busy="busy"
         :ready="ready"
         :pending-count="pendingCount"
+        :available-updates="view?.availableUpdates ?? 0"
         :show-setup="configuration?.firstRun === true || setupOpen"
         :view-settings="viewSettings"
         :title="mainView === 'diagnostics' ? 'Diagnostics' : 'Resources'"
@@ -935,9 +1186,72 @@ async function run(action: 'sync' | 'update') {
       <p v-else-if="view && (view.stage === 'inventory' || view.stage === 'final') && view.harnesses.length === 0" class="workspace__notice" role="status">
         No supported target harnesses are configured.
       </p>
-      <p v-if="view?.latestVersion" class="workspace__notice" role="status">
-        Agent Marketplace {{ view.latestVersion }} is available.
-      </p>
+      <div v-if="view?.latestVersion" class="workspace__notice workspace__release-notice" role="status">
+        <span>Agent Marketplace {{ view.latestVersion }} is available.</span>
+        <UButton
+          v-if="updateButtonVisible"
+          aria-label="Update now"
+          class="gui-button--secondary"
+          color="neutral"
+          variant="soft"
+          :disabled="updateButtonDisabled"
+          @click="startUpdate"
+        >Update now</UButton>
+        <a
+          v-else-if="
+            updateStatus?.phase === 'fallback' &&
+            updateStatus.browserURL &&
+            updateStatus.browserURL !== updateStatus.releasePageURL
+          "
+          :href="updateStatus.browserURL"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="Download disk image"
+        >Download disk image</a>
+        <a
+          v-else-if="updateStatus?.phase === 'fallback' && updateStatus.browserURL"
+          :href="updateStatus.browserURL"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="View release"
+        >View release</a>
+        <a
+          v-else-if="!updateAvailable && releaseNotice?.releasePageURL"
+          :href="releaseNotice.releasePageURL"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="View release"
+        >View release</a>
+        <a
+          v-else-if="updateStatus?.phase === 'fallback' && updateStatus.releasePageURL"
+          :href="updateStatus.releasePageURL"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="View release"
+        >View release</a>
+        <span v-if="updateStatus?.phase === 'fallback' && updateStatus.moveToApplications">
+          Move the app to Applications to enable updates.
+        </span>
+        <span v-if="updateStatus?.phase === 'fallback' && updateStatus.savedPath">
+          Package saved to {{ updateStatus.savedPath }}
+        </span>
+        <span v-if="updateStatus?.phase === 'complete' && updateStatus.restartRequired">
+          Install the package, then restart Agent Marketplace.
+        </span>
+        <span v-if="updateStatus?.phase === 'complete' && !updateStatus.restartRequired">
+          Update complete. Restarting Agent Marketplace.
+        </span>
+      </div>
+      <div v-if="updateRunning" class="workspace__update-progress" role="status">
+        <span>{{ updateProgressLabel(updateStatus?.phase) }} · {{ updateStatus?.progress ?? 0 }}%</span>
+        <progress aria-label="Update progress" max="100" :value="updateStatus?.progress ?? 0"></progress>
+      </div>
+      <div v-if="updateStatus?.phase === 'failed'" class="workspace__error workspace__update-error" role="alert">
+        <span>The update could not be completed.</span>
+        <UButton aria-label="Try update again" class="gui-button--secondary" color="neutral" variant="soft" @click="startUpdate">
+          Try again
+        </UButton>
+      </div>
 
       <DiagnosticsView
         v-if="mainView === 'diagnostics'"
@@ -945,7 +1259,7 @@ async function run(action: 'sync' | 'update') {
         :discovery-enabled="view?.discoveryEnabled === true"
         :discovery-loading="view?.discoveryLoading === true"
         :discovery-error="view?.discoveryError ?? null"
-        :discovery-health="view?.discoveryHealth ?? []"
+        :discovery-health="view?.diagnosticsDiscoveryHealth ?? []"
         :discovery-failed="discoveryFailed"
         :diagnostics="view?.diagnostics ?? []"
         @retry-discovery="state?.retryDiscovery()"
@@ -975,6 +1289,7 @@ async function run(action: 'sync' | 'update') {
         :view-settings="viewSettings"
         @toggle-group="toggleGroup"
         @select="select"
+        @row-click="selectFromClick"
         @activate="activateRow"
         @move="moveSelection"
       />
@@ -1012,6 +1327,23 @@ async function run(action: 'sync' | 'update') {
       </div>
     </div>
 
+    <div
+      v-if="!inspectorFolded && !inspectorOverlay"
+      class="gui-pane-resize gui-pane-resize--inspector"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize inspector"
+      :aria-valuenow="inspectorWidth"
+      :aria-valuemin="paneBounds.inspector.min"
+      :aria-valuemax="paneBounds.inspector.max"
+      tabindex="0"
+      @keydown="resizePaneFromKeyboard('inspector', $event)"
+      @pointerdown="startPaneResize('inspector', $event)"
+      @pointermove="movePaneResize"
+      @pointerup="stopPaneResize"
+      @pointercancel="stopPaneResize"
+    />
+
     <Inspector
       ref="inspector"
       :folded="inspectorFolded"
@@ -1032,7 +1364,7 @@ async function run(action: 'sync' | 'update') {
 
     <SettingsWindow v-if="state" v-model:open="settingsOpen" :tab="settingsTab" :controller="state" />
     <FirstRun v-if="state" v-model:open="setupOpen" :controller="state" @cancel="onSetupCancel" />
-    <Confirmations v-if="state" v-model:quit-open="quitOpen" :controller="state" />
+    <Confirmations v-if="state" v-model:quit-open="quitOpen" :controller="state" @cancelled="updateQuitCancelled" />
     <ResourceActions v-if="state" v-model:open="resourceActionOpen" :controller="state" />
     <ResourceInspection v-if="state" v-model:open="inspectionOpen" :controller="state" />
   </div>

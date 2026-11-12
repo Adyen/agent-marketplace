@@ -237,6 +237,7 @@ async function openActionPlan(page: Page, verb: string, actions: string[]): Prom
   expect(response.status()).toBe(200)
   const dialog = page.getByRole('dialog', { name: label, exact: true })
   await expect(dialog).toBeVisible()
+  await dialog.getByText('Technical details', { exact: true }).click()
   await expect(dialog.locator('pre')).toBeVisible()
   expect(await dialog.locator('script, img').count()).toBe(0)
   return dialog
@@ -299,6 +300,41 @@ async function cancelAction(page: Page, dialog: Locator, actions: string[]): Pro
   await expect(dialog).toBeHidden()
   actions.push('Cancelled the prepared resource action with Enter')
 }
+
+// spec: gui-shell/spinner-shows-only-while-the-action-is-in-flight
+test('resource action dialog shows a spinner while preparing the plan', async ({ page }, testInfo) => {
+  const harness = await startWork39Harness(testInfo, 'available', true)
+  let releaseResponse!: () => void
+  let responseFetched!: () => void
+  const heldResponse = new Promise<void>((resolve) => {
+    releaseResponse = resolve
+  })
+  const fetched = new Promise<void>((resolve) => {
+    responseFetched = resolve
+  })
+  try {
+    const bootstrap = await work39Bootstrap(harness.bootstrap)
+    await launchWorkspace(page, bootstrap, [])
+    await selectReviewRow(page, [])
+    await page.route('**/api/resource-plan', async (route) => {
+      const response = await route.fetch()
+      responseFetched()
+      await heldResponse
+      await route.fulfill({ response })
+    })
+    await page.getByRole('button', { name: 'Install Resource', exact: true }).click()
+    await fetched
+    const dialog = page.getByRole('dialog', { name: 'Install Resource', exact: true })
+    await expect(dialog).toBeVisible()
+    await expect(dialog.locator('.resource-actions__spinner')).toBeVisible()
+    releaseResponse()
+    await expect(dialog.locator('.resource-actions__spinner')).toHaveCount(0)
+  } finally {
+    releaseResponse()
+    await page.close().catch(() => undefined)
+    await harness.stop()
+  }
+})
 
 // spec: session-interactions/guarded-submission
 test('built user GUI cancels, installs, and removes a warned Marketplace Resource through authoritative finals', async ({ page }, testInfo) => {

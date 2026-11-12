@@ -50,3 +50,24 @@ func TestRowPresentationRetainsExclusionCheckState(t *testing.T) {
 		})
 	}
 }
+
+// spec: gui-shell/disabled-and-enabled-rows-use-distinct-indicator-roles
+func TestUserRowProjectionMarksExcludedUnavailableResourceDisabled(t *testing.T) {
+	row := session.Row{
+		Artifact: resolver.ResolvedArtifact{
+			Entry:  catalog.Entry{Kind: ir.KindSkill, Name: "excluded-resource"},
+			Source: config.UserPersonal,
+		},
+		IsAvailable:     false,
+		IsExcluded:      true,
+		ExcludedLocally: true,
+		EnabledGlobal:   true,
+	}
+	projected := rowPresentationForUser(row, true)
+	if !projected.Checked {
+		t.Fatal("expected the unavailable user-excluded row to reproduce the filled check state")
+	}
+	if !projected.Disabled {
+		t.Fatal("expected the unavailable user-excluded row to project disabled")
+	}
+}

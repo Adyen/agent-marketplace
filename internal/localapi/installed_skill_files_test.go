@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -692,5 +693,172 @@ func assertWork37CacheTreeUnchanged(t *testing.T, fixture *work37InstalledFixtur
 	entries, _ := captureWork37Cache(t, fixture.cacheRoot)
 	if !cacheEntriesEqual(fixture.cacheEntries, entries) {
 		t.Fatalf("Work37 cache entry set changed: before=%d after=%d", len(fixture.cacheEntries), len(entries))
+	}
+}
+
+// spec: gui-shell/unsafe-or-missing-local-skill-source-fails-actionably
+func TestUserAPILocalSkillFilesAreReadOnlyAndFailClosed(t *testing.T) {
+	home, _ := newUserAPIFixture(t, false)
+	sourceRoot := filepath.Join(home, "local-source")
+	writeFile(t, filepath.Join(sourceRoot, "review", "SKILL.md"), "---\nname: review\ndescription: Local review\n---\n# Local read-only review\n")
+	writeFile(t, filepath.Join(sourceRoot, "review", "notes.md"), "# Local support notes\n")
+	userConfigPath := filepath.Join(home, ".agents", "config.yaml")
+	writeFile(t, userConfigPath, fmt.Sprintf(
+		"apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  local: {directory: %q}\nresources:\n  local: {all: true}\n",
+		sourceRoot,
+	))
+	lockPaths, err := config.ResolveConfigLockPathsTolerateMissing(userConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockData, err := lockfile.Encode(lockfile.Document{APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeUser})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, lockPaths.CanonicalLock, string(lockData))
+	materializedPath := filepath.Join(home, ".devin", "skills", "protected", "SKILL.md")
+	writeFile(t, materializedPath, "protected materialized bytes\n")
+
+	api, err := NewUser(context.Background(), home, session.DependencyLifecycle{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer api.Close()
+	events := streamEvents(t, api)
+	waitForInspectionFinal(t, api, events)
+
+	api.mu.Lock()
+	rowID := ""
+	var snapshotRow rowDTO
+	for _, row := range api.current.Rows {
+		if row.Name == "review" {
+			rowID, snapshotRow = row.ID, row
+			break
+		}
+	}
+	api.mu.Unlock()
+	if rowID == "" || !snapshotRow.InstalledFiles {
+		t.Fatalf("local skill row = %+v, want installedFiles capability", snapshotRow)
+	}
+	row, generation, code := api.visibleResourceRow(rowID, session.LocalSkillFiles)
+	if code != "" || row.Artifact.SourceRoot != sourceRoot {
+		t.Fatalf("local skill row lookup = root %q code %q, want %q", row.Artifact.SourceRoot, code, sourceRoot)
+	}
+	if generation == 0 {
+		t.Fatal("local skill row has no current generation")
+	}
+
+	protected := []discoveryFixtureFile{
+		captureDiscoveryFixtureFile(t, userConfigPath),
+		captureDiscoveryFixtureFile(t, lockPaths.CanonicalLock),
+		captureDiscoveryFixtureFile(t, materializedPath),
+	}
+	for _, file := range protected {
+		if !file.exists {
+			t.Fatalf("read-only baseline file is missing: %s", file.path)
+		}
+	}
+	assertInspectionFilesUnchanged(t, protected)
+
+	primary := serveDiscoveryRequest(t, api, http.MethodPost, "/api/installed-skill-files", `{"rowId":"`+rowID+`"}`, api.Credential(), "")
+	if primary.Code != http.StatusOK {
+		t.Fatalf("local primary status = %d body=%s", primary.Code, primary.Body.String())
+	}
+	primaryResponse := decodeInstalledSkillFilesResponse(t, primary)
+	if len(primaryResponse.Files) != 2 || primaryResponse.Files[0].Path != "SKILL.md" || primaryResponse.SelectedFileID != primaryResponse.PrimaryFileID || !strings.Contains(primaryResponse.Content, "# Local read-only review") {
+		t.Fatalf("local primary response = %+v", primaryResponse)
+	}
+	var notes inspectionFileDTO
+	for _, file := range primaryResponse.Files {
+		if file.Path == "notes.md" {
+			notes = file
+		}
+	}
+	if notes.ID == "" {
+		t.Fatalf("local response omitted notes.md: %#v", primaryResponse.Files)
+	}
+	support := serveDiscoveryRequest(t, api, http.MethodPost, "/api/installed-skill-files", `{"rowId":"`+rowID+`","fileId":"`+notes.ID+`"}`, api.Credential(), "")
+	if support.Code != http.StatusOK {
+		t.Fatalf("local supporting file status = %d body=%s", support.Code, support.Body.String())
+	}
+	supportResponse := decodeInstalledSkillFilesResponse(t, support)
+	if supportResponse.SelectedFileID != notes.ID || supportResponse.Content != "# Local support notes\n" {
+		t.Fatalf("local supporting file response = %+v", supportResponse)
+	}
+	assertInspectionFilesUnchanged(t, protected)
+
+	outsideSecret := "outside-source-private-bytes"
+	outsideFile := filepath.Join(home, "outside-source.txt")
+	writeFile(t, outsideFile, outsideSecret)
+	if err := os.Remove(filepath.Join(sourceRoot, "review", "notes.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideFile, filepath.Join(sourceRoot, "review", "notes.md")); err != nil {
+		t.Fatal(err)
+	}
+	refused := serveDiscoveryRequest(t, api, http.MethodPost, "/api/installed-skill-files", `{"rowId":"`+rowID+`"}`, api.Credential(), "")
+	if refused.Code != http.StatusBadGateway || responseErrorCode(t, refused) != "localapi.source_files_unavailable" {
+		t.Fatalf("escaping local source response = %d/%s body=%s", refused.Code, responseErrorCode(t, refused), refused.Body.String())
+	}
+	var errorResponse struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(refused.Body.Bytes(), &errorResponse); err != nil {
+		t.Fatal(err)
+	}
+	if errorResponse.Message != "Skill source files are missing or unsafe; fix the source and refresh." {
+		t.Fatalf("local refusal message = %q", errorResponse.Message)
+	}
+	if strings.Contains(refused.Body.String(), outsideSecret) {
+		t.Fatalf("local refusal returned bytes outside the source root: %s", refused.Body.String())
+	}
+	assertInspectionFilesUnchanged(t, protected)
+}
+
+// spec: gui-shell/directory-and-git-skills-open-read-only-in-the-inspector
+func TestUserAPIGitSkillUsesCapturedExactSnapshotRoot(t *testing.T) {
+	home, _ := newUserAPIFixture(t, false)
+	bareGit := newBareGitSource(t)
+	gitURL := "file://" + filepath.ToSlash(bareGit)
+	writeFile(t, filepath.Join(home, ".agents", "config.yaml"), fmt.Sprintf(
+		"apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources:\n  git: {git: %q, ref: main}\nresources:\n  git: {all: true}\n",
+		gitURL,
+	))
+
+	api, err := NewUser(context.Background(), home, session.DependencyLifecycle{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer api.Close()
+	events := streamEvents(t, api)
+	waitForInspectionFinal(t, api, events)
+
+	api.mu.Lock()
+	rowID := ""
+	var snapshotRow rowDTO
+	for _, row := range api.current.Rows {
+		if row.Name == "solo" {
+			rowID, snapshotRow = row.ID, row
+			break
+		}
+	}
+	api.mu.Unlock()
+	if rowID == "" || !snapshotRow.InstalledFiles {
+		t.Fatalf("Git skill row = %+v, want installedFiles capability", snapshotRow)
+	}
+	row, _, code := api.visibleResourceRow(rowID, session.LocalSkillFiles)
+	root := row.Artifact.SourceRoot
+	primaryPath := row.Artifact.PrimarySourcePath
+	relative, relativeErr := filepath.Rel(root, primaryPath)
+	if code != "" || !filepath.IsAbs(root) || relativeErr != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		t.Fatalf("Git source root/path = %q/%q relative %q (err=%v code=%q)", root, primaryPath, relative, relativeErr, code)
+	}
+	response := serveDiscoveryRequest(t, api, http.MethodPost, "/api/installed-skill-files", `{"rowId":"`+rowID+`"}`, api.Credential(), "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("Git primary status = %d body=%s", response.Code, response.Body.String())
+	}
+	payload := decodeInstalledSkillFilesResponse(t, response)
+	if payload.SelectedFileID != payload.PrimaryFileID || !strings.Contains(payload.Content, "# Solo") {
+		t.Fatalf("Git exact-snapshot primary response = %+v", payload)
 	}
 }

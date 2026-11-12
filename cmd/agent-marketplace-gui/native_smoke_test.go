@@ -115,7 +115,7 @@ func TestNativeLaunchSmoke(t *testing.T) {
 	}
 	newHostFixture(t)
 	org := filepath.Join(t.TempDir(), "org.yaml")
-	writeFile(t, org, "apiVersion: agent-marketplace/v4\ngui:\n  version_check: false\n")
+	writeFile(t, org, "apiVersion: agent-marketplace/v4\nupdate_check:\n  enabled: false\n")
 	config.SetTestOrganizationConfigPath(t, org)
 
 	app, err := NewApp(context.Background(), session.RuntimeLifecycle())

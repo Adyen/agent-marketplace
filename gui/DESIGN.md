@@ -110,7 +110,7 @@ changes live.
 
 ```
 ┌──────────────┬──────────────────────────────────────┬─────────────────────┐
-│ ◧            │ Resources  user scope [⌕ ⌘K] [⟳] [Sync ~2] [Update] ◨ │
+│ ◧            │ Resources  user scope [⌕ ⌘K] [⟳] [Update] [Sync ~2] ◨ │
 │              │                                      │ Details             │
 │ ▤ Resources  │ ▾ PENDING SYNC                     2 │                     │
 │ ◷ Pending  2 │  [*] skill  auth-preflight   reg  U  │ Kind     skill      │
@@ -128,8 +128,10 @@ changes live.
   left sidebar           main column                       right inspector
 ```
 
-The shell is a three-column CSS grid:
-`[sidebar 260px] [main minmax(0,1fr)] [inspector 360px]`. The sidebar column is
+The shell is a grid of resizable columns:
+`[sidebar] [handle] [main minmax(0,1fr)] [handle] [inspector]`. The sidebar and
+inspector open at 260 px and 360 px and resize from their separator handles
+(see the visual feedback refinements). The sidebar column is
 always docked. A folded inspector's column collapses to `0`, and its contents
 are removed from the tab order with `inert`.
 
@@ -174,9 +176,10 @@ in Codex's selected-thread row.
        sit inside the pill.
     2. A **View** icon button (stacked rows), which opens the View menu.
     3. A Refresh icon button.
-    4. A **Sync** button, styled like Codex's "Commit" button, with a sync
+    4. An **Update** button, a separate visible secondary button next to Sync,
+       with an available-update count badge when updates exist.
+    5. A **Sync** button, styled like Codex's "Commit" button, with a sync
        icon and a pending badge (`~2`) in mono.
-    5. An **Update** button, a separate visible secondary button next to Sync.
     6. A "Set up" button, shown only during first run.
     7. A divider, then a "Toggle inspector" icon button (◨).
 - **Banners** sit under the toolbar for errors, the no-harness notice, and the
@@ -303,7 +306,7 @@ Per modal:
 |---|---|---|
 | **Settings** (`SettingsWindow`) | gear | A wide window with General, Harness targets, and Sources tabs. See the fourth review. |
 | **First run** | sparkle | A three-step flow with a step indicator (`1 Targets · 2 Telemetry · 3 Sources`). Telemetry consent is a choice list with *no* preselected row ("Share basic telemetry" / "Don't share"), and Continue stays disabled until the user picks one. Cancel writes nothing. |
-| **Resource action** (Install/Remove) | plus / minus | Label/value rows for the resource, the plan preview as a code card (12 px radius, mono, diff-colored lines), the risk acknowledgement as a toggle switch row, and the primary button "Install" or "Remove". |
+| **Resource action** (Install/Remove) | none | Label/value rows for the resource, the plan preview as a code card (12 px radius, mono, diff-colored lines), the risk acknowledgement as a toggle switch row, and the primary button "Install" or "Remove". |
 | **Confirmations** (quit, sync-and-quit, migration) | exit / sync | The question, then a choice list with the affirmative, negative, and cancel options from `session-interactions`, then "Continue". Escape maps to cancel. |
 | **Resource inspection** | file | Two columns: a file tree on `--gui-s0100` and a preview pane styled like Codex's diff panel, with a sticky path header (path in mono and a size tag), mono 12 px content, and line numbers in `--gui-ink-3`. |
 
@@ -384,10 +387,11 @@ here conflicts with an earlier section, this section wins.
   `[x]`, not `[*]`.
 - *Rule*: a row is a grid of fixed columns:
   `check 3ch · kind 9ch · name 1fr · registry minmax(0, 16ch) · scope 6ch · override auto`.
-  - **check**: an 8 px dot, filled `--gui-signal` when on and a 1.5 px
-    `--gui-ink-3` ring when off, in both themes. A column of black `[x]`
-    read as noise, and bracket glyphs still read as code; a column of green
-    dots reads as "these are on".
+  - **check**: an 8 px dot, filled `--gui-signal` when on, filled
+    `--am-color-status-warning` when excluded, and a 1.5 px `--gui-ink-3`
+    ring when off, in both themes. A column of black `[x]` read as noise,
+    and bracket glyphs still read as code; a column of green dots reads as
+    "these are on".
   - **kind**: the kind ID in `--gui-ink-2` (`skill`, `command`, `subagent`,
     `hook`, `mcpserver`). Kind, registry, and scope use `--gui-ink-2`, not
     `--gui-ink-3`: at 11–12 px, ink-3 measures about 3.3:1 on white, below
@@ -412,7 +416,8 @@ here conflicts with an earlier section, this section wins.
   and the part that identifies the source is hidden. The folder icons
   shrink by different amounts as the label grows, so they don't line up.
 - *Rule*: a source row shows a short label: the last two path segments for
-  directories (`resources/skills`), the host for Marketplace sources, and
+  directories (`resources/skills`), the configured name for named Marketplace
+  sources (otherwise the full endpoint host), and
   the host and repository name for Git sources (`github.com/org/repo` →
   `org/repo`). The full location stays in the tooltip and the accessible
   name. The leading icon matches the source kind: folder for directories,
@@ -457,7 +462,10 @@ here conflicts with an earlier section, this section wins.
   shows a status dot: signal for `ready`, warning for `pending`, danger for
   `failed`.
 - *Rule — discovery*: each endpoint is a compact row: the label in 500
-  weight, then `cache state · N results · truncated` in mono `--gui-ink-3`.
+  weight, then plain-language health and result count. Current results say
+  "Results are current", cached results say they are from an earlier check,
+  and a cache miss says "Not checked yet". Partial results say that only part
+  of the catalog is shown and invite the user to search.
 - *Rule — diagnostics*: the caps label carries the count. Each diagnostic is
   a disclosure row: the severity icon and the message clamped to two lines
   in mono 11.5 px, since the messages are tool output with paths. Selecting
@@ -490,7 +498,8 @@ wins.
     an ellipsis.
   - **name cell**: the name, then any exceptions as inline tags after an 8 px
     gap: the scope tag for `organization`, `project`, or `local`, and the
-    harness override badge. The name truncates first; tags never shrink.
+    harness override badge. The name keeps priority; a long status reason
+    shrinks and truncates before it can cover the registry column.
   - **scope**: the default `user` scope shows nothing visible. The
     `workspace__scope` element is kept with its full text but is visually
     hidden (`.gui-visually-hidden`), so the row's text and accessible content
@@ -544,11 +553,12 @@ wins.
 - *Observed*: Marketplace sources show the full host
   (`agent-marketplace.is.adyen…`), which truncates. Two Marketplace sources
   on the same domain therefore render as the same cut-off string.
-- *Rule*: a Marketplace source shows the first label of its host
-  (`agent-marketplace`), then `:port` for a non-default port, then the last
-  path segment when the URL has a path (`agent-marketplace/acme`). The full
-  location stays in the tooltip and the accessible name, and the ORG tag
-  still marks organization sources.
+- *Rule*: a Marketplace source shows its configured source name unless that
+  name is missing or the generic `marketplace` / `marketplace-<n>`; those
+  sources show the full endpoint hostname, then `:port` when present, and the
+  last path segment when the URL has a path. The full location stays in a
+  themed tooltip and the accessible name, and the ORG tag still marks
+  organization sources.
 
 ## Implementation plan
 
@@ -651,7 +661,8 @@ conflicts with an earlier section, this section wins.
 - *Rule*: such a row shows the reason as an inline tag after the name. The
   reason is the part of the status after the first `": "`, or the whole
   status when there is none. Broken uses danger text. Malformed and stale use
-  warning text. The tag never shrinks, and the name truncates first.
+  warning text. The reason tag shrinks and truncates, preserving room for the
+  resource name and source column.
 
 ### Empty states and sidebar
 
@@ -730,3 +741,23 @@ earlier section, this section wins.
 - Until inventory resolves, the sidebar shows "Loading targets…" in place of
   "No harnesses", and the no-targets notice stays hidden. The notice appears
   only after inventory or final with no targets.
+
+## Visual feedback refinements
+
+- The toolbar places the secondary Update action before the solid Sync action.
+  Update keeps its accessible name and shows a mono `--gui-signal` count only
+  when the latest update preview reports added or changed user resources.
+- The sidebar and inspector have keyboard-focusable vertical resize handles.
+  The sidebar opens at 260 px (200–400); the inspector opens at 360 px
+  (280–560). Arrow keys move 16 px and Home/End choose the limits. Integer
+  widths persist under `am-gui-sidebar-width` and `am-gui-inspector-width`;
+  missing or malformed values use the defaults.
+- Resource action dialogs omit the header tile, lead with plain-language
+  action and availability copy, and keep the plan in a collapsed
+  "Technical details" disclosure. A 16 px signal spinner accompanies plan
+  preparation and submission; the risk acknowledgement stays visible.
+- Settings' Add source button uses `.gui-button--secondary` with a leading
+  plus icon.
+- The native icon uses a rounded ink tile and the slanted green-and-white A
+  mark from `site/public/brand/favicon.svg`, rasterized from
+  `packaging/gui/icon.svg` without changing package metadata.

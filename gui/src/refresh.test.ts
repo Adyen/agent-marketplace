@@ -29,6 +29,18 @@ describe('workspace refresh', () => {
     expect(controller.state.configuration?.userTargets).toEqual(['claude'])
   })
 
+  it('focus reload does not request an update availability check', async () => {
+    const { client, push } = fakeClient()
+    mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('a')]) }))
+    await tick()
+
+    window.dispatchEvent(new Event('focus'))
+    await tick()
+
+    expect(client.snapshot).toHaveBeenCalledWith(false)
+  })
+
   it('keeps accepted rows through provisional, config, and inventory snapshots until final', async () => {
     const { client, push } = fakeClient()
     const { controller, wrapper } = mountWorkspace(client)

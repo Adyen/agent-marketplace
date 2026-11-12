@@ -180,6 +180,9 @@ func TestHostOptionWiring(t *testing.T) {
 	if bootstrap.Version != version {
 		t.Fatalf("bootstrap version = %q, want %q", bootstrap.Version, version)
 	}
+	if bootstrap.PackageFormat != "" {
+		t.Fatalf("default package format = %q, want empty", bootstrap.PackageFormat)
+	}
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/snapshot", nil)
 	app.handler().ServeHTTP(recorder, req)
@@ -188,18 +191,223 @@ func TestHostOptionWiring(t *testing.T) {
 	}
 }
 
+type windowEmission struct {
+	event string
+	args  []string
+}
+
 type recordedWindow struct {
 	unminimised bool
 	shown       bool
 	event       string
 	args        []string
+	events      chan windowEmission
 }
 
 func (w *recordedWindow) Unminimise() { w.unminimised = true }
 func (w *recordedWindow) Show()       { w.shown = true }
 func (w *recordedWindow) Emit(event string, args ...string) {
+	if w.events != nil {
+		w.events <- windowEmission{event: event, args: args}
+		return
+	}
 	w.event = event
 	w.args = args
+}
+
+func nextWindowEmission(t *testing.T, window *recordedWindow) windowEmission {
+	t.Helper()
+	select {
+	case event := <-window.events:
+		return event
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for window event")
+		return windowEmission{}
+	}
+}
+
+func decodeWindowFrame(t *testing.T, frame string) (kind, stage, message string) {
+	t.Helper()
+	var event struct {
+		Type    string `json:"type"`
+		Payload struct {
+			Stage   string `json:"stage"`
+			Message string `json:"message"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(frame, "data:"))), &event); err != nil {
+		t.Fatalf("decode window event frame: %v", err)
+	}
+	return event.Type, event.Payload.Stage, event.Payload.Message
+}
+
+// spec: gui-local-api/window-event-stream-requires-the-credential
+func TestWindowEventStreamRequiresCredential(t *testing.T) {
+	newHostFixture(t)
+	app, err := NewApp(context.Background(), session.DependencyLifecycle{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(app.close)
+	window := &recordedWindow{}
+
+	app.openEventStream(window, "unauthorized-stream", "wrong")
+
+	if window.event != "am:session-events:end" || len(window.args) != 2 || window.args[0] != "unauthorized-stream" || window.args[1] != "localapi.unauthorized" {
+		t.Fatalf("unauthorized stream end = %q %v", window.event, window.args)
+	}
+}
+
+// spec: gui-local-api/completion-notification-renders-without-further-activity
+func TestWindowEventStreamDeliversCompletionAndCloses(t *testing.T) {
+	newHostFixture(t)
+	app, err := NewApp(context.Background(), session.DependencyLifecycle{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(app.close)
+	finalRows(t, app)
+	window := &recordedWindow{events: make(chan windowEmission, 64)}
+	const streamID = "valid-stream"
+
+	app.openEventStream(window, streamID, app.api.Credential())
+
+	first := nextWindowEmission(t, window)
+	if first.event != "am:session-events" || len(first.args) != 2 || first.args[0] != streamID {
+		t.Fatalf("initial event = %+v", first)
+	}
+	if kind, stage, _ := decodeWindowFrame(t, first.args[1]); kind != "snapshot" || stage != "final" {
+		t.Fatalf("initial frame = %s/%s, want current final snapshot", kind, stage)
+	}
+
+	server := httptest.NewServer(app.handler())
+	t.Cleanup(server.Close)
+	request, err := http.NewRequest(http.MethodPost, server.URL+"/api/actions", strings.NewReader(`{"action":"sync"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("X-Agent-Marketplace-Token", app.api.Credential())
+	response, err := server.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusAccepted {
+		t.Fatalf("sync status = %d, want 202", response.StatusCode)
+	}
+
+	var frames []windowEmission
+	var finalIndex, notificationIndex int
+	for notificationIndex == 0 {
+		event := nextWindowEmission(t, window)
+		if event.event != "am:session-events" || len(event.args) != 2 || event.args[0] != streamID {
+			t.Fatalf("unexpected event before sync completion: %+v", event)
+		}
+		frames = append(frames, event)
+		kind, stage, message := decodeWindowFrame(t, event.args[1])
+		if kind == "snapshot" && stage == "final" {
+			finalIndex = len(frames)
+		}
+		if kind == "notification" && message == "sync complete" {
+			notificationIndex = len(frames)
+		}
+	}
+	if finalIndex == 0 || notificationIndex != finalIndex+1 {
+		t.Fatalf("completion frames final=%d notification=%d, want adjacent ordered frames", finalIndex, notificationIndex)
+	}
+
+	app.closeEventStream(streamID)
+	end := nextWindowEmission(t, window)
+	if end.event != "am:session-events:end" || len(end.args) != 2 || end.args[0] != streamID || end.args[1] != "" {
+		t.Fatalf("normal stream end = %+v", end)
+	}
+	snapshotRequest, err := http.NewRequest(http.MethodPost, server.URL+"/api/snapshot", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotRequest.Header.Set("X-Agent-Marketplace-Token", app.api.Credential())
+	snapshotResponse, err := server.Client().Do(snapshotRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = snapshotResponse.Body.Close()
+	select {
+	case event := <-window.events:
+		t.Fatalf("closed stream emitted another event: %+v", event)
+	case <-time.After(100 * time.Millisecond):
+	}
+	app.openEventStream(window, "app-close-stream", app.api.Credential())
+	initial := nextWindowEmission(t, window)
+	if initial.event != "am:session-events" || len(initial.args) != 2 || initial.args[0] != "app-close-stream" {
+		t.Fatalf("app-close stream initial event = %+v", initial)
+	}
+	app.close()
+	closed := nextWindowEmission(t, window)
+	if closed.event != "am:session-events:end" || len(closed.args) != 2 || closed.args[0] != "app-close-stream" || closed.args[1] != "" {
+		t.Fatalf("app-close stream end = %+v", closed)
+	}
+}
+
+func TestWindowEventStreamCloseBeforeOpenLeavesNoSubscription(t *testing.T) {
+	newHostFixture(t)
+	app, err := NewApp(context.Background(), session.DependencyLifecycle{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(app.close)
+	finalRows(t, app)
+	window := &recordedWindow{events: make(chan windowEmission, 64)}
+
+	app.closeEventStream("early-close")
+	app.openEventStream(window, "early-close", app.api.Credential())
+	app.openEventStream(window, "unauthorized-close", "wrong")
+	if end := nextWindowEmission(t, window); end.event != "am:session-events:end" || len(end.args) != 2 || end.args[0] != "unauthorized-close" {
+		t.Fatalf("unauthorized stream end = %+v", end)
+	}
+	app.closeEventStream("unauthorized-close")
+	select {
+	case event := <-window.events:
+		t.Fatalf("stream closed before open emitted %+v", event)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	app.eventStreams.mu.Lock()
+	streams, closed := len(app.eventStreams.streams), len(app.eventStreams.closed)
+	app.eventStreams.mu.Unlock()
+	if streams != 0 || closed != 0 {
+		t.Fatalf("retained %d streams and %d close records, want none", streams, closed)
+	}
+}
+
+func TestWindowEventStreamReplacementDoesNotEndNewStream(t *testing.T) {
+	newHostFixture(t)
+	app, err := NewApp(context.Background(), session.DependencyLifecycle{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(app.close)
+	finalRows(t, app)
+	window := &recordedWindow{events: make(chan windowEmission, 64)}
+	const streamID = "reused-stream"
+
+	for range 2 {
+		app.openEventStream(window, streamID, app.api.Credential())
+		initial := nextWindowEmission(t, window)
+		if initial.event != "am:session-events" || len(initial.args) != 2 || initial.args[0] != streamID {
+			t.Fatalf("initial event = %+v", initial)
+		}
+	}
+	select {
+	case event := <-window.events:
+		t.Fatalf("replaced stream emitted %+v for the replacement id", event)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	app.closeEventStream(streamID)
+	end := nextWindowEmission(t, window)
+	if end.event != "am:session-events:end" || len(end.args) != 2 || end.args[0] != streamID || end.args[1] != "" {
+		t.Fatalf("replacement stream end = %+v", end)
+	}
 }
 
 // spec: session-interactions/confirmation-retains-all-user-choices

@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"embed"
+	"log/slog"
 	"sync/atomic"
 
 	"github.com/Adyen/agent-marketplace/internal/session"
@@ -69,6 +70,34 @@ func (app *App) appOptions(hooks lifecycleHooks) *options.App {
 		Bind: []any{app},
 		OnStartup: func(ctx context.Context) {
 			windowCtx = ctx
+			wailsruntime.EventsOn(ctx, sessionEventsOpenEvent, func(data ...any) {
+				if len(data) < 2 {
+					return
+				}
+				id, idOK := data[0].(string)
+				credential, credentialOK := data[1].(string)
+				if idOK && credentialOK {
+					app.openEventStream(nativeWindow{ctx: ctx}, id, credential)
+				}
+			})
+			wailsruntime.EventsOn(ctx, sessionEventsCloseEvent, func(data ...any) {
+				if len(data) == 0 {
+					return
+				}
+				if id, ok := data[0].(string); ok {
+					app.closeEventStream(id)
+				}
+			})
+			controlClose, err := startE2EControl(app)
+			if err != nil {
+				slog.Error("GUI E2E control server could not start", "err", err)
+				wailsruntime.Quit(ctx)
+				return
+			}
+			app.e2eControlClose = controlClose
+			if err := app.updater.CleanupBackup(); err != nil {
+				slog.Warn("could not remove previous GUI update backup", "err", err)
+			}
 			if hooks.onStartup != nil {
 				hooks.onStartup(ctx)
 			}

@@ -18,6 +18,7 @@ export function snapshot(rows: Row[] = [], overrides: Partial<Snapshot> = {}): S
     diagnostics: [],
     harnesses: ['devin'],
     pendingChanges: 0,
+    availableUpdates: 0,
     discoveryEnabled: false,
     discoveryHealth: [],
     discoveryQuery: '',
@@ -44,6 +45,7 @@ export function row(name: string, overrides: Partial<Row> = {}): Row {
     required: false,
     pendingVerification: false,
     checked: true,
+    disabled: false,
     harnessOverride: false,
     harnesses: ['devin'],
     status: 'enabled',
@@ -63,6 +65,7 @@ export function event(overrides: Partial<SessionEvent>): SessionEvent {
 export function source(overrides: Partial<SourceDescription> = {}): SourceDescription {
   return {
     id: 'src-1',
+    name: '',
     kind: 'directory',
     location: '/home/dev/registry',
     path: '',

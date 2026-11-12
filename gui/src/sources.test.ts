@@ -6,6 +6,7 @@ import { configuration, event, fakeClient, mountWorkspace, snapshot, tick } from
 
 const dirSource = {
   id: 'user-dir-id',
+  name: '',
   kind: 'directory' as const,
   location: '/var/regs',
   ref: '',
@@ -15,6 +16,7 @@ const dirSource = {
 }
 const gitSource = {
   id: 'user-git-id',
+  name: '',
   kind: 'git' as const,
   location: 'https://example.com/repo.git',
   ref: 'main',
@@ -24,6 +26,7 @@ const gitSource = {
 }
 const marketplaceSource = {
   id: 'user-mp-id',
+  name: '',
   kind: 'marketplace' as const,
   location: 'https://marketplace.example',
   ref: '',
@@ -113,7 +116,42 @@ async function settleOperation(controller: { state: { operation: OperationRef | 
   expect(controller.state.operation).toBeNull()
 }
 
+function mutationError(code: string, message: string) {
+  return { severity: 'error' as const, category: 'mutation' as const, code, message }
+}
+
+function failAdd(push: (e: ReturnType<typeof event>) => void, operation: OperationRef, seq: number, diagnostics: ReturnType<typeof mutationError>[]) {
+  push(event({ sequence: seq, generation: 2, operation }))
+  push(event({ sequence: seq + 1, generation: 2, operation: null, payload: snapshot([], { diagnostics }) }))
+  push(
+    event({
+      sequence: seq + 2,
+      generation: 2,
+      operation,
+      type: 'notification',
+      payload: { severity: 'error', message: 'mutation failed' },
+    }),
+  )
+}
+
 describe('Source settings', () => {
+  it('styles Settings Add source as secondary with the plus icon', async () => {
+    const { client, push } = sourcesClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1 }))
+    await tick()
+
+    await openSources(wrapper)
+    const addButton = button('Add source')
+    expect(addButton.classList.contains('gui-button--secondary')).toBe(true)
+    const icon = addButton.querySelector('svg.gui-icon')
+    expect(icon).not.toBeNull()
+    expect(Array.from(icon!.querySelectorAll('path'), (path) => path.getAttribute('d'))).toEqual([
+      'M8 3v10',
+      'M3 8h10',
+    ])
+  })
+
   it('removes a user source through its opaque id and reloads metadata', async () => {
     const { client, push } = sourcesClient()
     const { controller, wrapper } = mountWorkspace(client)
@@ -263,13 +301,14 @@ describe('Source settings', () => {
 
   it.each([
     {
-      source: { id: 'org-dir', kind: 'directory' as const, location: '/opt/org-regs', ref: '', path: '', sourceHarness: '', rowSourceId: '' },
+      source: { id: 'org-dir', name: '', kind: 'directory' as const, location: '/opt/org-regs', ref: '', path: '', sourceHarness: '', rowSourceId: '' },
       texts: ['DIRECTORY', 'ORG', '/opt/org-regs'],
       absent: ['Ref ', 'Subpath '],
     },
     {
       source: {
         id: 'org-git',
+        name: '',
         kind: 'git' as const,
         location: 'https://example.com/org.git',
         ref: 'main',
@@ -281,7 +320,7 @@ describe('Source settings', () => {
       absent: [],
     },
     {
-      source: { id: 'org-mp', kind: 'marketplace' as const, location: 'https://org-mp.example', ref: '', path: '', sourceHarness: '', rowSourceId: '' },
+      source: { id: 'org-mp', name: '', kind: 'marketplace' as const, location: 'https://org-mp.example', ref: '', path: '', sourceHarness: '', rowSourceId: '' },
       texts: ['MARKETPLACE', 'ORG', 'https://org-mp.example'],
       absent: ['Ref ', 'Subpath '],
     },
@@ -324,8 +363,14 @@ describe('Source settings', () => {
     expect(client.configure).not.toHaveBeenCalled()
   })
 
-  it('adds a directory source with a typed body', async () => {
+  // spec: gui-configuration/add-source-request-error-renders-in-the-section
+  // spec: gui-configuration/add-source-error-clears-after-a-successful-add
+  it('keeps a failed add source request beside its form and clears it after a successful add', async () => {
     const { client, push } = sourcesClient({ userSources: [] })
+    const failure = new RequestError(502, 'localapi.source_unavailable')
+    vi.mocked(client.configure)
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValueOnce({ id: 9, kind: 'mutation' } as OperationRef)
     const { wrapper } = mountWorkspace(client)
     push(event({ sequence: 1 }))
     await tick()
@@ -339,6 +384,126 @@ describe('Source settings', () => {
       action: 'add-source',
       source: { kind: 'directory', location: '/opt/new-regs' },
     })
+    const addSection = dialog().querySelector<HTMLElement>('[aria-label="Add user source"]')!
+    expect(addSection.querySelector('[role="alert"]')?.textContent).toContain('The action could not be started')
+    expect(dialog().querySelector('.settings-window__content > [role="alert"]')).toBeNull()
+
+    button('Add source').click()
+    await tick()
+    expect(client.configure).toHaveBeenCalledTimes(2)
+    expect(addSection.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it('keeps a pre-existing mutation error at the top when an add source request is accepted', async () => {
+    const { client, push } = sourcesClient({ userSources: [] })
+    const saveFailure = {
+      severity: 'error' as const,
+      category: 'mutation' as const,
+      code: 'targets.failed',
+      message: 'Saving targets failed',
+    }
+    const addFailure = {
+      severity: 'error' as const,
+      category: 'mutation' as const,
+      code: 'source.unavailable',
+      message: 'Source unavailable',
+    }
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([], { diagnostics: [saveFailure] }) }))
+    await tick()
+    ;(client.configure as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 9, kind: 'mutation' } as OperationRef)
+
+    await openSources(wrapper)
+    await setInput('Source location', '/opt/new-regs')
+    button('Add source').click()
+    await tick()
+    push(event({ sequence: 2, generation: 2, operation: { id: 9, kind: 'mutation' } }))
+    push(
+      event({
+        sequence: 3,
+        generation: 2,
+        operation: null,
+        payload: snapshot([], { diagnostics: [saveFailure, addFailure] }),
+      }),
+    )
+    await tick()
+
+    const top = dialog().querySelector<HTMLElement>('.settings-window__content')!
+    const addSection = dialog().querySelector<HTMLElement>('[aria-label="Add user source"]')!
+    expect(Array.from(top.querySelectorAll(':scope > [role="alert"]')).map((el) => el.textContent)).toEqual([
+      'Saving targets failed',
+    ])
+    expect(addSection.textContent).not.toContain('Saving targets failed')
+    expect(addSection.querySelector('[role="alert"]')?.textContent).toContain('Source unavailable')
+  })
+
+  it('shows a busy rejection of an add source request beside its form', async () => {
+    const { client, push } = sourcesClient({ userSources: [] })
+    vi.mocked(client.configure).mockRejectedValueOnce(new RequestError(409, 'localapi.busy'))
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1 }))
+    await tick()
+
+    await openSources(wrapper)
+    await setInput('Source location', '/opt/new-regs')
+    button('Add source').click()
+    await tick()
+
+    const addSection = dialog().querySelector<HTMLElement>('[aria-label="Add user source"]')!
+    expect(addSection.querySelector('[role="alert"]')?.textContent).toContain('The action could not be started')
+    expect(dialog().querySelector('.settings-window__content > [role="alert"]')).toBeNull()
+  })
+
+  it('keeps a failed add source error in the Add source section after Settings is reopened', async () => {
+    const { client, push } = sourcesClient({ userSources: [] })
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1 }))
+    await tick()
+    const operation: OperationRef = { id: 9, kind: 'mutation' }
+    vi.mocked(client.configure).mockResolvedValue(operation)
+
+    await openSources(wrapper)
+    await setInput('Source location', '/opt/new-regs')
+    button('Add source').click()
+    await tick()
+    failAdd(push, operation, 2, [mutationError('config.edit.include-owned', 'Source is declared in an included fragment')])
+    await tick()
+
+    button('Close dialog').click()
+    await tick()
+    await openSources(wrapper)
+
+    expect(dialog().querySelector('[aria-label="Add user source"]')?.textContent).toContain('Source is declared in an included fragment')
+    expect(dialog().querySelector('.settings-window__content > [role="alert"]')).toBeNull()
+  })
+
+  it('keeps a retried add source error in the Add source section while the retry is pending and after it fails again', async () => {
+    const { client, push } = sourcesClient({ userSources: [] })
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1 }))
+    await tick()
+    const first: OperationRef = { id: 9, kind: 'mutation' }
+    const retry: OperationRef = { id: 10, kind: 'mutation' }
+    vi.mocked(client.configure).mockResolvedValueOnce(first).mockResolvedValueOnce(retry)
+    const diagnostic = mutationError('config.edit.include-owned', 'Source is declared in an included fragment')
+
+    await openSources(wrapper)
+    await setInput('Source location', '/opt/new-regs')
+    button('Add source').click()
+    await tick()
+    failAdd(push, first, 2, [diagnostic])
+    await tick()
+
+    button('Add source').click()
+    await tick()
+    const addSection = dialog().querySelector<HTMLElement>('[aria-label="Add user source"]')!
+    expect(addSection.textContent).toContain(diagnostic.message)
+    expect(dialog().querySelector('.settings-window__content > [role="alert"]')).toBeNull()
+
+    failAdd(push, retry, 5, [diagnostic])
+    await tick()
+    expect(addSection.textContent).toContain(diagnostic.message)
+    expect(dialog().querySelector('.settings-window__content > [role="alert"]')).toBeNull()
   })
 
   it('adds a git source with an explicit ref and optional subpath', async () => {

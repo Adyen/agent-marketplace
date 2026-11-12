@@ -10,11 +10,14 @@ import {
   type InspectionPayload,
   type InstalledSkillFilesPayload,
   type OperationRef,
+  type ReleaseNotice,
   type ResourceAction,
   type ResourceActionPlan,
   type SessionEvent,
   type Snapshot,
   type SourceInput,
+  type UpdateAction,
+  type UpdateStatus,
 } from './api/client'
 
 export type Row = Snapshot['rows'][number]
@@ -53,6 +56,7 @@ export const EVENT_OUTAGE_MESSAGE = 'Session updates are unavailable'
 export const DISCOVERY_REQUEST_ERROR_MESSAGE = 'Marketplace discovery request failed; retry or check the endpoint'
 export const INSPECTION_UNAVAILABLE_MESSAGE = 'Verified inspection is unavailable; check the Marketplace and retry.'
 export const RESOURCE_FILES_UNAVAILABLE_MESSAGE = 'Resource files are unavailable; refresh this resource and retry.'
+export const SOURCE_FILES_UNAVAILABLE_MESSAGE = 'Skill source files are missing or unsafe; fix the source and refresh.'
 export const RESOURCE_ACTION_UNAVAILABLE_MESSAGE = 'Resource action could not be prepared; refresh this resource and retry.'
 export const RESOURCE_ACTION_FAILED_MESSAGE = 'The resource action could not be started; refresh this resource and retry.'
 export const RESOURCE_ACTION_STALE_MESSAGE = 'This resource changed; prepare the action again.'
@@ -68,8 +72,10 @@ export interface WorkspaceState {
   harnesses: string[]
   diagnostics: Diagnostic[]
   pendingChanges: number
+  availableUpdates: number
   discoveryEnabled: boolean
   discoveryHealth: Snapshot['discoveryHealth']
+  diagnosticsDiscoveryHealth: Snapshot['discoveryHealth']
   discoveryQuery: string
   discoveryRequestId: number
   discoverySequence: number
@@ -84,8 +90,11 @@ export interface WorkspaceState {
   notifications: { id: number; severity: string; message: string }[]
   requesting: boolean
   error: string | null
+  sourceError: string | null
   configuration: Configuration | null
   latestVersion: string
+  releaseNotice: ReleaseNotice | null
+  updateStatus: UpdateStatus | null
 }
 
 const FATAL_DIAGNOSTIC_CATEGORIES = new Set(['config', 'catalog', 'resolution', 'materialization'])
@@ -112,8 +121,10 @@ export class WorkspaceController {
     harnesses: [],
     diagnostics: [],
     pendingChanges: 0,
+    availableUpdates: 0,
     discoveryEnabled: false,
     discoveryHealth: [],
+    diagnosticsDiscoveryHealth: [],
     discoveryQuery: '',
     discoveryRequestId: 0,
     discoverySequence: 0,
@@ -128,13 +139,17 @@ export class WorkspaceController {
     notifications: [],
     requesting: false,
     error: null,
+    sourceError: null,
     configuration: null,
     latestVersion: '',
+    releaseNotice: null,
+    updateStatus: null,
   })
 
   private readonly cursor = new EventCursor()
   private readonly timers = new Set<ReturnType<typeof setTimeout>>()
   private lastSettled: OperationRef | null = null
+  private quitHandler: (() => void) | null = null
   private pendingQuitId: number | null = null
   private quitEpoch = 0
   private configurationSeq = 0
@@ -162,7 +177,22 @@ export class WorkspaceController {
     private readonly client: Client,
     private readonly notifyTtl: number = NOTIFICATION_TTL_MS,
     private readonly onQuit?: () => void,
+    readonly packageFormat = '',
   ) {}
+
+  setQuitHandler(handler: (() => void) | null): void {
+    this.quitHandler = handler
+  }
+
+  async update(action: UpdateAction): Promise<UpdateStatus> {
+    const status = await this.client.update(action)
+    this.state.updateStatus = status
+    return status
+  }
+
+  private notifyQuit(): void {
+    ;(this.quitHandler ?? this.onQuit)?.()
+  }
 
   get resourceActionSubmitting(): boolean {
     return this.resourceActionPosting
@@ -219,9 +249,11 @@ export class WorkspaceController {
         return
       }
       this.state.latestVersion = notice.latestVersion ?? ''
+      this.state.releaseNotice = notice
     } catch {
       if (seq === this.releaseSeq) {
         this.state.latestVersion = ''
+        this.state.releaseNotice = null
       }
     }
   }
@@ -265,13 +297,13 @@ export class WorkspaceController {
     this.dispatchDiscoveryRequest()
   }
 
-  async refresh(): Promise<void> {
+  async refresh(checkUpdates = true): Promise<void> {
     if (this.state.requesting || this.state.operation != null) {
       return
     }
     this.state.requesting = true
     try {
-      await this.client.snapshot()
+      await this.client.snapshot(checkUpdates)
       await this.loadConfiguration()
       await this.checkRelease()
     } catch {
@@ -314,7 +346,7 @@ export class WorkspaceController {
 
   quit(): void {
     this.cancelQuit()
-    this.onQuit?.()
+    this.notifyQuit()
   }
 
   cancelQuit(): void {
@@ -544,7 +576,20 @@ export class WorkspaceController {
   }
 
   async addSource(source: SourceInput): Promise<boolean> {
-    return this.requestOperation(() => this.client.configure({ action: 'add-source', source }))
+    this.state.sourceError = null
+    const accepted = await this.requestOperation(
+      () => this.client.configure({ action: 'add-source', source }),
+      false,
+      (error) => {
+        if (error instanceof RequestError && error.code === 'localapi.directory_unavailable') {
+          this.state.sourceError = 'Directory source path does not exist or is not a directory.'
+        }
+      },
+    )
+    if (!accepted && this.state.sourceError == null) {
+      this.state.sourceError = 'The action could not be started'
+    }
+    return accepted
   }
 
   async removeSource(id: string): Promise<boolean> {
@@ -566,7 +611,11 @@ export class WorkspaceController {
     void this.client.telemetry(event).catch(() => undefined)
   }
 
-  private async requestOperation(start: () => Promise<OperationRef>, quitAfter = false): Promise<boolean> {
+  private async requestOperation(
+    start: () => Promise<OperationRef>,
+    quitAfter = false,
+    onFailure?: (error: unknown) => void,
+  ): Promise<boolean> {
     if (this.state.operation != null || this.state.requesting) {
       return false
     }
@@ -580,7 +629,11 @@ export class WorkspaceController {
       if (error instanceof RequestError && (error.status === 409 || error.code === 'localapi.busy')) {
         return false
       }
-      this.state.error = 'The action could not be started'
+      if (onFailure == null) {
+        this.state.error = 'The action could not be started'
+      } else {
+        onFailure(error)
+      }
       return false
     }
     this.state.requesting = false
@@ -592,7 +645,7 @@ export class WorkspaceController {
       const settled = this.lastSettled
       if (settled != null && settled.id === operation.id && settled.kind === 'sync') {
         this.quitEpoch++
-        this.onQuit?.()
+        this.notifyQuit()
       } else {
         this.pendingQuitId = operation.id
       }
@@ -673,7 +726,7 @@ export class WorkspaceController {
       this.applySnapshotFields(snapshot, generation)
       this.tryCompleteResourceActionSettlement()
       if (quitNow) {
-        this.onQuit?.()
+        this.notifyQuit()
       }
       return
     }
@@ -698,6 +751,7 @@ export class WorkspaceController {
     this.state.harnesses = snapshot.harnesses
     this.state.diagnostics = snapshot.diagnostics
     this.state.pendingChanges = snapshot.pendingChanges ?? 0
+    this.state.availableUpdates = snapshot.availableUpdates ?? 0
     const wasDiscoveryEnabled = this.state.discoveryEnabled
     const pendingDiscoveryIntent = this.browserDiscoveryRequestId > snapshot.discoveryRequestId
     this.state.discoveryEnabled = snapshot.discoveryEnabled === true
@@ -711,6 +765,9 @@ export class WorkspaceController {
     if (currentDiscovery) {
       this.state.discoverySequence = Math.max(this.state.discoverySequence, snapshot.discoverySequence)
       this.state.discoveryHealth = snapshot.discoveryHealth
+      if (snapshot.discoveryQuery === '') {
+        this.state.diagnosticsDiscoveryHealth = snapshot.discoveryHealth
+      }
       this.state.discoveryLoading = snapshot.discoveryLoading
       this.state.discoveryError = null
     } else {
@@ -718,6 +775,8 @@ export class WorkspaceController {
       this.state.discoveryLoading = false
     }
     if (!this.state.discoveryEnabled) {
+      this.state.discoveryHealth = []
+      this.state.diagnosticsDiscoveryHealth = []
       this.cancelDiscoveryRequest()
       this.lastDispatchedDiscoveryRequestId = 0
     }
@@ -752,6 +811,9 @@ export class WorkspaceController {
     this.cancelInspectionIfRowMissing()
     this.cancelResourceActionIfRowChanged()
     this.state.discoveryHealth = payload.health
+    if (payload.query === '') {
+      this.state.diagnosticsDiscoveryHealth = payload.health
+    }
     this.state.discoveryQuery = payload.query
     this.state.discoveryRequestId = payload.requestId
     this.state.discoverySequence = payload.discoverySequence
@@ -836,9 +898,12 @@ export class WorkspaceController {
       this.inspectionAbort = null
       const current = this.state.inspection
       if (current != null) {
-        const message = error instanceof RequestError && error.code === 'localapi.resource_files_unavailable'
+        const code = error instanceof RequestError ? error.code : ''
+        const message = code === 'localapi.resource_files_unavailable'
           ? RESOURCE_FILES_UNAVAILABLE_MESSAGE
-          : INSPECTION_UNAVAILABLE_MESSAGE
+          : code === 'localapi.source_files_unavailable'
+            ? SOURCE_FILES_UNAVAILABLE_MESSAGE
+            : INSPECTION_UNAVAILABLE_MESSAGE
         this.state.inspection = { ...current, loading: false, error: message }
       }
     })

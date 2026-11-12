@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/guiupdate"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/session"
@@ -33,12 +34,14 @@ const (
 	codeUnauthorized              = "localapi.unauthorized"
 	codeForbidden                 = "localapi.forbidden"
 	codeInvalidRequest            = "localapi.invalid_request"
+	codeDirectoryUnavailable      = "localapi.directory_unavailable"
 	codeNotReady                  = "localapi.not_ready"
 	codeNotSupported              = "localapi.not_supported"
 	codeBusy                      = "localapi.busy"
 	codeClosed                    = "localapi.closed"
 	codeInspectionUnavailable     = "localapi.inspection_unavailable"
 	codeResourceFilesUnavailable  = "localapi.resource_files_unavailable"
+	codeSourceFilesUnavailable    = "localapi.source_files_unavailable"
 	codeResourceActionUnavailable = "localapi.resource_action_unavailable"
 )
 
@@ -66,6 +69,7 @@ type rowDTO struct {
 	Required            bool      `json:"required"`
 	PendingVerification bool      `json:"pendingVerification"`
 	Checked             bool      `json:"checked"`
+	Disabled            bool      `json:"disabled"`
 	HarnessOverride     bool      `json:"harnessOverride"`
 	Harnesses           []string  `json:"harnesses"`
 	Status              string    `json:"status"`
@@ -96,6 +100,7 @@ type snapshotDTO struct {
 	Diagnostics        []diagnosticDTO      `json:"diagnostics"`
 	Harnesses          []string             `json:"harnesses"`
 	PendingChanges     int                  `json:"pendingChanges"`
+	AvailableUpdates   int                  `json:"availableUpdates"`
 	DiscoveryEnabled   bool                 `json:"discoveryEnabled"`
 	DiscoveryHealth    []discoveryHealthDTO `json:"discoveryHealth"`
 	DiscoveryQuery     string               `json:"discoveryQuery"`
@@ -146,13 +151,19 @@ type API struct {
 	gate      *session.OperationGate
 	token     string
 
-	mu       sync.Mutex
-	closed   bool
-	userOnly bool
-	requests session.RequestState
-	sequence uint64
-	current  *snapshotDTO
-	currentG session.RequestGeneration
+	mu                  sync.Mutex
+	closed              bool
+	userOnly            bool
+	requests            session.RequestState
+	sequence            uint64
+	current             *snapshotDTO
+	currentG            session.RequestGeneration
+	availableUpdates    int
+	updateCheckRunning  bool
+	updateCheckQueued   bool
+	updateCheckEpoch    uint64
+	updateCheckRunEpoch uint64
+	updateCheckCancel   context.CancelFunc
 
 	snapshotRowsKnown  bool
 	authoritativeRows  []session.Row
@@ -168,9 +179,11 @@ type API struct {
 	subs                 map[*subscriber]struct{}
 
 	version       string
+	packageFormat string
+	updater       *guiupdate.Service
 	releaseClient *http.Client
 	releaseOnce   sync.Once
-	releaseNotice string
+	releaseNotice releaseNotice
 
 	wg sync.WaitGroup
 }
@@ -247,9 +260,17 @@ func (a *API) Close() {
 		a.closed = true
 		a.cancel()
 		a.cancelDiscoveryLocked()
+		if a.updateCheckCancel != nil {
+			a.updateCheckCancel()
+			a.updateCheckCancel = nil
+		}
+		a.updateCheckQueued = false
 		a.resourceActionPlan = nil
 	}
 	a.mu.Unlock()
+	if a.updater != nil {
+		a.updater.Close()
+	}
 	a.wg.Wait()
 }
 
@@ -398,6 +419,8 @@ func (a *API) dispatch(w http.ResponseWriter, r *http.Request) {
 		a.handleConfigurationAction(w, r)
 	case "/api/release":
 		a.handleRelease(w, r)
+	case "/api/update":
+		a.handleUpdate(w, r)
 	default:
 		writeError(w, http.StatusNotFound, codeInvalidRequest)
 	}
@@ -410,12 +433,14 @@ func writeError(w http.ResponseWriter, status int, code string) {
 		codeUnauthorized:              "unauthorized",
 		codeForbidden:                 "origin rejected",
 		codeInvalidRequest:            "invalid request",
+		codeDirectoryUnavailable:      "directory source unavailable",
 		codeNotReady:                  "session is not ready for mutation",
 		codeNotSupported:              "operation not supported by this session mode",
 		codeBusy:                      "another operation is in progress",
 		codeClosed:                    "api is closed",
 		codeInspectionUnavailable:     "Verified inspection is unavailable; check the Marketplace and retry.",
 		codeResourceFilesUnavailable:  "Resource files are unavailable; refresh this resource and retry.",
+		codeSourceFilesUnavailable:    "Skill source files are missing or unsafe; fix the source and refresh.",
 		codeResourceActionUnavailable: "Resource action could not be prepared; refresh this resource and retry.",
 	}[code]
 	_ = json.NewEncoder(w).Encode(map[string]string{"code": code, "message": message})
@@ -472,6 +497,10 @@ func (a *API) emitLocked(eventType string, generation session.RequestGeneration,
 }
 
 func (a *API) deliverSnapshot(generation session.RequestGeneration, snapshot session.Snapshot) *snapshotDTO {
+	return a.deliverSnapshotWithUpdateCheck(generation, snapshot, false)
+}
+
+func (a *API) deliverSnapshotWithUpdateCheck(generation session.RequestGeneration, snapshot session.Snapshot, checkUpdates bool) *snapshotDTO {
 	a.mu.Lock()
 	if a.closed || generation == 0 || a.requests.Active(session.RequestSnapshot) != generation || snapshot.Generation != generation {
 		a.mu.Unlock()
@@ -484,10 +513,27 @@ func (a *API) deliverSnapshot(generation session.RequestGeneration, snapshot ses
 	a.emitLocked("snapshot", generation, dto.Operation, &dto)
 	a.mu.Unlock()
 	a.launchDiscovery(launch)
+	if checkUpdates && snapshot.Stage == session.SnapshotStageFinal {
+		a.requestUpdateAvailabilityCheck()
+	}
 	return &dto
 }
 
 func (a *API) handleSnapshot(w http.ResponseWriter, r *http.Request) {
+	var checkUpdates bool
+	if r.Body != nil && r.Body != http.NoBody && r.ContentLength != 0 {
+		seen := false
+		if !decodeStrictObject(r, func(decoder *json.Decoder, key string) bool {
+			if key != "checkUpdates" || seen {
+				return false
+			}
+			seen = true
+			return decoder.Decode(&checkUpdates) == nil
+		}) {
+			writeError(w, http.StatusBadRequest, codeInvalidRequest)
+			return
+		}
+	}
 	a.mu.Lock()
 	if operation := activeOperation(a.gate); operation != nil && a.current != nil {
 		dto := *a.current
@@ -510,14 +556,14 @@ func (a *API) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	var delivered *snapshotDTO
 	if staged {
 		for snapshot := range a.readSnapshotStages(ctx, session.CatalogLoadRefresh, generation) {
-			if dto := a.deliverSnapshot(generation, snapshot); dto != nil {
+			if dto := a.deliverSnapshotWithUpdateCheck(generation, snapshot, checkUpdates); dto != nil {
 				delivered = dto
 			}
 		}
 	} else {
 		snapshot := a.readSnapshot(ctx, session.CatalogLoadRefresh)
 		snapshot.Generation = generation
-		delivered = a.deliverSnapshot(generation, snapshot)
+		delivered = a.deliverSnapshotWithUpdateCheck(generation, snapshot, checkUpdates)
 	}
 	if delivered == nil {
 		a.mu.Lock()
@@ -560,6 +606,7 @@ func (a *API) snapshotPresentationLocked(snapshot session.Snapshot, op *operatio
 		Diagnostics:        []diagnosticDTO{},
 		Harnesses:          []string{},
 		PendingChanges:     snapshot.DriftReport.PendingCount(),
+		AvailableUpdates:   a.availableUpdates,
 		DiscoveryEnabled:   a.discovery.enabled,
 		DiscoveryHealth:    health,
 		DiscoveryQuery:     a.discovery.query,
@@ -615,6 +662,109 @@ func activeOperation(gate *session.OperationGate) *operationRef {
 		return nil
 	}
 	return &operationRef{ID: uint64(id), Kind: string(kind)}
+}
+
+func (a *API) setAvailableUpdatesLocked(count int) {
+	if a.availableUpdates == count {
+		return
+	}
+	a.availableUpdates = count
+	if a.current == nil {
+		return
+	}
+	dto := *a.current
+	dto.AvailableUpdates = count
+	a.emitLocked("snapshot", a.currentG, dto.Operation, &dto)
+}
+
+func (a *API) invalidateUpdateAvailabilityLocked() {
+	if !a.userOnly {
+		return
+	}
+	a.updateCheckEpoch++
+	a.setAvailableUpdatesLocked(0)
+	if a.updateCheckRunning {
+		a.updateCheckQueued = true
+		if a.updateCheckCancel != nil {
+			a.updateCheckCancel()
+		}
+	}
+}
+
+func (a *API) requestUpdateAvailabilityCheck() {
+	a.mu.Lock()
+	if a.closed || !a.userOnly || a.lifecycle.UpdateAvailability == nil {
+		a.mu.Unlock()
+		return
+	}
+	if activeOperation(a.gate) != nil {
+		a.updateCheckQueued = true
+		a.mu.Unlock()
+		return
+	}
+	if a.updateCheckRunning {
+		a.updateCheckQueued = true
+		a.mu.Unlock()
+		return
+	}
+	a.startUpdateAvailabilityCheckLocked()
+	a.mu.Unlock()
+}
+
+func (a *API) startUpdateAvailabilityCheckLocked() {
+	a.updateCheckRunning = true
+	a.updateCheckQueued = false
+	epoch := a.updateCheckEpoch
+	a.updateCheckRunEpoch = epoch
+	check := a.lifecycle.UpdateAvailability
+	ctx, cancel := context.WithCancel(a.ctx)
+	a.updateCheckCancel = cancel
+	a.wg.Add(1)
+
+	go func() {
+		defer a.wg.Done()
+		count, err := check(ctx, a.workspace)
+		if err != nil {
+			slog.Debug("GUI update availability check failed", "err", session.SanitizeReturnedError(err))
+		}
+		a.mu.Lock()
+		a.updateCheckRunning = false
+		a.updateCheckCancel = nil
+		valid := !a.closed && a.updateCheckEpoch == epoch && activeOperation(a.gate) == nil
+		if valid {
+			if err != nil {
+				a.setAvailableUpdatesLocked(0)
+			} else {
+				a.setAvailableUpdatesLocked(count)
+			}
+		}
+		rerun := a.updateCheckQueued && !a.closed && activeOperation(a.gate) == nil
+		if rerun {
+			a.updateCheckQueued = false
+			a.startUpdateAvailabilityCheckLocked()
+		}
+		a.mu.Unlock()
+		cancel()
+	}()
+}
+
+func (a *API) requestUpdateAvailabilityCheckAfterMutation() {
+	a.mu.Lock()
+	checkIsCurrent := a.updateCheckRunning && a.updateCheckRunEpoch == a.updateCheckEpoch
+	a.mu.Unlock()
+	if !checkIsCurrent {
+		a.requestUpdateAvailabilityCheck()
+	}
+}
+
+func (a *API) finishMutationGate(operation session.OperationID) {
+	a.gate.Finish(operation)
+	a.mu.Lock()
+	rerun := a.updateCheckQueued && !a.closed
+	a.mu.Unlock()
+	if rerun {
+		a.requestUpdateAvailabilityCheck()
+	}
 }
 
 func rowPresentation(row session.Row) rowDTO {
@@ -702,21 +852,30 @@ func rowPresentationForUser(row session.Row, userOnly bool) rowDTO {
 		Required:            row.Artifact.Required,
 		PendingVerification: row.PendingVerification,
 		Checked:             row.Artifact.Required || (!row.IsAvailable && (row.EnabledGlobal || row.EnabledProject || row.EnabledLocal)),
+		Disabled:            row.IsExcluded,
 		HarnessOverride:     row.HarnessSource == "registry override",
 		Harnesses:           harnesses,
 		Status:              status,
 		Group:               row.StatusGroup().ID(),
 		Discovery:           row.MarketplaceDiscovery != nil,
 		Inspectable:         session.MarketplaceInspectableSkill(row),
-		InstalledFiles:      session.MarketplaceInstalledSkillFiles(row),
+		InstalledFiles:      installedSkillFilesEligible(row),
 		ResourceAction:      session.UserMarketplaceActionNone,
 	}
 }
 
-func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {
+func (a *API) Subscribe(ctx context.Context, deliver func(frame []byte) bool) {
+	a.subscribe(ctx, deliver, nil)
+}
+
+func (a *API) subscribe(ctx context.Context, deliver func(frame []byte) bool, onReady func()) {
 	sub := &subscriber{events: make(chan []byte, 64)}
 	var envelope []byte
 	a.mu.Lock()
+	if a.closed {
+		a.mu.Unlock()
+		return
+	}
 	if a.current != nil {
 		a.sequence++
 		data, err := json.Marshal(sessionEvent{Type: "snapshot", Sequence: a.sequence, Generation: uint64(a.currentG), Operation: a.current.Operation, Payload: a.current})
@@ -729,14 +888,19 @@ func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if a.userOnly && !a.started {
 		a.started = true
 		startInitial = a.beginSnapshotLocked()
+		if startInitial != 0 {
+			a.wg.Add(1)
+		}
 	}
 	a.mu.Unlock()
+	if onReady != nil {
+		onReady()
+	}
 	if startInitial != 0 {
-		a.wg.Add(1)
 		go func() {
 			defer a.wg.Done()
 			for snapshot := range a.readSnapshotStages(a.ctx, session.CatalogLoadRefresh, startInitial) {
-				a.deliverSnapshot(startInitial, snapshot)
+				a.deliverSnapshotWithUpdateCheck(startInitial, snapshot, true)
 			}
 		}()
 	}
@@ -745,15 +909,28 @@ func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 		delete(a.subs, sub)
 		a.mu.Unlock()
 	}()
+	if envelope != nil && !deliver(envelope) {
+		return
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-a.ctx.Done():
+			return
+		case data, ok := <-sub.events:
+			if !ok || !deliver(data) {
+				return
+			}
+		}
+	}
+}
 
+func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 	header := w.Header()
 	header.Set("Content-Type", "text/event-stream")
 	header.Set("Cache-Control", "no-store")
-	w.WriteHeader(http.StatusOK)
 	flusher, _ := w.(http.Flusher)
-	if flusher != nil {
-		flusher.Flush()
-	}
 	write := func(data []byte) bool {
 		if _, err := w.Write(data); err != nil {
 			return false
@@ -763,21 +940,12 @@ func (a *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		return true
 	}
-	if envelope != nil && !write(envelope) {
-		return
-	}
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-a.ctx.Done():
-			return
-		case data, ok := <-sub.events:
-			if !ok || !write(data) {
-				return
-			}
+	a.subscribe(r.Context(), write, func() {
+		w.WriteHeader(http.StatusOK)
+		if flusher != nil {
+			flusher.Flush()
 		}
-	}
+	})
 }
 
 func decodeObject(decoder *json.Decoder, field func(decoder *json.Decoder, key string) bool) bool {
@@ -879,6 +1047,7 @@ func (a *API) handleAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, codeNotReady)
 		return
 	}
+	a.invalidateUpdateAvailabilityLocked()
 	a.wg.Add(1)
 	if kind == session.OperationSync || kind == session.OperationUpdate {
 		telemetry.RecordInteractiveAction(a.ctx, "gui", string(kind), nil)
@@ -972,6 +1141,7 @@ func (a *API) runOperation(operation session.OperationID, kind session.Operation
 	a.emitLocked("notification", generation, op, notificationPayload{Severity: severity, Message: message})
 	a.mu.Unlock()
 	a.launchDiscovery(launch)
+	a.requestUpdateAvailabilityCheckAfterMutation()
 	if failed != nil {
 		slog.Error("localapi operation failed", "kind", string(kind), "err", session.SanitizeReturnedError(failed))
 	}

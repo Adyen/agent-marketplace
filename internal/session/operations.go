@@ -23,12 +23,15 @@ type DependencyLifecycleFunc func(context.Context, pipeline.Workspace) (pipeline
 // config path mapper.
 type DependencyMutationFunc func(context.Context, pipeline.Workspace, func(pipeline.ConfigPathMapper) error) error
 
+type UpdateAvailabilityFunc func(context.Context, pipeline.Workspace) (int, error)
+
 // DependencyLifecycle carries the dependency lifecycle hooks a host injects
 // so guarded actions run against the host's runtime reconciliation.
 type DependencyLifecycle struct {
-	Sync   DependencyLifecycleFunc
-	Update DependencyLifecycleFunc
-	Mutate DependencyMutationFunc
+	Sync               DependencyLifecycleFunc
+	Update             DependencyLifecycleFunc
+	Mutate             DependencyMutationFunc
+	UpdateAvailability UpdateAvailabilityFunc
 	// InstallReconcile prepares acquisition locks for the sync that follows a
 	// Marketplace install, so other sources stay at their locked revisions.
 	InstallReconcile pipeline.DependencyReconciler
