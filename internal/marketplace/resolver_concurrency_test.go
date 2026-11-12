@@ -99,14 +99,12 @@ func TestResolveWithPolicyResolvesLeafPinsWithBoundedConcurrency(t *testing.T) {
 	}
 	latency := time.Second
 	server, pins, peak := concurrentPinServer(t, names, nil, func(string) time.Duration { return latency })
-	start := time.Now()
 	resolved, errs := (&Resolver{Cache: NewCache(t.TempDir())}).ResolveWithPolicy(context.Background(), &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: server.URL, InstanceID: "mp", Resources: pins}}}, nil, resolver.MarketplaceResolveModeRefresh, nil)
-	elapsed := time.Since(start)
 	if len(errs) != 0 || len(resolved) != len(pins) {
 		t.Fatalf("resolved=%d errors=%v", len(resolved), errs)
 	}
-	if elapsed >= 3*latency || peak.Load() <= 1 || peak.Load() > 8 {
-		t.Fatalf("elapsed=%s peak=%d, want < %s and 1 < peak <= 8", elapsed, peak.Load(), 3*latency)
+	if peak.Load() != maxPinConcurrency {
+		t.Fatalf("peak=%d, want full concurrency %d", peak.Load(), maxPinConcurrency)
 	}
 	for i := range pins {
 		if resolved[i].Name != pins[i].Name {

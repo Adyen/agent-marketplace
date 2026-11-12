@@ -39,16 +39,17 @@ func Resolve(ctx context.Context, marketplaceResolver *marketplace.Resolver, lay
 			plan *marketplace.PreparedInstall
 			err  error
 		}
+		budget := marketplace.NewPreparationBudget(remainingResources)
 		results := marketplace.ResolveConcurrently(len(source.Requests), func(i int) requestResult {
 			request := source.Requests[i]
-			plan, err := marketplaceResolver.PrepareLocatorWithResourceLimit(ctx, entry, marketplace.MarketplaceLocator{
+			plan, err := marketplaceResolver.PrepareLocatorWithBudget(ctx, entry, marketplace.MarketplaceLocator{
 				URL:      entry.URL,
 				Registry: request.Registry,
 				Kind:     request.MarketplaceKind(),
 				Name:     request.Name,
 				Revision: request.Options.Revision,
 				Digest:   request.Options.Revision,
-			}, targets, remainingResources, policy)
+			}, targets, budget, policy)
 			return requestResult{plan: plan, err: err}
 		})
 		for i, request := range source.Requests {
