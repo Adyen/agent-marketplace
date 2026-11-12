@@ -48,6 +48,7 @@ export function docsSidebar(docsPath: string): DefaultTheme.SidebarItem[] {
                 { text: 'Browse and inspect Marketplace resources', link: `${docsPath}how-to/browse-marketplace-resources` },
                 { text: 'Install from a hosted Marketplace', link: `${docsPath}how-to/install-from-a-marketplace` },
                 { text: 'Install resource bundles', link: `${docsPath}how-to/install-resource-bundles` },
+                { text: 'Install a plugin', link: `${docsPath}how-to/install-plugins` },
                 { text: 'Use a local registry', link: `${docsPath}how-to/use-a-local-registry` },
                 { text: 'Configure private Git registries', link: `${docsPath}how-to/configure-private-git-registries` }
               ]
@@ -172,6 +173,7 @@ export function docsSidebar(docsPath: string): DefaultTheme.SidebarItem[] {
             { text: 'Resource metadata', link: `${docsPath}reference/resource-metadata` },
             { text: 'Resource prerequisites', link: `${docsPath}reference/resource-prerequisites` },
             { text: 'Collections', link: `${docsPath}reference/collections` },
+            { text: 'Plugin support', link: `${docsPath}reference/plugin-support` },
             { text: 'Hook and tool names', link: `${docsPath}reference/hook-and-tool-names` }
           ]
         },
@@ -197,6 +199,7 @@ export function docsSidebar(docsPath: string): DefaultTheme.SidebarItem[] {
             { text: 'User journeys', link: `${docsPath}explanation/user-journeys` },
             { text: 'How agent-marketplace works', link: `${docsPath}explanation/how-agent-marketplace-works` },
             { text: 'Sources and resources', link: `${docsPath}explanation/sources-and-resources` },
+            { text: 'Plugins and package formats', link: `${docsPath}explanation/plugins-and-package-formats` },
             { text: 'Compared with APM and skills.sh', link: `${docsPath}explanation/compared-with-other-tools` }
           ]
         },

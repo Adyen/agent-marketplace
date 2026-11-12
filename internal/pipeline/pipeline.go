@@ -2,6 +2,8 @@ package pipeline
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -25,7 +27,10 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/plugindecode"
 	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
 )
@@ -68,6 +73,7 @@ type ResolveOptions struct {
 	// remain exact and malformed or stale locks still fail closed.
 	AllowMissingReadOnlyLocks   bool
 	ExactLockLease              func(context.Context) (func(), error)
+	LockMetadata                []LockMetadata
 	MarketplaceRevocationPolicy resolver.MarketplaceRevocationPolicy
 	// MarketplaceMode overrides the mode derived from CatalogMode when set,
 	// except that Offline always forces CachedNoFetch.
@@ -106,6 +112,7 @@ type ResolveResult struct {
 	MaterializationModes  config.MaterializationModes
 	CatalogLoad           catalog.LoadResult
 	Resolved              []resolver.ResolvedArtifact
+	PluginPlan            catalog.PluginSelectionPlan
 	LockMetadata          []LockMetadata
 	MarketplaceStatuses   []marketplace.PinStatus
 	MarketplaceInspection *marketplace.Inspection
@@ -155,7 +162,8 @@ func (e *TargetHarnessSetMissingError) Remediation() string {
 
 type SyncResult struct {
 	ResolveResult
-	Report *materialize.Report
+	Report           *materialize.Report
+	PluginDeliveries []PluginDeliveryChoice
 
 	// CatalogTrustErrors are the hard failures raised BEFORE materialization:
 	// config load/validation, catalog load, and resolve. They are the errors
@@ -176,6 +184,12 @@ type SyncResult struct {
 	// must read these fields rather than string-match or type-sniff Errors.
 	CatalogTrustErrors []error
 	MaterializeErrors  []error
+}
+
+type PluginDeliveryChoice struct {
+	Plugin   string
+	Target   string
+	Delivery string
 }
 
 // hccTargetsFromStrings converts a []string harness list into []hcc.Target.
@@ -315,6 +329,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	}
 	slog.Debug("pipeline resolve start", "repo_root", opts.Workspace.RepoRoot(), "catalog_mode", opts.CatalogMode, "offline", opts.Offline)
 	var result ResolveResult
+	result.LockMetadata = append([]LockMetadata(nil), opts.LockMetadata...)
 	// Every early return below must still hand back a valid policy: an unset
 	// mode matches neither "symlink" nor "file" and would silently pick a
 	// branch in materialize.Run for callers that materialize before checking
@@ -667,7 +682,7 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		marketplaceCfg = &filtered
 	}
 	var selectedCollections []resolver.ResolvedArtifact
-	resolved, resolveErrs := resolver.Resolve(
+	resolved, resolveErrs, pluginPlan := resolver.ResolveWithPluginSelectionPlan(
 		marketplaceCfg,
 		catalog.EntriesByKey(loadResult.Catalogs),
 		result.LocalCfg,
@@ -681,6 +696,33 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		resolver.WithMarketplaceRevocationPolicy(opts.MarketplaceRevocationPolicy),
 		resolver.WithSelectedCollections(&selectedCollections),
 	)
+	for i := range resolved {
+		if resolved[i].Kind != ir.KindPlugin {
+			continue
+		}
+		for _, metadata := range result.LockMetadata {
+			if metadata.Matches(resolved[i].Source, resolved[i].RegistryURL, resolved[i].Ref) {
+				resolved[i].SourceRevision = metadata.Commit
+				break
+			}
+		}
+	}
+	var externalSnapshotReleases []func()
+	resolved = resolveExternalPluginPackages(ctx, resolved, pluginPlan, result.LockMetadata, func(release func()) {
+		if release != nil {
+			externalSnapshotReleases = append(externalSnapshotReleases, release)
+		}
+	})
+	if len(externalSnapshotReleases) > 0 {
+		previousRelease := releaseExactLease
+		releaseExactLease = func() {
+			for i := len(externalSnapshotReleases) - 1; i >= 0; i-- {
+				externalSnapshotReleases[i]()
+			}
+			previousRelease()
+		}
+	}
+	result.PluginPlan = pluginPlan
 	result.LoadedCfg = loadedCfg
 	result.Resolved = resolved
 	result.SelectedCollections = append(selectedCollections, marketplaceSelectedCollections(marketplaceCfg)...)
@@ -705,6 +747,151 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 	}
 	result.Errors = errs
 	return result, releaseExactLease
+}
+
+func resolveExternalPluginPackages(ctx context.Context, artifacts []resolver.ResolvedArtifact, plan catalog.PluginSelectionPlan, metadata []LockMetadata, keepRelease func(func())) []resolver.ResolvedArtifact {
+	snapshots := make(map[string]string)
+	for i := range artifacts {
+		artifact := &artifacts[i]
+		if artifact.Kind != ir.KindPlugin || artifact.Plugin == nil || artifact.Plugin.Source.Kind != "git" {
+			continue
+		}
+		planned, ok := plannedExternalPlugin(plan, *artifact)
+		if !ok {
+			setExternalPluginRefusal(artifact, diag.CodePluginDeliveryPending, diag.SeverityWarning,
+				"plugin member selection plan is unavailable")
+			continue
+		}
+		source := artifact.Plugin.Source
+		ref := source.Ref
+		if ref == "" {
+			ref = "HEAD"
+		}
+		rootPath := source.Subdirectory
+		if rootPath == "" {
+			rootPath = "."
+		}
+		locked, ok := externalPluginLockMetadata(metadata, artifact.Source, source.URL, ref, rootPath)
+		if !ok || !locked.SnapshotAvailable {
+			setExternalPluginRefusal(artifact, diag.CodePluginDeliveryExternalUnavailable, diag.SeverityError,
+				"the locked external plugin snapshot is unavailable")
+			continue
+		}
+		oid, err := cache.ParseGitOID(locked.Commit)
+		if err != nil {
+			setExternalPluginRefusal(artifact, diag.CodePluginDeliveryExternalUnavailable, diag.SeverityError,
+				"the locked external plugin snapshot is unavailable")
+			continue
+		}
+		snapshotKey := locked.URL + "\x00" + oid.String()
+		snapshot, found := snapshots[snapshotKey]
+		if !found {
+			var release func()
+			snapshot, release, err = cache.LeaseExactGitReadOnlyWithContext(ctx, locked.URL, oid)
+			if err != nil {
+				setExternalPluginRefusal(artifact, diag.CodePluginDeliveryExternalUnavailable, diag.SeverityError,
+					"the locked external plugin snapshot is unavailable")
+				continue
+			}
+			snapshots[snapshotKey] = snapshot
+			keepRelease(release)
+		}
+		packageRoot, err := lockedExternalPluginPackageRoot(snapshot, source.Subdirectory)
+		if err != nil {
+			setExternalPluginRefusal(artifact, diag.CodePluginDeliveryExternalUnavailable, diag.SeverityError,
+				"the locked external plugin package is unavailable")
+			continue
+		}
+		plugin, _, err := plugindecode.DecodeEntry(packageRoot, planned.Source.Format, plugindecode.CatalogEntry{
+			Name:    planned.Name,
+			Strict:  planned.Entry.Plugin.Strict,
+			Overlay: planned.Entry.Plugin.Overlay,
+		})
+		if err != nil || plugin == nil || !packageRootMatches(packageRoot, plugin.Files) {
+			setExternalPluginRefusal(artifact, diag.CodePluginDeliveryExternalUnavailable, diag.SeverityError,
+				"the locked external plugin package is unavailable")
+			continue
+		}
+		artifact.Resource = plugin
+		artifact.PackageRoot = packageRoot
+		artifact.SourceRevision = locked.Commit
+	}
+	return artifacts
+}
+
+func plannedExternalPlugin(plan catalog.PluginSelectionPlan, artifact resolver.ResolvedArtifact) (catalog.PlannedPlugin, bool) {
+	for _, planned := range plan.Plugins {
+		if planned.Name != artifact.Name || planned.Layer != artifact.Source ||
+			planned.Source.CatalogKey != artifact.CatalogKey ||
+			planned.Entry.Plugin == nil || artifact.Plugin == nil ||
+			planned.Entry.Plugin.DefinitionDigest != artifact.Plugin.DefinitionDigest {
+			continue
+		}
+		return planned, true
+	}
+	return catalog.PlannedPlugin{}, false
+}
+
+func externalPluginLockMetadata(metadata []LockMetadata, source config.Source, url, ref, rootPath string) (LockMetadata, bool) {
+	var found LockMetadata
+	matched := false
+	for _, candidate := range metadata {
+		if !candidate.MatchesExternal(source, url, ref, rootPath) {
+			continue
+		}
+		if matched && candidate.Commit != found.Commit {
+			return LockMetadata{}, false
+		}
+		found = candidate
+		matched = true
+	}
+	return found, matched
+}
+
+func setExternalPluginRefusal(artifact *resolver.ResolvedArtifact, code string, severity diag.Severity, message string) {
+	plugin := *artifact.Plugin
+	plugin.Refusal = &diag.Diagnostic{
+		Code: code, Severity: severity, Resource: "plugin/" + artifact.Name, Message: message,
+	}
+	artifact.Plugin = &plugin
+	artifact.Resource = nil
+	artifact.PackageRoot = ""
+}
+
+func lockedExternalPluginPackageRoot(snapshot, subdirectory string) (string, error) {
+	relative := filepath.Clean(filepath.FromSlash(subdirectory))
+	if filepath.IsAbs(relative) {
+		return "", fmt.Errorf("external plugin root is not relative")
+	}
+	root := filepath.Join(snapshot, relative)
+	cleanRoot := filepath.Clean(root)
+	rel, err := filepath.Rel(snapshot, cleanRoot)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("external plugin root escapes its snapshot")
+	}
+	current := snapshot
+	parts := strings.Split(rel, string(os.PathSeparator))
+	for i, part := range parts {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			return "", err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || i < len(parts)-1 && !info.IsDir() {
+			return "", fmt.Errorf("external plugin root contains an unsafe path component")
+		}
+	}
+	info, err := os.Lstat(cleanRoot)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("external plugin root is not a real directory")
+	}
+	return cleanRoot, nil
 }
 
 func marketplaceResolveMode(mode catalog.LoadMode, offline bool) resolver.MarketplaceResolveMode {
@@ -941,7 +1128,21 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 			"resolved.count": strconv.Itoa(len(resolved.Resolved)),
 		})
 	}
-	report, err := materialize.Run(ctx, matRoot, resolved.Resolved, materialize.WithMaterializationModes(resolved.MaterializationModes))
+	deliverable, pending := DeliverableArtifacts(resolved.Resolved, resolved.PluginPlan)
+	result.PluginDeliveries = pluginDeliveryChoices(deliverable)
+	for _, issue := range pending {
+		var diagnostic interface{ DiagnosticSeverity() diag.Severity }
+		if errors.As(issue, &diagnostic) && diagnostic.DiagnosticSeverity() == diag.SeverityError {
+			result.addMaterializeError(issue)
+		} else {
+			result.Warnings = append(result.Warnings, issue)
+		}
+	}
+	materializeOptions := []materialize.RunOption{materialize.WithMaterializationModes(resolved.MaterializationModes)}
+	if len(resolved.ConfigErrors) == 0 && len(resolved.CatalogErrors) == 0 {
+		materializeOptions = append(materializeOptions, materialize.WithPluginStateReconciliation())
+	}
+	report, err := materialize.Run(ctx, matRoot, deliverable, materializeOptions...)
 	if materializeSpan != (telemetry.Span{}) {
 		materializeSpan.SetAttributes(materializationResultAttrs(report, err))
 		materializeSpan.End()
@@ -968,6 +1169,465 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 		result.addMaterializeError(err)
 	}
 	return result
+}
+
+func DeliverableArtifacts(resolved []resolver.ResolvedArtifact, plan catalog.PluginSelectionPlan) ([]resolver.ResolvedArtifact, []error) {
+	deliverable := make([]resolver.ResolvedArtifact, 0, len(resolved))
+	var pending []error
+	for _, artifact := range resolved {
+		if artifact.Kind != ir.KindPlugin {
+			deliverable = append(deliverable, artifact)
+			continue
+		}
+		if artifact.Plugin != nil && artifact.Plugin.Source.Kind == "git" && artifact.Plugin.Refusal != nil {
+			diagnostic := *artifact.Plugin.Refusal
+			diagnostic.Resource = "plugin/" + artifact.Name
+			pending = append(pending, newDiagIssue(diagnostic))
+			if diagnostic.Severity == diag.SeverityError {
+				marker := artifact
+				marker.PluginPackage = &resolver.PluginPackage{
+					Name: artifact.Name, SourceRevision: artifact.SourceRevision,
+					CatalogFingerprint: artifact.Plugin.DefinitionDigest, Scope: artifact.Source.String(),
+					GenerationError: "locked external plugin package is unavailable",
+				}
+				marker.Resource = &ir.Plugin{}
+				deliverable = append(deliverable, marker)
+			}
+			continue
+		}
+		delivery := "auto"
+		if artifact.Selection != nil && artifact.Selection.Delivery != "" {
+			delivery = artifact.Selection.Delivery
+		}
+		if artifact.Unresolved || artifact.Resource == nil {
+			continue
+		}
+		plugin, ok := artifact.Resource.(*ir.Plugin)
+		if !ok {
+			continue
+		}
+		targets := resolver.HarnessTargets(artifact.Harnesses)
+		deliveries := make(map[hcc.Target]PluginDeliveryResolution, len(targets))
+		scope := ScopeRepo
+		if artifact.Source.IsMachineScope() {
+			scope = ScopeUser
+		}
+		for _, target := range targets {
+			resolution := ResolvePluginDelivery(delivery, plugin.Format, target, scope)
+			if resolution.Diagnostic != nil {
+				diagnostic := *resolution.Diagnostic
+				diagnostic.Resource = "plugin/" + artifact.Name
+				pending = append(pending, newDiagIssue(diagnostic))
+				continue
+			}
+			deliveries[target] = resolution
+		}
+		if len(deliveries) == 0 {
+			continue
+		}
+		packageRoot, err := pluginPackageRoot(artifact, plugin)
+		if err != nil {
+			pending = append(pending, newDiagIssue(diag.Diagnostic{
+				Code:     diag.CodePluginGenerationPublish,
+				Severity: diag.SeverityError,
+				Resource: "plugin/" + artifact.Name,
+				Message:  "plugin package root could not be resolved safely",
+			}))
+			continue
+		}
+		members, foundPlan, authoredExclusions := plannedPluginMemberKeys(plan, artifact)
+		if !foundPlan {
+			pending = append(pending, newDiagIssue(diag.Diagnostic{
+				Code:     diag.CodePluginDeliveryPending,
+				Severity: diag.SeverityWarning,
+				Resource: "plugin/" + artifact.Name,
+				Message:  "plugin member selection plan is unavailable",
+			}))
+			continue
+		}
+		if artifact.Plugin != nil && artifact.Plugin.Source.Kind == "git" {
+			members = externalPluginMemberKeys(plugin, authoredExclusions)
+		}
+		decodeFailures, decodeKinds := pluginDecodeFailures(plugin, authoredExclusions)
+		excluded := make([]string, 0)
+		for _, member := range plugin.Members {
+			if !members[member.Key()] {
+				excluded = append(excluded, member.Key())
+			}
+		}
+		excluded = append(excluded, authoredExclusions...)
+		slices.Sort(excluded)
+		excluded = slices.Compact(excluded)
+		fingerprint := plugin.Format
+		if artifact.Plugin != nil && artifact.Plugin.DefinitionDigest != "" {
+			fingerprint = artifact.Plugin.DefinitionDigest
+		}
+		basePackage := resolver.PluginPackage{
+			Name:               plugin.Name(),
+			SourceRevision:     artifact.SourceRevision,
+			PackageRoot:        packageRoot,
+			CatalogFingerprint: fingerprint,
+			Scope:              artifact.Source.String(),
+			Exclusions:         append([]string(nil), excluded...),
+			DecodeFailures:     decodeFailures,
+			DecodeKinds:        decodeKinds,
+			Package:            plugin,
+		}
+		added := make(map[hcc.Target]bool, len(targets))
+		for _, target := range targets {
+			resolution, ok := deliveries[target]
+			if !ok {
+				continue
+			}
+			pluginPackage := basePackage
+			pluginPackage.Delivery = resolution.Delivery
+			pluginPackage.NativeRefresh = resolution.Refresh
+			for _, member := range plugin.Members {
+				if !members[member.Key()] || member.Resource == nil {
+					continue
+				}
+				memberPath := pluginMemberSourcePath(packageRoot, compile.SourceOf(member.Resource).File, plugin.Files)
+				memberRelPath, _ := filepath.Rel(packageRoot, memberPath)
+				memberArtifact := artifact
+				memberArtifact.Harnesses = []hcc.Target{target}
+				memberArtifact.Kind = member.Resource.Kind()
+				memberArtifact.Name = member.Resource.Name()
+				memberArtifact.Resource = member.Resource
+				memberArtifact.Path = memberPath
+				memberArtifact.Plugin = nil
+				if artifact.Selection != nil {
+					selection := *artifact.Selection
+					selection.Delivery = resolution.Delivery
+					memberArtifact.Selection = &selection
+				} else {
+					memberArtifact.Selection = nil
+				}
+				memberPackage := pluginPackage
+				memberPackage.MemberPath = filepath.ToSlash(memberRelPath)
+				memberArtifact.PluginPackage = &memberPackage
+				memberArtifact.InstalledName = plugin.Name() + "-" + member.Resource.Name()
+				deliverable = append(deliverable, memberArtifact)
+				added[target] = true
+			}
+		}
+		if len(decodeFailures) > 0 || plugin.HasDependencies() {
+			for _, target := range targets {
+				if added[target] {
+					continue
+				}
+				resolution, ok := deliveries[target]
+				if !ok {
+					continue
+				}
+				marker := artifact
+				marker.Harnesses = []hcc.Target{target}
+				markerPackage := basePackage
+				markerPackage.Delivery = resolution.Delivery
+				markerPackage.NativeRefresh = resolution.Refresh
+				marker.PluginPackage = &markerPackage
+				deliverable = append(deliverable, marker)
+			}
+		}
+	}
+	return deliverable, pending
+}
+
+func pluginDeliveryChoices(artifacts []resolver.ResolvedArtifact) []PluginDeliveryChoice {
+	seen := make(map[string]bool)
+	var choices []PluginDeliveryChoice
+	for _, artifact := range artifacts {
+		if artifact.Kind == ir.KindPlugin || artifact.PluginPackage == nil || artifact.PluginPackage.Delivery == "" {
+			continue
+		}
+		for _, target := range resolver.HarnessTargets(artifact.Harnesses) {
+			key := strings.Join([]string{artifact.PluginPackage.Name, string(target), artifact.PluginPackage.Delivery}, "\x00")
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			choices = append(choices, PluginDeliveryChoice{
+				Plugin: artifact.PluginPackage.Name, Target: string(target), Delivery: artifact.PluginPackage.Delivery,
+			})
+		}
+	}
+	slices.SortFunc(choices, func(a, b PluginDeliveryChoice) int {
+		if a.Plugin != b.Plugin {
+			return strings.Compare(a.Plugin, b.Plugin)
+		}
+		if a.Target != b.Target {
+			return strings.Compare(a.Target, b.Target)
+		}
+		return strings.Compare(a.Delivery, b.Delivery)
+	})
+	return choices
+}
+
+func plannedPluginMemberKeys(plan catalog.PluginSelectionPlan, artifact resolver.ResolvedArtifact) (map[string]bool, bool, []string) {
+	keys := map[string]bool{}
+	found := false
+	var exclusions []string
+	for _, planned := range plan.Plugins {
+		if planned.Name != artifact.Name || planned.Layer != artifact.Source {
+			continue
+		}
+		if filepath.Clean(planned.Entry.Path) != filepath.Clean(artifact.Path) {
+			continue
+		}
+		found = true
+		for _, key := range planned.Members {
+			keys[key] = true
+		}
+		exclusions = append(exclusions, planned.Exclusions...)
+	}
+	slices.Sort(exclusions)
+	exclusions = slices.Compact(exclusions)
+	return keys, found, exclusions
+}
+
+func externalPluginMemberKeys(plugin *ir.Plugin, exclusions []string) map[string]bool {
+	keys := make(map[string]bool, len(plugin.Members))
+	for _, member := range plugin.Members {
+		excluded := false
+		for _, exclusion := range exclusions {
+			if catalog.PluginMemberExclusionMatch(exclusion, member) {
+				excluded = true
+				break
+			}
+		}
+		if !excluded {
+			keys[member.Key()] = true
+		}
+	}
+	return keys
+}
+
+func pluginDecodeFailures(plugin *ir.Plugin, exclusions []string) ([]string, []ir.ResourceKind) {
+	if plugin == nil {
+		return nil, nil
+	}
+	exclude := make(map[string]bool, len(exclusions))
+	for _, key := range exclusions {
+		exclude[key] = true
+	}
+	var failures []string
+	var kinds []ir.ResourceKind
+	add := func(name string, kind ir.ResourceKind) {
+		if name == "" {
+			name = kind.String() + "/unknown"
+		}
+		if !slices.Contains(failures, name) {
+			failures = append(failures, name)
+		}
+		if kind != ir.KindPlugin && !slices.Contains(kinds, kind) {
+			kinds = append(kinds, kind)
+		}
+	}
+	for _, invalid := range plugin.Invalid {
+		switch invalid.Kind {
+		case "member":
+			key, kind := invalidPluginMemberKey(invalid.Path)
+			if key != "" && exclude[key] {
+				continue
+			}
+			add(key, kind)
+		case "entry":
+			add("mcpserver/unknown", ir.KindMcpServer)
+		case "component":
+			kind := invalidPluginComponentKind(invalid.Path)
+			if kind != ir.KindPlugin {
+				add(kind.String()+"/component", kind)
+			}
+		}
+	}
+	slices.Sort(failures)
+	slices.SortFunc(kinds, func(a, b ir.ResourceKind) int { return strings.Compare(a.String(), b.String()) })
+	return failures, kinds
+}
+
+func invalidPluginMemberKey(file string) (string, ir.ResourceKind) {
+	if strings.HasPrefix(path.Clean(filepath.ToSlash(file)), "hooks/") {
+		return "hook/unknown", ir.KindHook
+	}
+	kind, name, ok := catalog.InvalidPluginMemberLocator(file)
+	if !ok {
+		return "", ir.KindPlugin
+	}
+	return kind.String() + "/" + name, kind
+}
+
+func invalidPluginComponentKind(file string) ir.ResourceKind {
+	switch strings.Split(path.Clean(filepath.ToSlash(file)), "/")[0] {
+	case "skills":
+		return ir.KindSkill
+	case "commands":
+		return ir.KindCommand
+	case "agents", "droids":
+		return ir.KindSubagent
+	case "hooks":
+		return ir.KindHook
+	case "mcp", "mcpServers", "mcp.json":
+		return ir.KindMcpServer
+	default:
+		return ir.KindPlugin
+	}
+}
+
+func pluginPackageRoot(artifact resolver.ResolvedArtifact, plugin *ir.Plugin) (string, error) {
+	if plugin == nil {
+		return "", fmt.Errorf("plugin package is unavailable")
+	}
+	if packageRootMatches(artifact.PackageRoot, plugin.Files) {
+		return filepath.Clean(artifact.PackageRoot), nil
+	}
+	if artifact.Plugin != nil && artifact.Plugin.Source.Kind == "git" {
+		return "", fmt.Errorf("locked external plugin package root is unavailable")
+	}
+	layout, ok := targetmeta.LookupPackageLayout(plugin.Format)
+	if !ok {
+		return "", fmt.Errorf("plugin package manifest root is unavailable")
+	}
+	if artifact.Plugin != nil {
+		source := artifact.Plugin.Source
+		if source.Kind == "path" && !artifact.IsLocal() {
+			base := cache.RegistryCachePath(artifact.RegistryURL, artifact.Ref)
+			if artifact.RegistryPath != "" && artifact.RegistryPath != "." {
+				base = filepath.Join(base, filepath.FromSlash(artifact.RegistryPath))
+			}
+			root := filepath.Join(base, filepath.FromSlash(source.Path))
+			if packageRootMatches(root, plugin.Files) {
+				return filepath.Clean(root), nil
+			}
+		}
+	}
+	if manifestPath := artifact.PrimarySourcePath; manifestPath != "" {
+		if !filepath.IsAbs(manifestPath) {
+			manifestPath = filepath.Join(artifact.RegistryURL, filepath.FromSlash(manifestPath))
+		}
+		root := catalog.PackageRootFromManifest(manifestPath, layout.ManifestPath)
+		if packageRootMatches(root, plugin.Files) {
+			return root, nil
+		}
+	}
+	if manifestPath := artifact.Path; manifestPath != "" {
+		if !filepath.IsAbs(manifestPath) && artifact.IsLocal() {
+			manifestPath = filepath.Join(artifact.RegistryURL, filepath.FromSlash(manifestPath))
+		}
+		if !filepath.IsAbs(manifestPath) {
+			manifestPath = filepath.Join(cache.RegistryCachePath(artifact.RegistryURL, artifact.Ref), filepath.FromSlash(manifestPath))
+		}
+		root := catalog.PackageRootFromManifest(manifestPath, layout.ManifestPath)
+		if packageRootMatches(root, plugin.Files) {
+			return root, nil
+		}
+	}
+	for _, snapshot := range exactGitSnapshotRoots() {
+		base := snapshot
+		if artifact.Plugin != nil && artifact.Plugin.Source.Kind == "git" {
+			if artifact.Plugin.Source.Subdirectory != "" && artifact.Plugin.Source.Subdirectory != "." {
+				base = filepath.Join(base, filepath.FromSlash(artifact.Plugin.Source.Subdirectory))
+			}
+		} else {
+			if artifact.RegistryPath != "" && artifact.RegistryPath != "." {
+				base = filepath.Join(base, filepath.FromSlash(artifact.RegistryPath))
+			}
+			if artifact.Plugin != nil && artifact.Plugin.Source.Kind == "path" && artifact.Plugin.Source.Path != "" && artifact.Plugin.Source.Path != "." {
+				base = filepath.Join(base, filepath.FromSlash(artifact.Plugin.Source.Path))
+			}
+		}
+		if packageRootMatches(base, plugin.Files) {
+			return filepath.Clean(base), nil
+		}
+	}
+	return "", fmt.Errorf("plugin package source root is unavailable")
+}
+
+func pluginMemberSourcePath(root, source string, inventory []ir.PluginFile) string {
+	if source == "" {
+		return ""
+	}
+	if filepath.IsAbs(source) {
+		cleanSource := filepath.Clean(source)
+		rel, err := filepath.Rel(root, cleanSource)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+			return cleanSource
+		}
+		slashSource := filepath.ToSlash(cleanSource)
+		var match string
+		for _, file := range inventory {
+			if strings.HasSuffix(slashSource, "/"+file.Path) {
+				if match != "" {
+					return ""
+				}
+				match = file.Path
+			}
+		}
+		if match != "" {
+			return filepath.Join(root, filepath.FromSlash(match))
+		}
+		return ""
+	}
+	candidate := filepath.Clean(filepath.Join(root, filepath.FromSlash(source)))
+	rel, err := filepath.Rel(root, candidate)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return ""
+	}
+	return candidate
+}
+
+func packageRootMatches(root string, files []ir.PluginFile) (matched bool) {
+	if root == "" {
+		return false
+	}
+	info, err := os.Lstat(root)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return false
+	}
+	opened, err := os.OpenRoot(root)
+	if err != nil {
+		return false
+	}
+	defer func() {
+		if err := opened.Close(); err != nil {
+			matched = false
+		}
+	}()
+	source := opened.FS()
+	for _, file := range files {
+		handle, err := source.Open(file.Path)
+		if err != nil {
+			return false
+		}
+		fileInfo, statErr := handle.Stat()
+		if statErr == nil && (fileInfo.Size() < 0 || fileInfo.Size() > plugindecode.MaxPackageFileBytes) {
+			_ = handle.Close()
+			return false
+		}
+		data, readErr := io.ReadAll(io.LimitReader(handle, plugindecode.MaxPackageFileBytes+1))
+		closeErr := handle.Close()
+		if statErr != nil || readErr != nil || closeErr != nil || !fileInfo.Mode().IsRegular() || len(data) > plugindecode.MaxPackageFileBytes {
+			return false
+		}
+		digest := sha256.Sum256(data)
+		if hex.EncodeToString(digest[:]) != file.Digest || (fileInfo.Mode().Perm()&0o111 != 0) != file.Executable {
+			return false
+		}
+	}
+	return len(files) > 0
+}
+
+func exactGitSnapshotRoots() []string {
+	root := filepath.Join(cache.CacheDir(), "exact-git", "snapshots")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	var roots []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			roots = append(roots, filepath.Join(root, entry.Name()))
+		}
+	}
+	return roots
 }
 
 // CollectManagedPaths returns the managed paths (component subdirectories and

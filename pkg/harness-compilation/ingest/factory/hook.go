@@ -17,6 +17,7 @@ import (
 // nativeHooksFile is the standalone Factory hook file; it is a pure
 // top-level event map with no unrelated members.
 const nativeHooksFile = ".factory/hooks.json"
+const droidPluginRootToken = "${DROID_PLUGIN_ROOT}"
 
 func LoadHooks(src fs.FS, path string) ([]*ir.Hook, []diag.Diagnostic, error) {
 	load := bundle.LoadHooks

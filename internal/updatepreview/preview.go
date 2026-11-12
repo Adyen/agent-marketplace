@@ -65,7 +65,7 @@ type previewLiveSource struct {
 // summary comparison digests admitted files instead of holding their bytes.
 func Build(ctx context.Context, view lifecycle.PreparedUpdateView, includeDiffs bool) (*Preview, error) {
 	started := time.Now()
-	sides, err := lifecycle.ResolvePriorAndDesired(ctx, view.Ws, view.Offline, view.PriorJobs, view.Overlays, view.LockDesired, view.DesiredSet, view.Lookup, true)
+	sides, err := lifecycle.ResolvePriorAndDesired(ctx, view.Ws, view.Offline, view.PriorJobs, view.DesiredJobs, view.PriorPlanner, view.Overlays, view.LockDesired, view.DesiredSet, view.Lookup, true)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +129,7 @@ func Build(ctx context.Context, view lifecycle.PreparedUpdateView, includeDiffs 
 // they join the sides from the display selection: their definition and
 // membership changes must stay reviewable alongside their affected members.
 func previewSides(result pipeline.ResolveResult, set *lifecycle.ExactLockSet, keepBodies bool) ([]resourcediff.Side, error) {
-	artifacts := result.Resolved
+	artifacts, _ := pipeline.DeliverableArtifacts(result.Resolved, result.PluginPlan)
 	if len(result.SelectedCollections) > 0 {
 		combined := make([]resolver.ResolvedArtifact, 0, len(artifacts)+len(result.SelectedCollections))
 		combined = append(combined, artifacts...)

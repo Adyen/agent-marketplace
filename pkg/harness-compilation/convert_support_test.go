@@ -1,0 +1,1133 @@
+package harnesscompile
+
+import (
+	"bytes"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"testing/fstest"
+
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
+)
+
+const supportFixturePluginRoot = "/plugins/support-fixture"
+
+// artifactByPath returns the artifact emitted for path, or nil.
+func artifactByPath(artifacts []Artifact, path string) *Artifact {
+	for i := range artifacts {
+		if artifacts[i].Path == path {
+			return &artifacts[i]
+		}
+	}
+	return nil
+}
+
+func diagnosticCodes(result *Result) []string {
+	var codes []string
+	for _, d := range result.Diagnostics {
+		codes = append(codes, d.Code)
+	}
+	return codes
+}
+
+// A declared skill support file tree must reach the compiled target resource
+// root with exact bytes and executable mode when the source fs.FS is available.
+func TestConvertAssemblesSkillSupportFiles(t *testing.T) {
+	blob := []byte{0x00, 0x01, 0x02, 0xff, 0x7f}
+	src := fstest.MapFS{
+		"skills/demo/SKILL.md": &fstest.MapFile{
+			Data: []byte("---\nname: demo\ndescription: demo skill\n---\nBody"),
+		},
+		"skills/demo/scripts/run.sh": &fstest.MapFile{
+			Data: []byte("#!/bin/sh\necho hi\n"),
+			Mode: 0o755,
+		},
+		"skills/demo/assets/blob.bin": &fstest.MapFile{
+			Data: blob,
+			Mode: 0o644,
+		},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+
+	script := artifactByPath(result.Artifacts, "skills/demo/scripts/run.sh")
+	if script == nil {
+		t.Fatalf("missing support artifact skills/demo/scripts/run.sh; artifacts: %v", result.Artifacts)
+	}
+	if !bytes.Equal(script.Bytes, []byte("#!/bin/sh\necho hi\n")) {
+		t.Errorf("script bytes mismatch: %q", script.Bytes)
+	}
+	if script.Mode.Perm() != 0o755 {
+		t.Errorf("script mode = %o, want 0755", script.Mode.Perm())
+	}
+
+	asset := artifactByPath(result.Artifacts, "skills/demo/assets/blob.bin")
+	if asset == nil {
+		t.Fatalf("missing support artifact skills/demo/assets/blob.bin")
+	}
+	if !bytes.Equal(asset.Bytes, blob) {
+		t.Errorf("binary asset bytes mismatch")
+	}
+
+	for _, code := range diagnosticCodes(result) {
+		if code == diag.CodeSkillSupportFilesDeferred {
+			t.Errorf("support files were assembled but %q still reported", code)
+		}
+	}
+}
+
+// A hook command that references a bundled script through the canonical root
+// token must carry that asset into the converted bundle, and token-equivalent
+// targets must render their own spelling.
+func TestConvertAssemblesReferencedHookAsset(t *testing.T) {
+	src := fstest.MapFS{
+		"hooks/hooks.json": &fstest.MapFile{
+			Data: []byte(`{"hooks":{"Stop":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/check.sh"}]}}`),
+		},
+		"hooks/check.sh": &fstest.MapFile{
+			Data: []byte("#!/bin/sh\nexit 0\n"),
+			Mode: 0o755,
+		},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude, WithPluginRoot(supportFixturePluginRoot))
+	if err != nil {
+		t.Fatalf("Convert claude: %v", err)
+	}
+	asset := artifactByPath(result.Artifacts, "hooks/check.sh")
+	if asset == nil {
+		t.Fatalf("missing referenced hook asset hooks/check.sh")
+	}
+	if asset.Mode.Perm() != 0o755 {
+		t.Errorf("hook asset mode = %o, want 0755", asset.Mode.Perm())
+	}
+
+	factory, err := Convert(src, HarnessClaude, HarnessFactory, WithPluginRoot(supportFixturePluginRoot))
+	if err != nil {
+		t.Fatalf("Convert factory: %v", err)
+	}
+	if artifactByPath(factory.Artifacts, "hooks/check.sh") == nil {
+		t.Fatalf("factory conversion dropped referenced asset hooks/check.sh")
+	}
+	hooksJSON := artifactByPath(factory.Artifacts, "hooks/hooks.json")
+	if hooksJSON == nil {
+		t.Fatalf("factory conversion emitted no hook artifact")
+	}
+	if !strings.Contains(string(hooksJSON.Bytes), "plugins/support-fixture/hooks/check.sh") {
+		t.Errorf("factory hook command did not use the configured plugin root: %s", hooksJSON.Bytes)
+	}
+}
+
+// A referenced asset that does not exist in the source must fail closed: the
+// owning resource loses all of its output and a stable error is reported.
+func TestConvertMissingReferencedAssetFailsClosed(t *testing.T) {
+	src := fstest.MapFS{
+		"hooks/hooks.json": &fstest.MapFile{
+			Data: []byte(`{"hooks":{"Stop":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/absent.sh"}]}}`),
+		},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude, WithPluginRoot(supportFixturePluginRoot))
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if !sliceContains(diagnosticCodes(result), diag.CodeBundleSupportFileMissing) {
+		t.Errorf("missing %q diagnostic; codes: %v", diag.CodeBundleSupportFileMissing, diagnosticCodes(result))
+	}
+	if artifactByPath(result.Artifacts, "hooks/absent.sh") != nil {
+		t.Errorf("absent referenced asset was materialized")
+	}
+	if !result.HasErrors() {
+		t.Errorf("expected error-bearing result for missing referenced asset")
+	}
+}
+
+// Root references that escape the bundle root must fail closed instead of
+// reading outside the source.
+func TestConvertUnsafeReferencedAssetFailsClosed(t *testing.T) {
+	src := fstest.MapFS{
+		"hooks/hooks.json": &fstest.MapFile{
+			Data: []byte(`{"hooks":{"Stop":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/../outside.sh"}]}}`),
+		},
+		"hooks/inner.sh": &fstest.MapFile{Data: []byte("x")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude, WithPluginRoot(supportFixturePluginRoot))
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if !sliceContains(diagnosticCodes(result), diag.CodeBundleSupportFileUnsafe) {
+		t.Errorf("missing %q diagnostic; codes: %v", diag.CodeBundleSupportFileUnsafe, diagnosticCodes(result))
+	}
+	for _, a := range result.Artifacts {
+		if strings.Contains(a.Path, "..") {
+			t.Errorf("artifact escaped target root: %q", a.Path)
+		}
+	}
+
+	// A symlinked support path component is refused even when the reference
+	// itself is bundle-relative.
+	linkSrc := fstest.MapFS{
+		"hooks/hooks.json": &fstest.MapFile{
+			Data: []byte(`{"hooks":{"Stop":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/evil.sh"}]}}`),
+		},
+		"hooks/evil.sh": &fstest.MapFile{
+			Data: []byte("/outside/target.sh"),
+			Mode: fs.ModeSymlink,
+		},
+	}
+	linkResult, err := Convert(linkSrc, HarnessClaude, HarnessClaude, WithPluginRoot(supportFixturePluginRoot))
+	if err != nil {
+		t.Fatalf("Convert symlink: %v", err)
+	}
+	if !sliceContains(diagnosticCodes(linkResult), diag.CodeBundleSupportFileUnsafe) {
+		t.Errorf("symlinked support file was not refused; codes: %v", diagnosticCodes(linkResult))
+	}
+}
+
+// Referenced hook and MCP assets must apply the same VCS/OS metadata policy
+// as declared skill support enumeration. An existing metadata component is
+// still unsafe when named explicitly, and the owning resource is suppressed
+// rather than publishing repository internals or OS droppings.
+func TestConvertReferencedAssetsRejectMetadataComponents(t *testing.T) {
+	cases := []struct {
+		name            string
+		files           fstest.MapFS
+		forbiddenOutput string
+	}{
+		{
+			name: "hook git metadata",
+			files: fstest.MapFS{
+				"hooks/hooks.json":  &fstest.MapFile{Data: []byte(`{"hooks":{"Stop":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/.git/config"}]}}`)},
+				"hooks/.git/config": &fstest.MapFile{Data: []byte("[core]")},
+			},
+			forbiddenOutput: "hooks/hooks.json",
+		},
+		{
+			name: "hook svn metadata",
+			files: fstest.MapFS{
+				"hooks/hooks.json":       &fstest.MapFile{Data: []byte(`{"hooks":{"Stop":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/sub/.svn/entries"}]}}`)},
+				"hooks/sub/.svn/entries": &fstest.MapFile{Data: []byte("12")},
+			},
+			forbiddenOutput: "hooks/hooks.json",
+		},
+		{
+			name: "mcp hg metadata",
+			files: fstest.MapFS{
+				".mcp.json":        &fstest.MapFile{Data: []byte(`{"mcpServers":{"demo":{"command":"server","env":{"CFG":"${CLAUDE_PLUGIN_ROOT}/config/.hg/store"}}}}`)},
+				"config/.hg/store": &fstest.MapFile{Data: []byte("hg")},
+			},
+			forbiddenOutput: ".mcp.json",
+		},
+		{
+			name: "mcp ds store metadata",
+			files: fstest.MapFS{
+				".mcp.json":       &fstest.MapFile{Data: []byte(`{"mcpServers":{"demo":{"command":"server","headers":{"X-Cert":"${CLAUDE_PLUGIN_ROOT}/certs/.DS_Store"}}}}`)},
+				"certs/.DS_Store": &fstest.MapFile{Data: []byte("ds")},
+			},
+			forbiddenOutput: ".mcp.json",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := Convert(tc.files, HarnessClaude, HarnessClaude, WithPluginRoot(supportFixturePluginRoot))
+			if err != nil {
+				t.Fatalf("Convert: %v", err)
+			}
+			if !sliceContains(diagnosticCodes(result), diag.CodeBundleSupportFileUnsafe) {
+				t.Errorf("metadata reference did not emit %q; codes: %v", diag.CodeBundleSupportFileUnsafe, diagnosticCodes(result))
+			}
+			if artifactByPath(result.Artifacts, tc.forbiddenOutput) != nil {
+				t.Errorf("owning resource was not suppressed; artifacts: %v", result.Artifacts)
+			}
+			for _, a := range result.Artifacts {
+				for _, component := range strings.Split(a.Path, "/") {
+					switch component {
+					case ".git", ".svn", ".hg", ".DS_Store":
+						t.Errorf("metadata component %q reached artifact %q", component, a.Path)
+					}
+				}
+			}
+		})
+	}
+}
+
+// An IR skill that declares an unclean support-file name must fail closed
+// rather than producing a target path outside the compiled resource root.
+func TestAssembleSkillSupportRejectsUncleanRel(t *testing.T) {
+	skill := ir.NewSkill("demo", "d", "body", nil, nil, ir.SourceRef{File: "skills/demo/SKILL.md"})
+	skill.SupportFiles = []string{"../escape.sh"}
+	src := fstest.MapFS{
+		"skills/demo/SKILL.md":     &fstest.MapFile{Data: []byte("x")},
+		"skills/demo/scripts/s.sh": &fstest.MapFile{Data: []byte("y")},
+	}
+	compiled := []Artifact{{Path: "skills/demo/SKILL.md", Bytes: []byte("x")}}
+	support, diags := assembleResourceSupportArtifacts(src, skill, compiled, TargetClaude)
+	if len(support) != 0 {
+		t.Fatalf("unclean support rel produced artifacts: %v", support)
+	}
+	if len(diags) == 0 || diags[0].Code != diag.CodeBundleSupportFileUnsafe {
+		t.Fatalf("expected %q diagnostic, got %v", diag.CodeBundleSupportFileUnsafe, diags)
+	}
+}
+
+// A support-file artifact that collides with a compiled artifact path must
+// fail closed through the existing duplicate-path contract rather than
+// overwriting compiled output.
+func TestConvertSupportFileCollisionFailsClosed(t *testing.T) {
+	src := fstest.MapFS{
+		"skills/demo/SKILL.md": &fstest.MapFile{
+			Data: []byte("---\nname: demo\ndescription: demo skill\n---\nBody"),
+		},
+		"hooks/hooks.json": &fstest.MapFile{
+			Data: []byte(`{"hooks":{"Stop":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/skills/demo/SKILL.md"}]}}`),
+		},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude, WithPluginRoot(supportFixturePluginRoot))
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if !result.HasErrors() {
+		t.Fatalf("expected collision to fail closed; artifacts: %v", result.Artifacts)
+	}
+	codes := diagnosticCodes(result)
+	if !sliceContains(codes, diag.CodeBundleConflictDuplicateArtifactPath) &&
+		!sliceContains(codes, diag.CodeBundleConflictCrossKindArtifactPath) {
+		t.Errorf("missing artifact path conflict diagnostic; codes: %v", codes)
+	}
+}
+
+// Factory and Cursor MCP entries written with their native plugin-root token
+// must ingest to the canonical IR spelling so referenced assets ride along
+// and token-equivalent destinations render the canonical reference.
+func TestConvertNormalizesNativeMcpRootTokens(t *testing.T) {
+	cases := []struct {
+		name    string
+		source  Harness
+		token   string
+		mcpPath string
+	}{
+		{"factory", HarnessFactory, "${DROID_PLUGIN_ROOT}", ".factory/mcp.json"},
+		{"cursor", HarnessCursor, "${CURSOR_PLUGIN_ROOT}", ".cursor/mcp.json"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := `{"mcpServers":{` +
+				`"demo":{"command":"` + tc.token + `/bin/run.sh",` +
+				`"args":["--env","` + tc.token + `/config/.env"],` +
+				`"env":{"CFG":"` + tc.token + `/config/.env"}},` +
+				`"remote":{"url":"https://example.com/` + tc.token + `/sse",` +
+				`"headers":{"X-Root":"` + tc.token + `/tok"}}` +
+				`}}`
+			src := fstest.MapFS{
+				tc.mcpPath:    &fstest.MapFile{Data: []byte(entry)},
+				"bin/run.sh":  &fstest.MapFile{Data: []byte("#!/bin/sh\nexit 0\n"), Mode: 0o755},
+				"config/.env": &fstest.MapFile{Data: []byte("TOKEN=1\n")},
+				"tok":         &fstest.MapFile{Data: []byte("t")},
+			}
+
+			result, err := Convert(src, tc.source, HarnessClaude)
+			if err != nil {
+				t.Fatalf("Convert: %v", err)
+			}
+			for _, rel := range []string{"bin/run.sh", "config/.env"} {
+				if artifactByPath(result.Artifacts, rel) == nil {
+					t.Errorf("missing referenced MCP asset %s; artifacts: %v", rel, result.Artifacts)
+				}
+			}
+			mcpJSON := artifactByPath(result.Artifacts, ".mcp.json")
+			if mcpJSON == nil {
+				t.Fatalf("conversion emitted no .mcp.json artifact")
+			}
+			if !strings.Contains(string(mcpJSON.Bytes), "${CLAUDE_PLUGIN_ROOT}/config/.env") {
+				t.Errorf("MCP env did not carry canonical root token: %s", mcpJSON.Bytes)
+			}
+			if strings.Contains(string(mcpJSON.Bytes), tc.token) {
+				t.Errorf("native token %s leaked into converted output: %s", tc.token, mcpJSON.Bytes)
+			}
+		})
+	}
+}
+
+// Composite root-token values (env assignments, PATH-style colon lists, and
+// multi-token commands) must not be fabricated into single missing paths.
+// Valid file candidates inside them are assembled, directory and expansion
+// tails are ignored, and the owning resource keeps its output.
+func TestConvertCompositeRootReferenceAssemblesValidCandidates(t *testing.T) {
+	src := fstest.MapFS{
+		"hooks/hooks.json": &fstest.MapFile{
+			Data: []byte(`{"hooks":{"Stop":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/check.sh || true"}]}}`),
+		},
+		"hooks/check.sh": &fstest.MapFile{
+			Data: []byte("#!/bin/sh\nexit 0\n"),
+			Mode: 0o755,
+		},
+		".mcp.json": &fstest.MapFile{
+			Data: []byte(`{"mcpServers":{"demo":{` +
+				`"command":"${CLAUDE_PLUGIN_ROOT}/bin/run.sh",` +
+				`"env":{` +
+				`"PATH":"${CLAUDE_PLUGIN_ROOT}/bin:${CLAUDE_PLUGIN_ROOT}/tools:$PATH",` +
+				`"CFG":"prefix=${CLAUDE_PLUGIN_ROOT}/config/.env"` +
+				`}}}}`),
+		},
+		"bin/run.sh":  &fstest.MapFile{Data: []byte("#!/bin/sh\nexit 0\n"), Mode: 0o755},
+		"bin/helper":  &fstest.MapFile{Data: []byte("x")},
+		"tools/t.sh":  &fstest.MapFile{Data: []byte("x")},
+		"config/.env": &fstest.MapFile{Data: []byte("TOKEN=1\n")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude, WithPluginRoot(supportFixturePluginRoot))
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("composite references produced errors: %v", result.Diagnostics)
+	}
+	for _, rel := range []string{"hooks/check.sh", "bin/run.sh", "config/.env"} {
+		if artifactByPath(result.Artifacts, rel) == nil {
+			t.Errorf("missing referenced asset %s; artifacts: %v", rel, result.Artifacts)
+		}
+	}
+	for _, a := range result.Artifacts {
+		if strings.Contains(a.Path, "$PATH") || strings.Contains(a.Path, ":") {
+			t.Errorf("composite tail fabricated artifact %q", a.Path)
+		}
+	}
+	if artifactByPath(result.Artifacts, ".mcp.json") == nil {
+		t.Errorf("MCP resource was suppressed by composite env references")
+	}
+}
+
+// A whitespace-free remainder that contains a second root token (a
+// comma-joined list of two token-prefixed paths, for example) is not one
+// legal filename: every terminator-separated segment must be offered as a
+// candidate, and the first segment must not be suppressed by a
+// full-remainder candidate.
+func TestConvertCompositeRootReferenceAssemblesEveryTokenSegment(t *testing.T) {
+	src := fstest.MapFS{
+		".mcp.json": &fstest.MapFile{
+			Data: []byte(`{"mcpServers":{"demo":{` +
+				`"command":"env",` +
+				`"env":{"CA_BUNDLE":"${CLAUDE_PLUGIN_ROOT}/certs/ca.pem,${CLAUDE_PLUGIN_ROOT}/config/.env"}}}}`),
+		},
+		"certs/ca.pem": &fstest.MapFile{Data: []byte("ca\n")},
+		"config/.env":  &fstest.MapFile{Data: []byte("TOKEN=1\n")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("composite token list produced errors: %v", result.Diagnostics)
+	}
+	for _, rel := range []string{"certs/ca.pem", "config/.env"} {
+		if artifactByPath(result.Artifacts, rel) == nil {
+			t.Errorf("missing referenced asset %s; artifacts: %v", rel, result.Artifacts)
+		}
+	}
+	if artifactByPath(result.Artifacts, ".mcp.json") == nil {
+		t.Errorf("MCP resource was suppressed by composite env references")
+	}
+}
+
+// A missing or non-file candidate inside a composite value is not a clean
+// single-file reference: it must not fail closed or suppress the resource,
+// because the value cannot be proven to name a bundle file.
+func TestConvertCompositeRootReferenceSkipsNonFileCandidates(t *testing.T) {
+	src := fstest.MapFS{
+		".mcp.json": &fstest.MapFile{
+			Data: []byte(`{"mcpServers":{"demo":{` +
+				`"command":"run",` +
+				`"env":{"PATH":"${CLAUDE_PLUGIN_ROOT}/sbin:$PATH","DIR":"dir=${CLAUDE_PLUGIN_ROOT}/docs"}` +
+				`}}}`),
+		},
+		"docs/guide.md": &fstest.MapFile{Data: []byte("guide")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("composite non-file candidates produced errors: %v", result.Diagnostics)
+	}
+	if artifactByPath(result.Artifacts, ".mcp.json") == nil {
+		t.Fatalf("MCP resource was suppressed; artifacts: %v", result.Artifacts)
+	}
+}
+
+// MCP header values carry the canonical root token after ingestion; a header
+// that is exactly one root reference is a clear local-bundle contract and
+// its asset must be assembled, while token-embedded URL header values name
+// remote URLs and are never treated as bundle files.
+func TestConvertAssemblesMcpHeaderAsset(t *testing.T) {
+	src := fstest.MapFS{
+		".mcp.json": &fstest.MapFile{
+			Data: []byte(`{"mcpServers":{"demo":{` +
+				`"command":"server",` +
+				`"headers":{` +
+				`"X-Cert":"${CLAUDE_PLUGIN_ROOT}/certs/ca.pem",` +
+				`"X-Remote":"https://example.com/${CLAUDE_PLUGIN_ROOT}/tok"` +
+				`}}}}`),
+		},
+		"certs/ca.pem": &fstest.MapFile{Data: []byte("PEM")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("header references produced errors: %v", result.Diagnostics)
+	}
+	cert := artifactByPath(result.Artifacts, "certs/ca.pem")
+	if cert == nil {
+		t.Fatalf("missing header-referenced asset certs/ca.pem; artifacts: %v", result.Artifacts)
+	}
+	if !bytes.Equal(cert.Bytes, []byte("PEM")) {
+		t.Errorf("header asset bytes mismatch: %q", cert.Bytes)
+	}
+	if artifactByPath(result.Artifacts, "tok") != nil {
+		t.Errorf("remote URL header value was materialized as a bundle asset")
+	}
+}
+
+// A clean single-path header reference that is missing still fails closed:
+// the header deliberately names one bundle file.
+func TestConvertMissingMcpHeaderAssetFailsClosed(t *testing.T) {
+	src := fstest.MapFS{
+		".mcp.json": &fstest.MapFile{
+			Data: []byte(`{"mcpServers":{"demo":{` +
+				`"command":"server",` +
+				`"headers":{"X-Cert":"${CLAUDE_PLUGIN_ROOT}/certs/absent.pem"}` +
+				`}}}`),
+		},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if !sliceContains(diagnosticCodes(result), diag.CodeBundleSupportFileMissing) {
+		t.Errorf("missing %q diagnostic for absent header asset; codes: %v",
+			diag.CodeBundleSupportFileMissing, diagnosticCodes(result))
+	}
+}
+
+// A composite value whose earlier whitespace-delimited word contains :// must
+// not abort the scan: only token occurrences inside the URL word itself are
+// remote, and later genuine bundle references in the same value are still
+// assembled.
+func TestConvertCompositeURLWordDoesNotDropLaterReferences(t *testing.T) {
+	src := fstest.MapFS{
+		".mcp.json": &fstest.MapFile{
+			Data: []byte(`{"mcpServers":{"demo":{` +
+				`"command":"server",` +
+				`"env":{` +
+				`"DOCS":"see https://example.com/docs ${CLAUDE_PLUGIN_ROOT}/certs/ca.pem",` +
+				`"MIXED":"https://example.com/${CLAUDE_PLUGIN_ROOT}/tok ${CLAUDE_PLUGIN_ROOT}/config/.env"` +
+				`}}}}`),
+		},
+		"certs/ca.pem": &fstest.MapFile{Data: []byte("PEM")},
+		"config/.env":  &fstest.MapFile{Data: []byte("TOKEN=1\n")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("url-then-real references produced errors: %v", result.Diagnostics)
+	}
+	for _, rel := range []string{"certs/ca.pem", "config/.env"} {
+		if artifactByPath(result.Artifacts, rel) == nil {
+			t.Errorf("missing referenced asset %s after URL word; artifacts: %v", rel, result.Artifacts)
+		}
+	}
+	if artifactByPath(result.Artifacts, "tok") != nil {
+		t.Errorf("URL-contained token occurrence was materialized as a bundle asset")
+	}
+}
+
+// A root-token occurrence joined to a remote URL word by a declared asset
+// terminator (colon or comma) is a separate bundle reference, not part of the
+// URL: it must still be assembled, while token occurrences glued inside the
+// URL itself remain skipped and later genuine tokens keep scanning.
+func TestConvertURLSeparatorJoinedReferenceIsNotSwallowed(t *testing.T) {
+	src := fstest.MapFS{
+		".mcp.json": &fstest.MapFile{
+			Data: []byte(`{"mcpServers":{"demo":{` +
+				`"command":"server",` +
+				`"env":{` +
+				`"LIST":"https://example.com/a,${CLAUDE_PLUGIN_ROOT}/certs/ca.pem",` +
+				`"PAIR":"https://example.com:${CLAUDE_PLUGIN_ROOT}/config/.env",` +
+				`"EMBED":"https://example.com/${CLAUDE_PLUGIN_ROOT}/tok"` +
+				`}}}}`),
+		},
+		"certs/ca.pem": &fstest.MapFile{Data: []byte("PEM")},
+		"config/.env":  &fstest.MapFile{Data: []byte("TOKEN=1\n")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("separator-joined references produced errors: %v", result.Diagnostics)
+	}
+	for _, rel := range []string{"certs/ca.pem", "config/.env"} {
+		if artifactByPath(result.Artifacts, rel) == nil {
+			t.Errorf("missing separator-joined referenced asset %s; artifacts: %v", rel, result.Artifacts)
+		}
+	}
+	if artifactByPath(result.Artifacts, "tok") != nil {
+		t.Errorf("URL-embedded token occurrence was materialized as a bundle asset")
+	}
+}
+
+// An unclean composite candidate (traversal, absolute, or backslash path) is
+// not a merely-missing best-effort guess: it proves the published value can
+// escape the bundle root at runtime, so it must fail closed with
+// bundle.support-file.unsafe before any read.
+func TestConvertCompositeUnsafeCandidateFailsClosed(t *testing.T) {
+	cases := []struct {
+		name    string
+		command string
+	}{
+		{"traversal", "${CLAUDE_PLUGIN_ROOT}/../escape.sh || true"},
+		{"absolute", "${CLAUDE_PLUGIN_ROOT}//etc/passwd || true"},
+		{"backslash", `${CLAUDE_PLUGIN_ROOT}/dir\evil.sh || true`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := fstest.MapFS{
+				"hooks/hooks.json": &fstest.MapFile{
+					Data: []byte(`{"hooks":{"Stop":[{"type":"command","command":` + strconv.Quote(tc.command) + `}]}}`),
+				},
+				"hooks/ok.sh": &fstest.MapFile{Data: []byte("x")},
+			}
+			result, err := Convert(src, HarnessClaude, HarnessClaude, WithPluginRoot(supportFixturePluginRoot))
+			if err != nil {
+				t.Fatalf("Convert: %v", err)
+			}
+			if !sliceContains(diagnosticCodes(result), diag.CodeBundleSupportFileUnsafe) {
+				t.Errorf("composite unclean candidate %q did not emit %q; codes: %v",
+					tc.command, diag.CodeBundleSupportFileUnsafe, diagnosticCodes(result))
+			}
+		})
+	}
+}
+
+// A quoted single-token root reference is still one deliberate file
+// reference: one matching surrounding quote pair is normalized before strict
+// detection, so an existing asset is assembled and a missing one fails
+// closed instead of degrading to a silent best-effort skip.
+func TestConvertQuotedRootReferenceKeepsStrictSemantics(t *testing.T) {
+	src := fstest.MapFS{
+		"hooks/hooks.json": &fstest.MapFile{
+			Data: []byte(`{"hooks":{"Stop":[{"type":"command","command":` +
+				strconv.Quote(`"${CLAUDE_PLUGIN_ROOT}/hooks/check.sh"`) + `}]}}`),
+		},
+		"hooks/check.sh": &fstest.MapFile{
+			Data: []byte("#!/bin/sh\nexit 0\n"),
+			Mode: 0o755,
+		},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude, WithPluginRoot(supportFixturePluginRoot))
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("quoted existing reference produced errors: %v", result.Diagnostics)
+	}
+	asset := artifactByPath(result.Artifacts, "hooks/check.sh")
+	if asset == nil {
+		t.Fatalf("missing quoted referenced asset hooks/check.sh; artifacts: %v", result.Artifacts)
+	}
+
+	missingSrc := fstest.MapFS{
+		"hooks/hooks.json": &fstest.MapFile{
+			Data: []byte(`{"hooks":{"Stop":[{"type":"command","command":` +
+				strconv.Quote(`"${CLAUDE_PLUGIN_ROOT}/hooks/absent.sh"`) + `}]}}`),
+		},
+	}
+	missingResult, err := Convert(missingSrc, HarnessClaude, HarnessClaude, WithPluginRoot(supportFixturePluginRoot))
+	if err != nil {
+		t.Fatalf("Convert missing: %v", err)
+	}
+	if !sliceContains(diagnosticCodes(missingResult), diag.CodeBundleSupportFileMissing) {
+		t.Errorf("quoted missing reference lost strict semantics; codes: %v", diagnosticCodes(missingResult))
+	}
+}
+
+// A quoted root reference whose bundle path itself contains whitespace is
+// still one deliberate path. The quoted remainder must be preserved as the
+// candidate: an existing space-containing asset is assembled, an absent one
+// remains strict, and an existing whitespace-truncated prefix is never
+// published as a separate asset.
+func TestConvertQuotedRootReferenceWithWhitespaceStaysWhole(t *testing.T) {
+	src := fstest.MapFS{
+		"hooks/hooks.json": &fstest.MapFile{
+			Data: []byte(`{"hooks":{"Stop":[{"type":"command","command":` +
+				strconv.Quote(`"${CLAUDE_PLUGIN_ROOT}/hooks/check script.sh"`) + `}]}}`),
+		},
+		"hooks/check script.sh": &fstest.MapFile{Data: []byte("#!/bin/sh\nexit 0\n"), Mode: 0o755},
+		// Present on disk so a mistaken whitespace-truncated publish is
+		// observable as an extra artifact.
+		"hooks/check": &fstest.MapFile{Data: []byte("prefix")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude, WithPluginRoot(supportFixturePluginRoot))
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("quoted whitespace reference produced errors: %v", result.Diagnostics)
+	}
+	asset := artifactByPath(result.Artifacts, "hooks/check script.sh")
+	if asset == nil {
+		t.Fatalf("missing quoted whitespace referenced asset; artifacts: %v", result.Artifacts)
+	}
+	if asset.Mode.Perm() != 0o755 {
+		t.Errorf("quoted whitespace asset mode = %o, want 0755", asset.Mode.Perm())
+	}
+	if artifactByPath(result.Artifacts, "hooks/check") != nil {
+		t.Errorf("whitespace-truncated prefix was published alongside the quoted whole path")
+	}
+
+	missingSrc := fstest.MapFS{
+		"hooks/hooks.json": &fstest.MapFile{
+			Data: []byte(`{"hooks":{"Stop":[{"type":"command","command":` +
+				strconv.Quote(`"${CLAUDE_PLUGIN_ROOT}/hooks/absent script.sh"`) + `}]}}`),
+		},
+		"hooks/absent": &fstest.MapFile{Data: []byte("prefix")},
+	}
+	missingResult, err := Convert(missingSrc, HarnessClaude, HarnessClaude, WithPluginRoot(supportFixturePluginRoot))
+	if err != nil {
+		t.Fatalf("Convert missing: %v", err)
+	}
+	if !sliceContains(diagnosticCodes(missingResult), diag.CodeBundleSupportFileMissing) {
+		t.Errorf("quoted whitespace missing reference lost strict semantics; codes: %v", diagnosticCodes(missingResult))
+	}
+	if artifactByPath(missingResult.Artifacts, "hooks/absent") != nil {
+		t.Errorf("whitespace-truncated prefix was published for a missing quoted path")
+	}
+	if artifactByPath(missingResult.Artifacts, "hooks/hooks.json") != nil {
+		t.Errorf("owning hook was not suppressed for missing quoted path")
+	}
+}
+
+// A whitespace-free single-token remainder that contains declared asset
+// terminators may itself be a legal filename (e.g. a comma-named file): the
+// full remainder joins the best-effort candidates so it can resolve, while
+// unresolvable expansions such as a $PATH tail stay non-error.
+func TestConvertSingleTokenRemainderWithTerminatorsResolvesFile(t *testing.T) {
+	src := fstest.MapFS{
+		".mcp.json": &fstest.MapFile{
+			Data: []byte(`{"mcpServers":{"demo":{` +
+				`"command":"run",` +
+				`"env":{` +
+				`"LIST":"${CLAUDE_PLUGIN_ROOT}/data/a,b.txt",` +
+				`"PATH":"${CLAUDE_PLUGIN_ROOT}/sbin:$PATH"` +
+				`}}}}`),
+		},
+		"data/a,b.txt": &fstest.MapFile{Data: []byte("comma")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("terminator remainder references produced errors: %v", result.Diagnostics)
+	}
+	asset := artifactByPath(result.Artifacts, "data/a,b.txt")
+	if asset == nil {
+		t.Fatalf("comma-named referenced asset was not assembled; artifacts: %v", result.Artifacts)
+	}
+	if !bytes.Equal(asset.Bytes, []byte("comma")) {
+		t.Errorf("comma-named asset bytes mismatch: %q", asset.Bytes)
+	}
+	for _, a := range result.Artifacts {
+		if strings.Contains(a.Path, "$PATH") || a.Path == "sbin" {
+			t.Errorf("PATH expansion fabricated artifact %q", a.Path)
+		}
+	}
+}
+
+// When a single root-token value already offered its full
+// terminator-containing remainder as a best-effort candidate, the composite
+// scan must not also publish the terminator-truncated prefix of that same
+// remainder: the remainder is the better interpretation, and the prefix was
+// never independently referenced. Multi-token composite scanning and PATH
+// best-effort behavior are unaffected.
+func TestConvertSingleTokenRemainderDoesNotPublishTruncatedPrefix(t *testing.T) {
+	src := fstest.MapFS{
+		".mcp.json": &fstest.MapFile{
+			Data: []byte(`{"mcpServers":{"demo":{` +
+				`"command":"run",` +
+				`"env":{` +
+				`"LIST":"${CLAUDE_PLUGIN_ROOT}/data/a,b.txt",` +
+				`"PATH":"${CLAUDE_PLUGIN_ROOT}/sbin:$PATH"` +
+				`}}}}`),
+		},
+		"data/a,b.txt": &fstest.MapFile{Data: []byte("comma")},
+		// Present on disk so a mistaken truncated-prefix publish is
+		// observable as an extra artifact.
+		"data/a": &fstest.MapFile{Data: []byte("prefix")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("terminator remainder references produced errors: %v", result.Diagnostics)
+	}
+	asset := artifactByPath(result.Artifacts, "data/a,b.txt")
+	if asset == nil {
+		t.Fatalf("comma-named referenced asset was not assembled; artifacts: %v", result.Artifacts)
+	}
+	if !bytes.Equal(asset.Bytes, []byte("comma")) {
+		t.Errorf("comma-named asset bytes mismatch: %q", asset.Bytes)
+	}
+	if artifactByPath(result.Artifacts, "data/a") != nil {
+		t.Errorf("terminator-truncated prefix data/a was published alongside data/a,b.txt")
+	}
+	for _, a := range result.Artifacts {
+		if strings.Contains(a.Path, "$PATH") || a.Path == "sbin" {
+			t.Errorf("PATH expansion fabricated artifact %q", a.Path)
+		}
+	}
+}
+
+// VCS and OS metadata names inside a skill directory are never skill
+// content: they must be excluded at enumeration so .git, .svn, .hg, and
+// .DS_Store entries can never reach IR or compiled artifacts, while real
+// scripts, templates, and binary/executable assets still materialize.
+func TestConvertSkillSupportFilesExcludeMetadata(t *testing.T) {
+	src := fstest.MapFS{
+		"skills/demo/SKILL.md": &fstest.MapFile{
+			Data: []byte("---\nname: demo\ndescription: demo skill\n---\nBody"),
+		},
+		"skills/demo/scripts/run.sh": &fstest.MapFile{
+			Data: []byte("#!/bin/sh\necho hi\n"),
+			Mode: 0o755,
+		},
+		"skills/demo/templates/prompt.tmpl": &fstest.MapFile{Data: []byte("tmpl")},
+		"skills/demo/assets/blob.bin":       &fstest.MapFile{Data: []byte{0x00, 0xff}},
+		"skills/demo/.git/config":           &fstest.MapFile{Data: []byte("[core]")},
+		"skills/demo/.svn/entries":          &fstest.MapFile{Data: []byte("12")},
+		"skills/demo/.hg/store/data.i":      &fstest.MapFile{Data: []byte("hg")},
+		"skills/demo/.DS_Store":             &fstest.MapFile{Data: []byte("ds")},
+		"skills/demo/sub/.DS_Store":         &fstest.MapFile{Data: []byte("ds")},
+		"skills/demo/sub/nested/.git/HEAD":  &fstest.MapFile{Data: []byte("ref")},
+		"skills/demo/sub/keep.txt":          &fstest.MapFile{Data: []byte("keep")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("metadata exclusion produced errors: %v", result.Diagnostics)
+	}
+	for _, rel := range []string{
+		"skills/demo/scripts/run.sh",
+		"skills/demo/templates/prompt.tmpl",
+		"skills/demo/assets/blob.bin",
+		"skills/demo/sub/keep.txt",
+	} {
+		if artifactByPath(result.Artifacts, rel) == nil {
+			t.Errorf("missing support artifact %s; artifacts: %v", rel, result.Artifacts)
+		}
+	}
+	for _, a := range result.Artifacts {
+		for _, component := range strings.Split(a.Path, "/") {
+			switch component {
+			case ".git", ".svn", ".hg", ".DS_Store":
+				t.Errorf("metadata component %q reached artifact %q", component, a.Path)
+			}
+		}
+	}
+	script := artifactByPath(result.Artifacts, "skills/demo/scripts/run.sh")
+	if script != nil && script.Mode.Perm() != 0o755 {
+		t.Errorf("script mode = %o, want 0755", script.Mode.Perm())
+	}
+}
+
+// A token glued inside a protocol-relative URL word (//host/${TOKEN}/x)
+// names a remote URL and is skipped, while a reference joined to that word
+// by a declared terminator remains a genuine bundle candidate.
+func TestConvertProtocolRelativeURLWordSkipsRemoteReference(t *testing.T) {
+	src := fstest.MapFS{
+		".mcp.json": &fstest.MapFile{
+			Data: []byte(`{"mcpServers":{"demo":{` +
+				`"command":"server",` +
+				`"env":{` +
+				`"CDN":"//cdn.example.com/${CLAUDE_PLUGIN_ROOT}/tok",` +
+				`"MIX":"//cdn.example.com/a,${CLAUDE_PLUGIN_ROOT}/certs/ca.pem"` +
+				`}}}}`),
+		},
+		"certs/ca.pem": &fstest.MapFile{Data: []byte("PEM")},
+		// Present on disk so a mistaken local read would be observable.
+		"tok": &fstest.MapFile{Data: []byte("t")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("protocol-relative references produced errors: %v", result.Diagnostics)
+	}
+	if artifactByPath(result.Artifacts, "certs/ca.pem") == nil {
+		t.Errorf("missing separator-joined asset after protocol-relative word; artifacts: %v", result.Artifacts)
+	}
+	if artifactByPath(result.Artifacts, "tok") != nil {
+		t.Errorf("protocol-relative URL-embedded token was materialized as a bundle asset")
+	}
+}
+
+// Literal-only destinations must keep a stable diagnostic and must never
+// embed a caller-supplied author-machine path in emitted bytes.
+func TestConvertLiteralTargetDoesNotEmbedSourcePath(t *testing.T) {
+	src := fstest.MapFS{
+		"hooks/hooks.json": &fstest.MapFile{
+			Data: []byte(`{"hooks":{"Stop":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh"}]}}`),
+		},
+		"hooks/run.sh": &fstest.MapFile{
+			Data: []byte("#!/bin/sh\nexit 0\n"),
+			Mode: 0o755,
+		},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessWindsurf)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	for _, a := range result.Artifacts {
+		if strings.Contains(string(a.Bytes), "/home/author") || strings.Contains(string(a.Bytes), "/tmp/") {
+			t.Errorf("artifact %q embeds an author-machine path: %s", a.Path, a.Bytes)
+		}
+	}
+	found := false
+	for _, d := range result.Diagnostics {
+		if d.Code == diag.CodeHookSupportPathUnrepresentable {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected %q diagnostic for literal-only target; codes: %v",
+			diag.CodeHookWindsurfEnvTokenExpanded, diagnosticCodes(result))
+	}
+}
+
+func TestConvertCompositeSymlinkFailsClosed(t *testing.T) {
+	cases := []struct {
+		name, configPath, config, assetPath, aggregatePath string
+	}{
+		{"hook", "hooks/hooks.json", `{"hooks":{"Stop":[{"type":"command","command":"sh ${CLAUDE_PLUGIN_ROOT}/hooks/escape.sh"}]}}`, "hooks/escape.sh", "hooks/hooks.json"},
+		{"mcp", ".mcp.json", `{"mcpServers":{"demo":{"command":"run","env":{"CFG":"prefix=${CLAUDE_PLUGIN_ROOT}/certs/escape.pem"}}}}`, "certs/escape.pem", ".mcp.json"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := fstest.MapFS{
+				tc.configPath: &fstest.MapFile{Data: []byte(tc.config)},
+				tc.assetPath:  &fstest.MapFile{Mode: fs.ModeSymlink, Data: []byte("/outside")},
+			}
+			result, err := Convert(src, HarnessClaude, HarnessClaude, WithPluginRoot(supportFixturePluginRoot))
+			if err != nil {
+				t.Fatalf("Convert: %v", err)
+			}
+			if !sliceContains(diagnosticCodes(result), diag.CodeBundleSupportFileUnsafe) || len(result.Skipped) != 1 {
+				t.Errorf("symlink did not suppress its resource: diagnostics=%v skipped=%v", result.Diagnostics, result.Skipped)
+			}
+			if artifactByPath(result.Artifacts, tc.aggregatePath) != nil || artifactByPath(result.Artifacts, tc.assetPath) != nil {
+				t.Errorf("unsafe resource was emitted: %v", result.Artifacts)
+			}
+			src[tc.assetPath] = &fstest.MapFile{Data: []byte("safe")}
+			valid, err := Convert(src, HarnessClaude, HarnessClaude, WithPluginRoot(supportFixturePluginRoot))
+			if err != nil || valid.HasErrors() {
+				t.Fatalf("regular-file control: result=%v err=%v", valid, err)
+			}
+			if a := artifactByPath(valid.Artifacts, tc.assetPath); a == nil || !bytes.Equal(a.Bytes, []byte("safe")) {
+				t.Errorf("regular-file control lost asset: %v", valid.Artifacts)
+			}
+		})
+	}
+}
+
+func TestConvertCompositeTailIncludesExistingFile(t *testing.T) {
+	src := fstest.MapFS{
+		".mcp.json":    &fstest.MapFile{Data: []byte(`{"mcpServers":{"demo":{"command":"run","env":{"CFG":"${CLAUDE_PLUGIN_ROOT}/certs/ca.pem:$TAIL"}}}}`)},
+		"certs/ca.pem": &fstest.MapFile{Data: []byte("bundle PEM")},
+	}
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil || result.HasErrors() {
+		t.Fatalf("Convert: result=%v err=%v", result, err)
+	}
+	if artifactByPath(result.Artifacts, ".mcp.json") == nil {
+		t.Fatal("MCP control resource was not emitted")
+	}
+	if a := artifactByPath(result.Artifacts, "certs/ca.pem"); a == nil || !bytes.Equal(a.Bytes, []byte("bundle PEM")) {
+		t.Errorf("existing file preceding expansion tail was omitted: %v", result.Artifacts)
+	}
+	if artifactByPath(result.Artifacts, "certs/ca.pem:$TAIL") != nil {
+		t.Error("expansion tail was published as a filename")
+	}
+}
+
+func TestConvertMissingCommaNamedFileDoesNotPublishPrefix(t *testing.T) {
+	src := fstest.MapFS{
+		".mcp.json": &fstest.MapFile{Data: []byte(`{"mcpServers":{"demo":{"command":"run","env":{"CFG":"${CLAUDE_PLUGIN_ROOT}/data/a,b.txt"}}}}`)},
+		"data/a":    &fstest.MapFile{Data: []byte("unrelated")},
+	}
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil || result.HasErrors() {
+		t.Fatalf("Convert: result=%v err=%v", result, err)
+	}
+	if artifactByPath(result.Artifacts, ".mcp.json") == nil {
+		t.Fatal("MCP control resource was not emitted")
+	}
+	if artifactByPath(result.Artifacts, "data/a") != nil {
+		t.Errorf("unreferenced filename prefix was published: %v", result.Artifacts)
+	}
+}
+
+func TestConvertAssemblesPluginFormRootSkillSupportFiles(t *testing.T) {
+	src := fstest.MapFS{
+		".claude-plugin/plugin.json": &fstest.MapFile{
+			Data: []byte(`{"name":"demo","version":"1.0.0","skills":["./"]}`),
+		},
+		"SKILL.md": &fstest.MapFile{
+			Data: []byte("---\nname: demo\ndescription: root skill\n---\nBody"),
+		},
+		"scripts/run.sh": &fstest.MapFile{
+			Data: []byte("#!/bin/sh\necho hi\n"),
+			Mode: 0o755,
+		},
+		".git/config": &fstest.MapFile{Data: []byte("[core]")},
+	}
+
+	result, err := Convert(src, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("plugin-form root skill produced errors: %v", result.Diagnostics)
+	}
+	if artifactByPath(result.Artifacts, "skills/demo/SKILL.md") == nil {
+		t.Fatalf("plugin-form root skill was not converted; artifacts: %v", result.Artifacts)
+	}
+	script := artifactByPath(result.Artifacts, "skills/demo/scripts/run.sh")
+	if script == nil {
+		t.Fatalf("missing root skill support artifact; artifacts: %v", result.Artifacts)
+	}
+	if !bytes.Equal(script.Bytes, []byte("#!/bin/sh\necho hi\n")) {
+		t.Errorf("root support bytes mismatch: %q", script.Bytes)
+	}
+	if script.Mode.Perm() != 0o755 {
+		t.Errorf("root support mode = %o, want 0755", script.Mode.Perm())
+	}
+	for _, a := range result.Artifacts {
+		for _, component := range strings.Split(a.Path, "/") {
+			if component == ".git" {
+				t.Errorf("checkout metadata reached artifact %q", a.Path)
+			}
+		}
+	}
+}
+
+type swappingSupportFS struct {
+	fs.FS
+	inside, outside string
+}
+
+type swappingSupportEntry struct {
+	fs.DirEntry
+	inside, outside string
+}
+
+func (e swappingSupportEntry) Info() (fs.FileInfo, error) {
+	info, err := e.DirEntry.Info()
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Remove(e.inside); err != nil {
+		return nil, err
+	}
+	if err := os.Symlink(e.outside, e.inside); err != nil {
+		return nil, err
+	}
+	return info, nil
+}
+
+func (s swappingSupportFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	entries, err := fs.ReadDir(s.FS, name)
+	if name == "certs" && err == nil {
+		for i, entry := range entries {
+			if entry.Name() == "ca.pem" {
+				entries[i] = swappingSupportEntry{DirEntry: entry, inside: s.inside, outside: s.outside}
+			}
+		}
+	}
+	return entries, err
+}
+
+func TestConvertRefusesSupportFileReplacedAfterInspection(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	if err := os.MkdirAll(filepath.Join(source, "certs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	inside := filepath.Join(source, "certs", "ca.pem")
+	outside := filepath.Join(root, "outside.pem")
+	for path, data := range map[string]string{
+		filepath.Join(source, ".mcp.json"): `{"mcpServers":{"demo":{"command":"run","env":{"CFG":"${CLAUDE_PLUGIN_ROOT}/certs/ca.pem"}}}}`,
+		inside:                             "bundle PEM", outside: "external!!",
+	} {
+		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insideInfo, err := os.Stat(inside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(outside, insideInfo.ModTime(), insideInfo.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	control, err := Convert(os.DirFS(source), HarnessClaude, HarnessClaude)
+	if err != nil || control.HasErrors() {
+		t.Fatalf("regular-file control: result=%v err=%v", control, err)
+	}
+	if a := artifactByPath(control.Artifacts, "certs/ca.pem"); a == nil || !bytes.Equal(a.Bytes, []byte("bundle PEM")) {
+		t.Fatalf("regular-file control did not read source bytes: %v", control.Artifacts)
+	}
+	result, err := Convert(swappingSupportFS{FS: os.DirFS(source), inside: inside, outside: outside}, HarnessClaude, HarnessClaude)
+	if err != nil {
+		t.Fatalf("Convert: %v", err)
+	}
+	if !sliceContains(diagnosticCodes(result), diag.CodeBundleSupportFileUnsafe) || len(result.Skipped) != 1 {
+		t.Errorf("swapped source was not refused: diagnostics=%v skipped=%v", result.Diagnostics, result.Skipped)
+	}
+	if artifactByPath(result.Artifacts, "certs/ca.pem") != nil || artifactByPath(result.Artifacts, ".mcp.json") != nil {
+		t.Errorf("swapped source was emitted: %v", result.Artifacts)
+	}
+	data, err := os.ReadFile(outside)
+	if err != nil || !bytes.Equal(data, []byte("external!!")) {
+		t.Errorf("external bytes changed: %q, %v", data, err)
+	}
+}

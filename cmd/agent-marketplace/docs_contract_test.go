@@ -178,6 +178,8 @@ func TestPublicCommandPathsHaveBehaviorTests(t *testing.T) {
 	witnesses := map[string]func(*testing.T){
 		"init":                  TestInitCreatesV4UserPersonalConfig,
 		"list":                  TestListCommandPrintsCatalogWithStatuses,
+		"inspect":               TestInspectPluginReportsPackageDetailsWithoutWriting,
+		"export":                TestExportPluginAllowsLossAndReportsOmittedHook,
 		"search":                TestSearchCommandJSONOutput,
 		"install":               TestInstallCommandAddsSkillToRepoConfigAndSyncsIt,
 		"remove":                TestInstallThenRemove_RepoScope,
@@ -234,6 +236,9 @@ func TestPublicCommandPathsHaveBehaviorTests(t *testing.T) {
 		"deinit --purge-config":                   TestDeinitTable,
 		"deinit --scope":                          TestDeinitTable,
 		"doctor --repair":                         TestDoctorRepairYesAdoptsWithoutPrompting,
+		"export --allow-loss":                     TestExportPluginAllowsLossAndReportsOmittedHook,
+		"export --format":                         TestExportPluginAllowsLossAndReportsOmittedHook,
+		"export --out":                            TestExportPluginAllowsLossAndReportsOmittedHook,
 		"doctor --yes":                            TestDoctorRepairYesAdoptsWithoutPrompting,
 		"gc --dry-run":                            TestGcCommandDryRunReportsOrphanedCacheDirectoriesWithoutDeleting,
 		"init --harnesses":                        TestInitCreatesV4UserPersonalConfig,

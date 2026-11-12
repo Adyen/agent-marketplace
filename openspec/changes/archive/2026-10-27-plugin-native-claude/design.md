@@ -1,0 +1,82 @@
+## Context
+
+`plugin-native-registration` publishes native generations into an Agent
+Marketplace-owned catalog under the state root and writes owned
+`extraKnownMarketplaces` and `enabledPlugins` entries into the Claude
+partition's `settings.json`. Its catalog lists plugins with
+`{"source": "directory", "path": <absolute generation>}` and no `owner`.
+Claude Code's marketplace reference requires `name`, `owner`, and `plugins`,
+and its plugin sources do not include `directory`; a plugin listed by a path
+relative to the marketplace root loads from the marketplace in place once
+`extraKnownMarketplaces` applies. Claude honors repository
+`extraKnownMarketplaces` in `.claude/settings.json` or
+`.claude/settings.local.json` only in a trusted workspace. The pinned
+released v4 client refuses any plugin configuration, so released readers only
+ever see a repository's committed state.
+
+## Goals / Non-Goals
+
+**Goals:** a Claude registration shape that matches Claude's marketplace
+reference; repository registration kept out of shared committed settings; a
+one-sync move from the earlier file; the released-reader witness.
+
+**Non-Goals:** verifying Claude native delivery (see D4), Factory Droid and Codex native delivery, git-sourced native
+catalog entries, user documentation, Claude trust, policy, or plugin caches,
+and the delivery-resolution rules.
+
+## Decisions
+
+### D1: Claude catalog layout
+
+The catalog root stays `<state>/native-plugins/claude/<am-catalog>/`.
+`.claude-plugin/marketplace.json` carries `name`, `owner: {name: "Agent
+Marketplace"}`, and one entry per plugin `{name, source: "./plugins/<name>"}`.
+`plugins/<name>` is a symbolic link to the plugin's immutable generation
+directory, replaced atomically (temporary link, then rename) under the
+packages lock before the manifest commit, like generation publishing; links
+no entry names are removed after the commit. A crash leaves at most an
+unreferenced link, removed by the next sync.
+
+### D2: Registration file per scope
+
+The Claude registration member declares a project file and a user file, like
+native aggregates: `settings.local.json` for repository scope and
+`settings.json` for user scope. The Codex member keeps `config.toml` for
+both. Owned-entry reconciliation plans the registration file together with
+hooks and MCP entries from one read, unchanged.
+
+### D3: Move from the earlier file
+
+Ownership state records each owned registration entry with its file. When
+the desired file for an owned entry differs from the recorded one, the same
+sync writes it to the new file and retires the recorded entry from the old
+file, in one dependency transaction. Entries without ownership state stay
+where they are and are reported as collisions.
+
+### D4: Native delivery stays unverified
+
+The Claude catalog keeps `native: {status: unverified}`. Three CI attempts
+with Claude Code 2.1.311, offline with an isolated home, at user and
+repository scope, showed that a plugin registered only through
+`extraKnownMarketplaces` and `enabledPlugins` never loads: `claude plugin
+list` stayed empty after sync, after a print-mode session, and during a
+45-second live session, and Claude wrote no `known_marketplaces.json` or
+`installed_plugins.json`. Claude loads plugins only from those records and
+its cache, which Agent Marketplace does not write. A probe and the flip to
+verified wait for a registration path Claude loads without them.
+
+### D5: Released-reader witness
+
+The released-client gate adds a required scenario: teammate A's candidate
+installs a native Claude plugin from an untracked personal-local
+configuration in a repository whose committed configuration has locked
+resources and owned hooks; teammate B's pinned release runs `sync --locked`
+and `sync --check` after each candidate step and passes, committed bytes stay
+identical, and A's registration and catalog stay unchanged.
+
+## Risks / Trade-offs
+
+- The registration shape is exercised only through an explicitly verified
+  test catalog until Claude native delivery is verified.
+- `.claude/settings.local.json` is machine-local; Agent Marketplace does not
+  edit `.gitignore`.

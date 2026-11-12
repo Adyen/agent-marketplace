@@ -22,6 +22,152 @@ type preparedMutationSnapshot struct {
 	currentGeneration uint64
 }
 
+type StateSnapshot struct {
+	record     *Record
+	generation dependencytxn.Generation
+	mode       fs.FileMode
+	rootKey    string
+}
+
+func (s *Store) SnapshotState() (StateSnapshot, error) {
+	data, generation, mode, err := dependencytxn.ReadSnapshot(s.StateFile())
+	if err != nil {
+		return StateSnapshot{}, err
+	}
+	snapshot := StateSnapshot{generation: generation, mode: mode, rootKey: s.rootKey}
+	if generation.Exists {
+		record, err := s.decodeStateRecord(s.StateFile(), data)
+		if err != nil {
+			return StateSnapshot{}, err
+		}
+		snapshot.record = record
+	}
+	return snapshot, nil
+}
+
+func (s *Store) ProofFromSnapshot(snapshot StateSnapshot, rel string) (Proof, error) {
+	if snapshot.rootKey != s.rootKey {
+		return Proof{}, ErrStateRootMismatch
+	}
+	if snapshot.record == nil {
+		err := s.missingStateError()
+		return Proof{}, coded(diag.CodeOwnershipStateMissing, s.StateFile(), err)
+	}
+	file, ok := snapshot.record.Files[rel]
+	if !ok {
+		return Proof{file: rel, generation: snapshot.record.Generation}, nil
+	}
+	entries := make(map[string]Entry, len(file.Entries))
+	for _, entry := range file.Entries {
+		entries[entry.ID().mapKey()] = entry
+	}
+	return Proof{
+		file:              rel,
+		generation:        snapshot.record.Generation,
+		contentDigest:     file.ContentDigest,
+		entries:           entries,
+		hookSatisfactions: append([]HookSatisfaction(nil), file.HookSatisfactions...),
+	}, nil
+}
+
+func (s *Store) PrepareBatch(snapshot StateSnapshot, mutations []Mutation, satisfactions map[string][]HookSatisfaction) (dependencytxn.DesiredFile, error) {
+	if snapshot.rootKey != s.rootKey {
+		return dependencytxn.DesiredFile{}, ErrStateRootMismatch
+	}
+	if len(mutations) == 0 {
+		return dependencytxn.DesiredFile{}, nil
+	}
+	baseGeneration := uint64(0)
+	var current *Record
+	if snapshot.record != nil {
+		current = cloneRecord(snapshot.record)
+		baseGeneration = snapshot.record.Generation
+	}
+	seen := make(map[string]bool, len(mutations))
+	changed := false
+	for _, mutation := range mutations {
+		if err := validateMutation(mutation); err != nil {
+			return dependencytxn.DesiredFile{}, err
+		}
+		if err := s.ensureRelNamesAbsFile(mutation); err != nil {
+			return dependencytxn.DesiredFile{}, err
+		}
+		if seen[mutation.Rel] {
+			return dependencytxn.DesiredFile{}, fmt.Errorf("%w: duplicate aggregate mutation %q", ErrUnsafeStateValue, mutation.Rel)
+		}
+		seen[mutation.Rel] = true
+		if mutation.ExpectPriorGeneration != baseGeneration {
+			return dependencytxn.DesiredFile{}, coded(diag.CodeOwnershipGenerationConflict, mutation.Rel,
+				fmt.Errorf("%w: expected prior generation %d, found %d", ErrGenerationConflict, mutation.ExpectPriorGeneration, baseGeneration))
+		}
+		for _, entry := range mutation.Entries {
+			if err := validateEntry(entry); err != nil {
+				return dependencytxn.DesiredFile{}, coded(diag.CodeOwnershipStateUnsafeValue, mutation.Rel, err)
+			}
+		}
+		var satisfactionList *[]HookSatisfaction
+		if values, ok := satisfactions[mutation.Rel]; ok {
+			copy := append([]HookSatisfaction(nil), values...)
+			satisfactionList = &copy
+		}
+		next, err := s.nextRecordMeta(current, mutation.Rel, Digest(mutation.NextBytes), mutation.Entries, satisfactionList)
+		if err != nil {
+			return dependencytxn.DesiredFile{}, coded(diag.CodeOwnershipStateUnsafeValue, mutation.Rel, err)
+		}
+		next.Generation = baseGeneration + 1
+		if current == nil {
+			changed = changed || len(next.Files) > 0
+		} else {
+			prior, priorPresent := current.Files[mutation.Rel]
+			nextFile, nextPresent := next.Files[mutation.Rel]
+			changed = changed || !fileStateSemanticallyEqual(prior, priorPresent, nextFile, nextPresent)
+		}
+		current = next
+	}
+	if !changed {
+		return dependencytxn.DesiredFile{}, nil
+	}
+	if current == nil {
+		return dependencytxn.DesiredFile{}, nil
+	}
+	current.Generation = baseGeneration + 1
+	if err := validateRecord(current, s.canonicalRoot, s.rootKey); err != nil {
+		return dependencytxn.DesiredFile{}, coded(diag.CodeOwnershipStateUnsafeValue, "", err)
+	}
+	data, err := json.MarshalIndent(current, "", "  ")
+	if err != nil {
+		return dependencytxn.DesiredFile{}, fmt.Errorf("ownership: marshal batch record: %w", err)
+	}
+	data = append(data, '\n')
+	return dependencytxn.DesiredFile{
+		Path:         s.StateFile(),
+		Expected:     snapshot.generation,
+		ExpectedMode: snapshot.mode,
+		Bytes:        data,
+		Mode:         0o600,
+	}, nil
+}
+
+func cloneRecord(record *Record) *Record {
+	if record == nil {
+		return nil
+	}
+	clone := *record
+	clone.Files = make(map[string]FileState, len(record.Files))
+	for rel, file := range record.Files {
+		file.Entries = append([]Entry(nil), file.Entries...)
+		for i := range file.Entries {
+			file.Entries[i].SourceEvidence = append([]HookSourceEvidence(nil), file.Entries[i].SourceEvidence...)
+		}
+		file.HookSatisfactions = append([]HookSatisfaction(nil), file.HookSatisfactions...)
+		for i := range file.HookSatisfactions {
+			file.HookSatisfactions[i].Sources = append([]HookSourceEvidence(nil), file.HookSatisfactions[i].Sources...)
+		}
+		clone.Files[rel] = file
+	}
+	return &clone
+}
+
 func (s *Store) preparedMutationSnapshot(m Mutation) (preparedMutationSnapshot, error) {
 	if err := validateMutation(m); err != nil {
 		return preparedMutationSnapshot{}, err
@@ -135,6 +281,48 @@ func (s *Store) BackupPreparedMutation(m Mutation) (string, error) {
 			return err
 		}
 		backupPath, _, _, _, err = s.writeSafetyBackupSnapshot(m.Rel, m.AbsFile, snapshot.currentGeneration+1, m.Reason, m.Entries, snapshot.raw, snapshot.priorAbsent)
+		if err != nil {
+			return err
+		}
+		return s.pruneSafetyBackups(s.SafetyBackupDir(m.Rel))
+	})
+	return backupPath, err
+}
+
+func (s *Store) BackupPreparedMutationSnapshot(m Mutation, snapshot StateSnapshot, raw []byte, priorAbsent bool) (string, error) {
+	if snapshot.rootKey != s.rootKey {
+		return "", ErrStateRootMismatch
+	}
+	if err := validateMutation(m); err != nil {
+		return "", err
+	}
+	if err := s.ensureRelNamesAbsFile(m); err != nil {
+		return "", err
+	}
+	if snapshot.record != nil && snapshot.record.Generation != m.ExpectPriorGeneration ||
+		snapshot.record == nil && m.ExpectPriorGeneration != 0 {
+		return "", coded(diag.CodeOwnershipGenerationConflict, m.Rel, ErrGenerationConflict)
+	}
+	digest := ""
+	if !priorAbsent {
+		digest = Digest(raw)
+	}
+	if digest != m.ExpectPriorDigest {
+		return "", coded(diag.CodeOwnershipGenerationConflict, m.Rel, ErrGenerationConflict)
+	}
+	emptySatisfactions := []HookSatisfaction{}
+	if _, _, err := s.preparedMutationRecord(m, preparedMutationSnapshot{
+		raw: raw, priorAbsent: priorAbsent, stateGeneration: snapshot.generation,
+		stateMode: snapshot.mode, current: snapshot.record, currentGeneration: m.ExpectPriorGeneration,
+	}, &emptySatisfactions); err != nil {
+		return "", err
+	}
+	var backupPath string
+	err := s.withMutation("backup-prepared-mutation", func() error {
+		var err error
+		backupPath, _, _, _, err = s.writeSafetyBackupSnapshot(
+			m.Rel, m.AbsFile, m.ExpectPriorGeneration+1, m.Reason, m.Entries, raw, priorAbsent,
+		)
 		if err != nil {
 			return err
 		}

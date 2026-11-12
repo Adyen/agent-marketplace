@@ -14,8 +14,18 @@ import (
 )
 
 var compatibilityTargets = []string{"claude", "factory", "cursor", "windsurf", "gemini", "devin", "codex", "opencode"}
-var compatibilityResources = []string{"skill", "command", "subagent", "hook", "mcp", "collection", "rule", "native-cli"}
+var compatibilityResources = []string{"skill", "command", "subagent", "hook", "mcp", "collection", "rule", "native-cli", "native-plugin"}
 
+func compatibilityResourcesFor(harness, nativeMode string) []string {
+	if harness == "claude" && nativeMode == "probe" {
+		return compatibilityResources
+	}
+	return compatibilityResources[:len(compatibilityResources)-1]
+}
+
+// spec: plugin-delivery/claude-probe-loads-the-registered-plugin-at-user-scope
+// spec: plugin-delivery/claude-probe-confirms-repository-scope-stays-decomposed
+// spec: plugin-delivery/codex-catalog-is-a-marketplace-codex-accepts
 func TestHarnessCompatibility(t *testing.T) {
 	target := os.Getenv("HARNESS_COMPAT_TARGET")
 	if target == "" {
@@ -51,7 +61,7 @@ func TestHarnessCompatibility(t *testing.T) {
 	for _, harness := range targets {
 		for _, scope := range []string{"repo", "user"} {
 			for _, materialization := range []string{"symlink", "file"} {
-				for _, resource := range compatibilityResources {
+				for _, resource := range compatibilityResourcesFor(harness, mode) {
 					report.Results = append(report.Results, compatibilityResult{Harness: harness, Resource: resource, Scope: scope, Mode: materialization, Status: "failed", Reason: "not reached; preceding setup or assertion failed"})
 				}
 			}
@@ -79,8 +89,9 @@ func TestHarnessCompatibility(t *testing.T) {
 	})
 	server := buildCompatibilityHelper(t, "compat-mcp")
 	rules := buildCompatibilityHelper(t, "compat-rules")
-	for offset := 0; offset < len(report.Results); offset += len(compatibilityResources) {
-		results := report.Results[offset : offset+len(compatibilityResources)]
+	for offset := 0; offset < len(report.Results); {
+		count := len(compatibilityResourcesFor(report.Results[offset].Harness, mode))
+		results := report.Results[offset : offset+count]
 		first := results[0]
 		t.Run(first.Harness+"/"+first.Scope+"/"+first.Mode, func(t *testing.T) {
 			if mode != "probe" {
@@ -88,6 +99,7 @@ func TestHarnessCompatibility(t *testing.T) {
 			}
 			runCompatibilityScenario(t, results, mode, reason, report.ExpectedVersion, server, rules)
 		})
+		offset += count
 	}
 }
 
@@ -139,11 +151,27 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 	}
 	config := fmt.Sprintf("harnesses: [%s]\nmaterialization:\n  mode: %s\n", first.Harness, first.Mode)
 	e.WriteGlobalConfig(config)
-	config += fmt.Sprintf("sources: {fixture: {directory: %q, source_harness: claude}}\n", f.registry)
+	config += fmt.Sprintf("sources:\n  fixture: {directory: %q, source_harness: claude}\n", f.registry)
+	var pluginProbeRow *compatibilityResult
+	var nativePluginName, nativePluginSkill string
+	if native != nil && first.Harness == "claude" {
+		pluginProbeRow = rows["native-plugin"]
+		delivery := "auto"
+		if first.Scope == "user" {
+			delivery = "native"
+		}
+		config, nativePluginName, nativePluginSkill = addClaudePluginProbeSource(e, f, config, delivery)
+	}
 	if first.Scope == "user" {
 		e.WriteGlobalConfig(config)
 	} else {
 		e.WriteRepoConfig(config)
+	}
+	if pluginProbeRow != nil && first.Scope == "user" {
+		if err := observeClaudePluginAbsent(e, native.binary, f, pluginProbeRow, first.Scope, nativePluginName, nativePluginSkill); err != nil {
+			pluginProbeRow.Status, pluginProbeRow.Reason = "failed", err.Error()
+			t.Fatal(err)
+		}
 	}
 	catalog := map[string][]string{
 		"skill": {f.name("skill")}, "command": {f.name("command")}, "subagent": {f.name("subagent")},
@@ -171,7 +199,41 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 	}
 	sync := runCompatibilityCommand(e, e.binary, []string{"sync"}, 30*time.Second)
 	if sync.Error != "" {
+		rows["collection"].Commands = append(rows["collection"].Commands, sync)
 		t.Fatalf("Marketplace sync failed: %s\n%s", sync.Error, sync.output)
+	}
+	if pluginProbeRow != nil {
+		if first.Scope == "user" {
+			if err := assertClaudePluginStateAbsentAfterSync(e.home, e.workspace); err != nil {
+				pluginProbeRow.Status, pluginProbeRow.Reason = "failed", err.Error()
+				t.Fatal(err)
+			}
+			if err := establishClaudeWorkspaceTrust(e.home, e.workspace); err != nil {
+				pluginProbeRow.Status, pluginProbeRow.Reason = "failed", err.Error()
+				t.Fatal(err)
+			}
+			if err := primeClaudePluginSession(e, native.binary, nativePluginName, pluginProbeRow); err != nil {
+				pluginProbeRow.Status, pluginProbeRow.Reason = "failed", err.Error()
+				t.Fatal(err)
+			}
+			if err := observeClaudePluginEnabled(e, native.binary, f, pluginProbeRow, first.Scope, nativePluginName, nativePluginSkill); err != nil {
+				pluginProbeRow.Status, pluginProbeRow.Reason = "failed", err.Error()
+				t.Fatal(err)
+			}
+			pluginProbeRow.Status = "native-verified"
+			pluginProbeRow.Reason = "Claude reported the plugin enabled and initialized its namespaced skill"
+		} else {
+			if err := assertClaudePluginStateAbsentAfterSync(e.home, e.workspace); err != nil {
+				pluginProbeRow.Status, pluginProbeRow.Reason = "failed", err.Error()
+				t.Fatal(err)
+			}
+			if err := assertClaudeRepositoryPluginDecomposed(e.home, e.workspace, nativePluginName, nativePluginSkill); err != nil {
+				pluginProbeRow.Status, pluginProbeRow.Reason = "failed", err.Error()
+				t.Fatal(err)
+			}
+			pluginProbeRow.Status = "config-only-verified"
+			pluginProbeRow.Reason = "repository-scope auto delivery produced the decomposed skill and no Agent Marketplace Claude registration; no Claude session was run"
+		}
 	}
 	for _, kind := range compatibilityResources[:6] {
 		row := rows[kind]
@@ -226,9 +288,29 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 			t.Errorf("post-native sync --check failed: %s", check.Error)
 		}
 	}
+	for _, failure := range finalizeCompatibilityNativeRows(results, native) {
+		t.Error(failure)
+	}
+	if _, err := os.Lstat(f.hookMarker); !os.IsNotExist(err) {
+		rows["hook"].Status = "failed"
+		t.Error("inspection unexpectedly executed a hook")
+	}
+	if first.Harness == "codex" && first.Scope == "user" && first.Mode == "symlink" && nativeMode == "probe" && native != nil {
+		row := rows["skill"]
+		t.Run("native-codex-plugin", func(t *testing.T) {
+			if err := runCodexNativePluginProbe(e, f, native.binary, row); err != nil {
+				row.Status, row.Reason = "failed", err.Error()
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func finalizeCompatibilityNativeRows(results []compatibilityResult, native *compatibilityNative) []string {
+	var failures []string
 	for i := range results {
 		row := &results[i]
-		if row.Status != "config-only-verified" {
+		if row.Resource == "native-plugin" || row.Status != "config-only-verified" {
 			continue
 		}
 		if gap := compatibilityNativeGap(row.Harness, row.Resource); gap != "" {
@@ -236,13 +318,49 @@ func runCompatibilityScenario(t *testing.T, results []compatibilityResult, nativ
 		} else if native != nil {
 			row.Status = "failed"
 			row.Reason = "declared native resource probe did not produce an outcome"
-			t.Errorf("native coverage missing for %s/%s", row.Harness, row.Resource)
+			failures = append(failures, fmt.Sprintf("native coverage missing for %s/%s", row.Harness, row.Resource))
 		}
 	}
-	if _, err := os.Lstat(f.hookMarker); !os.IsNotExist(err) {
-		rows["hook"].Status = "failed"
-		t.Error("inspection unexpectedly executed a hook")
+	return failures
+}
+
+func runCodexNativePluginProbe(e *Env, f compatibilityFixture, binary string, row *compatibilityResult) error {
+	name, root := f.name("native-plugin"), filepath.Join(e.workspace, "native-plugin")
+	e.WriteFile(filepath.Join("/workspace/native-plugin", ".codex-plugin", "plugin.json"), fmt.Sprintf(`{"name":%q}`, name))
+	e.WriteFile(filepath.Join("/workspace/native-plugin", "skills", name, "SKILL.md"), fmt.Sprintf("---\nname: %s\ndescription: Codex plugin probe\n---\nprobe\n", name))
+	catalog := filepath.Join(e.workspace, "test-catalogs", "codex.yaml")
+	e.WriteFile(catalog, nativePluginCatalog("codex"))
+	config := fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [codex]\nmaterialization: {mode: symlink}\nsources:\n  native: {directory: %q, format: codex-plugin}\nresources:\n  native: [{kind: plugin, name: %s, delivery: native}]\n", root, name)
+	e.WriteGlobalConfig(config)
+	before := runCompatibilityCommand(e, binary, []string{"plugin", "list"}, 20*time.Second)
+	if err := requireCompatibilityObservation(&before, true, name); err != nil {
+		return fmt.Errorf("Codex plugin negative control: %w", err)
 	}
+	sync := e.RunAMWithEnv(nativeCatalogEnv(catalog), "sync", "--no-backup")
+	if sync.ExitCode != 0 {
+		return fmt.Errorf("Codex native plugin sync failed: %s", sync.Combined)
+	}
+	manifests, err := filepath.Glob(filepath.Join(e.home, ".local", "state", "agent-marketplace", "native-plugins", "codex", "*", ".agents", "plugins", "marketplace.json"))
+	if err != nil || len(manifests) != 1 {
+		return fmt.Errorf("Codex probe catalogs = %v / %v", manifests, err)
+	}
+	catalogName := filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(manifests[0]))))
+	after := runCompatibilityCommand(e, binary, []string{"plugin", "list"}, 20*time.Second)
+	row.Commands = append(row.Commands, before, after)
+	if err := requireCompatibilityObservation(&after, false, name+"@"+catalogName); err != nil {
+		return fmt.Errorf("Codex marketplace plugin listing: %w", err)
+	}
+	if _, err := os.Lstat(filepath.Join(e.home, ".codex", "plugins", "cache")); !os.IsNotExist(err) {
+		return fmt.Errorf("Codex shape probe wrote plugin cache: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(e.home, ".codex", "config.toml"))
+	if err != nil {
+		return fmt.Errorf("read Codex config: %w", err)
+	}
+	if strings.Contains(string(data), "trust_level") || strings.Contains(string(data), "[projects.") {
+		return fmt.Errorf("Codex shape probe wrote trust configuration")
+	}
+	return nil
 }
 
 func assertCompatibilityResource(t *testing.T, e *Env, f compatibilityFixture, row *compatibilityResult, paths []string, sync compatibilityCommand) {

@@ -59,11 +59,11 @@ func TestRunPortableManifestCannotNominateRootFilesOrComponentDirectories(t *tes
 		{target: hcc.TargetFactory, entry: "hooks/hooks.json", disk: ".factory/hooks/hooks.json"},
 		{target: hcc.TargetCursor, machine: true, entry: "hooks/hooks.json", disk: ".cursor/hooks/hooks.json"},
 		{target: hcc.TargetClaude, entry: "hooks/hooks.json", disk: ".claude/hooks/hooks.json"},
-		{target: hcc.TargetClaude, machine: true, entry: ".claude-plugin/plugin.json", disk: ".claude/.claude-plugin/plugin.json"},
+		{target: hcc.TargetClaude, machine: true, entry: "agents", disk: ".claude/agents", tree: true},
 		// Case-insensitive filesystems (the macOS and Windows defaults) resolve
-		// a case variant to the aggregate itself.
+		// a case variant to the protected location itself.
 		{target: hcc.TargetFactory, entry: "HOOKS/Hooks.json", disk: ".factory/hooks/hooks.json"},
-		{target: hcc.TargetClaude, machine: true, entry: ".Claude-Plugin/plugin.JSON", disk: ".claude/.claude-plugin/plugin.json"},
+		{target: hcc.TargetClaude, machine: true, entry: "AGENTS", disk: ".claude/agents", tree: true},
 	}
 	for _, nomination := range nominations {
 		for _, dryRun := range []bool{false, true} {

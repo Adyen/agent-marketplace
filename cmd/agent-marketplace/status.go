@@ -27,9 +27,11 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/lifecycle"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
+	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/skill"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
 type statusRow struct {
@@ -42,6 +44,14 @@ type statusRow struct {
 	Cache    string
 	Source   config.Source
 	Via      string
+}
+
+type pluginRevisionRow struct {
+	Plugin    string
+	Target    string
+	Locked    string
+	Installed string
+	Blocker   string
 }
 
 type orphanedSymlinkRow struct {
@@ -80,6 +90,7 @@ type statusView struct {
 	diag                config.ManagedInstallationDiagnostics
 	warnings            []error
 	statusRows          []statusRow
+	pluginRevisions     []pluginRevisionRow
 	locallyExcluded     []excludedRow
 	localRegistries     []localRegistryRow
 	orphaned            []orphanedSymlinkRow
@@ -223,6 +234,10 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 
 	statusRows := buildStatusRows(repoRoot, result.Resolved, cacheFreshness, dryRunReport)
 	applyExactLockFreshness(statusRows, result.LockMetadata)
+	pluginRevisions, err := buildPluginRevisionRows(repoRoot, result.Resolved, result.LockMetadata, dryRunReport)
+	if err != nil {
+		return fmt.Errorf("read installed plugin revisions: %w", err)
+	}
 	// A Marketplace pin that failed to resolve is already reported as a hard
 	// error naming the pin. Its dependents must not also be told to select a
 	// resource that is selected; the resolution failure is the actionable fact.
@@ -274,6 +289,7 @@ func runStatus(ctx context.Context, out io.Writer, now time.Time) error {
 		diag:                result.Diagnostics,
 		warnings:            statusWarnings,
 		statusRows:          statusRows,
+		pluginRevisions:     pluginRevisions,
 		locallyExcluded:     locallyExcluded,
 		localRegistries:     localRegistries,
 		orphaned:            orphaned,
@@ -471,6 +487,86 @@ func buildStatusRows(repoRoot string, resolved []resolver.ResolvedArtifact, cach
 	})
 
 	return rows
+}
+
+func buildPluginRevisionRows(repoRoot string, resolved []resolver.ResolvedArtifact, locks []pipeline.LockMetadata, report *materialize.Report) ([]pluginRevisionRow, error) {
+	states, err := ownership.ReadPluginInstanceStates()
+	if err != nil {
+		return nil, err
+	}
+	repoRoot, err = ownership.CanonicalRoot(repoRoot)
+	if err != nil {
+		return nil, err
+	}
+	repoScope := "repo:" + ownership.RootKey(repoRoot)
+	var rows []pluginRevisionRow
+	for _, artifact := range resolved {
+		if artifact.Kind != ir.KindPlugin {
+			continue
+		}
+		plugin, _ := artifact.Resource.(*ir.Plugin)
+		scope := repoScope
+		if artifact.Source.IsMachineScope() {
+			scope = "machine"
+		}
+		locked := "unlocked"
+		for _, metadata := range locks {
+			if metadata.Matches(artifact.Source, artifact.RegistryURL, artifact.Ref) {
+				locked = metadata.Commit
+				break
+			}
+		}
+		for _, target := range statusHarnesses(artifact) {
+			row := pluginRevisionRow{
+				Plugin:    artifact.Name,
+				Target:    string(target),
+				Locked:    locked,
+				Installed: "not installed",
+				Blocker:   pluginBlockerForTarget(plugin, artifact.Name, target, report),
+			}
+			for _, state := range states {
+				if state.Name != artifact.Name || state.Target != string(target) || state.Scope != scope {
+					continue
+				}
+				row.Installed = state.SourceRevision
+				if row.Installed == "" {
+					row.Installed = "unknown"
+				}
+				break
+			}
+			rows = append(rows, row)
+		}
+	}
+	slices.SortFunc(rows, func(a, b pluginRevisionRow) int {
+		if cmp := strings.Compare(a.Plugin, b.Plugin); cmp != 0 {
+			return cmp
+		}
+		return strings.Compare(a.Target, b.Target)
+	})
+	return rows, nil
+}
+
+func pluginBlockerForTarget(plugin *ir.Plugin, name string, target hcc.Target, report *materialize.Report) string {
+	if report == nil {
+		return "-"
+	}
+	memberNames := map[string]bool{}
+	if plugin != nil {
+		for _, member := range plugin.Members {
+			if member.Resource != nil {
+				memberNames[name+"-"+member.Resource.Name()] = true
+			}
+		}
+	}
+	for _, diagnostic := range report.Diags {
+		if !diagnostic.IsError() || diagnostic.Target != string(target) {
+			continue
+		}
+		if diagnostic.Resource == "plugin/"+name || memberNames[diagnostic.Resource] {
+			return diagnostic.Code
+		}
+	}
+	return "-"
 }
 
 func statusHarnesses(artifact resolver.ResolvedArtifact) []hcc.Target {
@@ -804,6 +900,7 @@ func writeStatusSections(out io.Writer, view statusView) error {
 	diag := view.diag
 	warnings := view.warnings
 	statusRows := view.statusRows
+	pluginRevisions := view.pluginRevisions
 	locallyExcluded := view.locallyExcluded
 	localRegistries := view.localRegistries
 	orphaned := view.orphaned
@@ -872,6 +969,12 @@ func writeStatusSections(out io.Writer, view statusView) error {
 
 	if err := writeStatusTable(out, "SYNCED RESOURCES", []string{"KIND", "NAME", "HARNESS", "SOURCE", "VIA", "TARGET", "REGISTRY", "REF", "CACHE"}, statusRowsToCells(statusRows)); err != nil {
 		return err
+	}
+
+	if len(pluginRevisions) > 0 {
+		if err := writeStatusTable(out, "PLUGIN REVISIONS", []string{"PLUGIN", "TARGET", "LOCKED REVISION", "INSTALLED REVISION", "BLOCKING DIAGNOSTIC"}, pluginRevisionRowsToCells(pluginRevisions)); err != nil {
+			return err
+		}
 	}
 
 	if len(marketplaceStatuses) > 0 {
@@ -1050,6 +1153,14 @@ func statusRowsToCells(rows []statusRow) [][]string {
 		cells = append(cells, []string{row.Kind, row.Name, row.Harness, row.Source.String(), via, row.Target, row.Registry, row.Ref, row.Cache})
 	}
 
+	return cells
+}
+
+func pluginRevisionRowsToCells(rows []pluginRevisionRow) [][]string {
+	cells := make([][]string, 0, len(rows))
+	for _, row := range rows {
+		cells = append(cells, []string{row.Plugin, row.Target, row.Locked, row.Installed, row.Blocker})
+	}
 	return cells
 }
 

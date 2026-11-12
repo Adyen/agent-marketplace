@@ -9,10 +9,12 @@ import { stripFrontMatter } from '../.vitepress/llms.ts'
 import { docsSidebar } from '../.vitepress/sidebar.ts'
 import * as site from '../src/shared/site.ts'
 import { nextTabIndex } from '../src/pages/landing/composables/tabNavigation.ts'
+import { assertCopyPageTrigger, assertCopyPageView, assertNoCopyPageTrigger } from './copy-page.ts'
 
 const dist = new URL('../.vitepress/dist/', import.meta.url)
 const base = process.env.SITE_BASE ?? '/'
 const docsPath = `${base.replace(/\/?$/, '/')}docs/`
+const installCommand = 'curl -fsSL https://agent-marketplace.io/install.sh | bash'
 
 type SidebarItem = ReturnType<typeof docsSidebar>[number]
 
@@ -27,14 +29,71 @@ async function generatedFilePaths(directory: URL): Promise<string[]> {
     .map(entry => relative(fileURLToPath(directory), join(entry.parentPath, entry.name)).split(sep).join('/'))
 }
 
+function landingSection(html: string, id: string): string {
+  const start = html.indexOf(`id="${id}"`)
+  assert.ok(start >= 0, `missing landing section ${id}`)
+  return html.slice(start, html.indexOf('</section>', start))
+}
+
+function frameAddresses(section: string): string[] {
+  return [...section.matchAll(/marketplace-browser-frame__address"[^>]*>([^<]*)</g)].map(([, host]) => host)
+}
+
+function markdownSection(markdown: string, heading: string): string {
+  return markdown.split(`${heading}\n`, 2)[1]?.split('\n## ', 1)[0] ?? ''
+}
+
+function firstBashBlockAfterHeading(markdown: string, heading: string): string {
+  return markdownSection(markdown, heading).match(/```bash\n([\s\S]*?)\n```/)?.[1] ?? ''
+}
+
 // spec: install-script/site-build-publishes-the-install-script
 test('public site publishes the install script byte-for-byte', async () => {
-  const [source, built] = await Promise.all([
+  const [source, built, landing] = await Promise.all([
     readFile(new URL('../public/install.sh', import.meta.url)),
     readFile(new URL('install.sh', dist)),
+    readFile(new URL('index.html', dist), 'utf8'),
   ])
 
   assert.deepEqual(built, source)
+  assert.ok(landing.includes(installCommand))
+  assert.doesNotMatch(landing, /go install/)
+})
+
+test('install docs lead with the install script and name the SHA256SUMS cutoff', async () => {
+  const [quickStart, install, readme] = await Promise.all([
+    readFile(new URL('../docs/quick-start.md', import.meta.url), 'utf8'),
+    readFile(new URL('../docs/install.md', import.meta.url), 'utf8'),
+    readFile(new URL('../../README.md', import.meta.url), 'utf8'),
+  ])
+  const quickStartInstall = firstBashBlockAfterHeading(quickStart, '## Install the CLI')
+  const readmeInstall = firstBashBlockAfterHeading(readme, '## Install')
+  const readmeInstallSection = markdownSection(readme, '## Install')
+  const prerequisites = quickStart.split('\n').find(line => line.startsWith('You need')) ?? ''
+  const intro = install.split('\n\n')[1] ?? ''
+
+  assert.ok(
+    quickStartInstall.startsWith(`${installCommand}\n`) && quickStartInstall.includes('agent-marketplace --version'),
+  )
+  assert.doesNotMatch(prerequisites, /\bGo\b/)
+  assert.ok(quickStart.includes('~/.local/bin'))
+  assert.ok(quickStart.includes('v5.0.3 and earlier'))
+  assert.ok(quickStart.includes('go install'))
+  assert.ok(quickStart.includes('Go 1.27.4'))
+  assert.ok(readmeInstall.startsWith(`${installCommand}\n`))
+  assert.ok(
+    readmeInstallSection.includes('AGENT_MARKETPLACE_VERSION') &&
+      readmeInstallSection.includes('AGENT_MARKETPLACE_INSTALL_DIR'),
+  )
+  assert.ok(
+    readmeInstallSection.indexOf('### More install options') >= 0 &&
+      readmeInstallSection.indexOf('### More install options') < readmeInstallSection.indexOf('chmod +x'),
+  )
+  assert.ok(readmeInstallSection.includes('v5.0.3 and earlier'))
+  assert.doesNotMatch(readmeInstallSection, /up to v5\.0\.0/)
+  assert.ok(intro.includes('install script') && !intro.includes('go install'))
+  assert.ok(install.includes('v5.1.0 and later'))
+  assert.doesNotMatch(install, /one step/)
 })
 
 // spec: marketplace-web-ui/default-harness-leads-the-tab-order
@@ -62,6 +121,115 @@ test('public project site exposes landing and documentation without a local Mark
 
   for (const html of [landing, nestedDocs]) {
     assert.doesNotMatch(html, /(?:href|rel="prefetch" href)="\/marketplace\/?"/)
+  }
+})
+
+test('documentation pages show one Copy page trigger and the landing page shows none', async () => {
+  const files = (await generatedFilePaths(dist)).filter(file => file.startsWith('docs/') && file.endsWith('.html') && !file.endsWith('/404.html'))
+  const [landing, readme, ...pages] = await Promise.all([
+    readFile(new URL('index.html', dist), 'utf8'),
+    readFile(new URL('README.html', dist), 'utf8'),
+    ...files.map(file => readFile(new URL(file, dist), 'utf8')),
+  ])
+
+  assertNoCopyPageTrigger(landing, 'landing page')
+  assertNoCopyPageTrigger(readme, 'non-docs README page')
+  assert.ok(pages.length > 0, 'public build should include documentation pages')
+  for (const [index, file] of files.entries()) assertCopyPageTrigger(pages[index], file)
+})
+
+test('View as Markdown links resolve to each public documentation Markdown file', async () => {
+  const files = (await generatedFilePaths(dist)).filter(file => file.startsWith('docs/') && file.endsWith('.html') && !file.endsWith('/404.html'))
+  for (const file of files) {
+    const html = await readFile(new URL(file, dist), 'utf8')
+    await assertCopyPageView(html, file, base, dist, file)
+  }
+})
+
+// spec: marketplace-web-ui/hero-shows-the-terminal-preview-by-default
+// spec: marketplace-web-ui/web-tab-shows-the-catalog-with-a-matching-caption
+test('public landing connects both hero preview tabs to their panels', async () => {
+  const landing = await readFile(new URL('index.html', dist), 'utf8')
+  assert.match(landing, /role="tablist"[^>]*aria-label="Hero preview"/)
+
+  for (const tabName of ['terminal', 'web']) {
+    const tabID = `hero-tab-${tabName}`
+    const panelID = `hero-panel-${tabName}`
+    const tab = landing.match(new RegExp(`<button\\b(?=[^>]*\\bid="${tabID}")[^>]*>`))?.[0]
+    const panel = landing.match(new RegExp(`<[^>]+(?=[^>]*\\bid="${panelID}")[^>]*>`))?.[0]
+
+    assert.ok(tab, `missing ${tabID}`)
+    assert.match(tab, /role="tab"/)
+    assert.match(tab, new RegExp(`aria-controls="${panelID}"`))
+    assert.ok(panel, `missing ${panelID}`)
+    assert.match(panel, /role="tabpanel"/)
+    assert.match(panel, new RegExp(`aria-labelledby="${tabID}"`))
+  }
+
+  const terminalTab = landing.match(/<button\b(?=[^>]*\bid="hero-tab-terminal")[^>]*>/)?.[0]
+  assert.ok(terminalTab)
+  assert.match(terminalTab, /aria-selected="true"/)
+  assert.match(terminalTab, /tabindex="0"/)
+})
+
+// spec: marketplace-web-ui/browser-frame-shows-catalog-and-resource-detail
+test('organizations section depicts the real catalog and a pinned clean resource detail', async () => {
+  const landing = await readFile(new URL('index.html', dist), 'utf8')
+  const section = landingSection(landing, 'organizations')
+
+  assert.match(section, /class="marketplace-browser-frame"/)
+  assert.deepEqual(frameAddresses(section), ['marketplace.example.com', 'marketplace.example.com'])
+  assert.match(section, /alt="Marketplace catalog showing skills, commands, and MCP servers with Kind and Registry filters and the Copy install command action\."/)
+  assert.match(section, /alt="Marketplace resource detail showing a pinned revision digest and a clean Security result\."/)
+})
+
+// spec: marketplace-web-ui/browser-frame-avoids-linking-a-live-marketplace
+test('organizations browser frame uses a neutral host and no Marketplace route', async () => {
+  const landing = await readFile(new URL('index.html', dist), 'utf8')
+  const section = landingSection(landing, 'organizations')
+
+  assert.deepEqual(frameAddresses(section), ['marketplace.example.com', 'marketplace.example.com'])
+  const srcsetCandidates = [...section.matchAll(/\bsrcset="([^"]*)"/g)].flatMap(([, srcset]) => srcset.split(',').map(candidate => candidate.trim().split(/\s+/)[0]))
+  assert.ok(srcsetCandidates.length > 0)
+  const targets = [...section.matchAll(/\b(?:href|src)="([^"]*)"/g)].map(([, target]) => target).concat(srcsetCandidates)
+    .map(target => new URL(target, 'https://example.com'))
+  assert.ok(targets.every(({ pathname }) => !pathname.split('/').includes('marketplace')))
+})
+
+// spec: marketplace-web-ui/benefit-cards-and-deployment-guide-remain
+test('organizations keeps its three benefits and Deployment guide destination', async () => {
+  const landing = await readFile(new URL('index.html', dist), 'utf8')
+  const section = landingSection(landing, 'organizations')
+
+  for (const heading of ['Your registries, together', 'Publication policies', 'Your infrastructure']) {
+    assert.ok(section.includes(heading), `missing benefit heading: ${heading}`)
+  }
+  const deploymentGuide = [...section.matchAll(/<a\b[^>]*\bhref="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g)].find(([, , text]) => text.includes('Deployment guide'))
+  assert.ok(deploymentGuide, 'missing Deployment guide link')
+  assert.equal(deploymentGuide[1], `${docsPath}how-to/operator/deploy-a-production-marketplace`)
+})
+
+// spec: marketplace-web-ui/depictions-declare-dimensions-alt-text-and-lazy-loading
+test('below-the-fold web UI images declare dimensions, meaningful alt text, and lazy loading', async () => {
+  const landing = await readFile(new URL('index.html', dist), 'utf8')
+  const images = [...landing.matchAll(/<img\b[^>]*data-web-ui-image[^>]*>/g)].map(([tag]) => tag)
+
+  assert.equal(images.length, 4)
+  for (const image of images) {
+    assert.match(image, /\bwidth="1440"/)
+    assert.match(image, /\bheight="960"/)
+    assert.match(image, /\balt="[^"]{20,}"/)
+    assert.match(image, /\bloading="lazy"/)
+  }
+  assert.equal(images.filter(image => image.includes('data-theme="light"')).length, 2)
+  assert.equal(images.filter(image => image.includes('data-theme="dark"')).length, 2)
+
+  const narrowSources = [...landing.matchAll(/<source\b[^>]*>/g)].map(([tag]) => tag).filter(tag => tag.includes('-narrow-'))
+  assert.equal(narrowSources.length, 4)
+  for (const source of narrowSources) {
+    assert.match(source, /\bmedia="\(max-width: 639px\)"/)
+    assert.match(source, /\bwidth="390"/)
+    assert.match(source, /\bheight="844"/)
   }
 })
 

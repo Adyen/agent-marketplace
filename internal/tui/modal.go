@@ -35,6 +35,8 @@ const (
 type toggleAction struct {
 	skillName               string
 	kind                    ir.ResourceKind
+	pluginName              string
+	pluginMember            config.ResourceLocator
 	scope                   scope
 	enable                  bool   // true = add to config; false = remove from config
 	registryURL             string // for project/global scopes: which registry entry to target
@@ -104,13 +106,26 @@ func scopedToggleAction(r row, s scope) toggleAction {
 	if act.isMarketplace {
 		act.marketplaceSelection, act.hasMarketplaceSelection = marketplaceSelectionForToggle(r, s)
 	}
+	if pluginPackage := r.Artifact.PluginPackage; pluginPackage != nil {
+		act.pluginName = pluginPackage.Name
+		act.pluginMember = config.ResourceLocator{Kind: r.Artifact.Kind, Name: r.Artifact.Name}
+	}
 	switch s {
 	case scopeGlobal:
 		act.enable = !r.EnabledGlobal
+		if r.PluginMemberExcluded && r.PluginSelectedGlobal {
+			act.enable = true
+		}
 	case scopeProject:
 		act.enable = !r.EnabledProject
+		if r.PluginMemberExcluded && r.PluginSelectedProject {
+			act.enable = true
+		}
 	case scopeLocal:
 		act.enable = !r.EnabledLocal
+		if r.PluginMemberExcluded && r.PluginSelectedLocal {
+			act.enable = true
+		}
 	case scopeLocalExclude:
 		act.enable = !r.ExcludedLocally
 	case scopeUserExclude:
@@ -250,8 +265,13 @@ func runScopedToggleAt(repoRoot string, act toggleAction, mapper pipeline.Config
 		entry := config.RegistryEntry{URL: act.registryURL, Ref: act.registryRef, Path: act.registryPath, V4Kind: act.registryKind, SourceHarness: act.sourceHarness}
 		locator := config.ResourceLocator{Kind: act.kind, Name: act.skillName}
 		target := config.LayerTarget{Source: source, StagedPath: mappedPath, DeclaringPath: originalPath}
+		if act.pluginName != "" && act.scope == scopeGlobal && act.enable {
+			if err := config.ValidateGlobalRegistryWrite(entry); err != nil {
+				return configWrittenMsg{skillName: act.skillName, enabled: act.enable, selectNext: act.disablesResource(), err: err}
+			}
+		}
 		var err error
-		if act.scope == scopeLocalExclude {
+		if act.scope == scopeLocalExclude || act.pluginName != "" {
 			err = pipeline.EditLayerAtPath(target, func(m *pipeline.LayerMutation) error {
 				return applyToggleAction(m, act)
 			})
@@ -281,6 +301,16 @@ func applyToggleAction(m *pipeline.LayerMutation, act toggleAction) error {
 	}
 	entry := config.RegistryEntry{URL: act.registryURL, Ref: act.registryRef, Path: act.registryPath, V4Kind: act.registryKind, SourceHarness: act.sourceHarness}
 	locator := config.ResourceLocator{Kind: act.kind, Name: act.skillName}
+	if act.pluginName != "" {
+		binding, found, err := m.LookupRegistry(entry)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("plugin source is not declared in the selected config layer")
+		}
+		return m.SetPluginMemberExcluded(binding, act.pluginName, act.pluginMember, !act.enable)
+	}
 	if act.scope == scopeLocalExclude {
 		if strings.TrimSpace(act.registryURL) == "" {
 			return m.SetLayerExclude(locator, nil)
@@ -624,7 +654,7 @@ func (m Model) startToggleOperation(act toggleAction) (tea.Model, tea.Cmd) {
 			return configWrittenMsg{skillName: act.skillName, enabled: false, err: err}
 		}, operation, false)
 	}
-	if act.enable && !act.isMarketplace && (act.scope == scopeGlobal || act.scope == scopeProject) && hasCollisionError(m.errs, m.modalSkill.Artifact.Kind, m.modalSkill.Artifact.Name) {
+	if act.pluginName == "" && act.enable && !act.isMarketplace && (act.scope == scopeGlobal || act.scope == scopeProject) && hasCollisionError(m.errs, m.modalSkill.Artifact.Kind, m.modalSkill.Artifact.Name) {
 		m.pendingExcludeAction = &act
 	}
 	return m, correlateOperation(runDependencyScopedToggle(ctxOrBackground(m.ctx), m.workspace, act, m.dependencyLifecycle.Mutate), operation, false)

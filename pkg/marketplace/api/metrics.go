@@ -44,7 +44,7 @@ type serverMetrics struct {
 	scrape http.Handler
 }
 
-func newServerMetrics(meta store.MetadataStore) *serverMetrics {
+func newServerMetrics(meta store.MetadataStore, extra ...prometheus.Collector) *serverMetrics {
 	metrics := &serverMetrics{
 		requests: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "agent_marketplace_requests_total", Help: "Total HTTP requests."}, []string{"listener", "method", "route", "code"}),
 		duration: prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "agent_marketplace_request_duration_seconds", Help: "HTTP request duration in seconds.", Buckets: prometheus.DefBuckets}, []string{"listener", "method", "route"}),
@@ -69,6 +69,9 @@ func newServerMetrics(meta store.MetadataStore) *serverMetrics {
 	registry.MustRegister(metrics.requests, metrics.duration, metrics.active, metrics.publicDuration, metrics.phases,
 		metrics.installationRefresh, metrics.installationRefreshSecs, metrics.installationLastSuccess,
 		collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	if len(extra) != 0 {
+		registry.MustRegister(extra...)
+	}
 	if pool, ok := meta.(interface{ PoolStats() sql.DBStats }); ok {
 		registry.MustRegister(
 			prometheus.NewCounterFunc(prometheus.CounterOpts{Name: "agent_marketplace_metadata_pool_waits_total", Help: "Total metadata connection pool waits."}, func() float64 {
@@ -81,6 +84,15 @@ func newServerMetrics(meta store.MetadataStore) *serverMetrics {
 	}
 	metrics.scrape = promhttp.HandlerFor(registry, promhttp.HandlerOpts{EnableOpenMetrics: true})
 	return metrics
+}
+
+func NewOperationsMetricsHandler(extra ...prometheus.Collector) http.Handler {
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(append(extra,
+		collectors.NewGoCollector(),
+		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+	)...)
+	return promhttp.HandlerFor(registry, promhttp.HandlerOpts{EnableOpenMetrics: true})
 }
 
 func (m *serverMetrics) observePhase(phase string, start time.Time) {

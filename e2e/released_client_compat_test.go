@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 // releasedClientArch maps the checksum of each pinned latest-release Linux
@@ -456,5 +458,397 @@ func TestReleasedClientReadsCandidateIsolatedCommittedState(t *testing.T) {
 				checkCacheOnly(executable, false)
 			}
 		})
+	}
+}
+
+// spec: regression-gates/released-client-remains-usable-after-candidate-mutations
+func TestPersonalLocalClaudePluginSyncLeavesCommittedWorkspaceUnchanged(t *testing.T) {
+	env := newEnv(t)
+	catalogPath := "/root/test-catalogs/claude.yaml"
+	env.WriteFile(catalogPath, nativePluginCatalog("claude"))
+	env.InitGitRepo()
+	env.WriteGlobalConfig("apiVersion: agent-marketplace/v4\nharnesses: [claude]\n")
+	registry := env.CreateBareRepo("shared", map[string]string{
+		"skills/review/SKILL.md": "---\nname: review\ndescription: Committed skill\n---\nCommitted body.\n",
+		"hooks/hooks.json":       `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo committed-claude-hook"}]}]}}`,
+	})
+	env.WriteRepoConfig(fmt.Sprintf(`apiVersion: agent-marketplace/v4
+harnesses: [claude]
+sources:
+  shared: {git: %q, ref: main}
+resources:
+  shared: {include: [skill/review, hook/PreToolUse-command]}
+`, registry))
+	initial := env.RunAM("sync")
+	if initial.ExitCode != 0 {
+		t.Fatalf("initial committed Claude sync failed (exit %d):\n%s", initial.ExitCode, initial.Combined)
+	}
+	env.MustRun(`git add -A && git -c user.name=E2E -c user.email=e2e@example.com commit -q -m "committed Claude baseline"`)
+	if tracked := env.Run("git ls-files --error-unmatch .claude/skills/review"); tracked.ExitCode != 0 {
+		t.Fatalf("committed Claude skill was not tracked before personal-local sync:\n%s", tracked.Combined)
+	}
+
+	env.WriteFile("/workspace/vendor/native-kit/.claude-plugin/plugin.json", `{"name":"native-kit"}`)
+	env.WriteFile("/workspace/vendor/native-kit/skills/review/SKILL.md", "---\nname: review\ndescription: Plugin member\n---\nPlugin member body.\n")
+	env.WriteFile("/workspace/.agents/config.local.yaml", `apiVersion: agent-marketplace/v4
+sources:
+  personal: {directory: ./vendor/native-kit, format: claude-plugin}
+resources:
+  personal:
+    - {kind: plugin, name: native-kit, delivery: native}
+`)
+	sync := env.RunAMWithEnv(nativeCatalogEnv(env.mustResolvePath(catalogPath)), "sync")
+	if sync.ExitCode != 0 {
+		t.Fatalf("personal-local Claude sync failed (exit %d):\n%s", sync.ExitCode, sync.Combined)
+	}
+	settings, err := os.ReadFile(env.mustResolvePath("/workspace/.claude/settings.local.json"))
+	if err != nil || !bytes.Contains(settings, []byte("native-kit@")) {
+		t.Fatalf("personal-local sync did not register the native Claude plugin: %v\n%s", err, settings)
+	}
+	diff := env.Run("git diff --name-only HEAD")
+	if diff.ExitCode != 0 {
+		t.Fatalf("read committed workspace diff failed (exit %d):\n%s", diff.ExitCode, diff.Combined)
+	}
+	if changed := strings.TrimSpace(diff.Stdout); changed != "" {
+		details := env.Run("git diff HEAD --")
+		t.Fatalf("personal-local Claude sync changed tracked workspace files:\n%s\n%s", changed, details.Combined)
+	}
+}
+
+// spec: regression-gates/released-client-remains-usable-after-candidate-mutations
+func TestReleasedClientNativeClaudePersonalLocalRegistration(t *testing.T) {
+	testReleasedClientNativePersonalLocalRegistration(t, "claude")
+}
+
+// spec: regression-gates/released-client-remains-usable-after-candidate-mutations
+func TestReleasedClientNativeFactoryPersonalLocalRegistration(t *testing.T) {
+	testReleasedClientNativePersonalLocalRegistration(t, "factory")
+}
+
+// spec: regression-gates/released-client-remains-usable-after-candidate-mutations
+func TestReleasedClientNativeCodexPersonalLocalRegistration(t *testing.T) {
+	testReleasedClientNativePersonalLocalRegistration(t, "codex")
+}
+
+func testReleasedClientNativePersonalLocalRegistration(t *testing.T, target string) {
+	image := os.Getenv("AM_E2E_RELEASED_IMAGE")
+	if os.Getenv("AM_E2E_RELEASED_BINARY") == "" || image == "" {
+		t.Skip("released executable and git-capable image are supplied by the dedicated released-client gate")
+	}
+	released, arch := verifiedExecutable(t, "AM_E2E_RELEASED_BINARY", releasedClientArch)
+	world := newHistoricalWorld(t, image)
+	candidate := world.buildCandidate(arch, "e2e")
+	candidateCatalogPath := world.path("test-catalogs", target+".yaml")
+	if err := os.MkdirAll(filepath.Dir(candidateCatalogPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(candidateCatalogPath, []byte(nativePluginCatalog(target)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	candidateCatalogEnv := []string{"AGENT_MARKETPLACE_E2E_PLUGIN_CATALOG=" + candidateCatalogPath}
+	candidateWorkspace := world.path("workspace-candidate")
+	releasedWorkspace := world.path("workspace-released")
+	candidateHome := world.path("home-candidate")
+	releasedHome := world.path("home-released")
+	for _, dir := range []string{filepath.Join(candidateWorkspace, ".agents"), candidateHome, releasedHome} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gitRun(t, "", "init", "-q", "-b", "main", candidateWorkspace)
+
+	registry := world.gitRegistry(map[string]string{"review": "Review body"})
+	if target == "claude" {
+		hookSource := filepath.Join(registry.source, "hooks", "hooks.json")
+		if err := os.MkdirAll(filepath.Dir(hookSource), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(hookSource, []byte(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo committed-claude-hook"}]}]}}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		registry.commit("add Claude hook")
+	}
+	gitRun(t, registry.source, "push", "-q", "origin", "main")
+
+	homes := map[string]string{candidate: candidateHome, released: releasedHome}
+	must := func(executable, workspace string, args ...string) string {
+		t.Helper()
+		if executable == candidate {
+			return world.mustWithEnv(candidateCatalogEnv, homes[executable], workspace, executable, args...)
+		}
+		return world.must(homes[executable], workspace, executable, args...)
+	}
+	must(candidate, candidateWorkspace, "init", "--harnesses", target)
+	resources := "[skill/review]"
+	if target == "claude" {
+		resources = "[skill/review, hook/PreToolUse-command]"
+	}
+	repoConfig := fmt.Sprintf("apiVersion: agent-marketplace/v4\nharnesses: [%s]\nsources:\n  shared: {git: %q, ref: main}\nresources:\n  shared: {include: %s}\n", target, registry.URL, resources)
+	if err := os.WriteFile(filepath.Join(candidateWorkspace, ".agents", "config.yaml"), []byte(repoConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	must(candidate, candidateWorkspace, "sync")
+	if target == "claude" {
+		hookSettings := filepath.Join(candidateWorkspace, ".claude", "settings.json")
+		hookBytes, err := os.ReadFile(hookSettings)
+		if err != nil || !bytes.Contains(hookBytes, []byte("committed-claude-hook")) {
+			t.Fatalf("candidate did not materialize the committed Claude hook: %v\n%s", err, hookBytes)
+		}
+	} else {
+		factorySettings := filepath.Join(candidateWorkspace, ".factory", "settings.json")
+		if err := os.MkdirAll(filepath.Dir(factorySettings), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(factorySettings, []byte("{\"handwritten\":\"keep\"}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gitRun(t, candidateWorkspace, "add", "-A")
+	gitRun(t, candidateWorkspace, "-c", "user.name=E2E", "-c", "user.email=e2e@example.com", "commit", "-q", "-m", "candidate Claude baseline")
+	origin := world.path("repository.git")
+	gitRun(t, "", "clone", "-q", "--bare", candidateWorkspace, origin)
+	gitRun(t, candidateWorkspace, "remote", "add", "origin", origin)
+	gitRun(t, candidateWorkspace, "push", "-q", "-u", "origin", "main")
+	gitRun(t, "", "clone", "-q", origin, releasedWorkspace)
+	must(released, releasedWorkspace, "init", "--harnesses", target)
+
+	committedPaths := []string{
+		filepath.Join(".agents", "config.yaml"),
+		filepath.Join(".agents", "lock.yaml"),
+	}
+	if target != "codex" {
+		committedPaths = append(committedPaths, filepath.Join("."+target, "settings.json"))
+	}
+	fingerprints := func(workspace string) map[string]string {
+		t.Helper()
+		result := make(map[string]string, len(committedPaths))
+		for _, rel := range committedPaths {
+			path := filepath.Join(workspace, rel)
+			fingerprint, err := pathFingerprint(path)
+			if err != nil {
+				t.Fatalf("fingerprint committed path %s: %v", rel, err)
+			}
+			result[rel] = fingerprint
+		}
+		return result
+	}
+	assertFingerprints := func(workspace string, before map[string]string, stage string) {
+		t.Helper()
+		for rel, fingerprint := range before {
+			got, err := pathFingerprint(filepath.Join(workspace, rel))
+			if err != nil || got != fingerprint {
+				t.Fatalf("%s changed committed path %s: %v", stage, rel, err)
+			}
+		}
+	}
+	readLock := func(workspace string) []byte {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(workspace, ".agents", "lock.yaml"))
+		if err != nil {
+			t.Fatalf("read %s lock: %v", workspace, err)
+		}
+		return data
+	}
+	candidateCommitted := fingerprints(candidateWorkspace)
+	releasedCommitted := fingerprints(releasedWorkspace)
+	lockBytes := readLock(candidateWorkspace)
+	if len(lockBytes) == 0 {
+		t.Fatal("candidate baseline did not create a Git lock")
+	}
+	releasedReads := func(stage string, checkCandidateNative bool, settingsLocal, catalogRoot, settingsFingerprint, catalogFingerprint string) {
+		t.Helper()
+		gitRun(t, releasedWorkspace, "fetch", "-q", "origin")
+		gitRun(t, releasedWorkspace, "merge", "-q", "--ff-only", "origin/main")
+		releasedLock := readLock(releasedWorkspace)
+		for _, args := range [][]string{{"sync", "--locked"}, {"sync", "--check"}} {
+			must(released, releasedWorkspace, args...)
+			if got := readLock(releasedWorkspace); !bytes.Equal(got, releasedLock) {
+				t.Fatalf("%v changed the released checkout's lock after %s", args, stage)
+			}
+			assertFingerprints(releasedWorkspace, releasedCommitted, fmt.Sprintf("%v after %s", args, stage))
+			assertFingerprints(candidateWorkspace, candidateCommitted, fmt.Sprintf("released %v after %s", args, stage))
+			if checkCandidateNative {
+				for path, before := range map[string]string{
+					settingsLocal: settingsFingerprint,
+					catalogRoot:   catalogFingerprint,
+				} {
+					got, err := pathFingerprint(path)
+					if err != nil || got != before {
+						t.Fatalf("released %v changed candidate native state after %s at %s: %v", args, stage, path, err)
+					}
+				}
+			}
+		}
+	}
+	releasedReads("committed "+target+" baseline", false, "", "", "", "")
+
+	pluginRoot := filepath.Join(candidateWorkspace, "vendor", "native-kit")
+	format, pluginManifestDir := nativePluginFormat(target)
+	pluginFiles := map[string]string{
+		filepath.Join(pluginManifestDir, "plugin.json"): `{"name":"native-kit"}`,
+		filepath.Join("skills", "review", "SKILL.md"):   "---\nname: review\ndescription: Review plugin changes\n---\nReview plugin changes.\n",
+	}
+	for rel, data := range pluginFiles {
+		path := filepath.Join(pluginRoot, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	localConfig := filepath.Join(candidateWorkspace, ".agents", "config.local.yaml")
+	localDocument := fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  personal: {directory: ./vendor/native-kit, format: %s}\nresources:\n  personal:\n    - {kind: plugin, name: native-kit, delivery: native}\n", format)
+	if err := os.WriteFile(localConfig, []byte(localDocument), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tracked := exec.Command("git", "ls-files", "--error-unmatch", filepath.Join(".agents", "config.local.yaml"))
+	tracked.Dir = candidateWorkspace
+	if output, err := tracked.CombinedOutput(); err == nil {
+		t.Fatalf("personal-local configuration is tracked:\n%s", output)
+	}
+	must(candidate, candidateWorkspace, "sync")
+	settingsLocal := filepath.Join(candidateWorkspace, "."+target, "settings.local.json")
+	if target == "codex" {
+		settingsLocal = filepath.Join(candidateWorkspace, ".codex", "config.toml")
+	}
+	registration, err := os.ReadFile(settingsLocal)
+	if err != nil {
+		t.Fatalf("candidate did not write the native %s registration from personal-local config: %v\n%s", target, err, registration)
+	}
+	if target != "codex" && (!bytes.Contains(registration, []byte("native-kit@")) || !bytes.Contains(registration, []byte("extraKnownMarketplaces"))) {
+		t.Fatalf("candidate did not write the native %s registration from personal-local config:\n%s", target, registration)
+	}
+	catalogDir := "." + target + "-plugin"
+	if target == "factory" {
+		catalogDir = ".factory-plugin"
+	} else if target == "codex" {
+		catalogDir = filepath.Join(".agents", "plugins")
+	}
+	manifests, err := filepath.Glob(filepath.Join(candidateHome, ".local", "state", "agent-marketplace", "native-plugins", target, "*", catalogDir, "marketplace.json"))
+	if err != nil || len(manifests) != 1 {
+		t.Fatalf("candidate %s catalogs = %v / %v, want one", target, manifests, err)
+	}
+	catalogRoot := filepath.Dir(filepath.Dir(manifests[0]))
+	if target == "codex" {
+		catalogRoot = filepath.Dir(catalogRoot)
+		var document map[string]map[string]map[string]any
+		if err := toml.Unmarshal(registration, &document); err != nil {
+			t.Fatalf("decode candidate Codex registration: %v\n%s", err, registration)
+		}
+		catalogName := filepath.Base(catalogRoot)
+		marketplace := document["marketplaces"][catalogName]
+		plugin := document["plugins"]["native-kit@"+catalogName]
+		if marketplace["source_type"] != "local" || marketplace["source"] != catalogRoot || marketplace["path"] != nil || plugin["enabled"] != true {
+			t.Fatalf("candidate Codex registration = %#v / %#v, want local source %q and enabled plugin", marketplace, plugin, catalogRoot)
+		}
+	}
+	catalogBytes, err := os.ReadFile(manifests[0])
+	if err != nil || !bytes.Contains(catalogBytes, []byte("native-kit")) {
+		t.Fatalf("candidate catalog omitted the native plugin: %v\n%s", err, catalogBytes)
+	}
+	settingsFingerprint, err := pathFingerprint(settingsLocal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalogBefore, err := pathFingerprint(catalogRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFingerprints(candidateWorkspace, candidateCommitted, "candidate personal-local sync")
+	if got := readLock(candidateWorkspace); !bytes.Equal(got, lockBytes) {
+		t.Fatalf("personal-local sync changed committed Git lock:\nbefore:\n%s\nafter:\n%s", lockBytes, got)
+	}
+	diff := exec.Command("git", "diff", "--quiet", "HEAD")
+	diff.Dir = candidateWorkspace
+	if output, err := diff.CombinedOutput(); err != nil {
+		t.Fatalf("personal-local sync changed tracked candidate bytes: %v\n%s", err, output)
+	}
+
+	releasedReads("native "+target+" personal-local sync", true, settingsLocal, catalogRoot, settingsFingerprint, catalogBefore)
+	if got, err := pathFingerprint(catalogRoot); err != nil || got != catalogBefore {
+		t.Fatalf("released-client reads changed candidate native catalog: %v", err)
+	}
+}
+
+// The released client predates format sources and plugin locators, so it
+// must refuse a plugin configuration before touching configuration, lock,
+// or harness state.
+// spec: plugin-packages/released-v4-client-refuses-a-plugin-configuration
+func TestReleasedClientRefusesPluginConfiguration(t *testing.T) {
+	image := os.Getenv("AM_E2E_RELEASED_IMAGE")
+	if os.Getenv("AM_E2E_RELEASED_BINARY") == "" || image == "" {
+		t.Skip("released executable and git-capable image are supplied by the dedicated released-client gate")
+	}
+	released, _ := verifiedExecutable(t, "AM_E2E_RELEASED_BINARY", releasedClientArch)
+	world := newHistoricalWorld(t, image)
+	workspace := world.path("workspace")
+	home := world.path("home-released")
+	for _, dir := range []string{filepath.Join(workspace, ".agents"), home} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	registry := world.gitRegistry(map[string]string{"seed": "Seed body"})
+	catalog := filepath.Join(registry.source, ".claude-plugin")
+	plugin := filepath.Join(registry.source, "plugins", "review-kit", ".claude-plugin")
+	for _, dir := range []string{catalog, plugin} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(catalog, "marketplace.json"), []byte(`{"name":"team","owner":{"name":"t"},"plugins":[{"name":"review-kit","source":"./plugins/review-kit"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(plugin, "plugin.json"), []byte(`{"name":"review-kit","version":"1.0.0"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	registry.commit("add catalog")
+	gitRun(t, registry.source, "push", "-q", "origin", "main")
+	gitRun(t, "", "init", "-q", "-b", "main", workspace)
+
+	world.must(home, workspace, released, "init", "--harnesses", "factory")
+	configPath := filepath.Join(workspace, ".agents", "config.yaml")
+	config := fmt.Sprintf("apiVersion: agent-marketplace/v4\nsources:\n  plugins: {git: '%s', ref: main, format: claude-marketplace}\nresources:\n  plugins: [plugin/review-kit]\n", registry.URL)
+	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, workspace, "add", ".agents/config.yaml")
+	gitRun(t, workspace, "-c", "user.name=E2E", "-c", "user.email=e2e@example.com", "commit", "-q", "-m", "plugin configuration")
+	harnessFile := filepath.Join(workspace, ".factory", "skills", "seed", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(harnessFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(harnessFile, []byte(skillDocument("seed", "Seed body")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(workspace, ".agents", "lock.yaml")
+	if absent, err := checkPathAbsent(lockPath); err != nil || !absent {
+		t.Fatalf("precondition: lock present before refusal: absent=%t err=%v", absent, err)
+	}
+	configBefore, err := pathFingerprint(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	harnessBefore, err := pathFingerprint(filepath.Join(workspace, ".factory"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	output, err := world.run(home, workspace, released, "sync")
+	if err == nil {
+		t.Fatalf("%s accepted a plugin configuration:\n%s", releasedClientVersion, output)
+	}
+	if !strings.Contains(output, "v4.unknown-field") && !strings.Contains(output, "v4.locator") {
+		t.Fatalf("%s refusal did not carry v4.unknown-field or v4.locator:\n%s", releasedClientVersion, output)
+	}
+	if got, err := pathFingerprint(configPath); err != nil || got != configBefore {
+		t.Fatalf("%s changed configuration bytes: %v", releasedClientVersion, err)
+	}
+	if absent, err := checkPathAbsent(lockPath); err != nil || !absent {
+		t.Fatalf("%s created a lock while refusing: absent=%t err=%v", releasedClientVersion, absent, err)
+	}
+	if got, err := pathFingerprint(filepath.Join(workspace, ".factory")); err != nil || got != harnessBefore {
+		t.Fatalf("%s changed harness files: %v", releasedClientVersion, err)
 	}
 }

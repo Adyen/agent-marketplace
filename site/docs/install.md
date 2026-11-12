@@ -1,6 +1,6 @@
 # More install options
 
-The [quick start](./quick-start.md) installs `agent-marketplace` with one `go install` command. This page covers the other ways to install it.
+The [quick start](./quick-start.md) installs `agent-marketplace` with the install script. This page covers other ways to install it.
 
 `agent-marketplace` is one program file with no other runtime dependencies. It runs on macOS and Linux, on Intel (`amd64`) and ARM (`arm64`) processors. There is no Windows build.
 
@@ -91,7 +91,7 @@ Use `~/.local/bin/agent-marketplace` instead if you chose option B.
 
 ## With Go
 
-If you have Go 1.27.3 or newer, you can build and install the newest code from the main branch in one step:
+With Go 1.27.4 or newer, you can install the newest code from the main branch:
 
 ```bash
 go install github.com/Adyen/agent-marketplace/cmd/agent-marketplace@latest
@@ -103,7 +103,7 @@ Go puts the program in `$(go env GOBIN)` if set, otherwise `$(go env GOPATH)/bin
 
 ## From source
 
-Clone the release tag and build it with `make`. This also requires Go 1.27.3 or newer:
+Clone the release tag and build it with `make`. This also requires Go 1.27.4 or newer:
 
 ```bash
 git clone --branch v5.0.0 https://github.com/Adyen/agent-marketplace.git
@@ -129,7 +129,7 @@ curl -fsSL https://agent-marketplace.io/install.sh | AGENT_MARKETPLACE_VERSION=v
 
 The checksum comes from the same release as the binary, so it confirms the download is intact, not who published it. To check authenticity, verify the asset against the release attestation with `gh release verify-asset <tag> agent-marketplace-<tag>-<os>-<arch> --repo Adyen/agent-marketplace`, for example `agent-marketplace-v5.0.3-darwin-arm64`.
 
-To inspect the script first, download it with `curl -fsSL https://agent-marketplace.io/install.sh -o install.sh`, read it, then run `bash install.sh`. The installer refuses a release without a `SHA256SUMS` asset; use one of the other methods on this page for such a release.
+To inspect the script first, download it with `curl -fsSL https://agent-marketplace.io/install.sh -o install.sh`, read it, then run `bash install.sh`. The installer refuses releases without a `SHA256SUMS` asset. v5.1.0 and later publish that asset; v5.0.3 and earlier do not. Use one of the other methods on this page for a release without it.
 
 ## Upgrade notices
 

@@ -126,8 +126,10 @@ func runUpdate(ctx context.Context, out io.Writer, bump, verbose, dryRun, includ
 			}
 			mode.StagedConfigEdits = edits
 			mode.StagedLockEdits = lockEdits
+			var lockMetadata []pipeline.LockMetadata
+			mode.LockMetadataSink = &lockMetadata
 			option, _, lease, err := lifecycle.PrepareRuntimeLocks(ctx, repoRoot, localDir, mode)
-			return pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, Warnings: warnings}, err
+			return pipeline.DependencyLockView{CatalogOption: option, ExactLockLease: lease, LockMetadata: lockMetadata, Warnings: warnings}, err
 		},
 	}
 	if localDir != "" && localDir != repoRoot {

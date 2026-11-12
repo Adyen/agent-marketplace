@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"maps"
 	"os"
@@ -8,8 +9,10 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 )
 
 // spec: hook-sync-diagnostics/hook-errors-retain-target-and-source
@@ -102,6 +105,198 @@ resources:
 			assertCliFilesystemSnapshot(t, "sync --check state", stateRoot, stateSnap)
 		})
 	}
+}
+
+// spec: command-error-output/owned-aggregate-diagnostics-print-their-code-guidance
+func TestSyncOwnedAggregateDiagnosticsPrintCodeGuidance(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	registry := t.TempDir()
+	writeFile(t, filepath.Join(registry, ".devin", "hooks.v1.json"),
+		`{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo source"}]}]}`)
+	repo := t.TempDir()
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), `
+apiVersion: agent-marketplace/v4
+harnesses: [devin]
+sources:
+  local:
+    directory: `+registry+`
+    source_harness: devin
+resources:
+  local:
+    include: [hook/PreToolUse-command]
+`)
+	aggregateFile := filepath.Join(repo, ".devin", "hooks.v1.json")
+	writeFile(t, aggregateFile,
+		`{"PostToolUse":[{"command":"echo mine","type":"command"}]}`)
+	withWorkingDir(t, repo)
+	output, err := executeCommand("sync")
+	if err == nil {
+		t.Fatalf("sync succeeded despite the unpatchable Devin aggregate:\n%s", output)
+	}
+	ownershipDoc, ok := diag.DocForCode(diag.CodeOwnershipStateMissing)
+	if !ok || ownershipDoc.Hint == "" {
+		t.Fatalf("DocForCode(%q) has no hint", diag.CodeOwnershipStateMissing)
+	}
+	aggregateDoc, ok := diag.DocForCode(diag.CodeMaterializeDevinAggregateShape)
+	if !ok || aggregateDoc.Hint == "" {
+		t.Fatalf("DocForCode(%q) has no hint", diag.CodeMaterializeDevinAggregateShape)
+	}
+	for _, code := range []string{diag.CodeOwnershipStateMissing, diag.CodeMaterializeDevinAggregateShape} {
+		if !strings.Contains(output, code) {
+			t.Errorf("sync output lacks %s:\n%s", code, output)
+		}
+	}
+	if !strings.Contains(output, "\n  → "+ownershipDoc.Hint+"\n") {
+		t.Errorf("sync warning lacks ownership guidance on its remediation line %q:\n%s", ownershipDoc.Hint, output)
+	}
+	if strings.Contains(output, "\n  → "+aggregateDoc.Hint+"\n") {
+		t.Errorf("sync error duplicated aggregate guidance on a remediation line:\n%s", output)
+	}
+	aggregateHint := "hint: " + expectedDevinEntryHint(aggregateFile, "PostToolUse", 0)
+	if count := strings.Count(output, aggregateHint); count != 1 {
+		t.Errorf("sync error hint count = %d, want one %q:\n%s", count, aggregateHint, output)
+	}
+	if hasEmptyRemediationLine(output) || strings.Contains(output, "Run `agent-marketplace sync --check`") {
+		t.Fatalf("sync used generic guidance or printed an empty remediation line:\n%s", output)
+	}
+}
+
+// spec: command-error-output/a-repository-devin-hook-entry-refusal-names-the-entry-to-rewrite
+// spec: command-error-output/a-user-devin-hook-entry-refusal-names-the-entry-to-rewrite
+// spec: command-error-output/a-devin-aggregate-root-or-member-refusal-keeps-root-guidance
+func TestSyncDevinAggregateShapeRefusalHints(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	catalogDoc, ok := diag.DocForCode(diag.CodeMaterializeDevinAggregateShape)
+	if !ok || catalogDoc.Hint == "" {
+		t.Fatalf("DocForCode(%q) has no hint", diag.CodeMaterializeDevinAggregateShape)
+	}
+	assertRefusal := func(t *testing.T, output, path string, before []byte, beforeInfo os.FileInfo, wantHint, forbidden string) {
+		t.Helper()
+		if !strings.Contains(output, diag.CodeMaterializeDevinAggregateShape) {
+			t.Fatalf("sync output lacks %s:\n%s", diag.CodeMaterializeDevinAggregateShape, output)
+		}
+		var hints []string
+		for _, line := range strings.Split(output, "\n") {
+			if strings.HasPrefix(line, "hint: ") {
+				hints = append(hints, line)
+			}
+		}
+		if len(hints) != 1 || hints[0] != "hint: "+wantHint {
+			t.Errorf("sync hint lines = %q, want exactly %q", hints, "hint: "+wantHint)
+		}
+		if forbidden != "" && strings.Contains(output, forbidden) {
+			t.Errorf("sync output contains forbidden guidance %q:\n%s", forbidden, output)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(after, before) {
+			t.Errorf("%s bytes changed: err=%v before=%q after=%q", path, err, before, after)
+		}
+		afterInfo, err := os.Stat(path)
+		if err != nil {
+			t.Errorf("stat %s after sync: %v", path, err)
+			return
+		}
+		if afterInfo.Mode().Perm() != beforeInfo.Mode().Perm() || !afterInfo.ModTime().Equal(beforeInfo.ModTime()) {
+			t.Errorf("%s metadata changed: mode=%#o mtime=%s, want mode=%#o mtime=%s",
+				path, afterInfo.Mode().Perm(), afterInfo.ModTime(), beforeInfo.Mode().Perm(), beforeInfo.ModTime())
+		}
+	}
+	for _, tc := range []struct {
+		name      string
+		userScope bool
+		rootShape bool
+		contents  string
+	}{
+		{
+			name:     "repository entry",
+			contents: `{"PostToolUse":[{"command":"echo mine","type":"command"}]}`,
+		},
+		{
+			name:      "user entry",
+			userScope: true,
+			contents:  `{"hooks":{"PostToolUse":[{"command":"echo mine","type":"command"}]}}`,
+		},
+		{
+			name:      "repository root",
+			rootShape: true,
+			contents:  `[]`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+			config.SetTestV3OrganizationConfigPath(t, filepath.Join(home, "nonexistent-org.yaml"))
+			registry := t.TempDir()
+			writeFile(t, filepath.Join(registry, ".devin", "hooks.v1.json"),
+				`{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo source"}]}]}`)
+			repo := filepath.Join(t.TempDir(), "repo")
+			if err := os.MkdirAll(repo, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			file := filepath.Join(repo, ".devin", "hooks.v1.json")
+			configPath := filepath.Join(repo, ".agents", "config.yaml")
+			source := "local"
+			if tc.userScope {
+				configPath = filepath.Join(home, ".agents", "config.yaml")
+				source = "user"
+				file = filepath.Join(home, ".config", "devin", "config.json")
+			}
+			writeConfig(t, configPath, fmt.Sprintf(`
+apiVersion: agent-marketplace/v4
+harnesses: [devin]
+sources:
+  %s:
+    directory: %s
+    source_harness: devin
+resources:
+  %s:
+    include: [hook/PreToolUse-command]
+`, source, registry, source))
+			writeFile(t, file, tc.contents)
+			if err := os.Chmod(file, 0o640); err != nil {
+				t.Fatal(err)
+			}
+			fixedTime := time.Date(2020, time.January, 2, 3, 4, 5, 0, time.UTC)
+			if err := os.Chtimes(file, fixedTime, fixedTime); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			beforeInfo, err := os.Stat(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			withWorkingDir(t, repo)
+			output, err := executeCommand("sync")
+			if err == nil {
+				t.Fatalf("sync succeeded despite the invalid Devin aggregate:\n%s", output)
+			}
+			wantHint := catalogDoc.Hint
+			forbidden := "Rewrite entry"
+			if !tc.rootShape {
+				wantHint = expectedDevinEntryHint(file, "PostToolUse", 0)
+				forbidden = catalogDoc.Hint
+			}
+			assertRefusal(t, output, file, before, beforeInfo, wantHint, forbidden)
+		})
+	}
+}
+
+func expectedDevinEntryHint(file, event string, index int) string {
+	return fmt.Sprintf(
+		`Rewrite entry %d of event %q in %s in the matcher-groups shape {"matcher": "<optional tool pattern>", "hooks": [{"type": "command", "command": "<command>"}]}, or remove that entry if you no longer want it, then run `+"`agent-marketplace sync`"+` again`,
+		index, event, file,
+	)
 }
 
 // assertMatcherRefusalDiagnostics inspects the whole rendered result: the

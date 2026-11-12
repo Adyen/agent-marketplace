@@ -124,7 +124,8 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	repoRoot := ws.RepoRoot()
 	localDir := ws.LocalConfigDir()
 	var lockWarnings []error
-	exactOption, _, exactLease, err := lifecycle.PrepareRuntimeLocks(ctx, repoRoot, localDir, lifecycle.LockMode{Locked: locked || offline, Offline: offline, WarningSink: &lockWarnings, MarketplacePolicy: marketplacePolicy})
+	var lockMetadata []pipeline.LockMetadata
+	exactOption, _, exactLease, err := lifecycle.PrepareRuntimeLocks(ctx, repoRoot, localDir, lifecycle.LockMode{Locked: locked || offline, Offline: offline, WarningSink: &lockWarnings, MarketplacePolicy: marketplacePolicy, LockMetadataSink: &lockMetadata})
 	if err != nil {
 		style := newSyncOutputStyle(out)
 		if summaryErr := writeSyncSummary(out, style, 0, 0, 0, 1); summaryErr != nil {
@@ -142,7 +143,7 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 		}
 		return err
 	}
-	resolveOpts := pipeline.ResolveOptions{Workspace: ws, NoBackup: noBackup, Offline: offline, CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease, SkipInventory: pruneStale, MarketplaceRevocationPolicy: marketplacePolicy, MarketplaceLockEvidenceStrict: locked, MarketplaceReportArchiveEvidenceDrift: !locked && !offline}
+	resolveOpts := pipeline.ResolveOptions{Workspace: ws, NoBackup: noBackup, Offline: offline, CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease, LockMetadata: lockMetadata, SkipInventory: pruneStale, MarketplaceRevocationPolicy: marketplacePolicy, MarketplaceLockEvidenceStrict: locked, MarketplaceReportArchiveEvidenceDrift: !locked && !offline}
 	syncResult := pipeline.Sync(ctx, resolveOpts)
 	syncResult.Warnings = append(lockWarnings, syncResult.Warnings...)
 	errs := syncResult.Errors
@@ -225,6 +226,11 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 	if err := writeSyncSummary(out, style, totalWritten, totalRemoved, malformedCount, len(errs)); err != nil {
 		return err
 	}
+	for _, choice := range syncResult.PluginDeliveries {
+		if _, err := fmt.Fprintf(out, "Plugin delivery: plugin/%s on %s: %s\n", choice.Plugin, choice.Target, choice.Delivery); err != nil {
+			return err
+		}
+	}
 
 	// Show which output directories were written to so users know where files
 	// landed. Default output lists each directory with its write/remove counts;
@@ -243,6 +249,13 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 
 	if err := writeHookChanges(out, report, false); err != nil {
 		return err
+	}
+	if report != nil {
+		for _, path := range report.RetainedPluginData {
+			if _, err := fmt.Fprintf(out, "Retained plugin data: %s\n", path); err != nil {
+				return err
+			}
+		}
 	}
 
 	// Under verbose, list malformed resources with their path and parse error

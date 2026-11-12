@@ -58,7 +58,7 @@ config:
 
 Do not put a literal DSN or other credentials in `values.yaml`. Use a secret manager or an existing Kubernetes Secret.
 
-The chart's container ports are fixed at 8080 (`http`) and 9090 (`operations`), so keep `listen` and `operations_listen` on those ports. `operations_listen` must bind an address the kubelet can reach, such as `0.0.0.0:9090`, because the probes call `/readyz` on it. Keep that port off the Ingress.
+The chart's container ports are fixed at 8080 (`http`) and 9090 (`operations`), so keep `listen` and `operations_listen` on those ports. `operations_listen` must bind an address the kubelet can reach, such as `0.0.0.0:9090`. API readiness probes call `/readyz`; a worker-only operations listener serves `/metrics` only. Keep the operations port off the Ingress.
 
 ## 2. Configure images and optional frontends
 
@@ -166,7 +166,7 @@ ingress:
 
 Add an ingress-controller or gateway redirect from the exact `/docs` path to `/docs/`. [Configure a reverse proxy](../../../site/docs/how-to/operator/configure-a-reverse-proxy.md) describes the route ownership.
 
-Do not route `/readyz` or `/metrics` through the public ingress. If a monitoring system needs `/metrics`, enable `serviceMonitor` or configure an equivalent private monitoring path. The rendered ServiceMonitor is named after the API component (for example `agent-marketplace-api` when `fullnameOverride: agent-marketplace` is set). It selects the API Service and scrapes its named `operations` port, so it covers the all-in-one pods in `mode: all` and the API pods in split mode. Worker pods have no metrics listener.
+Do not route `/readyz` or `/metrics` through the public ingress. If a monitoring system needs `/metrics`, enable `serviceMonitor` or configure an equivalent private monitoring path. The rendered ServiceMonitor is named after the API component (for example `agent-marketplace-api` when `fullnameOverride: agent-marketplace` is set). It scrapes the API Service and, in split mode, the worker Service on their named `operations` ports, covering all-in-one, API, and worker pods.
 
 To limit which pods can reach the API, all-in-one, web, and docs pods, set `networkPolicy.enabled: true`. The policy allows traffic from the same namespace (`networkPolicy.allowSameNamespace`, default `true`) and from each namespace in `networkPolicy.ingressNamespaces`.
 
@@ -206,7 +206,7 @@ Each workload block (`api`, `worker`, `all`, `web`, `docs`) accepts the same opt
         readOnly: true
   ```
 
-The API and `all` roles also render a `startupProbe` (`<role>.probes.startup`, enabled by default). It polls `/readyz` on the `operations` port so the liveness probe does not kill an API that starts slowly. The API and `all` roles check liveness with `/healthz` on the `http` port and readiness with `/readyz` on the `operations` port. The worker has no HTTP listener, and its probes are disabled by default. The web frontend serves only routes under `web.basePath`, so its liveness and readiness probes default to that base path without its trailing slash; set an explicit `web.probes.liveness.path` or `web.probes.readiness.path` to override. The docs frontend serves at `/docs/` and keeps that default.
+The API and `all` roles also render a `startupProbe` (`<role>.probes.startup`, enabled by default). It polls `/readyz` on the `operations` port so the liveness probe does not kill an API that starts slowly. The API and `all` roles check liveness with `/healthz` on the `http` port and readiness with `/readyz` on the `operations` port. The worker exposes only `/metrics` on its operations port; its probes are disabled by default. The web frontend serves only routes under `web.basePath`, so its liveness and readiness probes default to that base path without its trailing slash; set an explicit `web.probes.liveness.path` or `web.probes.readiness.path` to override. The docs frontend serves at `/docs/` and keeps that default.
 
 When the chart manages the ConfigMap (`config.enabled: true` and no `config.existingConfigMap`), the API, worker, and `all` pods carry a `checksum/config` annotation computed from the rendered ConfigMap. A change to `config.content` therefore restarts those pods. Set `config.nameOverride` to pin the ConfigMap name, and `config.key` to change both the data key and the mounted `subPath`. The chart mounts the configuration at `config.mountPath` (default `/etc/agent-marketplace/config.yaml`), which is the path the default `args` pass to `--config`.
 
@@ -243,7 +243,7 @@ kubectl describe deployment marketplace-agent-marketplace-api -n marketplace
 
 The Deployment name ends in the role: `-api` and `-worker` in split mode, and `-all` in the default `mode: all` (for example `marketplace-agent-marketplace-all`).
 
-The API readiness and startup probes use `/readyz` on the operations port. The docs probes use `/docs/` on their HTTP port. The API Service exposes the application HTTP port plus the named `operations` port for private monitoring, and the Ingress exposes only the intended public routes. Worker pods have no HTTP listener, so check their process state and logs instead of adding an HTTP probe.
+The API readiness and startup probes use `/readyz` on the operations port. The docs probes use `/docs/` on their HTTP port. The API Service exposes the application HTTP port plus the named `operations` port for private monitoring; split mode also creates a private worker Service for that port. The Ingress exposes only the intended public routes. Worker pods serve metrics, not readiness probes.
 
 ## Upgrade from the combined site profile
 
