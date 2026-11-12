@@ -15,6 +15,7 @@ import (
 
 const claudeDeliveryEndpointEnv = "AGENT_MARKETPLACE_E2E_CLAUDE_PLUGINS_ENDPOINT"
 const claudeDeliveryKeyEnv = "CLAUDE_ENTERPRISE_TEST_KEY"
+const claudeDeliveryTestAPIKey = "sk-ant-e2e-secret"
 
 // spec: claude-enterprise-delivery/disabled-delivery-makes-no-outbound-request
 func TestClaudeEnterpriseDeliveryDisabledMakesNoOutboundRequest(t *testing.T) {
@@ -36,6 +37,7 @@ func TestClaudeEnterpriseDeliveryDisabledMakesNoOutboundRequest(t *testing.T) {
 }
 
 // spec: claude-enterprise-delivery/publication-completion-enqueues-delivery
+// spec: claude-enterprise-delivery/a-revocation-withdraws-a-mirrored-resource
 func TestClaudeEnterpriseDeliveryMirrorsChangesAndWithdrawsAvailabilityOnly(t *testing.T) {
 	env, registryURL := newServeReindexEnvWithURL(t)
 	fake := newClaudePluginsAPIFake(t)
@@ -61,10 +63,13 @@ claude_enterprise:
 	configPath := env.mustResolvePath("/workspace/marketplace.yaml")
 	process := startServeTestProcess(t, env, configPath, "worker", map[string]string{
 		claudeDeliveryEndpointEnv: fake.URL(),
-		claudeDeliveryKeyEnv:      "sk-ant-e2e-secret",
+		claudeDeliveryKeyEnv:      claudeDeliveryTestAPIKey,
 	})
 	metadata := openServeMetadata(t, env)
 	defer func() { _ = metadata.Close() }()
+	coordinate := store.ResourceCoordinate{
+		Marketplace: "e2e-serve-mp", Registry: "src-serve", Kind: "skill", Name: "review",
+	}
 	waitForServeCondition(t, func() bool {
 		desired, err := metadata.ListClaudeDeliveryDesired(t.Context(), metadata, "e2e-serve-mp", []store.RegistryID{"src-serve"})
 		return err == nil && len(desired) == 1
@@ -94,6 +99,12 @@ claude_enterprise:
 	if first.createdVersions != 0 || first.deletes != 0 || first.writeRequests != 2 {
 		t.Fatalf("first mirror did not only create one plugin and set its availability: %+v", first)
 	}
+	waitForClaudeDeliveryState(t, metadata, coordinate, store.ClaudeDeliveryStatePublished)
+	group := env.RunAM("serve", "claude-delivery")
+	if group.ExitCode != 0 || !strings.Contains(group.Combined, "status") || !strings.Contains(group.Combined, "sync") {
+		t.Fatalf("serve claude-delivery help exited %d or omitted a subcommand:\n%s", group.ExitCode, group.Combined)
+	}
+	assertClaudeDeliveryStatus(t, env, store.ClaudeDeliveryStatePublished)
 
 	unchanged := waitForClaudeDeliverySnapshot(t, process, fake, func(snapshot claudePluginsSnapshot) bool {
 		return snapshot.requests >= first.requests+2
@@ -137,6 +148,42 @@ revocations:
 		!equalStrings(withdrawn.preferences, []string{"available", "not_available"}) {
 		t.Fatalf("withdrawal was not availability-only: %+v", withdrawn)
 	}
+	waitForClaudeDeliveryState(t, metadata, coordinate, store.ClaudeDeliveryStateRetired)
+	assertClaudeDeliveryStatus(t, env, store.ClaudeDeliveryStateRetired)
+}
+
+func waitForClaudeDeliveryState(t *testing.T, metadata store.ClaudeDeliveryStateStore, coordinate store.ResourceCoordinate, state store.ClaudeDeliveryState) {
+	t.Helper()
+	waitForServeCondition(t, func() bool {
+		row, err := metadata.GetClaudeDeliveryPlugin(t.Context(), coordinate)
+		return err == nil && row.State == state
+	}, string(state)+" Claude delivery state")
+}
+
+func assertClaudeDeliveryStatus(t *testing.T, env *Env, state store.ClaudeDeliveryState) {
+	t.Helper()
+	result := env.RunAM("serve", "claude-delivery", "status", "--config", "marketplace.yaml")
+	if result.ExitCode != 0 {
+		t.Fatalf("serve claude-delivery status exited %d:\n%s", result.ExitCode, result.Combined)
+	}
+	for _, want := range []string{
+		"Resource: src-serve/skill/review",
+		"Plugin: am-serve-source-skill-review (plugin_e2e)",
+		"State: " + string(state),
+	} {
+		if !strings.Contains(result.Combined, want) {
+			t.Errorf("serve claude-delivery status omitted %q:\n%s", want, result.Combined)
+		}
+	}
+	if state == store.ClaudeDeliveryStateRetired &&
+		!strings.Contains(result.Combined, "Previously installed copies and stored version history are unaffected.") {
+		t.Errorf("withdrawn status omitted its availability-only notice:\n%s", result.Combined)
+	}
+	for _, forbidden := range []string{claudeDeliveryTestAPIKey, "# review"} {
+		if strings.Contains(result.Combined, forbidden) {
+			t.Errorf("serve claude-delivery status exposed %q:\n%s", forbidden, result.Combined)
+		}
+	}
 }
 
 func waitForClaudeDeliverySnapshot(t *testing.T, process *serveTestProcess, fake *claudePluginsAPIFake, ready func(claudePluginsSnapshot) bool, description string) claudePluginsSnapshot {
@@ -165,7 +212,7 @@ func waitForClaudeDeliverySnapshot(t *testing.T, process *serveTestProcess, fake
 func runClaudeDeliveryOnce(env *Env, endpoint string) ExecResult {
 	return env.RunAMWithEnv(map[string]string{
 		claudeDeliveryEndpointEnv: endpoint,
-		claudeDeliveryKeyEnv:      "sk-ant-e2e-secret",
+		claudeDeliveryKeyEnv:      claudeDeliveryTestAPIKey,
 	}, "serve", "claude-delivery", "sync", "--config", "marketplace.yaml", "--once")
 }
 
@@ -200,7 +247,7 @@ func (f *claudePluginsAPIFake) serveHTTP(w http.ResponseWriter, r *http.Request)
 	if r.Method != http.MethodGet {
 		f.writeRequests++
 	}
-	if r.Header.Get("x-api-key") != "sk-ant-e2e-secret" ||
+	if r.Header.Get("x-api-key") != claudeDeliveryTestAPIKey ||
 		r.Header.Get("anthropic-version") != "2026-10-21" ||
 		r.Header.Get("anthropic-beta") != "ce-plugins-2026-09-01" {
 		http.Error(w, `{"error":"unexpected headers"}`, http.StatusUnauthorized)
