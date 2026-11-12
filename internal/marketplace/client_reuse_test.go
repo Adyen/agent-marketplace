@@ -117,16 +117,20 @@ func TestResolverEndpointClientReuse(t *testing.T) {
 	}
 }
 
-func TestClientRegistryReuse(t *testing.T) {
+func TestClientRegistryReuseKeysByRequestedRoute(t *testing.T) {
 	var registryRequests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/registries/source-slug" {
+		if r.URL.Path != "/api/v1/registries/a" && r.URL.Path != "/api/v1/registries/X" {
 			http.NotFound(w, r)
 			return
 		}
 		registryRequests.Add(1)
+		registryID, slug := "X", "a"
+		if r.URL.Path == "/api/v1/registries/X" {
+			registryID, slug = "b", "X"
+		}
 		writeTestRegistry(w, store.Registry{
-			ID: "src", Slug: "source-slug", Origins: []string{"https://git.example/repo.git"},
+			ID: store.RegistryID(registryID), Slug: slug, Origins: []string{"https://git.example/repo.git"},
 			Ref: "main", Roots: []store.RegistryRoot{{Path: ".agents"}},
 			Acquisition: store.AcquisitionMirror, Listed: true,
 		})
@@ -138,12 +142,19 @@ func TestClientRegistryReuse(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 	for range 2 {
-		if _, err := client.GetRegistryBySlug(context.Background(), "source-slug"); err != nil {
+		if _, err := client.GetRegistryBySlug(context.Background(), "a"); err != nil {
 			t.Fatalf("GetRegistryBySlug: %v", err)
 		}
 	}
-	if got := registryRequests.Load(); got != 1 {
-		t.Fatalf("registry requests = %d, want 1", got)
+	registry, err := client.GetRegistryBySlug(context.Background(), "X")
+	if err != nil {
+		t.Fatalf("GetRegistryBySlug(X): %v", err)
+	}
+	if registry.ID != "b" {
+		t.Fatalf("registry ID = %q, want b", registry.ID)
+	}
+	if got := registryRequests.Load(); got != 2 {
+		t.Fatalf("registry requests = %d, want 2", got)
 	}
 }
 

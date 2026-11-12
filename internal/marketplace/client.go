@@ -477,7 +477,6 @@ func (c *Client) getRegistry(ctx context.Context, routeRegistry, expectedRegistr
 	if !ok {
 		c.identityMu.Lock()
 		c.registries[routeRegistry] = public
-		c.registries[string(public.ID)] = public
 		c.identityMu.Unlock()
 	}
 	c.rememberRegistry(routeRegistry, public)
