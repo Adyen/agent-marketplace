@@ -352,6 +352,8 @@ jobs:
             --set prometheusRule.alerts.registryProbeFailing.for=11m \
             --set prometheusRule.alerts.registryProbeFailing.severity=emergency \
             --set prometheusRule.alerts.registryProbeFailing.threshold=7 \
+            --set prometheusRule.alerts.registryObservationStale.staleAfterSeconds=7200 \
+            --set prometheusRule.alerts.registryIndexStale.staleAfterSeconds=172800 \
             --set prometheusRule.alerts.refreshFailures.window=2h \
             --set prometheusRule.labels.owner=platform \
             --set prometheusRule.additionalLabels.release=monitored \
@@ -365,6 +367,8 @@ jobs:
           require "ruleLabels are applied" "$configured_rule_doc" "team: marketplace-alerts"
           require "runbook URL uses lower-case alert name" "$configured_rule_doc" 'runbook_url: "https://agent-marketplace.io/docs/how-to/operator/reindex-and-monitor#agentmarketplaceregistryprobefailing"'
           require "probe threshold is configurable" "$configured_rule_doc" ">= 7"
+          require "registry observation stale threshold is configurable" "$configured_rule_doc" "> 7200"
+          require "registry index stale threshold is configurable" "$configured_rule_doc" "> 172800"
           require "refresh failure window is configurable" "$configured_rule_doc" 'outcome="failed" }[2h]'
           require "alert duration is configurable" "$configured_rule_doc" 'for: "11m"'
           require "alert severity is configurable" "$configured_rule_doc" 'severity: "emergency"'
