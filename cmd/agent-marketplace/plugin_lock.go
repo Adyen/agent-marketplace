@@ -33,7 +33,7 @@ type pluginPlanSource struct {
 	localDir  string
 	offline   bool
 	readOnly  bool
-	snapshots map[string]acquiredSnap // gitLockIdentity → acquired snapshot
+	snapshots map[string]acquiredSnap // Git source/ref/root identity → acquired snapshot
 	fetchURLs map[string]string       // gitLockIdentity → authored fetch URL
 	fetchURL  func(lockfile.GitRegistry) string
 	docs      func() []lockfile.Document
@@ -48,8 +48,8 @@ func (s *pluginPlanSource) get(ctx context.Context) (catalog.PluginSelectionPlan
 		return s.plan, s.errs, s.err
 	}
 	s.built = true
-	openDoc := func(registry lockfile.GitRegistry) (string, func(), error) {
-		if snap, ok := s.snapshots[gitLockIdentity(registry.URL, registry.Ref)]; ok {
+	openDoc := func(registry lockfile.GitRegistry, rootPath string) (string, func(), error) {
+		if snap, ok := s.snapshots[gitLockRootIdentity(registry.URL, registry.Ref, rootPath)]; ok {
 			return snap.path, nil, nil
 		}
 		oid, err := cache.ParseGitOID(registry.Commit.String())
@@ -57,10 +57,10 @@ func (s *pluginPlanSource) get(ctx context.Context) (catalog.PluginSelectionPlan
 			return "", nil, err
 		}
 		if s.offline || s.readOnly {
-			path, release, err := cache.LeaseExactGitReadOnlyWithContext(ctx, registry.URL, oid)
+			path, release, err := cache.LeaseExactGitReadOnlyWithRootContext(ctx, registry.URL, oid, rootPath)
 			return path, release, err
 		}
-		path, err := cache.AcquireExactGitWithContext(ctx, registry.URL, s.fetchURL(registry), oid)
+		path, err := cache.AcquireExactGitWithRootContext(ctx, registry.URL, s.fetchURL(registry), oid, rootPath)
 		return path, nil, err
 	}
 	exactDocs, release := pipeline.DocExactSnapshots(s.docs(), openDoc)
@@ -72,7 +72,7 @@ func (s *pluginPlanSource) get(ctx context.Context) (catalog.PluginSelectionPlan
 		if err != nil {
 			return "", "", err
 		}
-		if snap, ok := s.snapshots[gitLockIdentity(canonical, entry.Ref)]; ok {
+		if snap, ok := s.snapshots[gitLockRootIdentity(canonical, entry.Ref, entry.Path)]; ok {
 			return snap.path, canonical + "@" + snap.commit + ":" + entry.Path, nil
 		}
 		return exactDocs(entry)
@@ -259,13 +259,13 @@ func acquireExternalPluginRegistry(ctx context.Context, ext sourcerevision.Plugi
 		}
 		oid = resolved
 	}
-	snapshot, err := cache.AcquireExactGitWithContext(ctx, canonical, ext.Source.URL, oid)
-	if err != nil {
-		return lockfile.GitRegistry{}, fmt.Errorf("acquire exact Git snapshot %s for plugin catalog entry %q: %w", oid.String(), binding.EntryName, err)
-	}
 	rootPath := ext.Source.Subdirectory
 	if rootPath == "" {
 		rootPath = "."
+	}
+	snapshot, err := cache.AcquireExactGitWithRootContext(ctx, canonical, ext.Source.URL, oid, rootPath)
+	if err != nil {
+		return lockfile.GitRegistry{}, fmt.Errorf("acquire exact Git snapshot %s for plugin catalog entry %q: %w", oid.String(), binding.EntryName, err)
 	}
 	binding.EntryDigest = ext.DefinitionDigest
 	built, err := sourcerevision.Build(sourcerevision.Input{SnapshotRoot: snapshot, RootPath: rootPath, SourceHarness: packageFormat, RevisionSchema: "plugin-v1", PluginExternal: binding})

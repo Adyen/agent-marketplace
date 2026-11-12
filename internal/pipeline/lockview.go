@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -39,9 +40,13 @@ func (m LockMetadata) MatchesExternal(source config.Source, url, ref, rootPath s
 	if !m.Matches(source, url, ref) {
 		return false
 	}
-	want := cleanLockRootPath(rootPath)
+	want, err := cache.NormalizeExactGitRoot(rootPath)
+	if err != nil {
+		return false
+	}
 	for _, candidate := range m.RootPaths {
-		if cleanLockRootPath(candidate) == want {
+		normalized, err := cache.NormalizeExactGitRoot(candidate)
+		if err == nil && normalized == want {
 			return true
 		}
 	}
@@ -59,14 +64,6 @@ func LockRootPaths(roots []lockfile.GitRoot) []string {
 		rootPaths = append(rootPaths, ".")
 	}
 	return rootPaths
-}
-
-func cleanLockRootPath(rootPath string) string {
-	rootPath = filepath.Clean(filepath.FromSlash(rootPath))
-	if rootPath == "" {
-		return "."
-	}
-	return filepath.ToSlash(rootPath)
 }
 
 type LockViewError struct {
@@ -114,10 +111,10 @@ func (e *LockViewError) DiagnosticPath() string {
 }
 
 type readOnlyLockedGit struct {
-	snapshot string
-	commit   string
-	unlocked bool
-	err      error
+	snapshots map[string]string
+	commit    string
+	unlocked  bool
+	err       error
 }
 
 type readOnlyExactView struct {
@@ -223,8 +220,8 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig, al
 		}
 	}
 	if hasFormatSources {
-		exact, releaseSnapshots := DocExactSnapshots(lockedDocs, func(registry lockfile.GitRegistry) (string, func(), error) {
-			return leaseRegistrySnapshot(ctx, registry)
+		exact, releaseSnapshots := DocExactSnapshots(lockedDocs, func(registry lockfile.GitRegistry, rootPath string) (string, func(), error) {
+			return leaseRegistrySnapshot(ctx, registry, rootPath)
 		})
 		var planErr error
 		var planErrs []error
@@ -270,19 +267,31 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig, al
 		}
 		for _, registry := range doc.Registries {
 			oid, parseErr := cache.ParseGitOID(registry.Commit.String())
-			snapshot := ""
 			errorCode := "lock.snapshot-unavailable"
 			openErr := parseErr
-			if openErr == nil {
-				var release func()
-				snapshot, release, openErr = cache.LeaseExactGitReadOnlyWithContext(ctx, registry.URL, oid)
-				if openErr == nil {
-					releases = append(releases, release)
-					ctx = cache.ContextWithExactGitNamespaceLease(ctx)
-				}
+			locked := readOnlyLockedGit{snapshots: make(map[string]string), commit: registry.Commit.String()}
+			roots := registry.Roots
+			if len(roots) == 0 {
+				roots = []lockfile.GitRoot{{Path: "."}}
 			}
-			if openErr == nil {
-				for _, root := range registry.Roots {
+			for _, root := range roots {
+				if openErr != nil {
+					break
+				}
+				rootPath, err := cache.NormalizeExactGitRoot(root.Path)
+				if err != nil {
+					openErr = err
+					break
+				}
+				snapshot, release, err := cache.LeaseExactGitReadOnlyWithRootContext(ctx, registry.URL, oid, rootPath)
+				openErr = err
+				if openErr != nil {
+					break
+				}
+				releases = append(releases, release)
+				ctx = cache.ContextWithExactGitNamespaceLease(ctx)
+				locked.snapshots[rootPath] = snapshot
+				if len(registry.Roots) > 0 {
 					verified, verifyErr := sourcerevision.VerifyLockedGitRootWithPluginContext(snapshot, root, pluginContexts.PluginContextFor(registry, root))
 					if verifyErr != nil {
 						errorCode = "lock.manifest-mismatch"
@@ -290,11 +299,11 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig, al
 						break
 					}
 					if verified.Catalog != nil && root.RevisionSchema == lockfile.CurrentRevisionSchema {
-						path := filepath.Clean(filepath.Join(snapshot, filepath.FromSlash(root.Path)))
-						if verifiedCatalogs[path] == nil {
-							verifiedCatalogs[path] = make(map[string]*catalog.Catalog)
+						catalogPath := filepath.Clean(filepath.Join(snapshot, filepath.FromSlash(rootPath)))
+						if verifiedCatalogs[catalogPath] == nil {
+							verifiedCatalogs[catalogPath] = make(map[string]*catalog.Catalog)
 						}
-						verifiedCatalogs[path][root.SourceHarness] = verified.Catalog
+						verifiedCatalogs[catalogPath][root.SourceHarness] = verified.Catalog
 					}
 				}
 			}
@@ -303,7 +312,6 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig, al
 				Ref: registry.Ref, Commit: registry.Commit.String(), RootPaths: LockRootPaths(registry.Roots),
 				SnapshotAvailable: openErr == nil,
 			})
-			locked := readOnlyLockedGit{snapshot: snapshot, commit: registry.Commit.String()}
 			if openErr != nil {
 				locked.err = &LockViewError{Code: errorCode, Scope: scope, Path: lockPath, Err: openErr}
 			}
@@ -322,6 +330,7 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig, al
 		}
 		return metadata[i].Ref < metadata[j].Ref
 	})
+	var exactSnapshotMu sync.Mutex
 	exactSnapshot := catalog.ExactSnapshotFunc(func(entry config.RegistryEntry) (string, string, error) {
 		canonical, err := readOnlyCanonicalURL(entry.URL)
 		if err != nil {
@@ -341,7 +350,28 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig, al
 		if locked.unlocked {
 			return "", "", nil
 		}
-		return locked.snapshot, canonical + "@" + locked.commit + ":" + entry.Path, nil
+		rootPath, err := cache.NormalizeExactGitRoot(entry.Path)
+		if err != nil {
+			return "", "", err
+		}
+		exactSnapshotMu.Lock()
+		defer exactSnapshotMu.Unlock()
+		snapshot, found := locked.snapshots[rootPath]
+		if !found {
+			oid, err := cache.ParseGitOID(locked.commit)
+			if err != nil {
+				return "", "", err
+			}
+			var release func()
+			snapshot, release, err = cache.LeaseExactGitReadOnlyWithRootContext(ctx, canonical, oid, rootPath)
+			if err != nil {
+				return "", "", err
+			}
+			releases = append(releases, release)
+			ctx = cache.ContextWithExactGitNamespaceLease(ctx)
+			locked.snapshots[rootPath] = snapshot
+		}
+		return snapshot, canonical + "@" + locked.commit + ":" + entry.Path, nil
 	})
 	return ctx, readOnlyExactView{catalogOption: catalog.WithVerifiedExactSnapshots(exactSnapshot, verifiedCatalogs), exactSnapshot: exactSnapshot, gitMetadata: metadata, errors: viewErrors, warnings: viewWarnings, release: releaseAll}
 }

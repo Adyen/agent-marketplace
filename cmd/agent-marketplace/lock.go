@@ -142,7 +142,7 @@ type lockedGit struct {
 	fetchURL  string
 	ref       string
 	commit    lockfile.GitOID
-	snapshot  string
+	snapshots map[string]string
 	unlocked  bool
 }
 
@@ -918,6 +918,8 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 	// one GC-critical section. Preserve the lock order: namespace before
 	// dependency transaction destinations.
 	var releaseSnapshotLease func()
+	var fallbackReleases []func()
+	var exactSnapshotMu sync.Mutex
 	snapshotLeaseAttempted := false
 	ensureSnapshotLease := func() error {
 		if snapshotLeaseAttempted {
@@ -1170,7 +1172,9 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			return nil, changed, nil, gitDesired.err
 		}
 		for _, result := range gitDesired.acquired {
-			pluginSnapshots[gitLockIdentity(result.registry.URL, result.registry.Ref)] = acquiredSnap{path: result.snapshot, commit: result.oid.String()}
+			for rootPath, snapshot := range result.snapshots {
+				pluginSnapshots[gitLockRootIdentity(result.registry.URL, result.registry.Ref, rootPath)] = acquiredSnap{path: snapshot, commit: result.oid.String()}
+			}
 		}
 		doc := gitDesired.doc
 		if mode.prepareInstall != nil {
@@ -1265,8 +1269,33 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			if locked.unlocked {
 				return "", "", nil
 			}
+			rootPath, err := cache.NormalizeExactGitRoot(entry.Path)
+			if err != nil {
+				return "", "", err
+			}
+			exactSnapshotMu.Lock()
+			defer exactSnapshotMu.Unlock()
+			snapshot, found := locked.snapshots[rootPath]
+			if !found {
+				if mode.check || mode.offline {
+					var release func()
+					snapshot, release, err = cache.LeaseExactGitReadOnlyWithRootContext(ctx, canonical, locked.commit, rootPath)
+					if err != nil {
+						return "", "", err
+					}
+					if release != nil {
+						fallbackReleases = append(fallbackReleases, release)
+					}
+				} else {
+					snapshot, err = cache.AcquireExactGitWithRootContext(ctx, canonical, locked.fetchURL, locked.commit, rootPath)
+					if err != nil {
+						return "", "", err
+					}
+				}
+				locked.snapshots[rootPath] = snapshot
+			}
 			catalogKey := canonical + "@" + locked.commit.String() + ":" + entry.Path
-			return locked.snapshot, catalogKey, nil
+			return snapshot, catalogKey, nil
 		}
 	}
 	if mode.upgrade && mode.selectionGuard && len(lockDesired) > 0 {
@@ -1418,7 +1447,16 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			release()
 			return nil, err
 		}
-		return release, nil
+		return func() {
+			exactSnapshotMu.Lock()
+			leases := fallbackReleases
+			fallbackReleases = nil
+			exactSnapshotMu.Unlock()
+			for i := len(leases) - 1; i >= 0; i-- {
+				leases[i]()
+			}
+			release()
+		}, nil
 	}
 	if mode.prepareInstall != nil {
 		if err := dependencytxn.ValidateReadAssertions(mode.prepareInstall.reads); err != nil {
@@ -1661,7 +1699,7 @@ func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries [
 		for i := range acquired {
 			result := &acquired[i]
 			for j := range result.pending {
-				result.pending[j].snapshot = result.snapshot
+				result.pending[j].snapshot = result.snapshots[result.pending[j].rootPath]
 				result.pending[j].oid = result.oid
 				result.pending[j].registry = &result.registry
 				result.pending[j].group = acquisitions[i].group
@@ -1721,10 +1759,10 @@ type registryAcquireJob struct {
 }
 
 type acquiredRegistry struct {
-	registry lockfile.GitRegistry
-	snapshot string
-	oid      cache.GitOID
-	pending  []pendingFormatRoot
+	registry  lockfile.GitRegistry
+	snapshots map[string]string
+	oid       cache.GitOID
+	pending   []pendingFormatRoot
 }
 
 // pendingFormatRoot defers a format root's manifest build until every
@@ -1793,25 +1831,30 @@ func acquireLockedRegistry(ctx context.Context, canonical, fetchURL, ref string,
 		}
 		oid = resolved
 	}
-	snapshot, err := cache.AcquireExactGitWithContext(ctx, canonical, fetchURL, oid)
-	if err != nil {
-		return acquiredRegistry{}, fmt.Errorf("acquire exact Git snapshot %s: %w", oid.String(), err)
-	}
-	if lockSnapshotAcquiredHook != nil {
-		lockSnapshotAcquiredHook()
-	}
 	commit, err := lockfile.ParseGitOID(oid.String())
 	if err != nil {
 		return acquiredRegistry{}, err
 	}
-	result := acquiredRegistry{snapshot: snapshot, oid: oid}
+	result := acquiredRegistry{snapshots: make(map[string]string), oid: oid}
 	registry := lockfile.GitRegistry{URL: canonical, Ref: ref, Commit: commit}
 	seen := map[string]bool{}
 	builtRequirements := map[lockfile.GitRootRequirement]bool{}
 	for _, entry := range entries {
-		rootPath := entry.Path
-		if rootPath == "" {
-			rootPath = "."
+		rootPath, rootErr := cache.NormalizeExactGitRoot(entry.Path)
+		if rootErr != nil {
+			return acquiredRegistry{}, fmt.Errorf("%w: unsafe configured root %q", sourcerevision.ErrPathEscape, entry.Path)
+		}
+		snapshot, found := result.snapshots[rootPath]
+		if !found {
+			var err error
+			snapshot, err = cache.AcquireExactGitWithRootContext(ctx, canonical, fetchURL, oid, rootPath)
+			if err != nil {
+				return acquiredRegistry{}, fmt.Errorf("acquire exact Git snapshot %s root %q: %w", oid.String(), rootPath, err)
+			}
+			result.snapshots[rootPath] = snapshot
+			if lockSnapshotAcquiredHook != nil {
+				lockSnapshotAcquiredHook()
+			}
 		}
 		if entry.Format != "" {
 			result.pending = append(result.pending, pendingFormatRoot{entry: entry, rootPath: rootPath})
@@ -1970,45 +2013,62 @@ func addLayerSnapshots(ctx context.Context, set *exactLockSet, source config.Sou
 		if err != nil {
 			return err
 		}
-		var snapshot string
-		consume := func(path string) error {
-			snapshot = path
-			for _, root := range registry.Roots {
-				rootResult, verifyErr := sourcerevision.VerifyLockedGitRootWithPluginContext(path, root, pluginContexts.PluginContextFor(registry, root))
-				if verifyErr != nil {
-					return &lockLifecycleError{Code: "lock.manifest-mismatch", Err: fmt.Errorf("verify %s@%s root %q: %w", registry.URL, registry.Commit.String(), root.Path, verifyErr)}
-				}
-				if rootResult.Catalog != nil {
-					rootPath := filepath.Join(path, filepath.FromSlash(root.Path))
-					if result.catalogs[rootPath] == nil {
-						result.catalogs[rootPath] = make(map[string]*catalog.Catalog)
-					}
-					result.catalogs[rootPath][root.SourceHarness] = rootResult.Catalog
-				}
-				for _, warning := range rootResult.Warnings {
-					result.warnings = append(result.warnings, warning)
-				}
-				result.verified++
-			}
-			return nil
+		result.locked = lockedGit{
+			canonical: registry.URL,
+			fetchURL:  fetchURLFor(registry),
+			ref:       registry.Ref,
+			commit:    registry.Commit,
+			snapshots: make(map[string]string),
 		}
-		if !offline && !readOnly {
-			err = cache.WithAcquiredExactGit(ctx, registry.URL, fetchURLFor(registry), cacheOID, consume)
-		} else {
-			err = cache.WithExactGitReadOnly(ctx, registry.URL, cacheOID, consume)
+		roots := registry.Roots
+		if len(roots) == 0 {
+			roots = []lockfile.GitRoot{{Path: "."}}
 		}
-		if err != nil {
-			var lifecycleErr *lockLifecycleError
-			if errors.As(err, &lifecycleErr) {
+		for _, root := range roots {
+			rootPath, err := cache.NormalizeExactGitRoot(root.Path)
+			if err != nil {
 				return err
 			}
-			code := "lock.snapshot-unavailable"
-			if offline {
-				code = "lock.offline-snapshot-missing"
+			var snapshot string
+			consume := func(path string) error {
+				snapshot = path
+				if len(registry.Roots) > 0 {
+					rootResult, verifyErr := sourcerevision.VerifyLockedGitRootWithPluginContext(path, root, pluginContexts.PluginContextFor(registry, root))
+					if verifyErr != nil {
+						return &lockLifecycleError{Code: "lock.manifest-mismatch", Err: fmt.Errorf("verify %s@%s root %q: %w", registry.URL, registry.Commit.String(), root.Path, verifyErr)}
+					}
+					if rootResult.Catalog != nil {
+						catalogPath := filepath.Join(path, filepath.FromSlash(rootPath))
+						if result.catalogs[catalogPath] == nil {
+							result.catalogs[catalogPath] = make(map[string]*catalog.Catalog)
+						}
+						result.catalogs[catalogPath][root.SourceHarness] = rootResult.Catalog
+					}
+					for _, warning := range rootResult.Warnings {
+						result.warnings = append(result.warnings, warning)
+					}
+					result.verified++
+				}
+				return nil
 			}
-			return &lockLifecycleError{Code: code, Err: err}
+			if !offline && !readOnly {
+				err = cache.WithAcquiredExactGitRoot(ctx, registry.URL, fetchURLFor(registry), cacheOID, rootPath, consume)
+			} else {
+				err = cache.WithExactGitReadOnlyRoot(ctx, registry.URL, cacheOID, rootPath, consume)
+			}
+			if err != nil {
+				var lifecycleErr *lockLifecycleError
+				if errors.As(err, &lifecycleErr) {
+					return err
+				}
+				code := "lock.snapshot-unavailable"
+				if offline {
+					code = "lock.offline-snapshot-missing"
+				}
+				return &lockLifecycleError{Code: code, Err: err}
+			}
+			result.locked.snapshots[rootPath] = snapshot
 		}
-		result.locked = lockedGit{canonical: registry.URL, fetchURL: fetchURLFor(registry), ref: registry.Ref, commit: registry.Commit, snapshot: snapshot}
 		return nil
 	})
 	for _, result := range results {
@@ -2194,6 +2254,14 @@ func sourceLockKey(source config.Source, canonical, ref string) string {
 	return fmt.Sprintf("%d\x00%s\x00%s", source, canonical, ref)
 }
 func gitLockIdentity(canonical, ref string) string { return canonical + "\x00" + ref }
+
+func gitLockRootIdentity(canonical, ref, root string) string {
+	normalized, err := cache.NormalizeExactGitRoot(root)
+	if err != nil {
+		normalized = root
+	}
+	return gitLockIdentity(canonical, ref) + "\x00" + normalized
+}
 
 // snapshotLockMetadata describes the locked registries of jobs, once per
 // source, URL, and ref, for resolution of external plugin entries.

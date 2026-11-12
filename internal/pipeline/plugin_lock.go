@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
@@ -358,10 +359,10 @@ func PluginPlanErrors(errs []error) []error {
 }
 
 // DocExactSnapshots maps configured registry entries to the committed
-// snapshots of the given locked documents. open supplies one snapshot of a
-// record, acquiring it in writable modes or leasing it read-only, and may
-// return a release invoked once loading completes.
-func DocExactSnapshots(docs []lockfile.Document, open func(registry lockfile.GitRegistry) (path string, release func(), err error)) (catalog.ExactSnapshotFunc, func()) {
+// snapshots of the given locked documents. open supplies the snapshot for a
+// record and configured root, acquiring it in writable modes or leasing it
+// read-only, and may return a release invoked once loading completes.
+func DocExactSnapshots(docs []lockfile.Document, open func(registry lockfile.GitRegistry, rootPath string) (path string, release func(), err error)) (catalog.ExactSnapshotFunc, func()) {
 	var releases []func()
 	releaseAll := func() {
 		for i := len(releases) - 1; i >= 0; i-- {
@@ -378,7 +379,11 @@ func DocExactSnapshots(docs []lockfile.Document, open func(registry lockfile.Git
 				if registry.URL != canonical || registry.Ref != entry.Ref {
 					continue
 				}
-				path, release, err := open(registry)
+				rootPath, err := cache.NormalizeExactGitRoot(entry.Path)
+				if err != nil {
+					return "", "", err
+				}
+				path, release, err := open(registry, rootPath)
 				if err != nil {
 					return "", "", err
 				}

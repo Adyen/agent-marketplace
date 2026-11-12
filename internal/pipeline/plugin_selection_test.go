@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -79,5 +80,37 @@ func TestCheckPlannedSharedOriginsRefusesAcrossCatalogs(t *testing.T) {
 	plan = catalog.PluginSelectionPlan{Plugins: []catalog.PlannedPlugin{first, second}}
 	if err := CheckPlannedSharedOrigins(plan); err != nil {
 		t.Fatalf("distinct subdirectories are distinct records: %v", err)
+	}
+}
+
+func TestDocExactSnapshotsPathlessEntryKeepsEmptyCatalogIdentitySuffix(t *testing.T) {
+	entry := config.RegistryEntry{URL: "https://example.com/repo.git", Ref: "main"}
+	canonical, err := lockfile.CanonicalGitConfigURL(entry.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit, err := lockfile.ParseGitOID("sha1:" + strings.Repeat("a", 40))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := lockfile.Document{Registries: []lockfile.GitRegistry{{
+		URL: canonical, Ref: entry.Ref, Commit: commit,
+	}}}
+	exact, release := DocExactSnapshots([]lockfile.Document{doc}, func(_ lockfile.GitRegistry, rootPath string) (string, func(), error) {
+		if rootPath != "." {
+			t.Fatalf("snapshot lookup root = %q, want .", rootPath)
+		}
+		return "/snapshot", nil, nil
+	})
+	defer release()
+	snapshot, identity, err := exact(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot != "/snapshot" {
+		t.Fatalf("snapshot = %q, want /snapshot", snapshot)
+	}
+	if want := canonical + "@" + commit.String() + ":"; identity != want {
+		t.Fatalf("catalog identity = %q, want %q", identity, want)
 	}
 }
