@@ -263,10 +263,6 @@ func (c *Client) GetPlugin(ctx context.Context, pluginID string) (Plugin, error)
 	return plugin, err
 }
 
-func (c *Client) ListVersions(ctx context.Context, pluginID string) ([]PluginVersion, error) {
-	return listPages[PluginVersion](ctx, c, pluginPath(pluginID)+"/versions", make(url.Values))
-}
-
 func (c *Client) GetVersion(ctx context.Context, pluginID, versionID string) (PluginVersion, error) {
 	var version PluginVersion
 	err := c.requestJSON(ctx, http.MethodGet, pluginPath(pluginID)+"/versions/"+url.PathEscape(versionID), nil, "", &version)
@@ -325,13 +321,6 @@ func (c *Client) SetInstallationSetting(ctx context.Context, pluginID, preferenc
 	return setting, err
 }
 
-func (c *Client) RemoveInstallationSetting(ctx context.Context, pluginID string) error {
-	lock := c.settingLock(pluginID)
-	lock.Lock()
-	defer lock.Unlock()
-	return c.requestJSON(ctx, http.MethodDelete, pluginPath(pluginID)+"/installation_settings/organization", nil, "", nil)
-}
-
 func (c *Client) settingLock(pluginID string) *sync.Mutex {
 	c.settingLocksMu.Lock()
 	defer c.settingLocksMu.Unlock()
@@ -349,9 +338,6 @@ func listPages[T any](ctx context.Context, client *Client, endpoint string, quer
 		values := make(url.Values, len(query)+1)
 		for key, items := range query {
 			values[key] = append([]string(nil), items...)
-		}
-		if page := query.Get("page"); page != "" {
-			values.Set("page", page)
 		}
 		var page pageEnvelope[T]
 		if err := client.requestJSON(ctx, http.MethodGet, endpoint+"?"+values.Encode(), nil, "", &page); err != nil {

@@ -51,20 +51,16 @@ func newServeClaudeDeliveryStatusCmd() *cobra.Command {
 					continue
 				}
 				wrote = true
-				status := string(row.State)
 				message := claudedelivery.StatusMessage(row)
-				if message == "awaiting its content scan" {
-					status += " (awaiting its content scan)"
-				}
 				if _, err := fmt.Fprintf(cmd.OutOrStdout(),
 					"Resource: %s/%s/%s\nPlugin: %s (%s)\nState: %s\nPublished version: %s\nServed version: %s\nScan status: %s\nReach: %s\nInstallation preference: %s\nLast failure code: %s\n",
 					row.Coordinate.Registry, row.Coordinate.Kind, row.Coordinate.Name,
-					row.PluginName, row.PluginID, status, row.PublishedVersionID,
+					row.PluginName, row.PluginID, row.State, row.PublishedVersionID,
 					row.ServedVersionID, row.ContentScanStatus, row.Reach,
 					row.InstallationPreference, row.LastErrorCode); err != nil {
 					return err
 				}
-				if message != "" && message != "awaiting its content scan" {
+				if message != "" {
 					if _, err := fmt.Fprintln(cmd.OutOrStdout(), message); err != nil {
 						return err
 					}
