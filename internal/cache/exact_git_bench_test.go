@@ -12,6 +12,7 @@ func exactGitManyFilesFixture(tb testing.TB, count int) string {
 	tb.Helper()
 	tb.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	tb.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	tb.Setenv("HOME", tb.TempDir())
 	root := tb.TempDir()
 	gitTest(tb, "", "init", "--object-format=sha1", root)
 	for i := range count {

@@ -830,7 +830,7 @@ func hashExactGitTrackedEntries(ctx context.Context, algorithm string, jobs []ex
 	var firstErr error
 	var once sync.Once
 	var wg sync.WaitGroup
-	var next int64
+	var next atomic.Int64
 	for range workerCount {
 		wg.Add(1)
 		go func() {
@@ -839,7 +839,7 @@ func hashExactGitTrackedEntries(ctx context.Context, algorithm string, jobs []ex
 				if workerCtx.Err() != nil {
 					return
 				}
-				i := int(atomic.AddInt64(&next, 1) - 1)
+				i := int(next.Add(1) - 1)
 				if i >= len(jobs) {
 					return
 				}
