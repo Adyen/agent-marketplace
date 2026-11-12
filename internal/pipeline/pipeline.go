@@ -783,11 +783,11 @@ func resolveExternalPluginPackages(ctx context.Context, artifacts []resolver.Res
 				"the locked external plugin snapshot is unavailable")
 			continue
 		}
-		snapshotKey := locked.URL + "\x00" + oid.String()
+		snapshotKey := locked.URL + "\x00" + oid.String() + "\x00" + rootPath
 		snapshot, found := snapshots[snapshotKey]
 		if !found {
 			var release func()
-			snapshot, release, err = cache.LeaseExactGitReadOnlyWithContext(ctx, locked.URL, oid)
+			snapshot, release, err = cache.LeaseExactGitReadOnlyWithRootContext(ctx, locked.URL, oid, rootPath)
 			if err != nil {
 				setExternalPluginRefusal(artifact, diag.CodePluginDeliveryExternalUnavailable, diag.SeverityError,
 					"the locked external plugin snapshot is unavailable")

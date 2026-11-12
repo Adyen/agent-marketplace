@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -133,6 +134,10 @@ func AcquireExactGit(canonicalSource, fetchURL string, oid GitOID) (string, erro
 }
 
 func AcquireExactGitWithContext(ctx context.Context, canonicalSource, fetchURL string, oid GitOID) (string, error) {
+	return AcquireExactGitWithRootContext(ctx, canonicalSource, fetchURL, oid, ".")
+}
+
+func AcquireExactGitWithRootContext(ctx context.Context, canonicalSource, fetchURL string, oid GitOID, root string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -142,13 +147,18 @@ func AcquireExactGitWithContext(ctx context.Context, canonicalSource, fetchURL s
 	if err := validateGitOID(oid); err != nil {
 		return "", err
 	}
+	root, err := NormalizeExactGitRoot(root)
+	if err != nil {
+		return "", err
+	}
 
-	path := exactGitSnapshotPath(canonicalSource, oid)
-	err := withExactGitLock(ctx, snapshotKey(canonicalSource, oid), func() error {
+	snapshot := exactGitSnapshotPathForRoot(canonicalSource, oid, root)
+	fallbackToWhole := false
+	err = withExactGitLock(ctx, snapshotKeyForRoot(canonicalSource, oid, root), func() error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		exists, err := validateExactGitDirectory(path)
+		exists, err := validateExactGitDirectory(snapshot)
 		if err != nil {
 			return fmt.Errorf("validate exact git snapshot: %w", err)
 		}
@@ -156,16 +166,16 @@ func AcquireExactGitWithContext(ctx context.Context, canonicalSource, fetchURL s
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if err := verifyExactGitSnapshotWithContext(ctx, path, oid); err == nil {
+			if err := verifyExactGitSnapshotForRootWithContext(ctx, snapshot, oid, root); err == nil {
 				return nil
 			}
 			if err := ctx.Err(); err != nil {
 				return err
 			}
 			if scope := exactGitVerificationScopeFrom(ctx); scope != nil {
-				scope.dropSnapshot(path, oid)
+				scope.dropSnapshot(snapshot, oid, root)
 			}
-			if err := quarantineExactGitSnapshot(path); err != nil {
+			if err := quarantineExactGitSnapshot(snapshot); err != nil {
 				return err
 			}
 		}
@@ -178,16 +188,41 @@ func AcquireExactGitWithContext(ctx context.Context, canonicalSource, fetchURL s
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		return publishExactGitSnapshotWithContext(ctx, path, exactGitObjectStorePath(canonicalSource), oid)
+		store := exactGitObjectStorePath(canonicalSource)
+		if root != "." {
+			isTree, err := exactGitObjectRootIsTreeWithContext(ctx, store, oid, root)
+			if err != nil {
+				return err
+			}
+			if !isTree {
+				fallbackToWhole = true
+				return nil
+			}
+		}
+		return publishExactGitSnapshotWithRootContext(ctx, snapshot, store, oid, root)
 	})
 	if err != nil {
 		return "", err
 	}
-	slog.Debug("acquired exact git snapshot", "source", redactSecrets(canonicalSource), "oid", oid.String(), "cache_path", path)
-	return path, nil
+	if fallbackToWhole {
+		whole, err := AcquireExactGitWithContext(ctx, canonicalSource, fetchURL, oid)
+		if err != nil {
+			return "", err
+		}
+		if scope := exactGitVerificationScopeFrom(ctx); scope != nil {
+			scope.recordSnapshot(whole, oid, root)
+		}
+		return whole, nil
+	}
+	slog.Debug("acquired exact git snapshot", "source", redactSecrets(canonicalSource), "oid", oid.String(), "root", root, "cache_path", snapshot)
+	return snapshot, nil
 }
 
 func WithAcquiredExactGit(ctx context.Context, canonicalSource, fetchURL string, oid GitOID, consume func(string) error) error {
+	return WithAcquiredExactGitRoot(ctx, canonicalSource, fetchURL, oid, ".", consume)
+}
+
+func WithAcquiredExactGitRoot(ctx context.Context, canonicalSource, fetchURL string, oid GitOID, root string, consume func(string) error) error {
 	if consume == nil {
 		return errors.New("exact git consumer is required")
 	}
@@ -208,7 +243,7 @@ func WithAcquiredExactGit(ctx context.Context, canonicalSource, fetchURL string,
 		defer release()
 		ctx = ContextWithExactGitNamespaceLease(ctx)
 	}
-	path, err := AcquireExactGitWithContext(ctx, canonicalSource, fetchURL, oid)
+	path, err := AcquireExactGitWithRootContext(ctx, canonicalSource, fetchURL, oid, root)
 	if err != nil {
 		return err
 	}
@@ -245,6 +280,10 @@ func OpenExactGitReadOnlyWithContext(ctx context.Context, canonicalSource string
 // path with a shared namespace lease. The caller must release the lease after
 // every filesystem consumer has finished with the snapshot.
 func LeaseExactGitReadOnlyWithContext(ctx context.Context, canonicalSource string, oid GitOID) (string, func(), error) {
+	return LeaseExactGitReadOnlyWithRootContext(ctx, canonicalSource, oid, ".")
+}
+
+func LeaseExactGitReadOnlyWithRootContext(ctx context.Context, canonicalSource string, oid GitOID, root string) (string, func(), error) {
 	if err := ctx.Err(); err != nil {
 		return "", nil, err
 	}
@@ -254,7 +293,20 @@ func LeaseExactGitReadOnlyWithContext(ctx context.Context, canonicalSource strin
 	if err := validateGitOID(oid); err != nil {
 		return "", nil, err
 	}
-	path := exactGitSnapshotPath(canonicalSource, oid)
+	root, err := NormalizeExactGitRoot(root)
+	if err != nil {
+		return "", nil, err
+	}
+	path, err := availableExactGitSnapshotPath(canonicalSource, oid, root)
+	if err != nil {
+		return "", nil, err
+	}
+	verifyRoot := root
+	if root != "." && path == exactGitSnapshotPath(canonicalSource, oid) {
+		if err := requireExactGitRootDirectories(path, root); err != nil {
+			verifyRoot = "."
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return "", nil, err
 	}
@@ -268,7 +320,7 @@ func LeaseExactGitReadOnlyWithContext(ctx context.Context, canonicalSource strin
 		return "", nil, err
 	}
 	if exactGitNamespaceLeaseHeld(ctx) {
-		if err := openExactGitPathWithContext(ctx, path, oid); err != nil {
+		if err := openExactGitPathWithRootScopeWithContext(ctx, path, oid, verifyRoot, root); err != nil {
 			return "", nil, err
 		}
 		return path, func() {}, nil
@@ -281,21 +333,47 @@ func LeaseExactGitReadOnlyWithContext(ctx context.Context, canonicalSource strin
 		release()
 		return "", nil, err
 	}
-	if err := openExactGitPathWithContext(ctx, path, oid); err != nil {
+	if err := openExactGitPathWithRootScopeWithContext(ctx, path, oid, verifyRoot, root); err != nil {
 		release()
 		return "", nil, err
 	}
 	return path, release, nil
 }
 
+func availableExactGitSnapshotPath(canonicalSource string, oid GitOID, root string) (string, error) {
+	snapshot := exactGitSnapshotPathForRoot(canonicalSource, oid, root)
+	exists, err := validateExactGitDirectory(snapshot)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrExactGitSnapshotUntrusted, err)
+	}
+	if exists {
+		return snapshot, nil
+	}
+	if root != "." {
+		whole := exactGitSnapshotPath(canonicalSource, oid)
+		exists, err = validateExactGitDirectory(whole)
+		if err != nil {
+			return "", fmt.Errorf("%w: %v", ErrExactGitSnapshotUntrusted, err)
+		}
+		if exists {
+			return whole, nil
+		}
+	}
+	return "", fmt.Errorf("%w: %s", ErrExactGitSnapshotUnavailable, oid.String())
+}
+
 // WithExactGitReadOnly verifies an exact snapshot and runs consume while the
 // shared exact-cache namespace lease is held. This prevents GC from deleting
 // the verified snapshot between validation and its actual consumption.
 func WithExactGitReadOnly(ctx context.Context, canonicalSource string, oid GitOID, consume func(string) error) error {
+	return WithExactGitReadOnlyRoot(ctx, canonicalSource, oid, ".", consume)
+}
+
+func WithExactGitReadOnlyRoot(ctx context.Context, canonicalSource string, oid GitOID, root string, consume func(string) error) error {
 	if consume == nil {
 		return errors.New("exact git read-only consumer is required")
 	}
-	path, release, err := LeaseExactGitReadOnlyWithContext(ctx, canonicalSource, oid)
+	path, release, err := LeaseExactGitReadOnlyWithRootContext(ctx, canonicalSource, oid, root)
 	if err != nil {
 		return err
 	}
@@ -317,7 +395,7 @@ func requireExactGitSnapshot(path string, oid GitOID) error {
 	return nil
 }
 
-func openExactGitPathWithContext(ctx context.Context, path string, oid GitOID) error {
+func openExactGitPathWithRootScopeWithContext(ctx context.Context, path string, oid GitOID, verifyRoot, scopeRoot string) error {
 	exists, err := validateExactGitDirectory(path)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrExactGitSnapshotUntrusted, err)
@@ -328,7 +406,7 @@ func openExactGitPathWithContext(ctx context.Context, path string, oid GitOID) e
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return verifyExactGitSnapshotWithContext(ctx, path, oid)
+	return verifyExactGitSnapshotForRootScopeWithContext(ctx, path, oid, verifyRoot, scopeRoot)
 }
 
 func quarantineExactGitSnapshot(path string) error {
@@ -464,7 +542,7 @@ func ensureExactGitObject(ctx context.Context, canonicalSource, fetchURL string,
 	})
 }
 
-func publishExactGitSnapshotWithContext(ctx context.Context, path, store string, oid GitOID) error {
+func publishExactGitSnapshotWithRootContext(ctx context.Context, path, store string, oid GitOID, root string) error {
 	parent := filepath.Dir(path)
 	if err := prepareExactGitDirectory(parent); err != nil {
 		return err
@@ -483,10 +561,19 @@ func publishExactGitSnapshotWithContext(ctx context.Context, path, store string,
 	if err := runExactGitWithContext(ctx, stage, "fetch", "--force", "--no-tags", "--no-write-fetch-head", "--", store, oid.Hex()); err != nil {
 		return fmt.Errorf("copy exact git object into snapshot: %w", err)
 	}
-	if err := runExactGitWithContext(ctx, stage, "checkout", "--detach", "--force", oid.Hex()); err != nil {
-		return fmt.Errorf("checkout exact git object: %w", err)
+	if root == "." {
+		if err := runExactGitWithContext(ctx, stage, "checkout", "--detach", "--force", oid.Hex()); err != nil {
+			return fmt.Errorf("checkout exact git object: %w", err)
+		}
+	} else {
+		if err := runExactGitWithContext(ctx, stage, "update-ref", "--no-deref", "HEAD", oid.Hex()); err != nil {
+			return fmt.Errorf("set exact git snapshot HEAD: %w", err)
+		}
+		if err := runExactGitWithContext(ctx, stage, "--literal-pathspecs", "checkout", oid.Hex(), "--", root); err != nil {
+			return fmt.Errorf("checkout exact git root %q: %w", root, err)
+		}
 	}
-	if err := verifyExactGitSnapshotWithContext(ctx, stage, oid); err != nil {
+	if err := verifyExactGitSnapshotForRootWithContext(ctx, stage, oid, root); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
@@ -495,27 +582,31 @@ func publishExactGitSnapshotWithContext(ctx context.Context, path, store string,
 	if err := publishRenamedDirectory(stage, path, syncExactGitDirectory); err != nil {
 		return fmt.Errorf("publish exact git snapshot: %w", err)
 	}
-	// The staged directory passed a full verification above, so the published
-	// snapshot counts as verified for the rest of this command.
+	// The staged directory passed verification above, so the published snapshot
+	// counts as verified for the rest of this command.
 	if scope := exactGitVerificationScopeFrom(ctx); scope != nil {
-		scope.recordSnapshot(path, oid)
+		scope.recordSnapshot(path, oid, root)
 	}
 	return nil
 }
 
-func verifyExactGitSnapshotWithContext(ctx context.Context, path string, oid GitOID) error {
+func verifyExactGitSnapshotForRootWithContext(ctx context.Context, path string, oid GitOID, root string) error {
+	return verifyExactGitSnapshotForRootScopeWithContext(ctx, path, oid, root, root)
+}
+
+func verifyExactGitSnapshotForRootScopeWithContext(ctx context.Context, path string, oid GitOID, verifyRoot, scopeRoot string) error {
 	scope := exactGitVerificationScopeFrom(ctx)
-	if scope != nil && scope.snapshotVerified(path, oid) {
+	if scope != nil && scope.snapshotVerified(path, oid, scopeRoot) {
 		return nil
 	}
-	err := verifyExactGitSnapshotMetadata(ctx, path, oid)
+	err := verifyExactGitSnapshotMetadataForRoot(ctx, path, oid, verifyRoot)
 	if err == nil && scope != nil {
-		scope.recordSnapshot(path, oid)
+		scope.recordSnapshot(path, oid, scopeRoot)
 	}
 	return err
 }
 
-func verifyExactGitSnapshotMetadata(ctx context.Context, path string, oid GitOID) error {
+func verifyExactGitSnapshotMetadataForRoot(ctx context.Context, path string, oid GitOID, root string) error {
 	if state, ok := readExactGitLocalState(path, false); ok {
 		if state.objectFormat != oid.Algorithm() {
 			return fmt.Errorf("%w: %w: repository uses %s, lock declares %s", ErrExactGitSnapshotUntrusted, ErrGitOIDMismatch, state.objectFormat, oid.Algorithm())
@@ -564,7 +655,7 @@ func verifyExactGitSnapshotMetadata(ctx context.Context, path string, oid GitOID
 			return fmt.Errorf("%w: worktree root differs from snapshot path", ErrExactGitSnapshotUntrusted)
 		}
 	}
-	if err := verifyExactGitTrackedTreeWithContext(ctx, path, oid.Algorithm()); err != nil {
+	if err := verifyExactGitTrackedTreeAtRootWithContext(ctx, path, oid.Algorithm(), root); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
@@ -716,7 +807,16 @@ func validateExactGitConfigWithContext(ctx context.Context, repo string) error {
 }
 
 func verifyExactGitTrackedTreeWithContext(ctx context.Context, root, algorithm string) error {
-	output, err := exactGitBytesWithContext(ctx, root, "ls-tree", "-rz", "--full-tree", "-r", "HEAD")
+	return verifyExactGitTrackedTreeAtRootWithContext(ctx, root, algorithm, ".")
+}
+
+func verifyExactGitTrackedTreeAtRootWithContext(ctx context.Context, snapshot, algorithm, configuredRoot string) error {
+	args := []string{"ls-tree", "-rz", "--full-tree", "-r", "HEAD"}
+	if configuredRoot != "." {
+		args = append([]string{"--literal-pathspecs"}, args...)
+		args = append(args, "--", configuredRoot)
+	}
+	output, err := exactGitBytesWithContext(ctx, snapshot, args...)
 	if err != nil {
 		return err
 	}
@@ -732,16 +832,23 @@ func verifyExactGitTrackedTreeWithContext(ctx context.Context, root, algorithm s
 		}
 		expected[filepath.FromSlash(name)] = exactGitTreeEntry{mode: fields[0], oid: fields[2]}
 	}
+	walkRoot := snapshot
+	if configuredRoot != "." {
+		if err := requireExactGitRootDirectories(snapshot, configuredRoot); err != nil {
+			return err
+		}
+		walkRoot = filepath.Join(snapshot, filepath.FromSlash(configuredRoot))
+	}
 	seen := make(map[string]struct{}, len(expected))
 	jobs := make([]exactGitHashJob, 0, len(expected))
-	err = filepath.WalkDir(root, func(candidate string, entry fs.DirEntry, walkErr error) error {
+	err = filepath.WalkDir(walkRoot, func(candidate string, entry fs.DirEntry, walkErr error) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if walkErr != nil {
 			return walkErr
 		}
-		rel, err := filepath.Rel(root, candidate)
+		rel, err := filepath.Rel(snapshot, candidate)
 		if err != nil {
 			return err
 		}
@@ -782,6 +889,21 @@ func verifyExactGitTrackedTreeWithContext(ctx context.Context, root, algorithm s
 		return errors.New("tracked path is missing")
 	}
 	return hashExactGitTrackedEntries(ctx, algorithm, jobs)
+}
+
+func requireExactGitRootDirectories(snapshot, root string) error {
+	current := snapshot
+	for _, component := range strings.Split(root, "/") {
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		if err != nil {
+			return fmt.Errorf("configured root component %q is unavailable: %w", current, err)
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("configured root component %q is not a real directory", current)
+		}
+	}
+	return nil
 }
 
 func hashExactGitTrackedEntries(ctx context.Context, algorithm string, jobs []exactGitHashJob) error {
@@ -1198,7 +1320,11 @@ func exactGitObjectStorePath(canonicalSource string) string {
 }
 
 func exactGitSnapshotPath(canonicalSource string, oid GitOID) string {
-	return filepath.Join(exactGitRoot(), "snapshots", snapshotKey(canonicalSource, oid))
+	return exactGitSnapshotPathForRoot(canonicalSource, oid, ".")
+}
+
+func exactGitSnapshotPathForRoot(canonicalSource string, oid GitOID, root string) string {
+	return filepath.Join(exactGitRoot(), "snapshots", snapshotKeyForRoot(canonicalSource, oid, root))
 }
 
 func sourceKey(canonicalSource string) string {
@@ -1209,6 +1335,40 @@ func sourceKey(canonicalSource string) string {
 func snapshotKey(canonicalSource string, oid GitOID) string {
 	sum := sha256.Sum256([]byte(canonicalSource + "\x00" + oid.String()))
 	return hex.EncodeToString(sum[:])
+}
+
+func snapshotKeyForRoot(canonicalSource string, oid GitOID, root string) string {
+	if root == "." {
+		return snapshotKey(canonicalSource, oid)
+	}
+	sum := sha256.Sum256([]byte(canonicalSource + "\x00" + oid.String() + "\x00" + root))
+	return hex.EncodeToString(sum[:])
+}
+
+// NormalizeExactGitRoot validates and cleans a configured repository root.
+func NormalizeExactGitRoot(root string) (string, error) {
+	if strings.Contains(root, `\`) || strings.ContainsRune(root, '\x00') || path.IsAbs(root) {
+		return "", fmt.Errorf("invalid exact git root %q", root)
+	}
+	clean := path.Clean(root)
+	if clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("exact git root escapes the repository: %q", root)
+	}
+	return clean, nil
+}
+
+func exactGitObjectRootIsTreeWithContext(ctx context.Context, store string, oid GitOID, root string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	kind, err := exactGitOutputWithContext(ctx, store, "cat-file", "-t", oid.Hex()+":"+root)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return false, ctxErr
+		}
+		return false, nil
+	}
+	return kind == "tree", nil
 }
 
 func activeExactGitSources(urls []string) (map[string]struct{}, error) {
@@ -1270,6 +1430,13 @@ func garbageCollectExactGitUnderLease(ctx context.Context, dryRun bool, locks []
 			}
 			sources[sourceKey(source)] = struct{}{}
 			reachable[snapshotKey(registry.URL, oid)] = struct{}{}
+			for _, root := range registry.Roots {
+				rootPath, err := NormalizeExactGitRoot(root.Path)
+				if err != nil {
+					return result, reachable, fmt.Errorf("validate exact git reachable root %q: %w", root.Path, err)
+				}
+				reachable[snapshotKeyForRoot(registry.URL, oid, rootPath)] = struct{}{}
+			}
 		}
 	}
 	if err := ctx.Err(); err != nil {
