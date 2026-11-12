@@ -41,6 +41,20 @@ const sourcesConfiguration = (overrides: Partial<Configuration> = {}): Configura
 const sourcesClient = (overrides: Partial<Configuration> = {}) =>
   fakeClient({ configuration: sourcesConfiguration(overrides) })
 
+const groupedSources = [
+  { ...gitSource, id: 'git-alpha', path: 'plugins/alpha' },
+  { ...gitSource, id: 'git-beta', path: 'plugins/beta', ref: 'next' },
+  { ...dirSource, id: 'solo-directory', location: '/var/solo' },
+]
+
+async function mountSources(overrides: Partial<Configuration> = { userSources: groupedSources }) {
+  const { client, push } = sourcesClient(overrides)
+  const { wrapper } = mountWorkspace(client)
+  push(event({ sequence: 1 }))
+  await tick()
+  return { client, wrapper }
+}
+
 async function openSources(wrapper: ReturnType<typeof mount>) {
   const button = wrapper.find('button[aria-label="Sources"]')
   expect(button.exists()).toBe(true)
@@ -855,5 +869,112 @@ describe('Source settings', () => {
     expect(controller.state.operation).toBeNull()
     expect(controller.state.requesting).toBe(false)
     expect((addButton as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  // spec: gui-shell/sources-sharing-a-location-are-grouped
+  // spec: gui-shell/group-folds-by-pointer-and-keyboard
+  it('groups shared locations in the sidebar and Settings but leaves a single source unwrapped', async () => {
+    const { wrapper } = await mountSources()
+    const sidebar = wrapper.find('[aria-label="Sources list"]')
+    expect(sidebar.findAll('button[aria-expanded]')).toHaveLength(1)
+    expect(sidebar.findAll('.gui-sidebar__source-child')).toHaveLength(2)
+    const sidebarSolo = sidebar.find('button[data-source-id="solo-directory"]')
+    expect(sidebarSolo.element.closest('li')?.classList.contains('gui-sidebar__source-child')).toBe(false)
+
+    const sidebarGroup = sidebar.find('button[aria-expanded]')
+    for (const text of ['repo', 'plugins/alpha', 'plugins/beta', 'next']) expect(sidebar.text()).toContain(text)
+    await sidebarGroup.trigger('click')
+    expect(sidebarGroup.attributes('aria-expanded')).toBe('false')
+    await sidebarGroup.trigger('keydown', { key: 'Enter' })
+    expect(sidebarGroup.attributes('aria-expanded')).toBe('true')
+    await sidebarGroup.trigger('keydown', { key: ' ' })
+    expect(sidebarGroup.attributes('aria-expanded')).toBe('false')
+    await openSources(wrapper)
+    const sources = dialog().querySelector('#settings-panel-sources')!
+    expect(sources.querySelectorAll('button[aria-expanded]')).toHaveLength(1)
+    expect(sources.querySelectorAll('.source-card--grouped')).toHaveLength(2)
+    const settingsSolo = sources.querySelector<HTMLElement>('[data-source-id="solo-directory"]')
+    expect(settingsSolo?.classList.contains('source-card--grouped')).toBe(false)
+
+    const settingsGroup = sources.querySelector<HTMLElement>('button[aria-expanded]')!
+    settingsGroup.click()
+    await tick()
+    expect(settingsGroup.getAttribute('aria-expanded')).toBe('false')
+    settingsGroup.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await tick()
+    expect(settingsGroup.getAttribute('aria-expanded')).toBe('true')
+    settingsGroup.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+    await tick()
+    expect(settingsGroup.getAttribute('aria-expanded')).toBe('false')
+    settingsGroup.click()
+    await tick()
+    expect(settingsGroup.getAttribute('aria-expanded')).toBe('true')
+    for (const text of ['plugins/alpha', 'plugins/beta', 'next']) expect(sources.textContent).toContain(text)
+    expect(settingsSolo?.textContent).toContain('/var/solo')
+
+    await sidebarGroup.trigger('click')
+    expect(sidebarGroup.attributes('aria-expanded')).toBe('true')
+    for (const [id, path] of [['git-alpha', 'plugins/alpha'], ['git-beta', 'plugins/beta']]) {
+      expect(sidebar.find(`button[data-source-id="${id}"]`).attributes('aria-label')).toContain(path)
+    }
+  })
+
+  // spec: gui-shell/selecting-a-sidebar-source-reveals-it-in-settings
+  // spec: gui-shell/revealing-a-source-unfolds-its-folded-group
+  // spec: gui-shell/sidebar-add-control-focuses-the-add-source-form
+  it('reveals a selected source and focuses the add form from the sidebar', async () => {
+    const { wrapper } = await mountSources()
+    await openSources(wrapper)
+    await setInput('Search sources', 'plugins/beta')
+    expect(Array.from(dialog().querySelectorAll('.source-card')).map((card) => card.getAttribute('data-source-id'))).toEqual(['git-beta'])
+    const group = dialog().querySelector<HTMLElement>('#settings-panel-sources button[aria-expanded]')!
+    group.click()
+    await tick()
+    expect(group.getAttribute('aria-expanded')).toBe('false')
+    await wrapper.find('button[data-source-id="git-alpha"]').trigger('click')
+    await tick()
+
+    const search = dialog().querySelector<HTMLInputElement>('input[aria-label="Search sources"]')
+    const card = dialog().querySelector<HTMLElement>('#settings-panel-sources [data-source-id="git-alpha"]')
+    expect(group.getAttribute('aria-expanded')).toBe('true')
+    expect(search?.value).toBe('')
+    expect(card?.getAttribute('data-highlighted')).toBe('true')
+    expect(document.activeElement).toBe(card)
+
+    button('Close dialog').click()
+    await tick()
+    await wrapper.find('button[aria-label="Sources"]').trigger('click')
+    await tick()
+    expect(document.activeElement).toBe(field('Source location'))
+  })
+
+  // spec: gui-shell/search-filters-sources-case-insensitively
+  // spec: gui-shell/no-matching-source-shows-an-empty-state
+  // spec: gui-shell/clearing-the-search-restores-the-list
+  it('searches source names, labels, locations, and paths case-insensitively', async () => {
+    const alpha = { ...dirSource, id: 'search-alpha', name: 'Named Alpha', location: '/var/Alpha', path: 'secret/alpha-path' }
+    const beta = { ...dirSource, id: 'search-beta', name: 'Named Beta', location: '/var/Beta', path: 'public/beta-path' }
+    const org = { ...dirSource, id: 'org-only', name: 'OrgOnly', location: '/org/records', path: 'private/org-only' }
+    const { client, wrapper } = await mountSources({ userSources: [alpha, beta], organizationSources: [org] })
+    await openSources(wrapper)
+
+    const sourceIds = () => Array.from(dialog().querySelectorAll('.source-card')).map((card) => card.getAttribute('data-source-id'))
+    const configurationCalls = vi.mocked(client.configuration).mock.calls.length
+
+    for (const [query, id] of [
+      ['named alpha', 'search-alpha'],
+      ['VAR/ALPHA', 'search-alpha'],
+      ['SECRET/ALPHA-PATH', 'search-alpha'],
+      ['ORGONLY', 'org-only'],
+    ] as const) {
+      await setInput('Search sources', query)
+      expect(sourceIds()).toEqual([id])
+    }
+    expect(client.configuration).toHaveBeenCalledTimes(configurationCalls)
+    await setInput('Search sources', 'not found')
+    expect(dialog().textContent).toContain('No sources match “not found”.')
+    expect(dialog().querySelectorAll('.source-card')).toHaveLength(0)
+    await setInput('Search sources', '')
+    expect(sourceIds()).toEqual(['search-alpha', 'search-beta', 'org-only'])
   })
 })

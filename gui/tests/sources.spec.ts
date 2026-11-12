@@ -694,3 +694,37 @@ test('built GUI keeps a failed Git source mutation in the Add source section', a
     await harness.stop()
   }
 })
+
+// spec: gui-shell/selecting-a-sidebar-source-reveals-it-in-settings
+// spec: gui-shell/sidebar-add-control-focuses-the-add-source-form
+test('built GUI reveals a sidebar source and focuses the add-source location field', async ({ page }) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
+  }
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'sources' })
+  const { bootstrap } = harness
+  try {
+    await launchBuiltUserApp(page, bootstrap)
+    await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
+
+    const sidebarSource = page.getByRole('button', { name: /^Open source / }).first()
+    const location = (await sidebarSource.getAttribute('aria-label'))!.slice('Open source '.length)
+    await sidebarSource.click()
+
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByRole('tab', { name: 'Sources' })).toHaveAttribute('aria-selected', 'true')
+    const card = dialog.locator('.source-card').filter({ hasText: location })
+    await expect(card).toBeInViewport()
+    await expect(card).toBeFocused()
+    await expect(card).toHaveAttribute('data-highlighted', 'true')
+
+    await dialog.getByRole('button', { name: 'Close dialog' }).click()
+    await expect(dialog).not.toBeVisible()
+    await page.getByRole('button', { name: 'Sources', exact: true }).click()
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByLabel('Source location')).toBeFocused()
+  } finally {
+    await harness.stop()
+  }
+})

@@ -153,9 +153,11 @@ alone separates it from the main column. It never folds.
   Selecting a row scrolls the main list to that group's header and moves
   selection there, using the existing section selection.
 - **Sources**: a caps label with a ＋ icon button ("Sources") that opens the
-  Settings window on its Sources tab. Below it, one folder-icon row per
-  configured source shows the location, truncated in the middle, with an ORG
-  tag where it applies. Selecting a row opens the same tab. The list is
+  Settings window on its Sources tab with focus in the Add source form.
+  Below it, one icon row per configured source shows the source label (see
+  the sidebar rules below), with an ORG tag where it applies; sources that
+  share a layer, kind, and location collapse under one foldable group row.
+  Selecting a row opens the same tab and reveals that source. The list is
   read-only; the Settings window performs all edits.
 - **Footer**: the configured Harness targets as a compact mono summary (for
   example `Claude · Codex +1`), a newer-version notice when there is one (a
@@ -616,7 +618,8 @@ conflicts with an earlier section, this section wins.
   repeated the source lists.
 - *Rule*: one window, titled "Settings", with three tabs. The entry points
   decide the first tab: the gear opens General, and the sidebar Sources
-  control, source rows, and the empty-state "Add a source" open Sources. The
+  control (focusing the Add source form), source rows (revealing that
+  source), and the empty-state "Add a source" open Sources. The
   window is 960 px wide and a fixed height, so switching tabs does not resize
   it. Its sections are described in the fourth review.
 
@@ -705,9 +708,10 @@ earlier section, this section wins.
 - The draft survives tab switches. Saving keeps the window open: the submitted
   selection stays on screen until the write settles, and the controller then
   reloads the saved configuration. Closing the window discards an unsaved draft.
-- Sources holds the user source cards with trash buttons, the inline removal
-  confirmation, organization sources, the add form, and the managed-outside
-  footnote at the bottom.
+- Sources holds a "Search sources" field, the user source cards with trash
+  buttons (grouped and foldable when sources share a location; see Sources
+  navigation), the inline removal confirmation, organization sources, the
+  add form, and the managed-outside footnote at the bottom.
 
 ### Diagnostics view
 
@@ -761,3 +765,46 @@ earlier section, this section wins.
 - The native icon uses a rounded ink tile and the slanted green-and-white A
   mark from `site/public/brand/favicon.svg`, rasterized from
   `packaging/gui/icon.svg` without changing package metadata.
+
+## Refinements: sources navigation
+
+Where a rule here conflicts with an earlier section, this section wins.
+
+### Source grouping
+
+- *Observed*: several sources can share one repository or registry and
+  differ only in subpath, so one top-level row per source repeats the same
+  location and pushes the other sources out of view.
+- *Rule*: sources in the same layer (user or organization) with the same
+  kind and location collapse under one foldable parent row, in the sidebar
+  and in Settings → Sources. A source with no sibling is not wrapped. The
+  parent is a `button` with `aria-expanded` and an accessible name naming
+  the group; it shows the shared label (the sidebar source label, or the
+  location in Settings) and the child count. Children indent and show their
+  subpath, or `/` when empty, plus the ref when set. Groups start expanded;
+  fold state is session-only and kept separately for the sidebar and for
+  Settings → Sources.
+
+### Sidebar source deep links
+
+- *Observed*: a sidebar source row opened only the Sources tab, so the user
+  still had to find the source in the list, and the ＋ left focus on the
+  tab rather than in the form.
+- *Rule*: selecting a sidebar source row opens Settings → Sources, clears
+  any active source search, unfolds the group that holds the source,
+  scrolls its card into view, focuses it, and marks it highlighted
+  (`data-highlighted` and `aria-current`). The highlight clears when
+  Settings closes or another reveal happens. The ＋ "Sources" button opens
+  Sources with focus in the "Source location" field of the Add source form,
+  scrolled into view; its accessible name stays "Sources".
+
+### Source search
+
+- *Observed*: with many configured sources, the Sources tab has no way to
+  narrow the list.
+- *Rule*: Settings → Sources has a "Search sources" field above the lists.
+  It filters the user and organization lists by source name, label,
+  location, and path, case-insensitively. A group stays when any child
+  matches and shows only matching children. No match shows
+  "No sources match “{query}”." Clearing the field restores the full list,
+  and the query resets each time Settings opens.

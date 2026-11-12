@@ -8,10 +8,16 @@ import GuiIcon, { type IconName } from './GuiIcon.vue'
 import GuiModal from './GuiModal.vue'
 import SourceForm from './SourceForm.vue'
 import SourceList from './SourceList.vue'
+import { groupSources } from './source-groups'
 
 export type SettingsTab = 'general' | 'targets' | 'sources'
 
-const props = defineProps<{ controller: WorkspaceController; tab: SettingsTab }>()
+const props = defineProps<{
+  controller: WorkspaceController
+  tab: SettingsTab
+  revealRequest: { sourceId: string; sequence: number } | null
+  addSourceFocusRequest: number
+}>()
 const open = defineModel<boolean>('open', { default: false })
 
 const tabs: { id: SettingsTab; label: string; icon: IconName }[] = [
@@ -23,6 +29,18 @@ const active = ref<SettingsTab>(props.tab)
 const activeTitle = computed(() => tabs.find((tab) => tab.id === active.value)?.label ?? '')
 
 const configuration = computed<Configuration | null>(() => props.controller.state.configuration)
+const sourceQuery = ref('')
+const highlightedSourceId = ref('')
+const sourceLists = computed(() => ({
+  user: groupSources(
+    (configuration.value?.userSources ?? []).map((source) => ({ source, layer: 'user' as const })),
+    sourceQuery.value,
+  ),
+  organization: groupSources(
+    (configuration.value?.organizationSources ?? []).map((source) => ({ source, layer: 'organization' as const })),
+    sourceQuery.value,
+  ),
+}))
 const loading = ref(false)
 const actionError = ref<string | null>(null)
 const draft = ref<Set<string>>(new Set())
@@ -77,6 +95,7 @@ const managedOutsideText = computed(() => {
   const list = new Intl.ListFormat('en', { style: 'long', type: 'conjunction' }).format(configuration.value?.managedOutsideGUI ?? [])
   return `${list.charAt(0).toUpperCase()}${list.slice(1)} are managed outside the GUI.`
 })
+let handledAddSourceFocusRequest = 0
 
 function resetDrafts() {
   draft.value = new Set<string>()
@@ -88,9 +107,11 @@ watch(open, () => {
   const epoch = ++openEpoch
   resetDrafts()
   if (!open.value) {
+    highlightedSourceId.value = ''
     return
   }
   active.value = props.tab
+  sourceQuery.value = ''
   actionError.value = null
   loading.value = true
   void props.controller.loadConfiguration().then(() => {
@@ -105,6 +126,34 @@ watch(open, () => {
     draft.value = new Set(configuration.value.userTargets)
   })
 })
+
+watch(
+  () => props.revealRequest,
+  (request) => {
+    if (request == null) {
+      return
+    }
+    active.value = 'sources'
+    sourceQuery.value = ''
+    highlightedSourceId.value = request.sourceId
+  },
+)
+
+watch(
+  [() => props.addSourceFocusRequest, loading],
+  async ([request, isLoading]) => {
+    if (request <= handledAddSourceFocusRequest || isLoading || !open.value) {
+      return
+    }
+    handledAddSourceFocusRequest = request
+    await nextTick()
+    const location = document.querySelector<HTMLInputElement>('#settings-panel-sources input[aria-label="Source location"]')
+    if (location != null && !location.disabled) {
+      location.scrollIntoView?.({ block: 'center' })
+      location.focus()
+    }
+  },
+)
 
 watch(
   () => props.tab,
@@ -380,7 +429,25 @@ async function confirmRemove() {
             class="settings-window__panel"
           >
             <template v-if="configuration != null">
-              <SourceList title="User sources" :sources="configuration.userSources" :organization="false">
+              <label class="settings__source-search">
+                <span class="gui-visually-hidden">Search sources</span>
+                <input v-model="sourceQuery" type="search" class="gui-input" aria-label="Search sources" placeholder="Search sources">
+              </label>
+
+              <p
+                v-if="sourceQuery !== '' && sourceLists.user.length + sourceLists.organization.length === 0"
+                class="settings__hint"
+                role="status"
+              >No sources match “{{ sourceQuery }}”.</p>
+
+              <SourceList
+                title="User sources"
+                :entries="sourceLists.user"
+                :source-count="configuration.userSources.length"
+                :organization="false"
+                :reveal-request="props.revealRequest"
+                :highlighted-source-id="highlightedSourceId"
+              >
                 <template #actions="{ source }">
                   <button
                     v-if="removable(source)"
@@ -399,7 +466,8 @@ async function confirmRemove() {
                 <UButton label="Cancel remove" color="neutral" variant="outline" aria-label="Cancel remove" @click="pendingRemove = null" />
               </section>
 
-              <SourceList title="Organization sources" :sources="configuration.organizationSources" :organization="true" />
+              <SourceList title="Organization sources" :entries="sourceLists.organization" :source-count="configuration.organizationSources.length"
+                :organization="true" :reveal-request="props.revealRequest" :highlighted-source-id="highlightedSourceId" />
 
               <section class="settings__group" aria-label="Add user source">
                 <h3>Add a source</h3>

@@ -44,6 +44,9 @@ const searchEditing = ref(false)
 const error = ref<string | null>(null)
 const settingsOpen = ref(false)
 const settingsTab = ref<SettingsTab>('general')
+const sourceRevealRequest = ref<{ sourceId: string; sequence: number } | null>(null)
+const addSourceFocusRequest = ref(0)
+let sourceRevealSequence = 0
 let settingsOpener: 'settings' | 'sources' = 'settings'
 const setupOpen = ref(false)
 const setupDismissed = ref(false)
@@ -207,8 +210,19 @@ function openSettingsWindow(tab: SettingsTab) {
   settingsOpen.value = true
 }
 
+function openSidebarSource(sourceId: string) {
+  openSettingsWindow('sources')
+  sourceRevealRequest.value = { sourceId, sequence: ++sourceRevealSequence }
+}
+
+function openSidebarAddSource() {
+  openSettingsWindow('sources')
+  addSourceFocusRequest.value += 1
+}
+
 watch(settingsOpen, (isOpen, wasOpen) => {
   if (!isOpen && wasOpen) {
+    sourceRevealRequest.value = null
     void nextTick(() => (settingsOpener === 'sources' ? sidebar.value?.focusSources() : sidebar.value?.focusSettings()))
   }
 })
@@ -1132,7 +1146,8 @@ async function run(action: 'sync' | 'update') {
       @show-all="showAll"
       @show-diagnostics="showDiagnostics"
       @select-group="selectGroup"
-      @open-sources="openSettingsWindow('sources')"
+      @open-sources="openSidebarAddSource"
+      @reveal-source="openSidebarSource"
       @open-settings="openSettingsWindow('general')"
       @quit="requestQuit"
     />
@@ -1362,7 +1377,14 @@ async function run(action: 'sync' | 'update') {
       @click="dismissOverlays"
     />
 
-    <SettingsWindow v-if="state" v-model:open="settingsOpen" :tab="settingsTab" :controller="state" />
+    <SettingsWindow
+      v-if="state"
+      v-model:open="settingsOpen"
+      :tab="settingsTab"
+      :controller="state"
+      :reveal-request="sourceRevealRequest"
+      :add-source-focus-request="addSourceFocusRequest"
+    />
     <FirstRun v-if="state" v-model:open="setupOpen" :controller="state" @cancel="onSetupCancel" />
     <Confirmations v-if="state" v-model:quit-open="quitOpen" :controller="state" @cancelled="updateQuitCancelled" />
     <ResourceActions v-if="state" v-model:open="resourceActionOpen" :controller="state" />
