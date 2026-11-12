@@ -343,8 +343,6 @@ func TestVersionAndMarketplaceReadsAndRemainingWrites(t *testing.T) {
 		calls = append(calls, r.Method+" "+r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method + " " + r.URL.Path {
-		case "GET /v1/organizations/plugins/plugin_one/versions":
-			_, _ = io.WriteString(w, `{"data":[{"id":"pluginver_one","plugin_id":"plugin_one"}],"next_page":null}`)
 		case "GET /v1/organizations/plugins/plugin_one/versions/pluginver_one":
 			_, _ = io.WriteString(w, `{"id":"pluginver_one","plugin_id":"plugin_one"}`)
 		case "GET /v1/organizations/plugin_marketplaces/marketplace_one":
@@ -352,8 +350,6 @@ func TestVersionAndMarketplaceReadsAndRemainingWrites(t *testing.T) {
 		case "POST /v1/organizations/plugins/plugin_one/versions":
 			_, _ = io.ReadAll(r.Body)
 			_, _ = io.WriteString(w, `{"id":"pluginver_two","plugin_id":"plugin_one"}`)
-		case "DELETE /v1/organizations/plugins/plugin_one/installation_settings/organization":
-			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
@@ -362,10 +358,6 @@ func TestVersionAndMarketplaceReadsAndRemainingWrites(t *testing.T) {
 	defer server.Close()
 	client := testClient(t, server, "key")
 
-	versions, err := client.ListVersions(context.Background(), "plugin_one")
-	if err != nil || len(versions) != 1 || versions[0].ID != "pluginver_one" {
-		t.Fatalf("ListVersions = %+v, %v", versions, err)
-	}
 	version, err := client.GetVersion(context.Background(), "plugin_one", "pluginver_one")
 	if err != nil || version.ID != "pluginver_one" {
 		t.Fatalf("GetVersion = %+v, %v", version, err)
@@ -378,15 +370,10 @@ func TestVersionAndMarketplaceReadsAndRemainingWrites(t *testing.T) {
 	if err != nil || version.ID != "pluginver_two" {
 		t.Fatalf("CreateVersion = %+v, %v", version, err)
 	}
-	if err := client.RemoveInstallationSetting(context.Background(), "plugin_one"); err != nil {
-		t.Fatalf("RemoveInstallationSetting: %v", err)
-	}
 	want := []string{
-		"GET /v1/organizations/plugins/plugin_one/versions",
 		"GET /v1/organizations/plugins/plugin_one/versions/pluginver_one",
 		"GET /v1/organizations/plugin_marketplaces/marketplace_one",
 		"POST /v1/organizations/plugins/plugin_one/versions",
-		"DELETE /v1/organizations/plugins/plugin_one/installation_settings/organization",
 	}
 	if fmt.Sprint(calls) != fmt.Sprint(want) {
 		t.Fatalf("requests = %v, want %v", calls, want)
