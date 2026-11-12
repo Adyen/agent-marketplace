@@ -131,6 +131,30 @@ func TestRunRediagnosesAndConfirmsNewSteps(t *testing.T) {
 	}
 }
 
+// spec: doctor-repair-planning/steps-added-by-re-diagnosis-are-confirmed-before-they-run
+func TestRunDoesNotApplyDeclinedStepAddedByRediagnosis(t *testing.T) {
+	firstRuns, secondRuns, confirmations := 0, 0, 0
+	first := Step{Stage: StageDrift, Class: Safe, Action: "sync drift", Code: "harness.drift",
+		Apply: func(context.Context) (bool, error) { firstRuns++; return true, nil }}
+	second := Step{Stage: StageOwnership, Class: Safe, Action: "adopt matches", Code: "ownership.adopt",
+		Apply: func(context.Context) (bool, error) { secondRuns++; return true, nil }}
+	queue := []Diagnosis{{Steps: []Step{first}}, {Steps: []Step{second}}}
+	loop := Loop{
+		Diagnose: func(context.Context) (Diagnosis, error) {
+			diagnosis := queue[0]
+			queue = queue[1:]
+			return diagnosis, nil
+		},
+		Confirm: func([]Step) bool { confirmations++; return confirmations == 1 },
+	}
+	if err := loop.Run(context.Background()); err != nil {
+		t.Fatalf("Loop.Run() error = %v", err)
+	}
+	if firstRuns != 1 || secondRuns != 0 || confirmations != 2 {
+		t.Fatalf("runs = %d/%d, confirmations = %d; want 1/0 and 2", firstRuns, secondRuns, confirmations)
+	}
+}
+
 // spec: doctor-repair-planning/a-recurring-step-stops-repair-at-the-iteration-cap
 func TestRunStopsWhenStepRecursFiveTimes(t *testing.T) {
 	runs := 0

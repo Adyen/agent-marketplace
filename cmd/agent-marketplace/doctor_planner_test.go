@@ -62,6 +62,45 @@ func TestDoctorRepairPlanDeclineLeavesCandidatesUnchanged(t *testing.T) {
 	}
 }
 
+// spec: doctor-repair-planning/declining-the-repair-plan-changes-nothing
+func TestDoctorRepairPlanEmptyAndInvalidAnswersLeaveCandidatesUnchanged(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, tc := range []struct {
+		name, answer string
+	}{
+		{name: "empty line", answer: "\n"},
+		{name: "EOF"},
+		{name: "unexpected answer", answer: "maybe\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoRoot, _ := devinDoctorEnv(t)
+			mcpPath, selection := prepareDevinRepairFixture(t, repoRoot)
+			before, err := os.ReadFile(mcpPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var out bytes.Buffer
+			err = runDoctor(doctorOptions{
+				out:     &out,
+				in:      strings.NewReader(tc.answer),
+				isTTY:   true,
+				repair:  true,
+				probe:   staticProbe(devincli.Probe{Status: devincli.StatusNotInstalled}),
+				resolve: staticResolve(selection),
+			})
+			if err != nil {
+				t.Fatalf("declining repair plan: %v\n%s", err, out.String())
+			}
+			after, err := os.ReadFile(mcpPath)
+			if err != nil || !bytes.Equal(before, after) || !devinRepairPreview(t, repoRoot, selection).Actionable() {
+				t.Fatalf("declined plan changed aggregate bytes: %v\n%s", err, after)
+			}
+		})
+	}
+}
+
 // spec: doctor-repair-planning/off-terminal-repair-without-yes-is-preview-only
 func TestDoctorRepairOffTerminalPlanIsPreviewOnly(t *testing.T) {
 	if isolateCommandTest(t) {
@@ -265,6 +304,59 @@ func TestDoctorRepairRunsDriftBesideCodexCollision(t *testing.T) {
 	}
 }
 
+// spec: doctor-repair-planning/drift-repair-leaves-acquisition-locks-byte-identical
+func TestDoctorRepairRunsDriftBesideSameBasenameDevinCollision(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	repoRoot, origin, _, lockPath := setupReadOnlyExactRegistry(t)
+	source := filepath.Join(repoRoot, "extra")
+	writeFile(t, filepath.Join(source, "mcp.json"), `{"mcpServers":{"collision":{"command":"echo collision"}}}`)
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"),
+		"apiVersion: agent-marketplace/v4\nharnesses: [devin, windsurf]\nsources:\n"+
+			"  locked: {git: file://"+origin+", ref: main}\n"+
+			"  extra: {directory: "+filepath.ToSlash(source)+"}\nresources:\n"+
+			"  locked: [skill/locked-skill]\n  extra: [mcp/collision]\n")
+	lockBefore, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync: %v\n%s", err, output)
+	}
+	windsurfMcp := filepath.Join(repoRoot, ".windsurf", "mcp_config.json")
+	windsurfBefore, err := os.ReadFile(windsurfMcp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, windsurfMcp, strings.Replace(string(windsurfBefore), "echo collision", "echo local drift", 1))
+	devinRoot := filepath.Join(repoRoot, ".devin")
+	store, err := ownership.Open(devinRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(store.StateFile()); err != nil {
+		t.Fatal(err)
+	}
+	devinMcp := filepath.Join(devinRoot, "mcp_config.json")
+	writeFile(t, devinMcp, `{"mcpServers":{"collision":{"command":"echo handwritten"}}}`)
+	checkOutput, checkErr := executeCommand("sync", "--check")
+	if checkErr == nil || !strings.Contains(checkOutput, "out of sync") || !strings.Contains(checkOutput, "unmanaged-key") {
+		t.Fatalf("fixture did not produce a Devin aggregate collision and Windsurf drift: %v\n%s", checkErr, checkOutput)
+	}
+
+	output, _ := executeCommand("doctor", "--repair", "--yes")
+	if !strings.Contains(output, "[safe] sync --locked harness drift") {
+		t.Fatalf("repair plan omitted Windsurf drift beside the Devin collision:\n%s", output)
+	}
+	if after, err := os.ReadFile(windsurfMcp); err != nil || !bytes.Equal(windsurfBefore, after) {
+		t.Fatalf("drift step did not restore Windsurf MCP config: %v\n%s\n%s", err, after, output)
+	}
+	if after, err := os.ReadFile(lockPath); err != nil || !bytes.Equal(lockBefore, after) {
+		t.Fatalf("drift repair changed acquisition lock: %v\n%s", err, after)
+	}
+}
+
 // spec: doctor-repair-planning/repair-exits-one-when-only-blocked-or-human-only-items-remain
 func TestDoctorRepairKeepsOwnershipAdoptionAvailableAfterSyncCheckError(t *testing.T) {
 	if isolateCommandTest(t) {
@@ -375,10 +467,19 @@ func TestDoctorRepairListsResolutionFailureAndBlockedSteps(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	_, _ = devinDoctorEnv(t)
+	repoRoot, _ := devinDoctorEnv(t)
+	mcpPath, _ := prepareDevinRepairFixture(t, repoRoot)
+	aggregateBefore, err := os.ReadFile(mcpPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(repoRoot, ".agents", "lock.yaml")
+	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+		t.Fatalf("fixture unexpectedly has an acquisition lock: %v", err)
+	}
 	want := errors.New("test resolution unavailable")
 	var out bytes.Buffer
-	err := runDoctor(doctorOptions{
+	err = runDoctor(doctorOptions{
 		out:    &out,
 		in:     strings.NewReader(""),
 		repair: true,
@@ -393,6 +494,12 @@ func TestDoctorRepairListsResolutionFailureAndBlockedSteps(t *testing.T) {
 	if !strings.Contains(out.String(), "human-only") || !strings.Contains(out.String(), "blocked by") || !strings.Contains(out.String(), want.Error()) {
 		t.Fatalf("resolution failure was not represented in the plan:\n%s", out.String())
 	}
+	if after, err := os.ReadFile(mcpPath); err != nil || !bytes.Equal(aggregateBefore, after) {
+		t.Fatalf("failed resolution changed aggregate bytes: %v\n%s", err, after)
+	}
+	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+		t.Fatalf("failed resolution created an acquisition lock: %v", err)
+	}
 }
 
 // spec: doctor-repair-planning/policy-change-before-a-confirmed-step-stops-repair
@@ -403,8 +510,30 @@ func TestDoctorRepairRevalidatesPolicyAfterPlanConfirmation(t *testing.T) {
 	repoRoot, _ := devinDoctorEnv(t)
 	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
 	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources: {}\n")
-	mcpPath, selection := prepareDevinRepairFixture(t, repoRoot)
+	selection := prepareDevinRepairFixtureOwned(t, repoRoot)
+	mcpPath := filepath.Join(repoRoot, ".devin", harness.DevinMcpConfigFile)
+	generated, err := os.ReadFile(mcpPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withUnownedMatch := strings.Replace(string(generated), `"mcpServers": {`,
+		`"mcpServers": {"adoptable": {"command": "adoptable-binary"},`, 1)
+	if withUnownedMatch == string(generated) {
+		t.Fatalf("fixture did not add an unowned matching entry:\n%s", generated)
+	}
+	if err := os.WriteFile(mcpPath, []byte(withUnownedMatch), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	selection = append(selection, devinMcpArtifact("adoptable", "adoptable-binary"))
 	before, err := os.ReadFile(mcpPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := ownership.Open(filepath.Join(repoRoot, ".devin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateBefore, err := os.ReadFile(store.StateFile())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -432,6 +561,10 @@ func TestDoctorRepairRevalidatesPolicyAfterPlanConfirmation(t *testing.T) {
 	after, err := os.ReadFile(mcpPath)
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatalf("policy change mutated aggregate bytes: %v\n%s", err, after)
+	}
+	stateAfter, err := os.ReadFile(store.StateFile())
+	if err != nil || !bytes.Equal(stateBefore, stateAfter) {
+		t.Fatalf("policy change mutated ownership-state bytes: %v\n%s", err, stateAfter)
 	}
 }
 

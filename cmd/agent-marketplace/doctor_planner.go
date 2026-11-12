@@ -147,10 +147,10 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 			var checkOutput strings.Builder
 			checkErr := runSyncCheck(ctx, &checkOutput, false)
 			checkText := checkOutput.String()
-			collisionFiles, otherCheckErrors := syncCheckCollisions(checkText)
+			collisionFiles, otherCheckErrors := syncCheckCollisions(checkText, repoRoot)
 			files := syncCheckFiles(checkText)
 			files = slices.DeleteFunc(files, func(file string) bool {
-				return slices.Contains(collisionFiles, filepath.Base(file))
+				return slices.Contains(collisionFiles, filepath.Clean(file))
 			})
 			hasDrift := strings.Contains(checkText, "out of sync")
 			if checkErr != nil && (otherCheckErrors ||
@@ -171,7 +171,7 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 						var checkOutput strings.Builder
 						checkErr := runSyncCheck(ctx, &checkOutput, false)
 						checkText := checkOutput.String()
-						remainingCollisions, otherCheckErrors := syncCheckCollisions(checkText)
+						remainingCollisions, otherCheckErrors := syncCheckCollisions(checkText, repoRoot)
 						if !strings.Contains(checkText, "out of sync") &&
 							!otherCheckErrors &&
 							slices.ContainsFunc(remainingCollisions, func(file string) bool {
@@ -372,17 +372,28 @@ func applyRepairGroup(out io.Writer, opts doctorOptions, targets []materialize.T
 
 func syncCheckFiles(output string) []string {
 	var files []string
+	var outputDir string
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "→ ") {
+			if dir := strings.TrimPrefix(line, "→ "); filepath.IsAbs(dir) {
+				outputDir = dir
+			}
+			continue
+		}
 		if strings.HasPrefix(line, "+ ") || strings.HasPrefix(line, "- ") {
-			files = append(files, strings.TrimSpace(line[2:]))
+			file := strings.TrimSpace(line[2:])
+			if !filepath.IsAbs(file) {
+				file = filepath.Join(outputDir, file)
+			}
+			files = append(files, filepath.Clean(file))
 		}
 	}
 	sort.Strings(files)
 	return slices.Compact(files)
 }
 
-func syncCheckCollisions(output string) ([]string, bool) {
+func syncCheckCollisions(output, repoRoot string) ([]string, bool) {
 	var files []string
 	otherErrors := false
 	for _, line := range strings.Split(output, "\n") {
@@ -407,7 +418,21 @@ func syncCheckCollisions(output string) ([]string, bool) {
 			}
 		}
 		if collisionFile != "" {
-			files = append(files, collisionFile)
+			var collisionPath string
+			for _, quoted := range strings.Split(line, `"`) {
+				if filepath.IsAbs(quoted) && filepath.Base(quoted) == collisionFile {
+					collisionPath = filepath.Clean(quoted)
+					break
+				}
+			}
+			if collisionPath == "" && strings.Contains(line, "Codex") {
+				collisionPath = filepath.Join(repoRoot, ".codex", collisionFile)
+			} else if collisionPath == "" && strings.Contains(line, "Devin") {
+				collisionPath = filepath.Join(repoRoot, ".devin", collisionFile)
+			}
+			if collisionPath != "" {
+				files = append(files, collisionPath)
+			}
 		}
 	}
 	return slices.Compact(files), otherErrors
