@@ -222,16 +222,99 @@ func TestReconcileAdoptsOnlyPluginsCreatedByConfiguredAPIKey(t *testing.T) {
 	}
 }
 
+// spec: claude-enterprise-delivery/a-foreign-plugin-with-the-same-name-is-never-written-to
+func TestReconcileConflictsOnPluginNameCollisionAcrossResources(t *testing.T) {
+	fixture := newDeliveryFixture(t, "my_skill", "first resource")
+	fixture.addResource(t, "my-skill", "second resource", "commit-2", "publication-2")
+	api := newPluginAPIFake(t, []string{"am-registry-skill-my-skill"})
+	delivery := fixture.reconciler(api, ReconcileTarget{APIKeyID: testAPIKeyID})
+
+	result, err := delivery.Reconcile(context.Background())
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	collision, err := fixture.state.GetClaudeDeliveryPlugin(context.Background(), fixture.coordinate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := fixture.state.GetClaudeDeliveryPlugin(context.Background(), store.ResourceCoordinate{
+		Marketplace: fixture.coordinate.Marketplace, Registry: fixture.coordinate.Registry,
+		Kind: fixture.coordinate.Kind, Name: "my-skill",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Published != 1 || result.Conflicts != 1 ||
+		collision.State != store.ClaudeDeliveryStateConflict ||
+		collision.LastErrorCode != "plugin.name-collision" ||
+		first.State != store.ClaudeDeliveryStatePublished {
+		t.Fatalf("colliding delivery rows = first %+v, second %+v, result %+v",
+			first, collision, result)
+	}
+	if api.createCount() != 1 || api.versionCount() != 0 || api.settingCount() != 1 {
+		t.Fatalf("colliding resources wrote creates=%d versions=%d settings=%d",
+			api.createCount(), api.versionCount(), api.settingCount())
+	}
+}
+
+// spec: claude-enterprise-delivery/a-revocation-withdraws-a-mirrored-resource
+func TestReconcileDoesNotRetireRowsFromAnotherSourceMarketplace(t *testing.T) {
+	fixture := newDeliveryFixture(t, "guide", "guide text")
+	otherCoordinate := store.ResourceCoordinate{
+		Marketplace: "another-source", Registry: "registry", Kind: "skill", Name: "other",
+	}
+	other := store.ClaudeDeliveryPlugin{
+		Coordinate: otherCoordinate, PluginName: "am-registry-skill-other",
+		PluginID: "plugin_other_source", TargetMarketplaceID: testMarketID,
+		PublishedArchiveDigest: "sha256:old", PublishedContentDigest: "sha256:old-content",
+		PublishedVersionID: "version_old", LatestVersionID: "version_old",
+		ServedVersionID: "version_old", InstallationPreference: "available",
+		State: store.ClaudeDeliveryStatePublished,
+	}
+	if err := fixture.state.UpsertClaudeDeliveryPublished(context.Background(), other); err != nil {
+		t.Fatal(err)
+	}
+	before, err := fixture.state.GetClaudeDeliveryPlugin(context.Background(), otherCoordinate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := newPluginAPIFake(t, []string{"am-registry-skill-guide"})
+	delivery := fixture.reconciler(api, ReconcileTarget{APIKeyID: testAPIKeyID})
+
+	if _, err := delivery.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	after, err := fixture.state.GetClaudeDeliveryPlugin(context.Background(), otherCoordinate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("out-of-scope delivery state changed: before %+v, after %+v", before, after)
+	}
+	if api.settingCount() != 1 {
+		t.Fatalf("installation setting requests = %d, want only the desired plugin's write", api.settingCount())
+	}
+}
+
+// spec: claude-enterprise-delivery/a-foreign-plugin-with-the-same-name-is-never-written-to
 func TestReconcileHandlesPluginNameTakenRaceWithOwnershipProof(t *testing.T) {
 	for _, test := range []struct {
-		name       string
-		actor      *claudeplugins.Actor
-		wantState  store.ClaudeDeliveryState
-		wantWrites int
+		name          string
+		actor         *claudeplugins.Actor
+		marketplaceID string
+		wantState     store.ClaudeDeliveryState
+		wantWrites    int
+		wantErrorCode string
 	}{
 		{
 			name: "matching API key", actor: &claudeplugins.Actor{Type: "api_actor", APIKeyID: testAPIKeyID},
 			wantState: store.ClaudeDeliveryStatePublished, wantWrites: 2,
+		},
+		{
+			name:          "matching API key in another marketplace",
+			actor:         &claudeplugins.Actor{Type: "api_actor", APIKeyID: testAPIKeyID},
+			marketplaceID: "marketplace_other", wantState: store.ClaudeDeliveryStateConflict,
+			wantErrorCode: "plugin.foreign",
 		},
 		{
 			name: "foreign API key", actor: &claudeplugins.Actor{Type: "api_actor", APIKeyID: "apikey_foreign456"},
@@ -246,7 +329,11 @@ func TestReconcileHandlesPluginNameTakenRaceWithOwnershipProof(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newDeliveryFixture(t, "guide", "guide text")
 			api := newPluginAPIFake(t, []string{"am-registry-skill-guide"})
-			api.addPlugin(pluginRecord("am-registry-skill-guide", testPluginID, test.actor))
+			plugin := pluginRecord("am-registry-skill-guide", testPluginID, test.actor)
+			if test.marketplaceID != "" {
+				plugin.MarketplaceID = test.marketplaceID
+			}
+			api.addPlugin(plugin)
 			api.hideInventory = true
 			api.createNameTaken = true
 			delivery := fixture.reconciler(api, ReconcileTarget{APIKeyID: testAPIKeyID})
@@ -254,7 +341,8 @@ func TestReconcileHandlesPluginNameTakenRaceWithOwnershipProof(t *testing.T) {
 				t.Fatalf("Reconcile: %v", err)
 			}
 			row, err := fixture.state.GetClaudeDeliveryPlugin(context.Background(), fixture.coordinate)
-			if err != nil || row.State != test.wantState {
+			if err != nil || row.State != test.wantState ||
+				(test.wantErrorCode != "" && row.LastErrorCode != test.wantErrorCode) {
 				t.Fatalf("delivery row = %+v, %v", row, err)
 			}
 			if api.createCount() != 1 || api.writeCount() != 1+test.wantWrites {
@@ -617,7 +705,8 @@ func (f *deliveryFixture) reconciler(api *pluginAPIFake, target ReconcileTarget,
 	}
 	return NewReconciler(ReconcileOptions{
 		Metadata: f.meta, Blobs: f.blobs, Client: client,
-		RegistryIDs: []store.RegistryID{"registry"}, Target: target,
+		SourceMarketplaceID: f.coordinate.Marketplace,
+		RegistryIDs:         []store.RegistryID{"registry"}, Target: target,
 		Limiter: limiter, Now: func() time.Time {
 			return time.Date(2026, time.November, 11, 12, 0, 0, 0, time.UTC)
 		},
