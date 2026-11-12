@@ -120,41 +120,31 @@ func (v *VerifiedRevisions) record(entry config.MarketplaceEntry, pin config.Mar
 	if v == nil {
 		return
 	}
-	key, ok := verifiedRevisionKeyFor(entry, pin, string(rev.ContentDigest))
-	if !ok {
-		return
-	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.revs == nil {
 		v.revs = make(map[verifiedRevisionKey]store.AssessedResourceRevision)
 	}
-	v.revs[key] = rev
+	v.revs[verifiedRevisionKeyFor(entry, pin, string(rev.ContentDigest))] = rev
 }
 
 func (v *VerifiedRevisions) lookup(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) (store.AssessedResourceRevision, bool) {
 	if v == nil {
 		return store.AssessedResourceRevision{}, false
 	}
-	key, ok := verifiedRevisionKeyFor(entry, pin, pin.Digest)
-	if !ok {
-		return store.AssessedResourceRevision{}, false
-	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	rev, ok := v.revs[key]
+	rev, ok := v.revs[verifiedRevisionKeyFor(entry, pin, pin.Digest)]
 	return rev, ok
 }
 
-func verifiedRevisionKeyFor(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, digest string) (verifiedRevisionKey, bool) {
-	canonical, err := canonicalMarketplaceEntry(entry)
-	if err != nil {
-		return verifiedRevisionKey{}, false
-	}
+// verifiedRevisionKeyFor builds the session key from an already-canonical
+// Marketplace entry; every call site canonicalizes the entry first.
+func verifiedRevisionKeyFor(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, digest string) verifiedRevisionKey {
 	return verifiedRevisionKey{
-		url: canonical.URL, instanceID: canonical.InstanceID, registryID: pin.RegistryID,
+		url: entry.URL, instanceID: entry.InstanceID, registryID: pin.RegistryID,
 		kind: pin.Kind, name: pin.Name, digest: digest,
-	}, true
+	}
 }
 
 // NewResolver creates a Marketplace resolver with a default cache.

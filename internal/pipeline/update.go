@@ -188,14 +188,7 @@ func Update(ctx context.Context, opts UpdateOptions) (result *UpdateResult, retE
 	}
 	verifiedMarketplaceRevisions := &marketplace.VerifiedRevisions{}
 	opts.verifiedMarketplaceRevisions = verifiedMarketplaceRevisions
-	var previousVerified *marketplace.VerifiedRevisions
-	if opts.MarketplaceResolver != nil {
-		previousVerified = opts.MarketplaceResolver.Verified
-	}
 	plans, err := planMarketplaceUpdates(ctx, opts, &ec)
-	if opts.MarketplaceResolver != nil {
-		opts.MarketplaceResolver.Verified = previousVerified
-	}
 	if err != nil {
 		slog.Error("update aborted while preparing Marketplace pins", "error", err)
 		return nil, err
@@ -349,10 +342,11 @@ func planMarketplaceUpdates(ctx context.Context, opts UpdateOptions, ec *config.
 	if resolverMP == nil {
 		resolverMP = marketplace.NewResolver()
 		resolverMP.AllowedRegistries = ec.Allowed
+	} else {
+		previousVerified := resolverMP.Verified
+		defer func() { resolverMP.Verified = previousVerified }()
 	}
-	if opts.verifiedMarketplaceRevisions != nil {
-		resolverMP.Verified = opts.verifiedMarketplaceRevisions
-	}
+	resolverMP.Verified = opts.verifiedMarketplaceRevisions
 	targets := hccTargetsFromStrings(ec.TargetHarnesses)
 	plans := make([]marketplaceUpdatePlan, 0, len(ec.Merged.Marketplaces))
 	collectionLeaves := make(map[string]bool)
