@@ -11,4 +11,4 @@
 
 ## 3. Archive
 
-- [ ] 3.1 Run `openspec archive exact-git-root-snapshots --yes`
+- [x] 3.1 Run `openspec archive exact-git-root-snapshots --yes`
