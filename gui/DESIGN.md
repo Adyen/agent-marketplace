@@ -29,9 +29,9 @@ accessible name, or its keyboard path.
    for chrome.
 4. **Mono for identifiers.** Resource names, kinds, scopes, registries, paths,
    counts, and keyboard hints use the mono face. Prose and controls use sans.
-5. **Every action is a visible control.** Keyboard shortcuts speed up actions
-   but never replace a visible, named button (`gui-shell` accessibility
-   requirement).
+5. **Actions have visible controls.** Keyboard shortcuts speed up actions
+   but do not replace visible, named controls. Refresh is the one exception:
+   it uses `⌘R` without a visible button.
 
 ## Tokens
 
@@ -110,19 +110,19 @@ changes live.
 
 ```
 ┌──────────────┬──────────────────────────────────────┬─────────────────────┐
-│ ◧            │ Resources  user scope [⌕ ⌘K] [⟳] [Update] [Sync ~2] ◨ │
+│ ◧            │ Resources  user scope [⌕ ⌘K] [Update] [Sync ~2] ◨       │
 │              │                                      │ Details             │
 │ ▤ Resources  │ ▾ PENDING SYNC                     2 │                     │
 │ ◷ Pending  2 │  [*] skill  auth-preflight   reg  U  │ Kind     skill      │
 │ ⌕ Search     │  [ ] mcp    docs-search      reg  U  │ Name     auth-pre…  │
-│              │ ▾ INSTALLED                       14 │ Targets  Claude · … │
-│ GROUPS       │  [*] skill  oncall-triage    reg  U  │ Status   enabled    │
-│  Pending   2 │  …                                   │ [Remove] [Open]     │
-│  Installed14 │                                      │                     │
+│              │ ▾ INSTALLED                       14 │ Registry reg        │
+│ GROUPS       │  [*] skill  oncall-triage    reg  U  │ Scope    user       │
+│  Pending   2 │  …                                   │ Status   enabled    │
+│  Installed14 │                                      │ [Remove] [Open]     │
 │ SOURCES   ＋ │                                      │ SESSION             │
 │  ▢ github…   │                                      │ DIAGNOSTICS  0      │
 │  ▢ ~/code/…  │                                      │                     │
-│              │ ~ 2 pending sync   ↑↓ move · space · s sync              │
+│              │ ~ 2 pending sync   ↑↓ move · ⏎ open · s sync             │
 │ ◉ Claude · 3 ⚙│                                      │                     │
 └──────────────┴──────────────────────────────────────┴─────────────────────┘
   left sidebar           main column                       right inspector
@@ -146,8 +146,9 @@ alone separates it from the main column. It never folds.
 - **Primary navigation**: icon rows that resemble Codex's "New thread",
   "Automations", and "Skills" rows.
   - *Resources* shows all groups.
-  - *Pending sync* scrolls to that group and selects it. Its count is shown on
-    the right in mono `--gui-ink-3`.
+  - *Pending sync* appears only when its count is above zero. It scrolls to
+    that group and selects it; the count appears on the right in mono
+    `--gui-ink-3`.
   - *Search* has a `⌘K` hint and opens the search field.
 - **Groups**: a caps label, then one row per session group with its row count.
   Selecting a row scrolls the main list to that group's header and moves
@@ -163,8 +164,8 @@ alone separates it from the main column. It never folds.
   example `Claude · Codex +1`), a newer-version notice when there is one (a
   green dot and "v4.3 available"), and a ⚙ icon button ("Settings").
 
-The active navigation row uses the `--gui-layer` overlay with 8 px radius, as
-in Codex's selected-thread row.
+The active Resources or Diagnostics row uses `aria-current="page"` and the
+`--gui-layer` overlay with 8 px radius, as in Codex's selected-thread row.
 
 ### Main column
 
@@ -177,13 +178,14 @@ in Codex's selected-thread row.
        into the search input. The local match status and a "Clear search" ×
        sit inside the pill.
     2. A **View** icon button (stacked rows), which opens the View menu.
-    3. A Refresh icon button.
-    4. An **Update** button, a separate visible secondary button next to Sync,
+    3. An **Update** button, a separate visible secondary button next to Sync,
        with an available-update count badge when updates exist.
-    5. A **Sync** button, styled like Codex's "Commit" button, with a sync
+    4. A **Sync** button, styled like Codex's "Commit" button, with a sync
        icon and a pending badge (`~2`) in mono.
-    6. A "Set up" button, shown only during first run.
-    7. A divider, then a "Toggle inspector" icon button (◨).
+    5. A "Set up" button, shown only during first run.
+    6. A divider, then a "Toggle inspector" icon button (◨).
+- Refresh is the only action without a visible control. `⌘R` refreshes the
+  session; window focus and successful mutations also reload it.
 - **Banners** sit under the toolbar for errors, the no-harness notice, and the
   latest-version notice. A banner is a 32 px row on `--gui-s0100` with an icon
   and text. Operation progress is a toast, not a banner (see Notifications).
@@ -207,14 +209,15 @@ in Codex's selected-thread row.
   Kind or Source is not the primary axis). A choice applies at once and is
   kept in the webview's local storage, with no request to the local API.
   Escape closes it and returns focus to the View button; an outside press closes it without moving focus.
-  A Then by section nests one level under its parent, indented, and only
-  leaf sections list resources. Needs attention pins to the top outside
-  Status grouping.
+  A Then by section nests one level under its parent, indented, and only leaf
+  sections list resources. Parent headings contain their child sections so
+  sticky status headings stay within the whole group. Needs attention pins to
+  the top outside Status grouping.
 - **Status bar** (32 px, bottom), styled after the design's `.activity` row
   and Codex's composer footer ("Local ▾ … main"). On the left, the sync status
   in mono, for example `~ 2 pending sync`, which changes to
   `✓ in sync` in `--gui-signal-ink`. On the right, keyboard hints:
-  `↑↓ move · space select · ⏎ open · s sync`.
+  `↑↓ move · ⏎ open · s sync`.
 - **Toasts** stack in the bottom-right corner of the main column, above the
   status bar, 16 px from the edge. Each is a card on the View-menu surface
   (`--gui-canvas`, 1 px `--gui-line`, 12 px radius, the shared shadow) with
@@ -238,7 +241,7 @@ in Codex's selected-thread row.
 The inspector uses the `--gui-s0100` surface and has its own 44 px header with
 the title "Details". It holds only the selected resource: the caps eyebrow
 (kind), the display name in mono, the description in `--gui-ink-2`, and a
-`dl` with Registry, Scope, Status, and Harnesses. Session drift, Marketplace
+`dl` with Registry, Scope, and Status. Session drift, Marketplace
 discovery, and diagnostics moved to the Diagnostics view (see the fourth
 review). The empty state, "Select a resource to inspect it.", is shown
 centered in `--gui-ink-3`.
@@ -287,7 +290,8 @@ All modals follow the Codex "Commit your changes" pattern:
 - Width 440 px; 720 px for First run; `min(72rem, 100vw - 2rem)` for Resource
   inspection.
 - 20 px radius, `--gui-canvas` background, a large soft shadow, and a 24 px
-  inner padding. The scrim is `rgb(0 0 0 / .32)` with a 2 px backdrop blur.
+  inner padding. The scrim has 0.2 alpha in light mode and 0.4 in dark mode,
+  with no backdrop blur.
 - Header: a 36 px icon tile (`--gui-s0100`, radius 10) at top left, a close ×
   icon button at top right, and the title (20 px / 600) below the tile.
 - Body: label/value rows (label `--gui-ink`, 500; value right-aligned mono
@@ -317,14 +321,14 @@ Per modal:
 The existing bindings stay: ↑/↓ move the selection, Space selects, Enter
 activates, and Escape cancels the search.
 
-New bindings, each of which mirrors a visible control:
+New bindings, each of which mirrors a visible control except refresh:
 
 | Keys | Action | Control |
 |---|---|---|
 | ⌘K or `/` | Open the search field | Search pill |
 | ⌘⌥B | Toggle the inspector | Toggle inspector |
 | ⌘, | Open Settings | ⚙ Settings |
-| ⌘R | Refresh | Refresh |
+| ⌘R | Refresh | None; keyboard-only |
 | `v` | Open the View menu | View |
 | `s` (focus on the list) | Sync | Sync |
 
@@ -335,10 +339,12 @@ open.
 
 - Keep every existing accessible name, role, and `id` on the controls that the
   Vitest and Playwright suites select (`Search`, `Search resources`,
-  `Clear search`, `Refresh`, `Sync`, `Update`, `Set up`, `Sources`,
+  `Clear search`, `Sync`, `Update`, `Set up`, `Sources`,
   `Settings`, `Quit`, `Open resource`, the group toggles, the `listbox` and
   `option` rows, and the regions "Resources", "Detail", "Notifications",
   "Marketplace discovery health", and "Diagnostics").
+- Refresh is the exception to visible controls. `⌘R` remains keyboard
+  reachable without a toolbar button.
 - **Quit** stays a visible control: an icon button at the bottom of the
   sidebar footer, also bound to ⌘Q through the native menu.
 - The suites reference these classes: `workspace__row--selected`,
@@ -457,7 +463,7 @@ here conflicts with an earlier section, this section wins.
   inspector and push the rest out of view.
 - *Rule — resource header*: a caps eyebrow `kind · registry`, then the
   display name as the title (mono 14 px / 500), then the description. The
-  `dl` keeps Registry, Scope, Status, and Harnesses; Status leads with a 6 px
+  `dl` keeps Registry, Scope, and Status; Status leads with a 6 px
   dot (signal when enabled or installed, warning otherwise).
 - *Rule — session*: each line is a key/value row with the key in
   `--gui-ink-2` and the value in mono, keeping the text "Drift: ready". Drift
@@ -468,11 +474,7 @@ here conflicts with an earlier section, this section wins.
   "Results are current", cached results say they are from an earlier check,
   and a cache miss says "Not checked yet". Partial results say that only part
   of the catalog is shown and invite the user to search.
-- *Rule — diagnostics*: the caps label carries the count. Each diagnostic is
-  a disclosure row: the severity icon and the message clamped to two lines
-  in mono 11.5 px, since the messages are tool output with paths. Selecting
-  the row (click, Enter, or Space; it is a `button` with `aria-expanded`)
-  shows the whole message. The full text stays in the DOM when clamped.
+- Diagnostics appear in the Diagnostics view, not in the inspector.
 - The empty state shows the `file` icon above "Select a resource to inspect
   it."
 - When the selection changes, the resource section fades in and rises 2 px
@@ -539,14 +541,15 @@ wins.
   inspector. Rows are keyed by code, so rows that share a code collide:
   Vue reuses one element for all of them, and expanding one expands all.
   Every row starts with `warning:`, which repeats what the icon says.
-- *Rule*: diagnostics are grouped by severity and code. Each group is one
-  disclosure row: the severity icon, the first message clamped to two lines,
-  and a `×N` tag when the group has more than one diagnostic. Expanding the
-  row (it stays a `button` with `aria-expanded`) lists every message in the
-  group, one per line, in mono 11.5 px `--gui-ink-2`; a group of one instead
-  unclamps its message in place, so no text appears twice. Groups are ordered
-  errors, then warnings, then info, and by first appearance within a
-  severity. The section's caps count stays the total number of diagnostics.
+- *Rule*: diagnostics are grouped by severity and code. Each group shows its
+  severity icon, first message, and a `×N` tag when multiple diagnostics share
+  it. Only multi-message groups have a separately named expand button with
+  `aria-expanded`; expanding lists every message in mono 11.5 px
+  `--gui-ink-2`. Message text stays outside buttons and can be selected.
+  "Copy diagnostics" copies each input diagnostic in order as
+  `<severity> <code>: <message>` lines. Groups are ordered errors, then
+  warnings, then info, and by first appearance within a severity. The
+  section's caps count stays the total number of diagnostics.
 - The `warning:` prefix is no longer visible. The severity word stays in the
   row as visually hidden text, so assistive technology still announces it.
 
@@ -717,11 +720,17 @@ earlier section, this section wins.
 
 - A "Diagnostics" row in the sidebar sits after Pending sync. Its count is
   tinted danger when any diagnostic is an error, warning when any is a
-  warning. The active view row carries `aria-current="page"`.
+  warning. The active Resources or Diagnostics row carries
+  `aria-current="page"` and the active background style.
 - Selecting it replaces the main column with the Diagnostics view: a Session
   card (drift), the Marketplace discovery region when discovery is enabled, and
-  the grouped diagnostics list. Messages wrap rather than truncate. An empty
-  list reads "No problems found."
+  the grouped diagnostics list. Messages wrap and remain selectable. A
+  separately named expand button appears only for groups with multiple
+  messages and works with Enter and Space. "Copy diagnostics" copies all
+  messages in input order as `<severity> <code>: <message>` lines, preferring
+  `window.runtime.ClipboardSetText` when available and otherwise using
+  `navigator.clipboard.writeText`. The button shows "Copied" only after a
+  successful write. An empty list reads "No problems found."
 - Resources, a group, a search, or the empty-state action returns to the
   resource list. The toolbar title follows the view. List shortcuts are inert
   while Diagnostics is shown.

@@ -198,6 +198,18 @@ async function openDiagnostics(wrapper: { get(selector: string): { trigger(event
   await tick()
 }
 
+function stubBrowserClipboard(writeText: (text: string) => Promise<void>) {
+  const descriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  return () => {
+    if (descriptor == null) {
+      Reflect.deleteProperty(navigator, 'clipboard')
+    } else {
+      Object.defineProperty(navigator, 'clipboard', descriptor)
+    }
+  }
+}
+
 describe('WorkspaceView', () => {
   it('groups rows by status with registry-qualified names, scope, and harness badges', async () => {
     const { client, push } = fakeClient()
@@ -318,7 +330,7 @@ describe('WorkspaceView', () => {
     expect(wrapper.find('button[aria-label="Show Stale group"] .gui-dot').exists()).toBe(false)
   })
 
-  it('toggles a diagnostic row between clamped and expanded on activation', async () => {
+  it('keeps a single diagnostic message selectable without a disclosure button', async () => {
     const { client, push } = fakeClient()
     const { wrapper } = mountWorkspace(client)
     const message = 'Long diagnostic message with a full tool path'
@@ -331,13 +343,9 @@ describe('WorkspaceView', () => {
     await tick()
 
     await openDiagnostics(wrapper)
-    const toggle = wrapper.get('ul[aria-label="Diagnostics"] button')
-    expect(toggle.attributes('aria-expanded')).toBe('false')
-    expect(toggle.text()).toContain(message)
-    await toggle.trigger('click')
-    expect(toggle.attributes('aria-expanded')).toBe('true')
-    await toggle.trigger('click')
-    expect(toggle.attributes('aria-expanded')).toBe('false')
+    const item = wrapper.get('ul[aria-label="Diagnostics"] li')
+    expect(item.get('.gui-diagnostics__message').text()).toContain(message)
+    expect(item.find('button').exists()).toBe(false)
   })
 
   it('collapses diagnostics that share a code into one disclosure row and expands each group on its own', async () => {
@@ -362,19 +370,160 @@ describe('WorkspaceView', () => {
     await openDiagnostics(wrapper)
     const list = wrapper.get('ul[aria-label="Diagnostics"]')
     const toggles = list.findAll('button')
-    expect(toggles).toHaveLength(2)
-    expect(toggles[0].text()).toContain('first subagent')
+    expect(toggles).toHaveLength(1)
+    expect(toggles[0].attributes('aria-label')).toBe('Expand warning diagnostics for subagent.devin.model-default')
+    expect(toggles[0].attributes('aria-expanded')).toBe('false')
+    expect(list.get('.gui-diagnostics__message').text()).toContain('first subagent')
     expect(toggles[0].text()).toContain('×3')
+    expect(toggles[0].text()).not.toContain('first subagent')
     expect(list.text()).not.toContain('second subagent')
 
     await toggles[0].trigger('click')
     expect(toggles[0].attributes('aria-expanded')).toBe('true')
-    expect(toggles[1].attributes('aria-expanded')).toBe('false')
+    expect(toggles[0].attributes('aria-label')).toBe('Collapse warning diagnostics for subagent.devin.model-default')
     expect(list.findAll('.gui-diagnostics__messages li').map((message) => message.text())).toEqual([
       'first subagent',
       'second subagent',
       'third subagent',
     ])
+    await toggles[0].trigger('click')
+    expect(toggles[0].attributes('aria-expanded')).toBe('false')
+  })
+
+  it('copies every diagnostic in input order and prefers the native clipboard', async () => {
+    const diagnostics = [
+      { severity: 'warning' as const, category: 'catalog', code: 'repeat', message: 'first grouped' },
+      { severity: 'error' as const, category: 'config', code: 'failure', message: 'broken config' },
+      { severity: 'warning' as const, category: 'catalog', code: 'repeat', message: 'second grouped' },
+    ]
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('a')], { diagnostics }) }))
+    await tick()
+
+    const browserWrite = vi.fn(async (_text: string) => {})
+    const restoreClipboard = stubBrowserClipboard(browserWrite)
+    const originalRuntime = window.runtime
+    const nativeWrite = vi.fn(async (_text: string) => true)
+    window.runtime = { ClipboardSetText: nativeWrite } as NonNullable<typeof window.runtime>
+    try {
+      await openDiagnostics(wrapper)
+      const copy = wrapper.get('button[aria-label="Copy diagnostics"]')
+      await copy.trigger('click')
+      await tick()
+
+      expect(nativeWrite).toHaveBeenCalledWith(
+        'warning repeat: first grouped\nerror failure: broken config\nwarning repeat: second grouped',
+      )
+      expect(browserWrite).not.toHaveBeenCalled()
+      expect(copy.text()).toContain('Copied')
+
+      push(event({
+        sequence: 2,
+        payload: snapshot([row('a')], {
+          diagnostics: [{ severity: 'warning', category: 'catalog', code: 'changed', message: 'new diagnostic' }],
+        }),
+      }))
+      await tick()
+      expect(copy.text()).toContain('Copy diagnostics')
+    } finally {
+      window.runtime = originalRuntime
+      restoreClipboard()
+    }
+  })
+
+  it('uses the browser clipboard when the native bridge is absent', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({
+      sequence: 1,
+      payload: snapshot([row('a')], {
+        diagnostics: [{ severity: 'warning', category: 'catalog', code: 'note', message: 'browser copy' }],
+      }),
+    }))
+    await tick()
+
+    const originalRuntime = window.runtime
+    const browserWrite = vi.fn(async (_text: string) => {})
+    const restoreClipboard = stubBrowserClipboard(browserWrite)
+    window.runtime = undefined
+    try {
+      await openDiagnostics(wrapper)
+      const copy = wrapper.get('button[aria-label="Copy diagnostics"]')
+      await copy.trigger('click')
+      await tick()
+
+      expect(browserWrite).toHaveBeenCalledWith('warning note: browser copy')
+      expect(copy.text()).toContain('Copied')
+    } finally {
+      window.runtime = originalRuntime
+      restoreClipboard()
+    }
+  })
+
+  it('keeps copy feedback hidden when either clipboard write fails', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({
+      sequence: 1,
+      payload: snapshot([row('a')], {
+        diagnostics: [{ severity: 'warning', category: 'catalog', code: 'retry', message: 'retry copy' }],
+      }),
+    }))
+    await tick()
+
+    const originalRuntime = window.runtime
+    const browserWrite = vi.fn(async (_text: string) => { throw new Error('browser clipboard denied') })
+    const restoreClipboard = stubBrowserClipboard(browserWrite)
+    const nativeWrite = vi.fn(async (_text: string) => false)
+    window.runtime = { ClipboardSetText: nativeWrite } as NonNullable<typeof window.runtime>
+    try {
+      await openDiagnostics(wrapper)
+      const copy = wrapper.get('button[aria-label="Copy diagnostics"]')
+      await copy.trigger('click')
+      await tick()
+      expect(nativeWrite).toHaveBeenCalledWith('warning retry: retry copy')
+      expect(browserWrite).not.toHaveBeenCalled()
+      expect(copy.text()).toContain('Copy diagnostics')
+      expect(copy.text()).not.toContain('Copied')
+
+      window.runtime = undefined
+      await copy.trigger('click')
+      await tick()
+      expect(browserWrite).toHaveBeenCalledWith('warning retry: retry copy')
+      expect(copy.text()).toContain('Copy diagnostics')
+      expect(copy.text()).not.toContain('Copied')
+    } finally {
+      window.runtime = originalRuntime
+      restoreClipboard()
+    }
+  })
+
+  it('refreshes with Command-R without a visible button and ignores the shortcut while busy', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('a')]) }))
+    await tick()
+
+    expect(wrapper.find('button[aria-label="Refresh"]').exists()).toBe(false)
+    const snapshotMock = client.snapshot as ReturnType<typeof vi.fn>
+    snapshotMock.mockClear()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', code: 'KeyR', metaKey: true, bubbles: true }))
+    await tick()
+    expect(snapshotMock).toHaveBeenCalledTimes(1)
+
+    const operation: OperationRef = { id: 9, kind: 'sync' }
+    push(event({
+      sequence: 2,
+      generation: 2,
+      operation,
+      payload: snapshot([row('a')], { operation }),
+    }))
+    await tick()
+    snapshotMock.mockClear()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', code: 'KeyR', metaKey: true, bubbles: true }))
+    await tick()
+    expect(snapshotMock).not.toHaveBeenCalled()
   })
 
   it('rejects stale generations and retains the accepted list until final', async () => {
@@ -1106,7 +1255,8 @@ describe('WorkspaceView', () => {
     push(event({ sequence: 1, payload: snapshot([row('a')]) }))
     await tick()
 
-    for (const name of ['Refresh', 'Sync', 'Update']) {
+    expect(wrapper.find('button[aria-label="Refresh"]').exists()).toBe(false)
+    for (const name of ['Sync', 'Update']) {
       const button = wrapper.find(`button[aria-label="${name}"]`)
       expect(button.exists()).toBe(true)
       expect(button.element.tagName).toBe('BUTTON')
@@ -1120,6 +1270,45 @@ describe('WorkspaceView', () => {
     expect(option.exists()).toBe(true)
     await option.trigger('keydown', { key: 'Enter' })
     expect(option.attributes('aria-selected')).toBe('true')
+  })
+})
+
+describe('workspace chrome', () => {
+  it('keeps the other status hints and limits inspector metadata', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('a')]) }))
+    await tick()
+    await wrapper.get('[role="option"]').trigger('click')
+    await tick()
+
+    const hints = wrapper.get('.gui-statusbar__hints').text().toLowerCase()
+    expect(hints).not.toContain('space')
+    expect(hints).toContain('move')
+    expect(hints).toContain('open')
+    expect(hints).toContain('sync')
+    const detail = wrapper.get('aside[aria-label="Detail"] dl')
+    expect(detail.findAll('dt').map((term) => term.text())).toEqual(['Registry', 'Scope', 'Status'])
+    expect(detail.text()).not.toContain('Harnesses')
+  })
+
+  it('hides Pending sync at zero and shows its count when positive', async () => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([row('a')]) }))
+    await tick()
+    expect(wrapper.find('button[aria-label="Pending sync group"]').exists()).toBe(false)
+
+    push(event({
+      sequence: 2,
+      payload: snapshot([
+        row('pending-a', { group: 'pending', status: 'pending sync' }),
+        row('pending-b', { group: 'pending', status: 'pending sync' }),
+      ]),
+    }))
+    await tick()
+
+    expect(wrapper.get('button[aria-label="Pending sync group"] .gui-nav-row__count').text()).toBe('2')
   })
 })
 

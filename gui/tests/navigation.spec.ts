@@ -73,9 +73,9 @@ test('built GUI preserves a selected resource through a real directory refresh a
     await page.getByRole('button', { name: 'Show diagnostics' }).click()
     await expect(page.locator('.gui-diagnostics-view')).toContainText('Drift: ready', { timeout: 60_000 })
     await page.getByRole('button', { name: 'Show all groups' }).click()
-    await expect(refresh).toBeEnabled({ timeout: 60_000 })
+    await expect(refresh).toHaveCount(0)
     await expect.poll(() => listRoot.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true)
-    actions.push('Startup ready: 60 resources, Detail Drift: ready, Refresh enabled')
+    actions.push('Startup ready: 60 resources, Detail Drift: ready, refresh has no visible control')
 
     const selected = page.getByRole('option', { name: /skill-030/ })
     await expect(selected).toBeVisible()
@@ -96,8 +96,6 @@ test('built GUI preserves a selected resource through a real directory refresh a
     }
     const selectedID = selectedDOMID.slice('row-'.length)
     const scrollTopBefore = await listRoot.evaluate((element) => element.scrollTop)
-    await tabTo(page, refresh, 'Refresh button', actions, undefined, 'Shift+Tab')
-    await expect(refresh).toBeEnabled()
     await listRoot.evaluate((element, scrollTop) => {
       element.scrollTop = scrollTop
     }, scrollTopBefore)
@@ -114,7 +112,7 @@ test('built GUI preserves a selected resource through a real directory refresh a
     expect(viewportBefore.bottom).toBeLessThanOrEqual(viewportBefore.height)
     const topBeforeRefresh = await relativeTop(selected)
     const scrollTopBeforeRefresh = await listRoot.evaluate((element) => element.scrollTop)
-    actions.push(`Refresh setup retained skill-030 at ${topBeforeRefresh.toFixed(1)}px with scrollTop ${scrollTopBeforeRefresh}`)
+    actions.push(`Command-R setup retained skill-030 at ${topBeforeRefresh.toFixed(1)}px with scrollTop ${scrollTopBeforeRefresh}`)
 
     const earlierName = 'skill-000-new'
     await mkdir(join(sourceDir, earlierName), { recursive: true })
@@ -123,18 +121,18 @@ test('built GUI preserves a selected resource through a real directory refresh a
       `---\nname: ${earlierName}\ndescription: Added before the selected navigation row\n---\n# ${earlierName}\n`,
     )
     await expect(page.getByRole('option')).toHaveCount(60)
-    actions.push('After writing the private fixture file, the visible list remains at 60 until Refresh')
+    actions.push('After writing the private fixture file, the visible list remains at 60 until Command-R')
     const refreshResponse = page.waitForResponse((response) =>
       response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/snapshot',
     )
-    actions.push('Enter: request real directory refresh')
-    await page.keyboard.press('Enter')
+    actions.push('Command-R: request real directory refresh')
+    await page.keyboard.press('Meta+r')
     const response = await refreshResponse
     expect(response.status()).toBe(200)
     const finalSnapshot = await response.json() as { stage: string; drift: string; rows: Array<{ id: string }> }
     expect(finalSnapshot.stage).toBe('final')
     expect(finalSnapshot.drift).toBe('ready')
-    actions.push(`Refresh response: stage=${finalSnapshot.stage}, drift=${finalSnapshot.drift}, rows=${finalSnapshot.rows.length}`)
+    actions.push(`Command-R response: stage=${finalSnapshot.stage}, drift=${finalSnapshot.drift}, rows=${finalSnapshot.rows.length}`)
     expect(finalSnapshot.rows.some((row) => row.id === selectedID)).toBe(true)
 
     const refreshedSelected = page.getByRole('option', { name: /skill-030/ })
@@ -169,7 +167,7 @@ test('built GUI preserves a selected resource through a real directory refresh a
     expect((await readFile(repoLocalPath)).equals(repoLocalBefore)).toBe(true)
     await expectOptionalFileUnchanged(personalLocalPath, personalLocalBefore)
     await page.screenshot({ path: testInfo.outputPath('navigation-folds-and-anchor.png'), fullPage: true, animations: 'disabled' })
-    actions.push('Refresh preserved the selected resource identity, detail, and viewport; fold controls worked by keyboard')
+    actions.push('Command-R preserved the selected resource identity, detail, and viewport; fold controls worked by keyboard')
   } finally {
     await harness.stop()
     await saveActions(testInfo, actions)

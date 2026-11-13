@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { Snapshot } from './api/client'
 import type { Diagnostic } from './controller'
 import { groupDiagnostics } from './diagnostics'
@@ -33,8 +33,16 @@ const driftTone = computed(() => {
 })
 
 const diagnosticGroups = computed(() => groupDiagnostics(props.diagnostics))
+const copiedText = computed(() => props.diagnostics
+  .map((diagnostic) => `${diagnostic.severity} ${diagnostic.code}: ${diagnostic.message}`)
+  .join('\n'))
+const copied = ref(false)
 
 const expandedDiagnostics = ref(new Set<string>())
+
+watch(() => props.diagnostics, () => {
+  copied.value = false
+}, { deep: true })
 
 function toggleDiagnostic(key: string) {
   const next = new Set(expandedDiagnostics.value)
@@ -44,6 +52,27 @@ function toggleDiagnostic(key: string) {
     next.add(key)
   }
   expandedDiagnostics.value = next
+}
+
+function expandLabel(group: { key: string; severity: string }): string {
+  const action = expandedDiagnostics.value.has(group.key) ? 'Collapse' : 'Expand'
+  const code = group.key.slice(group.severity.length + 1)
+  return `${action} ${group.severity} diagnostics for ${code}`
+}
+
+async function copyDiagnostics() {
+  copied.value = false
+  try {
+    const runtime = window.runtime
+    if (runtime?.ClipboardSetText != null) {
+      copied.value = await runtime.ClipboardSetText(copiedText.value)
+      return
+    }
+    await navigator.clipboard.writeText(copiedText.value)
+    copied.value = true
+  } catch {
+    copied.value = false
+  }
 }
 
 function discoveryStatus(health: Snapshot['discoveryHealth'][number]): string {
@@ -80,15 +109,33 @@ function discoveryStatus(health: Snapshot['discoveryHealth'][number]): string {
     </section>
 
     <section class="gui-diagnostics-view__card">
-      <h2 class="gui-caps">Diagnostics<span v-if="diagnostics.length > 0" class="gui-caps__count">{{ diagnostics.length }}</span></h2>
+      <div class="gui-diagnostics__header">
+        <h2 class="gui-caps">Diagnostics<span v-if="diagnostics.length > 0" class="gui-caps__count">{{ diagnostics.length }}</span></h2>
+        <UButton
+          aria-label="Copy diagnostics"
+          class="gui-button--secondary"
+          color="neutral"
+          variant="soft"
+          @click="copyDiagnostics"
+        >{{ copied ? 'Copied' : 'Copy diagnostics' }}</UButton>
+      </div>
       <ul v-if="diagnostics.length > 0" aria-label="Diagnostics" class="gui-diagnostics">
         <li v-for="group in diagnosticGroups" :key="group.key" :class="`diag--${group.severity}`">
-          <button type="button" class="gui-diagnostics__row" :aria-expanded="expandedDiagnostics.has(group.key)" @click="toggleDiagnostic(group.key)">
+          <div class="gui-diagnostics__row">
             <GuiIcon :name="group.severity === 'error' ? 'error' : group.severity === 'warning' ? 'warning' : 'info'" class="gui-diagnostics__icon" />
-            <span class="gui-visually-hidden">{{ group.severity }}: </span>
-            <span class="gui-diagnostics__message" :class="{ 'gui-diagnostics__message--single': group.messages.length === 1 }">{{ group.messages[0] }}</span>
-            <span v-if="group.messages.length > 1" class="gui-tag">×{{ group.messages.length }}</span>
-          </button>
+            <p class="gui-diagnostics__message"><span class="gui-visually-hidden">{{ group.severity }}: </span>{{ group.messages[0] }}</p>
+            <button
+              v-if="group.messages.length > 1"
+              type="button"
+              class="gui-diagnostics__expand"
+              :aria-label="expandLabel(group)"
+              :aria-expanded="expandedDiagnostics.has(group.key)"
+              @click="toggleDiagnostic(group.key)"
+            >
+              <span class="gui-visually-hidden">{{ expandedDiagnostics.has(group.key) ? 'Collapse' : 'Expand' }} diagnostics</span>
+              <span class="gui-tag">×{{ group.messages.length }}</span>
+            </button>
+          </div>
           <ul v-if="group.messages.length > 1 && expandedDiagnostics.has(group.key)" class="gui-diagnostics__messages">
             <li v-for="(message, index) in group.messages" :key="index">{{ message }}</li>
           </ul>

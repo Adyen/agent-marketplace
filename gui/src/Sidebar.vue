@@ -113,7 +113,7 @@ function groupTone(group: SidebarGroup): 'warning' | 'danger' | 'signal' | null 
         <GuiIcon name="folder" />
         <span class="gui-nav-row__label">Resources</span>
       </button>
-      <button type="button" class="gui-nav-row" aria-label="Pending sync group" @click="emit('selectGroup', pendingSectionId)">
+      <button v-if="pendingCount > 0" type="button" class="gui-nav-row" aria-label="Pending sync group" @click="emit('selectGroup', pendingSectionId)">
         <GuiIcon name="sync" />
         <span class="gui-nav-row__label">Pending sync</span>
         <span class="gui-nav-row__count">{{ pendingCount }}</span>

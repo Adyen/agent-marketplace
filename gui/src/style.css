@@ -265,7 +265,6 @@ textarea:focus-visible,
 }
 
 .gui-scrim-modal {
-  backdrop-filter: blur(2px);
   background: var(--gui-scrim);
 }
 
@@ -357,6 +356,11 @@ textarea:focus-visible,
 }
 
 .gui-nav-row:hover {
+  background: var(--gui-layer);
+  color: var(--gui-ink);
+}
+
+.gui-nav-row[aria-current="page"] {
   background: var(--gui-layer);
   color: var(--gui-ink);
 }
@@ -720,7 +724,7 @@ textarea:focus-visible,
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: 4px 12px 8px;
+  padding: 0 12px 12px;
 }
 
 .workspace__group h2 {
@@ -1238,14 +1242,12 @@ textarea:focus-visible,
   margin: 0;
 }
 
-.gui-diagnostics-view .gui-diagnostics__message {
-  -webkit-box-orient: unset;
-  -webkit-line-clamp: unset;
-  display: block;
-}
-
-.gui-diagnostics-view .gui-diagnostics__message--single {
-  display: block;
+.gui-diagnostics__header {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 8px;
 }
 
 .gui-inspector__actions {
@@ -1336,22 +1338,25 @@ textarea:focus-visible,
 
 .gui-diagnostics__row {
   align-items: flex-start;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 6px;
+  padding: 4px 6px;
+}
+
+.gui-diagnostics__expand {
+  align-items: center;
   background: transparent;
   border: 0;
   border-radius: 4px;
-  color: inherit;
   cursor: pointer;
   display: flex;
   font: inherit;
-  gap: 6px;
-  padding: 4px 6px;
-  text-align: left;
-  transition: background-color var(--gui-fade);
-  width: 100%;
+  padding: 0;
   --wails-draggable: no-drag;
 }
 
-.gui-diagnostics__row:hover {
+.gui-diagnostics__expand:hover {
   background: var(--gui-layer);
 }
 
@@ -1361,18 +1366,11 @@ textarea:focus-visible,
 }
 
 .gui-diagnostics__message {
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  display: -webkit-box;
   font-family: var(--gui-mono);
   font-size: 11.5px;
+  margin: 0;
   min-width: 0;
-  overflow: hidden;
   overflow-wrap: anywhere;
-}
-
-.gui-diagnostics__row[aria-expanded="true"] .gui-diagnostics__message--single {
-  display: block;
 }
 
 .gui-diagnostics .gui-tag {
@@ -2448,7 +2446,6 @@ fieldset:disabled .settings__list > .settings__option {
   .gui-nav-row,
   .gui-search-pill,
   .workspace__row,
-  .gui-diagnostics__row,
   .resource-actions__risk input[type="checkbox"],
   .resource-actions__risk input[type="checkbox"]::after {
     transition: none;

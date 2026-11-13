@@ -159,7 +159,8 @@ describe('local resource search', () => {
     expect(detailText).toContain(registryDisplay)
     expect(detailText).toContain(descriptionDisplay)
     expect(detailText).toContain(statusDisplay)
-    expect(detailText).toContain(harnessDisplay)
+    expect(detailText).not.toContain(harnessDisplay)
+    expect(detailText).not.toContain('Harnesses')
     expect(detailText).not.toContain('\u001b')
     expect(detailText).not.toContain('\u202e')
 
