@@ -30,7 +30,7 @@ func validBackupTargets() []string {
 func newBackupCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "backup",
-		Short: "Manage backups of machine-scope harness directories",
+		Short: "Manage machine-scope harness and user configuration backups",
 	}
 
 	cmd.AddCommand(
@@ -45,7 +45,7 @@ func newBackupCmd() *cobra.Command {
 func newBackupCreateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "create",
-		Short: "Create an on-demand backup of machine-scope harness directories",
+		Short: "Create an on-demand backup of machine-scope harness directories and user configuration",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runBackupCreate(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},

@@ -264,6 +264,18 @@ func TestReadOnlyModesDoNotWriteConfigurationArchives(t *testing.T) {
 	}
 }
 
+// spec: backup-recovery/sync-archives-user-configuration-with-harness-backups
+func TestSyncOfflineWritesConfigurationArchive(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	f := newConfigBackupFixture(t, "")
+	mustConfigBackupCommand(t, "sync", "--offline")
+	if archives := configArchivePaths(t, f.home); len(archives) != 1 {
+		t.Fatalf("offline sync configuration archives = %v, want one", archives)
+	}
+}
+
 // spec: backup-recovery/configuration-archive-failure-leaves-harness-files-unchanged
 func TestConfigurationArchiveFailureLeavesHarnessFilesUnchanged(t *testing.T) {
 	if isolateCommandTest(t) {

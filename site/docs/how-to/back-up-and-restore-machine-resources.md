@@ -47,7 +47,7 @@ Keep a copy of your machine-wide `agent-marketplace` setup and restore it on the
 
 Whenever `sync` or `backup create` writes harness backups, it also writes `~/.agent-marketplace/backups/agents-config/<timestamp>.tar.gz` with permission 0600. The archive holds `config.yaml`, `lock.yaml`, and every `include` fragment inside `~/.agents/`, named by their paths relative to `~/.agents/`, with the bytes on disk when the command started. A fragment outside `~/.agents/` is skipped and named in a debug log line. A missing file is left out, and no archive is written when none of these files exist.
 
-No `agents-config` archive is written when backups are disabled in configuration, with `sync --no-backup`, or by the read-only modes `sync --check`, `sync --locked`, `sync --offline`, and `lock --check`. The archives follow the same `max_days` and `max_per_day` rotation as the harness archives, and `backup list` shows them in their own `agents-config` group.
+No `agents-config` archive is written when backups are disabled in configuration, with `sync --no-backup`, or by the read-only modes `sync --check`, `sync --locked`, and `lock --check`. The archives follow the same `max_days` and `max_per_day` rotation as the harness archives, and `backup list` shows them in their own `agents-config` group.
 
 `backup restore --target agents-config` refuses, because `backup restore` only overlays harness folders. Inspect an archive with `tar -tzf` and restore it by hand:
 
