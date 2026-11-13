@@ -28,13 +28,10 @@ func TestDoctorRepairPlanDeclineLeavesCandidatesUnchanged(t *testing.T) {
 	}
 	repoRoot, _ := devinDoctorEnv(t)
 	mcpPath, selection := prepareDevinRepairFixture(t, repoRoot)
-	before, err := os.ReadFile(mcpPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	assertUnchanged := snapshotDoctorRepairFiles(t, repoRoot, mcpPath)
 
 	var out bytes.Buffer
-	err = runDoctor(doctorOptions{
+	err := runDoctor(doctorOptions{
 		out:     &out,
 		in:      strings.NewReader("n\n"),
 		isTTY:   true,
@@ -45,18 +42,15 @@ func TestDoctorRepairPlanDeclineLeavesCandidatesUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("declining repair plan: %v\n%s", err, out.String())
 	}
-	for _, want := range []string{"plan", "1. [safe]", "adopt", "ownership.unmanaged-key", "[y/N]"} {
-		if !strings.Contains(out.String(), want) {
-			t.Fatalf("repair plan missing %q:\n%s", want, out.String())
-		}
+	wantPlanLine := "  1. [safe] adopt exact shared-aggregate matches (ownership.unmanaged-key; files: devin:" +
+		mcpPath + "; needs: selection)"
+	if !strings.Contains(out.String(), wantPlanLine) {
+		t.Fatalf("repair plan missing full adoption line %q:\n%s", wantPlanLine, out.String())
 	}
 	if strings.Count(out.String(), "[y/N]") != 1 {
 		t.Fatalf("plan asked %d confirmations, want 1:\n%s", strings.Count(out.String(), "[y/N]"), out.String())
 	}
-	after, err := os.ReadFile(mcpPath)
-	if err != nil || !bytes.Equal(before, after) {
-		t.Fatalf("declined plan changed aggregate bytes: %v\n%s", err, after)
-	}
+	assertUnchanged()
 	if !devinRepairPreview(t, repoRoot, selection).Actionable() {
 		t.Fatal("declined plan recorded ownership")
 	}
@@ -77,12 +71,9 @@ func TestDoctorRepairPlanEmptyAndInvalidAnswersLeaveCandidatesUnchanged(t *testi
 		t.Run(tc.name, func(t *testing.T) {
 			repoRoot, _ := devinDoctorEnv(t)
 			mcpPath, selection := prepareDevinRepairFixture(t, repoRoot)
-			before, err := os.ReadFile(mcpPath)
-			if err != nil {
-				t.Fatal(err)
-			}
+			assertUnchanged := snapshotDoctorRepairFiles(t, repoRoot, mcpPath)
 			var out bytes.Buffer
-			err = runDoctor(doctorOptions{
+			err := runDoctor(doctorOptions{
 				out:     &out,
 				in:      strings.NewReader(tc.answer),
 				isTTY:   true,
@@ -93,11 +84,43 @@ func TestDoctorRepairPlanEmptyAndInvalidAnswersLeaveCandidatesUnchanged(t *testi
 			if err != nil {
 				t.Fatalf("declining repair plan: %v\n%s", err, out.String())
 			}
-			after, err := os.ReadFile(mcpPath)
-			if err != nil || !bytes.Equal(before, after) || !devinRepairPreview(t, repoRoot, selection).Actionable() {
-				t.Fatalf("declined plan changed aggregate bytes: %v\n%s", err, after)
+			assertUnchanged()
+			if !devinRepairPreview(t, repoRoot, selection).Actionable() {
+				t.Fatal("declined plan recorded ownership")
 			}
 		})
+	}
+}
+
+func snapshotDoctorRepairFiles(t *testing.T, repoRoot, aggregatePath string) func() {
+	t.Helper()
+	store, err := ownership.Open(filepath.Join(repoRoot, ".devin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := []string{aggregatePath, store.StateFile(), filepath.Join(repoRoot, ".agents", "lock.yaml")}
+	before := make([][]byte, len(paths))
+	present := make([]bool, len(paths))
+	for i, path := range paths {
+		before[i], err = os.ReadFile(path)
+		if err == nil {
+			present[i] = true
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("snapshot %s: %v", path, err)
+		}
+	}
+	return func() {
+		t.Helper()
+		for i, path := range paths {
+			after, err := os.ReadFile(path)
+			if !present[i] {
+				if !errors.Is(err, os.ErrNotExist) {
+					t.Errorf("declined plan created %s: %v", path, err)
+				}
+			} else if err != nil || !bytes.Equal(before[i], after) {
+				t.Errorf("declined plan changed %s: %v\n%s", path, err, after)
+			}
+		}
 	}
 }
 
@@ -345,7 +368,10 @@ func TestDoctorRepairRunsDriftBesideSameBasenameDevinCollision(t *testing.T) {
 		t.Fatalf("fixture did not produce a Devin aggregate collision and Windsurf drift: %v\n%s", checkErr, checkOutput)
 	}
 
-	output, _ := executeCommand("doctor", "--repair", "--yes")
+	output, err := executeCommand("doctor", "--repair", "--yes")
+	if err != nil {
+		t.Fatalf("--repair --yes must exit 0 when only a deferred destructive entry remains: %v\n%s", err, output)
+	}
 	if !strings.Contains(output, "[safe] sync --locked harness drift") {
 		t.Fatalf("repair plan omitted Windsurf drift beside the Devin collision:\n%s", output)
 	}
@@ -493,6 +519,10 @@ func TestDoctorRepairListsResolutionFailureAndBlockedSteps(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "human-only") || !strings.Contains(out.String(), "blocked by") || !strings.Contains(out.String(), want.Error()) {
 		t.Fatalf("resolution failure was not represented in the plan:\n%s", out.String())
+	}
+	wantBlockedLine := "  2. [safe] sync harness drift (ownership.entry-drift; files: selected harness outputs; blocked by 1 (selection unresolved))"
+	if !strings.Contains(out.String(), wantBlockedLine) {
+		t.Fatalf("resolution failure plan missing blocked step %q:\n%s", wantBlockedLine, out.String())
 	}
 	if after, err := os.ReadFile(mcpPath); err != nil || !bytes.Equal(aggregateBefore, after) {
 		t.Fatalf("failed resolution changed aggregate bytes: %v\n%s", err, after)
