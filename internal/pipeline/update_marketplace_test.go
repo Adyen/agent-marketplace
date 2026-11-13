@@ -95,14 +95,14 @@ func TestUpdateReusesPlanVerifiedMarketplaceRevisions(t *testing.T) {
 	writeFileMode(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [devin]\n", 0o600)
 	fake := newLayerMarketplaceServer(t)
 	registry := fake.addRegistry(t, "source")
-	names := []string{"unchanged-one", "unchanged-two", "changed", "constrained"}
+	names := []string{"unchanged-one", "unchanged-two", "changed", "constrained", "organization-managed"}
 	pinBatches := make([][]config.MarketplaceResourcePin, 0, len(names))
 	for _, name := range names {
 		fake.addSkill(t, registry, name)
 		pinBatches = append(pinBatches, layerPreparePins(t, fake, "skill", name))
 	}
 	entry := config.MarketplaceEntry{URL: fake.URL, InstanceID: fake.instanceID}
-	installV4MarketplaceLayer(t, repo, configPath, entry, pinBatches...)
+	installV4MarketplaceLayer(t, repo, configPath, entry, pinBatches[:4]...)
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {
@@ -114,6 +114,26 @@ func TestUpdateReusesPlanVerifiedMarketplaceRevisions(t *testing.T) {
 		t.Fatalf("request %q missing from config", constrainedRequest)
 	}
 	writeFileMode(t, configPath, constrained, 0o600)
+	organizationConfigPath := filepath.Join(home, "organization", "config.yaml")
+	config.SetTestOrganizationConfigPath(t, organizationConfigPath)
+	orgPin := pinBatches[4][0]
+	writeFileMode(t, organizationConfigPath, "apiVersion: agent-marketplace/v4\nsources:\n  organization: {marketplace: "+fake.URL+"}\nresources:\n  organization:\n    include:\n      - source/skill/organization-managed: {revision: "+orgPin.Revision+"}\n", 0o600)
+	orgResource := fake.resources["source/skill/organization-managed"]
+	organizationLock, err := lockfile.Encode(lockfile.Document{
+		APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeOrganization,
+		Marketplaces: []lockfile.MarketplaceLock{{URL: fake.URL, InstanceID: fake.instanceID,
+			RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: orgPin.RegistrySlug, RegistryID: orgPin.RegistryID}},
+			Resources: []lockfile.MarketplaceResourceLock{{
+				RegistryName: orgPin.RegistrySlug, RegistryID: orgPin.RegistryID, Kind: orgPin.Kind, Name: orgPin.Name,
+				Revision: orgPin.Revision, ContentDigest: lockfile.Digest(orgPin.Digest),
+				ArchiveDigest: lockfile.Digest(string(orgResource.revision.ArchiveDigest)), Acquisition: orgPin.Acquisition,
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFileMode(t, filepath.Join(filepath.Dir(organizationConfigPath), "lock.yaml"), string(organizationLock), 0o600)
 	fake.setSkill(t, registry, "changed", "changed body v2")
 	fake.pathsMu.Lock()
 	fake.paths = nil
@@ -123,11 +143,14 @@ func TestUpdateReusesPlanVerifiedMarketplaceRevisions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	if result.UpdatedMarketplacePins != 1 || result.SkippedMarketplacePins != 3 {
-		t.Fatalf("Marketplace result = %#v, want one update and three skips", result)
+	if result.UpdatedMarketplacePins != 1 || result.SkippedMarketplacePins != 4 {
+		t.Fatalf("Marketplace result = %#v, want one update and four skips", result)
 	}
 	if result.Report == nil || result.Report.TotalWritten() == 0 {
 		t.Fatalf("sync did not materialize the selected pins: %#v", result.Report)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config", "devin", "skills", "organization-managed", "SKILL.md")); err != nil {
+		t.Fatalf("organization-managed pin was not materialized by Refresh: %v", err)
 	}
 
 	requests := make(map[string][2]int, len(names))
@@ -156,8 +179,11 @@ func TestUpdateReusesPlanVerifiedMarketplaceRevisions(t *testing.T) {
 			t.Errorf("unchanged pin %q had %d revision metadata requests (latest=%d, by-digest=%d), want at most one", name, count, counts[0], counts[1])
 		}
 	}
-	if counts := requests["constrained"]; counts[0] != 0 || counts[1] != 1 {
-		t.Errorf("constrained pin requests = latest %d, by-digest %d; want 0 and 1", counts[0], counts[1])
+	for _, name := range names[3:] {
+		counts := requests[name]
+		if counts[0] != 0 || counts[1] != 1 {
+			t.Errorf("%s pin requests = latest %d, by-digest %d; want 0 and 1", name, counts[0], counts[1])
+		}
 	}
 }
 
