@@ -33,16 +33,31 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 	if len(initial.Errors) == 0 {
 		reads, policyErr = pipeline.EffectivePolicyReadAssertions(initial)
 	}
+	journalOnly := false
 	revalidate := func() error {
+		if journalOnly {
+			return nil
+		}
 		if policyErr != nil {
 			return policyErr
 		}
 		return dependencytxn.ValidateReadAssertions(reads)
 	}
-	if len(initial.Errors) == 0 && policyErr == nil {
-		if err := revalidate(); err != nil {
-			return doctorRepairFailure(out, err)
+	refreshPolicy := func(ctx context.Context) error {
+		ws, err := pipeline.DiscoverWorkspace()
+		if err != nil {
+			policyErr = err
+			return err
 		}
+		initial = pipeline.LoadEffective(ctx, pipeline.ConfigLoadOnline, config.LoadEffectiveOptions{
+			RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(),
+		}, nil)
+		reads = nil
+		policyErr = nil
+		if len(initial.Errors) == 0 {
+			reads, policyErr = pipeline.EffectivePolicyReadAssertions(initial)
+		}
+		return nil
 	}
 
 	var previews []materialize.TargetRepairPreview
@@ -69,6 +84,15 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 		ownershipActionable = false
 		incompleteCause = nil
 		diagnosis := repairplanner.Diagnosis{InvalidInputs: make(map[repairplanner.Input]repairplanner.Blocker)}
+		journalSteps, err := doctorJournalSteps(repoRoot, out, refreshPolicy)
+		if err != nil {
+			return repairplanner.Diagnosis{}, err
+		}
+		diagnosis.Steps = append(diagnosis.Steps, journalSteps...)
+		finish := func() (repairplanner.Diagnosis, error) {
+			journalOnly = len(journalSteps) > 0
+			return diagnosis, nil
+		}
 		addHuman := func(stage repairplanner.Stage, code string, issue error) string {
 			action := tui.TerminalSafeLine(issue.Error())
 			if hint := remedy.For(issue, "doctor"); hint != "" {
@@ -106,7 +130,7 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 				}
 			}
 			blockSelection(causeKey, "configuration invalid")
-			return diagnosis, nil
+			return finish()
 		}
 		if policyErr != nil {
 			incompleteCause = policyErr
@@ -114,7 +138,10 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 			code := repairDiagnosticCode(issue)
 			key := addHuman(repairplanner.StageConfiguration, code, issue)
 			blockSelection(key, "policy assertions unavailable")
-			return diagnosis, nil
+			return finish()
+		}
+		if len(journalSteps) > 0 {
+			return finish()
 		}
 
 		var selection []resolver.ResolvedArtifact
@@ -141,7 +168,7 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 			code := repairDiagnosticCode(resolveErr)
 			key := addHuman(repairplanner.StageLocks, code, resolveErr)
 			blockSelection(key, "selection unresolved")
-			return diagnosis, nil
+			return finish()
 		}
 
 		if opts.resolve == nil && len(current.TargetHarnesses) > 0 {
@@ -187,14 +214,13 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 			}
 		}
 
-		var err error
 		previews, err = materialize.RepairPreviews(ctx, repoRoot, selection, revalidate)
 		if err != nil {
 			incompleteCause = err
 			slog.Error("doctor repair preview failed", "repo_root", repoRoot, "status", "error", "code", diag.CodeDoctorRepairFailed)
 			issue := fmt.Errorf("inspect shared-aggregate ownership: %w", err)
 			addHuman(repairplanner.StageOwnership, repairDiagnosticCode(issue), issue)
-			return diagnosis, nil
+			return finish()
 		}
 		adoptions, adoptionFiles := repairCandidateGroup(previews, true, false, false)
 		conflicts, conflictFiles := repairCandidateGroup(previews, false, true, false)
@@ -240,7 +266,7 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 		}
 		slog.Info("doctor repair preview complete", "repo_root", repoRoot, "targets", len(previews),
 			"actionable", ownershipActionable, "corrupt", corrupt)
-		return diagnosis, nil
+		return finish()
 	}
 	display := func(steps []repairplanner.Step) error {
 		if len(steps) > 0 {
