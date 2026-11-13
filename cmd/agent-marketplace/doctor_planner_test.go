@@ -17,7 +17,9 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 )
 
 // spec: doctor-repair-planning/repair-plan-lists-every-step-before-confirmation
@@ -131,12 +133,9 @@ func TestDoctorRepairOffTerminalPlanIsPreviewOnly(t *testing.T) {
 	}
 	repoRoot, _ := devinDoctorEnv(t)
 	mcpPath, selection := prepareDevinRepairFixture(t, repoRoot)
-	before, err := os.ReadFile(mcpPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	assertUnchanged := snapshotDoctorRepairFiles(t, repoRoot, mcpPath)
 	var out bytes.Buffer
-	err = runDoctor(doctorOptions{
+	err := runDoctor(doctorOptions{
 		out:     &out,
 		in:      strings.NewReader("y\n"),
 		repair:  true,
@@ -149,9 +148,9 @@ func TestDoctorRepairOffTerminalPlanIsPreviewOnly(t *testing.T) {
 	if !strings.Contains(out.String(), "preview only: not a terminal") {
 		t.Fatalf("off-terminal plan omitted preview-only status:\n%s", out.String())
 	}
-	after, err := os.ReadFile(mcpPath)
-	if err != nil || !bytes.Equal(before, after) {
-		t.Fatalf("off-terminal plan changed aggregate bytes: %v\n%s", err, after)
+	assertUnchanged()
+	if !devinRepairPreview(t, repoRoot, selection).Actionable() {
+		t.Fatal("off-terminal plan recorded ownership")
 	}
 }
 
@@ -324,6 +323,104 @@ func TestDoctorRepairRunsDriftBesideCodexCollision(t *testing.T) {
 	}
 	if after, err := os.ReadFile(lockPath); err != nil || !bytes.Equal(lockBefore, after) {
 		t.Fatalf("drift repair changed the acquisition lock: %v\n%s", err, after)
+	}
+}
+
+// spec: doctor-repair-planning/repair-exits-one-when-a-step-fails
+func TestDoctorRepairStopsWhenDriftRepairFindsUnexpectedCollision(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	repoRoot, origin, _, lockPath := setupReadOnlyExactRegistry(t)
+	source := filepath.Join(repoRoot, "extra")
+	writeFile(t, filepath.Join(source, "mcp.json"), `{"mcpServers":{"collision":{"command":"collision-binary"}}}`)
+	writeConfig(t, filepath.Join(repoRoot, ".agents", "config.yaml"),
+		"apiVersion: agent-marketplace/v4\nharnesses: [factory, codex, devin]\nsources:\n"+
+			"  locked: {git: file://"+origin+", ref: main}\n"+
+			"  extra: {directory: "+filepath.ToSlash(source)+"}\nresources:\n"+
+			"  locked: [skill/locked-skill]\n  extra: [mcp/collision]\n")
+	lockBefore, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output, err := executeCommand("sync"); err != nil {
+		t.Fatalf("initial sync: %v\n%s", err, output)
+	}
+
+	driftPath := filepath.Join(repoRoot, ".factory", "skills", "locked-skill", "SKILL.md")
+	content, err := os.ReadFile(driftPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(driftPath, append(content, []byte("\nlocal drift\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	codexMCP := filepath.Join(repoRoot, ".codex", "config.toml")
+	codexBefore, err := os.ReadFile(codexMCP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	devinMCP := filepath.Join(repoRoot, ".devin", harness.DevinMcpConfigFile)
+	devinBefore, err := os.ReadFile(devinMCP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	codexStore, err := ownership.Open(filepath.Join(repoRoot, ".codex"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(codexStore.StateFile()); err != nil {
+		t.Fatal(err)
+	}
+	devinStore, err := ownership.Open(filepath.Join(repoRoot, ".devin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer := strings.NewReader("y\n")
+	devinOwnershipRemoved := false
+	input := doctorPlannerReadFunc(func(p []byte) (int, error) {
+		if !devinOwnershipRemoved {
+			devinOwnershipRemoved = true
+			if err := os.Remove(devinStore.StateFile()); err != nil {
+				return 0, err
+			}
+		}
+		return answer.Read(p)
+	})
+
+	var out bytes.Buffer
+	err = runDoctor(doctorOptions{
+		out:    &out,
+		in:     input,
+		isTTY:  true,
+		repair: true,
+		probe:  staticProbe(devincli.Probe{Status: devincli.StatusNotInstalled}),
+	})
+	if !devinOwnershipRemoved {
+		t.Fatal("plan confirmation did not remove Devin ownership state")
+	}
+	if err == nil {
+		t.Fatalf("doctor --repair succeeded after locked sync found an unexpected collision:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), diag.CodeDoctorRepairFailed) {
+		t.Fatalf("repair failure omitted stable diagnostic code %q:\n%s", diag.CodeDoctorRepairFailed, out.String())
+	}
+	if after, err := os.ReadFile(driftPath); err != nil || strings.Contains(string(after), "local drift") {
+		t.Fatalf("drift step did not restore the locked skill: %v\n%s", err, after)
+	}
+	if after, err := os.ReadFile(codexMCP); err != nil || !bytes.Equal(codexBefore, after) {
+		t.Fatalf("failed repair changed Codex MCP aggregate bytes: %v\n%s", err, after)
+	}
+	if after, err := os.ReadFile(devinMCP); err != nil || !bytes.Equal(devinBefore, after) {
+		t.Fatalf("failed repair changed Devin MCP aggregate bytes: %v\n%s", err, after)
+	}
+	if after, err := os.ReadFile(lockPath); err != nil || !bytes.Equal(lockBefore, after) {
+		t.Fatalf("failed repair changed acquisition lock bytes: %v\n%s", err, after)
+	}
+	for target, store := range map[string]*ownership.Store{"Codex": codexStore, "Devin": devinStore} {
+		if _, err := os.Stat(store.StateFile()); !os.IsNotExist(err) {
+			t.Errorf("%s ownership state was adopted before the drift step failed: %v", target, err)
+		}
 	}
 }
 
@@ -703,6 +800,128 @@ func TestDoctorRepairRevalidatesPolicyAfterPlanConfirmation(t *testing.T) {
 	stateAfter, err := os.ReadFile(store.StateFile())
 	if err != nil || !bytes.Equal(stateBefore, stateAfter) {
 		t.Fatalf("policy change mutated ownership-state bytes: %v\n%s", err, stateAfter)
+	}
+}
+
+// spec: doctor-repair-planning/policy-change-before-a-confirmed-step-stops-repair
+func TestDoctorRepairRevalidatesPolicyBeforeDriftPublication(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, phase := range []pipeline.Phase{pipeline.PhaseConfigure, pipeline.PhaseMaterialize} {
+		for _, changedInput := range []string{"root config comment", "root config selection", "acquisition lock comment"} {
+			t.Run(string(phase)+"/"+changedInput, func(t *testing.T) {
+				repoRoot, origin, _, lockPath := setupReadOnlyExactRegistry(t)
+				source := filepath.Join(repoRoot, "extra")
+				writeFile(t, filepath.Join(source, "mcp.json"), `{"mcpServers":{"collision":{"command":"collision-binary"}}}`)
+				configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+				policy := "apiVersion: agent-marketplace/v4\nharnesses: [factory, codex]\nsources:\n" +
+					"  locked: {git: file://" + origin + ", ref: main}\n" +
+					"  extra: {directory: " + filepath.ToSlash(source) + "}\nresources:\n" +
+					"  locked: [skill/locked-skill]\n  extra: [mcp/collision]\n"
+				writeConfig(t, configPath, policy)
+				if output, err := executeCommand("sync"); err != nil {
+					t.Fatalf("initial sync: %v\n%s", err, output)
+				}
+				configBefore, err := os.ReadFile(configPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				lockBefore, err := os.ReadFile(lockPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				driftPath := filepath.Join(repoRoot, ".factory", "skills", "locked-skill", "SKILL.md")
+				driftBefore, err := os.ReadFile(driftPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				driftBefore = append(driftBefore, []byte("\nlocal drift\n")...)
+				if err := os.WriteFile(driftPath, driftBefore, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				aggregatePath := filepath.Join(repoRoot, ".codex", "config.toml")
+				aggregateBefore, err := os.ReadFile(aggregatePath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				store, err := ownership.Open(filepath.Join(repoRoot, ".codex"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(store.StateFile()); err != nil {
+					t.Fatal(err)
+				}
+				var checkOutput strings.Builder
+				checkErr := runSyncCheck(context.Background(), &checkOutput, false)
+				checkText := checkOutput.String()
+				collisionFiles, otherCheckErrors := syncCheckCollisions(checkText, repoRoot)
+				if checkErr == nil || !strings.Contains(checkText, "out of sync") ||
+					!strings.Contains(checkText, diag.CodeOwnershipUnmanagedKey) ||
+					otherCheckErrors || len(collisionFiles) != 1 || collisionFiles[0] != aggregatePath {
+					t.Fatalf("fixture must contain a known Codex collision beside harness drift: %v\n%s", checkErr, checkText)
+				}
+
+				expectedConfig, expectedLock := configBefore, lockBefore
+				armed, changed := false, false
+				answer := strings.NewReader("y\n")
+				input := doctorPlannerReadFunc(func(p []byte) (int, error) {
+					armed = true
+					return answer.Read(p)
+				})
+				ctx := pipeline.WithPhaseObserver(context.Background(), func(got pipeline.Phase) {
+					if !armed || changed || got != phase {
+						return
+					}
+					switch changedInput {
+					case "root config comment":
+						updated := append(append([]byte(nil), configBefore...), []byte("# changed after confirmation\n")...)
+						expectedConfig = updated
+						writeConfig(t, configPath, string(updated))
+					case "root config selection":
+						updated := strings.Replace(string(configBefore), "[factory, codex]", "[factory, codex, windsurf]", 1)
+						if updated == string(configBefore) {
+							t.Fatal("fixture config does not contain the expected harness selection")
+						}
+						expectedConfig = []byte(updated)
+						writeConfig(t, configPath, updated)
+					case "acquisition lock comment":
+						updated := append(append([]byte(nil), lockBefore...), []byte("\n# changed after confirmation\n")...)
+						expectedLock = updated
+						if err := os.WriteFile(lockPath, updated, 0o644); err != nil {
+							t.Fatal(err)
+						}
+					}
+					changed = true
+				})
+				var out bytes.Buffer
+				err = runDoctor(doctorOptions{
+					ctx: ctx, out: &out, in: input, isTTY: true, repair: true,
+					probe: staticProbe(devincli.Probe{Status: devincli.StatusNotInstalled}),
+				})
+				if !changed {
+					t.Fatalf("repair never reached %s after confirmation:\n%s", phase, out.String())
+				}
+				if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+					t.Errorf("repair error = %v, want policy generation conflict\n%s", err, out.String())
+				}
+				for path, want := range map[string][]byte{configPath: expectedConfig, lockPath: expectedLock} {
+					if after, err := os.ReadFile(path); err != nil || !bytes.Equal(want, after) {
+						t.Errorf("concurrent edit to %s was not preserved: %v\n%s", path, err, after)
+					}
+				}
+				for path, want := range map[string][]byte{driftPath: driftBefore, aggregatePath: aggregateBefore} {
+					if after, err := os.ReadFile(path); err != nil || !bytes.Equal(want, after) {
+						t.Errorf("policy change mutated %s: %v\n%s", path, err, after)
+					}
+				}
+				for _, path := range []string{store.StateFile(), filepath.Join(repoRoot, ".windsurf")} {
+					if _, err := os.Stat(path); !os.IsNotExist(err) {
+						t.Errorf("policy change created %s: %v", path, err)
+					}
+				}
+			})
+		}
 	}
 }
 

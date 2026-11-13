@@ -58,6 +58,8 @@ type ResolveOptions struct {
 	Gitignore        bool
 	NoBackup         bool
 	RequireTargetSet bool
+	// BeforeMaterialize is invoked by Sync before publishing harness outputs.
+	BeforeMaterialize func() error
 	// EffectiveOpts overrides the paths used by LoadEffective.
 	EffectiveOpts config.LoadEffectiveOptions
 	// IgnoreBlockedRegistries treats RegistryURLBlockedError from the allowlist
@@ -1119,6 +1121,13 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 
 	if hook, ok := ctx.Value(syncPhaseHookContextKey{}).(func(string)); ok {
 		hook("before-materialization")
+	}
+
+	if opts.BeforeMaterialize != nil {
+		if err := opts.BeforeMaterialize(); err != nil {
+			result.addMaterializeError(fmt.Errorf("revalidate before materialization: %w", err))
+			return result
+		}
 	}
 
 	var materializeSpan telemetry.Span

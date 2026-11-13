@@ -21,4 +21,4 @@ See proposal.md for motivation. The approved design and work breakdown live in `
 ## Risks / Trade-offs
 
 - [The drift step could fight ownership repair over an unmanaged collision] → unmanaged shared-aggregate collisions are excluded from drift and left to the ownership stage.
-- [An extra plan-level prompt could shift answers for existing per-entry prompts] → no plan-level prompt is asked when no safe step is runnable, and existing repair tests run unchanged.
+- [Bulk adoption shifts terminal answer sequences] → the prompt change ships only in a maintainer-selected major CLI release. Upgrade guidance warns terminal and PTY automation not to replay old positional answers. Destructive-only plans still ask only their per-entry prompts; mixed plans confirm all safe adoptions before asking about destructive entries.

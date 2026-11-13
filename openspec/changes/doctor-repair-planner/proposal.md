@@ -8,7 +8,7 @@
 - Every plan step has a safety class. One confirmation authorizes the safe steps; destructive entries keep their per-entry confirmations and never run under `--yes` or off a terminal. Off a terminal without `--yes`, repair only previews.
 - Invalid configuration, failed resolution, and organization acquisition failure no longer refuse the whole repair. Steps whose inputs are valid still run; the others are listed as blocked by the plan item that explains the cause.
 - Repair adds a harness drift stage that reconciles drift through sync without changing any acquisition lock.
-- The existing Devin and Codex shared-aggregate repair becomes the last stage of the plan with its candidate classes, prompts, and policy checks unchanged.
+- The existing Devin and Codex shared-aggregate repair becomes the last stage of the plan with its candidate classes, destructive per-entry prompts, and policy checks unchanged; safe adoption is now approved by the plan confirmation.
 - Exit status reflects whether the user is still stuck: exit 0 only when the setup ends clean or the user declined.
 - Later work in this change adds journal recovery, acquisition lock, configuration, and further shared-aggregate fixers, and JSON plan output.
 
@@ -26,6 +26,12 @@
 
 `doctor --repair` output, prompts, and exit status; the `doctor` command help. No configuration, lock, ownership-state, or harness file format changes. Harness lists and organization files are never edited.
 
+## Release and upgrade
+
+This prompt change must ship in a maintainer-selected major CLI release, not a patch or minor release; maintainers select the exact version.
+
+Before upgrading repair workflows, preview off a terminal with `agent-marketplace doctor --repair </dev/null` and review the new prompts. Remove old positional answer streams; use `--repair --yes` only when all safe steps are intended, and review destructive per-entry prompts separately on a live terminal. No configuration or lock migration is needed.
+
 ## Release note
 
-`doctor --repair` now shows a numbered repair plan, asks once before running its safe steps, repairs harness drift, and keeps working when configuration or resolution is broken by listing the steps it cannot run yet and why.
+Breaking: `doctor --repair` replaces per-entry adoption prompts with one plan confirmation for all safe steps, including harness drift repair. Stop replaying old terminal answers and review the new prompts; use `--repair --yes` for safe-only automation, which leaves destructive entries untouched.

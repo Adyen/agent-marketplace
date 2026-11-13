@@ -106,7 +106,7 @@ Repair SHALL plan harness drift that sync can reconcile as a safe step, after co
 
 ### Requirement: Shared-aggregate ownership repair is the final stage
 
-Devin and Codex shared-aggregate ownership repair SHALL run as the last plan stage with its adoption, replacement, and orphan-removal classes, prompts, backups, and policy checks unchanged. Adoption is safe; replacement and orphan removal are destructive.
+Devin and Codex shared-aggregate ownership repair SHALL run as the last plan stage with its adoption, replacement, and orphan-removal classes, backups, and policy checks unchanged. Adoption is safe and is authorized by the plan confirmation rather than per-entry prompts. Replacement and orphan removal are destructive and SHALL retain their per-entry confirmations.
 
 #### Scenario: Shared-aggregate repair runs after drift repair
 

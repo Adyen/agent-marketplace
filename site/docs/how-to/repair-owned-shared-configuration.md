@@ -37,6 +37,8 @@ If standard input is not a terminal (for example in a script), the command stops
 
 On a terminal, the command asks one `[y/N]` confirmation for all the safe steps in the plan, for example `Repair the safe steps above? [y/N] `. Only `y` or `yes` confirms. Any other answer, pressing Enter, or end of input runs no step, exits 0, and leaves every file unchanged. Adoption is a safe step, so one answer adopts every exact match.
 
+**When upgrading a repair workflow, do not replay old terminal answer streams.** One plan confirmation replaces the per-entry adoption prompts, so a later answer can now authorize a destructive entry. Preview off a terminal with `agent-marketplace doctor --repair </dev/null` and review the new prompts. Replace scripted `y`/`n` streams with `--repair --yes` only when you intend all safe steps; review destructive per-entry prompts separately on a live terminal.
+
 Replacing a conflicting entry and removing an orphan are destructive: each entry keeps its own per-entry confirmation on a terminal, and the command takes a fresh backup first. Destructive steps never run under `--yes` or off a terminal. On a terminal under `--yes` the per-entry prompt is still shown, but a confirmed destructive entry is reported and left unchanged.
 
 To run the safe steps without the plan confirmation:

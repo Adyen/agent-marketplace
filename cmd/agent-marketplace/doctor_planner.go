@@ -165,8 +165,8 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 					Action: "sync --locked harness drift", Code: diag.CodeOwnershipEntryDrift,
 					Files: files, Inputs: []repairplanner.Input{repairplanner.InputSelection},
 					Apply: func(ctx context.Context) (bool, error) {
-						err := runSyncWithLocks(ctx, out, false, false, false, false, false, lockRunOptions{locked: true})
-						if err == nil || len(collisionFiles) == 0 {
+						err := runSyncWithLocks(ctx, out, false, false, false, false, false, lockRunOptions{locked: true, beforeMaterialize: revalidate})
+						if err == nil || errors.Is(err, dependencytxn.ErrGenerationConflict) || len(collisionFiles) == 0 {
 							return true, err
 						}
 						var checkOutput strings.Builder
@@ -175,8 +175,9 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 						remainingCollisions, otherCheckErrors := syncCheckCollisions(checkText, repoRoot)
 						if !strings.Contains(checkText, "out of sync") &&
 							!otherCheckErrors &&
-							slices.ContainsFunc(remainingCollisions, func(file string) bool {
-								return slices.Contains(collisionFiles, file)
+							len(remainingCollisions) > 0 &&
+							!slices.ContainsFunc(remainingCollisions, func(file string) bool {
+								return !slices.Contains(collisionFiles, file)
 							}) {
 							return true, nil
 						}

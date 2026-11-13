@@ -83,6 +83,7 @@ func newSyncCmd() *cobra.Command {
 type lockRunOptions struct {
 	locked            bool
 	marketplacePolicy resolver.MarketplaceRevocationPolicy
+	beforeMaterialize func() error
 }
 
 var errStrictUnmetPrerequisites = errors.New("unmet prerequisites reported as warnings; select the prerequisite resources or run without --strict")
@@ -101,8 +102,10 @@ var runSyncCheckMaterialize = materialize.Run
 func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict bool, pruneStale bool, verbose bool, offline bool, lockOpts ...lockRunOptions) error {
 	locked := len(lockOpts) > 0 && lockOpts[0].locked
 	var marketplacePolicy resolver.MarketplaceRevocationPolicy
+	var beforeMaterialize func() error
 	if len(lockOpts) > 0 {
 		marketplacePolicy = lockOpts[0].marketplacePolicy
+		beforeMaterialize = lockOpts[0].beforeMaterialize
 	}
 	ws, err := discoverSyncWorkspace()
 	if err != nil {
@@ -143,6 +146,7 @@ func runSyncWithLocks(ctx context.Context, out io.Writer, noBackup bool, strict 
 		return err
 	}
 	resolveOpts := pipeline.ResolveOptions{Workspace: ws, NoBackup: noBackup, Offline: offline, CatalogOption: []pkgcatalog.LoadOption{exactOption}, ExactLockLease: exactLease, LockMetadata: lockMetadata, SkipInventory: pruneStale, MarketplaceRevocationPolicy: marketplacePolicy, MarketplaceLockEvidenceStrict: locked, MarketplaceReportArchiveEvidenceDrift: !locked && !offline}
+	resolveOpts.BeforeMaterialize = beforeMaterialize
 	syncResult := pipeline.Sync(ctx, resolveOpts)
 	syncResult.Warnings = append(lockWarnings, syncResult.Warnings...)
 	errs := syncResult.Errors

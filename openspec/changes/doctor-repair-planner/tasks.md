@@ -33,3 +33,4 @@
 - [ ] 7.1 Add broken-to-healthy E2E journeys for interrupted writes, lock problems, aggregate collisions, and configuration errors; verify each ends with a clean `sync --check`
 - [ ] 7.2 Reconcile documentation with the archived specs
 - [ ] 7.3 Run `openspec archive doctor-repair-planner --yes`
+- [ ] 7.4 Before final delivery to main and release, select a new major CLI release for the breaking adoption-prompt change and verify that its release notes include the upgrade guidance
