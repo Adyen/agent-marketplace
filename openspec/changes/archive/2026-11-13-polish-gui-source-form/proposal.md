@@ -23,3 +23,7 @@ None.
 ## Impact
 
 The shared Vue source form, its Settings error wiring, styles, component and browser tests, and embedded frontend assets change. The CLI parser and server-side source safety checks remain authoritative. There is no folder picker or client directory-existence check.
+
+## Release note
+
+The desktop Add source form now shows field errors beside their inputs, disables invalid submissions, and uses consistent labels with a content-width action.
