@@ -35,11 +35,11 @@ Validation and request errors from adding a source in Settings SHALL remain insi
 
 ### Requirement: Source form input validity
 
-The shared source form SHALL disable Add source until a directory location is non-blank, a Git location is accepted by CLI source validation with a non-blank ref, or a Marketplace location is an absolute HTTP(S) URL. Client checks SHALL NOT reject locations accepted by the CLI. Directory existence SHALL remain a server check. Field hints SHALL appear only after blur or an attempted submit.
+The shared source form SHALL disable Add source until a directory location is non-blank, a Git location is accepted by the existing GUI add-source API/config location admission rules with a non-blank ref, or a Marketplace location is an absolute HTTP(S) URL. Client checks SHALL NOT reject locations accepted by that admission boundary, and SHALL NOT loosen existing server safety rules. Directory existence SHALL remain a server check. Field hints SHALL appear only after blur or an attempted submit.
 
 #### Scenario: Invalid source input disables addition
 
-- **WHEN** a directory location is blank or whitespace, a Git location is rejected by the CLI or its ref is blank, or a Marketplace location is not an absolute HTTP(S) URL
+- **WHEN** a directory location is blank or whitespace, a Git location is rejected by the existing GUI add-source API/config location admission rules or its ref is blank, or a Marketplace location is not an absolute HTTP(S) URL
 - **THEN** Add source MUST remain disabled
 - **AND** an untouched field MUST NOT show a validation hint while its first characters are typed
 - **AND** an invalid field MUST show its hint after blur or an attempted submit
@@ -48,5 +48,5 @@ The shared source form SHALL disable Add source until a directory location is no
 
 - **WHEN** the user supplies valid input for a source kind and the form is otherwise editable
 - **THEN** Add source MUST be enabled
-- **AND** the client MUST accept Git locations accepted by the CLI
+- **AND** the client MUST accept Git locations accepted by the existing GUI add-source API/config location admission rules
 - **AND** directory existence MUST NOT be checked by the client

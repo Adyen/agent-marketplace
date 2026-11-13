@@ -8,7 +8,7 @@ The Add source form uses inconsistent field labels and stretches its action acro
 - Place field errors below their inputs with accessible error associations.
 - Clear a field's error when it changes and all errors after a successful add.
 - Keep Add source right-aligned at content width and disabled until the input is valid.
-- Mirror the CLI's accepted Git locations without checking directory existence in the client.
+- Mirror the existing GUI add-source API/config location admission rules without checking directory existence in the client.
 
 ## Capabilities
 
@@ -22,7 +22,7 @@ None.
 
 ## Impact
 
-The shared Vue source form, its Settings error wiring, styles, component and browser tests, and embedded frontend assets change. The CLI parser and server-side source safety checks remain authoritative. There is no folder picker or client directory-existence check.
+The shared Vue source form, its Settings error wiring, styles, component and browser tests, and embedded frontend assets change. The existing GUI add-source API/config admission path and server-side source safety checks remain authoritative. There is no folder picker or client directory-existence check.
 
 ## Release note
 
