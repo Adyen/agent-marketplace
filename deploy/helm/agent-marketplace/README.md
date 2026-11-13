@@ -245,6 +245,40 @@ The Deployment name ends in the role: `-api` and `-worker` in split mode, and `-
 
 The API readiness and startup probes use `/readyz` on the operations port. The docs probes use `/docs/` on their HTTP port. The API Service exposes the application HTTP port plus the named `operations` port for private monitoring; split mode also creates a private worker Service for that port. The Ingress exposes only the intended public routes. Worker pods serve metrics, not readiness probes.
 
+## Prometheus worker alerts
+
+The chart can create a Prometheus Operator `PrometheusRule` for the Marketplace worker metrics. It is disabled by default. Enable it separately from scraping:
+
+```yaml
+serviceMonitor:
+  enabled: true
+
+prometheusRule:
+  enabled: true
+  runbookBaseUrl: https://agent-marketplace.io/docs/how-to/operator/reindex-and-monitor
+```
+
+The rule expressions scope metrics to the release namespace and the chart's API and worker Service names in both `mode: all` and `mode: split`. The API Service selects the all-in-one pod in all mode; split mode also creates a worker Service. Ensure your Prometheus Operator selects the `PrometheusRule` by its labels.
+
+`prometheusRule.labels` and `prometheusRule.additionalLabels` add labels to the resource in addition to the chart labels. `prometheusRule.ruleLabels` adds labels to each alert. Every alert also has `namespace` and `release` labels fixed to the Helm release identity; `ruleLabels` cannot override them. `prometheusRule.runbookBaseUrl` is optional; when set, each alert gets a `runbook_url` annotation formed from this base URL, `#`, and the lower-case alert name. An empty value omits the annotation.
+
+Every entry in `prometheusRule.alerts` accepts `enabled` (default `true`), `for`, and `severity`; set `enabled: false` to omit an alert. The defaults and additional threshold/window settings are:
+
+| Value path | Default `for` | Default severity | Additional value |
+|---|---:|---|---|
+| `prometheusRule.alerts.workerDown` | `10m` | `critical` | — |
+| `prometheusRule.alerts.workerObservationsStalled` | `15m` | `critical` | `window: 1h` |
+| `prometheusRule.alerts.registryProbeFailing` | `5m` | `warning` | `threshold: 3` consecutive probes |
+| `prometheusRule.alerts.registryObservationStale` | `10m` | `warning` | `staleAfterSeconds: 5400` |
+| `prometheusRule.alerts.registryIndexStale` | `30m` | `warning` | `staleAfterSeconds: 93600` |
+| `prometheusRule.alerts.registryNeverIndexed` | `2h` | `warning` | — |
+| `prometheusRule.alerts.refreshFailures` | `0m` | `warning` | `window: 1h` |
+| `prometheusRule.alerts.configCandidateRejected` | `0m` | `warning` | `window: 15m` |
+| `prometheusRule.alerts.configRestartRequired` | `30m` | `info` | — |
+| `prometheusRule.alerts.hostBudgetDelaysSustained` | `2h` | `info` | `window: 15m` |
+
+The observation-staleness default is three times the operator configuration's default `refresh.interval` of 30 minutes. The index-staleness default allows the 24-hour reconciliation plus two hours of margin. Adjust these values when changing the corresponding refresh cadence. Alert meanings and first response steps are in [Alert on metrics](../../../site/docs/how-to/operator/reindex-and-monitor.md#alert-on-metrics).
+
 ## Upgrade from the combined site profile
 
 Chart version 0.2.0 separates the documentation image from the Marketplace web interface and mounts the web interface at `/` by default. Before upgrading:

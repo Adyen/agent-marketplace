@@ -42,6 +42,29 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- printf "%s-%s" (include "agent-marketplace.fullname" .root) .component | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
+{{- define "agent-marketplace.workerMetricSelector" -}}
+{{- $api := include "agent-marketplace.componentName" (dict "root" . "component" "api") -}}
+{{- $worker := include "agent-marketplace.componentName" (dict "root" . "component" "worker") -}}
+namespace={{ .Release.Namespace | quote }},service=~"{{ $api }}|{{ $worker }}"
+{{- end }}
+
+{{- define "agent-marketplace.prometheusRule.alertLabels" -}}
+severity: {{ .severity | quote }}
+namespace: {{ .root.Release.Namespace | quote }}
+release: {{ .root.Release.Name | quote }}
+{{- with (omit .root.Values.prometheusRule.ruleLabels "namespace" "release") }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- define "agent-marketplace.prometheusRule.alertAnnotations" -}}
+summary: {{ .summary | quote }}
+description: {{ .description | quote }}
+{{- with .root.Values.prometheusRule.runbookBaseUrl }}
+runbook_url: {{ printf "%s#%s" . $.alertName | quote }}
+{{- end }}
+{{- end }}
+
 {{- define "agent-marketplace.configMapName" -}}
 {{- if .Values.config.existingConfigMap }}
 {{- .Values.config.existingConfigMap }}

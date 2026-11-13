@@ -99,7 +99,69 @@ Read the log file or collect it with your container tooling. Alert or investigat
 
 ## Alert on metrics
 
-Scrape `/metrics` on every worker and API operations listener. Alert against your service objectives: API request errors and public latency, plus worker source observations, refresh failures, host-budget delays, configuration rejection, and restart-required drift. An increasing `unchanged` observation counter with a stable nonzero last-index timestamp is healthy; a `0` last-index timestamp means the registry has been observed but not yet indexed successfully. Rising host-budget delays indicate admission limits rather than source failure. A recent successful observation with an old last-index timestamp can indicate a failed or delayed refresh. With multiple workers, aggregate per-registry timestamps using `max by (registry)`. The [health and metrics reference](../../reference/marketplace-health-and-metrics.md#metrics) lists every series and label. The Helm chart's ServiceMonitor scrapes API and worker operations Services when `serviceMonitor.enabled` is set.
+Scrape `/metrics` on every worker and API operations listener. The Helm chart's ServiceMonitor scrapes API and worker operations Services when `serviceMonitor.enabled` is set. Its optional Prometheus Operator rules are enabled with `prometheusRule.enabled: true`; the chart README lists their configurable values. The rules cover worker availability and progress, per-registry probe and index health, refresh failures, configuration changes, and sustained host-budget delays.
+
+An increasing `unchanged` observation counter with a stable nonzero last-index timestamp is healthy; a `0` last-index timestamp means the registry has been observed but not yet indexed successfully. Rising host-budget delays indicate admission limits rather than source failure. A recent successful observation with an old last-index timestamp can indicate a failed or delayed refresh. With multiple workers, aggregate per-registry timestamps using `max by (registry)`. The [health and metrics reference](../../reference/marketplace-health-and-metrics.md#metrics) lists every series and label.
+
+### AgentMarketplaceWorkerDown {#agentmarketplaceworkerdown}
+
+No source-observation series is being scraped from either the API or worker Service. This can mean the worker is down or that the metrics scrape is missing.
+
+**First response:** Check the API and worker operations Services and their `/metrics` endpoints, then inspect worker pod state and logs for startup or listener errors.
+
+### AgentMarketplaceWorkerObservationsStalled {#agentmarketplaceworkerobservationsstalled}
+
+Source-observation counters have not increased within the configured window even though an index timestamp exists.
+
+**First response:** Inspect `source observation` logs and compare the observation and index timestamps. Check whether the worker is waiting on upstream access or host-budget admission; use `serve reindex` when an immediate refresh is needed.
+
+### AgentMarketplaceRegistryProbeFailing {#agentmarketplaceregistryprobefailing}
+
+Repeated source probes for a registry are failing. The last published index remains available, but may be stale.
+
+**First response:** Inspect `source observation` logs for the registry and its error details. Verify network access and credentials for the configured origin; do not treat probe failures as completed refresh failures.
+
+### AgentMarketplaceRegistryObservationStale {#agentmarketplaceregistryobservationstale}
+
+The last successful source observation is older than the configured limit.
+
+**First response:** Check the `source observation` logs and the registry's last successful observation timestamp. Investigate repeated probe failures, connectivity, and host-budget delays.
+
+### AgentMarketplaceRegistryIndexStale {#agentmarketplaceregistryindexstale}
+
+The last successful index is older than the configured limit. The default allows the 24-hour reconciliation plus two hours of margin.
+
+**First response:** Inspect `refresh finished`, `reindex failed`, and `process refresh job failed` logs. Resolve the reported refresh error, then use `serve reindex` if the registry needs an immediate refresh.
+
+### AgentMarketplaceRegistryNeverIndexed {#agentmarketplaceregistryneverindexed}
+
+The registry has been observed by a worker, but no successful index timestamp has been recorded.
+
+**First response:** Inspect `reindex failed` and `process refresh job failed` logs and verify the registry's configuration and source access. Reindex after correcting the reported problem.
+
+### AgentMarketplaceRefreshFailures {#agentmarketplacerefreshfailures}
+
+One or more refreshes with the indicated trigger failed. Superseded refreshes and source probe failures are not counted as refresh failures.
+
+**First response:** Inspect `refresh finished`, `reindex failed`, or `managed refresh attempt failed` logs for the cause. A superseded refresh is expected to be retried under the current settings.
+
+### AgentMarketplaceConfigCandidateRejected {#agentmarketplaceconfigcandidaterejected}
+
+A runtime configuration candidate was rejected or failed to apply; the last valid configuration remains active.
+
+**First response:** Inspect the `config candidate rejected` log and its `reason`, correct the operator configuration file, and confirm that a subsequent candidate is applied.
+
+### AgentMarketplaceConfigRestartRequired {#agentmarketplaceconfigrestartrequired}
+
+Startup-owned configuration has drifted from the values used by running processes.
+
+**First response:** Inspect `restart-required config drift detected` and its `fields` attribute, then restart every API and worker process to apply those changes.
+
+### AgentMarketplaceHostBudgetDelaysSustained {#agentmarketplacehostbudgetdelayssustained}
+
+Host-budget admission has delayed work for the indicated operation over a sustained period. These delays indicate admission pressure, not a source or refresh failure.
+
+**First response:** Inspect `source observation delayed by host budget` and `refresh delayed by host budget` logs and their `overdue` values. Review the per-host budget and upstream response time before changing scrape or refresh intervals.
 
 ## Related documentation
 

@@ -156,6 +156,9 @@ jobs:
       - name: Verify explicit Helm image selection
         run: AM_HELM_CHECK=1 go test ./tools/ci-plan -run '^TestHelmImageSelection$' -count=1
 
+      - name: Verify PrometheusRule alert release identity
+        run: AM_HELM_CHECK=1 CGO_ENABLED=0 go test ./tools/ci-plan -run '^TestAlertReleaseIdentity$'
+
       - name: Validate and package Helm chart
         shell: bash
         env:
@@ -320,6 +323,80 @@ jobs:
               exit 1
             fi
           }
+
+          reject "default render omits PrometheusRule" "$(cat "$package_dir/default-rendered.yaml")" "kind: PrometheusRule"
+          helm lint --strict "$CHART_DIR" --set image.tag=ci --set prometheusRule.enabled=true
+
+          helm template marketplace "$CHART_DIR" --namespace marketplace \
+            --set image.tag=ci \
+            --set fullnameOverride=agent-marketplace \
+            --set prometheusRule.enabled=true > "$package_dir/alerts-all.yaml"
+          all_rule_doc="$(extract_doc PrometheusRule agent-marketplace-api "$package_dir/alerts-all.yaml")"
+          require "all-mode selector scopes worker metrics" "$all_rule_doc" 'namespace="marketplace",service=~"agent-marketplace-api|agent-marketplace-worker"'
+          if [[ "$(grep -cE '^[[:space:]]+- alert: AgentMarketplace' <<<"$all_rule_doc")" -ne 10 ]]; then
+            echo "assertion failed: enabled all-mode PrometheusRule must contain ten worker alerts" >&2
+            exit 1
+          fi
+          reject "empty runbook base omits runbook annotations" "$all_rule_doc" "runbook_url:"
+
+          helm template marketplace "$CHART_DIR" --namespace marketplace \
+            --set image.tag=ci \
+            --set fullnameOverride=agent-marketplace \
+            --set mode=split \
+            --set prometheusRule.enabled=true > "$package_dir/alerts-split.yaml"
+          split_rule_doc="$(extract_doc PrometheusRule agent-marketplace-api "$package_dir/alerts-split.yaml")"
+          require "split-mode selector scopes worker metrics" "$split_rule_doc" 'namespace="marketplace",service=~"agent-marketplace-api|agent-marketplace-worker"'
+
+          helm template marketplace "$CHART_DIR" --namespace marketplace \
+            --set image.tag=ci \
+            --set fullnameOverride=agent-marketplace \
+            --set prometheusRule.enabled=true \
+            --set prometheusRule.alerts.workerDown.enabled=false \
+            --set prometheusRule.alerts.registryProbeFailing.for=11m \
+            --set prometheusRule.alerts.registryProbeFailing.severity=emergency \
+            --set prometheusRule.alerts.registryProbeFailing.threshold=7 \
+            --set prometheusRule.alerts.registryObservationStale.staleAfterSeconds=7200 \
+            --set prometheusRule.alerts.registryIndexStale.staleAfterSeconds=172800 \
+            --set prometheusRule.alerts.refreshFailures.window=2h \
+            --set prometheusRule.labels.owner=platform \
+            --set prometheusRule.additionalLabels.release=monitored \
+            --set prometheusRule.ruleLabels.team=marketplace-alerts \
+            --set prometheusRule.runbookBaseUrl=https://agent-marketplace.io/docs/how-to/operator/reindex-and-monitor \
+            > "$package_dir/alerts-configured.yaml"
+          configured_rule_doc="$(extract_doc PrometheusRule agent-marketplace-api "$package_dir/alerts-configured.yaml")"
+          reject "disabled worker-down alert is omitted" "$configured_rule_doc" "alert: AgentMarketplaceWorkerDown"
+          require "PrometheusRule custom labels are applied" "$configured_rule_doc" "owner: platform"
+          require "PrometheusRule additional labels are applied" "$configured_rule_doc" "release: monitored"
+          require "ruleLabels are applied" "$configured_rule_doc" "team: marketplace-alerts"
+          require "runbook URL uses lower-case alert name" "$configured_rule_doc" 'runbook_url: "https://agent-marketplace.io/docs/how-to/operator/reindex-and-monitor#agentmarketplaceregistryprobefailing"'
+          require "probe threshold is configurable" "$configured_rule_doc" ">= 7"
+          require "registry observation stale threshold is configurable" "$configured_rule_doc" "> 7200"
+          require "registry index stale threshold is configurable" "$configured_rule_doc" "> 172800"
+          require "refresh failure window is configurable" "$configured_rule_doc" 'outcome="failed" }[2h]'
+          require "alert duration is configurable" "$configured_rule_doc" 'for: "11m"'
+          require "alert severity is configurable" "$configured_rule_doc" 'severity: "emergency"'
+          if [[ "$(grep -c 'team: marketplace-alerts' <<<"$configured_rule_doc")" -ne 9 ]]; then
+            echo "assertion failed: ruleLabels must be added to every enabled alert" >&2
+            exit 1
+          fi
+
+          for alert in \
+            AgentMarketplaceWorkerDown \
+            AgentMarketplaceWorkerObservationsStalled \
+            AgentMarketplaceRegistryProbeFailing \
+            AgentMarketplaceRegistryObservationStale \
+            AgentMarketplaceRegistryIndexStale \
+            AgentMarketplaceRegistryNeverIndexed \
+            AgentMarketplaceRefreshFailures \
+            AgentMarketplaceConfigCandidateRejected \
+            AgentMarketplaceConfigRestartRequired \
+            AgentMarketplaceHostBudgetDelaysSustained
+          do
+            anchor="$(printf '%s' "$alert" | tr '[:upper:]' '[:lower:]')"
+            require "runbook heading anchor matches $alert" \
+              "$(cat site/docs/how-to/operator/reindex-and-monitor.md)" \
+              "### $alert {#$anchor}"
+          done
 
           env_value() {
             awk -v target="$1" '
@@ -492,6 +569,17 @@ jobs:
             exit 1
           fi
           helm template marketplace "${package_paths[0]}" --namespace marketplace --values "$values_file" > "$package_dir/package-rendered.yaml"
+
+          prometheus_version=3.15.1
+          prometheus_archive="$package_dir/prometheus-${prometheus_version}.linux-amd64.tar.gz"
+          curl -fsSL "https://github.com/prometheus/prometheus/releases/download/v${prometheus_version}/prometheus-${prometheus_version}.linux-amd64.tar.gz" \
+            -o "$prometheus_archive"
+          printf '%s  %s\n' \
+            6a726885328ad9efebbf36e876ce2fb6225468a71fd1e7ce3ba666d5f4d97a84 \
+            "$prometheus_archive" | sha256sum -c -
+          tar -xzf "$prometheus_archive" -C "$package_dir"
+          PROMTOOL="$package_dir/prometheus-${prometheus_version}.linux-amd64/promtool" \
+            bash "$CHART_DIR/tests/prometheusrule/run.sh"
 
   container-images:
     name: Container images (public defaults)

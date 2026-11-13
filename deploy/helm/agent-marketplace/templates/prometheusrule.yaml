@@ -1,0 +1,128 @@
+{{- if .Values.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "agent-marketplace.componentName" (dict "root" . "component" "api") }}
+  labels:
+    {{- include "agent-marketplace.labels" . | nindent 4 }}
+    {{- with .Values.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.prometheusRule.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: agent-marketplace-worker
+      rules:
+        {{- with .Values.prometheusRule.alerts.workerDown }}
+        {{- if .enabled }}
+        - alert: AgentMarketplaceWorkerDown
+          expr: absent(agent_marketplace_source_observations_total{ {{ include "agent-marketplace.workerMetricSelector" $ }} })
+          for: {{ .for | quote }}
+          labels:
+            {{- include "agent-marketplace.prometheusRule.alertLabels" (dict "root" $ "severity" .severity) | nindent 12 }}
+          annotations:
+            {{- include "agent-marketplace.prometheusRule.alertAnnotations" (dict "root" $ "alertName" "agentmarketplaceworkerdown" "summary" "Marketplace worker source observations are absent" "description" "No worker source observation series is being scraped.") | nindent 12 }}
+        {{- end }}
+        {{- end }}
+        {{- with .Values.prometheusRule.alerts.workerObservationsStalled }}
+        {{- if .enabled }}
+        - alert: AgentMarketplaceWorkerObservationsStalled
+          expr: sum(increase(agent_marketplace_source_observations_total{ {{ include "agent-marketplace.workerMetricSelector" $ }} }[{{ .window }}])) == 0 and on() count(agent_marketplace_registry_last_successful_index_timestamp_seconds{ {{ include "agent-marketplace.workerMetricSelector" $ }} }) > 0
+          for: {{ .for | quote }}
+          labels:
+            {{- include "agent-marketplace.prometheusRule.alertLabels" (dict "root" $ "severity" .severity) | nindent 12 }}
+          annotations:
+            {{- include "agent-marketplace.prometheusRule.alertAnnotations" (dict "root" $ "alertName" "agentmarketplaceworkerobservationsstalled" "summary" "Marketplace worker observations have stalled" "description" "Source observations have not increased despite an observed index.") | nindent 12 }}
+        {{- end }}
+        {{- end }}
+        {{- with .Values.prometheusRule.alerts.registryProbeFailing }}
+        {{- if .enabled }}
+        - alert: AgentMarketplaceRegistryProbeFailing
+          expr: max by (registry) (agent_marketplace_registry_consecutive_probe_failures{ {{ include "agent-marketplace.workerMetricSelector" $ }} }) >= {{ .threshold }}
+          for: {{ .for | quote }}
+          labels:
+            {{- include "agent-marketplace.prometheusRule.alertLabels" (dict "root" $ "severity" .severity) | nindent 12 }}
+          annotations:
+            {{- include "agent-marketplace.prometheusRule.alertAnnotations" (dict "root" $ "alertName" "agentmarketplaceregistryprobefailing" "summary" "Marketplace registry source probes are repeatedly failing" "description" "Registry {{ $labels.registry }} has repeated source probe failures; the last published index remains available but may be stale.") | nindent 12 }}
+        {{- end }}
+        {{- end }}
+        {{- with .Values.prometheusRule.alerts.registryObservationStale }}
+        {{- if .enabled }}
+        - alert: AgentMarketplaceRegistryObservationStale
+          expr: time() - max by (registry) (agent_marketplace_registry_last_successful_observation_timestamp_seconds{ {{ include "agent-marketplace.workerMetricSelector" $ }} }) > {{ .staleAfterSeconds }}
+          for: {{ .for | quote }}
+          labels:
+            {{- include "agent-marketplace.prometheusRule.alertLabels" (dict "root" $ "severity" .severity) | nindent 12 }}
+          annotations:
+            {{- include "agent-marketplace.prometheusRule.alertAnnotations" (dict "root" $ "alertName" "agentmarketplaceregistryobservationstale" "summary" "Marketplace registry observation is stale" "description" "Registry {{ $labels.registry }} has not been successfully observed recently; the last published index remains available but may be stale.") | nindent 12 }}
+        {{- end }}
+        {{- end }}
+        {{- with .Values.prometheusRule.alerts.registryIndexStale }}
+        {{- if .enabled }}
+        - alert: AgentMarketplaceRegistryIndexStale
+          expr: time() - max by (registry) (agent_marketplace_registry_last_successful_index_timestamp_seconds{ {{ include "agent-marketplace.workerMetricSelector" $ }} } > 0) > {{ .staleAfterSeconds }}
+          for: {{ .for | quote }}
+          labels:
+            {{- include "agent-marketplace.prometheusRule.alertLabels" (dict "root" $ "severity" .severity) | nindent 12 }}
+          annotations:
+            {{- include "agent-marketplace.prometheusRule.alertAnnotations" (dict "root" $ "alertName" "agentmarketplaceregistryindexstale" "summary" "Marketplace registry index is stale" "description" "Registry {{ $labels.registry }} may not have an index reflecting its latest source revision.") | nindent 12 }}
+        {{- end }}
+        {{- end }}
+        {{- with .Values.prometheusRule.alerts.registryNeverIndexed }}
+        {{- if .enabled }}
+        - alert: AgentMarketplaceRegistryNeverIndexed
+          expr: max by (registry) (agent_marketplace_registry_last_successful_index_timestamp_seconds{ {{ include "agent-marketplace.workerMetricSelector" $ }} }) == 0
+          for: {{ .for | quote }}
+          labels:
+            {{- include "agent-marketplace.prometheusRule.alertLabels" (dict "root" $ "severity" .severity) | nindent 12 }}
+          annotations:
+            {{- include "agent-marketplace.prometheusRule.alertAnnotations" (dict "root" $ "alertName" "agentmarketplaceregistryneverindexed" "summary" "Marketplace registry has never been indexed successfully" "description" "Registry {{ $labels.registry }} has been observed but has no successful index timestamp.") | nindent 12 }}
+        {{- end }}
+        {{- end }}
+        {{- with .Values.prometheusRule.alerts.refreshFailures }}
+        {{- if .enabled }}
+        - alert: AgentMarketplaceRefreshFailures
+          expr: sum by (trigger) (increase(agent_marketplace_registry_refreshes_total{ {{ include "agent-marketplace.workerMetricSelector" $ }},outcome="failed" }[{{ .window }}])) > 0
+          for: {{ .for | quote }}
+          labels:
+            {{- include "agent-marketplace.prometheusRule.alertLabels" (dict "root" $ "severity" .severity) | nindent 12 }}
+          annotations:
+            {{- include "agent-marketplace.prometheusRule.alertAnnotations" (dict "root" $ "alertName" "agentmarketplacerefreshfailures" "summary" "Marketplace registry refreshes are failing" "description" "Failed refreshes with trigger {{ $labels.trigger }} are increasing; superseded refreshes and source probe failures are not refresh failures.") | nindent 12 }}
+        {{- end }}
+        {{- end }}
+        {{- with .Values.prometheusRule.alerts.configCandidateRejected }}
+        {{- if .enabled }}
+        - alert: AgentMarketplaceConfigCandidateRejected
+          expr: sum(increase(agent_marketplace_config_candidates_total{ {{ include "agent-marketplace.workerMetricSelector" $ }},outcome=~"rejected|apply_failed" }[{{ .window }}])) > 0
+          for: {{ .for | quote }}
+          labels:
+            {{- include "agent-marketplace.prometheusRule.alertLabels" (dict "root" $ "severity" .severity) | nindent 12 }}
+          annotations:
+            {{- include "agent-marketplace.prometheusRule.alertAnnotations" (dict "root" $ "alertName" "agentmarketplaceconfigcandidaterejected" "summary" "Marketplace configuration candidates are being rejected" "description" "Rejected or failed configuration candidates leave the last valid configuration running.") | nindent 12 }}
+        {{- end }}
+        {{- end }}
+        {{- with .Values.prometheusRule.alerts.configRestartRequired }}
+        {{- if .enabled }}
+        - alert: AgentMarketplaceConfigRestartRequired
+          expr: max(agent_marketplace_config_restart_required{ {{ include "agent-marketplace.workerMetricSelector" $ }} }) == 1
+          for: {{ .for | quote }}
+          labels:
+            {{- include "agent-marketplace.prometheusRule.alertLabels" (dict "root" $ "severity" .severity) | nindent 12 }}
+          annotations:
+            {{- include "agent-marketplace.prometheusRule.alertAnnotations" (dict "root" $ "alertName" "agentmarketplaceconfigrestartrequired" "summary" "Marketplace configuration requires restart" "description" "Restart every API and worker process to apply startup-owned configuration changes.") | nindent 12 }}
+        {{- end }}
+        {{- end }}
+        {{- with .Values.prometheusRule.alerts.hostBudgetDelaysSustained }}
+        {{- if .enabled }}
+        - alert: AgentMarketplaceHostBudgetDelaysSustained
+          expr: sum by (operation) (increase(agent_marketplace_host_budget_delays_total{ {{ include "agent-marketplace.workerMetricSelector" $ }} }[{{ .window }}])) > 0
+          for: {{ .for | quote }}
+          labels:
+            {{- include "agent-marketplace.prometheusRule.alertLabels" (dict "root" $ "severity" .severity) | nindent 12 }}
+          annotations:
+            {{- include "agent-marketplace.prometheusRule.alertAnnotations" (dict "root" $ "alertName" "agentmarketplacehostbudgetdelayssustained" "summary" "Marketplace worker delays are sustained" "description" "Host-budget delays for operation {{ $labels.operation }} are admission pressure, not a source or refresh failure.") | nindent 12 }}
+        {{- end }}
+        {{- end }}
+{{- end }}

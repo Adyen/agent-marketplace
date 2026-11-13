@@ -80,7 +80,7 @@ The three `listener`-labeled series observe requests inside the configuration au
 
 An increasing `unchanged` observation counter with a stable nonzero last-index timestamp is healthy. Rising host-budget delays indicate admission pressure, not source failure. A recent successful observation with an old successful-index timestamp can indicate a failed or delayed refresh. Configuration rejection and restart-required drift are separate conditions. Each terminal refresh logs one `refresh finished` record with its registry, trigger, outcome, and duration; source failures remain observation outcomes and superseded refreshes are not failures.
 
-Worker-only processes serve only `/metrics` on their operations listener; `/readyz` returns `404`, and the public listener is not opened. All-role processes include each worker series once on their existing operations `/metrics`. With multiple workers, aggregate per-registry timestamps using `max by (registry)`.
+Worker-only processes serve only `/metrics` on their operations listener; `/readyz` returns `404`, and the public listener is not opened. All-role processes include each worker series once on their existing operations `/metrics`. With multiple workers, aggregate per-registry timestamps using `max by (registry)`. The Helm chart can generate opt-in Prometheus Operator alerts for the worker series; see [Alert on metrics](../how-to/operator/reindex-and-monitor.md#alert-on-metrics).
 
 ## Keep operations endpoints private
 
