@@ -1,8 +1,6 @@
 package giturl
 
 import (
-	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 )
@@ -92,36 +90,6 @@ func TestValidateURLAllowsSupportedGitOrigins(t *testing.T) {
 		t.Run(url, func(t *testing.T) {
 			if err := ValidateURL(url); err != nil {
 				t.Fatalf("ValidateURL(%q) returned error: %v", url, err)
-			}
-		})
-	}
-}
-
-// spec: gui-configuration/valid-source-input-enables-addition
-// spec: gui-configuration/invalid-source-input-disables-addition
-func TestValidateURLMatchesGUISharedCases(t *testing.T) {
-	type sourceLocationCase struct {
-		Name     string `json:"name"`
-		Location string `json:"location"`
-		Valid    bool   `json:"valid"`
-	}
-
-	raw, err := os.ReadFile("../../gui/tests/fixtures/source-locations.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cases []sourceLocationCase
-	if err := json.Unmarshal(raw, &cases); err != nil {
-		t.Fatal(err)
-	}
-	if len(cases) == 0 {
-		t.Fatal("shared source location cases are empty")
-	}
-	for _, tc := range cases {
-		t.Run(tc.Name, func(t *testing.T) {
-			err := ValidateURL(tc.Location)
-			if got := err == nil; got != tc.Valid {
-				t.Errorf("ValidateURL(%q) valid = %v, want %v (error: %v)", tc.Location, got, tc.Valid, err)
 			}
 		})
 	}

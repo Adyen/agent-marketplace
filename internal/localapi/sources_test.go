@@ -1486,6 +1486,68 @@ func TestValidateAddSourceOriginForms(t *testing.T) {
 	}
 }
 
+// spec: gui-configuration/valid-source-input-enables-addition
+// spec: gui-configuration/invalid-source-input-disables-addition
+func TestAddSourceAdmissionMatchesSharedCases(t *testing.T) {
+	type sourceLocationCase struct {
+		Name     string `json:"name"`
+		Location string `json:"location"`
+		Valid    bool   `json:"valid"`
+	}
+
+	raw, err := os.ReadFile("../../gui/tests/fixtures/source-locations.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []sourceLocationCase
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatal(err)
+	}
+	if len(cases) == 0 {
+		t.Fatal("shared source location cases are empty")
+	}
+	for _, tc := range cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			home, _ := newUserAPIFixture(t, true)
+			userConfig := filepath.Join(home, ".agents", "config.yaml")
+			original, err := os.ReadFile(userConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			staged := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(staged, original, 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			entry, accepted := validateAddSource(&configurationActionSource{
+				Kind:     "git",
+				Location: tc.Location,
+				Ref:      "main",
+				refSeen:  true,
+			}, nil)
+			if accepted {
+				err = pipeline.EditLayerAtPath(config.LayerTarget{
+					Source:        config.UserPersonal,
+					StagedPath:    staged,
+					DeclaringPath: userConfig,
+				}, func(m *pipeline.LayerMutation) error {
+					_, err := m.EnsureRegistry(entry)
+					return err
+				})
+				accepted = err == nil
+			}
+			if accepted != tc.Valid {
+				t.Errorf("add-source admission for %q = %v, want %v (error: %v)", tc.Location, accepted, tc.Valid, err)
+			}
+			if after, readErr := os.ReadFile(userConfig); readErr != nil {
+				t.Fatal(readErr)
+			} else if !bytes.Equal(after, original) {
+				t.Errorf("declaring user root changed:\n%s", after)
+			}
+		})
+	}
+}
+
 func TestUserSourceAddAcceptsSSHAndSCPOrigins(t *testing.T) {
 	home, _ := newUserAPIFixture(t, true)
 	userConfig := filepath.Join(home, ".agents", "config.yaml")

@@ -15,7 +15,7 @@ const gitLocations = JSON.parse(
 describe('source input validation', () => {
   // spec: gui-configuration/valid-source-input-enables-addition
   // spec: gui-configuration/invalid-source-input-disables-addition
-  it.each(gitLocations)('matches the canonical Git parser for $name', ({ location, valid }) => {
+  it.each(gitLocations)('matches GUI add-source admission for $name', ({ location, valid }) => {
     const errors = validateSourceInput({ kind: 'git', location, ref: 'main', path: '' })
     expect(Object.hasOwn(errors, 'location')).toBe(!valid)
   })
@@ -40,7 +40,7 @@ describe('source input validation', () => {
     expect(validateSourceInput({ kind: 'directory', location: ' \t ', ref: '', path: '' })).toEqual({
       location: expect.any(String),
     })
-    expect(validateSourceInput({ kind: 'git', location: 'relative/repo', ref: ' \n', path: '' })).toEqual({
+    expect(validateSourceInput({ kind: 'git', location: 'https://example.com/repo.git', ref: ' \n', path: '' })).toEqual({
       ref: expect.any(String),
     })
     expect(validateSourceInput({ kind: 'marketplace', location: '/api', ref: '', path: '' })).toEqual({
@@ -54,7 +54,7 @@ describe('source input validation', () => {
   // spec: gui-configuration/valid-source-input-enables-addition
   it('accepts valid inputs for each source kind', () => {
     expect(validateSourceInput({ kind: 'directory', location: ' /var/registries ', ref: '', path: '' })).toEqual({})
-    expect(validateSourceInput({ kind: 'git', location: 'registries/example', ref: 'main', path: '' })).toEqual({})
+    expect(validateSourceInput({ kind: 'git', location: 'https://example.com/repo.git', ref: 'main', path: '' })).toEqual({})
     expect(validateSourceInput({ kind: 'marketplace', location: 'https://market.example/api', ref: '', path: '' })).toEqual({})
   })
 })

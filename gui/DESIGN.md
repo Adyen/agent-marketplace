@@ -617,8 +617,9 @@ conflicts with an earlier section, this section wins.
   sit once below the form inside the Add source section.
 - *Rule — source action and validation*: Add source is aligned to the form's
   right edge at content width, without a fixed width. It stays disabled until
-  a directory location is non-blank, a Git location accepted by the CLI has a
-  non-blank ref, or a Marketplace location is an absolute HTTP(S) URL.
+  a directory location is non-blank, a Git location accepted by the existing
+  GUI add-source API/config admission rules has a non-blank ref, or a
+  Marketplace location is an absolute HTTP(S) URL.
   Directory existence remains a server check.
 - *Observed*: each source is a row of text with a labelled Remove button. The
   footer button reads "Cancel", but the dialog applies each change at once.

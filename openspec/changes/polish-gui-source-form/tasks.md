@@ -1,8 +1,8 @@
 ## 1. Source form
 
 - [x] 1.1 Add failing component and browser tests for field-label consistency, inline errors and clearing, hint timing, and content-width alignment.
-- [ ] 1.2 Add a shared test-only input table exercised by the client validator and the real GUI add-source admission functions (`localapi.validateAddSource` with a valid main ref and no configured allowlist, plus the UserPersonal `pipeline.EditLayerAtPath`/`EnsureRegistry` v4 editor from configuration.go, not `giturl.ValidateURL` alone); verify invalid input disables addition without rejecting locations that admission boundary accepts.
-- [ ] 1.3 Implement the shared form validation against that admission authority, field-error wiring, and styles; verify the focused tests pass and update the source-form design guidance.
+- [x] 1.2 Add a shared test-only input table exercised by the client validator and the real GUI add-source admission functions (`localapi.validateAddSource` with a valid main ref and no configured allowlist, plus the UserPersonal `pipeline.EditLayerAtPath`/`EnsureRegistry` v4 editor from configuration.go, not `giturl.ValidateURL` alone); verify invalid input disables addition without rejecting locations that admission boundary accepts.
+- [x] 1.3 Implement the shared form validation against that admission authority, field-error wiring, and styles; verify the focused tests pass and update the source-form design guidance.
 
 ## 2. Integration
 
