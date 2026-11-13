@@ -432,7 +432,12 @@ func TestSyncCheckFiles(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
 	outputDir := t.TempDir()
+	homeOutputDir := "~" + string(filepath.Separator) + "workspace"
 	tests := []struct {
 		name   string
 		header string
@@ -448,6 +453,16 @@ func TestSyncCheckFiles(t *testing.T) {
 			header: "→ " + outputDir,
 			want:   filepath.Join(outputDir, "opencode.jsonc"),
 		},
+		{
+			name:   "target header with home abbreviation",
+			header: "→ mcp (" + homeOutputDir + ")",
+			want:   filepath.Join(home, "workspace", "opencode.jsonc"),
+		},
+		{
+			name:   "bare path header with home abbreviation",
+			header: "→ " + homeOutputDir,
+			want:   filepath.Join(home, "workspace", "opencode.jsonc"),
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -456,6 +471,23 @@ func TestSyncCheckFiles(t *testing.T) {
 				t.Fatalf("files = %v, want [%s]", got, tt.want)
 			}
 		})
+	}
+
+	report := &materialize.Report{
+		PerRoot: []materialize.TargetReport{{
+			RootID:  "mcp",
+			OutDir:  filepath.Join(home, "workspace"),
+			Written: []string{"opencode.jsonc"},
+		}},
+	}
+	var buffer bytes.Buffer
+	if err := printOutputDirDetail(&buffer, report, true); err != nil {
+		t.Fatal(err)
+	}
+	got := syncCheckFiles(buffer.String())
+	want := filepath.Join(home, "workspace", "opencode.jsonc")
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("emitted output files = %v, want [%s]\noutput:\n%s", got, want, buffer.String())
 	}
 }
 

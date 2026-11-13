@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -380,6 +381,11 @@ func syncCheckFiles(output string) []string {
 			if !filepath.IsAbs(dir) {
 				if open := strings.Index(dir, " ("); open >= 0 && strings.HasSuffix(dir, ")") {
 					dir = dir[open+2 : len(dir)-1]
+				}
+			}
+			if strings.HasPrefix(dir, "~"+string(filepath.Separator)) {
+				if home, err := os.UserHomeDir(); err == nil {
+					dir = filepath.Join(home, dir[2:])
 				}
 			}
 			if filepath.IsAbs(dir) {
