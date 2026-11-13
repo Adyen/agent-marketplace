@@ -383,6 +383,82 @@ func TestDoctorRepairRunsDriftBesideSameBasenameDevinCollision(t *testing.T) {
 	}
 }
 
+func TestSyncCheckCollisions(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	repoRoot := t.TempDir()
+	opencodeFile := filepath.Join(repoRoot, "opencode.jsonc")
+	collision := "warning: ownership.unmanaged-key: collision: mcp-server entry \"conflict\" in \"" +
+		opencodeFile + "\""
+	aggregateError := "error: materialize.opencode.aggregate-collision: A handwritten MCP entry conflicts with the selected server; configuration preserved"
+	tests := []struct {
+		name            string
+		output          string
+		wantFiles       []string
+		wantOtherErrors bool
+	}{
+		{
+			name:      "OpenCode aggregate collision",
+			output:    collision + "\n" + aggregateError,
+			wantFiles: []string{opencodeFile},
+		},
+		{
+			name:            "unrelated errors remain",
+			output:          "error: materialize.opencode.aggregate-write: write failed\n" + aggregateError + "\n" + collision,
+			wantFiles:       []string{opencodeFile},
+			wantOtherErrors: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotFiles, gotOtherErrors := syncCheckCollisions(tt.output, repoRoot)
+			if len(gotFiles) != len(tt.wantFiles) {
+				t.Fatalf("files = %v, want %v", gotFiles, tt.wantFiles)
+			}
+			for i := range tt.wantFiles {
+				if gotFiles[i] != tt.wantFiles[i] {
+					t.Fatalf("files = %v, want %v", gotFiles, tt.wantFiles)
+				}
+			}
+			if gotOtherErrors != tt.wantOtherErrors {
+				t.Fatalf("otherErrors = %t, want %t", gotOtherErrors, tt.wantOtherErrors)
+			}
+		})
+	}
+}
+
+func TestSyncCheckFiles(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	outputDir := t.TempDir()
+	tests := []struct {
+		name   string
+		header string
+		want   string
+	}{
+		{
+			name:   "target header",
+			header: "→ mcp (" + outputDir + ")",
+			want:   filepath.Join(outputDir, "opencode.jsonc"),
+		},
+		{
+			name:   "bare path header",
+			header: "→ " + outputDir,
+			want:   filepath.Join(outputDir, "opencode.jsonc"),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := syncCheckFiles(tt.header + "\n  + opencode.jsonc")
+			if len(got) != 1 || got[0] != tt.want {
+				t.Fatalf("files = %v, want [%s]", got, tt.want)
+			}
+		})
+	}
+}
+
 // spec: doctor-repair-planning/repair-exits-one-when-only-blocked-or-human-only-items-remain
 func TestDoctorRepairKeepsOwnershipAdoptionAvailableAfterSyncCheckError(t *testing.T) {
 	if isolateCommandTest(t) {

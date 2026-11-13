@@ -376,7 +376,13 @@ func syncCheckFiles(output string) []string {
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "→ ") {
-			if dir := strings.TrimPrefix(line, "→ "); filepath.IsAbs(dir) {
+			dir := strings.TrimPrefix(line, "→ ")
+			if !filepath.IsAbs(dir) {
+				if open := strings.Index(dir, " ("); open >= 0 && strings.HasSuffix(dir, ")") {
+					dir = dir[open+2 : len(dir)-1]
+				}
+			}
+			if filepath.IsAbs(dir) {
 				outputDir = dir
 			}
 			continue
@@ -396,44 +402,54 @@ func syncCheckFiles(output string) []string {
 func syncCheckCollisions(output, repoRoot string) ([]string, bool) {
 	var files []string
 	otherErrors := false
+	collisionError := false
 	for _, line := range strings.Split(output, "\n") {
-		var collisionFile string
 		if strings.Contains(line, diag.CodeOwnershipUnmanagedKey) ||
 			strings.Contains(line, "materialize.collision.user-owned") {
-			for _, file := range []string{"mcp_config.json", "config.toml"} {
-				if strings.Contains(line, file) {
-					collisionFile = file
-					break
-				}
-			}
-			if collisionFile == "" && strings.Contains(line, "hooks.json") &&
-				(strings.Contains(line, ".devin") || strings.Contains(line, ".codex") ||
-					strings.Contains(line, "Devin") || strings.Contains(line, "Codex")) {
-				collisionFile = "hooks.json"
-			}
-		}
-		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "error:") {
-			if collisionFile == "" {
-				otherErrors = true
-			}
-		}
-		if collisionFile != "" {
 			var collisionPath string
 			for _, quoted := range strings.Split(line, `"`) {
-				if filepath.IsAbs(quoted) && filepath.Base(quoted) == collisionFile {
+				if filepath.IsAbs(quoted) {
 					collisionPath = filepath.Clean(quoted)
 					break
 				}
 			}
-			if collisionPath == "" && strings.Contains(line, "Codex") {
-				collisionPath = filepath.Join(repoRoot, ".codex", collisionFile)
-			} else if collisionPath == "" && strings.Contains(line, "Devin") {
-				collisionPath = filepath.Join(repoRoot, ".devin", collisionFile)
+			if collisionPath == "" {
+				var collisionFile string
+				switch {
+				case strings.Contains(line, "mcp_config.json"):
+					collisionFile = "mcp_config.json"
+				case strings.Contains(line, "config.toml"):
+					collisionFile = "config.toml"
+				case strings.Contains(line, "hooks.json"):
+					collisionFile = "hooks.json"
+				}
+				if collisionFile != "" && (strings.Contains(line, "Codex") || strings.Contains(line, ".codex")) {
+					collisionPath = filepath.Join(repoRoot, ".codex", collisionFile)
+				} else if collisionFile != "" && (strings.Contains(line, "Devin") || strings.Contains(line, ".devin")) {
+					collisionPath = filepath.Join(repoRoot, ".devin", collisionFile)
+				}
 			}
 			if collisionPath != "" {
 				files = append(files, collisionPath)
 			}
 		}
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "error:") {
+			fields := strings.Fields(strings.TrimSpace(line))
+			code := ""
+			if len(fields) > 1 {
+				code = strings.TrimSuffix(fields[1], ":")
+			}
+			switch {
+			case code == diag.CodeOwnershipUnmanagedKey || code == "materialize.collision.user-owned",
+				strings.HasPrefix(code, "materialize.") && strings.HasSuffix(code, ".aggregate-collision"):
+				collisionError = true
+			default:
+				otherErrors = true
+			}
+		}
+	}
+	if collisionError && len(files) == 0 {
+		otherErrors = true
 	}
 	return slices.Compact(files), otherErrors
 }

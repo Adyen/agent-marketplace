@@ -109,9 +109,12 @@ func TestE2EOpenCodeOwnershipRepair(t *testing.T) {
 	if !strings.Contains(repair.Combined, "adopted") || strings.Contains(readFile(t, file), "desired") || readFile(t, file) != initial {
 		t.Fatalf("adoption changed bytes or replaced conflict: %s", repair.Combined)
 	}
-	confirmed := runAMInTTY(t, env, "doctor", "--repair", "[y/N]", "y\n")
+	confirmed := runAMInTTY(t, env, "doctor", "--repair", "[y/N]", "y\ny\n")
 	if confirmed.ExitCode != 0 || !strings.Contains(readFile(t, file), "desired") || !strings.Contains(readFile(t, file), "// handwritten") {
 		t.Fatalf("replacement: %s", confirmed.Combined)
+	}
+	if check := env.RunAM("sync", "--check"); check.ExitCode != 0 {
+		t.Fatalf("sync --check after repair exited %d: %s", check.ExitCode, check.Combined)
 	}
 }
 
