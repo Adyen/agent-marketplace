@@ -715,6 +715,10 @@ func doctorOrganizationConfigPaths(ec config.EffectiveConfig) []string {
 		if errors.As(issue, &validation) {
 			add(validation.File)
 		}
+		var trust *config.OrganizationTrustError
+		if errors.As(issue, &trust) {
+			add(trust.Path)
+		}
 	}
 	result := make([]string, 0, len(paths))
 	for path := range paths {

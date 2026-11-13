@@ -347,72 +347,83 @@ func TestDoctorRepairOrganizationIncludeAliasesRemainHumanOnly(t *testing.T) {
 	}
 	for _, alias := range []string{"symlink", "hard link"} {
 		t.Run(alias, func(t *testing.T) {
-			repoRoot, _ := devinDoctorEnv(t)
-			authority := filepath.Join(repoRoot, ".agents")
-			orgPath := filepath.Join(authority, "organization.yaml")
-			includePath := filepath.Join(authority, "fragment.yaml")
-			writeFile(t, orgPath, "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\n")
-			writeFile(t, includePath, "apiVersion: agent-marketplace/v4\nunknown_field: true\n")
-			if err := os.Chmod(includePath, 0o444); err != nil {
-				t.Fatal(err)
-			}
-			config.SetTestOrganizationConfigPath(t, orgPath)
+			for _, scenario := range []struct {
+				name, organizationCode, organizationRemedy string
+				includeMode                                os.FileMode
+			}{
+				{name: "validation error", organizationCode: "v4.unknown-field", organizationRemedy: "Ask your administrator to correct the organization configuration", includeMode: 0o444},
+				{name: "trust refusal", organizationCode: "organization.trust.include.writable", organizationRemedy: "Ask your administrator to restrict writes to the organization include", includeMode: 0o666},
+			} {
+				t.Run(scenario.name, func(t *testing.T) {
+					repoRoot, _ := devinDoctorEnv(t)
+					authority := filepath.Join(repoRoot, ".agents")
+					orgPath := filepath.Join(authority, "organization.yaml")
+					includePath := filepath.Join(authority, "fragment.yaml")
+					writeFile(t, orgPath, "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\n")
+					writeFile(t, includePath, "apiVersion: agent-marketplace/v4\nunknown_field: true\n")
+					if err := os.Chmod(includePath, scenario.includeMode); err != nil {
+						t.Fatal(err)
+					}
+					config.SetTestOrganizationConfigPath(t, orgPath)
 
-			repoConfig := filepath.Join(authority, "config.yaml")
-			if alias == "hard link" {
-				if err := os.Link(includePath, repoConfig); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				target, err := filepath.Rel(filepath.Dir(repoConfig), includePath)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := os.Symlink(target, repoConfig); err != nil {
-					t.Fatal(err)
-				}
-			}
-			beforeRoot, err := os.ReadFile(orgPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			beforeInclude, err := os.ReadFile(includePath)
-			if err != nil {
-				t.Fatal(err)
-			}
+					repoConfig := filepath.Join(authority, "config.yaml")
+					if alias == "hard link" {
+						if err := os.Link(includePath, repoConfig); err != nil {
+							t.Fatal(err)
+						}
+					} else {
+						target, err := filepath.Rel(filepath.Dir(repoConfig), includePath)
+						if err != nil {
+							t.Fatal(err)
+						}
+						if err := os.Symlink(target, repoConfig); err != nil {
+							t.Fatal(err)
+						}
+					}
+					beforeRoot, err := os.ReadFile(orgPath)
+					if err != nil {
+						t.Fatal(err)
+					}
+					beforeInclude, err := os.ReadFile(includePath)
+					if err != nil {
+						t.Fatal(err)
+					}
 
-			marker := filepath.Join(t.TempDir(), "editor-launched")
-			editor := filepath.Join(t.TempDir(), "editor.sh")
-			writeFile(t, editor, "#!/bin/sh\nprintf launched > \"$EDITOR_MARKER\"\n")
-			t.Setenv("EDITOR_MARKER", marker)
-			t.Setenv("VISUAL", "sh "+fmt.Sprintf("%q", editor))
+					marker := filepath.Join(t.TempDir(), "editor-launched")
+					editor := filepath.Join(t.TempDir(), "editor.sh")
+					writeFile(t, editor, "#!/bin/sh\nprintf launched > \"$EDITOR_MARKER\"\n")
+					t.Setenv("EDITOR_MARKER", marker)
+					t.Setenv("VISUAL", "sh "+fmt.Sprintf("%q", editor))
 
-			var out bytes.Buffer
-			if err := runDoctor(doctorOptions{
-				out:    &out,
-				in:     strings.NewReader("y\ny\n"),
-				isTTY:  true,
-				repair: true,
-				probe:  staticProbe(devincli.Probe{Status: devincli.StatusNotInstalled}),
-			}); err == nil {
-				t.Fatal("repair succeeded with a human-only organization issue")
-			}
-			text := out.String()
-			if !strings.Contains(text, "[human-only]") || !strings.Contains(text, "v4.unknown-field") ||
-				!strings.Contains(text, "Ask your administrator to correct the organization configuration") ||
-				strings.Contains(text, "[guided]") {
-				t.Fatalf("organization alias did not retain its human-only remedy:\n%s", text)
-			}
-			if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("organization alias launched the editor: %v", err)
-			}
-			afterRoot, err := os.ReadFile(orgPath)
-			if err != nil || !bytes.Equal(beforeRoot, afterRoot) {
-				t.Fatalf("organization root changed: %v\n%s", err, afterRoot)
-			}
-			afterInclude, err := os.ReadFile(includePath)
-			if err != nil || !bytes.Equal(beforeInclude, afterInclude) {
-				t.Fatalf("organization include changed: %v\n%s", err, afterInclude)
+					var out bytes.Buffer
+					if err := runDoctor(doctorOptions{
+						out:    &out,
+						in:     strings.NewReader("y\ny\n"),
+						isTTY:  true,
+						repair: true,
+						probe:  staticProbe(devincli.Probe{Status: devincli.StatusNotInstalled}),
+					}); err == nil {
+						t.Fatal("repair succeeded with a human-only organization issue")
+					}
+					text := out.String()
+					if !strings.Contains(text, "[human-only]") || !strings.Contains(text, scenario.organizationCode) ||
+						!strings.Contains(text, "v4.unknown-field") ||
+						!strings.Contains(text, scenario.organizationRemedy) ||
+						strings.Contains(text, "[guided]") {
+						t.Fatalf("organization alias did not retain its human-only remedy:\n%s", text)
+					}
+					if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+						t.Fatalf("organization alias launched the editor: %v", err)
+					}
+					afterRoot, err := os.ReadFile(orgPath)
+					if err != nil || !bytes.Equal(beforeRoot, afterRoot) {
+						t.Fatalf("organization root changed: %v\n%s", err, afterRoot)
+					}
+					afterInclude, err := os.ReadFile(includePath)
+					if err != nil || !bytes.Equal(beforeInclude, afterInclude) {
+						t.Fatalf("organization include changed: %v\n%s", err, afterInclude)
+					}
+				})
 			}
 		})
 	}
