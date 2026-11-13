@@ -116,6 +116,7 @@ function discoveryStatus(health: Snapshot['discoveryHealth'][number]): string {
           class="gui-button--secondary"
           color="neutral"
           variant="soft"
+          :disabled="diagnostics.length === 0"
           @click="copyDiagnostics"
         >{{ copied ? 'Copied' : 'Copy diagnostics' }}</UButton>
       </div>

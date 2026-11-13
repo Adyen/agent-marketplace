@@ -390,6 +390,46 @@ describe('WorkspaceView', () => {
     expect(toggles[0].attributes('aria-expanded')).toBe('false')
   })
 
+  // spec: gui-shell/empty-diagnostics-cannot-be-copied
+  it.each([
+    { clipboard: 'native', nativeBridgeAvailable: true },
+    { clipboard: 'browser', nativeBridgeAvailable: false },
+  ])('does not copy empty diagnostics with the $clipboard clipboard', async ({ nativeBridgeAvailable }) => {
+    const { client, push } = fakeClient()
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1, payload: snapshot([], { diagnostics: [] }) }))
+    await tick()
+
+    const browserWrite = vi.fn(async (_text: string) => {})
+    const restoreClipboard = stubBrowserClipboard(browserWrite)
+    const originalRuntime = window.runtime
+    const nativeWrite = vi.fn(async (_text: string) => true)
+    window.runtime = nativeBridgeAvailable
+      ? { ClipboardSetText: nativeWrite } as NonNullable<typeof window.runtime>
+      : undefined
+    try {
+      await openDiagnostics(wrapper)
+      const copy = wrapper.get('button[aria-label="Copy diagnostics"]')
+      await copy.trigger('click')
+      await tick()
+
+      expect({
+        disabled: (copy.element as HTMLButtonElement).disabled,
+        label: copy.text(),
+        nativeWrites: nativeWrite.mock.calls.length,
+        browserWrites: browserWrite.mock.calls.length,
+      }).toEqual({
+        disabled: true,
+        label: 'Copy diagnostics',
+        nativeWrites: 0,
+        browserWrites: 0,
+      })
+    } finally {
+      window.runtime = originalRuntime
+      restoreClipboard()
+    }
+  })
+
   it('copies every diagnostic in input order and prefers the native clipboard', async () => {
     const diagnostics = [
       { severity: 'warning' as const, category: 'catalog', code: 'repeat', message: 'first grouped' },
