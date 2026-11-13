@@ -2,12 +2,27 @@ package catalog
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 )
+
+type unreadableSkillFS struct{ fs.FS }
+
+func (f unreadableSkillFS) Open(name string) (fs.File, error) {
+	if strings.HasSuffix(name, "/SKILL.md") {
+		return nil, fs.ErrPermission
+	}
+	return f.FS.Open(name)
+}
+
+func (f unreadableSkillFS) Stat(name string) (fs.FileInfo, error) {
+	return fs.Stat(f.FS, name)
+}
 
 // spec: registry-symlink-containment/primary-ingestion-refuses-foreign-payload-aliases
 func TestLoadPrimarySourceRefusesForeignPayloadAlias(t *testing.T) {
@@ -145,6 +160,49 @@ func TestStatOnlyBundleProbesRetainRefusal(t *testing.T) {
 				t.Fatalf("boolean marker probe lost typed refusal: matched=%v refusal=%v", matched, source.Refusal())
 			}
 		})
+	}
+}
+
+// spec: registry-symlink-containment/primary-ingestion-refuses-foreign-payload-aliases
+func TestMultiSkillSubdirProbeUsesStatAndRetainsRefusal(t *testing.T) {
+	root := t.TempDir()
+	skill := filepath.Join(root, "project", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skill), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(skill, []byte("inert skill"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !hasMultiSkillSubdirs(unreadableSkillFS{FS: os.DirFS(root)}) {
+		t.Fatal("unreadable SKILL.md was not found by the metadata probe")
+	}
+
+	directoryRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(directoryRoot, "project", "SKILL.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if hasMultiSkillSubdirs(os.DirFS(directoryRoot)) {
+		t.Fatal("SKILL.md directory was counted as a skill file")
+	}
+
+	outside := t.TempDir()
+	foreign := filepath.Join(outside, "SKILL.md")
+	if err := os.WriteFile(foreign, []byte("foreign skill"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(skill); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(foreign, skill); err != nil {
+		t.Fatal(err)
+	}
+	source, err := fsboundary.OpenSourceFS(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = source.Close() })
+	if hasMultiSkillSubdirs(source) || !errors.Is(source.Refusal(), fsboundary.ErrUnsafePath) {
+		t.Fatalf("unsafe SKILL.md probe lost refusal: refusal=%v", source.Refusal())
 	}
 }
 
