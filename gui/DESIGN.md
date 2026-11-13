@@ -221,14 +221,17 @@ in Codex's selected-thread row.
   an icon and text. The newest notification sits at the bottom. A toast
   never covers the status bar, and its container ignores the pointer.
   - **Progress** shows while an operation runs: a 16 px `--gui-signal` spinner,
-    the humanized operation name ("Syncing"), and the observed phase. With no
-    phase, it reads "Working…". A 2 px `--gui-signal` bar sweeps along the
+    the humanized operation name ending in an ellipsis ("Syncing…", or the
+    resource's progressive verb and display name, "Installing <name>…"), and
+    the observed phase. With no observed phase, the detail
+    line stays empty. A 2 px `--gui-signal` bar sweeps along the
     bottom edge. The toast fades and rises 6 px in on entry.
   - **Notifications** are the existing `aria-live="polite"` list named
-    "Notifications". Each has a 3 px accent stripe. Success (a message ending in
-    " complete") uses a `--gui-signal` check. Other info uses a `--gui-line`
-    stripe and an info icon. Warnings use the warning colour, and errors use
-    the danger colour. The first letter is capitalized by CSS only.
+    "Notifications". Each has a 3 px accent stripe, and its tone comes from the
+    payload's `outcome` field: success uses a `--gui-signal` check, warnings
+    use the warning colour, and failures use the danger colour. Notifications
+    without an outcome fall back to severity. The first letter is capitalized
+    by CSS only.
   - Notifications expire on the controller's timer, and at most three show.
   - Under `prefers-reduced-motion`, the spinner, the bar, and the entry and
     exit fades do not animate.

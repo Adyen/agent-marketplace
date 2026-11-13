@@ -14,6 +14,6 @@
 
 ## 3. Validation and delivery
 
-- [ ] 3.1 Run approved focused GUI, local API and spec validation
-- [ ] 3.2 Capture matched light and dark preview evidence
-- [ ] 3.3 Archive the change and pass final delivery verification
+- [x] 3.1 Run approved focused GUI, local API and spec validation
+- [x] 3.2 Capture matched light and dark preview evidence
+- [x] 3.3 Prepare archive by checking the implementation, scenario trace and retained evidence
