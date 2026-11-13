@@ -149,6 +149,74 @@ function failAdd(push: (e: ReturnType<typeof event>) => void, operation: Operati
 }
 
 describe('Source settings', () => {
+  // spec: gui-configuration/add-source-request-error-renders-in-the-section
+  it('uses the shared field label class for the source kind and source fields', async () => {
+    const { wrapper } = await mountSources({ userSources: [] })
+    await openSources(wrapper)
+    const form = dialog().querySelector<HTMLElement>('.source-form')!
+    const labels = Array.from(form.querySelectorAll<HTMLElement>('.source-form__label'))
+    expect(labels.map((label) => label.textContent?.trim())).toEqual(['Source kind', 'Location'])
+    await chooseSourceKind('git', 'Git registry')
+    expect(Array.from(form.querySelectorAll<HTMLElement>('.source-form__label'), (label) => label.textContent?.trim())).toEqual([
+      'Source kind',
+      'Location',
+      'Ref',
+      'Subpath',
+    ])
+  })
+
+  // spec: gui-configuration/invalid-source-input-disables-addition
+  // spec: gui-configuration/valid-source-input-enables-addition
+  it('validates each source kind after blur and disables invalid submissions', async () => {
+    const { client, wrapper } = await mountSources({ userSources: [] })
+    await openSources(wrapper)
+    const add = button('Add source') as HTMLButtonElement
+    const location = field('Source location')
+    expect(add.disabled).toBe(true)
+    expect(dialog().querySelector('[role="alert"]')).toBeNull()
+
+    await setInput('Source location', ' \t ')
+    expect(add.disabled).toBe(true)
+    expect(dialog().querySelector('[role="alert"]')).toBeNull()
+    await location.dispatchEvent(new Event('blur'))
+    expect(client.configure).not.toHaveBeenCalled()
+    expect(dialog().querySelector('[role="alert"]')?.textContent).toContain('directory')
+    expect(location.getAttribute('aria-invalid')).toBe('true')
+
+    await setInput('Source location', '/var/registries')
+    expect(dialog().querySelector('[role="alert"]')).toBeNull()
+    expect(location.hasAttribute('aria-invalid')).toBe(false)
+    expect(add.disabled).toBe(false)
+
+    await chooseSourceKind('git', 'Git registry')
+    expect(add.disabled).toBe(true)
+    await setInput('Source location', '-oProxyCommand=unsafe')
+    expect(dialog().querySelector('[role="alert"]')).toBeNull()
+    expect(add.disabled).toBe(true)
+    await location.dispatchEvent(new Event('blur'))
+    expect(dialog().querySelector('[role="alert"]')?.textContent).toContain('Git')
+    await setInput('Source location', 'example.com:org/repo.git')
+    expect(dialog().querySelector('[role="alert"]')).toBeNull()
+    await setInput('Source ref', ' \t ')
+    expect(add.disabled).toBe(true)
+    await field('Source ref').dispatchEvent(new Event('blur'))
+    expect(dialog().querySelector('[role="alert"]')?.textContent).toContain('ref')
+    await setInput('Source ref', 'main')
+    expect(dialog().querySelector('[role="alert"]')).toBeNull()
+    expect(add.disabled).toBe(false)
+
+    await chooseSourceKind('marketplace', 'Marketplace endpoint')
+    expect(add.disabled).toBe(true)
+    await setInput('Source location', 'ftp://market.example')
+    expect(dialog().querySelector('[role="alert"]')).toBeNull()
+    expect(add.disabled).toBe(true)
+    await field('Source location').dispatchEvent(new Event('blur'))
+    expect(dialog().querySelector('[role="alert"]')?.textContent).toContain('HTTP')
+    await setInput('Source location', 'https://market.example/api')
+    expect(dialog().querySelector('[role="alert"]')).toBeNull()
+    expect(add.disabled).toBe(false)
+  })
+
   it('styles Settings Add source as secondary with the plus icon', async () => {
     const { client, push } = sourcesClient()
     const { wrapper } = mountWorkspace(client)
@@ -399,7 +467,11 @@ describe('Source settings', () => {
       source: { kind: 'directory', location: '/opt/new-regs' },
     })
     const addSection = dialog().querySelector<HTMLElement>('[aria-label="Add user source"]')!
-    expect(addSection.querySelector('[role="alert"]')?.textContent).toContain('The action could not be started')
+    const sourceError = addSection.querySelector<HTMLElement>('[role="alert"]')!
+    expect(sourceError.textContent).toContain('The action could not be started')
+    expect(addSection.querySelectorAll('[role="alert"]')).toHaveLength(1)
+    const sourceForm = addSection.querySelector('.source-form')!
+    expect(sourceForm.compareDocumentPosition(sourceError) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
     expect(dialog().querySelector('.settings-window__content > [role="alert"]')).toBeNull()
 
     button('Add source').click()
@@ -520,6 +592,7 @@ describe('Source settings', () => {
     expect(dialog().querySelector('.settings-window__content > [role="alert"]')).toBeNull()
   })
 
+  // spec: gui-configuration/valid-source-input-enables-addition
   it('adds a git source with an explicit ref and optional subpath', async () => {
     const { client, push } = sourcesClient({ userSources: [] })
     const { wrapper } = mountWorkspace(client)
@@ -528,7 +601,8 @@ describe('Source settings', () => {
 
     await openSources(wrapper)
     await chooseSourceKind('git', 'Git registry')
-    await setInput('Source location', 'https://example.com/reg.git')
+    const location = '\uFEFFexample.com:org/repo.git'
+    await setInput('Source location', location)
     await setInput('Source ref', 'main')
     await setInput('Source subpath', 'sub/dir')
     button('Add source').click()
@@ -536,7 +610,7 @@ describe('Source settings', () => {
 
     expect(client.configure).toHaveBeenCalledWith({
       action: 'add-source',
-      source: { kind: 'git', location: 'https://example.com/reg.git', ref: 'main', path: 'sub/dir' },
+      source: { kind: 'git', location, ref: 'main', path: 'sub/dir' },
     })
   })
 

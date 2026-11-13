@@ -59,6 +59,8 @@ async function sourceListVisibility(page: Page, dialog: Locator, sources: Locato
 }
 
 // spec: gui-configuration/nonexistent-directory-source-is-refused-in-the-form
+// spec: gui-configuration/editing-a-field-clears-its-error
+// spec: gui-configuration/add-source-error-clears-after-a-successful-add
 test('built GUI refuses a nonexistent directory source without disabling the workspace', async ({ page }) => {
   if (!distIndexExists()) {
     throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
@@ -85,11 +87,40 @@ test('built GUI refuses a nonexistent directory source without disabling the wor
     const dialog = page.getByRole('dialog', { name: 'Settings' })
     await expect(dialog).toBeVisible()
     const addSection = dialog.getByLabel('Add user source')
-    await addSection.getByLabel('Source location').fill(sourcePath)
+    const location = addSection.getByLabel('Source location')
+    await location.fill(sourcePath)
     await addSection.getByRole('button', { name: 'Add source' }).press('Enter')
 
-    await expect(addSection.getByRole('alert')).toContainText(/directory/i)
+    const locationError = addSection.getByRole('alert')
+    await expect(locationError).toContainText(/directory/i)
+    await expect(location).toHaveAttribute('aria-invalid', 'true')
+    await expect(location.locator('xpath=..').getByRole('alert')).toContainText(/directory/i)
+    const errorId = await location.getAttribute('aria-describedby')
+    expect(errorId).not.toBeNull()
+    await expect(addSection.locator(`#${errorId!}`)).toHaveText(/directory/i)
+    const [borderColor, dangerColor] = await location.evaluate((input) => {
+      const probe = document.createElement('span')
+      probe.style.borderColor = 'var(--am-color-status-danger)'
+      document.body.append(probe)
+      const expected = getComputedStyle(probe).borderColor
+      probe.remove()
+      return [getComputedStyle(input).borderColor, expected]
+    })
+    expect(borderColor).toBe(dangerColor)
+    await expect(dialog.locator('.settings-window__content > [role="alert"]')).toHaveCount(0)
     expect(await readFile(userConfigPath, 'utf8')).toBe(originalConfig)
+
+    await location.fill(`${sourcePath}-changed`)
+    await expect(addSection.getByRole('alert')).toHaveCount(0)
+    await expect(location).not.toHaveAttribute('aria-invalid', 'true')
+    expect(await readFile(userConfigPath, 'utf8')).toBe(originalConfig)
+    await location.fill(bootstrap.addSourceDir!)
+    await expect(addSection.getByRole('alert')).toHaveCount(0)
+    await expect(location).not.toHaveAttribute('aria-invalid', 'true')
+    await addSection.getByRole('button', { name: 'Add source' }).click()
+    await expect(addSection.getByRole('alert')).toHaveCount(0)
+    await expect(dialog.getByLabel('User sources')).toContainText(bootstrap.addSourceDir!, { timeout: 60_000 })
+    await expect.poll(async () => await readFile(userConfigPath, 'utf8'), { timeout: 60_000 }).not.toBe(originalConfig)
 
     await dialog.getByRole('button', { name: 'Close dialog' }).click()
     await expect(dialog).not.toBeVisible()
@@ -104,6 +135,61 @@ test('built GUI refuses a nonexistent directory source without disabling the wor
     await sourceButton.click()
     await expect(dialog).toBeVisible()
     await expect(dialog.getByRole('tab', { name: 'Sources' })).toHaveAttribute('aria-selected', 'true')
+  } finally {
+    await harness.stop()
+  }
+})
+
+// spec: gui-configuration/valid-source-input-enables-addition
+test('Settings source labels share sans typography and Add source stays content-width', async ({ page }) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run `./node_modules/.bin/vite build` in gui/ first')
+  }
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'sources' })
+  const { bootstrap } = harness
+  try {
+    await launchBuiltUserApp(page, bootstrap)
+    await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
+    await page.getByRole('button', { name: 'Sources' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
+    const addSection = dialog.getByLabel('Add user source')
+    await addSection.getByRole('radio', { name: 'Git registry' }).check()
+    const form = addSection.locator('.source-form')
+    const checkLayout = async (width: number) => {
+      await page.setViewportSize({ width, height: 800 })
+      await expect(dialog).toBeVisible()
+      const metrics = await form.evaluate((formElement) => {
+        const labels = Array.from(formElement.querySelectorAll<HTMLElement>('.source-form__label'))
+        const typography = labels.map((label) => {
+          const style = getComputedStyle(label)
+          return { family: style.fontFamily, size: style.fontSize, case: style.textTransform }
+        })
+        const heading = getComputedStyle(formElement.closest('[aria-label="Add user source"]')!.querySelector('h3')!)
+        const button = formElement.querySelector('button[aria-label="Add source"]')!
+        const formBox = formElement.getBoundingClientRect()
+        const buttonBox = button.getBoundingClientRect()
+        return {
+          typography,
+          headingFamily: heading.fontFamily,
+          headingCase: heading.textTransform,
+          actionWidth: buttonBox.width,
+          formWidth: formBox.width,
+          actionRight: buttonBox.right,
+          formRight: formBox.right,
+        }
+      })
+      expect(metrics.typography).toHaveLength(4)
+      expect(new Set(metrics.typography.map(({ family }) => family)).size).toBe(1)
+      expect(new Set(metrics.typography.map(({ size }) => size)).size).toBe(1)
+      expect(new Set(metrics.typography.map(({ case: textCase }) => textCase)).size).toBe(1)
+      expect(metrics.typography[0].case).toBe('none')
+      expect(metrics.headingFamily).not.toBe(metrics.typography[0].family)
+      expect(metrics.headingCase).toBe('uppercase')
+      expect(metrics.actionWidth).toBeLessThan(metrics.formWidth)
+      expect(Math.abs(metrics.actionRight - metrics.formRight)).toBeLessThanOrEqual(1)
+    }
+    await checkLayout(1024)
+    await checkLayout(720)
   } finally {
     await harness.stop()
   }
@@ -687,6 +773,7 @@ test('built GUI keeps a failed Git source mutation in the Add source section', a
     const sourceAlert = addSection.getByRole('alert')
     await expect(sourceAlert).toBeVisible({ timeout: 60_000 })
     await expect(sourceAlert).not.toHaveText('')
+    await expect(addSection.locator('.source-form + p[role="alert"]')).toHaveCount(1)
     await expect(dialog.locator('.settings-window__content > p[role="alert"]')).toHaveCount(0)
   } finally {
     await harness.stop()
