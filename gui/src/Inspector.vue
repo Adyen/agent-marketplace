@@ -85,8 +85,6 @@ defineExpose({
               <dd>{{ selected.scope }}</dd>
               <dt>Status</dt>
               <dd><span class="gui-dot" :class="`gui-dot--${statusTone}`" aria-hidden="true" />{{ selected.status }}</dd>
-              <dt>Harnesses</dt>
-              <dd class="mono">{{ selected.harnesses.join(', ') || 'none' }}</dd>
             </dl>
             <div class="gui-inspector__actions">
               <UButton
