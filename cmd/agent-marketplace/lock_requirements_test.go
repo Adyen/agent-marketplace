@@ -11,7 +11,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
 )
 
@@ -155,6 +157,11 @@ func TestSyncRepeatedGitRequirementsKeepsExactLock(t *testing.T) {
 	t.Setenv("AGENT_MARKETPLACE_LOG_FILE", logPath)
 	t.Setenv("AGENT_MARKETPLACE_LOG_LEVEL", "debug")
 	for _, args := range [][]string{{"update"}, {"sync", "--locked"}, {"sync", "--check"}} {
+		if args[0] != "update" {
+			if err := os.WriteFile(logPath, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
 		if output, err := executeCommand(args...); err != nil {
 			t.Fatalf("%v: %v\n%s", args, err, output)
 		}
@@ -169,8 +176,48 @@ func TestSyncRepeatedGitRequirementsKeepsExactLock(t *testing.T) {
 				t.Fatalf("update acquisition: reconciled=%t, builds=%d; want one before reconciliation", reconciled, builds)
 			}
 			verification, _, verified := strings.Cut(verification, `"msg":"lock snapshot verification completed"`)
-			if builds := strings.Count(verification, buildRecord); !verified || builds != 1 {
-				t.Fatalf("update verification: completed=%t, builds=%d; want one independent verification", verified, builds)
+			if builds := strings.Count(verification, buildRecord); !verified || builds != 0 {
+				t.Fatalf("update verification: completed=%t, builds=%d; want no repeated source build", verified, builds)
+			}
+			doc, err := lockfile.Read(lockPath)
+			if err != nil || len(doc.Registries) != 1 || len(doc.Registries[0].Roots) != 1 {
+				t.Fatalf("updated lock inventory: %v, doc=%+v", err, doc)
+			}
+			oid, err := cache.ParseGitOID(seeded.Commit.String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			var expected lockfile.GitRoot
+			err = cache.WithExactGitReadOnlyRoot(context.Background(), seeded.URL, oid, ".", func(snapshot string) error {
+				fresh, buildErr := sourcerevision.Build(sourcerevision.Input{SnapshotRoot: snapshot, RootPath: ".", SourceHarness: seeded.Roots[0].SourceHarness})
+				if buildErr != nil {
+					return buildErr
+				}
+				expected = lockfile.GitRoot{
+					Path:           ".",
+					SourceHarness:  fresh.SourceHarness,
+					RevisionSchema: fresh.Manifest.SchemaVersion,
+					RevisionDigest: lockfile.Digest(fresh.Manifest.RevisionDigest),
+					Resources:      revisionResources(fresh),
+				}
+				return nil
+			})
+			if err != nil || !reflect.DeepEqual(doc.Registries[0].Roots[0], expected) {
+				t.Fatalf("updated lock root differs from a fresh build: %v, got=%+v want=%+v", err, doc.Registries[0].Roots[0], expected)
+			}
+			secondOperationLogs, secondOperationErr := func() (string, error) {
+				var logs bytes.Buffer
+				previousLogger := slog.Default()
+				defer slog.SetDefault(previousLogger)
+				slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+				_, _, _, err := prepareRuntimeLocks(context.Background(), repo, repo, lockMode{locked: true})
+				return logs.String(), err
+			}()
+			if secondOperationErr != nil {
+				t.Fatalf("second independent lock operation: %v", secondOperationErr)
+			}
+			if builds := strings.Count(secondOperationLogs, `msg="built direct-Git source revision"`); builds != 1 {
+				t.Fatalf("second independent lock operation built %d times, want a fresh source ingestion\n%s", builds, secondOperationLogs)
 			}
 		}
 		after, err := os.ReadFile(lockPath)

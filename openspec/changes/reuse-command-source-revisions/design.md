@@ -26,6 +26,8 @@ Carry the source revision and catalog built during acquisition into snapshot bin
 
 Keep exact Git snapshot cache revalidation before comparing the available build with the locked projection. Use the same projection comparison for a reused result and for the existing `Build` fallback. This avoids changing comparison semantics; skipping revalidation would weaken source verification.
 
+The exact-Git verification scope can memoize a successful snapshot check without rechecking a source generation, so that memo alone cannot authorize reuse. Retain the captured `SourceFS` with each successful result and record a descriptor-bound metadata inventory of the selected source tree before ingestion. Recheck membership and file, directory, symlink, and root identities after hashing and before every result reuse; also call `VerifyRoot` to confirm the configured root still reaches the captured directory. The inventory observes metadata only and does not cache payload bytes.
+
 ### Retain `Build` when no matching result exists
 
 Use an acquisition result only when it matches the snapshot binding request. Otherwise, keep the existing `Build` path, including historical and plugin contexts that do not carry a matching acquisition result. A mandatory result parameter would break those paths.

@@ -1,6 +1,7 @@
 package sourcerevision
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -121,32 +122,55 @@ func nativeOnlyHistoricalCatalog(source *fsboundary.SourceFS, root, harness stri
 }
 
 func Build(input Input) (result Result, err error) {
-	if input.RevisionSchema == "" {
-		input.RevisionSchema = lockfile.CurrentRevisionSchema
-	}
-	contract, err := lockfile.RevisionContract(input.RevisionSchema)
+	input, contract, root, err := prepareBuildInput(input)
 	if err != nil {
 		return Result{}, err
 	}
 	if input.RevisionSchema == "plugin-v1" {
 		return buildPluginRevision(input, contract)
 	}
-	root, err := secureRoot(input)
-	if err != nil {
-		return Result{}, err
-	}
-
 	source, err := fsboundary.OpenSourceFS(root)
 	if err != nil {
 		return Result{}, fmt.Errorf("capture revision source: %w", err)
 	}
 	defer func() {
+		if closeErr := source.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+	return buildCaptured(input, root, source, contract)
+}
+
+func BuildWithContext(ctx context.Context, input Input) (Result, error) {
+	if session := revisionSessionFrom(ctx); session != nil && input.RevisionSchema != "plugin-v1" {
+		return session.build(input)
+	}
+	return Build(input)
+}
+
+func prepareBuildInput(input Input) (Input, lockfile.SourceRevisionContract, string, error) {
+	if input.RevisionSchema == "" {
+		input.RevisionSchema = lockfile.CurrentRevisionSchema
+	}
+	contract, err := lockfile.RevisionContract(input.RevisionSchema)
+	if err != nil {
+		return Input{}, lockfile.SourceRevisionContract{}, "", err
+	}
+	if input.RevisionSchema == "plugin-v1" {
+		return input, contract, "", nil
+	}
+	root, err := secureRoot(input)
+	if err != nil {
+		return Input{}, lockfile.SourceRevisionContract{}, "", err
+	}
+	return input, contract, root, nil
+}
+
+func buildCaptured(input Input, root string, source *fsboundary.SourceFS, contract lockfile.SourceRevisionContract) (result Result, err error) {
+	defer func() {
 		if refusal := source.Refusal(); refusal != nil {
 			result = Result{}
 			err = fmt.Errorf("%w: source refused: %w", ErrCatalog, errors.Join(err, refusal))
-		}
-		if closeErr := source.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
 		}
 	}()
 	if input.beforeIngest != nil {
@@ -304,6 +328,22 @@ func VerifyLockedGitRootWithCatalog(snapshot string, root lockfile.GitRoot) (Res
 }
 
 func VerifyLockedGitRootWithPluginContext(snapshot string, root lockfile.GitRoot, plugin *PluginVerifyContext) (Result, error) {
+	input := Input{SnapshotRoot: snapshot, RootPath: root.Path}
+	if plugin != nil {
+		input.PluginSelection = plugin.Plan
+		input.PluginExternal = plugin.External
+	}
+	return verify(input, lockedGitRootProjection(root))
+}
+
+func VerifyLockedGitRootWithContext(ctx context.Context, snapshot string, root lockfile.GitRoot, plugin *PluginVerifyContext) (Result, error) {
+	if plugin != nil {
+		return VerifyLockedGitRootWithPluginContext(snapshot, root, plugin)
+	}
+	return verifyWithContext(ctx, Input{SnapshotRoot: snapshot, RootPath: root.Path}, lockedGitRootProjection(root))
+}
+
+func lockedGitRootProjection(root lockfile.GitRoot) Projection {
 	resources := make([]revisionResource, 0, len(root.Resources))
 	for _, resource := range root.Resources {
 		support := make(map[string]string, len(resource.SupportFiles))
@@ -321,17 +361,12 @@ func VerifyLockedGitRootWithPluginContext(snapshot string, root lockfile.GitRoot
 			SupportFiles:  support,
 		})
 	}
-	input := Input{SnapshotRoot: snapshot, RootPath: root.Path}
-	if plugin != nil {
-		input.PluginSelection = plugin.Plan
-		input.PluginExternal = plugin.External
-	}
-	return verify(input, Projection{
+	return Projection{
 		SourceHarness:  root.SourceHarness,
 		RevisionSchema: root.RevisionSchema,
 		RevisionDigest: root.RevisionDigest.String(),
 		Resources:      resources,
-	})
+	}
 }
 
 func Verify(input Input, locked Projection) ([]ResourceWarning, error) {
@@ -340,21 +375,58 @@ func Verify(input Input, locked Projection) ([]ResourceWarning, error) {
 }
 
 func verify(input Input, locked Projection) (Result, error) {
-	if _, err := lockfile.RevisionContract(locked.RevisionSchema); err != nil {
+	prepared, err := prepareVerificationInput(input, locked)
+	if err != nil {
 		return Result{}, err
+	}
+	built, err := Build(prepared)
+	if err != nil {
+		return Result{}, err
+	}
+	return compareLockedProjection(built, locked)
+}
+
+func verifyWithContext(ctx context.Context, input Input, locked Projection) (Result, error) {
+	prepared, err := prepareVerificationInput(input, locked)
+	if err != nil {
+		return Result{}, err
+	}
+	if session := revisionSessionFrom(ctx); session != nil && prepared.RevisionSchema != "plugin-v1" {
+		_, contract, root, err := prepareBuildInput(prepared)
+		if err != nil {
+			return Result{}, err
+		}
+		built, found, err := session.find(root, contract.Schema, locked.SourceHarness)
+		if err != nil {
+			return Result{}, err
+		}
+		if found {
+			return compareLockedProjection(built, locked)
+		}
+	}
+	built, err := BuildWithContext(ctx, prepared)
+	if err != nil {
+		return Result{}, err
+	}
+	return compareLockedProjection(built, locked)
+}
+
+func prepareVerificationInput(input Input, locked Projection) (Input, error) {
+	if _, err := lockfile.RevisionContract(locked.RevisionSchema); err != nil {
+		return Input{}, err
 	}
 	input.RevisionSchema = locked.RevisionSchema
 	if locked.SourceHarness == "" {
-		return Result{}, fmt.Errorf("%w: locked source harness is empty", ErrManifestMismatch)
+		return Input{}, fmt.Errorf("%w: locked source harness is empty", ErrManifestMismatch)
 	}
 	input.SourceHarness = locked.SourceHarness
 	if input.SourceHarness == "auto" {
 		input.SourceHarness = ""
 	}
-	built, err := Build(input)
-	if err != nil {
-		return Result{}, err
-	}
+	return input, nil
+}
+
+func compareLockedProjection(built Result, locked Projection) (Result, error) {
 	if built.SourceHarness != locked.SourceHarness {
 		return Result{}, fmt.Errorf("%w: source harness got %q, want %q", ErrManifestMismatch, built.SourceHarness, locked.SourceHarness)
 	}
