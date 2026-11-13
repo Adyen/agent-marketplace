@@ -140,5 +140,5 @@ At least once a quarter, restore into a scratch environment for each topology yo
 ## Related documentation
 
 - [How to deploy a production Marketplace](./deploy-a-production-marketplace.md)
-- [How to back up and restore machine resources](../back-up-and-restore-machine-resources.md) — covers the consumer `agent-marketplace backup` command, including the `agents-config` archive of user configuration written with each harness backup
+- [How to back up and restore machine resources](../back-up-and-restore-machine-resources.md)
 - [Marketplace health and metrics reference](../../reference/marketplace-health-and-metrics.md)

@@ -83,7 +83,7 @@ tar -czf agent-marketplace-machine-state.tar.gz "${files[@]}"
 
 The snippet leaves `agent-marketplace-machine-state.tar.gz` in the current folder. Because the paths are absolute, `tar` may print a `Removing leading '/'` note while it builds the archive; that is expected and the archive is still usable.
 
-If your configuration uses `include` fragments outside `~/.agents/`, add those files to the list — the `agents-config` archive only covers fragments inside `~/.agents/`. To take the harness-folder and configuration archives with you as well, add `~/.agent-marketplace/backups`.
+If your configuration uses `include` fragments outside `~/.agents/`, add those files to the list. The `agents-config` archive only covers fragments inside `~/.agents/`. To take the harness-folder and configuration archives with you as well, add `~/.agent-marketplace/backups`.
 
 ## Restore on a new machine
 

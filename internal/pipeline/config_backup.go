@@ -48,7 +48,7 @@ func CaptureUserConfig() *UserConfigSnapshot {
 	archived := make(map[string]bool)
 	includeFiles := 0
 	add := func(name string, file backup.ConfigFile) {
-		if name == "" || archived[name] {
+		if archived[name] {
 			return
 		}
 		file.Name = name
@@ -146,7 +146,7 @@ func readUserConfigFile(path string) ([]byte, fs.FileInfo, error) {
 	}
 	if !info.Mode().IsRegular() {
 		_ = file.Close()
-		return nil, nil, fmt.Errorf("not a regular file")
+		return nil, nil, errors.New("not a regular file")
 	}
 	data, readErr := io.ReadAll(file)
 	closeErr := file.Close()
@@ -158,7 +158,7 @@ func readUserConfigFile(path string) ([]byte, fs.FileInfo, error) {
 
 func userConfigRelativePath(root, file string) (string, bool) {
 	relative, err := filepath.Rel(root, file)
-	if err != nil || relative == "." || relative == ".." || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		return "", false
 	}
 	return filepath.ToSlash(relative), true
