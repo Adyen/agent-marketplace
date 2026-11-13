@@ -17,7 +17,7 @@ Several sources can write entries into the same Devin or Codex file, such as `mc
 agent-marketplace doctor --repair
 ```
 
-After the normal `doctor` report, the command lists each Devin and Codex shared file it inspects, even files with nothing to repair. For each entry it can act on, it shows one of three actions:
+After the normal `doctor` report, the command prints a numbered repair plan. Each line shows the step's safety class (`safe`, `destructive`, or `human-only`), the action, the diagnostic code it addresses, the files it touches, and either the inputs it needs or `blocked by N (<reason>)` naming the plan item that blocks it. It then lists each Devin and Codex shared file it inspects, even files with nothing to repair. For each entry it can act on, it shows one of three actions:
 
 - `adopt`: the existing entry is identical to what `agent-marketplace` would write. Adopting records it as owned and does not change the file.
 - `replace`: the existing entry has the same key but a different value. Replacing overwrites your value with the generated one.
@@ -33,17 +33,23 @@ repair: devin shared-aggregate ownership
 
 If standard input is not a terminal (for example in a script), the command stops after the preview. It prints `preview only: not a terminal; re-run on a terminal to confirm, or use --repair --yes to adopt exact matches` when there is something to confirm. `--yes` is described in the next step.
 
-## 2. Confirm each repair
+## 2. Confirm the repairs
 
-On a terminal, the command asks about each entry, for example `adopt mcp-server "docs" in mcp_config.json? [y/N]`. Only `y` or `yes` confirms. Any other answer, or pressing Enter, leaves the entry unchanged.
+On a terminal, the command asks one `[y/N]` confirmation for all the safe steps in the plan, for example `Repair the safe steps above? [y/N] `. Only `y` or `yes` confirms. Any other answer, pressing Enter, or end of input runs no step, exits 0, and leaves every file unchanged. Adoption is a safe step, so one answer adopts every exact match.
 
-To adopt every exact match without being asked:
+**When upgrading a repair workflow, do not replay old terminal answer streams.** One plan confirmation replaces the per-entry adoption prompts, so a later answer can now authorize a destructive entry. Preview off a terminal with `agent-marketplace doctor --repair </dev/null` and review the new prompts. Replace scripted `y`/`n` streams with `--repair --yes` only when you intend all safe steps; review destructive per-entry prompts separately on a live terminal.
+
+Replacing a conflicting entry and removing an orphan are destructive: each entry keeps its own per-entry confirmation on a terminal, and the command takes a fresh backup first. Destructive steps never run under `--yes` or off a terminal. On a terminal under `--yes` the per-entry prompt is still shown, but a confirmed destructive entry is reported and left unchanged.
+
+To run the safe steps without the plan confirmation:
 
 ```bash
 agent-marketplace doctor --repair --yes
 ```
 
-`--yes` covers adoption only. Each adopted file is reported as `adopted <n> entr(y/ies) in <file>`. Replacing a conflicting entry or removing an orphan still asks you on a terminal, and is skipped when there is no terminal. Each skipped entry is printed as `left unchanged`.
+Each adopted file is reported as `adopted <n> entr(y/ies) in <file>`; every entry a destructive step would change stays byte-identical and is printed as `left unchanged`.
+
+After each step runs, the command diagnoses the setup again and shows any new steps for confirmation before they run. A step that keeps recurring stops the repair after five runs with exit status 1.
 
 ## 3. Verify
 
@@ -58,7 +64,7 @@ The check exits with status 0 when the shared configuration matches your selecti
 - It never removes or overwrites an entry without your confirmation on a terminal.
 - It takes a fresh safety backup of the file before it replaces or removes an entry.
 - It never edits your harness lists.
-- It exits with status 1 if the ownership state or a shared file is corrupt, or if a confirmed repair fails. Declining every prompt is not a failure.
+- An off-terminal preview or a `--yes` run can exit 0 with destructive entries deferred. Otherwise, status 0 means the setup ended clean or you declined. Status 1 means a confirmed step failed, corrupt ownership state or a corrupt shared file remains, or the plan is left with only blocked or `human-only` items. An invalid configuration or a failed resolution is reported as a plan item and blocks the steps that need it rather than refusing the whole repair.
 - When the ownership state is missing, every existing entry counts as unmanaged. `sync` then keeps all of them, refuses to write over any of them, and removes nothing.
 
 ## Related documentation

@@ -18,17 +18,17 @@ Before each change to one of these files, the CLI saves a copy of the file as it
 
 If the ownership state is missing or cannot be read, the CLI has no proof that it wrote anything. It then treats every existing entry as yours, and during `sync` it keeps every existing entry, removes nothing, and refuses any generated entry whose name is already taken. That collision fails only the generated entry; the run reports it rather than writing over your entry, and valid entries in other files still update.
 
-Unreadable state and a journal left by an interrupted write can block later operations on the affected files until the state is inspected or repaired, and a recovery that cannot prove its recorded authority is refused rather than silently completing or rolling back. An explicit repair can replace a handwritten entry after asking, and it works only from verified acquisition evidence: without it, repair refuses and changes nothing. A problem in one file, such as invalid JSON in `mcp_config.json`, blocks only that file; the other files are still updated.
+Unreadable state and a journal left by an interrupted write can block later operations on the affected files until the state is inspected or repaired, and a recovery that cannot prove its recorded authority is refused rather than silently completing or rolling back. An explicit repair can replace a handwritten entry after asking, and it works only from verified acquisition evidence: without it, repair reports the failure and lists every step that needs it as blocked, changing nothing those steps would touch. A problem in one file, such as invalid JSON in `mcp_config.json`, blocks only that file; the other files are still updated.
 
 ## Repairing ownership
 
-`agent-marketplace doctor --repair` shows what it can fix in the Devin and Codex files and, when run in a [terminal](../glossary.md#terminal), asks before each change. It recognizes three situations:
+`agent-marketplace doctor --repair` prints a numbered plan of what it can fix, each step with its safety class, and, when run in a [terminal](../glossary.md#terminal), asks once before running the safe steps. For the Devin and Codex files it recognizes three situations:
 
 - An existing entry is exactly what the CLI would write. Recording it as managed changes no bytes in the file, so `--yes` can do this without asking.
 - An entry the CLI wrote earlier is no longer selected, and a saved backup or a recorded change proves the CLI wrote it. The CLI can remove it.
 - An entry you did not install through the CLI has the same name as a selected resource but a different value. The CLI can replace it with the selected version.
 
-Removing or replacing an entry deletes content, so the CLI asks you about each entry separately and saves a fresh backup first, even with `--yes`. Without a terminal, `--repair` only previews, unless `--yes` lets it adopt exact matches. [How to repair owned shared configuration](../how-to/repair-owned-shared-configuration.md) walks through a repair.
+Removing or replacing an entry deletes content, so the CLI asks you about each of those entries separately and saves a fresh backup first. Those destructive steps never run under `--yes` or off a terminal; on a terminal under `--yes` the prompt still appears, but a confirmed entry is left unchanged. Without a terminal and without `--yes`, `--repair` only previews. [How to repair owned shared configuration](../how-to/repair-owned-shared-configuration.md) walks through a repair.
 
 ## Two processes at once
 

@@ -58,6 +58,8 @@ type ResolveOptions struct {
 	Gitignore        bool
 	NoBackup         bool
 	RequireTargetSet bool
+	// BeforeMaterialize is checked before Sync runs materialization and at materialization entry.
+	BeforeMaterialize func() error
 	// EffectiveOpts overrides the paths used by LoadEffective.
 	EffectiveOpts config.LoadEffectiveOptions
 	// IgnoreBlockedRegistries treats RegistryURLBlockedError from the allowlist
@@ -1121,6 +1123,13 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 		hook("before-materialization")
 	}
 
+	if opts.BeforeMaterialize != nil {
+		if err := opts.BeforeMaterialize(); err != nil {
+			result.addMaterializeError(fmt.Errorf("revalidate before materialization: %w", err))
+			return result
+		}
+	}
+
 	var materializeSpan telemetry.Span
 	if tel != nil {
 		ctx, materializeSpan = tel.StartSpan(ctx, "agent_marketplace.pipeline.materialization", map[string]string{
@@ -1139,6 +1148,9 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 		}
 	}
 	materializeOptions := []materialize.RunOption{materialize.WithMaterializationModes(resolved.MaterializationModes)}
+	if opts.BeforeMaterialize != nil {
+		materializeOptions = append(materializeOptions, materialize.WithBeforePublish(opts.BeforeMaterialize))
+	}
 	if len(resolved.ConfigErrors) == 0 && len(resolved.CatalogErrors) == 0 {
 		materializeOptions = append(materializeOptions, materialize.WithPluginStateReconciliation())
 	}
