@@ -59,9 +59,6 @@ func (session *revisionSession) build(input Input) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	if input.RevisionSchema == "plugin-v1" {
-		return buildPluginRevision(input, contract)
-	}
 	source, err := fsboundary.OpenSourceFS(root)
 	if err != nil {
 		return Result{}, fmt.Errorf("capture revision source: %w", err)
@@ -90,6 +87,7 @@ func (session *revisionSession) store(key revisionSessionKey, entry *revisionSes
 	if session.closed {
 		return errors.Join(errRevisionSessionClosed, entry.source.Close())
 	}
+	entry.result.Payload = nil
 	old := session.entries[key]
 	session.entries[key] = entry
 	if old != nil {
