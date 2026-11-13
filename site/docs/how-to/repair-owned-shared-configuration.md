@@ -63,9 +63,9 @@ The check exits with status 0 when the shared configuration matches your selecti
 
 ## What `--repair` guarantees
 
-- It never removes or overwrites an entry without your confirmation on a terminal. That guarantee covers explicit aggregate entry replacement and removal; completing an interrupted write the CLI itself already recorded — journal recovery — is a safe step that runs under the plan confirmation or `--yes`, not a destructive overwrite.
+- It never removes or overwrites an entry without your confirmation on a terminal. That guarantee covers explicit aggregate entry replacement and removal; completing an interrupted write the CLI itself already recorded counts as journal recovery, a safe step that runs under the plan confirmation or `--yes`, not a destructive overwrite.
 - It takes a fresh safety backup of the file before it replaces or removes an entry.
-- A journal recovery that cannot prove its recorded authority — foreign bytes or a non-prefix publication state — fails the step, exits 1, and leaves the journal and the files it recorded unchanged.
+- A journal recovery that cannot prove its recorded authority, such as foreign bytes or a non-prefix publication state, fails the step, exits 1, and leaves the journal and the files it recorded unchanged.
 - It never edits your harness lists.
 - An off-terminal preview or a `--yes` run can exit 0 with destructive entries deferred. Otherwise, status 0 means the setup ended clean or you declined. Status 1 means a confirmed step failed, corrupt ownership state or a corrupt shared file remains, or the plan is left with only blocked or `human-only` items. An invalid configuration or a failed resolution is reported as a plan item and blocks the steps that need it rather than refusing the whole repair.
 - When the ownership state is missing, every existing entry counts as unmanaged. `sync` then keeps all of them, refuses to write over any of them, and removes nothing.
