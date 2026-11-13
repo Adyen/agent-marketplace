@@ -20,7 +20,6 @@ import {
   type UpdateAction,
   type UpdateStatus,
 } from './api/client'
-import type { SourceField } from './source-input'
 
 export type Row = Snapshot['rows'][number]
 export type Diagnostic = Snapshot['diagnostics'][number]
@@ -98,7 +97,7 @@ export interface WorkspaceState {
   requesting: boolean
   error: string | null
   sourceError: string | null
-  sourceErrorField: SourceField | null
+  sourceErrorField: 'location' | null
   configuration: Configuration | null
   latestVersion: string
   releaseNotice: ReleaseNotice | null

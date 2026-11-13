@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, useId, watch } from 'vue'
 import type { SourceInput } from './api/client'
-import { validateSourceInput, type SourceField, type SourceFieldErrors } from './source-input'
+import { validateSourceInput, type SourceField } from './source-input'
 import GuiIcon from './GuiIcon.vue'
 
-const props = defineProps<{ disabled: boolean; fieldErrors?: SourceFieldErrors }>()
+const props = defineProps<{ disabled: boolean; serverLocationError?: string }>()
 const emit = defineEmits<{
   add: [source: SourceInput]
-  edit: [field: SourceField]
+  editLocation: []
 }>()
 
 const kind = ref<SourceInput['kind']>('directory')
@@ -15,7 +15,6 @@ const location = ref('')
 const refName = ref('')
 const subpath = ref('')
 const touched = ref(new Set<SourceField>())
-const suppressed = ref(new Set<SourceField>())
 const idPrefix = useId()
 
 const kindOptions: { value: SourceInput['kind']; label: string }[] = [
@@ -34,38 +33,28 @@ const validationErrors = computed(() =>
 )
 const addDisabled = computed(() => props.disabled || Object.keys(validationErrors.value).length > 0)
 
-function fieldError(field: SourceField): string | undefined {
-  if (suppressed.value.has(field)) return undefined
-  const serverError = props.fieldErrors?.[field]
-  if (serverError != null) return serverError
+function clientFieldError(field: SourceField): string | undefined {
   return touched.value.has(field) ? validationErrors.value[field] : undefined
 }
 
-const locationError = computed(() => fieldError('location'))
-const refError = computed(() => fieldError('ref'))
+const locationError = computed(() => props.serverLocationError ?? clientFieldError('location'))
+const refError = computed(() => clientFieldError('ref'))
 
 function edit(field: SourceField) {
   touched.value.delete(field)
-  suppressed.value.add(field)
-  emit('edit', field)
+  if (field === 'location') emit('editLocation')
 }
 
 function blur(field: SourceField) {
-  suppressed.value.delete(field)
   touched.value.add(field)
 }
 
 watch(kind, () => {
   touched.value.clear()
-  suppressed.value.clear()
-  for (const field of ['location', 'ref'] as const) {
-    if (props.fieldErrors?.[field] != null) emit('edit', field)
-  }
+  if (props.serverLocationError != null) emit('editLocation')
 })
 
 function add() {
-  suppressed.value.clear()
-
   const source: SourceInput =
     kind.value === 'git'
       ? {
@@ -102,7 +91,6 @@ function add() {
       <input
         v-model="location"
         class="gui-input"
-        :id="`${idPrefix}-location`"
         aria-label="Source location"
         type="text"
         :placeholder="locationPlaceholder"
@@ -120,7 +108,6 @@ function add() {
         <input
           v-model="refName"
           class="gui-input"
-          :id="`${idPrefix}-ref`"
           aria-label="Source ref"
           type="text"
           placeholder="main"

@@ -59,7 +59,6 @@ async function sourceListVisibility(page: Page, dialog: Locator, sources: Locato
 }
 
 // spec: gui-configuration/nonexistent-directory-source-is-refused-in-the-form
-// spec: gui-configuration/editing-a-field-clears-its-error
 // spec: gui-configuration/add-source-error-clears-after-a-successful-add
 test('built GUI refuses a nonexistent directory source without disabling the workspace', async ({ page }) => {
   if (!distIndexExists()) {
@@ -110,10 +109,6 @@ test('built GUI refuses a nonexistent directory source without disabling the wor
     await expect(dialog.locator('.settings-window__content > [role="alert"]')).toHaveCount(0)
     expect(await readFile(userConfigPath, 'utf8')).toBe(originalConfig)
 
-    await location.fill(`${sourcePath}-changed`)
-    await expect(addSection.getByRole('alert')).toHaveCount(0)
-    await expect(location).not.toHaveAttribute('aria-invalid', 'true')
-    expect(await readFile(userConfigPath, 'utf8')).toBe(originalConfig)
     await location.fill(bootstrap.addSourceDir!)
     await expect(addSection.getByRole('alert')).toHaveCount(0)
     await expect(location).not.toHaveAttribute('aria-invalid', 'true')
@@ -140,6 +135,36 @@ test('built GUI refuses a nonexistent directory source without disabling the wor
   }
 })
 
+// spec: gui-configuration/editing-a-field-clears-its-error
+test('built GUI clears a directory source error when Location is edited', async ({ page }) => {
+  if (!distIndexExists()) {
+    throw new Error('built GUI assets missing: run `make gui-build` or `pnpm run build` in gui/ first')
+  }
+
+  const harness = await startHarness('user', { AM_LOCALAPI_USER_FIXTURE: 'sources' })
+  const { bootstrap } = harness
+  const sourcePath = join(bootstrap.addSourceDir!, 'does-not-exist')
+
+  try {
+    await launchBuiltUserApp(page, bootstrap)
+    await expect(page.getByText('solo', { exact: true }).first()).toBeVisible({ timeout: 60_000 })
+    await page.getByRole('button', { name: 'Sources' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
+    const addSection = dialog.getByLabel('Add user source')
+    const location = addSection.getByLabel('Source location')
+    await location.fill(sourcePath)
+    await addSection.getByRole('button', { name: 'Add source' }).click()
+    await expect(addSection.getByRole('alert')).toContainText(/directory/i)
+
+    await location.fill(`${sourcePath}-changed`)
+    await location.blur()
+    await expect(addSection.getByRole('alert')).toHaveCount(0)
+    await expect(location).not.toHaveAttribute('aria-invalid', 'true')
+  } finally {
+    await harness.stop()
+  }
+})
+
 // spec: gui-configuration/valid-source-input-enables-addition
 test('Settings source labels share sans typography and Add source stays content-width', async ({ page }) => {
   if (!distIndexExists()) {
@@ -154,6 +179,9 @@ test('Settings source labels share sans typography and Add source stays content-
     const dialog = page.getByRole('dialog', { name: 'Settings' })
     const addSection = dialog.getByLabel('Add user source')
     await addSection.getByRole('radio', { name: 'Git registry' }).check()
+    await addSection.getByLabel('Source location').fill('https://example.com/repo.git')
+    await addSection.getByLabel('Source ref').fill('main')
+    await expect(addSection.getByRole('button', { name: 'Add source' })).toBeEnabled()
     const form = addSection.locator('.source-form')
     const checkLayout = async (width: number) => {
       await page.setViewportSize({ width, height: 800 })
@@ -165,19 +193,31 @@ test('Settings source labels share sans typography and Add source stays content-
           return { family: style.fontFamily, size: style.fontSize, case: style.textTransform }
         })
         const heading = getComputedStyle(formElement.closest('[aria-label="Add user source"]')!.querySelector('h3')!)
-        const button = formElement.querySelector('button[aria-label="Add source"]')!
+        const button = formElement.querySelector<HTMLButtonElement>('button[aria-label="Add source"]')!
         const formBox = formElement.getBoundingClientRect()
         const buttonBox = button.getBoundingClientRect()
+        const originalStyle = button.getAttribute('style')
+        button.style.setProperty('width', 'max-content', 'important')
+        button.style.setProperty('min-width', '0', 'important')
+        button.style.setProperty('max-width', 'none', 'important')
+        const intrinsicWidth = button.getBoundingClientRect().width
+        if (originalStyle == null) {
+          button.removeAttribute('style')
+        } else {
+          button.setAttribute('style', originalStyle)
+        }
         return {
           typography,
           headingFamily: heading.fontFamily,
           headingCase: heading.textTransform,
           actionWidth: buttonBox.width,
+          intrinsicWidth,
           formWidth: formBox.width,
           actionRight: buttonBox.right,
           formRight: formBox.right,
         }
       })
+      expect(Math.abs(metrics.actionWidth - metrics.intrinsicWidth)).toBeLessThanOrEqual(1)
       expect(metrics.typography).toHaveLength(4)
       expect(new Set(metrics.typography.map(({ family }) => family)).size).toBe(1)
       expect(new Set(metrics.typography.map(({ size }) => size)).size).toBe(1)

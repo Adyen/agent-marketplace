@@ -3,7 +3,6 @@ import { computed, nextTick, ref, watch } from 'vue'
 import type { Configuration, SourceDescription, SourceInput } from './api/client'
 import { useAppearance, type AppearancePreference } from './appearance'
 import type { WorkspaceController } from './controller'
-import type { SourceField, SourceFieldErrors } from './source-input'
 import { operationLabel } from './feedback'
 import GuiIcon, { type IconName } from './GuiIcon.vue'
 import GuiModal from './GuiModal.vue'
@@ -49,10 +48,9 @@ const formEpoch = ref(0)
 const pendingRemove = ref<SourceDescription | null>(null)
 const addSourceOwned = ref(new Set<string>())
 const addSourceClaim = ref<Set<string> | null>(null)
-const sourceFieldErrors = computed<SourceFieldErrors>(() => {
-  const field = props.controller.state.sourceErrorField
-  const message = props.controller.state.sourceError
-  return field != null && message != null ? { [field]: message } : {}
+const sourceLocationError = computed(() => {
+  if (props.controller.state.sourceErrorField !== 'location') return undefined
+  return props.controller.state.sourceError ?? undefined
 })
 let openEpoch = 0
 
@@ -237,8 +235,8 @@ async function add(source: SourceInput) {
   })
 }
 
-function clearSourceFieldError(field: SourceField) {
-  if (props.controller.state.sourceErrorField === field) {
+function clearSourceLocationError() {
+  if (props.controller.state.sourceErrorField === 'location') {
     props.controller.state.sourceError = null
     props.controller.state.sourceErrorField = null
   }
@@ -487,9 +485,9 @@ async function confirmRemove() {
                 <SourceForm
                   :key="formEpoch"
                   :disabled="fieldsDisabled"
-                  :field-errors="sourceFieldErrors"
+                  :server-location-error="sourceLocationError"
                   @add="add"
-                  @edit="clearSourceFieldError"
+                  @edit-location="clearSourceLocationError"
                 />
                 <p
                   v-if="controller.state.sourceError && controller.state.sourceErrorField == null"
