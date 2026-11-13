@@ -504,9 +504,14 @@ export class WorkspaceController {
     const plan = current?.plan ?? null
     const generation = this.resourceActionGeneration
     if (
-      this.disposed || current == null || plan == null || current.loading || this.resourceActionPosting ||
-      this.state.operation != null || this.state.requesting || !eligible(this.state) || this.state.configuration?.editable !== true
+      this.disposed || current == null || plan == null || current.loading || this.resourceActionPosting
     ) {
+      return false
+    }
+    if (this.state.operation != null || this.state.requesting || !eligible(this.state) || this.state.configuration?.editable !== true) {
+      if (!current.dialogOpen) {
+        this.state.resourceAction = { ...current, dialogOpen: true }
+      }
       return false
     }
     const row = this.state.rows.find((candidate) => candidate.id === current.rowId)

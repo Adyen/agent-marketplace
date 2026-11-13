@@ -185,6 +185,10 @@ function mutationStatus(page: Page): Locator {
   return page.locator('.gui-toast--progress')
 }
 
+async function expectNoInternalFeedback(locator: Locator): Promise<void> {
+  expect(await locator.innerText()).not.toMatch(/resource action|mutation|Working…/i)
+}
+
 async function trackOpenedDialogs(page: Page): Promise<void> {
   await page.evaluate(() => {
     const root = document.documentElement
@@ -332,6 +336,7 @@ async function cancelAction(page: Page, dialog: Locator, actions: string[]): Pro
 }
 
 // spec: gui-shell/spinner-shows-only-while-the-action-is-in-flight
+// spec: gui-shell/progress-names-the-action-without-invented-phases
 test('resource action dialog shows a spinner while preparing the plan', async ({ page }, testInfo) => {
   const harness = await startWork39Harness(testInfo, 'user-installed', false)
   let releaseResponse!: () => void
@@ -359,6 +364,9 @@ test('resource action dialog shows a spinner while preparing the plan', async ({
     await expect(dialog.locator('.resource-actions__spinner')).toBeVisible()
     await expect.poll(() => dialog.evaluate((element) => getComputedStyle(element).cursor)).toBe('progress')
     await expect.poll(() => dialog.locator('button:disabled').evaluateAll((buttons) => buttons.every((button) => getComputedStyle(button).cursor !== 'pointer'))).toBe(true)
+    const status = dialog.locator('.resource-actions__status')
+    await expect(status).toHaveText('Checking review…')
+    await expectNoInternalFeedback(status)
     releaseResponse()
     await expect(dialog.locator('.resource-actions__spinner')).toHaveCount(0)
   } finally {
@@ -369,6 +377,7 @@ test('resource action dialog shows a spinner while preparing the plan', async ({
 })
 
 // spec: gui-shell/plain-install-and-restore-skip-the-dialog
+// spec: gui-shell/progress-names-the-action-without-invented-phases
 test('risk-free Install writes without opening a dialog and shows busy inspector feedback', async ({ page }, testInfo) => {
   const harness = await startWork39Harness(testInfo, 'available', false)
   const counts = countRequests(page)
@@ -427,6 +436,9 @@ test('risk-free Install writes without opening a dialog and shows busy inspector
 
     const heldFinal = await page.request.get(bootstrap.resourceActionBarrierWaitURL)
     expect(heldFinal.status()).toBe(204)
+    const progress = mutationStatus(page)
+    await expect(progress.locator('.gui-toast__title')).toHaveText('Installing review…')
+    await expectNoInternalFeedback(progress)
     const installedFiles = await captureFiles(protectedPaths)
     if (
       userConfigIndex < 0 || userLockIndex < 0 ||
@@ -497,6 +509,7 @@ test('non-bare modal title and close button share a vertical center in both them
 // spec: session-interactions/guarded-submission
 // spec: gui-shell/risk-and-preparation-failure-keep-the-dialog
 // spec: gui-shell/remove-and-exclude-keep-confirmation
+// spec: gui-shell/progress-names-the-action-without-invented-phases
 test('built user GUI cancels, installs, and removes a warned Marketplace Resource through authoritative finals', async ({ page }, testInfo) => {
   if (!distIndexExists()) {
     throw new Error('built GUI assets missing: run the GUI build before the resource-action journey')
@@ -568,6 +581,8 @@ test('built user GUI cancels, installs, and removes a warned Marketplace Resourc
     await expect(installDialog.locator('.resource-actions__spinner')).toBeVisible()
     await expect.poll(() => installDialog.evaluate((element) => getComputedStyle(element).cursor)).toBe('progress')
     await expect.poll(() => installDialog.locator('button:disabled').evaluateAll((buttons) => buttons.every((button) => getComputedStyle(button).cursor !== 'pointer'))).toBe(true)
+    await expect(installDialog.locator('.resource-actions__status')).toHaveText('Installing review…')
+    await expectNoInternalFeedback(installDialog)
     releaseActionResponse()
     const installResponse = await installResponsePromise
     expect(installResponse.status()).toBe(202)

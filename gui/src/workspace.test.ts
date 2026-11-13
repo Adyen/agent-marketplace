@@ -2325,6 +2325,49 @@ describe('Event stream reconnect', () => {
       expect(client.resourceAction).toHaveBeenCalledTimes(1)
     })
 
+    // spec: gui-shell/plain-install-and-restore-skip-the-dialog
+    it.each(['install', 'restore'] as const)('shows a recoverable dialog when %s auto-confirm is temporarily blocked', async (action) => {
+      const actionName = action === 'install' ? 'Install' : 'Restore'
+      const resource = work39Row('review', 'opaque-user-source-review', action, action === 'restore' ? {
+        scope: 'organization', group: 'enabled', status: 'excluded by user', checked: false, discovery: false,
+      } : {})
+      const planRequest = deferred<ResourceActionPlan>()
+      const syncRequest = deferred<OperationRef>()
+      const { client, push } = fakeClient()
+      vi.mocked(client.resourcePlan).mockReturnValue(planRequest.promise)
+      vi.mocked(client.action).mockReturnValue(syncRequest.promise)
+      const { controller, wrapper } = mountWorkspace(client)
+      push(work39SnapshotEvent(1, 1, [resource]))
+      await tick()
+      await selectWork39Row(wrapper, resource.id)
+      await wrapper.get(`button[aria-label="${actionName} Resource"]`).trigger('click')
+      await tick()
+
+      const sync = controller.runAction('sync')
+      expect(controller.state.requesting).toBe(true)
+      planRequest.resolve(work39Plan(resource.id, 1, action))
+      await tick()
+
+      const dialog = document.body.querySelector('[role="dialog"]')
+      expect(dialog).not.toBeNull()
+      const confirm = dialog?.querySelector(`[aria-label="Confirm ${action}"]`) as HTMLButtonElement | null
+      expect(confirm?.disabled).toBe(true)
+      expect(client.resourceAction).not.toHaveBeenCalled()
+
+      syncRequest.reject(new RequestError(409, 'localapi.busy'))
+      await expect(sync).resolves.toBe(false)
+      await tick()
+      expect(confirm?.disabled).toBe(false)
+
+      const cancel = dialog?.querySelector('button[aria-label="Cancel"]') as HTMLButtonElement | null
+      cancel?.click()
+      await tick()
+      expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+      expect((wrapper.get(`button[aria-label="${actionName} Resource"]`).element as HTMLButtonElement).disabled).toBe(false)
+      expect(client.resourceAction).not.toHaveBeenCalled()
+      controller.dispose()
+    })
+
     // spec: session-interactions/guarded-submission
     it('shows static preparation failures and keeps cancel write-free', async () => {
       const resource = work39Row('review', 'opaque-user-source-review', 'install')
