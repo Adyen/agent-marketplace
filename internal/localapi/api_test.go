@@ -2090,23 +2090,51 @@ func TestConfigStageSnapshotPresentsTargetHarnesses(t *testing.T) {
 	}
 }
 
+// spec: gui-local-api/resource-notifications-name-action-and-resource
+// spec: gui-local-api/configuration-and-lifecycle-notifications-name-what-changed
 func TestOperationOutcomeNotificationWording(t *testing.T) {
-	cases := []struct {
-		name     string
-		warnings int
-		failed   bool
-		severity string
-		message  string
+	displayName := "Example resource"
+	subjects := []struct {
+		name, kind string
+		subject    operationSubject
+		success    string
+		failure    string
 	}{
-		{"plain success", 0, false, "info", "sync complete"},
-		{"success with warnings", 2, false, "warning", "sync complete with 2 warning(s)"},
-		{"failure", 2, true, "error", "sync failed"},
+		{name: "sync", kind: "sync", success: "Sync complete", failure: "Sync failed"},
+		{name: "update", kind: "update", success: "Update complete", failure: "Update failed"},
+		{name: "targets", kind: "targets", success: "Harness targets saved", failure: "Couldn't save harness targets"},
+		{name: "source add", kind: "mutation", subject: sourceOperationSubject("add-source"), success: "Source added", failure: "Couldn't add source"},
+		{name: "source remove", kind: "mutation", subject: sourceOperationSubject("remove-source"), success: "Source removed", failure: "Couldn't remove source"},
+		{name: "configuration", kind: "mutation", subject: operationSubject{success: "Configuration saved", failure: "Couldn't save configuration"}, success: "Configuration saved", failure: "Couldn't save configuration"},
+		{name: "resource install", kind: "mutation", subject: resourceActionSubject(session.UserMarketplaceActionInstall, displayName), success: "Installed " + displayName, failure: "Couldn't install " + displayName},
+		{name: "resource remove", kind: "mutation", subject: resourceActionSubject(session.UserMarketplaceActionRemove, displayName), success: "Removed " + displayName, failure: "Couldn't remove " + displayName},
+		{name: "resource exclude", kind: "mutation", subject: resourceActionSubject(session.UserMarketplaceActionExclude, displayName), success: "Excluded " + displayName, failure: "Couldn't exclude " + displayName},
+		{name: "resource restore", kind: "mutation", subject: resourceActionSubject(session.UserMarketplaceActionRestore, displayName), success: "Restored " + displayName, failure: "Couldn't restore " + displayName},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			severity, message := operationOutcomeNotification("sync", tc.warnings, tc.failed)
-			if severity != tc.severity || message != tc.message {
-				t.Fatalf("got (%q, %q), want (%q, %q)", severity, message, tc.severity, tc.message)
+	outcomes := []struct {
+		name, severity, outcome string
+		warnings                int
+		failed                  bool
+		message                 func(success, failure string) string
+	}{
+		{name: "success", severity: "info", outcome: "success", message: func(success, _ string) string { return success }},
+		{name: "warning", severity: "warning", outcome: "warning", warnings: 2, message: func(success, _ string) string { return success + " with 2 warning(s)" }},
+		{name: "failure", severity: "error", outcome: "failure", failed: true, message: func(_, failure string) string { return failure }},
+		{name: "failure with warnings", severity: "error", outcome: "failure", warnings: 2, failed: true, message: func(_, failure string) string { return failure }},
+	}
+	for _, subject := range subjects {
+		t.Run(subject.name, func(t *testing.T) {
+			for _, outcome := range outcomes {
+				t.Run(outcome.name, func(t *testing.T) {
+					got := operationOutcomeNotification(subject.kind, subject.subject, outcome.warnings, outcome.failed)
+					wantMessage := outcome.message(subject.success, subject.failure)
+					if got.Severity != outcome.severity || got.Outcome != outcome.outcome || got.Message != wantMessage {
+						t.Fatalf("got (%q, %q, %q), want (%q, %q, %q)", got.Severity, got.Outcome, got.Message, outcome.severity, outcome.outcome, wantMessage)
+					}
+					if strings.Contains(strings.ToLower(got.Message), "mutation") {
+						t.Fatalf("notification contains an internal operation name: %q", got.Message)
+					}
+				})
 			}
 		})
 	}

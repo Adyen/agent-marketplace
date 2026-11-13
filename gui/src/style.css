@@ -1444,10 +1444,15 @@ textarea:focus-visible,
   padding: 24px;
 }
 
+.gui-modal--busy {
+  cursor: progress;
+}
+
 .gui-modal__header {
-  align-items: flex-start;
+  align-items: center;
   display: flex;
   flex: none;
+  gap: 12px;
   justify-content: space-between;
 }
 
@@ -1483,10 +1488,12 @@ textarea:focus-visible,
 
 .gui-modal__title {
   color: var(--gui-ink);
+  flex: 1;
   font-size: 20px;
   font-weight: 600;
   line-height: 1.2;
-  margin: 4px 0 0;
+  margin: 0;
+  min-width: 0;
 }
 
 .gui-modal__body {
@@ -1532,6 +1539,20 @@ textarea:focus-visible,
 .gui-modal__footer > button:last-child {
   background: var(--gui-solid-bg);
   color: var(--gui-solid-ink);
+}
+
+button:disabled {
+  cursor: default;
+}
+
+.gui-button--busy:disabled {
+  cursor: progress;
+}
+
+.gui-inspector__action-spinner {
+  display: inline-block;
+  margin-right: 6px;
+  vertical-align: middle;
 }
 
 .gui-steps {

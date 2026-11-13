@@ -288,8 +288,9 @@ All modals follow the Codex "Commit your changes" pattern:
   inspection.
 - 20 px radius, `--gui-canvas` background, a large soft shadow, and a 24 px
   inner padding. The scrim is `rgb(0 0 0 / .32)` with a 2 px backdrop blur.
-- Header: a 36 px icon tile (`--gui-s0100`, radius 10) at top left, a close ×
-  icon button at top right, and the title (20 px / 600) below the tile.
+- Header: a single vertically centered row with the optional 36 px icon tile
+  (`--gui-s0100`, radius 10), a flexible title (20 px / 600), and a close ×
+  icon button. Bare modals keep no shared header.
 - Body: label/value rows (label `--gui-ink`, 500; value right-aligned mono
   `--gui-ink-2`), group labels in 500 weight, inputs as specified above.
 - **Choice lists**: Codex's "Next steps" list, a rounded group of 44 px rows on
@@ -758,8 +759,14 @@ earlier section, this section wins.
   missing or malformed values use the defaults.
 - Resource action dialogs omit the header tile, lead with plain-language
   action and availability copy, and keep the plan in a collapsed
-  "Technical details" disclosure. A 16 px signal spinner accompanies plan
-  preparation and submission; the risk acknowledgement stays visible.
+  "Technical details" disclosure. Risk-free Install and Restore submit without
+  opening the dialog; plans that need acknowledgement, preparation errors,
+  Remove, and Exclude keep confirmation. A 16 px signal spinner accompanies
+  visible plan preparation and submission; the risk acknowledgement stays
+  visible.
+- Progress titles name the operation, end with an ellipsis, and resource
+  actions retain the resource name through settlement. Detail shows only an
+  observed phase; typed notification outcomes determine toast tone.
 - Settings' Add source button uses `.gui-button--secondary` with a leading
   plus icon.
 - The native icon uses a rounded ink tile and the slanted green-and-white A

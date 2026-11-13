@@ -243,7 +243,7 @@ async function confirmPlan(page: Page, dialog: Locator, verb: 'Install' | 'Remov
 }
 
 function mutationStatus(page: Page): Locator {
-  return page.locator('.gui-toast--progress').filter({ hasText: 'Applying changes' })
+  return page.locator('.gui-toast--progress')
 }
 
 function countActionRequests(page: Page) {
@@ -282,7 +282,6 @@ test('built GUI edits root-owned directory selections without SDK materializatio
     const bootstrap = await work40Bootstrap(harness.bootstrap)
     bootstrapForCleanup = bootstrap
     const paths = protectedPaths(bootstrap)
-    const beforeCancel = await captureFiles(paths)
     await launchWorkspace(page, bootstrap, actions)
     const selectedReviewOption = await selectReview(page, actions)
     const reviewDOMID = await selectedReviewOption.getAttribute('id')
@@ -293,25 +292,11 @@ test('built GUI edits root-owned directory selections without SDK materializatio
     await expect.poll(() => selectedOptionDOMID(page)).toBe(reviewDOMID)
     await expect(reviewByID).toHaveAttribute('aria-selected', 'true')
 
-    const cancelDialog = await openPlan(page, bootstrap, 'Install', actions)
-    const preview = await cancelDialog.locator('pre').textContent()
-    assertNoLocalPaths(preview, bootstrap)
-    await cancelDialog.screenshot({ path: testInfo.outputPath('work40-directory-install-preview.png'), animations: 'disabled' })
-    await cancelPlan(page, cancelDialog, actions)
-    assertFilesUnchanged(beforeCancel, await captureFiles(paths))
-    assertActionRequestCounts(counts, 1, 0, 'cancelling the static directory plan submitted a mutation')
-    actions.push('Verified cancellation preserved all captured bytes/modes and sent no resource-actions request')
-    await expect.poll(() => selectedOptionDOMID(page)).toBe(reviewDOMID)
-
-    const installDialog = await openPlan(page, bootstrap, 'Install', actions)
-    await expect(reviewByID).toHaveAttribute('aria-selected', 'true')
     const beforeInstall = await captureFiles(paths)
-    const installPreview = await installDialog.locator('pre').textContent()
-    assertNoLocalPaths(installPreview, bootstrap)
-    await confirmPlan(page, installDialog, 'Install', actions)
+    await page.getByRole('button', { name: 'Install Resource', exact: true }).click()
+    await expect(page.getByRole('dialog', { name: 'Install Resource', exact: true })).toHaveCount(0)
     const heldFinal = await page.request.get(bootstrap.resourceActionBarrierWaitURL)
     expect(heldFinal.status()).toBe(204)
-    await expect(installDialog).toBeHidden()
     await expect(mutationStatus(page)).toBeVisible()
     const afterInstallBeforeFinal = await captureFiles(paths)
     assertFilesUnchanged(beforeInstall, afterInstallBeforeFinal, [bootstrap.work40UserConfig])
@@ -362,7 +347,7 @@ test('built GUI edits root-owned directory selections without SDK materializatio
     await expect(reviewByID).toHaveAttribute('aria-selected', 'true')
     actions.push('Reselected the captured Review row by its original opaque DOM id')
     await expect(page.getByRole('button', { name: 'Install Resource', exact: true })).toBeEnabled()
-    assertActionRequestCounts(counts, 3, 2, 'Work40 journey used an unexpected plan, mutation, or core-action endpoint')
+    assertActionRequestCounts(counts, 2, 2, 'Work40 journey used an unexpected plan, mutation, or core-action endpoint')
     actions.push('Confirmed removal through the real user API; the current review row is excluded and no core action/materialization ran')
     await saveActions(testInfo, actions)
   } finally {
@@ -410,7 +395,7 @@ test('built GUI refuses a directory source owned only by an included user fragme
     expect(release.status()).toBe(204)
     barrierReleased = true
     await expect(mutationStatus(page)).toBeHidden({ timeout: 60_000 })
-    await expect(page.getByLabel('Notifications').getByText('mutation failed')).toBeVisible()
+    await expect(page.getByLabel('Notifications').getByText("Couldn't remove review")).toBeVisible()
     await expect(page.getByRole('button', { name: 'Remove Resource', exact: true })).toBeFocused()
     assertFilesUnchanged(beforeRemove, await captureFiles(paths))
     assertActionRequestCounts(counts, 2, 1, 'included-owner refusal used an unexpected API endpoint')

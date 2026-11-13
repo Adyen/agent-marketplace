@@ -50,7 +50,8 @@ async function completeResponse(responsePromise: ReturnType<typeof armPost>, sta
 }
 
 async function waitForOperationCompletion(page: Page, action: 'sync' | 'update'): Promise<void> {
-  await expect(page.getByLabel('Notifications').getByText(new RegExp(`^${action} complete( with \\d+ warning\\(s\\))?$`))).toBeVisible({ timeout: 60_000 })
+  const actionLabel = action === 'sync' ? 'Sync' : 'Update'
+  await expect(page.getByLabel('Notifications').getByText(new RegExp(`^${actionLabel} complete( with \\d+ warning\\(s\\))?$`))).toBeVisible({ timeout: 60_000 })
   await expect(page.locator('.gui-toast--progress')).toHaveCount(0)
 }
 
@@ -223,7 +224,7 @@ test('built GUI traverses shell, resource, sources, settings, and quit controls 
     await pressKey(page, 'Enter', 'Add user source', actions)
     await completeResponse(addSourceResponse, 202)
     await expect(userSources).toContainText(sourceDir, { timeout: 60_000 })
-    await expect(page.getByLabel('Notifications').getByText('mutation complete').last()).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByLabel('Notifications').getByText('Source added').last()).toBeVisible({ timeout: 60_000 })
     await expect(sourcesDialog.getByText('Applying changes…')).toHaveCount(0)
     await expect.poll(async () => await readFile(userConfigPath, 'utf8'), { timeout: 60_000 }).toContain(sourceDir)
     const addedRoot = await readFile(userConfigPath)
@@ -252,7 +253,7 @@ test('built GUI traverses shell, resource, sources, settings, and quit controls 
     await pressKey(page, 'Enter', 'Confirm source removal', actions)
     await completeResponse(removeSourceResponse, 202)
     await expect(userSources.getByText(sourceDir)).toHaveCount(0, { timeout: 60_000 })
-    await expect(page.getByLabel('Notifications').getByText('mutation complete').last()).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByLabel('Notifications').getByText('Source removed').last()).toBeVisible({ timeout: 60_000 })
     await expect(sourcesDialog.getByText('Applying changes…')).toHaveCount(0)
     const removedRoot = await readFile(userConfigPath, 'utf8')
     expect(removedRoot).toContain('include: fragment.yaml')
@@ -315,7 +316,7 @@ test('built GUI traverses shell, resource, sources, settings, and quit controls 
     expect(savedTargetsRequest.targets.length).toBeGreaterThan(0)
     expect(configurationActionCount()).toBe(actionsBeforeSave + 1)
     await expect(settingsDialog).toBeVisible()
-    await expect(page.getByLabel('Notifications').getByText('targets complete').last()).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByLabel('Notifications').getByText('Harness targets saved').last()).toBeVisible({ timeout: 60_000 })
     await expect.poll(async () => await readFile(userConfigPath, 'utf8'), { timeout: 60_000 }).toContain('claude')
     const savedRoot = await readFile(userConfigPath, 'utf8')
     expect(savedRoot).toContain('harnesses:')
@@ -515,7 +516,7 @@ test('built GUI cancels and completes first-run setup using keyboard only', asyn
     expect(initializeRequest.consent).toBe(false)
     expect(initializeRequest.sources).toEqual([{ kind: 'directory', location: sourceDir }])
     expect(configurationActionCount()).toBe(1)
-    await expect(page.getByLabel('Notifications').getByText('mutation complete').last()).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByLabel('Notifications').getByText('Configuration saved').last()).toBeVisible({ timeout: 60_000 })
     await expect(dialog).not.toBeVisible({ timeout: 60_000 })
 
     await expect.poll(async () => await readFile(userConfigPath, 'utf8'), { timeout: 60_000 }).toContain(sourceDir)

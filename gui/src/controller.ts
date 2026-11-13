@@ -9,6 +9,7 @@ import {
   type GUIEvent,
   type InspectionPayload,
   type InstalledSkillFilesPayload,
+  type NotificationOutcome,
   type OperationRef,
   type ReleaseNotice,
   type ResourceAction,
@@ -37,6 +38,9 @@ export interface InspectionState {
 
 export interface ResourceActionState {
   rowId: string
+  action: ResourceAction
+  displayName: string
+  dialogOpen: boolean
   loading: boolean
   plan: ResourceActionPlan | null
   error: string | null
@@ -46,6 +50,8 @@ export interface ResourceActionState {
 export interface ResourceActionSettlementIntent {
   operation: OperationRef
   rowId: string
+  action: ResourceAction
+  displayName: string
   selectNext: boolean
 }
 
@@ -57,8 +63,8 @@ export const DISCOVERY_REQUEST_ERROR_MESSAGE = 'Marketplace discovery request fa
 export const INSPECTION_UNAVAILABLE_MESSAGE = 'Verified inspection is unavailable; check the Marketplace and retry.'
 export const RESOURCE_FILES_UNAVAILABLE_MESSAGE = 'Resource files are unavailable; refresh this resource and retry.'
 export const SOURCE_FILES_UNAVAILABLE_MESSAGE = 'Skill source files are missing or unsafe; fix the source and refresh.'
-export const RESOURCE_ACTION_UNAVAILABLE_MESSAGE = 'Resource action could not be prepared; refresh this resource and retry.'
-export const RESOURCE_ACTION_FAILED_MESSAGE = 'The resource action could not be started; refresh this resource and retry.'
+export const RESOURCE_ACTION_UNAVAILABLE_MESSAGE = 'Action could not be prepared; refresh this resource and retry.'
+export const RESOURCE_ACTION_FAILED_MESSAGE = 'Action could not be started; refresh this resource and retry.'
 export const RESOURCE_ACTION_STALE_MESSAGE = 'This resource changed; prepare the action again.'
 export const RESOURCE_ACTION_BUSY_MESSAGE = 'Another session operation is in progress.'
 
@@ -87,7 +93,7 @@ export interface WorkspaceState {
   settledMutation: ResourceActionSettlementIntent | null
   phase: string | null
   operation: OperationRef | null
-  notifications: { id: number; severity: string; message: string }[]
+  notifications: { id: number; severity: string; outcome?: NotificationOutcome; message: string }[]
   requesting: boolean
   error: string | null
   sourceError: string | null
@@ -409,7 +415,16 @@ export class WorkspaceController {
     this.resourceActionAbort = abort
     this.resourceActionGeneration = generation
     this.resourceActionKind = row.resourceAction
-    this.state.resourceAction = { rowId, loading: true, plan: null, error: null, acceptRisk: false }
+    this.state.resourceAction = {
+      rowId,
+      action: row.resourceAction,
+      displayName: row.displayName,
+      dialogOpen: row.resourceAction === 'remove' || row.resourceAction === 'exclude',
+      loading: true,
+      plan: null,
+      error: null,
+      acceptRisk: false,
+    }
     void this.client.resourcePlan(rowId, abort.signal).then((plan) => {
       if (!this.resourceActionRequestIsCurrent(rowId, generation, epoch, abort.signal)) {
         return
@@ -421,11 +436,21 @@ export class WorkspaceController {
       }
       if (plan.rowId !== rowId || plan.generation !== generation || plan.action !== this.resourceActionKind || currentRow?.resourceAction !== plan.action) {
         this.resourceActionAbort = null
-        this.state.resourceAction = { ...current, loading: false, plan: null, error: RESOURCE_ACTION_STALE_MESSAGE, acceptRisk: false }
+        this.state.resourceAction = { ...current, dialogOpen: true, loading: false, plan: null, error: RESOURCE_ACTION_STALE_MESSAGE, acceptRisk: false }
         return
       }
       this.resourceActionAbort = null
-      this.state.resourceAction = { ...current, loading: false, plan, error: null, acceptRisk: false }
+      this.state.resourceAction = {
+        ...current,
+        dialogOpen: current.dialogOpen || plan.requiresRiskAcceptance,
+        loading: false,
+        plan,
+        error: null,
+        acceptRisk: false,
+      }
+      if (!plan.requiresRiskAcceptance && (current.action === 'install' || current.action === 'restore')) {
+        void this.confirmResourceAction()
+      }
     }).catch((error: unknown) => {
       if (!this.resourceActionRequestIsCurrent(rowId, generation, epoch, abort.signal)) {
         return
@@ -433,7 +458,7 @@ export class WorkspaceController {
       this.resourceActionAbort = null
       const current = this.state.resourceAction
       if (current != null) {
-        this.state.resourceAction = { ...current, loading: false, plan: null, error: resourceActionErrorMessage(error, true), acceptRisk: false }
+        this.state.resourceAction = { ...current, dialogOpen: true, loading: false, plan: null, error: resourceActionErrorMessage(error, true), acceptRisk: false }
       }
     })
   }
@@ -485,8 +510,8 @@ export class WorkspaceController {
       return false
     }
     const row = this.state.rows.find((candidate) => candidate.id === current.rowId)
-    if (generation == null || generation !== this.snapshotGeneration || plan.rowId !== current.rowId || plan.generation !== generation || row?.resourceAction !== plan.action || plan.action !== this.resourceActionKind) {
-      this.state.resourceAction = { ...current, plan: null, error: RESOURCE_ACTION_STALE_MESSAGE, acceptRisk: false }
+    if (generation == null || generation !== this.snapshotGeneration || plan.rowId !== current.rowId || plan.generation !== generation || row?.resourceAction !== plan.action || plan.action !== current.action || plan.action !== this.resourceActionKind) {
+      this.state.resourceAction = { ...current, dialogOpen: true, plan: null, error: RESOURCE_ACTION_STALE_MESSAGE, acceptRisk: false }
       return false
     }
     if (plan.requiresRiskAcceptance && !current.acceptRisk) {
@@ -508,7 +533,7 @@ export class WorkspaceController {
         this.resourceActionPosting = false
         const latest = this.state.resourceAction
         if (latest != null) {
-          this.state.resourceAction = { ...latest, loading: false, plan: null, error: RESOURCE_ACTION_FAILED_MESSAGE, acceptRisk: false }
+          this.state.resourceAction = { ...latest, dialogOpen: true, loading: false, plan: null, error: RESOURCE_ACTION_FAILED_MESSAGE, acceptRisk: false }
         }
         return false
       }
@@ -538,6 +563,8 @@ export class WorkspaceController {
           this.state.settlementIntent = {
             operation,
             rowId: current.rowId,
+            action: current.action,
+            displayName: current.displayName,
             selectNext: plan.action === 'remove' || plan.action === 'exclude',
           }
         }
@@ -555,7 +582,7 @@ export class WorkspaceController {
       this.resourceActionPosting = false
       const latest = this.state.resourceAction
       if (latest != null) {
-        this.state.resourceAction = { ...latest, loading: false, plan: null, error: resourceActionErrorMessage(error, false), acceptRisk: false }
+        this.state.resourceAction = { ...latest, dialogOpen: true, loading: false, plan: null, error: resourceActionErrorMessage(error, false), acceptRisk: false }
       }
       return false
     }
@@ -673,9 +700,9 @@ export class WorkspaceController {
         break
       }
       case 'notification': {
-        this.notify(event.payload.severity, event.payload.message)
+        this.notify(event.payload.severity, event.payload.message, event.payload.outcome)
         if (event.operation?.kind === 'mutation') {
-          this.lastMutationNotification = { operation: event.operation, succeeded: event.payload.severity !== 'error' }
+          this.lastMutationNotification = { operation: event.operation, succeeded: event.payload.outcome !== 'failure' }
           this.tryCompleteResourceActionSettlement()
         }
         break
@@ -998,9 +1025,9 @@ export class WorkspaceController {
     }
   }
 
-  private notify(severity: string, message: string): void {
+  private notify(severity: string, message: string, outcome?: NotificationOutcome): void {
     const id = this.nextNotificationId++
-    this.state.notifications.push({ id, severity, message })
+    this.state.notifications.push({ id, severity, outcome, message })
     while (this.state.notifications.length > MAX_NOTIFICATIONS) {
       this.state.notifications.shift()
     }

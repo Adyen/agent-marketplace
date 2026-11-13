@@ -248,7 +248,7 @@ test('built GUI confirms and completes an in-place update when no work is pendin
     await launchBuiltUserApp(page, harness.bootstrap.url, harness.bootstrap.credential, 'macos-app', false)
     await expect(page.getByRole('option').filter({ hasText: 'solo' }).first()).toBeVisible({ timeout: 60_000 })
     await page.getByRole('button', { name: 'Sync', exact: true }).click()
-    await expect(page.getByText('sync complete')).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByText('Sync complete')).toBeVisible({ timeout: 60_000 })
     await page.getByRole('button', { name: 'Update now' }).click()
     await expect(page.getByText('Update complete. Restarting Agent Marketplace.')).toBeVisible({ timeout: 60_000 })
     expect(actions).toEqual(['start', 'confirm'])

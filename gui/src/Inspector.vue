@@ -7,6 +7,7 @@ const props = defineProps<{
   folded: boolean
   selected: Row | null
   actionDisabled: boolean
+  actionBusy: boolean
   overlay: boolean
 }>()
 
@@ -28,7 +29,7 @@ const resourceActionVerbs: Partial<Record<Row['resourceAction'], string>> = {
 
 const resourceActionVerb = computed(() => resourceActionVerbs[props.selected?.resourceAction ?? 'none'] ?? '')
 
-const resourceActionLabel = computed(() => (resourceActionVerb.value ? `${resourceActionVerb.value} Resource` : 'Resource action'))
+const resourceActionLabel = computed(() => (resourceActionVerb.value ? `${resourceActionVerb.value} Resource` : 'Action'))
 
 const resourceActionIcon = computed(() => props.selected?.resourceAction === 'remove' || props.selected?.resourceAction === 'exclude')
 
@@ -94,11 +95,13 @@ defineExpose({
                 ref="resourceActionButton"
                 :aria-label="resourceActionLabel"
                 class="gui-button--secondary"
+                :class="{ 'gui-button--busy': actionBusy }"
+                :aria-busy="actionBusy"
                 color="neutral"
                 variant="soft"
                 :disabled="actionDisabled"
                 @click="emit('openResourceAction', selected)"
-              >{{ resourceActionVerb }}</UButton>
+              ><span v-if="actionBusy" class="gui-toast__spinner gui-inspector__action-spinner" aria-hidden="true" />{{ resourceActionVerb }}</UButton>
               <UButton
                 v-if="selected.inspectable || selected.installedFiles"
                 ref="openResourceButton"
