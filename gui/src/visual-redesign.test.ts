@@ -14,12 +14,12 @@ async function dragHandle(handle: Pick<DOMWrapper<Element>, 'trigger'>, from: nu
   await handle.trigger('pointerup', { clientX: to, pointerId: 1 })
 }
 
-function resourcePlan(rowId: string): ResourceActionPlan {
+function resourcePlan(rowId: string, action: ResourceActionPlan['action'] = 'install'): ResourceActionPlan {
   return {
     rowId,
     generation: 1,
     planId: 'a'.repeat(64),
-    action: 'install',
+    action,
     preview: 'Resource: skill/review\nLayer: user',
     requiresRiskAcceptance: false,
   }
@@ -155,20 +155,20 @@ describe('resource action dialog', () => {
       id: 'review-row',
       displayName: 'Review',
       registry: 'team tools',
-      scope: 'available',
-      group: 'available',
-      status: 'available',
-      checked: false,
-      resourceAction: 'install',
+      scope: 'user',
+      group: 'enabled',
+      status: 'enabled',
+      checked: true,
+      resourceAction: 'remove',
     })
     const { client, push } = fakeClient()
     const mounted = mountWorkspace(client)
     push(event({ sequence: 1, payload: snapshot([resource]) }))
-    vi.mocked(client.resourcePlan).mockResolvedValue(resourcePlan(resource.id))
+    vi.mocked(client.resourcePlan).mockResolvedValue(resourcePlan(resource.id, 'remove'))
     await tick()
     await mounted.wrapper.get('[role="option"]').trigger('click')
     await tick()
-    await mounted.wrapper.get('button[aria-label="Install Resource"]').trigger('click')
+    await mounted.wrapper.get('button[aria-label="Remove Resource"]').trigger('click')
     await tick()
 
     const dialog = document.body.querySelector('[role="dialog"]')
@@ -176,8 +176,8 @@ describe('resource action dialog', () => {
     if (dialog == null) throw new Error('install dialog was not rendered')
     expect(dialog.querySelector('.gui-modal__tile')).toBeNull()
     const copy = dialog.querySelector('.resource-actions__copy')
-    expect(copy?.textContent).toContain('Install Review from team tools.')
-    expect(copy?.textContent).toContain('After the next sync, it will be available in Devin.')
+    expect(copy?.textContent).toContain('Remove Review from team tools.')
+    expect(copy?.textContent).toContain('After the next sync, it will no longer be available in Devin.')
     expect(copy?.textContent).not.toMatch(/\b(config|configuration|lock|lockfile|harness|acquisition|materialize)\b/i)
     const details = dialog.querySelector('details')
     expect(details?.open).toBe(false)
@@ -195,7 +195,7 @@ describe('resource action dialog', () => {
       group: 'available',
       status: 'available',
       checked: false,
-      resourceAction: 'install',
+      resourceAction: 'remove',
     })
     const { client, push } = fakeClient()
     const mounted = mountWorkspace(client)
@@ -205,15 +205,15 @@ describe('resource action dialog', () => {
     await tick()
     await mounted.wrapper.get('[role="option"]').trigger('click')
     await tick()
-    await mounted.wrapper.get('button[aria-label="Install Resource"]').trigger('click')
+    await mounted.wrapper.get('button[aria-label="Remove Resource"]').trigger('click')
     await tick()
     const dialog = document.body.querySelector('[role="dialog"]')
     expect(dialog?.querySelector('.resource-actions__spinner')).not.toBeNull()
 
-    resolvePlan(resourcePlan(resource.id))
+    resolvePlan(resourcePlan(resource.id, 'remove'))
     await tick()
     expect(dialog?.querySelector('.resource-actions__spinner')).toBeNull()
-    ;(dialog?.querySelector('button[aria-label="Confirm install"]') as HTMLButtonElement).click()
+    ;(dialog?.querySelector('button[aria-label="Confirm remove"]') as HTMLButtonElement).click()
     await tick()
     expect(dialog?.querySelector('.resource-actions__spinner')).not.toBeNull()
 
@@ -231,21 +231,21 @@ describe('resource action dialog', () => {
       group: 'available',
       status: 'available',
       checked: false,
-      resourceAction: 'install',
+      resourceAction: 'remove',
     })
     const { client, push } = fakeClient()
     const mounted = mountWorkspace(client)
     push(event({ sequence: 1, payload: snapshot([resource]) }))
-    vi.mocked(client.resourcePlan).mockResolvedValue(resourcePlan(resource.id))
+    vi.mocked(client.resourcePlan).mockResolvedValue(resourcePlan(resource.id, 'remove'))
     vi.mocked(client.resourceAction).mockReturnValue(
       new Promise<OperationRef>((resolve) => { resolveAction = resolve }),
     )
     await tick()
     await mounted.wrapper.get('[role="option"]').trigger('click')
     await tick()
-    await mounted.wrapper.get('button[aria-label="Install Resource"]').trigger('click')
+    await mounted.wrapper.get('button[aria-label="Remove Resource"]').trigger('click')
     await tick()
-    const confirm = document.body.querySelector('button[aria-label="Confirm install"]') as HTMLButtonElement
+    const confirm = document.body.querySelector('button[aria-label="Confirm remove"]') as HTMLButtonElement
     confirm.click()
     await tick()
     expect(document.body.querySelector('.resource-actions__spinner')).not.toBeNull()

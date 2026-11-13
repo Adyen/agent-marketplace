@@ -636,6 +636,8 @@ export interface components {
             payload: {
                 message: string;
                 /** @enum {string} */
+                outcome: "success" | "warning" | "failure";
+                /** @enum {string} */
                 severity: "info" | "warning" | "error";
             };
             /** @enum {string} */

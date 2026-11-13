@@ -289,7 +289,7 @@ test('built GUI sends canonical detailed browse, sync, and sync-choice cancellat
     const actionResponse = page.waitForResponse((response) => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/actions')
     await page.getByRole('button', { name: 'Sync', exact: true }).press('Enter')
     expect((await actionResponse).status()).toBe(202)
-    await expect(page.getByText('sync complete')).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByText('Sync complete')).toBeVisible({ timeout: 60_000 })
     expect(events.count()).toBe(2)
     await page.screenshot({ path: artifactPath(testInfo, 'telemetry-detailed-browse-sync.png'), fullPage: true, animations: 'disabled' })
   } finally {

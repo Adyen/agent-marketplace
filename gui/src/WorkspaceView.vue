@@ -622,7 +622,7 @@ onBeforeUnmount(() => {
 
 const view = computed(() => state.value?.state)
 const resourceActionOpen = computed({
-  get: () => view.value?.resourceAction != null,
+  get: () => view.value?.resourceAction?.dialogOpen === true,
   set: (open: boolean) => {
     if (!open) {
       state.value?.dismissResourceAction()
@@ -710,6 +710,26 @@ const selected = computed(() => {
   }
   const rowID = key.slice('row:'.length)
   return (view.value?.rows ?? []).find((row) => row.id === rowID) ?? null
+})
+const resourceActionBusy = computed(() => {
+  const action = view.value?.resourceAction
+  return action != null && action.rowId === selected.value?.id && action.loading &&
+    (action.action === 'install' || action.action === 'restore')
+})
+const progressTitle = computed(() => {
+  const operation = view.value?.operation
+  if (operation == null) {
+    return ''
+  }
+  const action = view.value?.resourceAction
+  if (state.value?.resourceActionSubmitting && action != null) {
+    return operationLabel(operation.kind, action.action, action.displayName)
+  }
+  const intent = [view.value?.settlementIntent, view.value?.settledMutation]
+    .find((candidate) => candidate?.operation.id === operation.id)
+  return intent == null
+    ? operationLabel(operation.kind)
+    : operationLabel(operation.kind, intent.action, intent.displayName)
 })
 
 watch(
@@ -931,7 +951,7 @@ function resourceActionLabel(action: Row['resourceAction']): string {
     case 'restore':
       return 'Restore Resource'
     default:
-      return 'Resource action'
+      return 'Action'
   }
 }
 
@@ -1316,8 +1336,8 @@ async function run(action: 'sync' | 'update') {
           <div v-if="view?.operation" class="gui-toast gui-toast--progress" role="status" aria-live="polite">
             <span class="gui-toast__spinner" aria-hidden="true" />
             <div class="gui-toast__body">
-              <p class="gui-toast__title">{{ operationLabel(view.operation.kind) }}</p>
-              <p class="gui-toast__detail">{{ operationDetail(view.phase) }}</p>
+              <p class="gui-toast__title">{{ progressTitle }}</p>
+              <p v-if="operationDetail(view.phase) !== ''" class="gui-toast__detail">{{ operationDetail(view.phase) }}</p>
             </div>
             <span class="gui-toast__bar" aria-hidden="true" />
           </div>
@@ -1365,7 +1385,8 @@ async function run(action: 'sync' | 'update') {
       :overlay="inspectorOverlay"
       :inert="inspectorFolded"
       :selected="selected"
-      :action-disabled="!ready || configuration?.editable !== true || busy || resourceActionOpen"
+      :action-disabled="!ready || configuration?.editable !== true || busy || resourceActionOpen || view?.resourceAction != null"
+      :action-busy="resourceActionBusy"
       @open-resource-action="openResourceAction"
       @open-inspection="openInspection"
     />

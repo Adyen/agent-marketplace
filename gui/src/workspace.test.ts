@@ -143,7 +143,7 @@ function work39Plan(rowId: string, generation: number, action: ResourceActionPla
     generation,
     planId: 'a'.repeat(64),
     action,
-    preview: 'Resource action preview',
+    preview: 'Action preview',
     requiresRiskAcceptance,
   }
 }
@@ -807,16 +807,16 @@ describe('WorkspaceView', () => {
     push(event({ sequence: 1, generation: 2, operation, payload: snapshot([row('a')], { diagnostics: [diagnostic] }) }))
     push(event({ sequence: 2, generation: 2, operation, type: 'progress', payload: { progressSequence: 1, phase: 'resolve' } }))
     await tick()
-    expect(wrapper.get('.gui-toast--progress .gui-toast__title').text()).toBe('Updating')
+    expect(wrapper.get('.gui-toast--progress .gui-toast__title').text()).toBe('Updating…')
     expect(wrapper.get('.gui-toast--progress .gui-toast__detail').text()).toBe('resolve')
-    push(event({ sequence: 3, generation: 2, operation, type: 'notification', payload: { severity: 'warning', message: 'Still working' } }))
+    push(event({ sequence: 3, generation: 2, operation, type: 'notification', payload: { severity: 'warning', outcome: 'warning', message: 'Still working' } }))
     push(event({ sequence: 4, generation: 2, operation, type: 'progress', payload: { progressSequence: 2, phase: 'materialize' } }))
     await tick()
     expect(wrapper.get('.gui-toast--progress .gui-toast__detail').text()).toBe('materialize')
     expect(controller.state.operation).toEqual(operation)
     expect(controller.state.diagnostics).toEqual([diagnostic])
     expect(wrapper.find('button[aria-label="Update"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.text()).not.toContain('update complete')
+    expect(wrapper.text()).not.toContain('Update complete')
   })
 
   // spec: session-feedback/late-progress
@@ -891,8 +891,8 @@ describe('WorkspaceView', () => {
     push(event({ sequence: 2, generation: 2, operation, payload: snapshot([row('a')]) }))
     push(event({ sequence: 3, generation: 2, operation, type: 'progress', payload: { progressSequence: 1, phase: '' } }))
     await tick()
-    expect(wrapper.get('.gui-toast--progress .gui-toast__title').text()).toBe('Syncing')
-    expect(wrapper.get('.gui-toast--progress .gui-toast__detail').text()).toBe('Working…')
+    expect(wrapper.get('.gui-toast--progress .gui-toast__title').text()).toBe('Syncing…')
+    expect(wrapper.find('.gui-toast--progress .gui-toast__detail').exists()).toBe(false)
 
     push(event({ sequence: 4, generation: 2, operation, type: 'progress', payload: { progressSequence: 2, phase: 'materialize' } }))
     await tick()
@@ -904,7 +904,7 @@ describe('WorkspaceView', () => {
         generation: 2,
         operation,
         type: 'notification',
-        payload: { severity: 'warning', message: 'still running' },
+        payload: { severity: 'warning', outcome: 'warning', message: 'still running' },
       }),
     )
     await tick()
@@ -912,7 +912,7 @@ describe('WorkspaceView', () => {
     expect(controller.state.phase).toBe('materialize')
 
     push(event({ sequence: 6, generation: 2, operation: null, payload: snapshot([row('a')]) }))
-    push(event({ sequence: 7, generation: 2, operation, type: 'notification', payload: { severity: 'info', message: 'sync complete' } }))
+    push(event({ sequence: 7, generation: 2, operation, type: 'notification', payload: { severity: 'info', outcome: 'success', message: 'Sync complete' } }))
     await tick()
     expect(controller.state.operation).toBeNull()
     expect(controller.state.phase).toBeNull()
@@ -942,7 +942,7 @@ describe('WorkspaceView', () => {
     ;(client.action as ReturnType<typeof vi.fn>).mockImplementation(async () => {
       push(event({ sequence: 2, generation: 2, operation, payload: snapshot([row('a')]) }))
       push(event({ sequence: 3, generation: 2, operation: null, payload: snapshot([row('a')]) }))
-      push(event({ sequence: 4, generation: 2, operation, type: 'notification', payload: { severity: 'info', message: 'done' } }))
+      push(event({ sequence: 4, generation: 2, operation, type: 'notification', payload: { severity: 'info', outcome: 'success', message: 'done' } }))
       return operation
     })
     push(event({ sequence: 1, payload: snapshot([row('a')]) }))
@@ -1026,7 +1026,7 @@ describe('WorkspaceView', () => {
           generation: 2,
           type: 'notification',
           operation: { id: 50 + i, kind: 'sync' } as OperationRef,
-          payload: { severity: 'info', message: `note ${i}` },
+          payload: { severity: 'info', outcome: 'success', message: `note ${i}` },
         }),
       )
     }
@@ -2144,6 +2144,7 @@ describe('Event stream reconnect', () => {
 
   describe('Marketplace resource actions', () => {
     // spec: session-interactions/guarded-submission
+    // spec: gui-shell/risk-and-preparation-failure-keep-the-dialog
     it('opens the explicit action button and requires risk acknowledgement before submission', async () => {
       const resource = work39Row('review', 'opaque-user-source-review', 'install', { inspectable: true })
       const planRequest = deferred<ResourceActionPlan>()
@@ -2171,16 +2172,20 @@ describe('Event stream reconnect', () => {
       const actionSignal = vi.mocked(client.resourcePlan).mock.calls[0]?.[1]
       expect(vi.mocked(client.resourcePlan).mock.calls[0]?.[0]).toBe(resource.id)
       expect(actionSignal).toBeInstanceOf(AbortSignal)
-      const dialog = document.body.querySelector('[role="dialog"]') as HTMLElement | null
-      expect(dialog).not.toBeNull()
-      if (dialog == null) {
-        throw new Error('resource action dialog was not rendered')
-      }
-      expect(dialog.querySelector('[role="status"]')?.textContent).toContain('Preparing')
+      expect(controller.state.resourceAction).toMatchObject({ action: 'install', displayName: resource.displayName, dialogOpen: false, loading: true })
+      expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+      expect(wrapper.get('button[aria-label="Install Resource"]').find('.gui-inspector__action-spinner').exists()).toBe(true)
 
       const plan = { ...work39Plan(resource.id, 1, 'install', true), preview: '<script>not executable</script>' }
       planRequest.resolve(plan)
       await tick()
+      const dialog = document.body.querySelector('[role="dialog"]') as HTMLElement | null
+      expect(dialog).not.toBeNull()
+      if (dialog == null) {
+        throw new Error('risk acknowledgement dialog was not rendered')
+      }
+      expect(controller.state.resourceAction?.dialogOpen).toBe(true)
+      expect(dialog.querySelector('[role="status"]')).toBeNull()
       const previewRegion = dialog.querySelector('pre') as HTMLPreElement | null
       expect(previewRegion?.textContent).toBe(plan.preview)
       expect(previewRegion?.getAttribute('role')).toBe('region')
@@ -2205,7 +2210,7 @@ describe('Event stream reconnect', () => {
       await tick()
       expect(client.resourceAction).toHaveBeenCalledTimes(1)
       expect(vi.mocked(client.resourceAction).mock.calls[0]).toEqual([resource.id, plan.planId, true, expect.any(AbortSignal)])
-      expect(controller.state.resourceAction?.loading).toBe(true)
+      expect(controller.state.resourceAction).toMatchObject({ action: 'install', displayName: resource.displayName, loading: true, dialogOpen: true })
       expect(controller.resourceActionSubmitting).toBe(true)
       expect(controller.state.settledMutation).toBeNull()
       expect((dialog.querySelector('button[aria-label="Cancel"]') as HTMLButtonElement | null)?.disabled).toBe(true)
@@ -2219,13 +2224,14 @@ describe('Event stream reconnect', () => {
       await tick()
       expect(controller.state.resourceAction).toBeNull()
       expect(controller.state.operation).toEqual(operation)
+      expect(controller.state.settlementIntent).toMatchObject({ action: 'install', displayName: resource.displayName })
       expect(controller.state.settledMutation).toBeNull()
 
       const installed = work39Row('review', resource.id, 'remove', {
         scope: 'user', group: 'enabled', status: 'enabled', checked: true, discovery: false,
       })
       push(work39SnapshotEvent(2, 2, [installed], null, operation))
-      push(event({ sequence: 3, generation: 2, type: 'notification', operation, payload: { severity: 'info', message: 'done' } }))
+      push(event({ sequence: 3, generation: 2, type: 'notification', operation, payload: { severity: 'info', outcome: 'success', message: 'done' } }))
       await tick()
       expect(controller.state.operation).toBeNull()
       expect(controller.state.rows[0]?.resourceAction).toBe('remove')
@@ -2295,10 +2301,77 @@ describe('Event stream reconnect', () => {
       expect(client.resourceAction).not.toHaveBeenCalled()
     })
 
+    // spec: gui-shell/risk-and-preparation-failure-keep-the-dialog
+    it('keeps an automatic risk-free install failure visible for retry', async () => {
+      const resource = work39Row('review', 'opaque-user-source-review', 'install')
+      const plan = work39Plan(resource.id, 1, 'install')
+      const { client, push } = fakeClient()
+      vi.mocked(client.resourcePlan).mockResolvedValue(plan)
+      vi.mocked(client.resourceAction).mockResolvedValue({ id: 0, kind: 'mutation' })
+      const { controller, wrapper } = mountWorkspace(client)
+      push(work39SnapshotEvent(1, 1, [resource]))
+      await tick()
+      await selectWork39Row(wrapper, resource.id)
+
+      await wrapper.get('button[aria-label="Install Resource"]').trigger('click')
+      await tick()
+
+      const dialog = document.body.querySelector('[role="dialog"]') as HTMLElement | null
+      expect(dialog).not.toBeNull()
+      expect(dialog?.querySelector('[role="alert"]')?.textContent).toBe('Action could not be started; refresh this resource and retry.')
+      expect(dialog?.querySelector('button[aria-label="Retry plan"]')).not.toBeNull()
+      expect(controller.state.operation).toBeNull()
+      expect(controller.resourceActionSubmitting).toBe(false)
+      expect(client.resourceAction).toHaveBeenCalledTimes(1)
+    })
+
+    // spec: gui-shell/plain-install-and-restore-skip-the-dialog
+    it.each(['install', 'restore'] as const)('shows a recoverable dialog when %s auto-confirm is temporarily blocked', async (action) => {
+      const actionName = action === 'install' ? 'Install' : 'Restore'
+      const resource = work39Row('review', 'opaque-user-source-review', action, action === 'restore' ? {
+        scope: 'organization', group: 'enabled', status: 'excluded by user', checked: false, discovery: false,
+      } : {})
+      const planRequest = deferred<ResourceActionPlan>()
+      const syncRequest = deferred<OperationRef>()
+      const { client, push } = fakeClient()
+      vi.mocked(client.resourcePlan).mockReturnValue(planRequest.promise)
+      vi.mocked(client.action).mockReturnValue(syncRequest.promise)
+      const { controller, wrapper } = mountWorkspace(client)
+      push(work39SnapshotEvent(1, 1, [resource]))
+      await tick()
+      await selectWork39Row(wrapper, resource.id)
+      await wrapper.get(`button[aria-label="${actionName} Resource"]`).trigger('click')
+      await tick()
+
+      const sync = controller.runAction('sync')
+      expect(controller.state.requesting).toBe(true)
+      planRequest.resolve(work39Plan(resource.id, 1, action))
+      await tick()
+
+      const dialog = document.body.querySelector('[role="dialog"]')
+      expect(dialog).not.toBeNull()
+      const confirm = dialog?.querySelector(`[aria-label="Confirm ${action}"]`) as HTMLButtonElement | null
+      expect(confirm?.disabled).toBe(true)
+      expect(client.resourceAction).not.toHaveBeenCalled()
+
+      syncRequest.reject(new RequestError(409, 'localapi.busy'))
+      await expect(sync).resolves.toBe(false)
+      await tick()
+      expect(confirm?.disabled).toBe(false)
+
+      const cancel = dialog?.querySelector('button[aria-label="Cancel"]') as HTMLButtonElement | null
+      cancel?.click()
+      await tick()
+      expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+      expect((wrapper.get(`button[aria-label="${actionName} Resource"]`).element as HTMLButtonElement).disabled).toBe(false)
+      expect(client.resourceAction).not.toHaveBeenCalled()
+      controller.dispose()
+    })
+
     // spec: session-interactions/guarded-submission
     it('shows static preparation failures and keeps cancel write-free', async () => {
       const resource = work39Row('review', 'opaque-user-source-review', 'install')
-      const plan = work39Plan(resource.id, 1, 'install')
+      const plan = work39Plan(resource.id, 1, 'install', true)
       const { client, push } = fakeClient()
       vi.mocked(client.resourcePlan)
         .mockRejectedValueOnce(new RequestError(502, 'localapi.resource_action_unavailable'))
@@ -2310,11 +2383,11 @@ describe('Event stream reconnect', () => {
       await wrapper.get('button[aria-label="Install Resource"]').trigger('click')
       await tick()
       const alert = document.body.querySelector('[role="alert"]')
-      expect(alert?.textContent).toBe('Resource action could not be prepared; refresh this resource and retry.')
+      expect(alert?.textContent).toBe('Action could not be prepared; refresh this resource and retry.')
       expect(alert?.textContent).not.toContain('resource_action_unavailable')
       expect(document.body.querySelector('button[aria-label="Confirm install"]')).toBeNull()
-      expect(document.body.querySelector('.gui-modal__footer > button:last-child')?.getAttribute('aria-label')).toBe('Retry resource action plan')
-      const retry = document.body.querySelector('button[aria-label="Retry resource action plan"]') as HTMLButtonElement | null
+      expect(document.body.querySelector('.gui-modal__footer > button:last-child')?.getAttribute('aria-label')).toBe('Retry plan')
+      const retry = document.body.querySelector('button[aria-label="Retry plan"]') as HTMLButtonElement | null
       expect(retry).not.toBeNull()
       retry?.click()
       await tick()
@@ -2379,7 +2452,7 @@ describe('Event stream reconnect', () => {
           discoveryEnabled: true,
         }),
       }))
-      push(event({ sequence: 4, generation: 3, type: 'notification', operation, payload: { severity: 'info', message: 'done' } }))
+      push(event({ sequence: 4, generation: 3, type: 'notification', operation, payload: { severity: 'info', outcome: 'success', message: 'done' } }))
       await tick()
       actionRequest.resolve(operation)
       await tick()
@@ -2401,7 +2474,7 @@ describe('Event stream reconnect', () => {
       })
       push(work39SnapshotEvent(2, 2, [available, next], newer))
       push(work39SnapshotEvent(3, 3, [available, next], null, newer))
-      push(event({ sequence: 4, generation: 3, type: 'notification', operation: newer, payload: { severity: 'info', message: 'newer operation done' } }))
+      push(event({ sequence: 4, generation: 3, type: 'notification', operation: newer, payload: { severity: 'info', outcome: 'success', message: 'newer operation done' } }))
       await tick()
       expect(controller.state.operation).toBeNull()
       expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).toBe(`row-${removed.id}`)
@@ -2436,7 +2509,7 @@ describe('Event stream reconnect', () => {
       expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).toBe(`row-${removed.id}`)
 
       push(work39SnapshotEvent(4, 3, [available, next], null, newer))
-      push(event({ sequence: 5, generation: 3, type: 'notification', operation: newer, payload: { severity: 'info', message: 'newer operation done' } }))
+      push(event({ sequence: 5, generation: 3, type: 'notification', operation: newer, payload: { severity: 'info', outcome: 'success', message: 'newer operation done' } }))
       await tick()
       expect(controller.state.operation).toBeNull()
       expect(controller.state.phase).toBeNull()
@@ -2468,7 +2541,7 @@ describe('Event stream reconnect', () => {
       expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).toBe(`row-${removed.id}`)
 
       push(work39SnapshotEvent(4, 3, [available, next], null, newer))
-      push(event({ sequence: 5, generation: 3, type: 'notification', operation: newer, payload: { severity: 'info', message: 'newer operation done' } }))
+      push(event({ sequence: 5, generation: 3, type: 'notification', operation: newer, payload: { severity: 'info', outcome: 'success', message: 'newer operation done' } }))
       await tick()
       expect(controller.state.operation).toBeNull()
       expect(controller.state.settlementIntent).toBeNull()
@@ -2488,7 +2561,7 @@ describe('Event stream reconnect', () => {
       await tick()
       push(work39SnapshotEvent(2, 2, [removed, next], operation))
       push(work39SnapshotEvent(3, 3, [retained, next], null, operation))
-      push(event({ sequence: 4, generation: 3, type: 'notification', operation, payload: { severity: 'info', message: 'removal settled' } }))
+      push(event({ sequence: 4, generation: 3, type: 'notification', operation, payload: { severity: 'info', outcome: 'success', message: 'removal settled' } }))
       await tick()
 
       expect(controller.state.rows.find((candidate) => candidate.id === removed.id)?.checked).toBe(true)
@@ -2522,7 +2595,7 @@ describe('Event stream reconnect', () => {
       const operation: OperationRef = { id: 91, kind: 'mutation' }
       push(work39SnapshotEvent(2, 2, [removed, next, lower], operation))
       push(work39SnapshotEvent(3, 3, [work39Row('resource-a', removed.id, 'install', { scope: 'available', group: 'available', status: 'available', checked: false }), next, lower], null, operation))
-      push(event({ sequence: 4, generation: 3, type: 'notification', operation, payload: { severity: 'info', message: 'done' } }))
+      push(event({ sequence: 4, generation: 3, type: 'notification', operation, payload: { severity: 'info', outcome: 'success', message: 'done' } }))
       await tick()
       expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).not.toBe(`row-${next.id}`)
 
@@ -2552,7 +2625,7 @@ describe('Event stream reconnect', () => {
       await tick()
       const operation: OperationRef = { id: 91, kind: 'mutation' }
       push(work39SnapshotEvent(2, 2, [removed, next], null, operation))
-      push(event({ sequence: 3, generation: 2, type: 'notification', operation, payload: { severity: 'error', message: 'failed' } }))
+      push(event({ sequence: 3, generation: 2, type: 'notification', operation, payload: { severity: 'error', outcome: 'failure', message: 'failed' } }))
       await tick()
       expect(wrapper.find('[role="option"][aria-selected="true"]').attributes('id')).toBe(`row-${removed.id}`)
       expect(controller.state.settledMutation).toBeNull()
@@ -2593,28 +2666,8 @@ describe('Event stream reconnect', () => {
 
       await wrapper.get('button[aria-label="Install Resource"]').trigger('click')
       await tick()
-      const dialog = document.body.querySelector('[role="dialog"]') as HTMLElement | null
-      expect(dialog).not.toBeNull()
-      if (dialog == null) {
-        throw new Error('user registry action dialog was not rendered')
-      }
-      expect(dialog.querySelector('input[type="checkbox"]')).toBeNull()
-      expect(dialog.querySelector('pre')?.textContent).toBe(plan.preview)
-      const confirm = dialog.querySelector('button[aria-label="Confirm install"]') as HTMLButtonElement | null
-      expect(confirm?.disabled).toBe(false)
-      ;(dialog.querySelector('button[aria-label="Cancel"]') as HTMLButtonElement | null)?.click()
-      await tick()
-      expect(controller.state.resourceAction).toBeNull()
-      expect(client.resourceAction).not.toHaveBeenCalled()
-
-      await wrapper.get('button[aria-label="Install Resource"]').trigger('click')
-      await tick()
-      const installDialog = document.body.querySelector('[role="dialog"]') as HTMLElement | null
-      if (installDialog == null) {
-        throw new Error('user registry action dialog did not reopen')
-      }
-      ;(installDialog.querySelector('button[aria-label="Confirm install"]') as HTMLButtonElement | null)?.click()
-      await tick()
+      expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+      expect(controller.state.resourceAction).toMatchObject({ action: 'install', dialogOpen: false, loading: true })
       expect(client.resourceAction).toHaveBeenCalledWith(resource.id, plan.planId, false, expect.any(AbortSignal))
       const operation: OperationRef = { id: 91, kind: 'mutation' }
       actionRequest.resolve(operation)
@@ -2632,7 +2685,7 @@ describe('Event stream reconnect', () => {
       })
       push(work39SnapshotEvent(2, 2, [installed], operation))
       push(work39SnapshotEvent(3, 3, [installed], null, operation))
-      push(event({ sequence: 4, generation: 3, type: 'notification', operation, payload: { severity: 'info', message: 'selection settled' } }))
+      push(event({ sequence: 4, generation: 3, type: 'notification', operation, payload: { severity: 'info', outcome: 'success', message: 'selection settled' } }))
       await tick()
       expect(controller.state.rows[0]?.resourceAction).toBe('remove')
       expect(controller.state.settledMutation).toBeNull()
@@ -2643,16 +2696,16 @@ describe('Event stream reconnect', () => {
 
   describe('Resource cancellation telemetry', () => {
     async function mountWork41ResourceAction() {
-      const resource = work39Row('review', 'opaque-work41-directory-review', 'install', {
-        scope: 'available',
-        group: 'available',
-        status: 'available',
-        checked: false,
+      const resource = work39Row('review', 'opaque-work41-directory-review', 'remove', {
+        scope: 'user',
+        group: 'enabled',
+        status: 'enabled',
+        checked: true,
         discovery: false,
       })
       const { client, push } = fakeClient()
       let generation = 1
-      vi.mocked(client.resourcePlan).mockImplementation(async (rowId) => work39Plan(rowId, generation, 'install'))
+      vi.mocked(client.resourcePlan).mockImplementation(async (rowId) => work39Plan(rowId, generation, 'remove'))
       const { controller, wrapper } = mountWorkspace(client)
       push(work39SnapshotEvent(1, 1, [resource]))
       await tick()
@@ -2661,7 +2714,7 @@ describe('Event stream reconnect', () => {
     }
 
     async function openWork41InstallPlan(wrapper: ReturnType<typeof mountWorkspace>['wrapper']): Promise<HTMLElement> {
-      await wrapper.get('button[aria-label="Install Resource"]').trigger('click')
+      await wrapper.get('button[aria-label="Remove Resource"]').trigger('click')
       await tick()
       const dialog = document.body.querySelector('[role="dialog"]') as HTMLElement | null
       if (dialog == null) {
@@ -2770,9 +2823,9 @@ describe('Event stream reconnect', () => {
       const actionRequest = deferred<OperationRef>()
       vi.mocked(client.resourceAction).mockReturnValue(actionRequest.promise)
       const dialog = await openWork41InstallPlan(wrapper)
-      const confirm = dialog.querySelector('button[aria-label="Confirm install"]') as HTMLButtonElement | null
+      const confirm = dialog.querySelector('button[aria-label="Confirm remove"]') as HTMLButtonElement | null
       if (confirm == null) {
-        throw new Error('Work41 Confirm install button was not rendered')
+        throw new Error('Work41 Confirm remove button was not rendered')
       }
       confirm.click()
       await tick()

@@ -387,7 +387,7 @@ describe('First-run setup', () => {
           generation: 2,
           operation,
           type: 'notification',
-          payload: { severity: 'info', message: 'mutation complete' },
+          payload: { severity: 'info', outcome: 'success', message: 'Configuration saved' },
         }),
       )
       await new Promise((resolve) => setTimeout(resolve, 0))
@@ -432,7 +432,7 @@ describe('First-run setup', () => {
           generation: 1,
           operation,
           type: 'notification',
-          payload: { severity: 'info', message: 'mutation complete' },
+          payload: { severity: 'info', outcome: 'success', message: 'Configuration saved' },
         }),
       )
       await new Promise((resolve) => setTimeout(resolve, 0))
@@ -687,14 +687,14 @@ describe('First-run setup', () => {
       generation: 2,
       operation: initializeOperation,
       type: 'notification',
-      payload: { severity: 'error', message: 'mutation failed' },
+      payload: { severity: 'error', outcome: 'failure', message: "Couldn't save configuration" },
     }))
     await tick()
 
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
     expect(controller.state.diagnostics.some((d) => d.code === 'localapi.optional-source-failed')).toBe(true)
-    expect(controller.state.notifications.some((n) => n.message === 'mutation failed')).toBe(true)
-    expect(controller.state.notifications.some((n) => n.message === 'mutation complete')).toBe(false)
+    expect(controller.state.notifications.some((n) => n.message === "Couldn't save configuration")).toBe(true)
+    expect(controller.state.notifications.some((n) => n.message === 'Configuration saved')).toBe(false)
     const sourcesButton = wrapper.find('button[aria-label="Sources"]')
     expect(sourcesButton.exists()).toBe(true)
     await sourcesButton.trigger('click')

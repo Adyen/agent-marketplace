@@ -78,7 +78,7 @@ function notificationEvent(sequence: number, generation: number, operation: numb
     sequence,
     generation,
     operation: { id: operation, kind: 'sync' },
-    payload: { severity: 'info', message: 'done' },
+    payload: { severity: 'info', outcome: 'success', message: 'done' },
   }
 }
 

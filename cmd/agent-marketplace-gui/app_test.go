@@ -308,7 +308,7 @@ func TestWindowEventStreamDeliversCompletionAndCloses(t *testing.T) {
 		if kind == "snapshot" && stage == "final" {
 			finalIndex = len(frames)
 		}
-		if kind == "notification" && message == "sync complete" {
+		if kind == "notification" && message == "Sync complete" {
 			notificationIndex = len(frames)
 		}
 	}

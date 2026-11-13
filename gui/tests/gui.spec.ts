@@ -92,7 +92,7 @@ test('built GUI drives the real user-scope core', async ({ page }) => {
     await expect(page.getByRole('button', { name: 'Sync', exact: true })).toBeEnabled()
     await page.getByRole('button', { name: 'Sync', exact: true }).focus()
     await page.keyboard.press('Enter')
-    await expect(page.getByText('sync complete')).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByText('Sync complete')).toBeVisible({ timeout: 60_000 })
     const body = await readFile(materialized, 'utf8')
     expect(body).toContain('Solo')
 
@@ -102,7 +102,7 @@ test('built GUI drives the real user-scope core', async ({ page }) => {
     await expect(page.getByRole('button', { name: 'Update' })).toBeEnabled()
     await page.getByRole('button', { name: 'Update' }).focus()
     await page.keyboard.press('Enter')
-    await expect(page.getByText('update complete')).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByText('Update complete')).toBeVisible({ timeout: 60_000 })
   } finally {
     await harness.stop()
   }
@@ -172,7 +172,7 @@ test('built GUI saves Harness targets through the real user-scope core', async (
     await expect(codex).toBeChecked()
 
     await page.getByRole('button', { name: 'Save targets' }).press('Enter')
-    await expect(page.getByText('targets complete')).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByText('Harness targets saved')).toBeVisible({ timeout: 60_000 })
     await expect(dialog).toBeVisible()
     await dialog.getByRole('button', { name: 'Close dialog' }).press('Enter')
     await expect(dialog).not.toBeVisible()
@@ -352,7 +352,7 @@ test('built GUI guided first-run setup initializes the absent root by keyboard',
     await focusAndCheckControl(page, dialog, finish)
     expect(actionBodies).toHaveLength(0)
     await page.keyboard.press('Enter')
-    await expect(page.getByText('mutation complete')).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByText('Configuration saved')).toBeVisible({ timeout: 60_000 })
     await expect(dialog).not.toBeVisible()
 
     const written = await readFile(userConfigPath, 'utf8')
@@ -432,7 +432,7 @@ test('built GUI initializes a queued directory source only after Finish setup', 
     await page.screenshot({ path: artifactPath('first-run-valid-source-queued.png'), fullPage: true })
     await page.keyboard.press('Enter')
 
-    await expect(page.getByLabel('Notifications').getByText('mutation complete')).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByLabel('Notifications').getByText('Configuration saved')).toBeVisible({ timeout: 60_000 })
     await expect(dialog).not.toBeVisible()
     const expectedRoot = `apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources:\n  optional-directory:\n    directory: ${sourceDir}\n`
     await expect.poll(async () => await readFile(userConfigPath, 'utf8'), { timeout: 60_000 }).toBe(expectedRoot)
@@ -544,8 +544,8 @@ test('built GUI keeps initialized sources on optional failure and retries from S
     await page.screenshot({ path: artifactPath('first-run-optional-sources-queued.png'), fullPage: true })
     await page.keyboard.press('Enter')
 
-    await expect(page.getByLabel('Notifications').getByText('mutation failed')).toBeVisible({ timeout: 60_000 })
-    await expect(page.getByLabel('Notifications').getByText('mutation complete')).toHaveCount(0)
+    await expect(page.getByLabel('Notifications').getByText("Couldn't save configuration")).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByLabel('Notifications').getByText('Configuration saved')).toHaveCount(0)
     await expect(dialog).not.toBeVisible()
     expect(actionBodies).toHaveLength(1)
     const initializeBody = JSON.parse(actionBodies[0]) as { action: string; sources: { kind: string; location: string }[] }
@@ -602,7 +602,7 @@ test('built GUI keeps initialized sources on optional failure and retries from S
     await focusAndCheckControl(page, sourcesDialog, retryAdd)
     await page.keyboard.press('Enter')
     await expect(userSources).toContainText(endpoint, { timeout: 60_000 })
-    await expect(page.getByLabel('Notifications').getByText('mutation complete').last()).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByLabel('Notifications').getByText('Source added').last()).toBeVisible({ timeout: 60_000 })
     expect(actionBodies).toHaveLength(2)
     expect(JSON.parse(actionBodies[1])).toEqual({
       action: 'add-source',
