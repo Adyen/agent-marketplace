@@ -50,7 +50,9 @@ namespace={{ .Release.Namespace | quote }},service=~"{{ $api }}|{{ $worker }}"
 
 {{- define "agent-marketplace.prometheusRule.alertLabels" -}}
 severity: {{ .severity | quote }}
-{{- with .root.Values.prometheusRule.ruleLabels }}
+namespace: {{ .root.Release.Namespace | quote }}
+release: {{ .root.Release.Name | quote }}
+{{- with (omit .root.Values.prometheusRule.ruleLabels "namespace" "release") }}
 {{ toYaml . }}
 {{- end }}
 {{- end }}

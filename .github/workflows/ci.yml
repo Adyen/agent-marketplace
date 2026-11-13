@@ -156,6 +156,9 @@ jobs:
       - name: Verify explicit Helm image selection
         run: AM_HELM_CHECK=1 go test ./tools/ci-plan -run '^TestHelmImageSelection$' -count=1
 
+      - name: Verify PrometheusRule alert release identity
+        run: AM_HELM_CHECK=1 CGO_ENABLED=0 go test ./tools/ci-plan -run '^TestAlertReleaseIdentity$'
+
       - name: Validate and package Helm chart
         shell: bash
         env:

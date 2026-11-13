@@ -11,6 +11,7 @@ tests:
             exp_labels:
               severity: critical
               namespace: marketplace-system
+              release: agent-marketplace
             exp_annotations:
               summary: Marketplace worker source observations are absent
               description: No worker source observation series is being scraped.
@@ -45,6 +46,8 @@ tests:
           - &observations_stalled
             exp_labels:
               severity: critical
+              namespace: marketplace-system
+              release: agent-marketplace
             exp_annotations:
               summary: Marketplace worker observations have stalled
               description: Source observations have not increased despite an observed index.
@@ -54,6 +57,8 @@ tests:
           - &probe_failing
             exp_labels:
               severity: warning
+              namespace: marketplace-system
+              release: agent-marketplace
               registry: registry-b
             exp_annotations:
               summary: Marketplace registry source probes are repeatedly failing
@@ -64,6 +69,8 @@ tests:
           - &observation_stale
             exp_labels:
               severity: warning
+              namespace: marketplace-system
+              release: agent-marketplace
               registry: registry-c
             exp_annotations:
               summary: Marketplace registry observation is stale
@@ -74,6 +81,8 @@ tests:
           - &never_indexed
             exp_labels:
               severity: warning
+              namespace: marketplace-system
+              release: agent-marketplace
               registry: registry-e
             exp_annotations:
               summary: Marketplace registry has never been indexed successfully
@@ -84,6 +93,8 @@ tests:
           - &refresh_failures
             exp_labels:
               severity: warning
+              namespace: marketplace-system
+              release: agent-marketplace
               trigger: source-change
             exp_annotations:
               summary: Marketplace registry refreshes are failing
@@ -94,6 +105,8 @@ tests:
           - &candidate_rejected
             exp_labels:
               severity: warning
+              namespace: marketplace-system
+              release: agent-marketplace
             exp_annotations:
               summary: Marketplace configuration candidates are being rejected
               description: Rejected or failed configuration candidates leave the last valid configuration running.
@@ -103,6 +116,8 @@ tests:
           - &restart_required
             exp_labels:
               severity: info
+              namespace: marketplace-system
+              release: agent-marketplace
             exp_annotations:
               summary: Marketplace configuration requires restart
               description: Restart every API and worker process to apply startup-owned configuration changes.
@@ -112,6 +127,8 @@ tests:
           - &host_budget_delays
             exp_labels:
               severity: info
+              namespace: marketplace-system
+              release: agent-marketplace
               operation: observation
             exp_annotations:
               summary: Marketplace worker delays are sustained
@@ -240,6 +257,8 @@ tests:
           - &index_stale
             exp_labels:
               severity: warning
+              namespace: marketplace-system
+              release: agent-marketplace
               registry: registry-a
             exp_annotations:
               summary: Marketplace registry index is stale

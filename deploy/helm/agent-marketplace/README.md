@@ -260,7 +260,7 @@ prometheusRule:
 
 The rule expressions scope metrics to the release namespace and the chart's API and worker Service names in both `mode: all` and `mode: split`. The API Service selects the all-in-one pod in all mode; split mode also creates a worker Service. Ensure your Prometheus Operator selects the `PrometheusRule` by its labels.
 
-`prometheusRule.labels` and `prometheusRule.additionalLabels` add labels to the resource in addition to the chart labels. `prometheusRule.ruleLabels` adds labels to each alert. `prometheusRule.runbookBaseUrl` is optional; when set, each alert gets a `runbook_url` annotation formed from this base URL, `#`, and the lower-case alert name. An empty value omits the annotation.
+`prometheusRule.labels` and `prometheusRule.additionalLabels` add labels to the resource in addition to the chart labels. `prometheusRule.ruleLabels` adds labels to each alert. Every alert also has `namespace` and `release` labels fixed to the Helm release identity; `ruleLabels` cannot override them. `prometheusRule.runbookBaseUrl` is optional; when set, each alert gets a `runbook_url` annotation formed from this base URL, `#`, and the lower-case alert name. An empty value omits the annotation.
 
 Every entry in `prometheusRule.alerts` accepts `enabled` (default `true`), `for`, and `severity`; set `enabled: false` to omit an alert. The defaults and additional threshold/window settings are:
 
