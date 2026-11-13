@@ -115,14 +115,14 @@ changes live.
 │ ▤ Resources  │ ▾ PENDING SYNC                     2 │                     │
 │ ◷ Pending  2 │  [*] skill  auth-preflight   reg  U  │ Kind     skill      │
 │ ⌕ Search     │  [ ] mcp    docs-search      reg  U  │ Name     auth-pre…  │
-│              │ ▾ INSTALLED                       14 │ Targets  Claude · … │
-│ GROUPS       │  [*] skill  oncall-triage    reg  U  │ Status   enabled    │
-│  Pending   2 │  …                                   │ [Remove] [Open]     │
-│  Installed14 │                                      │                     │
+│              │ ▾ INSTALLED                       14 │ Registry reg        │
+│ GROUPS       │  [*] skill  oncall-triage    reg  U  │ Scope    user       │
+│  Pending   2 │  …                                   │ Status   enabled    │
+│  Installed14 │                                      │ [Remove] [Open]     │
 │ SOURCES   ＋ │                                      │ SESSION             │
 │  ▢ github…   │                                      │ DIAGNOSTICS  0      │
 │  ▢ ~/code/…  │                                      │                     │
-│              │ ~ 2 pending sync   ↑↓ move · space · s sync              │
+│              │ ~ 2 pending sync   ↑↓ move · ⏎ open · s sync             │
 │ ◉ Claude · 3 ⚙│                                      │                     │
 └──────────────┴──────────────────────────────────────┴─────────────────────┘
   left sidebar           main column                       right inspector

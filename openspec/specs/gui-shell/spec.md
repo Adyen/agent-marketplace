@@ -28,11 +28,11 @@ Only one GUI instance SHALL own the desktop workspace. A second launch SHALL foc
 
 ### Requirement: Explicit and focus-triggered refresh
 
-The GUI SHALL provide an explicit refresh action, reload after its own successful mutation, and perform an ordinary reload when the window regains focus. Ordinary reload behavior SHALL follow `session-startup` and retain the current view until final assessment. The GUI SHALL NOT use file watching.
+The GUI SHALL provide explicit refresh through Command-R without a visible refresh control, reload after its own successful mutation, and perform an ordinary reload when the window regains focus. Ordinary reload behavior SHALL follow `session-startup` and retain the current view until final assessment. The GUI SHALL NOT use file watching.
 
 #### Scenario: Refresh and focus reload use ordinary snapshot behavior
 
-- **WHEN** the user refreshes, the window regains focus, or the GUI completes one of its own mutations
+- **WHEN** the user presses Command-R, the window regains focus, or the GUI completes one of its own mutations
 - **THEN** the session SHALL reload using the ordinary reload behavior in `session-startup`
 - **AND** an accepted resource list SHALL remain visible until the final assessed snapshot is accepted
 
@@ -44,13 +44,14 @@ The GUI SHALL provide an explicit refresh action, reload after its own successfu
 
 ### Requirement: Accessible keyboard-operated controls
 
-Every GUI action SHALL be available through visible controls and SHALL be operable using only a keyboard. Controls SHALL have accessible names, and user-facing text SHALL be in English.
+Every GUI action except refresh SHALL be available through visible controls, and every action SHALL be operable using only a keyboard. Refresh SHALL be available through Command-R without a visible control. Controls SHALL have accessible names, and user-facing text SHALL be in English.
 
 #### Scenario: All actions are keyboard reachable and named
 
 - **WHEN** a user operates the GUI without a pointer
 - **THEN** every action SHALL be reachable and operable by keyboard
 - **AND** every control SHALL expose an accessible name in English
+- **AND** refresh SHALL be available through Command-R without a visible refresh control
 
 ### Requirement: Newer-version availability notice
 

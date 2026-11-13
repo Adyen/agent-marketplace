@@ -13,11 +13,11 @@
 
 ## 3. AC3-AC7: Workspace chrome
 
-- [x] 3.1 For AC3, write a failing browser test first, then remove the Space hint; verify the test passes and the other hints remain.
-- [x] 3.2 For AC4, write a failing browser test first, then limit inspector metadata to Registry, Scope, and Status; verify the test passes.
-- [x] 3.3 For AC5, write a failing browser test first, then set the light and dark scrim alphas to `0.2` and `0.4` with no backdrop blur; verify the test passes.
-- [x] 3.4 For AC6, write a failing browser test first, then hide Pending at zero and show its count when positive; verify both states pass.
-- [x] 3.5 For AC7, write a failing browser test first, then verify active navigation in both Resources and Diagnostics views; confirm the test passes.
+- [x] 3.1 For AC3, write a failing Vitest component test first, then remove the Space hint; verify the test passes and the other hints remain.
+- [x] 3.2 For AC4, write a failing Vitest component test first, then limit inspector metadata to Registry, Scope, and Status; verify the test passes.
+- [x] 3.3 For AC5, write a failing Playwright browser test first, then set the light and dark scrim alphas to `0.2` and `0.4` with no backdrop blur; verify the test passes.
+- [x] 3.4 For AC6, write a failing Vitest component test first, then hide Pending at zero and show its count when positive; verify both states pass.
+- [x] 3.5 For AC7, write a failing Playwright browser test first, then verify active navigation in both Resources and Diagnostics views; confirm the test passes.
 - [x] 3.6 Update `gui/DESIGN.md` for AC3-AC7; verify the design text matches the tested behavior.
 
 ## 4. AC8: Diagnostic text and copying
@@ -31,8 +31,8 @@
 - [x] 5.1 Run `cd gui && ./node_modules/.bin/vue-tsc --noEmit && ./node_modules/.bin/vitest run`; verify typechecking and GUI unit tests pass.
 - [x] 5.2 Run `cd gui && ./node_modules/.bin/vite build`; verify it updates the embedded frontend at `cmd/agent-marketplace-gui/frontend/dist`.
 - [x] 5.3 Run the four contracted Playwright specs with `cd gui && ./node_modules/.bin/playwright test tests/refresh.spec.ts tests/navigation.spec.ts tests/feedback.spec.ts tests/visual-redesign.spec.ts`; verify all four pass.
-- [ ] 5.4 Run `make spec-check` and `make validate`; verify both gates pass.
 
 ## Workflow follow-up
 
 - openspec archive clean-up-gui-workspace-chrome --yes
+- Run `make spec-check` and `make validate`; verify both gates pass.
