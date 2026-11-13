@@ -174,10 +174,23 @@ export function validateGitLocation(raw: string): boolean {
   if (colon > 0) {
     const host = scp.slice(0, colon)
     const path = scp.slice(colon + 1)
-    return !host.startsWith('-') && !path.startsWith('-') && (location.startsWith('/') || v4GitScpRE.test(location))
+    if (host.startsWith('-') || path.startsWith('-')) return false
+  } else if (scp.startsWith('~')) {
+    return false
   }
 
-  return !scp.startsWith('~') && location.startsWith('/')
+  if (location.startsWith('/')) {
+    const fragmentIndex = location.indexOf('#')
+    const beforeFragment = fragmentIndex >= 0 ? location.slice(0, fragmentIndex) : location
+    const queryIndex = beforeFragment.indexOf('?')
+    const path = queryIndex >= 0 ? beforeFragment.slice(0, queryIndex) : beforeFragment
+    const fragment = fragmentIndex >= 0 ? location.slice(fragmentIndex + 1) : ''
+    return !hasInvalidEscape(path) && !hasInvalidEscape(fragment)
+  }
+
+  const firstColon = location.indexOf(':')
+  if (firstColon >= 0 && location.slice(firstColon + 1).startsWith('-')) return false
+  return v4GitScpRE.test(location)
 }
 
 function isMarketplaceURL(location: string): boolean {

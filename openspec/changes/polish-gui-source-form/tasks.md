@@ -6,7 +6,7 @@
 
 ## 2. Integration
 
-- [ ] 2.1 Rebuild embedded frontend assets and pass GUI typechecking, Vitest, sources and accessibility Playwright tests, local API tests, make spec-check, and make validate.
+- [x] 2.1 Rebuild embedded frontend assets and pass GUI typechecking, Vitest, sources and accessibility Playwright tests, local API tests, make spec-check, and make validate.
 - [x] 2.2 Capture matched light and dark before/after source-form screenshots from the mocked preview, with artifacts retained outside the repository.
 
 ## Workflow follow-up
