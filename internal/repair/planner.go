@@ -88,10 +88,6 @@ func WritePlan(out io.Writer, steps []Step) error {
 	if _, err := fmt.Fprintln(out, "plan"); err != nil {
 		return err
 	}
-	if len(steps) == 0 {
-		_, err := fmt.Fprintln(out, "  nothing to repair")
-		return err
-	}
 	for i, step := range steps {
 		files := strings.Join(step.Files, ", ")
 		if files == "" {

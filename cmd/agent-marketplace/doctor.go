@@ -482,9 +482,6 @@ func applyRepairActions(out io.Writer, opts doctorOptions, preview *materialize.
 	// no stdin is no consent, and a destructive class must decline rather than
 	// crash halfway through a file's candidate list.
 	reader := opts.repairReader
-	if reader == nil && opts.in != nil {
-		reader = bufio.NewReader(opts.in)
-	}
 
 	for _, file := range preview.Files {
 		var adopt []int
