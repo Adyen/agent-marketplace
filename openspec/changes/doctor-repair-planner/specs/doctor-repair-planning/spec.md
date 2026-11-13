@@ -112,3 +112,37 @@ Devin and Codex shared-aggregate ownership repair SHALL run as the last plan sta
 
 - **WHEN** a plan holds both a drift step and shared-aggregate ownership candidates
 - **THEN** the drift step SHALL be numbered and run before the shared-aggregate candidates
+
+### Requirement: Repair offers non-interactive JSON plan output
+
+`doctor --repair --json` SHALL write exactly one JSON document to stdout, containing plan steps with `id`, `code`, `class`, `action`, `files`, `status`, and `blocked_by`, and step results. It SHALL write no prose to stdout and SHALL never prompt. Without `--yes`, it SHALL write no repair files. With `--yes`, only safe steps SHALL run; destructive and guided steps SHALL report `deferred`. MCP environment and header values SHALL never appear in the output. Exit status SHALL match non-JSON repair for the same state. `--json` without `--repair` SHALL fail.
+
+#### Scenario: JSON repair reports a structured plan and results
+
+- **WHEN** `doctor --repair --json` diagnoses repair steps
+- **THEN** stdout SHALL contain exactly one JSON document with the required plan-step fields and step results, and no prose
+
+#### Scenario: JSON repair without yes never writes or prompts
+
+- **WHEN** `doctor --repair --json` runs without `--yes`, including on a terminal
+- **THEN** it SHALL never prompt and SHALL leave repair files unchanged
+
+#### Scenario: JSON repair with yes runs only safe steps
+
+- **WHEN** `doctor --repair --json --yes` finds safe, destructive, or guided steps
+- **THEN** it SHALL never prompt, SHALL run only safe steps, and SHALL report destructive and guided steps as `deferred`
+
+#### Scenario: JSON repair never prints MCP secrets
+
+- **WHEN** MCP environment or header values contain a secret sentinel
+- **THEN** JSON repair output SHALL not contain that sentinel
+
+#### Scenario: JSON repair preserves text repair exit status
+
+- **WHEN** JSON repair and non-JSON repair encounter the same state and authorization
+- **THEN** they SHALL return the same exit status
+
+#### Scenario: JSON without repair is rejected
+
+- **WHEN** `doctor --json` runs without `--repair`
+- **THEN** it SHALL exit nonzero with an error

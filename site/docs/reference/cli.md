@@ -442,10 +442,13 @@ agent-marketplace doctor [flags]
 |---|---|:---:|---|---|
 | `--repair` | boolean | no | `false` | Diagnoses harness drift and the ownership state of Devin and Codex shared configuration files, prints a numbered repair plan with each step's safety class, and on a terminal asks one confirmation for the safe steps. |
 | `--yes` | boolean | no | `false` | With `--repair`, runs the safe steps, including byte-identical adoptions, without prompting. Destructive steps never run under `--yes`. |
+| `--json` | boolean | no | `false` | With `--repair`, writes repair steps and results as JSON. |
 
 `doctor` detects a locally installed Devin CLI and reports whether it meets the 3000.3 compatibility floor. It recommends selecting the `devin` harness when a Devin CLI is installed but no harness list contains it. `sync` never needs a Devin binary, so none of these findings blocks it.
 
 `--repair` covers `hooks.v1.json`, `config.json#hooks`, `mcp_config.json`, `.codex/hooks.json`, and `.codex/config.toml`, plus harness drift it can reconcile through a locked sync without changing any acquisition lock. For the shared files it sorts candidates into three groups: exact matches it can adopt, orphans it has evidence for (entries a completed sync wrote that are no longer wanted), and unmanaged entries whose key matches a selected resource but whose value differs. It lists every file it inspected, including files with nothing to repair, and it never edits harness lists. One terminal confirmation authorizes every safe step, adoptions included. Removing an orphan or replacing a conflicting entry keeps its own per-entry confirmation on a terminal, and the command takes a fresh backup first. Destructive steps never run under `--yes` or off a terminal. Without a terminal it only previews, unless `--yes` runs the safe steps. Invalid configuration or failed resolution does not refuse the repair: the cause is listed as a plan item and every step that needs it is shown as blocked. `--yes` without `--repair` is an error.
+
+With `--repair --json`, stdout contains exactly one JSON document with plan steps and results. JSON mode never prompts, excludes MCP environment and header values, and marks destructive and guided steps `deferred`; without `--yes` it only previews, while with `--yes` it runs safe steps. Exit status matches text repair for the same state. `--json` without `--repair` is an error.
 
 Compatibility findings do not block `sync`. Repair failures, corrupt ownership state, unparseable shared files, and plans left with only blocked or human-only items return exit status 1; the command exits 0 when the setup ends clean or you declined.
 

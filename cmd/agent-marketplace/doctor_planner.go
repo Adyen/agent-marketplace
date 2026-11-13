@@ -26,6 +26,9 @@ import (
 )
 
 func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, initial config.EffectiveConfig) error {
+	if opts.json && opts.jsonReport == nil {
+		opts.jsonReport = repairplanner.NewJSONReport()
+	}
 	slog.Info("doctor repair preview start", "repo_root", repoRoot)
 	ctx := opts.ctx
 	var reads []dependencytxn.ReadAssertion
@@ -70,9 +73,12 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 		incompleteCause = nil
 		diagnosis := repairplanner.Diagnosis{InvalidInputs: make(map[repairplanner.Input]repairplanner.Blocker)}
 		addHuman := func(stage repairplanner.Stage, code string, issue error) string {
-			action := tui.TerminalSafeLine(issue.Error())
-			if hint := remedy.For(issue, "doctor"); hint != "" {
-				action += "; " + tui.TerminalSafeLine(hint)
+			action := "review " + code
+			if !opts.json {
+				action = tui.TerminalSafeLine(issue.Error())
+				if hint := remedy.For(issue, "doctor"); hint != "" {
+					action += "; " + tui.TerminalSafeLine(hint)
+				}
 			}
 			key := fmt.Sprintf("cause-%d", len(diagnosis.Steps)+1)
 			diagnosis.Steps = append(diagnosis.Steps, repairplanner.Step{
@@ -243,6 +249,9 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 		return diagnosis, nil
 	}
 	display := func(steps []repairplanner.Step) error {
+		if opts.json {
+			return opts.jsonReport.Display(steps)
+		}
 		if len(steps) > 0 {
 			if err := repairplanner.WritePlan(out, steps); err != nil {
 				return err
@@ -316,6 +325,9 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 			confirmErr = err
 			return accepted
 		},
+	}
+	if opts.json {
+		loop.Result = opts.jsonReport.RecordResult
 	}
 	slog.Info("doctor repair execution start", "repo_root", repoRoot, "targets", len(previews), "automatic_adoption", opts.yes)
 	err := loop.Run(ctx)

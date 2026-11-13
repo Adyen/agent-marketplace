@@ -26,7 +26,7 @@
 
 ## 6. JSON plan output (B5)
 
-- [ ] 6.1 Add `doctor --repair --json`; verify with annotated tests and a command-path witness
+- [x] 6.1 Add `doctor --repair --json`; verify with annotated tests and a command-path witness
 
 ## 7. Journeys and archive (B7)
 

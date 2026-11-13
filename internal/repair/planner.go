@@ -126,6 +126,7 @@ type Loop struct {
 	Confirm          func([]Step) bool
 	Validate         func() error
 	Display          func([]Step) error
+	Result           func(Step, bool, error)
 	AllowDestructive bool
 }
 
@@ -191,14 +192,24 @@ func (loop Loop) Run(ctx context.Context) error {
 			return nil
 		}
 		if next.Apply == nil {
-			return fmt.Errorf("repair step %q has no implementation", next.Action)
+			err := fmt.Errorf("repair step %q has no implementation", next.Action)
+			if loop.Result != nil {
+				loop.Result(*next, false, err)
+			}
+			return err
 		}
 		if loop.Validate != nil {
 			if err := loop.Validate(); err != nil {
+				if loop.Result != nil {
+					loop.Result(*next, false, err)
+				}
 				return err
 			}
 		}
 		applied, err := next.Apply(ctx)
+		if loop.Result != nil {
+			loop.Result(*next, applied, err)
+		}
 		if err != nil {
 			return err
 		}
