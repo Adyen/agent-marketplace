@@ -16,6 +16,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hccartifact "github.com/Adyen/agent-marketplace/pkg/harness-compilation/artifact"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 	mpapi "github.com/Adyen/agent-marketplace/pkg/marketplace/api"
@@ -84,6 +85,144 @@ func TestUpdateMarketplacePinMutatesOnlyAfterPreparationAndSyncs(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(fixture.repoRoot, ".factory", "skills", "chosen-review", "SKILL.md")); err != nil {
 		t.Fatalf("updated installed-name output missing: %v", err)
+	}
+}
+
+func TestUpdateReusesPlanVerifiedMarketplaceRevisions(t *testing.T) {
+	home := isolateConsumerPipeline(t)
+	repo := t.TempDir()
+	configPath := filepath.Join(home, ".agents", "config.yaml")
+	writeFileMode(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [devin]\n", 0o600)
+	fake := newLayerMarketplaceServer(t)
+	registry := fake.addRegistry(t, "source")
+	names := []string{"unchanged-one", "unchanged-two", "changed", "constrained", "organization-managed"}
+	pinBatches := make([][]config.MarketplaceResourcePin, 0, len(names))
+	for _, name := range names {
+		fake.addSkill(t, registry, name)
+		pinBatches = append(pinBatches, layerPreparePins(t, fake, "skill", name))
+	}
+	entry := config.MarketplaceEntry{URL: fake.URL, InstanceID: fake.instanceID}
+	installV4MarketplaceLayer(t, repo, configPath, entry, pinBatches[:4]...)
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	constrainedRequest := "source/skill/constrained"
+	constrained := strings.Replace(string(data), constrainedRequest, constrainedRequest+": {revision: "+pinBatches[3][0].Revision+"}", 1)
+	if constrained == string(data) {
+		t.Fatalf("request %q missing from config", constrainedRequest)
+	}
+	writeFileMode(t, configPath, constrained, 0o600)
+	organizationConfigPath := filepath.Join(home, "organization", "config.yaml")
+	config.SetTestOrganizationConfigPath(t, organizationConfigPath)
+	orgPin := pinBatches[4][0]
+	writeFileMode(t, organizationConfigPath, "apiVersion: agent-marketplace/v4\nsources:\n  organization: {marketplace: "+fake.URL+"}\nresources:\n  organization:\n    include:\n      - source/skill/organization-managed: {revision: "+orgPin.Revision+"}\n", 0o600)
+	orgResource := fake.resources["source/skill/organization-managed"]
+	organizationLock, err := lockfile.Encode(lockfile.Document{
+		APIVersion: lockfile.APIVersionV2, Scope: lockfile.ScopeOrganization,
+		Marketplaces: []lockfile.MarketplaceLock{{URL: fake.URL, InstanceID: fake.instanceID,
+			RegistryBindings: []lockfile.MarketplaceRegistryBinding{{Name: orgPin.RegistrySlug, RegistryID: orgPin.RegistryID}},
+			Resources: []lockfile.MarketplaceResourceLock{{
+				RegistryName: orgPin.RegistrySlug, RegistryID: orgPin.RegistryID, Kind: orgPin.Kind, Name: orgPin.Name,
+				Revision: orgPin.Revision, ContentDigest: lockfile.Digest(orgPin.Digest),
+				ArchiveDigest: lockfile.Digest(string(orgResource.revision.ArchiveDigest)), Acquisition: orgPin.Acquisition,
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFileMode(t, filepath.Join(filepath.Dir(organizationConfigPath), "lock.yaml"), string(organizationLock), 0o600)
+	fake.setSkill(t, registry, "changed", "changed body v2")
+	fake.pathsMu.Lock()
+	fake.paths = nil
+	fake.pathsMu.Unlock()
+
+	result, err := Update(context.Background(), UpdateOptions{RepoRoot: repo, DependencyReconcile: testMarketplaceUpdateReconcile})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if result.UpdatedMarketplacePins != 1 || result.SkippedMarketplacePins != 4 {
+		t.Fatalf("Marketplace result = %#v, want one update and four skips", result)
+	}
+	if result.Report == nil || result.Report.TotalWritten() == 0 {
+		t.Fatalf("sync did not materialize the selected pins: %#v", result.Report)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config", "devin", "skills", "organization-managed", "SKILL.md")); err != nil {
+		t.Fatalf("organization-managed pin was not materialized by Refresh: %v", err)
+	}
+
+	requests := make(map[string][2]int, len(names))
+	fake.pathsMu.Lock()
+	for _, request := range fake.paths {
+		if !strings.HasPrefix(request, "GET /api/v1/resources/") {
+			continue
+		}
+		parts := strings.Split(strings.TrimPrefix(request, "GET /api/v1/resources/"), "/")
+		if len(parts) != 3 && len(parts) != 5 {
+			continue
+		}
+		name := parts[2]
+		counts := requests[name]
+		if len(parts) == 3 {
+			counts[0]++
+		} else if parts[3] == "revisions" {
+			counts[1]++
+		}
+		requests[name] = counts
+	}
+	fake.pathsMu.Unlock()
+	for _, name := range names[:2] {
+		counts := requests[name]
+		if count := counts[0] + counts[1]; count > 1 {
+			t.Errorf("unchanged pin %q had %d revision metadata requests (latest=%d, by-digest=%d), want at most one", name, count, counts[0], counts[1])
+		}
+	}
+	for _, name := range names[3:] {
+		counts := requests[name]
+		if counts[0] != 0 || counts[1] != 1 {
+			t.Errorf("%s pin requests = latest %d, by-digest %d; want 0 and 1", name, counts[0], counts[1])
+		}
+	}
+	counts := requests["changed"]
+	if counts[0] != 1 || counts[1] > 1 {
+		t.Errorf("changed pin requests = latest %d, by-digest %d; want exactly 1 and at most 1", counts[0], counts[1])
+	}
+}
+
+func TestRejectedMarketplaceRevisionIsNotReusedByRefresh(t *testing.T) {
+	fake := newLayerMarketplaceServer(t)
+	registry := fake.addRegistry(t, "source")
+	fake.addSkill(t, registry, "review")
+	resourceKey := "source/skill/review"
+	resource := fake.resources[resourceKey]
+	digest := string(resource.revision.ContentDigest)
+	resource.revision.Revocation = &store.Revocation{Kind: store.RevocationRevision, TargetID: digest, Reason: "withdrawn"}
+	fake.resources[resourceKey] = resource
+	pin := config.MarketplaceResourcePin{
+		RegistryID: string(registry.ID), RegistrySlug: registry.Slug, Kind: "skill", Name: "review",
+		Revision: digest, Digest: digest, Acquisition: config.MarketplaceAcquisitionMirror,
+	}
+	entry := config.MarketplaceEntry{URL: fake.URL, InstanceID: fake.instanceID, Resources: []config.MarketplaceResourcePin{pin}}
+	r := &marketplace.Resolver{Cache: marketplace.NewCache(t.TempDir()), Verified: &marketplace.VerifiedRevisions{}}
+	if _, _, err := r.LatestRevision(context.Background(), entry, pin); err == nil || !strings.Contains(err.Error(), "revoked") {
+		t.Fatalf("LatestRevision error = %v, want revoked revision error", err)
+	}
+	_, errs := r.Resolve(context.Background(), &config.Config{Marketplaces: []config.MarketplaceEntry{entry}}, nil, resolver.MarketplaceResolveModeRefresh)
+	if len(errs) == 0 || !strings.Contains(errors.Join(errs...).Error(), "revoked") {
+		t.Fatalf("Refresh errors = %v, want revoked revision error", errs)
+	}
+	fake.pathsMu.Lock()
+	defer fake.pathsMu.Unlock()
+	revisionRequests := 0
+	for _, request := range fake.paths {
+		if strings.HasSuffix(request, "/revisions/"+digest) {
+			revisionRequests++
+		}
+	}
+	if revisionRequests != 1 {
+		t.Fatalf("Refresh made %d revision metadata requests after rejecting latest, want one network request", revisionRequests)
 	}
 }
 

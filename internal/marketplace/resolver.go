@@ -101,9 +101,50 @@ type Resolver struct {
 	AllowedRegistries          []string
 	LockEvidenceStrict         bool
 	ReportArchiveEvidenceDrift bool
+	Verified                   *VerifiedRevisions
 
 	clientsMu sync.Mutex
 	clients   map[string]*Client
+}
+
+type verifiedRevisionKey struct {
+	url, instanceID, registryID, kind, name, digest string
+}
+
+type VerifiedRevisions struct {
+	mu   sync.Mutex
+	revs map[verifiedRevisionKey]store.AssessedResourceRevision
+}
+
+func (v *VerifiedRevisions) record(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, rev store.AssessedResourceRevision) {
+	if v == nil {
+		return
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.revs == nil {
+		v.revs = make(map[verifiedRevisionKey]store.AssessedResourceRevision)
+	}
+	v.revs[verifiedRevisionKeyFor(entry, pin, string(rev.ContentDigest))] = rev
+}
+
+func (v *VerifiedRevisions) lookup(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin) (store.AssessedResourceRevision, bool) {
+	if v == nil {
+		return store.AssessedResourceRevision{}, false
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	rev, ok := v.revs[verifiedRevisionKeyFor(entry, pin, pin.Digest)]
+	return rev, ok
+}
+
+// verifiedRevisionKeyFor builds the session key from an already-canonical
+// Marketplace entry; every call site canonicalizes the entry first.
+func verifiedRevisionKeyFor(entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, digest string) verifiedRevisionKey {
+	return verifiedRevisionKey{
+		url: entry.URL, instanceID: entry.InstanceID, registryID: pin.RegistryID,
+		kind: pin.Kind, name: pin.Name, digest: digest,
+	}
 }
 
 // NewResolver creates a Marketplace resolver with a default cache.
@@ -1260,6 +1301,16 @@ func mustIRKind(kind string) ir.ResourceKind {
 	return value
 }
 
+func (r *Resolver) fetchResourceRevision(ctx context.Context, client *Client, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, mode resolver.MarketplaceResolveMode) (store.AssessedResourceRevision, error) {
+	if mode == resolver.MarketplaceResolveModeRefresh {
+		if rev, ok := r.Verified.lookup(entry, pin); ok && validateResourceRevision(entry, pin, rev) == nil &&
+			(pin.RegistryCommit == "" || (rev.Occurrence.Commit == pin.RegistryCommit && rev.Occurrence.ManifestDigest == store.RevisionDigest(pin.RegistryManifestDigest))) {
+			return rev, nil
+		}
+	}
+	return client.GetResourceRevision(ctx, pin.RegistryID, pin.Kind, pin.Name, pin.Digest)
+}
+
 func (r *Resolver) getIndexOnlyResourceRevision(ctx context.Context, client *Client, cache *Cache, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, identity IndexOnlyIdentity, mode resolver.MarketplaceResolveMode) (store.AssessedResourceRevision, error) {
 	if err := ctx.Err(); err != nil {
 		return store.AssessedResourceRevision{}, err
@@ -1282,7 +1333,7 @@ func (r *Resolver) getIndexOnlyResourceRevision(ctx context.Context, client *Cli
 	if client == nil {
 		return store.AssessedResourceRevision{}, fmt.Errorf("index-only online resolution requires a Marketplace client")
 	}
-	rev, err := client.GetResourceRevision(ctx, pin.RegistryID, pin.Kind, pin.Name, pin.Digest)
+	rev, err := r.fetchResourceRevision(ctx, client, entry, pin, mode)
 	if err != nil {
 		return store.AssessedResourceRevision{}, fmt.Errorf("fetch resource revision: %w", err)
 	}
@@ -1320,7 +1371,7 @@ func (r *Resolver) getResourceRevision(ctx context.Context, client *Client, cach
 	if client == nil {
 		return store.AssessedResourceRevision{}, fmt.Errorf("cached no-fetch resolver has no Marketplace client")
 	}
-	rev, err := client.GetResourceRevision(ctx, pin.RegistryID, pin.Kind, pin.Name, pin.Digest)
+	rev, err := r.fetchResourceRevision(ctx, client, entry, pin, mode)
 	if err != nil {
 		return store.AssessedResourceRevision{}, fmt.Errorf("fetch resource revision: %w", err)
 	}
