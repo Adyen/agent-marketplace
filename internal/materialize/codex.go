@@ -125,31 +125,80 @@ func (codexOwnedAggregateHandler) reconcile(ctx context.Context, report *Report,
 			continue
 		}
 		session, hasSession := state.writeSession(destination.Root)
-		if !state.reconcilesNativeHooks(key) {
+		if !hasSession && !dryRun && batch == nil && codexRootNeedsReconciliation(destination.Root, current) {
+			lockReport := newOwnedAggregateLockReporter(key, destination.Root)
+			store, err := ownership.Open(destination.Root, ownership.WithLockObserver(lockReport.observe))
+			if err != nil {
+				return codexMCPDiag(report, key, err)
+			}
+			session = ownedAggregateWriteSession{root: destination.Root, store: store, lockReport: lockReport}
 			hookOptions := codexHookJSONOptions()
-			hookOptions.rootID = destination.ID
-			hookOptions.onWrite = appendCodexTrustReviewDiagnostic
-			if batch != nil {
-				hookOptions.batch = batch
-				hookOptions.pluginInstanceKey = batch.instanceKey
-				hookOptions.pluginInstanceKeys = batch.ownerInstances
-				hookOptions.activePluginInstances = batch.activeInstances
+			sessionErr := withOwnedAggregateWriteSession(ctx, &state, session, hookOptions.sessionName, func() error {
+				outcomes, recoverErr := recoverOwnedAggregate(store)
+				for _, outcome := range outcomes {
+					report.Diags = append(report.Diags, ownedAggregateDiag(diag.CodeOwnershipRecovered, key, outcome.File,
+						fmt.Sprintf("recovered an incomplete ownership generation %d for %q (phase %s, action %s)",
+							outcome.Generation, ownedAggregateLabel(destination.Root, outcome.File), outcome.Phase, outcome.Action)))
+				}
+				if recoverErr != nil {
+					report.Diags = append(report.Diags, ownedAggregateCodedDiag(key, destination.Root, "", recoverErr, hookOptions.writeCode))
+					return nil
+				}
+				report = reconcileCodexRoot(ctx, report, state, key, destination, current, dryRun, &session, batch)
+				return nil
+			})
+			if sessionErr != nil {
+				report.Diags = append(report.Diags, ownedAggregateLockSessionDiag(key, destination.Root, sessionErr, hookOptions.writeCode))
 			}
-			if hasSession {
-				hookOptions.store = session.store
-				hookOptions.lockReport = session.lockReport
-				hookOptions.deferLockDiagnostics = true
-				hookOptions.storeSessionHeld = true
-			}
-			hookFile := ownedJSONFileSpec{rel: codexHooksFile, container: codexHooksContainer, rawValueDigest: true}
-			report = reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, []ownedJSONFileSpec{hookFile}, current.hooks, hookOptions, dryRun)
+			report.Diags = append(report.Diags, lockReport.diags()...)
+			return report
 		}
 		if hasSession {
-			return reconcileCodexMCPWithSession(ctx, report, key, destination.ID, destination.Root, current.mcps, current.registrations, current.blocked, dryRun, &session, batch)
+			return reconcileCodexRoot(ctx, report, state, key, destination, current, dryRun, &session, batch)
 		}
-		return reconcileCodexMCPWithSession(ctx, report, key, destination.ID, destination.Root, current.mcps, current.registrations, current.blocked, dryRun, nil, batch)
+		return reconcileCodexRoot(ctx, report, state, key, destination, current, dryRun, nil, batch)
 	}
 	return report
+}
+
+func codexRootNeedsReconciliation(root string, current *codexOwnedAggregateState) bool {
+	if current != nil && (current.hooks != nil && len(current.hooks.entries) > 0 ||
+		len(current.mcps) > 0 || len(current.registrations) > 0) {
+		return true
+	}
+	for _, rel := range []string{codexHooksFile, codexMCPFile} {
+		if _, err := os.Lstat(filepath.Join(root, rel)); err == nil || !os.IsNotExist(err) {
+			return true
+		}
+	}
+	return false
+}
+
+func reconcileCodexRoot(ctx context.Context, report *Report, state ownedAggregateState, key outputKey, destination harness.Destination,
+	current *codexOwnedAggregateState, dryRun bool, session *ownedAggregateWriteSession, batch *pluginInstanceBatch) *Report {
+	if !state.reconcilesNativeHooks(key) {
+		hookOptions := codexHookJSONOptions()
+		hookOptions.rootID = destination.ID
+		hookOptions.onWrite = appendCodexTrustReviewDiagnostic
+		if batch != nil {
+			hookOptions.batch = batch
+			hookOptions.pluginInstanceKey = batch.instanceKey
+			hookOptions.pluginInstanceKeys = batch.ownerInstances
+			hookOptions.activePluginInstances = batch.activeInstances
+		}
+		if session != nil {
+			hookOptions.store = session.store
+			hookOptions.lockReport = session.lockReport
+			hookOptions.deferLockDiagnostics = true
+			hookOptions.storeSessionHeld = true
+		}
+		hookFile := ownedJSONFileSpec{rel: codexHooksFile, container: codexHooksContainer, rawValueDigest: true}
+		report = reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, []ownedJSONFileSpec{hookFile}, current.hooks, hookOptions, dryRun)
+	}
+	if session != nil {
+		return reconcileCodexMCPWithSession(ctx, report, key, destination.ID, destination.Root, current.mcps, current.registrations, current.blocked, dryRun, session, batch)
+	}
+	return reconcileCodexMCPWithSession(ctx, report, key, destination.ID, destination.Root, current.mcps, current.registrations, current.blocked, dryRun, nil, batch)
 }
 
 func codexHookJSONOptions() ownedJSONReconcileOptions {
@@ -717,7 +766,7 @@ func reconcileCodexMCPWithSession(ctx context.Context, report *Report, key outpu
 	}
 	reconcile := func() error {
 		if !dryRun && sharedSession == nil && batch == nil {
-			if _, err := store.Recover(); err != nil {
+			if _, err := recoverOwnedAggregate(store); err != nil {
 				return err
 			}
 		}

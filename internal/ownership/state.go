@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Adyen/agent-marketplace/internal/fsboundary"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/jsonc"
 )
@@ -489,6 +491,11 @@ func (s *Store) commitRecord(rec *Record) error {
 }
 
 func (s *Store) commitRecordWithValidation(rec *Record, validate func() error) (err error) {
+	defer func() {
+		if err != nil {
+			s.invalidateSessionRecord()
+		}
+	}()
 	if err := validateRecord(rec, s.canonicalRoot, s.rootKey); err != nil {
 		return err
 	}
@@ -498,7 +505,12 @@ func (s *Store) commitRecordWithValidation(rec *Record, validate func() error) (
 	}
 	data = append(data, '\n')
 	if validate == nil {
-		return s.writeMetadata(stateFileName, data)
+		pin, err := s.writeObservedMetadata(stateFileName, data, nil)
+		if err != nil {
+			return err
+		}
+		s.updateSessionRecord(rec, pin)
+		return nil
 	}
 	if err := validate(); err != nil {
 		return err
@@ -512,12 +524,15 @@ func (s *Store) commitRecordWithValidation(rec *Record, validate func() error) (
 			err = errors.Join(err, closeErr)
 		}
 	}()
-	_, _, err = writeObservedMetadataFile(parent, stateFileName, data, func() error {
+	pin, _, err := writeObservedMetadataFile(parent, stateFileName, data, func() error {
 		if err := s.verifyMetadataParent(parent); err != nil {
 			return err
 		}
 		return validate()
 	})
+	if err == nil {
+		s.updateSessionRecord(rec, pin)
+	}
 	return err
 }
 
@@ -634,6 +649,37 @@ func fileStateSemanticallyEqual(current FileState, currentPresent bool, next Fil
 	return entriesEqual && satisfactionsEqual
 }
 
+func (s *Store) metadataPinMatches(name string, pin metadataPin, exists bool) (matches bool) {
+	parent, err := s.captureMetadataParent()
+	if err != nil {
+		return !exists && pin.parent.Inode == 0 && errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath)
+	}
+	defer func() {
+		if closeErr := parent.Close(); closeErr != nil {
+			matches = false
+		}
+	}()
+	if pin.parent.Inode == 0 || !pin.parent.SameObject(parent.Identity()) {
+		return false
+	}
+	file, err := fsboundary.CaptureDestination(parent, name, fsboundary.LinkPolicyRepository)
+	if err != nil {
+		return false
+	}
+	if file.Link() != nil {
+		_ = file.Close()
+		return false
+	}
+	matches = file.Exists() == exists
+	if matches && exists {
+		matches = pin.file.SameState(file.Identity())
+	}
+	if closeErr := file.Close(); closeErr != nil {
+		return false
+	}
+	return matches && s.verifyMetadataParent(parent) == nil
+}
+
 // Proof returns proof-backed ownership for one canonical output file.
 //
 // The returned error is ADVISORY: it reports missing or corrupt state so the
@@ -643,7 +689,7 @@ func fileStateSemanticallyEqual(current FileState, currentPresent bool, next Fil
 // behaves safely. There is no third option in which state is absent and
 // something is still considered owned.
 func (s *Store) Proof(rel string) (Proof, error) {
-	rec, err := s.Load()
+	rec, err := s.proofRecord()
 	if err != nil {
 		if errors.Is(err, ErrStateUninitialized) {
 			// Normal first use: there is no record because nothing has ever been
@@ -660,21 +706,100 @@ func (s *Store) Proof(rel string) (Proof, error) {
 			"state_file", s.StateFile(), "reason", codeOf(err))
 		return Proof{}, err
 	}
-	fs, ok := rec.Files[rel]
-	if !ok {
-		return Proof{file: rel, generation: rec.Generation}, nil
+	return proofFromRecord(rec, rel), nil
+}
+
+func (s *Store) proofRecord() (*Record, error) {
+	s.proofMu.Lock()
+	defer s.proofMu.Unlock()
+
+	s.lockMu.Lock()
+	session := s.session
+	var cached *Record
+	var pin metadataPin
+	var exists bool
+	loaded := session != nil && session.recordLoaded
+	observer := s.proofLoadObserver
+	if loaded {
+		cached = session.record
+		pin = session.recordPin
+		exists = session.recordExists
 	}
-	entries := make(map[string]Entry, len(fs.Entries))
-	for _, e := range fs.Entries {
-		entries[e.ID().mapKey()] = e
+	s.lockMu.Unlock()
+
+	if loaded && s.metadataPinMatches(stateFileName, pin, exists) {
+		s.lockMu.Lock()
+		if s.session == session && session.recordLoaded && session.record == cached && session.recordPin == pin {
+			record, err := session.record, session.recordErr
+			s.lockMu.Unlock()
+			return record, err
+		}
+		s.lockMu.Unlock()
+	}
+
+	if observer != nil {
+		observer()
+	}
+	record, pin, err := s.loadObservedRecord()
+	s.lockMu.Lock()
+	if session != nil && s.session == session && (pin.parent.Inode != 0 || pin.file.Inode != 0) {
+		session.record = cloneRecord(record)
+		session.recordPin = pin
+		session.recordExists = pin.file.Inode != 0
+		session.recordErr = err
+		session.recordLoaded = true
+		record = session.record
+	}
+	s.lockMu.Unlock()
+	return record, err
+}
+
+func (s *Store) updateSessionRecord(record *Record, pin metadataPin) {
+	s.lockMu.Lock()
+	defer s.lockMu.Unlock()
+	if s.session != nil {
+		s.session.record = cloneRecord(record)
+		s.session.recordPin = pin
+		s.session.recordExists = true
+		s.session.recordErr = nil
+		s.session.recordLoaded = true
+	}
+}
+
+func (s *Store) invalidateSessionRecord() {
+	s.lockMu.Lock()
+	defer s.lockMu.Unlock()
+	if s.session != nil {
+		s.session.record = nil
+		s.session.recordPin = metadataPin{}
+		s.session.recordExists = false
+		s.session.recordErr = nil
+		s.session.recordLoaded = false
+	}
+}
+
+func proofFromRecord(record *Record, rel string) Proof {
+	file, ok := record.Files[rel]
+	if !ok {
+		return Proof{file: rel, generation: record.Generation}
+	}
+	entries := make(map[string]Entry, len(file.Entries))
+	for _, entry := range file.Entries {
+		entry.SourceEvidence = append([]HookSourceEvidence(nil), entry.SourceEvidence...)
+		entry.PluginGenerations = append([]PluginGenerationRef(nil), entry.PluginGenerations...)
+		entries[entry.ID().mapKey()] = entry
+	}
+	satisfactions := append([]HookSatisfaction(nil), file.HookSatisfactions...)
+	for i := range satisfactions {
+		satisfactions[i].Sources = append([]HookSourceEvidence(nil), satisfactions[i].Sources...)
 	}
 	return Proof{
 		file:              rel,
-		generation:        rec.Generation,
-		contentDigest:     fs.ContentDigest,
+		generation:        record.Generation,
+		contentDigest:     file.ContentDigest,
 		entries:           entries,
-		hookSatisfactions: fs.HookSatisfactions,
-	}, nil
+		hookSatisfactions: satisfactions,
+	}
 }
 
 func codeOf(err error) string {

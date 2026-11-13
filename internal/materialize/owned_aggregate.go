@@ -241,6 +241,15 @@ type ownedAggregateWriteSession struct {
 	initial    *ownedAggregateSessionSnapshot
 }
 
+var ownedAggregateRecoverHook func(string)
+
+func recoverOwnedAggregate(store *ownership.Store) ([]ownership.RecoveryOutcome, error) {
+	if ownedAggregateRecoverHook != nil {
+		ownedAggregateRecoverHook(store.RootKey())
+	}
+	return store.Recover()
+}
+
 // ownedAggregateState stores adapter-specific desired state outside generic
 // orchestration. JSON hooks and TOML MCP entries retain their native patch models.
 type ownedAggregateState struct {
