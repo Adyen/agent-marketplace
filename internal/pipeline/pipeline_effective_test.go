@@ -3,12 +3,14 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
+	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 )
 
@@ -170,6 +172,58 @@ harnesses:
 	}
 	if !errors.Is(errors.Join(result.Errors...), concurrent) {
 		t.Fatalf("sync errors = %v, want concurrent exact-lock error", result.Errors)
+	}
+}
+
+// spec: doctor-repair-planning/policy-change-before-a-confirmed-step-stops-repair
+func TestSyncBeforeMaterializeRechecksPolicyAtMaterializationEntry(t *testing.T) {
+	repoRoot := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	registryRoot := filepath.Join(t.TempDir(), "registry")
+	writeSkill(t, registryRoot, "policy-skill", "Policy test", nil)
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	policy := "apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources:\n" +
+		"  local: {directory: " + filepath.ToSlash(registryRoot) + ", source_harness: factory}\n" +
+		"resources:\n  local: [skill/policy-skill]\n"
+	writeFile(t, configPath, policy)
+	canonical, err := dependencytxn.CanonicalConfigDestination(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation, err := dependencytxn.ReadGeneration(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads := []dependencytxn.ReadAssertion{{Path: canonical, RequestedPath: configPath, Expected: generation}}
+	updatedPolicy := policy + "# changed after the early check\n"
+	calls := 0
+	beforeMaterialize := func() error {
+		calls++
+		err := dependencytxn.ValidateReadAssertions(reads)
+		if calls == 1 && err == nil {
+			writeFile(t, configPath, updatedPolicy)
+		}
+		return err
+	}
+
+	result := Sync(context.Background(), ResolveOptions{
+		Workspace:         mustWorkspace(t, repoRoot),
+		NoBackup:          true,
+		BeforeMaterialize: beforeMaterialize,
+	})
+	if calls != 2 {
+		t.Errorf("BeforeMaterialize calls = %d, want the early and materialization-entry checks", calls)
+	}
+	if !errors.Is(errors.Join(result.Errors...), dependencytxn.ErrGenerationConflict) {
+		t.Errorf("sync errors = %v, want generation conflict", result.Errors)
+	}
+	outputPath := filepath.Join(repoRoot, ".factory", "skills", "policy-skill", "SKILL.md")
+	if _, err := os.Lstat(outputPath); !os.IsNotExist(err) {
+		t.Errorf("policy change published skill output %s: %v", outputPath, err)
+	}
+	if after, err := os.ReadFile(configPath); err != nil || string(after) != updatedPolicy {
+		t.Errorf("concurrent config edit was not preserved: %v\n%s", err, after)
 	}
 }
 

@@ -608,6 +608,7 @@ type runConfig struct {
 	pluginStateReconcile    bool
 	scopeFilter             *bool // nil = all scopes; true = machine only; false = repo only
 	modes                   config.MaterializationModes
+	beforePublish           func() error
 	beforeSupportWrite      func(string, string) error
 	supportCommitFault      dependencytxn.FaultHook
 	linkPublicationHook     func(string)
@@ -630,6 +631,12 @@ func WithDryRun() RunOption {
 
 func WithPluginStateReconciliation() RunOption {
 	return func(c *runConfig) { c.pluginStateReconcile = true }
+}
+
+// WithBeforePublish checks policy at materialization entry. Plugin runs call it
+// under the packages lock, so the callback must not acquire packagegen locks.
+func WithBeforePublish(check func() error) RunOption {
+	return func(c *runConfig) { c.beforePublish = check }
 }
 
 // WithMachineScopeOnly restricts materialization to machine-scope (user-level)
@@ -786,6 +793,11 @@ func Run(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtif
 }
 
 func runMaterialization(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtifact, rc runConfig, packagesLocked bool) (*Report, error) {
+	if !rc.dryRun && rc.beforePublish != nil {
+		if err := rc.beforePublish(); err != nil {
+			return nil, err
+		}
+	}
 	start := time.Now()
 	slog.Debug("materialize start", "repo_root", repoRoot, "resolved", len(resolved), "dry_run", rc.dryRun,
 		"machine_mode", rc.modes.Machine, "project_mode", rc.modes.Project)

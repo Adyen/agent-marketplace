@@ -58,7 +58,7 @@ type ResolveOptions struct {
 	Gitignore        bool
 	NoBackup         bool
 	RequireTargetSet bool
-	// BeforeMaterialize is invoked by Sync before publishing harness outputs.
+	// BeforeMaterialize is checked before Sync runs materialization and at materialization entry.
 	BeforeMaterialize func() error
 	// EffectiveOpts overrides the paths used by LoadEffective.
 	EffectiveOpts config.LoadEffectiveOptions
@@ -1148,6 +1148,9 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 		}
 	}
 	materializeOptions := []materialize.RunOption{materialize.WithMaterializationModes(resolved.MaterializationModes)}
+	if opts.BeforeMaterialize != nil {
+		materializeOptions = append(materializeOptions, materialize.WithBeforePublish(opts.BeforeMaterialize))
+	}
 	if len(resolved.ConfigErrors) == 0 && len(resolved.CatalogErrors) == 0 {
 		materializeOptions = append(materializeOptions, materialize.WithPluginStateReconciliation())
 	}
