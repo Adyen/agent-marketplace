@@ -96,21 +96,75 @@ installer.
 
 ## Decisions
 
-### 1. One target model: harnesses are targets
+### 1. Application target model and translation boundary
 
-A **target** is an app agent-marketplace writes into: `claude`, `devin`,
-`herdr-app`, `tern`, ... Today's `target.Definition` already carries roots
-and capability flags; it gains **the kinds the target accepts** and, per
-kind, a **delivery mode**:
+An **application target** is a destination the CLI may select and deliver
+resources to, whether it is a compiled harness or a future host-package
+target. Keep this authority in `internal/harness`. Evolve its existing
+`InstallationAdapterRegistry` into the composition, lookup, list, and
+accepted-kind seam for application target definitions. Compose compiled
+targets from `target.Definitions()` and the current legacy `TargetInfo`
+and native-layout adapter factories; do not add a third hand-maintained
+map beside `TargetInfoMap` and the adapter registry. During migration,
+adapt `TargetInfoMap` as a derived compatibility view. Devin, Codex, and
+OpenCode remain adapter-backed and must never fall back to legacy metadata.
 
-| Mode | Meaning | Examples |
+`pkg/harness-compilation` remains the authority for compiled translation
+declarations and scope-neutral native topology. Do not move concrete root
+resolution, profiles, selection, locks, ownership, distribution, or host
+commands into it. Profile-only targets never enter `target.Definitions()`,
+compiler or ingester registration, conversion targets, or translation
+catalogs. If the application model needs declared translation kinds for
+completeness, add `target.Definition.AcceptedKinds []ir.ResourceKind` as
+compiled translation/package capability data. Each current compiled target
+declares the five leaf kinds (`skill`, `command`, `subagent`, `hook`, and
+`mcpserver`) and `plugin`; only Factory, Cursor, and Windsurf declare
+`rule`. Derive the selectable application view by intersecting those
+declarations with `config.AllKinds` and removing virtual `collection`.
+Keep plugin package dispatch separate rather than adding a public selector
+or config field. Do not maintain an independent per-target application-kind
+list. Rule's diagnostic-only translation paths remain available even
+where `rule` is not accepted.
+
+Define the internal seam explicitly: evolve `InstallationAdapterRegistry`
+to compose `ApplicationTarget` entries. Each entry has an ID and
+accepted-kind delivery metadata, and
+`ApplicationTarget.Accepts(kind ir.ResourceKind) bool`; the registry
+exposes `Lookup(id string) (ApplicationTarget, bool)` and
+`Targets() []ApplicationTarget`. Existing installation adapters continue
+to resolve scopes and destinations; they are not a new external schema.
+
+The compiled-target `target.ValidateDefinition` paired-root check remains
+a compiled-target constraint. A future user-only application descriptor
+declares its scopes explicitly and does not run that validator. Repository
+selection for a descriptor with no repository root must refuse before
+resolving or joining an empty root. This bounded refactor changes neither
+profile loading nor root behavior.
+
+Use **delivery strategy** for the proposed `translate`, `place`, and
+`register` choices. Keep the plugin library's existing **delivery mode**
+(`native` or `decompose`) distinct, and keep **materialization mode**
+(regular copies or cache-backed symlinks) independent of both.
+
+For this design, **target** means an application destination; the existing
+compiled **harness target** term retains its runtime-format meaning. A
+**target profile** is future data that defines an application target, not
+a compiler or translation registration. Use a qualifier for generic
+packages (`host package`, `plugin package`): a plugin remains the
+format-owned first-class package resource, and a host package is not
+automatically an `ir.Plugin`. Do not edit the glossary or normative specs
+in this design-only change.
+
+### Delivery strategy and selection
+
+| Strategy | Meaning | Examples |
 |---|---|---|
 | translate | canonical IR compiled to the native format | skills, commands, MCP servers for agent harnesses |
 | place | package files copied into the target root, plus owned-entry merges into shared files | Herdr app mods and layouts, tern plugins |
 | register | place files in an agent-marketplace store, then register them through the host's CLI | Herdr plugins, omp plugins |
 
-A target may mix modes per kind (omp is a translate target for skills and a
-register target for plugins).
+A target may mix strategies per kind (omp is a translate target for skills
+and a register target for plugins).
 
 **Fan-out:** a resource is delivered to every enabled target that accepts
 its kind. A skill reaches every enabled harness; `herdr-app/mod` reaches
@@ -127,11 +181,212 @@ only `herdr-app`. A host kind resolves only when its target is enabled
 A kind becomes portable only when two targets declare a translator for it.
 Host kinds get no canonical IR until then.
 
-**Cost:** invariants that assume every target accepts every agent kind
-(the per-target compile-every-kind check documented in
-`internal/harness/roots.go`, per-target hook/plugin/model catalogs, golden
-iteration over all compiler targets) change to "every kind a target
-accepts". This is the bulk of the foundational work and ships first.
+### Current compiled-target kind matrix
+
+Each current compiled application target declares the same five
+selectable leaf kinds and `plugin` package capability. `collection` remains
+virtual selection expansion, not delivery. `rule` is not selectable at the
+application boundary; the rule column records the existing library
+behavior for diagnostics and output compatibility, not acceptance.
+Kind acceptance does not promise that every value is representable:
+hook events and restrictions, MCP fields, and other value-level limits
+retain their current diagnostics.
+
+| Application target | Skill | Command | Subagent | Hook | MCP server | Plugin | Rule (not selectable) |
+|---|---|---|---|---|---|---|---|
+| Factory | translate | translate | translate | translate | translate | package projection | Emits plain Markdown; `rule.factory.metadata-dropped` when metadata is lost |
+| Claude | translate | translate | translate | translate | translate | package projection | No artifact; `rule.claude.no-primitive` |
+| Cursor | translate | translate | translate | translate | translate | package projection | Emits native `.mdc` |
+| Windsurf | translate | translate | translate | translate | translate | package projection | Emits native `.mdc` |
+| Gemini | translate | translate | translate | translate | translate | package projection | No artifact; `rule.gemini.no-primitive` |
+| Devin | translate | translate | translate | translate | translate | package projection | No artifact; `rule.devin.unsupported` (out of scope) |
+| Codex | translate | translate | translate | translate | translate | package projection | No artifact; `rule.codex.unsupported` (out of scope) |
+| OpenCode | translate | translate | translate | translate | translate | package projection | No artifact; `rule.opencode.unsupported` (out of scope) |
+
+Factory, Cursor, and Windsurf are the only targets that emit native rule
+artifacts. Claude and Gemini report no-primitive diagnostics.
+Devin, Codex, and OpenCode report out-of-scope diagnostics; their codes
+must not be rewritten as claims that the host lacks runtime ability.
+Preserve these distinctions and their existing diagnostic codes.
+
+### Plugin package policy
+
+All eight compiled targets declare plugin package acceptance, but plugins
+remain package projections rather than leaf `Compile` inputs or new public
+selection fields.
+`Compile(plugin)` continues to refuse with
+`plugin.compile.package-required`; use `CompilePackage` and the existing
+plugin catalogs. In the application registry, dispatch plugin handling
+through the `translate` strategy's package path; never call leaf `Compile`.
+The plugin library's `native` and `decompose` choices remain separate
+existing plugin delivery modes. Every shipped plugin catalog has verified
+decomposed delivery. A catalog's `accepts` list is native package-format
+admission only, not a filter on decomposed member delivery.
+
+| Target | Native `accepts` formats | Decompose | Native delivery |
+|---|---|---|---|
+| Claude | `claude-plugin`, `agent-plugin` | verified | user: verified `claude-plugin` via `claude-native-plugin`; repo: unverified |
+| Factory | `factory-plugin`, `claude-plugin` | verified | unverified |
+| Cursor | `agent-plugin` | verified | unverified |
+| Windsurf | `claude-plugin`, `agent-plugin` | verified | unverified |
+| Gemini | none | verified | unverified |
+| Devin | `claude-plugin`, `agent-plugin` | verified | unverified |
+| Codex | `codex-plugin`, `agent-plugin` | verified | unverified |
+| OpenCode | none | verified | unverified |
+
+These facts are recorded in `pluginpolicy/catalogs/*.yaml` and
+`pluginpolicy.Project`; retain the `Compile` refusal and `CompilePackage`
+path. Do not infer native plugin delivery from a format appearing in
+`accepts` or from a package layout. Preserve plugin-member diagnostics
+and whole-instance refusal behavior.
+
+### Bounded `generalize-target-kinds` brief
+
+Implement one application-target model and lookup/list/acceptance seam in
+`internal/harness`, composing the compiled target declarations and the
+existing legacy/native-layout installation factories. Resolve roots and
+destinations through those adapters. If completeness requires an explicit
+compiled translation-kind declaration, put it in `target.Definition` and
+derive it into the application model; do not restate a parallel
+per-target capability authority. Keep diagnostic-only rules separate
+from successfully emitted kinds. Keep hook catalogs scoped to hook
+translation, plugin catalogs to package projection, and model/tool
+catalogs to the translation surfaces that use them. Profile-only targets
+need none; retain all current catalogs.
+
+Preserve existing output bytes and routing while composing the model:
+Factory's forced command copies, Devin and Codex converted command skills,
+Codex's partitioned destinations, Devin's scope-varying hook envelopes,
+and OpenCode's native/owned aggregate paths remain unchanged.
+
+The negative proof plan for the future implementation is:
+
+- A synthetic partial target accepts a proper subset; selecting an
+  unaccepted kind refuses before compile or write and names both kind
+  and target, with no silent fallback to a skill.
+- Missing implementation for an accepted kind fails completeness; a
+  diagnostic-only rule produces no output and retains its existing
+  diagnostic.
+- A collection cannot reach `Compile`; a plugin still requires the
+  package entry point; rejecting a plugin member preserves the whole
+  previous instance.
+- A user-only application descriptor never resolves a repository root;
+  missing capability-specific registrations or catalogs fail only when
+  that capability is required.
+
+The checked-in test inventory distinguishes application acceptance from
+compiler-library completeness:
+
+- `internal/materialize/aggregate_inventory_test.go` contains
+  `probeResources`, `TestAggregateProbeCoversEveryCompilableKind`, and
+  `TestAggregateFilesMatchMaterializedMergeArtifacts`. Keep global probe
+  coverage of every compilable leaf kind plus `rule`; `collection` is
+  virtual, while `plugin` is tested through the package compiler. The
+  per-target aggregate comparison uses accepted compilable leaf kinds,
+  not diagnostic-only `rule`; a valid partial target with no shared
+  aggregates may have an empty inventory.
+- `pkg/harness-compilation/plugin_package_test.go`'s
+  `TestCompileRefusesPlugin` and `TestCompilePackageProjects` preserve the
+  leaf-compile refusal and package-dispatch path for plugins.
+- Add `internal/materialize/native_layout_test.go` checks named
+  `TestNativeLayoutMatchesCompiledArtifactPaths` and
+  `TestDescribedTargetsDeclareNoRuleTopology`. The former proves
+  scope-neutral native topology matches compiled artifact paths; the
+  latter keeps declared accepted kinds distinct from topology and ensures
+  descriptors do not imply rule topology.
+- `pkg/harness-compilation/golden_test.go`'s `TestGolden_AllTargets`
+  continues to compare existing output trees byte-for-byte; never filter
+  fixture bytes. `TestGolden_PerResourceKind` keys its five leaf cases to
+  each compiled target's `AcceptedKinds`, keeps positive checks only for
+  accepted kinds, and separately asserts a negative result for an
+  unaccepted kind when exercising a partial compiled target. Neither test
+  includes profile-only targets: `target.Definitions()` and
+  `CompilerTargets()` remain compiled-only.
+- Keep diagnostic-only rule behavior outside accepted-kind inventories:
+  `pkg/harness-compilation/compile/factory/rule_test.go`
+  (`TestFactoryRule_PlainMarkdown`, `TestFactoryRule_MetadataDropped`),
+  `pkg/harness-compilation/compile/claude/rule_test.go`
+  (`TestClaudeRule_NoPrimitiveDiagnostic`),
+  `pkg/harness-compilation/compile/gemini/rule_test.go`
+  (`TestGeminiRule_NoPrimitiveDiagnostic`),
+  `pkg/harness-compilation/compile/cursor/rule_test.go`
+  (`TestCursorRule_MDC`),
+  `pkg/harness-compilation/compile/windsurf/rule_test.go`
+  (`TestWindsurfRule_MDC`),
+  `pkg/harness-compilation/compile/devin/translator_test.go`
+  (`TestCompilerDropsRulesAsAnOutOfScopeWarning`),
+  `pkg/harness-compilation/compile/codex/translator_test.go`
+  (`TestUnsupportedRuleAndHookProduceStableDiagnostics`), and
+  `pkg/harness-compilation/compile/opencode/translator_test.go`
+  (`TestRulesEmitNoInstructionArtifact`) retain their current guarantees.
+- `pkg/harness-compilation/target_registry_test.go` keeps
+  `TestTargetRegistryIsComplete`, `TestEveryDeclaredTargetHasItsRegistrations`,
+  and `TestEveryRegistrationIsDeclared` as compiler/ingester registration
+  checks. `pkg/harness-compilation/target/target_test.go` keeps
+  `TestDefinitionsHaveUniqueCompleteIdentity` and
+  `TestValidateDefinitionRootModels` for compiled definitions and paired
+  roots; app-only descriptors do not enter this registry or validator.
+- Preserve native and package descriptor checks by name:
+  `pkg/harness-compilation/target/native_layout_test.go`
+  (`TestRegisteredNativeLayoutsValidate`,
+  `TestHookAggregateTopologyIsDeclaredForEveryTarget`) and
+  `pkg/harness-compilation/target/package_layout_test.go`
+  (`TestValidatePackageLayouts`). These remain scope-neutral topology and
+  package-format checks, not app-target registration.
+- `internal/harness/registry_test.go`'s
+  `TestInstallationAdapterRegistryCoverage`,
+  `TestInstallationAdapterInventoryMatchesDescriptor`,
+  `TestRegistryAllowsRepoResolutionWithoutHome`,
+  `TestMigratedTargetsHaveNoLegacyMetadataFallback`, and
+  `TestAdapterBackedMigratedRootRouting`, plus
+  `internal/harness/roots_test.go`'s
+  `TestTargetInfoMapCoversAllInstallRoots`, continue to prove adapter-backed
+  routing, no Devin/Codex/OpenCode legacy fallback, and the `TargetInfoMap`
+  compatibility view. Adapt registry coverage to the composed application
+  set without weakening those invariants.
+- `pkg/harness-compilation/hookpolicy/catalog_test.go` and
+  `pkg/harness-compilation/toolpolicy/catalog_test.go` retain
+  `TestShippedCatalogsValidate` and `TestEveryTargetShipsACatalog`;
+  `pkg/harness-compilation/pluginpolicy/catalog_test.go` retains
+  `TestShippedCatalogsValidate`, `TestEveryTargetShipsACatalog`, and
+  `TestDecomposeDeliveryVerifiedEverywhere`, plus
+  `TestNativeDeliveryVerifiedScopeRequiresProbe`,
+  `TestVerifiedNativeDeliveryProbeRequired`, and
+  `TestVerifiedNativeDeliveryForUnacceptedFormatFails`.
+  `pkg/harness-compilation/modelpolicy/resolve_test.go` retains
+  `TestShippedCatalogs`, and
+  `tools/harness-compat/pluginprobes_test.go` retains
+  `TestPluginCatalogsValidateAgainstNativeProbes`. If a partial compiled
+  target is tested, only catalog checks relevant to its declared accepted
+  capabilities become capability-specific. Keep every current
+  compiled-target catalog and native proof requirement. `target.Targets()`
+  remains compiled-only, so catalog checks do not gain app-only targets
+  or weaken the current compiled-target guarantees.
+
+Existing regression commands, checked against the test names above and
+the rule compiler tests:
+
+```sh
+go test ./internal/materialize -run '^(TestAggregateProbeCoversEveryCompilableKind|TestAggregateFilesMatchMaterializedMergeArtifacts)$' -count=1
+go test ./pkg/harness-compilation -run '^(TestTargetRegistryIsComplete|TestEveryDeclaredTargetHasItsRegistrations|TestEveryRegistrationIsDeclared|TestGolden_AllTargets|TestGolden_PerResourceKind|TestCompileRefusesPlugin|TestCompilePackageProjects)$' -count=1
+go test ./pkg/harness-compilation/target -run '^(TestDefinitionsHaveUniqueCompleteIdentity|TestValidateDefinitionRootModels|TestRegisteredNativeLayoutsValidate|TestValidatePackageLayouts)$' -count=1
+go test ./internal/harness -run '^(TestTargetInfoMapCoversAllInstallRoots|TestInstallationAdapterRegistryCoverage|TestInstallationAdapterInventoryMatchesDescriptor|TestRegistryAllowsRepoResolutionWithoutHome|TestMigratedTargetsHaveNoLegacyMetadataFallback|TestAdapterBackedMigratedRootRouting)$' -count=1
+go test ./pkg/harness-compilation/pluginpolicy -run '^(TestEveryTargetShipsACatalog|TestDecomposeDeliveryVerifiedEverywhere|TestProjectDecomposeIgnoresNativeAccepts)$' -count=1
+go test ./pkg/harness-compilation/hookpolicy -run '^(TestShippedCatalogsValidate|TestEveryTargetShipsACatalog)$' -count=1
+go test ./pkg/harness-compilation/toolpolicy -run '^(TestShippedCatalogsValidate|TestEveryTargetShipsACatalog)$' -count=1
+go test ./pkg/harness-compilation/modelpolicy -run '^TestShippedCatalogs$' -count=1
+go test ./pkg/harness-compilation/compile/... -run 'Rule' -count=1
+```
+
+The existing catalog validator and generator entry points are
+`make catalog-check`, `make model-catalog-check`,
+`make model-catalog-audit`, and `make catalog-docs`; the latter runs
+`tools/catalog-docs`, while `catalog-check` also runs
+`tools/harness-compat`'s `TestPluginCatalogsValidateAgainstNativeProbes`
+and `tools/catalog-docs -check`.
+
+These are future implementation regressions, not runtime trials authorized
+by this design-only assignment.
 
 ### 2. `targets:` in consumer configuration
 
@@ -171,12 +426,13 @@ repository scope is refused with a diagnostic.
 
 ### 3. Target profiles: targets as data
 
-A **target profile** defines a target that uses place and/or register
-delivery, without Go code. Translate delivery stays compiled. Built-in
-harnesses remain compiled targets. The Herdr app is the first profile; it
-ships from a built-in source and goes through the same selection, lock
-and approval path as a profile from any other source, so the format and
-the external path are exercised by real use from the start.
+A **target profile** is future data defining an application target that
+uses `place` and/or `register` delivery strategies, without Go code.
+Translate delivery stays compiled. Built-in harnesses remain compiled
+targets. The Herdr app is the first profile; it ships from a built-in
+source and goes through the same selection, lock and approval path as a
+profile from any other source, so the format and the external path are
+exercised by real use from the start.
 
 **One profile per target.** All Herdr app mods and layouts use the same
 `herdr-app` profile. Its revisions define the host contract: accepted
@@ -946,16 +1202,9 @@ covers more than one app.
 
 ### Carried from the adversarial review, not yet resolved
 
-- **Where the target model lives.** `target.Definition` is in
-  `pkg/harness-compilation`, whose charter excludes distribution and sync.
-  `ValidateDefinition` rejects a target with only a user root, and there
-  are already two registries (`TargetInfoMap`, `InstallationAdapter`).
 - **Register store versus package generations.** `plugin-delivery`
   already specifies immutable, garbage-collected generations with journal
   references; the store in Decision 6 should reuse them.
-- **Terminology.** "Delivery mode", "plugin" and "package" already have
-  glossary meanings in `openspec/config.yaml`. The glossary also needs
-  "target" and "target profile".
 - **Profile identity and lifecycle.** A built-in `herdr-app` profile, "a
   profile cannot claim another target's id" and "upstream ships the
   profile" cannot all hold. Unregistering after a profile update or
