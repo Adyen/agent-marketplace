@@ -1,6 +1,6 @@
 import type { SourceInput } from './api/client'
 
-export type SourceField = 'location' | 'ref' | 'path'
+export type SourceField = 'location' | 'ref'
 export type SourceFieldErrors = Partial<Record<SourceField, string>>
 
 interface SourceDraft {

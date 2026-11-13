@@ -189,6 +189,7 @@ test('Settings source labels share sans typography and Add source stays content-
       expect(Math.abs(metrics.actionRight - metrics.formRight)).toBeLessThanOrEqual(1)
     }
     await checkLayout(1024)
+    await checkLayout(760)
     await checkLayout(720)
   } finally {
     await harness.stop()

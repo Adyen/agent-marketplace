@@ -16,7 +16,6 @@ const refName = ref('')
 const subpath = ref('')
 const touched = ref(new Set<SourceField>())
 const suppressed = ref(new Set<SourceField>())
-const submitAttempted = ref(false)
 const idPrefix = useId()
 
 const kindOptions: { value: SourceInput['kind']; label: string }[] = [
@@ -39,12 +38,11 @@ function fieldError(field: SourceField): string | undefined {
   if (suppressed.value.has(field)) return undefined
   const serverError = props.fieldErrors?.[field]
   if (serverError != null) return serverError
-  return submitAttempted.value || touched.value.has(field) ? validationErrors.value[field] : undefined
+  return touched.value.has(field) ? validationErrors.value[field] : undefined
 }
 
 const locationError = computed(() => fieldError('location'))
 const refError = computed(() => fieldError('ref'))
-const pathError = computed(() => fieldError('path'))
 
 function edit(field: SourceField) {
   touched.value.delete(field)
@@ -60,30 +58,25 @@ function blur(field: SourceField) {
 watch(kind, () => {
   touched.value.clear()
   suppressed.value.clear()
-  submitAttempted.value = false
-  for (const field of ['location', 'ref', 'path'] as const) {
+  for (const field of ['location', 'ref'] as const) {
     if (props.fieldErrors?.[field] != null) emit('edit', field)
   }
 })
 
 function add() {
-  if (props.disabled) return
-  submitAttempted.value = true
   suppressed.value.clear()
-  if (Object.keys(validationErrors.value).length > 0) return
 
-  const normalizedLocation = kind.value === 'git' ? location.value : location.value.trim()
   const source: SourceInput =
     kind.value === 'git'
       ? {
           kind: 'git',
-          location: normalizedLocation,
-          ref: refName.value.trim(),
-          ...(subpath.value.trim() === '' ? {} : { path: subpath.value.trim() }),
+          location: location.value,
+          ref: refName.value,
+          ...(subpath.value === '' ? {} : { path: subpath.value }),
         }
       : kind.value === 'marketplace'
-        ? { kind: 'marketplace', location: normalizedLocation }
-        : { kind: 'directory', location: normalizedLocation }
+        ? { kind: 'marketplace', location: location.value }
+        : { kind: 'directory', location: location.value }
   emit('add', source)
 }
 </script>
@@ -144,17 +137,11 @@ function add() {
         <input
           v-model="subpath"
           class="gui-input"
-          :id="`${idPrefix}-path`"
           aria-label="Source subpath"
           type="text"
           placeholder="optional"
           :disabled="disabled"
-          :aria-invalid="pathError != null ? 'true' : undefined"
-          :aria-describedby="pathError != null ? `${idPrefix}-path-error` : undefined"
-          @input="edit('path')"
-          @blur="blur('path')"
         />
-        <span v-if="pathError" :id="`${idPrefix}-path-error`" class="source-form__error" role="alert">{{ pathError }}</span>
       </label>
     </template>
     <UButton

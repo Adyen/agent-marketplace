@@ -149,7 +149,6 @@ function failAdd(push: (e: ReturnType<typeof event>) => void, operation: Operati
 }
 
 describe('Source settings', () => {
-  // spec: gui-configuration/add-source-request-error-renders-in-the-section
   it('uses the shared field label class for the source kind and source fields', async () => {
     const { wrapper } = await mountSources({ userSources: [] })
     await openSources(wrapper)
