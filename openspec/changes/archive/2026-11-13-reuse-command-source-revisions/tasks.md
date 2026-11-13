@@ -13,4 +13,4 @@
 
 ## 4. Finish
 
-- [ ] 4.1 Run `openspec archive reuse-command-source-revisions --yes` and verify the change is archived.
+- [x] 4.1 Run `openspec archive reuse-command-source-revisions --yes` and verify the change is archived.
