@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -228,6 +229,26 @@ sources:
 	}
 	if !strings.Contains(listOutput, "agents-config") {
 		t.Fatalf("expected agents-config in backup list output, got: %s", listOutput)
+	}
+	configArchives := configArchivePaths(t, homeDir)
+	if len(configArchives) == 0 {
+		t.Fatal("expected configuration archives after sync")
+	}
+	groupHeader := "agents-config (" + strconv.Itoa(len(configArchives)) + "):\n  "
+	groupStart := strings.Index(listOutput, groupHeader)
+	if groupStart == -1 {
+		t.Fatalf("expected agents-config group header %q, got: %s", strings.TrimSuffix(groupHeader, "  "), listOutput)
+	}
+	timestampLine := strings.SplitN(listOutput[groupStart+len(groupHeader):], "\n", 2)[0]
+	matched := false
+	for _, archive := range configArchives {
+		if strings.TrimSuffix(filepath.Base(archive), ".tar.gz") == timestampLine {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		t.Fatalf("agents-config group lists %q, which is not an archive timestamp from %v", timestampLine, configArchives)
 	}
 }
 
