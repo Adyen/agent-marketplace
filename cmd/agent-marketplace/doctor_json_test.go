@@ -88,6 +88,7 @@ func (doctorJSONPanicReader) Read([]byte) (int, error) {
 }
 
 // spec: doctor-repair-planning/json-repair-without-yes-never-writes-or-prompts
+// spec: doctor-repair-planning/json-repair-reports-a-structured-plan-and-results
 func TestDoctorRepairJSONPreviewDoesNotReadTerminalInputOrWrite(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
@@ -121,6 +122,7 @@ func TestDoctorRepairJSONPreviewDoesNotReadTerminalInputOrWrite(t *testing.T) {
 
 // spec: doctor-repair-planning/json-repair-with-yes-runs-only-safe-steps
 // spec: doctor-repair-planning/json-repair-never-prints-mcp-secrets
+// spec: doctor-repair-planning/json-repair-reports-a-structured-plan-and-results
 func TestDoctorRepairJSONYesAdoptsAndDefersConflictingMCP(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

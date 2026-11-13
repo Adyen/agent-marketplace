@@ -26,9 +26,6 @@ import (
 )
 
 func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, initial config.EffectiveConfig) error {
-	if opts.json && opts.jsonReport == nil {
-		opts.jsonReport = repairplanner.NewJSONReport()
-	}
 	slog.Info("doctor repair preview start", "repo_root", repoRoot)
 	ctx := opts.ctx
 	var reads []dependencytxn.ReadAssertion
