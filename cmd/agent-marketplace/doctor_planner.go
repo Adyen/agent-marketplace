@@ -622,11 +622,7 @@ func doctorRepairPolicyReadAssertions(ec config.EffectiveConfig) ([]dependencytx
 			if !errors.As(issue, &validation) {
 				continue
 			}
-			file := validation.File
-			if file == "" && filepath.IsAbs(validation.Path) {
-				file = validation.Path
-			}
-			if err := addPath(file); err != nil {
+			if err := addPath(repairConfigurationSourceFile(validation)); err != nil {
 				return nil, err
 			}
 		}
@@ -636,11 +632,7 @@ func doctorRepairPolicyReadAssertions(ec config.EffectiveConfig) ([]dependencytx
 		if !errors.As(issue, &validation) {
 			continue
 		}
-		file := validation.File
-		if file == "" && filepath.IsAbs(validation.Path) {
-			file = validation.Path
-		}
-		if err := addPath(file); err != nil {
+		if err := addPath(repairConfigurationSourceFile(validation)); err != nil {
 			return nil, err
 		}
 	}
@@ -667,10 +659,7 @@ func addConfigurationIssue(
 	if layer.Source == config.Organization || !errors.As(issue, &validation) || !guidedConfigurationError(validation.Code) {
 		return addHuman(repairplanner.StageConfiguration, code, issue)
 	}
-	file := validation.File
-	if file == "" && filepath.IsAbs(validation.Path) {
-		file = validation.Path
-	}
+	file := repairConfigurationSourceFile(validation)
 	if file == "" {
 		file = layer.Path
 	}
@@ -776,6 +765,16 @@ func guidedConfigurationError(code string) bool {
 	default:
 		return false
 	}
+}
+
+func repairConfigurationSourceFile(validation *config.V4ValidationError) string {
+	if validation.File != "" {
+		return validation.File
+	}
+	if filepath.IsAbs(validation.Path) {
+		return validation.Path
+	}
+	return ""
 }
 
 func repairDiagnosticLine(validation *config.V4ValidationError) int {

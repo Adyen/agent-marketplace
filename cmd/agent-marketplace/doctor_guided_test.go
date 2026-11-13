@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -11,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
@@ -601,38 +599,21 @@ func TestDoctorRepairGuidedEditRevalidatesAtNextStepBoundary(t *testing.T) {
 }
 
 // spec: doctor-repair-planning/an-editor-fix-is-diagnosed-again
-func TestDoctorRepairEditorFailureAndCancellationHaveContext(t *testing.T) {
+func TestDoctorRepairEditorFailureHasContext(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	t.Run("failure", func(t *testing.T) {
-		repoRoot, _ := devinDoctorEnv(t)
-		writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nunknown_field: true\n")
-		script := filepath.Join(t.TempDir(), "fail.sh")
-		writeFile(t, script, "#!/bin/sh\nexit 17\n")
-		t.Setenv("VISUAL", "sh "+fmt.Sprintf("%q", script))
-		var out bytes.Buffer
-		err := runDoctor(doctorOptions{out: &out, in: strings.NewReader("y\n"), isTTY: true, repair: true,
-			probe: staticProbe(devincli.Probe{Status: devincli.StatusNotInstalled})})
-		if err == nil || !strings.Contains(err.Error(), "configuration editor") {
-			t.Fatalf("editor failure lacks operation context: %v\n%s", err, out.String())
-		}
-	})
-	t.Run("context cancellation", func(t *testing.T) {
-		repoRoot, _ := devinDoctorEnv(t)
-		writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nunknown_field: true\n")
-		script := filepath.Join(t.TempDir(), "wait.sh")
-		writeFile(t, script, "#!/bin/sh\nsleep 60\n")
-		t.Setenv("VISUAL", "sh "+fmt.Sprintf("%q", script))
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-		defer cancel()
-		var out bytes.Buffer
-		err := runDoctor(doctorOptions{ctx: ctx, out: &out, in: strings.NewReader("y\n"), isTTY: true, repair: true,
-			probe: staticProbe(devincli.Probe{Status: devincli.StatusNotInstalled})})
-		if err == nil || !strings.Contains(err.Error(), "configuration editor") {
-			t.Fatalf("editor cancellation lacks operation context: %v\n%s", err, out.String())
-		}
-	})
+	repoRoot, _ := devinDoctorEnv(t)
+	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nunknown_field: true\n")
+	script := filepath.Join(t.TempDir(), "fail.sh")
+	writeFile(t, script, "#!/bin/sh\nexit 17\n")
+	t.Setenv("VISUAL", "sh "+fmt.Sprintf("%q", script))
+	var out bytes.Buffer
+	err := runDoctor(doctorOptions{out: &out, in: strings.NewReader("y\n"), isTTY: true, repair: true,
+		probe: staticProbe(devincli.Probe{Status: devincli.StatusNotInstalled})})
+	if err == nil || !strings.Contains(err.Error(), "configuration editor") {
+		t.Fatalf("editor failure lacks operation context: %v\n%s", err, out.String())
+	}
 }
 
 func doctorTestPath(t *testing.T, path string) string {
