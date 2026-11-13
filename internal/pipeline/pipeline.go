@@ -51,14 +51,16 @@ type ResolveOptions struct {
 	// Workspace is the single root-bearing field: it carries the validated
 	// repository, local-config, and derived materialization roots shared by
 	// Resolve and Sync.
-	Workspace        Workspace
-	CatalogMode      catalog.LoadMode
-	Offline          bool
-	Loaders          Loaders
-	CatalogOption    []catalog.LoadOption
-	Gitignore        bool
-	NoBackup         bool
-	RequireTargetSet bool
+	Workspace          Workspace
+	CatalogMode        catalog.LoadMode
+	Offline            bool
+	Loaders            Loaders
+	CatalogOption      []catalog.LoadOption
+	Gitignore          bool
+	NoBackup           bool
+	NoConfigBackup     bool
+	UserConfigSnapshot *UserConfigSnapshot
+	RequireTargetSet   bool
 	// EffectiveOpts overrides the paths used by LoadEffective.
 	EffectiveOpts config.LoadEffectiveOptions
 	// IgnoreBlockedRegistries treats RegistryURLBlockedError from the allowlist
@@ -994,6 +996,9 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 		result.CatalogTrustErrors = []error{err}
 		return result
 	}
+	if !opts.NoBackup && !opts.NoConfigBackup && opts.UserConfigSnapshot == nil {
+		opts.UserConfigSnapshot = CaptureUserConfig()
+	}
 
 	var releaseExactLocks func()
 	if opts.ExactLockLease != nil {
@@ -1122,6 +1127,16 @@ func Sync(ctx context.Context, opts ResolveOptions) SyncResult {
 							backupSpan.End()
 						}
 						result.addMaterializeError(fmt.Errorf("backup: %w", err))
+						return result
+					}
+				}
+				if !opts.NoConfigBackup && opts.UserConfigSnapshot != nil {
+					if _, err := opts.UserConfigSnapshot.WriteArchive(); err != nil {
+						if backupSpan != (telemetry.Span{}) {
+							backupSpan.SetAttributes(map[string]string{"error": "true"})
+							backupSpan.End()
+						}
+						result.addMaterializeError(fmt.Errorf("backup %s: %w", backup.ConfigArchiveTarget, err))
 						return result
 					}
 				}
