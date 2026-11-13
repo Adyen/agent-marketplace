@@ -114,15 +114,25 @@ declarations and scope-neutral native topology. Do not move concrete root
 resolution, profiles, selection, locks, ownership, distribution, or host
 commands into it. Profile-only targets never enter `target.Definitions()`,
 compiler or ingester registration, conversion targets, or translation
-catalogs. If the application model needs declared translation kinds for
-completeness, add `target.Definition.AcceptedKinds []ir.ResourceKind` as
-compiled translation/package capability data. Each current compiled target
-declares the five leaf kinds (`skill`, `command`, `subagent`, `hook`, and
-`mcpserver`) and `plugin`; only Factory, Cursor, and Windsurf declare
-`rule`. Derive the selectable application view by intersecting those
-declarations with `config.AllKinds` and removing virtual `collection`.
-Keep plugin package dispatch separate rather than adding a public selector
-or config field. Do not maintain an independent per-target application-kind
+catalogs. The recommended declaration is
+`target.Definition.AcceptedKinds []ir.ResourceKind` on the compiled
+definition, derived once into `ApplicationTarget` metadata. Today's
+compiled targets carry no such field; the observed matrix is that every
+current compiled target accepts the five leaf kinds (`skill`, `command`,
+`subagent`, `hook`, and `mcpserver`) and `plugin` packages, and only
+Factory, Cursor, and Windsurf emit native `rule` artifacts. The
+recommended `AcceptedKinds` lists those accepted kinds per target, with
+`rule` declared only where the target emits rule artifacts. Derive the
+selectable application view by intersecting the declared leaf kinds with
+`config.AllKinds` excluding virtual `collection`, plus `ir.KindPlugin`
+when the compiled `AcceptedKinds` declares it. `config.AllKinds` holds
+only the five leaf kinds and `collection` (`internal/config/config.go`);
+plugins ride the v4 ordered decision stream (`internal/config/v4.go`,
+`v4KindToIR`) and the package path, so deriving acceptance from
+`config.AllKinds` alone would silently lose plugin. Keep plugin package
+dispatch separate rather than adding a public selector or config field,
+and do not add `plugin` to `config.AllKinds` or change existing selector
+assumptions. Do not maintain an independent per-target application-kind
 list. Rule's diagnostic-only translation paths remain available even
 where `rule` is not accepted.
 
@@ -183,8 +193,10 @@ Host kinds get no canonical IR until then.
 
 ### Current compiled-target kind matrix
 
-Each current compiled application target declares the same five
-selectable leaf kinds and `plugin` package capability. `collection` remains
+Each current compiled application target accepts the same five
+selectable leaf kinds and `plugin` package capability; `AcceptedKinds`
+does not exist yet, so this matrix records observed behavior that the
+recommended field would declare. `collection` remains
 virtual selection expansion, not delivery. `rule` is not selectable at the
 application boundary; the rule column records the existing library
 behavior for diagnostics and output compatibility, not acceptance.
@@ -245,10 +257,10 @@ and whole-instance refusal behavior.
 Implement one application-target model and lookup/list/acceptance seam in
 `internal/harness`, composing the compiled target declarations and the
 existing legacy/native-layout installation factories. Resolve roots and
-destinations through those adapters. If completeness requires an explicit
-compiled translation-kind declaration, put it in `target.Definition` and
-derive it into the application model; do not restate a parallel
-per-target capability authority. Keep diagnostic-only rules separate
+destinations through those adapters. Record the chosen
+`target.Definition.AcceptedKinds []ir.ResourceKind` declaration on each
+compiled target and derive it once into `ApplicationTarget` metadata;
+do not restate a parallel per-target capability authority. Keep diagnostic-only rules separate
 from successfully emitted kinds. Keep hook catalogs scoped to hook
 translation, plugin catalogs to package projection, and model/tool
 catalogs to the translation surfaces that use them. Profile-only targets
@@ -288,12 +300,13 @@ compiler-library completeness:
 - `pkg/harness-compilation/plugin_package_test.go`'s
   `TestCompileRefusesPlugin` and `TestCompilePackageProjects` preserve the
   leaf-compile refusal and package-dispatch path for plugins.
-- Add `internal/materialize/native_layout_test.go` checks named
+- Keep `internal/materialize/native_layout_test.go`'s existing
   `TestNativeLayoutMatchesCompiledArtifactPaths` and
-  `TestDescribedTargetsDeclareNoRuleTopology`. The former proves
+  `TestDescribedTargetsDeclareNoRuleTopology` checks. The former proves
   scope-neutral native topology matches compiled artifact paths; the
   latter keeps declared accepted kinds distinct from topology and ensures
-  descriptors do not imply rule topology.
+  descriptors do not imply rule topology. Future accepted-kind case
+  selection can reuse these checks without inventing rule topology.
 - `pkg/harness-compilation/golden_test.go`'s `TestGolden_AllTargets`
   continues to compare existing output trees byte-for-byte; never filter
   fixture bytes. `TestGolden_PerResourceKind` keys its five leaf cases to
