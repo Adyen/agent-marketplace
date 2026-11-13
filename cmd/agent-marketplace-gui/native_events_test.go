@@ -42,7 +42,7 @@ const nativeCompletionProbeJS = `(async () => {
         body: JSON.stringify({ action }),
       })
       if (response.status !== 202) throw new Error(action + ' status ' + response.status)
-      const message = action + ' complete'
+      const message = action === 'sync' ? 'Sync complete' : 'Update complete'
       const toastDeadline = Date.now() + 30000
       let toast
       while (Date.now() <= toastDeadline) {

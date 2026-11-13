@@ -5,6 +5,7 @@
 - [x] 1.1 Add failing boundary tests for conditional confirmation, modal alignment and busy cursors
 - [x] 1.2 Add failing Go notification outcome and named-message tests and Vitest tone/progress tests
 - [x] 1.3 Cover temporary confirmation-guard refusal and named resource progress copy
+- [x] 1.4 Update the native completion probe's expected named messages
 
 ## 2. Implementation
 
