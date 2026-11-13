@@ -18,7 +18,7 @@
 
 ## 4. Configuration fixers (B3)
 
-- [ ] 4.1 Add guided configuration fixes and human-only version and organization items; verify with annotated tests
+- [x] 4.1 Add guided configuration fixes and human-only version and organization items; verify with annotated tests
 
 ## 5. Shared aggregates for every target (B4)
 

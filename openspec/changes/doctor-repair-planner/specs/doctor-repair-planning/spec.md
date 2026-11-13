@@ -112,3 +112,39 @@ Devin and Codex shared-aggregate ownership repair SHALL run as the last plan sta
 
 - **WHEN** a plan holds both a drift step and shared-aggregate ownership candidates
 - **THEN** the drift step SHALL be numbered and run before the shared-aggregate candidates
+
+### Requirement: Configuration errors offer guided fixes
+
+Configuration field, YAML syntax, and duplicate-key errors in writable consumer layers SHALL appear as guided steps naming the authored file and line and showing a terminal-safe source snippet. Control characters SHALL be escaped. On a terminal without `--yes`, repair SHALL offer `$VISUAL`, or `$EDITOR` when `$VISUAL` is unset, and diagnose again after the editor exits. With neither editor configured, repair SHALL print manual instructions without treating the missing editor as an execution failure. Repair SHALL NOT rewrite configuration automatically.
+
+#### Scenario: Configuration errors show safe source context
+
+- **WHEN** a writable configuration has a field, YAML syntax, or duplicate-key error
+- **THEN** repair SHALL show a guided step with the authored file and line and a source snippet whose control characters are escaped
+
+#### Scenario: An editor fix is diagnosed again
+
+- **WHEN** the user accepts a terminal guided step and the configured editor exits
+- **THEN** repair SHALL diagnose again
+- **AND** a still-broken file SHALL remain a guided step
+
+#### Scenario: Missing editor leaves manual instructions
+
+- **WHEN** a terminal guided step has neither `$VISUAL` nor `$EDITOR` configured
+- **THEN** repair SHALL print manual editing instructions without an editor execution failure
+
+#### Scenario: Non-interactive guided steps are deferred
+
+- **WHEN** repair runs off a terminal or with `--yes`
+- **THEN** guided steps SHALL be listed as deferred and no editor SHALL be launched
+
+#### Scenario: Version and organization issues remain human-only
+
+- **WHEN** diagnosis reports `v4.api-version-required`, `v4.api-version`, or an `organization.*` issue
+- **THEN** repair SHALL list it as human-only with the existing remedy text
+- **AND** its files SHALL remain byte-identical
+
+#### Scenario: A guided layer does not block independent steps
+
+- **WHEN** one layer has a guided error and another step uses only valid inputs from other layers
+- **THEN** that step SHALL remain runnable

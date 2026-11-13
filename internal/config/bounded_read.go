@@ -29,6 +29,11 @@ func readConfigFile(path string) ([]byte, error) {
 	return readOpenedConfigFile(file)
 }
 
+// ReadConfigFile reads a regular config file within the effective config size bound.
+func ReadConfigFile(path string) ([]byte, error) {
+	return readConfigFile(path)
+}
+
 func readOpenedConfigFile(file *os.File) ([]byte, error) {
 	info, err := file.Stat()
 	if err != nil {

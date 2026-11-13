@@ -11,6 +11,17 @@ func init() {
 		},
 	})
 
+	// spec: doctor-repair-planning/non-interactive-guided-steps-are-deferred
+	testTable = append(testTable, TestCase{
+		Name:      "config/doctor_guided_deferred",
+		GlobalCfg: v4(),
+		RepoCfg:   "apiVersion: agent-marketplace/v4\nunknown_field: true\n",
+		Steps: []Step{
+			exits(1, "doctor", "--repair", "--yes").out("guided", "deferred").unchanged("./.agents/config.yaml"),
+			exits(1, "doctor", "--repair").out("guided", "deferred").unchanged("./.agents/config.yaml"),
+		},
+	})
+
 	testTable = append(testTable, TestCase{
 		Name: "config_layer/global_repo_local_merge",
 		Desc: "Given global config with global-skill, repo config with repo-skill, and local config with local-skill, When sync is run, Then skills materialize at their respective scopes",

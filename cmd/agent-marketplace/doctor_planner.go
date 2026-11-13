@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -18,6 +19,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/processstart"
 	"github.com/Adyen/agent-marketplace/internal/remedy"
 	repairplanner "github.com/Adyen/agent-marketplace/internal/repair"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
@@ -28,18 +30,50 @@ import (
 func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, initial config.EffectiveConfig) error {
 	slog.Info("doctor repair preview start", "repo_root", repoRoot)
 	ctx := opts.ctx
-	var reads []dependencytxn.ReadAssertion
-	var policyErr error
-	if len(initial.Errors) == 0 {
-		reads, policyErr = pipeline.EffectivePolicyReadAssertions(initial)
-	}
+	reads, policyErr := doctorRepairPolicyReadAssertions(initial)
+	refreshReadSetAfterEdit := false
 	revalidate := func() error {
 		if policyErr != nil {
 			return policyErr
 		}
 		return dependencytxn.ValidateReadAssertions(reads)
 	}
-	if len(initial.Errors) == 0 && policyErr == nil {
+	refreshEditedFile := func(path string) error {
+		if policyErr != nil {
+			return policyErr
+		}
+		canonical, err := dependencytxn.CanonicalConfigDestination(path)
+		if err != nil {
+			return err
+		}
+		otherReads := make([]dependencytxn.ReadAssertion, 0, len(reads))
+		found := false
+		for _, read := range reads {
+			if read.Path == canonical {
+				found = true
+				continue
+			}
+			otherReads = append(otherReads, read)
+		}
+		if !found {
+			return fmt.Errorf("%w: edited configuration was not captured at %s", dependencytxn.ErrGenerationConflict, canonical)
+		}
+		if err := dependencytxn.ValidateReadAssertions(otherReads); err != nil {
+			return err
+		}
+		generation, err := dependencytxn.ReadGeneration(canonical)
+		if err != nil {
+			return err
+		}
+		for i := range reads {
+			if reads[i].Path == canonical {
+				reads[i].Expected = generation
+			}
+		}
+		refreshReadSetAfterEdit = true
+		return nil
+	}
+	if policyErr == nil {
 		if err := revalidate(); err != nil {
 			return doctorRepairFailure(out, err)
 		}
@@ -62,6 +96,20 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 			current = pipeline.LoadEffective(ctx, pipeline.ConfigLoadOnline, config.LoadEffectiveOptions{
 				RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(),
 			}, nil)
+			if refreshReadSetAfterEdit {
+				if err := revalidate(); err != nil {
+					return repairplanner.Diagnosis{}, err
+				}
+				refreshed, err := doctorRepairPolicyReadAssertions(current)
+				if err != nil {
+					return repairplanner.Diagnosis{}, err
+				}
+				if err := dependencytxn.ValidateReadAssertions(refreshed); err != nil {
+					return repairplanner.Diagnosis{}, err
+				}
+				reads = refreshed
+				refreshReadSetAfterEdit = false
+			}
 		}
 		firstDiagnosis = false
 		previews = nil
@@ -98,11 +146,26 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 		if len(current.Errors) > 0 {
 			incompleteCause = errors.Join(current.Errors...)
 			var causeKey string
+			seenLayerErrors := make(map[string]int)
+			organizationPaths := doctorOrganizationConfigPaths(current)
+			for _, layer := range current.LayerResults() {
+				for _, issue := range layer.Errors {
+					seenLayerErrors[issue.Error()]++
+					key := addConfigurationIssue(&diagnosis, layer, issue, organizationPaths, addHuman, revalidate, refreshEditedFile, opts)
+					if causeKey == "" {
+						causeKey = key
+					}
+				}
+			}
 			for _, issue := range current.Errors {
-				code := repairDiagnosticCode(issue)
-				key := addHuman(repairplanner.StageConfiguration, code, issue)
+				key := issue.Error()
+				if seenLayerErrors[key] > 0 {
+					seenLayerErrors[key]--
+					continue
+				}
+				cause := addHuman(repairplanner.StageConfiguration, repairDiagnosticCode(issue), issue)
 				if causeKey == "" {
-					causeKey = key
+					causeKey = cause
 				}
 			}
 			blockSelection(causeKey, "configuration invalid")
@@ -248,6 +311,13 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 				return err
 			}
 		}
+		for _, step := range steps {
+			if step.Class == repairplanner.Guided && (opts.yes || !opts.isTTY) {
+				if _, err := fmt.Fprintf(out, "  deferred: %s\n", tui.TerminalSafeLine(step.Action)); err != nil {
+					return err
+				}
+			}
+		}
 		if !previewsShown && len(previews) > 0 {
 			for _, target := range previews {
 				if _, err := fmt.Fprintf(out, "repair: %s shared-aggregate ownership\n", targetDisplayName(string(target.Target))); err != nil {
@@ -308,6 +378,7 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 		Display:          display,
 		Validate:         revalidate,
 		AllowDestructive: opts.isTTY,
+		AllowGuided:      opts.isTTY && !opts.yes,
 		Confirm: func([]repairplanner.Step) bool {
 			if opts.yes {
 				return true
@@ -508,4 +579,262 @@ func repairDiagnosticCodeFromDiagnostics(diagnostics []diag.Diagnostic) string {
 		}
 	}
 	return diag.CodeDoctorRepairFailed
+}
+
+func doctorRepairPolicyReadAssertions(ec config.EffectiveConfig) ([]dependencytxn.ReadAssertion, error) {
+	reads, err := pipeline.EffectivePolicyReadAssertions(ec)
+	if err != nil {
+		return nil, err
+	}
+	byRequested := make(map[string]dependencytxn.ReadAssertion, len(reads))
+	for _, read := range reads {
+		byRequested[read.RequestedPath] = read
+	}
+	addPath := func(path string) error {
+		if path == "" {
+			return nil
+		}
+		canonical, err := dependencytxn.CanonicalConfigDestination(path)
+		if err != nil {
+			return err
+		}
+		generation, err := dependencytxn.ReadGeneration(canonical)
+		if err != nil {
+			return err
+		}
+		if prior, ok := byRequested[path]; ok {
+			if prior.Path != canonical || (prior.Expected.Exists || prior.Expected.Digest != "") && prior.Expected != generation {
+				return fmt.Errorf("%w: config read changed at %s", dependencytxn.ErrGenerationConflict, path)
+			}
+		}
+		byRequested[path] = dependencytxn.ReadAssertion{Path: canonical, RequestedPath: path, Expected: generation}
+		return nil
+	}
+	for _, layer := range ec.LayerResults() {
+		if err := addPath(layer.Path); err != nil {
+			return nil, err
+		}
+		if len(layer.Errors) == 0 {
+			continue
+		}
+		for _, issue := range layer.Errors {
+			var validation *config.V4ValidationError
+			if !errors.As(issue, &validation) {
+				continue
+			}
+			file := validation.File
+			if file == "" && filepath.IsAbs(validation.Path) {
+				file = validation.Path
+			}
+			if err := addPath(file); err != nil {
+				return nil, err
+			}
+		}
+	}
+	for _, issue := range ec.Errors {
+		var validation *config.V4ValidationError
+		if !errors.As(issue, &validation) {
+			continue
+		}
+		file := validation.File
+		if file == "" && filepath.IsAbs(validation.Path) {
+			file = validation.Path
+		}
+		if err := addPath(file); err != nil {
+			return nil, err
+		}
+	}
+	reads = reads[:0]
+	for _, read := range byRequested {
+		reads = append(reads, read)
+	}
+	sort.Slice(reads, func(i, j int) bool { return reads[i].RequestedPath < reads[j].RequestedPath })
+	return reads, nil
+}
+
+func addConfigurationIssue(
+	diagnosis *repairplanner.Diagnosis,
+	layer config.LayerResult,
+	issue error,
+	organizationPaths []string,
+	addHuman func(repairplanner.Stage, string, error) string,
+	revalidate func() error,
+	refreshEditedFile func(string) error,
+	opts doctorOptions,
+) string {
+	code := repairDiagnosticCode(issue)
+	var validation *config.V4ValidationError
+	if layer.Source == config.Organization || !errors.As(issue, &validation) || !guidedConfigurationError(validation.Code) {
+		return addHuman(repairplanner.StageConfiguration, code, issue)
+	}
+	file := validation.File
+	if file == "" && filepath.IsAbs(validation.Path) {
+		file = validation.Path
+	}
+	if file == "" {
+		file = layer.Path
+	}
+	if aliases, err := configurationAliasesOrganization(file, organizationPaths); err != nil || aliases {
+		return addHuman(repairplanner.StageConfiguration, code, issue)
+	}
+	line := repairDiagnosticLine(validation)
+	source, err := config.ReadConfigFile(file)
+	if err != nil {
+		return addHuman(repairplanner.StageConfiguration, code, fmt.Errorf("read configuration source %s: %w", tui.TerminalSafeLine(file), err))
+	}
+	lines := strings.Split(string(source), "\n")
+	if line < 1 || line > len(lines) {
+		line = 1
+	}
+	action := tui.TerminalSafeLine(fmt.Sprintf("edit %s:%d %s; source: %s", file, line, issue.Error(), lines[line-1]))
+	key := fmt.Sprintf("guided-%s-%s-%d-%s", layer.Source, file, line, code)
+	diagnosis.Steps = append(diagnosis.Steps, repairplanner.Step{
+		Key: key, Stage: repairplanner.StageConfiguration, Class: repairplanner.Guided,
+		Action: action, Code: code, Files: []string{tui.TerminalSafeLine(file)},
+		Apply: func(ctx context.Context) (bool, error) {
+			return applyGuidedConfigurationEdit(ctx, opts, file, organizationPaths, revalidate, refreshEditedFile)
+		},
+	})
+	return key
+}
+
+func doctorOrganizationConfigPaths(ec config.EffectiveConfig) []string {
+	paths := make(map[string]struct{})
+	add := func(path string) {
+		if path != "" {
+			paths[path] = struct{}{}
+		}
+	}
+	add(ec.Organization.Path)
+	for _, read := range ec.Organization.Reads {
+		add(read.Path)
+		add(read.RequestedPath)
+	}
+	for _, issue := range ec.Organization.Errors {
+		var validation *config.V4ValidationError
+		if errors.As(issue, &validation) {
+			add(validation.File)
+		}
+	}
+	result := make([]string, 0, len(paths))
+	for path := range paths {
+		result = append(result, path)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func configurationAliasesOrganization(path string, organizationPaths []string) (bool, error) {
+	canonical, err := dependencytxn.CanonicalConfigDestination(path)
+	if err != nil {
+		return false, err
+	}
+	info, infoErr := os.Stat(canonical)
+	if infoErr != nil && !errors.Is(infoErr, os.ErrNotExist) {
+		return false, infoErr
+	}
+	for _, organizationPath := range organizationPaths {
+		organizationCanonical, err := dependencytxn.CanonicalConfigDestination(organizationPath)
+		if err != nil {
+			return false, err
+		}
+		if canonical == organizationCanonical {
+			return true, nil
+		}
+		if infoErr == nil {
+			organizationInfo, err := os.Stat(organizationCanonical)
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return false, err
+			}
+			if os.SameFile(info, organizationInfo) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func guidedConfigurationError(code string) bool {
+	switch code {
+	case "v4.parse", "v4.layer-field", "v4.unknown-field", "v4.duplicate-key",
+		"v4.alias-forbidden", "v4.auxiliary", "v4.duplicate", "v4.duplicate-request",
+		"v4.exclusion", "v4.git-origin", "v4.git-path", "v4.git-ref", "v4.git-ref-required",
+		"v4.harness", "v4.installed-name", "v4.key-type", "v4.locator", "v4.marketplace-url",
+		"v4.merge-key-forbidden", "v4.multiple-documents", "v4.option-combination",
+		"v4.registry-slug", "v4.resource-item", "v4.resource-options", "v4.revision",
+		"v4.root-type", "v4.runtime-option", "v4.source-conflict", "v4.source-discriminator",
+		"v4.source-field", "v4.source-kind", "v4.source-name", "v4.source-type",
+		"v4.source-value", "v4.type", "v4.undefined-source":
+		return true
+	default:
+		return false
+	}
+}
+
+func repairDiagnosticLine(validation *config.V4ValidationError) int {
+	if validation.Line > 0 {
+		return validation.Line
+	}
+	message := validation.Msg
+	if offset := strings.Index(message, "line "); offset >= 0 {
+		fields := strings.Fields(message[offset+len("line "):])
+		if len(fields) > 0 {
+			if line, err := strconv.Atoi(strings.TrimSuffix(fields[0], ":")); err == nil && line > 0 {
+				return line
+			}
+		}
+	}
+	return 1
+}
+
+func applyGuidedConfigurationEdit(
+	ctx context.Context,
+	opts doctorOptions,
+	path string,
+	organizationPaths []string,
+	revalidate func() error,
+	refreshEditedFile func(string) error,
+) (bool, error) {
+	editor := strings.TrimSpace(os.Getenv("VISUAL"))
+	if editor == "" {
+		editor = strings.TrimSpace(os.Getenv("EDITOR"))
+	}
+	safePath := tui.TerminalSafeLine(path)
+	if editor == "" {
+		_, err := fmt.Fprintf(opts.out, "  deferred: no $VISUAL or $EDITOR is set; edit %s manually, then run `agent-marketplace doctor --repair` again\n", safePath)
+		return false, err
+	}
+	accepted, err := confirmPrompt(opts.out, opts.repairReader,
+		fmt.Sprintf("Edit %s with %s? [y/N] ", safePath, tui.TerminalSafeLine(editor)))
+	if err != nil {
+		return false, err
+	}
+	if !accepted {
+		_, err := fmt.Fprintf(opts.out, "  deferred: editor offer declined for %s\n", safePath)
+		return false, err
+	}
+	if err := revalidate(); err != nil {
+		return false, err
+	}
+	aliases, err := configurationAliasesOrganization(path, organizationPaths)
+	if err != nil {
+		return false, fmt.Errorf("check organization editor boundary: %w", err)
+	}
+	if aliases {
+		return false, fmt.Errorf("%w: configuration editor target aliases organization configuration %s", dependencytxn.ErrGenerationConflict, safePath)
+	}
+	command := processstart.Command(ctx, "sh", "-c", `exec `+editor+` "$@"`, "doctor-editor", path)
+	command.Stdin = opts.in
+	command.Stdout = opts.out
+	command.Stderr = opts.err
+	if err := command.Run(); err != nil {
+		return false, fmt.Errorf("run configuration editor: %w", err)
+	}
+	if err := refreshEditedFile(path); err != nil {
+		return false, err
+	}
+	return true, nil
 }

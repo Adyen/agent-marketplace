@@ -37,6 +37,7 @@ import (
 // binary.
 type doctorOptions struct {
 	out io.Writer
+	err io.Writer
 	in  io.Reader
 	// isTTY enables the safe-step and destructive-entry confirmations.
 	isTTY        bool
@@ -79,9 +80,14 @@ or blocker. One terminal confirmation authorizes safe steps. Destructive
 replacements and orphan removals keep their per-entry confirmations and never
 run with --yes. Devin and Codex shared aggregate files include hooks.v1.json,
 config.json#hooks, mcp_config.json, .codex/hooks.json, and .codex/config.toml.
-Off a terminal, --repair is preview-only unless --yes is set; --yes runs only
-safe steps. Repair uses the acquisition locks already on disk and never edits
-harness lists or organization files.
+Configuration field, YAML, and duplicate-key errors are guided with a safe
+source snippet. On a terminal without --yes, repair offers $VISUAL or $EDITOR
+and diagnoses again after the editor exits. With --yes or off a terminal,
+guided configuration edits are deferred. Version and organization issues
+remain human-only. Off a terminal, --repair is preview-only unless --yes is
+set; --yes runs only safe steps. Repair uses the acquisition locks already on
+disk and never rewrites configuration automatically, edits harness lists, or
+edits organization files.
 `),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -91,6 +97,7 @@ harness lists or organization files.
 			return runDoctor(doctorOptions{
 				ctx:    cmd.Context(),
 				out:    cmd.OutOrStdout(),
+				err:    cmd.ErrOrStderr(),
 				in:     cmd.InOrStdin(),
 				isTTY:  term.IsTerminal(os.Stdin.Fd()),
 				repair: repair,
@@ -99,8 +106,8 @@ harness lists or organization files.
 		},
 	}
 
-	cmd.Flags().BoolVar(&repair, "repair", false, "Diagnose, plan, and confirm safe harness-drift and Devin and Codex shared-aggregate repairs")
-	cmd.Flags().BoolVar(&assumeYes, "yes", false, "With --repair, run safe planned steps without prompting; destructive aggregate changes are never automatic")
+	cmd.Flags().BoolVar(&repair, "repair", false, "Diagnose harness drift and Devin and Codex shared-aggregate repairs, plus guided configuration fixes")
+	cmd.Flags().BoolVar(&assumeYes, "yes", false, "With --repair, run safe steps without prompting; guided edits are deferred and destructive changes are never automatic")
 	return cmd
 }
 
@@ -111,6 +118,9 @@ func runDoctor(opts doctorOptions) error {
 	opts.ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(opts.ctx)
 	if opts.out == nil {
 		opts.out = os.Stdout
+	}
+	if opts.err == nil {
+		opts.err = os.Stderr
 	}
 	if opts.probe == nil {
 		opts.probe = func(ctx context.Context) devincli.Probe { return devincli.Detect(ctx) }
