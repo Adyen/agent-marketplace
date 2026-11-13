@@ -185,6 +185,10 @@ func TestUpdateReusesPlanVerifiedMarketplaceRevisions(t *testing.T) {
 			t.Errorf("%s pin requests = latest %d, by-digest %d; want 0 and 1", name, counts[0], counts[1])
 		}
 	}
+	counts := requests["changed"]
+	if counts[0] != 1 || counts[1] > 1 {
+		t.Errorf("changed pin requests = latest %d, by-digest %d; want exactly 1 and at most 1", counts[0], counts[1])
+	}
 }
 
 func TestRejectedMarketplaceRevisionIsNotReusedByRefresh(t *testing.T) {

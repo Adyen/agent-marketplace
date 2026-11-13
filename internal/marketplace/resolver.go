@@ -1303,7 +1303,8 @@ func mustIRKind(kind string) ir.ResourceKind {
 
 func (r *Resolver) fetchResourceRevision(ctx context.Context, client *Client, entry config.MarketplaceEntry, pin config.MarketplaceResourcePin, mode resolver.MarketplaceResolveMode) (store.AssessedResourceRevision, error) {
 	if mode == resolver.MarketplaceResolveModeRefresh {
-		if rev, ok := r.Verified.lookup(entry, pin); ok && validateResourceRevision(entry, pin, rev) == nil {
+		if rev, ok := r.Verified.lookup(entry, pin); ok && validateResourceRevision(entry, pin, rev) == nil &&
+			(pin.RegistryCommit == "" || (rev.Occurrence.Commit == pin.RegistryCommit && rev.Occurrence.ManifestDigest == store.RevisionDigest(pin.RegistryManifestDigest))) {
 			return rev, nil
 		}
 	}

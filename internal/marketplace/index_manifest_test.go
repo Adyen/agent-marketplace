@@ -143,3 +143,61 @@ func TestIndexOnlyResolutionBindsRegistryRevisionManifest(t *testing.T) {
 		t.Fatalf("cached index-only artifact with a foreign archive digest = %d artifacts, errors %v", len(resolved), errs)
 	}
 }
+
+func TestIndexOnlyRefreshFallsBackFromDifferentVerifiedOccurrence(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	repo, commit := commitReviewSkillRepo(t, "Review the code.")
+	origin := "file://" + repo
+	registry := store.Registry{ID: "src", Slug: "source", Ref: "main", Origins: []string{origin}, Acquisition: store.AcquisitionIndexOnly, License: "MIT", Roots: []store.RegistryRoot{{Path: ".agents", SourceHarness: "factory"}}}
+	built, err := ingest.BuildRegistryRevision(context.Background(), marketplaceconfig.Config{Policy: marketplaceconfig.Policy{HiddenContent: "warn", Limits: marketplaceconfig.Limits{IngestionDuration: marketplaceconfig.Duration(2 * time.Minute)}}}, "mp", registry, repo, commit)
+	if err != nil {
+		t.Fatalf("build revision: %v", err)
+	}
+	var revision store.AssessedResourceRevision
+	for _, candidate := range built.Resources {
+		if candidate.Coordinate.Kind == "skill" && candidate.Coordinate.Name == "review" {
+			revision = assessedRevisionOccurrence(candidate, commit, string(built.ManifestDigest))
+		}
+	}
+	if revision.ContentDigest == "" {
+		t.Fatal("reference revision is missing")
+	}
+	manifestDigest := string(built.ManifestDigest)
+	server := serveIndexOnlyOccurrence(t, registry, origin, commit, revision, manifestDigest, built.ManifestPayload)
+	pin := config.MarketplaceResourcePin{
+		RegistryID: "src", Kind: "skill", Name: "review",
+		Revision: string(revision.ContentDigest), Digest: string(revision.ContentDigest),
+		Acquisition: config.MarketplaceAcquisitionIndexOnly, RegistryCommit: commit,
+		RegistryManifestDigest: manifestDigest,
+	}
+	entry := config.MarketplaceEntry{URL: server.URL, InstanceID: "mp", Resources: []config.MarketplaceResourcePin{pin}}
+	differentCommit := strings.Repeat("0", 40)
+	if differentCommit == commit {
+		differentCommit = strings.Repeat("1", 40)
+	}
+	differentManifestDigest := "sha256:" + strings.Repeat("d", 64)
+	for _, tc := range []struct {
+		name           string
+		commit         string
+		manifestDigest string
+	}{
+		{name: "different commit", commit: differentCommit, manifestDigest: manifestDigest},
+		{name: "different manifest", commit: commit, manifestDigest: differentManifestDigest},
+		{name: "matching occurrence", commit: commit, manifestDigest: manifestDigest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			verified := assessedRevisionOccurrence(revision.ResourceRevision, tc.commit, tc.manifestDigest)
+			verifiedRevisions := &VerifiedRevisions{}
+			verifiedRevisions.record(entry, pin, verified)
+			resolved, errs := (&Resolver{Cache: NewCache(t.TempDir()), Verified: verifiedRevisions}).Resolve(
+				context.Background(),
+				&config.Config{Marketplaces: []config.MarketplaceEntry{entry}},
+				[]hcc.Target{hcc.TargetFactory},
+				resolver.MarketplaceResolveModeRefresh,
+			)
+			if len(errs) != 0 || len(resolved) != 1 {
+				t.Fatalf("index-only Refresh = %d artifacts, errors %v", len(resolved), errs)
+			}
+		})
+	}
+}
