@@ -635,6 +635,30 @@ textarea:focus-visible,
   padding: 0;
 }
 
+.source-form .source-form__kind > legend.source-form__label,
+.source-form__label {
+  color: var(--gui-ink);
+  font-family: var(--gui-sans);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.source-form .gui-input[aria-invalid="true"] {
+  border-color: var(--am-color-status-danger);
+}
+
+.source-form__error {
+  color: var(--am-color-status-danger);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.source-form__submit {
+  align-self: flex-end;
+}
+
 .gui-search-field {
   align-items: center;
   display: flex;

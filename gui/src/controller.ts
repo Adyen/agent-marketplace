@@ -97,6 +97,7 @@ export interface WorkspaceState {
   requesting: boolean
   error: string | null
   sourceError: string | null
+  sourceErrorField: 'location' | null
   configuration: Configuration | null
   latestVersion: string
   releaseNotice: ReleaseNotice | null
@@ -146,6 +147,7 @@ export class WorkspaceController {
     requesting: false,
     error: null,
     sourceError: null,
+    sourceErrorField: null,
     configuration: null,
     latestVersion: '',
     releaseNotice: null,
@@ -609,12 +611,14 @@ export class WorkspaceController {
 
   async addSource(source: SourceInput): Promise<boolean> {
     this.state.sourceError = null
+    this.state.sourceErrorField = null
     const accepted = await this.requestOperation(
       () => this.client.configure({ action: 'add-source', source }),
       false,
       (error) => {
         if (error instanceof RequestError && error.code === 'localapi.directory_unavailable') {
           this.state.sourceError = 'Directory source path does not exist or is not a directory.'
+          this.state.sourceErrorField = 'location'
         }
       },
     )
