@@ -194,15 +194,24 @@ export function validateGitLocation(raw: string): boolean {
 }
 
 function isMarketplaceURL(location: string): boolean {
-  const value = location.trim()
-  if (!/^(https?):\/\/[^/?#\\]+/i.test(value)) return false
+  const value = trimGoWhitespace(location)
+  if (/[\u0000-\u001f\u007f]/.test(value) || value.includes('\\') || hasInvalidEscape(value)) return false
 
-  try {
-    const url = new URL(value)
-    return (url.protocol === 'http:' || url.protocol === 'https:') && url.hostname !== ''
-  } catch {
-    return false
+  const match = value.match(/^https?:\/\/([^/?#]+)/i)
+  if (!match) return false
+  const authority = match[1]
+  if (authority.includes(' ')) return false
+
+  const hostPort = authority.slice(authority.lastIndexOf('@') + 1)
+  if (hostPort === '' || !validGoHostCharacters(hostPort.replace(/%[0-9a-f]{2}/gi, 'x'))) return false
+
+  if (hostPort.startsWith('[')) {
+    const closingBracket = hostPort.lastIndexOf(']')
+    return closingBracket > 1 && /^(:\d*)?$/.test(hostPort.slice(closingBracket + 1))
   }
+
+  const lastColon = hostPort.lastIndexOf(':')
+  return lastColon < 0 || (lastColon > 0 && /^:\d*$/.test(hostPort.slice(lastColon)))
 }
 
 export function validateSourceInput(source: SourceDraft): SourceFieldErrors {

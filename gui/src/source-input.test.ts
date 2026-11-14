@@ -8,9 +8,20 @@ interface GitLocationCase {
   valid: boolean
 }
 
+interface MarketplaceLocationCase {
+  name: string
+  location: string
+  admitted: boolean
+  clientValid: boolean
+}
+
 const gitLocations = JSON.parse(
   readFileSync(new URL('../tests/fixtures/source-locations.json', import.meta.url), 'utf8'),
 ) as GitLocationCase[]
+
+const marketplaceLocations = JSON.parse(
+  readFileSync(new URL('../tests/fixtures/marketplace-locations.json', import.meta.url), 'utf8'),
+) as MarketplaceLocationCase[]
 
 describe('source input validation', () => {
   // spec: gui-configuration/valid-source-input-enables-addition
@@ -18,6 +29,14 @@ describe('source input validation', () => {
   it.each(gitLocations)('matches GUI add-source admission for $name', ({ location, valid }) => {
     const errors = validateSourceInput({ kind: 'git', location, ref: 'main', path: '' })
     expect(Object.hasOwn(errors, 'location')).toBe(!valid)
+  })
+
+  // spec: gui-configuration/valid-source-input-enables-addition
+  // spec: gui-configuration/invalid-source-input-disables-addition
+  it.each(marketplaceLocations)('matches Marketplace location validity for $name', ({ location, admitted, clientValid }) => {
+    const errors = validateSourceInput({ kind: 'marketplace', location, ref: '', path: '' })
+    expect(!Object.hasOwn(errors, 'location')).toBe(clientValid)
+    if (admitted) expect(clientValid).toBe(true)
   })
 
   // spec: gui-configuration/invalid-source-input-disables-addition

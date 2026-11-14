@@ -1548,6 +1548,48 @@ func TestAddSourceAdmissionMatchesSharedCases(t *testing.T) {
 	}
 }
 
+// spec: gui-configuration/valid-source-input-enables-addition
+// spec: gui-configuration/invalid-source-input-disables-addition
+func TestMarketplaceSourceAdmissionMatchesSharedCases(t *testing.T) {
+	type marketplaceLocationCase struct {
+		Name     string `json:"name"`
+		Location string `json:"location"`
+		Admitted bool   `json:"admitted"`
+	}
+
+	raw, err := os.ReadFile("../../gui/tests/fixtures/marketplace-locations.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []marketplaceLocationCase
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatal(err)
+	}
+	if len(cases) == 0 {
+		t.Fatal("shared Marketplace location cases are empty")
+	}
+	for _, tc := range cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			entry, admitted := validateAddSource(&configurationActionSource{
+				Kind:     "marketplace",
+				Location: tc.Location,
+			}, nil)
+			if admitted != tc.Admitted {
+				t.Errorf("Marketplace admission for %q = %v, want %v", tc.Location, admitted, tc.Admitted)
+			}
+			if admitted {
+				normalized, err := config.NormalizeMarketplaceURL(tc.Location)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if entry.URL != normalized {
+					t.Errorf("Marketplace URL = %q, want normalized URL %q", entry.URL, normalized)
+				}
+			}
+		})
+	}
+}
+
 func TestUserSourceAddAcceptsSSHAndSCPOrigins(t *testing.T) {
 	home, _ := newUserAPIFixture(t, true)
 	userConfig := filepath.Join(home, ".agents", "config.yaml")

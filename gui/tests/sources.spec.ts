@@ -165,7 +165,6 @@ test('built GUI clears a directory source error when Location is edited', async 
   }
 })
 
-// spec: gui-configuration/valid-source-input-enables-addition
 test('Settings source labels share sans typography and Add source stays content-width', async ({ page }) => {
   if (!distIndexExists()) {
     throw new Error('built GUI assets missing: run `./node_modules/.bin/vite build` in gui/ first')

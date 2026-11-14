@@ -479,6 +479,35 @@ describe('Source settings', () => {
     expect(addSection.querySelector('[role="alert"]')).toBeNull()
   })
 
+  // spec: gui-configuration/add-source-error-clears-after-a-successful-add
+  it('clears a directory field error after a successful add without editing Location', async () => {
+    const { client, push } = sourcesClient({ userSources: [] })
+    const failure = new RequestError(400, 'localapi.directory_unavailable')
+    vi.mocked(client.configure)
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValueOnce({ id: 9, kind: 'mutation' } as OperationRef)
+    const { wrapper } = mountWorkspace(client)
+    push(event({ sequence: 1 }))
+    await tick()
+
+    await openSources(wrapper)
+    await setInput('Source location', '/opt/new-regs')
+    button('Add source').click()
+    await tick()
+
+    const addSection = dialog().querySelector<HTMLElement>('[aria-label="Add user source"]')!
+    const location = field('Source location')
+    expect(addSection.querySelector('[role="alert"]')?.textContent).toContain('Directory source path does not exist')
+    expect(location.getAttribute('aria-invalid')).toBe('true')
+
+    button('Add source').click()
+    await tick()
+
+    expect(client.configure).toHaveBeenCalledTimes(2)
+    expect(addSection.querySelector('[role="alert"]')).toBeNull()
+    expect(field('Source location').hasAttribute('aria-invalid')).toBe(false)
+  })
+
   it('keeps a pre-existing mutation error at the top when an add source request is accepted', async () => {
     const { client, push } = sourcesClient({ userSources: [] })
     const saveFailure = {
