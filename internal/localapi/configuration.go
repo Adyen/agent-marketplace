@@ -582,7 +582,7 @@ func (a *API) handleSourceMutation(w http.ResponseWriter, r *http.Request, req c
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(map[string]any{"operation": operationRef{ID: uint64(operation), Kind: string(session.OperationMutation)}})
 
-	go a.runOperation(operation, session.OperationMutation, func(ctx context.Context, _ session.RequestGeneration) (warnings []error, final session.Snapshot, failed error) {
+	go a.runOperation(operation, session.OperationMutation, sourceOperationSubject(req.action), func(ctx context.Context, _ session.RequestGeneration) (warnings []error, final session.Snapshot, failed error) {
 		failed = a.executeSourceMutation(ctx, req)
 		final = a.readSnapshot(ctx, session.CatalogLoadCached)
 		return nil, final, failed
@@ -725,7 +725,7 @@ func (a *API) handleSaveTargets(w http.ResponseWriter, r *http.Request, targets 
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(map[string]any{"operation": operationRef{ID: uint64(operation), Kind: string(session.OperationTargets)}})
 
-	go a.runOperation(operation, session.OperationTargets, func(ctx context.Context, _ session.RequestGeneration) (warnings []error, final session.Snapshot, failed error) {
+	go a.runOperation(operation, session.OperationTargets, operationSubject{}, func(ctx context.Context, _ session.RequestGeneration) (warnings []error, final session.Snapshot, failed error) {
 		err := config.SetHarnessesInConfig(a.userConfigPath(), targets)
 		final = a.readSnapshot(ctx, session.CatalogLoadCached)
 		return nil, final, err
@@ -798,7 +798,7 @@ func (a *API) handleInitialize(w http.ResponseWriter, r *http.Request, req confi
 	_ = json.NewEncoder(w).Encode(map[string]any{"operation": operationRef{ID: uint64(operation), Kind: string(session.OperationMutation)}})
 
 	consent := req.consentSeen && req.consent
-	go a.runOperation(operation, session.OperationMutation, func(ctx context.Context, _ session.RequestGeneration) (warnings []error, final session.Snapshot, failed error) {
+	go a.runOperation(operation, session.OperationMutation, operationSubject{success: "Configuration saved", failure: "Couldn't save configuration"}, func(ctx context.Context, _ session.RequestGeneration) (warnings []error, final session.Snapshot, failed error) {
 		path, err := config.InitializeUserPersonalAtPath(a.userConfigPath(), req.targets)
 		if err == nil && consent {
 			err = config.SetUserTelemetryLevel(path, tmcfg.LevelBasic)

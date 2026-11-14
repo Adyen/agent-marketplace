@@ -287,7 +287,7 @@ async function confirmRemove() {
           </p>
           <p v-if="controller.state.operation" role="status" class="settings__notice">
             <GuiIcon name="info" class="settings__notice-icon" />
-            <span>{{ operationLabel(controller.state.operation.kind) }}…</span>
+            <span>{{ operationLabel(controller.state.operation.kind) }}</span>
           </p>
           <p v-if="configuration == null && !actionError" role="status" class="settings__notice settings__notice--loading">Loading settings…</p>
           <p v-if="configuration != null && !configuration.editable" role="status" class="settings__notice">

@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import type { ResourceAction } from './api/client'
 import { eligible, type WorkspaceController } from './controller'
+import { resourceActionProgressLabel } from './feedback'
 import GuiModal from './GuiModal.vue'
 
 const props = defineProps<{ controller: WorkspaceController }>()
@@ -41,12 +42,17 @@ function actionName(value: ResourceAction): string {
     case 'restore':
       return 'Restore'
     default:
-      return 'Resource action'
+      return 'Action'
   }
 }
 
 const title = computed(() => `${actionName(action.value)} Resource`)
 const confirmLabel = computed(() => `Confirm ${actionName(action.value).toLowerCase()}`)
+const progressText = computed(() => state.value == null
+  ? ''
+  : state.value.plan == null
+    ? `Checking ${state.value.displayName}…`
+    : resourceActionProgressLabel(action.value, state.value.displayName))
 const showConfirm = computed(() => state.value?.error == null || state.value.plan != null)
 const canConfirm = computed(() => {
   const current = state.value
@@ -83,17 +89,18 @@ function harnessDisplayName(id: string): string {
     v-model:open="open"
     :title="title"
     :dismissible="!controller.resourceActionSubmitting"
+    :busy="state?.loading === true || controller.resourceActionSubmitting"
   >
     <div class="resource-actions">
       <p v-if="state?.loading || controller.resourceActionSubmitting" class="resource-actions__status" role="status" aria-live="polite">
         <span class="gui-toast__spinner resource-actions__spinner" aria-hidden="true" />
-        <span>{{ state?.plan == null ? 'Preparing a verified resource action…' : 'Waiting for the resource action to be accepted…' }}</span>
+        <span>{{ progressText }}</span>
       </p>
       <p class="resource-actions__copy">{{ actionCopy }}</p>
       <p v-if="state?.error" role="alert">{{ state.error }}</p>
       <details v-if="state?.plan" class="resource-actions__details">
         <summary>Technical details</summary>
-        <pre class="resource-actions__preview" role="region" tabindex="0" aria-label="Resource action preview">{{ state.plan.preview }}</pre>
+        <pre class="resource-actions__preview" role="region" tabindex="0" aria-label="Action preview">{{ state.plan.preview }}</pre>
       </details>
       <label v-if="state?.plan?.requiresRiskAcceptance" class="resource-actions__risk">
         <input
@@ -110,7 +117,7 @@ function harnessDisplayName(id: string): string {
       <UButton
         v-if="state?.error"
         label="Retry plan"
-        aria-label="Retry resource action plan"
+        aria-label="Retry plan"
         color="neutral"
         variant="outline"
         :disabled="state.loading || controller.resourceActionSubmitting"

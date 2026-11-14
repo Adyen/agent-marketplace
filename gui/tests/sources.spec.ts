@@ -136,12 +136,10 @@ test('built GUI installs a skill from a Git registry without Marketplace prepara
     const planResponse = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/resource-plan')
     await install.click()
     expect((await planResponse).status()).toBe(200)
-    const dialog = page.getByRole('dialog', { name: 'Install Resource' })
-    await expect(dialog.locator('pre')).toContainText('Resource: skill/solo')
-    await dialog.getByRole('button', { name: 'Confirm install' }).click()
-    await expect(page.getByLabel('Notifications').getByText('mutation complete')).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByRole('dialog', { name: 'Install Resource' })).toHaveCount(0)
+    await expect(page.getByLabel('Notifications').getByText('Installed solo')).toBeVisible({ timeout: 60_000 })
     await expect(page.getByRole('listbox', { name: 'Resources: Pending sync' }).getByRole('option').filter({ hasText: 'solo' })).toBeVisible()
-    await expect(page.getByText('Resource action could not be prepared; refresh this resource and retry.')).toHaveCount(0)
+    await expect(page.getByText('Action could not be prepared; refresh this resource and retry.')).toHaveCount(0)
   } finally {
     await harness.stop()
   }
@@ -217,7 +215,7 @@ test('built GUI adds and removes a user directory source against the real user-s
     const userSources = dialog.getByLabel('User sources')
     await expect(userSources).toContainText(sourceDir, { timeout: 60_000 })
     await expect(userSources).toContainText('DIRECTORY')
-    await expect(notifications.getByText('mutation complete')).toBeVisible()
+    await expect(notifications.getByText('Source added')).toBeVisible()
     await expect(dialog.getByText('Applying changes…')).toHaveCount(0)
     await expect(addButton).toBeEnabled()
     await expect(location).toBeEnabled()
@@ -243,7 +241,7 @@ test('built GUI adds and removes a user directory source against the real user-s
     await confirmRemove.press('Enter')
 
     await expect(userSources.getByText(sourceDir)).toHaveCount(0, { timeout: 60_000 })
-    await expect(notifications.getByText('mutation complete').last()).toBeVisible()
+    await expect(notifications.getByText('Source removed').last()).toBeVisible()
     await expect(dialog.getByText('Applying changes…')).toHaveCount(0)
     await expect(addButton).toBeEnabled()
     await expect(location).toBeEnabled()
@@ -414,7 +412,7 @@ test('built GUI adds and removes a Marketplace endpoint registration in the open
 
     await expect(userSources).toContainText(endpoint, { timeout: 60_000 })
     await expect(userSources).toContainText('MARKETPLACE')
-    await expect(page.getByLabel('Notifications').getByText('mutation complete')).toBeVisible()
+    await expect(page.getByLabel('Notifications').getByText('Source added')).toBeVisible()
     await expect(dialog.getByText('Applying changes…')).toHaveCount(0)
     await expect(addButton).toBeEnabled()
     await expect(location).toBeEnabled()
@@ -453,7 +451,7 @@ test('built GUI adds and removes a Marketplace endpoint registration in the open
     expect(removeMetrics).toMatchObject({ insideDialog: true, insideViewport: true, hittable: true })
     const confirmation = dialog.getByRole('region', { name: 'Confirm removal' })
     const notifications = page.getByLabel('Notifications')
-    await expect(notifications.getByText('mutation complete')).toHaveCount(0, { timeout: 10_000 })
+    await expect(notifications.getByText('Source added')).toHaveCount(0, { timeout: 10_000 })
 
     await removeButton.press('Enter')
     await expect(confirmation).toBeVisible()
@@ -473,7 +471,7 @@ test('built GUI adds and removes a Marketplace endpoint registration in the open
     await confirmRemove.press('Enter')
 
     await expect(userSources).not.toContainText(endpoint, { timeout: 60_000 })
-    await expect(notifications.getByText('mutation complete').last()).toBeVisible({ timeout: 60_000 })
+    await expect(notifications.getByText('Source removed').last()).toBeVisible({ timeout: 60_000 })
     await expect(dialog.getByText('Applying changes…')).toHaveCount(0)
     await expect(addButton).toBeEnabled()
     await expect(location).toBeEnabled()
@@ -608,7 +606,7 @@ test('built GUI adds and removes a user Git source with ref and subpath by keybo
     await expect(userSources).toContainText(gitURL, { timeout: 60_000 })
     await expect(userSources).toContainText('GIT')
     await expect(userSources).toContainText('main · solo')
-    await expect(notifications.getByText('mutation complete')).toBeVisible()
+    await expect(notifications.getByText('Source added')).toBeVisible()
     await expect(dialog.getByText('Applying changes…')).toHaveCount(0)
     await expect(addButton).toBeEnabled()
     await expect(location).toBeEnabled()
@@ -647,7 +645,7 @@ test('built GUI adds and removes a user Git source with ref and subpath by keybo
 
     await expect(userSources.getByText(gitURL)).toHaveCount(0, { timeout: 60_000 })
     await expect(userSources).toContainText(keepDir)
-    await expect(notifications.getByText('mutation complete').last()).toBeVisible({ timeout: 60_000 })
+    await expect(notifications.getByText('Source removed').last()).toBeVisible({ timeout: 60_000 })
     await expect(dialog.getByText('Applying changes…')).toHaveCount(0)
     await expect(dialog).toBeVisible()
     await expect.poll(async () => await readFile(userConfigPath, 'utf8'), { timeout: 60_000 }).toBe(original)

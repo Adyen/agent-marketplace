@@ -135,7 +135,39 @@ type progressPayload struct {
 
 type notificationPayload struct {
 	Severity string `json:"severity"`
+	Outcome  string `json:"outcome"`
 	Message  string `json:"message"`
+}
+
+type operationSubject struct {
+	success string
+	failure string
+}
+
+var resourceActionSubjects = map[string]operationSubject{
+	session.UserMarketplaceActionInstall: {success: "Installed", failure: "Couldn't install"},
+	session.UserMarketplaceActionRemove:  {success: "Removed", failure: "Couldn't remove"},
+	session.UserMarketplaceActionExclude: {success: "Excluded", failure: "Couldn't exclude"},
+	session.UserMarketplaceActionRestore: {success: "Restored", failure: "Couldn't restore"},
+}
+
+func resourceActionSubject(action string, displayName string) operationSubject {
+	verbs, ok := resourceActionSubjects[action]
+	if !ok {
+		return operationSubject{}
+	}
+	return operationSubject{success: verbs.success + " " + displayName, failure: verbs.failure + " " + displayName}
+}
+
+func sourceOperationSubject(action string) operationSubject {
+	switch action {
+	case "add-source":
+		return operationSubject{success: "Source added", failure: "Couldn't add source"}
+	case "remove-source":
+		return operationSubject{success: "Source removed", failure: "Couldn't remove source"}
+	default:
+		return operationSubject{success: "Configuration saved", failure: "Couldn't save configuration"}
+	}
 }
 
 type subscriber struct {
@@ -1058,7 +1090,7 @@ func (a *API) handleAction(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(map[string]any{"operation": operationRef{ID: uint64(operation), Kind: string(kind)}})
 
-	go a.runOperation(operation, kind, func(ctx context.Context, generation session.RequestGeneration) (warnings []error, final session.Snapshot, failed error) {
+	go a.runOperation(operation, kind, operationSubject{}, func(ctx context.Context, generation session.RequestGeneration) (warnings []error, final session.Snapshot, failed error) {
 		switch kind {
 		case session.OperationSync:
 			var synced pipeline.SyncResult
@@ -1077,7 +1109,7 @@ func (a *API) handleAction(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (a *API) runOperation(operation session.OperationID, kind session.OperationKind, run func(ctx context.Context, generation session.RequestGeneration) (warnings []error, final session.Snapshot, failed error)) {
+func (a *API) runOperation(operation session.OperationID, kind session.OperationKind, subject operationSubject, run func(ctx context.Context, generation session.RequestGeneration) (warnings []error, final session.Snapshot, failed error)) {
 	defer a.wg.Done()
 	op := &operationRef{ID: uint64(operation), Kind: string(kind)}
 
@@ -1137,8 +1169,8 @@ func (a *API) runOperation(operation session.OperationID, kind session.Operation
 	a.gate.Finish(operation)
 	a.emitLocked("snapshot", generation, nil, &dto)
 	failedOutcome := failed != nil || (kind != session.OperationTargets && kind != session.OperationMutation && (dto.Drift == "failed" || hasErrorDiagnostic(dto.Diagnostics)))
-	severity, message := operationOutcomeNotification(string(kind), len(warnings), failedOutcome)
-	a.emitLocked("notification", generation, op, notificationPayload{Severity: severity, Message: message})
+	notification := operationOutcomeNotification(string(kind), subject, len(warnings), failedOutcome)
+	a.emitLocked("notification", generation, op, notification)
 	a.mu.Unlock()
 	a.launchDiscovery(launch)
 	a.requestUpdateAvailabilityCheckAfterMutation()
@@ -1156,13 +1188,25 @@ func hasErrorDiagnostic(diagnostics []diagnosticDTO) bool {
 	return false
 }
 
-func operationOutcomeNotification(kind string, warningCount int, failed bool) (severity, message string) {
+func operationOutcomeNotification(kind string, subject operationSubject, warningCount int, failed bool) notificationPayload {
+	if subject.success == "" || subject.failure == "" {
+		switch kind {
+		case string(session.OperationSync):
+			subject = operationSubject{success: "Sync complete", failure: "Sync failed"}
+		case string(session.OperationUpdate):
+			subject = operationSubject{success: "Update complete", failure: "Update failed"}
+		case string(session.OperationTargets):
+			subject = operationSubject{success: "Harness targets saved", failure: "Couldn't save harness targets"}
+		default:
+			subject = operationSubject{success: "Changes saved", failure: "Couldn't save changes"}
+		}
+	}
 	switch {
 	case failed:
-		return "error", kind + " failed"
+		return notificationPayload{Severity: "error", Outcome: "failure", Message: subject.failure}
 	case warningCount > 0:
-		return "warning", fmt.Sprintf("%s complete with %d warning(s)", kind, warningCount)
+		return notificationPayload{Severity: "warning", Outcome: "warning", Message: fmt.Sprintf("%s with %d warning(s)", subject.success, warningCount)}
 	default:
-		return "info", kind + " complete"
+		return notificationPayload{Severity: "info", Outcome: "success", Message: subject.success}
 	}
 }

@@ -372,7 +372,8 @@ func (a *API) handleResourceAction(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(map[string]any{"operation": operationRef{ID: uint64(operation), Kind: string(session.OperationMutation)}})
-	go a.runOperation(operation, session.OperationMutation, func(ctx context.Context, _ session.RequestGeneration) (warnings []error, final session.Snapshot, failed error) {
+	subject := resourceActionSubject(acceptedPlan.action, session.SanitizeTerminalData(acceptedPlan.row.Artifact.Name, session.TerminalSingleLine))
+	go a.runOperation(operation, session.OperationMutation, subject, func(ctx context.Context, _ session.RequestGeneration) (warnings []error, final session.Snapshot, failed error) {
 		ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(ctx)
 		switch acceptedPlan.action {
 		case session.UserMarketplaceActionInstall:

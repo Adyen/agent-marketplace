@@ -284,9 +284,9 @@ const syncingScenario = (): PreviewScenario => ({
 const toastsScenario = (): PreviewScenario => ({
   ...syncingScenario(),
   notifications: [
-    { severity: 'info', message: 'sync complete' },
+    { severity: 'info', message: 'Sync complete' },
     { severity: 'warning', message: 'lock file was refreshed while syncing' },
-    { severity: 'error', message: 'mutation failed' },
+    { severity: 'error', message: "Couldn't save changes" },
   ],
 })
 

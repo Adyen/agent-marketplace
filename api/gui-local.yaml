@@ -1408,11 +1408,14 @@ components:
               enum: [notification]
             payload:
               type: object
-              required: [severity, message]
+              required: [severity, outcome, message]
               properties:
                 severity:
                   type: string
                   enum: [info, warning, error]
+                outcome:
+                  type: string
+                  enum: [success, warning, failure]
                 message: { type: string }
     DiscoveryEvent:
       description: Discovery-only projection for the applicable snapshot generation; it does not advance stage, drift, diagnostics, operation, or progress state.

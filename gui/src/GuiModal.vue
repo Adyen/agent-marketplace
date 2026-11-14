@@ -9,12 +9,13 @@ const props = withDefaults(
     size?: 'sm' | 'lg' | 'xl' | 'settings'
     dismissible?: boolean
     bare?: boolean
+    busy?: boolean
   }>(),
-  { size: 'sm', dismissible: true, bare: false },
+  { size: 'sm', dismissible: true, bare: false, busy: false },
 )
 const open = defineModel<boolean>('open', { default: false })
 
-const contentClass = computed(() => `gui-modal gui-modal--${props.size}`)
+const contentClass = computed(() => `gui-modal gui-modal--${props.size}${props.busy && !props.bare ? ' gui-modal--busy' : ''}`)
 </script>
 
 <template>
@@ -32,6 +33,7 @@ const contentClass = computed(() => `gui-modal gui-modal--${props.size}`)
       <section v-else class="gui-modal__frame" :aria-label="title">
         <header class="gui-modal__header">
           <span v-if="icon != null" class="gui-modal__tile"><GuiIcon :name="icon" /></span>
+          <h2 class="gui-modal__title">{{ title }}</h2>
           <button
             type="button"
             class="gui-modal__close"
@@ -40,7 +42,6 @@ const contentClass = computed(() => `gui-modal gui-modal--${props.size}`)
             @click="open = false"
           ><GuiIcon name="close" /></button>
         </header>
-        <h2 class="gui-modal__title">{{ title }}</h2>
         <div class="gui-modal__body">
           <slot />
         </div>

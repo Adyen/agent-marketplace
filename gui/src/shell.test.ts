@@ -435,12 +435,12 @@ describe('notification toasts', () => {
     push(event({ sequence: 1, payload: snapshot([row('a')]) }))
     await tick()
 
-    push(event({ sequence: 2, type: 'notification', payload: { severity: 'info', message: 'sync complete' } }))
+    push(event({ sequence: 2, type: 'notification', payload: { severity: 'info', outcome: 'success', message: 'Sync complete' } }))
     await tick()
-    expect(wrapper.get('.gui-toast--success').text()).toContain('sync complete')
+    expect(wrapper.get('.gui-toast--success').text()).toContain('Sync complete')
     expect(wrapper.find('.gui-toast--success .gui-toast__action').exists()).toBe(false)
 
-    push(event({ sequence: 3, type: 'notification', payload: { severity: 'warning', message: 'sync complete with 2 warning(s)' } }))
+    push(event({ sequence: 3, type: 'notification', payload: { severity: 'warning', outcome: 'warning', message: 'Sync complete with 2 warning(s)' } }))
     await tick()
     const action = wrapper.get('.gui-toast--warning .gui-toast__action')
     expect(action.text()).toBe('View diagnostics')

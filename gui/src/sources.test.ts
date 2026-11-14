@@ -114,7 +114,7 @@ async function chooseSourceKind(value: SourceInput['kind'], label: string) {
   await tick()
 }
 
-async function settleOperation(controller: { state: { operation: OperationRef | null } }, push: (e: ReturnType<typeof event>) => void, operation: OperationRef, seq: number) {
+async function settleOperation(controller: { state: { operation: OperationRef | null } }, push: (e: ReturnType<typeof event>) => void, operation: OperationRef, seq: number, message: string) {
   push(event({ sequence: seq, generation: 2, operation }))
   push(event({ sequence: seq + 1, generation: 2, operation: null }))
   push(
@@ -123,7 +123,7 @@ async function settleOperation(controller: { state: { operation: OperationRef | 
       generation: 2,
       operation,
       type: 'notification',
-      payload: { severity: 'info', message: 'mutation complete' },
+      payload: { severity: 'info', outcome: 'success', message },
     }),
   )
   await tick()
@@ -143,7 +143,7 @@ function failAdd(push: (e: ReturnType<typeof event>) => void, operation: Operati
       generation: 2,
       operation,
       type: 'notification',
-      payload: { severity: 'error', message: 'mutation failed' },
+      payload: { severity: 'error', outcome: 'failure', message: "Couldn't add source" },
     }),
   )
 }
@@ -187,7 +187,7 @@ describe('Source settings', () => {
     expect(controller.state.operation).toEqual({ id: 9, kind: 'mutation' })
 
     const calls = (client.configuration as ReturnType<typeof vi.fn>).mock.calls.length
-    await settleOperation(controller, push, { id: 9, kind: 'mutation' }, 2)
+    await settleOperation(controller, push, { id: 9, kind: 'mutation' }, 2, 'Source removed')
     expect((client.configuration as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(calls)
   })
 
@@ -268,7 +268,7 @@ describe('Source settings', () => {
         generation: 2,
         operation,
         type: 'notification',
-        payload: { severity: 'error', message: 'mutation failed' },
+        payload: { severity: 'error', outcome: 'failure', message: "Couldn't remove source" },
       }),
     )
     await tick()
@@ -299,7 +299,7 @@ describe('Source settings', () => {
     await tick()
     expect(client.configure).toHaveBeenCalledWith({ action: 'remove-source', id: marketplaceSource.id })
 
-    await settleOperation(controller, push, operation, 2)
+    await settleOperation(controller, push, operation, 2, 'Source removed')
     await tick()
 
     const list = dialog().querySelector('[aria-label="User sources"]')!
@@ -650,7 +650,7 @@ describe('Source settings', () => {
         generation: 2,
         operation: { id: 9, kind: 'mutation' },
         type: 'notification',
-        payload: { severity: 'error', message: 'mutation failed' },
+        payload: { severity: 'error', outcome: 'failure', message: "Couldn't remove source" },
       }),
     )
     await tick()
@@ -676,7 +676,7 @@ describe('Source settings', () => {
     await setInput('Source location', dirSource.location)
     button('Add source').click()
     await tick()
-    await settleOperation(controller, push, { id: 9, kind: 'mutation' }, 2)
+    await settleOperation(controller, push, { id: 9, kind: 'mutation' }, 2, 'Source added')
     await tick()
 
     const list = dialog().querySelector('[aria-label="User sources"]')!
@@ -701,7 +701,7 @@ describe('Source settings', () => {
           generation: 2,
           operation,
           type: 'notification',
-          payload: { severity: 'info', message: 'mutation complete' },
+          payload: { severity: 'info', outcome: 'success', message: 'Source added' },
         }),
       )
       await new Promise((resolve) => setTimeout(resolve, 0))
@@ -830,7 +830,7 @@ describe('Source settings', () => {
         generation: 2,
         operation,
         type: 'notification',
-        payload: { severity: 'error', message: 'mutation failed' },
+        payload: { severity: 'error', outcome: 'failure', message: "Couldn't add source" },
       }),
     )
     await tick()
@@ -859,7 +859,7 @@ describe('Source settings', () => {
     const addButton = button('Add source')
     addButton.click()
     await tick()
-    await settleOperation(controller, push, operation, 2)
+    await settleOperation(controller, push, operation, 2, 'Source added')
     await tick()
 
     const list = dialog().querySelector('[aria-label="User sources"]')!

@@ -93,7 +93,7 @@ test('built GUI drives ordinary quit choices through the native Quit bridge', as
     await expect(page.getByRole('option').filter({ hasText: 'solo' }).first()).toBeVisible({ timeout: 60_000 })
 
     await page.getByRole('button', { name: 'Sync', exact: true }).press('Enter')
-    await expect(page.getByText('sync complete')).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByText('Sync complete')).toBeVisible({ timeout: 60_000 })
     await expect.poll(() => actionBodies.filter((b) => JSON.parse(b).action === 'sync').length).toBe(1)
 
     const quit = page.getByRole('button', { name: 'Quit', exact: true })
@@ -156,7 +156,7 @@ test('built GUI pending-change quit offers sync-and-quit and quit-without-syncin
     await quitDialog.getByRole('button', { name: 'Sync and quit' }).press('Enter')
     await expect.poll(() => actionBodies.length).toBe(1)
     expect(JSON.parse(actionBodies[0])).toEqual({ action: 'sync' })
-    await expect(page.getByText('sync complete')).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByText('Sync complete')).toBeVisible({ timeout: 60_000 })
     await expect.poll(() => quitCount(page)).toBe(1)
     expect(actionBodies).toHaveLength(1)
     expect((await readFile(materialized)).equals(sourceSkill)).toBe(true)
@@ -206,7 +206,7 @@ test('built GUI attaches native close to a running sync and quits on its settlem
     expect(await quitCount(page)).toBe(0)
 
     await writeFile(syncRelease, '1')
-    await expect(page.getByText('sync complete')).toBeVisible({ timeout: 60_000 })
+    await expect(page.getByText('Sync complete')).toBeVisible({ timeout: 60_000 })
     await expect.poll(() => quitCount(page)).toBe(1)
     expect(await readFile(materialized, 'utf8')).toBe(sourceSkill)
     await page.screenshot({ path: artifactPath(testInfo, 'native-close-sync-settled.png'), fullPage: true, animations: 'disabled' })

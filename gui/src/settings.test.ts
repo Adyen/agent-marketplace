@@ -192,7 +192,7 @@ describe('Harness settings dialog', () => {
         generation: 2,
         operation,
         type: 'notification',
-        payload: { severity: 'info', message: 'targets complete' },
+        payload: { severity: 'info', outcome: 'success', message: 'Harness targets saved' },
       }),
     )
     await tick()
@@ -305,7 +305,7 @@ describe('Harness settings dialog', () => {
           generation: 2,
           operation,
           type: 'notification',
-          payload: { severity: 'info', message: 'targets complete' },
+          payload: { severity: 'info', outcome: 'success', message: 'Harness targets saved' },
         }),
       )
       await new Promise((resolve) => setTimeout(resolve, 0))

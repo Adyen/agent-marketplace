@@ -38,9 +38,10 @@ export function mockLocalApi(): Plugin {
                 event({ sequence: 2, generation: 2, operation, payload: current.snapshot }),
                 event({ sequence: 3, generation: 2, operation, type: 'progress', payload: { progressSequence: 1, phase: current.phase ?? '' } }),
               ]),
-              ...(current.notifications ?? []).map((notification, index) =>
-                event({ sequence: 4 + index, generation: 2, operation, type: 'notification', payload: notification }),
-              ),
+              ...(current.notifications ?? []).map((notification, index) => {
+                const outcome = notification.severity === 'error' ? 'failure' : notification.severity === 'warning' ? 'warning' : 'success'
+                return event({ sequence: 4 + index, generation: 2, operation, type: 'notification', payload: { ...notification, outcome } })
+              }),
             ]
             for (const frame of frames) {
               res.write(`data: ${JSON.stringify(frame)}\n\n`)
