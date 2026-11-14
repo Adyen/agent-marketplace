@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/Adyen/agent-marketplace/internal/catalog"
@@ -673,10 +672,13 @@ func addConfigurationIssue(
 		return addHuman(repairplanner.StageConfiguration, code, fmt.Errorf("read configuration source %s: %w", tui.TerminalSafeLine(file), err))
 	}
 	lines := strings.Split(string(source), "\n")
-	if line < 1 || line > len(lines) {
-		line = 1
+	var action string
+	if line > 0 && line <= len(lines) {
+		action = fmt.Sprintf("edit %s:%d %s; source: %s", file, line, issue.Error(), lines[line-1])
+	} else {
+		action = fmt.Sprintf("edit %s manually; %s", file, validation.Msg)
 	}
-	action := tui.TerminalSafeLine(fmt.Sprintf("edit %s:%d %s; source: %s", file, line, issue.Error(), lines[line-1]))
+	action = tui.TerminalSafeLine(action)
 	key := fmt.Sprintf("guided-%s-%s-%d-%s", layer.Source, file, line, code)
 	diagnosis.Steps = append(diagnosis.Steps, repairplanner.Step{
 		Key: key, Stage: repairplanner.StageConfiguration, Class: repairplanner.Guided,
@@ -787,19 +789,10 @@ func repairConfigurationSourceFile(validation *config.V4ValidationError) string 
 }
 
 func repairDiagnosticLine(validation *config.V4ValidationError) int {
-	if validation.Line > 0 {
-		return validation.Line
+	if validation == nil || validation.Line < 1 {
+		return 0
 	}
-	message := validation.Msg
-	if offset := strings.Index(message, "line "); offset >= 0 {
-		fields := strings.Fields(message[offset+len("line "):])
-		if len(fields) > 0 {
-			if line, err := strconv.Atoi(strings.TrimSuffix(fields[0], ":")); err == nil && line > 0 {
-				return line
-			}
-		}
-	}
-	return 1
+	return validation.Line
 }
 
 func applyGuidedConfigurationEdit(

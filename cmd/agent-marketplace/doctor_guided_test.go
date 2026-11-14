@@ -14,6 +14,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/devincli"
+	repairplanner "github.com/Adyen/agent-marketplace/internal/repair"
 )
 
 // spec: doctor-repair-planning/configuration-errors-show-safe-source-context
@@ -34,6 +35,12 @@ func TestDoctorRepairGuidedDiagnostics(t *testing.T) {
 		{name: "malformed YAML", root: "apiVersion: agent-marketplace/v4\nsources: [\n", source: "sources: [", code: "v4.parse", line: 2},
 		{name: "duplicate key", root: "apiVersion: agent-marketplace/v4\nsources:\n  team: {directory: /one}\n  team: {directory: /two}\n", source: "  team: {directory: /two}", code: "v4.duplicate-key", line: 4},
 		{name: "included fragment", root: "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\n", fragment: "sources:\n  team: {directory: /one, unknown: true}\n", source: "  team: {directory: /one, unknown: true}", code: "v4.unknown-field", line: 2},
+		{name: "root exclusion", root: "apiVersion: agent-marketplace/v4\nsources:\n  team: {directory: ./skills}\nresources:\n  team:\n    exclude: [\"skill/**\"]\n", source: "    exclude: [\"skill/**\"]", code: "v4.exclusion", line: 6},
+		{name: "root auxiliary field", root: "apiVersion: agent-marketplace/v4\nlogging:\n  level: invalid-level\n", source: "  level: invalid-level", code: "v4.auxiliary", line: 3},
+		{name: "root bound locator", root: "apiVersion: agent-marketplace/v4\nsources:\n  team: {directory: ./skills}\nresources:\n  team: [plugin/unsafe]\n", source: "  team: [plugin/unsafe]", code: "v4.locator", line: 5},
+		{name: "included bound locator", root: "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\nsources:\n  team: {directory: ./skills}\n", fragment: "resources:\n  team: [plugin/unsafe]\n", source: "  team: [plugin/unsafe]", code: "v4.locator", line: 2},
+		{name: "second-line forbidden character", root: "apiVersion: agent-marketplace/v4\ninvalid: \x01\n", source: "invalid:", code: "v4.parse", line: 2, escapes: []string{"\\x01"}},
+		{name: "second-line invalid UTF-8", root: "apiVersion: agent-marketplace/v4\ninvalid: \xff\n", source: "invalid:", code: "v4.parse", line: 2, escapes: []string{"\\xFF"}},
 		{name: "control characters", root: "apiVersion: agent-marketplace/v4\x01\u0085\u202e\r\n", source: "apiVersion: agent-marketplace/v4", code: "v4.parse", line: 1, escapes: []string{"\\x01", "\\x85", "\\u202E", "\\x0D"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -83,6 +90,31 @@ func TestDoctorRepairGuidedDiagnostics(t *testing.T) {
 				t.Fatalf("preview changed config bytes: %v\n%s", err, after)
 			}
 		})
+	}
+}
+
+func TestDoctorRepairGuidedUnknownPositionUsesFileOnlyContext(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	file := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, file, "first: line\nsecond: line\n")
+	for _, line := range []int{0, 99} {
+		diagnosis := repairplanner.Diagnosis{}
+		issue := &config.V4ValidationError{Code: "v4.parse", File: file, Path: "source", Line: line, Msg: "invalid YAML"}
+		addConfigurationIssue(&diagnosis, config.LayerResult{Source: config.RepoCommitted, Path: file}, issue, nil,
+			func(repairplanner.Stage, string, error) string { return "" }, nil, nil, doctorOptions{})
+		var out bytes.Buffer
+		if err := repairplanner.WritePlan(&out, repairplanner.Plan(diagnosis)); err != nil {
+			t.Fatal(err)
+		}
+		text := out.String()
+		if !strings.Contains(text, "[guided]") ||
+			!strings.Contains(text, "edit "+doctorTestPath(t, file)+" manually") ||
+			strings.Contains(text, doctorTestPath(t, file)+":1") ||
+			strings.Contains(text, "source: first: line") {
+			t.Fatalf("line %d is not shown as file-only manual context:\n%s", line, text)
+		}
 	}
 }
 

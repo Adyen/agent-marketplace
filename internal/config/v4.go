@@ -6,13 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Adyen/agent-marketplace/internal/giturl"
 	"github.com/Adyen/agent-marketplace/internal/lockfile"
@@ -140,6 +143,7 @@ type V4ResourceGroup struct {
 	HasRequired   bool
 	HasHarnesses  bool
 	Decisions     []V4SelectionDecision
+	locations     map[string]V4Provenance
 }
 
 // V4Config is a strict, normalized v4 document tree. Sources and groups are
@@ -315,6 +319,19 @@ func (e *V4ValidationError) Remediation() string {
 
 func v4err(code, p string, line int, format string, args ...any) error {
 	return &V4ValidationError{Code: code, Path: p, Line: line, Msg: fmt.Sprintf(format, args...)}
+}
+
+func withV4Provenance(err error, origins ...V4Provenance) error {
+	var validation *V4ValidationError
+	if len(origins) > 0 && errors.As(err, &validation) {
+		if validation.File == "" {
+			validation.File = origins[0].File
+		}
+		if validation.Line == 0 {
+			validation.Line = origins[0].Line
+		}
+	}
+	return err
 }
 
 func v4errVariant(code, p string, line int, variant, format string, args ...any) error {
@@ -521,14 +538,14 @@ func parseV4Document(data []byte, file string, root bool, kinds ...layerKind) (r
 		if err == io.EOF && root {
 			return nil, v4err("v4.api-version-required", file, 0, "root requires apiVersion: %s", APIVersionV4)
 		}
-		return nil, v4err("v4.parse", file, 0, "%v", err)
+		return nil, v4ParseError(file, data, err)
 	}
 	var extra yaml.Node
 	if err := dec.Decode(&extra); err != io.EOF {
 		if err == nil {
 			return nil, v4err("v4.multiple-documents", file, extra.Line, "multiple YAML documents are not allowed")
 		}
-		return nil, v4err("v4.parse", file, 0, "%v", err)
+		return nil, v4ParseError(file, data, err)
 	}
 	if err := validateV4YAMLTree(&node, file); err != nil {
 		return nil, err
@@ -555,76 +572,146 @@ func parseV4Document(data []byte, file string, root bool, kinds ...layerKind) (r
 		key := raw.Content[i]
 		if _, ok := v4RootKeys[key.Value]; !ok {
 			if _, legacy := v4LegacyKeys[key.Value]; legacy {
-				return nil, v4DocumentError(file, raw, v4err("v4.legacy-key", key.Value, key.Line, "legacy installation key %q is not valid in v4; migrate selections to sources/resources", key.Value), !root)
+				return nil, v4DocumentError(file, raw, v4err("v4.legacy-key", key.Value, key.Line, "legacy installation key %q is not valid in v4; migrate selections to sources/resources", key.Value))
 			}
-			return nil, v4DocumentError(file, raw, v4err("v4.unknown-field", key.Value, key.Line, "unknown top-level field"), !root)
+			return nil, v4DocumentError(file, raw, v4err("v4.unknown-field", key.Value, key.Line, "unknown top-level field"))
 		}
 	}
 	if err := validateV4AuxiliaryFields(raw); err != nil {
-		return nil, v4DocumentError(file, raw, err, !root)
+		return nil, v4DocumentError(file, raw, err)
 	}
 	doc := &v4Document{path: file, sources: map[string]V4Source{}, groups: map[string]V4ResourceGroup{}}
 	if err := decodeV4AuxiliaryFields(raw, doc); err != nil {
-		return nil, v4DocumentError(file, raw, err, !root)
+		return nil, v4DocumentError(file, raw, err)
 	}
 	if len(kinds) > 0 {
 		policy := &V4Config{HasHarnesses: doc.hasHarnesses, AllowedRegistries: doc.allowedRegistries, AllowedMarketplaces: doc.allowedMarketplaces, Backup: doc.backup, Logging: doc.logging, Telemetry: doc.telemetry, Materialization: doc.materialization}
 		if err := policy.validateLayerFields(kinds[0]); err != nil {
-			return nil, v4DocumentError(file, raw, err, !root)
+			return nil, v4DocumentError(file, raw, err)
 		}
 	}
 	if inc := mappingValue(raw, "include"); inc != nil {
 		if err := validateV4Includes(inc, file); err != nil {
-			return nil, v4DocumentError(file, raw, err, !root)
+			return nil, v4DocumentError(file, raw, err)
 		}
 	}
 	if sources := mappingValue(raw, "sources"); sources != nil {
 		parsed, err := parseV4Sources(sources, file, v4DirectoryBase(file, root, kinds...))
 		if err != nil {
-			return nil, v4DocumentError(file, raw, err, !root)
+			return nil, v4DocumentError(file, raw, err)
 		}
 		doc.sources = parsed
 	}
 	if resources := mappingValue(raw, "resources"); resources != nil {
 		groups, err := parseV4Groups(resources, file)
 		if err != nil {
-			return nil, v4DocumentError(file, raw, err, !root)
+			return nil, v4DocumentError(file, raw, err)
 		}
 		doc.groups = groups
 	}
 	return doc, nil
 }
 
-func v4DocumentError(file string, root *yaml.Node, err error, fragment bool) error {
+func v4ParseError(file string, data []byte, err error) error {
+	line := v4LineFromMessage(err.Error())
+	if line == 0 {
+		line = v4InputErrorLine(data)
+	}
+	return v4err("v4.parse", file, line, "%v", err)
+}
+
+func v4LineFromMessage(message string) int {
+	offset := strings.Index(message, "line ")
+	if offset < 0 {
+		return 0
+	}
+	fields := strings.Fields(message[offset+5:])
+	if len(fields) == 0 {
+		return 0
+	}
+	line, err := strconv.Atoi(strings.TrimSuffix(fields[0], ":"))
+	if err != nil || line < 1 {
+		return 0
+	}
+	return line
+}
+
+func v4InputErrorLine(data []byte) int {
+	if len(data) >= 2 && (data[0] == 0xff && data[1] == 0xfe || data[0] == 0xfe && data[1] == 0xff) {
+		return 0
+	}
+	line := 1
+	for offset := 0; offset < len(data); {
+		r, size := utf8.DecodeRune(data[offset:])
+		if r == '\n' {
+			line++
+			offset += size
+			continue
+		}
+		if r == utf8.RuneError && size == 1 || r <= 0x08 || r == 0x0b || r == 0x0c ||
+			(r >= 0x0e && r <= 0x1f) || (r >= 0x7f && r <= 0x84) ||
+			(r >= 0x86 && r <= 0x9f) {
+			return line
+		}
+		offset += size
+	}
+	return 0
+}
+
+func v4DocumentError(file string, root *yaml.Node, err error) error {
 	var validation *V4ValidationError
 	if errors.As(err, &validation) {
-		copy := *validation
-		if copy.File == "" {
-			copy.File = file
+		line := validation.Line
+		if line == 0 {
+			line = v4DocumentErrorLine(root, validation)
 		}
-		if fragment && copy.Line == 0 {
-			field := strings.FieldsFunc(copy.Path, func(r rune) bool { return r == '.' || r == '[' })
-			var node *yaml.Node
-			if len(field) > 0 {
-				node = mappingValue(root, field[0])
-			}
-			if copy.Path == "auxiliary" {
-				for _, key := range []string{"backup", "logging", "telemetry"} {
-					if value := mappingValue(root, key); value != nil && value.Tag != "!!null" {
-						node = value
-						break
-					}
-				}
-			} else if node == nil && copy.Path == "allowed_registries" {
-				node = mappingValue(root, "allowed_marketplaces")
-			}
-			if node != nil {
-				copy.Line = node.Line
-			}
-		}
-		err = &copy
+		err = withV4Provenance(err, V4Provenance{File: file, Line: line})
 	}
 	return fmt.Errorf("validate config %q: %w", file, err)
+}
+
+func v4DocumentErrorLine(root *yaml.Node, validation *V4ValidationError) int {
+	path := validation.Path
+	if path == "auxiliary" {
+		for _, key := range []string{"backup", "logging", "telemetry"} {
+			if value := mappingValue(root, key); value != nil && value.Tag != "!!null" {
+				return value.Line
+			}
+		}
+		return 0
+	}
+	if fields := strings.Fields(validation.Msg); len(fields) > 0 && strings.HasPrefix(fields[0], path+".") {
+		path = fields[0]
+	}
+	node := v4DocumentNodeAtPath(root, path)
+	if node == nil && validation.Path == "allowed_registries" {
+		node = mappingValue(root, "allowed_marketplaces")
+	}
+	if node == nil {
+		return 0
+	}
+	return node.Line
+}
+
+func v4DocumentNodeAtPath(node *yaml.Node, path string) *yaml.Node {
+	if path == "" {
+		return nil
+	}
+	for _, field := range strings.FieldsFunc(path, func(r rune) bool { return r == '.' || r == '[' || r == ']' }) {
+		if node == nil {
+			return nil
+		}
+		if node.Kind == yaml.SequenceNode {
+			index, err := strconv.Atoi(field)
+			if err != nil || index < 0 || index >= len(node.Content) {
+				return nil
+			}
+			node = node.Content[index]
+		} else {
+			node = mappingValue(node, field)
+		}
+	}
+	return node
 }
 
 func validateV4YAMLTree(node *yaml.Node, file string) error {
@@ -1151,7 +1238,10 @@ func parseV4Groups(n *yaml.Node, file string) (map[string]V4ResourceGroup, error
 }
 
 func parseV4Group(source string, n *yaml.Node, file string) (V4ResourceGroup, error) {
-	g := V4ResourceGroup{SourceName: source}
+	g := V4ResourceGroup{
+		SourceName: source,
+		locations:  map[string]V4Provenance{"": {File: file, Line: n.Line}},
+	}
 	if n.Kind == yaml.SequenceNode {
 		reqs, err := parseV4Includes(source, n, file)
 		g.Include = reqs
@@ -1168,6 +1258,7 @@ func parseV4Group(source string, n *yaml.Node, file string) (V4ResourceGroup, er
 		if _, ok := v4GroupKeys[key]; !ok {
 			return g, v4err("v4.unknown-field", "resources."+source+"."+key, n.Content[i].Line, "unknown resource group field")
 		}
+		g.locations[key] = V4Provenance{File: file, Line: value.Line}
 		switch key {
 		case "include":
 			if value.Kind != yaml.SequenceNode {
@@ -1184,8 +1275,9 @@ func parseV4Group(source string, n *yaml.Node, file string) (V4ResourceGroup, er
 			if err != nil {
 				return g, err
 			}
-			for _, x := range values {
+			for i, x := range values {
 				if err := validateV4Exclusion(x, source); err != nil {
+					err = withV4Provenance(err, V4Provenance{File: file, Line: value.Content[i].Line})
 					return g, err
 				}
 			}
@@ -1225,6 +1317,9 @@ func parseV4Group(source string, n *yaml.Node, file string) (V4ResourceGroup, er
 			if err != nil {
 				return g, err
 			}
+			for i, item := range value.Content {
+				g.locations[fmt.Sprintf("harnesses[%d]", i)] = V4Provenance{File: file, Line: item.Line}
+			}
 			g.Harnesses, g.HasHarnesses = values, true
 		}
 	}
@@ -1234,7 +1329,15 @@ func parseV4Group(source string, n *yaml.Node, file string) (V4ResourceGroup, er
 	g.Decisions = append(decisionsForIncludes(source, g.Include, file), decisionsForExclusions(source, g.Exclude, excludeNode, file)...)
 	assignV4DecisionPrecedence(&g)
 	if err := validateV4Dynamic(g, source); err != nil {
-		return g, err
+		origin := g.locations[""]
+		var validation *V4ValidationError
+		if errors.As(err, &validation) {
+			field, ok := strings.CutPrefix(validation.Path, "resources."+source+".")
+			if location, found := g.locations[field]; ok && found {
+				origin = location
+			}
+		}
+		return g, withV4Provenance(err, origin)
 	}
 	return g, nil
 }
@@ -1991,10 +2094,18 @@ func mergeV4Document(dst *V4Config, doc *v4Document) error {
 func mergeV4Group(dst *V4Config, name string, src V4ResourceGroup) {
 	d, ok := dst.Groups[name]
 	if !ok {
+		src.locations = maps.Clone(src.locations)
 		dst.Groups[name] = src
 		return
 	}
 	d.SourceName = name
+	d.locations = maps.Clone(d.locations)
+	if d.locations == nil {
+		d.locations = map[string]V4Provenance{}
+	}
+	for field, location := range src.locations {
+		d.locations[field] = location
+	}
 	d.Include = append(d.Include, src.Include...)
 	d.Exclude = append(d.Exclude, src.Exclude...)
 	d.Decisions = append(d.Decisions, src.Decisions...)
@@ -2021,22 +2132,28 @@ func mergeV4Group(dst *V4Config, name string, src V4ResourceGroup) {
 func normalizeV4Tree(c *V4Config) error {
 	for name, src := range c.Sources {
 		if src.SourceHarness != "" && !target.IsValid(src.SourceHarness) {
-			return v4err("v4.harness", "sources."+name+".source_harness", src.Line, "unknown target %q", src.SourceHarness)
+			return withV4Provenance(v4err("v4.harness", "sources."+name+".source_harness", 0, "unknown target %q", src.SourceHarness), V4Provenance{File: src.File, Line: src.Line})
 		}
 	}
 	for name := range c.Groups {
 		if _, ok := c.Sources[name]; !ok {
-			return v4err("v4.undefined-source", "resources."+name, 0, "resource group references undefined source %q", name)
+			g := c.Groups[name]
+			return withV4Provenance(v4err("v4.undefined-source", "resources."+name, 0, "resource group references undefined source %q", name), g.locations[""])
 		}
 	}
 	for name, g := range c.Groups {
 		src := c.Sources[name]
 		dynamic := (g.HasAll && g.All != nil && *g.All) || (g.HasTags && len(g.Tags) > 0)
 		if (src.Kind == V4SourceGit || src.Kind == V4SourceDirectory) && g.HasRegistries {
-			return v4err("v4.option-combination", "resources."+name+".registries", 0, "registries is only valid for Marketplace sources")
+			return withV4Provenance(v4err("v4.option-combination", "resources."+name+".registries", 0, "registries is only valid for Marketplace sources"), g.locations["registries"])
 		}
 		for _, exclusion := range g.Exclude {
 			if err := validateV4ExclusionForSource(exclusion, src.Kind); err != nil {
+				for _, decision := range g.Decisions {
+					if decision.Action == V4SelectionExclude && decision.Exclusion == exclusion {
+						return withV4Provenance(err, decision.Provenance)
+					}
+				}
 				return err
 			}
 		}
@@ -2046,14 +2163,14 @@ func normalizeV4Tree(c *V4Config) error {
 		if g.HasHarnesses {
 			for i, harness := range g.Harnesses {
 				if !target.IsValid(harness) {
-					return v4err("v4.harness", fmt.Sprintf("resources.%s.harnesses[%d]", name, i), 0, "unknown target %q", harness)
+					return withV4Provenance(v4err("v4.harness", fmt.Sprintf("resources.%s.harnesses[%d]", name, i), 0, "unknown target %q", harness), g.locations[fmt.Sprintf("harnesses[%d]", i)])
 				}
 			}
 		}
 		formatSource := src.Format != ""
 		for i := range g.Include {
 			if g.Include[i].Kind == "plugin" && !formatSource {
-				return v4err("v4.locator", "resources."+name+".include", 0, "plugin requests are only valid for sources declaring a format")
+				return withV4Provenance(v4err("v4.locator", "resources."+name+".include", 0, "plugin requests are only valid for sources declaring a format"), g.Include[i].Provenance...)
 			}
 			if g.Required != nil {
 				g.Include[i].Required = *g.Required
@@ -2063,16 +2180,16 @@ func normalizeV4Tree(c *V4Config) error {
 				g.Include[i].HasHarnesses = true
 			}
 			if g.Include[i].Options.Revision != "" && !v4RevisionRE.MatchString(g.Include[i].Options.Revision) {
-				return v4err("v4.revision", "resources."+name+".include", 0, "revision must be sha256:<64 lowercase hex>")
+				return withV4Provenance(v4err("v4.revision", "resources."+name+".include", 0, "revision must be sha256:<64 lowercase hex>"), g.Include[i].Provenance...)
 			}
 			if src.Kind != V4SourceMarketplace && g.Include[i].Registry != "" {
-				return v4err("v4.locator", "resources."+name+".include", 0, "git and directory locators must be kind/name without a registry slug")
+				return withV4Provenance(v4err("v4.locator", "resources."+name+".include", 0, "git and directory locators must be kind/name without a registry slug"), g.Include[i].Provenance...)
 			}
 			if g.Include[i].Options.Revision != "" && src.Kind != V4SourceMarketplace {
-				return v4err("v4.option-combination", "resources."+name+".include", 0, "revision is only valid for Marketplace resources")
+				return withV4Provenance(v4err("v4.option-combination", "resources."+name+".include", 0, "revision is only valid for Marketplace resources"), g.Include[i].Provenance...)
 			}
 			if src.Kind == V4SourceMarketplace && g.Include[i].Registry == "" {
-				return v4err("v4.locator", "resources."+name+".include", 0, "Marketplace locators require a registry slug")
+				return withV4Provenance(v4err("v4.locator", "resources."+name+".include", 0, "Marketplace locators require a registry slug"), g.Include[i].Provenance...)
 			}
 		}
 		// Associate decisions with include occurrences by stream order, not by
