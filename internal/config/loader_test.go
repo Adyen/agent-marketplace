@@ -424,7 +424,7 @@ func TestLoadConfigFromPathReturnsParseError(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected parse error")
 	}
-	assertLoaderV4Error(t, err, canonicalPath(t, path), "v4.parse", 0)
+	assertLoaderV4Error(t, err, canonicalPath(t, path), "v4.parse", 1)
 }
 
 func TestLoadConfigFromPathAllowsRepoHarnesses(t *testing.T) {
@@ -522,14 +522,14 @@ func TestLoadLocalConfigFromPathReturnsParseError(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected parse error")
 	}
-	assertLoaderV4Error(t, err, canonicalPath(t, path), "v4.parse", 0)
+	assertLoaderV4Error(t, err, canonicalPath(t, path), "v4.parse", 1)
 }
 
 func TestLoadLocalConfigFromPathRejectsUnknownKeys(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.local.yaml")
 	mustWriteFile(t, path, []byte("apiVersion: agent-marketplace/v4\nsources: {local: {directory: /local/skills}}\nresources: {local: {exclude: [skill/opt-out]}}\nharnesses: [factory]\n"))
 	_, err := LoadLocalConfigFromPath(path)
-	assertLoaderV4Error(t, err, "harnesses", "v4.layer-field", 0)
+	assertLoaderV4Error(t, err, "harnesses", "v4.layer-field", 4)
 }
 
 // spec: consumer-config-format/explicit-non-v4-root-versions-are-refused
