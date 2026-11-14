@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -755,7 +756,8 @@ func guidedConfigurationError(code string) bool {
 	case "v4.parse", "v4.layer-field", "v4.unknown-field", "v4.duplicate-key",
 		"v4.alias-forbidden", "v4.auxiliary", "v4.duplicate", "v4.duplicate-request",
 		"v4.exclusion", "v4.git-origin", "v4.git-path", "v4.git-ref", "v4.git-ref-required",
-		"v4.harness", "v4.installed-name", "v4.key-type", "v4.locator", "v4.marketplace-url",
+		"v4.directory-path", "v4.harness", "v4.include", "v4.installed-name",
+		"v4.key-type", "v4.locator", "v4.marketplace-url",
 		"v4.merge-key-forbidden", "v4.multiple-documents", "v4.option-combination",
 		"v4.registry-slug", "v4.resource-item", "v4.resource-options", "v4.revision",
 		"v4.root-type", "v4.runtime-option", "v4.source-conflict", "v4.source-discriminator",
@@ -833,8 +835,18 @@ func applyGuidedConfigurationEdit(
 	command.Stdin = opts.in
 	command.Stdout = opts.out
 	command.Stderr = opts.err
-	if err := command.Run(); err != nil {
+	runErr := command.Run()
+	if err := ctx.Err(); err != nil {
 		return false, fmt.Errorf("run configuration editor: %w", err)
+	}
+	if runErr != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(runErr, &exitErr) {
+			return false, fmt.Errorf("run configuration editor: %w", runErr)
+		}
+		if _, err := fmt.Fprintf(opts.out, "  editor exited with status %d; diagnosing configuration again\n", exitErr.ExitCode()); err != nil {
+			return false, err
+		}
 	}
 	if err := refreshEditedFile(path); err != nil {
 		return false, err

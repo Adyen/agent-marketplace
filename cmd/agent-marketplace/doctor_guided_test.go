@@ -29,6 +29,8 @@ func TestDoctorRepairGuidedDiagnostics(t *testing.T) {
 		{name: "unknown field", root: "apiVersion: agent-marketplace/v4\nunknown_field: true\n", source: "unknown_field: true", code: "v4.unknown-field", line: 2},
 		{name: "wrong field type", root: "apiVersion: agent-marketplace/v4\nsources: []\n", source: "sources: []", code: "v4.type", line: 2},
 		{name: "inapplicable source field", root: "apiVersion: agent-marketplace/v4\nsources:\n  team: {directory: ./team, ref: main}\n", source: "  team: {directory: ./team, ref: main}", code: "v4.source-field", line: 3},
+		{name: "directory path", root: "apiVersion: agent-marketplace/v4\nsources:\n  team: {directory: ../outside}\n", source: "  team: {directory: ../outside}", code: "v4.directory-path", line: 3},
+		{name: "empty include", root: "apiVersion: agent-marketplace/v4\ninclude: ''\n", source: "include: ''", code: "v4.include", line: 2},
 		{name: "malformed YAML", root: "apiVersion: agent-marketplace/v4\nsources: [\n", source: "sources: [", code: "v4.parse", line: 2},
 		{name: "duplicate key", root: "apiVersion: agent-marketplace/v4\nsources:\n  team: {directory: /one}\n  team: {directory: /two}\n", source: "  team: {directory: /two}", code: "v4.duplicate-key", line: 4},
 		{name: "included fragment", root: "apiVersion: agent-marketplace/v4\ninclude: fragment.yaml\n", fragment: "sources:\n  team: {directory: /one, unknown: true}\n", source: "  team: {directory: /one, unknown: true}", code: "v4.unknown-field", line: 2},
@@ -599,20 +601,70 @@ func TestDoctorRepairGuidedEditRevalidatesAtNextStepBoundary(t *testing.T) {
 }
 
 // spec: doctor-repair-planning/an-editor-fix-is-diagnosed-again
-func TestDoctorRepairEditorFailureHasContext(t *testing.T) {
+func TestDoctorRepairGuidedEditorNonzeroExitRediagnoses(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
-	repoRoot, _ := devinDoctorEnv(t)
-	writeFile(t, filepath.Join(repoRoot, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nunknown_field: true\n")
-	script := filepath.Join(t.TempDir(), "fail.sh")
-	writeFile(t, script, "#!/bin/sh\nexit 17\n")
-	t.Setenv("VISUAL", "sh "+fmt.Sprintf("%q", script))
-	var out bytes.Buffer
-	err := runDoctor(doctorOptions{out: &out, in: strings.NewReader("y\n"), isTTY: true, repair: true,
-		probe: staticProbe(devincli.Probe{Status: devincli.StatusNotInstalled})})
-	if err == nil || !strings.Contains(err.Error(), "configuration editor") {
-		t.Fatalf("editor failure lacks operation context: %v\n%s", err, out.String())
+	for _, tc := range []struct {
+		name       string
+		fix        bool
+		wantGuided int
+		wantErr    bool
+	}{
+		{name: "leaves broken input", wantGuided: 2, wantErr: true},
+		{name: "fixes input", fix: true, wantGuided: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoRoot, _ := devinDoctorEnv(t)
+			configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+			before := "apiVersion: agent-marketplace/v4\nunknown_field: true\n"
+			writeFile(t, configPath, before)
+			editorLog := filepath.Join(t.TempDir(), "editor.log")
+			script := filepath.Join(t.TempDir(), "exit-17.sh")
+			scriptBody := "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$EDITOR_LOG\"\n"
+			if tc.fix {
+				scriptBody += "cat > \"$1\" <<'EOF'\napiVersion: agent-marketplace/v4\nsources: {}\nEOF\n"
+			}
+			scriptBody += "exit 17\n"
+			writeFile(t, script, scriptBody)
+			t.Setenv("EDITOR_LOG", editorLog)
+			t.Setenv("VISUAL", "sh "+fmt.Sprintf("%q", script))
+
+			var out bytes.Buffer
+			err := runDoctor(doctorOptions{
+				out:    &out,
+				in:     strings.NewReader("y\n"),
+				isTTY:  true,
+				repair: true,
+				probe:  staticProbe(devincli.Probe{Status: devincli.StatusNotInstalled}),
+			})
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("repair error = %v, want error %t\n%s", err, tc.wantErr, out.String())
+			}
+			if err != nil && strings.Contains(err.Error(), "run configuration editor") {
+				t.Fatalf("finished editor exit was treated as a startup failure: %v\n%s", err, out.String())
+			}
+			if !strings.Contains(out.String(), "  editor exited with status 17; diagnosing configuration again\n") {
+				t.Fatalf("editor exit status was not reported:\n%s", out.String())
+			}
+			if got := strings.Count(out.String(), "[guided]"); got != tc.wantGuided {
+				t.Fatalf("guided step count = %d, want %d:\n%s", got, tc.wantGuided, out.String())
+			}
+			if data, readErr := os.ReadFile(editorLog); readErr != nil || strings.Count(string(data), doctorTestPath(t, configPath)) != 1 {
+				t.Fatalf("editor launch log = %q, want one launch: %v", data, readErr)
+			}
+			after, readErr := os.ReadFile(configPath)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if tc.fix {
+				if string(after) != "apiVersion: agent-marketplace/v4\nsources: {}\n" {
+					t.Fatalf("editor result = %q, want valid configuration", after)
+				}
+			} else if string(after) != before {
+				t.Fatalf("editor changed broken configuration: %q", after)
+			}
+		})
 	}
 }
 

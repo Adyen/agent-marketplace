@@ -668,7 +668,7 @@ func TestDoctorRepairListsOrganizationAcquisitionBlockers(t *testing.T) {
 
 // spec: doctor-repair-planning/invalid-configuration-blocks-only-the-steps-that-need-it
 // spec: doctor-repair-planning/repair-exits-one-when-only-blocked-or-human-only-items-remain
-func TestDoctorRepairListsInvalidConfigurationAsHumanOnly(t *testing.T) {
+func TestDoctorRepairListsInvalidConfigurationAsGuided(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
