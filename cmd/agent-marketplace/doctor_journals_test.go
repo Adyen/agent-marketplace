@@ -9,10 +9,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
 	"github.com/Adyen/agent-marketplace/internal/devincli"
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
+	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 )
 
@@ -339,4 +342,120 @@ func snapshotDoctorJournalFiles(t *testing.T, paths ...string) func() {
 			}
 		}
 	}
+}
+
+// spec: doctor-repair-planning/failed-resolution-blocks-selection-dependent-steps
+// spec: doctor-repair-planning/pending-journals-are-previewed-off-terminal-without-consent
+func TestDoctorRepairJournalResolutionFailure(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, tc := range []struct {
+		name string
+		yes  bool
+	}{
+		{name: "preview"},
+		{name: "replay", yes: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoRoot, _ := devinDoctorEnv(t)
+			configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+			writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources: {}\n")
+			mcpPath, _ := prepareDevinRepairFixture(t, repoRoot)
+			store, err := ownership.Open(filepath.Join(repoRoot, ".devin"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			lockPath := filepath.Join(repoRoot, ".agents", "lock.yaml")
+			_, journal := createDoctorDependencyJournal(t, lockPath, "old-lock\n", "new-lock\n")
+			preserveSelection := snapshotDoctorJournalFiles(t, mcpPath, store.StateFile())
+			preserveJournal := snapshotDoctorJournalFiles(t, journal, lockPath)
+			resolutionErr := errors.New("test resolution unavailable")
+			var out bytes.Buffer
+			err = runDoctor(doctorOptions{
+				out: &out, repair: true, yes: tc.yes,
+				probe: staticProbe(devincli.Probe{Status: devincli.StatusNotInstalled}),
+				resolve: func(context.Context, string) ([]resolver.ResolvedArtifact, error) {
+					return nil, resolutionErr
+				},
+			})
+			if !errors.Is(err, resolutionErr) {
+				t.Fatalf("repair error = %v, want resolution failure\n%s", err, out.String())
+			}
+			for _, expected := range []string{
+				"  1. [safe] replay interrupted dependency journal",
+				"needs: journal",
+				resolutionErr.Error(),
+				"blocked by",
+				"sync harness drift",
+				"reconcile shared-aggregate ownership",
+			} {
+				if !strings.Contains(out.String(), expected) {
+					t.Errorf("repair output omitted %q:\n%s", expected, out.String())
+				}
+			}
+			preserveSelection()
+			if tc.yes {
+				if !strings.Contains(out.String(), "recovered dependency journal") {
+					t.Fatalf("authorized replay was not reported:\n%s", out.String())
+				}
+				if got, readErr := os.ReadFile(lockPath); readErr != nil || string(got) != "new-lock\n" {
+					t.Fatalf("replayed lock = %q, %v", got, readErr)
+				}
+				if _, statErr := os.Lstat(journal); !errors.Is(statErr, os.ErrNotExist) {
+					t.Fatalf("replayed journal remains: %v", statErr)
+				}
+			} else {
+				preserveJournal()
+				if strings.Contains(out.String(), "recovered dependency journal") {
+					t.Fatalf("preview replayed the journal:\n%s", out.String())
+				}
+			}
+		})
+	}
+}
+
+// spec: doctor-repair-planning/policy-change-before-a-confirmed-step-stops-repair
+func TestDoctorRepairJournalFreePreviewRevalidatesPolicy(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	repoRoot, _ := devinDoctorEnv(t)
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	writeConfig(t, configPath, "apiVersion: agent-marketplace/v4\nharnesses: [devin]\nsources: {}\n")
+	prepareDevinRepairFixtureOwned(t, repoRoot)
+	aggregatePath := filepath.Join(repoRoot, ".devin", harness.DevinMcpConfigFile)
+	store, err := ownership.Open(filepath.Join(repoRoot, ".devin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	ws, err := pipeline.DiscoverWorkspace()
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := pipeline.LoadEffective(ctx, pipeline.ConfigLoadOnline, config.LoadEffectiveOptions{
+		RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(),
+	}, nil)
+	if len(initial.Errors) != 0 {
+		t.Fatalf("fixture configuration errors: %v", initial.Errors)
+	}
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	external := append(append([]byte(nil), before...), []byte("# changed after diagnosis\n")...)
+	if err := os.WriteFile(configPath, external, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	preserve := snapshotDoctorJournalFiles(t, configPath, aggregatePath, store.StateFile(), store.JournalFile())
+
+	var out bytes.Buffer
+	err = runDoctorRepairPlanner(&out, doctorOptions{
+		ctx: ctx, resolve: staticResolve(nil),
+	}, repoRoot, initial)
+	if !errors.Is(err, dependencytxn.ErrGenerationConflict) {
+		t.Fatalf("repair error = %v, want policy generation conflict\n%s", err, out.String())
+	}
+	preserve()
 }
