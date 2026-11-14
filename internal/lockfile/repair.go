@@ -116,8 +116,7 @@ func splitRepairConflictViews(data []byte) ([][]byte, error) {
 }
 
 func repairConflictMarker(line []byte) byte {
-	line = bytes.TrimSpace(bytes.TrimSuffix(line, []byte("\n")))
-	line = bytes.TrimSuffix(line, []byte("\r"))
+	line = bytes.TrimSpace(line)
 	switch {
 	case bytes.HasPrefix(line, []byte("<<<<<<<")):
 		return '<'

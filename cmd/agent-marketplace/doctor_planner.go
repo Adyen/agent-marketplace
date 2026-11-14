@@ -128,14 +128,7 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 					}
 					continue
 				}
-				hasRead := false
-				for _, read := range reads {
-					if filepath.Clean(read.Path) == filepath.Clean(lockPath) {
-						hasRead = true
-						break
-					}
-				}
-				if !hasRead {
+				if _, hasRead := doctorAcquisitionReadGeneration(reads, lockPath); !hasRead {
 					key := addHuman(repairplanner.StageLocks, diagnostic.code,
 						fmt.Errorf("capture policy assertion for acquisition lock %s", lockPath))
 					if blocker == "" {
