@@ -218,7 +218,7 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 			}
 			if len(selects) > 0 {
 				_, _, checkErr := prepareExactLocks(ctx, repoRoot, config.FindLocalConfigDir(), lockMode{
-					check: true, selects: selects,
+					check: true, selects: selects, allowTransientOrganization: true,
 					commitReads: append([]dependencytxn.ReadAssertion(nil), reads...),
 				})
 				if checkErr != nil {

@@ -169,7 +169,7 @@ func doctorAcquisitionStep(
 		}
 		if stage == repairplanner.StageCache {
 			_, _, err := prepareExactLocks(ctx, repoRoot, localDir, lockMode{
-				locked: true, selects: map[lockfile.Scope]bool{scope: true},
+				locked: true, selects: map[lockfile.Scope]bool{scope: true}, allowTransientOrganization: true,
 				commitReads: append([]dependencytxn.ReadAssertion(nil), (*reads)...),
 			})
 			if err != nil {
