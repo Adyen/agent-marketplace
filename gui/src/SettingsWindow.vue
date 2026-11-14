@@ -48,6 +48,10 @@ const formEpoch = ref(0)
 const pendingRemove = ref<SourceDescription | null>(null)
 const addSourceOwned = ref(new Set<string>())
 const addSourceClaim = ref<Set<string> | null>(null)
+const sourceLocationError = computed(() => {
+  if (props.controller.state.sourceErrorField !== 'location') return undefined
+  return props.controller.state.sourceError ?? undefined
+})
 let openEpoch = 0
 
 const { preference, setPreference } = useAppearance()
@@ -229,6 +233,13 @@ async function add(source: SourceInput) {
       document.querySelector<HTMLElement>('#settings-panel-sources')?.focus()
     }
   })
+}
+
+function clearSourceLocationError() {
+  if (props.controller.state.sourceErrorField === 'location') {
+    props.controller.state.sourceError = null
+    props.controller.state.sourceErrorField = null
+  }
 }
 
 async function confirmRemove() {
@@ -471,7 +482,18 @@ async function confirmRemove() {
 
               <section class="settings__group" aria-label="Add user source">
                 <h3>Add a source</h3>
-                <p v-if="controller.state.sourceError" role="alert" class="settings__notice settings__notice--danger">
+                <SourceForm
+                  :key="formEpoch"
+                  :disabled="fieldsDisabled"
+                  :server-location-error="sourceLocationError"
+                  @add="add"
+                  @edit-location="clearSourceLocationError"
+                />
+                <p
+                  v-if="controller.state.sourceError && controller.state.sourceErrorField == null"
+                  role="alert"
+                  class="settings__notice settings__notice--danger"
+                >
                   <GuiIcon name="error" class="settings__notice-icon" />
                   <span>{{ controller.state.sourceError }}</span>
                 </p>
@@ -479,7 +501,6 @@ async function confirmRemove() {
                   <GuiIcon name="error" class="settings__notice-icon" />
                   <span>{{ d.message }}</span>
                 </p>
-                <SourceForm :key="formEpoch" :disabled="fieldsDisabled" @add="add" />
               </section>
 
               <section v-if="configuration.managedOutsideGUI.length > 0" class="settings__footnote" aria-label="Managed outside the GUI">
