@@ -292,7 +292,7 @@ func exactLockViewWithContext(ctx context.Context, ec config.EffectiveConfig, al
 				ctx = cache.ContextWithExactGitNamespaceLease(ctx)
 				locked.snapshots[rootPath] = snapshot
 				if len(registry.Roots) > 0 {
-					verified, verifyErr := sourcerevision.VerifyLockedGitRootWithPluginContext(snapshot, root, pluginContexts.PluginContextFor(registry, root))
+					verified, verifyErr := sourcerevision.VerifyLockedGitRootWithContext(ctx, snapshot, root, pluginContexts.PluginContextFor(registry, root))
 					if verifyErr != nil {
 						errorCode = "lock.manifest-mismatch"
 						openErr = fmt.Errorf("verify locked root %q: %w", root.Path, verifyErr)

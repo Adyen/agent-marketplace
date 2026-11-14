@@ -19,6 +19,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/logging"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	tmcfg "github.com/Adyen/agent-marketplace/internal/telemetry/config"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
@@ -142,9 +143,31 @@ func newRootCmd() *cobra.Command {
 		newServeCmd(),
 		newTelemetryCmd(),
 	)
+	wrapCommandRunEWithSourceRevisionSession(rootCmd)
 	guardCommandErrors(rootCmd)
 
 	return rootCmd
+}
+
+func wrapCommandRunEWithSourceRevisionSession(cmd *cobra.Command) {
+	for _, child := range cmd.Commands() {
+		if child.RunE != nil && !commandRunsAsOrUnder(child, "tui") && !commandRunsAsOrUnder(child, "serve") {
+			runE := child.RunE
+			child.RunE = func(cmd *cobra.Command, args []string) (runErr error) {
+				previousContext := cmd.Context()
+				ctx, closeSession := sourcerevision.WithFreshSession(previousContext)
+				cmd.SetContext(ctx)
+				defer func() {
+					if closeErr := closeSession(); closeErr != nil {
+						runErr = errors.Join(runErr, closeErr)
+					}
+					cmd.SetContext(previousContext)
+				}()
+				return runE(cmd, args)
+			}
+		}
+		wrapCommandRunEWithSourceRevisionSession(child)
+	}
 }
 
 func prepareCommandDependencies(cmd *cobra.Command, rootTUI bool) error {

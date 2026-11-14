@@ -1,6 +1,7 @@
 package fsboundary_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -22,21 +23,7 @@ import (
 func TestSessionVerificationReusesBuiltSourceReads(t *testing.T) {
 	snapshot := t.TempDir()
 	writeSessionFixture(t, snapshot)
-	var mu sync.Mutex
-	reads := map[string]int{}
-	restore := fsboundary.ReplaceOpenatForTest(func(dirfd int, name string, flags int, mode uint32) (int, error) {
-		fd, err := unix.Openat(dirfd, name, flags, mode)
-		if err == nil && flags&unix.O_DIRECTORY == 0 && flags&unix.O_NOFOLLOW != 0 && (name == "SKILL.md" || name == "run.sh") {
-			var stat unix.Stat_t
-			if unix.Fstat(fd, &stat) == nil && stat.Mode&unix.S_IFMT == unix.S_IFREG {
-				mu.Lock()
-				reads[name]++
-				mu.Unlock()
-			}
-		}
-		return fd, err
-	})
-	defer restore()
+	reads := trackSessionPayloadOpens(t)
 
 	ctx, closeSession := sourcerevision.WithSession(context.Background())
 	defer func() {
@@ -51,25 +38,180 @@ func TestSessionVerificationReusesBuiltSourceReads(t *testing.T) {
 	if built.Catalog == nil || built.SourceHarness != "factory" {
 		t.Fatalf("built catalog = %+v, source harness = %q", built.Catalog, built.SourceHarness)
 	}
-	mu.Lock()
-	afterBuild := map[string]int{"SKILL.md": reads["SKILL.md"], "run.sh": reads["run.sh"]}
-	mu.Unlock()
-	verified, err := sourcerevision.VerifyLockedGitRootWithContext(ctx, snapshot, sessionLockRoot(built), nil)
+	afterBuild := reads()
+	borrowedCtx, closeBorrower := sourcerevision.WithSession(ctx)
+	verified, err := sourcerevision.VerifyLockedGitRootWithContext(borrowedCtx, snapshot, sessionLockRoot(built), nil)
 	if err != nil {
 		t.Fatalf("VerifyLockedGitRootWithContext: %v", err)
 	}
 	if verified.Catalog == nil || len(verified.Catalog.Entries) != 1 || verified.Catalog.Entries[0].Name != "probe" {
 		t.Fatalf("verified catalog entries = %+v, want probe", verified.Catalog)
 	}
-	mu.Lock()
-	defer mu.Unlock()
-	if !reflect.DeepEqual(reads, afterBuild) {
-		t.Fatalf("verification reopened source payloads: before=%v after=%v", afterBuild, reads)
+	if got := reads(); !reflect.DeepEqual(got, afterBuild) {
+		t.Fatalf("verification through a borrowed session reopened source payloads: before=%v after=%v", afterBuild, got)
+	}
+	if err := closeBorrower(); err != nil {
+		t.Fatalf("close borrowed source-revision session: %v", err)
+	}
+	if _, err := sourcerevision.VerifyLockedGitRootWithContext(ctx, snapshot, sessionLockRoot(built), nil); err != nil {
+		t.Fatalf("owner verification after borrower close: %v", err)
+	}
+	if got := reads(); !reflect.DeepEqual(got, afterBuild) {
+		t.Fatalf("closing the borrower closed the owner session: before=%v after=%v", afterBuild, got)
 	}
 	for _, name := range []string{"SKILL.md", "run.sh"} {
-		if reads[name] == 0 || reads[name] > 2 {
-			t.Fatalf("successful regular-file payload opens for %s = %d, want 1 or 2", name, reads[name])
+		if afterBuild[name] == 0 || afterBuild[name] > 2 {
+			t.Fatalf("successful regular-file payload opens for %s = %d, want 1 or 2", name, afterBuild[name])
 		}
+	}
+	freshCtx, closeFresh := sourcerevision.WithSession(context.Background())
+	defer func() {
+		if err := closeFresh(); err != nil {
+			t.Errorf("close fresh source-revision session: %v", err)
+		}
+	}()
+	if _, err := sourcerevision.BuildWithContext(freshCtx, sourcerevision.Input{SnapshotRoot: snapshot, RootPath: ".", SourceHarness: "factory"}); err != nil {
+		t.Fatalf("BuildWithContext in a fresh session: %v", err)
+	}
+	if got := reads(); reflect.DeepEqual(got, afterBuild) {
+		t.Fatalf("fresh session reused prior source reads: %v", got)
+	}
+}
+
+func TestSessionBuildWithContextReusesVerifiedResult(t *testing.T) {
+	snapshot := t.TempDir()
+	writeSessionFixture(t, snapshot)
+	reads := trackSessionPayloadOpens(t)
+	ctx, closeSession := sourcerevision.WithSession(context.Background())
+	defer func() {
+		if err := closeSession(); err != nil {
+			t.Errorf("close source-revision session: %v", err)
+		}
+	}()
+
+	input := sourcerevision.Input{SnapshotRoot: snapshot, RootPath: ".", SourceHarness: "factory"}
+	first, err := sourcerevision.BuildWithContext(ctx, input)
+	if err != nil {
+		t.Fatalf("first BuildWithContext: %v", err)
+	}
+	afterFirst := reads()
+	second, err := sourcerevision.BuildWithContext(ctx, input)
+	if err != nil {
+		t.Fatalf("repeated BuildWithContext: %v", err)
+	}
+	if !bytes.Equal(second.Payload, first.Payload) {
+		t.Fatalf("repeated BuildWithContext payload differs:\nfirst:  %s\nsecond: %s", first.Payload, second.Payload)
+	}
+	if got := reads(); !reflect.DeepEqual(got, afterFirst) {
+		t.Fatalf("repeated BuildWithContext reopened source payloads: before=%v after=%v", afterFirst, got)
+	}
+}
+
+func TestSessionBuildWithContextPreservesHarnessRequestPolicy(t *testing.T) {
+	t.Run("explicit build does not authorize autodetection", func(t *testing.T) {
+		snapshot := t.TempDir()
+		writeSessionFixture(t, snapshot)
+		writeSessionFile(t, filepath.Join(snapshot, ".devin", "skills", "auto-probe", "SKILL.md"), "---\nname: auto-probe\ndescription: Auto-detected Devin skill\n---\nDevin layout\n")
+		ctx, closeSession := sourcerevision.WithSession(context.Background())
+		defer func() {
+			if err := closeSession(); err != nil {
+				t.Errorf("close source-revision session: %v", err)
+			}
+		}()
+		first, err := sourcerevision.BuildWithContext(ctx, sourcerevision.Input{SnapshotRoot: snapshot, RootPath: ".", SourceHarness: "factory"})
+		if err != nil {
+			t.Fatalf("explicit BuildWithContext: %v", err)
+		}
+		if first.SourceHarness != "factory" {
+			t.Fatalf("explicit source harness = %q, want factory", first.SourceHarness)
+		}
+		auto, err := sourcerevision.BuildWithContext(ctx, sourcerevision.Input{SnapshotRoot: snapshot, RootPath: "."})
+		if err != nil {
+			t.Fatalf("autodetected BuildWithContext: %v", err)
+		}
+		if auto.SourceHarness != "devin" {
+			t.Fatalf("autodetected source harness = %q, want devin", auto.SourceHarness)
+		}
+		if auto.Catalog == nil || len(auto.Catalog.Entries) != 1 || auto.Catalog.Entries[0].Name != "auto-probe" {
+			t.Fatalf("autodetected catalog entries = %+v, want only auto-probe", auto.Catalog)
+		}
+	})
+
+	t.Run("autodetection can satisfy its resolved explicit harness", func(t *testing.T) {
+		snapshot := t.TempDir()
+		writeSessionFixture(t, snapshot)
+		reads := trackSessionPayloadOpens(t)
+		ctx, closeSession := sourcerevision.WithSession(context.Background())
+		defer func() {
+			if err := closeSession(); err != nil {
+				t.Errorf("close source-revision session: %v", err)
+			}
+		}()
+		auto, err := sourcerevision.BuildWithContext(ctx, sourcerevision.Input{SnapshotRoot: snapshot, RootPath: "."})
+		if err != nil {
+			t.Fatalf("autodetected BuildWithContext: %v", err)
+		}
+		if auto.SourceHarness != "factory" {
+			t.Fatalf("autodetected source harness = %q, want factory", auto.SourceHarness)
+		}
+		afterAuto := reads()
+		explicit, err := sourcerevision.BuildWithContext(ctx, sourcerevision.Input{SnapshotRoot: snapshot, RootPath: ".", SourceHarness: auto.SourceHarness})
+		if err != nil {
+			t.Fatalf("resolved explicit BuildWithContext: %v", err)
+		}
+		if !bytes.Equal(explicit.Payload, auto.Payload) {
+			t.Fatalf("resolved explicit payload differs from autodetected payload")
+		}
+		if got := reads(); !reflect.DeepEqual(got, afterAuto) {
+			t.Fatalf("resolved explicit request reopened an autodetected source: before=%v after=%v", afterAuto, got)
+		}
+	})
+
+	t.Run("resolved explicit hit checks source generation", func(t *testing.T) {
+		snapshot := t.TempDir()
+		writeSessionFixture(t, snapshot)
+		ctx, closeSession := sourcerevision.WithSession(context.Background())
+		defer func() {
+			if err := closeSession(); err != nil {
+				t.Errorf("close source-revision session: %v", err)
+			}
+		}()
+		if _, err := sourcerevision.BuildWithContext(ctx, sourcerevision.Input{SnapshotRoot: snapshot, RootPath: "."}); err != nil {
+			t.Fatalf("autodetected BuildWithContext: %v", err)
+		}
+		mutateSessionSource(t, snapshot, "addition")
+		got, err := sourcerevision.BuildWithContext(ctx, sourcerevision.Input{SnapshotRoot: snapshot, RootPath: ".", SourceHarness: "factory"})
+		if !errors.Is(err, fsboundary.ErrGenerationConflict) || !reflect.DeepEqual(got, sourcerevision.Result{}) {
+			t.Fatalf("resolved explicit request after source drift = %+v, %v; want generation conflict and empty result", got, err)
+		}
+	})
+}
+
+func trackSessionPayloadOpens(t *testing.T) func() map[string]int {
+	t.Helper()
+	var mu sync.Mutex
+	reads := map[string]int{}
+	restore := fsboundary.ReplaceOpenatForTest(func(dirfd int, name string, flags int, mode uint32) (int, error) {
+		fd, err := unix.Openat(dirfd, name, flags, mode)
+		if err == nil && flags&unix.O_DIRECTORY == 0 && flags&unix.O_NOFOLLOW != 0 && (name == "SKILL.md" || name == "run.sh") {
+			var stat unix.Stat_t
+			if unix.Fstat(fd, &stat) == nil && stat.Mode&unix.S_IFMT == unix.S_IFREG {
+				mu.Lock()
+				reads[name]++
+				mu.Unlock()
+			}
+		}
+		return fd, err
+	})
+	t.Cleanup(restore)
+	return func() map[string]int {
+		mu.Lock()
+		defer mu.Unlock()
+		result := make(map[string]int, len(reads))
+		for name, count := range reads {
+			result[name] = count
+		}
+		return result
 	}
 }
 

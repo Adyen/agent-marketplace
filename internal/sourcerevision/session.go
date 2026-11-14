@@ -21,9 +21,10 @@ type revisionSessionKey struct {
 }
 
 type revisionSessionEntry struct {
-	source     *fsboundary.SourceFS
-	checkpoint fsboundary.SourceCheckpoint
-	result     Result
+	source           *fsboundary.SourceFS
+	checkpoint       fsboundary.SourceCheckpoint
+	requestedHarness string
+	result           Result
 }
 
 type revisionSession struct {
@@ -33,6 +34,21 @@ type revisionSession struct {
 }
 
 func WithSession(ctx context.Context) (context.Context, func() error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if session := revisionSessionFrom(ctx); session != nil {
+		session.mu.RLock()
+		active := !session.closed
+		session.mu.RUnlock()
+		if active {
+			return ctx, func() error { return nil }
+		}
+	}
+	return WithFreshSession(ctx)
+}
+
+func WithFreshSession(ctx context.Context) (context.Context, func() error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -59,6 +75,17 @@ func (session *revisionSession) build(input Input) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	if cached, found, err := session.find(root, contract.Schema, input.SourceHarness); err != nil {
+		return Result{}, err
+	} else if found {
+		payload, manifest, err := encodeManifest(cached.Manifest)
+		if err != nil {
+			return Result{}, fmt.Errorf("encode reused source revision manifest: %w", err)
+		}
+		cached.Payload = payload
+		cached.Manifest = manifest
+		return cached, nil
+	}
 	source, err := fsboundary.OpenSourceFS(root)
 	if err != nil {
 		return Result{}, fmt.Errorf("capture revision source: %w", err)
@@ -75,7 +102,7 @@ func (session *revisionSession) build(input Input) (Result, error) {
 		return Result{}, errors.Join(fmt.Errorf("%w: validate revision source generation: %w", ErrCatalog, err), source.Close())
 	}
 	key := revisionSessionKey{root: filepath.Clean(root), schema: contract.Schema, harness: built.SourceHarness}
-	if err := session.store(key, &revisionSessionEntry{source: source, checkpoint: checkpoint, result: built}); err != nil {
+	if err := session.store(key, &revisionSessionEntry{source: source, checkpoint: checkpoint, requestedHarness: input.SourceHarness, result: built}); err != nil {
 		return Result{}, err
 	}
 	return built, nil
@@ -97,13 +124,23 @@ func (session *revisionSession) store(key revisionSessionKey, entry *revisionSes
 }
 
 func (session *revisionSession) find(root, schema, harness string) (Result, bool, error) {
-	key := revisionSessionKey{root: filepath.Clean(root), schema: schema, harness: harness}
 	session.mu.RLock()
 	defer session.mu.RUnlock()
 	if session.closed {
 		return Result{}, false, errRevisionSessionClosed
 	}
-	entry, ok := session.entries[key]
+	var entry *revisionSessionEntry
+	if harness == "" {
+		for key, candidate := range session.entries {
+			if key.root == filepath.Clean(root) && key.schema == schema && candidate.requestedHarness == "" {
+				entry = candidate
+				break
+			}
+		}
+	} else {
+		entry = session.entries[revisionSessionKey{root: filepath.Clean(root), schema: schema, harness: harness}]
+	}
+	ok := entry != nil
 	if !ok {
 		return Result{}, false, nil
 	}
