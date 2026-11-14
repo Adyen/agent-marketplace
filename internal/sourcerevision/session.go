@@ -28,9 +28,10 @@ type revisionSessionEntry struct {
 }
 
 type revisionSession struct {
-	mu      sync.RWMutex
-	closed  bool
-	entries map[revisionSessionKey]*revisionSessionEntry
+	mu         sync.RWMutex
+	closed     bool
+	entries    map[revisionSessionKey]*revisionSessionEntry
+	buildLocks map[revisionSessionKey]*sync.Mutex
 }
 
 func WithSession(ctx context.Context) (context.Context, func() error) {
@@ -52,7 +53,10 @@ func WithFreshSession(ctx context.Context) (context.Context, func() error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	session := &revisionSession{entries: make(map[revisionSessionKey]*revisionSessionEntry)}
+	session := &revisionSession{
+		entries:    make(map[revisionSessionKey]*revisionSessionEntry),
+		buildLocks: make(map[revisionSessionKey]*sync.Mutex),
+	}
 	return context.WithValue(ctx, revisionSessionContextKey{}, session), session.close
 }
 
@@ -75,6 +79,20 @@ func (session *revisionSession) build(input Input) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	lockKey := revisionSessionKey{root: filepath.Clean(root), schema: contract.Schema}
+	session.mu.Lock()
+	if session.closed {
+		session.mu.Unlock()
+		return Result{}, errRevisionSessionClosed
+	}
+	buildLock := session.buildLocks[lockKey]
+	if buildLock == nil {
+		buildLock = &sync.Mutex{}
+		session.buildLocks[lockKey] = buildLock
+	}
+	session.mu.Unlock()
+	buildLock.Lock()
+	defer buildLock.Unlock()
 	if cached, found, err := session.find(root, contract.Schema, input.SourceHarness); err != nil {
 		return Result{}, err
 	} else if found {
@@ -162,6 +180,7 @@ func (session *revisionSession) close() error {
 	session.closed = true
 	entries := session.entries
 	session.entries = nil
+	session.buildLocks = nil
 	session.mu.Unlock()
 	var err error
 	for _, entry := range entries {

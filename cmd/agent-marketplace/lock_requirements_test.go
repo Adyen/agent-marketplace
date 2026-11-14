@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
@@ -133,6 +136,59 @@ func TestAcquireGitRequirementsPreservesDifferentRoots(t *testing.T) {
 	second := got.registry.Roots[1]
 	if second.Path != "skills" || second.SourceHarness != "claude" || second.RevisionSchema != "v4" || len(second.Resources) != 1 || second.Resources[0].Name != "review-0" {
 		t.Fatalf("distinct root was conflated or lost: %+v", second)
+	}
+}
+
+func TestLockConcurrentRefsReuseSourceRevision(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	t.Setenv("HOME", t.TempDir())
+	origin, working := createBareRepoWithWorkingClone(t, "same-oid.git")
+	for i := range 32 {
+		writeSkill(t, working, fmt.Sprintf("probe-%d", i), "Probe", nil)
+	}
+	commitAndPushAll(t, working, "seed")
+	runSyncBenchmarkGit(t, origin, "update-ref", "refs/heads/other", "refs/heads/main")
+	repo := filepath.Join(t.TempDir(), "repo")
+	writeConfig(t, filepath.Join(repo, ".agents", "config.yaml"), fmt.Sprintf(`apiVersion: agent-marketplace/v4
+harnesses: [factory]
+sources:
+  first: {git: file://%s, ref: main}
+  second: {git: file://%s, ref: other}
+`, origin, origin))
+	withWorkingDir(t, repo)
+	logPath := filepath.Join(t.TempDir(), "lock.jsonl")
+	t.Setenv("AGENT_MARKETPLACE_LOG_ENABLED", "true")
+	t.Setenv("AGENT_MARKETPLACE_LOG_LEVEL", "debug")
+	t.Setenv("AGENT_MARKETPLACE_LOG_FILE", logPath)
+	var arrived atomic.Int32
+	start := make(chan struct{})
+	previous := lockSnapshotAcquiredHook
+	lockSnapshotAcquiredHook = func() {
+		if arrived.Add(1) == 2 {
+			close(start)
+		}
+		select {
+		case <-start:
+		case <-time.After(5 * time.Second):
+			t.Error("second acquisition did not reach the existing hook")
+		}
+	}
+	t.Cleanup(func() { lockSnapshotAcquiredHook = previous })
+	if output, err := executeCommand("lock", "--scope", "repo"); err != nil {
+		t.Fatalf("lock: %v\n%s", err, output)
+	}
+	doc := readLockDocument(t, filepath.Join(repo, ".agents", "lock.yaml"))
+	if len(doc.Registries) != 2 || doc.Registries[0].Commit.String() == "" || doc.Registries[0].Commit != doc.Registries[1].Commit {
+		t.Fatalf("fixture did not produce two refs of the same commit: %+v", doc)
+	}
+	logs, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count := strings.Count(string(logs), `"msg":"built direct-Git source revision"`); count != 1 {
+		t.Fatalf("same commit/root was built %d times, want one\n%s", count, logs)
 	}
 }
 

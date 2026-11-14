@@ -90,20 +90,46 @@ func TestSessionBuildWithContextReusesVerifiedResult(t *testing.T) {
 	}()
 
 	input := sourcerevision.Input{SnapshotRoot: snapshot, RootPath: ".", SourceHarness: "factory"}
-	first, err := sourcerevision.BuildWithContext(ctx, input)
-	if err != nil {
-		t.Fatalf("first BuildWithContext: %v", err)
+	type buildAttempt struct {
+		result sourcerevision.Result
+		err    error
 	}
-	afterFirst := reads()
+	attempts := make([]buildAttempt, 8)
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+	for i := range attempts {
+		workers.Add(1)
+		go func(i int) {
+			defer workers.Done()
+			<-start
+			attempts[i].result, attempts[i].err = sourcerevision.BuildWithContext(ctx, input)
+		}(i)
+	}
+	close(start)
+	workers.Wait()
+	for i, attempt := range attempts {
+		if attempt.err != nil {
+			t.Fatalf("concurrent BuildWithContext %d: %v", i, attempt.err)
+		}
+		if i > 0 && !bytes.Equal(attempt.result.Payload, attempts[0].result.Payload) {
+			t.Fatalf("concurrent BuildWithContext %d payload differs", i)
+		}
+	}
+	afterConcurrent := reads()
+	for _, name := range []string{"SKILL.md", "run.sh"} {
+		if count := afterConcurrent[name]; count < 1 || count > 2 {
+			t.Fatalf("concurrent payload opens for %s = %d, want 1 or 2", name, count)
+		}
+	}
 	second, err := sourcerevision.BuildWithContext(ctx, input)
 	if err != nil {
 		t.Fatalf("repeated BuildWithContext: %v", err)
 	}
-	if !bytes.Equal(second.Payload, first.Payload) {
-		t.Fatalf("repeated BuildWithContext payload differs:\nfirst:  %s\nsecond: %s", first.Payload, second.Payload)
+	if !bytes.Equal(second.Payload, attempts[0].result.Payload) {
+		t.Fatalf("repeated BuildWithContext payload differs:\nfirst:  %s\nsecond: %s", attempts[0].result.Payload, second.Payload)
 	}
-	if got := reads(); !reflect.DeepEqual(got, afterFirst) {
-		t.Fatalf("repeated BuildWithContext reopened source payloads: before=%v after=%v", afterFirst, got)
+	if got := reads(); !reflect.DeepEqual(got, afterConcurrent) {
+		t.Fatalf("repeated BuildWithContext reopened source payloads: before=%v after=%v", afterConcurrent, got)
 	}
 }
 
