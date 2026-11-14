@@ -148,11 +148,11 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 			incompleteCause = errors.Join(current.Errors...)
 			var causeKey string
 			seenLayerErrors := make(map[string]int)
-			organizationPaths := doctorOrganizationConfigPaths(current)
+			protectedPaths := doctorProtectedConfigPaths(current)
 			for _, layer := range current.LayerResults() {
 				for _, issue := range layer.Errors {
 					seenLayerErrors[issue.Error()]++
-					key := addConfigurationIssue(&diagnosis, layer, issue, organizationPaths, addHuman, revalidate, refreshEditedFile, opts)
+					key := addConfigurationIssue(&diagnosis, layer, issue, protectedPaths, addHuman, revalidate, refreshEditedFile, opts)
 					if causeKey == "" {
 						causeKey = key
 					}
@@ -649,7 +649,7 @@ func addConfigurationIssue(
 	diagnosis *repairplanner.Diagnosis,
 	layer config.LayerResult,
 	issue error,
-	organizationPaths []string,
+	protectedPaths []string,
 	addHuman func(repairplanner.Stage, string, error) string,
 	revalidate func() error,
 	refreshEditedFile func(string) error,
@@ -664,7 +664,7 @@ func addConfigurationIssue(
 	if file == "" {
 		file = layer.Path
 	}
-	if aliases, err := configurationAliasesOrganization(file, organizationPaths); err != nil || aliases {
+	if aliases, err := configurationAliasesProtectedConfig(file, protectedPaths); err != nil || aliases {
 		return addHuman(repairplanner.StageConfiguration, code, issue)
 	}
 	line := repairDiagnosticLine(validation)
@@ -682,13 +682,13 @@ func addConfigurationIssue(
 		Key: key, Stage: repairplanner.StageConfiguration, Class: repairplanner.Guided,
 		Action: action, Code: code, Files: []string{tui.TerminalSafeLine(file)},
 		Apply: func(ctx context.Context) (bool, error) {
-			return applyGuidedConfigurationEdit(ctx, opts, file, organizationPaths, revalidate, refreshEditedFile)
+			return applyGuidedConfigurationEdit(ctx, opts, file, protectedPaths, revalidate, refreshEditedFile)
 		},
 	})
 	return key
 }
 
-func doctorOrganizationConfigPaths(ec config.EffectiveConfig) []string {
+func doctorProtectedConfigPaths(ec config.EffectiveConfig) []string {
 	paths := make(map[string]struct{})
 	add := func(path string) {
 		if path != "" {
@@ -710,6 +710,13 @@ func doctorOrganizationConfigPaths(ec config.EffectiveConfig) []string {
 			add(trust.Path)
 		}
 	}
+	for _, issue := range ec.Errors {
+		var validation *config.V4ValidationError
+		if errors.As(issue, &validation) &&
+			(validation.Code == "v4.api-version-required" || validation.Code == "v4.api-version") {
+			add(repairConfigurationSourceFile(validation))
+		}
+	}
 	result := make([]string, 0, len(paths))
 	for path := range paths {
 		result = append(result, path)
@@ -718,7 +725,7 @@ func doctorOrganizationConfigPaths(ec config.EffectiveConfig) []string {
 	return result
 }
 
-func configurationAliasesOrganization(path string, organizationPaths []string) (bool, error) {
+func configurationAliasesProtectedConfig(path string, protectedPaths []string) (bool, error) {
 	canonical, err := dependencytxn.CanonicalConfigDestination(path)
 	if err != nil {
 		return false, err
@@ -727,23 +734,23 @@ func configurationAliasesOrganization(path string, organizationPaths []string) (
 	if infoErr != nil && !errors.Is(infoErr, os.ErrNotExist) {
 		return false, infoErr
 	}
-	for _, organizationPath := range organizationPaths {
-		organizationCanonical, err := dependencytxn.CanonicalConfigDestination(organizationPath)
+	for _, protectedPath := range protectedPaths {
+		protectedCanonical, err := dependencytxn.CanonicalConfigDestination(protectedPath)
 		if err != nil {
 			return false, err
 		}
-		if canonical == organizationCanonical {
+		if canonical == protectedCanonical {
 			return true, nil
 		}
 		if infoErr == nil {
-			organizationInfo, err := os.Stat(organizationCanonical)
+			protectedInfo, err := os.Stat(protectedCanonical)
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
 			if err != nil {
 				return false, err
 			}
-			if os.SameFile(info, organizationInfo) {
+			if os.SameFile(info, protectedInfo) {
 				return true, nil
 			}
 		}
@@ -799,7 +806,7 @@ func applyGuidedConfigurationEdit(
 	ctx context.Context,
 	opts doctorOptions,
 	path string,
-	organizationPaths []string,
+	protectedPaths []string,
 	revalidate func() error,
 	refreshEditedFile func(string) error,
 ) (bool, error) {
@@ -824,12 +831,12 @@ func applyGuidedConfigurationEdit(
 	if err := revalidate(); err != nil {
 		return false, err
 	}
-	aliases, err := configurationAliasesOrganization(path, organizationPaths)
+	aliases, err := configurationAliasesProtectedConfig(path, protectedPaths)
 	if err != nil {
-		return false, fmt.Errorf("check organization editor boundary: %w", err)
+		return false, fmt.Errorf("check protected configuration editor boundary: %w", err)
 	}
 	if aliases {
-		return false, fmt.Errorf("%w: configuration editor target aliases organization configuration %s", dependencytxn.ErrGenerationConflict, safePath)
+		return false, fmt.Errorf("%w: configuration editor target aliases protected configuration %s", dependencytxn.ErrGenerationConflict, safePath)
 	}
 	command := processstart.Command(ctx, "sh", "-c", `exec `+editor+` "$@"`, "doctor-editor", path)
 	command.Stdin = opts.in

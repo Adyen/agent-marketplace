@@ -318,6 +318,14 @@ func TestDoctorRepairVersionAndOrganizationIssuesRemainHumanOnly(t *testing.T) {
 			assertDoctorHumanOnlyUnchanged(t, configPath, tc.wantCode, tc.wantRemedy)
 		})
 	}
+	t.Run("versionless repository root included by personal-local config", func(t *testing.T) {
+		repoRoot, _ := devinDoctorEnv(t)
+		repoPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+		localPath := filepath.Join(repoRoot, ".agents", "config.local.yaml")
+		writeFile(t, repoPath, "unknown_field: true\n")
+		writeFile(t, localPath, "apiVersion: agent-marketplace/v4\ninclude: config.yaml\n")
+		assertDoctorHumanOnlyUnchanged(t, repoPath, "v4.api-version-required", "older released migrator")
+	})
 	t.Run("organization trust", func(t *testing.T) {
 		_, _ = devinDoctorEnv(t)
 		authority := t.TempDir()
@@ -443,13 +451,14 @@ func assertDoctorHumanOnlyUnchanged(t *testing.T, path, code, remedy string) {
 	var out bytes.Buffer
 	err = runDoctor(doctorOptions{
 		out:    &out,
-		in:     strings.NewReader(""),
+		in:     strings.NewReader("y\n"),
 		isTTY:  true,
 		repair: true,
 		probe:  staticProbe(devincli.Probe{Status: devincli.StatusNotInstalled}),
 	})
 	if err == nil || !strings.Contains(out.String(), "[human-only]") ||
-		!strings.Contains(out.String(), code) || !strings.Contains(out.String(), remedy) {
+		!strings.Contains(out.String(), code) || !strings.Contains(out.String(), remedy) ||
+		strings.Contains(out.String(), "[guided]") {
 		t.Fatalf("human-only issue lacks its remedy: %v\n%s", err, out.String())
 	}
 	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
