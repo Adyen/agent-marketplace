@@ -157,6 +157,7 @@ A Marketplace can repair a `mirror` archive without changing the resource's cont
 | `sync --locked` | Requires every lock to be current and never writes configuration or locks, including refreshed Marketplace archive evidence. |
 | `sync --check` | Reports lock and output drift without writing, and exits `1` if anything is out of date. |
 | `update` | Advances Git locks to the current commits of their refs, then syncs. Also refreshes Marketplace archive evidence when the locked content digest is unchanged. `--bump` first moves eligible refs in v4 `sources:` to newer matching tags. Refs declared by included fragments are reported and left unchanged. |
+| `doctor --repair` | Plans fixes for broken writable locks (see below). Confirmed safe steps reconcile a missing or stale lock without upgrading existing pins, or fetch a missing exact snapshot without changing lock bytes. Regenerating a conflicted, aliased, merged, or duplicate-field lock is destructive: terminal only, a fresh backup, and a per-lock confirmation, never under `--yes`. Verification failures stay human-only, and organization locks are never written. |
 
 A current lock does not move when the remote branch or tag moves. `lock --upgrade` or `update` picks up new commits.
 
@@ -179,6 +180,10 @@ Invalid lockfiles fail with a `lock.invalid` error that wraps one of these codes
 | `lock.digest-invalid` | A digest is malformed. |
 | `lock.git-url-invalid` | A Git `url` cannot be normalized. |
 | `lock.path-invalid` | A path is empty, absolute, contains `..` or a backslash, or is otherwise not portable. |
+
+`agent-marketplace doctor --repair` can fix some of these itself. A missing, stale, or deprecated-version writable lock is a safe repair step, as is an unsupported-version lock whose bytes still decode to a strictly validated known shape. `lock.conflicted`, `lock.alias-forbidden`, `lock.merge-forbidden`, and `lock.duplicate-field` can be regenerated on a terminal after a fresh backup and a per-lock confirmation; when conflict sides pin different commits it asks which to keep, and a choice that cannot retain a still-selected one-sided Git pin refuses the replacement.
+
+Errors that break verification rather than shape stay human-only: `lock.invalid` without a supported nested code, `lock.manifest-mismatch`, `lock.digest-invalid`, and `lock.trust`, as does any organization lock. Repair never deletes a lock to bypass verification or recovers a lock it cannot validate.
 
 ## Do not edit by hand
 
