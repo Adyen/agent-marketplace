@@ -1052,7 +1052,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			layerChangedCount = 1
 		}
 		slog.Debug("lock layer reconciled", "scope", dw.scope, "operation", dw.operation, "retained", dw.stats.retained, "acquired", dw.stats.acquired, "changed", layerChangedCount)
-		snapshots = append(snapshots, snapshotJob{source: dw.layer.Source, entries: dw.remote, decls: dw.layer.Sources, doc: doc})
+		snapshots = append(snapshots, snapshotJob{source: dw.layer.Source, entries: dw.remote, decls: dw.layer.Sources, doc: doc, lockPath: dw.lockPath})
 		return nil
 	}
 	for _, layer := range ec.PresentLayers() {
@@ -1066,26 +1066,51 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			return nil, changed, nil, pathErr
 		}
 		selected := mode.selects == nil || mode.selects[scope]
-		current, generation, exists, loadErr := pipeline.ReadLayerLock(lockPath, scope)
-		if loadErr != nil {
-			if mode.upgrade && !selected {
-				continue
-			}
-			return nil, changed, nil, loadErr
-		}
 		stagedLock, hasStagedLock := stagedLocks[lockPath]
 		if hasStagedLock && !layer.Source.IsWritable() {
 			hasStagedLock = false
+		}
+		var current *lockfile.Document
+		var generation dependencytxn.Generation
+		var exists bool
+		var currentMode os.FileMode
+		if hasStagedLock {
+			var stateErr error
+			generation, currentMode, stateErr = dependencytxn.ReadGenerationAndMode(lockPath)
+			if stateErr != nil {
+				return nil, changed, nil, stateErr
+			}
+			if generation != stagedLock.Expected || currentMode != stagedLock.ExpectedMode {
+				return nil, changed, nil, fmt.Errorf("%w: staged lock changed at %s", dependencytxn.ErrGenerationConflict, lockPath)
+			}
+			exists = generation.Exists
+			stagedDoc, decodeErr := lockfile.Decode(stagedLock.Bytes)
+			if decodeErr == nil {
+				decodeErr = lockfile.ValidateScope(stagedDoc, scope)
+			}
+			if decodeErr != nil {
+				return nil, changed, nil, &lockLifecycleError{Code: "lock.invalid", Scope: scope, Path: lockPath, Err: decodeErr}
+			}
+			current = &stagedDoc
+		} else {
+			var loadErr error
+			current, generation, exists, loadErr = pipeline.ReadLayerLock(lockPath, scope)
+			if loadErr != nil {
+				if mode.upgrade && !selected {
+					continue
+				}
+				return nil, changed, nil, loadErr
+			}
+			_, currentMode, err = dependencytxn.ReadGenerationAndMode(lockPath)
+			if err != nil {
+				return nil, changed, nil, err
+			}
 		}
 		if exists && current != nil {
 			priorSnapshots = append(priorSnapshots, snapshotJob{source: layer.Source, entries: remote, decls: layer.Sources, doc: *current, lockPath: lockPath})
 		}
 		if len(remote) > 0 || exists || hasStagedLock {
 			lockExpectations[lockPath] = generation
-			_, currentMode, stateErr := dependencytxn.ReadGenerationAndMode(lockPath)
-			if stateErr != nil {
-				return nil, changed, nil, stateErr
-			}
 			lockModes[lockPath] = currentMode
 		}
 		if len(remote) == 0 && !exists && !hasStagedLock && !directorySelectsExternalPlugin(ctx, planner, layer.Sources, layer.Source) {
@@ -1113,7 +1138,7 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			if err := ensureSnapshotLease(); err != nil {
 				return nil, changed, nil, err
 			}
-			snapshots = append(snapshots, snapshotJob{source: layer.Source, entries: remote, decls: layer.Sources, doc: *current})
+			snapshots = append(snapshots, snapshotJob{source: layer.Source, entries: remote, decls: layer.Sources, doc: *current, lockPath: lockPath})
 			continue
 		}
 		if !exists && mode.locked && !implicitOrg {
@@ -1139,20 +1164,12 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			if err := ensureSnapshotLease(); err != nil {
 				return nil, changed, nil, err
 			}
-			snapshots = append(snapshots, snapshotJob{source: layer.Source, entries: remote, decls: layer.Sources, doc: *current})
+			snapshots = append(snapshots, snapshotJob{source: layer.Source, entries: remote, decls: layer.Sources, doc: *current, lockPath: lockPath})
 			continue
 		}
 
 		if hasStagedLock {
 			consumedLocks[lockPath]++
-			stagedDoc, decodeErr := lockfile.Decode(stagedLock.Bytes)
-			if decodeErr == nil {
-				decodeErr = lockfile.ValidateScope(stagedDoc, scope)
-			}
-			if decodeErr != nil {
-				return nil, changed, nil, &lockLifecycleError{Code: "lock.invalid", Scope: scope, Path: lockPath, Err: decodeErr}
-			}
-			current = &stagedDoc
 		}
 		operation := lockfile.OperationSync
 		if mode.upgrade && selected && !implicitOrg {
@@ -1239,6 +1256,12 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 			}
 		}
 		if err := addLayerSnapshots(ctx, &set, job.source, job.entries, job.decls, job.doc, mode.offline, mode.check, mode.warningSink, planner); err != nil {
+			var lockErr *lockLifecycleError
+			if errors.As(err, &lockErr) && lockErr.Scope == "" && lockErr.Path == "" {
+				err = &lockLifecycleError{
+					Code: lockErr.Code, Scope: lockScopeForSource(job.source), Path: job.lockPath, Err: err,
+				}
+			}
 			return nil, changed, nil, err
 		}
 	}
@@ -1633,10 +1656,7 @@ func reconcileLayerDocument(ctx context.Context, scope lockfile.Scope, entries [
 			return fail(&lockLifecycleError{Code: "lock.offline-resolution", Scope: scope, Err: errors.New("offline mode cannot resolve a stale lock")})
 		}
 		job := registryAcquireJob{group: group}
-		// A plugin manifest commits to the resolved selection, so a format
-		// group is rebuilt each sync from the PINNED commit — the lock stays
-		// exact instead of tracking the ref.
-		if ok && !upgrade && hasFormat {
+		if ok && !upgrade {
 			job.pinned = &locked
 		}
 		acquisitions = append(acquisitions, job)

@@ -13,6 +13,16 @@ import (
 )
 
 func Decode(data []byte) (Document, error) {
+	return decode(data, false)
+}
+
+// DecodeKnownShapeVersion normalizes the version only for explicit lock repair
+// after strict decoding has proved that the document uses the known shape.
+func DecodeKnownShapeVersion(data []byte) (Document, error) {
+	return decode(data, true)
+}
+
+func decode(data []byte, normalizeKnownShapeVersion bool) (Document, error) {
 	if int64(len(data)) > MaxFileSize {
 		return Document{}, fmt.Errorf("%w: lock input exceeds %d bytes", ErrFileTooLarge, MaxFileSize)
 	}
@@ -45,6 +55,9 @@ func Decode(data []byte) (Document, error) {
 			code = CodeUnknownField
 		}
 		return Document{}, coded(code, "decode lock: %v", err)
+	}
+	if normalizeKnownShapeVersion {
+		doc.APIVersion = APIVersionV2
 	}
 	return Normalize(doc)
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/catalog"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/dependencytxn"
+	"github.com/Adyen/agent-marketplace/internal/lockfile"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/remedy"
@@ -29,13 +30,23 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 	slog.Info("doctor repair preview start", "repo_root", repoRoot)
 	ctx := opts.ctx
 	var reads []dependencytxn.ReadAssertion
-	var policyErr error
-	if len(initial.Errors) == 0 {
-		reads, policyErr = pipeline.EffectivePolicyReadAssertions(initial)
-	}
+	reads, policyErr := pipeline.EffectivePolicyReadAssertions(initial)
 	revalidate := func() error {
 		if policyErr != nil {
 			return policyErr
+		}
+		return dependencytxn.ValidateReadAssertions(reads)
+	}
+	authorizeLockGeneration := func(path string, generation dependencytxn.Generation) error {
+		updated := false
+		for i := range reads {
+			if filepath.Clean(reads[i].Path) == filepath.Clean(path) {
+				reads[i].Expected = generation
+				updated = true
+			}
+		}
+		if !updated {
+			return fmt.Errorf("%w: acquisition lock %s was not covered by the repair policy assertions", dependencytxn.ErrGenerationConflict, path)
 		}
 		return dependencytxn.ValidateReadAssertions(reads)
 	}
@@ -95,17 +106,102 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 				},
 			)
 		}
+		appendAcquisitionIssue := func(issue error) (bool, string) {
+			diagnostics := doctorAcquisitionDiagnostics(issue)
+			if len(diagnostics) == 0 {
+				return false, ""
+			}
+			if doctorHasNonLockDiagnostic(issue) {
+				return false, ""
+			}
+			var blocker string
+			for _, diagnostic := range diagnostics {
+				layer, lockPath, ok := doctorAcquisitionLayer(current, diagnostic)
+				if !ok || !layer.Source.IsWritable() || policyErr != nil {
+					humanIssue := issue
+					if policyErr != nil {
+						humanIssue = fmt.Errorf("capture policy assertions: %w", policyErr)
+					}
+					key := addHuman(repairplanner.StageLocks, diagnostic.code, humanIssue)
+					if blocker == "" {
+						blocker = key
+					}
+					continue
+				}
+				hasRead := false
+				for _, read := range reads {
+					if filepath.Clean(read.Path) == filepath.Clean(lockPath) {
+						hasRead = true
+						break
+					}
+				}
+				if !hasRead {
+					key := addHuman(repairplanner.StageLocks, diagnostic.code,
+						fmt.Errorf("capture policy assertion for acquisition lock %s", lockPath))
+					if blocker == "" {
+						blocker = key
+					}
+					continue
+				}
+				var step repairplanner.Step
+				switch {
+				case isDoctorSafeAcquisitionCode(diagnostic.code):
+					step = doctorAcquisitionStep(repoRoot, config.FindLocalConfigDir(),
+						diagnostic.code, lockScopeForSource(layer.Source), lockPath,
+						&reads, revalidate, authorizeLockGeneration)
+				case isDoctorDestructiveAcquisitionCode(diagnostic.code):
+					var stepErr error
+					step, stepErr = doctorDestructiveAcquisitionStep(opts, repoRoot,
+						config.FindLocalConfigDir(), layer, diagnostic,
+						lockPath, reads, revalidate, authorizeLockGeneration)
+					if stepErr != nil {
+						key := addHuman(repairplanner.StageLocks, repairDiagnosticCode(stepErr),
+							fmt.Errorf("cannot safely recover %s: %w", diagnostic.code, stepErr))
+						if blocker == "" {
+							blocker = key
+						}
+						continue
+					}
+				default:
+					key := addHuman(repairplanner.StageLocks, diagnostic.code, issue)
+					if blocker == "" {
+						blocker = key
+					}
+					continue
+				}
+				diagnosis.Steps = append(diagnosis.Steps, step)
+				if blocker == "" {
+					blocker = step.Key
+				}
+			}
+			return true, blocker
+		}
 		if len(current.Errors) > 0 {
 			incompleteCause = errors.Join(current.Errors...)
 			var causeKey string
+			blockReason := "configuration invalid"
 			for _, issue := range current.Errors {
+				if handled, key := appendAcquisitionIssue(issue); handled {
+					if causeKey == "" {
+						causeKey = key
+						blockReason = "acquisition authority unavailable"
+					}
+					continue
+				}
 				code := repairDiagnosticCode(issue)
 				key := addHuman(repairplanner.StageConfiguration, code, issue)
 				if causeKey == "" {
 					causeKey = key
 				}
 			}
-			blockSelection(causeKey, "configuration invalid")
+			if policyErr != nil {
+				issue := fmt.Errorf("capture policy assertions: %w", policyErr)
+				key := addHuman(repairplanner.StageConfiguration, repairDiagnosticCode(issue), issue)
+				if causeKey == "" {
+					causeKey = key
+				}
+			}
+			blockSelection(causeKey, blockReason)
 			return diagnosis, nil
 		}
 		if policyErr != nil {
@@ -114,6 +210,51 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 			code := repairDiagnosticCode(issue)
 			key := addHuman(repairplanner.StageConfiguration, code, issue)
 			blockSelection(key, "policy assertions unavailable")
+			return diagnosis, nil
+		}
+
+		if err := revalidate(); err != nil {
+			return diagnosis, err
+		}
+		if len(current.TargetHarnesses) > 0 {
+			selects := make(map[lockfile.Scope]bool)
+			for _, layer := range current.PresentLayers() {
+				if layer.Source.IsWritable() && len(layer.Sources) > 0 {
+					selects[lockScopeForSource(layer.Source)] = true
+				}
+			}
+			if len(selects) > 0 {
+				_, _, checkErr := prepareExactLocks(ctx, repoRoot, config.FindLocalConfigDir(), lockMode{
+					check: true, selects: selects,
+					commitReads: append([]dependencytxn.ReadAssertion(nil), reads...),
+				})
+				if checkErr != nil {
+					incompleteCause = checkErr
+					handled, key := appendAcquisitionIssue(checkErr)
+					if !handled {
+						key = addHuman(repairplanner.StageLocks, repairDiagnosticCode(checkErr), checkErr)
+					}
+					blockSelection(key, "acquisition authority unavailable")
+					return diagnosis, nil
+				}
+			}
+		}
+		if deprecated := doctorDeprecatedWritableLockErrors(current); len(deprecated) > 0 {
+			incompleteCause = errors.Join(deprecated...)
+			var key string
+			for _, issue := range deprecated {
+				if len(current.TargetHarnesses) > 0 {
+					var lockErr *pipeline.LockViewError
+					if errors.As(issue, &lockErr) && lockErr.Code == "lock.version-deprecated" {
+						lockErr.Code = "lock.version-upgrade-required"
+					}
+				}
+				_, next := appendAcquisitionIssue(issue)
+				if key == "" {
+					key = next
+				}
+			}
+			blockSelection(key, "acquisition authority unavailable")
 			return diagnosis, nil
 		}
 
@@ -138,6 +279,10 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 		}
 		if resolveErr != nil {
 			incompleteCause = resolveErr
+			if handled, key := appendAcquisitionIssue(resolveErr); handled {
+				blockSelection(key, "selection unresolved")
+				return diagnosis, nil
+			}
 			code := repairDiagnosticCode(resolveErr)
 			key := addHuman(repairplanner.StageLocks, code, resolveErr)
 			blockSelection(key, "selection unresolved")
@@ -154,6 +299,15 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 				return slices.Contains(collisionFiles, filepath.Clean(file))
 			})
 			hasDrift := strings.Contains(checkText, "out of sync")
+			if len(doctorAcquisitionDiagnostics(checkErr)) > 0 {
+				incompleteCause = checkErr
+				handled, key := appendAcquisitionIssue(checkErr)
+				if !handled {
+					key = addHuman(repairplanner.StageDrift, repairDiagnosticCode(checkErr), checkErr)
+				}
+				blockSelection(key, "acquisition authority unavailable")
+				return diagnosis, nil
+			}
 			if checkErr != nil && (otherCheckErrors ||
 				len(collisionFiles) == 0 && (!hasDrift || len(files) == 0)) {
 				incompleteCause = checkErr
@@ -303,17 +457,25 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 		opts.repairReader = bufio.NewReader(opts.in)
 	}
 	var confirmErr error
+	declinedAcquisitionAuthority := false
 	loop := repairplanner.Loop{
 		Diagnose:         diagnose,
 		Display:          display,
 		Validate:         revalidate,
 		AllowDestructive: opts.isTTY,
-		Confirm: func([]repairplanner.Step) bool {
+		Confirm: func(steps []repairplanner.Step) bool {
 			if opts.yes {
 				return true
 			}
 			accepted, err := confirmPrompt(out, opts.repairReader, "Repair the safe steps above? [y/N] ")
 			confirmErr = err
+			if !accepted {
+				for _, step := range steps {
+					if step.Stage == repairplanner.StageLocks && isDoctorSafeAcquisitionCode(step.Code) {
+						declinedAcquisitionAuthority = true
+					}
+				}
+			}
 			return accepted
 		},
 	}
@@ -321,6 +483,9 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 	err := loop.Run(ctx)
 	if confirmErr != nil {
 		err = confirmErr
+	}
+	if err == nil && declinedAcquisitionAuthority {
+		return repairIncomplete(corrupt, incompleteCause)
 	}
 	if errors.Is(err, repairplanner.ErrIncomplete) {
 		err = repairIncomplete(corrupt, incompleteCause)

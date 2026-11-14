@@ -232,21 +232,30 @@ func resolvePriorAndDesired(ctx context.Context, ws pipeline.Workspace, offline 
 	}
 	prior := pipeline.Resolve(ctx, priorOptions)
 
-	desiredOverlays := make(map[string][]byte, len(overlays)+len(lockDesired))
-	for path, data := range overlays {
-		desiredOverlays[path] = data
-	}
-	for path, data := range lockDesired {
-		desiredOverlays[path] = data
-	}
-	desired := pipeline.Resolve(ctx, pipeline.ResolveOptions{
-		Workspace:     ws,
-		SkipInventory: true,
-		CatalogOption: []catalog.LoadOption{catalog.WithVerifiedExactSnapshots(lookup(desiredSet, nil), desiredSet.catalogs)},
-		LockMetadata:  snapshotLockMetadata(desiredJobs),
-		EffectiveOpts: config.LoadEffectiveOptions{RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(), FileOverlays: desiredOverlays},
-	})
+	desired := resolvePreparedSelection(ctx, preparedUpdateView{
+		ws:          ws,
+		desiredJobs: desiredJobs,
+		overlays:    overlays,
+		lockDesired: lockDesired,
+	}, lookup(desiredSet, nil), desiredSet.catalogs)
 	return resolvedUpdateSides{prior: prior, desired: desired, priorSet: priorSet, desiredSet: desiredSet, loadErrors: loadErrors}, nil
+}
+
+func resolvePreparedSelection(ctx context.Context, view preparedUpdateView, exact catalog.ExactSnapshotFunc, catalogs map[string]map[string]*catalog.Catalog) pipeline.ResolveResult {
+	desiredOverlays := make(map[string][]byte, len(view.overlays)+len(view.lockDesired))
+	for path, data := range view.overlays {
+		desiredOverlays[path] = data
+	}
+	for path, data := range view.lockDesired {
+		desiredOverlays[path] = data
+	}
+	return pipeline.Resolve(ctx, pipeline.ResolveOptions{
+		Workspace:     view.ws,
+		SkipInventory: true,
+		CatalogOption: []catalog.LoadOption{catalog.WithVerifiedExactSnapshots(exact, catalogs)},
+		LockMetadata:  snapshotLockMetadata(view.desiredJobs),
+		EffectiveOpts: config.LoadEffectiveOptions{RepoRoot: view.ws.RepoRoot(), LocalConfigDir: view.ws.LocalConfigDir(), FileOverlays: desiredOverlays},
+	})
 }
 
 func guardNewlyMissingSelections(ctx context.Context, ws pipeline.Workspace, offline bool, priorJobs, desiredJobs []snapshotJob, priorPlanner *pluginPlanSource, overlays map[string][]byte, lockDesired map[string][]byte, desiredSet *exactLockSet, lookup func(*exactLockSet, func() error) catalog.ExactSnapshotFunc) error {
