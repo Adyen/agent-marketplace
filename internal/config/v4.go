@@ -1329,15 +1329,7 @@ func parseV4Group(source string, n *yaml.Node, file string) (V4ResourceGroup, er
 	g.Decisions = append(decisionsForIncludes(source, g.Include, file), decisionsForExclusions(source, g.Exclude, excludeNode, file)...)
 	assignV4DecisionPrecedence(&g)
 	if err := validateV4Dynamic(g, source); err != nil {
-		origin := g.locations[""]
-		var validation *V4ValidationError
-		if errors.As(err, &validation) {
-			field, ok := strings.CutPrefix(validation.Path, "resources."+source+".")
-			if location, found := g.locations[field]; ok && found {
-				origin = location
-			}
-		}
-		return g, withV4Provenance(err, origin)
+		return g, err
 	}
 	return g, nil
 }
