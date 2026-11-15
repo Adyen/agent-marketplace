@@ -670,6 +670,9 @@ func testDoctorRepairAcquisitionCacheStepReconfirmation(t *testing.T, harnesses 
 		probe: staticProbe(devincli.Probe{Status: devincli.StatusNotInstalled}),
 	})
 	output := out.String()
+	if repairErr == nil {
+		t.Errorf("declining a missing exact snapshot reported success:\n%s", output)
+	}
 	stepCount := strings.Count(output, "[safe] fetch exact snapshot from its locked commit")
 	confirmationCount := strings.Count(output, "[y/N]")
 	if reads != 2 || stepCount != 2 || confirmationCount != 2 {

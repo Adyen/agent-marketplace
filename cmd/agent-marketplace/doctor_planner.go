@@ -464,7 +464,7 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 			confirmErr = err
 			if !accepted {
 				for _, step := range steps {
-					if step.Stage == repairplanner.StageLocks && isDoctorSafeAcquisitionCode(step.Code) {
+					if isDoctorSafeAcquisitionCode(step.Code) {
 						declinedAcquisitionAuthority = true
 					}
 				}
