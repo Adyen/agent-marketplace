@@ -8,10 +8,12 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Adyen/agent-marketplace/internal/harness"
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
+	targetmeta "github.com/Adyen/agent-marketplace/pkg/harness-compilation/target"
 )
 
 // ErrRepairCandidateStale is returned when an authorized candidate no longer
@@ -182,21 +184,44 @@ type TargetRepairPreview struct {
 	Preview *RepairPreview
 }
 
-// RepairPreviews enumerates the materialization adapters in stable target order.
+// RepairPreviews enumerates targets with declared native aggregates in stable order.
 func RepairPreviews(ctx context.Context, repoRoot string, resolved []resolver.ResolvedArtifact, revalidate func() error) ([]TargetRepairPreview, error) {
 	composition, err := newMaterializeAdapterComposition()
 	if err != nil {
 		return nil, err
 	}
-	targets := composition.registry.Targets()
+	var targets []hcc.Target
+	for _, target := range targetmeta.Targets() {
+		layout, ok := targetmeta.LookupNativeLayout(targetmeta.Target(target))
+		if !ok {
+			continue
+		}
+		for _, partition := range layout.Partitions {
+			if len(partition.Aggregates) > 0 {
+				targets = append(targets, hcc.Target(target))
+				break
+			}
+		}
+	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i] < targets[j] })
 	out := make([]TargetRepairPreview, 0, len(targets))
 	for _, target := range targets {
 		binding, ok := composition.bindings[target]
-		if !ok {
+		if ok {
+			preview, err := binding.repair(ctx, repoRoot, resolved)
+			if err != nil {
+				return nil, err
+			}
+			for _, file := range preview.Files {
+				file.validatePolicy = revalidate
+			}
+			out = append(out, TargetRepairPreview{Target: target, Preview: preview})
+			continue
+		}
+		if harness.IsInstallationAdapterTarget(target) {
 			return nil, fmt.Errorf("installation adapter %q has no repair binding", target)
 		}
-		preview, err := binding.repair(ctx, repoRoot, resolved)
+		preview, err := nativeAggregateRepairPreview(ctx, repoRoot, resolved, target)
 		if err != nil {
 			return nil, err
 		}

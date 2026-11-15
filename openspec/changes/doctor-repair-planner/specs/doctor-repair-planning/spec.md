@@ -112,3 +112,25 @@ Devin and Codex shared-aggregate ownership repair SHALL run as the last plan sta
 
 - **WHEN** a plan holds both a drift step and shared-aggregate ownership candidates
 - **THEN** the drift step SHALL be numbered and run before the shared-aggregate candidates
+
+### Requirement: Repair inspects every declared native aggregate target
+
+Shared-aggregate repair SHALL inspect every registered harness target whose native layout declares aggregates. Claude, Factory, Cursor, Windsurf, Gemini, and OpenCode SHALL use the existing exact-adoption, confirmed-replacement, and evidence-backed orphan-removal safety rules. Devin and Codex repair behavior SHALL remain unchanged. Conflict output SHALL describe values by digest only and SHALL NOT print MCP values.
+
+#### Scenario: Repair includes every aggregate-capable target
+
+- **WHEN** repair previews are requested
+- **THEN** every registered target whose native layout declares aggregates SHALL be inspected
+
+#### Scenario: Native aggregate repair retains action safety
+
+- **WHEN** Claude, Factory, Cursor, Windsurf, Gemini, or OpenCode has an unmanaged exact desired entry, a differing desired entry, or an evidence-backed orphan
+- **THEN** repair SHALL offer byte-neutral adoption only for the exact match, replacement only for the differing value, and removal only for the evidence-backed orphan
+- **AND** replacement and removal SHALL require terminal per-entry confirmation and a fresh backup
+- **AND** conflict output SHALL contain digests rather than MCP values
+
+#### Scenario: Repair combines shared Gemini scopes
+
+- **WHEN** the repository root is HOME and both scopes select Gemini aggregate entries
+- **THEN** repair SHALL compute candidates once against the combined desired entries
+- **AND** differing desired values for one identity SHALL report `materialize.destination.overlap`, offer no mutation of the shared file, and preserve settings and ownership state
