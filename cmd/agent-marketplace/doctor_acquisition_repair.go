@@ -879,14 +879,10 @@ func doctorGuardOneSidedAcquisitionPins(ctx context.Context, view preparedUpdate
 	occurrences := make(map[doctorGitResourceIdentity]map[int]doctorOneSidedGitPin)
 	for candidateIndex, candidate := range candidates {
 		for _, registry := range candidate.Registries {
-			canonical, err := canonicalRegistryURL(registry.URL)
-			if err != nil {
-				return err
-			}
 			for _, root := range registry.Roots {
 				for _, resource := range root.Resources {
 					identity := doctorGitResourceIdentity{
-						url: canonical, ref: registry.Ref, path: config.NormalizeRegistryPath(root.Path),
+						url: registry.URL, ref: registry.Ref, path: config.NormalizeRegistryPath(root.Path),
 						harness: root.SourceHarness, kind: resource.Kind, name: resource.Name,
 					}
 					if occurrences[identity] == nil {
@@ -901,11 +897,7 @@ func doctorGuardOneSidedAcquisitionPins(ctx context.Context, view preparedUpdate
 	}
 	preparedRegistries := make(map[string]lockfile.GitRegistry, len(prepared.Registries))
 	for _, registry := range prepared.Registries {
-		canonical, err := canonicalRegistryURL(registry.URL)
-		if err != nil {
-			return err
-		}
-		preparedRegistries[gitLockIdentity(canonical, registry.Ref)] = registry
+		preparedRegistries[gitLockIdentity(registry.URL, registry.Ref)] = registry
 	}
 	var oneSided []doctorOneSidedGitPin
 	candidatesToVerify := make(map[int]bool)
@@ -1009,11 +1001,7 @@ func doctorCandidateHasEntry(candidate lockfile.Document, entry config.RegistryE
 	path := config.NormalizeRegistryPath(entry.Path)
 	harness := strings.TrimSpace(entry.SourceHarness)
 	for _, registry := range candidate.Registries {
-		candidateURL, err := canonicalRegistryURL(registry.URL)
-		if err != nil {
-			return false, err
-		}
-		if candidateURL != canonical || registry.Ref != entry.Ref {
+		if registry.URL != canonical || registry.Ref != entry.Ref {
 			continue
 		}
 		for _, root := range registry.Roots {
@@ -1119,8 +1107,7 @@ func doctorSelectionContainsPin(result pipeline.ResolveResult, source config.Sou
 
 func doctorPreparedRetainsOneSidedPin(prepared lockfile.Document, pin doctorOneSidedGitPin) bool {
 	for _, registry := range prepared.Registries {
-		canonical, err := canonicalRegistryURL(registry.URL)
-		if err != nil || canonical != pin.identity.url || registry.Ref != pin.identity.ref {
+		if registry.URL != pin.identity.url || registry.Ref != pin.identity.ref {
 			continue
 		}
 		if registry.Commit != pin.registry.Commit {
