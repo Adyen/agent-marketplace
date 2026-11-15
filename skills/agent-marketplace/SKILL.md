@@ -175,9 +175,11 @@ generated roots you use (for example `.claude/skills/`,
 Sync edits shared files entry by entry and keeps handwritten entries, comments,
 and unrelated settings.
 
-- Claude, Factory, Cursor, Windsurf, and Gemini hooks mark entries with
+- Claude, Factory, Cursor, and Windsurf MCP files mark managed entries with
   `"_managed_by": "agent-marketplace"`.
-- Devin, Codex, and Gemini MCP carry no marker. Ownership lives under
+- Devin, Codex, OpenCode, and Gemini shared files — and every target's native
+  hook aggregates, including those of Claude, Factory, Cursor, and Windsurf —
+  carry no marker. Ownership lives under
   `$XDG_STATE_HOME/agent-marketplace` (default `~/.local/state/agent-marketplace`).
   When that state is missing or corrupt, sync preserves every entry, refuses
   collisions, and prunes nothing. A raw safety backup (five newest per file) is
@@ -244,7 +246,9 @@ agent-marketplace deinit               # remove managed artifacts and cache
 prerequisites, and Devin CLI compatibility (3000.3 floor; it only recommends
 adding `devin`). `--repair` prints a numbered plan covering harness drift
 (repaired through a locked sync that leaves every acquisition lock unchanged)
-and Devin and Codex aggregate ownership. Each step shows its safety class,
+and shared-aggregate ownership for every harness target that declares
+aggregate files (Claude, Codex, Cursor, Devin, Factory, Gemini, OpenCode, and
+Windsurf). Each step shows its safety class,
 diagnostic code, files, and inputs or blocker. For the aggregates: exact adoption matches,
 evidence-backed orphans, and value conflicts. One terminal confirmation runs
 all safe steps; adoption no longer prompts per entry. Orphan removal and

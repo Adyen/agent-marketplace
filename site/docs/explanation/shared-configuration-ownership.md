@@ -1,8 +1,8 @@
 # Shared configuration ownership
 
-Some harnesses keep hooks and MCP servers in one shared file instead of one file per resource. Devin uses `mcp_config.json`, Codex uses `.codex/hooks.json` and `.codex/config.toml`, and Gemini keeps MCP servers in `.gemini/settings.json`. You may have written entries in those files yourself. `agent-marketplace` adds and updates its own entries there, and on its own it never deletes or overwrites yours; only an explicit repair, which asks first, can replace one. To tell the two apart, it keeps a record of the entries it wrote. The docs call that record [ownership state](../glossary.md#ownership-state).
+Some harnesses keep hooks and MCP servers in one shared file instead of one file per resource. Devin uses `hooks.v1.json` (or `config.json#hooks` at user scope) and `mcp_config.json`, Codex uses `.codex/hooks.json` and `.codex/config.toml`, and Gemini keeps hooks and MCP servers in `.gemini/settings.json`. You may have written entries in those files yourself. `agent-marketplace` adds and updates its own entries there, and on its own it never deletes or overwrites yours; only an explicit repair, which asks first, can replace one. To tell the two apart, it keeps a record of the entries it wrote. The docs call that record [ownership state](../glossary.md#ownership-state).
 
-This page covers Devin, Codex, and Gemini MCP servers. Other harnesses mark managed entries inside the file instead; [native harness materialization](./native-harness-materialization.md#shared-configuration-files) explains the difference.
+Durable ownership covers Devin, Codex, OpenCode, and Gemini shared files and every target's native hook aggregates, including those of Claude, Factory, Cursor, and Windsurf. The MCP files of Claude, Factory, Cursor, and Windsurf instead mark managed entries inside the file; [native harness materialization](./native-harness-materialization.md#shared-configuration-files) explains the difference.
 
 ## Why ownership is recorded outside the files
 
@@ -22,13 +22,13 @@ Unreadable state and a journal left by an interrupted write can block later oper
 
 ## Repairing ownership
 
-`agent-marketplace doctor --repair` prints a numbered plan of what it can fix, each step with its safety class, and, when run in a [terminal](../glossary.md#terminal), asks once before running the safe steps. For the Devin and Codex files it recognizes three situations:
+`agent-marketplace doctor --repair` prints a numbered plan of what it can fix, each step with its safety class, and, when run in a [terminal](../glossary.md#terminal), asks once before running the safe steps. For every shared file it inspects it recognizes three situations:
 
 - An existing entry is exactly what the CLI would write. Recording it as managed changes no bytes in the file, so `--yes` can do this without asking.
 - An entry the CLI wrote earlier is no longer selected, and a saved backup or a recorded change proves the CLI wrote it. The CLI can remove it.
 - An entry you did not install through the CLI has the same name as a selected resource but a different value. The CLI can replace it with the selected version.
 
-Removing or replacing an entry deletes content, so the CLI asks you about each of those entries separately and saves a fresh backup first. Those destructive steps never run under `--yes` or off a terminal; on a terminal under `--yes` the prompt still appears, but a confirmed entry is left unchanged. Without a terminal and without `--yes`, `--repair` only previews. [How to repair owned shared configuration](../how-to/repair-owned-shared-configuration.md) walks through a repair.
+Removing or replacing an entry deletes content, so the CLI asks you about each of those entries separately and saves a fresh backup first. Those destructive steps never run under `--yes` or off a terminal; on a terminal under `--yes` the prompt still appears, but a confirmed entry is left unchanged. Without a terminal and without `--yes`, `--repair` only previews. Repair inspects every harness target that declares shared aggregate files — Claude, Codex, Cursor, Devin, Factory, Gemini, OpenCode, and Windsurf — under the same candidate rules; it does not change how `sync` writes those files, so marker-managed MCP files keep their in-file markers. [How to repair owned shared configuration](../how-to/repair-owned-shared-configuration.md) walks through a repair.
 
 ## Two processes at once
 

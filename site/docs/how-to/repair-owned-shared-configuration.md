@@ -1,8 +1,8 @@
 # How to repair owned shared configuration
 
-Fix Devin or Codex shared configuration files when `agent-marketplace` cannot prove that it wrote an entry that is already there.
+Fix shared configuration files when `agent-marketplace` cannot prove that it wrote an entry that is already there.
 
-Several sources can write entries into the same Devin or Codex file, such as `mcp_config.json` or `.codex/config.toml`. `agent-marketplace` records the entries it wrote as [ownership state](../glossary.md#ownership-state), and it changes or removes only those. When an entry it wants to write already exists without that record, `sync` leaves the entry alone and reports it: a warning for Devin files, an error for Codex files. `doctor --repair` resolves those cases one by one.
+Several sources can write entries into the same shared file, such as `.devin/mcp_config.json`, `.codex/config.toml`, `.claude/settings.json`, or `.gemini/settings.json`. `agent-marketplace` records the entries it wrote as [ownership state](../glossary.md#ownership-state), and it changes or removes only those. When an entry it wants to write already exists without that record, `sync` leaves the entry alone and reports it. `doctor --repair` resolves those cases one by one, for every harness target that keeps resources in shared aggregate files: Claude, Codex, Cursor, Devin, Factory, Gemini, OpenCode, and Windsurf.
 
 ## Prerequisites
 
@@ -17,7 +17,7 @@ Several sources can write entries into the same Devin or Codex file, such as `mc
 agent-marketplace doctor --repair
 ```
 
-After the normal `doctor` report, the command prints a numbered repair plan. Each line shows the step's safety class (`safe`, `destructive`, or `human-only`), the action, the diagnostic code it addresses, the files it touches, and either the inputs it needs or `blocked by N (<reason>)` naming the plan item that blocks it. It then lists each Devin and Codex shared file it inspects, even files with nothing to repair. For each entry it can act on, it shows one of three actions:
+After the normal `doctor` report, the command prints a numbered repair plan. Each line shows the step's safety class (`safe`, `destructive`, or `human-only`), the action, the diagnostic code it addresses, the files it touches, and either the inputs it needs or `blocked by N (<reason>)` naming the plan item that blocks it. It then lists each shared file it inspects for every harness target, even files with nothing to repair. For each entry it can act on, it shows one of three actions:
 
 - `adopt`: the existing entry is identical to what `agent-marketplace` would write. Adopting records it as owned and does not change the file.
 - `replace`: the existing entry has the same key but a different value. Replacing overwrites your value with the generated one.
@@ -26,10 +26,20 @@ After the normal `doctor` report, the command prints a numbered repair plan. Eac
 When there is nothing to repair, the preview ends like this:
 
 ```text
+repair: claude shared-aggregate ownership
 repair: Codex shared-aggregate ownership
+repair: cursor shared-aggregate ownership
 repair: devin shared-aggregate ownership
+repair: factory shared-aggregate ownership
+repair: gemini shared-aggregate ownership
+repair: opencode shared-aggregate ownership
+repair: windsurf shared-aggregate ownership
   nothing to repair
 ```
+
+Only targets whose harness keeps entries in shared files appear; a target with no shared files is not listed.
+
+When your repository root is your home directory, Gemini's repository-scope and machine-scope selections share one `settings.json`. Repair reconciles both selections against that file once. If the two scopes want different values for the same entry, it reports `materialize.destination.overlap`, offers no step for that file, and changes nothing.
 
 If standard input is not a terminal (for example in a script), the command stops after the preview. It prints `preview only: not a terminal; re-run on a terminal to confirm, or use --repair --yes to adopt exact matches` when there is something to confirm. `--yes` is described in the next step.
 

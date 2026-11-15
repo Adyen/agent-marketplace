@@ -79,6 +79,10 @@ or blocker. One terminal confirmation authorizes safe steps. Destructive
 replacements and orphan removals keep their per-entry confirmations and never
 run with --yes. Devin and Codex shared aggregate files include hooks.v1.json,
 config.json#hooks, mcp_config.json, .codex/hooks.json, and .codex/config.toml.
+Repair also inspects the shared aggregates of every other harness target that
+declares them: Claude settings.json#hooks and .mcp.json, Factory hooks.json and
+mcp.json, Cursor hooks.json and mcp.json, Windsurf hooks.json and
+mcp_config.json, Gemini settings.json, and OpenCode opencode.json.
 Off a terminal, --repair is preview-only unless --yes is set; --yes runs only
 safe steps. Repair uses the acquisition locks already on disk and never edits
 harness lists or organization files.
@@ -99,7 +103,7 @@ harness lists or organization files.
 		},
 	}
 
-	cmd.Flags().BoolVar(&repair, "repair", false, "Diagnose, plan, and confirm safe harness-drift and Devin and Codex shared-aggregate repairs")
+	cmd.Flags().BoolVar(&repair, "repair", false, "Diagnose, plan, and confirm safe harness-drift and shared-aggregate repairs for Devin and Codex, Claude, Factory, Cursor, Windsurf, Gemini, and OpenCode")
 	cmd.Flags().BoolVar(&assumeYes, "yes", false, "With --repair, run safe planned steps without prompting; destructive aggregate changes are never automatic")
 	return cmd
 }
