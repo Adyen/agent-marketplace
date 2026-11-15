@@ -153,7 +153,7 @@ test('built GUI shows a newer stable release notice once per launch', async ({ p
     await page.screenshot({ path: artifactPath(testInfo, 'release-notice-visible.png'), fullPage: true, animations: 'disabled' })
 
     const refreshedRelease = waitForReleaseResponse(page)
-    await page.getByRole('button', { name: 'Refresh' }).press('Enter')
+    await page.keyboard.press('Meta+r')
     await expectReleaseResponse(refreshedRelease, 'v2.0.0')
     await expect(page.getByText('Agent Marketplace v2.0.0 is available.')).toBeVisible()
     const requests = await readMark(mark)
@@ -338,7 +338,7 @@ test('organization update_check false sends no release request and shows no noti
     await expect(page.getByRole('option').filter({ hasText: 'solo' }).first()).toBeVisible({ timeout: 60_000 })
 
     const refreshedRelease = waitForReleaseResponse(page)
-    await page.getByRole('button', { name: 'Refresh' }).press('Enter')
+    await page.keyboard.press('Meta+r')
     await expectReleaseResponse(refreshedRelease, '')
     await page.getByRole('button', { name: 'Show diagnostics' }).click()
     await expect(page.getByText('Drift: ready')).toBeVisible({ timeout: 60_000 })

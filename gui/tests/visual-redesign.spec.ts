@@ -23,7 +23,7 @@ test('built GUI shows the resource update count after refresh', async ({ page })
     execFileSync('git', ['-C', bootstrap.gitSourceWorking, '-c', 'user.name=GUI test', '-c', 'user.email=gui@example.test', 'commit', '-m', 'update resource'])
     execFileSync('git', ['-C', bootstrap.gitSourceWorking, 'push', 'origin', 'main'])
 
-    await page.getByRole('button', { name: 'Refresh' }).click()
+    await page.keyboard.press('Meta+r')
     await expect(update).toContainText('1', { timeout: 60_000 })
     const toolbar = page.getByRole('toolbar', { name: 'Session actions' })
     const labels = await toolbar.locator('button').evaluateAll((buttons) =>

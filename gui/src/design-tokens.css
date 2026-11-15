@@ -20,7 +20,7 @@
   --gui-signal-ink: var(--gui-ink);
   --gui-solid-bg: #111111;
   --gui-solid-ink: #ffffff;
-  --gui-scrim: rgb(0 0 0 / 0.32);
+  --gui-scrim: rgb(0 0 0 / 0.2);
   --gui-shadow: 0 24px 64px rgb(0 0 0 / 0.22);
   --gui-diff-add: color-mix(in srgb, var(--am-color-status-ready) 12%, transparent);
   --gui-diff-remove: color-mix(in srgb, var(--am-color-status-danger) 12%, transparent);
@@ -65,6 +65,6 @@
   --gui-signal-ink: var(--gui-signal);
   --gui-solid-bg: #ffffff;
   --gui-solid-ink: #111111;
-  --gui-scrim: rgb(0 0 0 / 0.5);
+  --gui-scrim: rgb(0 0 0 / 0.4);
   --gui-shadow: 0 24px 64px rgb(0 0 0 / 0.6);
 }

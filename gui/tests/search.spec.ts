@@ -53,8 +53,9 @@ test('built GUI searches the accepted local index by keyboard and restores saved
     await page.getByRole('button', { name: 'Show diagnostics' }).click()
     await expect(page.locator('.gui-diagnostics-view')).toContainText('Drift: ready', { timeout: 60_000 })
     await page.getByRole('button', { name: 'Show all groups' }).click()
-    await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeEnabled({ timeout: 60_000 })
-    actions.push('Startup ready: 60 local resources, Detail Drift: ready, Refresh enabled')
+    await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Sync', exact: true })).toBeEnabled({ timeout: 60_000 })
+    actions.push('Startup ready: 60 local resources, Detail Drift: ready, refresh has no visible control')
 
     await tabTo(page, pending, 'Pending sync section button', actions)
     await expect(pending).toHaveAttribute('aria-expanded', 'true')

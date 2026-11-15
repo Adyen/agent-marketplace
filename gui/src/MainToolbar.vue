@@ -11,7 +11,6 @@ const props = defineProps<{
   activeQuery: string
   appliedQuery: string
   localMatchCount: number
-  busy: boolean
   ready: boolean
   pendingCount: number
   availableUpdates: number
@@ -28,7 +27,6 @@ const emit = defineEmits<{
   cancelSearch: []
   clearSearch: []
   changeView: [settings: ViewSettings]
-  refresh: []
   sync: []
   update: []
   setup: []
@@ -116,7 +114,6 @@ defineExpose({
         @click="emit('clearSearch')"
       ><GuiIcon name="close" /></button>
       <ViewMenu ref="viewMenu" :settings="viewSettings" @change="emit('changeView', $event)" />
-      <button type="button" class="gui-icon-button" aria-label="Refresh" :disabled="busy" @click="emit('refresh')"><GuiIcon name="refresh" /></button>
       <UButton aria-label="Update" class="gui-button--secondary" color="neutral" variant="soft" :disabled="!ready" @click="emit('update')">
         <GuiIcon name="update" />
         Update

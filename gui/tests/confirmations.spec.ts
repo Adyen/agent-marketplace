@@ -238,7 +238,7 @@ test('built GUI keyboard input never opens a raw configuration editor', async ({
     await launchBuiltUserApp(page, bootstrap)
     await expect(page.getByRole('option').filter({ hasText: 'solo' }).first()).toBeVisible({ timeout: 60_000 })
 
-    for (const name of ['Sync', 'Refresh', 'Settings', 'Sources', 'Quit']) {
+    for (const name of ['Sync', 'Settings', 'Sources', 'Quit']) {
       const button = page.getByRole('button', { name, exact: true })
       if (await button.isVisible().catch(() => false)) {
         await button.press('e')

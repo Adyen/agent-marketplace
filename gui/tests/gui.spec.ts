@@ -82,11 +82,10 @@ test('built GUI drives the real user-scope core', async ({ page }) => {
     )
     await page.goto(bootstrap.url, { waitUntil: 'domcontentloaded' })
     await expect(page.getByRole('option').filter({ hasText: 'solo' }).first()).toBeVisible({ timeout: 60_000 })
-    await expect(page.getByRole('button', { name: 'Refresh' })).toBeEnabled()
+    await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Sync', exact: true })).toBeEnabled()
 
-    await page.getByRole('button', { name: 'Refresh' }).focus()
-    await page.keyboard.press('Enter')
+    await page.keyboard.press('Meta+r')
     await expect(page.getByRole('option').filter({ hasText: 'solo' }).first()).toBeVisible()
 
     await expect(page.getByRole('button', { name: 'Sync', exact: true })).toBeEnabled()
