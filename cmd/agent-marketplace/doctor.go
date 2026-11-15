@@ -76,18 +76,23 @@ never requires a Devin binary, so nothing doctor reports here blocks it.
 
 --repair diagnoses harness drift and shared-aggregate ownership, then prints a
 numbered plan with each step's safety class, diagnostic code, files, and inputs
-or blocker. One terminal confirmation authorizes safe steps. Destructive
-replacements and orphan removals keep their per-entry confirmations and never
-run with --yes. Devin and Codex shared aggregate files include hooks.v1.json,
-config.json#hooks, mcp_config.json, .codex/hooks.json, and .codex/config.toml.
-Configuration field, YAML, and duplicate-key errors are guided with a safe
-source snippet. On a terminal without --yes, repair offers $VISUAL or $EDITOR
-and diagnoses again after the editor exits. With --yes or off a terminal,
-guided configuration edits are deferred. Version and organization issues
-remain human-only. Off a terminal, --repair is preview-only unless --yes is
-set; --yes runs only safe steps. Repair uses the acquisition locks already on
-disk and never rewrites configuration automatically, edits harness lists, or
-edits organization files.
+or blocker. Pending dependency and ownership journals left by an interrupted
+run are recovered first as safe steps that need only the journal itself, so
+they run even when configuration is invalid. Replaying a journal completes only
+writes an earlier run already admitted; it is a safe step, not a destructive
+replacement, and a refused recovery fails the step, exits 1, and leaves the
+journal and its target bytes unchanged. One terminal confirmation authorizes
+safe steps. Destructive replacements and orphan removals keep their per-entry
+confirmations and never run with --yes. Devin and Codex shared aggregate files
+include hooks.v1.json, config.json#hooks, mcp_config.json, .codex/hooks.json,
+and .codex/config.toml. Off a terminal, --repair is preview-only unless --yes
+is set; --yes runs only safe steps. Repair uses the acquisition locks already
+on disk and never rewrites configuration automatically, edits harness lists,
+or edits organization files. Configuration field, YAML, and duplicate-key
+errors are guided with a safe source snippet. On a terminal without --yes,
+repair offers $VISUAL or $EDITOR and diagnoses again after the editor exits.
+With --yes or off a terminal, guided configuration edits are deferred. Version
+and organization issues remain human-only.
 `),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -106,7 +111,7 @@ edits organization files.
 		},
 	}
 
-	cmd.Flags().BoolVar(&repair, "repair", false, "Diagnose harness drift and Devin and Codex shared-aggregate repairs, plus guided configuration fixes")
+	cmd.Flags().BoolVar(&repair, "repair", false, "Recover pending journals and diagnose harness drift, Devin and Codex shared-aggregate repairs, and guided configuration fixes")
 	cmd.Flags().BoolVar(&assumeYes, "yes", false, "With --repair, run safe steps without prompting; guided edits are deferred and destructive changes are never automatic")
 	return cmd
 }

@@ -32,7 +32,11 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 	ctx := opts.ctx
 	reads, policyErr := doctorRepairPolicyReadAssertions(initial)
 	refreshReadSetAfterEdit := false
+	journalOnly := false
 	revalidate := func() error {
+		if journalOnly {
+			return nil
+		}
 		if policyErr != nil {
 			return policyErr
 		}
@@ -73,10 +77,18 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 		refreshReadSetAfterEdit = true
 		return nil
 	}
-	if policyErr == nil {
-		if err := revalidate(); err != nil {
-			return doctorRepairFailure(out, err)
+	refreshPolicy := func(ctx context.Context) error {
+		ws, err := pipeline.DiscoverWorkspace()
+		if err != nil {
+			policyErr = err
+			return err
 		}
+		initial = pipeline.LoadEffective(ctx, pipeline.ConfigLoadOnline, config.LoadEffectiveOptions{
+			RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(),
+		}, nil)
+		reads, policyErr = doctorRepairPolicyReadAssertions(initial)
+		refreshReadSetAfterEdit = false
+		return nil
 	}
 
 	var previews []materialize.TargetRepairPreview
@@ -117,6 +129,17 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 		ownershipActionable = false
 		incompleteCause = nil
 		diagnosis := repairplanner.Diagnosis{InvalidInputs: make(map[repairplanner.Input]repairplanner.Blocker)}
+		journalSteps, err := doctorJournalSteps(repoRoot, out, refreshPolicy)
+		if err != nil {
+			return repairplanner.Diagnosis{}, err
+		}
+		journalOnly = len(journalSteps) > 0
+		diagnosis.Steps = append(diagnosis.Steps, journalSteps...)
+		if !journalOnly && policyErr == nil {
+			if err := revalidate(); err != nil {
+				return diagnosis, err
+			}
+		}
 		addHuman := func(stage repairplanner.Stage, code string, issue error) string {
 			action := tui.TerminalSafeLine(issue.Error())
 			if hint := remedy.For(issue, "doctor"); hint != "" {
@@ -206,6 +229,9 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 			blockSelection(key, "selection unresolved")
 			return diagnosis, nil
 		}
+		if journalOnly {
+			return diagnosis, nil
+		}
 
 		if opts.resolve == nil && len(current.TargetHarnesses) > 0 {
 			var checkOutput strings.Builder
@@ -250,7 +276,6 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 			}
 		}
 
-		var err error
 		previews, err = materialize.RepairPreviews(ctx, repoRoot, selection, revalidate)
 		if err != nil {
 			incompleteCause = err

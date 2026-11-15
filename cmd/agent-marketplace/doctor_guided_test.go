@@ -709,6 +709,59 @@ func TestDoctorRepairGuidedEditorNonzeroExitRediagnoses(t *testing.T) {
 	}
 }
 
+// spec: doctor-repair-planning/dependency-journal-recovery-runs-with-invalid-configuration
+// spec: doctor-repair-planning/an-editor-fix-is-diagnosed-again
+func TestDoctorRepairGuidedAfterDependencyJournal(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	repoRoot, _ := devinDoctorEnv(t)
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	_, journalPath := createDoctorDependencyJournal(t, configPath,
+		"apiVersion: agent-marketplace/v4\nunknown_old: true\n",
+		"apiVersion: agent-marketplace/v4\nunknown_recovered: true\n")
+	editorLog := filepath.Join(t.TempDir(), "editor.log")
+	editor := filepath.Join(t.TempDir(), "editor.sh")
+	writeFile(t, editor, "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$EDITOR_LOG\"\ncat > \"$1\" <<'EOF'\napiVersion: agent-marketplace/v4\nsources: {}\nEOF\n")
+	t.Setenv("EDITOR_LOG", editorLog)
+	t.Setenv("VISUAL", "sh "+fmt.Sprintf("%q", editor))
+	t.Setenv("EDITOR", "")
+
+	var out bytes.Buffer
+	err := runDoctor(doctorOptions{
+		out:     &out,
+		in:      strings.NewReader("y\ny\n"),
+		isTTY:   true,
+		repair:  true,
+		probe:   staticProbe(devincli.Probe{Status: devincli.StatusNotInstalled}),
+		resolve: staticResolve(nil),
+	})
+	if err != nil {
+		if errors.Is(err, dependencytxn.ErrGenerationConflict) {
+			t.Fatalf("repair reported a generation conflict: %v\n%s", err, out.String())
+		}
+		t.Fatalf("guided repair after journal recovery: %v\n%s", err, out.String())
+	}
+	if _, err := os.Lstat(journalPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dependency journal remains: %v", err)
+	}
+	displayPath := doctorTestPath(t, configPath)
+	text := out.String()
+	recoveredAt := strings.Index(text, "recovered dependency journal:")
+	editorOfferAt := strings.Index(text, "Edit "+displayPath+" with ")
+	if recoveredAt < 0 || editorOfferAt < 0 || recoveredAt >= editorOfferAt {
+		t.Fatalf("journal recovery did not precede the editor offer:\n%s", text)
+	}
+	invocations, err := os.ReadFile(editorLog)
+	if err != nil || string(invocations) != displayPath+"\n" {
+		t.Fatalf("editor invocations = %q, want one invocation for %s: %v", invocations, displayPath, err)
+	}
+	contents, err := os.ReadFile(configPath)
+	if err != nil || string(contents) != "apiVersion: agent-marketplace/v4\nsources: {}\n" {
+		t.Fatalf("configuration = %q, %v", contents, err)
+	}
+}
+
 func doctorTestPath(t *testing.T, path string) string {
 	t.Helper()
 	resolved, err := filepath.EvalSymlinks(path)
