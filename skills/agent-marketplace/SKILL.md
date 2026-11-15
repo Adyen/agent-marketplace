@@ -177,9 +177,9 @@ and unrelated settings.
 
 - Claude, Factory, Cursor, and Windsurf MCP files mark managed entries with
   `"_managed_by": "agent-marketplace"`.
-- Devin, Codex, OpenCode, and Gemini shared files — and every target's native
-  hook aggregates, including those of Claude, Factory, Cursor, and Windsurf —
-  carry no marker. Ownership lives under
+- Devin, Codex, OpenCode, and Gemini shared files, along with every target's
+  native hook aggregates, including those of Claude, Factory, Cursor, and
+  Windsurf, carry no marker. Ownership lives under
   `$XDG_STATE_HOME/agent-marketplace` (default `~/.local/state/agent-marketplace`).
   When that state is missing or corrupt, sync preserves every entry, refuses
   collisions, and prunes nothing. A raw safety backup (five newest per file) is

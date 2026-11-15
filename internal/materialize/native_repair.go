@@ -41,10 +41,7 @@ func nativeAggregateRepairPreview(ctx context.Context, repoRoot string, resolved
 		}
 	}
 	sort.Slice(diagnosticKeys, func(i, j int) bool {
-		if diagnosticKeys[i].machineScope != diagnosticKeys[j].machineScope {
-			return !diagnosticKeys[i].machineScope
-		}
-		return string(diagnosticKeys[i].target) < string(diagnosticKeys[j].target)
+		return !diagnosticKeys[i].machineScope && diagnosticKeys[j].machineScope
 	})
 	for _, key := range diagnosticKeys {
 		preview.Diags = append(preview.Diags, compiled.byTarget[key].diags...)
@@ -73,10 +70,7 @@ func nativeAggregateRepairPreview(ctx context.Context, repoRoot string, resolved
 		}
 	}
 	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].machineScope != keys[j].machineScope {
-			return !keys[i].machineScope
-		}
-		return string(keys[i].target) < string(keys[j].target)
+		return !keys[i].machineScope && keys[j].machineScope
 	})
 
 	for _, key := range keys {
