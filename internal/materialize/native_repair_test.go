@@ -617,3 +617,211 @@ func TestGeminiRepairScopeConflictRefusesWithoutMutation(t *testing.T) {
 		t.Fatalf("Gemini ownership state changed after conflict refusal: %v", err)
 	}
 }
+
+func nativeRepairPluginSelection(t *testing.T, target hcc.Target, scopes []config.Source, sharedHome bool, includeMCP bool) (string, []resolver.ResolvedArtifact) {
+	t.Helper()
+	root := t.TempDir()
+	repoRoot := filepath.Join(root, "repo")
+	home := filepath.Join(root, "home")
+	if sharedHome {
+		home = repoRoot
+	}
+	for _, dir := range []string{repoRoot, home, filepath.Join(root, "state"), filepath.Join(root, "cache")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(root, "cache"))
+	t.Setenv("CODEX_HOME", filepath.Join(home, "codex"))
+
+	packageRoot := filepath.Join(root, "plugin")
+	hooks := []*ir.Hook{
+		ir.NewHookWithMatcher("repo-guard", "PreToolUse", "Bash", "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh", "command", nil, ir.SourceRef{File: "hooks/hooks.json"}),
+		ir.NewHookWithMatcher("machine-guard", "PostToolUse", "Write", "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh", "command", nil, ir.SourceRef{File: "hooks/hooks.json"}),
+	}
+	server := ir.NewMcpServer("plugin-tools", "node", nil, nil, nil, ir.SourceRef{File: ".mcp.json"})
+	files := []ir.PluginFile{
+		writePluginPackageFile(t, packageRoot, ".claude-plugin/plugin.json", `{"name":"repair-kit"}`, 0o644),
+		writePluginPackageFile(t, packageRoot, "hooks/hooks.json", `{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"}]}],"PostToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"}]}]}`, 0o644),
+		writePluginPackageFile(t, packageRoot, "scripts/check.sh", "#!/bin/sh\necho check\n", 0o755),
+		writePluginPackageFile(t, packageRoot, ".mcp.json", `{"mcpServers":{"plugin-tools":{"command":"node"}}}`, 0o644),
+	}
+	plugin := &ir.Plugin{
+		Format:   "claude-plugin",
+		Manifest: ir.Manifest{Name: "repair-kit"},
+		Members:  []ir.PluginMember{{Resource: hooks[0]}, {Resource: hooks[1]}, {Resource: server}},
+		Files:    files,
+	}
+	resolved := func(source config.Source, memberPath string, resource ir.Resource) resolver.ResolvedArtifact {
+		name := resource.Name()
+		pkg := &resolver.PluginPackage{
+			Name:               "repair-kit",
+			PackageRoot:        packageRoot,
+			CatalogFingerprint: "test-catalog",
+			Delivery:           "decompose",
+			Scope:              source.String(),
+			MemberPath:         memberPath,
+			Package:            plugin,
+		}
+		return resolver.ResolvedArtifact{
+			Entry:         catalog.Entry{Kind: resource.Kind(), Name: name, Path: filepath.Join(packageRoot, filepath.FromSlash(memberPath)), Resource: resource},
+			RegistryURL:   packageRoot,
+			V4Kind:        config.V4SourceDirectory,
+			Source:        source,
+			Harnesses:     []hcc.Target{target},
+			InstalledName: "repair-kit-" + name,
+			PluginPackage: pkg,
+		}
+	}
+	selection := make([]resolver.ResolvedArtifact, 0, len(scopes)+1)
+	for _, source := range scopes {
+		hook := hooks[0]
+		if source.IsMachineScope() {
+			hook = hooks[1]
+		}
+		selection = append(selection, resolved(source, "hooks/hooks.json", hook))
+	}
+	if includeMCP {
+		selection = append(selection, resolved(config.RepoCommitted, ".mcp.json", server))
+	}
+	selection, generationDiags := preparePluginGenerations(selection, repoRoot, false, false, nil)
+	if hasErrorDiagnostics(generationDiags) {
+		t.Fatalf("prepare plugin generation: %+v", generationDiags)
+	}
+	report, err := Run(context.Background(), repoRoot, selection, WithPluginStateReconciliation())
+	if err != nil || hasErrorDiagnostics(report.Diags) {
+		t.Fatalf("materialize selected plugin: %v %+v", err, report)
+	}
+	return repoRoot, selection
+}
+
+func assertPluginRepairEntries(t *testing.T, file *RepairFile, kind ownership.EntryKind, resources []string) {
+	t.Helper()
+	if len(file.Adoptions) != len(resources) || len(file.Conflicts) != 0 || len(file.Orphans) != 0 {
+		evidence := ""
+		if len(file.Orphans) > 0 {
+			evidence = file.Orphans[0].Evidence()
+		}
+		t.Fatalf("selected plugin entries: adopt=%d replace=%d orphan=%d evidence=%q", len(file.Adoptions), len(file.Conflicts), len(file.Orphans), evidence)
+	}
+	got := make(map[string]bool, len(resources))
+	for _, candidate := range file.Adoptions {
+		id := candidate.Candidate.EntryID()
+		if id.Kind != kind {
+			t.Fatalf("plugin adoption kind = %q, want %q", id.Kind, kind)
+		}
+		got[candidate.Resource] = true
+	}
+	for _, resource := range resources {
+		if !got[resource] {
+			t.Fatalf("missing selected plugin adoption for %q", resource)
+		}
+	}
+}
+
+// spec: doctor-repair-planning/native-aggregate-repair-retains-action-safety
+func TestNativeAggregateRepairIncludesSelectedPluginDesiredEntries(t *testing.T) {
+	t.Run("Claude hook and marker MCP fragment", func(t *testing.T) {
+		repoRoot, selection := nativeRepairPluginSelection(t, hcc.TargetClaude, []config.Source{config.RepoCommitted}, false, true)
+		key := outputKey{target: hcc.TargetClaude}
+		destination, hookSpec, err := nativeHookJSONLayout(key, repoRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hookPath := filepath.Join(destination.Root, hookSpec.rel)
+		hookBefore, err := os.ReadFile(hookPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hookInfo, err := os.Stat(hookPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mcpRoot, mcpRel, mcpContainer := nativeRepairMCPFile(t, repoRoot, hcc.TargetClaude, false)
+		mcpPath := filepath.Join(mcpRoot, mcpRel)
+		mcpBefore, err := os.ReadFile(mcpPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mcpInfo, err := os.Stat(mcpPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var mcpDocument struct {
+			Servers map[string]json.RawMessage `json:"mcpServers"`
+		}
+		if err := json.Unmarshal(mcpBefore, &mcpDocument); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := mcpDocument.Servers["repair-kit-plugin-tools"]; !ok {
+			t.Fatalf("Run did not materialize the selected plugin MCP fragment: %s", mcpBefore)
+		}
+		statePath := removeNativeRepairState(t, destination.Root)
+		mcpStatePath := ""
+		if filepath.Clean(mcpRoot) != filepath.Clean(destination.Root) {
+			mcpStatePath = removeNativeRepairState(t, mcpRoot)
+		}
+		previews, err := RepairPreviews(context.Background(), repoRoot, selection, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mcpFile := nativeRepairFileFor(t, previews, hcc.TargetClaude, mcpRoot, mcpRel, mcpContainer)
+		if len(mcpFile.Adoptions)+len(mcpFile.Conflicts) != 1 || len(mcpFile.Orphans) != 0 {
+			t.Fatalf("selected plugin MCP entry: adopt=%d replace=%d orphan=%d", len(mcpFile.Adoptions), len(mcpFile.Conflicts), len(mcpFile.Orphans))
+		}
+		mcpID := ownership.EntryID{}
+		mcpResource := ""
+		if len(mcpFile.Adoptions) == 1 {
+			mcpID = mcpFile.Adoptions[0].Candidate.EntryID()
+			mcpResource = mcpFile.Adoptions[0].Resource
+		} else {
+			mcpID = mcpFile.Conflicts[0].Candidate.EntryID()
+			mcpResource = mcpFile.Conflicts[0].Resource
+		}
+		if mcpID.Kind != ownership.KindMcpServer || mcpID.Key != "repair-kit-plugin-tools" || mcpResource != "repair-kit-plugin-tools" {
+			t.Fatalf("selected plugin MCP entry = %+v resource=%q", mcpID, mcpResource)
+		}
+		assertPluginRepairEntries(t, nativeRepairFileFor(t, previews, hcc.TargetClaude, destination.Root, hookSpec.rel, hookSpec.container), ownership.KindHook, []string{"repair-kit-repo-guard"})
+		assertNativeRepairSnapshot(t, hookPath, hookBefore, hookInfo.Mode(), hookInfo.ModTime())
+		assertNativeRepairSnapshot(t, mcpPath, mcpBefore, mcpInfo.Mode(), mcpInfo.ModTime())
+		if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+			t.Fatalf("preview changed missing ownership state: %v", err)
+		}
+		if mcpStatePath != "" {
+			if _, err := os.Stat(mcpStatePath); !os.IsNotExist(err) {
+				t.Fatalf("preview changed missing MCP ownership state: %v", err)
+			}
+		}
+	})
+
+	t.Run("Gemini coalesced scopes", func(t *testing.T) {
+		repoRoot, selection := nativeRepairPluginSelection(t, hcc.TargetGemini, []config.Source{config.RepoCommitted, config.UserPersonal}, true, false)
+		destination, hookSpec, err := nativeHookJSONLayout(outputKey{target: hcc.TargetGemini, machineScope: true}, repoRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(destination.Root, hookSpec.rel)
+		before, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		statePath := removeNativeRepairState(t, destination.Root)
+		previews, err := RepairPreviews(context.Background(), repoRoot, selection, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		file := nativeRepairFileFor(t, previews, hcc.TargetGemini, destination.Root, hookSpec.rel, hookSpec.container)
+		assertPluginRepairEntries(t, file, ownership.KindHook, []string{"repair-kit-repo-guard", "repair-kit-machine-guard"})
+		assertNativeRepairSnapshot(t, path, before, info.Mode(), info.ModTime())
+		if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+			t.Fatalf("preview changed missing ownership state: %v", err)
+		}
+	})
+}

@@ -106,8 +106,22 @@ func nativeAggregateRepairPreview(ctx context.Context, repoRoot string, resolved
 			file.entries = append(file.entries, entry)
 		}
 
+		var pluginPlans []*pluginInstancePlan
+		for _, plan := range compiled.plugins {
+			if plan.key != key && (!coalescence.isOwner(key) || !coalescence.includes(plan.key)) {
+				continue
+			}
+			pluginPlans = append(pluginPlans, plan)
+		}
+		sort.Slice(pluginPlans, func(i, j int) bool {
+			return pluginPlans[i].ref.InstanceKey < pluginPlans[j].ref.InstanceKey
+		})
+
 		fileFor(destination.Root, hookSpec)
 		hookWork := compiled.nativeHooks[key]
+		for _, plan := range pluginPlans {
+			hookWork = mergeOwnedJSONAggregateWork(hookWork, plan.hooks)
+		}
 		if hookWork != nil {
 			for _, entry := range hookWork.entries {
 				add(destination.Root, hookSpec, entry)
@@ -137,31 +151,36 @@ func nativeAggregateRepairPreview(ctx context.Context, repoRoot string, resolved
 				preview.Diags = append(preview.Diags, nativeRepairDiagnostic(target, "native MCP destinations could not be resolved safely"))
 				continue
 			}
+			var artifacts []artifact.Artifact
 			if work := compiled.byTarget[key]; work != nil {
-				for _, output := range work.artifacts {
-					root, rel, container, routed := nativeMCPArtifactDestination(destinations, mcpDeclaration, output.Path)
-					if !routed {
-						continue
-					}
-					policy, policyErr := output.Policy()
-					if policyErr != nil {
-						preview.Diags = append(preview.Diags, nativeRepairDiagnostic(target, "compiled MCP fragment policy could not be validated"))
-						fileFor(root, ownedJSONFileSpec{rel: rel, container: container, keyed: true}).invalid = true
-						continue
-					}
-					markerField, markerValue := "", ""
-					if policy.Mode == artifact.ReconciliationMarker {
-						markerField, markerValue = policy.MarkerField, policy.MarkerValue
-					}
-					entries, decodeErr := nativeMCPFragmentEntries(rel, container, output.Bytes, markerField, markerValue)
-					if decodeErr != nil {
-						preview.Diags = append(preview.Diags, nativeRepairDiagnostic(target, "compiled MCP fragment could not be decoded safely"))
-						fileFor(root, ownedJSONFileSpec{rel: rel, container: container, keyed: true}).invalid = true
-						continue
-					}
-					for _, entry := range entries {
-						add(root, ownedJSONFileSpec{rel: rel, container: container, keyed: true}, entry)
-					}
+				artifacts = append(artifacts, work.artifacts...)
+			}
+			for _, plan := range pluginPlans {
+				artifacts = append(artifacts, plan.artifacts...)
+			}
+			for _, output := range artifacts {
+				root, rel, container, routed := nativeMCPArtifactDestination(destinations, mcpDeclaration, output.Path)
+				if !routed {
+					continue
+				}
+				policy, policyErr := output.Policy()
+				if policyErr != nil {
+					preview.Diags = append(preview.Diags, nativeRepairDiagnostic(target, "compiled MCP fragment policy could not be validated"))
+					fileFor(root, ownedJSONFileSpec{rel: rel, container: container, keyed: true}).invalid = true
+					continue
+				}
+				markerField, markerValue := "", ""
+				if policy.Mode == artifact.ReconciliationMarker {
+					markerField, markerValue = policy.MarkerField, policy.MarkerValue
+				}
+				entries, decodeErr := nativeMCPFragmentEntries(rel, container, output.Bytes, markerField, markerValue)
+				if decodeErr != nil {
+					preview.Diags = append(preview.Diags, nativeRepairDiagnostic(target, "compiled MCP fragment could not be decoded safely"))
+					fileFor(root, ownedJSONFileSpec{rel: rel, container: container, keyed: true}).invalid = true
+					continue
+				}
+				for _, entry := range entries {
+					add(root, ownedJSONFileSpec{rel: rel, container: container, keyed: true}, entry)
 				}
 			}
 		}
