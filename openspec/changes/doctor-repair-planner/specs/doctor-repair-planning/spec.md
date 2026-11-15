@@ -4,6 +4,33 @@ Defines how `doctor --repair` turns a diagnosis of a broken setup into a confirm
 
 ## ADDED Requirements
 
+### Requirement: Repair recovers pending journals before configuration-dependent work
+
+Repair SHALL plan pending dependency and ownership journals as safe stage-1 steps using the existing recovery operations without changing their recovery semantics. These steps SHALL require only journal authority, not valid configuration or resolved selection. Ownership recovery outcomes SHALL be printed. A refused recovery SHALL fail the step and exit 1 without changing the refused journal or target bytes. Off a terminal without `--yes`, repair SHALL preview pending journals without recovering them.
+
+#### Scenario: Dependency journal recovery runs with invalid configuration
+
+- **WHEN** a dependency journal is pending and configuration has errors
+- **THEN** the first repair step SHALL be safe dependency replay and SHALL run when authorized
+- **AND** a subsequent `sync --check` SHALL no longer report `dependency.recovery-required`, even if configuration errors remain
+
+#### Scenario: Ownership journal recovery reports its outcome
+
+- **WHEN** an ownership journal is pending and its safe recovery is authorized
+- **THEN** repair SHALL recover it as a stage-1 step and print the recovery outcome
+
+#### Scenario: Refused journal recovery preserves evidence and target bytes
+
+- **WHEN** dependency recovery encounters foreign bytes or a non-prefix publication state
+- **THEN** the repair step SHALL fail and doctor SHALL exit 1
+- **AND** the journal and target bytes SHALL remain unchanged
+
+#### Scenario: Pending journals are previewed off-terminal without consent
+
+- **WHEN** pending dependency or ownership journals exist and repair runs off a terminal without `--yes`
+- **THEN** repair SHALL print their safe recovery steps without replay
+- **AND** journal and target bytes SHALL remain unchanged
+
 ### Requirement: Repair presents a numbered plan and one confirmation
 
 `doctor --repair` SHALL print a numbered plan before it changes anything. Every plan line SHALL show the step number, its safety class (`safe`, `destructive`, `guided`, or `human-only`), the action, the diagnostic code it addresses, the files it touches, and either the inputs it needs or `blocked by N (<reason>)` naming the plan item that blocks it. MCP values SHALL never be printed. On a terminal, one `[y/N]` confirmation SHALL authorize every safe step; only an explicit `y` or `yes` is consent. Destructive entries SHALL keep their own per-entry confirmations, and a plan whose only runnable entries are destructive SHALL ask only those per-entry confirmations.
