@@ -226,6 +226,7 @@ func TestDoctorRepairAcquisitionRepairsWritableLockDiagnostics(t *testing.T) {
 				recordedURL, _ := fixture.recordedEndpoint(t)
 				writeFile(t, fixture.configPath, "apiVersion: agent-marketplace/v4\nsources:\n  hosted: {marketplace: "+fixture.url+"}\n  recorded: {marketplace: "+recordedURL+"}\nharnesses: [factory]\n")
 				writeFile(t, fixture.lockPath, "apiVersion: agent-marketplace-lock/v2\nscope: repo\nmarketplaces:\n  - url: "+fixture.url+"\n    instance_id: endpoint-mp\n")
+				before := readLockDocument(t, fixture.lockPath)
 				checkOutput, checkErr := executeCommand("lock", "--check")
 				var lockErr *pipeline.LockViewError
 				if !errors.As(checkErr, &lockErr) || lockErr.Code != test.code {
@@ -235,6 +236,19 @@ func TestDoctorRepairAcquisitionRepairsWritableLockDiagnostics(t *testing.T) {
 				assertDoctorAcquisitionRepairStep(t, output, err, test.code)
 				if _, err := os.Stat(fixture.lockPath); err != nil {
 					t.Fatalf("safe acquisition repair did not create the registration lock: %v\n%s", err, output)
+				}
+				after := readLockDocument(t, fixture.lockPath)
+				for _, previous := range before.Marketplaces {
+					found := false
+					for _, current := range after.Marketplaces {
+						if reflect.DeepEqual(previous, current) {
+							found = true
+							break
+						}
+					}
+					if !found {
+						t.Fatalf("safe acquisition repair changed or removed an existing Marketplace lock record:\nbefore: %+v\nafter: %+v", previous, after.Marketplaces)
+					}
 				}
 				assertNoDoctorAcquisitionLockDiagnostics(t, true)
 				return

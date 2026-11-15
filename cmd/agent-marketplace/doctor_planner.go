@@ -31,11 +31,27 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 	ctx := opts.ctx
 	var reads []dependencytxn.ReadAssertion
 	reads, policyErr := pipeline.EffectivePolicyReadAssertions(initial)
+	journalOnly := false
 	revalidate := func() error {
+		if journalOnly {
+			return nil
+		}
 		if policyErr != nil {
 			return policyErr
 		}
 		return dependencytxn.ValidateReadAssertions(reads)
+	}
+	refreshPolicy := func(ctx context.Context) error {
+		ws, err := pipeline.DiscoverWorkspace()
+		if err != nil {
+			policyErr = err
+			return err
+		}
+		initial = pipeline.LoadEffective(ctx, pipeline.ConfigLoadOnline, config.LoadEffectiveOptions{
+			RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(),
+		}, nil)
+		reads, policyErr = pipeline.EffectivePolicyReadAssertions(initial)
+		return nil
 	}
 	authorizeLockGeneration := func(path string, generation dependencytxn.Generation) error {
 		updated := false
@@ -49,11 +65,6 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 			return fmt.Errorf("%w: acquisition lock %s was not covered by the repair policy assertions", dependencytxn.ErrGenerationConflict, path)
 		}
 		return dependencytxn.ValidateReadAssertions(reads)
-	}
-	if len(initial.Errors) == 0 && policyErr == nil {
-		if err := revalidate(); err != nil {
-			return doctorRepairFailure(out, err)
-		}
 	}
 
 	var previews []materialize.TargetRepairPreview
@@ -80,6 +91,17 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 		ownershipActionable = false
 		incompleteCause = nil
 		diagnosis := repairplanner.Diagnosis{InvalidInputs: make(map[repairplanner.Input]repairplanner.Blocker)}
+		journalSteps, err := doctorJournalSteps(repoRoot, out, refreshPolicy)
+		if err != nil {
+			return repairplanner.Diagnosis{}, err
+		}
+		journalOnly = len(journalSteps) > 0
+		diagnosis.Steps = append(diagnosis.Steps, journalSteps...)
+		if !journalOnly && len(current.Errors) == 0 && policyErr == nil {
+			if err := revalidate(); err != nil {
+				return diagnosis, err
+			}
+		}
 		addHuman := func(stage repairplanner.Stage, code string, issue error) string {
 			action := tui.TerminalSafeLine(issue.Error())
 			if hint := remedy.For(issue, "doctor"); hint != "" {
@@ -205,7 +227,6 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 			blockSelection(key, "policy assertions unavailable")
 			return diagnosis, nil
 		}
-
 		if err := revalidate(); err != nil {
 			return diagnosis, err
 		}
@@ -281,6 +302,9 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 			blockSelection(key, "selection unresolved")
 			return diagnosis, nil
 		}
+		if journalOnly {
+			return diagnosis, nil
+		}
 
 		if opts.resolve == nil && len(current.TargetHarnesses) > 0 {
 			var checkOutput strings.Builder
@@ -334,7 +358,6 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 			}
 		}
 
-		var err error
 		previews, err = materialize.RepairPreviews(ctx, repoRoot, selection, revalidate)
 		if err != nil {
 			incompleteCause = err

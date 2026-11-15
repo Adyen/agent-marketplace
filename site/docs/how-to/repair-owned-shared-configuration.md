@@ -29,6 +29,8 @@ It then lists each Devin and Codex shared file it inspects, even files with noth
 - `replace`: the existing entry has the same key but a different value. Replacing overwrites your value with the generated one.
 - `orphan candidate`: evidence shows that an earlier run of `agent-marketplace` wrote the entry, and nothing selects it anymore. Removing it deletes the entry.
 
+If an earlier `agent-marketplace` run was interrupted mid-write, the plan opens with safe steps that recover the pending dependency or ownership journal. These steps need only the journal itself, so they are planned and can run even when your configuration has errors. Replaying a journal finishes only writes the earlier run already admitted; it is a safe step authorized by the plan confirmation or `--yes`, not a destructive entry replacement. Ownership recovery prints each recovered file's outcome, and dependency replay prints the recovered journal.
+
 When there is nothing to repair, the preview ends like this:
 
 ```text
@@ -63,12 +65,13 @@ After each step runs, the command diagnoses the setup again and shows any new st
 agent-marketplace sync --check
 ```
 
-The check exits with status 0 when the shared configuration matches your selection.
+The check exits with status 0 when the shared configuration matches your selection. After the repair replayed a dependency journal, the check no longer reports `dependency.recovery-required`, though it can still report independent configuration issues that the journal recovery does not fix.
 
 ## What `--repair` guarantees
 
-- It never removes or overwrites an entry without your confirmation on a terminal.
+- It never removes or overwrites an entry without your confirmation on a terminal. That guarantee covers explicit aggregate entry replacement and removal; completing an interrupted write the CLI itself already recorded counts as journal recovery, a safe step that runs under the plan confirmation or `--yes`, not a destructive overwrite.
 - It takes a fresh safety backup of the file before it replaces or removes an entry.
+- A journal recovery that cannot prove its recorded authority, such as foreign bytes or a non-prefix publication state, fails the step, exits 1, and leaves the journal and the files it recorded unchanged.
 - It never edits your harness lists.
 - An off-terminal preview or a `--yes` run can exit 0 with destructive entries deferred. Otherwise, status 0 means the setup ended clean or you declined. Status 1 means a confirmed step failed, corrupt ownership state or a corrupt shared file remains, the plan is left with only blocked or `human-only` items, or a preview or decline left missing or stale acquisition-lock authority unresolved. An invalid configuration or a failed resolution is reported as a plan item and blocks the steps that need it rather than refusing the whole repair.
 - When the ownership state is missing, every existing entry counts as unmanaged. `sync` then keeps all of them, refuses to write over any of them, and removes nothing.
