@@ -130,7 +130,6 @@ func TestDoctorRepairAcquisitionRepairsWritableLockDiagnostics(t *testing.T) {
 	tests := []struct {
 		name         string
 		code         string
-		stepCode     string
 		registration bool
 		prepare      func(*testing.T, doctorAcquisitionPinFixture)
 	}{
@@ -159,12 +158,12 @@ func TestDoctorRepairAcquisitionRepairsWritableLockDiagnostics(t *testing.T) {
 			},
 		},
 		{
-			name:     "version-deprecated",
-			code:     "lock.version-deprecated",
-			stepCode: "lock.version-upgrade-required",
+			name: "version-deprecated",
+			code: "lock.version-deprecated",
 			prepare: func(t *testing.T, fixture doctorAcquisitionPinFixture) {
 				writeDoctorAcquisitionVersion(t, fixture, lockfile.APIVersionV1)
 				writeDoctorAcquisitionPinConfig(t, fixture, false, []string{})
+				writeFile(t, filepath.Join(os.Getenv("HOME"), ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\n")
 			},
 		},
 		{
@@ -250,12 +249,35 @@ func TestDoctorRepairAcquisitionRepairsWritableLockDiagnostics(t *testing.T) {
 					t.Fatalf("lock --check error = %v, want %s\n%s", checkErr, test.code, checkOutput)
 				}
 			}
-			output, err := executeCommand("doctor", "--repair", "--yes")
-			stepCode := test.stepCode
-			if stepCode == "" {
-				stepCode = test.code
+			if test.name == "version-deprecated" {
+				beforePreview, err := os.ReadFile(fixture.lockPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				preview, previewErr := executeCommand("doctor", "--repair")
+				if previewErr == nil {
+					t.Fatalf("off-terminal repair accepted deprecated acquisition lock:\n%s", preview)
+				}
+				var plannedDeprecatedLock bool
+				for _, line := range strings.Split(preview, "\n") {
+					if strings.Contains(line, "[safe]") && strings.Contains(line, test.code) {
+						plannedDeprecatedLock = true
+						break
+					}
+				}
+				if !plannedDeprecatedLock {
+					t.Fatalf("off-terminal repair did not plan the safe %s step:\n%s", test.code, preview)
+				}
+				afterPreview, err := os.ReadFile(fixture.lockPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !bytes.Equal(beforePreview, afterPreview) {
+					t.Fatalf("off-terminal repair changed acquisition lock bytes:\nbefore: %s\nafter:  %s", beforePreview, afterPreview)
+				}
 			}
-			assertDoctorAcquisitionRepairStep(t, output, err, stepCode)
+			output, err := executeCommand("doctor", "--repair", "--yes")
+			assertDoctorAcquisitionRepairStep(t, output, err, test.code)
 
 			after := readLockDocument(t, fixture.lockPath)
 			beforeRegistry, beforeRoot := doctorAcquisitionGitRoot(t, fixture.before, "first")
@@ -272,6 +294,9 @@ func TestDoctorRepairAcquisitionRepairsWritableLockDiagnostics(t *testing.T) {
 			}
 			if test.name == "stale" {
 				_, _ = doctorAcquisitionGitRoot(t, after, "second")
+			}
+			if test.name == "version-deprecated" {
+				writeFile(t, filepath.Join(os.Getenv("HOME"), ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses: [factory]\n")
 			}
 			assertNoDoctorAcquisitionLockDiagnostics(t, true)
 		})
