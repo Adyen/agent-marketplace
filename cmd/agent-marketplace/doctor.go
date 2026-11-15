@@ -80,13 +80,18 @@ never requires a Devin binary, so nothing doctor reports here blocks it.
 
 --repair diagnoses harness drift and shared-aggregate ownership, then prints a
 numbered plan with each step's safety class, diagnostic code, files, and inputs
-or blocker. One terminal confirmation authorizes safe steps. Destructive
-replacements and orphan removals keep their per-entry confirmations and never
-run with --yes. Devin and Codex shared aggregate files include hooks.v1.json,
-config.json#hooks, mcp_config.json, .codex/hooks.json, and .codex/config.toml.
-Off a terminal, --repair is preview-only unless --yes is set; --yes runs only
-safe steps. Repair uses the acquisition locks already on disk and never edits
-harness lists or organization files.
+or blocker. Pending dependency and ownership journals left by an interrupted
+run are recovered first as safe steps that need only the journal itself, so
+they run even when configuration is invalid. Replaying a journal completes only
+writes an earlier run already admitted; it is a safe step, not a destructive
+replacement, and a refused recovery fails the step, exits 1, and leaves the
+journal and its target bytes unchanged. One terminal confirmation authorizes
+safe steps. Destructive replacements and orphan removals keep their per-entry
+confirmations and never run with --yes. Devin and Codex shared aggregate files
+include hooks.v1.json, config.json#hooks, mcp_config.json, .codex/hooks.json,
+and .codex/config.toml. Off a terminal, --repair is preview-only unless --yes
+is set; --yes runs only safe steps. Repair uses the acquisition locks already
+on disk and never edits harness lists or organization files.
 
 With --repair, --json emits one structured plan and result document to stdout
 without prompting. Use --yes to run safe steps; destructive and guided steps
@@ -112,7 +117,7 @@ remain deferred.
 		},
 	}
 
-	cmd.Flags().BoolVar(&repair, "repair", false, "Diagnose, plan, and confirm safe harness-drift and Devin and Codex shared-aggregate repairs")
+	cmd.Flags().BoolVar(&repair, "repair", false, "Recover pending journals and diagnose, plan, and confirm safe harness-drift and Devin and Codex shared-aggregate repairs")
 	cmd.Flags().BoolVar(&assumeYes, "yes", false, "With --repair, run safe planned steps without prompting; destructive aggregate changes are never automatic")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "With --repair, emit the plan and results as JSON")
 	return cmd

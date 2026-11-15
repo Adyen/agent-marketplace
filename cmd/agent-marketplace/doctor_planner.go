@@ -33,16 +33,31 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 	if len(initial.Errors) == 0 {
 		reads, policyErr = pipeline.EffectivePolicyReadAssertions(initial)
 	}
+	journalOnly := false
 	revalidate := func() error {
+		if journalOnly {
+			return nil
+		}
 		if policyErr != nil {
 			return policyErr
 		}
 		return dependencytxn.ValidateReadAssertions(reads)
 	}
-	if len(initial.Errors) == 0 && policyErr == nil {
-		if err := revalidate(); err != nil {
-			return doctorRepairFailure(out, err)
+	refreshPolicy := func(ctx context.Context) error {
+		ws, err := pipeline.DiscoverWorkspace()
+		if err != nil {
+			policyErr = err
+			return err
 		}
+		initial = pipeline.LoadEffective(ctx, pipeline.ConfigLoadOnline, config.LoadEffectiveOptions{
+			RepoRoot: ws.RepoRoot(), LocalConfigDir: ws.LocalConfigDir(),
+		}, nil)
+		reads = nil
+		policyErr = nil
+		if len(initial.Errors) == 0 {
+			reads, policyErr = pipeline.EffectivePolicyReadAssertions(initial)
+		}
+		return nil
 	}
 
 	var previews []materialize.TargetRepairPreview
@@ -69,6 +84,17 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 		ownershipActionable = false
 		incompleteCause = nil
 		diagnosis := repairplanner.Diagnosis{InvalidInputs: make(map[repairplanner.Input]repairplanner.Blocker)}
+		journalSteps, err := doctorJournalSteps(repoRoot, out, refreshPolicy)
+		if err != nil {
+			return repairplanner.Diagnosis{}, err
+		}
+		journalOnly = len(journalSteps) > 0
+		diagnosis.Steps = append(diagnosis.Steps, journalSteps...)
+		if !journalOnly && len(current.Errors) == 0 && policyErr == nil {
+			if err := revalidate(); err != nil {
+				return diagnosis, err
+			}
+		}
 		addHuman := func(stage repairplanner.Stage, code string, issue error) string {
 			action := "review " + code
 			if !opts.json {
@@ -119,7 +145,6 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 			blockSelection(key, "policy assertions unavailable")
 			return diagnosis, nil
 		}
-
 		var selection []resolver.ResolvedArtifact
 		var resolveErr error
 		if opts.resolve != nil {
@@ -144,6 +169,9 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 			code := repairDiagnosticCode(resolveErr)
 			key := addHuman(repairplanner.StageLocks, code, resolveErr)
 			blockSelection(key, "selection unresolved")
+			return diagnosis, nil
+		}
+		if journalOnly {
 			return diagnosis, nil
 		}
 
@@ -190,7 +218,6 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 			}
 		}
 
-		var err error
 		previews, err = materialize.RepairPreviews(ctx, repoRoot, selection, revalidate)
 		if err != nil {
 			incompleteCause = err

@@ -120,6 +120,80 @@ func TestDoctorRepairJSONPreviewDoesNotReadTerminalInputOrWrite(t *testing.T) {
 	assertUnchanged()
 }
 
+// spec: doctor-repair-planning/json-repair-reports-a-structured-plan-and-results
+// spec: doctor-repair-planning/json-repair-without-yes-never-writes-or-prompts
+// spec: doctor-repair-planning/json-repair-with-yes-runs-only-safe-steps
+func TestDoctorRepairJSONDependencyJournal(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	for _, tc := range []struct {
+		name string
+		yes  bool
+	}{{name: "preview"}, {name: "recover", yes: true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoRoot, _ := devinDoctorEnv(t)
+			configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+			const invalid = "apiVersion: agent-marketplace/v4\nharnesses: [\n"
+			const valid = "apiVersion: agent-marketplace/v4\n"
+			_, journal := createDoctorDependencyJournal(t, configPath, invalid, valid)
+			var unchanged func()
+			if !tc.yes {
+				unchanged = snapshotDoctorJournalFiles(t, journal, configPath)
+			}
+
+			var out bytes.Buffer
+			err := runDoctor(doctorOptions{
+				out:     &out,
+				in:      doctorJSONPanicReader{},
+				isTTY:   true,
+				repair:  true,
+				yes:     tc.yes,
+				json:    true,
+				probe:   staticProbe(devincli.Probe{Status: devincli.StatusNotInstalled}),
+				resolve: staticResolve(nil),
+			})
+			if tc.yes && err != nil {
+				t.Fatalf("JSON repair: %v\n%s", err, out.String())
+			}
+			report := decodeDoctorJSON(t, out.String())
+			var journalStep *doctorJSONStep
+			for i := range report.Steps {
+				if *report.Steps[i].Code == "dependency.recovery-required" {
+					journalStep = &report.Steps[i]
+					break
+				}
+			}
+			if journalStep == nil || *journalStep.Class != "safe" {
+				t.Fatalf("dependency journal step = %+v", report.Steps)
+			}
+			if !tc.yes {
+				if *journalStep.Status != "pending" || len(report.Results) != 0 {
+					t.Fatalf("preview step/results = %+v / %+v", journalStep, report.Results)
+				}
+				unchanged()
+				return
+			}
+			if *journalStep.Status != "completed" {
+				t.Fatalf("recovery step = %+v", journalStep)
+			}
+			if _, err := os.Stat(journal); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("dependency journal remains: %v", err)
+			}
+			if got, err := os.ReadFile(configPath); err != nil || string(got) != valid {
+				t.Fatalf("recovered configuration = %q, %v; want %q", got, err, valid)
+			}
+			for _, result := range report.Results {
+				if *result.ID == *journalStep.ID && *result.Status == "completed" {
+					return
+				}
+			}
+			t.Fatalf("completed journal step %d has no matching completed result: %+v",
+				*journalStep.ID, report.Results)
+		})
+	}
+}
+
 // spec: doctor-repair-planning/json-repair-with-yes-runs-only-safe-steps
 // spec: doctor-repair-planning/json-repair-never-prints-mcp-secrets
 // spec: doctor-repair-planning/json-repair-reports-a-structured-plan-and-results
