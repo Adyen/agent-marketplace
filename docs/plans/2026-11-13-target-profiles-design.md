@@ -795,8 +795,8 @@ only it uses.
   nothing. Independent packages still proceed.
 
 Placing a layout and the mods it requires is several filesystem writes,
-and a running host can observe the state in between. Publication and
-hot-reload behavior still depend on the staging item under Open items.
+and a running host can observe the state in between; the proposed
+publication and recovery contract is Decision 14.
 
 Upstream resolves a name clash by renaming the incoming mod. Curators do
 the same at curation time, or split a shared mod into its own package;
@@ -946,10 +946,8 @@ instead of attempting a destructive rollback.
 **Verification.** A kind may declare `verify`, a command that checks one
 delivered package, such as `herdr-app check <mod folder>`. It runs after
 place or register in a mutating sync. A failure is reported, makes sync
-exit nonzero and is recorded. Whether a failed package stays in place
-remains open for the OpenSpec change. The prototype leaves files placed
-after a failed check, but the scenario did not exercise that case and this
-behavior is not a policy choice.
+exit nonzero and is recorded. Decision 14 chooses to retain the placed
+package after a failed check and defines its recovery and retry state.
 Herdr app mods use place followed by verify, not register. Verification
 reports only what the host check exercised; it does not prove all runtime
 paths or user configuration are valid, and it does not repair them.
@@ -1610,6 +1608,238 @@ host-package behavior already exists.
 | Ambiguous slash-kind and duplicate profile selection refuse before acquisition | `catalog-discovery`; `resource-selection` (Name collisions resolve per install scope) | `internal/marketplace/locator.go`; `internal/config/v4.go`; `internal/resolver/resolver.go` | Raw `herdr-app/mod/chris-links`, malformed percent escapes, and two selected profile identities produce deterministic named refusals with no source acquisition. |
 | Host-package disclosure and binary policy | `marketplace-analysis` (Non-UTF-8 support files cannot silently bypass analysis; Binary signature exemptions remain narrow); `marketplace-delivery-security` | `pkg/marketplace/analyze/assets.go:ScanAssets`; `pkg/marketplace/analyze/analyzer.go:isRecognizedBinary`; `pkg/marketplace/ingest/ingest.go` | Fixtures cover JavaScript, Luau, Python/shell helpers, computed commands, dynamic code and prebuilt binaries; output is labeled disclosure and never permission. |
 
+### 14. Place publication, ownership and recovery
+
+This decision is **proposed, not implemented**. It settles place delivery
+only; it does not add register-mode execution, an external-command rollback,
+or a second ownership database.
+
+#### Publication units and observation limits
+
+Before the first package-staging write, durably record a place-transaction
+intent containing the full payload manifest, immutable generation key,
+destination generations and a reserved engine-stage path. Then stage each
+reviewed package as a complete, immutable generation in
+agent-marketplace-owned state, outside every application root and outside
+the acquisition cache. Extend the existing `internal/packagegen` generation
+namespace and lock/collection discipline for place identities; its current
+`Plan`, `PublishUnderPackagesLock` and `GarbageCollect` implementation is
+plugin-specific, so this is a reuse of its generation seam, not a claim that
+it already stores Herdr packages. The place generation key includes
+Decision 13's profile identity and mapping plus every payload path, mode and
+content digest; extend `internal/packagegen/packagegen.go:BuildKey` and
+`internal/packagegen/gc.go:GarbageCollect` to retain it while a committed
+projection or pending transaction references it, extending
+`internal/ownership/plugin_state.go:ReadAllPluginGenerationRefs` and
+`ReadPendingPluginGenerationRefs`. Keep those references in the existing
+root-keyed `internal/ownership` record, not a parallel store. The completed
+generation is the recovery input; sync never reads payloads back from an
+upstream checkout during recovery.
+
+For publication, capture the approved canonical target root with
+`internal/fsboundary/dir_unix.go:OpenDir`; use
+`internal/fsboundary/root_unix.go:OpenContainedRoot` and
+`internal/fsboundary/destination_unix.go:CaptureDestination` for contained
+paths and the repository link policy. Revalidate that root, its parent
+chain, destination leaf and any honored link before every publish or removal
+with `Destination.Verify`/`Publish`.
+Create transaction-owned staging copies below agent-marketplace-owned data,
+not in the target tree: no `.dependencytxn-*` or other dot-prefixed host
+siblings. The existing `stageCapturedDestination` in
+`internal/dependencytxn/authority.go` uses
+`internal/fsboundary/staging_unix.go:Destination.StagingDir` to stage in the
+destination parent, and
+`internal/dependencytxn/txn.go:commitLocked` persists its journal after all
+files are staged. Extend the same transaction entry point through
+`internal/packagegen/packagegen.go:publishLocked` so the intent covers its
+current `.packagegen-*` stage as well as the separate publication copies.
+Record the stage directory identity before writing into it; a crash-created
+unrecorded object is foreign evidence, not cleanup authority. Reuse the
+generation checks and exact old/new classification through
+`internal/dependencytxn/txn.go:CheckPending`, `Recover` and `recoverJournal`,
+not a second recovery protocol.
+`internal/fsboundary/destination_unix.go:Destination.Publish` provides one
+descriptor-relative, same-filesystem rename; it is not a multi-file
+transaction.
+
+Choose **refusal**, not copy-then-verify, for cross-filesystem publication.
+Before the first target write, compare staging and destination filesystem
+identities and refuse the package set if they differ. If a rename nevertheless
+returns `EXDEV`, stop and retain the staged generation and pending journal;
+never fall back to a target-root temporary or copy. If no file has yet been
+published, the target remains unchanged. If earlier files were published,
+they remain visible and recovery follows the table below.
+
+The conflict plan is whole-set, but publication is per file. When a required
+mod is in the admitted set, publish it before its layout; deselection removes
+layouts before their mods. Whether to admit a layout whose required mod is
+absent remains open under Decision 4. The ordering prevents a *new* layout
+from appearing before its selected required mod is published, but an old
+layout may remain while its mod is updated, and a removed layout may leave
+its mod visible until the later removal. A crash or running app can observe a
+partially replaced package or a mixture of old and new files. There is no
+host reload barrier or guaranteed reload ordering: Herdr may hot-reload
+between any two renames, including while a layout or mod package is
+incomplete. Do not promise package- or dependency-set atomicity, suppress
+reload, or infer readiness from publication.
+
+#### Root binding and whole-set conflicts
+
+Decision 7's approval binds the resolved target root; Decision 14 also binds
+place ownership, status and retirement to that recorded canonical root.
+Reuse `internal/ownership/store.go:Open`,
+`internal/ownership/paths.go:CanonicalRoot`/`RootKey` and
+`internal/ownership/state.go:validateRecord`'s canonical-root checks.
+Approval is not authority to follow a new
+environment value at write time. A changed `HERDR_APP_HOME`, root alias or
+resolved root requires a new approval and describes a separate installation;
+approving it never retires or relocates the recorded installation. Retirement
+is an explicit operation against the old recorded root and its authority.
+
+Resolve and pin the root directory identity at plan admission; reuse
+`internal/materialize/destination_boundary.go:captureDirectory`'s named-root
+identity check as the precedent. A replacement of the root, a destination
+symlink, or any captured ancestor between plan and write/removal is a
+generation conflict: do not retry through the new
+name, write, prune, or clear the journal. An alias that cannot be proven to
+be the recorded canonical root is not ownership proof. Store the resolved
+XDG state root used by the existing ownership store in the local approval
+binding. If `XDG_STATE_HOME` changes and that recorded metadata is
+unavailable, report ownership as unavailable and refuse place mutation or
+retirement; do not open a new empty store and reinterpret existing files as
+a first installation.
+
+Plan the complete desired package set before any target publication. Record
+a deterministic dependency-topological publish order (path order breaks
+ties), not selection or iteration order. Retain the
+complete installed projection when a selected package conflicts with another
+owner; refuse its new revision as a unit. Refuse every new package in a
+new/new conflict, independent of selection or iteration order. Any collision
+with an unowned existing file refuses the package even when its bytes match;
+there is no implicit adoption. Compare normalized path components as a trie:
+a file `mods/a` conflicts with another package's directory `mods/a/` or any
+descendant. Also compare case-folded path keys on **all** hosts rather than
+trying to probe whether a volume is case-insensitive; this intentionally
+refuses some names on case-sensitive volumes, while making case collisions
+deterministic on case-insensitive volumes. A single conflict blocks each
+new package's full projection; independent packages may proceed.
+
+These rules extend the planning precedents in
+`internal/materialize/plugin_instance.go:preflightPluginInstances` and
+`internal/materialize/plugin_batch.go:planPluginArtifacts` (which retain a
+failed plugin instance and check prior output digests), and the
+batch/ownership commit in
+`internal/materialize/plugin_batch.go:pluginInstanceBatch.commit`; they are
+not current Herdr package behavior. The source contracts are
+`openspec/specs/plugin-delivery/spec.md`,
+`openspec/specs/materialization/spec.md`,
+`openspec/specs/owned-entry-reconciliation/spec.md`,
+`openspec/specs/resource-removal/spec.md`,
+`openspec/specs/backup-recovery/spec.md`,
+`openspec/specs/exact-snapshot-verification/spec.md`,
+`openspec/specs/registry-symlink-containment/spec.md` and
+`openspec/specs/status-reporting/spec.md`. In particular, they distinguish
+unproven collisions from proven-owned drift (`owned-entry-reconciliation`,
+`Unproven entries are preserved` and
+`Proven owned entries reconcile against recorded state`).
+
+#### Recovery state machine
+
+Keep one pending transaction from the first staging write through ownership
+commit and pruning. Read-only `status`, `sync --check` and other read-only
+commands check it first and return the existing
+`dependency.recovery-required` behavior without replay. A mutating sync
+recovers only the admitted transaction from its journal and recorded
+generations before validating or planning fresh work. `dependencytxn`
+already refuses third-party bytes and non-prefix publication in
+`recoverJournal`; place applies the same exact-generation rule to staged
+payloads, ownership state and pruning. Reuse the
+`internal/materialize/plugin_batch.go:pluginInstanceBatch.commit` pattern to
+include the existing ownership participant in that transaction, and extend
+its journal ordering so package files publish first, ownership commits next,
+and stale files prune last. The E2E crash hook in
+`internal/dependencytxn/fault_e2e.go` already targets stage/publish points;
+future witnesses add the place ownership and prune boundaries. The following
+are the proposed states:
+
+| Interruption point | Read-only outcome | Mutating recovery outcome |
+|---|---|---|
+| Before staging completes | `dependency.recovery-required`; no replay. | If the reserved stage path is absent, clear the no-write intent. Otherwise remove only a transaction-owned partial stage whose recorded directory identity and every present byte match its journaled manifest, then clear the transaction. A stage present without recorded identity, or a missing-after-capture, changed or foreign stage, is retained with the journal and recovery stops. |
+| After some files publish | `dependency.recovery-required`; no replay. | Complete the recorded publish prefix only while each destination is exactly its old or intended generation and all remaining stage bytes match. An unexpected generation, byte or non-prefix state stops without deleting evidence. |
+| All package files published, ownership generation not committed | `dependency.recovery-required`; no replay. | Verify every published file against the journal, then commit the matching package/root ownership generation. A mismatch stops with journal and files intact. |
+| Ownership committed, pruning not started | `dependency.recovery-required`; no replay. | Start pruning only stale files whose current bytes and captured parent still match the recorded old generation. A mismatch stops and preserves the journal and all files. |
+| Interruption during pruning | `dependency.recovery-required`; no replay. | Continue only the remaining exact prune set, then clear the journal and release unreferenced package generations. Any changed generation stops and preserves the remaining evidence. |
+| No pending journal after commit and prune | Normal read-only inspection; any verification-pending or failed result remains visible. | No recovery work; a later sync plans from the committed ownership generation. |
+
+The journal must record the ordered package writes, ownership participant,
+stale-file generations, stage manifest and root identity so these boundaries
+are durable, not inferred from directory contents. `dependencytxn.Commit`
+currently stages before journal publication and its journal recovery rolls
+forward an exact published prefix; the proposed early journal and prune phase
+are extensions to that same seam. Recovery never guesses ownership from
+matching content and never deletes a stage, target or journal whose generation
+differs from its recorded expectation. The journal remains pending on an
+unexpected generation so a later read-only command cannot report a clean
+installation.
+
+`internal/backup/backup.go:Create` and explicit `Restore` remain user
+recovery aids, not transaction rollback. A backup does not authorize
+ownership or prove that a host registration can be rolled back.
+
+#### Edited files and verification
+
+Use separate package-payload behavior from owned aggregate-entry behavior.
+For place payloads, sync keeps an edited file and records edited drift; if any
+member of an installed package is edited, keep that package's entire current
+projection and do not partly refresh it. An upgrade that encounters an edit
+keeps the complete old projection and refuses the new package revision as a
+unit. The user can restore or move the edit and sync again. On deselection,
+delete unchanged files only when their recorded ownership generation still
+matches; leave edited files byte-for-byte in place and cede those paths from
+ownership, reporting them as retained user files. Neither matching bytes at
+an unowned path nor a prior package name is sufficient to adopt them. This
+choice follows materialization's edited-copy preservation and
+`plugin-delivery`'s rule to retire only owned output; it deliberately does
+not apply the aggregate-entry rule that restores drifted proven entries.
+
+After publication, ownership commit and pruning finish, run the approved
+initial-load `verify` and record pass/fail against the exact profile, package
+generation, check identity and host version in the existing root-keyed
+ownership state.
+A failed check retains the complete placed projection and generation
+reference, reports the check as failed, and does not roll files back. The
+next mutating sync retries the check against unchanged files; a later user
+edit is separately reported as edited drift and is not converted into a
+verification failure. A crash-recovered publication is neither a failed
+check nor a user edit: recovery itself runs no host code and leaves
+verification pending; the sync may run its normal post-recovery check only
+after completing the journal and revalidating selection, otherwise the next
+mutating sync runs it. Read-only commands do not run host code; they report
+the recorded result. This preserves
+Decision 6's distinction among files placed, check scope, manual setup and
+runtime evidence. A successful initial-load check still does not prove
+deferred runtime behavior.
+
+#### Trace to future acceptance witnesses
+
+Every row is **proposed / not implemented**. Existing specifications and code
+below are precedents, not proof of Herdr place behavior.
+
+| Proposed transition | Existing contract/seam | Future acceptance witness |
+|---|---|---|
+| Engine staging and same-filesystem publish | `plugin-delivery` (Package roots resolve to immutable package generations); `packagegen.Plan` / `PublishUnderPackagesLock`; `fsboundary.Destination.Publish` | Stage outside a scratch target root and assert no host sibling; a different-device target refuses before writes; injected `EXDEV` leaves its journal and stage, with no copy fallback. |
+| Incomplete staging recovery | `dependencytxn.CheckPending`, `Recover`, `recoverJournal` | Crash after the first stage file: read-only `sync --check` returns `dependency.recovery-required` without byte changes; mutating recovery clears only an exact attempt-owned partial stage. Replace one stage byte and prove recovery stops with it and the journal intact. |
+| Partial publication recovery | `plugin-delivery` (Plugin instances install as a unit; Delivery transitions never activate a plugin twice); `dependencytxn.recoverJournal` | Crash after a published prefix: read-only status refuses without replay; mutating sync completes the exact recorded suffix. Change one destination generation and prove no subsequent file or evidence is deleted. |
+| Published files before ownership commit | `owned-entry-reconciliation` (Apply retains originally admitted ownership-record generation); `pluginInstanceBatch.commit` | Crash after all target files but before the ownership participant: read-only refuses; recovery commits the matching ownership generation once, without reacquisition. |
+| Ownership commit before/during prune | `plugin-delivery` (Removal retires only owned plugin output); `ownership.Store.Recover` | Crash before prune and between two removals: recovery prunes only matching stale generations; replace a remaining file and assert it and the pending journal survive. |
+| Root change, alias or destination-symlink replacement | `materialization` (Harness target roots remain within their authorized scope); `fsboundary.CaptureDestination` / `Destination.Verify`; `ownership.CanonicalRoot` | Change `HERDR_APP_HOME`, XDG state root, a root alias and a destination symlink between plan and write: no redirected write/prune; new-root approval leaves the old root untouched. |
+| New/new, installed/new and unmanaged conflicts | `owned-entry-reconciliation` (Unproven entries are preserved; Unmanaged collisions refuse only the generated entry); `planPluginArtifacts` | Reverse package order and assert both new colliders refuse; an installed package keeps its complete old projection; an identical unowned file, file/directory prefix collision and case-fold collision refuse deterministically. |
+| Edited package on sync and upgrade | `materialization` (Locally edited file-mode output is reported as an edited managed copy); `plugin-delivery` (Plugin instances install as a unit) | Edit one package file: sync preserves the complete projection and reports drift; upgrade retains the old complete projection and refuses the new generation. |
+| Edited package on deselection | `plugin-delivery` (Removal retires only owned plugin output); `resource-removal` | Deselect after editing one file: unchanged owned files retire, the edit survives byte-for-byte and is reported as ceded, with no implicit re-adoption. |
+| Failed initial-load verification | `exact-snapshot-verification` (Exact snapshot verification lasts one command or TUI action); Decision 6 verification boundary | Make the approved check fail: exact package files and ownership remain, the failure is recorded, `status` reports it without executing code, and next mutating sync retries it. |
+| Crash recovery versus user edit | `status-reporting` (Status reports drift at the effective output root); `dependencytxn.recoverJournal` | Recover a pending write, then separately edit an installed file: recovery leaves verification pending, while the next status reports the edit rather than labeling either event as the other. |
+| Host observation of dependent packages | `plugin-delivery` (Plugin instances install as a unit) | Pause between per-file renames while a host watcher reads the tree; assert only the documented partial states and dependency ordering, not an atomic view or reload guarantee. |
+
 ## Compared with the herdr-plugins proposal
 
 The herdr-plugins proposal (Andrew Z, 2026-11-13, not built) covers
@@ -1647,12 +1877,9 @@ covers more than one app.
   `requires.expand` is on, but a layout without a required mod does not
   work. Undecided: place it and report it as not ready, or refuse it.
 - **Organization preapproval and retirement UX:** the policy syntax for
-  allowed destination and executable bindings, and the explicit action
-  that retires an installation at a previous root (Decision 7). Apply
-  Decision 7's canonical resolved-root binding to ownership, status and
-  retirement; never substitute the caller's current `--home`. The spike's
-  root-change plan illustrated the missing binding but did not test
-  approval.
+  allowed destination and executable bindings and the explicit user action
+  for retiring an old installation remain open. Decision 14 settles the
+  canonical-root ownership binding and safety boundary, not that UX.
 - **Adopting existing hand installs.** Before release, document either a
   safe first-release refusal and remediation path or design a separate,
   explicit opt-in adoption flow. Never adopt implicitly, even when bytes
@@ -1680,25 +1907,23 @@ covers more than one app.
 
 ### Carried from the adversarial review, not yet resolved
 
-- **Register store versus package generations.** `plugin-delivery`
-  already specifies immutable, garbage-collected generations with journal
-  references; the store in Decision 6 should reuse them.
+- **Register store versus package generations.** Decision 14 chooses the
+  existing immutable package-generation and ownership-reference seam for
+  place delivery. Whether register-mode generations share that store remains
+  open with `target-profile-register`; register delivery is not part of this
+  decision.
 - **Profile identity and retention:** proposed in Decision 13. Unregistering after a profile update or removal remains open under Decision 6 and `target-profile-register`.
-- **Staging and publication.** Compare external same-filesystem staging,
-  per-file publication and package publication; test cross-filesystem
-  failure and what the app observes during publication. Keep the
-  no-dot-sibling and destination-containment guarantees. Define how the
-  engine authorizes staging outside target roots while restricting
-  publication to those roots. The spike showed per-file renames only on
-  one filesystem; it did not prove package atomicity, `EXDEV` handling or
-  hot-reload behavior.
+- **Staging and publication.** The proposed staging, same-filesystem
+  refusal, destination containment and observation limits are settled in
+  Decision 14; the acceptance witnesses there remain unimplemented.
 - **Herdr replaces its shipped mods on every start.** `host.shipped`
   (Decision 3) refuses known shipped names at curation. A later Herdr
   release may still ship a name we already placed. The guide documents
   that an edited shipped file is moved to `<name>-edited` and replaced by
   Herdr's version; whether a placed package of the same name is treated
-  that way is untested. Who wins, and what drift on an owned placed file
-  does, is unspecified.
+  that way is untested. Decision 14 defines how the engine reports and
+  retains bytes it observes as edited, but it cannot promise which copy
+  Herdr's own startup behavior will keep.
 - **Discovery and profile selection:** proposed in Decision 13.
 - **Required selections** of a host package whose target is not enabled
   or not available on the machine.
@@ -1708,11 +1933,9 @@ covers more than one app.
   `herdr plugin enable/disable` state; backup cannot restore host-side
   registration. Exact-path ownership checks and recovery behavior are
   specified in Decision 6.
-- **Edited owned files and failed verification.** Decide whether
-  deselection or upgrade keeps, restores or cedes a locally edited file,
-  and whether a failed check retains placed files or rolls them back.
-  Require exact tests for each chosen policy; the spike kept a modified
-  deselected file as drift, but that does not choose production semantics.
+- **Edited owned files and failed verification.** Decision 14 chooses
+  keep-on-sync/upgrade, cede-on-deselection, and retain-on-failed-check;
+  its per-transition witnesses remain unimplemented.
 
 ## Delivery plan (proposed OpenSpec changes, in order)
 
@@ -1816,11 +2039,9 @@ The relevant OpenSpec changes must prove these acceptance cases:
 - A second place target uses declarative profile and import data for its
   roots, package topology and metadata exclusions, with no target-ID-specific
   branch.
-- Destination symlinks cannot redirect writes or pruning outside approved
-  roots. Interrupted publication recovers under the chosen transaction
-  contract, and ownership cannot transfer to a different root by changing
-  the current environment. These require future annotated witnesses; the
-  Herdr spike did not prove them.
+- Decision 14's per-transition witnesses cover publication, conflicts,
+  root/symlink binding, recovery, edits and failed verification. The Herdr
+  spike did not prove those behaviors.
 
 Automated fixtures reproduce these source shapes and failures locally;
 they do not require access to the example repositories, credentials or
