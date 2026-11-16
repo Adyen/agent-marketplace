@@ -1,0 +1,6 @@
+schema = 1
+id = "sample-tools"
+name = "Sample Tools"
+version = "0.1.0"
+host = "host.luau"
+window = "window.luau"

@@ -1,0 +1,19 @@
+id: herdr-app
+roots:
+  user:
+    override: HERDR_APP_HOME
+    defaults:
+      macos:
+        base: home
+        path: .config/herdr-app
+      linux:
+        base: xdg-config
+        fallback: .config
+        path: herdr-app
+package:
+  metadata: agent-marketplace.yaml
+  display: [README.md, RECIPE.md, preview.png]
+kinds:
+  mod:
+    into: [mods]
+    directory: mods/{package}

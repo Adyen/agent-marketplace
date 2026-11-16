@@ -1,0 +1,26 @@
+id: tern
+roots:
+  user:
+    override: TERN_CONFIG_DIR
+    defaults:
+      macos:
+        base: home
+        path: Library/Application Support/Tern
+      linux:
+        base: xdg-config
+        fallback: .config
+        path: tern
+      windows:
+        base: appdata
+        path: Tern
+package:
+  metadata: agent-marketplace.yaml
+  display: [README.md, RECIPE.md, preview.png]
+kinds:
+  plugin:
+    into: [plugins]
+    directory: plugins/{identity.id}
+    identity:
+      file: plugin.toml
+      format: toml
+      field: id
