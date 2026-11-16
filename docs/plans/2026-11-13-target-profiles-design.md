@@ -94,6 +94,67 @@ prove runtime readiness for all packages; the spike did not test real-window
 activation or hot reload. It did not rewrite package code or run an upstream
 installer.
 
+## Second-target trial (2026-11-16)
+
+The non-production runner `tools/target-profile-trial` places inert Herdr-
+shaped and Tern-shaped fixtures with one declarative planner. Reference
+pages retrieved 2026-11-16:
+
+- [Tern packages and manifests](https://docs.stencil.so/tern/concepts/packages.html):
+  packages contain `plugin.toml` and the entry files it names. The page
+  documents macOS `~/Library/Application Support/Tern`, Linux
+  `$XDG_CONFIG_HOME/tern` (fallback `~/.config/tern`), Windows
+  `%APPDATA%\Tern`, and `TERN_CONFIG_DIR`; packages live under
+  `<config>/plugins/`. It also says Tern stages changes in dot-named siblings.
+- [Tern CLI reference](https://docs.stencil.so/tern/reference/cli.html):
+  `plugin install` copies a package to `<plugins>/<id>`, using its manifest
+  `id`, and stages it in a dot-named sibling before renaming it into place.
+- [Tern distribution guide](https://docs.stencil.so/tern/guides/distribution.html):
+  the source package directory contains `plugin.toml`; a repository with
+  several plugins gives each one a directory. The install copy uses the
+  manifest `id`, whatever the source directory is called. This page also
+  describes dot-named staging directories.
+- [Tern manifest reference](https://docs.stencil.so/tern/reference/manifest.html):
+  `id` is unique among installed packages, and the package directory name
+  need not match it.
+
+Command: `CGO_ENABLED=0 go run ./tools/target-profile-trial`.
+Observed result: exit 0; all cases passed:
+
+| Case | Result |
+|---|---|
+| macOS defaults for Herdr and Tern | Herdr resolved under `~/.config/herdr-app`; Tern resolved under `~/Library/Application Support/Tern`. |
+| Linux defaults without XDG | Herdr and Tern resolved under `~/.config/herdr-app` and `~/.config/tern`. |
+| Linux defaults with XDG | Both roots used the injected XDG config directory. |
+| Herdr override with spaces | `HERDR_APP_HOME` selected the scratch path; only `mods/night-light/{mod.json,main.js}` was placed. |
+| Tern override with spaces | `TERN_CONFIG_DIR` selected the scratch path; `plugins/sample-tools/` directly contained `plugin.toml`, `host.luau` and `window.luau`. |
+| Dot-prefixed Tern destination | The planner refused `plugins/.sample-tools/plugin.toml` and wrote nothing. |
+| Source traversal | `../outside/mod.json` was refused with that path in the result. |
+| Source symlink escape | `mods/night-light/mod.json` was refused as escaping the package source root. |
+| Outside `into` allowlist | `themes/night.json` was refused against `[mods]`. |
+| Outside package directory | `plugins/name-other-than-manifest-id/plugin.toml` was refused because the manifest identity expands the package directory to `plugins/sample-tools`. |
+| Duplicate Tern destination, forward order | Both new package IDs were refused for each shared destination; the target root remained absent. |
+| Duplicate Tern destination, reverse order | The same packages and destinations were refused; the target root remained absent. |
+
+The generic root data used an override, per-OS `base` and `path`, and an
+XDG fallback. The package data declared metadata and display exclusions.
+Each kind supplied its `into` allowlist and directory template. Imports
+mapped source files to root-relative native destinations. The planner checks
+the allowlist first, then rejects dot-prefixed components and destinations
+outside the expanded package directory. An optional identity rule names its
+file, format, and field; the planner selects TOML or YAML parsing by format.
+The trial refused a missing mapped source and an unexpected source payload.
+Its exact-tree check showed that sidecar and display files stayed out.
+
+This exercises only generic placement and simulated root selection. It
+does not exercise host activation, runtime behavior, Tern's installer,
+Windows roots, production race safety, crash recovery, ownership, or
+approval. Tern's documented installer uses dot-named staging; this trial
+applies files directly and rejects such entries. The trial sends absolute
+overrides to paths inside its scratch directory. The design still needs to
+resolve whether app overrides fit the engine's refusal of arbitrary
+absolute roots (see Open items). The trial does not freeze profile v1.
+
 ## Decisions
 
 ### 1. Application target model and translation boundary
@@ -545,15 +606,16 @@ kinds:
 The format must also fit tern without special cases: tern places
 `<config>/plugins/<id>/` with per-OS roots (macOS `~/Library/Application
 Support/Tern`, Linux `$XDG_CONFIG_HOME/tern`, Windows `%APPDATA%\Tern`) and
-a `TERN_CONFIG_DIR` override, and treats dot-named entries as its own
-staging. Keep the paper test against real Herdr app layouts, tern and omp,
-and add an executable second place-target trial before freezing v1. Tern
-is a candidate; that trial has not run. It must prove OS root overrides
-and paths with spaces, per-package native directory topology and metadata
-exclusions using declarative data, without a target-ID switch. Herdr layout
-dependency checks are host-specific author/analysis validation, not a
-generic place-engine feature. The trial must not introduce arbitrary
-code-executing validation to make placement work.
+a `TERN_CONFIG_DIR` override. Tern skips dot-named plugin entries and stages
+changes in dot-named siblings. Keep the paper test against real Herdr app
+layouts, tern and omp, and retain further trials before freezing v1. The
+scratch-only Tern trial above exercises declarative root overrides, paths
+with spaces, package topology and metadata exclusions without a target-ID
+switch; Tern remains a candidate, not an approved v1 profile. Herdr layout
+dependency checks
+are host-specific author/analysis validation, not a generic place-engine
+feature. The trial must not introduce arbitrary code-executing validation
+to make placement work.
 
 #### Engine-owned guarantees (profiles cannot relax them)
 
@@ -566,7 +628,8 @@ code-executing validation to make placement work.
   symlink containment. Roots resolve under `$HOME` or the OS/XDG config
   and data directories; arbitrary absolute roots are refused. A root may
   not be `$HOME` or an XDG base directory itself, and may not overlap
-  agent-marketplace's own directories.
+  agent-marketplace's own directories. This needs reconciliation with
+  app-specific absolute root overrides before profile v1 is frozen.
 - A profile cannot claim another target's id or overlap its roots.
 - No dot-prefixed staging siblings inside target roots.
 - Lock, drift, `sync --check`, backup and pruning behave as for every
@@ -1203,7 +1266,13 @@ covers more than one app.
   itself is not required if safe refusal is the chosen path.
 - **Organization block on unverified host versions:** exact policy shape.
 - **Profile format paper and executable tests** against real Herdr app
-  layouts, tern and omp before freezing v1.
+  layouts and omp before freezing v1; the Tern trial is only a scratch
+  placement exercise and is not a v1 approval.
+- **Blocker, application root overrides versus engine root policy.** Tern
+  documents a `TERN_CONFIG_DIR` override and the trial routed one to an absolute
+  scratch path; this conflicts with the engine guarantee that arbitrary
+  absolute roots are refused. Decide how explicit overrides are constrained
+  or approved, including `HERDR_APP_HOME`, before freezing v1.
 - **Herdr app root on Windows:** not documented by the Herdr app; confirm
   before declaring it.
 - **Appending to a layer that declares no target list.** Target lists

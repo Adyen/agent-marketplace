@@ -1,0 +1,10 @@
+sourceRoot: fixtures/herdr-mod
+package:
+  id: herdr-app/mod:night-light
+  name: night-light
+  kind: mod
+files:
+  - source: mods/night-light/mod.json
+    destination: mods/night-light/mod.json
+  - source: mods/night-light/main.js
+    destination: mods/night-light/main.js
