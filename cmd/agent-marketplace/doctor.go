@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -26,6 +27,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
 	"github.com/Adyen/agent-marketplace/internal/remedy"
+	repairplanner "github.com/Adyen/agent-marketplace/internal/repair"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	"github.com/Adyen/agent-marketplace/internal/tui"
 )
@@ -43,6 +45,8 @@ type doctorOptions struct {
 	isTTY        bool
 	repair       bool
 	yes          bool
+	json         bool
+	jsonReport   *repairplanner.JSONReport
 	repairReader *bufio.Reader
 	// ctx carries cancellation and request-scoped values from the command.
 	// Tests that do not set it get context.Background().
@@ -62,6 +66,7 @@ type doctorOptions struct {
 func newDoctorCmd() *cobra.Command {
 	var repair bool
 	var assumeYes bool
+	var jsonOutput bool
 
 	cmd := &cobra.Command{
 		Use:   "doctor",
@@ -93,11 +98,18 @@ errors are guided with a safe source snippet. On a terminal without --yes,
 repair offers $VISUAL or $EDITOR and diagnoses again after the editor exits.
 With --yes or off a terminal, guided configuration edits are deferred. Version
 and organization issues remain human-only.
+
+With --repair, --json emits one structured plan and result document to stdout
+without prompting. Use --yes to run safe steps; destructive and guided steps
+remain deferred.
 `),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if assumeYes && !repair {
 				return fmt.Errorf("--yes only applies to --repair")
+			}
+			if jsonOutput && !repair {
+				return fmt.Errorf("--json only applies to --repair")
 			}
 			return runDoctor(doctorOptions{
 				ctx:    cmd.Context(),
@@ -107,22 +119,27 @@ and organization issues remain human-only.
 				isTTY:  term.IsTerminal(os.Stdin.Fd()),
 				repair: repair,
 				yes:    assumeYes,
+				json:   jsonOutput,
 			})
 		},
 	}
 
 	cmd.Flags().BoolVar(&repair, "repair", false, "Recover pending journals and diagnose harness drift, Devin and Codex shared-aggregate repairs, and guided configuration fixes")
 	cmd.Flags().BoolVar(&assumeYes, "yes", false, "With --repair, run safe steps without prompting; guided edits are deferred and destructive changes are never automatic")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "With --repair, emit the plan and results as JSON")
 	return cmd
 }
 
-func runDoctor(opts doctorOptions) error {
+func runDoctor(opts doctorOptions) (runErr error) {
 	if opts.ctx == nil {
 		opts.ctx = context.Background()
 	}
 	opts.ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(opts.ctx)
 	if opts.out == nil {
 		opts.out = os.Stdout
+	}
+	if opts.json && !opts.repair {
+		return fmt.Errorf("--json only applies to --repair")
 	}
 	if opts.err == nil {
 		opts.err = os.Stderr
@@ -131,6 +148,19 @@ func runDoctor(opts doctorOptions) error {
 		opts.probe = func(ctx context.Context) devincli.Probe { return devincli.Detect(ctx) }
 	}
 	out := opts.out
+	if opts.json {
+		jsonOut := out
+		report := repairplanner.NewJSONReport()
+		opts.jsonReport = report
+		opts.out = io.Discard
+		opts.isTTY = false
+		out = opts.out
+		defer func() {
+			if err := json.NewEncoder(jsonOut).Encode(report); err != nil && runErr == nil {
+				runErr = err
+			}
+		}()
+	}
 
 	repoRoot := config.FindRepoRoot()
 	detected := "none"

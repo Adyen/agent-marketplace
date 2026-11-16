@@ -236,6 +236,7 @@ func TestPublicCommandPathsHaveBehaviorTests(t *testing.T) {
 		"deinit --purge-config":                   TestDeinitTable,
 		"deinit --scope":                          TestDeinitTable,
 		"doctor --repair":                         TestDoctorRepairYesAdoptsWithoutPrompting,
+		"doctor --json":                           TestDoctorRepairJSONCommandOutputsOneCleanDocument,
 		"export --allow-loss":                     TestExportPluginAllowsLossAndReportsOmittedHook,
 		"export --format":                         TestExportPluginAllowsLossAndReportsOmittedHook,
 		"export --out":                            TestExportPluginAllowsLossAndReportsOmittedHook,

@@ -155,9 +155,12 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 			}
 		}
 		addHuman := func(stage repairplanner.Stage, code string, issue error) string {
-			action := tui.TerminalSafeLine(issue.Error())
-			if hint := remedy.For(issue, "doctor"); hint != "" {
-				action += "; " + tui.TerminalSafeLine(hint)
+			action := "review " + code
+			if !opts.json {
+				action = tui.TerminalSafeLine(issue.Error())
+				if hint := remedy.For(issue, "doctor"); hint != "" {
+					action += "; " + tui.TerminalSafeLine(hint)
+				}
 			}
 			key := fmt.Sprintf("cause-%d", len(diagnosis.Steps)+1)
 			diagnosis.Steps = append(diagnosis.Steps, repairplanner.Step{
@@ -487,6 +490,9 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 		return diagnosis, nil
 	}
 	display := func(steps []repairplanner.Step) error {
+		if opts.json {
+			return opts.jsonReport.Display(steps)
+		}
 		if len(steps) > 0 {
 			if err := repairplanner.WritePlan(out, steps); err != nil {
 				return err
@@ -576,6 +582,9 @@ func runDoctorRepairPlanner(out io.Writer, opts doctorOptions, repoRoot string, 
 			}
 			return accepted
 		},
+	}
+	if opts.json {
+		loop.Result = opts.jsonReport.RecordResult
 	}
 	slog.Info("doctor repair execution start", "repo_root", repoRoot, "targets", len(previews), "automatic_adoption", opts.yes)
 	err := loop.Run(ctx)
@@ -865,9 +874,14 @@ func addConfigurationIssue(
 	}
 	lines := strings.Split(string(source), "\n")
 	var action string
-	if line > 0 && line <= len(lines) {
+	switch {
+	case opts.json && line > 0:
+		action = fmt.Sprintf("edit %s:%d", file, line)
+	case opts.json:
+		action = fmt.Sprintf("edit %s", file)
+	case line > 0 && line <= len(lines):
 		action = fmt.Sprintf("edit %s:%d %s; source: %s", file, line, issue.Error(), lines[line-1])
-	} else {
+	default:
 		action = fmt.Sprintf("edit %s manually; %s", file, validation.Msg)
 	}
 	action = tui.TerminalSafeLine(action)
