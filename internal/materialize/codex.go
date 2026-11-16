@@ -196,10 +196,7 @@ func reconcileCodexRoot(ctx context.Context, report *Report, state ownedAggregat
 		hookFile := ownedJSONFileSpec{rel: codexHooksFile, container: codexHooksContainer, rawValueDigest: true}
 		report = reconcileOwnedJSONAggregates(ctx, report, key, destination.Root, []ownedJSONFileSpec{hookFile}, current.hooks, hookOptions, dryRun)
 	}
-	if session != nil {
-		return reconcileCodexMCPWithSession(ctx, report, key, destination.ID, destination.Root, current.mcps, current.registrations, current.blocked, dryRun, session, batch)
-	}
-	return reconcileCodexMCPWithSession(ctx, report, key, destination.ID, destination.Root, current.mcps, current.registrations, current.blocked, dryRun, nil, batch)
+	return reconcileCodexMCPWithSession(ctx, report, key, destination.ID, destination.Root, current.mcps, current.registrations, current.blocked, dryRun, session, batch)
 }
 
 func codexHookJSONOptions() ownedJSONReconcileOptions {
