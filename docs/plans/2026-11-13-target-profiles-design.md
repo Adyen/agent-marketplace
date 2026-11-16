@@ -1268,7 +1268,7 @@ typed: `builtin:agent-marketplace`;
 `marketplace:<normalized-endpoint>#<instance-id>/<registry-id>/<profile-root>`;
 `git:<credential-free-normalized-origin>@<configured-ref>#<source-path>`; or
 `directory:<canonical-root>`. A configured source alias is not identity.
-Ref and path components share the ref percent-encoding, including the `git:` source path and `directory:` root.
+Ref and path components use the ref percent-encoding, including `git:` source paths and `directory:` roots.
 `revision_digest` is the exact full content digest of the selected
 resource with `kind: target-profile` and `name: <target_id>`, and `profile_digest` below equals
 that value. The digest covers the whole profile, including evidence-date
@@ -1344,8 +1344,8 @@ percent escapes. Both the CLI locator parser and Marketplace API route
 parser must split the escaped path before decoding that token. Canonical
 identity fields in `list`, the Marketplace index/API, ingestion sidecar
 and acquisition lock use the unescaped `herdr-app/mod`; the lock keeps
-`kind` and `name` as separate fields. The `%2F` route form requires proxies to forward encoded slashes undecoded.
-Prove that with the existing reverse-proxy check before implementation. Examples:
+`kind` and `name` as separate fields. The `%2F` route form requires proxies to forward encoded slashes undecoded;
+verify that with the existing reverse-proxy check before implementation. Examples:
 
 | Surface | Proposed spelling |
 |---|---|
