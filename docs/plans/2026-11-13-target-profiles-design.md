@@ -613,10 +613,9 @@ layouts, tern and omp, and retain further trials before freezing v1. The
 scratch-only Tern trial above exercises declarative root overrides, paths
 with spaces, package topology and metadata exclusions without a target-ID
 switch; Tern remains a candidate, not an approved v1 profile. Herdr layout
-dependency checks
-are host-specific author/analysis validation, not a generic place-engine
-feature. The trial must not introduce arbitrary code-executing validation
-to make placement work.
+dependency checks are host-specific author/analysis validation, not a
+generic place-engine feature. The trial must not introduce arbitrary
+code-executing validation to make placement work.
 
 #### Engine-owned guarantees (profiles cannot relax them)
 
