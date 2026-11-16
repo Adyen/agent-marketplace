@@ -7,7 +7,7 @@ Keep a copy of your machine-wide `agent-marketplace` setup and restore it on the
 `agent-marketplace` keeps four kinds of data on your machine. Each needs different handling:
 
 1. Harness folders. These are the machine-wide folders that `agent-marketplace` writes into, such as `~/.claude/skills/`, plus shared configuration files such as `~/.claude.json`. They contain generated output and may also contain files you wrote yourself. `sync` can recreate the generated part from your configuration and lock. The `backup` command archives these folders.
-2. Configuration and lock: `~/.agents/config.yaml` and `~/.agents/lock.yaml`, plus any files the configuration pulls in with `include`. Copy these yourself.
+2. Configuration and lock: `~/.agents/config.yaml` and `~/.agents/lock.yaml`, plus any files the configuration pulls in with `include`. Each harness backup also writes an `agents-config` archive with these files (see below), so `backup create` and `sync` cover them. You can still copy them yourself if you want them outside the backups folder.
 3. Durable state under `$XDG_STATE_HOME/agent-marketplace/` (default `~/.local/state/agent-marketplace/`). It holds the [ownership state](../glossary.md#ownership-state) that records which entries in shared configuration files `agent-marketplace` wrote, and the safety backups it takes before changing those files. Copy this yourself.
 4. The [cache](../glossary.md#cache) at `~/.cache/agent-marketplace/`. You do not need to back it up. `sync` downloads it again, as long as the configured remotes or Marketplace are reachable and still serve the exact commits in your lock.
 
@@ -19,7 +19,7 @@ Keep a copy of your machine-wide `agent-marketplace` setup and restore it on the
    agent-marketplace backup create
    ```
 
-   The command prints the harnesses it covered, for example `Backup created for: claude`. It archives the folders `agent-marketplace` writes into (skills, commands, agents, hooks, MCP configuration), including any of your own files inside them. Skills installed as symlinks are archived as symlinks, so their content stays in the cache. If backups are turned off in your configuration, the command prints `Backup is disabled in config; skipping.`
+   The command prints the targets it covered, for example `Backup created for: agents-config, claude`. It archives the folders `agent-marketplace` writes into (skills, commands, agents, hooks, MCP configuration), including any of your own files inside them. Skills installed as symlinks are archived as symlinks, so their content stays in the cache. If backups are turned off in your configuration, the command prints `Backup is disabled in config; skipping.`
 
 2. List the backups:
 
@@ -27,10 +27,13 @@ Keep a copy of your machine-wide `agent-marketplace` setup and restore it on the
    agent-marketplace backup list
    ```
 
-   Archives are stored under `~/.agent-marketplace/backups/<harness>/`. Most harnesses get one timestamped `.tar.gz` file per backup. Codex writes to two folders, so it gets one archive per folder plus a `.set.json` file that groups them. With one backup for Claude, the output looks like this:
+   Archives are stored under `~/.agent-marketplace/backups/<harness>/`. Most harnesses get one timestamped `.tar.gz` file per backup. Codex writes to two folders, so it gets one archive per folder plus a `.set.json` file that groups them. The `agents-config` group holds the configuration archive described below. With one backup for Claude, the output looks like this:
 
    ```text
    Backups directory: /home/you/.agent-marketplace/backups
+
+   agents-config (1):
+     2026-10-12-230443
 
    claude (1):
      2026-10-12-230443
@@ -39,6 +42,21 @@ Keep a copy of your machine-wide `agent-marketplace` setup and restore it on the
    With no backups it prints `No backups found.`
 
 `sync` also creates one of these backups before it changes anything, unless you pass `--no-backup`. Old archives are deleted automatically: by default `agent-marketplace` keeps at most 10 per day and archives from the 14 most recent days. To change this, add a `backup:` block to `~/.agents/config.yaml` with `enabled`, `max_days`, or `max_per_day`.
+
+## The `agents-config` archive
+
+Whenever `sync` or `backup create` writes harness backups, it also writes `~/.agent-marketplace/backups/agents-config/<timestamp>.tar.gz` with permission 0600. The archive holds `config.yaml`, `lock.yaml`, and every `include` fragment inside `~/.agents/`, named by their paths relative to `~/.agents/`, with the bytes on disk when the command started. A fragment outside `~/.agents/` is skipped and named in a debug log line. A missing file is left out, and no archive is written when none of these files exist.
+
+No `agents-config` archive is written when backups are disabled in configuration, with `sync --no-backup`, or by the read-only modes `sync --check`, `sync --locked`, `sync --offline`, and `lock --check`. The archives follow the same `max_days` and `max_per_day` rotation as the harness archives, and `backup list` shows them in their own `agents-config` group.
+
+`backup restore --target agents-config` refuses, because `backup restore` only overlays harness folders. Inspect an archive with `tar -tzf` and restore it by hand:
+
+```bash
+tar -tzf ~/.agent-marketplace/backups/agents-config/<timestamp>.tar.gz
+tar -xzf ~/.agent-marketplace/backups/agents-config/<timestamp>.tar.gz -C ~/.agents
+```
+
+Extracting overwrites `config.yaml`, `lock.yaml`, and the archived include fragments under `~/.agents/`.
 
 ## Restore a harness folder from a backup
 
@@ -52,7 +70,7 @@ The command copies the newest archive for that harness back into the machine-wid
 
 ## Back up configuration, lock, and durable state
 
-`backup` does not cover these. This snippet (bash or zsh) packs the ones that exist into one archive in the current folder:
+The `agents-config` archive described above already covers `~/.agents/config.yaml`, `~/.agents/lock.yaml`, and the `include` fragments inside `~/.agents/`; keeping `~/.agent-marketplace/backups/` keeps them. `backup` does not cover durable state. This snippet (bash or zsh) packs the files that exist into one archive in the current folder:
 
 ```bash
 state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/agent-marketplace"
@@ -65,7 +83,7 @@ tar -czf agent-marketplace-machine-state.tar.gz "${files[@]}"
 
 The snippet leaves `agent-marketplace-machine-state.tar.gz` in the current folder. Because the paths are absolute, `tar` may print a `Removing leading '/'` note while it builds the archive; that is expected and the archive is still usable.
 
-If your configuration uses `include`, add those files to the list. To take the harness-folder archives with you as well, add `~/.agent-marketplace/backups`.
+If your configuration uses `include` fragments outside `~/.agents/`, add those files to the list — the `agents-config` archive only covers fragments inside `~/.agents/`. To take the harness-folder and configuration archives with you as well, add `~/.agent-marketplace/backups`.
 
 ## Restore on a new machine
 
@@ -88,6 +106,8 @@ If your configuration uses `include`, add those files to the list. To take the h
 
    When everything matches, it exits with status 0 and prints no drift summary.
 5. To get back your own files from the harness folders, copy `~/.agent-marketplace/backups/` to the new machine and run `agent-marketplace backup restore --target <harness>`. If your home folder path is different on the new machine, a restore of an archive that contains symlinked skills fails with `invalid absolute symlink target`, because the links point into the old home folder's cache. In that case, rely on step 3 to recreate the skills, and extract your own files from the archive by hand with `tar`.
+
+If your state archive did not include the configuration and lock, restore them from the newest `agents-config` archive instead: `tar -xzf ~/.agent-marketplace/backups/agents-config/<timestamp>.tar.gz -C ~/.agents`.
 
 Ownership state is keyed by the full path of each harness folder. If your home folder path is different on the new machine, the restored state does not match the new paths. Run `agent-marketplace doctor --repair` and adopt the entries it lists as exact matches. See [How to repair owned shared configuration](./repair-owned-shared-configuration.md).
 

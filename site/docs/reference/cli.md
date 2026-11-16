@@ -323,7 +323,7 @@ agent-marketplace sync [flags]
 | `--locked` | boolean | no | `false` | Requires fresh lockfiles and forbids config or lock writes. |
 | `--offline` | boolean | no | `false` | Uses only trusted local Git and Marketplace caches and never contacts a remote endpoint; lock behavior is the same as `--locked`. Cached revocation data may be stale. |
 | `--allow-revoked` | exact Marketplace revision; repeatable | no | none | Allows one revoked pin for this run: `marketplace/registry/kind/name@sha256:<64 lowercase hex>`. Cannot be combined with `--check`. |
-| `--no-backup` | boolean | no | `false` | Skips the configured pre-sync backup of machine-scope harness directories. The mandatory safety backups of shared configuration files still happen. |
+| `--no-backup` | boolean | no | `false` | Skips the configured pre-sync backup of machine-scope harness directories and the `agents-config` user configuration archive. The mandatory safety backups of shared configuration files still happen. |
 | `--strict` | boolean | no | `false` | Fails on unresolved selections ("selected but not found", "found but failed to load") and on unmet prerequisites. |
 | `--prune-stale` | boolean | no | `false` | After catalogs load successfully, removes direct, non-required selections that no longer exist from configuration, then syncs again. Cannot be combined with `--locked` or `--offline`. |
 | `-v`, `--verbose` | boolean | no | `false` | Prints affected files per target and malformed-resource details instead of only the summary. |
@@ -451,7 +451,7 @@ Compatibility findings do not block `sync`. Repair failures, corrupt ownership s
 
 ## `backup`
 
-Manages backups of machine-scope harness output. Backups live in `~/.agent-marketplace/backups/`.
+Manages backups of machine-scope harness output and of the user configuration. Backups live in `~/.agent-marketplace/backups/`. Alongside each harness backup, the `agents-config` directory holds archives of `~/.agents/config.yaml`, `~/.agents/lock.yaml`, and the `include` fragments inside `~/.agents/`, captured with the bytes on disk when the command started. Configuration archives follow the same retention and appear in their own `backup list` group; `backup restore` does not restore them — extract one by hand with `tar -xzf ~/.agent-marketplace/backups/agents-config/<timestamp>.tar.gz -C ~/.agents`.
 
 ```text
 agent-marketplace backup <command>
@@ -465,11 +465,11 @@ Creates an on-demand backup of the machine paths Agent Marketplace currently man
 agent-marketplace backup create
 ```
 
-On success it prints `Backup created for: <targets>`. When backups are disabled in config, it prints `Backup is disabled in config; skipping.` and exits successfully. When no machine paths are managed, it prints `No managed paths to back up.` If configuration cannot be resolved, it prints each error and exits with status 1.
+On success it prints `Backup created for: <targets>`, naming `agents-config` when it wrote a configuration archive. When backups are disabled in config, it prints `Backup is disabled in config; skipping.` and exits successfully. When no machine paths are managed, it prints `No managed paths to back up.` If configuration cannot be resolved, it prints each error and exits with status 1.
 
 ### `backup list`
 
-Prints `Backups directory: <path>`, then the backup timestamps grouped by harness target. With no backups, it prints `No backups found.`
+Prints `Backups directory: <path>`, then the backup timestamps grouped by harness target, with configuration archives under an `agents-config` group. With no backups, it prints `No backups found.`
 
 ```text
 agent-marketplace backup list
@@ -487,7 +487,7 @@ agent-marketplace backup restore --target <harness>
 |---|---|:---:|---|---|
 | `-t`, `--target` | string | yes | none | Harness target: `claude`, `codex`, `cursor`, `devin`, `factory`, `gemini`, or `windsurf`. |
 
-On success it prints `Overlay-restored <target> from backup <timestamp>`. The command refuses a target root that is not a directory or is a symbolic link, and creates the root when it does not exist.
+On success it prints `Overlay-restored <target> from backup <timestamp>`. The command refuses a target root that is not a directory or is a symbolic link, and creates the root when it does not exist. `--target agents-config` fails with an error naming manual `tar` extraction and changes nothing on disk.
 
 ## `gc`
 
