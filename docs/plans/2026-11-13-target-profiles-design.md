@@ -707,11 +707,7 @@ packages/
       RECIPE.md
 ```
 
-The sidecar and display files sit beside `payload/`; `files[].source_path`
-is relative to `payload/`, `files[].destination_path` is relative to the
-profile-resolved target root, and `display_files` paths are relative to the
-package directory (the sidecar's directory), not to `payload/`. What
-security reviewed is byte-for-byte what is stored and served. Upstream
+What security reviewed is byte-for-byte what is stored and served. Upstream
 folders carry no agent-marketplace metadata, so the curator adds
 the **sidecar**: name, description, tags, `metadata.requires` (the
 packages it needs, below), the programs it runs and the host versions it
@@ -1238,11 +1234,10 @@ not implement the host-package proposal below:
 | Exact source revisions, registry identities, discovery, source loading and revocation have existing separate seams. `registryid` currently sanitizes telemetry; it is not a profile identity authority. | `openspec/specs/acquisition-lock-codec/spec.md`; `openspec/specs/deployed-acquisition-locks/spec.md`; `openspec/specs/mutable-ref-cache/spec.md`; `openspec/specs/exact-snapshot-verification/spec.md`; `openspec/specs/catalog-discovery/spec.md`; `openspec/specs/directory-source-discovery/spec.md`; `openspec/specs/resource-listing/spec.md`; `openspec/specs/resource-selection/spec.md`; `openspec/specs/plugin-packages/spec.md`; `openspec/specs/plugin-delivery/spec.md`; `openspec/specs/marketplace-delivery-security/spec.md`; `internal/sourcerevision/builder.go`; `internal/registryid/registryid.go`; `internal/catalog/catalog.go`; `internal/resolver/resolver.go`; `internal/config/v4.go`; `internal/marketplace/discovery.go`; `internal/marketplace/revocation.go` |
 | The current analyzer has shared text scanners and warning/reject policy, and rejects unknown non-UTF-8 support files as `marketplace.find.invalid-utf8`; its narrow recognized-binary exemptions do not include executable signatures. | `openspec/specs/marketplace-analysis/spec.md`; `pkg/marketplace/analyze/scanners.go`; `pkg/marketplace/analyze/policy.go`; `pkg/marketplace/analyze/codes.md` |
 
-Current v4 locators in `internal/config/v4.go` accept
-exactly `kind/name` or `registry/kind/name`; their fixed source-locator
-kinds are `skill`, `command`, `subagent`, `hook`, `mcp`, `collection`,
-and `plugin`, while Marketplace API/route kinds are exactly `skill`,
-`command`, `subagent`, `hook`, `mcpserver`, and `collection`.
+Current v4 locator kinds are `skill`, `command`, `subagent`,
+`hook`, `mcp`, `collection`, and `plugin`, while Marketplace API/route
+kinds are exactly `skill`, `command`, `subagent`, `hook`, `mcpserver`,
+and `collection`.
 `v4NameRE` allows any nonempty character sequence except slash,
 backslash, and ASCII controls; the locator also rejects `.`/`..`,
 `*`, and `?`, while `nameutil.ValidateSegment` requires a clean,
@@ -1324,9 +1319,9 @@ defines retention only, not register lifecycle or garbage collection.
 typed identity `(target_id, kind, name)`. Its registry directory is
 `packages/<target-id>/<local-kind>/<name>/`; the directory contains
 `agent-marketplace.yaml` and a `payload/` tree. The sidecar is the sole
-registry-side location for import mapping and identity-relevant metadata;
-upstream repositories need no Agent Marketplace fields. `files` lists
-each imported file explicitly as `{source_path, destination_path}`.
+registry-side location for import mapping and identity-relevant metadata.
+`files` lists each imported file explicitly as `{source_path,
+destination_path}`.
 `source_path` is relative to `payload/`; `destination_path` is relative to
 the profile-resolved target root. Tree imports expand to explicit file
 records before ingestion. Every payload file maps exactly once; source paths
@@ -1551,7 +1546,7 @@ absolute, parent-relative, or `file:` paths). Each result is labeled
 version, and one of `signal found`, `no static signal found`, or
 `analysis unavailable`; absence of a signal is not proof of absence.
 
-Proposed language signals are intentionally bounded:
+Proposed language signals are bounded:
 
 - **gpui-kit JavaScript:** parse supported JavaScript/TypeScript syntax and
   inspect static imports plus call sites. Flag process APIs such as
