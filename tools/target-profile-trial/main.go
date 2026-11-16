@@ -134,14 +134,14 @@ func main() {
 			declaration.Files = append([]fileMapping(nil), declaration.Files...)
 			declaration.Files[0].Destination = "plugins/.sample-tools/plugin.toml"
 			return checkRefusal(scratch, profiles["tern"], declaration, "linux", filepath.Join(scratch, "home"),
-				"plugins/.sample-tools/plugin.toml")
+				"plugins/.sample-tools/plugin.toml", "dot-prefixed component")
 		}},
 		{"refuse-source-traversal", func(scratch string) error {
 			declaration := imports["herdr-app"]
 			declaration.Files = append([]fileMapping(nil), declaration.Files...)
 			declaration.Files[0].Source = "../outside/mod.json"
 			return checkRefusal(scratch, profiles["herdr-app"], declaration, "linux", filepath.Join(scratch, "home"),
-				"../outside/mod.json")
+				"../outside/mod.json", "invalid relative path")
 		}},
 		{"refuse-source-symlink-escape", func(scratch string) error {
 			return checkSymlinkRefusal(scratch, profiles["herdr-app"], imports["herdr-app"])
@@ -151,14 +151,14 @@ func main() {
 			declaration.Files = append([]fileMapping(nil), declaration.Files...)
 			declaration.Files[0].Destination = "themes/night.json"
 			return checkRefusal(scratch, profiles["herdr-app"], declaration, "linux", filepath.Join(scratch, "home"),
-				"themes/night.json")
+				"themes/night.json", "outside allowed into")
 		}},
 		{"refuse-outside-package-directory", func(scratch string) error {
 			declaration := imports["tern"]
 			declaration.Files = append([]fileMapping(nil), declaration.Files...)
 			declaration.Files[0].Destination = "plugins/name-other-than-manifest-id/plugin.toml"
 			return checkRefusal(scratch, profiles["tern"], declaration, "linux", filepath.Join(scratch, "home"),
-				"plugins/name-other-than-manifest-id/plugin.toml")
+				"plugins/name-other-than-manifest-id/plugin.toml", "outside package directory")
 		}},
 		{"refuse-collision-order-forward", func(scratch string) error {
 			return checkCollisionOrder(scratch, profiles["tern"], imports["tern"],
@@ -260,7 +260,7 @@ func checkPlacement(scratch string, p profile, declaration importDeclaration, os
 	return compareTree(root, expected)
 }
 
-func checkRefusal(scratch string, p profile, declaration importDeclaration, osName string, home, offending string) error {
+func checkRefusal(scratch string, p profile, declaration importDeclaration, osName string, home, offending, reason string) error {
 	source, err := copyFixture(scratch, declaration.SourceRoot)
 	if err != nil {
 		return err
@@ -270,7 +270,7 @@ func checkRefusal(scratch string, p profile, declaration importDeclaration, osNa
 		return err
 	}
 	_, err = planPackage(p, declaration, source, resolved)
-	return expectRefusal(err, offending, resolved)
+	return expectRefusal(err, offending, reason, resolved)
 }
 
 func checkSymlinkRefusal(scratch string, p profile, declaration importDeclaration) error {
@@ -292,7 +292,7 @@ func checkSymlinkRefusal(scratch string, p profile, declaration importDeclaratio
 	root := filepath.Join(scratch, "target")
 	_, err = planPackage(p, declaration, source, root)
 	offending := declaration.Files[0].Source
-	return expectRefusal(err, offending, root)
+	return expectRefusal(err, offending, "source escapes package root", root)
 }
 
 func checkCollisionOrder(scratch string, p profile, declaration importDeclaration, order []string) error {
@@ -318,15 +318,18 @@ func checkCollisionOrder(scratch string, p profile, declaration importDeclaratio
 			return fmt.Errorf("collision refusal missing %q: %w", text, refusals)
 		}
 	}
-	return expectRefusal(refusals, "plugins/sample-tools/plugin.toml", root)
+	return expectRefusal(refusals, "plugins/sample-tools/plugin.toml", "both claim", root)
 }
 
-func expectRefusal(err error, offending, targetRoot string) error {
+func expectRefusal(err error, offending, reason, targetRoot string) error {
 	if err == nil {
 		return fmt.Errorf("%s was accepted", offending)
 	}
 	if !strings.Contains(err.Error(), offending) {
 		return fmt.Errorf("refusal did not name %q: %w", offending, err)
+	}
+	if !strings.Contains(err.Error(), reason) {
+		return fmt.Errorf("refusal did not include reason %q: %w", reason, err)
 	}
 	if _, statErr := os.Lstat(targetRoot); !errors.Is(statErr, os.ErrNotExist) {
 		return fmt.Errorf("refusal wrote target root %q: %v", targetRoot, statErr)
