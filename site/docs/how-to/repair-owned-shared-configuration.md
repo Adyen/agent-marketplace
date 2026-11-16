@@ -17,7 +17,15 @@ Several sources can write entries into the same Devin or Codex file, such as `mc
 agent-marketplace doctor --repair
 ```
 
-After the normal `doctor` report, the command prints a numbered repair plan. Each line shows the step's safety class (`safe`, `destructive`, or `human-only`), the action, the diagnostic code it addresses, the files it touches, and either the inputs it needs or `blocked by N (<reason>)` naming the plan item that blocks it. It then lists each Devin and Codex shared file it inspects, even files with nothing to repair. For each entry it can act on, it shows one of three actions:
+After the normal `doctor` report, the command prints a numbered repair plan. Each line shows the step's safety class (`safe`, `destructive`, `guided`, or `human-only`), the action, the diagnostic code it addresses, the files it touches, and either the inputs it needs or `blocked by N (<reason>)` naming the plan item that blocks it.
+
+Acquisition-lock steps can appear first. A missing or stale writable lock is a `safe` step that reconciles the lock without upgrading any pin. A missing exact snapshot is a `safe` fetch that leaves lock bytes unchanged. A conflicted or structurally forbidden lock is a `destructive` regeneration that needs a terminal, a fresh backup, and a per-lock confirmation; it never runs under `--yes`. Verification failures such as `lock.invalid` or `lock.trust` are `human-only`. Steps that need verified lock authority stay `blocked` until the lock steps succeed.
+
+When the conflict sides pin the same Git source to different commits, the command asks which commit to keep before replacing the lock. Off a terminal or under `--yes` that unresolved choice stays `guided` instead of running, and the lock is left unchanged.
+
+A field, YAML syntax, or duplicate-key error in a writable configuration file produces a `guided` step that names the authored file and, when known, its line, and shows source context when available. On a terminal it offers to open that file in `$VISUAL` (or `$EDITOR`) with its own confirmation, then diagnoses again after the editor exits. With neither variable set, it prints manual editing instructions and defers the step. Declining the editor offer also defers it. Edit the file yourself and run `doctor --repair` again. Guided steps are also deferred under `--yes` and off a terminal, and a deferred guided step leaves the repair incomplete (exit status 1). `doctor` never rewrites configuration automatically, and a guided error in one layer does not block steps whose other inputs are valid.
+
+It then lists each Devin and Codex shared file it inspects, even files with nothing to repair. For each entry it can act on, it shows one of three actions:
 
 - `adopt`: the existing entry is identical to what `agent-marketplace` would write. Adopting records it as owned and does not change the file.
 - `replace`: the existing entry has the same key but a different value. Replacing overwrites your value with the generated one.
@@ -37,7 +45,7 @@ If standard input is not a terminal (for example in a script), the command stops
 
 ## 2. Confirm the repairs
 
-On a terminal, the command asks one `[y/N]` confirmation for all the safe steps in the plan, for example `Repair the safe steps above? [y/N] `. Only `y` or `yes` confirms. Any other answer, pressing Enter, or end of input runs no step, exits 0, and leaves every file unchanged. Adoption is a safe step, so one answer adopts every exact match.
+On a terminal, the command asks one `[y/N]` confirmation for all the safe steps in the plan, for example `Repair the safe steps above? [y/N] `. Only `y` or `yes` confirms. Any other answer, pressing Enter, or end of input runs no step and leaves every file unchanged; it exits 0 unless the decline leaves missing or stale acquisition-lock authority unresolved, in which case it exits 1. Adoption is a safe step, so one answer adopts every exact match.
 
 **When upgrading a repair workflow, do not replay old terminal answer streams.** One plan confirmation replaces the per-entry adoption prompts, so a later answer can now authorize a destructive entry. Preview off a terminal with `agent-marketplace doctor --repair </dev/null` and review the new prompts. Replace scripted `y`/`n` streams with `--repair --yes` only when you intend all safe steps; review destructive per-entry prompts separately on a live terminal.
 
@@ -67,7 +75,7 @@ The check exits with status 0 when the shared configuration matches your selecti
 - It takes a fresh safety backup of the file before it replaces or removes an entry.
 - A journal recovery that cannot prove its recorded authority, such as foreign bytes or a non-prefix publication state, fails the step, exits 1, and leaves the journal and the files it recorded unchanged.
 - It never edits your harness lists.
-- An off-terminal preview or a `--yes` run can exit 0 with destructive entries deferred. Otherwise, status 0 means the setup ended clean or you declined. Status 1 means a confirmed step failed, corrupt ownership state or a corrupt shared file remains, or the plan is left with only blocked or `human-only` items. An invalid configuration or a failed resolution is reported as a plan item and blocks the steps that need it rather than refusing the whole repair.
+- An off-terminal preview or a `--yes` run can exit 0 with destructive entries deferred. Otherwise, status 0 means the setup ended clean or you declined. Status 1 means a confirmed step failed, corrupt ownership state or a corrupt shared file remains, the plan is left with only blocked, deferred `guided`, or `human-only` items, or a preview or decline left missing or stale acquisition-lock authority unresolved. An invalid configuration or a failed resolution is reported as a plan item and blocks the steps that need it rather than refusing the whole repair.
 - When the ownership state is missing, every existing entry counts as unmanaged. `sync` then keeps all of them, refuses to write over any of them, and removes nothing.
 
 ## Related documentation

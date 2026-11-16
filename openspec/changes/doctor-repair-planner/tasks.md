@@ -14,11 +14,11 @@
 
 ## 3. Acquisition lock fixers (B2)
 
-- [ ] 3.1 Add safe lock refresh and snapshot fetch steps, destructive conflicted-lock regeneration, and human-only verification failures; verify with annotated tests
+- [x] 3.1 Add safe lock refresh and snapshot fetch steps, destructive conflicted-lock regeneration, and human-only verification failures; verify with annotated tests
 
 ## 4. Configuration fixers (B3)
 
-- [ ] 4.1 Add guided configuration fixes and human-only version and organization items; verify with annotated tests
+- [x] 4.1 Add guided configuration fixes and human-only version and organization items; verify with annotated tests and declarative E2E case `config/doctor_guided_deferred`
 
 ## 5. Shared aggregates for every target (B4)
 

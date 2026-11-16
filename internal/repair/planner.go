@@ -128,6 +128,7 @@ type Loop struct {
 	Display          func([]Step) error
 	Result           func(Step, bool, error)
 	AllowDestructive bool
+	AllowGuided      bool
 }
 
 var ErrIncomplete = errors.New("repair remains blocked")
@@ -175,7 +176,7 @@ func (loop Loop) Run(ctx context.Context) error {
 		var next *Step
 		for i := range steps {
 			step := &steps[i]
-			if step.BlockedBy != nil || step.Class == HumanOnly || step.Class == Guided {
+			if step.BlockedBy != nil || step.Class == HumanOnly || step.Class == Guided && !loop.AllowGuided {
 				continue
 			}
 			key := identity(*step)
@@ -213,7 +214,7 @@ func (loop Loop) Run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if next.Class == Destructive {
+		if next.Class == Destructive || next.Class == Guided {
 			deferred[identity(*next)] = true
 		}
 		if applied {

@@ -44,7 +44,8 @@ Repair SHALL plan pending dependency and ownership journals as safe stage-1 step
 #### Scenario: Declining the repair plan changes nothing
 
 - **WHEN** the answer to the plan-level confirmation is anything other than `y` or `yes`, including an empty line or end of input
-- **THEN** repair SHALL run no step, exit 0, and leave every configuration, lock, ownership-state, and harness file byte-identical
+- **THEN** repair SHALL run no step and leave every configuration, lock, ownership-state, and harness file byte-identical
+- **AND** repair SHALL exit 0 unless missing or stale acquisition authority remains, in which case it SHALL exit 1
 
 ### Requirement: Repair diagnoses again after every step
 
@@ -104,7 +105,7 @@ Repair SHALL validate the configuration and acquisition-lock inputs that authori
 
 ### Requirement: Repair exit status reports whether the user is still stuck
 
-Repair SHALL exit 0 only when the setup ends clean or the user declined. It SHALL exit 1 when a step failed, corrupt state remains, or only blocked or human-only items remain.
+Repair SHALL exit 0 only when the setup ends clean or the user declined without leaving missing or stale acquisition authority. It SHALL exit 1 when a step failed, corrupt state remains, missing or stale acquisition authority remains after preview or decline, or only blocked or human-only items remain.
 
 #### Scenario: Repair exits zero when the setup ends clean
 
@@ -120,6 +121,65 @@ Repair SHALL exit 0 only when the setup ends clean or the user declined. It SHAL
 
 - **WHEN** a confirmed step fails
 - **THEN** repair SHALL report the failure and exit 1
+
+### Requirement: Repair refreshes writable acquisition locks without upgrading pins
+
+Repair SHALL plan `lock.stale`, `lock.missing`, `lock.version-upgrade-required`, `lock.version-deprecated`, `lock.unsupported-version`, and `lock.change-required` in writable scopes as safe acquisition-lock steps using the lock reconciliation path without pin upgrades. Existing current pins SHALL remain byte-identical. Selection-dependent stages SHALL stay blocked until verified acquisition authority is available. Organization acquisition locks SHALL never be written.
+
+#### Scenario: Confirmed lock repair retains current pins
+
+- **WHEN** a writable acquisition lock has one of these diagnostics and its safe repair step is confirmed
+- **THEN** repair SHALL reconcile it without upgrading any existing current pin
+- **AND** a subsequent `sync --check` SHALL report no acquisition-lock diagnostic
+
+#### Scenario: Organization lock repair remains human-only
+
+- **WHEN** an organization acquisition lock needs repair
+- **THEN** repair SHALL report a human-only item and leave that lock byte-identical
+
+### Requirement: Repair fetches exact snapshots without changing locks
+
+Repair SHALL plan `lock.offline-snapshot-missing` and `lock.snapshot-unavailable` as safe cache steps using the locked sync fetch path. Fetching SHALL preserve acquisition-lock bytes and verify the exact snapshot before any selection-dependent stage runs.
+
+#### Scenario: Missing exact snapshot is fetched from its locked commit
+
+- **WHEN** repair confirms a fetch for an unavailable exact snapshot
+- **THEN** it SHALL fetch and verify the locked commit without changing acquisition-lock bytes
+
+#### Scenario: Snapshot fetch failure stops repair
+
+- **WHEN** the confirmed snapshot fetch fails because the registry cannot be reached
+- **THEN** repair SHALL report the failed step, exit 1, and preserve acquisition-lock bytes
+
+### Requirement: Lock regeneration requires destructive confirmation
+
+Repair SHALL classify `lock.conflicted`, `lock.alias-forbidden`, `lock.merge-forbidden`, and `lock.duplicate-field` as destructive lock regeneration. Each lock replacement SHALL require a terminal, a fresh backup of the original bytes, and per-entry confirmation. It SHALL never run under `--yes`. Repair SHALL never delete a lock to bypass verification.
+
+#### Scenario: Destructive lock regeneration preserves backup and agreed pins
+
+- **WHEN** a user confirms regeneration of one of these writable locks on a terminal without `--yes`
+- **THEN** repair SHALL create a fresh backup before replacing the lock
+- **AND** it SHALL retain pins agreed by both conflict sides and one-sided pins only for resources still selected by configuration
+
+#### Scenario: Divergent conflict pins require an explicit choice
+
+- **WHEN** both conflict sides pin the same resource to different commits
+- **THEN** repair SHALL ask which pin to keep before replacement
+- **AND** off a terminal or under `--yes` the step SHALL remain guided and the lock SHALL remain byte-identical
+
+#### Scenario: Destructive lock repair cannot run through safe automation
+
+- **WHEN** destructive lock repair is previewed off a terminal, declined, or requested under `--yes`
+- **THEN** repair SHALL leave the acquisition lock byte-identical
+
+### Requirement: Lock verification failures remain human-only
+
+Repair SHALL leave `lock.invalid`, `lock.manifest-mismatch`, `lock.digest-invalid`, and `lock.trust` human-only. Nested specific lock diagnostics SHALL determine classification before a generic invalid-lock wrapper. No automated repair SHALL bypass these verification failures.
+
+#### Scenario: Verification refusal preserves acquisition-lock bytes
+
+- **WHEN** an acquisition lock has one of these verification failures without a specifically supported repair diagnostic
+- **THEN** repair SHALL report the human-only item and leave the lock byte-identical
 
 ### Requirement: Repair reconciles harness drift without changing acquisition locks
 
@@ -173,3 +233,39 @@ Devin and Codex shared-aggregate ownership repair SHALL run as the last plan sta
 
 - **WHEN** `doctor --json` runs without `--repair`
 - **THEN** it SHALL exit nonzero with an error
+
+### Requirement: Configuration errors offer guided fixes
+
+Configuration field, YAML syntax, and duplicate-key errors in writable consumer layers SHALL appear as guided steps naming the authored file and line and showing a terminal-safe source snippet. Control characters SHALL be escaped. On a terminal without `--yes`, repair SHALL offer `$VISUAL`, or `$EDITOR` when `$VISUAL` is unset, and diagnose again after the editor exits. With neither editor configured, repair SHALL print manual instructions without treating the missing editor as an execution failure. Repair SHALL NOT rewrite configuration automatically.
+
+#### Scenario: Configuration errors show safe source context
+
+- **WHEN** a writable configuration has a field, YAML syntax, or duplicate-key error
+- **THEN** repair SHALL show a guided step with the authored file and line and a source snippet whose control characters are escaped
+
+#### Scenario: An editor fix is diagnosed again
+
+- **WHEN** the user accepts a terminal guided step and the configured editor exits
+- **THEN** repair SHALL diagnose again
+- **AND** a still-broken file SHALL remain a guided step
+
+#### Scenario: Missing editor leaves manual instructions
+
+- **WHEN** a terminal guided step has neither `$VISUAL` nor `$EDITOR` configured
+- **THEN** repair SHALL print manual editing instructions without an editor execution failure
+
+#### Scenario: Non-interactive guided steps are deferred
+
+- **WHEN** repair runs off a terminal or with `--yes`
+- **THEN** guided steps SHALL be listed as deferred and no editor SHALL be launched
+
+#### Scenario: Version and organization issues remain human-only
+
+- **WHEN** diagnosis reports `v4.api-version-required`, `v4.api-version`, or an `organization.*` issue
+- **THEN** repair SHALL list it as human-only with the existing remedy text
+- **AND** its files SHALL remain byte-identical
+
+#### Scenario: A guided layer does not block independent steps
+
+- **WHEN** one layer has a guided error and another step uses only valid inputs from other layers
+- **THEN** that step SHALL remain runnable
