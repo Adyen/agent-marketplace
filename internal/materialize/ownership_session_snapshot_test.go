@@ -11,6 +11,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/ownership"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
+	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/diag"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/ir"
 )
 
@@ -109,5 +110,52 @@ func TestCodexRootRecoversOnceAcrossHookAndMCPReconciles(t *testing.T) {
 	gotMCP, err := os.ReadFile(filepath.Join(repo, ".codex", "config.toml"))
 	if err != nil || !bytes.Contains(gotMCP, []byte("managed-mcp")) || !bytes.Contains(gotMCP, []byte("managed-command")) {
 		t.Fatalf("Codex MCP output = %s / %v", gotMCP, err)
+	}
+}
+
+func TestCodexLockFailureKeepsHookAndMCPDiagnostics(t *testing.T) {
+	repo, home := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	root := filepath.Join(repo, ".codex")
+	hooksPath := filepath.Join(root, "hooks.json")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hooks := []byte(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo existing"}]}]}}`)
+	if err := os.WriteFile(hooksPath, hooks, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	holder, err := ownership.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, err := holder.Lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	t.Setenv(ownership.LockTimeoutEnvVar, "0")
+
+	report, err := Run(context.Background(), repo, []resolver.ResolvedArtifact{
+		codexResource("managed-mcp", ir.NewMcpServer("managed-mcp", "managed-command", nil, nil, nil, ir.SourceRef{}), config.RepoCommitted),
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	got := make(map[string]int)
+	for _, diagnostic := range report.Diags {
+		got[diagnostic.Code]++
+		if diagnostic.Code == diag.CodeOwnershipLockTimeout || diagnostic.Code == diag.CodeMaterializeCodexAggregateMalformed {
+			if diagnostic.Severity != diag.SeverityError {
+				t.Errorf("diagnostic %q severity = %q, want error", diagnostic.Code, diagnostic.Severity)
+			}
+		}
+	}
+	for _, code := range []string{diag.CodeOwnershipLockTimeout, diag.CodeMaterializeCodexAggregateMalformed} {
+		if got[code] != 1 {
+			t.Errorf("diagnostic %q count = %d, want 1 (all: %#v)", code, got[code], got)
+		}
 	}
 }

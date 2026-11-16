@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -652,7 +651,7 @@ func fileStateSemanticallyEqual(current FileState, currentPresent bool, next Fil
 func (s *Store) metadataPinMatches(name string, pin metadataPin, exists bool) (matches bool) {
 	parent, err := s.captureMetadataParent()
 	if err != nil {
-		return !exists && pin.parent.Inode == 0 && errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fsboundary.ErrUnsafePath)
+		return false
 	}
 	defer func() {
 		if closeErr := parent.Close(); closeErr != nil {

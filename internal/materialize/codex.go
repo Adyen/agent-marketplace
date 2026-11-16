@@ -149,6 +149,7 @@ func (codexOwnedAggregateHandler) reconcile(ctx context.Context, report *Report,
 			})
 			if sessionErr != nil {
 				report.Diags = append(report.Diags, ownedAggregateLockSessionDiag(key, destination.Root, sessionErr, hookOptions.writeCode))
+				report = codexMCPDiag(report, key, sessionErr)
 			}
 			report.Diags = append(report.Diags, lockReport.diags()...)
 			return report

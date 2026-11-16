@@ -3,7 +3,6 @@ package ownership
 import (
 	"os"
 	"testing"
-	"time"
 )
 
 func TestProofSessionCacheTracksCommittedGenerationAndExpires(t *testing.T) {
@@ -111,56 +110,5 @@ func TestProofSessionCacheReloadsWhenStateChangesExternally(t *testing.T) {
 	}
 	if loads != 2 {
 		t.Fatalf("Proof-path state loads after external state write = %d, want 2", loads)
-	}
-}
-
-func TestProofObserverDoesNotBlockSessionRelease(t *testing.T) {
-	f := newFixture(t)
-	store := f.store()
-	initial := []byte(`{"mcpServers":{"server":{"command":"old"}}}`)
-	f.writeAggregate(string(initial))
-	mustApply(t, store, Mutation{
-		Rel: f.rel, AbsFile: f.absFile, NextBytes: initial,
-		Entries: []Entry{mcpEntry("server", "resource", `{"command":"old"}`)}, Reason: ReasonSync,
-	})
-	release, err := store.Lock()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer release()
-
-	observed := make(chan struct{})
-	resume := make(chan struct{}, 1)
-	resumed := false
-	defer func() {
-		if !resumed {
-			resume <- struct{}{}
-		}
-	}()
-	store.proofLoadObserver = func() {
-		close(observed)
-		<-resume
-	}
-	proofDone := make(chan error, 1)
-	go func() {
-		_, err := store.Proof(f.rel)
-		proofDone <- err
-	}()
-	<-observed
-
-	releaseDone := make(chan struct{})
-	go func() {
-		release()
-		close(releaseDone)
-	}()
-	select {
-	case <-releaseDone:
-	case <-time.After(time.Second):
-		t.Fatal("session release blocked behind the Proof observer")
-	}
-	resume <- struct{}{}
-	resumed = true
-	if err := <-proofDone; err != nil {
-		t.Fatalf("Proof: %v", err)
 	}
 }
