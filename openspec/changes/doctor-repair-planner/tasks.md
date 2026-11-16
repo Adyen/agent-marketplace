@@ -14,7 +14,7 @@
 
 ## 3. Acquisition lock fixers (B2)
 
-- [ ] 3.1 Add safe lock refresh and snapshot fetch steps, destructive conflicted-lock regeneration, and human-only verification failures; verify with annotated tests
+- [x] 3.1 Add safe lock refresh and snapshot fetch steps, destructive conflicted-lock regeneration, and human-only verification failures; verify with annotated tests
 
 ## 4. Configuration fixers (B3)
 
