@@ -384,8 +384,10 @@ func runGitRawOutputContext(ctx context.Context, repoDir string, safeArgs []stri
 		args = args[2:]
 	}
 	if len(args) == 5 && args[0] == "ls-remote" && args[1] == "--symref" && args[2] == "--" && args[4] == "HEAD" {
-		if diagnostic, ok := classifiedGitTransportFailure(args[3], string(output)); ok {
-			return "", &gitTransportFailure{message: diagnostic, cause: err}
+		if canonical, cerr := canonicalGitTransport(args[3]); cerr == nil {
+			if diagnostic, ok := classifiedGitTransportFailure(canonical, string(output)); ok {
+				return "", &gitTransportFailure{message: diagnostic, cause: err}
+			}
 		}
 	}
 
