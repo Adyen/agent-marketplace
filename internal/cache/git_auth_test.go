@@ -131,6 +131,133 @@ func TestGitTransportFailureMessage(t *testing.T) {
 	}
 }
 
+func installGitFailureWrapper(t *testing.T, stderr string) {
+	t.Helper()
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AUTH_REAL_GIT", realGit)
+	t.Setenv("FIXTURE_GIT_STDERR", stderr)
+	wrapper := authFile(t, "git", `#!/bin/sh
+	for arg do
+	case "$arg" in
+		clone|fetch|ls-remote)
+			printf '%s\n' "$FIXTURE_GIT_STDERR" >&2
+			exit 128
+			;;
+	esac
+done
+exec "$AUTH_REAL_GIT" "$@"
+`, 0o700)
+	t.Setenv("PATH", filepath.Dir(wrapper)+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// spec: git-authentication/unverified-ssh-host-key-is-explained
+// spec: git-authentication/missing-or-private-https-repository-is-explained
+// spec: git-authentication/unclassified-transport-failures-keep-the-existing-diagnostic
+func TestGitTransportFailureClassification(t *testing.T) {
+	const sshHostKey = "git.auth-transport-failed: the SSH host key for github.com is not verified. Verify the host key (for example with ssh -T git@github.com) and add it to ~/.ssh/known_hosts"
+	const repositoryFailure = "git.auth-transport-failed: repository not found or requires credentials. Check the repository URL, or configure a Git credential helper for a private repository"
+	tests := []struct {
+		name, source, stderr, want string
+		forbidden                  []string
+	}{
+		{
+			name:      "unverified SSH host key",
+			source:    "ssh://git@github.com:2222/owner/repo.git",
+			stderr:    "Host key verification failed.",
+			want:      sshHostKey,
+			forbidden: []string{"ssh://git@github.com:2222", "Host key verification failed."},
+		},
+		{
+			name:      "changed SSH host key",
+			source:    "git+scp://git@github.com/owner/repo.git",
+			stderr:    "REMOTE HOST IDENTIFICATION HAS CHANGED",
+			want:      sshHostKey,
+			forbidden: []string{"git+scp://git@github.com/owner/repo.git", "REMOTE HOST IDENTIFICATION HAS CHANGED"},
+		},
+		{
+			name:      "authentication failure with userinfo and port",
+			source:    "https://user:tok@host:8443/o/r.git",
+			stderr:    "fatal: Authentication failed for 'https://user:tok@host:8443/o/r.git/'",
+			want:      repositoryFailure,
+			forbidden: []string{"user", "tok", "https://host:8443", "Authentication failed"},
+		},
+		{
+			name:      "remote reports missing repository",
+			source:    "https://host/o/r.git",
+			stderr:    "remote: Repository not found.",
+			want:      repositoryFailure,
+			forbidden: []string{"Repository not found."},
+		},
+		{
+			name:      "fatal missing repository",
+			source:    "https://host/o/r.git",
+			stderr:    "fatal: repository 'https://host/o/r.git/' not found",
+			want:      repositoryFailure,
+			forbidden: []string{"fatal: repository 'https://host/o/r.git/' not found"},
+		},
+		{
+			name:      "HTTP status 401",
+			source:    "https://host/o/r.git",
+			stderr:    "fatal: unable to access: The requested URL returned error: 401",
+			want:      repositoryFailure,
+			forbidden: []string{"The requested URL returned error: 401"},
+		},
+		{
+			name:      "HTTP status 403",
+			source:    "https://host/o/r.git",
+			stderr:    "fatal: unable to access: The requested URL returned error: 403",
+			want:      repositoryFailure,
+			forbidden: []string{"The requested URL returned error: 403"},
+		},
+		{
+			name:      "HTTP status 404",
+			source:    "https://host/o/r.git",
+			stderr:    "fatal: unable to access: The requested URL returned error: 404",
+			want:      repositoryFailure,
+			forbidden: []string{"The requested URL returned error: 404"},
+		},
+		{
+			name:      "unclassified SSH failure",
+			source:    "ssh://git@host/o/r.git",
+			stderr:    "connection reset by peer",
+			want:      "git.auth-transport-failed: Git SSH connection failed. Verify your SSH agent and repository access",
+			forbidden: []string{"connection reset by peer"},
+		},
+		{
+			name:      "unclassified HTTPS failure",
+			source:    "https://user:tok@host:8443/o/r.git",
+			stderr:    "connection reset by peer",
+			want:      "git.auth-transport-failed: transport diagnostics withheld to protect authentication data",
+			forbidden: []string{"user", "tok", "https://", "connection reset by peer"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			isolatedGitAuth(t)
+			installGitFailureWrapper(t, tt.stderr)
+			output, err := execGitContext(context.Background(), "", []string{"clone", "--", tt.source, filepath.Join(t.TempDir(), "clone")})
+			if !isGitTransportFailure(err) || err.Error() != tt.want {
+				t.Fatalf("execGitContext() error = %v, want %q", err, tt.want)
+			}
+			if string(output) != tt.want {
+				t.Fatalf("execGitContext() output = %q, want diagnostic %q", output, tt.want)
+			}
+			if strings.Contains(err.Error(), tt.source) || strings.Contains(err.Error(), tt.stderr) {
+				t.Fatalf("transport diagnostic exposed the source or stderr: source=%q stderr=%q error=%q", tt.source, tt.stderr, err)
+			}
+			for _, forbidden := range tt.forbidden {
+				if strings.Contains(err.Error(), forbidden) || strings.Contains(string(output), forbidden) {
+					t.Fatalf("transport diagnostic exposed %q: output=%q error=%q", forbidden, output, err)
+				}
+			}
+		})
+	}
+}
+
 func TestGitTransportFailureUsesResolvedFetchRemote(t *testing.T) {
 	isolatedGitAuth(t)
 	repo := t.TempDir()

@@ -71,12 +71,52 @@ func canonicalGitTransport(source string) (string, error) {
 	return lockfile.CanonicalGitURL(public)
 }
 
-func gitTransportFailureDiagnostic(source string) string {
+func gitTransportFailureDiagnostic(source, stderr string) string {
+	if diagnostic, ok := classifiedGitTransportFailure(source, stderr); ok {
+		return diagnostic
+	}
 	canonical, err := canonicalGitTransport(source)
-	if err == nil && (strings.HasPrefix(canonical, "ssh://") || strings.HasPrefix(canonical, "git+scp://")) {
+	if err != nil {
+		return "git.auth-transport-failed: transport diagnostics withheld to protect authentication data"
+	}
+	if strings.HasPrefix(canonical, "ssh://") || strings.HasPrefix(canonical, "git+scp://") {
 		return "git.auth-transport-failed: Git SSH connection failed. Verify your SSH agent and repository access"
 	}
 	return "git.auth-transport-failed: transport diagnostics withheld to protect authentication data"
+}
+
+func classifiedGitTransportFailure(source, stderr string) (string, bool) {
+	canonical, err := canonicalGitTransport(source)
+	if err != nil {
+		return "", false
+	}
+	if strings.HasPrefix(canonical, "ssh://") || strings.HasPrefix(canonical, "git+scp://") {
+		lower := strings.ToLower(stderr)
+		if strings.Contains(lower, "host key verification failed") || strings.Contains(lower, "remote host identification has changed") {
+			transport, parseErr := url.Parse(canonical)
+			if parseErr == nil && transport.Hostname() != "" {
+				host := transport.Hostname()
+				return fmt.Sprintf("git.auth-transport-failed: the SSH host key for %s is not verified. Verify the host key (for example with ssh -T git@%s) and add it to ~/.ssh/known_hosts", host, host), true
+			}
+		}
+		return "", false
+	}
+	if strings.HasPrefix(canonical, "https://") || strings.HasPrefix(canonical, "http://") {
+		for _, line := range strings.Split(strings.ToLower(stderr), "\n") {
+			if strings.Contains(line, "authentication failed") ||
+				strings.Contains(line, "repository not found") ||
+				strings.Contains(line, "repository '") && strings.Contains(line, " not found") {
+				return "git.auth-transport-failed: repository not found or requires credentials. Check the repository URL, or configure a Git credential helper for a private repository", true
+			}
+			if _, status, ok := strings.Cut(line, "the requested url returned error:"); ok {
+				fields := strings.Fields(status)
+				if len(fields) > 0 && (fields[0] == "401" || fields[0] == "403" || fields[0] == "404") {
+					return "git.auth-transport-failed: repository not found or requires credentials. Check the repository URL, or configure a Git credential helper for a private repository", true
+				}
+			}
+		}
+	}
+	return "", false
 }
 
 func gitAuthKey(key string) bool {
@@ -98,7 +138,7 @@ func gitAuthKey(key string) bool {
 
 func gitAuthEnvironment(ctx context.Context, repoDir string, env []string, source string) ([]string, string, error) {
 	if repoDir != "" {
-		cmd := processstart.Command(ctx, "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "config", "--local", "--no-includes", "--null", "--list")
+		cmd := processstart.Detached(ctx, "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "config", "--local", "--no-includes", "--null", "--list")
 		cmd.Dir, cmd.Env = repoDir, env
 		output, err := cmd.Output()
 		if err != nil {
@@ -118,7 +158,7 @@ func gitAuthEnvironment(ctx context.Context, repoDir string, env []string, sourc
 			hasRewrite = hasRewrite || strings.HasPrefix(key, "url.") && strings.HasSuffix(key, ".insteadof")
 		}
 		if hasRewrite {
-			cmd := processstart.Command(ctx, "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "ls-remote", "--get-url", "--", source)
+			cmd := processstart.Detached(ctx, "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "ls-remote", "--get-url", "--", source)
 			cmd.Dir, cmd.Env = repoDir, env
 			output, err := cmd.Output()
 			if err != nil {

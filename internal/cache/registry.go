@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -14,6 +15,21 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/processstart"
 	"github.com/Adyen/agent-marketplace/internal/redact"
 )
+
+type boundedGitStderr struct {
+	bytes.Buffer
+}
+
+func (b *boundedGitStderr) Write(p []byte) (int, error) {
+	n := len(p)
+	if remaining := 64*1024 - b.Len(); remaining > 0 {
+		if len(p) > remaining {
+			p = p[:remaining]
+		}
+		_, _ = b.Buffer.Write(p)
+	}
+	return n, nil
+}
 
 // redactSecrets removes embedded credentials from any URLs found in s while
 // preserving the rest for debugging. Strings without credentials are returned
@@ -363,6 +379,15 @@ func runGitRawOutputContext(ctx context.Context, repoDir string, safeArgs []stri
 	if isGitTransportFailure(err) {
 		return "", err
 	}
+	args := safeArgs
+	for len(args) >= 2 && args[0] == "-c" {
+		args = args[2:]
+	}
+	if len(args) == 5 && args[0] == "ls-remote" && args[1] == "--symref" && args[2] == "--" && args[4] == "HEAD" {
+		if diagnostic, ok := classifiedGitTransportFailure(args[3], string(output)); ok {
+			return "", &gitTransportFailure{message: diagnostic, cause: err}
+		}
+	}
 
 	redactedCmd := strings.Join(redactedSafe, " ")
 	if trimmedOutput == "" {
@@ -394,7 +419,7 @@ func execGitContext(ctx context.Context, repoDir string, args []string) ([]byte,
 		"-c", "protocol.remote.allow=never",
 		"-c", "protocol.file.allow=always",
 	}
-	cmd := processstart.Command(ctx, "git", append(hardened, args...)...)
+	cmd := processstart.Detached(ctx, "git", append(hardened, args...)...)
 	if repoDir != "" {
 		cmd.Dir = repoDir
 	}
@@ -419,8 +444,10 @@ func execGitContext(ctx context.Context, repoDir string, args []string) ([]byte,
 				}
 			}
 		}
+		stderr := &boundedGitStderr{}
+		cmd.Stderr = stderr
 		if err := cmd.Run(); err != nil {
-			diagnostic := gitTransportFailureDiagnostic(resolvedSource)
+			diagnostic := gitTransportFailureDiagnostic(resolvedSource, stderr.String())
 			return []byte(diagnostic), &gitTransportFailure{message: diagnostic, cause: err}
 		}
 		return nil, nil
@@ -485,6 +512,9 @@ func gitEnv() []string {
 	var env []string
 	for _, e := range os.Environ() {
 		key, _, _ := strings.Cut(e, "=")
+		if key == "SSH_ASKPASS_REQUIRE" {
+			continue
+		}
 		if strings.HasPrefix(key, "GIT_") && !allowedGIT[key] {
 			continue
 		}
@@ -498,6 +528,7 @@ func gitEnv() []string {
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_CONFIG_NOSYSTEM=1",
+		"SSH_ASKPASS_REQUIRE=never",
 	)
 	return env
 }
