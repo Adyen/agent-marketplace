@@ -94,7 +94,10 @@ func gitTransportFailureDiagnostic(source, stderr string) string {
 func classifiedGitTransportFailure(canonical, stderr string) (string, bool) {
 	if strings.HasPrefix(canonical, "ssh://") || strings.HasPrefix(canonical, "git+scp://") {
 		lower := strings.ToLower(stderr)
-		if strings.Contains(lower, "host key verification failed") || strings.Contains(lower, "remote host identification has changed") {
+		if strings.Contains(lower, "remote host identification has changed") {
+			return "", false
+		}
+		if strings.Contains(lower, "host key verification failed") {
 			transport, parseErr := url.Parse(canonical)
 			if parseErr == nil && transport.Hostname() != "" {
 				host := transport.Hostname()

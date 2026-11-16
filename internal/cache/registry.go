@@ -514,9 +514,6 @@ func gitEnv() []string {
 	var env []string
 	for _, e := range os.Environ() {
 		key, _, _ := strings.Cut(e, "=")
-		if key == "SSH_ASKPASS_REQUIRE" {
-			continue
-		}
 		if strings.HasPrefix(key, "GIT_") && !allowedGIT[key] {
 			continue
 		}

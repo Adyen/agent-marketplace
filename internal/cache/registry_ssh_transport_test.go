@@ -3,6 +3,7 @@
 package cache
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -59,8 +60,18 @@ func TestGitAcquisitionDoesNotPromptOnTTY(t *testing.T) {
 
 	home := os.Getenv("HOME")
 	knownHosts := filepath.Join(home, ".ssh", "known_hosts")
-	if _, err := os.Stat(knownHosts); !os.IsNotExist(err) {
-		t.Fatalf("known_hosts before acquisition: %v", err)
+	if err := os.Mkdir(filepath.Dir(knownHosts), 0o700); err != nil {
+		t.Fatalf("create SSH directory: %v", err)
+	}
+	if err := os.Chmod(filepath.Dir(knownHosts), 0o700); err != nil {
+		t.Fatalf("set SSH directory mode: %v", err)
+	}
+	knownHostsBefore := []byte("existing known_hosts fixture\n")
+	if err := os.WriteFile(knownHosts, knownHostsBefore, 0o600); err != nil {
+		t.Fatalf("seed known_hosts: %v", err)
+	}
+	if err := os.Chmod(knownHosts, 0o600); err != nil {
+		t.Fatalf("set known_hosts mode: %v", err)
 	}
 	parentSession, err := processSessionID(os.Getpid())
 	if err != nil {
@@ -167,7 +178,11 @@ exit 255
 	if strings.Contains(string(result.output), "Host key verification failed.") || strings.Contains(result.err.Error(), "Host key verification failed.") {
 		t.Fatalf("transport stderr was exposed: output=%q error=%q", result.output, result.err)
 	}
-	if _, err := os.Stat(knownHosts); !os.IsNotExist(err) {
-		t.Fatalf("known_hosts after acquisition: %v", err)
+	knownHostsAfter, err := os.ReadFile(knownHosts)
+	if err != nil {
+		t.Fatalf("read known_hosts after acquisition: %v", err)
+	}
+	if !bytes.Equal(knownHostsAfter, knownHostsBefore) {
+		t.Fatalf("known_hosts after acquisition = %q, want unchanged bytes %q", knownHostsAfter, knownHostsBefore)
 	}
 }

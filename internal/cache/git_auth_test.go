@@ -158,6 +158,7 @@ exec "$AUTH_REAL_GIT" "$@"
 // spec: git-authentication/unclassified-transport-failures-keep-the-existing-diagnostic
 func TestGitTransportFailureClassification(t *testing.T) {
 	const sshHostKey = "git.auth-transport-failed: the SSH host key for github.com is not verified. Verify the host key (for example with ssh -T git@github.com) and add it to ~/.ssh/known_hosts"
+	const sshConnectionFailure = "git.auth-transport-failed: Git SSH connection failed. Verify your SSH agent and repository access"
 	const repositoryFailure = "git.auth-transport-failed: repository not found or requires credentials. Check the repository URL, or configure a Git credential helper for a private repository"
 	tests := []struct {
 		name, source, stderr, want string
@@ -173,9 +174,9 @@ func TestGitTransportFailureClassification(t *testing.T) {
 		{
 			name:      "changed SSH host key",
 			source:    "git+scp://git@github.com/owner/repo.git",
-			stderr:    "REMOTE HOST IDENTIFICATION HAS CHANGED",
-			want:      sshHostKey,
-			forbidden: []string{"git+scp://git@github.com/owner/repo.git", "REMOTE HOST IDENTIFICATION HAS CHANGED"},
+			stderr:    "REMOTE HOST IDENTIFICATION HAS CHANGED\nHost key verification failed.",
+			want:      sshConnectionFailure,
+			forbidden: []string{"git+scp://git@github.com/owner/repo.git", "REMOTE HOST IDENTIFICATION HAS CHANGED", "Host key verification failed."},
 		},
 		{
 			name:      "authentication failure with userinfo and port",
@@ -223,7 +224,7 @@ func TestGitTransportFailureClassification(t *testing.T) {
 			name:      "unclassified SSH failure",
 			source:    "ssh://git@host/o/r.git",
 			stderr:    "connection reset by peer",
-			want:      "git.auth-transport-failed: Git SSH connection failed. Verify your SSH agent and repository access",
+			want:      sshConnectionFailure,
 			forbidden: []string{"connection reset by peer"},
 		},
 		{
