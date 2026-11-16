@@ -535,25 +535,46 @@ func DiscoverUpdates(ctx context.Context, ec config.EffectiveConfig, query strin
 	if err != nil {
 		return nil, err
 	}
+	outcomeCapacity := len(endpoints)
 	entries := make([]config.MarketplaceEntry, 0, len(endpoints))
 	for _, ep := range endpoints {
 		entries = append(entries, ep.MarketplaceEntry)
 	}
-	if err := config.ValidateMarketplaceURLs(entries, ec.AllowedMarketplaces); err != nil {
-		return nil, err
+	allowedEndpoints := make([]searchEndpoint, 0, len(endpoints))
+	outcomes := make([]DiscoveryOutcome, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		entry := endpoint.MarketplaceEntry
+		if err := config.ValidateMarketplaceURLs([]config.MarketplaceEntry{entry}, ec.AllowedMarketplaces); err != nil {
+			var blocked *config.MarketplaceURLBlockedError
+			if !errors.As(err, &blocked) {
+				return nil, err
+			}
+			outcomes = append(outcomes, DiscoveryOutcome{Endpoint: entry, CacheState: DiscoveryCacheMiss, Err: err})
+			continue
+		}
+		allowedEndpoints = append(allowedEndpoints, endpoint)
+	}
+	if len(allowedEndpoints) == 0 {
+		return nil, config.ValidateMarketplaceURLs(entries, ec.AllowedMarketplaces)
+	}
+	endpoints = allowedEndpoints
+	entries = entries[:0]
+	for _, endpoint := range endpoints {
+		entries = append(entries, endpoint.MarketplaceEntry)
 	}
 	slog.Info("marketplace discovery started", "endpoints", len(endpoints), "query_empty", query == "", "limit", limit)
 	cache := opts.Cache
 	if cache == nil {
 		cache = DefaultDiscoveryCache()
 	}
-	if err := cache.maintain(entries); err != nil {
-		slog.Warn("marketplace discovery cache maintenance failed", "error", err)
+	if len(outcomes) == 0 {
+		if err := cache.maintain(entries); err != nil {
+			slog.Warn("marketplace discovery cache maintenance failed", "error", err)
+		}
 	}
-	updates := make(chan []DiscoveryOutcome, len(endpoints)+1)
+	updates := make(chan []DiscoveryOutcome, outcomeCapacity+1)
 	results := make(chan DiscoveryOutcome, len(endpoints))
 	semaphore := make(chan struct{}, MaxSearchConcurrency)
-	outcomes := make([]DiscoveryOutcome, 0, len(endpoints))
 	pending := 0
 	for _, endpoint := range endpoints {
 		ep := endpoint.MarketplaceEntry

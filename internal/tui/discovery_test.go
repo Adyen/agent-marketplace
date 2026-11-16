@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -1008,6 +1010,50 @@ func TestSupersededKindDiscoveryCannotReplaceSearchOrBrowseInventory(t *testing.
 // spec: tui-navigation/failed-kind-discovery-preserves-usable-local-results
 func TestFailedAndDeniedKindDiscoveryPreservesUsableRows(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	home := t.TempDir()
+	repo := t.TempDir()
+	t.Setenv("HOME", home)
+	consumerFiles := map[string]string{
+		"user config": filepath.Join(home, ".agents", "config.yaml"),
+		"repo config": filepath.Join(repo, ".agents", "config.yaml"),
+		"repo lock":   filepath.Join(repo, ".agents", "lock.yaml"),
+		"resource":    filepath.Join(repo, ".claude", "skills", "kept", "SKILL.md"),
+	}
+	consumerContents := map[string][]byte{
+		"user config": []byte("apiVersion: agent-marketplace/v4\nharnesses: [factory]\nsources: {}\n"),
+		"repo config": []byte("apiVersion: agent-marketplace/v4\nsources: {}\n"),
+		"repo lock":   []byte("apiVersion: agent-marketplace-lock/v2\nscope: repo\n"),
+		"resource":    []byte("---\nname: kept\ndescription: Existing materialized resource\n---\n\nKeep unchanged.\n"),
+	}
+	for name, path := range consumerFiles {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("create %s directory: %v", name, err)
+		}
+		if err := os.WriteFile(path, consumerContents[name], 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	snapshotConsumerFiles := func() map[string][]byte {
+		t.Helper()
+		snapshot := make(map[string][]byte, len(consumerFiles))
+		for name, path := range consumerFiles {
+			content, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read %s: %v", name, err)
+			}
+			snapshot[name] = content
+		}
+		return snapshot
+	}
+	assertConsumerFilesUnchanged := func(stage string, before map[string][]byte) {
+		t.Helper()
+		for name, path := range consumerFiles {
+			after, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(after, before[name]) {
+				t.Errorf("%s changed %s: err=%v before=%q after=%q", stage, name, err, before[name], after)
+			}
+		}
+	}
 	failed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/.well-known/agent-marketplace.json" {
 			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("failing-market", "https://example.com", "https://example.com"))
@@ -1016,20 +1062,25 @@ func TestFailedAndDeniedKindDiscoveryPreservesUsableRows(t *testing.T) {
 		http.Error(w, "endpoint unavailable", http.StatusServiceUnavailable)
 	}))
 	defer failed.Close()
-	healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/.well-known/agent-marketplace.json":
-			_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown("healthy-market", "https://example.com", "https://example.com"))
-		case "/api/v1/search":
-			items := []mpapi.ResourceListItem{}
-			if r.URL.Query().Get("kind") == "mcpserver" {
-				items = append(items, tuiDiscoverySearchItem("registry", "mcpserver", "healthy-opaque", "healthy kind result"))
+	newKindEndpoint := func(instanceID string, requests *atomic.Int32) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests.Add(1)
+			switch r.URL.Path {
+			case "/.well-known/agent-marketplace.json":
+				_ = json.NewEncoder(w).Encode(mpapi.DefaultWellKnown(instanceID, "https://example.com", "https://example.com"))
+			case "/api/v1/search":
+				items := []mpapi.ResourceListItem{}
+				if r.URL.Query().Get("kind") == "mcpserver" {
+					items = append(items, tuiDiscoverySearchItem("registry", "mcpserver", "healthy-opaque", "healthy kind result"))
+				}
+				_ = json.NewEncoder(w).Encode(marketplace.SearchResponse{Items: items, Total: len(items), Offset: 0, Limit: marketplace.DiscoveryPageLimit})
+			default:
+				http.NotFound(w, r)
 			}
-			_ = json.NewEncoder(w).Encode(marketplace.SearchResponse{Items: items, Total: len(items), Offset: 0, Limit: marketplace.DiscoveryPageLimit})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
+		}))
+	}
+	var healthyRequests atomic.Int32
+	healthy := newKindEndpoint("healthy-market", &healthyRequests)
 	defer healthy.Close()
 	endpoints := []config.MarketplaceEntry{
 		{URL: failed.URL, InstanceID: "failing-market", Alias: "failing"},
@@ -1038,12 +1089,14 @@ func TestFailedAndDeniedKindDiscoveryPreservesUsableRows(t *testing.T) {
 	cfg := &config.Config{Marketplaces: endpoints}
 	local := mkRow("local-mcp", withAvailable, withRegistry("local", "local"))
 	m := newTestModel()
+	m.repoRoot, m.homeDir = repo, home
 	m.mergedCfg = cfg
 	m.authoritativeRows = []row{local}
 	m.rows = []row{local}
 	m.filter = "mcp"
 	generation := m.beginRequest(requestDiscovery)
 	m.discoveryLoading = true
+	beforeFailed := snapshotConsumerFiles()
 	raw := loadMarketplaceDiscovery(context.Background(), cfg, "mcp", generation)()
 	for {
 		msg := raw.(discoveryLoadedMsg)
@@ -1054,6 +1107,7 @@ func TestFailedAndDeniedKindDiscoveryPreservesUsableRows(t *testing.T) {
 		}
 		raw = next()
 	}
+	assertConsumerFilesUnchanged("failed discovery", beforeFailed)
 	if len(m.discoveryErrs) != 1 || !strings.Contains(m.discoveryErrs[0].Error(), "failing") || !strings.Contains(m.View().Content, "Marketplace: 1 failed") {
 		t.Fatalf("failed endpoint diagnostic is not visible: errors=%v view=%s", m.discoveryErrs, m.View().Content)
 	}
@@ -1077,13 +1131,16 @@ func TestFailedAndDeniedKindDiscoveryPreservesUsableRows(t *testing.T) {
 	denied := []string{}
 	deniedCfg := &config.Config{Marketplaces: []config.MarketplaceEntry{{URL: deniedServer.URL, InstanceID: "denied-market", Alias: "denied"}}, AllowedMarketplaces: &denied}
 	deniedModel := newTestModel()
+	deniedModel.repoRoot, deniedModel.homeDir = repo, home
 	deniedModel.mergedCfg = deniedCfg
 	deniedModel.authoritativeRows = []row{local}
 	deniedModel.rows = []row{local}
 	deniedModel.filter = "mcp"
+	beforeDenied := snapshotConsumerFiles()
 	if cmd := deniedModel.beginMarketplaceDiscovery("mcp", false); cmd != nil {
 		t.Fatal("denied endpoint scheduled discovery")
 	}
+	assertConsumerFilesUnchanged("denied discovery", beforeDenied)
 	if contacted.Load() != 0 {
 		t.Fatalf("denied endpoint received %d requests", contacted.Load())
 	}
@@ -1092,6 +1149,53 @@ func TestFailedAndDeniedKindDiscoveryPreservesUsableRows(t *testing.T) {
 	}
 	if got := artifactNames(deniedModel.flatItems); !namesEqual(got, []string{"local-mcp"}) {
 		t.Fatalf("denied discovery removed local results: %v", got)
+	}
+
+	contacted.Store(0)
+	var mixedAllowedRequests atomic.Int32
+	mixedHealthy := newKindEndpoint("mixed-healthy-market", &mixedAllowedRequests)
+	defer mixedHealthy.Close()
+	allowedPatterns := []string{"^" + regexp.QuoteMeta(mixedHealthy.URL) + "$"}
+	mixedCfg := &config.Config{
+		Marketplaces: []config.MarketplaceEntry{
+			{URL: mixedHealthy.URL, InstanceID: "mixed-healthy-market", Alias: "healthy"},
+			{URL: deniedServer.URL, InstanceID: "denied-market", Alias: "denied"},
+		},
+		AllowedMarketplaces: &allowedPatterns,
+	}
+	mixedModel := newTestModel()
+	mixedModel.repoRoot, mixedModel.homeDir = repo, home
+	mixedModel.mergedCfg = mixedCfg
+	mixedModel.authoritativeRows = []row{local}
+	mixedModel.rows = []row{local}
+	mixedModel.filter = "mcp"
+	beforeMixed := snapshotConsumerFiles()
+	cmd := mixedModel.beginMarketplaceDiscovery("mcp", false)
+	if cmd == nil {
+		t.Fatal("mixed allowed and denied endpoints did not schedule discovery")
+	}
+	raw = cmd()
+	for {
+		msg := raw.(discoveryLoadedMsg)
+		updated, next := mixedModel.Update(msg)
+		mixedModel = updated.(Model)
+		if next == nil {
+			break
+		}
+		raw = next()
+	}
+	assertConsumerFilesUnchanged("mixed discovery", beforeMixed)
+	if len(mixedModel.discoveryErrs) != 1 || !strings.Contains(mixedModel.discoveryErrs[0].Error(), "denied") || !strings.Contains(mixedModel.View().Content, "Marketplace: 1 failed") {
+		t.Fatalf("mixed denial diagnostic is not visible: errors=%v view=%s", mixedModel.discoveryErrs, mixedModel.View().Content)
+	}
+	if len(mixedModel.discoveryRows) != 1 || mixedModel.discoveryRows[0].Artifact.Name != "healthy-opaque" {
+		t.Fatalf("mixed discovery lost allowed kind result: %#v", mixedModel.discoveryRows)
+	}
+	if got := artifactNames(mixedModel.flatItems); !namesEqual(got, []string{"local-mcp", "healthy-opaque"}) {
+		t.Fatalf("mixed discovery removed local or allowed results: %v", got)
+	}
+	if contacted.Load() != 0 || mixedAllowedRequests.Load() == 0 {
+		t.Fatalf("mixed request counts = denied %d, allowed %d; want only allowed requests", contacted.Load(), mixedAllowedRequests.Load())
 	}
 }
 

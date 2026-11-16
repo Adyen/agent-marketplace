@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1101,6 +1102,94 @@ func TestDiscoverKindPaginationRejectsNonProgressingPage(t *testing.T) {
 	}
 	if len(outcomes) != 1 || outcomes[0].Err == nil || !strings.Contains(outcomes[0].Err.Error(), "no progress") {
 		t.Fatalf("stalled pagination outcome = %#v, want endpoint no-progress error", outcomes)
+	}
+}
+
+// spec: tui-navigation/failed-kind-discovery-preserves-usable-local-results
+func TestDiscoverUpdatesKeepsAllowedEndpointWhenAnotherIsDenied(t *testing.T) {
+	var allowedRequests, deniedRequests atomic.Int32
+	allowed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		allowedRequests.Add(1)
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			writeTestWellKnown(w, "allowed-market")
+			return
+		}
+		if r.URL.Path != "/api/v1/search" {
+			http.NotFound(w, r)
+			return
+		}
+		items := []mpapi.ResourceListItem{}
+		if r.URL.Query().Get("kind") == "mcpserver" {
+			items = []mpapi.ResourceListItem{canonicalSearchItem("registry", "mcpserver", "allowed-opaque", 0)}
+		}
+		_ = json.NewEncoder(w).Encode(SearchResponse{Items: items, Total: len(items), Limit: DiscoveryPageLimit})
+	}))
+	defer allowed.Close()
+	denied := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deniedRequests.Add(1)
+		http.NotFound(w, r)
+	}))
+	defer denied.Close()
+
+	allowedEndpoint := config.MarketplaceEntry{URL: allowed.URL, InstanceID: "allowed-market", Alias: "allowed"}
+	deniedEndpoint := config.MarketplaceEntry{URL: denied.URL, InstanceID: "denied-market", Alias: "denied"}
+	cache := NewDiscoveryCache(t.TempDir())
+	cached := DiscoveryOutcome{
+		Endpoint:   deniedEndpoint,
+		Items:      []mpapi.ResourceListItem{canonicalSearchItem("registry", "mcpserver", "cached-denied", 0)},
+		Total:      1,
+		ObservedAt: time.Now(),
+	}
+	if err := cache.store(cached, "mcp", "", "mcpserver", DiscoveryPageLimit); err != nil {
+		t.Fatal(err)
+	}
+	cachePath := cache.path(deniedEndpoint, "mcp", "", "mcpserver", DiscoveryPageLimit)
+	cacheBefore, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	effective := config.EffectiveConfig{
+		Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{allowedEndpoint, deniedEndpoint}},
+		AllowedMarketplaces: []string{
+			"^" + regexp.QuoteMeta(allowed.URL) + "$",
+		},
+	}
+	outcomes, err := Discover(context.Background(), effective, "mcp", DiscoveryOptions{
+		IncludeKind: "mcpserver",
+		Cache:       cache,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outcomes) != 2 {
+		t.Fatalf("outcomes = %d, want one per configured endpoint: %#v", len(outcomes), outcomes)
+	}
+	var allowedOutcome, deniedOutcome *DiscoveryOutcome
+	for i := range outcomes {
+		switch outcomes[i].Endpoint.URL {
+		case allowed.URL:
+			allowedOutcome = &outcomes[i]
+		case denied.URL:
+			deniedOutcome = &outcomes[i]
+		}
+	}
+	if allowedOutcome == nil || allowedOutcome.Err != nil || len(allowedOutcome.Items) != 1 || allowedOutcome.Items[0].Name != "allowed-opaque" {
+		t.Fatalf("allowed endpoint outcome = %#v", allowedOutcome)
+	}
+	var blocked *config.MarketplaceURLBlockedError
+	if deniedOutcome == nil || !errors.As(deniedOutcome.Err, &blocked) || len(blocked.BlockedURLs) != 1 || blocked.BlockedURLs[0] != denied.URL {
+		t.Fatalf("denied endpoint outcome = %#v, want its own MarketplaceURLBlockedError", deniedOutcome)
+	}
+	if len(deniedOutcome.Items) != 0 {
+		t.Fatalf("denied endpoint exposed cached resources: %#v", deniedOutcome.Items)
+	}
+	if allowedRequests.Load() == 0 || deniedRequests.Load() != 0 {
+		t.Fatalf("request counts = allowed %d, denied %d; want allowed requests and no denied requests", allowedRequests.Load(), deniedRequests.Load())
+	}
+	cacheAfter, err := os.ReadFile(cachePath)
+	if err != nil || !reflect.DeepEqual(cacheAfter, cacheBefore) {
+		t.Fatalf("denied endpoint cache changed: err=%v", err)
 	}
 }
 

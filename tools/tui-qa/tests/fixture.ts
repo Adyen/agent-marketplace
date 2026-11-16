@@ -33,7 +33,8 @@ export interface FixtureOptions {
   // Registers the stub as the user's "market" endpoint without selecting
   // anything, and lets a search find its installable skill. "findings"
   // assesses that skill with a warning so installing it requires consent.
-  marketplaceDiscovery?: "plain" | "findings";
+  // "mixed-denial" adds a blocked endpoint alongside the allowed stub.
+  marketplaceDiscovery?: "plain" | "findings" | "mixed-denial";
   // Adds an unconfigured local Git registry for install-from-source journeys.
   adHocSource?: boolean;
   // Seeds the Git registry with collection "starter", whose only member is
@@ -121,6 +122,7 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
     let orgLockPath: string | undefined;
     let expectedOrgConfig: string | undefined;
     let expectedOrgSkillContent: string | undefined;
+    let postSyncUserConfig: string | undefined;
     let marketplaceAcquisitionDataRequestCount: (() => number) | undefined;
     let marketplaceAcquisitionDataRequestPaths: (() => string[]) | undefined;
     let marketplaceDelayNextAcquisition: ((ms: number) => void) | undefined;
@@ -214,7 +216,16 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       } else if (options.firstRun) {
         fs.mkdirSync(path.join(home, ".claude"), { recursive: true, mode: 0o700 });
       } else if (options.marketplaceDiscovery && stub) {
-        write(path.join(home, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources:\n  market:\n    marketplace: ${stub.url}\n`);
+        const mixedDenial = options.marketplaceDiscovery === "mixed-denial";
+        const allowlist = mixedDenial
+          ? `allowed_marketplaces:\n  - '^${stub.url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$'\n`
+          : "";
+        const deniedSource = mixedDenial ? "  denied-market:\n    marketplace: http://127.0.0.1:1\n" : "";
+        const baseUserConfig = `apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources:\n  market:\n    marketplace: ${stub.url}\n`;
+        const userConfig = `${baseUserConfig}${deniedSource}${allowlist}`;
+        const configPath = path.join(home, ".agents", "config.yaml");
+        write(configPath, mixedDenial ? baseUserConfig : userConfig);
+        if (mixedDenial) postSyncUserConfig = userConfig;
       } else {
         write(path.join(home, ".agents", "config.yaml"), "apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources: {}\n");
       }
@@ -284,6 +295,7 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
         stub.driftArchiveDigest();
       }
     }
+    if (postSyncUserConfig) write(path.join(home, ".agents", "config.yaml"), postSyncUserConfig);
 
     const launcher = path.join(root, "launch-agent-marketplace");
     const pidFile = path.join(root, "target.pid");

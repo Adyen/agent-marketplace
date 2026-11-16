@@ -357,10 +357,22 @@ func (m *Model) beginMarketplaceDiscovery(query string, debounce bool) tea.Cmd {
 	}
 	m.cancelMarketplaceDiscovery()
 	if !debounce {
-		if err := config.ValidateMarketplaceURLs(m.mergedCfg.Marketplaces, effectiveMarketplaceConfig(m.mergedCfg).AllowedMarketplaces); err != nil {
-			m.clearMarketplaceDiscovery(true)
-			m.discoveryErrs = []error{err}
-			return nil
+		allowedMarketplaces := effectiveMarketplaceConfig(m.mergedCfg).AllowedMarketplaces
+		if err := config.ValidateMarketplaceURLs(m.mergedCfg.Marketplaces, allowedMarketplaces); err != nil {
+			var blocked *config.MarketplaceURLBlockedError
+			if errors.As(err, &blocked) {
+				for _, endpoint := range m.mergedCfg.Marketplaces {
+					if config.ValidateMarketplaceURLs([]config.MarketplaceEntry{endpoint}, allowedMarketplaces) == nil {
+						err = nil
+						break
+					}
+				}
+			}
+			if err != nil {
+				m.clearMarketplaceDiscovery(true)
+				m.discoveryErrs = []error{err}
+				return nil
+			}
 		}
 	}
 	generation := m.beginRequest(requestDiscovery)

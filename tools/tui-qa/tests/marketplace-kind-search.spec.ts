@@ -8,7 +8,7 @@ import { defineFixture, locate, step } from "./helpers.js";
 // spec: tui-navigation/every-kind-query-discovers-all-marketplace-matches
 // spec: tui-navigation/other-kinds-retain-additive-text-matching
 // spec: tui-navigation/failed-kind-discovery-preserves-usable-local-results
-const journey = defineFixture("marketplace-kind-search", ["tui"], 80, 24, { marketplaceDiscovery: "plain" });
+const journey = defineFixture("marketplace-kind-search", ["tui"], 80, 24, { marketplaceDiscovery: "mixed-denial" });
 before(journey.setup);
 after(journey.cleanup);
 
@@ -38,9 +38,17 @@ journey.test("kind queries discover opaque Marketplace resources and clear back 
   };
 
   await step("settled Marketplace browse", () => {}, async () => {
-    await locate(terminal, "~ in sync").unique().expect({ timeout: 30_000 });
+    await locate(terminal, /! 1 errors: marketplace URL/).unique().expect({ timeout: 30_000 });
     await browseRows();
   });
+  await step("show the denied endpoint diagnostic", () => terminal.write("e"), async () => {
+    await locate(terminal, "Marketplace discovery (1)").unique().expect();
+    await locate(
+      terminal,
+      "denied-market: marketplace URL(s) blocked by allowed_marketplaces policy"
+    ).unique().expect();
+  });
+  await step("return to the resource list", () => terminal.write("\x1b"), browseRows);
 
   await openSearch();
   await step("discover opaque hosted MCP servers", () => terminal.write("mcp"), async () => {
