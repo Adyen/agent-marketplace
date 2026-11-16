@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -155,6 +156,7 @@ func TestDoctorNativeAggregateRepairRequiresPerEntryConsentAndRedactsValues(t *t
 	var logs bytes.Buffer
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	defer slog.SetDefault(previous)
+	digestDescription := regexp.MustCompile(`existing value digest sha256:[0-9a-f]{64}, generated value digest sha256:[0-9a-f]{64}`)
 	for _, tc := range doctorNativeRepairCases {
 		t.Run(string(tc.target), func(t *testing.T) {
 			for _, action := range []struct {
@@ -219,6 +221,9 @@ func TestDoctorNativeAggregateRepairRequiresPerEntryConsentAndRedactsValues(t *t
 					}
 					if !strings.Contains(out.String(), fmt.Sprintf("replace mcp-server %q", name)) {
 						t.Fatalf("repair output omitted the digest-only conflict for %s:\n%s", tc.target, out.String())
+					}
+					if !digestDescription.MatchString(out.String()) {
+						t.Fatalf("repair conflict for %s was not described by SHA-256 digests:\n%s", tc.target, out.String())
 					}
 				})
 			}
