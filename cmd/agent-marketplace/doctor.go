@@ -37,6 +37,7 @@ import (
 // binary.
 type doctorOptions struct {
 	out io.Writer
+	err io.Writer
 	in  io.Reader
 	// isTTY enables the safe-step and destructive-entry confirmations.
 	isTTY        bool
@@ -75,17 +76,28 @@ never requires a Devin binary, so nothing doctor reports here blocks it.
 
 --repair diagnoses harness drift and shared-aggregate ownership, then prints a
 numbered plan with each step's safety class, diagnostic code, files, and inputs
-or blocker. One terminal confirmation authorizes safe steps. Destructive
-replacements and orphan removals keep their per-entry confirmations and never
-run with --yes. Devin and Codex shared aggregate files include hooks.v1.json,
-config.json#hooks, mcp_config.json, .codex/hooks.json, and .codex/config.toml.
+or blocker. Pending dependency and ownership journals left by an interrupted
+run are recovered first as safe steps that need only the journal itself, so
+they run even when configuration is invalid. Replaying a journal completes only
+writes an earlier run already admitted; it is a safe step, not a destructive
+replacement, and a refused recovery fails the step, exits 1, and leaves the
+journal and its target bytes unchanged. One terminal confirmation authorizes
+safe steps. Destructive replacements and orphan removals keep their per-entry
+confirmations and never run with --yes. Devin and Codex shared aggregate files
+include hooks.v1.json, config.json#hooks, mcp_config.json, .codex/hooks.json,
+and .codex/config.toml.
 Repair also inspects the shared aggregates of every other harness target that
 declares them: Claude settings.json#hooks and .mcp.json, Factory hooks.json and
 mcp.json, Cursor hooks.json and mcp.json, Windsurf hooks.json and
 mcp_config.json, Gemini settings.json, and OpenCode opencode.json.
-Off a terminal, --repair is preview-only unless --yes is set; --yes runs only
-safe steps. Repair uses the acquisition locks already on disk and never edits
-harness lists or organization files.
+Off a terminal, --repair is preview-only unless --yes
+is set; --yes runs only safe steps. Repair uses the acquisition locks already
+on disk and never rewrites configuration automatically, edits harness lists,
+or edits organization files. Configuration field, YAML, and duplicate-key
+errors are guided with a safe source snippet. On a terminal without --yes,
+repair offers $VISUAL or $EDITOR and diagnoses again after the editor exits.
+With --yes or off a terminal, guided configuration edits are deferred. Version
+and organization issues remain human-only.
 `),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -95,6 +107,7 @@ harness lists or organization files.
 			return runDoctor(doctorOptions{
 				ctx:    cmd.Context(),
 				out:    cmd.OutOrStdout(),
+				err:    cmd.ErrOrStderr(),
 				in:     cmd.InOrStdin(),
 				isTTY:  term.IsTerminal(os.Stdin.Fd()),
 				repair: repair,
@@ -103,8 +116,8 @@ harness lists or organization files.
 		},
 	}
 
-	cmd.Flags().BoolVar(&repair, "repair", false, "Diagnose, plan, and confirm safe harness-drift and shared-aggregate repairs for Devin and Codex, Claude, Factory, Cursor, Windsurf, Gemini, and OpenCode")
-	cmd.Flags().BoolVar(&assumeYes, "yes", false, "With --repair, run safe planned steps without prompting; destructive aggregate changes are never automatic")
+	cmd.Flags().BoolVar(&repair, "repair", false, "Recover pending journals and diagnose harness drift, shared-aggregate repairs for Devin and Codex, Claude, Factory, Cursor, Windsurf, Gemini, and OpenCode, and guided configuration fixes")
+	cmd.Flags().BoolVar(&assumeYes, "yes", false, "With --repair, run safe steps without prompting; guided edits are deferred and destructive changes are never automatic")
 	return cmd
 }
 
@@ -115,6 +128,9 @@ func runDoctor(opts doctorOptions) error {
 	opts.ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(opts.ctx)
 	if opts.out == nil {
 		opts.out = os.Stdout
+	}
+	if opts.err == nil {
+		opts.err = os.Stderr
 	}
 	if opts.probe == nil {
 		opts.probe = func(ctx context.Context) devincli.Probe { return devincli.Detect(ctx) }

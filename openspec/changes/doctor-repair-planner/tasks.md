@@ -10,7 +10,7 @@
 
 ## 2. Journal recovery fixer (B1)
 
-- [ ] 2.1 Plan and run dependency and ownership journal recovery as a safe stage-1 step; verify with annotated tests
+- [x] 2.1 Plan and run dependency and ownership journal recovery as a safe stage-1 step; verify with annotated tests
 
 ## 3. Acquisition lock fixers (B2)
 
@@ -18,7 +18,7 @@
 
 ## 4. Configuration fixers (B3)
 
-- [ ] 4.1 Add guided configuration fixes and human-only version and organization items; verify with annotated tests
+- [x] 4.1 Add guided configuration fixes and human-only version and organization items; verify with annotated tests and declarative E2E case `config/doctor_guided_deferred`
 
 ## 5. Shared aggregates for every target (B4)
 

@@ -668,7 +668,7 @@ func TestDoctorRepairListsOrganizationAcquisitionBlockers(t *testing.T) {
 
 // spec: doctor-repair-planning/invalid-configuration-blocks-only-the-steps-that-need-it
 // spec: doctor-repair-planning/repair-exits-one-when-only-blocked-or-human-only-items-remain
-func TestDoctorRepairListsInvalidConfigurationAsHumanOnly(t *testing.T) {
+func TestDoctorRepairListsInvalidConfigurationAsGuided(t *testing.T) {
 	if isolateCommandTest(t) {
 		return
 	}
@@ -688,8 +688,8 @@ func TestDoctorRepairListsInvalidConfigurationAsHumanOnly(t *testing.T) {
 	if err == nil {
 		t.Fatal("invalid configuration repair exited successfully")
 	}
-	if !strings.Contains(out.String(), "human-only") || !strings.Contains(out.String(), "blocked by") {
-		t.Fatalf("invalid configuration was not represented in the plan:\n%s", out.String())
+	if !strings.Contains(out.String(), "[guided]") || !strings.Contains(out.String(), "blocked by") {
+		t.Fatalf("invalid configuration was not represented as a guided step with blocked selection work:\n%s", out.String())
 	}
 }
 

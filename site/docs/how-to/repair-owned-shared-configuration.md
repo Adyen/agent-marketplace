@@ -17,11 +17,17 @@ Several sources can write entries into the same shared file, such as `.devin/mcp
 agent-marketplace doctor --repair
 ```
 
-After the normal `doctor` report, the command prints a numbered repair plan. Each line shows the step's safety class (`safe`, `destructive`, or `human-only`), the action, the diagnostic code it addresses, the files it touches, and either the inputs it needs or `blocked by N (<reason>)` naming the plan item that blocks it. It then lists each shared file it inspects for every harness target, even files with nothing to repair. For each entry it can act on, it shows one of three actions:
+After the normal `doctor` report, the command prints a numbered repair plan. Each line shows the step's safety class (`safe`, `destructive`, `guided`, or `human-only`), the action, the diagnostic code it addresses, the files it touches, and either the inputs it needs or `blocked by N (<reason>)` naming the plan item that blocks it.
+
+A field, YAML syntax, or duplicate-key error in a writable configuration file produces a `guided` step that names the authored file and, when known, its line, and shows source context when available. On a terminal it offers to open that file in `$VISUAL` (or `$EDITOR`) with its own confirmation, then diagnoses again after the editor exits. With neither variable set, it prints manual editing instructions and defers the step. Declining the editor offer also defers it. Edit the file yourself and run `doctor --repair` again. Guided steps are also deferred under `--yes` and off a terminal, and a deferred guided step leaves the repair incomplete (exit status 1). `doctor` never rewrites configuration automatically, and a guided error in one layer does not block steps whose other inputs are valid.
+
+It then lists each shared file it inspects for every harness target, even files with nothing to repair. For each entry it can act on, it shows one of three actions:
 
 - `adopt`: the existing entry is identical to what `agent-marketplace` would write. Adopting records it as owned and does not change the file.
 - `replace`: the existing entry has the same key but a different value. Replacing overwrites your value with the generated one.
 - `orphan candidate`: evidence shows that an earlier run of `agent-marketplace` wrote the entry, and nothing selects it anymore. Removing it deletes the entry.
+
+If an earlier `agent-marketplace` run was interrupted mid-write, the plan opens with safe steps that recover the pending dependency or ownership journal. These steps need only the journal itself, so they are planned and can run even when your configuration has errors. Replaying a journal finishes only writes the earlier run already admitted; it is a safe step authorized by the plan confirmation or `--yes`, not a destructive entry replacement. Ownership recovery prints each recovered file's outcome, and dependency replay prints the recovered journal.
 
 When there is nothing to repair, the preview ends like this:
 
@@ -67,14 +73,15 @@ After each step runs, the command diagnoses the setup again and shows any new st
 agent-marketplace sync --check
 ```
 
-The check exits with status 0 when the shared configuration matches your selection.
+The check exits with status 0 when the shared configuration matches your selection. After the repair replayed a dependency journal, the check no longer reports `dependency.recovery-required`, though it can still report independent configuration issues that the journal recovery does not fix.
 
 ## What `--repair` guarantees
 
-- It never removes or overwrites an entry without your confirmation on a terminal.
+- It never removes or overwrites an entry without your confirmation on a terminal. That guarantee covers explicit aggregate entry replacement and removal; completing an interrupted write the CLI itself already recorded counts as journal recovery, a safe step that runs under the plan confirmation or `--yes`, not a destructive overwrite.
 - It takes a fresh safety backup of the file before it replaces or removes an entry.
+- A journal recovery that cannot prove its recorded authority, such as foreign bytes or a non-prefix publication state, fails the step, exits 1, and leaves the journal and the files it recorded unchanged.
 - It never edits your harness lists.
-- An off-terminal preview or a `--yes` run can exit 0 with destructive entries deferred. Otherwise, status 0 means the setup ended clean or you declined. Status 1 means a confirmed step failed, corrupt ownership state or a corrupt shared file remains, or the plan is left with only blocked or `human-only` items. An invalid configuration or a failed resolution is reported as a plan item and blocks the steps that need it rather than refusing the whole repair.
+- An off-terminal preview or a `--yes` run can exit 0 with destructive entries deferred. Otherwise, status 0 means the setup ended clean or you declined. Status 1 means a confirmed step failed, corrupt ownership state or a corrupt shared file remains, or the plan is left with only blocked, deferred `guided`, or `human-only` items. An invalid configuration or a failed resolution is reported as a plan item and blocks the steps that need it rather than refusing the whole repair.
 - When the ownership state is missing, every existing entry counts as unmanaged. `sync` then keeps all of them, refuses to write over any of them, and removes nothing.
 
 ## Related documentation

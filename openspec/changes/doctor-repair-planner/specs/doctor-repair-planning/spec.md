@@ -4,6 +4,33 @@ Defines how `doctor --repair` turns a diagnosis of a broken setup into a confirm
 
 ## ADDED Requirements
 
+### Requirement: Repair recovers pending journals before configuration-dependent work
+
+Repair SHALL plan pending dependency and ownership journals as safe stage-1 steps using the existing recovery operations without changing their recovery semantics. These steps SHALL require only journal authority, not valid configuration or resolved selection. Ownership recovery outcomes SHALL be printed. A refused recovery SHALL fail the step and exit 1 without changing the refused journal or target bytes. Off a terminal without `--yes`, repair SHALL preview pending journals without recovering them.
+
+#### Scenario: Dependency journal recovery runs with invalid configuration
+
+- **WHEN** a dependency journal is pending and configuration has errors
+- **THEN** the first repair step SHALL be safe dependency replay and SHALL run when authorized
+- **AND** a subsequent `sync --check` SHALL no longer report `dependency.recovery-required`, even if configuration errors remain
+
+#### Scenario: Ownership journal recovery reports its outcome
+
+- **WHEN** an ownership journal is pending and its safe recovery is authorized
+- **THEN** repair SHALL recover it as a stage-1 step and print the recovery outcome
+
+#### Scenario: Refused journal recovery preserves evidence and target bytes
+
+- **WHEN** dependency recovery encounters foreign bytes or a non-prefix publication state
+- **THEN** the repair step SHALL fail and doctor SHALL exit 1
+- **AND** the journal and target bytes SHALL remain unchanged
+
+#### Scenario: Pending journals are previewed off-terminal without consent
+
+- **WHEN** pending dependency or ownership journals exist and repair runs off a terminal without `--yes`
+- **THEN** repair SHALL print their safe recovery steps without replay
+- **AND** journal and target bytes SHALL remain unchanged
+
 ### Requirement: Repair presents a numbered plan and one confirmation
 
 `doctor --repair` SHALL print a numbered plan before it changes anything. Every plan line SHALL show the step number, its safety class (`safe`, `destructive`, `guided`, or `human-only`), the action, the diagnostic code it addresses, the files it touches, and either the inputs it needs or `blocked by N (<reason>)` naming the plan item that blocks it. MCP values SHALL never be printed. On a terminal, one `[y/N]` confirmation SHALL authorize every safe step; only an explicit `y` or `yes` is consent. Destructive entries SHALL keep their own per-entry confirmations, and a plan whose only runnable entries are destructive SHALL ask only those per-entry confirmations.
@@ -112,6 +139,42 @@ Devin and Codex shared-aggregate ownership repair SHALL run as the last plan sta
 
 - **WHEN** a plan holds both a drift step and shared-aggregate ownership candidates
 - **THEN** the drift step SHALL be numbered and run before the shared-aggregate candidates
+
+### Requirement: Configuration errors offer guided fixes
+
+Configuration field, YAML syntax, and duplicate-key errors in writable consumer layers SHALL appear as guided steps naming the authored file and line and showing a terminal-safe source snippet. Control characters SHALL be escaped. On a terminal without `--yes`, repair SHALL offer `$VISUAL`, or `$EDITOR` when `$VISUAL` is unset, and diagnose again after the editor exits. With neither editor configured, repair SHALL print manual instructions without treating the missing editor as an execution failure. Repair SHALL NOT rewrite configuration automatically.
+
+#### Scenario: Configuration errors show safe source context
+
+- **WHEN** a writable configuration has a field, YAML syntax, or duplicate-key error
+- **THEN** repair SHALL show a guided step with the authored file and line and a source snippet whose control characters are escaped
+
+#### Scenario: An editor fix is diagnosed again
+
+- **WHEN** the user accepts a terminal guided step and the configured editor exits
+- **THEN** repair SHALL diagnose again
+- **AND** a still-broken file SHALL remain a guided step
+
+#### Scenario: Missing editor leaves manual instructions
+
+- **WHEN** a terminal guided step has neither `$VISUAL` nor `$EDITOR` configured
+- **THEN** repair SHALL print manual editing instructions without an editor execution failure
+
+#### Scenario: Non-interactive guided steps are deferred
+
+- **WHEN** repair runs off a terminal or with `--yes`
+- **THEN** guided steps SHALL be listed as deferred and no editor SHALL be launched
+
+#### Scenario: Version and organization issues remain human-only
+
+- **WHEN** diagnosis reports `v4.api-version-required`, `v4.api-version`, or an `organization.*` issue
+- **THEN** repair SHALL list it as human-only with the existing remedy text
+- **AND** its files SHALL remain byte-identical
+
+#### Scenario: A guided layer does not block independent steps
+
+- **WHEN** one layer has a guided error and another step uses only valid inputs from other layers
+- **THEN** that step SHALL remain runnable
 
 ### Requirement: Repair inspects every declared native aggregate target
 
