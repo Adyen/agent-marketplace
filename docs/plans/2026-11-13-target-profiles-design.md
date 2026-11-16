@@ -1913,7 +1913,7 @@ covers more than one app.
   open with `target-profile-register`; register delivery is not part of this
   decision.
 - **Profile identity and retention:** proposed in Decision 13. Unregistering after a profile update or removal remains open under Decision 6 and `target-profile-register`.
-- **Staging and publication.** The proposed staging, same-filesystem
+- **Staging and publication.** The proposed staging, cross-filesystem
   refusal, destination containment and observation limits are settled in
   Decision 14; the acceptance witnesses there remain unimplemented.
 - **Herdr replaces its shipped mods on every start.** `host.shipped`
@@ -1940,10 +1940,12 @@ covers more than one app.
 ## Delivery plan (proposed OpenSpec changes, in order)
 
 Before freezing the `target-profile-place` contract, close the executable
-second-target trial, publication/crash/symlink and root-identity design,
-existing-install refusal or adoption path, initial-check/readiness evidence
-contract, and the analysis-policy/assessment-binding gates already called
-out below. `generalize-target-kinds` can start independently once the
+second-target trial, existing-install refusal or adoption path,
+initial-check/readiness evidence contract, and the
+analysis-policy/assessment-binding gates already called out below.
+Decision 14 settles the publication/crash/symlink and root-identity
+design; its acceptance witnesses remain part of those changes.
+`generalize-target-kinds` can start independently once the
 target-model home, glossary and kind matrix decisions are settled; it need
 not wait for the full place feature.
 
