@@ -315,6 +315,36 @@ func TestDoctorRepairJSONRedactsDiagnosisError(t *testing.T) {
 }
 
 // spec: doctor-repair-planning/json-repair-preserves-text-repair-exit-status
+func TestDoctorRepairJSONEncodeFailureKeepsRepairError(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	devinDoctorEnv(t)
+	diagnosisErr := errors.New("resolution failed")
+	writeErr := errors.New("stdout closed")
+	err := runDoctor(doctorOptions{
+		out:    &failWriter{err: writeErr},
+		repair: true,
+		json:   true,
+		resolve: func(context.Context, string) ([]resolver.ResolvedArtifact, error) {
+			return nil, diagnosisErr
+		},
+	})
+	if !errors.Is(err, diagnosisErr) {
+		t.Fatalf("JSON repair error = %v, want preserved diagnosis error", err)
+	}
+	err = runDoctor(doctorOptions{
+		out:     &failWriter{err: writeErr},
+		repair:  true,
+		json:    true,
+		resolve: staticResolve(nil),
+	})
+	if !errors.Is(err, writeErr) {
+		t.Fatalf("JSON encode error = %v, want write error", err)
+	}
+}
+
+// spec: doctor-repair-planning/json-repair-preserves-text-repair-exit-status
 func TestDoctorRepairJSONExitStatusMatchesText(t *testing.T) {
 	if isolateCommandTest(t) {
 		return

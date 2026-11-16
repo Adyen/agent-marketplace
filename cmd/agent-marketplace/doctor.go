@@ -146,7 +146,7 @@ func runDoctor(opts doctorOptions) (runErr error) {
 		opts.isTTY = false
 		out = opts.out
 		defer func() {
-			if err := json.NewEncoder(jsonOut).Encode(report); err != nil {
+			if err := json.NewEncoder(jsonOut).Encode(report); err != nil && runErr == nil {
 				runErr = err
 			}
 		}()
