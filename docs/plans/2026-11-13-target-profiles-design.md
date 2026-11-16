@@ -1238,26 +1238,20 @@ not implement the host-package proposal below:
 | Exact source revisions, registry identities, discovery, source loading and revocation have existing separate seams. `registryid` currently sanitizes telemetry; it is not a profile identity authority. | `openspec/specs/acquisition-lock-codec/spec.md`; `openspec/specs/deployed-acquisition-locks/spec.md`; `openspec/specs/mutable-ref-cache/spec.md`; `openspec/specs/exact-snapshot-verification/spec.md`; `openspec/specs/catalog-discovery/spec.md`; `openspec/specs/directory-source-discovery/spec.md`; `openspec/specs/resource-listing/spec.md`; `openspec/specs/resource-selection/spec.md`; `openspec/specs/plugin-packages/spec.md`; `openspec/specs/plugin-delivery/spec.md`; `openspec/specs/marketplace-delivery-security/spec.md`; `internal/sourcerevision/builder.go`; `internal/registryid/registryid.go`; `internal/catalog/catalog.go`; `internal/resolver/resolver.go`; `internal/config/v4.go`; `internal/marketplace/discovery.go`; `internal/marketplace/revocation.go` |
 | The current analyzer has shared text scanners and warning/reject policy, and rejects unknown non-UTF-8 support files as `marketplace.find.invalid-utf8`; its narrow recognized-binary exemptions do not include executable signatures. | `openspec/specs/marketplace-analysis/spec.md`; `pkg/marketplace/analyze/scanners.go`; `pkg/marketplace/analyze/policy.go`; `pkg/marketplace/analyze/codes.md` |
 
-More precisely, current v4 locators in `internal/config/v4.go` accept
+Current v4 locators in `internal/config/v4.go` accept
 exactly `kind/name` or `registry/kind/name`; their fixed source-locator
 kinds are `skill`, `command`, `subagent`, `hook`, `mcp`, `collection`,
-and `plugin`. Marketplace API/route kinds are instead exactly `skill`,
+and `plugin`, while Marketplace API/route kinds are exactly `skill`,
 `command`, `subagent`, `hook`, `mcpserver`, and `collection`.
 `v4NameRE` allows any nonempty character sequence except slash,
 backslash, and ASCII controls; the locator additionally rejects `.`/`..`,
 `*`, and `?`, while `nameutil.ValidateSegment` requires a clean,
 nonempty single segment. Other Unicode and punctuation (including `:`,
-`@`, and `%`) can pass those configuration name checks. Marketplace compact
-locators accept
-`alias:registry/kind/name[@sha256:<64 lowercase hex>]` and browser
-locators use `/r/registry/kind/name` with an optional exact revision;
-their route tokens reject edge whitespace, dot components, slash,
-backslash, controls and `%`; compact syntax reserves `@` for the exact
-revision suffix. The filename-facing Marketplace name check additionally
-rejects Windows-invalid punctuation, trailing dots/spaces and DOS device
-names. Current `kind:name` prerequisite parsing splits at the first
-colon, maps only existing kind aliases, trims and requires a nonempty
-name, and rejects `all` and `collection`.
+`@`, and `%`) can pass those configuration name checks. The
+filename-facing Marketplace name check additionally rejects
+Windows-invalid punctuation, trailing dots/spaces and DOS device
+names. Current `kind:name` prerequisite parsing also rejects `all` and
+`collection`.
 
 #### Profile identity, selection and removal
 
@@ -1408,10 +1402,10 @@ and types are:
 
 Compiled-kind `content_digest` retains today's `artifact.ContentDigest(payload)`
 SHA-256 over canonical payload bytes
-(`pkg/harness-compilation/artifact/canonical.go`), consistent with
-`marketplace-api` → Requirement: Canonical artifact format. For host kinds
+(`pkg/harness-compilation/artifact/canonical.go`), consistent with the
+`marketplace-api` requirement "Canonical artifact format". For host kinds
 only, proposed `content_digest` instead equals the tree digest in
-`package_content_digest` above; compiled-kind digests are unchanged.
+`package_content_digest` above.
 
 The assessment's existing canonical
 `assessment_digest` includes the complete `host_package_identity`; the
