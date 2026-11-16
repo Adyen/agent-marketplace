@@ -9,4 +9,4 @@
 ## 2. Validation
 
 - [x] 2.1 Check the design against source evidence and run git diff --check.
-- [ ] 2.2 Reconcile design references for archive handoff; independent reviews and archive are later-role gates.
+- [x] 2.2 Reconcile design references for archive handoff; independent reviews and archive are later-role gates.
