@@ -1244,11 +1244,11 @@ kinds are `skill`, `command`, `subagent`, `hook`, `mcp`, `collection`,
 and `plugin`, while Marketplace API/route kinds are exactly `skill`,
 `command`, `subagent`, `hook`, `mcpserver`, and `collection`.
 `v4NameRE` allows any nonempty character sequence except slash,
-backslash, and ASCII controls; the locator additionally rejects `.`/`..`,
+backslash, and ASCII controls; the locator also rejects `.`/`..`,
 `*`, and `?`, while `nameutil.ValidateSegment` requires a clean,
 nonempty single segment. Other Unicode and punctuation (including `:`,
 `@`, and `%`) can pass those configuration name checks. The
-filename-facing Marketplace name check additionally rejects
+filename-facing Marketplace name check also rejects
 Windows-invalid punctuation, trailing dots/spaces and DOS device
 names. Current `kind:name` prerequisite parsing also rejects `all` and
 `collection`.
@@ -1360,12 +1360,11 @@ Keep existing simple-kind locator spelling. For target-scoped kinds,
 encode the one kind-internal slash as the single uppercase escape `%2F`
 inside the kind token, decode it exactly once, and reject all other
 percent escapes. Both the CLI locator parser and Marketplace API route
-parser must split the escaped path before decoding that token. In particular,
-the browser-locator proposal changes `parseBrowserLocator` and
-`hasUnsafeURLPath` in `internal/marketplace/locator.go`: today they refuse
-`%2F`, while the proposal splits the escaped path into route segments before
-decoding the kind token once. Canonical
-identity fields in `list`, the Marketplace index/API, ingestion sidecar
+parser must split the escaped path before decoding that token. The
+browser-locator proposal changes `parseBrowserLocator` and
+`hasUnsafeURLPath` in `internal/marketplace/locator.go`, which today refuse
+`%2F`. Canonical identity
+fields in `list`, the Marketplace index/API, ingestion sidecar
 and acquisition lock use the unescaped `herdr-app/mod`; the lock keeps
 `kind` and `name` as separate fields. The `%2F` route form requires
 proxies to forward encoded slashes undecoded; verify that with the
@@ -1394,12 +1393,9 @@ using `marketplace.locator.ambiguous-kind` and suggesting
 malformed percent escapes refuse with
 `marketplace.locator.invalid-encoding`; extra slashes or an unescaped slash
 inside the kind refuse with `marketplace.locator.ambiguous-kind`. The
-consumer-config locator and exclusion seams use the same proposed refusal
-codes: a raw slash-kind such as `herdr-app/mod/chris-links` is
-`marketplace.locator.ambiguous-kind`, and malformed or noncanonical percent
-escapes are `marketplace.locator.invalid-encoding`. The existing
-`parseV4Locator` and `validateV4Exclusion` instead split or validate only the
-current fixed-kind forms. The existing prerequisite parser splits
+consumer-config locator and exclusion seams, `parseV4Locator` and
+`validateV4Exclusion`, apply the same proposed refusal codes; today they
+handle only the fixed-kind forms. The existing prerequisite parser splits
 `kind:name` at the first colon, so
 the proposed slash-kind form is unambiguous because `kind` excludes
 colons; the new kind must be accepted in both structured and shorthand
