@@ -874,9 +874,14 @@ func addConfigurationIssue(
 	}
 	lines := strings.Split(string(source), "\n")
 	var action string
-	if line > 0 && line <= len(lines) {
+	switch {
+	case opts.json && line > 0:
+		action = fmt.Sprintf("edit %s:%d", file, line)
+	case opts.json:
+		action = fmt.Sprintf("edit %s", file)
+	case line > 0 && line <= len(lines):
 		action = fmt.Sprintf("edit %s:%d %s; source: %s", file, line, issue.Error(), lines[line-1])
-	} else {
+	default:
 		action = fmt.Sprintf("edit %s manually; %s", file, validation.Msg)
 	}
 	action = tui.TerminalSafeLine(action)

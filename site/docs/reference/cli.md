@@ -460,7 +460,6 @@ Configuration field, YAML syntax, and duplicate-key errors in writable layers ap
 
 One terminal confirmation authorizes every safe step, adoptions included. Removing an orphan or replacing a conflicting entry keeps its own per-entry confirmation on a terminal, and the command takes a fresh backup first. Destructive steps never run under `--yes` or off a terminal. Without a terminal it only previews, unless `--yes` runs the safe steps. Invalid configuration or failed resolution does not refuse the repair: the cause is listed as a plan item and every step that needs it is shown as blocked. `--yes` without `--repair` is an error.
 
-
 With `--repair --json`, stdout contains exactly one JSON document with plan steps and results. JSON mode never prompts, excludes MCP environment and header values, and marks destructive and guided steps `deferred`; without `--yes` it only previews, while with `--yes` it runs safe steps. Exit status matches text repair for the same state. `--json` without `--repair` is an error.
 
 Compatibility findings do not block `sync`. Repair failures, corrupt ownership state, unparseable shared files, plans left with only blocked, deferred guided, or human-only items, and previewed or declined runs that leave missing or stale acquisition-lock authority all return exit status 1; the command exits 0 when the setup ends clean or you declined without leaving that authority unresolved.

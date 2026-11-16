@@ -314,6 +314,49 @@ func TestDoctorRepairJSONRedactsDiagnosisError(t *testing.T) {
 	}
 }
 
+// spec: doctor-repair-planning/json-repair-never-prints-mcp-secrets
+func TestDoctorRepairJSONGuidedStepNeverPrintsSourceSecrets(t *testing.T) {
+	if isolateCommandTest(t) {
+		return
+	}
+	repoRoot, _ := devinDoctorEnv(t)
+	configPath := filepath.Join(repoRoot, ".agents", "config.yaml")
+	const secret = "guided-json-secret-sentinel"
+	writeFile(t, configPath, "apiVersion: agent-marketplace/v4\nunknown_field: {TOKEN: "+secret+"}\n")
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	err = runDoctor(doctorOptions{
+		out:    &out,
+		repair: true,
+		json:   true,
+		probe:  staticProbe(devincli.Probe{Status: devincli.StatusNotInstalled}),
+	})
+	if err == nil {
+		t.Fatal("JSON repair succeeded with a deferred guided step")
+	}
+	if strings.Contains(out.String(), secret) {
+		t.Fatalf("JSON repair printed a guided source value:\n%s", out.String())
+	}
+	report := decodeDoctorJSON(t, out.String())
+	var guided *doctorJSONStep
+	for i := range report.Steps {
+		if *report.Steps[i].Class == "guided" {
+			guided = &report.Steps[i]
+		}
+	}
+	if guided == nil || *guided.Status != "deferred" || len(*guided.Files) == 0 ||
+		!strings.HasSuffix((*guided.Files)[0], filepath.Join(".agents", "config.yaml")) {
+		t.Fatalf("guided report step = %+v", report.Steps)
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("JSON repair changed config bytes: %v\n%s", err, after)
+	}
+}
+
 // spec: doctor-repair-planning/json-repair-preserves-text-repair-exit-status
 func TestDoctorRepairJSONEncodeFailureKeepsRepairError(t *testing.T) {
 	if isolateCommandTest(t) {

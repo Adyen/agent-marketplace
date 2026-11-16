@@ -41,6 +41,28 @@ func TestJSONReportDefersGuidedStepsAndResolvesBlockerIDs(t *testing.T) {
 	}
 }
 
+// spec: doctor-repair-planning/json-repair-reports-a-structured-plan-and-results
+func TestJSONReportKeepsRepeatedIdentitiesDistinct(t *testing.T) {
+	report := NewJSONReport()
+	steps := []Step{
+		{Key: "cause-0", Stage: StageConfiguration, Class: HumanOnly, Code: "doctor.repair.failed", Action: "review doctor.repair.failed"},
+		{Key: "cause-1", Stage: StageConfiguration, Class: HumanOnly, Code: "doctor.repair.failed", Action: "review doctor.repair.failed"},
+	}
+	if err := report.Display(steps); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Steps) != 2 || report.Steps[0].ID == report.Steps[1].ID {
+		t.Fatalf("repeated identities projected as %+v, want two distinct steps", report.Steps)
+	}
+	firstID, secondID := report.Steps[0].ID, report.Steps[1].ID
+	if err := report.Display(steps); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Steps) != 2 || report.Steps[0].ID != firstID || report.Steps[1].ID != secondID {
+		t.Fatalf("re-displayed steps = %+v, want ids %d and %d kept", report.Steps, firstID, secondID)
+	}
+}
+
 // spec: doctor-repair-planning/json-repair-preserves-text-repair-exit-status
 func TestLoopJSONReportRetainsCompletedStepWhenLaterStepFails(t *testing.T) {
 	report := NewJSONReport()

@@ -1,5 +1,7 @@
 package repair
 
+import "strconv"
+
 type JSONReport struct {
 	Steps   []JSONStep       `json:"steps"`
 	Results []JSONStepResult `json:"results"`
@@ -37,21 +39,21 @@ func NewJSONReport() *JSONReport {
 }
 
 func (report *JSONReport) Display(steps []Step) error {
+	keys := reportKeys(steps)
 	ids := make([]int, len(steps))
 	blockers := make(map[string]int, len(steps))
 	active := make(map[string]bool, len(steps))
 	for i, step := range steps {
-		key := identity(step)
-		ids[i] = report.idFor(step)
-		active[key] = true
+		ids[i] = report.idFor(keys[i])
+		active[keys[i]] = true
 		if step.Key != "" {
 			blockers[step.Key] = ids[i]
 		}
 	}
 	report.retain(active)
 	for i, step := range steps {
-		report.ensureProjected(step, ids[i])
-		projected := &report.Steps[report.indexes[identity(step)]-1]
+		report.ensureProjected(keys[i], step, ids[i])
+		projected := &report.Steps[report.indexes[keys[i]]-1]
 		projected.Code = step.Code
 		projected.Class = step.Class
 		projected.Action = step.Action
@@ -71,21 +73,36 @@ func (report *JSONReport) Display(steps []Step) error {
 }
 
 func (report *JSONReport) RecordResult(step Step, applied bool, err error) {
-	id := report.idFor(step)
-	report.ensureProjected(step, id)
+	key := reportKey(identity(step), 0)
+	id := report.idFor(key)
+	report.ensureProjected(key, step, id)
 	status := "completed"
 	if err != nil {
 		status = "failed"
 	} else if !applied {
 		status = "deferred"
 	}
-	report.Steps[report.indexes[identity(step)]-1].Status = status
+	report.Steps[report.indexes[key]-1].Status = status
 	report.Results = append(report.Results, JSONStepResult{ID: id, Status: status})
 	report.hasResults[id] = true
 }
 
-func (report *JSONReport) idFor(step Step) int {
-	key := identity(step)
+func reportKeys(steps []Step) []string {
+	keys := make([]string, len(steps))
+	occurrences := make(map[string]int, len(steps))
+	for i, step := range steps {
+		id := identity(step)
+		keys[i] = reportKey(id, occurrences[id])
+		occurrences[id]++
+	}
+	return keys
+}
+
+func reportKey(base string, occurrence int) string {
+	return base + "\x00" + strconv.Itoa(occurrence)
+}
+
+func (report *JSONReport) idFor(key string) int {
 	if id, ok := report.ids[key]; ok {
 		return id
 	}
@@ -95,8 +112,7 @@ func (report *JSONReport) idFor(step Step) int {
 	return id
 }
 
-func (report *JSONReport) ensureProjected(step Step, id int) {
-	key := identity(step)
+func (report *JSONReport) ensureProjected(key string, step Step, id int) {
 	if _, ok := report.indexes[key]; ok {
 		return
 	}
