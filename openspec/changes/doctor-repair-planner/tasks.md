@@ -22,7 +22,7 @@
 
 ## 5. Shared aggregates for every target (B4)
 
-- [x] 5.1 Drive shared-aggregate repair from every target that declares native aggregates; verify with annotated tests
+- [x] 5.1 Drive shared-aggregate repair from every target that declares native aggregates; verify with annotated tests and declarative E2E case `config/doctor_repair_native_aggregate_targets`
 
 ## 6. JSON plan output (B5)
 
