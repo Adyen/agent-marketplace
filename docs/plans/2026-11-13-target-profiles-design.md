@@ -1258,10 +1258,9 @@ names. Current `kind:name` prerequisite parsing also rejects `all` and
 **Proposed profile identity:** keep `target_id` distinct from the existing
 compiled **harness target** IDs. The profile loader reserves every ID
 returned by the compiled target registry (`target.Targets()`); a profile
-that declares any of those IDs is invalid and is rejected before
-acquisition with `marketplace.profile.compiled-target-id` from the
-refusal table. `herdr-app` is a proposed application target ID, not a
-compiled harness target.
+that declares any of those IDs is invalid and refuses before acquisition
+with `marketplace.profile.compiled-target-id`. `herdr-app` is a proposed
+application target ID, not a compiled harness target.
 
 The proposed profile identity is `(target_id, source_id, revision_digest)`.
 Canonical typed `source_id` forms are `builtin:agent-marketplace`;
@@ -1284,9 +1283,10 @@ require canonical spelling or refuse with
 `git:https%3A%2F%2Fgit.example%2Fteam%2Fprofiles.git@refs%2Fheads%2Fmain#profiles%2Fherdr-app`;
 `directory:%2Fsrv%2Fprofiles%2Fherdr-app`.
 `revision_digest` is the exact full content digest of the selected
-resource with `kind: target-profile` and `name: <target_id>`, and `profile_digest` below equals
-that value. The digest covers the whole profile, including evidence-date
-changes; there is no narrower delivery-only profile digest in v1.
+resource with `kind: target-profile` and `name: <target_id>`;
+`profile_digest` below equals that value. The digest covers the whole
+profile, including evidence-date changes; there is no narrower
+delivery-only profile digest in v1.
 
 Built-in and upstream profiles may both be discoverable candidates for
 `herdr-app`. A source-bound selection names exactly one candidate; there
@@ -1363,8 +1363,9 @@ percent escapes. Both the CLI locator parser and Marketplace API route
 parser must split the escaped path before decoding that token. Canonical
 identity fields in `list`, the Marketplace index/API, ingestion sidecar
 and acquisition lock use the unescaped `herdr-app/mod`; the lock keeps
-`kind` and `name` as separate fields. The `%2F` route form requires proxies to forward encoded slashes undecoded;
-verify that with the existing reverse-proxy check before implementation. Examples:
+`kind` and `name` as separate fields. The `%2F` route form requires
+proxies to forward encoded slashes undecoded; verify that with the
+existing reverse-proxy check before implementation. Examples:
 
 | Surface | Proposed spelling |
 |---|---|
@@ -1433,8 +1434,7 @@ The assessment's existing canonical
 `assessment_digest` includes the complete `host_package_identity`; the
 artifact manifest repeats it, and the proposed Marketplace lock record
 stores that object plus `assessment_digest`. Profile resource selection
-and package selection remain separate lock records. No digest is derived
-from a sidecar claim.
+and package selection remain separate lock records.
 
 The Marketplace server requires an explicit per-package assessment
 selection keyed by registry ID, kind and name, containing the exact
@@ -1493,8 +1493,7 @@ sources cannot borrow Marketplace trust: if either declares Marketplace
 assessment or binding fields, refuse it as
 `marketplace.assessment.untrusted-source`.
 
-The following table is the complete proposed refusal-code set; each code
-appears here with its emitting side.
+The complete proposed refusal-code set, each with its emitting side:
 
 | Proposed refusal | Emitting side | Proposed diagnostic |
 |---|---|---|
