@@ -90,7 +90,7 @@ the pre-selected harness into the v4 user configuration.
 60. `tests/failed-sync.spec.ts` also starts from a v4 directory source selecting a Devin hook against a hand-written flat-entry `.devin/hooks.v1.json`. The settled launch shows a `materialize.devin` error banner, and the errors screen shows the `materialize.devin.aggregate-shape` catalog guidance instead of generic recovery copy. After closing the screen, `s` keeps the error and leaves the repository config and aggregate unchanged; `q` exits.
 61. `tests/plugin-parent-rows.spec.ts` launches with a plugin format source and checks that the plugin `t/kit` renders as one parent row with its skill, hook, and MCP members on screen.
 62. `tests/plugin-member-exclusion.spec.ts` selects the nested `skill t/review` member of a selected plugin, excludes it from that plugin through the toggle options, and checks the row, the member status, and that the config adds only a plugin `exclude` entry; restoring the member removes the exclusion and leaves nothing pending.
-64. `tests/marketplace-kind-search.spec.ts` searches the configured Marketplace by `/mcp` and `/command`, reaches opaque-name MCP servers and commands, clears both queries to restore the browse rows, and verifies the authored configs, acquisition lock, and materialized skill stay byte-identical.
+63. `tests/marketplace-kind-search.spec.ts` searches the configured Marketplace by `/mcp` and `/command`, reaches opaque-name MCP servers and commands, clears both queries to restore the browse rows, and verifies the authored configs, acquisition lock, and materialized skill stay byte-identical.
 
 `tests/target-pid.test.ts` is a helper test. It checks that the PID lookup used by the SIGTERM journey waits for the launcher to publish the PID.
 

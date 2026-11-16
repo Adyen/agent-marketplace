@@ -53,7 +53,7 @@ A failed drift check or missing output is a signal to diagnose before you rewrit
 These limits decide which parts of the lifecycle are available:
 
 - In the browser, you can inspect resources and copy install commands; installation happens in your terminal.
-- TUI Marketplace discovery shows at most 50 results per Marketplace and query, without pagination.
+- TUI Marketplace discovery shows at most 50 free-text results per Marketplace and query; a single resource-kind query paginates until every match is reached.
 - `agent-marketplace` does not install prerequisites; collections and tags group selections but do not resolve dependencies between resources.
 
 For command flags and less common options, see the [CLI reference](../reference/cli.md) and the [TUI reference](../reference/tui.md).
