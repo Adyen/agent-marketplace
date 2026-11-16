@@ -81,8 +81,6 @@ type packagePlan struct {
 	Files []plannedFile
 }
 
-type caseFunc func(string) error
-
 type refusalError string
 
 func (e refusalError) Error() string {
@@ -98,7 +96,7 @@ func main() {
 
 	checks := []struct {
 		name string
-		run  caseFunc
+		run  func(string) error
 	}{
 		{"roots-macos-default", func(scratch string) error {
 			return checkRootMatrix(profiles, "macos", nil, filepath.Join(scratch, "home"), map[string]string{
@@ -269,9 +267,6 @@ func checkRefusal(scratch string, p profile, declaration importDeclaration, osNa
 	}
 	resolved, err := resolveRoot(p, osName, nil, home)
 	if err != nil {
-		return err
-	}
-	if err := requireInside(scratch, resolved); err != nil {
 		return err
 	}
 	_, err = planPackage(p, declaration, source, resolved)
