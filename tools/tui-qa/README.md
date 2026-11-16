@@ -25,7 +25,7 @@ Each interaction contract has its own file. The `*.spec.ts` files are PTY journe
 
 1. `tests/launch-browse-inspect.spec.ts` launches with no arguments, browses the single status view, selects the available `alpha-skill` (whose detail offers `space = toggle · enter = full view`), opens details, returns, and quits.
 2. `tests/search-and-select.spec.ts` searches, checks that the match stays and a distractor disappears, and selects the match.
-3. `tests/local-toggle-and-sync.spec.ts` toggles an available skill locally, observes pending drift, syncs, and verifies the config and the files written to the harness folders.
+3. `tests/local-toggle-and-sync.spec.ts` toggles an available skill locally, observes pending drift, syncs, verifies the config and harness files, and checks that sync builds its locked Git source revision once.
 4. `tests/help-and-return.spec.ts` opens help and returns to the same selection. Its minimum-size variant scrolls through every help group and independently authored key/description pair at 50x12, acknowledging each line's changed frame without a sleep. Close and hard-quit hints remain visible throughout. Escape returns to the selected `alpha-skill`, reopening restores the exact final viewport, and Ctrl+C exits directly from help.
 5. `tests/resize-and-recover.spec.ts` shrinks the terminal below the minimum size, checks that a toggle and a wheel event are ignored, and recovers at exactly 50x12 with the selection unchanged.
 6. `tests/ctrl-c-hard-exit.spec.ts` exits with Ctrl+C within a time bound.

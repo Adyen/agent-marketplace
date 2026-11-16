@@ -11,6 +11,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/cache"
 	"github.com/Adyen/agent-marketplace/internal/config"
 	"github.com/Adyen/agent-marketplace/internal/pipeline"
+	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
 	"github.com/Adyen/agent-marketplace/internal/tui"
 )
 
@@ -70,9 +71,16 @@ func runTUIConfigMutation(ctx context.Context, workspace pipeline.Workspace, mut
 	return pipeline.MutateConfigWithDependencies(ctx, ws.RepoRoot(), ws.LocalConfigDir(), mutation, reconcileCommandDependencies)
 }
 
-func runTUIDependencyLifecycle(ctx context.Context, workspace pipeline.Workspace, upgrade bool) (pipeline.SyncResult, error) {
+func runTUIDependencyLifecycle(ctx context.Context, workspace pipeline.Workspace, upgrade bool) (result pipeline.SyncResult, retErr error) {
 	ctx = pipeline.WithTransientOrganizationMarketplaceLockCache(ctx)
 	ctx = cache.WithFreshExactGitVerificationScope(ctx)
+	ctx, closeRevisionSession := sourcerevision.WithFreshSession(ctx)
+	defer func() {
+		if closeErr := closeRevisionSession(); closeErr != nil {
+			retErr = errors.Join(retErr, closeErr)
+		}
+	}()
+
 	ws, err := pipeline.NewWorkspace(workspace.RepoRoot(), workspace.LocalConfigDir())
 	if err != nil {
 		return pipeline.SyncResult{}, err
@@ -92,7 +100,7 @@ func runTUIDependencyLifecycle(ctx context.Context, workspace pipeline.Workspace
 		return pipeline.SyncResult{}, err
 	}
 	options := pipeline.ResolveOptions{Workspace: ws, ReadOnlyExactLocks: true, ExactLockLease: exactLease, MarketplaceReportArchiveEvidenceDrift: true}
-	result := runTUIExactSync(ctx, options)
+	result = runTUIExactSync(ctx, options)
 	errs := result.Errors
 	var persistedRefreshes map[archiveRefreshKey]bool
 	if len(errs) == 0 {

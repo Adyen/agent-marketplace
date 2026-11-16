@@ -25,6 +25,7 @@ import (
 	"github.com/Adyen/agent-marketplace/internal/marketplace"
 	"github.com/Adyen/agent-marketplace/internal/materialize"
 	"github.com/Adyen/agent-marketplace/internal/resolver"
+	"github.com/Adyen/agent-marketplace/internal/sourcerevision"
 	"github.com/Adyen/agent-marketplace/internal/telemetry"
 	hcc "github.com/Adyen/agent-marketplace/pkg/harness-compilation"
 	"github.com/Adyen/agent-marketplace/pkg/harness-compilation/compile"
@@ -322,14 +323,14 @@ func Resolve(ctx context.Context, opts ResolveOptions) ResolveResult {
 	return result
 }
 
-func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
-	releaseExactLease := func() {}
+func resolve(ctx context.Context, opts ResolveOptions) (result ResolveResult, releaseExactLease func()) {
+	releaseExactLease = func() {}
+	ctx, closeRevisionSession := sourcerevision.WithSession(ctx)
 	start := time.Now()
 	if opts.Offline {
 		opts.CatalogMode = catalog.LoadModeInspect
 	}
 	slog.Debug("pipeline resolve start", "repo_root", opts.Workspace.RepoRoot(), "catalog_mode", opts.CatalogMode, "offline", opts.Offline)
-	var result ResolveResult
 	result.LockMetadata = append([]LockMetadata(nil), opts.LockMetadata...)
 	// Every early return below must still hand back a valid policy: an unset
 	// mode matches neither "symlink" nor "file" and would silently pick a
@@ -362,6 +363,11 @@ func resolve(ctx context.Context, opts ResolveOptions) (ResolveResult, func()) {
 		if resolveSpan != (telemetry.Span{}) {
 			resolveSpan.SetAttributes(resolveResultAttrs(result, time.Since(start)))
 			resolveSpan.End()
+		}
+	}()
+	defer func() {
+		if closeErr := closeRevisionSession(); closeErr != nil {
+			result.Errors = append(result.Errors, closeErr)
 		}
 	}()
 

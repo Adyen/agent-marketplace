@@ -716,6 +716,12 @@ func prepareRuntimeLocks(ctx context.Context, repoRoot, localDir string, mode lo
 		}
 		slog.Info("lock lifecycle completed", attrs...)
 	}()
+	ctx, closeRevisionSession := sourcerevision.WithSession(ctx)
+	defer func() {
+		if closeErr := closeRevisionSession(); closeErr != nil {
+			resultErr = errors.Join(resultErr, closeErr)
+		}
+	}()
 
 	ws, err := pipeline.WorkspaceForRoots(repoRoot, localDir)
 	if err != nil {
@@ -1865,7 +1871,7 @@ func acquireLockedRegistry(ctx context.Context, canonical, fetchURL, ref string,
 		if builtRequirements[requirement] {
 			continue
 		}
-		built, err := sourcerevision.Build(sourcerevision.Input{SnapshotRoot: snapshot, RootPath: rootPath, SourceHarness: entry.SourceHarness})
+		built, err := sourcerevision.BuildWithContext(ctx, sourcerevision.Input{SnapshotRoot: snapshot, RootPath: rootPath, SourceHarness: entry.SourceHarness})
 		if err != nil {
 			return acquiredRegistry{}, fmt.Errorf("build source revision for %s/%s: %w", canonical, rootPath, err)
 		}
@@ -2033,7 +2039,7 @@ func addLayerSnapshots(ctx context.Context, set *exactLockSet, source config.Sou
 			consume := func(path string) error {
 				snapshot = path
 				if len(registry.Roots) > 0 {
-					rootResult, verifyErr := sourcerevision.VerifyLockedGitRootWithPluginContext(path, root, pluginContexts.PluginContextFor(registry, root))
+					rootResult, verifyErr := sourcerevision.VerifyLockedGitRootWithContext(ctx, path, root, pluginContexts.PluginContextFor(registry, root))
 					if verifyErr != nil {
 						return &lockLifecycleError{Code: "lock.manifest-mismatch", Err: fmt.Errorf("verify %s@%s root %q: %w", registry.URL, registry.Commit.String(), root.Path, verifyErr)}
 					}
