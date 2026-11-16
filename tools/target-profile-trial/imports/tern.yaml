@@ -1,0 +1,12 @@
+sourceRoot: fixtures/tern-plugin
+package:
+  id: tern/plugin:sample-tools
+  name: sample-tools
+  kind: plugin
+files:
+  - source: plugin.toml
+    destination: plugins/sample-tools/plugin.toml
+  - source: host.luau
+    destination: plugins/sample-tools/host.luau
+  - source: window.luau
+    destination: plugins/sample-tools/window.luau
