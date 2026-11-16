@@ -704,8 +704,10 @@ sources:
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, configPath, string(append(configBytes, []byte("\nbackup:\n  max_per_day: 2\n")...)))
+	writeFile(t, configPath, string(append(configBytes, []byte("\nbackup:\n  max_days: 1\n  max_per_day: 2\n")...)))
 	clearConfigArchives(t, homeDir)
+	oldConfigArchive := filepath.Join(backupsDir, "agents-config", "2000-01-01-000000.tar.gz")
+	writeFile(t, oldConfigArchive, "")
 
 	// No backup should exist yet (install doesn't create one).
 	archives, _ := filepath.Glob(filepath.Join(backupsDir, "factory", "*.tar.gz"))
@@ -741,6 +743,9 @@ sources:
 	}
 	if archives := configArchivePaths(t, homeDir); len(archives) != 2 {
 		t.Fatalf("configuration archives after rotation = %v, want two", archives)
+	}
+	if _, err := os.Stat(oldConfigArchive); !os.IsNotExist(err) {
+		t.Fatalf("old configuration archive remains after max_days rotation: %v", err)
 	}
 	if _, err := os.Stat(first[0]); !os.IsNotExist(err) {
 		t.Fatalf("oldest configuration archive remains after rotation: %v", err)
