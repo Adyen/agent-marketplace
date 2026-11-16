@@ -63,15 +63,9 @@ func TestGitAcquisitionDoesNotPromptOnTTY(t *testing.T) {
 	if err := os.Mkdir(filepath.Dir(knownHosts), 0o700); err != nil {
 		t.Fatalf("create SSH directory: %v", err)
 	}
-	if err := os.Chmod(filepath.Dir(knownHosts), 0o700); err != nil {
-		t.Fatalf("set SSH directory mode: %v", err)
-	}
 	knownHostsBefore := []byte("existing known_hosts fixture\n")
 	if err := os.WriteFile(knownHosts, knownHostsBefore, 0o600); err != nil {
 		t.Fatalf("seed known_hosts: %v", err)
-	}
-	if err := os.Chmod(knownHosts, 0o600); err != nil {
-		t.Fatalf("set known_hosts mode: %v", err)
 	}
 	parentSession, err := processSessionID(os.Getpid())
 	if err != nil {

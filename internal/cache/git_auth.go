@@ -22,10 +22,15 @@ func (e gitAuthConfigError) DiagnosticCode() string { return "git.auth-config-un
 
 var ErrGitAuthConfigUntrusted error = gitAuthConfigError("git.auth-config-untrusted: authentication configuration must use trusted system/global files and ordinary include chains; conditional includes and repository-local authentication settings are unsupported")
 
-func gitAcquisition(args []string) (string, bool) {
+func stripGitConfigArgs(args []string) []string {
 	for len(args) >= 2 && args[0] == "-c" {
 		args = args[2:]
 	}
+	return args
+}
+
+func gitAcquisition(args []string) (string, bool) {
+	args = stripGitConfigArgs(args)
 	if len(args) == 0 || args[0] != "clone" && args[0] != "fetch" {
 		return "", false
 	}
@@ -85,14 +90,18 @@ func gitTransportFailureDiagnostic(source, stderr string) string {
 	if diagnostic, ok := classifiedGitTransportFailure(canonical, stderr); ok {
 		return diagnostic
 	}
-	if strings.HasPrefix(canonical, "ssh://") || strings.HasPrefix(canonical, "git+scp://") {
+	if gitSSHTransport(canonical) {
 		return gitTransportSSHDiagnostic
 	}
 	return gitTransportWithheldDiagnostic
 }
 
+func gitSSHTransport(canonical string) bool {
+	return strings.HasPrefix(canonical, "ssh://") || strings.HasPrefix(canonical, "git+scp://")
+}
+
 func classifiedGitTransportFailure(canonical, stderr string) (string, bool) {
-	if strings.HasPrefix(canonical, "ssh://") || strings.HasPrefix(canonical, "git+scp://") {
+	if gitSSHTransport(canonical) {
 		lower := strings.ToLower(stderr)
 		if strings.Contains(lower, "remote host identification has changed") {
 			return "", false

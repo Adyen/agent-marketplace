@@ -379,10 +379,7 @@ func runGitRawOutputContext(ctx context.Context, repoDir string, safeArgs []stri
 	if isGitTransportFailure(err) {
 		return "", err
 	}
-	args := safeArgs
-	for len(args) >= 2 && args[0] == "-c" {
-		args = args[2:]
-	}
+	args := stripGitConfigArgs(safeArgs)
 	if len(args) == 5 && args[0] == "ls-remote" && args[1] == "--symref" && args[2] == "--" && args[4] == "HEAD" {
 		if canonical, cerr := canonicalGitTransport(args[3]); cerr == nil {
 			if diagnostic, ok := classifiedGitTransportFailure(canonical, string(output)); ok {
