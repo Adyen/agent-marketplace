@@ -105,7 +105,7 @@ target. Keep this authority in `internal/harness`. Evolve its existing
 accepted-kind seam for application target definitions. Compose compiled
 targets from `target.Definitions()` and the current legacy `TargetInfo`
 and native-layout adapter factories; do not add a third hand-maintained
-map beside `TargetInfoMap` and the adapter registry. During migration,
+map besides `TargetInfoMap` and the adapter registry. During migration,
 adapt `TargetInfoMap` as a derived compatibility view. Devin, Codex, and
 OpenCode remain adapter-backed and must never fall back to legacy metadata.
 
@@ -129,8 +129,8 @@ when the compiled `AcceptedKinds` declares it. `config.AllKinds` holds
 only the five leaf kinds and `collection` (`internal/config/config.go`);
 plugins ride the v4 ordered decision stream (`internal/config/v4.go`,
 `v4KindToIR`) and the package path, so deriving acceptance from
-`config.AllKinds` alone would silently lose plugin. Keep plugin package
-dispatch separate rather than adding a public selector or config field,
+`config.AllKinds` alone would silently lose the `plugin` kind. Keep plugin
+package dispatch separate rather than adding a public selector or config field,
 and do not add `plugin` to `config.AllKinds` or change existing selector
 assumptions. Do not maintain an independent per-target application-kind
 list. Rule's diagnostic-only translation paths remain available even
