@@ -4,11 +4,12 @@
 
 TUI search SHALL match resource kind identifiers and displayed kind labels case-insensitively for configured and uninstalled Marketplace resources, independently of their names and descriptions. A kind query SHALL reach every matching discoverable resource across result pages and configured allowed endpoints. The existing slash shortcut SHALL open search without becoming part of the query.
 
-#### Scenario: MCP kind query discovers unnamed Marketplace matches
+#### Scenario: Every kind query discovers all Marketplace matches
 
-- **WHEN** a user presses `/` and types `mcp` with configured and uninstalled MCP servers whose names and descriptions contain no `mcp` text
-- **THEN** all those MCP servers MUST be reachable in the filtered list, including Marketplace matches beyond the first page and across configured allowed endpoints
-- **AND** a mixed-case `MCP` query MUST match the same kinds
+- **WHEN** a user presses `/` and types any supported resource kind with configured and uninstalled resources whose names and descriptions contain no kind text
+- **THEN** all resources of that kind MUST be reachable in the filtered list, including Marketplace matches beyond the first page and across configured allowed endpoints
+- **AND** `/mcp` MUST reach all MCP servers and `/command` MUST reach all commands through this same generic behavior
+- **AND** mixed-case kind queries MUST match the same kinds
 
 #### Scenario: Other kinds retain additive text matching
 
