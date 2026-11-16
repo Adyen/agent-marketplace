@@ -1259,16 +1259,30 @@ names. Current `kind:name` prerequisite parsing also rejects `all` and
 compiled **harness target** IDs. The profile loader reserves every ID
 returned by the compiled target registry (`target.Targets()`); a profile
 that declares any of those IDs is invalid and is rejected before
-acquisition. `herdr-app` is a proposed application target ID, not a
+acquisition with `marketplace.profile.compiled-target-id` from the
+refusal table. `herdr-app` is a proposed application target ID, not a
 compiled harness target.
 
-The proposed profile identity is the tuple
-`(target_id, source_id, revision_digest)`. `source_id` is canonical and
-typed: `builtin:agent-marketplace`;
-`marketplace:<normalized-endpoint>#<instance-id>/<registry-id>/<profile-root>`;
-`git:<credential-free-normalized-origin>@<configured-ref>#<source-path>`; or
-`directory:<canonical-root>`. A configured source alias is not identity.
-Ref and path components use the ref percent-encoding, including `git:` source paths and `directory:` roots.
+The proposed profile identity is `(target_id, source_id, revision_digest)`.
+Canonical typed `source_id` forms are `builtin:agent-marketplace`;
+`marketplace:<endpoint>#<instance-id>/<registry-id>/<profile-root>`;
+`git:<origin>@<ref>#<source-path>`; and `directory:<canonical-root>`.
+`<endpoint>` is the normalized value from
+`internal/marketplace/locator.go:NormalizeMarketplaceURL`; credential-free
+`<origin>` is the canonical URL from
+`internal/lockfile/giturl.go:CanonicalGitURLV1`; `<canonical-root>` is
+absolute and symlink-resolved. Source aliases are not identity.
+
+Encode each variable component's UTF-8 bytes without Unicode normalization.
+Leave only RFC 3986 unreserved bytes (`A-Z`, `a-z`, `0-9`, `-`, `.`, `_`,
+`~`) literal; percent-encode every other byte with uppercase hex. Escape
+`@`, `#`, `/`, `:`, and `%` inside components; grammar separators remain
+literal. Split on literal separators before decoding each component once;
+require canonical spelling or refuse with
+`marketplace.profile.identity-invalid`. Examples: `builtin:agent-marketplace`;
+`marketplace:https%3A%2F%2Fmp.example#mp-1/curated/profiles`;
+`git:https%3A%2F%2Fgit.example%2Fteam%2Fprofiles.git@refs%2Fheads%2Fmain#profiles%2Fherdr-app`;
+`directory:%2Fsrv%2Fprofiles%2Fherdr-app`.
 `revision_digest` is the exact full content digest of the selected
 resource with `kind: target-profile` and `name: <target_id>`, and `profile_digest` below equals
 that value. The digest covers the whole profile, including evidence-date
@@ -1280,21 +1294,24 @@ is no precedence rule that silently chooses one, no implicit latest, and
 no fallback if its source or pinned revision is absent. If two distinct
 profile identities for one `target_id` are selected in the same or
 different layers, resolution refuses before acquiring either, naming both
-source identities and declaring layers. Repeated selections of the same
+source identities and declaring layers with
+`marketplace.profile.selection-ambiguous`. Repeated selections of the same
 identity collapse to one. Switching explicitly from the built-in profile
 to an upstream profile changes identity even if their profile bytes are
 equal; it requires fresh local approval and a matching package
 reassessment before Marketplace delivery.
 
 A deselected profile with packages still directly selected triggers
-Decision 1's target-scoped configuration error before acquisition. If owned
+Decision 1's target-scoped configuration error
+(`marketplace.profile.deselected-package`) before acquisition. If owned
 files exist, retain bytes and ownership; refuse target-specific sync,
 update, prune, or cleanup that would mutate them, while unrelated targets
 proceed. If the profile remains selected but its exact source revision
-disappears, report it unavailable (not a deselection/configuration error)
-and apply the same retention and refusal. Explicit retirement requires the
-exact profile identity/revision, approved command set, and recorded
-resolved root/executable and placement; if unavailable, refuse cleanup.
+disappears, report it unavailable (`marketplace.profile.unavailable`, not a
+deselection/configuration error) and apply the same retention and refusal.
+Explicit retirement requires the exact profile identity/revision, approved
+command set, and recorded resolved root/executable and placement; if
+unavailable, refuse cleanup.
 A different profile revision never authorizes pruning old output. This
 defines retention only, not register lifecycle or garbage collection.
 
@@ -1308,12 +1325,14 @@ registry-side location for import mapping and identity-relevant metadata;
 upstream repositories need no Agent Marketplace fields. `files` lists
 each imported file explicitly as `{source_path, destination_path}`.
 `source_path` is relative to `payload/`; `destination_path` is relative to
-the profile-resolved target root. Tree imports are expanded to explicit
-file records before ingestion, not represented by runtime globs. Every
-payload file must be mapped exactly once; `display_files: array<string>`
-lists sidecar-relative display-only files, which are not payload. Existing
-containment rules apply;
-paths outside the package source root and symlink escapes refuse.
+the profile-resolved target root. Tree imports expand to explicit file
+records before ingestion. Every payload file maps exactly once; source paths
+use `/`, have no empty, `.` or `..` components, stay below `payload/`, and
+resolve to regular nonsymlink files. Unmapped files and duplicate source
+mappings refuse. Each destination is relative, unique, and contained beneath
+an entry in the profile's `into` allowlist; escapes and duplicate destinations
+refuse before digesting. `display_files: array<string>` lists sidecar-relative
+display files, not payload, and remains under the package root.
 
 The proposed sidecar identity fields are `target_id: string`,
 `kind: string`, `name: string`, and `files: array<{source_path: string,
@@ -1325,7 +1344,7 @@ target_id: herdr-app
 kind: herdr-app/mod
 name: chris-links
 files:
-  - {source_path: main.js, destination_path: mods/chris-links/main.js}
+  - {source_path: mods/chris-links/main.js, destination_path: mods/chris-links/main.js}
 ```
 
 Use one canonical identity everywhere: `kind` is an existing unscoped kind
@@ -1360,24 +1379,26 @@ verify that with the existing reverse-proxy check before implementation. Example
 
 Today the v4 parser reads `herdr-app/mod/chris-links` as registry
 `herdr-app`, kind `mod`, name `chris-links`, then refuses unknown kind
-`mod`. The proposal keeps that refusal without slash-kind reinterpretation;
-its diagnostic names unknown kind `mod` and suggests
-`herdr-app%2Fmod/chris-links`. Lowercase `%2f`, double decoding, extra
-slashes, or an unescaped slash inside the kind are refused too. The
+`mod`. The proposal keeps that refusal without slash-kind reinterpretation,
+using `marketplace.locator.ambiguous-kind` and suggesting
+`herdr-app%2Fmod/chris-links`. Lowercase `%2f`, double decoding, or
+malformed percent escapes refuse with
+`marketplace.locator.invalid-encoding`; extra slashes or an unescaped slash
+inside the kind refuse with `marketplace.locator.ambiguous-kind`. The
 existing prerequisite parser splits `kind:name` at the first colon, so
 the proposed slash-kind form is unambiguous because `kind` excludes
 colons; the new kind must be accepted in both structured and shorthand
 forms rather than silently dropped by `catalog.requires.invalid`.
 
 The new API capability and OpenAPI vocabulary must advertise the exact kind.
-Released v4.1.4 rejects kind `target-profile` as unknown before acquisition;
-it must not reinterpret it as `mod`, `skill`, or a path. The current client
-fails closed on unknown selectable kinds (`plugin-packages`); no fallback is proposed.
+The current client fails closed on unknown selectable kinds
+(`plugin-packages`); no fallback is proposed.
 Layer reads decode in `internal/dependencytxn/layer_lock.go`;
 `internal/lockfile/codec.go` normalizes via
 `internal/lockfile/marketplace.go:normalizeMarketplaceResource`, which
 rejects kinds outside `api.IsMarketplaceKind`. Released v4.1.4 therefore
-rejects `herdr-app/mod` and kind `target-profile` as unknown;
+rejects `herdr-app/mod` and kind `target-profile` as unknown before
+acquisition and does not reinterpret them as another kind or path;
 `internal/marketplacelock/merge.go` receives only decoded records and
 never ignores or reinterprets them. Host targets have no repository
 roots, so these records belong only in user/organization locks;
@@ -1396,8 +1417,8 @@ and types are:
 
 | Field | Type | Computation |
 |---|---|---|
-| `package_content_digest` | `string`, `sha256:<64 lowercase hex>` | The package revision/content digest: SHA-256 with domain tag `agent-marketplace/host-package-content/v1`, followed by records sorted by raw byte order of `path`; each path, mode and raw payload bytes are prefixed by an unsigned 64-bit big-endian byte length. Mode is regular-file `0644` or executable-file `0755`; symlinks are refused. Sidecar and display-only files are excluded; the digest is independent of profile choice. |
-| `delivery_mapping_digest` | `string`, `sha256:<64 lowercase hex>` | SHA-256 with domain tag `agent-marketplace/host-package-mapping/v1`, followed by records sorted by raw byte order of the `(source_path, destination_path)` pair; each path is prefixed by an unsigned 64-bit big-endian byte length. |
+| `package_content_digest` | `string`, `sha256:<64 lowercase hex>` | SHA-256 of the UTF-8 domain-tag bytes `agent-marketplace/host-package-content/v1`, then `0x00`, then records sorted by the UTF-8 bytes of `path`. `path` is the UTF-8 bytes of payload-relative `source_path`, uses `/`, has no empty, `.` or `..` components, and is not NFC-normalized. `mode` is one byte: `0x00` for mode `0644` or `0x01` for mode `0755`; all other modes, symlinks, and other file types refuse. Each record is `u64be(len(path)) || path || u64be(1) || mode || u64be(len(bytes)) || bytes`, where lengths count bytes and `u64be(n)` encodes unsigned 64-bit big-endian `n`. Sidecar and display-only files are excluded; the digest is independent of profile choice. |
+| `delivery_mapping_digest` | `string`, `sha256:<64 lowercase hex>` | SHA-256 of the UTF-8 domain-tag bytes `agent-marketplace/host-package-mapping/v1`, then `0x00`, then records sorted by UTF-8 `source_path` bytes and then `destination_path` bytes. Each record is `u64be(len(source_path)) || source_path || u64be(len(destination_path)) || destination_path`; paths are UTF-8 bytes with `/` separators and no NFC normalization, lengths count bytes, and `u64be(n)` is unsigned 64-bit big-endian. Duplicate `destination_path` values refuse before digesting. |
 | `profile_digest` | `string`, `sha256:<64 lowercase hex>` | The exact full `target-profile` resource content digest; equal to `profile_identity.revision_digest`. |
 | `profile_identity` | object `{target_id: string, source_id: string, revision_digest: string}` | `target_id` matching `[a-z][a-z0-9-]*` and canonical `source_id` identify the selected profile; `revision_digest` is its exact full content digest. |
 
@@ -1426,7 +1447,7 @@ host_package_assessment_profiles:
     name: chris-links
     profile_identity:
       target_id: herdr-app
-      source_id: marketplace:https://mp.example#mp-instance/curated/profiles
+      source_id: marketplace:https%3A%2F%2Fmp.example#mp-instance/curated/profiles
       revision_digest: sha256:<64-hex>
 ```
 
@@ -1442,10 +1463,12 @@ refuse the old assessment.
 Verification sequence, all proposed:
 
 1. **Ingestion** resolves the explicitly pinned profile revision, checks
-   the target ID, validates the sidecar paths, computes the package and
-   mapping digests from the exact source bytes, and creates the assessment
-   binding. Missing profile or any claimed digest mismatch does not create
-   an installable assessment.
+    the target ID, validates the sidecar paths, computes the package and
+    mapping digests from the exact source bytes, and creates the assessment
+    binding. An unset profile or mismatched sidecar digest claim refuses
+    with `marketplace.profile.unconfigured` or
+    `marketplace.package.claim-mismatch`, respectively, and creates no
+    installable assessment.
 2. **Publication** checks that assessment, resource revision and artifact
    manifest carry identical identity fields; verifies the computed
    assessment/content/archive digests; and atomically publishes them
@@ -1470,16 +1493,28 @@ sources cannot borrow Marketplace trust: if either declares Marketplace
 assessment or binding fields, refuse it as
 `marketplace.assessment.untrusted-source`.
 
-| Proposed refusal | Proposed diagnostic |
-|---|---|
-| Assessment or artifact binding is absent | `marketplace.assessment.identity-missing` |
-| Binding differs from its recomputed assessment/artifact digest | `marketplace.assessment.identity-invalid` |
-| Selected profile source or revision differs | `marketplace.profile.binding-mismatch` |
-| Recomputed import mapping differs | `marketplace.package.mapping-mismatch` |
-| Offline cache/lock has no profile binding | `marketplace.cache.profile-binding-missing` |
-| Offline assessment digest mismatches its recomputed value | `marketplace.assessment.identity-invalid` |
-| Git/directory input claims a Marketplace assessment | `marketplace.assessment.untrusted-source` |
-| Package bytes do not match `package_content_digest` | `marketplace.package.content-mismatch` |
+The following table is the complete proposed refusal-code set; each code
+appears here with its emitting side.
+
+| Proposed refusal | Emitting side | Proposed diagnostic |
+|---|---|---|
+| Server profile selection is unset | server ingestion/publication | `marketplace.profile.unconfigured` |
+| Configured profile source or revision differs | server ingestion/publication | `marketplace.profile.revision-mismatch` |
+| Two distinct identities are selected for one target; profile declares compiled target ID | config/selection | `marketplace.profile.selection-ambiguous`; `marketplace.profile.compiled-target-id` |
+| Package remains selected after profile deselection; selected profile revision is unavailable | config/selection | `marketplace.profile.deselected-package`; `marketplace.profile.unavailable` |
+| Source ID has malformed or noncanonical component escapes | server ingestion/publication; client online; client offline; config/selection | `marketplace.profile.identity-invalid` |
+| Raw slash-kind/extra slash makes kind ambiguous; locator escape is malformed or noncanonical | server ingestion/publication; config/selection | `marketplace.locator.ambiguous-kind`; `marketplace.locator.invalid-encoding` |
+| Source/display path is absolute or traversing (`path-invalid`); outside-root or symlink-escaped (`path-escape`); symlink or nonregular (`file-type-invalid`) | server ingestion/publication | `marketplace.package.path-invalid`; `marketplace.package.path-escape`; `marketplace.package.file-type-invalid` |
+| Payload file is unmapped; source mapping or destination path is duplicated | server ingestion | `marketplace.package.file-unmapped`; `marketplace.package.mapping-duplicate-source`; `marketplace.package.mapping-duplicate-destination` |
+| Destination path is malformed; destination is outside the profile's `into` allowlist | server ingestion/publication; client online; client offline | `marketplace.package.destination-invalid`; `marketplace.package.destination-escape` |
+| Sidecar digest claim differs from recomputed value | server ingestion | `marketplace.package.claim-mismatch` |
+| Assessment or artifact binding is absent | server publication; client online; client offline | `marketplace.assessment.identity-missing` |
+| Binding differs from its recomputed assessment/artifact digest | server publication; client online; client offline | `marketplace.assessment.identity-invalid` |
+| Selected profile source or revision differs | client online; client offline | `marketplace.profile.binding-mismatch` |
+| Recomputed import mapping differs | server ingestion/publication; client online; client offline | `marketplace.package.mapping-mismatch` |
+| Offline cache/lock has no profile binding | client offline | `marketplace.cache.profile-binding-missing` |
+| Git/directory input claims a Marketplace assessment | server ingestion/publication | `marketplace.assessment.untrusted-source` |
+| Package bytes do not match `package_content_digest` | server ingestion/publication; client online; client offline | `marketplace.package.content-mismatch` |
 
 #### Proposed analysis disclosures and limits
 
@@ -1522,9 +1557,10 @@ Only packaged helper scripts are recursively scanned; undeclared external
 helpers are not followed. Static analysis can miss behavior and cannot
 prove all runtime dependencies.
 
-Proposed v1 policy rejects prebuilt native executables and opaque
-executable assets (native signatures such as ELF, Mach-O or PE, or executable-mode non-script files), independent of filename extension; it does not waive
-`marketplace.find.invalid-utf8`. That existing finding still rejects
+Proposed v1 keeps the existing `marketplace.find.executable-asset`
+rejection for opaque native, packaged, or binary executable assets,
+including ELF, Mach-O, and PE signatures. It adds no executable-mode
+rejection rule and keeps `marketplace.find.invalid-utf8`: that finding rejects
 unknown non-UTF-8 support bytes, and only the current explicitly
 recognized non-executable binary signatures remain exempt from text
 scanning. Executable scripts remain analyzable disclosures, not
@@ -1545,11 +1581,12 @@ host-package behavior already exists.
 | Proposed extension | Existing spec(s) | Implementation seam(s) | Future acceptance witness |
 |---|---|---|---|
 | One explicitly chosen profile identity; compiled-ID and multi-layer ambiguity refusal | `resource-selection` (Name collisions resolve per install scope); `marketplace-api` (Capabilities document and wire vocabulary) | `pkg/harness-compilation/target/target.go`; `internal/config/targets.go`; `internal/resolver/resolver.go` | Built-in and upstream candidates share an ID; selecting both in one or different layers refuses before acquisition and names both; selecting a compiled ID refuses. |
-| Deselect/remove keeps owned files and permits no prune under a different profile revision | `plugin-delivery` (Removal retires only owned plugin output); `exact-snapshot-verification` (Exact snapshots are scoped to the configured root) | `internal/ownership/state.go`; `internal/materialize/materialize.go`; `internal/marketplace/resolver.go`; `internal/config/` | Remove the selected profile with owned files: bytes and ownership remain; cleanup with a different profile revision refuses. |
+| Deselect/remove keeps owned files and permits no prune under a different profile revision | `plugin-delivery` (Removal retires only owned plugin output); `exact-snapshot-verification` (Exact snapshots are scoped to the configured root) | `internal/ownership/state.go`; `internal/materialize/materialize.go`; `internal/marketplace/resolver.go`; `internal/config/` | Remove the selected profile with owned files: bytes and ownership remain; an unavailable exact source revision reports unavailable and retains them; cleanup with a different profile revision refuses. |
 | Same package bytes under a different selected profile refuse online and offline | `marketplace-api` (Canonical artifact format); `marketplace-publication`; `resource-listing` (List includes Marketplace selections from the verified cache) | `pkg/marketplace/store/assessment.go`; `internal/marketplace/client.go`; `internal/marketplace/resolver.go`; `internal/marketplace/cache.go` | Keep package content digest constant, change selected profile identity, and assert refusal before materialization in online and no-fetch offline modes. |
 | Explicit server profile pin; unset or changed profile blocks assessment until reassessment | `marketplace-publication`; `marketplace-api` | `pkg/marketplace/config/config.go`; `pkg/marketplace/ingest/ingest.go`; `cmd/agent-marketplace/serve_managed.go`; `pkg/marketplace/store/assessment.go` | Ingestion without a configured exact profile refuses; changing the configured profile digest refuses publication until the package is reassessed and the new identity is published. |
 | Offline cache reuse only with a valid locked binding; tampered/missing binding refuses | `resource-listing` (List includes Marketplace selections from the verified cache); `deployed-acquisition-locks` (Deployed evidence is validated before use); `acquisition-lock-codec` (Acquisition lock encoding is deterministic and canonical) | `internal/marketplace/cache.go`; `internal/marketplace/lock_evidence.go`; `internal/lockfile/schema.go`; `internal/marketplacelock/lock.go` | A valid profile-bound cache resolves offline; tampering with the cached assessment/artifact binding or removing the binding fails closed without network access. |
 | Mapping digest mismatch and Git/directory Marketplace-assessment claims refuse | `marketplace-api` (Canonical artifact format); `plugin-packages` (Released v4 clients fail closed on plugin configuration) | `pkg/marketplace/ingest/ingest.go`; `pkg/marketplace/store/assessment.go`; `internal/marketplace/resolver.go`; `internal/catalog/catalog.go` | Alter the mapping after assessment, or put a Marketplace assessment claim in Git/directory metadata; both refuse before staging and name the affected identity. |
+| Package boundary and file-map containment refuse unsafe imports | `registry-symlink-containment` (Configured source root bounds symlink validation; Disk primary payload ingestion stays below captured source authority) | `pkg/marketplace/ingest/ingest.go:registryEntryPath`; `pkg/marketplace/ingest/ingest.go:fileSetForResource`; `internal/fsboundary.OpenSourceFS`; `internal/fsboundary.Dir.OpenPath` | Out-of-root paths, symlink escapes, nonregular files, unmapped payload files, duplicate source mappings or destinations, and destinations outside profile `into` all refuse before digesting or staging. |
 | Slash-kind locator round-trip through list, Marketplace index, ingestion and lock | `marketplace-api` (Capabilities document and wire vocabulary → Selectable resource kinds); `resource-prerequisites` (Prerequisite kind syntax); `plugin-packages` | `internal/marketplace/locator.go`; `internal/catalog/catalog.go`; `pkg/marketplace/api/server.go`; `pkg/marketplace/ingest/ingest.go`; `internal/lockfile/marketplace.go` | `herdr-app/mod` round-trips as one kind and `chris-links` as name through both locator forms, list/index JSON, ingestion, and lock read/write. |
 | Ambiguous slash-kind and duplicate profile selection refuse before acquisition | `catalog-discovery`; `resource-selection` (Name collisions resolve per install scope) | `internal/marketplace/locator.go`; `internal/config/v4.go`; `internal/resolver/resolver.go` | Raw `herdr-app/mod/chris-links`, malformed percent escapes, and two selected profile identities produce deterministic named refusals with no source acquisition. |
 | Host-package disclosure and binary policy | `marketplace-analysis` (Non-UTF-8 support files cannot silently bypass analysis; Binary signature exemptions remain narrow); `marketplace-delivery-security` | `pkg/marketplace/analyze/scanners.go`; `pkg/marketplace/analyze/policy.go`; `pkg/marketplace/ingest/ingest.go` | Fixtures cover JavaScript, Luau, Python/shell helpers, computed commands, dynamic code and prebuilt binaries; output is labeled disclosure and never permission. |
