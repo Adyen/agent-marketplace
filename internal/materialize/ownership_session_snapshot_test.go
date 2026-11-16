@@ -1,6 +1,7 @@
 package materialize
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -73,17 +74,19 @@ func TestCodexRootRecoversOnceAcrossHookAndMCPReconciles(t *testing.T) {
 	repo, home := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
-	canonicalRoot, err := ownership.CanonicalRoot(filepath.Join(repo, ".codex"))
-	if err != nil {
+	hooksPath := filepath.Join(repo, ".codex", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	wantRootKey := ownership.RootKey(canonicalRoot)
+	hooks := []byte(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo existing"}]}]}}`)
+	if err := os.WriteFile(hooksPath, hooks, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	recoveries := make(map[string]int)
 	ownedAggregateRecoverHook = func(rootKey string) { recoveries[rootKey]++ }
 	t.Cleanup(func() { ownedAggregateRecoverHook = nil })
 
 	resolved := []resolver.ResolvedArtifact{
-		codexHookResolved(t, "managed-hook", ir.NewHookWithMatcher("managed-hook", "PreToolUse", "Bash", "echo managed", "command", nil, ir.SourceRef{}), config.RepoCommitted),
 		codexResource("managed-mcp", ir.NewMcpServer("managed-mcp", "managed-command", nil, nil, nil, ir.SourceRef{}), config.RepoCommitted),
 	}
 	report, err := Run(context.Background(), repo, resolved)
@@ -91,7 +94,20 @@ func TestCodexRootRecoversOnceAcrossHookAndMCPReconciles(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	requireNoErrorDiags(t, report.Diags)
-	if len(recoveries) != 1 || recoveries[wantRootKey] != 1 {
-		t.Fatalf("Recover calls per root = %#v, want one Recover for %q", recoveries, wantRootKey)
+	if len(recoveries) != 1 {
+		t.Fatalf("Recover root keys = %#v, want one root", recoveries)
+	}
+	for rootKey, calls := range recoveries {
+		if calls != 1 {
+			t.Fatalf("Recover calls for root %q = %d, want 1", rootKey, calls)
+		}
+	}
+	gotHooks, err := os.ReadFile(hooksPath)
+	if err != nil || !bytes.Equal(gotHooks, hooks) {
+		t.Fatalf("unowned Codex hooks changed: %s / %v", gotHooks, err)
+	}
+	gotMCP, err := os.ReadFile(filepath.Join(repo, ".codex", "config.toml"))
+	if err != nil || !bytes.Contains(gotMCP, []byte("managed-mcp")) || !bytes.Contains(gotMCP, []byte("managed-command")) {
+		t.Fatalf("Codex MCP output = %s / %v", gotMCP, err)
 	}
 }
