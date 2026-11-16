@@ -116,7 +116,7 @@ func TestDiscoveryCacheSchemaOwnsDistinctPath(t *testing.T) {
 	if err := cache.Store(outcome, query, "", DiscoveryPageLimit); err != nil {
 		t.Fatal(err)
 	}
-	currentKey := sha256.Sum256([]byte(fmt.Sprint(discoveryCacheSchema) + "\x00" + ep.URL + "\x00" + ep.InstanceID + "\x00" + query + "\x00\x00" + fmt.Sprint(DiscoveryPageLimit)))
+	currentKey := sha256.Sum256([]byte(fmt.Sprint(discoveryCacheSchema) + "\x00" + ep.URL + "\x00" + ep.InstanceID + "\x00" + query + "\x00\x00\x00" + fmt.Sprint(DiscoveryPageLimit)))
 	currentPath := filepath.Join(cache.root, discoveryEndpointDirectoryName(ep), hex.EncodeToString(currentKey[:])+".json")
 	if currentPath == priorPath {
 		t.Fatal("schema versions share a cache path")
@@ -162,7 +162,7 @@ func TestDiscoveryCacheRetainsEmptyBrowseAndFiftyRecentQueries(t *testing.T) {
 	if _, ok := cache.Load(ep, "query-51", "", DiscoveryPageLimit); !ok {
 		t.Fatal("newest non-empty query was evicted")
 	}
-	dir := filepath.Dir(cache.path(ep, "", "", DiscoveryPageLimit))
+	dir := filepath.Dir(cache.path(ep, "", "", "", DiscoveryPageLimit))
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -263,7 +263,7 @@ func writeDiscoveryRecord(t *testing.T, cache *DiscoveryCache, ep config.Marketp
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := cache.path(ep, query, "", DiscoveryPageLimit)
+	path := cache.path(ep, query, "", "", DiscoveryPageLimit)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +276,7 @@ func writeDiscoveryRecord(t *testing.T, cache *DiscoveryCache, ep config.Marketp
 func TestDiscoveryCacheStoreDoesNotOpenFIFO(t *testing.T) {
 	cache := NewDiscoveryCache(t.TempDir())
 	ep := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
-	path := cache.path(ep, "stored", "", DiscoveryPageLimit)
+	path := cache.path(ep, "stored", "", "", DiscoveryPageLimit)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +324,7 @@ func TestDiscoveryCacheRetentionPreservesArbitraryNameJSON(t *testing.T) {
 	for i := 0; i < DiscoveryQueryLimit; i++ {
 		writeDiscoveryRecord(t, cache, ep, fmt.Sprintf("query-%02d", i), now.Add(time.Duration(i)*time.Second))
 	}
-	dir := filepath.Dir(cache.path(ep, "query-00", "", DiscoveryPageLimit))
+	dir := filepath.Dir(cache.path(ep, "query-00", "", "", DiscoveryPageLimit))
 	arbitrary := filepath.Join(dir, "arbitrary.json")
 	record := discoveryCacheRecord{Schema: discoveryCacheSchema, Endpoint: ep.URL, InstanceID: ep.InstanceID, Query: "arbitrary", Limit: DiscoveryPageLimit, ObservedAt: now.Add(-time.Hour), Items: []mpapi.ResourceListItem{canonicalSearchItem("registry", "skill", "arbitrary", 1)}, Total: 1}
 	data, err := json.Marshal(record)
@@ -343,7 +343,7 @@ func TestDiscoveryCacheRetentionPreservesArbitraryNameJSON(t *testing.T) {
 			t.Fatalf("retention removed %s: %v", preserved, err)
 		}
 	}
-	oldest := cache.path(ep, "query-00", "", DiscoveryPageLimit)
+	oldest := cache.path(ep, "query-00", "", "", DiscoveryPageLimit)
 	if _, err := os.Lstat(oldest); !os.IsNotExist(err) {
 		t.Fatalf("retention did not evict the oldest recognized record: %v", err)
 	}
@@ -388,7 +388,7 @@ func TestDiscoveryCacheStoreRejectsOverCapEndpointBeforeMutation(t *testing.T) {
 	for i := 0; i < DiscoveryQueryLimit; i++ {
 		writeDiscoveryRecord(t, cache, ep, fmt.Sprintf("query-%03d", i), now.Add(time.Duration(i)*time.Second))
 	}
-	dir := filepath.Dir(cache.path(ep, "query-000", "", DiscoveryPageLimit))
+	dir := filepath.Dir(cache.path(ep, "query-000", "", "", DiscoveryPageLimit))
 	for i := DiscoveryQueryLimit; i <= maxDiscoveryDirEntries; i++ {
 		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("unknown-%03d", i)), []byte("preserve"), 0o600); err != nil {
 			t.Fatal(err)
@@ -404,7 +404,7 @@ func TestDiscoveryCacheStoreRejectsOverCapEndpointBeforeMutation(t *testing.T) {
 		if err := cache.Store(outcome, query, "", DiscoveryPageLimit); err == nil {
 			t.Fatalf("Store(%q) succeeded in over-cap endpoint directory", query)
 		}
-		if _, err := os.Lstat(cache.path(ep, query, "", DiscoveryPageLimit)); !os.IsNotExist(err) {
+		if _, err := os.Lstat(cache.path(ep, query, "", "", DiscoveryPageLimit)); !os.IsNotExist(err) {
 			t.Fatalf("Store(%q) created a record: %v", query, err)
 		}
 	}
@@ -480,7 +480,7 @@ func TestDiscoveryCacheStoreDoesNotReplaceCorruptExactPathAtCapacity(t *testing.
 	cache := NewDiscoveryCache(t.TempDir())
 	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
 	ep := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
-	path := cache.path(ep, "same", "", DiscoveryPageLimit)
+	path := cache.path(ep, "same", "", "", DiscoveryPageLimit)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -513,7 +513,7 @@ func TestDiscoveryCacheStoreSerializesInProcessCapacityChecks(t *testing.T) {
 	root := t.TempDir()
 	ep := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
 	cache := NewDiscoveryCache(root)
-	dir := fillDiscoveryEndpointToCount(t, cache.path(ep, "unused", "", DiscoveryPageLimit), maxDiscoveryDirEntries-1)
+	dir := fillDiscoveryEndpointToCount(t, cache.path(ep, "unused", "", "", DiscoveryPageLimit), maxDiscoveryDirEntries-1)
 	start := make(chan struct{})
 	errs := make(chan error, 2)
 	var wg sync.WaitGroup
@@ -584,7 +584,7 @@ func TestDiscoveryCacheStoreChildProcess(t *testing.T) {
 				}
 				time.Sleep(time.Millisecond)
 			}
-			return cache.storeLocked(ep, query, "", DiscoveryPageLimit, data)
+			return cache.storeLocked(ep, query, "", "", DiscoveryPageLimit, data)
 		})
 	} else {
 		err = cache.Store(outcome, query, "", DiscoveryPageLimit)
@@ -598,7 +598,7 @@ func TestDiscoveryCacheStoreSerializesTwoProcessesAtCapacity(t *testing.T) {
 	root := t.TempDir()
 	ep := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
 	cache := NewDiscoveryCache(root)
-	dir := fillDiscoveryEndpointToCount(t, cache.path(ep, "unused", "", DiscoveryPageLimit), maxDiscoveryDirEntries-1)
+	dir := fillDiscoveryEndpointToCount(t, cache.path(ep, "unused", "", "", DiscoveryPageLimit), maxDiscoveryDirEntries-1)
 	rendezvous := t.TempDir()
 	held, release := filepath.Join(rendezvous, "held"), filepath.Join(rendezvous, "release")
 	results := make(chan error, 2)
@@ -689,7 +689,7 @@ func TestDiscoveryCacheStoreRejectsFullRootBeforeCreatingEndpoint(t *testing.T) 
 	if err := cache.Store(outcome, "new", "", DiscoveryPageLimit); err == nil {
 		t.Fatal("Store succeeded with a full discovery root")
 	}
-	if _, err := os.Lstat(filepath.Dir(cache.path(ep, "new", "", DiscoveryPageLimit))); !os.IsNotExist(err) {
+	if _, err := os.Lstat(filepath.Dir(cache.path(ep, "new", "", "", DiscoveryPageLimit))); !os.IsNotExist(err) {
 		t.Fatalf("endpoint directory was created: %v", err)
 	}
 	entries, err := os.ReadDir(cache.root)
@@ -711,7 +711,7 @@ func TestDiscoveryCacheMaintenanceExpiresRecognizedRecordsAndPreservesUnknownAnd
 	if err := cache.Store(expired, "expired", "", DiscoveryPageLimit); err != nil {
 		t.Fatal(err)
 	}
-	expiredPath := cache.path(ep, "expired", "", DiscoveryPageLimit)
+	expiredPath := cache.path(ep, "expired", "", "", DiscoveryPageLimit)
 	dir := filepath.Dir(expiredPath)
 	unknown := filepath.Join(dir, "notes.txt")
 	if err := os.WriteFile(unknown, []byte("preserve"), 0o600); err != nil {
@@ -759,7 +759,7 @@ func TestDiscoveryCacheMaintenanceRemovesOnlySafelyRecognizedRetiredEndpoints(t 
 	if err := cache.Store(outcome, "", "", DiscoveryPageLimit); err != nil {
 		t.Fatal(err)
 	}
-	retiredDir := filepath.Dir(cache.path(retired, "", "", DiscoveryPageLimit))
+	retiredDir := filepath.Dir(cache.path(retired, "", "", "", DiscoveryPageLimit))
 	ambiguousDir := filepath.Join(cache.root, strings.Repeat("a", 64))
 	if err := os.Mkdir(ambiguousDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -797,7 +797,7 @@ func TestDiscoveryCacheRejectsOversizedRecordBeforeCreatingTemporaryFile(t *test
 	if err := cache.Store(outcome, "oversized", "", DiscoveryPageLimit); err == nil {
 		t.Fatal("oversized discovery cache record was stored")
 	}
-	path := cache.path(ep, "oversized", "", DiscoveryPageLimit)
+	path := cache.path(ep, "oversized", "", "", DiscoveryPageLimit)
 	if _, err := os.Lstat(path); !os.IsNotExist(err) {
 		t.Fatalf("published cache exists after oversized record: %v", err)
 	}
@@ -888,7 +888,7 @@ func TestDiscoveryRejectsTrailingNetworkJSON(t *testing.T) {
 func TestDiscoveryCacheRejectsSemanticCorruptionAndTrailingJSON(t *testing.T) {
 	cache := NewDiscoveryCache(t.TempDir())
 	ep := config.MarketplaceEntry{URL: "https://market.example", InstanceID: "market"}
-	path := cache.path(ep, "", "", DiscoveryPageLimit)
+	path := cache.path(ep, "", "", "", DiscoveryPageLimit)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}

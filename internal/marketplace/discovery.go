@@ -126,27 +126,14 @@ func normalizeDiscoveryQuery(query string) string {
 	return strings.Join(strings.Fields(strings.TrimSpace(query)), " ")
 }
 
-func (c *DiscoveryCache) key(ep config.MarketplaceEntry, query, kind string, limit int) string {
-	sum := sha256.Sum256([]byte(fmt.Sprint(discoveryCacheSchema) + "\x00" + ep.URL + "\x00" + ep.InstanceID + "\x00" + query + "\x00" + kind + "\x00" + fmt.Sprint(limit)))
-	return hex.EncodeToString(sum[:])
-}
-
-func (c *DiscoveryCache) keyWithIncludeKind(ep config.MarketplaceEntry, query, kind, includeKind string, limit int) string {
-	if includeKind == "" {
-		return c.key(ep, query, kind, limit)
-	}
+func (c *DiscoveryCache) key(ep config.MarketplaceEntry, query, kind, includeKind string, limit int) string {
 	sum := sha256.Sum256([]byte(fmt.Sprint(discoveryCacheSchema) + "\x00" + ep.URL + "\x00" + ep.InstanceID + "\x00" + query + "\x00" + kind + "\x00" + includeKind + "\x00" + fmt.Sprint(limit)))
 	return hex.EncodeToString(sum[:])
 }
 
-func (c *DiscoveryCache) path(ep config.MarketplaceEntry, query, kind string, limit int) string {
+func (c *DiscoveryCache) path(ep config.MarketplaceEntry, query, kind, includeKind string, limit int) string {
 	epSum := sha256.Sum256([]byte(ep.URL + "\x00" + ep.InstanceID))
-	return filepath.Join(c.root, hex.EncodeToString(epSum[:]), c.key(ep, query, kind, limit)+".json")
-}
-
-func (c *DiscoveryCache) pathWithIncludeKind(ep config.MarketplaceEntry, query, kind, includeKind string, limit int) string {
-	epSum := sha256.Sum256([]byte(ep.URL + "\x00" + ep.InstanceID))
-	return filepath.Join(c.root, hex.EncodeToString(epSum[:]), c.keyWithIncludeKind(ep, query, kind, includeKind, limit)+".json")
+	return filepath.Join(c.root, hex.EncodeToString(epSum[:]), c.key(ep, query, kind, includeKind, limit)+".json")
 }
 
 func (c *DiscoveryCache) Load(ep config.MarketplaceEntry, query, kind string, limit int) (DiscoveryOutcome, bool) {
@@ -158,7 +145,7 @@ func (c *DiscoveryCache) load(ep config.MarketplaceEntry, query, kind, includeKi
 	if c == nil || c.root == "" || strings.TrimSpace(ep.InstanceID) == "" {
 		return DiscoveryOutcome{}, false
 	}
-	path := c.pathWithIncludeKind(ep, query, kind, includeKind, limit)
+	path := c.path(ep, query, kind, includeKind, limit)
 	for _, dir := range []string{c.root, filepath.Dir(path)} {
 		info, err := os.Lstat(dir)
 		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
@@ -220,16 +207,12 @@ func (c *DiscoveryCache) store(out DiscoveryOutcome, query, kind, includeKind st
 		return errors.New("discovery cache record exceeds size limit")
 	}
 	return c.withFilesystemLock(true, func() error {
-		return c.storeLockedWithIncludeKind(out.Endpoint, query, kind, includeKind, limit, data)
+		return c.storeLocked(out.Endpoint, query, kind, includeKind, limit, data)
 	})
 }
 
-func (c *DiscoveryCache) storeLocked(endpoint config.MarketplaceEntry, query, kind string, limit int, data []byte) error {
-	return c.storeLockedWithIncludeKind(endpoint, query, kind, "", limit, data)
-}
-
-func (c *DiscoveryCache) storeLockedWithIncludeKind(endpoint config.MarketplaceEntry, query, kind, includeKind string, limit int, data []byte) error {
-	path := c.pathWithIncludeKind(endpoint, query, kind, includeKind, limit)
+func (c *DiscoveryCache) storeLocked(endpoint config.MarketplaceEntry, query, kind, includeKind string, limit int, data []byte) error {
+	path := c.path(endpoint, query, kind, includeKind, limit)
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(c.root, 0o700); err != nil {
 		return fmt.Errorf("create discovery cache root: %w", err)
@@ -411,7 +394,7 @@ func (c *DiscoveryCache) readRecognizedRecord(dir, name string) (discoveryCacheR
 		return discoveryCacheRecord{}, false
 	}
 	ep := config.MarketplaceEntry{URL: record.Endpoint, InstanceID: record.InstanceID}
-	if record.Schema != discoveryCacheSchema || discoveryEndpointDirectoryName(ep) != filepath.Base(dir) || c.keyWithIncludeKind(ep, record.Query, record.Kind, record.IncludeKind, record.Limit)+".json" != name || record.ObservedAt.IsZero() || c.now().Before(record.ObservedAt) {
+	if record.Schema != discoveryCacheSchema || discoveryEndpointDirectoryName(ep) != filepath.Base(dir) || c.key(ep, record.Query, record.Kind, record.IncludeKind, record.Limit)+".json" != name || record.ObservedAt.IsZero() || c.now().Before(record.ObservedAt) {
 		return discoveryCacheRecord{}, false
 	}
 	if err := validateDiscoveryRecord(record.Items, record.Total, record.Limit, record.IncludeKind); err != nil {
