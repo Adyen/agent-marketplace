@@ -235,6 +235,28 @@ const installSearchItem = {
   description: "Organization review fixture",
   availability: "available"
 };
+const kindSearchItems = [
+  ...["atlas", "beacon"].map((name) => ({
+    registry_id: registryID,
+    registry_slug: registrySlug,
+    kind: "mcpserver",
+    name,
+    revision: inspectionRevision,
+    content_digest: inspectionRevision,
+    description: "Opaque hosted resource",
+    availability: "available"
+  })),
+  ...["archivist", "sentinel"].map((name) => ({
+    registry_id: registryID,
+    registry_slug: registrySlug,
+    kind: "command",
+    name,
+    revision: inspectionRevision,
+    content_digest: inspectionRevision,
+    description: "Opaque hosted resource",
+    availability: "available"
+  }))
+];
 
 // A loopback stand-in for a hosted Marketplace endpoint. It serves one exact,
 // assessed skill and both forms of its canonical archive so a missing
@@ -283,13 +305,20 @@ export const createMarketplaceStub = async (options: MarketplaceStubOptions = {}
     if (request.method === "GET" && url.pathname === searchPath) {
       response.writeHead(200, { "content-type": "application/json" });
       const offset = Number(url.searchParams.get("offset") ?? "") || 0;
-      const limit = Number(url.searchParams.get("limit") ?? "") || 0;
+      const limit = Number(url.searchParams.get("limit") ?? "") || 50;
       const terms = (url.searchParams.get("q") ?? "").toLowerCase().split(/\s+/).filter(Boolean);
-      const items = [
-        ...(terms.some((term) => inspectionSkillName.includes(term)) ? [inspectionSearchItem] : []),
-        ...(options.searchableInstall && terms.some((term) => resourceName.includes(term)) ? [installSearchItem] : [])
+      const kind = url.searchParams.get("kind") ?? "";
+      const candidates = [
+        inspectionSearchItem,
+        ...(options.searchableInstall ? [installSearchItem, ...kindSearchItems] : [])
       ];
-      response.end(JSON.stringify({ items, total: items.length, offset, limit }));
+      const matches = candidates.filter((item) => {
+        const matchesKind = !kind || item.kind === kind;
+        const text = `${item.name} ${item.description}`.toLowerCase();
+        const matchesQuery = terms.length > 0 && terms.some((term) => text.includes(term));
+        return matchesKind && (terms.length === 0 ? Boolean(kind) : matchesQuery);
+      });
+      response.end(JSON.stringify({ items: matches.slice(offset, offset + limit), total: matches.length, offset, limit }));
       return;
     }
     if (request.method === "GET" && url.pathname.includes(`/skill/${inspectionSkillName}`)) {
