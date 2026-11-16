@@ -143,8 +143,9 @@ mapped source files to root-relative native destinations. The planner checks
 the allowlist first, then rejects dot-prefixed components and destinations
 outside the expanded package directory. An optional identity rule names its
 file, format, and field; the planner selects TOML or YAML parsing by format.
-The trial refused a missing mapped source and an unexpected source payload.
-Its exact-tree check showed that sidecar and display files stayed out.
+Negative-control runs that deleted a mapped fixture file or added an
+unmapped one made the trial exit nonzero.
+The exact-tree check showed that sidecar and display files stayed out.
 
 This exercises only generic placement and simulated root selection. It
 does not exercise host activation, runtime behavior, Tern's installer,
