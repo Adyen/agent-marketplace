@@ -1230,7 +1230,7 @@ not implement the host-package proposal below:
 | Current boundary | Evidence at this worktree's HEAD |
 |---|---|
 | Compiled harness-target IDs and selectable Marketplace kinds are separate registered vocabularies. Current compiled IDs are `claude`, `factory`, `cursor`, `windsurf`, `gemini`, `devin`, `codex`, and `opencode`; current Marketplace kinds are the five leaf kinds plus virtual `collection`. | `openspec/specs/marketplace-api/spec.md` (Capabilities document and wire vocabulary); `pkg/harness-compilation/target/target.go`; `pkg/marketplace/api/kinds.go`; `internal/config/targets.go` |
-| Current `kind/name` and `registry/kind/name` CLI locators split on literal slashes and accept only the fixed v4 kind set. Names reject path separators, controls, dot components, and selected wildcard/whitespace cases; the Marketplace route parser also rejects `%`, reserves `@` for an exact digest, and has a stricter installed-filename check. Marketplace kinds are a static allowlist, not arbitrary slash names. | `internal/config/v4.go`; `internal/marketplace/locator.go`; `pkg/marketplace/nameutil/name.go`; `pkg/marketplace/api/kinds.go` |
+| Current `kind/name` and `registry/kind/name` CLI locators split on literal slashes and accept only the fixed v4 kind set; `parseV4Locator` and `validateV4Exclusion` implement locator and exclusion parsing. Names reject path separators, controls, dot components, and selected wildcard/whitespace cases. The Marketplace route parser also rejects `%`, reserves `@` for an exact digest, and has a stricter installed-filename check. Browser locators pass through `parseBrowserLocator` and `hasUnsafeURLPath`, which currently rejects escaped `%2F` before splitting the decoded path. Marketplace kinds are a static allowlist, not arbitrary slash names. | `internal/config/v4.go`; `internal/marketplace/locator.go`; `pkg/marketplace/nameutil/name.go`; `pkg/marketplace/api/kinds.go` |
 | `kind:name` prerequisite shorthand splits at the first colon, then accepts the existing kind aliases; unknown or unsupported kinds are skipped with `catalog.requires.invalid`. Structured prerequisites carry separate kind and name fields. | `openspec/specs/resource-prerequisites/spec.md`; `internal/catalog/catalog.go`; `internal/resolver/resolver.go` |
 | Resource assessment digests are canonical SHA-256 identities over assessment fields, and the client validates that digest and its coordinate/content-digest binding. The digest is not a cryptographic signature. Artifact content/archive digests are separately verified. The server serves stored revisions and assessments through the Marketplace API. | `openspec/specs/marketplace-analysis/spec.md`; `openspec/specs/marketplace-publication/spec.md`; `openspec/specs/marketplace-api/spec.md`; `pkg/marketplace/store/assessment.go`; `internal/marketplace/client.go`; `pkg/marketplace/api/server.go`; `pkg/harness-compilation/artifact/canonical.go` |
 | Ingestion currently chooses the configured registry policy and creates resource revisions, inspection manifests and assessments; the serving command wires the API and managed worker. It has no host-package profile-selection setting. | `pkg/marketplace/ingest/ingest.go`; `cmd/agent-marketplace/serve.go`; `cmd/agent-marketplace/serve_managed.go`; `pkg/marketplace/config/config.go` |
@@ -1360,7 +1360,11 @@ Keep existing simple-kind locator spelling. For target-scoped kinds,
 encode the one kind-internal slash as the single uppercase escape `%2F`
 inside the kind token, decode it exactly once, and reject all other
 percent escapes. Both the CLI locator parser and Marketplace API route
-parser must split the escaped path before decoding that token. Canonical
+parser must split the escaped path before decoding that token. In particular,
+the browser-locator proposal changes `parseBrowserLocator` and
+`hasUnsafeURLPath` in `internal/marketplace/locator.go`: today they refuse
+`%2F`, while the proposal splits the escaped path into route segments before
+decoding the kind token once. Canonical
 identity fields in `list`, the Marketplace index/API, ingestion sidecar
 and acquisition lock use the unescaped `herdr-app/mod`; the lock keeps
 `kind` and `name` as separate fields. The `%2F` route form requires
@@ -1371,6 +1375,10 @@ existing reverse-proxy check before implementation. Examples:
 |---|---|
 | Prerequisite shorthand | `herdr-app/mod:chris-links` |
 | Structured prerequisite | `{kind: herdr-app/mod, name: chris-links}` |
+| Consumer config `resources:` shorthand (unqualified) | `herdr-app%2Fmod/chris-links` (`internal/config/v4.go:parseV4Locator`) |
+| Consumer config `resources:` shorthand (registry-qualified) | `curated/herdr-app%2Fmod/chris-links` (`internal/config/v4.go:parseV4Locator`) |
+| Consumer config structured `resources:` entry | `{kind: herdr-app/mod, name: chris-links}` |
+| Consumer config `exclude:` kind wildcard | `herdr-app%2Fmod/*` (`internal/config/v4.go:validateV4Exclusion`) |
 | Unqualified CLI locator | `herdr-app%2Fmod/chris-links` |
 | Registry-qualified CLI locator | `curated/herdr-app%2Fmod/chris-links` |
 | Marketplace locator | `mp:curated/herdr-app%2Fmod/chris-links@sha256:<64-hex>` |
@@ -1386,7 +1394,13 @@ using `marketplace.locator.ambiguous-kind` and suggesting
 malformed percent escapes refuse with
 `marketplace.locator.invalid-encoding`; extra slashes or an unescaped slash
 inside the kind refuse with `marketplace.locator.ambiguous-kind`. The
-existing prerequisite parser splits `kind:name` at the first colon, so
+consumer-config locator and exclusion seams use the same proposed refusal
+codes: a raw slash-kind such as `herdr-app/mod/chris-links` is
+`marketplace.locator.ambiguous-kind`, and malformed or noncanonical percent
+escapes are `marketplace.locator.invalid-encoding`. The existing
+`parseV4Locator` and `validateV4Exclusion` instead split or validate only the
+current fixed-kind forms. The existing prerequisite parser splits
+`kind:name` at the first colon, so
 the proposed slash-kind form is unambiguous because `kind` excludes
 colons; the new kind must be accepted in both structured and shorthand
 forms rather than silently dropped by `catalog.requires.invalid`.
@@ -1502,8 +1516,12 @@ The complete proposed refusal-code set, each with its emitting side:
 | Two distinct identities are selected for one target; profile declares compiled target ID | config/selection | `marketplace.profile.selection-ambiguous`; `marketplace.profile.compiled-target-id` |
 | Package remains selected after profile deselection; selected profile revision is unavailable | config/selection | `marketplace.profile.deselected-package`; `marketplace.profile.unavailable` |
 | Source ID has malformed or noncanonical component escapes | server ingestion/publication; client online; client offline; config/selection | `marketplace.profile.identity-invalid` |
+| Profile `target_id` violates `[a-z][a-z0-9-]*` | server ingestion/publication; client online; client offline; config/selection | `marketplace.profile.identity-invalid` |
 | Raw slash-kind/extra slash makes kind ambiguous; locator escape is malformed or noncanonical | server ingestion/publication; config/selection | `marketplace.locator.ambiguous-kind`; `marketplace.locator.invalid-encoding` |
-| Source/display path is absolute or traversing (`path-invalid`); outside-root or symlink-escaped (`path-escape`); symlink or nonregular (`file-type-invalid`) | server ingestion/publication | `marketplace.package.path-invalid`; `marketplace.package.path-escape`; `marketplace.package.file-type-invalid` |
+| Source/display path is absolute or traversing; outside-root or symlink-escaped | server ingestion/publication | `marketplace.package.path-invalid`; `marketplace.package.path-escape` |
+| Sidecar `target_id` disagrees with the scoped `kind` prefix | server ingestion | `marketplace.package.sidecar-mismatch` |
+| Host-package `name` violates `[a-z0-9][a-z0-9._-]{0,127}` | server ingestion | `marketplace.package.name-invalid` |
+| Payload or display file is symlink/nonregular, or payload mode is not `0644` or `0755` | server ingestion/publication | `marketplace.package.file-type-invalid` |
 | Payload file is unmapped; source mapping or destination path is duplicated | server ingestion | `marketplace.package.file-unmapped`; `marketplace.package.mapping-duplicate-source`; `marketplace.package.mapping-duplicate-destination` |
 | Destination path is malformed; destination is outside the profile's `into` allowlist | server ingestion/publication; client online; client offline | `marketplace.package.destination-invalid`; `marketplace.package.destination-escape` |
 | Sidecar digest claim differs from recomputed value | server ingestion | `marketplace.package.claim-mismatch` |
@@ -1514,6 +1532,7 @@ The complete proposed refusal-code set, each with its emitting side:
 | Offline cache/lock has no profile binding | client offline | `marketplace.cache.profile-binding-missing` |
 | Git/directory input claims a Marketplace assessment | server ingestion/publication | `marketplace.assessment.untrusted-source` |
 | Package bytes do not match `package_content_digest` | server ingestion/publication; client online; client offline | `marketplace.package.content-mismatch` |
+| Existing analyzer rejects an opaque executable asset or unknown non-UTF-8 support file | server ingestion/analyzer | `marketplace.find.executable-asset`; `marketplace.find.invalid-utf8` |
 
 #### Proposed analysis disclosures and limits
 
@@ -1588,7 +1607,7 @@ host-package behavior already exists.
 | Package boundary and file-map containment refuse unsafe imports | `registry-symlink-containment` (Configured source root bounds symlink validation; Disk primary payload ingestion stays below captured source authority) | `pkg/marketplace/ingest/ingest.go:registryEntryPath`; `pkg/marketplace/ingest/ingest.go:fileSetForResource`; `internal/fsboundary.OpenSourceFS`; `internal/fsboundary.Dir.OpenPath` | Out-of-root paths, symlink escapes, nonregular files, unmapped payload files, duplicate source mappings or destinations, and destinations outside profile `into` all refuse before digesting or staging. |
 | Slash-kind locator round-trip through list, Marketplace index, ingestion and lock | `marketplace-api` (Capabilities document and wire vocabulary → Selectable resource kinds); `resource-prerequisites` (Prerequisite kind syntax); `plugin-packages` | `internal/marketplace/locator.go`; `internal/catalog/catalog.go`; `pkg/marketplace/api/server.go`; `pkg/marketplace/ingest/ingest.go`; `internal/lockfile/marketplace.go` | `herdr-app/mod` round-trips as one kind and `chris-links` as name through both locator forms, list/index JSON, ingestion, and lock read/write. |
 | Ambiguous slash-kind and duplicate profile selection refuse before acquisition | `catalog-discovery`; `resource-selection` (Name collisions resolve per install scope) | `internal/marketplace/locator.go`; `internal/config/v4.go`; `internal/resolver/resolver.go` | Raw `herdr-app/mod/chris-links`, malformed percent escapes, and two selected profile identities produce deterministic named refusals with no source acquisition. |
-| Host-package disclosure and binary policy | `marketplace-analysis` (Non-UTF-8 support files cannot silently bypass analysis; Binary signature exemptions remain narrow); `marketplace-delivery-security` | `pkg/marketplace/analyze/scanners.go`; `pkg/marketplace/analyze/policy.go`; `pkg/marketplace/ingest/ingest.go` | Fixtures cover JavaScript, Luau, Python/shell helpers, computed commands, dynamic code and prebuilt binaries; output is labeled disclosure and never permission. |
+| Host-package disclosure and binary policy | `marketplace-analysis` (Non-UTF-8 support files cannot silently bypass analysis; Binary signature exemptions remain narrow); `marketplace-delivery-security` | `pkg/marketplace/analyze/assets.go:ScanAssets`; `pkg/marketplace/analyze/analyzer.go:isRecognizedBinary`; `pkg/marketplace/ingest/ingest.go` | Fixtures cover JavaScript, Luau, Python/shell helpers, computed commands, dynamic code and prebuilt binaries; output is labeled disclosure and never permission. |
 
 ## Compared with the herdr-plugins proposal
 
