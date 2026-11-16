@@ -7,8 +7,8 @@
 
 ## 2. Documentation
 
-- [ ] 2.1 Describe the configuration archive, its contents, rotation, and manual `tar` restore in `site/docs/how-to/operator/back-up-and-restore.md` and `site/docs/reference/filesystem-layout.md`
+- [x] 2.1 Describe the configuration archive, its contents, rotation, and manual `tar` restore in `site/docs/how-to/operator/back-up-and-restore.md` and `site/docs/reference/filesystem-layout.md`
 
 ## 3. Archive
 
-- [ ] 3.1 Run `openspec archive back-up-user-config --yes` and verify `make spec-check` passes
+- [x] 3.1 Run `openspec archive back-up-user-config --yes` and verify `make spec-check` passes
