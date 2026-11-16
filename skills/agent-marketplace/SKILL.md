@@ -243,16 +243,24 @@ agent-marketplace deinit               # remove managed artifacts and cache
 `doctor` reports repo detection, config diagnostics, harness roots, unmet
 prerequisites, and Devin CLI compatibility (3000.3 floor; it only recommends
 adding `devin`). `--repair` prints a numbered plan covering harness drift
-(repaired through a locked sync that leaves every acquisition lock unchanged)
-and Devin and Codex aggregate ownership. Each step shows its safety class,
+(repaired through a locked sync that leaves every acquisition lock unchanged),
+Devin and Codex aggregate ownership, and guided configuration fixes. Each step shows its safety class,
 diagnostic code, files, and inputs or blocker. For the aggregates: exact adoption matches,
 evidence-backed orphans, and value conflicts. One terminal confirmation runs
 all safe steps; adoption no longer prompts per entry. Orphan removal and
 conflict replacement keep their per-entry prompts and never run under `--yes`
 or off a terminal. Invalid configuration or failed resolution does not refuse
 repair: the cause appears as a plan item and dependent steps are listed as
-blocked; exit is 1 when only blocked or human-only items remain. Off a
-terminal without `--yes`, `--repair` only previews.
+blocked; exit is 1 when only blocked, deferred guided, or human-only items
+remain. Off a terminal without `--yes`, `--repair` only previews.
+
+`--repair` also lists writable-layer field, YAML, and duplicate-key issues as
+`guided` steps with escaped source context. On a terminal without `--yes`, it
+offers `$VISUAL` or `$EDITOR` with a separate confirmation and re-diagnoses
+after the editor exits, including a non-zero exit. Without an editor it prints
+manual instructions. Guided steps are deferred off a terminal and under
+`--yes`; unresolved guided items exit 1. Version and organization problems
+remain human-only. It never rewrites configuration automatically.
 
 ## Hosted Marketplaces
 
