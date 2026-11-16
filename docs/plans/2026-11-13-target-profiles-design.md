@@ -1759,8 +1759,8 @@ include the existing ownership participant in that transaction, and extend
 its journal ordering so package files publish first, ownership commits next,
 and stale files prune last. The E2E crash hook in
 `internal/dependencytxn/fault_e2e.go` already targets stage/publish points;
-future witnesses add the place ownership and prune boundaries. The following
-are the proposed states:
+future witnesses add the place ownership and prune boundaries. The proposed
+states:
 
 | Interruption point | Read-only outcome | Mutating recovery outcome |
 |---|---|---|
@@ -1788,7 +1788,7 @@ ownership or prove that a host registration can be rolled back.
 
 #### Edited files and verification
 
-Use separate package-payload behavior from owned aggregate-entry behavior.
+Place payloads behave differently from owned aggregate entries.
 For place payloads, sync keeps an edited file and records edited drift; if any
 member of an installed package is edited, keep that package's entire current
 projection and do not partly refresh it. An upgrade that encounters an edit
@@ -1802,7 +1802,7 @@ choice follows materialization's edited-copy preservation and
 `plugin-delivery`'s rule to retire only owned output; it deliberately does
 not apply the aggregate-entry rule that restores drifted proven entries.
 
-After publication, ownership commit and pruning finish, run the approved
+After publication, ownership commit and pruning, run the approved
 initial-load `verify` and record pass/fail against the exact profile, package
 generation, check identity and host version in the existing root-keyed
 ownership state.

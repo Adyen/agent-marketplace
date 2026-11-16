@@ -10,7 +10,7 @@ Settle place-delivery staging and publication, interruption recovery, root-bound
 
 ## Decisions
 
-Record the selected approach, transition table, observation limits and future witnesses in the existing target-profile design rather than duplicating them here, so one document stays authoritative for the direction until the place-delivery change makes it normative.
+Record the selected approach, transition table, observation limits and future witnesses in the existing target-profile design rather than duplicating them here, so one document stays authoritative until the place-delivery change makes it normative.
 
 ## Risks / Trade-offs
 
