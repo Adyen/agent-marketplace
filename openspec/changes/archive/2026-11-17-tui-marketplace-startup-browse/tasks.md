@@ -19,4 +19,4 @@
 
 ## Workflow follow-up
 
-- Run `openspec archive tui-marketplace-startup-browse --yes` as the final task and commit in the implementation pull request; verify archived specs retain the scenarios and `make spec-check` passes.
+- [x] Run `openspec archive tui-marketplace-startup-browse --yes` as the final task and commit in the implementation pull request; verify archived specs retain the scenarios and `make spec-check` passes.
