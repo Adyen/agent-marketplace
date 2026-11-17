@@ -55,7 +55,7 @@ func init() {
 			ok("doctor").out("agent-marketplace doctor"),
 			ok("lock", "--scope", "user").out("Locks: 0 changed"),
 			ok("lock", "--check"),
-			writeFile("~/.factory/skills/handwritten/SKILL.md", "backed up\n").then("backup", "create").pass().out("Backup created for: factory"),
+			writeFile("~/.factory/skills/handwritten/SKILL.md", "backed up\n").then("backup", "create").pass().out("Backup created for: agents-config, factory"),
 			ok("backup", "list").out("factory (1)"),
 			writeFile("~/.factory/skills/handwritten/SKILL.md", "changed after backup\n").
 				then("backup", "restore", "--target", "factory").
@@ -127,7 +127,7 @@ func init() {
 			ok("telemetry", "purge"),
 			ok("telemetry", "disable").has("~/.agents/config.yaml", "apiVersion: agent-marketplace/v4").lacks("~/.agents/config.yaml", "level: basic"),
 			ok("backup").out("Usage:"),
-			writeFile("~/.factory/skills/handwritten/SKILL.md", "backed up\n").then("backup", "create").pass().out("Backup created for: factory"),
+			writeFile("~/.factory/skills/handwritten/SKILL.md", "backed up\n").then("backup", "create").pass().out("Backup created for: agents-config, factory"),
 			ok("backup", "list").out("factory (1)"),
 			writeFile("~/.factory/skills/handwritten/SKILL.md", "changed after backup\n").
 				then("backup", "restore", "--target", "factory").
