@@ -599,7 +599,9 @@ func DiscoverUpdates(ctx context.Context, ec config.EffectiveConfig, query strin
 					cached.Err = fetchErr
 					results <- cached
 				} else {
-					out.Endpoint = endpoint.MarketplaceEntry
+					if out.Endpoint.URL == "" {
+						out.Endpoint = endpoint.MarketplaceEntry
+					}
 					out.CacheState = DiscoveryCacheMiss
 					out.Err = fetchErr
 					results <- out

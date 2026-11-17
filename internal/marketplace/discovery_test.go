@@ -1255,7 +1255,9 @@ func TestDiscoverUpdatesReturnsPartialKindResultsOnKindFailure(t *testing.T) {
 	}))
 	defer server.Close()
 
-	ep := config.MarketplaceEntry{URL: server.URL, InstanceID: "partial-market", Alias: "partial"}
+	ep := config.MarketplaceEntry{URL: server.URL, Alias: "partial"}
+	acquired := ep
+	acquired.InstanceID = "partial-market"
 	cache := NewDiscoveryCache(t.TempDir())
 	effective := config.EffectiveConfig{
 		Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{ep}},
@@ -1279,7 +1281,10 @@ func TestDiscoverUpdatesReturnsPartialKindResultsOnKindFailure(t *testing.T) {
 	if len(outcomes[0].Items) != 1 || outcomes[0].Items[0].Name != "widget-match" {
 		t.Fatalf("kind failure dropped usable text matches: %#v", outcomes[0].Items)
 	}
-	if _, err := os.Stat(cache.path(ep, "widget", "", "mcpserver", DiscoveryPageLimit)); !errors.Is(err, os.ErrNotExist) {
+	if outcomes[0].Endpoint.InstanceID != acquired.InstanceID {
+		t.Fatalf("kind failure endpoint = %#v, want acquired identity %#v", outcomes[0].Endpoint, acquired)
+	}
+	if _, err := os.Stat(cache.path(acquired, "widget", "", "mcpserver", DiscoveryPageLimit)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("partial kind results were cached: err=%v", err)
 	}
 }

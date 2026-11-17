@@ -49,7 +49,7 @@ func TestFuzzySearchRanksBestMatchFirstWithinLeaf(t *testing.T) {
 
 // spec: tui-navigation/every-kind-query-discovers-all-marketplace-matches
 func TestKindQueryMatchesConfiguredRowsWithoutKindText(t *testing.T) {
-	m := NewModel("/repo", "/home")
+	m := NewModel(t.TempDir(), t.TempDir())
 	m.rows = []row{
 		mkRow("atlas", withGlobal, withKind(ir.KindSubagent), withRegistry("sec.git", "security")),
 		mkRow("deploy", withGlobal, withKind(ir.KindSkill), withRegistry("sec.git", "security")),
