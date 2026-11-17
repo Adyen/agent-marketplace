@@ -1193,6 +1193,97 @@ func TestDiscoverUpdatesKeepsAllowedEndpointWhenAnotherIsDenied(t *testing.T) {
 	}
 }
 
+func TestDiscoverUpdatesMaintainsCacheWhenAnotherEndpointIsDenied(t *testing.T) {
+	allowed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agent-marketplace.json" {
+			writeTestWellKnown(w, "allowed-market")
+			return
+		}
+		_ = json.NewEncoder(w).Encode(SearchResponse{Items: []mpapi.ResourceListItem{}, Limit: DiscoveryPageLimit})
+	}))
+	defer allowed.Close()
+	denied := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer denied.Close()
+
+	allowedEndpoint := config.MarketplaceEntry{URL: allowed.URL, InstanceID: "allowed-market", Alias: "allowed"}
+	deniedEndpoint := config.MarketplaceEntry{URL: denied.URL, InstanceID: "denied-market", Alias: "denied"}
+	cache := NewDiscoveryCache(t.TempDir())
+	if err := cache.store(DiscoveryOutcome{Endpoint: allowedEndpoint, ObservedAt: time.Now().Add(-DiscoveryStaleTTL - time.Hour)}, "old", "", "", DiscoveryPageLimit); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.store(DiscoveryOutcome{Endpoint: deniedEndpoint, ObservedAt: time.Now()}, "old", "", "", DiscoveryPageLimit); err != nil {
+		t.Fatal(err)
+	}
+	staleAllowedPath := cache.path(allowedEndpoint, "old", "", "", DiscoveryPageLimit)
+	deniedPath := cache.path(deniedEndpoint, "old", "", "", DiscoveryPageLimit)
+
+	effective := config.EffectiveConfig{
+		Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{allowedEndpoint, deniedEndpoint}},
+		AllowedMarketplaces: []string{
+			"^" + regexp.QuoteMeta(allowed.URL) + "$",
+		},
+	}
+	if _, err := Discover(context.Background(), effective, "fresh", DiscoveryOptions{Cache: cache}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(staleAllowedPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale allowed endpoint record was not pruned: err=%v", err)
+	}
+	if _, err := os.Stat(deniedPath); err != nil {
+		t.Fatalf("denied endpoint record was not retained: %v", err)
+	}
+}
+
+// spec: tui-navigation/failed-kind-discovery-preserves-usable-local-results
+func TestDiscoverUpdatesReturnsPartialKindResultsOnKindFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/agent-marketplace.json":
+			writeTestWellKnown(w, "partial-market")
+		case "/api/v1/search":
+			if r.URL.Query().Get("kind") != "" {
+				http.Error(w, "kind search unavailable", http.StatusInternalServerError)
+				return
+			}
+			items := []mpapi.ResourceListItem{canonicalSearchItem("registry", "mcpserver", "widget-match", 0)}
+			_ = json.NewEncoder(w).Encode(SearchResponse{Items: items, Total: len(items), Limit: DiscoveryPageLimit})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	ep := config.MarketplaceEntry{URL: server.URL, InstanceID: "partial-market", Alias: "partial"}
+	cache := NewDiscoveryCache(t.TempDir())
+	effective := config.EffectiveConfig{
+		Merged: &config.Config{Marketplaces: []config.MarketplaceEntry{ep}},
+		AllowedMarketplaces: []string{
+			"^" + regexp.QuoteMeta(server.URL) + "$",
+		},
+	}
+	outcomes, err := Discover(context.Background(), effective, "widget", DiscoveryOptions{
+		IncludeKind: "mcpserver",
+		Cache:       cache,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outcomes) != 1 {
+		t.Fatalf("outcomes = %d, want one: %#v", len(outcomes), outcomes)
+	}
+	if outcomes[0].Err == nil {
+		t.Fatal("kind failure outcome has no error")
+	}
+	if len(outcomes[0].Items) != 1 || outcomes[0].Items[0].Name != "widget-match" {
+		t.Fatalf("kind failure dropped usable text matches: %#v", outcomes[0].Items)
+	}
+	if _, err := os.Stat(cache.path(ep, "widget", "", "mcpserver", DiscoveryPageLimit)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("partial kind results were cached: err=%v", err)
+	}
+}
+
 func BenchmarkDiscoverKindQueryAndUnion(b *testing.B) {
 	kindItems := make([]mpapi.ResourceListItem, 51)
 	kindItems[0] = canonicalSearchItem("registry", "mcpserver", "shared", 1)

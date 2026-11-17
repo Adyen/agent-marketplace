@@ -17,6 +17,7 @@ export interface FixtureOptions {
   directorySource?: boolean;
   pluginSource?: boolean;
   overflowStatus?: boolean;
+  neutralConfiguredSkill?: boolean;
   // Installs a v4 organization layer at <root>/etc/agent-marketplace that
   // declares one exact Marketplace skill:
   //  - "missing-lock" leaves the organization acquisition lock absent, so a
@@ -180,6 +181,10 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
     for (const name of overflowSkills) {
       write(path.join(source, "skills", name, "SKILL.md"), `---\nname: ${name}\ndescription: Status overflow fixture\n---\n\n# ${name}\n`);
     }
+    // A separate "helpers" source path keeps kind text out of the row's source label.
+    if (options.neutralConfiguredSkill) {
+      write(path.join(source, "helpers", "quiet-helper", "SKILL.md"), "---\nname: quiet-helper\ndescription: Quiet helper fixture\n---\n\n# quiet-helper\n");
+    }
     let registryURL: string;
     let expectedRepoConfig: string;
     if (options.pluginSource) {
@@ -210,7 +215,9 @@ export const createFixture = async (name: string, options: FixtureOptions = {}):
       const bareRegistry = path.join(registries, "fixture.git");
       git(registries, env, ["clone", "--quiet", "--bare", source, bareRegistry]);
       registryURL = `${pathToFileURL(bareRegistry).href}${options.trailingSlashRegistry ? "/" : ""}`;
-      expectedRepoConfig = `apiVersion: agent-marketplace/v4\nsources:\n  fixture:\n    git: ${registryURL}\n    ref: main\n    path: skills\nresources:\n  fixture:\n    include:\n      - skill/beta-skill\n${overflowSkills.map((name) => `      - skill/${name}\n`).join("")}`;
+      const neutralSource = options.neutralConfiguredSkill ? `  quiet:\n    git: ${registryURL}\n    ref: main\n    path: helpers\n` : "";
+      const neutralResource = options.neutralConfiguredSkill ? "  quiet:\n    include:\n      - skill/quiet-helper\n" : "";
+      expectedRepoConfig = `apiVersion: agent-marketplace/v4\nsources:\n  fixture:\n    git: ${registryURL}\n    ref: main\n    path: skills\n${neutralSource}resources:\n  fixture:\n    include:\n      - skill/beta-skill\n${overflowSkills.map((name) => `      - skill/${name}\n`).join("")}${neutralResource}`;
       if (options.userMarketplaceDrift && stub) {
         write(path.join(home, ".agents", "config.yaml"), `apiVersion: agent-marketplace/v4\nharnesses:\n  - factory\nsources:\n  user-market:\n    marketplace: ${stub.url}\nresources:\n  user-market:\n    include:\n      - tools/skill/org-review\n    required: true\n`);
       } else if (options.firstRun) {

@@ -2169,7 +2169,7 @@ func (m *Model) applyFilter() []row {
 			r.searchNameMatch = false
 			r.searchScore = 0
 			r.searchMatchRunes = nil
-		} else if kindQuery && r.MarketplaceDiscovery != nil && r.Artifact.Kind == kind {
+		} else if kindQuery && r.Artifact.Kind == kind {
 			r.searchNameMatch = false
 			r.searchScore = 0
 			r.searchMatchRunes = nil

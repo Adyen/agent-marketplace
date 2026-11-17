@@ -8,7 +8,7 @@ import { defineFixture, locate, step } from "./helpers.js";
 // spec: tui-navigation/every-kind-query-discovers-all-marketplace-matches
 // spec: tui-navigation/other-kinds-retain-additive-text-matching
 // spec: tui-navigation/failed-kind-discovery-preserves-usable-local-results
-const journey = defineFixture("marketplace-kind-search", ["tui"], 80, 24, { marketplaceDiscovery: "mixed-denial" });
+const journey = defineFixture("marketplace-kind-search", ["tui"], 80, 24, { marketplaceDiscovery: "mixed-denial", neutralConfiguredSkill: true });
 before(journey.setup);
 after(journey.cleanup);
 
@@ -52,7 +52,7 @@ journey.test("kind queries discover opaque Marketplace resources and clear back 
 
   await openSearch();
   await step("discover opaque hosted MCP servers", () => terminal.write("mcp"), async () => {
-    await locate(terminal, "market/tools/atlas").unique().expect({ timeout: 10_000 });
+    await locate(terminal, "market/tools/atlas").unique().expect({ timeout: 5_000 });
     await locate(terminal, "market/tools/beacon").unique().expect();
     await locate(terminal, "market/tools/atlas")
       .and(terminal.getByStyle({ foreground: "14", bold: true, underlineStyle: "single" }))
@@ -67,13 +67,23 @@ journey.test("kind queries discover opaque Marketplace resources and clear back 
 
   await openSearch();
   await step("discover opaque hosted commands", () => terminal.write("command"), async () => {
-    await locate(terminal, "market/tools/archivist").unique().expect({ timeout: 10_000 });
+    await locate(terminal, "market/tools/archivist").unique().expect({ timeout: 5_000 });
     await locate(terminal, "market/tools/sentinel").unique().expect();
   });
   await step("apply the command search", () => terminal.write("\r"), async () => {
     await locate(terminal, /2 matches.*esc clear/).unique().expect();
     await locate(terminal, "market/tools/archivist").unique().expect();
     await locate(terminal, "market/tools/sentinel").unique().expect();
+  });
+  await clearSearch();
+
+  await openSearch();
+  await step("search configured skills by their kind alias", () => terminal.write("skills"), async () => {
+    await locate(terminal, "skills").expect();
+  });
+  await step("apply the skills search", () => terminal.write("\r"), async () => {
+    await locate(terminal, /\d+ matches.*esc clear/).unique().expect();
+    await locate(terminal, "quiet-helper").unique().expect();
   });
   await clearSearch();
 

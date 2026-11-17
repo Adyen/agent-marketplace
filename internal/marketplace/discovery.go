@@ -558,19 +558,13 @@ func DiscoverUpdates(ctx context.Context, ec config.EffectiveConfig, query strin
 		return nil, config.ValidateMarketplaceURLs(entries, ec.AllowedMarketplaces)
 	}
 	endpoints = allowedEndpoints
-	entries = entries[:0]
-	for _, endpoint := range endpoints {
-		entries = append(entries, endpoint.MarketplaceEntry)
-	}
 	slog.Info("marketplace discovery started", "endpoints", len(endpoints), "query_empty", query == "", "limit", limit)
 	cache := opts.Cache
 	if cache == nil {
 		cache = DefaultDiscoveryCache()
 	}
-	if len(outcomes) == 0 {
-		if err := cache.maintain(entries); err != nil {
-			slog.Warn("marketplace discovery cache maintenance failed", "error", err)
-		}
+	if err := cache.maintain(entries); err != nil {
+		slog.Warn("marketplace discovery cache maintenance failed", "error", err)
 	}
 	updates := make(chan []DiscoveryOutcome, outcomeCapacity+1)
 	results := make(chan DiscoveryOutcome, len(endpoints))
@@ -605,7 +599,10 @@ func DiscoverUpdates(ctx context.Context, ec config.EffectiveConfig, query strin
 					cached.Err = fetchErr
 					results <- cached
 				} else {
-					results <- DiscoveryOutcome{Endpoint: endpoint.MarketplaceEntry, CacheState: DiscoveryCacheMiss, Err: fetchErr}
+					out.Endpoint = endpoint.MarketplaceEntry
+					out.CacheState = DiscoveryCacheMiss
+					out.Err = fetchErr
+					results <- out
 				}
 				return
 			}
@@ -746,12 +743,12 @@ func discoverOne(ctx context.Context, ep config.MarketplaceEntry, verify bool, q
 	for offset := 0; offset == 0 || offset < total; {
 		page, err := client.Search(ctx, SearchRequest{Kind: opts.IncludeKind, Limit: limit, Offset: offset})
 		if err != nil {
-			return DiscoveryOutcome{}, err
+			return partialKindDiscovery(ep, items, resp.Total, truncated, err)
 		}
 		total = max(total, page.Total)
 		if len(page.Items) == 0 {
 			if offset < total {
-				return DiscoveryOutcome{}, errors.New("marketplace kind discovery made no progress before reported total")
+				return partialKindDiscovery(ep, items, resp.Total, truncated, errors.New("marketplace kind discovery made no progress before reported total"))
 			}
 			break
 		}
@@ -766,4 +763,10 @@ func discoverOne(ctx context.Context, ep config.MarketplaceEntry, verify bool, q
 		offset += len(page.Items)
 	}
 	return DiscoveryOutcome{Endpoint: ep, Items: items, Total: max(resp.Total, len(items)), Truncated: truncated, CacheState: DiscoveryCacheMiss, ObservedAt: time.Now()}, nil
+}
+
+// partialKindDiscovery keeps the text matches already collected when a kind
+// page fails, so the caller can show them beside the error without caching them.
+func partialKindDiscovery(ep config.MarketplaceEntry, items []mpapi.ResourceListItem, total int, truncated bool, err error) (DiscoveryOutcome, error) {
+	return DiscoveryOutcome{Endpoint: ep, Items: items, Total: max(total, len(items)), Truncated: truncated, CacheState: DiscoveryCacheMiss, ObservedAt: time.Now(), Err: err}, err
 }
