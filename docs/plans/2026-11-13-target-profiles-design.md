@@ -1710,14 +1710,25 @@ the same rename until the user resolves the filesystem layout.
 A target write is either creation of a missing target directory or a file
 publication. Create missing package directories only from the intent's
 journaled directory list, after staging completes and immediately before the
-first file publication that needs them, verifying each new directory under
-the captured root. After each journaled directory creation, capture the
-destination below it again before publishing. The committed ownership
-generation records the directories each place transaction created, so a
-later transaction may list such a directory for removal. Prune removes a
-directory only when the current transaction lists it from that committed
-record and it is empty; directories not created by a recorded place
-transaction are never removed.
+first file publication that needs them. Before each creation, durably mark
+that directory as the next journaled write; create it below the captured root,
+then record its directory identity durably before any later write. A recorded
+directory identity must be the same object (`SameObject`) when recovery or
+prune inspects it; size and time fields are not compared. After each
+journaled directory creation, capture the destination below it again before
+publishing. The committed ownership generation records the directories each
+place transaction created, so a later transaction may list such a directory
+for removal. Prune removes a directory, through `fsboundary` `Dir.Rmdir`
+after checking its recorded identity, only when the current transaction lists
+it from that committed record and it is empty; directories not created by a
+recorded place transaction are never removed.
+
+Place destinations do not use the existing pre-journal `os.MkdirAll` loop in
+`internal/materialize/plugin_batch.go:pluginInstanceBatch.commit`, which
+creates parent directories before `dependencytxn.Commit` persists any journal;
+that loop stays for existing plugin output only. Refuse a package set before
+staging when its intent would exceed the dependency journal size limit that
+`readJournal` enforces, so no pending journal is unreadable.
 
 The conflict plan is whole-set, but publication is per file. When a required
 mod is in the admitted set, publish it before its layout; deselection removes
@@ -1840,7 +1851,8 @@ states:
 
 | Interruption point | Read-only outcome | Mutating recovery outcome |
 |---|---|---|
-| Before the first target write | `dependency.recovery-required`; no replay. | If the journal records no captured stage identity and no stage path is present, clear the no-write intent. Otherwise remove a transaction-owned stage, complete or partial, only when its recorded directory identity and every present byte match the journaled manifest, then clear the transaction; do not resume publication. This includes a stop at an `EXDEV` rename of the first file only when no journaled directory creation preceded it; otherwise the second row applies. Any other stage, including one present without recorded identity, missing after capture, changed or foreign, is retained with the journal and recovery stops. |
+| Before the first target write | `dependency.recovery-required`; no replay. | If the journal records no captured stage identity and no stage path is present, clear the no-write intent. Otherwise remove a transaction-owned stage, complete or partial, only when its recorded directory identity and every present byte match the journaled manifest, then clear the transaction; do not resume publication. This includes a stop at an `EXDEV` rename of the first file only when no journaled directory creation preceded it; otherwise the second row applies. Any other stage, including one present without recorded identity, missing after capture, changed or foreign, is retained with the journal and recovery stops. A stage left without recorded identity by a crash between creating the stage directory and recording it stays retained; the user removes it manually after `status` names its path, and the next mutating sync then clears the intent. |
+| During a journaled directory creation | `dependency.recovery-required`; no replay. | If the marked directory is absent, the creation did not happen: apply the first row when no earlier target write was recorded, otherwise the next row. If it is present with no recorded identity, retain it with the journal and stop recovery, because it cannot be proven to be the transaction's own directory. If its recorded identity matches, continue as the next row. |
 | After some target writes | `dependency.recovery-required`; no replay. | Complete the recorded write prefix of journaled directory creations and file publications only while each destination is exactly its old or intended generation and all remaining stage bytes match; a later `EXDEV` stays pending as described under cross-filesystem refusal. An unexpected generation, byte or non-prefix state stops without deleting evidence. |
 | All package files published, ownership generation not committed | `dependency.recovery-required`; no replay. | Verify every published file against the journal, then commit the matching package/root ownership generation. A mismatch stops with journal and files intact. |
 | During ownership-state commit | `dependency.recovery-required`; no replay. | The single atomic state-file rename leaves either the old generation, handled by the preceding row, or the new generation, handled by the following row. |
@@ -1913,7 +1925,7 @@ below are precedents, not proof of Herdr place behavior.
 |---|---|---|
 | Engine staging and same-filesystem publish | `plugin-delivery` (Package roots resolve to immutable package generations); `packagegen.Plan` / `PublishUnderPackagesLock`; `fsboundary.Destination.Publish` | Stage outside a scratch target root and assert no host sibling; a different-device target refuses before writes; an injected `EXDEV` after an earlier target write leaves its journal and stage, with no copy fallback; on the first write, recovery clears the matched stage and the next attempt refuses at the device check. |
 | Incomplete staging recovery | `dependencytxn.CheckPending`, `Recover`, `recoverJournal` | Crash after the first stage file and after staging completes but before the first target write: read-only `sync --check` returns `dependency.recovery-required` without byte changes; mutating recovery clears only an exact attempt-owned complete or partial stage and never resumes publication. Replace one stage byte and prove recovery stops with it and the journal intact. A mutating sync selecting a plugin package stops on an unrecorded or changed place stage; the stage and journal are preserved. |
-| Partial publication recovery | `plugin-delivery` (Plugin instances install as a unit; Delivery transitions never activate a plugin twice); `dependencytxn.recoverJournal` | Crash after a published prefix: read-only status refuses without replay; mutating sync completes the exact recorded suffix. Change one destination generation and prove no subsequent file or evidence is deleted. Crash after creating a new package directory but before its first file: recovery completes the prefix, and a later deselection removes that directory only when it is empty. |
+| Partial publication recovery | `plugin-delivery` (Plugin instances install as a unit; Delivery transitions never activate a plugin twice); `dependencytxn.recoverJournal` | Crash after a published prefix: read-only status refuses without replay; mutating sync completes the exact recorded suffix. Change one destination generation and prove no subsequent file or evidence is deleted. Crash after creating a new package directory but before its first file: recovery completes the prefix, and a later deselection removes that directory only when it is empty. Crash after marking a directory creation and before recording its identity: an absent directory resumes the prefix; a present unrecorded directory stops recovery and survives with the journal. |
 | Published files before ownership commit | `owned-entry-reconciliation` (Apply retains originally admitted ownership-record generation); `pluginInstanceBatch.commit` | Crash after all target files but before the ownership participant: read-only refuses; recovery commits the matching ownership generation once, without reacquisition. |
 | Ownership commit before/during prune | `plugin-delivery` (Removal retires only owned plugin output); `ownership.Store.Recover` | Interrupt at the ownership state-file rename: recovery sees exactly the old or new generation and follows its corresponding row. Crash before prune and between two removals: recovery prunes only matching stale generations; replace a remaining file and assert it and the pending journal survive. After commit and prune, read-only inspection reports the committed ownership state and any verification-pending or failed result without recovery work. |
 | Root change, alias or destination-symlink replacement | `materialization` (Harness target roots remain within their authorized scope); `fsboundary.CaptureDestination` / `Destination.Verify`; `ownership.CanonicalRoot` | Rename the approved root and recreate a directory at its path; place publish and prune refuse. Change `HERDR_APP_HOME`, XDG state root, a root alias or a destination symlink between plan and write: no redirected write/prune; new-root approval leaves the old root untouched. |
