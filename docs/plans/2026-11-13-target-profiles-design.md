@@ -1694,9 +1694,11 @@ transaction.
 Choose **refusal**, not copy-then-verify, for cross-filesystem publication.
 Before the first target write, compare the staging filesystem identity with
 the effective target parent after any honored link, and refuse the package
-set if they differ. If a rename nevertheless returns `EXDEV`, stop and retain
-the staged generation and pending journal; never fall back to a target-root
-temporary or copy. If no file has yet been published, the target remains
+set if they differ. If a rename nevertheless returns `EXDEV`, keep the
+transaction pending with its staged generation and journal; read-only commands
+report `dependency.recovery-required`, and mutating recovery refuses the same
+rename until the user resolves the filesystem layout, with no target-root
+temporary or copy fallback. If no file has yet been published, the target remains
 unchanged. If earlier files were published, they remain visible and recovery
 follows the table below.
 
@@ -1707,11 +1709,11 @@ absent remains open under Decision 4. The ordering prevents a *new* layout
 from appearing before its selected required mod is published, but an old
 layout may remain while its mod is updated, and a removed layout may leave
 its mod visible until the later removal. A crash or running app can observe a
-partially replaced package or a mixture of old and new files. There is no
-host reload barrier or guaranteed reload ordering: Herdr may hot-reload
-between any two renames, including while a layout or mod package is
-incomplete. Do not promise package- or dependency-set atomicity, suppress
-reload, or infer readiness from publication.
+partially replaced package or a mixture of old and new files. No host reload
+barrier or ordering is known or assumed; the spike did not test hot reload,
+and Herdr may hot-reload between any two renames, including while a layout or
+mod package is incomplete. Do not promise package- or dependency-set
+atomicity, suppress reload, or infer readiness from publication.
 
 #### Root binding and whole-set conflicts
 
@@ -1741,7 +1743,11 @@ symlink leaf replaced after leaf verification is replaced at the captured
 parent; a directory leaf makes `renameat` fail rather than being overwritten.
 These local-move and leaf windows are observation limits, not a proposal for
 new rename flags, and root binding does not prevent a concurrent local move
-in that window. An alias that cannot be proven to be the recorded canonical
+in that window. The same verify-then-unlink window applies to pruning and
+deselection (`Destination.RemoveLeaf` verifies the leaf, then
+`unix.Unlinkat` by name), so an edit landing between those steps can be
+removed and is not detected; this is an observation limit. An alias that
+cannot be proven to be the recorded canonical
 root is not ownership proof. A case-variant spelling on a case-insensitive
 host is also an unproven alias because `ownership.CanonicalRoot` does not
 fold case. Store the resolved XDG state root used
@@ -1821,7 +1827,7 @@ states:
 | After some files publish | `dependency.recovery-required`; no replay. | Complete the recorded publish prefix only while each destination is exactly its old or intended generation and all remaining stage bytes match. An unexpected generation, byte or non-prefix state stops without deleting evidence. |
 | All package files published, ownership generation not committed | `dependency.recovery-required`; no replay. | Verify every published file against the journal, then commit the matching package/root ownership generation. A mismatch stops with journal and files intact. |
 | During ownership-state commit | `dependency.recovery-required`; no replay. | The single atomic state-file rename leaves either the old generation, handled by the preceding row, or the new generation, handled by the following row. |
-| Ownership committed, pruning not started | `dependency.recovery-required`; no replay. | Start pruning only stale files whose current bytes and captured parent still match the recorded old generation. A mismatch stops and preserves the journal and all files. |
+| Ownership committed, pruning not started | `dependency.recovery-required`; no replay. | Start pruning only stale files whose current bytes and captured parent match the recorded old generation at verification time. A mismatch stops and preserves the journal and all files. |
 | Interruption during pruning | `dependency.recovery-required`; no replay. | Continue only the remaining exact prune set, then clear the journal and release unreferenced package generations. Any changed generation stops and preserves the remaining evidence. |
 | No pending journal after commit and prune | Normal read-only inspection; any verification-pending or failed result remains visible. | No recovery work; a later sync plans from the committed ownership generation. |
 
@@ -1848,8 +1854,9 @@ installed package is edited, keep that package's entire current projection
 and do not partly refresh it. An upgrade that encounters an edit
 keeps the complete old projection and refuses the new package revision as a
 unit. The user can restore or move the edit and sync again. On deselection,
-delete unchanged files only when their recorded ownership generation still
-matches; leave edited files byte-for-byte in place and cede those paths from
+delete unchanged files only when their current bytes and captured parent
+match the recorded ownership generation at verification time; leave edited
+files byte-for-byte in place and cede those paths from
 ownership, reporting them as retained user files. Neither matching bytes at
 an unowned path nor a prior package name is sufficient to adopt them. This
 choice follows materialization's edited-copy preservation and
@@ -1859,8 +1866,10 @@ not apply the aggregate-entry rule that restores drifted proven entries.
 Once publication, ownership commit and pruning finish, run the approved
 initial-load `verify`; record pass/fail against the exact profile, package
 generation, check identity and host version in a single ownership-state
-update after the journal clears. An interruption before that update leaves
-verification pending, as in the post-commit row.
+update after the journal clears. Verification-pending is durably defined as a
+committed package generation with no recorded verification result for that
+generation. An interruption before that update leaves verification pending,
+as in the post-commit row.
 A failed check retains the complete placed projection and generation
 reference, reports the check as failed, and does not roll files back. The
 next mutating sync retries the check against unchanged files; a later user
@@ -1889,7 +1898,7 @@ below are precedents, not proof of Herdr place behavior.
 | Published files before ownership commit | `owned-entry-reconciliation` (Apply retains originally admitted ownership-record generation); `pluginInstanceBatch.commit` | Crash after all target files but before the ownership participant: read-only refuses; recovery commits the matching ownership generation once, without reacquisition. |
 | Ownership commit before/during prune | `plugin-delivery` (Removal retires only owned plugin output); `ownership.Store.Recover` | Crash before prune and between two removals: recovery prunes only matching stale generations; replace a remaining file and assert it and the pending journal survive. |
 | Root change, alias or destination-symlink replacement | `materialization` (Harness target roots remain within their authorized scope); `fsboundary.CaptureDestination` / `Destination.Verify`; `ownership.CanonicalRoot` | Rename the approved root and recreate a directory at its path; place publish and prune refuse. Change `HERDR_APP_HOME`, XDG state root, a root alias or a destination symlink between plan and write: no redirected write/prune; new-root approval leaves the old root untouched. |
-| Destination leaf or ancestor move after verification | `fsboundary.Destination.Verify` / `Destination.Publish` (`unix.Renameat`) | Replace the leaf or move its ancestor after `verifyTarget` returns the parent descriptor but before `renameat`: leaf replacement does not follow the leaf (a directory leaf fails), while the moved descriptor can carry publication into a directory no longer at the approved path; neither local race is detected or reported. |
+| Destination leaf or ancestor move after verification | `fsboundary.Destination.Verify` / `Destination.Publish` (`unix.Renameat`) | Replace the leaf or move its ancestor after `verifyTarget` returns the parent descriptor but before `renameat`: leaf replacement does not follow the leaf (a directory leaf fails), while the moved descriptor can carry publication into a directory no longer at the approved path; neither local race is detected or reported. For pruning/deselection, edit a leaf after `Destination.RemoveLeaf` verifies it but before `unix.Unlinkat`, and assert the edit can be removed without detection. |
 | New/new, installed/new and unmanaged conflicts | `owned-entry-reconciliation` (Unproven entries are preserved; Unmanaged collisions refuse only the generated entry); `planPluginArtifacts` | Reverse package order and assert both new colliders refuse; an installed package keeps its complete old projection; an identical unowned file, file/directory prefix collision, case-fold collision and NFC/NFD twin refuse deterministically. A deselected installed owner blocks a new claimant until its prune completes. |
 | Edited package on sync and upgrade | `materialization` (Locally edited file-mode output is reported as an edited managed copy); `plugin-delivery` (Plugin instances install as a unit) | Edit one package file: sync preserves the complete projection and reports drift; upgrade retains the old complete projection and refuses the new generation. |
 | Edited package on deselection | `plugin-delivery` (Removal retires only owned plugin output); `resource-removal` | Deselect after editing one file: unchanged owned files retire, the edit survives byte-for-byte and is reported as ceded, with no implicit re-adoption. |
