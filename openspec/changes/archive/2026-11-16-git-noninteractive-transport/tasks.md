@@ -10,4 +10,4 @@
 
 ## 3. Archive
 
-- [ ] 3.1 Run `openspec archive git-noninteractive-transport --yes` as the final commit
+- [x] 3.1 Run `openspec archive git-noninteractive-transport --yes` as the final commit
