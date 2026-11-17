@@ -39,9 +39,97 @@ var nativeRepairCases = []nativeRepairCase{
 func nativeRepairEnvironment(t *testing.T) (string, string) {
 	t.Helper()
 	repoRoot, home := devinEnv(t)
+	isolateNativeRepairHarnessRoots(t, home)
+	return repoRoot, home
+}
+
+func isolateNativeRepairHarnessRoots(t *testing.T, home string) {
+	t.Helper()
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("CODEX_HOME", filepath.Join(home, "codex"))
-	return repoRoot, home
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("OPENCODE_CONFIG", "")
+	t.Setenv("OPENCODE_CONFIG_DIR", "")
+}
+
+// spec: doctor-repair-planning/native-aggregate-repair-retains-action-safety
+func TestNativeRepairFixtureIsolatesAmbientOpenCodeRoots(t *testing.T) {
+	ambientRoot := t.TempDir()
+	xdgRoot := filepath.Join(ambientRoot, "xdg-config")
+	openCodeDir := filepath.Join(ambientRoot, "opencode-config-dir")
+	openCodeFile := filepath.Join(ambientRoot, "opencode-config.json")
+	for _, dir := range []string{xdgRoot, openCodeDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ambientDirs := []struct {
+		root, name string
+		contents   []byte
+	}{
+		{root: xdgRoot, name: "sentinel", contents: []byte("xdg config sentinel\n")},
+		{root: openCodeDir, name: "sentinel", contents: []byte("opencode config directory sentinel\n")},
+	}
+	for _, ambient := range ambientDirs {
+		if err := os.WriteFile(filepath.Join(ambient.root, ambient.name), ambient.contents, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	openCodeContents := []byte("opencode config file sentinel\n")
+	if err := os.WriteFile(openCodeFile, openCodeContents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", xdgRoot)
+	t.Setenv("OPENCODE_CONFIG_DIR", openCodeDir)
+	t.Setenv("OPENCODE_CONFIG", openCodeFile)
+
+	repoRoot, home := nativeRepairEnvironment(t)
+	root, rel, _ := nativeRepairMCPFile(t, repoRoot, hcc.TargetOpenCode, true)
+	expectedRoot := filepath.Join(home, ".config", "opencode")
+	if root != expectedRoot || rel != "opencode.json" {
+		t.Fatalf("OpenCode machine MCP destination = %s/%s, want %s/opencode.json", root, rel, expectedRoot)
+	}
+
+	name := "ambient-root-isolation"
+	command := "true"
+	report, err := Run(context.Background(), repoRoot, []resolver.ResolvedArtifact{
+		nativeRepairSelection(hcc.TargetOpenCode, name, command, true),
+	})
+	if err != nil || hasErrorDiagnostics(report.Diags) {
+		t.Fatalf("materialize OpenCode selection: %v %+v", err, report)
+	}
+	raw, err := os.ReadFile(filepath.Join(expectedRoot, rel))
+	if err != nil {
+		t.Fatalf("read inside-HOME OpenCode aggregate: %v", err)
+	}
+	var document struct {
+		MCP map[string]json.RawMessage `json:"mcp"`
+	}
+	if err := json.Unmarshal(raw, &document); err != nil {
+		t.Fatalf("decode inside-HOME OpenCode aggregate: %v", err)
+	}
+	if _, ok := document.MCP[name]; !ok {
+		t.Fatalf("inside-HOME OpenCode aggregate lacks %q: %s", name, raw)
+	}
+
+	for _, ambient := range ambientDirs {
+		entries, err := os.ReadDir(ambient.root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 1 || entries[0].Name() != ambient.name || entries[0].IsDir() {
+			t.Fatalf("unexpected output beneath ambient OpenCode root %s: %v", ambient.root, entries)
+		}
+		got, err := os.ReadFile(filepath.Join(ambient.root, ambient.name))
+		if err != nil || !bytes.Equal(got, ambient.contents) {
+			t.Fatalf("ambient OpenCode sentinel changed at %s: %v", ambient.root, err)
+		}
+	}
+	got, err := os.ReadFile(openCodeFile)
+	if err != nil || !bytes.Equal(got, openCodeContents) {
+		t.Fatalf("ambient OPENCODE_CONFIG file changed: %v", err)
+	}
 }
 
 func nativeRepairSelection(target hcc.Target, name, command string, machine bool) resolver.ResolvedArtifact {
@@ -445,9 +533,9 @@ func TestGeminiRepairCombinesSharedScopesWithoutDuplicateCandidates(t *testing.T
 				}
 			}
 			t.Setenv("HOME", home)
-			t.Setenv("CLAUDE_CONFIG_DIR", "")
 			t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
 			t.Setenv("XDG_CACHE_HOME", filepath.Join(t.TempDir(), "cache"))
+			isolateNativeRepairHarnessRoots(t, home)
 			selection := sharedGeminiResources(t)
 			report, err := Run(context.Background(), repoRoot, selection)
 			if err != nil || hasErrorDiagnostics(report.Diags) {
@@ -557,9 +645,9 @@ func TestGeminiRepairCombinesSharedScopesWithoutDuplicateCandidates(t *testing.T
 func TestGeminiRepairScopeConflictRefusesWithoutMutation(t *testing.T) {
 	repoRoot := t.TempDir()
 	t.Setenv("HOME", repoRoot)
-	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(t.TempDir(), "cache"))
+	isolateNativeRepairHarnessRoots(t, repoRoot)
 	initial := []resolver.ResolvedArtifact{sharedGeminiMCPResource("initial", config.RepoCommitted)}
 	report, err := Run(context.Background(), repoRoot, initial)
 	if err != nil || hasErrorDiagnostics(report.Diags) {
@@ -632,10 +720,9 @@ func nativeRepairPluginSelection(t *testing.T, target hcc.Target, scopes []confi
 		}
 	}
 	t.Setenv("HOME", home)
-	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(root, "cache"))
-	t.Setenv("CODEX_HOME", filepath.Join(home, "codex"))
+	isolateNativeRepairHarnessRoots(t, home)
 
 	packageRoot := filepath.Join(root, "plugin")
 	hooks := []*ir.Hook{
